@@ -12,7 +12,10 @@
 - 基础 HTTP / WebSocket 协议框架
 - `shared-contracts`、`shared-events`、`shared-capabilities`
 - SQLite 的表范围与写入边界
+- 首次启动初始化流程
+- 默认用户名和密码创建
 - 单用户、单 Host 的基础认证模型
+- 公开接口与受保护接口边界
 
 ## 依赖关系
 

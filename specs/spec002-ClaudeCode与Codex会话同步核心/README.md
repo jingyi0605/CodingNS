@@ -12,6 +12,8 @@
 - 会话发现、历史读取、实时订阅
 - 会话续接与新建会话
 - 消息归一化
+- 原始消息只读边界
+- 会话索引与状态快照
 - provider capability descriptor
 - provider 兼容性测试样本
 
