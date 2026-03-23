@@ -1,0 +1,20 @@
+export interface ApiErrorPayload {
+  detail: string;
+  error_code: string;
+  field?: string;
+  timestamp?: string;
+}
+
+export class ApiError extends Error {
+  readonly status: number;
+  readonly errorCode: string;
+  readonly field?: string;
+
+  constructor(status: number, payload: ApiErrorPayload) {
+    super(payload.detail);
+    this.name = "ApiError";
+    this.status = status;
+    this.errorCode = payload.error_code;
+    this.field = payload.field;
+  }
+}

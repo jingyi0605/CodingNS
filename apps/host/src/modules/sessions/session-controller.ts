@@ -16,6 +16,11 @@ interface SessionMessagesQuery {
   limit?: string;
 }
 
+interface SendMessageBody {
+  content?: string;
+  clientRequestId?: string;
+}
+
 interface StartSessionBody {
   workspaceId?: string;
   provider?: string;
@@ -59,6 +64,13 @@ export class SessionController {
         Number(request.query.limit ?? "50")
       )
     );
+  };
+
+  readonly getDetail = async (
+    request: FastifyRequest<{ Params: SessionParams }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(this.sessionRuntimeService.getSession(request.params.sessionId));
   };
 
   readonly getCapabilities = async (
@@ -106,6 +118,30 @@ export class SessionController {
         provider,
         initialPrompt: request.body.initialPrompt?.trim()
       })
+    );
+  };
+
+  readonly sendMessage = async (
+    request: FastifyRequest<{ Params: SessionParams; Body: SendMessageBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    const content = request.body.content?.trim();
+
+    if (!content) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "INVALID_INPUT",
+        detail: "发送消息必须提供内容",
+        field: "content"
+      });
+    }
+
+    reply.status(201).send(
+      await this.sessionRuntimeService.sendMessage(
+        request.params.sessionId,
+        content,
+        request.body.clientRequestId?.trim() ?? null
+      )
     );
   };
 }

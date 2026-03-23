@@ -7,8 +7,10 @@ export async function registerSessionRoutes(
   sessionController: SessionController
 ): Promise<void> {
   app.get("/api/sessions", sessionController.list);
+  app.get("/api/sessions/:sessionId", sessionController.getDetail);
   app.get("/api/sessions/:sessionId/messages", sessionController.readMessages);
   app.get("/api/sessions/:sessionId/capabilities", sessionController.getCapabilities);
+  app.post("/api/sessions/:sessionId/messages", sessionController.sendMessage);
   app.post("/api/sessions/:sessionId/resume", sessionController.resume);
   app.post("/api/sessions/start", sessionController.start);
 }

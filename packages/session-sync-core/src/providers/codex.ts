@@ -12,6 +12,7 @@ import type {
   ProviderSessionSummary,
   ProviderSubscription,
   ResumeSessionResult,
+  SendMessageResult,
   StartSessionOptions,
   StartSessionResult
 } from "../types.js";
@@ -199,11 +200,53 @@ export class CodexAdapter implements ProviderAdapter {
     };
   }
 
+  async sendMessage(
+    providerSessionId: string,
+    rawStoreRef: string,
+    content: string,
+    clientRequestId: string | null
+  ): Promise<SendMessageResult> {
+    const lineNumber = readJsonLines(rawStoreRef).length + 1;
+    const acceptedAt = nextTimestamp();
+
+    appendJsonLine(rawStoreRef, {
+      timestamp: acceptedAt,
+      type: "event_msg",
+      payload: {
+        type: "user_message",
+        message: content,
+        clientRequestId
+      }
+    });
+
+    const rawRef = createRawRef(this.providerId, rawStoreRef, lineNumber);
+
+    return {
+      acceptedAt,
+      clientRequestId,
+      message: {
+        messageId: messageIdFromRawRef(rawRef),
+        provider: this.providerId,
+        providerSessionId,
+        role: "user",
+        content,
+        timestamp: acceptedAt,
+        sequence: this.parseMessages(
+          rawStoreRef,
+          readJsonLines(rawStoreRef).map((record) => record.data),
+          providerSessionId
+        ).length,
+        rawRef
+      }
+    };
+  }
+
   getProviderCapabilities(): ProviderCapabilities {
     return {
       provider: this.providerId,
       canStartSession: true,
       canResumeSession: true,
+      canSendMessage: true,
       supportsSubagents: false,
       supportsInterrupt: true,
       supportsStructuredToolCalls: true,

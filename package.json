@@ -5,6 +5,8 @@
   "scripts": {
     "build:session-sync-core": "pnpm --dir packages/session-sync-core build",
     "build:host": "pnpm --dir packages/session-sync-core build && pnpm --filter host build",
-    "test:host": "pnpm --dir packages/session-sync-core build && pnpm --filter host test"
+    "test:host": "pnpm --dir packages/session-sync-core build && pnpm --filter host test",
+    "build:user-app": "pnpm --dir apps/user-app build",
+    "test:user-app": "pnpm --dir apps/user-app test"
   }
 }

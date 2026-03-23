@@ -1,6 +1,6 @@
 # 任务清单 - spec003 对话式主界面与消息运行时（人话版）
 
-状态：Draft
+状态：DONE
 
 ## 这份文档是干什么的
 
@@ -26,8 +26,8 @@
 
 ## 阶段 1：先把页面骨架和边界立住
 
-- [ ] 1.1 建立会话页主舞台骨架
-  - 状态：TODO
+- [x] 1.1 建立会话页主舞台骨架
+  - 状态：DONE
   - 这一步到底做什么：实现会话页基础布局，确保对话区是主视图，头部和输入区位置固定。
   - 做完你能看到什么：页面打开后，中间是消息主舞台，输入区可直接交互，侧栏不抢焦点。
   - 先依赖什么：`spec001` 的登录基础路由可用。
@@ -35,8 +35,8 @@
     - `requirements.md` 需求 1
     - `design.md` §2.1、§3.1
   - 主要改哪里：
-    - `apps/web/src/pages/conversation/ConversationPage.tsx`
-    - `apps/web/src/pages/conversation/ConversationLayout.tsx`
+    - `apps/user-app/src/features/conversation/pages/ConversationPage.tsx`
+    - `apps/user-app/src/features/conversation/components/ConversationLayout.tsx`
   - 这一步先不做什么：不接入文件、Git、终端、进程面板的真实业务数据。
   - 怎么算完成：
     1. 桌面和移动布局都能展示主舞台
@@ -47,8 +47,8 @@
   - 对应需求：`requirements.md` 需求 1
   - 对应设计：`design.md` §2.1、§3.1
 
-- [ ] 1.2 接入会话头部与状态展示
-  - 状态：TODO
+- [x] 1.2 接入会话头部与状态展示
+  - 状态：DONE
   - 这一步到底做什么：实现 `SessionHeader`，显示会话标题、连接状态、能力摘要。
   - 做完你能看到什么：用户不用下钻也能知道会话是否在线、当前能力是否受限。
   - 先依赖什么：1.1
@@ -56,8 +56,8 @@
     - `requirements.md` 需求 1、需求 2、需求 5
     - `design.md` §2.2、§3.1、§4.2
   - 主要改哪里：
-    - `apps/web/src/pages/conversation/SessionHeader.tsx`
-    - `apps/web/src/stores/sessionRuntimeStore.ts`
+    - `apps/user-app/src/features/conversation/components/SessionHeader.tsx`
+    - `apps/user-app/src/features/conversation/runtime/session-runtime-store.ts`
   - 这一步先不做什么：不实现复杂筛选和多会话批量操作。
   - 怎么算完成：
     1. 会话头部可显示连接态和能力摘要
@@ -68,8 +68,8 @@
   - 对应需求：`requirements.md` 需求 1、需求 2、需求 5
   - 对应设计：`design.md` §2.2、§3.1、§4.2
 
-- [ ] 1.3 阶段检查：主舞台边界检查
-  - 状态：TODO
+- [x] 1.3 阶段检查：主舞台边界检查
+  - 状态：DONE
   - 这一步到底做什么：确认页面不会退化成后台风布局，并确认会话头部信息闭环。
   - 做完你能看到什么：阶段 1 的页面骨架可以作为后续运行时接入基底。
   - 先依赖什么：1.1、1.2
@@ -91,8 +91,8 @@
 
 ## 阶段 2：做稳消息运行时主链路
 
-- [ ] 2.1 建立消息运行时 store 和状态机
-  - 状态：TODO
+- [x] 2.1 建立消息运行时 store 和状态机
+  - 状态：DONE
   - 这一步到底做什么：实现 `session-runtime-store`，覆盖历史加载、增量合并、发送状态、连接状态。
   - 做完你能看到什么：页面状态不再靠多个组件拼凑，消息运行时有统一入口。
   - 先依赖什么：1.3
@@ -100,8 +100,8 @@
     - `requirements.md` 需求 3、需求 5
     - `design.md` §2.2、§4.1、§4.2
   - 主要改哪里：
-    - `apps/web/src/stores/sessionRuntimeStore.ts`
-    - `apps/web/src/pages/conversation/runtime/sessionRuntimeMachine.ts`
+    - `apps/user-app/src/features/conversation/runtime/session-runtime-store.ts`
+    - `apps/user-app/src/features/conversation/runtime/session-runtime-machine.ts`
   - 这一步先不做什么：不做离线本地消息持久化。
   - 怎么算完成：
     1. 支持历史分页加载和消息去重
@@ -112,8 +112,8 @@
   - 对应需求：`requirements.md` 需求 3、需求 5
   - 对应设计：`design.md` §2.2、§4.1、§4.2、§6.1、§6.4
 
-- [ ] 2.2 接入能力门控组件并移除散落特判
-  - 状态：TODO
+- [x] 2.2 接入能力门控组件并移除散落特判
+  - 状态：DONE
   - 这一步到底做什么：实现 `CapabilityGate`，统一消费 `Capability Descriptor` 控制按钮可用性。
   - 做完你能看到什么：不支持的功能直接在会话头部和输入区体现，不再点了才报错。
   - 先依赖什么：2.1
@@ -121,9 +121,9 @@
     - `requirements.md` 需求 2、需求 6
     - `design.md` §2.2、§3.2、§3.3
   - 主要改哪里：
-    - `apps/web/src/components/capability/CapabilityGate.tsx`
-    - `apps/web/src/pages/conversation/ComposerPanel.tsx`
-    - `apps/web/src/pages/conversation/SessionHeader.tsx`
+    - `apps/user-app/src/features/conversation/capability/capability-gate.tsx`
+    - `apps/user-app/src/features/conversation/components/ComposerPanel.tsx`
+    - `apps/user-app/src/features/conversation/components/SessionHeader.tsx`
   - 这一步先不做什么：不做 provider 新能力接入（由 `spec010` 负责）。
   - 怎么算完成：
     1. 页面入口全部经能力门控
@@ -134,8 +134,8 @@
   - 对应需求：`requirements.md` 需求 2、需求 6
   - 对应设计：`design.md` §2.2、§3.2、§3.3、§6.2
 
-- [ ] 2.3 接入发送链路与失败重试
-  - 状态：TODO
+- [x] 2.3 接入发送链路与失败重试
+  - 状态：DONE
   - 这一步到底做什么：实现发送动作、发送中反馈、失败重试，保持消息来源一致性。
   - 做完你能看到什么：输入区发送后有明确状态，失败可重试，成功后消息归并到正式列表。
   - 先依赖什么：2.1、2.2
@@ -143,8 +143,9 @@
     - `requirements.md` 需求 3、需求 6
     - `design.md` §2.3.3、§3.3、§5.3
   - 主要改哪里：
-    - `apps/web/src/pages/conversation/ComposerPanel.tsx`
-    - `apps/web/src/pages/conversation/runtime/sendMessageService.ts`
+    - `apps/user-app/src/features/conversation/components/ComposerPanel.tsx`
+    - `apps/user-app/src/features/conversation/runtime/session-runtime-store.ts`
+    - `apps/user-app/src/features/conversation/api/conversation-api.ts`
   - 这一步先不做什么：不做附件上传、语音输入等扩展动作。
   - 怎么算完成：
     1. 发送状态三态完整
@@ -155,8 +156,8 @@
   - 对应需求：`requirements.md` 需求 3、需求 6
   - 对应设计：`design.md` §2.3.3、§3.3、§5.3、§6.1
 
-- [ ] 2.4 阶段检查：消息运行时主链路检查
-  - 状态：TODO
+- [x] 2.4 阶段检查：消息运行时主链路检查
+  - 状态：DONE
   - 这一步到底做什么：确认“加载历史 -> 收实时 -> 发送 -> 重连补偿”主链路可用。
   - 做完你能看到什么：可以进入鉴权和异常链路收口阶段。
   - 先依赖什么：2.1、2.2、2.3
@@ -178,8 +179,8 @@
 
 ## 阶段 3：鉴权、重连和验收收口
 
-- [ ] 3.1 接入页面鉴权保护与 WS 鉴权握手
-  - 状态：TODO
+- [x] 3.1 接入页面鉴权保护与 WS 鉴权握手
+  - 状态：DONE
   - 这一步到底做什么：在路由层和通信层接入鉴权保护，未登录无法触达受保护会话数据。
   - 做完你能看到什么：未登录访问会话页会被拦截，WS 未鉴权订阅无法建立。
   - 先依赖什么：2.4
@@ -187,9 +188,9 @@
     - `requirements.md` 需求 4
     - `design.md` §2.3.1、§3.3、§6.3
   - 主要改哪里：
-    - `apps/web/src/router/authGuard.ts`
-    - `apps/web/src/network/httpClient.ts`
-    - `apps/web/src/network/realtimeClient.ts`
+    - `apps/user-app/src/app/router.tsx`
+    - `apps/user-app/src/network/http-client.ts`
+    - `apps/user-app/src/network/realtime-client.ts`
   - 这一步先不做什么：不做多角色权限系统。
   - 怎么算完成：
     1. 未登录不显示受保护数据
@@ -200,8 +201,8 @@
   - 对应需求：`requirements.md` 需求 4
   - 对应设计：`design.md` §2.3.1、§3.3、§6.3
 
-- [ ] 3.2 完成断线重连体验与手动恢复入口
-  - 状态：TODO
+- [x] 3.2 完成断线重连体验与手动恢复入口
+  - 状态：DONE
   - 这一步到底做什么：实现连接状态提示、自动重连、失败后手动重试入口。
   - 做完你能看到什么：弱网下用户知道系统在做什么，不会卡死在静默失败状态。
   - 先依赖什么：3.1
@@ -209,9 +210,9 @@
     - `requirements.md` 需求 5
     - `design.md` §2.3.4、§4.2、§5.3
   - 主要改哪里：
-    - `apps/web/src/network/realtimeClient.ts`
-    - `apps/web/src/pages/conversation/ConnectionBanner.tsx`
-    - `apps/web/src/stores/sessionRuntimeStore.ts`
+    - `apps/user-app/src/network/realtime-client.ts`
+    - `apps/user-app/src/features/conversation/components/ConnectionBanner.tsx`
+    - `apps/user-app/src/features/conversation/runtime/session-runtime-store.ts`
   - 这一步先不做什么：不做离线编辑和离线消息排队。
   - 怎么算完成：
     1. 自动重连成功后可恢复会话流
@@ -222,8 +223,8 @@
   - 对应需求：`requirements.md` 需求 5
   - 对应设计：`design.md` §2.3.4、§4.2、§6.4
 
-- [ ] 3.3 最终检查点：spec003 验收收口
-  - 状态：TODO
+- [x] 3.3 最终检查点：spec003 验收收口
+  - 状态：DONE
   - 这一步到底做什么：核对需求、设计、任务和验证证据是否一一对齐。
   - 做完你能看到什么：spec003 可以作为实现基线，不留关键边界歧义。
   - 先依赖什么：3.1、3.2

@@ -190,7 +190,21 @@ describe("spec002 会话同步核心", () => {
       provider: "claude-code",
       canStartSession: true,
       canResumeSession: true,
+      canSendMessage: true,
       supportsSubagents: true
+    });
+
+    const detail = await hosted.app.inject({
+      method: "GET",
+      url: `/api/sessions/${claudeSession.sessionId}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(detail.statusCode).toBe(200);
+    expect(detail.json()).toMatchObject({
+      sessionId: claudeSession.sessionId,
+      provider: "claude-code"
     });
 
     const sessionCapability = await hosted.app.inject({
@@ -215,6 +229,27 @@ describe("spec002 会话同步核心", () => {
     });
     expect(resumed.statusCode).toBe(200);
     expect(resumed.json().provider).toBe("codex");
+
+    const sent = await hosted.app.inject({
+      method: "POST",
+      url: `/api/sessions/${codexSession.sessionId}/messages`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        content: "把前端主链路先接上",
+        clientRequestId: "client-request-1"
+      }
+    });
+    expect(sent.statusCode).toBe(201);
+    expect(sent.json()).toMatchObject({
+      sessionId: codexSession.sessionId,
+      clientRequestId: "client-request-1",
+      message: {
+        role: "user",
+        content: "把前端主链路先接上"
+      }
+    });
 
     const started = await hosted.app.inject({
       method: "POST",

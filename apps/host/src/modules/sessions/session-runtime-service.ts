@@ -9,6 +9,7 @@ import {
   type HistoryPage,
   type ProviderCapabilities,
   type ProviderRealtimeEvent,
+  type SendMessageResult,
   type ProviderSubscription
 } from "@codingns/session-sync-core";
 
@@ -155,6 +156,10 @@ export class SessionRuntimeService {
     }
   }
 
+  getSession(sessionId: string): SessionListItem {
+    return this.getSessionListItemOrThrow(sessionId);
+  }
+
   getProviderCapabilities(provider: string): ProviderCapabilities {
     try {
       return this.capabilityService.getProviderCapabilities(provider);
@@ -257,6 +262,53 @@ export class SessionRuntimeService {
     } catch (error) {
       throw this.mapProviderError(error);
     }
+  }
+
+  async sendMessage(
+    sessionId: string,
+    content: string,
+    clientRequestId: string | null
+  ): Promise<SendMessageResult & { sessionId: string }> {
+    const binding = this.getBindingOrThrow(sessionId);
+    const result = await this.sessionSyncService
+      .sendMessage(
+        binding.provider,
+        binding.providerSessionId,
+        binding.rawStoreRef,
+        content,
+        clientRequestId
+      )
+      .catch((error) => {
+        this.markSessionError(sessionId, "SEND_FAILED", error);
+        throw this.mapProviderError(error);
+      });
+
+    const existing = this.sessionIndexRepository.findBySessionId(sessionId);
+
+    this.sessionIndexRepository.upsert({
+      sessionId,
+      workspaceId: binding.workspaceId,
+      provider: binding.provider,
+      title: existing?.title ?? result.message.content.slice(0, 48),
+      messageCount: (existing?.messageCount ?? 0) + 1,
+      lastMessageAt: result.message.timestamp,
+      createdAt: existing?.createdAt ?? nowIso(),
+      updatedAt: result.message.timestamp
+    });
+    this.upsertSnapshot(sessionId, {
+      syncStatus: "idle",
+      syncCursor: this.sessionStatusSnapshotRepository.findBySessionId(sessionId)?.syncCursor ?? null,
+      lastSyncAt: result.acceptedAt,
+      lastErrorCode: null,
+      lastErrorDetail: null,
+      resumedAt:
+        this.sessionStatusSnapshotRepository.findBySessionId(sessionId)?.resumedAt ?? null
+    });
+
+    return {
+      sessionId,
+      ...result
+    };
   }
 
   async subscribeSession(

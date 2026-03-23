@@ -12,6 +12,7 @@ import type {
   ProviderSessionSummary,
   ProviderSubscription,
   ResumeSessionResult,
+  SendMessageResult,
   StartSessionOptions,
   StartSessionResult
 } from "../types.js";
@@ -199,11 +200,64 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
     };
   }
 
+  async sendMessage(
+    providerSessionId: string,
+    rawStoreRef: string,
+    content: string,
+    clientRequestId: string | null
+  ): Promise<SendMessageResult> {
+    const records = readJsonLines(rawStoreRef).map((record) => record.data);
+    const lineNumber = records.length + 1;
+    const acceptedAt = nextTimestamp();
+    const cwd =
+      records
+        .map((record) => ensureText(record.cwd))
+        .find((value) => value.length > 0) ?? "";
+
+    appendJsonLine(rawStoreRef, {
+      parentUuid: null,
+      isSidechain: false,
+      promptId: crypto.randomUUID(),
+      type: "user",
+      message: {
+        role: "user",
+        content: [{ type: "text", text: content }]
+      },
+      uuid: crypto.randomUUID(),
+      timestamp: acceptedAt,
+      cwd,
+      sessionId: providerSessionId,
+      clientRequestId
+    });
+
+    const rawRef = createRawRef(this.providerId, rawStoreRef, lineNumber, 0);
+
+    return {
+      acceptedAt,
+      clientRequestId,
+      message: {
+        messageId: messageIdFromRawRef(rawRef),
+        provider: this.providerId,
+        providerSessionId,
+        role: "user",
+        content,
+        timestamp: acceptedAt,
+        sequence: this.parseMessages(
+          rawStoreRef,
+          readJsonLines(rawStoreRef).map((record) => record.data),
+          providerSessionId
+        ).length,
+        rawRef
+      }
+    };
+  }
+
   getProviderCapabilities(): ProviderCapabilities {
     return {
       provider: this.providerId,
       canStartSession: true,
       canResumeSession: true,
+      canSendMessage: true,
       supportsSubagents: true,
       supportsInterrupt: false,
       supportsStructuredToolCalls: true,

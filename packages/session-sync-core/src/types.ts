@@ -8,6 +8,7 @@ export interface ProviderCapabilities {
   provider: ProviderId;
   canStartSession: boolean;
   canResumeSession: boolean;
+  canSendMessage: boolean;
   supportsSubagents: boolean;
   supportsInterrupt: boolean;
   supportsStructuredToolCalls: boolean;
@@ -67,6 +68,12 @@ export interface ProviderRealtimeEvent {
   cursor: string | null;
 }
 
+export interface SendMessageResult {
+  acceptedAt: string;
+  clientRequestId: string | null;
+  message: NormalizedMessage;
+}
+
 export interface ProviderSubscription {
   close(): void;
 }
@@ -89,6 +96,12 @@ export interface ProviderAdapter {
   ): ProviderSubscription;
   resumeSession(providerSessionId: string, rawStoreRef: string): Promise<ResumeSessionResult>;
   startSession(workspacePath: string, options: StartSessionOptions): Promise<StartSessionResult>;
+  sendMessage(
+    providerSessionId: string,
+    rawStoreRef: string,
+    content: string,
+    clientRequestId: string | null
+  ): Promise<SendMessageResult>;
   getProviderCapabilities(): ProviderCapabilities;
   getSessionCapabilities(providerSessionId: string): Promise<ProviderCapabilities>;
 }

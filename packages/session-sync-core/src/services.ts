@@ -6,6 +6,7 @@ import type {
   ProviderSessionSummary,
   ProviderSubscription,
   ResumeSessionResult,
+  SendMessageResult,
   StartSessionOptions,
   StartSessionResult
 } from "./types.js";
@@ -62,6 +63,18 @@ export class SessionSyncService {
     options: StartSessionOptions
   ): Promise<StartSessionResult> {
     return this.registry.get(providerId).startSession(workspacePath, options);
+  }
+
+  async sendMessage(
+    providerId: string,
+    providerSessionId: string,
+    rawStoreRef: string,
+    content: string,
+    clientRequestId: string | null
+  ): Promise<SendMessageResult> {
+    return this.registry
+      .get(providerId)
+      .sendMessage(providerSessionId, rawStoreRef, content, clientRequestId);
   }
 }
 
