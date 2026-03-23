@@ -2,7 +2,8 @@ import type {
   DeliveryState,
   HistoryMessageDto,
   ProviderCapabilitiesDto,
-  SessionSummaryDto
+  SessionSummaryDto,
+  ToolCallDto
 } from "../api/conversation-api";
 
 export type RuntimeConnectionState = "connected" | "reconnecting" | "reconnect_failed" | "closed";
@@ -12,7 +13,9 @@ export interface SessionMessageViewModel {
   id: string;
   sessionId: string;
   role: HistoryMessageDto["role"];
+  kind: HistoryMessageDto["kind"];
   content: string;
+  toolCall: ToolCallDto | null;
   timestamp: string;
   sequence: number;
   rawRef: string;
@@ -52,11 +55,31 @@ export function toViewMessage(
   deliveryState: DeliveryState = "sent",
   clientRequestId: string | null = null
 ): SessionMessageViewModel {
+  const kind =
+    message.kind ??
+    (message.role === "tool"
+      ? "tool_result"
+      : "text");
+  const toolCall =
+    message.toolCall ??
+    (kind === "tool_call" || kind === "tool_result"
+      ? {
+          callId: message.rawRef || message.messageId,
+          name: "tool",
+          input: kind === "tool_call" ? message.content : "",
+          output: kind === "tool_result" && message.content ? message.content : null,
+          error: null,
+          status: kind === "tool_call" ? "running" : "completed"
+        }
+      : null);
+
   return {
     id: message.messageId,
     sessionId,
     role: message.role,
+    kind,
     content: message.content,
+    toolCall,
     timestamp: message.timestamp,
     sequence: message.sequence,
     rawRef: message.rawRef,
@@ -74,7 +97,9 @@ export function createPendingMessage(
     id: `pending-${clientRequestId}`,
     sessionId,
     role: "user",
+    kind: "text",
     content,
+    toolCall: null,
     timestamp: new Date().toISOString(),
     sequence: Number.MAX_SAFE_INTEGER,
     rawRef: `pending://${clientRequestId}`,

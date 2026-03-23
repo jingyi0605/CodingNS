@@ -3,6 +3,16 @@ import type { Stats } from "node:fs";
 export type ProviderId = "claude-code" | "codex";
 export type SessionRole = "user" | "assistant" | "tool" | "system";
 export type SyncStatus = "idle" | "syncing" | "error";
+export type MessageKind = "text" | "thinking" | "tool_call" | "tool_result";
+
+export interface NormalizedToolCall {
+  callId: string;
+  name: string;
+  input: string;
+  output: string | null;
+  error: string | null;
+  status: "running" | "completed" | "failed";
+}
 
 export interface ProviderCapabilities {
   provider: ProviderId;
@@ -34,7 +44,9 @@ export interface NormalizedMessage {
   provider: ProviderId;
   providerSessionId: string;
   role: SessionRole;
+  kind: MessageKind;
   content: string;
+  toolCall: NormalizedToolCall | null;
   timestamp: string;
   sequence: number;
   rawRef: string;

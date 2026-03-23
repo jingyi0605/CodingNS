@@ -556,6 +556,110 @@ a {
   padding: 16px;
 }
 
+.workbench-overview-page,
+.workbench-manager-page {
+  overflow-y: auto;
+}
+
+.workbench-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.workbench-overview-card {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  border-radius: var(--radius-lg);
+  padding: 20px;
+}
+
+.workbench-overview-card h1,
+.workbench-overview-card h2,
+.workbench-overview-card h3,
+.workbench-side-card h3 {
+  margin: 0;
+}
+
+.workbench-section-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.workbench-page-actions {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.workbench-inline-field {
+  min-width: 240px;
+}
+
+.workbench-inline-field select {
+  width: 100%;
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  background: var(--bg-primary);
+}
+
+.workbench-overview-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.workbench-overview-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-primary);
+  background: var(--bg-primary);
+  transition: all var(--transition-fast);
+}
+
+.workbench-overview-list-item:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent);
+}
+
+.workbench-overview-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.workbench-side-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-primary);
+  background: var(--bg-primary);
+}
+
+.process-manager-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.process-manager-meta-grid div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
 /* ========================================
    Auxiliary Panel
    ======================================== */
@@ -1088,6 +1192,36 @@ a {
   text-overflow: ellipsis;
 }
 
+.tool-call-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.tool-call-status {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+}
+
+.tool-call-status.is-running {
+  color: var(--accent);
+}
+
+.tool-call-status.is-completed {
+  color: var(--success);
+}
+
+.tool-call-status.is-failed {
+  color: var(--error);
+}
+
 .tool-call-toggle {
   color: var(--text-tertiary);
   transition: transform 200ms ease;
@@ -1101,6 +1235,23 @@ a {
   padding: 12px;
   background: var(--bg-primary);
   border-top: 1px solid var(--border-primary);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tool-call-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tool-call-section-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
 }
 
 .tool-call-output pre {
@@ -1614,6 +1765,11 @@ a {
     grid-template-columns: 1fr;
   }
 
+  .workbench-summary-grid,
+  .process-manager-meta-grid {
+    grid-template-columns: 1fr;
+  }
+
   .terminal-grid {
     grid-template-columns: 1fr;
   }
@@ -1663,6 +1819,16 @@ a {
   .workbench-page,
   .conversation-page-shell {
     padding: 12px;
+  }
+
+  .workbench-section-heading,
+  .workbench-overview-list-item {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .workbench-overview-meta {
+    align-items: flex-start;
   }
 
   .home-layout,

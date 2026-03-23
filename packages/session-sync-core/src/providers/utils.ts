@@ -135,6 +135,61 @@ export function ensureText(value: unknown): string {
   return JSON.stringify(value);
 }
 
+export function stringifyStructuredValue(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (value === undefined || value === null) {
+    return "";
+  }
+
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return ensureText(value);
+  }
+}
+
+export function extractTextBlocks(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (value === undefined || value === null) {
+    return "";
+  }
+
+  if (Array.isArray(value)) {
+    const combined = value
+      .map((item) => extractTextBlocks(item).trim())
+      .filter((item) => item.length > 0)
+      .join("\n");
+
+    if (combined.length > 0) {
+      return combined;
+    }
+
+    return stringifyStructuredValue(value);
+  }
+
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+
+    for (const key of ["text", "thinking", "output", "content", "message"]) {
+      const text = extractTextBlocks(record[key]).trim();
+
+      if (text.length > 0) {
+        return text;
+      }
+    }
+
+    return stringifyStructuredValue(value);
+  }
+
+  return ensureText(value);
+}
+
 export function safeDate(value: unknown, fallback: string): string {
   if (typeof value === "string" && value.length > 0) {
     return value;

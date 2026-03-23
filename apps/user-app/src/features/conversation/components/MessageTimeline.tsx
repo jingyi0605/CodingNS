@@ -14,52 +14,169 @@ interface MessageTimelineProps {
   provider: ProviderId | null;
 }
 
-function ToolCallItem({ message }: { message: SessionMessageViewModel }) {
-  const [expanded, setExpanded] = useState(false);
-  const tool = message.toolCall;
+interface ResolvedToolCall {
+  callId: string;
+  name: string;
+  input: string;
+  output: string | null;
+  error: string | null;
+  status: "running" | "completed" | "failed";
+}
 
-  if (!tool) {
+interface ToolMessageGroup {
+  key: string;
+  tool: ResolvedToolCall;
+  hasRequest: boolean;
+  hasResult: boolean;
+}
+
+type TimelineRenderItem =
+  | {
+      type: "message";
+      key: string;
+      message: SessionMessageViewModel;
+    }
+  | {
+      type: "tool_group";
+      key: string;
+      group: ToolMessageGroup;
+    };
+
+function isToolMessage(message: SessionMessageViewModel) {
+  return message.kind === "tool_call" || message.kind === "tool_result";
+}
+
+function resolveToolCall(message: SessionMessageViewModel): ResolvedToolCall | null {
+  if (message.toolCall) {
+    return message.toolCall;
+  }
+
+  if (!isToolMessage(message)) {
     return null;
   }
 
-  const isResult = message.kind === "tool_result";
-  const previewSource = isResult
-    ? tool.error || tool.output || t("conversation.toolResultEmpty")
-    : tool.input || "{}";
-  const preview = previewSource.length > 60 ? `${previewSource.slice(0, 60)}...` : previewSource;
-  const hasOutput = Boolean(tool.output || tool.error);
+  return {
+    callId: message.rawRef || message.id,
+    name: "tool",
+    input: message.kind === "tool_call" ? message.content : "",
+    output: message.kind === "tool_result" && message.content ? message.content : null,
+    error: null,
+    status: message.kind === "tool_call" ? "running" : "completed"
+  };
+}
 
-  return (
-    <div className={`tool-call-item ${isResult ? "tool-result" : ""}`}>
-      <button
-        type="button"
-        className="tool-call-header"
-        onClick={() => hasOutput && setExpanded((current) => !current)}
-      >
-        <div className="tool-call-info">
-          <span className="tool-call-name">
-            {isResult ? `${tool.name} / ${t("conversation.toolResultLabel")}` : tool.name}
-          </span>
-          <span className="tool-call-input-preview">{preview}</span>
-        </div>
-        {hasOutput && (
-          <span className={`tool-call-toggle ${expanded ? "expanded" : ""}`}>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <polyline points="6 9 12 15 18 9" />
-            </svg>
-          </span>
-        )}
-      </button>
+function shouldMergeToolMessages(
+  current: SessionMessageViewModel,
+  next: SessionMessageViewModel
+) {
+  const currentTool = resolveToolCall(current);
+  const nextTool = resolveToolCall(next);
 
-      {expanded && hasOutput && (
-        <div className="tool-call-output">
-          <pre className={tool.error ? "tool-call-error" : undefined}>
-            {tool.error || tool.output}
-          </pre>
-        </div>
-      )}
-    </div>
-  );
+  if (!currentTool || !nextTool) {
+    return false;
+  }
+
+  return currentTool.callId === nextTool.callId;
+}
+
+function mergeToolMessages(messages: SessionMessageViewModel[]): ToolMessageGroup | null {
+  const tools = messages
+    .map((message) => ({
+      message,
+      tool: resolveToolCall(message)
+    }))
+    .filter((item): item is { message: SessionMessageViewModel; tool: ResolvedToolCall } => Boolean(item.tool));
+
+  if (tools.length === 0) {
+    return null;
+  }
+
+  const merged: ResolvedToolCall = { ...tools[0]!.tool };
+  let hasRequest = false;
+  let hasResult = false;
+
+  for (const { message, tool } of tools) {
+    if (message.kind === "tool_call") {
+      hasRequest = true;
+
+      if (!merged.input && tool.input) {
+        merged.input = tool.input;
+      }
+    }
+
+    if (message.kind === "tool_result") {
+      hasResult = true;
+      merged.output = tool.output;
+      merged.error = tool.error;
+      merged.status = tool.status;
+
+      if (!merged.input && tool.input) {
+        merged.input = tool.input;
+      }
+    }
+
+    if (!merged.name && tool.name) {
+      merged.name = tool.name;
+    }
+  }
+
+  return {
+    key: tools.map(({ message }) => message.id).join(":"),
+    tool: merged,
+    hasRequest,
+    hasResult
+  };
+}
+
+function buildTimelineRenderItems(messages: SessionMessageViewModel[]): TimelineRenderItem[] {
+  const items: TimelineRenderItem[] = [];
+
+  for (let index = 0; index < messages.length; index += 1) {
+    const current = messages[index]!;
+
+    if (!isToolMessage(current)) {
+      items.push({
+        type: "message",
+        key: current.id,
+        message: current
+      });
+      continue;
+    }
+
+    const groupedMessages = [current];
+    let cursor = index + 1;
+
+    while (cursor < messages.length) {
+      const next = messages[cursor]!;
+
+      if (!isToolMessage(next) || !shouldMergeToolMessages(groupedMessages[groupedMessages.length - 1]!, next)) {
+        break;
+      }
+
+      groupedMessages.push(next);
+      cursor += 1;
+    }
+
+    const group = mergeToolMessages(groupedMessages);
+
+    if (group) {
+      items.push({
+        type: "tool_group",
+        key: group.key,
+        group
+      });
+    } else {
+      items.push({
+        type: "message",
+        key: current.id,
+        message: current
+      });
+    }
+
+    index = cursor - 1;
+  }
+
+  return items;
 }
 
 function looksLikeCodexRulesMessage(provider: ProviderId | null, content: string) {
@@ -126,6 +243,65 @@ function MessageMarkdownBody({
       >
         {content}
       </Markdown>
+    </div>
+  );
+}
+
+function ToolCallItem({ group }: { group: ToolMessageGroup }) {
+  const [expanded, setExpanded] = useState(false);
+  const { tool, hasRequest, hasResult } = group;
+  const previewSource = tool.input || tool.error || tool.output || t("conversation.toolResultEmpty");
+  const preview = previewSource.length > 60 ? `${previewSource.slice(0, 60)}...` : previewSource;
+  const hasDetails = Boolean(tool.input || tool.output || tool.error);
+  const statusLabel =
+    tool.status === "running"
+      ? t("conversation.toolStatusRunning")
+      : tool.status === "failed"
+        ? t("conversation.toolStatusFailed")
+        : t("conversation.toolStatusCompleted");
+
+  return (
+    <div className={`tool-call-item ${hasResult ? "tool-result" : ""}`}>
+      <button
+        type="button"
+        className="tool-call-header"
+        onClick={() => hasDetails && setExpanded((current) => !current)}
+      >
+        <div className="tool-call-info">
+          <span className="tool-call-name">{tool.name}</span>
+          <span className="tool-call-input-preview">{preview}</span>
+        </div>
+        <div className="tool-call-meta">
+          <span className={`tool-call-status is-${tool.status}`}>{statusLabel}</span>
+          {hasDetails && (
+            <span className={`tool-call-toggle ${expanded ? "expanded" : ""}`}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </span>
+          )}
+        </div>
+      </button>
+
+      {expanded && hasDetails && (
+        <div className="tool-call-output">
+          {hasRequest && tool.input && (
+            <div className="tool-call-section">
+              <div className="tool-call-section-label">{t("conversation.toolInputLabel")}</div>
+              <pre>{tool.input}</pre>
+            </div>
+          )}
+
+          {(hasResult || tool.error || tool.output) && (
+            <div className="tool-call-section">
+              <div className="tool-call-section-label">{t("conversation.toolResultLabel")}</div>
+              <pre className={tool.error ? "tool-call-error" : undefined}>
+                {tool.error || tool.output || t("conversation.toolResultEmpty")}
+              </pre>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -204,18 +380,9 @@ function MessageItem({
   onRetry: (clientRequestId: string) => void;
 }) {
   const isUser = message.role === "user";
-  const isTool = message.kind === "tool_call" || message.kind === "tool_result";
   const isThinking = message.kind === "thinking";
   const isAssistantText = message.role === "assistant" && message.kind === "text";
   const isRulesMessage = looksLikeCodexRulesMessage(provider, message.content);
-
-  if (isTool) {
-    return (
-      <article className="message-item tool-message-row">
-        <ToolCallItem message={message} />
-      </article>
-    );
-  }
 
   if (isRulesMessage) {
     const tone =
@@ -291,6 +458,8 @@ export function MessageTimeline({
   onRetryMessage,
   provider
 }: MessageTimelineProps) {
+  const renderItems = buildTimelineRenderItems(messages);
+
   return (
     <section className="message-timeline">
       {historyState === "loading" && (
@@ -307,20 +476,26 @@ export function MessageTimeline({
       )}
 
       <div className="message-list">
-        {messages.length === 0 && historyState === "ready" && (
+        {renderItems.length === 0 && historyState === "ready" && (
           <div className="timeline-empty">
             <p className="status-text">{t("conversation.timelineEmpty")}</p>
           </div>
         )}
 
-        {messages.map((message) => (
-          <MessageItem
-            key={message.id}
-            message={message}
-            provider={provider}
-            onRetry={onRetryMessage}
-          />
-        ))}
+        {renderItems.map((item) =>
+          item.type === "tool_group" ? (
+            <article key={item.key} className="message-item tool-message-row">
+              <ToolCallItem group={item.group} />
+            </article>
+          ) : (
+            <MessageItem
+              key={item.key}
+              message={item.message}
+              provider={provider}
+              onRetry={onRetryMessage}
+            />
+          )
+        )}
       </div>
     </section>
   );

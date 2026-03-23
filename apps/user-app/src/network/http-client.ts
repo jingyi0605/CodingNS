@@ -12,8 +12,11 @@ class HttpClient {
 
   async request<T>(path: string, options: RequestOptions = {}): Promise<T> {
     const headers = new Headers(options.headers);
+    const hasRequestBody = options.body !== undefined && options.body !== null;
 
-    headers.set("Content-Type", "application/json");
+    if (hasRequestBody && !headers.has("Content-Type")) {
+      headers.set("Content-Type", "application/json");
+    }
 
     if (!options.skipAuth) {
       const accessToken = authStore.getState().session?.accessToken;
@@ -61,7 +64,17 @@ class HttpClient {
       throw new ApiError(response.status, payload);
     }
 
-    return (await response.json()) as T;
+    if (response.status === 204 || response.status === 205) {
+      return undefined as T;
+    }
+
+    const raw = await response.text();
+
+    if (!raw) {
+      return undefined as T;
+    }
+
+    return JSON.parse(raw) as T;
   }
 }
 

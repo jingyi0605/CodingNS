@@ -21,6 +21,7 @@ import {
   createRawRef,
   encodeCursor,
   ensureDirectory,
+  extractTextBlocks,
   ensureText,
   messageIdFromRawRef,
   nextTimestamp,
@@ -28,12 +29,21 @@ import {
   readJsonLines,
   safeDate,
   sliceHistory,
+  stringifyStructuredValue,
   walkJsonlFiles,
   workspaceSlug
 } from "./utils.js";
 
 interface ClaudeCodeAdapterOptions {
   homeDir: string;
+}
+
+interface ClaudeMessageEnvelope {
+  type: "user" | "assistant";
+  timestamp: unknown;
+  message: {
+    content?: Array<Record<string, unknown>>;
+  };
 }
 
 export class ClaudeCodeAdapter implements ProviderAdapter {
@@ -242,7 +252,9 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
         provider: this.providerId,
         providerSessionId,
         role: "user",
+        kind: "text",
         content,
+        toolCall: null,
         timestamp: acceptedAt,
         sequence: this.parseMessages(
           rawStoreRef,
@@ -300,24 +312,114 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
     providerSessionId = basename(filePath, ".jsonl")
   ): NormalizedMessage[] {
     const messages: NormalizedMessage[] = [];
+    const toolNameById = new Map<string, string>();
     let sequence = 0;
 
     records.forEach((record, index) => {
       const lineNumber = index + 1;
 
-      if (record.type === "user") {
-        const message = (record.message ?? {}) as {
-          content?: Array<Record<string, unknown>>;
-        };
-        const parts = Array.isArray(message.content)
-          ? message.content
+      this.collectMessageEnvelopes(record).forEach((envelope) => {
+        const parts = Array.isArray(envelope.message.content)
+          ? envelope.message.content
           : [];
 
         parts.forEach((part, partIndex) => {
           const partType = ensureText(part.type);
-          const role = partType === "tool_result" ? "tool" : "user";
-          const content = ensureText(part.text ?? part.content);
           const rawRef = createRawRef(this.providerId, filePath, lineNumber, partIndex);
+
+          if (envelope.type === "user") {
+            if (partType === "tool_result") {
+              const callId = ensureText(part.tool_use_id).trim() || rawRef;
+              const toolName = toolNameById.get(callId) ?? "tool";
+              const output = extractTextBlocks(part.content).trim() || stringifyStructuredValue(part.content);
+              const isError = Boolean(part.is_error);
+
+              if (output.length === 0) {
+                return;
+              }
+
+              sequence += 1;
+              messages.push({
+                messageId: messageIdFromRawRef(rawRef),
+                provider: this.providerId,
+                providerSessionId,
+                role: "tool",
+                kind: "tool_result",
+                content: output,
+                toolCall: {
+                  callId,
+                  name: toolName,
+                  input: "",
+                  output: isError ? null : output,
+                  error: isError ? output : null,
+                  status: isError ? "failed" : "completed"
+                },
+                timestamp: safeDate(envelope.timestamp, nextTimestamp()),
+                sequence,
+                rawRef
+              });
+              return;
+            }
+
+            const content = extractTextBlocks(part).trim();
+
+            if (content.length === 0) {
+              return;
+            }
+
+            sequence += 1;
+            messages.push({
+              messageId: messageIdFromRawRef(rawRef),
+              provider: this.providerId,
+              providerSessionId,
+              role: "user",
+              kind: "text",
+              content,
+              toolCall: null,
+              timestamp: safeDate(envelope.timestamp, nextTimestamp()),
+              sequence,
+              rawRef
+            });
+            return;
+          }
+
+          if (partType === "tool_use") {
+            const callId = ensureText(part.id).trim() || rawRef;
+            const name = ensureText(part.name).trim() || "tool";
+            const input = stringifyStructuredValue(part.input);
+            toolNameById.set(callId, name);
+
+            if (name.length === 0 && input.length === 0) {
+              return;
+            }
+
+            sequence += 1;
+            messages.push({
+              messageId: messageIdFromRawRef(rawRef),
+              provider: this.providerId,
+              providerSessionId,
+              role: "tool",
+              kind: "tool_call",
+              content: input,
+              toolCall: {
+                callId,
+                name,
+                input,
+                output: null,
+                error: null,
+                status: "running"
+              },
+              timestamp: safeDate(envelope.timestamp, nextTimestamp()),
+              sequence,
+              rawRef
+            });
+            return;
+          }
+
+          const content =
+            partType === "thinking"
+              ? extractTextBlocks(part.thinking).trim()
+              : extractTextBlocks(part).trim();
 
           if (content.length === 0) {
             return;
@@ -328,57 +430,58 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
             messageId: messageIdFromRawRef(rawRef),
             provider: this.providerId,
             providerSessionId,
-            role,
+            role: "assistant",
+            kind: partType === "thinking" ? "thinking" : "text",
             content,
-            timestamp: safeDate(record.timestamp, nextTimestamp()),
+            toolCall: null,
+            timestamp: safeDate(envelope.timestamp, nextTimestamp()),
             sequence,
             rawRef
           });
         });
-      }
-
-      if (record.type === "assistant") {
-        const message = (record.message ?? {}) as {
-          content?: Array<Record<string, unknown>>;
-        };
-        const parts = Array.isArray(message.content)
-          ? message.content
-          : [];
-
-        parts.forEach((part, partIndex) => {
-          const partType = ensureText(part.type);
-          const rawRef = createRawRef(this.providerId, filePath, lineNumber, partIndex);
-          let role: NormalizedMessage["role"] = "assistant";
-          let content = "";
-
-          if (partType === "text") {
-            content = ensureText(part.text);
-          } else if (partType === "thinking") {
-            content = ensureText(part.thinking);
-          } else if (partType === "tool_use") {
-            role = "tool";
-            content = `[${ensureText(part.name)}] ${ensureText(part.input)}`;
-          }
-
-          if (content.length === 0) {
-            return;
-          }
-
-          sequence += 1;
-          messages.push({
-            messageId: messageIdFromRawRef(rawRef),
-            provider: this.providerId,
-            providerSessionId,
-            role,
-            content,
-            timestamp: safeDate(record.timestamp, nextTimestamp()),
-            sequence,
-            rawRef
-          });
-        });
-      }
+      });
     });
 
     return messages;
+  }
+
+  private collectMessageEnvelopes(record: Record<string, unknown>): ClaudeMessageEnvelope[] {
+    const envelopes: ClaudeMessageEnvelope[] = [];
+    const directType = ensureText(record.type);
+
+    if (directType === "user" || directType === "assistant") {
+      envelopes.push({
+        type: directType,
+        timestamp: record.timestamp,
+        message: ((record.message ?? {}) as ClaudeMessageEnvelope["message"])
+      });
+    }
+
+    const progressMessage = this.readProgressEnvelope(record);
+
+    if (progressMessage) {
+      envelopes.push(progressMessage);
+    }
+
+    return envelopes;
+  }
+
+  private readProgressEnvelope(record: Record<string, unknown>): ClaudeMessageEnvelope | null {
+    if (ensureText(record.type) !== "progress") {
+      return null;
+    }
+
+    const nested = (((record.data ?? {}) as Record<string, unknown>).message ?? {}) as Record<string, unknown>;
+    const nestedType = ensureText(nested.type);
+
+    if (nestedType !== "user" && nestedType !== "assistant") {
+      return null;
+    }
+
+    return {
+      type: nestedType,
+      timestamp: nested.timestamp ?? record.timestamp,
+      message: ((nested.message ?? {}) as ClaudeMessageEnvelope["message"])
+    };
   }
 }

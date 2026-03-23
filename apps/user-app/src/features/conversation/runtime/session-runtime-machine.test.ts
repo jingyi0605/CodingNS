@@ -4,47 +4,62 @@ import {
   createPendingMessage,
   markPendingAsFailed,
   mergeAuthoritativeMessages,
-  reconcileMessage
+  reconcileMessage,
+  toViewMessage
 } from "./session-runtime-machine";
+
+function createHistoryMessage(overrides: {
+  messageId: string;
+  provider: "claude-code" | "codex";
+  providerSessionId: string;
+  role: "user" | "assistant" | "tool" | "system";
+  content: string;
+  timestamp: string;
+  sequence: number;
+  rawRef: string;
+  kind?: "text" | "thinking" | "tool_call" | "tool_result";
+}) {
+  return {
+    kind: "text" as const,
+    toolCall: null,
+    ...overrides
+  };
+}
 
 describe("session runtime machine", () => {
   it("去重并保持权威消息顺序", () => {
-    const merged = mergeAuthoritativeMessages(
-      [],
-      "session-1",
-      [
-        {
-          messageId: "m-2",
-          provider: "codex",
-          providerSessionId: "raw-1",
-          role: "assistant",
-          content: "第二条",
-          timestamp: "2026-03-23T10:00:02.000Z",
-          sequence: 2,
-          rawRef: "codex://demo#2"
-        },
-        {
-          messageId: "m-1",
-          provider: "codex",
-          providerSessionId: "raw-1",
-          role: "user",
-          content: "第一条",
-          timestamp: "2026-03-23T10:00:01.000Z",
-          sequence: 1,
-          rawRef: "codex://demo#1"
-        },
-        {
-          messageId: "m-2",
-          provider: "codex",
-          providerSessionId: "raw-1",
-          role: "assistant",
-          content: "第二条",
-          timestamp: "2026-03-23T10:00:02.000Z",
-          sequence: 2,
-          rawRef: "codex://demo#2"
-        }
-      ]
-    );
+    const merged = mergeAuthoritativeMessages([], "session-1", [
+      createHistoryMessage({
+        messageId: "m-2",
+        provider: "codex",
+        providerSessionId: "raw-1",
+        role: "assistant",
+        content: "第二条",
+        timestamp: "2026-03-23T10:00:02.000Z",
+        sequence: 2,
+        rawRef: "codex://demo#2"
+      }),
+      createHistoryMessage({
+        messageId: "m-1",
+        provider: "codex",
+        providerSessionId: "raw-1",
+        role: "user",
+        content: "第一条",
+        timestamp: "2026-03-23T10:00:01.000Z",
+        sequence: 1,
+        rawRef: "codex://demo#1"
+      }),
+      createHistoryMessage({
+        messageId: "m-2",
+        provider: "codex",
+        providerSessionId: "raw-1",
+        role: "assistant",
+        content: "第二条",
+        timestamp: "2026-03-23T10:00:02.000Z",
+        sequence: 2,
+        rawRef: "codex://demo#2"
+      })
+    ]);
 
     expect(merged).toHaveLength(2);
     expect(merged.map((item) => item.id)).toEqual(["m-1", "m-2"]);
@@ -55,7 +70,7 @@ describe("session runtime machine", () => {
     const reconciled = reconcileMessage(
       [pending],
       "session-1",
-      {
+      createHistoryMessage({
         messageId: "server-1",
         provider: "claude-code",
         providerSessionId: "raw-2",
@@ -64,7 +79,7 @@ describe("session runtime machine", () => {
         timestamp: "2026-03-23T10:00:05.000Z",
         sequence: 3,
         rawRef: "claude-code://demo#3&part=0"
-      },
+      }),
       "client-1"
     );
 
@@ -80,5 +95,31 @@ describe("session runtime machine", () => {
     expect(failed).toHaveLength(1);
     expect(failed[0].deliveryState).toBe("failed");
     expect(failed[0].clientRequestId).toBe("client-2");
+  });
+  it("creates a generic tool abstraction when toolCall is missing", () => {
+    const view = toViewMessage(
+      "session-1",
+      {
+        messageId: "legacy-tool-1",
+        provider: "claude-code",
+        providerSessionId: "raw-legacy",
+        role: "tool",
+        content: "legacy tool output",
+        timestamp: "2026-03-23T10:00:06.000Z",
+        sequence: 4,
+        rawRef: "claude-code://demo#4",
+        toolCall: null
+      }
+    );
+
+    expect(view.kind).toBe("tool_result");
+    expect(view.toolCall).toEqual({
+      callId: "claude-code://demo#4",
+      name: "tool",
+      input: "",
+      output: "legacy tool output",
+      error: null,
+      status: "completed"
+    });
   });
 });
