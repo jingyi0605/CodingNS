@@ -34,24 +34,30 @@ class HttpClient {
       headers
     });
 
-    if (response.status === 401 && !options.skipAuth && !options.retryAfterRefresh) {
-      const refreshed = await authStore.refresh();
+    if (!response.ok) {
+      const payload = (await response.json()) as ApiErrorPayload;
 
-      if (!refreshed) {
-        throw new ApiError(401, {
-          detail: "登录态已经失效，请重新登录",
-          error_code: "UNAUTHORIZED"
+      if (
+        response.status === 401 &&
+        payload.error_code === "UNAUTHORIZED" &&
+        !options.skipAuth &&
+        !options.retryAfterRefresh
+      ) {
+        const refreshed = await authStore.refresh();
+
+        if (!refreshed) {
+          throw new ApiError(401, {
+            detail: "登录态已经失效，请重新登录",
+            error_code: "UNAUTHORIZED"
+          });
+        }
+
+        return this.request<T>(path, {
+          ...options,
+          retryAfterRefresh: true
         });
       }
 
-      return this.request<T>(path, {
-        ...options,
-        retryAfterRefresh: true
-      });
-    }
-
-    if (!response.ok) {
-      const payload = (await response.json()) as ApiErrorPayload;
       throw new ApiError(response.status, payload);
     }
 

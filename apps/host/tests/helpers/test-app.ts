@@ -1,9 +1,11 @@
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { resolveHostConfig } from "../../src/config/env.js";
+import { resolveHostConfig, type HostConfig } from "../../src/config/env.js";
 import { createServer } from "../../src/server/create-server.js";
+import { createId } from "../../src/shared/utils/id.js";
 
 export interface ProviderFixture {
   rootDir: string;
@@ -19,6 +21,12 @@ export interface EmptyFixture {
   workspaceDir: string;
   claudeHomeDir: string;
   codexHomeDir: string;
+}
+
+export interface GitWorkspaceFixture extends EmptyFixture {
+  workspaceId: string;
+  repoDir: string;
+  remoteDir?: string;
 }
 
 export function createProviderFixture(): ProviderFixture {
@@ -130,18 +138,64 @@ export function createEmptyFixture(): EmptyFixture {
   };
 }
 
+export function createGitWorkspaceFixture(options: { withRemote?: boolean } = {}): GitWorkspaceFixture {
+  const fixture = createEmptyFixture();
+  const workspaceId = createId();
+  const repoDir = fixture.workspaceDir;
+
+  runGit(repoDir, ["init", "--initial-branch=main"]);
+  runGit(repoDir, ["config", "user.name", "CodingNS Test"]);
+  runGit(repoDir, ["config", "user.email", "codingns@example.com"]);
+  writeFileSync(path.join(repoDir, "README.md"), "# 标题\n\n第一行\n", "utf8");
+  runGit(repoDir, ["add", "README.md"]);
+  runGit(repoDir, ["commit", "-m", "chore(init): 初始化仓库", "-m", "- 初始提交", "-m", "Refs: #1"]);
+  writeFileSync(path.join(repoDir, "README.md"), "# 标题\n\n第一行\n第二行改动\n", "utf8");
+
+  let remoteDir: string | undefined;
+
+  if (options.withRemote) {
+    remoteDir = path.join(fixture.rootDir, "remote.git");
+    runGit(fixture.rootDir, ["init", "--bare", remoteDir]);
+    runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+  }
+
+  return {
+    ...fixture,
+    workspaceId,
+    repoDir,
+    remoteDir
+  };
+}
+
 export function destroyFixture(context: { rootDir: string }): void {
   rmSync(context.rootDir, { recursive: true, force: true });
 }
 
-export function createTestApp(fixture: { claudeHomeDir: string; codexHomeDir: string }) {
+export function createTestApp(
+  fixture: { claudeHomeDir: string; codexHomeDir: string },
+  overrides: Partial<HostConfig> = {}
+) {
   return createServer(
     resolveHostConfig({
       databasePath: ":memory:",
       accessTokenTtlSeconds: 2,
       refreshTokenTtlSeconds: 30,
+      terminalIdleTimeoutSeconds: 900,
       claudeCodeHomeDir: fixture.claudeHomeDir,
-      codexHomeDir: fixture.codexHomeDir
+      codexHomeDir: fixture.codexHomeDir,
+      ...overrides
     })
   );
+}
+
+function runGit(cwd: string, args: string[]): void {
+  const result = spawnSync("git", args, {
+    cwd,
+    env: process.env,
+    encoding: "utf8"
+  });
+
+  if (result.status !== 0) {
+    throw new Error(result.stderr || result.stdout || `git ${args.join(" ")} 执行失败`);
+  }
 }

@@ -42,6 +42,20 @@ CREATE TABLE IF NOT EXISTS workspaces (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS commit_rule_profiles (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  subject_pattern TEXT NOT NULL,
+  max_subject_length INTEGER NOT NULL,
+  language TEXT NOT NULL CHECK (language IN ('zh', 'en', 'any')),
+  require_body INTEGER NOT NULL DEFAULT 0 CHECK (require_body IN (0, 1)),
+  require_issue INTEGER NOT NULL DEFAULT 0 CHECK (require_issue IN (0, 1)),
+  issue_pattern TEXT,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+);
+
 CREATE TABLE IF NOT EXISTS session_bindings (
   session_id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL,
@@ -83,9 +97,6 @@ CREATE TABLE IF NOT EXISTS session_status_snapshots (
   FOREIGN KEY (session_id) REFERENCES session_bindings(session_id)
 );
 
--- 会话同步的硬边界：这里只允许索引、状态、映射和认证信息。
--- 不允许出现保存原始会话正文的 message/content/raw_body 之类表。
-
 CREATE TABLE IF NOT EXISTS recent_files (
   id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL,
@@ -122,6 +133,48 @@ CREATE TABLE IF NOT EXISTS session_file_context_bindings (
 
 CREATE INDEX IF NOT EXISTS idx_session_file_context_bindings_session
   ON session_file_context_bindings(session_id, attached_at DESC);
+
+-- 会话同步的硬边界：这里只允许索引、状态、映射和认证信息。
+-- 不允许出现保存原始会话正文的 message/content/raw_body 之类表。
+
+CREATE TABLE IF NOT EXISTS terminal_instances (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  cwd TEXT NOT NULL,
+  shell TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('creating', 'running', 'closed', 'error')),
+  created_by_user_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  last_active_at TEXT NOT NULL,
+  closed_at TEXT,
+  exit_code INTEGER,
+  status_detail TEXT,
+  FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+  FOREIGN KEY (created_by_user_id) REFERENCES auth_users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_terminal_instances_workspace_id
+  ON terminal_instances(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_terminal_instances_last_active_at
+  ON terminal_instances(last_active_at DESC);
+
+CREATE TABLE IF NOT EXISTS terminal_command_templates (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  cwd TEXT NOT NULL,
+  command TEXT NOT NULL,
+  args_json TEXT NOT NULL,
+  env_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+  UNIQUE (workspace_id, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_terminal_templates_workspace_id
+  ON terminal_command_templates(workspace_id);
 
 INSERT INTO bootstrap_state (id, initialized)
 VALUES ('default', 0)

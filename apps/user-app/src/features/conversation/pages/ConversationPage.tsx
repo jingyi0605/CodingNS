@@ -7,6 +7,7 @@ import { ConnectionBanner } from "../components/ConnectionBanner";
 import { ComposerPanel } from "../components/ComposerPanel";
 import { ConversationLayout } from "../components/ConversationLayout";
 import { FileContextPanel } from "../components/FileContextPanel";
+import { GitSidebar } from "../components/GitSidebar";
 import { MessageTimeline } from "../components/MessageTimeline";
 import { SessionHeader } from "../components/SessionHeader";
 import { SessionRuntimeStore, useSessionRuntimeStore } from "../runtime/session-runtime-store";
@@ -78,6 +79,8 @@ export function ConversationPage() {
             </button>
           </div>
         </section>
+
+        <GitSidebar workspaceId={session?.workspaceId} />
       </>
     ),
     [errorDetail, pagesLoaded, session?.provider, session?.workspaceId]
