@@ -7,6 +7,7 @@ export interface HostConfig {
   databasePath: string;
   accessTokenTtlSeconds: number;
   refreshTokenTtlSeconds: number;
+  terminalIdleTimeoutSeconds: number;
   claudeCodeHomeDir: string;
   codexHomeDir: string;
 }
@@ -16,7 +17,7 @@ export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConf
 
   return {
     host: overrides.host ?? process.env.CODINGNS_HOST ?? "127.0.0.1",
-    port: overrides.port ?? Number(process.env.CODINGNS_PORT ?? "3321"),
+    port: overrides.port ?? Number(process.env.CODINGNS_PORT ?? "3002"),
     databasePath:
       overrides.databasePath ??
       process.env.CODINGNS_DB_PATH ??
@@ -27,6 +28,9 @@ export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConf
     refreshTokenTtlSeconds:
       overrides.refreshTokenTtlSeconds ??
       Number(process.env.CODINGNS_REFRESH_TOKEN_TTL ?? "604800"),
+    terminalIdleTimeoutSeconds:
+      overrides.terminalIdleTimeoutSeconds ??
+      Number(process.env.CODINGNS_TERMINAL_IDLE_TIMEOUT ?? "900"),
     claudeCodeHomeDir:
       overrides.claudeCodeHomeDir ??
       process.env.CODINGNS_CLAUDE_CODE_HOME ??

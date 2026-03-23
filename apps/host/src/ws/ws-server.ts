@@ -1,9 +1,11 @@
-import type { Server } from "node:http";
+import type { IncomingMessage, Server } from "node:http";
 
 import { WebSocketServer, type WebSocket } from "ws";
 
 import { AppError } from "../shared/errors/app-error.js";
+import type { AuthContext } from "../modules/auth/auth-service.js";
 import type { SessionRuntimeService } from "../modules/sessions/session-runtime-service.js";
+import type { TerminalWsHub } from "./terminal-ws-hub.js";
 import type { WsAuthGuard } from "./ws-auth-guard.js";
 
 interface SessionSubscribeMessage {
@@ -16,7 +18,8 @@ interface SessionSubscribeMessage {
 export function createWsServer(
   server: Server,
   wsAuthGuard: WsAuthGuard,
-  sessionRuntimeService: SessionRuntimeService
+  sessionRuntimeService: SessionRuntimeService,
+  terminalWsHub: TerminalWsHub
 ) {
   const wss = new WebSocketServer({
     noServer: true
@@ -32,6 +35,7 @@ export function createWsServer(
 
     try {
       const authContext = wsAuthGuard.authenticate(request);
+      (request as IncomingMessageWithAuthContext).authContext = authContext;
 
       wss.handleUpgrade(request, socket, head, (client) => {
         client.send(
@@ -50,7 +54,8 @@ export function createWsServer(
     }
   });
 
-  wss.on("connection", (client) => {
+  wss.on("connection", (client, request) => {
+    const authContext = (request as IncomingMessageWithAuthContext).authContext;
     const subscriptions = new Map<string, { close(): void }>();
 
     const cleanup = () => {
@@ -59,6 +64,7 @@ export function createWsServer(
       }
 
       subscriptions.clear();
+      terminalWsHub.cleanupClient(client);
     };
 
     client.on("message", async (raw) => {
@@ -68,6 +74,10 @@ export function createWsServer(
         payload = JSON.parse(raw.toString());
       } catch {
         sendWsError(client, null, "INVALID_INPUT", "WebSocket 消息必须是合法 JSON");
+        return;
+      }
+
+      if (terminalWsHub.handleMessage(client, payload, authContext)) {
         return;
       }
 
@@ -133,6 +143,10 @@ export function createWsServer(
       });
     }
   };
+}
+
+interface IncomingMessageWithAuthContext extends IncomingMessage {
+  authContext: AuthContext;
 }
 
 function isSessionSubscribeMessage(payload: unknown): payload is SessionSubscribeMessage {

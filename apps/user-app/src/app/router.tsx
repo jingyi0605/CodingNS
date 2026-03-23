@@ -2,6 +2,7 @@ import { Navigate, Outlet, createBrowserRouter, useLocation } from "react-router
 
 import { BootstrapPage } from "../features/auth/pages/BootstrapPage";
 import { LoginPage } from "../features/auth/pages/LoginPage";
+import { WorkbenchLayout } from "../features/conversation/components/WorkbenchLayout";
 import { useAuthSelector } from "../features/auth/store/auth-store";
 import { ConversationHomePage } from "../features/conversation/pages/ConversationHomePage";
 import { ConversationPage } from "../features/conversation/pages/ConversationPage";
@@ -32,12 +33,27 @@ export const appRouter = createBrowserRouter([
     element: <RequireAuth />,
     children: [
       {
-        index: true,
-        element: <ConversationHomePage />
-      },
-      {
-        path: "sessions/:sessionId",
-        element: <ConversationPage />
+        element: <WorkbenchLayout />,
+        children: [
+          {
+            index: true,
+            element: <ConversationHomePage />
+          },
+          {
+            path: "sessions/:sessionId",
+            element: <ConversationPage />
+          },
+          {
+            path: "terminals",
+            lazy: async () => {
+              const module = await import("../features/terminal/pages/TerminalPage");
+
+              return {
+                Component: module.TerminalPage
+              };
+            }
+          }
+        ]
       }
     ]
   }

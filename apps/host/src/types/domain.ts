@@ -87,7 +87,6 @@ export interface SessionListItem {
   resumedAt: string | null;
 }
 
-
 export interface FileNode {
   path: string;
   name: string;
@@ -137,4 +136,52 @@ export interface FileContextBinding {
   fileVersion: string;
   attachedBy: string;
   attachedAt: string;
+}
+
+export type TerminalStatus = "creating" | "running" | "closed" | "error";
+
+export interface TerminalInstance {
+  id: string;
+  workspaceId: string;
+  name: string;
+  cwd: string;
+  shell: string;
+  status: TerminalStatus;
+  createdByUserId: string;
+  createdAt: string;
+  lastActiveAt: string;
+  closedAt: string | null;
+  exitCode: number | null;
+  statusDetail: string | null;
+}
+
+export type TerminalConnectionState = "connected" | "disconnected" | "reconnecting";
+
+export interface TerminalConnection {
+  connectionId: string;
+  terminalId: string;
+  userId: string;
+  lastCursor: string | null;
+  state: TerminalConnectionState;
+  connectedAt: string;
+}
+
+export interface TerminalOutputChunk {
+  terminalId: string;
+  cursor: string;
+  stream: "stdout";
+  content: string;
+  timestamp: string;
+}
+
+export interface TerminalCommandTemplate {
+  id: string;
+  workspaceId: string;
+  name: string;
+  cwd: string;
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+  createdAt: string;
+  updatedAt: string;
 }
