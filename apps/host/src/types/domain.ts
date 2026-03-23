@@ -1,3 +1,5 @@
+import type { ProviderId, SyncStatus } from "@codingns/session-sync-core";
+
 export interface BootstrapState {
   id: "default";
   initialized: boolean;
@@ -34,37 +36,53 @@ export interface Workspace {
   updatedAt: string;
 }
 
-export interface SessionIndex {
-  id: string;
+export interface SessionBinding {
+  sessionId: string;
   workspaceId: string;
-  provider: string;
+  provider: ProviderId;
   providerSessionId: string;
-  title: string | null;
-  status: string;
-  lastMessageAt: string | null;
-  rawRef: string;
+  rawStoreRef: string;
   createdAt: string;
   updatedAt: string;
 }
 
-export interface SessionState {
+export interface SessionIndexRecord {
   sessionId: string;
-  syncCursor: string | null;
-  lastSyncAt: string | null;
-  syncErrorCode: string | null;
-  syncErrorMessage: string | null;
+  workspaceId: string;
+  provider: ProviderId;
+  title: string;
+  messageCount: number;
+  lastMessageAt: string | null;
+  createdAt: string;
   updatedAt: string;
 }
 
-export interface ProviderMessage {
-  id: string;
-  role: string;
-  content: string;
-  timestamp: string;
-  rawRef: string;
+export interface SessionStatusSnapshot {
+  sessionId: string;
+  syncStatus: SyncStatus;
+  syncCursor: string | null;
+  lastSyncAt: string | null;
+  lastErrorCode: string | null;
+  lastErrorDetail: string | null;
+  resumedAt: string | null;
+  updatedAt: string;
 }
 
-export interface ProviderMessagePage {
-  items: ProviderMessage[];
-  nextCursor: string | null;
+export interface SessionListItem {
+  sessionId: string;
+  workspaceId: string;
+  provider: ProviderId;
+  providerSessionId: string;
+  rawStoreRef: string;
+  title: string;
+  messageCount: number;
+  lastMessageAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  syncStatus: SyncStatus | null;
+  syncCursor: string | null;
+  lastSyncAt: string | null;
+  lastErrorCode: string | null;
+  lastErrorDetail: string | null;
+  resumedAt: string | null;
 }

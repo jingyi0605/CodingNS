@@ -1,39 +1,14 @@
-import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import type { FastifyInstance } from "fastify";
 
-import type { SessionIndexController } from "../modules/session-index/session-index-controller.js";
-import type { SessionReadService } from "../modules/sessions/session-read-service.js";
-
-interface SessionMessageParams {
-  sessionId: string;
-}
-
-interface SessionMessageQuery {
-  cursor?: string;
-  limit?: string;
-}
+import type { SessionController } from "../modules/sessions/session-controller.js";
 
 export async function registerSessionRoutes(
   app: FastifyInstance,
-  sessionIndexController: SessionIndexController,
-  sessionReadService: SessionReadService
+  sessionController: SessionController
 ): Promise<void> {
-  app.get("/api/sessions", sessionIndexController.list);
-  app.get(
-    "/api/sessions/:sessionId/messages",
-    async (
-      request: FastifyRequest<{
-        Params: SessionMessageParams;
-        Querystring: SessionMessageQuery;
-      }>,
-      reply: FastifyReply
-    ) => {
-      const page = await sessionReadService.readMessages(
-        request.params.sessionId,
-        request.query.cursor ?? null,
-        Number(request.query.limit ?? "50")
-      );
-
-      reply.send(page);
-    }
-  );
+  app.get("/api/sessions", sessionController.list);
+  app.get("/api/sessions/:sessionId/messages", sessionController.readMessages);
+  app.get("/api/sessions/:sessionId/capabilities", sessionController.getCapabilities);
+  app.post("/api/sessions/:sessionId/resume", sessionController.resume);
+  app.post("/api/sessions/start", sessionController.start);
 }

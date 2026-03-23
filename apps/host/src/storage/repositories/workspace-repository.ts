@@ -24,6 +24,30 @@ export class WorkspaceRepository {
     return record;
   }
 
+  findById(id: string): Workspace | null {
+    const row = this.db
+      .prepare(
+        `SELECT id, name, path, repo_root, favorite, created_at, updated_at
+         FROM workspaces
+         WHERE id = ?`
+      )
+      .get(id) as WorkspaceRow | undefined;
+
+    return row ? mapWorkspaceRow(row) : null;
+  }
+
+  findByPath(workspacePath: string): Workspace | null {
+    const row = this.db
+      .prepare(
+        `SELECT id, name, path, repo_root, favorite, created_at, updated_at
+         FROM workspaces
+         WHERE path = ?`
+      )
+      .get(workspacePath) as WorkspaceRow | undefined;
+
+    return row ? mapWorkspaceRow(row) : null;
+  }
+
   list(): Workspace[] {
     return this.db
       .prepare(

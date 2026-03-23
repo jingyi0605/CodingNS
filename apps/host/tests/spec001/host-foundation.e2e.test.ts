@@ -1,25 +1,45 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { resolveHostConfig } from "../../src/config/env.js";
 import { createId } from "../../src/shared/utils/id.js";
 import { nowIso } from "../../src/shared/utils/time.js";
-import { createServer } from "../../src/server/create-server.js";
 import { WsAuthGuard } from "../../src/ws/ws-auth-guard.js";
+import {
+  createEmptyFixture,
+  createTestApp,
+  destroyFixture,
+  type EmptyFixture
+} from "../helpers/test-app.js";
 
-const activeServers: Array<ReturnType<typeof createServer>> = [];
+const activeServers: Array<ReturnType<typeof createTestApp>> = [];
+const activeFixtures: EmptyFixture[] = [];
+
 afterEach(async () => {
   while (activeServers.length > 0) {
     const server = activeServers.pop();
+
     if (server) {
       server.app.server.closeAllConnections?.();
       await server.app.close();
+    }
+  }
+
+  while (activeFixtures.length > 0) {
+    const fixture = activeFixtures.pop();
+
+    if (fixture) {
+      destroyFixture(fixture);
     }
   }
 });
 
 describe("spec001 host 地基主链路", () => {
   it("完成 bootstrap -> login -> protected api -> refresh -> logout", async () => {
-    const hosted = await createTestHost();
+    const fixture = createEmptyFixture();
+    activeFixtures.push(fixture);
+
+    const hosted = createTestApp(fixture);
+    activeServers.push(hosted);
+    await hosted.app.ready();
 
     const bootstrapStatus = await hosted.app.inject({
       method: "GET",
@@ -83,23 +103,39 @@ describe("spec001 host 地基主链路", () => {
     hosted.services.repositories.workspaceRepository.create({
       id: workspaceId,
       name: "默认工作区",
-      path: "C:\\Code\\CodingNS",
-      repoRoot: "C:\\Code\\CodingNS",
+      path: fixture.workspaceDir,
+      repoRoot: fixture.workspaceDir,
       favorite: true,
       createdAt: timestamp,
       updatedAt: timestamp
     });
-
-    hosted.services.repositories.sessionIndexRepository.create({
-      id: sessionId,
+    hosted.services.repositories.sessionBindingRepository.upsert({
+      sessionId,
       workspaceId,
       provider: "codex",
       providerSessionId: "provider-session-1",
-      title: "会话索引示例",
-      status: "idle",
-      lastMessageAt: timestamp,
-      rawRef: "codex://provider-session-1",
+      rawStoreRef: "codex://provider-session-1",
       createdAt: timestamp,
+      updatedAt: timestamp
+    });
+    hosted.services.repositories.sessionIndexRepository.upsert({
+      sessionId,
+      workspaceId,
+      provider: "codex",
+      title: "会话索引示例",
+      messageCount: 0,
+      lastMessageAt: timestamp,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+    hosted.services.repositories.sessionStatusSnapshotRepository.upsert({
+      sessionId,
+      syncStatus: "idle",
+      syncCursor: null,
+      lastSyncAt: timestamp,
+      lastErrorCode: null,
+      lastErrorDetail: null,
+      resumedAt: null,
       updatedAt: timestamp
     });
 
@@ -121,7 +157,9 @@ describe("spec001 host 地基主链路", () => {
       }
     });
     expect(sessionsResponse.statusCode).toBe(200);
-    expect(sessionsResponse.json().items[0].rawRef).toBe("codex://provider-session-1");
+    expect(sessionsResponse.json().items).toHaveLength(1);
+    expect(sessionsResponse.json().items[0].providerSessionId).toBe("provider-session-1");
+    expect(sessionsResponse.json().items[0].rawStoreRef).toBe("codex://provider-session-1");
 
     const refreshResponse = await hosted.app.inject({
       method: "POST",
@@ -158,7 +196,12 @@ describe("spec001 host 地基主链路", () => {
   });
 
   it("统一拦截错误的 WebSocket 握手", async () => {
-    const hosted = await createTestHost();
+    const fixture = createEmptyFixture();
+    activeFixtures.push(fixture);
+
+    const hosted = createTestApp(fixture);
+    activeServers.push(hosted);
+    await hosted.app.ready();
 
     await hosted.app.inject({
       method: "POST",
@@ -202,127 +245,23 @@ describe("spec001 host 地基主链路", () => {
     ).toThrow("access token 无效");
   });
 
-  it("会话消息读取必须经过 provider gateway，且只更新状态快照", async () => {
-    const hosted = await createTestHost({
-      providerReaders: {
-        codex: {
-          readHistory: async ({ session, cursor, limit }) => ({
-            items: [
-              {
-                id: `${session.providerSessionId}-1`,
-                role: "assistant",
-                content: `cursor=${cursor ?? "null"} limit=${limit}`,
-                timestamp: nowIso(),
-                rawRef: `${session.rawRef}#1`
-              }
-            ],
-            nextCursor: "cursor-2"
-          })
-        }
-      }
-    });
+  it("会话数据库边界只保留映射、索引和状态快照", async () => {
+    const fixture = createEmptyFixture();
+    activeFixtures.push(fixture);
 
-    const loginBody = await bootstrapAndLogin(hosted);
-    const seeded = seedWorkspaceAndSession(hosted);
-
-    const messagesResponse = await hosted.app.inject({
-      method: "GET",
-      url: `/api/sessions/${seeded.sessionId}/messages?limit=20`,
-      headers: {
-        authorization: `Bearer ${loginBody.accessToken}`
-      }
-    });
-
-    expect(messagesResponse.statusCode).toBe(200);
-    expect(messagesResponse.json().items[0].rawRef).toBe("codex://provider-session-1#1");
-    expect(messagesResponse.json().nextCursor).toBe("cursor-2");
-
-    const state = hosted.services.repositories.sessionStateRepository.findBySessionId(
-      seeded.sessionId
-    );
-    expect(state?.syncCursor).toBe("cursor-2");
-    expect(state?.syncErrorCode).toBeNull();
+    const hosted = createTestApp(fixture);
+    activeServers.push(hosted);
+    await hosted.app.ready();
 
     const sqliteTables = hosted.services.database.db
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
       .all() as Array<{ name: string }>;
     const tableNames = sqliteTables.map((item) => item.name);
 
-    expect(tableNames).toContain("session_indexes");
-    expect(tableNames).toContain("session_states");
+    expect(tableNames).toContain("session_bindings");
+    expect(tableNames).toContain("session_indices");
+    expect(tableNames).toContain("session_status_snapshots");
     expect(tableNames).not.toContain("session_messages");
     expect(tableNames).not.toContain("raw_messages");
   });
 });
-
-async function createTestHost(overrides?: Parameters<typeof createServer>[1]) {
-  const hosted = createServer(
-    resolveHostConfig({
-      databasePath: ":memory:",
-      accessTokenTtlSeconds: 2,
-      refreshTokenTtlSeconds: 30
-    }),
-    overrides
-  );
-
-  activeServers.push(hosted);
-  await hosted.app.ready();
-
-  return hosted;
-}
-
-async function bootstrapAndLogin(hosted: ReturnType<typeof createServer>) {
-  await hosted.app.inject({
-    method: "POST",
-    url: "/api/public/setup",
-    payload: {
-      username: "admin",
-      password: "admin1234"
-    }
-  });
-
-  const response = await hosted.app.inject({
-    method: "POST",
-    url: "/api/auth/login",
-    payload: {
-      username: "admin",
-      password: "admin1234"
-    }
-  });
-
-  return response.json();
-}
-
-function seedWorkspaceAndSession(hosted: ReturnType<typeof createServer>) {
-  const workspaceId = createId();
-  const sessionId = createId();
-  const timestamp = nowIso();
-
-  hosted.services.repositories.workspaceRepository.create({
-    id: workspaceId,
-    name: "默认工作区",
-    path: "C:\\Code\\CodingNS",
-    repoRoot: "C:\\Code\\CodingNS",
-    favorite: true,
-    createdAt: timestamp,
-    updatedAt: timestamp
-  });
-
-  hosted.services.repositories.sessionIndexRepository.create({
-    id: sessionId,
-    workspaceId,
-    provider: "codex",
-    providerSessionId: "provider-session-1",
-    title: "消息读取示例",
-    status: "idle",
-    lastMessageAt: timestamp,
-    rawRef: "codex://provider-session-1",
-    createdAt: timestamp,
-    updatedAt: timestamp
-  });
-
-  return {
-    workspaceId,
-    sessionId
-  };
-}

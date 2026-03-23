@@ -3,7 +3,8 @@
   "private": true,
   "packageManager": "pnpm@10.7.1",
   "scripts": {
-    "build:host": "pnpm --filter host build",
-    "test:host": "pnpm --filter host test"
+    "build:session-sync-core": "pnpm --dir packages/session-sync-core build",
+    "build:host": "pnpm --dir packages/session-sync-core build && pnpm --filter host build",
+    "test:host": "pnpm --dir packages/session-sync-core build && pnpm --filter host test"
   }
 }

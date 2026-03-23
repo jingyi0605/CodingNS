@@ -42,34 +42,48 @@ CREATE TABLE IF NOT EXISTS workspaces (
   updated_at TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS session_indexes (
-  id TEXT PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS session_bindings (
+  session_id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL,
-  provider TEXT NOT NULL,
+  provider TEXT NOT NULL CHECK (provider IN ('claude-code', 'codex')),
   provider_session_id TEXT NOT NULL,
-  title TEXT,
-  status TEXT NOT NULL,
-  last_message_at TEXT,
-  raw_ref TEXT NOT NULL,
+  raw_store_ref TEXT NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
   UNIQUE (provider, provider_session_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_session_indexes_workspace_id ON session_indexes(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_session_bindings_workspace_id ON session_bindings(workspace_id);
 
-CREATE TABLE IF NOT EXISTS session_states (
+CREATE TABLE IF NOT EXISTS session_indices (
   session_id TEXT PRIMARY KEY,
-  sync_cursor TEXT,
-  last_sync_at TEXT,
-  sync_error_code TEXT,
-  sync_error_message TEXT,
+  workspace_id TEXT NOT NULL,
+  provider TEXT NOT NULL CHECK (provider IN ('claude-code', 'codex')),
+  title TEXT NOT NULL,
+  message_count INTEGER NOT NULL DEFAULT 0,
+  last_message_at TEXT,
+  created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  FOREIGN KEY (session_id) REFERENCES session_indexes(id)
+  FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+  FOREIGN KEY (session_id) REFERENCES session_bindings(session_id)
 );
 
--- spec001 的硬边界：这里只允许索引、状态、映射和认证信息。
+CREATE INDEX IF NOT EXISTS idx_session_indices_workspace_id ON session_indices(workspace_id);
+
+CREATE TABLE IF NOT EXISTS session_status_snapshots (
+  session_id TEXT PRIMARY KEY,
+  sync_status TEXT NOT NULL CHECK (sync_status IN ('idle', 'syncing', 'error')),
+  sync_cursor TEXT,
+  last_sync_at TEXT,
+  last_error_code TEXT,
+  last_error_detail TEXT,
+  resumed_at TEXT,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (session_id) REFERENCES session_bindings(session_id)
+);
+
+-- 会话同步的硬边界：这里只允许索引、状态、映射和认证信息。
 -- 不允许出现保存原始会话正文的 message/content/raw_body 之类表。
 
 INSERT INTO bootstrap_state (id, initialized)
