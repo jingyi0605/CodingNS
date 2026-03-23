@@ -6,6 +6,7 @@ import { authStore } from "../../auth/store/auth-store";
 import { ConnectionBanner } from "../components/ConnectionBanner";
 import { ComposerPanel } from "../components/ComposerPanel";
 import { ConversationLayout } from "../components/ConversationLayout";
+import { FileContextPanel } from "../components/FileContextPanel";
 import { MessageTimeline } from "../components/MessageTimeline";
 import { SessionHeader } from "../components/SessionHeader";
 import { SessionRuntimeStore, useSessionRuntimeStore } from "../runtime/session-runtime-store";
@@ -43,6 +44,8 @@ export function ConversationPage() {
   const sidebar = useMemo(
     () => (
       <>
+        <FileContextPanel sessionId={sessionId} workspaceId={session?.workspaceId ?? null} />
+
         <section className="conversation-panel surface-card">
           <h2>{t("conversation.sidebarTitle")}</h2>
           <p className="status-text">{t("conversation.sidebarSubtitle")}</p>
@@ -77,7 +80,7 @@ export function ConversationPage() {
         </section>
       </>
     ),
-    [errorDetail, pagesLoaded, session?.provider]
+    [errorDetail, pagesLoaded, session?.provider, session?.workspaceId]
   );
 
   return (
