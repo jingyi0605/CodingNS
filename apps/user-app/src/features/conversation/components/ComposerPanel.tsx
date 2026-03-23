@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 
 import { t } from "../../../shared/i18n";
-import { CapabilityGate, decideCapability } from "../capability/capability-gate";
+import { decideCapability } from "../capability/capability-gate";
 import type { ProviderCapabilitiesDto } from "../api/conversation-api";
 
 interface ComposerPanelProps {
@@ -13,12 +13,9 @@ interface ComposerPanelProps {
 export function ComposerPanel({ capabilities, isSubmitting, onSend }: ComposerPanelProps) {
   const [content, setContent] = useState("");
   const [statusText, setStatusText] = useState<string | null>(null);
+
   const sendDecision = useMemo(
     () => decideCapability(capabilities, "send_message"),
-    [capabilities]
-  );
-  const attachmentsDecision = useMemo(
-    () => decideCapability(capabilities, "attachments"),
     [capabilities]
   );
 
@@ -41,62 +38,32 @@ export function ComposerPanel({ capabilities, isSubmitting, onSend }: ComposerPa
   }
 
   return (
-    <section className="conversation-panel surface-card">
-      <form className="composer-panel" onSubmit={handleSubmit}>
-        <div className="composer-toolbar">
-          <span className="badge">{t("conversation.headerCapability")}</span>
-          <span className="badge">{capabilities?.provider ?? t("common.unknown")}</span>
-          <span className="badge" data-tone={attachmentsDecision.allowed ? "success" : "error"}>
-            {attachmentsDecision.allowed
-              ? t("conversation.attachmentsLabel")
-              : attachmentsDecision.reason ?? t("conversation.capabilityDenied")}
-          </span>
-        </div>
-
-        <label className="field-group">
-          <span className="status-text">
-            {isSubmitting ? t("conversation.composerHintSending") : t("conversation.composerHintReady")}
-          </span>
+    <section className="composer-panel">
+      <form className="composer-form" onSubmit={handleSubmit}>
+        <div className="composer-input-wrapper">
           <textarea
+            className="composer-input"
             value={content}
             placeholder={t("conversation.composerPlaceholder")}
             onChange={(event) => setContent(event.target.value)}
+            rows={3}
           />
-        </label>
-
-        {statusText ? (
-          <p className="status-text" data-tone="error">
-            {statusText}
-          </p>
-        ) : null}
-
-        <div className="composer-footer">
-          <span className="status-text">
-            {sendDecision.allowed ? t("conversation.sentState") : sendDecision.reason}
-          </span>
-          <div className="composer-actions">
-            <CapabilityGate
-              capabilities={capabilities}
-              action="attachments"
-              fallback={
-                <button className="secondary-button" type="button" disabled>
-                  {t("conversation.unavailableAction")}
-                </button>
-              }
-            >
-              <button className="secondary-button" type="button" disabled>
-                {t("conversation.attachmentsLabel")}
-              </button>
-            </CapabilityGate>
-            <button
-              className="primary-button"
-              type="submit"
-              disabled={isSubmitting || !sendDecision.allowed || !content.trim()}
-            >
-              {isSubmitting ? t("conversation.sendingState") : t("conversation.sendButton")}
-            </button>
-          </div>
+          <button
+            className="composer-send"
+            type="submit"
+            disabled={isSubmitting || !sendDecision.allowed || !content.trim()}
+            aria-label={t("conversation.sendButton")}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <line x1="22" y1="2" x2="11" y2="13" />
+              <polygon points="22 2 15 22 11 13 2 9 22 2" />
+            </svg>
+          </button>
         </div>
+
+        {statusText && (
+          <p className="composer-error">{statusText}</p>
+        )}
       </form>
     </section>
   );

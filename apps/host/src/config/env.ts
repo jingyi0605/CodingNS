@@ -24,10 +24,10 @@ export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConf
       path.resolve(process.cwd(), "apps", "host", "data", "host", "host.sqlite"),
     accessTokenTtlSeconds:
       overrides.accessTokenTtlSeconds ??
-      Number(process.env.CODINGNS_ACCESS_TOKEN_TTL ?? "900"),
+      Number(process.env.CODINGNS_ACCESS_TOKEN_TTL ?? "31536000"),
     refreshTokenTtlSeconds:
       overrides.refreshTokenTtlSeconds ??
-      Number(process.env.CODINGNS_REFRESH_TOKEN_TTL ?? "604800"),
+      Number(process.env.CODINGNS_REFRESH_TOKEN_TTL ?? "31536000"),
     terminalIdleTimeoutSeconds:
       overrides.terminalIdleTimeoutSeconds ??
       Number(process.env.CODINGNS_TERMINAL_IDLE_TIMEOUT ?? "900"),

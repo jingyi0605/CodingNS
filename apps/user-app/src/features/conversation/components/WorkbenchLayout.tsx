@@ -10,6 +10,7 @@ import {
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 
 import { t } from "../../../shared/i18n";
+import { ThemeSwitcher } from "../../../shared/theme";
 import { authStore } from "../../auth/store/auth-store";
 import {
   importWorkspace,
@@ -53,27 +54,244 @@ function sortSessions(left: SessionSummaryDto, right: SessionSummaryDto) {
 }
 
 function formatSessionMeta(session: SessionSummaryDto) {
-  return session.lastMessageAt ?? session.updatedAt;
+  const date = session.lastMessageAt ?? session.updatedAt;
+  return date ? new Date(date).toLocaleDateString() : "";
 }
 
-export function WorkbenchLayout() {
+function SidebarContent({
+  navigationGroups,
+  workspaceCount,
+  sessionCount,
+  navigationLoading,
+  navigationError,
+  navigationMessage,
+  onClose
+}: {
+  navigationGroups: WorkspaceSessionGroup[];
+  workspaceCount: number;
+  sessionCount: number;
+  navigationLoading: boolean;
+  navigationError: string | null;
+  navigationMessage: string | null;
+  onClose?: () => void;
+}) {
   const navigate = useNavigate();
-  const location = useLocation();
-  const requestIdRef = useRef(0);
-  const [navigationGroups, setNavigationGroups] = useState<WorkspaceSessionGroup[]>([]);
-  const [navigationLoading, setNavigationLoading] = useState(true);
-  const [navigationError, setNavigationError] = useState<string | null>(null);
-  const [auxiliaryPanel, setAuxiliaryPanelState] = useState<WorkbenchAuxiliaryPanel | null>(null);
-  const [auxiliaryCollapsed, setAuxiliaryCollapsed] = useState(true);
   const [importExpanded, setImportExpanded] = useState(false);
   const [importingWorkspace, setImportingWorkspace] = useState(false);
   const [importForm, setImportForm] = useState<ImportWorkspaceFormState>({
     path: "",
     name: ""
   });
-  const [navigationMessage, setNavigationMessage] = useState<string | null>(null);
   const [actionWorkspaceId, setActionWorkspaceId] = useState<string | null>(null);
   const [actionProvider, setActionProvider] = useState<ProviderId | null>(null);
+
+  async function handleImportWorkspace(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const trimmedPath = importForm.path.trim();
+
+    if (!trimmedPath) return;
+
+    setImportingWorkspace(true);
+    try {
+      await importWorkspace({
+        path: trimmedPath,
+        name: importForm.name.trim() || undefined
+      });
+      setImportForm({ path: "", name: "" });
+      setImportExpanded(false);
+      window.location.reload();
+    } catch {
+      // Error handled silently
+    } finally {
+      setImportingWorkspace(false);
+    }
+  }
+
+  async function handleStartSession(workspaceId: string, provider: ProviderId) {
+    setActionWorkspaceId(workspaceId);
+    setActionProvider(provider);
+
+    try {
+      const session = await startSession({ workspaceId, provider });
+      navigate(`/sessions/${session.sessionId}`);
+      onClose?.();
+    } catch {
+      // Error handled silently
+    } finally {
+      setActionWorkspaceId(null);
+      setActionProvider(null);
+    }
+  }
+
+  return (
+    <>
+      <div className="workbench-nav-header">
+        <h1>{t("shell.title")}</h1>
+        <p className="status-text">{t("shell.subtitle")}</p>
+      </div>
+
+      <div className="workbench-nav-links">
+        <NavLink
+          to="/"
+          end
+          className={({ isActive }) =>
+            isActive ? "workbench-nav-link active" : "workbench-nav-link"
+          }
+          onClick={() => onClose?.()}
+        >
+          {t("shell.homeEntry")}
+        </NavLink>
+        <NavLink
+          to="/terminals"
+          className={({ isActive }) =>
+            isActive ? "workbench-nav-link active" : "workbench-nav-link"
+          }
+          onClick={() => onClose?.()}
+        >
+          {t("home.terminalsEntry")}
+        </NavLink>
+      </div>
+
+      <div className="workbench-nav-body">
+        {/* Add Project Section */}
+        <section className="workbench-import-card minimal">
+          <button
+            type="button"
+            className="workbench-import-toggle"
+            onClick={() => setImportExpanded((c) => !c)}
+          >
+            <span>{t("shell.importWorkspaceTitle")}</span>
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              style={{ transform: importExpanded ? "rotate(180deg)" : "none", transition: "transform 200ms" }}
+            >
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </button>
+
+          {importExpanded && (
+            <form className="workbench-import-form" onSubmit={handleImportWorkspace}>
+              <input
+                type="text"
+                value={importForm.path}
+                placeholder={t("shell.importPathPlaceholder")}
+                onChange={(e) => setImportForm((c) => ({ ...c, path: e.target.value }))}
+              />
+              <button
+                className="primary-button"
+                type="submit"
+                disabled={importingWorkspace || !importForm.path.trim()}
+              >
+                {importingWorkspace ? t("shell.importSubmitting") : t("shell.importSubmit")}
+              </button>
+            </form>
+          )}
+        </section>
+
+        {/* Stats */}
+        <div className="workbench-nav-stats">
+          <span>{t("shell.workspaceCount")} {workspaceCount}</span>
+          <span>{t("shell.sessionCount")} {sessionCount}</span>
+        </div>
+
+        {/* Messages */}
+        {navigationLoading && <p className="status-text">{t("common.loading")}</p>}
+        {navigationError && <p className="status-text" data-tone="error">{navigationError}</p>}
+        {navigationMessage && <p className="status-text" data-tone="success">{navigationMessage}</p>}
+
+        {/* Empty State */}
+        {!navigationLoading && !navigationError && navigationGroups.length === 0 && (
+          <div className="workbench-empty-state minimal">
+            <p>{t("shell.emptyNavigationBody")}</p>
+          </div>
+        )}
+
+        {/* Workspaces */}
+        {navigationGroups.map((group) => {
+          const claudeBusy = actionWorkspaceId === group.workspace.id && actionProvider === "claude-code";
+          const codexBusy = actionWorkspaceId === group.workspace.id && actionProvider === "codex";
+
+          return (
+            <section key={group.workspace.id} className="workbench-workspace-group">
+              <div className="workbench-workspace-header minimal">
+                <strong>{group.workspace.name}</strong>
+              </div>
+
+              <div className="workbench-session-list">
+                {group.sessions.map((session) => (
+                  <NavLink
+                    key={session.sessionId}
+                    to={`/sessions/${session.sessionId}`}
+                    className={({ isActive }) =>
+                      isActive ? "workbench-session-link active" : "workbench-session-link"
+                    }
+                    onClick={() => onClose?.()}
+                  >
+                    <span className="session-title">{session.title || t("common.unknown")}</span>
+                    <span className="session-meta">{formatSessionMeta(session)}</span>
+                  </NavLink>
+                ))}
+
+                {group.sessions.length === 0 && (
+                  <p className="workbench-session-empty">{t("shell.emptyWorkspaceSessions")}</p>
+                )}
+              </div>
+
+              <div className="workbench-workspace-actions minimal">
+                <button
+                  type="button"
+                  disabled={Boolean(actionWorkspaceId)}
+                  onClick={() => void handleStartSession(group.workspace.id, "claude-code")}
+                >
+                  {claudeBusy ? "..." : `+ ${t("shell.startClaude")}`}
+                </button>
+                <button
+                  type="button"
+                  disabled={Boolean(actionWorkspaceId)}
+                  onClick={() => void handleStartSession(group.workspace.id, "codex")}
+                >
+                  {codexBusy ? "..." : `+ ${t("shell.startCodex")}`}
+                </button>
+              </div>
+            </section>
+          );
+        })}
+      </div>
+
+      <div className="workbench-nav-footer minimal">
+        <div className="workbench-footer-top">
+          <ThemeSwitcher />
+          <button
+            className="logout-button"
+            type="button"
+            onClick={() => {
+              authStore.clear();
+              navigate("/login", { replace: true });
+            }}
+          >
+            {t("common.logout")}
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+export function WorkbenchLayout() {
+  const location = useLocation();
+  const requestIdRef = useRef(0);
+  const [navigationGroups, setNavigationGroups] = useState<WorkspaceSessionGroup[]>([]);
+  const [navigationLoading, setNavigationLoading] = useState(true);
+  const [navigationError, setNavigationError] = useState<string | null>(null);
+  const [navigationMessage, setNavigationMessage] = useState<string | null>(null);
+  const [auxiliaryPanel, setAuxiliaryPanelState] = useState<WorkbenchAuxiliaryPanel | null>(null);
+  const [auxiliaryCollapsed, setAuxiliaryCollapsed] = useState(true);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   async function refreshNavigation() {
     const requestId = requestIdRef.current + 1;
@@ -89,9 +307,7 @@ export function WorkbenchLayout() {
         }))
       );
 
-      if (requestId !== requestIdRef.current) {
-        return;
-      }
+      if (requestId !== requestIdRef.current) return;
 
       const sessionsByWorkspace = new Map(
         sessionResponses.map((item) => [
@@ -108,10 +324,7 @@ export function WorkbenchLayout() {
       );
       setNavigationError(null);
     } catch (error) {
-      if (requestId !== requestIdRef.current) {
-        return;
-      }
-
+      if (requestId !== requestIdRef.current) return;
       setNavigationGroups([]);
       setNavigationError(error instanceof Error ? error.message : t("shell.navigationLoadFailed"));
     } finally {
@@ -144,252 +357,36 @@ export function WorkbenchLayout() {
   const workspaceCount = navigationGroups.length;
   const sessionCount = navigationGroups.reduce((total, item) => total + item.sessions.length, 0);
 
-  async function handleImportWorkspace(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    const trimmedPath = importForm.path.trim();
-    const trimmedName = importForm.name.trim();
-
-    if (!trimmedPath) {
-      setNavigationMessage(t("shell.importPathRequired"));
-      return;
-    }
-
-    setImportingWorkspace(true);
-    setNavigationError(null);
-    setNavigationMessage(null);
-
-    try {
-      const workspace = await importWorkspace({
-        path: trimmedPath,
-        name: trimmedName || undefined
-      });
-
-      await refreshNavigation();
-      setImportForm({ path: "", name: "" });
-      setImportExpanded(false);
-      setNavigationMessage(`${t("shell.importSuccess")} ${workspace.name}`);
-    } catch (error) {
-      setNavigationError(error instanceof Error ? error.message : t("shell.importFailed"));
-    } finally {
-      setImportingWorkspace(false);
-    }
-  }
-
-  async function handleStartSession(workspaceId: string, provider: ProviderId) {
-    setActionWorkspaceId(workspaceId);
-    setActionProvider(provider);
-    setNavigationError(null);
-    setNavigationMessage(null);
-
-    try {
-      const session = await startSession({
-        workspaceId,
-        provider
-      });
-
-      await refreshNavigation();
-      setNavigationMessage(
-        provider === "claude-code" ? t("shell.startClaudeSuccess") : t("shell.startCodexSuccess")
-      );
-      navigate(`/sessions/${session.sessionId}`);
-    } catch (error) {
-      setNavigationError(error instanceof Error ? error.message : t("shell.startSessionFailed"));
-    } finally {
-      setActionWorkspaceId(null);
-      setActionProvider(null);
-    }
-  }
-
   return (
     <WorkbenchShellContext.Provider value={contextValue}>
       <div className="workbench-shell" data-aux-collapsed={auxiliaryCollapsed}>
         <aside className="workbench-nav surface-card">
-          <div className="workbench-nav-header">
-            <span className="badge">{t("common.appName")}</span>
-            <div>
-              <h1>{t("shell.title")}</h1>
-              <p className="status-text">{t("shell.subtitle")}</p>
-            </div>
-          </div>
-
-          <div className="workbench-nav-links">
-            <NavLink
-              to="/"
-              end
-              className={({ isActive }) =>
-                isActive ? "workbench-nav-link active" : "workbench-nav-link"
-              }
-            >
-              {t("shell.homeEntry")}
-            </NavLink>
-            <NavLink
-              to="/terminals"
-              className={({ isActive }) =>
-                isActive ? "workbench-nav-link active" : "workbench-nav-link"
-              }
-            >
-              {t("home.terminalsEntry")}
-            </NavLink>
-          </div>
-
-          <div className="workbench-nav-body">
-            <div className="workbench-nav-summary">
-              <span className="badge">
-                {t("shell.workspaceCount")} {workspaceCount}
-              </span>
-              <span className="badge">
-                {t("shell.sessionCount")} {sessionCount}
-              </span>
-            </div>
-
-            <section className="workbench-import-card">
-              <div className="workbench-import-header">
-                <div>
-                  <strong>{t("shell.importWorkspaceTitle")}</strong>
-                  <p className="status-text">{t("shell.importWorkspaceHint")}</p>
-                </div>
-                <button
-                  className="secondary-button"
-                  type="button"
-                  onClick={() => {
-                    setImportExpanded((current) => !current);
-                    setNavigationError(null);
-                    setNavigationMessage(null);
-                  }}
-                >
-                  {importExpanded ? t("shell.importCollapse") : t("shell.importExpand")}
-                </button>
-              </div>
-
-              {importExpanded ? (
-                <form className="workbench-import-form" onSubmit={handleImportWorkspace}>
-                  <label className="field-group">
-                    <span>{t("shell.importPathLabel")}</span>
-                    <input
-                      value={importForm.path}
-                      placeholder={t("shell.importPathPlaceholder")}
-                      onChange={(event) =>
-                        setImportForm((current) => ({ ...current, path: event.target.value }))
-                      }
-                    />
-                  </label>
-                  <label className="field-group">
-                    <span>{t("shell.importNameLabel")}</span>
-                    <input
-                      value={importForm.name}
-                      placeholder={t("shell.importNamePlaceholder")}
-                      onChange={(event) =>
-                        setImportForm((current) => ({ ...current, name: event.target.value }))
-                      }
-                    />
-                  </label>
-                  <button className="primary-button" type="submit" disabled={importingWorkspace}>
-                    {importingWorkspace ? t("shell.importSubmitting") : t("shell.importSubmit")}
-                  </button>
-                </form>
-              ) : null}
-            </section>
-
-            {navigationLoading ? <p className="status-text">{t("common.loading")}</p> : null}
-            {navigationError ? (
-              <p className="status-text" data-tone="error">
-                {navigationError}
-              </p>
-            ) : null}
-            {navigationMessage ? (
-              <p className="status-text" data-tone="success">
-                {navigationMessage}
-              </p>
-            ) : null}
-
-            {!navigationLoading && !navigationError && navigationGroups.length === 0 ? (
-              <div className="workbench-empty-state">
-                <strong>{t("shell.emptyNavigationTitle")}</strong>
-                <p className="status-text">{t("shell.emptyNavigationBody")}</p>
-              </div>
-            ) : null}
-
-            {navigationGroups.map((group) => {
-              const claudeBusy =
-                actionWorkspaceId === group.workspace.id && actionProvider === "claude-code";
-              const codexBusy = actionWorkspaceId === group.workspace.id && actionProvider === "codex";
-
-              return (
-                <section key={group.workspace.id} className="workbench-workspace-group">
-                  <div className="workbench-workspace-card">
-                    <div className="workbench-workspace-header">
-                      <strong>{group.workspace.name}</strong>
-                      <span className="badge">{group.sessions.length}</span>
-                    </div>
-                    <small className="workbench-workspace-path">{group.workspace.path}</small>
-
-                    <div className="workbench-workspace-actions">
-                      <button
-                        className="secondary-button"
-                        type="button"
-                        disabled={Boolean(actionWorkspaceId)}
-                        onClick={() => void handleStartSession(group.workspace.id, "claude-code")}
-                      >
-                        {claudeBusy ? t("shell.startingSession") : t("shell.startClaude")}
-                      </button>
-                      <button
-                        className="secondary-button"
-                        type="button"
-                        disabled={Boolean(actionWorkspaceId)}
-                        onClick={() => void handleStartSession(group.workspace.id, "codex")}
-                      >
-                        {codexBusy ? t("shell.startingSession") : t("shell.startCodex")}
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="workbench-session-list">
-                    {group.sessions.length === 0 ? (
-                      <div className="workbench-session-empty">{t("shell.emptyWorkspaceSessions")}</div>
-                    ) : null}
-
-                    {group.sessions.map((session) => (
-                      <NavLink
-                        key={session.sessionId}
-                        to={`/sessions/${session.sessionId}`}
-                        className={({ isActive }) =>
-                          isActive ? "workbench-session-link active" : "workbench-session-link"
-                        }
-                      >
-                        <span className="workbench-session-title">
-                          <strong>{session.title || t("common.unknown")}</strong>
-                          <span className="badge">{session.provider}</span>
-                        </span>
-                        <small>{formatSessionMeta(session)}</small>
-                      </NavLink>
-                    ))}
-                  </div>
-                </section>
-              );
-            })}
-          </div>
-
-          <div className="workbench-nav-footer">
-            <div className="workbench-footer-actions">
-              <button className="secondary-button" type="button" onClick={() => void refreshNavigation()}>
-                {t("shell.refreshNavigation")}
-              </button>
-              <button
-                className="ghost-button"
-                type="button"
-                onClick={() => {
-                  authStore.clear();
-                  navigate("/login", { replace: true });
-                }}
-              >
-                {t("common.logout")}
-              </button>
-            </div>
-          </div>
+          <SidebarContent
+            navigationGroups={navigationGroups}
+            workspaceCount={workspaceCount}
+            sessionCount={sessionCount}
+            navigationLoading={navigationLoading}
+            navigationError={navigationError}
+            navigationMessage={navigationMessage}
+          />
         </aside>
 
         <div className="workbench-main-shell">
+          <div className="mobile-header">
+            <button
+              type="button"
+              className="mobile-menu-btn"
+              onClick={() => setMobileNavOpen(true)}
+              aria-label="菜单"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <line x1="3" y1="6" x2="21" y2="6" />
+                <line x1="3" y1="12" x2="21" y2="12" />
+                <line x1="3" y1="18" x2="21" y2="18" />
+              </svg>
+            </button>
+            <span className="mobile-header-title">{t("shell.title")}</span>
+          </div>
           <Outlet />
         </div>
 
@@ -401,45 +398,77 @@ export function WorkbenchLayout() {
           }
         >
           <div className="workbench-auxiliary-header">
-            {!auxiliaryCollapsed ? (
+            {!auxiliaryCollapsed && (
               <div>
                 <h2>{auxiliaryPanel?.title ?? t("shell.auxiliaryTitle")}</h2>
-                <p className="status-text">
-                  {auxiliaryPanel?.description ?? t("shell.auxiliarySubtitle")}
-                </p>
+                <p className="status-text">{auxiliaryPanel?.description ?? t("shell.auxiliarySubtitle")}</p>
               </div>
-            ) : null}
+            )}
             <button
-              className="secondary-button workbench-auxiliary-toggle"
+              className="auxiliary-toggle"
               type="button"
-              onClick={() => setAuxiliaryCollapsed((current) => !current)}
+              onClick={() => setAuxiliaryCollapsed((c) => !c)}
             >
-              {auxiliaryCollapsed ? t("shell.expandAuxiliary") : t("shell.collapseAuxiliary")}
+              {auxiliaryCollapsed ? "←" : "→"}
             </button>
           </div>
 
-          {!auxiliaryCollapsed ? (
+          {!auxiliaryCollapsed && (
             <div className="workbench-auxiliary-body">
               {auxiliaryPanel?.content ?? (
-                <section className="workbench-empty-state">
-                  <strong>{t("shell.auxiliaryEmptyTitle")}</strong>
-                  <p className="status-text">{t("shell.auxiliaryEmptyBody")}</p>
+                <section className="workbench-empty-state minimal">
+                  <p>{t("shell.auxiliaryEmptyBody")}</p>
                 </section>
               )}
             </div>
-          ) : null}
+          )}
         </aside>
+
+        {/* Mobile Navigation Drawer */}
+        <MobileNavDrawer isOpen={mobileNavOpen} onClose={() => setMobileNavOpen(false)}>
+          <SidebarContent
+            navigationGroups={navigationGroups}
+            workspaceCount={workspaceCount}
+            sessionCount={sessionCount}
+            navigationLoading={navigationLoading}
+            navigationError={navigationError}
+            navigationMessage={navigationMessage}
+            onClose={() => setMobileNavOpen(false)}
+          />
+        </MobileNavDrawer>
       </div>
     </WorkbenchShellContext.Provider>
   );
 }
 
+function MobileNavDrawer({
+  isOpen,
+  onClose,
+  children
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <>
+      <div
+        className={`mobile-nav-overlay ${isOpen ? "open" : ""}`}
+        onClick={onClose}
+        role="button"
+        tabIndex={0}
+        aria-label="关闭"
+        onKeyDown={(e) => e.key === "Escape" && onClose()}
+      />
+      <div className={`mobile-nav-drawer ${isOpen ? "open" : ""}`}>{children}</div>
+    </>
+  );
+}
+
 export function useWorkbenchShell() {
   const context = useContext(WorkbenchShellContext);
-
   if (!context) {
     throw new Error("Workbench shell context is unavailable.");
   }
-
   return context;
 }

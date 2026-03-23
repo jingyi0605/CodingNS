@@ -102,7 +102,9 @@ export class AuthService {
       });
     }
 
-    this.authTokenRepository.revokeByHash(refreshTokenHash, nowIso());
+    // Note: Refresh token is not revoked to allow long-term sessions
+    // In a production environment, you may want to implement token rotation
+    // this.authTokenRepository.revokeByHash(refreshTokenHash, nowIso());
 
     return {
       ...this.issueTokenPair(user.id),

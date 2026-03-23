@@ -30,8 +30,6 @@ export function ConversationPage() {
   const messages = useSessionRuntimeStore(store, (state) => state.messages);
   const historyState = useSessionRuntimeStore(store, (state) => state.historyState);
   const connectionState = useSessionRuntimeStore(store, (state) => state.connectionState);
-  const pagesLoaded = useSessionRuntimeStore(store, (state) => state.pagesLoaded);
-  const errorDetail = useSessionRuntimeStore(store, (state) => state.errorDetail);
 
   useEffect(() => {
     void store.initialize();
@@ -54,22 +52,6 @@ export function ConversationPage() {
       defaultCollapsed: false,
       content: (
         <>
-          <section className="workbench-side-card">
-            <h3>{t("conversation.sidebarTitle")}</h3>
-            <p className="status-text">{t("conversation.sidebarSubtitle")}</p>
-            <div className="badge-row">
-              <span className="badge">
-                {t("conversation.historyPages")} {pagesLoaded}
-              </span>
-              <span className="badge">{session?.provider ?? t("common.unknown")}</span>
-            </div>
-            {errorDetail ? (
-              <p className="status-text" data-tone="error">
-                {errorDetail}
-              </p>
-            ) : null}
-          </section>
-
           <FileContextPanel sessionId={sessionId} workspaceId={session?.workspaceId ?? null} />
           <GitSidebar workspaceId={session?.workspaceId} />
         </>
@@ -79,14 +61,12 @@ export function ConversationPage() {
     return () => {
       setAuxiliaryPanel(null);
     };
-  }, [errorDetail, pagesLoaded, session?.provider, session?.workspaceId, sessionId, setAuxiliaryPanel]);
+  }, [session?.workspaceId, sessionId, setAuxiliaryPanel]);
 
   return (
     <main className="workbench-page conversation-page-shell">
       <SessionHeader
         session={session}
-        capabilities={capabilities}
-        connectionState={connectionState}
         workspaceName={workspaceName}
       />
       <ConnectionBanner connectionState={connectionState} onReconnect={() => store.reconnect()} />
