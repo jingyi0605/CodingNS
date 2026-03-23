@@ -58,8 +58,10 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
       }
 
       const messages = this.parseMessages(filePath, typedRecords);
-      const titleRecord = typedRecords.find((record) => record.type === "ai-title");
-      const title = ensureText(titleRecord?.aiTitle) || basename(filePath, ".jsonl");
+      const title =
+        this.resolveClaudeTitle(typedRecords) ||
+        messages.find((message) => message.role === "user")?.content.slice(0, 48) ||
+        basename(filePath, ".jsonl");
       const lastMessageAt =
         messages.at(-1)?.timestamp ??
         (ensureText(typedRecords.at(-1)?.timestamp) || null);
@@ -271,6 +273,25 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
 
   async getSessionCapabilities(): Promise<ProviderCapabilities> {
     return this.getProviderCapabilities();
+  }
+
+  private resolveClaudeTitle(records: Array<Record<string, unknown>>): string {
+    // Claude 会在会话过程中多次刷新 ai-title，取最后一个有效值才是当前标题。
+    for (let index = records.length - 1; index >= 0; index -= 1) {
+      const record = records[index];
+
+      if (record?.type !== "ai-title") {
+        continue;
+      }
+
+      const title = ensureText(record.aiTitle).trim();
+
+      if (title.length > 0) {
+        return title;
+      }
+    }
+
+    return "";
   }
 
   private parseMessages(

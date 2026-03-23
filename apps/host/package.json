@@ -6,6 +6,7 @@
     "node": ">=22.0.0"
   },
   "scripts": {
+    "predev": "corepack pnpm --dir ../../packages/session-sync-core build",
     "prebuild": "corepack pnpm --dir ../../packages/session-sync-core build",
     "pretest": "corepack pnpm --dir ../../packages/session-sync-core build",
     "dev": "tsx src/main.ts",

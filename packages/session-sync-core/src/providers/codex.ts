@@ -1,5 +1,5 @@
 import { basename, join } from "node:path";
-import { statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import crypto from "node:crypto";
 
 import type {
@@ -43,6 +43,7 @@ export class CodexAdapter implements ProviderAdapter {
   async detectSessions(workspacePath: string): Promise<ProviderSessionSummary[]> {
     const targetPath = normalizeWorkspacePath(workspacePath);
     const files = walkJsonlFiles(join(this.options.homeDir, "sessions"));
+    const threadNameIndex = this.readThreadNameIndex();
     const sessions: ProviderSessionSummary[] = [];
 
     for (const filePath of files) {
@@ -57,8 +58,10 @@ export class CodexAdapter implements ProviderAdapter {
 
       const providerSessionId = basename(filePath, ".jsonl");
       const messages = this.parseMessages(filePath, records, providerSessionId);
+      const codexSessionId = this.resolveCodexSessionId(metaPayload, providerSessionId);
       const title =
-        messages.find((message) => message.role === "user")?.content.slice(0, 48) ||
+        this.resolveIndexedTitle(threadNameIndex, codexSessionId) ??
+        messages.find((message) => message.role === "user")?.content.slice(0, 48) ??
         providerSessionId;
       const lastMessageAt =
         messages.at(-1)?.timestamp ?? (ensureText(metaPayload.timestamp) || null);
@@ -260,6 +263,60 @@ export class CodexAdapter implements ProviderAdapter {
 
   async getSessionCapabilities(): Promise<ProviderCapabilities> {
     return this.getProviderCapabilities();
+  }
+
+  private readThreadNameIndex(): Map<string, string> {
+    const indexPath = join(this.options.homeDir, "session_index.jsonl");
+
+    if (!existsSync(indexPath)) {
+      return new Map();
+    }
+
+    const lines = readFileSync(indexPath, "utf8")
+      .split(/\r?\n/)
+      .filter((line) => line.trim().length > 0);
+    const index = new Map<string, string>();
+
+    // 这里容忍单行脏数据，避免某一条坏记录把整个会话列表拖死。
+    for (const line of lines) {
+      try {
+        const record = JSON.parse(line) as {
+          id?: unknown;
+          thread_name?: unknown;
+        };
+        const id = ensureText(record.id).trim();
+        const threadName = ensureText(record.thread_name).trim();
+
+        if (id.length > 0 && threadName.length > 0) {
+          index.set(id, threadName);
+        }
+      } catch {
+        continue;
+      }
+    }
+
+    return index;
+  }
+
+  private resolveCodexSessionId(
+    metaPayload: Record<string, unknown>,
+    providerSessionId: string
+  ): string {
+    const metaId = ensureText(metaPayload.id).trim();
+
+    if (metaId.length > 0) {
+      return metaId;
+    }
+
+    const matched = providerSessionId.match(
+      /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i
+    );
+
+    return matched?.[1] ?? providerSessionId;
+  }
+
+  private resolveIndexedTitle(index: Map<string, string>, sessionId: string): string | null {
+    return index.get(sessionId)?.trim() || null;
   }
 
   private parseMessages(
