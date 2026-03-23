@@ -1076,6 +1076,86 @@ a {
   color: var(--error);
 }
 
+/* Rules Message */
+.rules-message-row .message-content-wrapper {
+  flex: 1;
+  min-width: 0;
+}
+
+.rules-message-card {
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-lg);
+  background: var(--bg-primary);
+  overflow: hidden;
+}
+
+.rules-message-toggle {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px 10px;
+  background: transparent;
+  text-align: left;
+}
+
+.rules-message-toggle:hover {
+  background: var(--bg-hover);
+}
+
+.rules-message-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.rules-message-badge {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  text-transform: uppercase;
+}
+
+.rules-message-summary {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  word-break: break-all;
+}
+
+.rules-message-action {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.rules-message-hint {
+  margin: 0;
+  padding: 0 16px 14px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.rules-message-body {
+  padding: 16px;
+  border-top: 1px solid var(--border-primary);
+  background: var(--bg-surface);
+}
+
+.rules-message-body .markdown-content {
+  font-size: 13px;
+}
+
+.rules-message-body .markdown-content pre {
+  background: var(--bg-primary);
+}
+
 /* System Message */
 .system-message {
   background: var(--bg-sidebar);

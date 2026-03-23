@@ -75,6 +75,7 @@ export function ConversationPage() {
       <MessageTimeline
         messages={messages}
         historyState={historyState}
+        provider={session?.provider ?? null}
         onRetryMessage={(clientRequestId: string) => {
           void store.retryMessage(clientRequestId);
         }}

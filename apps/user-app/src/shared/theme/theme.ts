@@ -22,7 +22,7 @@ function getSystemTheme(): ThemeId {
 function getStoredTheme(): ThemeId | null {
   if (typeof window === "undefined") return null;
   const stored = localStorage.getItem(STORAGE_KEY);
-  if (stored && THEMES.some((t) => t.id === stored)) {
+  if (stored && THEMES.some((theme) => theme.id === stored)) {
     return stored as ThemeId;
   }
   return null;
@@ -52,14 +52,14 @@ function subscribe(callback: () => void): () => void {
 function getSnapshot(): ThemeId {
   if (typeof window === "undefined") return "light";
   const theme = document.documentElement.getAttribute("data-theme");
-  if (theme && THEMES.some((t) => t.id === theme)) {
+  if (theme && THEMES.some((item) => item.id === theme)) {
     return theme as ThemeId;
   }
   return getInitialTheme();
 }
 
 export function useTheme(): { theme: ThemeId; setTheme: (id: ThemeId) => void } {
-  const theme = useSyncExternalStore(subscribe, getSnapshot, () => "light");
+  const theme = useSyncExternalStore<ThemeId>(subscribe, getSnapshot, () => "light");
 
   return {
     theme,

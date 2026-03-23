@@ -15,12 +15,12 @@ const extensionZhCN = {
     quickOverviewTitle: "概览",
     quickOverviewBody: "管理工作区，继续对话",
     nextStepTitle: "开始使用",
-    nextStepBody: "从左侧选择一个会话，或导入新的工作区",
+    nextStepBody: "从左侧选择一个会话，或者导入新的工作区",
     auxiliarySubtitle: "会话信息和文件"
   },
   shell: {
     title: "工作台",
-    subtitle: "管理代码项目与 AI 会话",
+    subtitle: "管理代码项目里的 AI 会话",
     homeEntry: "首页",
     workspaceCount: "项目",
     sessionCount: "会话",
@@ -57,15 +57,19 @@ const extensionZhCN = {
   },
   conversation: {
     auxiliarySubtitle: "文件与 Git",
-    composerPlaceholder: "输入消息...",
-    sendButton: "发送",
+    composerPlaceholder: "把下一步交代清楚，剩下的交给这条会话继续跑。",
+    sendButton: "发送消息",
     attachFiles: "添加附件",
     titleFallback: "新会话",
     historyLoading: "加载中...",
     historyLoadFailed: "加载失败",
     timelineEmpty: "开始对话",
     resendButton: "重发",
-    capabilityDenied: "不可用"
+    capabilityDenied: "不可用",
+    rulesMessageTitle: "规则信息",
+    rulesMessageHint: "这是一段会话启动规则，默认折叠显示，需要时再展开查看。",
+    rulesMessageExpand: "展开规则",
+    rulesMessageCollapse: "收起规则"
   },
   theme: {
     light: "浅色",
