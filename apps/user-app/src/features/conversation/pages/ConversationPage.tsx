@@ -68,6 +68,8 @@ export function ConversationPage() {
       <SessionHeader
         session={session}
         workspaceName={workspaceName}
+        capabilities={capabilities}
+        connectionState={connectionState}
       />
       <ConnectionBanner connectionState={connectionState} onReconnect={() => store.reconnect()} />
       <MessageTimeline
@@ -80,11 +82,15 @@ export function ConversationPage() {
       <ComposerPanel
         capabilities={capabilities}
         isSubmitting={sending}
-        onSend={async (content) => {
+        onSend={async (content, options) => {
           setSending(true);
 
           try {
-            await store.sendMessage(content);
+            // Pass model and reasoning level options to the store
+            await store.sendMessage(content, {
+              model: options?.model,
+              reasoningLevel: options?.reasoningLevel
+            });
             await refreshNavigation();
           } finally {
             setSending(false);

@@ -59,6 +59,7 @@ const extensionZhCN = {
     auxiliarySubtitle: "文件与 Git",
     composerPlaceholder: "输入消息...",
     sendButton: "发送",
+    attachFiles: "添加附件",
     titleFallback: "新会话",
     historyLoading: "加载中...",
     historyLoadFailed: "加载失败",

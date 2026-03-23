@@ -71,7 +71,7 @@ export class SessionRuntimeStore {
     await this.initialize();
   }
 
-  async sendMessage(content: string): Promise<void> {
+  async sendMessage(content: string, options?: { model?: string; reasoningLevel?: string }): Promise<void> {
     const clientRequestId = crypto.randomUUID();
     const pending = createPendingMessage(this.sessionId, content, clientRequestId);
 
@@ -80,6 +80,7 @@ export class SessionRuntimeStore {
     });
 
     try {
+      // TODO: Pass model and reasoningLevel to API when backend supports it
       const response = await sendSessionMessage(this.sessionId, {
         content,
         clientRequestId

@@ -387,6 +387,13 @@ a {
   text-overflow: ellipsis;
 }
 
+.session-meta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .session-meta {
   font-size: 11px;
   color: var(--text-tertiary);
@@ -1597,4 +1604,310 @@ textarea:focus-visible {
 ::selection {
   background: var(--bg-active);
   color: var(--accent);
+}
+
+/* ========================================
+   New Composer Styles
+   ======================================== */
+
+/* Main Input Container - Rounded with shadow */
+.composer-input-container {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-primary);
+  border-radius: 16px;
+  box-shadow:
+    0 2px 12px rgba(0, 0, 0, 0.08),
+    0 0 1px rgba(0, 0, 0, 0.05);
+  transition: all 200ms ease;
+  overflow: hidden;
+}
+
+[data-theme="dark"] .composer-input-container {
+  box-shadow:
+    0 2px 12px rgba(0, 0, 0, 0.3),
+    0 0 1px rgba(255, 255, 255, 0.05);
+}
+
+.composer-input-container:hover {
+  box-shadow:
+    0 4px 20px rgba(0, 0, 0, 0.12),
+    0 0 1px rgba(0, 0, 0, 0.05);
+}
+
+[data-theme="dark"] .composer-input-container:hover {
+  box-shadow:
+    0 4px 20px rgba(0, 0, 0, 0.4),
+    0 0 1px rgba(255, 255, 255, 0.05);
+}
+
+.composer-input-container:focus-within {
+  border-color: var(--accent);
+  box-shadow:
+    0 4px 24px rgba(0, 0, 0, 0.15),
+    0 0 0 1px var(--accent);
+}
+
+[data-theme="dark"] .composer-input-container:focus-within {
+  box-shadow:
+    0 4px 24px rgba(0, 0, 0, 0.5),
+    0 0 0 1px var(--accent);
+}
+
+/* Attachments */
+.composer-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 12px 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.composer-attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: var(--bg-hover);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.composer-attachment-chip svg {
+  color: var(--accent);
+}
+
+.attachment-name {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-count {
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.attachment-remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  margin-left: 2px;
+  border-radius: 4px;
+  color: var(--text-tertiary);
+  transition: all 120ms;
+}
+
+.attachment-remove:hover {
+  background: var(--border-subtle);
+  color: var(--error);
+}
+
+/* Input Wrapper */
+.composer-input-wrapper {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 12px;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+}
+
+.composer-input-wrapper:focus-within {
+  border-color: transparent;
+}
+
+.composer-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  padding: 4px;
+  font-size: 14px;
+  line-height: 1.5;
+  resize: none;
+  min-height: 24px;
+  max-height: 120px;
+  font-family: var(--font-sans);
+}
+
+.composer-input:focus {
+  outline: none;
+}
+
+/* Controls Bar */
+.composer-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.composer-controls-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Provider Logo */
+.composer-provider-logo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+
+/* Select Wrapper */
+.composer-select-wrapper {
+  position: relative;
+}
+
+.composer-select {
+  appearance: none;
+  height: 28px;
+  padding: 0 24px 0 10px;
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+  background: var(--bg-primary);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: all 120ms;
+}
+
+.composer-select:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-subtle);
+}
+
+.composer-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.composer-select-arrow {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  color: var(--text-tertiary);
+}
+
+/* Slash Button */
+.composer-slash-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+  background: var(--bg-primary);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  transition: all 120ms;
+}
+
+.composer-slash-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-subtle);
+  color: var(--text-primary);
+}
+
+.slash-icon {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* Attach Button */
+.composer-attach-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  color: var(--text-secondary);
+  transition: all 120ms;
+}
+
+.composer-attach-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+/* Send Button */
+.composer-send {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--text-primary);
+  color: var(--bg-surface);
+  flex-shrink: 0;
+  transition: all 200ms;
+}
+
+.composer-send:hover:not(:disabled) {
+  transform: scale(1.05);
+  opacity: 0.9;
+}
+
+.composer-send:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ========================================
+   Session Provider Badge
+   ======================================== */
+
+.session-provider-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  flex-shrink: 0;
+  line-height: 1.4;
+}
+
+.session-provider-badge.claude-code {
+  background: rgba(251, 191, 36, 0.15);
+  color: #b45309;
+}
+
+[data-theme="dark"] .session-provider-badge.claude-code {
+  background: rgba(251, 191, 36, 0.2);
+  color: #fbbf24;
+}
+
+.session-provider-badge.codex {
+  background: rgba(249, 115, 22, 0.15);
+  color: #c2410c;
+}
+
+[data-theme="dark"] .session-provider-badge.codex {
+  background: rgba(249, 115, 22, 0.2);
+  color: #fb923c;
 }

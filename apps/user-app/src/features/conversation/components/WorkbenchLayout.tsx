@@ -233,7 +233,12 @@ function SidebarContent({
                     onClick={() => onClose?.()}
                   >
                     <span className="session-title">{session.title || t("common.unknown")}</span>
-                    <span className="session-meta">{formatSessionMeta(session)}</span>
+                    <div className="session-meta-row">
+                      <span className="session-meta">{formatSessionMeta(session)}</span>
+                      <span className={`session-provider-badge ${session.provider}`}>
+                        {session.provider === "codex" ? "Codex" : "Claude"}
+                      </span>
+                    </div>
                   </NavLink>
                 ))}
 
