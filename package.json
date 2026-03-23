@@ -3,6 +3,12 @@
   "private": true,
   "packageManager": "pnpm@10.7.1",
   "scripts": {
+    "preinstall": "node scripts/ensure-pnpm.cjs",
+    "dev": "node scripts/show-dev-help.cjs",
+    "dev:backend": "npm run dev:host",
+    "dev:frontend": "npm run dev:user-app",
+    "dev:host": "corepack pnpm --filter host dev",
+    "dev:user-app": "corepack pnpm --dir apps/user-app dev",
     "build:session-sync-core": "pnpm --dir packages/session-sync-core build",
     "build:host": "pnpm --dir packages/session-sync-core build && pnpm --filter host build",
     "test:host": "pnpm --dir packages/session-sync-core build && pnpm --filter host test",
