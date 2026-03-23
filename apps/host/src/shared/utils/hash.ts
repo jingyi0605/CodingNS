@@ -30,3 +30,8 @@ export function verifyPassword(password: string, passwordHash: string): boolean 
 export function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
+
+
+export function hashContent(content: string | Buffer): string {
+  return createHash("sha256").update(content).digest("hex");
+}

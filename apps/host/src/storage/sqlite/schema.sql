@@ -86,6 +86,43 @@ CREATE TABLE IF NOT EXISTS session_status_snapshots (
 -- 会话同步的硬边界：这里只允许索引、状态、映射和认证信息。
 -- 不允许出现保存原始会话正文的 message/content/raw_body 之类表。
 
+CREATE TABLE IF NOT EXISTS recent_files (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  path TEXT NOT NULL,
+  last_opened_at TEXT NOT NULL,
+  pinned INTEGER NOT NULL DEFAULT 0 CHECK (pinned IN (0, 1)),
+  FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+  FOREIGN KEY (user_id) REFERENCES auth_users(id),
+  UNIQUE (workspace_id, user_id, path)
+);
+
+CREATE INDEX IF NOT EXISTS idx_recent_files_workspace_user
+  ON recent_files(workspace_id, user_id, last_opened_at DESC);
+
+CREATE TABLE IF NOT EXISTS session_file_context_bindings (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  path TEXT NOT NULL,
+  display_name TEXT NOT NULL,
+  selected INTEGER NOT NULL DEFAULT 1 CHECK (selected IN (0, 1)),
+  pinned INTEGER NOT NULL DEFAULT 0 CHECK (pinned IN (0, 1)),
+  range_start INTEGER,
+  range_end INTEGER,
+  content_hash TEXT NOT NULL,
+  file_version TEXT NOT NULL,
+  attached_by TEXT NOT NULL,
+  attached_at TEXT NOT NULL,
+  FOREIGN KEY (session_id) REFERENCES session_bindings(session_id),
+  FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+  FOREIGN KEY (attached_by) REFERENCES auth_users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_file_context_bindings_session
+  ON session_file_context_bindings(session_id, attached_at DESC);
+
 INSERT INTO bootstrap_state (id, initialized)
 VALUES ('default', 0)
 ON CONFLICT(id) DO NOTHING;

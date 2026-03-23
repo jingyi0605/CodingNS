@@ -6,20 +6,34 @@ import { AuthController } from "../modules/auth/auth-controller.js";
 import { AuthService } from "../modules/auth/auth-service.js";
 import { BootstrapController } from "../modules/bootstrap/bootstrap-controller.js";
 import { BootstrapService } from "../modules/bootstrap/bootstrap-service.js";
+import { FileAccessGuard } from "../modules/file/file-access-guard.js";
+import { FileContentService } from "../modules/file/file-content-service.js";
+import { FileContextController } from "../modules/file/file-context-controller.js";
+import { FileContextService } from "../modules/file/file-context-service.js";
+import { FileController } from "../modules/file/file-controller.js";
+import { FilePreviewService } from "../modules/file/file-preview-service.js";
+import { FileSearchService } from "../modules/file/file-search-service.js";
+import { FileTreeService } from "../modules/file/file-tree-service.js";
+import { FileVersionChecker } from "../modules/file/file-version-checker.js";
+import { RecentFileService } from "../modules/file/recent-file-service.js";
 import { ProviderController } from "../modules/provider/provider-controller.js";
 import { SessionController } from "../modules/sessions/session-controller.js";
 import { SessionRuntimeService } from "../modules/sessions/session-runtime-service.js";
 import { WorkspaceController } from "../modules/workspace/workspace-controller.js";
 import { WorkspaceService } from "../modules/workspace/workspace-service.js";
 import { registerAuthRoutes } from "../routes/auth.js";
+import { registerFileRoutes } from "../routes/files.js";
 import { registerProviderRoutes } from "../routes/providers.js";
 import { registerPublicRoutes } from "../routes/public.js";
+import { registerSessionContextRoutes } from "../routes/session-contexts.js";
 import { registerSessionRoutes } from "../routes/sessions.js";
 import { registerWorkspaceRoutes } from "../routes/workspaces.js";
 import { setErrorHandler } from "../shared/http/error-handler.js";
 import { AuthTokenRepository } from "../storage/repositories/auth-token-repository.js";
 import { AuthUserRepository } from "../storage/repositories/auth-user-repository.js";
 import { BootstrapStateRepository } from "../storage/repositories/bootstrap-state-repository.js";
+import { FileContextBindingRepository } from "../storage/repositories/file-context-binding-repository.js";
+import { RecentFileRepository } from "../storage/repositories/recent-file-repository.js";
 import { SessionBindingRepository } from "../storage/repositories/session-binding-repository.js";
 import { SessionIndexRepository } from "../storage/repositories/session-index-repository.js";
 import { SessionStatusSnapshotRepository } from "../storage/repositories/session-status-snapshot-repository.js";
@@ -27,6 +41,7 @@ import { WorkspaceRepository } from "../storage/repositories/workspace-repositor
 import { createDatabaseClient } from "../storage/sqlite/client.js";
 import { createWsServer } from "../ws/ws-server.js";
 import { WsAuthGuard } from "../ws/ws-auth-guard.js";
+
 export function createServer(config: HostConfig) {
   const app = Fastify({
     logger: false
@@ -38,6 +53,8 @@ export function createServer(config: HostConfig) {
     authUserRepository: new AuthUserRepository(database.db),
     authTokenRepository: new AuthTokenRepository(database.db),
     workspaceRepository: new WorkspaceRepository(database.db),
+    recentFileRepository: new RecentFileRepository(database.db),
+    fileContextBindingRepository: new FileContextBindingRepository(database.db),
     sessionBindingRepository: new SessionBindingRepository(database.db),
     sessionIndexRepository: new SessionIndexRepository(database.db),
     sessionStatusSnapshotRepository: new SessionStatusSnapshotRepository(database.db)
@@ -55,6 +72,18 @@ export function createServer(config: HostConfig) {
     config
   );
   const workspaceService = new WorkspaceService(repositories.workspaceRepository);
+  const fileAccessGuard = new FileAccessGuard(workspaceService, app.log);
+  const recentFileService = new RecentFileService(repositories.recentFileRepository);
+  const fileVersionChecker = new FileVersionChecker();
+  const fileTreeService = new FileTreeService(fileAccessGuard);
+  const fileSearchService = new FileSearchService(fileAccessGuard);
+  const fileContentService = new FileContentService(
+    fileAccessGuard,
+    recentFileService,
+    repositories.fileContextBindingRepository,
+    fileVersionChecker
+  );
+  const filePreviewService = new FilePreviewService(fileAccessGuard, fileContentService);
   const sessionRuntimeService = new SessionRuntimeService(
     database.db,
     repositories.workspaceRepository,
@@ -63,10 +92,25 @@ export function createServer(config: HostConfig) {
     repositories.sessionStatusSnapshotRepository,
     config
   );
+  const fileContextService = new FileContextService(
+    sessionRuntimeService,
+    repositories.fileContextBindingRepository
+  );
 
   const bootstrapController = new BootstrapController(bootstrapService);
   const authController = new AuthController(authService);
   const workspaceController = new WorkspaceController(workspaceService);
+  const fileController = new FileController(
+    fileTreeService,
+    fileContentService,
+    fileSearchService,
+    recentFileService,
+    filePreviewService
+  );
+  const fileContextController = new FileContextController(
+    fileContentService,
+    fileContextService
+  );
   const sessionController = new SessionController(sessionRuntimeService);
   const providerController = new ProviderController(sessionRuntimeService);
   const wsHandle = createWsServer(app.server, new WsAuthGuard(authService), sessionRuntimeService);
@@ -78,6 +122,8 @@ export function createServer(config: HostConfig) {
   void registerAuthRoutes(app, authController);
   void registerWorkspaceRoutes(app, workspaceController);
   void registerSessionRoutes(app, sessionController);
+  void registerFileRoutes(app, fileController);
+  void registerSessionContextRoutes(app, fileContextController);
   void registerProviderRoutes(app, providerController);
 
   app.addHook("onClose", async () => {

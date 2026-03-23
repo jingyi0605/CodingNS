@@ -86,3 +86,55 @@ export interface SessionListItem {
   lastErrorDetail: string | null;
   resumedAt: string | null;
 }
+
+
+export interface FileNode {
+  path: string;
+  name: string;
+  kind: "file" | "directory";
+  size: number | null;
+  updatedAt: string | null;
+}
+
+export interface FileSnapshot {
+  workspaceId: string;
+  path: string;
+  content: string;
+  encoding: "utf-8";
+  version: string;
+  size: number;
+  updatedAt: string;
+}
+
+export interface FileSearchItem {
+  path: string;
+  name: string;
+  kind: "file" | "directory";
+  size: number | null;
+  updatedAt: string | null;
+}
+
+export interface RecentFileRecord {
+  id: string;
+  workspaceId: string;
+  userId: string;
+  path: string;
+  lastOpenedAt: string;
+  pinned: boolean;
+}
+
+export interface FileContextBinding {
+  id: string;
+  sessionId: string;
+  workspaceId: string;
+  path: string;
+  displayName: string;
+  selected: boolean;
+  pinned: boolean;
+  rangeStart: number | null;
+  rangeEnd: number | null;
+  contentHash: string;
+  fileVersion: string;
+  attachedBy: string;
+  attachedAt: string;
+}
