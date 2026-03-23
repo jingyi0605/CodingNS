@@ -11,6 +11,11 @@ export interface WorkspaceDto {
   repoRoot: string | null;
 }
 
+export interface ImportWorkspacePayload {
+  path: string;
+  name?: string;
+}
+
 export interface SessionSummaryDto {
   sessionId: string;
   workspaceId: string;
@@ -70,14 +75,34 @@ export interface SendMessageResponseDto {
   message: HistoryMessageDto;
 }
 
+export interface StartSessionPayload {
+  workspaceId: string;
+  provider: ProviderId;
+  initialPrompt?: string;
+}
+
 export function listWorkspaces() {
   return httpClient.request<{ items: WorkspaceDto[] }>("/api/workspaces");
+}
+
+export function importWorkspace(payload: ImportWorkspacePayload) {
+  return httpClient.request<WorkspaceDto>("/api/workspaces/import", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
 }
 
 export function listWorkspaceSessions(workspaceId: string) {
   return httpClient.request<{ items: SessionSummaryDto[] }>(
     `/api/sessions?workspaceId=${encodeURIComponent(workspaceId)}`
   );
+}
+
+export function startSession(payload: StartSessionPayload) {
+  return httpClient.request<SessionSummaryDto>("/api/sessions/start", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
 }
 
 export function getSessionDetail(sessionId: string) {

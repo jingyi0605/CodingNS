@@ -34,22 +34,22 @@
 
 ## 阶段 1：把交付边界和平台适配骨架立住
 
-- [ ] 1.1 建立桌面壳与共享 Web 运行时的边界
+- [ ] 1.1 建立桌面壳与共享前端运行时的边界
   - 状态：TODO
-  - 这一步到底做什么：明确 `apps/desktop` 与 `apps/web` 的职责边界，建立平台适配入口。
-  - 做完你能看到什么：桌面端与 H5 都从同一套 Web 入口启动，壳层只负责平台能力。
+  - 这一步到底做什么：明确 `apps/desktop` 与 `apps/user-app` 的职责边界，建立平台适配入口。
+  - 做完你能看到什么：桌面端与 H5 都从同一套前端入口启动，壳层只负责平台能力。
   - 先依赖什么：`spec001`、`spec003` 的基础约束已可用。
   - 开始前先看：
     - `requirements.md` 需求 1、需求 2
     - `design.md` §2.1、§2.2、§6.1
   - 主要改哪里：
-    - `apps/web/src/platform/platform-adapter.ts`
-    - `apps/web/src/platform/platform-provider.tsx`
+    - `apps/user-app/src/platform/platform-adapter.ts`
+    - `apps/user-app/src/platform/platform-provider.tsx`
     - `apps/desktop/src-tauri/src/main.rs`
     - `apps/desktop/src-tauri/tauri.conf.json`
   - 这一步先不做什么：不做业务页面逻辑，不做移动端适配。
   - 怎么算完成：
-    1. 平台适配入口可区分 `desktop/web`
+    1. 平台适配入口可区分 `desktop/h5`
     2. 业务页面无需感知 Tauri 细节
   - 怎么验证：
     - 平台适配单元测试
@@ -66,8 +66,8 @@
     - `requirements.md` 需求 2、需求 3
     - `design.md` §3.2.1、§4.1
   - 主要改哪里：
-    - `apps/web/src/config/client-config-store.ts`
-    - `apps/web/src/config/client-config-service.ts`
+    - `apps/user-app/src/config/client-config-store.ts`
+    - `apps/user-app/src/config/client-config-service.ts`
     - `apps/desktop/src-tauri/src/config.rs`
   - 这一步先不做什么：不实现更新发布策略。
   - 怎么算完成：
@@ -111,9 +111,9 @@
     - `requirements.md` 需求 3、需求 6
     - `design.md` §2.3.1、§3.3.1、§3.3.2
   - 主要改哪里：
-    - `apps/web/src/bootstrap/bootstrap-app.ts`
-    - `apps/web/src/auth/auth-gateway.ts`
-    - `apps/web/src/network/host-probe.ts`
+    - `apps/user-app/src/bootstrap/bootstrap-app.ts`
+    - `apps/user-app/src/auth/auth-gateway.ts`
+    - `apps/user-app/src/network/host-probe.ts`
   - 这一步先不做什么：不做桌面升级流程。
   - 怎么算完成：
     1. 初始化/登录/可进入三态清晰
@@ -133,9 +133,9 @@
     - `requirements.md` 需求 4、需求 6
     - `design.md` §2.3.3、§4.2、§5.3
   - 主要改哪里：
-    - `apps/web/src/network/connection-manager.ts`
-    - `apps/web/src/network/realtime-client.ts`
-    - `apps/web/src/components/connection/ConnectionStatusBanner.tsx`
+    - `apps/user-app/src/network/connection-manager.ts`
+    - `apps/user-app/src/network/realtime-client.ts`
+    - `apps/user-app/src/components/connection/ConnectionStatusBanner.tsx`
   - 这一步先不做什么：不改会话业务协议，不加移动端通知。
   - 怎么算完成：
     1. 自动重连和失败提示可用
@@ -179,8 +179,8 @@
     - `design.md` §2.3.4、§3.2.3、§3.3.5
   - 主要改哪里：
     - `apps/desktop/src-tauri/src/updater.rs`
-    - `apps/web/src/desktop/release-manager.ts`
-    - `apps/web/src/settings/ReleasePanel.tsx`
+    - `apps/user-app/src/platform/desktop/release-manager.ts`
+    - `apps/user-app/src/settings/ReleasePanel.tsx`
   - 这一步先不做什么：不接入移动端升级策略。
   - 怎么算完成：
     1. 可按通道检查更新
@@ -202,7 +202,7 @@
   - 主要改哪里：
     - `apps/desktop/src-tauri/src/rollback.rs`
     - `apps/desktop/src-tauri/src/config.rs`
-    - `apps/web/src/desktop/release-manager.ts`
+    - `apps/user-app/src/platform/desktop/release-manager.ts`
   - 这一步先不做什么：不新增发布平台范围。
   - 怎么算完成：
     1. 升级失败可自动或手动回退

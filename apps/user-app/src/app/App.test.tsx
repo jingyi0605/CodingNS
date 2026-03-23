@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
 import { authStore } from "../features/auth/store/auth-store";
+import { WorkbenchLayout } from "../features/conversation/components/WorkbenchLayout";
 import { ConversationPage } from "../features/conversation/pages/ConversationPage";
 import { t } from "../shared/i18n";
 
@@ -223,7 +224,9 @@ describe("app routes", () => {
     render(
       <MemoryRouter initialEntries={["/sessions/session-1"]}>
         <Routes>
-          <Route path="/sessions/:sessionId" element={<ConversationPage />} />
+          <Route element={<WorkbenchLayout />}>
+            <Route path="/sessions/:sessionId" element={<ConversationPage />} />
+          </Route>
         </Routes>
       </MemoryRouter>
     );
@@ -337,7 +340,9 @@ describe("app routes", () => {
     const view = render(
       <MemoryRouter initialEntries={["/sessions/session-1"]}>
         <Routes>
-          <Route path="/sessions/:sessionId" element={<ConversationPage />} />
+          <Route element={<WorkbenchLayout />}>
+            <Route path="/sessions/:sessionId" element={<ConversationPage />} />
+          </Route>
         </Routes>
       </MemoryRouter>
     );
@@ -697,7 +702,9 @@ describe("app routes", () => {
     render(
       <MemoryRouter initialEntries={["/sessions/session-1"]}>
         <Routes>
-          <Route path="/sessions/:sessionId" element={<ConversationPage />} />
+          <Route element={<WorkbenchLayout />}>
+            <Route path="/sessions/:sessionId" element={<ConversationPage />} />
+          </Route>
         </Routes>
       </MemoryRouter>
     );

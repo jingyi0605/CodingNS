@@ -11,12 +11,14 @@ interface SessionHeaderProps {
   session: SessionSummaryDto | null;
   capabilities: ProviderCapabilitiesDto | null;
   connectionState: RuntimeConnectionState;
+  workspaceName?: string | null;
 }
 
 export function SessionHeader({
   session,
   capabilities,
-  connectionState
+  connectionState,
+  workspaceName
 }: SessionHeaderProps) {
   const capabilitySummary = summarizeCapabilities(capabilities);
 
@@ -37,7 +39,8 @@ export function SessionHeader({
         </div>
         <h1>{session?.title || t("conversation.titleFallback")}</h1>
         <p>
-          {t("conversation.headerWorkspace")} · {session?.workspaceId ?? t("common.unknown")}
+          {t("conversation.headerWorkspace")} /{" "}
+          {workspaceName ?? session?.workspaceId ?? t("common.unknown")}
         </p>
       </div>
 

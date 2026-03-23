@@ -1,4 +1,4 @@
-import { getHostBaseUrl } from "../config/env";
+import { getHostWebSocketUrl } from "../config/env";
 import { authStore } from "../features/auth/store/auth-store";
 
 type RuntimeConnectionState = "connected" | "reconnecting" | "reconnect_failed" | "closed";
@@ -102,9 +102,7 @@ export class RealtimeClient {
       this.options.onConnectionChange("reconnecting");
     }
 
-    const baseUrl = new URL(getHostBaseUrl());
-    const protocol = baseUrl.protocol === "https:" ? "wss:" : "ws:";
-    const socketUrl = `${protocol}//${baseUrl.host}/ws?access_token=${encodeURIComponent(accessToken)}`;
+    const socketUrl = `${getHostWebSocketUrl("/ws")}?access_token=${encodeURIComponent(accessToken)}`;
     const socket = new WebSocket(socketUrl);
 
     this.socket = socket;

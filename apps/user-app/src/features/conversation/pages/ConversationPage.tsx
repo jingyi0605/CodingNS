@@ -1,19 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 
 import { t } from "../../../shared/i18n";
-import { authStore } from "../../auth/store/auth-store";
 import { ConnectionBanner } from "../components/ConnectionBanner";
 import { ComposerPanel } from "../components/ComposerPanel";
-import { ConversationLayout } from "../components/ConversationLayout";
 import { FileContextPanel } from "../components/FileContextPanel";
 import { GitSidebar } from "../components/GitSidebar";
 import { MessageTimeline } from "../components/MessageTimeline";
 import { SessionHeader } from "../components/SessionHeader";
+import { useWorkbenchShell } from "../components/WorkbenchLayout";
 import { SessionRuntimeStore, useSessionRuntimeStore } from "../runtime/session-runtime-store";
 
 export function ConversationPage() {
   const { sessionId = "" } = useParams();
+  const { navigationGroups, refreshNavigation, setAuxiliaryPanel } = useWorkbenchShell();
   const storeRef = useRef<SessionRuntimeStore | null>(null);
   const currentSessionIdRef = useRef<string | null>(null);
   const [sending, setSending] = useState(false);
@@ -25,7 +25,6 @@ export function ConversationPage() {
   }
 
   const store = storeRef.current;
-
   const session = useSessionRuntimeStore(store, (state) => state.session);
   const capabilities = useSessionRuntimeStore(store, (state) => state.capabilities);
   const messages = useSessionRuntimeStore(store, (state) => state.messages);
@@ -42,84 +41,76 @@ export function ConversationPage() {
     };
   }, [store]);
 
-  const sidebar = useMemo(
-    () => (
-      <>
-        <FileContextPanel sessionId={sessionId} workspaceId={session?.workspaceId ?? null} />
-
-        <section className="conversation-panel surface-card">
-          <h2>{t("conversation.sidebarTitle")}</h2>
-          <p className="status-text">{t("conversation.sidebarSubtitle")}</p>
-          <div className="badge-row">
-            <span className="badge">
-              {t("conversation.historyPages")} · {pagesLoaded}
-            </span>
-            <span className="badge">{session?.provider ?? t("common.unknown")}</span>
-          </div>
-          {errorDetail ? (
-            <p className="status-text" data-tone="error">
-              {errorDetail}
-            </p>
-          ) : null}
-        </section>
-
-        <section className="conversation-panel surface-card">
-          <div className="badge-row">
-            <Link className="ghost-button" to="/">
-              {t("common.back")}
-            </Link>
-            <button
-              className="ghost-button"
-              type="button"
-              onClick={() => {
-                authStore.clear();
-              }}
-            >
-              {t("common.logout")}
-            </button>
-          </div>
-        </section>
-
-        <GitSidebar workspaceId={session?.workspaceId} />
-      </>
-    ),
-    [errorDetail, pagesLoaded, session?.provider, session?.workspaceId]
+  const workspaceName = useMemo(
+    () =>
+      navigationGroups.find((item) => item.workspace.id === session?.workspaceId)?.workspace.name ?? null,
+    [navigationGroups, session?.workspaceId]
   );
 
-  return (
-    <ConversationLayout
-      header={
-        <SessionHeader
-          session={session}
-          capabilities={capabilities}
-          connectionState={connectionState}
-        />
-      }
-      banner={<ConnectionBanner connectionState={connectionState} onReconnect={() => store.reconnect()} />}
-      sidebar={sidebar}
-      composer={
-        <ComposerPanel
-          capabilities={capabilities}
-          isSubmitting={sending}
-          onSend={async (content) => {
-            setSending(true);
+  useEffect(() => {
+    setAuxiliaryPanel({
+      title: t("shell.auxiliaryTitle"),
+      description: t("conversation.auxiliarySubtitle"),
+      defaultCollapsed: false,
+      content: (
+        <>
+          <section className="workbench-side-card">
+            <h3>{t("conversation.sidebarTitle")}</h3>
+            <p className="status-text">{t("conversation.sidebarSubtitle")}</p>
+            <div className="badge-row">
+              <span className="badge">
+                {t("conversation.historyPages")} {pagesLoaded}
+              </span>
+              <span className="badge">{session?.provider ?? t("common.unknown")}</span>
+            </div>
+            {errorDetail ? (
+              <p className="status-text" data-tone="error">
+                {errorDetail}
+              </p>
+            ) : null}
+          </section>
 
-            try {
-              await store.sendMessage(content);
-            } finally {
-              setSending(false);
-            }
-          }}
-        />
-      }
-    >
+          <FileContextPanel sessionId={sessionId} workspaceId={session?.workspaceId ?? null} />
+          <GitSidebar workspaceId={session?.workspaceId} />
+        </>
+      )
+    });
+
+    return () => {
+      setAuxiliaryPanel(null);
+    };
+  }, [errorDetail, pagesLoaded, session?.provider, session?.workspaceId, sessionId, setAuxiliaryPanel]);
+
+  return (
+    <main className="workbench-page conversation-page-shell">
+      <SessionHeader
+        session={session}
+        capabilities={capabilities}
+        connectionState={connectionState}
+        workspaceName={workspaceName}
+      />
+      <ConnectionBanner connectionState={connectionState} onReconnect={() => store.reconnect()} />
       <MessageTimeline
         messages={messages}
         historyState={historyState}
-        onRetryMessage={(clientRequestId) => {
+        onRetryMessage={(clientRequestId: string) => {
           void store.retryMessage(clientRequestId);
         }}
       />
-    </ConversationLayout>
+      <ComposerPanel
+        capabilities={capabilities}
+        isSubmitting={sending}
+        onSend={async (content) => {
+          setSending(true);
+
+          try {
+            await store.sendMessage(content);
+            await refreshNavigation();
+          } finally {
+            setSending(false);
+          }
+        }}
+      />
+    </main>
   );
 }
