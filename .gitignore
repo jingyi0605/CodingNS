@@ -6,6 +6,7 @@ node_modules/
 # Build outputs
 dist/
 build/
+.build/
 out/
 .output/
 .next/

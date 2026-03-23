@@ -1,0 +1,9 @@
+{
+  "name": "codingns-workspace",
+  "private": true,
+  "packageManager": "pnpm@10.7.1",
+  "scripts": {
+    "build:host": "pnpm --filter host build",
+    "test:host": "pnpm --filter host test"
+  }
+}
