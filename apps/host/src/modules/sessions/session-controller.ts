@@ -27,6 +27,20 @@ interface StartSessionBody {
   initialPrompt?: string;
 }
 
+function requireUserId(request: FastifyRequest): string {
+  const userId = request.auth?.user.userId;
+
+  if (!userId) {
+    throw new AppError({
+      statusCode: 401,
+      errorCode: "UNAUTHORIZED",
+      detail: "当前请求缺少有效登录态"
+    });
+  }
+
+  return userId;
+}
+
 export class SessionController {
   constructor(private readonly sessionRuntimeService: SessionRuntimeService) {}
 
@@ -46,7 +60,10 @@ export class SessionController {
     }
 
     reply.send({
-      items: await this.sessionRuntimeService.discoverWorkspaceSessions(workspaceId)
+      items: await this.sessionRuntimeService.discoverWorkspaceSessions(
+        workspaceId,
+        requireUserId(request)
+      )
     });
   };
 
@@ -61,7 +78,8 @@ export class SessionController {
       await this.sessionRuntimeService.readSessionHistory(
         request.params.sessionId,
         request.query.cursor ?? null,
-        Number(request.query.limit ?? "50")
+        Number(request.query.limit ?? "50"),
+        requireUserId(request)
       )
     );
   };
@@ -70,7 +88,9 @@ export class SessionController {
     request: FastifyRequest<{ Params: SessionParams }>,
     reply: FastifyReply
   ): Promise<void> => {
-    reply.send(this.sessionRuntimeService.getSession(request.params.sessionId));
+    reply.send(
+      await this.sessionRuntimeService.getSession(request.params.sessionId, requireUserId(request))
+    );
   };
 
   readonly getCapabilities = async (
@@ -85,6 +105,17 @@ export class SessionController {
     reply: FastifyReply
   ): Promise<void> => {
     reply.send(await this.sessionRuntimeService.resumeSession(request.params.sessionId));
+  };
+
+  readonly markSeen = async (
+    request: FastifyRequest<{ Params: SessionParams }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    await this.sessionRuntimeService.markSessionSeen(
+      request.params.sessionId,
+      requireUserId(request)
+    );
+    reply.status(204).send();
   };
 
   readonly start = async (
@@ -115,6 +146,7 @@ export class SessionController {
     reply.status(201).send(
       await this.sessionRuntimeService.startSession({
         workspaceId,
+        userId: requireUserId(request),
         provider,
         initialPrompt: request.body.initialPrompt?.trim()
       })

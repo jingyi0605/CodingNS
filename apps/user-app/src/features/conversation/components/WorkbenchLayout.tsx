@@ -58,6 +58,18 @@ function formatSessionMeta(session: SessionSummaryDto) {
   return date ? new Date(date).toLocaleDateString() : "";
 }
 
+function sessionStateClassName(session: SessionSummaryDto) {
+  if (session.activityState === "running") {
+    return "session-state-indicator is-running";
+  }
+
+  if (session.activityState === "completed_unread") {
+    return "session-state-indicator is-unread";
+  }
+
+  return "session-state-indicator is-idle";
+}
+
 function SidebarContent({
   navigationGroups,
   workspaceCount,
@@ -232,7 +244,13 @@ function SidebarContent({
                     }
                     onClick={() => onClose?.()}
                   >
-                    <span className="session-title">{session.title || t("common.unknown")}</span>
+                    <div className="session-title-row">
+                      <span
+                        className={sessionStateClassName(session)}
+                        aria-hidden="true"
+                      />
+                      <span className="session-title">{session.title || t("common.unknown")}</span>
+                    </div>
                     <div className="session-meta-row">
                       <span className="session-meta">{formatSessionMeta(session)}</span>
                       <span className={`session-provider-badge ${session.provider}`}>
@@ -347,6 +365,18 @@ export function WorkbenchLayout() {
   useEffect(() => {
     void refreshNavigation();
   }, [location.pathname]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") {
+        void refreshNavigation();
+      }
+    }, 5000);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, []);
 
   const contextValue = useMemo<WorkbenchShellContextValue>(
     () => ({

@@ -38,7 +38,7 @@ export class SessionIndexRepository {
       );
   }
 
-  listByWorkspace(workspaceId: string): SessionListItem[] {
+  listByWorkspace(workspaceId: string, userId: string): SessionListItem[] {
     return this.db
       .prepare(
         `SELECT
@@ -57,18 +57,25 @@ export class SessionIndexRepository {
            snapshots.last_sync_at AS last_sync_at,
            snapshots.last_error_code AS last_error_code,
            snapshots.last_error_detail AS last_error_detail,
-           snapshots.resumed_at AS resumed_at
+           snapshots.resumed_at AS resumed_at,
+           states.running_state AS running_state,
+           states.last_event_at AS last_event_at,
+           states.completed_at AS completed_at,
+           states.last_seen_at AS last_seen_at
          FROM session_indices indices
          INNER JOIN session_bindings bindings ON bindings.session_id = indices.session_id
          LEFT JOIN session_status_snapshots snapshots ON snapshots.session_id = indices.session_id
+         LEFT JOIN session_states states
+           ON states.session_id = indices.session_id
+          AND states.user_id = ?
          WHERE indices.workspace_id = ?
          ORDER BY COALESCE(indices.last_message_at, indices.updated_at) DESC, indices.updated_at DESC`
       )
-      .all(workspaceId)
+      .all(userId, workspaceId)
       .map((row) => mapSessionListItemRow(row as SessionListItemRow));
   }
 
-  findBySessionId(sessionId: string): SessionListItem | null {
+  findBySessionId(sessionId: string, userId: string): SessionListItem | null {
     const row = this.db
       .prepare(
         `SELECT
@@ -87,15 +94,42 @@ export class SessionIndexRepository {
            snapshots.last_sync_at AS last_sync_at,
            snapshots.last_error_code AS last_error_code,
            snapshots.last_error_detail AS last_error_detail,
-           snapshots.resumed_at AS resumed_at
+           snapshots.resumed_at AS resumed_at,
+           states.running_state AS running_state,
+           states.last_event_at AS last_event_at,
+           states.completed_at AS completed_at,
+           states.last_seen_at AS last_seen_at
          FROM session_indices indices
          INNER JOIN session_bindings bindings ON bindings.session_id = indices.session_id
          LEFT JOIN session_status_snapshots snapshots ON snapshots.session_id = indices.session_id
+         LEFT JOIN session_states states
+           ON states.session_id = indices.session_id
+          AND states.user_id = ?
          WHERE indices.session_id = ?`
       )
-      .get(sessionId) as SessionListItemRow | undefined;
+      .get(userId, sessionId) as SessionListItemRow | undefined;
 
     return row ? mapSessionListItemRow(row) : null;
+  }
+
+  findIndexRecordBySessionId(sessionId: string): SessionIndexRecord | null {
+    const row = this.db
+      .prepare(
+        `SELECT
+           session_id AS session_id,
+           workspace_id AS workspace_id,
+           provider AS provider,
+           title AS title,
+           message_count AS message_count,
+           last_message_at AS last_message_at,
+           created_at AS created_at,
+           updated_at AS updated_at
+         FROM session_indices
+         WHERE session_id = ?`
+      )
+      .get(sessionId) as SessionIndexRecordRow | undefined;
+
+    return row ? mapSessionIndexRecordRow(row) : null;
   }
 }
 
@@ -116,9 +150,31 @@ interface SessionListItemRow {
   last_error_code: string | null;
   last_error_detail: string | null;
   resumed_at: string | null;
+  running_state: SessionListItem["runningState"];
+  last_event_at: string | null;
+  completed_at: string | null;
+  last_seen_at: string | null;
+}
+
+interface SessionIndexRecordRow {
+  session_id: string;
+  workspace_id: string;
+  provider: SessionIndexRecord["provider"];
+  title: string;
+  message_count: number;
+  last_message_at: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 function mapSessionListItemRow(row: SessionListItemRow): SessionListItem {
+  const activityState =
+    row.running_state === "running"
+      ? "running"
+      : row.completed_at && (!row.last_seen_at || row.completed_at > row.last_seen_at)
+        ? "completed_unread"
+        : "idle";
+
   return {
     sessionId: row.session_id,
     workspaceId: row.workspace_id,
@@ -135,6 +191,24 @@ function mapSessionListItemRow(row: SessionListItemRow): SessionListItem {
     lastSyncAt: row.last_sync_at,
     lastErrorCode: row.last_error_code,
     lastErrorDetail: row.last_error_detail,
-    resumedAt: row.resumed_at
+    resumedAt: row.resumed_at,
+    runningState: row.running_state,
+    lastEventAt: row.last_event_at,
+    completedAt: row.completed_at,
+    lastSeenAt: row.last_seen_at,
+    activityState
+  };
+}
+
+function mapSessionIndexRecordRow(row: SessionIndexRecordRow): SessionIndexRecord {
+  return {
+    sessionId: row.session_id,
+    workspaceId: row.workspace_id,
+    provider: row.provider,
+    title: row.title,
+    messageCount: row.message_count,
+    lastMessageAt: row.last_message_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
   };
 }

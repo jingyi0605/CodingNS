@@ -51,6 +51,7 @@ import { FileContextBindingRepository } from "../storage/repositories/file-conte
 import { RecentFileRepository } from "../storage/repositories/recent-file-repository.js";
 import { SessionBindingRepository } from "../storage/repositories/session-binding-repository.js";
 import { SessionIndexRepository } from "../storage/repositories/session-index-repository.js";
+import { SessionStateRepository } from "../storage/repositories/session-state-repository.js";
 import { SessionStatusSnapshotRepository } from "../storage/repositories/session-status-snapshot-repository.js";
 import { TerminalCommandTemplateRepository } from "../storage/repositories/terminal-command-template-repository.js";
 import { TerminalInstanceRepository } from "../storage/repositories/terminal-instance-repository.js";
@@ -75,6 +76,7 @@ export function createServer(config: HostConfig) {
     fileContextBindingRepository: new FileContextBindingRepository(database.db),
     sessionBindingRepository: new SessionBindingRepository(database.db),
     sessionIndexRepository: new SessionIndexRepository(database.db),
+    sessionStateRepository: new SessionStateRepository(database.db),
     sessionStatusSnapshotRepository: new SessionStatusSnapshotRepository(database.db),
     terminalInstanceRepository: new TerminalInstanceRepository(database.db),
     terminalCommandTemplateRepository: new TerminalCommandTemplateRepository(database.db)
@@ -122,6 +124,7 @@ export function createServer(config: HostConfig) {
     repositories.workspaceRepository,
     repositories.sessionBindingRepository,
     repositories.sessionIndexRepository,
+    repositories.sessionStateRepository,
     repositories.sessionStatusSnapshotRepository,
     config
   );

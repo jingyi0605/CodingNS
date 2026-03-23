@@ -1,4 +1,5 @@
-import { appendFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
 
 import WebSocket from "ws";
 import { afterEach, describe, expect, it } from "vitest";
@@ -176,7 +177,64 @@ describe("spec002 会话同步核心", () => {
       }
     });
     expect(nextHistory.statusCode).toBe(200);
-    expect(nextHistory.json().messages).toHaveLength(1);
+    expect(nextHistory.json().messages).toHaveLength(3);
+    expect(nextHistory.json().messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "tool_call",
+          role: "tool",
+          toolCall: expect.objectContaining({
+            callId: "toolu_fixture_1",
+            name: "Read",
+            input: expect.stringContaining("README.md"),
+            status: "running"
+          })
+        }),
+        expect.objectContaining({
+          kind: "tool_result",
+          role: "tool",
+          toolCall: expect.objectContaining({
+            callId: "toolu_fixture_1",
+            name: "Read",
+            output: "README fixture content",
+            status: "completed"
+          })
+        })
+      ])
+    );
+
+    const codexHistory = await hosted.app.inject({
+      method: "GET",
+      url: `/api/sessions/${codexSession.sessionId}/messages?limit=10`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(codexHistory.statusCode).toBe(200);
+    expect(codexHistory.json().messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "tool_call",
+          role: "tool",
+          toolCall: expect.objectContaining({
+            callId: "call-shell-1",
+            name: "shell_command",
+            input: "{\n  \"command\": \"git status --short\"\n}",
+            status: "running"
+          })
+        }),
+        expect.objectContaining({
+          kind: "tool_result",
+          role: "tool",
+          toolCall: expect.objectContaining({
+            callId: "call-shell-1",
+            name: "shell_command",
+            output: expect.stringContaining("M src/main.ts"),
+            status: "completed"
+          })
+        })
+      ])
+    );
 
     const providerCapability = await hosted.app.inject({
       method: "GET",
@@ -271,6 +329,7 @@ describe("spec002 会话同步核心", () => {
       .all() as Array<{ name: string }>;
     expect(schemaTables.map((item) => item.name)).toContain("session_bindings");
     expect(schemaTables.map((item) => item.name)).toContain("session_indices");
+    expect(schemaTables.map((item) => item.name)).toContain("session_states");
     expect(schemaTables.map((item) => item.name)).toContain("session_status_snapshots");
 
     const bindingColumns = hosted.services.database.db
@@ -487,4 +546,256 @@ describe("spec002 会话同步核心", () => {
       })
     ).resolves.toBe(true);
   });
+
+  it("session_state 涓夋€佹祦杞」", async () => {
+    const fixture = createProviderFixture();
+    activeFixtures.push(fixture);
+    writeFileSync(fixture.claudeSessionFile, "", "utf8");
+    writeCodexSessionFile({
+      codexHomeDir: fixture.codexHomeDir,
+      workspaceDir: fixture.workspaceDir,
+      fileName: "codex-session-1",
+      timestamps: [
+        "2026-03-23T09:00:00.000Z",
+        "2026-03-23T09:00:05.000Z",
+        "2026-03-23T09:00:08.000Z"
+      ],
+      includeToolCall: true
+    });
+
+    const hosted = createTestApp(fixture);
+    activeClosers.push(() => hosted.app.close());
+    await hosted.app.ready();
+
+    const accessToken = await bootstrapAndLogin(hosted);
+    const workspaceId = await importWorkspace(hosted, accessToken, fixture.workspaceDir);
+
+    const firstList = await hosted.app.inject({
+      method: "GET",
+      url: `/api/sessions?workspaceId=${workspaceId}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(firstList.statusCode).toBe(200);
+
+    const runningSession = firstList
+      .json()
+      .items.find((item: { provider: string }) => item.provider === "codex");
+    expect(runningSession).toMatchObject({
+      runningState: "running",
+      activityState: "running"
+    });
+
+    appendFileSync(
+      fixture.codexSessionFile,
+      `\n${JSON.stringify({
+        timestamp: "2026-03-23T09:00:10.000Z",
+        type: "response_item",
+        payload: {
+          type: "function_call_output",
+          call_id: "call-shell-1",
+          output: "Exit code: 0\nOutput:\nall good"
+        }
+      })}`,
+      "utf8"
+    );
+
+    const unreadList = await hosted.app.inject({
+      method: "GET",
+      url: `/api/sessions?workspaceId=${workspaceId}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(unreadList.statusCode).toBe(200);
+
+    const unreadSession = unreadList
+      .json()
+      .items.find((item: { provider: string }) => item.provider === "codex");
+    expect(unreadSession.runningState).toBe("idle");
+    expect(unreadSession.activityState).toBe("completed_unread");
+    expect(unreadSession.completedAt).toBe("2026-03-23T09:00:10.000Z");
+    expect(unreadSession.lastSeenAt).toBeNull();
+
+    const seen = await hosted.app.inject({
+      method: "POST",
+      url: `/api/sessions/${unreadSession.sessionId}/seen`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(seen.statusCode).toBe(204);
+
+    const idleList = await hosted.app.inject({
+      method: "GET",
+      url: `/api/sessions?workspaceId=${workspaceId}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(idleList.statusCode).toBe(200);
+
+    const idleSession = idleList
+      .json()
+      .items.find((item: { provider: string }) => item.provider === "codex");
+    expect(idleSession.activityState).toBe("idle");
+    expect(idleSession.lastSeenAt).toBeTruthy();
+  });
+
+  it("鍙埛鏂版渶杩?10 鏉′細璇濈姸鎬?", async () => {
+    const fixture = createProviderFixture();
+    activeFixtures.push(fixture);
+    writeFileSync(fixture.claudeSessionFile, "", "utf8");
+
+    for (let index = 0; index < 12; index += 1) {
+      const minute = String(index).padStart(2, "0");
+      writeCodexSessionFile({
+        codexHomeDir: fixture.codexHomeDir,
+        workspaceDir: fixture.workspaceDir,
+        fileName: `codex-session-${index + 1}`,
+        timestamps: [
+          `2026-03-23T09:${minute}:00.000Z`,
+          `2026-03-23T09:${minute}:10.000Z`,
+          `2026-03-23T09:${minute}:20.000Z`
+        ]
+      });
+    }
+
+    const hosted = createTestApp(fixture);
+    activeClosers.push(() => hosted.app.close());
+    await hosted.app.ready();
+
+    const accessToken = await bootstrapAndLogin(hosted);
+    const workspaceId = await importWorkspace(hosted, accessToken, fixture.workspaceDir);
+
+    const list = await hosted.app.inject({
+      method: "GET",
+      url: `/api/sessions?workspaceId=${workspaceId}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(list.statusCode).toBe(200);
+    expect(list.json().items).toHaveLength(12);
+
+    const stateRows = hosted.services.database.db
+      .prepare("SELECT session_id FROM session_states ORDER BY updated_at DESC")
+      .all() as Array<{ session_id: string }>;
+    expect(stateRows).toHaveLength(10);
+    expect(stateRows.map((row) => row.session_id).sort()).toEqual(
+      list
+        .json()
+        .items.slice(0, 10)
+        .map((item: { sessionId: string }) => item.sessionId)
+        .sort()
+    );
+    expect(list.json().items[10].runningState).toBeNull();
+    expect(list.json().items[11].runningState).toBeNull();
+  });
 });
+
+async function bootstrapAndLogin(hosted: ReturnType<typeof createTestApp>): Promise<string> {
+  await hosted.app.inject({
+    method: "POST",
+    url: "/api/public/setup",
+    payload: {
+      username: "admin",
+      password: "password123"
+    }
+  });
+
+  const login = await hosted.app.inject({
+    method: "POST",
+    url: "/api/auth/login",
+    payload: {
+      username: "admin",
+      password: "password123"
+    }
+  });
+
+  return login.json().accessToken as string;
+}
+
+async function importWorkspace(
+  hosted: ReturnType<typeof createTestApp>,
+  accessToken: string,
+  workspacePath: string
+): Promise<string> {
+  const imported = await hosted.app.inject({
+    method: "POST",
+    url: "/api/workspaces/import",
+    headers: {
+      authorization: `Bearer ${accessToken}`
+    },
+    payload: {
+      path: workspacePath,
+      name: "Fixture Workspace"
+    }
+  });
+
+  expect(imported.statusCode).toBe(201);
+  return imported.json().id as string;
+}
+
+function writeCodexSessionFile(input: {
+  codexHomeDir: string;
+  workspaceDir: string;
+  fileName: string;
+  timestamps: [string, string, string];
+  includeToolCall?: boolean;
+}): string {
+  const sessionDir = path.join(input.codexHomeDir, "sessions", "2026", "03", "23");
+  const sessionFile = path.join(sessionDir, `${input.fileName}.jsonl`);
+  mkdirSync(sessionDir, { recursive: true });
+
+  const lines = [
+    JSON.stringify({
+      timestamp: input.timestamps[0],
+      type: "session_meta",
+      payload: {
+        id: input.fileName,
+        timestamp: input.timestamps[0],
+        cwd: input.workspaceDir,
+        originator: "Codex",
+        source: "test"
+      }
+    }),
+    JSON.stringify({
+      timestamp: input.timestamps[1],
+      type: "event_msg",
+      payload: {
+        type: "user_message",
+        message: `${input.fileName} user message`
+      }
+    }),
+    JSON.stringify({
+      timestamp: input.timestamps[2],
+      type: "event_msg",
+      payload: {
+        type: "agent_message",
+        message: `${input.fileName} assistant message`
+      }
+    })
+  ];
+
+  if (input.includeToolCall) {
+    lines.push(
+      JSON.stringify({
+        timestamp: "2026-03-23T09:00:09.000Z",
+        type: "response_item",
+        payload: {
+          type: "function_call",
+          call_id: "call-shell-1",
+          name: "shell_command",
+          arguments: {
+            command: "git status --short"
+          }
+        }
+      })
+    );
+  }
+
+  writeFileSync(sessionFile, lines.join("\n"), "utf8");
+  return sessionFile;
+}

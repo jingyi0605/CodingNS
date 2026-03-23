@@ -7,6 +7,7 @@ import {
   getSessionCapabilities,
   getSessionDetail,
   getSessionMessages,
+  markSessionSeen,
   sendSessionMessage,
   type ProviderCapabilitiesDto
 } from "../api/conversation-api";
@@ -26,6 +27,7 @@ export class SessionRuntimeStore {
   private state: SessionRuntimeState = createInitialRuntimeState();
   private listeners = new Set<RuntimeListener>();
   private realtimeClient: RealtimeClient | null = null;
+  private markSeenTimer: number | null = null;
 
   constructor(private readonly sessionId: string) {}
 
@@ -57,6 +59,7 @@ export class SessionRuntimeStore {
       });
 
       await this.loadHistory();
+      this.scheduleMarkSeen();
       this.startRealtime();
     } catch (error) {
       this.handleError(error);
@@ -139,6 +142,11 @@ export class SessionRuntimeStore {
   destroy(): void {
     this.realtimeClient?.close();
     this.realtimeClient = null;
+
+    if (this.markSeenTimer !== null) {
+      window.clearTimeout(this.markSeenTimer);
+      this.markSeenTimer = null;
+    }
   }
 
   private async loadHistory(): Promise<void> {
@@ -190,6 +198,7 @@ export class SessionRuntimeStore {
           lastCursor: event.cursor
         });
         this.realtimeClient?.updateCursor(event.cursor);
+        this.scheduleMarkSeen();
       },
       onError: (event) => {
         this.patch({
@@ -219,6 +228,19 @@ export class SessionRuntimeStore {
       errorCode: "RUNTIME_INIT_FAILED",
       errorDetail: detail
     });
+  }
+
+  private scheduleMarkSeen(): void {
+    if (this.markSeenTimer !== null) {
+      return;
+    }
+
+    this.markSeenTimer = window.setTimeout(() => {
+      this.markSeenTimer = null;
+      void markSessionSeen(this.sessionId).catch(() => {
+        // 已读回写失败不阻断会话主链路，下次刷新还会继续尝试。
+      });
+    }, 600);
   }
 
   private emit(): void {

@@ -3,6 +3,18 @@ import { httpClient } from "../../../network/http-client";
 export type ProviderId = "claude-code" | "codex";
 export type SyncStatus = "idle" | "syncing" | "error";
 export type DeliveryState = "sending" | "sent" | "failed";
+export type MessageKind = "text" | "thinking" | "tool_call" | "tool_result";
+export type SessionRunningState = "idle" | "running";
+export type SessionActivityState = "idle" | "running" | "completed_unread";
+
+export interface ToolCallDto {
+  callId: string;
+  name: string;
+  input: string;
+  output: string | null;
+  error: string | null;
+  status: "running" | "completed" | "failed";
+}
 
 export interface WorkspaceDto {
   id: string;
@@ -33,6 +45,11 @@ export interface SessionSummaryDto {
   lastErrorCode: string | null;
   lastErrorDetail: string | null;
   resumedAt: string | null;
+  runningState: SessionRunningState | null;
+  lastEventAt: string | null;
+  completedAt: string | null;
+  lastSeenAt: string | null;
+  activityState: SessionActivityState;
 }
 
 export interface ProviderCapabilitiesDto {
@@ -55,7 +72,9 @@ export interface HistoryMessageDto {
   provider: ProviderId;
   providerSessionId: string;
   role: "user" | "assistant" | "tool" | "system";
+  kind?: MessageKind;
   content: string;
+  toolCall?: ToolCallDto | null;
   timestamp: string;
   sequence: number;
   rawRef: string;
@@ -107,6 +126,12 @@ export function startSession(payload: StartSessionPayload) {
 
 export function getSessionDetail(sessionId: string) {
   return httpClient.request<SessionSummaryDto>(`/api/sessions/${encodeURIComponent(sessionId)}`);
+}
+
+export function markSessionSeen(sessionId: string) {
+  return httpClient.request<void>(`/api/sessions/${encodeURIComponent(sessionId)}/seen`, {
+    method: "POST"
+  });
 }
 
 export function getSessionCapabilities(sessionId: string) {

@@ -14,17 +14,24 @@ import {
 } from "@codingns/session-sync-core";
 
 import type { HostConfig } from "../../config/env.js";
+import { inspectSessionActivity } from "./session-activity-inspector.js";
 import { AppError } from "../../shared/errors/app-error.js";
 import { createId } from "../../shared/utils/id.js";
 import { nowIso } from "../../shared/utils/time.js";
-import type { SessionListItem, SessionStatusSnapshot } from "../../types/domain.js";
+import type {
+  SessionListItem,
+  SessionStateRecord,
+  SessionStatusSnapshot
+} from "../../types/domain.js";
 import type { SessionBindingRepository } from "../../storage/repositories/session-binding-repository.js";
 import type { SessionIndexRepository } from "../../storage/repositories/session-index-repository.js";
+import type { SessionStateRepository } from "../../storage/repositories/session-state-repository.js";
 import type { SessionStatusSnapshotRepository } from "../../storage/repositories/session-status-snapshot-repository.js";
 import type { WorkspaceRepository } from "../../storage/repositories/workspace-repository.js";
 
 interface StartSessionInput {
   workspaceId: string;
+  userId: string;
   provider: string;
   initialPrompt?: string;
 }
@@ -46,6 +53,7 @@ export class SessionRuntimeService {
     private readonly workspaceRepository: WorkspaceRepository,
     private readonly sessionBindingRepository: SessionBindingRepository,
     private readonly sessionIndexRepository: SessionIndexRepository,
+    private readonly sessionStateRepository: SessionStateRepository,
     private readonly sessionStatusSnapshotRepository: SessionStatusSnapshotRepository,
     config: HostConfig
   ) {
@@ -57,7 +65,7 @@ export class SessionRuntimeService {
     this.capabilityService = new CapabilityService(this.providerRegistry);
   }
 
-  async discoverWorkspaceSessions(workspaceId: string): Promise<SessionListItem[]> {
+  async discoverWorkspaceSessions(workspaceId: string, userId: string): Promise<SessionListItem[]> {
     const workspace = this.getWorkspaceOrThrow(workspaceId);
     const sessions = await this.sessionSyncService
       .discoverWorkspaceSessions(workspace.path)
@@ -111,13 +119,16 @@ export class SessionRuntimeService {
     });
 
     persist();
-    return this.sessionIndexRepository.listByWorkspace(workspaceId);
+    const items = this.sessionIndexRepository.listByWorkspace(workspaceId, userId);
+    await this.refreshRecentSessionStates(items.slice(0, 10), userId);
+    return this.sessionIndexRepository.listByWorkspace(workspaceId, userId);
   }
 
   async readSessionHistory(
     sessionId: string,
     cursor: string | null,
-    limit: number
+    limit: number,
+    userId?: string
   ): Promise<HistoryPage> {
     const binding = this.getBindingOrThrow(sessionId);
     const current = this.sessionStatusSnapshotRepository.findBySessionId(sessionId);
@@ -149,6 +160,10 @@ export class SessionRuntimeService {
         resumedAt: current?.resumedAt ?? null
       });
 
+      if (userId) {
+        await this.refreshSessionState(sessionId, userId);
+      }
+
       return page;
     } catch (error) {
       this.markSessionError(sessionId, "PROVIDER_READ_FAILED", error);
@@ -156,8 +171,10 @@ export class SessionRuntimeService {
     }
   }
 
-  getSession(sessionId: string): SessionListItem {
-    return this.getSessionListItemOrThrow(sessionId);
+  async getSession(sessionId: string, userId: string): Promise<SessionListItem> {
+    await this.refreshSessionState(sessionId, userId);
+    await this.markSessionSeen(sessionId, userId);
+    return this.getSessionListItemOrThrow(sessionId, userId);
   }
 
   getProviderCapabilities(provider: string): ProviderCapabilities {
@@ -255,10 +272,19 @@ export class SessionRuntimeService {
           resumedAt: null,
           updatedAt: timestamp
         });
+        this.sessionStateRepository.upsert({
+          sessionId,
+          userId: input.userId,
+          runningState: "idle",
+          lastEventAt: result.session.lastMessageAt,
+          completedAt: null,
+          lastSeenAt: null,
+          updatedAt: timestamp
+        });
       });
 
       persist();
-      return this.getSessionListItemOrThrow(sessionId);
+      return this.getSessionListItemOrThrow(sessionId, input.userId);
     } catch (error) {
       throw this.mapProviderError(error);
     }
@@ -283,7 +309,7 @@ export class SessionRuntimeService {
         throw this.mapProviderError(error);
       });
 
-    const existing = this.sessionIndexRepository.findBySessionId(sessionId);
+    const existing = this.sessionIndexRepository.findIndexRecordBySessionId(sessionId);
 
     this.sessionIndexRepository.upsert({
       sessionId,
@@ -420,6 +446,23 @@ export class SessionRuntimeService {
     }
   }
 
+  async markSessionSeen(sessionId: string, userId: string): Promise<void> {
+    const existing =
+      this.sessionStateRepository.findBySessionAndUser(sessionId, userId) ??
+      (await this.refreshSessionState(sessionId, userId));
+    const seenAt = nowIso();
+
+    this.sessionStateRepository.upsert({
+      sessionId,
+      userId,
+      runningState: existing?.runningState ?? "idle",
+      lastEventAt: existing?.lastEventAt ?? null,
+      completedAt: existing?.completedAt ?? null,
+      lastSeenAt: seenAt,
+      updatedAt: seenAt
+    });
+  }
+
   private async readPage(
     provider: string,
     providerSessionId: string,
@@ -462,8 +505,8 @@ export class SessionRuntimeService {
     return binding;
   }
 
-  private getSessionListItemOrThrow(sessionId: string): SessionListItem {
-    const item = this.sessionIndexRepository.findBySessionId(sessionId);
+  private getSessionListItemOrThrow(sessionId: string, userId: string): SessionListItem {
+    const item = this.sessionIndexRepository.findBySessionId(sessionId, userId);
 
     if (!item) {
       throw new AppError({
@@ -474,6 +517,44 @@ export class SessionRuntimeService {
     }
 
     return item;
+  }
+
+  private async refreshRecentSessionStates(
+    sessions: SessionListItem[],
+    userId: string
+  ): Promise<void> {
+    for (const session of sessions) {
+      await this.refreshSessionState(session.sessionId, userId);
+    }
+  }
+
+  private async refreshSessionState(
+    sessionId: string,
+    userId: string
+  ): Promise<SessionStateRecord | null> {
+    const binding = this.getBindingOrThrow(sessionId);
+    const current = this.sessionStateRepository.findBySessionAndUser(sessionId, userId);
+    const inspection = inspectSessionActivity(binding.provider, binding.rawStoreRef);
+    const timestamp = nowIso();
+    const completedAt =
+      current?.runningState === "running" &&
+      inspection.runningState === "idle" &&
+      !inspection.hasPendingTools
+        ? inspection.completedAtCandidate ?? inspection.lastEventAt ?? current?.completedAt ?? null
+        : current?.completedAt ?? null;
+
+    const nextRecord: SessionStateRecord = {
+      sessionId,
+      userId,
+      runningState: inspection.runningState,
+      lastEventAt: inspection.lastEventAt,
+      completedAt,
+      lastSeenAt: current?.lastSeenAt ?? null,
+      updatedAt: timestamp
+    };
+
+    this.sessionStateRepository.upsert(nextRecord);
+    return nextRecord;
   }
 
   private upsertSnapshot(

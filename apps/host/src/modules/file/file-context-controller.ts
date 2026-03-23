@@ -48,7 +48,7 @@ export class FileContextController {
     );
 
     reply.status(201).send(
-      this.fileContextService.attach({
+      await this.fileContextService.attach({
         sessionId: request.params.sessionId,
         workspaceId,
         snapshot,
@@ -64,7 +64,7 @@ export class FileContextController {
     reply: FastifyReply
   ): Promise<void> => {
     reply.send({
-      items: this.fileContextService.list(request.params.sessionId)
+      items: await this.fileContextService.list(request.params.sessionId, requireUserId(request))
     });
   };
 
@@ -73,7 +73,11 @@ export class FileContextController {
     reply: FastifyReply
   ): Promise<void> => {
     reply.send(
-      this.fileContextService.detach(request.params.sessionId, request.params.bindingId ?? "")
+      await this.fileContextService.detach(
+        request.params.sessionId,
+        request.params.bindingId ?? "",
+        requireUserId(request)
+      )
     );
   };
 }

@@ -23,8 +23,8 @@ export class FileContextService {
     private readonly fileContextBindingRepository: FileContextBindingRepository
   ) {}
 
-  attach(input: AttachFileContextInput): FileContextBinding {
-    const session = this.sessionRuntimeService.getSession(input.sessionId);
+  async attach(input: AttachFileContextInput): Promise<FileContextBinding> {
+    const session = await this.sessionRuntimeService.getSession(input.sessionId, input.userId);
 
     if (session.workspaceId !== input.workspaceId) {
       throw new AppError({
@@ -57,12 +57,13 @@ export class FileContextService {
     });
   }
 
-  list(sessionId: string): FileContextBinding[] {
-    this.sessionRuntimeService.getSession(sessionId);
+  async list(sessionId: string, userId: string): Promise<FileContextBinding[]> {
+    await this.sessionRuntimeService.getSession(sessionId, userId);
     return this.fileContextBindingRepository.listBySession(sessionId);
   }
 
-  detach(sessionId: string, bindingId: string): { success: true } {
+  async detach(sessionId: string, bindingId: string, userId: string): Promise<{ success: true }> {
+    await this.sessionRuntimeService.getSession(sessionId, userId);
     const binding = this.fileContextBindingRepository.findById(bindingId);
 
     if (!binding || binding.sessionId !== sessionId) {

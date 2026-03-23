@@ -387,6 +387,37 @@ a {
   text-overflow: ellipsis;
 }
 
+.session-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.session-state-indicator {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.session-state-indicator.is-idle {
+  border: 1px solid var(--border-primary);
+  background: transparent;
+}
+
+.session-state-indicator.is-unread {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.session-state-indicator.is-running {
+  border: 2px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  border-top-color: var(--accent);
+  background: transparent;
+  animation: session-running-spin 800ms linear infinite;
+}
+
 .session-meta-row {
   display: flex;
   align-items: center;
@@ -397,6 +428,16 @@ a {
 .session-meta {
   font-size: 11px;
   color: var(--text-tertiary);
+}
+
+@keyframes session-running-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .workbench-session-empty {

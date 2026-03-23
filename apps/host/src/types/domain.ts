@@ -1,5 +1,8 @@
 import type { ProviderId, SyncStatus } from "@codingns/session-sync-core";
 
+export type SessionRunningState = "idle" | "running";
+export type SessionActivityState = "idle" | "running" | "completed_unread";
+
 export interface BootstrapState {
   id: "default";
   initialized: boolean;
@@ -68,6 +71,16 @@ export interface SessionStatusSnapshot {
   updatedAt: string;
 }
 
+export interface SessionStateRecord {
+  sessionId: string;
+  userId: string;
+  runningState: SessionRunningState;
+  lastEventAt: string | null;
+  completedAt: string | null;
+  lastSeenAt: string | null;
+  updatedAt: string;
+}
+
 export interface SessionListItem {
   sessionId: string;
   workspaceId: string;
@@ -85,6 +98,11 @@ export interface SessionListItem {
   lastErrorCode: string | null;
   lastErrorDetail: string | null;
   resumedAt: string | null;
+  runningState: SessionRunningState | null;
+  lastEventAt: string | null;
+  completedAt: string | null;
+  lastSeenAt: string | null;
+  activityState: SessionActivityState;
 }
 
 export interface FileNode {

@@ -11,6 +11,7 @@ export async function registerSessionRoutes(
   app.get("/api/sessions/:sessionId/messages", sessionController.readMessages);
   app.get("/api/sessions/:sessionId/capabilities", sessionController.getCapabilities);
   app.post("/api/sessions/:sessionId/messages", sessionController.sendMessage);
+  app.post("/api/sessions/:sessionId/seen", sessionController.markSeen);
   app.post("/api/sessions/:sessionId/resume", sessionController.resume);
   app.post("/api/sessions/start", sessionController.start);
 }

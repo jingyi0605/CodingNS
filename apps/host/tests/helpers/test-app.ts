@@ -68,6 +68,55 @@ export function createProviderFixture(): ProviderFixture {
         }
       }),
       JSON.stringify({
+        type: "progress",
+        sessionId: "claude-session-1",
+        cwd: workspaceDir,
+        timestamp: "2026-03-23T08:00:12.000Z",
+        data: {
+          type: "agent_progress",
+          message: {
+            type: "assistant",
+            timestamp: "2026-03-23T08:00:12.000Z",
+            message: {
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  id: "toolu_fixture_1",
+                  name: "Read",
+                  input: {
+                    file_path: `${workspaceDir}\\README.md`
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }),
+      JSON.stringify({
+        type: "progress",
+        sessionId: "claude-session-1",
+        cwd: workspaceDir,
+        timestamp: "2026-03-23T08:00:13.000Z",
+        data: {
+          type: "agent_progress",
+          message: {
+            type: "user",
+            timestamp: "2026-03-23T08:00:13.000Z",
+            message: {
+              role: "user",
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: "toolu_fixture_1",
+                  content: "README fixture content"
+                }
+              ]
+            }
+          }
+        }
+      }),
+      JSON.stringify({
         type: "ai-title",
         sessionId: "claude-session-1",
         aiTitle: "Claude 样本会话"
@@ -103,7 +152,28 @@ export function createProviderFixture(): ProviderFixture {
         type: "event_msg",
         payload: {
           type: "agent_message",
-          message: "已开始接入 provider registry。"
+          message: "已开始接入 provider registry"
+        }
+      }),
+      JSON.stringify({
+        timestamp: "2026-03-23T09:00:10.000Z",
+        type: "response_item",
+        payload: {
+          type: "function_call",
+          call_id: "call-shell-1",
+          name: "shell_command",
+          arguments: {
+            command: "git status --short"
+          }
+        }
+      }),
+      JSON.stringify({
+        timestamp: "2026-03-23T09:00:12.000Z",
+        type: "response_item",
+        payload: {
+          type: "function_call_output",
+          call_id: "call-shell-1",
+          output: "Exit code: 0\nWall time: 0.2 seconds\nOutput:\nerror_code: 0\n M src/main.ts"
         }
       })
     ].join("\n"),

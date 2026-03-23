@@ -735,6 +735,145 @@ describe("app routes", () => {
   });
 });
 
+it("会通过统一消息抽象渲染 codex 工具调用", async () => {
+  authStore.hydrate({
+    accessToken: "access-token",
+    refreshToken: "refresh-token",
+    expiresIn: 3600,
+    user: {
+      userId: "user-1",
+      username: "admin",
+      role: "admin"
+    }
+  });
+
+  global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+    const url = typeof input === "string" ? input : input.toString();
+
+    if (url.endsWith("/api/sessions/session-tools")) {
+      return createJsonResponse({
+        sessionId: "session-tools",
+        workspaceId: "workspace-1",
+        provider: "codex",
+        providerSessionId: "raw-tools",
+        rawStoreRef: "codex://raw-tools",
+        title: "工具链路",
+        messageCount: 2,
+        lastMessageAt: "2026-03-23T10:00:01.000Z",
+        createdAt: "2026-03-23T09:00:00.000Z",
+        updatedAt: "2026-03-23T10:00:01.000Z",
+        syncStatus: "idle",
+        syncCursor: "cursor-tools",
+        lastSyncAt: "2026-03-23T10:00:01.000Z",
+        lastErrorCode: null,
+        lastErrorDetail: null,
+        resumedAt: null
+      });
+    }
+
+    if (url.endsWith("/api/sessions/session-tools/capabilities")) {
+      return createJsonResponse({
+        provider: "codex",
+        canStartSession: true,
+        canResumeSession: true,
+        canSendMessage: true,
+        supportsSubagents: false,
+        supportsInterrupt: true,
+        supportsStructuredToolCalls: true,
+        supportsTokenUsage: false,
+        supportsAttachments: false,
+        supportsPermissionPrompt: true,
+        supportsCheckpoint: false,
+        limitations: []
+      });
+    }
+
+    if (url.includes("/api/sessions/session-tools/messages?")) {
+      return createJsonResponse({
+        messages: [
+          {
+            messageId: "tool-call-1",
+            provider: "codex",
+            providerSessionId: "raw-tools",
+            role: "tool",
+            kind: "tool_call",
+            content: "{\n  \"command\": \"git status --short\"\n}",
+            toolCall: {
+              callId: "call-shell-1",
+              name: "shell_command",
+              input: "{\n  \"command\": \"git status --short\"\n}",
+              output: null,
+              error: null,
+              status: "running"
+            },
+            timestamp: "2026-03-23T10:00:00.000Z",
+            sequence: 1,
+            rawRef: "codex://raw-tools#line=1"
+          },
+          {
+            messageId: "tool-result-1",
+            provider: "codex",
+            providerSessionId: "raw-tools",
+            role: "tool",
+            kind: "tool_result",
+            content: "Exit code: 0\nOutput:\nerror_code: 0\n M src/main.ts",
+            toolCall: {
+              callId: "call-shell-1",
+              name: "shell_command",
+              input: "",
+              output: "Exit code: 0\nOutput:\nerror_code: 0\n M src/main.ts",
+              error: null,
+              status: "completed"
+            },
+            timestamp: "2026-03-23T10:00:01.000Z",
+            sequence: 2,
+            rawRef: "codex://raw-tools#line=2"
+          }
+        ],
+        cursor: "cursor-tools",
+        nextCursor: null,
+        total: 2
+      });
+    }
+
+    if (url.endsWith("/api/workspaces")) {
+      return createJsonResponse({ items: [] });
+    }
+
+    if (url.includes("/api/files/tree?")) {
+      return createJsonResponse({ items: [] });
+    }
+
+    if (url.includes("/api/files/recent?")) {
+      return createJsonResponse({ items: [] });
+    }
+
+    if (url.endsWith("/api/sessions/session-tools/contexts/files")) {
+      return createJsonResponse({ items: [] });
+    }
+
+    throw new Error(`未处理的请求: ${url}`);
+  }) as typeof fetch;
+
+  render(
+    <MemoryRouter initialEntries={["/sessions/session-tools"]}>
+      <Routes>
+        <Route element={<WorkbenchLayout />}>
+          <Route path="/sessions/:sessionId" element={<ConversationPage />} />
+        </Route>
+      </Routes>
+    </MemoryRouter>
+  );
+
+  expect(await screen.findByText("工具链路")).toBeInTheDocument();
+  expect(await screen.findByText("shell_command")).toBeInTheDocument();
+  expect(screen.getByText(/shell_command \/ /)).toBeInTheDocument();
+
+  await userEvent.click(screen.getByRole("button", { name: /shell_command \/ / }));
+
+  expect((await screen.findAllByText((content) => content.includes("error_code: 0"))).length).toBeGreaterThan(0);
+});
+
 function createJsonResponse(payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
     status,

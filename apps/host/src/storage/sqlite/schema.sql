@@ -97,6 +97,22 @@ CREATE TABLE IF NOT EXISTS session_status_snapshots (
   FOREIGN KEY (session_id) REFERENCES session_bindings(session_id)
 );
 
+CREATE TABLE IF NOT EXISTS session_states (
+  session_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  running_state TEXT NOT NULL CHECK (running_state IN ('idle', 'running')),
+  last_event_at TEXT,
+  completed_at TEXT,
+  last_seen_at TEXT,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (session_id, user_id),
+  FOREIGN KEY (session_id) REFERENCES session_bindings(session_id),
+  FOREIGN KEY (user_id) REFERENCES auth_users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_states_user_id
+  ON session_states(user_id, updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS recent_files (
   id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL,
