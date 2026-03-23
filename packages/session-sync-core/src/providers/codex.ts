@@ -21,6 +21,7 @@ import {
   createRawRef,
   encodeCursor,
   ensureDirectory,
+  extractTextBlocks,
   ensureText,
   messageIdFromRawRef,
   nextTimestamp,
@@ -28,12 +29,15 @@ import {
   readJsonLines,
   safeDate,
   sliceHistory,
+  stringifyStructuredValue,
   walkJsonlFiles
 } from "./utils.js";
 
 interface CodexAdapterOptions {
   homeDir: string;
 }
+
+type CodexMessageSource = "event_msg" | "response_item";
 
 export class CodexAdapter implements ProviderAdapter {
   readonly providerId: ProviderId = "codex";
@@ -232,7 +236,9 @@ export class CodexAdapter implements ProviderAdapter {
         provider: this.providerId,
         providerSessionId,
         role: "user",
+        kind: "text",
         content,
+        toolCall: null,
         timestamp: acceptedAt,
         sequence: this.parseMessages(
           rawStoreRef,
@@ -324,8 +330,57 @@ export class CodexAdapter implements ProviderAdapter {
     records: Array<Record<string, unknown>>,
     providerSessionId: string
   ): NormalizedMessage[] {
-    const messages: NormalizedMessage[] = [];
+    const messages: Array<{
+      source: CodexMessageSource;
+      dedupeKey: string;
+      message: NormalizedMessage;
+    }> = [];
+    const messageIndexesByKey = new Map<string, number[]>();
+    const toolNameById = new Map<string, string>();
     let sequence = 0;
+
+    const pushMessage = (
+      source: CodexMessageSource,
+      message: Omit<NormalizedMessage, "sequence">
+    ) => {
+      const dedupeKey = buildCodexMessageDedupeKey(message);
+      const candidateIndexes = messageIndexesByKey.get(dedupeKey) ?? [];
+
+      for (let index = candidateIndexes.length - 1; index >= 0; index -= 1) {
+        const existingIndex = candidateIndexes[index];
+        const existing = messages[existingIndex];
+
+        if (!isEquivalentCodexMessage(existing.message, message)) {
+          continue;
+        }
+
+        // 同一条逻辑消息如果被 event_msg 和 response_item 同时记录，
+        // 优先保留结构更稳定的 response_item，避免时间线重复。
+        if (codexMessageSourcePriority(source) > codexMessageSourcePriority(existing.source)) {
+          messages[existingIndex] = {
+            source,
+            dedupeKey,
+            message: {
+              ...message,
+              sequence: existing.message.sequence
+            }
+          };
+        }
+
+        return;
+      }
+
+      sequence += 1;
+      messageIndexesByKey.set(dedupeKey, [...candidateIndexes, messages.length]);
+      messages.push({
+        source,
+        dedupeKey,
+        message: {
+          ...message,
+          sequence
+        }
+      });
+    };
 
     records.forEach((record, index) => {
       const lineNumber = index + 1;
@@ -339,15 +394,15 @@ export class CodexAdapter implements ProviderAdapter {
           const content = ensureText(payload.message);
 
           if (content.length > 0) {
-            sequence += 1;
-            messages.push({
+            pushMessage("event_msg", {
               messageId: messageIdFromRawRef(rawRef),
               provider: this.providerId,
               providerSessionId,
               role: "user",
+              kind: "text",
               content,
+              toolCall: null,
               timestamp: safeDate(record.timestamp, nextTimestamp()),
-              sequence,
               rawRef
             });
           }
@@ -357,15 +412,33 @@ export class CodexAdapter implements ProviderAdapter {
           const content = ensureText(payload.message);
 
           if (content.length > 0) {
-            sequence += 1;
-            messages.push({
+            pushMessage("event_msg", {
               messageId: messageIdFromRawRef(rawRef),
               provider: this.providerId,
               providerSessionId,
               role: "assistant",
+              kind: "text",
               content,
+              toolCall: null,
               timestamp: safeDate(record.timestamp, nextTimestamp()),
-              sequence,
+              rawRef
+            });
+          }
+        }
+
+        if (eventType === "agent_reasoning") {
+          const content = extractTextBlocks(payload.text ?? payload.message).trim();
+
+          if (content.length > 0) {
+            pushMessage("event_msg", {
+              messageId: messageIdFromRawRef(rawRef),
+              provider: this.providerId,
+              providerSessionId,
+              role: "assistant",
+              kind: "thinking",
+              content,
+              toolCall: null,
+              timestamp: safeDate(record.timestamp, nextTimestamp()),
               rawRef
             });
           }
@@ -377,40 +450,226 @@ export class CodexAdapter implements ProviderAdapter {
           type?: unknown;
           role?: unknown;
           content?: Array<Record<string, unknown>>;
+          summary?: Array<Record<string, unknown>>;
+          name?: unknown;
+          arguments?: unknown;
+          call_id?: unknown;
+          input?: unknown;
+          output?: unknown;
         };
         const payloadType = ensureText(payload.type);
+
+        if (payloadType === "reasoning") {
+          const content = extractTextFromArray(payload.summary);
+
+          if (content.length === 0) {
+            return;
+          }
+
+          pushMessage("response_item", {
+            messageId: messageIdFromRawRef(rawRef),
+            provider: this.providerId,
+            providerSessionId,
+            role: "assistant",
+            kind: "thinking",
+            content,
+            toolCall: null,
+            timestamp: safeDate(record.timestamp, nextTimestamp()),
+            rawRef
+          });
+          return;
+        }
+
+        if (payloadType === "function_call" || payloadType === "custom_tool_call") {
+          const callId = ensureText(payload.call_id).trim() || rawRef;
+          const name = ensureText(payload.name).trim() || "tool";
+          const inputSource = payloadType === "custom_tool_call" ? payload.input : payload.arguments;
+          const input = stringifyStructuredValue(inputSource);
+          toolNameById.set(callId, name);
+
+          pushMessage("response_item", {
+            messageId: messageIdFromRawRef(rawRef),
+            provider: this.providerId,
+            providerSessionId,
+            role: "tool",
+            kind: "tool_call",
+            content: input,
+            toolCall: {
+              callId,
+              name,
+              input,
+              output: null,
+              error: null,
+              status: "running"
+            },
+            timestamp: safeDate(record.timestamp, nextTimestamp()),
+            rawRef
+          });
+          return;
+        }
+
+        if (payloadType === "function_call_output" || payloadType === "custom_tool_call_output") {
+          const callId = ensureText(payload.call_id).trim() || rawRef;
+          const name = toolNameById.get(callId) ?? "tool";
+          const output = extractTextBlocks(payload.output).trim() || stringifyStructuredValue(payload.output);
+          const resultState = resolveToolResultState(payload, output);
+
+          pushMessage("response_item", {
+            messageId: messageIdFromRawRef(rawRef),
+            provider: this.providerId,
+            providerSessionId,
+            role: "tool",
+            kind: "tool_result",
+            content: output,
+            toolCall: {
+              callId,
+              name,
+              input: "",
+              output: resultState.status === "failed" ? null : output,
+              error: resultState.status === "failed" ? output : null,
+              status: resultState.status
+            },
+            timestamp: safeDate(record.timestamp, nextTimestamp()),
+            rawRef
+          });
+          return;
+        }
 
         if (payloadType !== "message") {
           return;
         }
 
         const role = ensureText(payload.role);
-        const contentArray = Array.isArray(payload.content)
-          ? payload.content
-          : [];
-        const content = contentArray
-          .map((item) => ensureText(item.text))
-          .filter((item) => item.length > 0)
-          .join("\n");
+        const content = extractTextFromArray(payload.content);
 
         if (content.length === 0 || (role !== "assistant" && role !== "user")) {
           return;
         }
 
-        sequence += 1;
-        messages.push({
+        pushMessage("response_item", {
           messageId: messageIdFromRawRef(rawRef),
           provider: this.providerId,
           providerSessionId,
           role,
+          kind: "text",
           content,
+          toolCall: null,
           timestamp: safeDate(record.timestamp, nextTimestamp()),
-          sequence,
           rawRef
         });
       }
     });
 
-    return messages;
+    return messages.map((entry) => entry.message);
   }
+}
+
+function buildCodexMessageDedupeKey(message: Omit<NormalizedMessage, "sequence">): string {
+  return JSON.stringify({
+    role: message.role,
+    kind: message.kind,
+    content: message.content,
+    toolCall: message.toolCall
+      ? {
+          callId: message.toolCall.callId,
+          name: message.toolCall.name,
+          input: message.toolCall.input,
+          output: message.toolCall.output,
+          error: message.toolCall.error,
+          status: message.toolCall.status
+        }
+      : null
+  });
+}
+
+function codexMessageSourcePriority(source: CodexMessageSource): number {
+  return source === "response_item" ? 2 : 1;
+}
+
+function isEquivalentCodexMessage(
+  left: Pick<NormalizedMessage, "role" | "kind" | "content" | "timestamp" | "toolCall">,
+  right: Pick<NormalizedMessage, "role" | "kind" | "content" | "timestamp" | "toolCall">
+): boolean {
+  if (
+    left.role !== right.role ||
+    left.kind !== right.kind ||
+    left.content !== right.content
+  ) {
+    return false;
+  }
+
+  if (JSON.stringify(left.toolCall) !== JSON.stringify(right.toolCall)) {
+    return false;
+  }
+
+  return areCodexTimestampsNear(left.timestamp, right.timestamp);
+}
+
+function areCodexTimestampsNear(left: string, right: string): boolean {
+  const leftMs = Date.parse(left);
+  const rightMs = Date.parse(right);
+
+  if (!Number.isFinite(leftMs) || !Number.isFinite(rightMs)) {
+    return left === right;
+  }
+
+  return Math.abs(leftMs - rightMs) <= 1000;
+}
+
+function extractTextFromArray(value: unknown): string {
+  if (!Array.isArray(value)) {
+    return "";
+  }
+
+  return value
+    .map((item) => extractTextBlocks(item).trim())
+    .filter((item) => item.length > 0)
+    .join("\n");
+}
+
+function resolveToolResultState(
+  payload: Record<string, unknown>,
+  output: string
+): { status: "completed" | "failed" } {
+  const statusText = ensureText(payload.status).trim().toLowerCase();
+
+  if (statusText === "failed" || statusText === "error") {
+    return { status: "failed" };
+  }
+
+  if (statusText === "completed" || statusText === "success" || statusText === "succeeded") {
+    return { status: "completed" };
+  }
+
+  if (typeof payload.success === "boolean") {
+    return {
+      status: payload.success ? "completed" : "failed"
+    };
+  }
+
+  if (typeof payload.is_error === "boolean") {
+    return {
+      status: payload.is_error ? "failed" : "completed"
+    };
+  }
+
+  if (typeof payload.exit_code === "number") {
+    return {
+      status: payload.exit_code === 0 ? "completed" : "failed"
+    };
+  }
+
+  const exitCodeMatch = output.match(/(?:^|\n)Exit code:\s*(-?\d+)/i);
+
+  if (exitCodeMatch) {
+    return {
+      status: Number(exitCodeMatch[1]) === 0 ? "completed" : "failed"
+    };
+  }
+
+  if (payload.error != null) {
+    return { status: "failed" };
+  }
+
+  return { status: "completed" };
 }
