@@ -2,6 +2,7 @@ import {
   type ActiveRunHandle,
   ClaudeRuntimeAdapter,
   CodexRuntimeAdapter,
+  type NormalizedMessageAttachment,
   ProviderRuntimeService,
   type ProviderRuntimeAdapter,
   type ProviderRuntimeRunRequest,
@@ -24,6 +25,8 @@ import type {
   SessionStatusSnapshot
 } from "../../types/domain.js";
 import type { WorkspaceService } from "../workspace/workspace-service.js";
+import type { SessionImageAttachmentInput } from "./session-message-attachment-service.js";
+import { SessionMessageAttachmentService } from "./session-message-attachment-service.js";
 import { mapSessionProviderError } from "./session-provider-error-mapper.js";
 import type { SessionHistoryEnvelope, SessionHistoryService } from "./session-history-service.js";
 
@@ -31,6 +34,7 @@ interface RuntimeSendOptions {
   model?: string | null;
   reasoningLevel?: string | null;
   permissionMode?: string | null;
+  attachments?: SessionImageAttachmentInput[];
 }
 
 interface StartLiveSessionInput {
@@ -112,6 +116,7 @@ export class SessionLiveRuntimeService {
 
   constructor(
     private readonly sessionHistoryService: SessionHistoryService,
+    private readonly sessionMessageAttachmentService: SessionMessageAttachmentService,
     private readonly workspaceService: WorkspaceService,
     private readonly sessionIndexRepository: SessionIndexRepository,
     private readonly sessionStateRepository: SessionStateRepository,
@@ -125,6 +130,16 @@ export class SessionLiveRuntimeService {
     const capabilities = this.sessionHistoryService.getProviderCapabilities(input.provider);
     const workspace = this.workspaceService.getWorkspaceOrThrow(input.workspaceId);
     const sessionId = createId();
+    const persistedAttachments = this.persistMessageAttachments(
+      sessionId,
+      input.clientRequestId,
+      input.runtimeOptions?.attachments ?? []
+    );
+    const providerPrompt = this.sessionMessageAttachmentService.buildProviderPrompt(
+      input.provider as "claude-code" | "codex",
+      input.content,
+      persistedAttachments.runtimeAttachments
+    );
 
     this.ensureCapability(capabilities.canStartSession, "provider", "provider 不支持 start-live");
     this.ensureCapability(capabilities.canSendMessage, "provider", "provider 不支持实时对话");
@@ -142,7 +157,9 @@ export class SessionLiveRuntimeService {
           clientRequestId: input.clientRequestId,
           model: input.runtimeOptions?.model ?? null,
           reasoningLevel: input.runtimeOptions?.reasoningLevel ?? null,
-          permissionMode: input.runtimeOptions?.permissionMode ?? null
+          permissionMode: input.runtimeOptions?.permissionMode ?? null,
+          providerPrompt,
+          attachments: persistedAttachments.runtimeAttachments
         }
       },
       "start"
@@ -160,7 +177,19 @@ export class SessionLiveRuntimeService {
     this.attachRuntimePersistence(handle, sessionId, workspace.id, input.userId);
 
     const binding = this.sessionHistoryService.getBindingOrThrow(sessionId);
-    const acceptedAt = nowIso();
+    const acceptedMessage = await this.findAcceptedUserMessage(
+      sessionId,
+      this.sessionMessageAttachmentService.buildAcceptedContentCandidates(
+        input.content,
+        providerPrompt
+      )
+    );
+    const acceptedAt = acceptedMessage?.timestamp ?? nowIso();
+    const boundAttachments = this.sessionMessageAttachmentService.bindClientRequestToMessage(
+      sessionId,
+      input.clientRequestId,
+      acceptedMessage?.messageId ?? null
+    );
 
     return {
       sessionId,
@@ -168,12 +197,22 @@ export class SessionLiveRuntimeService {
       providerSessionId: binding.providerSessionId,
       acceptedAt,
       clientRequestId: input.clientRequestId,
-      message: createSyntheticUserMessage(
-        input.provider,
-        binding.providerSessionId,
-        input.content,
-        acceptedAt
-      ),
+      message:
+        (acceptedMessage
+          ? {
+              ...acceptedMessage,
+              attachments: boundAttachments
+            }
+          : null) ??
+        createSyntheticUserMessage(
+          input.provider,
+          binding.providerSessionId,
+          input.content,
+          acceptedAt,
+          boundAttachments.length > 0
+            ? boundAttachments
+            : persistedAttachments.messageAttachments
+        ),
       session: this.sessionHistoryService.getSession(sessionId, input.userId)
     };
   }
@@ -183,6 +222,16 @@ export class SessionLiveRuntimeService {
     const capabilities = await this.sessionHistoryService.getSessionCapabilities(input.sessionId);
     const workspace = this.workspaceService.getWorkspaceOrThrow(session.workspaceId);
     const runtimeMode = shouldStartNativeSessionOnFirstMessage(session);
+    const persistedAttachments = this.persistMessageAttachments(
+      input.sessionId,
+      input.clientRequestId,
+      input.runtimeOptions?.attachments ?? []
+    );
+    const providerPrompt = this.sessionMessageAttachmentService.buildProviderPrompt(
+      session.provider,
+      input.content,
+      persistedAttachments.runtimeAttachments
+    );
 
     this.ensureCapability(capabilities.canSendMessage, "sessionId", "provider 不支持实时对话");
 
@@ -199,7 +248,9 @@ export class SessionLiveRuntimeService {
           clientRequestId: input.clientRequestId,
           model: input.runtimeOptions?.model ?? null,
           reasoningLevel: input.runtimeOptions?.reasoningLevel ?? null,
-          permissionMode: input.runtimeOptions?.permissionMode ?? null
+          permissionMode: input.runtimeOptions?.permissionMode ?? null,
+          providerPrompt,
+          attachments: persistedAttachments.runtimeAttachments
         }
       },
       input.userId,
@@ -207,8 +258,19 @@ export class SessionLiveRuntimeService {
     );
 
     const binding = this.sessionHistoryService.getBindingOrThrow(input.sessionId);
-    const acceptedMessage = await this.findAcceptedUserMessage(input.sessionId, input.content);
+    const acceptedMessage = await this.findAcceptedUserMessage(
+      input.sessionId,
+      this.sessionMessageAttachmentService.buildAcceptedContentCandidates(
+        input.content,
+        providerPrompt
+      )
+    );
     const acceptedAt = acceptedMessage?.timestamp ?? nowIso();
+    const boundAttachments = this.sessionMessageAttachmentService.bindClientRequestToMessage(
+      input.sessionId,
+      input.clientRequestId,
+      acceptedMessage?.messageId ?? null
+    );
 
     return {
       sessionId: input.sessionId,
@@ -217,12 +279,20 @@ export class SessionLiveRuntimeService {
       acceptedAt,
       clientRequestId: input.clientRequestId,
       message:
-        acceptedMessage ??
+        (acceptedMessage
+          ? {
+              ...acceptedMessage,
+              attachments: boundAttachments
+            }
+          : null) ??
         createSyntheticUserMessage(
           session.provider,
           binding.providerSessionId,
           input.content,
-          acceptedAt
+          acceptedAt,
+          boundAttachments.length > 0
+            ? boundAttachments
+            : persistedAttachments.messageAttachments
         )
     };
   }
@@ -335,6 +405,7 @@ export class SessionLiveRuntimeService {
       sessionId: request.sessionId,
       userId,
       runningState: toStoredRunningState(snapshot.runningState),
+      activitySource: "runtime",
       lastEventAt: snapshot.lastEventAt,
       completedAt: snapshot.completedAt,
       lastSeenAt:
@@ -404,6 +475,7 @@ export class SessionLiveRuntimeService {
       sessionId: input.sessionId,
       userId: input.userId,
       runningState: toStoredRunningState(input.snapshot.runningState),
+      activitySource: "runtime",
       lastEventAt: input.snapshot.lastEventAt,
       completedAt: input.snapshot.completedAt,
       lastSeenAt: null,
@@ -439,6 +511,7 @@ export class SessionLiveRuntimeService {
         sessionId,
         userId,
         runningState: "running",
+        activitySource: "runtime",
         lastEventAt: event.message.timestamp,
         completedAt: null,
         lastSeenAt:
@@ -467,6 +540,7 @@ export class SessionLiveRuntimeService {
       sessionId,
       userId,
       runningState: toStoredRunningState(event.status),
+      activitySource: "runtime",
       lastEventAt: event.timestamp,
       completedAt,
       lastSeenAt:
@@ -487,7 +561,7 @@ export class SessionLiveRuntimeService {
 
   private async findAcceptedUserMessage(
     sessionId: string,
-    content: string
+    content: string | string[]
   ): Promise<SendMessageResult["message"] | null> {
     try {
       return await withTimeout(
@@ -497,6 +571,25 @@ export class SessionLiveRuntimeService {
     } catch {
       return null;
     }
+  }
+
+  private persistMessageAttachments(
+    sessionId: string,
+    clientRequestId: string | null,
+    attachments: SessionImageAttachmentInput[]
+  ) {
+    if (!clientRequestId || attachments.length === 0) {
+      return {
+        messageAttachments: [] as NormalizedMessageAttachment[],
+        runtimeAttachments: []
+      };
+    }
+
+    return this.sessionMessageAttachmentService.persistImageAttachments({
+      sessionId,
+      clientRequestId,
+      attachments
+    });
   }
 
   private mapRuntimeEventToEnvelope(
@@ -564,7 +657,8 @@ function createSyntheticUserMessage(
   provider: string,
   providerSessionId: string,
   content: string,
-  timestamp: string
+  timestamp: string,
+  attachments: NormalizedMessageAttachment[] = []
 ): SendMessageResult["message"] {
   const syntheticId = createId();
 
@@ -576,6 +670,7 @@ function createSyntheticUserMessage(
     kind: "text",
     content,
     toolCall: null,
+    attachments,
     timestamp,
     sequence: Number.MAX_SAFE_INTEGER - 1,
     rawRef: `synthetic://${provider}/${providerSessionId}/${syntheticId}`
@@ -601,7 +696,7 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
 }
 
 function toStoredRunningState(state: RuntimeRunState): SessionRunningState {
-  return state === "starting" || state === "running" ? "running" : "idle";
+  return state;
 }
 
 function buildSessionTitle(content: string): string {

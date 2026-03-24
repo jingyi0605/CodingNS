@@ -24,6 +24,7 @@ import { GitSidebar } from "./GitSidebar";
 import {
   getWorkbenchSnapshot,
   importWorkspace,
+  renameSessionTitle,
   type ProviderId,
   type SessionSummaryDto,
   type WorkspaceDto
@@ -77,6 +78,7 @@ interface WorkbenchShellContextValue {
   refreshNavigation: () => Promise<void>;
   setSessionWorkspace: (sessionId: string, workspaceId: string | null) => void;
   upsertNavigationSession: (session: SessionSummaryDto) => void;
+  markNavigationSessionSeen: (sessionId: string, seenAt?: string) => void;
 }
 
 interface ImportWorkspaceFormState {
@@ -190,6 +192,10 @@ function buildSessionMeta(
 
 function sessionStateClassName(session: SessionSummaryDto) {
   if (session.activityState === "running") {
+    if (session.activitySource === "inferred") {
+      return "session-state-indicator is-running-inferred";
+    }
+
     return "session-state-indicator is-running";
   }
 
@@ -298,6 +304,44 @@ function upsertSessionIntoGroups(
       ...group,
       sessions: [...nextSessions].sort(sortSessions)
     };
+  });
+
+  return changed ? nextGroups : groups;
+}
+
+function markSessionSeenInGroups(
+  groups: WorkspaceSessionGroup[],
+  sessionId: string,
+  seenAt: string
+): WorkspaceSessionGroup[] {
+  let changed = false;
+
+  const nextGroups = groups.map((group) => {
+    let groupChanged = false;
+    const nextSessions = group.sessions.map((session) => {
+      if (session.sessionId !== sessionId) {
+        return session;
+      }
+
+      changed = true;
+      groupChanged = true;
+      return {
+        ...session,
+        lastSeenAt:
+          session.lastSeenAt && session.lastSeenAt > seenAt
+            ? session.lastSeenAt
+            : seenAt,
+        activityState:
+          session.activityState === "completed_unread" ? "idle" : session.activityState
+      };
+    });
+
+    return groupChanged
+      ? {
+          ...group,
+          sessions: nextSessions
+        }
+      : group;
   });
 
   return changed ? nextGroups : groups;
@@ -442,6 +486,15 @@ function ArchiveIcon() {
       <path d="M5 7l1 12h12l1-12" />
       <path d="M9 11h6" />
       <path d="M8 4h8l1 3H7l1-3z" />
+    </svg>
+  );
+}
+
+function PencilIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.12 2.12 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
     </svg>
   );
 }
@@ -630,6 +683,7 @@ function SessionCard({
   depth = 0,
   showActions = true,
   onOpen,
+  onRename,
   onToggleMenu,
   onToggleFavorite,
   onArchive,
@@ -645,6 +699,7 @@ function SessionCard({
   depth?: 0 | 1;
   showActions?: boolean;
   onOpen: () => void;
+  onRename: () => void;
   onToggleMenu: () => void;
   onToggleFavorite: () => void;
   onArchive: () => void;
@@ -662,7 +717,11 @@ function SessionCard({
     >
       <button type="button" className="workbench-session-link" data-active={isActive} onClick={onOpen}>
         <div className="session-title-row">
-          <span className={sessionStateClassName(session)} aria-hidden="true" />
+          <span
+            className={sessionStateClassName(session)}
+            data-activity-source={session.activitySource}
+            aria-hidden="true"
+          />
           <span className="session-title">{session.title || t("common.unknown")}</span>
           {subagentBadgeLabel ? <span className="session-subagent-badge">{subagentBadgeLabel}</span> : null}
         </div>
@@ -695,6 +754,17 @@ function SessionCard({
             data-menu-key={menuKey}
             onClick={(event) => event.stopPropagation()}
           >
+            <button
+              type="button"
+              className="workbench-session-menu-item"
+              onClick={() => {
+                onRename();
+                onCloseMenu();
+              }}
+            >
+              <PencilIcon />
+              <span>{t("shell.renameAction")}</span>
+            </button>
             <button
               type="button"
               className="workbench-session-menu-item"
@@ -735,6 +805,7 @@ function SidebarContent({
   navigationError,
   activeSessionId,
   onRefreshNavigation,
+  onSessionUpdated,
   onToggleWorkspaceCollapse,
   onToggleFavoriteSession,
   onArchiveSession,
@@ -751,6 +822,7 @@ function SidebarContent({
   navigationError: string | null;
   activeSessionId: string | null;
   onRefreshNavigation: () => Promise<void>;
+  onSessionUpdated: (session: SessionSummaryDto) => void;
   onToggleWorkspaceCollapse: (workspaceId: string) => void;
   onToggleFavoriteSession: (sessionId: string) => void;
   onArchiveSession: (sessionId: string) => void;
@@ -772,6 +844,9 @@ function SidebarContent({
   const [archiveWorkspaceId, setArchiveWorkspaceId] = useState<string | null>(null);
   const [openSessionMenuKey, setOpenSessionMenuKey] = useState<string | null>(null);
   const [visibleSubagentCounts, setVisibleSubagentCounts] = useState<Record<string, number>>({});
+  const [renameTarget, setRenameTarget] = useState<NavigationSessionEntry | null>(null);
+  const [renameTitleValue, setRenameTitleValue] = useState("");
+  const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
 
   const createSessionWorkspace =
     workspaceGroups.find((group) => group.workspace.id === createSessionWorkspaceId)?.workspace ?? null;
@@ -890,6 +965,46 @@ function SidebarContent({
     });
   }
 
+  function handleOpenRenameSession(session: SessionSummaryDto, workspace: WorkspaceDto) {
+    setOpenSessionMenuKey(null);
+    setRenameTarget({ session, workspace });
+    setRenameTitleValue(session.title);
+  }
+
+  async function handleRenameSession(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!renameTarget) {
+      return;
+    }
+
+    const nextTitle = renameTitleValue.trim();
+
+    if (!nextTitle) {
+      return;
+    }
+
+    setRenamingSessionId(renameTarget.session.sessionId);
+
+    try {
+      const renamedSession = await renameSessionTitle(renameTarget.session.sessionId, nextTitle);
+      onSessionUpdated(renamedSession);
+      setRenameTarget(null);
+      setRenameTitleValue("");
+      showToast({
+        title: t("shell.renameSuccess"),
+        tone: "success"
+      });
+    } catch (error) {
+      showToast({
+        title: error instanceof Error ? error.message : t("shell.renameFailed"),
+        tone: "error"
+      });
+    } finally {
+      setRenamingSessionId(null);
+    }
+  }
+
   return (
     <>
       <div className="workbench-nav-header">
@@ -978,6 +1093,7 @@ function SidebarContent({
                     navigate(`/sessions/${item.session.sessionId}`);
                     onClose?.();
                   }}
+                  onRename={() => handleOpenRenameSession(item.session, item.workspace)}
                   onToggleMenu={() =>
                     setOpenSessionMenuKey((current) =>
                       current === `favorite:${item.session.sessionId}`
@@ -1055,6 +1171,7 @@ function SidebarContent({
                               navigate(`/sessions/${node.session.sessionId}`);
                               onClose?.();
                             }}
+                            onRename={() => handleOpenRenameSession(node.session, group.workspace)}
                             onToggleMenu={() =>
                               setOpenSessionMenuKey((current) =>
                                 current === `workspace:${group.workspace.id}:${node.session.sessionId}`
@@ -1085,6 +1202,7 @@ function SidebarContent({
                                     navigate(`/sessions/${session.sessionId}`);
                                     onClose?.();
                                   }}
+                                  onRename={() => undefined}
                                   onToggleMenu={() => undefined}
                                   onToggleFavorite={() => undefined}
                                   onArchive={() => undefined}
@@ -1231,6 +1349,56 @@ function SidebarContent({
         ) : (
           <p className="workbench-section-empty">{t("shell.archiveEmpty")}</p>
         )}
+      </SidebarModal>
+
+      <SidebarModal
+        open={renameTarget !== null}
+        title={t("shell.renameModalTitle")}
+        description={t("shell.renameModalDescription")}
+        onClose={() => {
+          if (renamingSessionId) {
+            return;
+          }
+
+          setRenameTarget(null);
+          setRenameTitleValue("");
+        }}
+      >
+        <form className="workbench-rename-form" onSubmit={handleRenameSession}>
+          <label className="workbench-modal-field">
+            <span>{t("shell.renameInputLabel")}</span>
+            <input
+              type="text"
+              value={renameTitleValue}
+              placeholder={t("shell.renameInputPlaceholder")}
+              maxLength={120}
+              autoFocus
+              onChange={(event) => setRenameTitleValue(event.target.value)}
+            />
+          </label>
+          <div className="workbench-modal-actions">
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={Boolean(renamingSessionId)}
+              onClick={() => {
+                setRenameTarget(null);
+                setRenameTitleValue("");
+              }}
+            >
+              {t("common.cancel")}
+            </button>
+            <button
+              type="submit"
+              className="primary-button"
+              disabled={!renameTitleValue.trim() || renamingSessionId === renameTarget?.session.sessionId}
+            >
+              {renamingSessionId === renameTarget?.session.sessionId
+                ? t("shell.renamingSession")
+                : t("common.save")}
+            </button>
+          </div>
+        </form>
       </SidebarModal>
     </>
   );
@@ -1409,6 +1577,12 @@ export function WorkbenchLayout() {
 
   const upsertNavigationSession = useCallback((session: SessionSummaryDto) => {
     setNavigationGroups((current) => upsertSessionIntoGroups(current, session));
+  }, []);
+
+  const markNavigationSessionSeen = useCallback((sessionId: string, seenAt?: string) => {
+    setNavigationGroups((current) =>
+      markSessionSeenInGroups(current, sessionId, seenAt ?? new Date().toISOString())
+    );
   }, []);
 
   const setSessionWorkspace = useCallback((sessionId: string, workspaceId: string | null) => {
@@ -1693,10 +1867,12 @@ export function WorkbenchLayout() {
       navigationLoading,
       navigationError,
       refreshNavigation,
+      markNavigationSessionSeen,
       upsertNavigationSession,
       setSessionWorkspace
     }),
     [
+      markNavigationSessionSeen,
       navigationError,
       navigationGroups,
       navigationLoading,
@@ -1736,6 +1912,7 @@ export function WorkbenchLayout() {
                 navigationError={navigationError}
                 activeSessionId={currentSessionId}
                 onRefreshNavigation={refreshNavigation}
+                onSessionUpdated={upsertNavigationSession}
                 onToggleWorkspaceCollapse={(workspaceId) =>
                   setCollapsedWorkspaceIds((current) => toggleStoredId(current, workspaceId))
                 }
@@ -1886,6 +2063,7 @@ export function WorkbenchLayout() {
             navigationError={navigationError}
             activeSessionId={currentSessionId}
             onRefreshNavigation={refreshNavigation}
+            onSessionUpdated={upsertNavigationSession}
             onToggleWorkspaceCollapse={(workspaceId) =>
               setCollapsedWorkspaceIds((current) => toggleStoredId(current, workspaceId))
             }

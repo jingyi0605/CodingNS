@@ -14,6 +14,7 @@ export type SessionRunningState =
   | "interrupted"
   | "failed";
 export type SessionActivityState = "idle" | "running" | "completed_unread";
+export type SessionActivitySource = "none" | "runtime" | "inferred";
 export type HistoryDirection = "forward" | "backward";
 
 export interface ToolCallDto {
@@ -23,6 +24,21 @@ export interface ToolCallDto {
   output: string | null;
   error: string | null;
   status: "running" | "completed" | "failed";
+}
+
+export interface MessageAttachmentDto {
+  id: string;
+  kind: "image";
+  fileName: string;
+  mimeType: string;
+  fileSize: number;
+}
+
+export interface ImageAttachmentPayload {
+  fileName: string;
+  mimeType: string;
+  fileSize: number;
+  contentBase64: string;
 }
 
 export interface WorkspaceDto {
@@ -58,6 +74,7 @@ export interface SessionSummaryDto {
   lastErrorDetail: string | null;
   resumedAt: string | null;
   runningState: SessionRunningState | null;
+  activitySource: SessionActivitySource;
   lastEventAt: string | null;
   completedAt: string | null;
   lastSeenAt: string | null;
@@ -87,6 +104,7 @@ export interface HistoryMessageDto {
   kind?: MessageKind;
   content: string;
   toolCall?: ToolCallDto | null;
+  attachments?: MessageAttachmentDto[];
   timestamp: string;
   sequence: number;
   rawRef: string;
@@ -128,6 +146,7 @@ export interface StartLivePayload {
   clientRequestId?: string | null;
   model?: string | null;
   reasoningLevel?: string | null;
+  attachments?: ImageAttachmentPayload[];
 }
 
 export interface SendLiveMessagePayload {
@@ -135,6 +154,7 @@ export interface SendLiveMessagePayload {
   clientRequestId: string;
   model?: string | null;
   reasoningLevel?: string | null;
+  attachments?: ImageAttachmentPayload[];
 }
 
 export interface StartLiveResponseDto extends SendMessageResponseDto {

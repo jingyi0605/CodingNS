@@ -394,17 +394,13 @@ describe("app routes", () => {
     expect(screen.queryByText(t("conversation.connectionReconnectFailed"))).not.toBeInTheDocument();
   });
 
-  it("右侧文件面板延后挂载后仍然可以编辑并挂到当前会话", async () => {
+  it("右侧文件面板延后挂载后仍然可以展开目录、搜索并选中文件", async () => {
     hydrateAuth();
 
-    let currentContent = "初始文件内容";
-    let currentVersion = "version-1";
-    let bindingItems: Array<Record<string, unknown>> = [];
-    let recentItems: Array<Record<string, unknown>> = [];
     const workbenchSnapshot = createWorkbenchSnapshot([
       {
         workspace: createWorkspace(),
-        sessions: [createSessionSummary({ sessionId: "session-1", title: "Spec004 文件上下文" })]
+        sessions: [createSessionSummary({ sessionId: "session-1", title: "Spec004 文件管理" })]
       }
     ]);
 
@@ -412,7 +408,7 @@ describe("app routes", () => {
       workbenchSnapshot,
       sessions: {
         "session-1": {
-          detail: createSessionSummary({ sessionId: "session-1", title: "Spec004 文件上下文" }),
+          detail: createSessionSummary({ sessionId: "session-1", title: "Spec004 文件管理" }),
           capabilities: createCapabilities(),
           history: createHistoryPage([
             createHistoryMessage({
@@ -426,25 +422,58 @@ describe("app routes", () => {
       },
       extraHandler: (url, init) => {
         if (url.includes("/api/files/tree?")) {
+          const requestUrl = new URL(url, "http://localhost");
+          const filePath = requestUrl.searchParams.get("path");
+
+          if (filePath === "src") {
+            return createJsonResponse({
+              items: [
+                {
+                  path: "src/app.ts",
+                  name: "app.ts",
+                  kind: "file",
+                  size: 42,
+                  updatedAt: "2026-03-23T10:00:00.000Z"
+                }
+              ]
+            });
+          }
+
           return createJsonResponse({
             items: [
+              {
+                path: "src",
+                name: "src",
+                kind: "directory",
+                size: null,
+                updatedAt: "2026-03-23T10:00:00.000Z"
+              },
               {
                 path: "README.md",
                 name: "README.md",
                 kind: "file",
-                size: currentContent.length,
+                size: 24,
                 updatedAt: "2026-03-23T10:00:00.000Z"
               }
             ]
           });
         }
 
-        if (url.includes("/api/files/recent?")) {
-          return createJsonResponse({ items: recentItems });
-        }
-
-        if (url.endsWith("/api/sessions/session-1/contexts/files") && !init?.method) {
-          return createJsonResponse({ items: bindingItems });
+        if (url.includes("/api/files/search?")) {
+          return createJsonResponse({
+            items: [
+              {
+                path: "src/app.ts",
+                name: "app.ts",
+                kind: "file",
+                size: 42,
+                updatedAt: "2026-03-23T10:00:00.000Z"
+              }
+            ],
+            total: 1,
+            page: 1,
+            pageSize: 20
+          });
         }
 
         if (url.includes("/api/git/status?")) {
@@ -494,103 +523,31 @@ describe("app routes", () => {
           });
         }
 
-        if (url.includes("/api/files/preview?")) {
-          recentItems = [
-            {
-              id: "recent-1",
-              workspaceId: "workspace-1",
-              userId: "user-1",
-              path: "README.md",
-              lastOpenedAt: "2026-03-23T10:02:00.000Z",
-              pinned: false
-            }
-          ];
-
-          return createJsonResponse({
-            workspaceId: "workspace-1",
-            path: "README.md",
-            supported: true,
-            kind: "text",
-            reason: null,
-            content: currentContent,
-            version: currentVersion,
-            size: currentContent.length,
-            updatedAt: "2026-03-23T10:02:00.000Z"
-          });
-        }
-
-        if (url.endsWith("/api/files/content") && init?.method === "PUT") {
-          const body = JSON.parse(String(init.body)) as {
-            content: string;
-            expectedVersion: string;
-          };
-
-          expect(body.expectedVersion).toBe(currentVersion);
-          currentContent = body.content;
-          currentVersion = "version-2";
-
-          return createJsonResponse({
-            version: currentVersion,
-            updatedAt: "2026-03-23T10:03:00.000Z"
-          });
-        }
-
-        if (url.endsWith("/api/sessions/session-1/contexts/files") && init?.method === "POST") {
-          bindingItems = [
-            {
-              id: "binding-1",
-              sessionId: "session-1",
-              workspaceId: "workspace-1",
-              path: "README.md",
-              displayName: "README.md",
-              selected: true,
-              pinned: false,
-              rangeStart: null,
-              rangeEnd: null,
-              contentHash: "hash-1",
-              fileVersion: currentVersion,
-              attachedBy: "user-1",
-              attachedAt: "2026-03-23T10:04:00.000Z"
-            }
-          ];
-
-          return createJsonResponse(bindingItems[0], 201);
-        }
-
-        if (url.endsWith("/api/sessions/session-1/contexts/files/binding-1") && init?.method === "DELETE") {
-          bindingItems = [];
-          return createJsonResponse({ success: true });
-        }
-
         return null;
       }
     });
 
     renderConversationRoute("session-1");
 
-    expect(await screen.findByRole("heading", { name: "Spec004 文件上下文" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Spec004 文件管理" })).toBeInTheDocument();
+
+    await userEvent.click(await screen.findByText("src"));
+    expect(await screen.findByText("app.ts")).toBeInTheDocument();
 
     await userEvent.click(await screen.findByText("README.md"));
+    expect(screen.queryByTestId("file-editor-textarea")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("conversation.filePanelCollapseCurrent") })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("conversation.filePanelRefresh") })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("conversation.filePanelSearchButton") })).toBeInTheDocument();
 
-    await waitFor(() => {
-      expect(screen.getByTestId("file-editor-textarea")).toHaveValue("初始文件内容");
-    });
+    await userEvent.click(screen.getByRole("button", { name: t("conversation.filePanelSearchButton") }));
+    await userEvent.type(
+      screen.getByPlaceholderText(t("conversation.filePanelSearchPlaceholder")),
+      "app"
+    );
+    await userEvent.click(screen.getAllByRole("button", { name: t("conversation.filePanelSearchButton") })[1]);
 
-    await userEvent.clear(screen.getByTestId("file-editor-textarea"));
-    await userEvent.type(screen.getByTestId("file-editor-textarea"), "更新后的文件内容");
-    await userEvent.click(screen.getByRole("button", { name: t("conversation.filePanelSave") }));
-
-    expect(await screen.findByText(t("conversation.filePanelSaveSuccess"))).toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole("button", { name: t("conversation.filePanelAttach") }));
-
-    expect(await screen.findByText(t("conversation.filePanelAttachSuccess"))).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: t("conversation.filePanelAttached") })).toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole("button", { name: t("conversation.filePanelDetach") }));
-
-    expect(await screen.findByText(t("conversation.filePanelDetachSuccess"))).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: t("conversation.filePanelAttach") })).toBeInTheDocument();
+    expect(await screen.findByText("src/app.ts")).toBeInTheDocument();
   });
 });
 
@@ -705,6 +662,7 @@ function createSessionSummary(input: {
     lastErrorDetail: null,
     resumedAt: null,
     runningState: "idle",
+    activitySource: "none",
     lastEventAt: "2026-03-23T10:00:00.000Z",
     completedAt: null,
     lastSeenAt: null,

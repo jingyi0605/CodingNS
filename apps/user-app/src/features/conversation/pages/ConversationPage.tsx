@@ -49,7 +49,7 @@ function LiveConversationPage({
   sessionId: string;
   bootstrapMessages: HistoryMessageDto[];
 }) {
-  const { refreshNavigation, setSessionWorkspace } = useWorkbenchShell();
+  const { refreshNavigation, setSessionWorkspace, markNavigationSessionSeen } = useWorkbenchShell();
   const storeRef = useRef<SessionRuntimeStore | null>(null);
   const currentSessionIdRef = useRef<string | null>(null);
   const [sending, setSending] = useState(false);
@@ -57,7 +57,10 @@ function LiveConversationPage({
   if (!storeRef.current || currentSessionIdRef.current !== sessionId) {
     storeRef.current?.destroy();
     storeRef.current = new SessionRuntimeStore(sessionId, {
-      bootstrapMessages
+      bootstrapMessages,
+      onSeen: (seenSessionId, seenAt) => {
+        markNavigationSessionSeen(seenSessionId, seenAt);
+      }
     });
     currentSessionIdRef.current = sessionId;
   }
@@ -126,7 +129,9 @@ function LiveConversationPage({
           try {
             await store.sendMessage(content, {
               model: options?.model,
-              reasoningLevel: options?.reasoningLevel
+              reasoningLevel: options?.reasoningLevel,
+              attachments: options?.attachments,
+              attachmentMeta: options?.attachmentMeta
             });
             await refreshNavigation();
           } finally {
@@ -182,7 +187,16 @@ function DraftConversationPage({
         isRunning={false}
         onSend={async (content, options) => {
           const clientRequestId = createClientRequestId();
-          setDraftMessages((current) => [...current, createPendingMessage(draft.sessionId, content, clientRequestId)]);
+          setDraftMessages((current) => [
+            ...current,
+            createPendingMessage(
+              draft.sessionId,
+              content,
+              clientRequestId,
+              options?.attachmentMeta ?? [],
+              options?.attachments ?? []
+            )
+          ]);
           setSending(true);
 
           try {
@@ -192,7 +206,8 @@ function DraftConversationPage({
               content,
               clientRequestId,
               model: options?.model ?? null,
-              reasoningLevel: options?.reasoningLevel ?? null
+              reasoningLevel: options?.reasoningLevel ?? null,
+              attachments: options?.attachments ?? []
             });
 
             if (created.session) {
@@ -279,6 +294,7 @@ function createDraftSessionSummary(draft: DraftConversationContext): SessionSumm
     lastErrorDetail: null,
     resumedAt: null,
     runningState: "idle",
+    activitySource: "none",
     lastEventAt: null,
     completedAt: null,
     lastSeenAt: null,
@@ -296,7 +312,7 @@ function createDraftCapabilities(provider: ProviderId): ProviderCapabilitiesDto 
     supportsInterrupt: false,
     supportsStructuredToolCalls: true,
     supportsTokenUsage: false,
-    supportsAttachments: false,
+    supportsAttachments: true,
     supportsPermissionPrompt: true,
     supportsCheckpoint: false,
     limitations: []

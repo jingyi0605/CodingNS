@@ -77,7 +77,7 @@ describe("SessionRuntimeStore", () => {
       provider: "codex",
       providerSessionId: "raw-1",
       rawStoreRef: "codex://raw-1",
-      title: "会话 1",
+      title: "浼氳瘽 1",
       messageCount: 60,
       lastMessageAt: "2026-03-24T10:00:00.000Z",
       createdAt: "2026-03-24T09:00:00.000Z",
@@ -89,6 +89,7 @@ describe("SessionRuntimeStore", () => {
       lastErrorDetail: null,
       resumedAt: null,
       runningState: "idle",
+      activitySource: "none",
       lastEventAt: "2026-03-24T10:00:00.000Z",
       completedAt: null,
       lastSeenAt: null,
@@ -128,7 +129,7 @@ describe("SessionRuntimeStore", () => {
     vi.useRealTimers();
   });
 
-  it("首次进入会话时只加载最新 30 条，并用最新游标建立实时订阅", async () => {
+  it("loads the latest 30 messages on initialize", async () => {
     vi.useFakeTimers();
     const store = new SessionRuntimeStore("session-1");
 
@@ -164,7 +165,7 @@ describe("SessionRuntimeStore", () => {
     store.destroy();
   });
 
-  it("向上翻页时继续加载更早消息，但不回退实时订阅游标", async () => {
+  it("loads older messages without rewinding the realtime cursor", async () => {
     vi.useFakeTimers();
     const store = new SessionRuntimeStore("session-1");
 
@@ -222,7 +223,7 @@ describe("SessionRuntimeStore", () => {
     store.destroy();
   });
 
-  it("完成态不会被后续消息包重新覆盖成 running", async () => {
+  it("does not overwrite a terminal state back to running on later envelopes", async () => {
     vi.useFakeTimers();
     const store = new SessionRuntimeStore("session-1");
 
@@ -282,7 +283,7 @@ describe("SessionRuntimeStore", () => {
     store.destroy();
   });
 
-  it("最后一波消息后会主动复查运行态，避免停留在旧的 running", async () => {
+  it("refreshes runtime state after the last envelope to avoid stale running state", async () => {
     vi.useFakeTimers();
     const store = new SessionRuntimeStore("session-1");
 
@@ -347,6 +348,33 @@ describe("SessionRuntimeStore", () => {
 
     expect(mocked.getSessionRuntime).toHaveBeenCalledTimes(2);
     expect(store.getState().session?.runningState).toBe("completed");
+
+    store.destroy();
+  });
+
+  it("marks navigation as seen after markSessionSeen succeeds", async () => {
+    vi.useFakeTimers();
+    const onSeen = vi.fn();
+    const store = new SessionRuntimeStore("session-1", {
+      onSeen
+    });
+
+    mocked.getSessionMessages.mockResolvedValueOnce({
+      messages: [],
+      cursor: "cursor-latest",
+      nextCursor: null,
+      total: 0
+    });
+
+    await store.initialize();
+    await vi.advanceTimersByTimeAsync(600);
+
+    expect(mocked.markSessionSeen).toHaveBeenCalledWith("session-1");
+    expect(onSeen).toHaveBeenCalledTimes(1);
+    expect(onSeen).toHaveBeenCalledWith(
+      "session-1",
+      expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/)
+    );
 
     store.destroy();
   });

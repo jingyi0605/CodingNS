@@ -11,8 +11,10 @@ import {
   getSessionRuntime,
   interruptSession,
   markSessionSeen,
+  type MessageAttachmentDto,
   sendSessionMessage,
   sendLiveMessage,
+  type ImageAttachmentPayload,
   type HistoryMessageDto,
   type ProviderCapabilitiesDto,
   type SessionRunningState
@@ -47,6 +49,7 @@ export class SessionRuntimeStore {
     private readonly sessionId: string,
     private readonly options: {
       bootstrapMessages?: HistoryMessageDto[];
+      onSeen?: (sessionId: string, seenAt: string) => void;
     } = {}
   ) {}
 
@@ -102,10 +105,21 @@ export class SessionRuntimeStore {
 
   async sendMessage(
     content: string,
-    options?: { model?: string; reasoningLevel?: string }
+    options?: {
+      model?: string;
+      reasoningLevel?: string;
+      attachments?: ImageAttachmentPayload[];
+      attachmentMeta?: MessageAttachmentDto[];
+    }
   ): Promise<void> {
     const clientRequestId = createClientRequestId();
-    const pending = createPendingMessage(this.sessionId, content, clientRequestId);
+    const pending = createPendingMessage(
+      this.sessionId,
+      content,
+      clientRequestId,
+      options?.attachmentMeta ?? [],
+      options?.attachments ?? []
+    );
 
     this.patch({
       messages: [...this.state.messages, pending],
@@ -151,7 +165,10 @@ export class SessionRuntimeStore {
     });
 
     try {
-      const response = await this.sendMessageWithFallback(target.content, clientRequestId);
+      const response = await this.sendMessageWithFallback(target.content, clientRequestId, {
+        attachments: target.attachmentPayloads ?? [],
+        attachmentMeta: target.attachments
+      });
 
       this.patch({
         messages: reconcileMessage(
@@ -342,9 +359,14 @@ export class SessionRuntimeStore {
 
     this.markSeenTimer = window.setTimeout(() => {
       this.markSeenTimer = null;
-      void markSessionSeen(this.sessionId).catch(() => {
-        return;
-      });
+      const seenAt = new Date().toISOString();
+      void markSessionSeen(this.sessionId)
+        .then(() => {
+          this.options.onSeen?.(this.sessionId, seenAt);
+        })
+        .catch(() => {
+          return;
+        });
     }, 600);
   }
 
@@ -379,17 +401,27 @@ export class SessionRuntimeStore {
   private async sendMessageWithFallback(
     content: string,
     clientRequestId: string,
-    options?: { model?: string; reasoningLevel?: string }
+    options?: {
+      model?: string;
+      reasoningLevel?: string;
+      attachments?: ImageAttachmentPayload[];
+      attachmentMeta?: MessageAttachmentDto[];
+    }
   ) {
     try {
       return await sendLiveMessage(this.sessionId, {
         content,
         clientRequestId,
         model: options?.model ?? null,
-        reasoningLevel: options?.reasoningLevel ?? null
+        reasoningLevel: options?.reasoningLevel ?? null,
+        attachments: options?.attachments ?? []
       });
     } catch (error) {
       if (!(error instanceof ApiError) || (error.status !== 404 && error.status !== 405)) {
+        throw error;
+      }
+
+      if ((options?.attachments?.length ?? 0) > 0) {
         throw error;
       }
 
@@ -406,6 +438,10 @@ export class SessionRuntimeStore {
       errorCode: null,
       errorDetail: event.detail
     });
+
+    if (isTerminalRuntimeState(event.status)) {
+      this.scheduleMarkSeen();
+    }
   }
 
   private handleRuntimeError(event: SessionRuntimeErrorEvent): void {
@@ -414,6 +450,7 @@ export class SessionRuntimeStore {
       errorCode: event.error_code,
       errorDetail: event.detail
     });
+    this.scheduleMarkSeen();
   }
 
   private handleInterrupted(event: SessionInterruptedEvent): void {
@@ -422,6 +459,7 @@ export class SessionRuntimeStore {
       errorCode: null,
       errorDetail: event.detail
     });
+    this.scheduleMarkSeen();
   }
 
   private emit(): void {
@@ -492,6 +530,10 @@ function withRunningState<T extends { runningState: SessionRunningState | null }
 
 function isRuntimeActiveState(state: SessionRunningState | null | undefined): boolean {
   return state === "starting" || state === "running" || state === "reconnecting";
+}
+
+function isTerminalRuntimeState(state: SessionRunningState | null | undefined): boolean {
+  return state === "completed" || state === "interrupted" || state === "failed";
 }
 
 function resolveEnvelopeRunningState(

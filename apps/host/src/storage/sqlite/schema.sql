@@ -100,7 +100,10 @@ CREATE TABLE IF NOT EXISTS session_status_snapshots (
 CREATE TABLE IF NOT EXISTS session_states (
   session_id TEXT NOT NULL,
   user_id TEXT NOT NULL,
-  running_state TEXT NOT NULL CHECK (running_state IN ('idle', 'running')),
+  running_state TEXT NOT NULL CHECK (
+    running_state IN ('idle', 'starting', 'running', 'completed', 'interrupted', 'failed')
+  ),
+  activity_source TEXT NOT NULL CHECK (activity_source IN ('none', 'runtime', 'inferred')),
   last_event_at TEXT,
   completed_at TEXT,
   last_seen_at TEXT,
@@ -112,6 +115,25 @@ CREATE TABLE IF NOT EXISTS session_states (
 
 CREATE INDEX IF NOT EXISTS idx_session_states_user_id
   ON session_states(user_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS session_message_attachments (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  client_request_id TEXT NOT NULL,
+  message_id TEXT,
+  kind TEXT NOT NULL CHECK (kind IN ('image')),
+  file_name TEXT NOT NULL,
+  mime_type TEXT NOT NULL,
+  file_size INTEGER NOT NULL,
+  storage_path TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (session_id) REFERENCES session_bindings(session_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_message_attachments_message
+  ON session_message_attachments(session_id, message_id);
+CREATE INDEX IF NOT EXISTS idx_session_message_attachments_client_request
+  ON session_message_attachments(session_id, client_request_id);
 
 CREATE TABLE IF NOT EXISTS recent_files (
   id TEXT PRIMARY KEY,
@@ -183,6 +205,7 @@ CREATE TABLE IF NOT EXISTS terminal_command_templates (
   command TEXT NOT NULL,
   args_json TEXT NOT NULL,
   env_json TEXT NOT NULL,
+  port INTEGER,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   FOREIGN KEY (workspace_id) REFERENCES workspaces(id),

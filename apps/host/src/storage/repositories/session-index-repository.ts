@@ -59,6 +59,7 @@ export class SessionIndexRepository {
            snapshots.last_error_detail AS last_error_detail,
            snapshots.resumed_at AS resumed_at,
            states.running_state AS running_state,
+           COALESCE(states.activity_source, 'none') AS activity_source,
            states.last_event_at AS last_event_at,
            states.completed_at AS completed_at,
            states.last_seen_at AS last_seen_at
@@ -96,6 +97,7 @@ export class SessionIndexRepository {
            snapshots.last_error_detail AS last_error_detail,
            snapshots.resumed_at AS resumed_at,
            states.running_state AS running_state,
+           COALESCE(states.activity_source, 'none') AS activity_source,
            states.last_event_at AS last_event_at,
            states.completed_at AS completed_at,
            states.last_seen_at AS last_seen_at
@@ -151,6 +153,7 @@ interface SessionListItemRow {
   last_error_detail: string | null;
   resumed_at: string | null;
   running_state: SessionListItem["runningState"];
+  activity_source: SessionListItem["activitySource"];
   last_event_at: string | null;
   completed_at: string | null;
   last_seen_at: string | null;
@@ -168,10 +171,16 @@ interface SessionIndexRecordRow {
 }
 
 function mapSessionListItemRow(row: SessionListItemRow): SessionListItem {
+  const isRuntimeActive =
+    row.activity_source === "runtime"
+    && (row.running_state === "starting" || row.running_state === "running");
+  const isInferredActive = row.activity_source === "inferred" && row.running_state === "running";
   const activityState =
-    row.running_state === "running"
+    isRuntimeActive || isInferredActive
       ? "running"
-      : row.completed_at && (!row.last_seen_at || row.completed_at > row.last_seen_at)
+      : row.activity_source === "runtime"
+        && row.completed_at
+        && (!row.last_seen_at || row.completed_at > row.last_seen_at)
         ? "completed_unread"
         : "idle";
 
@@ -193,6 +202,7 @@ function mapSessionListItemRow(row: SessionListItemRow): SessionListItem {
     lastErrorDetail: row.last_error_detail,
     resumedAt: row.resumed_at,
     runningState: row.running_state,
+    activitySource: row.activity_source,
     lastEventAt: row.last_event_at,
     completedAt: row.completed_at,
     lastSeenAt: row.last_seen_at,

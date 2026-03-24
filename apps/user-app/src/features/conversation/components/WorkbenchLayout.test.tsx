@@ -374,6 +374,43 @@ describe("WorkbenchLayout", () => {
     expect(nestedSubagent.closest(".workbench-subsession-list")).not.toBeNull();
     expect(rootTreeScope.queryByRole("button", { name: t("shell.subagentExpandMore") })).not.toBeInTheDocument();
   });
+
+  it("对推断中的外部会话显示黄色活动图标", async () => {
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "Project One"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-inferred",
+            title: "External Session",
+            workspaceId: "workspace-1",
+            runningState: "running",
+            activitySource: "inferred",
+            activityState: "running"
+          })
+        ]
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/sessions/session-inferred");
+
+    const sessionTitle = await screen.findByText("External Session");
+    const sessionCard = sessionTitle.closest(".workbench-session-card") as HTMLElement | null;
+    expect(sessionCard).not.toBeNull();
+    expect(sessionCard?.querySelector(".session-state-indicator.is-running-inferred")).not.toBeNull();
+  });
 });
 
 function renderWorkbenchRoute(initialEntry = "/sessions/session-1") {
@@ -418,6 +455,9 @@ function createSessionSummary(input: {
   parentSessionId?: string | null;
   isSubagent?: boolean;
   subagentLabel?: string | null;
+  runningState?: "idle" | "starting" | "running" | "completed" | "interrupted" | "failed";
+  activitySource?: "none" | "runtime" | "inferred";
+  activityState?: "idle" | "running" | "completed_unread";
 }) {
   return {
     sessionId: input.sessionId,
@@ -439,11 +479,12 @@ function createSessionSummary(input: {
     lastErrorCode: null,
     lastErrorDetail: null,
     resumedAt: null,
-    runningState: "idle",
+    runningState: input.runningState ?? "idle",
+    activitySource: input.activitySource ?? "none",
     lastEventAt: "2026-03-24T10:00:00.000Z",
     completedAt: null,
     lastSeenAt: null,
-    activityState: "idle"
+    activityState: input.activityState ?? "idle"
   };
 }
 

@@ -1,7 +1,14 @@
 import type { ProviderId, SyncStatus } from "@codingns/session-sync-core";
 
-export type SessionRunningState = "idle" | "running";
+export type SessionRunningState =
+  | "idle"
+  | "starting"
+  | "running"
+  | "completed"
+  | "interrupted"
+  | "failed";
 export type SessionActivityState = "idle" | "running" | "completed_unread";
+export type SessionActivitySource = "none" | "runtime" | "inferred";
 
 export interface BootstrapState {
   id: "default";
@@ -75,10 +82,24 @@ export interface SessionStateRecord {
   sessionId: string;
   userId: string;
   runningState: SessionRunningState;
+  activitySource: SessionActivitySource;
   lastEventAt: string | null;
   completedAt: string | null;
   lastSeenAt: string | null;
   updatedAt: string;
+}
+
+export interface SessionMessageAttachmentRecord {
+  id: string;
+  sessionId: string;
+  clientRequestId: string;
+  messageId: string | null;
+  kind: "image";
+  fileName: string;
+  mimeType: string;
+  fileSize: number;
+  storagePath: string;
+  createdAt: string;
 }
 
 export interface SessionListItem {
@@ -102,6 +123,7 @@ export interface SessionListItem {
   lastErrorDetail: string | null;
   resumedAt: string | null;
   runningState: SessionRunningState | null;
+  activitySource: SessionActivitySource;
   lastEventAt: string | null;
   completedAt: string | null;
   lastSeenAt: string | null;
@@ -203,6 +225,16 @@ export interface TerminalCommandTemplate {
   command: string;
   args: string[];
   env: Record<string, string>;
+  port: number | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface TerminalTemplateRuntimeStatus {
+  templateId: string;
+  port: number;
+  occupied: boolean;
+  processId: number | null;
+  processName: string | null;
+  processCommandLine: string | null;
 }

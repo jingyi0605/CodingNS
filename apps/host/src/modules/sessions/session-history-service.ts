@@ -31,6 +31,7 @@ import type { SessionStateRepository } from "../../storage/repositories/session-
 import type { SessionStatusSnapshotRepository } from "../../storage/repositories/session-status-snapshot-repository.js";
 import type { WorkspaceRepository } from "../../storage/repositories/workspace-repository.js";
 import { inspectSessionActivity } from "./session-activity-inspector.js";
+import { SessionMessageAttachmentService } from "./session-message-attachment-service.js";
 import { mapSessionProviderError } from "./session-provider-error-mapper.js";
 
 interface StartSessionInput {
@@ -69,6 +70,7 @@ export class SessionHistoryService {
     private readonly workspaceRepository: WorkspaceRepository,
     private readonly sessionBindingRepository: SessionBindingRepository,
     private readonly sessionIndexRepository: SessionIndexRepository,
+    private readonly sessionMessageAttachmentService: SessionMessageAttachmentService,
     private readonly sessionStateRepository: SessionStateRepository,
     private readonly sessionStatusSnapshotRepository: SessionStatusSnapshotRepository,
     config: HostConfig
@@ -137,6 +139,7 @@ export class SessionHistoryService {
     try {
       const readStartedAt = Date.now();
       const page = await this.readPage(
+        sessionId,
         binding.provider,
         binding.providerSessionId,
         binding.rawStoreRef,
@@ -204,13 +207,17 @@ export class SessionHistoryService {
 
   async findLatestUserMessage(
     sessionId: string,
-    content: string,
+    content: string | string[],
     maxAttempts = 12
   ): Promise<SendMessageResult["message"] | null> {
     const binding = this.getBindingOrThrow(sessionId);
+    const acceptedContents = new Set(
+      (Array.isArray(content) ? content : [content]).filter((value) => value.trim().length > 0)
+    );
 
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       const page = await this.readPage(
+        sessionId,
         binding.provider,
         binding.providerSessionId,
         binding.rawStoreRef,
@@ -220,7 +227,11 @@ export class SessionHistoryService {
       );
       const matched = [...page.messages]
         .reverse()
-        .find((message) => message.role === "user" && message.content === content);
+        .find(
+          (message) =>
+            message.role === "user" &&
+            acceptedContents.has(message.content)
+        );
 
       if (matched) {
         return matched;
@@ -353,6 +364,7 @@ export class SessionHistoryService {
           sessionId,
           userId: input.userId,
           runningState: "idle",
+          activitySource: "none",
           lastEventAt: result.session.lastMessageAt,
           completedAt: null,
           lastSeenAt: null,
@@ -490,6 +502,7 @@ export class SessionHistoryService {
       sessionId,
       userId,
       runningState: existing?.runningState ?? "idle",
+      activitySource: existing?.activitySource ?? "none",
       lastEventAt: existing?.lastEventAt ?? null,
       completedAt: existing?.completedAt ?? null,
       lastSeenAt: seenAt,
@@ -676,6 +689,7 @@ export class SessionHistoryService {
   }
 
   private async readPage(
+    sessionId: string,
     provider: string,
     providerSessionId: string,
     rawStoreRef: string,
@@ -694,6 +708,10 @@ export class SessionHistoryService {
 
     return this.sessionSyncService
       .readHistory(provider, providerSessionId, rawStoreRef, cursor, limit, direction)
+      .then((page) => ({
+        ...page,
+        messages: this.sessionMessageAttachmentService.enrichMessages(sessionId, page.messages)
+      }))
       .catch((error) => {
         if (shouldTreatMissingSyntheticHistoryAsEmpty(provider, rawStoreRef, error)) {
           return {
@@ -807,6 +825,7 @@ export class SessionHistoryService {
     while (!isClosed()) {
       const binding = this.getBindingOrThrow(sessionId);
       const page = await this.readPage(
+        sessionId,
         binding.provider,
         binding.providerSessionId,
         binding.rawStoreRef,
@@ -977,19 +996,18 @@ export class SessionHistoryService {
     const current = this.sessionStateRepository.findBySessionAndUser(sessionId, userId);
     const inspection = inspectSessionActivity(binding.provider, binding.rawStoreRef);
     const timestamp = nowIso();
-    const completedAt =
-      current?.runningState === "running" &&
-      inspection.runningState === "idle" &&
-      !inspection.hasPendingTools
-        ? inspection.completedAtCandidate ?? inspection.lastEventAt ?? current?.completedAt ?? null
-        : current?.completedAt ?? null;
+
+    if (shouldPreserveRuntimeTerminalState(current, inspection)) {
+      return current;
+    }
 
     const nextRecord: SessionStateRecord = {
       sessionId,
       userId,
-      runningState: inspection.runningState,
+      runningState: inspection.runningState === "running" ? "running" : "idle",
+      activitySource: inspection.runningState === "running" ? "inferred" : "none",
       lastEventAt: inspection.lastEventAt,
-      completedAt,
+      completedAt: null,
       lastSeenAt: current?.lastSeenAt ?? null,
       updatedAt: timestamp
     };
@@ -1118,4 +1136,23 @@ function isLegacyCodingNsRolloutSession(providerSessionId: string, rawStoreRef: 
   } catch {
     return false;
   }
+}
+
+function shouldPreserveRuntimeTerminalState(
+  current: SessionStateRecord | null,
+  inspection: ReturnType<typeof inspectSessionActivity>
+): boolean {
+  if (!current || current.activitySource !== "runtime" || !isTerminalRunningState(current.runningState)) {
+    return false;
+  }
+
+  if (!inspection.lastEventAt || !current.lastEventAt) {
+    return true;
+  }
+
+  return inspection.lastEventAt.localeCompare(current.lastEventAt) <= 0;
+}
+
+function isTerminalRunningState(state: SessionStateRecord["runningState"]): boolean {
+  return state === "completed" || state === "interrupted" || state === "failed";
 }
