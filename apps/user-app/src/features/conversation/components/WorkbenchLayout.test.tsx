@@ -146,7 +146,7 @@ describe("WorkbenchLayout", () => {
       }
 
       if (url.includes("/api/sessions/session-2/archive")) {
-        const payload = JSON.parse(String(init.body ?? "{}")) as { archived?: boolean };
+        const payload = JSON.parse(String(init?.body ?? "{}")) as { archived?: boolean };
         const archived = payload.archived === true;
         const nextSession = createSessionSummary({
           sessionId: "session-2",
@@ -310,7 +310,7 @@ describe("WorkbenchLayout", () => {
       }
 
       if (url.endsWith("/api/sessions/session-1/title") && init?.method === "PATCH") {
-        const payload = JSON.parse(String(init.body ?? "{}")) as { title?: string };
+        const payload = JSON.parse(String(init?.body ?? "{}")) as { title?: string };
         const nextSession = createSessionSummary({
           sessionId: "session-1",
           title: payload.title ?? "未命名",
@@ -529,6 +529,103 @@ describe("WorkbenchLayout", () => {
     const sessionCard = sessionTitle.closest(".workbench-session-card") as HTMLElement | null;
     expect(sessionCard).not.toBeNull();
     expect(sessionCard?.querySelector(".session-state-indicator.is-running-inferred")).not.toBeNull();
+  });
+
+  it("归档成功后即使收到旧快照，也会再拉最新导航避免会话重新冒出来", async () => {
+    const initialSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "会话 Alpha",
+            workspaceId: "workspace-1"
+          }),
+          createSessionSummary({
+            sessionId: "session-2",
+            title: "会话 Beta",
+            workspaceId: "workspace-1"
+          })
+        ]
+      }
+    ]);
+    const archivedSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "会话 Alpha",
+            workspaceId: "workspace-1"
+          }),
+          createSessionSummary({
+            sessionId: "session-2",
+            title: "会话 Beta",
+            workspaceId: "workspace-1",
+            isArchived: true
+          })
+        ]
+      }
+    ]);
+    let currentSnapshot = initialSnapshot;
+    let releaseRefresh: (() => void) | null = null;
+    let refreshRequestedAfterArchive = false;
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        if (refreshRequestedAfterArchive) {
+          await new Promise<void>((resolve) => {
+            releaseRefresh = resolve;
+          });
+        }
+
+        return createJsonResponse(currentSnapshot);
+      }
+
+      if (url.includes("/api/sessions/session-2/archive")) {
+        refreshRequestedAfterArchive = true;
+        currentSnapshot = archivedSnapshot;
+        MockWebSocket.workbenchSnapshot = archivedSnapshot;
+
+        return createJsonResponse(
+          createSessionSummary({
+            sessionId: "session-2",
+            title: "会话 Beta",
+            workspaceId: "workspace-1",
+            isArchived: true
+          })
+        );
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute();
+
+    const betaCard = (await screen.findByText("会话 Beta")).closest(".workbench-session-card") as HTMLElement | null;
+    expect(betaCard).not.toBeNull();
+
+    await userEvent.click(within(betaCard!).getByRole("button", { name: t("shell.sessionMoreAction") }));
+    await userEvent.click(screen.getByRole("button", { name: t("shell.archiveAction") }));
+
+    await waitFor(() => {
+      expect(screen.queryAllByText("会话 Beta")).toHaveLength(0);
+    });
+
+    MockWebSocket.instances[0]?.dispatchMessage({
+      type: "workbench.snapshot",
+      snapshot: initialSnapshot
+    });
+
+    releaseRefresh?.();
+
+    await waitFor(() => {
+      expect(screen.queryAllByText("会话 Beta")).toHaveLength(0);
+    });
   });
 });
 

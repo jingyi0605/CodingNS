@@ -10,6 +10,10 @@ import {
   type FileNodeDto
 } from "../api/file-context-api";
 import { FileViewerModal } from "./FileViewerModal";
+import {
+  resolveFileTreeIconKind,
+  resolveFileTreeIconLabel
+} from "./file-tree-icon";
 import { SessionChangedFilesPanel } from "./SessionChangedFilesPanel";
 import { loadSessionChangedGitFiles } from "./session-change-utils";
 
@@ -26,8 +30,13 @@ type ExpandedDirectoriesUpdater =
   | string[]
   | ((previous: string[]) => string[]);
 type FilePanelTab = "workspace" | "session";
+type RecentFileActivation = {
+  filePath: string;
+  timestamp: number;
+};
 
 const ROOT_DIRECTORY = "";
+const FILE_REPEAT_ACTIVATION_MS = 450;
 
 export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelProps) {
   const [treeCache, setTreeCache] = useState<FileTreeCache>({});
@@ -47,6 +56,7 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
   const [sessionChangeCount, setSessionChangeCount] = useState(0);
   const treeCacheRef = useRef<FileTreeCache>({});
   const expandedDirectoriesRef = useRef<string[]>([]);
+  const recentFileActivationRef = useRef<RecentFileActivation | null>(null);
   const { showToast } = useToast();
 
   function updateTreeCache(nextValue: FileTreeCacheUpdater) {
@@ -89,6 +99,7 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
     setActiveTab("workspace");
     setSessionRefreshVersion(0);
     setSessionChangeCount(0);
+    recentFileActivationRef.current = null;
   }, [sessionId, workspaceId]);
 
   useEffect(() => {
@@ -257,6 +268,57 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
   async function openFileViewer(filePath: string) {
     await selectFile(filePath);
     setViewerFilePath(filePath);
+    recentFileActivationRef.current = null;
+  }
+
+  function shouldOpenViewerByRepeatClick(filePath: string): boolean {
+    const now = Date.now();
+    const recentActivation = recentFileActivationRef.current;
+    recentFileActivationRef.current = {
+      filePath,
+      timestamp: now
+    };
+
+    return (
+      recentActivation?.filePath === filePath &&
+      now - recentActivation.timestamp <= FILE_REPEAT_ACTIVATION_MS
+    );
+  }
+
+  function resetRecentFileActivation() {
+    recentFileActivationRef.current = null;
+  }
+
+  async function handleWorkspaceFileClick(filePath: string) {
+    if (shouldOpenViewerByRepeatClick(filePath)) {
+      await openFileViewer(filePath);
+      return;
+    }
+
+    await selectFile(filePath);
+  }
+
+  function closeSearchPanel() {
+    setSearchVisible(false);
+    setSearchKeyword("");
+    setSearchResult(null);
+    resetRecentFileActivation();
+  }
+
+  async function handleSearchResultClick(item: FileNodeDto) {
+    if (item.kind === "directory") {
+      closeSearchPanel();
+      await expandDirectory(item.path);
+      return;
+    }
+
+    if (shouldOpenViewerByRepeatClick(item.path)) {
+      closeSearchPanel();
+      await openFileViewer(item.path);
+      return;
+    }
+
+    await selectFile(item.path);
   }
 
   async function expandDirectory(directoryPath: string) {
@@ -434,28 +496,26 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
                 style={{ paddingInlineStart: `${12 + depth * 16}px` }}
                 onClick={() => {
                   if (isDirectory) {
+                    resetRecentFileActivation();
                     void toggleDirectory(item.path);
                     return;
                   }
 
-                  void selectFile(item.path);
-                }}
-                onDoubleClick={() => {
-                  if (isDirectory) {
-                    return;
-                  }
-
-                  void openFileViewer(item.path);
+                  void handleWorkspaceFileClick(item.path);
                 }}
               >
                 <span className={`file-tree-chevron${isDirectory ? "" : " is-hidden"}`} aria-hidden="true">
                   {isExpanded ? "v" : ">"}
                 </span>
-                <span
-                  className={`file-tree-icon ${isDirectory ? "is-directory" : "is-file"}`}
-                  data-expanded={isExpanded}
-                  aria-hidden="true"
-                />
+                {!isDirectory ? (
+                  <span
+                    className="git-tree-file-icon"
+                    data-kind={resolveFileTreeIconKind(item.name)}
+                    aria-hidden="true"
+                  >
+                    {resolveFileTreeIconLabel(item.name)}
+                  </span>
+                ) : null}
                 <span className="file-tree-label">{item.name}</span>
                 {isLoading ? <span className="file-tree-meta">{t("common.loading")}</span> : null}
               </button>
@@ -494,31 +554,22 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
                 data-kind={item.kind}
                 onClick={() => {
                   if (isDirectory) {
-                    setSearchVisible(false);
-                    setSearchKeyword("");
-                    setSearchResult(null);
-                    void expandDirectory(item.path);
-                    return;
+                    void handleSearchResultClick(item);
+                  } else {
+                    void handleSearchResultClick(item);
                   }
-
-                  setSearchVisible(false);
-                  setSearchKeyword("");
-                  setSearchResult(null);
-                  void selectFile(item.path);
-                }}
-                onDoubleClick={() => {
-                  if (isDirectory) {
-                    return;
-                  }
-
-                  setSearchVisible(false);
-                  setSearchKeyword("");
-                  setSearchResult(null);
-                  void openFileViewer(item.path);
                 }}
               >
                 <span className="file-tree-chevron is-hidden" aria-hidden="true">&gt;</span>
-                <span className={`file-tree-icon ${isDirectory ? "is-directory" : "is-file"}`} aria-hidden="true" />
+                {!isDirectory ? (
+                  <span
+                    className="git-tree-file-icon"
+                    data-kind={resolveFileTreeIconKind(item.name)}
+                    aria-hidden="true"
+                  >
+                    {resolveFileTreeIconLabel(item.name)}
+                  </span>
+                ) : null}
                 <span className="file-tree-label">
                   <span className="file-tree-name">{item.name}</span>
                   <span className="file-tree-path">{item.path}</span>

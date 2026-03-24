@@ -1947,57 +1947,6 @@ a {
   visibility: hidden;
 }
 
-.file-tree-icon {
-  position: relative;
-  flex: 0 0 auto;
-}
-
-.file-tree-icon.is-directory {
-  width: 14px;
-  height: 10px;
-  border: 1px solid color-mix(in srgb, var(--warning) 40%, var(--border-primary));
-  border-radius: 2px;
-  background: color-mix(in srgb, var(--warning) 24%, transparent);
-}
-
-.file-tree-icon.is-directory::before {
-  content: "";
-  position: absolute;
-  top: -4px;
-  left: 1px;
-  width: 6px;
-  height: 4px;
-  border: 1px solid color-mix(in srgb, var(--warning) 40%, var(--border-primary));
-  border-bottom: none;
-  border-radius: 2px 2px 0 0;
-  background: color-mix(in srgb, var(--warning) 18%, transparent);
-}
-
-.file-tree-icon.is-directory[data-expanded="true"] {
-  background: color-mix(in srgb, var(--warning) 34%, transparent);
-}
-
-.file-tree-icon.is-file {
-  width: 12px;
-  height: 14px;
-  border: 1px solid color-mix(in srgb, var(--border-primary) 82%, transparent);
-  border-radius: 2px;
-  background: color-mix(in srgb, var(--bg-surface) 94%, transparent);
-}
-
-.file-tree-icon.is-file::before {
-  content: "";
-  position: absolute;
-  top: -1px;
-  right: -1px;
-  width: 5px;
-  height: 5px;
-  border-top: 1px solid color-mix(in srgb, var(--border-primary) 82%, transparent);
-  border-right: 1px solid color-mix(in srgb, var(--border-primary) 82%, transparent);
-  background: color-mix(in srgb, var(--bg-primary) 92%, transparent);
-  clip-path: polygon(0 0, 100% 0, 100% 100%);
-}
-
 .file-tree-label {
   min-width: 0;
   flex: 1;
@@ -5434,6 +5383,11 @@ textarea:focus-visible {
   min-height: 28px;
   padding-right: 10px;
   border-radius: 8px;
+}
+
+.file-tree-item[data-kind="directory"],
+.file-session-list-button[data-kind="directory"] {
+  gap: 6px;
 }
 
 .file-tree-item.is-search-result,

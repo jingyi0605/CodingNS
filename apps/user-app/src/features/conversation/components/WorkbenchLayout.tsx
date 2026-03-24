@@ -39,9 +39,9 @@ const LAST_SESSION_PATH_KEY = "workbench.last.session.path";
 const WORKSPACE_COLLAPSED_IDS_KEY = "workbench.workspace.collapsed.ids";
 const FAVORITE_SESSION_IDS_KEY = "workbench.session.favorite.ids";
 
-const DEFAULT_LEFT_PANEL_WIDTH = 300;
-const DEFAULT_RIGHT_PANEL_WIDTH = 340;
-const MIN_PANEL_WIDTH = 220;
+const DEFAULT_LEFT_PANEL_WIDTH = 280;
+const DEFAULT_RIGHT_PANEL_WIDTH = 320;
+const MIN_PANEL_WIDTH = 208;
 const MAX_LEFT_PANEL_WIDTH = 520;
 const MAX_RIGHT_PANEL_WIDTH = 560;
 const INFO_PANEL_BOOT_DELAY_MS = 250;
@@ -1555,10 +1555,14 @@ export function WorkbenchLayout() {
   const [navigationLoading, setNavigationLoading] = useState(true);
   const [navigationError, setNavigationError] = useState<string | null>(null);
   const [leftPanelWidth, setLeftPanelWidth] = useState(() =>
-    readStoredNumber(LEFT_PANEL_WIDTH_KEY, DEFAULT_LEFT_PANEL_WIDTH)
+    clamp(readStoredNumber(LEFT_PANEL_WIDTH_KEY, DEFAULT_LEFT_PANEL_WIDTH), MIN_PANEL_WIDTH, MAX_LEFT_PANEL_WIDTH)
   );
   const [rightPanelWidth, setRightPanelWidth] = useState(() =>
-    readStoredNumber(RIGHT_PANEL_WIDTH_KEY, DEFAULT_RIGHT_PANEL_WIDTH)
+    clamp(
+      readStoredNumber(RIGHT_PANEL_WIDTH_KEY, DEFAULT_RIGHT_PANEL_WIDTH),
+      MIN_PANEL_WIDTH,
+      MAX_RIGHT_PANEL_WIDTH
+    )
   );
   const [leftCollapsed, setLeftCollapsed] = useState(() =>
     readStoredBoolean(LEFT_PANEL_COLLAPSED_KEY, false)
@@ -1644,6 +1648,7 @@ export function WorkbenchLayout() {
       try {
         const session = await updateSessionArchiveState(sessionId, isArchived);
         upsertNavigationSession(session);
+        void refreshNavigation();
       } catch (error) {
         setNavigationGroups((current) =>
           updateSessionArchivedStateInGroups(current, sessionId, !isArchived)
@@ -1651,7 +1656,7 @@ export function WorkbenchLayout() {
         throw error;
       }
     },
-    [upsertNavigationSession]
+    [refreshNavigation, upsertNavigationSession]
   );
 
   const setSessionWorkspace = useCallback((sessionId: string, workspaceId: string | null) => {

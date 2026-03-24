@@ -27,6 +27,10 @@ import {
   type GitHistoryItemDto,
   type GitStatusDto
 } from "../api/git-api";
+import {
+  resolveFileTreeIconKind,
+  resolveFileTreeIconLabel
+} from "./file-tree-icon";
 
 interface GitSidebarProps {
   workspaceId: string | null | undefined;
@@ -864,10 +868,10 @@ function renderTreeNodes({
         >
           <span
             className="git-tree-file-icon"
-            data-kind={resolveFileIconKind(node.name)}
+            data-kind={resolveFileTreeIconKind(node.name)}
             aria-hidden="true"
           >
-            {resolveFileIconLabel(node.name)}
+            {resolveFileTreeIconLabel(node.name)}
           </span>
           <span className="git-tree-label-wrap">
             <span className="git-tree-label">{node.name}</span>
@@ -1143,97 +1147,4 @@ function formatCommitTime(value: string) {
   } catch {
     return value;
   }
-}
-
-function resolveFileIconLabel(fileName: string) {
-  const normalizedName = fileName.toLowerCase();
-
-  if (normalizedName === ".env" || normalizedName.startsWith(".env.")) {
-    return "ENV";
-  }
-
-  if (normalizedName.endsWith(".d.ts")) {
-    return "DTS";
-  }
-
-  const extension = normalizedName.includes(".")
-    ? normalizedName.slice(normalizedName.lastIndexOf(".") + 1)
-    : "";
-
-  switch (extension) {
-    case "ts":
-      return "TS";
-    case "tsx":
-      return "TSX";
-    case "js":
-      return "JS";
-    case "jsx":
-      return "JSX";
-    case "json":
-      return "{}";
-    case "md":
-      return "MD";
-    case "css":
-      return "CSS";
-    case "scss":
-      return "SASS";
-    case "html":
-      return "HTML";
-    case "yml":
-    case "yaml":
-      return "YAML";
-    case "png":
-    case "jpg":
-    case "jpeg":
-    case "gif":
-    case "svg":
-    case "webp":
-      return "IMG";
-    case "txt":
-      return "TXT";
-    default:
-      return "FILE";
-  }
-}
-
-function resolveFileIconKind(fileName: string) {
-  const normalizedName = fileName.toLowerCase();
-
-  if (normalizedName === ".env" || normalizedName.startsWith(".env.")) {
-    return "env";
-  }
-
-  if (normalizedName.endsWith(".md")) {
-    return "md";
-  }
-
-  if (normalizedName.endsWith(".css") || normalizedName.endsWith(".scss")) {
-    return "style";
-  }
-
-  if (
-    normalizedName.endsWith(".png") ||
-    normalizedName.endsWith(".jpg") ||
-    normalizedName.endsWith(".jpeg") ||
-    normalizedName.endsWith(".gif") ||
-    normalizedName.endsWith(".svg") ||
-    normalizedName.endsWith(".webp")
-  ) {
-    return "image";
-  }
-
-  if (
-    normalizedName.endsWith(".ts") ||
-    normalizedName.endsWith(".tsx") ||
-    normalizedName.endsWith(".js") ||
-    normalizedName.endsWith(".jsx")
-  ) {
-    return "code";
-  }
-
-  if (normalizedName.endsWith(".json") || normalizedName.endsWith(".yml") || normalizedName.endsWith(".yaml")) {
-    return "data";
-  }
-
-  return "default";
 }

@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { t } from "../../../shared/i18n";
 import { ApiError } from "../../../shared/network/api-error";
@@ -12,6 +12,10 @@ import {
   loadSessionChangedGitFiles,
   type SessionChangeTreeNode
 } from "./session-change-utils";
+import {
+  resolveFileTreeIconKind,
+  resolveFileTreeIconLabel
+} from "./file-tree-icon";
 
 interface SessionChangedFilesPanelProps {
   sessionId: string;
@@ -24,6 +28,12 @@ interface SessionChangedFilesPanelProps {
 }
 
 type SessionViewMode = "tree" | "list";
+type RecentFileActivation = {
+  filePath: string;
+  timestamp: number;
+};
+
+const FILE_REPEAT_ACTIVATION_MS = 450;
 
 export function SessionChangedFilesPanel({
   sessionId,
@@ -39,6 +49,7 @@ export function SessionChangedFilesPanel({
   const [loading, setLoading] = useState(true);
   const [staging, setStaging] = useState(false);
   const [collapsedPaths, setCollapsedPaths] = useState<string[]>([]);
+  const recentFileActivationRef = useRef<RecentFileActivation | null>(null);
   const { showToast } = useToast();
 
   useEffect(() => {
@@ -47,6 +58,7 @@ export function SessionChangedFilesPanel({
     setLoading(true);
     setStaging(false);
     setCollapsedPaths([]);
+    recentFileActivationRef.current = null;
   }, [sessionId, workspaceId]);
 
   useEffect(() => {
@@ -140,6 +152,34 @@ export function SessionChangedFilesPanel({
     );
   }
 
+  function shouldOpenViewerByRepeatClick(filePath: string): boolean {
+    const now = Date.now();
+    const recentActivation = recentFileActivationRef.current;
+    recentFileActivationRef.current = {
+      filePath,
+      timestamp: now
+    };
+
+    return (
+      recentActivation?.filePath === filePath &&
+      now - recentActivation.timestamp <= FILE_REPEAT_ACTIVATION_MS
+    );
+  }
+
+  async function handleFileClick(filePath: string, canOpenViewer: boolean) {
+    if (canOpenViewer && shouldOpenViewerByRepeatClick(filePath)) {
+      await onOpenFile(filePath);
+      recentFileActivationRef.current = null;
+      return;
+    }
+
+    if (!canOpenViewer) {
+      recentFileActivationRef.current = null;
+    }
+
+    await onSelectFile(filePath);
+  }
+
   return (
     <>
       <div className="file-panel-session-toolbar">
@@ -205,15 +245,13 @@ export function SessionChangedFilesPanel({
             collapsedPathSet,
             selectedPath,
             onToggleTreePath: toggleTreePath,
-            onSelectFile,
-            onOpenFile
+            onFileClick: handleFileClick
           })
         ) : (
           renderList({
             items: changes,
             selectedPath,
-            onSelectFile,
-            onOpenFile
+            onFileClick: handleFileClick
           })
         )}
       </div>
@@ -227,16 +265,14 @@ function renderTree({
   collapsedPathSet,
   selectedPath,
   onToggleTreePath,
-  onSelectFile,
-  onOpenFile
+  onFileClick
 }: {
   nodes: SessionChangeTreeNode[];
   depth: number;
   collapsedPathSet: ReadonlySet<string>;
   selectedPath: string | null;
   onToggleTreePath: (path: string) => void;
-  onSelectFile: (filePath: string) => Promise<void>;
-  onOpenFile: (filePath: string) => Promise<void>;
+  onFileClick: (filePath: string, canOpenViewer: boolean) => Promise<void>;
 }): ReactNode {
   return nodes.map((node) => {
     if (node.kind === "directory") {
@@ -255,7 +291,6 @@ function renderTree({
             <span className="file-tree-chevron" aria-hidden="true">
               {expanded ? "v" : ">"}
             </span>
-            <span className="file-tree-icon is-directory" data-expanded={expanded} aria-hidden="true" />
             <span className="file-tree-label">{node.name}</span>
           </button>
 
@@ -267,8 +302,7 @@ function renderTree({
                 collapsedPathSet,
                 selectedPath,
                 onToggleTreePath,
-                onSelectFile,
-                onOpenFile
+                onFileClick
               })}
             </div>
           ) : null}
@@ -284,19 +318,18 @@ function renderTree({
           data-active={selectedPath === node.change.path}
           data-kind="file"
           style={{ paddingInlineStart: `${12 + depth * 16}px` }}
-          onClick={() => void onSelectFile(node.change.path)}
-          onDoubleClick={() => {
-            if (isDeletedGitChange(node.change)) {
-              return;
-            }
-
-            void onOpenFile(node.change.path);
-          }}
+          onClick={() => void onFileClick(node.change.path, !isDeletedGitChange(node.change))}
         >
           <span className="file-tree-chevron is-hidden" aria-hidden="true">
             &gt;
           </span>
-          <span className="file-tree-icon is-file" aria-hidden="true" />
+          <span
+            className="git-tree-file-icon"
+            data-kind={resolveFileTreeIconKind(node.name)}
+            aria-hidden="true"
+          >
+            {resolveFileTreeIconLabel(node.name)}
+          </span>
           <span className="file-tree-label">
             <span className="file-tree-name">{node.name}</span>
             <span className="file-tree-path">
@@ -320,13 +353,11 @@ function renderTree({
 function renderList({
   items,
   selectedPath,
-  onSelectFile,
-  onOpenFile
+  onFileClick
 }: {
   items: GitChangeItemDto[];
   selectedPath: string | null;
-  onSelectFile: (filePath: string) => Promise<void>;
-  onOpenFile: (filePath: string) => Promise<void>;
+  onFileClick: (filePath: string, canOpenViewer: boolean) => Promise<void>;
 }) {
   return items.map((item) => (
     <div key={`session-list:${item.path}`} className="file-session-list-item">
@@ -334,16 +365,15 @@ function renderList({
         className="file-session-list-button"
         type="button"
         data-active={selectedPath === item.path}
-        onClick={() => void onSelectFile(item.path)}
-        onDoubleClick={() => {
-          if (isDeletedGitChange(item)) {
-            return;
-          }
-
-          void onOpenFile(item.path);
-        }}
+        onClick={() => void onFileClick(item.path, !isDeletedGitChange(item))}
       >
-        <span className="file-tree-icon is-file" aria-hidden="true" />
+        <span
+          className="git-tree-file-icon"
+          data-kind={resolveFileTreeIconKind(getFileName(item.path))}
+          aria-hidden="true"
+        >
+          {resolveFileTreeIconLabel(getFileName(item.path))}
+        </span>
         <span className="file-tree-label">
           <span className="file-tree-name">{getFileName(item.path)}</span>
           <span className="file-tree-path">

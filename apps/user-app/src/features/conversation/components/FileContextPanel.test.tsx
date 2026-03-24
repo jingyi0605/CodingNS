@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+﻿import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -338,7 +338,7 @@ describe("FileContextPanel", () => {
         supported: true,
         kind: "text",
         reason: null,
-        content: "# 标题\n\n```ts\nconst answer = 42;\n```\n",
+        content: "# 鏍囬\n\n```ts\nconst answer = 42;\n```\n",
         version: "md-version-1",
         size: 38,
         updatedAt: "2026-03-24T12:01:00.000Z"
@@ -359,33 +359,33 @@ describe("FileContextPanel", () => {
     );
   }
 
-  it("双击 markdown 文件后会打开查看器并支持编辑保存", async () => {
+  it("鍙屽嚮 markdown 鏂囦欢鍚庝細鎵撳紑鏌ョ湅鍣ㄥ苟鏀寔缂栬緫淇濆瓨", async () => {
     renderPanel();
 
     await userEvent.dblClick(await screen.findByText("docs.md"));
 
     expect(await screen.findByRole("dialog", { name: "docs.md" })).toBeInTheDocument();
-    expect(await screen.findByRole("heading", { name: "标题" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "鏍囬" })).toBeInTheDocument();
     expect(await screen.findByText("TypeScript")).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("tab", { name: t("conversation.fileViewerEdit") }));
 
     const editor = await screen.findByTestId("file-viewer-editor");
     await userEvent.clear(editor);
-    await userEvent.type(editor, "# 新标题");
+    await userEvent.type(editor, "# 鏂版爣棰?");
     await userEvent.click(screen.getByRole("button", { name: t("conversation.filePanelSave") }));
 
     await waitFor(() => {
       expect(fileApiMock.saveFileContent).toHaveBeenCalledWith(
         "workspace-1",
         "docs.md",
-        "# 新标题",
+        "# 鏂版爣棰?",
         "md-version-1"
       );
     });
   });
 
-  it("双击 json 文件后会打开代码查看器", async () => {
+  it("鍙屽嚮 json 鏂囦欢鍚庝細鎵撳紑浠ｇ爜鏌ョ湅鍣?", async () => {
     renderPanel();
 
     await userEvent.dblClick(await screen.findByText("config.json"));
@@ -401,7 +401,7 @@ describe("FileContextPanel", () => {
     );
   });
 
-  it("双击 yaml 文件后会打开代码查看器", async () => {
+  it("鍙屽嚮 yaml 鏂囦欢鍚庝細鎵撳紑浠ｇ爜鏌ョ湅鍣?", async () => {
     renderPanel();
 
     await userEvent.dblClick(await screen.findByText("settings.yaml"));
@@ -417,7 +417,7 @@ describe("FileContextPanel", () => {
     );
   });
 
-  it("双击 toml 文件后会打开代码查看器", async () => {
+  it("鍙屽嚮 toml 鏂囦欢鍚庝細鎵撳紑浠ｇ爜鏌ョ湅鍣?", async () => {
     renderPanel();
 
     await userEvent.dblClick(await screen.findByText("app.toml"));
@@ -433,7 +433,7 @@ describe("FileContextPanel", () => {
     );
   });
 
-  it("双击 ini 文件后会打开代码查看器", async () => {
+  it("鍙屽嚮 ini 鏂囦欢鍚庝細鎵撳紑浠ｇ爜鏌ョ湅鍣?", async () => {
     renderPanel();
 
     await userEvent.dblClick(await screen.findByText("profile.ini"));
@@ -449,7 +449,7 @@ describe("FileContextPanel", () => {
     );
   });
 
-  it("双击 env 文件后会打开代码查看器", async () => {
+  it("鍙屽嚮 env 鏂囦欢鍚庝細鎵撳紑浠ｇ爜鏌ョ湅鍣?", async () => {
     renderPanel();
 
     await userEvent.dblClick(await screen.findByText(".env.local"));
@@ -465,7 +465,7 @@ describe("FileContextPanel", () => {
     );
   });
 
-  it("双击 properties 文件后会打开代码查看器", async () => {
+  it("鍙屽嚮 properties 鏂囦欢鍚庝細鎵撳紑浠ｇ爜鏌ョ湅鍣?", async () => {
     renderPanel();
 
     await userEvent.dblClick(await screen.findByText("gradle.properties"));
@@ -481,7 +481,7 @@ describe("FileContextPanel", () => {
     );
   });
 
-  it("双击 conf 文件后会打开代码查看器", async () => {
+  it("鍙屽嚮 conf 鏂囦欢鍚庝細鎵撳紑浠ｇ爜鏌ョ湅鍣?", async () => {
     renderPanel();
 
     await userEvent.dblClick(await screen.findByText("app.conf"));
@@ -497,7 +497,7 @@ describe("FileContextPanel", () => {
     );
   });
 
-  it("双击 editorconfig 文件后会打开代码查看器", async () => {
+  it("鍙屽嚮 editorconfig 鏂囦欢鍚庝細鎵撳紑浠ｇ爜鏌ョ湅鍣?", async () => {
     renderPanel();
 
     await userEvent.dblClick(await screen.findByText(".editorconfig"));
@@ -513,7 +513,7 @@ describe("FileContextPanel", () => {
     );
   });
 
-  it("双击 Dockerfile 后会打开代码查看器", async () => {
+  it("鍙屽嚮 Dockerfile 鍚庝細鎵撳紑浠ｇ爜鏌ョ湅鍣?", async () => {
     renderPanel();
 
     await userEvent.dblClick(await screen.findByText("Dockerfile"));
@@ -529,7 +529,7 @@ describe("FileContextPanel", () => {
     );
   });
 
-  it("双击 gitignore 文件后会打开代码查看器", async () => {
+  it("鍙屽嚮 gitignore 鏂囦欢鍚庝細鎵撳紑浠ｇ爜鏌ョ湅鍣?", async () => {
     renderPanel();
 
     await userEvent.dblClick(await screen.findByText(".gitignore"));
@@ -545,7 +545,7 @@ describe("FileContextPanel", () => {
     );
   });
 
-  it("双击 log 文件后会打开代码查看器", async () => {
+  it("鍙屽嚮 log 鏂囦欢鍚庝細鎵撳紑浠ｇ爜鏌ョ湅鍣?", async () => {
     renderPanel();
 
     await userEvent.dblClick(await screen.findByText("server.log"));
@@ -562,7 +562,7 @@ describe("FileContextPanel", () => {
     );
   });
 
-  it("会在本次会话标签页里筛选修改文件并支持一键暂存", async () => {
+  it("浼氬湪鏈浼氳瘽鏍囩椤甸噷绛涢€変慨鏀规枃浠跺苟鏀寔涓€閿殏瀛?", async () => {
     conversationApiMock.getSessionChangedFiles.mockResolvedValue({
       items: [
         {
@@ -629,7 +629,9 @@ describe("FileContextPanel", () => {
       await screen.findByLabelText(`${t("conversation.filePanelSessionTab")} 1`)
     ).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("tab", { name: /本次会话/ }));
+    await userEvent.click(
+      screen.getByRole("tab", { name: new RegExp(t("conversation.filePanelSessionTab")) })
+    );
 
     expect(await screen.findByText("App.tsx")).toBeInTheDocument();
     expect(screen.queryByText("README.md")).not.toBeInTheDocument();
@@ -644,6 +646,165 @@ describe("FileContextPanel", () => {
     });
 
     expect(await screen.findByText(t("git.stagedLabel"))).toBeInTheDocument();
+  });
+  it("连续点击同一文件两次也会打开查看器（旧块）", async () => {
+    renderPanel();
+
+    const fileEntry = await screen.findByText("config.json");
+    await userEvent.click(fileEntry);
+    await userEvent.click(fileEntry);
+
+    expect(await screen.findByRole("dialog", { name: "config.json" })).toBeInTheDocument();
+  });
+
+  it("本次会话文件连续点击两次会打开查看器（旧块）", async () => {
+    conversationApiMock.getSessionChangedFiles.mockResolvedValue({
+      items: [
+        {
+          sessionId: "session-1",
+          workspaceId: "workspace-1",
+          path: "apps/user-app/src/app/App.tsx",
+          firstDetectedAt: "2026-03-24T12:00:00.000Z",
+          lastDetectedAt: "2026-03-24T12:00:00.000Z",
+          lastToolName: "apply_patch"
+        }
+      ]
+    });
+
+    gitApiMock.getGitStatus.mockResolvedValue({
+      snapshot: {
+        workspaceId: "workspace-1",
+        repoRoot: "C:/Code/CodingNS",
+        branch: "main",
+        ahead: 0,
+        behind: 0,
+        hasRemote: true,
+        isDirty: true,
+        lastFetchedAt: null
+      },
+      changes: [createGitChange("apps/user-app/src/app/App.tsx", false)]
+    });
+
+    fileApiMock.getFilePreview.mockImplementation(async (_workspaceId: string, filePath: string) => {
+      if (filePath === "apps/user-app/src/app/App.tsx") {
+        return {
+          workspaceId: "workspace-1",
+          path: "apps/user-app/src/app/App.tsx",
+          supported: true,
+          kind: "text",
+          reason: null,
+          content: "export function App() {\n  return <main>demo</main>;\n}\n",
+          version: "app-version-1",
+          size: 58,
+          updatedAt: "2026-03-24T12:01:00.000Z"
+        };
+      }
+
+      return {
+        workspaceId: "workspace-1",
+        path: filePath,
+        supported: true,
+        kind: "text",
+        reason: null,
+        content: "",
+        version: "fallback-version",
+        size: 0,
+        updatedAt: "2026-03-24T12:01:00.000Z"
+      };
+    });
+
+    renderPanel();
+
+    await userEvent.click(screen.getByRole("tab", { name: new RegExp(t("conversation.filePanelSessionTab")) }));
+
+    const sessionFileEntry = await screen.findByText("App.tsx");
+    await userEvent.click(sessionFileEntry);
+    await userEvent.click(sessionFileEntry);
+
+    expect(
+      await screen.findByRole("dialog", { name: "apps/user-app/src/app/App.tsx" })
+    ).toBeInTheDocument();
+  });
+
+  it("杩炵画鐐瑰嚮鍚屼竴鏂囦欢涓ゆ涔熶細鎵撳紑鏌ョ湅鍣?", async () => {
+    renderPanel();
+
+    const fileEntry = await screen.findByText("config.json");
+    await userEvent.click(fileEntry);
+    await userEvent.click(fileEntry);
+
+    expect(await screen.findByRole("dialog", { name: "config.json" })).toBeInTheDocument();
+  });
+
+  it("鏈浼氳瘽鏂囦欢杩炵画鐐瑰嚮涓ゆ浼氭墦寮€鏌ョ湅鍣?", async () => {
+    conversationApiMock.getSessionChangedFiles.mockResolvedValue({
+      items: [
+        {
+          sessionId: "session-1",
+          workspaceId: "workspace-1",
+          path: "apps/user-app/src/app/App.tsx",
+          firstDetectedAt: "2026-03-24T12:00:00.000Z",
+          lastDetectedAt: "2026-03-24T12:00:00.000Z",
+          lastToolName: "apply_patch"
+        }
+      ]
+    });
+
+    gitApiMock.getGitStatus.mockResolvedValue({
+      snapshot: {
+        workspaceId: "workspace-1",
+        repoRoot: "C:/Code/CodingNS",
+        branch: "main",
+        ahead: 0,
+        behind: 0,
+        hasRemote: true,
+        isDirty: true,
+        lastFetchedAt: null
+      },
+      changes: [createGitChange("apps/user-app/src/app/App.tsx", false)]
+    });
+
+    fileApiMock.getFilePreview.mockImplementation(async (_workspaceId: string, filePath: string) => {
+      if (filePath === "apps/user-app/src/app/App.tsx") {
+        return {
+          workspaceId: "workspace-1",
+          path: "apps/user-app/src/app/App.tsx",
+          supported: true,
+          kind: "text",
+          reason: null,
+          content: "export function App() {\n  return <main>demo</main>;\n}\n",
+          version: "app-version-1",
+          size: 58,
+          updatedAt: "2026-03-24T12:01:00.000Z"
+        };
+      }
+
+      return {
+        workspaceId: "workspace-1",
+        path: filePath,
+        supported: true,
+        kind: "text",
+        reason: null,
+        content: "",
+        version: "fallback-version",
+        size: 0,
+        updatedAt: "2026-03-24T12:01:00.000Z"
+      };
+    });
+
+    renderPanel();
+
+    await userEvent.click(
+      screen.getByRole("tab", { name: new RegExp(t("conversation.filePanelSessionTab")) })
+    );
+
+    const sessionFileEntry = await screen.findByText("App.tsx");
+    await userEvent.click(sessionFileEntry);
+    await userEvent.click(sessionFileEntry);
+
+    expect(
+      await screen.findByRole("dialog", { name: "apps/user-app/src/app/App.tsx" })
+    ).toBeInTheDocument();
   });
 });
 
