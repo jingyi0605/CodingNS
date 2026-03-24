@@ -1,7 +1,7 @@
 import type { SessionListItem, Workspace } from "../../types/domain.js";
+import { logPerformance } from "../../shared/utils/perf-log.js";
 import type { SessionHistoryService } from "../sessions/session-history-service.js";
 import type { WorkspaceRepository } from "../../storage/repositories/workspace-repository.js";
-import type { SessionIndexRepository } from "../../storage/repositories/session-index-repository.js";
 
 const WORKBENCH_REFRESH_MAX_AGE_MS = 15_000;
 
@@ -17,7 +17,6 @@ export interface WorkbenchSnapshot {
 export class WorkbenchService {
   constructor(
     private readonly workspaceRepository: WorkspaceRepository,
-    private readonly sessionIndexRepository: SessionIndexRepository,
     private readonly sessionHistoryService: SessionHistoryService
   ) {}
 
@@ -27,12 +26,13 @@ export class WorkbenchService {
     return {
       items: workspaces.map((workspace) => ({
         workspace,
-        sessions: this.sessionIndexRepository.listByWorkspace(workspace.id, userId)
+        sessions: this.sessionHistoryService.listWorkspaceSessions(workspace.id, userId)
       }))
     };
   }
 
   async refreshSnapshot(userId: string): Promise<WorkbenchSnapshot> {
+    const startedAt = Date.now();
     const workspaces = this.workspaceRepository.list();
 
     await Promise.all(
@@ -43,6 +43,20 @@ export class WorkbenchService {
       )
     );
 
-    return this.getSnapshot(userId);
+    const snapshot = this.getSnapshot(userId);
+
+    logPerformance(
+      "workbench.refresh_snapshot",
+      Date.now() - startedAt,
+      {
+        workspaceCount: workspaces.length,
+        sessionCount: snapshot.items.reduce((total, item) => total + item.sessions.length, 0)
+      },
+      {
+        thresholdMs: 300
+      }
+    );
+
+    return snapshot;
   }
 }

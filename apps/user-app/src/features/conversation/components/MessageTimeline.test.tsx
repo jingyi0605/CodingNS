@@ -367,4 +367,69 @@ describe("MessageTimeline", () => {
     await userEvent.click(screen.getByRole("button", { name: /read_thread_terminal/ }));
     expect(screen.getByText("PS C:\\Code\\CodingNS>")).toBeInTheDocument();
   });
+
+  it("最后一条消息内容流式变化时会继续滚动到底部", () => {
+    const { rerender } = render(
+      <MessageTimeline
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+        messages={[
+          {
+            id: "assistant-1",
+            sessionId: "session-1",
+            role: "assistant",
+            kind: "text",
+            content: "第一段",
+            toolCall: null,
+            timestamp: "2026-03-24T10:00:00.000Z",
+            sequence: 1,
+            rawRef: "codex://raw#line=1",
+            deliveryState: "sent",
+            clientRequestId: null
+          }
+        ]}
+      />
+    );
+
+    const messageList = document.querySelector(".message-list") as HTMLDivElement | null;
+
+    expect(messageList).not.toBeNull();
+
+    Object.defineProperty(messageList, "scrollHeight", {
+      value: 1200,
+      configurable: true
+    });
+    Object.defineProperty(messageList, "clientHeight", {
+      value: 600,
+      configurable: true
+    });
+
+    messageList!.scrollTop = 1200;
+
+    rerender(
+      <MessageTimeline
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+        messages={[
+          {
+            id: "assistant-1",
+            sessionId: "session-1",
+            role: "assistant",
+            kind: "text",
+            content: "第一段\n第二段",
+            toolCall: null,
+            timestamp: "2026-03-24T10:00:00.000Z",
+            sequence: 1,
+            rawRef: "codex://raw#line=1",
+            deliveryState: "sent",
+            clientRequestId: null
+          }
+        ]}
+      />
+    );
+
+    expect(messageList!.scrollTop).toBe(1200);
+  });
 });

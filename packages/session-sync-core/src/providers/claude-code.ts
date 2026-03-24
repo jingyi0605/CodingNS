@@ -1,8 +1,9 @@
 import { basename, join } from "node:path";
-import { statSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import crypto from "node:crypto";
 
 import type {
+  DetectSessionsOptions,
   HistoryDirection,
   HistoryPage,
   NormalizedMessage,
@@ -47,17 +48,67 @@ interface ClaudeMessageEnvelope {
   };
 }
 
+interface ClaudeHistoryCacheEntry {
+  filePath: string;
+  providerSessionId: string;
+  mtimeMs: number;
+  size: number;
+  messages: NormalizedMessage[];
+}
+
+interface ClaudeSubagentMetadata {
+  providerSessionId: string;
+  parentProviderSessionId: string;
+}
+
+const HISTORY_CACHE_LIMIT = 6;
+
 export class ClaudeCodeAdapter implements ProviderAdapter {
   readonly providerId: ProviderId = "claude-code";
+  private readonly historyCache = new Map<string, ClaudeHistoryCacheEntry>();
 
   constructor(private readonly options: ClaudeCodeAdapterOptions) {}
 
-  async detectSessions(workspacePath: string): Promise<ProviderSessionSummary[]> {
+  async detectSessions(
+    workspacePath: string,
+    options?: DetectSessionsOptions
+  ): Promise<ProviderSessionSummary[]> {
     const targetPath = normalizeWorkspacePath(workspacePath);
-    const files = walkJsonlFiles(join(this.options.homeDir, "projects"));
+    const files = this.listWorkspaceFiles(workspacePath);
+    const subagentMetadataByFilePath = buildClaudeSubagentMetadataIndex(files);
+    const knownByRawStoreRef = new Map(
+      (options?.knownSessions ?? [])
+        .filter((session) => session.provider === this.providerId)
+        .map((session) => [session.rawStoreRef, session] as const)
+    );
     const sessions: ProviderSessionSummary[] = [];
 
     for (const filePath of files) {
+      const stats = statSync(filePath);
+      const known = knownByRawStoreRef.get(filePath);
+      const subagentMetadata = subagentMetadataByFilePath.get(filePath);
+      const providerSessionId =
+        subagentMetadata?.providerSessionId ?? basename(filePath, ".jsonl");
+
+      if (
+        known
+        && known.sourceMtimeMs === stats.mtimeMs
+        && known.sourceSizeBytes === stats.size
+        && normalizeWorkspacePath(known.workspacePath) === targetPath
+      ) {
+        sessions.push({
+          ...known,
+          providerSessionId,
+          rawStoreRef: filePath,
+          parentProviderSessionId: subagentMetadata?.parentProviderSessionId ?? null,
+          isSubagent: subagentMetadata !== undefined,
+          subagentLabel: known.subagentLabel ?? null,
+          sourceMtimeMs: stats.mtimeMs,
+          sourceSizeBytes: stats.size
+        });
+        continue;
+      }
+
       const records = readJsonLines(filePath);
       const typedRecords = records.map((record) => record.data);
       const matchesWorkspace = typedRecords.some(
@@ -79,12 +130,17 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
 
       sessions.push({
         provider: this.providerId,
-        providerSessionId: basename(filePath, ".jsonl"),
+        providerSessionId,
         title,
         workspacePath,
         rawStoreRef: filePath,
         lastMessageAt,
-        messageCount: messages.length
+        messageCount: messages.length,
+        parentProviderSessionId: subagentMetadata?.parentProviderSessionId ?? null,
+        isSubagent: subagentMetadata !== undefined,
+        subagentLabel: null,
+        sourceMtimeMs: stats.mtimeMs,
+        sourceSizeBytes: stats.size
       });
     }
 
@@ -100,8 +156,7 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
     limit: number,
     direction: HistoryDirection = "forward"
   ): Promise<HistoryPage> {
-    const records = readJsonLines(rawStoreRef).map((record) => record.data);
-    const messages = this.parseMessages(rawStoreRef, records, providerSessionId);
+    const messages = this.getParsedMessages(rawStoreRef, providerSessionId);
     return sliceHistory(messages, cursor, limit, direction);
   }
 
@@ -245,6 +300,7 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
     });
 
     const rawRef = createRawRef(this.providerId, rawStoreRef, lineNumber, 0);
+    this.historyCache.delete(rawStoreRef);
 
     return {
       acceptedAt,
@@ -306,6 +362,57 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
     }
 
     return "";
+  }
+
+  private listWorkspaceFiles(workspacePath: string): string[] {
+    const exactProjectDir = join(this.options.homeDir, "projects", workspaceSlug(workspacePath));
+
+    if (existsSync(exactProjectDir)) {
+      return walkJsonlFiles(exactProjectDir);
+    }
+
+    return walkJsonlFiles(join(this.options.homeDir, "projects"));
+  }
+
+  private getParsedMessages(filePath: string, providerSessionId: string): NormalizedMessage[] {
+    const stats = statSync(filePath);
+    const cached = this.historyCache.get(filePath);
+
+    if (
+      cached
+      && cached.providerSessionId === providerSessionId
+      && cached.mtimeMs === stats.mtimeMs
+      && cached.size === stats.size
+    ) {
+      this.touchHistoryCache(filePath, cached);
+      return cached.messages;
+    }
+
+    const records = readJsonLines(filePath).map((record) => record.data);
+    const messages = this.parseMessages(filePath, records, providerSessionId);
+    this.touchHistoryCache(filePath, {
+      filePath,
+      providerSessionId,
+      mtimeMs: stats.mtimeMs,
+      size: stats.size,
+      messages
+    });
+    return messages;
+  }
+
+  private touchHistoryCache(filePath: string, entry: ClaudeHistoryCacheEntry): void {
+    this.historyCache.delete(filePath);
+    this.historyCache.set(filePath, entry);
+
+    while (this.historyCache.size > HISTORY_CACHE_LIMIT) {
+      const oldestKey = this.historyCache.keys().next().value;
+
+      if (!oldestKey) {
+        break;
+      }
+
+      this.historyCache.delete(oldestKey);
+    }
   }
 
   private parseMessages(
@@ -486,4 +593,39 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
       message: ((nested.message ?? {}) as ClaudeMessageEnvelope["message"])
     };
   }
+}
+
+function buildClaudeSubagentMetadataIndex(
+  files: string[]
+): Map<string, ClaudeSubagentMetadata> {
+  const metadataByFilePath = new Map<string, ClaudeSubagentMetadata>();
+
+  for (const filePath of files) {
+    const metadata = parseClaudeSubagentMetadata(filePath);
+
+    if (!metadata) {
+      continue;
+    }
+
+    metadataByFilePath.set(filePath, metadata);
+  }
+
+  return metadataByFilePath;
+}
+
+function parseClaudeSubagentMetadata(filePath: string): ClaudeSubagentMetadata | null {
+  const normalizedPath = filePath.replaceAll("\\", "/");
+  const matched = normalizedPath.match(/\/([^/]+)\/subagents\/([^/]+)\.jsonl$/i);
+
+  if (!matched?.[1] || !matched[2]) {
+    return null;
+  }
+
+  const parentProviderSessionId = matched[1];
+  const agentFileName = matched[2];
+
+  return {
+    providerSessionId: `${parentProviderSessionId}::${agentFileName}`,
+    parentProviderSessionId
+  };
 }

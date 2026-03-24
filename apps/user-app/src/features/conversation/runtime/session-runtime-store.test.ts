@@ -7,28 +7,17 @@ const mocked = vi.hoisted(() => {
   const getSessionDetail = vi.fn();
   const getSessionCapabilities = vi.fn();
   const getSessionMessages = vi.fn();
+  const getSessionRuntime = vi.fn();
   const markSessionSeen = vi.fn();
   const sendSessionMessage = vi.fn();
   const realtimeInstances: Array<{
-    options: {
-      sessionId: string;
-      cursor: string | null;
-      limit: number;
-    };
+    options: Record<string, unknown>;
   }> = [];
 
   class MockRealtimeClient {
-    public readonly options: {
-      sessionId: string;
-      cursor: string | null;
-      limit: number;
-    };
+    public readonly options: Record<string, unknown>;
 
-    constructor(options: {
-      sessionId: string;
-      cursor: string | null;
-      limit: number;
-    }) {
+    constructor(options: Record<string, unknown>) {
       this.options = options;
       realtimeInstances.push(this);
     }
@@ -46,6 +35,7 @@ const mocked = vi.hoisted(() => {
     getSessionDetail,
     getSessionCapabilities,
     getSessionMessages,
+    getSessionRuntime,
     markSessionSeen,
     sendSessionMessage,
     realtimeInstances,
@@ -57,6 +47,7 @@ vi.mock("../api/conversation-api", () => ({
   getSessionDetail: mocked.getSessionDetail,
   getSessionCapabilities: mocked.getSessionCapabilities,
   getSessionMessages: mocked.getSessionMessages,
+  getSessionRuntime: mocked.getSessionRuntime,
   markSessionSeen: mocked.markSessionSeen,
   sendSessionMessage: mocked.sendSessionMessage
 }));
@@ -116,6 +107,17 @@ describe("SessionRuntimeStore", () => {
       supportsPermissionPrompt: true,
       supportsCheckpoint: false,
       limitations: []
+    });
+    mocked.getSessionRuntime.mockResolvedValue({
+      sessionId: "session-1",
+      runningState: "idle",
+      hasActiveRun: false,
+      canAttach: false,
+      canInterrupt: false,
+      provider: "codex",
+      providerSessionId: "raw-1",
+      detail: null,
+      updatedAt: "2026-03-24T10:00:00.000Z"
     });
     mocked.markSessionSeen.mockResolvedValue(undefined);
     mocked.sendSessionMessage.mockResolvedValue(undefined);
@@ -216,6 +218,135 @@ describe("SessionRuntimeStore", () => {
     expect(store.getState().hasOlderMessages).toBe(false);
     expect(store.getState().olderCursor).toBeNull();
     expect(store.getState().lastCursor).toBe("cursor-latest");
+
+    store.destroy();
+  });
+
+  it("完成态不会被后续消息包重新覆盖成 running", async () => {
+    vi.useFakeTimers();
+    const store = new SessionRuntimeStore("session-1");
+
+    mocked.getSessionRuntime.mockResolvedValueOnce({
+      sessionId: "session-1",
+      runningState: "running",
+      hasActiveRun: true,
+      canAttach: true,
+      canInterrupt: true,
+      provider: "codex",
+      providerSessionId: "raw-1",
+      detail: null,
+      updatedAt: "2026-03-24T10:00:00.000Z"
+    });
+    mocked.getSessionMessages.mockResolvedValueOnce({
+      messages: [],
+      cursor: "cursor-latest",
+      nextCursor: null,
+      total: 0
+    });
+
+    await store.initialize();
+
+    const client = mocked.realtimeInstances[0];
+    expect(client).toBeDefined();
+
+    (client!.options.onRuntimeStatus as ((event: Record<string, unknown>) => void))({
+      type: "session.runtime_status",
+      sessionId: "session-1",
+      status: "completed",
+      detail: "run completed",
+      timestamp: "2026-03-24T10:00:10.000Z"
+    });
+
+    (client!.options.onEnvelope as ((event: Record<string, unknown>) => void))({
+      type: "session.delta",
+      sessionId: "session-1",
+      cursor: "cursor-after",
+      messages: [
+        {
+          messageId: "assistant-1",
+          provider: "codex",
+          providerSessionId: "raw-1",
+          role: "assistant",
+          kind: "text",
+          content: "done",
+          timestamp: "2026-03-24T10:00:10.100Z",
+          sequence: 1,
+          rawRef: "codex://raw#line=1",
+          toolCall: null
+        }
+      ]
+    });
+
+    expect(store.getState().session?.runningState).toBe("completed");
+
+    store.destroy();
+  });
+
+  it("最后一波消息后会主动复查运行态，避免停留在旧的 running", async () => {
+    vi.useFakeTimers();
+    const store = new SessionRuntimeStore("session-1");
+
+    mocked.getSessionRuntime
+      .mockResolvedValueOnce({
+        sessionId: "session-1",
+        runningState: "running",
+        hasActiveRun: true,
+        canAttach: true,
+        canInterrupt: true,
+        provider: "codex",
+        providerSessionId: "raw-1",
+        detail: null,
+        updatedAt: "2026-03-24T10:00:00.000Z"
+      })
+      .mockResolvedValueOnce({
+        sessionId: "session-1",
+        runningState: "completed",
+        hasActiveRun: false,
+        canAttach: false,
+        canInterrupt: false,
+        provider: "codex",
+        providerSessionId: "raw-1",
+        detail: null,
+        updatedAt: "2026-03-24T10:00:03.000Z"
+      });
+    mocked.getSessionMessages.mockResolvedValueOnce({
+      messages: [],
+      cursor: "cursor-latest",
+      nextCursor: null,
+      total: 0
+    });
+
+    await store.initialize();
+
+    const client = mocked.realtimeInstances[0];
+    expect(client).toBeDefined();
+
+    (client!.options.onEnvelope as ((event: Record<string, unknown>) => void))({
+      type: "session.delta",
+      sessionId: "session-1",
+      cursor: "cursor-after",
+      messages: [
+        {
+          messageId: "assistant-1",
+          provider: "codex",
+          providerSessionId: "raw-1",
+          role: "assistant",
+          kind: "text",
+          content: "final answer",
+          timestamp: "2026-03-24T10:00:01.000Z",
+          sequence: 1,
+          rawRef: "codex://raw#line=1",
+          toolCall: null
+        }
+      ]
+    });
+
+    expect(store.getState().session?.runningState).toBe("running");
+
+    await vi.advanceTimersByTimeAsync(1200);
+
+    expect(mocked.getSessionRuntime).toHaveBeenCalledTimes(2);
+    expect(store.getState().session?.runningState).toBe("completed");
 
     store.destroy();
   });

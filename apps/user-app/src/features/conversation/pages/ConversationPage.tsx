@@ -1,23 +1,64 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 
+import { t } from "../../../shared/i18n";
+import {
+  startLiveSession,
+  type HistoryMessageDto,
+  type ProviderCapabilitiesDto,
+  type ProviderId,
+  type SessionSummaryDto
+} from "../api/conversation-api";
 import { ConnectionBanner } from "../components/ConnectionBanner";
 import { ComposerPanel } from "../components/ComposerPanel";
 import { MessageTimeline } from "../components/MessageTimeline";
 import { SessionHeader } from "../components/SessionHeader";
 import { useWorkbenchShell } from "../components/WorkbenchLayout";
 import { SessionRuntimeStore, useSessionRuntimeStore } from "../runtime/session-runtime-store";
+import {
+  createPendingMessage,
+  markPendingAsFailed,
+  type SessionMessageViewModel
+} from "../runtime/session-runtime-machine";
 
 export function ConversationPage() {
   const { sessionId = "" } = useParams();
-  const { navigationGroups, refreshNavigation, setSessionWorkspace } = useWorkbenchShell();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const searchParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
+  const draftContext = useMemo(
+    () => parseDraftContext(sessionId, searchParams),
+    [searchParams, sessionId]
+  );
+  const liveBootstrapMessages = useMemo(
+    () => parseLiveBootstrapMessages(sessionId, location.state),
+    [location.state, sessionId]
+  );
+
+  if (draftContext) {
+    return <DraftConversationPage draft={draftContext} navigate={navigate} />;
+  }
+
+  return <LiveConversationPage sessionId={sessionId} bootstrapMessages={liveBootstrapMessages} />;
+}
+
+function LiveConversationPage({
+  sessionId,
+  bootstrapMessages
+}: {
+  sessionId: string;
+  bootstrapMessages: HistoryMessageDto[];
+}) {
+  const { refreshNavigation, setSessionWorkspace } = useWorkbenchShell();
   const storeRef = useRef<SessionRuntimeStore | null>(null);
   const currentSessionIdRef = useRef<string | null>(null);
   const [sending, setSending] = useState(false);
 
   if (!storeRef.current || currentSessionIdRef.current !== sessionId) {
     storeRef.current?.destroy();
-    storeRef.current = new SessionRuntimeStore(sessionId);
+    storeRef.current = new SessionRuntimeStore(sessionId, {
+      bootstrapMessages
+    });
     currentSessionIdRef.current = sessionId;
   }
 
@@ -32,6 +73,10 @@ export function ConversationPage() {
   );
   const hasOlderMessages = useSessionRuntimeStore(store, (state) => state.hasOlderMessages);
   const connectionState = useSessionRuntimeStore(store, (state) => state.connectionState);
+  const isRunning =
+    session?.runningState === "starting"
+    || session?.runningState === "running"
+    || session?.runningState === "reconnecting";
 
   useEffect(() => {
     void store.initialize();
@@ -40,12 +85,6 @@ export function ConversationPage() {
       store.destroy();
     };
   }, [store]);
-
-  const workspaceName = useMemo(
-    () =>
-      navigationGroups.find((item) => item.workspace.id === session?.workspaceId)?.workspace.name ?? null,
-    [navigationGroups, session?.workspaceId]
-  );
 
   useEffect(() => {
     setSessionWorkspace(sessionId, session?.workspaceId ?? null);
@@ -57,12 +96,7 @@ export function ConversationPage() {
 
   return (
     <main className="workbench-page conversation-page-shell">
-      <SessionHeader
-        session={session}
-        workspaceName={workspaceName}
-        capabilities={capabilities}
-        connectionState={connectionState}
-      />
+      <SessionHeader session={session} />
       <ConnectionBanner connectionState={connectionState} onReconnect={() => store.reconnect()} />
       <MessageTimeline
         sessionId={sessionId}
@@ -81,11 +115,15 @@ export function ConversationPage() {
       <ComposerPanel
         capabilities={capabilities}
         isSubmitting={sending}
+        isRunning={isRunning}
+        onInterrupt={async () => {
+          await store.interrupt();
+          await refreshNavigation();
+        }}
         onSend={async (content, options) => {
           setSending(true);
 
           try {
-            // Pass model and reasoning level options to the store
             await store.sendMessage(content, {
               model: options?.model,
               reasoningLevel: options?.reasoningLevel
@@ -98,4 +136,226 @@ export function ConversationPage() {
       />
     </main>
   );
+}
+
+function DraftConversationPage({
+  draft,
+  navigate
+}: {
+  draft: DraftConversationContext;
+  navigate: ReturnType<typeof useNavigate>;
+}) {
+  const {
+    refreshNavigation,
+    setSessionWorkspace,
+    upsertNavigationSession
+  } = useWorkbenchShell();
+  const [sending, setSending] = useState(false);
+  const [draftMessages, setDraftMessages] = useState<SessionMessageViewModel[]>([]);
+  const session = useMemo(() => createDraftSessionSummary(draft), [draft]);
+  const capabilities = useMemo(() => createDraftCapabilities(draft.provider), [draft.provider]);
+  useEffect(() => {
+    setSessionWorkspace(draft.sessionId, draft.workspaceId);
+
+    return () => {
+      setSessionWorkspace(draft.sessionId, null);
+    };
+  }, [draft.sessionId, draft.workspaceId, setSessionWorkspace]);
+
+  return (
+    <main className="workbench-page conversation-page-shell">
+      <SessionHeader session={session} />
+      <ConnectionBanner connectionState="closed" onReconnect={() => {}} />
+      <MessageTimeline
+        sessionId={draft.sessionId}
+        messages={draftMessages}
+        historyState="ready"
+        loadingOlderMessages={false}
+        hasOlderMessages={false}
+        provider={draft.provider}
+        onLoadOlderMessages={() => {}}
+        onRetryMessage={() => {}}
+      />
+      <ComposerPanel
+        capabilities={capabilities}
+        isSubmitting={sending}
+        isRunning={false}
+        onSend={async (content, options) => {
+          const clientRequestId = createClientRequestId();
+          setDraftMessages((current) => [...current, createPendingMessage(draft.sessionId, content, clientRequestId)]);
+          setSending(true);
+
+          try {
+            const created = await startLiveSession({
+              workspaceId: draft.workspaceId,
+              provider: draft.provider,
+              content,
+              clientRequestId,
+              model: options?.model ?? null,
+              reasoningLevel: options?.reasoningLevel ?? null
+            });
+
+            if (created.session) {
+              upsertNavigationSession(created.session);
+            }
+
+            setSessionWorkspace(created.sessionId, draft.workspaceId);
+            navigate(`/sessions/${created.sessionId}`, {
+              replace: true,
+              state: isAuthoritativeBootstrapMessage(created.message)
+                ? {
+                    bootstrap: {
+                      sessionId: created.sessionId,
+                      messages: [created.message]
+                    }
+                  }
+                : null
+            });
+            void refreshNavigation();
+          } catch (error) {
+            setDraftMessages((current) => markPendingAsFailed(current, clientRequestId));
+            throw error;
+          } finally {
+            setSending(false);
+          }
+        }}
+      />
+    </main>
+  );
+}
+
+interface DraftConversationContext {
+  sessionId: string;
+  workspaceId: string;
+  provider: ProviderId;
+}
+
+function parseDraftContext(
+  sessionId: string,
+  searchParams: URLSearchParams
+): DraftConversationContext | null {
+  if (!isDraftSessionId(sessionId)) {
+    return null;
+  }
+
+  const workspaceId = searchParams.get("workspaceId")?.trim();
+  const provider = searchParams.get("provider")?.trim();
+
+  if (!workspaceId || (provider !== "codex" && provider !== "claude-code")) {
+    return null;
+  }
+
+  return {
+    sessionId,
+    workspaceId,
+    provider
+  };
+}
+
+function createDraftSessionSummary(draft: DraftConversationContext): SessionSummaryDto {
+  const timestamp = new Date().toISOString();
+
+  return {
+    sessionId: draft.sessionId,
+    workspaceId: draft.workspaceId,
+    provider: draft.provider,
+    providerSessionId: `draft://${draft.sessionId}`,
+    rawStoreRef: `draft://${draft.sessionId}`,
+    parentSessionId: null,
+    isSubagent: false,
+    subagentLabel: null,
+    title:
+      draft.provider === "codex"
+        ? t("conversation.draftTitleCodex")
+        : t("conversation.draftTitleClaude"),
+    messageCount: 0,
+    lastMessageAt: null,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    syncStatus: "idle",
+    syncCursor: null,
+    lastSyncAt: null,
+    lastErrorCode: null,
+    lastErrorDetail: null,
+    resumedAt: null,
+    runningState: "idle",
+    lastEventAt: null,
+    completedAt: null,
+    lastSeenAt: null,
+    activityState: "idle"
+  };
+}
+
+function createDraftCapabilities(provider: ProviderId): ProviderCapabilitiesDto {
+  return {
+    provider,
+    canStartSession: true,
+    canResumeSession: true,
+    canSendMessage: true,
+    supportsSubagents: false,
+    supportsInterrupt: false,
+    supportsStructuredToolCalls: true,
+    supportsTokenUsage: false,
+    supportsAttachments: false,
+    supportsPermissionPrompt: true,
+    supportsCheckpoint: false,
+    limitations: []
+  };
+}
+
+function isDraftSessionId(sessionId: string): boolean {
+  return sessionId.startsWith("draft-");
+}
+
+function parseLiveBootstrapMessages(sessionId: string, state: unknown): HistoryMessageDto[] {
+  if (!state || typeof state !== "object") {
+    return [];
+  }
+
+  const bootstrap = (state as { bootstrap?: unknown }).bootstrap;
+
+  if (!bootstrap || typeof bootstrap !== "object") {
+    return [];
+  }
+
+  const bootstrapSessionId = (bootstrap as { sessionId?: unknown }).sessionId;
+  const messages = (bootstrap as { messages?: unknown }).messages;
+
+  if (bootstrapSessionId !== sessionId || !Array.isArray(messages)) {
+    return [];
+  }
+
+  return messages.filter(isHistoryMessageDto);
+}
+
+function isHistoryMessageDto(value: unknown): value is HistoryMessageDto {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const message = value as Partial<HistoryMessageDto>;
+  return (
+    typeof message.messageId === "string" &&
+    typeof message.provider === "string" &&
+    typeof message.providerSessionId === "string" &&
+    typeof message.role === "string" &&
+    typeof message.content === "string" &&
+    typeof message.timestamp === "string" &&
+    typeof message.sequence === "number" &&
+    typeof message.rawRef === "string"
+  );
+}
+
+function createClientRequestId(): string {
+  const nativeCrypto = globalThis.crypto;
+
+  if (nativeCrypto && typeof nativeCrypto.randomUUID === "function") {
+    return nativeCrypto.randomUUID();
+  }
+
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function isAuthoritativeBootstrapMessage(message: HistoryMessageDto): boolean {
+  return !message.rawRef.startsWith("synthetic://");
 }

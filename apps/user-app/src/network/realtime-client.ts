@@ -33,6 +33,29 @@ interface SessionEnvelopeEvent {
   }>;
 }
 
+export interface SessionRuntimeStatusEvent {
+  type: "session.runtime_status";
+  sessionId: string;
+  status: "idle" | "starting" | "running" | "reconnecting" | "completed" | "interrupted" | "failed";
+  detail: string | null;
+  timestamp: string;
+}
+
+export interface SessionRuntimeErrorEvent {
+  type: "session.runtime_error";
+  sessionId: string;
+  error_code: string;
+  detail: string;
+  timestamp: string;
+}
+
+export interface SessionInterruptedEvent {
+  type: "session.interrupted";
+  sessionId: string;
+  detail: string | null;
+  timestamp: string;
+}
+
 interface SessionErrorEvent {
   type: "session.error";
   sessionId: string | null;
@@ -40,7 +63,13 @@ interface SessionErrorEvent {
   detail: string;
 }
 
-type IncomingEvent = SessionSubscribedEvent | SessionEnvelopeEvent | SessionErrorEvent;
+type IncomingEvent =
+  | SessionSubscribedEvent
+  | SessionEnvelopeEvent
+  | SessionRuntimeStatusEvent
+  | SessionRuntimeErrorEvent
+  | SessionInterruptedEvent
+  | SessionErrorEvent;
 
 export interface RealtimeClientOptions {
   sessionId: string;
@@ -49,6 +78,9 @@ export interface RealtimeClientOptions {
   onConnectionChange: (state: RuntimeConnectionState) => void;
   onSubscribed: () => void;
   onEnvelope: (event: SessionEnvelopeEvent) => void;
+  onRuntimeStatus: (event: SessionRuntimeStatusEvent) => void;
+  onRuntimeError: (event: SessionRuntimeErrorEvent) => void;
+  onInterrupted: (event: SessionInterruptedEvent) => void;
   onError: (event: SessionErrorEvent) => void;
   onUnauthorized: () => void;
 }
@@ -148,6 +180,21 @@ export class RealtimeClient {
         }
 
         this.options.onError(payload);
+        return;
+      }
+
+      if (payload.type === "session.runtime_status") {
+        this.options.onRuntimeStatus(payload);
+        return;
+      }
+
+      if (payload.type === "session.runtime_error") {
+        this.options.onRuntimeError(payload);
+        return;
+      }
+
+      if (payload.type === "session.interrupted") {
+        this.options.onInterrupted(payload);
         return;
       }
 

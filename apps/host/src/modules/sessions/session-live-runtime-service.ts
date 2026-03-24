@@ -1,4 +1,5 @@
 import {
+  type ActiveRunHandle,
   ClaudeRuntimeAdapter,
   CodexRuntimeAdapter,
   ProviderRuntimeService,
@@ -17,7 +18,11 @@ import { nowIso } from "../../shared/utils/time.js";
 import type { SessionIndexRepository } from "../../storage/repositories/session-index-repository.js";
 import type { SessionStateRepository } from "../../storage/repositories/session-state-repository.js";
 import type { SessionStatusSnapshotRepository } from "../../storage/repositories/session-status-snapshot-repository.js";
-import type { SessionRunningState, SessionStatusSnapshot } from "../../types/domain.js";
+import type {
+  SessionListItem,
+  SessionRunningState,
+  SessionStatusSnapshot
+} from "../../types/domain.js";
 import type { WorkspaceService } from "../workspace/workspace-service.js";
 import { mapSessionProviderError } from "./session-provider-error-mapper.js";
 import type { SessionHistoryEnvelope, SessionHistoryService } from "./session-history-service.js";
@@ -52,6 +57,7 @@ interface LiveMessageAcceptedResult {
   acceptedAt: string;
   clientRequestId: string | null;
   message: SendMessageResult["message"];
+  session?: SessionListItem;
 }
 
 export interface SessionRuntimeStatusView {
@@ -117,33 +123,20 @@ export class SessionLiveRuntimeService {
 
   async startLiveSession(input: StartLiveSessionInput): Promise<LiveMessageAcceptedResult> {
     const capabilities = this.sessionHistoryService.getProviderCapabilities(input.provider);
-
-    this.ensureCapability(
-      capabilities.canStartSession,
-      "provider",
-      "当前 provider 不支持 start-live"
-    );
-    this.ensureCapability(
-      capabilities.canSendMessage,
-      "provider",
-      "当前 provider 不支持实时消息"
-    );
-
-    const session = await this.sessionHistoryService.startSession({
-      workspaceId: input.workspaceId,
-      userId: input.userId,
-      provider: input.provider
-    });
     const workspace = this.workspaceService.getWorkspaceOrThrow(input.workspaceId);
+    const sessionId = createId();
 
-    await this.startRuntimeRun(
+    this.ensureCapability(capabilities.canStartSession, "provider", "provider 不支持 start-live");
+    this.ensureCapability(capabilities.canSendMessage, "provider", "provider 不支持实时对话");
+
+    const handle = await this.launchRuntimeRun(
       {
-        sessionId: session.sessionId,
+        sessionId,
         workspaceId: workspace.id,
         workspacePath: workspace.path,
-        provider: session.provider,
-        providerSessionId: session.providerSessionId,
-        rawStoreRef: session.rawStoreRef,
+        provider: input.provider as ProviderRuntimeRunRequest["provider"],
+        providerSessionId: null,
+        rawStoreRef: null,
         options: {
           content: input.content,
           clientRequestId: input.clientRequestId,
@@ -152,30 +145,36 @@ export class SessionLiveRuntimeService {
           permissionMode: input.runtimeOptions?.permissionMode ?? null
         }
       },
-      input.userId,
-      "continue"
+      "start"
     );
+    const snapshot = handle.getSnapshot();
 
-    const acceptedMessage = await this.sessionHistoryService.findLatestUserMessage(
-      session.sessionId,
-      input.content
-    );
-    const acceptedAt = acceptedMessage?.timestamp ?? nowIso();
+    this.createRuntimeBackedSession({
+      sessionId,
+      workspaceId: workspace.id,
+      userId: input.userId,
+      provider: input.provider,
+      initialContent: input.content,
+      snapshot
+    });
+    this.attachRuntimePersistence(handle, sessionId, workspace.id, input.userId);
+
+    const binding = this.sessionHistoryService.getBindingOrThrow(sessionId);
+    const acceptedAt = nowIso();
 
     return {
-      sessionId: session.sessionId,
-      provider: session.provider,
-      providerSessionId: session.providerSessionId,
+      sessionId,
+      provider: input.provider,
+      providerSessionId: binding.providerSessionId,
       acceptedAt,
       clientRequestId: input.clientRequestId,
-      message:
-        acceptedMessage ??
-        createSyntheticUserMessage(
-          session.provider,
-          session.providerSessionId,
-          input.content,
-          acceptedAt
-        )
+      message: createSyntheticUserMessage(
+        input.provider,
+        binding.providerSessionId,
+        input.content,
+        acceptedAt
+      ),
+      session: this.sessionHistoryService.getSession(sessionId, input.userId)
     };
   }
 
@@ -183,12 +182,9 @@ export class SessionLiveRuntimeService {
     const session = this.sessionHistoryService.getSession(input.sessionId, input.userId);
     const capabilities = await this.sessionHistoryService.getSessionCapabilities(input.sessionId);
     const workspace = this.workspaceService.getWorkspaceOrThrow(session.workspaceId);
+    const runtimeMode = shouldStartNativeSessionOnFirstMessage(session);
 
-    this.ensureCapability(
-      capabilities.canSendMessage,
-      "sessionId",
-      "当前会话 provider 不支持实时消息"
-    );
+    this.ensureCapability(capabilities.canSendMessage, "sessionId", "provider 不支持实时对话");
 
     await this.startRuntimeRun(
       {
@@ -196,8 +192,8 @@ export class SessionLiveRuntimeService {
         workspaceId: session.workspaceId,
         workspacePath: workspace.path,
         provider: session.provider,
-        providerSessionId: session.providerSessionId,
-        rawStoreRef: session.rawStoreRef,
+        providerSessionId: runtimeMode === "start" ? null : session.providerSessionId,
+        rawStoreRef: runtimeMode === "start" ? null : session.rawStoreRef,
         options: {
           content: input.content,
           clientRequestId: input.clientRequestId,
@@ -207,26 +203,24 @@ export class SessionLiveRuntimeService {
         }
       },
       input.userId,
-      "continue"
+      runtimeMode
     );
 
-    const acceptedMessage = await this.sessionHistoryService.findLatestUserMessage(
-      input.sessionId,
-      input.content
-    );
+    const binding = this.sessionHistoryService.getBindingOrThrow(input.sessionId);
+    const acceptedMessage = await this.findAcceptedUserMessage(input.sessionId, input.content);
     const acceptedAt = acceptedMessage?.timestamp ?? nowIso();
 
     return {
       sessionId: input.sessionId,
       provider: session.provider,
-      providerSessionId: session.providerSessionId,
+      providerSessionId: binding.providerSessionId,
       acceptedAt,
       clientRequestId: input.clientRequestId,
       message:
         acceptedMessage ??
         createSyntheticUserMessage(
           session.provider,
-          session.providerSessionId,
+          binding.providerSessionId,
           input.content,
           acceptedAt
         )
@@ -301,6 +295,18 @@ export class SessionLiveRuntimeService {
     sessionId: string,
     onEnvelope: (envelope: SessionRuntimeEnvelope) => Promise<void> | void
   ): ProviderSubscription {
+    const runtimeSnapshot = this.providerRuntimeService.getSnapshot(sessionId);
+
+    if (runtimeSnapshot) {
+      void onEnvelope({
+        type: "session.runtime_status",
+        sessionId,
+        status: runtimeSnapshot.runningState,
+        detail: runtimeSnapshot.detail,
+        timestamp: runtimeSnapshot.lastEventAt ?? runtimeSnapshot.startedAt
+      });
+    }
+
     return this.providerRuntimeService.subscribe(sessionId, async (event) => {
       const envelope = this.mapRuntimeEventToEnvelope(sessionId, event);
 
@@ -321,12 +327,9 @@ export class SessionLiveRuntimeService {
     userId: string,
     mode: "start" | "continue"
   ): Promise<void> {
-    const handle =
-      mode === "start"
-        ? await this.providerRuntimeService.startSession(request)
-        : await this.providerRuntimeService.continueSession(request);
-
+    const handle = await this.launchRuntimeRun(request, mode);
     const snapshot = handle.getSnapshot();
+
     this.sessionHistoryService.persistSessionBinding(request.sessionId, request.workspaceId, snapshot);
     this.sessionStateRepository.upsert({
       sessionId: request.sessionId,
@@ -338,9 +341,73 @@ export class SessionLiveRuntimeService {
         this.sessionStateRepository.findBySessionAndUser(request.sessionId, userId)?.lastSeenAt ?? null,
       updatedAt: nowIso()
     });
+    this.attachRuntimePersistence(handle, request.sessionId, request.workspaceId, userId);
+  }
 
+  private async launchRuntimeRun(
+    request: ProviderRuntimeRunRequest,
+    mode: "start" | "continue"
+  ): Promise<ActiveRunHandle> {
+    return mode === "start"
+      ? this.providerRuntimeService.startSession(request)
+      : this.providerRuntimeService.continueSession(request);
+  }
+
+  private attachRuntimePersistence(
+    handle: ActiveRunHandle,
+    sessionId: string,
+    workspaceId: string,
+    userId: string
+  ): void {
     handle.attach(async (event) => {
-      await this.persistRuntimeEvent(request.sessionId, request.workspaceId, userId, event);
+      await this.persistRuntimeEvent(sessionId, workspaceId, userId, event);
+    });
+  }
+
+  private createRuntimeBackedSession(input: {
+    sessionId: string;
+    workspaceId: string;
+    userId: string;
+    provider: string;
+    initialContent: string;
+    snapshot: ReturnType<ActiveRunHandle["getSnapshot"]>;
+  }): void {
+    const timestamp = nowIso();
+    const providerSessionId =
+      input.snapshot.providerSessionId ?? `pending://${input.provider}/${input.sessionId}`;
+    const rawStoreRef = input.snapshot.rawStoreRef ?? `pending://${input.provider}/${input.sessionId}`;
+
+    this.sessionHistoryService.persistSessionBinding(input.sessionId, input.workspaceId, {
+      provider: input.snapshot.provider,
+      providerSessionId,
+      rawStoreRef
+    });
+    this.sessionIndexRepository.upsert({
+      sessionId: input.sessionId,
+      workspaceId: input.workspaceId,
+      provider: input.provider as "claude-code" | "codex",
+      title: buildSessionTitle(input.initialContent),
+      messageCount: 0,
+      lastMessageAt: input.snapshot.lastEventAt,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+    this.upsertSnapshot(input.sessionId, {
+      syncStatus: "idle",
+      syncCursor: null,
+      lastSyncAt: input.snapshot.lastEventAt ?? timestamp,
+      lastErrorCode: null,
+      lastErrorDetail: null,
+      resumedAt: null
+    });
+    this.sessionStateRepository.upsert({
+      sessionId: input.sessionId,
+      userId: input.userId,
+      runningState: toStoredRunningState(input.snapshot.runningState),
+      lastEventAt: input.snapshot.lastEventAt,
+      completedAt: input.snapshot.completedAt,
+      lastSeenAt: null,
+      updatedAt: timestamp
     });
   }
 
@@ -418,17 +485,26 @@ export class SessionLiveRuntimeService {
     });
   }
 
+  private async findAcceptedUserMessage(
+    sessionId: string,
+    content: string
+  ): Promise<SendMessageResult["message"] | null> {
+    try {
+      return await withTimeout(
+        this.sessionHistoryService.findLatestUserMessage(sessionId, content),
+        1200
+      );
+    } catch {
+      return null;
+    }
+  }
+
   private mapRuntimeEventToEnvelope(
     sessionId: string,
     event: RuntimeEvent
   ): SessionRuntimeEnvelope | null {
     if (event.type === "message") {
-      return {
-        type: "session.delta",
-        sessionId,
-        cursor: null,
-        messages: [event.message]
-      };
+      return null;
     }
 
     if (event.type === "error") {
@@ -506,8 +582,51 @@ function createSyntheticUserMessage(
   };
 }
 
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error("TIMEOUT"));
+    }, timeoutMs);
+
+    void promise
+      .then((value) => {
+        clearTimeout(timer);
+        resolve(value);
+      })
+      .catch((error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+  });
+}
+
 function toStoredRunningState(state: RuntimeRunState): SessionRunningState {
   return state === "starting" || state === "running" ? "running" : "idle";
+}
+
+function buildSessionTitle(content: string): string {
+  const title = content.trim().replace(/\s+/g, " ");
+  return title.slice(0, 48) || "继续对话";
+}
+
+function shouldStartNativeSessionOnFirstMessage(session: {
+  provider: string;
+  providerSessionId: string;
+  messageCount: number;
+}): "start" | "continue" {
+  if (session.provider !== "codex") {
+    return "continue";
+  }
+
+  if (session.messageCount > 0) {
+    return "continue";
+  }
+
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    session.providerSessionId
+  )
+    ? "continue"
+    : "start";
 }
 
 function createProviderRuntimeAdapters(config: HostConfig): ProviderRuntimeAdapter[] {

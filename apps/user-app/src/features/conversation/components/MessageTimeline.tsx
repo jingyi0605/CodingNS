@@ -516,7 +516,9 @@ export function MessageTimeline({
   const listRef = useRef<HTMLDivElement | null>(null);
   const previousSessionIdRef = useRef(sessionId);
   const previousMessageCountRef = useRef(messages.length);
-  const previousLastMessageIdRef = useRef<string | null>(messages.at(-1)?.id ?? null);
+  const previousLastMessageSignatureRef = useRef<string | null>(
+    buildMessageSignature(messages.at(-1) ?? null)
+  );
   const stickToBottomRef = useRef(true);
   const pendingOlderLoadOffsetRef = useRef<number | null>(null);
   const renderItems = buildTimelineRenderItems(messages);
@@ -537,7 +539,7 @@ export function MessageTimeline({
     if (previousSessionIdRef.current !== sessionId) {
       previousSessionIdRef.current = sessionId;
       previousMessageCountRef.current = 0;
-      previousLastMessageIdRef.current = null;
+      previousLastMessageSignatureRef.current = null;
       stickToBottomRef.current = true;
       pendingOlderLoadOffsetRef.current = null;
     }
@@ -548,26 +550,30 @@ export function MessageTimeline({
 
     if (!list) {
       previousMessageCountRef.current = messages.length;
-      previousLastMessageIdRef.current = messages.at(-1)?.id ?? null;
+      previousLastMessageSignatureRef.current = buildMessageSignature(messages.at(-1) ?? null);
       return;
     }
 
     const previousCount = previousMessageCountRef.current;
-    const previousLastId = previousLastMessageIdRef.current;
-    const currentLastId = messages.at(-1)?.id ?? null;
+    const previousLastSignature = previousLastMessageSignatureRef.current;
+    const currentLastSignature = buildMessageSignature(messages.at(-1) ?? null);
 
     if (pendingOlderLoadOffsetRef.current !== null && messages.length >= previousCount) {
       list.scrollTop = Math.max(0, list.scrollHeight - pendingOlderLoadOffsetRef.current);
       pendingOlderLoadOffsetRef.current = null;
     } else if (
       stickToBottomRef.current
-      && (previousCount === 0 || (currentLastId !== null && currentLastId !== previousLastId))
+      && (
+        previousCount === 0 ||
+        messages.length !== previousCount ||
+        currentLastSignature !== previousLastSignature
+      )
     ) {
       list.scrollTop = list.scrollHeight;
     }
 
     previousMessageCountRef.current = messages.length;
-    previousLastMessageIdRef.current = currentLastId;
+    previousLastMessageSignatureRef.current = currentLastSignature;
   }, [messages, sessionId]);
 
   function handleScroll() {
@@ -634,4 +640,24 @@ export function MessageTimeline({
       </div>
     </section>
   );
+}
+
+function buildMessageSignature(message: SessionMessageViewModel | null): string | null {
+  if (!message) {
+    return null;
+  }
+
+  return JSON.stringify({
+    id: message.id,
+    content: message.content,
+    timestamp: message.timestamp,
+    deliveryState: message.deliveryState,
+    toolCall: message.toolCall
+      ? {
+          status: message.toolCall.status,
+          output: message.toolCall.output,
+          error: message.toolCall.error
+        }
+      : null
+  });
 }

@@ -126,7 +126,14 @@ export function mergeAuthoritativeMessages(
   }
 
   for (const message of incoming) {
-    nextById.set(message.messageId, toViewMessage(sessionId, message));
+    const nextMessage = toViewMessage(sessionId, message);
+    const optimisticMessageId = findMatchingOptimisticMessageId(nextById, nextMessage);
+
+    if (optimisticMessageId && optimisticMessageId !== nextMessage.id) {
+      nextById.delete(optimisticMessageId);
+    }
+
+    nextById.set(message.messageId, nextMessage);
   }
 
   const sorted = Array.from(nextById.values()).sort((left, right) => {
@@ -194,7 +201,6 @@ function isEquivalentCodexTextMessage(
     !right.rawRef.startsWith("codex://") ||
     left.role !== right.role ||
     left.kind !== right.kind ||
-    left.timestamp !== right.timestamp ||
     left.toolCall !== null ||
     right.toolCall !== null
   ) {
@@ -205,7 +211,10 @@ function isEquivalentCodexTextMessage(
     return false;
   }
 
-  return normalizeComparableCodexText(left.content) === normalizeComparableCodexText(right.content);
+  return (
+    areTimestampsNear(left.timestamp, right.timestamp) &&
+    normalizeComparableCodexText(left.content) === normalizeComparableCodexText(right.content)
+  );
 }
 
 function pickPreferredCodexTextMessage(
@@ -226,4 +235,64 @@ function pickPreferredCodexTextMessage(
 
 function normalizeComparableCodexText(content: string): string {
   return content.replace(/\r\n/g, "\n").trimEnd();
+}
+
+function findMatchingOptimisticMessageId(
+  messagesById: Map<string, SessionMessageViewModel>,
+  incoming: SessionMessageViewModel
+): string | null {
+  if (
+    incoming.role !== "user" ||
+    incoming.kind !== "text" ||
+    incoming.rawRef.startsWith("pending://") ||
+    incoming.rawRef.startsWith("synthetic://")
+  ) {
+    return null;
+  }
+
+  const incomingTimestampMs = toTimestampMs(incoming.timestamp);
+  const comparableIncomingContent = normalizeComparableCodexText(incoming.content);
+  let matchedId: string | null = null;
+  let matchedDistance = Number.POSITIVE_INFINITY;
+
+  for (const [messageId, current] of messagesById.entries()) {
+    if (!isOptimisticUserMessage(current)) {
+      continue;
+    }
+
+    if (normalizeComparableCodexText(current.content) !== comparableIncomingContent) {
+      continue;
+    }
+
+    const currentTimestampMs = toTimestampMs(current.timestamp);
+    const distance = Math.abs(currentTimestampMs - incomingTimestampMs);
+
+    if (distance > 5 * 60 * 1000) {
+      continue;
+    }
+
+    if (distance < matchedDistance) {
+      matchedId = messageId;
+      matchedDistance = distance;
+    }
+  }
+
+  return matchedId;
+}
+
+function isOptimisticUserMessage(message: SessionMessageViewModel): boolean {
+  if (message.role !== "user" || message.kind !== "text" || message.deliveryState === "failed") {
+    return false;
+  }
+
+  return message.rawRef.startsWith("pending://") || message.rawRef.startsWith("synthetic://");
+}
+
+function toTimestampMs(timestamp: string): number {
+  const value = Date.parse(timestamp);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function areTimestampsNear(left: string, right: string): boolean {
+  return Math.abs(toTimestampMs(left) - toTimestampMs(right)) <= 1000;
 }

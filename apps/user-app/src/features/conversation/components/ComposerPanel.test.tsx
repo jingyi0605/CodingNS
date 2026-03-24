@@ -1,6 +1,7 @@
-import { render, screen, fireEvent } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
+import { t } from "../../../shared/i18n";
 import { ComposerPanel } from "./ComposerPanel";
 
 function createDeferred() {
@@ -15,24 +16,28 @@ function createDeferred() {
   };
 }
 
+function createCapabilities() {
+  return {
+    provider: "codex" as const,
+    canStartSession: true,
+    canResumeSession: true,
+    canSendMessage: true,
+    supportsSubagents: false,
+    supportsInterrupt: true,
+    supportsStructuredToolCalls: true,
+    supportsTokenUsage: false,
+    supportsAttachments: false,
+    supportsPermissionPrompt: true,
+    supportsCheckpoint: false,
+    limitations: []
+  };
+}
+
 describe("ComposerPanel", () => {
-  it("不再渲染 Host 同步提示文案", () => {
+  it("不再展示旧的 Host 同步提示文案", () => {
     render(
       <ComposerPanel
-        capabilities={{
-          provider: "codex",
-          canStartSession: true,
-          canResumeSession: true,
-          canSendMessage: true,
-          supportsSubagents: false,
-          supportsInterrupt: true,
-          supportsStructuredToolCalls: true,
-          supportsTokenUsage: false,
-          supportsAttachments: false,
-          supportsPermissionPrompt: true,
-          supportsCheckpoint: false,
-          limitations: []
-        }}
+        capabilities={createCapabilities()}
         isSubmitting={false}
         onSend={vi.fn().mockResolvedValue(undefined)}
       />
@@ -48,20 +53,7 @@ describe("ComposerPanel", () => {
 
     render(
       <ComposerPanel
-        capabilities={{
-          provider: "codex",
-          canStartSession: true,
-          canResumeSession: true,
-          canSendMessage: true,
-          supportsSubagents: false,
-          supportsInterrupt: true,
-          supportsStructuredToolCalls: true,
-          supportsTokenUsage: false,
-          supportsAttachments: false,
-          supportsPermissionPrompt: true,
-          supportsCheckpoint: false,
-          limitations: []
-        }}
+        capabilities={createCapabilities()}
         isSubmitting={false}
         onSend={onSend}
       />
@@ -70,7 +62,7 @@ describe("ComposerPanel", () => {
     const textarea = screen.getByRole("textbox");
     fireEvent.change(textarea, {
       target: {
-        value: "请将本次会话变更的代码提交到git暂存区，然后总结一条中文的提交信息"
+        value: "请将本次会话变更的代码提交到 git 暂存区，然后总结一条中文的提交信息"
       }
     });
 
@@ -85,5 +77,49 @@ describe("ComposerPanel", () => {
 
     deferred.resolve();
     await deferred.promise;
+  });
+
+  it("提交后会立即清空输入框，并切到发送中按钮", () => {
+    const deferred = createDeferred();
+
+    render(
+      <ComposerPanel
+        capabilities={createCapabilities()}
+        isSubmitting={false}
+        onSend={vi.fn(() => deferred.promise)}
+      />
+    );
+
+    const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+    fireEvent.change(textarea, {
+      target: {
+        value: "继续整理这条会话的下一步"
+      }
+    });
+
+    fireEvent.submit(document.querySelector(".composer-form")!);
+
+    expect(textarea.value).toBe("");
+    expect(screen.queryByLabelText(t("conversation.sendButton"))).not.toBeInTheDocument();
+    expect(screen.getByLabelText(t("conversation.sendingState"))).toBeInTheDocument();
+    expect(screen.getByText(t("conversation.sendingState"))).toBeInTheDocument();
+
+    deferred.resolve();
+  });
+
+  it("运行中时只显示中断按钮，不再显示发送按钮", () => {
+    render(
+      <ComposerPanel
+        capabilities={createCapabilities()}
+        isSubmitting={false}
+        isRunning
+        onInterrupt={vi.fn()}
+        onSend={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    expect(screen.queryByLabelText(t("conversation.sendButton"))).not.toBeInTheDocument();
+    expect(screen.getByLabelText(t("conversation.capabilityInterrupt"))).toBeInTheDocument();
+    expect(screen.getByText(t("conversation.runtimeRunning"))).toBeInTheDocument();
   });
 });

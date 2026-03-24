@@ -5,7 +5,8 @@ import {
   markPendingAsFailed,
   mergeAuthoritativeMessages,
   reconcileMessage,
-  toViewMessage
+  toViewMessage,
+  type SessionMessageViewModel
 } from "./session-runtime-machine";
 
 function createHistoryMessage(overrides: {
@@ -23,6 +24,22 @@ function createHistoryMessage(overrides: {
     kind: "text" as const,
     toolCall: null,
     ...overrides
+  };
+}
+
+function createSyntheticUserMessage(): SessionMessageViewModel {
+  return {
+    id: "synthetic-1",
+    sessionId: "session-1",
+    role: "user",
+    kind: "text",
+    content: "你好",
+    toolCall: null,
+    timestamp: "2026-03-24T10:00:00.000Z",
+    sequence: Number.MAX_SAFE_INTEGER - 1,
+    rawRef: "synthetic://codex/thread-1/synthetic-1",
+    deliveryState: "sent",
+    clientRequestId: null
   };
 }
 
@@ -94,7 +111,43 @@ describe("session runtime machine", () => {
     expect(merged[0].content).toBe("same message");
   });
 
-  it("发送成功后会用正式消息替换本地暂态消息", () => {
+  it("会折叠 codex 过时 event_msg 和后续 response_item 的重复用户消息", () => {
+    const merged = mergeAuthoritativeMessages(
+      [
+        toViewMessage(
+          "session-1",
+          createHistoryMessage({
+            messageId: "codex-event-msg",
+            provider: "codex",
+            providerSessionId: "raw-1",
+            role: "user",
+            content: "same message",
+            timestamp: "2026-03-24T01:05:29.100Z",
+            sequence: 2,
+            rawRef: "codex://demo#line=6"
+          })
+        )
+      ],
+      "session-1",
+      [
+        createHistoryMessage({
+          messageId: "codex-response-item",
+          provider: "codex",
+          providerSessionId: "raw-1",
+          role: "user",
+          content: "same message",
+          timestamp: "2026-03-24T01:05:29.900Z",
+          sequence: 2,
+          rawRef: "codex://demo#line=7"
+        })
+      ]
+    );
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0].id).toBe("codex-response-item");
+  });
+
+  it("发送成功后会用正式消息替换本地 pending 消息", () => {
     const pending = createPendingMessage("session-1", "先发出去", "client-1");
     const reconciled = reconcileMessage(
       [pending],
@@ -115,6 +168,29 @@ describe("session runtime machine", () => {
     expect(reconciled).toHaveLength(1);
     expect(reconciled[0].id).toBe("server-1");
     expect(reconciled[0].deliveryState).toBe("sent");
+  });
+
+  it("会用权威 user 消息替换 synthetic 首条消息，避免重复显示", () => {
+    const merged = mergeAuthoritativeMessages(
+      [createSyntheticUserMessage()],
+      "session-1",
+      [
+        createHistoryMessage({
+          messageId: "server-user-1",
+          provider: "codex",
+          providerSessionId: "thread-1",
+          role: "user",
+          content: "你好",
+          timestamp: "2026-03-24T10:00:00.400Z",
+          sequence: 1,
+          rawRef: "codex://demo#line=1"
+        })
+      ]
+    );
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0].id).toBe("server-user-1");
+    expect(merged[0].rawRef).toBe("codex://demo#line=1");
   });
 
   it("发送失败后只标记失败，不制造第二份消息", () => {

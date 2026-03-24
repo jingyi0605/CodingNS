@@ -38,6 +38,15 @@ export interface ProviderSessionSummary {
   rawStoreRef: string;
   lastMessageAt: string | null;
   messageCount: number;
+  parentProviderSessionId?: string | null;
+  isSubagent?: boolean;
+  subagentLabel?: string | null;
+  sourceMtimeMs?: number;
+  sourceSizeBytes?: number;
+}
+
+export interface DetectSessionsOptions {
+  knownSessions?: ProviderSessionSummary[];
 }
 
 export interface NormalizedMessage {
@@ -93,7 +102,10 @@ export interface ProviderSubscription {
 
 export interface ProviderAdapter {
   readonly providerId: ProviderId;
-  detectSessions(workspacePath: string): Promise<ProviderSessionSummary[]>;
+  detectSessions(
+    workspacePath: string,
+    options?: DetectSessionsOptions
+  ): Promise<ProviderSessionSummary[]>;
   readSessionHistory(
     providerSessionId: string,
     rawStoreRef: string,

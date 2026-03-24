@@ -5,7 +5,14 @@ export type ProviderId = "claude-code" | "codex";
 export type SyncStatus = "idle" | "syncing" | "error";
 export type DeliveryState = "sending" | "sent" | "failed";
 export type MessageKind = "text" | "thinking" | "tool_call" | "tool_result";
-export type SessionRunningState = "idle" | "running";
+export type SessionRunningState =
+  | "idle"
+  | "starting"
+  | "running"
+  | "reconnecting"
+  | "completed"
+  | "interrupted"
+  | "failed";
 export type SessionActivityState = "idle" | "running" | "completed_unread";
 export type HistoryDirection = "forward" | "backward";
 
@@ -36,6 +43,9 @@ export interface SessionSummaryDto {
   provider: ProviderId;
   providerSessionId: string;
   rawStoreRef: string;
+  parentSessionId?: string | null;
+  isSubagent?: boolean;
+  subagentLabel?: string | null;
   title: string;
   messageCount: number;
   lastMessageAt: string | null;
@@ -109,6 +119,46 @@ export interface StartSessionPayload {
   workspaceId: string;
   provider: ProviderId;
   initialPrompt?: string;
+}
+
+export interface StartLivePayload {
+  workspaceId: string;
+  provider: ProviderId;
+  content: string;
+  clientRequestId?: string | null;
+  model?: string | null;
+  reasoningLevel?: string | null;
+}
+
+export interface SendLiveMessagePayload {
+  content: string;
+  clientRequestId: string;
+  model?: string | null;
+  reasoningLevel?: string | null;
+}
+
+export interface StartLiveResponseDto extends SendMessageResponseDto {
+  provider: ProviderId;
+  providerSessionId: string;
+  session?: SessionSummaryDto;
+}
+
+export interface SessionRuntimeDto {
+  sessionId: string;
+  runningState: SessionRunningState;
+  hasActiveRun: boolean;
+  canAttach: boolean;
+  canInterrupt: boolean;
+  provider: ProviderId;
+  providerSessionId: string;
+  detail: string | null;
+  updatedAt: string;
+}
+
+export interface InterruptSessionResponseDto {
+  sessionId: string;
+  interrupted: boolean;
+  detail?: string | null;
 }
 
 export function listWorkspaces() {
@@ -202,6 +252,41 @@ export function sendSessionMessage(
     {
       method: "POST",
       body: JSON.stringify(payload)
+    }
+  );
+}
+
+export function startLiveSession(payload: StartLivePayload) {
+  return httpClient.request<StartLiveResponseDto>("/api/sessions/start-live", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function sendLiveMessage(
+  sessionId: string,
+  payload: SendLiveMessagePayload
+) {
+  return httpClient.request<SendMessageResponseDto>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/messages/live`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }
+  );
+}
+
+export function getSessionRuntime(sessionId: string) {
+  return httpClient.request<SessionRuntimeDto>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/runtime`
+  );
+}
+
+export function interruptSession(sessionId: string) {
+  return httpClient.request<InterruptSessionResponseDto>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/interrupt`,
+    {
+      method: "POST"
     }
   );
 }

@@ -1,16 +1,9 @@
 import { t } from "../../../shared/i18n";
 
-import type {
-  ProviderCapabilitiesDto,
-  SessionSummaryDto
-} from "../api/conversation-api";
-import type { RuntimeConnectionState } from "../runtime/session-runtime-machine";
+import type { SessionSummaryDto } from "../api/conversation-api";
 
 interface SessionHeaderProps {
   session: SessionSummaryDto | null;
-  capabilities: ProviderCapabilitiesDto | null;
-  connectionState: RuntimeConnectionState;
-  workspaceName?: string | null;
 }
 
 function resolveTitleScale(title: string) {

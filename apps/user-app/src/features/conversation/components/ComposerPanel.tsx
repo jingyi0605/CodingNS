@@ -8,6 +8,8 @@ import type { ProviderCapabilitiesDto, ProviderId } from "../api/conversation-ap
 interface ComposerPanelProps {
   capabilities: ProviderCapabilitiesDto | null;
   isSubmitting: boolean;
+  isRunning?: boolean;
+  onInterrupt?: () => Promise<void> | void;
   onSend: (content: string, options?: { model?: string; reasoningLevel?: string }) => Promise<void>;
 }
 
@@ -28,7 +30,13 @@ const MODEL_OPTIONS: ModelOption[] = [
   { id: "gpt-4o", name: "GPT-4o", provider: "codex" }
 ];
 
-export function ComposerPanel({ capabilities, isSubmitting, onSend }: ComposerPanelProps) {
+export function ComposerPanel({
+  capabilities,
+  isSubmitting,
+  isRunning = false,
+  onInterrupt,
+  onSend
+}: ComposerPanelProps) {
   const [content, setContent] = useState("");
   const [selectedModel, setSelectedModel] = useState<string>(() => {
     const saved = localStorage.getItem("composer-selected-model");
@@ -40,6 +48,8 @@ export function ComposerPanel({ capabilities, isSubmitting, onSend }: ComposerPa
   });
   const [attachments, setAttachments] = useState<File[]>([]);
   const [showSlashMenu, setShowSlashMenu] = useState(false);
+  const [interrupting, setInterrupting] = useState(false);
+  const [localSubmitting, setLocalSubmitting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const submitLockRef = useRef(false);
@@ -48,6 +58,14 @@ export function ComposerPanel({ capabilities, isSubmitting, onSend }: ComposerPa
   const provider: ProviderId = capabilities?.provider || "claude-code";
   const sendDecision = useMemo(
     () => decideCapability(capabilities, "send_message"),
+    [capabilities]
+  );
+  const interruptDecision = useMemo(
+    () => decideCapability(capabilities, "interrupt"),
+    [capabilities]
+  );
+  const attachmentDecision = useMemo(
+    () => decideCapability(capabilities, "attachments"),
     [capabilities]
   );
   const availableModels = useMemo(
@@ -71,6 +89,14 @@ export function ComposerPanel({ capabilities, isSubmitting, onSend }: ComposerPa
     ],
     []
   );
+  const interactionActive = localSubmitting || isSubmitting || isRunning;
+  const interactionLabel = interactionActive
+    ? localSubmitting || isSubmitting
+      ? t("conversation.sendingState")
+      : t("conversation.runtimeRunning")
+    : null;
+  const canInterruptNow =
+    isRunning && interruptDecision.allowed && Boolean(onInterrupt) && !interrupting;
 
   const handleModelChange = useCallback((modelId: string) => {
     setSelectedModel(modelId);
@@ -99,8 +125,16 @@ export function ComposerPanel({ capabilities, isSubmitting, onSend }: ComposerPa
   }, []);
 
   const openFilePicker = useCallback(() => {
+    if (!attachmentDecision.allowed) {
+      showToast({
+        title: attachmentDecision.reason ?? t("conversation.capabilityDenied"),
+        tone: "error"
+      });
+      return;
+    }
+
     fileInputRef.current?.click();
-  }, []);
+  }, [attachmentDecision.allowed, attachmentDecision.reason, showToast]);
 
   const handleSlashCommand = useCallback(() => {
     setShowSlashMenu((current) => !current);
@@ -145,6 +179,15 @@ export function ComposerPanel({ capabilities, isSubmitting, onSend }: ComposerPa
     textarea.style.height = `${Math.min(textarea.scrollHeight, 120)}px`;
   }, [content]);
 
+  useEffect(() => {
+    if (attachmentDecision.allowed) {
+      return;
+    }
+
+    // 当前后端尚不支持附件时，主动清理本地附件状态，避免 UI 伪装可用
+    setAttachments([]);
+  }, [attachmentDecision.allowed]);
+
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -153,7 +196,9 @@ export function ComposerPanel({ capabilities, isSubmitting, onSend }: ComposerPa
       return;
     }
 
-    if (!content.trim() || !sendDecision.allowed) {
+    const nextContent = content.trim();
+
+    if (!nextContent || !sendDecision.allowed) {
       showToast({
         title: sendDecision.reason ?? t("conversation.capabilityDenied"),
         tone: "error"
@@ -161,27 +206,50 @@ export function ComposerPanel({ capabilities, isSubmitting, onSend }: ComposerPa
       return;
     }
 
+    const nextAttachments = attachments;
     submitLockRef.current = true;
+    setLocalSubmitting(true);
+    setContent("");
+    setAttachments([]);
+    setShowSlashMenu(false);
 
     try {
-      await onSend(content.trim(), {
+      await onSend(nextContent, {
         model: selectedModel,
         reasoningLevel: provider === "codex" ? reasoningLevel : undefined
       });
-      setContent("");
-      setAttachments([]);
-      setShowSlashMenu(false);
     } catch (error) {
+      setContent(nextContent);
+      setAttachments(nextAttachments);
       showToast({
         title: error instanceof Error ? error.message : t("conversation.capabilityDenied"),
         tone: "error"
       });
     } finally {
+      setLocalSubmitting(false);
       submitLockRef.current = false;
     }
   }
 
-  const isDisabled = isSubmitting || !sendDecision.allowed || !content.trim();
+  async function handleInterrupt(): Promise<void> {
+    if (!interruptDecision.allowed || !onInterrupt || interrupting) {
+      return;
+    }
+
+    try {
+      setInterrupting(true);
+      await onInterrupt();
+    } catch (error) {
+      showToast({
+        title: error instanceof Error ? error.message : t("conversation.capabilityInterruptDisabled"),
+        tone: "error"
+      });
+    } finally {
+      setInterrupting(false);
+    }
+  }
+
+  const isDisabled = interactionActive || !sendDecision.allowed || !content.trim();
 
   return (
     <section className="composer-panel">
@@ -264,6 +332,19 @@ export function ComposerPanel({ capabilities, isSubmitting, onSend }: ComposerPa
             </div>
           ) : null}
 
+          {interactionLabel ? (
+            <div className="composer-status-row" aria-live="polite">
+              <span className="header-chip composer-status-pill" data-tone="active">
+                {interactionLabel}
+              </span>
+              <span className="composer-status-hint">
+                {canInterruptNow
+                  ? t("conversation.capabilityInterrupt")
+                  : t("conversation.runtimeStarting")}
+              </span>
+            </div>
+          ) : null}
+
           <div className="composer-controls">
             <div className="composer-controls-left">
               <div className="composer-provider-logo">
@@ -335,6 +416,7 @@ export function ComposerPanel({ capabilities, isSubmitting, onSend }: ComposerPa
                 className="composer-attach-btn"
                 onClick={openFilePicker}
                 title={t("conversation.attachFiles")}
+                disabled={!attachmentDecision.allowed}
               >
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <line x1="12" y1="5" x2="12" y2="19" />
@@ -343,17 +425,55 @@ export function ComposerPanel({ capabilities, isSubmitting, onSend }: ComposerPa
               </button>
             </div>
 
-            <button
-              className="composer-send"
-              type="submit"
-              disabled={isDisabled}
-              aria-label={t("conversation.sendButton")}
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                <line x1="22" y1="2" x2="11" y2="13" />
-                <polygon points="22 2 15 22 11 13 2 9 22 2" />
-              </svg>
-            </button>
+            {interactionActive ? (
+              <button
+                className="composer-send composer-send-busy"
+                type="button"
+                onClick={() => {
+                  if (canInterruptNow) {
+                    void handleInterrupt();
+                  }
+                }}
+                disabled={!canInterruptNow}
+                aria-label={canInterruptNow ? t("conversation.capabilityInterrupt") : interactionLabel ?? t("conversation.sendingState")}
+                title={canInterruptNow ? t("conversation.capabilityInterrupt") : interactionLabel ?? t("conversation.sendingState")}
+              >
+                {canInterruptNow ? (
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <rect x="6" y="6" width="12" height="12" />
+                  </svg>
+                ) : (
+                  <svg className="composer-send-spinner" width="18" height="18" viewBox="0 0 24 24" fill="none">
+                    <circle
+                      cx="12"
+                      cy="12"
+                      r="8"
+                      stroke="currentColor"
+                      strokeOpacity="0.28"
+                      strokeWidth="2.5"
+                    />
+                    <path
+                      d="M20 12a8 8 0 0 0-8-8"
+                      stroke="currentColor"
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                )}
+              </button>
+            ) : (
+              <button
+                className="composer-send"
+                type="submit"
+                disabled={isDisabled}
+                aria-label={t("conversation.sendButton")}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <line x1="22" y1="2" x2="11" y2="13" />
+                  <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                </svg>
+              </button>
+            )}
           </div>
 
         </div>

@@ -5,7 +5,7 @@
   "scripts": {
     "preinstall": "node scripts/ensure-pnpm.cjs",
     "dev": "node scripts/show-dev-help.cjs",
-    "dev:backend": "corepack pnpm --dir packages/session-sync-core build && concurrently -k -n core,host -c yellow,cyan \"corepack pnpm --dir packages/session-sync-core dev\" \"corepack pnpm --filter host dev:watch\"",
+    "dev:backend": "node scripts/dev-backend.cjs",
     "dev:frontend": "corepack pnpm --filter user-app dev",
     "dev:host": "npm run dev:backend",
     "dev:user-app": "corepack pnpm --dir apps/user-app dev",

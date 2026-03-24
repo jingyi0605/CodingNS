@@ -1,8 +1,10 @@
+import { DatabaseSync } from "node:sqlite";
 import { basename, join } from "node:path";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import crypto from "node:crypto";
 
 import type {
+  DetectSessionsOptions,
   HistoryDirection,
   HistoryPage,
   NormalizedMessage,
@@ -40,45 +42,250 @@ interface CodexAdapterOptions {
 
 type CodexMessageSource = "event_msg" | "response_item";
 
+interface CodexHistoryCacheEntry {
+  filePath: string;
+  providerSessionId: string;
+  mtimeMs: number;
+  size: number;
+  messages: NormalizedMessage[];
+}
+
+interface CodexSessionSummaryCacheEntry {
+  filePath: string;
+  mtimeMs: number;
+  size: number;
+  workspacePath: string | null;
+  summary: ProviderSessionSummary | null;
+}
+
+interface CodexThreadMetadata {
+  title: string | null;
+  cwd: string | null;
+  createdAtMs: number | null;
+  firstUserMessage: string | null;
+  agentNickname: string | null;
+  agentRole: string | null;
+}
+
+interface CodexSpawnRelation {
+  parentProviderSessionId: string;
+}
+
+interface CodexSpawnRecord {
+  parentProviderSessionId: string;
+  workspacePath: string | null;
+  message: string;
+  timestampMs: number | null;
+}
+
+const HISTORY_CACHE_LIMIT = 6;
+const SESSION_SUMMARY_CACHE_LIMIT = 512;
+
 export class CodexAdapter implements ProviderAdapter {
   readonly providerId: ProviderId = "codex";
+  private readonly historyCache = new Map<string, CodexHistoryCacheEntry>();
+  private readonly sessionSummaryCache = new Map<string, CodexSessionSummaryCacheEntry>();
 
   constructor(private readonly options: CodexAdapterOptions) {}
 
-  async detectSessions(workspacePath: string): Promise<ProviderSessionSummary[]> {
+  async detectSessions(
+    workspacePath: string,
+    options?: DetectSessionsOptions
+  ): Promise<ProviderSessionSummary[]> {
     const targetPath = normalizeWorkspacePath(workspacePath);
     const files = this.listSessionFiles();
-    const threadNameIndex = this.readThreadNameIndex();
+    const threadMetadataIndex = this.readThreadMetadataIndex();
+    const spawnedAgentRelationIndex = this.readSpawnedAgentRelationIndex(
+      files,
+      targetPath,
+      threadMetadataIndex
+    );
+    const knownSessions = (options?.knownSessions ?? []).filter(
+      (session) => session.provider === this.providerId
+    );
+    const knownByRawStoreRef = new Map(
+      knownSessions.map((session) => [session.rawStoreRef, session] as const)
+    );
+    const knownByProviderSessionId = new Map(
+      knownSessions.map((session) => [session.providerSessionId, session] as const)
+    );
     const sessionsByProviderSessionId = new Map<string, ProviderSessionSummary>();
 
     for (const filePath of files) {
-      const records = readJsonLines(filePath).map((record) => record.data);
-      const meta = records.find((record) => record.type === "session_meta");
-      const metaPayload = (meta?.payload ?? {}) as Record<string, unknown>;
-      const cwd = ensureText(metaPayload.cwd);
+      const stats = statSync(filePath);
+      const cachedSummary = this.sessionSummaryCache.get(filePath);
+      const fileSessionId = basename(filePath, ".jsonl");
+      const sessionIdentity = this.readSessionIdentity(filePath, fileSessionId);
+      const threadMetadata = sessionIdentity
+        ? threadMetadataIndex.get(sessionIdentity.threadId)
+        : null;
+      const spawnRelation = sessionIdentity
+        ? spawnedAgentRelationIndex.get(sessionIdentity.threadId)
+        : null;
 
-      if (normalizeWorkspacePath(cwd) !== targetPath) {
+      if (
+        cachedSummary
+        && cachedSummary.mtimeMs === stats.mtimeMs
+        && cachedSummary.size === stats.size
+      ) {
+        this.touchSessionSummaryCache(filePath, cachedSummary);
+
+        if (
+          cachedSummary.summary
+          && normalizeWorkspacePath(cachedSummary.summary.workspacePath) === targetPath
+        ) {
+          sessionsByProviderSessionId.set(cachedSummary.summary.providerSessionId, {
+            ...cachedSummary.summary,
+            rawStoreRef: filePath,
+            parentProviderSessionId: spawnRelation?.parentProviderSessionId ?? null,
+            isSubagent: isCodexSubagentThread(threadMetadata, spawnRelation),
+            subagentLabel: buildCodexSubagentLabel(threadMetadata),
+            sourceMtimeMs: stats.mtimeMs,
+            sourceSizeBytes: stats.size
+          });
+          continue;
+        }
+
+        if (
+          cachedSummary.workspacePath
+          && normalizeWorkspacePath(cachedSummary.workspacePath) !== targetPath
+        ) {
+          continue;
+        }
+      }
+
+      const knownByPath = knownByRawStoreRef.get(filePath);
+
+      if (
+        knownByPath
+        && knownByPath.sourceMtimeMs === stats.mtimeMs
+        && knownByPath.sourceSizeBytes === stats.size
+        && normalizeWorkspacePath(knownByPath.workspacePath) === targetPath
+      ) {
+        this.touchSessionSummaryCache(filePath, {
+          filePath,
+          mtimeMs: stats.mtimeMs,
+          size: stats.size,
+          workspacePath: knownByPath.workspacePath,
+          summary: {
+            ...knownByPath,
+            rawStoreRef: filePath,
+            parentProviderSessionId: spawnRelation?.parentProviderSessionId ?? null,
+            isSubagent: isCodexSubagentThread(threadMetadata, spawnRelation),
+            subagentLabel: buildCodexSubagentLabel(threadMetadata),
+            sourceMtimeMs: stats.mtimeMs,
+            sourceSizeBytes: stats.size
+          }
+        });
+        sessionsByProviderSessionId.set(knownByPath.providerSessionId, {
+          ...knownByPath,
+          rawStoreRef: filePath,
+          parentProviderSessionId: spawnRelation?.parentProviderSessionId ?? null,
+          isSubagent: isCodexSubagentThread(threadMetadata, spawnRelation),
+          subagentLabel: buildCodexSubagentLabel(threadMetadata),
+          sourceMtimeMs: stats.mtimeMs,
+          sourceSizeBytes: stats.size
+        });
         continue;
       }
 
-      const providerSessionId = basename(filePath, ".jsonl");
-      const messages = this.parseMessages(filePath, records, providerSessionId);
-      const codexSessionId = this.resolveCodexSessionId(metaPayload, providerSessionId);
+      const records = readJsonLines(filePath).map((record) => record.data);
+      const meta = records.find((record) => record.type === "session_meta");
+      const metaPayload = (meta?.payload ?? {}) as Record<string, unknown>;
+
+      if (shouldIgnoreCodingNsDraftSession(metaPayload)) {
+        this.touchSessionSummaryCache(filePath, {
+          filePath,
+          mtimeMs: stats.mtimeMs,
+          size: stats.size,
+          workspacePath: null,
+          summary: null
+        });
+        continue;
+      }
+
+      const cwd = ensureText(metaPayload.cwd);
+      const cachedWorkspacePath = cwd || null;
+      const sessionWorkspacePath = cwd || workspacePath;
+
+      if (normalizeWorkspacePath(cwd) !== targetPath) {
+        this.touchSessionSummaryCache(filePath, {
+          filePath,
+          mtimeMs: stats.mtimeMs,
+          size: stats.size,
+          workspacePath: cachedWorkspacePath,
+          summary: null
+        });
+        continue;
+      }
+
+      const codexSessionId = this.resolveCodexSessionId(metaPayload, fileSessionId);
+      const currentThreadMetadata = threadMetadataIndex.get(codexSessionId) ?? threadMetadata;
+      const currentSpawnRelation = spawnedAgentRelationIndex.get(codexSessionId) ?? spawnRelation;
+      const knownBySessionId = knownByProviderSessionId.get(codexSessionId);
+
+      if (
+        knownBySessionId
+        && knownBySessionId.sourceMtimeMs === stats.mtimeMs
+        && knownBySessionId.sourceSizeBytes === stats.size
+      ) {
+        this.touchSessionSummaryCache(filePath, {
+          filePath,
+          mtimeMs: stats.mtimeMs,
+          size: stats.size,
+          workspacePath: sessionWorkspacePath,
+          summary: {
+            ...knownBySessionId,
+            rawStoreRef: filePath,
+            workspacePath: sessionWorkspacePath,
+            parentProviderSessionId: currentSpawnRelation?.parentProviderSessionId ?? null,
+            isSubagent: isCodexSubagentThread(currentThreadMetadata, currentSpawnRelation),
+            subagentLabel: buildCodexSubagentLabel(currentThreadMetadata),
+            sourceMtimeMs: stats.mtimeMs,
+            sourceSizeBytes: stats.size
+          }
+        });
+        sessionsByProviderSessionId.set(codexSessionId, {
+          ...knownBySessionId,
+          rawStoreRef: filePath,
+          workspacePath: sessionWorkspacePath,
+          parentProviderSessionId: currentSpawnRelation?.parentProviderSessionId ?? null,
+          isSubagent: isCodexSubagentThread(currentThreadMetadata, currentSpawnRelation),
+          subagentLabel: buildCodexSubagentLabel(currentThreadMetadata),
+          sourceMtimeMs: stats.mtimeMs,
+          sourceSizeBytes: stats.size
+        });
+        continue;
+      }
+
+      const messages = this.parseMessages(filePath, records, codexSessionId);
       const title =
-        this.resolveIndexedTitle(threadNameIndex, codexSessionId) ??
+        this.resolveIndexedTitle(threadMetadataIndex, codexSessionId) ??
         messages.find((message) => message.role === "user")?.content.slice(0, 48) ??
-        providerSessionId;
+        fileSessionId;
       const lastMessageAt =
         messages.at(-1)?.timestamp ?? (ensureText(metaPayload.timestamp) || null);
 
-      sessionsByProviderSessionId.set(providerSessionId, {
+      sessionsByProviderSessionId.set(codexSessionId, {
         provider: this.providerId,
-        providerSessionId,
+        providerSessionId: codexSessionId,
         title,
-        workspacePath,
+        workspacePath: sessionWorkspacePath,
         rawStoreRef: filePath,
         lastMessageAt,
-        messageCount: messages.length
+        messageCount: messages.length,
+        parentProviderSessionId: currentSpawnRelation?.parentProviderSessionId ?? null,
+        isSubagent: isCodexSubagentThread(currentThreadMetadata, currentSpawnRelation),
+        subagentLabel: buildCodexSubagentLabel(currentThreadMetadata),
+        sourceMtimeMs: stats.mtimeMs,
+        sourceSizeBytes: stats.size
+      });
+      this.touchSessionSummaryCache(filePath, {
+        filePath,
+        mtimeMs: stats.mtimeMs,
+        size: stats.size,
+        workspacePath: sessionWorkspacePath,
+        summary: sessionsByProviderSessionId.get(codexSessionId) ?? null
       });
     }
 
@@ -95,8 +302,7 @@ export class CodexAdapter implements ProviderAdapter {
     direction: HistoryDirection = "forward"
   ): Promise<HistoryPage> {
     const resolvedStoreRef = this.resolveSessionFilePath(rawStoreRef, providerSessionId);
-    const records = readJsonLines(resolvedStoreRef).map((record) => record.data);
-    const messages = this.parseMessages(rawStoreRef, records, providerSessionId);
+    const messages = this.getParsedMessages(resolvedStoreRef, providerSessionId);
     return sliceHistory(messages, cursor, limit, direction);
   }
 
@@ -232,7 +438,8 @@ export class CodexAdapter implements ProviderAdapter {
       }
     });
 
-    const rawRef = createRawRef(this.providerId, rawStoreRef, lineNumber);
+    const rawRef = createRawRef(this.providerId, resolvedStoreRef, lineNumber);
+    this.historyCache.delete(resolvedStoreRef);
 
     return {
       acceptedAt,
@@ -262,7 +469,7 @@ export class CodexAdapter implements ProviderAdapter {
       canStartSession: true,
       canResumeSession: true,
       canSendMessage: true,
-      supportsSubagents: false,
+      supportsSubagents: true,
       supportsInterrupt: true,
       supportsStructuredToolCalls: true,
       supportsTokenUsage: false,
@@ -277,34 +484,100 @@ export class CodexAdapter implements ProviderAdapter {
     return this.getProviderCapabilities();
   }
 
-  private readThreadNameIndex(): Map<string, string> {
+  private readThreadMetadataIndex(): Map<string, CodexThreadMetadata> {
+    const index = new Map<string, CodexThreadMetadata>();
     const indexPath = join(this.options.homeDir, "session_index.jsonl");
 
-    if (!existsSync(indexPath)) {
-      return new Map();
+    if (existsSync(indexPath)) {
+      const lines = readFileSync(indexPath, "utf8")
+        .split(/\r?\n/)
+        .filter((line) => line.trim().length > 0);
+
+      // 这里容忍单行脏数据，避免某一条坏记录把整个会话列表拖死。
+      for (const line of lines) {
+        try {
+          const record = JSON.parse(line) as {
+            id?: unknown;
+            thread_name?: unknown;
+          };
+          const id = ensureText(record.id).trim();
+
+          if (id.length === 0) {
+            continue;
+          }
+
+          index.set(id, {
+            title: ensureText(record.thread_name).trim() || null,
+            cwd: null,
+            createdAtMs: null,
+            firstUserMessage: null,
+            agentNickname: null,
+            agentRole: null
+          });
+        } catch {
+          continue;
+        }
+      }
     }
 
-    const lines = readFileSync(indexPath, "utf8")
-      .split(/\r?\n/)
-      .filter((line) => line.trim().length > 0);
-    const index = new Map<string, string>();
+    const stateDbPath = findLatestCodexStateDatabase(this.options.homeDir);
 
-    // 这里容忍单行脏数据，避免某一条坏记录把整个会话列表拖死。
-    for (const line of lines) {
-      try {
-        const record = JSON.parse(line) as {
-          id?: unknown;
-          thread_name?: unknown;
-        };
-        const id = ensureText(record.id).trim();
-        const threadName = ensureText(record.thread_name).trim();
+    if (!stateDbPath) {
+      return index;
+    }
 
-        if (id.length > 0 && threadName.length > 0) {
-          index.set(id, threadName);
+    let db: DatabaseSync | null = null;
+
+    try {
+      db = new DatabaseSync(stateDbPath, { open: true, readOnly: true });
+      const rows = db.prepare(
+        `SELECT
+           id,
+           title,
+           cwd,
+           created_at,
+           first_user_message,
+           agent_nickname,
+           agent_role
+         FROM threads`
+      ).all() as Array<{
+        id?: unknown;
+        title?: unknown;
+        cwd?: unknown;
+        created_at?: unknown;
+        first_user_message?: unknown;
+        agent_nickname?: unknown;
+        agent_role?: unknown;
+      }>;
+
+      for (const row of rows) {
+        const id = ensureText(row.id).trim();
+
+        if (id.length === 0) {
+          continue;
         }
-      } catch {
-        continue;
+
+        const current = index.get(id);
+        const createdAtSeconds =
+          typeof row.created_at === "number"
+            ? row.created_at
+            : Number.parseInt(ensureText(row.created_at), 10);
+
+        index.set(id, {
+          title: ensureText(row.title).trim() || (current?.title ?? null),
+          cwd: ensureText(row.cwd).trim() || (current?.cwd ?? null),
+          createdAtMs: Number.isFinite(createdAtSeconds) ? createdAtSeconds * 1000 : null,
+          firstUserMessage:
+            ensureText(row.first_user_message).trim() || (current?.firstUserMessage ?? null),
+          agentNickname:
+            ensureText(row.agent_nickname).trim() || (current?.agentNickname ?? null),
+          agentRole: ensureText(row.agent_role).trim() || (current?.agentRole ?? null)
+        });
       }
+    } catch {
+      return index;
+    } finally {
+      db?.close();
     }
 
     return index;
@@ -336,7 +609,117 @@ export class CodexAdapter implements ProviderAdapter {
       return matchedPath;
     }
 
+    const matchedByThreadId = this.findSessionFileByThreadId(providerSessionId);
+
+    if (matchedByThreadId) {
+      return matchedByThreadId;
+    }
+
     return rawStoreRef;
+  }
+
+  private findSessionFileByThreadId(providerSessionId: string): string | null {
+    for (const filePath of this.listSessionFiles()) {
+      const threadId = this.readThreadIdFromRawStore(filePath);
+
+      if (threadId === providerSessionId) {
+        return filePath;
+      }
+    }
+
+    return null;
+  }
+
+  private readThreadIdFromRawStore(filePath: string): string | null {
+    if (!existsSync(filePath)) {
+      return null;
+    }
+
+    const firstLine = readFileSync(filePath, "utf8")
+      .split(/\r?\n/, 1)
+      .at(0)
+      ?.trim();
+
+    if (!firstLine) {
+      return null;
+    }
+
+    try {
+      const record = JSON.parse(firstLine) as {
+        type?: unknown;
+        payload?: {
+          id?: unknown;
+        };
+      };
+
+      if (ensureText(record.type).trim() !== "session_meta") {
+        return null;
+      }
+
+      const threadId = ensureText(record.payload?.id).trim();
+      return threadId.length > 0 ? threadId : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private getParsedMessages(filePath: string, providerSessionId: string): NormalizedMessage[] {
+    const stats = statSync(filePath);
+    const cached = this.historyCache.get(filePath);
+
+    if (
+      cached
+      && cached.providerSessionId === providerSessionId
+      && cached.mtimeMs === stats.mtimeMs
+      && cached.size === stats.size
+    ) {
+      this.touchHistoryCache(filePath, cached);
+      return cached.messages;
+    }
+
+    const records = readJsonLines(filePath).map((record) => record.data);
+    const messages = this.parseMessages(filePath, records, providerSessionId);
+    this.touchHistoryCache(filePath, {
+      filePath,
+      providerSessionId,
+      mtimeMs: stats.mtimeMs,
+      size: stats.size,
+      messages
+    });
+    return messages;
+  }
+
+  private touchHistoryCache(filePath: string, entry: CodexHistoryCacheEntry): void {
+    this.historyCache.delete(filePath);
+    this.historyCache.set(filePath, entry);
+
+    while (this.historyCache.size > HISTORY_CACHE_LIMIT) {
+      const oldestKey = this.historyCache.keys().next().value;
+
+      if (!oldestKey) {
+        break;
+      }
+
+      this.historyCache.delete(oldestKey);
+    }
+  }
+
+  private touchSessionSummaryCache(
+    filePath: string,
+    entry: CodexSessionSummaryCacheEntry
+  ): void {
+    this.sessionSummaryCache.delete(filePath);
+    this.sessionSummaryCache.set(filePath, entry);
+
+    while (this.sessionSummaryCache.size > SESSION_SUMMARY_CACHE_LIMIT) {
+      const oldestKey = this.sessionSummaryCache.keys().next().value;
+
+      if (!oldestKey) {
+        break;
+      }
+
+      this.sessionSummaryCache.delete(oldestKey);
+    }
   }
 
   private resolveCodexSessionId(
@@ -344,20 +727,178 @@ export class CodexAdapter implements ProviderAdapter {
     providerSessionId: string
   ): string {
     const metaId = ensureText(metaPayload.id).trim();
+    const normalizedProviderSessionId = ensureText(providerSessionId).trim();
 
-    if (metaId.length > 0) {
+    if (looksLikeCodexThreadId(metaId)) {
       return metaId;
     }
 
-    const matched = providerSessionId.match(
+    const matched = normalizedProviderSessionId.match(
       /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i
     );
 
-    return matched?.[1] ?? providerSessionId;
+    if (matched?.[1]) {
+      return matched[1];
+    }
+
+    return metaId || normalizedProviderSessionId;
   }
 
-  private resolveIndexedTitle(index: Map<string, string>, sessionId: string): string | null {
-    return index.get(sessionId)?.trim() || null;
+  private resolveIndexedTitle(
+    index: Map<string, CodexThreadMetadata>,
+    sessionId: string
+  ): string | null {
+    return index.get(sessionId)?.title?.trim() || null;
+  }
+
+  private readSpawnedAgentRelationIndex(
+    files: string[],
+    targetPath: string,
+    threadMetadataIndex: Map<string, CodexThreadMetadata>
+  ): Map<string, CodexSpawnRelation> {
+    const directRelations = new Map<string, CodexSpawnRelation>();
+    const spawnRecords: CodexSpawnRecord[] = [];
+
+    for (const filePath of files) {
+      const sessionIdentity = this.readSessionIdentity(filePath, basename(filePath, ".jsonl"));
+
+      if (!sessionIdentity) {
+        continue;
+      }
+
+      if (normalizeWorkspacePath(sessionIdentity.cwd) !== targetPath) {
+        continue;
+      }
+
+      const records = readJsonLines(filePath).map((record) => record.data);
+      const spawnCallById = new Map<string, CodexSpawnRecord>();
+
+      for (const record of records) {
+        if (record.type !== "response_item") {
+          continue;
+        }
+
+        const payload = (record.payload ?? {}) as Record<string, unknown>;
+        const payloadType = ensureText(payload.type).trim();
+
+        if (payloadType === "function_call" && ensureText(payload.name).trim() === "spawn_agent") {
+          const callId = ensureText(payload.call_id).trim();
+          const args = parseStructuredJson(ensureText(payload.arguments));
+          const message = ensureText(args?.message).trim();
+
+          if (callId.length === 0 || message.length === 0) {
+            continue;
+          }
+
+          const spawnRecord: CodexSpawnRecord = {
+            parentProviderSessionId: sessionIdentity.threadId,
+            workspacePath: sessionIdentity.cwd,
+            message,
+            timestampMs: toTimestampMs(record.timestamp)
+          };
+
+          spawnCallById.set(callId, spawnRecord);
+          spawnRecords.push(spawnRecord);
+          continue;
+        }
+
+        if (payloadType !== "function_call_output") {
+          continue;
+        }
+
+        const callId = ensureText(payload.call_id).trim();
+        const spawnRecord = spawnCallById.get(callId);
+
+        if (!spawnRecord) {
+          continue;
+        }
+
+        const agentId = parseCodexAgentIdFromToolOutput(ensureText(payload.output));
+
+        if (!agentId) {
+          continue;
+        }
+
+        directRelations.set(agentId, {
+          parentProviderSessionId: spawnRecord.parentProviderSessionId
+        });
+      }
+    }
+
+    for (const [threadId, metadata] of threadMetadataIndex.entries()) {
+      if (directRelations.has(threadId)) {
+        continue;
+      }
+
+      if (!metadata.agentRole && !metadata.agentNickname) {
+        continue;
+      }
+
+      const firstUserMessage = metadata.firstUserMessage?.trim();
+      const workspacePath = metadata.cwd ? normalizeWorkspacePath(metadata.cwd) : null;
+
+      if (!firstUserMessage || workspacePath !== targetPath) {
+        continue;
+      }
+
+      const matchedSpawn = pickClosestCodexSpawnRecord(
+        spawnRecords,
+        workspacePath,
+        firstUserMessage,
+        metadata.createdAtMs
+      );
+
+      if (!matchedSpawn) {
+        continue;
+      }
+
+      directRelations.set(threadId, {
+        parentProviderSessionId: matchedSpawn.parentProviderSessionId
+      });
+    }
+
+    return directRelations;
+  }
+
+  private readSessionIdentity(
+    filePath: string,
+    fallbackSessionId: string
+  ): { threadId: string; cwd: string } | null {
+    if (!existsSync(filePath)) {
+      return null;
+    }
+
+    const firstLine = readFileSync(filePath, "utf8")
+      .split(/\r?\n/, 1)
+      .at(0)
+      ?.trim();
+
+    if (!firstLine) {
+      return null;
+    }
+
+    try {
+      const record = JSON.parse(firstLine) as {
+        type?: unknown;
+        payload?: {
+          id?: unknown;
+          cwd?: unknown;
+        };
+      };
+
+      if (ensureText(record.type).trim() !== "session_meta") {
+        return null;
+      }
+
+      const payload = (record.payload ?? {}) as Record<string, unknown>;
+
+      return {
+        threadId: this.resolveCodexSessionId(payload, fallbackSessionId),
+        cwd: ensureText(payload.cwd).trim()
+      };
+    } catch {
+      return null;
+    }
   }
 
   private parseMessages(
@@ -769,4 +1310,121 @@ function resolveToolResultState(
   }
 
   return { status: "completed" };
+}
+
+function shouldIgnoreCodingNsDraftSession(metaPayload: Record<string, unknown>): boolean {
+  const source = ensureText(metaPayload.source).trim().toLowerCase();
+  const sessionId = ensureText(metaPayload.id).trim().toLowerCase();
+
+  return source === "codingns" && sessionId.startsWith("rollout-");
+}
+
+function looksLikeCodexThreadId(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+}
+
+function findLatestCodexStateDatabase(homeDir: string): string | null {
+  if (!existsSync(homeDir)) {
+    return null;
+  }
+
+  const candidates = readdirSync(homeDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && /^state_\d+\.sqlite$/i.test(entry.name))
+    .map((entry) => {
+      const filePath = join(homeDir, entry.name);
+
+      return {
+        filePath,
+        mtimeMs: statSync(filePath).mtimeMs
+      };
+    })
+    .sort((left, right) => right.mtimeMs - left.mtimeMs);
+
+  return candidates[0]?.filePath ?? null;
+}
+
+function parseStructuredJson(value: string): Record<string, unknown> | null {
+  const text = value.trim();
+
+  if (text.length === 0) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseCodexAgentIdFromToolOutput(output: string): string | null {
+  const parsed = parseStructuredJson(output);
+  const agentId = ensureText(parsed?.agent_id ?? parsed?.agentId).trim();
+
+  if (looksLikeCodexThreadId(agentId)) {
+    return agentId;
+  }
+
+  const matched = output.match(
+    /"agent(?:_id|Id)"\s*:\s*"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"/i
+  );
+
+  return matched?.[1] ?? null;
+}
+
+function toTimestampMs(value: unknown): number | null {
+  const timestampMs = Date.parse(ensureText(value).trim());
+  return Number.isFinite(timestampMs) ? timestampMs : null;
+}
+
+function pickClosestCodexSpawnRecord(
+  spawnRecords: CodexSpawnRecord[],
+  workspacePath: string,
+  message: string,
+  createdAtMs: number | null
+): CodexSpawnRecord | null {
+  const matchedRecords = spawnRecords.filter(
+    (record) =>
+      record.workspacePath !== null &&
+      normalizeWorkspacePath(record.workspacePath) === workspacePath &&
+      record.message === message
+  );
+
+  if (matchedRecords.length === 0) {
+    return null;
+  }
+
+  if (createdAtMs === null) {
+    return matchedRecords.at(-1) ?? null;
+  }
+
+  const closeRecord = matchedRecords
+    .filter((record) => record.timestampMs !== null)
+    .sort(
+      (left, right) =>
+        Math.abs((left.timestampMs ?? createdAtMs) - createdAtMs) -
+        Math.abs((right.timestampMs ?? createdAtMs) - createdAtMs)
+    )
+    .find((record) => Math.abs((record.timestampMs ?? createdAtMs) - createdAtMs) <= 120_000);
+
+  return closeRecord ?? matchedRecords.at(-1) ?? null;
+}
+
+function isCodexSubagentThread(
+  metadata: CodexThreadMetadata | null | undefined,
+  relation: CodexSpawnRelation | null | undefined
+): boolean {
+  return Boolean(relation?.parentProviderSessionId || metadata?.agentRole || metadata?.agentNickname);
+}
+
+function buildCodexSubagentLabel(metadata: CodexThreadMetadata | null | undefined): string | null {
+  const agentRole = metadata?.agentRole?.trim() || "";
+  const agentNickname = metadata?.agentNickname?.trim() || "";
+
+  if (agentRole && agentNickname) {
+    return `${agentRole} · ${agentNickname}`;
+  }
+
+  return agentNickname || agentRole || null;
 }

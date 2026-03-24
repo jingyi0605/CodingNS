@@ -87,6 +87,9 @@ export interface SessionListItem {
   provider: ProviderId;
   providerSessionId: string;
   rawStoreRef: string;
+  parentSessionId?: string | null;
+  isSubagent?: boolean;
+  subagentLabel?: string | null;
   title: string;
   messageCount: number;
   lastMessageAt: string | null;

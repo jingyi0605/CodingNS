@@ -10,6 +10,8 @@ export interface SessionActivityInspection {
 }
 
 const ACTIVE_WINDOW_MS = 20_000;
+const ACTIVITY_CACHE_LIMIT = 20;
+const activityCache = new Map<string, CachedActivityEntry>();
 
 export function inspectSessionActivity(
   provider: ProviderId,
@@ -21,7 +23,6 @@ export function inspectSessionActivity(
 
   try {
     stats = statSync(rawStoreRef);
-    records = readJsonlRecords(rawStoreRef);
   } catch {
     return {
       runningState: "idle",
@@ -31,11 +32,37 @@ export function inspectSessionActivity(
     };
   }
 
-  if (provider === "claude-code") {
-    return inspectClaudeActivity(records, stats.mtimeMs, now);
+  const cached = activityCache.get(rawStoreRef);
+
+  if (
+    cached
+    && cached.provider === provider
+    && cached.mtimeMs === stats.mtimeMs
+    && cached.size === stats.size
+  ) {
+    touchActivityCache(rawStoreRef, cached);
+    return cached.inspection.hasPendingTools
+      ? {
+          ...cached.inspection,
+          runningState: now - cached.mtimeMs <= ACTIVE_WINDOW_MS ? "running" : "idle"
+        }
+      : cached.inspection;
   }
 
-  return inspectCodexActivity(records, stats.mtimeMs, now);
+  records = readJsonlRecords(rawStoreRef);
+  const inspection =
+    provider === "claude-code"
+      ? inspectClaudeActivity(records, stats.mtimeMs, now)
+      : inspectCodexActivity(records, stats.mtimeMs, now);
+
+  touchActivityCache(rawStoreRef, {
+    provider,
+    mtimeMs: stats.mtimeMs,
+    size: stats.size,
+    inspection
+  });
+
+  return inspection;
 }
 
 function inspectClaudeActivity(
@@ -258,4 +285,26 @@ interface ClaudeEnvelope {
   message: Record<string, unknown> & {
     content?: Array<Record<string, unknown>>;
   };
+}
+
+interface CachedActivityEntry {
+  provider: ProviderId;
+  mtimeMs: number;
+  size: number;
+  inspection: SessionActivityInspection;
+}
+
+function touchActivityCache(filePath: string, entry: CachedActivityEntry): void {
+  activityCache.delete(filePath);
+  activityCache.set(filePath, entry);
+
+  while (activityCache.size > ACTIVITY_CACHE_LIMIT) {
+    const oldestKey = activityCache.keys().next().value;
+
+    if (!oldestKey) {
+      break;
+    }
+
+    activityCache.delete(oldestKey);
+  }
 }

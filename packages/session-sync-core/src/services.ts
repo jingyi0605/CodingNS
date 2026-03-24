@@ -1,5 +1,6 @@
 import { ProviderRegistry } from "./registry.js";
 import type {
+  DetectSessionsOptions,
   HistoryDirection,
   HistoryPage,
   ProviderCapabilities,
@@ -11,13 +12,32 @@ import type {
   StartSessionOptions,
   StartSessionResult
 } from "./types.js";
+export { ActiveRunRegistry } from "./runtime/active-run-registry.js";
+export { ProviderRuntimeService } from "./runtime/provider-runtime-service.js";
+export type {
+  ActiveRunHandle,
+  ActiveRunSnapshot,
+  ProviderRuntimeAdapter,
+  ProviderRuntimeLaunchResult,
+  ProviderRuntimeRunRequest,
+  RuntimeEvent,
+  RuntimeEventInput,
+  RuntimeEventListener,
+  RuntimeRunState,
+  RuntimeSendOptions,
+  RuntimeSessionContext,
+  RuntimeSessionView
+} from "./runtime/types.js";
 
 export class SessionSyncService {
   constructor(private readonly registry: ProviderRegistry) {}
 
-  async discoverWorkspaceSessions(workspacePath: string): Promise<ProviderSessionSummary[]> {
+  async discoverWorkspaceSessions(
+    workspacePath: string,
+    options?: DetectSessionsOptions
+  ): Promise<ProviderSessionSummary[]> {
     const sessions = await Promise.all(
-      this.registry.list().map((provider) => provider.detectSessions(workspacePath))
+      this.registry.list().map((provider) => provider.detectSessions(workspacePath, options))
     );
 
     return sessions

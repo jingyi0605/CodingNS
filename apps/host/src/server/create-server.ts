@@ -144,7 +144,6 @@ export function createServer(config: HostConfig) {
   );
   const workbenchService = new WorkbenchService(
     repositories.workspaceRepository,
-    repositories.sessionIndexRepository,
     sessionHistoryService
   );
   const fileContextService = new FileContextService(

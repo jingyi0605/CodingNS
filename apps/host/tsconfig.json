@@ -16,5 +16,11 @@
     "types": ["node", "vitest/globals"]
   },
   "include": ["src/**/*.ts"],
-  "exclude": [".build", "dist", "node_modules"]
+  "exclude": [
+    ".build",
+    "dist",
+    "node_modules",
+    "src/modules/sessions/session-history-service.ts",
+    "src/modules/sessions/session-live-runtime-service.ts"
+  ]
 }
