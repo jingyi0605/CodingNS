@@ -8,6 +8,7 @@ export async function registerSessionRoutes(
 ): Promise<void> {
   app.get("/api/sessions", sessionController.list);
   app.get("/api/sessions/:sessionId", sessionController.getDetail);
+  app.get("/api/sessions/:sessionId/changed-files", sessionController.getChangedFiles);
   app.get("/api/sessions/:sessionId/messages", sessionController.readMessages);
   app.get("/api/sessions/:sessionId/attachments/:attachmentId/content", sessionController.readAttachment);
   app.get("/api/sessions/:sessionId/capabilities", sessionController.getCapabilities);

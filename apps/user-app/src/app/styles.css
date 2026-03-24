@@ -5053,6 +5053,660 @@ textarea:focus-visible {
   gap: 8px;
 }
 
+/* ========================================
+   桌面 App 紧凑化收口
+   ======================================== */
+
+:root {
+  --desktop-panel-radius: 18px;
+  --desktop-panel-radius-sm: 14px;
+  --desktop-panel-edge: color-mix(in srgb, var(--border-primary) 86%, rgba(255, 255, 255, 0.72));
+  --desktop-panel-fill:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--bg-surface) 96%, rgba(255, 255, 255, 0.52)),
+      color-mix(in srgb, var(--bg-primary) 98%, transparent)
+    );
+  --desktop-panel-shadow: 0 12px 28px rgba(15, 23, 42, 0.06);
+  --desktop-panel-shadow-strong: 0 18px 40px rgba(15, 23, 42, 0.08);
+}
+
+[data-theme="dark"] {
+  --desktop-panel-edge: color-mix(in srgb, var(--border-primary) 82%, rgba(255, 255, 255, 0.08));
+  --desktop-panel-fill:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--bg-surface) 94%, rgba(15, 23, 42, 0.24)),
+      color-mix(in srgb, var(--bg-primary) 98%, transparent)
+    );
+  --desktop-panel-shadow: 0 16px 36px rgba(0, 0, 0, 0.28);
+  --desktop-panel-shadow-strong: 0 22px 48px rgba(0, 0, 0, 0.36);
+}
+
+.surface-card {
+  border-radius: var(--desktop-panel-radius);
+  border-color: var(--desktop-panel-edge);
+  box-shadow: var(--desktop-panel-shadow);
+}
+
+.workbench-shell {
+  gap: 6px;
+  padding: 6px;
+}
+
+.workbench-nav,
+.workbench-auxiliary,
+.workbench-main-shell {
+  height: calc(100vh - 12px);
+  border-radius: 20px;
+}
+
+.workbench-main-shell {
+  padding: 4px;
+}
+
+.workbench-nav-header,
+.workbench-auxiliary-header,
+.workbench-main-topbar {
+  min-height: 48px;
+  padding: 9px 12px;
+}
+
+.workbench-nav-header h1 {
+  font-size: 15px;
+  line-height: 1.2;
+}
+
+.workbench-nav-header p {
+  margin-top: 2px;
+  font-size: 12px;
+}
+
+.workbench-nav-body {
+  gap: 10px;
+  padding: 10px;
+}
+
+.workbench-nav-stats span,
+.conversation-header-label,
+.conversation-header-subline {
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.workbench-auxiliary-body {
+  padding: 8px 10px 10px;
+}
+
+.workbench-topbar-tabs,
+.workbench-info-tabs {
+  gap: 6px;
+}
+
+.workbench-topbar-tab,
+.workbench-info-tab,
+.panel-toggle-button {
+  height: 30px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+
+.panel-icon-button,
+.workbench-edge-toggle {
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
+}
+
+.workbench-session-list {
+  gap: 6px;
+}
+
+.workbench-session-card {
+  border-radius: 14px;
+}
+
+.workbench-session-card[data-depth="1"] {
+  border-radius: 12px;
+}
+
+.workbench-session-link,
+.workbench-session-card[data-depth="1"] .workbench-session-link {
+  gap: 4px;
+  padding: 8px 10px;
+}
+
+.session-title {
+  font-size: 12px;
+}
+
+.session-meta {
+  font-size: 10px;
+}
+
+.session-state-indicator {
+  width: 8px;
+  height: 8px;
+}
+
+.workbench-session-actions {
+  right: 8px;
+}
+
+.workbench-session-menu-trigger {
+  width: 26px;
+  height: 26px;
+  border-radius: 9px;
+}
+
+.workbench-subsession-list {
+  gap: 6px;
+  margin-left: 12px;
+  padding-left: 10px;
+}
+
+.workbench-archive-folder {
+  margin-top: 4px;
+  padding: 8px 10px;
+  border-radius: 12px;
+}
+
+.workbench-main-shell > .workbench-page,
+.workbench-main-shell > .conversation-page-shell {
+  overflow: hidden;
+  border: 1px solid var(--desktop-panel-edge);
+  border-radius: 16px;
+  background: var(--desktop-panel-fill);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+
+.conversation-page-shell::before {
+  opacity: 0.24;
+}
+
+.conversation-header {
+  padding: 10px 12px 8px;
+  gap: 10px;
+}
+
+.conversation-header-main {
+  gap: 6px;
+}
+
+.conversation-header-eyebrow {
+  gap: 6px;
+}
+
+.conversation-header h1 {
+  font-size: 20px;
+}
+
+.conversation-title.is-xl {
+  font-size: 1.9rem;
+}
+
+.conversation-title.is-lg {
+  font-size: 1.65rem;
+}
+
+.conversation-title.is-md {
+  font-size: 1.32rem;
+}
+
+.conversation-title.is-sm {
+  font-size: 1.08rem;
+}
+
+.message-timeline {
+  padding: 0 8px 6px;
+}
+
+.message-list {
+  gap: 8px;
+  padding: 6px 0 2px;
+}
+
+.message-item {
+  gap: 8px;
+}
+
+.message-content-wrapper {
+  border-radius: 16px;
+  padding: 12px 14px;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.05);
+}
+
+.user-message .message-content-wrapper {
+  max-width: min(680px, calc(100vw - 260px));
+}
+
+.assistant-message .message-avatar {
+  width: 24px;
+  height: 24px;
+  margin-top: 3px;
+}
+
+.message-text,
+.markdown-content {
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.tool-call-item,
+.rules-message-card {
+  border-radius: 14px;
+  box-shadow: var(--desktop-panel-shadow);
+}
+
+.composer-panel {
+  padding: 8px 10px 10px;
+}
+
+.composer-form {
+  gap: 6px;
+}
+
+.composer-input-container {
+  border-radius: 16px;
+  box-shadow: var(--desktop-panel-shadow);
+}
+
+.composer-input-wrapper {
+  padding: 10px 12px;
+}
+
+.composer-input {
+  min-height: 54px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.composer-attachments {
+  gap: 8px;
+  padding: 10px 10px 0;
+}
+
+.composer-attachment-card {
+  border-radius: 12px;
+}
+
+.composer-controls {
+  gap: 8px;
+  padding: 7px 10px 9px;
+}
+
+.composer-controls-left {
+  gap: 6px;
+}
+
+.composer-provider-logo {
+  width: 28px;
+  height: 28px;
+  border-radius: 10px;
+}
+
+.composer-select {
+  min-height: 30px;
+  padding: 0 30px 0 10px;
+  font-size: 12px;
+}
+
+.composer-slash-btn,
+.composer-attach-btn {
+  min-height: 30px;
+  border-radius: 10px;
+  font-size: 12px;
+}
+
+.composer-attach-btn {
+  width: 30px;
+  padding: 0;
+}
+
+.composer-send {
+  width: 34px;
+  height: 34px;
+  box-shadow: 0 8px 18px color-mix(in srgb, var(--text-primary) 18%, transparent);
+}
+
+.composer-slash-menu {
+  gap: 6px;
+  margin: 0 12px 8px;
+  padding: 10px;
+  border-radius: 14px;
+}
+
+.file-panel,
+.git-sidebar,
+.terminal-manager-panel {
+  gap: 8px;
+}
+
+.file-panel-tabs {
+  gap: 6px;
+}
+
+.file-panel-tab {
+  min-height: 32px;
+  border-radius: 12px;
+  font-size: 12px;
+}
+
+.file-panel-tab-badge,
+.workbench-section-counter {
+  min-width: 22px;
+  height: 18px;
+  padding: 0 6px;
+  font-size: 10px;
+}
+
+.file-panel-toolbar {
+  gap: 5px;
+}
+
+.file-toolbar-button {
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+}
+
+.file-toolbar-search input,
+.field-group input,
+.field-group textarea,
+.terminal-select,
+.terminal-manager-panel select,
+.terminal-manager-panel input {
+  min-height: 34px;
+  border-radius: 12px;
+  font-size: 12px;
+}
+
+.file-tree {
+  min-height: 0;
+  padding: 4px 0;
+  border-radius: 12px;
+}
+
+.file-tree-item {
+  min-height: 28px;
+  padding-right: 10px;
+  border-radius: 8px;
+}
+
+.file-tree-item.is-search-result,
+.file-tree-item.is-session-change {
+  min-height: 36px;
+}
+
+.file-tree-name {
+  font-size: 12px;
+}
+
+.file-tree-path,
+.file-tree-meta,
+.file-tree-empty,
+.file-tree-status {
+  font-size: 11px;
+}
+
+.terminal-manager-section {
+  gap: 10px;
+  padding: 10px;
+  border-radius: 14px;
+}
+
+.terminal-manager-grid,
+.terminal-manager-list {
+  gap: 10px;
+}
+
+.terminal-manager-card {
+  gap: 8px;
+  padding: 10px;
+  border-radius: 12px;
+}
+
+.terminal-layout {
+  padding: 10px;
+}
+
+.terminal-layout-inner {
+  width: min(1280px, 100%);
+  gap: 10px;
+}
+
+.terminal-hero {
+  padding: 14px 16px;
+  border-radius: 16px;
+}
+
+.terminal-hero h1 {
+  margin: 0;
+  font-size: 20px;
+  line-height: 1.15;
+}
+
+.terminal-grid {
+  grid-template-columns: minmax(240px, 280px) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.terminal-panel {
+  padding: 12px;
+  border-radius: 14px;
+}
+
+.terminal-panel h2 {
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+
+.terminal-list,
+.terminal-template-list {
+  gap: 6px;
+}
+
+.terminal-card,
+.terminal-template-card {
+  border-radius: 12px;
+}
+
+.terminal-stage-header {
+  gap: 10px;
+  padding-bottom: 8px;
+}
+
+.terminal-output {
+  min-height: 420px;
+  border-radius: 12px;
+}
+
+.terminal-composer {
+  gap: 8px;
+  padding-top: 8px;
+}
+
+.git-sidebar {
+  gap: 8px;
+}
+
+.git-sidebar .git-card {
+  gap: 6px;
+  padding: 10px 12px 8px;
+  border-radius: 14px;
+  background: var(--desktop-panel-fill);
+  box-shadow: var(--desktop-panel-shadow);
+}
+
+.git-editor-row input {
+  height: 32px;
+}
+
+.git-primary-actions .primary-button,
+.git-primary-actions .secondary-button {
+  min-height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.git-content-split {
+  gap: 6px;
+}
+
+.git-tree-group {
+  gap: 6px;
+}
+
+.git-tree-group + .git-tree-group {
+  padding-top: 6px;
+}
+
+.git-tree-shell {
+  gap: 2px;
+}
+
+.git-tree-row {
+  gap: 6px;
+  padding-right: 0;
+}
+
+.git-tree-trigger,
+.git-tree-file-button {
+  min-height: 24px;
+  border-radius: 8px;
+}
+
+.git-icon-button {
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+}
+
+.git-panel-divider {
+  height: 6px;
+}
+
+.git-panel-divider-handle {
+  width: 22px;
+  height: 3px;
+}
+
+.git-operations-menu {
+  border-radius: 12px;
+  padding: 8px;
+}
+
+.git-history-entry {
+  padding: 8px 0 0;
+}
+
+.git-history-body strong {
+  font-size: 11px;
+}
+
+@media (max-width: 960px) {
+  .user-message .message-content-wrapper {
+    max-width: min(100%, calc(100vw - 140px));
+  }
+
+  .terminal-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.conversation-header {
+  padding: 8px 12px 6px;
+}
+
+.conversation-header-main {
+  gap: 0;
+}
+
+.conversation-header h1 {
+  font-size: 18px;
+  line-height: 1.12;
+}
+
+.conversation-title.is-xl {
+  font-size: 1.72rem;
+}
+
+.conversation-title.is-lg {
+  font-size: 1.48rem;
+}
+
+.conversation-title.is-md {
+  font-size: 1.24rem;
+}
+
+.conversation-title.is-sm {
+  font-size: 1.02rem;
+}
+
+.tool-message-row .tool-call-item {
+  width: min(680px, 100%);
+}
+
+.tool-call-item {
+  border-radius: 12px;
+  box-shadow: none;
+}
+
+.tool-call-header {
+  min-height: 34px;
+  gap: 8px;
+  padding: 0 8px;
+  background: color-mix(in srgb, var(--bg-hover) 62%, transparent);
+  font-size: 12px;
+}
+
+.tool-call-info {
+  gap: 8px;
+}
+
+.tool-call-name {
+  font-size: 11px;
+  line-height: 1;
+}
+
+.tool-call-input-preview {
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.tool-call-meta {
+  gap: 4px;
+}
+
+.tool-call-output {
+  gap: 0;
+  padding: 0;
+  background: color-mix(in srgb, var(--bg-primary) 96%, transparent);
+}
+
+.tool-call-section {
+  gap: 0;
+}
+
+.tool-call-section + .tool-call-section {
+  border-top: 1px solid color-mix(in srgb, var(--border-primary) 72%, transparent);
+}
+
+.tool-call-section-label {
+  padding: 6px 8px 2px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+
+.tool-call-output pre {
+  padding: 0 8px 7px;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
 .workbench-modal-layer {
   position: fixed;
   inset: 0;

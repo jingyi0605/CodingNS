@@ -62,8 +62,24 @@ export interface SessionIndexRecord {
   provider: ProviderId;
   title: string;
   messageCount: number;
+  isArchived: boolean;
   lastMessageAt: string | null;
   createdAt: string;
+  updatedAt: string;
+}
+
+export interface SessionChangedFileRecord {
+  sessionId: string;
+  workspaceId: string;
+  path: string;
+  firstDetectedAt: string;
+  lastDetectedAt: string;
+  lastToolName: string | null;
+}
+
+export interface SessionChangedFileIndexState {
+  sessionId: string;
+  indexedAt: string;
   updatedAt: string;
 }
 

@@ -24,6 +24,7 @@ import type {
   SessionRunningState,
   SessionStatusSnapshot
 } from "../../types/domain.js";
+import { SessionChangedFileService } from "./session-changed-file-service.js";
 import type { WorkspaceService } from "../workspace/workspace-service.js";
 import type { SessionImageAttachmentInput } from "./session-message-attachment-service.js";
 import { SessionMessageAttachmentService } from "./session-message-attachment-service.js";
@@ -118,6 +119,7 @@ export class SessionLiveRuntimeService {
     private readonly sessionHistoryService: SessionHistoryService,
     private readonly sessionMessageAttachmentService: SessionMessageAttachmentService,
     private readonly workspaceService: WorkspaceService,
+    private readonly sessionChangedFileService: SessionChangedFileService,
     private readonly sessionIndexRepository: SessionIndexRepository,
     private readonly sessionStateRepository: SessionStateRepository,
     private readonly sessionStatusSnapshotRepository: SessionStatusSnapshotRepository,
@@ -460,6 +462,7 @@ export class SessionLiveRuntimeService {
       provider: input.provider as "claude-code" | "codex",
       title: buildSessionTitle(input.initialContent),
       messageCount: 0,
+      isArchived: false,
       lastMessageAt: input.snapshot.lastEventAt,
       createdAt: timestamp,
       updatedAt: timestamp
@@ -499,6 +502,7 @@ export class SessionLiveRuntimeService {
     const currentState = this.sessionStateRepository.findBySessionAndUser(sessionId, userId);
 
     if (event.type === "message") {
+      const workspace = this.workspaceService.getWorkspaceOrThrow(workspaceId);
       const existing = this.sessionIndexRepository.findIndexRecordBySessionId(sessionId);
 
       if (existing) {
@@ -509,6 +513,13 @@ export class SessionLiveRuntimeService {
           updatedAt: event.message.timestamp
         });
       }
+
+      this.sessionChangedFileService.recordMessages(
+        sessionId,
+        workspaceId,
+        workspace.path,
+        [event.message]
+      );
 
       this.sessionStateRepository.upsert({
         sessionId,

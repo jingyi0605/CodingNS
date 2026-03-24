@@ -27,8 +27,10 @@ import { GitWriteService } from "../modules/git/git-write-service.js";
 import { WorkspaceRepoGuard } from "../modules/git/workspace-repo-guard.js";
 import { ProviderController } from "../modules/provider/provider-controller.js";
 import { SessionController } from "../modules/sessions/session-controller.js";
+import { SessionChangedFileService } from "../modules/sessions/session-changed-file-service.js";
 import { SessionHistoryService } from "../modules/sessions/session-history-service.js";
 import { SessionLiveRuntimeService } from "../modules/sessions/session-live-runtime-service.js";
+import { SessionMessageAttachmentService } from "../modules/sessions/session-message-attachment-service.js";
 import { CommandTemplateService } from "../modules/terminal/command-template-service.js";
 import { TerminalController } from "../modules/terminal/terminal-controller.js";
 import { TerminalService } from "../modules/terminal/terminal-service.js";
@@ -54,7 +56,9 @@ import { CommitRuleProfileRepository } from "../storage/repositories/commit-rule
 import { FileContextBindingRepository } from "../storage/repositories/file-context-binding-repository.js";
 import { RecentFileRepository } from "../storage/repositories/recent-file-repository.js";
 import { SessionBindingRepository } from "../storage/repositories/session-binding-repository.js";
+import { SessionChangedFileRepository } from "../storage/repositories/session-changed-file-repository.js";
 import { SessionIndexRepository } from "../storage/repositories/session-index-repository.js";
+import { SessionMessageAttachmentRepository } from "../storage/repositories/session-message-attachment-repository.js";
 import { SessionStateRepository } from "../storage/repositories/session-state-repository.js";
 import { SessionStatusSnapshotRepository } from "../storage/repositories/session-status-snapshot-repository.js";
 import { TerminalCommandTemplateRepository } from "../storage/repositories/terminal-command-template-repository.js";
@@ -81,7 +85,9 @@ export function createServer(config: HostConfig) {
     recentFileRepository: new RecentFileRepository(database.db),
     fileContextBindingRepository: new FileContextBindingRepository(database.db),
     sessionBindingRepository: new SessionBindingRepository(database.db),
+    sessionChangedFileRepository: new SessionChangedFileRepository(database.db),
     sessionIndexRepository: new SessionIndexRepository(database.db),
+    sessionMessageAttachmentRepository: new SessionMessageAttachmentRepository(database.db),
     sessionStateRepository: new SessionStateRepository(database.db),
     sessionStatusSnapshotRepository: new SessionStatusSnapshotRepository(database.db),
     terminalInstanceRepository: new TerminalInstanceRepository(database.db),
@@ -125,18 +131,29 @@ export function createServer(config: HostConfig) {
     commitDraftService,
     gitWriteService
   );
+  const sessionMessageAttachmentService = new SessionMessageAttachmentService(
+    repositories.sessionMessageAttachmentRepository,
+    config
+  );
+  const sessionChangedFileService = new SessionChangedFileService(
+    repositories.sessionChangedFileRepository
+  );
   const sessionHistoryService = new SessionHistoryService(
     database.db,
     repositories.workspaceRepository,
     repositories.sessionBindingRepository,
+    sessionChangedFileService,
     repositories.sessionIndexRepository,
+    sessionMessageAttachmentService,
     repositories.sessionStateRepository,
     repositories.sessionStatusSnapshotRepository,
     config
   );
   const sessionLiveRuntimeService = new SessionLiveRuntimeService(
     sessionHistoryService,
+    sessionMessageAttachmentService,
     workspaceService,
+    sessionChangedFileService,
     repositories.sessionIndexRepository,
     repositories.sessionStateRepository,
     repositories.sessionStatusSnapshotRepository,
@@ -236,6 +253,8 @@ export function createServer(config: HostConfig) {
         gitWriteService,
         commitOrchestrator,
         sessionHistoryService,
+        sessionChangedFileService,
+        sessionMessageAttachmentService,
         sessionLiveRuntimeService,
         terminalService,
         commandTemplateService

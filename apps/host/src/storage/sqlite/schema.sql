@@ -76,6 +76,7 @@ CREATE TABLE IF NOT EXISTS session_indices (
   provider TEXT NOT NULL CHECK (provider IN ('claude-code', 'codex')),
   title TEXT NOT NULL,
   message_count INTEGER NOT NULL DEFAULT 0,
+  is_archived INTEGER NOT NULL DEFAULT 0 CHECK (is_archived IN (0, 1)),
   last_message_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
@@ -84,6 +85,28 @@ CREATE TABLE IF NOT EXISTS session_indices (
 );
 
 CREATE INDEX IF NOT EXISTS idx_session_indices_workspace_id ON session_indices(workspace_id);
+
+CREATE TABLE IF NOT EXISTS session_changed_files (
+  session_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  path TEXT NOT NULL,
+  first_detected_at TEXT NOT NULL,
+  last_detected_at TEXT NOT NULL,
+  last_tool_name TEXT,
+  PRIMARY KEY (session_id, path),
+  FOREIGN KEY (session_id) REFERENCES session_bindings(session_id),
+  FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_changed_files_session
+  ON session_changed_files(session_id, path);
+
+CREATE TABLE IF NOT EXISTS session_changed_file_states (
+  session_id TEXT PRIMARY KEY,
+  indexed_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (session_id) REFERENCES session_bindings(session_id)
+);
 
 CREATE TABLE IF NOT EXISTS session_status_snapshots (
   session_id TEXT PRIMARY KEY,

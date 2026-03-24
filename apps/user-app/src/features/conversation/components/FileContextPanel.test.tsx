@@ -14,12 +14,30 @@ const fileApiMock = vi.hoisted(() => ({
   saveFileContent: vi.fn()
 }));
 
+const conversationApiMock = vi.hoisted(() => ({
+  getSessionChangedFiles: vi.fn()
+}));
+
+const gitApiMock = vi.hoisted(() => ({
+  getGitStatus: vi.fn(),
+  stageGitTargets: vi.fn()
+}));
+
 vi.mock("../api/file-context-api", () => ({
   getFileTree: fileApiMock.getFileTree,
   operateFile: fileApiMock.operateFile,
   searchFiles: fileApiMock.searchFiles,
   getFilePreview: fileApiMock.getFilePreview,
   saveFileContent: fileApiMock.saveFileContent
+}));
+
+vi.mock("../api/conversation-api", () => ({
+  getSessionChangedFiles: conversationApiMock.getSessionChangedFiles
+}));
+
+vi.mock("../api/git-api", () => ({
+  getGitStatus: gitApiMock.getGitStatus,
+  stageGitTargets: gitApiMock.stageGitTargets
 }));
 
 describe("FileContextPanel", () => {
@@ -125,6 +143,38 @@ describe("FileContextPanel", () => {
       total: 0,
       page: 1,
       pageSize: 20
+    });
+
+    conversationApiMock.getSessionChangedFiles.mockResolvedValue({
+      items: []
+    });
+
+    gitApiMock.getGitStatus.mockResolvedValue({
+      snapshot: {
+        workspaceId: "workspace-1",
+        repoRoot: "C:/Code/CodingNS",
+        branch: "main",
+        ahead: 0,
+        behind: 0,
+        hasRemote: true,
+        isDirty: true,
+        lastFetchedAt: null
+      },
+      changes: []
+    });
+
+    gitApiMock.stageGitTargets.mockResolvedValue({
+      snapshot: {
+        workspaceId: "workspace-1",
+        repoRoot: "C:/Code/CodingNS",
+        branch: "main",
+        ahead: 0,
+        behind: 0,
+        hasRemote: true,
+        isDirty: true,
+        lastFetchedAt: null
+      },
+      changes: []
     });
 
     fileApiMock.getFilePreview.mockImplementation(async (_workspaceId: string, filePath: string) => {
@@ -511,4 +561,100 @@ describe("FileContextPanel", () => {
       "2026-03-24 21:45:01 INFO server started\n2026-03-24 21:45:03 ERROR port in use\n"
     );
   });
+
+  it("会在本次会话标签页里筛选修改文件并支持一键暂存", async () => {
+    conversationApiMock.getSessionChangedFiles.mockResolvedValue({
+      items: [
+        {
+          sessionId: "session-1",
+          workspaceId: "workspace-1",
+          path: "apps/user-app/src/app/App.tsx",
+          firstDetectedAt: "2026-03-24T12:00:00.000Z",
+          lastDetectedAt: "2026-03-24T12:00:00.000Z",
+          lastToolName: "apply_patch"
+        }
+      ]
+    });
+
+    gitApiMock.getGitStatus
+      .mockResolvedValueOnce({
+        snapshot: {
+          workspaceId: "workspace-1",
+          repoRoot: "C:/Code/CodingNS",
+          branch: "main",
+          ahead: 0,
+          behind: 0,
+          hasRemote: true,
+          isDirty: true,
+          lastFetchedAt: null
+        },
+        changes: [
+          createGitChange("apps/user-app/src/app/App.tsx", false),
+          createGitChange("README.md", false)
+        ]
+      })
+      .mockResolvedValueOnce({
+        snapshot: {
+          workspaceId: "workspace-1",
+          repoRoot: "C:/Code/CodingNS",
+          branch: "main",
+          ahead: 0,
+          behind: 0,
+          hasRemote: true,
+          isDirty: true,
+          lastFetchedAt: null
+        },
+        changes: [
+          createGitChange("apps/user-app/src/app/App.tsx", false),
+          createGitChange("README.md", false)
+        ]
+      })
+      .mockResolvedValueOnce({
+        snapshot: {
+          workspaceId: "workspace-1",
+          repoRoot: "C:/Code/CodingNS",
+          branch: "main",
+          ahead: 0,
+          behind: 0,
+          hasRemote: true,
+          isDirty: true,
+          lastFetchedAt: null
+        },
+        changes: [createGitChange("apps/user-app/src/app/App.tsx", true)]
+      });
+
+    renderPanel();
+
+    expect(
+      await screen.findByLabelText(`${t("conversation.filePanelSessionTab")} 1`)
+    ).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("tab", { name: /本次会话/ }));
+
+    expect(await screen.findByText("App.tsx")).toBeInTheDocument();
+    expect(screen.queryByText("README.md")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("tab", { name: t("conversation.filePanelSessionListView") }));
+    await userEvent.click(screen.getByRole("button", { name: t("conversation.filePanelSessionStageAll") }));
+
+    await waitFor(() => {
+      expect(gitApiMock.stageGitTargets).toHaveBeenCalledWith("workspace-1", [
+        "apps/user-app/src/app/App.tsx"
+      ]);
+    });
+
+    expect(await screen.findByText(t("git.stagedLabel"))).toBeInTheDocument();
+  });
 });
+
+function createGitChange(path: string, staged: boolean) {
+  return {
+    path,
+    status: "M",
+    staged,
+    oldPath: null,
+    binary: false,
+    stagedStatus: staged ? "M" : null,
+    worktreeStatus: staged ? null : "M"
+  };
+}

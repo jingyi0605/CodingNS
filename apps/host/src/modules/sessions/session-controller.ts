@@ -252,6 +252,18 @@ export class SessionController {
     );
   };
 
+  readonly getChangedFiles = async (
+    request: FastifyRequest<{ Params: SessionParams }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send({
+      items: await this.sessionHistoryService.listSessionChangedFiles(
+        request.params.sessionId,
+        requireUserId(request)
+      )
+    });
+  };
+
   readonly getCapabilities = async (
     request: FastifyRequest<{ Params: SessionParams }>,
     reply: FastifyReply

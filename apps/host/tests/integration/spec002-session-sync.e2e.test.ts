@@ -1052,6 +1052,82 @@ describe("spec002 会话同步核心", () => {
     expect(list.json().items[10].runningState).toBeNull();
     expect(list.json().items[11].runningState).toBeNull();
   });
+  it("会把历史工具写文件结果回填为正式会话索引，并把绝对路径归一成工作区相对路径", async () => {
+    const fixture = createProviderFixture();
+    activeFixtures.push(fixture);
+
+    appendFileSync(
+      fixture.codexSessionFile,
+      `\n${JSON.stringify({
+        timestamp: "2026-03-23T09:00:14.000Z",
+        type: "response_item",
+        payload: {
+          type: "function_call",
+          call_id: "call-apply-patch-1",
+          name: "apply_patch",
+          arguments: `*** Begin Patch\n*** Update File: ${fixture.workspaceDir.replace(/\\/g, "/")}/.gitignore\n*** End Patch`
+        }
+      })}`,
+      "utf8"
+    );
+
+    const hosted = createTestApp(fixture);
+    activeClosers.push(() => hosted.app.close());
+    await hosted.app.ready();
+
+    const accessToken = await bootstrapAndLogin(hosted);
+    const workspaceId = await importWorkspace(hosted, accessToken, fixture.workspaceDir);
+
+    const sessions = await hosted.app.inject({
+      method: "GET",
+      url: `/api/sessions?workspaceId=${workspaceId}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(sessions.statusCode).toBe(200);
+
+    const codexSession = sessions
+      .json()
+      .items.find((item: { provider: string }) => item.provider === "codex");
+    expect(codexSession).toBeTruthy();
+
+    const changedFiles = await hosted.app.inject({
+      method: "GET",
+      url: `/api/sessions/${codexSession.sessionId}/changed-files`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(changedFiles.statusCode).toBe(200);
+    expect(changedFiles.json().items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: ".gitignore",
+          lastToolName: "apply_patch"
+        })
+      ])
+    );
+
+    const storedFiles = hosted.services.database.db
+      .prepare(
+        "SELECT path, last_tool_name FROM session_changed_files WHERE session_id = ? ORDER BY path"
+      )
+      .all(codexSession.sessionId) as Array<{ path: string; last_tool_name: string | null }>;
+    expect(storedFiles).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: ".gitignore",
+          last_tool_name: "apply_patch"
+        })
+      ])
+    );
+
+    const indexState = hosted.services.database.db
+      .prepare("SELECT indexed_at FROM session_changed_file_states WHERE session_id = ?")
+      .get(codexSession.sessionId) as { indexed_at: string } | undefined;
+    expect(indexState?.indexed_at).toBeTruthy();
+  });
 });
 
 async function bootstrapAndLogin(hosted: ReturnType<typeof createTestApp>): Promise<string> {

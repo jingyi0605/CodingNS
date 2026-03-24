@@ -48,6 +48,12 @@ export interface WorkspaceDto {
   repoRoot: string | null;
 }
 
+export interface ProviderModelOptionDto {
+  id: string;
+  name: string;
+  usesProviderDefault?: boolean;
+}
+
 export interface ImportWorkspacePayload {
   path: string;
   name?: string;
@@ -94,6 +100,7 @@ export interface ProviderCapabilitiesDto {
   supportsAttachments: boolean;
   supportsPermissionPrompt: boolean;
   supportsCheckpoint: boolean;
+  modelOptions?: ProviderModelOptionDto[];
   limitations: string[];
 }
 
@@ -182,6 +189,15 @@ export interface InterruptSessionResponseDto {
   detail?: string | null;
 }
 
+export interface SessionChangedFileDto {
+  sessionId: string;
+  workspaceId: string;
+  path: string;
+  firstDetectedAt: string;
+  lastDetectedAt: string;
+  lastToolName: string | null;
+}
+
 export function listWorkspaces() {
   return httpClient.request<{ items: WorkspaceDto[] }>("/api/workspaces");
 }
@@ -232,6 +248,12 @@ export function getSessionDetail(sessionId: string) {
   return httpClient.request<SessionSummaryDto>(`/api/sessions/${encodeURIComponent(sessionId)}`);
 }
 
+export function getSessionChangedFiles(sessionId: string) {
+  return httpClient.request<{ items: SessionChangedFileDto[] }>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/changed-files`
+  );
+}
+
 export function markSessionSeen(sessionId: string) {
   return httpClient.request<void>(`/api/sessions/${encodeURIComponent(sessionId)}/seen`, {
     method: "POST"
@@ -255,6 +277,12 @@ export function updateSessionArchiveState(sessionId: string, archived: boolean) 
 export function getSessionCapabilities(sessionId: string) {
   return httpClient.request<ProviderCapabilitiesDto>(
     `/api/sessions/${encodeURIComponent(sessionId)}/capabilities`
+  );
+}
+
+export function getProviderCapabilities(provider: ProviderId) {
+  return httpClient.request<ProviderCapabilitiesDto>(
+    `/api/providers/${encodeURIComponent(provider)}/capabilities`
   );
 }
 

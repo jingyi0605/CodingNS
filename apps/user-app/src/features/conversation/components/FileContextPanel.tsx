@@ -10,6 +10,8 @@ import {
   type FileNodeDto
 } from "../api/file-context-api";
 import { FileViewerModal } from "./FileViewerModal";
+import { SessionChangedFilesPanel } from "./SessionChangedFilesPanel";
+import { loadSessionChangedGitFiles } from "./session-change-utils";
 
 interface FileContextPanelProps {
   sessionId: string;
@@ -23,6 +25,7 @@ type FileTreeCacheUpdater =
 type ExpandedDirectoriesUpdater =
   | string[]
   | ((previous: string[]) => string[]);
+type FilePanelTab = "workspace" | "session";
 
 const ROOT_DIRECTORY = "";
 
@@ -39,6 +42,9 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
   const [searchResult, setSearchResult] = useState<FileNodeDto[] | null>(null);
   const [searching, setSearching] = useState(false);
   const [viewerFilePath, setViewerFilePath] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<FilePanelTab>("workspace");
+  const [sessionRefreshVersion, setSessionRefreshVersion] = useState(0);
+  const [sessionChangeCount, setSessionChangeCount] = useState(0);
   const treeCacheRef = useRef<FileTreeCache>({});
   const expandedDirectoriesRef = useRef<string[]>([]);
   const { showToast } = useToast();
@@ -80,6 +86,9 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
     setSearchResult(null);
     setSearching(false);
     setViewerFilePath(null);
+    setActiveTab("workspace");
+    setSessionRefreshVersion(0);
+    setSessionChangeCount(0);
   }, [sessionId, workspaceId]);
 
   useEffect(() => {
@@ -120,6 +129,35 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
       cancelled = true;
     };
   }, [sessionId, showToast, workspaceId]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadSessionChangeCount() {
+      if (!workspaceId) {
+        setSessionChangeCount(0);
+        return;
+      }
+
+      try {
+        const changes = await loadSessionChangedGitFiles(sessionId, workspaceId);
+
+        if (!cancelled) {
+          setSessionChangeCount(changes.length);
+        }
+      } catch {
+        if (!cancelled) {
+          setSessionChangeCount(0);
+        }
+      }
+    }
+
+    void loadSessionChangeCount();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId, sessionRefreshVersion, workspaceId]);
 
   const rootItems = treeCache[ROOT_DIRECTORY] ?? [];
   const searchMode = searchVisible && searchResult !== null;
@@ -509,102 +547,138 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
             onSaved={async (filePath) => {
               await refreshTreeCache();
               await selectFile(filePath);
+              setSessionRefreshVersion((current) => current + 1);
             }}
           />
-          <div className="file-panel-header">
-            <h2>{t("conversation.filePanelTitle")}</h2>
-            <div className="file-panel-toolbar" aria-label={t("conversation.filePanelTitle")}>
-              <button
-                className="file-toolbar-button"
-                type="button"
-                title={t("conversation.filePanelCollapseCurrent")}
-                aria-label={t("conversation.filePanelCollapseCurrent")}
-                onClick={handleCollapseCurrent}
-                disabled={
-                  !(selectedPath ? getParentDirectory(selectedPath) : activeDirectoryPath) ||
-                  !expandedDirectories.length
-                }
-              >
-                <CollapseIcon />
-              </button>
-              <button
-                className="file-toolbar-button"
-                type="button"
-                title={t("conversation.filePanelRefresh")}
-                aria-label={t("conversation.filePanelRefresh")}
-                onClick={() => void handleRefresh()}
-                disabled={loadingTree || mutating || searching}
-              >
-                <RefreshIcon />
-              </button>
-              <button
-                className="file-toolbar-button"
-                type="button"
-                title={t("conversation.filePanelSearchButton")}
-                aria-label={t("conversation.filePanelSearchButton")}
-                data-active={searchVisible}
-                onClick={handleToggleSearch}
-                disabled={loadingTree}
-              >
-                <SearchIcon />
-              </button>
-              <button
-                className="file-toolbar-button"
-                type="button"
-                title={t("conversation.filePanelNewFile")}
-                aria-label={t("conversation.filePanelNewFile")}
-                onClick={() => void handleCreate("create_file")}
-                disabled={mutating}
-              >
-                <FilePlusIcon />
-              </button>
-              <button
-                className="file-toolbar-button"
-                type="button"
-                title={t("conversation.filePanelNewDirectory")}
-                aria-label={t("conversation.filePanelNewDirectory")}
-                onClick={() => void handleCreate("create_directory")}
-                disabled={mutating}
-              >
-                <FolderPlusIcon />
-              </button>
-            </div>
+          <div className="file-panel-tabs" role="tablist" aria-label={t("conversation.filePanelTitle")}>
+            <button
+              className={activeTab === "workspace" ? "file-panel-tab active" : "file-panel-tab"}
+              type="button"
+              role="tab"
+              aria-selected={activeTab === "workspace"}
+              onClick={() => setActiveTab("workspace")}
+            >
+              {t("conversation.filePanelWorkspaceTab")}
+            </button>
+            <button
+              className={activeTab === "session" ? "file-panel-tab active" : "file-panel-tab"}
+              type="button"
+              role="tab"
+              aria-selected={activeTab === "session"}
+              onClick={() => setActiveTab("session")}
+            >
+              {t("conversation.filePanelSessionTab")}
+              <span className="file-panel-tab-badge" aria-label={`${t("conversation.filePanelSessionTab")} ${sessionChangeCount}`}>
+                {sessionChangeCount}
+              </span>
+            </button>
           </div>
 
-          {searchVisible ? (
-            <form className="file-toolbar-search" onSubmit={(event) => void handleSearchSubmit(event)}>
-              <input
-                value={searchKeyword}
-                onChange={(event) => setSearchKeyword(event.target.value)}
-                placeholder={t("conversation.filePanelSearchPlaceholder")}
-              />
-              <button
-                className="file-toolbar-button"
-                type="submit"
-                title={t("conversation.filePanelSearchButton")}
-                aria-label={t("conversation.filePanelSearchButton")}
-                disabled={searching}
-              >
-                <SearchIcon />
-              </button>
-            </form>
-          ) : null}
+          {activeTab === "workspace" ? (
+            <>
+              <div className="file-panel-toolbar" aria-label={t("conversation.filePanelTitle")}>
+                <button
+                  className="file-toolbar-button"
+                  type="button"
+                  title={t("conversation.filePanelCollapseCurrent")}
+                  aria-label={t("conversation.filePanelCollapseCurrent")}
+                  onClick={handleCollapseCurrent}
+                  disabled={
+                    !(selectedPath ? getParentDirectory(selectedPath) : activeDirectoryPath) ||
+                    !expandedDirectories.length
+                  }
+                >
+                  <CollapseIcon />
+                </button>
+                <button
+                  className="file-toolbar-button"
+                  type="button"
+                  title={t("conversation.filePanelRefresh")}
+                  aria-label={t("conversation.filePanelRefresh")}
+                  onClick={() => void handleRefresh()}
+                  disabled={loadingTree || mutating || searching}
+                >
+                  <RefreshIcon />
+                </button>
+                <button
+                  className="file-toolbar-button"
+                  type="button"
+                  title={t("conversation.filePanelSearchButton")}
+                  aria-label={t("conversation.filePanelSearchButton")}
+                  data-active={searchVisible}
+                  onClick={handleToggleSearch}
+                  disabled={loadingTree}
+                >
+                  <SearchIcon />
+                </button>
+                <button
+                  className="file-toolbar-button"
+                  type="button"
+                  title={t("conversation.filePanelNewFile")}
+                  aria-label={t("conversation.filePanelNewFile")}
+                  onClick={() => void handleCreate("create_file")}
+                  disabled={mutating}
+                >
+                  <FilePlusIcon />
+                </button>
+                <button
+                  className="file-toolbar-button"
+                  type="button"
+                  title={t("conversation.filePanelNewDirectory")}
+                  aria-label={t("conversation.filePanelNewDirectory")}
+                  onClick={() => void handleCreate("create_directory")}
+                  disabled={mutating}
+                >
+                  <FolderPlusIcon />
+                </button>
+              </div>
 
-          <div className="file-tree" data-search-mode={searchMode}>
-            {loadingTree ? (
-              <p className="file-tree-status status-text">{t("common.loading")}</p>
-            ) : searchMode ? (
-              searchResult?.length ? (
-                renderSearchResults(searchResult)
-              ) : (
-                <p className="file-tree-status status-text">{t("conversation.filePanelSearchEmpty")}</p>
-              )
-            ) : rootItems.length ? (
-              renderTree(rootItems, 0)
-            ) : (
-              <p className="file-tree-status status-text">{t("conversation.filePanelEmptyDirectory")}</p>
-            )}
-          </div>
+              {searchVisible ? (
+                <form className="file-toolbar-search" onSubmit={(event) => void handleSearchSubmit(event)}>
+                  <input
+                    value={searchKeyword}
+                    onChange={(event) => setSearchKeyword(event.target.value)}
+                    placeholder={t("conversation.filePanelSearchPlaceholder")}
+                  />
+                  <button
+                    className="file-toolbar-button"
+                    type="submit"
+                    title={t("conversation.filePanelSearchButton")}
+                    aria-label={t("conversation.filePanelSearchButton")}
+                    disabled={searching}
+                  >
+                    <SearchIcon />
+                  </button>
+                </form>
+              ) : null}
+
+              <div className="file-tree" data-search-mode={searchMode}>
+                {loadingTree ? (
+                  <p className="file-tree-status status-text">{t("common.loading")}</p>
+                ) : searchMode ? (
+                  searchResult?.length ? (
+                    renderSearchResults(searchResult)
+                  ) : (
+                    <p className="file-tree-status status-text">{t("conversation.filePanelSearchEmpty")}</p>
+                  )
+                ) : rootItems.length ? (
+                  renderTree(rootItems, 0)
+                ) : (
+                  <p className="file-tree-status status-text">{t("conversation.filePanelEmptyDirectory")}</p>
+                )}
+              </div>
+            </>
+          ) : (
+            <SessionChangedFilesPanel
+              sessionId={sessionId}
+              workspaceId={workspaceId}
+              selectedPath={selectedPath}
+              refreshVersion={sessionRefreshVersion}
+              onCountChange={setSessionChangeCount}
+              onSelectFile={selectFile}
+              onOpenFile={openFileViewer}
+            />
+          )}
         </>
       )}
     </section>

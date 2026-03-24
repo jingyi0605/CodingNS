@@ -34,7 +34,7 @@ afterEach(async () => {
   }
 });
 
-describe("spec004 文件上下文能力", () => {
+describe("spec004 文件管理能力", () => {
   it("打通受保护文件树、读取、保存、文件操作、搜索、最近打开和预览", async () => {
     const fixture = createEmptyFixture();
     activeFixtures.push(fixture);
@@ -141,7 +141,7 @@ describe("spec004 文件上下文能力", () => {
         workspaceId,
         opType: "create_file",
         dstPath: "notes/todo.md",
-        content: "先把文件上下文挂起来\n"
+        content: "先把文件管理挂起来\n"
       }
     });
     expect(createFile.statusCode).toBe(200);
@@ -176,7 +176,7 @@ describe("spec004 文件上下文能力", () => {
     });
     expect(moveFile.statusCode).toBe(200);
     expect(readFileSync(path.join(fixture.workspaceDir, "docs", "todo-renamed.md"), "utf8")).toContain(
-      "文件上下文"
+      "文件管理"
     );
 
     const search = await hosted.app.inject({
@@ -237,7 +237,7 @@ describe("spec004 文件上下文能力", () => {
     expect(deletedRead.statusCode).toBe(404);
   });
 
-  it("打通文件上下文挂载、查询、解绑，并保持只存元数据", async () => {
+  it("打通文件管理挂载、查询、解绑，并保持只存元数据", async () => {
     const fixture = createEmptyFixture();
     activeFixtures.push(fixture);
     seedWorkspaceFiles(fixture.workspaceDir);
@@ -392,6 +392,7 @@ function createSession(hosted: ReturnType<typeof createTestApp>, workspaceId: st
     provider: "codex",
     title: "spec004 上下文会话",
     messageCount: 0,
+    isArchived: false,
     lastMessageAt: timestamp,
     createdAt: timestamp,
     updatedAt: timestamp

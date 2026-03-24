@@ -20,6 +20,8 @@ export function createDatabaseClient(databasePath: string): DatabaseClient {
   db.exec(schema);
   ensureSessionStateSchema(db);
   ensureSessionStateArchiveColumn(db);
+  ensureSessionIndexArchiveColumn(db);
+  ensureSessionChangedFileTables(db);
   ensureTerminalCommandTemplatePortColumn(db);
 
   return {
@@ -103,6 +105,47 @@ function ensureSessionStateArchiveColumn(db: Database.Database): void {
   db.exec(`
     ALTER TABLE session_states
     ADD COLUMN is_archived INTEGER NOT NULL DEFAULT 0 CHECK (is_archived IN (0, 1));
+  `);
+}
+
+function ensureSessionIndexArchiveColumn(db: Database.Database): void {
+  const columns = db
+    .prepare("PRAGMA table_info(session_indices)")
+    .all() as Array<{ name: string }>;
+
+  if (columns.some((column) => column.name === "is_archived")) {
+    return;
+  }
+
+  db.exec(`
+    ALTER TABLE session_indices
+    ADD COLUMN is_archived INTEGER NOT NULL DEFAULT 0 CHECK (is_archived IN (0, 1));
+  `);
+}
+
+function ensureSessionChangedFileTables(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS session_changed_files (
+      session_id TEXT NOT NULL,
+      workspace_id TEXT NOT NULL,
+      path TEXT NOT NULL,
+      first_detected_at TEXT NOT NULL,
+      last_detected_at TEXT NOT NULL,
+      last_tool_name TEXT,
+      PRIMARY KEY (session_id, path),
+      FOREIGN KEY (session_id) REFERENCES session_bindings(session_id),
+      FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_session_changed_files_session
+      ON session_changed_files(session_id, path);
+
+    CREATE TABLE IF NOT EXISTS session_changed_file_states (
+      session_id TEXT PRIMARY KEY,
+      indexed_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (session_id) REFERENCES session_bindings(session_id)
+    );
   `);
 }
 
