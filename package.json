@@ -5,14 +5,17 @@
   "scripts": {
     "preinstall": "node scripts/ensure-pnpm.cjs",
     "dev": "node scripts/show-dev-help.cjs",
-    "dev:backend": "npm run dev:host",
-    "dev:frontend": "npm run dev:user-app",
-    "dev:host": "corepack pnpm --filter host dev",
+    "dev:backend": "corepack pnpm --dir packages/session-sync-core build && concurrently -k -n core,host -c yellow,cyan \"corepack pnpm --dir packages/session-sync-core dev\" \"corepack pnpm --filter host dev:watch\"",
+    "dev:frontend": "corepack pnpm --filter user-app dev",
+    "dev:host": "npm run dev:backend",
     "dev:user-app": "corepack pnpm --dir apps/user-app dev",
     "build:session-sync-core": "pnpm --dir packages/session-sync-core build",
     "build:host": "pnpm --dir packages/session-sync-core build && pnpm --filter host build",
     "test:host": "pnpm --dir packages/session-sync-core build && pnpm --filter host test",
     "build:user-app": "pnpm --dir apps/user-app build",
     "test:user-app": "pnpm --dir apps/user-app test"
+  },
+  "devDependencies": {
+    "concurrently": "9.2.1"
   }
 }

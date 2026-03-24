@@ -9,7 +9,8 @@
     "predev": "corepack pnpm --dir ../../packages/session-sync-core build",
     "prebuild": "corepack pnpm --dir ../../packages/session-sync-core build",
     "pretest": "corepack pnpm --dir ../../packages/session-sync-core build",
-    "dev": "tsx src/main.ts",
+    "dev": "npm run dev:watch",
+    "dev:watch": "tsx watch --clear-screen=false --include \"../../packages/session-sync-core/dist/**/*.js\" src/main.ts",
     "build": "node scripts/build.mjs",
     "test": "vitest run"
   },
