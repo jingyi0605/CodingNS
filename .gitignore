@@ -79,4 +79,5 @@ tmp/
 specs/000-Spec规范/
 AGENTS.md
 .claude/settings.json
-apps/host/apps/host/data/*
+apps/host/data/host/*
+apps/host/apps/host/*

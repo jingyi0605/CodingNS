@@ -56,6 +56,7 @@ export class TerminalService extends EventEmitter {
   private readonly activeSubscribers = new Map<string, number>();
   private readonly idleTimers = new Map<string, NodeJS.Timeout>();
   private readonly pendingCloseReasons = new Map<string, TerminalCloseReason>();
+  private isDisposing = false;
 
   constructor(
     private readonly db: Database.Database,
@@ -272,6 +273,8 @@ export class TerminalService extends EventEmitter {
   }
 
   async dispose(): Promise<void> {
+    this.isDisposing = true;
+
     for (const timer of this.idleTimers.values()) {
       clearTimeout(timer);
     }
@@ -282,6 +285,10 @@ export class TerminalService extends EventEmitter {
   }
 
   private handleRuntimeOutput(terminalId: string, content: string): void {
+    if (this.isDisposing) {
+      return;
+    }
+
     const chunks = this.outputBuffer.append(terminalId, content);
 
     if (chunks.length === 0) {
@@ -296,6 +303,10 @@ export class TerminalService extends EventEmitter {
   }
 
   private handleRuntimeExit(event: TerminalRuntimeExitEvent): void {
+    if (this.isDisposing) {
+      return;
+    }
+
     this.cancelIdleCleanup(event.terminalId);
     this.activeSubscribers.delete(event.terminalId);
     const closeReason = this.pendingCloseReasons.get(event.terminalId) ?? "user_closed";
@@ -326,6 +337,10 @@ export class TerminalService extends EventEmitter {
   }
 
   private touchLastActiveAt(terminalId: string): void {
+    if (this.isDisposing) {
+      return;
+    }
+
     this.cancelIdleCleanup(terminalId);
     const hasSubscribers = (this.activeSubscribers.get(terminalId) ?? 0) > 0;
     const now = Date.now();
