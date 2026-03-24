@@ -1,7 +1,7 @@
 export const zhCN = {
   common: {
     appName: "码不能停",
-    loading: "正在准备会话主舞台…",
+    loading: "正在准备会话工作区…",
     retry: "重新尝试",
     back: "返回",
     save: "保存",
@@ -10,7 +10,7 @@ export const zhCN = {
   },
   auth: {
     loginTitle: "继续你的编码会话",
-    loginSubtitle: "先确认身份，再进入工作中的对话主舞台。",
+    loginSubtitle: "先确认身份，再进入工作中的对话工作区。",
     bootstrapTitle: "先完成首次初始化",
     bootstrapSubtitle: "这个 Host 还没有管理员账号，先创建一个最小登录入口。",
     username: "用户名",
@@ -25,7 +25,7 @@ export const zhCN = {
   },
   home: {
     title: "从一条会话继续，而不是从后台表格开始",
-    subtitle: "这里先挑一个工作区和会话，真正的主舞台在下一步。",
+    subtitle: "这里先挑一个工作区和会话，真正的工作区在下一步。",
     terminalsEntry: "进入终端页",
     workspaceSection: "工作区",
     sessionSection: "最近会话",

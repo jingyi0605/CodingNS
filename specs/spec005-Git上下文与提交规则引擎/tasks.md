@@ -280,7 +280,7 @@
     - 已补 `docs/integration.md`，说明 Host 与 user-app 的接入位置和联调排查顺序
     - 已补 `docs/acceptance-checklist.md`，收口工作区边界、规则引擎、会话侧栏接入和验证命令
     - 已补 `docs/acceptance-result.md`，记录当前最小交付结果、验证链路与剩余边界
-    - 已确认 `user-app` 侧栏承载 Git 辅助区，未破坏 `spec003` 的消息主舞台结构
+    - 已确认 `user-app` 侧栏承载 Git 辅助区，未破坏 `spec003` 的消息工作区结构
     - 已补 Git 错误码到侧栏提示映射，避免远程认证失败被误判成登录失效
     - 已补远程同步失败测试，覆盖 `REMOTE_NOT_FOUND` 和 `BRANCH_CONFLICT`
     - 已补 `pull` 冲突、Git 命令超时、远程网络失败三类远程同步异常测试
