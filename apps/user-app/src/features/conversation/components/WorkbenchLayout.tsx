@@ -45,6 +45,7 @@ const MIN_PANEL_WIDTH = 220;
 const MAX_LEFT_PANEL_WIDTH = 520;
 const MAX_RIGHT_PANEL_WIDTH = 560;
 const INFO_PANEL_BOOT_DELAY_MS = 250;
+const MOBILE_BREAKPOINT_PX = 720;
 
 export interface WorkspaceSessionGroup {
   workspace: WorkspaceDto;
@@ -134,6 +135,156 @@ function flattenSessions(groups: WorkspaceSessionGroup[]) {
       }))
     )
     .sort((left, right) => sortSessions(left.session, right.session));
+}
+
+function SkeletonLines({
+  count,
+  className = "workbench-skeleton-lines"
+}: {
+  count: number;
+  className?: string;
+}) {
+  return (
+    <div className={className} aria-hidden="true">
+      {Array.from({ length: count }, (_, index) => (
+        <span key={index} className="skeleton-line" />
+      ))}
+    </div>
+  );
+}
+
+function SidebarNavigationSkeleton() {
+  return (
+    <div className="workbench-nav-loading" aria-hidden="true">
+      {Array.from({ length: 3 }, (_, sectionIndex) => (
+        <section key={sectionIndex} className="workbench-skeleton-card">
+          <div className="workbench-skeleton-heading">
+            <span className="skeleton-line short" />
+            <span className="skeleton-line tiny" />
+          </div>
+          <div className="workbench-skeleton-list">
+            {Array.from({ length: 3 }, (_, itemIndex) => (
+              <div key={itemIndex} className="workbench-skeleton-session">
+                <span className="workbench-skeleton-dot" />
+                <SkeletonLines count={2} className="workbench-skeleton-lines compact" />
+              </div>
+            ))}
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+function InfoPanelSkeleton() {
+  return (
+    <section className="workbench-info-skeleton" aria-hidden="true">
+      {Array.from({ length: 4 }, (_, index) => (
+        <article key={index} className="workbench-info-skeleton-card">
+          <span className="skeleton-line short" />
+          <SkeletonLines count={3} />
+        </article>
+      ))}
+    </section>
+  );
+}
+
+function SidebarHamburgerButton({
+  ariaLabel,
+  className = "panel-icon-button",
+  onClick
+}: {
+  ariaLabel: string;
+  className?: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      className={className}
+      type="button"
+      aria-label={ariaLabel}
+      title={ariaLabel}
+      onClick={onClick}
+    >
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <line x1="4" y1="7" x2="20" y2="7" />
+        <line x1="4" y1="12" x2="20" y2="12" />
+        <line x1="4" y1="17" x2="20" y2="17" />
+      </svg>
+    </button>
+  );
+}
+
+function MobileSidebarHandle({
+  side,
+  isOpen,
+  onToggle
+}: {
+  side: "left" | "right";
+  isOpen: boolean;
+  onToggle: () => void;
+}) {
+  const pointerStartRef = useRef<number | null>(null);
+  const pointerHandledRef = useRef(false);
+
+  function resetGesture() {
+    pointerStartRef.current = null;
+    pointerHandledRef.current = false;
+  }
+
+  function handlePointerDown(event: React.PointerEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    pointerStartRef.current = event.clientX;
+    pointerHandledRef.current = false;
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function handlePointerMove(event: React.PointerEvent<HTMLButtonElement>) {
+    if (pointerStartRef.current === null || pointerHandledRef.current) {
+      return;
+    }
+
+    const delta = event.clientX - pointerStartRef.current;
+    const shouldToggle =
+      side === "left"
+        ? (!isOpen && delta >= 28) || (isOpen && delta <= -28)
+        : (!isOpen && delta <= -28) || (isOpen && delta >= 28);
+
+    if (!shouldToggle) {
+      return;
+    }
+
+    pointerHandledRef.current = true;
+    onToggle();
+  }
+
+  function handlePointerUp(event: React.PointerEvent<HTMLButtonElement>) {
+    if (!pointerHandledRef.current) {
+      onToggle();
+    }
+
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+
+    resetGesture();
+  }
+
+  return (
+    <button
+      className={`mobile-sidebar-handle ${side} ${isOpen ? "open" : "closed"}`}
+      type="button"
+      aria-label={isOpen ? t(`shell.hide${side === "left" ? "Session" : "Info"}Sidebar`) : t(`shell.show${side === "left" ? "Session" : "Info"}Sidebar`)}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={resetGesture}
+    >
+      <span className="mobile-sidebar-handle-shape" aria-hidden="true">
+        <span className="mobile-sidebar-handle-chevron" />
+      </span>
+    </button>
+  );
 }
 
 function SidebarContent({
@@ -231,13 +382,10 @@ function SidebarContent({
           <p className="status-text">{t("shell.subtitle")}</p>
         </div>
         {onToggleCollapse ? (
-          <button
-            className="panel-toggle-button"
-            type="button"
+          <SidebarHamburgerButton
+            ariaLabel={t("shell.hideSessionSidebar")}
             onClick={onToggleCollapse}
-          >
-            {t("shell.hideSessionSidebar")}
-          </button>
+          />
         ) : null}
       </div>
 
@@ -291,7 +439,7 @@ function SidebarContent({
           <span>{t("shell.sessionCount")} {sessionCount}</span>
         </div>
 
-
+        {navigationLoading && navigationGroups.length === 0 ? <SidebarNavigationSkeleton /> : null}
 
         {!navigationLoading && !navigationError && navigationGroups.length === 0 ? (
           <div className="workbench-empty-state minimal">
@@ -392,7 +540,7 @@ function WorkbenchInfoPanel({
   panelReady: boolean;
   activeTab: InfoTab;
   onTabChange: (tab: InfoTab) => void;
-  onToggleCollapse: () => void;
+  onToggleCollapse?: () => void;
   currentSessionId: string | null;
   currentWorkspaceId: string | null;
   navigationGroups: WorkspaceSessionGroup[];
@@ -431,17 +579,16 @@ function WorkbenchInfoPanel({
             {t("shell.terminalManagerEntry")}
           </button>
         </div>
-        <button className="panel-toggle-button" type="button" onClick={onToggleCollapse}>
-          {t("shell.hideInfoSidebar")}
-        </button>
+        {onToggleCollapse ? (
+          <SidebarHamburgerButton
+            ariaLabel={t("shell.hideInfoSidebar")}
+            onClick={onToggleCollapse}
+          />
+        ) : null}
       </div>
 
       <div className="workbench-auxiliary-body">
-        {!panelReady ? (
-          <section className="workbench-empty-state minimal">
-            <p>{t("shell.infoPanelDeferred")}</p>
-          </section>
-        ) : null}
+        {!panelReady ? <InfoPanelSkeleton /> : null}
 
         {panelReady && activeTab === "files" ? (
           currentSessionId && currentWorkspaceId ? (
@@ -499,6 +646,10 @@ export function WorkbenchLayout() {
   const [infoPanelReady, setInfoPanelReady] = useState(false);
   const [activeInfoTab, setActiveInfoTab] = useState<InfoTab>("files");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [mobileInfoOpen, setMobileInfoOpen] = useState(false);
+  const [isMobileViewport, setIsMobileViewport] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth <= MOBILE_BREAKPOINT_PX : false
+  );
   const [sessionWorkspaceMap, setSessionWorkspaceMap] = useState<Record<string, string>>({});
 
   function applyWorkbenchSnapshot(snapshot: Awaited<ReturnType<typeof getWorkbenchSnapshot>>) {
@@ -633,13 +784,50 @@ export function WorkbenchLayout() {
     }
   }, [currentSessionId]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    function handleResize() {
+      setIsMobileViewport(window.innerWidth <= MOBILE_BREAKPOINT_PX);
+    }
+
+    handleResize();
+    window.addEventListener("resize", handleResize);
+
+    return () => {
+      window.removeEventListener("resize", handleResize);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (isMobileViewport) {
+      return;
+    }
+
+    setMobileNavOpen(false);
+    setMobileInfoOpen(false);
+  }, [isMobileViewport]);
+
   function openLeftPanel() {
-    if (window.innerWidth <= 720) {
+    if (isMobileViewport) {
       setMobileNavOpen(true);
       return;
     }
 
     setLeftCollapsed(false);
+  }
+
+  function openRightPanel() {
+    ensureInfoPanelReady();
+
+    if (isMobileViewport) {
+      setMobileInfoOpen(true);
+      return;
+    }
+
+    setRightCollapsed(false);
   }
 
   function ensureInfoPanelReady() {
@@ -725,7 +913,14 @@ export function WorkbenchLayout() {
 
   return (
     <WorkbenchShellContext.Provider value={contextValue}>
-      <div className="workbench-shell" style={shellStyle}>
+      <div
+        className="workbench-shell"
+        style={shellStyle}
+        data-nav-loading={navigationLoading}
+        data-left-collapsed={leftCollapsed}
+        data-right-collapsed={rightCollapsed}
+        data-info-ready={infoPanelReady}
+      >
         {!leftCollapsed ? (
           <>
             <aside className="workbench-nav surface-card">
@@ -750,23 +945,23 @@ export function WorkbenchLayout() {
         ) : null}
 
         <div className="workbench-main-shell">
-          <div className="workbench-main-topbar surface-card">
-            <div className="workbench-topbar-actions">
-              <button
-                className="panel-toggle-button"
-                type="button"
-                onClick={() => {
-                  if (leftCollapsed) {
-                    openLeftPanel();
-                  } else {
-                    setLeftCollapsed(true);
-                  }
-                }}
-              >
-                {leftCollapsed ? t("shell.showSessionSidebar") : t("shell.hideSessionSidebar")}
-              </button>
-            </div>
+          {!isMobileViewport && leftCollapsed ? (
+            <SidebarHamburgerButton
+              className="workbench-edge-toggle left"
+              ariaLabel={t("shell.showSessionSidebar")}
+              onClick={openLeftPanel}
+            />
+          ) : null}
 
+          {!isMobileViewport && rightCollapsed ? (
+            <SidebarHamburgerButton
+              className="workbench-edge-toggle right"
+              ariaLabel={t("shell.showInfoSidebar")}
+              onClick={openRightPanel}
+            />
+          ) : null}
+
+          <div className="workbench-main-topbar surface-card">
             <div className="workbench-topbar-tabs" role="tablist" aria-label={t("shell.centerTabsLabel")}>
               <button
                 className={
@@ -793,24 +988,6 @@ export function WorkbenchLayout() {
                 onClick={() => navigate("/terminals")}
               >
                 {t("shell.terminalsEntry")}
-              </button>
-            </div>
-
-            <div className="workbench-topbar-actions">
-              <button
-                className="panel-toggle-button"
-                type="button"
-                onClick={() => {
-                  if (rightCollapsed) {
-                    ensureInfoPanelReady();
-                    setRightCollapsed(false);
-                    return;
-                  }
-
-                  setRightCollapsed(true);
-                }}
-              >
-                {rightCollapsed ? t("shell.showInfoSidebar") : t("shell.hideInfoSidebar")}
               </button>
             </div>
           </div>
@@ -843,17 +1020,67 @@ export function WorkbenchLayout() {
           </>
         ) : null}
 
-        <MobileNavDrawer isOpen={mobileNavOpen} onClose={() => setMobileNavOpen(false)}>
+        {isMobileViewport ? (
+          <>
+            {!mobileInfoOpen ? (
+              <MobileSidebarHandle
+                side="left"
+                isOpen={mobileNavOpen}
+                onToggle={() => {
+                  if (mobileNavOpen) {
+                    setMobileNavOpen(false);
+                    return;
+                  }
+
+                  setMobileInfoOpen(false);
+                  setMobileNavOpen(true);
+                }}
+              />
+            ) : null}
+            {!mobileNavOpen ? (
+              <MobileSidebarHandle
+                side="right"
+                isOpen={mobileInfoOpen}
+                onToggle={() => {
+                  ensureInfoPanelReady();
+
+                  if (mobileInfoOpen) {
+                    setMobileInfoOpen(false);
+                    return;
+                  }
+
+                  setMobileNavOpen(false);
+                  setMobileInfoOpen(true);
+                }}
+              />
+            ) : null}
+          </>
+        ) : null}
+
+        <MobileNavDrawer isOpen={mobileNavOpen} side="left" onClose={() => setMobileNavOpen(false)}>
           <SidebarContent
             navigationGroups={navigationGroups}
             workspaceCount={workspaceCount}
             sessionCount={sessionCount}
             navigationLoading={navigationLoading}
             navigationError={navigationError}
-            navigationMessage={navigationMessage}
             activeSessionId={currentSessionId}
             onRefreshNavigation={refreshNavigation}
             onClose={() => setMobileNavOpen(false)}
+          />
+        </MobileNavDrawer>
+
+        <MobileNavDrawer isOpen={mobileInfoOpen} side="right" onClose={() => setMobileInfoOpen(false)}>
+          <WorkbenchInfoPanel
+            panelReady={infoPanelReady}
+            activeTab={activeInfoTab}
+            onTabChange={(tab) => {
+              ensureInfoPanelReady();
+              setActiveInfoTab(tab);
+            }}
+            currentSessionId={currentSessionId}
+            currentWorkspaceId={currentWorkspaceId}
+            navigationGroups={navigationGroups}
           />
         </MobileNavDrawer>
       </div>
@@ -863,17 +1090,23 @@ export function WorkbenchLayout() {
 
 function MobileNavDrawer({
   isOpen,
+  side,
   onClose,
   children
 }: {
   isOpen: boolean;
+  side: "left" | "right";
   onClose: () => void;
   children: ReactNode;
 }) {
+  if (!isOpen) {
+    return null;
+  }
+
   return (
     <>
       <div
-        className={`mobile-nav-overlay ${isOpen ? "open" : ""}`}
+        className="mobile-nav-overlay open"
         onClick={onClose}
         role="button"
         tabIndex={0}
@@ -884,7 +1117,7 @@ function MobileNavDrawer({
           }
         }}
       />
-      <div className={`mobile-nav-drawer ${isOpen ? "open" : ""}`}>{children}</div>
+      <div className={`mobile-nav-drawer ${side} open`}>{children}</div>
     </>
   );
 }

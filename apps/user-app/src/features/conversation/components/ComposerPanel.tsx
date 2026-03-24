@@ -1,4 +1,4 @@
-import { useMemo, useState, useRef, useCallback } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
@@ -20,21 +20,12 @@ type ModelOption = {
 type ReasoningLevel = "low" | "medium" | "high" | "maximum";
 
 const MODEL_OPTIONS: ModelOption[] = [
-  // Claude models
   { id: "claude-opus-4-6", name: "Claude Opus 4.6", provider: "claude-code" },
   { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6", provider: "claude-code" },
   { id: "claude-haiku-4-5", name: "Claude Haiku 4.5", provider: "claude-code" },
-  // Codex models
   { id: "gpt-5.4", name: "GPT-5.4", provider: "codex" },
   { id: "gpt-4.1", name: "GPT-4.1", provider: "codex" },
-  { id: "gpt-4o", name: "GPT-4o", provider: "codex" },
-];
-
-const REASONING_LEVELS: { value: ReasoningLevel; label: string }[] = [
-  { value: "low", label: "低" },
-  { value: "medium", label: "中" },
-  { value: "high", label: "高" },
-  { value: "maximum", label: "极高" },
+  { id: "gpt-4o", name: "GPT-4o", provider: "codex" }
 ];
 
 export function ComposerPanel({ capabilities, isSubmitting, onSend }: ComposerPanelProps) {
@@ -51,18 +42,34 @@ export function ComposerPanel({ capabilities, isSubmitting, onSend }: ComposerPa
   const [showSlashMenu, setShowSlashMenu] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const submitLockRef = useRef(false);
   const { showToast } = useToast();
 
   const provider: ProviderId = capabilities?.provider || "claude-code";
-
   const sendDecision = useMemo(
     () => decideCapability(capabilities, "send_message"),
     [capabilities]
   );
-
   const availableModels = useMemo(
-    () => MODEL_OPTIONS.filter((m) => m.provider === provider),
+    () => MODEL_OPTIONS.filter((model) => model.provider === provider),
     [provider]
+  );
+  const reasoningLevels = useMemo(
+    () => [
+      { value: "low" as const, label: t("conversation.reasoningLow") },
+      { value: "medium" as const, label: t("conversation.reasoningMedium") },
+      { value: "high" as const, label: t("conversation.reasoningHigh") },
+      { value: "maximum" as const, label: t("conversation.reasoningMaximum") }
+    ],
+    []
+  );
+  const slashCommands = useMemo(
+    () => [
+      { command: "/plan", label: t("conversation.slashCommandPlan") },
+      { command: "/review", label: t("conversation.slashCommandReview") },
+      { command: "/explain", label: t("conversation.slashCommandExplain") }
+    ],
+    []
   );
 
   const handleModelChange = useCallback((modelId: string) => {
@@ -77,17 +84,18 @@ export function ComposerPanel({ capabilities, isSubmitting, onSend }: ComposerPa
 
   const handleFileSelect = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
+
     if (files && files.length > 0) {
-      setAttachments((prev) => [...prev, ...Array.from(files)]);
+      setAttachments((current) => [...current, ...Array.from(files)]);
     }
-    // Reset input value to allow selecting the same file again
+
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
   }, []);
 
   const removeAttachment = useCallback((index: number) => {
-    setAttachments((prev) => prev.filter((_, i) => i !== index));
+    setAttachments((current) => current.filter((_, currentIndex) => currentIndex !== index));
   }, []);
 
   const openFilePicker = useCallback(() => {
@@ -95,11 +103,55 @@ export function ComposerPanel({ capabilities, isSubmitting, onSend }: ComposerPa
   }, []);
 
   const handleSlashCommand = useCallback(() => {
-    setShowSlashMenu((prev) => !prev);
+    setShowSlashMenu((current) => !current);
   }, []);
+
+  const applySlashCommand = useCallback((command: string) => {
+    setContent((current) => {
+      const trimmedStart = current.trimStart();
+
+      if (trimmedStart.startsWith(command)) {
+        return current;
+      }
+
+      return current.trim() ? `${command} ${current.trim()}` : `${command} `;
+    });
+    setShowSlashMenu(false);
+    textareaRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
+    if (!availableModels.length) {
+      return;
+    }
+
+    if (availableModels.some((model) => model.id === selectedModel)) {
+      return;
+    }
+
+    const fallbackModel = availableModels[0]!.id;
+    setSelectedModel(fallbackModel);
+    localStorage.setItem("composer-selected-model", fallbackModel);
+  }, [availableModels, selectedModel]);
+
+  useEffect(() => {
+    const textarea = textareaRef.current;
+
+    if (!textarea) {
+      return;
+    }
+
+    textarea.style.height = "0px";
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 120)}px`;
+  }, [content]);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
+    // 发送状态依赖父组件异步回流，这里额外加一层同步锁，防止双击和连按 Enter。
+    if (submitLockRef.current) {
+      return;
+    }
 
     if (!content.trim() || !sendDecision.allowed) {
       showToast({
@@ -109,18 +161,23 @@ export function ComposerPanel({ capabilities, isSubmitting, onSend }: ComposerPa
       return;
     }
 
+    submitLockRef.current = true;
+
     try {
       await onSend(content.trim(), {
         model: selectedModel,
-        reasoningLevel: provider === "codex" ? reasoningLevel : undefined,
+        reasoningLevel: provider === "codex" ? reasoningLevel : undefined
       });
       setContent("");
       setAttachments([]);
+      setShowSlashMenu(false);
     } catch (error) {
       showToast({
         title: error instanceof Error ? error.message : t("conversation.capabilityDenied"),
         tone: "error"
       });
+    } finally {
+      submitLockRef.current = false;
     }
   }
 
@@ -129,9 +186,7 @@ export function ComposerPanel({ capabilities, isSubmitting, onSend }: ComposerPa
   return (
     <section className="composer-panel">
       <form className="composer-form" onSubmit={handleSubmit}>
-        {/* Main Input Container - Styled like the image */}
         <div className="composer-input-container">
-          {/* Hidden file input */}
           <input
             ref={fileInputRef}
             type="file"
@@ -141,23 +196,22 @@ export function ComposerPanel({ capabilities, isSubmitting, onSend }: ComposerPa
             accept="image/*,.pdf,.txt,.md,.json,.js,.ts,.jsx,.tsx,.py,.java,.go,.rs,.c,.cpp,.h,.hpp,.css,.scss,.html,.xml,.yaml,.yml,.sql,.sh,.bash,.zsh,.ps1,.bat,.cmd,.dockerfile,.gitignore,.env,.lock,package.json,Cargo.toml,go.mod,pom.xml,build.gradle"
           />
 
-          {/* Attachment indicator */}
-          {attachments.length > 0 && (
+          {attachments.length > 0 ? (
             <div className="composer-attachments">
               {attachments.map((file, index) => (
-                <div key={index} className="composer-attachment-chip">
+                <div key={`${file.name}-${index}`} className="composer-attachment-chip">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" />
                   </svg>
                   <span className="attachment-name">{file.name}</span>
-                  {attachments.length > 1 && index === 0 && (
+                  {attachments.length > 1 && index === 0 ? (
                     <span className="attachment-count">+{attachments.length - 1}</span>
-                  )}
+                  ) : null}
                   <button
                     type="button"
                     className="attachment-remove"
                     onClick={() => removeAttachment(index)}
-                    aria-label="Remove attachment"
+                    aria-label={t("conversation.removeAttachment")}
                   >
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <line x1="18" y1="6" x2="6" y2="18" />
@@ -167,7 +221,7 @@ export function ComposerPanel({ capabilities, isSubmitting, onSend }: ComposerPa
                 </div>
               ))}
             </div>
-          )}
+          ) : null}
 
           <div className="composer-input-wrapper">
             <textarea
@@ -177,22 +231,41 @@ export function ComposerPanel({ capabilities, isSubmitting, onSend }: ComposerPa
               placeholder={t("conversation.composerPlaceholder")}
               onChange={(event) => setContent(event.target.value)}
               rows={1}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
+              onFocus={() => setShowSlashMenu(false)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  setShowSlashMenu(false);
+                }
+
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+
                   if (!isDisabled) {
-                    handleSubmit(e as unknown as React.FormEvent<HTMLFormElement>);
+                    void handleSubmit(event as unknown as React.FormEvent<HTMLFormElement>);
                   }
                 }
               }}
             />
           </div>
 
-          {/* Bottom Controls Bar */}
+          {provider === "claude-code" && showSlashMenu ? (
+            <div className="composer-slash-menu" role="menu" aria-label={t("conversation.slashMenuTitle")}>
+              {slashCommands.map((item) => (
+                <button
+                  key={item.command}
+                  type="button"
+                  className="composer-slash-item"
+                  onClick={() => applySlashCommand(item.command)}
+                >
+                  <span className="composer-slash-command">{item.command}</span>
+                  <span className="composer-slash-label">{item.label}</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
+
           <div className="composer-controls">
-            {/* Left side controls */}
             <div className="composer-controls-left">
-              {/* Provider Logo */}
               <div className="composer-provider-logo">
                 {provider === "codex" ? (
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -207,12 +280,12 @@ export function ComposerPanel({ capabilities, isSubmitting, onSend }: ComposerPa
                 )}
               </div>
 
-              {/* Model Selector */}
               <div className="composer-select-wrapper">
                 <select
                   value={selectedModel}
-                  onChange={(e) => handleModelChange(e.target.value)}
+                  onChange={(event) => handleModelChange(event.target.value)}
                   className="composer-select"
+                  aria-label={t("conversation.modelSelectorLabel")}
                 >
                   {availableModels.map((model) => (
                     <option key={model.id} value={model.id}>
@@ -225,15 +298,15 @@ export function ComposerPanel({ capabilities, isSubmitting, onSend }: ComposerPa
                 </svg>
               </div>
 
-              {/* Reasoning Level Selector - Only for Codex */}
-              {provider === "codex" && (
+              {provider === "codex" ? (
                 <div className="composer-select-wrapper">
                   <select
                     value={reasoningLevel}
-                    onChange={(e) => handleReasoningLevelChange(e.target.value as ReasoningLevel)}
+                    onChange={(event) => handleReasoningLevelChange(event.target.value as ReasoningLevel)}
                     className="composer-select"
+                    aria-label={t("conversation.reasoningSelectorLabel")}
                   >
-                    {REASONING_LEVELS.map((level) => (
+                    {reasoningLevels.map((level) => (
                       <option key={level.value} value={level.value}>
                         {level.label}
                       </option>
@@ -243,22 +316,20 @@ export function ComposerPanel({ capabilities, isSubmitting, onSend }: ComposerPa
                     <polyline points="6 9 12 15 18 9" />
                   </svg>
                 </div>
-              )}
+              ) : null}
 
-              {/* Claude-specific: Slash Commands */}
-              {provider === "claude-code" && (
+              {provider === "claude-code" ? (
                 <button
                   type="button"
                   className="composer-slash-btn"
                   onClick={handleSlashCommand}
-                  title="命令菜单"
+                  title={t("conversation.slashMenu")}
                 >
                   <span className="slash-icon">/</span>
-                  <span>菜单</span>
+                  <span>{t("conversation.slashMenu")}</span>
                 </button>
-              )}
+              ) : null}
 
-              {/* Attach Button */}
               <button
                 type="button"
                 className="composer-attach-btn"
@@ -272,7 +343,6 @@ export function ComposerPanel({ capabilities, isSubmitting, onSend }: ComposerPa
               </button>
             </div>
 
-            {/* Right side - Send Button */}
             <button
               className="composer-send"
               type="submit"
@@ -285,9 +355,8 @@ export function ComposerPanel({ capabilities, isSubmitting, onSend }: ComposerPa
               </svg>
             </button>
           </div>
+
         </div>
-
-
       </form>
     </section>
   );

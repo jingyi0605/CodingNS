@@ -93,8 +93,6 @@ export const zhCN = {
     rawRefLabel: "来源",
     loadMore: "加载更多消息",
     composerPlaceholder: "把下一步交代清楚，剩下的交给这条会话继续跑。",
-    composerHintReady: "消息真相来自 Host，同步成功后会自动并入正式消息流。",
-    composerHintSending: "正在把消息交给 Host。",
     sendButton: "发送消息",
     resendButton: "重试发送",
     sendingState: "发送中",

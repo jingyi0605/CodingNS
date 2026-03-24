@@ -70,20 +70,6 @@ function resolveToolCall(message: SessionMessageViewModel): ResolvedToolCall | n
   };
 }
 
-function shouldMergeToolMessages(
-  current: SessionMessageViewModel,
-  next: SessionMessageViewModel
-) {
-  const currentTool = resolveToolCall(current);
-  const nextTool = resolveToolCall(next);
-
-  if (!currentTool || !nextTool) {
-    return false;
-  }
-
-  return currentTool.callId === nextTool.callId;
-}
-
 function mergeToolMessages(messages: SessionMessageViewModel[]): ToolMessageGroup | null {
   const tools = messages
     .map((message) => ({
@@ -133,6 +119,41 @@ function mergeToolMessages(messages: SessionMessageViewModel[]): ToolMessageGrou
   };
 }
 
+function mergeToolMessageBlock(messages: SessionMessageViewModel[]): ToolMessageGroup[] {
+  const groupsByCallId = new Map<
+    string,
+    {
+      messages: SessionMessageViewModel[];
+      firstSequence: number;
+    }
+  >();
+
+  for (const message of messages) {
+    const tool = resolveToolCall(message);
+
+    if (!tool) {
+      continue;
+    }
+
+    const existing = groupsByCallId.get(tool.callId);
+
+    if (existing) {
+      existing.messages.push(message);
+      continue;
+    }
+
+    groupsByCallId.set(tool.callId, {
+      messages: [message],
+      firstSequence: message.sequence
+    });
+  }
+
+  return Array.from(groupsByCallId.values())
+    .sort((left, right) => left.firstSequence - right.firstSequence)
+    .map((entry) => mergeToolMessages(entry.messages))
+    .filter((group): group is ToolMessageGroup => Boolean(group));
+}
+
 function buildTimelineRenderItems(messages: SessionMessageViewModel[]): TimelineRenderItem[] {
   const items: TimelineRenderItem[] = [];
 
@@ -148,35 +169,39 @@ function buildTimelineRenderItems(messages: SessionMessageViewModel[]): Timeline
       continue;
     }
 
-    const groupedMessages = [current];
+    const toolMessageBlock = [current];
     let cursor = index + 1;
 
     while (cursor < messages.length) {
       const next = messages[cursor]!;
 
-      if (!isToolMessage(next) || !shouldMergeToolMessages(groupedMessages[groupedMessages.length - 1]!, next)) {
+      if (!isToolMessage(next)) {
         break;
       }
 
-      groupedMessages.push(next);
+      toolMessageBlock.push(next);
       cursor += 1;
     }
 
-    const group = mergeToolMessages(groupedMessages);
+    const groups = mergeToolMessageBlock(toolMessageBlock);
 
-    if (group) {
-      items.push({
-        type: "tool_group",
-        key: group.key,
-        group
-      });
-    } else {
+    if (groups.length === 0) {
       items.push({
         type: "message",
         key: current.id,
         message: current
       });
+      index = cursor - 1;
+      continue;
     }
+
+    groups.forEach((group) => {
+      items.push({
+        type: "tool_group",
+        key: group.key,
+        group
+      });
+    });
 
     index = cursor - 1;
   }
@@ -248,6 +273,26 @@ function MessageMarkdownBody({
       >
         {content}
       </Markdown>
+    </div>
+  );
+}
+
+function TimelineSkeleton() {
+  return (
+    <div className="timeline-skeleton" aria-hidden="true">
+      {Array.from({ length: 5 }, (_, index) => (
+        <article
+          key={index}
+          className={`timeline-skeleton-item ${index % 2 === 0 ? "assistant" : "user"}`}
+        >
+          <div className="timeline-skeleton-avatar" />
+          <div className="timeline-skeleton-bubble">
+            <span className="timeline-skeleton-line long" />
+            <span className="timeline-skeleton-line medium" />
+            <span className="timeline-skeleton-line short" />
+          </div>
+        </article>
+      ))}
     </div>
   );
 }
@@ -475,6 +520,7 @@ export function MessageTimeline({
   const stickToBottomRef = useRef(true);
   const pendingOlderLoadOffsetRef = useRef<number | null>(null);
   const renderItems = buildTimelineRenderItems(messages);
+  const showTimelineSkeleton = historyState === "loading" && messages.length === 0;
 
   useEffect(() => {
     if (historyState !== "error") {
@@ -552,12 +598,13 @@ export function MessageTimeline({
           <span className="status-text">{t("conversation.historyLoading")}</span>
         </div>
       )}
-
       <div
         ref={listRef}
         className="message-list"
         onScroll={handleScroll}
       >
+        {showTimelineSkeleton ? <TimelineSkeleton /> : null}
+
         {loadingOlderMessages ? (
           <div className="timeline-status timeline-status-inline">
             <span className="status-text">{t("conversation.historyLoadingOlder")}</span>

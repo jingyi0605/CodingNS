@@ -267,4 +267,104 @@ describe("MessageTimeline", () => {
 
     expect(handleLoadOlderMessages).toHaveBeenCalledTimes(1);
   });
+
+  it("会把交错返回的工具调用和结果按 callId 成对合并显示", async () => {
+    render(
+      <MessageTimeline
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+        messages={[
+          {
+            id: "tool-call-shell",
+            sessionId: "session-1",
+            role: "tool",
+            kind: "tool_call",
+            content: "{\"command\":\"git status --short\"}",
+            toolCall: {
+              callId: "call-shell",
+              name: "shell_command",
+              input: "{\"command\":\"git status --short\"}",
+              output: null,
+              error: null,
+              status: "running"
+            },
+            timestamp: "2026-03-23T10:00:00.000Z",
+            sequence: 1,
+            rawRef: "codex://raw#line=1",
+            deliveryState: "sent",
+            clientRequestId: null
+          },
+          {
+            id: "tool-call-terminal",
+            sessionId: "session-1",
+            role: "tool",
+            kind: "tool_call",
+            content: "{}",
+            toolCall: {
+              callId: "call-terminal",
+              name: "read_thread_terminal",
+              input: "{}",
+              output: null,
+              error: null,
+              status: "running"
+            },
+            timestamp: "2026-03-23T10:00:01.000Z",
+            sequence: 2,
+            rawRef: "codex://raw#line=2",
+            deliveryState: "sent",
+            clientRequestId: null
+          },
+          {
+            id: "tool-result-shell",
+            sessionId: "session-1",
+            role: "tool",
+            kind: "tool_result",
+            content: " M src/main.ts",
+            toolCall: {
+              callId: "call-shell",
+              name: "shell_command",
+              input: "",
+              output: " M src/main.ts",
+              error: null,
+              status: "completed"
+            },
+            timestamp: "2026-03-23T10:00:02.000Z",
+            sequence: 3,
+            rawRef: "codex://raw#line=3",
+            deliveryState: "sent",
+            clientRequestId: null
+          },
+          {
+            id: "tool-result-terminal",
+            sessionId: "session-1",
+            role: "tool",
+            kind: "tool_result",
+            content: "PS C:\\Code\\CodingNS>",
+            toolCall: {
+              callId: "call-terminal",
+              name: "read_thread_terminal",
+              input: "",
+              output: "PS C:\\Code\\CodingNS>",
+              error: null,
+              status: "completed"
+            },
+            timestamp: "2026-03-23T10:00:03.000Z",
+            sequence: 4,
+            rawRef: "codex://raw#line=4",
+            deliveryState: "sent",
+            clientRequestId: null
+          }
+        ]}
+      />
+    );
+
+    expect(document.querySelectorAll(".tool-message-row")).toHaveLength(2);
+
+    await userEvent.click(screen.getByRole("button", { name: /shell_command/ }));
+    expect(screen.getByText((content) => content.includes("M src/main.ts"))).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /read_thread_terminal/ }));
+    expect(screen.getByText("PS C:\\Code\\CodingNS>")).toBeInTheDocument();
+  });
 });

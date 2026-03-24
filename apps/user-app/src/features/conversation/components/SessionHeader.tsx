@@ -13,17 +13,45 @@ interface SessionHeaderProps {
   workspaceName?: string | null;
 }
 
-export function SessionHeader({
-  session,
-  workspaceName
-}: SessionHeaderProps) {
+function resolveTitleScale(title: string) {
+  const length = title.trim().length;
+
+  if (length <= 16) {
+    return "xl";
+  }
+
+  if (length <= 26) {
+    return "lg";
+  }
+
+  if (length <= 38) {
+    return "md";
+  }
+
+  return "sm";
+}
+
+export function SessionHeader({ session }: SessionHeaderProps) {
+  if (!session) {
+    return (
+      <header className="conversation-header conversation-header-skeleton" aria-hidden="true">
+        <div className="conversation-header-main">
+          <span className="skeleton-line short" />
+          <span className="skeleton-line long" />
+        </div>
+      </header>
+    );
+  }
+
+  const title = session.title || t("conversation.titleFallback");
+  const titleScale = resolveTitleScale(title);
+
   return (
     <header className="conversation-header">
       <div className="conversation-header-main">
-        <h1>{session?.title || t("conversation.titleFallback")}</h1>
-        <p>
-          {workspaceName ?? session?.workspaceId ?? t("common.unknown")}
-        </p>
+        <h1 className={`conversation-title is-${titleScale}`} title={title}>
+          {title}
+        </h1>
       </div>
     </header>
   );
