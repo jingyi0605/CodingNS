@@ -332,19 +332,6 @@ export function ComposerPanel({
             </div>
           ) : null}
 
-          {interactionLabel ? (
-            <div className="composer-status-row" aria-live="polite">
-              <span className="header-chip composer-status-pill" data-tone="active">
-                {interactionLabel}
-              </span>
-              <span className="composer-status-hint">
-                {canInterruptNow
-                  ? t("conversation.capabilityInterrupt")
-                  : t("conversation.runtimeStarting")}
-              </span>
-            </div>
-          ) : null}
-
           <div className="composer-controls">
             <div className="composer-controls-left">
               <div className="composer-provider-logo">

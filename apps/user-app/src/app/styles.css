@@ -1354,29 +1354,6 @@ a {
   flex-shrink: 0;
 }
 
-.tool-call-status {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 600;
-  background: var(--bg-primary);
-  color: var(--text-secondary);
-}
-
-.tool-call-status.is-running {
-  color: var(--accent);
-}
-
-.tool-call-status.is-completed {
-  color: var(--success);
-}
-
-.tool-call-status.is-failed {
-  color: var(--error);
-}
-
 .tool-call-toggle {
   color: var(--text-tertiary);
   transition: transform 200ms ease;
@@ -2592,9 +2569,7 @@ textarea:focus-visible {
 
 .workbench-nav-stats span,
 .conversation-header-label,
-.conversation-header-subline,
-.composer-status-pill,
-.header-chip {
+.conversation-header-subline {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -2713,32 +2688,6 @@ textarea:focus-visible {
   margin: 0;
   font-size: 13px;
   color: var(--text-secondary);
-}
-
-.conversation-header-meta {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
-.header-chip {
-  color: var(--text-secondary);
-}
-
-.header-chip[data-tone="connected"] {
-  color: var(--success);
-  background: color-mix(in srgb, var(--success) 12%, transparent);
-  border-color: color-mix(in srgb, var(--success) 28%, transparent);
-}
-
-.header-chip[data-tone="muted"] {
-  color: var(--text-secondary);
-}
-
-.header-chip[data-tone="subtle"] {
-  color: var(--accent);
 }
 
 .message-timeline {
@@ -2901,32 +2850,6 @@ textarea:focus-visible {
 
 .composer-controls {
   padding: 8px 12px 10px;
-}
-
-.composer-status-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 0 12px 10px;
-}
-
-.composer-status-pill {
-  color: var(--accent);
-}
-
-.composer-status-pill[data-tone="active"] {
-  color: var(--success);
-  border-color: color-mix(in srgb, var(--success) 30%, transparent);
-  background: color-mix(in srgb, var(--success) 12%, transparent);
-}
-
-.composer-status-hint {
-  flex: 1;
-  min-width: 0;
-  font-size: 12px;
-  color: var(--text-secondary);
-  text-align: right;
 }
 
 .composer-slash-menu {
@@ -3428,10 +3351,6 @@ textarea:focus-visible {
     flex-direction: column;
   }
 
-  .conversation-header-meta {
-    justify-content: flex-start;
-  }
-
   .conversation-title {
     white-space: nowrap;
     overflow: hidden;
@@ -3553,15 +3472,6 @@ textarea:focus-visible {
 
   .composer-send {
     flex-shrink: 0;
-  }
-
-  .composer-status-row {
-    align-items: center;
-    flex-direction: row;
-  }
-
-  .composer-status-hint {
-    text-align: left;
   }
 
   .file-search-form,

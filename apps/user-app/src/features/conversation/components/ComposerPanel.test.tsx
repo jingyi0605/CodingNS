@@ -43,11 +43,13 @@ describe("ComposerPanel", () => {
       />
     );
 
-    expect(screen.queryByText("消息真相来自 Host，同步成功后会自动并入正式消息流。")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("消息真相来自 Host，同步成功后会自动并入正式消息流。")
+    ).not.toBeInTheDocument();
     expect(screen.queryByText("正在把消息交给 Host。")).not.toBeInTheDocument();
   });
 
-  it("连续触发两次提交时只发送一次消息", async () => {
+  it("连续触发两次提交时只发送一条消息", async () => {
     const deferred = createDeferred();
     const onSend = vi.fn(() => deferred.promise);
 
@@ -102,12 +104,12 @@ describe("ComposerPanel", () => {
     expect(textarea.value).toBe("");
     expect(screen.queryByLabelText(t("conversation.sendButton"))).not.toBeInTheDocument();
     expect(screen.getByLabelText(t("conversation.sendingState"))).toBeInTheDocument();
-    expect(screen.getByText(t("conversation.sendingState"))).toBeInTheDocument();
+    expect(screen.queryByText(t("conversation.sendingState"))).not.toBeInTheDocument();
 
     deferred.resolve();
   });
 
-  it("运行中时只显示中断按钮，不再显示发送按钮", () => {
+  it("运行中时只显示中断按钮，不再显示状态标签文字", () => {
     render(
       <ComposerPanel
         capabilities={createCapabilities()}
@@ -120,6 +122,7 @@ describe("ComposerPanel", () => {
 
     expect(screen.queryByLabelText(t("conversation.sendButton"))).not.toBeInTheDocument();
     expect(screen.getByLabelText(t("conversation.capabilityInterrupt"))).toBeInTheDocument();
-    expect(screen.getByText(t("conversation.runtimeRunning"))).toBeInTheDocument();
+    expect(screen.queryByText(t("conversation.runtimeRunning"))).not.toBeInTheDocument();
+    expect(screen.queryByText(t("conversation.capabilityInterrupt"))).not.toBeInTheDocument();
   });
 });

@@ -303,12 +303,6 @@ function ToolCallItem({ group }: { group: ToolMessageGroup }) {
   const previewSource = tool.input || tool.error || tool.output || t("conversation.toolResultEmpty");
   const preview = previewSource.length > 60 ? `${previewSource.slice(0, 60)}...` : previewSource;
   const hasDetails = Boolean(tool.input || tool.output || tool.error);
-  const statusLabel =
-    tool.status === "running"
-      ? t("conversation.toolStatusRunning")
-      : tool.status === "failed"
-        ? t("conversation.toolStatusFailed")
-        : t("conversation.toolStatusCompleted");
 
   return (
     <div className={`tool-call-item ${hasResult ? "tool-result" : ""}`}>
@@ -322,7 +316,6 @@ function ToolCallItem({ group }: { group: ToolMessageGroup }) {
           <span className="tool-call-input-preview">{preview}</span>
         </div>
         <div className="tool-call-meta">
-          <span className={`tool-call-status is-${tool.status}`}>{statusLabel}</span>
           {hasDetails && (
             <span className={`tool-call-toggle ${expanded ? "expanded" : ""}`}>
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">

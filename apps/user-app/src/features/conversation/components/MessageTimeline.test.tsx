@@ -24,7 +24,7 @@ function createTextMessage(content: string): SessionMessageViewModel {
 }
 
 describe("MessageTimeline", () => {
-  it("按统一抽象层将同一次工具调用和结果合并渲染", async () => {
+  it("会把同一次工具调用和结果合并渲染", async () => {
     render(
       <MessageTimeline
         historyState="ready"
@@ -77,7 +77,7 @@ describe("MessageTimeline", () => {
 
     expect(screen.getByText("shell_command")).toBeInTheDocument();
     expect(document.querySelectorAll(".tool-message-row")).toHaveLength(1);
-    expect(screen.getByText("已完成")).toBeInTheDocument();
+    expect(screen.queryByText(t("conversation.toolStatusCompleted"))).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: /shell_command/ }));
 
@@ -86,7 +86,7 @@ describe("MessageTimeline", () => {
     expect(screen.getAllByText((content) => content.includes("M src/main.ts")).length).toBeGreaterThan(0);
   });
 
-  it("不依赖 provider，会为相邻的 claude 工具消息做合并", async () => {
+  it("不依赖 provider，也会合并相邻的 claude 工具消息", async () => {
     render(
       <MessageTimeline
         historyState="ready"
@@ -220,7 +220,8 @@ describe("MessageTimeline", () => {
 
     expect(screen.getAllByText("legacy tool output").length).toBeGreaterThan(0);
   });
-  it("婊氬姩鍒板ご閮ㄦ椂浼氱户缁姞杞芥洿鏃╂秷鎭?", () => {
+
+  it("滚到顶部时会触发加载更早消息", () => {
     const handleLoadOlderMessages = vi.fn();
 
     render(
