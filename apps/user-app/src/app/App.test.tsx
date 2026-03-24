@@ -867,9 +867,7 @@ it("会通过统一消息抽象渲染 codex 工具调用", async () => {
 
   expect(await screen.findByText("工具链路")).toBeInTheDocument();
   expect(await screen.findByText("shell_command")).toBeInTheDocument();
-  expect(screen.getByText(/shell_command \/ /)).toBeInTheDocument();
-
-  await userEvent.click(screen.getByRole("button", { name: /shell_command \/ / }));
+  await userEvent.click(screen.getByRole("button", { name: /shell_command/ }));
 
   expect((await screen.findAllByText((content) => content.includes("error_code: 0"))).length).toBeGreaterThan(0);
 });

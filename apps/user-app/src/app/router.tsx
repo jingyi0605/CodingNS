@@ -4,8 +4,8 @@ import { BootstrapPage } from "../features/auth/pages/BootstrapPage";
 import { LoginPage } from "../features/auth/pages/LoginPage";
 import { WorkbenchLayout } from "../features/conversation/components/WorkbenchLayout";
 import { useAuthSelector } from "../features/auth/store/auth-store";
-import { ConversationHomePage } from "../features/conversation/pages/ConversationHomePage";
 import { ConversationPage } from "../features/conversation/pages/ConversationPage";
+import { WorkbenchPlaceholderPage } from "../features/workbench/pages/WorkbenchPlaceholderPage";
 
 function RequireAuth() {
   const status = useAuthSelector((state) => state.status);
@@ -37,7 +37,7 @@ export const appRouter = createBrowserRouter([
         children: [
           {
             index: true,
-            element: <ConversationHomePage />
+            element: <WorkbenchPlaceholderPage />
           },
           {
             path: "sessions/:sessionId",

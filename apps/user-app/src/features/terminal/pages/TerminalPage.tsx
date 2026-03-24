@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { FitAddon } from "@xterm/addon-fit";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { Terminal } from "@xterm/xterm";
@@ -426,7 +426,7 @@ export function TerminalPage() {
   }
 
   return (
-    <main className="terminal-layout app-shell">
+    <main className="terminal-layout">
       <div className="terminal-layout-inner">
         <section className="terminal-hero surface-card">
           <div className="badge-row">
@@ -439,9 +439,6 @@ export function TerminalPage() {
           <h1>{t("terminal.heroTitle")}</h1>
           <p className="status-text">{t("terminal.heroSubtitle")}</p>
           <div className="badge-row">
-            <Link className="ghost-button" to="/">
-              {t("common.back")}
-            </Link>
             <button
               className="ghost-button"
               type="button"

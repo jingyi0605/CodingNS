@@ -1,11 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 
-import { t } from "../../../shared/i18n";
 import { ConnectionBanner } from "../components/ConnectionBanner";
 import { ComposerPanel } from "../components/ComposerPanel";
-import { FileContextPanel } from "../components/FileContextPanel";
-import { GitSidebar } from "../components/GitSidebar";
 import { MessageTimeline } from "../components/MessageTimeline";
 import { SessionHeader } from "../components/SessionHeader";
 import { useWorkbenchShell } from "../components/WorkbenchLayout";
@@ -13,7 +10,7 @@ import { SessionRuntimeStore, useSessionRuntimeStore } from "../runtime/session-
 
 export function ConversationPage() {
   const { sessionId = "" } = useParams();
-  const { navigationGroups, refreshNavigation, setAuxiliaryPanel } = useWorkbenchShell();
+  const { navigationGroups, refreshNavigation, setSessionWorkspace } = useWorkbenchShell();
   const storeRef = useRef<SessionRuntimeStore | null>(null);
   const currentSessionIdRef = useRef<string | null>(null);
   const [sending, setSending] = useState(false);
@@ -29,6 +26,11 @@ export function ConversationPage() {
   const capabilities = useSessionRuntimeStore(store, (state) => state.capabilities);
   const messages = useSessionRuntimeStore(store, (state) => state.messages);
   const historyState = useSessionRuntimeStore(store, (state) => state.historyState);
+  const loadingOlderMessages = useSessionRuntimeStore(
+    store,
+    (state) => state.loadingOlderMessages
+  );
+  const hasOlderMessages = useSessionRuntimeStore(store, (state) => state.hasOlderMessages);
   const connectionState = useSessionRuntimeStore(store, (state) => state.connectionState);
 
   useEffect(() => {
@@ -46,22 +48,12 @@ export function ConversationPage() {
   );
 
   useEffect(() => {
-    setAuxiliaryPanel({
-      title: t("shell.auxiliaryTitle"),
-      description: t("conversation.auxiliarySubtitle"),
-      defaultCollapsed: false,
-      content: (
-        <>
-          <FileContextPanel sessionId={sessionId} workspaceId={session?.workspaceId ?? null} />
-          <GitSidebar workspaceId={session?.workspaceId} />
-        </>
-      )
-    });
+    setSessionWorkspace(sessionId, session?.workspaceId ?? null);
 
     return () => {
-      setAuxiliaryPanel(null);
+      setSessionWorkspace(sessionId, null);
     };
-  }, [session?.workspaceId, sessionId, setAuxiliaryPanel]);
+  }, [session?.workspaceId, sessionId, setSessionWorkspace]);
 
   return (
     <main className="workbench-page conversation-page-shell">
@@ -73,9 +65,15 @@ export function ConversationPage() {
       />
       <ConnectionBanner connectionState={connectionState} onReconnect={() => store.reconnect()} />
       <MessageTimeline
+        sessionId={sessionId}
         messages={messages}
         historyState={historyState}
+        loadingOlderMessages={loadingOlderMessages}
+        hasOlderMessages={hasOlderMessages}
         provider={session?.provider ?? null}
+        onLoadOlderMessages={() => {
+          void store.loadOlderMessages();
+        }}
         onRetryMessage={(clientRequestId: string) => {
           void store.retryMessage(clientRequestId);
         }}
