@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { FitAddon } from "@xterm/addon-fit";
 import { SerializeAddon } from "@xterm/addon-serialize";
@@ -6,6 +6,7 @@ import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 
 import { t } from "../../../shared/i18n";
+import { useToast, type ToastTone } from "../../../shared/toast";
 import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout";
 import {
   closeTerminal,
@@ -76,7 +77,6 @@ export function TerminalPage() {
   const [templates, setTemplates] = useState<TerminalTemplateDto[]>([]);
   const [activeTerminalId, setActiveTerminalId] = useState<string | null>(null);
   const [connectionState, setConnectionState] = useState<TerminalConnectionState>("closed");
-  const [pageMessage, setPageMessage] = useState("");
   const [terminalInput, setTerminalInput] = useState("");
   const [creatingTerminal, setCreatingTerminal] = useState(false);
   const [subscribed, setSubscribed] = useState(false);
@@ -85,6 +85,14 @@ export function TerminalPage() {
     command: "",
     args: ""
   });
+  const { showToast } = useToast();
+
+  const notifyTerminal = useCallback(
+    (title: string, tone: ToastTone = "info") => {
+      showToast({ title, tone });
+    },
+    [showToast]
+  );
 
   useEffect(() => {
     void (async () => {
@@ -94,9 +102,9 @@ export function TerminalPage() {
       const defaultShellId = pickDefaultShellId(shellResponse.items);
       setSelectedShellId(defaultShellId);
     })().catch(() => {
-      setPageMessage(t("terminal.workspaceLoadFailed"));
+      notifyTerminal(t("terminal.workspaceLoadFailed"), "error");
     });
-  }, []);
+  }, [notifyTerminal]);
 
   useEffect(() => {
     const persistedWorkspaceId = readPersistedTerminalPageState().selectedWorkspaceId;
@@ -217,18 +225,19 @@ export function TerminalPage() {
         persistTerminalCursor(activeTerminalId, nextCursor);
 
         if (activeRecoveryStateRef.current === "idle_closed") {
-          setPageMessage(t("terminal.recoveryIdleClosed"));
+          notifyTerminal(t("terminal.recoveryIdleClosed"), "warning");
           return;
         }
 
         if (resumeCursor) {
-          setPageMessage(
-            event.truncated ? t("terminal.recoveryTruncated") : t("terminal.recoveryComplete")
+          notifyTerminal(
+            event.truncated ? t("terminal.recoveryTruncated") : t("terminal.recoveryComplete"),
+            event.truncated ? "warning" : "success"
           );
           return;
         }
 
-        setPageMessage(t("terminal.connectedHint"));
+        notifyTerminal(t("terminal.connectedHint"));
       },
       onOutput: (event) => {
         viewportRuntimeRef.current?.terminal.write(event.chunk.content);
@@ -255,16 +264,16 @@ export function TerminalPage() {
 
         if (event.terminal.status === "closed" && event.terminal.statusDetail === "TERMINAL_IDLE_TIMEOUT") {
           activeRecoveryStateRef.current = "idle_closed";
-          setPageMessage(t("terminal.recoveryIdleClosed"));
+          notifyTerminal(t("terminal.recoveryIdleClosed"), "warning");
           return;
         }
 
         if (event.terminal.status === "error" && event.terminal.statusDetail) {
-          setPageMessage(event.terminal.statusDetail);
+          notifyTerminal(event.terminal.statusDetail, "error");
         }
       },
       onError: (event) => {
-        setPageMessage(event.detail);
+        notifyTerminal(event.detail, "error");
       },
       onUnauthorized: () => {
         navigate("/login", { replace: true });
@@ -277,7 +286,7 @@ export function TerminalPage() {
     return () => {
       client.close();
     };
-  }, [activeTerminalId, navigate]);
+  }, [activeTerminalId, navigate, notifyTerminal]);
 
   const activeTerminal = useMemo(
     () => terminals.find((terminal) => terminal.id === activeTerminalId) ?? null,
@@ -314,15 +323,13 @@ export function TerminalPage() {
         const restoredMessage = restoredTerminal ? readTerminalRestoreMessage(restoredTerminal) : null;
 
         if (restoredMessage) {
-          setPageMessage(restoredMessage);
+          notifyTerminal(restoredMessage, "warning");
           return;
         }
       }
-
-      setPageMessage("");
     } catch (error) {
       const detail = error instanceof Error ? error.message : t("terminal.workspaceLoadFailed");
-      setPageMessage(detail);
+      notifyTerminal(detail, "error");
     }
   }
 
@@ -342,9 +349,9 @@ export function TerminalPage() {
 
       await reloadWorkspaceResources(selectedWorkspaceId);
       setActiveTerminalId(terminal.id);
-      setPageMessage(t("terminal.created"));
+      notifyTerminal(t("terminal.created"), "success");
     } catch (error) {
-      setPageMessage(error instanceof Error ? error.message : t("terminal.createFailed"));
+      notifyTerminal(error instanceof Error ? error.message : t("terminal.createFailed"), "error");
     } finally {
       setCreatingTerminal(false);
     }
@@ -365,7 +372,7 @@ export function TerminalPage() {
       setTerminalInput("");
       viewportRuntimeRef.current?.focus();
     } catch (error) {
-      setPageMessage(error instanceof Error ? error.message : t("terminal.inputFailed"));
+      notifyTerminal(error instanceof Error ? error.message : t("terminal.inputFailed"), "error");
     }
   }
 
@@ -377,9 +384,9 @@ export function TerminalPage() {
     try {
       await closeTerminal(activeTerminalId);
       await reloadWorkspaceResources(selectedWorkspaceId);
-      setPageMessage(t("terminal.closed"));
+      notifyTerminal(t("terminal.closed"), "success");
     } catch (error) {
-      setPageMessage(error instanceof Error ? error.message : t("terminal.closeFailed"));
+      notifyTerminal(error instanceof Error ? error.message : t("terminal.closeFailed"), "error");
     }
   }
 
@@ -402,9 +409,12 @@ export function TerminalPage() {
         args: ""
       });
       await reloadWorkspaceResources(selectedWorkspaceId);
-      setPageMessage(t("terminal.templateCreated"));
+      notifyTerminal(t("terminal.templateCreated"), "success");
     } catch (error) {
-      setPageMessage(error instanceof Error ? error.message : t("terminal.templateCreateFailed"));
+      notifyTerminal(
+        error instanceof Error ? error.message : t("terminal.templateCreateFailed"),
+        "error"
+      );
     }
   }
 
@@ -423,13 +433,14 @@ export function TerminalPage() {
       }
 
       setActiveTerminalId(result.terminalId);
-      setPageMessage(
+      notifyTerminal(
         result.createdTerminal
           ? t("terminal.templateRunCreatedTerminal")
-          : t("terminal.templateRunSent")
+          : t("terminal.templateRunSent"),
+        "success"
       );
     } catch (error) {
-      setPageMessage(error instanceof Error ? error.message : t("terminal.templateRunFailed"));
+      notifyTerminal(error instanceof Error ? error.message : t("terminal.templateRunFailed"), "error");
     }
   }
 
@@ -678,7 +689,6 @@ export function TerminalPage() {
                   </button>
                 </div>
               </div>
-              {pageMessage ? <p className="status-text">{pageMessage}</p> : null}
             </section>
           </section>
         </section>

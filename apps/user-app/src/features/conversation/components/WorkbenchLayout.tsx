@@ -19,6 +19,7 @@ import {
 import { WorkbenchRealtimeClient } from "../../../network/workbench-realtime-client";
 import { t } from "../../../shared/i18n";
 import { ThemeSwitcher } from "../../../shared/theme";
+import { useToast } from "../../../shared/toast";
 import { authStore } from "../../auth/store/auth-store";
 import { TerminalManagerPanel } from "../../workbench/components/TerminalManagerPanel";
 import { FileContextPanel } from "./FileContextPanel";
@@ -141,7 +142,6 @@ function SidebarContent({
   sessionCount,
   navigationLoading,
   navigationError,
-  navigationMessage,
   activeSessionId,
   onRefreshNavigation,
   onClose,
@@ -152,13 +152,13 @@ function SidebarContent({
   sessionCount: number;
   navigationLoading: boolean;
   navigationError: string | null;
-  navigationMessage: string | null;
   activeSessionId: string | null;
   onRefreshNavigation: () => Promise<void>;
   onClose?: () => void;
   onToggleCollapse?: () => void;
 }) {
   const navigate = useNavigate();
+  const { showToast } = useToast();
   const [importExpanded, setImportExpanded] = useState(false);
   const [importingWorkspace, setImportingWorkspace] = useState(false);
   const [importForm, setImportForm] = useState<ImportWorkspaceFormState>({
@@ -185,8 +185,15 @@ function SidebarContent({
       setImportForm({ path: "", name: "" });
       setImportExpanded(false);
       await onRefreshNavigation();
-    } catch {
-      // Error handled silently.
+      showToast({
+        title: t("shell.importSuccess"),
+        tone: "success"
+      });
+    } catch (error) {
+      showToast({
+        title: error instanceof Error ? error.message : t("shell.importFailed"),
+        tone: "error"
+      });
     } finally {
       setImportingWorkspace(false);
     }
@@ -199,10 +206,17 @@ function SidebarContent({
     try {
       const session = await startSession({ workspaceId, provider });
       await onRefreshNavigation();
+      showToast({
+        title: provider === "codex" ? t("shell.startCodexSuccess") : t("shell.startClaudeSuccess"),
+        tone: "success"
+      });
       navigate(`/sessions/${session.sessionId}`);
       onClose?.();
-    } catch {
-      // Error handled silently.
+    } catch (error) {
+      showToast({
+        title: error instanceof Error ? error.message : t("shell.startSessionFailed"),
+        tone: "error"
+      });
     } finally {
       setActionWorkspaceId(null);
       setActionProvider(null);
@@ -277,16 +291,7 @@ function SidebarContent({
           <span>{t("shell.sessionCount")} {sessionCount}</span>
         </div>
 
-        {navigationError ? (
-          <p className="status-text" data-tone="error">
-            {navigationError}
-          </p>
-        ) : null}
-        {navigationMessage ? (
-          <p className="status-text" data-tone="success">
-            {navigationMessage}
-          </p>
-        ) : null}
+
 
         {!navigationLoading && !navigationError && navigationGroups.length === 0 ? (
           <div className="workbench-empty-state minimal">
@@ -472,13 +477,13 @@ function WorkbenchInfoPanel({
 export function WorkbenchLayout() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { showToast } = useToast();
   const requestIdRef = useRef(0);
   const realtimeClientRef = useRef<WorkbenchRealtimeClient | null>(null);
   const hasNavigationDataRef = useRef(false);
   const [navigationGroups, setNavigationGroups] = useState<WorkspaceSessionGroup[]>([]);
   const [navigationLoading, setNavigationLoading] = useState(true);
   const [navigationError, setNavigationError] = useState<string | null>(null);
-  const [navigationMessage, setNavigationMessage] = useState<string | null>(null);
   const [leftPanelWidth, setLeftPanelWidth] = useState(() =>
     readStoredNumber(LEFT_PANEL_WIDTH_KEY, DEFAULT_LEFT_PANEL_WIDTH)
   );
@@ -529,6 +534,10 @@ export function WorkbenchLayout() {
       }
 
       setNavigationError(error instanceof Error ? error.message : t("shell.navigationLoadFailed"));
+      showToast({
+        title: error instanceof Error ? error.message : t("shell.navigationLoadFailed"),
+        tone: "error"
+      });
     } finally {
       if (requestId === requestIdRef.current) {
         setNavigationLoading(false);
@@ -549,6 +558,12 @@ export function WorkbenchLayout() {
       onConnectionChange: (connectionState) => {
         if (connectionState === "reconnect_failed" && !hasNavigationDataRef.current) {
           setNavigationError(t("shell.navigationLoadFailed"));
+          showToast({
+            id: "workbench-navigation-connection",
+            title: t("shell.navigationLoadFailed"),
+            tone: "warning",
+            durationMs: 3600
+          });
         }
       },
       onSnapshot: (snapshot) => {
@@ -568,7 +583,7 @@ export function WorkbenchLayout() {
       realtimeClientRef.current = null;
       client.close();
     };
-  }, [navigate]);
+  }, [navigate, showToast]);
 
   useEffect(() => {
     writeStoredValue(LEFT_PANEL_WIDTH_KEY, String(leftPanelWidth));
@@ -720,7 +735,6 @@ export function WorkbenchLayout() {
                 sessionCount={sessionCount}
                 navigationLoading={navigationLoading}
                 navigationError={navigationError}
-                navigationMessage={navigationMessage}
                 activeSessionId={currentSessionId}
                 onRefreshNavigation={refreshNavigation}
                 onToggleCollapse={() => setLeftCollapsed(true)}

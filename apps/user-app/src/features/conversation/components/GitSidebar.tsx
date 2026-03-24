@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import { t } from "../../../shared/i18n";
 import { ApiError } from "../../../shared/network/api-error";
+import { useToast } from "../../../shared/toast";
 import {
   commitDraft,
   createCommitDraft,
@@ -45,12 +46,10 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
   const [diff, setDiff] = useState<GitDiffDto | null>(null);
   const [draft, setDraft] = useState<CommitDraftDto>(EMPTY_DRAFT);
   const [validation, setValidation] = useState<CommitValidationResultDto | null>(null);
-  const [panelError, setPanelError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [actioning, setActioning] = useState(false);
   const [branchInput, setBranchInput] = useState("");
-  const [remoteMessage, setRemoteMessage] = useState<string | null>(null);
-  const [commitMessage, setCommitMessage] = useState<string | null>(null);
+  const { showToast } = useToast();
 
   useEffect(() => {
     let cancelled = false;
@@ -63,13 +62,11 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
         setBranches(null);
         setDiff(null);
         setValidation(null);
-        setPanelError(null);
         setDraft(EMPTY_DRAFT);
         return;
       }
 
       setLoading(true);
-      setPanelError(null);
 
       try {
         const [nextStatus, nextRules, nextHistory, nextBranches] = await Promise.all([
@@ -101,7 +98,10 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
           return;
         }
 
-        setPanelError(readError(error, t("git.panelLoadFailed")));
+        showToast({
+          title: readError(error, t("git.panelLoadFailed")),
+          tone: "error"
+        });
       } finally {
         if (!cancelled) {
           setLoading(false);
@@ -114,7 +114,7 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
     return () => {
       cancelled = true;
     };
-  }, [workspaceId]);
+  }, [showToast, workspaceId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -134,7 +134,10 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
       } catch (error) {
         if (!cancelled) {
           setDiff(null);
-          setPanelError(readError(error, t("git.diffLoadFailed")));
+          showToast({
+            title: readError(error, t("git.diffLoadFailed")),
+            tone: "error"
+          });
         }
       }
     }
@@ -144,7 +147,7 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
     return () => {
       cancelled = true;
     };
-  }, [selectedPath, selectedStaged, workspaceId]);
+  }, [selectedPath, selectedStaged, showToast, workspaceId]);
 
   async function refreshContext() {
     if (!workspaceId) {
@@ -162,9 +165,11 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
       setHistory(nextHistory.items);
       setBranches(nextBranches);
       setBranchInput(nextBranches.currentBranch);
-      setPanelError(null);
     } catch (error) {
-      setPanelError(readError(error, t("git.panelLoadFailed")));
+      showToast({
+        title: readError(error, t("git.panelLoadFailed")),
+        tone: "error"
+      });
     }
   }
 
@@ -174,8 +179,6 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
     }
 
     setActioning(true);
-    setPanelError(null);
-    setCommitMessage(null);
 
     try {
       const nextStatus = staged
@@ -186,7 +189,10 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
       setSelectedPath(filePath);
       setSelectedStaged(!staged);
     } catch (error) {
-      setPanelError(readError(error, t("git.stageFailed")));
+      showToast({
+        title: readError(error, t("git.stageFailed")),
+        tone: "error"
+      });
     } finally {
       setActioning(false);
     }
@@ -198,8 +204,6 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
     }
 
     setActioning(true);
-    setPanelError(null);
-    setCommitMessage(null);
 
     try {
       const response = await createCommitDraft(workspaceId, mode);
@@ -212,7 +216,10 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
       });
       setValidation(response.validation);
     } catch (error) {
-      setPanelError(readError(error, t("git.draftFailed")));
+      showToast({
+        title: readError(error, t("git.draftFailed")),
+        tone: "error"
+      });
     } finally {
       setActioning(false);
     }
@@ -224,8 +231,6 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
     }
 
     setActioning(true);
-    setPanelError(null);
-    setCommitMessage(null);
 
     try {
       const response = await validateCommitDraft(workspaceId, normalizeDraft(draft));
@@ -233,7 +238,10 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
       setValidation(response.validation);
       setDraft(response.validation.normalizedDraft);
     } catch (error) {
-      setPanelError(readError(error, t("git.validateFailed")));
+      showToast({
+        title: readError(error, t("git.validateFailed")),
+        tone: "error"
+      });
     } finally {
       setActioning(false);
     }
@@ -245,13 +253,14 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
     }
 
     setActioning(true);
-    setPanelError(null);
-    setCommitMessage(null);
 
     try {
       const response = await commitDraft(workspaceId, normalizeDraft(draft));
       setValidation(response.validation);
-      setCommitMessage(t("git.commitSuccess"));
+      showToast({
+        title: t("git.commitSuccess"),
+        tone: "success"
+      });
       setDraft({
         subject: "",
         body: "",
@@ -262,7 +271,10 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
       setSelectedPath(null);
       setDiff(null);
     } catch (error) {
-      setPanelError(readError(error, t("git.commitFailed")));
+      showToast({
+        title: readError(error, t("git.commitFailed")),
+        tone: "error"
+      });
     } finally {
       setActioning(false);
     }
@@ -274,7 +286,6 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
     }
 
     setActioning(true);
-    setPanelError(null);
 
     try {
       const nextBranches = await switchGitBranch(workspaceId, branchInput.trim(), create);
@@ -282,7 +293,10 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
       setBranchInput(nextBranches.currentBranch);
       await refreshContext();
     } catch (error) {
-      setPanelError(readError(error, t("git.branchFailed")));
+      showToast({
+        title: readError(error, t("git.branchFailed")),
+        tone: "error"
+      });
     } finally {
       setActioning(false);
     }
@@ -294,15 +308,19 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
     }
 
     setActioning(true);
-    setPanelError(null);
-    setRemoteMessage(null);
 
     try {
       const result = await syncGitRemote(workspaceId, action);
-      setRemoteMessage(result.summary);
+      showToast({
+        title: result.summary,
+        tone: "success"
+      });
       await refreshContext();
     } catch (error) {
-      setPanelError(readError(error, t("git.remoteFailed")));
+      showToast({
+        title: readError(error, t("git.remoteFailed")),
+        tone: "error"
+      });
     } finally {
       setActioning(false);
     }
@@ -321,24 +339,6 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
           {t("git.refresh")}
         </button>
       </div>
-
-      {panelError ? (
-        <p className="status-text" data-tone="error">
-          {panelError}
-        </p>
-      ) : null}
-
-      {commitMessage ? (
-        <p className="status-text" data-tone="success">
-          {commitMessage}
-        </p>
-      ) : null}
-
-      {remoteMessage ? (
-        <p className="status-text" data-tone="success">
-          {remoteMessage}
-        </p>
-      ) : null}
 
       <section className="git-card">
         <div className="badge-row">

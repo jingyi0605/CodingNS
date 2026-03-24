@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { t } from "../../../shared/i18n";
+import { useToast } from "../../../shared/toast";
 import {
   closeTerminal,
   listWorkspaceTerminals,
@@ -44,9 +45,8 @@ export function TerminalManagerPanel({
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState(currentWorkspaceId ?? "");
   const [terminals, setTerminals] = useState<TerminalDto[]>([]);
   const [loading, setLoading] = useState(false);
-  const [panelError, setPanelError] = useState<string | null>(null);
-  const [panelMessage, setPanelMessage] = useState<string | null>(null);
   const [closingTerminalId, setClosingTerminalId] = useState<string | null>(null);
+  const { showToast } = useToast();
 
   useEffect(() => {
     const fallbackWorkspaceId = currentWorkspaceId ?? workspaceOptions[0]?.id ?? "";
@@ -58,14 +58,16 @@ export function TerminalManagerPanel({
 
   async function loadTerminals(workspaceId: string) {
     setLoading(true);
-    setPanelError(null);
 
     try {
       const response = await listWorkspaceTerminals(workspaceId);
       setTerminals(response.items);
     } catch (error) {
       setTerminals([]);
-      setPanelError(error instanceof Error ? error.message : t("terminalManager.loadFailed"));
+      showToast({
+        title: error instanceof Error ? error.message : t("terminalManager.loadFailed"),
+        tone: "error"
+      });
     } finally {
       setLoading(false);
     }
@@ -86,15 +88,19 @@ export function TerminalManagerPanel({
     }
 
     setClosingTerminalId(terminalId);
-    setPanelError(null);
-    setPanelMessage(null);
 
     try {
       await closeTerminal(terminalId);
       await loadTerminals(selectedWorkspaceId);
-      setPanelMessage(t("terminalManager.closeSuccess"));
+      showToast({
+        title: t("terminalManager.closeSuccess"),
+        tone: "success"
+      });
     } catch (error) {
-      setPanelError(error instanceof Error ? error.message : t("terminalManager.closeFailed"));
+      showToast({
+        title: error instanceof Error ? error.message : t("terminalManager.closeFailed"),
+        tone: "error"
+      });
     } finally {
       setClosingTerminalId(null);
     }
@@ -140,18 +146,6 @@ export function TerminalManagerPanel({
           {t("terminalManager.refresh")}
         </button>
       </div>
-
-      {panelError ? (
-        <p className="status-text" data-tone="error">
-          {panelError}
-        </p>
-      ) : null}
-
-      {panelMessage ? (
-        <p className="status-text" data-tone="success">
-          {panelMessage}
-        </p>
-      ) : null}
 
       {loading ? (
         <p className="status-text">{t("common.loading")}</p>

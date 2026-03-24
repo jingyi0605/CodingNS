@@ -1,6 +1,7 @@
 import { useMemo, useState, useRef, useCallback } from "react";
 
 import { t } from "../../../shared/i18n";
+import { useToast } from "../../../shared/toast";
 import { decideCapability } from "../capability/capability-gate";
 import type { ProviderCapabilitiesDto, ProviderId } from "../api/conversation-api";
 
@@ -38,7 +39,6 @@ const REASONING_LEVELS: { value: ReasoningLevel; label: string }[] = [
 
 export function ComposerPanel({ capabilities, isSubmitting, onSend }: ComposerPanelProps) {
   const [content, setContent] = useState("");
-  const [statusText, setStatusText] = useState<string | null>(null);
   const [selectedModel, setSelectedModel] = useState<string>(() => {
     const saved = localStorage.getItem("composer-selected-model");
     return saved || "claude-sonnet-4-6";
@@ -51,6 +51,7 @@ export function ComposerPanel({ capabilities, isSubmitting, onSend }: ComposerPa
   const [showSlashMenu, setShowSlashMenu] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const { showToast } = useToast();
 
   const provider: ProviderId = capabilities?.provider || "claude-code";
 
@@ -101,11 +102,12 @@ export function ComposerPanel({ capabilities, isSubmitting, onSend }: ComposerPa
     event.preventDefault();
 
     if (!content.trim() || !sendDecision.allowed) {
-      setStatusText(sendDecision.reason);
+      showToast({
+        title: sendDecision.reason ?? t("conversation.capabilityDenied"),
+        tone: "error"
+      });
       return;
     }
-
-    setStatusText(null);
 
     try {
       await onSend(content.trim(), {
@@ -115,7 +117,10 @@ export function ComposerPanel({ capabilities, isSubmitting, onSend }: ComposerPa
       setContent("");
       setAttachments([]);
     } catch (error) {
-      setStatusText(error instanceof Error ? error.message : t("conversation.capabilityDenied"));
+      showToast({
+        title: error instanceof Error ? error.message : t("conversation.capabilityDenied"),
+        tone: "error"
+      });
     }
   }
 
@@ -282,9 +287,7 @@ export function ComposerPanel({ capabilities, isSubmitting, onSend }: ComposerPa
           </div>
         </div>
 
-        {statusText && (
-          <p className="composer-error">{statusText}</p>
-        )}
+
       </form>
     </section>
   );

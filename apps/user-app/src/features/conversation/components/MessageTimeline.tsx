@@ -3,6 +3,7 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { t } from "../../../shared/i18n";
+import { useToast } from "../../../shared/toast";
 
 import type { ProviderId } from "../api/conversation-api";
 import type { SessionMessageViewModel } from "../runtime/session-runtime-machine";
@@ -466,6 +467,7 @@ export function MessageTimeline({
   onRetryMessage,
   provider
 }: MessageTimelineProps) {
+  const { showToast } = useToast();
   const listRef = useRef<HTMLDivElement | null>(null);
   const previousSessionIdRef = useRef(sessionId);
   const previousMessageCountRef = useRef(messages.length);
@@ -473,6 +475,17 @@ export function MessageTimeline({
   const stickToBottomRef = useRef(true);
   const pendingOlderLoadOffsetRef = useRef<number | null>(null);
   const renderItems = buildTimelineRenderItems(messages);
+
+  useEffect(() => {
+    if (historyState !== "error") {
+      return;
+    }
+
+    showToast({
+      title: t("conversation.historyLoadFailed"),
+      tone: "error"
+    });
+  }, [historyState, showToast]);
 
   useEffect(() => {
     if (previousSessionIdRef.current !== sessionId) {
@@ -537,13 +550,6 @@ export function MessageTimeline({
       {historyState === "loading" && (
         <div className="timeline-status">
           <span className="status-text">{t("conversation.historyLoading")}</span>
-        </div>
-      )}
-      {historyState === "error" && (
-        <div className="timeline-status">
-          <span className="status-text" data-tone="error">
-            {t("conversation.historyLoadFailed")}
-          </span>
         </div>
       )}
 

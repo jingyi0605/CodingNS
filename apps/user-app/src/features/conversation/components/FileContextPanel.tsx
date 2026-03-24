@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import { t } from "../../../shared/i18n";
 import { ApiError } from "../../../shared/network/api-error";
+import { useToast } from "../../../shared/toast";
 import {
   attachFileContext,
   detachFileContext,
@@ -35,14 +36,13 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [preview, setPreview] = useState<FilePreviewDto | null>(null);
   const [editorContent, setEditorContent] = useState("");
-  const [panelError, setPanelError] = useState<string | null>(null);
-  const [panelMessage, setPanelMessage] = useState<string | null>(null);
   const [loadingTree, setLoadingTree] = useState(false);
   const [loadingPreview, setLoadingPreview] = useState(false);
   const [searching, setSearching] = useState(false);
   const [saving, setSaving] = useState(false);
   const [syncingMeta, setSyncingMeta] = useState(false);
   const [mutating, setMutating] = useState(false);
+  const { showToast } = useToast();
 
   useEffect(() => {
     setCurrentDirectory("");
@@ -54,8 +54,6 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
     setSelectedPath(null);
     setPreview(null);
     setEditorContent("");
-    setPanelError(null);
-    setPanelMessage(null);
   }, [sessionId, workspaceId]);
 
   useEffect(() => {
@@ -73,11 +71,13 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
 
         if (!cancelled) {
           setTreeItems(response.items);
-          setPanelError(null);
         }
       } catch (error) {
         if (!cancelled) {
-          setPanelError(readError(error, t("conversation.filePanelLoadFailed")));
+          showToast({
+            title: readError(error, t("conversation.filePanelLoadFailed")),
+            tone: "error"
+          });
         }
       } finally {
         if (!cancelled) {
@@ -91,7 +91,7 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
     return () => {
       cancelled = true;
     };
-  }, [currentDirectory, workspaceId]);
+  }, [currentDirectory, showToast, workspaceId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -115,7 +115,10 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
         }
       } catch (error) {
         if (!cancelled) {
-          setPanelError(readError(error, t("conversation.filePanelLoadFailed")));
+          showToast({
+            title: readError(error, t("conversation.filePanelLoadFailed")),
+            tone: "error"
+          });
         }
       } finally {
         if (!cancelled) {
@@ -129,7 +132,7 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
     return () => {
       cancelled = true;
     };
-  }, [sessionId, workspaceId]);
+  }, [sessionId, showToast, workspaceId]);
 
   const activeBinding = bindings.find((item) => item.path === selectedPath);
   const canEdit = Boolean(preview?.supported && preview.kind === "text" && selectedPath);
@@ -164,8 +167,6 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
     }
 
     setLoadingPreview(true);
-    setPanelError(null);
-    setPanelMessage(null);
 
     try {
       const nextPreview = await getFilePreview(workspaceId, filePath);
@@ -176,7 +177,10 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
       setCurrentDirectory(getParentDirectory(filePath));
       await refreshMeta();
     } catch (error) {
-      setPanelError(readError(error, t("conversation.filePanelOpenFailed")));
+      showToast({
+        title: readError(error, t("conversation.filePanelOpenFailed")),
+        tone: "error"
+      });
     } finally {
       setLoadingPreview(false);
     }
@@ -187,9 +191,6 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
       return;
     }
 
-    setPanelError(null);
-    setPanelMessage(null);
-
     try {
       await Promise.all([refreshCurrentTree(), refreshMeta()]);
 
@@ -199,7 +200,10 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
         setEditorContent(nextPreview.content ?? "");
       }
     } catch (error) {
-      setPanelError(readError(error, t("conversation.filePanelLoadFailed")));
+      showToast({
+        title: readError(error, t("conversation.filePanelLoadFailed")),
+        tone: "error"
+      });
     }
   }
 
@@ -212,14 +216,15 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
     }
 
     setSearching(true);
-    setPanelError(null);
-    setPanelMessage(null);
 
     try {
       const response = await searchFiles(workspaceId, searchKeyword.trim());
       setSearchResult(response);
     } catch (error) {
-      setPanelError(readError(error, t("conversation.filePanelSearchFailed")));
+      showToast({
+        title: readError(error, t("conversation.filePanelSearchFailed")),
+        tone: "error"
+      });
     } finally {
       setSearching(false);
     }
@@ -231,8 +236,6 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
     }
 
     setSaving(true);
-    setPanelError(null);
-    setPanelMessage(null);
 
     try {
       await saveFileContent(workspaceId, selectedPath, editorContent, preview.version);
@@ -241,9 +244,15 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
       setEditorContent(nextPreview.content ?? "");
       await refreshMeta();
       await refreshCurrentTree();
-      setPanelMessage(t("conversation.filePanelSaveSuccess"));
+      showToast({
+        title: t("conversation.filePanelSaveSuccess"),
+        tone: "success"
+      });
     } catch (error) {
-      setPanelError(readError(error, t("conversation.filePanelSaveFailed")));
+      showToast({
+        title: readError(error, t("conversation.filePanelSaveFailed")),
+        tone: "error"
+      });
     } finally {
       setSaving(false);
     }
@@ -255,8 +264,6 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
     }
 
     setMutating(true);
-    setPanelError(null);
-    setPanelMessage(null);
 
     try {
       await attachFileContext(sessionId, {
@@ -264,9 +271,15 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
         path: selectedPath
       });
       await refreshMeta();
-      setPanelMessage(t("conversation.filePanelAttachSuccess"));
+      showToast({
+        title: t("conversation.filePanelAttachSuccess"),
+        tone: "success"
+      });
     } catch (error) {
-      setPanelError(readError(error, t("conversation.filePanelAttachFailed")));
+      showToast({
+        title: readError(error, t("conversation.filePanelAttachFailed")),
+        tone: "error"
+      });
     } finally {
       setMutating(false);
     }
@@ -274,15 +287,19 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
 
   async function handleDetach(bindingId: string) {
     setMutating(true);
-    setPanelError(null);
-    setPanelMessage(null);
 
     try {
       await detachFileContext(sessionId, bindingId);
       await refreshMeta();
-      setPanelMessage(t("conversation.filePanelDetachSuccess"));
+      showToast({
+        title: t("conversation.filePanelDetachSuccess"),
+        tone: "success"
+      });
     } catch (error) {
-      setPanelError(readError(error, t("conversation.filePanelDetachFailed")));
+      showToast({
+        title: readError(error, t("conversation.filePanelDetachFailed")),
+        tone: "error"
+      });
     } finally {
       setMutating(false);
     }
@@ -306,8 +323,6 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
     }
 
     setMutating(true);
-    setPanelError(null);
-    setPanelMessage(null);
 
     try {
       await operateFile({
@@ -323,7 +338,10 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
         await openFile(nextPath.trim());
       }
     } catch (error) {
-      setPanelError(readError(error, t("conversation.filePanelMutateFailed")));
+      showToast({
+        title: readError(error, t("conversation.filePanelMutateFailed")),
+        tone: "error"
+      });
     } finally {
       setMutating(false);
     }
@@ -343,8 +361,6 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
     }
 
     setMutating(true);
-    setPanelError(null);
-    setPanelMessage(null);
 
     try {
       await operateFile({
@@ -357,7 +373,10 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
       setEditorContent("");
       await Promise.all([refreshCurrentTree(), refreshMeta()]);
     } catch (error) {
-      setPanelError(readError(error, t("conversation.filePanelMutateFailed")));
+      showToast({
+        title: readError(error, t("conversation.filePanelMutateFailed")),
+        tone: "error"
+      });
     } finally {
       setMutating(false);
     }
@@ -382,8 +401,6 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
       getParentDirectory(nextPath) === getParentDirectory(selectedPath) ? "rename" : "move";
 
     setMutating(true);
-    setPanelError(null);
-    setPanelMessage(null);
 
     try {
       await operateFile({
@@ -397,7 +414,10 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
       await Promise.all([refreshCurrentTree(), refreshMeta()]);
       await openFile(nextPath);
     } catch (error) {
-      setPanelError(readError(error, t("conversation.filePanelMutateFailed")));
+      showToast({
+        title: readError(error, t("conversation.filePanelMutateFailed")),
+        tone: "error"
+      });
     } finally {
       setMutating(false);
     }
@@ -421,18 +441,6 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
           {t("conversation.filePanelRefresh")}
         </button>
       </div>
-
-      {panelError ? (
-        <p className="status-text" data-tone="error">
-          {panelError}
-        </p>
-      ) : null}
-
-      {panelMessage ? (
-        <p className="status-text" data-tone="success">
-          {panelMessage}
-        </p>
-      ) : null}
 
       {!workspaceId ? (
         <section className="file-panel-section">

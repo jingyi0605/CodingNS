@@ -8,6 +8,7 @@ import { authStore } from "../features/auth/store/auth-store";
 import { WorkbenchLayout } from "../features/conversation/components/WorkbenchLayout";
 import { ConversationPage } from "../features/conversation/pages/ConversationPage";
 import { t } from "../shared/i18n";
+import { ToastProvider } from "../shared/toast";
 
 interface MockSocketMessage {
   type: string;
@@ -747,13 +748,15 @@ function installFetchMock(input: {
 
 function renderConversationRoute(sessionId: string) {
   return render(
-    <MemoryRouter initialEntries={[`/sessions/${sessionId}`]}>
-      <Routes>
-        <Route element={<WorkbenchLayout />}>
-          <Route path="/sessions/:sessionId" element={<ConversationPage />} />
-        </Route>
-      </Routes>
-    </MemoryRouter>
+    <ToastProvider>
+      <MemoryRouter initialEntries={[`/sessions/${sessionId}`]}>
+        <Routes>
+          <Route element={<WorkbenchLayout />}>
+            <Route path="/sessions/:sessionId" element={<ConversationPage />} />
+          </Route>
+        </Routes>
+      </MemoryRouter>
+    </ToastProvider>
   );
 }
 

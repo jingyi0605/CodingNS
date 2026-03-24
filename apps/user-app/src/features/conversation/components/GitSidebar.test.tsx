@@ -3,10 +3,19 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { authStore } from "../../auth/store/auth-store";
+import { ToastProvider } from "../../../shared/toast";
 import type { GitHistoryItemDto, GitStatusDto } from "../api/git-api";
 import { GitSidebar } from "./GitSidebar";
 
 const originalFetch = global.fetch;
+
+function renderGitSidebar(workspaceId = "workspace-1") {
+  return render(
+    <ToastProvider>
+      <GitSidebar workspaceId={workspaceId} />
+    </ToastProvider>
+  );
+}
 
 describe("GitSidebar", () => {
   beforeEach(() => {
@@ -115,7 +124,7 @@ describe("GitSidebar", () => {
       throw new Error(`未处理的请求: ${url}`);
     }) as typeof fetch;
 
-    render(<GitSidebar workspaceId="workspace-1" />);
+    renderGitSidebar();
 
     expect(await screen.findByText("Git 上下文")).toBeInTheDocument();
     expect(await screen.findByText("README.md")).toBeInTheDocument();
@@ -315,7 +324,7 @@ describe("GitSidebar", () => {
       throw new Error(`未处理的请求: ${url}`);
     }) as typeof fetch;
 
-    render(<GitSidebar workspaceId="workspace-1" />);
+    renderGitSidebar();
 
     expect(await screen.findByText("提交草稿")).toBeInTheDocument();
 
@@ -404,7 +413,7 @@ describe("GitSidebar", () => {
       throw new Error(`未处理的请求: ${url}`);
     }) as typeof fetch;
 
-    render(<GitSidebar workspaceId="workspace-1" />);
+    renderGitSidebar();
 
     expect(await screen.findByText("远程同步")).toBeInTheDocument();
 
@@ -501,7 +510,7 @@ describe("GitSidebar", () => {
       throw new Error(`未处理的请求: ${url}`);
     }) as typeof fetch;
 
-    render(<GitSidebar workspaceId="workspace-1" />);
+    renderGitSidebar();
 
     expect(await screen.findByText("远程同步")).toBeInTheDocument();
 

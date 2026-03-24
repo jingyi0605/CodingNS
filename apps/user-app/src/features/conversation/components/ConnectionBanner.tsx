@@ -1,4 +1,7 @@
+import { useEffect } from "react";
+
 import { t } from "../../../shared/i18n";
+import { useToast } from "../../../shared/toast";
 
 import type { RuntimeConnectionState } from "../runtime/session-runtime-machine";
 
@@ -8,30 +11,37 @@ interface ConnectionBannerProps {
 }
 
 export function ConnectionBanner({ connectionState, onReconnect }: ConnectionBannerProps) {
-  if (connectionState === "connected" || connectionState === "closed") {
-    return null;
-  }
+  const { showToast, dismissToast } = useToast();
 
-  const description =
-    connectionState === "reconnect_failed"
-      ? t("conversation.reconnectFailedExplain")
-      : t("conversation.reconnectExplain");
+  useEffect(() => {
+    if (connectionState === "connected" || connectionState === "closed") {
+      dismissToast("conversation-connection-state");
+      return;
+    }
 
-  return (
-    <section className="connection-banner" aria-live="polite">
-      <div>
-        <strong>
-          {connectionState === "reconnect_failed"
-            ? t("conversation.connectionReconnectFailed")
-            : t("conversation.connectionReconnecting")}
-        </strong>
-        <p className="status-text">{description}</p>
-      </div>
-      {connectionState === "reconnect_failed" ? (
-        <button className="secondary-button" type="button" onClick={onReconnect}>
-          {t("conversation.reconnectButton")}
-        </button>
-      ) : null}
-    </section>
-  );
+    if (connectionState === "reconnect_failed") {
+      showToast({
+        id: "conversation-connection-state",
+        title: t("conversation.connectionReconnectFailed"),
+        description: t("conversation.reconnectFailedExplain"),
+        tone: "warning",
+        durationMs: null,
+        action: {
+          label: t("conversation.reconnectButton"),
+          onClick: onReconnect
+        }
+      });
+      return;
+    }
+
+    showToast({
+      id: "conversation-connection-state",
+      title: t("conversation.connectionReconnecting"),
+      description: t("conversation.reconnectExplain"),
+      tone: "info",
+      durationMs: 3200
+    });
+  }, [connectionState, dismissToast, onReconnect, showToast]);
+
+  return null;
 }
