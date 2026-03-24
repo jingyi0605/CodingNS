@@ -132,6 +132,7 @@ export class CodexAdapter implements ProviderAdapter {
 
         if (
           cachedSummary.summary
+          && hasUsableCodexTitle(cachedSummary.summary.title)
           && normalizeWorkspacePath(cachedSummary.summary.workspacePath) === targetPath
         ) {
           sessionsByProviderSessionId.set(cachedSummary.summary.providerSessionId, {
@@ -160,6 +161,7 @@ export class CodexAdapter implements ProviderAdapter {
         knownByPath
         && knownByPath.sourceMtimeMs === stats.mtimeMs
         && knownByPath.sourceSizeBytes === stats.size
+        && hasUsableCodexTitle(knownByPath.title)
         && normalizeWorkspacePath(knownByPath.workspacePath) === targetPath
       ) {
         this.touchSessionSummaryCache(filePath, {
@@ -228,6 +230,7 @@ export class CodexAdapter implements ProviderAdapter {
         knownBySessionId
         && knownBySessionId.sourceMtimeMs === stats.mtimeMs
         && knownBySessionId.sourceSizeBytes === stats.size
+        && hasUsableCodexTitle(knownBySessionId.title)
       ) {
         this.touchSessionSummaryCache(filePath, {
           filePath,
@@ -540,7 +543,7 @@ export class CodexAdapter implements ProviderAdapter {
           }
 
           index.set(id, {
-            title: ensureText(record.thread_name).trim() || null,
+            title: normalizeCodexIndexedTitle(ensureText(record.thread_name)) || null,
             cwd: null,
             createdAtMs: null,
             firstUserMessage: null,
@@ -597,7 +600,7 @@ export class CodexAdapter implements ProviderAdapter {
             : Number.parseInt(ensureText(row.created_at), 10);
 
         index.set(id, {
-          title: ensureText(row.title).trim() || (current?.title ?? null),
+          title: normalizeCodexIndexedTitle(ensureText(row.title)) || (current?.title ?? null),
           cwd: ensureText(row.cwd).trim() || (current?.cwd ?? null),
           createdAtMs: Number.isFinite(createdAtSeconds) ? createdAtSeconds * 1000 : null,
           firstUserMessage:
@@ -781,7 +784,14 @@ export class CodexAdapter implements ProviderAdapter {
     index: Map<string, CodexThreadMetadata>,
     sessionId: string
   ): string | null {
-    return index.get(sessionId)?.title?.trim() || null;
+    const metadata = index.get(sessionId);
+    const indexedTitle = normalizeCodexIndexedTitle(metadata?.title);
+
+    if (indexedTitle) {
+      return indexedTitle;
+    }
+
+    return normalizeCodexMessageTitle(metadata?.firstUserMessage);
   }
 
   private readSpawnedAgentRelationIndex(
@@ -1199,19 +1209,23 @@ function resolveCodexFallbackTitle(messages: NormalizedMessage[]): string | null
   );
 
   if (preferredMessage) {
-    return preferredMessage.content.slice(0, 48);
+    return normalizeCodexMessageTitle(preferredMessage.content);
   }
 
   const firstUserMessage = messages.find((message) => message.role === "user");
-  return firstUserMessage?.content.slice(0, 48) ?? null;
+  return normalizeCodexMessageTitle(firstUserMessage?.content);
 }
 
 function looksLikeCodexRulesMessage(content: string): boolean {
   const normalized = content.trim();
+  const beginsWithRulesHeader = /^#?\s*AGENTS\.md instructions for\b/i.test(normalized);
+
+  if (beginsWithRulesHeader) {
+    return true;
+  }
 
   return /AGENTS\.md instructions for/i.test(normalized)
-    && /<INSTRUCTIONS>/i.test(normalized)
-    && /<\/INSTRUCTIONS>/i.test(normalized);
+    && /<INSTRUCTIONS>/i.test(normalized);
 }
 
 function codexMessageSourcePriority(source: CodexMessageSource): number {
@@ -1481,4 +1495,23 @@ function buildCodexSubagentLabel(metadata: CodexThreadMetadata | null | undefine
   }
 
   return agentNickname || agentRole || null;
+}
+
+function hasUsableCodexTitle(title: string | null | undefined): boolean {
+  return normalizeCodexIndexedTitle(title) !== null;
+}
+
+function normalizeCodexIndexedTitle(title: string | null | undefined): string | null {
+  const normalized = ensureText(title).trim();
+
+  if (normalized.length === 0 || looksLikeCodexRulesMessage(normalized)) {
+    return null;
+  }
+
+  return normalized;
+}
+
+function normalizeCodexMessageTitle(content: string | null | undefined): string | null {
+  const normalized = normalizeCodexIndexedTitle(content);
+  return normalized ? normalized.slice(0, 48) : null;
 }

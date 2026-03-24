@@ -1,5 +1,6 @@
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 import WebSocket from "ws";
 import { afterEach, describe, expect, it } from "vitest";
@@ -339,6 +340,322 @@ describe("spec002 会话同步核心", () => {
     expect(bindingColumns.map((column) => column.name)).not.toContain("raw_message");
   });
 
+  it("会跳过 Codex 规则消息标题，并支持手动重命名回写原始记录", async () => {
+    const fixture = createProviderFixture();
+    activeFixtures.push(fixture);
+
+    writeFileSync(
+      fixture.codexSessionFile,
+      [
+        JSON.stringify({
+          timestamp: "2026-03-23T09:00:00.000Z",
+          type: "session_meta",
+          payload: {
+            id: "codex-session-1",
+            timestamp: "2026-03-23T09:00:00.000Z",
+            cwd: fixture.workspaceDir,
+            originator: "Codex",
+            source: "test"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-03-23T09:00:05.000Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message:
+              "# AGENTS.md instructions for C:\\\\Code\\\\CodingNS\\n\\n<INSTRUCTIONS>\\n规则正文\\n</INSTRUCTIONS>"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-03-23T09:00:08.000Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: "真正的用户需求标题"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-03-23T09:00:12.000Z",
+          type: "event_msg",
+          payload: {
+            type: "agent_message",
+            message: "已经开始处理"
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const codexStateDbPath = path.join(fixture.codexHomeDir, "state_999.sqlite");
+    const codexStateDb = new DatabaseSync(codexStateDbPath);
+    codexStateDb.exec(`
+      CREATE TABLE threads (
+        id TEXT PRIMARY KEY,
+        title TEXT,
+        cwd TEXT,
+        created_at INTEGER,
+        first_user_message TEXT,
+        agent_nickname TEXT,
+        agent_role TEXT
+      );
+    `);
+    codexStateDb
+      .prepare(
+        `INSERT INTO threads (id, title, cwd, created_at, first_user_message, agent_nickname, agent_role)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        "codex-session-1",
+        null,
+        fixture.workspaceDir,
+        Math.floor(Date.parse("2026-03-23T09:00:00.000Z") / 1000),
+        "# AGENTS.md instructions for C:\\Code\\CodingNS\n\n<INSTRUCTIONS>\n规则正文\n</INSTRUCTIONS>",
+        null,
+        null
+      );
+    codexStateDb.close();
+
+    const hosted = createTestApp(fixture);
+    activeClosers.push(() => hosted.app.close());
+    await hosted.app.ready();
+
+    const accessToken = await bootstrapAndLogin(hosted);
+    const workspaceId = await importWorkspace(hosted, accessToken, fixture.workspaceDir);
+
+    const sessions = await hosted.app.inject({
+      method: "GET",
+      url: `/api/sessions?workspaceId=${workspaceId}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(sessions.statusCode).toBe(200);
+
+    const sessionItems = sessions.json().items;
+    const codexSession = sessionItems.find((item: { provider: string }) => item.provider === "codex");
+    const claudeSession = sessionItems.find(
+      (item: { provider: string }) => item.provider === "claude-code"
+    );
+
+    if (!codexSession || !claudeSession) {
+      throw new Error("测试会话没有按预期加载出来");
+    }
+
+    expect(codexSession?.title).toBe("真正的用户需求标题");
+    expect(claudeSession).toBeTruthy();
+
+    const renamedCodexTitle = "重命名后的 Codex 会话";
+    const renamedCodex = await hosted.app.inject({
+      method: "PATCH",
+      url: `/api/sessions/${codexSession.sessionId}/title`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        title: renamedCodexTitle
+      }
+    });
+    expect(renamedCodex.statusCode).toBe(200);
+    expect(renamedCodex.json().title).toBe(renamedCodexTitle);
+
+    const codexIndexLines = readFileSync(path.join(fixture.codexHomeDir, "session_index.jsonl"), "utf8")
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line) as { id?: string; thread_name?: string });
+    expect(codexIndexLines.at(-1)).toEqual({
+      id: "codex-session-1",
+      thread_name: renamedCodexTitle
+    });
+
+    const renamedCodexDb = new DatabaseSync(codexStateDbPath, { readOnly: true });
+    const codexThreadRow = renamedCodexDb
+      .prepare("SELECT title FROM threads WHERE id = ?")
+      .get("codex-session-1") as { title: string | null } | undefined;
+    renamedCodexDb.close();
+    expect(codexThreadRow?.title).toBe(renamedCodexTitle);
+
+    const renamedClaudeTitle = "重命名后的 Claude 会话";
+    const renamedClaude = await hosted.app.inject({
+      method: "PATCH",
+      url: `/api/sessions/${claudeSession.sessionId}/title`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        title: renamedClaudeTitle
+      }
+    });
+    expect(renamedClaude.statusCode).toBe(200);
+    expect(renamedClaude.json().title).toBe(renamedClaudeTitle);
+
+    const claudeLines = readFileSync(fixture.claudeSessionFile, "utf8")
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line) as { type?: string; aiTitle?: string });
+    expect(claudeLines.at(-1)).toEqual({
+      type: "ai-title",
+      sessionId: "claude-session-1",
+      aiTitle: renamedClaudeTitle
+    });
+  });
+
+  it("已有的 Codex 脏标题缓存会在源文件未变化时被重新解析修正", async () => {
+    const fixture = createProviderFixture();
+    activeFixtures.push(fixture);
+
+    const rulesMessage =
+      "# AGENTS.md instructions for C:\\\\Code\\\\CodingNS\\n\\n<INSTRUCTIONS>\\n规则正文\\n</INSTRUCTIONS>";
+    const realUserTitle = "真正的用户需求标题";
+
+    writeFileSync(
+      fixture.codexSessionFile,
+      [
+        JSON.stringify({
+          timestamp: "2026-03-23T09:00:00.000Z",
+          type: "session_meta",
+          payload: {
+            id: "codex-session-1",
+            timestamp: "2026-03-23T09:00:00.000Z",
+            cwd: fixture.workspaceDir,
+            originator: "Codex",
+            source: "test"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-03-23T09:00:05.000Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: rulesMessage
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-03-23T09:00:08.000Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: realUserTitle
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-03-23T09:00:12.000Z",
+          type: "event_msg",
+          payload: {
+            type: "agent_message",
+            message: "已经开始处理"
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const codexStateDbPath = path.join(fixture.codexHomeDir, "state_999.sqlite");
+    const codexStateDb = new DatabaseSync(codexStateDbPath);
+    codexStateDb.exec(`
+      CREATE TABLE threads (
+        id TEXT PRIMARY KEY,
+        title TEXT,
+        cwd TEXT,
+        created_at INTEGER,
+        first_user_message TEXT,
+        agent_nickname TEXT,
+        agent_role TEXT
+      );
+    `);
+    codexStateDb
+      .prepare(
+        `INSERT INTO threads (id, title, cwd, created_at, first_user_message, agent_nickname, agent_role)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        "codex-session-1",
+        realUserTitle,
+        fixture.workspaceDir,
+        Math.floor(Date.parse("2026-03-23T09:00:00.000Z") / 1000),
+        realUserTitle,
+        null,
+        null
+      );
+    codexStateDb.close();
+
+    const hosted = createTestApp(fixture);
+    activeClosers.push(() => hosted.app.close());
+    await hosted.app.ready();
+
+    const accessToken = await bootstrapAndLogin(hosted);
+    const workspaceId = await importWorkspace(hosted, accessToken, fixture.workspaceDir);
+    const staleSessionId = "stale-codex-host-session";
+    const staleUpdatedAt = "2026-03-23T09:00:12.000Z";
+
+    hosted.services.database.db
+      .prepare(
+        `INSERT INTO session_bindings (
+           session_id,
+           workspace_id,
+           provider,
+           provider_session_id,
+           raw_store_ref,
+           created_at,
+           updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        staleSessionId,
+        workspaceId,
+        "codex",
+        "codex-session-1",
+        fixture.codexSessionFile,
+        staleUpdatedAt,
+        staleUpdatedAt
+      );
+    hosted.services.database.db
+      .prepare(
+        `INSERT INTO session_indices (
+           session_id,
+           workspace_id,
+           provider,
+           title,
+           message_count,
+           last_message_at,
+           created_at,
+           updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        staleSessionId,
+        workspaceId,
+        "codex",
+        rulesMessage.slice(0, 48),
+        2,
+        staleUpdatedAt,
+        staleUpdatedAt,
+        staleUpdatedAt
+      );
+
+    const sessions = await hosted.app.inject({
+      method: "GET",
+      url: `/api/sessions?workspaceId=${workspaceId}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(sessions.statusCode).toBe(200);
+
+    const codexSession = sessions
+      .json()
+      .items.find((item: { provider: string }) => item.provider === "codex");
+
+    expect(codexSession).toBeTruthy();
+    expect(codexSession.sessionId).toBe(staleSessionId);
+    expect(codexSession.title).toBe(realUserTitle);
+
+    const corrected = hosted.services.database.db
+      .prepare("SELECT title FROM session_indices WHERE session_id = ?")
+      .get(staleSessionId) as { title: string };
+    expect(corrected.title).toBe(realUserTitle);
+  });
+
   it("支持 WebSocket 订阅、增量推送和鉴权拒绝", async () => {
     const fixture = createProviderFixture();
     activeFixtures.push(fixture);
@@ -641,6 +958,46 @@ describe("spec002 会话同步核心", () => {
       .items.find((item: { provider: string }) => item.provider === "codex");
     expect(idleSession.activityState).toBe("idle");
     expect(idleSession.lastSeenAt).toBeTruthy();
+
+    const archive = await hosted.app.inject({
+      method: "PATCH",
+      url: `/api/sessions/${idleSession.sessionId}/archive`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        archived: true
+      }
+    });
+    expect(archive.statusCode).toBe(200);
+    expect(archive.json().isArchived).toBe(true);
+
+    const archivedList = await hosted.app.inject({
+      method: "GET",
+      url: `/api/sessions?workspaceId=${workspaceId}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(archivedList.statusCode).toBe(200);
+
+    const archivedSession = archivedList
+      .json()
+      .items.find((item: { sessionId: string }) => item.sessionId === idleSession.sessionId);
+    expect(archivedSession?.isArchived).toBe(true);
+
+    const unarchive = await hosted.app.inject({
+      method: "PATCH",
+      url: `/api/sessions/${idleSession.sessionId}/archive`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        archived: false
+      }
+    });
+    expect(unarchive.statusCode).toBe(200);
+    expect(unarchive.json().isArchived).toBe(false);
   });
 
   it("鍙埛鏂版渶杩?10 鏉′細璇濈姸鎬?", async () => {
