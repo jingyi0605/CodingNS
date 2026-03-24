@@ -14,15 +14,17 @@ export class SessionIndexRepository {
            provider,
            title,
            message_count,
+           is_archived,
            last_message_at,
            created_at,
            updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(session_id) DO UPDATE SET
            workspace_id = excluded.workspace_id,
            provider = excluded.provider,
            title = excluded.title,
            message_count = excluded.message_count,
+           is_archived = excluded.is_archived,
            last_message_at = excluded.last_message_at,
            updated_at = excluded.updated_at`
       )
@@ -32,6 +34,7 @@ export class SessionIndexRepository {
         record.provider,
         record.title,
         record.messageCount,
+        record.isArchived ? 1 : 0,
         record.lastMessageAt,
         record.createdAt,
         record.updatedAt
@@ -60,6 +63,10 @@ export class SessionIndexRepository {
            snapshots.resumed_at AS resumed_at,
            states.running_state AS running_state,
            COALESCE(states.activity_source, 'none') AS activity_source,
+           CASE
+             WHEN indices.provider = 'codex' THEN indices.is_archived
+             ELSE COALESCE(states.is_archived, 0)
+           END AS is_archived,
            states.last_event_at AS last_event_at,
            states.completed_at AS completed_at,
            states.last_seen_at AS last_seen_at
@@ -98,6 +105,10 @@ export class SessionIndexRepository {
            snapshots.resumed_at AS resumed_at,
            states.running_state AS running_state,
            COALESCE(states.activity_source, 'none') AS activity_source,
+           CASE
+             WHEN indices.provider = 'codex' THEN indices.is_archived
+             ELSE COALESCE(states.is_archived, 0)
+           END AS is_archived,
            states.last_event_at AS last_event_at,
            states.completed_at AS completed_at,
            states.last_seen_at AS last_seen_at
@@ -123,6 +134,7 @@ export class SessionIndexRepository {
            provider AS provider,
            title AS title,
            message_count AS message_count,
+           is_archived AS is_archived,
            last_message_at AS last_message_at,
            created_at AS created_at,
            updated_at AS updated_at
@@ -132,6 +144,16 @@ export class SessionIndexRepository {
       .get(sessionId) as SessionIndexRecordRow | undefined;
 
     return row ? mapSessionIndexRecordRow(row) : null;
+  }
+
+  renameTitle(sessionId: string, title: string, updatedAt: string): void {
+    this.db
+      .prepare(
+        `UPDATE session_indices
+         SET title = ?, updated_at = ?
+         WHERE session_id = ?`
+      )
+      .run(title, updatedAt, sessionId);
   }
 }
 
@@ -154,6 +176,7 @@ interface SessionListItemRow {
   resumed_at: string | null;
   running_state: SessionListItem["runningState"];
   activity_source: SessionListItem["activitySource"];
+  is_archived: number;
   last_event_at: string | null;
   completed_at: string | null;
   last_seen_at: string | null;
@@ -165,6 +188,7 @@ interface SessionIndexRecordRow {
   provider: SessionIndexRecord["provider"];
   title: string;
   message_count: number;
+  is_archived: number;
   last_message_at: string | null;
   created_at: string;
   updated_at: string;
@@ -175,12 +199,14 @@ function mapSessionListItemRow(row: SessionListItemRow): SessionListItem {
     row.activity_source === "runtime"
     && (row.running_state === "starting" || row.running_state === "running");
   const isInferredActive = row.activity_source === "inferred" && row.running_state === "running";
+  const hasUnreadCompletion =
+    row.activity_source !== "none"
+    && !!row.completed_at
+    && (!row.last_seen_at || row.completed_at > row.last_seen_at);
   const activityState =
     isRuntimeActive || isInferredActive
       ? "running"
-      : row.activity_source === "runtime"
-        && row.completed_at
-        && (!row.last_seen_at || row.completed_at > row.last_seen_at)
+      : hasUnreadCompletion
         ? "completed_unread"
         : "idle";
 
@@ -203,6 +229,7 @@ function mapSessionListItemRow(row: SessionListItemRow): SessionListItem {
     resumedAt: row.resumed_at,
     runningState: row.running_state,
     activitySource: row.activity_source,
+    isArchived: row.is_archived === 1,
     lastEventAt: row.last_event_at,
     completedAt: row.completed_at,
     lastSeenAt: row.last_seen_at,
@@ -217,6 +244,7 @@ function mapSessionIndexRecordRow(row: SessionIndexRecordRow): SessionIndexRecor
     provider: row.provider,
     title: row.title,
     messageCount: row.message_count,
+    isArchived: row.is_archived === 1,
     lastMessageAt: row.last_message_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at

@@ -21,6 +21,7 @@ import { logPerformance } from "../../shared/utils/perf-log.js";
 import { nowIso } from "../../shared/utils/time.js";
 import type {
   SessionBinding,
+  SessionChangedFileRecord,
   SessionListItem,
   SessionStateRecord,
   SessionStatusSnapshot
@@ -31,6 +32,7 @@ import type { SessionStateRepository } from "../../storage/repositories/session-
 import type { SessionStatusSnapshotRepository } from "../../storage/repositories/session-status-snapshot-repository.js";
 import type { WorkspaceRepository } from "../../storage/repositories/workspace-repository.js";
 import { inspectSessionActivity } from "./session-activity-inspector.js";
+import { SessionChangedFileService } from "./session-changed-file-service.js";
 import { SessionMessageAttachmentService } from "./session-message-attachment-service.js";
 import { mapSessionProviderError } from "./session-provider-error-mapper.js";
 
@@ -75,6 +77,7 @@ export class SessionHistoryService {
     private readonly db: Database.Database,
     private readonly workspaceRepository: WorkspaceRepository,
     private readonly sessionBindingRepository: SessionBindingRepository,
+    private readonly sessionChangedFileService: SessionChangedFileService,
     private readonly sessionIndexRepository: SessionIndexRepository,
     private readonly sessionMessageAttachmentService: SessionMessageAttachmentService,
     private readonly sessionStateRepository: SessionStateRepository,
@@ -267,6 +270,17 @@ export class SessionHistoryService {
     return this.enrichSessionItem(this.getSessionListItemOrThrow(sessionId, userId));
   }
 
+  async listSessionChangedFiles(
+    sessionId: string,
+    userId: string
+  ): Promise<SessionChangedFileRecord[]> {
+    this.getSession(sessionId, userId);
+
+    await this.ensureSessionChangedFilesIndexed(sessionId);
+
+    return this.sessionChangedFileService.listBySessionId(sessionId);
+  }
+
   listWorkspaceSessions(workspaceId: string, userId: string): SessionListItem[] {
     return this.enrichSessionItems(
       workspaceId,
@@ -364,6 +378,7 @@ export class SessionHistoryService {
           provider: result.session.provider,
           title: result.session.title,
           messageCount: result.session.messageCount,
+          isArchived: false,
           lastMessageAt: result.session.lastMessageAt,
           createdAt: timestamp,
           updatedAt: timestamp
@@ -425,6 +440,7 @@ export class SessionHistoryService {
       provider: binding.provider,
       title: existing?.title ?? result.message.content.slice(0, 48),
       messageCount: (existing?.messageCount ?? 0) + 1,
+      isArchived: existing?.isArchived ?? false,
       lastMessageAt: result.message.timestamp,
       createdAt: existing?.createdAt ?? nowIso(),
       updatedAt: result.message.timestamp
@@ -531,6 +547,46 @@ export class SessionHistoryService {
   }
 
   async updateSessionArchiveState(input: ArchiveSessionInput): Promise<SessionListItem> {
+    const binding = this.getBindingOrThrow(input.sessionId);
+
+    if (binding.provider === "codex") {
+      const timestamp = nowIso();
+      const existing = this.getSessionListItemOrThrow(input.sessionId, input.userId);
+      const result = await this.sessionSyncService
+        .updateSessionArchiveState(
+          binding.provider,
+          binding.providerSessionId,
+          binding.rawStoreRef,
+          input.isArchived
+        )
+        .catch((error) => {
+          throw mapSessionProviderError(error);
+        });
+
+      this.sessionBindingRepository.upsert({
+        ...binding,
+        rawStoreRef: result.rawStoreRef,
+        updatedAt: timestamp
+      });
+      this.sessionIndexRepository.upsert({
+        sessionId: existing.sessionId,
+        workspaceId: existing.workspaceId,
+        provider: existing.provider,
+        title: existing.title,
+        messageCount: existing.messageCount,
+        isArchived: result.isArchived,
+        lastMessageAt: existing.lastMessageAt,
+        createdAt: existing.createdAt,
+        updatedAt: timestamp
+      });
+
+      return this.enrichSessionItem({
+        ...this.getSessionListItemOrThrow(input.sessionId, input.userId),
+        rawStoreRef: result.rawStoreRef,
+        isArchived: result.isArchived
+      });
+    }
+
     const existing =
       this.sessionStateRepository.findBySessionAndUser(input.sessionId, input.userId) ??
       (await this.refreshSessionState(input.sessionId, input.userId));
@@ -684,6 +740,7 @@ export class SessionHistoryService {
             provider: session.provider,
             title: session.title,
             messageCount: session.messageCount,
+            isArchived: session.isArchived ?? false,
             lastMessageAt: session.lastMessageAt,
             createdAt,
             updatedAt: timestamp
@@ -708,7 +765,7 @@ export class SessionHistoryService {
       const persistStartedAt = Date.now();
       persist();
       persistDurationMs = Date.now() - persistStartedAt;
-      this.cleanupLegacyCodexDraftSessions(workspaceId, userId, sessions);
+      this.cleanupStaleCodexSessions(workspaceId, userId, sessions);
       this.workspaceSessionRelations.set(
         workspaceId,
         this.buildWorkspaceSessionRelationMap(sessions, discoveredSessionIds)
@@ -782,10 +839,15 @@ export class SessionHistoryService {
 
     return this.sessionSyncService
       .readHistory(provider, providerSessionId, rawStoreRef, cursor, limit, direction)
-      .then((page) => ({
-        ...page,
-        messages: this.sessionMessageAttachmentService.enrichMessages(sessionId, page.messages)
-      }))
+      .then((page) => {
+        const messages = this.sessionMessageAttachmentService.enrichMessages(sessionId, page.messages);
+        this.persistSessionChangedFiles(sessionId, messages);
+
+        return {
+          ...page,
+          messages
+        };
+      })
       .catch((error) => {
         if (shouldTreatMissingSyntheticHistoryAsEmpty(provider, rawStoreRef, error)) {
           return {
@@ -944,6 +1006,63 @@ export class SessionHistoryService {
     return currentCursor;
   }
 
+  private async ensureSessionChangedFilesIndexed(
+    sessionId: string
+  ): Promise<void> {
+    if (this.sessionChangedFileService.hasIndexedSession(sessionId)) {
+      return;
+    }
+
+    const binding = this.getBindingOrThrow(sessionId);
+    const seenCursors = new Set<string>();
+    let cursor: string | null = null;
+
+    while (true) {
+      const page = await this.readPage(
+        sessionId,
+        binding.provider,
+        binding.providerSessionId,
+        binding.rawStoreRef,
+        cursor,
+        100,
+        "forward"
+      );
+
+      if (!page.nextCursor || seenCursors.has(page.nextCursor)) {
+        this.sessionChangedFileService.markSessionIndexed(sessionId, nowIso());
+        return;
+      }
+
+      seenCursors.add(page.nextCursor);
+      cursor = page.nextCursor;
+    }
+  }
+
+  private persistSessionChangedFiles(sessionId: string, messages: HistoryPage["messages"]): void {
+    if (messages.length === 0) {
+      return;
+    }
+
+    const binding = this.sessionBindingRepository.findBySessionId(sessionId);
+
+    if (!binding) {
+      return;
+    }
+
+    const workspace = this.workspaceRepository.findById(binding.workspaceId);
+
+    if (!workspace) {
+      return;
+    }
+
+    this.sessionChangedFileService.recordMessages(
+      sessionId,
+      binding.workspaceId,
+      workspace.path,
+      messages
+    );
+  }
+
   private getWorkspaceOrThrow(workspaceId: string) {
     const workspace = this.workspaceRepository.findById(workspaceId);
 
@@ -979,7 +1098,7 @@ export class SessionHistoryService {
     await Promise.all(sessions.map((session) => this.refreshSessionState(session.sessionId, userId)));
   }
 
-  private cleanupLegacyCodexDraftSessions(
+  private cleanupStaleCodexSessions(
     workspaceId: string,
     userId: string,
     sessions: Array<{
@@ -1005,7 +1124,10 @@ export class SessionHistoryService {
           session.provider === "codex" &&
           !discoveredProviderSessionIds.has(session.providerSessionId) &&
           !discoveredRawStoreRefs.has(session.rawStoreRef) &&
-          isLegacyCodingNsRolloutSession(session.providerSessionId, session.rawStoreRef)
+          (
+            isLegacyCodingNsRolloutSession(session.providerSessionId, session.rawStoreRef) ||
+            shouldRemoveMissingSyntheticCodexSession(session.rawStoreRef)
+          )
       );
 
     if (staleDrafts.length === 0) {
@@ -1014,6 +1136,10 @@ export class SessionHistoryService {
 
     const remove = this.db.transaction((sessionIds: string[]) => {
       for (const sessionId of sessionIds) {
+        this.sessionChangedFileService.deleteBySessionId(sessionId);
+        this.db
+          .prepare("DELETE FROM session_message_attachments WHERE session_id = ?")
+          .run(sessionId);
         this.db
           .prepare("DELETE FROM session_file_context_bindings WHERE session_id = ?")
           .run(sessionId);
@@ -1079,10 +1205,11 @@ export class SessionHistoryService {
       sessionId,
       userId,
       runningState: inspection.runningState === "running" ? "running" : "idle",
-      activitySource: inspection.runningState === "running" ? "inferred" : "none",
+      activitySource:
+        inspection.lastEventAt || inspection.completedAtCandidate ? "inferred" : "none",
       isArchived: current?.isArchived ?? false,
       lastEventAt: inspection.lastEventAt,
-      completedAt: null,
+      completedAt: inspection.completedAtCandidate,
       lastSeenAt: current?.lastSeenAt ?? null,
       updatedAt: timestamp
     };
@@ -1211,6 +1338,10 @@ function isLegacyCodingNsRolloutSession(providerSessionId: string, rawStoreRef: 
   } catch {
     return false;
   }
+}
+
+function shouldRemoveMissingSyntheticCodexSession(rawStoreRef: string): boolean {
+  return isSyntheticCodexRawStoreRef(rawStoreRef) && !existsSync(rawStoreRef);
 }
 
 function shouldPreserveRuntimeTerminalState(

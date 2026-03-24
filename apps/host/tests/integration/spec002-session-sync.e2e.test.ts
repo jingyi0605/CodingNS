@@ -322,8 +322,10 @@ describe("spec002 会话同步核心", () => {
         initialPrompt: "新建一个最小主链路"
       }
     });
-    expect(started.statusCode).toBe(201);
-    expect(started.json().provider).toBe("codex");
+    expect(started.statusCode).toBe(409);
+    expect(started.json()).toMatchObject({
+      error_code: "SESSION_START_DEFERRED"
+    });
 
     const schemaTables = hosted.services.database.db
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
