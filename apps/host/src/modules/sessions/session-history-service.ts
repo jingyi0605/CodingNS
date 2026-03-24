@@ -41,6 +41,12 @@ interface StartSessionInput {
   initialPrompt?: string;
 }
 
+interface ArchiveSessionInput {
+  sessionId: string;
+  userId: string;
+  isArchived: boolean;
+}
+
 export interface SessionHistoryEnvelope {
   type: "session.backfill" | "session.delta";
   sessionId: string;
@@ -245,6 +251,18 @@ export class SessionHistoryService {
     return null;
   }
 
+  readSessionAttachment(
+    sessionId: string,
+    attachmentId: string
+  ): {
+    attachment: import("@codingns/session-sync-core").NormalizedMessageAttachment;
+    fileName: string;
+    mimeType: string;
+    content: Buffer;
+  } | null {
+    return this.sessionMessageAttachmentService.readAttachmentContent(sessionId, attachmentId);
+  }
+
   getSession(sessionId: string, userId: string): SessionListItem {
     return this.enrichSessionItem(this.getSessionListItemOrThrow(sessionId, userId));
   }
@@ -365,6 +383,7 @@ export class SessionHistoryService {
           userId: input.userId,
           runningState: "idle",
           activitySource: "none",
+          isArchived: false,
           lastEventAt: result.session.lastMessageAt,
           completedAt: null,
           lastSeenAt: null,
@@ -503,10 +522,65 @@ export class SessionHistoryService {
       userId,
       runningState: existing?.runningState ?? "idle",
       activitySource: existing?.activitySource ?? "none",
+      isArchived: existing?.isArchived ?? false,
       lastEventAt: existing?.lastEventAt ?? null,
       completedAt: existing?.completedAt ?? null,
       lastSeenAt: seenAt,
       updatedAt: seenAt
+    });
+  }
+
+  async updateSessionArchiveState(input: ArchiveSessionInput): Promise<SessionListItem> {
+    const existing =
+      this.sessionStateRepository.findBySessionAndUser(input.sessionId, input.userId) ??
+      (await this.refreshSessionState(input.sessionId, input.userId));
+    const timestamp = nowIso();
+
+    this.sessionStateRepository.upsert({
+      sessionId: input.sessionId,
+      userId: input.userId,
+      runningState: existing?.runningState ?? "idle",
+      activitySource: existing?.activitySource ?? "none",
+      isArchived: input.isArchived,
+      lastEventAt: existing?.lastEventAt ?? null,
+      completedAt: existing?.completedAt ?? null,
+      lastSeenAt: existing?.lastSeenAt ?? null,
+      updatedAt: timestamp
+    });
+
+    return this.enrichSessionItem({
+      ...this.getSessionListItemOrThrow(input.sessionId, input.userId),
+      isArchived: input.isArchived
+    });
+  }
+
+  async renameSessionTitle(
+    sessionId: string,
+    userId: string,
+    title: string
+  ): Promise<SessionListItem> {
+    const binding = this.getBindingOrThrow(sessionId);
+    const existing = this.getSessionListItemOrThrow(sessionId, userId);
+    const nextTitle = title.trim();
+    const timestamp = nowIso();
+
+    try {
+      await this.sessionSyncService.renameSessionTitle(
+        binding.provider,
+        binding.providerSessionId,
+        binding.rawStoreRef,
+        nextTitle
+      );
+    } catch (error) {
+      throw mapSessionProviderError(error);
+    }
+
+    this.sessionIndexRepository.renameTitle(sessionId, nextTitle, timestamp);
+
+    return this.enrichSessionItem({
+      ...existing,
+      title: nextTitle,
+      updatedAt: timestamp
     });
   }
 
@@ -1006,6 +1080,7 @@ export class SessionHistoryService {
       userId,
       runningState: inspection.runningState === "running" ? "running" : "idle",
       activitySource: inspection.runningState === "running" ? "inferred" : "none",
+      isArchived: current?.isArchived ?? false,
       lastEventAt: inspection.lastEventAt,
       completedAt: null,
       lastSeenAt: current?.lastSeenAt ?? null,

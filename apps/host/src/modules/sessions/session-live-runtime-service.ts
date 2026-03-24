@@ -399,6 +399,7 @@ export class SessionLiveRuntimeService {
   ): Promise<void> {
     const handle = await this.launchRuntimeRun(request, mode);
     const snapshot = handle.getSnapshot();
+    const currentState = this.sessionStateRepository.findBySessionAndUser(request.sessionId, userId);
 
     this.sessionHistoryService.persistSessionBinding(request.sessionId, request.workspaceId, snapshot);
     this.sessionStateRepository.upsert({
@@ -406,10 +407,10 @@ export class SessionLiveRuntimeService {
       userId,
       runningState: toStoredRunningState(snapshot.runningState),
       activitySource: "runtime",
+      isArchived: currentState?.isArchived ?? false,
       lastEventAt: snapshot.lastEventAt,
       completedAt: snapshot.completedAt,
-      lastSeenAt:
-        this.sessionStateRepository.findBySessionAndUser(request.sessionId, userId)?.lastSeenAt ?? null,
+      lastSeenAt: currentState?.lastSeenAt ?? null,
       updatedAt: nowIso()
     });
     this.attachRuntimePersistence(handle, request.sessionId, request.workspaceId, userId);
@@ -476,6 +477,7 @@ export class SessionLiveRuntimeService {
       userId: input.userId,
       runningState: toStoredRunningState(input.snapshot.runningState),
       activitySource: "runtime",
+      isArchived: false,
       lastEventAt: input.snapshot.lastEventAt,
       completedAt: input.snapshot.completedAt,
       lastSeenAt: null,
@@ -494,6 +496,7 @@ export class SessionLiveRuntimeService {
       providerSessionId: event.providerSessionId,
       rawStoreRef: event.rawStoreRef
     });
+    const currentState = this.sessionStateRepository.findBySessionAndUser(sessionId, userId);
 
     if (event.type === "message") {
       const existing = this.sessionIndexRepository.findIndexRecordBySessionId(sessionId);
@@ -512,10 +515,10 @@ export class SessionLiveRuntimeService {
         userId,
         runningState: "running",
         activitySource: "runtime",
+        isArchived: currentState?.isArchived ?? false,
         lastEventAt: event.message.timestamp,
         completedAt: null,
-        lastSeenAt:
-          this.sessionStateRepository.findBySessionAndUser(sessionId, userId)?.lastSeenAt ?? null,
+        lastSeenAt: currentState?.lastSeenAt ?? null,
         updatedAt: nowIso()
       });
 
@@ -541,10 +544,10 @@ export class SessionLiveRuntimeService {
       userId,
       runningState: toStoredRunningState(event.status),
       activitySource: "runtime",
+      isArchived: currentState?.isArchived ?? false,
       lastEventAt: event.timestamp,
       completedAt,
-      lastSeenAt:
-        this.sessionStateRepository.findBySessionAndUser(sessionId, userId)?.lastSeenAt ?? null,
+      lastSeenAt: currentState?.lastSeenAt ?? null,
       updatedAt: nowIso()
     });
 

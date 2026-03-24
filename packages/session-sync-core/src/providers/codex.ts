@@ -261,7 +261,7 @@ export class CodexAdapter implements ProviderAdapter {
       const messages = this.parseMessages(filePath, records, codexSessionId);
       const title =
         this.resolveIndexedTitle(threadMetadataIndex, codexSessionId) ??
-        messages.find((message) => message.role === "user")?.content.slice(0, 48) ??
+        resolveCodexFallbackTitle(messages) ??
         fileSessionId;
       const lastMessageAt =
         messages.at(-1)?.timestamp ?? (ensureText(metaPayload.timestamp) || null);
@@ -463,6 +463,39 @@ export class CodexAdapter implements ProviderAdapter {
     };
   }
 
+  async renameSessionTitle(
+    providerSessionId: string,
+    rawStoreRef: string,
+    title: string
+  ): Promise<string> {
+    const nextTitle = title.trim();
+    const resolvedStoreRef = this.resolveSessionFilePath(rawStoreRef, providerSessionId);
+    const indexPath = join(this.options.homeDir, "session_index.jsonl");
+    const stateDbPath = findLatestCodexStateDatabase(this.options.homeDir);
+
+    statSync(resolvedStoreRef);
+    ensureDirectory(this.options.homeDir);
+    appendJsonLine(indexPath, {
+      id: providerSessionId,
+      thread_name: nextTitle
+    });
+
+    if (stateDbPath) {
+      let db: DatabaseSync | null = null;
+
+      try {
+        db = new DatabaseSync(stateDbPath, { open: true });
+        db.prepare("UPDATE threads SET title = ? WHERE id = ?").run(nextTitle, providerSessionId);
+      } finally {
+        db?.close();
+      }
+    }
+
+    this.sessionSummaryCache.delete(resolvedStoreRef);
+
+    return nextTitle;
+  }
+
   getProviderCapabilities(): ProviderCapabilities {
     return {
       provider: this.providerId,
@@ -473,7 +506,7 @@ export class CodexAdapter implements ProviderAdapter {
       supportsInterrupt: true,
       supportsStructuredToolCalls: true,
       supportsTokenUsage: false,
-      supportsAttachments: false,
+      supportsAttachments: true,
       supportsPermissionPrompt: true,
       supportsCheckpoint: false,
       limitations: ["当前实现只维护原生会话文件，不负责直接驱动 Codex CLI 进程执行。"]
@@ -1158,6 +1191,27 @@ function buildCodexMessageDedupeKey(message: Omit<NormalizedMessage, "sequence">
         }
       : null
   });
+}
+
+function resolveCodexFallbackTitle(messages: NormalizedMessage[]): string | null {
+  const preferredMessage = messages.find(
+    (message) => message.role === "user" && !looksLikeCodexRulesMessage(message.content)
+  );
+
+  if (preferredMessage) {
+    return preferredMessage.content.slice(0, 48);
+  }
+
+  const firstUserMessage = messages.find((message) => message.role === "user");
+  return firstUserMessage?.content.slice(0, 48) ?? null;
+}
+
+function looksLikeCodexRulesMessage(content: string): boolean {
+  const normalized = content.trim();
+
+  return /AGENTS\.md instructions for/i.test(normalized)
+    && /<INSTRUCTIONS>/i.test(normalized)
+    && /<\/INSTRUCTIONS>/i.test(normalized);
 }
 
 function codexMessageSourcePriority(source: CodexMessageSource): number {

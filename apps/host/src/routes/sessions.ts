@@ -9,8 +9,11 @@ export async function registerSessionRoutes(
   app.get("/api/sessions", sessionController.list);
   app.get("/api/sessions/:sessionId", sessionController.getDetail);
   app.get("/api/sessions/:sessionId/messages", sessionController.readMessages);
+  app.get("/api/sessions/:sessionId/attachments/:attachmentId/content", sessionController.readAttachment);
   app.get("/api/sessions/:sessionId/capabilities", sessionController.getCapabilities);
   app.get("/api/sessions/:sessionId/runtime", sessionController.getRuntime);
+  app.patch("/api/sessions/:sessionId/title", sessionController.renameTitle);
+  app.patch("/api/sessions/:sessionId/archive", sessionController.updateArchiveState);
   app.post("/api/sessions/:sessionId/messages", sessionController.sendMessage);
   app.post("/api/sessions/:sessionId/messages/live", sessionController.sendLiveMessage);
   app.post("/api/sessions/:sessionId/interrupt", sessionController.interrupt);

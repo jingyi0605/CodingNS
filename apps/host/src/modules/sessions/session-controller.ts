@@ -3,6 +3,7 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 import { AppError } from "../../shared/errors/app-error.js";
 import type { SessionHistoryService } from "./session-history-service.js";
 import type { SessionLiveRuntimeService } from "./session-live-runtime-service.js";
+import type { SessionImageAttachmentInput } from "./session-message-attachment-service.js";
 
 interface SessionListQuery {
   workspaceId?: string;
@@ -10,6 +11,10 @@ interface SessionListQuery {
 
 interface SessionParams {
   sessionId: string;
+}
+
+interface SessionAttachmentParams extends SessionParams {
+  attachmentId: string;
 }
 
 interface SessionMessagesQuery {
@@ -29,7 +34,11 @@ interface SendMessageBody {
   clientRequestId?: string;
 }
 
-interface SendLiveMessageBody extends SendMessageBody, RuntimeOptionsBody {}
+interface AttachmentsBody {
+  attachments?: SessionImageAttachmentInput[];
+}
+
+interface SendLiveMessageBody extends SendMessageBody, RuntimeOptionsBody, AttachmentsBody {}
 
 interface StartSessionBody {
   workspaceId?: string;
@@ -42,6 +51,15 @@ interface StartLiveSessionBody extends RuntimeOptionsBody {
   provider?: string;
   content?: string;
   clientRequestId?: string;
+  attachments?: SessionImageAttachmentInput[];
+}
+
+interface RenameSessionBody {
+  title?: string;
+}
+
+interface ArchiveSessionBody {
+  archived?: boolean;
 }
 
 function requireUserId(request: FastifyRequest): string {
@@ -71,6 +89,73 @@ function requireNonEmptyText(value: string | undefined, field: string, detail: s
   }
 
   return text;
+}
+
+function requireMessageContentOrAttachments(
+  value: string | undefined,
+  attachments: SessionImageAttachmentInput[],
+  field: string,
+  detail: string
+): string {
+  const text = value?.trim() ?? "";
+
+  if (text.length === 0 && attachments.length === 0) {
+    throw new AppError({
+      statusCode: 400,
+      errorCode: "INVALID_INPUT",
+      detail,
+      field
+    });
+  }
+
+  return text;
+}
+
+function normalizeAttachments(input: AttachmentsBody): SessionImageAttachmentInput[] {
+  if (!Array.isArray(input.attachments)) {
+    return [];
+  }
+
+  return input.attachments.map((attachment, index) => {
+    const fileName = attachment?.fileName?.trim();
+    const mimeType = attachment?.mimeType?.trim();
+    const contentBase64 = attachment?.contentBase64?.trim();
+    const fileSize = Number(attachment?.fileSize ?? 0);
+
+    if (!fileName || !mimeType || !contentBase64 || !Number.isFinite(fileSize) || fileSize <= 0) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "INVALID_INPUT",
+        detail: `attachments[${index}] 缺少有效的图片字段`,
+        field: "attachments"
+      });
+    }
+
+    return {
+      fileName,
+      mimeType,
+      fileSize,
+      contentBase64
+    };
+  });
+}
+
+function requireClientRequestIdForAttachments(
+  clientRequestId: string | undefined,
+  attachments: SessionImageAttachmentInput[]
+): string | null {
+  const normalized = clientRequestId?.trim() ?? null;
+
+  if (attachments.length > 0 && !normalized) {
+    throw new AppError({
+      statusCode: 400,
+      errorCode: "INVALID_INPUT",
+      detail: "发送图片时必须提供 clientRequestId",
+      field: "clientRequestId"
+    });
+  }
+
+  return normalized;
 }
 
 function normalizeRuntimeOptions(input: RuntimeOptionsBody) {
@@ -131,6 +216,33 @@ export class SessionController {
     );
   };
 
+  readonly readAttachment = async (
+    request: FastifyRequest<{ Params: SessionAttachmentParams }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    const userId = requireUserId(request);
+    this.sessionHistoryService.getSession(request.params.sessionId, userId);
+    const attachment = this.sessionHistoryService.readSessionAttachment(
+      request.params.sessionId,
+      request.params.attachmentId
+    );
+
+    if (!attachment) {
+      throw new AppError({
+        statusCode: 404,
+        errorCode: "ATTACHMENT_NOT_FOUND",
+        detail: "未找到对应的图片附件",
+        field: "attachmentId"
+      });
+    }
+
+    reply
+      .type(attachment.mimeType)
+      .header("Cache-Control", "private, max-age=300")
+      .header("Content-Disposition", `inline; filename="${encodeURIComponent(attachment.fileName)}"`)
+      .send(attachment.content);
+  };
+
   readonly getDetail = async (
     request: FastifyRequest<{ Params: SessionParams }>,
     reply: FastifyReply
@@ -163,6 +275,38 @@ export class SessionController {
       requireUserId(request)
     );
     reply.status(204).send();
+  };
+
+  readonly renameTitle = async (
+    request: FastifyRequest<{ Params: SessionParams; Body: RenameSessionBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    const title = requireNonEmptyText(
+      request.body.title,
+      "title",
+      "重命名会话时必须提供 title"
+    );
+
+    reply.send(
+      await this.sessionHistoryService.renameSessionTitle(
+        request.params.sessionId,
+        requireUserId(request),
+        title
+      )
+    );
+  };
+
+  readonly updateArchiveState = async (
+    request: FastifyRequest<{ Params: SessionParams; Body: ArchiveSessionBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(
+      await this.sessionHistoryService.updateSessionArchiveState({
+        sessionId: request.params.sessionId,
+        userId: requireUserId(request),
+        isArchived: request.body.archived === true
+      })
+    );
   };
 
   readonly start = async (
@@ -204,11 +348,18 @@ export class SessionController {
       "provider",
       "创建实时会话必须提供 provider"
     );
-    const content = requireNonEmptyText(
+    const attachments = normalizeAttachments(request.body);
+    const content = requireMessageContentOrAttachments(
       request.body.content,
+      attachments,
       "content",
       "start-live 必须提供首条消息 content"
     );
+    const clientRequestId = requireClientRequestIdForAttachments(
+      request.body.clientRequestId,
+      attachments
+    );
+    const runtimeOptions = normalizeRuntimeOptions(request.body);
 
     reply.status(201).send(
       await this.sessionLiveRuntimeService.startLiveSession({
@@ -216,8 +367,15 @@ export class SessionController {
         userId: requireUserId(request),
         provider,
         content,
-        clientRequestId: request.body.clientRequestId?.trim() ?? null,
-        runtimeOptions: normalizeRuntimeOptions(request.body)
+        clientRequestId,
+        runtimeOptions: runtimeOptions
+          ? {
+              ...runtimeOptions,
+              attachments
+            }
+          : {
+              attachments
+            }
       })
     );
   };
@@ -245,19 +403,33 @@ export class SessionController {
     request: FastifyRequest<{ Params: SessionParams; Body: SendLiveMessageBody }>,
     reply: FastifyReply
   ): Promise<void> => {
-    const content = requireNonEmptyText(
+    const attachments = normalizeAttachments(request.body);
+    const content = requireMessageContentOrAttachments(
       request.body.content,
+      attachments,
       "content",
       "messages/live 必须提供 content"
     );
+    const clientRequestId = requireClientRequestIdForAttachments(
+      request.body.clientRequestId,
+      attachments
+    );
+    const runtimeOptions = normalizeRuntimeOptions(request.body);
 
     reply.status(202).send(
       await this.sessionLiveRuntimeService.sendLiveMessage({
         sessionId: request.params.sessionId,
         userId: requireUserId(request),
         content,
-        clientRequestId: request.body.clientRequestId?.trim() ?? null,
-        runtimeOptions: normalizeRuntimeOptions(request.body)
+        clientRequestId,
+        runtimeOptions: runtimeOptions
+          ? {
+              ...runtimeOptions,
+              attachments
+            }
+          : {
+              attachments
+            }
       })
     );
   };

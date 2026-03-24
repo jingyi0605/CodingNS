@@ -1,6 +1,6 @@
 import { randomUUID, createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { spawn } from "node:child_process";
 
 import {
@@ -100,15 +100,21 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
     rawStoreRef: string,
     sessionArgs: string[]
   ): ProviderRuntimeLaunchResult {
+    const attachmentDirectories = Array.from(
+      new Set(
+        request.options.attachments.map((attachment) => dirname(attachment.filePath))
+      )
+    );
     const args = [
       "-p",
-      request.options.content,
+      request.options.providerPrompt ?? request.options.content,
       "--verbose",
       "--output-format",
       "stream-json",
       "--include-partial-messages",
       "--cwd",
       request.workspacePath,
+      ...attachmentDirectories.flatMap((directory) => ["--add-dir", directory]),
       ...sessionArgs
     ];
 

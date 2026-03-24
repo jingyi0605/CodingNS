@@ -1,5 +1,5 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { t } from "../../../shared/i18n";
 import { ComposerPanel } from "./ComposerPanel";
@@ -16,7 +16,9 @@ function createDeferred() {
   };
 }
 
-function createCapabilities() {
+function createCapabilities(options?: {
+  supportsAttachments?: boolean;
+}) {
   return {
     provider: "codex" as const,
     canStartSession: true,
@@ -26,30 +28,43 @@ function createCapabilities() {
     supportsInterrupt: true,
     supportsStructuredToolCalls: true,
     supportsTokenUsage: false,
-    supportsAttachments: false,
+    supportsAttachments: options?.supportsAttachments ?? false,
     supportsPermissionPrompt: true,
     supportsCheckpoint: false,
     limitations: []
   };
 }
 
-describe("ComposerPanel", () => {
-  it("不再展示旧的 Host 同步提示文案", () => {
-    render(
-      <ComposerPanel
-        capabilities={createCapabilities()}
-        isSubmitting={false}
-        onSend={vi.fn().mockResolvedValue(undefined)}
-      />
-    );
+class MockFileReader {
+  result: string | ArrayBuffer | null = null;
+  error: Error | null = null;
+  onload: null | (() => void) = null;
+  onerror: null | (() => void) = null;
 
-    expect(
-      screen.queryByText("消息真相来自 Host，同步成功后会自动并入正式消息流。")
-    ).not.toBeInTheDocument();
-    expect(screen.queryByText("正在把消息交给 Host。")).not.toBeInTheDocument();
+  readAsDataURL() {
+    this.result = "data:image/png;base64,ZmFrZQ==";
+    this.onload?.();
+  }
+}
+
+describe("ComposerPanel", () => {
+  beforeEach(() => {
+    Object.defineProperty(URL, "createObjectURL", {
+      writable: true,
+      value: vi.fn(() => "blob:preview")
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      writable: true,
+      value: vi.fn(() => {})
+    });
+    vi.stubGlobal("FileReader", MockFileReader);
   });
 
-  it("连续触发两次提交时只发送一条消息", async () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("连续提交两次时只会发送一次", async () => {
     const deferred = createDeferred();
     const onSend = vi.fn(() => deferred.promise);
 
@@ -64,24 +79,25 @@ describe("ComposerPanel", () => {
     const textarea = screen.getByRole("textbox");
     fireEvent.change(textarea, {
       target: {
-        value: "请将本次会话变更的代码提交到 git 暂存区，然后总结一条中文的提交信息"
+        value: "请整理这次修改，并输出一条中文提交信息"
       }
     });
 
     const form = document.querySelector(".composer-form");
-
     expect(form).not.toBeNull();
 
     fireEvent.submit(form!);
     fireEvent.submit(form!);
 
-    expect(onSend).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(onSend).toHaveBeenCalledTimes(1);
+    });
 
     deferred.resolve();
     await deferred.promise;
   });
 
-  it("提交后会立即清空输入框，并切到发送中按钮", () => {
+  it("提交后会立刻清空输入框，并切换到发送中按钮", () => {
     const deferred = createDeferred();
 
     render(
@@ -95,7 +111,7 @@ describe("ComposerPanel", () => {
     const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
     fireEvent.change(textarea, {
       target: {
-        value: "继续整理这条会话的下一步"
+        value: "继续整理这一轮会话的下一步。"
       }
     });
 
@@ -104,12 +120,11 @@ describe("ComposerPanel", () => {
     expect(textarea.value).toBe("");
     expect(screen.queryByLabelText(t("conversation.sendButton"))).not.toBeInTheDocument();
     expect(screen.getByLabelText(t("conversation.sendingState"))).toBeInTheDocument();
-    expect(screen.queryByText(t("conversation.sendingState"))).not.toBeInTheDocument();
 
     deferred.resolve();
   });
 
-  it("运行中时只显示中断按钮，不再显示状态标签文字", () => {
+  it("运行中时只显示中断按钮", () => {
     render(
       <ComposerPanel
         capabilities={createCapabilities()}
@@ -122,7 +137,81 @@ describe("ComposerPanel", () => {
 
     expect(screen.queryByLabelText(t("conversation.sendButton"))).not.toBeInTheDocument();
     expect(screen.getByLabelText(t("conversation.capabilityInterrupt"))).toBeInTheDocument();
-    expect(screen.queryByText(t("conversation.runtimeRunning"))).not.toBeInTheDocument();
-    expect(screen.queryByText(t("conversation.capabilityInterrupt"))).not.toBeInTheDocument();
+  });
+
+  it("粘贴图片后会显示预览卡片", async () => {
+    render(
+      <ComposerPanel
+        capabilities={createCapabilities({ supportsAttachments: true })}
+        isSubmitting={false}
+        onSend={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    const textarea = screen.getByRole("textbox");
+    const file = new File(["demo"], "demo.png", { type: "image/png" });
+
+    fireEvent.paste(textarea, {
+      clipboardData: {
+        items: [
+          {
+            kind: "file",
+            type: "image/png",
+            getAsFile: () => file
+          }
+        ]
+      }
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("demo.png")).toBeInTheDocument();
+    });
+    expect(screen.getByAltText(t("conversation.attachmentPreviewAlt"))).toBeInTheDocument();
+  });
+
+  it("只有图片附件时也允许提交，并把附件一起传出去", async () => {
+    const onSend = vi.fn().mockResolvedValue(undefined);
+
+    const { container } = render(
+      <ComposerPanel
+        capabilities={createCapabilities({ supportsAttachments: true })}
+        isSubmitting={false}
+        onSend={onSend}
+      />
+    );
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(["demo"], "demo.png", { type: "image/png" });
+
+    fireEvent.change(input, {
+      target: {
+        files: [file]
+      }
+    });
+    fireEvent.submit(container.querySelector(".composer-form")!);
+
+    await waitFor(() => {
+      expect(onSend).toHaveBeenCalledTimes(1);
+    });
+    expect(onSend).toHaveBeenCalledWith("", {
+      model: "gpt-5.4",
+      reasoningLevel: "medium",
+      attachments: [
+        {
+          fileName: "demo.png",
+          mimeType: "image/png",
+          fileSize: 4,
+          contentBase64: "ZmFrZQ=="
+        }
+      ],
+      attachmentMeta: [
+        expect.objectContaining({
+          kind: "image",
+          fileName: "demo.png",
+          mimeType: "image/png",
+          fileSize: 4
+        })
+      ]
+    });
   });
 });

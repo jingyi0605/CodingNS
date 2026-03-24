@@ -1,6 +1,8 @@
 import type {
   DeliveryState,
   HistoryMessageDto,
+  ImageAttachmentPayload,
+  MessageAttachmentDto,
   ProviderCapabilitiesDto,
   SessionSummaryDto,
   ToolCallDto
@@ -16,6 +18,8 @@ export interface SessionMessageViewModel {
   kind: HistoryMessageDto["kind"];
   content: string;
   toolCall: ToolCallDto | null;
+  attachments?: MessageAttachmentDto[];
+  attachmentPayloads?: ImageAttachmentPayload[] | null;
   timestamp: string;
   sequence: number;
   rawRef: string;
@@ -86,6 +90,8 @@ export function toViewMessage(
     kind,
     content: message.content,
     toolCall,
+    attachments: message.attachments ?? [],
+    attachmentPayloads: null,
     timestamp: message.timestamp,
     sequence: message.sequence,
     rawRef: message.rawRef,
@@ -97,7 +103,9 @@ export function toViewMessage(
 export function createPendingMessage(
   sessionId: string,
   content: string,
-  clientRequestId: string
+  clientRequestId: string,
+  attachments: MessageAttachmentDto[] = [],
+  attachmentPayloads: ImageAttachmentPayload[] = []
 ): SessionMessageViewModel {
   return {
     id: `pending-${clientRequestId}`,
@@ -106,6 +114,8 @@ export function createPendingMessage(
     kind: "text",
     content,
     toolCall: null,
+    attachments,
+    attachmentPayloads,
     timestamp: new Date().toISOString(),
     sequence: Number.MAX_SAFE_INTEGER,
     rawRef: `pending://${clientRequestId}`,

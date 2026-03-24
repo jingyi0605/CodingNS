@@ -62,6 +62,7 @@ export interface SessionSummaryDto {
   parentSessionId?: string | null;
   isSubagent?: boolean;
   subagentLabel?: string | null;
+  isArchived?: boolean;
   title: string;
   messageCount: number;
   lastMessageAt: string | null;
@@ -237,6 +238,20 @@ export function markSessionSeen(sessionId: string) {
   });
 }
 
+export function renameSessionTitle(sessionId: string, title: string) {
+  return httpClient.request<SessionSummaryDto>(`/api/sessions/${encodeURIComponent(sessionId)}/title`, {
+    method: "PATCH",
+    body: JSON.stringify({ title })
+  });
+}
+
+export function updateSessionArchiveState(sessionId: string, archived: boolean) {
+  return httpClient.request<SessionSummaryDto>(`/api/sessions/${encodeURIComponent(sessionId)}/archive`, {
+    method: "PATCH",
+    body: JSON.stringify({ archived })
+  });
+}
+
 export function getSessionCapabilities(sessionId: string) {
   return httpClient.request<ProviderCapabilitiesDto>(
     `/api/sessions/${encodeURIComponent(sessionId)}/capabilities`
@@ -260,6 +275,12 @@ export function getSessionMessages(
 
   return httpClient.request<HistoryPageDto>(
     `/api/sessions/${encodeURIComponent(sessionId)}/messages?${search.toString()}`
+  );
+}
+
+export function getSessionAttachmentBlob(sessionId: string, attachmentId: string) {
+  return httpClient.requestBlob(
+    `/api/sessions/${encodeURIComponent(sessionId)}/attachments/${encodeURIComponent(attachmentId)}/content`
   );
 }
 

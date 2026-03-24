@@ -1,4 +1,5 @@
 import type {
+  NormalizedMessageAttachment,
   NormalizedMessage,
   ProviderCapabilities,
   ProviderId,
@@ -18,6 +19,12 @@ export interface RuntimeSendOptions {
   model: string | null;
   reasoningLevel: string | null;
   permissionMode: string | null;
+  providerPrompt: string | null;
+  attachments: RuntimeImageAttachment[];
+}
+
+export interface RuntimeImageAttachment extends NormalizedMessageAttachment {
+  filePath: string;
 }
 
 export interface RuntimeSessionContext {

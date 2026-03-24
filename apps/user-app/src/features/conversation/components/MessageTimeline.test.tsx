@@ -433,4 +433,55 @@ describe("MessageTimeline", () => {
 
     expect(messageList!.scrollTop).toBe(1200);
   });
+  it("renders image thumbnail preview for pending image attachments", async () => {
+    render(
+      <MessageTimeline
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+        messages={[
+          {
+            id: "pending-image-message",
+            sessionId: "session-1",
+            role: "user",
+            kind: "text",
+            content: "check image",
+            toolCall: null,
+            attachments: [
+              {
+                id: "attachment-1",
+                kind: "image",
+                fileName: "sample.png",
+                mimeType: "image/png",
+                fileSize: 128
+              }
+            ],
+            attachmentPayloads: [
+              {
+                fileName: "sample.png",
+                mimeType: "image/png",
+                fileSize: 128,
+                contentBase64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aF9sAAAAASUVORK5CYII="
+              }
+            ],
+            timestamp: "2026-03-23T10:00:02.000Z",
+            sequence: 2,
+            rawRef: "pending://image-1",
+            deliveryState: "sending",
+            clientRequestId: "image-1"
+          }
+        ]}
+      />
+    );
+
+    const thumbnail = screen.getByAltText("sample.png");
+
+    expect(thumbnail).toHaveAttribute("src", expect.stringContaining("data:image/png;base64,"));
+
+    await userEvent.click(screen.getByRole("button", { name: /sample\.png/ }));
+
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: t("conversation.imagePreviewTitle") })).toBeInTheDocument();
+    expect(screen.getAllByAltText("sample.png")).toHaveLength(2);
+  });
 });

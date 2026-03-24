@@ -324,6 +324,24 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
     };
   }
 
+  async renameSessionTitle(
+    providerSessionId: string,
+    rawStoreRef: string,
+    title: string
+  ): Promise<string> {
+    const nextTitle = title.trim();
+
+    statSync(rawStoreRef);
+    appendJsonLine(rawStoreRef, {
+      type: "ai-title",
+      sessionId: providerSessionId,
+      aiTitle: nextTitle
+    });
+    this.historyCache.delete(rawStoreRef);
+
+    return nextTitle;
+  }
+
   getProviderCapabilities(): ProviderCapabilities {
     return {
       provider: this.providerId,
@@ -334,7 +352,7 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
       supportsInterrupt: false,
       supportsStructuredToolCalls: true,
       supportsTokenUsage: true,
-      supportsAttachments: false,
+      supportsAttachments: true,
       supportsPermissionPrompt: true,
       supportsCheckpoint: false,
       limitations: ["当前实现只读取原生 jsonl，会话恢复不负责拉起外部 Claude 进程。"]

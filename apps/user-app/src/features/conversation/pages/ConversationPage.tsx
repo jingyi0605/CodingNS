@@ -279,6 +279,7 @@ function createDraftSessionSummary(draft: DraftConversationContext): SessionSumm
     parentSessionId: null,
     isSubagent: false,
     subagentLabel: null,
+    isArchived: false,
     title:
       draft.provider === "codex"
         ? t("conversation.draftTitleCodex")

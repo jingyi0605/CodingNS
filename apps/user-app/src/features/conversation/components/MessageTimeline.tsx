@@ -1,11 +1,16 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
+import { getSessionAttachmentBlob } from "../api/conversation-api";
 
-import type { ProviderId } from "../api/conversation-api";
+import type {
+  ImageAttachmentPayload,
+  MessageAttachmentDto,
+  ProviderId
+} from "../api/conversation-api";
 import type { SessionMessageViewModel } from "../runtime/session-runtime-machine";
 
 interface MessageTimelineProps {
@@ -277,6 +282,274 @@ function MessageMarkdownBody({
   );
 }
 
+function formatAttachmentSize(fileSize: number): string {
+  if (fileSize >= 1024 * 1024) {
+    return `${(fileSize / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  if (fileSize >= 1024) {
+    return `${Math.max(fileSize / 1024, 0.1).toFixed(1)} KB`;
+  }
+
+  return `${fileSize} B`;
+}
+
+interface AttachmentPreviewSource {
+  id: string;
+  fileName: string;
+  fileSize: number;
+  url: string | null;
+  status: "ready" | "loading" | "error";
+}
+
+function buildInlineAttachmentPreviewUrl(
+  attachment: MessageAttachmentDto,
+  payload: ImageAttachmentPayload | null | undefined
+) {
+  if (!payload?.contentBase64 || payload.mimeType !== attachment.mimeType) {
+    return null;
+  }
+
+  return `data:${payload.mimeType};base64,${payload.contentBase64}`;
+}
+
+function MessageAttachments({
+  sessionId,
+  attachmentPayloads = [],
+  attachments = []
+}: {
+  sessionId?: string;
+  attachmentPayloads?: ImageAttachmentPayload[] | null;
+  attachments?: MessageAttachmentDto[];
+}) {
+  return (
+    <RichMessageAttachments
+      sessionId={sessionId}
+      attachments={attachments}
+      attachmentPayloads={attachmentPayloads}
+    />
+  );
+}
+
+function RichMessageAttachments({
+  sessionId,
+  attachmentPayloads = [],
+  attachments = []
+}: {
+  sessionId?: string;
+  attachmentPayloads?: ImageAttachmentPayload[] | null;
+  attachments?: MessageAttachmentDto[];
+}) {
+  const [remotePreviewSources, setRemotePreviewSources] = useState<Record<string, AttachmentPreviewSource>>({});
+  const [previewAttachmentId, setPreviewAttachmentId] = useState<string | null>(null);
+
+  const attachmentPreviewSources = useMemo(
+    () =>
+      attachments.map((attachment, index) => {
+        const inlineUrl = buildInlineAttachmentPreviewUrl(attachment, attachmentPayloads?.[index]);
+
+        if (inlineUrl) {
+          return {
+            id: attachment.id,
+            fileName: attachment.fileName,
+            fileSize: attachment.fileSize,
+            url: inlineUrl,
+            status: "ready" as const
+          };
+        }
+
+        const remoteSource = remotePreviewSources[attachment.id];
+
+        return {
+          id: attachment.id,
+          fileName: attachment.fileName,
+          fileSize: attachment.fileSize,
+          url: remoteSource?.url ?? null,
+          status: remoteSource?.status ?? (sessionId ? "loading" : "error")
+        };
+      }),
+    [attachmentPayloads, attachments, remotePreviewSources, sessionId]
+  );
+
+  const previewAttachment =
+    attachmentPreviewSources.find((attachment) => attachment.id === previewAttachmentId) ?? null;
+
+  useEffect(() => {
+    if (!previewAttachmentId) {
+      return undefined;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setPreviewAttachmentId(null);
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [previewAttachmentId]);
+
+  useEffect(() => {
+    const attachmentsNeedingRemotePreview = attachments.filter((attachment, index) =>
+      !buildInlineAttachmentPreviewUrl(attachment, attachmentPayloads?.[index])
+    );
+
+    if (!sessionId || attachmentsNeedingRemotePreview.length === 0) {
+      setRemotePreviewSources({});
+      return undefined;
+    }
+
+    let cancelled = false;
+    const objectUrls: string[] = [];
+
+    setRemotePreviewSources(
+      Object.fromEntries(
+        attachmentsNeedingRemotePreview.map((attachment) => [
+          attachment.id,
+          {
+            id: attachment.id,
+            fileName: attachment.fileName,
+            fileSize: attachment.fileSize,
+            url: null,
+            status: "loading" as const
+          }
+        ])
+      )
+    );
+
+    void Promise.all(
+      attachmentsNeedingRemotePreview.map(async (attachment) => {
+        try {
+          const blob = await getSessionAttachmentBlob(sessionId, attachment.id);
+          const objectUrl = URL.createObjectURL(blob);
+          objectUrls.push(objectUrl);
+
+          return {
+            id: attachment.id,
+            fileName: attachment.fileName,
+            fileSize: attachment.fileSize,
+            url: objectUrl,
+            status: "ready" as const
+          };
+        } catch {
+          return {
+            id: attachment.id,
+            fileName: attachment.fileName,
+            fileSize: attachment.fileSize,
+            url: null,
+            status: "error" as const
+          };
+        }
+      })
+    ).then((results) => {
+      if (cancelled) {
+        objectUrls.forEach((url) => URL.revokeObjectURL(url));
+        return;
+      }
+
+      setRemotePreviewSources(Object.fromEntries(results.map((attachment) => [attachment.id, attachment])));
+    });
+
+    return () => {
+      cancelled = true;
+      objectUrls.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [attachmentPayloads, attachments, sessionId]);
+
+  if (attachments.length === 0) {
+    return null;
+  }
+
+  return (
+    <>
+      <div className="message-attachments">
+        {attachmentPreviewSources.map((attachment) => {
+          const previewLabel =
+            attachment.status === "loading"
+              ? t("conversation.attachmentPreviewLoading")
+              : attachment.status === "error"
+                ? t("conversation.attachmentPreviewUnavailable")
+                : t("conversation.attachmentPreviewOpen");
+
+          return (
+            <button
+              key={attachment.id}
+              type="button"
+              className="message-attachment-button"
+              onClick={() => attachment.url && setPreviewAttachmentId(attachment.id)}
+              disabled={!attachment.url}
+              aria-label={`${attachment.fileName} - ${previewLabel}`}
+              title={previewLabel}
+            >
+              <div className="message-attachment-card">
+                {attachment.url ? (
+                  <img
+                    className="message-attachment-thumbnail"
+                    src={attachment.url}
+                    alt={attachment.fileName || t("conversation.attachmentPreviewAlt")}
+                    loading="lazy"
+                  />
+                ) : (
+                  <div className="message-attachment-placeholder" aria-hidden="true">
+                    {attachment.status === "loading"
+                      ? t("conversation.attachmentPreviewLoading")
+                      : t("conversation.attachmentPreviewUnavailable")}
+                  </div>
+                )}
+                <div className="message-attachment-meta">
+                  <span className="message-attachment-title" title={attachment.fileName}>
+                    {attachment.fileName}
+                  </span>
+                  <span className="message-attachment-subtitle">
+                    {t("conversation.imageAttachmentLabel")} / {formatAttachmentSize(attachment.fileSize)}
+                  </span>
+                </div>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      {previewAttachment?.url ? (
+        <div className="workbench-modal-layer message-image-modal" role="dialog" aria-modal="true">
+          <button
+            type="button"
+            className="workbench-modal-backdrop"
+            aria-label={t("conversation.attachmentPreviewClose")}
+            onClick={() => setPreviewAttachmentId(null)}
+          />
+          <div className="workbench-modal-card surface-card message-image-modal-card">
+            <div className="workbench-modal-header message-image-modal-header">
+              <div className="workbench-modal-title-wrap">
+                <h2>{t("conversation.imagePreviewTitle")}</h2>
+                <p>{previewAttachment.fileName}</p>
+              </div>
+              <button
+                type="button"
+                className="workbench-modal-close"
+                aria-label={t("conversation.attachmentPreviewClose")}
+                onClick={() => setPreviewAttachmentId(null)}
+              >
+                x
+              </button>
+            </div>
+            <div className="message-image-modal-body">
+              <div className="message-image-modal-stage">
+                <img
+                  className="message-image-modal-image"
+                  src={previewAttachment.url}
+                  alt={previewAttachment.fileName || t("conversation.attachmentPreviewAlt")}
+                />
+              </div>
+              <p className="message-image-modal-hint">{t("conversation.imagePreviewHint")}</p>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 function TimelineSkeleton() {
   return (
     <div className="timeline-skeleton" aria-hidden="true">
@@ -442,7 +715,14 @@ function MessageItem({
     return (
       <article className="message-item user-message">
         <div className="message-content-wrapper">
-          <MessageMarkdownBody content={message.content} className="message-text message-content" />
+          <MessageAttachments
+            sessionId={message.sessionId}
+            attachments={message.attachments}
+            attachmentPayloads={message.attachmentPayloads}
+          />
+          {message.content ? (
+            <MessageMarkdownBody content={message.content} className="message-text message-content" />
+          ) : null}
           {message.deliveryState === "failed" && message.clientRequestId && (
             <button
               className="retry-button"
@@ -473,6 +753,11 @@ function MessageItem({
           {isThinking && (
             <div className="tool-call-name">{t("conversation.thinkingLabel")}</div>
           )}
+          <MessageAttachments
+            sessionId={message.sessionId}
+            attachments={message.attachments}
+            attachmentPayloads={message.attachmentPayloads}
+          />
           {message.content && (
             <MessageMarkdownBody
               content={message.content}
@@ -487,9 +772,16 @@ function MessageItem({
   return (
     <article className="message-item system-message">
       <div className="message-content-wrapper">
-        <div className="message-text message-content">
-          <pre>{message.content}</pre>
-        </div>
+        <MessageAttachments
+          sessionId={message.sessionId}
+          attachments={message.attachments}
+          attachmentPayloads={message.attachmentPayloads}
+        />
+        {message.content ? (
+          <div className="message-text message-content">
+            <pre>{message.content}</pre>
+          </div>
+        ) : null}
       </div>
     </article>
   );
@@ -643,6 +935,7 @@ function buildMessageSignature(message: SessionMessageViewModel | null): string 
   return JSON.stringify({
     id: message.id,
     content: message.content,
+    attachments: message.attachments,
     timestamp: message.timestamp,
     deliveryState: message.deliveryState,
     toolCall: message.toolCall

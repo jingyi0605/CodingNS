@@ -6,6 +6,14 @@ export type SyncStatus = "idle" | "syncing" | "error";
 export type MessageKind = "text" | "thinking" | "tool_call" | "tool_result";
 export type HistoryDirection = "forward" | "backward";
 
+export interface NormalizedMessageAttachment {
+  id: string;
+  kind: "image";
+  fileName: string;
+  mimeType: string;
+  fileSize: number;
+}
+
 export interface NormalizedToolCall {
   callId: string;
   name: string;
@@ -57,6 +65,7 @@ export interface NormalizedMessage {
   kind: MessageKind;
   content: string;
   toolCall: NormalizedToolCall | null;
+  attachments?: NormalizedMessageAttachment[];
   timestamp: string;
   sequence: number;
   rawRef: string;
@@ -128,6 +137,11 @@ export interface ProviderAdapter {
     content: string,
     clientRequestId: string | null
   ): Promise<SendMessageResult>;
+  renameSessionTitle(
+    providerSessionId: string,
+    rawStoreRef: string,
+    title: string
+  ): Promise<string>;
   getProviderCapabilities(): ProviderCapabilities;
   getSessionCapabilities(providerSessionId: string): Promise<ProviderCapabilities>;
 }

@@ -23,7 +23,7 @@ import type {
 interface CodexThread {
   id?: string | null;
   runStreamed(
-    prompt: string,
+    prompt: CodexRuntimeInput,
     options?: Record<string, unknown>
   ): Promise<{
     events: AsyncIterable<unknown>;
@@ -38,6 +38,19 @@ interface CodexSdkClient {
 interface CodexSdkModule {
   Codex: new () => CodexSdkClient;
 }
+
+type CodexRuntimeInput =
+  | string
+  | Array<
+      | {
+          type: "text";
+          text: string;
+        }
+      | {
+          type: "local_image";
+          path: string;
+        }
+    >;
 
 interface ActiveTurnContext {
   providerSessionId: string;
@@ -75,7 +88,7 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
     const client = await loadCodexClient();
     const thread = client.startThread(createThreadOptions(request));
     const abortController = new AbortController();
-    const streamed = await thread.runStreamed(request.options.content, {
+    const streamed = await thread.runStreamed(createCodexInput(request), {
       signal: abortController.signal
     });
     const events = streamed.events[Symbol.asyncIterator]();
@@ -209,7 +222,7 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
 
       const events =
         preparedEvents ??
-        (await thread!.runStreamed(request.options.content, {
+        (await thread!.runStreamed(createCodexInput(request), {
           signal: abortController.signal
         })).events[Symbol.asyncIterator]();
 
@@ -760,7 +773,42 @@ function createThreadOptions(request: ProviderRuntimeRunRequest): Record<string,
     options.model = request.options.model;
   }
 
+  const additionalDirectories = Array.from(
+    new Set(
+      request.options.attachments.map((attachment) => dirname(attachment.filePath))
+    )
+  );
+
+  if (additionalDirectories.length > 0) {
+    options.additionalDirectories = additionalDirectories;
+  }
+
   return options;
+}
+
+function createCodexInput(request: ProviderRuntimeRunRequest): CodexRuntimeInput {
+  if (request.options.attachments.length === 0) {
+    return request.options.content;
+  }
+
+  const input: CodexRuntimeInput = [];
+  const promptText = request.options.content.trim();
+
+  if (promptText.length > 0) {
+    input.push({
+      type: "text",
+      text: promptText
+    });
+  }
+
+  request.options.attachments.forEach((attachment) => {
+    input.push({
+      type: "local_image",
+      path: attachment.filePath
+    });
+  });
+
+  return input;
 }
 
 async function loadCodexClient(): Promise<CodexSdkClient> {

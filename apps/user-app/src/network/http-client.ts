@@ -10,6 +10,27 @@ interface RequestOptions extends RequestInit {
 
 class HttpClient {
   async request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+    const response = await this.performRequest(path, options);
+
+    if (response.status === 204 || response.status === 205) {
+      return undefined as T;
+    }
+
+    const raw = await response.text();
+
+    if (!raw) {
+      return undefined as T;
+    }
+
+    return JSON.parse(raw) as T;
+  }
+
+  async requestBlob(path: string, options: RequestOptions = {}): Promise<Blob> {
+    const response = await this.performRequest(path, options);
+    return response.blob();
+  }
+
+  private async performRequest(path: string, options: RequestOptions): Promise<Response> {
     const headers = new Headers(options.headers);
     const hasRequestBody = options.body !== undefined && options.body !== null;
 
@@ -54,7 +75,7 @@ class HttpClient {
           });
         }
 
-        return this.request<T>(path, {
+        return this.performRequest(path, {
           ...options,
           retryAfterRefresh: true
         });
@@ -63,17 +84,7 @@ class HttpClient {
       throw new ApiError(response.status, payload);
     }
 
-    if (response.status === 204 || response.status === 205) {
-      return undefined as T;
-    }
-
-    const raw = await response.text();
-
-    if (!raw) {
-      return undefined as T;
-    }
-
-    return JSON.parse(raw) as T;
+    return response;
   }
 }
 
