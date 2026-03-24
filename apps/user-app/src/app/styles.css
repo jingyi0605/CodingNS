@@ -514,6 +514,22 @@ a {
   min-width: 0;
 }
 
+.session-subagent-badge {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  max-width: 140px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-active) 78%, transparent);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .session-state-indicator {
   width: 10px;
   height: 10px;
@@ -1585,6 +1601,25 @@ a {
 .composer-send:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+.composer-send-busy {
+  background: var(--text-primary);
+  color: var(--bg-surface);
+}
+
+.composer-send-spinner {
+  animation: composer-send-spin 0.9s linear infinite;
+}
+
+@keyframes composer-send-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .composer-error {
@@ -2723,6 +2758,7 @@ textarea:focus-visible {
   border: none;
   padding: 0;
   background: transparent;
+  width: 100%;
 }
 
 .message-content-wrapper {
@@ -2741,14 +2777,27 @@ textarea:focus-visible {
 }
 
 .user-message {
-  justify-content: flex-end;
+  width: 100%;
+  margin-left: auto;
+  flex-direction: row-reverse;
+  justify-content: flex-start;
+  align-items: flex-end;
   gap: 10px;
+  align-self: flex-end;
+  max-width: 100%;
 }
 
 .user-message .message-content-wrapper {
+  margin-left: auto;
+  max-width: min(720px, calc(100vw - 220px));
   background:
     linear-gradient(180deg, color-mix(in srgb, var(--accent) 10%, var(--bg-surface)), color-mix(in srgb, var(--bg-primary) 96%, transparent));
   border-color: color-mix(in srgb, var(--accent) 16%, var(--border-primary));
+}
+
+.user-message .message-time {
+  padding-left: 0;
+  text-align: right;
 }
 
 .assistant-message .message-avatar {
@@ -3626,6 +3675,12 @@ textarea:focus-visible {
   border-color: color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
+.workbench-session-tree-node {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .workbench-session-card {
   position: relative;
   display: block;
@@ -3645,6 +3700,31 @@ textarea:focus-visible {
 .workbench-session-card[data-active="true"] {
   background: var(--bg-active);
   border-color: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.workbench-session-card[data-depth="1"] {
+  border-radius: 14px;
+}
+
+.workbench-session-card[data-depth="1"] .workbench-session-link {
+  padding: 9px 11px;
+}
+
+.workbench-subsession-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-left: 16px;
+  padding-left: 12px;
+  border-left: 1px solid color-mix(in srgb, var(--border-primary) 82%, transparent);
+}
+
+.workbench-subsession-expand {
+  align-self: flex-start;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 1.2;
 }
 
 .workbench-session-link {

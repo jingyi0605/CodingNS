@@ -1,4 +1,5 @@
 import {
+  useCallback,
   createContext,
   useContext,
   useEffect,
@@ -23,7 +24,6 @@ import { GitSidebar } from "./GitSidebar";
 import {
   getWorkbenchSnapshot,
   importWorkspace,
-  startSession,
   type ProviderId,
   type SessionSummaryDto,
   type WorkspaceDto
@@ -45,6 +45,7 @@ const MAX_LEFT_PANEL_WIDTH = 520;
 const MAX_RIGHT_PANEL_WIDTH = 560;
 const INFO_PANEL_BOOT_DELAY_MS = 250;
 const MOBILE_BREAKPOINT_PX = 720;
+const SUBAGENT_PAGE_SIZE = 5;
 
 export interface WorkspaceSessionGroup {
   workspace: WorkspaceDto;
@@ -60,7 +61,13 @@ interface WorkspaceSidebarGroup {
   workspace: WorkspaceDto;
   visibleSessions: SessionSummaryDto[];
   archivedSessions: SessionSummaryDto[];
+  visibleSessionTree: NavigationSessionTreeNode[];
   isCollapsed: boolean;
+}
+
+interface NavigationSessionTreeNode {
+  session: SessionSummaryDto;
+  children: SessionSummaryDto[];
 }
 
 interface WorkbenchShellContextValue {
@@ -69,6 +76,7 @@ interface WorkbenchShellContextValue {
   navigationError: string | null;
   refreshNavigation: () => Promise<void>;
   setSessionWorkspace: (sessionId: string, workspaceId: string | null) => void;
+  upsertNavigationSession: (session: SessionSummaryDto) => void;
 }
 
 interface ImportWorkspaceFormState {
@@ -83,6 +91,68 @@ const WorkbenchShellContext = createContext<WorkbenchShellContextValue | null>(n
 
 function sortSessions(left: SessionSummaryDto, right: SessionSummaryDto) {
   return (right.lastMessageAt ?? right.updatedAt).localeCompare(left.lastMessageAt ?? left.updatedAt);
+}
+
+function isSubagentSession(session: SessionSummaryDto) {
+  return session.isSubagent === true;
+}
+
+function resolveParentSessionId(session: SessionSummaryDto) {
+  return session.parentSessionId?.trim() || null;
+}
+
+function resolveTopLevelSessionId(
+  session: SessionSummaryDto,
+  sessionById: ReadonlyMap<string, SessionSummaryDto>
+) {
+  let currentSession = session;
+  const visitedSessionIds = new Set<string>([session.sessionId]);
+
+  while (true) {
+    const parentSessionId = resolveParentSessionId(currentSession);
+
+    if (!parentSessionId) {
+      return currentSession.sessionId;
+    }
+
+    const parentSession = sessionById.get(parentSessionId);
+
+    if (!parentSession) {
+      return currentSession.sessionId;
+    }
+
+    if (visitedSessionIds.has(parentSession.sessionId)) {
+      return session.sessionId;
+    }
+
+    visitedSessionIds.add(parentSession.sessionId);
+    currentSession = parentSession;
+  }
+}
+
+function buildSessionTree(sessions: SessionSummaryDto[]) {
+  const sessionById = new Map(sessions.map((session) => [session.sessionId, session] as const));
+  const childSessionsByRootId = new Map<string, SessionSummaryDto[]>();
+  const rootSessions: SessionSummaryDto[] = [];
+
+  for (const session of sessions) {
+    const topLevelSessionId = resolveTopLevelSessionId(session, sessionById);
+
+    if (topLevelSessionId === session.sessionId) {
+      rootSessions.push(session);
+      continue;
+    }
+
+    const currentChildren = childSessionsByRootId.get(topLevelSessionId) ?? [];
+    childSessionsByRootId.set(topLevelSessionId, [...currentChildren, session]);
+  }
+
+  return [...rootSessions]
+    .sort(sortSessions)
+    .map((session) => ({
+      session,
+      children: [...(childSessionsByRootId.get(session.sessionId) ?? [])].sort(sortSessions)
+    }));
 }
 
 function formatSessionMeta(session: SessionSummaryDto) {
@@ -203,6 +273,34 @@ function flattenSessions(groups: WorkspaceSessionGroup[]) {
       }))
     )
     .sort((left, right) => sortSessions(left.session, right.session));
+}
+
+function upsertSessionIntoGroups(
+  groups: WorkspaceSessionGroup[],
+  session: SessionSummaryDto
+): WorkspaceSessionGroup[] {
+  let changed = false;
+
+  const nextGroups = groups.map((group) => {
+    if (group.workspace.id !== session.workspaceId) {
+      return group;
+    }
+
+    const existingIndex = group.sessions.findIndex((item) => item.sessionId === session.sessionId);
+    const nextSessions =
+      existingIndex >= 0
+        ? group.sessions.map((item, index) => (index === existingIndex ? session : item))
+        : [session, ...group.sessions];
+
+    changed = true;
+
+    return {
+      ...group,
+      sessions: [...nextSessions].sort(sortSessions)
+    };
+  });
+
+  return changed ? nextGroups : groups;
 }
 
 function toggleStoredId(items: string[], id: string) {
@@ -529,6 +627,8 @@ function SessionCard({
   isFavorite,
   menuOpen,
   showWorkspaceName,
+  depth = 0,
+  showActions = true,
   onOpen,
   onToggleMenu,
   onToggleFavorite,
@@ -542,18 +642,29 @@ function SessionCard({
   isFavorite: boolean;
   menuOpen: boolean;
   showWorkspaceName: boolean;
+  depth?: 0 | 1;
+  showActions?: boolean;
   onOpen: () => void;
   onToggleMenu: () => void;
   onToggleFavorite: () => void;
   onArchive: () => void;
   onCloseMenu: () => void;
 }) {
+  const subagentBadgeLabel =
+    session.subagentLabel?.trim() || (isSubagentSession(session) ? t("shell.subagentBadge") : null);
+
   return (
-    <article className="workbench-session-card" data-active={isActive}>
+    <article
+      className="workbench-session-card"
+      data-active={isActive}
+      data-depth={depth}
+      data-subagent={isSubagentSession(session)}
+    >
       <button type="button" className="workbench-session-link" data-active={isActive} onClick={onOpen}>
         <div className="session-title-row">
           <span className={sessionStateClassName(session)} aria-hidden="true" />
           <span className="session-title">{session.title || t("common.unknown")}</span>
+          {subagentBadgeLabel ? <span className="session-subagent-badge">{subagentBadgeLabel}</span> : null}
         </div>
         <div className="session-meta-row">
           <span className="session-meta">{buildSessionMeta(session, workspace, showWorkspaceName)}</span>
@@ -561,7 +672,8 @@ function SessionCard({
         </div>
       </button>
 
-      <div className="workbench-session-actions" data-open={menuOpen}>
+      {showActions ? (
+        <div className="workbench-session-actions" data-open={menuOpen}>
         <button
           type="button"
           className="workbench-session-menu-trigger"
@@ -607,7 +719,8 @@ function SessionCard({
             </button>
           </div>
         ) : null}
-      </div>
+        </div>
+      ) : null}
     </article>
   );
 }
@@ -658,6 +771,7 @@ function SidebarContent({
   const [createSessionWorkspaceId, setCreateSessionWorkspaceId] = useState<string | null>(null);
   const [archiveWorkspaceId, setArchiveWorkspaceId] = useState<string | null>(null);
   const [openSessionMenuKey, setOpenSessionMenuKey] = useState<string | null>(null);
+  const [visibleSubagentCounts, setVisibleSubagentCounts] = useState<Record<string, number>>({});
 
   const createSessionWorkspace =
     workspaceGroups.find((group) => group.workspace.id === createSessionWorkspaceId)?.workspace ?? null;
@@ -718,19 +832,24 @@ function SidebarContent({
     }
   }
 
+  function getVisibleSubagentCount(sessionId: string) {
+    return visibleSubagentCounts[sessionId] ?? SUBAGENT_PAGE_SIZE;
+  }
+
+  function handleExpandSubagents(sessionId: string) {
+    setVisibleSubagentCounts((current) => ({
+      ...current,
+      [sessionId]: (current[sessionId] ?? SUBAGENT_PAGE_SIZE) + SUBAGENT_PAGE_SIZE
+    }));
+  }
+
   async function handleStartSession(workspaceId: string, provider: ProviderId) {
     setActionWorkspaceId(workspaceId);
     setActionProvider(provider);
 
     try {
-      const session = await startSession({ workspaceId, provider });
-      await onRefreshNavigation();
       setCreateSessionWorkspaceId(null);
-      showToast({
-        title: provider === "codex" ? t("shell.startCodexSuccess") : t("shell.startClaudeSuccess"),
-        tone: "success"
-      });
-      navigate(`/sessions/${session.sessionId}`);
+      navigate(buildDraftSessionPath(workspaceId, provider));
       onClose?.();
     } catch (error) {
       showToast({
@@ -910,37 +1029,82 @@ function SidebarContent({
             {!group.isCollapsed ? (
               <>
                 <div className="workbench-session-list">
-                  {group.visibleSessions.length === 0 ? (
+                  {group.visibleSessionTree.length === 0 ? (
                     <p className="workbench-session-empty">{t("shell.emptyWorkspaceSessions")}</p>
                   ) : (
-                    group.visibleSessions.map((session) => (
-                      <SessionCard
-                        menuKey={`workspace:${group.workspace.id}:${session.sessionId}`}
-                        key={session.sessionId}
-                        session={session}
-                        workspace={group.workspace}
-                        isActive={session.sessionId === activeSessionId}
-                        isFavorite={favoriteSessionIds.has(session.sessionId)}
-                        menuOpen={
-                          openSessionMenuKey === `workspace:${group.workspace.id}:${session.sessionId}`
-                        }
-                        showWorkspaceName={false}
-                        onOpen={() => {
-                          navigate(`/sessions/${session.sessionId}`);
-                          onClose?.();
-                        }}
-                        onToggleMenu={() =>
-                          setOpenSessionMenuKey((current) =>
-                            current === `workspace:${group.workspace.id}:${session.sessionId}`
-                              ? null
-                              : `workspace:${group.workspace.id}:${session.sessionId}`
-                          )
-                        }
-                        onToggleFavorite={() => handleToggleFavorite(session.sessionId)}
-                        onArchive={() => handleArchive(session.sessionId)}
-                        onCloseMenu={() => setOpenSessionMenuKey(null)}
-                      />
-                    ))
+                    group.visibleSessionTree.map((node) => {
+                      const visibleChildren = node.children.slice(
+                        0,
+                        getVisibleSubagentCount(node.session.sessionId)
+                      );
+                      const hasMoreSubagents = visibleChildren.length < node.children.length;
+
+                      return (
+                        <div key={node.session.sessionId} className="workbench-session-tree-node">
+                          <SessionCard
+                            menuKey={`workspace:${group.workspace.id}:${node.session.sessionId}`}
+                            session={node.session}
+                            workspace={group.workspace}
+                            isActive={node.session.sessionId === activeSessionId}
+                            isFavorite={favoriteSessionIds.has(node.session.sessionId)}
+                            menuOpen={
+                              openSessionMenuKey === `workspace:${group.workspace.id}:${node.session.sessionId}`
+                            }
+                            showWorkspaceName={false}
+                            onOpen={() => {
+                              navigate(`/sessions/${node.session.sessionId}`);
+                              onClose?.();
+                            }}
+                            onToggleMenu={() =>
+                              setOpenSessionMenuKey((current) =>
+                                current === `workspace:${group.workspace.id}:${node.session.sessionId}`
+                                  ? null
+                                  : `workspace:${group.workspace.id}:${node.session.sessionId}`
+                              )
+                            }
+                            onToggleFavorite={() => handleToggleFavorite(node.session.sessionId)}
+                            onArchive={() => handleArchive(node.session.sessionId)}
+                            onCloseMenu={() => setOpenSessionMenuKey(null)}
+                          />
+
+                          {node.children.length > 0 ? (
+                            <div className="workbench-subsession-list">
+                              {visibleChildren.map((session) => (
+                                <SessionCard
+                                  menuKey={`workspace:${group.workspace.id}:${session.sessionId}`}
+                                  key={session.sessionId}
+                                  session={session}
+                                  workspace={group.workspace}
+                                  isActive={session.sessionId === activeSessionId}
+                                  isFavorite={false}
+                                  menuOpen={false}
+                                  showWorkspaceName={false}
+                                  depth={1}
+                                  showActions={false}
+                                  onOpen={() => {
+                                    navigate(`/sessions/${session.sessionId}`);
+                                    onClose?.();
+                                  }}
+                                  onToggleMenu={() => undefined}
+                                  onToggleFavorite={() => undefined}
+                                  onArchive={() => undefined}
+                                  onCloseMenu={() => undefined}
+                                />
+                              ))}
+                              {hasMoreSubagents ? (
+                                <button
+                                  type="button"
+                                  className="workbench-subsession-expand ghost-button"
+                                  onClick={() => handleExpandSubagents(node.session.sessionId)}
+                                >
+                                  {t("shell.subagentExpandMore")}
+                                </button>
+                              ) : null}
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })
                   )}
                 </div>
 
@@ -1165,6 +1329,7 @@ export function WorkbenchLayout() {
   const { showToast } = useToast();
   const requestIdRef = useRef(0);
   const hasNavigationDataRef = useRef(false);
+  const lastDraftSessionPathRef = useRef<string | null>(null);
   const [navigationGroups, setNavigationGroups] = useState<WorkspaceSessionGroup[]>([]);
   const [navigationLoading, setNavigationLoading] = useState(true);
   const [navigationError, setNavigationError] = useState<string | null>(null);
@@ -1212,7 +1377,7 @@ export function WorkbenchLayout() {
     setNavigationError(null);
   }
 
-  async function refreshNavigation() {
+  const refreshNavigation = useCallback(async () => {
     const requestId = requestIdRef.current + 1;
     requestIdRef.current = requestId;
     setNavigationLoading((current) => current || navigationGroups.length === 0);
@@ -1240,7 +1405,34 @@ export function WorkbenchLayout() {
         setNavigationLoading(false);
       }
     }
-  }
+  }, [navigationGroups.length, showToast]);
+
+  const upsertNavigationSession = useCallback((session: SessionSummaryDto) => {
+    setNavigationGroups((current) => upsertSessionIntoGroups(current, session));
+  }, []);
+
+  const setSessionWorkspace = useCallback((sessionId: string, workspaceId: string | null) => {
+    setSessionWorkspaceMap((current) => {
+      if (!workspaceId) {
+        if (!(sessionId in current)) {
+          return current;
+        }
+
+        const next = { ...current };
+        delete next[sessionId];
+        return next;
+      }
+
+      if (current[sessionId] === workspaceId) {
+        return current;
+      }
+
+      return {
+        ...current,
+        [sessionId]: workspaceId
+      };
+    });
+  }, []);
 
   useEffect(() => {
     void refreshNavigation();
@@ -1324,6 +1516,7 @@ export function WorkbenchLayout() {
 
   const sessionMatch = matchPath("/sessions/:sessionId", location.pathname);
   const currentSessionId = sessionMatch?.params.sessionId ?? null;
+  const isDraftSession = currentSessionId ? isDraftSessionId(currentSessionId) : false;
   const flattenedSessions = useMemo(() => flattenSessions(navigationGroups), [navigationGroups]);
   const collapsedWorkspaceIdSet = useMemo(() => new Set(collapsedWorkspaceIds), [collapsedWorkspaceIds]);
   const favoriteSessionIdSet = useMemo(() => new Set(favoriteSessionIds), [favoriteSessionIds]);
@@ -1358,6 +1551,16 @@ export function WorkbenchLayout() {
         workspace: group.workspace,
         visibleSessions: group.sessions.filter((session) => !archivedSessionIdSet.has(session.sessionId)),
         archivedSessions: group.sessions.filter((session) => archivedSessionIdSet.has(session.sessionId)),
+        visibleSessionTree: buildSessionTree(
+          group.sessions.filter((session) => {
+            if (archivedSessionIdSet.has(session.sessionId)) {
+              return false;
+            }
+
+            const parentSessionId = resolveParentSessionId(session);
+            return !parentSessionId || !archivedSessionIdSet.has(parentSessionId);
+          })
+        ),
         isCollapsed: collapsedWorkspaceIdSet.has(group.workspace.id)
       })),
     [archivedSessionIdSet, collapsedWorkspaceIdSet, navigationGroups]
@@ -1368,16 +1571,28 @@ export function WorkbenchLayout() {
       flattenedSessions.filter(
         (item) =>
           favoriteSessionIdSet.has(item.session.sessionId) &&
-          !archivedSessionIdSet.has(item.session.sessionId)
+          !archivedSessionIdSet.has(item.session.sessionId) &&
+          !isSubagentSession(item.session)
       ),
     [archivedSessionIdSet, favoriteSessionIdSet, flattenedSessions]
   );
 
   useEffect(() => {
-    if (currentSessionId) {
-      writeStoredValue(LAST_SESSION_PATH_KEY, `/sessions/${currentSessionId}`);
+    if (currentSessionId && !isDraftSession) {
+      writeStoredValue(LAST_SESSION_PATH_KEY, `${location.pathname}${location.search}`);
     }
-  }, [currentSessionId]);
+  }, [currentSessionId, isDraftSession, location.pathname, location.search]);
+
+  useEffect(() => {
+    if (currentSessionId && isDraftSession) {
+      lastDraftSessionPathRef.current = `${location.pathname}${location.search}`;
+      return;
+    }
+
+    if (currentSessionId && !isDraftSession) {
+      lastDraftSessionPathRef.current = null;
+    }
+  }, [currentSessionId, isDraftSession, location.pathname, location.search]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -1454,7 +1669,12 @@ export function WorkbenchLayout() {
 
   function goToConversationTab() {
     if (currentSessionId) {
-      navigate(`/sessions/${currentSessionId}`);
+      navigate(`${location.pathname}${location.search}`);
+      return;
+    }
+
+    if (lastDraftSessionPathRef.current) {
+      navigate(lastDraftSessionPathRef.current);
       return;
     }
 
@@ -1473,30 +1693,17 @@ export function WorkbenchLayout() {
       navigationLoading,
       navigationError,
       refreshNavigation,
-      setSessionWorkspace: (sessionId: string, workspaceId: string | null) => {
-        setSessionWorkspaceMap((current) => {
-          if (!workspaceId) {
-            if (!(sessionId in current)) {
-              return current;
-            }
-
-            const next = { ...current };
-            delete next[sessionId];
-            return next;
-          }
-
-          if (current[sessionId] === workspaceId) {
-            return current;
-          }
-
-          return {
-            ...current,
-            [sessionId]: workspaceId
-          };
-        });
-      }
+      upsertNavigationSession,
+      setSessionWorkspace
     }),
-    [navigationError, navigationGroups, navigationLoading]
+    [
+      navigationError,
+      navigationGroups,
+      navigationLoading,
+      refreshNavigation,
+      setSessionWorkspace,
+      upsertNavigationSession
+    ]
   );
 
   const workspaceCount = navigationGroups.length;
@@ -1623,7 +1830,7 @@ export function WorkbenchLayout() {
                   setActiveInfoTab(tab);
                 }}
                 onToggleCollapse={() => setRightCollapsed(true)}
-                currentSessionId={currentSessionId}
+                currentSessionId={isDraftSession ? null : currentSessionId}
                 currentWorkspaceId={currentWorkspaceId}
                 navigationGroups={navigationGroups}
               />
@@ -1705,7 +1912,7 @@ export function WorkbenchLayout() {
               ensureInfoPanelReady();
               setActiveInfoTab(tab);
             }}
-            currentSessionId={currentSessionId}
+            currentSessionId={isDraftSession ? null : currentSessionId}
             currentWorkspaceId={currentWorkspaceId}
             navigationGroups={navigationGroups}
           />
@@ -1757,4 +1964,28 @@ export function useWorkbenchShell() {
   }
 
   return context;
+}
+
+function buildDraftSessionPath(workspaceId: string, provider: ProviderId): string {
+  const draftId = createDraftSessionId();
+  const search = new URLSearchParams({
+    workspaceId,
+    provider
+  });
+
+  return `/sessions/${draftId}?${search.toString()}`;
+}
+
+function createDraftSessionId(): string {
+  const nativeCrypto = globalThis.crypto;
+
+  if (nativeCrypto && typeof nativeCrypto.randomUUID === "function") {
+    return `draft-${nativeCrypto.randomUUID()}`;
+  }
+
+  return `draft-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function isDraftSessionId(sessionId: string): boolean {
+  return sessionId.startsWith("draft-");
 }
