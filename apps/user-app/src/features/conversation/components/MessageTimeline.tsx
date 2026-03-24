@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -8,8 +8,12 @@ import type { ProviderId } from "../api/conversation-api";
 import type { SessionMessageViewModel } from "../runtime/session-runtime-machine";
 
 interface MessageTimelineProps {
+  sessionId?: string;
   messages: SessionMessageViewModel[];
   historyState: "idle" | "loading" | "ready" | "error";
+  loadingOlderMessages?: boolean;
+  hasOlderMessages?: boolean;
+  onLoadOlderMessages?: () => void;
   onRetryMessage: (clientRequestId: string) => void;
   provider: ProviderId | null;
 }
@@ -453,12 +457,80 @@ function MessageItem({
 }
 
 export function MessageTimeline({
+  sessionId = "session",
   messages,
   historyState,
+  loadingOlderMessages = false,
+  hasOlderMessages = false,
+  onLoadOlderMessages = () => {},
   onRetryMessage,
   provider
 }: MessageTimelineProps) {
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const previousSessionIdRef = useRef(sessionId);
+  const previousMessageCountRef = useRef(messages.length);
+  const previousLastMessageIdRef = useRef<string | null>(messages.at(-1)?.id ?? null);
+  const stickToBottomRef = useRef(true);
+  const pendingOlderLoadOffsetRef = useRef<number | null>(null);
   const renderItems = buildTimelineRenderItems(messages);
+
+  useEffect(() => {
+    if (previousSessionIdRef.current !== sessionId) {
+      previousSessionIdRef.current = sessionId;
+      previousMessageCountRef.current = 0;
+      previousLastMessageIdRef.current = null;
+      stickToBottomRef.current = true;
+      pendingOlderLoadOffsetRef.current = null;
+    }
+  }, [sessionId]);
+
+  useLayoutEffect(() => {
+    const list = listRef.current;
+
+    if (!list) {
+      previousMessageCountRef.current = messages.length;
+      previousLastMessageIdRef.current = messages.at(-1)?.id ?? null;
+      return;
+    }
+
+    const previousCount = previousMessageCountRef.current;
+    const previousLastId = previousLastMessageIdRef.current;
+    const currentLastId = messages.at(-1)?.id ?? null;
+
+    if (pendingOlderLoadOffsetRef.current !== null && messages.length >= previousCount) {
+      list.scrollTop = Math.max(0, list.scrollHeight - pendingOlderLoadOffsetRef.current);
+      pendingOlderLoadOffsetRef.current = null;
+    } else if (
+      stickToBottomRef.current
+      && (previousCount === 0 || (currentLastId !== null && currentLastId !== previousLastId))
+    ) {
+      list.scrollTop = list.scrollHeight;
+    }
+
+    previousMessageCountRef.current = messages.length;
+    previousLastMessageIdRef.current = currentLastId;
+  }, [messages, sessionId]);
+
+  function handleScroll() {
+    const list = listRef.current;
+
+    if (!list) {
+      return;
+    }
+
+    const distanceToBottom = list.scrollHeight - list.clientHeight - list.scrollTop;
+    stickToBottomRef.current = distanceToBottom <= 80;
+
+    if (
+      list.scrollTop <= 120
+      && hasOlderMessages
+      && !loadingOlderMessages
+      && historyState === "ready"
+    ) {
+      pendingOlderLoadOffsetRef.current = list.scrollHeight - list.scrollTop;
+      onLoadOlderMessages();
+    }
+  }
 
   return (
     <section className="message-timeline">
@@ -475,7 +547,17 @@ export function MessageTimeline({
         </div>
       )}
 
-      <div className="message-list">
+      <div
+        ref={listRef}
+        className="message-list"
+        onScroll={handleScroll}
+      >
+        {loadingOlderMessages ? (
+          <div className="timeline-status timeline-status-inline">
+            <span className="status-text">{t("conversation.historyLoadingOlder")}</span>
+          </div>
+        ) : null}
+
         {renderItems.length === 0 && historyState === "ready" && (
           <div className="timeline-empty">
             <p className="status-text">{t("conversation.timelineEmpty")}</p>

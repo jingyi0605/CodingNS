@@ -6,6 +6,7 @@ import {
   CodexAdapter,
   ProviderRegistry,
   SessionSyncService,
+  type HistoryDirection,
   type HistoryPage,
   type ProviderCapabilities,
   type ProviderRealtimeEvent,
@@ -47,6 +48,8 @@ export class SessionRuntimeService {
   private readonly providerRegistry: ProviderRegistry;
   private readonly sessionSyncService: SessionSyncService;
   private readonly capabilityService: CapabilityService;
+  private readonly workspaceDiscoveryTimestamps = new Map<string, number>();
+  private readonly workspaceDiscoveryInflight = new Map<string, Promise<SessionListItem[]>>();
 
   constructor(
     private readonly db: Database.Database,
@@ -65,7 +68,41 @@ export class SessionRuntimeService {
     this.capabilityService = new CapabilityService(this.providerRegistry);
   }
 
-  async discoverWorkspaceSessions(workspaceId: string, userId: string): Promise<SessionListItem[]> {
+  async discoverWorkspaceSessions(
+    workspaceId: string,
+    userId: string,
+    options?: {
+      maxAgeMs?: number;
+      force?: boolean;
+    }
+  ): Promise<SessionListItem[]> {
+    const maxAgeMs = options?.maxAgeMs ?? 0;
+    const force = options?.force ?? false;
+    const lastRefreshedAt = this.workspaceDiscoveryTimestamps.get(workspaceId) ?? 0;
+
+    if (!force && maxAgeMs > 0 && Date.now() - lastRefreshedAt <= maxAgeMs) {
+      return this.sessionIndexRepository.listByWorkspace(workspaceId, userId);
+    }
+
+    const inflight = this.workspaceDiscoveryInflight.get(workspaceId);
+
+    if (inflight) {
+      return inflight;
+    }
+
+    const task = this.runDiscoverWorkspaceSessions(workspaceId, userId)
+      .finally(() => {
+        this.workspaceDiscoveryInflight.delete(workspaceId);
+      });
+
+    this.workspaceDiscoveryInflight.set(workspaceId, task);
+    return task;
+  }
+
+  private async runDiscoverWorkspaceSessions(
+    workspaceId: string,
+    userId: string
+  ): Promise<SessionListItem[]> {
     const workspace = this.getWorkspaceOrThrow(workspaceId);
     const sessions = await this.sessionSyncService
       .discoverWorkspaceSessions(workspace.path)
@@ -121,6 +158,7 @@ export class SessionRuntimeService {
     persist();
     const items = this.sessionIndexRepository.listByWorkspace(workspaceId, userId);
     await this.refreshRecentSessionStates(items.slice(0, 10), userId);
+    this.workspaceDiscoveryTimestamps.set(workspaceId, Date.now());
     return this.sessionIndexRepository.listByWorkspace(workspaceId, userId);
   }
 
@@ -128,6 +166,7 @@ export class SessionRuntimeService {
     sessionId: string,
     cursor: string | null,
     limit: number,
+    direction: HistoryDirection = "forward",
     userId?: string
   ): Promise<HistoryPage> {
     const binding = this.getBindingOrThrow(sessionId);
@@ -148,12 +187,16 @@ export class SessionRuntimeService {
         binding.providerSessionId,
         binding.rawStoreRef,
         cursor,
-        clampLimit(limit)
+        clampLimit(limit),
+        direction
       );
 
       this.upsertSnapshot(sessionId, {
         syncStatus: "idle",
-        syncCursor: page.cursor,
+        syncCursor:
+          direction === "backward" && cursor !== null
+            ? current?.syncCursor ?? page.cursor
+            : page.cursor,
         lastSyncAt: nowIso(),
         lastErrorCode: null,
         lastErrorDetail: null,
@@ -523,9 +566,9 @@ export class SessionRuntimeService {
     sessions: SessionListItem[],
     userId: string
   ): Promise<void> {
-    for (const session of sessions) {
-      await this.refreshSessionState(session.sessionId, userId);
-    }
+    await Promise.all(
+      sessions.map((session) => this.refreshSessionState(session.sessionId, userId))
+    );
   }
 
   private async refreshSessionState(

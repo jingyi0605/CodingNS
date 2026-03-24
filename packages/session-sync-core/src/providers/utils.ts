@@ -2,7 +2,12 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-import type { HistoryPage, NormalizedMessage, ProviderId } from "../types.js";
+import type {
+  HistoryDirection,
+  HistoryPage,
+  NormalizedMessage,
+  ProviderId
+} from "../types.js";
 
 interface RawJsonLine {
   lineNumber: number;
@@ -93,9 +98,25 @@ export function decodeCursor(cursor: string | null): number {
 export function sliceHistory(
   messages: NormalizedMessage[],
   cursor: string | null,
-  limit: number
+  limit: number,
+  direction: HistoryDirection = "forward"
 ): HistoryPage {
   const safeLimit = Math.max(1, Math.min(limit, 100));
+
+  if (direction === "backward") {
+    const end = cursor ? decodeCursor(cursor) : messages.length;
+    const boundedEnd = Math.max(0, Math.min(end, messages.length));
+    const start = Math.max(0, boundedEnd - safeLimit);
+    const page = messages.slice(start, boundedEnd);
+
+    return {
+      messages: page,
+      cursor: encodeCursor(boundedEnd),
+      nextCursor: start > 0 ? encodeCursor(start) : null,
+      total: messages.length
+    };
+  }
+
   const start = decodeCursor(cursor);
   const page = messages.slice(start, start + safeLimit);
   const nextIndex = start + page.length;

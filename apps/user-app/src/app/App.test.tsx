@@ -14,8 +14,15 @@ interface MockSocketMessage {
   [key: string]: unknown;
 }
 
+interface MockSessionRecord {
+  detail: Record<string, unknown>;
+  capabilities: Record<string, unknown>;
+  history: Record<string, unknown>;
+}
+
 class MockWebSocket extends EventTarget {
   static instances: MockWebSocket[] = [];
+  static workbenchSnapshot: Record<string, unknown> = { items: [] };
 
   readyState = 1;
   sentPayloads: string[] = [];
@@ -32,11 +39,24 @@ class MockWebSocket extends EventTarget {
     });
   }
 
+  static reset() {
+    MockWebSocket.instances = [];
+    MockWebSocket.workbenchSnapshot = { items: [] };
+  }
+
   send(payload: string) {
     this.sentPayloads.push(payload);
-    const parsed = JSON.parse(payload) as { type: string; sessionId: string };
+    const parsed = JSON.parse(payload) as { type: string; sessionId?: string };
 
-    if (parsed.type === "session.subscribe") {
+    if (parsed.type === "workbench.subscribe" || parsed.type === "workbench.refresh") {
+      this.dispatchMessage({
+        type: "workbench.snapshot",
+        snapshot: MockWebSocket.workbenchSnapshot
+      });
+      return;
+    }
+
+    if (parsed.type === "session.subscribe" && parsed.sessionId) {
       this.dispatchMessage({
         type: "session.subscribed",
         sessionId: parsed.sessionId
@@ -64,38 +84,23 @@ describe("app routes", () => {
   beforeEach(() => {
     window.localStorage.clear();
     authStore.clear();
-    MockWebSocket.instances = [];
+    MockWebSocket.reset();
     global.WebSocket = MockWebSocket as unknown as typeof WebSocket;
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.useRealTimers();
     global.fetch = originalFetch;
     global.WebSocket = originalWebSocket;
   });
 
-  it("未登录访问受保护会话页时会回到登录页", async () => {
+  it("未登录访问受保护页面时会回到登录页", async () => {
     global.fetch = vi.fn(async (input: RequestInfo | URL) => {
       const url = typeof input === "string" ? input : input.toString();
 
       if (url.endsWith("/api/public/bootstrap-status")) {
         return createJsonResponse({ initialized: true });
-      }
-
-      if (url.endsWith("/api/workspaces")) {
-        return createJsonResponse({ items: [] });
-      }
-
-      if (url.includes("/api/files/tree?")) {
-        return createJsonResponse({ items: [] });
-      }
-
-      if (url.includes("/api/files/recent?")) {
-        return createJsonResponse({ items: [] });
-      }
-
-      if (url.endsWith("/api/sessions/session-1/contexts/files")) {
-        return createJsonResponse({ items: [] });
       }
 
       throw new Error(`未处理的请求: ${url}`);
@@ -105,334 +110,183 @@ describe("app routes", () => {
 
     render(<App />);
 
-    expect(await screen.findByText("继续你的编码会话")).toBeInTheDocument();
+    expect(await screen.findByText(t("auth.loginTitle"))).toBeInTheDocument();
   });
 
-  it("已登录时可以加载会话、显示历史并完成发送", async () => {
-    authStore.hydrate({
-      accessToken: "access-token",
-      refreshToken: "refresh-token",
-      expiresIn: 3600,
-      user: {
-        userId: "user-1",
-        username: "admin",
-        role: "admin"
+  it("已登录时只拉一次工作台快照，并可以加载会话与发送消息", async () => {
+    hydrateAuth();
+
+    const workbenchSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace(),
+        sessions: [createSessionSummary({ sessionId: "session-1", title: "Spec003 主链路" })]
+      }
+    ]);
+    const fetchMock = installFetchMock({
+      workbenchSnapshot,
+      sessions: {
+        "session-1": {
+          detail: createSessionSummary({ sessionId: "session-1", title: "Spec003 主链路" }),
+          capabilities: createCapabilities(),
+          history: createHistoryPage([
+            createHistoryMessage({
+              messageId: "history-1",
+              role: "assistant",
+              content: "历史消息已经到了。",
+              sequence: 1
+            })
+          ])
+        }
+      },
+      extraHandler: (url, init) => {
+        if (url.endsWith("/api/sessions/session-1/messages") && init?.method === "POST") {
+          return createJsonResponse(
+            {
+              sessionId: "session-1",
+              acceptedAt: "2026-03-23T10:01:00.000Z",
+              clientRequestId: "client-send-1",
+              message: createHistoryMessage({
+                messageId: "sent-1",
+                role: "user",
+                content: "把 capability gate 接上去",
+                sequence: 2,
+                timestamp: "2026-03-23T10:01:00.000Z"
+              })
+            },
+            201
+          );
+        }
+
+        return null;
       }
     });
 
-    global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = typeof input === "string" ? input : input.toString();
+    renderConversationRoute("session-1");
 
-      if (url.endsWith("/api/sessions/session-1")) {
-        return createJsonResponse({
-          sessionId: "session-1",
-          workspaceId: "workspace-1",
-          provider: "codex",
-          providerSessionId: "raw-1",
-          rawStoreRef: "codex://raw",
-          title: "Spec003 主链路",
-          messageCount: 1,
-          lastMessageAt: "2026-03-23T10:00:00.000Z",
-          createdAt: "2026-03-23T09:00:00.000Z",
-          updatedAt: "2026-03-23T10:00:00.000Z",
-          syncStatus: "idle",
-          syncCursor: "cursor-1",
-          lastSyncAt: "2026-03-23T10:00:00.000Z",
-          lastErrorCode: null,
-          lastErrorDetail: null,
-          resumedAt: null
-        });
-      }
-
-      if (url.endsWith("/api/sessions/session-1/capabilities")) {
-        return createJsonResponse({
-          provider: "codex",
-          canStartSession: true,
-          canResumeSession: true,
-          canSendMessage: true,
-          supportsSubagents: false,
-          supportsInterrupt: true,
-          supportsStructuredToolCalls: true,
-          supportsTokenUsage: false,
-          supportsAttachments: false,
-          supportsPermissionPrompt: true,
-          supportsCheckpoint: false,
-          limitations: []
-        });
-      }
-
-      if (url.includes("/api/sessions/session-1/messages?")) {
-        return createJsonResponse({
-          messages: [
-            {
-              messageId: "history-1",
-              provider: "codex",
-              providerSessionId: "raw-1",
-              role: "assistant",
-              content: "历史消息已经到了。",
-              timestamp: "2026-03-23T10:00:00.000Z",
-              sequence: 1,
-              rawRef: "codex://raw#line=1"
-            }
-          ],
-          cursor: "cursor-1",
-          nextCursor: null,
-          total: 1
-        });
-      }
-
-      if (url.endsWith("/api/sessions/session-1/messages") && init?.method === "POST") {
-        return createJsonResponse(
-          {
-            sessionId: "session-1",
-            acceptedAt: "2026-03-23T10:01:00.000Z",
-            clientRequestId: "client-send-1",
-            message: {
-              messageId: "sent-1",
-              provider: "codex",
-              providerSessionId: "raw-1",
-              role: "user",
-              content: "把 capability gate 接上去",
-              timestamp: "2026-03-23T10:01:00.000Z",
-              sequence: 2,
-              rawRef: "codex://raw#line=2"
-            }
-          },
-          201
-        );
-      }
-
-      if (url.endsWith("/api/workspaces")) {
-        return createJsonResponse({ items: [] });
-      }
-
-      if (url.includes("/api/files/tree?")) {
-        return createJsonResponse({ items: [] });
-      }
-
-      if (url.includes("/api/files/recent?")) {
-        return createJsonResponse({ items: [] });
-      }
-
-      if (url.endsWith("/api/sessions/session-1/contexts/files")) {
-        return createJsonResponse({ items: [] });
-      }
-
-      throw new Error(`未处理的请求: ${url}`);
-    }) as typeof fetch;
-
-    render(
-      <MemoryRouter initialEntries={["/sessions/session-1"]}>
-        <Routes>
-          <Route element={<WorkbenchLayout />}>
-            <Route path="/sessions/:sessionId" element={<ConversationPage />} />
-          </Route>
-        </Routes>
-      </MemoryRouter>
-    );
-
-    expect(await screen.findByText("Spec003 主链路")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Spec003 主链路" })).toBeInTheDocument();
     expect(await screen.findByText("历史消息已经到了。")).toBeInTheDocument();
 
+    await waitFor(() => {
+      expect(countFetchCalls(fetchMock, "/api/workbench")).toBe(1);
+    });
+
     await userEvent.type(
-      screen.getByPlaceholderText("把下一步交代清楚，剩下的交给这条会话继续跑。"),
+      screen.getByPlaceholderText(t("conversation.composerPlaceholder")),
       "把 capability gate 接上去"
     );
-    await userEvent.click(screen.getByRole("button", { name: "发送消息" }));
+    await userEvent.click(screen.getByRole("button", { name: t("conversation.sendButton") }));
 
     await waitFor(() => {
       expect(screen.getByText("把 capability gate 接上去")).toBeInTheDocument();
     });
   });
 
-  it("断线重连后会按游标补齐缺失消息并保持顺序", async () => {
-    authStore.hydrate({
-      accessToken: "access-token",
-      refreshToken: "refresh-token",
-      expiresIn: 3600,
-      user: {
-        userId: "user-1",
-        username: "admin",
-        role: "admin"
+  it("会话 socket 断线后会按游标补齐缺失消息，工作台 socket 不会干扰重连", async () => {
+    hydrateAuth();
+
+    const workbenchSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace(),
+        sessions: [createSessionSummary({ sessionId: "session-1", title: "Spec003 主链路" })]
+      }
+    ]);
+
+    installFetchMock({
+      workbenchSnapshot,
+      sessions: {
+        "session-1": {
+          detail: createSessionSummary({ sessionId: "session-1", title: "Spec003 主链路" }),
+          capabilities: createCapabilities(),
+          history: createHistoryPage([
+            createHistoryMessage({
+              messageId: "history-1",
+              role: "assistant",
+              content: "历史消息已经到了。",
+              sequence: 1
+            })
+          ])
+        }
       }
     });
 
-    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
-      const url = typeof input === "string" ? input : input.toString();
+    const view = renderConversationRoute("session-1");
 
-      if (url.endsWith("/api/sessions/session-1")) {
-        return createJsonResponse({
-          sessionId: "session-1",
-          workspaceId: "workspace-1",
-          provider: "codex",
-          providerSessionId: "raw-1",
-          rawStoreRef: "codex://raw",
-          title: "Spec003 主链路",
-          messageCount: 1,
-          lastMessageAt: "2026-03-23T10:00:00.000Z",
-          createdAt: "2026-03-23T09:00:00.000Z",
-          updatedAt: "2026-03-23T10:00:00.000Z",
-          syncStatus: "idle",
-          syncCursor: "cursor-1",
-          lastSyncAt: "2026-03-23T10:00:00.000Z",
-          lastErrorCode: null,
-          lastErrorDetail: null,
-          resumedAt: null
-        });
-      }
-
-      if (url.endsWith("/api/sessions/session-1/capabilities")) {
-        return createJsonResponse({
-          provider: "codex",
-          canStartSession: true,
-          canResumeSession: true,
-          canSendMessage: true,
-          supportsSubagents: false,
-          supportsInterrupt: true,
-          supportsStructuredToolCalls: true,
-          supportsTokenUsage: false,
-          supportsAttachments: false,
-          supportsPermissionPrompt: true,
-          supportsCheckpoint: false,
-          limitations: []
-        });
-      }
-
-      if (url.includes("/api/sessions/session-1/messages?")) {
-        return createJsonResponse({
-          messages: [
-            {
-              messageId: "history-1",
-              provider: "codex",
-              providerSessionId: "raw-1",
-              role: "assistant",
-              content: "历史消息已经到了。",
-              timestamp: "2026-03-23T10:00:00.000Z",
-              sequence: 1,
-              rawRef: "codex://raw#line=1"
-            }
-          ],
-          cursor: "cursor-1",
-          nextCursor: null,
-          total: 1
-        });
-      }
-
-      if (url.endsWith("/api/workspaces")) {
-        return createJsonResponse({ items: [] });
-      }
-
-      if (url.includes("/api/files/tree?")) {
-        return createJsonResponse({ items: [] });
-      }
-
-      if (url.includes("/api/files/recent?")) {
-        return createJsonResponse({ items: [] });
-      }
-
-      if (url.endsWith("/api/sessions/session-1/contexts/files")) {
-        return createJsonResponse({ items: [] });
-      }
-
-      throw new Error(`未处理的请求: ${url}`);
-    }) as typeof fetch;
-
-    const view = render(
-      <MemoryRouter initialEntries={["/sessions/session-1"]}>
-        <Routes>
-          <Route element={<WorkbenchLayout />}>
-            <Route path="/sessions/:sessionId" element={<ConversationPage />} />
-          </Route>
-        </Routes>
-      </MemoryRouter>
-    );
-
-    expect(await screen.findByText("Spec003 主链路")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Spec003 主链路" })).toBeInTheDocument();
     expect(await screen.findByText("历史消息已经到了。")).toBeInTheDocument();
 
     await waitFor(() => {
-      expect(MockWebSocket.instances).toHaveLength(1);
+      expect(getSessionSockets()).toHaveLength(1);
+      expect(getWorkbenchSockets()).toHaveLength(1);
     });
 
-    const firstSocket = MockWebSocket.instances[0]!;
-    firstSocket.dispatchMessage({
+    const firstSessionSocket = getSessionSockets()[0]!;
+    firstSessionSocket.dispatchMessage({
       type: "session.delta",
       sessionId: "session-1",
       cursor: "cursor-2",
       messages: [
-        {
+        createHistoryMessage({
           messageId: "live-2",
-          provider: "codex",
-          providerSessionId: "raw-1",
           role: "assistant",
           content: "第二条实时消息",
-          timestamp: "2026-03-23T10:00:02.000Z",
           sequence: 2,
-          rawRef: "codex://raw#line=2"
-        }
+          timestamp: "2026-03-23T10:00:02.000Z"
+        })
       ]
     });
 
     expect(await screen.findByText("第二条实时消息")).toBeInTheDocument();
 
-    firstSocket.close();
+    firstSessionSocket.close();
 
     await waitFor(() => {
-      expect(MockWebSocket.instances).toHaveLength(2);
-    });
+      expect(getSessionSockets()).toHaveLength(2);
+      expect(getWorkbenchSockets()).toHaveLength(1);
+    }, { timeout: 1500 });
 
-    const secondSocket = MockWebSocket.instances[1]!;
+    const secondSessionSocket = getSessionSockets()[1]!;
 
     await waitFor(() => {
-      const subscribePayload = secondSocket.sentPayloads
-        .map((payload) => JSON.parse(payload) as { type: string; cursor: string | null })
+      const subscribePayload = secondSessionSocket.sentPayloads
+        .map((payload) => JSON.parse(payload) as { type: string; cursor?: string | null })
         .find((payload) => payload.type === "session.subscribe");
+
       expect(subscribePayload?.cursor).toBe("cursor-2");
     });
 
-    secondSocket.dispatchMessage({
+    secondSessionSocket.dispatchMessage({
       type: "session.backfill",
       sessionId: "session-1",
       cursor: "cursor-3",
       messages: [
-        {
+        createHistoryMessage({
           messageId: "live-2",
-          provider: "codex",
-          providerSessionId: "raw-1",
           role: "assistant",
           content: "第二条实时消息",
-          timestamp: "2026-03-23T10:00:02.000Z",
           sequence: 2,
-          rawRef: "codex://raw#line=2"
-        },
-        {
+          timestamp: "2026-03-23T10:00:02.000Z"
+        }),
+        createHistoryMessage({
           messageId: "backfill-3",
-          provider: "codex",
-          providerSessionId: "raw-1",
           role: "assistant",
           content: "第三条缺口补偿消息",
-          timestamp: "2026-03-23T10:00:03.000Z",
           sequence: 3,
-          rawRef: "codex://raw#line=3"
-        }
+          timestamp: "2026-03-23T10:00:03.000Z"
+        })
       ]
     });
-
-    secondSocket.dispatchMessage({
+    secondSessionSocket.dispatchMessage({
       type: "session.delta",
       sessionId: "session-1",
       cursor: "cursor-4",
       messages: [
-        {
+        createHistoryMessage({
           messageId: "live-4",
-          provider: "codex",
-          providerSessionId: "raw-1",
           role: "assistant",
           content: "第四条恢复后消息",
-          timestamp: "2026-03-23T10:00:04.000Z",
           sequence: 4,
-          rawRef: "codex://raw#line=4"
-        }
+          timestamp: "2026-03-23T10:00:04.000Z"
+        })
       ]
     });
 
@@ -456,260 +310,181 @@ describe("app routes", () => {
     expect(screen.queryByText(t("conversation.connectionReconnectFailed"))).not.toBeInTheDocument();
   });
 
-  it("会话侧栏可以打开文件、保存文本并挂载到当前会话", async () => {
-    authStore.hydrate({
-      accessToken: "access-token",
-      refreshToken: "refresh-token",
-      expiresIn: 3600,
-      user: {
-        userId: "user-1",
-        username: "admin",
-        role: "admin"
-      }
-    });
+  it("右侧文件面板延后挂载后仍然可以编辑并挂到当前会话", async () => {
+    hydrateAuth();
 
     let currentContent = "初始文件内容";
     let currentVersion = "version-1";
-    let bindingItems: Array<{
-      id: string;
-      sessionId: string;
-      workspaceId: string;
-      path: string;
-      displayName: string;
-      selected: boolean;
-      pinned: boolean;
-      rangeStart: number | null;
-      rangeEnd: number | null;
-      contentHash: string;
-      fileVersion: string;
-      attachedBy: string;
-      attachedAt: string;
-    }> = [];
-    let recentItems: Array<{
-      id: string;
-      workspaceId: string;
-      userId: string;
-      path: string;
-      lastOpenedAt: string;
-      pinned: boolean;
-    }> = [];
-
-    global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = typeof input === "string" ? input : input.toString();
-
-      if (url.endsWith("/api/sessions/session-1")) {
-        return createJsonResponse({
-          sessionId: "session-1",
-          workspaceId: "workspace-1",
-          provider: "codex",
-          providerSessionId: "raw-1",
-          rawStoreRef: "codex://raw",
-          title: "Spec004 文件上下文",
-          messageCount: 1,
-          lastMessageAt: "2026-03-23T10:00:00.000Z",
-          createdAt: "2026-03-23T09:00:00.000Z",
-          updatedAt: "2026-03-23T10:00:00.000Z",
-          syncStatus: "idle",
-          syncCursor: "cursor-1",
-          lastSyncAt: "2026-03-23T10:00:00.000Z",
-          lastErrorCode: null,
-          lastErrorDetail: null,
-          resumedAt: null
-        });
+    let bindingItems: Array<Record<string, unknown>> = [];
+    let recentItems: Array<Record<string, unknown>> = [];
+    const workbenchSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace(),
+        sessions: [createSessionSummary({ sessionId: "session-1", title: "Spec004 文件上下文" })]
       }
+    ]);
 
-      if (url.endsWith("/api/sessions/session-1/capabilities")) {
-        return createJsonResponse({
-          provider: "codex",
-          canStartSession: true,
-          canResumeSession: true,
-          canSendMessage: true,
-          supportsSubagents: false,
-          supportsInterrupt: true,
-          supportsStructuredToolCalls: true,
-          supportsTokenUsage: false,
-          supportsAttachments: false,
-          supportsPermissionPrompt: true,
-          supportsCheckpoint: false,
-          limitations: []
-        });
-      }
-
-      if (url.includes("/api/sessions/session-1/messages?")) {
-        return createJsonResponse({
-          messages: [
-            {
+    installFetchMock({
+      workbenchSnapshot,
+      sessions: {
+        "session-1": {
+          detail: createSessionSummary({ sessionId: "session-1", title: "Spec004 文件上下文" }),
+          capabilities: createCapabilities(),
+          history: createHistoryPage([
+            createHistoryMessage({
               messageId: "history-1",
-              provider: "codex",
-              providerSessionId: "raw-1",
               role: "assistant",
               content: "文件面板已经接进来了。",
-              timestamp: "2026-03-23T10:00:00.000Z",
-              sequence: 1,
-              rawRef: "codex://raw#line=1"
-            }
-          ],
-          cursor: "cursor-1",
-          nextCursor: null,
-          total: 1
-        });
-      }
+              sequence: 1
+            })
+          ])
+        }
+      },
+      extraHandler: (url, init) => {
+        if (url.includes("/api/files/tree?")) {
+          return createJsonResponse({
+            items: [
+              {
+                path: "README.md",
+                name: "README.md",
+                kind: "file",
+                size: currentContent.length,
+                updatedAt: "2026-03-23T10:00:00.000Z"
+              }
+            ]
+          });
+        }
 
-      if (url.includes("/api/files/tree?")) {
-        return createJsonResponse({
-          items: [
+        if (url.includes("/api/files/recent?")) {
+          return createJsonResponse({ items: recentItems });
+        }
+
+        if (url.endsWith("/api/sessions/session-1/contexts/files") && !init?.method) {
+          return createJsonResponse({ items: bindingItems });
+        }
+
+        if (url.includes("/api/git/status?")) {
+          return createJsonResponse({
+            snapshot: {
+              workspaceId: "workspace-1",
+              repoRoot: "C:/repo",
+              branch: "main",
+              ahead: 0,
+              behind: 0,
+              hasRemote: false,
+              isDirty: false,
+              lastFetchedAt: null
+            },
+            changes: []
+          });
+        }
+
+        if (url.includes("/api/git/rules?")) {
+          return createJsonResponse({
+            id: "rule-1",
+            workspaceId: "workspace-1",
+            name: "默认提交规则",
+            subjectPattern: ".*",
+            maxSubjectLength: 72,
+            language: "zh",
+            requireBody: false,
+            requireIssue: false,
+            issuePattern: null,
+            updatedAt: "2026-03-23T10:00:00.000Z"
+          });
+        }
+
+        if (url.includes("/api/git/history?")) {
+          return createJsonResponse({
+            items: [],
+            cursor: null,
+            nextCursor: null
+          });
+        }
+
+        if (url.includes("/api/git/branches?")) {
+          return createJsonResponse({
+            currentBranch: "main",
+            local: [],
+            remote: []
+          });
+        }
+
+        if (url.includes("/api/files/preview?")) {
+          recentItems = [
             {
+              id: "recent-1",
+              workspaceId: "workspace-1",
+              userId: "user-1",
               path: "README.md",
-              name: "README.md",
-              kind: "file",
-              size: currentContent.length,
-              updatedAt: "2026-03-23T10:00:00.000Z"
+              lastOpenedAt: "2026-03-23T10:02:00.000Z",
+              pinned: false
             }
-          ]
-        });
-      }
+          ];
 
-      if (url.includes("/api/files/recent?")) {
-        return createJsonResponse({ items: recentItems });
-      }
-
-      if (url.endsWith("/api/sessions/session-1/contexts/files") && !init?.method) {
-        return createJsonResponse({ items: bindingItems });
-      }
-
-      if (url.includes("/api/git/status?")) {
-        return createJsonResponse({
-          snapshot: {
-            workspaceId: "workspace-1",
-            repoRoot: "C:/repo",
-            branch: "main",
-            ahead: 0,
-            behind: 0,
-            hasRemote: false,
-            isDirty: false,
-            lastFetchedAt: null
-          },
-          changes: []
-        });
-      }
-
-      if (url.includes("/api/git/rules?")) {
-        return createJsonResponse({
-          id: "rule-1",
-          workspaceId: "workspace-1",
-          name: "默认提交规则",
-          subjectPattern: ".*",
-          maxSubjectLength: 72,
-          language: "zh",
-          requireBody: false,
-          requireIssue: false,
-          issuePattern: null,
-          updatedAt: "2026-03-23T10:00:00.000Z"
-        });
-      }
-
-      if (url.includes("/api/git/history?")) {
-        return createJsonResponse({
-          items: [],
-          cursor: null,
-          nextCursor: null
-        });
-      }
-
-      if (url.includes("/api/git/branches?")) {
-        return createJsonResponse({
-          currentBranch: "main",
-          local: [],
-          remote: []
-        });
-      }
-
-      if (url.includes("/api/files/preview?")) {
-        recentItems = [
-          {
-            id: "recent-1",
-            workspaceId: "workspace-1",
-            userId: "user-1",
-            path: "README.md",
-            lastOpenedAt: "2026-03-23T10:02:00.000Z",
-            pinned: false
-          }
-        ];
-
-        return createJsonResponse({
-          workspaceId: "workspace-1",
-          path: "README.md",
-          supported: true,
-          kind: "text",
-          reason: null,
-          content: currentContent,
-          version: currentVersion,
-          size: currentContent.length,
-          updatedAt: "2026-03-23T10:02:00.000Z"
-        });
-      }
-
-      if (url.endsWith("/api/files/content") && init?.method === "PUT") {
-        const body = JSON.parse(String(init.body)) as {
-          content: string;
-          expectedVersion: string;
-        };
-
-        expect(body.expectedVersion).toBe(currentVersion);
-        currentContent = body.content;
-        currentVersion = "version-2";
-
-        return createJsonResponse({
-          version: currentVersion,
-          updatedAt: "2026-03-23T10:03:00.000Z"
-        });
-      }
-
-      if (url.endsWith("/api/sessions/session-1/contexts/files") && init?.method === "POST") {
-        bindingItems = [
-          {
-            id: "binding-1",
-            sessionId: "session-1",
+          return createJsonResponse({
             workspaceId: "workspace-1",
             path: "README.md",
-            displayName: "README.md",
-            selected: true,
-            pinned: false,
-            rangeStart: null,
-            rangeEnd: null,
-            contentHash: "hash-1",
-            fileVersion: currentVersion,
-            attachedBy: "user-1",
-            attachedAt: "2026-03-23T10:04:00.000Z"
-          }
-        ];
+            supported: true,
+            kind: "text",
+            reason: null,
+            content: currentContent,
+            version: currentVersion,
+            size: currentContent.length,
+            updatedAt: "2026-03-23T10:02:00.000Z"
+          });
+        }
 
-        return createJsonResponse(bindingItems[0], 201);
+        if (url.endsWith("/api/files/content") && init?.method === "PUT") {
+          const body = JSON.parse(String(init.body)) as {
+            content: string;
+            expectedVersion: string;
+          };
+
+          expect(body.expectedVersion).toBe(currentVersion);
+          currentContent = body.content;
+          currentVersion = "version-2";
+
+          return createJsonResponse({
+            version: currentVersion,
+            updatedAt: "2026-03-23T10:03:00.000Z"
+          });
+        }
+
+        if (url.endsWith("/api/sessions/session-1/contexts/files") && init?.method === "POST") {
+          bindingItems = [
+            {
+              id: "binding-1",
+              sessionId: "session-1",
+              workspaceId: "workspace-1",
+              path: "README.md",
+              displayName: "README.md",
+              selected: true,
+              pinned: false,
+              rangeStart: null,
+              rangeEnd: null,
+              contentHash: "hash-1",
+              fileVersion: currentVersion,
+              attachedBy: "user-1",
+              attachedAt: "2026-03-23T10:04:00.000Z"
+            }
+          ];
+
+          return createJsonResponse(bindingItems[0], 201);
+        }
+
+        if (url.endsWith("/api/sessions/session-1/contexts/files/binding-1") && init?.method === "DELETE") {
+          bindingItems = [];
+          return createJsonResponse({ success: true });
+        }
+
+        return null;
       }
+    });
 
-      if (url.endsWith("/api/sessions/session-1/contexts/files/binding-1") && init?.method === "DELETE") {
-        bindingItems = [];
-        return createJsonResponse({ success: true });
-      }
+    renderConversationRoute("session-1");
 
-      if (url.endsWith("/api/workspaces")) {
-        return createJsonResponse({ items: [] });
-      }
-
-      throw new Error(`未处理的请求: ${url}`);
-    }) as typeof fetch;
-
-    render(
-      <MemoryRouter initialEntries={["/sessions/session-1"]}>
-        <Routes>
-          <Route element={<WorkbenchLayout />}>
-            <Route path="/sessions/:sessionId" element={<ConversationPage />} />
-          </Route>
-        </Routes>
-      </MemoryRouter>
-    );
-
-    expect(await screen.findByText("文件上下文")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Spec004 文件上下文" })).toBeInTheDocument();
 
     await userEvent.click(await screen.findByText("README.md"));
 
@@ -719,23 +494,88 @@ describe("app routes", () => {
 
     await userEvent.clear(screen.getByTestId("file-editor-textarea"));
     await userEvent.type(screen.getByTestId("file-editor-textarea"), "更新后的文件内容");
-    await userEvent.click(screen.getByRole("button", { name: "保存" }));
+    await userEvent.click(screen.getByRole("button", { name: t("conversation.filePanelSave") }));
 
-    expect(await screen.findByText("文件已经保存。")).toBeInTheDocument();
+    expect(await screen.findByText(t("conversation.filePanelSaveSuccess"))).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "挂到会话" }));
+    await userEvent.click(screen.getByRole("button", { name: t("conversation.filePanelAttach") }));
 
-    expect(await screen.findByText("文件已经挂到当前会话。")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "已挂载" })).toBeInTheDocument();
+    expect(await screen.findByText(t("conversation.filePanelAttachSuccess"))).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("conversation.filePanelAttached") })).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "解绑" }));
+    await userEvent.click(screen.getByRole("button", { name: t("conversation.filePanelDetach") }));
 
-    expect(await screen.findByText("文件已经从当前会话解绑。")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "挂到会话" })).toBeInTheDocument();
+    expect(await screen.findByText(t("conversation.filePanelDetachSuccess"))).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("conversation.filePanelAttach") })).toBeInTheDocument();
   });
 });
 
-it("会通过统一消息抽象渲染 codex 工具调用", async () => {
+it("统一消息抽象会渲染 codex 工具调用", async () => {
+  hydrateAuth();
+
+  const workbenchSnapshot = createWorkbenchSnapshot([
+    {
+      workspace: createWorkspace(),
+      sessions: [createSessionSummary({ sessionId: "session-tools", title: "工具链路" })]
+    }
+  ]);
+
+  installFetchMock({
+    workbenchSnapshot,
+    sessions: {
+      "session-tools": {
+        detail: createSessionSummary({ sessionId: "session-tools", title: "工具链路" }),
+        capabilities: createCapabilities(),
+        history: createHistoryPage([
+          createHistoryMessage({
+            messageId: "tool-call-1",
+            role: "tool",
+            kind: "tool_call",
+            content: "{\n  \"command\": \"git status --short\"\n}",
+            sequence: 1,
+            toolCall: {
+              callId: "call-shell-1",
+              name: "shell_command",
+              input: "{\n  \"command\": \"git status --short\"\n}",
+              output: null,
+              error: null,
+              status: "running"
+            }
+          }),
+          createHistoryMessage({
+            messageId: "tool-result-1",
+            role: "tool",
+            kind: "tool_result",
+            content: "Exit code: 0\nOutput:\nerror_code: 0\n M src/main.ts",
+            sequence: 2,
+            timestamp: "2026-03-23T10:00:01.000Z",
+            toolCall: {
+              callId: "call-shell-1",
+              name: "shell_command",
+              input: "",
+              output: "Exit code: 0\nOutput:\nerror_code: 0\n M src/main.ts",
+              error: null,
+              status: "completed"
+            }
+          })
+        ])
+      }
+    }
+  });
+
+  renderConversationRoute("session-tools");
+
+  expect(await screen.findByRole("heading", { name: "工具链路" })).toBeInTheDocument();
+  expect(await screen.findByText("shell_command")).toBeInTheDocument();
+
+  await userEvent.click(screen.getByRole("button", { name: /shell_command/ }));
+
+  expect(
+    (await screen.findAllByText((content) => content.includes("error_code: 0"))).length
+  ).toBeGreaterThan(0);
+});
+
+function hydrateAuth() {
   authStore.hydrate({
     accessToken: "access-token",
     refreshToken: "refresh-token",
@@ -746,117 +586,168 @@ it("会通过统一消息抽象渲染 codex 工具调用", async () => {
       role: "admin"
     }
   });
+}
 
-  global.fetch = vi.fn(async (input: RequestInfo | URL) => {
-    const url = typeof input === "string" ? input : input.toString();
+function createWorkspace() {
+  return {
+    id: "workspace-1",
+    name: "Workspace One",
+    path: "C:/repo",
+    repoRoot: "C:/repo"
+  };
+}
 
-    if (url.endsWith("/api/sessions/session-tools")) {
-      return createJsonResponse({
-        sessionId: "session-tools",
-        workspaceId: "workspace-1",
-        provider: "codex",
-        providerSessionId: "raw-tools",
-        rawStoreRef: "codex://raw-tools",
-        title: "工具链路",
-        messageCount: 2,
-        lastMessageAt: "2026-03-23T10:00:01.000Z",
-        createdAt: "2026-03-23T09:00:00.000Z",
-        updatedAt: "2026-03-23T10:00:01.000Z",
-        syncStatus: "idle",
-        syncCursor: "cursor-tools",
-        lastSyncAt: "2026-03-23T10:00:01.000Z",
-        lastErrorCode: null,
-        lastErrorDetail: null,
-        resumedAt: null
-      });
+function createSessionSummary(input: {
+  sessionId: string;
+  title: string;
+  workspaceId?: string;
+  provider?: "codex" | "claude-code";
+}) {
+  return {
+    sessionId: input.sessionId,
+    workspaceId: input.workspaceId ?? "workspace-1",
+    provider: input.provider ?? "codex",
+    providerSessionId: `raw-${input.sessionId}`,
+    rawStoreRef: `codex://${input.sessionId}`,
+    title: input.title,
+    messageCount: 1,
+    lastMessageAt: "2026-03-23T10:00:00.000Z",
+    createdAt: "2026-03-23T09:00:00.000Z",
+    updatedAt: "2026-03-23T10:00:00.000Z",
+    syncStatus: "idle",
+    syncCursor: "cursor-1",
+    lastSyncAt: "2026-03-23T10:00:00.000Z",
+    lastErrorCode: null,
+    lastErrorDetail: null,
+    resumedAt: null,
+    runningState: "idle",
+    lastEventAt: "2026-03-23T10:00:00.000Z",
+    completedAt: null,
+    lastSeenAt: null,
+    activityState: "idle"
+  };
+}
+
+function createCapabilities() {
+  return {
+    provider: "codex",
+    canStartSession: true,
+    canResumeSession: true,
+    canSendMessage: true,
+    supportsSubagents: false,
+    supportsInterrupt: true,
+    supportsStructuredToolCalls: true,
+    supportsTokenUsage: false,
+    supportsAttachments: false,
+    supportsPermissionPrompt: true,
+    supportsCheckpoint: false,
+    limitations: []
+  };
+}
+
+function createHistoryMessage(input: {
+  messageId: string;
+  role: "user" | "assistant" | "tool" | "system";
+  content: string;
+  sequence: number;
+  kind?: "text" | "thinking" | "tool_call" | "tool_result";
+  timestamp?: string;
+  toolCall?: Record<string, unknown> | null;
+}) {
+  return {
+    messageId: input.messageId,
+    provider: "codex",
+    providerSessionId: "raw-1",
+    role: input.role,
+    kind: input.kind,
+    content: input.content,
+    toolCall: input.toolCall ?? null,
+    timestamp: input.timestamp ?? "2026-03-23T10:00:00.000Z",
+    sequence: input.sequence,
+    rawRef: `codex://raw#line=${input.sequence}`
+  };
+}
+
+function createHistoryPage(messages: Array<Record<string, unknown>>) {
+  return {
+    messages,
+    cursor: "cursor-1",
+    nextCursor: null,
+    total: messages.length
+  };
+}
+
+function createWorkbenchSnapshot(items: Array<Record<string, unknown>>) {
+  return { items };
+}
+
+function installFetchMock(input: {
+  workbenchSnapshot: Record<string, unknown>;
+  sessions: Record<string, MockSessionRecord>;
+  extraHandler?: (url: string, init?: RequestInit) => Response | null;
+}) {
+  MockWebSocket.workbenchSnapshot = input.workbenchSnapshot;
+
+  const fetchMock = vi.fn(async (rawInput: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+    if (url.endsWith("/api/workbench")) {
+      return createJsonResponse(input.workbenchSnapshot);
     }
 
-    if (url.endsWith("/api/sessions/session-tools/capabilities")) {
-      return createJsonResponse({
-        provider: "codex",
-        canStartSession: true,
-        canResumeSession: true,
-        canSendMessage: true,
-        supportsSubagents: false,
-        supportsInterrupt: true,
-        supportsStructuredToolCalls: true,
-        supportsTokenUsage: false,
-        supportsAttachments: false,
-        supportsPermissionPrompt: true,
-        supportsCheckpoint: false,
-        limitations: []
-      });
+    const detailMatch = url.match(/\/api\/sessions\/([^/]+)$/);
+
+    if (detailMatch && !url.endsWith("/capabilities")) {
+      const sessionId = decodeURIComponent(detailMatch[1]!);
+      const record = input.sessions[sessionId];
+
+      if (record) {
+        return createJsonResponse(record.detail);
+      }
     }
 
-    if (url.includes("/api/sessions/session-tools/messages?")) {
-      return createJsonResponse({
-        messages: [
-          {
-            messageId: "tool-call-1",
-            provider: "codex",
-            providerSessionId: "raw-tools",
-            role: "tool",
-            kind: "tool_call",
-            content: "{\n  \"command\": \"git status --short\"\n}",
-            toolCall: {
-              callId: "call-shell-1",
-              name: "shell_command",
-              input: "{\n  \"command\": \"git status --short\"\n}",
-              output: null,
-              error: null,
-              status: "running"
-            },
-            timestamp: "2026-03-23T10:00:00.000Z",
-            sequence: 1,
-            rawRef: "codex://raw-tools#line=1"
-          },
-          {
-            messageId: "tool-result-1",
-            provider: "codex",
-            providerSessionId: "raw-tools",
-            role: "tool",
-            kind: "tool_result",
-            content: "Exit code: 0\nOutput:\nerror_code: 0\n M src/main.ts",
-            toolCall: {
-              callId: "call-shell-1",
-              name: "shell_command",
-              input: "",
-              output: "Exit code: 0\nOutput:\nerror_code: 0\n M src/main.ts",
-              error: null,
-              status: "completed"
-            },
-            timestamp: "2026-03-23T10:00:01.000Z",
-            sequence: 2,
-            rawRef: "codex://raw-tools#line=2"
-          }
-        ],
-        cursor: "cursor-tools",
-        nextCursor: null,
-        total: 2
-      });
+    const capabilityMatch = url.match(/\/api\/sessions\/([^/]+)\/capabilities$/);
+
+    if (capabilityMatch) {
+      const sessionId = decodeURIComponent(capabilityMatch[1]!);
+      const record = input.sessions[sessionId];
+
+      if (record) {
+        return createJsonResponse(record.capabilities);
+      }
     }
 
-    if (url.endsWith("/api/workspaces")) {
-      return createJsonResponse({ items: [] });
+    const historyMatch = url.match(/\/api\/sessions\/([^/]+)\/messages\?/);
+
+    if (historyMatch && (!init?.method || init.method === "GET")) {
+      const sessionId = decodeURIComponent(historyMatch[1]!);
+      const record = input.sessions[sessionId];
+
+      if (record) {
+        return createJsonResponse(record.history);
+      }
     }
 
-    if (url.includes("/api/files/tree?")) {
-      return createJsonResponse({ items: [] });
+    if (url.endsWith("/api/public/bootstrap-status")) {
+      return createJsonResponse({ initialized: true });
     }
 
-    if (url.includes("/api/files/recent?")) {
-      return createJsonResponse({ items: [] });
-    }
+    const extraResponse = input.extraHandler?.(url, init);
 
-    if (url.endsWith("/api/sessions/session-tools/contexts/files")) {
-      return createJsonResponse({ items: [] });
+    if (extraResponse) {
+      return extraResponse;
     }
 
     throw new Error(`未处理的请求: ${url}`);
-  }) as typeof fetch;
+  });
 
-  render(
-    <MemoryRouter initialEntries={["/sessions/session-tools"]}>
+  global.fetch = fetchMock as typeof fetch;
+  return fetchMock;
+}
+
+function renderConversationRoute(sessionId: string) {
+  return render(
+    <MemoryRouter initialEntries={[`/sessions/${sessionId}`]}>
       <Routes>
         <Route element={<WorkbenchLayout />}>
           <Route path="/sessions/:sessionId" element={<ConversationPage />} />
@@ -864,13 +755,26 @@ it("会通过统一消息抽象渲染 codex 工具调用", async () => {
       </Routes>
     </MemoryRouter>
   );
+}
 
-  expect(await screen.findByText("工具链路")).toBeInTheDocument();
-  expect(await screen.findByText("shell_command")).toBeInTheDocument();
-  await userEvent.click(screen.getByRole("button", { name: /shell_command/ }));
+function getSessionSockets() {
+  return MockWebSocket.instances.filter((socket) =>
+    socket.sentPayloads.some((payload) => JSON.parse(payload).type === "session.subscribe")
+  );
+}
 
-  expect((await screen.findAllByText((content) => content.includes("error_code: 0"))).length).toBeGreaterThan(0);
-});
+function getWorkbenchSockets() {
+  return MockWebSocket.instances.filter((socket) =>
+    socket.sentPayloads.some((payload) => JSON.parse(payload).type === "workbench.subscribe")
+  );
+}
+
+function countFetchCalls(fetchMock: ReturnType<typeof vi.fn>, path: string) {
+  return fetchMock.mock.calls.filter(([input]) => {
+    const url = typeof input === "string" ? input : input.toString();
+    return url.includes(path);
+  }).length;
+}
 
 function createJsonResponse(payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {

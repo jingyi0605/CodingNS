@@ -22,6 +22,8 @@ import {
 } from "./session-runtime-machine";
 
 type RuntimeListener = () => void;
+const INITIAL_HISTORY_LIMIT = 30;
+const REALTIME_LIMIT = 40;
 
 export class SessionRuntimeStore {
   private state: SessionRuntimeState = createInitialRuntimeState();
@@ -43,6 +45,9 @@ export class SessionRuntimeStore {
   async initialize(): Promise<void> {
     this.patch({
       historyState: "loading",
+      loadingOlderMessages: false,
+      olderCursor: null,
+      hasOlderMessages: false,
       errorCode: null,
       errorDetail: null
     });
@@ -58,7 +63,7 @@ export class SessionRuntimeStore {
         capabilities
       });
 
-      await this.loadHistory();
+      await this.loadLatestHistory();
       this.scheduleMarkSeen();
       this.startRealtime();
     } catch (error) {
@@ -139,6 +144,47 @@ export class SessionRuntimeStore {
     this.realtimeClient?.reconnectNow();
   }
 
+  async loadOlderMessages(): Promise<void> {
+    if (
+      this.state.historyState !== "ready"
+      || this.state.loadingOlderMessages
+      || !this.state.olderCursor
+    ) {
+      return;
+    }
+
+    this.patch({
+      loadingOlderMessages: true,
+      errorCode: null,
+      errorDetail: null
+    });
+
+    try {
+      const page = await getSessionMessages(
+        this.sessionId,
+        this.state.olderCursor,
+        INITIAL_HISTORY_LIMIT,
+        "backward"
+      );
+      const merged = mergeAuthoritativeMessages(this.state.messages, this.sessionId, page.messages);
+
+      this.patch({
+        messages: merged,
+        loadingOlderMessages: false,
+        olderCursor: page.nextCursor,
+        hasOlderMessages: Boolean(page.nextCursor),
+        pagesLoaded: this.state.pagesLoaded + 1
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "unknown";
+      this.patch({
+        loadingOlderMessages: false,
+        errorCode: "HISTORY_LOAD_MORE_FAILED",
+        errorDetail: detail
+      });
+    }
+  }
+
   destroy(): void {
     this.realtimeClient?.close();
     this.realtimeClient = null;
@@ -149,25 +195,23 @@ export class SessionRuntimeStore {
     }
   }
 
-  private async loadHistory(): Promise<void> {
-    let cursor: string | null = null;
-    let nextCursor: string | null = null;
-    let pagesLoaded = 0;
-    let merged = this.state.messages;
-
-    do {
-      const page = await getSessionMessages(this.sessionId, cursor, 40);
-      pagesLoaded += 1;
-      merged = mergeAuthoritativeMessages(merged, this.sessionId, page.messages);
-      cursor = page.nextCursor;
-      nextCursor = page.cursor;
-    } while (cursor);
+  private async loadLatestHistory(): Promise<void> {
+    const page = await getSessionMessages(
+      this.sessionId,
+      null,
+      INITIAL_HISTORY_LIMIT,
+      "backward"
+    );
+    const merged = mergeAuthoritativeMessages(this.state.messages, this.sessionId, page.messages);
 
     this.patch({
       messages: merged,
       historyState: "ready",
-      lastCursor: nextCursor,
-      pagesLoaded,
+      loadingOlderMessages: false,
+      olderCursor: page.nextCursor,
+      hasOlderMessages: Boolean(page.nextCursor),
+      lastCursor: page.cursor,
+      pagesLoaded: page.messages.length > 0 ? 1 : 0,
       errorCode: null,
       errorDetail: null
     });
@@ -184,7 +228,7 @@ export class SessionRuntimeStore {
     this.realtimeClient = new RealtimeClient({
       sessionId: this.sessionId,
       cursor: this.state.lastCursor,
-      limit: 40,
+      limit: REALTIME_LIMIT,
       onSubscribed: () => {
         this.patch({ connectionState: "connected" });
       },

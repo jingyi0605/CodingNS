@@ -31,6 +31,8 @@ import { SessionRuntimeService } from "../modules/sessions/session-runtime-servi
 import { CommandTemplateService } from "../modules/terminal/command-template-service.js";
 import { TerminalController } from "../modules/terminal/terminal-controller.js";
 import { TerminalService } from "../modules/terminal/terminal-service.js";
+import { WorkbenchController } from "../modules/workbench/workbench-controller.js";
+import { WorkbenchService } from "../modules/workbench/workbench-service.js";
 import { WorkspaceController } from "../modules/workspace/workspace-controller.js";
 import { WorkspaceService } from "../modules/workspace/workspace-service.js";
 import { registerAuthRoutes } from "../routes/auth.js";
@@ -41,6 +43,7 @@ import { registerPublicRoutes } from "../routes/public.js";
 import { registerSessionContextRoutes } from "../routes/session-contexts.js";
 import { registerSessionRoutes } from "../routes/sessions.js";
 import { registerTerminalRoutes } from "../routes/terminals.js";
+import { registerWorkbenchRoutes } from "../routes/workbench.js";
 import { registerWorkspaceRoutes } from "../routes/workspaces.js";
 import { setErrorHandler } from "../shared/http/error-handler.js";
 import { AuthTokenRepository } from "../storage/repositories/auth-token-repository.js";
@@ -58,6 +61,7 @@ import { TerminalInstanceRepository } from "../storage/repositories/terminal-ins
 import { WorkspaceRepository } from "../storage/repositories/workspace-repository.js";
 import { createDatabaseClient } from "../storage/sqlite/client.js";
 import { TerminalWsHub } from "../ws/terminal-ws-hub.js";
+import { WorkbenchWsHub } from "../ws/workbench-ws-hub.js";
 import { createWsServer } from "../ws/ws-server.js";
 import { WsAuthGuard } from "../ws/ws-auth-guard.js";
 export function createServer(config: HostConfig) {
@@ -128,6 +132,11 @@ export function createServer(config: HostConfig) {
     repositories.sessionStatusSnapshotRepository,
     config
   );
+  const workbenchService = new WorkbenchService(
+    repositories.workspaceRepository,
+    repositories.sessionIndexRepository,
+    sessionRuntimeService
+  );
   const fileContextService = new FileContextService(
     sessionRuntimeService,
     repositories.fileContextBindingRepository
@@ -148,6 +157,7 @@ export function createServer(config: HostConfig) {
   const bootstrapController = new BootstrapController(bootstrapService);
   const authController = new AuthController(authService);
   const workspaceController = new WorkspaceController(workspaceService);
+  const workbenchController = new WorkbenchController(workbenchService);
   const sessionController = new SessionController(sessionRuntimeService);
   const providerController = new ProviderController(sessionRuntimeService);
   const fileController = new FileController(
@@ -167,7 +177,8 @@ export function createServer(config: HostConfig) {
     app.server,
     new WsAuthGuard(authService),
     sessionRuntimeService,
-    new TerminalWsHub(terminalService)
+    new TerminalWsHub(terminalService),
+    new WorkbenchWsHub(workbenchService)
   );
 
   app.addHook("onRequest", createAuthGuard(authService));
@@ -176,6 +187,7 @@ export function createServer(config: HostConfig) {
   void registerPublicRoutes(app, bootstrapController);
   void registerAuthRoutes(app, authController);
   void registerWorkspaceRoutes(app, workspaceController);
+  void registerWorkbenchRoutes(app, workbenchController);
   void registerSessionRoutes(app, sessionController);
   void registerFileRoutes(app, fileController);
   void registerSessionContextRoutes(app, fileContextController);
@@ -199,6 +211,7 @@ export function createServer(config: HostConfig) {
         bootstrapService,
         authService,
         workspaceService,
+        workbenchService,
         fileTreeService,
         fileSearchService,
         fileContentService,

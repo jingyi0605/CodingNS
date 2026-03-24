@@ -4,6 +4,7 @@ export type ProviderId = "claude-code" | "codex";
 export type SessionRole = "user" | "assistant" | "tool" | "system";
 export type SyncStatus = "idle" | "syncing" | "error";
 export type MessageKind = "text" | "thinking" | "tool_call" | "tool_result";
+export type HistoryDirection = "forward" | "backward";
 
 export interface NormalizedToolCall {
   callId: string;
@@ -97,7 +98,8 @@ export interface ProviderAdapter {
     providerSessionId: string,
     rawStoreRef: string,
     cursor: string | null,
-    limit: number
+    limit: number,
+    direction?: HistoryDirection
   ): Promise<HistoryPage>;
   subscribeSession(
     providerSessionId: string,

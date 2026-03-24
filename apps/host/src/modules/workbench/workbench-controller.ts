@@ -1,0 +1,29 @@
+import type { FastifyReply, FastifyRequest } from "fastify";
+
+import { AppError } from "../../shared/errors/app-error.js";
+import type { WorkbenchService } from "./workbench-service.js";
+
+function requireUserId(request: FastifyRequest): string {
+  const userId = request.auth?.user.userId;
+
+  if (!userId) {
+    throw new AppError({
+      statusCode: 401,
+      errorCode: "UNAUTHORIZED",
+      detail: "当前请求缺少有效登录态"
+    });
+  }
+
+  return userId;
+}
+
+export class WorkbenchController {
+  constructor(private readonly workbenchService: WorkbenchService) {}
+
+  readonly getSnapshot = async (
+    request: FastifyRequest,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(this.workbenchService.getSnapshot(requireUserId(request)));
+  };
+}

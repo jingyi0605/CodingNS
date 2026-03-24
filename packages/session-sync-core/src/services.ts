@@ -1,5 +1,6 @@
 import { ProviderRegistry } from "./registry.js";
 import type {
+  HistoryDirection,
   HistoryPage,
   ProviderCapabilities,
   ProviderRealtimeEvent,
@@ -29,11 +30,12 @@ export class SessionSyncService {
     providerSessionId: string,
     rawStoreRef: string,
     cursor: string | null,
-    limit: number
+    limit: number,
+    direction: HistoryDirection = "forward"
   ): Promise<HistoryPage> {
     return this.registry
       .get(providerId)
-      .readSessionHistory(providerSessionId, rawStoreRef, cursor, limit);
+      .readSessionHistory(providerSessionId, rawStoreRef, cursor, limit, direction);
   }
 
   subscribe(

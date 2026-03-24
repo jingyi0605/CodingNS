@@ -87,6 +87,7 @@ export const zhCN = {
   conversation: {
     titleFallback: "继续对话",
     historyLoading: "正在从 Host 拉取消息历史…",
+    historyLoadingOlder: "正在加载更早的消息…",
     historyLoadFailed: "历史消息暂时没有拉回来，可以稍后再试。",
     timelineEmpty: "这条会话还没有消息。你发出的第一句话会直接进入 Host 链路。",
     rawRefLabel: "来源",

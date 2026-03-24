@@ -6,6 +6,7 @@ import { AppError } from "../shared/errors/app-error.js";
 import type { AuthContext } from "../modules/auth/auth-service.js";
 import type { SessionRuntimeService } from "../modules/sessions/session-runtime-service.js";
 import type { TerminalWsHub } from "./terminal-ws-hub.js";
+import type { WorkbenchWsHub } from "./workbench-ws-hub.js";
 import type { WsAuthGuard } from "./ws-auth-guard.js";
 
 interface SessionSubscribeMessage {
@@ -19,7 +20,8 @@ export function createWsServer(
   server: Server,
   wsAuthGuard: WsAuthGuard,
   sessionRuntimeService: SessionRuntimeService,
-  terminalWsHub: TerminalWsHub
+  terminalWsHub: TerminalWsHub,
+  workbenchWsHub: WorkbenchWsHub
 ) {
   const wss = new WebSocketServer({
     noServer: true
@@ -65,6 +67,7 @@ export function createWsServer(
 
       subscriptions.clear();
       terminalWsHub.cleanupClient(client);
+      workbenchWsHub.cleanupClient(client);
     };
 
     client.on("message", async (raw) => {
@@ -78,6 +81,10 @@ export function createWsServer(
       }
 
       if (terminalWsHub.handleMessage(client, payload, authContext)) {
+        return;
+      }
+
+      if (workbenchWsHub.handleMessage(client, payload, authContext)) {
         return;
       }
 

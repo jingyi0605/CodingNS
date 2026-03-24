@@ -1,80 +1,55 @@
 import { getHostWebSocketUrl } from "../config/env";
 import { authStore } from "../features/auth/store/auth-store";
 
-type RuntimeConnectionState = "connected" | "reconnecting" | "reconnect_failed" | "closed";
+import type { WorkbenchSnapshotDto } from "../features/conversation/api/conversation-api";
 
-interface SessionSubscribedEvent {
-  type: "session.subscribed";
-  sessionId: string;
+type WorkbenchConnectionState = "connected" | "reconnecting" | "reconnect_failed" | "closed";
+
+interface SystemConnectedEvent {
+  type: "system.connected";
 }
 
-interface SessionEnvelopeEvent {
-  type: "session.backfill" | "session.delta";
-  sessionId: string;
-  cursor: string | null;
-  messages: Array<{
-    messageId: string;
-    provider: "claude-code" | "codex";
-    providerSessionId: string;
-    role: "user" | "assistant" | "tool" | "system";
-    kind: "text" | "thinking" | "tool_call" | "tool_result";
-    content: string;
-    toolCall: {
-      callId: string;
-      name: string;
-      input: string;
-      output: string | null;
-      error: string | null;
-      status: "running" | "completed" | "failed";
-    } | null;
-    timestamp: string;
-    sequence: number;
-    rawRef: string;
-  }>;
+interface WorkbenchSnapshotEvent {
+  type: "workbench.snapshot";
+  snapshot: WorkbenchSnapshotDto;
 }
 
 interface SessionErrorEvent {
   type: "session.error";
-  sessionId: string | null;
   error_code: string;
   detail: string;
 }
 
-type IncomingEvent = SessionSubscribedEvent | SessionEnvelopeEvent | SessionErrorEvent;
+type IncomingEvent = WorkbenchSnapshotEvent | SystemConnectedEvent | SessionErrorEvent;
 
-export interface RealtimeClientOptions {
-  sessionId: string;
-  cursor: string | null;
-  limit: number;
-  onConnectionChange: (state: RuntimeConnectionState) => void;
-  onSubscribed: () => void;
-  onEnvelope: (event: SessionEnvelopeEvent) => void;
-  onError: (event: SessionErrorEvent) => void;
+export interface WorkbenchRealtimeClientOptions {
+  onConnectionChange: (state: WorkbenchConnectionState) => void;
+  onSnapshot: (snapshot: WorkbenchSnapshotDto) => void;
   onUnauthorized: () => void;
 }
 
-export class RealtimeClient {
+export class WorkbenchRealtimeClient {
   private socket: WebSocket | null = null;
   private disposed = false;
   private reconnectAttempts = 0;
   private reconnectTimer: number | null = null;
-  private latestCursor: string | null;
 
-  constructor(private readonly options: RealtimeClientOptions) {
-    this.latestCursor = options.cursor;
-  }
+  constructor(private readonly options: WorkbenchRealtimeClientOptions) {}
 
   start(): void {
     this.connect(false);
   }
 
-  updateCursor(cursor: string | null): void {
-    this.latestCursor = cursor;
-  }
+  requestRefresh(): void {
+    if (this.socket?.readyState !== WebSocket.OPEN) {
+      return;
+    }
 
-  reconnectNow(): void {
-    this.reconnectAttempts = 0;
-    this.connect(true);
+    this.socket.send(
+      JSON.stringify({
+        type: "workbench.refresh"
+      })
+    );
   }
 
   close(): void {
@@ -120,39 +95,32 @@ export class RealtimeClient {
       this.reconnectAttempts = 0;
       socket.send(
         JSON.stringify({
-          type: "session.subscribe",
-          sessionId: this.options.sessionId,
-          cursor: this.latestCursor,
-          limit: this.options.limit
+          type: "workbench.subscribe"
         })
       );
     });
 
     socket.addEventListener("message", (raw) => {
-      const payload = JSON.parse(raw.data as string) as IncomingEvent | { type: "system.connected" };
+      const payload = JSON.parse(raw.data as string) as IncomingEvent;
 
       if (payload.type === "system.connected") {
         this.options.onConnectionChange("connected");
         return;
       }
 
-      if (payload.type === "session.subscribed") {
-        this.options.onSubscribed();
-        return;
-      }
-
       if (payload.type === "session.error") {
         if (payload.error_code === "UNAUTHORIZED") {
           this.options.onUnauthorized();
-          return;
         }
 
-        this.options.onError(payload);
         return;
       }
 
-      this.latestCursor = payload.cursor;
-      this.options.onEnvelope(payload);
+      if (payload.type !== "workbench.snapshot" || !isWorkbenchSnapshot(payload.snapshot)) {
+        return;
+      }
+
+      this.options.onSnapshot(payload.snapshot);
     });
 
     socket.addEventListener("close", () => {
@@ -189,4 +157,12 @@ export class RealtimeClient {
       this.connect(true);
     }, delay);
   }
+}
+
+function isWorkbenchSnapshot(payload: unknown): payload is WorkbenchSnapshotDto {
+  if (typeof payload !== "object" || payload === null) {
+    return false;
+  }
+
+  return Array.isArray((payload as WorkbenchSnapshotDto).items);
 }

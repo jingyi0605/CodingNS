@@ -28,6 +28,9 @@ export interface SessionRuntimeState {
   capabilities: ProviderCapabilitiesDto | null;
   messages: SessionMessageViewModel[];
   historyState: RuntimeHistoryState;
+  loadingOlderMessages: boolean;
+  olderCursor: string | null;
+  hasOlderMessages: boolean;
   connectionState: RuntimeConnectionState;
   lastCursor: string | null;
   pagesLoaded: number;
@@ -41,6 +44,9 @@ export function createInitialRuntimeState(): SessionRuntimeState {
     capabilities: null,
     messages: [],
     historyState: "idle",
+    loadingOlderMessages: false,
+    olderCursor: null,
+    hasOlderMessages: false,
     connectionState: "closed",
     lastCursor: null,
     pagesLoaded: 0,

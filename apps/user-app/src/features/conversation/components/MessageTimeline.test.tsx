@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -219,5 +219,52 @@ describe("MessageTimeline", () => {
     await userEvent.click(screen.getByRole("button", { name: /tool/ }));
 
     expect(screen.getAllByText("legacy tool output").length).toBeGreaterThan(0);
+  });
+  it("婊氬姩鍒板ご閮ㄦ椂浼氱户缁姞杞芥洿鏃╂秷鎭?", () => {
+    const handleLoadOlderMessages = vi.fn();
+
+    render(
+      <MessageTimeline
+        historyState="ready"
+        provider="codex"
+        hasOlderMessages
+        onLoadOlderMessages={handleLoadOlderMessages}
+        onRetryMessage={vi.fn()}
+        messages={Array.from({ length: 5 }, (_, index) => ({
+          id: `message-${index + 1}`,
+          sessionId: "session-1",
+          role: "assistant",
+          kind: "text",
+          content: `message-${index + 1}`,
+          toolCall: null,
+          timestamp: `2026-03-23T10:0${index}:00.000Z`,
+          sequence: index + 1,
+          rawRef: `codex://raw#line=${index + 1}`,
+          deliveryState: "sent",
+          clientRequestId: null
+        }))}
+      />
+    );
+
+    const messageList = document.querySelector(".message-list") as HTMLDivElement | null;
+
+    expect(messageList).not.toBeNull();
+
+    Object.defineProperty(messageList, "scrollHeight", {
+      value: 1200,
+      configurable: true
+    });
+    Object.defineProperty(messageList, "clientHeight", {
+      value: 600,
+      configurable: true
+    });
+
+    fireEvent.scroll(messageList!, {
+      target: {
+        scrollTop: 0
+      }
+    });
+
+    expect(handleLoadOlderMessages).toHaveBeenCalledTimes(1);
   });
 });

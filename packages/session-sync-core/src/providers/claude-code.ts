@@ -3,6 +3,7 @@ import { statSync } from "node:fs";
 import crypto from "node:crypto";
 
 import type {
+  HistoryDirection,
   HistoryPage,
   NormalizedMessage,
   ProviderAdapter,
@@ -96,11 +97,12 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
     providerSessionId: string,
     rawStoreRef: string,
     cursor: string | null,
-    limit: number
+    limit: number,
+    direction: HistoryDirection = "forward"
   ): Promise<HistoryPage> {
     const records = readJsonLines(rawStoreRef).map((record) => record.data);
     const messages = this.parseMessages(rawStoreRef, records, providerSessionId);
-    return sliceHistory(messages, cursor, limit);
+    return sliceHistory(messages, cursor, limit, direction);
   }
 
   subscribeSession(

@@ -14,6 +14,7 @@ interface SessionParams {
 interface SessionMessagesQuery {
   cursor?: string;
   limit?: string;
+  direction?: string;
 }
 
 interface SendMessageBody {
@@ -79,6 +80,7 @@ export class SessionController {
         request.params.sessionId,
         request.query.cursor ?? null,
         Number(request.query.limit ?? "50"),
+        request.query.direction === "backward" ? "backward" : "forward",
         requireUserId(request)
       )
     );

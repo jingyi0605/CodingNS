@@ -16,6 +16,7 @@ import {
   useNavigate
 } from "react-router-dom";
 
+import { WorkbenchRealtimeClient } from "../../../network/workbench-realtime-client";
 import { t } from "../../../shared/i18n";
 import { ThemeSwitcher } from "../../../shared/theme";
 import { authStore } from "../../auth/store/auth-store";
@@ -23,9 +24,8 @@ import { TerminalManagerPanel } from "../../workbench/components/TerminalManager
 import { FileContextPanel } from "./FileContextPanel";
 import { GitSidebar } from "./GitSidebar";
 import {
+  getWorkbenchSnapshot,
   importWorkspace,
-  listWorkspaceSessions,
-  listWorkspaces,
   startSession,
   type ProviderId,
   type SessionSummaryDto,
@@ -43,6 +43,7 @@ const DEFAULT_RIGHT_PANEL_WIDTH = 340;
 const MIN_PANEL_WIDTH = 220;
 const MAX_LEFT_PANEL_WIDTH = 520;
 const MAX_RIGHT_PANEL_WIDTH = 560;
+const INFO_PANEL_BOOT_DELAY_MS = 250;
 
 export interface WorkspaceSessionGroup {
   workspace: WorkspaceDto;
@@ -142,6 +143,7 @@ function SidebarContent({
   navigationError,
   navigationMessage,
   activeSessionId,
+  onRefreshNavigation,
   onClose,
   onToggleCollapse
 }: {
@@ -152,6 +154,7 @@ function SidebarContent({
   navigationError: string | null;
   navigationMessage: string | null;
   activeSessionId: string | null;
+  onRefreshNavigation: () => Promise<void>;
   onClose?: () => void;
   onToggleCollapse?: () => void;
 }) {
@@ -181,7 +184,7 @@ function SidebarContent({
       });
       setImportForm({ path: "", name: "" });
       setImportExpanded(false);
-      window.location.reload();
+      await onRefreshNavigation();
     } catch {
       // Error handled silently.
     } finally {
@@ -195,6 +198,7 @@ function SidebarContent({
 
     try {
       const session = await startSession({ workspaceId, provider });
+      await onRefreshNavigation();
       navigate(`/sessions/${session.sessionId}`);
       onClose?.();
     } catch {
@@ -372,6 +376,7 @@ function SidebarContent({
 }
 
 function WorkbenchInfoPanel({
+  panelReady,
   activeTab,
   onTabChange,
   onToggleCollapse,
@@ -379,6 +384,7 @@ function WorkbenchInfoPanel({
   currentWorkspaceId,
   navigationGroups
 }: {
+  panelReady: boolean;
   activeTab: InfoTab;
   onTabChange: (tab: InfoTab) => void;
   onToggleCollapse: () => void;
@@ -426,7 +432,13 @@ function WorkbenchInfoPanel({
       </div>
 
       <div className="workbench-auxiliary-body">
-        {activeTab === "files" ? (
+        {!panelReady ? (
+          <section className="workbench-empty-state minimal">
+            <p>{t("shell.infoPanelDeferred")}</p>
+          </section>
+        ) : null}
+
+        {panelReady && activeTab === "files" ? (
           currentSessionId && currentWorkspaceId ? (
             <FileContextPanel sessionId={currentSessionId} workspaceId={currentWorkspaceId} />
           ) : (
@@ -436,7 +448,7 @@ function WorkbenchInfoPanel({
           )
         ) : null}
 
-        {activeTab === "git" ? (
+        {panelReady && activeTab === "git" ? (
           fallbackWorkspaceId ? (
             <GitSidebar workspaceId={fallbackWorkspaceId} />
           ) : (
@@ -446,7 +458,7 @@ function WorkbenchInfoPanel({
           )
         ) : null}
 
-        {activeTab === "terminals" ? (
+        {panelReady && activeTab === "terminals" ? (
           <TerminalManagerPanel
             currentWorkspaceId={fallbackWorkspaceId}
             navigationGroups={navigationGroups}
@@ -461,6 +473,8 @@ export function WorkbenchLayout() {
   const location = useLocation();
   const navigate = useNavigate();
   const requestIdRef = useRef(0);
+  const realtimeClientRef = useRef<WorkbenchRealtimeClient | null>(null);
+  const hasNavigationDataRef = useRef(false);
   const [navigationGroups, setNavigationGroups] = useState<WorkspaceSessionGroup[]>([]);
   const [navigationLoading, setNavigationLoading] = useState(true);
   const [navigationError, setNavigationError] = useState<string | null>(null);
@@ -477,48 +491,43 @@ export function WorkbenchLayout() {
   const [rightCollapsed, setRightCollapsed] = useState(() =>
     readStoredBoolean(RIGHT_PANEL_COLLAPSED_KEY, false)
   );
+  const [infoPanelReady, setInfoPanelReady] = useState(false);
   const [activeInfoTab, setActiveInfoTab] = useState<InfoTab>("files");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [sessionWorkspaceMap, setSessionWorkspaceMap] = useState<Record<string, string>>({});
 
+  function applyWorkbenchSnapshot(snapshot: Awaited<ReturnType<typeof getWorkbenchSnapshot>>) {
+    if (!snapshot || !Array.isArray(snapshot.items)) {
+      return;
+    }
+
+    setNavigationGroups(
+      snapshot.items.map((item) => ({
+        workspace: item.workspace,
+        sessions: [...item.sessions].sort(sortSessions)
+      }))
+    );
+    setNavigationError(null);
+  }
+
   async function refreshNavigation() {
     const requestId = requestIdRef.current + 1;
     requestIdRef.current = requestId;
-    setNavigationLoading(true);
+    setNavigationLoading((current) => current || navigationGroups.length === 0);
 
     try {
-      const workspaceResponse = await listWorkspaces();
-      const sessionResponses = await Promise.all(
-        workspaceResponse.items.map(async (workspace) => ({
-          workspaceId: workspace.id,
-          response: await listWorkspaceSessions(workspace.id)
-        }))
-      );
+      const snapshot = await getWorkbenchSnapshot();
 
       if (requestId !== requestIdRef.current) {
         return;
       }
 
-      const sessionsByWorkspace = new Map(
-        sessionResponses.map((item) => [
-          item.workspaceId,
-          [...item.response.items].sort(sortSessions)
-        ])
-      );
-
-      setNavigationGroups(
-        workspaceResponse.items.map((workspace) => ({
-          workspace,
-          sessions: sessionsByWorkspace.get(workspace.id) ?? []
-        }))
-      );
-      setNavigationError(null);
+      applyWorkbenchSnapshot(snapshot);
     } catch (error) {
       if (requestId !== requestIdRef.current) {
         return;
       }
 
-      setNavigationGroups([]);
       setNavigationError(error instanceof Error ? error.message : t("shell.navigationLoadFailed"));
     } finally {
       if (requestId === requestIdRef.current) {
@@ -529,19 +538,37 @@ export function WorkbenchLayout() {
 
   useEffect(() => {
     void refreshNavigation();
-  }, [location.pathname]);
+  }, []);
 
   useEffect(() => {
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === "visible") {
-        void refreshNavigation();
+    hasNavigationDataRef.current = navigationGroups.length > 0;
+  }, [navigationGroups]);
+
+  useEffect(() => {
+    const client = new WorkbenchRealtimeClient({
+      onConnectionChange: (connectionState) => {
+        if (connectionState === "reconnect_failed" && !hasNavigationDataRef.current) {
+          setNavigationError(t("shell.navigationLoadFailed"));
+        }
+      },
+      onSnapshot: (snapshot) => {
+        applyWorkbenchSnapshot(snapshot);
+        setNavigationLoading(false);
+      },
+      onUnauthorized: () => {
+        authStore.clear();
+        navigate("/login", { replace: true });
       }
-    }, 5000);
+    });
+
+    realtimeClientRef.current = client;
+    client.start();
 
     return () => {
-      window.clearInterval(timer);
+      realtimeClientRef.current = null;
+      client.close();
     };
-  }, []);
+  }, [navigate]);
 
   useEffect(() => {
     writeStoredValue(LEFT_PANEL_WIDTH_KEY, String(leftPanelWidth));
@@ -558,6 +585,20 @@ export function WorkbenchLayout() {
   useEffect(() => {
     writeStoredValue(RIGHT_PANEL_COLLAPSED_KEY, String(rightCollapsed));
   }, [rightCollapsed]);
+
+  useEffect(() => {
+    if (infoPanelReady || rightCollapsed || navigationLoading) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setInfoPanelReady(true);
+    }, INFO_PANEL_BOOT_DELAY_MS);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [infoPanelReady, navigationLoading, rightCollapsed]);
 
   const sessionMatch = matchPath("/sessions/:sessionId", location.pathname);
   const currentSessionId = sessionMatch?.params.sessionId ?? null;
@@ -584,6 +625,10 @@ export function WorkbenchLayout() {
     }
 
     setLeftCollapsed(false);
+  }
+
+  function ensureInfoPanelReady() {
+    setInfoPanelReady(true);
   }
 
   function beginResize(side: "left" | "right", startClientX: number) {
@@ -677,6 +722,7 @@ export function WorkbenchLayout() {
                 navigationError={navigationError}
                 navigationMessage={navigationMessage}
                 activeSessionId={currentSessionId}
+                onRefreshNavigation={refreshNavigation}
                 onToggleCollapse={() => setLeftCollapsed(true)}
               />
             </aside>
@@ -740,7 +786,15 @@ export function WorkbenchLayout() {
               <button
                 className="panel-toggle-button"
                 type="button"
-                onClick={() => setRightCollapsed((current) => !current)}
+                onClick={() => {
+                  if (rightCollapsed) {
+                    ensureInfoPanelReady();
+                    setRightCollapsed(false);
+                    return;
+                  }
+
+                  setRightCollapsed(true);
+                }}
               >
                 {rightCollapsed ? t("shell.showInfoSidebar") : t("shell.hideInfoSidebar")}
               </button>
@@ -760,8 +814,12 @@ export function WorkbenchLayout() {
             />
             <aside className="workbench-auxiliary surface-card">
               <WorkbenchInfoPanel
+                panelReady={infoPanelReady}
                 activeTab={activeInfoTab}
-                onTabChange={setActiveInfoTab}
+                onTabChange={(tab) => {
+                  ensureInfoPanelReady();
+                  setActiveInfoTab(tab);
+                }}
                 onToggleCollapse={() => setRightCollapsed(true)}
                 currentSessionId={currentSessionId}
                 currentWorkspaceId={currentWorkspaceId}
@@ -780,6 +838,7 @@ export function WorkbenchLayout() {
             navigationError={navigationError}
             navigationMessage={navigationMessage}
             activeSessionId={currentSessionId}
+            onRefreshNavigation={refreshNavigation}
             onClose={() => setMobileNavOpen(false)}
           />
         </MobileNavDrawer>

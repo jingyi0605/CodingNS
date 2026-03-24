@@ -1,4 +1,5 @@
 import { httpClient } from "../../../network/http-client";
+import { ApiError } from "../../../shared/network/api-error";
 
 export type ProviderId = "claude-code" | "codex";
 export type SyncStatus = "idle" | "syncing" | "error";
@@ -6,6 +7,7 @@ export type DeliveryState = "sending" | "sent" | "failed";
 export type MessageKind = "text" | "thinking" | "tool_call" | "tool_result";
 export type SessionRunningState = "idle" | "running";
 export type SessionActivityState = "idle" | "running" | "completed_unread";
+export type HistoryDirection = "forward" | "backward";
 
 export interface ToolCallDto {
   callId: string;
@@ -87,6 +89,15 @@ export interface HistoryPageDto {
   total: number;
 }
 
+export interface WorkbenchSnapshotItemDto {
+  workspace: WorkspaceDto;
+  sessions: SessionSummaryDto[];
+}
+
+export interface WorkbenchSnapshotDto {
+  items: WorkbenchSnapshotItemDto[];
+}
+
 export interface SendMessageResponseDto {
   sessionId: string;
   acceptedAt: string;
@@ -102,6 +113,28 @@ export interface StartSessionPayload {
 
 export function listWorkspaces() {
   return httpClient.request<{ items: WorkspaceDto[] }>("/api/workspaces");
+}
+
+export async function getWorkbenchSnapshot() {
+  try {
+    return await httpClient.request<WorkbenchSnapshotDto>("/api/workbench");
+  } catch (error) {
+    if (!(error instanceof ApiError) || error.status !== 404) {
+      throw error;
+    }
+
+    const workspaceResponse = await listWorkspaces();
+    const sessionResponses = await Promise.all(
+      workspaceResponse.items.map(async (workspace) => ({
+        workspace,
+        sessions: (await listWorkspaceSessions(workspace.id)).items
+      }))
+    );
+
+    return {
+      items: sessionResponses
+    } satisfies WorkbenchSnapshotDto;
+  }
 }
 
 export function importWorkspace(payload: ImportWorkspacePayload) {
@@ -140,7 +173,12 @@ export function getSessionCapabilities(sessionId: string) {
   );
 }
 
-export function getSessionMessages(sessionId: string, cursor: string | null, limit: number) {
+export function getSessionMessages(
+  sessionId: string,
+  cursor: string | null,
+  limit: number,
+  direction: HistoryDirection = "forward"
+) {
   const search = new URLSearchParams();
 
   if (cursor) {
@@ -148,6 +186,7 @@ export function getSessionMessages(sessionId: string, cursor: string | null, lim
   }
 
   search.set("limit", String(limit));
+  search.set("direction", direction);
 
   return httpClient.request<HistoryPageDto>(
     `/api/sessions/${encodeURIComponent(sessionId)}/messages?${search.toString()}`

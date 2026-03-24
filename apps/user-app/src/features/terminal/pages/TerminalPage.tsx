@@ -6,7 +6,7 @@ import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 
 import { t } from "../../../shared/i18n";
-import { listWorkspaces, type WorkspaceDto } from "../../conversation/api/conversation-api";
+import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout";
 import {
   closeTerminal,
   createTerminal,
@@ -58,13 +58,17 @@ const MAX_PERSISTED_TERMINAL_VIEW_CHARS = 120_000;
 
 export function TerminalPage() {
   const navigate = useNavigate();
+  const { navigationGroups } = useWorkbenchShell();
   const terminalContainerRef = useRef<HTMLDivElement | null>(null);
   const realtimeClientRef = useRef<TerminalRealtimeClient | null>(null);
   const viewportRuntimeRef = useRef<TerminalViewportRuntime | null>(null);
   const activeCursorRef = useRef<string | null>(null);
   const activeRecoveryStateRef = useRef<"idle_closed" | null>(null);
+  const workspaces = useMemo(
+    () => navigationGroups.map((group) => group.workspace),
+    [navigationGroups]
+  );
 
-  const [workspaces, setWorkspaces] = useState<WorkspaceDto[]>([]);
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState("");
   const [shellOptions, setShellOptions] = useState<TerminalShellOptionDto[]>([]);
   const [selectedShellId, setSelectedShellId] = useState("");
@@ -84,27 +88,31 @@ export function TerminalPage() {
 
   useEffect(() => {
     void (async () => {
-      const [workspaceResponse, shellResponse] = await Promise.all([
-        listWorkspaces(),
-        listTerminalShellOptions()
-      ]);
-      setWorkspaces(workspaceResponse.items);
+      const shellResponse = await listTerminalShellOptions();
       setShellOptions(shellResponse.items);
 
       const defaultShellId = pickDefaultShellId(shellResponse.items);
       setSelectedShellId(defaultShellId);
-
-      const persistedWorkspaceId = readPersistedTerminalPageState().selectedWorkspaceId;
-      const restoredWorkspaceId =
-        workspaceResponse.items.find((workspace) => workspace.id === persistedWorkspaceId)?.id ??
-        workspaceResponse.items[0]?.id ??
-        "";
-
-      setSelectedWorkspaceId(restoredWorkspaceId);
     })().catch(() => {
       setPageMessage(t("terminal.workspaceLoadFailed"));
     });
   }, []);
+
+  useEffect(() => {
+    const persistedWorkspaceId = readPersistedTerminalPageState().selectedWorkspaceId;
+    const restoredWorkspaceId =
+      workspaces.find((workspace) => workspace.id === persistedWorkspaceId)?.id ??
+      workspaces[0]?.id ??
+      "";
+
+    setSelectedWorkspaceId((current) => {
+      if (current && workspaces.some((workspace) => workspace.id === current)) {
+        return current;
+      }
+
+      return restoredWorkspaceId;
+    });
+  }, [workspaces]);
 
   useEffect(() => {
     persistSelectedWorkspaceId(selectedWorkspaceId || null);
