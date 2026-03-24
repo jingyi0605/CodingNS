@@ -567,18 +567,20 @@ export class CodexAdapter implements ProviderAdapter {
 }
 
 function buildCodexMessageDedupeKey(message: Omit<NormalizedMessage, "sequence">): string {
+  const comparable = toComparableCodexMessage(message);
+
   return JSON.stringify({
-    role: message.role,
-    kind: message.kind,
-    content: message.content,
-    toolCall: message.toolCall
+    role: comparable.role,
+    kind: comparable.kind,
+    content: comparable.content,
+    toolCall: comparable.toolCall
       ? {
-          callId: message.toolCall.callId,
-          name: message.toolCall.name,
-          input: message.toolCall.input,
-          output: message.toolCall.output,
-          error: message.toolCall.error,
-          status: message.toolCall.status
+          callId: comparable.toolCall.callId,
+          name: comparable.toolCall.name,
+          input: comparable.toolCall.input,
+          output: comparable.toolCall.output,
+          error: comparable.toolCall.error,
+          status: comparable.toolCall.status
         }
       : null
   });
@@ -592,19 +594,79 @@ function isEquivalentCodexMessage(
   left: Pick<NormalizedMessage, "role" | "kind" | "content" | "timestamp" | "toolCall">,
   right: Pick<NormalizedMessage, "role" | "kind" | "content" | "timestamp" | "toolCall">
 ): boolean {
+  const comparableLeft = toComparableCodexMessage(left);
+  const comparableRight = toComparableCodexMessage(right);
+
   if (
-    left.role !== right.role ||
-    left.kind !== right.kind ||
-    left.content !== right.content
+    comparableLeft.role !== comparableRight.role ||
+    comparableLeft.kind !== comparableRight.kind ||
+    comparableLeft.content !== comparableRight.content
   ) {
     return false;
   }
 
-  if (JSON.stringify(left.toolCall) !== JSON.stringify(right.toolCall)) {
+  if (JSON.stringify(comparableLeft.toolCall) !== JSON.stringify(comparableRight.toolCall)) {
     return false;
   }
 
   return areCodexTimestampsNear(left.timestamp, right.timestamp);
+}
+
+function toComparableCodexMessage<
+  T extends Pick<NormalizedMessage, "role" | "kind" | "content" | "toolCall">
+>(message: T): {
+  role: T["role"];
+  kind: T["kind"];
+  content: string;
+  toolCall:
+    | {
+        callId: string;
+        name: string;
+        input: string;
+        output: string | null;
+        error: string | null;
+        status: NonNullable<T["toolCall"]>["status"];
+      }
+    | null;
+} {
+  return {
+    role: message.role,
+    kind: message.kind,
+    content: normalizeComparableCodexContent(message.kind, message.content),
+    toolCall: message.toolCall
+      ? {
+          callId: message.toolCall.callId,
+          name: message.toolCall.name,
+          input: normalizeComparableCodexLineEndings(message.toolCall.input),
+          output:
+            message.toolCall.output === null
+              ? null
+              : normalizeComparableCodexLineEndings(message.toolCall.output),
+          error:
+            message.toolCall.error === null
+              ? null
+              : normalizeComparableCodexLineEndings(message.toolCall.error),
+          status: message.toolCall.status
+        }
+      : null
+  };
+}
+
+function normalizeComparableCodexContent(
+  kind: NormalizedMessage["kind"],
+  content: string
+): string {
+  const normalized = normalizeComparableCodexLineEndings(content);
+
+  if (kind === "text" || kind === "thinking") {
+    return normalized.trimEnd();
+  }
+
+  return normalized;
+}
+
+function normalizeComparableCodexLineEndings(content: string): string {
+  return content.replace(/\r\n/g, "\n");
 }
 
 function areCodexTimestampsNear(left: string, right: string): boolean {

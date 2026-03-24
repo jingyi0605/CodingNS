@@ -129,13 +129,15 @@ export function mergeAuthoritativeMessages(
     nextById.set(message.messageId, toViewMessage(sessionId, message));
   }
 
-  return Array.from(nextById.values()).sort((left, right) => {
+  const sorted = Array.from(nextById.values()).sort((left, right) => {
     if (left.sequence !== right.sequence) {
       return left.sequence - right.sequence;
     }
 
     return left.timestamp.localeCompare(right.timestamp);
   });
+
+  return collapseEquivalentCodexMessages(sorted);
 }
 
 export function reconcileMessage(
@@ -160,4 +162,68 @@ export function markPendingAsFailed(
         }
       : item
   );
+}
+
+function collapseEquivalentCodexMessages(
+  messages: SessionMessageViewModel[]
+): SessionMessageViewModel[] {
+  const collapsed: SessionMessageViewModel[] = [];
+
+  for (const message of messages) {
+    const previous = collapsed.at(-1);
+
+    if (!previous || !isEquivalentCodexTextMessage(previous, message)) {
+      collapsed.push(message);
+      continue;
+    }
+
+    collapsed[collapsed.length - 1] = pickPreferredCodexTextMessage(previous, message);
+  }
+
+  return collapsed;
+}
+
+function isEquivalentCodexTextMessage(
+  left: SessionMessageViewModel,
+  right: SessionMessageViewModel
+): boolean {
+  if (
+    left.deliveryState !== "sent" ||
+    right.deliveryState !== "sent" ||
+    !left.rawRef.startsWith("codex://") ||
+    !right.rawRef.startsWith("codex://") ||
+    left.role !== right.role ||
+    left.kind !== right.kind ||
+    left.timestamp !== right.timestamp ||
+    left.toolCall !== null ||
+    right.toolCall !== null
+  ) {
+    return false;
+  }
+
+  if (left.kind !== "text" && left.kind !== "thinking") {
+    return false;
+  }
+
+  return normalizeComparableCodexText(left.content) === normalizeComparableCodexText(right.content);
+}
+
+function pickPreferredCodexTextMessage(
+  left: SessionMessageViewModel,
+  right: SessionMessageViewModel
+): SessionMessageViewModel {
+  const leftHasTrailingWhitespace =
+    left.content !== normalizeComparableCodexText(left.content);
+  const rightHasTrailingWhitespace =
+    right.content !== normalizeComparableCodexText(right.content);
+
+  if (leftHasTrailingWhitespace !== rightHasTrailingWhitespace) {
+    return leftHasTrailingWhitespace ? right : left;
+  }
+
+  return right;
+}
+
+function normalizeComparableCodexText(content: string): string {
+  return content.replace(/\r\n/g, "\n").trimEnd();
 }

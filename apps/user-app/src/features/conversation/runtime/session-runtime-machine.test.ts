@@ -27,7 +27,7 @@ function createHistoryMessage(overrides: {
 }
 
 describe("session runtime machine", () => {
-  it("去重并保持权威消息顺序", () => {
+  it("按 messageId 去重并保持消息顺序", () => {
     const merged = mergeAuthoritativeMessages([], "session-1", [
       createHistoryMessage({
         messageId: "m-2",
@@ -65,6 +65,35 @@ describe("session runtime machine", () => {
     expect(merged.map((item) => item.id)).toEqual(["m-1", "m-2"]);
   });
 
+  it("会折叠 codex 历史里只差末尾换行的重复文本消息", () => {
+    const merged = mergeAuthoritativeMessages([], "session-1", [
+      createHistoryMessage({
+        messageId: "codex-response-item",
+        provider: "codex",
+        providerSessionId: "raw-1",
+        role: "user",
+        content: "same message",
+        timestamp: "2026-03-24T01:05:29.473Z",
+        sequence: 2,
+        rawRef: "codex://demo#line=6"
+      }),
+      createHistoryMessage({
+        messageId: "codex-event-msg",
+        provider: "codex",
+        providerSessionId: "raw-1",
+        role: "user",
+        content: "same message\n",
+        timestamp: "2026-03-24T01:05:29.473Z",
+        sequence: 3,
+        rawRef: "codex://demo#line=7"
+      })
+    ]);
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0].id).toBe("codex-response-item");
+    expect(merged[0].content).toBe("same message");
+  });
+
   it("发送成功后会用正式消息替换本地暂态消息", () => {
     const pending = createPendingMessage("session-1", "先发出去", "client-1");
     const reconciled = reconcileMessage(
@@ -96,21 +125,19 @@ describe("session runtime machine", () => {
     expect(failed[0].deliveryState).toBe("failed");
     expect(failed[0].clientRequestId).toBe("client-2");
   });
-  it("creates a generic tool abstraction when toolCall is missing", () => {
-    const view = toViewMessage(
-      "session-1",
-      {
-        messageId: "legacy-tool-1",
-        provider: "claude-code",
-        providerSessionId: "raw-legacy",
-        role: "tool",
-        content: "legacy tool output",
-        timestamp: "2026-03-23T10:00:06.000Z",
-        sequence: 4,
-        rawRef: "claude-code://demo#4",
-        toolCall: null
-      }
-    );
+
+  it("缺少 toolCall 时会补一个通用工具抽象", () => {
+    const view = toViewMessage("session-1", {
+      messageId: "legacy-tool-1",
+      provider: "claude-code",
+      providerSessionId: "raw-legacy",
+      role: "tool",
+      content: "legacy tool output",
+      timestamp: "2026-03-23T10:00:06.000Z",
+      sequence: 4,
+      rawRef: "claude-code://demo#4",
+      toolCall: null
+    });
 
     expect(view.kind).toBe("tool_result");
     expect(view.toolCall).toEqual({

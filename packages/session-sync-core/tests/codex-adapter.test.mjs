@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 
 import { CodexAdapter } from "../dist/index.js";
 
-test("CodexAdapter 会优先保留 response_item，避免 event_msg 重复渲染同一条消息", async () => {
+test("CodexAdapter 会优先保留 response_item，并忽略末尾空白差异导致的重复消息", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-adapter-"));
   const sessionFile = join(tempDir, "session.jsonl");
 
@@ -26,7 +26,7 @@ test("CodexAdapter 会优先保留 response_item，避免 event_msg 重复渲染
         type: "event_msg",
         payload: {
           type: "user_message",
-          message: "用户消息"
+          message: "用户消息\n"
         }
       }),
       JSON.stringify({
