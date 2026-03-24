@@ -23,6 +23,7 @@ export interface TerminalTemplateDto {
   command: string;
   args: string[];
   env: Record<string, string>;
+  port: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -35,6 +36,15 @@ export interface TerminalShellOptionDto {
   unavailableReason: string | null;
 }
 
+export interface TerminalTemplateRuntimeStatusDto {
+  templateId: string;
+  port: number;
+  occupied: boolean;
+  processId: number | null;
+  processName: string | null;
+  processCommandLine: string | null;
+}
+
 export function listTerminalShellOptions() {
   return httpClient.request<{ items: TerminalShellOptionDto[] }>("/api/terminals/shells");
 }
@@ -43,6 +53,22 @@ export function listWorkspaceTerminals(workspaceId: string) {
   return httpClient.request<{ items: TerminalDto[] }>(
     `/api/terminals?workspaceId=${encodeURIComponent(workspaceId)}`
   );
+}
+
+export function listWorkspaceTemplateRuntimeStatuses(workspaceId: string) {
+  return httpClient.request<{ items: TerminalTemplateRuntimeStatusDto[] }>(
+    `/api/terminals/templates/runtime-status?workspaceId=${encodeURIComponent(workspaceId)}`
+  );
+}
+
+export function stopTerminalTemplateProcess(templateId: string) {
+  return httpClient.request<{
+    success: true;
+    processId: number | null;
+    alreadyStopped: boolean;
+  }>(`/api/terminals/templates/${encodeURIComponent(templateId)}/stop`, {
+    method: "POST"
+  });
 }
 
 export function createTerminal(payload: {
@@ -85,6 +111,7 @@ export function createTerminalTemplate(payload: {
   cwd?: string;
   command: string;
   args: string[];
+  port?: number | null;
 }) {
   return httpClient.request<TerminalTemplateDto>("/api/terminals/templates", {
     method: "POST",

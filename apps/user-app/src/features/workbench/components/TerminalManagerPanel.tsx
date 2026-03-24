@@ -1,11 +1,18 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 import {
-  closeTerminal,
-  listWorkspaceTerminals,
-  type TerminalDto
+  createTerminalTemplate,
+  listTerminalShellOptions,
+  listWorkspaceTemplateRuntimeStatuses,
+  listWorkspaceTemplates,
+  runTerminalTemplate,
+  stopTerminalTemplateProcess,
+  type TerminalShellOptionDto,
+  type TerminalTemplateDto,
+  type TerminalTemplateRuntimeStatusDto
 } from "../../terminal/api/terminal-api";
 import type { WorkspaceSessionGroup } from "../../conversation/components/WorkbenchLayout";
 
@@ -14,17 +21,23 @@ interface TerminalManagerPanelProps {
   navigationGroups: WorkspaceSessionGroup[];
 }
 
-interface WorkspaceOption {
-  id: string;
+interface LaunchDraftState {
+  mode: "command" | "script";
   name: string;
+  cwd: string;
+  target: string;
+  args: string;
+  port: string;
 }
 
-function collectWorkspaceOptions(groups: WorkspaceSessionGroup[]): WorkspaceOption[] {
-  return groups.map((group) => ({
-    id: group.workspace.id,
-    name: group.workspace.name
-  }));
-}
+const INITIAL_LAUNCH_DRAFT: LaunchDraftState = {
+  mode: "command",
+  name: "",
+  cwd: "",
+  target: "",
+  args: "",
+  port: ""
+};
 
 function formatDate(value: string | null): string {
   if (!value) {
@@ -34,36 +47,216 @@ function formatDate(value: string | null): string {
   return new Date(value).toLocaleString();
 }
 
+function splitArgs(input: string): string[] {
+  return input
+    .split(" ")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function pickDefaultShellId(options: TerminalShellOptionDto[]): string {
+  return (
+    options.find((option) => option.id === "cmd" && option.available)?.id ??
+    options.find((option) => option.available)?.id ??
+    options[0]?.id ??
+    ""
+  );
+}
+
+function buildLaunchName(draft: LaunchDraftState): string {
+  const name = draft.name.trim();
+
+  if (name) {
+    return name;
+  }
+
+  const target = draft.target.trim();
+  const args = draft.args.trim();
+
+  if (!target) {
+    return draft.mode === "script"
+      ? t("terminalManager.defaultScriptName")
+      : t("terminalManager.defaultCommandName");
+  }
+
+  return args ? `${target} ${args}` : target;
+}
+
+function buildTemplatePreview(template: TerminalTemplateDto): string {
+  const args = template.args.join(" ");
+  return args ? `${template.command} ${args}` : template.command;
+}
+
+function detectTemplateMode(template: TerminalTemplateDto): "command" | "script" {
+  const command = template.command.toLowerCase();
+
+  if (
+    command.endsWith(".ps1") ||
+    command.endsWith(".bat") ||
+    command.endsWith(".cmd") ||
+    command.endsWith(".sh")
+  ) {
+    return "script";
+  }
+
+  return "command";
+}
+
+function parsePort(input: string): number | null {
+  const value = input.trim();
+
+  if (!value) {
+    return null;
+  }
+
+  const port = Number(value);
+  return Number.isInteger(port) ? port : Number.NaN;
+}
+
+function getTemplateRuntimeStatus(
+  runtimeStatusByTemplateId: ReadonlyMap<string, TerminalTemplateRuntimeStatusDto>,
+  templateId: string
+) {
+  return runtimeStatusByTemplateId.get(templateId) ?? null;
+}
+
+function TerminalManagerModal({
+  open,
+  title,
+  description,
+  onClose,
+  children
+}: {
+  open: boolean;
+  title: string;
+  description: string;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [onClose, open]);
+
+  if (!open || typeof document === "undefined") {
+    return null;
+  }
+
+  return createPortal(
+    <div className="workbench-modal-layer">
+      <button
+        type="button"
+        className="workbench-modal-backdrop"
+        aria-label={t("common.close")}
+        onClick={onClose}
+      />
+      <section
+        className="workbench-modal-card surface-card terminal-manager-modal-card"
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+      >
+        <div className="workbench-modal-header">
+          <div className="workbench-modal-title-wrap">
+            <h2>{title}</h2>
+            <p>{description}</p>
+          </div>
+          <button
+            type="button"
+            className="workbench-modal-close"
+            aria-label={t("common.close")}
+            onClick={onClose}
+          >
+            x
+          </button>
+        </div>
+        <div className="workbench-modal-body">{children}</div>
+      </section>
+    </div>,
+    document.body
+  );
+}
+
 export function TerminalManagerPanel({
   currentWorkspaceId,
   navigationGroups
 }: TerminalManagerPanelProps) {
-  const workspaceOptions = useMemo(
-    () => collectWorkspaceOptions(navigationGroups),
-    [navigationGroups]
-  );
-  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState(currentWorkspaceId ?? "");
-  const [terminals, setTerminals] = useState<TerminalDto[]>([]);
+  const activeWorkspaceId = currentWorkspaceId?.trim() || null;
+  const [templates, setTemplates] = useState<TerminalTemplateDto[]>([]);
+  const [templateStatuses, setTemplateStatuses] = useState<TerminalTemplateRuntimeStatusDto[]>([]);
+  const [shellOptions, setShellOptions] = useState<TerminalShellOptionDto[]>([]);
+  const [selectedShellId, setSelectedShellId] = useState("");
+  const [launchDraft, setLaunchDraft] = useState<LaunchDraftState>(INITIAL_LAUNCH_DRAFT);
+  const [createModalOpen, setCreateModalOpen] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [closingTerminalId, setClosingTerminalId] = useState<string | null>(null);
+  const [savingTemplate, setSavingTemplate] = useState(false);
+  const [runningTemplateId, setRunningTemplateId] = useState<string | null>(null);
+  const [stoppingTemplateId, setStoppingTemplateId] = useState<string | null>(null);
   const { showToast } = useToast();
 
+  const selectedShellOption = useMemo(
+    () => shellOptions.find((option) => option.id === selectedShellId) ?? null,
+    [selectedShellId, shellOptions]
+  );
+  const runtimeStatusByTemplateId = useMemo(
+    () => new Map(templateStatuses.map((status) => [status.templateId, status] as const)),
+    [templateStatuses]
+  );
+
   useEffect(() => {
-    const fallbackWorkspaceId = currentWorkspaceId ?? workspaceOptions[0]?.id ?? "";
+    let cancelled = false;
 
-    setSelectedWorkspaceId((current) =>
-      workspaceOptions.some((workspace) => workspace.id === current) ? current : fallbackWorkspaceId
-    );
-  }, [currentWorkspaceId, workspaceOptions]);
+    void (async () => {
+      try {
+        const response = await listTerminalShellOptions();
 
-  async function loadTerminals(workspaceId: string) {
+        if (cancelled) {
+          return;
+        }
+
+        setShellOptions(response.items);
+        setSelectedShellId((current) => current || pickDefaultShellId(response.items));
+      } catch (error) {
+        if (!cancelled) {
+          showToast({
+            title: error instanceof Error ? error.message : t("terminalManager.shellLoadFailed"),
+            tone: "error"
+          });
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [showToast]);
+
+  async function loadWorkspaceData(workspaceId: string) {
     setLoading(true);
 
     try {
-      const response = await listWorkspaceTerminals(workspaceId);
-      setTerminals(response.items);
+      const [templateResponse, templateStatusResponse] = await Promise.all([
+        listWorkspaceTemplates(workspaceId),
+        listWorkspaceTemplateRuntimeStatuses(workspaceId)
+      ]);
+
+      setTemplates(templateResponse.items);
+      setTemplateStatuses(templateStatusResponse.items);
     } catch (error) {
-      setTerminals([]);
+      setTemplates([]);
+      setTemplateStatuses([]);
       showToast({
         title: error instanceof Error ? error.message : t("terminalManager.loadFailed"),
         tone: "error"
@@ -74,39 +267,109 @@ export function TerminalManagerPanel({
   }
 
   useEffect(() => {
-    if (!selectedWorkspaceId) {
-      setTerminals([]);
+    if (!activeWorkspaceId) {
+      setTemplates([]);
+      setTemplateStatuses([]);
       return;
     }
 
-    void loadTerminals(selectedWorkspaceId);
-  }, [selectedWorkspaceId]);
+    void loadWorkspaceData(activeWorkspaceId);
+  }, [activeWorkspaceId]);
 
-  async function handleCloseTerminal(terminalId: string) {
-    if (!selectedWorkspaceId) {
+  async function handleStopTemplateProcess(templateId: string) {
+    if (!activeWorkspaceId) {
       return;
     }
 
-    setClosingTerminalId(terminalId);
+    setStoppingTemplateId(templateId);
 
     try {
-      await closeTerminal(terminalId);
-      await loadTerminals(selectedWorkspaceId);
+      await stopTerminalTemplateProcess(templateId);
+      await loadWorkspaceData(activeWorkspaceId);
       showToast({
-        title: t("terminalManager.closeSuccess"),
+        title: t("terminalManager.stopProcessSuccess"),
         tone: "success"
       });
     } catch (error) {
       showToast({
-        title: error instanceof Error ? error.message : t("terminalManager.closeFailed"),
+        title: error instanceof Error ? error.message : t("terminalManager.stopProcessFailed"),
         tone: "error"
       });
     } finally {
-      setClosingTerminalId(null);
+      setStoppingTemplateId(null);
     }
   }
 
-  if (!workspaceOptions.length) {
+  async function handleSaveLaunchTemplate() {
+    if (!activeWorkspaceId || !launchDraft.target.trim()) {
+      return;
+    }
+
+    const parsedPort = parsePort(launchDraft.port);
+
+    if (Number.isNaN(parsedPort)) {
+      showToast({
+        title: t("terminalManager.invalidPort"),
+        tone: "error"
+      });
+      return;
+    }
+
+    setSavingTemplate(true);
+
+    try {
+      await createTerminalTemplate({
+        workspaceId: activeWorkspaceId,
+        name: buildLaunchName(launchDraft),
+        cwd: launchDraft.cwd.trim() || undefined,
+        command: launchDraft.target.trim(),
+        args: splitArgs(launchDraft.args),
+        port: parsedPort
+      });
+      setLaunchDraft(INITIAL_LAUNCH_DRAFT);
+      setCreateModalOpen(false);
+      await loadWorkspaceData(activeWorkspaceId);
+      showToast({
+        title: t("terminalManager.templateSaveSuccess"),
+        tone: "success"
+      });
+    } catch (error) {
+      showToast({
+        title: error instanceof Error ? error.message : t("terminalManager.templateSaveFailed"),
+        tone: "error"
+      });
+    } finally {
+      setSavingTemplate(false);
+    }
+  }
+
+  async function handleRunTemplate(templateId: string) {
+    if (!activeWorkspaceId) {
+      return;
+    }
+
+    setRunningTemplateId(templateId);
+
+    try {
+      await runTerminalTemplate(templateId, {
+        shell: selectedShellOption?.available ? selectedShellOption.shell : undefined
+      });
+      await loadWorkspaceData(activeWorkspaceId);
+      showToast({
+        title: t("terminalManager.templateRunSuccess"),
+        tone: "success"
+      });
+    } catch (error) {
+      showToast({
+        title: error instanceof Error ? error.message : t("terminalManager.templateRunFailed"),
+        tone: "error"
+      });
+    } finally {
+      setRunningTemplateId(null);
+    }
+  }
+
+  if (!navigationGroups.length) {
     return (
       <section className="workbench-empty-state minimal">
         <p>{t("terminalManager.emptyWorkspaceBody")}</p>
@@ -114,32 +377,24 @@ export function TerminalManagerPanel({
     );
   }
 
+  if (!activeWorkspaceId) {
+    return (
+      <section className="workbench-empty-state minimal">
+        <p>{t("terminalManager.noCurrentWorkspaceBody")}</p>
+      </section>
+    );
+  }
+
   return (
     <section className="conversation-panel surface-card terminal-manager-panel">
       <div className="terminal-manager-header">
-        <div className="field-group">
-          <span>{t("terminalManager.workspaceField")}</span>
-          <select
-            value={selectedWorkspaceId}
-            onChange={(event) => {
-              setSelectedWorkspaceId(event.target.value);
-            }}
-          >
-            {workspaceOptions.map((workspace) => (
-              <option key={workspace.id} value={workspace.id}>
-                {workspace.name}
-              </option>
-            ))}
-          </select>
-        </div>
-
         <button
           className="ghost-button"
           type="button"
-          disabled={!selectedWorkspaceId || loading}
+          disabled={!activeWorkspaceId || loading}
           onClick={() => {
-            if (selectedWorkspaceId) {
-              void loadTerminals(selectedWorkspaceId);
+            if (activeWorkspaceId) {
+              void loadWorkspaceData(activeWorkspaceId);
             }
           }}
         >
@@ -147,62 +402,315 @@ export function TerminalManagerPanel({
         </button>
       </div>
 
-      {loading ? (
-        <p className="status-text">{t("common.loading")}</p>
-      ) : terminals.length ? (
-        <div className="terminal-manager-list">
-          {terminals.map((terminal) => (
-            <article key={terminal.id} className="terminal-manager-card">
-              <div className="terminal-manager-card-header">
-                <div>
-                  <strong>{terminal.name}</strong>
-                  <p className="status-text">{terminal.cwd}</p>
-                </div>
-                <span
-                  className="badge"
-                  data-tone={terminal.status === "running" ? "success" : undefined}
-                >
-                  {terminal.status}
-                </span>
-              </div>
-
-              <div className="terminal-manager-meta">
-                <span className="status-text">{terminal.shell}</span>
-                <span className="status-text">
-                  {t("terminalManager.lastActiveAt")} {formatDate(terminal.lastActiveAt)}
-                </span>
-                <span className="status-text">
-                  {t("terminalManager.exitCode")}{" "}
-                  {terminal.exitCode === null ? t("terminalManager.runningValue") : terminal.exitCode}
-                </span>
-              </div>
-
-              {terminal.statusDetail ? (
-                <p className="status-text">{terminal.statusDetail}</p>
-              ) : null}
-
-              <div className="terminal-manager-actions">
-                <button
-                  className="secondary-button"
-                  type="button"
-                  disabled={terminal.status !== "running" || closingTerminalId === terminal.id}
-                  onClick={() => {
-                    void handleCloseTerminal(terminal.id);
-                  }}
-                >
-                  {closingTerminalId === terminal.id
-                    ? t("terminalManager.closing")
-                    : t("terminalManager.closeAction")}
-                </button>
-              </div>
-            </article>
-          ))}
+      <section className="terminal-manager-section">
+        <div className="terminal-manager-section-header">
+          <div>
+            <h3>{t("terminalManager.templateSectionTitle")}</h3>
+            <p className="status-text">{t("terminalManager.templateSectionDescription")}</p>
+          </div>
+          <span className="workbench-section-counter">{templates.length}</span>
         </div>
-      ) : (
-        <section className="workbench-empty-state minimal">
-          <p>{t("terminalManager.emptyTerminalBody")}</p>
+
+        <div className="terminal-manager-toolbar">
+          <button
+            className="primary-button"
+            type="button"
+            disabled={!activeWorkspaceId}
+            onClick={() => {
+              setCreateModalOpen(true);
+            }}
+          >
+            {t("terminalManager.openCreateModalAction")}
+          </button>
+        </div>
+
+        {loading && !templates.length ? <p className="status-text">{t("common.loading")}</p> : null}
+
+        {templates.length ? (
+          <div className="terminal-manager-list">
+            {templates.map((template) => {
+              const runtimeStatus = getTemplateRuntimeStatus(runtimeStatusByTemplateId, template.id);
+
+              return (
+                <article key={template.id} className="terminal-manager-card">
+                  <div className="terminal-manager-card-header">
+                    <div>
+                      <strong>{template.name}</strong>
+                      <p className="status-text">{buildTemplatePreview(template)}</p>
+                    </div>
+                    <span className="badge">
+                      {detectTemplateMode(template) === "script"
+                        ? t("terminalManager.scriptMode")
+                        : t("terminalManager.commandMode")}
+                    </span>
+                  </div>
+
+                  <div className="terminal-manager-meta">
+                    <span className="status-text">
+                      {t("terminalManager.cwdLabel")} {template.cwd}
+                    </span>
+                    <span className="status-text">
+                      {t("terminalManager.updatedAt")} {formatDate(template.updatedAt)}
+                    </span>
+                    <span className="status-text">
+                      {template.port === null
+                        ? t("terminalManager.portUnset")
+                        : `${t("terminalManager.portLabel")} ${template.port}`}
+                    </span>
+                  </div>
+
+                  {template.port !== null ? (
+                    runtimeStatus?.occupied ? (
+                      <div className="terminal-template-status success">
+                        <div className="terminal-process-item-header">
+                          <strong>{t("terminalManager.portOccupied")}</strong>
+                          <span className="badge" data-tone="success">
+                            {runtimeStatus.processId
+                              ? `PID ${runtimeStatus.processId}`
+                              : t("terminalManager.statusRunning")}
+                          </span>
+                        </div>
+                        <p className="status-text">
+                          {runtimeStatus.processName || t("terminalManager.processCommandFallback")}
+                        </p>
+                        {runtimeStatus.processCommandLine ? (
+                          <p className="status-text">{runtimeStatus.processCommandLine}</p>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <div className="terminal-template-status">
+                        <div className="terminal-process-item-header">
+                          <strong>{t("terminalManager.portAvailable")}</strong>
+                          <span className="badge">{t("terminalManager.statusStopped")}</span>
+                        </div>
+                        <p className="status-text">{t("terminalManager.portAvailableDescription")}</p>
+                      </div>
+                    )
+                  ) : (
+                    <div className="terminal-template-status">
+                      <div className="terminal-process-item-header">
+                        <strong>{t("terminalManager.portUnset")}</strong>
+                      </div>
+                      <p className="status-text">{t("terminalManager.portUnsetDescription")}</p>
+                    </div>
+                  )}
+
+                  <div className="terminal-manager-actions">
+                    {runtimeStatus?.occupied ? (
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        disabled={stoppingTemplateId === template.id}
+                        onClick={() => {
+                          void handleStopTemplateProcess(template.id);
+                        }}
+                      >
+                        {stoppingTemplateId === template.id
+                          ? t("terminalManager.stoppingProcess")
+                          : t("terminalManager.stopProcessAction")}
+                      </button>
+                    ) : null}
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      disabled={
+                        runningTemplateId === template.id ||
+                        (selectedShellOption?.available === false && shellOptions.length > 0)
+                      }
+                      onClick={() => {
+                        void handleRunTemplate(template.id);
+                      }}
+                    >
+                      {runningTemplateId === template.id
+                        ? t("terminalManager.runningTemplate")
+                        : t("terminalManager.runTemplateAction")}
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        ) : (
+          <section className="workbench-empty-state minimal">
+            <p>{t("terminalManager.emptyTemplateBody")}</p>
+          </section>
+        )}
+      </section>
+
+      <TerminalManagerModal
+        open={createModalOpen}
+        title={t("terminalManager.createModalTitle")}
+        description={t("terminalManager.createModalDescription")}
+        onClose={() => {
+          setCreateModalOpen(false);
+        }}
+      >
+        <section className="terminal-manager-modal-form">
+          <div className="field-group">
+            <span>{t("terminalManager.shellField")}</span>
+            <select
+              value={selectedShellId}
+              onChange={(event) => {
+                setSelectedShellId(event.target.value);
+              }}
+            >
+              {shellOptions.map((option) => (
+                <option key={option.id} value={option.id} disabled={!option.available}>
+                  {option.available
+                    ? option.label
+                    : `${option.label} - ${t("terminalManager.shellUnavailable")}`}
+                </option>
+              ))}
+            </select>
+            {selectedShellOption?.available === false && selectedShellOption.unavailableReason ? (
+              <p className="status-text">{selectedShellOption.unavailableReason}</p>
+            ) : null}
+          </div>
+
+          <div
+            className="terminal-manager-mode-row"
+            role="tablist"
+            aria-label={t("terminalManager.modeField")}
+          >
+            <button
+              type="button"
+              className={
+                launchDraft.mode === "command" ? "workbench-info-tab active" : "workbench-info-tab"
+              }
+              onClick={() => {
+                setLaunchDraft((current) => ({
+                  ...current,
+                  mode: "command"
+                }));
+              }}
+            >
+              {t("terminalManager.commandMode")}
+            </button>
+            <button
+              type="button"
+              className={
+                launchDraft.mode === "script" ? "workbench-info-tab active" : "workbench-info-tab"
+              }
+              onClick={() => {
+                setLaunchDraft((current) => ({
+                  ...current,
+                  mode: "script"
+                }));
+              }}
+            >
+              {t("terminalManager.scriptMode")}
+            </button>
+          </div>
+
+          <div className="terminal-manager-grid">
+            <div className="field-group">
+              <span>{t("terminalManager.templateNameField")}</span>
+              <input
+                value={launchDraft.name}
+                placeholder={t("terminalManager.templateNamePlaceholder")}
+                onChange={(event) => {
+                  setLaunchDraft((current) => ({
+                    ...current,
+                    name: event.target.value
+                  }));
+                }}
+              />
+            </div>
+
+            <div className="field-group">
+              <span>{t("terminalManager.cwdField")}</span>
+              <input
+                value={launchDraft.cwd}
+                placeholder={t("terminalManager.cwdPlaceholder")}
+                onChange={(event) => {
+                  setLaunchDraft((current) => ({
+                    ...current,
+                    cwd: event.target.value
+                  }));
+                }}
+              />
+            </div>
+          </div>
+
+          <div className="terminal-manager-grid">
+            <div className="field-group">
+              <span>
+                {launchDraft.mode === "script"
+                  ? t("terminalManager.scriptPathField")
+                  : t("terminalManager.commandField")}
+              </span>
+              <input
+                value={launchDraft.target}
+                placeholder={
+                  launchDraft.mode === "script"
+                    ? t("terminalManager.scriptPathPlaceholder")
+                    : t("terminalManager.commandPlaceholder")
+                }
+                onChange={(event) => {
+                  setLaunchDraft((current) => ({
+                    ...current,
+                    target: event.target.value
+                  }));
+                }}
+              />
+            </div>
+
+            <div className="field-group">
+              <span>{t("terminalManager.argsField")}</span>
+              <input
+                value={launchDraft.args}
+                placeholder={t("terminalManager.argsPlaceholder")}
+                onChange={(event) => {
+                  setLaunchDraft((current) => ({
+                    ...current,
+                    args: event.target.value
+                  }));
+                }}
+              />
+            </div>
+          </div>
+
+          <div className="terminal-manager-grid">
+            <div className="field-group">
+              <span>{t("terminalManager.portField")}</span>
+              <input
+                value={launchDraft.port}
+                placeholder={t("terminalManager.portPlaceholder")}
+                onChange={(event) => {
+                  setLaunchDraft((current) => ({
+                    ...current,
+                    port: event.target.value
+                  }));
+                }}
+              />
+            </div>
+          </div>
+
+          <div className="terminal-manager-actions">
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => {
+                setCreateModalOpen(false);
+              }}
+            >
+              {t("common.close")}
+            </button>
+            <button
+              className="primary-button"
+              type="button"
+              disabled={!activeWorkspaceId || savingTemplate || !launchDraft.target.trim()}
+              onClick={() => {
+                void handleSaveLaunchTemplate();
+              }}
+            >
+              {savingTemplate
+                ? t("terminalManager.templateSaving")
+                : t("terminalManager.saveLaunchAction")}
+            </button>
+          </div>
         </section>
-      )}
+      </TerminalManagerModal>
     </section>
   );
 }

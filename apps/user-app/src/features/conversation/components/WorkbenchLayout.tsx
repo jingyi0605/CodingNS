@@ -25,6 +25,7 @@ import {
   getWorkbenchSnapshot,
   importWorkspace,
   renameSessionTitle,
+  updateSessionArchiveState,
   type ProviderId,
   type SessionSummaryDto,
   type WorkspaceDto
@@ -37,7 +38,6 @@ const RIGHT_PANEL_COLLAPSED_KEY = "workbench.right.collapsed";
 const LAST_SESSION_PATH_KEY = "workbench.last.session.path";
 const WORKSPACE_COLLAPSED_IDS_KEY = "workbench.workspace.collapsed.ids";
 const FAVORITE_SESSION_IDS_KEY = "workbench.session.favorite.ids";
-const ARCHIVED_SESSION_IDS_KEY = "workbench.session.archived.ids";
 
 const DEFAULT_LEFT_PANEL_WIDTH = 300;
 const DEFAULT_RIGHT_PANEL_WIDTH = 340;
@@ -97,6 +97,10 @@ function sortSessions(left: SessionSummaryDto, right: SessionSummaryDto) {
 
 function isSubagentSession(session: SessionSummaryDto) {
   return session.isSubagent === true;
+}
+
+function isArchivedSession(session: SessionSummaryDto) {
+  return session.isArchived === true;
 }
 
 function resolveParentSessionId(session: SessionSummaryDto) {
@@ -347,12 +351,45 @@ function markSessionSeenInGroups(
   return changed ? nextGroups : groups;
 }
 
-function toggleStoredId(items: string[], id: string) {
-  return items.includes(id) ? items.filter((item) => item !== id) : [...items, id];
+function updateSessionArchivedStateInGroups(
+  groups: WorkspaceSessionGroup[],
+  sessionId: string,
+  isArchived: boolean
+): WorkspaceSessionGroup[] {
+  let changed = false;
+
+  const nextGroups = groups.map((group) => {
+    let groupChanged = false;
+    const nextSessions = group.sessions.map((session) => {
+      if (session.sessionId !== sessionId) {
+        return session;
+      }
+
+      if (session.isArchived === isArchived) {
+        return session;
+      }
+
+      changed = true;
+      groupChanged = true;
+      return {
+        ...session,
+        isArchived
+      };
+    });
+
+    return groupChanged
+      ? {
+          ...group,
+          sessions: nextSessions
+        }
+      : group;
+  });
+
+  return changed ? nextGroups : groups;
 }
 
-function removeStoredId(items: string[], id: string) {
-  return items.filter((item) => item !== id);
+function toggleStoredId(items: string[], id: string) {
+  return items.includes(id) ? items.filter((item) => item !== id) : [...items, id];
 }
 
 function retainKnownIds(items: string[], knownIds: ReadonlySet<string>) {
@@ -825,8 +862,8 @@ function SidebarContent({
   onSessionUpdated: (session: SessionSummaryDto) => void;
   onToggleWorkspaceCollapse: (workspaceId: string) => void;
   onToggleFavoriteSession: (sessionId: string) => void;
-  onArchiveSession: (sessionId: string) => void;
-  onUnarchiveSession: (sessionId: string) => void;
+  onArchiveSession: (sessionId: string) => Promise<void>;
+  onUnarchiveSession: (sessionId: string) => Promise<void>;
   onClose?: () => void;
   onToggleCollapse?: () => void;
 }) {
@@ -947,22 +984,38 @@ function SidebarContent({
     });
   }
 
-  function handleArchive(sessionId: string) {
+  async function handleArchive(sessionId: string) {
     setOpenSessionMenuKey(null);
-    onArchiveSession(sessionId);
-    showToast({
-      title: t("shell.archiveAdded"),
-      tone: "success"
-    });
+
+    try {
+      await onArchiveSession(sessionId);
+      showToast({
+        title: t("shell.archiveAdded"),
+        tone: "success"
+      });
+    } catch (error) {
+      showToast({
+        title: error instanceof Error ? error.message : t("shell.navigationLoadFailed"),
+        tone: "error"
+      });
+    }
   }
 
-  function handleUnarchive(sessionId: string) {
+  async function handleUnarchive(sessionId: string) {
     setOpenSessionMenuKey(null);
-    onUnarchiveSession(sessionId);
-    showToast({
-      title: t("shell.archiveRestored"),
-      tone: "success"
-    });
+
+    try {
+      await onUnarchiveSession(sessionId);
+      showToast({
+        title: t("shell.archiveRestored"),
+        tone: "success"
+      });
+    } catch (error) {
+      showToast({
+        title: error instanceof Error ? error.message : t("shell.navigationLoadFailed"),
+        tone: "error"
+      });
+    }
   }
 
   function handleOpenRenameSession(session: SessionSummaryDto, workspace: WorkspaceDto) {
@@ -1484,7 +1537,7 @@ function WorkbenchInfoPanel({
         ) : null}
 
         {panelReady && activeTab === "terminals" ? (
-          <TerminalManagerPanel currentWorkspaceId={fallbackWorkspaceId} navigationGroups={navigationGroups} />
+          <TerminalManagerPanel currentWorkspaceId={currentWorkspaceId} navigationGroups={navigationGroups} />
         ) : null}
       </div>
     </>
@@ -1518,9 +1571,6 @@ export function WorkbenchLayout() {
   );
   const [favoriteSessionIds, setFavoriteSessionIds] = useState(() =>
     readStoredStringArray(FAVORITE_SESSION_IDS_KEY)
-  );
-  const [archivedSessionIds, setArchivedSessionIds] = useState(() =>
-    readStoredStringArray(ARCHIVED_SESSION_IDS_KEY)
   );
   const [infoPanelReady, setInfoPanelReady] = useState(false);
   const [activeInfoTab, setActiveInfoTab] = useState<InfoTab>("files");
@@ -1671,10 +1721,6 @@ export function WorkbenchLayout() {
   }, [favoriteSessionIds]);
 
   useEffect(() => {
-    writeStoredValue(ARCHIVED_SESSION_IDS_KEY, JSON.stringify(archivedSessionIds));
-  }, [archivedSessionIds]);
-
-  useEffect(() => {
     if (infoPanelReady || rightCollapsed || navigationLoading) {
       return;
     }
@@ -1694,7 +1740,6 @@ export function WorkbenchLayout() {
   const flattenedSessions = useMemo(() => flattenSessions(navigationGroups), [navigationGroups]);
   const collapsedWorkspaceIdSet = useMemo(() => new Set(collapsedWorkspaceIds), [collapsedWorkspaceIds]);
   const favoriteSessionIdSet = useMemo(() => new Set(favoriteSessionIds), [favoriteSessionIds]);
-  const archivedSessionIdSet = useMemo(() => new Set(archivedSessionIds), [archivedSessionIds]);
 
   useEffect(() => {
     if (navigationLoading && navigationGroups.length === 0) {
@@ -1707,7 +1752,6 @@ export function WorkbenchLayout() {
     // 只保留当前快照里还存在的偏好状态，避免历史垃圾状态越积越多。
     setCollapsedWorkspaceIds((current) => retainKnownIds(current, knownWorkspaceIds));
     setFavoriteSessionIds((current) => retainKnownIds(current, knownSessionIds));
-    setArchivedSessionIds((current) => retainKnownIds(current, knownSessionIds));
   }, [flattenedSessions, navigationGroups, navigationLoading]);
 
   const currentSessionContext =
@@ -1723,21 +1767,27 @@ export function WorkbenchLayout() {
     () =>
       navigationGroups.map((group) => ({
         workspace: group.workspace,
-        visibleSessions: group.sessions.filter((session) => !archivedSessionIdSet.has(session.sessionId)),
-        archivedSessions: group.sessions.filter((session) => archivedSessionIdSet.has(session.sessionId)),
+        visibleSessions: group.sessions.filter((session) => !isArchivedSession(session)),
+        archivedSessions: group.sessions.filter((session) => isArchivedSession(session)),
         visibleSessionTree: buildSessionTree(
           group.sessions.filter((session) => {
-            if (archivedSessionIdSet.has(session.sessionId)) {
+            if (isArchivedSession(session)) {
               return false;
             }
 
             const parentSessionId = resolveParentSessionId(session);
-            return !parentSessionId || !archivedSessionIdSet.has(parentSessionId);
+
+            if (!parentSessionId) {
+              return true;
+            }
+
+            const parentSession = group.sessions.find((item) => item.sessionId === parentSessionId);
+            return !parentSession || !isArchivedSession(parentSession);
           })
         ),
         isCollapsed: collapsedWorkspaceIdSet.has(group.workspace.id)
       })),
-    [archivedSessionIdSet, collapsedWorkspaceIdSet, navigationGroups]
+    [collapsedWorkspaceIdSet, navigationGroups]
   );
 
   const favoriteSessions = useMemo(
@@ -1745,10 +1795,10 @@ export function WorkbenchLayout() {
       flattenedSessions.filter(
         (item) =>
           favoriteSessionIdSet.has(item.session.sessionId) &&
-          !archivedSessionIdSet.has(item.session.sessionId) &&
+          !isArchivedSession(item.session) &&
           !isSubagentSession(item.session)
       ),
-    [archivedSessionIdSet, favoriteSessionIdSet, flattenedSessions]
+    [favoriteSessionIdSet, flattenedSessions]
   );
 
   useEffect(() => {
@@ -1919,14 +1969,20 @@ export function WorkbenchLayout() {
                 onToggleFavoriteSession={(sessionId) =>
                   setFavoriteSessionIds((current) => toggleStoredId(current, sessionId))
                 }
-                onArchiveSession={(sessionId) =>
-                  setArchivedSessionIds((current) =>
-                    current.includes(sessionId) ? current : [...current, sessionId]
-                  )
-                }
-                onUnarchiveSession={(sessionId) =>
-                  setArchivedSessionIds((current) => removeStoredId(current, sessionId))
-                }
+                onArchiveSession={async (sessionId) => {
+                  setNavigationGroups((current) =>
+                    updateSessionArchivedStateInGroups(current, sessionId, true)
+                  );
+                  const session = await updateSessionArchiveState(sessionId, true);
+                  upsertNavigationSession(session);
+                }}
+                onUnarchiveSession={async (sessionId) => {
+                  setNavigationGroups((current) =>
+                    updateSessionArchivedStateInGroups(current, sessionId, false)
+                  );
+                  const session = await updateSessionArchiveState(sessionId, false);
+                  upsertNavigationSession(session);
+                }}
                 onToggleCollapse={() => setLeftCollapsed(true)}
               />
             </aside>
@@ -2070,14 +2126,20 @@ export function WorkbenchLayout() {
             onToggleFavoriteSession={(sessionId) =>
               setFavoriteSessionIds((current) => toggleStoredId(current, sessionId))
             }
-            onArchiveSession={(sessionId) =>
-              setArchivedSessionIds((current) =>
-                current.includes(sessionId) ? current : [...current, sessionId]
-              )
-            }
-            onUnarchiveSession={(sessionId) =>
-              setArchivedSessionIds((current) => removeStoredId(current, sessionId))
-            }
+            onArchiveSession={async (sessionId) => {
+              setNavigationGroups((current) =>
+                updateSessionArchivedStateInGroups(current, sessionId, true)
+              );
+              const session = await updateSessionArchiveState(sessionId, true);
+              upsertNavigationSession(session);
+            }}
+            onUnarchiveSession={async (sessionId) => {
+              setNavigationGroups((current) =>
+                updateSessionArchivedStateInGroups(current, sessionId, false)
+              );
+              const session = await updateSessionArchiveState(sessionId, false);
+              upsertNavigationSession(session);
+            }}
             onClose={() => setMobileNavOpen(false)}
           />
         </MobileNavDrawer>

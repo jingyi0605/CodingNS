@@ -9,6 +9,10 @@ import type { WorkspaceService } from "../workspace/workspace-service.js";
 import { resolveWorkspaceCwd } from "./terminal-paths.js";
 import { buildTemplateCommandLine, getShellEnterSequence } from "./terminal-shell.js";
 import type { TerminalService } from "./terminal-service.js";
+import {
+  discoverTemplateRuntimeStatuses,
+  terminateRuntimeProcess
+} from "./template-port-runtime.js";
 
 interface UpsertCommandTemplateInput {
   workspaceId?: string;
@@ -17,6 +21,7 @@ interface UpsertCommandTemplateInput {
   command?: string;
   args?: string[];
   env?: Record<string, string>;
+  port?: number | null;
 }
 
 interface RunCommandTemplateInput {
@@ -45,6 +50,57 @@ export class CommandTemplateService {
     return this.templateRepository.listByWorkspace(workspaceId);
   }
 
+  async listTemplateRuntimeStatuses(workspaceId: string) {
+    const templates = this.listTemplates(workspaceId)
+      .filter((template) => template.port !== null)
+      .map((template) => ({
+        templateId: template.id,
+        port: template.port as number
+      }));
+
+    return await discoverTemplateRuntimeStatuses(templates);
+  }
+
+  async stopTemplateRuntimeProcess(templateId: string): Promise<{
+    success: true;
+    processId: number | null;
+    alreadyStopped: boolean;
+  }> {
+    const template = this.getTemplateOrThrow(templateId);
+
+    if (template.port === null) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "COMMAND_TEMPLATE_INVALID",
+        detail: "当前启动项没有配置端口，无法自动结束进程",
+        field: "port"
+      });
+    }
+
+    const [runtimeStatus] = await discoverTemplateRuntimeStatuses([
+      {
+        templateId: template.id,
+        port: template.port
+      }
+    ]);
+
+    if (!runtimeStatus?.occupied || runtimeStatus.processId === null) {
+      return {
+        success: true,
+        processId: null,
+        alreadyStopped: true
+      };
+    }
+
+    await terminateRuntimeProcess(runtimeStatus.processId);
+
+    return {
+      success: true,
+      processId: runtimeStatus.processId,
+      alreadyStopped: false
+    };
+  }
+
   createTemplate(input: UpsertCommandTemplateInput): TerminalCommandTemplate {
     const workspace = this.workspaceService.getWorkspaceOrThrow(input.workspaceId ?? "");
     const timestamp = nowIso();
@@ -56,6 +112,7 @@ export class CommandTemplateService {
       command: input.command,
       args: input.args ?? [],
       env: input.env ?? {},
+      port: normalizePort(input.port),
       createdAt: timestamp,
       updatedAt: timestamp
     });
@@ -83,6 +140,7 @@ export class CommandTemplateService {
       command: input.command ?? current.command,
       args: input.args ?? current.args,
       env: input.env ?? current.env,
+      port: input.port === undefined ? current.port : normalizePort(input.port),
       updatedAt: nowIso()
     });
 
@@ -223,6 +281,23 @@ function buildValidatedTemplate(input: CommandTemplateDraft): TerminalCommandTem
     name,
     command
   };
+}
+
+function normalizePort(input?: number | null): number | null {
+  if (input === undefined || input === null) {
+    return null;
+  }
+
+  if (!Number.isInteger(input) || input < 1 || input > 65535) {
+    throw new AppError({
+      statusCode: 400,
+      errorCode: "COMMAND_TEMPLATE_INVALID",
+      detail: "port 必须是 1 到 65535 之间的整数",
+      field: "port"
+    });
+  }
+
+  return input;
 }
 
 function containsControlCharacter(input: string): boolean {

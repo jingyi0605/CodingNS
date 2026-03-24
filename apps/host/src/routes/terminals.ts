@@ -13,8 +13,10 @@ export async function registerTerminalRoutes(
   app.post("/api/terminals/:terminalId/input", terminalController.writeInput);
 
   app.get("/api/terminals/templates", terminalController.listTemplates);
+  app.get("/api/terminals/templates/runtime-status", terminalController.listTemplateRuntimeStatuses);
   app.post("/api/terminals/templates", terminalController.createTemplate);
   app.put("/api/terminals/templates/:templateId", terminalController.updateTemplate);
   app.delete("/api/terminals/templates/:templateId", terminalController.deleteTemplate);
   app.post("/api/terminals/templates/:templateId/run", terminalController.runTemplate);
+  app.post("/api/terminals/templates/:templateId/stop", terminalController.stopTemplateRuntimeProcess);
 }

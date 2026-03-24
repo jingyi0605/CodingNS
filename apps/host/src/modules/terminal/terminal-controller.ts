@@ -35,6 +35,7 @@ interface CommandTemplateBody {
   command?: string;
   args?: string[];
   env?: Record<string, string>;
+  port?: number | null;
 }
 
 interface TemplateListQuery {
@@ -149,6 +150,26 @@ export class TerminalController {
     });
   };
 
+  readonly listTemplateRuntimeStatuses = async (
+    request: FastifyRequest<{ Querystring: TemplateListQuery }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    const workspaceId = request.query.workspaceId?.trim();
+
+    if (!workspaceId) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "INVALID_INPUT",
+        detail: "查询命令模板运行状态必须提供 workspaceId",
+        field: "workspaceId"
+      });
+    }
+
+    reply.send({
+      items: await this.commandTemplateService.listTemplateRuntimeStatuses(workspaceId)
+    });
+  };
+
   readonly createTemplate = async (
     request: FastifyRequest<{ Body: CommandTemplateBody }>,
     reply: FastifyReply
@@ -170,7 +191,8 @@ export class TerminalController {
       cwd: request.body.cwd,
       command: request.body.command,
       args: normalizeArgs(request.body.args),
-      env: request.body.env
+      env: request.body.env,
+      port: normalizePort(request.body.port)
     });
 
     reply.status(201).send(template);
@@ -187,7 +209,8 @@ export class TerminalController {
         cwd: request.body.cwd,
         command: request.body.command,
         args: normalizeArgs(request.body.args),
-        env: request.body.env
+        env: request.body.env,
+        port: normalizePort(request.body.port)
       })
     );
   };
@@ -212,6 +235,13 @@ export class TerminalController {
       })
     );
   };
+
+  readonly stopTemplateRuntimeProcess = async (
+    request: FastifyRequest<{ Params: CommandTemplateParams }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(await this.commandTemplateService.stopTemplateRuntimeProcess(request.params.templateId));
+  };
 }
 
 function normalizeArgs(input?: string[]): string[] {
@@ -225,6 +255,27 @@ function normalizeArgs(input?: string[]): string[] {
       errorCode: "INVALID_INPUT",
       detail: "args 必须是字符串数组",
       field: "args"
+    });
+  }
+
+  return input;
+}
+
+function normalizePort(input?: number | null): number | null | undefined {
+  if (input === undefined) {
+    return undefined;
+  }
+
+  if (input === null) {
+    return null;
+  }
+
+  if (!Number.isInteger(input)) {
+    throw new AppError({
+      statusCode: 400,
+      errorCode: "INVALID_INPUT",
+      detail: "port 必须是整数",
+      field: "port"
     });
   }
 

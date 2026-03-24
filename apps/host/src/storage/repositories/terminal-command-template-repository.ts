@@ -16,9 +16,10 @@ export class TerminalCommandTemplateRepository {
           command,
           args_json,
           env_json,
+          port,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         record.id,
@@ -28,6 +29,7 @@ export class TerminalCommandTemplateRepository {
         record.command,
         JSON.stringify(record.args),
         JSON.stringify(record.env),
+        record.port,
         record.createdAt,
         record.updatedAt
       );
@@ -46,6 +48,7 @@ export class TerminalCommandTemplateRepository {
           command,
           args_json,
           env_json,
+          port,
           created_at,
           updated_at
         FROM terminal_command_templates
@@ -67,6 +70,7 @@ export class TerminalCommandTemplateRepository {
           command,
           args_json,
           env_json,
+          port,
           created_at,
           updated_at
         FROM terminal_command_templates
@@ -86,6 +90,7 @@ export class TerminalCommandTemplateRepository {
              command = ?,
              args_json = ?,
              env_json = ?,
+             port = ?,
              updated_at = ?
          WHERE id = ?`
       )
@@ -95,6 +100,7 @@ export class TerminalCommandTemplateRepository {
         record.command,
         JSON.stringify(record.args),
         JSON.stringify(record.env),
+        record.port,
         record.updatedAt,
         record.id
       );
@@ -119,6 +125,7 @@ interface TerminalCommandTemplateRow {
   command: string;
   args_json: string;
   env_json: string;
+  port: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -132,6 +139,7 @@ function mapTemplateRow(row: TerminalCommandTemplateRow): TerminalCommandTemplat
     command: row.command,
     args: JSON.parse(row.args_json) as string[],
     env: JSON.parse(row.env_json) as Record<string, string>,
+    port: row.port,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
