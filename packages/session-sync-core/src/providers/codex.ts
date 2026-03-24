@@ -47,9 +47,9 @@ export class CodexAdapter implements ProviderAdapter {
 
   async detectSessions(workspacePath: string): Promise<ProviderSessionSummary[]> {
     const targetPath = normalizeWorkspacePath(workspacePath);
-    const files = walkJsonlFiles(join(this.options.homeDir, "sessions"));
+    const files = this.listSessionFiles();
     const threadNameIndex = this.readThreadNameIndex();
-    const sessions: ProviderSessionSummary[] = [];
+    const sessionsByProviderSessionId = new Map<string, ProviderSessionSummary>();
 
     for (const filePath of files) {
       const records = readJsonLines(filePath).map((record) => record.data);
@@ -71,7 +71,7 @@ export class CodexAdapter implements ProviderAdapter {
       const lastMessageAt =
         messages.at(-1)?.timestamp ?? (ensureText(metaPayload.timestamp) || null);
 
-      sessions.push({
+      sessionsByProviderSessionId.set(providerSessionId, {
         provider: this.providerId,
         providerSessionId,
         title,
@@ -82,7 +82,7 @@ export class CodexAdapter implements ProviderAdapter {
       });
     }
 
-    return sessions.sort((left, right) =>
+    return [...sessionsByProviderSessionId.values()].sort((left, right) =>
       (left.lastMessageAt ?? "").localeCompare(right.lastMessageAt ?? "")
     );
   }
@@ -94,7 +94,8 @@ export class CodexAdapter implements ProviderAdapter {
     limit: number,
     direction: HistoryDirection = "forward"
   ): Promise<HistoryPage> {
-    const records = readJsonLines(rawStoreRef).map((record) => record.data);
+    const resolvedStoreRef = this.resolveSessionFilePath(rawStoreRef, providerSessionId);
+    const records = readJsonLines(resolvedStoreRef).map((record) => record.data);
     const messages = this.parseMessages(rawStoreRef, records, providerSessionId);
     return sliceHistory(messages, cursor, limit, direction);
   }
@@ -107,10 +108,11 @@ export class CodexAdapter implements ProviderAdapter {
     onEvent: (event: ProviderRealtimeEvent) => Promise<void> | void
   ): ProviderSubscription {
     let currentCursor = cursor;
-    let lastMtime = statSync(rawStoreRef).mtimeMs;
+    const resolvedStoreRef = this.resolveSessionFilePath(rawStoreRef, providerSessionId);
+    let lastMtime = statSync(resolvedStoreRef).mtimeMs;
 
     const timer = setInterval(async () => {
-      const nextStat = statSync(rawStoreRef);
+      const nextStat = statSync(resolvedStoreRef);
 
       if (nextStat.mtimeMs <= lastMtime) {
         return;
@@ -143,13 +145,14 @@ export class CodexAdapter implements ProviderAdapter {
     providerSessionId: string,
     rawStoreRef: string
   ): Promise<ResumeSessionResult> {
-    statSync(rawStoreRef);
+    const resolvedStoreRef = this.resolveSessionFilePath(rawStoreRef, providerSessionId);
+    statSync(resolvedStoreRef);
 
     return {
       provider: this.providerId,
       providerSessionId,
       resumedAt: nextTimestamp(),
-      rawStoreRef
+      rawStoreRef: resolvedStoreRef
     };
   }
 
@@ -215,10 +218,11 @@ export class CodexAdapter implements ProviderAdapter {
     content: string,
     clientRequestId: string | null
   ): Promise<SendMessageResult> {
-    const lineNumber = readJsonLines(rawStoreRef).length + 1;
+    const resolvedStoreRef = this.resolveSessionFilePath(rawStoreRef, providerSessionId);
+    const lineNumber = readJsonLines(resolvedStoreRef).length + 1;
     const acceptedAt = nextTimestamp();
 
-    appendJsonLine(rawStoreRef, {
+    appendJsonLine(resolvedStoreRef, {
       timestamp: acceptedAt,
       type: "event_msg",
       payload: {
@@ -244,7 +248,7 @@ export class CodexAdapter implements ProviderAdapter {
         timestamp: acceptedAt,
         sequence: this.parseMessages(
           rawStoreRef,
-          readJsonLines(rawStoreRef).map((record) => record.data),
+          readJsonLines(resolvedStoreRef).map((record) => record.data),
           providerSessionId
         ).length,
         rawRef
@@ -304,6 +308,35 @@ export class CodexAdapter implements ProviderAdapter {
     }
 
     return index;
+  }
+
+  private listSessionFiles(): string[] {
+    const activeFiles = walkJsonlFiles(join(this.options.homeDir, "sessions"));
+    const archivedFiles = walkJsonlFiles(join(this.options.homeDir, "archived_sessions"));
+    return [...activeFiles, ...archivedFiles];
+  }
+
+  private resolveSessionFilePath(rawStoreRef: string, providerSessionId: string): string {
+    if (existsSync(rawStoreRef)) {
+      return rawStoreRef;
+    }
+
+    const fileName = basename(rawStoreRef) || `${providerSessionId}.jsonl`;
+    const match = fileName.match(/^rollout-(\d{4})-(\d{2})-(\d{2})T.+\.jsonl$/);
+    const candidates = [
+      join(this.options.homeDir, "archived_sessions", fileName),
+      match
+        ? join(this.options.homeDir, "sessions", match[1], match[2], match[3], fileName)
+        : null
+    ].filter((value): value is string => value !== null);
+
+    const matchedPath = candidates.find((candidate) => existsSync(candidate));
+
+    if (matchedPath) {
+      return matchedPath;
+    }
+
+    return rawStoreRef;
   }
 
   private resolveCodexSessionId(
