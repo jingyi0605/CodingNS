@@ -1635,6 +1635,25 @@ export function WorkbenchLayout() {
     );
   }, []);
 
+  const commitNavigationArchiveState = useCallback(
+    async (sessionId: string, isArchived: boolean) => {
+      setNavigationGroups((current) =>
+        updateSessionArchivedStateInGroups(current, sessionId, isArchived)
+      );
+
+      try {
+        const session = await updateSessionArchiveState(sessionId, isArchived);
+        upsertNavigationSession(session);
+      } catch (error) {
+        setNavigationGroups((current) =>
+          updateSessionArchivedStateInGroups(current, sessionId, !isArchived)
+        );
+        throw error;
+      }
+    },
+    [upsertNavigationSession]
+  );
+
   const setSessionWorkspace = useCallback((sessionId: string, workspaceId: string | null) => {
     setSessionWorkspaceMap((current) => {
       if (!workspaceId) {
@@ -1969,20 +1988,8 @@ export function WorkbenchLayout() {
                 onToggleFavoriteSession={(sessionId) =>
                   setFavoriteSessionIds((current) => toggleStoredId(current, sessionId))
                 }
-                onArchiveSession={async (sessionId) => {
-                  setNavigationGroups((current) =>
-                    updateSessionArchivedStateInGroups(current, sessionId, true)
-                  );
-                  const session = await updateSessionArchiveState(sessionId, true);
-                  upsertNavigationSession(session);
-                }}
-                onUnarchiveSession={async (sessionId) => {
-                  setNavigationGroups((current) =>
-                    updateSessionArchivedStateInGroups(current, sessionId, false)
-                  );
-                  const session = await updateSessionArchiveState(sessionId, false);
-                  upsertNavigationSession(session);
-                }}
+                onArchiveSession={(sessionId) => commitNavigationArchiveState(sessionId, true)}
+                onUnarchiveSession={(sessionId) => commitNavigationArchiveState(sessionId, false)}
                 onToggleCollapse={() => setLeftCollapsed(true)}
               />
             </aside>
@@ -2126,20 +2133,8 @@ export function WorkbenchLayout() {
             onToggleFavoriteSession={(sessionId) =>
               setFavoriteSessionIds((current) => toggleStoredId(current, sessionId))
             }
-            onArchiveSession={async (sessionId) => {
-              setNavigationGroups((current) =>
-                updateSessionArchivedStateInGroups(current, sessionId, true)
-              );
-              const session = await updateSessionArchiveState(sessionId, true);
-              upsertNavigationSession(session);
-            }}
-            onUnarchiveSession={async (sessionId) => {
-              setNavigationGroups((current) =>
-                updateSessionArchivedStateInGroups(current, sessionId, false)
-              );
-              const session = await updateSessionArchiveState(sessionId, false);
-              upsertNavigationSession(session);
-            }}
+            onArchiveSession={(sessionId) => commitNavigationArchiveState(sessionId, true)}
+            onUnarchiveSession={(sessionId) => commitNavigationArchiveState(sessionId, false)}
             onClose={() => setMobileNavOpen(false)}
           />
         </MobileNavDrawer>

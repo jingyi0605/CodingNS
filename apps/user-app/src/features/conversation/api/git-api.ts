@@ -91,6 +91,7 @@ export interface GitHistoryPageDto {
   items: GitHistoryItemDto[];
   cursor: string | null;
   nextCursor: string | null;
+  totalCount: number;
 }
 
 export interface GitBranchItemDto {
@@ -111,6 +112,11 @@ export interface GitRemoteSyncResultDto {
   summary: string;
   stdout: string;
   stderr: string;
+}
+
+export interface GitUndoCommitResultDto {
+  summary: string;
+  commitHash: string;
 }
 
 export function getGitStatus(workspaceId: string) {
@@ -141,6 +147,16 @@ export function stageGitTargets(workspaceId: string, targets: string[]) {
 
 export function unstageGitTargets(workspaceId: string, targets: string[]) {
   return httpClient.request<GitStatusDto>("/api/git/unstage", {
+    method: "POST",
+    body: JSON.stringify({
+      workspaceId,
+      targets
+    })
+  });
+}
+
+export function discardGitTargets(workspaceId: string, targets: string[]) {
+  return httpClient.request<GitStatusDto>("/api/git/discard", {
     method: "POST",
     body: JSON.stringify({
       workspaceId,
@@ -191,10 +207,26 @@ export function commitDraft(workspaceId: string, draft: CommitDraftDto) {
   );
 }
 
-export function getGitHistory(workspaceId: string, limit = 5) {
-  return httpClient.request<GitHistoryPageDto>(
-    `/api/git/history?workspaceId=${encodeURIComponent(workspaceId)}&limit=${limit}`
-  );
+export function undoLastCommit(workspaceId: string) {
+  return httpClient.request<GitUndoCommitResultDto>("/api/git/commit/undo", {
+    method: "POST",
+    body: JSON.stringify({
+      workspaceId
+    })
+  });
+}
+
+export function getGitHistory(workspaceId: string, limit = 5, cursor: string | null = null) {
+  const search = new URLSearchParams({
+    workspaceId,
+    limit: String(limit)
+  });
+
+  if (cursor) {
+    search.set("cursor", cursor);
+  }
+
+  return httpClient.request<GitHistoryPageDto>(`/api/git/history?${search.toString()}`);
 }
 
 export function getGitBranches(workspaceId: string) {

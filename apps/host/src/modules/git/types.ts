@@ -75,6 +75,7 @@ export interface GitHistoryPage {
   items: GitHistoryItem[];
   cursor: string | null;
   nextCursor: string | null;
+  totalCount: number;
 }
 
 export interface GitBranchItem {
@@ -95,4 +96,9 @@ export interface GitRemoteSyncResult {
   summary: string;
   stdout: string;
   stderr: string;
+}
+
+export interface GitUndoCommitResult {
+  summary: string;
+  commitHash: string;
 }

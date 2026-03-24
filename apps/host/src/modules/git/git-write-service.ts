@@ -4,7 +4,12 @@ import path from "node:path";
 
 import { AppError } from "../../shared/errors/app-error.js";
 import type { GitCommandRunner } from "./git-command-runner.js";
-import type { CommitDraft, GitBranchSnapshot, GitRemoteSyncResult } from "./types.js";
+import type {
+  CommitDraft,
+  GitBranchSnapshot,
+  GitRemoteSyncResult,
+  GitUndoCommitResult
+} from "./types.js";
 import type { GitReadService } from "./git-read-service.js";
 import type { WorkspaceRepoGuard } from "./workspace-repo-guard.js";
 
@@ -34,13 +39,71 @@ export class GitWriteService {
         throw new AppError({
           statusCode: 409,
           errorCode: "NOT_STAGED",
-          detail: `目标文件尚未暂存：${target}`,
+          detail: `Target is not staged: ${target}`,
           field: "targets"
         });
       }
     }
 
     await this.gitCommandRunner.run(status.snapshot.repoRoot, ["reset", "HEAD", "--", ...relativeTargets]);
+
+    return await this.gitReadService.getStatus(workspaceId);
+  }
+
+  async discard(workspaceId: string, targets: string[]) {
+    const status = await this.gitReadService.getStatus(workspaceId);
+    const repoRoot = status.snapshot.repoRoot;
+    const relativeTargets = ensureTargets(repoRoot, targets, this.workspaceRepoGuard);
+    const changeMap = new Map(status.changes.map((item) => [item.path, item] as const));
+    const trackedTargets: string[] = [];
+    const untrackedTargets: string[] = [];
+
+    for (const target of relativeTargets) {
+      const change = changeMap.get(target);
+
+      if (!change) {
+        throw new AppError({
+          statusCode: 404,
+          errorCode: "INVALID_TARGET",
+          detail: `Git target is not present in change list: ${target}`,
+          field: "targets"
+        });
+      }
+
+      if (change.status === "?" && !change.staged) {
+        untrackedTargets.push(target);
+        continue;
+      }
+
+      trackedTargets.push(target);
+    }
+
+    try {
+      if (trackedTargets.length > 0) {
+        await this.gitCommandRunner.run(repoRoot, [
+          "restore",
+          "--source=HEAD",
+          "--staged",
+          "--worktree",
+          "--",
+          ...trackedTargets
+        ]);
+      }
+
+      if (untrackedTargets.length > 0) {
+        await this.gitCommandRunner.run(repoRoot, ["clean", "-fd", "--", ...untrackedTargets]);
+      }
+    } catch (error) {
+      if (error instanceof AppError) {
+        throw new AppError({
+          statusCode: 500,
+          errorCode: "GIT_DISCARD_FAILED",
+          detail: error.message
+        });
+      }
+
+      throw error;
+    }
 
     return await this.gitReadService.getStatus(workspaceId);
   }
@@ -57,14 +120,11 @@ export class GitWriteService {
       throw new AppError({
         statusCode: 409,
         errorCode: "EMPTY_STAGED_CHANGES",
-        detail: "暂存区为空，不能执行提交"
+        detail: "No staged changes available for commit"
       });
     }
 
-    const messagePath = path.join(
-      os.tmpdir(),
-      `codingns-commit-${process.pid}-${Date.now()}.txt`
-    );
+    const messagePath = path.join(os.tmpdir(), `codingns-commit-${process.pid}-${Date.now()}.txt`);
 
     fs.writeFileSync(messagePath, formatCommitMessage(draft), "utf8");
 
@@ -104,7 +164,7 @@ export class GitWriteService {
       throw new AppError({
         statusCode: 400,
         errorCode: "INVALID_INPUT",
-        detail: "分支名称不能为空",
+        detail: "Branch name is required",
         field: "branchName"
       });
     }
@@ -138,7 +198,7 @@ export class GitWriteService {
       throw new AppError({
         statusCode: 404,
         errorCode: "REMOTE_NOT_FOUND",
-        detail: "当前仓库没有可用的 origin 远程"
+        detail: "Origin remote is not configured"
       });
     }
 
@@ -166,6 +226,41 @@ export class GitWriteService {
       stderr: result.stderr.trim()
     };
   }
+
+  async undoLastCommit(workspaceId: string): Promise<GitUndoCommitResult> {
+    const repo = await this.workspaceRepoGuard.resolve(workspaceId);
+    const headResult = await this.gitCommandRunner.run(repo.repoRoot, ["rev-parse", "HEAD"], {
+      allowNonZeroExit: true
+    });
+
+    if (headResult.exitCode !== 0 || !headResult.stdout.trim()) {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "GIT_UNDO_FAILED",
+        detail: "No commit available to undo"
+      });
+    }
+
+    const commitHash = headResult.stdout.trim();
+    const resetResult = await this.gitCommandRunner.run(
+      repo.repoRoot,
+      ["reset", "--soft", "HEAD~1"],
+      { allowNonZeroExit: true, timeoutMs: 30_000 }
+    );
+
+    if (resetResult.exitCode !== 0) {
+      throw new AppError({
+        statusCode: 500,
+        errorCode: "GIT_UNDO_FAILED",
+        detail: resetResult.stderr.trim() || resetResult.stdout.trim() || "Undo last commit failed"
+      });
+    }
+
+    return {
+      summary: "已撤销上次提交，改动保留在暂存区",
+      commitHash
+    };
+  }
 }
 
 function ensureTargets(
@@ -182,7 +277,7 @@ function ensureTargets(
     throw new AppError({
       statusCode: 400,
       errorCode: "INVALID_TARGET",
-      detail: "至少要提供一个 Git 目标路径",
+      detail: "At least one Git target is required",
       field: "targets"
     });
   }
@@ -201,7 +296,7 @@ function mapBranchSwitchError(detail: string): AppError {
     return new AppError({
       statusCode: 404,
       errorCode: "BRANCH_NOT_FOUND",
-      detail: "目标分支不存在"
+      detail: "Target branch not found"
     });
   }
 
@@ -209,14 +304,14 @@ function mapBranchSwitchError(detail: string): AppError {
     return new AppError({
       statusCode: 409,
       errorCode: "BRANCH_CONFLICT",
-      detail: "切换分支前请先处理当前未提交变更"
+      detail: "Local changes conflict with branch switch"
     });
   }
 
   return new AppError({
     statusCode: 500,
     errorCode: "GIT_BRANCH_FAILED",
-    detail: detail.trim() || "分支操作失败"
+    detail: detail.trim() || "Branch switch failed"
   });
 }
 
@@ -225,7 +320,7 @@ function mapRemoteError(action: GitRemoteSyncResult["action"], detail: string): 
     return new AppError({
       statusCode: 401,
       errorCode: "GIT_REMOTE_AUTH_FAILED",
-      detail: "远程仓库认证失败"
+      detail: "Remote authentication failed"
     });
   }
 
@@ -233,7 +328,7 @@ function mapRemoteError(action: GitRemoteSyncResult["action"], detail: string): 
     return new AppError({
       statusCode: 404,
       errorCode: "REMOTE_NOT_FOUND",
-      detail: "远程仓库或远程分支不存在"
+      detail: "Remote repository or branch not found"
     });
   }
 
@@ -241,7 +336,7 @@ function mapRemoteError(action: GitRemoteSyncResult["action"], detail: string): 
     return new AppError({
       statusCode: 409,
       errorCode: "BRANCH_CONFLICT",
-      detail: "远程同步失败，存在分支冲突或非快进更新"
+      detail: "Remote sync failed because of non-fast-forward conflict"
     });
   }
 
@@ -249,7 +344,7 @@ function mapRemoteError(action: GitRemoteSyncResult["action"], detail: string): 
     return new AppError({
       statusCode: 502,
       errorCode: "GIT_REMOTE_FAILED",
-      detail: "远程网络异常，暂时无法完成同步"
+      detail: "Remote network request failed"
     });
   }
 
@@ -261,7 +356,7 @@ function mapRemoteError(action: GitRemoteSyncResult["action"], detail: string): 
         : action === "push"
           ? "GIT_PUSH_FAILED"
           : "GIT_REMOTE_FAILED",
-    detail: detail.trim() || "远程同步失败"
+    detail: detail.trim() || "Remote sync failed"
   });
 }
 

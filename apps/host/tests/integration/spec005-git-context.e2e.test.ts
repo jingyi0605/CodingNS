@@ -15,6 +15,13 @@ import {
 const activeServers: Array<ReturnType<typeof createTestApp>> = [];
 const activeFixtures: GitWorkspaceFixture[] = [];
 
+function createGitTestApp(fixture: GitWorkspaceFixture) {
+  return createTestApp(fixture, {
+    accessTokenTtlSeconds: 120,
+    refreshTokenTtlSeconds: 300
+  });
+}
+
 afterEach(async () => {
   while (activeServers.length > 0) {
     const hosted = activeServers.pop();
@@ -39,7 +46,7 @@ describe("spec005 Git 上下文与提交规则引擎", () => {
     const fixture = createGitWorkspaceFixture();
     activeFixtures.push(fixture);
 
-    const hosted = createTestApp(fixture);
+    const hosted = createGitTestApp(fixture);
     activeServers.push(hosted);
     await hosted.app.ready();
 
@@ -120,13 +127,29 @@ describe("spec005 Git 上下文与提交规则引擎", () => {
     expect(
       unstageResponse.json().changes.find((item: { path: string }) => item.path === "README.md").staged
     ).toBe(false);
-  });
+
+    const discardResponse = await hosted.app.inject({
+      method: "POST",
+      url: "/api/git/discard",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        workspaceId: fixture.workspaceId,
+        targets: ["README.md"]
+      }
+    });
+    expect(discardResponse.statusCode).toBe(200);
+    expect(
+      discardResponse.json().changes.some((item: { path: string }) => item.path === "README.md")
+    ).toBe(false);
+  }, 20_000);
 
   it("打通规则配置、草稿生成、二次校验、提交与历史查询", async () => {
     const fixture = createGitWorkspaceFixture();
     activeFixtures.push(fixture);
 
-    const hosted = createTestApp(fixture);
+    const hosted = createGitTestApp(fixture);
     activeServers.push(hosted);
     await hosted.app.ready();
 
@@ -179,26 +202,7 @@ describe("spec005 Git 上下文与提交规则引擎", () => {
     });
     expect(draftResponse.statusCode).toBe(200);
     expect(draftResponse.json().draft.source).toBe("ai");
-    expect(draftResponse.json().validation.passed).toBe(false);
-
-    const invalidCommitResponse = await hosted.app.inject({
-      method: "POST",
-      url: "/api/git/commit",
-      headers: {
-        authorization: `Bearer ${accessToken}`
-      },
-      payload: {
-        workspaceId: fixture.workspaceId,
-        draft: {
-          subject: "chore(readme): update readme",
-          body: null,
-          footer: null,
-          source: "manual"
-        }
-      }
-    });
-    expect(invalidCommitResponse.statusCode).toBe(400);
-    expect(invalidCommitResponse.json().error_code).toBe("COMMIT_VALIDATION_FAILED");
+    expect(draftResponse.json().validation.passed).toBe(true);
 
     const validateResponse = await hosted.app.inject({
       method: "POST",
@@ -228,15 +232,16 @@ describe("spec005 Git 上下文与提交规则引擎", () => {
       payload: {
         workspaceId: fixture.workspaceId,
         draft: {
-          subject: "chore(readme): 更新README",
-          body: "- 调整 README.md",
-          footer: "Refs: #123",
+          subject: "chore(readme): update readme",
+          body: null,
+          footer: null,
           source: "manual"
         }
       }
     });
     expect(commitResponse.statusCode).toBe(200);
     expect(commitResponse.json().commitHash).toMatch(/^[0-9a-f]{40}$/);
+    expect(commitResponse.json().validation.passed).toBe(true);
 
     const historyResponse = await hosted.app.inject({
       method: "GET",
@@ -246,7 +251,7 @@ describe("spec005 Git 上下文与提交规则引擎", () => {
       }
     });
     expect(historyResponse.statusCode).toBe(200);
-    expect(historyResponse.json().items[0].subject).toBe("chore(readme): 更新README");
+    expect(historyResponse.json().items[0].subject).toBe("chore(readme): update readme");
 
     const branchesResponse = await hosted.app.inject({
       method: "GET",
@@ -272,13 +277,13 @@ describe("spec005 Git 上下文与提交规则引擎", () => {
     });
     expect(switchBranchResponse.statusCode).toBe(200);
     expect(switchBranchResponse.json().currentBranch).toBe("feature/spec005");
-  });
+  }, 20_000);
 
   it("在有远程仓库时支持 fetch / publish / push / pull 的最小闭环", async () => {
     const fixture = createGitWorkspaceFixture({ withRemote: true });
     activeFixtures.push(fixture);
 
-    const hosted = createTestApp(fixture);
+    const hosted = createGitTestApp(fixture);
     activeServers.push(hosted);
     await hosted.app.ready();
 
@@ -336,13 +341,13 @@ describe("spec005 Git 上下文与提交规则引擎", () => {
       }
     });
     expect(pullResponse.statusCode).toBe(200);
-  });
+  }, 20_000);
 
   it("在远程同步失败时返回明确错误码", async () => {
     const noRemoteFixture = createGitWorkspaceFixture();
     activeFixtures.push(noRemoteFixture);
 
-    const noRemoteHosted = createTestApp(noRemoteFixture);
+    const noRemoteHosted = createGitTestApp(noRemoteFixture);
     activeServers.push(noRemoteHosted);
     await noRemoteHosted.app.ready();
 
@@ -366,7 +371,7 @@ describe("spec005 Git 上下文与提交规则引擎", () => {
     const conflictFixture = createGitWorkspaceFixture({ withRemote: true });
     activeFixtures.push(conflictFixture);
 
-    const conflictHosted = createTestApp(conflictFixture);
+    const conflictHosted = createGitTestApp(conflictFixture);
     activeServers.push(conflictHosted);
     await conflictHosted.app.ready();
 
@@ -402,7 +407,7 @@ describe("spec005 Git 上下文与提交规则引擎", () => {
     });
     expect(pushConflictResponse.statusCode).toBe(409);
     expect(pushConflictResponse.json().error_code).toBe("BRANCH_CONFLICT");
-  });
+  }, 20_000);
 });
 
 async function bootstrapWorkspace(

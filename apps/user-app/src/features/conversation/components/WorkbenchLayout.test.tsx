@@ -92,7 +92,7 @@ describe("WorkbenchLayout", () => {
   });
 
   it("支持收藏、归档恢复，并在新建时进入 draft 会话路由", async () => {
-    const currentSnapshot = createWorkbenchSnapshot([
+    let currentSnapshot = createWorkbenchSnapshot([
       {
         workspace: createWorkspace("workspace-1", "项目一"),
         sessions: [
@@ -138,11 +138,65 @@ describe("WorkbenchLayout", () => {
 
     MockWebSocket.workbenchSnapshot = currentSnapshot;
 
-    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
 
       if (url.endsWith("/api/workbench")) {
         return createJsonResponse(currentSnapshot);
+      }
+
+      if (url.includes("/api/sessions/session-2/archive")) {
+        const payload = JSON.parse(String(init.body ?? "{}")) as { archived?: boolean };
+        const archived = payload.archived === true;
+        const nextSession = createSessionSummary({
+          sessionId: "session-2",
+          title: "会话 Beta",
+          workspaceId: "workspace-1",
+          isArchived: archived
+        });
+
+        currentSnapshot = createWorkbenchSnapshot([
+          {
+            workspace: createWorkspace("workspace-1", "项目一"),
+            sessions: [
+              createSessionSummary({
+                sessionId: "session-1",
+                title: "会话 Alpha",
+                workspaceId: "workspace-1"
+              }),
+              createSessionSummary({
+                sessionId: "session-1-sub",
+                title: "子代理探索",
+                workspaceId: "workspace-1",
+                parentSessionId: "session-1",
+                isSubagent: true,
+                subagentLabel: "worker · Banach"
+              }),
+              createSessionSummary({
+                sessionId: "session-1-sub-nested",
+                title: "子代理深挖",
+                workspaceId: "workspace-1",
+                parentSessionId: "session-1-sub",
+                isSubagent: true,
+                subagentLabel: "explorer · Turing"
+              }),
+              nextSession
+            ]
+          },
+          {
+            workspace: createWorkspace("workspace-2", "项目二"),
+            sessions: [
+              createSessionSummary({
+                sessionId: "session-3",
+                title: "会话 Gamma",
+                workspaceId: "workspace-2"
+              })
+            ]
+          }
+        ]);
+        MockWebSocket.workbenchSnapshot = currentSnapshot;
+
+        return createJsonResponse(nextSession);
       }
 
       throw new Error(`未处理的请求: ${url}`);
@@ -230,6 +284,71 @@ describe("WorkbenchLayout", () => {
         "?workspaceId=workspace-1&provider=claude-code"
       );
     });
+  });
+
+  it("支持会话重命名，并立即更新左侧列表标题", async () => {
+    let currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "旧标题",
+            workspaceId: "workspace-1"
+          })
+        ]
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      if (url.endsWith("/api/sessions/session-1/title") && init?.method === "PATCH") {
+        const payload = JSON.parse(String(init.body ?? "{}")) as { title?: string };
+        const nextSession = createSessionSummary({
+          sessionId: "session-1",
+          title: payload.title ?? "未命名",
+          workspaceId: "workspace-1"
+        });
+
+        currentSnapshot = createWorkbenchSnapshot([
+          {
+            workspace: createWorkspace("workspace-1", "项目一"),
+            sessions: [nextSession]
+          }
+        ]);
+        MockWebSocket.workbenchSnapshot = currentSnapshot;
+
+        return createJsonResponse(nextSession);
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/sessions/session-1");
+
+    const sessionCard = (await screen.findByText("旧标题")).closest(".workbench-session-card") as HTMLElement | null;
+    expect(sessionCard).not.toBeNull();
+
+    await userEvent.click(within(sessionCard!).getByRole("button", { name: t("shell.sessionMoreAction") }));
+    await userEvent.click(screen.getByRole("button", { name: t("shell.renameAction") }));
+
+    const dialog = await screen.findByRole("dialog", { name: t("shell.renameModalTitle") });
+    const input = within(dialog).getByRole("textbox");
+    await userEvent.clear(input);
+    await userEvent.type(input, "新标题");
+    await userEvent.click(within(dialog).getByRole("button", { name: t("common.save") }));
+
+    await waitFor(() => {
+      expect(screen.getByText("新标题")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("旧标题")).not.toBeInTheDocument();
   });
 
   it("主会话默认只显示最近 5 个子代理，并支持按批展开", async () => {
@@ -452,6 +571,7 @@ function createSessionSummary(input: {
   title: string;
   workspaceId: string;
   provider?: "codex" | "claude-code";
+  isArchived?: boolean;
   parentSessionId?: string | null;
   isSubagent?: boolean;
   subagentLabel?: string | null;
@@ -465,6 +585,7 @@ function createSessionSummary(input: {
     provider: input.provider ?? "codex",
     providerSessionId: `raw-${input.sessionId}`,
     rawStoreRef: `codex://${input.sessionId}`,
+    isArchived: input.isArchived ?? false,
     parentSessionId: input.parentSessionId ?? null,
     isSubagent: input.isSubagent ?? false,
     subagentLabel: input.subagentLabel ?? null,

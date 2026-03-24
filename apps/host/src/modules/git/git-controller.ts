@@ -125,6 +125,18 @@ export class GitController {
     );
   };
 
+  readonly discard = async (
+    request: FastifyRequest<{ Body: TargetsBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(
+      await this.gitWriteService.discard(
+        requireWorkspaceId(request.body.workspaceId),
+        request.body.targets ?? []
+      )
+    );
+  };
+
   readonly getRules = async (
     request: FastifyRequest<{ Querystring: WorkspaceQuery }>,
     reply: FastifyReply
@@ -262,6 +274,15 @@ export class GitController {
 
     reply.send(
       await this.gitWriteService.syncRemote(requireWorkspaceId(request.body.workspaceId), action)
+    );
+  };
+
+  readonly undoLastCommit = async (
+    request: FastifyRequest<{ Body: WorkspaceQuery }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(
+      await this.gitWriteService.undoLastCommit(requireWorkspaceId(request.body.workspaceId))
     );
   };
 }

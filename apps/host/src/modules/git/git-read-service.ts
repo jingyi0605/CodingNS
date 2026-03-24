@@ -95,13 +95,18 @@ export class GitReadService {
     const repo = await this.workspaceRepoGuard.resolve(workspaceId);
     const safeLimit = clampHistoryLimit(limit);
     const offset = parseCursor(cursor);
-    const logResult = await this.gitCommandRunner.run(repo.repoRoot, [
-      "log",
-      `--skip=${offset}`,
-      "-n",
-      String(safeLimit + 1),
-      "--date=iso-strict",
-      "--pretty=format:%H%x1f%an%x1f%ad%x1f%s%x1f%b%x1e"
+    const [logResult, countResult] = await Promise.all([
+      this.gitCommandRunner.run(repo.repoRoot, [
+        "log",
+        `--skip=${offset}`,
+        "-n",
+        String(safeLimit + 1),
+        "--date=iso-strict",
+        "--pretty=format:%H%x1f%an%x1f%ad%x1f%s%x1f%b%x1e"
+      ]),
+      this.gitCommandRunner.run(repo.repoRoot, ["rev-list", "--count", "HEAD"], {
+        allowNonZeroExit: true
+      })
     ]);
     const parsedItems = logResult.stdout
       .split("\u001e")
@@ -110,11 +115,13 @@ export class GitReadService {
       .map((entry) => parseHistoryItem(entry));
     const hasMore = parsedItems.length > safeLimit;
     const items = hasMore ? parsedItems.slice(0, safeLimit) : parsedItems;
+    const totalCount = parseHistoryCount(countResult.stdout);
 
     return {
       items,
       cursor: cursor ?? "0",
-      nextCursor: hasMore ? String(offset + safeLimit) : null
+      nextCursor: hasMore ? String(offset + safeLimit) : null,
+      totalCount
     };
   }
 
@@ -232,6 +239,16 @@ function parseCursor(cursor: string | null): number {
   }
 
   return value;
+}
+
+function parseHistoryCount(stdout: string): number {
+  const value = Number(stdout.trim());
+
+  if (!Number.isFinite(value) || value < 0) {
+    return 0;
+  }
+
+  return Math.trunc(value);
 }
 
 function parseBranchLine(line: string, remote: boolean): GitBranchItem {

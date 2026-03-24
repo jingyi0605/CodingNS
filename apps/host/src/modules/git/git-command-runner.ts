@@ -20,9 +20,10 @@ export class GitCommandRunner {
     options: GitCommandOptions = {}
   ): Promise<GitCommandResult> {
     const timeoutMs = options.timeoutMs ?? 15_000;
+    const effectiveArgs = ["-c", "core.quotepath=false", ...args];
 
     return await new Promise<GitCommandResult>((resolve, reject) => {
-      const child = spawn("git", args, {
+      const child = spawn("git", effectiveArgs, {
         cwd: repoRoot,
         env: process.env,
         stdio: ["ignore", "pipe", "pipe"]

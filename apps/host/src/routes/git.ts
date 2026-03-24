@@ -10,11 +10,13 @@ export async function registerGitRoutes(
   app.get("/api/git/diff", gitController.getDiff);
   app.post("/api/git/stage", gitController.stage);
   app.post("/api/git/unstage", gitController.unstage);
+  app.post("/api/git/discard", gitController.discard);
   app.get("/api/git/rules", gitController.getRules);
   app.put("/api/git/rules", gitController.saveRules);
   app.post("/api/git/commit/draft", gitController.createCommitDraft);
   app.post("/api/git/commit/validate", gitController.validateCommit);
   app.post("/api/git/commit", gitController.commit);
+  app.post("/api/git/commit/undo", gitController.undoLastCommit);
   app.get("/api/git/history", gitController.getHistory);
   app.get("/api/git/branches", gitController.getBranches);
   app.post("/api/git/branches/switch", gitController.switchBranch);

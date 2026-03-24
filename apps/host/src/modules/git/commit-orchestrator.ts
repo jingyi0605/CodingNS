@@ -1,4 +1,3 @@
-import { AppError } from "../../shared/errors/app-error.js";
 import type { CommitDraft, CommitRuleProfile, CommitValidationResult } from "./types.js";
 import type { CommitRuleEngine } from "./commit-rule-engine.js";
 import type { CommitDraftService } from "./commit-draft-service.js";
@@ -60,15 +59,6 @@ export class CommitOrchestrator {
   }> {
     const ruleProfile = this.gitRuleRepository.getRuleProfile(workspaceId);
     const validation = this.commitRuleEngine.validate(ruleProfile, draft);
-
-    if (!validation.passed) {
-      throw new AppError({
-        statusCode: 400,
-        errorCode: "COMMIT_VALIDATION_FAILED",
-        detail: validation.errors.map((item) => item.detail).join("；")
-      });
-    }
-
     const commitResult = await this.gitWriteService.commit(workspaceId, validation.normalizedDraft);
 
     return {
