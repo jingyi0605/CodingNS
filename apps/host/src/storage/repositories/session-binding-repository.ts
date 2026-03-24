@@ -30,6 +30,19 @@ export class SessionBindingRepository {
     return row ? mapSessionBindingRow(row) : null;
   }
 
+  findByRawStoreRef(provider: string, rawStoreRef: string): SessionBinding | null {
+    const row = this.db
+      .prepare(
+        `SELECT session_id, workspace_id, provider, provider_session_id, raw_store_ref, created_at, updated_at
+         FROM session_bindings
+         WHERE provider = ?
+           AND raw_store_ref = ?`
+      )
+      .get(provider, rawStoreRef) as SessionBindingRow | undefined;
+
+    return row ? mapSessionBindingRow(row) : null;
+  }
+
   upsert(record: SessionBinding): void {
     this.db
       .prepare(

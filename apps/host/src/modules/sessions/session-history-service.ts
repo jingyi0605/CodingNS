@@ -10,16 +10,16 @@ import {
   type HistoryPage,
   type ProviderCapabilities,
   type ProviderRealtimeEvent,
-  type SendMessageResult,
-  type ProviderSubscription
+  type ProviderSubscription,
+  type SendMessageResult
 } from "@codingns/session-sync-core";
 
 import type { HostConfig } from "../../config/env.js";
-import { inspectSessionActivity } from "./session-activity-inspector.js";
 import { AppError } from "../../shared/errors/app-error.js";
 import { createId } from "../../shared/utils/id.js";
 import { nowIso } from "../../shared/utils/time.js";
 import type {
+  SessionBinding,
   SessionListItem,
   SessionStateRecord,
   SessionStatusSnapshot
@@ -29,6 +29,8 @@ import type { SessionIndexRepository } from "../../storage/repositories/session-
 import type { SessionStateRepository } from "../../storage/repositories/session-state-repository.js";
 import type { SessionStatusSnapshotRepository } from "../../storage/repositories/session-status-snapshot-repository.js";
 import type { WorkspaceRepository } from "../../storage/repositories/workspace-repository.js";
+import { inspectSessionActivity } from "./session-activity-inspector.js";
+import { mapSessionProviderError } from "./session-provider-error-mapper.js";
 
 interface StartSessionInput {
   workspaceId: string;
@@ -37,14 +39,14 @@ interface StartSessionInput {
   initialPrompt?: string;
 }
 
-interface RealtimeEnvelope {
+export interface SessionHistoryEnvelope {
   type: "session.backfill" | "session.delta";
   sessionId: string;
   cursor: string | null;
   messages: HistoryPage["messages"];
 }
 
-export class SessionRuntimeService {
+export class SessionHistoryService {
   private readonly providerRegistry: ProviderRegistry;
   private readonly sessionSyncService: SessionSyncService;
   private readonly capabilityService: CapabilityService;
@@ -90,76 +92,12 @@ export class SessionRuntimeService {
       return inflight;
     }
 
-    const task = this.runDiscoverWorkspaceSessions(workspaceId, userId)
-      .finally(() => {
-        this.workspaceDiscoveryInflight.delete(workspaceId);
-      });
+    const task = this.runDiscoverWorkspaceSessions(workspaceId, userId).finally(() => {
+      this.workspaceDiscoveryInflight.delete(workspaceId);
+    });
 
     this.workspaceDiscoveryInflight.set(workspaceId, task);
     return task;
-  }
-
-  private async runDiscoverWorkspaceSessions(
-    workspaceId: string,
-    userId: string
-  ): Promise<SessionListItem[]> {
-    const workspace = this.getWorkspaceOrThrow(workspaceId);
-    const sessions = await this.sessionSyncService
-      .discoverWorkspaceSessions(workspace.path)
-      .catch((error) => {
-        throw this.mapProviderError(error);
-      });
-    const timestamp = nowIso();
-
-    const persist = this.db.transaction(() => {
-      for (const session of sessions) {
-        const existing = this.sessionBindingRepository.findByProviderSession(
-          session.provider,
-          session.providerSessionId
-        );
-        const currentSnapshot = existing
-          ? this.sessionStatusSnapshotRepository.findBySessionId(existing.sessionId)
-          : null;
-        const sessionId = existing?.sessionId ?? createId();
-        const createdAt = existing?.createdAt ?? timestamp;
-
-        this.sessionBindingRepository.upsert({
-          sessionId,
-          workspaceId: workspace.id,
-          provider: session.provider,
-          providerSessionId: session.providerSessionId,
-          rawStoreRef: session.rawStoreRef,
-          createdAt,
-          updatedAt: timestamp
-        });
-        this.sessionIndexRepository.upsert({
-          sessionId,
-          workspaceId: workspace.id,
-          provider: session.provider,
-          title: session.title,
-          messageCount: session.messageCount,
-          lastMessageAt: session.lastMessageAt,
-          createdAt,
-          updatedAt: timestamp
-        });
-        this.sessionStatusSnapshotRepository.upsert({
-          sessionId,
-          syncStatus: currentSnapshot?.syncStatus ?? "idle",
-          syncCursor: currentSnapshot?.syncCursor ?? null,
-          lastSyncAt: currentSnapshot?.lastSyncAt ?? null,
-          lastErrorCode: currentSnapshot?.lastErrorCode ?? null,
-          lastErrorDetail: currentSnapshot?.lastErrorDetail ?? null,
-          resumedAt: currentSnapshot?.resumedAt ?? null,
-          updatedAt: timestamp
-        });
-      }
-    });
-
-    persist();
-    const items = this.sessionIndexRepository.listByWorkspace(workspaceId, userId);
-    await this.refreshRecentSessionStates(items.slice(0, 10), userId);
-    this.workspaceDiscoveryTimestamps.set(workspaceId, Date.now());
-    return this.sessionIndexRepository.listByWorkspace(workspaceId, userId);
   }
 
   async readSessionHistory(
@@ -182,7 +120,7 @@ export class SessionRuntimeService {
     });
 
     try {
-      const page = await this.sessionSyncService.readHistory(
+      const page = await this.readPage(
         binding.provider,
         binding.providerSessionId,
         binding.rawStoreRef,
@@ -210,13 +148,43 @@ export class SessionRuntimeService {
       return page;
     } catch (error) {
       this.markSessionError(sessionId, "PROVIDER_READ_FAILED", error);
-      throw this.mapProviderError(error);
+      throw mapSessionProviderError(error);
     }
   }
 
-  async getSession(sessionId: string, userId: string): Promise<SessionListItem> {
-    await this.refreshSessionState(sessionId, userId);
-    await this.markSessionSeen(sessionId, userId);
+  async findLatestUserMessage(
+    sessionId: string,
+    content: string,
+    maxAttempts = 12
+  ): Promise<SendMessageResult["message"] | null> {
+    const binding = this.getBindingOrThrow(sessionId);
+
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const page = await this.readPage(
+        binding.provider,
+        binding.providerSessionId,
+        binding.rawStoreRef,
+        null,
+        30,
+        "backward"
+      );
+      const matched = [...page.messages]
+        .reverse()
+        .find((message) => message.role === "user" && message.content === content);
+
+      if (matched) {
+        return matched;
+      }
+
+      if (attempt < maxAttempts - 1) {
+        await delay(100);
+      }
+    }
+
+    return null;
+  }
+
+  getSession(sessionId: string, userId: string): SessionListItem {
     return this.getSessionListItemOrThrow(sessionId, userId);
   }
 
@@ -224,7 +192,7 @@ export class SessionRuntimeService {
     try {
       return this.capabilityService.getProviderCapabilities(provider);
     } catch (error) {
-      throw this.mapProviderError(error);
+      throw mapSessionProviderError(error);
     }
   }
 
@@ -234,7 +202,7 @@ export class SessionRuntimeService {
     return this.capabilityService
       .getSessionCapabilities(binding.provider, binding.providerSessionId)
       .catch((error) => {
-        throw this.mapProviderError(error);
+        throw mapSessionProviderError(error);
       });
   }
 
@@ -271,7 +239,7 @@ export class SessionRuntimeService {
       };
     } catch (error) {
       this.markSessionError(sessionId, "RESUME_FAILED", error);
-      throw this.mapProviderError(error);
+      throw mapSessionProviderError(error);
     }
   }
 
@@ -329,7 +297,7 @@ export class SessionRuntimeService {
       persist();
       return this.getSessionListItemOrThrow(sessionId, input.userId);
     } catch (error) {
-      throw this.mapProviderError(error);
+      throw mapSessionProviderError(error);
     }
   }
 
@@ -349,7 +317,7 @@ export class SessionRuntimeService {
       )
       .catch((error) => {
         this.markSessionError(sessionId, "SEND_FAILED", error);
-        throw this.mapProviderError(error);
+        throw mapSessionProviderError(error);
       });
 
     const existing = this.sessionIndexRepository.findIndexRecordBySessionId(sessionId);
@@ -366,12 +334,12 @@ export class SessionRuntimeService {
     });
     this.upsertSnapshot(sessionId, {
       syncStatus: "idle",
-      syncCursor: this.sessionStatusSnapshotRepository.findBySessionId(sessionId)?.syncCursor ?? null,
+      syncCursor:
+        this.sessionStatusSnapshotRepository.findBySessionId(sessionId)?.syncCursor ?? null,
       lastSyncAt: result.acceptedAt,
       lastErrorCode: null,
       lastErrorDetail: null,
-      resumedAt:
-        this.sessionStatusSnapshotRepository.findBySessionId(sessionId)?.resumedAt ?? null
+      resumedAt: this.sessionStatusSnapshotRepository.findBySessionId(sessionId)?.resumedAt ?? null
     });
 
     return {
@@ -384,7 +352,7 @@ export class SessionRuntimeService {
     sessionId: string,
     cursor: string | null,
     limit: number,
-    onEnvelope: (envelope: RealtimeEnvelope) => Promise<void> | void
+    onEnvelope: (envelope: SessionHistoryEnvelope) => Promise<void> | void
   ): Promise<ProviderSubscription> {
     const binding = this.getBindingOrThrow(sessionId);
     const sentMessageIds = new Set<string>();
@@ -485,7 +453,7 @@ export class SessionRuntimeService {
       );
     } catch (error) {
       this.markSessionError(sessionId, "SUBSCRIBE_FAILED", error);
-      throw this.mapProviderError(error);
+      throw mapSessionProviderError(error);
     }
   }
 
@@ -506,17 +474,127 @@ export class SessionRuntimeService {
     });
   }
 
+  getBindingOrThrow(sessionId: string): SessionBinding {
+    const binding = this.sessionBindingRepository.findBySessionId(sessionId);
+
+    if (!binding) {
+      throw new AppError({
+        statusCode: 404,
+        errorCode: "SESSION_NOT_FOUND",
+        detail: "session 不存在"
+      });
+    }
+
+    return binding;
+  }
+
+  persistSessionBinding(
+    sessionId: string,
+    workspaceId: string,
+    snapshot: { provider: string; providerSessionId: string | null; rawStoreRef: string | null }
+  ): void {
+    if (!snapshot.providerSessionId || !snapshot.rawStoreRef) {
+      return;
+    }
+
+    const currentBinding = this.sessionBindingRepository.findBySessionId(sessionId);
+    const currentIndex = this.sessionIndexRepository.findIndexRecordBySessionId(sessionId);
+    const timestamp = nowIso();
+
+    this.sessionBindingRepository.upsert({
+      sessionId,
+      workspaceId,
+      provider: snapshot.provider as "claude-code" | "codex",
+      providerSessionId: snapshot.providerSessionId,
+      rawStoreRef: snapshot.rawStoreRef,
+      createdAt: currentBinding?.createdAt ?? timestamp,
+      updatedAt: timestamp
+    });
+
+    if (currentIndex) {
+      this.sessionIndexRepository.upsert({
+        ...currentIndex,
+        updatedAt: timestamp
+      });
+    }
+  }
+
+  private async runDiscoverWorkspaceSessions(
+    workspaceId: string,
+    userId: string
+  ): Promise<SessionListItem[]> {
+    const workspace = this.getWorkspaceOrThrow(workspaceId);
+    const sessions = await this.sessionSyncService
+      .discoverWorkspaceSessions(workspace.path)
+      .catch((error) => {
+        throw mapSessionProviderError(error);
+      });
+    const timestamp = nowIso();
+
+    const persist = this.db.transaction(() => {
+      for (const session of sessions) {
+        const existing =
+          this.sessionBindingRepository.findByProviderSession(
+            session.provider,
+            session.providerSessionId
+          ) ?? this.sessionBindingRepository.findByRawStoreRef(session.provider, session.rawStoreRef);
+        const currentSnapshot = existing
+          ? this.sessionStatusSnapshotRepository.findBySessionId(existing.sessionId)
+          : null;
+        const sessionId = existing?.sessionId ?? createId();
+        const createdAt = existing?.createdAt ?? timestamp;
+
+        this.sessionBindingRepository.upsert({
+          sessionId,
+          workspaceId: workspace.id,
+          provider: session.provider,
+          providerSessionId: session.providerSessionId,
+          rawStoreRef: session.rawStoreRef,
+          createdAt,
+          updatedAt: timestamp
+        });
+        this.sessionIndexRepository.upsert({
+          sessionId,
+          workspaceId: workspace.id,
+          provider: session.provider,
+          title: session.title,
+          messageCount: session.messageCount,
+          lastMessageAt: session.lastMessageAt,
+          createdAt,
+          updatedAt: timestamp
+        });
+        this.sessionStatusSnapshotRepository.upsert({
+          sessionId,
+          syncStatus: currentSnapshot?.syncStatus ?? "idle",
+          syncCursor: currentSnapshot?.syncCursor ?? null,
+          lastSyncAt: currentSnapshot?.lastSyncAt ?? null,
+          lastErrorCode: currentSnapshot?.lastErrorCode ?? null,
+          lastErrorDetail: currentSnapshot?.lastErrorDetail ?? null,
+          resumedAt: currentSnapshot?.resumedAt ?? null,
+          updatedAt: timestamp
+        });
+      }
+    });
+
+    persist();
+    const items = this.sessionIndexRepository.listByWorkspace(workspaceId, userId);
+    await this.refreshRecentSessionStates(items.slice(0, 10), userId);
+    this.workspaceDiscoveryTimestamps.set(workspaceId, Date.now());
+    return this.sessionIndexRepository.listByWorkspace(workspaceId, userId);
+  }
+
   private async readPage(
     provider: string,
     providerSessionId: string,
     rawStoreRef: string,
     cursor: string | null,
-    limit: number
+    limit: number,
+    direction: HistoryDirection = "forward"
   ): Promise<HistoryPage> {
     return this.sessionSyncService
-      .readHistory(provider, providerSessionId, rawStoreRef, cursor, limit)
+      .readHistory(provider, providerSessionId, rawStoreRef, cursor, limit, direction)
       .catch((error) => {
-        throw this.mapProviderError(error);
+        throw mapSessionProviderError(error);
       });
   }
 
@@ -527,25 +605,11 @@ export class SessionRuntimeService {
       throw new AppError({
         statusCode: 404,
         errorCode: "WORKSPACE_NOT_FOUND",
-        detail: "指定工作区不存在"
+        detail: "工作区不存在"
       });
     }
 
     return workspace;
-  }
-
-  private getBindingOrThrow(sessionId: string) {
-    const binding = this.sessionBindingRepository.findBySessionId(sessionId);
-
-    if (!binding) {
-      throw new AppError({
-        statusCode: 404,
-        errorCode: "SESSION_NOT_FOUND",
-        detail: "指定会话不存在"
-      });
-    }
-
-    return binding;
   }
 
   private getSessionListItemOrThrow(sessionId: string, userId: string): SessionListItem {
@@ -555,7 +619,7 @@ export class SessionRuntimeService {
       throw new AppError({
         statusCode: 500,
         errorCode: "SESSION_INDEX_MISSING",
-        detail: "会话索引缺失"
+        detail: "session 索引缺失"
       });
     }
 
@@ -566,9 +630,7 @@ export class SessionRuntimeService {
     sessions: SessionListItem[],
     userId: string
   ): Promise<void> {
-    await Promise.all(
-      sessions.map((session) => this.refreshSessionState(session.sessionId, userId))
-    );
+    await Promise.all(sessions.map((session) => this.refreshSessionState(session.sessionId, userId)));
   }
 
   private async refreshSessionState(
@@ -625,35 +687,6 @@ export class SessionRuntimeService {
       updatedAt: nowIso()
     });
   }
-
-  private mapProviderError(error: unknown): AppError {
-    if (error instanceof AppError) {
-      return error;
-    }
-
-    if (error instanceof Error && error.message === "PROVIDER_NOT_SUPPORTED") {
-      return new AppError({
-        statusCode: 400,
-        errorCode: "PROVIDER_NOT_SUPPORTED",
-        detail: "当前阶段只支持 claude-code 和 codex"
-      });
-    }
-
-    if (error instanceof Error && error.message === "CURSOR_INVALID") {
-      return new AppError({
-        statusCode: 400,
-        errorCode: "CURSOR_INVALID",
-        detail: "分页游标无效",
-        field: "cursor"
-      });
-    }
-
-    return new AppError({
-      statusCode: 502,
-      errorCode: "PROVIDER_IO_ERROR",
-      detail: error instanceof Error ? error.message : "provider 读写失败"
-    });
-  }
 }
 
 function clampLimit(limit: number): number {
@@ -662,4 +695,10 @@ function clampLimit(limit: number): number {
   }
 
   return Math.max(1, Math.min(Math.trunc(limit), 100));
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }

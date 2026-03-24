@@ -4,7 +4,14 @@ import { WebSocketServer, type WebSocket } from "ws";
 
 import { AppError } from "../shared/errors/app-error.js";
 import type { AuthContext } from "../modules/auth/auth-service.js";
-import type { SessionRuntimeService } from "../modules/sessions/session-runtime-service.js";
+import type {
+  SessionHistoryEnvelope,
+  SessionHistoryService
+} from "../modules/sessions/session-history-service.js";
+import type {
+  SessionLiveRuntimeService,
+  SessionRuntimeEnvelope
+} from "../modules/sessions/session-live-runtime-service.js";
 import type { TerminalWsHub } from "./terminal-ws-hub.js";
 import type { WorkbenchWsHub } from "./workbench-ws-hub.js";
 import type { WsAuthGuard } from "./ws-auth-guard.js";
@@ -16,10 +23,15 @@ interface SessionSubscribeMessage {
   limit?: number;
 }
 
+interface CombinedSubscription {
+  close(): void;
+}
+
 export function createWsServer(
   server: Server,
   wsAuthGuard: WsAuthGuard,
-  sessionRuntimeService: SessionRuntimeService,
+  sessionHistoryService: SessionHistoryService,
+  sessionLiveRuntimeService: SessionLiveRuntimeService,
   terminalWsHub: TerminalWsHub,
   workbenchWsHub: WorkbenchWsHub
 ) {
@@ -58,7 +70,7 @@ export function createWsServer(
 
   wss.on("connection", (client, request) => {
     const authContext = (request as IncomingMessageWithAuthContext).authContext;
-    const subscriptions = new Map<string, { close(): void }>();
+    const subscriptions = new Map<string, CombinedSubscription>();
 
     const cleanup = () => {
       for (const subscription of subscriptions.values()) {
@@ -102,18 +114,39 @@ export function createWsServer(
         })
       );
 
+      const sentMessageIds = new Set<string>();
+      const forwardEnvelope = async (envelope: SessionHistoryEnvelope | SessionRuntimeEnvelope) => {
+        const deduped = dedupeEnvelopeMessages(envelope, sentMessageIds);
+
+        if (!deduped) {
+          return;
+        }
+
+        client.send(JSON.stringify(deduped));
+      };
+
+      const runtimeSubscription = sessionLiveRuntimeService.subscribeRuntime(
+        payload.sessionId,
+        forwardEnvelope
+      );
+
       try {
-        const subscription = await sessionRuntimeService.subscribeSession(
+        const historySubscription = await sessionHistoryService.subscribeSession(
           payload.sessionId,
           payload.cursor ?? null,
           typeof payload.limit === "number" ? payload.limit : 50,
-          async (envelope) => {
-            client.send(JSON.stringify(envelope));
-          }
+          forwardEnvelope
         );
 
-        subscriptions.set(payload.sessionId, subscription);
+        subscriptions.set(payload.sessionId, {
+          close() {
+            historySubscription.close();
+            runtimeSubscription.close();
+          }
+        });
       } catch (error) {
+        runtimeSubscription.close();
+
         const appError =
           error instanceof AppError
             ? error
@@ -165,6 +198,33 @@ function isSessionSubscribeMessage(payload: unknown): payload is SessionSubscrib
     candidate?.type === "session.subscribe" &&
     typeof candidate?.sessionId === "string"
   );
+}
+
+function dedupeEnvelopeMessages(
+  envelope: SessionHistoryEnvelope | SessionRuntimeEnvelope,
+  sentMessageIds: Set<string>
+): SessionHistoryEnvelope | SessionRuntimeEnvelope | null {
+  if (envelope.type !== "session.backfill" && envelope.type !== "session.delta") {
+    return envelope;
+  }
+
+  const messages = envelope.messages.filter((message) => {
+    if (sentMessageIds.has(message.messageId)) {
+      return false;
+    }
+
+    sentMessageIds.add(message.messageId);
+    return true;
+  });
+
+  if (messages.length === 0) {
+    return null;
+  }
+
+  return {
+    ...envelope,
+    messages
+  };
 }
 
 function sendWsError(

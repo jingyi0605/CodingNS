@@ -27,7 +27,8 @@ import { GitWriteService } from "../modules/git/git-write-service.js";
 import { WorkspaceRepoGuard } from "../modules/git/workspace-repo-guard.js";
 import { ProviderController } from "../modules/provider/provider-controller.js";
 import { SessionController } from "../modules/sessions/session-controller.js";
-import { SessionRuntimeService } from "../modules/sessions/session-runtime-service.js";
+import { SessionHistoryService } from "../modules/sessions/session-history-service.js";
+import { SessionLiveRuntimeService } from "../modules/sessions/session-live-runtime-service.js";
 import { CommandTemplateService } from "../modules/terminal/command-template-service.js";
 import { TerminalController } from "../modules/terminal/terminal-controller.js";
 import { TerminalService } from "../modules/terminal/terminal-service.js";
@@ -64,6 +65,7 @@ import { TerminalWsHub } from "../ws/terminal-ws-hub.js";
 import { WorkbenchWsHub } from "../ws/workbench-ws-hub.js";
 import { createWsServer } from "../ws/ws-server.js";
 import { WsAuthGuard } from "../ws/ws-auth-guard.js";
+
 export function createServer(config: HostConfig) {
   const app = Fastify({
     logger: false
@@ -123,7 +125,7 @@ export function createServer(config: HostConfig) {
     commitDraftService,
     gitWriteService
   );
-  const sessionRuntimeService = new SessionRuntimeService(
+  const sessionHistoryService = new SessionHistoryService(
     database.db,
     repositories.workspaceRepository,
     repositories.sessionBindingRepository,
@@ -132,13 +134,21 @@ export function createServer(config: HostConfig) {
     repositories.sessionStatusSnapshotRepository,
     config
   );
+  const sessionLiveRuntimeService = new SessionLiveRuntimeService(
+    sessionHistoryService,
+    workspaceService,
+    repositories.sessionIndexRepository,
+    repositories.sessionStateRepository,
+    repositories.sessionStatusSnapshotRepository,
+    config
+  );
   const workbenchService = new WorkbenchService(
     repositories.workspaceRepository,
     repositories.sessionIndexRepository,
-    sessionRuntimeService
+    sessionHistoryService
   );
   const fileContextService = new FileContextService(
-    sessionRuntimeService,
+    sessionHistoryService,
     repositories.fileContextBindingRepository
   );
   const terminalService = new TerminalService(
@@ -158,8 +168,11 @@ export function createServer(config: HostConfig) {
   const authController = new AuthController(authService);
   const workspaceController = new WorkspaceController(workspaceService);
   const workbenchController = new WorkbenchController(workbenchService);
-  const sessionController = new SessionController(sessionRuntimeService);
-  const providerController = new ProviderController(sessionRuntimeService);
+  const sessionController = new SessionController(
+    sessionHistoryService,
+    sessionLiveRuntimeService
+  );
+  const providerController = new ProviderController(sessionHistoryService);
   const fileController = new FileController(
     fileTreeService,
     fileContentService,
@@ -176,7 +189,8 @@ export function createServer(config: HostConfig) {
   const wsHandle = createWsServer(
     app.server,
     new WsAuthGuard(authService),
-    sessionRuntimeService,
+    sessionHistoryService,
+    sessionLiveRuntimeService,
     new TerminalWsHub(terminalService),
     new WorkbenchWsHub(workbenchService)
   );
@@ -197,6 +211,7 @@ export function createServer(config: HostConfig) {
 
   app.addHook("onClose", async () => {
     await terminalService.dispose();
+    await sessionLiveRuntimeService.dispose();
     await wsHandle.close();
     database.close();
   });
@@ -221,7 +236,8 @@ export function createServer(config: HostConfig) {
         gitReadService,
         gitWriteService,
         commitOrchestrator,
-        sessionRuntimeService,
+        sessionHistoryService,
+        sessionLiveRuntimeService,
         terminalService,
         commandTemplateService
       }

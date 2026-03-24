@@ -1,5 +1,5 @@
 import type { SessionListItem, Workspace } from "../../types/domain.js";
-import type { SessionRuntimeService } from "../sessions/session-runtime-service.js";
+import type { SessionHistoryService } from "../sessions/session-history-service.js";
 import type { WorkspaceRepository } from "../../storage/repositories/workspace-repository.js";
 import type { SessionIndexRepository } from "../../storage/repositories/session-index-repository.js";
 
@@ -18,7 +18,7 @@ export class WorkbenchService {
   constructor(
     private readonly workspaceRepository: WorkspaceRepository,
     private readonly sessionIndexRepository: SessionIndexRepository,
-    private readonly sessionRuntimeService: SessionRuntimeService
+    private readonly sessionHistoryService: SessionHistoryService
   ) {}
 
   getSnapshot(userId: string): WorkbenchSnapshot {
@@ -37,7 +37,7 @@ export class WorkbenchService {
 
     await Promise.all(
       workspaces.map((workspace) =>
-        this.sessionRuntimeService.discoverWorkspaceSessions(workspace.id, userId, {
+        this.sessionHistoryService.discoverWorkspaceSessions(workspace.id, userId, {
           maxAgeMs: WORKBENCH_REFRESH_MAX_AGE_MS
         })
       )
