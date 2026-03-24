@@ -32,7 +32,7 @@ export class FileContextController {
       throw new AppError({
         statusCode: 400,
         errorCode: "INVALID_INPUT",
-        detail: "挂载文件上下文必须提供 workspaceId",
+        detail: "挂载文件管理必须提供 workspaceId",
         field: "workspaceId"
       });
     }

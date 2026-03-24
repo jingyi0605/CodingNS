@@ -1,65 +1,91 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { t } from "../../../shared/i18n";
 import { ApiError } from "../../../shared/network/api-error";
 import { useToast } from "../../../shared/toast";
 import {
-  attachFileContext,
-  detachFileContext,
-  getFilePreview,
   getFileTree,
-  getRecentFiles,
-  listFileContextBindings,
   operateFile,
-  saveFileContent,
   searchFiles,
-  type FileContextBindingDto,
-  type FileNodeDto,
-  type FilePreviewDto,
-  type FileSearchResultDto,
-  type FileOperationType,
-  type RecentFileRecordDto
+  type FileNodeDto
 } from "../api/file-context-api";
+import { FileViewerModal } from "./FileViewerModal";
 
 interface FileContextPanelProps {
   sessionId: string;
   workspaceId: string | null | undefined;
 }
 
+type FileTreeCache = Record<string, FileNodeDto[]>;
+type FileTreeCacheUpdater =
+  | FileTreeCache
+  | ((previous: FileTreeCache) => FileTreeCache);
+type ExpandedDirectoriesUpdater =
+  | string[]
+  | ((previous: string[]) => string[]);
+
+const ROOT_DIRECTORY = "";
+
 export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelProps) {
-  const [currentDirectory, setCurrentDirectory] = useState("");
-  const [treeItems, setTreeItems] = useState<FileNodeDto[]>([]);
-  const [recentItems, setRecentItems] = useState<RecentFileRecordDto[]>([]);
-  const [bindings, setBindings] = useState<FileContextBindingDto[]>([]);
-  const [searchKeyword, setSearchKeyword] = useState("");
-  const [searchResult, setSearchResult] = useState<FileSearchResultDto | null>(null);
+  const [treeCache, setTreeCache] = useState<FileTreeCache>({});
+  const [expandedDirectories, setExpandedDirectories] = useState<string[]>([]);
+  const [loadingDirectories, setLoadingDirectories] = useState<string[]>([]);
+  const [activeDirectoryPath, setActiveDirectoryPath] = useState(ROOT_DIRECTORY);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
-  const [preview, setPreview] = useState<FilePreviewDto | null>(null);
-  const [editorContent, setEditorContent] = useState("");
   const [loadingTree, setLoadingTree] = useState(false);
-  const [loadingPreview, setLoadingPreview] = useState(false);
-  const [searching, setSearching] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [syncingMeta, setSyncingMeta] = useState(false);
   const [mutating, setMutating] = useState(false);
+  const [searchVisible, setSearchVisible] = useState(false);
+  const [searchKeyword, setSearchKeyword] = useState("");
+  const [searchResult, setSearchResult] = useState<FileNodeDto[] | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [viewerFilePath, setViewerFilePath] = useState<string | null>(null);
+  const treeCacheRef = useRef<FileTreeCache>({});
+  const expandedDirectoriesRef = useRef<string[]>([]);
   const { showToast } = useToast();
 
+  function updateTreeCache(nextValue: FileTreeCacheUpdater) {
+    setTreeCache((previous) => {
+      const nextCache =
+        typeof nextValue === "function"
+          ? (nextValue as (previous: FileTreeCache) => FileTreeCache)(previous)
+          : nextValue;
+      treeCacheRef.current = nextCache;
+      return nextCache;
+    });
+  }
+
+  function updateExpandedDirectories(nextValue: ExpandedDirectoriesUpdater) {
+    setExpandedDirectories((previous) => {
+      const nextDirectories =
+        typeof nextValue === "function"
+          ? (nextValue as (previous: string[]) => string[])(previous)
+          : nextValue;
+      expandedDirectoriesRef.current = nextDirectories;
+      return nextDirectories;
+    });
+  }
+
   useEffect(() => {
-    setCurrentDirectory("");
-    setTreeItems([]);
-    setRecentItems([]);
-    setBindings([]);
+    treeCacheRef.current = {};
+    expandedDirectoriesRef.current = [];
+    updateTreeCache({});
+    updateExpandedDirectories([]);
+    setLoadingDirectories([]);
+    setActiveDirectoryPath(ROOT_DIRECTORY);
+    setSelectedPath(null);
+    setLoadingTree(false);
+    setMutating(false);
+    setSearchVisible(false);
     setSearchKeyword("");
     setSearchResult(null);
-    setSelectedPath(null);
-    setPreview(null);
-    setEditorContent("");
+    setSearching(false);
+    setViewerFilePath(null);
   }, [sessionId, workspaceId]);
 
   useEffect(() => {
     let cancelled = false;
 
-    async function loadTree() {
+    async function loadRootTree() {
       if (!workspaceId) {
         return;
       }
@@ -67,10 +93,12 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
       setLoadingTree(true);
 
       try {
-        const response = await getFileTree(workspaceId, currentDirectory || undefined);
+        const response = await getFileTree(workspaceId);
 
         if (!cancelled) {
-          setTreeItems(response.items);
+          updateTreeCache({
+            [ROOT_DIRECTORY]: response.items
+          });
         }
       } catch (error) {
         if (!cancelled) {
@@ -86,104 +114,147 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
       }
     }
 
-    void loadTree();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [currentDirectory, showToast, workspaceId]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadMeta() {
-      if (!workspaceId) {
-        return;
-      }
-
-      setSyncingMeta(true);
-
-      try {
-        const [recentResponse, bindingResponse] = await Promise.all([
-          getRecentFiles(workspaceId),
-          listFileContextBindings(sessionId)
-        ]);
-
-        if (!cancelled) {
-          setRecentItems(recentResponse.items);
-          setBindings(bindingResponse.items);
-        }
-      } catch (error) {
-        if (!cancelled) {
-          showToast({
-            title: readError(error, t("conversation.filePanelLoadFailed")),
-            tone: "error"
-          });
-        }
-      } finally {
-        if (!cancelled) {
-          setSyncingMeta(false);
-        }
-      }
-    }
-
-    void loadMeta();
+    void loadRootTree();
 
     return () => {
       cancelled = true;
     };
   }, [sessionId, showToast, workspaceId]);
 
-  const activeBinding = bindings.find((item) => item.path === selectedPath);
-  const canEdit = Boolean(preview?.supported && preview.kind === "text" && selectedPath);
+  const rootItems = treeCache[ROOT_DIRECTORY] ?? [];
+  const searchMode = searchVisible && searchResult !== null;
 
-  async function refreshMeta() {
+  async function loadDirectory(directoryPath: string, force = false) {
     if (!workspaceId) {
-      return;
+      return [];
     }
 
-    const [recentResponse, bindingResponse] = await Promise.all([
-      getRecentFiles(workspaceId),
-      listFileContextBindings(sessionId)
-    ]);
+    if (!force) {
+      const cachedItems = treeCacheRef.current[directoryPath];
 
-    setRecentItems(recentResponse.items);
-    setBindings(bindingResponse.items);
-  }
-
-  async function refreshCurrentTree() {
-    if (!workspaceId) {
-      return;
+      if (cachedItems) {
+        return cachedItems;
+      }
     }
 
-    const response = await getFileTree(workspaceId, currentDirectory || undefined);
-    setTreeItems(response.items);
-  }
-
-  // 文件内容只在面板本地状态里短暂存在，真正的会话真相仍然是消息流。
-  async function openFile(filePath: string) {
-    if (!workspaceId) {
-      return;
+    if (directoryPath === ROOT_DIRECTORY) {
+      setLoadingTree(true);
+    } else {
+      setLoadingDirectories((previous) => appendUnique(previous, directoryPath));
     }
-
-    setLoadingPreview(true);
 
     try {
-      const nextPreview = await getFilePreview(workspaceId, filePath);
+      const response = await getFileTree(workspaceId, directoryPath || undefined);
 
-      setSelectedPath(filePath);
-      setPreview(nextPreview);
-      setEditorContent(nextPreview.content ?? "");
-      setCurrentDirectory(getParentDirectory(filePath));
-      await refreshMeta();
+      updateTreeCache((previous) => ({
+        ...previous,
+        [directoryPath]: response.items
+      }));
+
+      return response.items;
     } catch (error) {
       showToast({
-        title: readError(error, t("conversation.filePanelOpenFailed")),
+        title: readError(error, t("conversation.filePanelLoadFailed")),
         tone: "error"
       });
+      throw error;
     } finally {
-      setLoadingPreview(false);
+      if (directoryPath === ROOT_DIRECTORY) {
+        setLoadingTree(false);
+      } else {
+        setLoadingDirectories((previous) => previous.filter((item) => item !== directoryPath));
+      }
     }
+  }
+
+  async function refreshTreeCache() {
+    if (!workspaceId) {
+      return;
+    }
+
+    const loadedDirectories = Object.keys(treeCacheRef.current);
+    const targetDirectories = loadedDirectories.length ? loadedDirectories : [ROOT_DIRECTORY];
+    const entries = await Promise.all(
+      targetDirectories.map(async (directoryPath) => {
+        const response = await getFileTree(workspaceId, directoryPath || undefined);
+        return [directoryPath, response.items] as const;
+      })
+    );
+
+    updateTreeCache(
+      entries.reduce<FileTreeCache>((nextCache, [directoryPath, items]) => {
+        nextCache[directoryPath] = items;
+        return nextCache;
+      }, {})
+    );
+  }
+
+  // 选中文件时要把父目录链展开，否则树高亮永远对不上。
+  async function revealPathInTree(targetPath: string, includeLeafDirectory = false) {
+    const directoryChain = getDirectoryChain(targetPath, includeLeafDirectory);
+
+    if (!directoryChain.length) {
+      setActiveDirectoryPath(ROOT_DIRECTORY);
+      return;
+    }
+
+    updateExpandedDirectories((previous) => mergeUnique(previous, directoryChain));
+    setActiveDirectoryPath(directoryChain[directoryChain.length - 1] ?? ROOT_DIRECTORY);
+
+    for (const directoryPath of directoryChain) {
+      try {
+        await loadDirectory(directoryPath);
+      } catch {
+        return;
+      }
+    }
+  }
+
+  async function selectFile(filePath: string) {
+    setSelectedPath(filePath);
+    setActiveDirectoryPath(getParentDirectory(filePath));
+    await revealPathInTree(filePath);
+  }
+
+  async function openFileViewer(filePath: string) {
+    await selectFile(filePath);
+    setViewerFilePath(filePath);
+  }
+
+  async function expandDirectory(directoryPath: string) {
+    setSelectedPath(null);
+    setActiveDirectoryPath(directoryPath);
+
+    if (expandedDirectoriesRef.current.includes(directoryPath)) {
+      return;
+    }
+
+    try {
+      await loadDirectory(directoryPath);
+      updateExpandedDirectories((previous) => appendUnique(previous, directoryPath));
+    } catch {
+      // loadDirectory 已经提示错误，这里不再重复报。
+    }
+  }
+
+  async function toggleDirectory(directoryPath: string) {
+    setSelectedPath(null);
+    setActiveDirectoryPath(directoryPath);
+
+    if (expandedDirectoriesRef.current.includes(directoryPath)) {
+      collapseBranch(directoryPath);
+      return;
+    }
+
+    await expandDirectory(directoryPath);
+  }
+
+  function collapseBranch(directoryPath: string) {
+    updateExpandedDirectories((previous) =>
+      previous.filter((item) => item !== directoryPath && !item.startsWith(`${directoryPath}/`))
+    );
+    setActiveDirectoryPath(getParentDirectory(directoryPath));
+    setSelectedPath(null);
   }
 
   async function handleRefresh() {
@@ -192,12 +263,15 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
     }
 
     try {
-      await Promise.all([refreshCurrentTree(), refreshMeta()]);
+      await refreshTreeCache();
 
       if (selectedPath) {
-        const nextPreview = await getFilePreview(workspaceId, selectedPath);
-        setPreview(nextPreview);
-        setEditorContent(nextPreview.content ?? "");
+        await revealPathInTree(selectedPath);
+      }
+
+      if (searchMode && searchKeyword.trim()) {
+        const response = await searchFiles(workspaceId, searchKeyword.trim());
+        setSearchResult(response.items);
       }
     } catch (error) {
       showToast({
@@ -207,8 +281,8 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
     }
   }
 
-  async function handleSearchSubmit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function handleSearchSubmit(event?: React.FormEvent<HTMLFormElement>) {
+    event?.preventDefault();
 
     if (!workspaceId || !searchKeyword.trim()) {
       setSearchResult(null);
@@ -219,7 +293,7 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
 
     try {
       const response = await searchFiles(workspaceId, searchKeyword.trim());
-      setSearchResult(response);
+      setSearchResult(response.items);
     } catch (error) {
       showToast({
         title: readError(error, t("conversation.filePanelSearchFailed")),
@@ -230,79 +304,25 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
     }
   }
 
-  async function handleSave() {
-    if (!workspaceId || !selectedPath || !preview?.supported || !preview.version) {
+  function handleToggleSearch() {
+    if (searchVisible) {
+      setSearchVisible(false);
+      setSearchKeyword("");
+      setSearchResult(null);
       return;
     }
 
-    setSaving(true);
-
-    try {
-      await saveFileContent(workspaceId, selectedPath, editorContent, preview.version);
-      const nextPreview = await getFilePreview(workspaceId, selectedPath);
-      setPreview(nextPreview);
-      setEditorContent(nextPreview.content ?? "");
-      await refreshMeta();
-      await refreshCurrentTree();
-      showToast({
-        title: t("conversation.filePanelSaveSuccess"),
-        tone: "success"
-      });
-    } catch (error) {
-      showToast({
-        title: readError(error, t("conversation.filePanelSaveFailed")),
-        tone: "error"
-      });
-    } finally {
-      setSaving(false);
-    }
+    setSearchVisible(true);
   }
 
-  async function handleAttach() {
-    if (!workspaceId || !selectedPath || !preview?.supported) {
+  function handleCollapseCurrent() {
+    const targetDirectory = selectedPath ? getParentDirectory(selectedPath) : activeDirectoryPath;
+
+    if (!targetDirectory || !expandedDirectoriesRef.current.includes(targetDirectory)) {
       return;
     }
 
-    setMutating(true);
-
-    try {
-      await attachFileContext(sessionId, {
-        workspaceId,
-        path: selectedPath
-      });
-      await refreshMeta();
-      showToast({
-        title: t("conversation.filePanelAttachSuccess"),
-        tone: "success"
-      });
-    } catch (error) {
-      showToast({
-        title: readError(error, t("conversation.filePanelAttachFailed")),
-        tone: "error"
-      });
-    } finally {
-      setMutating(false);
-    }
-  }
-
-  async function handleDetach(bindingId: string) {
-    setMutating(true);
-
-    try {
-      await detachFileContext(sessionId, bindingId);
-      await refreshMeta();
-      showToast({
-        title: t("conversation.filePanelDetachSuccess"),
-        tone: "success"
-      });
-    } catch (error) {
-      showToast({
-        title: readError(error, t("conversation.filePanelDetachFailed")),
-        tone: "error"
-      });
-    } finally {
-      setMutating(false);
-    }
+    collapseBranch(targetDirectory);
   }
 
   async function handleCreate(opType: "create_file" | "create_directory") {
@@ -310,7 +330,8 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
       return;
     }
 
-    const defaultPath = currentDirectory ? `${currentDirectory}/` : "";
+    const baseDirectory = getCreateBaseDirectory(activeDirectoryPath, selectedPath);
+    const defaultPath = baseDirectory ? `${baseDirectory}/` : "";
     const nextPath = window.prompt(
       opType === "create_file"
         ? t("conversation.filePanelCreateFilePrompt")
@@ -322,20 +343,25 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
       return;
     }
 
+    const safeNextPath = nextPath.trim();
+
     setMutating(true);
 
     try {
       await operateFile({
         workspaceId,
         opType,
-        dstPath: nextPath.trim(),
+        dstPath: safeNextPath,
         content: opType === "create_file" ? "" : undefined
       });
-      setCurrentDirectory(getParentDirectory(nextPath.trim()));
-      await Promise.all([refreshCurrentTree(), refreshMeta()]);
 
-      if (opType === "create_file") {
-        await openFile(nextPath.trim());
+      await refreshTreeCache();
+
+      if (opType === "create_directory") {
+        await revealPathInTree(safeNextPath, true);
+        setSelectedPath(null);
+      } else {
+        await selectFile(safeNextPath);
       }
     } catch (error) {
       showToast({
@@ -347,336 +373,238 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
     }
   }
 
-  async function handleDelete() {
-    if (!workspaceId || !selectedPath) {
-      return;
-    }
+  function renderTree(items: FileNodeDto[], depth: number) {
+    return (
+      <>
+        {items.map((item) => {
+          const isDirectory = item.kind === "directory";
+          const isExpanded = isDirectory && expandedDirectories.includes(item.path);
+          const isLoading = isDirectory && loadingDirectories.includes(item.path);
+          const childItems = treeCache[item.path] ?? [];
+          const isActive =
+            selectedPath === item.path ||
+            (selectedPath === null && isDirectory && activeDirectoryPath === item.path);
 
-    const confirmed = window.confirm(
-      t("conversation.filePanelDeleteConfirm").replace("{path}", selectedPath)
+          return (
+            <div key={`${item.kind}-${item.path}`} className="file-tree-node">
+              <button
+                className="file-tree-item"
+                type="button"
+                data-active={isActive}
+                data-kind={item.kind}
+                aria-expanded={isDirectory ? isExpanded : undefined}
+                style={{ paddingInlineStart: `${12 + depth * 16}px` }}
+                onClick={() => {
+                  if (isDirectory) {
+                    void toggleDirectory(item.path);
+                    return;
+                  }
+
+                  void selectFile(item.path);
+                }}
+                onDoubleClick={() => {
+                  if (isDirectory) {
+                    return;
+                  }
+
+                  void openFileViewer(item.path);
+                }}
+              >
+                <span className={`file-tree-chevron${isDirectory ? "" : " is-hidden"}`} aria-hidden="true">
+                  {isExpanded ? "v" : ">"}
+                </span>
+                <span
+                  className={`file-tree-icon ${isDirectory ? "is-directory" : "is-file"}`}
+                  data-expanded={isExpanded}
+                  aria-hidden="true"
+                />
+                <span className="file-tree-label">{item.name}</span>
+                {isLoading ? <span className="file-tree-meta">{t("common.loading")}</span> : null}
+              </button>
+
+              {isDirectory && isExpanded ? (
+                <div className="file-tree-children">
+                  {isLoading && !childItems.length ? (
+                    <p className="file-tree-empty">{t("common.loading")}</p>
+                  ) : childItems.length ? (
+                    renderTree(childItems, depth + 1)
+                  ) : (
+                    <p className="file-tree-empty">{t("conversation.filePanelEmptyDirectory")}</p>
+                  )}
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </>
     );
-
-    if (!confirmed) {
-      return;
-    }
-
-    setMutating(true);
-
-    try {
-      await operateFile({
-        workspaceId,
-        opType: "delete",
-        srcPath: selectedPath
-      });
-      setSelectedPath(null);
-      setPreview(null);
-      setEditorContent("");
-      await Promise.all([refreshCurrentTree(), refreshMeta()]);
-    } catch (error) {
-      showToast({
-        title: readError(error, t("conversation.filePanelMutateFailed")),
-        tone: "error"
-      });
-    } finally {
-      setMutating(false);
-    }
   }
 
-  async function handleMove() {
-    if (!workspaceId || !selectedPath) {
-      return;
-    }
+  function renderSearchResults(items: FileNodeDto[]) {
+    return (
+      <>
+        {items.map((item) => {
+          const isDirectory = item.kind === "directory";
+          const isActive = selectedPath === item.path;
 
-    const targetPath = window.prompt(
-      t("conversation.filePanelRenameMovePrompt"),
-      selectedPath
+          return (
+            <div key={`search-${item.kind}-${item.path}`} className="file-tree-node">
+              <button
+                className="file-tree-item is-search-result"
+                type="button"
+                data-active={isActive}
+                data-kind={item.kind}
+                onClick={() => {
+                  if (isDirectory) {
+                    setSearchVisible(false);
+                    setSearchKeyword("");
+                    setSearchResult(null);
+                    void expandDirectory(item.path);
+                    return;
+                  }
+
+                  setSearchVisible(false);
+                  setSearchKeyword("");
+                  setSearchResult(null);
+                  void selectFile(item.path);
+                }}
+                onDoubleClick={() => {
+                  if (isDirectory) {
+                    return;
+                  }
+
+                  setSearchVisible(false);
+                  setSearchKeyword("");
+                  setSearchResult(null);
+                  void openFileViewer(item.path);
+                }}
+              >
+                <span className="file-tree-chevron is-hidden" aria-hidden="true">&gt;</span>
+                <span className={`file-tree-icon ${isDirectory ? "is-directory" : "is-file"}`} aria-hidden="true" />
+                <span className="file-tree-label">
+                  <span className="file-tree-name">{item.name}</span>
+                  <span className="file-tree-path">{item.path}</span>
+                </span>
+              </button>
+            </div>
+          );
+        })}
+      </>
     );
-
-    if (!targetPath?.trim() || targetPath.trim() === selectedPath) {
-      return;
-    }
-
-    const nextPath = targetPath.trim();
-    const opType: FileOperationType =
-      getParentDirectory(nextPath) === getParentDirectory(selectedPath) ? "rename" : "move";
-
-    setMutating(true);
-
-    try {
-      await operateFile({
-        workspaceId,
-        opType,
-        srcPath: selectedPath,
-        dstPath: nextPath
-      });
-      setSelectedPath(nextPath);
-      setCurrentDirectory(getParentDirectory(nextPath));
-      await Promise.all([refreshCurrentTree(), refreshMeta()]);
-      await openFile(nextPath);
-    } catch (error) {
-      showToast({
-        title: readError(error, t("conversation.filePanelMutateFailed")),
-        tone: "error"
-      });
-    } finally {
-      setMutating(false);
-    }
   }
 
   return (
     <section className="conversation-panel surface-card file-panel" data-testid="file-context-panel">
-      <div className="file-panel-header">
-        <div>
-          <h2>{t("conversation.filePanelTitle")}</h2>
-          <p className="status-text">
-            {workspaceId ? t("conversation.filePanelSubtitle") : t("conversation.filePanelNoWorkspace")}
-          </p>
-        </div>
-        <button
-          className="ghost-button"
-          type="button"
-          onClick={() => void handleRefresh()}
-          disabled={!workspaceId || loadingTree || syncingMeta || loadingPreview}
-        >
-          {t("conversation.filePanelRefresh")}
-        </button>
-      </div>
-
       {!workspaceId ? (
         <section className="file-panel-section">
           <p className="status-text">{t("conversation.filePanelNoWorkspace")}</p>
         </section>
       ) : (
         <>
-          <section className="file-panel-section">
-            <div className="file-section-header">
-              <div>
-                <h3>{t("conversation.filePanelBrowse")}</h3>
-                <p className="status-text">{currentDirectory || "/"}</p>
-              </div>
-              <div className="badge-row">
-                <button
-                  className="secondary-button"
-                  type="button"
-                  onClick={() => setCurrentDirectory(getParentDirectory(currentDirectory))}
-                  disabled={!currentDirectory}
-                >
-                  {t("conversation.filePanelBackDirectory")}
-                </button>
-                <button
-                  className="secondary-button"
-                  type="button"
-                  onClick={() => void handleCreate("create_file")}
-                  disabled={mutating}
-                >
-                  {t("conversation.filePanelNewFile")}
-                </button>
-                <button
-                  className="secondary-button"
-                  type="button"
-                  onClick={() => void handleCreate("create_directory")}
-                  disabled={mutating}
-                >
-                  {t("conversation.filePanelNewDirectory")}
-                </button>
-              </div>
+          <FileViewerModal
+            workspaceId={workspaceId}
+            filePath={viewerFilePath}
+            open={viewerFilePath !== null}
+            onClose={() => setViewerFilePath(null)}
+            onSaved={async (filePath) => {
+              await refreshTreeCache();
+              await selectFile(filePath);
+            }}
+          />
+          <div className="file-panel-header">
+            <h2>{t("conversation.filePanelTitle")}</h2>
+            <div className="file-panel-toolbar" aria-label={t("conversation.filePanelTitle")}>
+              <button
+                className="file-toolbar-button"
+                type="button"
+                title={t("conversation.filePanelCollapseCurrent")}
+                aria-label={t("conversation.filePanelCollapseCurrent")}
+                onClick={handleCollapseCurrent}
+                disabled={
+                  !(selectedPath ? getParentDirectory(selectedPath) : activeDirectoryPath) ||
+                  !expandedDirectories.length
+                }
+              >
+                <CollapseIcon />
+              </button>
+              <button
+                className="file-toolbar-button"
+                type="button"
+                title={t("conversation.filePanelRefresh")}
+                aria-label={t("conversation.filePanelRefresh")}
+                onClick={() => void handleRefresh()}
+                disabled={loadingTree || mutating || searching}
+              >
+                <RefreshIcon />
+              </button>
+              <button
+                className="file-toolbar-button"
+                type="button"
+                title={t("conversation.filePanelSearchButton")}
+                aria-label={t("conversation.filePanelSearchButton")}
+                data-active={searchVisible}
+                onClick={handleToggleSearch}
+                disabled={loadingTree}
+              >
+                <SearchIcon />
+              </button>
+              <button
+                className="file-toolbar-button"
+                type="button"
+                title={t("conversation.filePanelNewFile")}
+                aria-label={t("conversation.filePanelNewFile")}
+                onClick={() => void handleCreate("create_file")}
+                disabled={mutating}
+              >
+                <FilePlusIcon />
+              </button>
+              <button
+                className="file-toolbar-button"
+                type="button"
+                title={t("conversation.filePanelNewDirectory")}
+                aria-label={t("conversation.filePanelNewDirectory")}
+                onClick={() => void handleCreate("create_directory")}
+                disabled={mutating}
+              >
+                <FolderPlusIcon />
+              </button>
             </div>
-            <div className="file-list">
-              {loadingTree ? (
-                <p className="status-text">{t("common.loading")}</p>
-              ) : treeItems.length ? (
-                treeItems.map((item) => (
-                  <button
-                    key={`${item.kind}-${item.path}`}
-                    className="file-list-item"
-                    type="button"
-                    data-active={selectedPath === item.path}
-                    onClick={() => {
-                      if (item.kind === "directory") {
-                        setCurrentDirectory(item.path);
-                        return;
-                      }
+          </div>
 
-                      void openFile(item.path);
-                    }}
-                  >
-                    <span className="badge">{item.kind === "directory" ? "DIR" : "FILE"}</span>
-                    <span>{item.path}</span>
-                  </button>
-                ))
-              ) : (
-                <p className="status-text">{t("conversation.filePanelEmptyDirectory")}</p>
-              )}
-            </div>
-          </section>
-
-          <section className="file-panel-section">
-            <div className="file-section-header">
-              <h3>{t("conversation.filePanelSearchResults")}</h3>
-            </div>
-            <form className="file-search-form" onSubmit={(event) => void handleSearchSubmit(event)}>
+          {searchVisible ? (
+            <form className="file-toolbar-search" onSubmit={(event) => void handleSearchSubmit(event)}>
               <input
                 value={searchKeyword}
                 onChange={(event) => setSearchKeyword(event.target.value)}
                 placeholder={t("conversation.filePanelSearchPlaceholder")}
               />
-              <button className="secondary-button" type="submit" disabled={searching}>
-                {t("conversation.filePanelSearchButton")}
+              <button
+                className="file-toolbar-button"
+                type="submit"
+                title={t("conversation.filePanelSearchButton")}
+                aria-label={t("conversation.filePanelSearchButton")}
+                disabled={searching}
+              >
+                <SearchIcon />
               </button>
             </form>
-            {searchResult ? (
-              <div className="file-list compact">
-                {searchResult.items.length ? (
-                  searchResult.items.map((item) => (
-                    <button
-                      key={`search-${item.kind}-${item.path}`}
-                      className="file-list-item"
-                      type="button"
-                      onClick={() => {
-                        if (item.kind === "directory") {
-                          setCurrentDirectory(item.path);
-                          return;
-                        }
+          ) : null}
 
-                        void openFile(item.path);
-                      }}
-                    >
-                      <span className="badge">{item.kind === "directory" ? "DIR" : "FILE"}</span>
-                      <span>{item.path}</span>
-                    </button>
-                  ))
-                ) : (
-                  <p className="status-text">{t("conversation.filePanelEmptyDirectory")}</p>
-                )}
-              </div>
-            ) : null}
-          </section>
-
-          <section className="file-panel-section">
-            <div className="file-section-header">
-              <h3>{t("conversation.filePanelRecentTitle")}</h3>
-              <span className="status-text">{syncingMeta ? t("common.loading") : null}</span>
-            </div>
-            <div className="file-list compact">
-              {recentItems.length ? (
-                recentItems.map((item) => (
-                  <button
-                    key={item.id}
-                    className="file-list-item"
-                    type="button"
-                    data-active={selectedPath === item.path}
-                    onClick={() => void openFile(item.path)}
-                  >
-                    <span>{item.path}</span>
-                  </button>
-                ))
+          <div className="file-tree" data-search-mode={searchMode}>
+            {loadingTree ? (
+              <p className="file-tree-status status-text">{t("common.loading")}</p>
+            ) : searchMode ? (
+              searchResult?.length ? (
+                renderSearchResults(searchResult)
               ) : (
-                <p className="status-text">{t("conversation.filePanelEmptyRecent")}</p>
-              )}
-            </div>
-          </section>
-
-          <section className="file-panel-section">
-            <div className="file-section-header">
-              <h3>{t("conversation.filePanelContextTitle")}</h3>
-            </div>
-            <div className="file-list compact">
-              {bindings.length ? (
-                bindings.map((item) => (
-                  <article key={item.id} className="file-context-item">
-                    <button
-                      className="file-list-item"
-                      type="button"
-                      data-active={selectedPath === item.path}
-                      onClick={() => void openFile(item.path)}
-                    >
-                      <span>{item.displayName}</span>
-                      <span className="status-text">{item.path}</span>
-                    </button>
-                    <button
-                      className="secondary-button"
-                      type="button"
-                      onClick={() => void handleDetach(item.id)}
-                      disabled={mutating}
-                    >
-                      {t("conversation.filePanelDetach")}
-                    </button>
-                  </article>
-                ))
-              ) : (
-                <p className="status-text">{t("conversation.filePanelEmptyContexts")}</p>
-              )}
-            </div>
-          </section>
-
-          <section className="file-panel-section">
-            <div className="file-section-header">
-              <div>
-                <h3>{t("conversation.filePanelEditorTitle")}</h3>
-                <p className="status-text">{selectedPath ?? t("conversation.filePanelSelectHint")}</p>
-              </div>
-              {selectedPath ? (
-                <div className="badge-row">
-                  <button
-                    className="secondary-button"
-                    type="button"
-                    onClick={() => void handleMove()}
-                    disabled={mutating}
-                  >
-                    {t("conversation.filePanelRenameMove")}
-                  </button>
-                  <button
-                    className="secondary-button"
-                    type="button"
-                    onClick={() => void handleDelete()}
-                    disabled={mutating}
-                  >
-                    {t("conversation.filePanelDelete")}
-                  </button>
-                </div>
-              ) : null}
-            </div>
-
-            {loadingPreview ? (
-              <p className="status-text">{t("common.loading")}</p>
-            ) : preview ? (
-              <>
-                {preview.supported ? null : (
-                  <p className="status-text">{preview.reason ?? t("conversation.filePanelUnsupported")}</p>
-                )}
-                <textarea
-                  className="file-editor"
-                  data-testid="file-editor-textarea"
-                  value={editorContent}
-                  onChange={(event) => setEditorContent(event.target.value)}
-                  placeholder={t("conversation.filePanelEditorPlaceholder")}
-                  disabled={!preview.supported}
-                />
-                <div className="badge-row">
-                  <button
-                    className="primary-button"
-                    type="button"
-                    onClick={() => void handleSave()}
-                    disabled={!canEdit || saving}
-                  >
-                    {saving ? t("conversation.filePanelSaving") : t("conversation.filePanelSave")}
-                  </button>
-                  <button
-                    className="secondary-button"
-                    type="button"
-                    onClick={() => void handleAttach()}
-                    disabled={!preview.supported || Boolean(activeBinding) || mutating}
-                  >
-                    {activeBinding
-                      ? t("conversation.filePanelAttached")
-                      : t("conversation.filePanelAttach")}
-                  </button>
-                </div>
-              </>
+                <p className="file-tree-status status-text">{t("conversation.filePanelSearchEmpty")}</p>
+              )
+            ) : rootItems.length ? (
+              renderTree(rootItems, 0)
             ) : (
-              <p className="status-text">{t("conversation.filePanelSelectHint")}</p>
+              <p className="file-tree-status status-text">{t("conversation.filePanelEmptyDirectory")}</p>
             )}
-          </section>
+          </div>
         </>
       )}
     </section>
@@ -685,10 +613,42 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
 
 function getParentDirectory(filePath: string): string {
   if (!filePath.includes("/")) {
-    return "";
+    return ROOT_DIRECTORY;
   }
 
   return filePath.split("/").slice(0, -1).join("/");
+}
+
+function getDirectoryChain(targetPath: string, includeLeafDirectory = false): string[] {
+  const parts = targetPath.split("/").filter(Boolean);
+  const lastIndex = includeLeafDirectory ? parts.length : parts.length - 1;
+  const directories: string[] = [];
+
+  for (let index = 0; index < lastIndex; index += 1) {
+    directories.push(parts.slice(0, index + 1).join("/"));
+  }
+
+  return directories;
+}
+
+function getCreateBaseDirectory(activeDirectoryPath: string, selectedPath: string | null): string {
+  if (activeDirectoryPath) {
+    return activeDirectoryPath;
+  }
+
+  if (selectedPath) {
+    return getParentDirectory(selectedPath);
+  }
+
+  return ROOT_DIRECTORY;
+}
+
+function appendUnique(items: string[], nextItem: string): string[] {
+  return items.includes(nextItem) ? items : [...items, nextItem];
+}
+
+function mergeUnique(items: string[], nextItems: string[]): string[] {
+  return nextItems.reduce((merged, nextItem) => appendUnique(merged, nextItem), items);
 }
 
 function readError(error: unknown, fallback: string): string {
@@ -697,4 +657,58 @@ function readError(error: unknown, fallback: string): string {
   }
 
   return fallback;
+}
+
+function CollapseIcon() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <path d="M2.5 4.5h11v2h-11zM2.5 7.5h7v2h-7zM2.5 10.5h4v2h-4z" fill="currentColor" />
+    </svg>
+  );
+}
+
+function RefreshIcon() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <path
+        d="M12.8 5.2A5.5 5.5 0 1 0 13.5 8h-1.8A3.7 3.7 0 1 1 10.6 5l-1.4 1.4h4V2l-1.4 1.4z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
+function SearchIcon() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <path
+        d="M11.2 10.1l3 3-1.1 1.1-3-3a5 5 0 1 1 1.1-1.1zM6.8 10.3a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
+function FilePlusIcon() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <path d="M4 1.5h5l3 3v10H4z" fill="none" stroke="currentColor" strokeWidth="1.2" />
+      <path d="M9 1.5v3h3" fill="none" stroke="currentColor" strokeWidth="1.2" />
+      <path d="M8 6.5v5M5.5 9h5" fill="none" stroke="currentColor" strokeWidth="1.2" />
+    </svg>
+  );
+}
+
+function FolderPlusIcon() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <path
+        d="M1.8 4.5h4l1.2 1.3h7.2v6.7H1.8z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.2"
+      />
+      <path d="M8.5 7.2v4M6.5 9.2h4" fill="none" stroke="currentColor" strokeWidth="1.2" />
+    </svg>
+  );
 }

@@ -30,7 +30,7 @@ export class FileContextService {
       throw new AppError({
         statusCode: 400,
         errorCode: "SESSION_WORKSPACE_MISMATCH",
-        detail: "会话和工作区不匹配，不能附加该文件上下文",
+        detail: "会话和工作区不匹配，不能附加该文件管理",
         field: "workspaceId"
       });
     }
@@ -70,7 +70,7 @@ export class FileContextService {
       throw new AppError({
         statusCode: 404,
         errorCode: "CONTEXT_BINDING_NOT_FOUND",
-        detail: "指定文件上下文绑定不存在"
+        detail: "指定文件管理绑定不存在"
       });
     }
 

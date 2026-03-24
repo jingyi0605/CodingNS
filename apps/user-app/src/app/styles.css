@@ -933,9 +933,21 @@ a {
   gap: 4px;
 }
 
+.terminal-manager-toolbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.terminal-manager-toolbar .field-group {
+  flex: 1;
+}
+
 .terminal-manager-actions {
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
 }
 
 .terminal-template-status {
@@ -967,6 +979,16 @@ a {
 .terminal-template-status p {
   margin: 0;
   word-break: break-word;
+}
+
+.terminal-manager-modal-card {
+  width: min(680px, 100%);
+}
+
+.terminal-manager-modal-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 /* ========================================
@@ -2393,54 +2415,70 @@ textarea:focus-visible {
 
 /* Attachments */
 .composer-attachments {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 10px 12px 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(108px, 1fr));
+  gap: 10px;
+  padding: 12px 12px 0;
   border-bottom: 1px solid var(--border-subtle);
 }
 
-.composer-attachment-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 8px;
-  background: var(--bg-hover);
-  border-radius: 6px;
-  font-size: 12px;
-  color: var(--text-secondary);
+.composer-attachment-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--border-primary);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-surface) 92%, transparent);
 }
 
-.composer-attachment-chip svg {
-  color: var(--accent);
+.composer-attachment-preview {
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 10px;
+  object-fit: cover;
+  background: var(--bg-hover);
+}
+
+.composer-attachment-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
 }
 
 .attachment-name {
-  max-width: 120px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.attachment-count {
+.attachment-size {
   color: var(--text-tertiary);
   font-size: 11px;
 }
 
 .attachment-remove {
+  position: absolute;
+  top: 12px;
+  right: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 2px;
-  margin-left: 2px;
-  border-radius: 4px;
-  color: var(--text-tertiary);
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: 999px;
+  color: var(--text-inverse);
+  background: rgba(15, 23, 42, 0.6);
   transition: all 120ms;
 }
 
 .attachment-remove:hover {
-  background: var(--border-subtle);
-  color: var(--error);
+  background: rgba(220, 38, 38, 0.88);
+  color: #fff;
 }
 
 /* Input Wrapper */
@@ -3072,6 +3110,60 @@ textarea:focus-visible {
   color: var(--text-tertiary);
 }
 
+.message-attachments {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.message-attachments + .message-content,
+.message-content + .message-attachments {
+  margin-top: 12px;
+}
+
+.message-attachment-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 80%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--bg-hover) 60%, transparent);
+}
+
+.message-attachment-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  border-radius: 12px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.message-attachment-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.message-attachment-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.message-attachment-subtitle {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
 .tool-message-row {
   padding: 0;
   background: transparent;
@@ -3440,12 +3532,12 @@ textarea:focus-visible {
 .git-tree-file-button {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   width: 100%;
   min-width: 0;
   min-height: 32px;
-  padding-top: 6px;
-  padding-bottom: 6px;
+  padding-top: 5px;
+  padding-bottom: 5px;
   border-radius: 10px;
   color: var(--text-primary);
   text-align: left;
@@ -3474,56 +3566,51 @@ textarea:focus-visible {
   transition: transform 160ms ease;
 }
 
-.git-tree-folder,
-.git-tree-file {
-  position: relative;
-  flex: 0 0 auto;
+.git-tree-file-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  min-width: 30px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--bg-hover) 90%, transparent);
+  color: var(--text-secondary);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1;
 }
 
-.git-tree-folder {
-  width: 14px;
-  height: 10px;
-  border-radius: 2px;
-  border: 1px solid color-mix(in srgb, var(--warning) 42%, var(--border-primary));
-  background: color-mix(in srgb, var(--warning) 22%, transparent);
+.git-tree-file-icon[data-kind="code"] {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
 }
 
-.git-tree-folder::before {
-  content: "";
-  position: absolute;
-  top: -4px;
-  left: 1px;
-  width: 6px;
-  height: 4px;
-  border-radius: 2px 2px 0 0;
-  border: 1px solid color-mix(in srgb, var(--warning) 42%, var(--border-primary));
-  border-bottom: none;
-  background: color-mix(in srgb, var(--warning) 18%, transparent);
+.git-tree-file-icon[data-kind="style"] {
+  background: color-mix(in srgb, #10b981 16%, transparent);
+  color: #0f9a6d;
 }
 
-.git-tree-folder[data-expanded="true"] {
-  background: color-mix(in srgb, var(--warning) 34%, transparent);
+.git-tree-file-icon[data-kind="data"] {
+  background: color-mix(in srgb, #f59e0b 18%, transparent);
+  color: #c77c08;
 }
 
-.git-tree-file {
-  width: 12px;
-  height: 14px;
-  border-radius: 2px;
-  border: 1px solid color-mix(in srgb, var(--border-primary) 80%, transparent);
-  background: color-mix(in srgb, var(--bg-surface) 94%, transparent);
+.git-tree-file-icon[data-kind="md"] {
+  background: color-mix(in srgb, #8b5cf6 16%, transparent);
+  color: #7c3aed;
 }
 
-.git-tree-file::before {
-  content: "";
-  position: absolute;
-  top: -1px;
-  right: -1px;
-  width: 5px;
-  height: 5px;
-  border-top: 1px solid color-mix(in srgb, var(--border-primary) 80%, transparent);
-  border-right: 1px solid color-mix(in srgb, var(--border-primary) 80%, transparent);
-  background: color-mix(in srgb, var(--bg-primary) 92%, transparent);
-  clip-path: polygon(0 0, 100% 0, 100% 100%);
+.git-tree-file-icon[data-kind="env"] {
+  background: color-mix(in srgb, #ef4444 14%, transparent);
+  color: #dc2626;
+}
+
+.git-tree-file-icon[data-kind="image"] {
+  background: color-mix(in srgb, #06b6d4 16%, transparent);
+  color: #0891b2;
 }
 
 .git-tree-label-wrap {
@@ -3540,6 +3627,10 @@ textarea:focus-visible {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 13px;
+}
+
+.git-tree-label-directory {
+  font-weight: 500;
 }
 
 .git-tree-subtitle {
@@ -3964,6 +4055,11 @@ textarea:focus-visible {
     grid-template-columns: 1fr;
   }
 
+  .terminal-manager-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
   .git-tree-row {
     grid-template-columns: 1fr;
     padding-right: 0;
@@ -3971,7 +4067,7 @@ textarea:focus-visible {
 
   .git-stage-button {
     justify-self: flex-start;
-    margin-left: 38px;
+    margin-left: 22px;
   }
 
   .git-commit-inline {
@@ -4469,6 +4565,42 @@ textarea:focus-visible {
   gap: 12px;
   min-height: 0;
   overflow-y: auto;
+}
+
+.workbench-rename-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.workbench-modal-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.workbench-modal-field input {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 12px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 82%, transparent);
+  background: color-mix(in srgb, var(--bg-hover) 72%, transparent);
+  color: var(--text-primary);
+}
+
+.workbench-modal-field input:focus {
+  outline: 2px solid color-mix(in srgb, var(--accent) 32%, transparent);
+  outline-offset: 1px;
+  border-color: color-mix(in srgb, var(--accent) 22%, var(--border-primary));
+}
+
+.workbench-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
 }
 
 .file-viewer-modal {
