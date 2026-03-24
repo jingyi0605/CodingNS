@@ -538,7 +538,7 @@ export class SessionHistoryService {
       userId,
       runningState: existing?.runningState ?? "idle",
       activitySource: existing?.activitySource ?? "none",
-      isArchived: existing?.isArchived ?? false,
+      isArchived: this.getStoredArchiveState(sessionId, existing?.isArchived ?? false),
       lastEventAt: existing?.lastEventAt ?? null,
       completedAt: existing?.completedAt ?? null,
       lastSeenAt: seenAt,
@@ -548,10 +548,12 @@ export class SessionHistoryService {
 
   async updateSessionArchiveState(input: ArchiveSessionInput): Promise<SessionListItem> {
     const binding = this.getBindingOrThrow(input.sessionId);
+    const existing = this.getSessionListItemOrThrow(input.sessionId, input.userId);
+    const timestamp = nowIso();
+    let nextRawStoreRef = binding.rawStoreRef;
+    let nextArchivedState = input.isArchived;
 
     if (binding.provider === "codex") {
-      const timestamp = nowIso();
-      const existing = this.getSessionListItemOrThrow(input.sessionId, input.userId);
       const result = await this.sessionSyncService
         .updateSessionArchiveState(
           binding.provider,
@@ -568,45 +570,26 @@ export class SessionHistoryService {
         rawStoreRef: result.rawStoreRef,
         updatedAt: timestamp
       });
-      this.sessionIndexRepository.upsert({
-        sessionId: existing.sessionId,
-        workspaceId: existing.workspaceId,
-        provider: existing.provider,
-        title: existing.title,
-        messageCount: existing.messageCount,
-        isArchived: result.isArchived,
-        lastMessageAt: existing.lastMessageAt,
-        createdAt: existing.createdAt,
-        updatedAt: timestamp
-      });
-
-      return this.enrichSessionItem({
-        ...this.getSessionListItemOrThrow(input.sessionId, input.userId),
-        rawStoreRef: result.rawStoreRef,
-        isArchived: result.isArchived
-      });
+      nextRawStoreRef = result.rawStoreRef;
+      nextArchivedState = result.isArchived;
     }
 
-    const existing =
-      this.sessionStateRepository.findBySessionAndUser(input.sessionId, input.userId) ??
-      (await this.refreshSessionState(input.sessionId, input.userId));
-    const timestamp = nowIso();
-
-    this.sessionStateRepository.upsert({
+    this.sessionIndexRepository.upsert({
       sessionId: input.sessionId,
-      userId: input.userId,
-      runningState: existing?.runningState ?? "idle",
-      activitySource: existing?.activitySource ?? "none",
-      isArchived: input.isArchived,
-      lastEventAt: existing?.lastEventAt ?? null,
-      completedAt: existing?.completedAt ?? null,
-      lastSeenAt: existing?.lastSeenAt ?? null,
+      workspaceId: existing.workspaceId,
+      provider: existing.provider,
+      title: existing.title,
+      messageCount: existing.messageCount,
+      isArchived: nextArchivedState,
+      lastMessageAt: existing.lastMessageAt,
+      createdAt: existing.createdAt,
       updatedAt: timestamp
     });
 
     return this.enrichSessionItem({
       ...this.getSessionListItemOrThrow(input.sessionId, input.userId),
-      isArchived: input.isArchived
+      rawStoreRef: nextRawStoreRef,
+      isArchived: nextArchivedState
     });
   }
 
@@ -724,6 +707,9 @@ export class SessionHistoryService {
             : null;
           const sessionId = existing?.sessionId ?? createId();
           const createdAt = existing?.createdAt ?? timestamp;
+          const existingIndex = existing
+            ? this.sessionIndexRepository.findIndexRecordBySessionId(existing.sessionId)
+            : null;
 
           this.sessionBindingRepository.upsert({
             sessionId,
@@ -740,7 +726,7 @@ export class SessionHistoryService {
             provider: session.provider,
             title: session.title,
             messageCount: session.messageCount,
-            isArchived: session.isArchived ?? false,
+            isArchived: session.isArchived ?? existingIndex?.isArchived ?? false,
             lastMessageAt: session.lastMessageAt,
             createdAt,
             updatedAt: timestamp
@@ -1207,7 +1193,7 @@ export class SessionHistoryService {
       runningState: inspection.runningState === "running" ? "running" : "idle",
       activitySource:
         inspection.lastEventAt || inspection.completedAtCandidate ? "inferred" : "none",
-      isArchived: current?.isArchived ?? false,
+      isArchived: this.getStoredArchiveState(sessionId, current?.isArchived ?? false),
       lastEventAt: inspection.lastEventAt,
       completedAt: inspection.completedAtCandidate,
       lastSeenAt: current?.lastSeenAt ?? null,
@@ -1216,6 +1202,10 @@ export class SessionHistoryService {
 
     this.sessionStateRepository.upsert(nextRecord);
     return nextRecord;
+  }
+
+  private getStoredArchiveState(sessionId: string, fallback = false): boolean {
+    return this.sessionIndexRepository.findIndexRecordBySessionId(sessionId)?.isArchived ?? fallback;
   }
 
   private upsertSnapshot(

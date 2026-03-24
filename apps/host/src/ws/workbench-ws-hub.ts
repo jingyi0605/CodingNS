@@ -113,9 +113,8 @@ export class WorkbenchWsHub {
     userId: string,
     channel: UserChannelState
   ): Promise<void> {
-    const payload =
-      channel.lastPayload ?? buildSnapshotPayload(this.workbenchService.getSnapshot(userId));
-    channel.lastPayload ??= payload;
+    const payload = buildSnapshotPayload(this.workbenchService.getSnapshot(userId));
+    channel.lastPayload = payload;
     client.send(payload);
   }
 

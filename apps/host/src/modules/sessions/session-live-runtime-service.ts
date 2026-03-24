@@ -409,7 +409,7 @@ export class SessionLiveRuntimeService {
       userId,
       runningState: toStoredRunningState(snapshot.runningState),
       activitySource: "runtime",
-      isArchived: currentState?.isArchived ?? false,
+      isArchived: this.resolveArchivedState(request.sessionId, currentState?.isArchived ?? false),
       lastEventAt: snapshot.lastEventAt,
       completedAt: snapshot.completedAt,
       lastSeenAt: currentState?.lastSeenAt ?? null,
@@ -480,7 +480,7 @@ export class SessionLiveRuntimeService {
       userId: input.userId,
       runningState: toStoredRunningState(input.snapshot.runningState),
       activitySource: "runtime",
-      isArchived: false,
+      isArchived: this.resolveArchivedState(input.sessionId),
       lastEventAt: input.snapshot.lastEventAt,
       completedAt: input.snapshot.completedAt,
       lastSeenAt: null,
@@ -526,7 +526,7 @@ export class SessionLiveRuntimeService {
         userId,
         runningState: "running",
         activitySource: "runtime",
-        isArchived: currentState?.isArchived ?? false,
+        isArchived: this.resolveArchivedState(sessionId, currentState?.isArchived ?? false),
         lastEventAt: event.message.timestamp,
         completedAt: null,
         lastSeenAt: currentState?.lastSeenAt ?? null,
@@ -555,7 +555,7 @@ export class SessionLiveRuntimeService {
       userId,
       runningState: toStoredRunningState(event.status),
       activitySource: "runtime",
-      isArchived: currentState?.isArchived ?? false,
+      isArchived: this.resolveArchivedState(sessionId, currentState?.isArchived ?? false),
       lastEventAt: event.timestamp,
       completedAt,
       lastSeenAt: currentState?.lastSeenAt ?? null,
@@ -664,6 +664,10 @@ export class SessionLiveRuntimeService {
       ...input,
       updatedAt: nowIso()
     });
+  }
+
+  private resolveArchivedState(sessionId: string, fallback = false): boolean {
+    return this.sessionIndexRepository.findIndexRecordBySessionId(sessionId)?.isArchived ?? fallback;
   }
 }
 

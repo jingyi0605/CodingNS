@@ -1128,6 +1128,115 @@ describe("spec002 会话同步核心", () => {
       .get(codexSession.sessionId) as { indexed_at: string } | undefined;
     expect(indexState?.indexed_at).toBeTruthy();
   });
+
+  it("claude-code 归档只认 session_indices，discover 和 workbench 订阅都不会把它刷回未归档", async () => {
+    const fixture = createProviderFixture();
+    activeFixtures.push(fixture);
+
+    const hosted = createTestApp(fixture);
+    activeClosers.push(() => hosted.app.close());
+    await hosted.app.ready();
+
+    const accessToken = await bootstrapAndLogin(hosted);
+    const workspaceId = await importWorkspace(hosted, accessToken, fixture.workspaceDir);
+
+    const sessions = await hosted.app.inject({
+      method: "GET",
+      url: `/api/sessions?workspaceId=${workspaceId}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(sessions.statusCode).toBe(200);
+
+    const claudeSession = sessions
+      .json()
+      .items.find((item: { provider: string }) => item.provider === "claude-code");
+
+    if (!claudeSession) {
+      throw new Error("未找到 claude-code 测试会话");
+    }
+
+    await hosted.app.listen({
+      host: "127.0.0.1",
+      port: 0
+    });
+
+    const address = hosted.app.server.address();
+
+    if (!address || typeof address === "string") {
+      throw new Error("测试服务地址异常");
+    }
+
+    const socket = new WebSocket(`ws://127.0.0.1:${address.port}/ws?access_token=${accessToken}`);
+    activeClosers.push(() => socket.close());
+    const queue = createWsMessageQueue(socket);
+
+    expect(JSON.parse(await queue.next()).type).toBe("system.connected");
+
+    socket.send(
+      JSON.stringify({
+        type: "workbench.subscribe"
+      })
+    );
+
+    const initialSnapshot = await nextWorkbenchSnapshot(queue);
+    expect(findWorkbenchSession(initialSnapshot, claudeSession.sessionId)?.isArchived).toBe(false);
+
+    const archive = await hosted.app.inject({
+      method: "PATCH",
+      url: `/api/sessions/${claudeSession.sessionId}/archive`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        archived: true
+      }
+    });
+    expect(archive.statusCode).toBe(200);
+    expect(archive.json().isArchived).toBe(true);
+
+    const storedFlags = hosted.services.database.db
+      .prepare(
+        `SELECT
+           indices.is_archived AS index_archived,
+           states.is_archived AS state_archived
+         FROM session_indices indices
+         LEFT JOIN session_states states
+           ON states.session_id = indices.session_id
+          AND states.user_id = ?
+         WHERE indices.session_id = ?`
+      )
+      .get("user-admin", claudeSession.sessionId) as {
+      index_archived: number;
+      state_archived: number | null;
+    };
+    expect(storedFlags.index_archived).toBe(1);
+    expect(storedFlags.state_archived ?? 0).toBe(0);
+
+    const archivedList = await hosted.app.inject({
+      method: "GET",
+      url: `/api/sessions?workspaceId=${workspaceId}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(archivedList.statusCode).toBe(200);
+
+    const archivedClaudeSession = archivedList
+      .json()
+      .items.find((item: { sessionId: string }) => item.sessionId === claudeSession.sessionId);
+    expect(archivedClaudeSession?.isArchived).toBe(true);
+
+    socket.send(
+      JSON.stringify({
+        type: "workbench.subscribe"
+      })
+    );
+
+    const archivedSnapshot = await nextWorkbenchSnapshot(queue);
+    expect(findWorkbenchSession(archivedSnapshot, claudeSession.sessionId)?.isArchived).toBe(true);
+  });
 });
 
 async function bootstrapAndLogin(hosted: ReturnType<typeof createTestApp>): Promise<string> {
@@ -1171,6 +1280,45 @@ async function importWorkspace(
 
   expect(imported.statusCode).toBe(201);
   return imported.json().id as string;
+}
+
+async function nextWorkbenchSnapshot(
+  queue: ReturnType<typeof createWsMessageQueue>,
+  timeoutMs = 2000
+): Promise<{
+  items: Array<{
+    workspace: { id: string };
+    sessions: Array<{ sessionId: string; isArchived: boolean }>;
+  }>;
+}> {
+  while (true) {
+    const payload = JSON.parse(await queue.next(timeoutMs)) as {
+      type: string;
+      snapshot?: {
+        items: Array<{
+          workspace: { id: string };
+          sessions: Array<{ sessionId: string; isArchived: boolean }>;
+        }>;
+      };
+    };
+
+    if (payload.type === "workbench.snapshot" && payload.snapshot) {
+      return payload.snapshot;
+    }
+  }
+}
+
+function findWorkbenchSession(
+  snapshot: {
+    items: Array<{
+      sessions: Array<{ sessionId: string; isArchived: boolean }>;
+    }>;
+  },
+  sessionId: string
+): { sessionId: string; isArchived: boolean } | undefined {
+  return snapshot.items
+    .flatMap((item) => item.sessions)
+    .find((session) => session.sessionId === sessionId);
 }
 
 function writeCodexSessionFile(input: {

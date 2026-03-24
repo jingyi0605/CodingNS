@@ -63,10 +63,7 @@ export class SessionIndexRepository {
            snapshots.resumed_at AS resumed_at,
            states.running_state AS running_state,
            COALESCE(states.activity_source, 'none') AS activity_source,
-           CASE
-             WHEN indices.provider = 'codex' THEN indices.is_archived
-             ELSE COALESCE(states.is_archived, 0)
-           END AS is_archived,
+           indices.is_archived AS is_archived,
            states.last_event_at AS last_event_at,
            states.completed_at AS completed_at,
            states.last_seen_at AS last_seen_at
@@ -105,10 +102,7 @@ export class SessionIndexRepository {
            snapshots.resumed_at AS resumed_at,
            states.running_state AS running_state,
            COALESCE(states.activity_source, 'none') AS activity_source,
-           CASE
-             WHEN indices.provider = 'codex' THEN indices.is_archived
-             ELSE COALESCE(states.is_archived, 0)
-           END AS is_archived,
+           indices.is_archived AS is_archived,
            states.last_event_at AS last_event_at,
            states.completed_at AS completed_at,
            states.last_seen_at AS last_seen_at
