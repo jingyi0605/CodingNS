@@ -1,15 +1,14 @@
-import { getHostBaseUrl } from "../config/env";
+import { getHostBaseUrl, getHostRequestUrl } from "../config/env";
 import { ApiError, type ApiErrorPayload } from "../shared/network/api-error";
 import { authStore } from "../features/auth/store/auth-store";
 
 interface RequestOptions extends RequestInit {
+  baseUrl?: string;
   skipAuth?: boolean;
   retryAfterRefresh?: boolean;
 }
 
 class HttpClient {
-  private readonly baseUrl = getHostBaseUrl();
-
   async request<T>(path: string, options: RequestOptions = {}): Promise<T> {
     const headers = new Headers(options.headers);
     const hasRequestBody = options.body !== undefined && options.body !== null;
@@ -32,7 +31,7 @@ class HttpClient {
       headers.set("Authorization", `Bearer ${accessToken}`);
     }
 
-    const response = await fetch(`${this.baseUrl}${path}`, {
+    const response = await fetch(getHostRequestUrl(path, options.baseUrl ?? getHostBaseUrl()), {
       ...options,
       headers
     });

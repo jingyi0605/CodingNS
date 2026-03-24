@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 
+import { getHostBaseUrl } from "../../../config/env";
 import { loginRequest, refreshRequest, setupRequest } from "../api/auth-api";
 
 export interface AuthenticatedUser {
@@ -23,6 +24,11 @@ export interface AuthState {
 type AuthListener = () => void;
 
 const STORAGE_KEY = "codingns.auth.session";
+
+interface StoredAuthSession {
+  serverBaseUrl?: string;
+  session: AuthSession;
+}
 
 class AuthStore {
   private state: AuthState = {
@@ -50,14 +56,14 @@ class AuthStore {
 
   getState = () => this.state;
 
-  async login(username: string, password: string): Promise<AuthSession> {
-    const session = await loginRequest({ username, password });
+  async login(username: string, password: string, baseUrl?: string): Promise<AuthSession> {
+    const session = await loginRequest({ username, password }, baseUrl);
     this.setSession(session);
     return session;
   }
 
-  async bootstrap(username: string, password: string): Promise<void> {
-    await setupRequest({ username, password });
+  async bootstrap(username: string, password: string, baseUrl?: string): Promise<void> {
+    await setupRequest({ username, password }, baseUrl);
   }
 
   hydrate(session: AuthSession | null): void {
@@ -107,7 +113,11 @@ class AuthStore {
       status: "authenticated",
       session
     };
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
+    const storedSession: StoredAuthSession = {
+      serverBaseUrl: getHostBaseUrl(),
+      session
+    };
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(storedSession));
     this.emit();
   }
 
@@ -119,7 +129,23 @@ class AuthStore {
     }
 
     try {
-      return JSON.parse(raw) as AuthSession;
+      const parsed = JSON.parse(raw) as AuthSession | StoredAuthSession;
+
+      if (isStoredAuthSession(parsed)) {
+        if (parsed.serverBaseUrl && parsed.serverBaseUrl !== getHostBaseUrl()) {
+          window.localStorage.removeItem(STORAGE_KEY);
+          return null;
+        }
+
+        return parsed.session;
+      }
+
+      if (isAuthSession(parsed)) {
+        return parsed;
+      }
+
+      window.localStorage.removeItem(STORAGE_KEY);
+      return null;
     } catch {
       window.localStorage.removeItem(STORAGE_KEY);
       return null;
@@ -137,4 +163,28 @@ export const authStore = new AuthStore();
 
 export function useAuthSelector<T>(selector: (state: AuthState) => T): T {
   return useSyncExternalStore(authStore.subscribe, () => selector(authStore.getState()));
+}
+
+function isStoredAuthSession(value: unknown): value is StoredAuthSession {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  return "session" in value && isAuthSession((value as StoredAuthSession).session);
+}
+
+function isAuthSession(value: unknown): value is AuthSession {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const candidate = value as Partial<AuthSession>;
+
+  return (
+    typeof candidate.accessToken === "string" &&
+    typeof candidate.refreshToken === "string" &&
+    typeof candidate.expiresIn === "number" &&
+    typeof candidate.user === "object" &&
+    candidate.user !== null
+  );
 }

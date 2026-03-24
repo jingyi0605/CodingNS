@@ -1,19 +1,23 @@
-function getDefaultHostBaseUrl(): string {
-  if (typeof window !== "undefined" && window.location.origin.length > 0) {
-    return window.location.origin;
-  }
+import { serverConfigStore } from "./server-config";
 
-  return "http://127.0.0.1:3002";
+function ensureTrailingSlash(baseUrl: string): string {
+  return baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
+}
+
+function trimLeadingSlash(path: string): string {
+  return path.replace(/^\/+/, "");
 }
 
 export function getHostBaseUrl(): string {
-  const envUrl = import.meta.env.VITE_HOST_BASE_URL;
-  return typeof envUrl === "string" && envUrl.length > 0 ? envUrl : getDefaultHostBaseUrl();
+  return serverConfigStore.getState().baseUrl;
 }
 
-export function getHostWebSocketUrl(path: string): string {
-  const baseUrl = new URL(getHostBaseUrl());
-  const protocol = baseUrl.protocol === "https:" ? "wss:" : "ws:";
+export function getHostRequestUrl(path: string, baseUrl = getHostBaseUrl()): string {
+  return new URL(trimLeadingSlash(path), ensureTrailingSlash(baseUrl)).toString();
+}
 
-  return new URL(path, `${protocol}//${baseUrl.host}`).toString();
+export function getHostWebSocketUrl(path: string, baseUrl = getHostBaseUrl()): string {
+  const url = new URL(getHostRequestUrl(path, baseUrl));
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  return url.toString();
 }

@@ -1869,6 +1869,7 @@ a {
 }
 
 .field-group input,
+.field-group select,
 .field-group textarea {
   width: 100%;
   border: 1px solid var(--border-primary);
@@ -1879,6 +1880,7 @@ a {
 }
 
 .field-group input:focus,
+.field-group select:focus,
 .field-group textarea:focus {
   outline: none;
   border-color: var(--accent);
@@ -1887,6 +1889,10 @@ a {
 .field-group textarea {
   min-height: 80px;
   resize: vertical;
+}
+
+.auth-server-value {
+  word-break: break-all;
 }
 
 /* ========================================

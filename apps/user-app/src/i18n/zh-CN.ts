@@ -11,6 +11,13 @@ export const zhCN = {
   auth: {
     loginTitle: "继续你的编码会话",
     loginSubtitle: "先确认身份，再进入工作中的对话工作区。",
+    serverPreset: "服务器列表",
+    serverCustomOption: "使用自定义服务器",
+    serverAddress: "服务器地址",
+    serverPlaceholder: "例如：http://127.0.0.1:3002",
+    serverHint: "登录、实时消息和终端都会连接到这里。",
+    serverInvalid: "服务器地址无效，请检查后再试。",
+    serverCurrent: "当前服务器",
     bootstrapTitle: "先完成首次初始化",
     bootstrapSubtitle: "这个 Host 还没有管理员账号，先创建一个最小登录入口。",
     username: "用户名",

@@ -4,6 +4,8 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
+import { serverConfigStore } from "../config/server-config";
+import { LoginPage } from "../features/auth/pages/LoginPage";
 import { authStore } from "../features/auth/store/auth-store";
 import { WorkbenchLayout } from "../features/conversation/components/WorkbenchLayout";
 import { ConversationPage } from "../features/conversation/pages/ConversationPage";
@@ -84,6 +86,7 @@ const originalWebSocket = global.WebSocket;
 describe("app routes", () => {
   beforeEach(() => {
     window.localStorage.clear();
+    serverConfigStore.reset();
     authStore.clear();
     MockWebSocket.reset();
     global.WebSocket = MockWebSocket as unknown as typeof WebSocket;
@@ -112,6 +115,86 @@ describe("app routes", () => {
     render(<App />);
 
     expect(await screen.findByText(t("auth.loginTitle"))).toBeInTheDocument();
+  });
+
+  it("登录页切换服务器后会把登录请求发到新地址", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+
+      if (url.endsWith("/api/public/bootstrap-status")) {
+        return createJsonResponse({ initialized: true });
+      }
+
+      if (url === "http://10.10.1.8:4100/api/auth/login" && init?.method === "POST") {
+        return createJsonResponse(
+          {
+            accessToken: "access-token",
+            refreshToken: "refresh-token",
+            expiresIn: 3600,
+            user: {
+              userId: "user-1",
+              username: "admin",
+              role: "admin"
+            }
+          },
+          201
+        );
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    });
+
+    global.fetch = fetchMock as typeof fetch;
+
+    render(
+      <MemoryRouter initialEntries={["/login"]}>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    await screen.findByText(t("auth.loginTitle"));
+    await userEvent.clear(screen.getByLabelText(t("auth.serverAddress")));
+    await userEvent.type(screen.getByLabelText(t("auth.serverAddress")), "10.10.1.8:4100");
+    await userEvent.tab();
+    await userEvent.click(screen.getByRole("button", { name: t("auth.submitLogin") }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://10.10.1.8:4100/api/auth/login",
+        expect.objectContaining({
+          method: "POST"
+        })
+      );
+    });
+  });
+
+  it("实时连接会跟着当前服务器地址切换", async () => {
+    serverConfigStore.setBaseUrl("http://10.10.1.8:4100");
+    hydrateAuth();
+
+    installFetchMock({
+      workbenchSnapshot: createWorkbenchSnapshot([
+        {
+          workspace: createWorkspace(),
+          sessions: [createSessionSummary({ sessionId: "session-1", title: "Spec003 主链路" })]
+        }
+      ]),
+      sessions: {
+        "session-1": {
+          detail: createSessionSummary({ sessionId: "session-1", title: "Spec003 主链路" }),
+          capabilities: createCapabilities(),
+          history: createHistoryPage([])
+        }
+      }
+    });
+
+    renderConversationRoute("session-1");
+
+    await waitFor(() => {
+      expect(MockWebSocket.instances.some((socket) => socket.url.startsWith("ws://10.10.1.8:4100/ws?"))).toBe(true);
+    });
   });
 
   it("已登录时只拉一次工作台快照，并可以加载会话与发送消息", async () => {
@@ -178,7 +261,7 @@ describe("app routes", () => {
     await userEvent.click(screen.getByRole("button", { name: t("conversation.sendButton") }));
 
     await waitFor(() => {
-      expect(screen.getByText("把 capability gate 接上去")).toBeInTheDocument();
+      expect(screen.getAllByText("把 capability gate 接上去").length).toBeGreaterThan(0);
     });
   });
 

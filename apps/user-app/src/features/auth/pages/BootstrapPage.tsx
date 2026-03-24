@@ -1,15 +1,17 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 
+import { useServerConfigSelector } from "../../../config/server-config";
 import { t } from "../../../shared/i18n";
 import { ApiError } from "../../../shared/network/api-error";
 import { authStore } from "../store/auth-store";
 
 export function BootstrapPage() {
   const navigate = useNavigate();
+  const serverBaseUrl = useServerConfigSelector((state) => state.baseUrl);
   const [username, setUsername] = useState("admin");
-  const [password, setPassword] = useState("password123");
-  const [confirmPassword, setConfirmPassword] = useState("password123");
+  const [password, setPassword] = useState("123456aA?!");
+  const [confirmPassword, setConfirmPassword] = useState("123456aA?!");
   const [statusText, setStatusText] = useState<string | null>(null);
   const [statusTone, setStatusTone] = useState<"error" | "success">("error");
   const [loading, setLoading] = useState(false);
@@ -48,6 +50,10 @@ export function BootstrapPage() {
       <section className="auth-card surface-card">
         <h1>{t("auth.bootstrapTitle")}</h1>
         <p className="status-text">{t("auth.bootstrapSubtitle")}</p>
+        <div className="field-group">
+          <span>{t("auth.serverCurrent")}</span>
+          <span className="auth-server-value">{serverBaseUrl}</span>
+        </div>
         <form className="auth-form" onSubmit={handleSubmit}>
           <label className="field-group">
             <span>{t("auth.username")}</span>
