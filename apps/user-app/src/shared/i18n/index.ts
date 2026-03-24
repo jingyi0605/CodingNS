@@ -3,6 +3,9 @@ import { zhCN } from "../../i18n/zh-CN";
 type DictionaryValue = string | Record<string, unknown>;
 
 const extensionZhCN = {
+  common: {
+    close: "关闭"
+  },
   shell: {
     title: "\u5de5\u4f5c\u53f0",
     subtitle: "\u7ba1\u7406\u4ee3\u7801\u9879\u76ee\u91cc\u7684 AI \u4f1a\u8bdd",
@@ -31,6 +34,31 @@ const extensionZhCN = {
     emptyNavigationTitle: "\u8fd8\u6ca1\u6709\u9879\u76ee",
     emptyNavigationBody: "\u6dfb\u52a0\u672c\u5730\u4ee3\u7801\u76ee\u5f55\u5f00\u59cb\u5de5\u4f5c",
     emptyWorkspaceSessions: "\u6682\u65e0\u4f1a\u8bdd",
+    favoriteSectionTitle: "收藏会话",
+    favoriteSectionEmpty: "收藏后的会话会固定放在这里，方便你快速回到常用链路。",
+    favoriteAction: "收藏会话",
+    unfavoriteAction: "取消收藏",
+    favoriteAdded: "会话已加入收藏",
+    favoriteRemoved: "会话已取消收藏",
+    sessionMoreAction: "更多操作",
+    archiveFolderLabel: "归档文件夹",
+    archiveAction: "归档会话",
+    archiveAdded: "会话已归档",
+    unarchiveAction: "取消归档",
+    archiveRestored: "会话已恢复到主列表",
+    archiveModalTitle: "归档会话",
+    archiveModalDescription: "这里列出当前项目暂时隐藏的会话，需要时可以恢复到主列表。",
+    archiveEmpty: "这个项目还没有归档会话。",
+    workspaceCollapse: "收起项目",
+    workspaceExpand: "展开项目",
+    createSession: "新建会话",
+    createSessionModalTitle: "选择新会话类型",
+    createSessionModalDescription: "先选会话类型，再启动真正的会话进程。",
+    createSessionTarget: "当前项目",
+    providerClaudeCode: "Claude Code",
+    providerCodexDescription: "创建 Codex 会话，适合继续当前默认工作流。",
+    providerClaudeDescription: "创建 Claude Code 会话，适合切换另一条会话链路。",
+    providerOptionHint: "选择后会立即创建会话",
     startClaude: "Claude",
     startCodex: "Codex",
     startingSession: "\u521b\u5efa\u4e2d...",

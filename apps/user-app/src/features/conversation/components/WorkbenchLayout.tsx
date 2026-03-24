@@ -9,12 +9,8 @@ import {
   type FormEvent,
   type ReactNode
 } from "react";
-import {
-  Outlet,
-  matchPath,
-  useLocation,
-  useNavigate
-} from "react-router-dom";
+import { createPortal } from "react-dom";
+import { Outlet, matchPath, useLocation, useNavigate } from "react-router-dom";
 
 import { WorkbenchRealtimeClient } from "../../../network/workbench-realtime-client";
 import { t } from "../../../shared/i18n";
@@ -38,6 +34,9 @@ const RIGHT_PANEL_WIDTH_KEY = "workbench.right.width";
 const LEFT_PANEL_COLLAPSED_KEY = "workbench.left.collapsed";
 const RIGHT_PANEL_COLLAPSED_KEY = "workbench.right.collapsed";
 const LAST_SESSION_PATH_KEY = "workbench.last.session.path";
+const WORKSPACE_COLLAPSED_IDS_KEY = "workbench.workspace.collapsed.ids";
+const FAVORITE_SESSION_IDS_KEY = "workbench.session.favorite.ids";
+const ARCHIVED_SESSION_IDS_KEY = "workbench.session.archived.ids";
 
 const DEFAULT_LEFT_PANEL_WIDTH = 300;
 const DEFAULT_RIGHT_PANEL_WIDTH = 340;
@@ -50,6 +49,18 @@ const MOBILE_BREAKPOINT_PX = 720;
 export interface WorkspaceSessionGroup {
   workspace: WorkspaceDto;
   sessions: SessionSummaryDto[];
+}
+
+interface NavigationSessionEntry {
+  session: SessionSummaryDto;
+  workspace: WorkspaceDto;
+}
+
+interface WorkspaceSidebarGroup {
+  workspace: WorkspaceDto;
+  visibleSessions: SessionSummaryDto[];
+  archivedSessions: SessionSummaryDto[];
+  isCollapsed: boolean;
 }
 
 interface WorkbenchShellContextValue {
@@ -79,6 +90,34 @@ function formatSessionMeta(session: SessionSummaryDto) {
   return date ? new Date(date).toLocaleDateString() : "";
 }
 
+function formatProviderLabel(provider: ProviderId, mode: "compact" | "full" = "compact") {
+  if (provider === "codex") {
+    return t("conversation.providerCodex");
+  }
+
+  return mode === "full" ? t("shell.providerClaudeCode") : t("conversation.providerClaude");
+}
+
+function buildSessionMeta(
+  session: SessionSummaryDto,
+  workspace: WorkspaceDto,
+  includeWorkspaceName: boolean
+) {
+  const metaParts: string[] = [];
+
+  if (includeWorkspaceName) {
+    metaParts.push(workspace.name);
+  }
+
+  const dateLabel = formatSessionMeta(session);
+
+  if (dateLabel) {
+    metaParts.push(dateLabel);
+  }
+
+  return metaParts.join(" · ") || workspace.name;
+}
+
 function sessionStateClassName(session: SessionSummaryDto) {
   if (session.activityState === "running") {
     return "session-state-indicator is-running";
@@ -104,6 +143,7 @@ function readStoredNumber(key: string, fallback: number) {
 function readStoredBoolean(key: string, fallback: boolean) {
   try {
     const raw = window.localStorage.getItem(key);
+
     if (raw === null) {
       return fallback;
     }
@@ -114,11 +154,39 @@ function readStoredBoolean(key: string, fallback: boolean) {
   }
 }
 
+function readStoredStringArray(key: string) {
+  try {
+    const raw = window.localStorage.getItem(key);
+
+    if (!raw) {
+      return [] as string[];
+    }
+
+    const parsed = JSON.parse(raw) as unknown;
+
+    if (!Array.isArray(parsed)) {
+      return [] as string[];
+    }
+
+    const uniqueValues: string[] = [];
+
+    for (const value of parsed) {
+      if (typeof value === "string" && !uniqueValues.includes(value)) {
+        uniqueValues.push(value);
+      }
+    }
+
+    return uniqueValues;
+  } catch {
+    return [] as string[];
+  }
+}
+
 function writeStoredValue(key: string, value: string) {
   try {
     window.localStorage.setItem(key, value);
   } catch {
-    // Ignore storage failures in private mode or tests.
+    // 忽略隐私模式或测试环境里的本地存储失败。
   }
 }
 
@@ -135,6 +203,19 @@ function flattenSessions(groups: WorkspaceSessionGroup[]) {
       }))
     )
     .sort((left, right) => sortSessions(left.session, right.session));
+}
+
+function toggleStoredId(items: string[], id: string) {
+  return items.includes(id) ? items.filter((item) => item !== id) : [...items, id];
+}
+
+function removeStoredId(items: string[], id: string) {
+  return items.filter((item) => item !== id);
+}
+
+function retainKnownIds(items: string[], knownIds: ReadonlySet<string>) {
+  const nextItems = items.filter((item) => knownIds.has(item));
+  return nextItems.length === items.length ? items : nextItems;
 }
 
 function SkeletonLines({
@@ -215,6 +296,86 @@ function SidebarHamburgerButton({
   );
 }
 
+function ChevronIcon({ expanded }: { expanded: boolean }) {
+  return (
+    <svg
+      className={expanded ? "workbench-chevron" : "workbench-chevron collapsed"}
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+    >
+      <polyline points="6 9 12 15 18 9" />
+    </svg>
+  );
+}
+
+function PlusIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <line x1="12" y1="5" x2="12" y2="19" />
+      <line x1="5" y1="12" x2="19" y2="12" />
+    </svg>
+  );
+}
+
+function StarIcon({ active }: { active: boolean }) {
+  if (active) {
+    return (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" strokeWidth="1.5">
+        <polygon points="12 3 15 9 22 10 17 15 18 22 12 18 6 22 7 15 2 10 9 9" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <polygon points="12 3 15 9 22 10 17 15 18 22 12 18 6 22 7 15 2 10 9 9" />
+    </svg>
+  );
+}
+
+function ArchiveIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M3 7h18" />
+      <path d="M5 7l1 12h12l1-12" />
+      <path d="M9 11h6" />
+      <path d="M8 4h8l1 3H7l1-3z" />
+    </svg>
+  );
+}
+
+function FolderArchiveIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" />
+      <path d="M9 13h6" />
+    </svg>
+  );
+}
+
+function CloseIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <line x1="6" y1="6" x2="18" y2="18" />
+      <line x1="18" y1="6" x2="6" y2="18" />
+    </svg>
+  );
+}
+
+function MoreIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+      <circle cx="5" cy="12" r="1.8" />
+      <circle cx="12" cy="12" r="1.8" />
+      <circle cx="19" cy="12" r="1.8" />
+    </svg>
+  );
+}
+
 function MobileSidebarHandle({
   side,
   isOpen,
@@ -274,7 +435,11 @@ function MobileSidebarHandle({
     <button
       className={`mobile-sidebar-handle ${side} ${isOpen ? "open" : "closed"}`}
       type="button"
-      aria-label={isOpen ? t(`shell.hide${side === "left" ? "Session" : "Info"}Sidebar`) : t(`shell.show${side === "left" ? "Session" : "Info"}Sidebar`)}
+      aria-label={
+        isOpen
+          ? t(`shell.hide${side === "left" ? "Session" : "Info"}Sidebar`)
+          : t(`shell.show${side === "left" ? "Session" : "Info"}Sidebar`)
+      }
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
@@ -287,24 +452,196 @@ function MobileSidebarHandle({
   );
 }
 
+function SidebarModal({
+  open,
+  title,
+  description,
+  onClose,
+  children
+}: {
+  open: boolean;
+  title: string;
+  description: string;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [onClose, open]);
+
+  if (!open) {
+    return null;
+  }
+
+  if (typeof document === "undefined") {
+    return null;
+  }
+
+  return createPortal(
+    <div className="workbench-modal-layer">
+      <button
+        type="button"
+        className="workbench-modal-backdrop"
+        aria-label={t("common.close")}
+        onClick={onClose}
+      />
+      <section className="workbench-modal-card surface-card" role="dialog" aria-modal="true" aria-label={title}>
+        <div className="workbench-modal-header">
+          <div className="workbench-modal-title-wrap">
+            <h2>{title}</h2>
+            <p>{description}</p>
+          </div>
+          <button
+            type="button"
+            className="workbench-modal-close"
+            aria-label={t("common.close")}
+            onClick={onClose}
+          >
+            <CloseIcon />
+          </button>
+        </div>
+        <div className="workbench-modal-body">{children}</div>
+      </section>
+    </div>,
+    document.body
+  );
+}
+
+function SessionCard({
+  menuKey,
+  session,
+  workspace,
+  isActive,
+  isFavorite,
+  menuOpen,
+  showWorkspaceName,
+  onOpen,
+  onToggleMenu,
+  onToggleFavorite,
+  onArchive,
+  onCloseMenu
+}: {
+  menuKey: string;
+  session: SessionSummaryDto;
+  workspace: WorkspaceDto;
+  isActive: boolean;
+  isFavorite: boolean;
+  menuOpen: boolean;
+  showWorkspaceName: boolean;
+  onOpen: () => void;
+  onToggleMenu: () => void;
+  onToggleFavorite: () => void;
+  onArchive: () => void;
+  onCloseMenu: () => void;
+}) {
+  return (
+    <article className="workbench-session-card" data-active={isActive}>
+      <button type="button" className="workbench-session-link" data-active={isActive} onClick={onOpen}>
+        <div className="session-title-row">
+          <span className={sessionStateClassName(session)} aria-hidden="true" />
+          <span className="session-title">{session.title || t("common.unknown")}</span>
+        </div>
+        <div className="session-meta-row">
+          <span className="session-meta">{buildSessionMeta(session, workspace, showWorkspaceName)}</span>
+          <span className={`session-provider-badge ${session.provider}`}>{formatProviderLabel(session.provider)}</span>
+        </div>
+      </button>
+
+      <div className="workbench-session-actions" data-open={menuOpen}>
+        <button
+          type="button"
+          className="workbench-session-menu-trigger"
+          data-open={menuOpen}
+          aria-label={t("shell.sessionMoreAction")}
+          title={t("shell.sessionMoreAction")}
+          aria-expanded={menuOpen}
+          onClick={(event) => {
+            event.stopPropagation();
+            onToggleMenu();
+          }}
+        >
+          <MoreIcon />
+        </button>
+
+        {menuOpen ? (
+          <div
+            className="workbench-session-menu"
+            data-menu-key={menuKey}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              className="workbench-session-menu-item"
+              onClick={() => {
+                onToggleFavorite();
+                onCloseMenu();
+              }}
+            >
+              <StarIcon active={isFavorite} />
+              <span>{isFavorite ? t("shell.unfavoriteAction") : t("shell.favoriteAction")}</span>
+            </button>
+            <button
+              type="button"
+              className="workbench-session-menu-item"
+              onClick={() => {
+                onArchive();
+                onCloseMenu();
+              }}
+            >
+              <ArchiveIcon />
+              <span>{t("shell.archiveAction")}</span>
+            </button>
+          </div>
+        ) : null}
+      </div>
+    </article>
+  );
+}
+
 function SidebarContent({
-  navigationGroups,
+  workspaceGroups,
+  favoriteSessions,
+  favoriteSessionIds,
   workspaceCount,
   sessionCount,
   navigationLoading,
   navigationError,
   activeSessionId,
   onRefreshNavigation,
+  onToggleWorkspaceCollapse,
+  onToggleFavoriteSession,
+  onArchiveSession,
+  onUnarchiveSession,
   onClose,
   onToggleCollapse
 }: {
-  navigationGroups: WorkspaceSessionGroup[];
+  workspaceGroups: WorkspaceSidebarGroup[];
+  favoriteSessions: NavigationSessionEntry[];
+  favoriteSessionIds: ReadonlySet<string>;
   workspaceCount: number;
   sessionCount: number;
   navigationLoading: boolean;
   navigationError: string | null;
   activeSessionId: string | null;
   onRefreshNavigation: () => Promise<void>;
+  onToggleWorkspaceCollapse: (workspaceId: string) => void;
+  onToggleFavoriteSession: (sessionId: string) => void;
+  onArchiveSession: (sessionId: string) => void;
+  onUnarchiveSession: (sessionId: string) => void;
   onClose?: () => void;
   onToggleCollapse?: () => void;
 }) {
@@ -318,6 +655,36 @@ function SidebarContent({
   });
   const [actionWorkspaceId, setActionWorkspaceId] = useState<string | null>(null);
   const [actionProvider, setActionProvider] = useState<ProviderId | null>(null);
+  const [createSessionWorkspaceId, setCreateSessionWorkspaceId] = useState<string | null>(null);
+  const [archiveWorkspaceId, setArchiveWorkspaceId] = useState<string | null>(null);
+  const [openSessionMenuKey, setOpenSessionMenuKey] = useState<string | null>(null);
+
+  const createSessionWorkspace =
+    workspaceGroups.find((group) => group.workspace.id === createSessionWorkspaceId)?.workspace ?? null;
+  const archiveWorkspaceGroup =
+    workspaceGroups.find((group) => group.workspace.id === archiveWorkspaceId) ?? null;
+
+  useEffect(() => {
+    if (!openSessionMenuKey) {
+      return;
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target;
+
+      if (target instanceof HTMLElement && target.closest(".workbench-session-actions")) {
+        return;
+      }
+
+      setOpenSessionMenuKey(null);
+    }
+
+    window.addEventListener("pointerdown", handlePointerDown);
+
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown);
+    };
+  }, [openSessionMenuKey]);
 
   async function handleImportWorkspace(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -328,6 +695,7 @@ function SidebarContent({
     }
 
     setImportingWorkspace(true);
+
     try {
       await importWorkspace({
         path: trimmedPath,
@@ -357,6 +725,7 @@ function SidebarContent({
     try {
       const session = await startSession({ workspaceId, provider });
       await onRefreshNavigation();
+      setCreateSessionWorkspaceId(null);
       showToast({
         title: provider === "codex" ? t("shell.startCodexSuccess") : t("shell.startClaudeSuccess"),
         tone: "success"
@@ -374,6 +743,34 @@ function SidebarContent({
     }
   }
 
+  function handleToggleFavorite(sessionId: string) {
+    const isFavorite = favoriteSessionIds.has(sessionId);
+    setOpenSessionMenuKey(null);
+    onToggleFavoriteSession(sessionId);
+    showToast({
+      title: isFavorite ? t("shell.favoriteRemoved") : t("shell.favoriteAdded"),
+      tone: "success"
+    });
+  }
+
+  function handleArchive(sessionId: string) {
+    setOpenSessionMenuKey(null);
+    onArchiveSession(sessionId);
+    showToast({
+      title: t("shell.archiveAdded"),
+      tone: "success"
+    });
+  }
+
+  function handleUnarchive(sessionId: string) {
+    setOpenSessionMenuKey(null);
+    onUnarchiveSession(sessionId);
+    showToast({
+      title: t("shell.archiveRestored"),
+      tone: "success"
+    });
+  }
+
   return (
     <>
       <div className="workbench-nav-header">
@@ -382,10 +779,7 @@ function SidebarContent({
           <p className="status-text">{t("shell.subtitle")}</p>
         </div>
         {onToggleCollapse ? (
-          <SidebarHamburgerButton
-            ariaLabel={t("shell.hideSessionSidebar")}
-            onClick={onToggleCollapse}
-          />
+          <SidebarHamburgerButton ariaLabel={t("shell.hideSessionSidebar")} onClick={onToggleCollapse} />
         ) : null}
       </div>
 
@@ -397,23 +791,10 @@ function SidebarContent({
             onClick={() => setImportExpanded((current) => !current)}
           >
             <span>{t("shell.importWorkspaceTitle")}</span>
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              style={{
-                transform: importExpanded ? "rotate(180deg)" : "none",
-                transition: "transform 200ms"
-              }}
-            >
-              <polyline points="6 9 12 15 18 9" />
-            </svg>
+            <ChevronIcon expanded={importExpanded} />
           </button>
 
-          {importExpanded && (
+          {importExpanded ? (
             <form className="workbench-import-form" onSubmit={handleImportWorkspace}>
               <input
                 type="text"
@@ -431,82 +812,153 @@ function SidebarContent({
                 {importingWorkspace ? t("shell.importSubmitting") : t("shell.importSubmit")}
               </button>
             </form>
-          )}
+          ) : null}
         </section>
 
         <div className="workbench-nav-stats">
-          <span>{t("shell.workspaceCount")} {workspaceCount}</span>
-          <span>{t("shell.sessionCount")} {sessionCount}</span>
+          <span>
+            {t("shell.workspaceCount")} {workspaceCount}
+          </span>
+          <span>
+            {t("shell.sessionCount")} {sessionCount}
+          </span>
         </div>
 
-        {navigationLoading && navigationGroups.length === 0 ? <SidebarNavigationSkeleton /> : null}
+        {navigationError ? (
+          <div className="workbench-status-row">
+            <p className="status-text" data-tone="error">
+              {navigationError}
+            </p>
+          </div>
+        ) : null}
 
-        {!navigationLoading && !navigationError && navigationGroups.length === 0 ? (
+        <section className="workbench-section-block">
+          <div className="workbench-section-heading">
+            <div className="workbench-section-heading-main">
+              <StarIcon active />
+              <span>{t("shell.favoriteSectionTitle")}</span>
+            </div>
+            <span className="workbench-section-counter">{favoriteSessions.length}</span>
+          </div>
+
+          {favoriteSessions.length === 0 ? (
+            <p className="workbench-section-empty">{t("shell.favoriteSectionEmpty")}</p>
+          ) : (
+            <div className="workbench-session-list">
+              {favoriteSessions.map((item) => (
+                <SessionCard
+                  menuKey={`favorite:${item.session.sessionId}`}
+                  key={item.session.sessionId}
+                  session={item.session}
+                  workspace={item.workspace}
+                  isActive={item.session.sessionId === activeSessionId}
+                  isFavorite={favoriteSessionIds.has(item.session.sessionId)}
+                  menuOpen={openSessionMenuKey === `favorite:${item.session.sessionId}`}
+                  showWorkspaceName
+                  onOpen={() => {
+                    navigate(`/sessions/${item.session.sessionId}`);
+                    onClose?.();
+                  }}
+                  onToggleMenu={() =>
+                    setOpenSessionMenuKey((current) =>
+                      current === `favorite:${item.session.sessionId}`
+                        ? null
+                        : `favorite:${item.session.sessionId}`
+                    )
+                  }
+                  onToggleFavorite={() => handleToggleFavorite(item.session.sessionId)}
+                  onArchive={() => handleArchive(item.session.sessionId)}
+                  onCloseMenu={() => setOpenSessionMenuKey(null)}
+                />
+              ))}
+            </div>
+          )}
+        </section>
+
+        {navigationLoading && workspaceGroups.length === 0 ? <SidebarNavigationSkeleton /> : null}
+
+        {!navigationLoading && !navigationError && workspaceGroups.length === 0 ? (
           <div className="workbench-empty-state minimal">
             <p>{t("shell.emptyNavigationBody")}</p>
           </div>
         ) : null}
 
-        {navigationGroups.map((group) => {
-          const claudeBusy =
-            actionWorkspaceId === group.workspace.id && actionProvider === "claude-code";
-          const codexBusy = actionWorkspaceId === group.workspace.id && actionProvider === "codex";
-
-          return (
-            <section key={group.workspace.id} className="workbench-workspace-group">
-              <div className="workbench-workspace-header minimal">
+        {workspaceGroups.map((group) => (
+          <section key={group.workspace.id} className="workbench-workspace-group">
+            <div className="workbench-workspace-header minimal">
+              <button
+                type="button"
+                className="workbench-workspace-toggle"
+                aria-label={group.isCollapsed ? t("shell.workspaceExpand") : t("shell.workspaceCollapse")}
+                onClick={() => onToggleWorkspaceCollapse(group.workspace.id)}
+              >
+                <ChevronIcon expanded={!group.isCollapsed} />
                 <strong>{group.workspace.name}</strong>
-              </div>
+              </button>
 
-              <div className="workbench-session-list">
-                {group.sessions.map((session) => (
-                  <button
-                    key={session.sessionId}
-                    type="button"
-                    className="workbench-session-link"
-                    data-active={session.sessionId === activeSessionId}
-                    onClick={() => {
-                      navigate(`/sessions/${session.sessionId}`);
-                      onClose?.();
-                    }}
-                  >
-                    <div className="session-title-row">
-                      <span className={sessionStateClassName(session)} aria-hidden="true" />
-                      <span className="session-title">{session.title || t("common.unknown")}</span>
-                    </div>
-                    <div className="session-meta-row">
-                      <span className="session-meta">{formatSessionMeta(session)}</span>
-                      <span className={`session-provider-badge ${session.provider}`}>
-                        {session.provider === "codex" ? "Codex" : "Claude"}
-                      </span>
-                    </div>
-                  </button>
-                ))}
+              <button
+                type="button"
+                className="workbench-workspace-create"
+                aria-label={t("shell.createSession")}
+                onClick={() => setCreateSessionWorkspaceId(group.workspace.id)}
+              >
+                <PlusIcon />
+                <span>{t("shell.createSession")}</span>
+              </button>
+            </div>
 
-                {group.sessions.length === 0 ? (
-                  <p className="workbench-session-empty">{t("shell.emptyWorkspaceSessions")}</p>
-                ) : null}
-              </div>
+            {!group.isCollapsed ? (
+              <>
+                <div className="workbench-session-list">
+                  {group.visibleSessions.length === 0 ? (
+                    <p className="workbench-session-empty">{t("shell.emptyWorkspaceSessions")}</p>
+                  ) : (
+                    group.visibleSessions.map((session) => (
+                      <SessionCard
+                        menuKey={`workspace:${group.workspace.id}:${session.sessionId}`}
+                        key={session.sessionId}
+                        session={session}
+                        workspace={group.workspace}
+                        isActive={session.sessionId === activeSessionId}
+                        isFavorite={favoriteSessionIds.has(session.sessionId)}
+                        menuOpen={
+                          openSessionMenuKey === `workspace:${group.workspace.id}:${session.sessionId}`
+                        }
+                        showWorkspaceName={false}
+                        onOpen={() => {
+                          navigate(`/sessions/${session.sessionId}`);
+                          onClose?.();
+                        }}
+                        onToggleMenu={() =>
+                          setOpenSessionMenuKey((current) =>
+                            current === `workspace:${group.workspace.id}:${session.sessionId}`
+                              ? null
+                              : `workspace:${group.workspace.id}:${session.sessionId}`
+                          )
+                        }
+                        onToggleFavorite={() => handleToggleFavorite(session.sessionId)}
+                        onArchive={() => handleArchive(session.sessionId)}
+                        onCloseMenu={() => setOpenSessionMenuKey(null)}
+                      />
+                    ))
+                  )}
+                </div>
 
-              <div className="workbench-workspace-actions minimal">
                 <button
                   type="button"
-                  disabled={Boolean(actionWorkspaceId)}
-                  onClick={() => void handleStartSession(group.workspace.id, "claude-code")}
+                  className="workbench-archive-folder"
+                  onClick={() => setArchiveWorkspaceId(group.workspace.id)}
                 >
-                  {claudeBusy ? "..." : `+ ${t("shell.startClaude")}`}
+                  <span className="workbench-archive-folder-main">
+                    <FolderArchiveIcon />
+                    <span>{t("shell.archiveFolderLabel")}</span>
+                  </span>
+                  <span className="workbench-section-counter">{group.archivedSessions.length}</span>
                 </button>
-                <button
-                  type="button"
-                  disabled={Boolean(actionWorkspaceId)}
-                  onClick={() => void handleStartSession(group.workspace.id, "codex")}
-                >
-                  {codexBusy ? "..." : `+ ${t("shell.startCodex")}`}
-                </button>
-              </div>
-            </section>
-          );
-        })}
+              </>
+            ) : null}
+          </section>
+        ))}
       </div>
 
       <div className="workbench-nav-footer minimal">
@@ -524,6 +976,98 @@ function SidebarContent({
           </button>
         </div>
       </div>
+
+      <SidebarModal
+        open={createSessionWorkspace !== null}
+        title={t("shell.createSessionModalTitle")}
+        description={
+          createSessionWorkspace
+            ? `${t("shell.createSessionTarget")} · ${createSessionWorkspace.name}`
+            : t("shell.createSessionModalDescription")
+        }
+        onClose={() => setCreateSessionWorkspaceId(null)}
+      >
+        <div className="workbench-provider-grid">
+          <button
+            type="button"
+            className="workbench-provider-option"
+            disabled={Boolean(actionWorkspaceId)}
+            onClick={() =>
+              createSessionWorkspace
+                ? void handleStartSession(createSessionWorkspace.id, "codex")
+                : undefined
+            }
+          >
+            <span className="workbench-provider-badge">{formatProviderLabel("codex", "full")}</span>
+            <strong>{formatProviderLabel("codex", "full")}</strong>
+            <p>{t("shell.providerCodexDescription")}</p>
+            <span className="workbench-provider-hint">
+              {actionWorkspaceId === createSessionWorkspace?.id && actionProvider === "codex"
+                ? t("shell.startingSession")
+                : t("shell.providerOptionHint")}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            className="workbench-provider-option"
+            disabled={Boolean(actionWorkspaceId)}
+            onClick={() =>
+              createSessionWorkspace
+                ? void handleStartSession(createSessionWorkspace.id, "claude-code")
+                : undefined
+            }
+          >
+            <span className="workbench-provider-badge">
+              {formatProviderLabel("claude-code", "full")}
+            </span>
+            <strong>{formatProviderLabel("claude-code", "full")}</strong>
+            <p>{t("shell.providerClaudeDescription")}</p>
+            <span className="workbench-provider-hint">
+              {actionWorkspaceId === createSessionWorkspace?.id &&
+              actionProvider === "claude-code"
+                ? t("shell.startingSession")
+                : t("shell.providerOptionHint")}
+            </span>
+          </button>
+        </div>
+      </SidebarModal>
+
+      <SidebarModal
+        open={archiveWorkspaceGroup !== null}
+        title={t("shell.archiveModalTitle")}
+        description={
+          archiveWorkspaceGroup
+            ? `${archiveWorkspaceGroup.workspace.name} · ${t("shell.archiveModalDescription")}`
+            : t("shell.archiveModalDescription")
+        }
+        onClose={() => setArchiveWorkspaceId(null)}
+      >
+        {archiveWorkspaceGroup && archiveWorkspaceGroup.archivedSessions.length > 0 ? (
+          <div className="workbench-archive-list">
+            {archiveWorkspaceGroup.archivedSessions.map((session) => (
+              <article key={session.sessionId} className="workbench-archive-item">
+                <div className="workbench-archive-item-main">
+                  <strong>{session.title || t("common.unknown")}</strong>
+                  <p>
+                    {buildSessionMeta(session, archiveWorkspaceGroup.workspace, false)} ·{" "}
+                    {formatProviderLabel(session.provider)}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => handleUnarchive(session.sessionId)}
+                >
+                  {t("shell.unarchiveAction")}
+                </button>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <p className="workbench-section-empty">{t("shell.archiveEmpty")}</p>
+        )}
+      </SidebarModal>
     </>
   );
 }
@@ -580,10 +1124,7 @@ function WorkbenchInfoPanel({
           </button>
         </div>
         {onToggleCollapse ? (
-          <SidebarHamburgerButton
-            ariaLabel={t("shell.hideInfoSidebar")}
-            onClick={onToggleCollapse}
-          />
+          <SidebarHamburgerButton ariaLabel={t("shell.hideInfoSidebar")} onClick={onToggleCollapse} />
         ) : null}
       </div>
 
@@ -611,10 +1152,7 @@ function WorkbenchInfoPanel({
         ) : null}
 
         {panelReady && activeTab === "terminals" ? (
-          <TerminalManagerPanel
-            currentWorkspaceId={fallbackWorkspaceId}
-            navigationGroups={navigationGroups}
-          />
+          <TerminalManagerPanel currentWorkspaceId={fallbackWorkspaceId} navigationGroups={navigationGroups} />
         ) : null}
       </div>
     </>
@@ -626,7 +1164,6 @@ export function WorkbenchLayout() {
   const navigate = useNavigate();
   const { showToast } = useToast();
   const requestIdRef = useRef(0);
-  const realtimeClientRef = useRef<WorkbenchRealtimeClient | null>(null);
   const hasNavigationDataRef = useRef(false);
   const [navigationGroups, setNavigationGroups] = useState<WorkspaceSessionGroup[]>([]);
   const [navigationLoading, setNavigationLoading] = useState(true);
@@ -642,6 +1179,15 @@ export function WorkbenchLayout() {
   );
   const [rightCollapsed, setRightCollapsed] = useState(() =>
     readStoredBoolean(RIGHT_PANEL_COLLAPSED_KEY, false)
+  );
+  const [collapsedWorkspaceIds, setCollapsedWorkspaceIds] = useState(() =>
+    readStoredStringArray(WORKSPACE_COLLAPSED_IDS_KEY)
+  );
+  const [favoriteSessionIds, setFavoriteSessionIds] = useState(() =>
+    readStoredStringArray(FAVORITE_SESSION_IDS_KEY)
+  );
+  const [archivedSessionIds, setArchivedSessionIds] = useState(() =>
+    readStoredStringArray(ARCHIVED_SESSION_IDS_KEY)
   );
   const [infoPanelReady, setInfoPanelReady] = useState(false);
   const [activeInfoTab, setActiveInfoTab] = useState<InfoTab>("files");
@@ -727,11 +1273,9 @@ export function WorkbenchLayout() {
       }
     });
 
-    realtimeClientRef.current = client;
     client.start();
 
     return () => {
-      realtimeClientRef.current = null;
       client.close();
     };
   }, [navigate, showToast]);
@@ -753,6 +1297,18 @@ export function WorkbenchLayout() {
   }, [rightCollapsed]);
 
   useEffect(() => {
+    writeStoredValue(WORKSPACE_COLLAPSED_IDS_KEY, JSON.stringify(collapsedWorkspaceIds));
+  }, [collapsedWorkspaceIds]);
+
+  useEffect(() => {
+    writeStoredValue(FAVORITE_SESSION_IDS_KEY, JSON.stringify(favoriteSessionIds));
+  }, [favoriteSessionIds]);
+
+  useEffect(() => {
+    writeStoredValue(ARCHIVED_SESSION_IDS_KEY, JSON.stringify(archivedSessionIds));
+  }, [archivedSessionIds]);
+
+  useEffect(() => {
     if (infoPanelReady || rightCollapsed || navigationLoading) {
       return;
     }
@@ -769,6 +1325,24 @@ export function WorkbenchLayout() {
   const sessionMatch = matchPath("/sessions/:sessionId", location.pathname);
   const currentSessionId = sessionMatch?.params.sessionId ?? null;
   const flattenedSessions = useMemo(() => flattenSessions(navigationGroups), [navigationGroups]);
+  const collapsedWorkspaceIdSet = useMemo(() => new Set(collapsedWorkspaceIds), [collapsedWorkspaceIds]);
+  const favoriteSessionIdSet = useMemo(() => new Set(favoriteSessionIds), [favoriteSessionIds]);
+  const archivedSessionIdSet = useMemo(() => new Set(archivedSessionIds), [archivedSessionIds]);
+
+  useEffect(() => {
+    if (navigationLoading && navigationGroups.length === 0) {
+      return;
+    }
+
+    const knownWorkspaceIds = new Set(navigationGroups.map((group) => group.workspace.id));
+    const knownSessionIds = new Set(flattenedSessions.map((item) => item.session.sessionId));
+
+    // 只保留当前快照里还存在的偏好状态，避免历史垃圾状态越积越多。
+    setCollapsedWorkspaceIds((current) => retainKnownIds(current, knownWorkspaceIds));
+    setFavoriteSessionIds((current) => retainKnownIds(current, knownSessionIds));
+    setArchivedSessionIds((current) => retainKnownIds(current, knownSessionIds));
+  }, [flattenedSessions, navigationGroups, navigationLoading]);
+
   const currentSessionContext =
     flattenedSessions.find((item) => item.session.sessionId === currentSessionId) ?? null;
   const currentWorkspaceId =
@@ -777,6 +1351,27 @@ export function WorkbenchLayout() {
   const activeCenterTab: CenterTab = location.pathname.startsWith("/terminals")
     ? "terminals"
     : "conversation";
+
+  const workspaceSidebarGroups = useMemo(
+    () =>
+      navigationGroups.map((group) => ({
+        workspace: group.workspace,
+        visibleSessions: group.sessions.filter((session) => !archivedSessionIdSet.has(session.sessionId)),
+        archivedSessions: group.sessions.filter((session) => archivedSessionIdSet.has(session.sessionId)),
+        isCollapsed: collapsedWorkspaceIdSet.has(group.workspace.id)
+      })),
+    [archivedSessionIdSet, collapsedWorkspaceIdSet, navigationGroups]
+  );
+
+  const favoriteSessions = useMemo(
+    () =>
+      flattenedSessions.filter(
+        (item) =>
+          favoriteSessionIdSet.has(item.session.sessionId) &&
+          !archivedSessionIdSet.has(item.session.sessionId)
+      ),
+    [archivedSessionIdSet, favoriteSessionIdSet, flattenedSessions]
+  );
 
   useEffect(() => {
     if (currentSessionId) {
@@ -925,13 +1520,29 @@ export function WorkbenchLayout() {
           <>
             <aside className="workbench-nav surface-card">
               <SidebarContent
-                navigationGroups={navigationGroups}
+                workspaceGroups={workspaceSidebarGroups}
+                favoriteSessions={favoriteSessions}
+                favoriteSessionIds={favoriteSessionIdSet}
                 workspaceCount={workspaceCount}
                 sessionCount={sessionCount}
                 navigationLoading={navigationLoading}
                 navigationError={navigationError}
                 activeSessionId={currentSessionId}
                 onRefreshNavigation={refreshNavigation}
+                onToggleWorkspaceCollapse={(workspaceId) =>
+                  setCollapsedWorkspaceIds((current) => toggleStoredId(current, workspaceId))
+                }
+                onToggleFavoriteSession={(sessionId) =>
+                  setFavoriteSessionIds((current) => toggleStoredId(current, sessionId))
+                }
+                onArchiveSession={(sessionId) =>
+                  setArchivedSessionIds((current) =>
+                    current.includes(sessionId) ? current : [...current, sessionId]
+                  )
+                }
+                onUnarchiveSession={(sessionId) =>
+                  setArchivedSessionIds((current) => removeStoredId(current, sessionId))
+                }
                 onToggleCollapse={() => setLeftCollapsed(true)}
               />
             </aside>
@@ -1059,13 +1670,29 @@ export function WorkbenchLayout() {
 
         <MobileNavDrawer isOpen={mobileNavOpen} side="left" onClose={() => setMobileNavOpen(false)}>
           <SidebarContent
-            navigationGroups={navigationGroups}
+            workspaceGroups={workspaceSidebarGroups}
+            favoriteSessions={favoriteSessions}
+            favoriteSessionIds={favoriteSessionIdSet}
             workspaceCount={workspaceCount}
             sessionCount={sessionCount}
             navigationLoading={navigationLoading}
             navigationError={navigationError}
             activeSessionId={currentSessionId}
             onRefreshNavigation={refreshNavigation}
+            onToggleWorkspaceCollapse={(workspaceId) =>
+              setCollapsedWorkspaceIds((current) => toggleStoredId(current, workspaceId))
+            }
+            onToggleFavoriteSession={(sessionId) =>
+              setFavoriteSessionIds((current) => toggleStoredId(current, sessionId))
+            }
+            onArchiveSession={(sessionId) =>
+              setArchivedSessionIds((current) =>
+                current.includes(sessionId) ? current : [...current, sessionId]
+              )
+            }
+            onUnarchiveSession={(sessionId) =>
+              setArchivedSessionIds((current) => removeStoredId(current, sessionId))
+            }
             onClose={() => setMobileNavOpen(false)}
           />
         </MobileNavDrawer>
