@@ -7,6 +7,7 @@ import type {
   SessionSummaryDto,
   ToolCallDto
 } from "../api/conversation-api";
+import { parseMessageRichContent } from "../message-rich-content";
 
 export type RuntimeConnectionState = "connected" | "reconnecting" | "reconnect_failed" | "closed";
 export type RuntimeHistoryState = "idle" | "loading" | "ready" | "error";
@@ -223,9 +224,13 @@ function isEquivalentCodexTextMessage(
     return false;
   }
 
+  const leftContent = parseMessageRichContent(left.content);
+  const rightContent = parseMessageRichContent(right.content);
+
   return (
     areTimestampsNear(left.timestamp, right.timestamp) &&
-    normalizeComparableCodexText(left.content) === normalizeComparableCodexText(right.content)
+    normalizeComparableCodexText(leftContent.text) === normalizeComparableCodexText(rightContent.text) &&
+    areEquivalentInlineImages(leftContent.inlineImages, rightContent.inlineImages)
   );
 }
 
@@ -233,6 +238,20 @@ function pickPreferredCodexTextMessage(
   left: SessionMessageViewModel,
   right: SessionMessageViewModel
 ): SessionMessageViewModel {
+  const leftAttachmentCount = left.attachments?.length ?? 0;
+  const rightAttachmentCount = right.attachments?.length ?? 0;
+
+  if (leftAttachmentCount !== rightAttachmentCount) {
+    return leftAttachmentCount > rightAttachmentCount ? left : right;
+  }
+
+  const leftInlineImageCount = parseMessageRichContent(left.content).inlineImages.length;
+  const rightInlineImageCount = parseMessageRichContent(right.content).inlineImages.length;
+
+  if (leftInlineImageCount !== rightInlineImageCount) {
+    return leftInlineImageCount > rightInlineImageCount ? left : right;
+  }
+
   const leftHasTrailingWhitespace =
     left.content !== normalizeComparableCodexText(left.content);
   const rightHasTrailingWhitespace =
@@ -247,6 +266,21 @@ function pickPreferredCodexTextMessage(
 
 function normalizeComparableCodexText(content: string): string {
   return content.replace(/\r\n/g, "\n").trimEnd();
+}
+
+function areEquivalentInlineImages(
+  left: ReturnType<typeof parseMessageRichContent>["inlineImages"],
+  right: ReturnType<typeof parseMessageRichContent>["inlineImages"]
+): boolean {
+  if (left.length === 0 || right.length === 0) {
+    return true;
+  }
+
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  return left.every((item, index) => item.url === right[index]?.url);
 }
 
 function findMatchingOptimisticMessageId(

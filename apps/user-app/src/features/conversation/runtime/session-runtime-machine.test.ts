@@ -9,6 +9,9 @@ import {
   type SessionMessageViewModel
 } from "./session-runtime-machine";
 
+const SAMPLE_IMAGE_DATA_URL =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aF9sAAAAASUVORK5CYII=";
+
 function createHistoryMessage(overrides: {
   messageId: string;
   provider: "claude-code" | "codex";
@@ -19,6 +22,13 @@ function createHistoryMessage(overrides: {
   sequence: number;
   rawRef: string;
   kind?: "text" | "thinking" | "tool_call" | "tool_result";
+  attachments?: Array<{
+    id: string;
+    kind: "image";
+    fileName: string;
+    mimeType: string;
+    fileSize: number;
+  }>;
 }) {
   return {
     kind: "text" as const,
@@ -109,6 +119,74 @@ describe("session runtime machine", () => {
     expect(merged).toHaveLength(1);
     expect(merged[0].id).toBe("codex-response-item");
     expect(merged[0].content).toBe("same message");
+  });
+
+  it("prefers the richer codex message when the duplicate only differs by an inline base64 image", () => {
+    const merged = mergeAuthoritativeMessages([], "session-1", [
+      createHistoryMessage({
+        messageId: "codex-plain-message",
+        provider: "codex",
+        providerSessionId: "raw-1",
+        role: "assistant",
+        content: "请看这张图",
+        timestamp: "2026-03-24T01:05:29.100Z",
+        sequence: 2,
+        rawRef: "codex://demo#line=6"
+      }),
+      createHistoryMessage({
+        messageId: "codex-rich-message",
+        provider: "codex",
+        providerSessionId: "raw-1",
+        role: "assistant",
+        content: `请看这张图\n\n![预览图](${SAMPLE_IMAGE_DATA_URL})`,
+        timestamp: "2026-03-24T01:05:29.900Z",
+        sequence: 3,
+        rawRef: "codex://demo#line=7"
+      })
+    ]);
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0].id).toBe("codex-rich-message");
+    expect(merged[0].content).toContain(SAMPLE_IMAGE_DATA_URL);
+  });
+
+  it("prefers the codex message that keeps attachments when the visible text is the same", () => {
+    const merged = mergeAuthoritativeMessages([], "session-1", [
+      createHistoryMessage({
+        messageId: "codex-plain-message",
+        provider: "codex",
+        providerSessionId: "raw-1",
+        role: "assistant",
+        content: "确保主题按钮横向铺满",
+        timestamp: "2026-03-24T01:05:29.100Z",
+        sequence: 2,
+        rawRef: "codex://demo#line=6"
+      }),
+      createHistoryMessage({
+        messageId: "codex-attachment-message",
+        provider: "codex",
+        providerSessionId: "raw-1",
+        role: "assistant",
+        content:
+          '<image name=[Image #1]> { "type": "input_image", "image_url": "" } </image>\n确保主题按钮横向铺满',
+        timestamp: "2026-03-24T01:05:29.900Z",
+        sequence: 3,
+        rawRef: "codex://demo#line=7",
+        attachments: [
+          {
+            id: "attachment-1",
+            kind: "image",
+            fileName: "图片附件 1",
+            mimeType: "image/png",
+            fileSize: 114100
+          }
+        ]
+      })
+    ]);
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0].id).toBe("codex-attachment-message");
+    expect(merged[0].attachments).toHaveLength(1);
   });
 
   it("会折叠 codex 过时 event_msg 和后续 response_item 的重复用户消息", () => {

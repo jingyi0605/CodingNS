@@ -1,10 +1,18 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 import { getSessionAttachmentBlob } from "../api/conversation-api";
+import {
+  getApplyPatchDisplayName,
+  parseApplyPatchPreview,
+  type ApplyPatchPreview,
+  type ApplyPatchFileChange
+} from "../apply-patch-preview";
+import { parseMessageRichContent } from "../message-rich-content";
 
 import type {
   ImageAttachmentPayload,
@@ -297,7 +305,7 @@ function formatAttachmentSize(fileSize: number): string {
 interface AttachmentPreviewSource {
   id: string;
   fileName: string;
-  fileSize: number;
+  fileSize: number | null;
   url: string | null;
   status: "ready" | "loading" | "error";
 }
@@ -316,17 +324,20 @@ function buildInlineAttachmentPreviewUrl(
 function MessageAttachments({
   sessionId,
   attachmentPayloads = [],
-  attachments = []
+  attachments = [],
+  inlineImages = []
 }: {
   sessionId?: string;
   attachmentPayloads?: ImageAttachmentPayload[] | null;
   attachments?: MessageAttachmentDto[];
+  inlineImages?: ReturnType<typeof parseMessageRichContent>["inlineImages"];
 }) {
   return (
     <RichMessageAttachments
       sessionId={sessionId}
       attachments={attachments}
       attachmentPayloads={attachmentPayloads}
+      inlineImages={inlineImages}
     />
   );
 }
@@ -334,11 +345,13 @@ function MessageAttachments({
 function RichMessageAttachments({
   sessionId,
   attachmentPayloads = [],
-  attachments = []
+  attachments = [],
+  inlineImages = []
 }: {
   sessionId?: string;
   attachmentPayloads?: ImageAttachmentPayload[] | null;
   attachments?: MessageAttachmentDto[];
+  inlineImages?: ReturnType<typeof parseMessageRichContent>["inlineImages"];
 }) {
   const [remotePreviewSources, setRemotePreviewSources] = useState<Record<string, AttachmentPreviewSource>>({});
   const [previewAttachmentId, setPreviewAttachmentId] = useState<string | null>(null);
@@ -370,9 +383,24 @@ function RichMessageAttachments({
       }),
     [attachmentPayloads, attachments, remotePreviewSources, sessionId]
   );
+  const inlinePreviewSources = useMemo(
+    () =>
+      inlineImages.map((image, index) => ({
+        id: `inline-image-${index}`,
+        fileName: image.altText || `${t("conversation.imageAttachmentLabel")} ${index + 1}`,
+        fileSize: image.estimatedBytes,
+        url: image.url,
+        status: "ready" as const
+      })),
+    [inlineImages]
+  );
+  const previewSources = useMemo(
+    () => [...inlinePreviewSources, ...attachmentPreviewSources],
+    [attachmentPreviewSources, inlinePreviewSources]
+  );
 
   const previewAttachment =
-    attachmentPreviewSources.find((attachment) => attachment.id === previewAttachmentId) ?? null;
+    previewSources.find((attachment) => attachment.id === previewAttachmentId) ?? null;
 
   useEffect(() => {
     if (!previewAttachmentId) {
@@ -456,14 +484,14 @@ function RichMessageAttachments({
     };
   }, [attachmentPayloads, attachments, sessionId]);
 
-  if (attachments.length === 0) {
+  if (previewSources.length === 0) {
     return null;
   }
 
   return (
     <>
       <div className="message-attachments">
-        {attachmentPreviewSources.map((attachment) => {
+        {previewSources.map((attachment) => {
           const previewLabel =
             attachment.status === "loading"
               ? t("conversation.attachmentPreviewLoading")
@@ -501,7 +529,9 @@ function RichMessageAttachments({
                     {attachment.fileName}
                   </span>
                   <span className="message-attachment-subtitle">
-                    {t("conversation.imageAttachmentLabel")} / {formatAttachmentSize(attachment.fileSize)}
+                    {attachment.fileSize && attachment.fileSize > 0
+                      ? `${t("conversation.imageAttachmentLabel")} / ${formatAttachmentSize(attachment.fileSize)}`
+                      : t("conversation.imageAttachmentLabel")}
                   </span>
                 </div>
               </div>
@@ -570,9 +600,152 @@ function TimelineSkeleton() {
   );
 }
 
+function ApplyPatchToolItem({
+  tool,
+  preview
+}: {
+  tool: ResolvedToolCall;
+  preview: ApplyPatchPreview;
+}) {
+  const [isModalOpen, setIsModalOpen] = useState(false);
+
+  useEffect(() => {
+    if (!isModalOpen) {
+      return undefined;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsModalOpen(false);
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isModalOpen]);
+
+  return (
+    <>
+      <div className="tool-call-item apply-patch-item">
+        {preview.files.map((file) => (
+          <button
+            key={`${file.path}:${file.nextPath ?? ""}`}
+            type="button"
+            className="apply-patch-summary-row"
+            onClick={() => setIsModalOpen(true)}
+          >
+            <span className="apply-patch-summary-label">{getApplyPatchActionLabel(file.action)}</span>
+            <span className="apply-patch-summary-file" title={buildApplyPatchFullPathLabel(file)}>
+              {getApplyPatchDisplayName(file.nextPath ?? file.path)}
+            </span>
+            <span className="apply-patch-summary-stats">
+              <span className="apply-patch-summary-added">+{file.additions}</span>
+              <span className="apply-patch-summary-removed">-{file.deletions}</span>
+            </span>
+          </button>
+        ))}
+      </div>
+
+      {isModalOpen && typeof document !== "undefined"
+        ? createPortal(
+            <div className="workbench-modal-layer apply-patch-modal" role="dialog" aria-modal="true">
+              <button
+                type="button"
+                className="workbench-modal-backdrop"
+                aria-label={t("common.close")}
+                onClick={() => setIsModalOpen(false)}
+              />
+              <div className="workbench-modal-card surface-card apply-patch-modal-card">
+                <div className="workbench-modal-header">
+                  <div className="workbench-modal-title-wrap">
+                    <h2>{t("conversation.applyPatchDialogTitle")}</h2>
+                    <p>{t("conversation.applyPatchDialogDescription")}</p>
+                  </div>
+                  <button
+                    type="button"
+                    className="workbench-modal-close"
+                    aria-label={t("common.close")}
+                    onClick={() => setIsModalOpen(false)}
+                  >
+                    x
+                  </button>
+                </div>
+
+                <div className="apply-patch-modal-totals">
+                  <span className="apply-patch-stat-pill positive">
+                    {t("conversation.applyPatchAddedStat")} +{preview.totalAdditions}
+                  </span>
+                  <span className="apply-patch-stat-pill negative">
+                    {t("conversation.applyPatchRemovedStat")} -{preview.totalDeletions}
+                  </span>
+                </div>
+
+                <div className="apply-patch-modal-body">
+                  {preview.files.length === 0 ? (
+                    <p className="status-text">{t("conversation.applyPatchEmpty")}</p>
+                  ) : (
+                    preview.files.map((file) => (
+                      <section key={`${file.path}:${file.nextPath ?? ""}`} className="apply-patch-file-panel">
+                        <div className="apply-patch-file-panel-header">
+                          <div className="apply-patch-file-panel-title">
+                            <span className="apply-patch-summary-label">{getApplyPatchActionLabel(file.action)}</span>
+                            <strong>{buildApplyPatchFullPathLabel(file)}</strong>
+                          </div>
+                          <div className="apply-patch-summary-stats">
+                            <span className="apply-patch-summary-added">+{file.additions}</span>
+                            <span className="apply-patch-summary-removed">-{file.deletions}</span>
+                          </div>
+                        </div>
+                        <div className="apply-patch-diff-view">
+                          <div className="apply-patch-diff-scroll">
+                            {file.lines.map((line, index) => (
+                              <div
+                                key={`${buildApplyPatchFullPathLabel(file)}:${index}`}
+                                className={`apply-patch-diff-line ${resolveApplyPatchLineClassName(line.kind)}`}
+                              >
+                                <span className="apply-patch-line-number">
+                                  {formatApplyPatchLineNumber(line.oldLineNumber)}
+                                </span>
+                                <span className="apply-patch-line-number">
+                                  {formatApplyPatchLineNumber(line.newLineNumber)}
+                                </span>
+                                <span className="apply-patch-line-content">{line.text || " "}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </section>
+                    ))
+                  )}
+
+                  {tool.error ? (
+                    <section className="apply-patch-error-panel">
+                      <div className="tool-call-section-label">{t("conversation.toolResultLabel")}</div>
+                      <pre className="tool-call-error">{tool.error}</pre>
+                    </section>
+                  ) : null}
+                </div>
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
+    </>
+  );
+}
+
 function ToolCallItem({ group }: { group: ToolMessageGroup }) {
   const [expanded, setExpanded] = useState(false);
   const { tool, hasRequest, hasResult } = group;
+  const applyPatchPreview = useMemo(
+    () => (tool.name === "apply_patch" ? parseApplyPatchPreview(tool.input) : null),
+    [tool.input, tool.name]
+  );
+
+  if (applyPatchPreview) {
+    return <ApplyPatchToolItem tool={tool} preview={applyPatchPreview} />;
+  }
+
   const previewSource = tool.input || tool.error || tool.output || t("conversation.toolResultEmpty");
   const preview = previewSource.length > 60 ? `${previewSource.slice(0, 60)}...` : previewSource;
   const hasDetails = Boolean(tool.input || tool.output || tool.error);
@@ -620,6 +793,50 @@ function ToolCallItem({ group }: { group: ToolMessageGroup }) {
       )}
     </div>
   );
+}
+
+function getApplyPatchActionLabel(action: ApplyPatchFileChange["action"]) {
+  if (action === "add") {
+    return t("conversation.applyPatchAddedLabel");
+  }
+
+  if (action === "delete") {
+    return t("conversation.applyPatchDeletedLabel");
+  }
+
+  return t("conversation.applyPatchEditedLabel");
+}
+
+function buildApplyPatchFullPathLabel(file: ApplyPatchFileChange) {
+  if (file.nextPath && file.nextPath !== file.path) {
+    return `${file.path} -> ${file.nextPath}`;
+  }
+
+  return file.nextPath ?? file.path;
+}
+
+function resolveApplyPatchLineClassName(kind: ApplyPatchFileChange["lines"][number]["kind"]) {
+  if (kind === "add") {
+    return "is-added";
+  }
+
+  if (kind === "remove") {
+    return "is-removed";
+  }
+
+  if (kind === "hunk") {
+    return "is-hunk";
+  }
+
+  if (kind === "meta") {
+    return "is-meta";
+  }
+
+  return "is-context";
+}
+
+function formatApplyPatchLineNumber(value: number | null) {
+  return value === null || value <= 0 ? "" : String(value);
 }
 
 function RulesMessageCard({
@@ -699,6 +916,9 @@ function MessageItem({
   const isThinking = message.kind === "thinking";
   const isAssistantText = message.role === "assistant" && message.kind === "text";
   const isRulesMessage = looksLikeCodexRulesMessage(provider, message.content);
+  const richContent = useMemo(() => parseMessageRichContent(message.content), [message.content]);
+  const visibleContent = richContent.text;
+  const inlineImages = richContent.inlineImages;
 
   if (isRulesMessage) {
     const tone =
@@ -719,9 +939,10 @@ function MessageItem({
             sessionId={message.sessionId}
             attachments={message.attachments}
             attachmentPayloads={message.attachmentPayloads}
+            inlineImages={inlineImages}
           />
-          {message.content ? (
-            <MessageMarkdownBody content={message.content} className="message-text message-content" />
+          {visibleContent ? (
+            <MessageMarkdownBody content={visibleContent} className="message-text message-content" />
           ) : null}
           {message.deliveryState === "failed" && message.clientRequestId && (
             <button
@@ -757,10 +978,11 @@ function MessageItem({
             sessionId={message.sessionId}
             attachments={message.attachments}
             attachmentPayloads={message.attachmentPayloads}
+            inlineImages={inlineImages}
           />
-          {message.content && (
+          {visibleContent && (
             <MessageMarkdownBody
-              content={message.content}
+              content={visibleContent}
               className="message-text message-content markdown-content"
             />
           )}
@@ -776,10 +998,11 @@ function MessageItem({
           sessionId={message.sessionId}
           attachments={message.attachments}
           attachmentPayloads={message.attachmentPayloads}
+          inlineImages={inlineImages}
         />
-        {message.content ? (
+        {visibleContent ? (
           <div className="message-text message-content">
-            <pre>{message.content}</pre>
+            <pre>{visibleContent}</pre>
           </div>
         ) : null}
       </div>

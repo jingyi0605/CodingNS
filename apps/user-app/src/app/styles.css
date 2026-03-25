@@ -1663,7 +1663,8 @@ a {
 }
 
 .composer-input-wrapper:focus-within {
-  border-color: var(--accent);
+  border-color: var(--border-primary);
+  box-shadow: none;
 }
 
 .composer-input {
@@ -1681,6 +1682,11 @@ a {
 
 .composer-input:focus {
   outline: none;
+}
+
+.composer-input:focus-visible {
+  outline: none;
+  outline-offset: 0;
 }
 
 .composer-send {
@@ -2629,6 +2635,7 @@ textarea:focus-visible {
 
 .composer-input-wrapper:focus-within {
   border-color: transparent;
+  box-shadow: none;
 }
 
 .composer-input {
@@ -3175,7 +3182,7 @@ textarea:focus-visible {
 .message-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   padding: 10px 2px 4px;
 }
 
@@ -3184,13 +3191,14 @@ textarea:focus-visible {
   padding: 0;
   background: transparent;
   width: 100%;
+  gap: 8px;
 }
 
 .message-content-wrapper {
   position: relative;
   border-radius: 18px;
   border: 1px solid color-mix(in srgb, var(--border-primary) 72%, transparent);
-  padding: 14px 16px;
+  padding: 13px 15px;
   box-shadow: 0 8px 18px rgba(15, 23, 42, 0.04);
 }
 
@@ -3207,14 +3215,18 @@ textarea:focus-visible {
   flex-direction: row-reverse;
   justify-content: flex-start;
   align-items: flex-end;
-  gap: 10px;
+  gap: 8px;
   align-self: flex-end;
   max-width: 100%;
 }
 
 .user-message .message-content-wrapper {
   margin-left: auto;
+  width: fit-content;
   max-width: min(720px, calc(100vw - 220px));
+  min-width: min(180px, 100%);
+  padding: 8px 12px;
+  border-radius: 14px;
   background:
     linear-gradient(180deg, color-mix(in srgb, var(--accent) 10%, var(--bg-surface)), color-mix(in srgb, var(--bg-primary) 96%, transparent));
   border-color: color-mix(in srgb, var(--accent) 16%, var(--border-primary));
@@ -3222,6 +3234,7 @@ textarea:focus-visible {
 
 .user-message .message-time {
   padding-left: 0;
+  padding-top: 4px;
   text-align: right;
 }
 
@@ -3238,6 +3251,16 @@ textarea:focus-visible {
   line-height: 1.76;
 }
 
+.message-text p,
+.markdown-content p {
+  margin: 0;
+}
+
+.message-text p + p,
+.markdown-content p + p {
+  margin-top: 8px;
+}
+
 .message-time {
   align-self: flex-end;
   padding: 6px 10px 0;
@@ -3248,11 +3271,12 @@ textarea:focus-visible {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 220px));
   gap: 10px;
+  justify-content: start;
 }
 
 .message-attachments + .message-content,
 .message-content + .message-attachments {
-  margin-top: 12px;
+  margin-top: 10px;
 }
 
 .message-attachment-button {
@@ -4903,6 +4927,16 @@ textarea:focus-visible {
   border-color: color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
+.workbench-import-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.workbench-import-actions .workbench-import-toggle {
+  flex: 1 1 0;
+}
+
 .workbench-workspace-batch-toolbar {
   display: flex;
   align-items: center;
@@ -4965,13 +4999,13 @@ textarea:focus-visible {
 .workbench-session-tree-node {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 4px;
 }
 
 .workbench-session-card {
   position: relative;
   display: block;
-  border-radius: 16px;
+  border-radius: 14px;
   border: 1px solid transparent;
   background: transparent;
   transition:
@@ -4990,19 +5024,19 @@ textarea:focus-visible {
 }
 
 .workbench-session-card[data-depth="1"] {
-  border-radius: 14px;
+  border-radius: 12px;
 }
 
 .workbench-session-card[data-depth="1"] .workbench-session-link {
-  padding: 9px 11px;
+  padding: 8px 10px;
 }
 
 .workbench-subsession-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-left: 16px;
-  padding-left: 12px;
+  gap: 4px;
+  margin-left: 14px;
+  padding-left: 10px;
   border-left: 1px solid color-mix(in srgb, var(--border-primary) 82%, transparent);
 }
 
@@ -5018,16 +5052,16 @@ textarea:focus-visible {
   display: flex;
   width: 100%;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
-  padding: 10px 12px;
+  padding: 6px 38px 6px 9px;
 }
 
 .workbench-session-link.is-selecting {
   flex-direction: row;
   align-items: center;
-  gap: 10px;
-  padding-right: 12px;
+  gap: 8px;
+  padding: 6px 10px 6px 9px;
 }
 
 .workbench-session-link-copy {
@@ -5035,7 +5069,8 @@ textarea:focus-visible {
   min-width: 0;
   flex: 1;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
+  min-height: 28px;
 }
 
 .workbench-session-selection-indicator {
@@ -5065,12 +5100,11 @@ textarea:focus-visible {
 
 .workbench-session-actions {
   position: absolute;
-  top: 50%;
-  right: 10px;
+  top: 4px;
+  right: 4px;
   z-index: 4;
   display: flex;
   align-items: center;
-  transform: translateY(-50%);
 }
 
 .workbench-session-menu-trigger {
@@ -5303,7 +5337,7 @@ textarea:focus-visible {
 }
 
 .workbench-session-list {
-  gap: 6px;
+  gap: 2px;
 }
 
 .workbench-session-card {
@@ -5316,14 +5350,14 @@ textarea:focus-visible {
 
 .workbench-session-link,
 .workbench-session-card[data-depth="1"] .workbench-session-link {
-  gap: 4px;
-  padding: 8px 10px;
+  gap: 3px;
+  padding: 5px 38px 5px 9px;
 }
 
 .workbench-session-link.is-selecting,
 .workbench-session-card[data-depth="1"] .workbench-session-link.is-selecting {
-  gap: 8px;
-  padding-right: 10px;
+  gap: 7px;
+  padding: 5px 10px 5px 9px;
 }
 
 .workbench-session-selection-indicator {
@@ -5334,10 +5368,19 @@ textarea:focus-visible {
 
 .session-title {
   font-size: 12px;
+  font-weight: 400;
 }
 
 .session-meta {
   font-size: 10px;
+}
+
+.session-title-row {
+  gap: 5px;
+}
+
+.session-meta-row {
+  gap: 5px;
 }
 
 .session-state-indicator {
@@ -5346,7 +5389,8 @@ textarea:focus-visible {
 }
 
 .workbench-session-actions {
-  right: 8px;
+  top: 4px;
+  right: 4px;
 }
 
 .workbench-session-menu-trigger {
@@ -5438,7 +5482,7 @@ textarea:focus-visible {
 }
 
 .message-list {
-  gap: 8px;
+  gap: 6px;
   padding: 6px 0 2px;
 }
 
@@ -5448,12 +5492,16 @@ textarea:focus-visible {
 
 .message-content-wrapper {
   border-radius: 16px;
-  padding: 12px 14px;
+  padding: 11px 13px;
   box-shadow: 0 8px 18px rgba(15, 23, 42, 0.05);
 }
 
 .user-message .message-content-wrapper {
+  width: fit-content;
   max-width: min(680px, calc(100vw - 260px));
+  min-width: min(160px, 100%);
+  padding: 7px 10px;
+  border-radius: 14px;
 }
 
 .assistant-message .message-avatar {
@@ -5885,6 +5933,226 @@ textarea:focus-visible {
   line-height: 1.45;
 }
 
+.apply-patch-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 78%, transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 95%, transparent), color-mix(in srgb, var(--bg-primary) 98%, transparent));
+}
+
+.apply-patch-stat-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 48px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.4;
+  border: 1px solid transparent;
+}
+
+.apply-patch-stat-pill.positive {
+  color: #15803d;
+  background: rgba(34, 197, 94, 0.14);
+  border-color: rgba(34, 197, 94, 0.2);
+}
+
+.apply-patch-stat-pill.negative {
+  color: #b91c1c;
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.18);
+}
+
+.apply-patch-summary-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  min-height: 34px;
+  gap: 8px;
+  width: 100%;
+  padding: 0 8px;
+  border: none;
+  border-radius: 0;
+  text-align: left;
+  background: color-mix(in srgb, var(--bg-hover) 62%, transparent);
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.apply-patch-summary-row + .apply-patch-summary-row {
+  border-top: 1px solid color-mix(in srgb, var(--border-primary) 72%, transparent);
+}
+
+.apply-patch-summary-row:hover {
+  background: var(--border-subtle);
+}
+
+.apply-patch-summary-row:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  outline-offset: -2px;
+}
+
+.apply-patch-summary-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.apply-patch-summary-file {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--accent);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.apply-patch-summary-stats {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
+.apply-patch-summary-added {
+  color: #15803d;
+}
+
+.apply-patch-summary-removed {
+  color: #b91c1c;
+}
+
+.apply-patch-modal-card {
+  width: min(980px, calc(100vw - 48px));
+  max-height: min(88vh, 920px);
+}
+
+.apply-patch-modal-totals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.apply-patch-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.apply-patch-file-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 76%, transparent);
+  border-radius: 16px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--bg-primary) 97%, transparent);
+}
+
+.apply-patch-file-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  background: color-mix(in srgb, var(--bg-hover) 58%, transparent);
+}
+
+.apply-patch-file-panel-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.apply-patch-file-panel-title strong {
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-word;
+  color: var(--text-primary);
+}
+
+.apply-patch-diff-view {
+  max-height: min(56vh, 560px);
+  overflow: auto;
+  overscroll-behavior: contain;
+  background: #0f172a;
+  color: #dbeafe;
+}
+
+.apply-patch-diff-scroll {
+  min-width: 100%;
+  width: max-content;
+}
+
+.apply-patch-diff-line {
+  display: grid;
+  grid-template-columns: 52px 52px minmax(0, 1fr);
+  align-items: stretch;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.apply-patch-diff-line.is-added {
+  background: rgba(34, 197, 94, 0.12);
+}
+
+.apply-patch-diff-line.is-removed {
+  background: rgba(239, 68, 68, 0.12);
+}
+
+.apply-patch-diff-line.is-hunk {
+  background: rgba(59, 130, 246, 0.14);
+  color: #bfdbfe;
+}
+
+.apply-patch-diff-line.is-meta {
+  background: rgba(148, 163, 184, 0.08);
+  color: #cbd5e1;
+}
+
+.apply-patch-line-number {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 10px 0 6px;
+  color: rgba(203, 213, 225, 0.62);
+  user-select: none;
+  border-right: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.apply-patch-line-content {
+  display: block;
+  min-width: 0;
+  padding: 0 12px;
+  white-space: pre;
+}
+
+.apply-patch-error-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .workbench-modal-layer {
   position: fixed;
   inset: 0;
@@ -5893,6 +6161,10 @@ textarea:focus-visible {
   align-items: center;
   justify-content: center;
   padding: 24px;
+}
+
+.apply-patch-modal {
+  z-index: 2400;
 }
 
 .workbench-modal-backdrop {
@@ -5978,7 +6250,14 @@ textarea:focus-visible {
   font-size: 13px;
 }
 
-.workbench-modal-field input {
+.workbench-clone-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.workbench-modal-field input,
+.workbench-modal-field select {
   width: 100%;
   min-height: 42px;
   padding: 0 12px;
@@ -5988,10 +6267,25 @@ textarea:focus-visible {
   color: var(--text-primary);
 }
 
-.workbench-modal-field input:focus {
+.workbench-modal-field input:focus,
+.workbench-modal-field select:focus {
   outline: 2px solid color-mix(in srgb, var(--accent) 32%, transparent);
   outline-offset: 1px;
   border-color: color-mix(in srgb, var(--accent) 22%, var(--border-primary));
+}
+
+.workbench-modal-inline-field {
+  display: flex;
+  gap: 10px;
+  align-items: stretch;
+}
+
+.workbench-modal-inline-field input {
+  flex: 1 1 auto;
+}
+
+.workbench-modal-inline-field .secondary-button {
+  flex: 0 0 auto;
 }
 
 .workbench-modal-actions {

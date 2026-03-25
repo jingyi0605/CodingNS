@@ -7,6 +7,34 @@ import { MessageTimeline } from "./MessageTimeline";
 
 import type { SessionMessageViewModel } from "../runtime/session-runtime-machine";
 
+const SAMPLE_IMAGE_DATA_URL =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aF9sAAAAASUVORK5CYII=";
+const SAMPLE_APPLY_PATCH_INPUT = `*** Begin Patch
+*** Update File: C:/Code/CodingNS/apps/user-app/src/app/styles.css
+@@
+ .message-item {
+   border: none;
+   padding: 0;
+   background: transparent;
+   width: 100%;
++  gap: 8px;
+ }
+@@
+ .user-message .message-content-wrapper {
+   margin-left: auto;
++  width: fit-content;
+   max-width: min(720px, calc(100vw - 220px));
+-  padding: 10px 14px;
+-  border-radius: 15px;
++  min-width: min(180px, 100%);
++  padding: 8px 12px;
++  border-radius: 14px;
+   background:
+     linear-gradient(180deg, color-mix(in srgb, var(--accent) 10%, var(--bg-surface)), color-mix(in srgb, var(--bg-primary) 96%, transparent));
+   border-color: color-mix(in srgb, var(--accent) 16%, var(--border-primary));
+ }
+*** End Patch`;
+
 function createTextMessage(content: string): SessionMessageViewModel {
   return {
     id: "message-1",
@@ -219,6 +247,57 @@ describe("MessageTimeline", () => {
     await userEvent.click(screen.getByRole("button", { name: /tool/ }));
 
     expect(screen.getAllByText("legacy tool output").length).toBeGreaterThan(0);
+  });
+
+  it("renders apply_patch as file summaries and opens a diff modal", async () => {
+    render(
+      <MessageTimeline
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+        messages={[
+          {
+            id: "tool-call-apply-patch",
+            sessionId: "session-1",
+            role: "tool",
+            kind: "tool_call",
+            content: SAMPLE_APPLY_PATCH_INPUT,
+            toolCall: {
+              callId: "call-apply-patch",
+              name: "apply_patch",
+              input: SAMPLE_APPLY_PATCH_INPUT,
+              output: null,
+              error: null,
+              status: "running"
+            },
+            timestamp: "2026-03-23T10:00:02.000Z",
+            sequence: 2,
+            rawRef: "codex://raw#line=2",
+            deliveryState: "sent",
+            clientRequestId: null
+          }
+        ]}
+      />
+    );
+
+    expect(screen.queryByText(/^apply_patch$/)).not.toBeInTheDocument();
+    expect(screen.getByText("已编辑")).toBeInTheDocument();
+    expect(screen.getByText("styles.css")).toBeInTheDocument();
+    expect(screen.getAllByText("+5").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("-2").length).toBeGreaterThan(0);
+    expect(screen.queryByText("*** Begin Patch")).not.toBeInTheDocument();
+    expect(document.querySelector(".apply-patch-header")).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: /styles\.css/i }));
+
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(document.querySelector(".message-list .apply-patch-modal")).toBeNull();
+    expect(document.body.querySelector(".apply-patch-modal")).not.toBeNull();
+    expect(screen.getByRole("heading", { name: "Patch 变更预览" })).toBeInTheDocument();
+    expect(screen.getByText("C:/Code/CodingNS/apps/user-app/src/app/styles.css")).toBeInTheDocument();
+    const diffViewText = document.querySelector(".apply-patch-diff-view")?.textContent ?? "";
+    expect(diffViewText).toContain("+  gap: 8px;");
+    expect(diffViewText).toContain("-  padding: 10px 14px;");
   });
 
   it("滚到顶部时会触发加载更早消息", () => {
@@ -483,5 +562,143 @@ describe("MessageTimeline", () => {
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: t("conversation.imagePreviewTitle") })).toBeInTheDocument();
     expect(screen.getAllByAltText("sample.png")).toHaveLength(2);
+  });
+
+  it("renders inline base64 images in content as thumbnails instead of raw text", async () => {
+    render(
+      <MessageTimeline
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+        messages={[
+          {
+            id: "assistant-inline-image",
+            sessionId: "session-1",
+            role: "assistant",
+            kind: "text",
+            content: JSON.stringify([
+              {
+                type: "output_text",
+                text: "请看这张图"
+              },
+              {
+                type: "output_image",
+                image_url: SAMPLE_IMAGE_DATA_URL
+              }
+            ]),
+            toolCall: null,
+            timestamp: "2026-03-23T10:00:03.000Z",
+            sequence: 3,
+            rawRef: "codex://raw#line=3",
+            deliveryState: "sent",
+            clientRequestId: null
+          }
+        ]}
+      />
+    );
+
+    expect(screen.getByText("请看这张图")).toBeInTheDocument();
+    expect(screen.queryByText(/data:image\/png;base64/i)).not.toBeInTheDocument();
+    expect(document.querySelectorAll(".message-attachment-thumbnail")).toHaveLength(1);
+
+    const attachmentButton = document.querySelector(".message-attachment-button") as HTMLButtonElement | null;
+    expect(attachmentButton).not.toBeNull();
+
+    await userEvent.click(attachmentButton!);
+
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: t("conversation.imagePreviewTitle") })).toBeInTheDocument();
+  });
+
+  it("renders claude structured base64 images as thumbnails instead of raw metadata text", async () => {
+    render(
+      <MessageTimeline
+        historyState="ready"
+        provider="claude-code"
+        onRetryMessage={vi.fn()}
+        messages={[
+          {
+            id: "assistant-claude-inline-image",
+            sessionId: "session-1",
+            role: "assistant",
+            kind: "text",
+            content: JSON.stringify([
+              {
+                type: "text",
+                text: "请看这张图"
+              },
+              {
+                type: "image",
+                source: {
+                  type: "base64",
+                  media_type: "image/png",
+                  data: SAMPLE_IMAGE_DATA_URL.replace(/^data:image\/png;base64,/, "")
+                }
+              }
+            ]),
+            toolCall: null,
+            timestamp: "2026-03-23T10:00:04.000Z",
+            sequence: 4,
+            rawRef: "claude-code://raw#line=4",
+            deliveryState: "sent",
+            clientRequestId: null
+          }
+        ]}
+      />
+    );
+
+    expect(screen.getByText("请看这张图")).toBeInTheDocument();
+    expect(screen.queryByText(/^image$/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^base64$/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^image\/png$/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/iVBORw0KGgo/i)).not.toBeInTheDocument();
+    expect(document.querySelectorAll(".message-attachment-thumbnail")).toHaveLength(1);
+
+    const attachmentButton = document.querySelector(".message-attachment-button") as HTMLButtonElement | null;
+    expect(attachmentButton).not.toBeNull();
+
+    await userEvent.click(attachmentButton!);
+
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: t("conversation.imagePreviewTitle") })).toBeInTheDocument();
+  });
+
+  it("removes custom image metadata blocks from visible text", () => {
+    render(
+      <MessageTimeline
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+        messages={[
+          {
+            id: "assistant-image-metadata",
+            sessionId: "session-1",
+            role: "assistant",
+            kind: "text",
+            content:
+              '<image name=[Image #1]> { "type": "input_image", "image_url": "" } </image>\n确保主题切换容器里面的主题按钮横向铺满，不要出现仅在左侧出现导致换行的情况',
+            toolCall: null,
+            attachments: [
+              {
+                id: "attachment-1",
+                kind: "image",
+                fileName: "图片附件 1",
+                mimeType: "image/png",
+                fileSize: 114100
+              }
+            ],
+            timestamp: "2026-03-23T10:00:03.000Z",
+            sequence: 3,
+            rawRef: "codex://raw#line=3",
+            deliveryState: "sent",
+            clientRequestId: null
+          }
+        ]}
+      />
+    );
+
+    expect(screen.getByText("确保主题切换容器里面的主题按钮横向铺满，不要出现仅在左侧出现导致换行的情况")).toBeInTheDocument();
+    expect(screen.queryByText(/<image name=\[Image #1\]>/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/"type": "input_image"/i)).not.toBeInTheDocument();
   });
 });
