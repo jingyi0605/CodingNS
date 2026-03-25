@@ -324,6 +324,7 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
       return;
     }
 
+    setLoading(true);
     logPerfDebug("git_sidebar.refresh_requested", {
       workspaceId: workspaceId.trim(),
       resetTreeScroll: options?.resetTreeScroll ?? false
@@ -418,7 +419,9 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
       setSelectedPath(targets[targets.length - 1] ?? null);
       setSelectedMobilePaths((current) => current.filter((path) => !targets.includes(path)));
       setMobileActionMenuVariant(null);
+      requestGitSnapshotRefresh();
     } catch (error) {
+      setLoading(false);
       showToast({
         title: readError(error, t("git.stageFailed")),
         tone: "error"
@@ -449,7 +452,9 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
 
       setSelectedMobilePaths((current) => current.filter((path) => !targets.includes(path)));
       setMobileActionMenuVariant(null);
+      requestGitSnapshotRefresh();
     } catch (error) {
+      setLoading(false);
       showToast({
         title: readError(error, t("git.discardFailed")),
         tone: "error"

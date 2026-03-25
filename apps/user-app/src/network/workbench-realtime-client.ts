@@ -97,6 +97,9 @@ export class WorkbenchRealtimeClient {
   private fileTreeSubscription: { workspaceId: string; paths: string[] } | null = null;
   private gitWorkspaceId: string | null = null;
   private terminalManagerWorkspaceId: string | null = null;
+  private pendingFileTreeRefresh: { workspaceId: string; paths: string[] } | null = null;
+  private pendingGitRefreshWorkspaceId: string | null = null;
+  private pendingTerminalManagerRefreshWorkspaceId: string | null = null;
   private readonly fileTreeListeners = new Set<(snapshot: FileTreeRealtimeSnapshotDto) => void>();
   private readonly gitListeners = new Set<(snapshot: GitRealtimeSnapshotDto) => void>();
   private readonly terminalManagerListeners = new Set<
@@ -145,11 +148,20 @@ export class WorkbenchRealtimeClient {
 
   requestFileTreeRefresh(workspaceId: string, paths?: string[]): void {
     const normalizedPaths = normalizePaths(paths);
-    this.sendWhenReady({
+    const payload = {
       type: "fileTree.refresh",
       workspaceId,
       paths: normalizedPaths
-    });
+    };
+
+    if (!this.sendWhenReady(payload)) {
+      this.pendingFileTreeRefresh = {
+        workspaceId,
+        paths: normalizedPaths
+      };
+    } else {
+      this.pendingFileTreeRefresh = null;
+    }
   }
 
   subscribeGit(workspaceId: string): void {
@@ -161,10 +173,14 @@ export class WorkbenchRealtimeClient {
   }
 
   requestGitRefresh(workspaceId: string): void {
-    this.sendWhenReady({
+    if (!this.sendWhenReady({
       type: "git.refresh",
       workspaceId
-    });
+    })) {
+      this.pendingGitRefreshWorkspaceId = workspaceId;
+    } else {
+      this.pendingGitRefreshWorkspaceId = null;
+    }
   }
 
   subscribeTerminalManager(workspaceId: string): void {
@@ -176,10 +192,14 @@ export class WorkbenchRealtimeClient {
   }
 
   requestTerminalManagerRefresh(workspaceId: string): void {
-    this.sendWhenReady({
+    if (!this.sendWhenReady({
       type: "terminalManager.refresh",
       workspaceId
-    });
+    })) {
+      this.pendingTerminalManagerRefreshWorkspaceId = workspaceId;
+    } else {
+      this.pendingTerminalManagerRefreshWorkspaceId = null;
+    }
   }
 
   addFileTreeSnapshotListener(
@@ -253,6 +273,13 @@ export class WorkbenchRealtimeClient {
         );
       }
 
+      if (this.pendingFileTreeRefresh) {
+        this.requestFileTreeRefresh(
+          this.pendingFileTreeRefresh.workspaceId,
+          this.pendingFileTreeRefresh.paths
+        );
+      }
+
       if (this.gitWorkspaceId) {
         socket.send(
           JSON.stringify({
@@ -262,6 +289,10 @@ export class WorkbenchRealtimeClient {
         );
       }
 
+      if (this.pendingGitRefreshWorkspaceId) {
+        this.requestGitRefresh(this.pendingGitRefreshWorkspaceId);
+      }
+
       if (this.terminalManagerWorkspaceId) {
         socket.send(
           JSON.stringify({
@@ -269,6 +300,10 @@ export class WorkbenchRealtimeClient {
             workspaceId: this.terminalManagerWorkspaceId
           })
         );
+      }
+
+      if (this.pendingTerminalManagerRefreshWorkspaceId) {
+        this.requestTerminalManagerRefresh(this.pendingTerminalManagerRefreshWorkspaceId);
       }
     });
 
@@ -328,12 +363,13 @@ export class WorkbenchRealtimeClient {
     });
   }
 
-  private sendWhenReady(payload: Record<string, unknown>): void {
+  private sendWhenReady(payload: Record<string, unknown>): boolean {
     if (this.socket?.readyState !== WebSocket.OPEN) {
-      return;
+      return false;
     }
 
     this.socket.send(JSON.stringify(payload));
+    return true;
   }
 }
 

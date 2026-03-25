@@ -2809,6 +2809,17 @@ export function WorkbenchLayout() {
   const lastDraftSessionPathRef = useRef<string | null>(null);
   const navigationBootstrapFallbackTimerRef = useRef<number | null>(null);
   const workbenchRealtimeClientRef = useRef<WorkbenchRealtimeClient | null>(null);
+  const fileTreeSnapshotListenersRef = useRef(new Set<(snapshot: FileTreeRealtimeSnapshotDto) => void>());
+  const gitSnapshotListenersRef = useRef(new Set<(snapshot: GitRealtimeSnapshotDto) => void>());
+  const terminalManagerSnapshotListenersRef = useRef(
+    new Set<(snapshot: TerminalManagerRealtimeSnapshotDto) => void>()
+  );
+  const fileTreeSubscriptionRef = useRef<{ workspaceId: string; paths: string[] } | null>(null);
+  const pendingFileTreeRefreshRef = useRef<{ workspaceId: string; paths?: string[] } | null>(null);
+  const gitWorkspaceSubscriptionRef = useRef<string | null>(null);
+  const pendingGitRefreshWorkspaceIdRef = useRef<string | null>(null);
+  const terminalManagerWorkspaceSubscriptionRef = useRef<string | null>(null);
+  const pendingTerminalManagerRefreshWorkspaceIdRef = useRef<string | null>(null);
   const showToastRef = useRef(showToast);
   const [navigationGroups, setNavigationGroups] = useState<WorkspaceSessionGroup[]>(() =>
     mapWorkbenchSnapshotToGroups(initialWorkbenchSnapshotRef.current)
@@ -2935,44 +2946,68 @@ export function WorkbenchLayout() {
   }, []);
 
   const subscribeFileTree = useCallback((workspaceId: string, paths: string[]) => {
+    fileTreeSubscriptionRef.current = {
+      workspaceId,
+      paths
+    };
     workbenchRealtimeClientRef.current?.subscribeFileTree(workspaceId, paths);
   }, []);
 
   const requestFileTreeRefresh = useCallback((workspaceId: string, paths?: string[]) => {
+    pendingFileTreeRefreshRef.current = {
+      workspaceId,
+      paths
+    };
     workbenchRealtimeClientRef.current?.requestFileTreeRefresh(workspaceId, paths);
   }, []);
 
   const addFileTreeSnapshotListener = useCallback(
-    (listener: (snapshot: FileTreeRealtimeSnapshotDto) => void) =>
-      workbenchRealtimeClientRef.current?.addFileTreeSnapshotListener(listener) ?? (() => {}),
+    (listener: (snapshot: FileTreeRealtimeSnapshotDto) => void) => {
+      fileTreeSnapshotListenersRef.current.add(listener);
+      return () => {
+        fileTreeSnapshotListenersRef.current.delete(listener);
+      };
+    },
     []
   );
 
   const subscribeGitSnapshot = useCallback((workspaceId: string) => {
+    gitWorkspaceSubscriptionRef.current = workspaceId;
     workbenchRealtimeClientRef.current?.subscribeGit(workspaceId);
   }, []);
 
   const requestGitRefresh = useCallback((workspaceId: string) => {
+    pendingGitRefreshWorkspaceIdRef.current = workspaceId;
     workbenchRealtimeClientRef.current?.requestGitRefresh(workspaceId);
   }, []);
 
   const addGitSnapshotListener = useCallback(
-    (listener: (snapshot: GitRealtimeSnapshotDto) => void) =>
-      workbenchRealtimeClientRef.current?.addGitSnapshotListener(listener) ?? (() => {}),
+    (listener: (snapshot: GitRealtimeSnapshotDto) => void) => {
+      gitSnapshotListenersRef.current.add(listener);
+      return () => {
+        gitSnapshotListenersRef.current.delete(listener);
+      };
+    },
     []
   );
 
   const subscribeTerminalManagerSnapshot = useCallback((workspaceId: string) => {
+    terminalManagerWorkspaceSubscriptionRef.current = workspaceId;
     workbenchRealtimeClientRef.current?.subscribeTerminalManager(workspaceId);
   }, []);
 
   const requestTerminalManagerRefresh = useCallback((workspaceId: string) => {
+    pendingTerminalManagerRefreshWorkspaceIdRef.current = workspaceId;
     workbenchRealtimeClientRef.current?.requestTerminalManagerRefresh(workspaceId);
   }, []);
 
   const addTerminalManagerSnapshotListener = useCallback(
-    (listener: (snapshot: TerminalManagerRealtimeSnapshotDto) => void) =>
-      workbenchRealtimeClientRef.current?.addTerminalManagerSnapshotListener(listener) ?? (() => {}),
+    (listener: (snapshot: TerminalManagerRealtimeSnapshotDto) => void) => {
+      terminalManagerSnapshotListenersRef.current.add(listener);
+      return () => {
+        terminalManagerSnapshotListenersRef.current.delete(listener);
+      };
+    },
     []
   );
 
@@ -3082,6 +3117,15 @@ export function WorkbenchLayout() {
         applyWorkbenchSnapshot(snapshot);
         setNavigationLoading(false);
       },
+      onFileTreeSnapshot: (snapshot) => {
+        fileTreeSnapshotListenersRef.current.forEach((listener) => listener(snapshot));
+      },
+      onGitSnapshot: (snapshot) => {
+        gitSnapshotListenersRef.current.forEach((listener) => listener(snapshot));
+      },
+      onTerminalManagerSnapshot: (snapshot) => {
+        terminalManagerSnapshotListenersRef.current.forEach((listener) => listener(snapshot));
+      },
       onUnauthorized: () => {
         authStore.clear();
         navigate("/login", { replace: true });
@@ -3089,6 +3133,38 @@ export function WorkbenchLayout() {
     });
 
     workbenchRealtimeClientRef.current = client;
+    const fileTreeSubscription = fileTreeSubscriptionRef.current;
+    const pendingFileTreeRefresh = pendingFileTreeRefreshRef.current;
+    const gitWorkspaceSubscription = gitWorkspaceSubscriptionRef.current;
+    const pendingGitRefreshWorkspaceId = pendingGitRefreshWorkspaceIdRef.current;
+    const terminalManagerWorkspaceSubscription = terminalManagerWorkspaceSubscriptionRef.current;
+    const pendingTerminalManagerRefreshWorkspaceId =
+      pendingTerminalManagerRefreshWorkspaceIdRef.current;
+
+    if (fileTreeSubscription) {
+      client.subscribeFileTree(fileTreeSubscription.workspaceId, fileTreeSubscription.paths);
+    }
+
+    if (gitWorkspaceSubscription) {
+      client.subscribeGit(gitWorkspaceSubscription);
+    }
+
+    if (terminalManagerWorkspaceSubscription) {
+      client.subscribeTerminalManager(terminalManagerWorkspaceSubscription);
+    }
+
+    if (pendingFileTreeRefresh) {
+      client.requestFileTreeRefresh(pendingFileTreeRefresh.workspaceId, pendingFileTreeRefresh.paths);
+    }
+
+    if (pendingGitRefreshWorkspaceId) {
+      client.requestGitRefresh(pendingGitRefreshWorkspaceId);
+    }
+
+    if (pendingTerminalManagerRefreshWorkspaceId) {
+      client.requestTerminalManagerRefresh(pendingTerminalManagerRefreshWorkspaceId);
+    }
+
     client.start();
 
     return () => {
