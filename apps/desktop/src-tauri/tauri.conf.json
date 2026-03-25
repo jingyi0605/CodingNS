@@ -6,8 +6,8 @@
   "build": {
     "frontendDist": "../../user-app/dist",
     "devUrl": "http://127.0.0.1:4174",
-    "beforeDevCommand": "corepack pnpm --dir ../user-app dev -- --host 127.0.0.1 --port 4174",
-    "beforeBuildCommand": "corepack pnpm --dir ../user-app build"
+    "beforeDevCommand": "pnpm --dir ../user-app dev -- --host 127.0.0.1 --port 4174",
+    "beforeBuildCommand": "pnpm --dir ../user-app build"
   },
   "app": {
     "windows": [
