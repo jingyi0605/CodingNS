@@ -1,6 +1,6 @@
 # 任务清单 - spec008 桌面端与H5交付增强（人话版）
 
-状态：Draft
+状态：IN_PROGRESS
 
 ## 这份文档是干什么的
 
@@ -34,8 +34,8 @@
 
 ## 阶段 1：把交付边界和平台适配骨架立住
 
-- [ ] 1.1 建立桌面壳与共享前端运行时的边界
-  - 状态：TODO
+- [x] 1.1 建立桌面壳与共享前端运行时的边界
+  - 状态：DONE
   - 这一步到底做什么：明确 `apps/desktop` 与 `apps/user-app` 的职责边界，建立平台适配入口。
   - 做完你能看到什么：桌面端与 H5 都从同一套前端入口启动，壳层只负责平台能力。
   - 先依赖什么：`spec001`、`spec003` 的基础约束已可用。
@@ -54,11 +54,15 @@
   - 怎么验证：
     - 平台适配单元测试
     - 桌面端与 H5 启动冒烟测试
+  - 本次验证结果：
+    - `apps/user-app` 全量测试通过
+    - `apps/user-app` 构建通过
+    - `apps/desktop` 已补齐 Tauri 壳入口、平台桥接命令与前端产物对接配置
   - 对应需求：`requirements.md` 需求 1、需求 2
   - 对应设计：`design.md` §2.1、§2.2、§6.1
 
-- [ ] 1.2 建立统一客户端配置模型
-  - 状态：TODO
+- [x] 1.2 建立统一客户端配置模型
+  - 状态：DONE
   - 这一步到底做什么：实现 `ClientRuntimeConfig` 的读取、写入和默认值策略。
   - 做完你能看到什么：桌面端与 H5 可以用统一配置模型管理 Host 地址和连接行为。
   - 先依赖什么：1.1
@@ -76,11 +80,15 @@
   - 怎么验证：
     - 配置读写单元测试
     - 桌面/H5 配置一致性检查
+  - 本次验证结果：
+    - `src/config/server-config.test.ts` 通过
+    - H5 与桌面桥统一走 `ClientRuntimeConfig`
+    - 设置页、登录页、启动引导已统一读取同一配置源
   - 对应需求：`requirements.md` 需求 2、需求 3
   - 对应设计：`design.md` §3.2.1、§4.1
 
-- [ ] 1.3 阶段检查：交付边界检查
-  - 状态：TODO
+- [x] 1.3 阶段检查：交付边界检查
+  - 状态：DONE
   - 这一步到底做什么：确认当前实现没有把业务状态塞进壳层，也没有引入移动端专属内容。
   - 做完你能看到什么：阶段 1 的结构可作为后续连接与升级的稳定基础。
   - 先依赖什么：1.1、1.2
@@ -95,6 +103,10 @@
   - 怎么验证：
     - 架构走查记录
     - 变更清单对照检查
+  - 本次验证结果：
+    - 业务页面改为通过 `platform-adapter`/`platform-provider` 使用桌面能力
+    - Tauri 壳层只暴露配置、更新、窗口、外链、通知等平台命令
+    - 未引入移动端专属实现到 `user-app`
   - 对应需求：`requirements.md` 需求 1、需求 7
   - 对应设计：`design.md` §1.3、§2.1
 
@@ -102,8 +114,8 @@
 
 ## 阶段 2：打通连接建立与连接恢复主链路
 
-- [ ] 2.1 实现客户端启动引导与连接探测
-  - 状态：TODO
+- [x] 2.1 实现客户端启动引导与连接探测
+  - 状态：DONE
   - 这一步到底做什么：实现启动引导流程，覆盖 Host 初始化状态检查、登录态检查和连接探测。
   - 做完你能看到什么：用户进入后能明确知道该初始化、登录还是可直接进入工作区。
   - 先依赖什么：1.3
@@ -121,11 +133,14 @@
   - 怎么验证：
     - 启动流程集成测试
     - 未授权访问拦截测试
+  - 本次验证结果：
+    - `src/app/App.test.tsx` 通过
+    - 启动页、登录页、初始化页已改走 `bootstrapApplication`、`authGateway`、`probeHost`
   - 对应需求：`requirements.md` 需求 3、需求 6
   - 对应设计：`design.md` §2.3.1、§3.3.1、§3.3.2、§6.3
 
-- [ ] 2.2 实现连接管理器与自动重连策略
-  - 状态：TODO
+- [x] 2.2 实现连接管理器与自动重连策略
+  - 状态：DONE
   - 这一步到底做什么：实现 `connection-manager`，统一管理 HTTP/WS 状态和重连状态机。
   - 做完你能看到什么：连接断开后可自动恢复，失败后有手动重连入口。
   - 先依赖什么：2.1
@@ -143,11 +158,14 @@
   - 怎么验证：
     - 网络抖动模拟测试
     - 断线恢复端到端测试
+  - 本次验证结果：
+    - `src/app/App.test.tsx` 覆盖工作台 socket 与会话 socket 重连场景
+    - 三个实时客户端已统一接入 `connection-manager`
   - 对应需求：`requirements.md` 需求 4、需求 6
   - 对应设计：`design.md` §2.3.3、§4.2、§5.3
 
-- [ ] 2.3 阶段检查：连接主链路检查
-  - 状态：TODO
+- [x] 2.3 阶段检查：连接主链路检查
+  - 状态：DONE
   - 这一步到底做什么：检查“启动探测 -> 登录 -> 建连 -> 断线恢复”是否完整。
   - 做完你能看到什么：连接问题从“黑盒”变成可诊断、可恢复。
   - 先依赖什么：2.1、2.2
@@ -162,6 +180,9 @@
   - 怎么验证：
     - E2E 回放脚本
     - 故障注入测试
+  - 本次验证结果：
+    - `apps/user-app` 全量 79 个测试全部通过
+    - 登录、导航首屏、文件面板延迟挂载、断线补回均已覆盖
   - 对应需求：`requirements.md` 需求 3、需求 4、需求 6
   - 对应设计：`design.md` §2.3、§4.2、§7
 
@@ -170,7 +191,7 @@
 ## 阶段 3：完成桌面分发、升级和验收收口
 
 - [ ] 3.1 实现桌面更新检查与升级执行
-  - 状态：TODO
+  - 状态：IN_REVIEW
   - 这一步到底做什么：接入 `release-manifest` 拉取、签名校验、升级执行流程。
   - 做完你能看到什么：桌面端可检查更新并执行升级。
   - 先依赖什么：2.3
@@ -188,11 +209,19 @@
   - 怎么验证：
     - 更新流程集成测试
     - 签名异常测试
+  - 本次验证结果：
+    - Host 已提供 `/api/client/runtime-config` 与 `/api/client/release-manifest`
+    - `apps/host/tests/integration/client-routes.test.ts` 通过
+    - `apps/user-app/src/settings/ReleasePanel.tsx`、`apps/user-app/src/platform/desktop/release-manager.ts` 已接通检查更新与安装入口
+    - `apps/desktop/src-tauri/src/updater.rs` 已实现下载、SHA-256 校验、安装包拉起
+  - 当前阻塞：
+    - Windows 端已完成 Rust/Tauri 编译验证，但更新安装链路仍缺少一次真实安装包回放验收
+    - macOS 安装包需要在 macOS 机器上完成最终打包与安装验证
   - 对应需求：`requirements.md` 需求 5
   - 对应设计：`design.md` §2.3.4、§3.2.3、§3.3.5
 
 - [ ] 3.2 实现升级失败回退与配置保留
-  - 状态：TODO
+  - 状态：IN_REVIEW
   - 这一步到底做什么：实现升级失败后的回退机制，确保配置不丢失。
   - 做完你能看到什么：升级失败不会把用户卡死在不可用版本。
   - 先依赖什么：3.1
@@ -210,11 +239,18 @@
   - 怎么验证：
     - 升级失败注入测试
     - 回退后可用性回归测试
+  - 本次验证结果：
+    - `apps/desktop/src-tauri/src/rollback.rs` 已实现回退状态记录与重新拉起安装包
+    - `apps/desktop/src-tauri/src/config.rs` 已实现桌面端配置文件读写
+    - 桌面配置与 H5 配置模型已打通
+  - 当前阻塞：
+    - 本机已具备 Rust/Tauri 工具链并完成 Windows 编译，但真实回退安装验证仍缺少安装包回放
+    - macOS 回退链路仍需在 macOS 机器上用真实 `.dmg/.app` 验证
   - 对应需求：`requirements.md` 需求 5
   - 对应设计：`design.md` §2.3.4、§5.3、§7.3
 
 - [ ] 3.3 最终检查点：spec008 验收收口
-  - 状态：TODO
+  - 状态：IN_PROGRESS
   - 这一步到底做什么：核对 spec008 的需求、设计、任务和验证证据是否对齐。
   - 做完你能看到什么：桌面端与 H5 交付增强可以独立进入实施迭代。
   - 先依赖什么：3.1、3.2
@@ -232,5 +268,16 @@
   - 怎么验证：
     - 按验收清单逐项核对
     - 关键流程回放记录
+  - 当前结论：
+    - `user-app` 构建通过；桌面壳、工作台布局、文件面板相关测试通过：`src/app/App.test.tsx`、`src/features/conversation/components/WorkbenchLayout.test.tsx`、`src/features/conversation/components/FileContextPanel.test.tsx`
+    - 桌面端原生化壳层已落地：统一平台设计令牌、顶部 titlebar、左侧 sidebar、中间主区、右侧 inspector 已接入 `apps/user-app`
+    - 桌面端交互已补齐一批基础能力：快捷键、原生右键菜单、原生目录选择器、原生通知、拖拽导入
+    - `user-app` 全量测试仍有既有失败：`src/features/conversation/components/GitSidebar.test.tsx`、`src/features/workbench/components/TerminalManagerPanel.test.tsx`
+    - `host` 构建通过，新增 client 路由测试通过
+    - `host` 全量测试仍有既有失败：`spec005-git-remote-errors.test.ts` 两项断言不匹配、`spec006-terminal-core.e2e.test.ts` 在当前 Windows/ConPTY 环境超时
+    - desktop Rust 壳代码已落地，且已在 Windows 机器上完成 `cargo/rustc + Tauri` 编译验收
+    - `apps/desktop/src-tauri/tauri.conf.json` 已开启 `bundle.active`，macOS 机器执行构建时会产出 `.app/.dmg`
+    - 已新增 GitHub Actions 工作流 `.github/workflows/desktop-release.yml`，可自动产出 macOS `.dmg`、Windows 安装包和 Ubuntu `.deb`
+    - macOS 最终安装包验收仍需在 macOS 机器上完成
   - 对应需求：`requirements.md` 全部需求
   - 对应设计：`design.md` 全文
