@@ -10,7 +10,7 @@ export const zhCN = {
   },
   auth: {
     loginTitle: "继续你的编码会话",
-    loginSubtitle: "先确认身份，再进入工作中的对话工作区。",
+    loginSubtitle: "INITIALIZING DEVELOPMENT ENVIRONMENT...",
     serverPreset: "服务器列表",
     serverCustomOption: "使用自定义服务器",
     serverAddress: "服务器地址",
@@ -28,7 +28,19 @@ export const zhCN = {
     bootstrapSuccess: "初始化完成，现在可以登录了。",
     bootstrapMismatch: "两次输入的密码不一致。",
     authUnavailable: "暂时连不上 Host，请确认服务可访问。",
-    logoutSuccess: "当前登录态已经清空。"
+    logoutSuccess: "当前登录态已经清空。",
+    serverSettings: "服务器设置",
+    serverSettingsTitle: "服务器配置",
+    saveServerSettings: "保存设置"
+  },
+  settings: {
+    title: "设置",
+    appearance: "外观",
+    theme: "主题",
+    themeDescription: "选择适合你的界面配色方案",
+    account: "账号",
+    logout: "退出登录",
+    logoutDescription: "退出当前账号并返回登录页面"
   },
   home: {
     title: "从一条会话继续，而不是从后台表格开始",

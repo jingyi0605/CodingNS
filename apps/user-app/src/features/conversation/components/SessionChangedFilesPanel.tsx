@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
+import { readViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import { t } from "../../../shared/i18n";
 import { ApiError } from "../../../shared/network/api-error";
 import { useToast } from "../../../shared/toast";
@@ -34,6 +35,7 @@ type RecentFileActivation = {
 };
 
 const FILE_REPEAT_ACTIVATION_MS = 450;
+const SESSION_CHANGED_FILES_CACHE_MAX_AGE_MS = 60 * 1000;
 
 export function SessionChangedFilesPanel({
   sessionId,
@@ -53,12 +55,18 @@ export function SessionChangedFilesPanel({
   const { showToast } = useToast();
 
   useEffect(() => {
+    const cachedChanges = readViewSnapshot<GitChangeItemDto[]>(
+      buildSessionChangedFilesSnapshotKey(workspaceId, sessionId),
+      SESSION_CHANGED_FILES_CACHE_MAX_AGE_MS
+    );
+
     setViewMode("tree");
-    setChanges([]);
-    setLoading(true);
+    setChanges(cachedChanges ?? []);
+    setLoading(cachedChanges === null);
     setStaging(false);
     setCollapsedPaths([]);
     recentFileActivationRef.current = null;
+    onCountChange?.(cachedChanges?.length ?? 0);
   }, [sessionId, workspaceId]);
 
   useEffect(() => {
@@ -73,6 +81,7 @@ export function SessionChangedFilesPanel({
         if (!cancelled) {
           setChanges(nextChanges);
           onCountChange?.(nextChanges.length);
+          writeViewSnapshot(buildSessionChangedFilesSnapshotKey(workspaceId, sessionId), nextChanges);
         }
       } catch (error) {
         if (!cancelled) {
@@ -107,6 +116,7 @@ export function SessionChangedFilesPanel({
       const nextChanges = await loadSessionChangedGitFiles(sessionId, workspaceId);
       setChanges(nextChanges);
       onCountChange?.(nextChanges.length);
+      writeViewSnapshot(buildSessionChangedFilesSnapshotKey(workspaceId, sessionId), nextChanges);
     } catch (error) {
       showToast({
         title: readError(error, t("conversation.filePanelSessionLoadFailed")),
@@ -132,6 +142,7 @@ export function SessionChangedFilesPanel({
       const nextChanges = await loadSessionChangedGitFiles(sessionId, workspaceId);
       setChanges(nextChanges);
       onCountChange?.(nextChanges.length);
+      writeViewSnapshot(buildSessionChangedFilesSnapshotKey(workspaceId, sessionId), nextChanges);
       showToast({
         title: t("conversation.filePanelSessionStageSuccess"),
         tone: "success"
@@ -391,6 +402,10 @@ function renderList({
       </button>
     </div>
   ));
+}
+
+function buildSessionChangedFilesSnapshotKey(workspaceId: string, sessionId: string) {
+  return `file-panel.session-changes.${workspaceId}.${sessionId}`;
 }
 
 function readError(error: unknown, fallback: string): string {

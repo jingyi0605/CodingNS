@@ -6,6 +6,8 @@ import { AuthController } from "../modules/auth/auth-controller.js";
 import { AuthService } from "../modules/auth/auth-service.js";
 import { BootstrapController } from "../modules/bootstrap/bootstrap-controller.js";
 import { BootstrapService } from "../modules/bootstrap/bootstrap-service.js";
+import { ClientController } from "../modules/client/client-controller.js";
+import { ClientService } from "../modules/client/client-service.js";
 import { FileAccessGuard } from "../modules/file/file-access-guard.js";
 import { FileContentService } from "../modules/file/file-content-service.js";
 import { FileContextController } from "../modules/file/file-context-controller.js";
@@ -39,6 +41,7 @@ import { WorkbenchService } from "../modules/workbench/workbench-service.js";
 import { WorkspaceController } from "../modules/workspace/workspace-controller.js";
 import { WorkspaceService } from "../modules/workspace/workspace-service.js";
 import { registerAuthRoutes } from "../routes/auth.js";
+import { registerClientRoutes } from "../routes/client.js";
 import { registerFileRoutes } from "../routes/files.js";
 import { registerGitRoutes } from "../routes/git.js";
 import { registerProviderRoutes } from "../routes/providers.js";
@@ -99,6 +102,7 @@ export function createServer(config: HostConfig) {
     repositories.bootstrapStateRepository,
     repositories.authUserRepository
   );
+  const clientService = new ClientService(config);
   const authService = new AuthService(
     repositories.bootstrapStateRepository,
     repositories.authUserRepository,
@@ -181,6 +185,7 @@ export function createServer(config: HostConfig) {
   );
 
   const bootstrapController = new BootstrapController(bootstrapService);
+  const clientController = new ClientController(clientService);
   const authController = new AuthController(authService);
   const workspaceController = new WorkspaceController(workspaceService);
   const workbenchController = new WorkbenchController(workbenchService);
@@ -224,6 +229,7 @@ export function createServer(config: HostConfig) {
 
   void registerPublicRoutes(app, bootstrapController);
   void registerAuthRoutes(app, authController);
+  void registerClientRoutes(app, clientController);
   void registerWorkspaceRoutes(app, workspaceController);
   void registerWorkbenchRoutes(app, workbenchController);
   void registerSessionRoutes(app, sessionController);
@@ -248,6 +254,7 @@ export function createServer(config: HostConfig) {
       repositories,
       modules: {
         bootstrapService,
+        clientService,
         authService,
         workspaceService,
         workbenchService,

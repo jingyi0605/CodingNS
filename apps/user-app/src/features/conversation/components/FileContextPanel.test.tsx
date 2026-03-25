@@ -1,10 +1,18 @@
 ﻿import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import {
+  clearViewSnapshot,
+  readViewSnapshot,
+  writeViewSnapshot
+} from "../../../shared/cache/view-snapshot-cache";
 import { t } from "../../../shared/i18n";
 import { ToastProvider } from "../../../shared/toast";
 import { FileContextPanel } from "./FileContextPanel";
+
+const WORKSPACE_TREE_SNAPSHOT_KEY = "file-panel.workspace-tree.workspace-1";
+const SESSION_COUNT_SNAPSHOT_KEY = "file-panel.session-change-count.workspace-1.session-1";
 
 const fileApiMock = vi.hoisted(() => ({
   getFileTree: vi.fn(),
@@ -22,6 +30,93 @@ const gitApiMock = vi.hoisted(() => ({
   getGitStatus: vi.fn(),
   stageGitTargets: vi.fn()
 }));
+
+const rootItemsMock = [
+  {
+    path: "config.json",
+    name: "config.json",
+    kind: "file",
+    size: 42,
+    updatedAt: "2026-03-24T12:00:00.000Z"
+  },
+  {
+    path: "settings.yaml",
+    name: "settings.yaml",
+    kind: "file",
+    size: 36,
+    updatedAt: "2026-03-24T12:00:00.000Z"
+  },
+  {
+    path: "docs.md",
+    name: "docs.md",
+    kind: "file",
+    size: 120,
+    updatedAt: "2026-03-24T12:00:00.000Z"
+  },
+  {
+    path: "app.toml",
+    name: "app.toml",
+    kind: "file",
+    size: 84,
+    updatedAt: "2026-03-24T12:00:00.000Z"
+  },
+  {
+    path: "profile.ini",
+    name: "profile.ini",
+    kind: "file",
+    size: 56,
+    updatedAt: "2026-03-24T12:00:00.000Z"
+  },
+  {
+    path: ".env.local",
+    name: ".env.local",
+    kind: "file",
+    size: 64,
+    updatedAt: "2026-03-24T12:00:00.000Z"
+  },
+  {
+    path: "gradle.properties",
+    name: "gradle.properties",
+    kind: "file",
+    size: 72,
+    updatedAt: "2026-03-24T12:00:00.000Z"
+  },
+  {
+    path: "app.conf",
+    name: "app.conf",
+    kind: "file",
+    size: 68,
+    updatedAt: "2026-03-24T12:00:00.000Z"
+  },
+  {
+    path: ".editorconfig",
+    name: ".editorconfig",
+    kind: "file",
+    size: 96,
+    updatedAt: "2026-03-24T12:00:00.000Z"
+  },
+  {
+    path: "Dockerfile",
+    name: "Dockerfile",
+    kind: "file",
+    size: 128,
+    updatedAt: "2026-03-24T12:00:00.000Z"
+  },
+  {
+    path: ".gitignore",
+    name: ".gitignore",
+    kind: "file",
+    size: 48,
+    updatedAt: "2026-03-24T12:00:00.000Z"
+  },
+  {
+    path: "server.log",
+    name: "server.log",
+    kind: "file",
+    size: 144,
+    updatedAt: "2026-03-24T12:00:00.000Z"
+  }
+] as const;
 
 vi.mock("../api/file-context-api", () => ({
   getFileTree: fileApiMock.getFileTree,
@@ -43,94 +138,12 @@ vi.mock("../api/git-api", () => ({
 describe("FileContextPanel", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    window.sessionStorage.clear();
+    clearViewSnapshot(WORKSPACE_TREE_SNAPSHOT_KEY);
+    clearViewSnapshot(SESSION_COUNT_SNAPSHOT_KEY);
 
     fileApiMock.getFileTree.mockResolvedValue({
-      items: [
-        {
-          path: "config.json",
-          name: "config.json",
-          kind: "file",
-          size: 42,
-          updatedAt: "2026-03-24T12:00:00.000Z"
-        },
-        {
-          path: "settings.yaml",
-          name: "settings.yaml",
-          kind: "file",
-          size: 36,
-          updatedAt: "2026-03-24T12:00:00.000Z"
-        },
-        {
-          path: "docs.md",
-          name: "docs.md",
-          kind: "file",
-          size: 120,
-          updatedAt: "2026-03-24T12:00:00.000Z"
-        },
-        {
-          path: "app.toml",
-          name: "app.toml",
-          kind: "file",
-          size: 84,
-          updatedAt: "2026-03-24T12:00:00.000Z"
-        },
-        {
-          path: "profile.ini",
-          name: "profile.ini",
-          kind: "file",
-          size: 56,
-          updatedAt: "2026-03-24T12:00:00.000Z"
-        },
-        {
-          path: ".env.local",
-          name: ".env.local",
-          kind: "file",
-          size: 64,
-          updatedAt: "2026-03-24T12:00:00.000Z"
-        },
-        {
-          path: "gradle.properties",
-          name: "gradle.properties",
-          kind: "file",
-          size: 72,
-          updatedAt: "2026-03-24T12:00:00.000Z"
-        },
-        {
-          path: "app.conf",
-          name: "app.conf",
-          kind: "file",
-          size: 68,
-          updatedAt: "2026-03-24T12:00:00.000Z"
-        },
-        {
-          path: ".editorconfig",
-          name: ".editorconfig",
-          kind: "file",
-          size: 96,
-          updatedAt: "2026-03-24T12:00:00.000Z"
-        },
-        {
-          path: "Dockerfile",
-          name: "Dockerfile",
-          kind: "file",
-          size: 128,
-          updatedAt: "2026-03-24T12:00:00.000Z"
-        },
-        {
-          path: ".gitignore",
-          name: ".gitignore",
-          kind: "file",
-          size: 48,
-          updatedAt: "2026-03-24T12:00:00.000Z"
-        },
-        {
-          path: "server.log",
-          name: "server.log",
-          kind: "file",
-          size: 144,
-          updatedAt: "2026-03-24T12:00:00.000Z"
-        }
-      ]
+      items: [...rootItemsMock]
     });
 
     fileApiMock.operateFile.mockResolvedValue({
@@ -351,6 +364,12 @@ describe("FileContextPanel", () => {
     });
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+    clearViewSnapshot(WORKSPACE_TREE_SNAPSHOT_KEY);
+    clearViewSnapshot(SESSION_COUNT_SNAPSHOT_KEY);
+  });
+
   function renderPanel() {
     render(
       <ToastProvider>
@@ -358,6 +377,246 @@ describe("FileContextPanel", () => {
       </ToastProvider>
     );
   }
+
+  it("有缓存时会先显示缓存目录，并在后台静默刷新", async () => {
+    writeViewSnapshot(WORKSPACE_TREE_SNAPSHOT_KEY, {
+      treeCache: {
+        "": [
+          {
+            path: "cached-dir",
+            name: "cached-dir",
+            kind: "directory",
+            size: null,
+            updatedAt: "2026-03-24T12:00:00.000Z"
+          }
+        ]
+      },
+      expandedDirectories: [],
+      activeDirectoryPath: ""
+    });
+
+    fileApiMock.getFileTree.mockResolvedValue({ items: [...rootItemsMock] });
+
+    renderPanel();
+
+    expect(await screen.findByText("cached-dir")).toBeInTheDocument();
+    expect(screen.queryByText(t("common.loading"))).not.toBeInTheDocument();
+    expect(fileApiMock.getFileTree).not.toHaveBeenCalled();
+
+    await new Promise((resolve) => window.setTimeout(resolve, 1700));
+
+    await waitFor(() => {
+      expect(fileApiMock.getFileTree).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("工作区首屏有会话改动缓存时不会立刻请求 changed-files", async () => {
+    writeViewSnapshot(SESSION_COUNT_SNAPSHOT_KEY, 16);
+
+    renderPanel();
+
+    expect(
+      await screen.findByLabelText(`${t("conversation.filePanelSessionTab")} 16`)
+    ).toBeInTheDocument();
+  });
+
+  it("工作区首屏没有缓存时也不会主动请求 changed-files", async () => {
+    renderPanel();
+
+    expect(screen.getByLabelText(`${t("conversation.filePanelSessionTab")} 0`)).toBeInTheDocument();
+  });
+
+  it("切换到本次会话页签时由会话面板自己加载 changed-files", async () => {
+    writeViewSnapshot(SESSION_COUNT_SNAPSHOT_KEY, 16);
+    conversationApiMock.getSessionChangedFiles.mockResolvedValue({
+      items: [
+        {
+          sessionId: "session-1",
+          workspaceId: "workspace-1",
+          path: "apps/user-app/src/app/App.tsx",
+          firstDetectedAt: "2026-03-24T12:00:00.000Z",
+          lastDetectedAt: "2026-03-24T12:00:00.000Z",
+          lastToolName: "apply_patch"
+        }
+      ]
+    });
+    gitApiMock.getGitStatus.mockResolvedValue({
+      snapshot: {
+        workspaceId: "workspace-1",
+        repoRoot: "C:/Code/CodingNS",
+        branch: "main",
+        ahead: 0,
+        behind: 0,
+        hasRemote: true,
+        isDirty: true,
+        lastFetchedAt: null
+      },
+      changes: [createGitChange("apps/user-app/src/app/App.tsx", false)]
+    });
+
+    renderPanel();
+
+    expect(
+      await screen.findByLabelText(`${t("conversation.filePanelSessionTab")} 16`)
+    ).toBeInTheDocument();
+
+    await userEvent.click(
+      screen.getByRole("tab", { name: new RegExp(t("conversation.filePanelSessionTab")) })
+    );
+
+    expect(await screen.findByText("App.tsx")).toBeInTheDocument();
+    expect(await screen.findByLabelText(`${t("conversation.filePanelSessionTab")} 1`)).toBeInTheDocument();
+  });
+
+  it("恢复缓存时只展开当前活动目录链路", async () => {
+    writeViewSnapshot(WORKSPACE_TREE_SNAPSHOT_KEY, {
+      treeCache: {
+        "": [
+          {
+            path: "apps",
+            name: "apps",
+            kind: "directory",
+            size: null,
+            updatedAt: "2026-03-24T12:00:00.000Z"
+          },
+          {
+            path: "docs",
+            name: "docs",
+            kind: "directory",
+            size: null,
+            updatedAt: "2026-03-24T12:00:00.000Z"
+          }
+        ],
+        apps: [
+          {
+            path: "apps/user-app",
+            name: "user-app",
+            kind: "directory",
+            size: null,
+            updatedAt: "2026-03-24T12:00:00.000Z"
+          }
+        ],
+        "apps/user-app": [
+          {
+            path: "apps/user-app/src",
+            name: "src",
+            kind: "directory",
+            size: null,
+            updatedAt: "2026-03-24T12:00:00.000Z"
+          }
+        ],
+        docs: [
+          {
+            path: "docs/spec.md",
+            name: "spec.md",
+            kind: "file",
+            size: 1,
+            updatedAt: "2026-03-24T12:00:00.000Z"
+          }
+        ]
+      },
+      expandedDirectories: ["apps", "apps/user-app", "docs"],
+      activeDirectoryPath: "apps/user-app"
+    });
+
+    renderPanel();
+
+    expect(await screen.findByText("apps")).toBeInTheDocument();
+    expect(screen.queryByText("spec.md")).not.toBeInTheDocument();
+
+    await waitFor(() => {
+      const restoredSnapshot = readViewSnapshot<{
+        treeCache: Record<string, unknown>;
+        expandedDirectories: string[];
+        activeDirectoryPath: string;
+      }>(WORKSPACE_TREE_SNAPSHOT_KEY, 5 * 60 * 1000);
+
+      expect(restoredSnapshot?.expandedDirectories).toEqual(["apps", "apps/user-app"]);
+      expect(Object.keys(restoredSnapshot?.treeCache ?? {}).sort()).toEqual(["", "apps", "apps/user-app"]);
+    });
+  });
+
+  it("手动刷新时只请求当前展开目录，不重刷历史缓存目录", async () => {
+    writeViewSnapshot(WORKSPACE_TREE_SNAPSHOT_KEY, {
+      treeCache: {
+        "": [
+          {
+            path: "apps",
+            name: "apps",
+            kind: "directory",
+            size: null,
+            updatedAt: "2026-03-24T12:00:00.000Z"
+          },
+          {
+            path: "docs",
+            name: "docs",
+            kind: "directory",
+            size: null,
+            updatedAt: "2026-03-24T12:00:00.000Z"
+          }
+        ],
+        apps: [
+          {
+            path: "apps/user-app",
+            name: "user-app",
+            kind: "directory",
+            size: null,
+            updatedAt: "2026-03-24T12:00:00.000Z"
+          }
+        ],
+        docs: [
+          {
+            path: "docs/spec.md",
+            name: "spec.md",
+            kind: "file",
+            size: 1,
+            updatedAt: "2026-03-24T12:00:00.000Z"
+          }
+        ]
+      },
+      expandedDirectories: ["apps"],
+      activeDirectoryPath: "apps"
+    });
+
+    fileApiMock.getFileTree.mockImplementation(async (_workspaceId: string, filePath?: string) => ({
+      items:
+        filePath === "apps"
+          ? [
+              {
+                path: "apps/user-app",
+                name: "user-app",
+                kind: "directory",
+                size: null,
+                updatedAt: "2026-03-24T12:00:00.000Z"
+              }
+            ]
+          : [...rootItemsMock]
+    }));
+
+    renderPanel();
+
+    await screen.findByText("apps");
+    await waitFor(() => {
+      const restoredSnapshot = readViewSnapshot<{
+        treeCache: Record<string, unknown>;
+        expandedDirectories: string[];
+        activeDirectoryPath: string;
+      }>(WORKSPACE_TREE_SNAPSHOT_KEY, 5 * 60 * 1000);
+
+      expect(restoredSnapshot?.expandedDirectories).toEqual(["apps"]);
+      expect(Object.keys(restoredSnapshot?.treeCache ?? {}).sort()).toEqual(["", "apps"]);
+    });
+
+    fileApiMock.getFileTree.mockClear();
+    await userEvent.click(screen.getByRole("button", { name: t("conversation.filePanelRefresh") }));
+
+    await waitFor(() => {
+      expect(fileApiMock.getFileTree).toHaveBeenCalledTimes(2);
+    });
+
+    expect(fileApiMock.getFileTree).toHaveBeenNthCalledWith(1, "workspace-1", undefined);
+    expect(fileApiMock.getFileTree).toHaveBeenNthCalledWith(2, "workspace-1", "apps");
+  });
 
   it("鍙屽嚮 markdown 鏂囦欢鍚庝細鎵撳紑鏌ョ湅鍣ㄥ苟鏀寔缂栬緫淇濆瓨", async () => {
     renderPanel();
@@ -625,14 +884,11 @@ describe("FileContextPanel", () => {
 
     renderPanel();
 
-    expect(
-      await screen.findByLabelText(`${t("conversation.filePanelSessionTab")} 1`)
-    ).toBeInTheDocument();
-
     await userEvent.click(
       screen.getByRole("tab", { name: new RegExp(t("conversation.filePanelSessionTab")) })
     );
 
+    expect(await screen.findByLabelText(`${t("conversation.filePanelSessionTab")} 1`)).toBeInTheDocument();
     expect(await screen.findByText("App.tsx")).toBeInTheDocument();
     expect(screen.queryByText("README.md")).not.toBeInTheDocument();
 
@@ -645,7 +901,7 @@ describe("FileContextPanel", () => {
       ]);
     });
 
-    expect(await screen.findByText(t("git.stagedLabel"))).toBeInTheDocument();
+    expect(await screen.findByText("已把本次会话的修改加入暂存区。")).toBeInTheDocument();
   });
   it("连续点击同一文件两次也会打开查看器（旧块）", async () => {
     renderPanel();

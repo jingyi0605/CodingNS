@@ -1,4 +1,4 @@
-import { serverConfigStore } from "./server-config";
+import { clientConfigStore } from "./client-config-store";
 
 function ensureTrailingSlash(baseUrl: string): string {
   return baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
@@ -40,7 +40,7 @@ function getDevWebSocketBaseUrl(baseUrl: string): string {
 }
 
 export function getHostBaseUrl(): string {
-  return serverConfigStore.getState().baseUrl;
+  return clientConfigStore.getState().hostBaseUrl;
 }
 
 export function getHostRequestUrl(path: string, baseUrl = getHostBaseUrl()): string {

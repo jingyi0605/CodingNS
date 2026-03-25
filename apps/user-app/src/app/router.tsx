@@ -6,6 +6,7 @@ import { WorkbenchLayout } from "../features/conversation/components/WorkbenchLa
 import { useAuthSelector } from "../features/auth/store/auth-store";
 import { ConversationPage } from "../features/conversation/pages/ConversationPage";
 import { WorkbenchPlaceholderPage } from "../features/workbench/pages/WorkbenchPlaceholderPage";
+import { SettingsPage } from "../features/settings/pages/SettingsPage";
 
 function RequireAuth() {
   const status = useAuthSelector((state) => state.status);
@@ -52,6 +53,10 @@ export const appRouter = createBrowserRouter([
                 Component: module.TerminalPage
               };
             }
+          },
+          {
+            path: "settings",
+            element: <SettingsPage />
           }
         ]
       }

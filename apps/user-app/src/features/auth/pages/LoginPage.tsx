@@ -1,17 +1,146 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
-import {
-  getCustomServerOptionValue,
-  getServerSelectValue,
-  normalizeServerBaseUrl,
-  serverConfigStore,
-  useServerConfigSelector
-} from "../../../config/server-config";
+import { serverConfigStore, useServerConfigSelector } from "../../../config/server-config";
+import { authGateway } from "../../../auth/auth-gateway";
+import { probeHost } from "../../../network/host-probe";
 import { t } from "../../../shared/i18n";
 import { ApiError } from "../../../shared/network/api-error";
-import { getBootstrapStatus } from "../api/auth-api";
+import { useTheme } from "../../../shared/theme";
 import { authStore, useAuthSelector } from "../store/auth-store";
+import { ServerSettingsModal } from "../components/ServerSettingsModal";
+
+// Animated background particles
+function ParticleField() {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    let animationId: number;
+    let particles: Array<{
+      x: number;
+      y: number;
+      vx: number;
+      vy: number;
+      size: number;
+      opacity: number;
+    }> = [];
+
+    const resize = () => {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    };
+
+    const createParticles = () => {
+      particles = [];
+      const count = Math.min(50, Math.floor((canvas.width * canvas.height) / 25000));
+      for (let i = 0; i < count; i++) {
+        particles.push({
+          x: Math.random() * canvas.width,
+          y: Math.random() * canvas.height,
+          vx: (Math.random() - 0.5) * 0.5,
+          vy: (Math.random() - 0.5) * 0.5,
+          size: Math.random() * 2 + 1,
+          opacity: Math.random() * 0.5 + 0.2
+        });
+      }
+    };
+
+    const draw = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Draw particles
+      particles.forEach((p, i) => {
+        p.x += p.vx;
+        p.y += p.vy;
+
+        if (p.x < 0) p.x = canvas.width;
+        if (p.x > canvas.width) p.x = 0;
+        if (p.y < 0) p.y = canvas.height;
+        if (p.y > canvas.height) p.y = 0;
+
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(10, 132, 255, ${p.opacity})`;
+        ctx.fill();
+
+        // Draw connections
+        particles.slice(i + 1).forEach(p2 => {
+          const dx = p.x - p2.x;
+          const dy = p.y - p2.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist < 150) {
+            ctx.beginPath();
+            ctx.moveTo(p.x, p.y);
+            ctx.lineTo(p2.x, p2.y);
+            ctx.strokeStyle = `rgba(10, 132, 255, ${0.1 * (1 - dist / 150)})`;
+            ctx.stroke();
+          }
+        });
+      });
+
+      animationId = requestAnimationFrame(draw);
+    };
+
+    resize();
+    createParticles();
+    draw();
+
+    window.addEventListener("resize", () => {
+      resize();
+      createParticles();
+    });
+
+    return () => {
+      cancelAnimationFrame(animationId);
+    };
+  }, []);
+
+  return <canvas ref={canvasRef} className="particle-canvas" />;
+}
+
+// Glitch text effect
+function GlitchText({ text }: { text: string }) {
+  return (
+    <span className="glitch-text" data-text={text}>
+      {text}
+    </span>
+  );
+}
+
+// Typewriter effect for subtitle
+function TypewriterText({ text }: { text: string }) {
+  const [displayText, setDisplayText] = useState("");
+  const [showCursor, setShowCursor] = useState(true);
+
+  useEffect(() => {
+    let index = 0;
+    const interval = setInterval(() => {
+      if (index <= text.length) {
+        setDisplayText(text.slice(0, index));
+        index++;
+      } else {
+        clearInterval(interval);
+        // Hide cursor after typing complete
+        setTimeout(() => setShowCursor(false), 1000);
+      }
+    }, 50);
+
+    return () => clearInterval(interval);
+  }, [text]);
+
+  return (
+    <span className="typewriter-text">
+      {displayText}
+      {showCursor && <span className="typewriter-cursor">_</span>}
+    </span>
+  );
+}
 
 export function LoginPage() {
   const navigate = useNavigate();
@@ -19,25 +148,19 @@ export function LoginPage() {
   const [username, setUsername] = useState("admin");
   const [password, setPassword] = useState("123456aA?!");
   const persistedServerBaseUrl = useServerConfigSelector((state) => state.baseUrl);
-  const serverOptions = useServerConfigSelector((state) => state.options);
-  const [serverBaseUrlInput, setServerBaseUrlInput] = useState(persistedServerBaseUrl);
   const [probeServerBaseUrl, setProbeServerBaseUrl] = useState(persistedServerBaseUrl);
   const [statusText, setStatusText] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [showServerModal, setShowServerModal] = useState(false);
+  const [focusedField, setFocusedField] = useState<string | null>(null);
   const authStatus = useAuthSelector((state) => state.status);
   const returnTo = useMemo(() => searchParams.get("returnTo") ?? "/", [searchParams]);
-  const customServerOptionValue = getCustomServerOptionValue();
-  const normalizedServerBaseUrl = useMemo(() => {
-    try {
-      return normalizeServerBaseUrl(serverBaseUrlInput);
-    } catch {
-      return null;
-    }
-  }, [serverBaseUrlInput]);
-  const selectedServerOption = getServerSelectValue(
-    normalizedServerBaseUrl ?? serverBaseUrlInput,
-    serverOptions
-  );
+  const { theme } = useTheme();
+
+  // Map app theme to login page theme (light or dark)
+  const loginTheme = useMemo(() => {
+    return theme === "light" ? "light" : "dark";
+  }, [theme]);
 
   useEffect(() => {
     if (authStatus === "authenticated") {
@@ -51,15 +174,9 @@ export function LoginPage() {
 
     let disposed = false;
 
-    void getBootstrapStatus(probeServerBaseUrl)
+    void probeHost(probeServerBaseUrl)
       .then((status) => {
-        if (!disposed && !status.initialized) {
-          const changed = serverConfigStore.setBaseUrl(probeServerBaseUrl);
-
-          if (changed) {
-            authStore.clear();
-          }
-
+        if (!disposed && status.reachable && !status.initialized) {
           navigate("/bootstrap", { replace: true });
         }
       })
@@ -77,23 +194,12 @@ export function LoginPage() {
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (!normalizedServerBaseUrl) {
-      setStatusText(t("auth.serverInvalid"));
-      return;
-    }
-
     setLoading(true);
     setStatusText(null);
-    setProbeServerBaseUrl(normalizedServerBaseUrl);
+    setProbeServerBaseUrl(persistedServerBaseUrl);
 
     try {
-      const changed = serverConfigStore.setBaseUrl(normalizedServerBaseUrl);
-
-      if (changed) {
-        authStore.clear();
-      }
-
-      await authStore.login(username, password);
+      await authGateway.login(username, password);
       navigate(returnTo, { replace: true });
     } catch (error) {
       if (error instanceof ApiError) {
@@ -106,77 +212,173 @@ export function LoginPage() {
     }
   }
 
-  function handleServerBlur(): void {
-    if (!normalizedServerBaseUrl) {
-      return;
-    }
-
-    setServerBaseUrlInput(normalizedServerBaseUrl);
-    setProbeServerBaseUrl(normalizedServerBaseUrl);
+  function handleServerSettingsSave(baseUrl: string): void {
+    setProbeServerBaseUrl(baseUrl);
+    setStatusText(null);
   }
 
+  const usernameInputId = "login-username";
+  const passwordInputId = "login-password";
+
   return (
-    <main className="page-center app-shell">
-      <section className="auth-card surface-card">
-        <h1>{t("auth.loginTitle")}</h1>
-        <p className="status-text">{t("auth.loginSubtitle")}</p>
-        <form className="auth-form" onSubmit={handleSubmit}>
-          <label className="field-group">
-            <span>{t("auth.serverPreset")}</span>
-            <select
-              value={selectedServerOption}
-              onChange={(event) => {
-                const nextValue = event.target.value;
+    <main className="cyber-login-page" data-theme={loginTheme}>
+      {/* Animated Background */}
+      <div className="cyber-bg">
+        <div className="cyber-grid" />
+        <div className="cyber-glow cyber-glow-1" />
+        <div className="cyber-glow cyber-glow-2" />
+        <ParticleField />
+      </div>
 
-                if (nextValue === customServerOptionValue) {
-                  return;
-                }
+      {/* Scanline overlay */}
+      <div className="scanlines" />
 
-                setServerBaseUrlInput(nextValue);
-                setProbeServerBaseUrl(nextValue);
-                setStatusText(null);
-              }}
+      {/* Main Content */}
+      <div className="cyber-login-container">
+        {/* Logo / Brand */}
+        <div className="cyber-brand">
+          <div className="cyber-logo">
+            <div className="cyber-logo-inner">
+              <span className="cyber-logo-icon">◈</span>
+            </div>
+            <div className="cyber-logo-ring ring-1" />
+            <div className="cyber-logo-ring ring-2" />
+          </div>
+          <h1 className="cyber-brand-title">
+            <GlitchText text="CODING NS" />
+          </h1>
+          <p className="cyber-brand-subtitle">
+            <TypewriterText text={t("auth.loginSubtitle")} />
+          </p>
+        </div>
+
+        {/* Login Card */}
+        <div className="cyber-card">
+          {/* Decorative corners */}
+          <div className="cyber-corner corner-tl" />
+          <div className="cyber-corner corner-tr" />
+          <div className="cyber-corner corner-bl" />
+          <div className="cyber-corner corner-br" />
+
+          {/* Header line */}
+          <div className="cyber-card-header">
+            <div className="cyber-line" />
+            <span className="cyber-card-label">
+              {t("auth.loginTitle").toUpperCase()}
+            </span>
+            <div className="cyber-line" />
+          </div>
+
+          <form className="cyber-form" onSubmit={handleSubmit}>
+            {/* Username Field */}
+            <div className={`cyber-field ${focusedField === "username" ? "focused" : ""}`}>
+              <div className="cyber-field-border">
+                <div className="cyber-field-border-glow" />
+              </div>
+              <label className="cyber-field-label" htmlFor={usernameInputId}>
+                <span className="cyber-field-icon">❯</span>
+                {t("auth.username")}
+              </label>
+              <input
+                id={usernameInputId}
+                aria-label={t("auth.username")}
+                className="cyber-input"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                onFocus={() => setFocusedField("username")}
+                onBlur={() => setFocusedField(null)}
+                autoComplete="username"
+              />
+            </div>
+
+            {/* Password Field */}
+            <div className={`cyber-field ${focusedField === "password" ? "focused" : ""}`}>
+              <div className="cyber-field-border">
+                <div className="cyber-field-border-glow" />
+              </div>
+              <label className="cyber-field-label" htmlFor={passwordInputId}>
+                <span className="cyber-field-icon">⚷</span>
+                {t("auth.password")}
+              </label>
+              <input
+                id={passwordInputId}
+                aria-label={t("auth.password")}
+                className="cyber-input"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                onFocus={() => setFocusedField("password")}
+                onBlur={() => setFocusedField(null)}
+                autoComplete="current-password"
+              />
+            </div>
+
+            {/* Status Message */}
+            {statusText ? (
+              <div className="cyber-status" data-tone="error">
+                <span className="cyber-status-icon">⚠</span>
+                <span>{statusText}</span>
+              </div>
+            ) : null}
+
+            {/* Submit Button */}
+            <button
+              className={`cyber-submit ${loading ? "loading" : ""}`}
+              type="submit"
+              disabled={loading}
             >
-              {serverOptions.map((option) => (
-                <option key={option} value={option}>
-                  {option}
-                </option>
-              ))}
-              <option value={customServerOptionValue}>{t("auth.serverCustomOption")}</option>
-            </select>
-          </label>
-          <label className="field-group">
-            <span>{t("auth.serverAddress")}</span>
-            <input
-              value={serverBaseUrlInput}
-              placeholder={t("auth.serverPlaceholder")}
-              onBlur={handleServerBlur}
-              onChange={(event) => setServerBaseUrlInput(event.target.value)}
-            />
-          </label>
-          <p className="status-text">{t("auth.serverHint")}</p>
-          <label className="field-group">
-            <span>{t("auth.username")}</span>
-            <input value={username} onChange={(event) => setUsername(event.target.value)} />
-          </label>
-          <label className="field-group">
-            <span>{t("auth.password")}</span>
-            <input
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-            />
-          </label>
-          {statusText ? (
-            <p className="status-text" data-tone="error">
-              {statusText}
-            </p>
-          ) : null}
-          <button className="primary-button" type="submit" disabled={loading}>
-            {loading ? t("common.loading") : t("auth.submitLogin")}
-          </button>
-        </form>
-      </section>
+              <span className="cyber-submit-glow" />
+              <span className="cyber-submit-border" />
+              <span className="cyber-submit-text">
+                {loading ? (
+                  <>
+                    <span className="cyber-spinner" />
+                    {t("common.loading")}
+                  </>
+                ) : (
+                  <>
+                    <span className="cyber-submit-icon">➤</span>
+                    {t("auth.submitLogin")}
+                  </>
+                )}
+              </span>
+            </button>
+          </form>
+
+          {/* Server Settings Button */}
+          <div className="cyber-footer">
+            <div className="cyber-divider">
+              <span className="cyber-divider-line" />
+              <span className="cyber-divider-text">//</span>
+              <span className="cyber-divider-line" />
+            </div>
+            <button
+              className="cyber-server-btn"
+              onClick={() => setShowServerModal(true)}
+              type="button"
+            >
+              <span className="cyber-server-icon">⚙</span>
+              <span className="cyber-server-text">{t("auth.serverSettings")}</span>
+              <span className="cyber-server-current">{persistedServerBaseUrl}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Version / Credits */}
+        <div className="cyber-version">
+          <span className="cyber-version-text">v1.0.0</span>
+          <span className="cyber-version-divider">|</span>
+          <span className="cyber-version-text">SYSTEM READY</span>
+        </div>
+      </div>
+
+      {/* Server Settings Modal */}
+      <ServerSettingsModal
+        isOpen={showServerModal}
+        onClose={() => setShowServerModal(false)}
+        onSave={handleServerSettingsSave}
+        theme={loginTheme}
+      />
     </main>
   );
 }

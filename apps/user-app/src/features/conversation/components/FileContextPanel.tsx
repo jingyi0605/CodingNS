@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 
+import { readViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
+import { logPerfDebug } from "../../../shared/debug/perf-debug";
 import { t } from "../../../shared/i18n";
 import { ApiError } from "../../../shared/network/api-error";
 import { useToast } from "../../../shared/toast";
-import { getSessionChangedFiles } from "../api/conversation-api";
 import {
   getFileTree,
   operateFile,
@@ -37,6 +38,18 @@ type RecentFileActivation = {
 
 const ROOT_DIRECTORY = "";
 const FILE_REPEAT_ACTIVATION_MS = 450;
+const FILE_PANEL_WORKSPACE_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
+const FILE_PANEL_SESSION_COUNT_CACHE_MAX_AGE_MS = 60 * 1000;
+
+interface FilePanelWorkspaceSnapshot {
+  treeCache: FileTreeCache;
+  expandedDirectories: string[];
+  activeDirectoryPath: string;
+}
+
+interface LoadRootTreeOptions {
+  silent?: boolean;
+}
 
 export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelProps) {
   const [treeCache, setTreeCache] = useState<FileTreeCache>({});
@@ -56,8 +69,21 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
   const [sessionChangeCount, setSessionChangeCount] = useState(0);
   const treeCacheRef = useRef<FileTreeCache>({});
   const expandedDirectoriesRef = useRef<string[]>([]);
+  const activeDirectoryPathRef = useRef(ROOT_DIRECTORY);
+  const restoringWorkspaceSnapshotRef = useRef(false);
   const recentFileActivationRef = useRef<RecentFileActivation | null>(null);
   const { showToast } = useToast();
+
+  useEffect(() => {
+    logPerfDebug("file_panel.props", {
+      sessionId,
+      workspaceId
+    });
+  }, [sessionId, workspaceId]);
+
+  useEffect(() => {
+    activeDirectoryPathRef.current = activeDirectoryPath;
+  }, [activeDirectoryPath]);
 
   function updateTreeCache(nextValue: FileTreeCacheUpdater) {
     setTreeCache((previous) => {
@@ -82,43 +108,151 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
   }
 
   useEffect(() => {
-    treeCacheRef.current = {};
-    expandedDirectoriesRef.current = [];
-    updateTreeCache({});
-    updateExpandedDirectories([]);
+    if (!workspaceId) {
+      restoringWorkspaceSnapshotRef.current = false;
+      treeCacheRef.current = {};
+      expandedDirectoriesRef.current = [];
+      activeDirectoryPathRef.current = ROOT_DIRECTORY;
+      updateTreeCache({});
+      updateExpandedDirectories([]);
+      setLoadingDirectories([]);
+      setActiveDirectoryPath(ROOT_DIRECTORY);
+      setSearchVisible(false);
+      setSearchKeyword("");
+      setSearchResult(null);
+      setSearching(false);
+      setLoadingTree(false);
+      return;
+    }
+
+    restoringWorkspaceSnapshotRef.current = true;
+
+    const cachedSnapshot = readViewSnapshot<FilePanelWorkspaceSnapshot>(
+      buildWorkspaceTreeSnapshotKey(workspaceId),
+      FILE_PANEL_WORKSPACE_CACHE_MAX_AGE_MS
+    );
+
+    logPerfDebug("file_panel.workspace_snapshot", {
+      workspaceId,
+      cached: Boolean(cachedSnapshot),
+      cachedRootItems: cachedSnapshot?.treeCache?.[ROOT_DIRECTORY]?.length ?? 0,
+      cachedDirectoryCount: Object.keys(cachedSnapshot?.treeCache ?? {}).length
+    });
+
+    const nextActiveDirectoryPath = resolveRestoredActiveDirectoryPath(
+      cachedSnapshot?.activeDirectoryPath ?? ROOT_DIRECTORY,
+      cachedSnapshot?.treeCache ?? {}
+    );
+    const nextExpandedDirectories = sanitizeExpandedDirectories(
+      cachedSnapshot?.expandedDirectories ?? [],
+      nextActiveDirectoryPath
+    );
+    const nextTreeCache = pruneTreeCache(
+      cachedSnapshot?.treeCache ?? {},
+      nextActiveDirectoryPath,
+      nextExpandedDirectories
+    );
+
+    treeCacheRef.current = nextTreeCache;
+    expandedDirectoriesRef.current = nextExpandedDirectories;
+    activeDirectoryPathRef.current = nextActiveDirectoryPath;
+    updateTreeCache(nextTreeCache);
+    updateExpandedDirectories(nextExpandedDirectories);
     setLoadingDirectories([]);
-    setActiveDirectoryPath(ROOT_DIRECTORY);
-    setSelectedPath(null);
+    setActiveDirectoryPath(nextActiveDirectoryPath);
     setLoadingTree(false);
     setMutating(false);
     setSearchVisible(false);
     setSearchKeyword("");
     setSearchResult(null);
     setSearching(false);
+
+    queueMicrotask(() => {
+      restoringWorkspaceSnapshotRef.current = false;
+    });
+  }, [workspaceId]);
+
+  useEffect(() => {
+    setSelectedPath(null);
     setViewerFilePath(null);
-    setActiveTab("workspace");
     setSessionRefreshVersion(0);
-    setSessionChangeCount(0);
     recentFileActivationRef.current = null;
-  }, [sessionId, workspaceId]);
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (!workspaceId) {
+      return;
+    }
+
+    const snapshotExpandedDirectories = sanitizeExpandedDirectories(
+      expandedDirectories,
+      activeDirectoryPath
+    );
+    const snapshotTreeCache = pruneTreeCache(
+      treeCache,
+      activeDirectoryPath,
+      snapshotExpandedDirectories
+    );
+
+    writeViewSnapshot<FilePanelWorkspaceSnapshot>(buildWorkspaceTreeSnapshotKey(workspaceId), {
+      treeCache: snapshotTreeCache,
+      expandedDirectories: snapshotExpandedDirectories,
+      activeDirectoryPath
+    });
+  }, [activeDirectoryPath, expandedDirectories, treeCache, workspaceId]);
+
+  useEffect(() => {
+    if (restoringWorkspaceSnapshotRef.current) {
+      return;
+    }
+
+    const prunedTreeCache = pruneTreeCache(treeCache, activeDirectoryPath, expandedDirectories);
+
+    if (isSameTreeCache(treeCache, prunedTreeCache)) {
+      return;
+    }
+
+    updateTreeCache(prunedTreeCache);
+  }, [activeDirectoryPath, expandedDirectories, treeCache]);
 
   useEffect(() => {
     let cancelled = false;
 
-    async function loadRootTree() {
+    async function loadRootTree(options?: LoadRootTreeOptions) {
       if (!workspaceId) {
         return;
       }
 
-      setLoadingTree(true);
+      const shouldShowLoading = options?.silent !== true && (treeCacheRef.current[ROOT_DIRECTORY]?.length ?? 0) === 0;
+
+      if (shouldShowLoading) {
+        setLoadingTree(true);
+      }
+
+      logPerfDebug("file_panel.load_root_tree.start", {
+        sessionId,
+        workspaceId,
+        silent: options?.silent === true,
+        cachedRootItems: treeCacheRef.current[ROOT_DIRECTORY]?.length ?? 0
+      });
 
       try {
         const response = await getFileTree(workspaceId);
 
         if (!cancelled) {
-          updateTreeCache({
-            [ROOT_DIRECTORY]: response.items
+          logPerfDebug("file_panel.load_root_tree.end", {
+            sessionId,
+            workspaceId,
+            itemCount: response.items.length
           });
+          updateTreeCache((previous) => ({
+            ...pruneTreeCache(
+              previous,
+              activeDirectoryPathRef.current,
+              expandedDirectoriesRef.current
+            ),
+            [ROOT_DIRECTORY]: response.items
+          }));
         }
       } catch (error) {
         if (!cancelled) {
@@ -128,10 +262,23 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
           });
         }
       } finally {
-        if (!cancelled) {
+        if (!cancelled && shouldShowLoading) {
           setLoadingTree(false);
         }
       }
+    }
+
+    const hasCachedRootItems = (treeCacheRef.current[ROOT_DIRECTORY]?.length ?? 0) > 0;
+
+    if (hasCachedRootItems) {
+      const timer = window.setTimeout(() => {
+        void loadRootTree({ silent: true });
+      }, 1500);
+
+      return () => {
+        cancelled = true;
+        window.clearTimeout(timer);
+      };
     }
 
     void loadRootTree();
@@ -142,32 +289,24 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
   }, [sessionId, showToast, workspaceId]);
 
   useEffect(() => {
-    let cancelled = false;
-
-    async function loadSessionChangeCount() {
-      if (!workspaceId) {
-        setSessionChangeCount(0);
-        return;
-      }
-
-      try {
-        const response = await getSessionChangedFiles(sessionId);
-
-        if (!cancelled) {
-          setSessionChangeCount(response.items.length);
-        }
-      } catch {
-        if (!cancelled) {
-          setSessionChangeCount(0);
-        }
-      }
+    if (!workspaceId) {
+      setSessionChangeCount(0);
+      return;
     }
 
-    void loadSessionChangeCount();
+    const cachedCount = readViewSnapshot<number>(
+      buildSessionChangeCountSnapshotKey(workspaceId, sessionId),
+      FILE_PANEL_SESSION_COUNT_CACHE_MAX_AGE_MS
+    );
 
-    return () => {
-      cancelled = true;
-    };
+    logPerfDebug("file_panel.session_change_count.snapshot", {
+      sessionId,
+      workspaceId,
+      cached: cachedCount !== null,
+      cachedCount
+    });
+
+    setSessionChangeCount(cachedCount ?? 0);
   }, [sessionId, sessionRefreshVersion, workspaceId]);
 
   const rootItems = treeCache[ROOT_DIRECTORY] ?? [];
@@ -221,8 +360,18 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
       return;
     }
 
-    const loadedDirectories = Object.keys(treeCacheRef.current);
-    const targetDirectories = loadedDirectories.length ? loadedDirectories : [ROOT_DIRECTORY];
+    const targetDirectories = resolveRefreshTargetDirectories(
+      treeCacheRef.current,
+      activeDirectoryPath,
+      expandedDirectoriesRef.current
+    );
+
+    logPerfDebug("file_panel.refresh_tree_cache.start", {
+      sessionId,
+      workspaceId,
+      targetDirectories
+    });
+
     const entries = await Promise.all(
       targetDirectories.map(async (directoryPath) => {
         const response = await getFileTree(workspaceId, directoryPath || undefined);
@@ -230,12 +379,19 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
       })
     );
 
-    updateTreeCache(
-      entries.reduce<FileTreeCache>((nextCache, [directoryPath, items]) => {
-        nextCache[directoryPath] = items;
-        return nextCache;
-      }, {})
-    );
+    const nextTreeCache = entries.reduce<FileTreeCache>((nextCache, [directoryPath, items]) => {
+      nextCache[directoryPath] = items;
+      return nextCache;
+    }, {});
+
+    logPerfDebug("file_panel.refresh_tree_cache.end", {
+      sessionId,
+      workspaceId,
+      targetDirectories,
+      directoryCount: Object.keys(nextTreeCache).length
+    });
+
+    updateTreeCache(nextTreeCache);
   }
 
   // 选中文件时要把父目录链展开，否则树高亮永远对不上。
@@ -704,7 +860,7 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
               ) : null}
 
               <div className="file-tree" data-search-mode={searchMode}>
-                {loadingTree ? (
+                {loadingTree && rootItems.length === 0 ? (
                   <p className="file-tree-status status-text">{t("common.loading")}</p>
                 ) : searchMode ? (
                   searchResult?.length ? (
@@ -768,12 +924,101 @@ function getCreateBaseDirectory(activeDirectoryPath: string, selectedPath: strin
   return ROOT_DIRECTORY;
 }
 
+function resolveRestoredActiveDirectoryPath(activeDirectoryPath: string, treeCache: FileTreeCache): string {
+  if (!activeDirectoryPath) {
+    return ROOT_DIRECTORY;
+  }
+
+  const directoryChain = getDirectoryChain(activeDirectoryPath, true);
+  const hasCachedChain = directoryChain.every((directoryPath) => directoryPath in treeCache);
+
+  return hasCachedChain ? activeDirectoryPath : ROOT_DIRECTORY;
+}
+
+function sanitizeExpandedDirectories(expandedDirectories: string[], activeDirectoryPath: string): string[] {
+  if (!activeDirectoryPath) {
+    return [];
+  }
+
+  const activeDirectoryChain = getDirectoryChain(activeDirectoryPath, true);
+  return expandedDirectories.filter((directoryPath) => activeDirectoryChain.includes(directoryPath));
+}
+
+function pruneTreeCache(
+  treeCache: FileTreeCache,
+  activeDirectoryPath: string,
+  expandedDirectories: string[]
+): FileTreeCache {
+  const retainedDirectoryPaths = resolveRetainedDirectoryPaths(
+    activeDirectoryPath,
+    expandedDirectories
+  );
+
+  return Object.entries(treeCache).reduce<FileTreeCache>((nextCache, [directoryPath, items]) => {
+    if (retainedDirectoryPaths.has(directoryPath)) {
+      nextCache[directoryPath] = items;
+    }
+
+    return nextCache;
+  }, {});
+}
+
+function resolveRefreshTargetDirectories(
+  treeCache: FileTreeCache,
+  activeDirectoryPath: string,
+  expandedDirectories: string[]
+): string[] {
+  const retainedDirectoryPaths = resolveRetainedDirectoryPaths(
+    activeDirectoryPath,
+    expandedDirectories
+  );
+  const targetDirectories = [...retainedDirectoryPaths].filter(
+    (directoryPath) => directoryPath === ROOT_DIRECTORY || directoryPath in treeCache
+  );
+
+  return targetDirectories.length ? targetDirectories : [ROOT_DIRECTORY];
+}
+
+function resolveRetainedDirectoryPaths(activeDirectoryPath: string, expandedDirectories: string[]) {
+  const retainedDirectoryPaths = new Set<string>([ROOT_DIRECTORY]);
+  const scopedDirectories = mergeUnique(expandedDirectories, getDirectoryChain(activeDirectoryPath, true));
+
+  for (const directoryPath of scopedDirectories) {
+    retainedDirectoryPaths.add(directoryPath);
+
+    for (const ancestorPath of getDirectoryChain(directoryPath, true)) {
+      retainedDirectoryPaths.add(ancestorPath);
+    }
+  }
+
+  return retainedDirectoryPaths;
+}
+
+function isSameTreeCache(currentCache: FileTreeCache, nextCache: FileTreeCache) {
+  const currentKeys = Object.keys(currentCache);
+  const nextKeys = Object.keys(nextCache);
+
+  if (currentKeys.length !== nextKeys.length) {
+    return false;
+  }
+
+  return currentKeys.every((cacheKey) => currentCache[cacheKey] === nextCache[cacheKey]);
+}
+
 function appendUnique(items: string[], nextItem: string): string[] {
   return items.includes(nextItem) ? items : [...items, nextItem];
 }
 
 function mergeUnique(items: string[], nextItems: string[]): string[] {
   return nextItems.reduce((merged, nextItem) => appendUnique(merged, nextItem), items);
+}
+
+function buildWorkspaceTreeSnapshotKey(workspaceId: string) {
+  return `file-panel.workspace-tree.${workspaceId}`;
+}
+
+function buildSessionChangeCountSnapshotKey(workspaceId: string, sessionId: string) {
+  return `file-panel.session-change-count.${workspaceId}.${sessionId}`;
 }
 
 function readError(error: unknown, fallback: string): string {

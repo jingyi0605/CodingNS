@@ -1,0 +1,11 @@
+{
+  "identifier": "default",
+  "description": "CodingNS desktop default capability",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-minimize",
+    "core:window:allow-maximize",
+    "core:window:allow-close"
+  ]
+}

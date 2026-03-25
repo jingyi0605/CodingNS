@@ -5,6 +5,8 @@ export interface HostConfig {
   host: string;
   port: number;
   databasePath: string;
+  releaseChannel: "stable" | "beta";
+  releaseManifestRoot: string;
   accessTokenTtlSeconds: number;
   refreshTokenTtlSeconds: number;
   terminalIdleTimeoutSeconds: number;
@@ -22,6 +24,13 @@ export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConf
       overrides.databasePath ??
       process.env.CODINGNS_DB_PATH ??
       path.resolve(process.cwd(), "apps", "host", "data", "host", "host.sqlite"),
+    releaseChannel:
+      overrides.releaseChannel ??
+      ((process.env.CODINGNS_RELEASE_CHANNEL as "stable" | "beta" | undefined) ?? "stable"),
+    releaseManifestRoot:
+      overrides.releaseManifestRoot ??
+      process.env.CODINGNS_RELEASE_MANIFEST_ROOT ??
+      path.resolve(process.cwd(), "apps", "host", "data", "releases"),
     accessTokenTtlSeconds:
       overrides.accessTokenTtlSeconds ??
       Number(process.env.CODINGNS_ACCESS_TOKEN_TTL ?? "31536000"),

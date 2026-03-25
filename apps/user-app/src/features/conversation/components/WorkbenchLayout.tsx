@@ -1,8 +1,10 @@
 import {
+  Suspense,
   useCallback,
   createContext,
   useContext,
   useEffect,
+  lazy,
   useMemo,
   useRef,
   useState,
@@ -14,13 +16,12 @@ import { createPortal } from "react-dom";
 import { Outlet, matchPath, useLocation, useNavigate } from "react-router-dom";
 
 import { WorkbenchRealtimeClient } from "../../../network/workbench-realtime-client";
+import { readViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
+import { logPerfDebug } from "../../../shared/debug/perf-debug";
 import { t } from "../../../shared/i18n";
 import { ThemeSwitcher } from "../../../shared/theme";
 import { useToast } from "../../../shared/toast";
 import { authStore } from "../../auth/store/auth-store";
-import { TerminalManagerPanel } from "../../workbench/components/TerminalManagerPanel";
-import { FileContextPanel } from "./FileContextPanel";
-import { GitSidebar } from "./GitSidebar";
 import {
   getWorkbenchSnapshot,
   importWorkspace,
@@ -28,6 +29,7 @@ import {
   updateSessionArchiveState,
   type ProviderId,
   type SessionSummaryDto,
+  type WorkbenchSnapshotDto,
   type WorkspaceDto
 } from "../api/conversation-api";
 
@@ -38,15 +40,43 @@ const RIGHT_PANEL_COLLAPSED_KEY = "workbench.right.collapsed";
 const LAST_SESSION_PATH_KEY = "workbench.last.session.path";
 const WORKSPACE_COLLAPSED_IDS_KEY = "workbench.workspace.collapsed.ids";
 const FAVORITE_SESSION_IDS_KEY = "workbench.session.favorite.ids";
+const WORKBENCH_NAVIGATION_SNAPSHOT_KEY = "workbench.navigation.snapshot";
 
 const DEFAULT_LEFT_PANEL_WIDTH = 280;
 const DEFAULT_RIGHT_PANEL_WIDTH = 320;
 const MIN_PANEL_WIDTH = 208;
 const MAX_LEFT_PANEL_WIDTH = 520;
 const MAX_RIGHT_PANEL_WIDTH = 560;
-const INFO_PANEL_BOOT_DELAY_MS = 250;
+const INFO_PANEL_BOOT_DELAY_MS = 200;
 const MOBILE_BREAKPOINT_PX = 720;
+const FAVORITE_SESSION_PAGE_SIZE = 20;
+const ROOT_SESSION_PAGE_SIZE = 40;
 const SUBAGENT_PAGE_SIZE = 5;
+const WORKBENCH_NAVIGATION_CACHE_MAX_AGE_MS = 30 * 60 * 1000;
+
+const LazyFileContextPanel = lazy(async () => {
+  const module = await import("./FileContextPanel");
+
+  return {
+    default: module.FileContextPanel
+  };
+});
+
+const LazyGitSidebar = lazy(async () => {
+  const module = await import("./GitSidebar");
+
+  return {
+    default: module.GitSidebar
+  };
+});
+
+const LazyTerminalManagerPanel = lazy(async () => {
+  const module = await import("../../workbench/components/TerminalManagerPanel");
+
+  return {
+    default: module.TerminalManagerPanel
+  };
+});
 
 export interface WorkspaceSessionGroup {
   workspace: WorkspaceDto;
@@ -160,6 +190,35 @@ function buildSessionTree(sessions: SessionSummaryDto[]) {
       session,
       children: [...(childSessionsByRootId.get(session.sessionId) ?? [])].sort(sortSessions)
     }));
+}
+
+function resolveVisibleItemCount(
+  totalCount: number,
+  pageSize: number,
+  currentVisibleCount?: number,
+  activeItemIndex = -1
+) {
+  if (totalCount <= 0) {
+    return 0;
+  }
+
+  const minimumVisibleCount = activeItemIndex >= 0 ? Math.max(pageSize, activeItemIndex + 1) : pageSize;
+
+  return Math.min(totalCount, Math.max(currentVisibleCount ?? 0, minimumVisibleCount));
+}
+
+function isSameVisibleCountRecord(
+  currentRecord: Record<string, number>,
+  nextRecord: Record<string, number>
+) {
+  const currentKeys = Object.keys(currentRecord);
+  const nextKeys = Object.keys(nextRecord);
+
+  if (currentKeys.length !== nextKeys.length) {
+    return false;
+  }
+
+  return currentKeys.every((key) => currentRecord[key] === nextRecord[key]);
 }
 
 function formatSessionMeta(session: SessionSummaryDto) {
@@ -284,6 +343,24 @@ function flattenSessions(groups: WorkspaceSessionGroup[]) {
       }))
     )
     .sort((left, right) => sortSessions(left.session, right.session));
+}
+
+function mapWorkbenchSnapshotToGroups(snapshot: WorkbenchSnapshotDto | null | undefined) {
+  if (!snapshot || !Array.isArray(snapshot.items)) {
+    return [];
+  }
+
+  return snapshot.items.map((item) => ({
+    workspace: item.workspace,
+    sessions: [...item.sessions].sort(sortSessions)
+  }));
+}
+
+function readCachedWorkbenchSnapshot() {
+  return readViewSnapshot<WorkbenchSnapshotDto>(
+    WORKBENCH_NAVIGATION_SNAPSHOT_KEY,
+    WORKBENCH_NAVIGATION_CACHE_MAX_AGE_MS
+  );
 }
 
 function upsertSessionIntoGroups(
@@ -881,6 +958,8 @@ function SidebarContent({
   const [createSessionWorkspaceId, setCreateSessionWorkspaceId] = useState<string | null>(null);
   const [archiveWorkspaceId, setArchiveWorkspaceId] = useState<string | null>(null);
   const [openSessionMenuKey, setOpenSessionMenuKey] = useState<string | null>(null);
+  const [visibleFavoriteCount, setVisibleFavoriteCount] = useState(FAVORITE_SESSION_PAGE_SIZE);
+  const [visibleWorkspaceSessionCounts, setVisibleWorkspaceSessionCounts] = useState<Record<string, number>>({});
   const [visibleSubagentCounts, setVisibleSubagentCounts] = useState<Record<string, number>>({});
   const [renameTarget, setRenameTarget] = useState<NavigationSessionEntry | null>(null);
   const [renameTitleValue, setRenameTitleValue] = useState("");
@@ -912,6 +991,69 @@ function SidebarContent({
       window.removeEventListener("pointerdown", handlePointerDown);
     };
   }, [openSessionMenuKey]);
+
+  useEffect(() => {
+    const activeFavoriteIndex = favoriteSessions.findIndex((item) => item.session.sessionId === activeSessionId);
+
+    setVisibleFavoriteCount((current) => {
+      const nextCount = resolveVisibleItemCount(
+        favoriteSessions.length,
+        FAVORITE_SESSION_PAGE_SIZE,
+        current,
+        activeFavoriteIndex
+      );
+
+      return nextCount === current ? current : nextCount;
+    });
+  }, [activeSessionId, favoriteSessions]);
+
+  useEffect(() => {
+    setVisibleWorkspaceSessionCounts((current) => {
+      const next: Record<string, number> = {};
+
+      for (const group of workspaceGroups) {
+        const activeRootSessionIndex = group.visibleSessionTree.findIndex(
+          (node) =>
+            node.session.sessionId === activeSessionId ||
+            node.children.some((session) => session.sessionId === activeSessionId)
+        );
+
+        next[group.workspace.id] = resolveVisibleItemCount(
+          group.visibleSessionTree.length,
+          ROOT_SESSION_PAGE_SIZE,
+          current[group.workspace.id],
+          activeRootSessionIndex
+        );
+      }
+
+      return isSameVisibleCountRecord(current, next) ? current : next;
+    });
+  }, [activeSessionId, workspaceGroups]);
+
+  useEffect(() => {
+    setVisibleSubagentCounts((current) => {
+      const next: Record<string, number> = {};
+
+      for (const group of workspaceGroups) {
+        for (const node of group.visibleSessionTree) {
+          if (node.children.length === 0) {
+            continue;
+          }
+
+          const activeChildIndex = node.children.findIndex((session) => session.sessionId === activeSessionId);
+
+          next[node.session.sessionId] = resolveVisibleItemCount(
+            node.children.length,
+            SUBAGENT_PAGE_SIZE,
+            current[node.session.sessionId],
+            activeChildIndex
+          );
+        }
+      }
+
+      return isSameVisibleCountRecord(current, next) ? current : next;
+    });
+  }, [activeSessionId, workspaceGroups]);
 
   async function handleImportWorkspace(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -947,6 +1089,21 @@ function SidebarContent({
 
   function getVisibleSubagentCount(sessionId: string) {
     return visibleSubagentCounts[sessionId] ?? SUBAGENT_PAGE_SIZE;
+  }
+
+  function getVisibleWorkspaceSessionCount(workspaceId: string) {
+    return visibleWorkspaceSessionCounts[workspaceId] ?? ROOT_SESSION_PAGE_SIZE;
+  }
+
+  function handleExpandFavoriteSessions() {
+    setVisibleFavoriteCount((current) => Math.min(favoriteSessions.length, current + FAVORITE_SESSION_PAGE_SIZE));
+  }
+
+  function handleExpandWorkspaceSessions(workspaceId: string, totalCount: number) {
+    setVisibleWorkspaceSessionCounts((current) => ({
+      ...current,
+      [workspaceId]: Math.min(totalCount, (current[workspaceId] ?? ROOT_SESSION_PAGE_SIZE) + ROOT_SESSION_PAGE_SIZE)
+    }));
   }
 
   function handleExpandSubagents(sessionId: string) {
@@ -1059,6 +1216,9 @@ function SidebarContent({
     }
   }
 
+  const visibleFavoriteSessions = favoriteSessions.slice(0, visibleFavoriteCount);
+  const hasMoreFavoriteSessions = visibleFavoriteSessions.length < favoriteSessions.length;
+
   return (
     <>
       <div className="workbench-nav-header">
@@ -1133,7 +1293,7 @@ function SidebarContent({
             <p className="workbench-section-empty">{t("shell.favoriteSectionEmpty")}</p>
           ) : (
             <div className="workbench-session-list">
-              {favoriteSessions.map((item) => (
+              {visibleFavoriteSessions.map((item) => (
                 <SessionCard
                   menuKey={`favorite:${item.session.sessionId}`}
                   key={item.session.sessionId}
@@ -1160,6 +1320,15 @@ function SidebarContent({
                   onCloseMenu={() => setOpenSessionMenuKey(null)}
                 />
               ))}
+              {hasMoreFavoriteSessions ? (
+                <button
+                  type="button"
+                  className="workbench-subsession-expand ghost-button"
+                  onClick={handleExpandFavoriteSessions}
+                >
+                  {t("shell.favoriteExpandMore")}
+                </button>
+              ) : null}
             </div>
           )}
         </section>
@@ -1202,7 +1371,9 @@ function SidebarContent({
                   {group.visibleSessionTree.length === 0 ? (
                     <p className="workbench-session-empty">{t("shell.emptyWorkspaceSessions")}</p>
                   ) : (
-                    group.visibleSessionTree.map((node) => {
+                    group.visibleSessionTree
+                      .slice(0, getVisibleWorkspaceSessionCount(group.workspace.id))
+                      .map((node) => {
                       const visibleChildren = node.children.slice(
                         0,
                         getVisibleSubagentCount(node.session.sessionId)
@@ -1275,9 +1446,20 @@ function SidebarContent({
                             </div>
                           ) : null}
                         </div>
-                      );
-                    })
+                        );
+                      })
                   )}
+                  {group.visibleSessionTree.length > getVisibleWorkspaceSessionCount(group.workspace.id) ? (
+                    <button
+                      type="button"
+                      className="workbench-subsession-expand ghost-button"
+                      onClick={() =>
+                        handleExpandWorkspaceSessions(group.workspace.id, group.visibleSessionTree.length)
+                      }
+                    >
+                      {t("shell.sessionExpandMore")}
+                    </button>
+                  ) : null}
                 </div>
 
                 <button
@@ -1299,7 +1481,18 @@ function SidebarContent({
 
       <div className="workbench-nav-footer minimal">
         <div className="workbench-footer-top">
+          <button
+            className="settings-entry-button"
+            type="button"
+            onClick={() => navigate("/settings")}
+            title={t("settings.title")}
+          >
+            <span className="settings-entry-icon">⚙</span>
+            <span className="settings-entry-label">{t("settings.title")}</span>
+          </button>
           <ThemeSwitcher />
+        </div>
+        <div className="workbench-footer-bottom">
           <button
             className="logout-button"
             type="button"
@@ -1519,7 +1712,9 @@ function WorkbenchInfoPanel({
 
         {panelReady && activeTab === "files" ? (
           currentSessionId && currentWorkspaceId ? (
-            <FileContextPanel sessionId={currentSessionId} workspaceId={currentWorkspaceId} />
+            <Suspense fallback={<InfoPanelSkeleton />}>
+              <LazyFileContextPanel sessionId={currentSessionId} workspaceId={currentWorkspaceId} />
+            </Suspense>
           ) : (
             <section className="workbench-empty-state minimal">
               <p>{t("shell.filesPanelEmpty")}</p>
@@ -1529,7 +1724,9 @@ function WorkbenchInfoPanel({
 
         {panelReady && activeTab === "git" ? (
           fallbackWorkspaceId ? (
-            <GitSidebar workspaceId={fallbackWorkspaceId} />
+            <Suspense fallback={<InfoPanelSkeleton />}>
+              <LazyGitSidebar workspaceId={fallbackWorkspaceId} />
+            </Suspense>
           ) : (
             <section className="workbench-empty-state minimal">
               <p>{t("shell.gitPanelEmpty")}</p>
@@ -1538,7 +1735,12 @@ function WorkbenchInfoPanel({
         ) : null}
 
         {panelReady && activeTab === "terminals" ? (
-          <TerminalManagerPanel currentWorkspaceId={currentWorkspaceId} navigationGroups={navigationGroups} />
+          <Suspense fallback={<InfoPanelSkeleton />}>
+            <LazyTerminalManagerPanel
+              currentWorkspaceId={currentWorkspaceId}
+              navigationGroups={navigationGroups}
+            />
+          </Suspense>
         ) : null}
       </div>
     </>
@@ -1549,15 +1751,22 @@ export function WorkbenchLayout() {
   const location = useLocation();
   const navigate = useNavigate();
   const { showToast } = useToast();
+  const initialWorkbenchSnapshotRef = useRef<WorkbenchSnapshotDto | null>(readCachedWorkbenchSnapshot());
   const requestIdRef = useRef(0);
-  const hasNavigationDataRef = useRef(false);
+  const hasNavigationDataRef = useRef(
+    (initialWorkbenchSnapshotRef.current?.items?.length ?? 0) > 0
+  );
   const hasReceivedWorkbenchSnapshotRef = useRef(false);
   const lastDraftSessionPathRef = useRef<string | null>(null);
   const navigationBootstrapFallbackTimerRef = useRef<number | null>(null);
   const workbenchRealtimeClientRef = useRef<WorkbenchRealtimeClient | null>(null);
   const showToastRef = useRef(showToast);
-  const [navigationGroups, setNavigationGroups] = useState<WorkspaceSessionGroup[]>([]);
-  const [navigationLoading, setNavigationLoading] = useState(true);
+  const [navigationGroups, setNavigationGroups] = useState<WorkspaceSessionGroup[]>(() =>
+    mapWorkbenchSnapshotToGroups(initialWorkbenchSnapshotRef.current)
+  );
+  const [navigationLoading, setNavigationLoading] = useState(
+    () => (initialWorkbenchSnapshotRef.current?.items?.length ?? 0) === 0
+  );
   const [navigationError, setNavigationError] = useState<string | null>(null);
   const [leftPanelWidth, setLeftPanelWidth] = useState(() =>
     clamp(readStoredNumber(LEFT_PANEL_WIDTH_KEY, DEFAULT_LEFT_PANEL_WIDTH), MIN_PANEL_WIDTH, MAX_LEFT_PANEL_WIDTH)
@@ -1594,17 +1803,38 @@ export function WorkbenchLayout() {
     showToastRef.current = showToast;
   }, [showToast]);
 
-  function applyWorkbenchSnapshot(snapshot: Awaited<ReturnType<typeof getWorkbenchSnapshot>>) {
+  useEffect(() => {
+    logPerfDebug("workbench.layout_mounted", {
+      path: location.pathname,
+      search: location.search
+    });
+  }, [location.pathname, location.search]);
+
+  useEffect(() => {
+    logPerfDebug("workbench.cached_snapshot_loaded", {
+      cached: Boolean(initialWorkbenchSnapshotRef.current),
+      workspaceCount: initialWorkbenchSnapshotRef.current?.items.length ?? 0,
+      sessionCount:
+        initialWorkbenchSnapshotRef.current?.items.reduce(
+          (total, item) => total + item.sessions.length,
+          0
+        ) ?? 0
+    });
+  }, []);
+
+  function applyWorkbenchSnapshot(snapshot: WorkbenchSnapshotDto) {
     if (!snapshot || !Array.isArray(snapshot.items)) {
       return;
     }
 
-    setNavigationGroups(
-      snapshot.items.map((item) => ({
-        workspace: item.workspace,
-        sessions: [...item.sessions].sort(sortSessions)
-      }))
-    );
+    logPerfDebug("workbench.apply_snapshot", {
+      workspaceCount: snapshot.items.length,
+      sessionCount: snapshot.items.reduce((total, item) => total + item.sessions.length, 0),
+      currentSessionId: matchPath("/sessions/:sessionId", location.pathname)?.params.sessionId ?? null
+    });
+
+    writeViewSnapshot(WORKBENCH_NAVIGATION_SNAPSHOT_KEY, snapshot);
+    setNavigationGroups(mapWorkbenchSnapshotToGroups(snapshot));
     setNavigationError(null);
   }
 
@@ -1612,11 +1842,16 @@ export function WorkbenchLayout() {
     const requestId = requestIdRef.current + 1;
     requestIdRef.current = requestId;
     setNavigationLoading((current) => current || !hasNavigationDataRef.current);
+    logPerfDebug("workbench.refresh_navigation.start", {
+      requestId,
+      hasNavigationData: hasNavigationDataRef.current
+    });
 
     try {
       const snapshot = await getWorkbenchSnapshot();
 
       if (requestId !== requestIdRef.current) {
+        logPerfDebug("workbench.refresh_navigation.stale", { requestId });
         return;
       }
 
@@ -1632,6 +1867,10 @@ export function WorkbenchLayout() {
         tone: "error"
       });
     } finally {
+      logPerfDebug("workbench.refresh_navigation.end", {
+        requestId,
+        success: requestId === requestIdRef.current
+      });
       if (requestId === requestIdRef.current) {
         setNavigationLoading(false);
       }
@@ -1673,6 +1912,10 @@ export function WorkbenchLayout() {
   );
 
   const setSessionWorkspace = useCallback((sessionId: string, workspaceId: string | null) => {
+    logPerfDebug("workbench.set_session_workspace", {
+      sessionId,
+      workspaceId
+    });
     setSessionWorkspaceMap((current) => {
       if (!workspaceId) {
         if (!(sessionId in current)) {
@@ -1700,6 +1943,14 @@ export function WorkbenchLayout() {
   }, [navigationGroups]);
 
   useEffect(() => {
+    logPerfDebug("workbench.navigation_state", {
+      navigationLoading,
+      workspaceCount: navigationGroups.length,
+      sessionCount: navigationGroups.reduce((total, item) => total + item.sessions.length, 0)
+    });
+  }, [navigationGroups, navigationLoading]);
+
+  useEffect(() => {
     if (navigationBootstrapFallbackTimerRef.current !== null) {
       window.clearTimeout(navigationBootstrapFallbackTimerRef.current);
     }
@@ -1711,6 +1962,7 @@ export function WorkbenchLayout() {
         return;
       }
 
+      logPerfDebug("workbench.refresh_navigation.fallback_triggered");
       void refreshNavigation();
     }, 1200);
 
@@ -1728,6 +1980,10 @@ export function WorkbenchLayout() {
       },
       onSnapshot: (snapshot) => {
         hasReceivedWorkbenchSnapshotRef.current = true;
+        logPerfDebug("workbench.ws_snapshot_received", {
+          workspaceCount: snapshot.items.length,
+          sessionCount: snapshot.items.reduce((total, item) => total + item.sessions.length, 0)
+        });
         if (navigationBootstrapFallbackTimerRef.current !== null) {
           window.clearTimeout(navigationBootstrapFallbackTimerRef.current);
           navigationBootstrapFallbackTimerRef.current = null;
@@ -1782,7 +2038,7 @@ export function WorkbenchLayout() {
   }, [favoriteSessionIds]);
 
   useEffect(() => {
-    if (infoPanelReady || rightCollapsed || navigationLoading) {
+    if (infoPanelReady || rightCollapsed) {
       return;
     }
 
@@ -1793,7 +2049,7 @@ export function WorkbenchLayout() {
     return () => {
       window.clearTimeout(timer);
     };
-  }, [infoPanelReady, navigationLoading, rightCollapsed]);
+  }, [infoPanelReady, rightCollapsed]);
 
   const sessionMatch = matchPath("/sessions/:sessionId", location.pathname);
   const currentSessionId = sessionMatch?.params.sessionId ?? null;
@@ -1820,6 +2076,22 @@ export function WorkbenchLayout() {
   const currentWorkspaceId =
     currentSessionContext?.workspace.id ??
     (currentSessionId ? sessionWorkspaceMap[currentSessionId] ?? null : null);
+  useEffect(() => {
+    logPerfDebug("workbench.current_workspace_resolved", {
+      currentSessionId,
+      currentWorkspaceId,
+      source: currentSessionContext ? "navigation" : "sessionWorkspaceMap"
+    });
+  }, [currentSessionContext, currentSessionId, currentWorkspaceId]);
+
+  useEffect(() => {
+    logPerfDebug("workbench.info_panel_state", {
+      infoPanelReady,
+      rightCollapsed,
+      currentWorkspaceId,
+      currentSessionId
+    });
+  }, [currentSessionId, currentWorkspaceId, infoPanelReady, rightCollapsed]);
   const activeCenterTab: CenterTab = location.pathname.startsWith("/terminals")
     ? "terminals"
     : "conversation";

@@ -4,7 +4,6 @@ import type { AuthContext } from "../modules/auth/auth-service.js";
 import type { WorkbenchService, WorkbenchSnapshot } from "../modules/workbench/workbench-service.js";
 
 const WORKBENCH_REFRESH_INTERVAL_MS = 15_000;
-const WORKBENCH_SUBSCRIBE_REFRESH_DELAY_MS = 1_200;
 
 interface WorkbenchSubscribeMessage {
   type: "workbench.subscribe";
@@ -21,7 +20,6 @@ interface UserChannelState {
   lastPayload: string | null;
   timer: NodeJS.Timeout | null;
   refreshTask: Promise<void> | null;
-  deferredRefreshTimer: NodeJS.Timeout | null;
 }
 
 export class WorkbenchWsHub {
@@ -41,7 +39,6 @@ export class WorkbenchWsHub {
     if (payload.type === "workbench.subscribe") {
       this.attachClient(client, userId, channel);
       void this.sendSnapshotToClient(client, userId, channel);
-      this.scheduleDeferredRefresh(userId, channel);
       return true;
     }
 
@@ -75,10 +72,6 @@ export class WorkbenchWsHub {
       clearInterval(channel.timer);
     }
 
-    if (channel.deferredRefreshTimer) {
-      clearTimeout(channel.deferredRefreshTimer);
-    }
-
     this.userChannels.delete(userId);
   }
 
@@ -98,8 +91,7 @@ export class WorkbenchWsHub {
       clients: new Set<WebSocket>(),
       lastPayload: null,
       timer: null,
-      refreshTask: null,
-      deferredRefreshTimer: null
+      refreshTask: null
     };
     channel.timer = setInterval(() => {
       void this.refreshAndBroadcast(userId);
@@ -148,17 +140,6 @@ export class WorkbenchWsHub {
       });
 
     return channel.refreshTask;
-  }
-
-  private scheduleDeferredRefresh(userId: string, channel: UserChannelState): void {
-    if (channel.deferredRefreshTimer || channel.refreshTask) {
-      return;
-    }
-
-    channel.deferredRefreshTimer = setTimeout(() => {
-      channel.deferredRefreshTimer = null;
-      void this.refreshAndBroadcast(userId);
-    }, WORKBENCH_SUBSCRIBE_REFRESH_DELAY_MS);
   }
 }
 

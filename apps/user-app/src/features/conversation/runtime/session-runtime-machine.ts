@@ -42,11 +42,13 @@ export interface SessionRuntimeState {
   errorDetail: string | null;
 }
 
-export function createInitialRuntimeState(): SessionRuntimeState {
+export function createInitialRuntimeState(
+  seed?: Partial<Pick<SessionRuntimeState, "session" | "capabilities" | "messages">>
+): SessionRuntimeState {
   return {
-    session: null,
-    capabilities: null,
-    messages: [],
+    session: seed?.session ?? null,
+    capabilities: seed?.capabilities ?? null,
+    messages: seed?.messages ?? [],
     historyState: "idle",
     loadingOlderMessages: false,
     olderCursor: null,

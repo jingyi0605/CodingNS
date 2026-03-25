@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -21,6 +21,7 @@ interface MockSessionRecord {
   detail: Record<string, unknown>;
   capabilities: Record<string, unknown>;
   history: Record<string, unknown>;
+  runtime?: Record<string, unknown>;
 }
 
 class MockWebSocket extends EventTarget {
@@ -155,10 +156,20 @@ describe("app routes", () => {
     );
 
     await screen.findByText(t("auth.loginTitle"));
-    await userEvent.clear(screen.getByLabelText(t("auth.serverAddress")));
-    await userEvent.type(screen.getByLabelText(t("auth.serverAddress")), "10.10.1.8:4100");
+    await userEvent.click(
+      screen.getByRole("button", { name: new RegExp(t("auth.serverSettings")) })
+    );
+
+    const dialog = await screen.findByRole("dialog");
+    const addressInput = within(dialog).getByLabelText(t("auth.serverAddress"));
+
+    await userEvent.clear(addressInput);
+    await userEvent.type(addressInput, "10.10.1.8:4100");
     await userEvent.tab();
-    await userEvent.click(screen.getByRole("button", { name: t("auth.submitLogin") }));
+    await userEvent.click(within(dialog).getByRole("button", { name: t("auth.saveServerSettings") }));
+    await userEvent.click(
+      screen.getByRole("button", { name: new RegExp(t("auth.submitLogin")) })
+    );
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -251,7 +262,8 @@ describe("app routes", () => {
     expect(await screen.findByText("历史消息已经到了。")).toBeInTheDocument();
 
     await waitFor(() => {
-      expect(countFetchCalls(fetchMock, "/api/workbench")).toBe(1);
+      expect(countFetchCalls(fetchMock, "/api/workbench")).toBe(0);
+      expect(getWorkbenchSockets()).toHaveLength(1);
     });
 
     await userEvent.type(
@@ -687,6 +699,20 @@ function createCapabilities() {
   };
 }
 
+function createSessionRuntime(detail: Record<string, unknown>) {
+  return {
+    sessionId: detail.sessionId,
+    runningState: detail.runningState ?? "idle",
+    hasActiveRun: false,
+    canAttach: true,
+    canInterrupt: true,
+    provider: detail.provider ?? "codex",
+    providerSessionId: detail.providerSessionId ?? "raw-1",
+    detail: null,
+    updatedAt: detail.updatedAt ?? "2026-03-23T10:00:00.000Z"
+  };
+}
+
 function createHistoryMessage(input: {
   messageId: string;
   role: "user" | "assistant" | "tool" | "system";
@@ -756,6 +782,17 @@ function installFetchMock(input: {
 
       if (record) {
         return createJsonResponse(record.capabilities);
+      }
+    }
+
+    const runtimeMatch = url.match(/\/api\/sessions\/([^/]+)\/runtime$/);
+
+    if (runtimeMatch) {
+      const sessionId = decodeURIComponent(runtimeMatch[1]!);
+      const record = input.sessions[sessionId];
+
+      if (record) {
+        return createJsonResponse(record.runtime ?? createSessionRuntime(record.detail));
       }
     }
 

@@ -1,12 +1,15 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { authStore } from "../../auth/store/auth-store";
+import { clearViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import { t } from "../../../shared/i18n";
 import { ToastProvider } from "../../../shared/toast";
 import { WorkbenchLayout } from "./WorkbenchLayout";
+
+const WORKBENCH_NAVIGATION_SNAPSHOT_KEY = "workbench.navigation.snapshot";
 
 class MockWebSocket extends EventTarget {
   static instances: MockWebSocket[] = [];
@@ -63,12 +66,37 @@ class MockWebSocket extends EventTarget {
   }
 }
 
+class NoSnapshotWebSocket extends EventTarget {
+  readyState = 1;
+
+  constructor(public readonly url: string) {
+    super();
+
+    queueMicrotask(() => {
+      this.dispatchEvent(new Event("open"));
+      this.dispatchEvent(
+        new MessageEvent("message", {
+          data: JSON.stringify({ type: "system.connected" })
+        })
+      );
+    });
+  }
+
+  send() {}
+
+  close() {
+    this.dispatchEvent(new Event("close"));
+  }
+}
+
 const originalFetch = global.fetch;
 const originalWebSocket = global.WebSocket;
 
 describe("WorkbenchLayout", () => {
   beforeEach(() => {
     window.localStorage.clear();
+    window.sessionStorage.clear();
+    clearViewSnapshot(WORKBENCH_NAVIGATION_SNAPSHOT_KEY);
     authStore.clear();
     MockWebSocket.reset();
     global.WebSocket = MockWebSocket as unknown as typeof WebSocket;
@@ -87,6 +115,8 @@ describe("WorkbenchLayout", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.useRealTimers();
+    clearViewSnapshot(WORKBENCH_NAVIGATION_SNAPSHOT_KEY);
     global.fetch = originalFetch;
     global.WebSocket = originalWebSocket;
   });
@@ -494,6 +524,106 @@ describe("WorkbenchLayout", () => {
     expect(rootTreeScope.queryByRole("button", { name: t("shell.subagentExpandMore") })).not.toBeInTheDocument();
   });
 
+  it("工作区根会话默认分段渲染，并保证当前激活会话不会被折叠掉", async () => {
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "Project One"),
+        sessions: Array.from({ length: 45 }, (_, index) => ({
+          ...createSessionSummary({
+            sessionId: `root-session-${index + 1}`,
+            title: `Root Session ${index + 1}`,
+            workspaceId: "workspace-1"
+          }),
+          lastMessageAt: `2026-03-24T10:${String(59 - index).padStart(2, "0")}:00.000Z`,
+          updatedAt: `2026-03-24T10:${String(59 - index).padStart(2, "0")}:00.000Z`
+        }))
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/sessions/root-session-41");
+
+    const workspaceGroup = (await screen.findByText("Project One")).closest(
+      ".workbench-workspace-group"
+    ) as HTMLElement | null;
+    expect(workspaceGroup).not.toBeNull();
+
+    const workspaceScope = within(workspaceGroup!);
+    expect(workspaceScope.getByText("Root Session 1")).toBeInTheDocument();
+    expect(workspaceScope.getByText("Root Session 40")).toBeInTheDocument();
+    expect(workspaceScope.getByText("Root Session 41")).toBeInTheDocument();
+    expect(workspaceScope.queryByText("Root Session 42")).not.toBeInTheDocument();
+
+    await userEvent.click(workspaceScope.getByRole("button", { name: t("shell.sessionExpandMore") }));
+
+    expect(workspaceScope.getByText("Root Session 45")).toBeInTheDocument();
+    expect(workspaceScope.queryByRole("button", { name: t("shell.sessionExpandMore") })).not.toBeInTheDocument();
+  });
+
+  it("收藏会话默认分段渲染，并支持按批展开", async () => {
+    const sessions = Array.from({ length: 25 }, (_, index) => ({
+      ...createSessionSummary({
+        sessionId: `favorite-session-${index + 1}`,
+        title: `Favorite Session ${index + 1}`,
+        workspaceId: "workspace-1"
+      }),
+      lastMessageAt: `2026-03-24T11:${String(59 - index).padStart(2, "0")}:00.000Z`,
+      updatedAt: `2026-03-24T11:${String(59 - index).padStart(2, "0")}:00.000Z`
+    }));
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "Project One"),
+        sessions
+      }
+    ]);
+
+    window.localStorage.setItem(
+      "workbench.session.favorite.ids",
+      JSON.stringify(sessions.map((session) => session.sessionId))
+    );
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/sessions/favorite-session-1");
+
+    await screen.findByText("Favorite Session 1");
+
+    const favoriteSection = screen.getByText(t("shell.favoriteSectionTitle")).closest(
+      ".workbench-section-block"
+    ) as HTMLElement | null;
+    expect(favoriteSection).not.toBeNull();
+
+    const favoriteScope = within(favoriteSection!);
+    expect(favoriteScope.getByText("Favorite Session 1")).toBeInTheDocument();
+    expect(favoriteScope.getByText("Favorite Session 20")).toBeInTheDocument();
+    expect(favoriteScope.queryByText("Favorite Session 21")).not.toBeInTheDocument();
+
+    await userEvent.click(favoriteScope.getByRole("button", { name: t("shell.favoriteExpandMore") }));
+
+    expect(favoriteScope.getByText("Favorite Session 25")).toBeInTheDocument();
+    expect(favoriteScope.queryByRole("button", { name: t("shell.favoriteExpandMore") })).not.toBeInTheDocument();
+  });
+
   it("对推断中的外部会话显示黄色活动图标", async () => {
     const currentSnapshot = createWorkbenchSnapshot([
       {
@@ -630,6 +760,52 @@ describe("WorkbenchLayout", () => {
     await waitFor(() => {
       expect(screen.queryAllByText("会话 Beta")).toHaveLength(0);
     });
+  });
+  it("右侧信息栏不会被导航加载状态阻塞", async () => {
+    vi.useFakeTimers();
+    global.WebSocket = NoSnapshotWebSocket as unknown as typeof WebSocket;
+    global.fetch = vi.fn(() => new Promise<Response>(() => undefined)) as typeof fetch;
+
+    const view = renderWorkbenchRoute("/sessions/session-1");
+    const shell = view.container.querySelector(".workbench-shell");
+
+    expect(shell?.getAttribute("data-nav-loading")).toBe("true");
+    expect(shell?.getAttribute("data-info-ready")).toBe("false");
+
+    await act(async () => {
+      vi.advanceTimersByTime(250);
+    });
+
+    expect(shell?.getAttribute("data-nav-loading")).toBe("true");
+    expect(shell?.getAttribute("data-info-ready")).toBe("true");
+  });
+
+  it("导航栏会优先显示缓存快照", async () => {
+    const cachedSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "缓存会话",
+            workspaceId: "workspace-1"
+          })
+        ]
+      }
+    ]);
+
+    writeViewSnapshot(WORKBENCH_NAVIGATION_SNAPSHOT_KEY, cachedSnapshot);
+    MockWebSocket.workbenchSnapshot = cachedSnapshot;
+    global.fetch = vi.fn(() => {
+      throw new Error("不应该在缓存首屏阶段主动请求 /api/workbench");
+    }) as typeof fetch;
+
+    const view = renderWorkbenchRoute("/sessions/session-1");
+    const shell = view.container.querySelector(".workbench-shell");
+
+    expect(shell?.getAttribute("data-nav-loading")).toBe("false");
+    expect(screen.getByText("缓存会话")).toBeInTheDocument();
+    expect(screen.getByText("项目一")).toBeInTheDocument();
   });
 });
 

@@ -51,6 +51,7 @@ function LiveConversationPage({
   bootstrapMessages: HistoryMessageDto[];
 }) {
   const {
+    navigationGroups,
     requestNavigationRefresh,
     setSessionWorkspace,
     markNavigationSessionSeen
@@ -58,10 +59,18 @@ function LiveConversationPage({
   const storeRef = useRef<SessionRuntimeStore | null>(null);
   const currentSessionIdRef = useRef<string | null>(null);
   const [sending, setSending] = useState(false);
+  const navigationSession = useMemo(
+    () =>
+      navigationGroups
+        .flatMap((group) => group.sessions)
+        .find((item) => item.sessionId === sessionId) ?? null,
+    [navigationGroups, sessionId]
+  );
 
   if (!storeRef.current || currentSessionIdRef.current !== sessionId) {
     storeRef.current?.destroy();
     storeRef.current = new SessionRuntimeStore(sessionId, {
+      initialSession: navigationSession,
       bootstrapMessages,
       onSeen: (seenSessionId, seenAt) => {
         markNavigationSessionSeen(seenSessionId, seenAt);
@@ -85,6 +94,10 @@ function LiveConversationPage({
     session?.runningState === "starting"
     || session?.runningState === "running"
     || session?.runningState === "reconnecting";
+
+  useEffect(() => {
+    store.applyNavigationSession(navigationSession);
+  }, [navigationSession, store]);
 
   useEffect(() => {
     void store.initialize();

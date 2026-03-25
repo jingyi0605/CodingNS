@@ -31,6 +31,17 @@ export class WorkbenchService {
     };
   }
 
+  shouldRefreshSnapshot(): boolean {
+    return this.workspaceRepository
+      .list()
+      .some((workspace) =>
+        this.sessionHistoryService.needsWorkspaceDiscovery(
+          workspace.id,
+          WORKBENCH_REFRESH_MAX_AGE_MS
+        )
+      );
+  }
+
   async refreshSnapshot(userId: string): Promise<WorkbenchSnapshot> {
     const startedAt = Date.now();
     const workspaces = this.workspaceRepository.list();
@@ -38,7 +49,8 @@ export class WorkbenchService {
     await Promise.all(
       workspaces.map((workspace) =>
         this.sessionHistoryService.discoverWorkspaceSessions(workspace.id, userId, {
-          maxAgeMs: WORKBENCH_REFRESH_MAX_AGE_MS
+          maxAgeMs: WORKBENCH_REFRESH_MAX_AGE_MS,
+          refreshStateMode: "deferred"
         })
       )
     );

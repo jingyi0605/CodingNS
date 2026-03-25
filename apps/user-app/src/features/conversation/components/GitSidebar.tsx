@@ -6,6 +6,8 @@ import {
   type UIEvent
 } from "react";
 
+import { readViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
+import { logPerfDebug } from "../../../shared/debug/perf-debug";
 import { t } from "../../../shared/i18n";
 import { ApiError } from "../../../shared/network/api-error";
 import { useToast } from "../../../shared/toast";
@@ -64,6 +66,15 @@ const MIN_TREE_PANEL_RATIO = 28;
 const MAX_TREE_PANEL_RATIO = 72;
 const PANEL_RESIZER_HEIGHT = 8;
 const GIT_MOBILE_BREAKPOINT_PX = 960;
+const GIT_SNAPSHOT_CACHE_MAX_AGE_MS = 60 * 1000;
+
+interface GitSidebarSnapshot {
+  status: GitStatusDto | null;
+  history: GitHistoryItemDto[];
+  historyTotalCount: number;
+  historyNextCursor: string | null;
+  branches: GitBranchSnapshotDto | null;
+}
 
 export function GitSidebar({ workspaceId }: GitSidebarProps) {
   const [status, setStatus] = useState<GitStatusDto | null>(null);
@@ -89,6 +100,12 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
   const splitLayoutRef = useRef<HTMLDivElement | null>(null);
   const treePanelBodyRef = useRef<HTMLDivElement | null>(null);
   const { showToast } = useToast();
+
+  useEffect(() => {
+    logPerfDebug("git_sidebar.props", {
+      workspaceId
+    });
+  }, [workspaceId]);
 
   useEffect(() => {
     setCollapsedTreePaths([]);
@@ -150,37 +167,84 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
 
   useEffect(() => {
     let cancelled = false;
+    if (!workspaceId?.trim()) {
+      setStatus(null);
+      setHistory([]);
+      setHistoryTotalCount(0);
+      setHistoryNextCursor(null);
+      setBranches(null);
+      setLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const currentWorkspaceId: string = workspaceId.trim();
+
+    const cachedSnapshot = readViewSnapshot<GitSidebarSnapshot>(
+      buildGitSidebarSnapshotKey(currentWorkspaceId),
+      GIT_SNAPSHOT_CACHE_MAX_AGE_MS
+    );
+
+    logPerfDebug("git_sidebar.snapshot", {
+      workspaceId: currentWorkspaceId,
+      cached: Boolean(cachedSnapshot),
+      cachedHistoryCount: cachedSnapshot?.history.length ?? 0,
+      cachedChangedCount:
+        cachedSnapshot?.status?.changes.length ?? 0
+    });
+
+    if (cachedSnapshot) {
+      setStatus(cachedSnapshot.status);
+      setHistory(cachedSnapshot.history);
+      setHistoryTotalCount(cachedSnapshot.historyTotalCount);
+      setHistoryNextCursor(cachedSnapshot.historyNextCursor);
+      setBranches(cachedSnapshot.branches);
+      setLoading(false);
+    } else {
+      setStatus(null);
+      setHistory([]);
+      setHistoryTotalCount(0);
+      setHistoryNextCursor(null);
+      setBranches(null);
+      setLoading(true);
+    }
 
     async function loadAll() {
-      if (!workspaceId) {
-        setStatus(null);
-        setHistory([]);
-        setHistoryTotalCount(0);
-        setHistoryNextCursor(null);
-        setBranches(null);
-        return;
-      }
-
-      setLoading(true);
-
       try {
-        const [nextStatus, nextHistory, nextBranches] = await Promise.all([
-          getGitStatus(workspaceId),
-          getGitHistory(workspaceId, 20),
-          getGitBranches(workspaceId)
-        ]);
+        logPerfDebug("git_sidebar.load_all.start", {
+          workspaceId: currentWorkspaceId
+        });
+        const nextStatus = await getGitStatus(currentWorkspaceId);
 
         if (cancelled) {
           return;
         }
 
         setStatus(nextStatus);
+
+        const [nextHistory, nextBranches] = await Promise.all([
+          getGitHistory(currentWorkspaceId, 20),
+          getGitBranches(currentWorkspaceId)
+        ]);
+
+        if (cancelled) {
+          return;
+        }
+
         setHistory(nextHistory.items);
         setHistoryTotalCount(nextHistory.totalCount);
         setHistoryNextCursor(nextHistory.nextCursor);
         setBranches(nextBranches);
+        logPerfDebug("git_sidebar.load_all.end", {
+          workspaceId: currentWorkspaceId,
+          stagedCount: nextStatus.changes.filter((item) => item.staged).length,
+          unstagedCount: nextStatus.changes.filter((item) => !item.staged).length,
+          historyCount: nextHistory.items.length,
+          branchCount: nextBranches.local.length + nextBranches.remote.length
+        });
       } catch (error) {
-        if (!cancelled) {
+        if (!cancelled && !cachedSnapshot) {
           showToast({
             title: readError(error, t("git.panelLoadFailed")),
             tone: "error"
@@ -199,6 +263,20 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
       cancelled = true;
     };
   }, [showToast, workspaceId]);
+
+  useEffect(() => {
+    if (!workspaceId) {
+      return;
+    }
+
+    writeViewSnapshot<GitSidebarSnapshot>(buildGitSidebarSnapshotKey(workspaceId), {
+      status,
+      history,
+      historyTotalCount,
+      historyNextCursor,
+      branches
+    });
+  }, [branches, history, historyNextCursor, historyTotalCount, status, workspaceId]);
 
   useEffect(() => {
     if (!status || !selectedPath) {
@@ -247,18 +325,21 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
   }
 
   async function refreshContext(options?: { resetTreeScroll?: boolean }) {
-    if (!workspaceId) {
+    if (!workspaceId?.trim()) {
       return;
     }
 
+    const currentWorkspaceId: string = workspaceId.trim();
+
     try {
-      const [nextStatus, nextHistory, nextBranches] = await Promise.all([
-        getGitStatus(workspaceId),
-        getGitHistory(workspaceId, 20, null),
-        getGitBranches(workspaceId)
+      const nextStatus = await getGitStatus(currentWorkspaceId);
+      setStatus(nextStatus);
+
+      const [nextHistory, nextBranches] = await Promise.all([
+        getGitHistory(currentWorkspaceId, 20, null),
+        getGitBranches(currentWorkspaceId)
       ]);
 
-      setStatus(nextStatus);
       setHistory(nextHistory.items);
       setHistoryTotalCount(nextHistory.totalCount);
       setHistoryNextCursor(nextHistory.nextCursor);
@@ -1273,6 +1354,10 @@ function readError(error: unknown, fallback: string): string {
   }
 
   return fallback;
+}
+
+function buildGitSidebarSnapshotKey(workspaceId: string) {
+  return `git-sidebar.snapshot.${workspaceId}`;
 }
 
 function mapGitError(error: ApiError): string | null {

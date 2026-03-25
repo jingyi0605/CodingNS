@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
+import { readViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
+import { logPerfDebug } from "../../../shared/debug/perf-debug";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 import {
@@ -38,6 +40,12 @@ const INITIAL_LAUNCH_DRAFT: LaunchDraftState = {
   args: "",
   port: ""
 };
+const TERMINAL_MANAGER_SNAPSHOT_CACHE_MAX_AGE_MS = 60 * 1000;
+
+interface TerminalManagerSnapshot {
+  templates: TerminalTemplateDto[];
+  templateStatuses: TerminalTemplateRuntimeStatusDto[];
+}
 
 function formatDate(value: string | null): string {
   if (!value) {
@@ -206,6 +214,13 @@ export function TerminalManagerPanel({
   const [stoppingTemplateId, setStoppingTemplateId] = useState<string | null>(null);
   const { showToast } = useToast();
 
+  useEffect(() => {
+    logPerfDebug("terminal_manager.props", {
+      currentWorkspaceId,
+      workspaceCount: navigationGroups.length
+    });
+  }, [currentWorkspaceId, navigationGroups.length]);
+
   const selectedShellOption = useMemo(
     () => shellOptions.find((option) => option.id === selectedShellId) ?? null,
     [selectedShellId, shellOptions]
@@ -220,6 +235,7 @@ export function TerminalManagerPanel({
 
     void (async () => {
       try {
+        logPerfDebug("terminal_manager.shell_options.start");
         const response = await listTerminalShellOptions();
 
         if (cancelled) {
@@ -228,6 +244,9 @@ export function TerminalManagerPanel({
 
         setShellOptions(response.items);
         setSelectedShellId((current) => current || pickDefaultShellId(response.items));
+        logPerfDebug("terminal_manager.shell_options.end", {
+          count: response.items.length
+        });
       } catch (error) {
         if (!cancelled) {
           showToast({
@@ -243,24 +262,36 @@ export function TerminalManagerPanel({
     };
   }, [showToast]);
 
-  async function loadWorkspaceData(workspaceId: string) {
-    setLoading(true);
+  async function loadWorkspaceData(workspaceId: string, options?: { silent?: boolean }) {
+    if (!options?.silent) {
+      setLoading(true);
+    }
 
     try {
-      const [templateResponse, templateStatusResponse] = await Promise.all([
-        listWorkspaceTemplates(workspaceId),
-        listWorkspaceTemplateRuntimeStatuses(workspaceId)
-      ]);
+      logPerfDebug("terminal_manager.load_workspace.start", {
+        workspaceId,
+        silent: options?.silent ?? false
+      });
+      const templateResponse = await listWorkspaceTemplates(workspaceId);
 
       setTemplates(templateResponse.items);
+
+      const templateStatusResponse = await listWorkspaceTemplateRuntimeStatuses(workspaceId);
       setTemplateStatuses(templateStatusResponse.items);
-    } catch (error) {
-      setTemplates([]);
-      setTemplateStatuses([]);
-      showToast({
-        title: error instanceof Error ? error.message : t("terminalManager.loadFailed"),
-        tone: "error"
+      logPerfDebug("terminal_manager.load_workspace.end", {
+        workspaceId,
+        templateCount: templateResponse.items.length,
+        statusCount: templateStatusResponse.items.length
       });
+    } catch (error) {
+      if (!options?.silent) {
+        setTemplates([]);
+        setTemplateStatuses([]);
+        showToast({
+          title: error instanceof Error ? error.message : t("terminalManager.loadFailed"),
+          tone: "error"
+        });
+      }
     } finally {
       setLoading(false);
     }
@@ -270,11 +301,47 @@ export function TerminalManagerPanel({
     if (!activeWorkspaceId) {
       setTemplates([]);
       setTemplateStatuses([]);
+      setLoading(false);
       return;
     }
 
-    void loadWorkspaceData(activeWorkspaceId);
+    const cachedSnapshot = readViewSnapshot<TerminalManagerSnapshot>(
+      buildTerminalManagerSnapshotKey(activeWorkspaceId),
+      TERMINAL_MANAGER_SNAPSHOT_CACHE_MAX_AGE_MS
+    );
+
+    logPerfDebug("terminal_manager.snapshot", {
+      workspaceId: activeWorkspaceId,
+      cached: Boolean(cachedSnapshot),
+      cachedTemplateCount: cachedSnapshot?.templates.length ?? 0,
+      cachedStatusCount: cachedSnapshot?.templateStatuses.length ?? 0
+    });
+
+    if (cachedSnapshot) {
+      setTemplates(cachedSnapshot.templates);
+      setTemplateStatuses(cachedSnapshot.templateStatuses);
+      setLoading(false);
+    } else {
+      setTemplates([]);
+      setTemplateStatuses([]);
+      setLoading(true);
+    }
+
+    void loadWorkspaceData(activeWorkspaceId, {
+      silent: cachedSnapshot !== null
+    });
   }, [activeWorkspaceId]);
+
+  useEffect(() => {
+    if (!activeWorkspaceId) {
+      return;
+    }
+
+    writeViewSnapshot<TerminalManagerSnapshot>(buildTerminalManagerSnapshotKey(activeWorkspaceId), {
+      templates,
+      templateStatuses
+    });
+  }, [activeWorkspaceId, templateStatuses, templates]);
 
   async function handleStopTemplateProcess(templateId: string) {
     if (!activeWorkspaceId) {
@@ -713,4 +780,8 @@ export function TerminalManagerPanel({
       </TerminalManagerModal>
     </section>
   );
+}
+
+function buildTerminalManagerSnapshotKey(workspaceId: string) {
+  return `terminal-manager.snapshot.${workspaceId}`;
 }

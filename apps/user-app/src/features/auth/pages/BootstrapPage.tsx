@@ -2,9 +2,9 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { useServerConfigSelector } from "../../../config/server-config";
+import { authGateway } from "../../../auth/auth-gateway";
 import { t } from "../../../shared/i18n";
 import { ApiError } from "../../../shared/network/api-error";
-import { authStore } from "../store/auth-store";
 
 export function BootstrapPage() {
   const navigate = useNavigate();
@@ -29,7 +29,7 @@ export function BootstrapPage() {
     setStatusText(null);
 
     try {
-      await authStore.bootstrap(username, password);
+      await authGateway.bootstrap(username, password);
       setStatusTone("success");
       setStatusText(t("auth.bootstrapSuccess"));
       window.setTimeout(() => navigate("/login", { replace: true }), 500);

@@ -1,0 +1,154 @@
+name: desktop-build-and-release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+env:
+  NODE_VERSION: "20"
+  PNPM_VERSION: "10.7.1"
+
+jobs:
+  build-desktop:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macos-aarch64
+            runner: macos-latest
+            tauri_args: --target aarch64-apple-darwin --bundles app,dmg
+            artifact_name: desktop-macos-aarch64
+            artifact_paths: |
+              apps/desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app
+              apps/desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+          - name: macos-x86_64
+            runner: macos-latest
+            tauri_args: --target x86_64-apple-darwin --bundles app,dmg
+            artifact_name: desktop-macos-x86_64
+            artifact_paths: |
+              apps/desktop/src-tauri/target/x86_64-apple-darwin/release/bundle/macos/*.app
+              apps/desktop/src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg
+          - name: windows-installers
+            runner: windows-latest
+            tauri_args: --bundles msi,nsis
+            artifact_name: desktop-windows
+            artifact_paths: |
+              apps/desktop/src-tauri/target/release/bundle/msi/*.msi
+              apps/desktop/src-tauri/target/release/bundle/nsis/*.exe
+          - name: ubuntu-deb
+            runner: ubuntu-22.04
+            tauri_args: --bundles deb
+            artifact_name: desktop-ubuntu-deb
+            artifact_paths: |
+              apps/desktop/src-tauri/target/release/bundle/deb/*.deb
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Linux system dependencies
+        if: matrix.runner == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Enable pnpm
+        shell: bash
+        run: |
+          corepack enable
+          corepack prepare pnpm@${PNPM_VERSION} --activate
+          pnpm --version
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Add macOS Rust targets
+        if: matrix.runner == 'macos-latest'
+        shell: bash
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - name: Cache Rust artifacts
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./apps/desktop/src-tauri -> target"
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build desktop bundles
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: corepack pnpm --dir apps/desktop build -- ${{ matrix.tauri_args }}
+
+      - name: Upload bundle artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          if-no-files-found: error
+          path: ${{ matrix.artifact_paths }}
+
+  publish-release:
+    name: publish-release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build-desktop
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download bundle artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag_name="${GITHUB_REF_NAME}"
+
+          if ! gh release view "${tag_name}" >/dev/null 2>&1; then
+            gh release create "${tag_name}" \
+              --title "${tag_name}" \
+              --notes "Automated desktop release assets."
+          fi
+
+          mapfile -d "" files < <(
+            find release-assets -type f \
+              \( -name "*.dmg" -o -name "*.msi" -o -name "*.exe" -o -name "*.deb" \) \
+              -print0
+          )
+
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No release files were found."
+            exit 1
+          fi
+
+          gh release upload "${tag_name}" "${files[@]}" --clobber

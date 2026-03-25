@@ -70,6 +70,7 @@ export class SessionHistoryService {
   private readonly claudeCodeHomeDir: string;
   private readonly workspaceDiscoveryTimestamps = new Map<string, number>();
   private readonly workspaceDiscoveryInflight = new Map<string, Promise<SessionListItem[]>>();
+  private readonly workspaceStateRefreshInflight = new Map<string, Promise<void>>();
   private readonly workspaceSessionRelations = new Map<
     string,
     Map<string, SessionRelationDescriptor>
@@ -101,6 +102,7 @@ export class SessionHistoryService {
     options?: {
       maxAgeMs?: number;
       force?: boolean;
+      refreshStateMode?: "inline" | "deferred";
     }
   ): Promise<SessionListItem[]> {
     const maxAgeMs = options?.maxAgeMs ?? 0;
@@ -117,12 +119,25 @@ export class SessionHistoryService {
       return inflight;
     }
 
-    const task = this.runDiscoverWorkspaceSessions(workspaceId, userId).finally(() => {
+    const task = this.runDiscoverWorkspaceSessions(
+      workspaceId,
+      userId,
+      options?.refreshStateMode ?? "inline"
+    ).finally(() => {
       this.workspaceDiscoveryInflight.delete(workspaceId);
     });
 
     this.workspaceDiscoveryInflight.set(workspaceId, task);
     return task;
+  }
+
+  needsWorkspaceDiscovery(workspaceId: string, maxAgeMs: number): boolean {
+    if (maxAgeMs <= 0) {
+      return true;
+    }
+
+    const lastRefreshedAt = this.workspaceDiscoveryTimestamps.get(workspaceId) ?? 0;
+    return Date.now() - lastRefreshedAt > maxAgeMs;
   }
 
   async readSessionHistory(
@@ -136,6 +151,10 @@ export class SessionHistoryService {
     const binding = this.getBindingOrThrow(sessionId);
     const current = this.sessionStatusSnapshotRepository.findBySessionId(sessionId);
     const safeLimit = clampLimit(limit);
+    const knownTotalMessageCount =
+      direction === "backward" && cursor === null
+        ? this.sessionIndexRepository.findIndexRecordBySessionId(sessionId)?.messageCount ?? null
+        : null;
     let readDurationMs = 0;
     let refreshStateDurationMs = 0;
 
@@ -157,7 +176,8 @@ export class SessionHistoryService {
         binding.rawStoreRef,
         cursor,
         safeLimit,
-        direction
+        direction,
+        knownTotalMessageCount
       );
       readDurationMs = Date.now() - readStartedAt;
 
@@ -228,6 +248,8 @@ export class SessionHistoryService {
     );
 
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const knownTotalMessageCount =
+        this.sessionIndexRepository.findIndexRecordBySessionId(sessionId)?.messageCount ?? null;
       const page = await this.readPage(
         sessionId,
         binding.provider,
@@ -235,7 +257,8 @@ export class SessionHistoryService {
         binding.rawStoreRef,
         null,
         30,
-        "backward"
+        "backward",
+        knownTotalMessageCount
       );
       const matched = [...page.messages]
         .reverse()
@@ -683,13 +706,14 @@ export class SessionHistoryService {
 
   private async runDiscoverWorkspaceSessions(
     workspaceId: string,
-    userId: string
+    userId: string,
+    refreshStateMode: "inline" | "deferred" = "inline"
   ): Promise<SessionListItem[]> {
     const startedAt = Date.now();
     const workspace = this.getWorkspaceOrThrow(workspaceId);
     let discoverDurationMs = 0;
     let persistDurationMs = 0;
-    let refreshStateDurationMs = 0;
+    const refreshStateCount = 10;
 
     try {
       const discoverStartedAt = Date.now();
@@ -771,10 +795,15 @@ export class SessionHistoryService {
       );
 
       const items = this.sessionIndexRepository.listByWorkspace(workspaceId, userId);
-      const refreshStateStartedAt = Date.now();
-      await this.refreshRecentSessionStates(items.slice(0, 10), userId);
-      refreshStateDurationMs = Date.now() - refreshStateStartedAt;
+      const recentItems = items.slice(0, refreshStateCount);
       this.workspaceDiscoveryTimestamps.set(workspaceId, Date.now());
+
+      if (refreshStateMode === "inline") {
+        await this.refreshRecentSessionStates(recentItems, userId);
+      } else {
+        this.scheduleWorkspaceStateRefresh(workspaceId, userId, recentItems);
+      }
+
       const nextItems = this.listWorkspaceSessions(workspaceId, userId);
 
       logPerformance(
@@ -786,10 +815,10 @@ export class SessionHistoryService {
           knownSessions: knownSessions.length,
           discoveredSessions: sessions.length,
           returnedSessions: nextItems.length,
-          refreshedStates: Math.min(items.length, 10),
+          refreshedStates: Math.min(items.length, refreshStateCount),
           discoverMs: discoverDurationMs,
           persistMs: persistDurationMs,
-          refreshStateMs: refreshStateDurationMs
+          refreshStateDeferred: refreshStateMode !== "inline"
         },
         {
           thresholdMs: 500
@@ -806,7 +835,7 @@ export class SessionHistoryService {
           workspacePath: workspace.path,
           discoverMs: discoverDurationMs,
           persistMs: persistDurationMs,
-          refreshStateMs: refreshStateDurationMs,
+          refreshStateDeferred: refreshStateMode !== "inline",
           error: error instanceof Error ? error.message : "unknown"
         },
         {
@@ -825,7 +854,8 @@ export class SessionHistoryService {
     rawStoreRef: string,
     cursor: string | null,
     limit: number,
-    direction: HistoryDirection = "forward"
+    direction: HistoryDirection = "forward",
+    knownTotalMessageCount: number | null = null
   ): Promise<HistoryPage> {
     if (shouldShortCircuitMissingSyntheticCodexHistory(provider, rawStoreRef)) {
       return {
@@ -836,8 +866,25 @@ export class SessionHistoryService {
       };
     }
 
-    return this.sessionSyncService
-      .readHistory(provider, providerSessionId, rawStoreRef, cursor, limit, direction)
+    const historyTask =
+      direction === "backward" && cursor === null && typeof knownTotalMessageCount === "number"
+        ? this.sessionSyncService.readRecentHistory(
+            provider,
+            providerSessionId,
+            rawStoreRef,
+            knownTotalMessageCount,
+            limit
+          )
+        : this.sessionSyncService.readHistory(
+            provider,
+            providerSessionId,
+            rawStoreRef,
+            cursor,
+            limit,
+            direction
+          );
+
+    return historyTask
       .then((page) => {
         const messages = this.sessionMessageAttachmentService.enrichMessages(sessionId, page.messages);
         this.persistSessionChangedFiles(sessionId, messages);
@@ -1094,7 +1141,66 @@ export class SessionHistoryService {
     sessions: SessionListItem[],
     userId: string
   ): Promise<void> {
-    await Promise.all(sessions.map((session) => this.refreshSessionState(session.sessionId, userId)));
+    for (let index = 0; index < sessions.length; index += 1) {
+      if (index > 0) {
+        await delay(0);
+      }
+
+      await this.refreshSessionState(sessions[index]!.sessionId, userId);
+    }
+  }
+
+  private scheduleWorkspaceStateRefresh(
+    workspaceId: string,
+    userId: string,
+    sessions: SessionListItem[]
+  ): void {
+    if (sessions.length === 0) {
+      return;
+    }
+
+    const inflightKey = `${workspaceId}:${userId}`;
+
+    if (this.workspaceStateRefreshInflight.has(inflightKey)) {
+      return;
+    }
+
+    const startedAt = Date.now();
+    const task = delay(0)
+      .then(() => this.refreshRecentSessionStates(sessions, userId))
+      .then(() => {
+        logPerformance(
+          "workspace.refresh_recent_session_states",
+          Date.now() - startedAt,
+          {
+            workspaceId,
+            refreshedStates: sessions.length
+          },
+          {
+            thresholdMs: 300
+          }
+        );
+      })
+      .catch((error) => {
+        logPerformance(
+          "workspace.refresh_recent_session_states.failed",
+          Date.now() - startedAt,
+          {
+            workspaceId,
+            refreshedStates: sessions.length,
+            error: error instanceof Error ? error.message : "unknown"
+          },
+          {
+            thresholdMs: 0,
+            force: true
+          }
+        );
+      })
+      .finally(() => {
+        this.workspaceStateRefreshInflight.delete(inflightKey);
+      });
+
+    this.workspaceStateRefreshInflight.set(inflightKey, task);
   }
 
   private cleanupStaleCodexSessions(

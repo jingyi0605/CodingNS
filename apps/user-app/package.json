@@ -8,9 +8,14 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json && vite build",
-    "test": "vitest run"
+    "test": "vitest run",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "tauri:android:init": "tauri android init",
+    "tauri:android:build": "tauri android build"
   },
   "dependencies": {
+    "@tauri-apps/api": "^2.10.1",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-serialize": "^0.14.0",
     "@xterm/xterm": "^6.0.0",
@@ -21,6 +26,7 @@
     "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.8.1",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.1.0",
     "@testing-library/user-event": "^14.5.2",

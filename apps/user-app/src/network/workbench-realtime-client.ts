@@ -1,5 +1,6 @@
 import { getHostWebSocketUrl } from "../config/env";
 import { authStore } from "../features/auth/store/auth-store";
+import { ConnectionManager } from "./connection-manager";
 
 import type { WorkbenchSnapshotDto } from "../features/conversation/api/conversation-api";
 
@@ -31,14 +32,20 @@ export interface WorkbenchRealtimeClientOptions {
 export class WorkbenchRealtimeClient {
   private socket: WebSocket | null = null;
   private disposed = false;
-  private reconnectAttempts = 0;
-  private reconnectTimer: number | null = null;
   private pendingRefresh = false;
+  private readonly connectionManager: ConnectionManager;
 
-  constructor(private readonly options: WorkbenchRealtimeClientOptions) {}
+  constructor(private readonly options: WorkbenchRealtimeClientOptions) {
+    this.connectionManager = new ConnectionManager({
+      onReconnect: (forceReset) => {
+        this.connect(forceReset);
+      },
+      onStateChange: options.onConnectionChange
+    });
+  }
 
   start(): void {
-    this.connect(false);
+    this.connectionManager.start();
   }
 
   requestRefresh(): void {
@@ -57,13 +64,7 @@ export class WorkbenchRealtimeClient {
 
   close(): void {
     this.disposed = true;
-
-    if (this.reconnectTimer !== null) {
-      window.clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
-
-    this.options.onConnectionChange("closed");
+    this.connectionManager.close();
     this.socket?.close();
     this.socket = null;
   }
@@ -85,17 +86,12 @@ export class WorkbenchRealtimeClient {
       return;
     }
 
-    if (this.reconnectAttempts > 0) {
-      this.options.onConnectionChange("reconnecting");
-    }
-
     const socketUrl = `${getHostWebSocketUrl("/ws")}?access_token=${encodeURIComponent(accessToken)}`;
     const socket = new WebSocket(socketUrl);
 
     this.socket = socket;
 
     socket.addEventListener("open", () => {
-      this.reconnectAttempts = 0;
       socket.send(
         JSON.stringify({
           type: "workbench.subscribe"
@@ -111,7 +107,7 @@ export class WorkbenchRealtimeClient {
       const payload = JSON.parse(raw.data as string) as IncomingEvent;
 
       if (payload.type === "system.connected") {
-        this.options.onConnectionChange("connected");
+        this.connectionManager.markConnected();
         return;
       }
 
@@ -131,38 +127,20 @@ export class WorkbenchRealtimeClient {
     });
 
     socket.addEventListener("close", () => {
-      if (this.disposed) {
+      if (this.disposed || this.socket !== socket) {
         return;
       }
 
-      this.scheduleReconnect();
+      this.connectionManager.markDisconnected();
     });
 
     socket.addEventListener("error", () => {
-      if (this.disposed) {
+      if (this.disposed || this.socket !== socket) {
         return;
       }
 
-      if (this.reconnectAttempts === 0) {
-        this.options.onConnectionChange("reconnecting");
-      }
+      this.connectionManager.markTransientFailure();
     });
-  }
-
-  private scheduleReconnect(): void {
-    this.reconnectAttempts += 1;
-
-    if (this.reconnectAttempts > 4) {
-      this.options.onConnectionChange("reconnect_failed");
-      return;
-    }
-
-    this.options.onConnectionChange("reconnecting");
-    const delay = 300 * this.reconnectAttempts;
-
-    this.reconnectTimer = window.setTimeout(() => {
-      this.connect(true);
-    }, delay);
   }
 }
 

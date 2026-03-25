@@ -1,5 +1,6 @@
 import { getHostWebSocketUrl } from "../config/env";
 import { authStore } from "../features/auth/store/auth-store";
+import { ConnectionManager } from "./connection-manager";
 
 type RuntimeConnectionState = "connected" | "reconnecting" | "reconnect_failed" | "closed";
 
@@ -88,16 +89,21 @@ export interface RealtimeClientOptions {
 export class RealtimeClient {
   private socket: WebSocket | null = null;
   private disposed = false;
-  private reconnectAttempts = 0;
-  private reconnectTimer: number | null = null;
   private latestCursor: string | null;
+  private readonly connectionManager: ConnectionManager;
 
   constructor(private readonly options: RealtimeClientOptions) {
     this.latestCursor = options.cursor;
+    this.connectionManager = new ConnectionManager({
+      onReconnect: (forceReset) => {
+        this.connect(forceReset);
+      },
+      onStateChange: options.onConnectionChange
+    });
   }
 
   start(): void {
-    this.connect(false);
+    this.connectionManager.start();
   }
 
   updateCursor(cursor: string | null): void {
@@ -105,19 +111,12 @@ export class RealtimeClient {
   }
 
   reconnectNow(): void {
-    this.reconnectAttempts = 0;
-    this.connect(true);
+    this.connectionManager.reconnectNow();
   }
 
   close(): void {
     this.disposed = true;
-
-    if (this.reconnectTimer !== null) {
-      window.clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
-
-    this.options.onConnectionChange("closed");
+    this.connectionManager.close();
     this.socket?.close();
     this.socket = null;
   }
@@ -139,17 +138,12 @@ export class RealtimeClient {
       return;
     }
 
-    if (this.reconnectAttempts > 0) {
-      this.options.onConnectionChange("reconnecting");
-    }
-
     const socketUrl = `${getHostWebSocketUrl("/ws")}?access_token=${encodeURIComponent(accessToken)}`;
     const socket = new WebSocket(socketUrl);
 
     this.socket = socket;
 
     socket.addEventListener("open", () => {
-      this.reconnectAttempts = 0;
       socket.send(
         JSON.stringify({
           type: "session.subscribe",
@@ -164,7 +158,7 @@ export class RealtimeClient {
       const payload = JSON.parse(raw.data as string) as IncomingEvent | { type: "system.connected" };
 
       if (payload.type === "system.connected") {
-        this.options.onConnectionChange("connected");
+        this.connectionManager.markConnected();
         return;
       }
 
@@ -203,37 +197,19 @@ export class RealtimeClient {
     });
 
     socket.addEventListener("close", () => {
-      if (this.disposed) {
+      if (this.disposed || this.socket !== socket) {
         return;
       }
 
-      this.scheduleReconnect();
+      this.connectionManager.markDisconnected();
     });
 
     socket.addEventListener("error", () => {
-      if (this.disposed) {
+      if (this.disposed || this.socket !== socket) {
         return;
       }
 
-      if (this.reconnectAttempts === 0) {
-        this.options.onConnectionChange("reconnecting");
-      }
+      this.connectionManager.markTransientFailure();
     });
-  }
-
-  private scheduleReconnect(): void {
-    this.reconnectAttempts += 1;
-
-    if (this.reconnectAttempts > 4) {
-      this.options.onConnectionChange("reconnect_failed");
-      return;
-    }
-
-    this.options.onConnectionChange("reconnecting");
-    const delay = 300 * this.reconnectAttempts;
-
-    this.reconnectTimer = window.setTimeout(() => {
-      this.connect(true);
-    }, delay);
   }
 }

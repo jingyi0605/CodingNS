@@ -1,7 +1,8 @@
 import { useSyncExternalStore } from "react";
 
-const FALLBACK_HOST_BASE_URL = "http://127.0.0.1:3002";
-const STORAGE_KEY = "codingns.server.base-url";
+import { clientConfigStore } from "./client-config-store";
+import { normalizeServerBaseUrl } from "./server-config-shared";
+
 const HISTORY_STORAGE_KEY = "codingns.server.base-url.history";
 const MAX_HISTORY_SIZE = 6;
 const CUSTOM_SERVER_OPTION = "__custom__";
@@ -10,8 +11,6 @@ export interface ServerConfigState {
   baseUrl: string;
   options: string[];
 }
-
-type Listener = () => void;
 
 function canUseLocalStorage(): boolean {
   return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
@@ -25,43 +24,6 @@ function readWindowOrigin(): string | null {
   return window.location.origin;
 }
 
-function readEnvBaseUrl(): string | null {
-  const envUrl = import.meta.env.VITE_HOST_BASE_URL;
-  return typeof envUrl === "string" && envUrl.trim().length > 0 ? envUrl : null;
-}
-
-function isDevMode(): boolean {
-  return Boolean(import.meta.env.DEV);
-}
-
-function isHttpProtocol(protocol: string): boolean {
-  return protocol === "http:" || protocol === "https:";
-}
-
-export function normalizeServerBaseUrl(input: string): string {
-  const trimmed = input.trim();
-
-  if (!trimmed) {
-    throw new Error("EMPTY_SERVER_URL");
-  }
-
-  const candidate = /^[a-zA-Z][a-zA-Z\d+.-]*:\/\//.test(trimmed)
-    ? trimmed
-    : `http://${trimmed}`;
-  const parsed = new URL(candidate);
-
-  if (!isHttpProtocol(parsed.protocol)) {
-    throw new Error("INVALID_SERVER_PROTOCOL");
-  }
-
-  parsed.hash = "";
-  parsed.search = "";
-
-  const pathname = parsed.pathname.replace(/\/+$/, "");
-
-  return `${parsed.origin}${pathname === "/" ? "" : pathname}`;
-}
-
 function safelyNormalizeServerBaseUrl(input: string | null | undefined): string | null {
   if (!input) {
     return null;
@@ -72,47 +34,6 @@ function safelyNormalizeServerBaseUrl(input: string | null | undefined): string 
   } catch {
     return null;
   }
-}
-
-function getDefaultHostBaseUrl(): string {
-  const envBaseUrl = safelyNormalizeServerBaseUrl(readEnvBaseUrl());
-  const windowOrigin = safelyNormalizeServerBaseUrl(readWindowOrigin());
-
-  // 开发环境优先直连后端，避免通过 Vite 代理放大大体积导航接口的延迟。
-  if (isDevMode()) {
-    return envBaseUrl ?? FALLBACK_HOST_BASE_URL;
-  }
-
-  return (
-    envBaseUrl ??
-    windowOrigin ??
-    FALLBACK_HOST_BASE_URL
-  );
-}
-
-function readStoredBaseUrl(): string | null {
-  if (!canUseLocalStorage()) {
-    return null;
-  }
-
-  const storedBaseUrl = safelyNormalizeServerBaseUrl(window.localStorage.getItem(STORAGE_KEY));
-
-  if (!storedBaseUrl) {
-    return null;
-  }
-
-  if (!isDevMode()) {
-    return storedBaseUrl;
-  }
-
-  const windowOrigin = safelyNormalizeServerBaseUrl(readWindowOrigin());
-
-  if (windowOrigin && storedBaseUrl === windowOrigin && storedBaseUrl !== FALLBACK_HOST_BASE_URL) {
-    window.localStorage.setItem(STORAGE_KEY, FALLBACK_HOST_BASE_URL);
-    return FALLBACK_HOST_BASE_URL;
-  }
-
-  return storedBaseUrl;
 }
 
 function readStoredHistory(): string[] {
@@ -135,13 +56,13 @@ function readStoredHistory(): string[] {
 
     return parsed
       .map((item) => (typeof item === "string" ? safelyNormalizeServerBaseUrl(item) : null))
-      .filter((item): item is string => typeof item === "string");
+      .filter((item): item is string => Boolean(item));
   } catch {
     return [];
   }
 }
 
-function uniqServerOptions(items: Array<string | null | undefined>): string[] {
+function uniqOptions(items: Array<string | null | undefined>): string[] {
   const seen = new Set<string>();
   const result: string[] = [];
 
@@ -157,61 +78,71 @@ function uniqServerOptions(items: Array<string | null | undefined>): string[] {
   return result;
 }
 
-function buildOptions(baseUrl: string, history: string[]): string[] {
-  return uniqServerOptions([
-    baseUrl,
-    ...history,
-    safelyNormalizeServerBaseUrl(readWindowOrigin()),
-    safelyNormalizeServerBaseUrl(readEnvBaseUrl()),
-    FALLBACK_HOST_BASE_URL
-  ]).slice(0, MAX_HISTORY_SIZE);
-}
-
-function createInitialState(): ServerConfigState {
-  const baseUrl = readStoredBaseUrl() ?? getDefaultHostBaseUrl();
+function buildOptions(baseUrl: string): string[] {
   const history = readStoredHistory();
+  const nextOptions = uniqOptions([baseUrl, ...history, safelyNormalizeServerBaseUrl(readWindowOrigin())]);
 
-  return {
-    baseUrl,
-    options: buildOptions(baseUrl, history)
-  };
+  return nextOptions.slice(0, MAX_HISTORY_SIZE);
 }
 
-class ServerConfigStore {
-  private state = createInitialState();
-  private listeners = new Set<Listener>();
+function persistHistory(options: string[]): void {
+  if (canUseLocalStorage()) {
+    window.localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(options.slice(0, MAX_HISTORY_SIZE)));
+  }
+}
 
-  subscribe = (listener: Listener) => {
+class ServerConfigStoreCompat {
+  private state: ServerConfigState = this.createState(clientConfigStore.getState().hostBaseUrl);
+  private listeners = new Set<() => void>();
+
+  constructor() {
+    clientConfigStore.subscribe(() => {
+      const nextState = this.createState(clientConfigStore.getState().hostBaseUrl);
+
+      if (
+        nextState.baseUrl === this.state.baseUrl &&
+        nextState.options.length === this.state.options.length &&
+        nextState.options.every((item, index) => item === this.state.options[index])
+      ) {
+        return;
+      }
+
+      this.state = nextState;
+      this.emit();
+    });
+  }
+
+  subscribe = (listener: () => void) => {
     this.listeners.add(listener);
     return () => {
       this.listeners.delete(listener);
     };
   };
 
-  getState = () => this.state;
+  getState = (): ServerConfigState => this.state;
 
   setBaseUrl(input: string): boolean {
     const nextBaseUrl = normalizeServerBaseUrl(input);
-    const changed = nextBaseUrl !== this.state.baseUrl;
-    const nextOptions = buildOptions(nextBaseUrl, [nextBaseUrl, ...this.state.options]);
-
-    this.state = {
-      baseUrl: nextBaseUrl,
-      options: nextOptions
-    };
-
-    if (canUseLocalStorage()) {
-      window.localStorage.setItem(STORAGE_KEY, nextBaseUrl);
-      window.localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(nextOptions));
-    }
-
+    const changed = nextBaseUrl !== clientConfigStore.getState().hostBaseUrl;
+    this.state = this.createState(nextBaseUrl);
     this.emit();
+    void clientConfigStore.update({ hostBaseUrl: nextBaseUrl });
     return changed;
   }
 
   reset(): void {
-    this.state = createInitialState();
+    this.state = this.createState(clientConfigStore.getState().hostBaseUrl);
     this.emit();
+  }
+
+  private createState(baseUrl: string): ServerConfigState {
+    const options = buildOptions(baseUrl);
+    persistHistory(options);
+
+    return {
+      baseUrl,
+      options
+    };
   }
 
   private emit(): void {
@@ -221,7 +152,7 @@ class ServerConfigStore {
   }
 }
 
-export const serverConfigStore = new ServerConfigStore();
+export const serverConfigStore = new ServerConfigStoreCompat();
 
 export function useServerConfigSelector<T>(selector: (state: ServerConfigState) => T): T {
   return useSyncExternalStore(serverConfigStore.subscribe, () => selector(serverConfigStore.getState()));
@@ -234,3 +165,5 @@ export function getServerSelectValue(baseUrl: string, options: string[]): string
 export function getCustomServerOptionValue(): string {
   return CUSTOM_SERVER_OPTION;
 }
+
+export { normalizeServerBaseUrl } from "./server-config-shared";
