@@ -5054,7 +5054,7 @@ textarea:focus-visible {
   flex-direction: column;
   gap: 4px;
   min-width: 0;
-  padding: 6px 38px 6px 9px;
+  padding: 6px 9px;
 }
 
 .workbench-session-link.is-selecting {
@@ -5351,7 +5351,7 @@ textarea:focus-visible {
 .workbench-session-link,
 .workbench-session-card[data-depth="1"] .workbench-session-link {
   gap: 3px;
-  padding: 5px 38px 5px 9px;
+  padding: 5px 9px;
 }
 
 .workbench-session-link.is-selecting,
