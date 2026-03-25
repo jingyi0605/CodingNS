@@ -4,9 +4,9 @@ import { clientConfigStore, useClientConfigSelector } from "../../../config/clie
 import { normalizeServerBaseUrl } from "../../../config/server-config";
 import { usePlatform } from "../../../platform/platform-provider";
 import { t } from "../../../shared/i18n";
-import { THEMES, useTheme, type ThemeId } from "../../../shared/theme";
-import { authStore } from "../../auth/store/auth-store";
+import { THEMES, getThemeLabel, useTheme, type ThemeId } from "../../../shared/theme";
 import { ReleasePanel } from "../../../settings/ReleasePanel";
+import { authStore } from "../../auth/store/auth-store";
 
 export function SettingsPage() {
   const navigate = useNavigate();
@@ -25,7 +25,7 @@ export function SettingsPage() {
         hostBaseUrl: normalizeServerBaseUrl(value)
       });
     } catch {
-      // 输入过程中允许暂时非法，真正保存动作交给 blur。
+      // 输入过程中允许暂时不合法，真正保存交给 blur 时兜底。
     }
   }
 
@@ -34,34 +34,26 @@ export function SettingsPage() {
       <div className="settings-container">
         <h1 className="settings-title">{t("settings.title")}</h1>
 
-        {/* Appearance Section */}
         <section className="settings-section">
           <h2 className="settings-section-title">{t("settings.appearance")}</h2>
           <div className="settings-card">
-            <div className="settings-row">
+            <div className="settings-row settings-row-theme">
               <div className="settings-row-label">
                 <span className="settings-row-title">{t("settings.theme")}</span>
-                <span className="settings-row-description">
-                  {t("settings.themeDescription")}
-                </span>
               </div>
-              <div className="settings-row-control">
+              <div className="settings-row-control settings-row-control-stretch">
                 <div className="theme-selector">
-                  {THEMES.map((tOption: { id: string; label: string; color: string }) => (
+                  {THEMES.map((themeOption) => (
                     <button
-                      key={tOption.id}
+                      key={themeOption.id}
                       type="button"
-                      className={`theme-card ${theme === tOption.id ? "active" : ""}`}
-                      onClick={() => setTheme(tOption.id as ThemeId)}
+                      className={`theme-card ${theme === themeOption.id ? "active" : ""}`}
+                      aria-pressed={theme === themeOption.id}
+                      onClick={() => setTheme(themeOption.id as ThemeId)}
                     >
-                      <span
-                        className="theme-preview"
-                        style={{ background: tOption.color }}
-                      />
-                      <span className="theme-label">{tOption.label}</span>
-                      {theme === tOption.id && (
-                        <span className="theme-check">✓</span>
-                      )}
+                      <span className="theme-preview" style={{ background: themeOption.color }} />
+                      <span className="theme-label">{getThemeLabel(themeOption)}</span>
+                      {theme === themeOption.id ? <span className="theme-check">✓</span> : null}
                     </button>
                   ))}
                 </div>
@@ -86,10 +78,13 @@ export function SettingsPage() {
                 />
               </div>
             </div>
+
             <div className="settings-row">
               <div className="settings-row-label">
                 <span className="settings-row-title">{t("settings.releaseChannel")}</span>
-                <span className="settings-row-description">{t("settings.releaseChannelDescription")}</span>
+                <span className="settings-row-description">
+                  {t("settings.releaseChannelDescription")}
+                </span>
               </div>
               <div className="settings-row-control">
                 <select
@@ -106,10 +101,13 @@ export function SettingsPage() {
                 </select>
               </div>
             </div>
+
             <div className="settings-row">
               <div className="settings-row-label">
                 <span className="settings-row-title">{t("settings.autoReconnect")}</span>
-                <span className="settings-row-description">{t("settings.autoReconnectDescription")}</span>
+                <span className="settings-row-description">
+                  {t("settings.autoReconnectDescription")}
+                </span>
               </div>
               <div className="settings-row-control">
                 <label className="settings-checkbox">
@@ -126,10 +124,13 @@ export function SettingsPage() {
                 </label>
               </div>
             </div>
+
             <div className="settings-row">
               <div className="settings-row-label">
                 <span className="settings-row-title">{t("settings.autoCheckUpdate")}</span>
-                <span className="settings-row-description">{t("settings.autoCheckUpdateDescription")}</span>
+                <span className="settings-row-description">
+                  {t("settings.autoCheckUpdateDescription")}
+                </span>
               </div>
               <div className="settings-row-control">
                 <label className="settings-checkbox">
@@ -155,7 +156,9 @@ export function SettingsPage() {
             <div className="settings-row">
               <div className="settings-row-label">
                 <span className="settings-row-title">{t("settings.runtimePlatform")}</span>
-                <span className="settings-row-description">{t("settings.runtimePlatformDescription")}</span>
+                <span className="settings-row-description">
+                  {t("settings.runtimePlatformDescription")}
+                </span>
               </div>
               <div className="settings-row-control">
                 <span className="settings-runtime-badge">
@@ -163,10 +166,13 @@ export function SettingsPage() {
                 </span>
               </div>
             </div>
+
             <div className="settings-row">
               <div className="settings-row-label">
                 <span className="settings-row-title">{t("settings.desktopRelease")}</span>
-                <span className="settings-row-description">{t("settings.desktopReleaseDescription")}</span>
+                <span className="settings-row-description">
+                  {t("settings.desktopReleaseDescription")}
+                </span>
               </div>
               <div className="settings-row-control settings-row-control-stretch">
                 <ReleasePanel enabled={platform.isDesktop} />
@@ -175,23 +181,16 @@ export function SettingsPage() {
           </div>
         </section>
 
-        {/* Account Section */}
         <section className="settings-section">
           <h2 className="settings-section-title">{t("settings.account")}</h2>
           <div className="settings-card">
             <div className="settings-row">
               <div className="settings-row-label">
                 <span className="settings-row-title">{t("settings.logout")}</span>
-                <span className="settings-row-description">
-                  {t("settings.logoutDescription")}
-                </span>
+                <span className="settings-row-description">{t("settings.logoutDescription")}</span>
               </div>
               <div className="settings-row-control">
-                <button
-                  className="settings-button settings-button-danger"
-                  onClick={handleLogout}
-                  type="button"
-                >
+                <button className="settings-button settings-button-danger" onClick={handleLogout} type="button">
                   {t("common.logout")}
                 </button>
               </div>
@@ -199,7 +198,6 @@ export function SettingsPage() {
           </div>
         </section>
 
-        {/* Version Info */}
         <div className="settings-footer">
           <span className="settings-version">CodingNS v1.0.0</span>
         </div>

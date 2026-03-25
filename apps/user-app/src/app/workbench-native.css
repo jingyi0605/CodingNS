@@ -868,34 +868,47 @@ body {
 }
 
 .settings-page {
-  padding: 18px 20px 28px;
+  padding: 14px 18px 22px;
   background: transparent;
 }
 
 .settings-container {
-  max-width: 860px;
+  max-width: 780px;
 }
 
 .settings-title {
-  margin-bottom: 20px;
-  font-size: 22px;
+  margin-bottom: 16px;
+  font-size: 20px;
   letter-spacing: -0.02em;
 }
 
 .settings-section-title {
-  margin-bottom: 10px;
+  margin-bottom: 8px;
   font-size: 12px;
   color: var(--text-tertiary);
 }
 
 .settings-card {
-  border-radius: 14px;
+  border-radius: 12px;
   overflow: hidden;
 }
 
 .settings-row {
-  padding: 16px 18px;
+  gap: 14px;
+  padding: 12px 16px;
   border-bottom-color: var(--panel-separator);
+}
+
+.settings-row-theme {
+  gap: 10px;
+}
+
+.settings-row-theme .settings-row-control {
+  width: 100%;
+}
+
+.theme-selector {
+  gap: 8px;
 }
 
 .settings-release-notes {
@@ -904,8 +917,10 @@ body {
 }
 
 .theme-card {
-  min-width: 150px;
+  min-width: 0;
+  min-height: 44px;
   border-width: 1px;
+  border-radius: 10px;
 }
 
 .theme-card.active {
