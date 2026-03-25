@@ -42,6 +42,7 @@ interface ComposerImageAttachment {
 }
 
 const DEFAULT_CLAUDE_MODEL_ID = "provider-default";
+const FOCUS_COMPOSER_EVENT = "workbench:focus-composer";
 const MODEL_OPTIONS: ModelOption[] = [
   { id: "gpt-5.4", name: "GPT-5.4", provider: "codex" },
   { id: "gpt-4.1", name: "GPT-4.1", provider: "codex" },
@@ -369,6 +370,18 @@ export function ComposerPanel({
       URL.revokeObjectURL(previewUrl);
     });
     attachmentRegistryRef.current.clear();
+  }, []);
+
+  useEffect(() => {
+    function handleFocusComposer() {
+      textareaRef.current?.focus();
+    }
+
+    window.addEventListener(FOCUS_COMPOSER_EVENT, handleFocusComposer as EventListener);
+
+    return () => {
+      window.removeEventListener(FOCUS_COMPOSER_EVENT, handleFocusComposer as EventListener);
+    };
   }, []);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {

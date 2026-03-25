@@ -944,7 +944,7 @@ describe("WorkbenchLayout", () => {
 
     renderWorkbenchRoute();
 
-    await userEvent.click(await screen.findByRole("button", { name: /Clone 项目/i }));
+    await userEvent.click(await screen.findByRole("button", { name: /Clone项目/i }));
 
     const cloneDialog = await screen.findByRole("dialog", { name: t("shell.cloneWorkspaceTitle") });
 
