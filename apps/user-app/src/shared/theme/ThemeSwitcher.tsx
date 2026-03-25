@@ -1,5 +1,5 @@
 import { t } from "../i18n";
-import { THEMES, useTheme, type ThemeId } from "./theme";
+import { THEMES, getThemeLabel, useTheme, type ThemeId } from "./theme";
 
 export function ThemeSwitcher() {
   const { theme, setTheme } = useTheme();
@@ -18,8 +18,8 @@ export function ThemeSwitcher() {
             type="button"
             className={`theme-option ${theme === t.id ? "active" : ""}`}
             onClick={() => handleChange(t.id)}
-            title={t.label}
-            aria-label={t.label}
+            title={getThemeLabel(t)}
+            aria-label={getThemeLabel(t)}
             style={{ "--theme-color": t.color } as React.CSSProperties}
           >
             <span className="theme-option-dot" />
