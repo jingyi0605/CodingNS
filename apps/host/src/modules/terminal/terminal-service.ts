@@ -197,7 +197,7 @@ export class TerminalService extends EventEmitter {
       });
     }
 
-    this.getTerminalOrThrow(terminalId);
+    this.reconcileInactiveTerminal(terminalId);
     this.runtimeManager.write(terminalId, content);
     this.touchLastActiveAt(terminalId);
 
@@ -214,7 +214,7 @@ export class TerminalService extends EventEmitter {
       });
     }
 
-    this.getTerminalOrThrow(terminalId);
+    this.reconcileInactiveTerminal(terminalId);
     this.runtimeManager.resize(terminalId, cols, rows);
     this.touchLastActiveAt(terminalId);
 
@@ -226,7 +226,7 @@ export class TerminalService extends EventEmitter {
     lastCursor: string | null,
     callbacks: SubscribeTerminalCallbacks
   ): { close(): void } {
-    const terminal = this.getTerminalOrThrow(terminalId);
+    const terminal = this.reconcileInactiveTerminal(terminalId);
     const backfill = this.outputBuffer.readSince(terminalId, lastCursor);
     this.cancelIdleCleanup(terminalId);
     this.activeSubscribers.set(terminalId, (this.activeSubscribers.get(terminalId) ?? 0) + 1);
@@ -355,6 +355,32 @@ export class TerminalService extends EventEmitter {
       // 终端重新活跃后，从当前时刻重新计算空闲清理窗口。
       this.scheduleIdleCleanup(terminalId);
     }
+  }
+
+  private reconcileInactiveTerminal(terminalId: string): TerminalInstance {
+    const terminal = this.getTerminalOrThrow(terminalId);
+
+    if (this.runtimeManager.isRunning(terminalId)) {
+      return terminal;
+    }
+
+    if (terminal.status === "closed" || terminal.status === "error") {
+      return terminal;
+    }
+
+    const closedAt = nowIso();
+    this.terminalInstanceRepository.updateLifecycle({
+      id: terminalId,
+      status: "closed",
+      lastActiveAt: closedAt,
+      closedAt,
+      exitCode: terminal.exitCode,
+      statusDetail: resolveClosedStatusDetail("user_closed", terminal.statusDetail)
+    });
+
+    const closedTerminal = this.getTerminalOrThrow(terminalId);
+    this.emit("status", closedTerminal);
+    return closedTerminal;
   }
 
   private releaseSubscription(terminalId: string): void {

@@ -56,6 +56,7 @@ export class TerminalRealtimeClient {
   private lastCursor: string | null;
   private isSubscribed = false;
   private pendingResize: { cols: number; rows: number } | null = null;
+  private lastSentResizeKey: string | null = null;
   private readonly connectionManager: ConnectionManager;
 
   constructor(private readonly options: TerminalRealtimeClientOptions) {
@@ -218,11 +219,22 @@ export class TerminalRealtimeClient {
       return;
     }
 
+    const nextResize = this.pendingResize;
+    const nextResizeKey = `${nextResize.cols}x${nextResize.rows}`;
+
+    if (this.lastSentResizeKey === nextResizeKey) {
+      this.pendingResize = null;
+      return;
+    }
+
     this.sendMessage({
       type: "terminal.resize",
       terminalId: this.options.terminalId,
-      cols: this.pendingResize.cols,
-      rows: this.pendingResize.rows
+      cols: nextResize.cols,
+      rows: nextResize.rows
     });
+
+    this.lastSentResizeKey = nextResizeKey;
+    this.pendingResize = null;
   }
 }

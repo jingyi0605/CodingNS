@@ -11,15 +11,10 @@ import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout
 import {
   closeTerminal,
   createTerminal,
-  createTerminalTemplate,
   listTerminalShellOptions,
-  listWorkspaceTemplates,
   listWorkspaceTerminals,
-  runTerminalTemplate,
-  sendTerminalInput,
   type TerminalDto,
-  type TerminalShellOptionDto,
-  type TerminalTemplateDto
+  type TerminalShellOptionDto
 } from "../api/terminal-api";
 import {
   persistActiveTerminalId,
@@ -37,12 +32,6 @@ import {
   type TerminalOutputChunkDto
 } from "../runtime/terminal-realtime-client";
 
-interface TemplateDraftState {
-  name: string;
-  command: string;
-  args: string;
-}
-
 interface TerminalViewportRuntime {
   terminal: Terminal;
   restoredFromSnapshot: boolean;
@@ -56,6 +45,10 @@ const DEFAULT_TERMINAL_COLS = 120;
 const DEFAULT_TERMINAL_ROWS = 30;
 const PERSISTED_TERMINAL_SCROLLBACK = 160;
 const MAX_PERSISTED_TERMINAL_VIEW_CHARS = 120_000;
+const MIN_TERMINAL_COLS = 20;
+const MIN_TERMINAL_ROWS = 5;
+const MIN_TERMINAL_PIXEL_WIDTH = 320;
+const MIN_TERMINAL_PIXEL_HEIGHT = 120;
 
 export function TerminalPage() {
   const navigate = useNavigate();
@@ -65,6 +58,7 @@ export function TerminalPage() {
   const viewportRuntimeRef = useRef<TerminalViewportRuntime | null>(null);
   const activeCursorRef = useRef<string | null>(null);
   const activeRecoveryStateRef = useRef<"idle_closed" | null>(null);
+  const activeTerminalStatusRef = useRef<TerminalDto["status"] | null>(null);
   const workspaces = useMemo(
     () => navigationGroups.map((group) => group.workspace),
     [navigationGroups]
@@ -74,17 +68,8 @@ export function TerminalPage() {
   const [shellOptions, setShellOptions] = useState<TerminalShellOptionDto[]>([]);
   const [selectedShellId, setSelectedShellId] = useState("");
   const [terminals, setTerminals] = useState<TerminalDto[]>([]);
-  const [templates, setTemplates] = useState<TerminalTemplateDto[]>([]);
   const [activeTerminalId, setActiveTerminalId] = useState<string | null>(null);
-  const [connectionState, setConnectionState] = useState<TerminalConnectionState>("closed");
-  const [terminalInput, setTerminalInput] = useState("");
   const [creatingTerminal, setCreatingTerminal] = useState(false);
-  const [subscribed, setSubscribed] = useState(false);
-  const [templateDraft, setTemplateDraft] = useState<TemplateDraftState>({
-    name: "",
-    command: "",
-    args: ""
-  });
   const { showToast } = useToast();
 
   const notifyTerminal = useCallback(
@@ -94,13 +79,24 @@ export function TerminalPage() {
     [showToast]
   );
 
+  const activeTerminal = useMemo(
+    () => terminals.find((terminal) => terminal.id === activeTerminalId) ?? null,
+    [activeTerminalId, terminals]
+  );
+  const selectedShellOption = useMemo(
+    () => shellOptions.find((option) => option.id === selectedShellId) ?? null,
+    [selectedShellId, shellOptions]
+  );
+
+  useEffect(() => {
+    activeTerminalStatusRef.current = activeTerminal?.status ?? null;
+  }, [activeTerminal]);
+
   useEffect(() => {
     void (async () => {
       const shellResponse = await listTerminalShellOptions();
       setShellOptions(shellResponse.items);
-
-      const defaultShellId = pickDefaultShellId(shellResponse.items);
-      setSelectedShellId(defaultShellId);
+      setSelectedShellId(pickDefaultShellId(shellResponse.items));
     })().catch(() => {
       notifyTerminal(t("terminal.workspaceLoadFailed"), "error");
     });
@@ -129,7 +125,6 @@ export function TerminalPage() {
   useEffect(() => {
     if (!selectedWorkspaceId) {
       setTerminals([]);
-      setTemplates([]);
       setActiveTerminalId(null);
       return;
     }
@@ -154,11 +149,11 @@ export function TerminalPage() {
     }
 
     const persistedViewState = readTerminalRecoveryState(activeTerminalId).viewState;
-
     const runtime = createTerminalViewportRuntime({
       container: terminalContainerRef.current,
       restoredViewState: persistedViewState,
       getCursor: () => activeCursorRef.current,
+      canResize: () => activeTerminalStatusRef.current === "running",
       onInput: (content) => {
         realtimeClientRef.current?.sendInput(content);
       },
@@ -184,12 +179,10 @@ export function TerminalPage() {
   useEffect(() => {
     realtimeClientRef.current?.close();
     realtimeClientRef.current = null;
-    setSubscribed(false);
     activeRecoveryStateRef.current = null;
 
     if (!activeTerminalId) {
       activeCursorRef.current = null;
-      setConnectionState("closed");
       return;
     }
 
@@ -197,14 +190,12 @@ export function TerminalPage() {
     const persistedViewState = recoveryState.viewState;
     const resumeCursor = recoveryState.resumeCursor;
     activeCursorRef.current = resumeCursor;
-    setConnectionState("reconnecting");
 
     const client = new TerminalRealtimeClient({
       terminalId: activeTerminalId,
       lastCursor: resumeCursor,
-      onConnectionChange: setConnectionState,
+      onConnectionChange: (_state: TerminalConnectionState) => {},
       onSubscribed: () => {
-        setSubscribed(true);
         viewportRuntimeRef.current?.focus();
       },
       onBackfill: (event) => {
@@ -237,7 +228,9 @@ export function TerminalPage() {
           return;
         }
 
-        notifyTerminal(t("terminal.connectedHint"));
+        if (!persistedViewState?.content) {
+          notifyTerminal(t("terminal.connectedHint"));
+        }
       },
       onOutput: (event) => {
         viewportRuntimeRef.current?.terminal.write(event.chunk.content);
@@ -262,6 +255,8 @@ export function TerminalPage() {
           return;
         }
 
+        activeTerminalStatusRef.current = event.terminal.status;
+
         if (event.terminal.status === "closed" && event.terminal.statusDetail === "TERMINAL_IDLE_TIMEOUT") {
           activeRecoveryStateRef.current = "idle_closed";
           notifyTerminal(t("terminal.recoveryIdleClosed"), "warning");
@@ -273,6 +268,21 @@ export function TerminalPage() {
         }
       },
       onError: (event) => {
+        if (event.terminalId !== activeTerminalId) {
+          return;
+        }
+
+        if (event.error_code === "TERMINAL_NOT_RUNNING") {
+          if (selectedWorkspaceId) {
+            void reloadWorkspaceResources(selectedWorkspaceId);
+          }
+          return;
+        }
+
+        if (event.error_code === "INVALID_TERMINAL_SIZE") {
+          return;
+        }
+
         notifyTerminal(event.detail, "error");
       },
       onUnauthorized: () => {
@@ -286,26 +296,12 @@ export function TerminalPage() {
     return () => {
       client.close();
     };
-  }, [activeTerminalId, navigate, notifyTerminal]);
-
-  const activeTerminal = useMemo(
-    () => terminals.find((terminal) => terminal.id === activeTerminalId) ?? null,
-    [activeTerminalId, terminals]
-  );
-  const selectedShellOption = useMemo(
-    () => shellOptions.find((option) => option.id === selectedShellId) ?? null,
-    [selectedShellId, shellOptions]
-  );
+  }, [activeTerminalId, navigate, notifyTerminal, selectedWorkspaceId]);
 
   async function reloadWorkspaceResources(workspaceId: string): Promise<void> {
     try {
-      const [terminalResponse, templateResponse] = await Promise.all([
-        listWorkspaceTerminals(workspaceId),
-        listWorkspaceTemplates(workspaceId)
-      ]);
-
+      const terminalResponse = await listWorkspaceTerminals(workspaceId);
       setTerminals(terminalResponse.items);
-      setTemplates(templateResponse.items);
 
       const persistedTerminalId = readPersistedActiveTerminalId(workspaceId);
       const nextActiveTerminal =
@@ -324,7 +320,6 @@ export function TerminalPage() {
 
         if (restoredMessage) {
           notifyTerminal(restoredMessage, "warning");
-          return;
         }
       }
     } catch (error) {
@@ -343,13 +338,12 @@ export function TerminalPage() {
     try {
       const terminal = await createTerminal({
         workspaceId: selectedWorkspaceId,
-        name: t("terminal.defaultTerminalName"),
+        name: buildTerminalName(terminals.length),
         shell: selectedShellOption?.available ? selectedShellOption.shell : undefined
       });
 
       await reloadWorkspaceResources(selectedWorkspaceId);
       setActiveTerminalId(terminal.id);
-      notifyTerminal(t("terminal.created"), "success");
     } catch (error) {
       notifyTerminal(error instanceof Error ? error.message : t("terminal.createFailed"), "error");
     } finally {
@@ -357,342 +351,85 @@ export function TerminalPage() {
     }
   }
 
-  async function handleSendInput(): Promise<void> {
-    if (!activeTerminalId || !terminalInput.trim()) {
-      return;
-    }
-
-    try {
-      if (realtimeClientRef.current) {
-        realtimeClientRef.current.sendInput(`${terminalInput}\r`);
-      } else {
-        await sendTerminalInput(activeTerminalId, `${terminalInput}\r`);
-      }
-
-      setTerminalInput("");
-      viewportRuntimeRef.current?.focus();
-    } catch (error) {
-      notifyTerminal(error instanceof Error ? error.message : t("terminal.inputFailed"), "error");
-    }
-  }
-
-  async function handleCloseTerminal(): Promise<void> {
-    if (!activeTerminalId || !selectedWorkspaceId) {
-      return;
-    }
-
-    try {
-      await closeTerminal(activeTerminalId);
-      await reloadWorkspaceResources(selectedWorkspaceId);
-      notifyTerminal(t("terminal.closed"), "success");
-    } catch (error) {
-      notifyTerminal(error instanceof Error ? error.message : t("terminal.closeFailed"), "error");
-    }
-  }
-
-  async function handleCreateTemplate(): Promise<void> {
+  async function handleCloseTerminal(terminalId: string): Promise<void> {
     if (!selectedWorkspaceId) {
       return;
     }
 
     try {
-      await createTerminalTemplate({
-        workspaceId: selectedWorkspaceId,
-        name: templateDraft.name,
-        command: templateDraft.command,
-        args: splitArgs(templateDraft.args)
-      });
-
-      setTemplateDraft({
-        name: "",
-        command: "",
-        args: ""
-      });
+      await closeTerminal(terminalId);
       await reloadWorkspaceResources(selectedWorkspaceId);
-      notifyTerminal(t("terminal.templateCreated"), "success");
     } catch (error) {
-      notifyTerminal(
-        error instanceof Error ? error.message : t("terminal.templateCreateFailed"),
-        "error"
-      );
-    }
-  }
-
-  async function handleRunTemplate(templateId: string): Promise<void> {
-    try {
-      const result = await runTerminalTemplate(templateId, {
-        terminalId: activeTerminalId ?? undefined,
-        shell:
-          !activeTerminalId && selectedShellOption?.available
-            ? selectedShellOption.shell
-            : undefined
-      });
-
-      if (selectedWorkspaceId) {
-        await reloadWorkspaceResources(selectedWorkspaceId);
-      }
-
-      setActiveTerminalId(result.terminalId);
-      notifyTerminal(
-        result.createdTerminal
-          ? t("terminal.templateRunCreatedTerminal")
-          : t("terminal.templateRunSent"),
-        "success"
-      );
-    } catch (error) {
-      notifyTerminal(error instanceof Error ? error.message : t("terminal.templateRunFailed"), "error");
+      notifyTerminal(error instanceof Error ? error.message : t("terminal.closeFailed"), "error");
     }
   }
 
   return (
     <main className="terminal-layout">
-      <div className="terminal-layout-inner">
-        <section className="terminal-hero surface-card">
-          <div className="badge-row">
-            <span className="badge">{t("terminal.title")}</span>
-            <span className="badge" data-tone={mapConnectionTone(connectionState)}>
-              {t(`terminal.connection.${connectionState}`)}
-            </span>
-            {subscribed ? <span className="badge">{t("terminal.liveConnected")}</span> : null}
-          </div>
-          <h1>{t("terminal.heroTitle")}</h1>
-          <p className="status-text">{t("terminal.heroSubtitle")}</p>
-          <div className="badge-row">
+      <section className="terminal-shell">
+        <header className="terminal-tabbar" role="tablist" aria-label={t("terminal.title")}>
+          {terminals.map((terminal) => (
             <button
-              className="ghost-button"
+              key={terminal.id}
+              className="terminal-tab"
+              data-active={terminal.id === activeTerminalId}
               type="button"
-              onClick={() => realtimeClientRef.current?.reconnectNow()}
-            >
-              {t("terminal.reconnect")}
-            </button>
-          </div>
-        </section>
-
-        <section className="terminal-grid">
-          <aside className="terminal-side">
-            <section className="terminal-panel surface-card">
-              <h2>{t("terminal.workspaceSection")}</h2>
-              <div className="field-group">
-                <label htmlFor="terminal-workspace">{t("terminal.workspaceField")}</label>
-                <select
-                  id="terminal-workspace"
-                  className="terminal-select"
-                  value={selectedWorkspaceId}
-                  onChange={(event) => {
-                    setSelectedWorkspaceId(event.target.value);
-                  }}
-                >
-                  {workspaces.map((workspace) => (
-                    <option key={workspace.id} value={workspace.id}>
-                      {workspace.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="field-group">
-                <label htmlFor="terminal-shell">{t("terminal.shellField")}</label>
-                <select
-                  id="terminal-shell"
-                  className="terminal-select"
-                  value={selectedShellId}
-                  onChange={(event) => {
-                    setSelectedShellId(event.target.value);
-                  }}
-                >
-                  {shellOptions.map((option) => (
-                    <option key={option.id} value={option.id} disabled={!option.available}>
-                      {option.available
-                        ? option.label
-                        : `${option.label} - ${t("terminal.shellUnavailable")}`}
-                    </option>
-                  ))}
-                </select>
-                {selectedShellOption?.available === false && selectedShellOption.unavailableReason ? (
-                  <p className="status-text">{selectedShellOption.unavailableReason}</p>
-                ) : null}
-              </div>
-              <button
-                className="primary-button"
-                type="button"
-                disabled={
-                  !selectedWorkspaceId ||
-                  creatingTerminal ||
-                  (selectedShellOption?.available === false && shellOptions.length > 0)
+              role="tab"
+              aria-selected={terminal.id === activeTerminalId}
+              onClick={() => {
+                setActiveTerminalId(terminal.id);
+              }}
+              onAuxClick={(event) => {
+                if (event.button !== 1) {
+                  return;
                 }
-                onClick={() => {
-                  void handleCreateTerminal();
-                }}
-              >
-                {creatingTerminal ? t("terminal.creating") : t("terminal.createButton")}
-              </button>
-            </section>
 
-            <section className="terminal-panel surface-card">
-              <h2>{t("terminal.terminalSection")}</h2>
-              <div className="terminal-list">
-                {terminals.map((terminal) => (
-                  <button
-                    key={terminal.id}
-                    className="terminal-card"
-                    data-active={terminal.id === activeTerminalId}
-                    type="button"
-                    onClick={() => {
-                      setActiveTerminalId(terminal.id);
-                    }}
-                  >
-                    <strong>{terminal.name}</strong>
-                    <small>{terminal.status}</small>
-                    <small>{terminal.shell}</small>
-                    <small>{terminal.cwd}</small>
-                  </button>
-                ))}
-                {terminals.length === 0 ? (
-                  <p className="status-text">{t("terminal.emptyTerminals")}</p>
-                ) : null}
-              </div>
-            </section>
+                event.preventDefault();
+                void handleCloseTerminal(terminal.id);
+              }}
+            >
+              <span className="terminal-tab-name">{terminal.name}</span>
+              <span className="terminal-tab-meta" data-status={terminal.status}>
+                {terminal.status}
+              </span>
+            </button>
+          ))}
+          <button
+            className="terminal-tab terminal-tab-create"
+            type="button"
+            aria-label={t("terminal.createButton")}
+            title={t("terminal.createButton")}
+            disabled={
+              !selectedWorkspaceId ||
+              creatingTerminal ||
+              (selectedShellOption?.available === false && shellOptions.length > 0)
+            }
+            onClick={() => {
+              void handleCreateTerminal();
+            }}
+          >
+            +
+          </button>
+        </header>
 
-            <section className="terminal-panel surface-card">
-              <h2>{t("terminal.templateSection")}</h2>
-              <div className="terminal-template-list">
-                {templates.map((template) => (
-                  <button
-                    key={template.id}
-                    className="terminal-template-card"
-                    type="button"
-                    onClick={() => {
-                      void handleRunTemplate(template.id);
-                    }}
-                  >
-                    <strong>{template.name}</strong>
-                    <small>{template.command}</small>
-                    <small>{template.args.join(" ")}</small>
-                  </button>
-                ))}
-                {templates.length === 0 ? (
-                  <p className="status-text">{t("terminal.emptyTemplates")}</p>
-                ) : null}
-              </div>
-              <div className="field-group">
-                <label htmlFor="template-name">{t("terminal.templateName")}</label>
-                <input
-                  id="template-name"
-                  value={templateDraft.name}
-                  onChange={(event) => {
-                    setTemplateDraft((current) => ({ ...current, name: event.target.value }));
-                  }}
-                />
-              </div>
-              <div className="field-group">
-                <label htmlFor="template-command">{t("terminal.templateCommand")}</label>
-                <input
-                  id="template-command"
-                  value={templateDraft.command}
-                  onChange={(event) => {
-                    setTemplateDraft((current) => ({ ...current, command: event.target.value }));
-                  }}
-                />
-              </div>
-              <div className="field-group">
-                <label htmlFor="template-args">{t("terminal.templateArgs")}</label>
-                <input
-                  id="template-args"
-                  value={templateDraft.args}
-                  onChange={(event) => {
-                    setTemplateDraft((current) => ({ ...current, args: event.target.value }));
-                  }}
-                />
-              </div>
-              <button
-                className="secondary-button"
-                type="button"
-                disabled={!selectedWorkspaceId}
-                onClick={() => {
-                  void handleCreateTemplate();
-                }}
-              >
-                {t("terminal.templateCreateButton")}
-              </button>
-            </section>
-          </aside>
-
-          <section className="terminal-stage">
-            <section className="terminal-panel terminal-panel-large surface-card">
-              <div className="terminal-stage-header">
-                <div>
-                  <h2>{activeTerminal?.name ?? t("terminal.stageEmptyTitle")}</h2>
-                  <p className="status-text">
-                    {activeTerminal?.cwd ?? t("terminal.stageEmptySubtitle")}
-                  </p>
-                </div>
-                <div className="badge-row">
-                  {activeTerminal ? (
-                    <span
-                      className="badge"
-                      data-tone={activeTerminal.status === "error" ? "error" : "connected"}
-                    >
-                      {activeTerminal.status}
-                    </span>
-                  ) : null}
-                  <button
-                    className="ghost-button"
-                    type="button"
-                    disabled={!activeTerminal}
-                    onClick={() => {
-                      void handleCloseTerminal();
-                    }}
-                  >
-                    {t("terminal.closeButton")}
-                  </button>
-                </div>
-              </div>
-              <div
-                className="terminal-output"
-                onClick={() => {
-                  viewportRuntimeRef.current?.focus();
-                }}
-              >
-                {activeTerminal ? (
-                  <div ref={terminalContainerRef} className="terminal-xterm" />
-                ) : (
-                  <p className="status-text">{t("terminal.outputEmpty")}</p>
-                )}
-              </div>
-              <div className="terminal-composer">
-                <div className="field-group">
-                  <label htmlFor="terminal-input">{t("terminal.inputLabel")}</label>
-                  <input
-                    id="terminal-input"
-                    value={terminalInput}
-                    placeholder={t("terminal.inputPlaceholder")}
-                    onChange={(event) => {
-                      setTerminalInput(event.target.value);
-                    }}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        event.preventDefault();
-                        void handleSendInput();
-                      }
-                    }}
-                  />
-                </div>
-                <div className="terminal-composer-actions">
-                  <button
-                    className="primary-button"
-                    type="button"
-                    disabled={!activeTerminal || !terminalInput.trim()}
-                    onClick={() => {
-                      void handleSendInput();
-                    }}
-                  >
-                    {t("terminal.sendButton")}
-                  </button>
-                </div>
-              </div>
-            </section>
-          </section>
-        </section>
-      </div>
+        <div
+          className="terminal-stage-surface"
+          onClick={() => {
+            viewportRuntimeRef.current?.focus();
+          }}
+        >
+          {activeTerminal ? (
+            <div className="terminal-canvas">
+              <div ref={terminalContainerRef} className="terminal-xterm" />
+            </div>
+          ) : (
+            <div className="terminal-empty-state">
+              <h1>{t("terminal.stageEmptyTitle")}</h1>
+              <p>{selectedWorkspaceId ? t("terminal.stageEmptySubtitle") : t("terminal.workspaceLoadFailed")}</p>
+            </div>
+          )}
+        </div>
+      </section>
     </main>
   );
 }
@@ -701,6 +438,7 @@ function createTerminalViewportRuntime(input: {
   container: HTMLDivElement;
   restoredViewState: PersistedTerminalViewState | null;
   getCursor: () => string | null;
+  canResize: () => boolean;
   onInput: (content: string) => void;
   onResize: (dimensions: { cols: number; rows: number }) => void;
   onViewStateChange: (viewState: PersistedTerminalViewState | null) => void;
@@ -724,6 +462,8 @@ function createTerminalViewportRuntime(input: {
   const serializeAddon = new SerializeAddon();
   let persistTimer: number | null = null;
   let disposed = false;
+  let lastFittedCols = terminal.cols;
+  let lastFittedRows = terminal.rows;
 
   terminal.loadAddon(fitAddon);
   terminal.loadAddon(serializeAddon);
@@ -731,7 +471,11 @@ function createTerminalViewportRuntime(input: {
     input.onInput(content);
   });
   terminal.onResize(({ cols, rows }) => {
-    input.onResize({ cols, rows });
+    lastFittedCols = cols;
+    lastFittedRows = rows;
+    if (input.canResize()) {
+      input.onResize({ cols, rows });
+    }
     schedulePersist();
   });
 
@@ -740,16 +484,18 @@ function createTerminalViewportRuntime(input: {
 
   if (input.restoredViewState?.content) {
     terminal.write(input.restoredViewState.content, () => {
-      if (input.restoredViewState && input.restoredViewState.viewportY > 0) {
-        terminal.scrollToLine(input.restoredViewState.viewportY);
+      const restoredViewState = input.restoredViewState;
+
+      if (restoredViewState && restoredViewState.viewportY > 0) {
+        terminal.scrollToLine(restoredViewState.viewportY);
       }
 
-      window.requestAnimationFrame(() => {
+      void waitForStableContainer().then(() => {
         fitToContainer();
       });
     });
   } else {
-    window.requestAnimationFrame(() => {
+    void waitForStableContainer().then(() => {
       fitToContainer();
     });
   }
@@ -764,6 +510,26 @@ function createTerminalViewportRuntime(input: {
         });
 
   resizeObserver?.observe(input.container);
+
+  if (typeof document !== "undefined" && "fonts" in document) {
+    void document.fonts.ready.then(() => {
+      window.requestAnimationFrame(() => {
+        fitToContainer();
+      });
+    });
+  }
+
+  async function waitForStableContainer(): Promise<void> {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      if (hasUsableContainerSize(input.container)) {
+        return;
+      }
+
+      await new Promise<void>((resolve) => {
+        window.requestAnimationFrame(() => resolve());
+      });
+    }
+  }
 
   function persistNow(): void {
     if (disposed) {
@@ -793,13 +559,18 @@ function createTerminalViewportRuntime(input: {
   }
 
   function fitToContainer(): void {
-    if (disposed) {
+    if (disposed || !hasUsableContainerSize(input.container)) {
       return;
     }
 
     const dimensions = fitAddon.proposeDimensions();
 
-    if (!dimensions || dimensions.cols < 20 || dimensions.rows < 5) {
+    if (
+      !dimensions ||
+      dimensions.cols < MIN_TERMINAL_COLS ||
+      dimensions.rows < MIN_TERMINAL_ROWS ||
+      (dimensions.cols === lastFittedCols && dimensions.rows === lastFittedRows)
+    ) {
       return;
     }
 
@@ -866,29 +637,6 @@ function replaceTerminalChunks(terminal: Terminal, chunks: TerminalOutputChunkDt
   terminal.write(chunks.map((chunk) => chunk.content).join(""));
 }
 
-function splitArgs(input: string): string[] {
-  return input
-    .split(" ")
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function mapConnectionTone(connectionState: TerminalConnectionState) {
-  if (connectionState === "connected") {
-    return "connected";
-  }
-
-  if (connectionState === "reconnecting") {
-    return "reconnecting";
-  }
-
-  if (connectionState === "reconnect_failed") {
-    return "reconnect_failed";
-  }
-
-  return "failed";
-}
-
 function readTerminalRestoreMessage(terminal: TerminalDto): string | null {
   if (terminal.status === "closed" && terminal.statusDetail === "TERMINAL_IDLE_TIMEOUT") {
     return t("terminal.recoveryIdleClosed");
@@ -904,4 +652,15 @@ function pickDefaultShellId(options: TerminalShellOptionDto[]): string {
     options[0]?.id ??
     ""
   );
+}
+
+function hasUsableContainerSize(container: HTMLDivElement): boolean {
+  return (
+    container.clientWidth >= MIN_TERMINAL_PIXEL_WIDTH &&
+    container.clientHeight >= MIN_TERMINAL_PIXEL_HEIGHT
+  );
+}
+
+function buildTerminalName(existingCount: number): string {
+  return `${t("terminal.defaultTerminalName")} ${existingCount + 1}`;
 }
