@@ -7786,17 +7786,9 @@ textarea:focus-visible {
   align-items: center;
 }
 
-.cyber-input-prefix {
-  position: absolute;
-  left: 16px;
-  font-size: 12px;
-  color: var(--cyber-text-dim);
-  pointer-events: none;
-}
-
 .cyber-input-wrapper .cyber-input {
   width: 100%;
-  padding: 12px 16px 12px 36px;
+  padding: 12px 16px;
   background: var(--cyber-bg-input);
   border: 1px solid var(--cyber-border);
   border-radius: 8px;

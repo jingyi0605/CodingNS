@@ -130,7 +130,6 @@ export function ServerSettingsModal({ isOpen, onClose, onSave, theme = "dark" }:
           <label className="field-group cyber-field" htmlFor={addressInputId}>
             <span className="cyber-label">{t("auth.serverAddress")}</span>
             <div className="cyber-input-wrapper">
-              <span className="cyber-input-prefix">://</span>
               <input
                 id={addressInputId}
                 aria-label={t("auth.serverAddress")}
