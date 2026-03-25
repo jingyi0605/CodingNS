@@ -76,6 +76,7 @@ interface WorkbenchShellContextValue {
   navigationLoading: boolean;
   navigationError: string | null;
   refreshNavigation: () => Promise<void>;
+  requestNavigationRefresh: () => void;
   setSessionWorkspace: (sessionId: string, workspaceId: string | null) => void;
   upsertNavigationSession: (session: SessionSummaryDto) => void;
   markNavigationSessionSeen: (sessionId: string, seenAt?: string) => void;
@@ -1550,7 +1551,11 @@ export function WorkbenchLayout() {
   const { showToast } = useToast();
   const requestIdRef = useRef(0);
   const hasNavigationDataRef = useRef(false);
+  const hasReceivedWorkbenchSnapshotRef = useRef(false);
   const lastDraftSessionPathRef = useRef<string | null>(null);
+  const navigationBootstrapFallbackTimerRef = useRef<number | null>(null);
+  const workbenchRealtimeClientRef = useRef<WorkbenchRealtimeClient | null>(null);
+  const showToastRef = useRef(showToast);
   const [navigationGroups, setNavigationGroups] = useState<WorkspaceSessionGroup[]>([]);
   const [navigationLoading, setNavigationLoading] = useState(true);
   const [navigationError, setNavigationError] = useState<string | null>(null);
@@ -1585,6 +1590,10 @@ export function WorkbenchLayout() {
   );
   const [sessionWorkspaceMap, setSessionWorkspaceMap] = useState<Record<string, string>>({});
 
+  useEffect(() => {
+    showToastRef.current = showToast;
+  }, [showToast]);
+
   function applyWorkbenchSnapshot(snapshot: Awaited<ReturnType<typeof getWorkbenchSnapshot>>) {
     if (!snapshot || !Array.isArray(snapshot.items)) {
       return;
@@ -1602,7 +1611,7 @@ export function WorkbenchLayout() {
   const refreshNavigation = useCallback(async () => {
     const requestId = requestIdRef.current + 1;
     requestIdRef.current = requestId;
-    setNavigationLoading((current) => current || navigationGroups.length === 0);
+    setNavigationLoading((current) => current || !hasNavigationDataRef.current);
 
     try {
       const snapshot = await getWorkbenchSnapshot();
@@ -1618,7 +1627,7 @@ export function WorkbenchLayout() {
       }
 
       setNavigationError(error instanceof Error ? error.message : t("shell.navigationLoadFailed"));
-      showToast({
+      showToastRef.current({
         title: error instanceof Error ? error.message : t("shell.navigationLoadFailed"),
         tone: "error"
       });
@@ -1627,10 +1636,14 @@ export function WorkbenchLayout() {
         setNavigationLoading(false);
       }
     }
-  }, [navigationGroups.length, showToast]);
+  }, []);
 
   const upsertNavigationSession = useCallback((session: SessionSummaryDto) => {
     setNavigationGroups((current) => upsertSessionIntoGroups(current, session));
+  }, []);
+
+  const requestNavigationRefresh = useCallback(() => {
+    workbenchRealtimeClientRef.current?.requestRefresh();
   }, []);
 
   const markNavigationSessionSeen = useCallback((sessionId: string, seenAt?: string) => {
@@ -1648,7 +1661,7 @@ export function WorkbenchLayout() {
       try {
         const session = await updateSessionArchiveState(sessionId, isArchived);
         upsertNavigationSession(session);
-        void refreshNavigation();
+        requestNavigationRefresh();
       } catch (error) {
         setNavigationGroups((current) =>
           updateSessionArchivedStateInGroups(current, sessionId, !isArchived)
@@ -1656,7 +1669,7 @@ export function WorkbenchLayout() {
         throw error;
       }
     },
-    [refreshNavigation, upsertNavigationSession]
+    [requestNavigationRefresh, upsertNavigationSession]
   );
 
   const setSessionWorkspace = useCallback((sessionId: string, workspaceId: string | null) => {
@@ -1683,19 +1696,29 @@ export function WorkbenchLayout() {
   }, []);
 
   useEffect(() => {
-    void refreshNavigation();
-  }, []);
-
-  useEffect(() => {
     hasNavigationDataRef.current = navigationGroups.length > 0;
   }, [navigationGroups]);
 
   useEffect(() => {
+    if (navigationBootstrapFallbackTimerRef.current !== null) {
+      window.clearTimeout(navigationBootstrapFallbackTimerRef.current);
+    }
+
+    navigationBootstrapFallbackTimerRef.current = window.setTimeout(() => {
+      navigationBootstrapFallbackTimerRef.current = null;
+
+      if (hasReceivedWorkbenchSnapshotRef.current || hasNavigationDataRef.current) {
+        return;
+      }
+
+      void refreshNavigation();
+    }, 1200);
+
     const client = new WorkbenchRealtimeClient({
       onConnectionChange: (connectionState) => {
         if (connectionState === "reconnect_failed" && !hasNavigationDataRef.current) {
           setNavigationError(t("shell.navigationLoadFailed"));
-          showToast({
+          showToastRef.current({
             id: "workbench-navigation-connection",
             title: t("shell.navigationLoadFailed"),
             tone: "warning",
@@ -1704,6 +1727,11 @@ export function WorkbenchLayout() {
         }
       },
       onSnapshot: (snapshot) => {
+        hasReceivedWorkbenchSnapshotRef.current = true;
+        if (navigationBootstrapFallbackTimerRef.current !== null) {
+          window.clearTimeout(navigationBootstrapFallbackTimerRef.current);
+          navigationBootstrapFallbackTimerRef.current = null;
+        }
         applyWorkbenchSnapshot(snapshot);
         setNavigationLoading(false);
       },
@@ -1713,12 +1741,21 @@ export function WorkbenchLayout() {
       }
     });
 
+    workbenchRealtimeClientRef.current = client;
     client.start();
 
     return () => {
+      if (navigationBootstrapFallbackTimerRef.current !== null) {
+        window.clearTimeout(navigationBootstrapFallbackTimerRef.current);
+        navigationBootstrapFallbackTimerRef.current = null;
+      }
+
+      if (workbenchRealtimeClientRef.current === client) {
+        workbenchRealtimeClientRef.current = null;
+      }
       client.close();
     };
-  }, [navigate, showToast]);
+  }, [navigate, refreshNavigation]);
 
   useEffect(() => {
     writeStoredValue(LEFT_PANEL_WIDTH_KEY, String(leftPanelWidth));
@@ -1941,6 +1978,7 @@ export function WorkbenchLayout() {
       navigationLoading,
       navigationError,
       refreshNavigation,
+      requestNavigationRefresh,
       markNavigationSessionSeen,
       upsertNavigationSession,
       setSessionWorkspace
@@ -1951,6 +1989,7 @@ export function WorkbenchLayout() {
       navigationGroups,
       navigationLoading,
       refreshNavigation,
+      requestNavigationRefresh,
       setSessionWorkspace,
       upsertNavigationSession
     ]

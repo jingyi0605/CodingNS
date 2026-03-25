@@ -130,11 +130,22 @@ class AuthStore {
 
     try {
       const parsed = JSON.parse(raw) as AuthSession | StoredAuthSession;
+      const currentBaseUrl = getHostBaseUrl();
 
       if (isStoredAuthSession(parsed)) {
-        if (parsed.serverBaseUrl && parsed.serverBaseUrl !== getHostBaseUrl()) {
+        if (parsed.serverBaseUrl && !canReuseStoredSession(parsed.serverBaseUrl, currentBaseUrl)) {
           window.localStorage.removeItem(STORAGE_KEY);
           return null;
+        }
+
+        if (parsed.serverBaseUrl && parsed.serverBaseUrl !== currentBaseUrl) {
+          window.localStorage.setItem(
+            STORAGE_KEY,
+            JSON.stringify({
+              serverBaseUrl: currentBaseUrl,
+              session: parsed.session
+            } satisfies StoredAuthSession)
+          );
         }
 
         return parsed.session;
@@ -187,4 +198,19 @@ function isAuthSession(value: unknown): value is AuthSession {
     typeof candidate.user === "object" &&
     candidate.user !== null
   );
+}
+
+function canReuseStoredSession(storedBaseUrl: string, currentBaseUrl: string): boolean {
+  if (storedBaseUrl === currentBaseUrl) {
+    return true;
+  }
+
+  if (!import.meta.env.DEV || typeof window === "undefined") {
+    return false;
+  }
+
+  const windowOrigin = window.location.origin;
+
+  // 兼容开发环境从前端代理地址迁移到直连后端地址，避免一次配置修正把本地登录态全部清空。
+  return storedBaseUrl === windowOrigin;
 }

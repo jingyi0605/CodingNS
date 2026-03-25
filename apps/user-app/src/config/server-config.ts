@@ -30,6 +30,10 @@ function readEnvBaseUrl(): string | null {
   return typeof envUrl === "string" && envUrl.trim().length > 0 ? envUrl : null;
 }
 
+function isDevMode(): boolean {
+  return Boolean(import.meta.env.DEV);
+}
+
 function isHttpProtocol(protocol: string): boolean {
   return protocol === "http:" || protocol === "https:";
 }
@@ -71,9 +75,17 @@ function safelyNormalizeServerBaseUrl(input: string | null | undefined): string 
 }
 
 function getDefaultHostBaseUrl(): string {
+  const envBaseUrl = safelyNormalizeServerBaseUrl(readEnvBaseUrl());
+  const windowOrigin = safelyNormalizeServerBaseUrl(readWindowOrigin());
+
+  // 开发环境优先直连后端，避免通过 Vite 代理放大大体积导航接口的延迟。
+  if (isDevMode()) {
+    return envBaseUrl ?? FALLBACK_HOST_BASE_URL;
+  }
+
   return (
-    safelyNormalizeServerBaseUrl(readEnvBaseUrl()) ??
-    safelyNormalizeServerBaseUrl(readWindowOrigin()) ??
+    envBaseUrl ??
+    windowOrigin ??
     FALLBACK_HOST_BASE_URL
   );
 }
@@ -83,7 +95,24 @@ function readStoredBaseUrl(): string | null {
     return null;
   }
 
-  return safelyNormalizeServerBaseUrl(window.localStorage.getItem(STORAGE_KEY));
+  const storedBaseUrl = safelyNormalizeServerBaseUrl(window.localStorage.getItem(STORAGE_KEY));
+
+  if (!storedBaseUrl) {
+    return null;
+  }
+
+  if (!isDevMode()) {
+    return storedBaseUrl;
+  }
+
+  const windowOrigin = safelyNormalizeServerBaseUrl(readWindowOrigin());
+
+  if (windowOrigin && storedBaseUrl === windowOrigin && storedBaseUrl !== FALLBACK_HOST_BASE_URL) {
+    window.localStorage.setItem(STORAGE_KEY, FALLBACK_HOST_BASE_URL);
+    return FALLBACK_HOST_BASE_URL;
+  }
+
+  return storedBaseUrl;
 }
 
 function readStoredHistory(): string[] {

@@ -76,20 +76,21 @@ export class SessionRuntimeStore {
     });
 
     try {
-      const [session, capabilities] = await Promise.all([
+      const [session, capabilities, runtime] = await Promise.all([
         getSessionDetail(this.sessionId),
-        getSessionCapabilities(this.sessionId)
+        getSessionCapabilities(this.sessionId),
+        getSessionRuntime(this.sessionId)
       ]);
 
       this.patch({
-        session,
+        session: withRunningState(session, runtime.runningState),
         capabilities
       });
-      await this.refreshRuntimeState();
 
       await this.loadLatestHistory();
       this.scheduleMarkSeen();
       this.startRealtime();
+      this.scheduleRuntimeRefresh();
     } catch (error) {
       this.handleError(error);
     }
@@ -137,6 +138,7 @@ export class SessionRuntimeStore {
           clientRequestId
         )
       });
+      this.scheduleRuntimeRefresh();
     } catch (error) {
       this.patch({
         messages: markPendingAsFailed(this.state.messages, clientRequestId),
@@ -287,7 +289,6 @@ export class SessionRuntimeStore {
       limit: REALTIME_LIMIT,
       onSubscribed: () => {
         this.patch({ connectionState: "connected" });
-        void this.refreshRuntimeState();
       },
       onConnectionChange: (connectionState) => {
         this.patch({
@@ -298,6 +299,10 @@ export class SessionRuntimeStore {
               ? withRunningState(this.state.session, "reconnecting")
               : this.state.session
         });
+
+        if (connectionState !== "connected") {
+          this.scheduleRuntimeRefresh();
+        }
       },
       onEnvelope: (event) => {
         const merged = mergeAuthoritativeMessages(this.state.messages, this.sessionId, event.messages);
@@ -393,6 +398,14 @@ export class SessionRuntimeStore {
         errorCode: null,
         errorDetail: null
       });
+
+      if (this.state.connectionState !== "connected") {
+        await this.loadLatestHistory().catch(() => {
+          return;
+        });
+      }
+
+      this.scheduleRuntimeRefresh();
     } catch {
       return;
     }

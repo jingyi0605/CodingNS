@@ -99,7 +99,6 @@ export interface SessionStateRecord {
   userId: string;
   runningState: SessionRunningState;
   activitySource: SessionActivitySource;
-  isArchived: boolean;
   lastEventAt: string | null;
   completedAt: string | null;
   lastSeenAt: string | null;

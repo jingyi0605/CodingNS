@@ -30,6 +30,7 @@ type ModelOption = {
   id: string;
   name: string;
   provider: ProviderId;
+  usesProviderDefault?: boolean;
 };
 
 type ReasoningLevel = "low" | "medium" | "high" | "maximum";
@@ -40,14 +41,27 @@ interface ComposerImageAttachment {
   previewUrl: string;
 }
 
+const DEFAULT_CLAUDE_MODEL_ID = "provider-default";
 const MODEL_OPTIONS: ModelOption[] = [
-  { id: "claude-opus-4-6", name: "Claude Opus 4.6", provider: "claude-code" },
-  { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6", provider: "claude-code" },
-  { id: "claude-haiku-4-5", name: "Claude Haiku 4.5", provider: "claude-code" },
   { id: "gpt-5.4", name: "GPT-5.4", provider: "codex" },
   { id: "gpt-4.1", name: "GPT-4.1", provider: "codex" },
   { id: "gpt-4o", name: "GPT-4o", provider: "codex" }
 ];
+
+function createFallbackClaudeModelOptions(): ModelOption[] {
+  return [
+    {
+      id: DEFAULT_CLAUDE_MODEL_ID,
+      name: t("conversation.modelUseCliDefault"),
+      provider: "claude-code",
+      usesProviderDefault: true
+    }
+  ];
+}
+
+function getModelStorageKey(provider: ProviderId): string {
+  return `composer-selected-model:${provider}`;
+}
 
 function createAttachmentId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -142,10 +156,7 @@ export function ComposerPanel({
   onSend
 }: ComposerPanelProps) {
   const [content, setContent] = useState("");
-  const [selectedModel, setSelectedModel] = useState<string>(() => {
-    const saved = localStorage.getItem("composer-selected-model");
-    return saved || "claude-sonnet-4-6";
-  });
+  const [selectedModel, setSelectedModel] = useState<string>("");
   const [reasoningLevel, setReasoningLevel] = useState<ReasoningLevel>(() => {
     const saved = localStorage.getItem("composer-reasoning-level");
     return (saved as ReasoningLevel) || "medium";
@@ -173,9 +184,21 @@ export function ComposerPanel({
     () => decideCapability(capabilities, "attachments"),
     [capabilities]
   );
-  const availableModels = useMemo(
-    () => MODEL_OPTIONS.filter((model) => model.provider === provider),
-    [provider]
+  const availableModels = useMemo(() => {
+    if (provider === "claude-code") {
+      const providerModels = capabilities?.modelOptions?.map((model) => ({
+        ...model,
+        provider
+      }));
+
+      return providerModels?.length ? providerModels : createFallbackClaudeModelOptions();
+    }
+
+    return MODEL_OPTIONS.filter((model) => model.provider === provider);
+  }, [capabilities?.modelOptions, provider]);
+  const selectedModelOption = useMemo(
+    () => availableModels.find((model) => model.id === selectedModel) ?? null,
+    [availableModels, selectedModel]
   );
   const reasoningLevels = useMemo(
     () => [
@@ -205,8 +228,8 @@ export function ComposerPanel({
 
   const handleModelChange = useCallback((modelId: string) => {
     setSelectedModel(modelId);
-    localStorage.setItem("composer-selected-model", modelId);
-  }, []);
+    localStorage.setItem(getModelStorageKey(provider), modelId);
+  }, [provider]);
 
   const handleReasoningLevelChange = useCallback((level: ReasoningLevel) => {
     setReasoningLevel(level);
@@ -298,14 +321,23 @@ export function ComposerPanel({
       return;
     }
 
+    const saved = localStorage.getItem(getModelStorageKey(provider));
+
+    if (saved && availableModels.some((model) => model.id === saved)) {
+      if (selectedModel !== saved) {
+        setSelectedModel(saved);
+      }
+      return;
+    }
+
     if (availableModels.some((model) => model.id === selectedModel)) {
       return;
     }
 
     const fallbackModel = availableModels[0]!.id;
     setSelectedModel(fallbackModel);
-    localStorage.setItem("composer-selected-model", fallbackModel);
-  }, [availableModels, selectedModel]);
+    localStorage.setItem(getModelStorageKey(provider), fallbackModel);
+  }, [availableModels, provider, selectedModel]);
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -378,7 +410,7 @@ export function ComposerPanel({
       );
 
       await onSend(nextContent, {
-        model: selectedModel,
+        model: selectedModelOption?.usesProviderDefault ? undefined : selectedModel || undefined,
         reasoningLevel: provider === "codex" ? reasoningLevel : undefined,
         attachments: payloads,
         attachmentMeta

@@ -35,6 +35,7 @@ import { inspectSessionActivity } from "./session-activity-inspector.js";
 import { SessionChangedFileService } from "./session-changed-file-service.js";
 import { SessionMessageAttachmentService } from "./session-message-attachment-service.js";
 import { mapSessionProviderError } from "./session-provider-error-mapper.js";
+import { enrichClaudeCapabilities } from "../provider/claude-model-options.js";
 
 interface StartSessionInput {
   workspaceId: string;
@@ -66,6 +67,7 @@ export class SessionHistoryService {
   private readonly providerRegistry: ProviderRegistry;
   private readonly sessionSyncService: SessionSyncService;
   private readonly capabilityService: CapabilityService;
+  private readonly claudeCodeHomeDir: string;
   private readonly workspaceDiscoveryTimestamps = new Map<string, number>();
   private readonly workspaceDiscoveryInflight = new Map<string, Promise<SessionListItem[]>>();
   private readonly workspaceSessionRelations = new Map<
@@ -84,6 +86,7 @@ export class SessionHistoryService {
     private readonly sessionStatusSnapshotRepository: SessionStatusSnapshotRepository,
     config: HostConfig
   ) {
+    this.claudeCodeHomeDir = config.claudeCodeHomeDir;
     this.providerRegistry = new ProviderRegistry([
       new ClaudeCodeAdapter({ homeDir: config.claudeCodeHomeDir }),
       new CodexAdapter({ homeDir: config.codexHomeDir })
@@ -288,9 +291,14 @@ export class SessionHistoryService {
     );
   }
 
-  getProviderCapabilities(provider: string): ProviderCapabilities {
+  getProviderCapabilities(provider: string, workspaceId?: string | null): ProviderCapabilities {
     try {
-      return this.capabilityService.getProviderCapabilities(provider);
+      const workspacePath = workspaceId ? this.getWorkspaceOrThrow(workspaceId).path : null;
+
+      return enrichClaudeCapabilities(this.capabilityService.getProviderCapabilities(provider), {
+        claudeHomeDir: this.claudeCodeHomeDir,
+        workspacePath
+      });
     } catch (error) {
       throw mapSessionProviderError(error);
     }
@@ -298,9 +306,16 @@ export class SessionHistoryService {
 
   async getSessionCapabilities(sessionId: string): Promise<ProviderCapabilities> {
     const binding = this.getBindingOrThrow(sessionId);
+    const workspace = this.getWorkspaceOrThrow(binding.workspaceId);
 
     return this.capabilityService
       .getSessionCapabilities(binding.provider, binding.providerSessionId)
+      .then((capabilities) =>
+        enrichClaudeCapabilities(capabilities, {
+          claudeHomeDir: this.claudeCodeHomeDir,
+          workspacePath: workspace.path
+        })
+      )
       .catch((error) => {
         throw mapSessionProviderError(error);
       });
@@ -398,7 +413,6 @@ export class SessionHistoryService {
           userId: input.userId,
           runningState: "idle",
           activitySource: "none",
-          isArchived: false,
           lastEventAt: result.session.lastMessageAt,
           completedAt: null,
           lastSeenAt: null,
@@ -538,7 +552,6 @@ export class SessionHistoryService {
       userId,
       runningState: existing?.runningState ?? "idle",
       activitySource: existing?.activitySource ?? "none",
-      isArchived: this.getStoredArchiveState(sessionId, existing?.isArchived ?? false),
       lastEventAt: existing?.lastEventAt ?? null,
       completedAt: existing?.completedAt ?? null,
       lastSeenAt: seenAt,
@@ -1193,7 +1206,6 @@ export class SessionHistoryService {
       runningState: inspection.runningState === "running" ? "running" : "idle",
       activitySource:
         inspection.lastEventAt || inspection.completedAtCandidate ? "inferred" : "none",
-      isArchived: this.getStoredArchiveState(sessionId, current?.isArchived ?? false),
       lastEventAt: inspection.lastEventAt,
       completedAt: inspection.completedAtCandidate,
       lastSeenAt: current?.lastSeenAt ?? null,
@@ -1202,10 +1214,6 @@ export class SessionHistoryService {
 
     this.sessionStateRepository.upsert(nextRecord);
     return nextRecord;
-  }
-
-  private getStoredArchiveState(sessionId: string, fallback = false): boolean {
-    return this.sessionIndexRepository.findIndexRecordBySessionId(sessionId)?.isArchived ?? fallback;
   }
 
   private upsertSnapshot(

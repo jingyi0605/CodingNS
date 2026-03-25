@@ -16,7 +16,7 @@ export class SessionStateRepository {
            last_event_at,
            completed_at,
            last_seen_at,
-           updated_at
+            updated_at
          FROM session_states
          WHERE session_id = ? AND user_id = ?`
       )

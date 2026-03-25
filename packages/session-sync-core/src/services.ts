@@ -4,6 +4,7 @@ import type {
   HistoryDirection,
   HistoryPage,
   ProviderCapabilities,
+  ProviderArchiveUpdateResult,
   ProviderRealtimeEvent,
   ProviderSessionSummary,
   ProviderSubscription,
@@ -108,6 +109,17 @@ export class SessionSyncService {
     return this.registry
       .get(providerId)
       .renameSessionTitle(providerSessionId, rawStoreRef, title);
+  }
+
+  async updateSessionArchiveState(
+    providerId: string,
+    providerSessionId: string,
+    rawStoreRef: string,
+    isArchived: boolean
+  ): Promise<ProviderArchiveUpdateResult> {
+    return this.registry
+      .get(providerId)
+      .updateSessionArchiveState(providerSessionId, rawStoreRef, isArchived);
   }
 }
 

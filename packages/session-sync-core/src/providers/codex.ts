@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
-import { basename, join } from "node:path";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
+import { existsSync, readFileSync, readdirSync, renameSync, statSync } from "node:fs";
 import crypto from "node:crypto";
 
 import type {
@@ -65,6 +65,7 @@ interface CodexThreadMetadata {
   firstUserMessage: string | null;
   agentNickname: string | null;
   agentRole: string | null;
+  isArchived: boolean | null;
 }
 
 interface CodexSpawnRelation {
@@ -122,6 +123,7 @@ export class CodexAdapter implements ProviderAdapter {
       const spawnRelation = sessionIdentity
         ? spawnedAgentRelationIndex.get(sessionIdentity.threadId)
         : null;
+      const archiveState = resolveCodexArchivedState(threadMetadata, filePath);
 
       if (
         cachedSummary
@@ -138,6 +140,7 @@ export class CodexAdapter implements ProviderAdapter {
           sessionsByProviderSessionId.set(cachedSummary.summary.providerSessionId, {
             ...cachedSummary.summary,
             rawStoreRef: filePath,
+            isArchived: archiveState,
             parentProviderSessionId: spawnRelation?.parentProviderSessionId ?? null,
             isSubagent: isCodexSubagentThread(threadMetadata, spawnRelation),
             subagentLabel: buildCodexSubagentLabel(threadMetadata),
@@ -172,6 +175,7 @@ export class CodexAdapter implements ProviderAdapter {
           summary: {
             ...knownByPath,
             rawStoreRef: filePath,
+            isArchived: archiveState,
             parentProviderSessionId: spawnRelation?.parentProviderSessionId ?? null,
             isSubagent: isCodexSubagentThread(threadMetadata, spawnRelation),
             subagentLabel: buildCodexSubagentLabel(threadMetadata),
@@ -180,12 +184,13 @@ export class CodexAdapter implements ProviderAdapter {
           }
         });
         sessionsByProviderSessionId.set(knownByPath.providerSessionId, {
-          ...knownByPath,
-          rawStoreRef: filePath,
-          parentProviderSessionId: spawnRelation?.parentProviderSessionId ?? null,
-          isSubagent: isCodexSubagentThread(threadMetadata, spawnRelation),
-          subagentLabel: buildCodexSubagentLabel(threadMetadata),
-          sourceMtimeMs: stats.mtimeMs,
+            ...knownByPath,
+            rawStoreRef: filePath,
+            isArchived: archiveState,
+            parentProviderSessionId: spawnRelation?.parentProviderSessionId ?? null,
+            isSubagent: isCodexSubagentThread(threadMetadata, spawnRelation),
+            subagentLabel: buildCodexSubagentLabel(threadMetadata),
+            sourceMtimeMs: stats.mtimeMs,
           sourceSizeBytes: stats.size
         });
         continue;
@@ -241,6 +246,7 @@ export class CodexAdapter implements ProviderAdapter {
             ...knownBySessionId,
             rawStoreRef: filePath,
             workspacePath: sessionWorkspacePath,
+            isArchived: archiveState,
             parentProviderSessionId: currentSpawnRelation?.parentProviderSessionId ?? null,
             isSubagent: isCodexSubagentThread(currentThreadMetadata, currentSpawnRelation),
             subagentLabel: buildCodexSubagentLabel(currentThreadMetadata),
@@ -252,6 +258,7 @@ export class CodexAdapter implements ProviderAdapter {
           ...knownBySessionId,
           rawStoreRef: filePath,
           workspacePath: sessionWorkspacePath,
+          isArchived: archiveState,
           parentProviderSessionId: currentSpawnRelation?.parentProviderSessionId ?? null,
           isSubagent: isCodexSubagentThread(currentThreadMetadata, currentSpawnRelation),
           subagentLabel: buildCodexSubagentLabel(currentThreadMetadata),
@@ -275,6 +282,7 @@ export class CodexAdapter implements ProviderAdapter {
         title,
         workspacePath: sessionWorkspacePath,
         rawStoreRef: filePath,
+        isArchived: archiveState,
         lastMessageAt,
         messageCount: messages.length,
         parentProviderSessionId: currentSpawnRelation?.parentProviderSessionId ?? null,
@@ -414,6 +422,7 @@ export class CodexAdapter implements ProviderAdapter {
         title: options.initialPrompt?.slice(0, 48) || "New Codex session",
         workspacePath,
         rawStoreRef: filePath,
+        isArchived: false,
         lastMessageAt: nextTimestamp(),
         messageCount: options.initialPrompt ? 1 : 0
       },
@@ -499,6 +508,51 @@ export class CodexAdapter implements ProviderAdapter {
     return nextTitle;
   }
 
+  async updateSessionArchiveState(
+    providerSessionId: string,
+    rawStoreRef: string,
+    isArchived: boolean
+  ): Promise<import("../types.js").ProviderArchiveUpdateResult> {
+    const resolvedStoreRef = this.resolveSessionFilePath(rawStoreRef, providerSessionId);
+    const currentFileName = basename(resolvedStoreRef) || `${providerSessionId}.jsonl`;
+    const nextStoreRef = isArchived
+      ? join(this.options.homeDir, "archived_sessions", currentFileName)
+      : buildCodexActiveSessionPath(this.options.homeDir, currentFileName);
+    const stateDbPath = findLatestCodexStateDatabase(this.options.homeDir);
+
+    statSync(resolvedStoreRef);
+
+    if (resolvedStoreRef !== nextStoreRef) {
+      ensureDirectory(dirname(nextStoreRef));
+      renameSync(resolvedStoreRef, nextStoreRef);
+    }
+
+    if (stateDbPath) {
+      let db: DatabaseSync | null = null;
+
+      try {
+        db = new DatabaseSync(stateDbPath, { open: true });
+        db.prepare(
+          `UPDATE threads
+           SET archived = ?,
+               archived_at = ?,
+               rollout_path = ?
+           WHERE id = ?`
+        ).run(isArchived ? 1 : 0, isArchived ? Math.floor(Date.now() / 1000) : null, nextStoreRef, providerSessionId);
+      } finally {
+        db?.close();
+      }
+    }
+
+    this.sessionSummaryCache.delete(resolvedStoreRef);
+    this.sessionSummaryCache.delete(nextStoreRef);
+
+    return {
+      rawStoreRef: nextStoreRef,
+      isArchived
+    };
+  }
+
   getProviderCapabilities(): ProviderCapabilities {
     return {
       provider: this.providerId,
@@ -548,7 +602,8 @@ export class CodexAdapter implements ProviderAdapter {
             createdAtMs: null,
             firstUserMessage: null,
             agentNickname: null,
-            agentRole: null
+            agentRole: null,
+            isArchived: null
           });
         } catch {
           continue;
@@ -572,18 +627,22 @@ export class CodexAdapter implements ProviderAdapter {
            title,
            cwd,
            created_at,
+           archived,
            first_user_message,
            agent_nickname,
-           agent_role
+           agent_role,
+           rollout_path
          FROM threads`
       ).all() as Array<{
         id?: unknown;
         title?: unknown;
         cwd?: unknown;
         created_at?: unknown;
+        archived?: unknown;
         first_user_message?: unknown;
         agent_nickname?: unknown;
         agent_role?: unknown;
+        rollout_path?: unknown;
       }>;
 
       for (const row of rows) {
@@ -607,7 +666,13 @@ export class CodexAdapter implements ProviderAdapter {
             ensureText(row.first_user_message).trim() || (current?.firstUserMessage ?? null),
           agentNickname:
             ensureText(row.agent_nickname).trim() || (current?.agentNickname ?? null),
-          agentRole: ensureText(row.agent_role).trim() || (current?.agentRole ?? null)
+          agentRole: ensureText(row.agent_role).trim() || (current?.agentRole ?? null),
+          isArchived:
+            typeof row.archived === "number"
+              ? row.archived === 1
+              : ensureText(row.rollout_path).includes("archived_sessions")
+                ? true
+                : (current?.isArchived ?? null)
         });
       }
     } catch {
@@ -1495,6 +1560,35 @@ function buildCodexSubagentLabel(metadata: CodexThreadMetadata | null | undefine
   }
 
   return agentNickname || agentRole || null;
+}
+
+function resolveCodexArchivedState(
+  metadata: CodexThreadMetadata | null | undefined,
+  filePath: string
+): boolean {
+  if (isCodexArchivedFilePath(filePath)) {
+    return true;
+  }
+
+  if (typeof metadata?.isArchived === "boolean") {
+    return metadata.isArchived;
+  }
+
+  return false;
+}
+
+function isCodexArchivedFilePath(filePath: string): boolean {
+  return filePath.replaceAll("\\", "/").includes("/archived_sessions/");
+}
+
+function buildCodexActiveSessionPath(homeDir: string, fileName: string): string {
+  const match = fileName.match(/^rollout-(\d{4})-(\d{2})-(\d{2})T.+\.jsonl$/);
+
+  if (!match) {
+    return join(homeDir, "sessions", fileName);
+  }
+
+  return join(homeDir, "sessions", match[1], match[2], match[3], fileName);
 }
 
 function hasUsableCodexTitle(title: string | null | undefined): boolean {

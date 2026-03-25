@@ -211,6 +211,14 @@ export function createServer(config: HostConfig) {
     new WorkbenchWsHub(workbenchService)
   );
 
+  app.addHook("onRequest", async (request, reply) => {
+    applyCorsHeaders(request.headers.origin, reply);
+
+    if (request.method === "OPTIONS") {
+      reply.code(204).send();
+      return reply;
+    }
+  });
   app.addHook("onRequest", createAuthGuard(authService));
   app.setErrorHandler(setErrorHandler);
 
@@ -262,4 +270,47 @@ export function createServer(config: HostConfig) {
     },
     startWs: () => wsHandle
   };
+}
+
+function applyCorsHeaders(origin: string | undefined, reply: {
+  header: (name: string, value: string) => unknown;
+}): void {
+  const allowedOrigin = resolveAllowedCorsOrigin(origin);
+
+  if (!allowedOrigin) {
+    return;
+  }
+
+  reply.header("Access-Control-Allow-Origin", allowedOrigin);
+  reply.header("Vary", "Origin");
+  reply.header("Access-Control-Allow-Credentials", "true");
+  reply.header("Access-Control-Allow-Headers", "Authorization, Content-Type");
+  reply.header("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
+}
+
+function resolveAllowedCorsOrigin(origin: string | undefined): string | null {
+  if (!origin) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(origin);
+    const hostname = parsed.hostname.toLowerCase();
+
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return null;
+    }
+
+    if (
+      hostname === "127.0.0.1" ||
+      hostname === "localhost" ||
+      hostname === "::1"
+    ) {
+      return origin;
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
 }

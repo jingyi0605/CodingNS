@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { t } from "../../../shared/i18n";
 import { ApiError } from "../../../shared/network/api-error";
 import { useToast } from "../../../shared/toast";
+import { getSessionChangedFiles } from "../api/conversation-api";
 import {
   getFileTree,
   operateFile,
@@ -15,7 +16,6 @@ import {
   resolveFileTreeIconLabel
 } from "./file-tree-icon";
 import { SessionChangedFilesPanel } from "./SessionChangedFilesPanel";
-import { loadSessionChangedGitFiles } from "./session-change-utils";
 
 interface FileContextPanelProps {
   sessionId: string;
@@ -151,10 +151,10 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
       }
 
       try {
-        const changes = await loadSessionChangedGitFiles(sessionId, workspaceId);
+        const response = await getSessionChangedFiles(sessionId);
 
         if (!cancelled) {
-          setSessionChangeCount(changes.length);
+          setSessionChangeCount(response.items.length);
         }
       } catch {
         if (!cancelled) {

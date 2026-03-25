@@ -124,6 +124,7 @@ describe("spec001 host 地基主链路", () => {
       provider: "codex",
       title: "会话索引示例",
       messageCount: 0,
+      isArchived: false,
       lastMessageAt: timestamp,
       createdAt: timestamp,
       updatedAt: timestamp

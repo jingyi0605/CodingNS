@@ -23,6 +23,12 @@ export interface NormalizedToolCall {
   status: "running" | "completed" | "failed";
 }
 
+export interface ProviderModelOption {
+  id: string;
+  name: string;
+  usesProviderDefault?: boolean;
+}
+
 export interface ProviderCapabilities {
   provider: ProviderId;
   canStartSession: boolean;
@@ -35,6 +41,7 @@ export interface ProviderCapabilities {
   supportsAttachments: boolean;
   supportsPermissionPrompt: boolean;
   supportsCheckpoint: boolean;
+  modelOptions?: ProviderModelOption[];
   limitations: string[];
 }
 
@@ -44,6 +51,7 @@ export interface ProviderSessionSummary {
   title: string;
   workspacePath: string;
   rawStoreRef: string;
+  isArchived?: boolean;
   lastMessageAt: string | null;
   messageCount: number;
   parentProviderSessionId?: string | null;
@@ -51,6 +59,11 @@ export interface ProviderSessionSummary {
   subagentLabel?: string | null;
   sourceMtimeMs?: number;
   sourceSizeBytes?: number;
+}
+
+export interface ProviderArchiveUpdateResult {
+  rawStoreRef: string;
+  isArchived: boolean;
 }
 
 export interface DetectSessionsOptions {
@@ -142,6 +155,11 @@ export interface ProviderAdapter {
     rawStoreRef: string,
     title: string
   ): Promise<string>;
+  updateSessionArchiveState(
+    providerSessionId: string,
+    rawStoreRef: string,
+    isArchived: boolean
+  ): Promise<ProviderArchiveUpdateResult>;
   getProviderCapabilities(): ProviderCapabilities;
   getSessionCapabilities(providerSessionId: string): Promise<ProviderCapabilities>;
 }

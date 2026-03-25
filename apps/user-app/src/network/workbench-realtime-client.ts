@@ -33,6 +33,7 @@ export class WorkbenchRealtimeClient {
   private disposed = false;
   private reconnectAttempts = 0;
   private reconnectTimer: number | null = null;
+  private pendingRefresh = false;
 
   constructor(private readonly options: WorkbenchRealtimeClientOptions) {}
 
@@ -42,6 +43,7 @@ export class WorkbenchRealtimeClient {
 
   requestRefresh(): void {
     if (this.socket?.readyState !== WebSocket.OPEN) {
+      this.pendingRefresh = true;
       return;
     }
 
@@ -50,6 +52,7 @@ export class WorkbenchRealtimeClient {
         type: "workbench.refresh"
       })
     );
+    this.pendingRefresh = false;
   }
 
   close(): void {
@@ -98,6 +101,10 @@ export class WorkbenchRealtimeClient {
           type: "workbench.subscribe"
         })
       );
+
+      if (this.pendingRefresh) {
+        this.requestRefresh();
+      }
     });
 
     socket.addEventListener("message", (raw) => {

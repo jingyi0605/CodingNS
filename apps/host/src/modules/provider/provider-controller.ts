@@ -7,11 +7,15 @@ interface ProviderParams {
   provider: string;
 }
 
+interface ProviderCapabilitiesQuery {
+  workspaceId?: string;
+}
+
 export class ProviderController {
   constructor(private readonly sessionHistoryService: SessionHistoryService) {}
 
   readonly getCapabilities = async (
-    request: FastifyRequest<{ Params: ProviderParams }>,
+    request: FastifyRequest<{ Params: ProviderParams; Querystring: ProviderCapabilitiesQuery }>,
     reply: FastifyReply
   ): Promise<void> => {
     const provider = request.params.provider.trim();
@@ -25,6 +29,11 @@ export class ProviderController {
       });
     }
 
-    reply.send(this.sessionHistoryService.getProviderCapabilities(provider));
+    reply.send(
+      this.sessionHistoryService.getProviderCapabilities(
+        provider,
+        request.query.workspaceId?.trim() || null
+      )
+    );
   };
 }

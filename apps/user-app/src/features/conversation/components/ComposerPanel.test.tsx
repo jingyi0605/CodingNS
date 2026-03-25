@@ -18,9 +18,15 @@ function createDeferred() {
 
 function createCapabilities(options?: {
   supportsAttachments?: boolean;
+  provider?: "codex" | "claude-code";
+  modelOptions?: Array<{
+    id: string;
+    name: string;
+    usesProviderDefault?: boolean;
+  }>;
 }) {
   return {
-    provider: "codex" as const,
+    provider: options?.provider ?? ("codex" as const),
     canStartSession: true,
     canResumeSession: true,
     canSendMessage: true,
@@ -31,6 +37,7 @@ function createCapabilities(options?: {
     supportsAttachments: options?.supportsAttachments ?? false,
     supportsPermissionPrompt: true,
     supportsCheckpoint: false,
+    modelOptions: options?.modelOptions,
     limitations: []
   };
 }
@@ -49,6 +56,7 @@ class MockFileReader {
 
 describe("ComposerPanel", () => {
   beforeEach(() => {
+    localStorage.clear();
     Object.defineProperty(URL, "createObjectURL", {
       writable: true,
       value: vi.fn(() => "blob:preview")
@@ -61,6 +69,7 @@ describe("ComposerPanel", () => {
   });
 
   afterEach(() => {
+    localStorage.clear();
     vi.restoreAllMocks();
   });
 
@@ -212,6 +221,47 @@ describe("ComposerPanel", () => {
           fileSize: 4
         })
       ]
+    });
+  });
+  it("Claude Code 选择 CLI 默认模型时不会强行覆盖 model", async () => {
+    const onSend = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <ComposerPanel
+        capabilities={createCapabilities({
+          provider: "claude-code",
+          modelOptions: [
+            {
+              id: "provider-default",
+              name: "跟随 CLI 默认模型",
+              usesProviderDefault: true
+            },
+            {
+              id: "sonnet",
+              name: "Sonnet"
+            }
+          ]
+        })}
+        isSubmitting={false}
+        onSend={onSend}
+      />
+    );
+
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: {
+        value: "请回复OK"
+      }
+    });
+    fireEvent.submit(document.querySelector(".composer-form")!);
+
+    await waitFor(() => {
+      expect(onSend).toHaveBeenCalledTimes(1);
+    });
+    expect(onSend).toHaveBeenCalledWith("请回复OK", {
+      model: undefined,
+      reasoningLevel: undefined,
+      attachments: [],
+      attachmentMeta: []
     });
   });
 });

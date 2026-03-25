@@ -3,6 +3,7 @@ import { useLocation, useNavigate, useParams } from "react-router-dom";
 
 import { t } from "../../../shared/i18n";
 import {
+  getProviderCapabilities,
   startLiveSession,
   type HistoryMessageDto,
   type ProviderCapabilitiesDto,
@@ -49,7 +50,11 @@ function LiveConversationPage({
   sessionId: string;
   bootstrapMessages: HistoryMessageDto[];
 }) {
-  const { refreshNavigation, setSessionWorkspace, markNavigationSessionSeen } = useWorkbenchShell();
+  const {
+    requestNavigationRefresh,
+    setSessionWorkspace,
+    markNavigationSessionSeen
+  } = useWorkbenchShell();
   const storeRef = useRef<SessionRuntimeStore | null>(null);
   const currentSessionIdRef = useRef<string | null>(null);
   const [sending, setSending] = useState(false);
@@ -121,7 +126,7 @@ function LiveConversationPage({
         isRunning={isRunning}
         onInterrupt={async () => {
           await store.interrupt();
-          await refreshNavigation();
+          requestNavigationRefresh();
         }}
         onSend={async (content, options) => {
           setSending(true);
@@ -133,7 +138,7 @@ function LiveConversationPage({
               attachments: options?.attachments,
               attachmentMeta: options?.attachmentMeta
             });
-            await refreshNavigation();
+            requestNavigationRefresh();
           } finally {
             setSending(false);
           }
@@ -151,14 +156,16 @@ function DraftConversationPage({
   navigate: ReturnType<typeof useNavigate>;
 }) {
   const {
-    refreshNavigation,
+    requestNavigationRefresh,
     setSessionWorkspace,
     upsertNavigationSession
   } = useWorkbenchShell();
   const [sending, setSending] = useState(false);
   const [draftMessages, setDraftMessages] = useState<SessionMessageViewModel[]>([]);
+  const [capabilities, setCapabilities] = useState<ProviderCapabilitiesDto>(() =>
+    createDraftCapabilities(draft.provider)
+  );
   const session = useMemo(() => createDraftSessionSummary(draft), [draft]);
-  const capabilities = useMemo(() => createDraftCapabilities(draft.provider), [draft.provider]);
   useEffect(() => {
     setSessionWorkspace(draft.sessionId, draft.workspaceId);
 
@@ -166,6 +173,25 @@ function DraftConversationPage({
       setSessionWorkspace(draft.sessionId, null);
     };
   }, [draft.sessionId, draft.workspaceId, setSessionWorkspace]);
+
+  useEffect(() => {
+    let disposed = false;
+
+    setCapabilities(createDraftCapabilities(draft.provider));
+    void getProviderCapabilities(draft.provider, draft.workspaceId)
+      .then((nextCapabilities) => {
+        if (!disposed) {
+          setCapabilities(nextCapabilities);
+        }
+      })
+      .catch(() => {
+        return;
+      });
+
+    return () => {
+      disposed = true;
+    };
+  }, [draft.provider]);
 
   return (
     <main className="workbench-page conversation-page-shell">
@@ -217,7 +243,7 @@ function DraftConversationPage({
             setSessionWorkspace(created.sessionId, draft.workspaceId);
             navigate(`/sessions/${created.sessionId}`, {
               replace: true,
-              state: isAuthoritativeBootstrapMessage(created.message)
+              state: created.message
                 ? {
                     bootstrap: {
                       sessionId: created.sessionId,
@@ -226,7 +252,7 @@ function DraftConversationPage({
                   }
                 : null
             });
-            void refreshNavigation();
+            requestNavigationRefresh();
           } catch (error) {
             setDraftMessages((current) => markPendingAsFailed(current, clientRequestId));
             throw error;
@@ -316,6 +342,16 @@ function createDraftCapabilities(provider: ProviderId): ProviderCapabilitiesDto 
     supportsAttachments: true,
     supportsPermissionPrompt: true,
     supportsCheckpoint: false,
+    modelOptions:
+      provider === "claude-code"
+        ? [
+            {
+              id: "provider-default",
+              name: t("conversation.modelUseCliDefault"),
+              usesProviderDefault: true
+            }
+          ]
+        : undefined,
     limitations: []
   };
 }
@@ -371,8 +407,4 @@ function createClientRequestId(): string {
   }
 
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-}
-
-function isAuthoritativeBootstrapMessage(message: HistoryMessageDto): boolean {
-  return !message.rawRef.startsWith("synthetic://");
 }

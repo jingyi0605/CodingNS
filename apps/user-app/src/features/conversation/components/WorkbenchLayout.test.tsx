@@ -621,7 +621,11 @@ describe("WorkbenchLayout", () => {
       snapshot: initialSnapshot
     });
 
-    releaseRefresh?.();
+    const pendingReleaseRefresh = releaseRefresh as (() => void) | null;
+
+    if (pendingReleaseRefresh !== null) {
+      pendingReleaseRefresh();
+    }
 
     await waitFor(() => {
       expect(screen.queryAllByText("会话 Beta")).toHaveLength(0);

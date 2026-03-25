@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
@@ -340,6 +340,11 @@ describe("spec002 会话同步核心", () => {
       .all() as Array<{ name: string }>;
     expect(bindingColumns.map((column) => column.name)).not.toContain("content");
     expect(bindingColumns.map((column) => column.name)).not.toContain("raw_message");
+
+    const sessionStateColumns = hosted.services.database.db
+      .prepare("PRAGMA table_info(session_states)")
+      .all() as Array<{ name: string }>;
+    expect(sessionStateColumns.map((column) => column.name)).not.toContain("is_archived");
   });
 
   it("会跳过 Codex 规则消息标题，并支持手动重命名回写原始记录", async () => {
@@ -1198,21 +1203,19 @@ describe("spec002 会话同步核心", () => {
 
     const storedFlags = hosted.services.database.db
       .prepare(
-        `SELECT
-           indices.is_archived AS index_archived,
-           states.is_archived AS state_archived
+        `SELECT indices.is_archived AS index_archived
          FROM session_indices indices
-         LEFT JOIN session_states states
-           ON states.session_id = indices.session_id
-          AND states.user_id = ?
          WHERE indices.session_id = ?`
       )
-      .get("user-admin", claudeSession.sessionId) as {
+      .get(claudeSession.sessionId) as {
       index_archived: number;
-      state_archived: number | null;
     };
     expect(storedFlags.index_archived).toBe(1);
-    expect(storedFlags.state_archived ?? 0).toBe(0);
+
+    const sessionStateColumns = hosted.services.database.db
+      .prepare("PRAGMA table_info(session_states)")
+      .all() as Array<{ name: string }>;
+    expect(sessionStateColumns.map((column) => column.name)).not.toContain("is_archived");
 
     const archivedList = await hosted.app.inject({
       method: "GET",
@@ -1236,6 +1239,82 @@ describe("spec002 会话同步核心", () => {
 
     const archivedSnapshot = await nextWorkbenchSnapshot(queue);
     expect(findWorkbenchSession(archivedSnapshot, claudeSession.sessionId)?.isArchived).toBe(true);
+  });
+
+  it("Codex 会话只要文件已经进入 archived_sessions，就必须判定为已归档", async () => {
+    const fixture = createProviderFixture();
+    activeFixtures.push(fixture);
+
+    const archivedDir = path.join(fixture.codexHomeDir, "archived_sessions");
+    const archivedFile = path.join(archivedDir, "codex-session-1.jsonl");
+    mkdirSync(archivedDir, { recursive: true });
+    renameSync(fixture.codexSessionFile, archivedFile);
+
+    const codexStateDbPath = path.join(fixture.codexHomeDir, "state_999.sqlite");
+    const codexStateDb = new DatabaseSync(codexStateDbPath);
+    codexStateDb.exec(`
+      CREATE TABLE threads (
+        id TEXT PRIMARY KEY,
+        title TEXT,
+        cwd TEXT,
+        created_at INTEGER,
+        archived INTEGER,
+        first_user_message TEXT,
+        agent_nickname TEXT,
+        agent_role TEXT,
+        rollout_path TEXT
+      );
+    `);
+    codexStateDb
+      .prepare(
+        `INSERT INTO threads (
+           id,
+           title,
+           cwd,
+           created_at,
+           archived,
+           first_user_message,
+           agent_nickname,
+           agent_role,
+           rollout_path
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        "codex-session-1",
+        "已经归档的 Codex 会话",
+        fixture.workspaceDir,
+        Math.floor(Date.parse("2026-03-23T09:00:00.000Z") / 1000),
+        0,
+        "继续实现 spec002",
+        null,
+        null,
+        fixture.codexSessionFile
+      );
+    codexStateDb.close();
+
+    const hosted = createTestApp(fixture);
+    activeClosers.push(() => hosted.app.close());
+    await hosted.app.ready();
+
+    const accessToken = await bootstrapAndLogin(hosted);
+    const workspaceId = await importWorkspace(hosted, accessToken, fixture.workspaceDir);
+
+    const sessions = await hosted.app.inject({
+      method: "GET",
+      url: `/api/sessions?workspaceId=${workspaceId}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(sessions.statusCode).toBe(200);
+
+    const codexSession = sessions
+      .json()
+      .items.find((item: { provider: string }) => item.provider === "codex");
+
+    expect(codexSession).toBeTruthy();
+    expect(codexSession.rawStoreRef).toBe(archivedFile);
+    expect(codexSession.isArchived).toBe(true);
   });
 });
 

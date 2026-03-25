@@ -10,6 +10,7 @@ import type {
   ProviderAdapter,
   ProviderCapabilities,
   ProviderId,
+  ProviderModelOption,
   ProviderRealtimeEvent,
   ProviderSessionSummary,
   ProviderSubscription,
@@ -62,6 +63,25 @@ interface ClaudeSubagentMetadata {
 }
 
 const HISTORY_CACHE_LIMIT = 6;
+const CLAUDE_MODEL_OPTIONS: ProviderModelOption[] = [
+  {
+    id: "provider-default",
+    name: "跟随 CLI 默认模型",
+    usesProviderDefault: true
+  },
+  {
+    id: "sonnet",
+    name: "Sonnet"
+  },
+  {
+    id: "opus",
+    name: "Opus"
+  },
+  {
+    id: "haiku",
+    name: "Haiku"
+  }
+];
 
 export class ClaudeCodeAdapter implements ProviderAdapter {
   readonly providerId: ProviderId = "claude-code";
@@ -262,6 +282,7 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
         title: options.initialPrompt?.slice(0, 48) || "New Claude Code session",
         workspacePath,
         rawStoreRef: filePath,
+        isArchived: false,
         lastMessageAt: now,
         messageCount: options.initialPrompt ? 1 : 0
       },
@@ -342,6 +363,10 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
     return nextTitle;
   }
 
+  async updateSessionArchiveState(): Promise<import("../types.js").ProviderArchiveUpdateResult> {
+    throw new Error("claude-code archive state is managed by host");
+  }
+
   getProviderCapabilities(): ProviderCapabilities {
     return {
       provider: this.providerId,
@@ -355,6 +380,7 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
       supportsAttachments: true,
       supportsPermissionPrompt: true,
       supportsCheckpoint: false,
+      modelOptions: CLAUDE_MODEL_OPTIONS,
       limitations: ["当前实现只读取原生 jsonl，会话恢复不负责拉起外部 Claude 进程。"]
     };
   }

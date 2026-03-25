@@ -1,10 +1,11 @@
 import { randomUUID, createHash } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { spawn } from "node:child_process";
 
 import {
   createRawRef,
+  ensureDirectory,
   ensureText,
   extractTextBlocks,
   nextTimestamp,
@@ -50,8 +51,12 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
     request: ProviderRuntimeRunRequest,
     sink: ProviderRuntimeEventSink
   ): Promise<ProviderRuntimeLaunchResult> {
-    const providerSessionId = request.providerSessionId ?? randomUUID();
-    const rawStoreRef = buildClaudeRawStoreRef(this.options.homeDir, request.workspacePath, providerSessionId);
+    const providerSessionId = request.providerSessionId ?? buildPendingClaudeSessionId(request.sessionId);
+    const rawStoreRef = buildClaudePendingRawStoreRef(
+      this.options.homeDir,
+      request.workspacePath,
+      request.sessionId
+    );
 
     sink.updateSessionBinding({
       providerSessionId,
@@ -63,7 +68,7 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
       sink,
       providerSessionId,
       rawStoreRef,
-      ["--session-id", providerSessionId]
+      []
     );
   }
 
@@ -76,6 +81,7 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
       "CLAUDE_PROVIDER_SESSION_ID_REQUIRED"
     );
     const rawStoreRef =
+      findClaudeSessionFile(this.options.homeDir, providerSessionId) ??
       request.rawStoreRef ??
       buildClaudeRawStoreRef(this.options.homeDir, request.workspacePath, providerSessionId);
 
@@ -112,11 +118,13 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
       "--output-format",
       "stream-json",
       "--include-partial-messages",
-      "--cwd",
-      request.workspacePath,
       ...attachmentDirectories.flatMap((directory) => ["--add-dir", directory]),
       ...sessionArgs
     ];
+
+    if (request.options.model) {
+      args.push("--model", request.options.model);
+    }
 
     let sequence = 0;
     const toolNameById = new Map<string, string>();
@@ -125,11 +133,57 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
     let stderrBuffer = "";
     let stdoutBuffer = "";
 
+    let activeProviderSessionId = providerSessionId;
+    let activeRawStoreRef = rawStoreRef;
+    const refreshBinding = (parsed?: Record<string, unknown>) => {
+      const discoveredProviderSessionId = extractClaudeSessionId(parsed);
+      let changed = false;
+
+      if (
+        discoveredProviderSessionId &&
+        discoveredProviderSessionId !== activeProviderSessionId &&
+        !isPendingClaudeSessionId(discoveredProviderSessionId)
+      ) {
+        activeProviderSessionId = discoveredProviderSessionId;
+        changed = true;
+      }
+
+      if (!isPendingClaudeSessionId(activeProviderSessionId)) {
+        const nextRawStoreRef =
+          findClaudeSessionFile(this.options.homeDir, activeProviderSessionId) ??
+          buildClaudeRawStoreRef(this.options.homeDir, request.workspacePath, activeProviderSessionId);
+
+        if (nextRawStoreRef !== activeRawStoreRef) {
+          activeRawStoreRef = nextRawStoreRef;
+          this.ensureRuntimeStoreReady(activeRawStoreRef);
+          changed = true;
+        }
+      }
+
+      if (changed) {
+        sink.updateSessionBinding({
+          providerSessionId: activeProviderSessionId,
+          rawStoreRef: activeRawStoreRef
+        });
+      }
+
+      return {
+        providerSessionId: activeProviderSessionId,
+        rawStoreRef: activeRawStoreRef
+      };
+    };
+
+    this.ensureRuntimeStoreReady(activeRawStoreRef);
+
     const proc = spawn(this.commandPath, args, {
       cwd: request.workspacePath,
+      shell: shouldSpawnClaudeViaShell(this.commandPath),
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"]
     });
+    const bindingRefreshTimer = setInterval(() => {
+      refreshBinding();
+    }, 250);
 
     const completedPromise = new Promise<void>((resolve) => {
       const emitRuntimeError = async (detail: string) => {
@@ -138,11 +192,12 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
         }
 
         completed = true;
+        const binding = refreshBinding();
         await sink.emit({
           type: "error",
           status: "failed",
-          providerSessionId,
-          rawStoreRef,
+          providerSessionId: binding.providerSessionId,
+          rawStoreRef: binding.rawStoreRef,
           detail
         });
       };
@@ -153,11 +208,12 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
         }
 
         completed = true;
+        const binding = refreshBinding();
         await sink.emit({
           type: status,
           status: status === "complete" ? "completed" : "interrupted",
-          providerSessionId,
-          rawStoreRef,
+          providerSessionId: binding.providerSessionId,
+          rawStoreRef: binding.rawStoreRef,
           detail
         });
       };
@@ -177,8 +233,7 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
 
           void this.consumeStreamLine({
             line: trimmed,
-            rawStoreRef,
-            providerSessionId,
+            refreshBinding,
             sink,
             sequenceRef: () => {
               sequence += 1;
@@ -195,10 +250,13 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
       });
 
       proc.on("error", (error) => {
+        clearInterval(bindingRefreshTimer);
         void emitRuntimeError(error.message).finally(resolve);
       });
 
       proc.on("close", (code, signal) => {
+        clearInterval(bindingRefreshTimer);
+
         if (interrupted || signal === "SIGTERM" || signal === "SIGINT") {
           void emitRuntimeComplete("interrupted", "claude process interrupted").finally(resolve);
           return;
@@ -215,8 +273,8 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
     });
 
     return {
-      providerSessionId,
-      rawStoreRef,
+      providerSessionId: activeProviderSessionId,
+      rawStoreRef: activeRawStoreRef,
       completed: completedPromise,
       interrupt: async () => {
         if (proc.killed) {
@@ -229,10 +287,22 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
     };
   }
 
+  private ensureRuntimeStoreReady(rawStoreRef: string): void {
+    ensureDirectory(dirname(rawStoreRef));
+
+    if (existsSync(rawStoreRef)) {
+      return;
+    }
+
+    writeFileSync(rawStoreRef, "", "utf8");
+  }
+
   private async consumeStreamLine(input: {
     line: string;
-    rawStoreRef: string;
-    providerSessionId: string;
+    refreshBinding: (parsed?: Record<string, unknown>) => {
+      providerSessionId: string;
+      rawStoreRef: string;
+    };
     sink: ProviderRuntimeEventSink;
     sequenceRef: () => number;
     toolNameById: Map<string, string>;
@@ -245,6 +315,7 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
       return;
     }
 
+    const binding = input.refreshBinding(parsed);
     const envelopes = collectMessageEnvelopes(parsed);
 
     for (const envelope of envelopes) {
@@ -255,8 +326,8 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
         const normalized = normalizePart({
           part,
           envelope,
-          providerSessionId: input.providerSessionId,
-          rawStoreRef: input.rawStoreRef,
+          providerSessionId: binding.providerSessionId,
+          rawStoreRef: binding.rawStoreRef,
           partIndex,
           sequence: input.sequenceRef(),
           toolNameById: input.toolNameById
@@ -268,8 +339,8 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
 
         await input.sink.emit({
           type: "message",
-          providerSessionId: input.providerSessionId,
-          rawStoreRef: input.rawStoreRef,
+          providerSessionId: binding.providerSessionId,
+          rawStoreRef: binding.rawStoreRef,
           message: normalized,
           status: "running",
           rawEventRef: normalized.rawRef
@@ -294,8 +365,73 @@ function resolveClaudeCommand(explicitPath?: string): string {
   return "claude.cmd";
 }
 
+function shouldSpawnClaudeViaShell(commandPath: string): boolean {
+  return process.platform === "win32" && /\.(cmd|bat)$/i.test(commandPath);
+}
+
+function buildPendingClaudeSessionId(sessionId: string): string {
+  return `pending://claude-code/${sessionId}`;
+}
+
+function isPendingClaudeSessionId(sessionId: string): boolean {
+  return sessionId.startsWith("pending://claude-code/");
+}
+
 function buildClaudeRawStoreRef(homeDir: string, workspacePath: string, sessionId: string): string {
   return join(homeDir, "projects", workspaceSlug(workspacePath), `${sessionId}.jsonl`);
+}
+
+function buildClaudePendingRawStoreRef(homeDir: string, workspacePath: string, sessionId: string): string {
+  return join(homeDir, "projects", workspaceSlug(workspacePath), `.pending-${sessionId}.jsonl`);
+}
+
+function findClaudeSessionFile(homeDir: string, sessionId: string): string | null {
+  const projectsDir = join(homeDir, "projects");
+
+  if (!existsSync(projectsDir)) {
+    return null;
+  }
+
+  const candidates = readdirSync(projectsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => join(projectsDir, entry.name, `${sessionId}.jsonl`))
+    .filter((filePath) => existsSync(filePath));
+
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  candidates.sort((left, right) => compareClaudeSessionFiles(right, left));
+  return candidates[0] ?? null;
+}
+
+function compareClaudeSessionFiles(left: string, right: string): number {
+  const leftStat = statSync(left);
+  const rightStat = statSync(right);
+
+  if (leftStat.size !== rightStat.size) {
+    return leftStat.size - rightStat.size;
+  }
+
+  return leftStat.mtimeMs - rightStat.mtimeMs;
+}
+
+function extractClaudeSessionId(parsed?: Record<string, unknown>): string | null {
+  const directSessionId = ensureText(parsed?.session_id).trim();
+
+  if (directSessionId.length > 0) {
+    return directSessionId;
+  }
+
+  const resultSessionId = ensureText(
+    ((parsed?.result ?? {}) as Record<string, unknown>).session_id
+  ).trim();
+
+  if (resultSessionId.length > 0) {
+    return resultSessionId;
+  }
+
+  return null;
 }
 
 function ensureNonEmpty(value: string | null, errorCode: string): string {

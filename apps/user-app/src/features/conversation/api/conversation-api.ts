@@ -280,9 +280,17 @@ export function getSessionCapabilities(sessionId: string) {
   );
 }
 
-export function getProviderCapabilities(provider: ProviderId) {
+export function getProviderCapabilities(provider: ProviderId, workspaceId?: string) {
+  const search = new URLSearchParams();
+
+  if (workspaceId?.trim()) {
+    search.set("workspaceId", workspaceId.trim());
+  }
+
   return httpClient.request<ProviderCapabilitiesDto>(
-    `/api/providers/${encodeURIComponent(provider)}/capabilities`
+    `/api/providers/${encodeURIComponent(provider)}/capabilities${
+      search.size > 0 ? `?${search.toString()}` : ""
+    }`
   );
 }
 

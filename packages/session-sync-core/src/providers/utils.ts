@@ -220,12 +220,13 @@ export function safeDate(value: unknown, fallback: string): string {
 }
 
 export function workspaceSlug(workspacePath: string): string {
-  const normalized = workspacePath
-    .replaceAll(":", "")
+  const trimmed = workspacePath.replace(/[\\/]+$/, "");
+  const normalizedDriveLetter = trimmed.replace(/^[A-Z](?=:)/, (value) => value.toLowerCase());
+
+  return normalizedDriveLetter
+    .replaceAll(":", "-")
     .replaceAll("\\", "-")
     .replaceAll("/", "-");
-
-  return normalized.toLowerCase();
 }
 
 export function appendJsonLine(filePath: string, payload: unknown): void {

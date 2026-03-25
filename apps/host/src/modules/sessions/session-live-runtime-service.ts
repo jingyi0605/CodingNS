@@ -211,6 +211,7 @@ export class SessionLiveRuntimeService {
           binding.providerSessionId,
           input.content,
           acceptedAt,
+          1,
           boundAttachments.length > 0
             ? boundAttachments
             : persistedAttachments.messageAttachments
@@ -292,6 +293,7 @@ export class SessionLiveRuntimeService {
           binding.providerSessionId,
           input.content,
           acceptedAt,
+          Math.max(session.messageCount + 1, 1),
           boundAttachments.length > 0
             ? boundAttachments
             : persistedAttachments.messageAttachments
@@ -409,7 +411,6 @@ export class SessionLiveRuntimeService {
       userId,
       runningState: toStoredRunningState(snapshot.runningState),
       activitySource: "runtime",
-      isArchived: this.resolveArchivedState(request.sessionId, currentState?.isArchived ?? false),
       lastEventAt: snapshot.lastEventAt,
       completedAt: snapshot.completedAt,
       lastSeenAt: currentState?.lastSeenAt ?? null,
@@ -480,7 +481,6 @@ export class SessionLiveRuntimeService {
       userId: input.userId,
       runningState: toStoredRunningState(input.snapshot.runningState),
       activitySource: "runtime",
-      isArchived: this.resolveArchivedState(input.sessionId),
       lastEventAt: input.snapshot.lastEventAt,
       completedAt: input.snapshot.completedAt,
       lastSeenAt: null,
@@ -526,7 +526,6 @@ export class SessionLiveRuntimeService {
         userId,
         runningState: "running",
         activitySource: "runtime",
-        isArchived: this.resolveArchivedState(sessionId, currentState?.isArchived ?? false),
         lastEventAt: event.message.timestamp,
         completedAt: null,
         lastSeenAt: currentState?.lastSeenAt ?? null,
@@ -555,7 +554,6 @@ export class SessionLiveRuntimeService {
       userId,
       runningState: toStoredRunningState(event.status),
       activitySource: "runtime",
-      isArchived: this.resolveArchivedState(sessionId, currentState?.isArchived ?? false),
       lastEventAt: event.timestamp,
       completedAt,
       lastSeenAt: currentState?.lastSeenAt ?? null,
@@ -665,10 +663,6 @@ export class SessionLiveRuntimeService {
       updatedAt: nowIso()
     });
   }
-
-  private resolveArchivedState(sessionId: string, fallback = false): boolean {
-    return this.sessionIndexRepository.findIndexRecordBySessionId(sessionId)?.isArchived ?? fallback;
-  }
 }
 
 function createSyntheticUserMessage(
@@ -676,6 +670,7 @@ function createSyntheticUserMessage(
   providerSessionId: string,
   content: string,
   timestamp: string,
+  sequence: number,
   attachments: NormalizedMessageAttachment[] = []
 ): SendMessageResult["message"] {
   const syntheticId = createId();
@@ -690,7 +685,7 @@ function createSyntheticUserMessage(
     toolCall: null,
     attachments,
     timestamp,
-    sequence: Number.MAX_SAFE_INTEGER - 1,
+    sequence,
     rawRef: `synthetic://${provider}/${providerSessionId}/${syntheticId}`
   };
 }
