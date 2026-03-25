@@ -59,6 +59,18 @@ export interface ImportWorkspacePayload {
   name?: string;
 }
 
+export interface WorkspaceDirectoryOptionDto {
+  path: string;
+  name: string;
+}
+
+export interface WorkspaceDirectoryBrowseDto {
+  currentPath: string;
+  parentPath: string | null;
+  roots: WorkspaceDirectoryOptionDto[];
+  items: WorkspaceDirectoryOptionDto[];
+}
+
 export interface SessionSummaryDto {
   sessionId: string;
   workspaceId: string;
@@ -229,6 +241,18 @@ export function importWorkspace(payload: ImportWorkspacePayload) {
     method: "POST",
     body: JSON.stringify(payload)
   });
+}
+
+export function browseWorkspaceDirectories(targetPath?: string) {
+  const search = new URLSearchParams();
+
+  if (targetPath?.trim()) {
+    search.set("path", targetPath.trim());
+  }
+
+  return httpClient.request<WorkspaceDirectoryBrowseDto>(
+    `/api/workspaces/browse${search.size > 0 ? `?${search.toString()}` : ""}`
+  );
 }
 
 export function listWorkspaceSessions(workspaceId: string) {

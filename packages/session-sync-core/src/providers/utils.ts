@@ -1,5 +1,15 @@
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  readSync,
+  statSync,
+  writeFileSync
+} from "node:fs";
 import path from "node:path";
 
 import type {
@@ -9,7 +19,7 @@ import type {
   ProviderId
 } from "../types.js";
 
-interface RawJsonLine {
+export interface RawJsonLine {
   lineNumber: number;
   raw: string;
   data: Record<string, unknown>;
@@ -68,6 +78,129 @@ export function readJsonLines(filePath: string): RawJsonLine[] {
       raw: line,
       data: JSON.parse(line) as Record<string, unknown>
     }));
+}
+
+export function readFirstNonEmptyLine(filePath: string, maxBytes = 256 * 1024): string | null {
+  const stats = statSync(filePath);
+
+  if (stats.size <= 0 || maxBytes <= 0) {
+    return null;
+  }
+
+  const readLimit = Math.min(stats.size, Math.max(1, Math.trunc(maxBytes)));
+  const fd = openSync(filePath, "r");
+
+  try {
+    let bytesToRead = Math.min(readLimit, 8 * 1024);
+
+    while (bytesToRead > 0) {
+      const buffer = Buffer.alloc(bytesToRead);
+      const bytesRead = readSync(fd, buffer, 0, bytesToRead, 0);
+
+      if (bytesRead <= 0) {
+        return null;
+      }
+
+      let content = buffer.subarray(0, bytesRead);
+      const newlineIndex = content.indexOf(0x0a);
+
+      if (newlineIndex >= 0) {
+        content = content.subarray(0, newlineIndex);
+      } else if (bytesToRead < readLimit) {
+        bytesToRead = Math.min(readLimit, bytesToRead * 2);
+        continue;
+      }
+
+      const firstLine = content.toString("utf8").replace(/\r$/, "").trim();
+      return firstLine.length > 0 ? firstLine : null;
+    }
+  } finally {
+    closeSync(fd);
+  }
+
+  return null;
+}
+
+export function readTrailingJsonLines(filePath: string, maxBytes: number): RawJsonLine[] {
+  const stats = statSync(filePath);
+
+  if (stats.size <= 0 || maxBytes <= 0) {
+    return [];
+  }
+
+  const bytesToRead = Math.min(Math.max(1, Math.trunc(maxBytes)), stats.size);
+  const startOffset = stats.size - bytesToRead;
+  const fd = openSync(filePath, "r");
+
+  try {
+    const buffer = Buffer.alloc(bytesToRead);
+    const bytesRead = readSync(fd, buffer, 0, bytesToRead, startOffset);
+
+    if (bytesRead <= 0) {
+      return [];
+    }
+
+    let content = buffer.subarray(0, bytesRead);
+    let alignedStartOffset = startOffset;
+
+    if (startOffset > 0) {
+      const newlineIndex = content.indexOf(0x0a);
+
+      if (newlineIndex < 0) {
+        return [];
+      }
+
+      alignedStartOffset += newlineIndex + 1;
+      content = content.subarray(newlineIndex + 1);
+    }
+
+    if (content.length === 0) {
+      return [];
+    }
+
+    const firstLineNumber = countLinesBeforeOffset(fd, alignedStartOffset) + 1;
+
+    return content
+      .toString("utf8")
+      .split(/\r?\n/)
+      .filter((line) => line.trim().length > 0)
+      .map((line, index) => ({
+        lineNumber: firstLineNumber + index,
+        raw: line,
+        data: JSON.parse(line) as Record<string, unknown>
+      }));
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function countLinesBeforeOffset(fd: number, offset: number): number {
+  if (offset <= 0) {
+    return 0;
+  }
+
+  const buffer = Buffer.alloc(64 * 1024);
+  let count = 0;
+  let position = 0;
+
+  while (position < offset) {
+    const length = Math.min(buffer.length, offset - position);
+    const bytesRead = readSync(fd, buffer, 0, length, position);
+
+    if (bytesRead <= 0) {
+      break;
+    }
+
+    for (let index = 0; index < bytesRead; index += 1) {
+      if (buffer[index] === 0x0a) {
+        count += 1;
+      }
+    }
+
+    position += bytesRead;
+  }
+
+  return count;
 }
 
 export function encodeCursor(index: number): string {

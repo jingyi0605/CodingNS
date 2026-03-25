@@ -11,6 +11,7 @@ import {
   searchFiles,
   type FileNodeDto
 } from "../api/file-context-api";
+import { useWorkbenchShell } from "./WorkbenchLayout";
 import { FileViewerModal } from "./FileViewerModal";
 import {
   resolveFileTreeIconKind,
@@ -40,6 +41,7 @@ const ROOT_DIRECTORY = "";
 const FILE_REPEAT_ACTIVATION_MS = 450;
 const FILE_PANEL_WORKSPACE_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
 const FILE_PANEL_SESSION_COUNT_CACHE_MAX_AGE_MS = 60 * 1000;
+const FILE_TREE_SNAPSHOT_TIMEOUT_MS = 1600;
 
 interface FilePanelWorkspaceSnapshot {
   treeCache: FileTreeCache;
@@ -51,7 +53,17 @@ interface LoadRootTreeOptions {
   silent?: boolean;
 }
 
+interface DirectorySnapshotRequestOptions {
+  force?: boolean;
+  mode?: "snapshot-first" | "api-first";
+}
+
 export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelProps) {
+  const {
+    subscribeFileTree,
+    requestFileTreeRefresh,
+    addFileTreeSnapshotListener
+  } = useWorkbenchShell();
   const [treeCache, setTreeCache] = useState<FileTreeCache>({});
   const [expandedDirectories, setExpandedDirectories] = useState<string[]>([]);
   const [loadingDirectories, setLoadingDirectories] = useState<string[]>([]);
@@ -72,6 +84,16 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
   const activeDirectoryPathRef = useRef(ROOT_DIRECTORY);
   const restoringWorkspaceSnapshotRef = useRef(false);
   const recentFileActivationRef = useRef<RecentFileActivation | null>(null);
+  const directoryWaitersRef = useRef(
+    new Map<
+      string,
+      Array<{
+        resolve: (items: FileNodeDto[]) => void;
+        reject: (error: Error) => void;
+        timerId: number;
+      }>
+    >()
+  );
   const { showToast } = useToast();
 
   useEffect(() => {
@@ -108,7 +130,10 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
   }
 
   useEffect(() => {
+    rejectAllDirectoryWaiters();
+
     if (!workspaceId) {
+      rejectAllDirectoryWaiters();
       restoringWorkspaceSnapshotRef.current = false;
       treeCacheRef.current = {};
       expandedDirectoriesRef.current = [];
@@ -173,6 +198,47 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
   }, [workspaceId]);
 
   useEffect(() => {
+    if (!workspaceId) {
+      return;
+    }
+
+    return addFileTreeSnapshotListener((snapshot) => {
+      if (snapshot.workspaceId !== workspaceId) {
+        return;
+      }
+
+      updateTreeCache((previous) => ({
+        ...previous,
+        [snapshot.path]: snapshot.items
+      }));
+
+      if (snapshot.path === ROOT_DIRECTORY) {
+        setLoadingTree(false);
+      }
+
+      setLoadingDirectories((previous) => previous.filter((item) => item !== snapshot.path));
+      resolveDirectoryWaiters(snapshot.path, snapshot.items);
+    });
+  }, [addFileTreeSnapshotListener, workspaceId]);
+
+  useEffect(() => {
+    return () => {
+      rejectAllDirectoryWaiters();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!workspaceId) {
+      return;
+    }
+
+    subscribeFileTree(
+      workspaceId,
+      collectSubscribedDirectories(expandedDirectoriesRef.current, activeDirectoryPathRef.current)
+    );
+  }, [activeDirectoryPath, expandedDirectories, subscribeFileTree, workspaceId]);
+
+  useEffect(() => {
     setSelectedPath(null);
     setViewerFilePath(null);
     setSessionRefreshVersion(0);
@@ -217,9 +283,10 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
 
   useEffect(() => {
     let cancelled = false;
+    const currentWorkspaceId = workspaceId?.trim() ?? null;
 
     async function loadRootTree(options?: LoadRootTreeOptions) {
-      if (!workspaceId) {
+      if (!currentWorkspaceId) {
         return;
       }
 
@@ -231,19 +298,22 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
 
       logPerfDebug("file_panel.load_root_tree.start", {
         sessionId,
-        workspaceId,
+        workspaceId: currentWorkspaceId,
         silent: options?.silent === true,
         cachedRootItems: treeCacheRef.current[ROOT_DIRECTORY]?.length ?? 0
       });
 
       try {
-        const response = await getFileTree(workspaceId);
+        const response = await requestDirectorySnapshot(ROOT_DIRECTORY, {
+          force: true,
+          mode: "api-first"
+        });
 
         if (!cancelled) {
           logPerfDebug("file_panel.load_root_tree.end", {
             sessionId,
-            workspaceId,
-            itemCount: response.items.length
+            workspaceId: currentWorkspaceId,
+            itemCount: response.length
           });
           updateTreeCache((previous) => ({
             ...pruneTreeCache(
@@ -251,7 +321,7 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
               activeDirectoryPathRef.current,
               expandedDirectoriesRef.current
             ),
-            [ROOT_DIRECTORY]: response.items
+            [ROOT_DIRECTORY]: response
           }));
         }
       } catch (error) {
@@ -272,6 +342,15 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
 
     if (hasCachedRootItems) {
       const timer = window.setTimeout(() => {
+        if (!currentWorkspaceId) {
+          return;
+        }
+
+        subscribeFileTree(
+          currentWorkspaceId,
+          collectSubscribedDirectories(expandedDirectoriesRef.current, activeDirectoryPathRef.current)
+        );
+        requestFileTreeRefresh(currentWorkspaceId, [ROOT_DIRECTORY]);
         void loadRootTree({ silent: true });
       }, 1500);
 
@@ -332,14 +411,17 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
     }
 
     try {
-      const response = await getFileTree(workspaceId, directoryPath || undefined);
+      const items = await requestDirectorySnapshot(directoryPath, {
+        force,
+        mode: "api-first"
+      });
 
       updateTreeCache((previous) => ({
         ...previous,
-        [directoryPath]: response.items
+        [directoryPath]: items
       }));
 
-      return response.items;
+      return items;
     } catch (error) {
       showToast({
         title: readError(error, t("conversation.filePanelLoadFailed")),
@@ -374,8 +456,11 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
 
     const entries = await Promise.all(
       targetDirectories.map(async (directoryPath) => {
-        const response = await getFileTree(workspaceId, directoryPath || undefined);
-        return [directoryPath, response.items] as const;
+        const items = await requestDirectorySnapshot(directoryPath, {
+          force: true,
+          mode: "api-first"
+        });
+        return [directoryPath, items] as const;
       })
     );
 
@@ -392,6 +477,111 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
     });
 
     updateTreeCache(nextTreeCache);
+  }
+
+  async function requestDirectorySnapshot(
+    directoryPath: string,
+    options?: DirectorySnapshotRequestOptions
+  ): Promise<FileNodeDto[]> {
+    if (!workspaceId) {
+      return [];
+    }
+
+    if (!options?.force) {
+      const cachedItems = treeCacheRef.current[directoryPath];
+
+      if (cachedItems) {
+        return cachedItems;
+      }
+    }
+
+    const subscribedDirectories = collectSubscribedDirectories(
+      appendUnique(expandedDirectoriesRef.current, directoryPath),
+      directoryPath || activeDirectoryPathRef.current
+    );
+
+    subscribeFileTree(workspaceId, subscribedDirectories);
+    requestFileTreeRefresh(workspaceId, [directoryPath]);
+
+    if (options?.mode === "api-first") {
+      const response = await getFileTree(workspaceId, directoryPath || undefined);
+      resolveDirectoryWaiters(directoryPath, response.items);
+      return response.items;
+    }
+
+    try {
+      return await waitForDirectorySnapshot(directoryPath);
+    } catch {
+      const response = await getFileTree(workspaceId, directoryPath || undefined);
+      resolveDirectoryWaiters(directoryPath, response.items);
+      return response.items;
+    }
+  }
+
+  function waitForDirectorySnapshot(
+    directoryPath: string,
+    timeoutMs = FILE_TREE_SNAPSHOT_TIMEOUT_MS
+  ): Promise<FileNodeDto[]> {
+    const cachedItems = treeCacheRef.current[directoryPath];
+
+    if (cachedItems) {
+      return Promise.resolve(cachedItems);
+    }
+
+    return new Promise<FileNodeDto[]>((resolve, reject) => {
+      const timerId = window.setTimeout(() => {
+        removeDirectoryWaiter(directoryPath, timerId);
+        reject(new Error(`FILE_TREE_SNAPSHOT_TIMEOUT:${directoryPath}`));
+      }, timeoutMs);
+      const waiters = directoryWaitersRef.current.get(directoryPath) ?? [];
+
+      directoryWaitersRef.current.set(directoryPath, [
+        ...waiters,
+        {
+          resolve,
+          reject,
+          timerId
+        }
+      ]);
+    });
+  }
+
+  function resolveDirectoryWaiters(directoryPath: string, items: FileNodeDto[]) {
+    const waiters = directoryWaitersRef.current.get(directoryPath) ?? [];
+
+    if (waiters.length === 0) {
+      return;
+    }
+
+    directoryWaitersRef.current.delete(directoryPath);
+
+    waiters.forEach((waiter) => {
+      window.clearTimeout(waiter.timerId);
+      waiter.resolve(items);
+    });
+  }
+
+  function removeDirectoryWaiter(directoryPath: string, timerId: number) {
+    const waiters = directoryWaitersRef.current.get(directoryPath) ?? [];
+    const nextWaiters = waiters.filter((waiter) => waiter.timerId !== timerId);
+
+    if (nextWaiters.length === 0) {
+      directoryWaitersRef.current.delete(directoryPath);
+      return;
+    }
+
+    directoryWaitersRef.current.set(directoryPath, nextWaiters);
+  }
+
+  function rejectAllDirectoryWaiters() {
+    for (const [directoryPath, waiters] of directoryWaitersRef.current.entries()) {
+      waiters.forEach((waiter) => {
+        window.clearTimeout(waiter.timerId);
+        waiter.reject(new Error(`FILE_TREE_ABORTED:${directoryPath}`));
+      });
+    }
+
+    directoryWaitersRef.current.clear();
   }
 
   // 选中文件时要把父目录链展开，否则树高亮永远对不上。
@@ -1019,6 +1209,13 @@ function buildWorkspaceTreeSnapshotKey(workspaceId: string) {
 
 function buildSessionChangeCountSnapshotKey(workspaceId: string, sessionId: string) {
   return `file-panel.session-change-count.${workspaceId}.${sessionId}`;
+}
+
+function collectSubscribedDirectories(
+  expandedDirectories: string[],
+  activeDirectoryPath: string
+): string[] {
+  return [...resolveRetainedDirectoryPaths(activeDirectoryPath, expandedDirectories)];
 }
 
 function readError(error: unknown, fallback: string): string {

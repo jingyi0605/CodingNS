@@ -350,33 +350,10 @@ describe("SessionRuntimeStore", () => {
     store.destroy();
   });
 
-  it("refreshes runtime state after the last envelope to avoid stale running state", async () => {
+  it("does not refresh runtime state after envelopes while realtime stays connected", async () => {
     vi.useFakeTimers();
     const store = new SessionRuntimeStore("session-1");
 
-    mocked.getSessionRuntime
-      .mockResolvedValueOnce({
-        sessionId: "session-1",
-        runningState: "running",
-        hasActiveRun: true,
-        canAttach: true,
-        canInterrupt: true,
-        provider: "codex",
-        providerSessionId: "raw-1",
-        detail: null,
-        updatedAt: "2026-03-24T10:00:00.000Z"
-      })
-      .mockResolvedValueOnce({
-        sessionId: "session-1",
-        runningState: "completed",
-        hasActiveRun: false,
-        canAttach: false,
-        canInterrupt: false,
-        provider: "codex",
-        providerSessionId: "raw-1",
-        detail: null,
-        updatedAt: "2026-03-24T10:00:03.000Z"
-      });
     mocked.getSessionMessages.mockResolvedValueOnce({
       messages: [],
       cursor: "cursor-latest",
@@ -411,21 +388,42 @@ describe("SessionRuntimeStore", () => {
 
     expect(store.getState().session?.runningState).toBe("running");
 
-    await vi.advanceTimersByTimeAsync(1200);
+    await vi.advanceTimersByTimeAsync(12_000);
 
-    expect(mocked.getSessionRuntime).toHaveBeenCalledTimes(2);
-    expect(store.getState().session?.runningState).toBe("completed");
-
-    await vi.advanceTimersByTimeAsync(3600);
-
-    expect(mocked.getSessionRuntime).toHaveBeenCalledTimes(2);
+    expect(mocked.getSessionRuntime).not.toHaveBeenCalled();
+    expect(store.getState().session?.runningState).toBe("running");
 
     store.destroy();
   });
 
   it("falls back to polling runtime only while realtime is disconnected", async () => {
     vi.useFakeTimers();
-    const store = new SessionRuntimeStore("session-1");
+    const store = new SessionRuntimeStore("session-1", {
+      initialSession: {
+        sessionId: "session-1",
+        workspaceId: "workspace-1",
+        provider: "codex",
+        providerSessionId: "raw-1",
+        rawStoreRef: "codex://raw-1",
+        title: "session-1",
+        messageCount: 1,
+        lastMessageAt: "2026-03-24T10:00:00.000Z",
+        createdAt: "2026-03-24T09:00:00.000Z",
+        updatedAt: "2026-03-24T10:00:00.000Z",
+        syncStatus: "idle",
+        syncCursor: "cursor-sync",
+        lastSyncAt: "2026-03-24T10:00:00.000Z",
+        lastErrorCode: null,
+        lastErrorDetail: null,
+        resumedAt: null,
+        runningState: "running",
+        activitySource: "none",
+        lastEventAt: "2026-03-24T10:00:00.000Z",
+        completedAt: null,
+        lastSeenAt: null,
+        activityState: "idle"
+      }
+    });
 
     mocked.getSessionRuntime.mockResolvedValue({
       sessionId: "session-1",
@@ -452,19 +450,16 @@ describe("SessionRuntimeStore", () => {
 
     (client!.options.onConnectionChange as ((state: string) => void))("reconnecting");
 
-    await vi.advanceTimersByTimeAsync(1200);
-    expect(mocked.getSessionRuntime).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(mocked.getSessionRuntime).not.toHaveBeenCalled();
 
-    await vi.advanceTimersByTimeAsync(1200);
-    expect(mocked.getSessionRuntime).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(mocked.getSessionRuntime).toHaveBeenCalledTimes(1);
 
     (client!.options.onConnectionChange as ((state: string) => void))("connected");
 
-    await vi.advanceTimersByTimeAsync(1200);
-    expect(mocked.getSessionRuntime).toHaveBeenCalledTimes(4);
-
-    await vi.advanceTimersByTimeAsync(2400);
-    expect(mocked.getSessionRuntime).toHaveBeenCalledTimes(4);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(mocked.getSessionRuntime).toHaveBeenCalledTimes(1);
 
     store.destroy();
   });
@@ -477,7 +472,19 @@ describe("SessionRuntimeStore", () => {
     });
 
     mocked.getSessionMessages.mockResolvedValueOnce({
-      messages: [],
+      messages: [
+        {
+          messageId: "assistant-1",
+          provider: "codex",
+          providerSessionId: "raw-1",
+          role: "assistant",
+          kind: "text",
+          content: "hello",
+          timestamp: "2026-03-24T10:00:00.000Z",
+          sequence: 1,
+          rawRef: "codex://raw#line=1"
+        }
+      ],
       cursor: "cursor-latest",
       nextCursor: null,
       total: 0
@@ -490,8 +497,179 @@ describe("SessionRuntimeStore", () => {
     expect(onSeen).toHaveBeenCalledTimes(1);
     expect(onSeen).toHaveBeenCalledWith(
       "session-1",
-      expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/)
+      "2026-03-24T10:00:00.000Z"
     );
+
+    store.destroy();
+  });
+
+  it("does not repeat mark seen when navigation session pushes an older lastSeenAt", async () => {
+    vi.useFakeTimers();
+    const store = new SessionRuntimeStore("session-1", {
+      initialSession: {
+        sessionId: "session-1",
+        workspaceId: "workspace-1",
+        provider: "codex",
+        providerSessionId: "raw-1",
+        rawStoreRef: "codex://raw-1",
+        title: "session-1",
+        messageCount: 1,
+        lastMessageAt: "2026-03-24T10:00:00.000Z",
+        createdAt: "2026-03-24T09:00:00.000Z",
+        updatedAt: "2026-03-24T10:00:00.000Z",
+        syncStatus: "idle",
+        syncCursor: "cursor-sync",
+        lastSyncAt: "2026-03-24T10:00:00.000Z",
+        lastErrorCode: null,
+        lastErrorDetail: null,
+        resumedAt: null,
+        runningState: "idle",
+        activitySource: "none",
+        lastEventAt: "2026-03-24T10:00:00.000Z",
+        completedAt: null,
+        lastSeenAt: null,
+        activityState: "idle"
+      }
+    });
+
+    mocked.getSessionMessages.mockResolvedValueOnce({
+      messages: [
+        {
+          messageId: "assistant-1",
+          provider: "codex",
+          providerSessionId: "raw-1",
+          role: "assistant",
+          kind: "text",
+          content: "hello",
+          timestamp: "2026-03-24T10:00:00.000Z",
+          sequence: 1,
+          rawRef: "codex://raw#line=1"
+        }
+      ],
+      cursor: "cursor-latest",
+      nextCursor: null,
+      total: 0
+    });
+
+    await store.initialize();
+    await vi.advanceTimersByTimeAsync(600);
+
+    expect(mocked.markSessionSeen).toHaveBeenCalledTimes(1);
+    expect(store.getState().session?.lastSeenAt).toBe("2026-03-24T10:00:00.000Z");
+
+    store.applyNavigationSession({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "raw-1",
+      rawStoreRef: "codex://raw-1",
+      title: "session-1",
+      messageCount: 1,
+      lastMessageAt: "2026-03-24T10:05:00.000Z",
+      createdAt: "2026-03-24T09:00:00.000Z",
+      updatedAt: "2026-03-24T10:05:00.000Z",
+      syncStatus: "idle",
+      syncCursor: "cursor-sync",
+      lastSyncAt: "2026-03-24T10:05:00.000Z",
+      lastErrorCode: null,
+      lastErrorDetail: null,
+      resumedAt: null,
+      runningState: "idle",
+      activitySource: "none",
+      lastEventAt: "2026-03-24T10:05:00.000Z",
+      completedAt: null,
+      lastSeenAt: null,
+      activityState: "idle"
+    });
+
+    expect(store.getState().session?.lastSeenAt).toBe("2026-03-24T10:00:00.000Z");
+
+    const client = mocked.realtimeInstances[0];
+    expect(client).toBeDefined();
+
+    (client!.options.onEnvelope as ((event: Record<string, unknown>) => void))({
+      type: "session.delta",
+      sessionId: "session-1",
+      cursor: "cursor-after",
+      messages: [
+        {
+          messageId: "assistant-1",
+          provider: "codex",
+          providerSessionId: "raw-1",
+          role: "assistant",
+          kind: "text",
+          content: "hello",
+          timestamp: "2026-03-24T10:00:00.000Z",
+          sequence: 1,
+          rawRef: "codex://raw#line=1",
+          toolCall: null
+        }
+      ]
+    });
+
+    await vi.advanceTimersByTimeAsync(600);
+
+    expect(mocked.markSessionSeen).toHaveBeenCalledTimes(1);
+
+    store.destroy();
+  });
+
+  it("throttles mark seen requests while new assistant messages keep streaming in", async () => {
+    vi.useFakeTimers();
+    const store = new SessionRuntimeStore("session-1");
+
+    mocked.getSessionMessages.mockResolvedValueOnce({
+      messages: [
+        {
+          messageId: "assistant-1",
+          provider: "codex",
+          providerSessionId: "raw-1",
+          role: "assistant",
+          kind: "text",
+          content: "hello",
+          timestamp: "2026-03-24T10:00:00.000Z",
+          sequence: 1,
+          rawRef: "codex://raw#line=1"
+        }
+      ],
+      cursor: "cursor-latest",
+      nextCursor: null,
+      total: 0
+    });
+
+    await store.initialize();
+    await vi.advanceTimersByTimeAsync(600);
+
+    expect(mocked.markSessionSeen).toHaveBeenCalledTimes(1);
+
+    const client = mocked.realtimeInstances[0];
+    expect(client).toBeDefined();
+
+    (client!.options.onEnvelope as ((event: Record<string, unknown>) => void))({
+      type: "session.delta",
+      sessionId: "session-1",
+      cursor: "cursor-after",
+      messages: [
+        {
+          messageId: "assistant-2",
+          provider: "codex",
+          providerSessionId: "raw-1",
+          role: "assistant",
+          kind: "text",
+          content: "world",
+          timestamp: "2026-03-24T10:00:02.000Z",
+          sequence: 2,
+          rawRef: "codex://raw#line=2",
+          toolCall: null
+        }
+      ]
+    });
+
+    await vi.advanceTimersByTimeAsync(600);
+    expect(mocked.markSessionSeen).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(4_400);
+    expect(mocked.markSessionSeen).toHaveBeenCalledTimes(2);
 
     store.destroy();
   });

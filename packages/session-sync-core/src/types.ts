@@ -128,6 +128,12 @@ export interface ProviderAdapter {
     workspacePath: string,
     options?: DetectSessionsOptions
   ): Promise<ProviderSessionSummary[]>;
+  readRecentSessionHistory?(
+    providerSessionId: string,
+    rawStoreRef: string,
+    totalMessageCount: number,
+    limit: number
+  ): Promise<HistoryPage | null>;
   readSessionHistory(
     providerSessionId: string,
     rawStoreRef: string,

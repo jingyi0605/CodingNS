@@ -43,6 +43,9 @@ type RuntimeRefreshMode = "tail" | "poll";
 const INITIAL_HISTORY_LIMIT = 30;
 const REALTIME_LIMIT = 40;
 const SESSION_RUNTIME_SNAPSHOT_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
+const SESSION_MARK_SEEN_DELAY_MS = 600;
+const SESSION_MARK_SEEN_MIN_INTERVAL_MS = 5_000;
+const SESSION_RUNTIME_POLL_DELAY_MS = 10_000;
 
 interface SessionRuntimeSnapshot {
   session: SessionSummaryDto | null;
@@ -55,6 +58,9 @@ export class SessionRuntimeStore {
   private listeners = new Set<RuntimeListener>();
   private realtimeClient: RealtimeClient | null = null;
   private markSeenTimer: number | null = null;
+  private markSeenInFlight = false;
+  private lastMarkSeenRequestAt = 0;
+  private seenWatermark: string | null = null;
   private runtimeRefreshTimer: number | null = null;
   private runtimeRefreshMode: RuntimeRefreshMode | null = null;
 
@@ -82,6 +88,7 @@ export class SessionRuntimeStore {
       capabilities: cachedSnapshot?.capabilities ?? null,
       messages: seededMessages
     });
+    this.seenWatermark = seededSession?.lastSeenAt ?? null;
   }
 
   subscribe = (listener: RuntimeListener) => {
@@ -136,6 +143,7 @@ export class SessionRuntimeStore {
         this.options.bootstrapMessages ?? []
       )
     });
+    this.seenWatermark = this.state.session?.lastSeenAt ?? null;
     this.emit();
     await this.initialize();
   }
@@ -190,7 +198,6 @@ export class SessionRuntimeStore {
           clientRequestId
         )
       });
-      this.scheduleRuntimeRefresh("tail", "send_message");
     } catch (error) {
       this.patch({
         messages: markPendingAsFailed(this.state.messages, clientRequestId),
@@ -232,7 +239,6 @@ export class SessionRuntimeStore {
           clientRequestId
         )
       });
-      this.scheduleRuntimeRefresh("tail", "retry_message");
     } catch (error) {
       this.patch({
         messages: markPendingAsFailed(this.state.messages, clientRequestId),
@@ -364,7 +370,10 @@ export class SessionRuntimeStore {
             previousConnectionState !== "closed" &&
             previousConnectionState !== "connected"
           ) {
-            this.scheduleRuntimeRefresh("tail", "reconnected");
+            this.patch({
+              errorCode: null,
+              errorDetail: null
+            });
           }
 
           return;
@@ -384,7 +393,6 @@ export class SessionRuntimeStore {
         });
         this.realtimeClient?.updateCursor(event.cursor);
         this.scheduleMarkSeen();
-        this.scheduleRuntimeRefresh("tail", "envelope");
       },
       onRuntimeStatus: (event) => {
         this.handleRuntimeStatus(event);
@@ -409,15 +417,25 @@ export class SessionRuntimeStore {
   }
 
   private patch(input: Partial<SessionRuntimeState>): void {
+    let nextInput = input;
+
+    if (Object.prototype.hasOwnProperty.call(input, "session")) {
+      this.syncSeenWatermark(input.session ?? null);
+      nextInput = {
+        ...input,
+        session: this.applySeenWatermark(input.session ?? null)
+      };
+    }
+
     this.state = {
       ...this.state,
-      ...input
+      ...nextInput
     };
 
     if (
-      Object.prototype.hasOwnProperty.call(input, "session")
-      || Object.prototype.hasOwnProperty.call(input, "capabilities")
-      || Object.prototype.hasOwnProperty.call(input, "messages")
+      Object.prototype.hasOwnProperty.call(nextInput, "session")
+      || Object.prototype.hasOwnProperty.call(nextInput, "capabilities")
+      || Object.prototype.hasOwnProperty.call(nextInput, "messages")
     ) {
       this.persistSnapshot();
     }
@@ -439,17 +457,58 @@ export class SessionRuntimeStore {
       return;
     }
 
+    const targetSeenAt = this.getTargetSeenAt();
+
+    if (this.markSeenInFlight || targetSeenAt === null) {
+      return;
+    }
+
+    const throttleDelayMs = this.getMarkSeenThrottleDelayMs();
+    const delayMs = Math.max(SESSION_MARK_SEEN_DELAY_MS, throttleDelayMs);
+
     this.markSeenTimer = window.setTimeout(() => {
       this.markSeenTimer = null;
-      const seenAt = new Date().toISOString();
+      const nextTargetSeenAt = this.getTargetSeenAt();
+
+      if (nextTargetSeenAt === null) {
+        return;
+      }
+
+      logPerfDebug("session_seen.start", {
+        sessionId: this.sessionId,
+        targetSeenAt: nextTargetSeenAt,
+        seenWatermark: this.seenWatermark
+      });
+
+      this.markSeenInFlight = true;
+      this.lastMarkSeenRequestAt = Date.now();
       void markSessionSeen(this.sessionId)
         .then(() => {
-          this.options.onSeen?.(this.sessionId, seenAt);
+          this.bumpSeenWatermark(nextTargetSeenAt);
+          this.patch({
+            session: withLastSeenAt(this.state.session, nextTargetSeenAt)
+          });
+          this.options.onSeen?.(this.sessionId, nextTargetSeenAt);
+          logPerfDebug("session_seen.end", {
+            sessionId: this.sessionId,
+            seenWatermark: this.seenWatermark
+          });
         })
         .catch(() => {
+          logPerfDebug("session_seen.error", {
+            sessionId: this.sessionId,
+            targetSeenAt: nextTargetSeenAt
+          });
           return;
+        })
+        .finally(() => {
+          this.markSeenInFlight = false;
+
+          if (this.shouldMarkSeen()) {
+            this.scheduleMarkSeen();
+          }
         });
-    }, 600);
+    }, delayMs);
   }
 
   private clearRuntimeRefreshTimer(targetMode?: RuntimeRefreshMode): void {
@@ -493,7 +552,7 @@ export class SessionRuntimeStore {
       this.runtimeRefreshTimer = null;
       this.runtimeRefreshMode = null;
       void this.refreshRuntimeState(refreshMode, reason);
-    }, 1200);
+    }, mode === "poll" ? SESSION_RUNTIME_POLL_DELAY_MS : 1200);
   }
 
   private async refreshRuntimeState(mode: RuntimeRefreshMode, reason: string): Promise<void> {
@@ -587,22 +646,6 @@ export class SessionRuntimeStore {
       );
     }
 
-    if (this.state.session?.runningState === null || this.state.session === null) {
-      tasks.push(
-        getSessionRuntime(this.sessionId)
-          .then((runtime) => {
-            this.patch({
-              session: withRunningState(this.state.session, runtime.runningState),
-              errorCode: null,
-              errorDetail: null
-            });
-          })
-          .catch(() => {
-            return;
-          })
-      );
-    }
-
     if (tasks.length === 0) {
       return;
     }
@@ -663,9 +706,6 @@ export class SessionRuntimeStore {
       this.clearRuntimeRefreshTimer();
     }
 
-    if (isTerminalRuntimeState(event.status)) {
-      this.scheduleMarkSeen();
-    }
   }
 
   private handleRuntimeError(event: SessionRuntimeErrorEvent): void {
@@ -675,7 +715,6 @@ export class SessionRuntimeStore {
       errorCode: event.error_code,
       errorDetail: event.detail
     });
-    this.scheduleMarkSeen();
   }
 
   private handleInterrupted(event: SessionInterruptedEvent): void {
@@ -685,7 +724,60 @@ export class SessionRuntimeStore {
       errorCode: null,
       errorDetail: event.detail
     });
-    this.scheduleMarkSeen();
+  }
+
+  private shouldMarkSeen(): boolean {
+    return this.getTargetSeenAt() !== null;
+  }
+
+  private getTargetSeenAt(): string | null {
+    const latestVisibleMessage = [...this.state.messages]
+      .reverse()
+      .find((message) => message.role !== "user");
+
+    if (!latestVisibleMessage) {
+      return null;
+    }
+
+    const lastSeenAt = this.seenWatermark;
+
+    if (!lastSeenAt) {
+      return latestVisibleMessage.timestamp;
+    }
+
+    return latestVisibleMessage.timestamp > lastSeenAt ? latestVisibleMessage.timestamp : null;
+  }
+
+  private syncSeenWatermark(session: SessionSummaryDto | null): void {
+    if (!session?.lastSeenAt) {
+      return;
+    }
+
+    this.bumpSeenWatermark(session.lastSeenAt);
+  }
+
+  private bumpSeenWatermark(nextSeenAt: string): void {
+    if (this.seenWatermark && this.seenWatermark >= nextSeenAt) {
+      return;
+    }
+
+    this.seenWatermark = nextSeenAt;
+  }
+
+  private getMarkSeenThrottleDelayMs(): number {
+    if (this.lastMarkSeenRequestAt <= 0) {
+      return 0;
+    }
+
+    return Math.max(0, SESSION_MARK_SEEN_MIN_INTERVAL_MS - (Date.now() - this.lastMarkSeenRequestAt));
+  }
+
+  private applySeenWatermark(session: SessionSummaryDto | null): SessionSummaryDto | null {
+    if (!session || !this.seenWatermark) {
+      return session;
+    }
+
+    return withLastSeenAt(session, this.seenWatermark);
   }
 
   private emit(): void {
@@ -759,6 +851,24 @@ function withRunningState<T extends { runningState: SessionRunningState | null }
   return {
     ...session,
     runningState
+  };
+}
+
+function withLastSeenAt<T extends { lastSeenAt: string | null }>(
+  session: T | null,
+  lastSeenAt: string
+): T | null {
+  if (!session) {
+    return session;
+  }
+
+  if (session.lastSeenAt && session.lastSeenAt >= lastSeenAt) {
+    return session;
+  }
+
+  return {
+    ...session,
+    lastSeenAt
   };
 }
 

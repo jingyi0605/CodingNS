@@ -15,9 +15,7 @@ import {
   commitDraft,
   createCommitDraft,
   discardGitTargets,
-  getGitBranches,
   getGitHistory,
-  getGitStatus,
   stageGitTargets,
   switchGitBranch,
   syncGitRemote,
@@ -33,6 +31,7 @@ import {
   resolveFileTreeIconKind,
   resolveFileTreeIconLabel
 } from "./file-tree-icon";
+import { useWorkbenchShell } from "./WorkbenchLayout";
 
 interface GitSidebarProps {
   workspaceId: string | null | undefined;
@@ -77,6 +76,7 @@ interface GitSidebarSnapshot {
 }
 
 export function GitSidebar({ workspaceId }: GitSidebarProps) {
+  const { subscribeGitSnapshot, requestGitRefresh, addGitSnapshotListener } = useWorkbenchShell();
   const [status, setStatus] = useState<GitStatusDto | null>(null);
   const [history, setHistory] = useState<GitHistoryItemDto[]>([]);
   const [historyTotalCount, setHistoryTotalCount] = useState(0);
@@ -166,7 +166,6 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
   }, [panelResizeActive]);
 
   useEffect(() => {
-    let cancelled = false;
     if (!workspaceId?.trim()) {
       setStatus(null);
       setHistory([]);
@@ -174,13 +173,10 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
       setHistoryNextCursor(null);
       setBranches(null);
       setLoading(false);
-      return () => {
-        cancelled = true;
-      };
+      return;
     }
 
-    const currentWorkspaceId: string = workspaceId.trim();
-
+    const currentWorkspaceId = workspaceId.trim();
     const cachedSnapshot = readViewSnapshot<GitSidebarSnapshot>(
       buildGitSidebarSnapshotKey(currentWorkspaceId),
       GIT_SNAPSHOT_CACHE_MAX_AGE_MS
@@ -190,79 +186,70 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
       workspaceId: currentWorkspaceId,
       cached: Boolean(cachedSnapshot),
       cachedHistoryCount: cachedSnapshot?.history.length ?? 0,
-      cachedChangedCount:
-        cachedSnapshot?.status?.changes.length ?? 0
+      cachedChangedCount: cachedSnapshot?.status?.changes.length ?? 0
     });
 
     if (cachedSnapshot) {
-      setStatus(cachedSnapshot.status);
-      setHistory(cachedSnapshot.history);
-      setHistoryTotalCount(cachedSnapshot.historyTotalCount);
-      setHistoryNextCursor(cachedSnapshot.historyNextCursor);
-      setBranches(cachedSnapshot.branches);
+      applyGitSnapshot(cachedSnapshot);
       setLoading(false);
-    } else {
-      setStatus(null);
-      setHistory([]);
-      setHistoryTotalCount(0);
-      setHistoryNextCursor(null);
-      setBranches(null);
-      setLoading(true);
+      return;
     }
 
-    async function loadAll() {
-      try {
-        logPerfDebug("git_sidebar.load_all.start", {
-          workspaceId: currentWorkspaceId
-        });
-        const nextStatus = await getGitStatus(currentWorkspaceId);
+    setStatus(null);
+    setHistory([]);
+    setHistoryTotalCount(0);
+    setHistoryNextCursor(null);
+    setBranches(null);
+    setLoading(true);
+  }, [workspaceId]);
 
-        if (cancelled) {
-          return;
-        }
+  useEffect(() => {
+    if (!workspaceId?.trim()) {
+      return;
+    }
 
-        setStatus(nextStatus);
-
-        const [nextHistory, nextBranches] = await Promise.all([
-          getGitHistory(currentWorkspaceId, 20),
-          getGitBranches(currentWorkspaceId)
-        ]);
-
-        if (cancelled) {
-          return;
-        }
-
-        setHistory(nextHistory.items);
-        setHistoryTotalCount(nextHistory.totalCount);
-        setHistoryNextCursor(nextHistory.nextCursor);
-        setBranches(nextBranches);
-        logPerfDebug("git_sidebar.load_all.end", {
-          workspaceId: currentWorkspaceId,
-          stagedCount: nextStatus.changes.filter((item) => item.staged).length,
-          unstagedCount: nextStatus.changes.filter((item) => !item.staged).length,
-          historyCount: nextHistory.items.length,
-          branchCount: nextBranches.local.length + nextBranches.remote.length
-        });
-      } catch (error) {
-        if (!cancelled && !cachedSnapshot) {
-          showToast({
-            title: readError(error, t("git.panelLoadFailed")),
-            tone: "error"
-          });
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
+    return addGitSnapshotListener((snapshot) => {
+      if (snapshot.workspaceId !== workspaceId.trim()) {
+        return;
       }
+
+      logPerfDebug("git_sidebar.snapshot_received", {
+        workspaceId: snapshot.workspaceId,
+        changedCount: snapshot.status.changes.length,
+        historyCount: snapshot.history.length,
+        branchCount: snapshot.branches.local.length + snapshot.branches.remote.length
+      });
+      applyGitSnapshot(snapshot);
+      setLoading(false);
+    });
+  }, [addGitSnapshotListener, workspaceId]);
+
+  useEffect(() => {
+    if (!workspaceId?.trim()) {
+      return;
     }
 
-    void loadAll();
+    const currentWorkspaceId = workspaceId.trim();
+    const hasCachedSnapshot =
+      readViewSnapshot<GitSidebarSnapshot>(
+        buildGitSidebarSnapshotKey(currentWorkspaceId),
+        GIT_SNAPSHOT_CACHE_MAX_AGE_MS
+      ) !== null;
 
-    return () => {
-      cancelled = true;
-    };
-  }, [showToast, workspaceId]);
+    subscribeGitSnapshot(currentWorkspaceId);
+
+    if (hasCachedSnapshot) {
+      const timer = window.setTimeout(() => {
+        requestGitSnapshotRefresh();
+      }, 1500);
+
+      return () => {
+        window.clearTimeout(timer);
+      };
+    }
+
+    requestGitSnapshotRefresh();
+  }, [requestGitRefresh, subscribeGitSnapshot, workspaceId]);
 
   useEffect(() => {
     if (!workspaceId) {
@@ -324,36 +311,28 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
     });
   }
 
-  async function refreshContext(options?: { resetTreeScroll?: boolean }) {
+  function applyGitSnapshot(snapshot: GitSidebarSnapshot) {
+    setStatus(snapshot.status);
+    setHistory(snapshot.history);
+    setHistoryTotalCount(snapshot.historyTotalCount);
+    setHistoryNextCursor(snapshot.historyNextCursor);
+    setBranches(snapshot.branches);
+  }
+
+  function requestGitSnapshotRefresh(options?: { resetTreeScroll?: boolean }) {
     if (!workspaceId?.trim()) {
       return;
     }
 
-    const currentWorkspaceId: string = workspaceId.trim();
+    logPerfDebug("git_sidebar.refresh_requested", {
+      workspaceId: workspaceId.trim(),
+      resetTreeScroll: options?.resetTreeScroll ?? false
+    });
+    requestGitRefresh(workspaceId.trim());
 
-    try {
-      const nextStatus = await getGitStatus(currentWorkspaceId);
-      setStatus(nextStatus);
-
-      const [nextHistory, nextBranches] = await Promise.all([
-        getGitHistory(currentWorkspaceId, 20, null),
-        getGitBranches(currentWorkspaceId)
-      ]);
-
-      setHistory(nextHistory.items);
-      setHistoryTotalCount(nextHistory.totalCount);
-      setHistoryNextCursor(nextHistory.nextCursor);
-      setBranches(nextBranches);
-
-      if (options?.resetTreeScroll) {
-        requestAnimationFrame(() => {
-          resetTreePanelScroll();
-        });
-      }
-    } catch (error) {
-      showToast({
-        title: readError(error, t("git.panelLoadFailed")),
-        tone: "error"
+    if (options?.resetTreeScroll) {
+      requestAnimationFrame(() => {
+        resetTreePanelScroll();
       });
     }
   }
@@ -495,7 +474,7 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
       });
       setCommitSubject("");
       setSelectedPath(null);
-      await refreshContext();
+      requestGitSnapshotRefresh();
     } catch (error) {
       showToast({
         title: readError(error, t("git.commitFailed")),
@@ -519,7 +498,7 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
         title: result.summary,
         tone: "success"
       });
-      await refreshContext();
+      requestGitSnapshotRefresh();
     } catch (error) {
       showToast({
         title: readError(error, t("git.remoteFailed")),
@@ -544,7 +523,7 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
         tone: "success"
       });
       setMenuOpen(false);
-      await refreshContext();
+      requestGitSnapshotRefresh();
     } catch (error) {
       showToast({
         title: readError(error, t("git.remoteFailed")),
@@ -569,7 +548,7 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
         tone: "success"
       });
       setMenuOpen(false);
-      await refreshContext();
+      requestGitSnapshotRefresh();
     } catch (error) {
       showToast({
         title: readError(error, t("git.undoLastCommitFailed")),
@@ -591,7 +570,7 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
       const nextBranches = await switchGitBranch(workspaceId, branchName, false);
       setBranches(nextBranches);
       setMenuOpen(false);
-      await refreshContext();
+      requestGitSnapshotRefresh();
     } catch (error) {
       showToast({
         title: readError(error, t("git.branchFailed")),
@@ -710,7 +689,7 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
           <button
             className="secondary-button"
             type="button"
-            onClick={() => void refreshContext({ resetTreeScroll: true })}
+            onClick={() => requestGitSnapshotRefresh({ resetTreeScroll: true })}
             disabled={actioning || !workspaceId}
           >
             {t("git.refreshNow")}
@@ -883,7 +862,7 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
                       className="git-menu-item"
                       type="button"
                       disabled={actioning}
-                      onClick={() => void refreshContext({ resetTreeScroll: true })}
+                      onClick={() => requestGitSnapshotRefresh({ resetTreeScroll: true })}
                     >
                       <span>{t("git.refresh")}</span>
                     </button>

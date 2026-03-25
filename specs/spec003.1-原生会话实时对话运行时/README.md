@@ -24,7 +24,7 @@
 
 - 前置依赖：`spec002`、`spec003`、`spec006`、`spec010`
 - 影响范围：`apps/host`、`packages/session-sync-core`、`apps/user-app`
-- 后续会直接受益：文件上下文、Git 上下文、终端联动、移动端会话体验
+- 后续会直接受益：文件管理、Git 上下文、终端联动、移动端会话体验
 
 ## 本阶段明确不做
 

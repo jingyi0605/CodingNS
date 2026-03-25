@@ -8,15 +8,17 @@ import { useToast } from "../../../shared/toast";
 import {
   createTerminalTemplate,
   listTerminalShellOptions,
-  listWorkspaceTemplateRuntimeStatuses,
-  listWorkspaceTemplates,
   runTerminalTemplate,
   stopTerminalTemplateProcess,
   type TerminalShellOptionDto,
+  type TerminalDto,
   type TerminalTemplateDto,
   type TerminalTemplateRuntimeStatusDto
 } from "../../terminal/api/terminal-api";
-import type { WorkspaceSessionGroup } from "../../conversation/components/WorkbenchLayout";
+import {
+  type WorkspaceSessionGroup,
+  useWorkbenchShell
+} from "../../conversation/components/WorkbenchLayout";
 
 interface TerminalManagerPanelProps {
   currentWorkspaceId: string | null;
@@ -43,6 +45,7 @@ const INITIAL_LAUNCH_DRAFT: LaunchDraftState = {
 const TERMINAL_MANAGER_SNAPSHOT_CACHE_MAX_AGE_MS = 60 * 1000;
 
 interface TerminalManagerSnapshot {
+  terminals: TerminalDto[];
   templates: TerminalTemplateDto[];
   templateStatuses: TerminalTemplateRuntimeStatusDto[];
 }
@@ -201,7 +204,13 @@ export function TerminalManagerPanel({
   currentWorkspaceId,
   navigationGroups
 }: TerminalManagerPanelProps) {
+  const {
+    subscribeTerminalManagerSnapshot,
+    requestTerminalManagerRefresh,
+    addTerminalManagerSnapshotListener
+  } = useWorkbenchShell();
   const activeWorkspaceId = currentWorkspaceId?.trim() || null;
+  const [terminals, setTerminals] = useState<TerminalDto[]>([]);
   const [templates, setTemplates] = useState<TerminalTemplateDto[]>([]);
   const [templateStatuses, setTemplateStatuses] = useState<TerminalTemplateRuntimeStatusDto[]>([]);
   const [shellOptions, setShellOptions] = useState<TerminalShellOptionDto[]>([]);
@@ -262,43 +271,9 @@ export function TerminalManagerPanel({
     };
   }, [showToast]);
 
-  async function loadWorkspaceData(workspaceId: string, options?: { silent?: boolean }) {
-    if (!options?.silent) {
-      setLoading(true);
-    }
-
-    try {
-      logPerfDebug("terminal_manager.load_workspace.start", {
-        workspaceId,
-        silent: options?.silent ?? false
-      });
-      const templateResponse = await listWorkspaceTemplates(workspaceId);
-
-      setTemplates(templateResponse.items);
-
-      const templateStatusResponse = await listWorkspaceTemplateRuntimeStatuses(workspaceId);
-      setTemplateStatuses(templateStatusResponse.items);
-      logPerfDebug("terminal_manager.load_workspace.end", {
-        workspaceId,
-        templateCount: templateResponse.items.length,
-        statusCount: templateStatusResponse.items.length
-      });
-    } catch (error) {
-      if (!options?.silent) {
-        setTemplates([]);
-        setTemplateStatuses([]);
-        showToast({
-          title: error instanceof Error ? error.message : t("terminalManager.loadFailed"),
-          tone: "error"
-        });
-      }
-    } finally {
-      setLoading(false);
-    }
-  }
-
   useEffect(() => {
     if (!activeWorkspaceId) {
+      setTerminals([]);
       setTemplates([]);
       setTemplateStatuses([]);
       setLoading(false);
@@ -318,18 +293,16 @@ export function TerminalManagerPanel({
     });
 
     if (cachedSnapshot) {
+      setTerminals(cachedSnapshot.terminals);
       setTemplates(cachedSnapshot.templates);
       setTemplateStatuses(cachedSnapshot.templateStatuses);
       setLoading(false);
     } else {
+      setTerminals([]);
       setTemplates([]);
       setTemplateStatuses([]);
       setLoading(true);
     }
-
-    void loadWorkspaceData(activeWorkspaceId, {
-      silent: cachedSnapshot !== null
-    });
   }, [activeWorkspaceId]);
 
   useEffect(() => {
@@ -337,11 +310,72 @@ export function TerminalManagerPanel({
       return;
     }
 
+    return addTerminalManagerSnapshotListener((snapshot) => {
+      if (snapshot.workspaceId !== activeWorkspaceId) {
+        return;
+      }
+
+      logPerfDebug("terminal_manager.snapshot_received", {
+        workspaceId: snapshot.workspaceId,
+        terminalCount: snapshot.terminals.length,
+        templateCount: snapshot.templates.length,
+        statusCount: snapshot.templateStatuses.length
+      });
+      applyTerminalManagerSnapshot(snapshot);
+      setLoading(false);
+    });
+  }, [activeWorkspaceId, addTerminalManagerSnapshotListener]);
+
+  useEffect(() => {
+    if (!activeWorkspaceId) {
+      return;
+    }
+
+    const hasCachedSnapshot =
+      readViewSnapshot<TerminalManagerSnapshot>(
+        buildTerminalManagerSnapshotKey(activeWorkspaceId),
+        TERMINAL_MANAGER_SNAPSHOT_CACHE_MAX_AGE_MS
+      ) !== null;
+
+    subscribeTerminalManagerSnapshot(activeWorkspaceId);
+
+    if (hasCachedSnapshot) {
+      const timer = window.setTimeout(() => {
+        requestTerminalManagerSnapshotRefresh(activeWorkspaceId);
+      }, 1500);
+
+      return () => {
+        window.clearTimeout(timer);
+      };
+    }
+
+    requestTerminalManagerSnapshotRefresh(activeWorkspaceId);
+  }, [activeWorkspaceId, requestTerminalManagerRefresh, subscribeTerminalManagerSnapshot]);
+
+  useEffect(() => {
+    if (!activeWorkspaceId) {
+      return;
+    }
+
     writeViewSnapshot<TerminalManagerSnapshot>(buildTerminalManagerSnapshotKey(activeWorkspaceId), {
+      terminals,
       templates,
       templateStatuses
     });
-  }, [activeWorkspaceId, templateStatuses, templates]);
+  }, [activeWorkspaceId, templateStatuses, templates, terminals]);
+
+  function applyTerminalManagerSnapshot(snapshot: TerminalManagerSnapshot) {
+    setTerminals(snapshot.terminals);
+    setTemplates(snapshot.templates);
+    setTemplateStatuses(snapshot.templateStatuses);
+  }
+
+  function requestTerminalManagerSnapshotRefresh(workspaceId: string) {
+    logPerfDebug("terminal_manager.refresh_requested", {
+      workspaceId
+    });
+    requestTerminalManagerRefresh(workspaceId);
+  }
 
   async function handleStopTemplateProcess(templateId: string) {
     if (!activeWorkspaceId) {
@@ -352,7 +386,7 @@ export function TerminalManagerPanel({
 
     try {
       await stopTerminalTemplateProcess(templateId);
-      await loadWorkspaceData(activeWorkspaceId);
+      requestTerminalManagerSnapshotRefresh(activeWorkspaceId);
       showToast({
         title: t("terminalManager.stopProcessSuccess"),
         tone: "success"
@@ -395,7 +429,7 @@ export function TerminalManagerPanel({
       });
       setLaunchDraft(INITIAL_LAUNCH_DRAFT);
       setCreateModalOpen(false);
-      await loadWorkspaceData(activeWorkspaceId);
+      requestTerminalManagerSnapshotRefresh(activeWorkspaceId);
       showToast({
         title: t("terminalManager.templateSaveSuccess"),
         tone: "success"
@@ -421,7 +455,7 @@ export function TerminalManagerPanel({
       await runTerminalTemplate(templateId, {
         shell: selectedShellOption?.available ? selectedShellOption.shell : undefined
       });
-      await loadWorkspaceData(activeWorkspaceId);
+      requestTerminalManagerSnapshotRefresh(activeWorkspaceId);
       showToast({
         title: t("terminalManager.templateRunSuccess"),
         tone: "success"
@@ -455,13 +489,16 @@ export function TerminalManagerPanel({
   return (
     <section className="conversation-panel surface-card terminal-manager-panel">
       <div className="terminal-manager-header">
+        <p className="status-text">
+          {`${t("terminalManager.templateSectionTitle")} ${templates.length} / ${t("terminalManager.terminalSectionTitle")} ${terminals.length}`}
+        </p>
         <button
           className="ghost-button"
           type="button"
           disabled={!activeWorkspaceId || loading}
           onClick={() => {
             if (activeWorkspaceId) {
-              void loadWorkspaceData(activeWorkspaceId);
+              requestTerminalManagerSnapshotRefresh(activeWorkspaceId);
             }
           }}
         >

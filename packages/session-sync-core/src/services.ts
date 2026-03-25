@@ -59,6 +59,28 @@ export class SessionSyncService {
       .readSessionHistory(providerSessionId, rawStoreRef, cursor, limit, direction);
   }
 
+  async readRecentHistory(
+    providerId: string,
+    providerSessionId: string,
+    rawStoreRef: string,
+    totalMessageCount: number,
+    limit: number
+  ): Promise<HistoryPage> {
+    const provider = this.registry.get(providerId);
+    const recentPage = await provider.readRecentSessionHistory?.(
+      providerSessionId,
+      rawStoreRef,
+      totalMessageCount,
+      limit
+    );
+
+    if (recentPage) {
+      return recentPage;
+    }
+
+    return provider.readSessionHistory(providerSessionId, rawStoreRef, null, limit, "backward");
+  }
+
   subscribe(
     providerId: string,
     providerSessionId: string,

@@ -234,7 +234,7 @@ describe("WorkbenchLayout", () => {
 
     const firstView = renderWorkbenchRoute();
 
-    expect(await screen.findByText("会话 Alpha")).toBeInTheDocument();
+    expect(await findSessionCardByTitle("会话 Alpha")).toBeInTheDocument();
     const subagentTitle = screen.getByText("子代理探索");
     expect(subagentTitle).toBeInTheDocument();
     expect(subagentTitle.closest(".workbench-subsession-list")).not.toBeNull();
@@ -245,12 +245,9 @@ describe("WorkbenchLayout", () => {
     expect(screen.getByText("explorer · Turing")).toBeInTheDocument();
     expect(screen.getByText(t("shell.favoriteSectionTitle"))).toBeInTheDocument();
 
-    const betaCard = screen
-      .getAllByText("会话 Beta")[0]
-      ?.closest(".workbench-session-card") as HTMLElement | null;
-    expect(betaCard).not.toBeNull();
+    const betaCard = await findSessionCardByTitle("会话 Beta");
 
-    await userEvent.click(within(betaCard!).getByRole("button", { name: t("shell.sessionMoreAction") }));
+    await userEvent.click(within(betaCard).getByRole("button", { name: t("shell.sessionMoreAction") }));
     await userEvent.click(screen.getByRole("button", { name: t("shell.favoriteAction") }));
 
     const favoriteSection = screen
@@ -274,13 +271,10 @@ describe("WorkbenchLayout", () => {
       expect(within(favoriteSectionAfterReload!).getByText("会话 Beta")).toBeInTheDocument();
     });
 
-    const betaCardAfterReload = screen
-      .getAllByText("会话 Beta")[0]
-      ?.closest(".workbench-session-card") as HTMLElement | null;
-    expect(betaCardAfterReload).not.toBeNull();
+    const betaCardAfterReload = await findSessionCardByTitle("会话 Beta");
 
     await userEvent.click(
-      within(betaCardAfterReload!).getByRole("button", { name: t("shell.sessionMoreAction") })
+      within(betaCardAfterReload).getByRole("button", { name: t("shell.sessionMoreAction") })
     );
     await userEvent.click(screen.getByRole("button", { name: t("shell.archiveAction") }));
 
@@ -363,10 +357,9 @@ describe("WorkbenchLayout", () => {
 
     renderWorkbenchRoute("/sessions/session-1");
 
-    const sessionCard = (await screen.findByText("旧标题")).closest(".workbench-session-card") as HTMLElement | null;
-    expect(sessionCard).not.toBeNull();
+    const sessionCard = await findSessionCardByTitle("旧标题");
 
-    await userEvent.click(within(sessionCard!).getByRole("button", { name: t("shell.sessionMoreAction") }));
+    await userEvent.click(within(sessionCard).getByRole("button", { name: t("shell.sessionMoreAction") }));
     await userEvent.click(screen.getByRole("button", { name: t("shell.renameAction") }));
 
     const dialog = await screen.findByRole("dialog", { name: t("shell.renameModalTitle") });
@@ -376,9 +369,9 @@ describe("WorkbenchLayout", () => {
     await userEvent.click(within(dialog).getByRole("button", { name: t("common.save") }));
 
     await waitFor(() => {
-      expect(screen.getByText("新标题")).toBeInTheDocument();
+      expect(getSessionCardByTitle("新标题")).toBeInTheDocument();
     });
-    expect(screen.queryByText("旧标题")).not.toBeInTheDocument();
+    expect(querySessionCardsByTitle("旧标题")).toHaveLength(0);
   });
 
   it("主会话默认只显示最近 5 个子代理，并支持按批展开", async () => {
@@ -501,7 +494,7 @@ describe("WorkbenchLayout", () => {
 
     renderWorkbenchRoute("/sessions/root-session");
 
-    const rootSession = await screen.findByText("Root Session");
+    const rootSession = await findSessionCardByTitle("Root Session");
     const rootTreeNode = rootSession.closest(".workbench-session-tree-node") as HTMLElement | null;
     expect(rootTreeNode).not.toBeNull();
 
@@ -554,12 +547,9 @@ describe("WorkbenchLayout", () => {
 
     renderWorkbenchRoute("/sessions/root-session-41");
 
-    const workspaceGroup = (await screen.findByText("Project One")).closest(
-      ".workbench-workspace-group"
-    ) as HTMLElement | null;
-    expect(workspaceGroup).not.toBeNull();
+    const workspaceGroup = await findWorkspaceGroupByName("Project One");
 
-    const workspaceScope = within(workspaceGroup!);
+    const workspaceScope = within(workspaceGroup);
     expect(workspaceScope.getByText("Root Session 1")).toBeInTheDocument();
     expect(workspaceScope.getByText("Root Session 40")).toBeInTheDocument();
     expect(workspaceScope.getByText("Root Session 41")).toBeInTheDocument();
@@ -606,7 +596,7 @@ describe("WorkbenchLayout", () => {
 
     renderWorkbenchRoute("/sessions/favorite-session-1");
 
-    await screen.findByText("Favorite Session 1");
+    await findSessionCardByTitle("Favorite Session 1");
 
     const favoriteSection = screen.getByText(t("shell.favoriteSectionTitle")).closest(
       ".workbench-section-block"
@@ -655,10 +645,8 @@ describe("WorkbenchLayout", () => {
 
     renderWorkbenchRoute("/sessions/session-inferred");
 
-    const sessionTitle = await screen.findByText("External Session");
-    const sessionCard = sessionTitle.closest(".workbench-session-card") as HTMLElement | null;
-    expect(sessionCard).not.toBeNull();
-    expect(sessionCard?.querySelector(".session-state-indicator.is-running-inferred")).not.toBeNull();
+    const sessionCard = await findSessionCardByTitle("External Session");
+    expect(sessionCard.querySelector(".session-state-indicator.is-running-inferred")).not.toBeNull();
   });
 
   it("归档成功后即使收到旧快照，也会再拉最新导航避免会话重新冒出来", async () => {
@@ -736,10 +724,9 @@ describe("WorkbenchLayout", () => {
 
     renderWorkbenchRoute();
 
-    const betaCard = (await screen.findByText("会话 Beta")).closest(".workbench-session-card") as HTMLElement | null;
-    expect(betaCard).not.toBeNull();
+    const betaCard = await findSessionCardByTitle("会话 Beta");
 
-    await userEvent.click(within(betaCard!).getByRole("button", { name: t("shell.sessionMoreAction") }));
+    await userEvent.click(within(betaCard).getByRole("button", { name: t("shell.sessionMoreAction") }));
     await userEvent.click(screen.getByRole("button", { name: t("shell.archiveAction") }));
 
     await waitFor(() => {
@@ -804,8 +791,88 @@ describe("WorkbenchLayout", () => {
     const shell = view.container.querySelector(".workbench-shell");
 
     expect(shell?.getAttribute("data-nav-loading")).toBe("false");
-    expect(screen.getByText("缓存会话")).toBeInTheDocument();
-    expect(screen.getByText("项目一")).toBeInTheDocument();
+    expect(getSessionCardByTitle("缓存会话")).toBeInTheDocument();
+    expect(await findWorkspaceGroupByName("项目一")).toBeInTheDocument();
+  });
+  it("添加项目会打开服务器目录选择器并导入当前目录", async () => {
+    let currentSnapshot = createWorkbenchSnapshot([]);
+
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      if (url.includes("/api/workspaces/browse")) {
+        const requestUrl = new URL(url);
+        const targetPath = requestUrl.searchParams.get("path");
+
+        if (targetPath === "C:/srv/projects/server-app") {
+          return createJsonResponse({
+            currentPath: "C:/srv/projects/server-app",
+            parentPath: "C:/srv/projects",
+            roots: [{ path: "C:/", name: "C:\\" }],
+            items: []
+          });
+        }
+
+        return createJsonResponse({
+          currentPath: "C:/srv/projects",
+          parentPath: "C:/srv",
+          roots: [{ path: "C:/", name: "C:\\" }],
+          items: [{ path: "C:/srv/projects/server-app", name: "server-app" }]
+        });
+      }
+
+      if (url.endsWith("/api/workspaces/import") && init?.method === "POST") {
+        const payload = JSON.parse(String(init?.body ?? "{}")) as { path?: string };
+        expect(payload.path).toBe("C:/srv/projects/server-app");
+
+        currentSnapshot = createWorkbenchSnapshot([
+          {
+            workspace: {
+              id: "workspace-imported",
+              name: "Server App",
+              path: "C:/srv/projects/server-app",
+              repoRoot: "C:/srv/projects/server-app"
+            },
+            sessions: []
+          }
+        ]);
+
+        return createJsonResponse(
+          {
+            id: "workspace-imported",
+            name: "Server App",
+            path: "C:/srv/projects/server-app",
+            repoRoot: "C:/srv/projects/server-app"
+          },
+          201
+        );
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute();
+
+    await userEvent.click(await screen.findByRole("button", { name: /添加项目/i }));
+
+    const dialog = await screen.findByRole("dialog", { name: t("shell.importBrowserTitle") });
+    expect(within(dialog).getByDisplayValue("C:/srv/projects")).toBeInTheDocument();
+
+    await userEvent.click(within(dialog).getByRole("button", { name: /server-app/i }));
+
+    await waitFor(() => {
+      expect(within(dialog).getByText("C:/srv/projects/server-app")).toBeInTheDocument();
+    });
+
+    await userEvent.click(within(dialog).getByRole("button", { name: t("shell.importBrowserSubmit") }));
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Server App").length).toBeGreaterThan(0);
+    });
   });
 });
 
@@ -821,6 +888,52 @@ function renderWorkbenchRoute(initialEntry = "/sessions/session-1") {
       </MemoryRouter>
     </ToastProvider>
   );
+}
+
+async function findSessionCardByTitle(title: string) {
+  const titleElements = await screen.findAllByText(title);
+  const card = titleElements.find((element) => element.closest(".workbench-session-card"))?.closest(
+    ".workbench-session-card"
+  );
+
+  if (!(card instanceof HTMLElement)) {
+    throw new Error(`未找到会话卡片: ${title}`);
+  }
+
+  return card;
+}
+
+function getSessionCardByTitle(title: string) {
+  const card = screen
+    .queryAllByText(title)
+    .find((element) => element.closest(".workbench-session-card"))
+    ?.closest(".workbench-session-card");
+
+  if (!(card instanceof HTMLElement)) {
+    throw new Error(`未找到会话卡片: ${title}`);
+  }
+
+  return card;
+}
+
+function querySessionCardsByTitle(title: string) {
+  return screen
+    .queryAllByText(title)
+    .map((element) => element.closest(".workbench-session-card"))
+    .filter((element): element is HTMLElement => element instanceof HTMLElement);
+}
+
+async function findWorkspaceGroupByName(name: string) {
+  const matches = await screen.findAllByText(name);
+  const group = matches.find((element) => element.closest(".workbench-workspace-group"))?.closest(
+    ".workbench-workspace-group"
+  );
+
+  if (!(group instanceof HTMLElement)) {
+    throw new Error(`未找到工作区分组: ${name}`);
+  }
+
+  return group;
 }
 
 function CurrentLocationProbe() {

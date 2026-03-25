@@ -1,3 +1,6 @@
+import { mkdirSync } from "node:fs";
+import path from "node:path";
+
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createId } from "../../src/shared/utils/id.js";
@@ -161,6 +164,27 @@ describe("spec001 host 地基主链路", () => {
     expect(sessionsResponse.json().items).toHaveLength(1);
     expect(sessionsResponse.json().items[0].providerSessionId).toBe("provider-session-1");
     expect(sessionsResponse.json().items[0].rawStoreRef).toBe("codex://provider-session-1");
+
+    const serverProjectDir = path.join(fixture.workspaceDir, "server-project");
+    mkdirSync(serverProjectDir, { recursive: true });
+
+    const browseResponse = await hosted.app.inject({
+      method: "GET",
+      url: `/api/workspaces/browse?path=${encodeURIComponent(fixture.workspaceDir)}`,
+      headers: {
+        authorization: `Bearer ${loginBody.accessToken}`
+      }
+    });
+    expect(browseResponse.statusCode).toBe(200);
+    expect(browseResponse.json().currentPath).toBe(path.resolve(fixture.workspaceDir));
+    expect(browseResponse.json().items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: serverProjectDir,
+          name: "server-project"
+        })
+      ])
+    );
 
     const refreshResponse = await hosted.app.inject({
       method: "POST",

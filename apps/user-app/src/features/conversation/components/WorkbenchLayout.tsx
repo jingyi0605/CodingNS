@@ -1581,6 +1581,9 @@ function SidebarContent({
             <span className="workbench-import-toggle-symbol" aria-hidden="true">
               +
             </span>
+            <span className="workbench-import-toggle-label">
+              {importingWorkspace ? t("shell.importSubmitting") : t("shell.importWorkspaceTitle")}
+            </span>
           </button>
         </section>
 

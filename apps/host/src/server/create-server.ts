@@ -38,6 +38,7 @@ import { TerminalController } from "../modules/terminal/terminal-controller.js";
 import { TerminalService } from "../modules/terminal/terminal-service.js";
 import { WorkbenchController } from "../modules/workbench/workbench-controller.js";
 import { WorkbenchService } from "../modules/workbench/workbench-service.js";
+import { WorkspacePanelSnapshotService } from "../modules/workbench/workspace-panel-snapshot-service.js";
 import { WorkspaceController } from "../modules/workspace/workspace-controller.js";
 import { WorkspaceService } from "../modules/workspace/workspace-service.js";
 import { registerAuthRoutes } from "../routes/auth.js";
@@ -183,6 +184,12 @@ export function createServer(config: HostConfig) {
     workspaceService,
     terminalService
   );
+  const workspacePanelSnapshotService = new WorkspacePanelSnapshotService(
+    fileTreeService,
+    gitReadService,
+    terminalService,
+    commandTemplateService
+  );
 
   const bootstrapController = new BootstrapController(bootstrapService);
   const clientController = new ClientController(clientService);
@@ -213,7 +220,7 @@ export function createServer(config: HostConfig) {
     sessionHistoryService,
     sessionLiveRuntimeService,
     new TerminalWsHub(terminalService),
-    new WorkbenchWsHub(workbenchService)
+    new WorkbenchWsHub(workbenchService, workspacePanelSnapshotService)
   );
 
   app.addHook("onRequest", async (request, reply) => {
@@ -258,6 +265,7 @@ export function createServer(config: HostConfig) {
         authService,
         workspaceService,
         workbenchService,
+        workspacePanelSnapshotService,
         fileTreeService,
         fileSearchService,
         fileContentService,
