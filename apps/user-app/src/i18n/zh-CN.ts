@@ -15,7 +15,8 @@ export const zhCN = {
     serverCustomOption: "使用自定义服务器",
     serverAddress: "服务器地址",
     serverPlaceholder: "例如：http://127.0.0.1:3002",
-    serverHint: "登录、实时消息和终端都会连接到这里。",
+    serverHint:
+      "登录、实时消息和终端都会连接到这里。桌面端优先填写 Host API 地址，例如 http://127.0.0.1:3002；4174 这类前端开发端口只有在代理与跨域都配置正确时才适合调试。",
     serverInvalid: "服务器地址无效，请检查后再试。",
     serverCurrent: "当前服务器",
     bootstrapTitle: "先完成首次初始化",

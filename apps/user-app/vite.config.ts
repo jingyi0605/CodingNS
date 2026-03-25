@@ -1,11 +1,27 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
+const desktopAndLocalOrigins = [
+  /^tauri:\/\/localhost$/,
+  /^https?:\/\/tauri\.localhost$/,
+  /^https?:\/\/127\.0\.0\.1(?::\d+)?$/,
+  /^https?:\/\/localhost(?::\d+)?$/
+];
+
 export default defineConfig({
   plugins: [react()],
   server: {
     host: "0.0.0.0",
     port: 4174,
+    allowedHosts: ["cns.jacksonz.cn"],
+    // 桌面壳直连 Vite 代理时，POST JSON 会先走 OPTIONS 预检。
+    // 不显式放行 tauri://localhost，登录请求会在浏览器层被拦掉。
+    cors: {
+      origin: desktopAndLocalOrigins,
+      credentials: true,
+      allowedHeaders: ["Authorization", "Content-Type"],
+      methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+    },
     proxy: {
       "/api": {
         target: "http://127.0.0.1:3002",

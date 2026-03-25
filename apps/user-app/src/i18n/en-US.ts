@@ -18,7 +18,8 @@ export const enUS = {
     serverCustomOption: "Use custom server",
     serverAddress: "Server Address",
     serverPlaceholder: "For example: http://127.0.0.1:3002",
-    serverHint: "Login, realtime messages, and terminals all connect through this host.",
+    serverHint:
+      "Login, realtime messages, and terminals all connect through this host. On desktop, prefer the Host API endpoint such as http://127.0.0.1:3002; frontend dev ports like 4174 only work when proxying and CORS are configured correctly.",
     serverInvalid: "Invalid server address. Check it and try again.",
     serverCurrent: "Current Server",
     bootstrapTitle: "Complete the first-time bootstrap",

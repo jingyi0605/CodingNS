@@ -311,15 +311,21 @@ function resolveAllowedCorsOrigin(origin: string | undefined): string | null {
   try {
     const parsed = new URL(origin);
     const hostname = parsed.hostname.toLowerCase();
+    const protocol = parsed.protocol.toLowerCase();
 
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      return null;
+    // Tauri 在 macOS/Linux 默认使用 tauri://localhost，
+    // Windows/Android 则会落到 http(s)://tauri.localhost。
+    // 桌面壳不在这里放行，打包后的 fetch 会被浏览器 CORS 直接拦掉。
+    if (protocol === "tauri:" && hostname === "localhost") {
+      return origin;
     }
 
     if (
-      hostname === "127.0.0.1" ||
-      hostname === "localhost" ||
-      hostname === "::1"
+      (protocol === "http:" || protocol === "https:") &&
+      (hostname === "127.0.0.1" ||
+        hostname === "localhost" ||
+        hostname === "::1" ||
+        hostname === "tauri.localhost")
     ) {
       return origin;
     }

@@ -33,6 +33,7 @@ class HttpClient {
   private async performRequest(path: string, options: RequestOptions): Promise<Response> {
     const headers = new Headers(options.headers);
     const hasRequestBody = options.body !== undefined && options.body !== null;
+    const requestUrl = getHostRequestUrl(path, options.baseUrl ?? getHostBaseUrl());
 
     if (hasRequestBody && !headers.has("Content-Type")) {
       headers.set("Content-Type", "application/json");
@@ -52,10 +53,21 @@ class HttpClient {
       headers.set("Authorization", `Bearer ${accessToken}`);
     }
 
-    const response = await fetch(getHostRequestUrl(path, options.baseUrl ?? getHostBaseUrl()), {
-      ...options,
-      headers
-    });
+    let response: Response;
+
+    try {
+      response = await fetch(requestUrl, {
+        ...options,
+        headers
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "未知网络错误";
+
+      throw new ApiError(0, {
+        detail: `请求 ${requestUrl} 失败：${detail}`,
+        error_code: "NETWORK_ERROR"
+      });
+    }
 
     if (!response.ok) {
       const payload = (await response.json()) as ApiErrorPayload;
