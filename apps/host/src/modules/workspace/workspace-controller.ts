@@ -7,6 +7,10 @@ interface ImportWorkspaceBody {
   name?: string;
 }
 
+interface BrowseWorkspaceQuery {
+  path?: string;
+}
+
 export class WorkspaceController {
   constructor(private readonly workspaceService: WorkspaceService) {}
 
@@ -14,6 +18,13 @@ export class WorkspaceController {
     reply.send({
       items: this.workspaceService.list()
     });
+  };
+
+  readonly browse = async (
+    request: FastifyRequest<{ Querystring: BrowseWorkspaceQuery }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(this.workspaceService.browseDirectories(request.query.path?.trim()));
   };
 
   readonly import = async (

@@ -7,5 +7,6 @@ export async function registerWorkspaceRoutes(
   workspaceController: WorkspaceController
 ): Promise<void> {
   app.get("/api/workspaces", workspaceController.list);
+  app.get("/api/workspaces/browse", workspaceController.browse);
   app.post("/api/workspaces/import", workspaceController.import);
 }
