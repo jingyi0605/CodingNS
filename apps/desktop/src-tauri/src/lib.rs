@@ -3,6 +3,7 @@ mod rollback;
 mod updater;
 
 use config::DesktopRuntimeConfig;
+use rfd::FileDialog;
 use tauri::{AppHandle, Manager, WebviewWindow};
 use updater::{DesktopRuntimeInfo, ReleaseManifest, UpdateInstallResult};
 
@@ -43,6 +44,13 @@ fn show_notification(title: String, body: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn pick_directory() -> Option<String> {
+    FileDialog::new()
+        .pick_folder()
+        .map(|path| path.display().to_string())
+}
+
+#[tauri::command]
 fn set_window_state(app: AppHandle, state: String) -> Result<(), String> {
     let window = app
         .get_webview_window("main")
@@ -78,6 +86,7 @@ pub fn run() {
             rollback_to_previous_version,
             open_external,
             show_notification,
+            pick_directory,
             set_window_state
         ])
         .run(tauri::generate_context!())
