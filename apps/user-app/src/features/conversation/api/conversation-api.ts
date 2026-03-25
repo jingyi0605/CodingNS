@@ -59,6 +59,29 @@ export interface ImportWorkspacePayload {
   name?: string;
 }
 
+export type CloneWorkspaceAuthMode = "none" | "basic" | "token";
+
+export interface CloneWorkspacePayload {
+  repositoryUrl: string;
+  parentPath: string;
+  directoryName?: string;
+  name?: string;
+  auth?:
+    | {
+        mode?: "none";
+      }
+    | {
+        mode: "basic";
+        username?: string;
+        password?: string;
+      }
+    | {
+        mode: "token";
+        username?: string;
+        token?: string;
+      };
+}
+
 export interface WorkspaceDirectoryOptionDto {
   path: string;
   name: string;
@@ -238,6 +261,13 @@ export async function getWorkbenchSnapshot() {
 
 export function importWorkspace(payload: ImportWorkspacePayload) {
   return httpClient.request<WorkspaceDto>("/api/workspaces/import", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function cloneWorkspace(payload: CloneWorkspacePayload) {
+  return httpClient.request<WorkspaceDto>("/api/workspaces/clone", {
     method: "POST",
     body: JSON.stringify(payload)
   });

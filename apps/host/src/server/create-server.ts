@@ -110,7 +110,8 @@ export function createServer(config: HostConfig) {
     repositories.authTokenRepository,
     config
   );
-  const workspaceService = new WorkspaceService(repositories.workspaceRepository);
+  const gitCommandRunner = new GitCommandRunner();
+  const workspaceService = new WorkspaceService(repositories.workspaceRepository, gitCommandRunner);
   const fileAccessGuard = new FileAccessGuard(workspaceService, app.log);
   const recentFileService = new RecentFileService(repositories.recentFileRepository);
   const fileVersionChecker = new FileVersionChecker();
@@ -123,7 +124,6 @@ export function createServer(config: HostConfig) {
     fileVersionChecker
   );
   const filePreviewService = new FilePreviewService(fileAccessGuard, fileContentService);
-  const gitCommandRunner = new GitCommandRunner();
   const workspaceRepoGuard = new WorkspaceRepoGuard(workspaceService, gitCommandRunner);
   const gitReadService = new GitReadService(gitCommandRunner, workspaceRepoGuard);
   const gitWriteService = new GitWriteService(gitCommandRunner, workspaceRepoGuard, gitReadService);

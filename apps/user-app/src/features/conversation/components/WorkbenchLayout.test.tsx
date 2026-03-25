@@ -874,6 +874,109 @@ describe("WorkbenchLayout", () => {
       expect(screen.getAllByText("Server App").length).toBeGreaterThan(0);
     });
   });
+  it("Clone 项目会收集仓库地址、父目录和认证信息后提交给后端", async () => {
+    let currentSnapshot = createWorkbenchSnapshot([]);
+
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      if (url.includes("/api/workspaces/browse")) {
+        return createJsonResponse({
+          currentPath: "C:/srv/projects",
+          parentPath: "C:/srv",
+          roots: [{ path: "C:/", name: "C:\\" }],
+          items: [{ path: "C:/srv/projects/private-app", name: "private-app" }]
+        });
+      }
+
+      if (url.endsWith("/api/workspaces/clone") && init?.method === "POST") {
+        const payload = JSON.parse(String(init?.body ?? "{}")) as {
+          repositoryUrl?: string;
+          parentPath?: string;
+          directoryName?: string;
+          auth?: {
+            mode?: string;
+            username?: string;
+            token?: string;
+          };
+        };
+
+        expect(payload).toMatchObject({
+          repositoryUrl: "https://example.com/team/private-app.git",
+          parentPath: "C:/srv/projects",
+          directoryName: "private-app",
+          auth: {
+            mode: "token",
+            username: "oauth2",
+            token: "secret-token"
+          }
+        });
+
+        currentSnapshot = createWorkbenchSnapshot([
+          {
+            workspace: {
+              id: "workspace-cloned",
+              name: "Private App",
+              path: "C:/srv/projects/private-app",
+              repoRoot: "C:/srv/projects/private-app"
+            },
+            sessions: []
+          }
+        ]);
+
+        return createJsonResponse(
+          {
+            id: "workspace-cloned",
+            name: "Private App",
+            path: "C:/srv/projects/private-app",
+            repoRoot: "C:/srv/projects/private-app"
+          },
+          201
+        );
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute();
+
+    await userEvent.click(await screen.findByRole("button", { name: /Clone 项目/i }));
+
+    const cloneDialog = await screen.findByRole("dialog", { name: t("shell.cloneWorkspaceTitle") });
+
+    await userEvent.type(
+      within(cloneDialog).getByPlaceholderText("例如：https://github.com/org/repo.git"),
+      "https://example.com/team/private-app.git"
+    );
+
+    await userEvent.click(within(cloneDialog).getByRole("button", { name: t("shell.clonePickDirectory") }));
+
+    const browserDialog = await screen.findByRole("dialog", { name: t("shell.cloneBrowserTitle") });
+    expect(within(browserDialog).getByDisplayValue("C:/srv/projects")).toBeInTheDocument();
+
+    await userEvent.click(within(browserDialog).getByRole("button", { name: t("shell.cloneBrowserSubmit") }));
+
+    await userEvent.type(
+      within(cloneDialog).getByPlaceholderText("留空时默认使用仓库名"),
+      "private-app"
+    );
+    await userEvent.selectOptions(within(cloneDialog).getByRole("combobox"), "token");
+    await userEvent.type(
+      within(cloneDialog).getByPlaceholderText("可选，留空时默认使用 git"),
+      "oauth2"
+    );
+    await userEvent.type(within(cloneDialog).getByPlaceholderText("输入 access token"), "secret-token");
+
+    await userEvent.click(within(cloneDialog).getByRole("button", { name: t("shell.cloneSubmit") }));
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Private App").length).toBeGreaterThan(0);
+    });
+  });
   it("支持工作区会话批量选择，并可部分选择或全选后批量归档", async () => {
     const sessionTitles: Record<string, string> = {
       "session-1": "Session Alpha",

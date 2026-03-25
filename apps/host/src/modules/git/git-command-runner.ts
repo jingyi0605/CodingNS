@@ -5,6 +5,7 @@ import { AppError } from "../../shared/errors/app-error.js";
 interface GitCommandOptions {
   allowNonZeroExit?: boolean;
   timeoutMs?: number;
+  env?: NodeJS.ProcessEnv;
 }
 
 export interface GitCommandResult {
@@ -21,11 +22,12 @@ export class GitCommandRunner {
   ): Promise<GitCommandResult> {
     const timeoutMs = options.timeoutMs ?? 15_000;
     const effectiveArgs = ["-c", "core.quotepath=false", ...args];
+    const env = options.env ? { ...process.env, ...options.env } : process.env;
 
     return await new Promise<GitCommandResult>((resolve, reject) => {
       const child = spawn("git", effectiveArgs, {
         cwd: repoRoot,
-        env: process.env,
+        env,
         stdio: ["ignore", "pipe", "pipe"]
       });
 

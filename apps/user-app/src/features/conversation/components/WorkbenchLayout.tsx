@@ -1907,38 +1907,36 @@ function SidebarContent({
 
       <div className="workbench-nav-body">
         <section className="workbench-import-card minimal">
-          <div className="workbench-import-actions">
-            <button
-              type="button"
-              className="workbench-import-toggle"
-              aria-label={importingWorkspace ? t("shell.importSubmitting") : t("shell.importWorkspaceTitle")}
-              title={importingWorkspace ? t("shell.importSubmitting") : t("shell.importWorkspaceTitle")}
-              disabled={workspaceActionPending}
-              onClick={handleOpenDirectoryBrowser}
-            >
-              <span className="workbench-import-toggle-symbol" aria-hidden="true">
-                +
-              </span>
-              <span className="workbench-import-toggle-label">
-                {importingWorkspace ? t("shell.importSubmitting") : t("shell.importWorkspaceTitle")}
-              </span>
-            </button>
-            <button
-              type="button"
-              className="workbench-import-toggle"
-              aria-label={cloningWorkspace ? t("shell.cloneSubmitting") : t("shell.cloneWorkspaceTitle")}
-              title={cloningWorkspace ? t("shell.cloneSubmitting") : t("shell.cloneWorkspaceTitle")}
-              disabled={workspaceActionPending}
-              onClick={handleOpenCloneWorkspace}
-            >
-              <span className="workbench-import-toggle-symbol" aria-hidden="true">
-                +
-              </span>
-              <span className="workbench-import-toggle-label">
-                {cloningWorkspace ? t("shell.cloneSubmitting") : t("shell.cloneWorkspaceTitle")}
-              </span>
-            </button>
-          </div>
+          <button
+            type="button"
+            className="workbench-import-toggle"
+            aria-label={importingWorkspace ? t("shell.importSubmitting") : t("shell.importWorkspaceTitle")}
+            title={importingWorkspace ? t("shell.importSubmitting") : t("shell.importWorkspaceTitle")}
+            disabled={workspaceActionPending}
+            onClick={handleOpenDirectoryBrowser}
+          >
+            <span className="workbench-import-toggle-symbol" aria-hidden="true">
+              +
+            </span>
+            <span className="workbench-import-toggle-label">
+              {importingWorkspace ? t("shell.importSubmitting") : t("shell.importWorkspaceTitle")}
+            </span>
+          </button>
+          <button
+            type="button"
+            className="workbench-import-toggle"
+            aria-label={cloningWorkspace ? t("shell.cloneSubmitting") : t("shell.cloneWorkspaceTitle")}
+            title={cloningWorkspace ? t("shell.cloneSubmitting") : t("shell.cloneWorkspaceTitle")}
+            disabled={workspaceActionPending}
+            onClick={handleOpenCloneWorkspace}
+          >
+            <span className="workbench-import-toggle-symbol" aria-hidden="true">
+              +
+            </span>
+            <span className="workbench-import-toggle-label">
+              {cloningWorkspace ? t("shell.cloneSubmitting") : t("shell.cloneWorkspaceTitle")}
+            </span>
+          </button>
         </section>
 
         {navigationError ? (

@@ -7,6 +7,27 @@ interface ImportWorkspaceBody {
   name?: string;
 }
 
+interface CloneWorkspaceBody {
+  repositoryUrl?: string;
+  parentPath?: string;
+  directoryName?: string;
+  name?: string;
+  auth?:
+    | {
+        mode?: "none";
+      }
+    | {
+        mode: "basic";
+        username?: string;
+        password?: string;
+      }
+    | {
+        mode: "token";
+        username?: string;
+        token?: string;
+      };
+}
+
 interface BrowseWorkspaceQuery {
   path?: string;
 }
@@ -35,6 +56,21 @@ export class WorkspaceController {
       request.body.path?.trim() || "",
       request.body.name?.trim()
     );
+
+    reply.status(201).send(workspace);
+  };
+
+  readonly clone = async (
+    request: FastifyRequest<{ Body: CloneWorkspaceBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    const workspace = await this.workspaceService.cloneWorkspace({
+      repositoryUrl: request.body.repositoryUrl?.trim() || "",
+      parentPath: request.body.parentPath?.trim() || "",
+      directoryName: request.body.directoryName?.trim() || undefined,
+      name: request.body.name?.trim() || undefined,
+      auth: request.body.auth
+    });
 
     reply.status(201).send(workspace);
   };
