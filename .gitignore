@@ -69,6 +69,7 @@ pnpm-debug.log*
 *.tsbuildinfo
 
 # Test & coverage
+test/
 coverage/
 .nyc_output/
 
@@ -82,3 +83,5 @@ AGENTS.md
 apps/host/data/host/*
 apps/host/apps/host/*
 apps/host/runtime/
+UsersjacksonAndroidSdk/
+apps/user-app/src-tauri/gen/android/
