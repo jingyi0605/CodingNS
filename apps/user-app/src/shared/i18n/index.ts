@@ -1,3 +1,9 @@
+import type { ReactNode } from "react";
+import { useEffect } from "react";
+
+import { clientConfigStore, useClientConfigSelector } from "../../config/client-config-store";
+import type { AppLanguage } from "../../config/client-config-types";
+import { enUS } from "../../i18n/en-US";
 import { zhCN } from "../../i18n/zh-CN";
 
 type DictionaryValue = string | Record<string, unknown>;
@@ -6,11 +12,18 @@ const extensionZhCN = {
   common: {
     close: "关闭",
     cancel: "\u53d6\u6d88",
-    logout: "\u9000\u51fa\u767b\u5f55"
+    logout: "\u9000\u51fa\u767b\u5f55",
+    language: "\u8bed\u8a00"
+  },
+  locale: {
+    zhCN: "\u7b80\u4f53\u4e2d\u6587",
+    enUS: "English"
   },
   settings: {
     title: "\u8bbe\u7f6e",
     appearance: "\u5916\u89c2",
+    language: "\u8bed\u8a00",
+    languageDescription: "\u9009\u62e9\u754c\u9762\u663e\u793a\u8bed\u8a00\uff0c\u5207\u6362\u540e\u7acb\u5373\u5e94\u7528\u5230\u5f53\u524d\u9875\u9762\u3002",
     theme: "\u4e3b\u9898",
     themeDescription: "\u9009\u62e9\u9002\u5408\u4f60\u7684\u754c\u9762\u914d\u8272\u65b9\u6848",
     connection: "\u8fde\u63a5\u4e0e\u66f4\u65b0",
@@ -402,6 +415,82 @@ const extensionZhCN = {
   }
 } satisfies Record<string, unknown>;
 
+const extensionEnUS = {
+  common: {
+    close: "Close",
+    cancel: "Cancel",
+    logout: "Log out",
+    language: "Language"
+  },
+  locale: {
+    zhCN: "\u7b80\u4f53\u4e2d\u6587",
+    enUS: "English"
+  },
+  settings: {
+    title: "Settings",
+    appearance: "Appearance",
+    language: "Language",
+    languageDescription: "Choose the display language used by the interface. The page updates immediately.",
+    theme: "Theme",
+    themeDescription: "Choose the color theme that fits the way you work.",
+    connection: "Connection & Updates",
+    serverAddress: "Server Address",
+    serverDescription: "Desktop and H5 both work through this host entry.",
+    releaseChannel: "Release Channel",
+    releaseChannelDescription: "Desktop fetches update manifests from this channel.",
+    releaseStable: "Stable",
+    releaseBeta: "Beta",
+    autoReconnect: "Auto Reconnect",
+    autoReconnectDescription: "Retry HTTP and WebSocket links automatically when Host is briefly unavailable.",
+    autoCheckUpdate: "Auto Check for Updates",
+    autoCheckUpdateDescription: "Only works in desktop runtime. H5 does not enable this capability.",
+    enabled: "Enabled",
+    disabled: "Disabled",
+    desktopRelease: "Desktop Release",
+    desktopReleaseDescription: "Check for updates, install them, or roll back from here.",
+    runtimePlatform: "Runtime Platform",
+    runtimePlatformDescription: "Shows whether the app is running in Web/H5 or the Tauri desktop shell.",
+    platformDesktop: "Desktop",
+    platformWeb: "Web",
+    releaseDesktopOnly: "Desktop updates are not available in the current Web/H5 runtime.",
+    releaseCurrentVersion: "Current Version",
+    releaseTargetVersion: "Target Version",
+    releaseUnknownVersion: "Unknown",
+    releaseNotes: "Release Notes",
+    releaseNotesEmpty: "This version does not include extra notes.",
+    releaseCheckNow: "Check for Updates",
+    releaseInstallNow: "Install Update",
+    releaseRollback: "Rollback",
+    releaseUpdateReady: "A new version is available and ready to install.",
+    releaseUpToDate: "You are already on the latest available version.",
+    releaseCheckFailed: "Failed to check for updates.",
+    releaseInstallStarted: "The installer has started. Follow the installer prompts to continue.",
+    releaseInstallFailed: "Desktop update failed.",
+    releaseRollbackStarted: "Rollback started. Follow the prompts to continue.",
+    releaseRollbackFailed: "Desktop rollback failed.",
+    account: "Account",
+    logout: "Log out",
+    logoutDescription: "Sign out of the current account and return to the login page."
+  },
+  theme: {
+    light: "Light",
+    dark: "Dark",
+    skyBlue: "Sky Blue",
+    eyeGreen: "Eye Green",
+    switchLabel: "Theme"
+  }
+} satisfies Record<string, unknown>;
+
+const dictionaries: Record<AppLanguage, Record<string, unknown>> = {
+  "zh-CN": zhCN,
+  "en-US": enUS
+};
+
+const extensionDictionaries: Record<AppLanguage, Record<string, unknown>> = {
+  "zh-CN": extensionZhCN,
+  "en-US": extensionEnUS
+};
+
 function readValue(key: string, source: DictionaryValue): string {
   const path = key.split(".");
   let current: DictionaryValue | undefined = source;
@@ -423,12 +512,69 @@ function readValue(key: string, source: DictionaryValue): string {
   return typeof current === "string" ? current : key;
 }
 
-export function t(key: string): string {
-  const extensionValue = readValue(key, extensionZhCN);
+function getCurrentLanguage(): AppLanguage {
+  return clientConfigStore.getState().language ?? "zh-CN";
+}
 
-  if (extensionValue !== key) {
-    return extensionValue;
+export function t(key: string): string {
+  const language = getCurrentLanguage();
+  const localeCandidates: AppLanguage[] = language === "en-US" ? ["en-US", "zh-CN"] : ["zh-CN"];
+
+  for (const locale of localeCandidates) {
+    const extensionValue = readValue(key, extensionDictionaries[locale]);
+
+    if (extensionValue !== key) {
+      return extensionValue;
+    }
+
+    const dictionaryValue = readValue(key, dictionaries[locale]);
+
+    if (dictionaryValue !== key) {
+      return dictionaryValue;
+    }
   }
 
-  return readValue(key, zhCN);
+  return key;
 }
+
+interface I18nProviderProps {
+  children: ReactNode;
+  language: AppLanguage;
+}
+
+export function I18nProvider({ children, language }: I18nProviderProps) {
+  useEffect(() => {
+    document.documentElement.setAttribute("lang", language);
+  }, [language]);
+
+  return children;
+}
+
+/**
+ * 响应式的翻译hook，语言切换时会自动触发组件重新渲染
+ */
+export function useT(): (key: string) => string {
+  const language = useClientConfigSelector((state) => state.language);
+
+  return (key: string) => {
+    const localeCandidates: AppLanguage[] = language === "en-US" ? ["en-US", "zh-CN"] : ["zh-CN"];
+
+    for (const locale of localeCandidates) {
+      const extensionValue = readValue(key, extensionDictionaries[locale]);
+
+      if (extensionValue !== key) {
+        return extensionValue;
+      }
+
+      const dictionaryValue = readValue(key, dictionaries[locale]);
+
+      if (dictionaryValue !== key) {
+        return dictionaryValue;
+      }
+    }
+
+    return key;
+  };
+}
+
+export { LanguageSwitcher } from "./LanguageSwitcher";

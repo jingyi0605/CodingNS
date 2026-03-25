@@ -795,15 +795,15 @@ function WorkbenchDesktopTitlebar({
         className={`workbench-titlebar-leading ${showTrafficLightsPadding ? "traffic-lights-offset" : ""}`}
         data-tauri-drag-region={isDesktop ? true : undefined}
       >
-        {isDesktop ? (
-          <div className="workbench-titlebar-brand">
-            <img src="/logo.svg" alt="CodingNS" className="workbench-titlebar-logo" />
+        <div className="workbench-titlebar-brand">
+          <img src="/logo.svg" alt="CodingNS" className="workbench-titlebar-logo" />
+          {isDesktop ? (
             <div className="workbench-titlebar-brand-text">
               <strong>CodingNS</strong>
               <span>{t("shell.desktopChromeLabel")}</span>
             </div>
-          </div>
-        ) : null}
+          ) : null}
+        </div>
         <div className="workbench-titlebar-context">
           <span className="workbench-titlebar-pill">
             {currentWorkspaceName ?? t("conversation.headerWorkspaceUnknown")}

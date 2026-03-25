@@ -106,6 +106,42 @@ body {
     var(--app-bg);
 }
 
+/* 工作台默认禁止拖拽选中文本，只对白名单区域放开。 */
+.workbench-shell,
+.workbench-shell * {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.workbench-titlebar-context,
+.workbench-titlebar-context *,
+.workbench-shell .message-content,
+.workbench-shell .message-content *,
+.workbench-shell .rules-message-summary,
+.workbench-shell .rules-message-hint,
+.workbench-shell .rules-message-body,
+.workbench-shell .rules-message-body *,
+.workbench-shell input,
+.workbench-shell textarea,
+.workbench-shell select,
+.workbench-shell [contenteditable="true"],
+.workbench-shell [contenteditable="true"] * {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* Git 面板整体禁止拖拽选中，只保留提交信息输入框可选。 */
+.workbench-shell .git-sidebar,
+.workbench-shell .git-sidebar * {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.workbench-shell .git-sidebar .git-editor-row input {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 .workbench-body-shell {
   display: flex;
   flex: 1;
@@ -148,11 +184,12 @@ body {
   align-items: center;
   gap: 10px;
   min-width: 0;
+  margin-right: 8px;
 }
 
 .workbench-titlebar-logo {
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   flex-shrink: 0;
   filter: drop-shadow(0 0 6px rgba(0, 122, 255, 0.4));
   transition: filter 0.2s ease;

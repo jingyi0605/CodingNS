@@ -4,7 +4,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { serverConfigStore, useServerConfigSelector } from "../../../config/server-config";
 import { authGateway } from "../../../auth/auth-gateway";
 import { probeHost } from "../../../network/host-probe";
-import { t } from "../../../shared/i18n";
+import { LanguageSwitcher, t, useT } from "../../../shared/i18n";
 import { ApiError } from "../../../shared/network/api-error";
 import { useTheme } from "../../../shared/theme";
 import { authStore, useAuthSelector } from "../store/auth-store";
@@ -144,6 +144,7 @@ function TypewriterText({ text }: { text: string }) {
 
 export function LoginPage() {
   const navigate = useNavigate();
+  const t = useT();
   const [searchParams] = useSearchParams();
   const [username, setUsername] = useState("admin");
   const [password, setPassword] = useState("123456aA?!");
@@ -189,7 +190,7 @@ export function LoginPage() {
     return () => {
       disposed = true;
     };
-  }, [authStatus, navigate, probeServerBaseUrl, returnTo]);
+  }, [authStatus, navigate, probeServerBaseUrl, returnTo, t]);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -235,14 +236,14 @@ export function LoginPage() {
 
       {/* Main Content */}
       <div className="cyber-login-container">
+        <div className="cyber-login-toolbar">
+          <LanguageSwitcher variant="compact" />
+        </div>
+
         {/* Logo / Brand */}
         <div className="cyber-brand">
           <div className="cyber-logo">
-            <div className="cyber-logo-inner">
-              <span className="cyber-logo-icon">◈</span>
-            </div>
-            <div className="cyber-logo-ring ring-1" />
-            <div className="cyber-logo-ring ring-2" />
+            <img src="/logo.svg" alt="CodingNS" className="cyber-logo-svg" />
           </div>
           <h1 className="cyber-brand-title">
             <GlitchText text="CODING NS" />
