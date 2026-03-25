@@ -12,7 +12,8 @@ function createFallbackState(): ClientRuntimeConfig {
     hostBaseUrl: "http://127.0.0.1:3002",
     releaseChannel: "stable",
     autoReconnect: true,
-    autoCheckUpdate: resolveRuntimePlatform() === "desktop"
+    autoCheckUpdate: resolveRuntimePlatform() === "desktop",
+    language: "zh-CN"
   };
 }
 

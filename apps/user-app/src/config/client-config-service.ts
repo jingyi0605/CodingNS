@@ -1,4 +1,5 @@
 import {
+  type AppLanguage,
   type ClientRuntimeConfig,
   type ClientRuntimeConfigPatch,
   type RuntimePlatform
@@ -7,6 +8,22 @@ import { createPlatformAdapter } from "../platform/platform-adapter";
 import { normalizeServerBaseUrl } from "./server-config-shared";
 
 const STORAGE_KEY = "codingns.client.runtime-config";
+
+function normalizeLanguage(value?: string | null): AppLanguage {
+  if (value === "en" || value === "en-US") {
+    return "en-US";
+  }
+
+  return "zh-CN";
+}
+
+function detectBrowserLanguage(): AppLanguage {
+  if (typeof navigator === "undefined") {
+    return "zh-CN";
+  }
+
+  return normalizeLanguage(navigator.language);
+}
 
 function canUseLocalStorage(): boolean {
   return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
@@ -45,7 +62,8 @@ function createDefaultConfig(platform: RuntimePlatform): ClientRuntimeConfig {
     hostBaseUrl: normalizeServerBaseUrl("http://127.0.0.1:3002"),
     releaseChannel: "stable",
     autoReconnect: true,
-    autoCheckUpdate: platform === "desktop"
+    autoCheckUpdate: platform === "desktop",
+    language: detectBrowserLanguage()
   };
 }
 
@@ -66,7 +84,8 @@ function mergeConfig(
     platform: patch.platform ?? baseConfig.platform,
     releaseChannel: patch.releaseChannel ?? baseConfig.releaseChannel,
     autoReconnect: patch.autoReconnect ?? baseConfig.autoReconnect,
-    autoCheckUpdate: patch.autoCheckUpdate ?? baseConfig.autoCheckUpdate
+    autoCheckUpdate: patch.autoCheckUpdate ?? baseConfig.autoCheckUpdate,
+    language: normalizeLanguage(patch.language ?? baseConfig.language)
   };
 }
 

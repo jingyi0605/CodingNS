@@ -1,5 +1,6 @@
 export type RuntimePlatform = "desktop" | "web";
 export type ReleaseChannel = "stable" | "beta";
+export type AppLanguage = "zh-CN" | "en-US";
 
 export interface ClientRuntimeConfig {
   platform: RuntimePlatform;
@@ -7,6 +8,7 @@ export interface ClientRuntimeConfig {
   releaseChannel: ReleaseChannel;
   autoReconnect: boolean;
   autoCheckUpdate: boolean;
+  language: AppLanguage;
 }
 
 export interface ClientRuntimeConfigPatch extends Partial<ClientRuntimeConfig> {
