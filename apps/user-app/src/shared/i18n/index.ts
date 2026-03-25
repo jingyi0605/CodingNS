@@ -120,6 +120,7 @@ const extensionZhCN = {
     imagePreviewHint: "点击遮罩或按 Esc 可以关闭预览",
     removeAttachment: "\u79fb\u9664\u9644\u4ef6",
     modelSelectorLabel: "\u9009\u62e9\u6a21\u578b",
+    modelUseCliDefault: "\u8ddf\u968f CLI \u9ed8\u8ba4\u6a21\u578b",
     reasoningSelectorLabel: "\u9009\u62e9\u63a8\u7406\u5f3a\u5ea6",
     reasoningLow: "\u4f4e",
     reasoningMedium: "\u4e2d",
@@ -199,7 +200,10 @@ const extensionZhCN = {
     undoLastCommitSuccess: "\u5df2\u64a4\u9500\u4e0a\u6b21\u63d0\u4ea4",
     pushNow: "\u63a8\u9001",
     commitNow: "\u63d0\u4ea4",
-    refreshNow: "\u5237\u65b0"
+    refreshNow: "\u5237\u65b0",
+    selectedFiles: "\u5df2\u9009\u6587\u4ef6",
+    clearSelection: "\u6e05\u7a7a\u9009\u4e2d",
+    selectFile: "\u9009\u4e2d\u6587\u4ef6"
   },
   terminalManager: {
     workspaceField: "\u5f53\u524d\u5de5\u4f5c\u533a",

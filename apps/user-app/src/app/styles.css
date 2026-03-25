@@ -3786,6 +3786,17 @@ textarea:focus-visible {
   margin: 0;
 }
 
+.git-tree-group-header {
+  position: relative;
+}
+
+.git-tree-group-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
 .git-scaffold-section {
   gap: 6px;
 }
@@ -3817,6 +3828,7 @@ textarea:focus-visible {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  flex-wrap: nowrap;
 }
 
 .git-primary-submit {
@@ -3825,10 +3837,13 @@ textarea:focus-visible {
 
 .git-primary-actions .primary-button,
 .git-primary-actions .secondary-button {
+  flex: 1 1 0;
+  min-width: 0;
   min-height: 30px;
   padding: 0 12px;
   border-radius: 8px;
   font-size: 12px;
+  white-space: nowrap;
 }
 
 .git-commit-inline {
@@ -3878,6 +3893,12 @@ textarea:focus-visible {
   padding-right: 2px;
 }
 
+.git-tree-row[data-mobile="true"] {
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  padding-right: 0;
+}
+
 .git-tree-row[data-active="true"] {
   background: color-mix(in srgb, var(--bg-active) 42%, transparent);
   border-radius: 10px;
@@ -3906,6 +3927,18 @@ textarea:focus-visible {
 
 .git-tree-file-button[data-active="true"] {
   background: color-mix(in srgb, var(--bg-active) 84%, transparent);
+}
+
+.git-tree-file-button[data-mobile="true"] {
+  min-height: 28px;
+}
+
+.git-tree-select-checkbox {
+  width: 16px;
+  height: 16px;
+  margin: 0 0 0 6px;
+  accent-color: var(--accent);
+  flex: 0 0 auto;
 }
 
 .git-tree-chevron {
@@ -4041,6 +4074,22 @@ textarea:focus-visible {
 .git-tree-row[data-active="true"] .git-row-actions {
   opacity: 1;
   pointer-events: auto;
+}
+
+.git-selection-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 4;
+  width: min(220px, calc(100vw - 88px));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 78%, transparent);
+  background: color-mix(in srgb, var(--bg-surface) 96%, transparent);
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.18);
 }
 
 .git-icon-button {
@@ -4559,11 +4608,13 @@ textarea:focus-visible {
     padding-right: 0;
   }
 
+  .git-tree-row[data-mobile="true"] {
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 8px;
+  }
+
   .git-row-actions {
-    justify-self: flex-start;
-    margin-left: 22px;
-    opacity: 1;
-    pointer-events: auto;
+    display: none;
   }
 
   .git-commit-inline {
@@ -4571,7 +4622,7 @@ textarea:focus-visible {
   }
 
   .git-primary-actions {
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
   }
 
   .git-history-topbar {
@@ -4584,6 +4635,11 @@ textarea:focus-visible {
   }
 
   .git-operations-menu {
+    position: static;
+    width: 100%;
+  }
+
+  .git-selection-menu {
     position: static;
     width: 100%;
   }

@@ -63,6 +63,7 @@ const DEFAULT_TREE_PANEL_RATIO = 56;
 const MIN_TREE_PANEL_RATIO = 28;
 const MAX_TREE_PANEL_RATIO = 72;
 const PANEL_RESIZER_HEIGHT = 8;
+const GIT_MOBILE_BREAKPOINT_PX = 960;
 
 export function GitSidebar({ workspaceId }: GitSidebarProps) {
   const [status, setStatus] = useState<GitStatusDto | null>(null);
@@ -78,6 +79,11 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
   const [collapsedTreePaths, setCollapsedTreePaths] = useState<string[]>([]);
   const [historyExpanded, setHistoryExpanded] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [isMobileViewport, setIsMobileViewport] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth <= GIT_MOBILE_BREAKPOINT_PX : false
+  );
+  const [selectedMobilePaths, setSelectedMobilePaths] = useState<string[]>([]);
+  const [mobileActionMenuVariant, setMobileActionMenuVariant] = useState<"staged" | "unstaged" | null>(null);
   const [treePanelRatio, setTreePanelRatio] = useState(DEFAULT_TREE_PANEL_RATIO);
   const [panelResizeActive, setPanelResizeActive] = useState(false);
   const splitLayoutRef = useRef<HTMLDivElement | null>(null);
@@ -93,9 +99,24 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
     setSelectedPath(null);
     setCommitSubject("");
     setMenuOpen(false);
+    setSelectedMobilePaths([]);
+    setMobileActionMenuVariant(null);
     setPanelResizeActive(false);
     setTreePanelRatio(DEFAULT_TREE_PANEL_RATIO);
   }, [workspaceId]);
+
+  useEffect(() => {
+    function handleResize() {
+      setIsMobileViewport(window.innerWidth <= GIT_MOBILE_BREAKPOINT_PX);
+    }
+
+    handleResize();
+    window.addEventListener("resize", handleResize);
+
+    return () => {
+      window.removeEventListener("resize", handleResize);
+    };
+  }, []);
 
   useEffect(() => {
     if (!panelResizeActive) {
@@ -190,6 +211,26 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
       setSelectedPath(null);
     }
   }, [selectedPath, status]);
+
+  useEffect(() => {
+    if (isMobileViewport) {
+      return;
+    }
+
+    setSelectedMobilePaths([]);
+    setMobileActionMenuVariant(null);
+  }, [isMobileViewport]);
+
+  useEffect(() => {
+    if (!status) {
+      setSelectedMobilePaths([]);
+      return;
+    }
+
+    const availablePaths = new Set(status.changes.map((item) => item.path));
+
+    setSelectedMobilePaths((current) => current.filter((path) => availablePaths.has(path)));
+  }, [status]);
 
   function resetTreePanelScroll() {
     const treePanelBody = treePanelBodyRef.current;
@@ -297,8 +338,12 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
     }
   }
 
-  async function handleStageToggle(filePath: string, staged: boolean) {
+  async function handleStageToggle(targets: string[], staged: boolean) {
     if (!workspaceId) {
+      return;
+    }
+
+    if (!targets.length) {
       return;
     }
 
@@ -306,11 +351,13 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
 
     try {
       const nextStatus = staged
-        ? await unstageGitTargets(workspaceId, [filePath])
-        : await stageGitTargets(workspaceId, [filePath]);
+        ? await unstageGitTargets(workspaceId, targets)
+        : await stageGitTargets(workspaceId, targets);
 
       setStatus(nextStatus);
-      setSelectedPath(filePath);
+      setSelectedPath(targets[targets.length - 1] ?? null);
+      setSelectedMobilePaths((current) => current.filter((path) => !targets.includes(path)));
+      setMobileActionMenuVariant(null);
     } catch (error) {
       showToast({
         title: readError(error, t("git.stageFailed")),
@@ -321,20 +368,27 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
     }
   }
 
-  async function handleDiscard(filePath: string) {
+  async function handleDiscard(targets: string[]) {
     if (!workspaceId) {
+      return;
+    }
+
+    if (!targets.length) {
       return;
     }
 
     setActioning(true);
 
     try {
-      const nextStatus = await discardGitTargets(workspaceId, [filePath]);
+      const nextStatus = await discardGitTargets(workspaceId, targets);
       setStatus(nextStatus);
 
-      if (selectedPath === filePath) {
+      if (targets.includes(selectedPath ?? "")) {
         setSelectedPath(null);
       }
+
+      setSelectedMobilePaths((current) => current.filter((path) => !targets.includes(path)));
+      setMobileActionMenuVariant(null);
     } catch (error) {
       showToast({
         title: readError(error, t("git.discardFailed")),
@@ -473,6 +527,14 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
     );
   }
 
+  function toggleMobileSelection(filePath: string) {
+    setSelectedPath(filePath);
+    setMobileActionMenuVariant(null);
+    setSelectedMobilePaths((current) =>
+      current.includes(filePath) ? current.filter((item) => item !== filePath) : [...current, filePath]
+    );
+  }
+
   function updateTreePanelRatio(clientY: number) {
     const layout = splitLayoutRef.current;
 
@@ -511,6 +573,9 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
   const stagedTree = buildChangeTree(stagedChanges);
   const unstagedTree = buildChangeTree(unstagedChanges);
   const collapsedTreePathSet = new Set(collapsedTreePaths);
+  const selectedMobilePathSet = new Set(selectedMobilePaths);
+  const mobileSelectedStagedTargets = collectSelectionTargets(selectedMobilePaths, allChanges, "staged");
+  const mobileSelectedUnstagedTargets = collectSelectionTargets(selectedMobilePaths, allChanges, "unstaged");
   const canPush = allChanges.length === 0 && (status?.snapshot.ahead ?? 0) > 0;
   const canCommit = stagedChanges.length > 0 && commitSubject.trim().length > 0;
   const currentBranch = branches?.currentBranch ?? status?.snapshot.branch ?? t("common.unknown");
@@ -520,6 +585,20 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
   const splitRows = historyExpanded
     ? `minmax(120px, ${safeTreePanelRatio}fr) ${PANEL_RESIZER_HEIGHT}px minmax(140px, ${100 - safeTreePanelRatio}fr)`
     : `minmax(120px, 1fr) ${PANEL_RESIZER_HEIGHT}px auto`;
+
+  useEffect(() => {
+    if (mobileActionMenuVariant === "staged" && mobileSelectedStagedTargets.length === 0) {
+      setMobileActionMenuVariant(null);
+    }
+
+    if (mobileActionMenuVariant === "unstaged" && mobileSelectedUnstagedTargets.length === 0) {
+      setMobileActionMenuVariant(null);
+    }
+  }, [
+    mobileActionMenuVariant,
+    mobileSelectedStagedTargets.length,
+    mobileSelectedUnstagedTargets.length
+  ]);
 
   return (
     <section className="conversation-panel surface-card git-sidebar" data-testid="git-sidebar">
@@ -589,10 +668,23 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
                 collapsedTreePathSet={collapsedTreePathSet}
                 onToggleTreePath={toggleTreePath}
                 onSelectFile={setSelectedPath}
+                onToggleMobileSelection={toggleMobileSelection}
                 onStageToggle={handleStageToggle}
                 onDiscard={handleDiscard}
                 actioning={actioning}
                 variant="staged"
+                isMobileViewport={isMobileViewport}
+                selectedMobilePathSet={selectedMobilePathSet}
+                selectedTargets={mobileSelectedStagedTargets}
+                mobileActionMenuOpen={mobileActionMenuVariant === "staged"}
+                onToggleMobileActionMenu={() =>
+                  setMobileActionMenuVariant((current) => (current === "staged" ? null : "staged"))
+                }
+                onClearSelectedTargets={() =>
+                  setSelectedMobilePaths((current) =>
+                    current.filter((path) => !mobileSelectedStagedTargets.includes(path))
+                  )
+                }
               />
             ) : null}
 
@@ -604,10 +696,23 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
               collapsedTreePathSet={collapsedTreePathSet}
               onToggleTreePath={toggleTreePath}
               onSelectFile={setSelectedPath}
+              onToggleMobileSelection={toggleMobileSelection}
               onStageToggle={handleStageToggle}
               onDiscard={handleDiscard}
               actioning={actioning}
               variant="unstaged"
+              isMobileViewport={isMobileViewport}
+              selectedMobilePathSet={selectedMobilePathSet}
+              selectedTargets={mobileSelectedUnstagedTargets}
+              mobileActionMenuOpen={mobileActionMenuVariant === "unstaged"}
+              onToggleMobileActionMenu={() =>
+                setMobileActionMenuVariant((current) => (current === "unstaged" ? null : "unstaged"))
+              }
+              onClearSelectedTargets={() =>
+                setSelectedMobilePaths((current) =>
+                  current.filter((path) => !mobileSelectedUnstagedTargets.includes(path))
+                )
+              }
             />
           </div>
         </section>
@@ -745,10 +850,17 @@ function GitChangeGroup({
   collapsedTreePathSet,
   onToggleTreePath,
   onSelectFile,
+  onToggleMobileSelection,
   onStageToggle,
   onDiscard,
   actioning,
-  variant
+  variant,
+  isMobileViewport,
+  selectedMobilePathSet,
+  selectedTargets,
+  mobileActionMenuOpen,
+  onToggleMobileActionMenu,
+  onClearSelectedTargets
 }: {
   title: string;
   count: number;
@@ -757,16 +869,78 @@ function GitChangeGroup({
   collapsedTreePathSet: ReadonlySet<string>;
   onToggleTreePath: (path: string) => void;
   onSelectFile: (filePath: string) => void;
-  onStageToggle: (filePath: string, staged: boolean) => Promise<void>;
-  onDiscard: (filePath: string) => Promise<void>;
+  onToggleMobileSelection: (filePath: string) => void;
+  onStageToggle: (targets: string[], staged: boolean) => Promise<void>;
+  onDiscard: (targets: string[]) => Promise<void>;
   actioning: boolean;
   variant: "staged" | "unstaged";
+  isMobileViewport: boolean;
+  selectedMobilePathSet: ReadonlySet<string>;
+  selectedTargets: string[];
+  mobileActionMenuOpen: boolean;
+  onToggleMobileActionMenu: () => void;
+  onClearSelectedTargets: () => void;
 }) {
   return (
     <section className="git-tree-group" data-variant={variant}>
-      <div className="git-section-header">
+      <div className="git-section-header git-tree-group-header">
         <h3>{title}</h3>
-        <span className="workbench-section-counter">{count}</span>
+
+        <div className="git-tree-group-actions">
+          <span className="workbench-section-counter">{count}</span>
+          {isMobileViewport && selectedTargets.length > 0 ? (
+            <button
+              className="git-icon-button"
+              type="button"
+              aria-label={t("git.operationMenu")}
+              title={t("git.operationMenu")}
+              onClick={onToggleMobileActionMenu}
+              disabled={actioning}
+            >
+              <MoreIcon />
+            </button>
+          ) : null}
+        </div>
+
+        {isMobileViewport && mobileActionMenuOpen ? (
+          <div className="git-selection-menu">
+            <div className="git-menu-section">
+              <span className="git-menu-caption">{t("git.selectedFiles")}</span>
+              <strong className="git-menu-branch">{selectedTargets.length}</strong>
+            </div>
+
+            <div className="git-menu-section">
+              <button
+                className="git-menu-item"
+                type="button"
+                disabled={actioning}
+                onClick={() => void onStageToggle(selectedTargets, variant === "staged")}
+              >
+                <span>{variant === "staged" ? t("git.unstage") : t("git.stage")}</span>
+              </button>
+
+              {variant === "unstaged" ? (
+                <button
+                  className="git-menu-item"
+                  type="button"
+                  disabled={actioning}
+                  onClick={() => void onDiscard(selectedTargets)}
+                >
+                  <span>{t("git.discard")}</span>
+                </button>
+              ) : null}
+
+              <button
+                className="git-menu-item"
+                type="button"
+                disabled={actioning}
+                onClick={onClearSelectedTargets}
+              >
+                <span>{t("git.clearSelection")}</span>
+              </button>
+            </div>
+          </div>
+        ) : null}
       </div>
 
       <div className="git-tree-shell" role="tree" aria-label={title}>
@@ -778,10 +952,13 @@ function GitChangeGroup({
             selectedPath,
             onToggleTreePath,
             onSelectFile,
+            onToggleMobileSelection,
             onStageToggle,
             onDiscard,
             actioning,
-            variant
+            variant,
+            isMobileViewport,
+            selectedMobilePathSet
           })
         ) : (
           <p className="git-tree-status">{t("git.noChanges")}</p>
@@ -798,10 +975,13 @@ function renderTreeNodes({
   selectedPath,
   onToggleTreePath,
   onSelectFile,
+  onToggleMobileSelection,
   onStageToggle,
   onDiscard,
   actioning,
-  variant
+  variant,
+  isMobileViewport,
+  selectedMobilePathSet
 }: {
   nodes: GitTreeNode[];
   depth: number;
@@ -809,10 +989,13 @@ function renderTreeNodes({
   selectedPath: string | null;
   onToggleTreePath: (path: string) => void;
   onSelectFile: (filePath: string) => void;
-  onStageToggle: (filePath: string, staged: boolean) => Promise<void>;
-  onDiscard: (filePath: string) => Promise<void>;
+  onToggleMobileSelection: (filePath: string) => void;
+  onStageToggle: (targets: string[], staged: boolean) => Promise<void>;
+  onDiscard: (targets: string[]) => Promise<void>;
   actioning: boolean;
   variant: "staged" | "unstaged";
+  isMobileViewport: boolean;
+  selectedMobilePathSet: ReadonlySet<string>;
 }) {
   return nodes.map((node) => {
     if (node.kind === "directory") {
@@ -841,13 +1024,64 @@ function renderTreeNodes({
                 selectedPath,
                 onToggleTreePath,
                 onSelectFile,
+                onToggleMobileSelection,
                 onStageToggle,
                 onDiscard,
                 actioning,
-                variant
+                variant,
+                isMobileViewport,
+                selectedMobilePathSet
               })}
             </div>
           ) : null}
+        </div>
+      );
+    }
+
+    const mobileSelected = selectedMobilePathSet.has(node.path);
+    const active = isMobileViewport ? mobileSelected : selectedPath === node.path;
+
+    if (isMobileViewport) {
+      return (
+        <div
+          key={`file:${node.path}`}
+          className="git-tree-row"
+          role="treeitem"
+          data-active={active}
+          data-mobile="true"
+        >
+          <input
+            className="git-tree-select-checkbox"
+            type="checkbox"
+            checked={mobileSelected}
+            aria-label={`${t("git.selectFile")} ${node.name}`}
+            onChange={() => onToggleMobileSelection(node.change.path)}
+          />
+
+          <button
+            className="git-tree-file-button"
+            type="button"
+            data-active={active}
+            data-mobile="true"
+            style={{ paddingInlineStart: `${18 + depth * 8}px` }}
+            onClick={() => onToggleMobileSelection(node.change.path)}
+          >
+            <span
+              className="git-tree-file-icon"
+              data-kind={resolveFileTreeIconKind(node.name)}
+              aria-hidden="true"
+            >
+              {resolveFileTreeIconLabel(node.name)}
+            </span>
+            <span className="git-tree-label-wrap">
+              <span className="git-tree-label">{node.name}</span>
+            </span>
+            <span className="git-tree-file-meta">
+              <span className="git-status-badge" data-status={node.change.status}>
+                {node.change.status}
+              </span>
+            </span>
+          </button>
         </div>
       );
     }
@@ -857,12 +1091,12 @@ function renderTreeNodes({
         key={`file:${node.path}`}
         className="git-tree-row"
         role="treeitem"
-        data-active={selectedPath === node.path}
+        data-active={active}
       >
         <button
           className="git-tree-file-button"
           type="button"
-          data-active={selectedPath === node.path}
+          data-active={active}
           style={{ paddingInlineStart: `${18 + depth * 8}px` }}
           onClick={() => onSelectFile(node.change.path)}
         >
@@ -889,7 +1123,7 @@ function renderTreeNodes({
             type="button"
             aria-label={node.change.staged ? t("git.unstage") : t("git.stage")}
             title={node.change.staged ? t("git.unstage") : t("git.stage")}
-            onClick={() => void onStageToggle(node.change.path, node.change.staged)}
+            onClick={() => void onStageToggle([node.change.path], node.change.staged)}
             disabled={actioning}
           >
             <StageIcon staged={node.change.staged} />
@@ -900,7 +1134,7 @@ function renderTreeNodes({
               type="button"
               aria-label={t("git.discard")}
               title={t("git.discard")}
-              onClick={() => void onDiscard(node.change.path)}
+              onClick={() => void onDiscard([node.change.path])}
               disabled={actioning}
             >
               <DiscardIcon />
@@ -1006,6 +1240,18 @@ function compactTreeNodes(nodes: GitTreeNode[]): GitTreeNode[] {
       children: nextChildren
     };
   });
+}
+
+function collectSelectionTargets(
+  selectedPaths: string[],
+  changes: GitChangeItemDto[],
+  variant: "staged" | "unstaged"
+) {
+  const selectedSet = new Set(selectedPaths);
+
+  return changes
+    .filter((item) => item.staged === (variant === "staged") && selectedSet.has(item.path))
+    .map((item) => item.path);
 }
 
 function buildCommitDraft(subject: string): CommitDraftDto {
