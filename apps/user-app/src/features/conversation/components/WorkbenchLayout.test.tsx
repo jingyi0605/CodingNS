@@ -874,6 +874,122 @@ describe("WorkbenchLayout", () => {
       expect(screen.getAllByText("Server App").length).toBeGreaterThan(0);
     });
   });
+  it("支持工作区会话批量选择，并可部分选择或全选后批量归档", async () => {
+    const sessionTitles: Record<string, string> = {
+      "session-1": "Session Alpha",
+      "session-2": "Session Beta",
+      "session-3": "Session Gamma"
+    };
+    let workbenchFetchCount = 0;
+    let archivedSessionIds = new Set<string>();
+    let currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "Project One"),
+        sessions: Object.entries(sessionTitles).map(([sessionId, title]) =>
+          createSessionSummary({
+            sessionId,
+            title,
+            workspaceId: "workspace-1",
+            isArchived: archivedSessionIds.has(sessionId)
+          })
+        )
+      }
+    ]);
+
+    function rebuildSnapshot() {
+      currentSnapshot = createWorkbenchSnapshot([
+        {
+          workspace: createWorkspace("workspace-1", "Project One"),
+          sessions: Object.entries(sessionTitles).map(([sessionId, title]) =>
+            createSessionSummary({
+              sessionId,
+              title,
+              workspaceId: "workspace-1",
+              isArchived: archivedSessionIds.has(sessionId)
+            })
+          )
+        }
+      ]);
+      MockWebSocket.workbenchSnapshot = currentSnapshot;
+    }
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        workbenchFetchCount += 1;
+        return createJsonResponse(currentSnapshot);
+      }
+
+      if (url.includes("/api/sessions/") && url.endsWith("/archive")) {
+        const sessionId = url.split("/api/sessions/")[1]?.split("/archive")[0];
+        const payload = JSON.parse(String(init?.body ?? "{}")) as { archived?: boolean };
+
+        if (!sessionId || !(sessionId in sessionTitles)) {
+          throw new Error(`未处理的归档会话: ${url}`);
+        }
+
+        if (payload.archived) {
+          archivedSessionIds = new Set([...archivedSessionIds, sessionId]);
+        } else {
+          const nextArchivedSessionIds = new Set(archivedSessionIds);
+          nextArchivedSessionIds.delete(sessionId);
+          archivedSessionIds = nextArchivedSessionIds;
+        }
+
+        rebuildSnapshot();
+
+        return createJsonResponse(
+          createSessionSummary({
+            sessionId,
+            title: sessionTitles[sessionId],
+            workspaceId: "workspace-1",
+            isArchived: payload.archived === true
+          })
+        );
+      }
+
+      throw new Error(`鏈鐞嗙殑璇锋眰: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/sessions/session-1");
+
+    const workspaceGroup = await findWorkspaceGroupByName("Project One");
+    const workspaceScope = within(workspaceGroup);
+
+    expect(workspaceScope.getByRole("button", { name: t("shell.createSession") })).toBeInTheDocument();
+    expect(workspaceScope.queryByText(t("shell.createSession"))).not.toBeInTheDocument();
+
+    await userEvent.click(workspaceScope.getByRole("button", { name: t("shell.batchSelectSessions") }));
+
+    const alphaCard = await findSessionCardByTitle("Session Alpha");
+    await userEvent.click(within(alphaCard).getByText("Session Alpha"));
+
+    expect(workspaceScope.getByText("1/3")).toBeInTheDocument();
+
+    await userEvent.click(workspaceScope.getByRole("button", { name: t("shell.batchArchiveAction") }));
+
+    await waitFor(() => {
+      expect(querySessionCardsByTitle("Session Alpha")).toHaveLength(0);
+    });
+    expect(getSessionCardByTitle("Session Beta")).toBeInTheDocument();
+    expect(workspaceScope.getByRole("button", { name: t("shell.selectAllSessions") })).toBeInTheDocument();
+
+    await userEvent.click(workspaceScope.getByRole("button", { name: t("shell.selectAllSessions") }));
+
+    expect(workspaceScope.getByText("2/2")).toBeInTheDocument();
+
+    await userEvent.click(workspaceScope.getByRole("button", { name: t("shell.batchArchiveAction") }));
+
+    await waitFor(() => {
+      expect(querySessionCardsByTitle("Session Beta")).toHaveLength(0);
+      expect(querySessionCardsByTitle("Session Gamma")).toHaveLength(0);
+    });
+
+    expect(archivedSessionIds).toEqual(new Set(Object.keys(sessionTitles)));
+    expect(workbenchFetchCount).toBeGreaterThanOrEqual(1);
+  });
 });
 
 function renderWorkbenchRoute(initialEntry = "/sessions/session-1") {

@@ -215,6 +215,10 @@ function buildSessionTree(sessions: SessionSummaryDto[]) {
     }));
 }
 
+function flattenVisibleSessionTree(nodes: NavigationSessionTreeNode[]) {
+  return nodes.flatMap((node) => [node.session, ...node.children]);
+}
+
 function resolveVisibleItemCount(
   totalCount: number,
   pageSize: number,
@@ -622,6 +626,34 @@ function PlusIcon() {
   );
 }
 
+function MultiSelectIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <rect x="4" y="5" width="6" height="6" rx="1.5" />
+      <rect x="14" y="5" width="6" height="6" rx="1.5" />
+      <rect x="4" y="13" width="6" height="6" rx="1.5" />
+      <path d="M14 16l2 2 4-4" />
+    </svg>
+  );
+}
+
+function SelectionMarkerIcon({ selected }: { selected: boolean }) {
+  if (selected) {
+    return (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <rect x="4" y="4" width="16" height="16" rx="4" />
+        <path d="M8 12.5l2.8 2.8L16.5 9.5" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <rect x="4" y="4" width="16" height="16" rx="4" />
+    </svg>
+  );
+}
+
 function StarIcon({ active }: { active: boolean }) {
   if (active) {
     return (
@@ -1019,6 +1051,9 @@ function SessionCard({
   showWorkspaceName,
   depth = 0,
   showActions = true,
+  selectionMode = false,
+  selected = false,
+  onToggleSelect,
   onOpen,
   onRename,
   onToggleMenu,
@@ -1036,6 +1071,9 @@ function SessionCard({
   showWorkspaceName: boolean;
   depth?: 0 | 1;
   showActions?: boolean;
+  selectionMode?: boolean;
+  selected?: boolean;
+  onToggleSelect?: () => void;
   onOpen: () => void;
   onRename: () => void;
   onToggleMenu: () => void;
@@ -1053,8 +1091,10 @@ function SessionCard({
       data-active={isActive}
       data-depth={depth}
       data-subagent={isSubagentSession(session)}
+      data-selecting={selectionMode}
+      data-selected={selected}
       onContextMenu={(event) => {
-        if (!onContextMenu) {
+        if (selectionMode || !onContextMenu) {
           return;
         }
 
@@ -1062,23 +1102,36 @@ function SessionCard({
         onContextMenu();
       }}
     >
-      <button type="button" className="workbench-session-link" data-active={isActive} onClick={onOpen}>
-        <div className="session-title-row">
-          <span
-            className={sessionStateClassName(session)}
-            data-activity-source={session.activitySource}
-            aria-hidden="true"
-          />
-          <span className="session-title">{session.title || t("common.unknown")}</span>
-          {subagentBadgeLabel ? <span className="session-subagent-badge">{subagentBadgeLabel}</span> : null}
-        </div>
-        <div className="session-meta-row">
-          <span className="session-meta">{buildSessionMeta(session, workspace, showWorkspaceName)}</span>
-          <span className={`session-provider-badge ${session.provider}`}>{formatProviderLabel(session.provider)}</span>
+      <button
+        type="button"
+        className={selectionMode ? "workbench-session-link is-selecting" : "workbench-session-link"}
+        data-active={isActive}
+        aria-pressed={selectionMode ? selected : undefined}
+        onClick={selectionMode ? onToggleSelect : onOpen}
+      >
+        {selectionMode ? (
+          <span className="workbench-session-selection-indicator" data-selected={selected} aria-hidden="true">
+            <SelectionMarkerIcon selected={selected} />
+          </span>
+        ) : null}
+        <div className="workbench-session-link-copy">
+          <div className="session-title-row">
+            <span
+              className={sessionStateClassName(session)}
+              data-activity-source={session.activitySource}
+              aria-hidden="true"
+            />
+            <span className="session-title">{session.title || t("common.unknown")}</span>
+            {subagentBadgeLabel ? <span className="session-subagent-badge">{subagentBadgeLabel}</span> : null}
+          </div>
+          <div className="session-meta-row">
+            <span className="session-meta">{buildSessionMeta(session, workspace, showWorkspaceName)}</span>
+            <span className={`session-provider-badge ${session.provider}`}>{formatProviderLabel(session.provider)}</span>
+          </div>
         </div>
       </button>
 
-      {showActions ? (
+      {showActions && !selectionMode ? (
         <div className="workbench-session-actions" data-open={menuOpen}>
         <button
           type="button"
@@ -1204,11 +1257,31 @@ function SidebarContent({
   const [renameTarget, setRenameTarget] = useState<NavigationSessionEntry | null>(null);
   const [renameTitleValue, setRenameTitleValue] = useState("");
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
+  const [batchWorkspaceId, setBatchWorkspaceId] = useState<string | null>(null);
+  const [selectedSessionIds, setSelectedSessionIds] = useState<string[]>([]);
+  const [batchArchiving, setBatchArchiving] = useState(false);
 
   const createSessionWorkspace =
     workspaceGroups.find((group) => group.workspace.id === createSessionWorkspaceId)?.workspace ?? null;
   const archiveWorkspaceGroup =
     workspaceGroups.find((group) => group.workspace.id === archiveWorkspaceId) ?? null;
+  const activeBatchWorkspaceGroup =
+    workspaceGroups.find((group) => group.workspace.id === batchWorkspaceId) ?? null;
+  const batchSelectableSessions = useMemo(
+    () => (activeBatchWorkspaceGroup ? flattenVisibleSessionTree(activeBatchWorkspaceGroup.visibleSessionTree) : []),
+    [activeBatchWorkspaceGroup]
+  );
+  const batchSelectableSessionIds = useMemo(
+    () => batchSelectableSessions.map((session) => session.sessionId),
+    [batchSelectableSessions]
+  );
+  const batchSelectableSessionIdSet = useMemo(
+    () => new Set(batchSelectableSessionIds),
+    [batchSelectableSessionIds]
+  );
+  const selectedSessionIdSet = useMemo(() => new Set(selectedSessionIds), [selectedSessionIds]);
+  const allBatchSessionsSelected =
+    batchSelectableSessionIds.length > 0 && selectedSessionIds.length === batchSelectableSessionIds.length;
 
   const notifyWorkspaceImported = useCallback(
     async (workspacePath: string) => {
@@ -1276,6 +1349,35 @@ function SidebarContent({
       window.removeEventListener("pointerdown", handlePointerDown);
     };
   }, [openSessionMenuKey]);
+
+  useEffect(() => {
+    if (!batchWorkspaceId) {
+      if (selectedSessionIds.length > 0) {
+        setSelectedSessionIds([]);
+      }
+      return;
+    }
+
+    if (!activeBatchWorkspaceGroup) {
+      setBatchWorkspaceId(null);
+      setSelectedSessionIds([]);
+      return;
+    }
+
+    setSelectedSessionIds((current) => retainKnownIds(current, batchSelectableSessionIdSet));
+  }, [
+    activeBatchWorkspaceGroup,
+    batchSelectableSessionIdSet,
+    batchWorkspaceId,
+    selectedSessionIds.length
+  ]);
+
+  useEffect(() => {
+    if (batchWorkspaceId && batchSelectableSessionIds.length === 0) {
+      setBatchWorkspaceId(null);
+      setSelectedSessionIds([]);
+    }
+  }, [batchSelectableSessionIds.length, batchWorkspaceId]);
 
   useEffect(() => {
     const activeFavoriteIndex = favoriteSessions.findIndex((item) => item.session.sessionId === activeSessionId);
@@ -1414,6 +1516,27 @@ function SidebarContent({
     }));
   }
 
+  function handleStartBatchSelection(workspaceId: string) {
+    setOpenSessionMenuKey(null);
+    setBatchWorkspaceId(workspaceId);
+    setSelectedSessionIds([]);
+  }
+
+  function handleStopBatchSelection() {
+    setBatchWorkspaceId(null);
+    setSelectedSessionIds([]);
+  }
+
+  function handleToggleSessionSelection(sessionId: string) {
+    setSelectedSessionIds((current) => toggleStoredId(current, sessionId));
+  }
+
+  function handleToggleSelectAllSessions() {
+    setSelectedSessionIds((current) =>
+      current.length === batchSelectableSessionIds.length ? [] : batchSelectableSessionIds
+    );
+  }
+
   async function handleStartSession(workspaceId: string, provider: ProviderId) {
     setActionWorkspaceId(workspaceId);
     setActionProvider(provider);
@@ -1457,6 +1580,67 @@ function SidebarContent({
         title: error instanceof Error ? error.message : t("shell.navigationLoadFailed"),
         tone: "error"
       });
+    }
+  }
+
+  async function handleArchiveSelectedSessions() {
+    if (selectedSessionIds.length === 0 || batchArchiving) {
+      return;
+    }
+
+    setOpenSessionMenuKey(null);
+    setBatchArchiving(true);
+
+    try {
+      const targetSessionIds = [...selectedSessionIds];
+      const results = await Promise.allSettled(
+        targetSessionIds.map(async (sessionId) => ({
+          sessionId,
+          session: await updateSessionArchiveState(sessionId, true)
+        }))
+      );
+
+      const succeededSessionIds: string[] = [];
+      let failedCount = 0;
+
+      for (const result of results) {
+        if (result.status === "fulfilled") {
+          succeededSessionIds.push(result.value.sessionId);
+          onSessionUpdated(result.value.session);
+          continue;
+        }
+
+        failedCount += 1;
+      }
+
+      if (succeededSessionIds.length > 0) {
+        await onRefreshNavigation();
+        setSelectedSessionIds((current) =>
+          current.filter((sessionId) => !succeededSessionIds.includes(sessionId))
+        );
+      }
+
+      if (failedCount > 0) {
+        showToast({
+          title:
+            succeededSessionIds.length > 0
+              ? t("shell.batchArchivePartialFailed")
+              : t("shell.batchArchiveFailed"),
+          tone: "error"
+        });
+      } else {
+        showToast({
+          title: t("shell.batchArchiveSuccess"),
+          tone: "success"
+        });
+      }
+    } catch (error) {
+      showToast({
+        title: error instanceof Error ? error.message : t("shell.batchArchiveFailed"),
+        tone: "error"
+      });
+    } finally {
+      setBatchArchiving(false);
     }
   }
 
@@ -1664,7 +1848,11 @@ function SidebarContent({
         ) : null}
 
         {workspaceGroups.map((group) => (
-          <section key={group.workspace.id} className="workbench-workspace-group">
+          <section
+            key={group.workspace.id}
+            className="workbench-workspace-group"
+            data-batch-active={batchWorkspaceId === group.workspace.id}
+          >
             <div className="workbench-workspace-header minimal">
               <button
                 type="button"
@@ -1676,15 +1864,59 @@ function SidebarContent({
                 <strong>{group.workspace.name}</strong>
               </button>
 
-              <button
-                type="button"
-                className="workbench-workspace-create"
-                aria-label={t("shell.createSession")}
-                onClick={() => setCreateSessionWorkspaceId(group.workspace.id)}
-              >
-                <PlusIcon />
-                <span>{t("shell.createSession")}</span>
-              </button>
+              {batchWorkspaceId === group.workspace.id ? (
+                <div className="workbench-workspace-batch-toolbar">
+                  <span className="workbench-workspace-batch-label">{t("shell.batchSelectionMode")}</span>
+                  <span className="workbench-workspace-batch-counter">
+                    {selectedSessionIds.length}/{batchSelectableSessionIds.length}
+                  </span>
+                  <button
+                    type="button"
+                    className="workbench-workspace-batch-action"
+                    onClick={handleToggleSelectAllSessions}
+                  >
+                    {allBatchSessionsSelected ? t("shell.clearSelectedSessions") : t("shell.selectAllSessions")}
+                  </button>
+                  <button
+                    type="button"
+                    className="workbench-workspace-batch-action primary"
+                    disabled={selectedSessionIds.length === 0 || batchArchiving}
+                    onClick={() => {
+                      void handleArchiveSelectedSessions();
+                    }}
+                  >
+                    {batchArchiving ? t("shell.batchArchiving") : t("shell.batchArchiveAction")}
+                  </button>
+                  <button
+                    type="button"
+                    className="workbench-workspace-batch-action"
+                    onClick={handleStopBatchSelection}
+                  >
+                    {t("common.cancel")}
+                  </button>
+                </div>
+              ) : (
+                <div className="workbench-workspace-actions">
+                  <button
+                    type="button"
+                    className="workbench-workspace-icon-button"
+                    aria-label={t("shell.batchSelectSessions")}
+                    title={t("shell.batchSelectSessions")}
+                    onClick={() => handleStartBatchSelection(group.workspace.id)}
+                  >
+                    <MultiSelectIcon />
+                  </button>
+                  <button
+                    type="button"
+                    className="workbench-workspace-icon-button workbench-workspace-create"
+                    aria-label={t("shell.createSession")}
+                    title={t("shell.createSession")}
+                    onClick={() => setCreateSessionWorkspaceId(group.workspace.id)}
+                  >
+                    <PlusIcon />
+                  </button>
+                </div>
+              )}
             </div>
 
             {!group.isCollapsed ? (
@@ -1714,6 +1946,9 @@ function SidebarContent({
                               openSessionMenuKey === `workspace:${group.workspace.id}:${node.session.sessionId}`
                             }
                             showWorkspaceName={false}
+                            selectionMode={batchWorkspaceId === group.workspace.id}
+                            selected={selectedSessionIdSet.has(node.session.sessionId)}
+                            onToggleSelect={() => handleToggleSessionSelection(node.session.sessionId)}
                             onOpen={() => {
                               navigate(`/sessions/${node.session.sessionId}`);
                               onClose?.();
@@ -1755,6 +1990,9 @@ function SidebarContent({
                                   showWorkspaceName={false}
                                   depth={1}
                                   showActions={false}
+                                  selectionMode={batchWorkspaceId === group.workspace.id}
+                                  selected={selectedSessionIdSet.has(session.sessionId)}
+                                  onToggleSelect={() => handleToggleSessionSelection(session.sessionId)}
                                   onOpen={() => {
                                     navigate(`/sessions/${session.sessionId}`);
                                     onClose?.();

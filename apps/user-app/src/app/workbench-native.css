@@ -481,23 +481,81 @@ body {
   color: var(--text-primary);
 }
 
-.workbench-workspace-create {
+.workbench-workspace-actions {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
+}
+
+.workbench-workspace-icon-button,
+.workbench-workspace-create {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-height: var(--control-height-md);
-  padding: 0 var(--space-4);
-  border-radius: 10px;
+  width: var(--control-height-md);
+  padding: 0;
+  border-radius: 999px;
   border: 1px solid var(--panel-border);
   background: transparent;
   color: var(--text-secondary);
 }
 
+.workbench-workspace-batch-toolbar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.workbench-workspace-batch-label {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.workbench-workspace-batch-counter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 28px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-pill);
+  background: var(--panel-hover);
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.workbench-workspace-batch-action {
+  min-height: 28px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--panel-border);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.workbench-workspace-batch-action.primary {
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel-bg));
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 26%, var(--panel-border));
+}
+
+.workbench-workspace-batch-action:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.workbench-workspace-icon-button:hover,
 .workbench-workspace-create:hover,
 .settings-entry-button:hover,
 .theme-card:hover,
 .workbench-info-tab:hover,
 .workbench-topbar-tab:hover,
+.workbench-workspace-batch-action:hover,
 .workbench-session-menu-item:hover {
   background: var(--panel-hover);
   border-color: var(--panel-border-strong);
@@ -528,6 +586,42 @@ body {
   align-items: stretch;
   padding: var(--list-item-padding-y) var(--list-item-padding-x);
   border-radius: 11px;
+}
+
+.workbench-session-link.is-selecting {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.workbench-session-link-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.workbench-session-selection-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  background: var(--panel-bg);
+  color: var(--text-tertiary);
+}
+
+.workbench-session-selection-indicator[data-selected="true"] {
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel-bg));
+  color: var(--accent);
+}
+
+.workbench-session-card[data-selecting="true"][data-selected="true"] {
+  background: color-mix(in srgb, var(--accent) 10%, var(--panel-bg));
+  border-color: color-mix(in srgb, var(--accent) 22%, var(--panel-border));
 }
 
 .workbench-session-link:hover,

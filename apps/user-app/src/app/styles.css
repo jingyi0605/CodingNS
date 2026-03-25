@@ -4870,13 +4870,22 @@ textarea:focus-visible {
   white-space: nowrap;
 }
 
+.workbench-workspace-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.workbench-workspace-icon-button,
 .workbench-workspace-create {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  justify-content: center;
   flex-shrink: 0;
   min-height: 30px;
-  padding: 0 10px;
+  width: 30px;
+  padding: 0;
   border-radius: 999px;
   border: 1px solid color-mix(in srgb, var(--border-primary) 78%, transparent);
   background: color-mix(in srgb, var(--bg-surface) 82%, transparent);
@@ -4887,10 +4896,70 @@ textarea:focus-visible {
     border-color var(--transition-fast);
 }
 
+.workbench-workspace-icon-button:hover,
 .workbench-workspace-create:hover {
   background: var(--bg-active);
   color: var(--accent);
   border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.workbench-workspace-batch-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.workbench-workspace-batch-label {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.workbench-workspace-batch-counter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-active) 78%, transparent);
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.workbench-workspace-batch-action {
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 80%, transparent);
+  background: color-mix(in srgb, var(--bg-surface) 88%, transparent);
+  color: var(--text-secondary);
+  font-size: 12px;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast),
+    border-color var(--transition-fast),
+    opacity var(--transition-fast);
+}
+
+.workbench-workspace-batch-action:hover:not(:disabled) {
+  background: var(--bg-active);
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+.workbench-workspace-batch-action.primary {
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-surface));
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 26%, transparent);
+}
+
+.workbench-workspace-batch-action:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .workbench-session-tree-node {
@@ -4952,6 +5021,46 @@ textarea:focus-visible {
   gap: 6px;
   min-width: 0;
   padding: 10px 12px;
+}
+
+.workbench-session-link.is-selecting {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  padding-right: 12px;
+}
+
+.workbench-session-link-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.workbench-session-selection-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-surface) 88%, transparent);
+  color: var(--text-tertiary);
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.workbench-session-selection-indicator[data-selected="true"] {
+  background: color-mix(in srgb, var(--accent) 18%, var(--bg-surface));
+  color: var(--accent);
+}
+
+.workbench-session-card[data-selecting="true"][data-selected="true"] {
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-surface));
+  border-color: color-mix(in srgb, var(--accent) 24%, transparent);
 }
 
 .workbench-session-actions {
@@ -5211,6 +5320,18 @@ textarea:focus-visible {
   padding: 8px 10px;
 }
 
+.workbench-session-link.is-selecting,
+.workbench-session-card[data-depth="1"] .workbench-session-link.is-selecting {
+  gap: 8px;
+  padding-right: 10px;
+}
+
+.workbench-session-selection-indicator {
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+}
+
 .session-title {
   font-size: 12px;
 }
@@ -5238,6 +5359,26 @@ textarea:focus-visible {
   gap: 6px;
   margin-left: 12px;
   padding-left: 10px;
+}
+
+.workbench-workspace-actions {
+  gap: 6px;
+}
+
+.workbench-workspace-icon-button,
+.workbench-workspace-create {
+  width: 28px;
+  min-height: 28px;
+}
+
+.workbench-workspace-batch-toolbar {
+  gap: 6px;
+}
+
+.workbench-workspace-batch-action {
+  min-height: 28px;
+  padding: 0 8px;
+  font-size: 11px;
 }
 
 .workbench-archive-folder {
