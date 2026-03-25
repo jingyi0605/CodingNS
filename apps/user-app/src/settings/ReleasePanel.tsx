@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import type { ReleaseManifest } from "../config/client-config-types";
+import { createPlatformAdapter } from "../platform/platform-adapter";
 import { t } from "../shared/i18n";
 import {
   checkForDesktopUpdate,
@@ -9,6 +10,7 @@ import {
 } from "../platform/desktop/release-manager";
 
 export function ReleasePanel({ enabled }: { enabled: boolean }) {
+  const platform = createPlatformAdapter();
   const [loading, setLoading] = useState(false);
   const [installing, setInstalling] = useState(false);
   const [statusText, setStatusText] = useState<string | null>(null);
@@ -30,6 +32,13 @@ export function ReleasePanel({ enabled }: { enabled: boolean }) {
           ? t("settings.releaseUpdateReady")
           : t("settings.releaseUpToDate")
       );
+
+      if (state.hasUpdate) {
+        await platform.bridge.showNotification(
+          t("settings.releaseUpdateReady"),
+          `${t("settings.releaseTargetVersion")}: ${state.manifest?.version ?? "-"}`
+        );
+      }
     } catch (error) {
       setStatusText(error instanceof Error ? error.message : t("settings.releaseCheckFailed"));
     } finally {
@@ -54,6 +63,10 @@ export function ReleasePanel({ enabled }: { enabled: boolean }) {
       }
 
       setStatusText(t("settings.releaseInstallStarted"));
+      await platform.bridge.showNotification(
+        t("settings.releaseInstallStarted"),
+        manifest.version
+      );
     } catch (error) {
       setStatusText(error instanceof Error ? error.message : t("settings.releaseInstallFailed"));
     } finally {
@@ -68,6 +81,13 @@ export function ReleasePanel({ enabled }: { enabled: boolean }) {
     try {
       const result = await rollbackDesktopUpdate();
       setStatusText(result.ok ? t("settings.releaseRollbackStarted") : (result.detail ?? t("settings.releaseRollbackFailed")));
+
+      if (result.ok) {
+        await platform.bridge.showNotification(
+          t("settings.releaseRollbackStarted"),
+          checkedVersion ?? t("settings.releaseUnknownVersion")
+        );
+      }
     } catch (error) {
       setStatusText(error instanceof Error ? error.message : t("settings.releaseRollbackFailed"));
     } finally {

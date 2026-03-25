@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { clientConfigStore, useClientConfigSelector } from "../../../config/client-config-store";
 import { normalizeServerBaseUrl } from "../../../config/server-config";
 import { usePlatform } from "../../../platform/platform-provider";
-import { t } from "../../../shared/i18n";
+import { LanguageSwitcher, t } from "../../../shared/i18n";
 import { THEMES, getThemeLabel, useTheme, type ThemeId } from "../../../shared/theme";
 import { ReleasePanel } from "../../../settings/ReleasePanel";
 import { authStore } from "../../auth/store/auth-store";
@@ -37,6 +37,16 @@ export function SettingsPage() {
         <section className="settings-section">
           <h2 className="settings-section-title">{t("settings.appearance")}</h2>
           <div className="settings-card">
+            <div className="settings-row">
+              <div className="settings-row-label">
+                <span className="settings-row-title">{t("settings.language")}</span>
+                <span className="settings-row-description">{t("settings.languageDescription")}</span>
+              </div>
+              <div className="settings-row-control">
+                <LanguageSwitcher />
+              </div>
+            </div>
+
             <div className="settings-row settings-row-theme">
               <div className="settings-row-label">
                 <span className="settings-row-title">{t("settings.theme")}</span>
