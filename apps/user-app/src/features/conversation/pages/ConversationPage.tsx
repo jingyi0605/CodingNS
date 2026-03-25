@@ -13,7 +13,6 @@ import {
 import { ConnectionBanner } from "../components/ConnectionBanner";
 import { ComposerPanel } from "../components/ComposerPanel";
 import { MessageTimeline } from "../components/MessageTimeline";
-import { SessionHeader } from "../components/SessionHeader";
 import { useWorkbenchShell } from "../components/WorkbenchLayout";
 import { SessionRuntimeStore, useSessionRuntimeStore } from "../runtime/session-runtime-store";
 import {
@@ -117,7 +116,6 @@ function LiveConversationPage({
 
   return (
     <main className="workbench-page conversation-page-shell">
-      <SessionHeader session={session} />
       <ConnectionBanner connectionState={connectionState} onReconnect={() => store.reconnect()} />
       <MessageTimeline
         sessionId={sessionId}
@@ -208,7 +206,6 @@ function DraftConversationPage({
 
   return (
     <main className="workbench-page conversation-page-shell">
-      <SessionHeader session={session} />
       <ConnectionBanner connectionState="closed" onReconnect={() => {}} />
       <MessageTimeline
         sessionId={draft.sessionId}

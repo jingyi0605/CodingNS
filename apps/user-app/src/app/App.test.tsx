@@ -258,7 +258,7 @@ describe("app routes", () => {
 
     renderConversationRoute("session-1");
 
-    expect(await screen.findByRole("heading", { name: "Spec003 主链路" })).toBeInTheDocument();
+    expect((await screen.findAllByRole("heading", { name: "Spec003 主链路" })).length).toBeGreaterThan(0);
     expect(await screen.findByText("历史消息已经到了。")).toBeInTheDocument();
 
     await waitFor(() => {
@@ -307,7 +307,7 @@ describe("app routes", () => {
 
     const view = renderConversationRoute("session-1");
 
-    expect(await screen.findByRole("heading", { name: "Spec003 主链路" })).toBeInTheDocument();
+    expect((await screen.findAllByRole("heading", { name: "Spec003 主链路" })).length).toBeGreaterThan(0);
     expect(await screen.findByText("历史消息已经到了。")).toBeInTheDocument();
 
     await waitFor(() => {
@@ -541,25 +541,26 @@ describe("app routes", () => {
 
     renderConversationRoute("session-1");
 
-    expect(await screen.findByRole("heading", { name: "Spec004 文件管理" })).toBeInTheDocument();
+    expect((await screen.findAllByRole("heading", { name: "Spec004 文件管理" })).length).toBeGreaterThan(0);
+    const filePanel = await screen.findByTestId("file-context-panel");
 
-    await userEvent.click(await screen.findByText("src"));
-    expect(await screen.findByText("app.ts")).toBeInTheDocument();
+    await userEvent.click(await within(filePanel).findByText("src"));
+    expect(await within(filePanel).findByText("app.ts")).toBeInTheDocument();
 
-    await userEvent.click(await screen.findByText("README.md"));
+    await userEvent.click(await within(filePanel).findByText("README.md"));
     expect(screen.queryByTestId("file-editor-textarea")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: t("conversation.filePanelCollapseCurrent") })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: t("conversation.filePanelRefresh") })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: t("conversation.filePanelSearchButton") })).toBeInTheDocument();
+    expect(within(filePanel).getByRole("button", { name: t("conversation.filePanelCollapseCurrent") })).toBeInTheDocument();
+    expect(within(filePanel).getByRole("button", { name: t("conversation.filePanelRefresh") })).toBeInTheDocument();
+    expect(within(filePanel).getByRole("button", { name: t("conversation.filePanelSearchButton") })).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: t("conversation.filePanelSearchButton") }));
+    await userEvent.click(within(filePanel).getByRole("button", { name: t("conversation.filePanelSearchButton") }));
     await userEvent.type(
-      screen.getByPlaceholderText(t("conversation.filePanelSearchPlaceholder")),
+      within(filePanel).getByPlaceholderText(t("conversation.filePanelSearchPlaceholder")),
       "app"
     );
-    await userEvent.click(screen.getAllByRole("button", { name: t("conversation.filePanelSearchButton") })[1]);
+    await userEvent.click(within(filePanel).getAllByRole("button", { name: t("conversation.filePanelSearchButton") })[1]);
 
-    expect(await screen.findByText("src/app.ts")).toBeInTheDocument();
+    expect(await within(filePanel).findByText("src/app.ts")).toBeInTheDocument();
   });
 });
 
@@ -618,7 +619,6 @@ it("统一消息抽象会渲染 codex 工具调用", async () => {
 
   renderConversationRoute("session-tools");
 
-  expect(await screen.findByRole("heading", { name: "工具链路" })).toBeInTheDocument();
   expect(await screen.findByText("shell_command")).toBeInTheDocument();
 
   await userEvent.click(screen.getByRole("button", { name: /shell_command/ }));

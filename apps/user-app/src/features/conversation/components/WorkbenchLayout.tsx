@@ -15,7 +15,14 @@ import {
 import { createPortal } from "react-dom";
 import { Outlet, matchPath, useLocation, useNavigate } from "react-router-dom";
 
-import { WorkbenchRealtimeClient } from "../../../network/workbench-realtime-client";
+import {
+  WorkbenchRealtimeClient,
+  type FileTreeRealtimeSnapshotDto,
+  type GitRealtimeSnapshotDto,
+  type TerminalManagerRealtimeSnapshotDto
+} from "../../../network/workbench-realtime-client";
+import { showDesktopContextMenu } from "../../../platform/desktop/desktop-context-menu";
+import { usePlatform } from "../../../platform/platform-provider";
 import { readViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import { logPerfDebug } from "../../../shared/debug/perf-debug";
 import { t } from "../../../shared/i18n";
@@ -23,6 +30,7 @@ import { ThemeSwitcher } from "../../../shared/theme";
 import { useToast } from "../../../shared/toast";
 import { authStore } from "../../auth/store/auth-store";
 import {
+  browseWorkspaceDirectories,
   getWorkbenchSnapshot,
   importWorkspace,
   renameSessionTitle,
@@ -30,6 +38,7 @@ import {
   type ProviderId,
   type SessionSummaryDto,
   type WorkbenchSnapshotDto,
+  type WorkspaceDirectoryOptionDto,
   type WorkspaceDto
 } from "../api/conversation-api";
 
@@ -53,6 +62,7 @@ const FAVORITE_SESSION_PAGE_SIZE = 20;
 const ROOT_SESSION_PAGE_SIZE = 40;
 const SUBAGENT_PAGE_SIZE = 5;
 const WORKBENCH_NAVIGATION_CACHE_MAX_AGE_MS = 30 * 60 * 1000;
+const FOCUS_COMPOSER_EVENT = "workbench:focus-composer";
 
 const LazyFileContextPanel = lazy(async () => {
   const module = await import("./FileContextPanel");
@@ -107,6 +117,19 @@ interface WorkbenchShellContextValue {
   navigationError: string | null;
   refreshNavigation: () => Promise<void>;
   requestNavigationRefresh: () => void;
+  subscribeFileTree: (workspaceId: string, paths: string[]) => void;
+  requestFileTreeRefresh: (workspaceId: string, paths?: string[]) => void;
+  addFileTreeSnapshotListener: (
+    listener: (snapshot: FileTreeRealtimeSnapshotDto) => void
+  ) => () => void;
+  subscribeGitSnapshot: (workspaceId: string) => void;
+  requestGitRefresh: (workspaceId: string) => void;
+  addGitSnapshotListener: (listener: (snapshot: GitRealtimeSnapshotDto) => void) => () => void;
+  subscribeTerminalManagerSnapshot: (workspaceId: string) => void;
+  requestTerminalManagerRefresh: (workspaceId: string) => void;
+  addTerminalManagerSnapshotListener: (
+    listener: (snapshot: TerminalManagerRealtimeSnapshotDto) => void
+  ) => () => void;
   setSessionWorkspace: (sessionId: string, workspaceId: string | null) => void;
   upsertNavigationSession: (session: SessionSummaryDto) => void;
   markNavigationSessionSeen: (sessionId: string, seenAt?: string) => void;
@@ -332,6 +355,27 @@ function writeStoredValue(key: string, value: string) {
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
+}
+
+function isEditableTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  return (
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement ||
+    Boolean(target.closest("[contenteditable='true']"))
+  );
+}
+
+function focusComposer() {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.dispatchEvent(new CustomEvent(FOCUS_COMPOSER_EVENT));
 }
 
 function flattenSessions(groups: WorkspaceSessionGroup[]) {
@@ -632,6 +676,22 @@ function CloseIcon() {
   );
 }
 
+function MinusIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <line x1="5" y1="12" x2="19" y2="12" />
+    </svg>
+  );
+}
+
+function MaximizeIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <rect x="5" y="5" width="14" height="14" rx="2" />
+    </svg>
+  );
+}
+
 function MoreIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
@@ -639,6 +699,168 @@ function MoreIcon() {
       <circle cx="12" cy="12" r="1.8" />
       <circle cx="19" cy="12" r="1.8" />
     </svg>
+  );
+}
+
+function WorkbenchDesktopTitlebar({
+  activeCenterTab,
+  currentWorkspaceName,
+  currentSessionTitle,
+  workspaceCount,
+  sessionCount,
+  leftCollapsed,
+  rightCollapsed,
+  isDesktop,
+  showTrafficLightsPadding,
+  showWindowsControls,
+  onNavigateConversation,
+  onNavigateTerminals,
+  onRefreshNavigation,
+  onToggleLeftPanel,
+  onToggleRightPanel,
+  onOpenSettings,
+  onMinimizeWindow,
+  onToggleMaximizeWindow,
+  onCloseWindow
+}: {
+  activeCenterTab: CenterTab;
+  currentWorkspaceName: string | null;
+  currentSessionTitle: string | null;
+  workspaceCount: number;
+  sessionCount: number;
+  leftCollapsed: boolean;
+  rightCollapsed: boolean;
+  isDesktop: boolean;
+  showTrafficLightsPadding: boolean;
+  showWindowsControls: boolean;
+  onNavigateConversation: () => void;
+  onNavigateTerminals: () => void;
+  onRefreshNavigation: () => void;
+  onToggleLeftPanel: () => void;
+  onToggleRightPanel: () => void;
+  onOpenSettings: () => void;
+  onMinimizeWindow: () => void;
+  onToggleMaximizeWindow: () => void;
+  onCloseWindow: () => void;
+}) {
+  return (
+    <header className="workbench-desktop-titlebar surface-card">
+      <div
+        className={`workbench-titlebar-leading ${showTrafficLightsPadding ? "traffic-lights-offset" : ""}`}
+        data-tauri-drag-region={isDesktop ? true : undefined}
+      >
+        {isDesktop ? (
+          <div className="workbench-titlebar-brand">
+            <strong>CodingNS</strong>
+            <span>{t("shell.desktopChromeLabel")}</span>
+          </div>
+        ) : null}
+        <div className="workbench-titlebar-context">
+          <span className="workbench-titlebar-pill">
+            {currentWorkspaceName ?? t("conversation.headerWorkspaceUnknown")}
+          </span>
+          <h1 className="workbench-titlebar-title" data-testid="workbench-current-session-title">
+            {currentSessionTitle ?? t("workbench.emptyTitle")}
+          </h1>
+        </div>
+      </div>
+
+      <div className="workbench-titlebar-center" data-tauri-drag-region={isDesktop ? true : undefined}>
+        <div className="workbench-desktop-segment" role="tablist" aria-label={t("shell.centerTabsLabel")}>
+          <button
+            className={activeCenterTab === "conversation" ? "workbench-topbar-tab active" : "workbench-topbar-tab"}
+            type="button"
+            role="tab"
+            aria-selected={activeCenterTab === "conversation"}
+            onClick={onNavigateConversation}
+          >
+            {t("shell.conversationEntry")}
+          </button>
+          <button
+            className={activeCenterTab === "terminals" ? "workbench-topbar-tab active" : "workbench-topbar-tab"}
+            type="button"
+            role="tab"
+            aria-selected={activeCenterTab === "terminals"}
+            onClick={onNavigateTerminals}
+          >
+            {t("shell.terminalsEntry")}
+          </button>
+        </div>
+      </div>
+
+      <div className="workbench-titlebar-trailing">
+        <div className="workbench-titlebar-stats" data-tauri-drag-region={isDesktop ? true : undefined}>
+          <span>{t("shell.workspaceCount")} {workspaceCount}</span>
+          <span>{t("shell.sessionCount")} {sessionCount}</span>
+        </div>
+        <div className="workbench-titlebar-actions">
+          <button
+            type="button"
+            className="workbench-toolbar-button"
+            aria-pressed={!leftCollapsed}
+            aria-label={leftCollapsed ? t("shell.showSessionSidebar") : t("shell.hideSessionSidebar")}
+            onClick={onToggleLeftPanel}
+            title="Ctrl/Cmd+B"
+          >
+            <svg
+              className="workbench-toolbar-glyph"
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
+              <line x1="4" y1="7" x2="20" y2="7" />
+              <line x1="4" y1="12" x2="20" y2="12" />
+              <line x1="4" y1="17" x2="20" y2="17" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            className="workbench-toolbar-button"
+            aria-pressed={!rightCollapsed}
+            aria-label={rightCollapsed ? t("shell.showInfoSidebar") : t("shell.hideInfoSidebar")}
+            onClick={onToggleRightPanel}
+            title="Ctrl/Cmd+Shift+I"
+          >
+            <span className="workbench-toolbar-label">{t("shell.auxiliaryTitle")}</span>
+          </button>
+          <button
+            type="button"
+            className="workbench-toolbar-button"
+            aria-label={t("shell.refreshNavigation")}
+            onClick={onRefreshNavigation}
+            title="Ctrl/Cmd+Shift+R"
+          >
+            <span className="workbench-toolbar-label">{t("shell.refreshNavigation")}</span>
+          </button>
+          <button
+            type="button"
+            className="workbench-toolbar-button"
+            aria-label={t("settings.title")}
+            onClick={onOpenSettings}
+            title="Ctrl/Cmd+,"
+          >
+            <span className="workbench-toolbar-label">{t("settings.title")}</span>
+          </button>
+        </div>
+
+        {showWindowsControls ? (
+          <div className="workbench-window-controls">
+            <button type="button" className="workbench-window-control" onClick={onMinimizeWindow} aria-label={t("shell.windowMinimize")}>
+              <MinusIcon />
+            </button>
+            <button type="button" className="workbench-window-control" onClick={onToggleMaximizeWindow} aria-label={t("shell.windowMaximize")}>
+              <MaximizeIcon />
+            </button>
+            <button type="button" className="workbench-window-control close" onClick={onCloseWindow} aria-label={t("shell.windowClose")}>
+              <CloseIcon />
+            </button>
+          </div>
+        ) : null}
+      </div>
+    </header>
   );
 }
 
@@ -802,7 +1024,8 @@ function SessionCard({
   onToggleMenu,
   onToggleFavorite,
   onArchive,
-  onCloseMenu
+  onCloseMenu,
+  onContextMenu
 }: {
   menuKey: string;
   session: SessionSummaryDto;
@@ -819,6 +1042,7 @@ function SessionCard({
   onToggleFavorite: () => void;
   onArchive: () => void;
   onCloseMenu: () => void;
+  onContextMenu?: () => void;
 }) {
   const subagentBadgeLabel =
     session.subagentLabel?.trim() || (isSubagentSession(session) ? t("shell.subagentBadge") : null);
@@ -829,6 +1053,14 @@ function SessionCard({
       data-active={isActive}
       data-depth={depth}
       data-subagent={isSubagentSession(session)}
+      onContextMenu={(event) => {
+        if (!onContextMenu) {
+          return;
+        }
+
+        event.preventDefault();
+        onContextMenu();
+      }}
     >
       <button type="button" className="workbench-session-link" data-active={isActive} onClick={onOpen}>
         <div className="session-title-row">
@@ -946,13 +1178,21 @@ function SidebarContent({
   onToggleCollapse?: () => void;
 }) {
   const navigate = useNavigate();
+  const platform = usePlatform();
   const { showToast } = useToast();
-  const [importExpanded, setImportExpanded] = useState(false);
   const [importingWorkspace, setImportingWorkspace] = useState(false);
   const [importForm, setImportForm] = useState<ImportWorkspaceFormState>({
     path: "",
     name: ""
   });
+  const [directoryBrowserOpen, setDirectoryBrowserOpen] = useState(false);
+  const [directoryBrowserLoading, setDirectoryBrowserLoading] = useState(false);
+  const [directoryBrowserError, setDirectoryBrowserError] = useState<string | null>(null);
+  const [directoryBrowserCurrentPath, setDirectoryBrowserCurrentPath] = useState("");
+  const [directoryBrowserInputPath, setDirectoryBrowserInputPath] = useState("");
+  const [directoryBrowserParentPath, setDirectoryBrowserParentPath] = useState<string | null>(null);
+  const [directoryBrowserRoots, setDirectoryBrowserRoots] = useState<WorkspaceDirectoryOptionDto[]>([]);
+  const [directoryBrowserItems, setDirectoryBrowserItems] = useState<WorkspaceDirectoryOptionDto[]>([]);
   const [actionWorkspaceId, setActionWorkspaceId] = useState<string | null>(null);
   const [actionProvider, setActionProvider] = useState<ProviderId | null>(null);
   const [createSessionWorkspaceId, setCreateSessionWorkspaceId] = useState<string | null>(null);
@@ -969,6 +1209,51 @@ function SidebarContent({
     workspaceGroups.find((group) => group.workspace.id === createSessionWorkspaceId)?.workspace ?? null;
   const archiveWorkspaceGroup =
     workspaceGroups.find((group) => group.workspace.id === archiveWorkspaceId) ?? null;
+
+  const notifyWorkspaceImported = useCallback(
+    async (workspacePath: string) => {
+      showToast({
+        title: t("shell.importSuccess"),
+        description: workspacePath,
+        tone: "success"
+      });
+      await platform.bridge.showNotification(t("shell.importSuccess"), workspacePath);
+    },
+    [platform.bridge, showToast]
+  );
+
+  const commitWorkspaceImport = useCallback(
+    async (workspacePath: string, workspaceName?: string) => {
+      const trimmedPath = workspacePath.trim();
+
+      if (!trimmedPath) {
+        return false;
+      }
+
+      setImportingWorkspace(true);
+
+      try {
+        await importWorkspace({
+          path: trimmedPath,
+          name: workspaceName?.trim() || undefined
+        });
+        setImportForm({ path: "", name: "" });
+        setDirectoryBrowserOpen(false);
+        await onRefreshNavigation();
+        await notifyWorkspaceImported(trimmedPath);
+        return true;
+      } catch (error) {
+        showToast({
+          title: error instanceof Error ? error.message : t("shell.importFailed"),
+          tone: "error"
+        });
+        return false;
+      } finally {
+        setImportingWorkspace(false);
+      }
+    },
+    [notifyWorkspaceImported, onRefreshNavigation, showToast]
+  );
 
   useEffect(() => {
     if (!openSessionMenuKey) {
@@ -1055,36 +1340,52 @@ function SidebarContent({
     });
   }, [activeSessionId, workspaceGroups]);
 
-  async function handleImportWorkspace(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const trimmedPath = importForm.path.trim();
+  async function loadDirectoryBrowser(targetPath?: string) {
+    setDirectoryBrowserLoading(true);
+    setDirectoryBrowserError(null);
 
-    if (!trimmedPath) {
+    try {
+      const snapshot = await browseWorkspaceDirectories(targetPath);
+      setDirectoryBrowserCurrentPath(snapshot.currentPath);
+      setDirectoryBrowserInputPath(snapshot.currentPath);
+      setDirectoryBrowserParentPath(snapshot.parentPath);
+      setDirectoryBrowserRoots(snapshot.roots);
+      setDirectoryBrowserItems(snapshot.items);
+      setImportForm((current) => ({
+        ...current,
+        path: snapshot.currentPath
+      }));
+    } catch (error) {
+      setDirectoryBrowserCurrentPath("");
+      setDirectoryBrowserParentPath(null);
+      setDirectoryBrowserItems([]);
+      setDirectoryBrowserError(error instanceof Error ? error.message : t("shell.importBrowserBrowseFailed"));
+    } finally {
+      setDirectoryBrowserLoading(false);
+    }
+  }
+
+  function handleOpenDirectoryBrowser() {
+    setDirectoryBrowserOpen(true);
+    void loadDirectoryBrowser(importForm.path || undefined);
+  }
+
+  function handleCloseDirectoryBrowser() {
+    if (importingWorkspace) {
       return;
     }
 
-    setImportingWorkspace(true);
+    setDirectoryBrowserOpen(false);
+    setDirectoryBrowserError(null);
+  }
 
-    try {
-      await importWorkspace({
-        path: trimmedPath,
-        name: importForm.name.trim() || undefined
-      });
-      setImportForm({ path: "", name: "" });
-      setImportExpanded(false);
-      await onRefreshNavigation();
-      showToast({
-        title: t("shell.importSuccess"),
-        tone: "success"
-      });
-    } catch (error) {
-      showToast({
-        title: error instanceof Error ? error.message : t("shell.importFailed"),
-        tone: "error"
-      });
-    } finally {
-      setImportingWorkspace(false);
-    }
+  async function handleDirectoryBrowserSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await loadDirectoryBrowser(directoryBrowserInputPath);
+  }
+
+  async function handleImportCurrentDirectory() {
+    await commitWorkspaceImport(directoryBrowserCurrentPath, importForm.name);
   }
 
   function getVisibleSubagentCount(sessionId: string) {
@@ -1216,6 +1517,42 @@ function SidebarContent({
     }
   }
 
+  async function handleSessionContextMenu(entry: NavigationSessionEntry) {
+    if (!platform.isDesktop) {
+      return;
+    }
+
+    const isFavorite = favoriteSessionIds.has(entry.session.sessionId);
+
+    await showDesktopContextMenu([
+      {
+        id: `open-${entry.session.sessionId}`,
+        label: t("shell.contextOpenSession"),
+        onSelect: () => {
+          navigate(`/sessions/${entry.session.sessionId}`);
+          onClose?.();
+        }
+      },
+      {
+        id: `rename-${entry.session.sessionId}`,
+        label: t("shell.renameAction"),
+        onSelect: () => handleOpenRenameSession(entry.session, entry.workspace)
+      },
+      {
+        id: `favorite-${entry.session.sessionId}`,
+        label: isFavorite ? t("shell.unfavoriteAction") : t("shell.favoriteAction"),
+        onSelect: () => handleToggleFavorite(entry.session.sessionId)
+      },
+      {
+        id: `archive-${entry.session.sessionId}`,
+        label: t("shell.archiveAction"),
+        onSelect: () => {
+          void handleArchive(entry.session.sessionId);
+        }
+      }
+    ]);
+  }
+
   const visibleFavoriteSessions = favoriteSessions.slice(0, visibleFavoriteCount);
   const hasMoreFavoriteSessions = visibleFavoriteSessions.length < favoriteSessions.length;
 
@@ -1236,41 +1573,16 @@ function SidebarContent({
           <button
             type="button"
             className="workbench-import-toggle"
-            onClick={() => setImportExpanded((current) => !current)}
+            aria-label={importingWorkspace ? t("shell.importSubmitting") : t("shell.importWorkspaceTitle")}
+            title={importingWorkspace ? t("shell.importSubmitting") : t("shell.importWorkspaceTitle")}
+            disabled={importingWorkspace}
+            onClick={handleOpenDirectoryBrowser}
           >
-            <span>{t("shell.importWorkspaceTitle")}</span>
-            <ChevronIcon expanded={importExpanded} />
+            <span className="workbench-import-toggle-symbol" aria-hidden="true">
+              +
+            </span>
           </button>
-
-          {importExpanded ? (
-            <form className="workbench-import-form" onSubmit={handleImportWorkspace}>
-              <input
-                type="text"
-                value={importForm.path}
-                placeholder={t("shell.importPathPlaceholder")}
-                onChange={(event) =>
-                  setImportForm((current) => ({ ...current, path: event.target.value }))
-                }
-              />
-              <button
-                className="primary-button"
-                type="submit"
-                disabled={importingWorkspace || !importForm.path.trim()}
-              >
-                {importingWorkspace ? t("shell.importSubmitting") : t("shell.importSubmit")}
-              </button>
-            </form>
-          ) : null}
         </section>
-
-        <div className="workbench-nav-stats">
-          <span>
-            {t("shell.workspaceCount")} {workspaceCount}
-          </span>
-          <span>
-            {t("shell.sessionCount")} {sessionCount}
-          </span>
-        </div>
 
         {navigationError ? (
           <div className="workbench-status-row">
@@ -1318,6 +1630,13 @@ function SidebarContent({
                   onToggleFavorite={() => handleToggleFavorite(item.session.sessionId)}
                   onArchive={() => handleArchive(item.session.sessionId)}
                   onCloseMenu={() => setOpenSessionMenuKey(null)}
+                  onContextMenu={
+                    platform.isDesktop
+                      ? () => {
+                          void handleSessionContextMenu(item);
+                        }
+                      : undefined
+                  }
                 />
               ))}
               {hasMoreFavoriteSessions ? (
@@ -1407,6 +1726,16 @@ function SidebarContent({
                             onToggleFavorite={() => handleToggleFavorite(node.session.sessionId)}
                             onArchive={() => handleArchive(node.session.sessionId)}
                             onCloseMenu={() => setOpenSessionMenuKey(null)}
+                            onContextMenu={
+                              platform.isDesktop
+                                ? () => {
+                                    void handleSessionContextMenu({
+                                      session: node.session,
+                                      workspace: group.workspace
+                                    });
+                                  }
+                                : undefined
+                            }
                           />
 
                           {node.children.length > 0 ? (
@@ -1432,6 +1761,16 @@ function SidebarContent({
                                   onToggleFavorite={() => undefined}
                                   onArchive={() => undefined}
                                   onCloseMenu={() => undefined}
+                                  onContextMenu={
+                                    platform.isDesktop
+                                      ? () => {
+                                          void handleSessionContextMenu({
+                                            session,
+                                            workspace: group.workspace
+                                          });
+                                        }
+                                      : undefined
+                                  }
                                 />
                               ))}
                               {hasMoreSubagents ? (
@@ -1479,7 +1818,7 @@ function SidebarContent({
         ))}
       </div>
 
-      <div className="workbench-nav-footer minimal">
+      {false ? <div className="workbench-nav-footer minimal">
         <div className="workbench-footer-top">
           <button
             className="settings-entry-button"
@@ -1504,7 +1843,117 @@ function SidebarContent({
             {t("common.logout")}
           </button>
         </div>
-      </div>
+      </div> : null}
+
+      <SidebarModal
+        open={directoryBrowserOpen}
+        title={t("shell.importBrowserTitle")}
+        description={t("shell.importBrowserDescription")}
+        onClose={handleCloseDirectoryBrowser}
+      >
+        <form className="workbench-directory-browser-form" onSubmit={handleDirectoryBrowserSubmit}>
+          <label className="workbench-modal-field">
+            <span>{t("shell.importBrowserCurrentPath")}</span>
+            <input
+              type="text"
+              value={directoryBrowserInputPath}
+              placeholder={t("shell.importPathPlaceholder")}
+              onChange={(event) => setDirectoryBrowserInputPath(event.target.value)}
+            />
+          </label>
+          <div className="workbench-directory-browser-toolbar">
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={directoryBrowserLoading || !directoryBrowserParentPath}
+              onClick={() => {
+                if (!directoryBrowserParentPath) {
+                  return;
+                }
+
+                void loadDirectoryBrowser(directoryBrowserParentPath);
+              }}
+            >
+              {t("shell.importBrowserOpenParent")}
+            </button>
+            <button type="submit" className="secondary-button" disabled={directoryBrowserLoading}>
+              {t("shell.importBrowserOpenPath")}
+            </button>
+          </div>
+        </form>
+
+        <section className="workbench-directory-browser-panel">
+          <div className="workbench-directory-browser-section">
+            <span className="workbench-directory-browser-section-title">{t("shell.importBrowserRoots")}</span>
+            <div className="workbench-directory-browser-root-list">
+              {directoryBrowserRoots.map((item) => (
+                <button
+                  key={item.path}
+                  type="button"
+                  className="workbench-directory-browser-chip"
+                  disabled={directoryBrowserLoading}
+                  onClick={() => {
+                    void loadDirectoryBrowser(item.path);
+                  }}
+                >
+                  {item.name}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="workbench-directory-browser-current-path">{directoryBrowserCurrentPath}</div>
+
+          {directoryBrowserError ? (
+            <p className="workbench-directory-browser-status status-text" data-tone="error">
+              {directoryBrowserError}
+            </p>
+          ) : null}
+
+          {directoryBrowserLoading ? (
+            <p className="workbench-directory-browser-status status-text">{t("common.loading")}</p>
+          ) : directoryBrowserItems.length > 0 ? (
+            <div className="workbench-directory-browser-list">
+              {directoryBrowserItems.map((item) => (
+                <button
+                  key={item.path}
+                  type="button"
+                  className="workbench-directory-browser-item"
+                  onClick={() => {
+                    void loadDirectoryBrowser(item.path);
+                  }}
+                >
+                  <span className="workbench-directory-browser-item-name">{item.name}</span>
+                  <span className="workbench-directory-browser-item-path">{item.path}</span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p className="workbench-directory-browser-status status-text">{t("shell.importBrowserEmpty")}</p>
+          )}
+        </section>
+
+        <div className="workbench-modal-actions">
+          <button
+            type="button"
+            className="secondary-button"
+            disabled={importingWorkspace}
+            onClick={handleCloseDirectoryBrowser}
+          >
+            {t("common.cancel")}
+          </button>
+          <button
+            type="button"
+            className="primary-button"
+            disabled={importingWorkspace || directoryBrowserLoading || !directoryBrowserCurrentPath}
+            onClick={() => {
+              void handleImportCurrentDirectory();
+            }}
+          >
+            {importingWorkspace ? t("shell.importSubmitting") : t("shell.importBrowserSubmit")}
+          </button>
+        </div>
+      </SidebarModal>
 
       <SidebarModal
         open={createSessionWorkspace !== null}
@@ -1750,6 +2199,7 @@ function WorkbenchInfoPanel({
 export function WorkbenchLayout() {
   const location = useLocation();
   const navigate = useNavigate();
+  const platform = usePlatform();
   const { showToast } = useToast();
   const initialWorkbenchSnapshotRef = useRef<WorkbenchSnapshotDto | null>(readCachedWorkbenchSnapshot());
   const requestIdRef = useRef(0);
@@ -1884,6 +2334,48 @@ export function WorkbenchLayout() {
   const requestNavigationRefresh = useCallback(() => {
     workbenchRealtimeClientRef.current?.requestRefresh();
   }, []);
+
+  const subscribeFileTree = useCallback((workspaceId: string, paths: string[]) => {
+    workbenchRealtimeClientRef.current?.subscribeFileTree(workspaceId, paths);
+  }, []);
+
+  const requestFileTreeRefresh = useCallback((workspaceId: string, paths?: string[]) => {
+    workbenchRealtimeClientRef.current?.requestFileTreeRefresh(workspaceId, paths);
+  }, []);
+
+  const addFileTreeSnapshotListener = useCallback(
+    (listener: (snapshot: FileTreeRealtimeSnapshotDto) => void) =>
+      workbenchRealtimeClientRef.current?.addFileTreeSnapshotListener(listener) ?? (() => {}),
+    []
+  );
+
+  const subscribeGitSnapshot = useCallback((workspaceId: string) => {
+    workbenchRealtimeClientRef.current?.subscribeGit(workspaceId);
+  }, []);
+
+  const requestGitRefresh = useCallback((workspaceId: string) => {
+    workbenchRealtimeClientRef.current?.requestGitRefresh(workspaceId);
+  }, []);
+
+  const addGitSnapshotListener = useCallback(
+    (listener: (snapshot: GitRealtimeSnapshotDto) => void) =>
+      workbenchRealtimeClientRef.current?.addGitSnapshotListener(listener) ?? (() => {}),
+    []
+  );
+
+  const subscribeTerminalManagerSnapshot = useCallback((workspaceId: string) => {
+    workbenchRealtimeClientRef.current?.subscribeTerminalManager(workspaceId);
+  }, []);
+
+  const requestTerminalManagerRefresh = useCallback((workspaceId: string) => {
+    workbenchRealtimeClientRef.current?.requestTerminalManagerRefresh(workspaceId);
+  }, []);
+
+  const addTerminalManagerSnapshotListener = useCallback(
+    (listener: (snapshot: TerminalManagerRealtimeSnapshotDto) => void) =>
+      workbenchRealtimeClientRef.current?.addTerminalManagerSnapshotListener(listener) ?? (() => {}),
+    []
+  );
 
   const markNavigationSessionSeen = useCallback((sessionId: string, seenAt?: string) => {
     setNavigationGroups((current) =>
@@ -2197,6 +2689,26 @@ export function WorkbenchLayout() {
     setRightCollapsed(false);
   }
 
+  function toggleLeftPanel() {
+    if (isMobileViewport) {
+      setMobileNavOpen((current) => !current);
+      return;
+    }
+
+    setLeftCollapsed((current) => !current);
+  }
+
+  function toggleRightPanel() {
+    ensureInfoPanelReady();
+
+    if (isMobileViewport) {
+      setMobileInfoOpen((current) => !current);
+      return;
+    }
+
+    setRightCollapsed((current) => !current);
+  }
+
   function ensureInfoPanelReady() {
     setInfoPanelReady(true);
   }
@@ -2244,6 +2756,77 @@ export function WorkbenchLayout() {
     navigate(storedSessionPath || fallbackSessionPath);
   }
 
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      const hasModifier = event.metaKey || event.ctrlKey;
+
+      if (!hasModifier) {
+        if (event.key === "Escape") {
+          setMobileNavOpen(false);
+          setMobileInfoOpen(false);
+        }
+        return;
+      }
+
+      if (isEditableTarget(event.target)) {
+        return;
+      }
+
+      const normalizedKey = event.key.toLowerCase();
+
+      if (!event.shiftKey && normalizedKey === "b") {
+        event.preventDefault();
+        toggleLeftPanel();
+        return;
+      }
+
+      if (event.shiftKey && normalizedKey === "i") {
+        event.preventDefault();
+        toggleRightPanel();
+        return;
+      }
+
+      if (!event.shiftKey && normalizedKey === ",") {
+        event.preventDefault();
+        navigate("/settings");
+        return;
+      }
+
+      if (!event.shiftKey && normalizedKey === "1") {
+        event.preventDefault();
+        goToConversationTab();
+        return;
+      }
+
+      if (!event.shiftKey && normalizedKey === "2") {
+        event.preventDefault();
+        navigate("/terminals");
+        return;
+      }
+
+      if (!event.shiftKey && normalizedKey === "k") {
+        event.preventDefault();
+        focusComposer();
+        return;
+      }
+
+      if (event.shiftKey && normalizedKey === "r") {
+        event.preventDefault();
+        void refreshNavigation();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [navigate, refreshNavigation, isMobileViewport, goToConversationTab]);
+
   const contextValue = useMemo<WorkbenchShellContextValue>(
     () => ({
       navigationGroups,
@@ -2251,24 +2834,48 @@ export function WorkbenchLayout() {
       navigationError,
       refreshNavigation,
       requestNavigationRefresh,
+      subscribeFileTree,
+      requestFileTreeRefresh,
+      addFileTreeSnapshotListener,
+      subscribeGitSnapshot,
+      requestGitRefresh,
+      addGitSnapshotListener,
+      subscribeTerminalManagerSnapshot,
+      requestTerminalManagerRefresh,
+      addTerminalManagerSnapshotListener,
       markNavigationSessionSeen,
       upsertNavigationSession,
       setSessionWorkspace
     }),
     [
+      addFileTreeSnapshotListener,
+      addGitSnapshotListener,
+      addTerminalManagerSnapshotListener,
       markNavigationSessionSeen,
       navigationError,
       navigationGroups,
       navigationLoading,
+      requestFileTreeRefresh,
+      requestGitRefresh,
       refreshNavigation,
       requestNavigationRefresh,
+      requestTerminalManagerRefresh,
       setSessionWorkspace,
+      subscribeFileTree,
+      subscribeGitSnapshot,
+      subscribeTerminalManagerSnapshot,
       upsertNavigationSession
     ]
   );
 
   const workspaceCount = navigationGroups.length;
   const sessionCount = navigationGroups.reduce((total, item) => total + item.sessions.length, 0);
+  const currentWorkspaceName = currentSessionContext?.workspace.name ?? navigationGroups[0]?.workspace.name ?? null;
+  const currentSessionTitle = currentSessionContext?.session.title ?? null;
+  const showTrafficLightsPadding =
+    platform.isDesktop && platform.ui.windowControlsStyle === "traffic-lights";
+  const showWindowsControls =
+    platform.isDesktop && platform.ui.windowControlsStyle === "windows";
   const shellStyle = {
     "--workbench-left-width": leftCollapsed ? "0px" : `${leftPanelWidth}px`,
     "--workbench-right-width": rightCollapsed ? "0px" : `${rightPanelWidth}px`
@@ -2283,116 +2890,119 @@ export function WorkbenchLayout() {
         data-left-collapsed={leftCollapsed}
         data-right-collapsed={rightCollapsed}
         data-info-ready={infoPanelReady}
+        data-runtime-platform={platform.platform}
+        data-os-family={platform.ui.osFamily}
       >
-        {!leftCollapsed ? (
-          <>
-            <aside className="workbench-nav surface-card">
-              <SidebarContent
-                workspaceGroups={workspaceSidebarGroups}
-                favoriteSessions={favoriteSessions}
-                favoriteSessionIds={favoriteSessionIdSet}
-                workspaceCount={workspaceCount}
-                sessionCount={sessionCount}
-                navigationLoading={navigationLoading}
-                navigationError={navigationError}
-                activeSessionId={currentSessionId}
-                onRefreshNavigation={refreshNavigation}
-                onSessionUpdated={upsertNavigationSession}
-                onToggleWorkspaceCollapse={(workspaceId) =>
-                  setCollapsedWorkspaceIds((current) => toggleStoredId(current, workspaceId))
-                }
-                onToggleFavoriteSession={(sessionId) =>
-                  setFavoriteSessionIds((current) => toggleStoredId(current, sessionId))
-                }
-                onArchiveSession={(sessionId) => commitNavigationArchiveState(sessionId, true)}
-                onUnarchiveSession={(sessionId) => commitNavigationArchiveState(sessionId, false)}
-                onToggleCollapse={() => setLeftCollapsed(true)}
+        <WorkbenchDesktopTitlebar
+          activeCenterTab={activeCenterTab}
+          currentWorkspaceName={currentWorkspaceName}
+          currentSessionTitle={currentSessionTitle}
+          workspaceCount={workspaceCount}
+          sessionCount={sessionCount}
+          leftCollapsed={leftCollapsed}
+          rightCollapsed={rightCollapsed}
+          isDesktop={platform.isDesktop}
+          showTrafficLightsPadding={showTrafficLightsPadding}
+          showWindowsControls={showWindowsControls}
+          onNavigateConversation={goToConversationTab}
+          onNavigateTerminals={() => navigate("/terminals")}
+          onRefreshNavigation={() => {
+            void refreshNavigation();
+          }}
+          onToggleLeftPanel={toggleLeftPanel}
+          onToggleRightPanel={toggleRightPanel}
+          onOpenSettings={() => navigate("/settings")}
+          onMinimizeWindow={() => {
+            void platform.bridge.setWindowState("minimize");
+          }}
+          onToggleMaximizeWindow={() => {
+            void platform.bridge.setWindowState("toggle-maximize");
+          }}
+          onCloseWindow={() => {
+            void platform.bridge.setWindowState("close");
+          }}
+        />
+
+        <div className="workbench-body-shell">
+          {!leftCollapsed ? (
+            <>
+              <aside className="workbench-nav surface-card">
+                <SidebarContent
+                  workspaceGroups={workspaceSidebarGroups}
+                  favoriteSessions={favoriteSessions}
+                  favoriteSessionIds={favoriteSessionIdSet}
+                  workspaceCount={workspaceCount}
+                  sessionCount={sessionCount}
+                  navigationLoading={navigationLoading}
+                  navigationError={navigationError}
+                  activeSessionId={currentSessionId}
+                  onRefreshNavigation={refreshNavigation}
+                  onSessionUpdated={upsertNavigationSession}
+                  onToggleWorkspaceCollapse={(workspaceId) =>
+                    setCollapsedWorkspaceIds((current) => toggleStoredId(current, workspaceId))
+                  }
+                  onToggleFavoriteSession={(sessionId) =>
+                    setFavoriteSessionIds((current) => toggleStoredId(current, sessionId))
+                  }
+                  onArchiveSession={(sessionId) => commitNavigationArchiveState(sessionId, true)}
+                  onUnarchiveSession={(sessionId) => commitNavigationArchiveState(sessionId, false)}
+                  onToggleCollapse={() => setLeftCollapsed(true)}
+                />
+              </aside>
+              <div
+                className="workbench-side-resizer"
+                role="separator"
+                aria-label={t("shell.leftResizerLabel")}
+                onMouseDown={(event) => beginResize("left", event.clientX)}
               />
-            </aside>
-            <div
-              className="workbench-side-resizer"
-              role="separator"
-              aria-label={t("shell.leftResizerLabel")}
-              onMouseDown={(event) => beginResize("left", event.clientX)}
-            />
-          </>
-        ) : null}
-
-        <div className="workbench-main-shell">
-          {!isMobileViewport && leftCollapsed ? (
-            <SidebarHamburgerButton
-              className="workbench-edge-toggle left"
-              ariaLabel={t("shell.showSessionSidebar")}
-              onClick={openLeftPanel}
-            />
+            </>
           ) : null}
 
-          {!isMobileViewport && rightCollapsed ? (
-            <SidebarHamburgerButton
-              className="workbench-edge-toggle right"
-              ariaLabel={t("shell.showInfoSidebar")}
-              onClick={openRightPanel}
-            />
-          ) : null}
+          <div className="workbench-main-shell">
+            {!isMobileViewport && leftCollapsed ? (
+              <SidebarHamburgerButton
+                className="workbench-edge-toggle left"
+                ariaLabel={t("shell.showSessionSidebar")}
+                onClick={openLeftPanel}
+              />
+            ) : null}
 
-          <div className="workbench-main-topbar surface-card">
-            <div className="workbench-topbar-tabs" role="tablist" aria-label={t("shell.centerTabsLabel")}>
-              <button
-                className={
-                  activeCenterTab === "conversation"
-                    ? "workbench-topbar-tab active"
-                    : "workbench-topbar-tab"
-                }
-                type="button"
-                role="tab"
-                aria-selected={activeCenterTab === "conversation"}
-                onClick={goToConversationTab}
-              >
-                {t("shell.conversationEntry")}
-              </button>
-              <button
-                className={
-                  activeCenterTab === "terminals"
-                    ? "workbench-topbar-tab active"
-                    : "workbench-topbar-tab"
-                }
-                type="button"
-                role="tab"
-                aria-selected={activeCenterTab === "terminals"}
-                onClick={() => navigate("/terminals")}
-              >
-                {t("shell.terminalsEntry")}
-              </button>
-            </div>
+            {!isMobileViewport && rightCollapsed ? (
+              <SidebarHamburgerButton
+                className="workbench-edge-toggle right"
+                ariaLabel={t("shell.showInfoSidebar")}
+                onClick={openRightPanel}
+              />
+            ) : null}
+
+            <Outlet />
           </div>
 
-          <Outlet />
-        </div>
-
-        {!rightCollapsed ? (
-          <>
-            <div
-              className="workbench-side-resizer"
-              role="separator"
-              aria-label={t("shell.rightResizerLabel")}
-              onMouseDown={(event) => beginResize("right", event.clientX)}
-            />
-            <aside className="workbench-auxiliary surface-card">
-              <WorkbenchInfoPanel
-                panelReady={infoPanelReady}
-                activeTab={activeInfoTab}
-                onTabChange={(tab) => {
-                  ensureInfoPanelReady();
-                  setActiveInfoTab(tab);
-                }}
-                onToggleCollapse={() => setRightCollapsed(true)}
-                currentSessionId={isDraftSession ? null : currentSessionId}
-                currentWorkspaceId={currentWorkspaceId}
-                navigationGroups={navigationGroups}
+          {!rightCollapsed ? (
+            <>
+              <div
+                className="workbench-side-resizer"
+                role="separator"
+                aria-label={t("shell.rightResizerLabel")}
+                onMouseDown={(event) => beginResize("right", event.clientX)}
               />
-            </aside>
-          </>
-        ) : null}
+              <aside className="workbench-auxiliary surface-card">
+                <WorkbenchInfoPanel
+                  panelReady={infoPanelReady}
+                  activeTab={activeInfoTab}
+                  onTabChange={(tab) => {
+                    ensureInfoPanelReady();
+                    setActiveInfoTab(tab);
+                  }}
+                  onToggleCollapse={() => setRightCollapsed(true)}
+                  currentSessionId={isDraftSession ? null : currentSessionId}
+                  currentWorkspaceId={currentWorkspaceId}
+                  navigationGroups={navigationGroups}
+                />
+              </aside>
+            </>
+          ) : null}
+        </div>
 
         {isMobileViewport ? (
           <>
@@ -2509,12 +3119,27 @@ function MobileNavDrawer({
 
 export function useWorkbenchShell() {
   const context = useContext(WorkbenchShellContext);
-
-  if (!context) {
-    throw new Error("Workbench shell context is unavailable.");
-  }
-
-  return context;
+  return (
+    context ?? {
+      navigationGroups: [],
+      navigationLoading: false,
+      navigationError: null,
+      refreshNavigation: async () => undefined,
+      requestNavigationRefresh: () => undefined,
+      subscribeFileTree: () => undefined,
+      requestFileTreeRefresh: () => undefined,
+      addFileTreeSnapshotListener: () => () => undefined,
+      subscribeGitSnapshot: () => undefined,
+      requestGitRefresh: () => undefined,
+      addGitSnapshotListener: () => () => undefined,
+      subscribeTerminalManagerSnapshot: () => undefined,
+      requestTerminalManagerRefresh: () => undefined,
+      addTerminalManagerSnapshotListener: () => () => undefined,
+      setSessionWorkspace: () => undefined,
+      upsertNavigationSession: () => undefined,
+      markNavigationSessionSeen: () => undefined
+    }
+  );
 }
 
 function buildDraftSessionPath(workspaceId: string, provider: ProviderId): string {
