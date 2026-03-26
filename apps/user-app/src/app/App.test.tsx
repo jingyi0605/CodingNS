@@ -98,7 +98,8 @@ describe("app routes", () => {
       releaseChannel: "stable",
       autoReconnect: true,
       autoCheckUpdate: false,
-      language: "zh-CN"
+      language: "zh-CN",
+      defaultPermissionMode: "default"
     });
     serverConfigStore.reset();
     authStore.clear();
@@ -242,6 +243,20 @@ describe("app routes", () => {
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: t("common.save") })).toBeDisabled();
+    });
+  });
+
+  it("设置页可以切换默认会话权限模式", async () => {
+    renderSettingsPage();
+
+    const select = screen.getByRole("combobox", { name: t("settings.defaultPermissionMode") });
+
+    expect(select).toHaveValue("default");
+
+    await userEvent.selectOptions(select, "bypassPermissions");
+
+    await waitFor(() => {
+      expect(clientConfigStore.getState().defaultPermissionMode).toBe("bypassPermissions");
     });
   });
 

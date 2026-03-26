@@ -133,6 +133,11 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
       ...attachmentDirectories.flatMap((directory) => ["--add-dir", directory]),
       ...sessionArgs
     ];
+    const permissionArgs = buildClaudePermissionArgs(request.options.permissionMode);
+
+    if (permissionArgs.length > 0) {
+      args.push(...permissionArgs);
+    }
 
     if (request.options.model) {
       args.push("--model", request.options.model);
@@ -439,6 +444,18 @@ function buildClaudeStreamingUserInput(
       ]
     }
   };
+}
+
+export function buildClaudePermissionArgs(permissionMode: string | null): string[] {
+  if (
+    permissionMode === "default" ||
+    permissionMode === "acceptEdits" ||
+    permissionMode === "bypassPermissions"
+  ) {
+    return ["--permission-mode", permissionMode];
+  }
+
+  return [];
 }
 
 function resolveClaudeCommand(explicitPath?: string): string {

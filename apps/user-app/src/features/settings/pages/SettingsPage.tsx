@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { clientConfigStore, useClientConfigSelector } from "../../../config/client-config-store";
+import type { ClientPermissionMode } from "../../../config/client-config-types";
 import { normalizeServerBaseUrl } from "../../../config/server-config";
 import { usePlatform } from "../../../platform/platform-provider";
 import { LanguageSwitcher, t } from "../../../shared/i18n";
@@ -48,6 +49,24 @@ export function SettingsPage() {
       hostBaseUrl: normalizedHostBaseUrlDraft
     });
   }
+
+  const permissionModeOptions: Array<{
+    value: ClientPermissionMode;
+    label: string;
+  }> = [
+    {
+      value: "default",
+      label: t("settings.permissionModeDefault")
+    },
+    {
+      value: "acceptEdits",
+      label: t("settings.permissionModeAcceptEdits")
+    },
+    {
+      value: "bypassPermissions",
+      label: t("settings.permissionModeBypassPermissions")
+    }
+  ];
 
   return (
     <div className="settings-page">
@@ -124,6 +143,7 @@ export function SettingsPage() {
               </div>
               <div className="settings-row-control">
                 <select
+                  aria-label={t("settings.releaseChannel")}
                   className="settings-select"
                   value={runtimeConfig.releaseChannel}
                   onChange={(event) => {
@@ -181,6 +201,37 @@ export function SettingsPage() {
                   />
                   <span>{runtimeConfig.autoCheckUpdate ? t("settings.enabled") : t("settings.disabled")}</span>
                 </label>
+              </div>
+            </div>
+
+            <div className="settings-row">
+              <div className="settings-row-label">
+                <span className="settings-row-title">{t("settings.defaultPermissionMode")}</span>
+                <span className="settings-row-description">
+                  {t("settings.defaultPermissionModeDescription")}
+                </span>
+              </div>
+              <div className="settings-row-control">
+                <select
+                  aria-label={t("settings.defaultPermissionMode")}
+                  className="settings-select"
+                  value={runtimeConfig.defaultPermissionMode}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    void clientConfigStore.update({
+                      defaultPermissionMode:
+                        value === "acceptEdits" || value === "bypassPermissions"
+                          ? value
+                          : "default"
+                    });
+                  }}
+                >
+                  {permissionModeOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
           </div>

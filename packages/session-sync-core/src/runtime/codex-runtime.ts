@@ -13,6 +13,7 @@ import {
   nextTimestamp,
   normalizeWorkspacePath
 } from "../providers/utils.js";
+import { createCodexThreadPermissionOptions } from "./codex-permissions.js";
 import type { NormalizedMessage, NormalizedToolCall, ProviderId } from "../types.js";
 import type {
   ProviderRuntimeAdapter,
@@ -756,23 +757,12 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
   }
 }
 
-function createThreadOptions(request: ProviderRuntimeRunRequest): Record<string, unknown> {
+export function createThreadOptions(request: ProviderRuntimeRunRequest): Record<string, unknown> {
   const options: Record<string, unknown> = {
     workingDirectory: request.workspacePath,
-    skipGitRepoCheck: true
+    skipGitRepoCheck: true,
+    ...createCodexThreadPermissionOptions(request.options.permissionMode ?? "default")
   };
-  const permissionMode = request.options.permissionMode ?? "default";
-
-  if (permissionMode === "bypassPermissions") {
-    options.sandboxMode = "danger-full-access";
-    options.approvalPolicy = "never";
-  } else if (permissionMode === "acceptEdits") {
-    options.sandboxMode = "workspace-write";
-    options.approvalPolicy = "never";
-  } else {
-    options.sandboxMode = "workspace-write";
-    options.approvalPolicy = "untrusted";
-  }
 
   if (request.options.model) {
     options.model = request.options.model;

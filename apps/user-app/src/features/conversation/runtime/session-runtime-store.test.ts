@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { clientConfigStore } from "../../../config/client-config-store";
 import { authStore } from "../../auth/store/auth-store";
 import { clearViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import { SessionRuntimeStore } from "./session-runtime-store";
@@ -85,6 +86,15 @@ describe("SessionRuntimeStore", () => {
         username: "admin",
         role: "admin"
       }
+    });
+    clientConfigStore.hydrate({
+      platform: "web",
+      hostBaseUrl: "http://127.0.0.1:3002",
+      releaseChannel: "stable",
+      autoReconnect: true,
+      autoCheckUpdate: false,
+      language: "zh-CN",
+      defaultPermissionMode: "default"
     });
 
     mocked.getSessionDetail.mockResolvedValue({
@@ -778,10 +788,29 @@ describe("SessionRuntimeStore", () => {
     expect(mocked.sendLiveMessage).toHaveBeenCalledWith(
       "session-1",
       expect.objectContaining({
-        content: "继续按这个方向补充"
+        content: "继续按这个方向补充",
+        permissionMode: null
       })
     );
     expect(store.getState().session?.runningState).toBe("running");
+  });
+
+  it("默认完整权限开启后，sendLiveMessage 会透传 bypassPermissions", async () => {
+    clientConfigStore.hydrate({
+      ...clientConfigStore.getState(),
+      defaultPermissionMode: "bypassPermissions"
+    });
+    const store = new SessionRuntimeStore("session-1");
+
+    await store.sendMessage("直接执行 git add");
+
+    expect(mocked.sendLiveMessage).toHaveBeenCalledWith(
+      "session-1",
+      expect.objectContaining({
+        content: "直接执行 git add",
+        permissionMode: "bypassPermissions"
+      })
+    );
   });
 
   it("收到终态运行事件后会刷新等待队列", async () => {
@@ -878,8 +907,27 @@ describe("SessionRuntimeStore", () => {
         content: "排队继续执行"
       })
     );
+    expect(store.getState().messages).toHaveLength(0);
     expect(store.getState().queuedMessages).toHaveLength(1);
     expect(store.getState().queuedMessages[0]?.content).toBe("排队继续执行");
+  });
+
+  it("默认完整权限开启后，enqueueMessage 会透传 bypassPermissions", async () => {
+    clientConfigStore.hydrate({
+      ...clientConfigStore.getState(),
+      defaultPermissionMode: "bypassPermissions"
+    });
+    const store = new SessionRuntimeStore("session-1");
+
+    await store.enqueueMessage("排队执行 git add");
+
+    expect(mocked.enqueueSessionMessage).toHaveBeenCalledWith(
+      "session-1",
+      expect.objectContaining({
+        content: "排队执行 git add",
+        permissionMode: "bypassPermissions"
+      })
+    );
   });
 
   it("deleteQueuedMessage 会删除等待项并刷新队列", async () => {

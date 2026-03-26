@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 
+import { clientConfigStore } from "../../../config/client-config-store";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 import {
@@ -300,6 +301,7 @@ function DraftConversationPage({
           setSending(true);
 
           try {
+            const permissionMode = clientConfigStore.getState().defaultPermissionMode;
             const created = await startLiveSession({
               workspaceId: draft.workspaceId,
               provider: draft.provider,
@@ -307,6 +309,7 @@ function DraftConversationPage({
               clientRequestId,
               model: options?.model ?? null,
               reasoningLevel: options?.reasoningLevel ?? null,
+              permissionMode: permissionMode === "default" ? null : permissionMode,
               attachments: options?.attachments ?? []
             });
 

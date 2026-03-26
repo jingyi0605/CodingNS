@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import { clientConfigStore } from "../../../config/client-config-store";
 import { authStore } from "../../auth/store/auth-store";
 import { RealtimeClient } from "../../../network/realtime-client";
 import { readViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
@@ -51,6 +52,11 @@ const SESSION_RUNTIME_SNAPSHOT_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
 const SESSION_MARK_SEEN_DELAY_MS = 600;
 const SESSION_MARK_SEEN_MIN_INTERVAL_MS = 5_000;
 const SESSION_RUNTIME_POLL_DELAY_MS = 10_000;
+
+function getDefaultPermissionMode(): string | null {
+  const permissionMode = clientConfigStore.getState().defaultPermissionMode;
+  return permissionMode === "default" ? null : permissionMode;
+}
 
 interface SessionRuntimeSnapshot {
   session: SessionSummaryDto | null;
@@ -275,42 +281,22 @@ export class SessionRuntimeStore {
     }
   ): Promise<void> {
     const clientRequestId = createClientRequestId();
-    const pending = createPendingMessage(
-      this.sessionId,
-      content,
-      clientRequestId,
-      options?.attachmentMeta ?? [],
-      options?.attachments ?? []
-    );
-
-    this.patch({
-      messages: [...this.state.messages, pending]
-    });
 
     try {
-      await enqueueSessionMessage(this.sessionId, {
+      const queuedItem = await enqueueSessionMessage(this.sessionId, {
         content,
         clientRequestId,
         model: options?.model ?? null,
         reasoningLevel: options?.reasoningLevel ?? null,
+        permissionMode: getDefaultPermissionMode(),
         attachments: options?.attachments ?? []
       });
 
       this.patch({
-        messages: this.state.messages.map((item) =>
-          item.clientRequestId === clientRequestId
-            ? {
-                ...item,
-                deliveryState: "sent"
-              }
-            : item
-        )
+        queuedMessages: upsertQueuedMessage(this.state.queuedMessages, queuedItem)
       });
       await this.refreshQueue();
     } catch (error) {
-      this.patch({
-        messages: markPendingAsFailed(this.state.messages, clientRequestId)
-      });
       throw error;
     }
   }
@@ -799,6 +785,7 @@ export class SessionRuntimeStore {
         clientRequestId,
         model: options?.model ?? null,
         reasoningLevel: options?.reasoningLevel ?? null,
+        permissionMode: getDefaultPermissionMode(),
         attachments: options?.attachments ?? []
       });
     } catch (error) {
@@ -1104,6 +1091,16 @@ function buildSnapshotMessages(messages: SessionMessageViewModel[]): SessionMess
   return messages
     .filter((message) => message.deliveryState === "sent")
     .slice(-INITIAL_HISTORY_LIMIT);
+}
+
+function upsertQueuedMessage(
+  current: SessionQueueItemDto[],
+  incoming: SessionQueueItemDto
+): SessionQueueItemDto[] {
+  const next = current.filter((item) => item.id !== incoming.id);
+  next.push(incoming);
+  next.sort((left, right) => left.orderIndex - right.orderIndex);
+  return next;
 }
 
 function pickFreshestSessionSummary(

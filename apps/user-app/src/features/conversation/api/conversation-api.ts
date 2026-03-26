@@ -193,6 +193,7 @@ export interface StartLivePayload {
   clientRequestId?: string | null;
   model?: string | null;
   reasoningLevel?: string | null;
+  permissionMode?: string | null;
   attachments?: ImageAttachmentPayload[];
 }
 
@@ -201,6 +202,7 @@ export interface SendLiveMessagePayload {
   clientRequestId: string;
   model?: string | null;
   reasoningLevel?: string | null;
+  permissionMode?: string | null;
   attachments?: ImageAttachmentPayload[];
 }
 
@@ -224,6 +226,21 @@ export interface SessionRuntimeDto {
   errorDetail: string | null;
   updatedAt: string;
   contextUsage: ContextUsageDto | null;
+}
+
+export interface SessionQueueItemDto {
+  id: string;
+  sessionId: string;
+  content: string;
+  clientRequestId: string | null;
+  model: string | null;
+  reasoningLevel: string | null;
+  permissionMode: string | null;
+  status: "queued" | "dispatching" | "failed";
+  orderIndex: number;
+  errorDetail: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface ContextUsageDto {
@@ -425,6 +442,34 @@ export function sendLiveMessage(
     {
       method: "POST",
       body: JSON.stringify(payload)
+    }
+  );
+}
+
+export function getSessionQueue(sessionId: string) {
+  return httpClient.request<{ items: SessionQueueItemDto[] }>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/queue`
+  );
+}
+
+export function enqueueSessionMessage(
+  sessionId: string,
+  payload: SendLiveMessagePayload
+) {
+  return httpClient.request<SessionQueueItemDto>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/queue`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }
+  );
+}
+
+export function deleteSessionQueueItem(sessionId: string, queueItemId: string) {
+  return httpClient.request<void>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/queue/${encodeURIComponent(queueItemId)}`,
+    {
+      method: "DELETE"
     }
   );
 }

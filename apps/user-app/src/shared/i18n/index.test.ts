@@ -11,7 +11,8 @@ function createConfig(language: ClientRuntimeConfig["language"]): ClientRuntimeC
     releaseChannel: "stable",
     autoReconnect: true,
     autoCheckUpdate: false,
-    language
+    language,
+    defaultPermissionMode: "default"
   };
 }
 

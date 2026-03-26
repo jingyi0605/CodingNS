@@ -10,6 +10,7 @@ pub struct DesktopRuntimeConfig {
     pub release_channel: Option<String>,
     pub auto_reconnect: Option<bool>,
     pub auto_check_update: Option<bool>,
+    pub default_permission_mode: Option<String>,
 }
 
 fn config_file_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -59,6 +60,9 @@ pub fn write_desktop_config(
     }
     if patch.auto_check_update.is_some() {
         current.auto_check_update = patch.auto_check_update;
+    }
+    if patch.default_permission_mode.is_some() {
+        current.default_permission_mode = patch.default_permission_mode;
     }
 
     let payload = serde_json::to_string_pretty(&current)

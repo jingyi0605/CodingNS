@@ -1,5 +1,6 @@
 import {
   type AppLanguage,
+  type ClientPermissionMode,
   type ClientRuntimeConfig,
   type ClientRuntimeConfigPatch,
   type RuntimePlatform
@@ -23,6 +24,14 @@ function detectBrowserLanguage(): AppLanguage {
   }
 
   return normalizeLanguage(navigator.language);
+}
+
+function normalizePermissionMode(value?: string | null): ClientPermissionMode {
+  if (value === "acceptEdits" || value === "bypassPermissions") {
+    return value;
+  }
+
+  return "default";
 }
 
 function canUseLocalStorage(): boolean {
@@ -63,7 +72,8 @@ function createDefaultConfig(platform: RuntimePlatform): ClientRuntimeConfig {
     releaseChannel: "stable",
     autoReconnect: true,
     autoCheckUpdate: platform === "desktop",
-    language: detectBrowserLanguage()
+    language: detectBrowserLanguage(),
+    defaultPermissionMode: "default"
   };
 }
 
@@ -85,7 +95,10 @@ function mergeConfig(
     releaseChannel: patch.releaseChannel ?? baseConfig.releaseChannel,
     autoReconnect: patch.autoReconnect ?? baseConfig.autoReconnect,
     autoCheckUpdate: patch.autoCheckUpdate ?? baseConfig.autoCheckUpdate,
-    language: normalizeLanguage(patch.language ?? baseConfig.language)
+    language: normalizeLanguage(patch.language ?? baseConfig.language),
+    defaultPermissionMode: normalizePermissionMode(
+      patch.defaultPermissionMode ?? baseConfig.defaultPermissionMode
+    )
   };
 }
 

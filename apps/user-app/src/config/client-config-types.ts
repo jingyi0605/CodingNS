@@ -1,6 +1,7 @@
 export type RuntimePlatform = "desktop" | "web";
 export type ReleaseChannel = "stable" | "beta";
 export type AppLanguage = "zh-CN" | "en-US";
+export type ClientPermissionMode = "default" | "acceptEdits" | "bypassPermissions";
 
 export interface ClientRuntimeConfig {
   platform: RuntimePlatform;
@@ -9,6 +10,7 @@ export interface ClientRuntimeConfig {
   autoReconnect: boolean;
   autoCheckUpdate: boolean;
   language: AppLanguage;
+  defaultPermissionMode: ClientPermissionMode;
 }
 
 export interface ClientRuntimeConfigPatch extends Partial<ClientRuntimeConfig> {

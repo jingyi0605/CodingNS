@@ -50,7 +50,8 @@ describe("terminal realtime client", () => {
       releaseChannel: "stable",
       autoReconnect: true,
       autoCheckUpdate: false,
-      language: "zh-CN"
+      language: "zh-CN",
+      defaultPermissionMode: "default"
     });
     authStore.hydrate({
       accessToken: "token",

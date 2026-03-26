@@ -13,7 +13,8 @@ function createFallbackState(): ClientRuntimeConfig {
     releaseChannel: "stable",
     autoReconnect: true,
     autoCheckUpdate: resolveRuntimePlatform() === "desktop",
-    language: "zh-CN"
+    language: "zh-CN",
+    defaultPermissionMode: "default"
   };
 }
 
