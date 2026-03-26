@@ -118,6 +118,25 @@ export interface SessionMessageAttachmentRecord {
   createdAt: string;
 }
 
+export type SessionSendQueueStatus = "queued" | "dispatching" | "failed";
+
+export interface SessionSendQueueItemRecord {
+  id: string;
+  sessionId: string;
+  userId: string;
+  content: string;
+  clientRequestId: string | null;
+  model: string | null;
+  reasoningLevel: string | null;
+  permissionMode: string | null;
+  status: SessionSendQueueStatus;
+  orderIndex: number;
+  errorDetail: string | null;
+  createdAt: string;
+  updatedAt: string;
+  dispatchedAt: string | null;
+}
+
 export interface SessionListItem {
   sessionId: string;
   workspaceId: string;
@@ -207,6 +226,7 @@ export interface TerminalInstance {
   cwd: string;
   shell: string;
   status: TerminalStatus;
+  processId: number | null;
   createdByUserId: string;
   createdAt: string;
   lastActiveAt: string;

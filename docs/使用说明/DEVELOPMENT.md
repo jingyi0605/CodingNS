@@ -92,6 +92,8 @@ pnpm install
 > This version of Node.js requires NODE_MODULE_VERSION 127.
 > ```
 > 这表示你的原生模块是用旧版本编译的，需要运行 `pnpm rebuild:native` 重新编译。
+>
+> 在 macOS 上，如果看到终端创建时报 `posix_spawnp failed.`，通常是 `node-pty` 的 `spawn-helper` 丢失了执行权限。现在项目会在 `postinstall`、`rebuild:native` 和 Host 运行时自动修复这个权限。
 
 ### 5. 运行开发服务器
 

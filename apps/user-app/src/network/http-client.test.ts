@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { authStore, type AuthSession } from "../features/auth/store/auth-store";
+import { ApiError } from "../shared/network/api-error";
 import { httpClient } from "./http-client";
 
 const session: AuthSession = {
@@ -69,5 +70,38 @@ describe("httpClient", () => {
     await expect(httpClient.request<{ ok: boolean }>("/api/demo")).resolves.toEqual({
       ok: true
     });
+  });
+
+  it("错误响应为空体时不会再抛出 JSON 解析异常", async () => {
+    const fetchMock = vi.mocked(fetch);
+
+    fetchMock.mockResolvedValue(new Response(null, { status: 502 }));
+
+    await expect(httpClient.request("/api/demo")).rejects.toMatchObject({
+      name: "ApiError",
+      status: 502,
+      errorCode: "HTTP_ERROR",
+      message: "请求失败（HTTP 502）"
+    } satisfies Partial<ApiError>);
+  });
+
+  it("错误响应为纯文本时会保留原始错误信息", async () => {
+    const fetchMock = vi.mocked(fetch);
+
+    fetchMock.mockResolvedValue(
+      new Response("upstream proxy failed", {
+        status: 502,
+        headers: {
+          "Content-Type": "text/plain"
+        }
+      })
+    );
+
+    await expect(httpClient.request("/api/demo")).rejects.toMatchObject({
+      name: "ApiError",
+      status: 502,
+      errorCode: "HTTP_ERROR",
+      message: "upstream proxy failed"
+    } satisfies Partial<ApiError>);
   });
 });

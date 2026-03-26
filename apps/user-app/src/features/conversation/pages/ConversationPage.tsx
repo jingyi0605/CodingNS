@@ -99,6 +99,7 @@ function LiveConversationPage({
   const hasOlderMessages = useSessionRuntimeStore(store, (state) => state.hasOlderMessages);
   const connectionState = useSessionRuntimeStore(store, (state) => state.connectionState);
   const [deletingQueueItemId, setDeletingQueueItemId] = useState<string | null>(null);
+  const [steeringQueueItemId, setSteeringQueueItemId] = useState<string | null>(null);
   const isRunning =
     session?.activitySource !== "inferred" &&
     (
@@ -106,6 +107,13 @@ function LiveConversationPage({
       || session?.runningState === "running"
       || session?.runningState === "reconnecting"
     );
+  const canSteerQueuedMessage =
+    isRunning &&
+    session?.provider === "claude-code" &&
+    capabilities?.inRunInputMode === "streaming_guidance";
+  const hasPendingQueuedMessages = queuedMessages.some(
+    (item) => item.status === "queued" || item.status === "dispatching"
+  );
 
   useEffect(() => {
     store.applyNavigationSession(navigationSession);
@@ -170,6 +178,8 @@ function LiveConversationPage({
       <QueuedMessageList
         items={queuedMessages}
         deletingQueueItemId={deletingQueueItemId}
+        steeringQueueItemId={steeringQueueItemId}
+        canSteer={canSteerQueuedMessage}
         onDelete={async (queueItemId) => {
           setDeletingQueueItemId(queueItemId);
 
@@ -179,10 +189,21 @@ function LiveConversationPage({
             setDeletingQueueItemId(null);
           }
         }}
+        onSteer={async (queueItemId) => {
+          setSteeringQueueItemId(queueItemId);
+
+          try {
+            await store.steerQueuedMessage(queueItemId);
+            requestNavigationRefresh();
+          } finally {
+            setSteeringQueueItemId(null);
+          }
+        }}
       />
       <ComposerPanel
         capabilities={capabilities}
         contextUsage={contextUsage}
+        hasPendingQueuedMessages={hasPendingQueuedMessages}
         isSubmitting={sending}
         isRunning={isRunning}
         onInterrupt={async () => {

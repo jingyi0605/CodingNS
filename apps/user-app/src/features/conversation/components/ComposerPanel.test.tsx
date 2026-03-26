@@ -177,6 +177,109 @@ describe("ComposerPanel", () => {
     expect(screen.getByLabelText(t("conversation.capabilityInterrupt"))).toBeInTheDocument();
   });
 
+  it("Codex 运行中且不支持直发时，Enter 会改走项目队列", async () => {
+    const onSend = vi.fn().mockResolvedValue(undefined);
+    const onQueueSend = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <ComposerPanel
+        capabilities={createCapabilities({ provider: "codex" })}
+        isSubmitting={false}
+        isRunning
+        onInterrupt={vi.fn()}
+        onQueueSend={onQueueSend}
+        onSend={onSend}
+      />
+    );
+
+    const textarea = screen.getByRole("textbox");
+    fireEvent.change(textarea, {
+      target: {
+        value: "这条消息不该被送出去"
+      }
+    });
+
+    expect(screen.getByLabelText(t("conversation.queueGuidanceButton"))).toBeInTheDocument();
+    expect(screen.queryByLabelText(t("conversation.capabilityInterrupt"))).not.toBeInTheDocument();
+
+    fireEvent.keyDown(textarea, {
+      key: "Enter",
+      code: "Enter"
+    });
+
+    expect(textarea).not.toHaveAttribute("readonly");
+    expect(onSend).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(onQueueSend).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("Claude 运行中且没有草稿时只显示中断按钮", () => {
+    const onSend = vi.fn().mockResolvedValue(undefined);
+    const onQueueSend = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <ComposerPanel
+        capabilities={createCapabilities({ provider: "claude-code" })}
+        isSubmitting={false}
+        isRunning
+        onInterrupt={vi.fn()}
+        onQueueSend={onQueueSend}
+        onSend={onSend}
+      />
+    );
+
+    expect(screen.getByLabelText(t("conversation.capabilityInterrupt"))).toBeInTheDocument();
+    expect(screen.queryByLabelText(t("conversation.queueGuidanceButton"))).not.toBeInTheDocument();
+  });
+
+  it("Claude 运行中输入草稿后会切到加入队列按钮", async () => {
+    const onSend = vi.fn().mockResolvedValue(undefined);
+    const onQueueSend = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <ComposerPanel
+        capabilities={createCapabilities({ provider: "claude-code" })}
+        isSubmitting={false}
+        isRunning
+        onInterrupt={vi.fn()}
+        onQueueSend={onQueueSend}
+        onSend={onSend}
+      />
+    );
+
+    const textarea = screen.getByRole("textbox");
+    fireEvent.change(textarea, {
+      target: {
+        value: "这条默认应该排队"
+      }
+    });
+
+    expect(screen.getByLabelText(t("conversation.queueGuidanceButton"))).toBeInTheDocument();
+    expect(screen.queryByLabelText(t("conversation.capabilityInterrupt"))).not.toBeInTheDocument();
+
+    fireEvent.submit(document.querySelector(".composer-form")!);
+
+    await waitFor(() => {
+      expect(onQueueSend).toHaveBeenCalledTimes(1);
+    });
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("空闲但队列还有待发消息时，不显示未发送态按钮", () => {
+    render(
+      <ComposerPanel
+        capabilities={createCapabilities()}
+        hasPendingQueuedMessages
+        isSubmitting={false}
+        onSend={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    expect(screen.getByLabelText(t("conversation.sendingState"))).toBeInTheDocument();
+    expect(screen.queryByLabelText(t("conversation.sendButton"))).not.toBeInTheDocument();
+  });
+
   it("会在发送按钮旁显示当前上下文占用圆环", () => {
     const { container } = render(
       <ComposerPanel

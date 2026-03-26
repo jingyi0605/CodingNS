@@ -158,6 +158,30 @@ CREATE INDEX IF NOT EXISTS idx_session_message_attachments_message
 CREATE INDEX IF NOT EXISTS idx_session_message_attachments_client_request
   ON session_message_attachments(session_id, client_request_id);
 
+CREATE TABLE IF NOT EXISTS session_send_queue (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  content TEXT NOT NULL,
+  client_request_id TEXT,
+  model TEXT,
+  reasoning_level TEXT,
+  permission_mode TEXT,
+  status TEXT NOT NULL CHECK (status IN ('queued', 'dispatching', 'failed')),
+  order_index INTEGER NOT NULL,
+  error_detail TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  dispatched_at TEXT,
+  FOREIGN KEY (session_id) REFERENCES session_bindings(session_id),
+  FOREIGN KEY (user_id) REFERENCES auth_users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_send_queue_session_status
+  ON session_send_queue(session_id, status, order_index ASC);
+CREATE INDEX IF NOT EXISTS idx_session_send_queue_session_user
+  ON session_send_queue(session_id, user_id, order_index ASC);
+
 CREATE TABLE IF NOT EXISTS recent_files (
   id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL,
@@ -195,8 +219,8 @@ CREATE TABLE IF NOT EXISTS session_file_context_bindings (
 CREATE INDEX IF NOT EXISTS idx_session_file_context_bindings_session
   ON session_file_context_bindings(session_id, attached_at DESC);
 
--- 会话同步的硬边界：这里只允许索引、状态、映射和认证信息。
--- 不允许出现保存原始会话正文的 message/content/raw_body 之类表。
+-- 会话同步的硬边界：这里不保存 provider 原始历史正文。
+-- 允许保存项目内待发送队列正文，因为它属于本项目的发送控制面，不属于 provider 原始会话镜像。
 
 CREATE TABLE IF NOT EXISTS terminal_instances (
   id TEXT PRIMARY KEY,
@@ -205,6 +229,7 @@ CREATE TABLE IF NOT EXISTS terminal_instances (
   cwd TEXT NOT NULL,
   shell TEXT NOT NULL,
   status TEXT NOT NULL CHECK (status IN ('creating', 'running', 'closed', 'error')),
+  process_id INTEGER,
   created_by_user_id TEXT NOT NULL,
   created_at TEXT NOT NULL,
   last_active_at TEXT NOT NULL,

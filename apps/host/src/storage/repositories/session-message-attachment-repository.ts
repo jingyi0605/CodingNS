@@ -131,6 +131,45 @@ export class SessionMessageAttachmentRepository {
       )
       .run(messageId, sessionId, clientRequestId);
   }
+
+  listUnboundBySessionAndClientRequest(
+    sessionId: string,
+    clientRequestId: string
+  ): SessionMessageAttachmentRecord[] {
+    const rows = this.db
+      .prepare(
+        `SELECT
+           id,
+           session_id,
+           client_request_id,
+           message_id,
+           kind,
+           file_name,
+           mime_type,
+           file_size,
+           storage_path,
+           created_at
+         FROM session_message_attachments
+         WHERE session_id = ?
+           AND client_request_id = ?
+           AND message_id IS NULL
+         ORDER BY created_at ASC`
+      )
+      .all(sessionId, clientRequestId) as SessionMessageAttachmentRow[];
+
+    return rows.map(mapSessionMessageAttachmentRow);
+  }
+
+  deleteByIds(attachmentIds: string[]): void {
+    if (attachmentIds.length === 0) {
+      return;
+    }
+
+    const placeholders = attachmentIds.map(() => "?").join(", ");
+    this.db
+      .prepare(`DELETE FROM session_message_attachments WHERE id IN (${placeholders})`)
+      .run(...attachmentIds);
+  }
 }
 
 interface SessionMessageAttachmentRow {

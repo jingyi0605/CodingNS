@@ -5,6 +5,7 @@ import type {
   ImageAttachmentPayload,
   MessageAttachmentDto,
   ProviderCapabilitiesDto,
+  SessionQueueItemDto,
   SessionSummaryDto,
   ToolCallDto
 } from "../api/conversation-api";
@@ -34,6 +35,7 @@ export interface SessionRuntimeState {
   capabilities: ProviderCapabilitiesDto | null;
   contextUsage: ContextUsageDto | null;
   messages: SessionMessageViewModel[];
+  queuedMessages: SessionQueueItemDto[];
   historyState: RuntimeHistoryState;
   loadingOlderMessages: boolean;
   olderCursor: string | null;
@@ -46,13 +48,19 @@ export interface SessionRuntimeState {
 }
 
 export function createInitialRuntimeState(
-  seed?: Partial<Pick<SessionRuntimeState, "session" | "capabilities" | "contextUsage" | "messages">>
+  seed?: Partial<
+    Pick<
+      SessionRuntimeState,
+      "session" | "capabilities" | "contextUsage" | "messages" | "queuedMessages"
+    >
+  >
 ): SessionRuntimeState {
   return {
     session: seed?.session ?? null,
     capabilities: seed?.capabilities ?? null,
     contextUsage: seed?.contextUsage ?? null,
     messages: seed?.messages ?? [],
+    queuedMessages: seed?.queuedMessages ?? [],
     historyState: "idle",
     loadingOlderMessages: false,
     olderCursor: null,

@@ -8,7 +8,7 @@
   },
   "scripts": {
     "preinstall": "node scripts/check-node-version.cjs && node scripts/ensure-pnpm.cjs",
-    "postinstall": "echo '\n✅ 依赖安装完成！现在可以运行开发命令了。\n'",
+    "postinstall": "node scripts/fix-node-pty-helper-permissions.cjs && echo '\n✅ 依赖安装完成！现在可以运行开发命令了。\n'",
     "rebuild:native": "node scripts/rebuild-native-modules.cjs",
     "dev": "node scripts/show-dev-help.cjs",
     "dev:backend": "node scripts/dev-backend.cjs",

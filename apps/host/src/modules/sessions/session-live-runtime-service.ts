@@ -103,6 +103,10 @@ interface DeleteQueuedMessageResult {
   deleted: boolean;
 }
 
+interface SteerQueuedMessageResult extends LiveMessageAcceptedResult {
+  queueItemId: string;
+}
+
 export interface SessionRuntimeStatusView {
   sessionId: string;
   runningState: SessionRunningState | RuntimeRunState;
@@ -192,6 +196,7 @@ export class SessionLiveRuntimeService {
     Set<(envelope: SessionRuntimeEnvelope) => Promise<void> | void>
   >();
   private readonly queueDispatchSessions = new Set<string>();
+  private readonly queueRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(
     private readonly sessionHistoryService: SessionHistoryService,
@@ -308,7 +313,8 @@ export class SessionLiveRuntimeService {
   }
 
   async listQueuedMessages(sessionId: string, userId: string): Promise<SessionQueueItemView[]> {
-    this.sessionHistoryService.getSession(sessionId, userId);
+    const session = await this.resolveQueueDispatchSession(sessionId, userId);
+    this.maybeDispatchQueuedMessages(session);
 
     return this.sessionSendQueueRepository
       .listBySessionAndUser(sessionId, userId)
@@ -316,7 +322,7 @@ export class SessionLiveRuntimeService {
   }
 
   async enqueueLiveMessage(input: SendLiveMessageInput): Promise<SessionQueueItemView> {
-    this.sessionHistoryService.getSession(input.sessionId, input.userId);
+    const session = await this.resolveQueueDispatchSession(input.sessionId, input.userId);
     this.persistMessageAttachments(
       input.sessionId,
       input.clientRequestId,
@@ -342,8 +348,122 @@ export class SessionLiveRuntimeService {
 
     this.sessionSendQueueRepository.insert(queueItem);
 
-    void this.dispatchNextQueuedMessage(input.sessionId);
+    this.maybeDispatchQueuedMessages(session);
     return mapQueueItemRecordToView(queueItem);
+  }
+
+  async steerQueuedMessage(
+    sessionId: string,
+    userId: string,
+    queueItemId: string
+  ): Promise<SteerQueuedMessageResult> {
+    const session = await this.resolveQueueDispatchSession(sessionId, userId);
+    const queueItem = this.sessionSendQueueRepository.findBySessionUserAndId(
+      sessionId,
+      userId,
+      queueItemId
+    );
+
+    if (!queueItem) {
+      throw new AppError({
+        statusCode: 404,
+        errorCode: "QUEUE_ITEM_NOT_FOUND",
+        detail: "未找到对应的发送队列项",
+        field: "queueItemId"
+      });
+    }
+
+    if (queueItem.status !== "queued" && queueItem.status !== "failed") {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "QUEUE_ITEM_NOT_STEERABLE",
+        detail: "该队列项已经开始发送，当前不能再引导",
+        field: "queueItemId"
+      });
+    }
+
+    const runtimeSnapshot = this.providerRuntimeService.getSnapshot(sessionId);
+
+    if (!runtimeSnapshot || !isActiveRuntimeState(runtimeSnapshot.runningState)) {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "SESSION_NOT_RUNNING",
+        detail: "当前会话不在运行中，无法立刻引导这条消息",
+        field: "queueItemId"
+      });
+    }
+
+    const capabilities = await this.sessionHistoryService.getSessionCapabilities(sessionId);
+
+    if (capabilities.inRunInputMode === "none") {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "QUEUE_STEER_NOT_SUPPORTED",
+        detail: "当前 provider 不支持把等待消息立刻引导到正在运行的会话",
+        field: "queueItemId"
+      });
+    }
+
+    const dispatchStartedAt = nowIso();
+    const claimed = this.sessionSendQueueRepository.markDispatching(queueItem.id, dispatchStartedAt);
+
+    if (!claimed) {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "QUEUE_ITEM_NOT_STEERABLE",
+        detail: "该队列项状态已经变化，请刷新后重试",
+        field: "queueItemId"
+      });
+    }
+
+    const restoredAttachments = queueItem.clientRequestId
+      ? this.sessionMessageAttachmentService.getRuntimeAttachments(
+          sessionId,
+          queueItem.clientRequestId
+        )
+      : [];
+    const persistedAttachments: PersistedAttachmentBundle = {
+      messageAttachments: restoredAttachments,
+      runtimeAttachments: restoredAttachments
+    };
+
+    try {
+      const result = await this.sendLiveMessageDirect(
+        {
+          sessionId,
+          userId,
+          content: queueItem.content,
+          clientRequestId: queueItem.clientRequestId,
+          runtimeOptions: {
+            model: queueItem.model,
+            reasoningLevel: queueItem.reasoningLevel,
+            permissionMode: queueItem.permissionMode,
+            attachments: []
+          }
+        },
+        persistedAttachments
+      );
+      this.sessionSendQueueRepository.delete(queueItem.id);
+
+      return {
+        ...result,
+        queueItemId: queueItem.id,
+        session
+      };
+    } catch (error) {
+      if (isQueueDispatchDeferredError(error)) {
+        this.sessionSendQueueRepository.markQueued(queueItem.id, nowIso());
+        this.scheduleQueueRetry(sessionId);
+      } else {
+        this.sessionSendQueueRepository.markFailed(
+          queueItem.id,
+          error instanceof Error ? error.message : "QUEUE_STEER_FAILED",
+          nowIso()
+        );
+      }
+
+      throw error;
+    }
   }
 
   async deleteQueuedMessage(
@@ -479,6 +599,7 @@ export class SessionLiveRuntimeService {
     const session = runtimeSnapshot || externalRuntimeSnapshot
       ? this.sessionHistoryService.getSession(sessionId, userId)
       : await this.sessionHistoryService.refreshRuntimeFallbackSession(sessionId, userId);
+    this.maybeDispatchQueuedMessages(session);
     const capabilities = await this.sessionHistoryService.getSessionCapabilities(sessionId);
     const contextUsage = await this.sessionHistoryService.getSessionContextUsage(sessionId).catch(() => null);
 
@@ -624,6 +745,10 @@ export class SessionLiveRuntimeService {
   }
 
   async dispose(): Promise<void> {
+    this.queueRetryTimers.forEach((timer) => {
+      clearTimeout(timer);
+    });
+    this.queueRetryTimers.clear();
     await this.providerRuntimeService.dispose();
     this.externalRuntimeSnapshots.clear();
     this.runtimeListeners.clear();
@@ -972,7 +1097,13 @@ export class SessionLiveRuntimeService {
     this.queueDispatchSessions.add(sessionId);
 
     try {
-      if (this.hasActiveRuntime(sessionId)) {
+      const runtimeSnapshot = this.providerRuntimeService.getSnapshot(sessionId);
+      const externalRuntimeSnapshot = this.externalRuntimeSnapshots.get(sessionId);
+
+      if (
+        (runtimeSnapshot && isActiveRuntimeState(runtimeSnapshot.runningState))
+        || (externalRuntimeSnapshot && isActiveRuntimeState(externalRuntimeSnapshot.runningState))
+      ) {
         return;
       }
 
@@ -992,8 +1123,11 @@ export class SessionLiveRuntimeService {
         return;
       }
 
-      if (this.hasActiveRuntime(sessionId)) {
+      const session = await this.findSessionForQueueDispatch(nextQueueItem);
+
+      if (session && this.shouldBlockQueueDispatch(session)) {
         this.sessionSendQueueRepository.markQueued(nextQueueItem.id, nowIso());
+        this.scheduleQueueRetry(sessionId);
         return;
       }
 
@@ -1026,6 +1160,12 @@ export class SessionLiveRuntimeService {
         );
         this.sessionSendQueueRepository.delete(nextQueueItem.id);
       } catch (error) {
+        if (isQueueDispatchDeferredError(error)) {
+          this.sessionSendQueueRepository.markQueued(nextQueueItem.id, nowIso());
+          this.scheduleQueueRetry(sessionId);
+          return;
+        }
+
         this.sessionSendQueueRepository.markFailed(
           nextQueueItem.id,
           error instanceof Error ? error.message : "QUEUE_DISPATCH_FAILED",
@@ -1037,15 +1177,89 @@ export class SessionLiveRuntimeService {
     }
   }
 
-  private hasActiveRuntime(sessionId: string): boolean {
-    const activeRun = this.providerRuntimeService.getSnapshot(sessionId);
+  private maybeDispatchQueuedMessages(session: Pick<SessionListItem, "sessionId" | "provider" | "runningState">): void {
+    if (this.shouldBlockQueueDispatch(session)) {
+      return;
+    }
 
-    if (activeRun && isActiveRuntimeState(activeRun.runningState)) {
+    void this.dispatchNextQueuedMessage(session.sessionId);
+  }
+
+  private shouldBlockQueueDispatch(
+    session: Pick<SessionListItem, "sessionId" | "provider" | "runningState">
+  ): boolean {
+    const runtimeSnapshot = this.providerRuntimeService.getSnapshot(session.sessionId);
+
+    if (runtimeSnapshot && isActiveRuntimeState(runtimeSnapshot.runningState)) {
       return true;
     }
 
+    const externalRuntimeSnapshot = this.externalRuntimeSnapshots.get(session.sessionId);
+
+    if (externalRuntimeSnapshot && isActiveRuntimeState(externalRuntimeSnapshot.runningState)) {
+      return true;
+    }
+
+    if (session.provider === "claude-code" && isPendingSessionRunningState(session.runningState)) {
+      return true;
+    }
+
+    return false;
+  }
+
+  private scheduleQueueRetry(sessionId: string): void {
+    if (this.queueRetryTimers.has(sessionId)) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      this.queueRetryTimers.delete(sessionId);
+      void this.dispatchNextQueuedMessage(sessionId);
+    }, 1200);
+
+    this.queueRetryTimers.set(sessionId, timer);
+  }
+
+  private async findSessionForQueueDispatch(
+    queueItem: Pick<SessionSendQueueItemRecord, "sessionId" | "userId"> | null
+  ): Promise<SessionListItem | null> {
+    if (!queueItem) {
+      return null;
+    }
+
+    try {
+      return await this.resolveQueueDispatchSession(queueItem.sessionId, queueItem.userId);
+    } catch {
+      return null;
+    }
+  }
+
+  private async resolveQueueDispatchSession(
+    sessionId: string,
+    userId: string
+  ): Promise<SessionListItem> {
+    const session = this.sessionHistoryService.getSession(sessionId, userId);
+
+    if (
+      session.provider !== "claude-code"
+      || !isPendingSessionRunningState(session.runningState)
+    ) {
+      return session;
+    }
+
+    const runtimeSnapshot = this.providerRuntimeService.getSnapshot(sessionId);
     const externalRuntimeSnapshot = this.externalRuntimeSnapshots.get(sessionId);
-    return externalRuntimeSnapshot ? isActiveRuntimeState(externalRuntimeSnapshot.runningState) : false;
+
+    if (
+      (runtimeSnapshot && isActiveRuntimeState(runtimeSnapshot.runningState))
+      || (externalRuntimeSnapshot && isActiveRuntimeState(externalRuntimeSnapshot.runningState))
+    ) {
+      return session;
+    }
+
+    return Promise.resolve(this.sessionHistoryService.refreshRuntimeFallbackSession(sessionId, userId))
+      .then((refreshedSession) => refreshedSession ?? session)
+      .catch(() => session);
   }
 
   private async launchRuntimeRun(
@@ -1509,6 +1723,24 @@ function isTerminalRuntimeEventStatus(
   status: RuntimeEvent["status"]
 ): status is "completed" | "interrupted" | "failed" {
   return status === "completed" || status === "interrupted" || status === "failed";
+}
+
+function isPendingSessionRunningState(
+  state: SessionRunningState | RuntimeRunState | null | undefined
+): boolean {
+  return state === "starting" || state === "running";
+}
+
+function isQueueDispatchDeferredError(error: unknown): boolean {
+  if (error instanceof AppError) {
+    return error.errorCode === "ACTIVE_RUN_EXISTS" || error.errorCode === "SESSION_NOT_RUNNING";
+  }
+
+  if (error instanceof Error) {
+    return error.message === "ACTIVE_RUN_EXISTS";
+  }
+
+  return false;
 }
 
 function mapQueueItemRecordToView(record: SessionSendQueueItemRecord): SessionQueueItemView {

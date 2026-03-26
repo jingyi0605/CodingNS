@@ -4077,61 +4077,63 @@ textarea:focus-visible {
 .queued-message-list {
   position: relative;
   z-index: 1;
-  margin: 0 12px 8px;
-  padding: 14px;
-  border: 1px solid color-mix(in srgb, var(--border-primary) 78%, transparent);
-  border-radius: 18px;
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 94%, transparent), color-mix(in srgb, var(--bg-primary) 98%, transparent));
-  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.05);
-}
-
-.queued-message-list__header h2,
-.queued-message-list__header p {
-  margin: 0;
+  margin: 0 12px 6px;
+  padding: 6px 10px 8px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 72%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--bg-surface) 92%, transparent);
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.04);
 }
 
 .queued-message-list__header h2 {
-  font-size: 14px;
-}
-
-.queued-message-list__header p {
-  margin-top: 4px;
+  margin: 0;
   font-size: 12px;
+  font-weight: 600;
   color: var(--text-secondary);
 }
 
 .queued-message-list__items {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  margin-top: 12px;
+  gap: 6px;
+  margin-top: 6px;
 }
 
 .queued-message-item {
-  padding: 12px;
-  border-radius: 16px;
-  border: 1px solid color-mix(in srgb, var(--border-primary) 82%, transparent);
-  background: color-mix(in srgb, var(--bg-hover) 74%, transparent);
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 78%, transparent);
+  background: color-mix(in srgb, var(--bg-hover) 66%, transparent);
 }
 
-.queued-message-item__meta {
-  display: flex;
+.queued-message-item__main {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto auto;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  font-size: 12px;
+  gap: 8px;
 }
 
 .queued-message-item__order {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-active) 76%, transparent);
   color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
 }
 
 .queued-message-item__status {
-  padding: 2px 8px;
+  flex-shrink: 0;
+  padding: 2px 7px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   color: var(--accent);
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 .queued-message-item__status--failed {
@@ -4139,31 +4141,71 @@ textarea:focus-visible {
   color: var(--status-danger);
 }
 
-.queued-message-item__content,
-.queued-message-item__error {
-  margin: 8px 0 0;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
 .queued-message-item__content {
-  font-size: 13px;
+  margin: 0;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.queued-message-item__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
 .queued-message-item__error {
-  font-size: 12px;
+  margin: 6px 0 0 30px;
+  font-size: 11px;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--status-danger);
 }
 
-.queued-message-item__delete {
-  margin-top: 10px;
+.queued-message-item__action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 22px;
   padding: 0;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 76%, transparent);
+  background: color-mix(in srgb, var(--bg-surface) 92%, transparent);
   color: var(--text-secondary);
-  font-size: 12px;
+  line-height: 1;
+  transition:
+    border-color var(--transition-fast),
+    background var(--transition-fast),
+    color var(--transition-fast),
+    opacity var(--transition-fast);
 }
 
-.queued-message-item__delete:disabled {
+.queued-message-item__action:disabled {
   opacity: 0.6;
+  cursor: default;
+}
+
+.queued-message-item__action:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--bg-active) 78%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--border-primary));
+  color: var(--accent);
+}
+
+.queued-message-item__action--steer {
+  padding: 0 9px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.queued-message-item__action--delete {
+  width: 22px;
+  font-size: 16px;
 }
 
 .message-list {

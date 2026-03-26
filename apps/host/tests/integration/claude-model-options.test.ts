@@ -49,6 +49,7 @@ describe("enrichClaudeCapabilities", () => {
           canStartSession: true,
           canResumeSession: true,
           canSendMessage: true,
+          inRunInputMode: "streaming_guidance",
           supportsSubagents: true,
           supportsInterrupt: false,
           supportsStructuredToolCalls: true,

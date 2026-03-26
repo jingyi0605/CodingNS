@@ -679,7 +679,10 @@ export class CodexAdapter implements ProviderAdapter {
       supportsAttachments: true,
       supportsPermissionPrompt: true,
       supportsCheckpoint: false,
-      limitations: ["当前实现只维护原生会话文件，不负责直接驱动 Codex CLI 进程执行。"]
+      limitations: [
+        "Codex 产品原生支持将指导加入队列，但当前 SDK 0.116.0 仍未向宿主暴露运行中 queue/steer 提交入口。",
+        "当前实现只维护原生会话文件，不负责直接驱动 Codex CLI 进程执行。"
+      ]
     };
   }
 

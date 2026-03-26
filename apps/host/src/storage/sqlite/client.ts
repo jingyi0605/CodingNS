@@ -21,6 +21,7 @@ export function createDatabaseClient(databasePath: string): DatabaseClient {
   ensureSessionStateSchema(db);
   ensureSessionIndexArchiveColumn(db);
   ensureSessionChangedFileTables(db);
+  ensureTerminalInstanceProcessIdColumn(db);
   ensureTerminalCommandTemplatePortColumn(db);
 
   return {
@@ -158,4 +159,16 @@ function ensureTerminalCommandTemplatePortColumn(db: Database.Database): void {
   }
 
   db.exec("ALTER TABLE terminal_command_templates ADD COLUMN port INTEGER");
+}
+
+function ensureTerminalInstanceProcessIdColumn(db: Database.Database): void {
+  const columns = db
+    .prepare("PRAGMA table_info(terminal_instances)")
+    .all() as Array<{ name: string }>;
+
+  if (columns.some((column) => column.name === "process_id")) {
+    return;
+  }
+
+  db.exec("ALTER TABLE terminal_instances ADD COLUMN process_id INTEGER");
 }

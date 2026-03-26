@@ -226,6 +226,17 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
     });
 
     const completedPromise = new Promise<void>((resolve) => {
+      const shutdownProcessAfterTurn = () => {
+        stdinClosed = true;
+
+        if (!proc.stdin.destroyed) {
+          proc.stdin.end();
+        }
+
+        if (!proc.killed) {
+          proc.kill("SIGTERM");
+        }
+      };
       const emitRuntimeError = async (detail: string, errorCode = "CLAUDE_RUNTIME_ERROR") => {
         if (completed) {
           return;
@@ -258,6 +269,24 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
           detail
         });
       };
+      const handleControlLine = (parsed: Record<string, unknown>) => {
+        const result = readClaudeResultOutcome(parsed);
+
+        if (!result) {
+          return false;
+        }
+
+        const settle = result.kind === "complete"
+          ? emitRuntimeComplete("complete", result.detail)
+          : emitRuntimeError(result.detail, result.errorCode);
+
+        void settle.finally(() => {
+          shutdownProcessAfterTurn();
+          resolve();
+        });
+
+        return true;
+      };
 
       proc.stdout.setEncoding("utf8");
       proc.stdout.on("data", (chunk: string) => {
@@ -274,6 +303,7 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
 
           void this.consumeStreamLine({
             line: trimmed,
+            onParsed: handleControlLine,
             refreshBinding,
             sink,
             sequenceRef: () => {
@@ -355,6 +385,7 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
 
   private async consumeStreamLine(input: {
     line: string;
+    onParsed: (parsed: Record<string, unknown>) => boolean;
     refreshBinding: (parsed?: Record<string, unknown>) => {
       providerSessionId: string;
       rawStoreRef: string;
@@ -368,6 +399,10 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
     try {
       parsed = JSON.parse(input.line) as Record<string, unknown>;
     } catch {
+      return;
+    }
+
+    if (input.onParsed(parsed)) {
       return;
     }
 
@@ -656,6 +691,47 @@ function ensureNonEmpty(value: string | null, errorCode: string): string {
   }
 
   return value.trim();
+}
+
+function readClaudeResultOutcome(record: Record<string, unknown>):
+  | {
+      kind: "complete";
+      detail: string;
+    }
+  | {
+      kind: "error";
+      detail: string;
+      errorCode: string;
+    }
+  | null {
+  if (ensureText(record.type).trim() !== "result") {
+    return null;
+  }
+
+  const subtype = ensureText(record.subtype).trim().toLowerCase();
+  const stopReason = ensureText(record.stop_reason).trim();
+  const resultRecord = ((record.result ?? {}) as Record<string, unknown>);
+  const nestedStopReason = ensureText(resultRecord.stop_reason).trim();
+  const detailCandidate =
+    ensureText(record.error).trim()
+    || ensureText(record.message).trim()
+    || ensureText(resultRecord.error).trim()
+    || ensureText(resultRecord.message).trim()
+    || stopReason
+    || nestedStopReason;
+
+  if (!subtype || subtype === "success" || subtype === "completed") {
+    return {
+      kind: "complete",
+      detail: detailCandidate || "claude turn completed"
+    };
+  }
+
+  return {
+    kind: "error",
+    detail: detailCandidate || `claude result ${subtype}`,
+    errorCode: `CLAUDE_RESULT_${subtype.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}`
+  };
 }
 
 function collectMessageEnvelopes(record: Record<string, unknown>): ClaudeMessageEnvelope[] {

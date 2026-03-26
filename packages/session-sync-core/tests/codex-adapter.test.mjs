@@ -7,6 +7,19 @@ import { DatabaseSync } from "node:sqlite";
 
 import { CodexAdapter } from "../dist/index.js";
 
+test("CodexAdapter 会如实声明 queued guidance 的产品语义与当前 SDK 接入限制", async () => {
+  const adapter = new CodexAdapter({ homeDir: "/tmp/codingns-codex-capabilities" });
+  const capabilities = adapter.getProviderCapabilities();
+
+  assert.equal(capabilities.inRunInputMode, "none");
+  assert.equal(
+    capabilities.limitations.some(
+      (item) => item.includes("加入队列") && item.includes("SDK 0.116.0")
+    ),
+    true
+  );
+});
+
 test("CodexAdapter 会优先保留 response_item，并忽略末尾空白差异导致的重复消息", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-adapter-"));
   const sessionFile = join(tempDir, "session.jsonl");

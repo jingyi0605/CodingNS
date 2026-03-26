@@ -70,7 +70,7 @@ class HttpClient {
     }
 
     if (!response.ok) {
-      const payload = (await response.json()) as ApiErrorPayload;
+      const payload = await parseApiErrorPayload(response);
 
       if (
         response.status === 401 &&
@@ -101,3 +101,37 @@ class HttpClient {
 }
 
 export const httpClient = new HttpClient();
+
+async function parseApiErrorPayload(response: Response): Promise<ApiErrorPayload> {
+  const raw = await response.text();
+
+  if (!raw) {
+    return buildFallbackApiErrorPayload(response.status);
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as Partial<ApiErrorPayload>;
+
+    if (typeof parsed.detail === "string" && typeof parsed.error_code === "string") {
+      return {
+        detail: parsed.detail,
+        error_code: parsed.error_code,
+        field: typeof parsed.field === "string" ? parsed.field : undefined,
+        timestamp: typeof parsed.timestamp === "string" ? parsed.timestamp : undefined
+      };
+    }
+  } catch {
+    // 代理层或上游服务偶尔会返回纯文本，这里退回到可读错误即可。
+  }
+
+  return buildFallbackApiErrorPayload(response.status, raw);
+}
+
+function buildFallbackApiErrorPayload(status: number, rawDetail?: string): ApiErrorPayload {
+  const normalizedDetail = rawDetail?.trim();
+
+  return {
+    detail: normalizedDetail || `请求失败（HTTP ${status}）`,
+    error_code: status === 401 ? "UNAUTHORIZED" : "HTTP_ERROR"
+  };
+}

@@ -14,9 +14,19 @@ import type {
 interface ComposerPanelProps {
   capabilities: ProviderCapabilitiesDto | null;
   contextUsage?: ContextUsageDto | null;
+  hasPendingQueuedMessages?: boolean;
   isSubmitting: boolean;
   isRunning?: boolean;
   onInterrupt?: () => Promise<void> | void;
+  onQueueSend?: (
+    content: string,
+    options?: {
+      model?: string;
+      reasoningLevel?: string;
+      attachments?: ImageAttachmentPayload[];
+      attachmentMeta?: MessageAttachmentDto[];
+    }
+  ) => Promise<void>;
   onSend: (
     content: string,
     options?: {
@@ -166,9 +176,11 @@ function mergeImageAttachments(
 export function ComposerPanel({
   capabilities,
   contextUsage = null,
+  hasPendingQueuedMessages = false,
   isSubmitting,
   isRunning = false,
   onInterrupt,
+  onQueueSend,
   onSend
 }: ComposerPanelProps) {
   const [content, setContent] = useState("");
@@ -249,14 +261,29 @@ export function ComposerPanel({
     ],
     []
   );
-  const interactionActive = localSubmitting || isSubmitting || isRunning;
-  const interactionLabel = interactionActive
-    ? localSubmitting || isSubmitting
-      ? t("conversation.sendingState")
-      : t("conversation.runtimeRunning")
-    : null;
+  const inRunInputMode = capabilities?.inRunInputMode ?? "none";
+  const canSendDuringRun = isRunning && inRunInputMode !== "none";
+  const canQueueDuringRun = isRunning && typeof onQueueSend === "function";
+  const inRunSendBlocked = isRunning && !canSendDuringRun && !canQueueDuringRun;
+  const hasDraft = content.trim().length > 0 || attachments.length > 0;
   const canInterruptNow =
     isRunning && interruptDecision.allowed && Boolean(onInterrupt) && !interrupting;
+  // 按钮只保留一个主状态：运行中优先显示停止；只有用户已经写了新内容，才切到可发送态。
+  const showInterruptButton =
+    canInterruptNow && !hasDraft && !localSubmitting && !isSubmitting;
+  const showBusyButton =
+    !showInterruptButton &&
+    !hasDraft &&
+    (localSubmitting || isSubmitting || (!isRunning && hasPendingQueuedMessages));
+  const busyButtonLabel =
+    localSubmitting || isSubmitting || hasPendingQueuedMessages
+      ? t("conversation.sendingState")
+      : t("conversation.runtimeRunning");
+  const sendButtonLabel = isRunning
+    ? canQueueDuringRun || inRunInputMode === "queued_guidance"
+        ? t("conversation.queueGuidanceButton")
+        : t("conversation.sendButton")
+    : t("conversation.sendButton");
 
   const handleModelChange = useCallback((modelId: string) => {
     setSelectedModel(modelId);
@@ -451,9 +478,7 @@ export function ComposerPanel({
     };
   }, []);
 
-  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
+  async function submitMessage(mode: "send" | "queue"): Promise<void> {
     // 发送状态依赖父组件异步回流，这里额外加一层同步锁，防止双击和连按 Enter。
     if (submitLockRef.current) {
       return;
@@ -462,9 +487,11 @@ export function ComposerPanel({
     const nextContent = content.trim();
     const nextAttachments = attachments;
 
-    if ((nextContent.length === 0 && nextAttachments.length === 0) || !sendDecision.allowed) {
+    if ((nextContent.length === 0 && nextAttachments.length === 0) || !sendDecision.allowed || inRunSendBlocked) {
       showToast({
-        title: sendDecision.reason ?? t("conversation.capabilityDenied"),
+        title: inRunSendBlocked
+          ? t("conversation.runtimeRunning")
+          : sendDecision.reason ?? t("conversation.capabilityDenied"),
         tone: "error"
       });
       return;
@@ -489,7 +516,14 @@ export function ComposerPanel({
         toAttachmentMeta(attachment.file, attachment.id)
       );
 
-      await onSend(nextContent, {
+      const sendHandler =
+        mode === "queue" && onQueueSend
+          ? onQueueSend
+          : isRunning && canQueueDuringRun
+            ? onQueueSend!
+            : onSend;
+
+      await sendHandler(nextContent, {
         model: selectedModelOption?.usesProviderDefault ? undefined : selectedModel || undefined,
         reasoningLevel:
           provider === "codex" && availableReasoningLevels.length > 0 ? reasoningLevel : undefined,
@@ -519,6 +553,11 @@ export function ComposerPanel({
     }
   }
 
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await submitMessage(isRunning && canQueueDuringRun ? "queue" : "send");
+  }
+
   async function handleInterrupt(): Promise<void> {
     if (!interruptDecision.allowed || !onInterrupt || interrupting) {
       return;
@@ -538,9 +577,11 @@ export function ComposerPanel({
   }
 
   const isDisabled =
-    interactionActive ||
+    localSubmitting ||
+    isSubmitting ||
+    inRunSendBlocked ||
     !sendDecision.allowed ||
-    (content.trim().length === 0 && attachments.length === 0);
+    !hasDraft;
 
   return (
     <section className="composer-panel">
@@ -594,10 +635,16 @@ export function ComposerPanel({
               className="composer-input"
               value={content}
               placeholder={t("conversation.composerPlaceholder")}
+              readOnly={inRunSendBlocked}
+              aria-readonly={inRunSendBlocked}
               onChange={(event) => setContent(event.target.value)}
               rows={1}
               onFocus={() => setShowSlashMenu(false)}
               onPaste={(event) => {
+                if (inRunSendBlocked) {
+                  return;
+                }
+
                 if (!attachmentDecision.allowed) {
                   return;
                 }
@@ -717,7 +764,7 @@ export function ComposerPanel({
                 className="composer-attach-btn"
                 onClick={openFilePicker}
                 title={`${t("conversation.attachFiles")} · ${t("conversation.pasteImagesHint")}`}
-                disabled={!attachmentDecision.allowed}
+                disabled={!attachmentDecision.allowed || inRunSendBlocked}
               >
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <line x1="12" y1="5" x2="12" y2="19" />
@@ -728,57 +775,63 @@ export function ComposerPanel({
               <ContextUsageRing contextUsage={contextUsage} />
             </div>
 
-            {interactionActive ? (
+            {showBusyButton ? (
               <div className="composer-send-group">
                 <button
                   className="composer-send composer-send-busy"
                   type="button"
-                  onClick={() => {
-                    if (canInterruptNow) {
-                      void handleInterrupt();
-                    }
-                  }}
-                  disabled={!canInterruptNow}
-                  aria-label={canInterruptNow ? t("conversation.capabilityInterrupt") : interactionLabel ?? t("conversation.sendingState")}
-                  title={canInterruptNow ? t("conversation.capabilityInterrupt") : interactionLabel ?? t("conversation.sendingState")}
+                  disabled
+                  aria-label={busyButtonLabel}
+                  title={busyButtonLabel}
                 >
-                  {canInterruptNow ? (
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                      <rect x="6" y="6" width="12" height="12" />
-                    </svg>
-                  ) : (
-                    <svg className="composer-send-spinner" width="18" height="18" viewBox="0 0 24 24" fill="none">
-                      <circle
-                        cx="12"
-                        cy="12"
-                        r="8"
-                        stroke="currentColor"
-                        strokeOpacity="0.28"
-                        strokeWidth="2.5"
-                      />
-                      <path
-                        d="M20 12a8 8 0 0 0-8-8"
-                        stroke="currentColor"
-                        strokeWidth="2.5"
-                        strokeLinecap="round"
-                      />
-                    </svg>
-                  )}
+                  <svg className="composer-send-spinner" width="18" height="18" viewBox="0 0 24 24" fill="none">
+                    <circle
+                      cx="12"
+                      cy="12"
+                      r="8"
+                      stroke="currentColor"
+                      strokeOpacity="0.28"
+                      strokeWidth="2.5"
+                    />
+                    <path
+                      d="M20 12a8 8 0 0 0-8-8"
+                      stroke="currentColor"
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                    />
+                  </svg>
                 </button>
               </div>
             ) : (
               <div className="composer-send-group">
-                <button
-                  className="composer-send"
-                  type="submit"
-                  disabled={isDisabled}
-                  aria-label={t("conversation.sendButton")}
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                    <line x1="22" y1="2" x2="11" y2="13" />
-                    <polygon points="22 2 15 22 11 13 2 9 22 2" />
-                  </svg>
-                </button>
+                {showInterruptButton ? (
+                  <button
+                    className="composer-send composer-send-busy"
+                    type="button"
+                    onClick={() => {
+                      void handleInterrupt();
+                    }}
+                    aria-label={t("conversation.capabilityInterrupt")}
+                    title={t("conversation.capabilityInterrupt")}
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <rect x="6" y="6" width="12" height="12" />
+                    </svg>
+                  </button>
+                ) : (
+                  <button
+                    className="composer-send"
+                    type="submit"
+                    disabled={isDisabled}
+                    aria-label={sendButtonLabel}
+                    title={sendButtonLabel}
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <line x1="22" y1="2" x2="11" y2="13" />
+                      <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                    </svg>
+                  </button>
+                )}
               </div>
             )}
           </div>

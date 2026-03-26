@@ -21,6 +21,7 @@ import {
   type MessageAttachmentDto,
   sendSessionMessage,
   sendLiveMessage,
+  steerSessionQueueItem,
   type ImageAttachmentPayload,
   type HistoryMessageDto,
   type ProviderCapabilitiesDto,
@@ -306,6 +307,11 @@ export class SessionRuntimeStore {
     await this.refreshQueue();
   }
 
+  async steerQueuedMessage(queueItemId: string): Promise<void> {
+    await steerSessionQueueItem(this.sessionId, queueItemId);
+    await this.refreshRuntimeSnapshot("queue_steer");
+  }
+
   async interrupt(): Promise<void> {
     await interruptSession(this.sessionId);
     this.patch({
@@ -451,6 +457,10 @@ export class SessionRuntimeStore {
         });
         this.realtimeClient?.updateCursor(event.cursor);
         this.scheduleMarkSeen();
+
+        if (this.state.queuedMessages.length > 0) {
+          void this.refreshQueue();
+        }
       },
       onRuntimeStatus: (event) => {
         this.handleRuntimeStatus(event);
@@ -633,6 +643,7 @@ export class SessionRuntimeStore {
         errorCode: runtimeError.errorCode,
         errorDetail: runtimeError.errorDetail
       });
+      await this.refreshQueue();
 
       if (this.state.connectionState !== "connected") {
         await this.loadLatestHistory().catch(() => {
@@ -743,6 +754,7 @@ export class SessionRuntimeStore {
         errorCode: runtimeError.errorCode,
         errorDetail: runtimeError.errorDetail
       });
+      await this.refreshQueue();
 
       logPerfDebug("session_runtime.snapshot.end", {
         sessionId: this.sessionId,

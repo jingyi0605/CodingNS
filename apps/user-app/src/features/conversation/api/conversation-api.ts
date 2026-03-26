@@ -474,6 +474,15 @@ export function deleteSessionQueueItem(sessionId: string, queueItemId: string) {
   );
 }
 
+export function steerSessionQueueItem(sessionId: string, queueItemId: string) {
+  return httpClient.request<StartLiveResponseDto>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/queue/${encodeURIComponent(queueItemId)}/steer`,
+    {
+      method: "POST"
+    }
+  );
+}
+
 export function getSessionRuntime(sessionId: string) {
   return httpClient.request<SessionRuntimeDto>(
     `/api/sessions/${encodeURIComponent(sessionId)}/runtime`

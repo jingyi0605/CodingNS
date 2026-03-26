@@ -17,6 +17,10 @@ interface SessionAttachmentParams extends SessionParams {
   attachmentId: string;
 }
 
+interface SessionQueueItemParams extends SessionParams {
+  queueItemId: string;
+}
+
 interface SessionMessagesQuery {
   cursor?: string;
   limit?: string;
@@ -39,6 +43,7 @@ interface AttachmentsBody {
 }
 
 interface SendLiveMessageBody extends SendMessageBody, RuntimeOptionsBody, AttachmentsBody {}
+interface EnqueueLiveMessageBody extends SendLiveMessageBody {}
 
 interface StartSessionBody {
   workspaceId?: string;
@@ -271,6 +276,18 @@ export class SessionController {
     reply.send(await this.sessionHistoryService.getSessionCapabilities(request.params.sessionId));
   };
 
+  readonly listQueue = async (
+    request: FastifyRequest<{ Params: SessionParams }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send({
+      items: await this.sessionLiveRuntimeService.listQueuedMessages(
+        request.params.sessionId,
+        requireUserId(request)
+      )
+    });
+  };
+
   readonly resume = async (
     request: FastifyRequest<{ Params: SessionParams }>,
     reply: FastifyReply
@@ -446,6 +463,41 @@ export class SessionController {
     );
   };
 
+  readonly enqueueLiveMessage = async (
+    request: FastifyRequest<{ Params: SessionParams; Body: EnqueueLiveMessageBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    const attachments = normalizeAttachments(request.body);
+    const content = requireMessageContentOrAttachments(
+      request.body.content,
+      attachments,
+      "content",
+      "queue 必须提供 content"
+    );
+    const clientRequestId = requireClientRequestIdForAttachments(
+      request.body.clientRequestId,
+      attachments
+    );
+    const runtimeOptions = normalizeRuntimeOptions(request.body);
+
+    reply.status(202).send(
+      await this.sessionLiveRuntimeService.enqueueLiveMessage({
+        sessionId: request.params.sessionId,
+        userId: requireUserId(request),
+        content,
+        clientRequestId,
+        runtimeOptions: runtimeOptions
+          ? {
+              ...runtimeOptions,
+              attachments
+            }
+          : {
+              attachments
+            }
+      })
+    );
+  };
+
   readonly getRuntime = async (
     request: FastifyRequest<{ Params: SessionParams }>,
     reply: FastifyReply
@@ -466,6 +518,31 @@ export class SessionController {
       await this.sessionLiveRuntimeService.interruptSession(
         request.params.sessionId,
         requireUserId(request)
+      )
+    );
+  };
+
+  readonly deleteQueuedMessage = async (
+    request: FastifyRequest<{ Params: SessionQueueItemParams }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    await this.sessionLiveRuntimeService.deleteQueuedMessage(
+      request.params.sessionId,
+      requireUserId(request),
+      request.params.queueItemId
+    );
+    reply.status(204).send();
+  };
+
+  readonly steerQueuedMessage = async (
+    request: FastifyRequest<{ Params: SessionQueueItemParams }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.status(202).send(
+      await this.sessionLiveRuntimeService.steerQueuedMessage(
+        request.params.sessionId,
+        requireUserId(request),
+        request.params.queueItemId
       )
     );
   };

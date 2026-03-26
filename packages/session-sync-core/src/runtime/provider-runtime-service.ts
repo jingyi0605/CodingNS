@@ -5,6 +5,7 @@ import type {
   ActiveRunSnapshot,
   ProviderRuntimeAdapter,
   ProviderRuntimeRunRequest,
+  RuntimeSendOptions,
   RuntimeEventListener
 } from "./types.js";
 
@@ -60,6 +61,20 @@ export class ProviderRuntimeService {
     return handle.getSnapshot();
   }
 
+  async submitToActiveRun(
+    sessionId: string,
+    options: RuntimeSendOptions
+  ): Promise<ActiveRunSnapshot> {
+    const handle = this.handles.get(sessionId);
+
+    if (!handle) {
+      throw new Error("ACTIVE_RUN_NOT_FOUND");
+    }
+
+    await handle.submitDuringRun(options);
+    return handle.getSnapshot();
+  }
+
   async dispose(): Promise<void> {
     const handles = [...this.handles.values()];
 
@@ -108,6 +123,7 @@ export class ProviderRuntimeService {
         rawStoreRef: launch.rawStoreRef
       });
       handle.setInterruptHandler(launch.interrupt ?? null);
+      handle.setInRunInputHandler(launch.submitDuringRun ?? null);
 
       await handle.emit({
         type: "session_created",

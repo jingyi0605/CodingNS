@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { SessionLiveRuntimeService } from "../../src/modules/sessions/session-live-runtime-service.js";
 
@@ -105,6 +105,10 @@ function createService() {
 }
 
 describe("SessionLiveRuntimeService", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("sendLiveMessage 在 active run 存在时会优先走 submitToActiveRun", async () => {
     const { service, sessionHistoryService, sessionMessageAttachmentService, workspaceService } =
       createService();
@@ -352,6 +356,29 @@ describe("SessionLiveRuntimeService", () => {
     expect(providerRuntimeService.getSnapshot).toHaveBeenCalledWith("session-1");
   });
 
+  it("Claude 会话仍标记为运行中时，加入队列不会立刻偷发", async () => {
+    const { service, sessionHistoryService, sessionSendQueueRepository } = createService();
+
+    sessionHistoryService.getSession.mockReturnValue({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      providerSessionId: "claude-session-1",
+      rawStoreRef: "/tmp/.claude/projects/workspace/claude-session-1.jsonl",
+      messageCount: 3,
+      runningState: "running"
+    });
+
+    await service.enqueueLiveMessage({
+      sessionId: "session-1",
+      userId: "user-1",
+      content: "排队给 Claude",
+      clientRequestId: "client-queue-claude"
+    });
+
+    expect(sessionSendQueueRepository.markDispatching).not.toHaveBeenCalled();
+  });
+
   it("dispatchNextQueuedMessage 会在空闲时自动发送下一条并删除队列项", async () => {
     const {
       service,
@@ -403,6 +430,306 @@ describe("SessionLiveRuntimeService", () => {
     );
     expect((service as any).sendLiveMessageDirect).toHaveBeenCalledTimes(1);
     expect(sessionSendQueueRepository.delete).toHaveBeenCalledWith("queue-1");
+  });
+
+  it("stale 的 Claude running 状态会先回刷成空闲，再继续派发队列", async () => {
+    const { service, sessionHistoryService, sessionSendQueueRepository } = createService();
+    const providerRuntimeService = {
+      getSnapshot: vi.fn(() => null)
+    };
+    Object.defineProperty(service, "providerRuntimeService", {
+      value: providerRuntimeService,
+      configurable: true
+    });
+    Object.defineProperty(service, "sendLiveMessageDirect", {
+      value: vi.fn().mockResolvedValue({
+        sessionId: "session-1",
+        provider: "claude-code",
+        providerSessionId: "claude-session-1",
+        acceptedAt: "2026-03-26T10:00:02.000Z",
+        clientRequestId: "client-queue-claude",
+        message: null
+      }),
+      configurable: true
+    });
+
+    sessionHistoryService.getSession.mockReturnValue({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      providerSessionId: "claude-session-1",
+      rawStoreRef: "/tmp/.claude/projects/workspace/claude-session-1.jsonl",
+      messageCount: 3,
+      runningState: "running"
+    });
+    sessionHistoryService.refreshRuntimeFallbackSession.mockResolvedValue({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      providerSessionId: "claude-session-1",
+      rawStoreRef: "/tmp/.claude/projects/workspace/claude-session-1.jsonl",
+      messageCount: 3,
+      runningState: "completed"
+    });
+    sessionSendQueueRepository.findNextQueued.mockReturnValue({
+      id: "queue-claude-1",
+      sessionId: "session-1",
+      userId: "user-1",
+      content: "Claude stale running 后也要继续发",
+      clientRequestId: "client-queue-claude",
+      model: null,
+      reasoningLevel: null,
+      permissionMode: null,
+      status: "queued",
+      orderIndex: 1,
+      errorDetail: null,
+      createdAt: "2026-03-26T10:00:00.000Z",
+      updatedAt: "2026-03-26T10:00:00.000Z",
+      dispatchedAt: null
+    });
+
+    await (service as any).dispatchNextQueuedMessage("session-1");
+
+    expect(sessionHistoryService.refreshRuntimeFallbackSession).toHaveBeenCalledWith(
+      "session-1",
+      "user-1"
+    );
+    expect((service as any).sendLiveMessageDirect).toHaveBeenCalledTimes(1);
+    expect(sessionSendQueueRepository.delete).toHaveBeenCalledWith("queue-claude-1");
+  });
+
+  it("steerQueuedMessage 会原子地发送并移除等待项", async () => {
+    const {
+      service,
+      sessionHistoryService,
+      sessionSendQueueRepository,
+      sessionMessageAttachmentService
+    } = createService();
+    const providerRuntimeService = {
+      getSnapshot: vi.fn(() => ({
+        sessionId: "session-1",
+        workspaceId: "workspace-1",
+        provider: "claude-code",
+        providerSessionId: "claude-session-1",
+        rawStoreRef: "/tmp/.claude/projects/workspace/claude-session-1.jsonl",
+        runningState: "running",
+        attachedClients: 1,
+        startedAt: "2026-03-26T10:00:00.000Z",
+        lastEventAt: "2026-03-26T10:00:01.000Z",
+        completedAt: null,
+        detail: null,
+        errorCode: null,
+        supportsInterrupt: true
+      }))
+    };
+    Object.defineProperty(service, "providerRuntimeService", {
+      value: providerRuntimeService,
+      configurable: true
+    });
+    Object.defineProperty(service, "sendLiveMessageDirect", {
+      value: vi.fn().mockResolvedValue({
+        sessionId: "session-1",
+        provider: "claude-code",
+        providerSessionId: "claude-session-1",
+        acceptedAt: "2026-03-26T10:00:03.000Z",
+        clientRequestId: "client-queue-1",
+        message: null
+      }),
+      configurable: true
+    });
+
+    sessionHistoryService.getSession.mockReturnValue({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      providerSessionId: "claude-session-1",
+      rawStoreRef: "/tmp/.claude/projects/workspace/claude-session-1.jsonl",
+      messageCount: 3,
+      runningState: "running"
+    });
+    sessionHistoryService.getSessionCapabilities.mockResolvedValue({
+      provider: "claude-code",
+      canStartSession: true,
+      canResumeSession: true,
+      canSendMessage: true,
+      inRunInputMode: "streaming_guidance",
+      supportsSubagents: true,
+      supportsInterrupt: false,
+      supportsStructuredToolCalls: true,
+      supportsTokenUsage: true,
+      supportsAttachments: true,
+      supportsPermissionPrompt: true,
+      supportsCheckpoint: false,
+      limitations: []
+    });
+    sessionSendQueueRepository.findBySessionUserAndId.mockReturnValue({
+      id: "queue-1",
+      sessionId: "session-1",
+      userId: "user-1",
+      content: "立刻引导这条消息",
+      clientRequestId: "client-queue-1",
+      model: null,
+      reasoningLevel: null,
+      permissionMode: null,
+      status: "queued",
+      orderIndex: 1,
+      errorDetail: null,
+      createdAt: "2026-03-26T10:00:00.000Z",
+      updatedAt: "2026-03-26T10:00:00.000Z",
+      dispatchedAt: null
+    });
+    sessionMessageAttachmentService.getRuntimeAttachments.mockReturnValue([]);
+
+    const result = await service.steerQueuedMessage("session-1", "user-1", "queue-1");
+
+    expect(sessionSendQueueRepository.markDispatching).toHaveBeenCalledWith(
+      "queue-1",
+      expect.any(String)
+    );
+    expect((service as any).sendLiveMessageDirect).toHaveBeenCalledTimes(1);
+    expect(sessionSendQueueRepository.delete).toHaveBeenCalledWith("queue-1");
+    expect(result.queueItemId).toBe("queue-1");
+  });
+
+  it("Claude 外部运行态存在时不会提前调度队列", async () => {
+    const { service, sessionSendQueueRepository } = createService();
+    const providerRuntimeService = {
+      getSnapshot: vi.fn(() => null)
+    };
+    Object.defineProperty(service, "providerRuntimeService", {
+      value: providerRuntimeService,
+      configurable: true
+    });
+    Object.defineProperty(service, "sendLiveMessageDirect", {
+      value: vi.fn(),
+      configurable: true
+    });
+
+    (service as any).externalRuntimeSnapshots.set("session-1", {
+      sessionId: "session-1",
+      provider: "claude-code",
+      providerSessionId: "claude-session-1",
+      rawStoreRef: "claude://raw-1",
+      runningState: "running",
+      detail: null,
+      updatedAt: "2026-03-26T10:00:01.000Z"
+    });
+
+    await (service as any).dispatchNextQueuedMessage("session-1");
+
+    expect(sessionSendQueueRepository.findNextQueued).not.toHaveBeenCalled();
+    expect((service as any).sendLiveMessageDirect).not.toHaveBeenCalled();
+  });
+
+  it("dispatchNextQueuedMessage 遇到 ACTIVE_RUN_EXISTS 时会回到等待并安排重试", async () => {
+    vi.useFakeTimers();
+    const { service, sessionHistoryService, sessionSendQueueRepository } = createService();
+    const providerRuntimeService = {
+      getSnapshot: vi.fn(() => null)
+    };
+    Object.defineProperty(service, "providerRuntimeService", {
+      value: providerRuntimeService,
+      configurable: true
+    });
+    Object.defineProperty(service, "sendLiveMessageDirect", {
+      value: vi.fn().mockRejectedValue(new Error("ACTIVE_RUN_EXISTS")),
+      configurable: true
+    });
+
+    sessionHistoryService.getSession.mockReturnValue({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "thread-1",
+      rawStoreRef: "/tmp/.codex/thread-1.jsonl",
+      messageCount: 3,
+      runningState: "completed"
+    });
+    sessionSendQueueRepository.findNextQueued.mockReturnValue({
+      id: "queue-1",
+      sessionId: "session-1",
+      userId: "user-1",
+      content: "继续续跑",
+      clientRequestId: null,
+      model: null,
+      reasoningLevel: null,
+      permissionMode: null,
+      status: "queued",
+      orderIndex: 1,
+      errorDetail: null,
+      createdAt: "2026-03-26T10:00:00.000Z",
+      updatedAt: "2026-03-26T10:00:00.000Z",
+      dispatchedAt: null
+    });
+
+    await (service as any).dispatchNextQueuedMessage("session-1");
+
+    expect(sessionSendQueueRepository.markQueued).toHaveBeenCalledWith(
+      "queue-1",
+      expect.any(String)
+    );
+    expect(sessionSendQueueRepository.markFailed).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1200);
+
+    expect((service as any).sendLiveMessageDirect).toHaveBeenCalledTimes(2);
+  });
+
+  it("终态 runtime 快照不会阻塞 Codex 队列续跑", async () => {
+    const { service, sessionSendQueueRepository } = createService();
+    const providerRuntimeService = {
+      getSnapshot: vi.fn(() => ({
+        sessionId: "session-1",
+        workspaceId: "workspace-1",
+        provider: "codex",
+        providerSessionId: "thread-1",
+        rawStoreRef: "/tmp/.codex/thread-1.jsonl",
+        runningState: "completed",
+        attachedClients: 0,
+        startedAt: "2026-03-26T10:00:00.000Z",
+        lastEventAt: "2026-03-26T10:00:02.000Z",
+        completedAt: "2026-03-26T10:00:02.000Z",
+        detail: null,
+        errorCode: null,
+        supportsInterrupt: true
+      }))
+    };
+    Object.defineProperty(service, "providerRuntimeService", {
+      value: providerRuntimeService,
+      configurable: true
+    });
+    Object.defineProperty(service, "sendLiveMessageDirect", {
+      value: vi.fn().mockResolvedValue({
+        sessionId: "session-1",
+        provider: "codex",
+        providerSessionId: "thread-1",
+        acceptedAt: "2026-03-26T10:00:03.000Z",
+        clientRequestId: null,
+        message: null
+      }),
+      configurable: true
+    });
+
+    sessionSendQueueRepository.findNextQueued.mockReturnValue({
+      id: "queue-terminal",
+      sessionId: "session-1",
+      userId: "user-1",
+      content: "终态后应立即续跑",
+      clientRequestId: null,
+      model: null,
+      reasoningLevel: null,
+      permissionMode: null,
+      status: "queued",
+      orderIndex: 1,
+      errorDetail: null,
+      createdAt: "2026-03-26T10:00:00.000Z",
+      updatedAt: "2026-03-26T10:00:00.000Z",
+      dispatchedAt: null
+    });
+
+    await (service as any).dispatchNextQueuedMessage("session-1");
+
+    expect((service as any).sendLiveMessageDirect).toHaveBeenCalledTimes(1);
   });
 
   it("deleteQueuedMessage 会拒绝删除已经开始发送的队列项", async () => {

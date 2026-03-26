@@ -117,6 +117,43 @@ export class SessionMessageAttachmentService {
       .map(toMessageAttachmentDto);
   }
 
+  getRuntimeAttachments(
+    sessionId: string,
+    clientRequestId: string | null
+  ): RuntimeImageAttachmentDescriptor[] {
+    if (!clientRequestId) {
+      return [];
+    }
+
+    return this.repository
+      .listBySessionAndClientRequest(sessionId, clientRequestId)
+      .map(toRuntimeAttachment);
+  }
+
+  deletePendingAttachments(sessionId: string, clientRequestId: string | null): void {
+    if (!clientRequestId) {
+      return;
+    }
+
+    const records = this.repository.listUnboundBySessionAndClientRequest(sessionId, clientRequestId);
+
+    if (records.length === 0) {
+      return;
+    }
+
+    this.repository.deleteByIds(records.map((record) => record.id));
+
+    records.forEach((record) => {
+      try {
+        fs.rmSync(record.storagePath, { force: true });
+      } catch {
+        return;
+      }
+
+      pruneEmptyParentDirectories(path.dirname(record.storagePath), this.storageRoot);
+    });
+  }
+
   readAttachmentContent(
     sessionId: string,
     attachmentId: string
@@ -302,4 +339,35 @@ function toRuntimeAttachment(
     ...toMessageAttachmentDto(record),
     filePath: record.storagePath
   };
+}
+
+function pruneEmptyParentDirectories(currentDir: string, stopDir: string): void {
+  let cursor = currentDir;
+  const normalizedStopDir = path.resolve(stopDir);
+
+  while (cursor.startsWith(normalizedStopDir)) {
+    try {
+      const entries = fs.readdirSync(cursor);
+
+      if (entries.length > 0) {
+        return;
+      }
+
+      fs.rmdirSync(cursor);
+    } catch {
+      return;
+    }
+
+    if (cursor === normalizedStopDir) {
+      return;
+    }
+
+    const parentDir = path.dirname(cursor);
+
+    if (parentDir === cursor) {
+      return;
+    }
+
+    cursor = parentDir;
+  }
 }
