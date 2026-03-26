@@ -54,6 +54,20 @@ function createSyntheticUserMessage(): SessionMessageViewModel {
   };
 }
 
+function createSyntheticBootstrapMessage(overrides?: Partial<ReturnType<typeof createHistoryMessage>>) {
+  return createHistoryMessage({
+    messageId: "synthetic-bootstrap-1",
+    provider: "opencode",
+    providerSessionId: "thread-1",
+    role: "user",
+    content: "你好",
+    timestamp: "2026-03-24T10:00:00.100Z",
+    sequence: 1,
+    rawRef: "synthetic://opencode/thread-1/bootstrap-1",
+    ...overrides
+  });
+}
+
 describe("session runtime machine", () => {
   it("按 messageId 去重并保持消息顺序", () => {
     const merged = mergeAuthoritativeMessages([], "session-1", [
@@ -297,7 +311,7 @@ describe("session runtime machine", () => {
           role: "user",
           content: "你好",
           timestamp: "2026-03-24T10:00:00.400Z",
-          sequence: 1,
+          sequence: 3,
           rawRef: "codex://demo#line=1"
         })
       ]
@@ -306,6 +320,173 @@ describe("session runtime machine", () => {
     expect(merged).toHaveLength(1);
     expect(merged[0].id).toBe("server-user-1");
     expect(merged[0].rawRef).toBe("codex://demo#line=1");
+  });
+
+  it("缓存里已有正式 user 消息时，不会再注入重复的 bootstrap synthetic 消息", () => {
+    const merged = mergeAuthoritativeMessages(
+      [
+        toViewMessage(
+          "session-1",
+          createHistoryMessage({
+            messageId: "server-user-1",
+            provider: "opencode",
+            providerSessionId: "thread-1",
+            role: "user",
+            content: "你好",
+            timestamp: "2026-03-24T10:00:00.000Z",
+            sequence: 3,
+            rawRef: "opencode://thread-1#line=1"
+          })
+        )
+      ],
+      "session-1",
+      [createSyntheticBootstrapMessage()]
+    );
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0].id).toBe("server-user-1");
+  });
+
+  it("会把 OpenCode 的 #synthetic accepted 消息当成 optimistic，并在历史回流后替换掉", () => {
+    const merged = mergeAuthoritativeMessages(
+      [
+        toViewMessage(
+          "session-1",
+          createHistoryMessage({
+            messageId: "opencode-accepted-1",
+            provider: "opencode",
+            providerSessionId: "thread-1",
+            role: "user",
+            content: "继续执行",
+            timestamp: "2026-03-24T10:00:02.000Z",
+            sequence: 61,
+            rawRef: "opencode://thread-1/message/accepted-1#synthetic"
+          })
+        )
+      ],
+      "session-1",
+      [
+        createHistoryMessage({
+          messageId: "server-user-61",
+          provider: "opencode",
+            providerSessionId: "thread-1",
+            role: "user",
+            content: "继续执行",
+            timestamp: "2026-03-24T10:00:02.200Z",
+            sequence: 64,
+            rawRef: "opencode://thread-1#line=61"
+        })
+      ]
+    );
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0].id).toBe("server-user-61");
+    expect(merged[0].rawRef).toBe("opencode://thread-1#line=61");
+  });
+
+  it("会折叠 OpenCode 在工具链中插入的重复 user turn", () => {
+    const merged = mergeAuthoritativeMessages([], "session-1", [
+      createHistoryMessage({
+        messageId: "user-1",
+        provider: "opencode",
+        providerSessionId: "thread-1",
+        role: "user",
+        content: "请分析 git 改动",
+        timestamp: "2026-03-24T10:00:00.000Z",
+        sequence: 1,
+        rawRef: "opencode://thread-1/message/user-1/part/text-1"
+      }),
+      createHistoryMessage({
+        messageId: "thinking-1",
+        provider: "opencode",
+        providerSessionId: "thread-1",
+        role: "assistant",
+        kind: "thinking",
+        content: "先看看 git 变更",
+        timestamp: "2026-03-24T10:00:03.000Z",
+        sequence: 2,
+        rawRef: "opencode://thread-1/message/assistant-1/part/reasoning-1"
+      }),
+      createHistoryMessage({
+        messageId: "tool-1",
+        provider: "opencode",
+        providerSessionId: "thread-1",
+        role: "tool",
+        kind: "tool_result",
+        content: "git status --short",
+        timestamp: "2026-03-24T10:00:05.000Z",
+        sequence: 3,
+        rawRef: "opencode://thread-1/message/assistant-1/part/tool-1"
+      }),
+      createHistoryMessage({
+        messageId: "user-2",
+        provider: "opencode",
+        providerSessionId: "thread-1",
+        role: "user",
+        content: "请分析 git 改动",
+        timestamp: "2026-03-24T10:00:12.000Z",
+        sequence: 4,
+        rawRef: "opencode://thread-1/message/user-2/part/text-1"
+      }),
+      createHistoryMessage({
+        messageId: "assistant-2",
+        provider: "opencode",
+        providerSessionId: "thread-1",
+        role: "assistant",
+        content: "我看完了，下面开始总结。",
+        timestamp: "2026-03-24T10:00:20.000Z",
+        sequence: 5,
+        rawRef: "opencode://thread-1/message/assistant-2/part/text-1"
+      })
+    ]);
+
+    expect(merged.map((item) => item.id)).toEqual([
+      "user-1",
+      "thinking-1",
+      "tool-1",
+      "assistant-2"
+    ]);
+  });
+
+  it("如果两次相同 user turn 之间已经有 assistant 正文，就保留两次用户消息", () => {
+    const merged = mergeAuthoritativeMessages([], "session-1", [
+      createHistoryMessage({
+        messageId: "user-1",
+        provider: "opencode",
+        providerSessionId: "thread-1",
+        role: "user",
+        content: "请分析 git 改动",
+        timestamp: "2026-03-24T10:00:00.000Z",
+        sequence: 1,
+        rawRef: "opencode://thread-1/message/user-1/part/text-1"
+      }),
+      createHistoryMessage({
+        messageId: "assistant-1",
+        provider: "opencode",
+        providerSessionId: "thread-1",
+        role: "assistant",
+        content: "第一轮总结",
+        timestamp: "2026-03-24T10:00:08.000Z",
+        sequence: 2,
+        rawRef: "opencode://thread-1/message/assistant-1/part/text-1"
+      }),
+      createHistoryMessage({
+        messageId: "user-2",
+        provider: "opencode",
+        providerSessionId: "thread-1",
+        role: "user",
+        content: "请分析 git 改动",
+        timestamp: "2026-03-24T10:00:12.000Z",
+        sequence: 3,
+        rawRef: "opencode://thread-1/message/user-2/part/text-1"
+      })
+    ]);
+
+    expect(merged.map((item) => item.id)).toEqual([
+      "user-1",
+      "assistant-1",
+      "user-2"
+    ]);
   });
 
   it("发送失败后只标记失败，不制造第二份消息", () => {

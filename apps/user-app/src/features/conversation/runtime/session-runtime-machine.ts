@@ -155,6 +155,12 @@ export function mergeAuthoritativeMessages(
 
   for (const message of incoming) {
     const nextMessage = toViewMessage(sessionId, message);
+    const authoritativeMessageId = findMatchingAuthoritativeMessageId(nextById, nextMessage);
+
+    if (authoritativeMessageId && authoritativeMessageId !== nextMessage.id) {
+      continue;
+    }
+
     const optimisticMessageId = findMatchingOptimisticMessageId(nextById, nextMessage);
 
     if (optimisticMessageId && optimisticMessageId !== nextMessage.id) {
@@ -217,6 +223,40 @@ function collapseEquivalentCodexMessages(
   return collapsed;
 }
 
+function collapseEquivalentOpenCodeUserMessages(
+  messages: SessionMessageViewModel[]
+): SessionMessageViewModel[] {
+  const collapsed: SessionMessageViewModel[] = [];
+  let lastOpenCodeUser: SessionMessageViewModel | null = null;
+  let sawAssistantTextSinceLastOpenCodeUser = false;
+
+  for (const message of messages) {
+    if (
+      shouldCollapseOpenCodeRepeatedUserMessage(
+        lastOpenCodeUser,
+        message,
+        sawAssistantTextSinceLastOpenCodeUser
+      )
+    ) {
+      continue;
+    }
+
+    collapsed.push(message);
+
+    if (isOpenCodeUserTextMessage(message)) {
+      lastOpenCodeUser = message;
+      sawAssistantTextSinceLastOpenCodeUser = false;
+      continue;
+    }
+
+    if (lastOpenCodeUser && isOpenCodeAssistantTextMessage(message)) {
+      sawAssistantTextSinceLastOpenCodeUser = true;
+    }
+  }
+
+  return collapsed;
+}
+
 function sortMessages(messages: SessionMessageViewModel[]): SessionMessageViewModel[] {
   const sorted = [...messages].sort((left, right) => {
     if (left.sequence !== right.sequence) {
@@ -226,7 +266,7 @@ function sortMessages(messages: SessionMessageViewModel[]): SessionMessageViewMo
     return left.timestamp.localeCompare(right.timestamp);
   });
 
-  return collapseEquivalentCodexMessages(sorted);
+  return collapseEquivalentOpenCodeUserMessages(collapseEquivalentCodexMessages(sorted));
 }
 
 function mergeResolvedUserMessage(
@@ -292,6 +332,42 @@ function isEquivalentCodexTextMessage(
   );
 }
 
+function shouldCollapseOpenCodeRepeatedUserMessage(
+  previousUser: SessionMessageViewModel | null,
+  nextMessage: SessionMessageViewModel,
+  sawAssistantTextSincePreviousUser: boolean
+): boolean {
+  if (!previousUser || sawAssistantTextSincePreviousUser) {
+    return false;
+  }
+
+  if (!isOpenCodeUserTextMessage(previousUser) || !isOpenCodeUserTextMessage(nextMessage)) {
+    return false;
+  }
+
+  return (
+    areTimestampsNearWithinWindow(previousUser.timestamp, nextMessage.timestamp, 2 * 60 * 1000) &&
+    normalizeComparableCodexText(previousUser.content) === normalizeComparableCodexText(nextMessage.content)
+  );
+}
+
+function isOpenCodeUserTextMessage(message: SessionMessageViewModel): boolean {
+  return (
+    message.deliveryState === "sent" &&
+    message.rawRef.startsWith("opencode://") &&
+    message.role === "user" &&
+    message.kind === "text"
+  );
+}
+
+function isOpenCodeAssistantTextMessage(message: SessionMessageViewModel): boolean {
+  return (
+    message.rawRef.startsWith("opencode://") &&
+    message.role === "assistant" &&
+    message.kind === "text"
+  );
+}
+
 function pickPreferredCodexTextMessage(
   left: SessionMessageViewModel,
   right: SessionMessageViewModel
@@ -345,22 +421,41 @@ function findMatchingOptimisticMessageId(
   messagesById: Map<string, SessionMessageViewModel>,
   incoming: SessionMessageViewModel
 ): string | null {
-  if (
-    incoming.role !== "user" ||
-    incoming.kind !== "text" ||
-    incoming.rawRef.startsWith("pending://") ||
-    incoming.rawRef.startsWith("synthetic://")
-  ) {
+  if (!isAuthoritativeUserTextMessage(incoming)) {
     return null;
   }
 
+  return findClosestMatchingUserMessageId(messagesById, incoming, "optimistic");
+}
+
+function findMatchingAuthoritativeMessageId(
+  messagesById: Map<string, SessionMessageViewModel>,
+  incoming: SessionMessageViewModel
+): string | null {
+  if (!isOptimisticUserMessage(incoming)) {
+    return null;
+  }
+
+  return findClosestMatchingUserMessageId(messagesById, incoming, "authoritative");
+}
+
+function findClosestMatchingUserMessageId(
+  messagesById: Map<string, SessionMessageViewModel>,
+  incoming: SessionMessageViewModel,
+  target: "optimistic" | "authoritative"
+): string | null {
   const incomingTimestampMs = toTimestampMs(incoming.timestamp);
   const comparableIncomingContent = normalizeComparableCodexText(incoming.content);
   let matchedId: string | null = null;
   let matchedDistance = Number.POSITIVE_INFINITY;
 
   for (const [messageId, current] of messagesById.entries()) {
-    if (!isOptimisticUserMessage(current)) {
+    const matchesTarget =
+      target === "optimistic"
+        ? isOptimisticUserMessage(current)
+        : isAuthoritativeUserTextMessage(current);
+
+    if (!matchesTarget) {
       continue;
     }
 
@@ -389,7 +484,19 @@ function isOptimisticUserMessage(message: SessionMessageViewModel): boolean {
     return false;
   }
 
-  return message.rawRef.startsWith("pending://") || message.rawRef.startsWith("synthetic://");
+  return (
+    message.rawRef.startsWith("pending://")
+    || message.rawRef.startsWith("synthetic://")
+    || message.rawRef.includes("#synthetic")
+  );
+}
+
+function isAuthoritativeUserTextMessage(message: SessionMessageViewModel): boolean {
+  return (
+    message.role === "user"
+    && message.kind === "text"
+    && !isOptimisticUserMessage(message)
+  );
 }
 
 function toTimestampMs(timestamp: string): number {
@@ -399,4 +506,8 @@ function toTimestampMs(timestamp: string): number {
 
 function areTimestampsNear(left: string, right: string): boolean {
   return Math.abs(toTimestampMs(left) - toTimestampMs(right)) <= 1000;
+}
+
+function areTimestampsNearWithinWindow(left: string, right: string, windowMs: number): boolean {
+  return Math.abs(toTimestampMs(left) - toTimestampMs(right)) <= windowMs;
 }

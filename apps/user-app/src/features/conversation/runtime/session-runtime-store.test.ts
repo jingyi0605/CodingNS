@@ -373,6 +373,78 @@ describe("SessionRuntimeStore", () => {
     store.destroy();
   });
 
+  it("缓存里已有正式消息时，会忽略重复的 bootstrap synthetic 用户消息", () => {
+    writeViewSnapshot(SESSION_RUNTIME_SNAPSHOT_KEY, {
+      session: {
+        sessionId: "session-1",
+        workspaceId: "workspace-1",
+        provider: "opencode",
+        providerSessionId: "thread-1",
+        rawStoreRef: "opencode://thread-1",
+        title: "会话 1",
+        messageCount: 1,
+        lastMessageAt: "2026-03-24T10:00:00.000Z",
+        createdAt: "2026-03-24T09:00:00.000Z",
+        updatedAt: "2026-03-24T10:00:00.000Z",
+        syncStatus: "idle",
+        syncCursor: "cursor-sync",
+        lastSyncAt: "2026-03-24T10:00:00.000Z",
+        lastErrorCode: null,
+        lastErrorDetail: null,
+        resumedAt: null,
+        runningState: "idle",
+        activitySource: "none",
+        lastEventAt: "2026-03-24T10:00:00.000Z",
+        completedAt: null,
+        lastSeenAt: null,
+        activityState: "idle"
+      },
+      capabilities: null,
+      contextUsage: null,
+      messages: [
+        {
+          id: "server-user-1",
+          sessionId: "session-1",
+          role: "user",
+          kind: "text",
+          content: "你好",
+          toolCall: null,
+          attachments: [],
+          attachmentPayloads: null,
+          timestamp: "2026-03-24T10:00:00.000Z",
+          sequence: 1,
+          rawRef: "opencode://thread-1#line=1",
+          deliveryState: "sent",
+          clientRequestId: null
+        }
+      ],
+      queuedMessages: []
+    });
+
+    const store = new SessionRuntimeStore("session-1", {
+      bootstrapMessages: [
+        {
+          messageId: "synthetic-bootstrap-1",
+          provider: "opencode",
+          providerSessionId: "thread-1",
+          role: "user",
+          kind: "text",
+          content: "你好",
+          toolCall: null,
+          attachments: [],
+          timestamp: "2026-03-24T10:00:00.100Z",
+          sequence: 1,
+          rawRef: "synthetic://opencode/thread-1/bootstrap-1"
+        }
+      ]
+    });
+
+    expect(store.getState().messages).toHaveLength(1);
+    expect(store.getState().messages[0]?.id).toBe("server-user-1");
+
+    store.destroy();
+  });
+
   it("loads older messages without rewinding the realtime cursor", async () => {
     vi.useFakeTimers();
     const store = new SessionRuntimeStore("session-1");
