@@ -240,7 +240,8 @@ export class SessionHistoryService {
   async findLatestUserMessage(
     sessionId: string,
     content: string | string[],
-    maxAttempts = 12
+    maxAttempts = 12,
+    minTimestamp: string | null = null
   ): Promise<SendMessageResult["message"] | null> {
     const binding = this.getBindingOrThrow(sessionId);
     const acceptedContents = new Set(
@@ -265,7 +266,8 @@ export class SessionHistoryService {
         .find(
           (message) =>
             message.role === "user" &&
-            acceptedContents.has(message.content)
+            acceptedContents.has(message.content) &&
+            isMessageAtOrAfter(message.timestamp, minTimestamp)
         );
 
       if (matched) {
@@ -788,7 +790,7 @@ export class SessionHistoryService {
       const persistStartedAt = Date.now();
       persist();
       persistDurationMs = Date.now() - persistStartedAt;
-      this.cleanupStaleCodexSessions(workspaceId, userId, sessions);
+      this.cleanupStaleHiddenSessions(workspaceId, userId, sessions);
       this.workspaceSessionRelations.set(
         workspaceId,
         this.buildWorkspaceSessionRelationMap(sessions, discoveredSessionIds)
@@ -1024,6 +1026,7 @@ export class SessionHistoryService {
       });
 
       if (messages.length > 0) {
+        await this.syncSessionTitleFromProvider(sessionId, binding);
         this.upsertSnapshot(sessionId, {
           syncStatus: "idle",
           syncCursor: page.cursor,
@@ -1050,6 +1053,35 @@ export class SessionHistoryService {
     }
 
     return currentCursor;
+  }
+
+  private async syncSessionTitleFromProvider(
+    sessionId: string,
+    binding: SessionBinding
+  ): Promise<void> {
+    const currentIndex = this.sessionIndexRepository.findIndexRecordBySessionId(sessionId);
+
+    if (!currentIndex) {
+      return;
+    }
+
+    const nextTitle = (
+      await this.sessionSyncService.readSessionTitle(
+        binding.provider,
+        binding.providerSessionId,
+        binding.rawStoreRef
+      )
+    ).trim();
+
+    if (nextTitle.length === 0 || nextTitle === currentIndex.title) {
+      return;
+    }
+
+    this.sessionIndexRepository.upsert({
+      ...currentIndex,
+      title: nextTitle,
+      updatedAt: nowIso()
+    });
   }
 
   private async ensureSessionChangedFilesIndexed(
@@ -1203,7 +1235,7 @@ export class SessionHistoryService {
     this.workspaceStateRefreshInflight.set(inflightKey, task);
   }
 
-  private cleanupStaleCodexSessions(
+  private cleanupStaleHiddenSessions(
     workspaceId: string,
     userId: string,
     sessions: Array<{
@@ -1213,34 +1245,40 @@ export class SessionHistoryService {
     }>
   ): void {
     const discoveredProviderSessionIds = new Set(
-      sessions
-        .filter((session) => session.provider === "codex")
-        .map((session) => session.providerSessionId)
+      sessions.map((session) => buildProviderSessionKey(session.provider, session.providerSessionId))
     );
-    const discoveredRawStoreRefs = new Set(
-      sessions
-        .filter((session) => session.provider === "codex")
-        .map((session) => session.rawStoreRef)
-    );
-    const staleDrafts = this.sessionIndexRepository
+    const discoveredRawStoreRefs = new Set(sessions.map((session) => session.rawStoreRef));
+    const staleHiddenSessions = this.sessionIndexRepository
       .listByWorkspace(workspaceId, userId)
-      .filter(
-        (session) =>
-          session.provider === "codex" &&
-          !discoveredProviderSessionIds.has(session.providerSessionId) &&
-          !discoveredRawStoreRefs.has(session.rawStoreRef) &&
-          (
-            isLegacyCodingNsRolloutSession(session.providerSessionId, session.rawStoreRef) ||
-            shouldRemoveMissingSyntheticCodexSession(session.rawStoreRef)
-          )
-      );
+      .filter((session) => {
+        if (discoveredProviderSessionIds.has(buildProviderSessionKey(session.provider, session.providerSessionId))) {
+          return false;
+        }
 
-    if (staleDrafts.length === 0) {
+        if (discoveredRawStoreRefs.has(session.rawStoreRef)) {
+          return false;
+        }
+
+        return (
+          (session.provider === "codex" &&
+            (
+              isLegacyCodingNsRolloutSession(session.providerSessionId, session.rawStoreRef) ||
+              shouldRemoveMissingSyntheticCodexSession(session.rawStoreRef)
+            )) ||
+          (session.provider === "claude-code" && shouldRemoveHiddenClaudeDebugSession(session))
+        );
+      });
+
+    if (staleHiddenSessions.length === 0) {
       return;
     }
 
-    const remove = this.db.transaction((sessionIds: string[]) => {
-      for (const sessionId of sessionIds) {
+    this.deleteSessionsByIds(staleHiddenSessions.map((session) => session.sessionId));
+  }
+
+  private deleteSessionsByIds(sessionIds: string[]): void {
+    const remove = this.db.transaction((ids: string[]) => {
+      for (const sessionId of ids) {
         this.sessionChangedFileService.deleteBySessionId(sessionId);
         this.db
           .prepare("DELETE FROM session_message_attachments WHERE session_id = ?")
@@ -1263,7 +1301,7 @@ export class SessionHistoryService {
       }
     });
 
-    remove(staleDrafts.map((session) => session.sessionId));
+    remove(sessionIds);
   }
 
   private buildKnownSessionSummaries(
@@ -1361,6 +1399,21 @@ function buildProviderSessionKey(provider: string, providerSessionId: string): s
   return `${provider}::${providerSessionId}`;
 }
 
+function isMessageAtOrAfter(timestamp: string, minTimestamp: string | null): boolean {
+  if (!minTimestamp) {
+    return true;
+  }
+
+  const messageAt = Date.parse(timestamp);
+  const minAt = Date.parse(minTimestamp);
+
+  if (!Number.isFinite(messageAt) || !Number.isFinite(minAt)) {
+    return true;
+  }
+
+  return messageAt >= minAt;
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
@@ -1446,6 +1499,22 @@ function isLegacyCodingNsRolloutSession(providerSessionId: string, rawStoreRef: 
 
 function shouldRemoveMissingSyntheticCodexSession(rawStoreRef: string): boolean {
   return isSyntheticCodexRawStoreRef(rawStoreRef) && !existsSync(rawStoreRef);
+}
+
+function shouldRemoveHiddenClaudeDebugSession(session: {
+  providerSessionId: string;
+  rawStoreRef: string;
+}): boolean {
+  const normalizedRawStoreRef = session.rawStoreRef.replaceAll("\\", "/");
+
+  if (normalizedRawStoreRef.includes("/subagents/")) {
+    return false;
+  }
+
+  return (
+    /^agent-[^/]+$/i.test(session.providerSessionId) &&
+    /\/agent-[^/]+\.jsonl$/i.test(normalizedRawStoreRef)
+  );
 }
 
 function shouldPreserveRuntimeTerminalState(

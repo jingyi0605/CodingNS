@@ -29,6 +29,7 @@ import {
   messageIdFromRawRef,
   nextTimestamp,
   normalizeWorkspacePath,
+  readFirstNonEmptyLine,
   readJsonLines,
   safeDate,
   sliceHistory,
@@ -45,7 +46,7 @@ interface ClaudeMessageEnvelope {
   type: "user" | "assistant";
   timestamp: unknown;
   message: {
-    content?: Array<Record<string, unknown>>;
+    content?: unknown;
   };
 }
 
@@ -104,6 +105,10 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
     const sessions: ProviderSessionSummary[] = [];
 
     for (const filePath of files) {
+      if (shouldHideClaudeDebugSession(filePath)) {
+        continue;
+      }
+
       const stats = statSync(filePath);
       const known = knownByRawStoreRef.get(filePath);
       const subagentMetadata = subagentMetadataByFilePath.get(filePath);
@@ -345,6 +350,21 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
     };
   }
 
+  async readSessionTitle(
+    providerSessionId: string,
+    rawStoreRef: string
+  ): Promise<string> {
+    statSync(rawStoreRef);
+    const records = readJsonLines(rawStoreRef).map((record) => record.data);
+    const messages = this.parseMessages(rawStoreRef, records, providerSessionId);
+
+    return (
+      this.resolveClaudeTitle(records) ||
+      messages.find((message) => message.role === "user")?.content.slice(0, 48) ||
+      basename(rawStoreRef, ".jsonl")
+    );
+  }
+
   async renameSessionTitle(
     providerSessionId: string,
     rawStoreRef: string,
@@ -472,9 +492,7 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
       const lineNumber = index + 1;
 
       this.collectMessageEnvelopes(record).forEach((envelope) => {
-        const parts = Array.isArray(envelope.message.content)
-          ? envelope.message.content
-          : [];
+        const parts = normalizeClaudeMessageParts(envelope.message.content);
 
         parts.forEach((part, partIndex) => {
           const partType = ensureText(part.type);
@@ -672,4 +690,98 @@ function parseClaudeSubagentMetadata(filePath: string): ClaudeSubagentMetadata |
     providerSessionId: `${parentProviderSessionId}::${agentFileName}`,
     parentProviderSessionId
   };
+}
+
+function normalizeClaudeMessageParts(content: unknown): Array<Record<string, unknown>> {
+  if (content === undefined || content === null) {
+    return [];
+  }
+
+  const items = Array.isArray(content) ? content : [content];
+
+  return items
+    .map((item) => {
+      if (typeof item === "string") {
+        return {
+          type: "text",
+          text: item
+        };
+      }
+
+      if (!item || typeof item !== "object") {
+        const text = ensureText(item).trim();
+
+        return text.length > 0
+          ? {
+              type: "text",
+              text
+            }
+          : null;
+      }
+
+      return item as Record<string, unknown>;
+    })
+    .filter((item): item is Record<string, unknown> => item !== null);
+}
+
+function shouldHideClaudeDebugSession(filePath: string): boolean {
+  const normalizedPath = filePath.replaceAll("\\", "/");
+
+  if (normalizedPath.includes("/subagents/")) {
+    return false;
+  }
+
+  const firstLine = readFirstNonEmptyLine(filePath);
+
+  if (!firstLine) {
+    return false;
+  }
+
+  try {
+    const record = JSON.parse(firstLine) as {
+      type?: unknown;
+      isSidechain?: unknown;
+      agentId?: unknown;
+      message?: {
+        role?: unknown;
+        content?: unknown;
+      };
+    };
+    const firstUserContent = extractClaudeDebugMessageText(record.message?.content);
+
+    return (
+      record.type === "user" &&
+      Boolean(record.isSidechain) &&
+      ensureText(record.agentId).trim().length > 0 &&
+      /^agent-[^/]+\.jsonl$/i.test(basename(filePath)) &&
+      firstUserContent === "Warmup"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function extractClaudeDebugMessageText(content: unknown): string {
+  if (typeof content === "string") {
+    return content.trim();
+  }
+
+  if (!Array.isArray(content)) {
+    return "";
+  }
+
+  return content
+    .map((item) => {
+      if (typeof item === "string") {
+        return item;
+      }
+
+      if (!item || typeof item !== "object") {
+        return "";
+      }
+
+      return ensureText((item as Record<string, unknown>).text);
+    })
+    .join("\n")
+    .trim();
 }

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -102,6 +102,49 @@ test("CodexAdapter 会优先保留 response_item，并忽略末尾空白差异�
         }
       ]
     );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("CodexAdapter 能识别 macOS 工作区下的原生会话", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-macos-"));
+  const workspacePath = "/Users/jackson/Documents/Code/CodingNS";
+  const sessionFile = join(tempDir, "sessions", "2026", "03", "26", "session.jsonl");
+  const threadId = "12345678-1234-4234-9234-1234567890ab";
+
+  try {
+    mkdirSync(join(tempDir, "sessions", "2026", "03", "26"), { recursive: true });
+    writeFileSync(
+      sessionFile,
+      [
+        JSON.stringify({
+          type: "session_meta",
+          payload: {
+            id: threadId,
+            cwd: workspacePath
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-03-26T00:00:00.000Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "macOS Codex 会话" }]
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const adapter = new CodexAdapter({ homeDir: tempDir });
+    const sessions = await adapter.detectSessions(workspacePath);
+
+    assert.equal(sessions.length, 1);
+    assert.equal(sessions[0]?.providerSessionId, threadId);
+    assert.equal(sessions[0]?.rawStoreRef, sessionFile);
+    assert.equal(sessions[0]?.workspacePath, workspacePath);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }

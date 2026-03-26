@@ -248,6 +248,42 @@ describe("session runtime machine", () => {
     expect(reconciled[0].deliveryState).toBe("sent");
   });
 
+  it("发送成功后如果正式消息序号更小，会先保留 pending 的底部位置", () => {
+    const historical = toViewMessage(
+      "session-1",
+      createHistoryMessage({
+        messageId: "history-1",
+        provider: "claude-code",
+        providerSessionId: "raw-2",
+        role: "assistant",
+        content: "上一条",
+        timestamp: "2026-03-23T10:00:04.000Z",
+        sequence: 50,
+        rawRef: "claude-code://demo#50&part=0"
+      })
+    );
+    const pending = createPendingMessage("session-1", "先发出去", "client-1");
+    const reconciled = reconcileMessage(
+      [historical, pending],
+      "session-1",
+      createHistoryMessage({
+        messageId: "server-1",
+        provider: "claude-code",
+        providerSessionId: "raw-2",
+        role: "user",
+        content: "先发出去",
+        timestamp: "2026-03-23T10:00:05.000Z",
+        sequence: 3,
+        rawRef: "claude-code://demo#3&part=0"
+      }),
+      "client-1"
+    );
+
+    expect(reconciled).toHaveLength(2);
+    expect(reconciled.at(-1)?.id).toBe("server-1");
+    expect(reconciled.at(-1)?.sequence).toBe(Number.MAX_SAFE_INTEGER);
+  });
+
   it("会用权威 user 消息替换 synthetic 首条消息，避免重复显示", () => {
     const merged = mergeAuthoritativeMessages(
       [createSyntheticUserMessage()],

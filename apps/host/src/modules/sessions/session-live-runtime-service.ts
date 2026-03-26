@@ -129,6 +129,7 @@ export class SessionLiveRuntimeService {
   }
 
   async startLiveSession(input: StartLiveSessionInput): Promise<LiveMessageAcceptedResult> {
+    const requestStartedAt = nowIso();
     const capabilities = this.sessionHistoryService.getProviderCapabilities(input.provider);
     const workspace = this.workspaceService.getWorkspaceOrThrow(input.workspaceId);
     const sessionId = createId();
@@ -184,7 +185,8 @@ export class SessionLiveRuntimeService {
       this.sessionMessageAttachmentService.buildAcceptedContentCandidates(
         input.content,
         providerPrompt
-      )
+      ),
+      requestStartedAt
     );
     const acceptedAt = acceptedMessage?.timestamp ?? nowIso();
     const boundAttachments = this.sessionMessageAttachmentService.bindClientRequestToMessage(
@@ -221,6 +223,7 @@ export class SessionLiveRuntimeService {
   }
 
   async sendLiveMessage(input: SendLiveMessageInput): Promise<LiveMessageAcceptedResult> {
+    const requestStartedAt = nowIso();
     const session = this.sessionHistoryService.getSession(input.sessionId, input.userId);
     const capabilities = await this.sessionHistoryService.getSessionCapabilities(input.sessionId);
     const workspace = this.workspaceService.getWorkspaceOrThrow(session.workspaceId);
@@ -266,7 +269,8 @@ export class SessionLiveRuntimeService {
       this.sessionMessageAttachmentService.buildAcceptedContentCandidates(
         input.content,
         providerPrompt
-      )
+      ),
+      requestStartedAt
     );
     const acceptedAt = acceptedMessage?.timestamp ?? nowIso();
     const boundAttachments = this.sessionMessageAttachmentService.bindClientRequestToMessage(
@@ -573,11 +577,12 @@ export class SessionLiveRuntimeService {
 
   private async findAcceptedUserMessage(
     sessionId: string,
-    content: string | string[]
+    content: string | string[],
+    minTimestamp: string
   ): Promise<SendMessageResult["message"] | null> {
     try {
       return await withTimeout(
-        this.sessionHistoryService.findLatestUserMessage(sessionId, content),
+        this.sessionHistoryService.findLatestUserMessage(sessionId, content, 12, minTimestamp),
         1200
       );
     } catch {

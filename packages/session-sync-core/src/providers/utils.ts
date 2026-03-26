@@ -26,7 +26,25 @@ export interface RawJsonLine {
 }
 
 export function normalizeWorkspacePath(value: string): string {
-  return value.replaceAll("/", "\\").toLowerCase();
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    return "";
+  }
+
+  const normalizedSeparators = trimmed.replaceAll("\\", "/");
+  const withoutTrailingSeparators =
+    normalizedSeparators.length > 1
+      ? normalizedSeparators.replace(/\/+$/, "")
+      : normalizedSeparators;
+
+  return isCaseInsensitiveWorkspacePath(withoutTrailingSeparators)
+    ? withoutTrailingSeparators.toLowerCase()
+    : withoutTrailingSeparators;
+}
+
+function isCaseInsensitiveWorkspacePath(value: string): boolean {
+  return /^[a-z]:(?:\/|$)/i.test(value) || value.startsWith("//");
 }
 
 export function ensureDirectory(dirPath: string): void {

@@ -149,15 +149,7 @@ export function mergeAuthoritativeMessages(
     nextById.set(message.messageId, nextMessage);
   }
 
-  const sorted = Array.from(nextById.values()).sort((left, right) => {
-    if (left.sequence !== right.sequence) {
-      return left.sequence - right.sequence;
-    }
-
-    return left.timestamp.localeCompare(right.timestamp);
-  });
-
-  return collapseEquivalentCodexMessages(sorted);
+  return sortMessages(Array.from(nextById.values()));
 }
 
 export function reconcileMessage(
@@ -166,8 +158,15 @@ export function reconcileMessage(
   message: HistoryMessageDto,
   clientRequestId: string | null
 ): SessionMessageViewModel[] {
+  const optimistic =
+    clientRequestId === null
+      ? null
+      : current.find((item) => item.clientRequestId === clientRequestId) ?? null;
   const next = current.filter((item) => item.clientRequestId !== clientRequestId);
-  return mergeAuthoritativeMessages(next, sessionId, [message]);
+  const authoritative = toViewMessage(sessionId, message, "sent", clientRequestId);
+  const merged = mergeResolvedUserMessage(authoritative, optimistic);
+
+  return sortMessages([...next.filter((item) => item.id !== merged.id), merged]);
 }
 
 export function markPendingAsFailed(
@@ -201,6 +200,48 @@ function collapseEquivalentCodexMessages(
   }
 
   return collapsed;
+}
+
+function sortMessages(messages: SessionMessageViewModel[]): SessionMessageViewModel[] {
+  const sorted = [...messages].sort((left, right) => {
+    if (left.sequence !== right.sequence) {
+      return left.sequence - right.sequence;
+    }
+
+    return left.timestamp.localeCompare(right.timestamp);
+  });
+
+  return collapseEquivalentCodexMessages(sorted);
+}
+
+function mergeResolvedUserMessage(
+  authoritative: SessionMessageViewModel,
+  optimistic: SessionMessageViewModel | null
+): SessionMessageViewModel {
+  if (!optimistic || !shouldPreserveOptimisticPlacement(optimistic, authoritative)) {
+    return authoritative;
+  }
+
+  return {
+    ...authoritative,
+    sequence: optimistic.sequence,
+    timestamp: optimistic.timestamp,
+    attachments:
+      authoritative.attachments.length > 0 ? authoritative.attachments : optimistic.attachments ?? [],
+    attachmentPayloads: optimistic.attachmentPayloads ?? null
+  };
+}
+
+function shouldPreserveOptimisticPlacement(
+  optimistic: SessionMessageViewModel,
+  authoritative: SessionMessageViewModel
+): boolean {
+  return (
+    isOptimisticUserMessage(optimistic) &&
+    authoritative.role === "user" &&
+    authoritative.kind === "text" &&
+    optimistic.sequence > authoritative.sequence
+  );
 }
 
 function isEquivalentCodexTextMessage(

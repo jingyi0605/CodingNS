@@ -10,7 +10,8 @@ import {
   ensureDirectory,
   extractTextBlocks,
   messageIdFromRawRef,
-  nextTimestamp
+  nextTimestamp,
+  normalizeWorkspacePath
 } from "../providers/utils.js";
 import type { NormalizedMessage, NormalizedToolCall, ProviderId } from "../types.js";
 import type {
@@ -964,10 +965,6 @@ function readSessionMeta(filePath: string): { threadId: string; cwd: string | nu
   } catch {
     return null;
   }
-}
-
-function normalizeWorkspacePath(value: string): string {
-  return value.replaceAll("/", "\\").toLowerCase();
 }
 
 function isSyntheticRawStoreRef(rawStoreRef: string): boolean {

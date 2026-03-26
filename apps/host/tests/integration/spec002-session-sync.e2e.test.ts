@@ -347,6 +347,172 @@ describe("spec002 会话同步核心", () => {
     expect(sessionStateColumns.map((column) => column.name)).not.toContain("is_archived");
   });
 
+  it("发现工作区会话时会忽略 Claude 顶层 Warmup sidechain 调试会话", async () => {
+    const fixture = createProviderFixture();
+    activeFixtures.push(fixture);
+    writeFileSync(
+      path.join(
+        fixture.claudeHomeDir,
+        "projects",
+        "c--Fixtures-Workspace",
+        "agent-a18af649.jsonl"
+      ),
+      [
+        JSON.stringify({
+          parentUuid: null,
+          isSidechain: true,
+          userType: "external",
+          cwd: fixture.workspaceDir,
+          sessionId: "claude-session-1",
+          agentId: "a18af649",
+          type: "user",
+          message: {
+            role: "user",
+            content: "Warmup"
+          },
+          uuid: "warmup-user-1",
+          timestamp: "2026-03-26T00:00:01.000Z"
+        }),
+        JSON.stringify({
+          parentUuid: "warmup-user-1",
+          isSidechain: true,
+          userType: "external",
+          cwd: fixture.workspaceDir,
+          sessionId: "claude-session-1",
+          agentId: "a18af649",
+          type: "assistant",
+          message: {
+            id: "msg-warmup-1",
+            type: "message",
+            role: "assistant",
+            content: [{ type: "text", text: "调试 warmup 回复" }]
+          },
+          uuid: "warmup-assistant-1",
+          timestamp: "2026-03-26T00:00:02.000Z"
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const hosted = createTestApp(fixture);
+    activeClosers.push(() => hosted.app.close());
+    await hosted.app.ready();
+
+    await hosted.app.inject({
+      method: "POST",
+      url: "/api/public/setup",
+      payload: {
+        username: "admin",
+        password: "password123"
+      }
+    });
+    const login = await hosted.app.inject({
+      method: "POST",
+      url: "/api/auth/login",
+      payload: {
+        username: "admin",
+        password: "password123"
+      }
+    });
+    const accessToken = login.json().accessToken;
+    const imported = await hosted.app.inject({
+      method: "POST",
+      url: "/api/workspaces/import",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        path: fixture.workspaceDir,
+        name: "Fixture Workspace"
+      }
+    });
+    const workspaceId = imported.json().id;
+
+    const sessions = await hosted.app.inject({
+      method: "GET",
+      url: `/api/sessions?workspaceId=${workspaceId}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+
+    expect(sessions.statusCode).toBe(200);
+    expect(sessions.json().items).toHaveLength(2);
+    expect(
+      sessions
+        .json()
+        .items.some(
+          (item: { provider: string; providerSessionId: string; title: string }) =>
+            item.provider === "claude-code" &&
+            item.providerSessionId === "agent-a18af649"
+        )
+    ).toBe(false);
+  });
+
+  it("继续 Claude 现有会话时会优先认领本次请求之后的新用户消息", async () => {
+    const fixture = createProviderFixture();
+    activeFixtures.push(fixture);
+    appendFileSync(
+      fixture.claudeSessionFile,
+      `\n${JSON.stringify({
+        type: "user",
+        sessionId: "claude-session-1",
+        cwd: fixture.workspaceDir,
+        timestamp: "2026-03-26T00:00:01.000Z",
+        message: {
+          role: "user",
+          content: [{ type: "text", text: "重复内容" }]
+        }
+      })}`
+    );
+
+    const hosted = createTestApp(fixture);
+    activeClosers.push(() => hosted.app.close());
+    await hosted.app.ready();
+
+    const accessToken = await bootstrapAndLogin(hosted);
+    const workspaceId = await importWorkspace(hosted, accessToken, fixture.workspaceDir);
+    const sessions = await hosted.app.inject({
+      method: "GET",
+      url: `/api/sessions?workspaceId=${workspaceId}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    const claudeSession = sessions
+      .json()
+      .items.find((item: { provider: string }) => item.provider === "claude-code");
+
+    if (!claudeSession) {
+      throw new Error("Claude 会话没有按预期加载出来");
+    }
+
+    appendFileSync(
+      fixture.claudeSessionFile,
+      `\n${JSON.stringify({
+        type: "user",
+        sessionId: "claude-session-1",
+        cwd: fixture.workspaceDir,
+        timestamp: "2026-03-26T00:00:05.000Z",
+        message: {
+          role: "user",
+          content: [{ type: "text", text: "重复内容" }]
+        }
+      })}`
+    );
+
+    const matched = await hosted.services.modules.sessionHistoryService.findLatestUserMessage(
+      claudeSession.sessionId,
+      "重复内容",
+      1,
+      "2026-03-26T00:00:04.000Z"
+    );
+
+    expect(matched).toBeTruthy();
+    expect(matched?.timestamp).toBe("2026-03-26T00:00:05.000Z");
+    expect(matched?.sequence).toBeGreaterThan(4);
+  });
+
   it("会跳过 Codex 规则消息标题，并支持手动重命名回写原始记录", async () => {
     const fixture = createProviderFixture();
     activeFixtures.push(fixture);
@@ -871,6 +1037,246 @@ describe("spec002 会话同步核心", () => {
     ).resolves.toBe(true);
   });
 
+  it("claude-code 会在消息推送时同步刷新会话列表标题", async () => {
+    const fixture = createProviderFixture();
+    activeFixtures.push(fixture);
+
+    const hosted = createTestApp(fixture);
+    activeClosers.push(() => hosted.app.close());
+    await hosted.app.ready();
+
+    const accessToken = await bootstrapAndLogin(hosted);
+    const workspaceId = await importWorkspace(hosted, accessToken, fixture.workspaceDir);
+
+    const sessions = await hosted.app.inject({
+      method: "GET",
+      url: `/api/sessions?workspaceId=${workspaceId}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(sessions.statusCode).toBe(200);
+
+    const claudeSessionId = sessions
+      .json()
+      .items.find((item: { provider: string }) => item.provider === "claude-code")?.sessionId;
+    expect(claudeSessionId).toBeTruthy();
+
+    await hosted.app.listen({
+      host: "127.0.0.1",
+      port: 0
+    });
+    activeClosers.push(() => hosted.app.close());
+
+    const address = hosted.app.server.address();
+
+    if (!address || typeof address === "string") {
+      throw new Error("测试服务器地址异常");
+    }
+
+    const workbenchSocket = new WebSocket(
+      `ws://127.0.0.1:${address.port}/ws?access_token=${accessToken}`
+    );
+    activeClosers.push(() => workbenchSocket.close());
+    const workbenchMessages = createWsMessageQueue(workbenchSocket);
+    expect(JSON.parse(await workbenchMessages.next()).type).toBe("system.connected");
+    workbenchSocket.send(JSON.stringify({ type: "workbench.subscribe" }));
+
+    const initialSnapshot = await nextWorkbenchSnapshot(workbenchMessages);
+    expect(findWorkbenchSession(initialSnapshot, claudeSessionId!)?.title).toBe("Claude 样本会话");
+
+    const sessionSocket = new WebSocket(`ws://127.0.0.1:${address.port}/ws?access_token=${accessToken}`);
+    activeClosers.push(() => sessionSocket.close());
+    const sessionMessages = createWsMessageQueue(sessionSocket);
+    expect(JSON.parse(await sessionMessages.next()).type).toBe("system.connected");
+    sessionSocket.send(
+      JSON.stringify({
+        type: "session.subscribe",
+        sessionId: claudeSessionId,
+        limit: 20
+      })
+    );
+
+    for (let index = 0; index < 3; index += 1) {
+      const payload = JSON.parse(await sessionMessages.next()) as { type: string };
+
+      if (payload.type === "session.backfill") {
+        break;
+      }
+    }
+
+    appendFileSync(
+      fixture.claudeSessionFile,
+      `\n${JSON.stringify({
+        type: "ai-title",
+        sessionId: "claude-session-1",
+        aiTitle: "Claude 新标题"
+      })}\n${JSON.stringify({
+        type: "assistant",
+        sessionId: "claude-session-1",
+        cwd: fixture.workspaceDir,
+        timestamp: "2026-03-23T08:00:20.000Z",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "Claude 标题已经更新。" }]
+        }
+      })}`,
+      "utf8"
+    );
+
+    const delta = await waitForSessionDelta(sessionMessages);
+    expect(delta.messages[0]?.content).toBe("Claude 标题已经更新。");
+
+    const refreshedSessions = await hosted.app.inject({
+      method: "GET",
+      url: `/api/sessions?workspaceId=${workspaceId}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(refreshedSessions.statusCode).toBe(200);
+    expect(
+      refreshedSessions
+        .json()
+        .items.find((item: { sessionId: string }) => item.sessionId === claudeSessionId)?.title
+    ).toBe("Claude 新标题");
+
+    await waitForWorkbenchSessionTitle(workbenchMessages, claudeSessionId!, "Claude 新标题");
+  });
+
+  it("codex 会在消息推送时同步刷新会话列表标题", async () => {
+    const fixture = createProviderFixture();
+    activeFixtures.push(fixture);
+
+    const codexStateDbPath = path.join(fixture.codexHomeDir, "state_999.sqlite");
+    const initialDb = new DatabaseSync(codexStateDbPath);
+    initialDb.exec(`
+      CREATE TABLE threads (
+        id TEXT PRIMARY KEY,
+        title TEXT,
+        cwd TEXT,
+        created_at INTEGER,
+        archived INTEGER,
+        first_user_message TEXT,
+        agent_nickname TEXT,
+        agent_role TEXT,
+        rollout_path TEXT
+      );
+    `);
+    initialDb
+      .prepare(
+        `INSERT INTO threads (
+           id,
+           title,
+           cwd,
+           created_at,
+           archived,
+           first_user_message,
+           agent_nickname,
+           agent_role,
+           rollout_path
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        "codex-session-1",
+        "旧 Codex 标题",
+        fixture.workspaceDir,
+        Math.floor(Date.parse("2026-03-23T09:00:00.000Z") / 1000),
+        0,
+        "继续实现 spec002",
+        null,
+        null,
+        fixture.codexSessionFile
+      );
+    initialDb.close();
+
+    const hosted = createTestApp(fixture);
+    activeClosers.push(() => hosted.app.close());
+    await hosted.app.ready();
+
+    const accessToken = await bootstrapAndLogin(hosted);
+    const workspaceId = await importWorkspace(hosted, accessToken, fixture.workspaceDir);
+
+    const sessions = await hosted.app.inject({
+      method: "GET",
+      url: `/api/sessions?workspaceId=${workspaceId}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(sessions.statusCode).toBe(200);
+
+    const codexSessionId = sessions
+      .json()
+      .items.find((item: { provider: string }) => item.provider === "codex")?.sessionId;
+    expect(codexSessionId).toBeTruthy();
+
+    await hosted.app.listen({
+      host: "127.0.0.1",
+      port: 0
+    });
+    activeClosers.push(() => hosted.app.close());
+
+    const address = hosted.app.server.address();
+
+    if (!address || typeof address === "string") {
+      throw new Error("测试服务器地址异常");
+    }
+
+    const workbenchSocket = new WebSocket(
+      `ws://127.0.0.1:${address.port}/ws?access_token=${accessToken}`
+    );
+    activeClosers.push(() => workbenchSocket.close());
+    const workbenchMessages = createWsMessageQueue(workbenchSocket);
+    expect(JSON.parse(await workbenchMessages.next()).type).toBe("system.connected");
+    workbenchSocket.send(JSON.stringify({ type: "workbench.subscribe" }));
+
+    const initialSnapshot = await nextWorkbenchSnapshot(workbenchMessages);
+    expect(findWorkbenchSession(initialSnapshot, codexSessionId!)?.title).toBe("旧 Codex 标题");
+
+    const sessionSocket = new WebSocket(`ws://127.0.0.1:${address.port}/ws?access_token=${accessToken}`);
+    activeClosers.push(() => sessionSocket.close());
+    const sessionMessages = createWsMessageQueue(sessionSocket);
+    expect(JSON.parse(await sessionMessages.next()).type).toBe("system.connected");
+    sessionSocket.send(
+      JSON.stringify({
+        type: "session.subscribe",
+        sessionId: codexSessionId,
+        limit: 20
+      })
+    );
+
+    for (let index = 0; index < 3; index += 1) {
+      const payload = JSON.parse(await sessionMessages.next()) as { type: string };
+
+      if (payload.type === "session.backfill") {
+        break;
+      }
+    }
+
+    const updatedDb = new DatabaseSync(codexStateDbPath);
+    updatedDb.prepare("UPDATE threads SET title = ? WHERE id = ?").run("新 Codex 标题", "codex-session-1");
+    updatedDb.close();
+
+    appendFileSync(
+      fixture.codexSessionFile,
+      `\n${JSON.stringify({
+        timestamp: "2026-03-23T09:00:20.000Z",
+        type: "event_msg",
+        payload: {
+          type: "agent_message",
+          message: "Codex 标题已经刷新。"
+        }
+      })}`,
+      "utf8"
+    );
+
+    const delta = await waitForSessionDelta(sessionMessages);
+    expect(delta.messages[0]?.content).toBe("Codex 标题已经刷新。");
+
+    await waitForWorkbenchSessionTitle(workbenchMessages, codexSessionId!, "新 Codex 标题");
+  });
+
   it("session_state 涓夋€佹祦杞」", async () => {
     const fixture = createProviderFixture();
     activeFixtures.push(fixture);
@@ -1367,7 +1773,7 @@ async function nextWorkbenchSnapshot(
 ): Promise<{
   items: Array<{
     workspace: { id: string };
-    sessions: Array<{ sessionId: string; isArchived: boolean }>;
+    sessions: Array<{ sessionId: string; isArchived: boolean; title?: string }>;
   }>;
 }> {
   while (true) {
@@ -1376,7 +1782,7 @@ async function nextWorkbenchSnapshot(
       snapshot?: {
         items: Array<{
           workspace: { id: string };
-          sessions: Array<{ sessionId: string; isArchived: boolean }>;
+          sessions: Array<{ sessionId: string; isArchived: boolean; title?: string }>;
         }>;
       };
     };
@@ -1390,14 +1796,59 @@ async function nextWorkbenchSnapshot(
 function findWorkbenchSession(
   snapshot: {
     items: Array<{
-      sessions: Array<{ sessionId: string; isArchived: boolean }>;
+      sessions: Array<{ sessionId: string; isArchived: boolean; title?: string }>;
     }>;
   },
   sessionId: string
-): { sessionId: string; isArchived: boolean } | undefined {
+): { sessionId: string; isArchived: boolean; title?: string } | undefined {
   return snapshot.items
     .flatMap((item) => item.sessions)
     .find((session) => session.sessionId === sessionId);
+}
+
+async function waitForSessionDelta(
+  queue: ReturnType<typeof createWsMessageQueue>,
+  timeoutMs = 2500
+): Promise<{
+  sessionId: string;
+  cursor: string | null;
+  messages: Array<{ content: string }>;
+}> {
+  while (true) {
+    const payload = JSON.parse(await queue.next(timeoutMs)) as {
+      type: string;
+      sessionId?: string;
+      cursor?: string | null;
+      messages?: Array<{ content: string }>;
+    };
+
+    if (payload.type === "session.delta" && payload.sessionId && payload.messages) {
+      return {
+        sessionId: payload.sessionId,
+        cursor: payload.cursor ?? null,
+        messages: payload.messages
+      };
+    }
+  }
+}
+
+async function waitForWorkbenchSessionTitle(
+  queue: ReturnType<typeof createWsMessageQueue>,
+  sessionId: string,
+  expectedTitle: string,
+  timeoutMs = 2500
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const snapshot = await nextWorkbenchSnapshot(queue, Math.max(50, deadline - Date.now()));
+
+    if (findWorkbenchSession(snapshot, sessionId)?.title === expectedTitle) {
+      return;
+    }
+  }
+
+  throw new Error(`等待 workbench 标题更新超时: ${expectedTitle}`);
 }
 
 function writeCodexSessionFile(input: {
