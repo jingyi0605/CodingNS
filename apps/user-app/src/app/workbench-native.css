@@ -1839,7 +1839,10 @@ body {
 }
 
 .user-message .message-content-wrapper {
-  width: min(78%, 720px);
+  width: fit-content;
+  max-width: min(78%, 720px);
+  min-width: 0;
+  margin-left: 0;
   padding: 14px 16px 10px;
   border-radius: 18px;
   background: rgba(142, 142, 147, 0.14);
@@ -1857,6 +1860,7 @@ body {
 }
 
 .user-message .message-time {
+  order: -1;
   margin-top: 8px;
   font-size: 11px;
   color: var(--text-tertiary);
@@ -2052,7 +2056,9 @@ body {
   }
 
   .user-message .message-content-wrapper {
-    width: min(100%, 100%);
+    width: fit-content;
+    max-width: 100%;
+    min-width: 0;
   }
 }
 

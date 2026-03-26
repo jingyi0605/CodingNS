@@ -5560,8 +5560,8 @@ textarea:focus-visible {
 .user-message {
   width: 100%;
   margin-left: auto;
-  flex-direction: row-reverse;
-  justify-content: flex-start;
+  flex-direction: row;
+  justify-content: flex-end;
   align-items: flex-end;
   gap: 8px;
   align-self: flex-end;
@@ -5569,10 +5569,10 @@ textarea:focus-visible {
 }
 
 .user-message .message-content-wrapper {
-  margin-left: auto;
+  margin-left: 0;
   width: fit-content;
   max-width: min(720px, calc(100vw - 220px));
-  min-width: min(180px, 100%);
+  min-width: 0;
   padding: 8px 12px;
   border-radius: 14px;
   background:
@@ -5581,6 +5581,7 @@ textarea:focus-visible {
 }
 
 .user-message .message-time {
+  order: -1;
   padding-left: 0;
   padding-top: 4px;
   text-align: right;
@@ -8037,7 +8038,7 @@ textarea:focus-visible {
 .user-message .message-content-wrapper {
   width: fit-content;
   max-width: min(680px, calc(100vw - 260px));
-  min-width: min(160px, 100%);
+  min-width: 0;
   padding: 7px 10px;
   border-radius: 14px;
 }
