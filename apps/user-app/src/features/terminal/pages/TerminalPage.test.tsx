@@ -12,7 +12,9 @@ import { TerminalPage } from "./TerminalPage";
 
 const {
   navigationGroups,
+  mockCloseTerminal,
   mockCreateTerminal,
+  mockDeleteTerminalRecord,
   mockListTerminalShellOptions,
   mockListWorkspaceTerminals
 } = vi.hoisted(() => ({
@@ -27,7 +29,9 @@ const {
       sessions: []
     }
   ] as WorkspaceSessionGroup[],
+  mockCloseTerminal: vi.fn(),
   mockCreateTerminal: vi.fn(),
+  mockDeleteTerminalRecord: vi.fn(),
   mockListTerminalShellOptions: vi.fn(),
   mockListWorkspaceTerminals: vi.fn()
 }));
@@ -48,11 +52,11 @@ vi.mock("../api/terminal-api", async () => {
 
   return {
     ...actual,
+    closeTerminal: mockCloseTerminal,
     createTerminal: mockCreateTerminal,
+    deleteTerminalRecord: mockDeleteTerminalRecord,
     listTerminalShellOptions: mockListTerminalShellOptions,
-    listWorkspaceTerminals: mockListWorkspaceTerminals,
-    closeTerminal: vi.fn(),
-    deleteTerminalRecord: vi.fn()
+    listWorkspaceTerminals: mockListWorkspaceTerminals
   };
 });
 
@@ -276,7 +280,9 @@ describe("TerminalPage", () => {
         role: "admin"
       }
     });
+    mockCloseTerminal.mockReset();
     mockCreateTerminal.mockReset();
+    mockDeleteTerminalRecord.mockReset();
     mockListTerminalShellOptions.mockReset();
     mockListWorkspaceTerminals.mockReset();
     mockListTerminalShellOptions.mockResolvedValue(buildShellOption());
@@ -365,6 +371,166 @@ describe("TerminalPage", () => {
 
     await waitFor(() => {
       expect(screen.getByText("工作终端")).toBeInTheDocument();
+    });
+  });
+
+  it("分栏模式下的标签菜单会明确显示主副分栏绑定动作", async () => {
+    mockListWorkspaceTerminals.mockResolvedValue({
+      items: [
+        buildTerminal({
+          id: "terminal-1",
+          name: "前端"
+        }),
+        buildTerminal({
+          id: "terminal-2",
+          name: "后端",
+          runtimeSessionId: "session-2",
+          attachTarget: "tmux://session-2",
+          processId: 4567
+        })
+      ]
+    });
+
+    renderPage();
+
+    await screen.findByText("前端");
+
+    await userEvent.click(
+      screen.getByRole("button", {
+        name: "展开终端工具栏"
+      })
+    );
+    await userEvent.click(
+      screen.getByRole("button", {
+        name: "左右分栏"
+      })
+    );
+
+    const actionButtons = screen.getAllByRole("button", { name: "终端操作" });
+    await userEvent.click(actionButtons[0]);
+
+    expect(screen.getByRole("menuitem", { name: "绑定到主分栏" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "绑定到副分栏" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "绑定到当前分栏" })).not.toBeInTheDocument();
+  });
+
+  it("运行中和异常终端的菜单只显示各自允许的生命周期动作", async () => {
+    mockListWorkspaceTerminals.mockResolvedValue({
+      items: [
+        buildTerminal({
+          id: "terminal-running",
+          name: "运行中终端"
+        }),
+        buildTerminal({
+          id: "terminal-error",
+          name: "异常终端",
+          runtimeSessionId: "session-2",
+          attachTarget: "tmux://session-2",
+          status: "error",
+          processId: null,
+          statusDetail: "tmux exited"
+        })
+      ]
+    });
+
+    renderPage();
+
+    await screen.findByText("运行中终端");
+
+    const actionButtons = screen.getAllByRole("button", { name: "终端操作" });
+
+    await userEvent.click(actionButtons[0]);
+    expect(screen.getByRole("menuitem", { name: "关闭终端" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "删除" })).not.toBeInTheDocument();
+
+    await userEvent.click(actionButtons[1]);
+    expect(screen.getByRole("menuitem", { name: "删除" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "关闭终端" })).not.toBeInTheDocument();
+  });
+
+  it("关闭终端时会先显示关闭中状态，再在后台同步关闭结果", async () => {
+    const closeDeferred = createDeferred<{ success: true }>();
+    const runningTerminal = buildTerminal({
+      id: "terminal-running",
+      name: "运行中终端"
+    });
+    const closedTerminal = buildTerminal({
+      id: "terminal-running",
+      name: "运行中终端",
+      status: "closed",
+      processId: null,
+      closedAt: "2026-03-26T08:10:00.000Z",
+      exitCode: 0,
+      statusDetail: "user_closed"
+    });
+
+    mockListWorkspaceTerminals
+      .mockResolvedValueOnce({
+        items: [runningTerminal]
+      })
+      .mockResolvedValueOnce({
+        items: [closedTerminal]
+      });
+    mockCloseTerminal.mockImplementationOnce(() => closeDeferred.promise);
+
+    renderPage();
+
+    await screen.findByText("运行中终端");
+    await userEvent.click(screen.getByRole("button", { name: "终端操作" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "关闭终端" }));
+
+    expect(mockCloseTerminal).toHaveBeenCalledWith("terminal-running");
+    expect(await screen.findByText("关闭中")).toBeInTheDocument();
+
+    closeDeferred.resolve({
+      success: true
+    });
+
+    await waitFor(() => {
+      expect(mockListWorkspaceTerminals).toHaveBeenCalledTimes(2);
+    });
+    await waitFor(() => {
+      expect(screen.queryByText("关闭中")).not.toBeInTheDocument();
+    });
+  });
+
+  it("删除终端时会先显示删除中状态，再在后台同步列表移除", async () => {
+    const deleteDeferred = createDeferred<{ success: true }>();
+    const erroredTerminal = buildTerminal({
+      id: "terminal-error",
+      name: "异常终端",
+      status: "error",
+      processId: null,
+      statusDetail: "tmux exited"
+    });
+
+    mockListWorkspaceTerminals
+      .mockResolvedValueOnce({
+        items: [erroredTerminal]
+      })
+      .mockResolvedValueOnce({
+        items: []
+      });
+    mockDeleteTerminalRecord.mockImplementationOnce(() => deleteDeferred.promise);
+
+    renderPage();
+
+    await screen.findByText("异常终端");
+    await userEvent.click(screen.getByRole("button", { name: "终端操作" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "删除" }));
+
+    expect(mockDeleteTerminalRecord).toHaveBeenCalledWith("terminal-error");
+    expect(await screen.findByText("删除中")).toBeInTheDocument();
+
+    deleteDeferred.resolve({
+      success: true
+    });
+
+    await waitFor(() => {
+      expect(mockListWorkspaceTerminals).toHaveBeenCalledTimes(2);
+    });
+    await waitFor(() => {
+      expect(screen.queryByText("异常终端")).not.toBeInTheDocument();
     });
   });
 });

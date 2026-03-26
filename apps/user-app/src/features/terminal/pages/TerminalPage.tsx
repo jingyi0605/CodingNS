@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { FitAddon } from "@xterm/addon-fit";
 import { SerializeAddon } from "@xterm/addon-serialize";
@@ -6,6 +6,7 @@ import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 
 import { t } from "../../../shared/i18n";
+import { useToast } from "../../../shared/toast";
 import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout";
 import {
   closeTerminal,
@@ -67,6 +68,7 @@ interface TerminalActionMenuState {
 }
 
 type TerminalNoticeTone = "info" | "success" | "warning" | "error";
+type TerminalMutationType = "closing" | "deleting";
 
 interface TerminalPaneBindings {
   primary: string | null;
@@ -104,7 +106,28 @@ interface TerminalWorkspacePaneProps {
   onRequireReload: () => Promise<void> | void;
   onUnauthorized: () => void;
   registerApi: (paneId: PaneId, api: TerminalPaneApi | null) => void;
-  notifyTerminal: (title: string, tone?: ToastTone) => void;
+  notifyTerminal: (title: string, tone?: TerminalNoticeTone) => void;
+}
+
+interface TerminalActionMenuProps {
+  actionMenu: TerminalActionMenuState;
+  terminal: TerminalDto;
+  pendingMutation: TerminalMutationType | null;
+  paneBindings: TerminalPaneBindings;
+  splitDirection: SplitDirection;
+  activePaneId: PaneId;
+  paneConnectionStates: Record<PaneId, TerminalConnectionState>;
+  pinnedTerminalIdSet: ReadonlySet<string>;
+  manuallyDisconnectedTerminalIdSet: ReadonlySet<string>;
+  onBindToActivePane: (terminalId: string) => void;
+  onBindToPane: (terminalId: string, paneId: PaneId) => void;
+  onDuplicate: (terminal: TerminalDto) => Promise<void>;
+  onDisconnect: (terminalId: string) => void;
+  onReconnect: (terminalId: string) => void;
+  onClose: (terminalId: string) => Promise<void>;
+  onDelete: (terminalId: string) => Promise<void>;
+  onTogglePin: (terminalId: string) => void;
+  onCloseMenu: () => void;
 }
 
 const DEFAULT_TERMINAL_COLS = 120;
@@ -119,9 +142,11 @@ const MIN_TERMINAL_PIXEL_HEIGHT = 120;
 const MIN_TERMINAL_ZOOM_SCALE = 0.8;
 const MAX_TERMINAL_ZOOM_SCALE = 1.6;
 const TERMINAL_ZOOM_STEP = 0.1;
+const TERMINAL_MUTATION_POLL_INTERVAL_MS = 700;
+const TERMINAL_MUTATION_POLL_ATTEMPTS = 10;
 const TERMINAL_ACTION_MENU_WIDTH = 196;
 const TERMINAL_ACTION_MENU_OFFSET = 6;
-const TERMINAL_ACTION_MENU_VIEWPORT_GUTTER = 12;
+const TERMINAL_ACTION_MENU_EDGE_PADDING = 8;
 const INITIAL_PANE_BINDINGS: TerminalPaneBindings = {
   primary: null,
   secondary: null
@@ -135,10 +160,12 @@ export function TerminalPage() {
   const navigate = useNavigate();
   const { navigationGroups } = useWorkbenchShell();
   const terminalActionMenuRef = useRef<HTMLDivElement | null>(null);
-  const terminalActionMenuTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const terminalTabbarMainRef = useRef<HTMLDivElement | null>(null);
   const terminalTabbarScrollRef = useRef<HTMLDivElement | null>(null);
+  const terminalActionMenuTriggerRef = useRef<Record<string, HTMLButtonElement | null>>({});
   const toolbarRef = useRef<HTMLDivElement | null>(null);
   const toolbarToggleRef = useRef<HTMLButtonElement | null>(null);
+  const selectedWorkspaceIdRef = useRef("");
   const terminalsRef = useRef<TerminalDto[]>([]);
   const terminalReloadRequestIdRef = useRef(0);
   const paneApiRef = useRef<Record<PaneId, TerminalPaneApi | null>>({
@@ -177,7 +204,11 @@ export function TerminalPage() {
   const [manuallyDisconnectedTerminalIds, setManuallyDisconnectedTerminalIds] = useState<string[]>(
     []
   );
+  const [terminalMutations, setTerminalMutations] = useState<Record<string, TerminalMutationType>>(
+    {}
+  );
   const [zoomScale, setZoomScale] = useState(() => readPersistedTerminalZoomScale() ?? 1);
+  const { dismissToast, showToast } = useToast();
 
   // 终端页不再弹 toast，保留统一入口，避免把调用点改成一堆分散判断。
   const notifyTerminal = useCallback(
@@ -192,42 +223,56 @@ export function TerminalPage() {
   const handleUnauthorized = useCallback(() => {
     navigate("/login", { replace: true });
   }, [navigate]);
-  const updateActionMenuPosition = useCallback(() => {
-    const trigger = terminalActionMenuTriggerRef.current;
+  const buildActionMenuState = useCallback(
+    (terminalId: string, triggerOverride?: HTMLButtonElement | null): TerminalActionMenuState | null => {
+      const tabbarMain = terminalTabbarMainRef.current;
+      const trigger = triggerOverride ?? terminalActionMenuTriggerRef.current[terminalId];
 
-    if (!trigger || !trigger.isConnected) {
+      if (!tabbarMain || !trigger || !trigger.isConnected) {
+        return null;
+      }
+
+      const tabbarRect = tabbarMain.getBoundingClientRect();
+      const triggerRect = trigger.getBoundingClientRect();
+      const maxLeft = Math.max(
+        TERMINAL_ACTION_MENU_EDGE_PADDING,
+        tabbarRect.width - TERMINAL_ACTION_MENU_WIDTH - TERMINAL_ACTION_MENU_EDGE_PADDING
+      );
+      const left = clampNumber(
+        triggerRect.right - tabbarRect.left - TERMINAL_ACTION_MENU_WIDTH,
+        TERMINAL_ACTION_MENU_EDGE_PADDING,
+        maxLeft
+      );
+      const top = Math.max(0, triggerRect.bottom - tabbarRect.top + TERMINAL_ACTION_MENU_OFFSET);
+
+      return {
+        terminalId,
+        top,
+        left
+      };
+    },
+    []
+  );
+  const updateActionMenuPosition = useCallback((terminalId: string) => {
+    const nextState = buildActionMenuState(terminalId);
+
+    if (!nextState) {
       setActionMenu(null);
       return;
     }
 
-    const triggerRect = trigger.getBoundingClientRect();
-    const maxLeft = Math.max(
-      TERMINAL_ACTION_MENU_VIEWPORT_GUTTER,
-      window.innerWidth - TERMINAL_ACTION_MENU_WIDTH - TERMINAL_ACTION_MENU_VIEWPORT_GUTTER
-    );
-    const left = clampNumber(
-      triggerRect.right - TERMINAL_ACTION_MENU_WIDTH,
-      TERMINAL_ACTION_MENU_VIEWPORT_GUTTER,
-      maxLeft
-    );
-    const top = Math.max(TERMINAL_ACTION_MENU_VIEWPORT_GUTTER, triggerRect.bottom + TERMINAL_ACTION_MENU_OFFSET);
-
     setActionMenu((current) => {
-      if (!current) {
+      if (!current || current.terminalId !== terminalId) {
         return current;
       }
 
-      if (current.left === left && current.top === top) {
+      if (current.top === nextState.top && current.left === nextState.left) {
         return current;
       }
 
-      return {
-        ...current,
-        left,
-        top
-      };
+      return nextState;
     });
-  }, []);
+  }, [buildActionMenuState]);
 
   const pinnedTerminalIdSet = useMemo(() => new Set(pinnedTerminalIds), [pinnedTerminalIds]);
   const manuallyDisconnectedTerminalIdSet = useMemo(
@@ -247,6 +292,10 @@ export function TerminalPage() {
   const activeTerminal = useMemo(
     () => terminals.find((terminal) => terminal.id === activeTerminalId) ?? null,
     [activeTerminalId, terminals]
+  );
+  const actionMenuTerminal = useMemo(
+    () => (actionMenu ? terminals.find((terminal) => terminal.id === actionMenu.terminalId) ?? null : null),
+    [actionMenu, terminals]
   );
   const visiblePaneIds =
     splitDirection === "single" ? (["primary"] as PaneId[]) : (["primary", "secondary"] as PaneId[]);
@@ -285,7 +334,10 @@ export function TerminalPage() {
       try {
         const terminalResponse = await listWorkspaceTerminals(workspaceId);
 
-        if (requestId !== terminalReloadRequestIdRef.current) {
+        if (
+          requestId !== terminalReloadRequestIdRef.current ||
+          selectedWorkspaceIdRef.current !== workspaceId
+        ) {
           return;
         }
 
@@ -326,7 +378,10 @@ export function TerminalPage() {
           })
         );
       } catch (error) {
-        if (requestId !== terminalReloadRequestIdRef.current) {
+        if (
+          requestId !== terminalReloadRequestIdRef.current ||
+          selectedWorkspaceIdRef.current !== workspaceId
+        ) {
           return;
         }
 
@@ -343,6 +398,10 @@ export function TerminalPage() {
 
     return reloadWorkspaceResources(selectedWorkspaceId);
   }, [reloadWorkspaceResources, selectedWorkspaceId]);
+
+  useEffect(() => {
+    selectedWorkspaceIdRef.current = selectedWorkspaceId;
+  }, [selectedWorkspaceId]);
 
   useEffect(() => {
     paneBindingsRef.current = paneBindings;
@@ -404,32 +463,33 @@ export function TerminalPage() {
   }, [activePaneId, paneBindings, selectedWorkspaceId]);
 
   useEffect(() => {
-    if (!actionMenu) {
-      terminalActionMenuTriggerRef.current = null;
+    if (actionMenu && !terminals.some((terminal) => terminal.id === actionMenu.terminalId)) {
+      setActionMenu(null);
     }
-  }, [actionMenu]);
+  }, [actionMenu, terminals]);
 
   useEffect(() => {
-    if (!actionMenu?.terminalId) {
+    if (!actionMenu) {
       return;
     }
 
-    const tabbarScrollElement = terminalTabbarScrollRef.current;
-    const frameId = window.requestAnimationFrame(() => {
-      updateActionMenuPosition();
-    });
+    const scrollElement = terminalTabbarScrollRef.current;
+    const handlePositionUpdate = () => {
+      updateActionMenuPosition(actionMenu.terminalId);
+    };
+    const frameId = window.requestAnimationFrame(handlePositionUpdate);
 
-    window.addEventListener("resize", updateActionMenuPosition);
-    window.addEventListener("scroll", updateActionMenuPosition, true);
-    tabbarScrollElement?.addEventListener("scroll", updateActionMenuPosition, { passive: true });
+    window.addEventListener("resize", handlePositionUpdate);
+    window.addEventListener("scroll", handlePositionUpdate, true);
+    scrollElement?.addEventListener("scroll", handlePositionUpdate, { passive: true });
 
     return () => {
       window.cancelAnimationFrame(frameId);
-      window.removeEventListener("resize", updateActionMenuPosition);
-      window.removeEventListener("scroll", updateActionMenuPosition, true);
-      tabbarScrollElement?.removeEventListener("scroll", updateActionMenuPosition);
+      window.removeEventListener("resize", handlePositionUpdate);
+      window.removeEventListener("scroll", handlePositionUpdate, true);
+      scrollElement?.removeEventListener("scroll", handlePositionUpdate);
     };
-  }, [actionMenu?.terminalId, updateActionMenuPosition]);
+  }, [actionMenu, updateActionMenuPosition]);
 
   useEffect(() => {
     if (!actionMenu && !toolbarOpen) {
@@ -440,7 +500,8 @@ export function TerminalPage() {
       const target = event.target as Node;
       const insideActionMenu =
         (terminalActionMenuRef.current?.contains(target) ?? false) ||
-        (terminalActionMenuTriggerRef.current?.contains(target) ?? false);
+        (!!actionMenu &&
+          (terminalActionMenuTriggerRef.current[actionMenu.terminalId]?.contains(target) ?? false));
       const insideToolbar =
         (toolbarRef.current?.contains(target) ?? false) ||
         (toolbarToggleRef.current?.contains(target) ?? false);
@@ -506,8 +567,8 @@ export function TerminalPage() {
         );
       }
 
-      setTerminals((current) =>
-        current.map((terminal) =>
+      setTerminals((current) => {
+        const nextTerminals = current.map((terminal) =>
           terminal.id === terminalPatch.id
             ? {
                 ...terminal,
@@ -516,22 +577,116 @@ export function TerminalPage() {
                 processId: terminalPatch.processId ?? terminal.processId ?? null
               }
             : terminal
-        )
-      );
+        );
+        terminalsRef.current = nextTerminals;
+        return nextTerminals;
+      });
     },
     []
   );
+
+  function markTerminalMutation(terminalId: string, mutation: TerminalMutationType | null): void {
+    setTerminalMutations((current) => {
+      if (mutation === null) {
+        if (!(terminalId in current)) {
+          return current;
+        }
+
+        const next = { ...current };
+        delete next[terminalId];
+        return next;
+      }
+
+      if (current[terminalId] === mutation) {
+        return current;
+      }
+
+      return {
+        ...current,
+        [terminalId]: mutation
+      };
+    });
+  }
+
+  function showTerminalMutationToast(terminalId: string, mutation: TerminalMutationType): void {
+    showToast({
+      id: buildTerminalMutationToastId(terminalId),
+      title: mutation === "closing" ? t("terminal.closing") : t("terminal.deleting"),
+      description:
+        mutation === "closing"
+          ? t("terminal.closePendingDescription")
+          : t("terminal.deletePendingDescription"),
+      tone: "info",
+      durationMs: null
+    });
+  }
+
+  async function waitForTerminalMutationSettlement(
+    workspaceId: string,
+    terminalId: string,
+    mutation: TerminalMutationType
+  ): Promise<"settled" | "timeout" | "workspace_changed"> {
+    for (let attempt = 0; attempt < TERMINAL_MUTATION_POLL_ATTEMPTS; attempt += 1) {
+      if (selectedWorkspaceIdRef.current !== workspaceId) {
+        return "workspace_changed";
+      }
+
+      await reloadWorkspaceResources(workspaceId);
+      const terminal = terminalsRef.current.find((item) => item.id === terminalId) ?? null;
+      const settled =
+        mutation === "deleting"
+          ? terminal === null
+          : terminal === null || terminal.status !== "running";
+
+      if (settled) {
+        return "settled";
+      }
+
+      if (attempt < TERMINAL_MUTATION_POLL_ATTEMPTS - 1) {
+        await waitForNextMutationPoll();
+      }
+    }
+
+    return "timeout";
+  }
 
   function activatePane(paneId: PaneId): void {
     updateActivePane(paneId);
   }
 
   function bindTerminalToActivePane(terminalId: string): void {
-    updatePaneBindings((current) => ({
-      ...current,
-      [activePaneIdRef.current]: terminalId,
-      ...(splitDirectionRef.current === "single" ? { primary: terminalId, secondary: null } : {})
-    }));
+    bindTerminalToPane(terminalId, activePaneIdRef.current);
+  }
+
+  function bindTerminalToPane(terminalId: string, paneId: PaneId): void {
+    updatePaneBindings((current) => {
+      const nextBindings: TerminalPaneBindings =
+        splitDirectionRef.current === "single"
+          ? {
+              primary: terminalId,
+              secondary: null
+            }
+          : {
+              ...current,
+              [paneId]: terminalId
+            };
+
+      if (splitDirectionRef.current !== "single") {
+        const siblingPaneId = paneId === "primary" ? "secondary" : "primary";
+
+        if (nextBindings[siblingPaneId] === terminalId) {
+          nextBindings[siblingPaneId] = pickAnotherTerminalId(terminals, terminalId);
+        }
+      }
+
+      return normalizePaneBindings({
+        terminals,
+        currentBindings: nextBindings,
+        splitDirection: splitDirectionRef.current,
+        fallbackTerminalId: terminalId,
+        preferredPaneId: paneId
+      });
+    });
     setManuallyDisconnectedTerminalIds((current) =>
       current.filter((item) => item !== terminalId)
     );
@@ -630,41 +785,107 @@ export function TerminalPage() {
   }
 
   async function handleCloseTerminal(terminalId: string): Promise<void> {
-    if (!selectedWorkspaceId) {
+    if (!selectedWorkspaceId || terminalMutations[terminalId]) {
       return;
     }
 
-    try {
-      await closeTerminal(terminalId);
-      await reloadWorkspaceResources(selectedWorkspaceId);
-      notifyTerminal(t("terminal.closed"), "success");
-    } catch (error) {
-      notifyTerminal(error instanceof Error ? error.message : t("terminal.closeFailed"), "error");
-    }
+    const workspaceId = selectedWorkspaceId;
+    const toastId = buildTerminalMutationToastId(terminalId);
+    setActionMenu(null);
+    markTerminalMutation(terminalId, "closing");
+    showTerminalMutationToast(terminalId, "closing");
+
+    void (async () => {
+      try {
+        await closeTerminal(terminalId);
+        showToast({
+          id: toastId,
+          title: t("terminal.closed"),
+          description: t("terminal.closePendingDescription"),
+          tone: "info",
+          durationMs: null
+        });
+
+        const settlement = await waitForTerminalMutationSettlement(workspaceId, terminalId, "closing");
+
+        if (settlement === "workspace_changed") {
+          dismissToast(toastId);
+          return;
+        }
+
+        if (settlement === "timeout") {
+          showToast({
+            id: toastId,
+            title: t("terminal.closed"),
+            description: t("terminal.closeSyncDelayed"),
+            tone: "warning"
+          });
+          return;
+        }
+
+        showToast({
+          id: toastId,
+          title: t("terminal.closeCompleted"),
+          tone: "success"
+        });
+      } catch (error) {
+        showToast({
+          id: toastId,
+          title: error instanceof Error ? error.message : t("terminal.closeFailed"),
+          tone: "error"
+        });
+      } finally {
+        markTerminalMutation(terminalId, null);
+      }
+    })();
   }
 
   async function handleDeleteTerminal(terminalId: string): Promise<void> {
-    if (!selectedWorkspaceId) {
+    if (!selectedWorkspaceId || terminalMutations[terminalId]) {
       return;
     }
 
-    try {
-      await deleteTerminalRecord(terminalId);
-      setActionMenu(null);
-      updatePaneBindings((current) => ({
-        primary: current.primary === terminalId ? null : current.primary,
-        secondary: current.secondary === terminalId ? null : current.secondary
-      }));
-      setPinnedTerminalIds((current) => {
-        const nextPinnedIds = current.filter((item) => item !== terminalId);
-        persistPinnedTerminalIds(selectedWorkspaceId, nextPinnedIds);
-        return nextPinnedIds;
-      });
-      await reloadWorkspaceResources(selectedWorkspaceId);
-      notifyTerminal(t("terminal.deleted"), "success");
-    } catch (error) {
-      notifyTerminal(error instanceof Error ? error.message : t("terminal.deleteFailed"), "error");
-    }
+    const workspaceId = selectedWorkspaceId;
+    const toastId = buildTerminalMutationToastId(terminalId);
+    setActionMenu(null);
+    markTerminalMutation(terminalId, "deleting");
+    showTerminalMutationToast(terminalId, "deleting");
+
+    void (async () => {
+      try {
+        await deleteTerminalRecord(terminalId);
+        const settlement = await waitForTerminalMutationSettlement(workspaceId, terminalId, "deleting");
+
+        if (settlement === "workspace_changed") {
+          dismissToast(toastId);
+          return;
+        }
+
+        if (settlement === "timeout") {
+          showToast({
+            id: toastId,
+            title: t("terminal.deleted"),
+            description: t("terminal.deleteSyncDelayed"),
+            tone: "warning"
+          });
+          return;
+        }
+
+        showToast({
+          id: toastId,
+          title: t("terminal.deleted"),
+          tone: "success"
+        });
+      } catch (error) {
+        showToast({
+          id: toastId,
+          title: error instanceof Error ? error.message : t("terminal.deleteFailed"),
+          tone: "error"
+        });
+      } finally {
+        markTerminalMutation(terminalId, null);
+      }
+    })();
   }
 
   async function handleDuplicateTerminal(terminal: TerminalDto): Promise<void> {
@@ -879,7 +1100,7 @@ export function TerminalPage() {
       />
       <section className="terminal-shell">
         <header className="terminal-tabbar">
-          <div className="terminal-tabbar-main">
+          <div ref={terminalTabbarMainRef} className="terminal-tabbar-main">
             <div
               ref={terminalTabbarScrollRef}
               className="terminal-tabbar-scroll"
@@ -890,12 +1111,15 @@ export function TerminalPage() {
                 const isActive = terminal.id === activeTerminalId;
                 const isPinned = pinnedTerminalIdSet.has(terminal.id);
                 const menuOpen = actionMenu?.terminalId === terminal.id;
-                const indicatorStatus = resolveTerminalIndicatorStatus({
-                  terminal,
-                  paneBindings,
-                  paneConnectionStates,
-                  manuallyDisconnectedTerminalIdSet
-                });
+                const pendingMutation = terminalMutations[terminal.id] ?? null;
+                const indicatorStatus = pendingMutation
+                  ? "creating"
+                  : resolveTerminalIndicatorStatus({
+                      terminal,
+                      paneBindings,
+                      paneConnectionStates,
+                      manuallyDisconnectedTerminalIdSet
+                    });
 
                 return (
                   <div
@@ -910,38 +1134,57 @@ export function TerminalPage() {
                       type="button"
                       role="tab"
                       aria-selected={isActive}
+                      aria-busy={pendingMutation !== null}
                       onClick={() => {
                         bindTerminalToActivePane(terminal.id);
                       }}
                       onAuxClick={(event) => {
-                        if (event.button !== 1) {
+                        if (event.button !== 1 || pendingMutation !== null) {
                           return;
                         }
 
                         event.preventDefault();
                         void handleCloseTerminal(terminal.id);
-                    }}
-                  >
-                    <span className="terminal-tab-name">
-                      <span
-                        className="terminal-tab-status-dot"
-                        data-status={indicatorStatus}
-                        aria-hidden="true"
-                      />
-                      {isPinned ? <span className="terminal-tab-pin-indicator">•</span> : null}
-                      <span className="terminal-tab-name-text">{terminal.name}</span>
-                      <span
-                        className="terminal-tab-runtime"
-                        title={getTerminalRuntimeLabel(terminal.runtimeType)}
-                      >
-                        {getTerminalRuntimeShortLabel(terminal.runtimeType)}
+                      }}
+                    >
+                      <span className="terminal-tab-name">
+                        <span
+                          className="terminal-tab-status-dot"
+                          data-status={indicatorStatus}
+                          aria-hidden="true"
+                        />
+                        {isPinned ? <span className="terminal-tab-pin-indicator">•</span> : null}
+                        <span className="terminal-tab-name-text">{terminal.name}</span>
+                        <span
+                          className="terminal-tab-runtime"
+                          title={getTerminalRuntimeLabel(terminal.runtimeType)}
+                        >
+                          {getTerminalRuntimeShortLabel(terminal.runtimeType)}
+                        </span>
+                        {pendingMutation ? (
+                          <span
+                            className="terminal-tab-operation"
+                            data-operation={pendingMutation}
+                          >
+                            <span
+                              className="terminal-tab-operation-spinner"
+                              aria-hidden="true"
+                            />
+                            {pendingMutation === "closing"
+                              ? t("terminal.closePendingBadge")
+                              : t("terminal.deletePendingBadge")}
+                          </span>
+                        ) : null}
                       </span>
-                    </span>
-                  </button>
+                    </button>
                     <button
+                      ref={(node) => {
+                        terminalActionMenuTriggerRef.current[terminal.id] = node;
+                      }}
                       className="terminal-tab-inline-action"
                       type="button"
                       data-open={menuOpen}
+                      disabled={pendingMutation !== null}
                       aria-haspopup="menu"
                       aria-label={t("terminal.moreActions")}
                       aria-expanded={menuOpen}
@@ -953,12 +1196,13 @@ export function TerminalPage() {
                           return;
                         }
 
-                        terminalActionMenuTriggerRef.current = event.currentTarget;
-                        setActionMenu({
-                          terminalId: terminal.id,
-                          top: 0,
-                          left: 0
-                        });
+                        setActionMenu(
+                          buildActionMenuState(terminal.id, event.currentTarget) ?? {
+                            terminalId: terminal.id,
+                            top: 0,
+                            left: 0
+                          }
+                        );
                       }}
                     >
                       ⋯
@@ -1002,16 +1246,16 @@ export function TerminalPage() {
                   creatingTerminal ||
                   (selectedShellOption?.available === false && shellOptions.length > 0)
                 }
-              onClick={() => {
-                void handleCreateTerminal();
-              }}
-            >
-              <span className="terminal-toolbar-icon" aria-hidden="true">
-                <svg viewBox="0 0 16 16" focusable="false">
-                  <path d="M8 3.25a.75.75 0 0 1 .75.75v3.25H12a.75.75 0 0 1 0 1.5H8.75V12a.75.75 0 0 1-1.5 0V8.75H4A.75.75 0 0 1 4 7.25h3.25V4A.75.75 0 0 1 8 3.25Z" />
-                </svg>
-              </span>
-            </button>
+                onClick={() => {
+                  void handleCreateTerminal();
+                }}
+              >
+                <span className="terminal-toolbar-icon" aria-hidden="true">
+                  <svg viewBox="0 0 16 16" focusable="false">
+                    <path d="M8 3.25a.75.75 0 0 1 .75.75v3.25H12a.75.75 0 0 1 0 1.5H8.75V12a.75.75 0 0 1-1.5 0V8.75H4A.75.75 0 0 1 4 7.25h3.25V4A.75.75 0 0 1 8 3.25Z" />
+                  </svg>
+                </span>
+              </button>
             </div>
 
             <div className="terminal-tabbar-inline-actions">
@@ -1165,114 +1409,33 @@ export function TerminalPage() {
                 </button>
               </div>
             </div>
+            {actionMenu && actionMenuTerminal ? (
+              <TerminalActionMenu
+                ref={terminalActionMenuRef}
+                actionMenu={actionMenu}
+                terminal={actionMenuTerminal}
+                paneBindings={paneBindings}
+                splitDirection={splitDirection}
+                activePaneId={activePaneId}
+                paneConnectionStates={paneConnectionStates}
+                pinnedTerminalIdSet={pinnedTerminalIdSet}
+                manuallyDisconnectedTerminalIdSet={manuallyDisconnectedTerminalIdSet}
+                pendingMutation={terminalMutations[actionMenuTerminal.id] ?? null}
+                onBindToActivePane={bindTerminalToActivePane}
+                onBindToPane={bindTerminalToPane}
+                onDuplicate={handleDuplicateTerminal}
+                onDisconnect={handleDisconnectTerminal}
+                onReconnect={handleReconnectTerminal}
+                onClose={handleCloseTerminal}
+                onDelete={handleDeleteTerminal}
+                onTogglePin={handleTogglePin}
+                onCloseMenu={() => {
+                  setActionMenu(null);
+                }}
+              />
+            ) : null}
           </div>
         </header>
-
-        {actionMenu ? (
-          <div
-            ref={terminalActionMenuRef}
-            className="terminal-tab-menu terminal-tab-menu-floating"
-            role="menu"
-            style={{
-              top: `${actionMenu.top}px`,
-              left: `${actionMenu.left}px`
-            }}
-          >
-            {(() => {
-              const terminal = terminals.find((item) => item.id === actionMenu.terminalId);
-
-              if (!terminal) {
-                return null;
-              }
-
-              const isPinned = pinnedTerminalIdSet.has(terminal.id);
-              const canControlConnection = terminal.id === activeTerminalId && terminal.status === "running";
-              const activeConnectionState = paneConnectionStates[activePaneId];
-
-              return (
-                <>
-                  <button
-                    type="button"
-                    className="terminal-tab-menu-item"
-                    role="menuitem"
-                    onClick={() => {
-                      bindTerminalToActivePane(terminal.id);
-                      setActionMenu(null);
-                    }}
-                  >
-                    {t("terminal.bindToPaneAction")}
-                  </button>
-                  <button
-                    type="button"
-                    className="terminal-tab-menu-item"
-                    role="menuitem"
-                    onClick={() => {
-                      setActionMenu(null);
-                      void handleDuplicateTerminal(terminal);
-                    }}
-                  >
-                    {t("terminal.duplicateAction")}
-                  </button>
-                  <div className="terminal-tab-menu-divider" role="separator" />
-                  <button
-                    type="button"
-                    className="terminal-tab-menu-item"
-                    role="menuitem"
-                    disabled={!canControlConnection || activeConnectionState !== "connected"}
-                    onClick={() => {
-                      handleDisconnectTerminal(terminal.id);
-                    }}
-                  >
-                    {t("terminal.disconnectAction")}
-                  </button>
-                  <button
-                    type="button"
-                    className="terminal-tab-menu-item"
-                    role="menuitem"
-                    disabled={!canControlConnection || activeConnectionState === "connected"}
-                    onClick={() => {
-                      handleReconnectTerminal(terminal.id);
-                    }}
-                  >
-                    {t("terminal.reconnectAction")}
-                  </button>
-                  <div className="terminal-tab-menu-divider" role="separator" />
-                  <button
-                    type="button"
-                    className="terminal-tab-menu-item"
-                    role="menuitem"
-                    onClick={() => {
-                      setActionMenu(null);
-                      void handleCloseTerminal(terminal.id);
-                    }}
-                  >
-                    {t("terminal.closeButton")}
-                  </button>
-                  <button
-                    type="button"
-                    className="terminal-tab-menu-item"
-                    role="menuitem"
-                    onClick={() => {
-                      void handleDeleteTerminal(terminal.id);
-                    }}
-                  >
-                    {t("terminal.deleteAction")}
-                  </button>
-                  <button
-                    type="button"
-                    className="terminal-tab-menu-item"
-                    role="menuitem"
-                    onClick={() => {
-                      handleTogglePin(terminal.id);
-                    }}
-                  >
-                    {isPinned ? t("terminal.unpinAction") : t("terminal.pinAction")}
-                  </button>
-                </>
-              );
-            })()}
-          </div>
-        ) : null}
 
         <div className="terminal-stage-surface">
           <div className="terminal-stage-grid" data-layout={splitDirection}>
@@ -1306,6 +1469,184 @@ export function TerminalPage() {
     </main>
   );
 }
+
+const TerminalActionMenu = forwardRef<HTMLDivElement, TerminalActionMenuProps>(function TerminalActionMenu(
+  {
+    actionMenu,
+    terminal,
+    pendingMutation,
+    paneBindings,
+    splitDirection,
+    activePaneId,
+    paneConnectionStates,
+    pinnedTerminalIdSet,
+    manuallyDisconnectedTerminalIdSet,
+    onBindToActivePane,
+    onBindToPane,
+    onDuplicate,
+    onDisconnect,
+    onReconnect,
+    onClose,
+    onDelete,
+    onTogglePin,
+    onCloseMenu
+  },
+  ref
+) {
+  const isPinned = pinnedTerminalIdSet.has(terminal.id);
+  const assignedPaneId = findPaneIdByTerminalId(
+    terminal.id,
+    paneBindings,
+    splitDirection,
+    activePaneId
+  );
+  const activeConnectionState = assignedPaneId ? paneConnectionStates[assignedPaneId] : "closed";
+  const indicatorStatus = resolveTerminalIndicatorStatus({
+    terminal,
+    paneBindings,
+    paneConnectionStates,
+    manuallyDisconnectedTerminalIdSet
+  });
+  const showCloseAction =
+    pendingMutation === null && terminal.status === "running" && indicatorStatus !== "disconnected";
+  const showDeleteAction = pendingMutation === null && !showCloseAction;
+  const canControlConnection =
+    pendingMutation === null && assignedPaneId !== null && terminal.status === "running";
+  const showSplitPaneBindings = splitDirection !== "single";
+
+  return (
+    <div
+      ref={ref}
+      className="terminal-tab-menu"
+      role="menu"
+      style={{
+        top: `${actionMenu.top}px`,
+        left: `${actionMenu.left}px`
+      }}
+      onClick={(event) => {
+        event.stopPropagation();
+      }}
+    >
+      {showSplitPaneBindings ? (
+        <>
+          <button
+            type="button"
+            className="terminal-tab-menu-item"
+            role="menuitem"
+            disabled={pendingMutation !== null || paneBindings.primary === terminal.id}
+            onClick={() => {
+              onBindToPane(terminal.id, "primary");
+            }}
+          >
+            {t("terminal.bindToPrimaryPaneAction")}
+          </button>
+          <button
+            type="button"
+            className="terminal-tab-menu-item"
+            role="menuitem"
+            disabled={pendingMutation !== null || paneBindings.secondary === terminal.id}
+            onClick={() => {
+              onBindToPane(terminal.id, "secondary");
+            }}
+          >
+            {t("terminal.bindToSecondaryPaneAction")}
+          </button>
+        </>
+      ) : (
+        <button
+          type="button"
+          className="terminal-tab-menu-item"
+          role="menuitem"
+          disabled={pendingMutation !== null || paneBindings.primary === terminal.id}
+          onClick={() => {
+            onBindToActivePane(terminal.id);
+          }}
+        >
+          {t("terminal.bindToPaneAction")}
+        </button>
+      )}
+      <button
+        type="button"
+        className="terminal-tab-menu-item"
+        role="menuitem"
+        disabled={pendingMutation !== null}
+        onClick={() => {
+          onCloseMenu();
+          void onDuplicate(terminal);
+        }}
+      >
+        {t("terminal.duplicateAction")}
+      </button>
+      {canControlConnection ? (
+        <>
+          <div className="terminal-tab-menu-divider" role="separator" />
+          {activeConnectionState === "connected" ? (
+            <button
+              type="button"
+              className="terminal-tab-menu-item"
+              role="menuitem"
+              disabled={pendingMutation !== null}
+              onClick={() => {
+                onDisconnect(terminal.id);
+              }}
+            >
+              {t("terminal.disconnectAction")}
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="terminal-tab-menu-item"
+              role="menuitem"
+              disabled={pendingMutation !== null}
+              onClick={() => {
+                onReconnect(terminal.id);
+              }}
+            >
+              {t("terminal.reconnectAction")}
+            </button>
+          )}
+        </>
+      ) : null}
+      <div className="terminal-tab-menu-divider" role="separator" />
+      {showCloseAction ? (
+        <button
+          type="button"
+          className="terminal-tab-menu-item"
+          role="menuitem"
+          onClick={() => {
+            onCloseMenu();
+            void onClose(terminal.id);
+          }}
+        >
+          {t("terminal.closeButton")}
+        </button>
+      ) : null}
+      {showDeleteAction ? (
+        <button
+          type="button"
+          className="terminal-tab-menu-item"
+          role="menuitem"
+          onClick={() => {
+            void onDelete(terminal.id);
+          }}
+        >
+          {t("terminal.deleteAction")}
+        </button>
+      ) : null}
+      <button
+        type="button"
+        className="terminal-tab-menu-item"
+        role="menuitem"
+        disabled={pendingMutation !== null}
+        onClick={() => {
+          onTogglePin(terminal.id);
+        }}
+      >
+        {isPinned ? t("terminal.unpinAction") : t("terminal.pinAction")}
+      </button>
+    </div>
+  );
+});
 
 function TerminalWorkspacePane({
   paneId,
@@ -2047,6 +2388,16 @@ function findPaneIdByTerminalId(
   }
 
   return null;
+}
+
+function buildTerminalMutationToastId(terminalId: string): string {
+  return `terminal-mutation-${terminalId}`;
+}
+
+function waitForNextMutationPoll(): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, TERMINAL_MUTATION_POLL_INTERVAL_MS);
+  });
 }
 
 function downloadTextFile(fileName: string, content: string): void {
