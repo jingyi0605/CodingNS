@@ -1,4 +1,5 @@
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import crypto from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 
@@ -14,10 +15,15 @@ export interface HostConfig {
   claudeCodeHomeDir: string;
   codexHomeDir: string;
   codexCliPath: string;
+  claudeHookBridgeToken: string;
 }
 
 export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConfig {
   const homeDir = os.homedir();
+  const databasePath =
+    overrides.databasePath ??
+    process.env.CODINGNS_DB_PATH ??
+    path.resolve(process.cwd(), "apps", "host", "data", "host", "host.sqlite");
   const codexCliPath = resolveCodexCliPath(
     overrides.codexCliPath ?? process.env.CODINGNS_CODEX_COMMAND,
     homeDir
@@ -26,10 +32,7 @@ export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConf
   return {
     host: overrides.host ?? process.env.CODINGNS_HOST ?? "0.0.0.0",
     port: overrides.port ?? Number(process.env.CODINGNS_PORT ?? "3002"),
-    databasePath:
-      overrides.databasePath ??
-      process.env.CODINGNS_DB_PATH ??
-      path.resolve(process.cwd(), "apps", "host", "data", "host", "host.sqlite"),
+    databasePath,
     releaseChannel:
       overrides.releaseChannel ??
       ((process.env.CODINGNS_RELEASE_CHANNEL as "stable" | "beta" | undefined) ?? "stable"),
@@ -54,7 +57,11 @@ export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConf
       overrides.codexHomeDir ??
       process.env.CODINGNS_CODEX_HOME ??
       path.join(homeDir, ".codex"),
-    codexCliPath
+    codexCliPath,
+    claudeHookBridgeToken:
+      overrides.claudeHookBridgeToken ??
+      process.env.CODINGNS_CLAUDE_HOOK_TOKEN ??
+      resolvePersistentSecret(path.join(path.dirname(databasePath), "claude-hook-token"))
   };
 }
 
@@ -79,4 +86,23 @@ function resolveCodexCliPath(configuredPath: string | undefined, homeDir: string
   }
 
   return "codex";
+}
+
+function resolvePersistentSecret(secretPath: string): string {
+  try {
+    if (existsSync(secretPath)) {
+      const existing = readFileSync(secretPath, "utf8").trim();
+
+      if (existing.length > 0) {
+        return existing;
+      }
+    }
+
+    mkdirSync(path.dirname(secretPath), { recursive: true });
+    const nextSecret = crypto.randomBytes(24).toString("hex");
+    writeFileSync(secretPath, nextSecret, "utf8");
+    return nextSecret;
+  } catch {
+    return crypto.randomBytes(24).toString("hex");
+  }
 }

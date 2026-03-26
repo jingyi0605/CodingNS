@@ -1039,7 +1039,13 @@ export class SessionLiveRuntimeService {
 
   private hasActiveRuntime(sessionId: string): boolean {
     const activeRun = this.providerRuntimeService.getSnapshot(sessionId);
-    return activeRun ? isActiveRuntimeState(activeRun.runningState) : false;
+
+    if (activeRun && isActiveRuntimeState(activeRun.runningState)) {
+      return true;
+    }
+
+    const externalRuntimeSnapshot = this.externalRuntimeSnapshots.get(sessionId);
+    return externalRuntimeSnapshot ? isActiveRuntimeState(externalRuntimeSnapshot.runningState) : false;
   }
 
   private async launchRuntimeRun(

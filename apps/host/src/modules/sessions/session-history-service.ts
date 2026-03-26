@@ -307,6 +307,11 @@ export class SessionHistoryService {
     return this.enrichSessionItem(this.getSessionListItemOrThrow(sessionId, userId));
   }
 
+  async refreshRuntimeFallbackSession(sessionId: string, userId: string): Promise<SessionListItem> {
+    await this.refreshSessionState(sessionId, userId);
+    return this.enrichSessionItem(this.getSessionListItemOrThrow(sessionId, userId));
+  }
+
   async syncSessionTitle(sessionId: string): Promise<void> {
     const binding = this.getBindingOrThrow(sessionId);
     await this.syncSessionTitleFromProvider(sessionId, binding);
@@ -1577,7 +1582,7 @@ function shouldPreserveRuntimeTerminalState(
   current: SessionStateRecord | null,
   inspection: ReturnType<typeof inspectSessionActivity>
 ): boolean {
-  if (!current || current.activitySource !== "runtime" || !isTerminalRunningState(current.runningState)) {
+  if (!current || current.activitySource !== "runtime") {
     return false;
   }
 
@@ -1585,7 +1590,15 @@ function shouldPreserveRuntimeTerminalState(
     return true;
   }
 
-  return inspection.lastEventAt.localeCompare(current.lastEventAt) <= 0;
+  if (isTerminalRunningState(current.runningState)) {
+    return inspection.lastEventAt.localeCompare(current.lastEventAt) <= 0;
+  }
+
+  if (current.runningState === "starting" || current.runningState === "running") {
+    return inspection.lastEventAt.localeCompare(current.lastEventAt) < 0;
+  }
+
+  return false;
 }
 
 function isTerminalRunningState(state: SessionStateRecord["runningState"]): boolean {

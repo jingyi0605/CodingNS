@@ -63,6 +63,7 @@ import { SessionBindingRepository } from "../storage/repositories/session-bindin
 import { SessionChangedFileRepository } from "../storage/repositories/session-changed-file-repository.js";
 import { SessionIndexRepository } from "../storage/repositories/session-index-repository.js";
 import { SessionMessageAttachmentRepository } from "../storage/repositories/session-message-attachment-repository.js";
+import { SessionSendQueueRepository } from "../storage/repositories/session-send-queue-repository.js";
 import { SessionStateRepository } from "../storage/repositories/session-state-repository.js";
 import { SessionStatusSnapshotRepository } from "../storage/repositories/session-status-snapshot-repository.js";
 import { TerminalCommandTemplateRepository } from "../storage/repositories/terminal-command-template-repository.js";
@@ -92,6 +93,7 @@ export function createServer(config: HostConfig) {
     sessionChangedFileRepository: new SessionChangedFileRepository(database.db),
     sessionIndexRepository: new SessionIndexRepository(database.db),
     sessionMessageAttachmentRepository: new SessionMessageAttachmentRepository(database.db),
+    sessionSendQueueRepository: new SessionSendQueueRepository(database.db),
     sessionStateRepository: new SessionStateRepository(database.db),
     sessionStatusSnapshotRepository: new SessionStatusSnapshotRepository(database.db),
     terminalInstanceRepository: new TerminalInstanceRepository(database.db),
@@ -159,6 +161,9 @@ export function createServer(config: HostConfig) {
     sessionMessageAttachmentService,
     workspaceService,
     sessionChangedFileService,
+    repositories.sessionBindingRepository,
+    repositories.authUserRepository,
+    repositories.sessionSendQueueRepository,
     repositories.sessionIndexRepository,
     repositories.sessionStateRepository,
     repositories.sessionStatusSnapshotRepository,
@@ -200,7 +205,11 @@ export function createServer(config: HostConfig) {
     sessionHistoryService,
     sessionLiveRuntimeService
   );
-  const providerController = new ProviderController(sessionHistoryService);
+  const providerController = new ProviderController(
+    sessionHistoryService,
+    sessionLiveRuntimeService,
+    config
+  );
   const fileController = new FileController(
     fileTreeService,
     fileContentService,

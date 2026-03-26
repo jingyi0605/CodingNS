@@ -14,6 +14,7 @@ import {
 import { ConnectionBanner } from "../components/ConnectionBanner";
 import { ComposerPanel } from "../components/ComposerPanel";
 import { MessageTimeline } from "../components/MessageTimeline";
+import { QueuedMessageList } from "../components/QueuedMessageList";
 import { useWorkbenchShell } from "../components/WorkbenchLayout";
 import { SessionRuntimeStore, useSessionRuntimeStore } from "../runtime/session-runtime-store";
 import {
@@ -85,6 +86,7 @@ function LiveConversationPage({
   const session = useSessionRuntimeStore(store, (state) => state.session);
   const capabilities = useSessionRuntimeStore(store, (state) => state.capabilities);
   const messages = useSessionRuntimeStore(store, (state) => state.messages);
+  const queuedMessages = useSessionRuntimeStore(store, (state) => state.queuedMessages);
   const contextUsage = useSessionRuntimeStore(store, (state) => state.contextUsage);
   const historyState = useSessionRuntimeStore(store, (state) => state.historyState);
   const runtimeErrorCode = useSessionRuntimeStore(store, (state) => state.errorCode);
@@ -95,6 +97,7 @@ function LiveConversationPage({
   );
   const hasOlderMessages = useSessionRuntimeStore(store, (state) => state.hasOlderMessages);
   const connectionState = useSessionRuntimeStore(store, (state) => state.connectionState);
+  const [deletingQueueItemId, setDeletingQueueItemId] = useState<string | null>(null);
   const isRunning =
     session?.activitySource !== "inferred" &&
     (
@@ -163,6 +166,19 @@ function LiveConversationPage({
           void store.retryMessage(clientRequestId);
         }}
       />
+      <QueuedMessageList
+        items={queuedMessages}
+        deletingQueueItemId={deletingQueueItemId}
+        onDelete={async (queueItemId) => {
+          setDeletingQueueItemId(queueItemId);
+
+          try {
+            await store.deleteQueuedMessage(queueItemId);
+          } finally {
+            setDeletingQueueItemId(null);
+          }
+        }}
+      />
       <ComposerPanel
         capabilities={capabilities}
         contextUsage={contextUsage}
@@ -183,6 +199,20 @@ function LiveConversationPage({
               attachmentMeta: options?.attachmentMeta
             });
             requestNavigationRefresh();
+          } finally {
+            setSending(false);
+          }
+        }}
+        onQueueSend={async (content, options) => {
+          setSending(true);
+
+          try {
+            await store.enqueueMessage(content, {
+              model: options?.model,
+              reasoningLevel: options?.reasoningLevel,
+              attachments: options?.attachments,
+              attachmentMeta: options?.attachmentMeta
+            });
           } finally {
             setSending(false);
           }

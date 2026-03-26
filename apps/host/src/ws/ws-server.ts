@@ -124,7 +124,13 @@ export function createWsServer(
 
         client.send(JSON.stringify(deduped));
 
-        if (deduped.type === "session.backfill" || deduped.type === "session.delta") {
+        if (
+          deduped.type === "session.backfill" ||
+          deduped.type === "session.delta" ||
+          deduped.type === "session.runtime_status" ||
+          deduped.type === "session.runtime_error" ||
+          deduped.type === "session.interrupted"
+        ) {
           await workbenchWsHub.broadcastSnapshot(authContext.user.userId);
         }
       };

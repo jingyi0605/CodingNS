@@ -8,9 +8,12 @@ import { t } from "../../../shared/i18n";
 import { ApiError } from "../../../shared/network/api-error";
 import {
   type ContextUsageDto,
+  deleteSessionQueueItem,
+  enqueueSessionMessage,
   getSessionCapabilities,
   getSessionDetail,
   getSessionMessages,
+  getSessionQueue,
   getSessionRuntime,
   interruptSession,
   markSessionSeen,
@@ -20,6 +23,7 @@ import {
   type ImageAttachmentPayload,
   type HistoryMessageDto,
   type ProviderCapabilitiesDto,
+  type SessionQueueItemDto,
   type SessionSummaryDto,
   type SessionRunningState
 } from "../api/conversation-api";
@@ -53,6 +57,7 @@ interface SessionRuntimeSnapshot {
   capabilities: ProviderCapabilitiesDto | null;
   contextUsage: ContextUsageDto | null;
   messages: SessionMessageViewModel[];
+  queuedMessages: SessionQueueItemDto[];
 }
 
 export class SessionRuntimeStore {
@@ -89,7 +94,8 @@ export class SessionRuntimeStore {
       session: seededSession,
       capabilities: cachedSnapshot?.capabilities ?? null,
       contextUsage: cachedSnapshot?.contextUsage ?? null,
-      messages: seededMessages
+      messages: seededMessages,
+      queuedMessages: cachedSnapshot?.queuedMessages ?? []
     });
     this.seenWatermark = seededSession?.lastSeenAt ?? null;
   }
@@ -125,6 +131,8 @@ export class SessionRuntimeStore {
       void this.refreshRuntimeSnapshot("bootstrap");
     }
 
+    void this.refreshQueue();
+
     try {
       await this.loadLatestHistory();
       this.scheduleMarkSeen();
@@ -149,7 +157,8 @@ export class SessionRuntimeStore {
         cachedSnapshot?.messages ?? [],
         this.sessionId,
         this.options.bootstrapMessages ?? []
-      )
+      ),
+      queuedMessages: cachedSnapshot?.queuedMessages ?? []
     });
     this.seenWatermark = this.state.session?.lastSeenAt ?? null;
     this.emit();
@@ -254,6 +263,61 @@ export class SessionRuntimeStore {
       });
       throw error;
     }
+  }
+
+  async enqueueMessage(
+    content: string,
+    options?: {
+      model?: string;
+      reasoningLevel?: string;
+      attachments?: ImageAttachmentPayload[];
+      attachmentMeta?: MessageAttachmentDto[];
+    }
+  ): Promise<void> {
+    const clientRequestId = createClientRequestId();
+    const pending = createPendingMessage(
+      this.sessionId,
+      content,
+      clientRequestId,
+      options?.attachmentMeta ?? [],
+      options?.attachments ?? []
+    );
+
+    this.patch({
+      messages: [...this.state.messages, pending]
+    });
+
+    try {
+      await enqueueSessionMessage(this.sessionId, {
+        content,
+        clientRequestId,
+        model: options?.model ?? null,
+        reasoningLevel: options?.reasoningLevel ?? null,
+        attachments: options?.attachments ?? []
+      });
+
+      this.patch({
+        messages: this.state.messages.map((item) =>
+          item.clientRequestId === clientRequestId
+            ? {
+                ...item,
+                deliveryState: "sent"
+              }
+            : item
+        )
+      });
+      await this.refreshQueue();
+    } catch (error) {
+      this.patch({
+        messages: markPendingAsFailed(this.state.messages, clientRequestId)
+      });
+      throw error;
+    }
+  }
+
+  async deleteQueuedMessage(queueItemId: string): Promise<void> {
+    await deleteSessionQueueItem(this.sessionId, queueItemId);
+    await this.refreshQueue();
   }
 
   async interrupt(): Promise<void> {
@@ -445,6 +509,7 @@ export class SessionRuntimeStore {
       || Object.prototype.hasOwnProperty.call(nextInput, "capabilities")
       || Object.prototype.hasOwnProperty.call(nextInput, "contextUsage")
       || Object.prototype.hasOwnProperty.call(nextInput, "messages")
+      || Object.prototype.hasOwnProperty.call(nextInput, "queuedMessages")
     ) {
       this.persistSnapshot();
     }
@@ -707,6 +772,17 @@ export class SessionRuntimeStore {
     }
   }
 
+  async refreshQueue(): Promise<void> {
+    try {
+      const response = await getSessionQueue(this.sessionId);
+      this.patch({
+        queuedMessages: response.items
+      });
+    } catch {
+      return;
+    }
+  }
+
   private async sendMessageWithFallback(
     content: string,
     clientRequestId: string,
@@ -752,6 +828,7 @@ export class SessionRuntimeStore {
 
     if (isTerminalRuntimeState(nextRunningState)) {
       this.clearRuntimeRefreshTimer();
+      void this.refreshQueue();
       void this.refreshRuntimeSnapshot("runtime_terminal");
     }
 
@@ -766,6 +843,7 @@ export class SessionRuntimeStore {
       errorCode: nextRunningState === "failed" ? event.error_code : this.state.errorCode,
       errorDetail: nextRunningState === "failed" ? event.detail : this.state.errorDetail
     });
+    void this.refreshQueue();
   }
 
   private handleInterrupted(event: SessionInterruptedEvent): void {
@@ -777,6 +855,7 @@ export class SessionRuntimeStore {
       errorCode: nextRunningState === "interrupted" ? null : this.state.errorCode,
       errorDetail: nextRunningState === "interrupted" ? event.detail : this.state.errorDetail
     });
+    void this.refreshQueue();
   }
 
   private shouldMarkSeen(): boolean {
@@ -844,7 +923,8 @@ export class SessionRuntimeStore {
       session: this.state.session,
       capabilities: this.state.capabilities,
       contextUsage: this.state.contextUsage,
-      messages: buildSnapshotMessages(this.state.messages)
+      messages: buildSnapshotMessages(this.state.messages),
+      queuedMessages: this.state.queuedMessages
     });
   }
 }

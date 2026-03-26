@@ -89,4 +89,15 @@ export class AuthUserRepository {
     const row = this.db.prepare("SELECT COUNT(1) AS count FROM auth_users").get() as { count: number };
     return row.count;
   }
+
+  listIds(): string[] {
+    return this.db
+      .prepare(
+        `SELECT id
+         FROM auth_users
+         ORDER BY created_at ASC`
+      )
+      .all()
+      .map((row) => (row as { id: string }).id);
+  }
 }

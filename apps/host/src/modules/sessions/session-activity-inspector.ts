@@ -41,7 +41,7 @@ export function inspectSessionActivity(
     && cached.size === stats.size
   ) {
     touchActivityCache(rawStoreRef, cached);
-    return cached.inspection.hasPendingTools
+    return cached.inspection.hasPendingTools && !cached.inspection.completedAtCandidate
       ? {
           ...cached.inspection,
           runningState: now - cached.mtimeMs <= ACTIVE_WINDOW_MS ? "running" : "idle"
@@ -73,6 +73,7 @@ function inspectClaudeActivity(
   const pendingToolCalls = new Set<string>();
   let lastEventAt: string | null = null;
   let lastStopAt: string | null = null;
+  let lastToolUseAt: string | null = null;
 
   for (const record of records) {
     const directType = readText(record.type);
@@ -100,6 +101,7 @@ function inspectClaudeActivity(
           if (callId) {
             pendingToolCalls.add(callId);
           }
+          lastToolUseAt = maxTimestamp(lastToolUseAt, envelope.timestamp);
           continue;
         }
 
@@ -114,7 +116,8 @@ function inspectClaudeActivity(
     }
   }
 
-  const hasPendingTools = pendingToolCalls.size > 0;
+  const hasExplicitCompletion = isTimestampAtOrAfter(lastStopAt, lastToolUseAt);
+  const hasPendingTools = pendingToolCalls.size > 0 && !hasExplicitCompletion;
   const runningState =
     hasPendingTools && now - mtimeMs <= ACTIVE_WINDOW_MS
       ? "running"
@@ -124,7 +127,7 @@ function inspectClaudeActivity(
     runningState,
     hasPendingTools,
     lastEventAt,
-    completedAtCandidate: hasPendingTools ? null : lastStopAt ?? lastEventAt
+    completedAtCandidate: hasExplicitCompletion ? lastStopAt : hasPendingTools ? null : lastStopAt ?? lastEventAt
   };
 }
 
@@ -136,6 +139,7 @@ function inspectCodexActivity(
   const pendingToolCalls = new Set<string>();
   let lastEventAt: string | null = null;
   let lastTaskCompleteAt: string | null = null;
+  let lastToolCallAt: string | null = null;
 
   for (const record of records) {
     const recordType = readText(record.type);
@@ -175,6 +179,7 @@ function inspectCodexActivity(
       if (callId) {
         pendingToolCalls.add(callId);
       }
+      lastToolCallAt = maxTimestamp(lastToolCallAt, recordTimestamp);
       continue;
     }
 
@@ -187,7 +192,8 @@ function inspectCodexActivity(
     }
   }
 
-  const hasPendingTools = pendingToolCalls.size > 0;
+  const hasExplicitCompletion = isTimestampAtOrAfter(lastTaskCompleteAt, lastToolCallAt);
+  const hasPendingTools = pendingToolCalls.size > 0 && !hasExplicitCompletion;
   const runningState =
     hasPendingTools && now - mtimeMs <= ACTIVE_WINDOW_MS
       ? "running"
@@ -197,7 +203,8 @@ function inspectCodexActivity(
     runningState,
     hasPendingTools,
     lastEventAt,
-    completedAtCandidate: hasPendingTools ? null : lastTaskCompleteAt ?? lastEventAt
+    completedAtCandidate:
+      hasExplicitCompletion ? lastTaskCompleteAt : hasPendingTools ? null : lastTaskCompleteAt ?? lastEventAt
   };
 }
 
@@ -269,6 +276,18 @@ function maxTimestamp(left: string | null, right: string | null): string | null 
   }
 
   return left.localeCompare(right) >= 0 ? left : right;
+}
+
+function isTimestampAtOrAfter(left: string | null, right: string | null): boolean {
+  if (!left) {
+    return false;
+  }
+
+  if (!right) {
+    return true;
+  }
+
+  return left.localeCompare(right) >= 0;
 }
 
 function readText(value: unknown): string {

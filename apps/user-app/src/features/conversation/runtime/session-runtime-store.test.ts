@@ -10,8 +10,11 @@ const mocked = vi.hoisted(() => {
   const getSessionDetail = vi.fn();
   const getSessionCapabilities = vi.fn();
   const getSessionMessages = vi.fn();
+  const getSessionQueue = vi.fn();
   const getSessionRuntime = vi.fn();
   const markSessionSeen = vi.fn();
+  const enqueueSessionMessage = vi.fn();
+  const deleteSessionQueueItem = vi.fn();
   const sendLiveMessage = vi.fn();
   const sendSessionMessage = vi.fn();
   const realtimeInstances: Array<{
@@ -39,8 +42,11 @@ const mocked = vi.hoisted(() => {
     getSessionDetail,
     getSessionCapabilities,
     getSessionMessages,
+    getSessionQueue,
     getSessionRuntime,
     markSessionSeen,
+    enqueueSessionMessage,
+    deleteSessionQueueItem,
     sendLiveMessage,
     sendSessionMessage,
     realtimeInstances,
@@ -52,10 +58,13 @@ vi.mock("../api/conversation-api", () => ({
   getSessionDetail: mocked.getSessionDetail,
   getSessionCapabilities: mocked.getSessionCapabilities,
   getSessionMessages: mocked.getSessionMessages,
+  getSessionQueue: mocked.getSessionQueue,
   getSessionRuntime: mocked.getSessionRuntime,
   sendLiveMessage: mocked.sendLiveMessage,
   markSessionSeen: mocked.markSessionSeen,
-  sendSessionMessage: mocked.sendSessionMessage
+  sendSessionMessage: mocked.sendSessionMessage,
+  enqueueSessionMessage: mocked.enqueueSessionMessage,
+  deleteSessionQueueItem: mocked.deleteSessionQueueItem
 }));
 
 vi.mock("../../../network/realtime-client", () => ({
@@ -132,7 +141,25 @@ describe("SessionRuntimeStore", () => {
       updatedAt: "2026-03-24T10:00:00.000Z",
       contextUsage: null
     });
+    mocked.getSessionQueue.mockResolvedValue({
+      items: []
+    });
     mocked.markSessionSeen.mockResolvedValue(undefined);
+    mocked.enqueueSessionMessage.mockResolvedValue({
+      id: "queue-1",
+      sessionId: "session-1",
+      content: "继续执行",
+      clientRequestId: "client-1",
+      model: null,
+      reasoningLevel: null,
+      permissionMode: null,
+      status: "queued",
+      orderIndex: 1,
+      errorDetail: null,
+      createdAt: "2026-03-24T10:00:02.000Z",
+      updatedAt: "2026-03-24T10:00:02.000Z"
+    });
+    mocked.deleteSessionQueueItem.mockResolvedValue(undefined);
     mocked.sendLiveMessage.mockResolvedValue({
       sessionId: "session-1",
       acceptedAt: "2026-03-24T10:00:02.000Z",
@@ -198,6 +225,42 @@ describe("SessionRuntimeStore", () => {
     store.destroy();
   });
 
+  it("initialize 时会同步拉取当前会话的发送队列", async () => {
+    vi.useFakeTimers();
+    const store = new SessionRuntimeStore("session-1");
+
+    mocked.getSessionMessages.mockResolvedValueOnce({
+      messages: [],
+      cursor: "cursor-latest",
+      nextCursor: null,
+      total: 0
+    });
+    mocked.getSessionQueue.mockResolvedValueOnce({
+      items: [
+        {
+          id: "queue-1",
+          sessionId: "session-1",
+          content: "下一条排队消息",
+          clientRequestId: "client-queue-1",
+          model: null,
+          reasoningLevel: null,
+          permissionMode: null,
+          status: "queued",
+          orderIndex: 1,
+          errorDetail: null,
+          createdAt: "2026-03-24T10:00:00.000Z",
+          updatedAt: "2026-03-24T10:00:00.000Z"
+        }
+      ]
+    });
+
+    await store.initialize();
+
+    expect(mocked.getSessionQueue).toHaveBeenCalledWith("session-1");
+    expect(store.getState().queuedMessages).toHaveLength(1);
+    store.destroy();
+  });
+
   it("skips detail, capabilities and runtime bootstrap requests when snapshot already has them", async () => {
     vi.useFakeTimers();
     writeViewSnapshot(SESSION_RUNTIME_SNAPSHOT_KEY, {
@@ -253,7 +316,8 @@ describe("SessionRuntimeStore", () => {
         capturedAt: "2026-03-24T10:00:00.000Z",
         isEstimated: false
       },
-      messages: []
+      messages: [],
+      queuedMessages: []
     });
     const store = new SessionRuntimeStore("session-1");
 
@@ -718,6 +782,119 @@ describe("SessionRuntimeStore", () => {
       })
     );
     expect(store.getState().session?.runningState).toBe("running");
+  });
+
+  it("收到终态运行事件后会刷新等待队列", async () => {
+    vi.useFakeTimers();
+    const store = new SessionRuntimeStore("session-1");
+
+    mocked.getSessionMessages.mockResolvedValueOnce({
+      messages: [],
+      cursor: "cursor-latest",
+      nextCursor: null,
+      total: 0
+    });
+    mocked.getSessionQueue
+      .mockResolvedValueOnce({ items: [] })
+      .mockResolvedValueOnce({
+        items: [
+          {
+            id: "queue-next",
+            sessionId: "session-1",
+            content: "下一条",
+            clientRequestId: "client-next",
+            model: null,
+            reasoningLevel: null,
+            permissionMode: null,
+            status: "queued",
+            orderIndex: 1,
+            errorDetail: null,
+            createdAt: "2026-03-24T10:00:03.000Z",
+            updatedAt: "2026-03-24T10:00:03.000Z"
+          }
+        ]
+      });
+
+    await store.initialize();
+
+    const client = mocked.realtimeInstances[0];
+    expect(client).toBeDefined();
+
+    await (client!.options.onRuntimeStatus as ((event: { status: "completed"; detail: string | null; timestamp: string; sessionId: string; }) => void))({
+      sessionId: "session-1",
+      status: "completed",
+      detail: null,
+      timestamp: "2026-03-24T10:00:03.000Z"
+    });
+
+    await vi.runAllTimersAsync();
+
+    expect(mocked.getSessionQueue).toHaveBeenCalledTimes(2);
+    expect(store.getState().queuedMessages[0]?.id).toBe("queue-next");
+    store.destroy();
+  });
+
+  it("enqueueMessage 会写入项目队列并刷新等待列表", async () => {
+    const store = new SessionRuntimeStore("session-1");
+    mocked.getSessionQueue
+      .mockResolvedValueOnce({
+        items: [
+          {
+            id: "queue-1",
+            sessionId: "session-1",
+            content: "排队继续执行",
+            clientRequestId: "client-queue-1",
+            model: null,
+            reasoningLevel: null,
+            permissionMode: null,
+            status: "queued",
+            orderIndex: 1,
+            errorDetail: null,
+            createdAt: "2026-03-24T10:00:02.000Z",
+            updatedAt: "2026-03-24T10:00:02.000Z"
+          }
+        ]
+      });
+    mocked.enqueueSessionMessage.mockResolvedValueOnce({
+      id: "queue-1",
+      sessionId: "session-1",
+      content: "排队继续执行",
+      clientRequestId: "client-queue-1",
+      model: null,
+      reasoningLevel: null,
+      permissionMode: null,
+      status: "queued",
+      orderIndex: 1,
+      errorDetail: null,
+      createdAt: "2026-03-24T10:00:02.000Z",
+      updatedAt: "2026-03-24T10:00:02.000Z"
+    });
+
+    await store.enqueueMessage("排队继续执行");
+
+    expect(mocked.enqueueSessionMessage).toHaveBeenCalledWith(
+      "session-1",
+      expect.objectContaining({
+        content: "排队继续执行"
+      })
+    );
+    expect(store.getState().queuedMessages).toHaveLength(1);
+    expect(store.getState().queuedMessages[0]?.content).toBe("排队继续执行");
+  });
+
+  it("deleteQueuedMessage 会删除等待项并刷新队列", async () => {
+    const store = new SessionRuntimeStore("session-1");
+    mocked.getSessionQueue.mockResolvedValueOnce({
+      items: []
+    });
+    mocked.getSessionQueue.mockResolvedValueOnce({
+      items: []
+    });
+
+    await store.deleteQueuedMessage("queue-1");
+
+    expect(mocked.deleteSessionQueueItem).toHaveBeenCalledWith("session-1", "queue-1");
+    expect(mocked.getSessionQueue).toHaveBeenCalledWith("session-1");
   });
 
   it("marks navigation as seen after markSessionSeen succeeds", async () => {

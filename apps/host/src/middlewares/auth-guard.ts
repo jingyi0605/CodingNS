@@ -7,7 +7,8 @@ const PUBLIC_ROUTE_RULES = new Set([
   "GET:/api/public/bootstrap-status",
   "POST:/api/public/setup",
   "POST:/api/auth/login",
-  "POST:/api/auth/refresh"
+  "POST:/api/auth/refresh",
+  "POST:/api/providers/claude-code/hook-bridge/events"
 ]);
 
 export function isPublicRoute(method: string, routePath: string): boolean {

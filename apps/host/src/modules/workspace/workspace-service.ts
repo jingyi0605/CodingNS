@@ -154,6 +154,10 @@ export class WorkspaceService {
 
     return workspace;
   }
+
+  findWorkspaceByPath(workspacePath: string): Workspace | null {
+    return this.workspaceRepository.findByPath(path.resolve(workspacePath));
+  }
 }
 
 function createWorkspaceRecord(

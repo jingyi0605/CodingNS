@@ -1172,6 +1172,9 @@ function SessionCard({
           <div className="session-meta-row">
             <span className="session-meta">{buildSessionMeta(session, workspace, showWorkspaceName)}</span>
             <span className={`session-provider-badge ${session.provider}`}>{formatProviderLabel(session.provider)}</span>
+            {session.activitySource === "inferred" && session.activityState === "running" ? (
+              <span className="session-runtime-origin-badge inferred">{t("shell.sessionStateInferred")}</span>
+            ) : null}
           </div>
         </div>
       </button>
