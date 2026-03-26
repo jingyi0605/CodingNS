@@ -243,7 +243,7 @@ describe("WorkbenchLayout", () => {
     expect(nestedSubagentTitle).toBeInTheDocument();
     expect(nestedSubagentTitle.closest(".workbench-subsession-list")).not.toBeNull();
     expect(screen.getByText("explorer · Turing")).toBeInTheDocument();
-    expect(screen.getByText(t("shell.favoriteSectionTitle"))).toBeInTheDocument();
+    expect(screen.queryByText(t("shell.favoriteSectionTitle"))).not.toBeInTheDocument();
 
     const betaCard = await findSessionCardByTitle("会话 Beta");
 
@@ -612,6 +612,97 @@ describe("WorkbenchLayout", () => {
 
     expect(favoriteScope.getByText("Favorite Session 25")).toBeInTheDocument();
     expect(favoriteScope.queryByRole("button", { name: t("shell.favoriteExpandMore") })).not.toBeInTheDocument();
+  });
+
+  it("搜索按钮不会抢占页面焦点，并支持会话与代码搜索", async () => {
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "终端调试",
+            workspaceId: "workspace-1"
+          })
+        ]
+      },
+      {
+        workspace: createWorkspace("workspace-2", "项目二"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-2",
+            title: "搜索目标会话",
+            workspaceId: "workspace-2",
+            provider: "claude-code"
+          })
+        ]
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      if (url.includes("/api/files/search?")) {
+        return createJsonResponse({
+          items: [
+            {
+              path: "src/components/SearchPanel.tsx",
+              name: "SearchPanel.tsx",
+              kind: "file",
+              size: 1234,
+              updatedAt: "2026-03-24T10:00:00.000Z"
+            }
+          ],
+          total: 1,
+          page: 1,
+          pageSize: 20
+        });
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/sessions/session-1");
+
+    const conversationTab = await screen.findByRole("tab", { name: t("shell.conversationEntry") });
+    const terminalTab = screen.getByRole("tab", { name: t("shell.terminalsEntry") });
+    const searchButton = screen.getByRole("button", { name: t("shell.searchEntry") });
+
+    expect(conversationTab.className).toContain("active");
+    expect(terminalTab.className).not.toContain("active");
+    expect(searchButton).toHaveAttribute("data-open", "false");
+
+    await userEvent.click(searchButton);
+
+    const searchDialog = await screen.findByRole("dialog", { name: t("shell.searchModalTitle") });
+    expect(searchDialog).toBeInTheDocument();
+    expect(conversationTab.className).toContain("active");
+    expect(searchButton).toHaveAttribute("data-open", "true");
+
+    const sessionInput = within(searchDialog).getByRole("textbox");
+    await userEvent.type(sessionInput, "搜索目标");
+    await userEvent.click(within(searchDialog).getByRole("button", { name: /搜索目标会话/ }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("current-path").textContent).toBe("/sessions/session-2");
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: t("shell.searchEntry") }));
+    const reopenedDialog = await screen.findByRole("dialog", { name: t("shell.searchModalTitle") });
+    await userEvent.click(within(reopenedDialog).getByRole("tab", { name: t("shell.searchModeCode") }));
+
+    const codeInput = within(reopenedDialog).getByRole("textbox");
+    await userEvent.type(codeInput, "SearchPanel");
+    await userEvent.click(within(reopenedDialog).getByRole("button", { name: t("shell.searchSubmit") }));
+
+    expect(await screen.findByText("SearchPanel.tsx")).toBeInTheDocument();
+    expect(screen.getByText("src/components/SearchPanel.tsx")).toBeInTheDocument();
   });
 
   it("对推断中的外部会话显示黄色活动图标", async () => {
