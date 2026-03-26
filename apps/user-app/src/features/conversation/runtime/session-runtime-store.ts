@@ -396,7 +396,7 @@ export class SessionRuntimeStore {
           lastCursor: event.cursor,
           session: withRunningState(
             this.state.session,
-            resolveEnvelopeRunningState(this.state.session?.runningState)
+            resolveEnvelopeRunningState(event.type, this.state.session?.runningState)
           )
         });
         this.realtimeClient?.updateCursor(event.cursor);
@@ -575,11 +575,12 @@ export class SessionRuntimeStore {
 
     try {
       const runtime = await getSessionRuntime(this.sessionId);
+      const runtimeError = resolveRuntimeErrorState(runtime);
       this.patch({
         session: withRunningState(this.state.session, runtime.runningState),
         contextUsage: runtime.contextUsage,
-        errorCode: null,
-        errorDetail: null
+        errorCode: runtimeError.errorCode,
+        errorDetail: runtimeError.errorDetail
       });
 
       if (this.state.connectionState !== "connected") {
@@ -683,12 +684,13 @@ export class SessionRuntimeStore {
 
     try {
       const runtime = await getSessionRuntime(this.sessionId);
+      const runtimeError = resolveRuntimeErrorState(runtime);
 
       this.patch({
         session: withRunningState(this.state.session, runtime.runningState),
         contextUsage: runtime.contextUsage,
-        errorCode: null,
-        errorDetail: null
+        errorCode: runtimeError.errorCode,
+        errorDetail: runtimeError.errorDetail
       });
 
       logPerfDebug("session_runtime.snapshot.end", {
@@ -740,13 +742,15 @@ export class SessionRuntimeStore {
   }
 
   private handleRuntimeStatus(event: SessionRuntimeStatusEvent): void {
+    const nextRunningState = resolveRuntimeTransitionState(this.state.session?.runningState, event.status);
+
     this.patch({
-      session: withRunningState(this.state.session, event.status),
+      session: withRunningState(this.state.session, nextRunningState),
       errorCode: null,
-      errorDetail: event.detail
+      errorDetail: nextRunningState === event.status ? event.detail : this.state.errorDetail
     });
 
-    if (isTerminalRuntimeState(event.status)) {
+    if (isTerminalRuntimeState(nextRunningState)) {
       this.clearRuntimeRefreshTimer();
       void this.refreshRuntimeSnapshot("runtime_terminal");
     }
@@ -754,20 +758,24 @@ export class SessionRuntimeStore {
   }
 
   private handleRuntimeError(event: SessionRuntimeErrorEvent): void {
+    const nextRunningState = resolveRuntimeTransitionState(this.state.session?.runningState, "failed");
+
     this.clearRuntimeRefreshTimer();
     this.patch({
-      session: withRunningState(this.state.session, "failed"),
-      errorCode: event.error_code,
-      errorDetail: event.detail
+      session: withRunningState(this.state.session, nextRunningState),
+      errorCode: nextRunningState === "failed" ? event.error_code : this.state.errorCode,
+      errorDetail: nextRunningState === "failed" ? event.detail : this.state.errorDetail
     });
   }
 
   private handleInterrupted(event: SessionInterruptedEvent): void {
+    const nextRunningState = resolveRuntimeTransitionState(this.state.session?.runningState, "interrupted");
+
     this.clearRuntimeRefreshTimer();
     this.patch({
-      session: withRunningState(this.state.session, "interrupted"),
-      errorCode: null,
-      errorDetail: event.detail
+      session: withRunningState(this.state.session, nextRunningState),
+      errorCode: nextRunningState === "interrupted" ? null : this.state.errorCode,
+      errorDetail: nextRunningState === "interrupted" ? event.detail : this.state.errorDetail
     });
   }
 
@@ -929,13 +937,65 @@ function isTerminalRuntimeState(
 }
 
 function resolveEnvelopeRunningState(
+  eventType: "session.backfill" | "session.delta",
   state: SessionRunningState | null | undefined
 ): SessionRunningState {
+  if (eventType === "session.backfill") {
+    return state ?? "idle";
+  }
+
   if (state === "completed" || state === "interrupted" || state === "failed") {
     return state;
   }
 
   return "running";
+}
+
+function resolveRuntimeTransitionState(
+  currentState: SessionRunningState | null | undefined,
+  incomingState: SessionRunningState
+): SessionRunningState {
+  if (isTerminalRuntimeState(currentState)) {
+    return currentState;
+  }
+
+  return incomingState;
+}
+
+function resolveRuntimeErrorState(runtime: {
+  runningState: SessionRunningState;
+  errorCode: string | null;
+  errorDetail: string | null;
+  detail: string | null;
+}): {
+  errorCode: string | null;
+  errorDetail: string | null;
+} {
+  if (runtime.runningState === "failed") {
+    return {
+      errorCode: runtime.errorCode,
+      errorDetail: runtime.errorDetail ?? runtime.detail
+    };
+  }
+
+  if (runtime.runningState === "interrupted") {
+    return {
+      errorCode: null,
+      errorDetail: runtime.detail
+    };
+  }
+
+  if (runtime.runningState === "completed") {
+    return {
+      errorCode: null,
+      errorDetail: runtime.detail
+    };
+  }
+
+  return {
+    errorCode: null,
+    errorDetail: null
+  };
 }
 
 function createClientRequestId(): string {

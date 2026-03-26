@@ -23,8 +23,10 @@ interface ActiveRunRecord {
   lastEventAt: string | null;
   completedAt: string | null;
   detail: string | null;
+  errorCode: string | null;
   supportsInterrupt: boolean;
   interruptHandler: (() => Promise<void>) | null;
+  inRunInputHandler: ((options: import("./types.js").RuntimeSendOptions) => Promise<void>) | null;
   listeners: Set<RuntimeEventListener>;
   disposed: boolean;
 }
@@ -49,8 +51,10 @@ export class ActiveRunRegistry {
       lastEventAt: null,
       completedAt: null,
       detail: null,
+      errorCode: null,
       supportsInterrupt: input.supportsInterrupt ?? false,
       interruptHandler: null,
+      inRunInputHandler: null,
       listeners: new Set(),
       disposed: false
     };
@@ -118,6 +122,9 @@ export class ActiveRunRegistry {
         record.interruptHandler = interrupt;
         record.supportsInterrupt = typeof interrupt === "function";
       },
+      setInRunInputHandler: (submitDuringRun) => {
+        record.inRunInputHandler = submitDuringRun;
+      },
       emit: (event) => this.emit(record.sessionId, event),
       attach: (listener) => this.attach(record.sessionId, listener),
       interrupt: async () => {
@@ -126,6 +133,13 @@ export class ActiveRunRegistry {
         }
 
         await record.interruptHandler();
+      },
+      submitDuringRun: async (options) => {
+        if (!record.inRunInputHandler) {
+          throw new Error("IN_RUN_INPUT_NOT_SUPPORTED");
+        }
+
+        await record.inRunInputHandler(options);
       },
       dispose: () => this.dispose(record.sessionId)
     };
@@ -149,6 +163,7 @@ export class ActiveRunRegistry {
     record.providerSessionId = providerSessionId;
     record.rawStoreRef = rawStoreRef;
     record.detail = detail;
+    record.errorCode = input.type === "error" ? normalizeErrorCode(input.errorCode) : null;
 
     const event = this.toRuntimeEvent(record, input, timestamp, detail);
     this.applyEventState(record, event);
@@ -176,6 +191,7 @@ export class ActiveRunRegistry {
     record.lastEventAt = event.timestamp;
     record.detail = event.detail;
     record.runningState = event.status;
+    record.errorCode = event.type === "error" ? event.errorCode : null;
 
     if (
       event.status === "completed" ||
@@ -206,6 +222,7 @@ export class ActiveRunRegistry {
         message: input.message,
         status: null,
         detail,
+        errorCode: null,
         rawEventRef: input.rawEventRef ?? null,
         timestamp
       };
@@ -227,6 +244,7 @@ export class ActiveRunRegistry {
       return {
         type: "error",
         ...shared,
+        errorCode: normalizeErrorCode(input.errorCode),
         status: "failed"
       };
     }
@@ -234,6 +252,7 @@ export class ActiveRunRegistry {
     return {
       type: input.type,
       ...shared,
+      errorCode: null,
       status
     };
   }
@@ -274,6 +293,7 @@ export class ActiveRunRegistry {
       lastEventAt: record.lastEventAt,
       completedAt: record.completedAt,
       detail: record.detail,
+      errorCode: record.errorCode,
       supportsInterrupt: record.supportsInterrupt
     };
   }
@@ -296,4 +316,9 @@ function normalizeRuntimeStatus(
   }
 
   return status ?? "running";
+}
+
+function normalizeErrorCode(errorCode: string | null | undefined): string {
+  const normalized = errorCode?.trim();
+  return normalized && normalized.length > 0 ? normalized : "PROVIDER_RUNTIME_ERROR";
 }

@@ -251,12 +251,14 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
         return;
       }
 
+      const failure = classifyCodexRuntimeFailure(error);
       await sink.emit({
         type: "error",
         status: "failed",
         providerSessionId: context.providerSessionId,
         rawStoreRef: context.rawStoreRef,
-        detail: error instanceof Error ? error.message : "codex runtime error",
+        errorCode: failure.errorCode,
+        detail: failure.detail,
         timestamp: nextTimestamp()
       });
     }
@@ -287,12 +289,14 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
     }
 
     if (eventType === "turn.failed") {
+      const detail = extractTextBlocks(readProp(event, "error")).trim() || "codex turn failed";
       await context.sink.emit({
         type: "error",
         status: "failed",
         providerSessionId: context.providerSessionId,
         rawStoreRef: context.rawStoreRef,
-        detail: extractTextBlocks(readProp(event, "error")).trim() || "codex turn failed",
+        errorCode: "CODEX_CLI_TURN_FAILED",
+        detail,
         timestamp: pickTimestamp(event)
       });
       return;
@@ -1115,6 +1119,36 @@ function inferToolSuccess(item: unknown, output: string): boolean {
   }
 
   return true;
+}
+
+function classifyCodexRuntimeFailure(error: unknown): { errorCode: string; detail: string } {
+  const detail = error instanceof Error ? error.message : "codex runtime error";
+
+  if (detail.includes("PROVIDER_SESSION_ID_REQUIRED")) {
+    return {
+      errorCode: "CODEX_PROVIDER_SESSION_ID_REQUIRED",
+      detail
+    };
+  }
+
+  if (detail.includes("Cannot find package") || detail.includes("ERR_MODULE_NOT_FOUND")) {
+    return {
+      errorCode: "CODEX_RUNTIME_SDK_MISSING",
+      detail
+    };
+  }
+
+  if (detail.includes("ENOENT") || detail.includes("spawn")) {
+    return {
+      errorCode: "CODEX_CLI_LAUNCH_FAILED",
+      detail
+    };
+  }
+
+  return {
+    errorCode: "CODEX_RUNTIME_ERROR",
+    detail
+  };
 }
 
 function persistSyntheticUserMessageIfNeeded(

@@ -220,6 +220,8 @@ export interface SessionRuntimeDto {
   provider: ProviderId;
   providerSessionId: string;
   detail: string | null;
+  errorCode: string | null;
+  errorDetail: string | null;
   updatedAt: string;
   contextUsage: ContextUsageDto | null;
 }

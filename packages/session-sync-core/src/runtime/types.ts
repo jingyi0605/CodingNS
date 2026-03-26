@@ -48,6 +48,7 @@ interface RuntimeEventBase {
   rawStoreRef: string | null;
   timestamp: string;
   detail: string | null;
+  errorCode: string | null;
   rawEventRef: string | null;
 }
 
@@ -67,6 +68,7 @@ export interface RuntimeErrorEvent extends RuntimeEventBase {
   type: "error";
   message: null;
   status: "failed";
+  errorCode: string;
 }
 
 export type RuntimeEvent = RuntimeMessageEvent | RuntimeStatusEvent | RuntimeErrorEvent;
@@ -76,6 +78,7 @@ export interface RuntimeEventInput {
   message?: NormalizedMessage | null;
   status?: RuntimeRunState | null;
   detail?: string | null;
+  errorCode?: string | null;
   rawEventRef?: string | null;
   timestamp?: string;
   providerSessionId?: string | null;
@@ -96,6 +99,7 @@ export interface ActiveRunSnapshot {
   lastEventAt: string | null;
   completedAt: string | null;
   detail: string | null;
+  errorCode: string | null;
   supportsInterrupt: boolean;
 }
 
@@ -106,9 +110,11 @@ export interface ActiveRunHandle {
   getSnapshot(): ActiveRunSnapshot;
   updateSessionBinding(binding: RuntimeSessionBinding): void;
   setInterruptHandler(interrupt: (() => Promise<void>) | null): void;
+  setInRunInputHandler(submitDuringRun: ((options: RuntimeSendOptions) => Promise<void>) | null): void;
   emit(event: RuntimeEventInput): Promise<RuntimeEvent>;
   attach(listener: RuntimeEventListener): ProviderSubscription;
   interrupt(): Promise<void>;
+  submitDuringRun(options: RuntimeSendOptions): Promise<void>;
   dispose(): Promise<void>;
 }
 
@@ -137,6 +143,7 @@ export interface ProviderRuntimeLaunchResult {
   rawStoreRef: string | null;
   completed: Promise<void>;
   interrupt?: (() => Promise<void>) | null;
+  submitDuringRun?: ((options: RuntimeSendOptions) => Promise<void>) | null;
 }
 
 export interface ProviderRuntimeAdapter {

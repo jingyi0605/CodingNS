@@ -12,6 +12,7 @@ const mocked = vi.hoisted(() => {
   const getSessionMessages = vi.fn();
   const getSessionRuntime = vi.fn();
   const markSessionSeen = vi.fn();
+  const sendLiveMessage = vi.fn();
   const sendSessionMessage = vi.fn();
   const realtimeInstances: Array<{
     options: Record<string, unknown>;
@@ -40,6 +41,7 @@ const mocked = vi.hoisted(() => {
     getSessionMessages,
     getSessionRuntime,
     markSessionSeen,
+    sendLiveMessage,
     sendSessionMessage,
     realtimeInstances,
     MockRealtimeClient
@@ -51,6 +53,7 @@ vi.mock("../api/conversation-api", () => ({
   getSessionCapabilities: mocked.getSessionCapabilities,
   getSessionMessages: mocked.getSessionMessages,
   getSessionRuntime: mocked.getSessionRuntime,
+  sendLiveMessage: mocked.sendLiveMessage,
   markSessionSeen: mocked.markSessionSeen,
   sendSessionMessage: mocked.sendSessionMessage
 }));
@@ -124,10 +127,32 @@ describe("SessionRuntimeStore", () => {
       provider: "codex",
       providerSessionId: "raw-1",
       detail: null,
+      errorCode: null,
+      errorDetail: null,
       updatedAt: "2026-03-24T10:00:00.000Z",
       contextUsage: null
     });
     mocked.markSessionSeen.mockResolvedValue(undefined);
+    mocked.sendLiveMessage.mockResolvedValue({
+      sessionId: "session-1",
+      acceptedAt: "2026-03-24T10:00:02.000Z",
+      clientRequestId: "client-1",
+      provider: "codex",
+      providerSessionId: "raw-1",
+      message: {
+        messageId: "user-message-1",
+        provider: "codex",
+        providerSessionId: "raw-1",
+        role: "user",
+        kind: "text",
+        content: "继续执行",
+        timestamp: "2026-03-24T10:00:02.000Z",
+        sequence: 61,
+        rawRef: "codex://raw#line=61",
+        toolCall: null,
+        attachments: []
+      }
+    });
     mocked.sendSessionMessage.mockResolvedValue(undefined);
   });
 
@@ -370,6 +395,152 @@ describe("SessionRuntimeStore", () => {
     store.destroy();
   });
 
+  it("does not overwrite a completed state when a late runtime error arrives", async () => {
+    vi.useFakeTimers();
+    const store = new SessionRuntimeStore("session-1");
+
+    mocked.getSessionRuntime.mockResolvedValueOnce({
+      sessionId: "session-1",
+      runningState: "running",
+      hasActiveRun: true,
+      canAttach: true,
+      canInterrupt: true,
+      inRunInputMode: "streaming_guidance",
+      provider: "claude-code",
+      providerSessionId: "claude-session-1",
+      detail: null,
+      updatedAt: "2026-03-24T10:00:00.000Z",
+      contextUsage: null
+    });
+    mocked.getSessionMessages.mockResolvedValueOnce({
+      messages: [],
+      cursor: "cursor-latest",
+      nextCursor: null,
+      total: 0
+    });
+
+    await store.initialize();
+
+    const client = mocked.realtimeInstances[0];
+    expect(client).toBeDefined();
+
+    (client!.options.onRuntimeStatus as ((event: Record<string, unknown>) => void))({
+      type: "session.runtime_status",
+      sessionId: "session-1",
+      status: "completed",
+      detail: "run completed",
+      timestamp: "2026-03-24T10:00:10.000Z"
+    });
+
+    (client!.options.onRuntimeError as ((event: Record<string, unknown>) => void))({
+      type: "session.runtime_error",
+      sessionId: "session-1",
+      error_code: "PROVIDER_RUNTIME_ERROR",
+      detail: "late provider error",
+      timestamp: "2026-03-24T10:00:10.100Z"
+    });
+
+    expect(store.getState().session?.runningState).toBe("completed");
+    expect(store.getState().errorCode).toBeNull();
+    expect(store.getState().errorDetail).toBe("run completed");
+
+    store.destroy();
+  });
+
+  it("轮询 runtime 时会把持久化错误详情带回前端状态", async () => {
+    vi.useFakeTimers();
+    const store = new SessionRuntimeStore("session-1");
+
+    mocked.getSessionRuntime.mockResolvedValueOnce({
+      sessionId: "session-1",
+      runningState: "running",
+      hasActiveRun: true,
+      canAttach: true,
+      canInterrupt: true,
+      inRunInputMode: "streaming_guidance",
+      provider: "claude-code",
+      providerSessionId: "claude-session-1",
+      detail: null,
+      errorCode: null,
+      errorDetail: null,
+      updatedAt: "2026-03-24T10:00:00.000Z",
+      contextUsage: null
+    });
+    mocked.getSessionMessages.mockResolvedValueOnce({
+      messages: [],
+      cursor: "cursor-latest",
+      nextCursor: null,
+      total: 0
+    });
+
+    await store.initialize();
+
+    mocked.getSessionRuntime.mockResolvedValueOnce({
+      sessionId: "session-1",
+      runningState: "failed",
+      hasActiveRun: false,
+      canAttach: false,
+      canInterrupt: false,
+      inRunInputMode: "streaming_guidance",
+      provider: "claude-code",
+      providerSessionId: "claude-session-1",
+      detail: "npm ERR! missing script: dev",
+      errorCode: "CLAUDE_CLI_EXIT_NON_ZERO",
+      errorDetail: "npm ERR! missing script: dev",
+      updatedAt: "2026-03-24T10:00:10.000Z",
+      contextUsage: null
+    });
+
+    await (store as any).refreshRuntimeState("poll", "test_fallback_error");
+
+    expect(store.getState().session?.runningState).toBe("failed");
+    expect(store.getState().errorCode).toBe("CLAUDE_CLI_EXIT_NON_ZERO");
+    expect(store.getState().errorDetail).toBe("npm ERR! missing script: dev");
+
+    store.destroy();
+  });
+
+  it("收到 session.backfill 时不会把空闲会话误抬成 running", async () => {
+    vi.useFakeTimers();
+    const store = new SessionRuntimeStore("session-1");
+
+    mocked.getSessionMessages.mockResolvedValueOnce({
+      messages: [],
+      cursor: "cursor-latest",
+      nextCursor: null,
+      total: 0
+    });
+
+    await store.initialize();
+
+    const client = mocked.realtimeInstances[0];
+    expect(client).toBeDefined();
+
+    (client!.options.onEnvelope as ((event: Record<string, unknown>) => void))({
+      type: "session.backfill",
+      sessionId: "session-1",
+      cursor: "cursor-after",
+      messages: [
+        {
+          messageId: "assistant-1",
+          provider: "codex",
+          providerSessionId: "raw-1",
+          role: "assistant",
+          kind: "text",
+          content: "历史消息",
+          timestamp: "2026-03-24T10:00:10.000Z",
+          sequence: 1,
+          rawRef: "codex://raw#line=1",
+          toolCall: null
+        }
+      ]
+    });
+
+    expect(store.getState().session?.runningState).toBe("idle");
+
+    store.destroy();
+  });
+
   it("realtime 保持连接时不会因为消息增量而额外轮询 runtime", async () => {
     vi.useFakeTimers();
     const store = new SessionRuntimeStore("session-1");
@@ -486,6 +657,67 @@ describe("SessionRuntimeStore", () => {
     expect(mocked.getSessionRuntime).toHaveBeenCalledTimes(1);
 
     store.destroy();
+  });
+
+  it("运行中的 Claude 会话继续发送时仍然走 sendLiveMessage", async () => {
+    const store = new SessionRuntimeStore("session-1", {
+      initialSession: {
+        sessionId: "session-1",
+        workspaceId: "workspace-1",
+        provider: "claude-code",
+        providerSessionId: "claude-session-1",
+        rawStoreRef: "claude://raw-1",
+        title: "Claude 会话",
+        messageCount: 3,
+        lastMessageAt: "2026-03-24T10:00:00.000Z",
+        createdAt: "2026-03-24T09:00:00.000Z",
+        updatedAt: "2026-03-24T10:00:00.000Z",
+        syncStatus: "idle",
+        syncCursor: "cursor-sync",
+        lastSyncAt: "2026-03-24T10:00:00.000Z",
+        lastErrorCode: null,
+        lastErrorDetail: null,
+        resumedAt: null,
+        runningState: "running",
+        activitySource: "runtime",
+        lastEventAt: "2026-03-24T10:00:01.000Z",
+        completedAt: null,
+        lastSeenAt: null,
+        activityState: "running"
+      }
+    });
+
+    mocked.sendLiveMessage.mockResolvedValueOnce({
+      sessionId: "session-1",
+      acceptedAt: "2026-03-24T10:00:03.000Z",
+      clientRequestId: expect.any(String),
+      provider: "claude-code",
+      providerSessionId: "claude-session-1",
+      message: {
+        messageId: "user-message-guidance",
+        provider: "claude-code",
+        providerSessionId: "claude-session-1",
+        role: "user",
+        kind: "text",
+        content: "继续按这个方向补充",
+        timestamp: "2026-03-24T10:00:03.000Z",
+        sequence: 4,
+        rawRef: "claude://raw#line=4",
+        toolCall: null,
+        attachments: []
+      }
+    });
+
+    await store.sendMessage("继续按这个方向补充");
+
+    expect(mocked.sendLiveMessage).toHaveBeenCalledTimes(1);
+    expect(mocked.sendLiveMessage).toHaveBeenCalledWith(
+      "session-1",
+      expect.objectContaining({
+        content: "继续按这个方向补充"
+      })
+    );
+    expect(store.getState().session?.runningState).toBe("running");
   });
 
   it("marks navigation as seen after markSessionSeen succeeds", async () => {

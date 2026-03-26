@@ -1,7 +1,7 @@
 import { randomUUID, createHash } from "node:crypto";
 import { accessSync, constants, existsSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { delimiter, dirname, isAbsolute, join, sep } from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 
 import {
   createRawRef,
@@ -31,6 +31,17 @@ interface ClaudeMessageEnvelope {
   timestamp: unknown;
   message: {
     content?: Array<Record<string, unknown>>;
+  };
+}
+
+interface ClaudeStreamingUserInput {
+  type: "user";
+  message: {
+    role: "user";
+    content: Array<{
+      type: "text";
+      text: string;
+    }>;
   };
 }
 
@@ -113,9 +124,10 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
     );
     const args = [
       "-p",
-      request.options.providerPrompt ?? request.options.content,
       "--verbose",
       "--output-format",
+      "stream-json",
+      "--input-format",
       "stream-json",
       "--include-partial-messages",
       ...attachmentDirectories.flatMap((directory) => ["--add-dir", directory]),
@@ -130,8 +142,11 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
     const toolNameById = new Map<string, string>();
     let interrupted = false;
     let completed = false;
+    let fatalWriteError: string | null = null;
+    let fatalWriteErrorCode: string | null = null;
     let stderrBuffer = "";
     let stdoutBuffer = "";
+    let stdinClosed = false;
 
     let activeProviderSessionId = providerSessionId;
     let activeRawStoreRef = rawStoreRef;
@@ -179,14 +194,34 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
       cwd: request.workspacePath,
       shell: shouldSpawnClaudeViaShell(this.commandPath),
       windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"]
+      stdio: ["pipe", "pipe", "pipe"]
     });
+    let pendingInputWrite = Promise.resolve();
+    const submitDuringRun = (options: ProviderRuntimeRunRequest["options"]) => {
+      pendingInputWrite = pendingInputWrite.then(() =>
+        writeClaudeStreamingInput(proc, options, completed || interrupted || stdinClosed)
+      );
+      return pendingInputWrite;
+    };
     const bindingRefreshTimer = setInterval(() => {
       refreshBinding();
     }, 250);
+    void submitDuringRun(request.options).catch((error) => {
+      if (completed || interrupted) {
+        return;
+      }
+
+      fatalWriteError = error instanceof Error ? error.message : "claude stdin write failed";
+      fatalWriteErrorCode = "CLAUDE_CLI_STDIN_WRITE_FAILED";
+      stderrBuffer = `${stderrBuffer}\n${fatalWriteError}`.trim();
+
+      if (!proc.killed) {
+        proc.kill("SIGTERM");
+      }
+    });
 
     const completedPromise = new Promise<void>((resolve) => {
-      const emitRuntimeError = async (detail: string) => {
+      const emitRuntimeError = async (detail: string, errorCode = "CLAUDE_RUNTIME_ERROR") => {
         if (completed) {
           return;
         }
@@ -198,6 +233,7 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
           status: "failed",
           providerSessionId: binding.providerSessionId,
           rawStoreRef: binding.rawStoreRef,
+          errorCode,
           detail
         });
       };
@@ -251,11 +287,21 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
 
       proc.on("error", (error) => {
         clearInterval(bindingRefreshTimer);
-        void emitRuntimeError(error.message).finally(resolve);
+        stdinClosed = true;
+        void emitRuntimeError(error.message, "CLAUDE_CLI_SPAWN_FAILED").finally(resolve);
       });
 
       proc.on("close", (code, signal) => {
         clearInterval(bindingRefreshTimer);
+        stdinClosed = true;
+
+        if (fatalWriteError) {
+          void emitRuntimeError(
+            fatalWriteError,
+            fatalWriteErrorCode ?? "CLAUDE_CLI_STDIN_WRITE_FAILED"
+          ).finally(resolve);
+          return;
+        }
 
         if (interrupted || signal === "SIGTERM" || signal === "SIGINT") {
           void emitRuntimeComplete("interrupted", "claude process interrupted").finally(resolve);
@@ -268,7 +314,7 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
         }
 
         const detail = stderrBuffer.trim() || `claude exited with code ${String(code)}`;
-        void emitRuntimeError(detail).finally(resolve);
+        void emitRuntimeError(detail, "CLAUDE_CLI_EXIT_NON_ZERO").finally(resolve);
       });
     });
 
@@ -276,12 +322,17 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
       providerSessionId: activeProviderSessionId,
       rawStoreRef: activeRawStoreRef,
       completed: completedPromise,
+      submitDuringRun,
       interrupt: async () => {
         if (proc.killed) {
           return;
         }
 
         interrupted = true;
+        stdinClosed = true;
+        if (!proc.stdin.destroyed) {
+          proc.stdin.end();
+        }
         proc.kill("SIGTERM");
       }
     };
@@ -348,6 +399,46 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
       }
     }
   }
+}
+
+function writeClaudeStreamingInput(
+  proc: ChildProcessWithoutNullStreams,
+  options: ProviderRuntimeRunRequest["options"],
+  isClosed: boolean
+): Promise<void> {
+  if (isClosed || proc.killed || proc.stdin.destroyed || !proc.stdin.writable) {
+    return Promise.reject(new Error("IN_RUN_INPUT_NOT_SUPPORTED"));
+  }
+
+  const payload = JSON.stringify(buildClaudeStreamingUserInput(options));
+
+  return new Promise<void>((resolve, reject) => {
+    proc.stdin.write(`${payload}\n`, "utf8", (error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+
+      resolve();
+    });
+  });
+}
+
+function buildClaudeStreamingUserInput(
+  options: ProviderRuntimeRunRequest["options"]
+): ClaudeStreamingUserInput {
+  return {
+    type: "user",
+    message: {
+      role: "user",
+      content: [
+        {
+          type: "text",
+          text: options.providerPrompt ?? options.content
+        }
+      ]
+    }
+  };
 }
 
 function resolveClaudeCommand(explicitPath?: string): string {

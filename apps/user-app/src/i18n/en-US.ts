@@ -179,10 +179,15 @@ export const enUS = {
     timelineEmpty:
       "There are no messages in this session yet. Your first message will go straight into the Host chain.",
     rawRefLabel: "Source",
+    copyAction: "Copy",
+    copyContentSuccess: "Content copied.",
+    copyContentFailed: "Failed to copy the content.",
     loadMore: "Load More",
     composerPlaceholder:
       "State the next step clearly. Let the rest continue inside this session.",
     sendButton: "Send Message",
+    sendGuidanceButton: "Add Guidance",
+    queueGuidanceButton: "Queue Guidance",
     resendButton: "Resend",
     sendingState: "Sending",
     sentState: "Synced",
@@ -202,6 +207,7 @@ export const enUS = {
     connectionReconnecting: "Reconnecting",
     connectionReconnectFailed: "Reconnect failed",
     connectionClosed: "Connection closed",
+    runtimeErrorTitle: "Session run failed",
     reconnectExplain: "The realtime link is broken. The system is replaying missing messages.",
     reconnectFailedExplain:
       "Automatic recovery failed. Retry manually, or reopen the session later.",

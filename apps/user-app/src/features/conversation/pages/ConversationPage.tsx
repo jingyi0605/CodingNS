@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 
 import { t } from "../../../shared/i18n";
+import { useToast } from "../../../shared/toast";
 import {
   getProviderCapabilities,
   startLiveSession,
@@ -79,11 +80,15 @@ function LiveConversationPage({
   }
 
   const store = storeRef.current;
+  const { showToast, dismissToast } = useToast();
+  const lastRuntimeErrorSignatureRef = useRef<string | null>(null);
   const session = useSessionRuntimeStore(store, (state) => state.session);
   const capabilities = useSessionRuntimeStore(store, (state) => state.capabilities);
   const messages = useSessionRuntimeStore(store, (state) => state.messages);
   const contextUsage = useSessionRuntimeStore(store, (state) => state.contextUsage);
   const historyState = useSessionRuntimeStore(store, (state) => state.historyState);
+  const runtimeErrorCode = useSessionRuntimeStore(store, (state) => state.errorCode);
+  const runtimeErrorDetail = useSessionRuntimeStore(store, (state) => state.errorDetail);
   const loadingOlderMessages = useSessionRuntimeStore(
     store,
     (state) => state.loadingOlderMessages
@@ -91,9 +96,12 @@ function LiveConversationPage({
   const hasOlderMessages = useSessionRuntimeStore(store, (state) => state.hasOlderMessages);
   const connectionState = useSessionRuntimeStore(store, (state) => state.connectionState);
   const isRunning =
-    session?.runningState === "starting"
-    || session?.runningState === "running"
-    || session?.runningState === "reconnecting";
+    session?.activitySource !== "inferred" &&
+    (
+      session?.runningState === "starting"
+      || session?.runningState === "running"
+      || session?.runningState === "reconnecting"
+    );
 
   useEffect(() => {
     store.applyNavigationSession(navigationSession);
@@ -114,6 +122,29 @@ function LiveConversationPage({
       setSessionWorkspace(sessionId, null);
     };
   }, [session?.workspaceId, sessionId, setSessionWorkspace]);
+
+  useEffect(() => {
+    if (!runtimeErrorCode || !runtimeErrorDetail) {
+      lastRuntimeErrorSignatureRef.current = null;
+      dismissToast("conversation-runtime-error");
+      return;
+    }
+
+    const signature = `${runtimeErrorCode}:${runtimeErrorDetail}`;
+
+    if (lastRuntimeErrorSignatureRef.current === signature) {
+      return;
+    }
+
+    lastRuntimeErrorSignatureRef.current = signature;
+    showToast({
+      id: "conversation-runtime-error",
+      title: t("conversation.runtimeErrorTitle"),
+      description: runtimeErrorDetail,
+      tone: "error",
+      durationMs: null
+    });
+  }, [dismissToast, runtimeErrorCode, runtimeErrorDetail, showToast]);
 
   return (
     <main className="workbench-page conversation-page-shell">
