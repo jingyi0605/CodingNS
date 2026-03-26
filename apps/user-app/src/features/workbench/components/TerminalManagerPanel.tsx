@@ -50,6 +50,14 @@ interface TerminalManagerSnapshot {
   templateStatuses: TerminalTemplateRuntimeStatusDto[];
 }
 
+interface TemplateVisualStatus {
+  tone: "running" | "idle" | "untracked";
+  title: string;
+  summary: string;
+  badgeLabel: string;
+  badgeTone?: "success";
+}
+
 function formatDate(value: string | null): string {
   if (!value) {
     return t("common.unknown");
@@ -129,6 +137,39 @@ function getTemplateRuntimeStatus(
   templateId: string
 ) {
   return runtimeStatusByTemplateId.get(templateId) ?? null;
+}
+
+function resolveTemplateVisualStatus(
+  template: TerminalTemplateDto,
+  runtimeStatus: TerminalTemplateRuntimeStatusDto | null
+): TemplateVisualStatus {
+  if (template.port === null) {
+    return {
+      tone: "untracked",
+      title: t("terminalManager.portUnset"),
+      summary: t("terminalManager.portUnsetDescription"),
+      badgeLabel: t("terminalManager.portUnset")
+    };
+  }
+
+  if (runtimeStatus?.occupied) {
+    return {
+      tone: "running",
+      title: t("terminalManager.portOccupied"),
+      summary: runtimeStatus.processName || t("terminalManager.processCommandFallback"),
+      badgeLabel: runtimeStatus.processId
+        ? `PID ${runtimeStatus.processId}`
+        : t("terminalManager.statusRunning"),
+      badgeTone: "success"
+    };
+  }
+
+  return {
+    tone: "idle",
+    title: t("terminalManager.portAvailable"),
+    summary: t("terminalManager.portAvailableDescription"),
+    badgeLabel: t("terminalManager.statusStopped")
+  };
 }
 
 function TerminalManagerModal({
@@ -217,6 +258,7 @@ export function TerminalManagerPanel({
   const [selectedShellId, setSelectedShellId] = useState("");
   const [launchDraft, setLaunchDraft] = useState<LaunchDraftState>(INITIAL_LAUNCH_DRAFT);
   const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [expandedTemplateIds, setExpandedTemplateIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [savingTemplate, setSavingTemplate] = useState(false);
   const [runningTemplateId, setRunningTemplateId] = useState<string | null>(null);
@@ -238,6 +280,15 @@ export function TerminalManagerPanel({
     () => new Map(templateStatuses.map((status) => [status.templateId, status] as const)),
     [templateStatuses]
   );
+  const runningTemplateCount = useMemo(
+    () => templateStatuses.filter((status) => status.occupied).length,
+    [templateStatuses]
+  );
+  const monitoredTemplateCount = useMemo(
+    () => templates.filter((template) => template.port !== null).length,
+    [templates]
+  );
+  const unavailableShellSelected = selectedShellOption?.available === false && shellOptions.length > 0;
 
   useEffect(() => {
     let cancelled = false;
@@ -470,6 +521,14 @@ export function TerminalManagerPanel({
     }
   }
 
+  function toggleTemplateDetails(templateId: string) {
+    setExpandedTemplateIds((current) =>
+      current.includes(templateId)
+        ? current.filter((item) => item !== templateId)
+        : [...current, templateId]
+    );
+  }
+
   if (!navigationGroups.length) {
     return (
       <section className="workbench-empty-state minimal">
@@ -488,34 +547,43 @@ export function TerminalManagerPanel({
 
   return (
     <section className="conversation-panel surface-card terminal-manager-panel">
-      <div className="terminal-manager-header">
-        <p className="status-text">
-          {`${t("terminalManager.templateSectionTitle")} ${templates.length} / ${t("terminalManager.terminalSectionTitle")} ${terminals.length}`}
-        </p>
-        <button
-          className="ghost-button"
-          type="button"
-          disabled={!activeWorkspaceId || loading}
-          onClick={() => {
-            if (activeWorkspaceId) {
-              requestTerminalManagerSnapshotRefresh(activeWorkspaceId);
-            }
-          }}
-        >
-          {t("terminalManager.refresh")}
-        </button>
-      </div>
-
-      <section className="terminal-manager-section">
-        <div className="terminal-manager-section-header">
+      <div className="terminal-manager-header terminal-manager-desktop-header">
+        <div className="terminal-manager-panel-heading">
+          <span className="terminal-manager-panel-eyebrow">{t("terminalManager.quickLaunchTitle")}</span>
           <div>
-            <h3>{t("terminalManager.templateSectionTitle")}</h3>
-            <p className="status-text">{t("terminalManager.templateSectionDescription")}</p>
+            <h2>{t("terminalManager.templateSectionTitle")}</h2>
+            <p className="status-text">{t("terminalManager.desktopPanelDescription")}</p>
           </div>
-          <span className="workbench-section-counter">{templates.length}</span>
         </div>
 
-        <div className="terminal-manager-toolbar">
+        <div className="terminal-manager-overview">
+          <article className="terminal-manager-overview-card">
+            <span>{t("terminalManager.runningCountLabel")}</span>
+            <strong>{runningTemplateCount}</strong>
+          </article>
+          <article className="terminal-manager-overview-card">
+            <span>{t("terminalManager.portWatchCountLabel")}</span>
+            <strong>{monitoredTemplateCount}</strong>
+          </article>
+          <article className="terminal-manager-overview-card">
+            <span>{t("terminalManager.terminalCountLabel")}</span>
+            <strong>{terminals.length}</strong>
+          </article>
+        </div>
+
+        <div className="terminal-manager-toolbar terminal-manager-toolbar-header">
+          <button
+            className="ghost-button"
+            type="button"
+            disabled={!activeWorkspaceId || loading}
+            onClick={() => {
+              if (activeWorkspaceId) {
+                requestTerminalManagerSnapshotRefresh(activeWorkspaceId);
+              }
+            }}
+          >
+            {t("terminalManager.refresh")}
+          </button>
           <button
             className="primary-button"
             type="button"
@@ -527,6 +595,16 @@ export function TerminalManagerPanel({
             {t("terminalManager.openCreateModalAction")}
           </button>
         </div>
+      </div>
+
+      <section className="terminal-manager-section">
+        <div className="terminal-manager-section-header">
+          <div>
+            <h3>{t("terminalManager.templateSectionTitle")}</h3>
+            <p className="status-text">{t("terminalManager.templateSectionDescription")}</p>
+          </div>
+          <span className="workbench-section-counter">{templates.length}</span>
+        </div>
 
         {loading && !templates.length ? <p className="status-text">{t("common.loading")}</p> : null}
 
@@ -534,70 +612,60 @@ export function TerminalManagerPanel({
           <div className="terminal-manager-list">
             {templates.map((template) => {
               const runtimeStatus = getTemplateRuntimeStatus(runtimeStatusByTemplateId, template.id);
+              const visualStatus = resolveTemplateVisualStatus(template, runtimeStatus);
+              const detailsOpen = expandedTemplateIds.includes(template.id);
+              const detailButtonLabel = detailsOpen
+                ? t("terminalManager.hideDetailsAction")
+                : t("terminalManager.showDetailsAction");
 
               return (
-                <article key={template.id} className="terminal-manager-card">
+                <article
+                  key={template.id}
+                  className="terminal-manager-card terminal-manager-desktop-card"
+                  data-tone={visualStatus.tone}
+                  data-expanded={detailsOpen ? "true" : "false"}
+                >
                   <div className="terminal-manager-card-header">
-                    <div>
+                    <div className="terminal-manager-card-title">
+                      <span className="terminal-manager-card-indicator" aria-hidden="true" />
                       <strong>{template.name}</strong>
-                      <p className="status-text">{buildTemplatePreview(template)}</p>
                     </div>
-                    <span className="badge">
-                      {detectTemplateMode(template) === "script"
-                        ? t("terminalManager.scriptMode")
-                        : t("terminalManager.commandMode")}
-                    </span>
+                    <div className="terminal-manager-card-tools">
+                      <span className="badge">
+                        {detectTemplateMode(template) === "script"
+                          ? t("terminalManager.scriptMode")
+                          : t("terminalManager.commandMode")}
+                      </span>
+                      <button
+                        className="terminal-manager-detail-toggle"
+                        type="button"
+                        aria-label={detailButtonLabel}
+                        aria-expanded={detailsOpen}
+                        onClick={() => {
+                          toggleTemplateDetails(template.id);
+                        }}
+                      >
+                        i
+                      </button>
+                    </div>
                   </div>
 
-                  <div className="terminal-manager-meta">
-                    <span className="status-text">
-                      {t("terminalManager.cwdLabel")} {template.cwd}
-                    </span>
-                    <span className="status-text">
-                      {t("terminalManager.updatedAt")} {formatDate(template.updatedAt)}
-                    </span>
-                    <span className="status-text">
-                      {template.port === null
-                        ? t("terminalManager.portUnset")
-                        : `${t("terminalManager.portLabel")} ${template.port}`}
-                    </span>
-                  </div>
-
-                  {template.port !== null ? (
-                    runtimeStatus?.occupied ? (
-                      <div className="terminal-template-status success">
-                        <div className="terminal-process-item-header">
-                          <strong>{t("terminalManager.portOccupied")}</strong>
-                          <span className="badge" data-tone="success">
-                            {runtimeStatus.processId
-                              ? `PID ${runtimeStatus.processId}`
-                              : t("terminalManager.statusRunning")}
-                          </span>
-                        </div>
-                        <p className="status-text">
-                          {runtimeStatus.processName || t("terminalManager.processCommandFallback")}
-                        </p>
-                        {runtimeStatus.processCommandLine ? (
-                          <p className="status-text">{runtimeStatus.processCommandLine}</p>
-                        ) : null}
-                      </div>
-                    ) : (
-                      <div className="terminal-template-status">
-                        <div className="terminal-process-item-header">
-                          <strong>{t("terminalManager.portAvailable")}</strong>
-                          <span className="badge">{t("terminalManager.statusStopped")}</span>
-                        </div>
-                        <p className="status-text">{t("terminalManager.portAvailableDescription")}</p>
-                      </div>
-                    )
-                  ) : (
-                    <div className="terminal-template-status">
-                      <div className="terminal-process-item-header">
-                        <strong>{t("terminalManager.portUnset")}</strong>
-                      </div>
-                      <p className="status-text">{t("terminalManager.portUnsetDescription")}</p>
+                  <div className="terminal-manager-status-panel">
+                    <div className="terminal-manager-status-copy">
+                      <p className="terminal-manager-status-title">{visualStatus.title}</p>
+                      <p className="status-text">{visualStatus.summary}</p>
                     </div>
-                  )}
+                    <div className="terminal-manager-status-badges">
+                      <span className="terminal-manager-stat-pill">
+                        {template.port === null
+                          ? t("terminalManager.portUnset")
+                          : `${t("terminalManager.portLabel")} ${template.port}`}
+                      </span>
+                      <span className="badge" data-tone={visualStatus.badgeTone}>
+                        {visualStatus.badgeLabel}
+                      </span>
+                    </div>
+                  </div>
 
                   <div className="terminal-manager-actions">
                     {runtimeStatus?.occupied ? (
@@ -617,10 +685,7 @@ export function TerminalManagerPanel({
                     <button
                       className="secondary-button"
                       type="button"
-                      disabled={
-                        runningTemplateId === template.id ||
-                        (selectedShellOption?.available === false && shellOptions.length > 0)
-                      }
+                      disabled={runningTemplateId === template.id || unavailableShellSelected}
                       onClick={() => {
                         void handleRunTemplate(template.id);
                       }}
@@ -630,6 +695,46 @@ export function TerminalManagerPanel({
                         : t("terminalManager.runTemplateAction")}
                     </button>
                   </div>
+
+                  {detailsOpen ? (
+                    <section
+                      className="terminal-manager-details"
+                      aria-label={t("terminalManager.detailsSectionTitle")}
+                    >
+                      <div className="terminal-manager-detail-grid">
+                        <div className="terminal-manager-detail-item terminal-manager-detail-item-wide">
+                          <span>{t("terminalManager.commandPreviewLabel")}</span>
+                          <strong>{buildTemplatePreview(template)}</strong>
+                        </div>
+                        <div className="terminal-manager-detail-item">
+                          <span>{t("terminalManager.cwdLabel")}</span>
+                          <strong>{template.cwd}</strong>
+                        </div>
+                        <div className="terminal-manager-detail-item">
+                          <span>{t("terminalManager.updatedAt")}</span>
+                          <strong>{formatDate(template.updatedAt)}</strong>
+                        </div>
+                        <div className="terminal-manager-detail-item">
+                          <span>{t("terminalManager.portLabel")}</span>
+                          <strong>
+                            {template.port === null ? t("terminalManager.portUnset") : template.port}
+                          </strong>
+                        </div>
+                        {runtimeStatus?.processId ? (
+                          <div className="terminal-manager-detail-item">
+                            <span>{t("terminalManager.processIdLabel")}</span>
+                            <strong>{runtimeStatus.processId}</strong>
+                          </div>
+                        ) : null}
+                        {runtimeStatus?.processCommandLine ? (
+                          <div className="terminal-manager-detail-item terminal-manager-detail-item-wide">
+                            <span>{t("terminalManager.processCommandLabel")}</span>
+                            <strong>{runtimeStatus.processCommandLine}</strong>
+                          </div>
+                        ) : null}
+                      </div>
+                    </section>
+                  ) : null}
                 </article>
               );
             })}

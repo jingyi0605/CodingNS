@@ -5,7 +5,63 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ToastProvider } from "../../../shared/toast";
 import { authStore } from "../../auth/store/auth-store";
 import type { WorkspaceSessionGroup } from "../../conversation/components/WorkbenchLayout";
+import type {
+  TerminalDto,
+  TerminalTemplateDto,
+  TerminalTemplateRuntimeStatusDto
+} from "../../terminal/api/terminal-api";
 import { TerminalManagerPanel } from "./TerminalManagerPanel";
+
+interface MockTerminalManagerSnapshot {
+  workspaceId: string;
+  terminals: TerminalDto[];
+  templates: TerminalTemplateDto[];
+  templateStatuses: TerminalTemplateRuntimeStatusDto[];
+}
+
+let terminalManagerSnapshotListener: ((snapshot: MockTerminalManagerSnapshot) => void) | null = null;
+let buildMockSnapshot = (): MockTerminalManagerSnapshot => ({
+  workspaceId: "workspace-1",
+  terminals: [],
+  templates: [],
+  templateStatuses: []
+});
+
+vi.mock("../../conversation/components/WorkbenchLayout", async () => {
+  const actual = await vi.importActual("../../conversation/components/WorkbenchLayout");
+
+  return {
+    ...actual,
+    useWorkbenchShell: () => ({
+      navigationGroups,
+      navigationLoading: false,
+      navigationError: null,
+      refreshNavigation: async () => undefined,
+      requestNavigationRefresh: () => undefined,
+      subscribeFileTree: () => undefined,
+      requestFileTreeRefresh: () => undefined,
+      addFileTreeSnapshotListener: () => () => undefined,
+      subscribeGitSnapshot: () => undefined,
+      requestGitRefresh: () => undefined,
+      addGitSnapshotListener: () => () => undefined,
+      subscribeTerminalManagerSnapshot: () => undefined,
+      requestTerminalManagerRefresh: () => {
+        terminalManagerSnapshotListener?.(buildMockSnapshot());
+      },
+      addTerminalManagerSnapshotListener: (listener: (snapshot: MockTerminalManagerSnapshot) => void) => {
+        terminalManagerSnapshotListener = listener;
+        return () => {
+          if (terminalManagerSnapshotListener === listener) {
+            terminalManagerSnapshotListener = null;
+          }
+        };
+      },
+      setSessionWorkspace: () => undefined,
+      upsertNavigationSession: () => undefined,
+      markNavigationSessionSeen: () => undefined
+    })
+  };
+});
 
 const originalFetch = global.fetch;
 
@@ -32,7 +88,15 @@ function renderPanel(currentWorkspaceId: string | null = "workspace-1") {
 describe("TerminalManagerPanel", () => {
   beforeEach(() => {
     window.localStorage.clear();
+    window.sessionStorage.clear();
     authStore.clear();
+    terminalManagerSnapshotListener = null;
+    buildMockSnapshot = () => ({
+      workspaceId: "workspace-1",
+      terminals: [],
+      templates: [],
+      templateStatuses: []
+    });
     authStore.hydrate({
       accessToken: "access-token",
       refreshToken: "refresh-token",
@@ -54,6 +118,45 @@ describe("TerminalManagerPanel", () => {
     let savedTemplateBody: Record<string, unknown> | null = null;
     let stopRequested = false;
     let runtimeOccupied = true;
+    buildMockSnapshot = () => ({
+      workspaceId: "workspace-1",
+      terminals: [],
+      templates: [
+        {
+          id: "template-1",
+          workspaceId: "workspace-1",
+          name: "启动前端",
+          cwd: "C:/Code/demo",
+          command: "pnpm",
+          args: ["dev"],
+          env: {},
+          port: 5173,
+          createdAt: "2026-03-24T00:00:00.000Z",
+          updatedAt: "2026-03-24T00:10:00.000Z"
+        }
+      ],
+      templateStatuses: runtimeOccupied
+        ? [
+            {
+              templateId: "template-1",
+              port: 5173,
+              occupied: true,
+              processId: 3250,
+              processName: "node",
+              processCommandLine: "node node_modules/vite/bin/vite.js --port 5173"
+            }
+          ]
+        : [
+            {
+              templateId: "template-1",
+              port: 5173,
+              occupied: false,
+              processId: null,
+              processName: null,
+              processCommandLine: null
+            }
+          ]
+    });
 
     global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input.toString();
@@ -67,51 +170,6 @@ describe("TerminalManagerPanel", () => {
               shell: "powershell.exe",
               available: true,
               unavailableReason: null
-            }
-          ]
-        });
-      }
-
-      if (url.includes("/api/terminals/templates/runtime-status?workspaceId=")) {
-        return createJsonResponse({
-          items: runtimeOccupied
-            ? [
-                {
-                  templateId: "template-1",
-                  port: 5173,
-                  occupied: true,
-                  processId: 3250,
-                  processName: "node",
-                  processCommandLine: "node node_modules/vite/bin/vite.js --port 5173"
-                }
-              ]
-            : [
-                {
-                  templateId: "template-1",
-                  port: 5173,
-                  occupied: false,
-                  processId: null,
-                  processName: null,
-                  processCommandLine: null
-                }
-              ]
-        });
-      }
-
-      if (url.includes("/api/terminals/templates?workspaceId=")) {
-        return createJsonResponse({
-          items: [
-            {
-              id: "template-1",
-              workspaceId: "workspace-1",
-              name: "启动前端",
-              cwd: "C:/Code/demo",
-              command: "pnpm",
-              args: ["dev"],
-              env: {},
-              port: 5173,
-              createdAt: "2026-03-24T00:00:00.000Z",
-              updatedAt: "2026-03-24T00:10:00.000Z"
             }
           ]
         });
@@ -152,10 +210,21 @@ describe("TerminalManagerPanel", () => {
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
     expect(screen.queryByPlaceholderText("例如：npm")).not.toBeInTheDocument();
 
-    expect(await screen.findByText("启动项")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 2, name: "启动项" })).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "刷新列表" })).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "添加快捷启动项" })).toBeInTheDocument();
-    expect(await screen.findByText("端口已被占用")).toBeInTheDocument();
+    expect(await screen.findByText("进程已启动")).toBeInTheDocument();
+    expect(screen.queryByText("node node_modules/vite/bin/vite.js --port 5173")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "显示详细信息" }));
+
+    expect(await screen.findByText("node node_modules/vite/bin/vite.js --port 5173")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "隐藏详细信息" }));
+
+    await waitFor(() => {
+      expect(screen.queryByText("node node_modules/vite/bin/vite.js --port 5173")).not.toBeInTheDocument();
+    });
 
     await userEvent.click(screen.getByRole("button", { name: "结束进程" }));
 
