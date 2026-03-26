@@ -15,6 +15,8 @@ import {
   commitDraft,
   createCommitDraft,
   discardGitTargets,
+  getGitBranches,
+  getGitStatus,
   getGitHistory,
   stageGitTargets,
   switchGitBranch,
@@ -66,6 +68,7 @@ const MAX_TREE_PANEL_RATIO = 72;
 const PANEL_RESIZER_HEIGHT = 8;
 const GIT_MOBILE_BREAKPOINT_PX = 960;
 const GIT_SNAPSHOT_CACHE_MAX_AGE_MS = 60 * 1000;
+const GIT_HISTORY_PAGE_SIZE = 20;
 
 interface GitSidebarSnapshot {
   status: GitStatusDto | null;
@@ -343,6 +346,45 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
     }
   }
 
+  async function handleManualRefresh(options?: { resetTreeScroll?: boolean }) {
+    if (!workspaceId?.trim()) {
+      return;
+    }
+
+    const currentWorkspaceId = workspaceId.trim();
+    setLoading(true);
+
+    try {
+      const [nextStatus, nextHistoryPage, nextBranches] = await Promise.all([
+        getGitStatus(currentWorkspaceId),
+        getGitHistory(currentWorkspaceId, GIT_HISTORY_PAGE_SIZE, null),
+        getGitBranches(currentWorkspaceId)
+      ]);
+
+      applyGitSnapshot({
+        status: nextStatus,
+        history: nextHistoryPage.items,
+        historyTotalCount: nextHistoryPage.totalCount,
+        historyNextCursor: nextHistoryPage.nextCursor,
+        branches: nextBranches
+      });
+      requestGitRefresh(currentWorkspaceId);
+
+      if (options?.resetTreeScroll) {
+        requestAnimationFrame(() => {
+          resetTreePanelScroll();
+        });
+      }
+    } catch (error) {
+      showToast({
+        title: readError(error, t("git.panelLoadFailed")),
+        tone: "error"
+      });
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function loadMoreHistory() {
     if (!workspaceId || !historyNextCursor || historyLoadingMore) {
       return;
@@ -351,7 +393,7 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
     setHistoryLoadingMore(true);
 
     try {
-      const nextHistory = await getGitHistory(workspaceId, 20, historyNextCursor);
+      const nextHistory = await getGitHistory(workspaceId, GIT_HISTORY_PAGE_SIZE, historyNextCursor);
 
       setHistory((current) => {
         const existingHashes = new Set(current.map((item) => item.commitHash));
@@ -707,8 +749,8 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
           <button
             className="secondary-button"
             type="button"
-            onClick={() => requestGitSnapshotRefresh({ resetTreeScroll: true })}
-            disabled={actioning || !workspaceId}
+            onClick={() => void handleManualRefresh({ resetTreeScroll: true })}
+            disabled={actioning || loading || !workspaceId}
           >
             {t("git.refreshNow")}
           </button>
@@ -879,8 +921,8 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
                     <button
                       className="git-menu-item"
                       type="button"
-                      disabled={actioning}
-                      onClick={() => requestGitSnapshotRefresh({ resetTreeScroll: true })}
+                      disabled={actioning || loading}
+                      onClick={() => void handleManualRefresh({ resetTreeScroll: true })}
                     >
                       <span>{t("git.refresh")}</span>
                     </button>

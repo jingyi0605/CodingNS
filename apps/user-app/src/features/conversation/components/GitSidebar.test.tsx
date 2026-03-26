@@ -196,6 +196,45 @@ describe("GitSidebar", () => {
     expect(screen.getByText("origin/main")).toBeInTheDocument();
     expect(screen.getByText("upstream/release")).toBeInTheDocument();
   });
+
+  it("点击刷新会直接重新拉取 Git 快照并同步实时订阅", async () => {
+    gitApiMock.getGitStatus.mockResolvedValueOnce(createStatus(["docs/refresh-target.md"]));
+    gitApiMock.getGitHistory.mockResolvedValueOnce({
+      items: [
+        {
+          commitHash: "44444444",
+          authorName: "Linus",
+          authoredAt: "2026-03-26T08:00:00.000Z",
+          subject: "feat: refreshed snapshot",
+          body: "",
+          commitKind: "local",
+          refs: [{ name: "feature/refresh", kind: "head", remoteName: null }]
+        }
+      ],
+      cursor: "0",
+      nextCursor: null,
+      totalCount: 1
+    });
+    gitApiMock.getGitBranches.mockResolvedValueOnce({
+      currentBranch: "feature/refresh",
+      local: [{ name: "feature/refresh", current: true, upstream: null, remote: false }],
+      remote: []
+    });
+
+    renderSidebar();
+
+    await userEvent.click(await screen.findByRole("button", { name: "刷新" }));
+
+    await waitFor(() => {
+      expect(gitApiMock.getGitStatus).toHaveBeenCalledWith("workspace-1");
+      expect(gitApiMock.getGitHistory).toHaveBeenCalledWith("workspace-1", 20, null);
+      expect(gitApiMock.getGitBranches).toHaveBeenCalledWith("workspace-1");
+    });
+
+    expect(await screen.findByText("feat: refreshed snapshot")).toBeInTheDocument();
+    expect(screen.getByText("refresh-target.md")).toBeInTheDocument();
+    expect(workbenchShellMock.requestGitRefresh).toHaveBeenCalledWith("workspace-1");
+  });
 });
 
 function renderSidebar() {
