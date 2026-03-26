@@ -68,6 +68,19 @@ export function SettingsPage() {
     }
   ];
 
+  function getRuntimePlatformLabel() {
+    switch (platform.platform) {
+      case "desktop":
+        return t("settings.platformDesktop");
+      case "ios":
+        return t("settings.platformIos");
+      case "android":
+        return t("settings.platformAndroid");
+      default:
+        return t("settings.platformWeb");
+    }
+  }
+
   return (
     <div className="settings-page">
       <div className="settings-container">
@@ -248,9 +261,7 @@ export function SettingsPage() {
                 </span>
               </div>
               <div className="settings-row-control">
-                <span className="settings-runtime-badge">
-                  {platform.isDesktop ? t("settings.platformDesktop") : t("settings.platformWeb")}
-                </span>
+                <span className="settings-runtime-badge">{getRuntimePlatformLabel()}</span>
               </div>
             </div>
 

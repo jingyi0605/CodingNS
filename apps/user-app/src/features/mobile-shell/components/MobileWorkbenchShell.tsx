@@ -5,6 +5,12 @@ import { t } from "../../../shared/i18n";
 import { AndroidWorkbenchShell } from "../android/AndroidWorkbenchShell";
 import { IosWorkbenchShell } from "../ios/IosWorkbenchShell";
 import { useH5ViewportState } from "../h5/useH5ViewportState";
+import {
+  AdaptiveMobilePaneLayout,
+  resolveAdaptiveMobilePaneLayout,
+  shouldDockAuxiliaryPanel,
+  shouldDockNavigationPanel
+} from "../layouts/AdaptiveMobilePaneLayout";
 import type {
   MobileWorkbenchEntry,
   MobileWorkbenchShellProps
@@ -24,6 +30,8 @@ export function MobileWorkbenchShell({
   title,
   subtitle,
   children,
+  navigationPanel,
+  auxiliaryPanel,
   onOpenNavigation,
   onOpenSearch,
   onOpenAuxiliary,
@@ -40,6 +48,8 @@ export function MobileWorkbenchShell({
         activeEntry={activeEntry}
         title={title}
         subtitle={subtitle}
+        navigationPanel={navigationPanel}
+        auxiliaryPanel={auxiliaryPanel}
         onOpenNavigation={onOpenNavigation}
         onOpenSearch={onOpenSearch}
         onOpenAuxiliary={onOpenAuxiliary}
@@ -59,6 +69,8 @@ export function MobileWorkbenchShell({
         activeEntry={activeEntry}
         title={title}
         subtitle={subtitle}
+        navigationPanel={navigationPanel}
+        auxiliaryPanel={auxiliaryPanel}
         onOpenNavigation={onOpenNavigation}
         onOpenSearch={onOpenSearch}
         onOpenAuxiliary={onOpenAuxiliary}
@@ -77,6 +89,8 @@ export function MobileWorkbenchShell({
       activeEntry={activeEntry}
       title={title}
       subtitle={subtitle}
+      navigationPanel={navigationPanel}
+      auxiliaryPanel={auxiliaryPanel}
       onOpenNavigation={onOpenNavigation}
       onOpenSearch={onOpenSearch}
       onOpenAuxiliary={onOpenAuxiliary}
@@ -95,6 +109,8 @@ function BrowserMobileWorkbenchShell({
   title,
   subtitle,
   children,
+  navigationPanel,
+  auxiliaryPanel,
   onOpenNavigation,
   onOpenSearch,
   onOpenAuxiliary,
@@ -106,6 +122,14 @@ function BrowserMobileWorkbenchShell({
   const platform = usePlatform();
   const h5ViewportState = useH5ViewportState(platform.platform === "web");
   const hideTabbarForKeyboard = platform.platform === "web" && h5ViewportState.keyboardOpen;
+  const paneLayout = resolveAdaptiveMobilePaneLayout({
+    viewportClass: platform.viewportClass,
+    activeEntry,
+    hasNavigationPanel: Boolean(navigationPanel),
+    hasAuxiliaryPanel: Boolean(auxiliaryPanel)
+  });
+  const navigationDocked = shouldDockNavigationPanel(paneLayout);
+  const auxiliaryDocked = shouldDockAuxiliaryPanel(paneLayout);
 
   // 移动端主导航只保留一级目的地，复杂操作都从页面内或顶部按钮进入。
   const navItems: MobileNavItem[] = [
@@ -141,17 +165,20 @@ function BrowserMobileWorkbenchShell({
       data-active-entry={activeEntry}
       data-mobile-runtime={platform.platform}
       data-mobile-keyboard-open={hideTabbarForKeyboard}
+      data-pane-layout={paneLayout}
     >
       <header className="mobile-workbench-header surface-card">
         <div className="mobile-workbench-header-leading">
-          <button
-            type="button"
-            className="mobile-workbench-header-button"
-            aria-label={t("shell.mobileNavigationAction")}
-            onClick={onOpenNavigation}
-          >
-            <NavigationIcon />
-          </button>
+          {!navigationDocked ? (
+            <button
+              type="button"
+              className="mobile-workbench-header-button"
+              aria-label={t("shell.mobileNavigationAction")}
+              onClick={onOpenNavigation}
+            >
+              <NavigationIcon />
+            </button>
+          ) : null}
           <div className="mobile-workbench-header-copy">
             <h1>{title}</h1>
             {subtitle ? <p>{subtitle}</p> : null}
@@ -167,18 +194,31 @@ function BrowserMobileWorkbenchShell({
           >
             <SearchIcon />
           </button>
-          <button
-            type="button"
-            className="mobile-workbench-header-button"
-            aria-label={t("shell.mobileAuxiliaryAction")}
-            onClick={onOpenAuxiliary}
-          >
-            <PanelIcon />
-          </button>
+          {!auxiliaryDocked ? (
+            <button
+              type="button"
+              className="mobile-workbench-header-button"
+              aria-label={t("shell.mobileAuxiliaryAction")}
+              onClick={onOpenAuxiliary}
+            >
+              <PanelIcon />
+            </button>
+          ) : null}
         </div>
       </header>
 
-      <div className="mobile-workbench-content">{children}</div>
+      <div className="mobile-workbench-content">
+        <AdaptiveMobilePaneLayout
+          viewportClass={platform.viewportClass}
+          activeEntry={activeEntry}
+          hasNavigationPanel={Boolean(navigationPanel)}
+          hasAuxiliaryPanel={Boolean(auxiliaryPanel)}
+          navigationPanel={navigationPanel}
+          auxiliaryPanel={auxiliaryPanel}
+        >
+          {children}
+        </AdaptiveMobilePaneLayout>
+      </div>
 
       <nav
         className="mobile-workbench-tabbar surface-card"

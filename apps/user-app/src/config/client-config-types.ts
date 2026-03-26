@@ -1,4 +1,4 @@
-export type RuntimePlatform = "desktop" | "web";
+export type RuntimePlatform = "desktop" | "web" | "ios" | "android";
 export type ReleaseChannel = "stable" | "beta";
 export type AppLanguage = "zh-CN" | "en-US";
 export type ClientPermissionMode = "default" | "acceptEdits" | "bypassPermissions";

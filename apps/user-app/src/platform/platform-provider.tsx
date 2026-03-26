@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { createPlatformAdapter, type PlatformAdapter } from "./platform-adapter";
 
@@ -14,12 +14,47 @@ function applyPlatformDatasets(adapter: PlatformAdapter) {
   documentElement.dataset.runtimePlatform = adapter.platform;
   documentElement.dataset.osFamily = adapter.ui.osFamily;
   documentElement.dataset.windowControls = adapter.ui.windowControlsStyle;
-  body.dataset.runtimePlatform = adapter.platform;
-  body.dataset.osFamily = adapter.ui.osFamily;
+  documentElement.dataset.viewportClass = adapter.viewportClass;
+
+  if (body) {
+    body.dataset.runtimePlatform = adapter.platform;
+    body.dataset.osFamily = adapter.ui.osFamily;
+    body.dataset.windowControls = adapter.ui.windowControlsStyle;
+    body.dataset.viewportClass = adapter.viewportClass;
+  }
+}
+
+function readViewportWidth() {
+  if (typeof window === "undefined") {
+    return undefined;
+  }
+
+  return window.innerWidth;
 }
 
 export function PlatformProvider({ children }: { children: ReactNode }) {
-  const adapter = createPlatformAdapter();
+  const [viewportWidth, setViewportWidth] = useState<number | undefined>(() => readViewportWidth());
+  const adapter = useMemo(
+    () => createPlatformAdapter({ viewportWidth }),
+    [viewportWidth]
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    function handleResize() {
+      setViewportWidth(window.innerWidth);
+    }
+
+    handleResize();
+    window.addEventListener("resize", handleResize);
+
+    return () => {
+      window.removeEventListener("resize", handleResize);
+    };
+  }, []);
 
   useEffect(() => {
     applyPlatformDatasets(adapter);

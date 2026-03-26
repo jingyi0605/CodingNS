@@ -1,0 +1,129 @@
+.session-index-page {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1rem;
+}
+
+.session-index-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+}
+
+.session-index-subtitle {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.session-section {
+  background: var(--surface);
+  border-radius: 12px;
+  padding: 1rem;
+  border: 1px solid var(--border-primary);
+}
+
+.session-section-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.session-section-description {
+  margin: 0.25rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.session-section-count {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.session-section-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.session-section-empty {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.session-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  border-radius: 10px;
+  background: var(--surface-press);
+  border: 1px solid transparent;
+}
+
+.session-list-link {
+  flex: 1;
+  text-align: left;
+  border: none;
+  background: transparent;
+  padding: 0;
+}
+
+.session-list-link:hover {
+  text-decoration: underline;
+}
+
+.session-list-title {
+  margin: 0;
+  font-weight: 600;
+}
+
+.session-list-meta {
+  margin: 0.25rem 0 0;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.session-list-actions {
+  position: relative;
+  display: flex;
+  gap: 0.4rem;
+}
+
+.session-list-actions .ghost-button {
+  padding: 0.35rem 0.6rem;
+  font-size: 0.75rem;
+}
+
+.session-action-menu {
+  position: absolute;
+  top: calc(100% + 0.4rem);
+  right: 0;
+  z-index: 2;
+  min-width: 9rem;
+  display: flex;
+  flex-direction: column;
+  padding: 0.35rem;
+  border: 1px solid var(--border-primary);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
+}
+
+.session-action-menu-item {
+  width: 100%;
+  border: none;
+  background: transparent;
+  text-align: left;
+  padding: 0.55rem 0.65rem;
+  border-radius: 8px;
+  color: var(--text-primary);
+}
+
+.session-action-menu-item:hover {
+  background: var(--surface-press);
+}

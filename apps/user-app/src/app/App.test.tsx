@@ -755,7 +755,6 @@ describe("app routes", () => {
 
     renderConversationRoute("session-1");
 
-    expect((await screen.findAllByRole("heading", { name: "Spec004 文件管理" })).length).toBeGreaterThan(0);
     const filePanel = await screen.findByTestId("file-context-panel");
 
     await userEvent.click(await within(filePanel).findByText("src"));

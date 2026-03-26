@@ -7,6 +7,7 @@ import { enUS } from "../../i18n/en-US";
 import { zhCN } from "../../i18n/zh-CN";
 
 type DictionaryValue = string | Record<string, unknown>;
+type TranslationParams = Record<string, string | number | boolean | null | undefined>;
 
 const extensionZhCN = {
   common: {
@@ -42,9 +43,11 @@ const extensionZhCN = {
     desktopRelease: "\u684c\u9762\u53d1\u5e03",
     desktopReleaseDescription: "\u68c0\u67e5\u66f4\u65b0\u3001\u6267\u884c\u5b89\u88c5\u548c\u624b\u52a8\u56de\u9000\u90fd\u4ece\u8fd9\u91cc\u8d70\u3002",
     runtimePlatform: "\u5f53\u524d\u8fd0\u884c\u5e73\u53f0",
-    runtimePlatformDescription: "\u7528\u6765\u786e\u8ba4\u73b0\u5728\u662f H5 \u8fd0\u884c\u8fd8\u662f Tauri desktop \u58f3\u5c42\u8fd0\u884c\u3002",
+    runtimePlatformDescription: "\u7528\u6765\u786e\u8ba4\u73b0\u5728\u662f Web/H5\u3001Desktop\u3001iOS \u8fd8\u662f Android \u8fd0\u884c\u73af\u5883\u3002",
     platformDesktop: "Desktop",
     platformWeb: "Web",
+    platformIos: "iOS",
+    platformAndroid: "Android",
     releaseDesktopOnly: "\u5f53\u524d\u662f Web/H5 \u8fd0\u884c\u73af\u5883\uff0c\u4e0d\u652f\u6301\u684c\u9762\u66f4\u65b0\u3002",
     releaseCurrentVersion: "\u5f53\u524d\u7248\u672c",
     releaseTargetVersion: "\u76ee\u6807\u7248\u672c",
@@ -68,6 +71,15 @@ const extensionZhCN = {
   shell: {
     title: "\u5de5\u4f5c\u53f0",
     subtitle: "\u7ba1\u7406\u4ee3\u7801\u9879\u76ee\u91cc\u7684 AI \u4f1a\u8bdd",
+    mobileWorkspacesEntry: "\u5de5\u4f5c\u533a",
+    mobileSessionsEntry: "\u4f1a\u8bdd",
+    mobileToolsEntry: "\u5de5\u5177",
+    mobileSettingsEntry: "\u8bbe\u7f6e",
+    mobileNavigationAction: "\u6253\u5f00\u5de5\u4f5c\u53f0\u83dc\u5355",
+    mobileSearchAction: "\u6253\u5f00\u641c\u7d22",
+    mobileAuxiliaryAction: "\u6253\u5f00\u5de5\u5177\u9762\u677f",
+    iosMoreAction: "\u66f4\u591a\u64cd\u4f5c",
+    androidMoreAction: "\u66f4\u591a\u64cd\u4f5c",
     conversationEntry: "\u5bf9\u8bdd",
     terminalsEntry: "\u7ec8\u7aef",
     searchEntry: "\u641c\u7d22",
@@ -94,6 +106,36 @@ const extensionZhCN = {
     goForward: "\u524d\u8fdb",
     workspaceCount: "\u9879\u76ee",
     sessionCount: "\u4f1a\u8bdd",
+    manageWorkspaceAction: "\u7ba1\u7406\u9879\u76ee",
+    manageWorkspaceTitle: "\u7ba1\u7406\u9879\u76ee",
+    manageWorkspaceDescription:
+      "\u9ed8\u8ba4\u53ea\u5217\u51fa\u5f53\u524d\u5df2\u52a0\u8f7d\u7684\u9879\u76ee\uff0c\u5c55\u5f00\u540e\u53ef\u4ee5\u67e5\u770b\u8def\u5f84\u3001Git \u6458\u8981\u3001\u4ee3\u7801\u7c7b\u578b\u7ec4\u6210\uff0c\u4e5f\u53ef\u4ee5\u4ece\u5f53\u524d\u5de5\u4f5c\u53f0\u5217\u8868\u91cc\u79fb\u9664\u3002",
+    manageWorkspaceEmpty: "\u5f53\u524d\u6ca1\u6709\u53ef\u7ba1\u7406\u7684\u9879\u76ee\u3002",
+    manageWorkspaceLoading: "\u6b63\u5728\u8bfb\u53d6\u9879\u76ee\u8be6\u60c5...",
+    manageWorkspaceLoadFailed: "\u9879\u76ee\u8be6\u60c5\u52a0\u8f7d\u5931\u8d25",
+    manageWorkspacePathLabel: "\u8def\u5f84",
+    manageWorkspaceGitCommitCount: "Git \u63d0\u4ea4\u7248\u672c\u6570",
+    manageWorkspaceGitInfoLabel: "Git \u4ed3\u5e93\u4fe1\u606f",
+    manageWorkspaceRepoRoot: "\u4ed3\u5e93\u6839\u76ee\u5f55",
+    manageWorkspaceCurrentBranch: "\u5f53\u524d\u5206\u652f",
+    manageWorkspaceRemoteLabel: "\u8fdc\u7a0b",
+    manageWorkspaceNoRemote: "\u672a\u914d\u7f6e\u8fdc\u7a0b",
+    manageWorkspaceNotGit: "\u5f53\u524d\u9879\u76ee\u4e0d\u662f Git \u4ed3\u5e93\u3002",
+    manageWorkspaceCodeCompositionLabel: "\u4ee3\u7801\u7c7b\u578b\u7ec4\u6210",
+    manageWorkspaceCodeCompositionFiles: "\u6587\u4ef6",
+    manageWorkspaceCodeCompositionOther: "\u5176\u4ed6",
+    manageWorkspaceNoCodeComposition: "\u6682\u65f6\u6ca1\u6709\u8bc6\u522b\u5230\u53ef\u7edf\u8ba1\u7684\u4ee3\u7801\u6587\u4ef6\u3002",
+    manageWorkspaceCodeTruncated:
+      "\u6587\u4ef6\u8fc7\u591a\uff0c\u53ea\u7edf\u8ba1\u4e86\u524d {count} \u4e2a\u53ef\u8bc6\u522b\u6587\u4ef6\u3002",
+    manageWorkspaceRemoveAction: "\u79fb\u9664\u9879\u76ee",
+    manageWorkspaceRemoving: "\u79fb\u9664\u4e2d...",
+    manageWorkspaceRemoveSuccess: "\u9879\u76ee\u5df2\u4ece\u5f53\u524d\u5de5\u4f5c\u53f0\u79fb\u9664",
+    manageWorkspaceRemoveFailed: "\u79fb\u9664\u9879\u76ee\u5931\u8d25",
+    manageWorkspaceRemoveConfirmTitle: "\u786e\u8ba4\u79fb\u9664\u9879\u76ee",
+    manageWorkspaceRemoveConfirmDescription:
+      "\u8fd9\u53ea\u4f1a\u628a\u9879\u76ee\u4ece\u5f53\u524d\u5de5\u4f5c\u53f0\u5217\u8868\u79fb\u9664\uff0c\u4e0d\u4f1a\u5220\u9664\u4efb\u4f55\u78c1\u76d8\u6570\u636e\u6216\u5386\u53f2\u8bb0\u5f55\u3002\u540e\u7eed\u91cd\u65b0\u52a0\u8f7d\u540c\u4e00\u8def\u5f84\u65f6\uff0c\u65e7\u8bb0\u5f55\u4f1a\u76f4\u63a5\u6062\u590d\u663e\u793a\u3002",
+    manageWorkspaceRemoveConfirmTarget: "\u786e\u5b9a\u79fb\u9664\u300c{name}\u300d\u5417\uff1f",
+    manageWorkspaceRemoveConfirmAction: "\u786e\u8ba4\u79fb\u9664",
     importWorkspaceTitle: "\u6dfb\u52a0\u9879\u76ee",
     importWorkspaceHint: "\u5bfc\u5165\u672c\u5730\u4ee3\u7801\u76ee\u5f55",
     importExpand: "\u5c55\u5f00",
@@ -192,6 +234,29 @@ const extensionZhCN = {
     workspaceCollapse: "收起项目",
     workspaceExpand: "展开项目",
     switchWorkspace: "切换到此项目",
+    workspaceOverviewTitle: "把项目入口放到看得见的地方",
+    workspaceOverviewBody: "先选项目，再决定是继续已有会话，还是开一条新的工作链路。",
+    workspaceListBody: "这里保留当前工作台里的全部项目，并把高频操作直接放到首页。",
+    workspaceDetailTitle: "项目详情",
+    workspaceDetailSummaryTitle: "项目概览",
+    workspaceDetailSummaryBody: "先看当前项目路径、Git 摘要和代码规模，再决定下一步去哪做事。",
+    workspaceDetailMissingTitle: "没找到这个项目",
+    workspaceDetailMissingBody: "这个项目可能已经被移除，或者当前快照还没加载到它。",
+    workspaceSessionListBody: "项目里的会话、收藏和归档操作都收在这里，不再让你先去翻侧栏。",
+    recentSessionsSectionTitle: "最近会话",
+    recentSessionsSectionBody: "先回到最近在做的事情，别让手机端还要你猜入口。",
+    currentWorkspaceSectionTitle: "当前项目会话",
+    currentWorkspaceSectionBody: "当前项目下的会话都集中在这里，方便继续刚才的上下文。",
+    sessionIndexTitle: "会话入口单独成页",
+    sessionIndexBody: "最近、收藏、当前项目三块分开看，手机上找会话别再靠侧栏折叠。",
+    toolsOverviewTitle: "辅助能力别再挤在右侧栏",
+    toolsOverviewBody: "当前项目：{name}。文件、Git、终端和进程都从这里进。",
+    toolsOverviewBodyEmpty: "先选一个项目，再进入文件、Git、终端和进程这些辅助能力。",
+    toolFilesBody: "查看项目文件、变更文件和代码上下文，不再靠桌面右栏概念。",
+    toolGitBody: "把当前项目的 Git 状态、提交和分支操作收进一个明确入口。",
+    toolTerminalsBody: "进入终端主页面，处理输入密集和滚动密集的操作。",
+    toolProcessesBody: "查看当前项目的终端模板、运行状态和进程入口。",
+    toolsWorkspaceRequiredBody: "先选一个项目，再打开对应的工具页。",
     createSession: "新建会话",
     createSessionModalTitle: "选择新会话类型",
     createSessionModalDescription: "先选会话类型，再启动真正的会话进程。",
@@ -199,6 +264,7 @@ const extensionZhCN = {
     providerClaudeCode: "Claude Code",
     providerCodexDescription: "创建 Codex 会话，适合继续当前默认工作流。",
     providerClaudeDescription: "创建 Claude Code 会话，适合切换另一条会话链路。",
+    providerOpenCodeDescription: "创建 OpenCode 会话，适合通过 OpenCode server 延续当前上下文。",
     providerOptionHint: "选择后会立即创建会话",
     startClaude: "Claude",
     startCodex: "Codex",
@@ -269,6 +335,7 @@ const extensionZhCN = {
     modelSelectorLabel: "\u9009\u62e9\u6a21\u578b",
     modelUseCliDefault: "\u8ddf\u968f CLI \u9ed8\u8ba4\u6a21\u578b",
     modelUseCodexConfig: "\u8ddf\u968f\u5f53\u524d Codex \u914d\u7f6e",
+    modelUseOpenCodeConfig: "\u8ddf\u968f\u5f53\u524d OpenCode \u914d\u7f6e",
     reasoningSelectorLabel: "\u9009\u62e9\u63a8\u7406\u5f3a\u5ea6",
     reasoningLow: "\u4f4e",
     reasoningMedium: "\u4e2d",
@@ -297,6 +364,7 @@ const extensionZhCN = {
     titleFallback: "\u7ee7\u7eed\u5bf9\u8bdd",
     draftTitleCodex: "New Codex session",
     draftTitleClaude: "New Claude Code session",
+    draftTitleOpenCode: "New OpenCode session",
     headerWorkspace: "\u5de5\u4f5c\u533a",
     headerWorkspaceUnknown: "\u672a\u77e5\u5de5\u4f5c\u533a",
     headerProvider: "Provider",
@@ -304,6 +372,7 @@ const extensionZhCN = {
     headerRuntime: "\u8fd0\u884c\u6001",
     providerCodex: "Codex",
     providerClaude: "Claude",
+    providerOpenCode: "OpenCode",
     capabilitySend: "\u53ef\u53d1\u9001",
     queueTitle: "\u5f85\u53d1\u961f\u5217",
     queueDescription: "\u5f53\u524d\u8fd0\u884c\u7ed3\u675f\u540e\uff0c\u4f1a\u6309\u987a\u5e8f\u81ea\u52a8\u7ee7\u7eed\u5904\u7406\u4e0b\u9762\u7684\u6d88\u606f\u3002",
@@ -503,9 +572,11 @@ const extensionEnUS = {
     desktopRelease: "Desktop Release",
     desktopReleaseDescription: "Check for updates, install them, or roll back from here.",
     runtimePlatform: "Runtime Platform",
-    runtimePlatformDescription: "Shows whether the app is running in Web/H5 or the Tauri desktop shell.",
+    runtimePlatformDescription: "Shows whether the app is running in Web/H5, Desktop, iOS, or Android.",
     platformDesktop: "Desktop",
     platformWeb: "Web",
+    platformIos: "iOS",
+    platformAndroid: "Android",
     releaseDesktopOnly: "Desktop updates are not available in the current Web/H5 runtime.",
     releaseCurrentVersion: "Current Version",
     releaseTargetVersion: "Target Version",
@@ -529,6 +600,15 @@ const extensionEnUS = {
   shell: {
     title: "Workbench",
     subtitle: "Manage AI sessions inside code projects",
+    mobileWorkspacesEntry: "Workspaces",
+    mobileSessionsEntry: "Sessions",
+    mobileToolsEntry: "Tools",
+    mobileSettingsEntry: "Settings",
+    mobileNavigationAction: "Open workbench menu",
+    mobileSearchAction: "Open search",
+    mobileAuxiliaryAction: "Open tools panel",
+    iosMoreAction: "More actions",
+    androidMoreAction: "More actions",
     conversationEntry: "Conversation",
     terminalsEntry: "Terminal",
     searchEntry: "Search",
@@ -555,6 +635,36 @@ const extensionEnUS = {
     goForward: "Forward",
     workspaceCount: "Projects",
     sessionCount: "Sessions",
+    manageWorkspaceAction: "Manage Projects",
+    manageWorkspaceTitle: "Manage Projects",
+    manageWorkspaceDescription:
+      "The list starts with the currently loaded projects. Expand one to inspect its path, Git summary, and code composition, or remove it from the current workbench list.",
+    manageWorkspaceEmpty: "There are no projects to manage right now.",
+    manageWorkspaceLoading: "Loading project details...",
+    manageWorkspaceLoadFailed: "Failed to load project details.",
+    manageWorkspacePathLabel: "Path",
+    manageWorkspaceGitCommitCount: "Git Commit Count",
+    manageWorkspaceGitInfoLabel: "Git Repository Info",
+    manageWorkspaceRepoRoot: "Repository Root",
+    manageWorkspaceCurrentBranch: "Current Branch",
+    manageWorkspaceRemoteLabel: "Remote",
+    manageWorkspaceNoRemote: "No remote configured",
+    manageWorkspaceNotGit: "This project is not a Git repository.",
+    manageWorkspaceCodeCompositionLabel: "Code Composition",
+    manageWorkspaceCodeCompositionFiles: "files",
+    manageWorkspaceCodeCompositionOther: "Other",
+    manageWorkspaceNoCodeComposition: "No recognizable code files were found for composition stats.",
+    manageWorkspaceCodeTruncated:
+      "The project is large, so only the first {count} recognizable files were counted.",
+    manageWorkspaceRemoveAction: "Remove Project",
+    manageWorkspaceRemoving: "Removing...",
+    manageWorkspaceRemoveSuccess: "Project removed from the current workbench list",
+    manageWorkspaceRemoveFailed: "Failed to remove the project",
+    manageWorkspaceRemoveConfirmTitle: "Confirm Project Removal",
+    manageWorkspaceRemoveConfirmDescription:
+      "This only removes the project from the current workbench list. It does not delete any files on disk or historical records. If you load the same path again later, the old records will appear again.",
+    manageWorkspaceRemoveConfirmTarget: "Remove \"{name}\" from the current workbench?",
+    manageWorkspaceRemoveConfirmAction: "Remove Project",
     importWorkspaceTitle: "Add Project",
     importWorkspaceHint: "Import a local code directory",
     importExpand: "Expand",
@@ -653,6 +763,29 @@ const extensionEnUS = {
     workspaceCollapse: "Collapse Project",
     workspaceExpand: "Expand Project",
     switchWorkspace: "Switch to Project",
+    workspaceOverviewTitle: "Put project entry points where you can actually see them",
+    workspaceOverviewBody: "Choose a project first, then decide whether to continue or start a new session.",
+    workspaceListBody: "Keep every loaded project here and surface the frequent actions on the page.",
+    workspaceDetailTitle: "Project Details",
+    workspaceDetailSummaryTitle: "Project Overview",
+    workspaceDetailSummaryBody: "See the path, Git summary, and code footprint first, then jump into the right tool.",
+    workspaceDetailMissingTitle: "Project not found",
+    workspaceDetailMissingBody: "This project may have been removed, or the current snapshot has not loaded it yet.",
+    workspaceSessionListBody: "Project sessions, favorites, and archive actions live here instead of hiding in a sidebar.",
+    recentSessionsSectionTitle: "Recent Sessions",
+    recentSessionsSectionBody: "Jump back into the work you touched most recently.",
+    currentWorkspaceSectionTitle: "Current Project Sessions",
+    currentWorkspaceSectionBody: "Keep the sessions for the current project together so the context stays obvious.",
+    sessionIndexTitle: "Sessions deserve their own page",
+    sessionIndexBody: "Recent, favorites, and current-project sessions are split into clear sections for mobile.",
+    toolsOverviewTitle: "Tools should not hide in a right sidebar",
+    toolsOverviewBody: "Current project: {name}. Open files, Git, terminals, and process tools from here.",
+    toolsOverviewBodyEmpty: "Pick a project first, then open files, Git, terminals, or process tools.",
+    toolFilesBody: "Browse project files, changed files, and code context without relying on a desktop sidebar.",
+    toolGitBody: "Open a clear Git entry for status, commits, and branches in the current project.",
+    toolTerminalsBody: "Open the full terminal page for input-heavy and scroll-heavy tasks.",
+    toolProcessesBody: "Review terminal templates, runtime status, and process entry points for the current project.",
+    toolsWorkspaceRequiredBody: "Pick a project before opening this tool page.",
     createSession: "New Session",
     createSessionModalTitle: "Choose Session Type",
     createSessionModalDescription: "Pick the session type first, then start the actual session process.",
@@ -660,6 +793,7 @@ const extensionEnUS = {
     providerClaudeCode: "Claude Code",
     providerCodexDescription: "Create a Codex session for the current default workflow.",
     providerClaudeDescription: "Create a Claude Code session when you want to switch to another conversation chain.",
+    providerOpenCodeDescription: "Create an OpenCode session to continue context via the OpenCode service.",
     providerOptionHint: "A session is created immediately after selection",
     startClaude: "Claude",
     startCodex: "Codex",
@@ -730,6 +864,7 @@ const extensionEnUS = {
     modelSelectorLabel: "Model",
     modelUseCliDefault: "Use CLI default model",
     modelUseCodexConfig: "Follow current Codex config",
+    modelUseOpenCodeConfig: "Follow current OpenCode config",
     reasoningSelectorLabel: "Reasoning Effort",
     reasoningLow: "Low",
     reasoningMedium: "Medium",
@@ -758,6 +893,7 @@ const extensionEnUS = {
     titleFallback: "Continue Conversation",
     draftTitleCodex: "New Codex session",
     draftTitleClaude: "New Claude Code session",
+    draftTitleOpenCode: "New OpenCode session",
     headerWorkspace: "Workspace",
     headerWorkspaceUnknown: "Unknown Workspace",
     headerProvider: "Provider",
@@ -765,6 +901,7 @@ const extensionEnUS = {
     headerRuntime: "Runtime",
     providerCodex: "Codex",
     providerClaude: "Claude",
+    providerOpenCode: "OpenCode",
     capabilitySend: "Send Enabled",
     queueTitle: "Queued Messages",
     queueDescription: "After the current run finishes, these messages will be processed automatically in order.",
@@ -966,7 +1103,7 @@ function getCurrentLanguage(): AppLanguage {
   return clientConfigStore.getState().language ?? "zh-CN";
 }
 
-export function t(key: string): string {
+export function t(key: string, params?: TranslationParams): string {
   const language = getCurrentLanguage();
   const localeCandidates: AppLanguage[] = language === "en-US" ? ["en-US", "zh-CN"] : ["zh-CN"];
 
@@ -974,17 +1111,33 @@ export function t(key: string): string {
     const extensionValue = readValue(key, extensionDictionaries[locale]);
 
     if (extensionValue !== key) {
-      return extensionValue;
+      return interpolateTemplate(extensionValue, params);
     }
 
     const dictionaryValue = readValue(key, dictionaries[locale]);
 
     if (dictionaryValue !== key) {
-      return dictionaryValue;
+      return interpolateTemplate(dictionaryValue, params);
     }
   }
 
-  return key;
+  return interpolateTemplate(key, params);
+}
+
+function interpolateTemplate(template: string, params?: TranslationParams): string {
+  if (!params) {
+    return template;
+  }
+
+  return template.replace(/\{([^}]+)\}/g, (matched, token) => {
+    const value = params[token];
+
+    if (value === null || value === undefined) {
+      return matched;
+    }
+
+    return String(value);
+  });
 }
 
 interface I18nProviderProps {

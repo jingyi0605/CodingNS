@@ -20,6 +20,11 @@ import {
   type MobileWorkbenchEntry
 } from "../../mobile-shell/components/MobileWorkbenchShell";
 import {
+  resolveAdaptiveMobilePaneLayout,
+  shouldDockAuxiliaryPanel,
+  shouldDockNavigationPanel
+} from "../../mobile-shell/layouts/AdaptiveMobilePaneLayout";
+import {
   WorkbenchRealtimeClient,
   type FileTreeRealtimeSnapshotDto,
   type GitRealtimeSnapshotDto,
@@ -51,6 +56,10 @@ import {
 } from "../api/conversation-api";
 import { searchFiles, type FileNodeDto } from "../api/file-context-api";
 import { buildSessionTitlePresentation } from "../session-title";
+import {
+  buildDraftSessionPath,
+  flattenNavigationSessions
+} from "../../workbench/utils/workbench-navigation";
 
 const LEFT_PANEL_WIDTH_KEY = "workbench.left.width";
 const RIGHT_PANEL_WIDTH_KEY = "workbench.right.width";
@@ -160,9 +169,13 @@ export function getVisibleSessionTreeNodes(
 }
 
 interface WorkbenchShellContextValue {
+  shellMode: WorkbenchShellMode;
   navigationGroups: WorkspaceSessionGroup[];
   navigationLoading: boolean;
   navigationError: string | null;
+  currentWorkspaceId: string | null;
+  currentSessionId: string | null;
+  favoriteSessionIds: string[];
   refreshNavigation: () => Promise<void>;
   requestNavigationRefresh: () => void;
   subscribeFileTree: (workspaceId: string, paths: string[]) => void;
@@ -178,6 +191,12 @@ interface WorkbenchShellContextValue {
   addTerminalManagerSnapshotListener: (
     listener: (snapshot: TerminalManagerRealtimeSnapshotDto) => void
   ) => () => void;
+  selectWorkspace: (workspaceId: string) => void;
+  toggleFavoriteSession: (sessionId: string) => void;
+  archiveSession: (sessionId: string) => Promise<void>;
+  unarchiveSession: (sessionId: string) => Promise<void>;
+  renameSession: (sessionId: string, title: string) => Promise<SessionSummaryDto>;
+  startDraftSession: (workspaceId: string, provider: ProviderId) => void;
   setSessionWorkspace: (sessionId: string, workspaceId: string | null) => void;
   upsertNavigationSession: (session: SessionSummaryDto) => void;
   markNavigationSessionSeen: (sessionId: string, seenAt?: string) => void;
@@ -326,6 +345,14 @@ function formatProviderLabel(provider: ProviderId, mode: "compact" | "full" = "c
     return t("conversation.providerCodex");
   }
 
+  if (provider === "claude-code") {
+    return mode === "full" ? t("shell.providerClaudeCode") : t("conversation.providerClaude");
+  }
+
+  if (provider === "opencode") {
+    return t("conversation.providerOpenCode");
+  }
+
   return mode === "full" ? t("shell.providerClaudeCode") : t("conversation.providerClaude");
 }
 
@@ -465,17 +492,6 @@ function focusComposer() {
   }
 
   window.dispatchEvent(new CustomEvent(FOCUS_COMPOSER_EVENT));
-}
-
-function flattenSessions(groups: WorkspaceSessionGroup[]) {
-  return groups
-    .flatMap((group) =>
-      group.sessions.map((session) => ({
-        session,
-        workspace: group.workspace
-      }))
-    )
-    .sort((left, right) => sortSessions(left.session, right.session));
 }
 
 function mapWorkbenchSnapshotToGroups(snapshot: WorkbenchSnapshotDto | null | undefined) {
@@ -3355,6 +3371,29 @@ function SidebarContent({
                 : t("shell.providerOptionHint")}
             </span>
           </button>
+
+          <button
+            type="button"
+            className="workbench-provider-option"
+            disabled={Boolean(actionWorkspaceId)}
+            onClick={() =>
+              createSessionWorkspace
+                ? void handleStartSession(createSessionWorkspace.id, "opencode")
+                : undefined
+            }
+          >
+            <span className="workbench-provider-badge">
+              {formatProviderLabel("opencode", "full")}
+            </span>
+            <strong>{formatProviderLabel("opencode", "full")}</strong>
+            <p>{t("shell.providerOpenCodeDescription")}</p>
+            <span className="workbench-provider-hint">
+              {actionWorkspaceId === createSessionWorkspace?.id &&
+              actionProvider === "opencode"
+                ? t("shell.startingSession")
+                : t("shell.providerOptionHint")}
+            </span>
+          </button>
         </div>
       </SidebarModal>
 
@@ -4004,7 +4043,10 @@ export function WorkbenchLayout({
   const sessionMatch = matchPath("/sessions/:sessionId", location.pathname);
   const currentSessionId = sessionMatch?.params.sessionId ?? null;
   const isDraftSession = currentSessionId ? isDraftSessionId(currentSessionId) : false;
-  const flattenedSessions = useMemo(() => flattenSessions(navigationGroups), [navigationGroups]);
+  const flattenedSessions = useMemo(
+    () => flattenNavigationSessions(navigationGroups),
+    [navigationGroups]
+  );
   const collapsedWorkspaceIdSet = useMemo(() => new Set(collapsedWorkspaceIds), [collapsedWorkspaceIds]);
   const favoriteSessionIdSet = useMemo(() => new Set(favoriteSessionIds), [favoriteSessionIds]);
 
@@ -4108,10 +4150,10 @@ export function WorkbenchLayout({
     navigationGroups.find((group) => group.workspace.id === currentWorkspaceId)?.workspace ?? null;
   const mobileActiveEntry: MobileWorkbenchEntry = location.pathname.startsWith("/settings")
     ? "settings"
-    : location.pathname.startsWith("/terminals")
+    : location.pathname.startsWith("/terminals") || location.pathname.startsWith("/tools")
       ? "tools"
-      : location.pathname.startsWith("/sessions")
-        ? "sessions"
+    : location.pathname.startsWith("/sessions")
+      ? "sessions"
         : "workspaces";
   const mobileHeaderTitle =
     mobileActiveEntry === "settings"
@@ -4123,6 +4165,14 @@ export function WorkbenchLayout({
           : t("shell.mobileWorkspacesEntry");
   const mobileHeaderSubtitle =
     mobileActiveEntry === "settings" ? null : currentWorkspace?.name ?? null;
+  const mobilePaneLayout = resolveAdaptiveMobilePaneLayout({
+    viewportClass: platform.viewportClass,
+    activeEntry: mobileActiveEntry,
+    hasNavigationPanel: isMobileShell,
+    hasAuxiliaryPanel: isMobileShell
+  });
+  const mobileNavigationDocked = isMobileShell && shouldDockNavigationPanel(mobilePaneLayout);
+  const mobileAuxiliaryDocked = isMobileShell && shouldDockAuxiliaryPanel(mobilePaneLayout);
   const availableSearchWorkspaces = useMemo(
     () => navigationGroups.map((group) => group.workspace),
     [navigationGroups]
@@ -4243,6 +4293,26 @@ export function WorkbenchLayout({
       navigate("/");
     }
   }
+
+  const toggleFavoriteSession = useCallback((sessionId: string) => {
+    setFavoriteSessionIds((current) => toggleStoredId(current, sessionId));
+  }, []);
+
+  const startDraftSession = useCallback(
+    (workspaceId: string, provider: ProviderId) => {
+      navigate(buildDraftSessionPath(workspaceId, provider));
+    },
+    [navigate]
+  );
+
+  const renameNavigationSession = useCallback(
+    async (sessionId: string, title: string) => {
+      const renamedSession = await renameSessionTitle(sessionId, title.trim());
+      upsertNavigationSession(renamedSession);
+      return renamedSession;
+    },
+    [upsertNavigationSession]
+  );
 
   function openSearchModal(nextMode?: SearchMode) {
     if (nextMode) {
@@ -4421,9 +4491,13 @@ export function WorkbenchLayout({
 
   const contextValue = useMemo<WorkbenchShellContextValue>(
     () => ({
+      shellMode,
       navigationGroups,
       navigationLoading,
       navigationError,
+      currentWorkspaceId,
+      currentSessionId,
+      favoriteSessionIds,
       refreshNavigation,
       requestNavigationRefresh,
       subscribeFileTree,
@@ -4435,6 +4509,12 @@ export function WorkbenchLayout({
       subscribeTerminalManagerSnapshot,
       requestTerminalManagerRefresh,
       addTerminalManagerSnapshotListener,
+      selectWorkspace: handleSelectWorkspace,
+      toggleFavoriteSession,
+      archiveSession: (sessionId: string) => commitNavigationArchiveState(sessionId, true),
+      unarchiveSession: (sessionId: string) => commitNavigationArchiveState(sessionId, false),
+      renameSession: renameNavigationSession,
+      startDraftSession,
       markNavigationSessionSeen,
       upsertNavigationSession,
       setSessionWorkspace
@@ -4443,6 +4523,11 @@ export function WorkbenchLayout({
       addFileTreeSnapshotListener,
       addGitSnapshotListener,
       addTerminalManagerSnapshotListener,
+      commitNavigationArchiveState,
+      currentSessionId,
+      currentWorkspaceId,
+      favoriteSessionIds,
+      handleSelectWorkspace,
       markNavigationSessionSeen,
       navigationError,
       navigationGroups,
@@ -4452,10 +4537,14 @@ export function WorkbenchLayout({
       refreshNavigation,
       requestNavigationRefresh,
       requestTerminalManagerRefresh,
+      renameNavigationSession,
+      shellMode,
+      startDraftSession,
       setSessionWorkspace,
       subscribeFileTree,
       subscribeGitSnapshot,
       subscribeTerminalManagerSnapshot,
+      toggleFavoriteSession,
       upsertNavigationSession
     ]
   );
@@ -4466,6 +4555,58 @@ export function WorkbenchLayout({
     "--workbench-right-width": `${rightPanelWidth}px`,
     "--workbench-right-current-width": rightCollapsed ? "0px" : `${rightPanelWidth}px`
   } as CSSProperties;
+  const mobileNavigationPanel = isMobileShell ? (
+    <SidebarContent
+      workspaceGroups={workspaceSidebarGroups}
+      favoriteSessions={favoriteSessions}
+      favoriteSessionIds={favoriteSessionIdSet}
+      activeWorkspaceId={currentWorkspaceId}
+      isConversationActive={activeCenterTab === "conversation"}
+      isTerminalActive={activeCenterTab === "terminals"}
+      isSearchOpen={searchModalOpen}
+      navigationLoading={navigationLoading}
+      navigationError={navigationError}
+      activeSessionId={currentSessionId}
+      onRefreshNavigation={refreshNavigation}
+      onSessionUpdated={upsertNavigationSession}
+      onNavigateConversation={goToConversationTab}
+      onNavigateTerminals={() => {
+        setMobileNavOpen(false);
+        navigate("/terminals");
+      }}
+      onOpenSearch={() => {
+        setMobileNavOpen(false);
+        openSearchModal();
+      }}
+      onOpenSettings={() => {
+        setMobileNavOpen(false);
+        navigate("/settings");
+      }}
+      onSelectWorkspace={handleSelectWorkspace}
+      onToggleWorkspaceCollapse={(workspaceId) =>
+        setCollapsedWorkspaceIds((current) => toggleStoredId(current, workspaceId))
+      }
+      onToggleFavoriteSession={(sessionId) =>
+        setFavoriteSessionIds((current) => toggleStoredId(current, sessionId))
+      }
+      onArchiveSession={(sessionId) => commitNavigationArchiveState(sessionId, true)}
+      onUnarchiveSession={(sessionId) => commitNavigationArchiveState(sessionId, false)}
+      onClose={() => setMobileNavOpen(false)}
+    />
+  ) : null;
+  const mobileAuxiliaryPanel = isMobileShell ? (
+    <WorkbenchInfoPanel
+      panelReady={infoPanelReady}
+      activeTab={activeInfoTab}
+      onTabChange={(tab) => {
+        ensureInfoPanelReady();
+        setActiveInfoTab(tab);
+      }}
+      currentSessionId={isDraftSession ? null : currentSessionId}
+      activeWorkspaceId={currentWorkspaceId}
+      navigationGroups={navigationGroups}
+    />
+  ) : null;
 
   return (
     <WorkbenchShellContext.Provider value={contextValue}>
@@ -4475,6 +4616,8 @@ export function WorkbenchLayout({
             activeEntry={mobileActiveEntry}
             title={mobileHeaderTitle}
             subtitle={mobileHeaderSubtitle}
+            navigationPanel={mobileNavigationPanel}
+            auxiliaryPanel={mobileAuxiliaryPanel}
             onOpenNavigation={() => {
               setMobileInfoOpen(false);
               setMobileNavOpen(true);
@@ -4497,12 +4640,12 @@ export function WorkbenchLayout({
             onNavigateSessions={() => {
               setMobileNavOpen(false);
               setMobileInfoOpen(false);
-              goToConversationTab();
+              navigate("/sessions");
             }}
             onNavigateTools={() => {
               setMobileNavOpen(false);
               setMobileInfoOpen(false);
-              navigate("/terminals");
+              navigate("/tools");
             }}
             onNavigateSettings={() => {
               setMobileNavOpen(false);
@@ -4683,59 +4826,17 @@ export function WorkbenchLayout({
 
       {isMobileShell ? (
         <>
-          <MobileNavDrawer isOpen={mobileNavOpen} side="left" onClose={() => setMobileNavOpen(false)}>
-            <SidebarContent
-              workspaceGroups={workspaceSidebarGroups}
-              favoriteSessions={favoriteSessions}
-              favoriteSessionIds={favoriteSessionIdSet}
-              activeWorkspaceId={currentWorkspaceId}
-              isConversationActive={activeCenterTab === "conversation"}
-              isTerminalActive={activeCenterTab === "terminals"}
-              isSearchOpen={searchModalOpen}
-              navigationLoading={navigationLoading}
-              navigationError={navigationError}
-              activeSessionId={currentSessionId}
-              onRefreshNavigation={refreshNavigation}
-              onSessionUpdated={upsertNavigationSession}
-              onNavigateConversation={goToConversationTab}
-              onNavigateTerminals={() => {
-                setMobileNavOpen(false);
-                navigate("/terminals");
-              }}
-              onOpenSearch={() => {
-                setMobileNavOpen(false);
-                openSearchModal();
-              }}
-              onOpenSettings={() => {
-                setMobileNavOpen(false);
-                navigate("/settings");
-              }}
-              onSelectWorkspace={handleSelectWorkspace}
-              onToggleWorkspaceCollapse={(workspaceId) =>
-                setCollapsedWorkspaceIds((current) => toggleStoredId(current, workspaceId))
-              }
-              onToggleFavoriteSession={(sessionId) =>
-                setFavoriteSessionIds((current) => toggleStoredId(current, sessionId))
-              }
-              onArchiveSession={(sessionId) => commitNavigationArchiveState(sessionId, true)}
-              onUnarchiveSession={(sessionId) => commitNavigationArchiveState(sessionId, false)}
-              onClose={() => setMobileNavOpen(false)}
-            />
-          </MobileNavDrawer>
+          {!mobileNavigationDocked ? (
+            <MobileNavDrawer isOpen={mobileNavOpen} side="left" onClose={() => setMobileNavOpen(false)}>
+              {mobileNavigationPanel}
+            </MobileNavDrawer>
+          ) : null}
 
-          <MobileNavDrawer isOpen={mobileInfoOpen} side="right" onClose={() => setMobileInfoOpen(false)}>
-            <WorkbenchInfoPanel
-              panelReady={infoPanelReady}
-              activeTab={activeInfoTab}
-              onTabChange={(tab) => {
-                ensureInfoPanelReady();
-                setActiveInfoTab(tab);
-              }}
-              currentSessionId={isDraftSession ? null : currentSessionId}
-              activeWorkspaceId={currentWorkspaceId}
-              navigationGroups={navigationGroups}
-            />
-          </MobileNavDrawer>
+          {!mobileAuxiliaryDocked ? (
+            <MobileNavDrawer isOpen={mobileInfoOpen} side="right" onClose={() => setMobileInfoOpen(false)}>
+              {mobileAuxiliaryPanel}
+            </MobileNavDrawer>
+          ) : null}
         </>
       ) : null}
     </WorkbenchShellContext.Provider>
@@ -4783,6 +4884,10 @@ export function useWorkbenchShell() {
       navigationGroups: [],
       navigationLoading: false,
       navigationError: null,
+      shellMode: "desktop",
+      currentWorkspaceId: null,
+      currentSessionId: null,
+      favoriteSessionIds: [],
       refreshNavigation: async () => undefined,
       requestNavigationRefresh: () => undefined,
       subscribeFileTree: () => undefined,
@@ -4794,6 +4899,14 @@ export function useWorkbenchShell() {
       subscribeTerminalManagerSnapshot: () => undefined,
       requestTerminalManagerRefresh: () => undefined,
       addTerminalManagerSnapshotListener: () => () => undefined,
+      selectWorkspace: () => undefined,
+      toggleFavoriteSession: () => undefined,
+      archiveSession: async () => undefined,
+      unarchiveSession: async () => undefined,
+      renameSession: async () => {
+        throw new Error("workbench shell unavailable");
+      },
+      startDraftSession: () => undefined,
       setSessionWorkspace: () => undefined,
       upsertNavigationSession: () => undefined,
       markNavigationSessionSeen: () => undefined
@@ -4865,26 +4978,6 @@ function buildWorkspaceCompositionChartBackground(items: WorkspaceCompositionCha
 function formatWorkspaceCompositionChartPercent(value: number) {
   const percent = Math.round(value * 1000) / 10;
   return `${percent.toFixed(percent % 1 === 0 ? 0 : 1)}%`;
-}
-
-function buildDraftSessionPath(workspaceId: string, provider: ProviderId): string {
-  const draftId = createDraftSessionId();
-  const search = new URLSearchParams({
-    workspaceId,
-    provider
-  });
-
-  return `/sessions/${draftId}?${search.toString()}`;
-}
-
-function createDraftSessionId(): string {
-  const nativeCrypto = globalThis.crypto;
-
-  if (nativeCrypto && typeof nativeCrypto.randomUUID === "function") {
-    return `draft-${nativeCrypto.randomUUID()}`;
-  }
-
-  return `draft-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 function isDraftSessionId(sessionId: string): boolean {

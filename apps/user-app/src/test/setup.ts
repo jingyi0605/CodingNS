@@ -41,6 +41,16 @@ if (typeof window !== "undefined") {
       value: createMemoryStorage()
     });
   }
+
+  // React Router 的 data router 会混用 window 和 global 的 Abort 实现；
+  // 在 jsdom 下把它们对齐，避免 undici 对 signal 实例校验时报错。
+  if (typeof globalThis.AbortController === "function") {
+    window.AbortController = globalThis.AbortController;
+  }
+
+  if (typeof globalThis.AbortSignal === "function") {
+    window.AbortSignal = globalThis.AbortSignal;
+  }
 }
 
 if (typeof HTMLCanvasElement !== "undefined") {

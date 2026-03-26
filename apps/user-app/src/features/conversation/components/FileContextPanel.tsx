@@ -1032,6 +1032,9 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
               setSessionRefreshVersion((current) => current + 1);
             }}
           />
+          <div className="file-panel-heading-row">
+            <h2 className="file-panel-heading">{t("conversation.filePanelTitle")}</h2>
+          </div>
           <div className="file-panel-tabs" role="tablist" aria-label={t("conversation.filePanelTitle")}>
             <button
               className={activeTab === "workspace" ? "file-panel-tab active" : "file-panel-tab"}

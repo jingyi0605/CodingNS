@@ -1,7 +1,8 @@
 import { httpClient } from "../../../network/http-client";
 import { ApiError } from "../../../shared/network/api-error";
 
-export type ProviderId = "claude-code" | "codex";
+export type BuiltinProviderId = "claude-code" | "codex" | "opencode";
+export type ProviderId = BuiltinProviderId | (string & {});
 export type SyncStatus = "idle" | "syncing" | "error";
 export type DeliveryState = "sending" | "sent" | "failed";
 export type MessageKind = "text" | "thinking" | "tool_call" | "tool_result";
@@ -47,6 +48,41 @@ export interface WorkspaceDto {
   name: string;
   path: string;
   repoRoot: string | null;
+}
+
+export interface WorkspaceGitRemoteDto {
+  name: string;
+  url: string;
+}
+
+export interface WorkspaceManagementGitDto {
+  isRepository: boolean;
+  repoRoot: string | null;
+  currentBranch: string | null;
+  commitCount: number | null;
+  remotes: WorkspaceGitRemoteDto[];
+  error: string | null;
+}
+
+export interface WorkspaceCodeCompositionItemDto {
+  type: string;
+  count: number;
+  ratio: number;
+}
+
+export interface WorkspaceCodeCompositionDto {
+  scannedFileCount: number;
+  truncated: boolean;
+  items: WorkspaceCodeCompositionItemDto[];
+  error: string | null;
+}
+
+export interface WorkspaceManagementSummaryDto {
+  workspaceId: string;
+  name: string;
+  path: string;
+  git: WorkspaceManagementGitDto;
+  codeComposition: WorkspaceCodeCompositionDto;
 }
 
 export interface ProviderModelOptionDto {
@@ -138,9 +174,22 @@ export interface ProviderCapabilitiesDto {
   supportsAttachments: boolean;
   supportsPermissionPrompt: boolean;
   supportsCheckpoint: boolean;
+  supportsTodo?: boolean;
+  supportsSessionDiff?: boolean;
+  supportsPermissionRequests?: boolean;
+  supportsSessionFork?: boolean;
+  supportsSessionShare?: boolean;
+  supportsAsyncPrompt?: boolean;
+  supportsNativeAgents?: boolean;
   modelOptions?: ProviderModelOptionDto[];
   defaultReasoningLevel?: string | null;
   limitations: string[];
+  // 新增补充字段，方便前端收口 provider 行为判定
+  supportsSlashMenu?: boolean;
+  supportsReasoningSelector?: boolean;
+  supportsRunSteering?: boolean;
+  supportsQueueWhileRunning?: boolean;
+  supportsRulesMessageFolding?: boolean;
 }
 
 export interface HistoryMessageDto {
@@ -309,6 +358,18 @@ export function cloneWorkspace(payload: CloneWorkspacePayload) {
   return httpClient.request<WorkspaceDto>("/api/workspaces/clone", {
     method: "POST",
     body: JSON.stringify(payload)
+  });
+}
+
+export function getWorkspaceManagementSummary(workspaceId: string) {
+  return httpClient.request<WorkspaceManagementSummaryDto>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/management`
+  );
+}
+
+export function removeWorkspace(workspaceId: string) {
+  return httpClient.request<WorkspaceDto>(`/api/workspaces/${encodeURIComponent(workspaceId)}`, {
+    method: "DELETE"
   });
 }
 

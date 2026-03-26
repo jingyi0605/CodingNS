@@ -1,8 +1,9 @@
 import { clientConfigStore } from "../config/client-config-store";
+import type { RuntimePlatform } from "../config/client-config-types";
 import { createPlatformAdapter } from "../platform/platform-adapter";
 
 export interface BootstrapAppResult {
-  platform: "desktop" | "web";
+  platform: RuntimePlatform;
 }
 
 export async function bootstrapApplication(): Promise<BootstrapAppResult> {

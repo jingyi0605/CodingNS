@@ -16,8 +16,9 @@ declare global {
   }
 }
 
-export type PlatformOsFamily = "macos" | "windows" | "linux" | "unknown";
+export type PlatformOsFamily = "macos" | "windows" | "linux" | "ios" | "android" | "unknown";
 export type WindowControlsStyle = "traffic-lights" | "windows" | "none";
+export type ViewportClass = "compact" | "medium" | "expanded";
 
 export interface PlatformUiProfile {
   readonly osFamily: PlatformOsFamily;
@@ -45,8 +46,15 @@ export interface PlatformAdapter {
   readonly platform: RuntimePlatform;
   readonly isDesktop: boolean;
   readonly isWeb: boolean;
+  readonly isMobile: boolean;
+  readonly isNativeMobile: boolean;
+  readonly viewportClass: ViewportClass;
   readonly ui: PlatformUiProfile;
   readonly bridge: DesktopShellBridge;
+}
+
+interface PlatformAdapterOptions {
+  readonly viewportWidth?: number;
 }
 
 function isTauriRuntime(): boolean {
@@ -62,6 +70,20 @@ function detectOsFamily(): PlatformOsFamily {
   const userAgentData = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData;
   const platform = userAgentData?.platform?.toLowerCase() ?? navigator.platform?.toLowerCase() ?? "";
   const fingerprint = `${platform} ${userAgent}`;
+  const isTouchMac = platform.includes("mac") && navigator.maxTouchPoints > 1;
+
+  if (fingerprint.includes("android")) {
+    return "android";
+  }
+
+  if (
+    fingerprint.includes("iphone") ||
+    fingerprint.includes("ipad") ||
+    fingerprint.includes("ipod") ||
+    isTouchMac
+  ) {
+    return "ios";
+  }
 
   if (fingerprint.includes("mac")) {
     return "macos";
@@ -76,6 +98,40 @@ function detectOsFamily(): PlatformOsFamily {
   }
 
   return "unknown";
+}
+
+function resolveViewportWidth(explicitWidth?: number): number {
+  if (typeof explicitWidth === "number" && Number.isFinite(explicitWidth) && explicitWidth > 0) {
+    return explicitWidth;
+  }
+
+  if (typeof window !== "undefined" && Number.isFinite(window.innerWidth) && window.innerWidth > 0) {
+    return window.innerWidth;
+  }
+
+  if (
+    typeof document !== "undefined" &&
+    Number.isFinite(document.documentElement?.clientWidth) &&
+    document.documentElement.clientWidth > 0
+  ) {
+    return document.documentElement.clientWidth;
+  }
+
+  return 1280;
+}
+
+export function resolveViewportClass(width?: number): ViewportClass {
+  const viewportWidth = resolveViewportWidth(width);
+
+  if (viewportWidth < 768) {
+    return "compact";
+  }
+
+  if (viewportWidth < 1024) {
+    return "medium";
+  }
+
+  return "expanded";
 }
 
 function createUiProfile(runtimePlatform: RuntimePlatform): PlatformUiProfile {
@@ -272,26 +328,37 @@ class TauriDesktopShellBridge implements DesktopShellBridge {
   }
 }
 
-let cachedAdapter: PlatformAdapter | null = null;
-
 export function resolveRuntimePlatform(): RuntimePlatform {
-  return isTauriRuntime() ? "desktop" : "web";
-}
-
-export function createPlatformAdapter(): PlatformAdapter {
-  if (cachedAdapter) {
-    return cachedAdapter;
+  if (!isTauriRuntime()) {
+    return "web";
   }
 
-  const platform = resolveRuntimePlatform();
+  const osFamily = detectOsFamily();
 
-  cachedAdapter = {
+  if (osFamily === "ios") {
+    return "ios";
+  }
+
+  if (osFamily === "android") {
+    return "android";
+  }
+
+  return "desktop";
+}
+
+export function createPlatformAdapter(options: PlatformAdapterOptions = {}): PlatformAdapter {
+  const platform = resolveRuntimePlatform();
+  const viewportClass = resolveViewportClass(options.viewportWidth);
+  const isNativeMobile = platform === "ios" || platform === "android";
+
+  return {
     platform,
     isDesktop: platform === "desktop",
     isWeb: platform === "web",
+    isMobile: isNativeMobile || viewportClass !== "expanded",
+    isNativeMobile,
+    viewportClass,
     ui: createUiProfile(platform),
     bridge: platform === "desktop" ? new TauriDesktopShellBridge() : new WebDesktopShellBridge()
   };
-
-  return cachedAdapter;
 }

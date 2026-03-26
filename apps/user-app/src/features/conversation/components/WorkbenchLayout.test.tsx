@@ -96,6 +96,7 @@ class NoSnapshotWebSocket extends EventTarget {
 
 const originalFetch = global.fetch;
 const originalWebSocket = global.WebSocket;
+const originalInnerWidth = window.innerWidth;
 
 describe("WorkbenchLayout", () => {
   beforeEach(() => {
@@ -124,6 +125,11 @@ describe("WorkbenchLayout", () => {
     clearViewSnapshot(WORKBENCH_NAVIGATION_SNAPSHOT_KEY);
     global.fetch = originalFetch;
     global.WebSocket = originalWebSocket;
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      writable: true,
+      value: originalInnerWidth
+    });
   });
 
   it("会把缺失 children 的侧栏树节点当作空数组处理", () => {
@@ -1479,6 +1485,12 @@ describe("WorkbenchLayout", () => {
   });
 
   it("移动壳不再渲染边缘手柄，主导航改走顶部可见入口", async () => {
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      writable: true,
+      value: 390
+    });
+
     MockWebSocket.workbenchSnapshot = createWorkbenchSnapshot([
       {
         workspace: createWorkspace("workspace-1", "项目一"),
@@ -1508,6 +1520,37 @@ describe("WorkbenchLayout", () => {
 
     expect(await screen.findByText("会话 Alpha")).toBeInTheDocument();
     expect(view.container.querySelector(".mobile-nav-drawer.left.open")).toBeInTheDocument();
+  });
+
+  it("medium 宽度移动壳会把导航面板常驻到主内容旁边", async () => {
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      writable: true,
+      value: 820
+    });
+
+    MockWebSocket.workbenchSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "会话 Alpha",
+            workspaceId: "workspace-1"
+          })
+        ]
+      }
+    ]);
+
+    const view = renderWorkbenchRoute("/sessions/session-1", {
+      shellMode: "mobile"
+    });
+
+    expect(await screen.findByText("会话 Alpha")).toBeInTheDocument();
+    expect(view.container.querySelector(".mobile-adaptive-pane-panel-navigation")).toBeInTheDocument();
+    expect(view.container.querySelector(".mobile-nav-drawer.left.open")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("shell.mobileNavigationAction") })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("shell.mobileAuxiliaryAction") })).toBeInTheDocument();
   });
 });
 
