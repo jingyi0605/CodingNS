@@ -16,6 +16,10 @@ import { createPortal } from "react-dom";
 import { Outlet, matchPath, useLocation, useNavigate } from "react-router-dom";
 
 import {
+  MobileWorkbenchShell,
+  type MobileWorkbenchEntry
+} from "../../mobile-shell/components/MobileWorkbenchShell";
+import {
   WorkbenchRealtimeClient,
   type FileTreeRealtimeSnapshotDto,
   type GitRealtimeSnapshotDto,
@@ -32,13 +36,17 @@ import {
   browseWorkspaceDirectories,
   cloneWorkspace,
   getWorkbenchSnapshot,
+  getWorkspaceManagementSummary,
   importWorkspace,
+  removeWorkspace,
   renameSessionTitle,
   updateSessionArchiveState,
   type ProviderId,
   type SessionSummaryDto,
   type WorkbenchSnapshotDto,
+  type WorkspaceCodeCompositionItemDto,
   type WorkspaceDirectoryOptionDto,
+  type WorkspaceManagementSummaryDto,
   type WorkspaceDto
 } from "../api/conversation-api";
 import { searchFiles, type FileNodeDto } from "../api/file-context-api";
@@ -60,12 +68,20 @@ const MIN_PANEL_WIDTH = 208;
 const MAX_LEFT_PANEL_WIDTH = 520;
 const MAX_RIGHT_PANEL_WIDTH = 560;
 const INFO_PANEL_BOOT_DELAY_MS = 200;
-const MOBILE_BREAKPOINT_PX = 720;
 const FAVORITE_SESSION_PAGE_SIZE = 20;
 const ROOT_SESSION_PAGE_SIZE = 40;
 const SUBAGENT_PAGE_SIZE = 5;
 const WORKBENCH_NAVIGATION_CACHE_MAX_AGE_MS = 30 * 60 * 1000;
 const FOCUS_COMPOSER_EVENT = "workbench:focus-composer";
+const WORKSPACE_COMPOSITION_CHART_MAX_ITEMS = 5;
+const WORKSPACE_COMPOSITION_CHART_COLORS = [
+  "#2563eb",
+  "#0891b2",
+  "#16a34a",
+  "#d97706",
+  "#dc2626",
+  "#64748b"
+];
 
 const LazyFileContextPanel = lazy(async () => {
   const module = await import("./FileContextPanel");
@@ -113,6 +129,13 @@ interface NavigationSessionTreeNode {
   session: SessionSummaryDto;
   children: SessionSummaryDto[];
 }
+
+interface WorkspaceCompositionChartItem extends WorkspaceCodeCompositionItemDto {
+  key: string;
+  color: string;
+}
+
+export type WorkbenchShellMode = "desktop" | "mobile";
 
 function hasValidTreeNodeSession(
   node: NavigationSessionTreeNode | null | undefined
@@ -174,6 +197,12 @@ interface CloneWorkspaceFormState {
   username: string;
   password: string;
   token: string;
+}
+
+interface WorkspaceManagementViewState {
+  detail: WorkspaceManagementSummaryDto | null;
+  loading: boolean;
+  error: string | null;
 }
 
 type DirectoryBrowserMode = "import" | "clone";
@@ -709,6 +738,17 @@ function ImportIcon() {
   );
 }
 
+function WorkspaceManageIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <rect x="4" y="5" width="16" height="14" rx="2" />
+      <line x1="8" y1="10" x2="16" y2="10" />
+      <line x1="8" y1="14" x2="12" y2="14" />
+      <circle cx="17.5" cy="15.5" r="2.5" />
+    </svg>
+  );
+}
+
 function PlusIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -1091,82 +1131,6 @@ function WorkbenchDesktopTitlebar({
         ) : null}
       </div>
     </header>
-  );
-}
-
-function MobileSidebarHandle({
-  side,
-  isOpen,
-  onToggle
-}: {
-  side: "left" | "right";
-  isOpen: boolean;
-  onToggle: () => void;
-}) {
-  const pointerStartRef = useRef<number | null>(null);
-  const pointerHandledRef = useRef(false);
-
-  function resetGesture() {
-    pointerStartRef.current = null;
-    pointerHandledRef.current = false;
-  }
-
-  function handlePointerDown(event: React.PointerEvent<HTMLButtonElement>) {
-    event.preventDefault();
-    pointerStartRef.current = event.clientX;
-    pointerHandledRef.current = false;
-    event.currentTarget.setPointerCapture(event.pointerId);
-  }
-
-  function handlePointerMove(event: React.PointerEvent<HTMLButtonElement>) {
-    if (pointerStartRef.current === null || pointerHandledRef.current) {
-      return;
-    }
-
-    const delta = event.clientX - pointerStartRef.current;
-    const shouldToggle =
-      side === "left"
-        ? (!isOpen && delta >= 28) || (isOpen && delta <= -28)
-        : (!isOpen && delta <= -28) || (isOpen && delta >= 28);
-
-    if (!shouldToggle) {
-      return;
-    }
-
-    pointerHandledRef.current = true;
-    onToggle();
-  }
-
-  function handlePointerUp(event: React.PointerEvent<HTMLButtonElement>) {
-    if (!pointerHandledRef.current) {
-      onToggle();
-    }
-
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-
-    resetGesture();
-  }
-
-  return (
-    <button
-      className={`mobile-sidebar-handle ${side} ${isOpen ? "open" : "closed"}`}
-      type="button"
-      aria-label={
-        isOpen
-          ? t(`shell.hide${side === "left" ? "Session" : "Info"}Sidebar`)
-          : t(`shell.show${side === "left" ? "Session" : "Info"}Sidebar`)
-      }
-      onPointerDown={handlePointerDown}
-      onPointerMove={handlePointerMove}
-      onPointerUp={handlePointerUp}
-      onPointerCancel={resetGesture}
-    >
-      <span className="mobile-sidebar-handle-shape" aria-hidden="true">
-        <span className="mobile-sidebar-handle-chevron" />
-      </span>
-    </button>
   );
 }
 
@@ -1620,6 +1584,13 @@ function SidebarContent({
     path: "",
     name: ""
   });
+  const [workspaceManagerOpen, setWorkspaceManagerOpen] = useState(false);
+  const [expandedManagedWorkspaceIds, setExpandedManagedWorkspaceIds] = useState<string[]>([]);
+  const [workspaceManagementStateById, setWorkspaceManagementStateById] = useState<
+    Record<string, WorkspaceManagementViewState>
+  >({});
+  const [workspaceRemovalTarget, setWorkspaceRemovalTarget] = useState<WorkspaceDto | null>(null);
+  const [removingWorkspaceId, setRemovingWorkspaceId] = useState<string | null>(null);
   const [cloneWorkspaceOpen, setCloneWorkspaceOpen] = useState(false);
   const [cloneForm, setCloneForm] = useState<CloneWorkspaceFormState>({
     repositoryUrl: "",
@@ -1805,6 +1776,91 @@ function SidebarContent({
     }
   }, [cloneForm, notifyWorkspaceCloned, onRefreshNavigation, showToast]);
 
+  const loadWorkspaceManagementSummary = useCallback(
+    async (workspaceId: string) => {
+      setWorkspaceManagementStateById((current) => ({
+        ...current,
+        [workspaceId]: {
+          detail: current[workspaceId]?.detail ?? null,
+          loading: true,
+          error: null
+        }
+      }));
+
+      try {
+        const detail = await getWorkspaceManagementSummary(workspaceId);
+        setWorkspaceManagementStateById((current) => ({
+          ...current,
+          [workspaceId]: {
+            detail,
+            loading: false,
+            error: null
+          }
+        }));
+      } catch (error) {
+        setWorkspaceManagementStateById((current) => ({
+          ...current,
+          [workspaceId]: {
+            detail: current[workspaceId]?.detail ?? null,
+            loading: false,
+            error: error instanceof Error ? error.message : t("shell.manageWorkspaceLoadFailed")
+          }
+        }));
+      }
+    },
+    []
+  );
+
+  function handleToggleManagedWorkspace(workspaceId: string) {
+    const isExpanded = expandedManagedWorkspaceIds.includes(workspaceId);
+
+    if (isExpanded) {
+      setExpandedManagedWorkspaceIds((current) => current.filter((item) => item !== workspaceId));
+      return;
+    }
+
+    setExpandedManagedWorkspaceIds((current) => [...current, workspaceId]);
+
+    const currentState = workspaceManagementStateById[workspaceId];
+
+    if (!currentState || (!currentState.loading && currentState.detail === null)) {
+      void loadWorkspaceManagementSummary(workspaceId);
+    }
+  }
+
+  async function handleConfirmWorkspaceRemoval() {
+    if (!workspaceRemovalTarget || removingWorkspaceId) {
+      return;
+    }
+
+    setRemovingWorkspaceId(workspaceRemovalTarget.id);
+
+    try {
+      await removeWorkspace(workspaceRemovalTarget.id);
+      setExpandedManagedWorkspaceIds((current) =>
+        current.filter((workspaceId) => workspaceId !== workspaceRemovalTarget.id)
+      );
+      setWorkspaceManagementStateById((current) => {
+        const next = { ...current };
+        delete next[workspaceRemovalTarget.id];
+        return next;
+      });
+      setWorkspaceRemovalTarget(null);
+      await onRefreshNavigation();
+      showToast({
+        title: t("shell.manageWorkspaceRemoveSuccess"),
+        tone: "success"
+      });
+    } catch (error) {
+      showToast({
+        title: error instanceof Error ? error.message : t("shell.manageWorkspaceRemoveFailed"),
+        tone: "error"
+      });
+    } finally {
+      setRemovingWorkspaceId(null);
+    }
+  }
+
   useEffect(() => {
     if (!openSessionMenuKey) {
       return;
@@ -1855,6 +1911,15 @@ function SidebarContent({
       setSelectedSessionIds([]);
     }
   }, [batchSelectableSessionIds.length, batchWorkspaceId]);
+
+  useEffect(() => {
+    const knownWorkspaceIdSet = new Set(workspaceGroups.map((group) => group.workspace.id));
+
+    setExpandedManagedWorkspaceIds((current) => current.filter((workspaceId) => knownWorkspaceIdSet.has(workspaceId)));
+    setWorkspaceRemovalTarget((current) =>
+      current && knownWorkspaceIdSet.has(current.id) ? current : null
+    );
+  }, [workspaceGroups]);
 
   useEffect(() => {
     const activeFavoriteIndex = favoriteSessions.findIndex((item) => item.session.sessionId === activeSessionId);
@@ -2424,6 +2489,15 @@ function SidebarContent({
               <button
                 type="button"
                 className="workbench-workspace-icon-button"
+                aria-label={t("shell.manageWorkspaceAction")}
+                title={t("shell.manageWorkspaceAction")}
+                onClick={() => setWorkspaceManagerOpen(true)}
+              >
+                <WorkspaceManageIcon />
+              </button>
+              <button
+                type="button"
+                className="workbench-workspace-icon-button"
                 aria-label={importingWorkspace ? t("shell.importSubmitting") : t("shell.importWorkspaceTitle")}
                 title={importingWorkspace ? t("shell.importSubmitting") : t("shell.importWorkspaceTitle")}
                 disabled={workspaceActionPending}
@@ -2444,230 +2518,234 @@ function SidebarContent({
             </div>
           </div>
 
-        {workspaceGroups.map((group) => (
-          <section
-            key={group.workspace.id}
-            className="workbench-workspace-group"
-            data-batch-active={batchWorkspaceId === group.workspace.id}
-          >
-            <div className="workbench-workspace-header minimal">
-              <button
-                type="button"
-                className="workbench-workspace-toggle"
-                aria-label={group.isCollapsed ? t("shell.workspaceExpand") : t("shell.workspaceCollapse")}
-                onClick={() => onToggleWorkspaceCollapse(group.workspace.id)}
-              >
-                <ChevronIcon expanded={!group.isCollapsed} />
-                <strong>{group.workspace.name}</strong>
-              </button>
+        {workspaceGroups.map((group) => {
+          const visibleSessionTree = getVisibleSessionTreeNodes(group);
 
-              {batchWorkspaceId === group.workspace.id ? (
-                <div className="workbench-workspace-batch-toolbar">
-                  <span className="workbench-workspace-batch-label">{t("shell.batchSelectionMode")}</span>
-                  <span className="workbench-workspace-batch-counter">
-                    {selectedSessionIds.length}/{batchSelectableSessionIds.length}
-                  </span>
-                  <button
-                    type="button"
-                    className="workbench-workspace-batch-action"
-                    onClick={handleToggleSelectAllSessions}
-                  >
-                    {allBatchSessionsSelected ? t("shell.clearSelectedSessions") : t("shell.selectAllSessions")}
-                  </button>
-                  <button
-                    type="button"
-                    className="workbench-workspace-batch-action primary"
-                    disabled={selectedSessionIds.length === 0 || batchArchiving}
-                    onClick={() => {
-                      void handleArchiveSelectedSessions();
-                    }}
-                  >
-                    {batchArchiving ? t("shell.batchArchiving") : t("shell.batchArchiveAction")}
-                  </button>
-                  <button
-                    type="button"
-                    className="workbench-workspace-batch-action"
-                    onClick={handleStopBatchSelection}
-                  >
-                    {t("common.cancel")}
-                  </button>
-                </div>
-              ) : (
-                <div className="workbench-workspace-actions">
-                  <button
-                    type="button"
-                    className="workbench-workspace-icon-button"
-                    aria-label={t("shell.switchWorkspace")}
-                    title={t("shell.switchWorkspace")}
-                    aria-pressed={activeWorkspaceId === group.workspace.id}
-                    onClick={() => {
-                      onSelectWorkspace(group.workspace.id);
-                      onClose?.();
-                    }}
-                  >
-                    <WorkspaceSwitchIcon />
-                  </button>
-                  <button
-                    type="button"
-                    className="workbench-workspace-icon-button"
-                    aria-label={t("shell.batchSelectSessions")}
-                    title={t("shell.batchSelectSessions")}
-                    onClick={() => handleStartBatchSelection(group.workspace.id)}
-                  >
-                    <MultiSelectIcon />
-                  </button>
-                  <button
-                    type="button"
-                    className="workbench-workspace-icon-button workbench-workspace-create"
-                    aria-label={t("shell.createSession")}
-                    title={t("shell.createSession")}
-                    onClick={() => setCreateSessionWorkspaceId(group.workspace.id)}
-                  >
-                    <PlusIcon />
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {!group.isCollapsed ? (
-              <>
-                <div className="workbench-session-list">
-                  {getVisibleSessionTreeNodes(group).length === 0 ? (
-                    <p className="workbench-session-empty">{t("shell.emptyWorkspaceSessions")}</p>
-                  ) : (
-                    getVisibleSessionTreeNodes(group)
-                      .slice(0, getVisibleWorkspaceSessionCount(group.workspace.id))
-                      .map((node) => {
-                      const childSessions = getTreeNodeChildren(node);
-                      const visibleChildren = childSessions.slice(
-                        0,
-                        getVisibleSubagentCount(node.session.sessionId)
-                      );
-                      const hasMoreSubagents = visibleChildren.length < childSessions.length;
-
-                      return (
-                        <div key={node.session.sessionId} className="workbench-session-tree-node">
-                          <SessionCard
-                            menuKey={`workspace:${group.workspace.id}:${node.session.sessionId}`}
-                            session={node.session}
-                            workspace={group.workspace}
-                            isActive={node.session.sessionId === activeSessionId}
-                            isFavorite={favoriteSessionIds.has(node.session.sessionId)}
-                            menuOpen={
-                              openSessionMenuKey === `workspace:${group.workspace.id}:${node.session.sessionId}`
-                            }
-                            showWorkspaceName={false}
-                            selectionMode={batchWorkspaceId === group.workspace.id}
-                            selected={selectedSessionIdSet.has(node.session.sessionId)}
-                            onToggleSelect={() => handleToggleSessionSelection(node.session.sessionId)}
-                            onOpen={() => {
-                              navigate(`/sessions/${node.session.sessionId}`);
-                              onClose?.();
-                            }}
-                            onRename={() => handleOpenRenameSession(node.session, group.workspace)}
-                            onToggleMenu={() =>
-                              setOpenSessionMenuKey((current) =>
-                                current === `workspace:${group.workspace.id}:${node.session.sessionId}`
-                                  ? null
-                                  : `workspace:${group.workspace.id}:${node.session.sessionId}`
-                              )
-                            }
-                            onToggleFavorite={() => handleToggleFavorite(node.session.sessionId)}
-                            onArchive={() => handleArchive(node.session.sessionId)}
-                            onCloseMenu={() => setOpenSessionMenuKey(null)}
-                            onContextMenu={
-                              platform.isDesktop
-                                ? () => {
-                                    void handleSessionContextMenu({
-                                      session: node.session,
-                                      workspace: group.workspace
-                                    });
-                                  }
-                                : undefined
-                            }
-                          />
-
-                          {childSessions.length > 0 ? (
-                            <div className="workbench-subsession-list">
-                              {visibleChildren.map((session) => (
-                                <SessionCard
-                                  menuKey={`workspace:${group.workspace.id}:${session.sessionId}`}
-                                  key={session.sessionId}
-                                  session={session}
-                                  workspace={group.workspace}
-                                  isActive={session.sessionId === activeSessionId}
-                                  isFavorite={false}
-                                  menuOpen={false}
-                                  showWorkspaceName={false}
-                                  depth={1}
-                                  showActions={false}
-                                  selectionMode={batchWorkspaceId === group.workspace.id}
-                                  selected={selectedSessionIdSet.has(session.sessionId)}
-                                  onToggleSelect={() => handleToggleSessionSelection(session.sessionId)}
-                                  onOpen={() => {
-                                    navigate(`/sessions/${session.sessionId}`);
-                                    onClose?.();
-                                  }}
-                                  onRename={() => undefined}
-                                  onToggleMenu={() => undefined}
-                                  onToggleFavorite={() => undefined}
-                                  onArchive={() => undefined}
-                                  onCloseMenu={() => undefined}
-                                  onContextMenu={
-                                    platform.isDesktop
-                                      ? () => {
-                                          void handleSessionContextMenu({
-                                            session,
-                                            workspace: group.workspace
-                                          });
-                                        }
-                                      : undefined
-                                  }
-                                />
-                              ))}
-                              {hasMoreSubagents ? (
-                                <button
-                                  type="button"
-                                  className="workbench-subsession-expand ghost-button"
-                                  onClick={() => handleExpandSubagents(node.session.sessionId)}
-                                >
-                                  {t("shell.subagentExpandMore")}
-                                </button>
-                              ) : null}
-                            </div>
-                          ) : null}
-                        </div>
-                        );
-                      })
-                  )}
-                  {getVisibleSessionTreeNodes(group).length > getVisibleWorkspaceSessionCount(group.workspace.id) ? (
-                    <button
-                      type="button"
-                      className="workbench-subsession-expand ghost-button"
-                      onClick={() =>
-                        handleExpandWorkspaceSessions(group.workspace.id, getVisibleSessionTreeNodes(group).length)
-                      }
-                    >
-                      {t("shell.sessionExpandMore")}
-                    </button>
-                  ) : null}
-                </div>
-
+          return (
+            <section
+              key={group.workspace.id}
+              className="workbench-workspace-group"
+              data-batch-active={batchWorkspaceId === group.workspace.id}
+            >
+              <div className="workbench-workspace-header minimal">
                 <button
                   type="button"
-                  className="workbench-archive-folder"
-                  onClick={() => setArchiveWorkspaceId(group.workspace.id)}
+                  className="workbench-workspace-toggle"
+                  aria-label={group.isCollapsed ? t("shell.workspaceExpand") : t("shell.workspaceCollapse")}
+                  onClick={() => onToggleWorkspaceCollapse(group.workspace.id)}
                 >
-                  <span className="workbench-archive-folder-main">
-                    <FolderArchiveIcon />
-                    <span>{t("shell.archiveFolderLabel")}</span>
-                  </span>
-                  <span className="workbench-section-counter">{group.archivedSessions.length}</span>
+                  <ChevronIcon expanded={!group.isCollapsed} />
+                  <strong>{group.workspace.name}</strong>
                 </button>
-              </>
-            ) : null}
-          </section>
-        ))}
+
+                {batchWorkspaceId === group.workspace.id ? (
+                  <div className="workbench-workspace-batch-toolbar">
+                    <span className="workbench-workspace-batch-label">{t("shell.batchSelectionMode")}</span>
+                    <span className="workbench-workspace-batch-counter">
+                      {selectedSessionIds.length}/{batchSelectableSessionIds.length}
+                    </span>
+                    <button
+                      type="button"
+                      className="workbench-workspace-batch-action"
+                      onClick={handleToggleSelectAllSessions}
+                    >
+                      {allBatchSessionsSelected ? t("shell.clearSelectedSessions") : t("shell.selectAllSessions")}
+                    </button>
+                    <button
+                      type="button"
+                      className="workbench-workspace-batch-action primary"
+                      disabled={selectedSessionIds.length === 0 || batchArchiving}
+                      onClick={() => {
+                        void handleArchiveSelectedSessions();
+                      }}
+                    >
+                      {batchArchiving ? t("shell.batchArchiving") : t("shell.batchArchiveAction")}
+                    </button>
+                    <button
+                      type="button"
+                      className="workbench-workspace-batch-action"
+                      onClick={handleStopBatchSelection}
+                    >
+                      {t("common.cancel")}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="workbench-workspace-actions">
+                    <button
+                      type="button"
+                      className="workbench-workspace-icon-button"
+                      aria-label={t("shell.switchWorkspace")}
+                      title={t("shell.switchWorkspace")}
+                      aria-pressed={activeWorkspaceId === group.workspace.id}
+                      onClick={() => {
+                        onSelectWorkspace(group.workspace.id);
+                        onClose?.();
+                      }}
+                    >
+                      <WorkspaceSwitchIcon />
+                    </button>
+                    <button
+                      type="button"
+                      className="workbench-workspace-icon-button"
+                      aria-label={t("shell.batchSelectSessions")}
+                      title={t("shell.batchSelectSessions")}
+                      onClick={() => handleStartBatchSelection(group.workspace.id)}
+                    >
+                      <MultiSelectIcon />
+                    </button>
+                    <button
+                      type="button"
+                      className="workbench-workspace-icon-button workbench-workspace-create"
+                      aria-label={t("shell.createSession")}
+                      title={t("shell.createSession")}
+                      onClick={() => setCreateSessionWorkspaceId(group.workspace.id)}
+                    >
+                      <PlusIcon />
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {!group.isCollapsed ? (
+                <>
+                  <div className="workbench-session-list">
+                    {visibleSessionTree.length === 0 ? (
+                      <p className="workbench-session-empty">{t("shell.emptyWorkspaceSessions")}</p>
+                    ) : (
+                      visibleSessionTree
+                        .slice(0, getVisibleWorkspaceSessionCount(group.workspace.id))
+                        .map((node) => {
+                          const childSessions = getTreeNodeChildren(node);
+                          const visibleChildren = childSessions.slice(
+                            0,
+                            getVisibleSubagentCount(node.session.sessionId)
+                          );
+                          const hasMoreSubagents = visibleChildren.length < childSessions.length;
+
+                          return (
+                            <div key={node.session.sessionId} className="workbench-session-tree-node">
+                              <SessionCard
+                                menuKey={`workspace:${group.workspace.id}:${node.session.sessionId}`}
+                                session={node.session}
+                                workspace={group.workspace}
+                                isActive={node.session.sessionId === activeSessionId}
+                                isFavorite={favoriteSessionIds.has(node.session.sessionId)}
+                                menuOpen={
+                                  openSessionMenuKey === `workspace:${group.workspace.id}:${node.session.sessionId}`
+                                }
+                                showWorkspaceName={false}
+                                selectionMode={batchWorkspaceId === group.workspace.id}
+                                selected={selectedSessionIdSet.has(node.session.sessionId)}
+                                onToggleSelect={() => handleToggleSessionSelection(node.session.sessionId)}
+                                onOpen={() => {
+                                  navigate(`/sessions/${node.session.sessionId}`);
+                                  onClose?.();
+                                }}
+                                onRename={() => handleOpenRenameSession(node.session, group.workspace)}
+                                onToggleMenu={() =>
+                                  setOpenSessionMenuKey((current) =>
+                                    current === `workspace:${group.workspace.id}:${node.session.sessionId}`
+                                      ? null
+                                      : `workspace:${group.workspace.id}:${node.session.sessionId}`
+                                  )
+                                }
+                                onToggleFavorite={() => handleToggleFavorite(node.session.sessionId)}
+                                onArchive={() => handleArchive(node.session.sessionId)}
+                                onCloseMenu={() => setOpenSessionMenuKey(null)}
+                                onContextMenu={
+                                  platform.isDesktop
+                                    ? () => {
+                                        void handleSessionContextMenu({
+                                          session: node.session,
+                                          workspace: group.workspace
+                                        });
+                                      }
+                                    : undefined
+                                }
+                              />
+
+                              {childSessions.length > 0 ? (
+                                <div className="workbench-subsession-list">
+                                  {visibleChildren.map((session) => (
+                                    <SessionCard
+                                      menuKey={`workspace:${group.workspace.id}:${session.sessionId}`}
+                                      key={session.sessionId}
+                                      session={session}
+                                      workspace={group.workspace}
+                                      isActive={session.sessionId === activeSessionId}
+                                      isFavorite={false}
+                                      menuOpen={false}
+                                      showWorkspaceName={false}
+                                      depth={1}
+                                      showActions={false}
+                                      selectionMode={batchWorkspaceId === group.workspace.id}
+                                      selected={selectedSessionIdSet.has(session.sessionId)}
+                                      onToggleSelect={() => handleToggleSessionSelection(session.sessionId)}
+                                      onOpen={() => {
+                                        navigate(`/sessions/${session.sessionId}`);
+                                        onClose?.();
+                                      }}
+                                      onRename={() => undefined}
+                                      onToggleMenu={() => undefined}
+                                      onToggleFavorite={() => undefined}
+                                      onArchive={() => undefined}
+                                      onCloseMenu={() => undefined}
+                                      onContextMenu={
+                                        platform.isDesktop
+                                          ? () => {
+                                              void handleSessionContextMenu({
+                                                session,
+                                                workspace: group.workspace
+                                              });
+                                            }
+                                          : undefined
+                                      }
+                                    />
+                                  ))}
+                                  {hasMoreSubagents ? (
+                                    <button
+                                      type="button"
+                                      className="workbench-subsession-expand ghost-button"
+                                      onClick={() => handleExpandSubagents(node.session.sessionId)}
+                                    >
+                                      {t("shell.subagentExpandMore")}
+                                    </button>
+                                  ) : null}
+                                </div>
+                              ) : null}
+                            </div>
+                          );
+                        })
+                    )}
+                    {visibleSessionTree.length > getVisibleWorkspaceSessionCount(group.workspace.id) ? (
+                      <button
+                        type="button"
+                        className="workbench-subsession-expand ghost-button"
+                        onClick={() =>
+                          handleExpandWorkspaceSessions(group.workspace.id, visibleSessionTree.length)
+                        }
+                      >
+                        {t("shell.sessionExpandMore")}
+                      </button>
+                    ) : null}
+                  </div>
+
+                  <button
+                    type="button"
+                    className="workbench-archive-folder"
+                    onClick={() => setArchiveWorkspaceId(group.workspace.id)}
+                  >
+                    <span className="workbench-archive-folder-main">
+                      <FolderArchiveIcon />
+                      <span>{t("shell.archiveFolderLabel")}</span>
+                    </span>
+                    <span className="workbench-section-counter">{group.archivedSessions.length}</span>
+                  </button>
+                </>
+              ) : null}
+            </section>
+          );
+        })}
         </section>
       </div>
 
@@ -2682,6 +2760,245 @@ function SidebarContent({
           <span className="settings-entry-label">{t("settings.title")}</span>
         </button>
       </div>
+
+      <SidebarModal
+        open={workspaceManagerOpen}
+        title={t("shell.manageWorkspaceTitle")}
+        description={t("shell.manageWorkspaceDescription")}
+        onClose={() => {
+          if (removingWorkspaceId) {
+            return;
+          }
+
+          setWorkspaceManagerOpen(false);
+        }}
+      >
+        {workspaceGroups.length > 0 ? (
+          <div className="workbench-manage-list">
+            {workspaceGroups.map((group) => {
+              const isExpanded = expandedManagedWorkspaceIds.includes(group.workspace.id);
+              const managementState = workspaceManagementStateById[group.workspace.id] ?? {
+                detail: null,
+                loading: false,
+                error: null
+              };
+              const isRemovingCurrentWorkspace = removingWorkspaceId === group.workspace.id;
+              const remoteSummary =
+                managementState.detail?.git.remotes.length
+                  ? managementState.detail.git.remotes
+                      .map((remote) => `${remote.name}: ${remote.url}`)
+                      .join(" · ")
+                  : t("shell.manageWorkspaceNoRemote");
+              const workspaceSessionCount =
+                group.visibleSessions.length + group.archivedSessions.length;
+              const compositionChartItems = managementState.detail
+                ? buildWorkspaceCompositionChartItems(
+                    managementState.detail.codeComposition.items,
+                    t("shell.manageWorkspaceCodeCompositionOther")
+                  )
+                : [];
+              const compositionChartStyle =
+                compositionChartItems.length > 0
+                  ? ({
+                      "--workbench-manage-chart-background":
+                        buildWorkspaceCompositionChartBackground(compositionChartItems)
+                    } as CSSProperties)
+                  : undefined;
+
+              return (
+                <article key={group.workspace.id} className="workbench-manage-item">
+                  <button
+                    type="button"
+                    className="workbench-manage-item-toggle"
+                    aria-expanded={isExpanded}
+                    onClick={() => handleToggleManagedWorkspace(group.workspace.id)}
+                  >
+                    <span className="workbench-manage-item-heading">
+                      <ChevronIcon expanded={isExpanded} />
+                      <strong>{group.workspace.name}</strong>
+                    </span>
+                    <span className="workbench-section-counter">{workspaceSessionCount}</span>
+                  </button>
+
+                  {isExpanded ? (
+                    <div className="workbench-manage-item-body">
+                      <div className="workbench-manage-detail-block">
+                        <span className="workbench-manage-detail-label">
+                          {t("shell.manageWorkspacePathLabel")}
+                        </span>
+                        <p className="workbench-manage-detail-value">{group.workspace.path}</p>
+                      </div>
+
+                      {managementState.loading && managementState.detail === null ? (
+                        <p className="workbench-manage-status status-text">
+                          {t("shell.manageWorkspaceLoading")}
+                        </p>
+                      ) : null}
+
+                      {managementState.error ? (
+                        <p className="workbench-manage-status status-text" data-tone="error">
+                          {managementState.error}
+                        </p>
+                      ) : null}
+
+                      {managementState.detail ? (
+                        <>
+                          <div className="workbench-manage-detail-block">
+                            <div className="workbench-manage-detail-header">
+                              <span className="workbench-manage-detail-label">
+                                {t("shell.manageWorkspaceGitCommitCount")}
+                              </span>
+                              <strong className="workbench-manage-detail-accent">
+                                {managementState.detail.git.commitCount ?? "--"}
+                              </strong>
+                            </div>
+                          </div>
+
+                          <div className="workbench-manage-detail-block">
+                            <span className="workbench-manage-detail-label">
+                              {t("shell.manageWorkspaceGitInfoLabel")}
+                            </span>
+                            {managementState.detail.git.isRepository ? (
+                              <div className="workbench-manage-kv-list">
+                                <div className="workbench-manage-kv-item">
+                                  <span>{t("shell.manageWorkspaceRepoRoot")}</span>
+                                  <span>{managementState.detail.git.repoRoot ?? "--"}</span>
+                                </div>
+                                <div className="workbench-manage-kv-item">
+                                  <span>{t("shell.manageWorkspaceCurrentBranch")}</span>
+                                  <span>{managementState.detail.git.currentBranch ?? "--"}</span>
+                                </div>
+                                <div className="workbench-manage-kv-item">
+                                  <span>{t("shell.manageWorkspaceRemoteLabel")}</span>
+                                  <span>{remoteSummary}</span>
+                                </div>
+                              </div>
+                            ) : (
+                              <p className="workbench-section-empty">
+                                {managementState.detail.git.error ?? t("shell.manageWorkspaceNotGit")}
+                              </p>
+                            )}
+                          </div>
+
+                          <div className="workbench-manage-detail-block">
+                            <span className="workbench-manage-detail-label">
+                              {t("shell.manageWorkspaceCodeCompositionLabel")}
+                            </span>
+                            {compositionChartItems.length > 0 ? (
+                              <div className="workbench-manage-type-chart">
+                                <div
+                                  className="workbench-manage-type-chart-ring"
+                                  style={compositionChartStyle}
+                                  aria-hidden="true"
+                                >
+                                  <strong className="workbench-manage-type-chart-total">
+                                    {managementState.detail.codeComposition.scannedFileCount}
+                                  </strong>
+                                  <span className="workbench-manage-type-chart-caption">
+                                    {t("shell.manageWorkspaceCodeCompositionFiles")}
+                                  </span>
+                                </div>
+
+                                <div className="workbench-manage-type-list">
+                                  {compositionChartItems.map((item) => (
+                                    <div key={item.key} className="workbench-manage-type-item">
+                                      <span className="workbench-manage-type-meta">
+                                        <span
+                                          className="workbench-manage-type-swatch"
+                                          style={{ backgroundColor: item.color }}
+                                          aria-hidden="true"
+                                        />
+                                        <span className="workbench-manage-type-name">{item.type}</span>
+                                      </span>
+                                      <span>
+                                        {item.count} · {formatWorkspaceCompositionRatio(item)}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : (
+                              <p className="workbench-section-empty">
+                                {managementState.detail.codeComposition.error ??
+                                  t("shell.manageWorkspaceNoCodeComposition")}
+                              </p>
+                            )}
+                            {managementState.detail.codeComposition.truncated ? (
+                              <p className="workbench-manage-hint">
+                                {t("shell.manageWorkspaceCodeTruncated", {
+                                  count: managementState.detail.codeComposition.scannedFileCount
+                                })}
+                              </p>
+                            ) : null}
+                          </div>
+                        </>
+                      ) : null}
+
+                      <div className="workbench-modal-actions">
+                        <button
+                          type="button"
+                          className="secondary-button workbench-danger-button"
+                          disabled={Boolean(removingWorkspaceId)}
+                          onClick={() => setWorkspaceRemovalTarget(group.workspace)}
+                        >
+                          {isRemovingCurrentWorkspace
+                            ? t("shell.manageWorkspaceRemoving")
+                            : t("shell.manageWorkspaceRemoveAction")}
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+                </article>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="workbench-section-empty">{t("shell.manageWorkspaceEmpty")}</p>
+        )}
+      </SidebarModal>
+
+      <SidebarModal
+        open={workspaceRemovalTarget !== null}
+        title={t("shell.manageWorkspaceRemoveConfirmTitle")}
+        description={t("shell.manageWorkspaceRemoveConfirmDescription")}
+        onClose={() => {
+          if (removingWorkspaceId) {
+            return;
+          }
+
+          setWorkspaceRemovalTarget(null);
+        }}
+      >
+        <p className="workbench-section-empty">
+          {workspaceRemovalTarget
+            ? t("shell.manageWorkspaceRemoveConfirmTarget", {
+                name: workspaceRemovalTarget.name
+              })
+            : ""}
+        </p>
+        <div className="workbench-modal-actions">
+          <button
+            type="button"
+            className="secondary-button"
+            disabled={Boolean(removingWorkspaceId)}
+            onClick={() => setWorkspaceRemovalTarget(null)}
+          >
+            {t("common.cancel")}
+          </button>
+          <button
+            type="button"
+            className="secondary-button workbench-danger-button"
+            disabled={Boolean(removingWorkspaceId)}
+            onClick={() => {
+              void handleConfirmWorkspaceRemoval();
+            }}
+          >
+            {removingWorkspaceId
+              ? t("shell.manageWorkspaceRemoving")
+              : t("shell.manageWorkspaceRemoveConfirmAction")}
+          </button>
+        </div>
+      </SidebarModal>
 
       <SidebarModal
         open={cloneWorkspaceOpen}
@@ -3241,7 +3558,11 @@ function WorkbenchInfoPanel({
   );
 }
 
-export function WorkbenchLayout() {
+export function WorkbenchLayout({
+  shellMode = "desktop"
+}: {
+  shellMode?: WorkbenchShellMode;
+}) {
   const location = useLocation();
   const navigate = useNavigate();
   const platform = usePlatform();
@@ -3303,9 +3624,6 @@ export function WorkbenchLayout() {
   const [activeInfoTab, setActiveInfoTab] = useState<InfoTab>("files");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [mobileInfoOpen, setMobileInfoOpen] = useState(false);
-  const [isMobileViewport, setIsMobileViewport] = useState(() =>
-    typeof window !== "undefined" ? window.innerWidth <= MOBILE_BREAKPOINT_PX : false
-  );
   const [sessionWorkspaceMap, setSessionWorkspaceMap] = useState<Record<string, string>>({});
   const [searchModalOpen, setSearchModalOpen] = useState(false);
   const [searchMode, setSearchMode] = useState<SearchMode>("sessions");
@@ -3747,6 +4065,7 @@ export function WorkbenchLayout() {
   const activeCenterTab: CenterTab = location.pathname.startsWith("/terminals")
     ? "terminals"
     : "conversation";
+  const isMobileShell = shellMode === "mobile";
 
   const workspaceSidebarGroups = useMemo(
     () =>
@@ -3785,6 +4104,25 @@ export function WorkbenchLayout() {
       ),
     [favoriteSessionIdSet, flattenedSessions]
   );
+  const currentWorkspace =
+    navigationGroups.find((group) => group.workspace.id === currentWorkspaceId)?.workspace ?? null;
+  const mobileActiveEntry: MobileWorkbenchEntry = location.pathname.startsWith("/settings")
+    ? "settings"
+    : location.pathname.startsWith("/terminals")
+      ? "tools"
+      : location.pathname.startsWith("/sessions")
+        ? "sessions"
+        : "workspaces";
+  const mobileHeaderTitle =
+    mobileActiveEntry === "settings"
+      ? t("shell.mobileSettingsEntry")
+      : mobileActiveEntry === "tools"
+        ? t("shell.mobileToolsEntry")
+        : mobileActiveEntry === "sessions"
+          ? t("shell.mobileSessionsEntry")
+          : t("shell.mobileWorkspacesEntry");
+  const mobileHeaderSubtitle =
+    mobileActiveEntry === "settings" ? null : currentWorkspace?.name ?? null;
   const availableSearchWorkspaces = useMemo(
     () => navigationGroups.map((group) => group.workspace),
     [navigationGroups]
@@ -3844,33 +4182,16 @@ export function WorkbenchLayout() {
   }, [currentSessionId, isDraftSession, location.pathname, location.search]);
 
   useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-
-    function handleResize() {
-      setIsMobileViewport(window.innerWidth <= MOBILE_BREAKPOINT_PX);
-    }
-
-    handleResize();
-    window.addEventListener("resize", handleResize);
-
-    return () => {
-      window.removeEventListener("resize", handleResize);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (isMobileViewport) {
+    if (isMobileShell) {
       return;
     }
 
     setMobileNavOpen(false);
     setMobileInfoOpen(false);
-  }, [isMobileViewport]);
+  }, [isMobileShell]);
 
   function openLeftPanel() {
-    if (isMobileViewport) {
+    if (isMobileShell) {
       setMobileNavOpen(true);
       return;
     }
@@ -3881,7 +4202,7 @@ export function WorkbenchLayout() {
   function openRightPanel() {
     ensureInfoPanelReady();
 
-    if (isMobileViewport) {
+    if (isMobileShell) {
       setMobileInfoOpen(true);
       return;
     }
@@ -3890,7 +4211,7 @@ export function WorkbenchLayout() {
   }
 
   function toggleLeftPanel() {
-    if (isMobileViewport) {
+    if (isMobileShell) {
       setMobileNavOpen((current) => !current);
       return;
     }
@@ -3901,7 +4222,7 @@ export function WorkbenchLayout() {
   function toggleRightPanel() {
     ensureInfoPanelReady();
 
-    if (isMobileViewport) {
+    if (isMobileShell) {
       setMobileInfoOpen((current) => !current);
       return;
     }
@@ -4096,7 +4417,7 @@ export function WorkbenchLayout() {
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [navigate, refreshNavigation, isMobileViewport, goToConversationTab]);
+  }, [navigate, refreshNavigation, isMobileShell, goToConversationTab]);
 
   const contextValue = useMemo<WorkbenchShellContextValue>(
     () => ({
@@ -4148,66 +4469,106 @@ export function WorkbenchLayout() {
 
   return (
     <WorkbenchShellContext.Provider value={contextValue}>
-      <div
-        className="workbench-shell"
-        style={shellStyle}
-        data-nav-loading={navigationLoading}
-        data-left-collapsed={leftCollapsed}
-        data-right-collapsed={rightCollapsed}
-        data-info-ready={infoPanelReady}
-        data-runtime-platform={platform.platform}
-        data-os-family={platform.ui.osFamily}
-      >
-        <div className="workbench-body-shell">
-          {!isMobileViewport ? (
-            <>
-              <aside className="workbench-nav surface-card" data-collapsed={leftCollapsed}>
-                <SidebarContent
-                  workspaceGroups={workspaceSidebarGroups}
-                  favoriteSessions={favoriteSessions}
-                  favoriteSessionIds={favoriteSessionIdSet}
-                  activeWorkspaceId={currentWorkspaceId}
-                  isConversationActive={activeCenterTab === "conversation"}
-                  isTerminalActive={activeCenterTab === "terminals"}
-                  isSearchOpen={searchModalOpen}
-                  navigationLoading={navigationLoading}
-                  navigationError={navigationError}
-                  activeSessionId={currentSessionId}
-                  onRefreshNavigation={refreshNavigation}
-                  onSessionUpdated={upsertNavigationSession}
-                  onNavigateConversation={goToConversationTab}
-                  onNavigateTerminals={() => navigate("/terminals")}
-                  onOpenSearch={() => openSearchModal()}
-                  onOpenSettings={() => navigate("/settings")}
-                  onSelectWorkspace={handleSelectWorkspace}
-                  onToggleWorkspaceCollapse={(workspaceId) =>
-                    setCollapsedWorkspaceIds((current) => toggleStoredId(current, workspaceId))
-                  }
-                  onToggleFavoriteSession={(sessionId) =>
-                    setFavoriteSessionIds((current) => toggleStoredId(current, sessionId))
-                  }
-                  onArchiveSession={(sessionId) => commitNavigationArchiveState(sessionId, true)}
-                  onUnarchiveSession={(sessionId) => commitNavigationArchiveState(sessionId, false)}
-                  onToggleCollapse={() => setLeftCollapsed(true)}
-                />
-              </aside>
-              <div
-                className="workbench-side-resizer"
-                data-side="left"
-                data-collapsed={leftCollapsed}
-                role="separator"
-                aria-label={t("shell.leftResizerLabel")}
-                onMouseDown={
-                  leftCollapsed
-                    ? undefined
-                    : (event) => beginResize("left", event.clientX)
+      {isMobileShell ? (
+        <>
+          <MobileWorkbenchShell
+            activeEntry={mobileActiveEntry}
+            title={mobileHeaderTitle}
+            subtitle={mobileHeaderSubtitle}
+            onOpenNavigation={() => {
+              setMobileInfoOpen(false);
+              setMobileNavOpen(true);
+            }}
+            onOpenSearch={() => {
+              setMobileNavOpen(false);
+              setMobileInfoOpen(false);
+              openSearchModal();
+            }}
+            onOpenAuxiliary={() => {
+              ensureInfoPanelReady();
+              setMobileNavOpen(false);
+              setMobileInfoOpen(true);
+            }}
+            onNavigateWorkspaces={() => {
+              setMobileNavOpen(false);
+              setMobileInfoOpen(false);
+              navigate("/");
+            }}
+            onNavigateSessions={() => {
+              setMobileNavOpen(false);
+              setMobileInfoOpen(false);
+              goToConversationTab();
+            }}
+            onNavigateTools={() => {
+              setMobileNavOpen(false);
+              setMobileInfoOpen(false);
+              navigate("/terminals");
+            }}
+            onNavigateSettings={() => {
+              setMobileNavOpen(false);
+              setMobileInfoOpen(false);
+              navigate("/settings");
+            }}
+          >
+            <Outlet />
+          </MobileWorkbenchShell>
+        </>
+      ) : (
+        <div
+          className="workbench-shell"
+          style={shellStyle}
+          data-nav-loading={navigationLoading}
+          data-left-collapsed={leftCollapsed}
+          data-right-collapsed={rightCollapsed}
+          data-info-ready={infoPanelReady}
+          data-runtime-platform={platform.platform}
+          data-os-family={platform.ui.osFamily}
+        >
+          <div className="workbench-body-shell">
+            <aside className="workbench-nav surface-card" data-collapsed={leftCollapsed}>
+              <SidebarContent
+                workspaceGroups={workspaceSidebarGroups}
+                favoriteSessions={favoriteSessions}
+                favoriteSessionIds={favoriteSessionIdSet}
+                activeWorkspaceId={currentWorkspaceId}
+                isConversationActive={activeCenterTab === "conversation"}
+                isTerminalActive={activeCenterTab === "terminals"}
+                isSearchOpen={searchModalOpen}
+                navigationLoading={navigationLoading}
+                navigationError={navigationError}
+                activeSessionId={currentSessionId}
+                onRefreshNavigation={refreshNavigation}
+                onSessionUpdated={upsertNavigationSession}
+                onNavigateConversation={goToConversationTab}
+                onNavigateTerminals={() => navigate("/terminals")}
+                onOpenSearch={() => openSearchModal()}
+                onOpenSettings={() => navigate("/settings")}
+                onSelectWorkspace={handleSelectWorkspace}
+                onToggleWorkspaceCollapse={(workspaceId) =>
+                  setCollapsedWorkspaceIds((current) => toggleStoredId(current, workspaceId))
                 }
+                onToggleFavoriteSession={(sessionId) =>
+                  setFavoriteSessionIds((current) => toggleStoredId(current, sessionId))
+                }
+                onArchiveSession={(sessionId) => commitNavigationArchiveState(sessionId, true)}
+                onUnarchiveSession={(sessionId) => commitNavigationArchiveState(sessionId, false)}
+                onToggleCollapse={() => setLeftCollapsed(true)}
               />
-            </>
-          ) : null}
+            </aside>
+            <div
+              className="workbench-side-resizer"
+              data-side="left"
+              data-collapsed={leftCollapsed}
+              role="separator"
+              aria-label={t("shell.leftResizerLabel")}
+              onMouseDown={
+                leftCollapsed
+                  ? undefined
+                  : (event) => beginResize("left", event.clientX)
+              }
+            />
 
-          <div className="workbench-main-shell">
-            {!isMobileViewport ? (
+            <div className="workbench-main-shell">
               <div className="workbench-collapsed-rail" aria-hidden={!leftCollapsed && !rightCollapsed}>
                 <div
                   className="workbench-collapsed-controls left"
@@ -4253,167 +4614,130 @@ export function WorkbenchLayout() {
                   />
                 </div>
               </div>
-            ) : null}
 
-            <Outlet />
-          </div>
+              <Outlet />
+            </div>
 
-          {!isMobileViewport ? (
-            <>
-              <div
-                className="workbench-side-resizer"
-                data-side="right"
-                data-collapsed={rightCollapsed}
-                role="separator"
-                aria-label={t("shell.rightResizerLabel")}
-                onMouseDown={
-                  rightCollapsed
-                    ? undefined
-                    : (event) => beginResize("right", event.clientX)
-                }
-              />
-              <aside className="workbench-auxiliary surface-card" data-collapsed={rightCollapsed}>
-                <WorkbenchInfoPanel
-                  panelReady={infoPanelReady}
-                  activeTab={activeInfoTab}
-                  onTabChange={(tab) => {
-                    ensureInfoPanelReady();
-                    setActiveInfoTab(tab);
-                  }}
-                  onToggleCollapse={() => setRightCollapsed(true)}
-                  currentSessionId={isDraftSession ? null : currentSessionId}
-                  activeWorkspaceId={currentWorkspaceId}
-                  navigationGroups={navigationGroups}
-                />
-              </aside>
-            </>
-          ) : null}
-        </div>
-
-        <WorkspaceSearchModal
-          open={searchModalOpen}
-          mode={searchMode}
-          keyword={searchKeyword}
-          codeWorkspaceId={searchWorkspaceId}
-          codeResults={codeSearchResults}
-          codeLoading={codeSearchLoading}
-          codeError={codeSearchError}
-          workspaceOptions={availableSearchWorkspaces}
-          sessionResults={sessionSearchResults}
-          onClose={closeSearchModal}
-          onModeChange={(mode) => {
-            setSearchMode(mode);
-            setCodeSearchError(null);
-            setCodeSearchResults([]);
-          }}
-          onKeywordChange={(value) => {
-            setSearchKeyword(value);
-            if (searchMode === "code" && !value.trim()) {
-              setCodeSearchResults([]);
-              setCodeSearchError(null);
-            }
-          }}
-          onCodeWorkspaceChange={(workspaceId) => setSearchWorkspaceId(workspaceId)}
-          onCodeSearch={() => {
-            void handleCodeSearch();
-          }}
-          onOpenSession={(sessionId) => {
-            closeSearchModal();
-            navigate(`/sessions/${sessionId}`);
-          }}
-        />
-
-        {isMobileViewport ? (
-          <>
-            {!mobileInfoOpen ? (
-              <MobileSidebarHandle
-                side="left"
-                isOpen={mobileNavOpen}
-                onToggle={() => {
-                  if (mobileNavOpen) {
-                    setMobileNavOpen(false);
-                    return;
-                  }
-
-                  setMobileInfoOpen(false);
-                  setMobileNavOpen(true);
-                }}
-              />
-            ) : null}
-            {!mobileNavOpen ? (
-              <MobileSidebarHandle
-                side="right"
-                isOpen={mobileInfoOpen}
-                onToggle={() => {
+            <div
+              className="workbench-side-resizer"
+              data-side="right"
+              data-collapsed={rightCollapsed}
+              role="separator"
+              aria-label={t("shell.rightResizerLabel")}
+              onMouseDown={
+                rightCollapsed
+                  ? undefined
+                  : (event) => beginResize("right", event.clientX)
+              }
+            />
+            <aside className="workbench-auxiliary surface-card" data-collapsed={rightCollapsed}>
+              <WorkbenchInfoPanel
+                panelReady={infoPanelReady}
+                activeTab={activeInfoTab}
+                onTabChange={(tab) => {
                   ensureInfoPanelReady();
-
-                  if (mobileInfoOpen) {
-                    setMobileInfoOpen(false);
-                    return;
-                  }
-
-                  setMobileNavOpen(false);
-                  setMobileInfoOpen(true);
+                  setActiveInfoTab(tab);
                 }}
+                onToggleCollapse={() => setRightCollapsed(true)}
+                currentSessionId={isDraftSession ? null : currentSessionId}
+                activeWorkspaceId={currentWorkspaceId}
+                navigationGroups={navigationGroups}
               />
-            ) : null}
-          </>
-        ) : null}
+            </aside>
+          </div>
+        </div>
+      )}
 
-        <MobileNavDrawer isOpen={mobileNavOpen} side="left" onClose={() => setMobileNavOpen(false)}>
-          <SidebarContent
-            workspaceGroups={workspaceSidebarGroups}
-            favoriteSessions={favoriteSessions}
-            favoriteSessionIds={favoriteSessionIdSet}
-            activeWorkspaceId={currentWorkspaceId}
-            isConversationActive={activeCenterTab === "conversation"}
-            isTerminalActive={activeCenterTab === "terminals"}
-            isSearchOpen={searchModalOpen}
-            navigationLoading={navigationLoading}
-            navigationError={navigationError}
-            activeSessionId={currentSessionId}
-            onRefreshNavigation={refreshNavigation}
-            onSessionUpdated={upsertNavigationSession}
-            onNavigateConversation={goToConversationTab}
-            onNavigateTerminals={() => {
-              setMobileNavOpen(false);
-              navigate("/terminals");
-            }}
-            onOpenSearch={() => {
-              setMobileNavOpen(false);
-              openSearchModal();
-            }}
-            onOpenSettings={() => {
-              setMobileNavOpen(false);
-              navigate("/settings");
-            }}
-            onSelectWorkspace={handleSelectWorkspace}
-            onToggleWorkspaceCollapse={(workspaceId) =>
-              setCollapsedWorkspaceIds((current) => toggleStoredId(current, workspaceId))
-            }
-            onToggleFavoriteSession={(sessionId) =>
-              setFavoriteSessionIds((current) => toggleStoredId(current, sessionId))
-            }
-            onArchiveSession={(sessionId) => commitNavigationArchiveState(sessionId, true)}
-            onUnarchiveSession={(sessionId) => commitNavigationArchiveState(sessionId, false)}
-            onClose={() => setMobileNavOpen(false)}
-          />
-        </MobileNavDrawer>
+      <WorkspaceSearchModal
+        open={searchModalOpen}
+        mode={searchMode}
+        keyword={searchKeyword}
+        codeWorkspaceId={searchWorkspaceId}
+        codeResults={codeSearchResults}
+        codeLoading={codeSearchLoading}
+        codeError={codeSearchError}
+        workspaceOptions={availableSearchWorkspaces}
+        sessionResults={sessionSearchResults}
+        onClose={closeSearchModal}
+        onModeChange={(mode) => {
+          setSearchMode(mode);
+          setCodeSearchError(null);
+          setCodeSearchResults([]);
+        }}
+        onKeywordChange={(value) => {
+          setSearchKeyword(value);
+          if (searchMode === "code" && !value.trim()) {
+            setCodeSearchResults([]);
+            setCodeSearchError(null);
+          }
+        }}
+        onCodeWorkspaceChange={(workspaceId) => setSearchWorkspaceId(workspaceId)}
+        onCodeSearch={() => {
+          void handleCodeSearch();
+        }}
+        onOpenSession={(sessionId) => {
+          closeSearchModal();
+          navigate(`/sessions/${sessionId}`);
+        }}
+      />
 
-        <MobileNavDrawer isOpen={mobileInfoOpen} side="right" onClose={() => setMobileInfoOpen(false)}>
-          <WorkbenchInfoPanel
-            panelReady={infoPanelReady}
-            activeTab={activeInfoTab}
-            onTabChange={(tab) => {
-              ensureInfoPanelReady();
-              setActiveInfoTab(tab);
-            }}
-            currentSessionId={isDraftSession ? null : currentSessionId}
-            activeWorkspaceId={currentWorkspaceId}
-            navigationGroups={navigationGroups}
-          />
-        </MobileNavDrawer>
-      </div>
+      {isMobileShell ? (
+        <>
+          <MobileNavDrawer isOpen={mobileNavOpen} side="left" onClose={() => setMobileNavOpen(false)}>
+            <SidebarContent
+              workspaceGroups={workspaceSidebarGroups}
+              favoriteSessions={favoriteSessions}
+              favoriteSessionIds={favoriteSessionIdSet}
+              activeWorkspaceId={currentWorkspaceId}
+              isConversationActive={activeCenterTab === "conversation"}
+              isTerminalActive={activeCenterTab === "terminals"}
+              isSearchOpen={searchModalOpen}
+              navigationLoading={navigationLoading}
+              navigationError={navigationError}
+              activeSessionId={currentSessionId}
+              onRefreshNavigation={refreshNavigation}
+              onSessionUpdated={upsertNavigationSession}
+              onNavigateConversation={goToConversationTab}
+              onNavigateTerminals={() => {
+                setMobileNavOpen(false);
+                navigate("/terminals");
+              }}
+              onOpenSearch={() => {
+                setMobileNavOpen(false);
+                openSearchModal();
+              }}
+              onOpenSettings={() => {
+                setMobileNavOpen(false);
+                navigate("/settings");
+              }}
+              onSelectWorkspace={handleSelectWorkspace}
+              onToggleWorkspaceCollapse={(workspaceId) =>
+                setCollapsedWorkspaceIds((current) => toggleStoredId(current, workspaceId))
+              }
+              onToggleFavoriteSession={(sessionId) =>
+                setFavoriteSessionIds((current) => toggleStoredId(current, sessionId))
+              }
+              onArchiveSession={(sessionId) => commitNavigationArchiveState(sessionId, true)}
+              onUnarchiveSession={(sessionId) => commitNavigationArchiveState(sessionId, false)}
+              onClose={() => setMobileNavOpen(false)}
+            />
+          </MobileNavDrawer>
+
+          <MobileNavDrawer isOpen={mobileInfoOpen} side="right" onClose={() => setMobileInfoOpen(false)}>
+            <WorkbenchInfoPanel
+              panelReady={infoPanelReady}
+              activeTab={activeInfoTab}
+              onTabChange={(tab) => {
+                ensureInfoPanelReady();
+                setActiveInfoTab(tab);
+              }}
+              currentSessionId={isDraftSession ? null : currentSessionId}
+              activeWorkspaceId={currentWorkspaceId}
+              navigationGroups={navigationGroups}
+            />
+          </MobileNavDrawer>
+        </>
+      ) : null}
     </WorkbenchShellContext.Provider>
   );
 }
@@ -4475,6 +4799,72 @@ export function useWorkbenchShell() {
       markNavigationSessionSeen: () => undefined
     }
   );
+}
+
+function formatWorkspaceCompositionRatio(item: WorkspaceCodeCompositionItemDto) {
+  const percent = Math.round(item.ratio * 1000) / 10;
+  return `${percent.toFixed(percent % 1 === 0 ? 0 : 1)}%`;
+}
+
+function buildWorkspaceCompositionChartItems(
+  items: WorkspaceCodeCompositionItemDto[],
+  otherLabel: string
+): WorkspaceCompositionChartItem[] {
+  const totalCount = items.reduce((sum, item) => sum + item.count, 0);
+
+  if (totalCount <= 0) {
+    return [];
+  }
+
+  const topItems = items.slice(0, WORKSPACE_COMPOSITION_CHART_MAX_ITEMS);
+  const chartItems = topItems.map((item, index) => ({
+    ...item,
+    key: item.type,
+    ratio: item.count / totalCount,
+    color: WORKSPACE_COMPOSITION_CHART_COLORS[index] ?? WORKSPACE_COMPOSITION_CHART_COLORS[0]
+  }));
+  const remainingItems = items.slice(WORKSPACE_COMPOSITION_CHART_MAX_ITEMS);
+
+  if (remainingItems.length === 0) {
+    return chartItems;
+  }
+
+  const otherCount = remainingItems.reduce((sum, item) => sum + item.count, 0);
+
+  chartItems.push({
+    key: "other",
+    type: otherLabel,
+    count: otherCount,
+    ratio: otherCount / totalCount,
+    color:
+      WORKSPACE_COMPOSITION_CHART_COLORS[WORKSPACE_COMPOSITION_CHART_MAX_ITEMS] ??
+      WORKSPACE_COMPOSITION_CHART_COLORS[WORKSPACE_COMPOSITION_CHART_COLORS.length - 1]
+  });
+
+  return chartItems;
+}
+
+function buildWorkspaceCompositionChartBackground(items: WorkspaceCompositionChartItem[]): string {
+  if (items.length === 0) {
+    return "conic-gradient(color-mix(in srgb, var(--border-primary) 78%, transparent) 0% 100%)";
+  }
+
+  let offset = 0;
+  const segments = items.map((item, index) => {
+    const start = offset;
+    const end = index === items.length - 1 ? 1 : Math.min(1, offset + item.ratio);
+
+    offset = end;
+
+    return `${item.color} ${formatWorkspaceCompositionChartPercent(start)} ${formatWorkspaceCompositionChartPercent(end)}`;
+  });
+
+  return `conic-gradient(${segments.join(", ")})`;
+}
+
+function formatWorkspaceCompositionChartPercent(value: number) {
+  const percent = Math.round(value * 1000) / 10;
+  return `${percent.toFixed(percent % 1 === 0 ? 0 : 1)}%`;
 }
 
 function buildDraftSessionPath(workspaceId: string, provider: ProviderId): string {

@@ -697,7 +697,7 @@ describe("WorkbenchLayout", () => {
 
     const conversationTab = await screen.findByRole("tab", { name: t("shell.conversationEntry") });
     const terminalTab = screen.getByRole("tab", { name: t("shell.terminalsEntry") });
-    const searchButton = screen.getByRole("button", { name: t("shell.searchEntry") });
+    const [searchButton] = screen.getAllByRole("button", { name: t("shell.searchEntry") });
 
     expect(conversationTab.className).toContain("active");
     expect(terminalTab.className).not.toContain("active");
@@ -718,7 +718,7 @@ describe("WorkbenchLayout", () => {
       expect(screen.getByTestId("current-path").textContent).toBe("/sessions/session-2");
     });
 
-    await userEvent.click(screen.getByRole("button", { name: t("shell.searchEntry") }));
+    await userEvent.click(screen.getAllByRole("button", { name: t("shell.searchEntry") })[0]);
     const reopenedDialog = await screen.findByRole("dialog", { name: t("shell.searchModalTitle") });
     await userEvent.click(within(reopenedDialog).getByRole("tab", { name: t("shell.searchModeCode") }));
 
@@ -1156,6 +1156,157 @@ describe("WorkbenchLayout", () => {
     });
   });
 
+  it("支持展开项目管理详情，并从当前列表软移除项目", async () => {
+    let currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "会话 Alpha",
+            workspaceId: "workspace-1"
+          })
+        ]
+      },
+      {
+        workspace: createWorkspace("workspace-2", "项目二"),
+        sessions: []
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      if (url.endsWith("/api/workspaces/workspace-1/management")) {
+        return createJsonResponse({
+          workspaceId: "workspace-1",
+          name: "项目一",
+          path: "C:/repo/workspace-1",
+          git: {
+            isRepository: true,
+            repoRoot: "C:/repo/workspace-1",
+            currentBranch: "main",
+            commitCount: 42,
+            remotes: [
+              {
+                name: "origin",
+                url: "https://example.com/team/workspace-1.git"
+              }
+            ],
+            error: null
+          },
+          codeComposition: {
+            scannedFileCount: 18,
+            truncated: false,
+            error: null,
+            items: [
+              {
+                type: "TypeScript",
+                count: 7,
+                ratio: 7 / 18
+              },
+              {
+                type: "Markdown",
+                count: 3,
+                ratio: 3 / 18
+              },
+              {
+                type: "JSON",
+                count: 3,
+                ratio: 3 / 18
+              },
+              {
+                type: "YAML",
+                count: 2,
+                ratio: 2 / 18
+              },
+              {
+                type: "CSS",
+                count: 2,
+                ratio: 2 / 18
+              },
+              {
+                type: "Python",
+                count: 1,
+                ratio: 1 / 18
+              }
+            ]
+          }
+        });
+      }
+
+      if (url.endsWith("/api/workspaces/workspace-1") && init?.method === "DELETE") {
+        currentSnapshot = createWorkbenchSnapshot([
+          {
+            workspace: createWorkspace("workspace-2", "项目二"),
+            sessions: []
+          }
+        ]);
+        MockWebSocket.workbenchSnapshot = currentSnapshot;
+
+        return createJsonResponse({
+          ...createWorkspace("workspace-1", "项目一"),
+          removedAt: "2026-03-26T12:00:00.000Z"
+        });
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute();
+
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.manageWorkspaceAction") }));
+
+    const managerDialog = await screen.findByRole("dialog", {
+      name: t("shell.manageWorkspaceTitle")
+    });
+
+    await userEvent.click(within(managerDialog).getByRole("button", { name: /项目一/ }));
+
+    expect((await within(managerDialog).findAllByText("C:/repo/workspace-1")).length).toBeGreaterThan(0);
+    expect(within(managerDialog).getByText("main")).toBeInTheDocument();
+    expect(
+      within(managerDialog).getByText("origin: https://example.com/team/workspace-1.git")
+    ).toBeInTheDocument();
+    expect(within(managerDialog).getByText("TypeScript")).toBeInTheDocument();
+    expect(within(managerDialog).getByText("Markdown")).toBeInTheDocument();
+    expect(within(managerDialog).getByText("JSON")).toBeInTheDocument();
+    expect(within(managerDialog).getByText("YAML")).toBeInTheDocument();
+    expect(within(managerDialog).getByText("CSS")).toBeInTheDocument();
+    expect(within(managerDialog).getByText(t("shell.manageWorkspaceCodeCompositionOther"))).toBeInTheDocument();
+    expect(within(managerDialog).queryByText("Python")).not.toBeInTheDocument();
+    expect(managerDialog.querySelector(".workbench-manage-type-chart-ring")).not.toBeNull();
+
+    await userEvent.click(
+      within(managerDialog).getByRole("button", { name: t("shell.manageWorkspaceRemoveAction") })
+    );
+
+    const confirmDialog = await screen.findByRole("dialog", {
+      name: t("shell.manageWorkspaceRemoveConfirmTitle")
+    });
+    expect(within(confirmDialog).getByText(/项目一/)).toBeInTheDocument();
+
+    await userEvent.click(
+      within(confirmDialog).getByRole("button", {
+        name: t("shell.manageWorkspaceRemoveConfirmAction")
+      })
+    );
+
+    await waitFor(() => {
+      expect(
+        within(screen.getByRole("dialog", { name: t("shell.manageWorkspaceTitle") })).queryByText("项目一")
+      ).not.toBeInTheDocument();
+    });
+
+    expect(screen.getAllByText("项目二").length).toBeGreaterThan(0);
+  });
+
   it("支持直接切换到没有会话的项目，并回到空白工作台保留该项目上下文", async () => {
     const currentSnapshot = createWorkbenchSnapshot([
       {
@@ -1326,14 +1477,53 @@ describe("WorkbenchLayout", () => {
     expect(archivedSessionIds).toEqual(new Set(Object.keys(sessionTitles)));
     expect(workbenchFetchCount).toBeGreaterThanOrEqual(1);
   });
+
+  it("移动壳不再渲染边缘手柄，主导航改走顶部可见入口", async () => {
+    MockWebSocket.workbenchSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "会话 Alpha",
+            workspaceId: "workspace-1"
+          })
+        ]
+      }
+    ]);
+
+    const view = renderWorkbenchRoute("/sessions/session-1", {
+      shellMode: "mobile"
+    });
+
+    expect(
+      await screen.findByRole("button", { name: t("shell.mobileNavigationAction") })
+    ).toBeInTheDocument();
+    expect(view.container.querySelector(".mobile-sidebar-handle")).not.toBeInTheDocument();
+    expect(screen.queryByText("会话 Alpha")).not.toBeInTheDocument();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: t("shell.mobileNavigationAction") })
+    );
+
+    expect(await screen.findByText("会话 Alpha")).toBeInTheDocument();
+    expect(view.container.querySelector(".mobile-nav-drawer.left.open")).toBeInTheDocument();
+  });
 });
 
-function renderWorkbenchRoute(initialEntry = "/sessions/session-1") {
+function renderWorkbenchRoute(
+  initialEntry = "/sessions/session-1",
+  options?: {
+    shellMode?: "desktop" | "mobile";
+  }
+) {
+  const shellMode = options?.shellMode ?? "desktop";
+
   return render(
     <ToastProvider>
       <MemoryRouter initialEntries={[initialEntry]}>
         <Routes>
-          <Route element={<WorkbenchLayout />}>
+          <Route element={<WorkbenchLayout shellMode={shellMode} />}>
             <Route index element={<CurrentLocationProbe />} />
             <Route path="/sessions/:sessionId" element={<CurrentLocationProbe />} />
           </Route>

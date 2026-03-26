@@ -772,6 +772,238 @@ a {
   font-weight: 600;
 }
 
+.android-workbench-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: var(--mobile-shell-viewport-height, 100dvh);
+  min-height: 0;
+  gap: 10px;
+  overflow: hidden;
+  padding:
+    calc(8px + env(safe-area-inset-top, 0px))
+    8px
+    calc(10px + env(safe-area-inset-bottom, 0px));
+  background:
+    radial-gradient(circle at top, color-mix(in srgb, var(--accent) 8%, transparent), transparent 36%),
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 26%, transparent), transparent 22%),
+    var(--bg-primary);
+}
+
+.android-workbench-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 24px;
+  background: color-mix(in srgb, var(--bg-surface) 98%, transparent);
+}
+
+.android-workbench-topbar-leading,
+.android-workbench-topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.android-workbench-topbar-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.android-workbench-topbar-overline {
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.android-workbench-topbar-copy h1 {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.android-workbench-topbar-copy p {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.android-workbench-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 88%, transparent);
+  background: color-mix(in srgb, var(--bg-surface) 94%, transparent);
+  color: var(--text-primary);
+  transition:
+    transform var(--transition-fast),
+    background var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.android-workbench-icon-button:hover {
+  background: var(--bg-hover);
+}
+
+.android-workbench-icon-button:active {
+  transform: scale(0.97);
+}
+
+.android-workbench-content {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.android-workbench-content > .workbench-page,
+.android-workbench-content > .conversation-page-shell,
+.android-workbench-content > .terminal-layout,
+.android-workbench-content > .settings-page {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: 24px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 88%, transparent);
+  background: color-mix(in srgb, var(--bg-surface) 98%, transparent);
+}
+
+.android-workbench-bottom-nav {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  padding: 8px 10px calc(10px + env(safe-area-inset-bottom, 0px));
+  border-radius: 26px;
+  background: color-mix(in srgb, var(--bg-surface) 97%, transparent);
+}
+
+.android-workbench-bottom-nav-item {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 8px 6px;
+  border-radius: 18px;
+  color: var(--text-secondary);
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast),
+    transform var(--transition-fast);
+}
+
+.android-workbench-bottom-nav-item[data-active="true"] {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--bg-active) 84%, transparent);
+}
+
+.android-workbench-bottom-nav-item:active {
+  transform: scale(0.98);
+}
+
+.android-workbench-bottom-nav-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.android-workbench-bottom-nav-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.android-bottom-sheet-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 140;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 0;
+  background: rgba(15, 23, 42, 0.22);
+}
+
+.android-bottom-sheet {
+  width: min(100%, 560px);
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding:
+    10px
+    18px
+    calc(18px + env(safe-area-inset-bottom, 0px));
+  border-radius: 28px 28px 0 0;
+  background: color-mix(in srgb, var(--bg-surface) 99%, transparent);
+  box-shadow: 0 -18px 42px rgba(15, 23, 42, 0.18);
+}
+
+.android-bottom-sheet-handle {
+  width: 40px;
+  height: 4px;
+  margin: 0 auto 12px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-tertiary) 55%, transparent);
+}
+
+.android-bottom-sheet-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.android-bottom-sheet-header strong {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.android-bottom-sheet-header span {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.android-bottom-sheet-action,
+.android-bottom-sheet-close {
+  display: inline-flex;
+  min-height: 52px;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 0 4px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-primary) 78%, transparent);
+  color: var(--text-primary);
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.android-bottom-sheet-close {
+  justify-content: center;
+  margin-top: 8px;
+  border-bottom: none;
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--bg-hover) 90%, transparent);
+}
+
 .workbench-side-resizer {
   width: 4px;
   flex: 0 0 4px;
