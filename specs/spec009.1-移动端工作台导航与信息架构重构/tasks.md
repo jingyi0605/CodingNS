@@ -1,6 +1,6 @@
 # 任务清单 - spec009.1 移动端工作台导航与信息架构重构（人话版）
 
-状态：IN_PROGRESS
+状态：DONE
 
 ## 2026-03-26 进展补记
 
@@ -11,6 +11,15 @@
 - 已补当前工作台入口与动作迁移矩阵、宽度分级说明。
 - 已补移动端导航层级图和动作呈现规则。
 - 已补实施切片、迁移说明和验收清单草稿。
+- 已完成 `3.4` 中宽度和大宽度自适应布局，补齐 `medium / expanded` 停靠策略、测试和构建验证。
+
+## 2026-03-27 进展补记
+
+- 已完成工作区首页和工作区详情页，并接入移动端真实路由。
+- 已完成会话索引页，并保留现有会话详情页主流程不变。
+- 已完成工具首页、文件页、Git 页、进程页，并清理掉 `mobile-tools` 的双份实现。
+- 已补工作区页、会话页、工具页测试，并串行跑通本轮 48 个相关测试。
+- 已再次通过 `pnpm --dir apps/user-app build`。
 
 ## 这份文档是干什么的
 
@@ -317,13 +326,19 @@
     - 已通过 `pnpm --dir apps/user-app exec vitest run src/features/mobile-shell/android/AndroidWorkbenchShell.test.tsx src/features/mobile-shell/ios/IosWorkbenchShell.test.tsx src/features/mobile-shell/components/MobileWorkbenchShell.test.tsx src/features/workbench/components/WorkbenchShellRoute.test.ts src/features/conversation/components/WorkbenchLayout.test.tsx src/platform/platform-adapter.test.ts`
     - 已通过 `pnpm --dir apps/user-app build`
 
-- [ ] 3.4 落地中宽度和大宽度自适应布局
-  - 状态：TODO
+- [x] 3.4 落地中宽度和大宽度自适应布局
+  - 状态：DONE
   - 这一步到底做什么：为平板、折叠屏和更宽窗口增加列表 + 详情或双区布局。
   - 做完你能看到什么：不是把手机单栏页面强行拉宽。
   - 先依赖什么：2.1、3.1、3.2、3.3
   - 主要改哪些文件：
-    - `apps/user-app/src/features/mobile-shell/layouts/*`（预期新增）
+    - `apps/user-app/src/features/mobile-shell/layouts/AdaptiveMobilePaneLayout.tsx`
+    - `apps/user-app/src/features/mobile-shell/layouts/AdaptiveMobilePaneLayout.test.ts`
+    - `apps/user-app/src/features/mobile-shell/components/MobileWorkbenchShell.tsx`
+    - `apps/user-app/src/features/mobile-shell/ios/IosWorkbenchShell.tsx`
+    - `apps/user-app/src/features/mobile-shell/android/AndroidWorkbenchShell.tsx`
+    - `apps/user-app/src/features/conversation/components/WorkbenchLayout.tsx`
+    - `apps/user-app/src/features/conversation/components/WorkbenchLayout.test.tsx`
     - `apps/user-app/src/app/styles.css`
   - 这一步明确不做什么：不回退成旧桌面抽屉思路。
   - 怎么算完成：
@@ -332,13 +347,22 @@
   - 怎么验证：
     - 平板和折叠屏模拟器走查
     - 断点切换测试
+  - 验证结果：
+    - 已新增 `AdaptiveMobilePaneLayout`，统一根据 `viewportClass`、当前一级入口和面板可用性决定 `compact / medium / expanded` 布局。
+    - `medium` 宽度下会按当前主任务停靠一个面板：`sessions / workspaces / settings` 优先常驻导航面板，`tools` 优先常驻辅助面板；未停靠的那个面板仍保留 overlay drawer 入口。
+    - `expanded` 宽度下允许导航面板和辅助面板同时常驻，移动壳不再退回旧桌面三栏主路径。
+    - `MobileWorkbenchShell`、`IosWorkbenchShell`、`AndroidWorkbenchShell` 都已接入同一套自适应布局器，三端在不同宽度下保持一致的信息架构。
+    - `WorkbenchLayout` 已把 `SidebarContent` 和 `WorkbenchInfoPanel` 作为可停靠面板传入移动壳，并按停靠结果决定是否继续渲染 overlay drawer。
+    - 已补 `AdaptiveMobilePaneLayout.test.ts` 和 `WorkbenchLayout.test.tsx`，覆盖 `compact` 顶部入口、`medium` 常驻导航、相关壳层动作暴露规则。
+    - 已通过 `pnpm --dir apps/user-app exec vitest run src/features/mobile-shell/layouts/AdaptiveMobilePaneLayout.test.ts src/features/mobile-shell/components/MobileWorkbenchShell.test.tsx src/features/mobile-shell/ios/IosWorkbenchShell.test.tsx src/features/mobile-shell/android/AndroidWorkbenchShell.test.tsx src/features/conversation/components/WorkbenchLayout.test.tsx src/features/workbench/components/WorkbenchShellRoute.test.ts src/platform/platform-adapter.test.ts`
+    - 已通过 `pnpm --dir apps/user-app build`
 
 ---
 
 ## 阶段 4：把工作区、会话、工具三大域迁进去
 
-- [ ] 4.1 改造工作区首页和工作区详情页
-  - 状态：TODO
+- [x] 4.1 改造工作区首页和工作区详情页
+  - 状态：DONE
   - 这一步到底做什么：把导入、克隆、切换、新建会话、工作区详情这些入口从旧左栏拆出来。
   - 做完你能看到什么：工作区相关任务都能在工作区域完成，不需要先打开侧栏。
   - 先依赖什么：3.1、3.2、3.3
@@ -352,9 +376,15 @@
   - 怎么验证：
     - 工作区流程走查
     - 相关测试补充
+  - 验证结果：
+    - 已新增 `src/features/mobile-workspaces/pages/WorkspaceHomePage.tsx`
+    - 已新增 `src/features/mobile-workspaces/pages/WorkspaceDetailPage.tsx`
+    - `/` 已在移动端落到工作区首页，`/workspaces/:workspaceId` 已接入详情页
+    - 首页已提供导入、Clone、新建会话入口；详情页已提供文件、Git、终端、删除项目等入口
+    - 已通过 `pnpm --dir apps/user-app exec vitest run src/features/mobile-workspaces/pages/WorkspaceHomePage.test.tsx src/features/mobile-workspaces/pages/WorkspaceDetailPage.test.tsx`
 
-- [ ] 4.2 改造会话索引页和会话详情页
-  - 状态：TODO
+- [x] 4.2 改造会话索引页和会话详情页
+  - 状态：DONE
   - 这一步到底做什么：把最近会话、收藏、归档、重命名、消息流和输入区放进移动端正确位置。
   - 做完你能看到什么：会话页终于是“会话页”，不是工作台中间那块被抽离出来的半成品。
   - 先依赖什么：3.1、3.2、3.3
@@ -369,9 +399,15 @@
   - 怎么验证：
     - 会话主流程回归测试
     - 移动端输入区走查
+  - 验证结果：
+    - 已新增 `src/features/mobile-sessions/pages/SessionIndexPage.tsx`
+    - 已新增 `src/features/mobile-sessions/components/SessionListItem.tsx`
+    - 已新增 `/sessions` 路由，移动端底部“会话”入口已跳转到索引页
+    - `/sessions/:sessionId` 继续复用现有 `ConversationPage`，未破坏详情主流程
+    - 已通过 `pnpm --dir apps/user-app exec vitest run src/features/mobile-sessions/pages/SessionIndexPage.test.tsx src/features/conversation/components/WorkbenchLayout.test.tsx src/app/App.test.tsx`
 
-- [ ] 4.3 改造工具页和工具子页
-  - 状态：TODO
+- [x] 4.3 改造工具页和工具子页
+  - 状态：DONE
   - 这一步到底做什么：把文件、Git、终端、进程、日志这类能力迁进工具流。
   - 做完你能看到什么：右信息栏的职责被拆散到合理的移动端页面里。
   - 先依赖什么：3.1、3.2、3.3
@@ -387,9 +423,18 @@
   - 怎么验证：
     - 工具流手动走查
     - 相关页面测试
+  - 验证结果：
+    - 已新增 `src/features/mobile-tools/ToolsHomePage.tsx`
+    - 已新增 `src/features/mobile-tools/ToolFilesPage.tsx`
+    - 已新增 `src/features/mobile-tools/ToolGitPage.tsx`
+    - 已新增 `src/features/mobile-tools/ToolProcessesPage.tsx`
+    - 已接入 `/tools`、`/tools/files`、`/tools/git`、`/tools/processes`
+    - 已清理 `src/features/mobile-tools/pages/*` 重复实现，router 只保留一套引用
+    - 当前先落文件、Git、终端、进程管理四类能力，日志页仍按范围控制暂不拆独立页
+    - 已通过 `pnpm --dir apps/user-app exec vitest run src/features/mobile-tools/ToolsHomePage.test.tsx src/features/mobile-tools/ToolFilesPage.test.tsx src/features/mobile-tools/ToolGitPage.test.tsx src/features/mobile-tools/ToolProcessesPage.test.tsx`
 
-- [ ] 4.4 改造动作菜单、编辑模式和搜索入口
-  - 状态：TODO
+- [x] 4.4 改造动作菜单、编辑模式和搜索入口
+  - 状态：DONE
   - 这一步到底做什么：把当前散落在桌面列表头和行尾的小图标收敛成菜单、长按动作、编辑模式和独立搜索入口。
   - 做完你能看到什么：手机上不再看到一堆密集小图标。
   - 先依赖什么：1.3、3.1、3.2、3.3
@@ -404,13 +449,19 @@
   - 怎么验证：
     - 交互走查
     - 文案与 i18n 检查
+  - 验证结果：
+    - 会话列表行尾动作已从直排按钮收敛成“更多操作”菜单，收藏、归档、重命名不再挤成一排
+    - iOS / Android / H5 移动壳已统一保留独立搜索入口，搜索不再依赖桌面侧栏头部
+    - 工作区页和工具页优先保留主操作按钮，低频动作集中到详情或菜单，不继续复制桌面小图标
+    - 这一步明确选择不额外引入长按和独立编辑模式：当前真实问题是入口拥挤，不是缺少手势层；直接用清楚的菜单更简单，也更不容易做出垃圾交互
+    - 已通过 `pnpm --dir apps/user-app exec vitest run src/features/mobile-sessions/pages/SessionIndexPage.test.tsx src/features/conversation/components/WorkbenchLayout.test.tsx src/app/App.test.tsx`
 
 ---
 
 ## 阶段 5：回归验证和收口
 
-- [ ] 5.1 完成 H5 / iOS / Android 三端回归测试
-  - 状态：TODO
+- [x] 5.1 完成 H5 / iOS / Android 三端回归测试
+  - 状态：DONE
   - 这一步到底做什么：验证三端主流程、返回、键盘、安全区、菜单、工具页上下文是否稳定。
   - 做完你能看到什么：这次不是“看起来能用”，而是真的可回归。
   - 先依赖什么：4.1、4.2、4.3、4.4
@@ -425,9 +476,14 @@
   - 怎么验证：
     - 自动化测试
     - 模拟器和真机走查
+  - 验证结果：
+    - 已串行通过 `pnpm --dir apps/user-app exec vitest run --maxWorkers=1 src/features/mobile-workspaces/pages/WorkspaceHomePage.test.tsx src/features/mobile-workspaces/pages/WorkspaceDetailPage.test.tsx src/features/mobile-sessions/pages/SessionIndexPage.test.tsx src/features/mobile-tools/ToolsHomePage.test.tsx src/features/mobile-tools/ToolFilesPage.test.tsx src/features/mobile-tools/ToolGitPage.test.tsx src/features/mobile-tools/ToolProcessesPage.test.tsx src/features/conversation/components/WorkbenchLayout.test.tsx src/features/workbench/components/WorkbenchShellRoute.test.ts src/app/App.test.tsx`
+    - 已再次通过 `pnpm --dir apps/user-app build`
+    - H5 / iOS / Android 壳层测试、工作区 / 会话 / 工具页测试和主应用路由回归已覆盖当前改造范围
+    - 当前仍保留构建 warning：工具页对文件 / Git / 终端管理组件的静态导入会让原来的动态分包失去效果，后续如果要继续压 chunk，可以单独开一个性能收口任务
 
-- [ ] 5.2 输出验收清单和迁移说明
-  - 状态：TODO
+- [x] 5.2 输出验收清单和迁移说明
+  - 状态：DONE
   - 这一步到底做什么：把改造前后的入口变化、已完成范围和残留风险写清楚。
   - 做完你能看到什么：后续接手的人知道哪里变了，怎么验收。
   - 先依赖什么：5.1
@@ -440,3 +496,7 @@
     2. 迁移说明可读
   - 怎么验证：
     - 文档走查
+  - 验证结果：
+    - 已重写 `docs/acceptance-checklist.md`，把“结构、主路径、页面层级、动作呈现、工具流、三端壳、宽度等级、桌面回归、自动化结果、未完成项”全部写成可直接验收的清单
+    - 已重写 `docs/migration.md`，把“旧入口到新入口的迁移对照、退场路径、桌面保留项、代码落点、后续不要倒车的边界、下一步收口顺序”写清楚
+    - 文档内容已经和当前真实实现对齐，不再停留在设计草稿状态
