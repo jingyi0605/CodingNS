@@ -738,7 +738,7 @@ describe("WorkbenchLayout", () => {
 
     const sessionCard = await findSessionCardByTitle("External Session");
     expect(sessionCard.querySelector(".session-state-indicator.is-running-inferred")).not.toBeNull();
-    expect(within(sessionCard).getByText(t("shell.sessionStateInferred"))).toBeInTheDocument();
+    expect(within(sessionCard).queryByText(t("shell.sessionStateInferred"))).not.toBeInTheDocument();
   });
 
   it("归档成功后即使收到旧快照，也会再拉最新导航避免会话重新冒出来", async () => {
