@@ -9,6 +9,8 @@ const { execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
+const fixNodePtyHelperScript = path.join(__dirname, 'fix-node-pty-helper-permissions.cjs');
+
 console.log('\n🔧 重新编译原生模块...\n');
 
 // 原生模块列表
@@ -42,6 +44,13 @@ nativeModules.forEach(moduleName => {
       stdio: 'inherit',
       cwd: path.join(__dirname, '..')
     });
+
+    if (moduleName === 'node-pty' && fs.existsSync(fixNodePtyHelperScript)) {
+      execSync(`node "${fixNodePtyHelperScript}"`, {
+        stdio: 'inherit',
+        cwd: path.join(__dirname, '..')
+      });
+    }
 
     console.log(`✅ ${moduleName} 重新编译成功\n`);
   } catch (error) {

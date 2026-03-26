@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import crypto from "node:crypto";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 export interface HostConfig {
   host: string;
@@ -20,10 +21,11 @@ export interface HostConfig {
 
 export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConfig {
   const homeDir = os.homedir();
+  const appRootDir = resolveAppRootDir();
   const databasePath =
     overrides.databasePath ??
     process.env.CODINGNS_DB_PATH ??
-    path.resolve(process.cwd(), "apps", "host", "data", "host", "host.sqlite");
+    path.join(appRootDir, "data", "host", "host.sqlite");
   const codexCliPath = resolveCodexCliPath(
     overrides.codexCliPath ?? process.env.CODINGNS_CODEX_COMMAND,
     homeDir
@@ -39,7 +41,7 @@ export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConf
     releaseManifestRoot:
       overrides.releaseManifestRoot ??
       process.env.CODINGNS_RELEASE_MANIFEST_ROOT ??
-      path.resolve(process.cwd(), "apps", "host", "data", "releases"),
+      path.join(appRootDir, "data", "releases"),
     accessTokenTtlSeconds:
       overrides.accessTokenTtlSeconds ??
       Number(process.env.CODINGNS_ACCESS_TOKEN_TTL ?? "31536000"),
@@ -63,6 +65,14 @@ export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConf
       process.env.CODINGNS_CLAUDE_HOOK_TOKEN ??
       resolvePersistentSecret(path.join(path.dirname(databasePath), "claude-hook-token"))
   };
+}
+
+function resolveAppRootDir(): string {
+  const configDir = path.dirname(fileURLToPath(import.meta.url));
+  const candidate = path.resolve(configDir, "..", "..");
+
+  // 构建产物位于 .build/src/config，源代码位于 src/config，统一回到应用根目录。
+  return path.basename(candidate) === ".build" ? path.dirname(candidate) : candidate;
 }
 
 function resolveCodexCliPath(configuredPath: string | undefined, homeDir: string): string {
