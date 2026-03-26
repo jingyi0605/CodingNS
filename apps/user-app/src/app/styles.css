@@ -1722,9 +1722,22 @@ a {
   border-radius: var(--radius-md);
   overflow: hidden;
   border: 1px solid var(--border-primary);
+  background: color-mix(in srgb, var(--bg-surface) 96%, transparent);
+}
+
+.text-code-block {
+  border: none;
+  border-radius: 0;
+  overflow: visible;
+  background: transparent;
+  margin: 10px 0;
 }
 
 .code-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   padding: 6px 12px;
   background: var(--bg-hover);
   font-size: 12px;
@@ -1732,11 +1745,59 @@ a {
   border-bottom: 1px solid var(--border-primary);
 }
 
+.text-code-block .code-header {
+  padding: 0 0 6px;
+  background: transparent;
+  border-bottom: none;
+}
+
+.code-header-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-transform: lowercase;
+}
+
+.code-copy-button {
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 86%, transparent);
+  border-radius: 999px;
+  padding: 4px 10px;
+  background: color-mix(in srgb, var(--bg-surface) 92%, transparent);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1.2;
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.code-copy-button:hover {
+  background: color-mix(in srgb, var(--bg-hover) 90%, var(--bg-surface));
+  border-color: color-mix(in srgb, var(--accent) 26%, var(--border-primary));
+  color: var(--text-primary);
+}
+
+.code-copy-button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 32%, transparent);
+  outline-offset: 1px;
+}
+
 .code-block pre {
   margin: 0;
   padding: 12px 16px;
   background: var(--bg-primary);
   overflow-x: auto;
+}
+
+.text-code-block pre {
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 72%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--bg-hover) 56%, transparent);
 }
 
 /* Tool Calls */

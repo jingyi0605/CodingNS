@@ -51,6 +51,22 @@ function createTextMessage(content: string): SessionMessageViewModel {
   };
 }
 
+function createAssistantTextMessage(content: string, id = "assistant-1"): SessionMessageViewModel {
+  return {
+    id,
+    sessionId: "session-1",
+    role: "assistant",
+    kind: "text",
+    content,
+    toolCall: null,
+    timestamp: "2026-03-23T10:00:00.000Z",
+    sequence: 1,
+    rawRef: `codex://raw#line=${id}`,
+    deliveryState: "sent",
+    clientRequestId: null
+  };
+}
+
 describe("MessageTimeline", () => {
   it("会把同一次工具调用和结果合并渲染", async () => {
     render(
@@ -196,6 +212,54 @@ describe("MessageTimeline", () => {
 
     expect(screen.getByRole("button", { name: /收起规则/ })).toBeInTheDocument();
     expect(screen.getByText((content) => content.includes("不要主动启动开发服务器"))).toBeInTheDocument();
+  });
+
+  it("会给代码块和 text 文本块渲染复制按钮", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: {
+        writeText
+      },
+      configurable: true
+    });
+
+    render(
+      <MessageTimeline
+        messages={[
+          createAssistantTextMessage("```ts\nconst answer = 42;\n```"),
+          createAssistantTextMessage("```text\n优化工作区切换交互并补齐文件面板项目级联动\n```", "assistant-2")
+        ]}
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+      />
+    );
+
+    const copyButtons = screen.getAllByRole("button", { name: t("conversation.copyAction") });
+    expect(copyButtons).toHaveLength(2);
+    expect(document.querySelector(".text-code-block")).not.toBeNull();
+
+    await userEvent.click(copyButtons[0]!);
+    await userEvent.click(copyButtons[1]!);
+
+    expect(writeText).toHaveBeenNthCalledWith(1, "const answer = 42;");
+    expect(writeText).toHaveBeenNthCalledWith(2, "优化工作区切换交互并补齐文件面板项目级联动");
+  });
+
+  it("不会把行内反引号内容误判成代码块", () => {
+    render(
+      <MessageTimeline
+        messages={[createAssistantTextMessage("在 `styles.css` 里，我把 `text` 类型块收紧了。")]}
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText("styles.css")).toBeInTheDocument();
+    expect(screen.getByText("text")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("conversation.copyAction") })).not.toBeInTheDocument();
+    expect(document.querySelector(".code-block")).toBeNull();
   });
 
   it("不会折叠非 codex 会话里的同类文本", () => {

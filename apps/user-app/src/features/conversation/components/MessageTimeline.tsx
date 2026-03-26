@@ -1,10 +1,11 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { isValidElement, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
+import { usePlatform } from "../../../platform/platform-provider";
 import { getSessionAttachmentBlob } from "../api/conversation-api";
 import {
   getApplyPatchDisplayName,
@@ -247,6 +248,146 @@ function getRulesMessageSummary(content: string) {
   return firstLine.replace(/^#+\s*/, "");
 }
 
+function flattenReactNodeText(node: ReactNode): string {
+  if (typeof node === "string" || typeof node === "number") {
+    return String(node);
+  }
+
+  if (Array.isArray(node)) {
+    return node.map((item) => flattenReactNodeText(item)).join("");
+  }
+
+  if (node && typeof node === "object" && "props" in node) {
+    const element = node as { props?: { children?: ReactNode } };
+    return flattenReactNodeText(element.props?.children ?? "");
+  }
+
+  return "";
+}
+
+function extractCodeBlockProps(node: ReactNode): {
+  content: string;
+  codeClassName?: string;
+  language: string | null;
+} | null {
+  const candidate = Array.isArray(node) ? node[0] : node;
+
+  if (!isValidElement(candidate)) {
+    return null;
+  }
+
+  const props = candidate.props as {
+    className?: string;
+    children?: ReactNode;
+  };
+  const codeClassName = typeof props.className === "string" ? props.className : "";
+  const match = /language-([^\s]+)/.exec(codeClassName);
+
+  return {
+    content: flattenReactNodeText(props.children).replace(/\n$/, ""),
+    codeClassName: codeClassName || undefined,
+    language: match?.[1] ?? null
+  };
+}
+
+function copyTextWithExecCommand(text: string): boolean {
+  if (typeof document === "undefined" || typeof document.execCommand !== "function") {
+    return false;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.top = "-9999px";
+  textarea.style.left = "-9999px";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+
+  try {
+    return document.execCommand("copy");
+  } catch {
+    return false;
+  } finally {
+    document.body.removeChild(textarea);
+  }
+}
+
+async function writeTextToClipboard(
+  text: string,
+  platform: ReturnType<typeof usePlatform>
+): Promise<void> {
+  if (platform.isDesktop) {
+    const desktopResult = await platform.bridge.writeClipboardText(text);
+
+    if (desktopResult.ok) {
+      return;
+    }
+  }
+
+  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // 浏览器剪贴板在部分 WebView/权限场景下会失败，继续走兼容回退。
+    }
+  }
+
+  if (copyTextWithExecCommand(text)) {
+    return;
+  }
+
+  throw new Error(t("conversation.copyContentFailed"));
+}
+
+function CopyableContentBlock({
+  language,
+  codeClassName,
+  content
+}: {
+  language: string | null;
+  codeClassName?: string;
+  content: string;
+}) {
+  const { showToast } = useToast();
+  const platform = usePlatform();
+  const normalizedLanguage = language?.trim().toLowerCase() ?? null;
+  const isTextBlock = normalizedLanguage === "text";
+  const blockLabel = normalizedLanguage || "code";
+
+  async function handleCopy() {
+    try {
+      await writeTextToClipboard(content, platform);
+      showToast({
+        title: t("conversation.copyContentSuccess"),
+        tone: "success"
+      });
+    } catch (error) {
+      showToast({
+        title: error instanceof Error ? error.message : t("conversation.copyContentFailed"),
+        tone: "error"
+      });
+    }
+  }
+
+  return (
+    <div className={`code-block${isTextBlock ? " text-code-block" : ""}`}>
+      <div className="code-header">
+        <span className="code-header-label">{blockLabel}</span>
+        <button className="code-copy-button" type="button" onClick={() => void handleCopy()}>
+          {t("conversation.copyAction")}
+        </button>
+      </div>
+      <pre className={codeClassName}>
+        <code>{content}</code>
+      </pre>
+    </div>
+  );
+}
+
 function MessageMarkdownBody({
   content,
   className
@@ -261,21 +402,23 @@ function MessageMarkdownBody({
         components={{
           // eslint-disable-next-line @typescript-eslint/no-unused-vars
           p: ({ node, ...props }) => <p {...props} />,
-          code(props) {
-            const codeClassName = typeof props.className === "string" ? props.className : "";
-            const match = /language-(\w+)/.exec(codeClassName);
+          pre(props) {
+            const blockProps = extractCodeBlockProps(props.children);
 
-            if (match) {
-              return (
-                <div className="code-block">
-                  <div className="code-header">{match[1]}</div>
-                  <pre className={codeClassName}>
-                    <code>{props.children}</code>
-                  </pre>
-                </div>
-              );
+            if (!blockProps) {
+              return <pre>{props.children}</pre>;
             }
 
+            return (
+              <CopyableContentBlock
+                language={blockProps.language}
+                codeClassName={blockProps.codeClassName}
+                content={blockProps.content}
+              />
+            );
+          },
+          code(props) {
+            const codeClassName = typeof props.className === "string" ? props.className : "";
             return (
               <code className={codeClassName || undefined}>
                 {props.children}
@@ -980,7 +1123,7 @@ function MessageItem({
         />
         {visibleContent ? (
           <div className="message-text message-content">
-            <pre>{visibleContent}</pre>
+            <CopyableContentBlock language="text" content={visibleContent} />
           </div>
         ) : null}
       </div>
