@@ -11,11 +11,11 @@ describe("GitReadService", () => {
         if (args[0] === "for-each-ref") {
           return createResult(
             [
-              "refs/heads/main\u001fmain\u001f111\u001forigin/main\u001f*",
-              "refs/heads/feature\u001ffeature\u001f333\u001forigin/feature\u001f",
-              "refs/remotes/origin/main\u001forigin/main\u001f111\u001f\u001f",
-              "refs/remotes/upstream/main\u001fupstream/main\u001f111\u001f\u001f",
-              "refs/remotes/upstream/release\u001fupstream/release\u001f222\u001f\u001f"
+              "refs/heads/main\u0000main\u0000111\u0000origin/main\u0000*",
+              "refs/heads/feature\u0000feature\u0000333\u0000origin/feature\u0000",
+              "refs/remotes/origin/main\u0000origin/main\u0000111\u0000\u0000 ",
+              "refs/remotes/upstream/main\u0000upstream/main\u0000111\u0000\u0000 ",
+              "refs/remotes/upstream/release\u0000upstream/release\u0000222\u0000\u0000 "
             ].join("\n")
           );
         }

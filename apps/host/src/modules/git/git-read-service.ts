@@ -108,14 +108,14 @@ export class GitReadService {
     const offset = parseCursor(cursor);
     const refsResult = await this.gitCommandRunner.run(repo.repoRoot, [
       "for-each-ref",
-      "--format=%(refname)%x1f%(refname:short)%x1f%(objectname)%x1f%(upstream:short)%x1f%(HEAD)",
+      "--format=%(refname)%00%(refname:short)%00%(objectname)%00%(upstream:short)%00%(HEAD)",
       "refs/heads",
       "refs/remotes"
     ]);
     const parsedRefs = refsResult.stdout
       .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean)
+      .map((line) => line.trimEnd())
+      .filter((line) => line.length > 0)
       .map((line) => parseGitRefLine(line));
     const refByShortName = new Map(parsedRefs.map((ref) => [ref.shortName, ref] as const));
     const currentRef = parsedRefs.find((ref) => ref.kind === "local" && ref.current) ?? null;
@@ -262,7 +262,7 @@ function parseHistoryItem(
 
 function parseGitRefLine(line: string): ParsedGitRef {
   const [fullName = "", shortName = "", commitHash = "", upstream = "", currentMarker = ""] =
-    line.split("\u001f");
+    line.split("\u0000");
   const remoteName =
     fullName.startsWith("refs/remotes/") && shortName.includes("/")
       ? shortName.split("/")[0] || null
