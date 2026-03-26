@@ -6,6 +6,7 @@ import {
   ClaudeCodeAdapter,
   type ContextUsageSnapshot,
   CodexAdapter,
+  OpenCodeAdapter,
   ProviderRegistry,
   SessionSyncService,
   type HistoryDirection,
@@ -23,6 +24,7 @@ import { nowIso } from "../../shared/utils/time.js";
 import type {
   SessionBinding,
   SessionChangedFileRecord,
+  SessionIndexRecord,
   SessionListItem,
   SessionStateRecord,
   SessionStatusSnapshot
@@ -68,6 +70,15 @@ interface SessionRelationDescriptor {
   subagentLabel: string | null;
 }
 
+interface PersistedSessionDescriptor {
+  session: Awaited<
+    ReturnType<SessionSyncService["discoverWorkspaceSessions"]>
+  >[number];
+  sessionId: string;
+  createdAt: string;
+  existingIndex: SessionIndexRecord | null;
+}
+
 export class SessionHistoryService {
   private readonly providerRegistry: ProviderRegistry;
   private readonly sessionSyncService: SessionSyncService;
@@ -96,7 +107,12 @@ export class SessionHistoryService {
     this.claudeCodeHomeDir = config.claudeCodeHomeDir;
     this.providerRegistry = new ProviderRegistry([
       new ClaudeCodeAdapter({ homeDir: config.claudeCodeHomeDir }),
-      new CodexAdapter({ homeDir: config.codexHomeDir })
+      new CodexAdapter({ homeDir: config.codexHomeDir }),
+      new OpenCodeAdapter({
+        baseUrl: config.opencodeBaseUrl,
+        dataDir: config.opencodeDataDir,
+        dbPath: config.opencodeDbPath
+      })
     ]);
     this.sessionSyncService = new SessionSyncService(this.providerRegistry);
     this.capabilityService = new CapabilityService(this.providerRegistry);
@@ -447,7 +463,7 @@ export class SessionHistoryService {
   async startSession(input: StartSessionInput): Promise<SessionListItem> {
     const workspace = this.getWorkspaceOrThrow(input.workspaceId);
 
-    if (input.provider === "codex" || input.provider === "claude-code") {
+    if (input.provider === "codex" || input.provider === "claude-code" || input.provider === "opencode") {
       throw new AppError({
         statusCode: 409,
         errorCode: "SESSION_START_DEFERRED",
@@ -477,6 +493,9 @@ export class SessionHistoryService {
           sessionId,
           workspaceId: workspace.id,
           provider: result.session.provider,
+          parentSessionId: result.session.parentProviderSessionId ?? null,
+          isSubagent: result.session.isSubagent ?? false,
+          subagentLabel: result.session.subagentLabel ?? null,
           title: result.session.title,
           messageCount: result.session.messageCount,
           isArchived: false,
@@ -538,6 +557,9 @@ export class SessionHistoryService {
       sessionId,
       workspaceId: binding.workspaceId,
       provider: binding.provider,
+      parentSessionId: existing?.parentSessionId ?? null,
+      isSubagent: existing?.isSubagent ?? false,
+      subagentLabel: existing?.subagentLabel ?? null,
       title: existing?.title ?? result.message.content.slice(0, 48),
       messageCount: (existing?.messageCount ?? 0) + 1,
       isArchived: existing?.isArchived ?? false,
@@ -677,6 +699,9 @@ export class SessionHistoryService {
       sessionId: input.sessionId,
       workspaceId: existing.workspaceId,
       provider: existing.provider,
+      parentSessionId: existing.parentSessionId ?? null,
+      isSubagent: existing.isSubagent ?? false,
+      subagentLabel: existing.subagentLabel ?? null,
       title: existing.title,
       messageCount: existing.messageCount,
       isArchived: nextArchivedState,
@@ -752,7 +777,7 @@ export class SessionHistoryService {
     this.sessionBindingRepository.upsert({
       sessionId,
       workspaceId,
-      provider: snapshot.provider as "claude-code" | "codex",
+      provider: snapshot.provider,
       providerSessionId: snapshot.providerSessionId,
       rawStoreRef: snapshot.rawStoreRef,
       createdAt: currentBinding?.createdAt ?? timestamp,
@@ -794,6 +819,7 @@ export class SessionHistoryService {
       discoverDurationMs = Date.now() - discoverStartedAt;
       const timestamp = nowIso();
       const discoveredSessionIds = new Map<string, string>();
+      const persistedSessions: PersistedSessionDescriptor[] = [];
 
       const persist = this.db.transaction(() => {
         for (const session of sessions) {
@@ -845,6 +871,36 @@ export class SessionHistoryService {
             buildProviderSessionKey(session.provider, session.providerSessionId),
             sessionId
           );
+          persistedSessions.push({
+            session,
+            sessionId,
+            createdAt,
+            existingIndex
+          });
+        }
+
+        const relationMap = this.buildWorkspaceSessionRelationMap(sessions, discoveredSessionIds);
+
+        for (const persistedSession of persistedSessions) {
+          const relation = relationMap.get(persistedSession.sessionId);
+
+          this.sessionIndexRepository.upsert({
+            sessionId: persistedSession.sessionId,
+            workspaceId: workspace.id,
+            provider: persistedSession.session.provider,
+            parentSessionId: relation?.parentSessionId ?? null,
+            isSubagent: relation?.isSubagent ?? false,
+            subagentLabel: relation?.subagentLabel ?? null,
+            title: persistedSession.session.title,
+            messageCount: persistedSession.session.messageCount,
+            isArchived:
+              persistedSession.session.isArchived ??
+              persistedSession.existingIndex?.isArchived ??
+              false,
+            lastMessageAt: persistedSession.session.lastMessageAt,
+            createdAt: persistedSession.createdAt,
+            updatedAt: timestamp
+          });
         }
       });
 
@@ -1042,9 +1098,9 @@ export class SessionHistoryService {
     if (!relation) {
       return {
         ...item,
-        parentSessionId: null,
-        isSubagent: false,
-        subagentLabel: null
+        parentSessionId: item.parentSessionId ?? null,
+        isSubagent: item.isSubagent ?? false,
+        subagentLabel: item.subagentLabel ?? null
       };
     }
 

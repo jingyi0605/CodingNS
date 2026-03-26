@@ -1,7 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import type { NormalizedMessage, NormalizedMessageAttachment } from "@codingns/session-sync-core";
+import type {
+  NormalizedMessage,
+  NormalizedMessageAttachment,
+  ProviderId
+} from "@codingns/session-sync-core";
 
 import type { HostConfig } from "../../config/env.js";
 import { createId } from "../../shared/utils/id.js";
@@ -208,7 +212,7 @@ export class SessionMessageAttachmentService {
   }
 
   buildProviderPrompt(
-    provider: "claude-code" | "codex",
+    provider: ProviderId,
     content: string,
     attachments: RuntimeImageAttachmentDescriptor[]
   ): string | null {

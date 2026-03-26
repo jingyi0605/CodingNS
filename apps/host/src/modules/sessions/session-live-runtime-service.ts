@@ -8,6 +8,7 @@ import {
   CodexRuntimeAdapter,
   type InRunInputMode,
   type NormalizedMessageAttachment,
+  OpenCodeRuntimeAdapter,
   ProviderRuntimeService,
   type ProviderRuntimeAdapter,
   type ProviderRuntimeRunRequest,
@@ -225,7 +226,7 @@ export class SessionLiveRuntimeService {
       input.runtimeOptions?.attachments ?? []
     );
     const providerPrompt = this.sessionMessageAttachmentService.buildProviderPrompt(
-      input.provider as "claude-code" | "codex",
+      input.provider,
       input.content,
       persistedAttachments.runtimeAttachments
     );
@@ -863,6 +864,9 @@ export class SessionLiveRuntimeService {
       sessionId,
       workspaceId: input.workspaceId,
       provider: "claude-code",
+      parentSessionId: null,
+      isSubagent: false,
+      subagentLabel: null,
       title: `Claude 会话 ${input.providerSessionId.slice(0, 8)}`,
       messageCount: 0,
       isArchived: false,
@@ -1340,7 +1344,10 @@ export class SessionLiveRuntimeService {
     this.sessionIndexRepository.upsert({
       sessionId: input.sessionId,
       workspaceId: input.workspaceId,
-      provider: input.provider as "claude-code" | "codex",
+      provider: input.provider,
+      parentSessionId: null,
+      isSubagent: false,
+      subagentLabel: null,
       title: buildSessionTitle(input.initialContent),
       messageCount: 0,
       isArchived: false,
@@ -1751,7 +1758,7 @@ function shouldStartNativeSessionOnFirstMessage(session: {
   providerSessionId: string;
   messageCount: number;
 }): "start" | "continue" {
-  if (session.provider !== "codex") {
+  if (session.provider !== "codex" && session.provider !== "opencode") {
     return "continue";
   }
 
@@ -1822,7 +1829,10 @@ function createProviderRuntimeAdapters(config: HostConfig): ProviderRuntimeAdapt
     new ClaudeRuntimeAdapter({
       homeDir: config.claudeCodeHomeDir
     }),
-    new CodexRuntimeAdapter()
+    new CodexRuntimeAdapter(),
+    new OpenCodeRuntimeAdapter({
+      baseUrl: config.opencodeBaseUrl
+    })
   ];
 }
 

@@ -168,4 +168,52 @@ describe("sqlite 启动引导", () => {
       }
     }
   });
+
+  it("可以给旧 session_indices 平滑补上子 Agent 关系列", async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-session-index-bootstrap-"));
+    tempDirs.push(tempDir);
+    const databasePath = path.join(tempDir, "host.sqlite");
+    const { default: Database } = await import("better-sqlite3");
+    const seed = new Database(databasePath);
+
+    seed.exec(`
+      CREATE TABLE workspaces (
+        id TEXT PRIMARY KEY
+      );
+
+      CREATE TABLE session_bindings (
+        session_id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        provider_session_id TEXT NOT NULL,
+        raw_store_ref TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE session_indices (
+        session_id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        title TEXT NOT NULL,
+        message_count INTEGER NOT NULL DEFAULT 0,
+        is_archived INTEGER NOT NULL DEFAULT 0 CHECK (is_archived IN (0, 1)),
+        last_message_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    `);
+    seed.close();
+
+    const client = createDatabaseClient(databasePath);
+    const columns = client.db
+      .prepare("PRAGMA table_info(session_indices)")
+      .all() as Array<{ name: string }>;
+
+    client.close();
+
+    expect(columns.map((column) => column.name)).toEqual(
+      expect.arrayContaining(["parent_session_id", "is_subagent", "subagent_label"])
+    );
+  });
 });

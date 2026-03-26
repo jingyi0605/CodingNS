@@ -18,6 +18,15 @@ export function inspectSessionActivity(
   rawStoreRef: string,
   now = Date.now()
 ): SessionActivityInspection {
+  if (isVirtualRawStoreRef(rawStoreRef)) {
+    return {
+      runningState: "idle",
+      hasPendingTools: false,
+      lastEventAt: null,
+      completedAtCandidate: null
+    };
+  }
+
   let stats: ReturnType<typeof statSync>;
   let records: Array<Record<string, unknown>>;
 
@@ -296,6 +305,20 @@ function readText(value: unknown): string {
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+}
+
+function isVirtualRawStoreRef(rawStoreRef: string): boolean {
+  const normalized = rawStoreRef.trim().toLowerCase();
+
+  if (normalized.length === 0) {
+    return true;
+  }
+
+  if (normalized.startsWith("pending://")) {
+    return true;
+  }
+
+  return normalized.includes("://");
 }
 
 interface ClaudeEnvelope {

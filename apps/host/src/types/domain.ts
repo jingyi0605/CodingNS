@@ -61,6 +61,9 @@ export interface SessionIndexRecord {
   sessionId: string;
   workspaceId: string;
   provider: ProviderId;
+  parentSessionId?: string | null;
+  isSubagent?: boolean;
+  subagentLabel?: string | null;
   title: string;
   messageCount: number;
   isArchived: boolean;

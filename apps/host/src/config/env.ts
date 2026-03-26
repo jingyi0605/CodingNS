@@ -8,6 +8,9 @@ export interface HostConfig {
   host: string;
   port: number;
   databasePath: string;
+  opencodeBaseUrl: string;
+  opencodeDataDir: string;
+  opencodeDbPath: string;
   releaseChannel: "stable" | "beta";
   releaseManifestRoot: string;
   accessTokenTtlSeconds: number;
@@ -22,10 +25,18 @@ export interface HostConfig {
 export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConfig {
   const homeDir = os.homedir();
   const appRootDir = resolveAppRootDir();
+  const opencodeDataDir =
+    overrides.opencodeDataDir ??
+    process.env.CODINGNS_OPENCODE_DATA_DIR ??
+    path.join(homeDir, ".local", "share", "opencode");
   const databasePath =
     overrides.databasePath ??
     process.env.CODINGNS_DB_PATH ??
     path.join(appRootDir, "data", "host", "host.sqlite");
+  const opencodeDbPath =
+    overrides.opencodeDbPath ??
+    process.env.CODINGNS_OPENCODE_DB_PATH ??
+    path.join(opencodeDataDir, "opencode.db");
   const codexCliPath = resolveCodexCliPath(
     overrides.codexCliPath ?? process.env.CODINGNS_CODEX_COMMAND,
     homeDir
@@ -35,6 +46,10 @@ export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConf
     host: overrides.host ?? process.env.CODINGNS_HOST ?? "0.0.0.0",
     port: overrides.port ?? Number(process.env.CODINGNS_PORT ?? "3002"),
     databasePath,
+    opencodeBaseUrl:
+      overrides.opencodeBaseUrl ?? process.env.CODINGNS_OPENCODE_BASE_URL ?? "http://127.0.0.1:4096",
+    opencodeDataDir,
+    opencodeDbPath,
     releaseChannel:
       overrides.releaseChannel ??
       ((process.env.CODINGNS_RELEASE_CHANNEL as "stable" | "beta" | undefined) ?? "stable"),

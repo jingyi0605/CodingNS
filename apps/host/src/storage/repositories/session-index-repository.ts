@@ -12,16 +12,22 @@ export class SessionIndexRepository {
            session_id,
            workspace_id,
            provider,
+           parent_session_id,
+           is_subagent,
+           subagent_label,
            title,
            message_count,
            is_archived,
            last_message_at,
            created_at,
            updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(session_id) DO UPDATE SET
            workspace_id = excluded.workspace_id,
            provider = excluded.provider,
+           parent_session_id = excluded.parent_session_id,
+           is_subagent = excluded.is_subagent,
+           subagent_label = excluded.subagent_label,
            title = excluded.title,
            message_count = excluded.message_count,
            is_archived = excluded.is_archived,
@@ -32,6 +38,9 @@ export class SessionIndexRepository {
         record.sessionId,
         record.workspaceId,
         record.provider,
+        record.parentSessionId ?? null,
+        record.isSubagent ? 1 : 0,
+        record.subagentLabel ?? null,
         record.title,
         record.messageCount,
         record.isArchived ? 1 : 0,
@@ -50,6 +59,9 @@ export class SessionIndexRepository {
            indices.provider AS provider,
            bindings.provider_session_id AS provider_session_id,
            bindings.raw_store_ref AS raw_store_ref,
+           indices.parent_session_id AS parent_session_id,
+           indices.is_subagent AS is_subagent,
+           indices.subagent_label AS subagent_label,
            indices.title AS title,
            indices.message_count AS message_count,
            indices.last_message_at AS last_message_at,
@@ -89,6 +101,9 @@ export class SessionIndexRepository {
            indices.provider AS provider,
            bindings.provider_session_id AS provider_session_id,
            bindings.raw_store_ref AS raw_store_ref,
+           indices.parent_session_id AS parent_session_id,
+           indices.is_subagent AS is_subagent,
+           indices.subagent_label AS subagent_label,
            indices.title AS title,
            indices.message_count AS message_count,
            indices.last_message_at AS last_message_at,
@@ -126,6 +141,9 @@ export class SessionIndexRepository {
            session_id AS session_id,
            workspace_id AS workspace_id,
            provider AS provider,
+           parent_session_id AS parent_session_id,
+           is_subagent AS is_subagent,
+           subagent_label AS subagent_label,
            title AS title,
            message_count AS message_count,
            is_archived AS is_archived,
@@ -157,6 +175,9 @@ interface SessionListItemRow {
   provider: SessionListItem["provider"];
   provider_session_id: string;
   raw_store_ref: string;
+  parent_session_id: string | null;
+  is_subagent: number;
+  subagent_label: string | null;
   title: string;
   message_count: number;
   last_message_at: string | null;
@@ -180,6 +201,9 @@ interface SessionIndexRecordRow {
   session_id: string;
   workspace_id: string;
   provider: SessionIndexRecord["provider"];
+  parent_session_id: string | null;
+  is_subagent: number;
+  subagent_label: string | null;
   title: string;
   message_count: number;
   is_archived: number;
@@ -210,6 +234,9 @@ function mapSessionListItemRow(row: SessionListItemRow): SessionListItem {
     provider: row.provider,
     providerSessionId: row.provider_session_id,
     rawStoreRef: row.raw_store_ref,
+    parentSessionId: row.parent_session_id,
+    isSubagent: row.is_subagent === 1,
+    subagentLabel: row.subagent_label,
     title: row.title,
     messageCount: row.message_count,
     lastMessageAt: row.last_message_at,
@@ -236,6 +263,9 @@ function mapSessionIndexRecordRow(row: SessionIndexRecordRow): SessionIndexRecor
     sessionId: row.session_id,
     workspaceId: row.workspace_id,
     provider: row.provider,
+    parentSessionId: row.parent_session_id,
+    isSubagent: row.is_subagent === 1,
+    subagentLabel: row.subagent_label,
     title: row.title,
     messageCount: row.message_count,
     isArchived: row.is_archived === 1,

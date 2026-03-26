@@ -60,7 +60,7 @@ CREATE TABLE IF NOT EXISTS commit_rule_profiles (
 CREATE TABLE IF NOT EXISTS session_bindings (
   session_id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL,
-  provider TEXT NOT NULL CHECK (provider IN ('claude-code', 'codex')),
+  provider TEXT NOT NULL,
   provider_session_id TEXT NOT NULL,
   raw_store_ref TEXT NOT NULL,
   created_at TEXT NOT NULL,
@@ -74,7 +74,10 @@ CREATE INDEX IF NOT EXISTS idx_session_bindings_workspace_id ON session_bindings
 CREATE TABLE IF NOT EXISTS session_indices (
   session_id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL,
-  provider TEXT NOT NULL CHECK (provider IN ('claude-code', 'codex')),
+  provider TEXT NOT NULL,
+  parent_session_id TEXT,
+  is_subagent INTEGER NOT NULL DEFAULT 0 CHECK (is_subagent IN (0, 1)),
+  subagent_label TEXT,
   title TEXT NOT NULL,
   message_count INTEGER NOT NULL DEFAULT 0,
   is_archived INTEGER NOT NULL DEFAULT 0 CHECK (is_archived IN (0, 1)),

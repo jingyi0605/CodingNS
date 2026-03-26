@@ -19,8 +19,10 @@ export function createDatabaseClient(databasePath: string): DatabaseClient {
 
   db.exec(schema);
   ensureWorkspaceRemovalColumn(db);
+  ensureSessionProviderSchema(db);
   ensureSessionStateSchema(db);
   ensureSessionIndexArchiveColumn(db);
+  ensureSessionRelationColumns(db);
   ensureSessionChangedFileTables(db);
   ensureTerminalInstanceProcessIdColumn(db);
   ensureTerminalRuntimeSchema(db);
@@ -43,6 +45,103 @@ function ensureWorkspaceRemovalColumn(db: Database.Database): void {
   }
 
   db.exec("ALTER TABLE workspaces ADD COLUMN removed_at TEXT");
+}
+
+function ensureSessionProviderSchema(db: Database.Database): void {
+  const bindingSql = readTableSql(db, "session_bindings");
+  const indexSql = readTableSql(db, "session_indices");
+  const requiresBindingMigration = bindingSql.includes("CHECK (provider IN ('claude-code', 'codex'))");
+  const requiresIndexMigration = indexSql.includes("CHECK (provider IN ('claude-code', 'codex'))");
+
+  if (!requiresBindingMigration && !requiresIndexMigration) {
+    return;
+  }
+
+  db.exec(`
+    PRAGMA foreign_keys = OFF;
+
+    CREATE TABLE session_bindings_next (
+      session_id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      provider_session_id TEXT NOT NULL,
+      raw_store_ref TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+      UNIQUE (provider, provider_session_id)
+    );
+
+    INSERT INTO session_bindings_next (
+      session_id,
+      workspace_id,
+      provider,
+      provider_session_id,
+      raw_store_ref,
+      created_at,
+      updated_at
+    )
+    SELECT
+      session_id,
+      workspace_id,
+      provider,
+      provider_session_id,
+      raw_store_ref,
+      created_at,
+      updated_at
+    FROM session_bindings;
+
+    CREATE TABLE session_indices_next (
+      session_id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      title TEXT NOT NULL,
+      message_count INTEGER NOT NULL DEFAULT 0,
+      is_archived INTEGER NOT NULL DEFAULT 0 CHECK (is_archived IN (0, 1)),
+      last_message_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+      FOREIGN KEY (session_id) REFERENCES session_bindings(session_id)
+    );
+
+    INSERT INTO session_indices_next (
+      session_id,
+      workspace_id,
+      provider,
+      title,
+      message_count,
+      is_archived,
+      last_message_at,
+      created_at,
+      updated_at
+    )
+    SELECT
+      session_id,
+      workspace_id,
+      provider,
+      title,
+      message_count,
+      COALESCE(is_archived, 0),
+      last_message_at,
+      created_at,
+      updated_at
+    FROM session_indices;
+
+    DROP TABLE session_indices;
+    DROP TABLE session_bindings;
+
+    ALTER TABLE session_bindings_next RENAME TO session_bindings;
+    ALTER TABLE session_indices_next RENAME TO session_indices;
+
+    CREATE INDEX IF NOT EXISTS idx_session_bindings_workspace_id
+      ON session_bindings(workspace_id);
+
+    CREATE INDEX IF NOT EXISTS idx_session_indices_workspace_id
+      ON session_indices(workspace_id);
+
+    PRAGMA foreign_keys = ON;
+  `);
 }
 
 function ensureSessionStateSchema(db: Database.Database): void {
@@ -136,6 +235,27 @@ function ensureSessionIndexArchiveColumn(db: Database.Database): void {
     ALTER TABLE session_indices
     ADD COLUMN is_archived INTEGER NOT NULL DEFAULT 0 CHECK (is_archived IN (0, 1));
   `);
+}
+
+function ensureSessionRelationColumns(db: Database.Database): void {
+  const columns = db
+    .prepare("PRAGMA table_info(session_indices)")
+    .all() as Array<{ name: string }>;
+  const columnNames = new Set(columns.map((column) => column.name));
+
+  if (!columnNames.has("parent_session_id")) {
+    db.exec("ALTER TABLE session_indices ADD COLUMN parent_session_id TEXT");
+  }
+
+  if (!columnNames.has("is_subagent")) {
+    db.exec(
+      "ALTER TABLE session_indices ADD COLUMN is_subagent INTEGER NOT NULL DEFAULT 0 CHECK (is_subagent IN (0, 1))"
+    );
+  }
+
+  if (!columnNames.has("subagent_label")) {
+    db.exec("ALTER TABLE session_indices ADD COLUMN subagent_label TEXT");
+  }
 }
 
 function ensureSessionChangedFileTables(db: Database.Database): void {
@@ -313,4 +433,18 @@ function ensureTerminalRuntimeSchema(db: Database.Database): void {
       WHERE terminal_runtime_sessions.id = terminal_instances.runtime_session_id
     );
   `);
+}
+
+function readTableSql(db: Database.Database, tableName: string): string {
+  const row = db
+    .prepare(
+      `
+        SELECT sql
+        FROM sqlite_master
+        WHERE type = 'table' AND name = ?
+      `
+    )
+    .get(tableName) as { sql?: string } | undefined;
+
+  return row?.sql ?? "";
 }
