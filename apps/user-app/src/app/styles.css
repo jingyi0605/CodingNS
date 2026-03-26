@@ -47,6 +47,16 @@
   --code-token-tag: #db2777;
   --code-token-attr: #b45309;
   --code-token-literal: #7c3aed;
+  --patch-diff-surface: #f8fafc;
+  --patch-diff-text: #1f2937;
+  --patch-diff-muted: #94a3b8;
+  --patch-diff-line-border: rgba(148, 163, 184, 0.22);
+  --patch-diff-added-bg: rgba(34, 197, 94, 0.12);
+  --patch-diff-removed-bg: rgba(239, 68, 68, 0.1);
+  --patch-diff-hunk-bg: rgba(37, 99, 235, 0.12);
+  --patch-diff-hunk-text: #1d4ed8;
+  --patch-diff-meta-bg: rgba(148, 163, 184, 0.08);
+  --patch-diff-meta-text: #475569;
   --mobile-handle-fg: rgba(136, 136, 136, 0.72);
   --mobile-handle-border: rgba(0, 0, 0, 0.08);
   --mobile-handle-surface-top: rgba(246, 246, 246, 0.96);
@@ -90,6 +100,16 @@
   --code-token-tag: #f9a8d4;
   --code-token-attr: #fcd34d;
   --code-token-literal: #c4b5fd;
+  --patch-diff-surface: #0f172a;
+  --patch-diff-text: #dbeafe;
+  --patch-diff-muted: rgba(203, 213, 225, 0.62);
+  --patch-diff-line-border: rgba(148, 163, 184, 0.16);
+  --patch-diff-added-bg: rgba(34, 197, 94, 0.12);
+  --patch-diff-removed-bg: rgba(239, 68, 68, 0.12);
+  --patch-diff-hunk-bg: rgba(59, 130, 246, 0.14);
+  --patch-diff-hunk-text: #bfdbfe;
+  --patch-diff-meta-bg: rgba(148, 163, 184, 0.08);
+  --patch-diff-meta-text: #cbd5e1;
   --mobile-handle-fg: rgba(168, 168, 168, 0.76);
   --mobile-handle-border: rgba(255, 255, 255, 0.1);
   --mobile-handle-surface-top: rgba(32, 32, 32, 0.96);
@@ -6537,9 +6557,10 @@ textarea:focus-visible {
   color: #b91c1c;
 }
 
-.apply-patch-modal-card {
-  width: min(980px, calc(100vw - 48px));
-  max-height: min(88vh, 920px);
+.workbench-modal-card.apply-patch-modal-card {
+  width: min(1480px, calc(100vw - clamp(32px, 4vw, 64px)), max(728px, 72vw));
+  max-width: calc(100vw - clamp(32px, 4vw, 64px));
+  max-height: min(90vh, 980px);
 }
 
 .apply-patch-modal-totals {
@@ -6597,12 +6618,12 @@ textarea:focus-visible {
   max-height: min(56vh, 560px);
   overflow: auto;
   overscroll-behavior: contain;
-  background: #0f172a;
-  color: #dbeafe;
+  background: var(--patch-diff-surface);
+  color: var(--patch-diff-text);
 }
 
 .apply-patch-diff-scroll {
-  min-width: 100%;
+  min-width: max(100%, 1120px);
   width: max-content;
 }
 
@@ -6616,21 +6637,21 @@ textarea:focus-visible {
 }
 
 .apply-patch-diff-line.is-added {
-  background: rgba(34, 197, 94, 0.12);
+  background: var(--patch-diff-added-bg);
 }
 
 .apply-patch-diff-line.is-removed {
-  background: rgba(239, 68, 68, 0.12);
+  background: var(--patch-diff-removed-bg);
 }
 
 .apply-patch-diff-line.is-hunk {
-  background: rgba(59, 130, 246, 0.14);
-  color: #bfdbfe;
+  background: var(--patch-diff-hunk-bg);
+  color: var(--patch-diff-hunk-text);
 }
 
 .apply-patch-diff-line.is-meta {
-  background: rgba(148, 163, 184, 0.08);
-  color: #cbd5e1;
+  background: var(--patch-diff-meta-bg);
+  color: var(--patch-diff-meta-text);
 }
 
 .apply-patch-line-number {
@@ -6638,9 +6659,9 @@ textarea:focus-visible {
   align-items: center;
   justify-content: flex-end;
   padding: 0 10px 0 6px;
-  color: rgba(203, 213, 225, 0.62);
+  color: var(--patch-diff-muted);
   user-select: none;
-  border-right: 1px solid rgba(148, 163, 184, 0.16);
+  border-right: 1px solid var(--patch-diff-line-border);
 }
 
 .apply-patch-line-content {
@@ -6668,6 +6689,7 @@ textarea:focus-visible {
 
 .apply-patch-modal {
   z-index: 2400;
+  padding: clamp(16px, 2.5vw, 32px);
 }
 
 .workbench-modal-backdrop {
