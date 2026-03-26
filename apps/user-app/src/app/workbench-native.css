@@ -2330,10 +2330,32 @@ body {
   border: none;
 }
 
+.workbench-session-main {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+}
+
+.workbench-session-card[data-selecting="true"] .workbench-session-main {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px var(--workbench-sidebar-item-padding-end) 5px 9px;
+}
+
 .workbench-session-link,
 .workbench-session-card[data-depth="1"] .workbench-session-link {
-  padding: 6px var(--workbench-sidebar-item-padding-end) 6px var(--workbench-sidebar-icon-inset);
+  padding:
+    6px
+    var(--workbench-sidebar-item-padding-end)
+    6px
+    calc(var(--workbench-sidebar-icon-inset) + var(--workbench-sidebar-icon-slot-size) + 8px);
   border-radius: 9px;
+}
+
+.workbench-session-card[data-selecting="true"] .workbench-session-link,
+.workbench-session-card[data-depth="1"][data-selecting="true"] .workbench-session-link {
+  padding: 0 var(--workbench-sidebar-item-padding-end) 0 0;
 }
 
 .workbench-session-link:hover,
@@ -2344,6 +2366,7 @@ body {
 .workbench-session-link-copy {
   min-height: 24px;
   gap: 2px;
+  padding-left: 0;
 }
 
 .session-title {
@@ -2370,6 +2393,60 @@ body {
   border: none;
   box-shadow: none;
   animation: none;
+}
+
+.workbench-session-main > .session-state-indicator,
+.workbench-session-main > .workbench-session-subagent-toggle {
+  position: absolute;
+  left: var(--workbench-sidebar-icon-inset);
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.workbench-session-subagent-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--workbench-sidebar-icon-slot-size);
+  min-width: var(--workbench-sidebar-icon-slot-size);
+  height: var(--workbench-sidebar-icon-slot-size);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #34c759;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.workbench-session-subagent-toggle .session-state-indicator,
+.workbench-session-subagent-toggle .workbench-session-subagent-toggle-icon {
+  transition:
+    opacity var(--transition-fast),
+    transform var(--transition-fast);
+}
+
+.workbench-session-subagent-toggle-icon {
+  position: absolute;
+  inset: 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transform: scale(0.72);
+}
+
+.workbench-session-subagent-toggle:hover .session-state-indicator,
+.workbench-session-subagent-toggle:focus-visible .session-state-indicator,
+.workbench-session-card[data-has-subagents="true"]:focus-within .workbench-session-subagent-toggle .session-state-indicator {
+  opacity: 0;
+  transform: scale(0.7);
+}
+
+.workbench-session-subagent-toggle:hover .workbench-session-subagent-toggle-icon,
+.workbench-session-subagent-toggle:focus-visible .workbench-session-subagent-toggle-icon,
+.workbench-session-card[data-has-subagents="true"]:focus-within .workbench-session-subagent-toggle-icon {
+  opacity: 1;
+  transform: scale(1);
 }
 
 /* 清掉 styles.css 里按状态直接画在外层元素上的旧点，否则会把缩小后的 before 盖住。 */

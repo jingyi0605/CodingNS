@@ -1,6 +1,8 @@
-import { useState } from "react";
+import { useEffect, useRef, useState, type PointerEvent } from "react";
 
 import { t } from "../../../shared/i18n";
+
+const LONG_PRESS_DELAY_MS = 420;
 
 interface WorkbenchNavigationEntry {
   readonly session: {
@@ -8,6 +10,7 @@ interface WorkbenchNavigationEntry {
     readonly title: string | null;
     readonly workspaceId: string;
     readonly provider: string;
+    readonly activityState?: string | null;
     readonly isArchived?: boolean;
   };
   readonly workspace: {
@@ -19,7 +22,11 @@ interface WorkbenchNavigationEntry {
 interface SessionListItemProps {
   readonly entry: WorkbenchNavigationEntry;
   readonly isFavorite: boolean;
+  readonly isActive?: boolean;
+  readonly depth?: 0 | 1;
+  readonly hasSubsessions?: boolean;
   readonly onActivate: (sessionId: string) => void;
+  readonly onToggleSubsessions?: () => void;
   readonly onToggleFavorite: (sessionId: string) => void;
   readonly onArchive: (sessionId: string) => Promise<void>;
   readonly onUnarchive: (sessionId: string) => Promise<void>;
@@ -29,16 +36,66 @@ interface SessionListItemProps {
 export function SessionListItem({
   entry,
   isFavorite,
+  isActive = false,
+  depth = 0,
+  hasSubsessions = false,
   onActivate,
+  onToggleSubsessions,
   onToggleFavorite,
   onArchive,
   onUnarchive,
   onRename
 }: SessionListItemProps) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const longPressTimerRef = useRef<number | null>(null);
+  const suppressNextClickRef = useRef(false);
   const { session, workspace } = entry;
   const title = session.title ?? session.sessionId;
-  const providerLabel = session.provider === "codex" ? t("conversation.providerCodex") : t("conversation.providerClaude");
+  const providerLabel =
+    session.provider === "codex"
+      ? t("conversation.providerCodex")
+      : session.provider === "opencode"
+        ? t("conversation.providerOpenCode")
+        : t("conversation.providerClaude");
+
+  useEffect(() => {
+    return () => {
+      clearLongPressTimer();
+    };
+  }, []);
+
+  function clearLongPressTimer() {
+    if (longPressTimerRef.current !== null) {
+      window.clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  }
+
+  function handlePointerDown(event: PointerEvent<HTMLButtonElement>) {
+    if (!hasSubsessions || event.pointerType === "mouse") {
+      return;
+    }
+
+    clearLongPressTimer();
+    longPressTimerRef.current = window.setTimeout(() => {
+      suppressNextClickRef.current = true;
+      onToggleSubsessions?.();
+    }, LONG_PRESS_DELAY_MS);
+  }
+
+  function handlePointerEnd() {
+    clearLongPressTimer();
+  }
+
+  function handleActivate() {
+    if (suppressNextClickRef.current) {
+      suppressNextClickRef.current = false;
+      return;
+    }
+
+    onActivate(session.sessionId);
+  }
+
   const handleRename = async () => {
     const nextTitle = window.prompt(t("shell.renameModalDescription"), title);
     if (!nextTitle) {
@@ -66,17 +123,36 @@ export function SessionListItem({
   };
 
   return (
-    <article className="session-list-item">
+    <article
+      className="session-list-item"
+      data-depth={depth}
+      data-active={isActive}
+      data-has-subsessions={hasSubsessions}
+    >
       <button
         type="button"
         className="session-list-link"
-        onClick={() => onActivate(session.sessionId)}
+        onClick={handleActivate}
+        onPointerDown={handlePointerDown}
+        onPointerUp={handlePointerEnd}
+        onPointerCancel={handlePointerEnd}
+        onPointerLeave={handlePointerEnd}
       >
-        <div className="session-list-title">{title || t("shell.searchEntry")}</div>
-        <div className="session-list-meta">
-          <span>{workspace.name}</span>
-          <span aria-hidden="true">·</span>
-          <span>{providerLabel}</span>
+        <span
+          className={resolveSessionListIndicatorClassName({
+            activityState: session.activityState ?? null,
+            isActive,
+            hasSubsessions
+          })}
+          aria-hidden="true"
+        />
+        <div className="session-list-copy">
+          <div className="session-list-title">{title || t("shell.searchEntry")}</div>
+          <div className="session-list-meta">
+            <span>{workspace.name}</span>
+            <span aria-hidden="true">·</span>
+            <span>{providerLabel}</span>
+          </div>
         </div>
       </button>
       <div className="session-list-actions">
@@ -104,4 +180,24 @@ export function SessionListItem({
       </div>
     </article>
   );
+}
+
+function resolveSessionListIndicatorClassName(input: {
+  activityState: string | null;
+  isActive: boolean;
+  hasSubsessions: boolean;
+}) {
+  if (input.hasSubsessions) {
+    if (input.activityState === "running" || input.isActive) {
+      return "session-list-indicator is-subagent-running";
+    }
+
+    return "session-list-indicator is-subagent";
+  }
+
+  if (input.activityState === "running") {
+    return "session-list-indicator is-running";
+  }
+
+  return "session-list-indicator is-idle";
 }

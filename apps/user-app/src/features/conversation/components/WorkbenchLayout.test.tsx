@@ -266,6 +266,13 @@ describe("WorkbenchLayout", () => {
     const firstView = renderWorkbenchRoute();
 
     expect(await findSessionCardByTitle("会话 Alpha")).toBeInTheDocument();
+    expect(screen.queryByText("子代理探索")).not.toBeInTheDocument();
+    expect(screen.queryByText("子代理深挖")).not.toBeInTheDocument();
+    expect(screen.queryByText(t("shell.favoriteSectionTitle"))).not.toBeInTheDocument();
+
+    const alphaCard = await findSessionCardByTitle("会话 Alpha");
+    await userEvent.click(within(alphaCard).getByRole("button", { name: t("shell.subagentExpand") }));
+
     const subagentTitle = screen.getByText("子代理探索");
     expect(subagentTitle).toBeInTheDocument();
     expect(subagentTitle.closest(".workbench-subsession-list")).not.toBeNull();
@@ -274,7 +281,6 @@ describe("WorkbenchLayout", () => {
     expect(nestedSubagentTitle).toBeInTheDocument();
     expect(nestedSubagentTitle.closest(".workbench-subsession-list")).not.toBeNull();
     expect(screen.getByText("explorer · Turing")).toBeInTheDocument();
-    expect(screen.queryByText(t("shell.favoriteSectionTitle"))).not.toBeInTheDocument();
 
     const betaCard = await findSessionCardByTitle("会话 Beta");
 
@@ -405,7 +411,7 @@ describe("WorkbenchLayout", () => {
     expect(querySessionCardsByTitle("旧标题")).toHaveLength(0);
   });
 
-  it("主会话默认只显示最近 5 个子代理，并支持按批展开", async () => {
+  it("主会话默认收起子代理，并支持展开、分页和再次收起", async () => {
     const subagentSessions = [
       {
         ...createSessionSummary({
@@ -531,6 +537,12 @@ describe("WorkbenchLayout", () => {
 
     const rootTreeScope = within(rootTreeNode!);
 
+    expect(rootTreeScope.queryByText("Subagent 1")).not.toBeInTheDocument();
+    expect(rootTreeScope.queryByText("Subagent 5")).not.toBeInTheDocument();
+    expect(rootTreeScope.queryByText("Nested Subagent 7")).not.toBeInTheDocument();
+
+    await userEvent.click(rootTreeScope.getByRole("button", { name: t("shell.subagentExpand") }));
+
     expect(rootTreeScope.getByText("Subagent 1")).toBeInTheDocument();
     expect(rootTreeScope.getByText("Subagent 2")).toBeInTheDocument();
     expect(rootTreeScope.getByText("Subagent 3")).toBeInTheDocument();
@@ -546,6 +558,11 @@ describe("WorkbenchLayout", () => {
     expect(nestedSubagent).toBeInTheDocument();
     expect(nestedSubagent.closest(".workbench-subsession-list")).not.toBeNull();
     expect(rootTreeScope.queryByRole("button", { name: t("shell.subagentExpandMore") })).not.toBeInTheDocument();
+
+    await userEvent.click(rootTreeScope.getByRole("button", { name: t("shell.subagentCollapse") }));
+
+    expect(rootTreeScope.queryByText("Subagent 1")).not.toBeInTheDocument();
+    expect(rootTreeScope.queryByText("Subagent 6")).not.toBeInTheDocument();
   });
 
   it("工作区根会话默认分段渲染，并保证当前激活会话不会被折叠掉", async () => {
@@ -629,7 +646,8 @@ describe("WorkbenchLayout", () => {
 
     await findSessionCardByTitle("Favorite Session 1");
 
-    const favoriteSection = screen.getByText(t("shell.favoriteSectionTitle")).closest(
+    const favoriteTitle = await screen.findByText(t("shell.favoriteSectionTitle"));
+    const favoriteSection = favoriteTitle.closest(
       ".workbench-section-block"
     ) as HTMLElement | null;
     expect(favoriteSection).not.toBeNull();
@@ -643,6 +661,109 @@ describe("WorkbenchLayout", () => {
 
     expect(favoriteScope.getByText("Favorite Session 25")).toBeInTheDocument();
     expect(favoriteScope.queryByRole("button", { name: t("shell.favoriteExpandMore") })).not.toBeInTheDocument();
+  });
+
+  it("收藏区里的主会话如果带子代理，也能展开查看子代理", async () => {
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "Project One"),
+        sessions: [
+          {
+            ...createSessionSummary({
+              sessionId: "favorite-root",
+              title: "Favorite Root",
+              workspaceId: "workspace-1"
+            }),
+            lastMessageAt: "2026-03-24T11:00:00.000Z",
+            updatedAt: "2026-03-24T11:00:00.000Z"
+          },
+          {
+            ...createSessionSummary({
+              sessionId: "favorite-root-sub",
+              title: "Favorite Root Subagent",
+              workspaceId: "workspace-1",
+              parentSessionId: "favorite-root",
+              isSubagent: true,
+              subagentLabel: "worker · fav"
+            }),
+            lastMessageAt: "2026-03-24T10:50:00.000Z",
+            updatedAt: "2026-03-24T10:50:00.000Z"
+          }
+        ]
+      }
+    ]);
+
+    window.localStorage.setItem("workbench.session.favorite.ids", JSON.stringify(["favorite-root"]));
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/sessions/favorite-root");
+
+    const favoriteTitle = await screen.findByText(t("shell.favoriteSectionTitle"));
+    const favoriteSection = favoriteTitle.closest(
+      ".workbench-section-block"
+    ) as HTMLElement | null;
+    expect(favoriteSection).not.toBeNull();
+
+    const favoriteScope = within(favoriteSection!);
+    await userEvent.click(favoriteScope.getByRole("button", { name: t("shell.subagentExpand") }));
+
+    expect(favoriteScope.getByText("Favorite Root Subagent")).toBeInTheDocument();
+  });
+
+  it("归档文件夹里只显示主会话，不单独列出子代理", async () => {
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "archived-root",
+            title: "归档主会话",
+            workspaceId: "workspace-1",
+            isArchived: true
+          }),
+          createSessionSummary({
+            sessionId: "archived-root-sub",
+            title: "归档子代理",
+            workspaceId: "workspace-1",
+            parentSessionId: "archived-root",
+            isSubagent: true,
+            subagentLabel: "worker · archived",
+            isArchived: true
+          })
+        ]
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/sessions/archived-root");
+
+    const archiveFolder = await screen.findByRole("button", { name: /归档会话/ });
+    await userEvent.click(archiveFolder);
+
+    const archiveDialog = await screen.findByRole("dialog", { name: t("shell.archiveModalTitle") });
+    expect(within(archiveDialog).getByText("归档主会话")).toBeInTheDocument();
+    expect(within(archiveDialog).queryByText("归档子代理")).not.toBeInTheDocument();
   });
 
   it("搜索按钮不会抢占页面焦点，并支持会话与代码搜索", async () => {

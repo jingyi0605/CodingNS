@@ -50,6 +50,21 @@
   gap: 0.75rem;
 }
 
+.session-list-tree-node {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.session-list-children {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  margin-left: 1rem;
+  padding-left: 0.85rem;
+  border-left: 1px solid color-mix(in srgb, var(--border-primary) 80%, transparent);
+}
+
 .session-section-empty {
   margin: 0;
   color: var(--text-muted);
@@ -66,8 +81,20 @@
   border: 1px solid transparent;
 }
 
+.session-list-item[data-active="true"] {
+  border-color: color-mix(in srgb, var(--accent) 22%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface-press));
+}
+
+.session-list-item[data-depth="1"] {
+  background: color-mix(in srgb, var(--surface-press) 84%, transparent);
+}
+
 .session-list-link {
   flex: 1;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.7rem;
   text-align: left;
   border: none;
   background: transparent;
@@ -83,10 +110,47 @@
   font-weight: 600;
 }
 
+.session-list-copy {
+  min-width: 0;
+  flex: 1;
+}
+
 .session-list-meta {
   margin: 0.25rem 0 0;
   font-size: 0.85rem;
   color: var(--text-muted);
+}
+
+.session-list-indicator {
+  width: 10px;
+  height: 10px;
+  margin-top: 0.35rem;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.session-list-indicator.is-idle {
+  border: 1px solid var(--border-primary);
+  background: transparent;
+}
+
+.session-list-indicator.is-running {
+  border: 2px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  border-top-color: var(--accent);
+  background: transparent;
+  animation: session-running-spin 800ms linear infinite;
+}
+
+.session-list-indicator.is-subagent {
+  background: var(--success);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 18%, transparent);
+}
+
+.session-list-indicator.is-subagent-running {
+  border: 2px solid color-mix(in srgb, var(--success) 24%, transparent);
+  border-top-color: var(--success);
+  background: transparent;
+  animation: session-running-spin 800ms linear infinite;
 }
 
 .session-list-actions {

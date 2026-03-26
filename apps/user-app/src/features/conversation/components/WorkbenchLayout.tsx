@@ -376,7 +376,21 @@ function buildSessionMeta(
   return metaParts.join(" · ") || workspace.name;
 }
 
-function sessionStateClassName(session: SessionSummaryDto) {
+function sessionStateClassName(
+  session: SessionSummaryDto,
+  options?: {
+    hasSubagents?: boolean;
+    isActive?: boolean;
+  }
+) {
+  if (options?.hasSubagents) {
+    if (session.activityState === "running" || options.isActive) {
+      return "session-state-indicator is-subagent-running";
+    }
+
+    return "session-state-indicator is-subagent";
+  }
+
   if (session.activityState === "running") {
     if (session.activitySource === "inferred") {
       return "session-state-indicator is-running-inferred";
@@ -1395,9 +1409,12 @@ function SessionCard({
   showWorkspaceName,
   depth = 0,
   showActions = true,
+  hasSubagents = false,
+  subagentListExpanded = false,
   selectionMode = false,
   selected = false,
   onToggleSelect,
+  onToggleSubagents,
   onOpen,
   onRename,
   onToggleMenu,
@@ -1415,9 +1432,12 @@ function SessionCard({
   showWorkspaceName: boolean;
   depth?: 0 | 1;
   showActions?: boolean;
+  hasSubagents?: boolean;
+  subagentListExpanded?: boolean;
   selectionMode?: boolean;
   selected?: boolean;
   onToggleSelect?: () => void;
+  onToggleSubagents?: () => void;
   onOpen: () => void;
   onRename: () => void;
   onToggleMenu: () => void;
@@ -1436,6 +1456,7 @@ function SessionCard({
       data-active={isActive}
       data-depth={depth}
       data-subagent={isSubagentSession(session)}
+      data-has-subagents={hasSubagents}
       data-selecting={selectionMode}
       data-selected={selected}
       onContextMenu={(event) => {
@@ -1447,36 +1468,64 @@ function SessionCard({
         onContextMenu();
       }}
     >
-      <button
-        type="button"
-        className={selectionMode ? "workbench-session-link is-selecting" : "workbench-session-link"}
-        data-active={isActive}
-        aria-pressed={selectionMode ? selected : undefined}
-        onClick={selectionMode ? onToggleSelect : onOpen}
-      >
+      <div className="workbench-session-main">
         {selectionMode ? (
           <span className="workbench-session-selection-indicator" data-selected={selected} aria-hidden="true">
             <SelectionMarkerIcon selected={selected} />
           </span>
-        ) : null}
-        <div className="workbench-session-link-copy">
-          <div className="session-title-row">
+        ) : hasSubagents ? (
+          <button
+            type="button"
+            className="workbench-session-subagent-toggle"
+            aria-label={subagentListExpanded ? t("shell.subagentCollapse") : t("shell.subagentExpand")}
+            title={subagentListExpanded ? t("shell.subagentCollapse") : t("shell.subagentExpand")}
+            aria-expanded={subagentListExpanded}
+            onClick={(event) => {
+              event.stopPropagation();
+              onToggleSubagents?.();
+            }}
+          >
             <span
-              className={sessionStateClassName(session)}
+              className={sessionStateClassName(session, {
+                hasSubagents: true,
+                isActive
+              })}
               data-activity-source={session.activitySource}
               aria-hidden="true"
             />
-            <span className="session-title" title={titlePresentation.fullTitle}>
-              {titlePresentation.displayTitle}
+            <span className="workbench-session-subagent-toggle-icon" aria-hidden="true">
+              {subagentListExpanded ? <CloseIcon /> : <ArrowRightIcon />}
             </span>
-            {subagentBadgeLabel ? <span className="session-subagent-badge">{subagentBadgeLabel}</span> : null}
+          </button>
+        ) : (
+          <span
+            className={sessionStateClassName(session, { isActive })}
+            data-activity-source={session.activitySource}
+            aria-hidden="true"
+          />
+        )}
+
+        <button
+          type="button"
+          className="workbench-session-link"
+          data-active={isActive}
+          aria-pressed={selectionMode ? selected : undefined}
+          onClick={selectionMode ? onToggleSelect : onOpen}
+        >
+          <div className="workbench-session-link-copy">
+            <div className="session-title-row">
+              <span className="session-title" title={titlePresentation.fullTitle}>
+                {titlePresentation.displayTitle}
+              </span>
+              {subagentBadgeLabel ? <span className="session-subagent-badge">{subagentBadgeLabel}</span> : null}
+            </div>
+            <div className="session-meta-row">
+              <span className="session-meta">{buildSessionMeta(session, workspace, showWorkspaceName)}</span>
+              <span className={`session-provider-badge ${session.provider}`}>{formatProviderLabel(session.provider)}</span>
+            </div>
           </div>
-          <div className="session-meta-row">
-            <span className="session-meta">{buildSessionMeta(session, workspace, showWorkspaceName)}</span>
-            <span className={`session-provider-badge ${session.provider}`}>{formatProviderLabel(session.provider)}</span>
-          </div>
-        </div>
-      </button>
+        </button>
+      </div>
 
       {showActions && !selectionMode ? (
         <div className="workbench-session-actions" data-open={menuOpen}>
@@ -1635,6 +1684,7 @@ function SidebarContent({
   const [visibleFavoriteCount, setVisibleFavoriteCount] = useState(FAVORITE_SESSION_PAGE_SIZE);
   const [visibleWorkspaceSessionCounts, setVisibleWorkspaceSessionCounts] = useState<Record<string, number>>({});
   const [visibleSubagentCounts, setVisibleSubagentCounts] = useState<Record<string, number>>({});
+  const [expandedSubagentRootIds, setExpandedSubagentRootIds] = useState<string[]>([]);
   const [renameTarget, setRenameTarget] = useState<NavigationSessionEntry | null>(null);
   const [renameTitleValue, setRenameTitleValue] = useState("");
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
@@ -2003,6 +2053,36 @@ function SidebarContent({
     });
   }, [activeSessionId, workspaceGroups]);
 
+  useEffect(() => {
+    if (!activeSessionId) {
+      return;
+    }
+
+    const rootSessionIdsToExpand = workspaceGroups.flatMap((group) =>
+      getVisibleSessionTreeNodes(group)
+        .filter((node) => getTreeNodeChildren(node).some((session) => session.sessionId === activeSessionId))
+        .map((node) => node.session.sessionId)
+    );
+
+    if (rootSessionIdsToExpand.length === 0) {
+      return;
+    }
+
+    setExpandedSubagentRootIds((current) => {
+      const currentSet = new Set(current);
+      let changed = false;
+
+      for (const sessionId of rootSessionIdsToExpand) {
+        if (!currentSet.has(sessionId)) {
+          currentSet.add(sessionId);
+          changed = true;
+        }
+      }
+
+      return changed ? Array.from(currentSet) : current;
+    });
+  }, [activeSessionId, workspaceGroups]);
+
   async function loadDirectoryBrowser(targetPath?: string) {
     setDirectoryBrowserLoading(true);
     setDirectoryBrowserError(null);
@@ -2095,6 +2175,10 @@ function SidebarContent({
     return visibleSubagentCounts[sessionId] ?? SUBAGENT_PAGE_SIZE;
   }
 
+  function isSubagentListExpanded(sessionId: string) {
+    return expandedSubagentRootIds.includes(sessionId);
+  }
+
   function getVisibleWorkspaceSessionCount(workspaceId: string) {
     return visibleWorkspaceSessionCounts[workspaceId] ?? ROOT_SESSION_PAGE_SIZE;
   }
@@ -2115,6 +2199,24 @@ function SidebarContent({
       ...current,
       [sessionId]: (current[sessionId] ?? SUBAGENT_PAGE_SIZE) + SUBAGENT_PAGE_SIZE
     }));
+  }
+
+  function handleToggleSubagentList(sessionId: string) {
+    setExpandedSubagentRootIds((current) =>
+      current.includes(sessionId) ? current.filter((item) => item !== sessionId) : [...current, sessionId]
+    );
+  }
+
+  function getFavoriteChildSessions(sessionId: string) {
+    for (const group of workspaceGroups) {
+      const node = getVisibleSessionTreeNodes(group).find((item) => item.session.sessionId === sessionId);
+
+      if (node) {
+        return getTreeNodeChildren(node);
+      }
+    }
+
+    return [];
   }
 
   function handleStartBatchSelection(workspaceId: string) {
@@ -2441,40 +2543,99 @@ function SidebarContent({
               <span className="workbench-section-counter">{favoriteSessions.length}</span>
             </div>
             <div className="workbench-session-list">
-              {visibleFavoriteSessions.map((item) => (
-                <SessionCard
-                  menuKey={`favorite:${item.session.sessionId}`}
-                  key={item.session.sessionId}
-                  session={item.session}
-                  workspace={item.workspace}
-                  isActive={item.session.sessionId === activeSessionId}
-                  isFavorite={favoriteSessionIds.has(item.session.sessionId)}
-                  menuOpen={openSessionMenuKey === `favorite:${item.session.sessionId}`}
-                  showWorkspaceName
-                  onOpen={() => {
-                    navigate(`/sessions/${item.session.sessionId}`);
-                    onClose?.();
-                  }}
-                  onRename={() => handleOpenRenameSession(item.session, item.workspace)}
-                  onToggleMenu={() =>
-                    setOpenSessionMenuKey((current) =>
-                      current === `favorite:${item.session.sessionId}`
-                        ? null
-                        : `favorite:${item.session.sessionId}`
-                    )
-                  }
-                  onToggleFavorite={() => handleToggleFavorite(item.session.sessionId)}
-                  onArchive={() => handleArchive(item.session.sessionId)}
-                  onCloseMenu={() => setOpenSessionMenuKey(null)}
-                  onContextMenu={
-                    platform.isDesktop
-                      ? () => {
-                          void handleSessionContextMenu(item);
-                        }
-                      : undefined
-                  }
-                />
-              ))}
+              {visibleFavoriteSessions.map((item) => {
+                const childSessions = getFavoriteChildSessions(item.session.sessionId);
+                const subagentListExpanded = isSubagentListExpanded(item.session.sessionId);
+                const visibleChildren = subagentListExpanded
+                  ? childSessions.slice(0, getVisibleSubagentCount(item.session.sessionId))
+                  : [];
+                const hasMoreSubagents = subagentListExpanded && visibleChildren.length < childSessions.length;
+
+                return (
+                  <div key={item.session.sessionId} className="workbench-session-tree-node">
+                    <SessionCard
+                      menuKey={`favorite:${item.session.sessionId}`}
+                      session={item.session}
+                      workspace={item.workspace}
+                      isActive={item.session.sessionId === activeSessionId}
+                      isFavorite={favoriteSessionIds.has(item.session.sessionId)}
+                      menuOpen={openSessionMenuKey === `favorite:${item.session.sessionId}`}
+                      showWorkspaceName
+                      hasSubagents={childSessions.length > 0}
+                      subagentListExpanded={subagentListExpanded}
+                      onToggleSubagents={() => handleToggleSubagentList(item.session.sessionId)}
+                      onOpen={() => {
+                        navigate(`/sessions/${item.session.sessionId}`);
+                        onClose?.();
+                      }}
+                      onRename={() => handleOpenRenameSession(item.session, item.workspace)}
+                      onToggleMenu={() =>
+                        setOpenSessionMenuKey((current) =>
+                          current === `favorite:${item.session.sessionId}`
+                            ? null
+                            : `favorite:${item.session.sessionId}`
+                        )
+                      }
+                      onToggleFavorite={() => handleToggleFavorite(item.session.sessionId)}
+                      onArchive={() => handleArchive(item.session.sessionId)}
+                      onCloseMenu={() => setOpenSessionMenuKey(null)}
+                      onContextMenu={
+                        platform.isDesktop
+                          ? () => {
+                              void handleSessionContextMenu(item);
+                            }
+                          : undefined
+                      }
+                    />
+                    {childSessions.length > 0 && subagentListExpanded ? (
+                      <div className="workbench-subsession-list">
+                        {visibleChildren.map((session) => (
+                          <SessionCard
+                            menuKey={`favorite:${session.sessionId}`}
+                            key={session.sessionId}
+                            session={session}
+                            workspace={item.workspace}
+                            isActive={session.sessionId === activeSessionId}
+                            isFavorite={false}
+                            menuOpen={false}
+                            showWorkspaceName
+                            depth={1}
+                            showActions={false}
+                            onOpen={() => {
+                              navigate(`/sessions/${session.sessionId}`);
+                              onClose?.();
+                            }}
+                            onRename={() => undefined}
+                            onToggleMenu={() => undefined}
+                            onToggleFavorite={() => undefined}
+                            onArchive={() => undefined}
+                            onCloseMenu={() => undefined}
+                            onContextMenu={
+                              platform.isDesktop
+                                ? () => {
+                                    void handleSessionContextMenu({
+                                      session,
+                                      workspace: item.workspace
+                                    });
+                                  }
+                                : undefined
+                            }
+                          />
+                        ))}
+                        {hasMoreSubagents ? (
+                          <button
+                            type="button"
+                            className="workbench-subsession-expand ghost-button"
+                            onClick={() => handleExpandSubagents(item.session.sessionId)}
+                          >
+                            {t("shell.subagentExpandMore")}
+                          </button>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
               {hasMoreFavoriteSessions ? (
                 <button
                   type="button"
@@ -2632,11 +2793,12 @@ function SidebarContent({
                         .slice(0, getVisibleWorkspaceSessionCount(group.workspace.id))
                         .map((node) => {
                           const childSessions = getTreeNodeChildren(node);
-                          const visibleChildren = childSessions.slice(
-                            0,
-                            getVisibleSubagentCount(node.session.sessionId)
-                          );
-                          const hasMoreSubagents = visibleChildren.length < childSessions.length;
+                          const subagentListExpanded = isSubagentListExpanded(node.session.sessionId);
+                          const visibleChildren = subagentListExpanded
+                            ? childSessions.slice(0, getVisibleSubagentCount(node.session.sessionId))
+                            : [];
+                          const hasMoreSubagents =
+                            subagentListExpanded && visibleChildren.length < childSessions.length;
 
                           return (
                             <div key={node.session.sessionId} className="workbench-session-tree-node">
@@ -2650,9 +2812,12 @@ function SidebarContent({
                                   openSessionMenuKey === `workspace:${group.workspace.id}:${node.session.sessionId}`
                                 }
                                 showWorkspaceName={false}
+                                hasSubagents={childSessions.length > 0}
+                                subagentListExpanded={subagentListExpanded}
                                 selectionMode={batchWorkspaceId === group.workspace.id}
                                 selected={selectedSessionIdSet.has(node.session.sessionId)}
                                 onToggleSelect={() => handleToggleSessionSelection(node.session.sessionId)}
+                                onToggleSubagents={() => handleToggleSubagentList(node.session.sessionId)}
                                 onOpen={() => {
                                   navigate(`/sessions/${node.session.sessionId}`);
                                   onClose?.();
@@ -2680,7 +2845,7 @@ function SidebarContent({
                                 }
                               />
 
-                              {childSessions.length > 0 ? (
+                              {childSessions.length > 0 && subagentListExpanded ? (
                                 <div className="workbench-subsession-list">
                                   {visibleChildren.map((session) => (
                                     <SessionCard
@@ -4114,7 +4279,9 @@ export function WorkbenchLayout({
       navigationGroups.map((group) => ({
         workspace: group.workspace,
         visibleSessions: group.sessions.filter((session) => !isArchivedSession(session)),
-        archivedSessions: group.sessions.filter((session) => isArchivedSession(session)),
+        archivedSessions: group.sessions.filter(
+          (session) => isArchivedSession(session) && !resolveParentSessionId(session)
+        ),
         visibleSessionTree: buildSessionTree(
           group.sessions.filter((session) => {
             if (isArchivedSession(session)) {

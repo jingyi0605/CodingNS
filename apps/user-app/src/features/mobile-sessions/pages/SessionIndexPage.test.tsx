@@ -1,7 +1,7 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SessionIndexPage } from "./SessionIndexPage";
 
@@ -25,6 +25,16 @@ const navigationGroups = [
         provider: "claude-code",
         workspaceId: "workspace-1",
         lastMessageAt: "2026-03-27T09:00:00Z"
+      },
+      {
+        sessionId: "session-2-sub",
+        title: "子代理 Beta-1",
+        provider: "codex",
+        workspaceId: "workspace-1",
+        parentSessionId: "session-2",
+        isSubagent: true,
+        subagentLabel: "worker · Beta",
+        lastMessageAt: "2026-03-27T08:30:00Z"
       }
     ]
   },
@@ -48,6 +58,7 @@ const navigationGroups = [
 const contextValue = {
   navigationGroups,
   currentWorkspaceId: "workspace-1",
+  currentSessionId: "session-1",
   favoriteSessionIds: ["session-2"],
   navigationLoading: false,
   toggleFavoriteSession: vi.fn(),
@@ -78,6 +89,10 @@ function renderPage() {
 describe("SessionIndexPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("渲染最近、收藏和当前工作区三个区块", () => {
@@ -135,5 +150,36 @@ describe("SessionIndexPage", () => {
     await user.click(renameButton);
     expect(contextValue.renameSession).toHaveBeenCalledWith("session-1", "New Title");
     promptSpy.mockRestore();
+  });
+
+  it("主会话长按后会展开和收起子会话列表", () => {
+    vi.useFakeTimers();
+    renderPage();
+
+    expect(screen.queryByText("子代理 Beta-1")).not.toBeInTheDocument();
+
+    const favoriteSection = screen.getByRole("heading", { level: 2, name: "收藏会话" }).closest("section");
+
+    if (!favoriteSection) {
+      throw new Error("未找到收藏会话区块");
+    }
+
+    const betaButton = within(favoriteSection).getByRole("button", { name: "会话 Beta 项目一 Claude" });
+
+    fireEvent.pointerDown(betaButton, { pointerType: "touch" });
+    act(() => {
+      vi.advanceTimersByTime(450);
+    });
+    fireEvent.pointerUp(betaButton, { pointerType: "touch" });
+
+    expect(within(favoriteSection).getByText("子代理 Beta-1")).toBeInTheDocument();
+
+    fireEvent.pointerDown(betaButton, { pointerType: "touch" });
+    act(() => {
+      vi.advanceTimersByTime(450);
+    });
+    fireEvent.pointerUp(betaButton, { pointerType: "touch" });
+
+    expect(within(favoriteSection).queryByText("子代理 Beta-1")).not.toBeInTheDocument();
   });
 });
