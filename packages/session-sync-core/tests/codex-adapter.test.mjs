@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { DatabaseSync } from "node:sqlite";
@@ -382,6 +382,265 @@ test("CodexAdapter 遇到和首条用户消息相同的长标题时应截断到�
 
     assert.equal(sessions.length, 1);
     assert.equal(sessions[0]?.title, longTitle.slice(0, 48));
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("CodexAdapter 会优先使用 session_meta 里的 parent_thread_id 识别子 Agent 父子关系", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-subagent-parent-"));
+  const workspacePath = "/Users/jackson/Documents/Code/CodingNS";
+  const sessionDir = join(tempDir, "sessions", "2026", "03", "27");
+  const parentThreadId = "019d2a92-b74b-7981-862f-ecf3fd4f28d1";
+  const childThreadId = "019d2b12-e5d1-7430-9b7f-35b46be47bde";
+  const parentSessionFile = join(sessionDir, `rollout-${parentThreadId}.jsonl`);
+  const childSessionFile = join(sessionDir, `rollout-${childThreadId}.jsonl`);
+
+  try {
+    mkdirSync(sessionDir, { recursive: true });
+    writeFileSync(
+      parentSessionFile,
+      [
+        JSON.stringify({
+          type: "session_meta",
+          payload: {
+            id: parentThreadId,
+            cwd: workspacePath
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-03-27T00:50:00.000Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: "请评估如果要兼容opencode到本项目，都需要考虑哪些方面？"
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(
+      childSessionFile,
+      [
+        JSON.stringify({
+          type: "session_meta",
+          payload: {
+            id: childThreadId,
+            cwd: workspacePath,
+            forked_from_id: parentThreadId,
+            source: {
+              subagent: {
+                thread_spawn: {
+                  parent_thread_id: parentThreadId,
+                  depth: 1,
+                  agent_path: "/root/spec0101_tasks_update",
+                  agent_nickname: "Wegener",
+                  agent_role: "worker"
+                }
+              }
+            },
+            agent_nickname: "Wegener",
+            agent_role: "worker",
+            agent_path: "/root/spec0101_tasks_update"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-03-27T00:55:52.000Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: "请评估如果要兼容opencode到本项目，都需要考虑哪些方面？"
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const db = new DatabaseSync(join(tempDir, "state_1.sqlite"));
+    db.exec(`
+      CREATE TABLE threads (
+        id TEXT PRIMARY KEY,
+        title TEXT,
+        cwd TEXT,
+        created_at INTEGER,
+        archived INTEGER,
+        first_user_message TEXT,
+        agent_nickname TEXT,
+        agent_role TEXT,
+        rollout_path TEXT
+      );
+    `);
+    db.prepare(
+      `INSERT INTO threads (
+         id,
+         title,
+         cwd,
+         created_at,
+         archived,
+         first_user_message,
+         agent_nickname,
+         agent_role,
+         rollout_path
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      parentThreadId,
+      "请评估如果要兼容opencode到本项目，都需要考虑哪些方面？",
+      workspacePath,
+      Math.floor(Date.parse("2026-03-27T00:50:00.000Z") / 1000),
+      0,
+      "请评估如果要兼容opencode到本项目，都需要考虑哪些方面？",
+      null,
+      null,
+      parentSessionFile
+    );
+    db.prepare(
+      `INSERT INTO threads (
+         id,
+         title,
+         cwd,
+         created_at,
+         archived,
+         first_user_message,
+         agent_nickname,
+         agent_role,
+         rollout_path
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      childThreadId,
+      "请评估如果要兼容opencode到本项目，都需要考虑哪些方面？",
+      workspacePath,
+      Math.floor(Date.parse("2026-03-27T00:55:52.000Z") / 1000),
+      0,
+      "请评估如果要兼容opencode到本项目，都需要考虑哪些方面？",
+      "Wegener",
+      "worker",
+      childSessionFile
+    );
+    db.close();
+
+    const adapter = new CodexAdapter({ homeDir: tempDir });
+    const sessions = await adapter.detectSessions(workspacePath);
+    const childSession = sessions.find((session) => session.providerSessionId === childThreadId);
+
+    assert.equal(childSession?.parentProviderSessionId, parentThreadId);
+    assert.equal(childSession?.isSubagent, true);
+    assert.equal(childSession?.subagentLabel, "worker · Wegener");
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("CodexAdapter 会纠正 knownSessions 里已经缓存错的子 Agent 关系", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-subagent-known-"));
+  const workspacePath = "/Users/jackson/Documents/Code/CodingNS";
+  const sessionDir = join(tempDir, "sessions", "2026", "03", "27");
+  const parentThreadId = "019d2a42-21a1-7f13-ac1d-1e8791959204";
+  const childThreadId = "019d2af8-19aa-77a2-8169-a1898ad42b0d";
+  const childSessionFile = join(sessionDir, `rollout-${childThreadId}.jsonl`);
+
+  try {
+    mkdirSync(sessionDir, { recursive: true });
+    writeFileSync(
+      childSessionFile,
+      [
+        JSON.stringify({
+          type: "session_meta",
+          payload: {
+            id: childThreadId,
+            cwd: workspacePath,
+            forked_from_id: parentThreadId,
+            source: {
+              subagent: {
+                thread_spawn: {
+                  parent_thread_id: parentThreadId,
+                  depth: 1,
+                  agent_path: "/root/spec0091_workspace_pages_impl",
+                  agent_nickname: "Parfit",
+                  agent_role: "worker"
+                }
+              }
+            },
+            agent_nickname: "Parfit",
+            agent_role: "worker",
+            agent_path: "/root/spec0091_workspace_pages_impl"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-03-27T00:26:36.000Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: "我希望按照IOS以及android的最佳实践风格分别对H5移动端、IOS端、android端进行改造"
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const db = new DatabaseSync(join(tempDir, "state_1.sqlite"));
+    db.exec(`
+      CREATE TABLE threads (
+        id TEXT PRIMARY KEY,
+        title TEXT,
+        cwd TEXT,
+        created_at INTEGER,
+        archived INTEGER,
+        first_user_message TEXT,
+        agent_nickname TEXT,
+        agent_role TEXT,
+        rollout_path TEXT
+      );
+    `);
+    db.prepare(
+      `INSERT INTO threads (
+         id,
+         title,
+         cwd,
+         created_at,
+         archived,
+         first_user_message,
+         agent_nickname,
+         agent_role,
+         rollout_path
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      childThreadId,
+      "我希望按照IOS以及android的最佳实践风格分别对H5移动端、IOS端、android端进行",
+      workspacePath,
+      Math.floor(Date.parse("2026-03-27T00:26:36.000Z") / 1000),
+      0,
+      "我希望按照IOS以及android的最佳实践风格分别对H5移动端、IOS端、android端进行改造",
+      "Parfit",
+      "worker",
+      childSessionFile
+    );
+    db.close();
+
+    const adapter = new CodexAdapter({ homeDir: tempDir });
+    const stats = statSync(childSessionFile);
+    const sessions = await adapter.detectSessions(workspacePath, {
+      knownSessions: [
+        {
+          provider: "codex",
+          providerSessionId: childThreadId,
+          title: "我希望按照IOS以及android的最佳实践风格分别对H5移动端、IOS端、android端进行",
+          workspacePath,
+          rawStoreRef: childSessionFile,
+          lastMessageAt: "2026-03-27T00:26:36.000Z",
+          messageCount: 1,
+          parentProviderSessionId: null,
+          isSubagent: false,
+          subagentLabel: null,
+          sourceMtimeMs: stats.mtimeMs,
+          sourceSizeBytes: stats.size
+        }
+      ]
+    });
+    const childSession = sessions.find((session) => session.providerSessionId === childThreadId);
+
+    assert.equal(childSession?.parentProviderSessionId, parentThreadId);
+    assert.equal(childSession?.isSubagent, true);
+    assert.equal(childSession?.subagentLabel, "worker · Parfit");
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }

@@ -1722,6 +1722,223 @@ describe("spec002 会话同步核心", () => {
     expect(codexSession.rawStoreRef).toBe(archivedFile);
     expect(codexSession.isArchived).toBe(true);
   });
+
+  it("Host 重启后，/api/workbench 仍然能返回 Codex 子 Agent 的父子关系", async () => {
+    const fixture = createProviderFixture();
+    activeFixtures.push(fixture);
+
+    appendFileSync(
+      fixture.codexSessionFile,
+      `\n${JSON.stringify({
+        timestamp: "2026-03-23T09:00:15.000Z",
+        type: "response_item",
+        payload: {
+          type: "function_call",
+          call_id: "call-spawn-1",
+          name: "spawn_agent",
+          arguments: {
+            message: "请只做代码库探索"
+          }
+        }
+      })}`,
+      "utf8"
+    );
+
+    const workerSessionFile = path.join(
+      fixture.codexHomeDir,
+      "sessions",
+      "2026",
+      "03",
+      "23",
+      "worker-thread-1.jsonl"
+    );
+    writeFileSync(
+      workerSessionFile,
+      [
+        JSON.stringify({
+          timestamp: "2026-03-23T09:00:16.000Z",
+          type: "session_meta",
+          payload: {
+            id: "worker-thread-1",
+            cwd: fixture.workspaceDir,
+            originator: "Codex",
+            source: "test"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-03-23T09:00:16.500Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: "请只做代码库探索"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-03-23T09:00:18.000Z",
+          type: "event_msg",
+          payload: {
+            type: "agent_message",
+            message: "我会先扫描代码结构。"
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const codexStateDbPath = path.join(fixture.codexHomeDir, "state_999.sqlite");
+    const codexStateDb = new DatabaseSync(codexStateDbPath);
+    codexStateDb.exec(`
+      CREATE TABLE threads (
+        id TEXT PRIMARY KEY,
+        title TEXT,
+        cwd TEXT,
+        created_at INTEGER,
+        archived INTEGER,
+        first_user_message TEXT,
+        agent_nickname TEXT,
+        agent_role TEXT,
+        rollout_path TEXT
+      );
+    `);
+    codexStateDb
+      .prepare(
+        `INSERT INTO threads (
+           id,
+           title,
+           cwd,
+           created_at,
+           archived,
+           first_user_message,
+           agent_nickname,
+           agent_role,
+           rollout_path
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        "codex-session-1",
+        "主会话",
+        fixture.workspaceDir,
+        Math.floor(Date.parse("2026-03-23T09:00:00.000Z") / 1000),
+        0,
+        "继续实现 spec002",
+        null,
+        null,
+        fixture.codexSessionFile
+      );
+    codexStateDb
+      .prepare(
+        `INSERT INTO threads (
+           id,
+           title,
+           cwd,
+           created_at,
+           archived,
+           first_user_message,
+           agent_nickname,
+           agent_role,
+           rollout_path
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        "worker-thread-1",
+        "代码库探索子代理",
+        fixture.workspaceDir,
+        Math.floor(Date.parse("2026-03-23T09:00:16.000Z") / 1000),
+        0,
+        "请只做代码库探索",
+        "Dewey",
+        "worker",
+        workerSessionFile
+      );
+    codexStateDb.close();
+
+    const databasePath = path.join(fixture.rootDir, "host.sqlite");
+    let firstHostClosed = false;
+    const firstHosted = createTestApp(fixture, { databasePath });
+    activeClosers.push(async () => {
+      if (!firstHostClosed) {
+        firstHostClosed = true;
+        await firstHosted.app.close();
+      }
+    });
+    await firstHosted.app.ready();
+
+    const accessToken = await bootstrapAndLogin(firstHosted);
+    const workspaceId = await importWorkspace(firstHosted, accessToken, fixture.workspaceDir);
+    const discovered = await firstHosted.app.inject({
+      method: "GET",
+      url: `/api/sessions?workspaceId=${workspaceId}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(discovered.statusCode).toBe(200);
+
+    const discoveredItems = discovered.json().items as Array<{
+      sessionId: string;
+      providerSessionId: string;
+      parentSessionId?: string | null;
+      isSubagent?: boolean;
+      subagentLabel?: string | null;
+    }>;
+    const rootSession = discoveredItems.find((item) => item.providerSessionId === "codex-session-1");
+    const workerSession = discoveredItems.find((item) => item.providerSessionId === "worker-thread-1");
+
+    expect(rootSession).toBeTruthy();
+    expect(workerSession).toMatchObject({
+      parentSessionId: rootSession?.sessionId,
+      isSubagent: true,
+      subagentLabel: "worker · Dewey"
+    });
+
+    firstHostClosed = true;
+    await firstHosted.app.close();
+
+    const secondHosted = createTestApp(fixture, { databasePath });
+    activeClosers.push(() => secondHosted.app.close());
+    await secondHosted.app.ready();
+
+    const relogin = await secondHosted.app.inject({
+      method: "POST",
+      url: "/api/auth/login",
+      payload: {
+        username: "admin",
+        password: "password123"
+      }
+    });
+    expect(relogin.statusCode).toBe(200);
+    const secondAccessToken = relogin.json().accessToken as string;
+
+    const workbench = await secondHosted.app.inject({
+      method: "GET",
+      url: "/api/workbench",
+      headers: {
+        authorization: `Bearer ${secondAccessToken}`
+      }
+    });
+    expect(workbench.statusCode).toBe(200);
+
+    const workbenchSession = workbench
+      .json()
+      .items.flatMap((item: { workspace: { id: string }; sessions: Array<Record<string, unknown>> }) =>
+        item.workspace.id === workspaceId ? item.sessions : []
+      )
+      .find(
+        (item: { providerSessionId?: string }) => item.providerSessionId === "worker-thread-1"
+      ) as
+      | {
+          parentSessionId?: string | null;
+          isSubagent?: boolean;
+          subagentLabel?: string | null;
+        }
+      | undefined;
+
+    expect(workbenchSession).toMatchObject({
+      parentSessionId: rootSession?.sessionId,
+      isSubagent: true,
+      subagentLabel: "worker · Dewey"
+    });
+  });
 });
 
 async function bootstrapAndLogin(hosted: ReturnType<typeof createTestApp>): Promise<string> {
