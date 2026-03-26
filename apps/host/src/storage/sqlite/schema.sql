@@ -39,7 +39,8 @@ CREATE TABLE IF NOT EXISTS workspaces (
   repo_root TEXT,
   favorite INTEGER NOT NULL DEFAULT 0 CHECK (favorite IN (0, 1)),
   created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  removed_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS commit_rule_profiles (

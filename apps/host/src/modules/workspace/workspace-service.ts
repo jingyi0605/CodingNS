@@ -49,8 +49,116 @@ interface GitAuthContext {
   cleanup: () => void;
 }
 
+interface WorkspaceGitRemoteSummary {
+  name: string;
+  url: string;
+}
+
+export interface WorkspaceGitSummary {
+  isRepository: boolean;
+  repoRoot: string | null;
+  currentBranch: string | null;
+  commitCount: number | null;
+  remotes: WorkspaceGitRemoteSummary[];
+  error: string | null;
+}
+
+export interface WorkspaceCodeCompositionItem {
+  type: string;
+  count: number;
+  ratio: number;
+}
+
+export interface WorkspaceCodeCompositionSummary {
+  scannedFileCount: number;
+  truncated: boolean;
+  items: WorkspaceCodeCompositionItem[];
+  error: string | null;
+}
+
+export interface WorkspaceManagementSummary {
+  workspaceId: string;
+  name: string;
+  path: string;
+  git: WorkspaceGitSummary;
+  codeComposition: WorkspaceCodeCompositionSummary;
+}
+
 const DIRECTORY_BROWSE_LIMIT = 200;
 const GIT_CLONE_TIMEOUT_MS = 120_000;
+const WORKSPACE_CODE_SCAN_LIMIT = 20_000;
+const IGNORED_COMPOSITION_DIRECTORIES = new Set([
+  ".git",
+  ".idea",
+  ".vscode",
+  ".yarn",
+  ".pnpm-store",
+  ".turbo",
+  "node_modules",
+  "dist",
+  "build",
+  "coverage",
+  ".next",
+  ".nuxt",
+  "out",
+  "target",
+  "vendor",
+  "bin",
+  "obj"
+]);
+const COMPOSITION_TYPE_BY_NAME: Record<string, string> = {
+  dockerfile: "Dockerfile",
+  makefile: "Makefile",
+  justfile: "Justfile"
+};
+const COMPOSITION_TYPE_BY_EXTENSION: Record<string, string> = {
+  ".ts": "TypeScript",
+  ".tsx": "TypeScript",
+  ".mts": "TypeScript",
+  ".cts": "TypeScript",
+  ".js": "JavaScript",
+  ".jsx": "JavaScript",
+  ".mjs": "JavaScript",
+  ".cjs": "JavaScript",
+  ".vue": "Vue",
+  ".svelte": "Svelte",
+  ".css": "CSS",
+  ".scss": "SCSS",
+  ".sass": "Sass",
+  ".less": "Less",
+  ".html": "HTML",
+  ".xml": "XML",
+  ".json": "JSON",
+  ".jsonc": "JSON",
+  ".yaml": "YAML",
+  ".yml": "YAML",
+  ".toml": "TOML",
+  ".md": "Markdown",
+  ".mdx": "Markdown",
+  ".sh": "Shell",
+  ".bash": "Shell",
+  ".zsh": "Shell",
+  ".ps1": "PowerShell",
+  ".bat": "Batch",
+  ".cmd": "Batch",
+  ".py": "Python",
+  ".go": "Go",
+  ".rs": "Rust",
+  ".java": "Java",
+  ".kt": "Kotlin",
+  ".kts": "Kotlin",
+  ".swift": "Swift",
+  ".php": "PHP",
+  ".rb": "Ruby",
+  ".sql": "SQL",
+  ".c": "C",
+  ".h": "C/C++ Header",
+  ".cc": "C++",
+  ".cpp": "C++",
+  ".cxx": "C++",
+  ".hpp": "C++ Header",
+  ".cs": "C#"
+};
 
 export class WorkspaceService {
   constructor(
@@ -141,6 +249,36 @@ export class WorkspaceService {
     return this.workspaceRepository.list();
   }
 
+  removeWorkspace(workspaceId: string): Workspace {
+    const workspace = this.getWorkspaceOrThrow(workspaceId);
+    const timestamp = nowIso();
+
+    return (
+      this.workspaceRepository.markRemoved(workspace.id, timestamp, timestamp) ?? {
+        ...workspace,
+        updatedAt: timestamp,
+        removedAt: timestamp
+      }
+    );
+  }
+
+  async getManagementSummary(workspaceId: string): Promise<WorkspaceManagementSummary> {
+    const workspace = this.getWorkspaceOrThrow(workspaceId);
+
+    const [git, codeComposition] = await Promise.all([
+      this.readGitSummary(workspace),
+      Promise.resolve(readWorkspaceCodeComposition(workspace.path))
+    ]);
+
+    return {
+      workspaceId: workspace.id,
+      name: workspace.name,
+      path: workspace.path,
+      git,
+      codeComposition
+    };
+  }
+
   getWorkspaceOrThrow(workspaceId: string): Workspace {
     const workspace = this.workspaceRepository.findById(workspaceId);
 
@@ -158,6 +296,70 @@ export class WorkspaceService {
   findWorkspaceByPath(workspacePath: string): Workspace | null {
     return this.workspaceRepository.findByPath(path.resolve(workspacePath));
   }
+
+  private async readGitSummary(workspace: Workspace): Promise<WorkspaceGitSummary> {
+    const workspacePath = path.resolve(workspace.path);
+
+    if (!fs.existsSync(workspacePath) || !fs.statSync(workspacePath).isDirectory()) {
+      return {
+        isRepository: false,
+        repoRoot: null,
+        currentBranch: null,
+        commitCount: null,
+        remotes: [],
+        error: "工作区路径不存在，Git 信息不可用"
+      };
+    }
+
+    const repoRootResult = await this.gitCommandRunner.run(workspacePath, ["rev-parse", "--show-toplevel"], {
+      allowNonZeroExit: true
+    });
+
+    if (repoRootResult.exitCode !== 0) {
+      return {
+        isRepository: false,
+        repoRoot: null,
+        currentBranch: null,
+        commitCount: null,
+        remotes: [],
+        error: "当前工作区不是 Git 仓库"
+      };
+    }
+
+    const repoRoot = repoRootResult.stdout.trim();
+
+    if (!repoRoot) {
+      return {
+        isRepository: false,
+        repoRoot: null,
+        currentBranch: null,
+        commitCount: null,
+        remotes: [],
+        error: "Git 仓库根目录解析失败"
+      };
+    }
+
+    const [branchResult, commitCountResult, remoteResult] = await Promise.all([
+      this.gitCommandRunner.run(repoRoot, ["branch", "--show-current"], {
+        allowNonZeroExit: true
+      }),
+      this.gitCommandRunner.run(repoRoot, ["rev-list", "--count", "--all"], {
+        allowNonZeroExit: true
+      }),
+      this.gitCommandRunner.run(repoRoot, ["remote", "-v"], {
+        allowNonZeroExit: true
+      })
+    ]);
+
+    return {
+      isRepository: true,
+      repoRoot,
+      currentBranch: normalizeGitOutput(branchResult.stdout),
+      commitCount: parseGitCommitCount(commitCountResult.stdout),
+      remotes: parseGitRemotes(remoteResult.stdout),
+      error: null
+    };
+  }
 }
 
 function createWorkspaceRecord(
@@ -168,7 +370,25 @@ function createWorkspaceRecord(
   const existing = workspaceRepository.findByPath(workspacePath);
 
   if (existing) {
-    return existing;
+    if (!existing.removedAt) {
+      return existing;
+    }
+
+    const timestamp = nowIso();
+
+    return (
+      workspaceRepository.restore(existing.id, {
+        name: name?.trim() || undefined,
+        repoRoot: workspacePath,
+        updatedAt: timestamp
+      }) ?? {
+        ...existing,
+        name: name?.trim() || existing.name,
+        repoRoot: workspacePath,
+        updatedAt: timestamp,
+        removedAt: null
+      }
+    );
   }
 
   const timestamp = nowIso();
@@ -180,7 +400,8 @@ function createWorkspaceRecord(
     repoRoot: workspacePath,
     favorite: false,
     createdAt: timestamp,
-    updatedAt: timestamp
+    updatedAt: timestamp,
+    removedAt: null
   });
 }
 
@@ -437,4 +658,147 @@ function resolveParentPath(currentPath: string): string | null {
   }
 
   return parentPath;
+}
+
+function readWorkspaceCodeComposition(workspacePath: string): WorkspaceCodeCompositionSummary {
+  const resolvedPath = path.resolve(workspacePath);
+
+  if (!fs.existsSync(resolvedPath) || !fs.statSync(resolvedPath).isDirectory()) {
+    return {
+      scannedFileCount: 0,
+      truncated: false,
+      items: [],
+      error: "工作区路径不存在，无法统计代码类型"
+    };
+  }
+
+  const typeCounts = new Map<string, number>();
+  const directories = [resolvedPath];
+  let scannedFileCount = 0;
+  let truncated = false;
+
+  // 这里故意只做轻量扫描，避免为了一个信息面板把大仓库整棵树扫爆。
+  while (directories.length > 0 && !truncated) {
+    const currentDirectory = directories.pop();
+
+    if (!currentDirectory) {
+      continue;
+    }
+
+    let entries: fs.Dirent[];
+
+    try {
+      entries = fs.readdirSync(currentDirectory, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      if (entry.isSymbolicLink()) {
+        continue;
+      }
+
+      const fullPath = path.join(currentDirectory, entry.name);
+
+      if (entry.isDirectory()) {
+        if (!IGNORED_COMPOSITION_DIRECTORIES.has(entry.name)) {
+          directories.push(fullPath);
+        }
+        continue;
+      }
+
+      if (!entry.isFile()) {
+        continue;
+      }
+
+      const detectedType = detectWorkspaceFileType(entry.name);
+
+      if (!detectedType) {
+        continue;
+      }
+
+      scannedFileCount += 1;
+      typeCounts.set(detectedType, (typeCounts.get(detectedType) ?? 0) + 1);
+
+      if (scannedFileCount >= WORKSPACE_CODE_SCAN_LIMIT) {
+        truncated = true;
+        break;
+      }
+    }
+  }
+
+  const items = [...typeCounts.entries()]
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .map(([type, count]) => ({
+      type,
+      count,
+      ratio: scannedFileCount > 0 ? count / scannedFileCount : 0
+    }));
+
+  return {
+    scannedFileCount,
+    truncated,
+    items,
+    error: null
+  };
+}
+
+function detectWorkspaceFileType(fileName: string): string | null {
+  const normalizedName = fileName.trim().toLowerCase();
+
+  if (!normalizedName) {
+    return null;
+  }
+
+  const directMatch = COMPOSITION_TYPE_BY_NAME[normalizedName];
+
+  if (directMatch) {
+    return directMatch;
+  }
+
+  return COMPOSITION_TYPE_BY_EXTENSION[path.extname(normalizedName)] ?? null;
+}
+
+function normalizeGitOutput(value: string): string | null {
+  const normalized = value.trim();
+  return normalized || null;
+}
+
+function parseGitCommitCount(value: string): number | null {
+  const normalized = value.trim();
+
+  if (!normalized) {
+    return null;
+  }
+
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parseGitRemotes(output: string): WorkspaceGitRemoteSummary[] {
+  const remoteMap = new Map<string, WorkspaceGitRemoteSummary>();
+
+  for (const line of output.split(/\r?\n/)) {
+    const trimmedLine = line.trim();
+
+    if (!trimmedLine) {
+      continue;
+    }
+
+    const match = /^([^\s]+)\s+([^\s]+)\s+\((fetch|push)\)$/.exec(trimmedLine);
+
+    if (!match) {
+      continue;
+    }
+
+    const [, name, url, mode] = match;
+    const existing = remoteMap.get(name);
+
+    // 远程列表通常 fetch/push 会重复两次，这里优先保留 fetch 行，避免 UI 重复。
+    if (!existing || mode === "fetch") {
+      remoteMap.set(name, { name, url });
+    }
+  }
+
+  return [...remoteMap.values()].sort((left, right) => left.name.localeCompare(right.name));
 }

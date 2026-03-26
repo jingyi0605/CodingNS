@@ -44,6 +44,7 @@ export interface Workspace {
   favorite: boolean;
   createdAt: string;
   updatedAt: string;
+  removedAt?: string | null;
 }
 
 export interface SessionBinding {

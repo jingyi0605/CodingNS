@@ -18,6 +18,7 @@ export function createDatabaseClient(databasePath: string): DatabaseClient {
   const schema = fs.readFileSync(schemaPath, "utf8");
 
   db.exec(schema);
+  ensureWorkspaceRemovalColumn(db);
   ensureSessionStateSchema(db);
   ensureSessionIndexArchiveColumn(db);
   ensureSessionChangedFileTables(db);
@@ -30,6 +31,18 @@ export function createDatabaseClient(databasePath: string): DatabaseClient {
     db,
     close: () => db.close()
   };
+}
+
+function ensureWorkspaceRemovalColumn(db: Database.Database): void {
+  const columns = db
+    .prepare("PRAGMA table_info(workspaces)")
+    .all() as Array<{ name: string }>;
+
+  if (columns.some((column) => column.name === "removed_at")) {
+    return;
+  }
+
+  db.exec("ALTER TABLE workspaces ADD COLUMN removed_at TEXT");
 }
 
 function ensureSessionStateSchema(db: Database.Database): void {

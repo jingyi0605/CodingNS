@@ -32,6 +32,10 @@ interface BrowseWorkspaceQuery {
   path?: string;
 }
 
+interface WorkspaceParams {
+  workspaceId: string;
+}
+
 export class WorkspaceController {
   constructor(private readonly workspaceService: WorkspaceService) {}
 
@@ -73,5 +77,19 @@ export class WorkspaceController {
     });
 
     reply.status(201).send(workspace);
+  };
+
+  readonly getManagementSummary = async (
+    request: FastifyRequest<{ Params: WorkspaceParams }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(await this.workspaceService.getManagementSummary(request.params.workspaceId));
+  };
+
+  readonly remove = async (
+    request: FastifyRequest<{ Params: WorkspaceParams }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(this.workspaceService.removeWorkspace(request.params.workspaceId));
   };
 }

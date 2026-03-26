@@ -85,3 +85,4 @@ apps/host/apps/host/*
 apps/host/runtime/
 UsersjacksonAndroidSdk/
 apps/user-app/src-tauri/gen/android/
+apps/host/claude-hook-token
