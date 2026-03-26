@@ -99,7 +99,23 @@ export class TmuxRuntimeAdapter implements TerminalRuntimeAdapter {
 
     return {
       command: "tmux",
-      args: ["attach-session", "-t", input.session.sessionKey],
+      args: [
+        "set-option",
+        "-t",
+        input.session.sessionKey,
+        "status",
+        "off",
+        ";",
+        "set-window-option",
+        "-t",
+        input.session.sessionKey,
+        "window-size",
+        "latest",
+        ";",
+        "attach-session",
+        "-t",
+        input.session.sessionKey
+      ],
       cwd: input.terminal.cwd,
       env: input.env
     };

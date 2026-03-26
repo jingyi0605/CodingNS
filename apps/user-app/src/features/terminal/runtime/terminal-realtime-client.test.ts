@@ -142,4 +142,71 @@ describe("terminal realtime client", () => {
     expect(onBackfill).not.toHaveBeenCalled();
     expect(onUnauthorized).not.toHaveBeenCalled();
   });
+
+  it("会在 subscribed 之后再发送缓冲的输入和尺寸", () => {
+    const onStatus = vi.fn();
+    const onError = vi.fn();
+    const onOutput = vi.fn();
+    const onBackfill = vi.fn();
+    const onSubscribed = vi.fn();
+    const onUnauthorized = vi.fn();
+    const onConnectionChange = vi.fn();
+
+    const client = new TerminalRealtimeClient({
+      terminalId: "terminal-1",
+      lastCursor: null,
+      onConnectionChange,
+      onSubscribed,
+      onBackfill,
+      onOutput,
+      onStatus,
+      onError,
+      onUnauthorized
+    });
+
+    client.start();
+
+    const socket = MockWebSocket.instances[0];
+
+    if (!socket) {
+      throw new Error("WebSocket 未创建");
+    }
+
+    socket.emit("open");
+    client.sendInput("ls");
+    client.sendCurrentDimensions(132, 40);
+
+    expect(socket.sentMessages).toEqual([
+      JSON.stringify({
+        type: "terminal.subscribe",
+        terminalId: "terminal-1",
+        lastCursor: null
+      })
+    ]);
+
+    socket.emit("message", {
+      data: JSON.stringify({ type: "terminal.subscribed", terminalId: "terminal-1" })
+    });
+
+    expect(socket.sentMessages).toEqual([
+      JSON.stringify({
+        type: "terminal.subscribe",
+        terminalId: "terminal-1",
+        lastCursor: null
+      }),
+      JSON.stringify({
+        type: "terminal.resize",
+        terminalId: "terminal-1",
+        cols: 132,
+        rows: 40
+      }),
+      JSON.stringify({
+        type: "terminal.input",
+        terminalId: "terminal-1",
+        content: "ls"
+      })
+    ]);
+    expect(onSubscribed).toHaveBeenCalledTimes(1);
+    expect(onError).not.toHaveBeenCalled();
+  });
 });

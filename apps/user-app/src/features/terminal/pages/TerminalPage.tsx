@@ -841,141 +841,143 @@ export function TerminalPage() {
             </div>
 
             <div className="terminal-tabbar-inline-actions">
-              <div
-                ref={toolbarRef}
-                className="terminal-toolbar-inline"
-                data-open={toolbarOpen}
-                aria-hidden={!toolbarOpen}
-              >
-                <div className="terminal-toolbar-cluster">
-                  <div className="terminal-toolbar-section">
-                    <span className="terminal-toolbar-label">{t("terminal.runtimeField")}</span>
-                    <select
-                      className="terminal-runtime-select"
-                      value={selectedRuntimeType}
-                      aria-label={t("terminal.runtimeField")}
-                      title={
-                        runtimeOptions.find((option) => option.value === selectedRuntimeType)
-                          ?.description
-                      }
-                      onChange={(event) => {
-                        setSelectedRuntimeType(event.target.value as SelectableTerminalRuntimeType);
+              <div className="terminal-toolbar-anchor">
+                <div
+                  ref={toolbarRef}
+                  className="terminal-toolbar-inline"
+                  data-open={toolbarOpen}
+                  aria-hidden={!toolbarOpen}
+                >
+                  <div className="terminal-toolbar-cluster">
+                    <div className="terminal-toolbar-section">
+                      <span className="terminal-toolbar-label">{t("terminal.runtimeField")}</span>
+                      <select
+                        className="terminal-runtime-select"
+                        value={selectedRuntimeType}
+                        aria-label={t("terminal.runtimeField")}
+                        title={
+                          runtimeOptions.find((option) => option.value === selectedRuntimeType)
+                            ?.description
+                        }
+                        onChange={(event) => {
+                          setSelectedRuntimeType(event.target.value as SelectableTerminalRuntimeType);
+                        }}
+                      >
+                        {runtimeOptions.map((option) => (
+                          <option key={option.value || "auto"} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="terminal-toolbar-section">
+                      <span className="terminal-toolbar-label">{t("terminal.zoomLabel")}</span>
+                      <div className="terminal-zoom-group" aria-label={t("terminal.zoomLabel")}>
+                        <button
+                          type="button"
+                          className="terminal-zoom-button"
+                          aria-label={t("terminal.zoomOutAction")}
+                          onClick={() => {
+                            updateZoomScale(zoomScale - TERMINAL_ZOOM_STEP);
+                          }}
+                        >
+                          -
+                        </button>
+                        <button
+                          type="button"
+                          className="terminal-zoom-value"
+                          aria-label={t("terminal.zoomResetAction")}
+                          onClick={() => {
+                            updateZoomScale(1);
+                          }}
+                        >
+                          {formatZoomPercent(zoomScale)}
+                        </button>
+                        <button
+                          type="button"
+                          className="terminal-zoom-button"
+                          aria-label={t("terminal.zoomInAction")}
+                          onClick={() => {
+                            updateZoomScale(zoomScale + TERMINAL_ZOOM_STEP);
+                          }}
+                        >
+                          +
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="terminal-toolbar-section">
+                      <span className="terminal-toolbar-label">{t("terminal.layoutLabel")}</span>
+                      <div className="terminal-layout-switcher">
+                        <button
+                          type="button"
+                          className="terminal-layout-button"
+                          data-active={splitDirection === "single"}
+                          aria-label={t("terminal.layoutSingleAction")}
+                          onClick={() => {
+                            applySplitLayout("single");
+                          }}
+                        >
+                          1
+                        </button>
+                        <button
+                          type="button"
+                          className="terminal-layout-button"
+                          data-active={splitDirection === "vertical"}
+                          aria-label={t("terminal.layoutVerticalAction")}
+                          onClick={() => {
+                            applySplitLayout("vertical");
+                          }}
+                        >
+                          ||
+                        </button>
+                        <button
+                          type="button"
+                          className="terminal-layout-button"
+                          data-active={splitDirection === "horizontal"}
+                          aria-label={t("terminal.layoutHorizontalAction")}
+                          onClick={() => {
+                            applySplitLayout("horizontal");
+                          }}
+                        >
+                          =
+                        </button>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      className="terminal-toolbar-save"
+                      disabled={!activeTerminal}
+                      onClick={() => {
+                        void handleSaveActivePaneLog();
                       }}
                     >
-                      {runtimeOptions.map((option) => (
-                        <option key={option.value || "auto"} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
+                      {t("terminal.saveLogAction")}
+                    </button>
                   </div>
-
-                  <div className="terminal-toolbar-section">
-                    <span className="terminal-toolbar-label">{t("terminal.zoomLabel")}</span>
-                    <div className="terminal-zoom-group" aria-label={t("terminal.zoomLabel")}>
-                      <button
-                        type="button"
-                        className="terminal-zoom-button"
-                        aria-label={t("terminal.zoomOutAction")}
-                        onClick={() => {
-                          updateZoomScale(zoomScale - TERMINAL_ZOOM_STEP);
-                        }}
-                      >
-                        -
-                      </button>
-                      <button
-                        type="button"
-                        className="terminal-zoom-value"
-                        aria-label={t("terminal.zoomResetAction")}
-                        onClick={() => {
-                          updateZoomScale(1);
-                        }}
-                      >
-                        {formatZoomPercent(zoomScale)}
-                      </button>
-                      <button
-                        type="button"
-                        className="terminal-zoom-button"
-                        aria-label={t("terminal.zoomInAction")}
-                        onClick={() => {
-                          updateZoomScale(zoomScale + TERMINAL_ZOOM_STEP);
-                        }}
-                      >
-                        +
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="terminal-toolbar-section">
-                    <span className="terminal-toolbar-label">{t("terminal.layoutLabel")}</span>
-                    <div className="terminal-layout-switcher">
-                      <button
-                        type="button"
-                        className="terminal-layout-button"
-                        data-active={splitDirection === "single"}
-                        aria-label={t("terminal.layoutSingleAction")}
-                        onClick={() => {
-                          applySplitLayout("single");
-                        }}
-                      >
-                        1
-                      </button>
-                      <button
-                        type="button"
-                        className="terminal-layout-button"
-                        data-active={splitDirection === "vertical"}
-                        aria-label={t("terminal.layoutVerticalAction")}
-                        onClick={() => {
-                          applySplitLayout("vertical");
-                        }}
-                      >
-                        ||
-                      </button>
-                      <button
-                        type="button"
-                        className="terminal-layout-button"
-                        data-active={splitDirection === "horizontal"}
-                        aria-label={t("terminal.layoutHorizontalAction")}
-                        onClick={() => {
-                          applySplitLayout("horizontal");
-                        }}
-                      >
-                        =
-                      </button>
-                    </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    className="terminal-toolbar-save"
-                    disabled={!activeTerminal}
-                    onClick={() => {
-                      void handleSaveActivePaneLog();
-                    }}
-                  >
-                    {t("terminal.saveLogAction")}
-                  </button>
                 </div>
-              </div>
 
-              <button
-                ref={toolbarToggleRef}
-                type="button"
-                className="terminal-toolbar-toggle"
-                data-open={toolbarOpen}
-                aria-label={t("terminal.toolbarToggleAction")}
-                aria-expanded={toolbarOpen}
-                onClick={() => {
-                  setActionMenu(null);
-                  setToolbarOpen((current) => !current);
-                }}
-              >
-                <span className="terminal-toolbar-icon" aria-hidden="true">
-                  <svg viewBox="0 0 16 16" focusable="false">
-                    <path d="M9.78 2.7a3.1 3.1 0 0 0-2.97 4.02L2.8 10.73a1.47 1.47 0 0 0-.4 1l-.02 1.28a.75.75 0 0 0 .76.76l1.28-.02c.38 0 .74-.15 1-.4l4.02-4.01a3.1 3.1 0 1 0 .34-6.64Zm0 1.5a1.6 1.6 0 1 1 0 3.2 1.6 1.6 0 0 1 0-3.2Zm-4.4 7.57.55.55-.78.01.01-.78.22-.22Zm1.61-.55-.55-.55 1.8-1.8c.16.16.34.3.53.42l-1.78 1.93Z" />
-                  </svg>
-                </span>
-              </button>
+                <button
+                  ref={toolbarToggleRef}
+                  type="button"
+                  className="terminal-toolbar-toggle"
+                  data-open={toolbarOpen}
+                  aria-label={t("terminal.toolbarToggleAction")}
+                  aria-expanded={toolbarOpen}
+                  onClick={() => {
+                    setActionMenu(null);
+                    setToolbarOpen((current) => !current);
+                  }}
+                >
+                  <span className="terminal-toolbar-icon" aria-hidden="true">
+                    <svg viewBox="0 0 16 16" focusable="false">
+                      <path d="M9.86 1.79a.75.75 0 0 1 .83.17l.86.86a.75.75 0 0 1 .18.78l-.57 1.72 1.95 1.95 1.72-.57a.75.75 0 0 1 .78.18l.86.86a.75.75 0 0 1 .17.83l-.47 1.26a4.25 4.25 0 0 1-5.38 2.59l-4.83 4.83a1.75 1.75 0 1 1-2.48-2.48l4.83-4.83a4.25 4.25 0 0 1 2.59-5.38l1.26-.47ZM10.2 3.65l-.64.24a2.75 2.75 0 0 0-1.67 3.48.75.75 0 0 1-.18.77l-5.06 5.06a.25.25 0 1 0 .35.35l5.07-5.06a.75.75 0 0 1 .77-.18 2.75 2.75 0 0 0 3.48-1.67l.24-.64-1.31.44a.75.75 0 0 1-.76-.18L9.94 5.72a.75.75 0 0 1-.18-.76l.44-1.31Z" />
+                    </svg>
+                  </span>
+                </button>
+              </div>
             </div>
           </div>
         </header>
@@ -1232,6 +1234,13 @@ function TerminalWorkspacePane({
         onConnectionChange(paneId, state);
       },
       onSubscribed: () => {
+        const runtime = viewportRuntimeRef.current;
+
+        if (runtime) {
+          runtime.reflow();
+          client.sendCurrentDimensions(runtime.terminal.cols, runtime.terminal.rows);
+        }
+
         if (activePaneRef.current) {
           viewportRuntimeRef.current?.focus();
         }
@@ -1240,7 +1249,9 @@ function TerminalWorkspacePane({
         const runtime = viewportRuntimeRef.current;
 
         if (runtime) {
-          if (runtime.restoredFromSnapshot) {
+          if (event.cursorReset) {
+            replaceTerminalChunks(runtime.terminal, event.chunks);
+          } else if (runtime.restoredFromSnapshot) {
             appendTerminalChunks(runtime.terminal, event.chunks);
           } else {
             replaceTerminalChunks(runtime.terminal, event.chunks);
@@ -1398,6 +1409,7 @@ function createTerminalViewportRuntime(input: {
   const serializeAddon = new SerializeAddon();
   let persistTimer: number | null = null;
   let disposed = false;
+  let hasCommittedFit = false;
   let lastFittedCols = terminal.cols;
   let lastFittedRows = terminal.rows;
 
@@ -1505,12 +1517,17 @@ function createTerminalViewportRuntime(input: {
       !dimensions ||
       dimensions.cols < MIN_TERMINAL_COLS ||
       dimensions.rows < MIN_TERMINAL_ROWS ||
-      (dimensions.cols === lastFittedCols && dimensions.rows === lastFittedRows)
+      (hasCommittedFit &&
+        dimensions.cols === lastFittedCols &&
+        dimensions.rows === lastFittedRows)
     ) {
       return;
     }
 
     fitAddon.fit();
+    hasCommittedFit = true;
+    lastFittedCols = terminal.cols;
+    lastFittedRows = terminal.rows;
   }
 
   return {

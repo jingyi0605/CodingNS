@@ -11,6 +11,7 @@ interface TerminalBufferState {
 export interface TerminalBackfillResult {
   chunks: TerminalOutputChunk[];
   truncated: boolean;
+  cursorReset: boolean;
   latestCursor: string | null;
 }
 
@@ -66,6 +67,7 @@ export class TerminalOutputBuffer {
       return {
         chunks: [],
         truncated: false,
+        cursorReset: false,
         latestCursor: null
       };
     }
@@ -74,6 +76,7 @@ export class TerminalOutputBuffer {
       return {
         chunks: [...buffer.chunks],
         truncated: false,
+        cursorReset: false,
         latestCursor: buffer.chunks.at(-1)?.cursor ?? null
       };
     }
@@ -93,18 +96,19 @@ export class TerminalOutputBuffer {
     const latestCursor = Number(buffer.chunks.at(-1)?.cursor ?? "0");
 
     if (parsedCursor > latestCursor) {
-      throw new AppError({
-        statusCode: 400,
-        errorCode: "RECONNECT_CURSOR_INVALID",
-        detail: "重连游标超出当前输出范围",
-        field: "lastCursor"
-      });
+      return {
+        chunks: [...buffer.chunks],
+        truncated: true,
+        cursorReset: true,
+        latestCursor: String(latestCursor)
+      };
     }
 
     if (parsedCursor < earliestCursor - 1) {
       return {
         chunks: [...buffer.chunks],
         truncated: true,
+        cursorReset: false,
         latestCursor: String(latestCursor)
       };
     }
@@ -112,6 +116,7 @@ export class TerminalOutputBuffer {
     return {
       chunks: buffer.chunks.filter((chunk) => Number(chunk.cursor) > parsedCursor),
       truncated: false,
+      cursorReset: false,
       latestCursor: String(latestCursor)
     };
   }

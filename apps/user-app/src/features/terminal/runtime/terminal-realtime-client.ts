@@ -25,6 +25,7 @@ type TerminalIncomingEvent =
       type: "terminal.backfill";
       terminalId: string;
       truncated: boolean;
+      cursorReset: boolean;
       latestCursor: string | null;
       chunks: TerminalOutputChunkDto[];
     }
@@ -69,6 +70,7 @@ export class TerminalRealtimeClient {
   private manuallyDisconnected = false;
   private lastCursor: string | null;
   private isSubscribed = false;
+  private pendingInput = "";
   private pendingResize: { cols: number; rows: number } | null = null;
   private lastSentResizeKey: string | null = null;
   private readonly connectionManager: ConnectionManager;
@@ -96,6 +98,23 @@ export class TerminalRealtimeClient {
       return;
     }
 
+    if (!this.canSendRealtimePayload()) {
+      this.pendingInput += content;
+      return;
+    }
+
+    this.sendTerminalInput(content);
+  }
+
+  sendCurrentDimensions(cols: number, rows: number): void {
+    if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols < 1 || rows < 1) {
+      return;
+    }
+
+    this.resize(cols, rows);
+  }
+
+  private sendTerminalInput(content: string): void {
     this.sendMessage({
       type: "terminal.input",
       terminalId: this.options.terminalId,
@@ -185,6 +204,7 @@ export class TerminalRealtimeClient {
         this.isSubscribed = true;
         this.options.onSubscribed();
         this.flushPendingResize();
+        this.flushPendingInput();
         return;
       }
 
@@ -254,8 +274,22 @@ export class TerminalRealtimeClient {
     this.socket.send(JSON.stringify(payload));
   }
 
+  private canSendRealtimePayload(): boolean {
+    return Boolean(this.socket && this.socket.readyState === WebSocket.OPEN && this.isSubscribed);
+  }
+
+  private flushPendingInput(): void {
+    if (!this.pendingInput || !this.canSendRealtimePayload()) {
+      return;
+    }
+
+    const bufferedInput = this.pendingInput;
+    this.pendingInput = "";
+    this.sendTerminalInput(bufferedInput);
+  }
+
   private flushPendingResize(): void {
-    if (!this.pendingResize) {
+    if (!this.pendingResize || !this.canSendRealtimePayload()) {
       return;
     }
 

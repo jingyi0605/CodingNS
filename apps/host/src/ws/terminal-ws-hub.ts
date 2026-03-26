@@ -76,14 +76,6 @@ export class TerminalWsHub {
     subscriptions.get(payload.terminalId)?.close();
     subscriptions.delete(payload.terminalId);
 
-    client.send(
-      JSON.stringify({
-        type: "terminal.subscribed",
-        terminalId: payload.terminalId,
-        userId: authContext.user.userId
-      })
-    );
-
     try {
       const subscription = this.terminalService.subscribeTerminal(
         payload.terminalId,
@@ -95,6 +87,7 @@ export class TerminalWsHub {
                 type: "terminal.backfill",
                 terminalId: payload.terminalId,
                 truncated: backfill.truncated,
+                cursorReset: backfill.cursorReset,
                 latestCursor: backfill.latestCursor,
                 chunks: backfill.chunks
               })
@@ -128,6 +121,14 @@ export class TerminalWsHub {
             );
           }
         }
+      );
+
+      client.send(
+        JSON.stringify({
+          type: "terminal.subscribed",
+          terminalId: payload.terminalId,
+          userId: authContext.user.userId
+        })
       );
 
       subscriptions.set(payload.terminalId, subscription);
