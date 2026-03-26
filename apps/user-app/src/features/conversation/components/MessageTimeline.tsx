@@ -1064,7 +1064,10 @@ function MessageItem({
             inlineImages={inlineImages}
           />
           {visibleContent ? (
-            <MessageMarkdownBody content={visibleContent} className="message-text message-content" />
+            <MessageMarkdownBody
+              content={visibleContent}
+              className="message-text message-content markdown-content"
+            />
           ) : null}
           {message.deliveryState === "failed" && message.clientRequestId && (
             <button

@@ -1329,9 +1329,21 @@ a {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
+.session-state-indicator.is-subagent {
+  background: var(--success);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 18%, transparent);
+}
+
 .session-state-indicator.is-running {
   border: 2px solid color-mix(in srgb, var(--accent) 22%, transparent);
   border-top-color: var(--accent);
+  background: transparent;
+  animation: session-running-spin 800ms linear infinite;
+}
+
+.session-state-indicator.is-subagent-running {
+  border: 2px solid color-mix(in srgb, var(--success) 24%, transparent);
+  border-top-color: var(--success);
   background: transparent;
   animation: session-running-spin 800ms linear infinite;
 }
@@ -2429,7 +2441,6 @@ a {
 
 .user-message .message-text {
   color: var(--text-primary);
-  font-size: 14px;
   line-height: 1.6;
   text-align: left;
 }
@@ -7377,8 +7388,17 @@ textarea:focus-visible {
   border-radius: 12px;
 }
 
-.workbench-session-card[data-depth="1"] .workbench-session-link {
-  padding: 8px 10px 8px 0;
+.workbench-session-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 6px 0 6px 10px;
+}
+
+.workbench-session-card[data-depth="1"] .workbench-session-main {
+  padding-left: 10px;
 }
 
 .workbench-subsession-list {
@@ -7404,14 +7424,7 @@ textarea:focus-visible {
   flex-direction: column;
   gap: 4px;
   min-width: 0;
-  padding: 6px 9px 6px 0;
-}
-
-.workbench-session-link.is-selecting {
-  flex-direction: row;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px 6px 0;
+  padding: 0 9px 0 0;
 }
 
 .workbench-session-link-copy {
@@ -7436,6 +7449,57 @@ textarea:focus-visible {
   transition:
     background var(--transition-fast),
     color var(--transition-fast);
+}
+
+.workbench-session-subagent-toggle {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  min-width: 14px;
+  margin-top: 2px;
+  color: var(--success);
+  border-radius: 999px;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.workbench-session-subagent-toggle .session-state-indicator,
+.workbench-session-subagent-toggle .workbench-session-subagent-toggle-icon {
+  transition:
+    opacity var(--transition-fast),
+    transform var(--transition-fast);
+}
+
+.workbench-session-subagent-toggle-icon {
+  position: absolute;
+  inset: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transform: scale(0.72);
+}
+
+.workbench-session-subagent-toggle:hover,
+.workbench-session-subagent-toggle:focus-visible {
+  background: color-mix(in srgb, var(--success) 10%, transparent);
+}
+
+.workbench-session-subagent-toggle:hover .session-state-indicator,
+.workbench-session-subagent-toggle:focus-visible .session-state-indicator,
+.workbench-session-card[data-has-subagents="true"]:focus-within .workbench-session-subagent-toggle .session-state-indicator {
+  opacity: 0;
+  transform: scale(0.7);
+}
+
+.workbench-session-subagent-toggle:hover .workbench-session-subagent-toggle-icon,
+.workbench-session-subagent-toggle:focus-visible .workbench-session-subagent-toggle-icon,
+.workbench-session-card[data-has-subagents="true"]:focus-within .workbench-session-subagent-toggle-icon {
+  opacity: 1;
+  transform: scale(1);
 }
 
 .workbench-session-selection-indicator[data-selected="true"] {
@@ -7887,22 +7951,31 @@ textarea:focus-visible {
   border-radius: 12px;
 }
 
+.workbench-session-main {
+  gap: 7px;
+  padding: 5px 0 5px 9px;
+}
+
 .workbench-session-link,
 .workbench-session-card[data-depth="1"] .workbench-session-link {
   gap: 3px;
-  padding: 5px 9px 5px 0;
-}
-
-.workbench-session-link.is-selecting,
-.workbench-session-card[data-depth="1"] .workbench-session-link.is-selecting {
-  gap: 7px;
-  padding: 5px 10px 5px 0;
+  padding: 0 9px 0 0;
 }
 
 .workbench-session-selection-indicator {
   width: 24px;
   height: 24px;
   border-radius: 8px;
+}
+
+.workbench-session-subagent-toggle {
+  width: 12px;
+  min-width: 12px;
+  margin-top: 1px;
+}
+
+.workbench-session-subagent-toggle-icon {
+  inset: 3px;
 }
 
 .session-title {

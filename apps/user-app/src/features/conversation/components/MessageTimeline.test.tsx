@@ -262,6 +262,29 @@ describe("MessageTimeline", () => {
     expect(document.querySelector(".code-block")).toBeNull();
   });
 
+  it("用户消息和 AI 消息共用 markdown 内容样式类", () => {
+    const { container } = render(
+      <MessageTimeline
+        messages={[
+          createTextMessage("用户消息"),
+          {
+            ...createAssistantTextMessage("AI 消息", "assistant-2"),
+            sequence: 2
+          }
+        ]}
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+      />
+    );
+
+    const userContent = container.querySelector(".user-message .message-content");
+    const assistantContent = container.querySelector(".assistant-message .message-content");
+
+    expect(userContent?.classList.contains("markdown-content")).toBe(true);
+    expect(assistantContent?.classList.contains("markdown-content")).toBe(true);
+  });
+
   it("不会折叠非 codex 会话里的同类文本", () => {
     render(
       <MessageTimeline

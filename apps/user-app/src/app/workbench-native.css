@@ -1854,11 +1854,6 @@ body {
   border-color: rgba(255, 255, 255, 0.08);
 }
 
-.user-message .message-text {
-  font-size: 14px;
-  line-height: 1.65;
-}
-
 .user-message .message-time {
   order: -1;
   margin-top: 8px;
