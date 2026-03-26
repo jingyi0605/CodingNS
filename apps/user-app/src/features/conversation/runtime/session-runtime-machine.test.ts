@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import type { ProviderId } from "../api/conversation-api";
 import {
   createPendingMessage,
   markPendingAsFailed,
@@ -14,7 +15,7 @@ const SAMPLE_IMAGE_DATA_URL =
 
 function createHistoryMessage(overrides: {
   messageId: string;
-  provider: "claude-code" | "codex";
+  provider: ProviderId;
   providerSessionId: string;
   role: "user" | "assistant" | "tool" | "system";
   content: string;

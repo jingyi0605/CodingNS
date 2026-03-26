@@ -3,6 +3,15 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 import { decideCapability } from "../capability/capability-gate";
+import {
+  allowsQueueDuringRun,
+  getProviderFromCapabilities,
+  getProviderIconVariant,
+  shouldPersistReasoningLevel,
+  shouldShowSlashMenu,
+  shouldSupportRunSteering,
+  supportsReasoningSelector
+} from "../capability/provider-ui";
 import type {
   ContextUsageDto,
   ImageAttachmentPayload,
@@ -58,6 +67,7 @@ interface ComposerImageAttachment {
 
 const DEFAULT_CLAUDE_MODEL_ID = "provider-default";
 const DEFAULT_CODEX_MODEL_ID = "provider-default";
+const DEFAULT_OPENCODE_MODEL_ID = "provider-default";
 const FOCUS_COMPOSER_EVENT = "workbench:focus-composer";
 
 function createFallbackClaudeModelOptions(): ModelOption[] {
@@ -75,11 +85,34 @@ function createFallbackCodexModelOptions(): ModelOption[] {
   return [
     {
       id: DEFAULT_CODEX_MODEL_ID,
-      name: t("conversation.modelUseCodexConfig"),
+      name: t("conversation.modelUseCliDefault"),
       provider: "codex",
       usesProviderDefault: true
     }
   ];
+}
+
+function createFallbackOpenCodeModelOptions(): ModelOption[] {
+  return [
+    {
+      id: DEFAULT_OPENCODE_MODEL_ID,
+      name: t("conversation.modelUseCliDefault"),
+      provider: "opencode",
+      usesProviderDefault: true
+    }
+  ];
+}
+
+function getFallbackModelOptions(provider: ProviderId): ModelOption[] {
+  if (provider === "claude-code") {
+    return createFallbackClaudeModelOptions();
+  }
+
+  if (provider === "opencode") {
+    return createFallbackOpenCodeModelOptions();
+  }
+
+  return createFallbackCodexModelOptions();
 }
 
 function getModelStorageKey(provider: ProviderId): string {
@@ -200,7 +233,7 @@ export function ComposerPanel({
   const attachmentRegistryRef = useRef(new Set<string>());
   const { showToast } = useToast();
 
-  const provider: ProviderId = capabilities?.provider || "claude-code";
+  const provider = getProviderFromCapabilities(capabilities);
   const sendDecision = useMemo(
     () => decideCapability(capabilities, "send_message"),
     [capabilities]
@@ -227,14 +260,14 @@ export function ComposerPanel({
       return providerModels;
     }
 
-    return provider === "claude-code"
-      ? createFallbackClaudeModelOptions()
-      : createFallbackCodexModelOptions();
+    return getFallbackModelOptions(provider);
   }, [capabilities?.modelOptions, provider]);
   const selectedModelOption = useMemo(
     () => availableModels.find((model) => model.id === selectedModel) ?? null,
     [availableModels, selectedModel]
   );
+  const reasoningSelectorEnabled = supportsReasoningSelector(capabilities);
+  const slashMenuEnabled = shouldShowSlashMenu(capabilities);
   const reasoningLevelCatalog = useMemo(
     () => [
       { value: "low" as const, label: t("conversation.reasoningLow") },
@@ -245,7 +278,7 @@ export function ComposerPanel({
     []
   );
   const availableReasoningLevels = useMemo(() => {
-    if (provider !== "codex") {
+    if (!reasoningSelectorEnabled) {
       return [];
     }
 
@@ -256,7 +289,7 @@ export function ComposerPanel({
     }
 
     return reasoningLevelCatalog.filter((level) => supportedEfforts.includes(level.value));
-  }, [provider, reasoningLevelCatalog, selectedModelOption?.supportedReasoningEfforts]);
+  }, [reasoningSelectorEnabled, reasoningLevelCatalog, selectedModelOption?.supportedReasoningEfforts]);
   const slashCommands = useMemo(
     () => [
       { command: "/plan", label: t("conversation.slashCommandPlan") },
@@ -266,23 +299,20 @@ export function ComposerPanel({
     []
   );
   const inRunInputMode = capabilities?.inRunInputMode ?? "none";
-  const isClaudeUnmanagedStreamingRun =
-    provider === "claude-code" &&
+  const runHasActiveFlag = hasActiveRun ?? null;
+  const isUnmanagedStreamingRun =
     isRunning &&
     inRunInputMode === "streaming_guidance" &&
-    hasActiveRun === false;
+    runHasActiveFlag === false &&
+    !shouldSupportRunSteering(capabilities);
   const canStreamDuringRun =
     isRunning &&
     inRunInputMode === "streaming_guidance" &&
-    !isClaudeUnmanagedStreamingRun;
+    !isUnmanagedStreamingRun;
   const canQueueDuringRun =
     isRunning &&
     typeof onQueueSend === "function" &&
-    (
-      inRunInputMode === "queued_guidance"
-      || inRunInputMode === "none"
-      || isClaudeUnmanagedStreamingRun
-    );
+    allowsQueueDuringRun(capabilities, runHasActiveFlag);
   const inRunSendBlocked = isRunning && !canStreamDuringRun && !canQueueDuringRun;
   const hasDraft = content.trim().length > 0 || attachments.length > 0;
   const interruptAvailable = canInterrupt ?? interruptDecision.allowed;
@@ -426,7 +456,7 @@ export function ComposerPanel({
   }, [availableModels, provider, selectedModel]);
 
   useEffect(() => {
-    if (provider !== "codex" || availableReasoningLevels.length === 0) {
+    if (!shouldPersistReasoningLevel(provider) || availableReasoningLevels.length === 0) {
       return;
     }
 
@@ -551,7 +581,7 @@ export function ComposerPanel({
       await sendHandler(nextContent, {
         model: selectedModelOption?.usesProviderDefault ? undefined : selectedModel || undefined,
         reasoningLevel:
-          provider === "codex" && availableReasoningLevels.length > 0 ? reasoningLevel : undefined,
+          reasoningSelectorEnabled && availableReasoningLevels.length > 0 ? reasoningLevel : undefined,
         attachments: payloads,
         attachmentMeta
       });
@@ -702,7 +732,7 @@ export function ComposerPanel({
             />
           </div>
 
-          {provider === "claude-code" && showSlashMenu ? (
+              {showSlashMenu ? (
             <div className="composer-slash-menu" role="menu" aria-label={t("conversation.slashMenuTitle")}>
               {slashCommands.map((item) => (
                 <button
@@ -721,17 +751,7 @@ export function ComposerPanel({
           <div className="composer-controls">
             <div className="composer-controls-left">
               <div className="composer-provider-logo">
-                {provider === "codex" ? (
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <rect x="3" y="3" width="18" height="18" rx="4" />
-                    <path d="M8 12h8M12 8v8" />
-                  </svg>
-                ) : (
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <circle cx="12" cy="12" r="9" />
-                    <path d="M12 8v8M8 12h8" />
-                  </svg>
-                )}
+                {renderProviderIcon(provider)}
               </div>
 
               <div className="composer-select-wrapper">
@@ -752,7 +772,7 @@ export function ComposerPanel({
                 </svg>
               </div>
 
-              {provider === "codex" ? (
+              {reasoningSelectorEnabled && availableReasoningLevels.length > 0 ? (
                 <div className="composer-select-wrapper">
                   <select
                     value={reasoningLevel}
@@ -772,7 +792,7 @@ export function ComposerPanel({
                 </div>
               ) : null}
 
-              {provider === "claude-code" ? (
+              {slashMenuEnabled ? (
                 <button
                   type="button"
                   className="composer-slash-btn"
@@ -863,6 +883,26 @@ export function ComposerPanel({
         </div>
       </form>
     </section>
+  );
+}
+
+function renderProviderIcon(provider: ProviderId) {
+  const variant = getProviderIconVariant(provider);
+
+  if (variant === "codex") {
+    return (
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <rect x="3" y="3" width="18" height="18" rx="4" />
+        <path d="M8 12h8M12 8v8" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 8v8M8 12h8" />
+    </svg>
   );
 }
 

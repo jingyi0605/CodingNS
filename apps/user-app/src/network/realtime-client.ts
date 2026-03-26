@@ -1,5 +1,6 @@
 import { getHostWebSocketUrl } from "../config/env";
 import { authStore } from "../features/auth/store/auth-store";
+import type { ProviderId } from "../features/conversation/api/conversation-api";
 import { ConnectionManager } from "./connection-manager";
 
 type RuntimeConnectionState = "connected" | "reconnecting" | "reconnect_failed" | "closed";
@@ -15,7 +16,7 @@ interface SessionEnvelopeEvent {
   cursor: string | null;
   messages: Array<{
     messageId: string;
-    provider: "claude-code" | "codex";
+    provider: ProviderId;
     providerSessionId: string;
     role: "user" | "assistant" | "tool" | "system";
     kind: "text" | "thinking" | "tool_call" | "tool_result";

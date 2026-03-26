@@ -21,6 +21,7 @@ import type {
   ProviderId
 } from "../api/conversation-api";
 import type { SessionMessageViewModel } from "../runtime/session-runtime-machine";
+import { shouldFoldRulesMessages } from "../capability/provider-ui";
 
 interface MessageTimelineProps {
   sessionId?: string;
@@ -223,8 +224,8 @@ function buildTimelineRenderItems(messages: SessionMessageViewModel[]): Timeline
   return items;
 }
 
-function looksLikeCodexRulesMessage(provider: ProviderId | null, content: string) {
-  if (provider !== "codex") {
+function looksLikeRulesMessage(provider: ProviderId | null, content: string) {
+  if (!shouldFoldRulesMessages(null, provider)) {
     return false;
   }
 
@@ -1036,7 +1037,7 @@ function MessageItem({
   const isUser = message.role === "user";
   const isThinking = message.kind === "thinking";
   const isAssistantText = message.role === "assistant" && message.kind === "text";
-  const isRulesMessage = looksLikeCodexRulesMessage(provider, message.content);
+  const isRulesMessage = looksLikeRulesMessage(provider, message.content);
   const richContent = useMemo(() => parseMessageRichContent(message.content), [message.content]);
   const visibleContent = richContent.text;
   const inlineImages = richContent.inlineImages;

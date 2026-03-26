@@ -24,6 +24,12 @@ import {
   markPendingAsFailed,
   type SessionMessageViewModel
 } from "../runtime/session-runtime-machine";
+import {
+  createDraftCapabilities as createProviderDraftCapabilities,
+  getDraftTitle as getProviderDraftTitle,
+  isDraftProviderSupported,
+  shouldSupportRunSteering
+} from "../capability/provider-ui";
 
 export function ConversationPage() {
   const { sessionId = "" } = useParams();
@@ -106,8 +112,8 @@ function LiveConversationPage({
   const isRunning = isSessionRunning(session);
   const canSteerQueuedMessage =
     isRunning &&
-    session?.provider === "claude-code" &&
-    capabilities?.inRunInputMode === "streaming_guidance";
+    shouldSupportRunSteering(capabilities) &&
+    session?.provider === capabilities?.provider;
   const hasPendingQueuedMessages = queuedMessages.some(
     (item) => item.status === "queued" || item.status === "dispatching"
   );
@@ -259,7 +265,7 @@ function DraftConversationPage({
   const [sending, setSending] = useState(false);
   const [draftMessages, setDraftMessages] = useState<SessionMessageViewModel[]>([]);
   const [capabilities, setCapabilities] = useState<ProviderCapabilitiesDto>(() =>
-    createDraftCapabilities(draft.provider)
+    createProviderDraftCapabilities(draft.provider)
   );
   const session = useMemo(() => createDraftSessionSummary(draft), [draft]);
   useEffect(() => {
@@ -273,7 +279,7 @@ function DraftConversationPage({
   useEffect(() => {
     let disposed = false;
 
-    setCapabilities(createDraftCapabilities(draft.provider));
+    setCapabilities(createProviderDraftCapabilities(draft.provider));
     void getProviderCapabilities(draft.provider, draft.workspaceId)
       .then((nextCapabilities) => {
         if (!disposed) {
@@ -379,16 +385,16 @@ function parseDraftContext(
   }
 
   const workspaceId = searchParams.get("workspaceId")?.trim();
-  const provider = searchParams.get("provider")?.trim();
+  const provider = searchParams.get("provider")?.trim() ?? null;
 
-  if (!workspaceId || (provider !== "codex" && provider !== "claude-code")) {
+  if (!workspaceId || !isDraftProviderSupported(provider)) {
     return null;
   }
 
   return {
     sessionId,
     workspaceId,
-    provider
+    provider: provider as ProviderId
   };
 }
 
@@ -405,10 +411,7 @@ function createDraftSessionSummary(draft: DraftConversationContext): SessionSumm
     isSubagent: false,
     subagentLabel: null,
     isArchived: false,
-    title:
-      draft.provider === "codex"
-        ? t("conversation.draftTitleCodex")
-        : t("conversation.draftTitleClaude"),
+    title: getProviderDraftTitle(draft.provider),
     messageCount: 0,
     lastMessageAt: null,
     createdAt: timestamp,
@@ -425,41 +428,6 @@ function createDraftSessionSummary(draft: DraftConversationContext): SessionSumm
     completedAt: null,
     lastSeenAt: null,
     activityState: "idle"
-  };
-}
-
-function createDraftCapabilities(provider: ProviderId): ProviderCapabilitiesDto {
-  return {
-    provider,
-    canStartSession: true,
-    canResumeSession: true,
-    canSendMessage: true,
-    inRunInputMode: provider === "claude-code" ? "streaming_guidance" : "none",
-    supportsSubagents: false,
-    supportsInterrupt: false,
-    supportsStructuredToolCalls: true,
-    supportsTokenUsage: true,
-    supportsAttachments: true,
-    supportsPermissionPrompt: true,
-    supportsCheckpoint: false,
-    modelOptions:
-      provider === "claude-code"
-        ? [
-            {
-              id: "provider-default",
-              name: t("conversation.modelUseCliDefault"),
-              usesProviderDefault: true
-            }
-          ]
-        : [
-            {
-              id: "provider-default",
-              name: t("conversation.modelUseCodexConfig"),
-              usesProviderDefault: true
-            }
-          ],
-    defaultReasoningLevel: provider === "codex" ? null : undefined,
-    limitations: []
   };
 }
 

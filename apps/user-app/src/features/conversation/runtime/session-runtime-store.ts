@@ -216,17 +216,14 @@ export class SessionRuntimeStore {
       messages: [...this.state.messages, pending],
       session: withRunningState(this.state.session, "running"),
       runtimeHasActiveRun:
-        this.state.session?.provider === "codex" || this.state.session?.provider === "claude-code"
+        shouldOptimisticallyAssumeActiveRun(this.state.session, this.state.capabilities)
           ? true
           : this.state.runtimeHasActiveRun,
       // 这次运行是由当前应用主动发起的，runtime adapter 已经持有真实子进程句柄，
       // 因此在后端回流前就应先把按钮切到可中断态，而不是继续沿用 provider 的静态能力。
       runtimeCanInterrupt:
-        this.state.session?.provider === "codex"
+        shouldOptimisticallyEnableInterrupt(this.state.session, this.state.capabilities)
           ? true
-          : this.state.session?.provider === "claude-code" &&
-              this.state.session.activitySource !== "inferred"
-            ? true
           : this.state.runtimeCanInterrupt
     });
 
@@ -269,15 +266,12 @@ export class SessionRuntimeStore {
           : item
       ),
       runtimeHasActiveRun:
-        this.state.session?.provider === "codex" || this.state.session?.provider === "claude-code"
+        shouldOptimisticallyAssumeActiveRun(this.state.session, this.state.capabilities)
           ? true
           : this.state.runtimeHasActiveRun,
       runtimeCanInterrupt:
-        this.state.session?.provider === "codex"
+        shouldOptimisticallyEnableInterrupt(this.state.session, this.state.capabilities)
           ? true
-          : this.state.session?.provider === "claude-code" &&
-              this.state.session.activitySource !== "inferred"
-            ? true
           : this.state.runtimeCanInterrupt
     });
 
@@ -1143,6 +1137,53 @@ function createClientRequestId(): string {
   }
 
   return `fallback-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
+}
+
+function shouldOptimisticallyAssumeActiveRun(
+  session: SessionSummaryDto | null,
+  capabilities: ProviderCapabilitiesDto | null
+): boolean {
+  if (!session) {
+    return false;
+  }
+
+  if (capabilities && session.provider === capabilities.provider) {
+    return Boolean(capabilities.canSendMessage);
+  }
+
+  return (
+    session.provider === "codex" ||
+    session.provider === "claude-code" ||
+    session.provider === "opencode"
+  );
+}
+
+function shouldOptimisticallyEnableInterrupt(
+  session: SessionSummaryDto | null,
+  capabilities: ProviderCapabilitiesDto | null
+): boolean {
+  if (!session) {
+    return false;
+  }
+
+  if (capabilities && session.provider === capabilities.provider) {
+    if (!capabilities.supportsInterrupt) {
+      return false;
+    }
+
+    // Claude 仍保留外部推断态，避免把非当前前端持有的会话误判成可中断。
+    if (session.provider === "claude-code" && session.activitySource === "inferred") {
+      return false;
+    }
+
+    return true;
+  }
+
+  if (session.provider === "codex" || session.provider === "opencode") {
+    return true;
+  }
+
+  return session.provider === "claude-code" && session.activitySource !== "inferred";
 }
 
 function buildSessionRuntimeSnapshotKey(sessionId: string) {
