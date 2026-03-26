@@ -1822,6 +1822,10 @@ body {
    ======================================== */
 
 .workbench-shell {
+  /* 统一侧栏图标列，避免导航、工作区、会话列表各自漂移。 */
+  --workbench-sidebar-icon-inset: 20px;
+  --workbench-sidebar-item-padding-end: 14px;
+  --workbench-sidebar-icon-slot-size: 16px;
   padding: 8px;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.52), rgba(255, 255, 255, 0.12)),
@@ -1900,7 +1904,7 @@ body {
 }
 
 .workbench-nav-body {
-  padding: 14px 14px 10px;
+  padding: 14px 0 10px;
   gap: 18px;
 }
 
@@ -1910,7 +1914,7 @@ body {
 
 .workbench-nav-segment-button {
   min-height: 38px;
-  padding: 0 14px;
+  padding: 0 var(--workbench-sidebar-item-padding-end) 0 var(--workbench-sidebar-icon-inset);
   border-radius: 14px;
   color: rgba(28, 28, 30, 0.84);
   font-size: 13px;
@@ -1955,7 +1959,7 @@ body {
 
 .workbench-section-heading {
   margin-bottom: 6px;
-  padding: 0;
+  padding: 0 var(--workbench-sidebar-icon-inset);
 }
 
 .workbench-section-heading-main {
@@ -1996,7 +2000,7 @@ body {
 
 .workbench-workspace-toggle {
   min-height: 24px;
-  padding: 0;
+  padding: 0 var(--workbench-sidebar-item-padding-end) 0 var(--workbench-sidebar-icon-inset);
   border-radius: 8px;
 }
 
@@ -2062,7 +2066,7 @@ body {
 
 .workbench-session-link,
 .workbench-session-card[data-depth="1"] .workbench-session-link {
-  padding: 6px 8px;
+  padding: 6px var(--workbench-sidebar-item-padding-end) 6px var(--workbench-sidebar-icon-inset);
   border-radius: 9px;
 }
 
@@ -2086,6 +2090,66 @@ body {
   color: rgba(60, 60, 67, 0.5);
   font-size: 10px;
   line-height: 1.2;
+}
+
+.session-state-indicator {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--workbench-sidebar-icon-slot-size);
+  height: var(--workbench-sidebar-icon-slot-size);
+  flex: 0 0 var(--workbench-sidebar-icon-slot-size);
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  animation: none;
+}
+
+/* 清掉 styles.css 里按状态直接画在外层元素上的旧点，否则会把缩小后的 before 盖住。 */
+.session-state-indicator.is-idle,
+.session-state-indicator.is-unread,
+.session-state-indicator.is-running,
+.session-state-indicator.is-running-inferred {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  animation: none;
+}
+
+.session-state-indicator::before {
+  content: "";
+  display: block;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: transparent;
+  box-sizing: border-box;
+}
+
+.session-state-indicator.is-idle::before {
+  border: 1px solid var(--border-primary);
+}
+
+.session-state-indicator.is-unread::before {
+  background: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.session-state-indicator.is-running::before {
+  width: 7px;
+  height: 7px;
+  border: 1.5px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  border-top-color: var(--accent);
+  animation: session-running-spin 800ms linear infinite;
+}
+
+.session-state-indicator.is-running-inferred::before {
+  width: 7px;
+  height: 7px;
+  border: 1.5px solid color-mix(in srgb, var(--warning) 28%, transparent);
+  border-top-color: var(--warning);
+  animation: session-running-spin 800ms linear infinite;
 }
 
 .session-provider-badge {
@@ -2131,7 +2195,7 @@ body {
   justify-content: flex-start;
   gap: 8px;
   min-height: 30px;
-  padding: 4px 8px;
+  padding: 4px var(--workbench-sidebar-item-padding-end) 4px var(--workbench-sidebar-icon-inset);
   border-radius: 10px;
   background: transparent;
   color: rgba(60, 60, 67, 0.78);
@@ -2142,7 +2206,7 @@ body {
 }
 
 .workbench-nav-footer.minimal {
-  padding: 8px 14px 14px;
+  padding: 8px 0 14px;
   border-top: none;
   background: transparent;
 }
@@ -2150,7 +2214,7 @@ body {
 .workbench-nav-settings-button {
   justify-content: flex-start;
   min-height: 36px;
-  padding: 0 10px;
+  padding: 0 var(--workbench-sidebar-item-padding-end) 0 var(--workbench-sidebar-icon-inset);
   border-radius: 10px;
   border: none;
   background: transparent;
@@ -2216,6 +2280,7 @@ body {
 
 .workbench-auxiliary .file-tree-item,
 .workbench-auxiliary .file-session-list-button {
+  padding: 0 var(--workbench-sidebar-item-padding-end) 0 var(--workbench-sidebar-icon-inset);
   border-radius: 10px;
   transition:
     background var(--transition-fast),

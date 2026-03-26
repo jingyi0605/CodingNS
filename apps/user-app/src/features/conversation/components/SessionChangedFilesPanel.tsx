@@ -36,6 +36,8 @@ type RecentFileActivation = {
 
 const FILE_REPEAT_ACTIVATION_MS = 450;
 const SESSION_CHANGED_FILES_CACHE_MAX_AGE_MS = 60 * 1000;
+const SIDEBAR_TREE_ROOT_PADDING_PX = 20;
+const SIDEBAR_TREE_DEPTH_STEP_PX = 16;
 
 export function SessionChangedFilesPanel({
   sessionId,
@@ -296,7 +298,9 @@ function renderTree({
             type="button"
             data-kind="directory"
             aria-expanded={expanded}
-            style={{ paddingInlineStart: `${12 + depth * 16}px` }}
+            style={{
+              paddingInlineStart: `${SIDEBAR_TREE_ROOT_PADDING_PX + depth * SIDEBAR_TREE_DEPTH_STEP_PX}px`
+            }}
             onClick={() => onToggleTreePath(node.path)}
           >
             <span className="file-tree-chevron" aria-hidden="true">
@@ -328,7 +332,9 @@ function renderTree({
           type="button"
           data-active={selectedPath === node.change.path}
           data-kind="file"
-          style={{ paddingInlineStart: `${12 + depth * 16}px` }}
+          style={{
+            paddingInlineStart: `${SIDEBAR_TREE_ROOT_PADDING_PX + depth * SIDEBAR_TREE_DEPTH_STEP_PX}px`
+          }}
           onClick={() => void onFileClick(node.change.path, !isDeletedGitChange(node.change))}
         >
           <span className="file-tree-chevron is-hidden" aria-hidden="true">

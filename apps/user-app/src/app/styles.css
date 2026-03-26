@@ -430,7 +430,7 @@ a {
   gap: 16px;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 12px;
+  padding: 12px 10px 10px;
   min-height: 0;
 }
 
@@ -548,7 +548,7 @@ a {
 .workbench-workspace-header.minimal {
   display: flex;
   align-items: center;
-  padding: 8px 4px;
+  padding: 8px 0;
   min-width: 0;
 }
 
@@ -570,7 +570,7 @@ a {
   width: 100%;
   flex-direction: column;
   gap: 2px;
-  padding: 8px 10px;
+  padding: 8px 10px 8px 0;
   border-radius: var(--radius-md);
   text-align: left;
   transition: all var(--transition-fast);
@@ -706,7 +706,7 @@ a {
 
 /* Nav Footer */
 .workbench-nav-footer.minimal {
-  padding: 12px;
+  padding: 12px 10px;
   border-top: 1px solid var(--border-primary);
   flex-shrink: 0;
 }
@@ -4266,7 +4266,7 @@ textarea:focus-visible {
 .workbench-session-link {
   position: relative;
   gap: 6px;
-  padding: 10px 12px;
+  padding: 10px 12px 10px 0;
   border: 1px solid transparent;
 }
 
@@ -4953,7 +4953,7 @@ textarea:focus-visible {
 }
 
 .workbench-workspace-header.minimal {
-  padding: 4px 2px;
+  padding: 4px 0;
 }
 
 .workbench-workspace-actions.minimal {
@@ -6264,7 +6264,7 @@ textarea:focus-visible {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 12px;
+  padding: 10px;
   border-radius: 16px;
   border: 1px solid color-mix(in srgb, var(--border-primary) 78%, transparent);
   background: color-mix(in srgb, var(--bg-hover) 62%, transparent);
@@ -6481,7 +6481,7 @@ textarea:focus-visible {
 }
 
 .workbench-session-card[data-depth="1"] .workbench-session-link {
-  padding: 8px 10px;
+  padding: 8px 10px 8px 0;
 }
 
 .workbench-subsession-list {
@@ -6507,14 +6507,14 @@ textarea:focus-visible {
   flex-direction: column;
   gap: 4px;
   min-width: 0;
-  padding: 6px 9px;
+  padding: 6px 9px 6px 0;
 }
 
 .workbench-session-link.is-selecting {
   flex-direction: row;
   align-items: center;
   gap: 8px;
-  padding: 6px 10px 6px 9px;
+  padding: 6px 10px 6px 0;
 }
 
 .workbench-session-link-copy {
@@ -6804,13 +6804,13 @@ textarea:focus-visible {
 .workbench-session-link,
 .workbench-session-card[data-depth="1"] .workbench-session-link {
   gap: 3px;
-  padding: 5px 9px;
+  padding: 5px 9px 5px 0;
 }
 
 .workbench-session-link.is-selecting,
 .workbench-session-card[data-depth="1"] .workbench-session-link.is-selecting {
   gap: 7px;
-  padding: 5px 10px 5px 9px;
+  padding: 5px 10px 5px 0;
 }
 
 .workbench-session-selection-indicator {
@@ -9237,7 +9237,7 @@ textarea:focus-visible {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
+  padding: 8px 12px 8px 20px;
   background: var(--bg-hover);
   border: 1px solid var(--border-primary);
   border-radius: var(--radius-md);

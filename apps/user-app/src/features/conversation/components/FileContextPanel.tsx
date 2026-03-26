@@ -43,6 +43,8 @@ const FILE_REPEAT_ACTIVATION_MS = 450;
 const FILE_PANEL_WORKSPACE_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
 const FILE_PANEL_SESSION_COUNT_CACHE_MAX_AGE_MS = 60 * 1000;
 const FILE_TREE_SNAPSHOT_TIMEOUT_MS = 1600;
+const SIDEBAR_TREE_ROOT_PADDING_PX = 20;
+const SIDEBAR_TREE_DEPTH_STEP_PX = 16;
 
 interface FilePanelWorkspaceSnapshot {
   treeCache: FileTreeCache;
@@ -920,7 +922,9 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
                 data-active={isActive}
                 data-kind={item.kind}
                 aria-expanded={isDirectory ? isExpanded : undefined}
-                style={{ paddingInlineStart: `${12 + depth * 16}px` }}
+                style={{
+                  paddingInlineStart: `${SIDEBAR_TREE_ROOT_PADDING_PX + depth * SIDEBAR_TREE_DEPTH_STEP_PX}px`
+                }}
                 onClick={() => {
                   if (isDirectory) {
                     resetRecentFileActivation();
