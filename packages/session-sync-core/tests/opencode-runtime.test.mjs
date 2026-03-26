@@ -160,6 +160,296 @@ test("OpenCodeRuntimeAdapter 会创建会话、发送消息并消费 SSE 事件"
   assert.equal(completeEvent.status, "completed");
 });
 
+test("OpenCodeRuntimeAdapter 会把网络失败收口成 SERVER_UNAVAILABLE", async (context) => {
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async () => {
+    throw new TypeError("fetch failed", {
+      cause: {
+        code: "ECONNREFUSED"
+      }
+    });
+  };
+
+  context.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const adapter = new OpenCodeRuntimeAdapter({
+    baseUrl: "http://127.0.0.1:4096",
+    requestTimeoutMs: 1_000
+  });
+
+  await assert.rejects(
+    () =>
+      adapter.startSession(
+        {
+          sessionId: "local-session-2",
+          workspaceId: "workspace-1",
+          workspacePath: "/Users/jackson/Code/CodingNS",
+          provider: "opencode",
+          providerSessionId: null,
+          rawStoreRef: null,
+          options: {
+            content: "测试网络失败",
+            clientRequestId: null,
+            model: null,
+            reasoningLevel: null,
+            permissionMode: null,
+            providerPrompt: null,
+            attachments: []
+          }
+        },
+        {
+          updateSessionBinding() {},
+          async emit() {}
+        }
+      ),
+    (error) => error instanceof Error && error.message === "SERVER_UNAVAILABLE"
+  );
+});
+
+test("OpenCodeRuntimeAdapter 会在 resolver 刷新后切换到新的 server 地址", async (context) => {
+  const originalFetch = globalThis.fetch;
+  let currentBaseUrl = "http://127.0.0.1:4096";
+
+  globalThis.fetch = async (input, init = {}) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const method = init.method ?? "GET";
+
+    if (url.startsWith("http://127.0.0.1:4096/")) {
+      throw new TypeError("fetch failed", {
+        cause: {
+          code: "ECONNREFUSED"
+        }
+      });
+    }
+
+    if (url.startsWith("http://127.0.0.1:41827/session?") && method === "POST") {
+      return jsonResponse({ id: "ses_refresh_runtime" });
+    }
+
+    if (url === "http://127.0.0.1:41827/event" && method === "GET") {
+      return sseResponse([
+        {
+          payload: {
+            type: "session.idle",
+            properties: {
+              sessionID: "ses_refresh_runtime"
+            }
+          }
+        }
+      ]);
+    }
+
+    if (url === "http://127.0.0.1:41827/session/ses_refresh_runtime/message" && method === "POST") {
+      return jsonResponse({});
+    }
+
+    throw new Error(`unexpected request: ${method} ${url}`);
+  };
+
+  context.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const adapter = new OpenCodeRuntimeAdapter({
+    baseUrlResolver: ({ refresh } = {}) => {
+      if (refresh) {
+        currentBaseUrl = "http://127.0.0.1:41827";
+      }
+
+      return currentBaseUrl;
+    },
+    requestTimeoutMs: 1_000
+  });
+
+  const launch = await adapter.startSession(
+    {
+      sessionId: "local-session-3",
+      workspaceId: "workspace-1",
+      workspacePath: "/Users/jackson/Code/CodingNS",
+      provider: "opencode",
+      providerSessionId: null,
+      rawStoreRef: null,
+      options: {
+        content: "刷新地址后继续",
+        clientRequestId: null,
+        model: null,
+        reasoningLevel: null,
+        permissionMode: null,
+        providerPrompt: null,
+        attachments: []
+      }
+    },
+    {
+      updateSessionBinding() {},
+      async emit() {}
+    }
+  );
+
+  await launch.completed;
+
+  assert.equal(currentBaseUrl, "http://127.0.0.1:41827");
+  assert.equal(launch.providerSessionId, "ses_refresh_runtime");
+});
+
+test("OpenCodeRuntimeAdapter 会忽略 step 事件和空 text part", async (context) => {
+  const originalFetch = globalThis.fetch;
+  const events = [];
+
+  globalThis.fetch = async (input, init = {}) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const method = init.method ?? "GET";
+
+    if (url.startsWith("http://127.0.0.1:41827/session?") && method === "POST") {
+      return jsonResponse({ id: "ses_runtime_filter" });
+    }
+
+    if (url === "http://127.0.0.1:41827/event" && method === "GET") {
+      return sseResponse([
+        {
+          payload: {
+            type: "message.updated",
+            properties: {
+              info: {
+                id: "msg_runtime_filter",
+                sessionID: "ses_runtime_filter",
+                role: "assistant",
+                time: {
+                  created: 1
+                }
+              }
+            }
+          }
+        },
+        {
+          payload: {
+            type: "message.part.updated",
+            properties: {
+              part: {
+                id: "prt_step_start",
+                messageID: "msg_runtime_filter",
+                sessionID: "ses_runtime_filter",
+                type: "step-start"
+              }
+            }
+          }
+        },
+        {
+          payload: {
+            type: "message.part.updated",
+            properties: {
+              part: {
+                id: "prt_empty_text",
+                messageID: "msg_runtime_filter",
+                sessionID: "ses_runtime_filter",
+                type: "text",
+                text: "",
+                time: {
+                  start: 1
+                },
+                metadata: {
+                  openai: {
+                    itemId: "msg_raw"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          payload: {
+            type: "message.part.updated",
+            properties: {
+              part: {
+                id: "prt_final_text",
+                messageID: "msg_runtime_filter",
+                sessionID: "ses_runtime_filter",
+                type: "text",
+                text: "4567",
+                time: {
+                  start: 2,
+                  end: 2
+                }
+              }
+            }
+          }
+        },
+        {
+          payload: {
+            type: "message.part.updated",
+            properties: {
+              part: {
+                id: "prt_step_finish",
+                messageID: "msg_runtime_filter",
+                sessionID: "ses_runtime_filter",
+                type: "step-finish",
+                reason: "stop"
+              }
+            }
+          }
+        },
+        {
+          payload: {
+            type: "session.idle",
+            properties: {
+              sessionID: "ses_runtime_filter"
+            }
+          }
+        }
+      ]);
+    }
+
+    if (url === "http://127.0.0.1:41827/session/ses_runtime_filter/message" && method === "POST") {
+      return jsonResponse({});
+    }
+
+    throw new Error(`unexpected request: ${method} ${url}`);
+  };
+
+  context.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const adapter = new OpenCodeRuntimeAdapter({
+    baseUrl: "http://127.0.0.1:41827",
+    requestTimeoutMs: 1_000
+  });
+
+  const launch = await adapter.startSession(
+    {
+      sessionId: "local-session-4",
+      workspaceId: "workspace-1",
+      workspacePath: "/Users/jackson/Code/CodingNS",
+      provider: "opencode",
+      providerSessionId: null,
+      rawStoreRef: null,
+      options: {
+        content: "过滤占位事件",
+        clientRequestId: null,
+        model: null,
+        reasoningLevel: null,
+        permissionMode: null,
+        providerPrompt: null,
+        attachments: []
+      }
+    },
+    {
+      updateSessionBinding() {},
+      async emit(event) {
+        events.push(event);
+      }
+    }
+  );
+
+  await launch.completed;
+
+  const messageEvents = events.filter((event) => event.type === "message");
+  assert.equal(messageEvents.length, 1);
+  assert.equal(messageEvents[0].message.content, "4567");
+});
+
 function jsonResponse(payload, status = 200) {
   return new Response(JSON.stringify(payload), {
     status,

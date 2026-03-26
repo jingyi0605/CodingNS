@@ -5,6 +5,7 @@ import { SessionLiveRuntimeService } from "../../src/modules/sessions/session-li
 function createService() {
   const sessionHistoryService = {
     getSession: vi.fn(),
+    getProviderCapabilitiesSnapshot: vi.fn(),
     refreshRuntimeFallbackSession: vi.fn(),
     getSessionCapabilities: vi.fn(),
     getSessionContextUsage: vi.fn(),
@@ -200,6 +201,55 @@ describe("SessionLiveRuntimeService", () => {
     );
     expect(result.providerSessionId).toBe("claude-session-1");
     expect(result.message?.content).toBe("继续补充这轮任务的要求");
+  });
+
+  it("startLiveSession 会把 provider 启动失败映射成稳定的 AppError", async () => {
+    const { service, sessionHistoryService, sessionMessageAttachmentService, workspaceService } =
+      createService();
+    const providerRuntimeService = {
+      startSession: vi.fn(async () => {
+        throw new Error("SERVER_UNAVAILABLE");
+      })
+    };
+    Object.defineProperty(service, "providerRuntimeService", {
+      value: providerRuntimeService,
+      configurable: true
+    });
+
+    sessionHistoryService.getProviderCapabilitiesSnapshot = vi.fn(() => ({
+      provider: "opencode",
+      canStartSession: true,
+      canResumeSession: true,
+      canSendMessage: true,
+      inRunInputMode: "none",
+      supportsSubagents: false,
+      supportsInterrupt: false,
+      supportsStructuredToolCalls: true,
+      supportsTokenUsage: true,
+      supportsAttachments: true,
+      supportsPermissionPrompt: true,
+      supportsCheckpoint: false,
+      limitations: []
+    }));
+    workspaceService.getWorkspaceOrThrow.mockReturnValue({
+      id: "workspace-1",
+      path: "/tmp/workspace"
+    });
+    sessionMessageAttachmentService.buildProviderPrompt.mockReturnValue(null);
+
+    await expect(
+      service.startLiveSession({
+        workspaceId: "workspace-1",
+        userId: "user-1",
+        provider: "opencode",
+        content: "启动 OpenCode 会话",
+        clientRequestId: null
+      })
+    ).rejects.toMatchObject({
+      statusCode: 503,
+      errorCode: "PROVIDER_RUNTIME_UNAVAILABLE",
+      message: expect.stringContaining("OpenCode server 已启动")
+    });
   });
 
   it("Claude 托管 active run 续发消息时会清理外部运行态快照，避免退回灰色不可中止", async () => {
@@ -717,7 +767,7 @@ describe("SessionLiveRuntimeService", () => {
   });
 
   it("Claude 外部运行态存在时会拒绝直发，避免假装送进当前会话", async () => {
-    const { service, sessionHistoryService } = createService();
+    const { service, sessionHistoryService, workspaceService } = createService();
     const providerRuntimeService = {
       getSnapshot: vi.fn(() => null)
     };
@@ -749,6 +799,10 @@ describe("SessionLiveRuntimeService", () => {
       supportsPermissionPrompt: true,
       supportsCheckpoint: false,
       limitations: []
+    });
+    workspaceService.getWorkspaceOrThrow.mockReturnValue({
+      id: "workspace-1",
+      path: "/tmp/workspace"
     });
 
     (service as any).externalRuntimeSnapshots.set("session-1", {

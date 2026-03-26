@@ -296,9 +296,7 @@ function buildCodexModelOptions(
   return [
     {
       id: PROVIDER_DEFAULT_MODEL_ID,
-      name: currentModel
-        ? `跟随当前 Codex 配置（当前：${currentModel}）`
-        : "跟随当前 Codex 配置",
+      name: "跟随 CLI 默认模型",
       usesProviderDefault: true,
       supportedReasoningEfforts: normalizeReasoningEfforts(currentModelEntry)
     },
@@ -314,9 +312,7 @@ function createFallbackCodexModelOptions(currentModel: string | null): ProviderM
   return [
     {
       id: PROVIDER_DEFAULT_MODEL_ID,
-      name: currentModel
-        ? `跟随当前 Codex 配置（当前：${currentModel}）`
-        : "跟随当前 Codex 配置",
+      name: "跟随 CLI 默认模型",
       usesProviderDefault: true
     }
   ];

@@ -134,8 +134,7 @@ export function normalizeOpenCodePartMessage(
   const providerSessionId = input.providerSessionId;
 
   if (partType === "text") {
-    const content = ensureText(input.partPayload.text).trim()
-      || extractTextBlocks(input.partPayload).trim();
+    const content = extractOpenCodeTextLikeContent(input.partPayload).trim();
 
     if (content.length === 0) {
       return null;
@@ -155,7 +154,7 @@ export function normalizeOpenCodePartMessage(
   }
 
   if (partType === "reasoning") {
-    const content = ensureText(input.partPayload.text).trim();
+    const content = extractOpenCodeTextLikeContent(input.partPayload).trim();
 
     if (content.length === 0) {
       return null;
@@ -179,25 +178,7 @@ export function normalizeOpenCodePartMessage(
   }
 
   if (partType === "step-start" || partType === "step-finish") {
-    const finishReason = ensureText(input.partPayload.reason).trim();
-    const content =
-      partType === "step-finish" && finishReason
-        ? `Step finished: ${finishReason}`
-        : partType === "step-finish"
-          ? "Step finished"
-          : "Step started";
-
-    return {
-      messageId: messageIdFromRawRef(rawRef),
-      provider,
-      providerSessionId,
-      role: "assistant",
-      kind: "thinking",
-      content,
-      toolCall: null,
-      timestamp,
-      rawRef
-    };
+    return null;
   }
 
   const marker = `[${partType || "unknown"}]`;
@@ -403,6 +384,18 @@ function normalizeToolPart(
 
 function normalizePartType(value: unknown): string {
   return ensureText(value).trim().toLowerCase();
+}
+
+function extractOpenCodeTextLikeContent(partPayload: Record<string, unknown>): string {
+  for (const key of ["text", "content", "message", "thinking"]) {
+    const content = extractTextBlocks(partPayload[key]).trim();
+
+    if (content.length > 0) {
+      return content;
+    }
+  }
+
+  return "";
 }
 
 function resolvePartTimestamp(

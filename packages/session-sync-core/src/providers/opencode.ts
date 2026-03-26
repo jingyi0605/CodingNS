@@ -51,6 +51,7 @@ const DEFAULT_SERVER_PAGE_LIMIT = 100;
 
 interface OpenCodeAdapterOptions {
   baseUrl?: string;
+  baseUrlResolver?: (input?: { refresh?: boolean }) => Promise<string> | string;
   dataDir?: string;
   dbPath?: string;
   pollIntervalMs?: number;
@@ -465,7 +466,7 @@ export class OpenCodeAdapter implements ProviderAdapter {
     return normalizeOpenCodeMessageEnvelopes(
       sessionId,
       sessionId,
-      envelopes.reverse()
+      envelopes
     );
   }
 
@@ -593,9 +594,12 @@ export class OpenCodeAdapter implements ProviderAdapter {
     }
   }
 
-  private resolveBaseUrl(): string {
-    const configured = (this.options.baseUrl?.trim() || DEFAULT_BASE_URL).trim();
-    return configured.replace(/\/+$/, "");
+  private async resolveBaseUrl(refresh = false): Promise<string> {
+    const resolved = this.options.baseUrlResolver
+      ? await this.options.baseUrlResolver({ refresh })
+      : (this.options.baseUrl?.trim() || DEFAULT_BASE_URL);
+
+    return resolved.trim().replace(/\/+$/, "");
   }
 
   private resolveDbPath(): string {
@@ -638,7 +642,20 @@ export class OpenCodeAdapter implements ProviderAdapter {
       query?: Record<string, string | undefined>;
     } = {}
   ): Promise<SessionPageResponse<T>> {
-    const url = new URL(pathname, `${this.resolveBaseUrl()}/`);
+    return this.fetchJsonWithRetry(pathname, input, false);
+  }
+
+  private async fetchJsonWithRetry<T = unknown>(
+    pathname: string,
+    input: {
+      method?: string;
+      headers?: Record<string, string>;
+      body?: string;
+      query?: Record<string, string | undefined>;
+    },
+    refresh: boolean
+  ): Promise<SessionPageResponse<T>> {
+    const url = new URL(pathname, `${await this.resolveBaseUrl(refresh)}/`);
 
     if (input.query) {
       for (const [key, value] of Object.entries(input.query)) {
@@ -666,7 +683,15 @@ export class OpenCodeAdapter implements ProviderAdapter {
       clearTimeout(timer);
 
       if (error instanceof Error && error.name === "AbortError") {
+        if (!refresh && this.options.baseUrlResolver) {
+          return this.fetchJsonWithRetry(pathname, input, true);
+        }
+
         throw new Error("SERVER_UNAVAILABLE");
+      }
+
+      if (!refresh && this.options.baseUrlResolver) {
+        return this.fetchJsonWithRetry(pathname, input, true);
       }
 
       throw new Error("SERVER_UNAVAILABLE");
@@ -676,7 +701,13 @@ export class OpenCodeAdapter implements ProviderAdapter {
 
     if (!response.ok) {
       const detail = await safeReadResponseText(response);
-      throw mapOpenCodeHttpError(response.status, detail);
+      const mapped = mapOpenCodeHttpError(response.status, detail);
+
+      if (!refresh && isServerUnavailableError(mapped) && this.options.baseUrlResolver) {
+        return this.fetchJsonWithRetry(pathname, input, true);
+      }
+
+      throw mapped;
     }
 
     const text = await response.text();

@@ -1307,9 +1307,13 @@ export class SessionLiveRuntimeService {
     request: ProviderRuntimeRunRequest,
     mode: "start" | "continue"
   ): Promise<ActiveRunHandle> {
-    return mode === "start"
-      ? this.providerRuntimeService.startSession(request)
-      : this.providerRuntimeService.continueSession(request);
+    try {
+      return await (mode === "start"
+        ? this.providerRuntimeService.startSession(request)
+        : this.providerRuntimeService.continueSession(request));
+    } catch (error) {
+      throw mapSessionProviderError(error);
+    }
   }
 
   private attachRuntimePersistence(
@@ -1831,7 +1835,8 @@ function createProviderRuntimeAdapters(config: HostConfig): ProviderRuntimeAdapt
     }),
     new CodexRuntimeAdapter(),
     new OpenCodeRuntimeAdapter({
-      baseUrl: config.opencodeBaseUrl
+      baseUrl: config.opencodeBaseUrl,
+      baseUrlResolver: config.opencodeBaseUrlResolver?.resolve.bind(config.opencodeBaseUrlResolver)
     })
   ];
 }

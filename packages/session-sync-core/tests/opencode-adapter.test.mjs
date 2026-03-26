@@ -53,35 +53,29 @@ test("OpenCodeAdapter 能把核心 part 类型映射到统一消息模型", asyn
       50
     );
 
-    assert.equal(page.messages.length, 7);
+    assert.equal(page.messages.length, 5);
     assert.equal(page.messages[0]?.role, "user");
     assert.equal(page.messages[0]?.kind, "text");
     assert.equal(page.messages[0]?.content, "你好，OpenCode");
 
     assert.equal(page.messages[1]?.kind, "thinking");
-    assert.equal(page.messages[1]?.content, "Step started");
+    assert.equal(page.messages[1]?.content, "先分析一下问题");
 
-    assert.equal(page.messages[2]?.kind, "thinking");
-    assert.equal(page.messages[2]?.content, "先分析一下问题");
+    assert.equal(page.messages[2]?.kind, "tool_call");
+    assert.equal(page.messages[2]?.toolCall?.name, "bash");
+    assert.equal(page.messages[2]?.toolCall?.status, "running");
 
-    assert.equal(page.messages[3]?.kind, "tool_call");
-    assert.equal(page.messages[3]?.toolCall?.name, "bash");
-    assert.equal(page.messages[3]?.toolCall?.status, "running");
+    assert.equal(page.messages[3]?.kind, "tool_result");
+    assert.equal(page.messages[3]?.toolCall?.status, "completed");
+    assert.equal(page.messages[3]?.content.includes("README.md"), true);
 
-    assert.equal(page.messages[4]?.kind, "tool_result");
-    assert.equal(page.messages[4]?.toolCall?.status, "completed");
-    assert.equal(page.messages[4]?.content.includes("README.md"), true);
-
-    assert.equal(page.messages[5]?.kind, "text");
-    assert.equal(page.messages[5]?.content.includes("[patch]"), true);
-
-    assert.equal(page.messages[6]?.kind, "thinking");
-    assert.equal(page.messages[6]?.content, "Step finished: stop");
+    assert.equal(page.messages[4]?.kind, "text");
+    assert.equal(page.messages[4]?.content.includes("[patch]"), true);
     assert.equal(
-      page.messages[4]?.rawRef,
+      page.messages[3]?.rawRef,
       "opencode://session/ses_demo/message/msg_demo_assistant/part/prt_demo_tool_done"
     );
-    assert.equal(page.messages[6]?.sequence, 7);
+    assert.equal(page.messages[4]?.sequence, 5);
     assert.equal(page.nextCursor, null);
   } finally {
     fixture.dispose();
@@ -102,13 +96,330 @@ test("OpenCodeAdapter 的历史分页支持 backward 读取", async () => {
     );
 
     assert.equal(page.messages.length, 2);
-    assert.equal(page.messages[0]?.content.includes("[patch]"), true);
-    assert.equal(page.messages[1]?.content, "Step finished: stop");
+    assert.equal(page.messages[0]?.content.includes("README.md"), true);
+    assert.equal(page.messages[1]?.content.includes("[patch]"), true);
     assert.ok(page.nextCursor);
   } finally {
     fixture.dispose();
   }
 });
+
+test("OpenCodeAdapter 只会保留真正的 reasoning 内容，不会把 step 事件伪装成思考", async (context) => {
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async (input) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+
+    if (url === "http://127.0.0.1:41827/session/ses_reasoning_only/message?limit=100") {
+      return jsonResponse([
+        {
+          info: {
+            id: "msg_user_1",
+            sessionID: "ses_reasoning_only",
+            role: "user",
+            time: {
+              created: 1
+            }
+          },
+          parts: [
+            {
+              id: "prt_user_1",
+              messageID: "msg_user_1",
+              sessionID: "ses_reasoning_only",
+              type: "text",
+              text: "测试"
+            }
+          ]
+        },
+        {
+          info: {
+            id: "msg_assistant_1",
+            sessionID: "ses_reasoning_only",
+            role: "assistant",
+            time: {
+              created: 2
+            }
+          },
+          parts: [
+            {
+              id: "prt_step_start",
+              messageID: "msg_assistant_1",
+              sessionID: "ses_reasoning_only",
+              type: "step-start"
+            },
+            {
+              id: "prt_reasoning",
+              messageID: "msg_assistant_1",
+              sessionID: "ses_reasoning_only",
+              type: "reasoning",
+              text: "这里才是真正的思考"
+            },
+            {
+              id: "prt_step_finish",
+              messageID: "msg_assistant_1",
+              sessionID: "ses_reasoning_only",
+              type: "step-finish",
+              reason: "stop"
+            },
+            {
+              id: "prt_text",
+              messageID: "msg_assistant_1",
+              sessionID: "ses_reasoning_only",
+              type: "text",
+              text: "最终回答",
+              time: {
+                end: 3
+              }
+            }
+          ]
+        }
+      ]);
+    }
+
+    throw new Error(`unexpected request: ${url}`);
+  };
+
+  context.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const adapter = new OpenCodeAdapter({
+    baseUrl: "http://127.0.0.1:41827",
+    dbPath: "/tmp/codingns-opencode.db"
+  });
+
+  const page = await adapter.readSessionHistory(
+    "ses_reasoning_only",
+    "opencode://session/ses_reasoning_only",
+    null,
+    10,
+    "forward"
+  );
+
+  assert.deepEqual(
+    page.messages.map((message) => ({ kind: message.kind, content: message.content })),
+    [
+      { kind: "text", content: "测试" },
+      { kind: "thinking", content: "这里才是真正的思考" },
+      { kind: "text", content: "最终回答" }
+    ]
+  );
+});
+
+test("OpenCodeAdapter 不会把空 text part 序列化成 JSON 正文", async (context) => {
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async (input) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+
+    if (url === "http://127.0.0.1:41827/session/ses_empty_text/message?limit=100") {
+      return jsonResponse([
+        {
+          info: {
+            id: "msg_assistant_1",
+            sessionID: "ses_empty_text",
+            role: "assistant",
+            time: {
+              created: 1
+            }
+          },
+          parts: [
+            {
+              id: "prt_empty_text",
+              messageID: "msg_assistant_1",
+              sessionID: "ses_empty_text",
+              type: "text",
+              text: "",
+              time: {
+                start: 1
+              },
+              metadata: {
+                openai: {
+                  itemId: "msg_raw"
+                }
+              }
+            },
+            {
+              id: "prt_final_text",
+              messageID: "msg_assistant_1",
+              sessionID: "ses_empty_text",
+              type: "text",
+              text: "4567",
+              time: {
+                start: 2,
+                end: 2
+              }
+            }
+          ]
+        }
+      ]);
+    }
+
+    throw new Error(`unexpected request: ${url}`);
+  };
+
+  context.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const adapter = new OpenCodeAdapter({
+    baseUrl: "http://127.0.0.1:41827",
+    dbPath: "/tmp/codingns-opencode.db"
+  });
+
+  const page = await adapter.readSessionHistory(
+    "ses_empty_text",
+    "opencode://session/ses_empty_text",
+    null,
+    10,
+    "forward"
+  );
+
+  assert.deepEqual(
+    page.messages.map((message) => message.content),
+    ["4567"]
+  );
+});
+
+test("OpenCodeAdapter 会保留服务端消息的正序，避免新增消息倒插到顶部", async (context) => {
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async (input) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+
+    if (url === "http://127.0.0.1:41827/session/ses_server_order/message?limit=100") {
+      return jsonResponse([
+        {
+          info: {
+            id: "msg_user_1",
+            sessionID: "ses_server_order",
+            role: "user",
+            time: {
+              created: 1
+            }
+          },
+          parts: [
+            {
+              id: "prt_user_1",
+              messageID: "msg_user_1",
+              sessionID: "ses_server_order",
+              type: "text",
+              text: "第一条"
+            }
+          ]
+        },
+        {
+          info: {
+            id: "msg_assistant_1",
+            sessionID: "ses_server_order",
+            role: "assistant",
+            time: {
+              created: 2
+            }
+          },
+          parts: [
+            {
+              id: "prt_assistant_1",
+              messageID: "msg_assistant_1",
+              sessionID: "ses_server_order",
+              type: "text",
+              text: "第一条回复",
+              time: {
+                end: 2
+              }
+            }
+          ]
+        },
+        {
+          info: {
+            id: "msg_user_2",
+            sessionID: "ses_server_order",
+            role: "user",
+            time: {
+              created: 3
+            }
+          },
+          parts: [
+            {
+              id: "prt_user_2",
+              messageID: "msg_user_2",
+              sessionID: "ses_server_order",
+              type: "text",
+              text: "第二条"
+            }
+          ]
+        },
+        {
+          info: {
+            id: "msg_assistant_2",
+            sessionID: "ses_server_order",
+            role: "assistant",
+            time: {
+              created: 4
+            }
+          },
+          parts: [
+            {
+              id: "prt_assistant_2",
+              messageID: "msg_assistant_2",
+              sessionID: "ses_server_order",
+              type: "text",
+              text: "第二条回复",
+              time: {
+                end: 4
+              }
+            }
+          ]
+        }
+      ]);
+    }
+
+    throw new Error(`unexpected request: ${url}`);
+  };
+
+  context.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const adapter = new OpenCodeAdapter({
+    baseUrl: "http://127.0.0.1:41827",
+    dbPath: "/tmp/codingns-opencode.db"
+  });
+
+  const firstPage = await adapter.readSessionHistory(
+    "ses_server_order",
+    "opencode://session/ses_server_order",
+    null,
+    10,
+    "forward"
+  );
+
+  assert.deepEqual(
+    firstPage.messages.map((message) => message.content),
+    ["第一条", "第一条回复", "第二条", "第二条回复"]
+  );
+  assert.equal(firstPage.cursor !== null, true);
+
+  const deltaPage = await adapter.readSessionHistory(
+    "ses_server_order",
+    "opencode://session/ses_server_order",
+    firstPage.cursor,
+    10,
+    "forward"
+  );
+
+  assert.equal(deltaPage.messages.length, 0);
+});
+
+function jsonResponse(payload, status = 200, headers = {}) {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: {
+      "content-type": "application/json",
+      ...headers
+    }
+  });
+}
 
 function createOpenCodeFixture() {
   const tempDir = mkdtempSync(join(tmpdir(), "codingns-opencode-adapter-"));

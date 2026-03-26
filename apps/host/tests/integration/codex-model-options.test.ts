@@ -167,7 +167,7 @@ rl.on("line", (line) => {
       expect(capabilities.modelOptions).toEqual([
         {
           id: "provider-default",
-          name: "跟随当前 Codex 配置（当前：gpt-5.4）",
+          name: "跟随 CLI 默认模型",
           usesProviderDefault: true,
           supportedReasoningEfforts: ["low", "medium", "high", "xhigh"]
         },

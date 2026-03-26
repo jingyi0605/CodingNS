@@ -20,6 +20,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 
 interface OpenCodeRuntimeOptions {
   baseUrl?: string;
+  baseUrlResolver?: (input?: { refresh?: boolean }) => Promise<string> | string;
   requestTimeoutMs?: number;
 }
 
@@ -486,9 +487,12 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
     );
   }
 
-  private resolveBaseUrl(): string {
-    const configured = (this.options.baseUrl?.trim() || DEFAULT_BASE_URL).trim();
-    return configured.replace(/\/+$/, "");
+  private async resolveBaseUrl(refresh = false): Promise<string> {
+    const resolved = this.options.baseUrlResolver
+      ? await this.options.baseUrlResolver({ refresh })
+      : (this.options.baseUrl?.trim() || DEFAULT_BASE_URL);
+
+    return resolved.trim().replace(/\/+$/, "");
   }
 
   private resolveRequestTimeoutMs(): number {
@@ -511,7 +515,21 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
       signal?: AbortSignal;
     } = {}
   ): Promise<Response> {
-    const url = new URL(pathname, `${this.resolveBaseUrl()}/`);
+    return this.fetchResponseWithRetry(pathname, input, false);
+  }
+
+  private async fetchResponseWithRetry(
+    pathname: string,
+    input: {
+      method?: string;
+      headers?: Record<string, string>;
+      body?: string;
+      query?: Record<string, string | undefined>;
+      signal?: AbortSignal;
+    },
+    refresh: boolean
+  ): Promise<Response> {
+    const url = new URL(pathname, `${await this.resolveBaseUrl(refresh)}/`);
 
     if (input.query) {
       for (const [key, value] of Object.entries(input.query)) {
@@ -537,12 +555,30 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
 
       if (!response.ok) {
         const detail = await safeReadResponseText(response);
-        throw mapRuntimeHttpError(response.status, detail);
+        const mapped = mapRuntimeHttpError(response.status, detail);
+
+        if (!refresh && isRuntimeServerUnavailableError(mapped) && this.options.baseUrlResolver) {
+          return this.fetchResponseWithRetry(pathname, input, true);
+        }
+
+        throw mapped;
       }
 
       return response;
     } catch (error) {
       if (controller.signal.aborted) {
+        if (!refresh && this.options.baseUrlResolver && !input.signal?.aborted) {
+          return this.fetchResponseWithRetry(pathname, input, true);
+        }
+
+        throw new Error("SERVER_UNAVAILABLE");
+      }
+
+      if (isRuntimeRequestUnavailable(error)) {
+        if (!refresh && this.options.baseUrlResolver) {
+          return this.fetchResponseWithRetry(pathname, input, true);
+        }
+
         throw new Error("SERVER_UNAVAILABLE");
       }
 
@@ -590,7 +626,7 @@ function shouldEmitPart(partPayload: Record<string, unknown>): boolean {
   }
 
   if (partType === "step-start" || partType === "step-finish") {
-    return true;
+    return false;
   }
 
   return true;
@@ -747,4 +783,30 @@ async function safeReadResponseText(response: Response): Promise<string> {
   } catch {
     return "";
   }
+}
+
+function isRuntimeServerUnavailableError(error: unknown): boolean {
+  return error instanceof Error && error.message === "SERVER_UNAVAILABLE";
+}
+
+function isRuntimeRequestUnavailable(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  if (error.name === "AbortError") {
+    return true;
+  }
+
+  const cause = "cause" in error ? error.cause : null;
+
+  if (cause && typeof cause === "object" && "code" in cause) {
+    const code = typeof cause.code === "string" ? cause.code : "";
+
+    if (code === "ECONNREFUSED" || code === "ECONNRESET" || code === "ENOTFOUND") {
+      return true;
+    }
+  }
+
+  return error.message === "fetch failed";
 }

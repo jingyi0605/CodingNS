@@ -4,11 +4,14 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { OpenCodeBaseUrlResolver } from "./opencode-base-url-resolver.js";
+
 export interface HostConfig {
   host: string;
   port: number;
   databasePath: string;
   opencodeBaseUrl: string;
+  opencodeBaseUrlResolver?: OpenCodeBaseUrlResolver;
   opencodeDataDir: string;
   opencodeDbPath: string;
   releaseChannel: "stable" | "beta";
@@ -41,13 +44,19 @@ export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConf
     overrides.codexCliPath ?? process.env.CODINGNS_CODEX_COMMAND,
     homeDir
   );
+  const configuredOpenCodeBaseUrl =
+    overrides.opencodeBaseUrl ?? process.env.CODINGNS_OPENCODE_BASE_URL ?? null;
 
   return {
     host: overrides.host ?? process.env.CODINGNS_HOST ?? "0.0.0.0",
     port: overrides.port ?? Number(process.env.CODINGNS_PORT ?? "3002"),
     databasePath,
-    opencodeBaseUrl:
-      overrides.opencodeBaseUrl ?? process.env.CODINGNS_OPENCODE_BASE_URL ?? "http://127.0.0.1:4096",
+    opencodeBaseUrl: configuredOpenCodeBaseUrl ?? "http://127.0.0.1:4096",
+    opencodeBaseUrlResolver:
+      overrides.opencodeBaseUrlResolver
+      ?? new OpenCodeBaseUrlResolver({
+        configuredBaseUrl: configuredOpenCodeBaseUrl
+      }),
     opencodeDataDir,
     opencodeDbPath,
     releaseChannel:

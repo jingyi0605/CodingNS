@@ -110,6 +110,7 @@ export class SessionHistoryService {
       new CodexAdapter({ homeDir: config.codexHomeDir }),
       new OpenCodeAdapter({
         baseUrl: config.opencodeBaseUrl,
+        baseUrlResolver: config.opencodeBaseUrlResolver?.resolve.bind(config.opencodeBaseUrlResolver),
         dataDir: config.opencodeDataDir,
         dbPath: config.opencodeDbPath
       })
