@@ -1,11 +1,13 @@
 const STORAGE_KEY = "codingns.user-app.terminal-page";
-const STORAGE_SCHEMA_VERSION = 2;
+const STORAGE_SCHEMA_VERSION = 3;
 const MIN_TERMINAL_COLS = 20;
 const MIN_TERMINAL_ROWS = 5;
 const MAX_TERMINAL_COLS = 400;
 const MAX_TERMINAL_ROWS = 200;
 const MAX_TERMINAL_VIEWPORT_Y = 200_000;
 const MAX_TERMINAL_SNAPSHOT_CHARS = 120_000;
+const MIN_TERMINAL_ZOOM_SCALE = 0.7;
+const MAX_TERMINAL_ZOOM_SCALE = 2;
 
 interface PersistedTerminalPageStateEnvelope {
   schemaVersion: number;
@@ -20,8 +22,10 @@ interface PersistedValueEnvelope<T> {
 interface PersistedTerminalPageState {
   selectedWorkspaceId: PersistedValueEnvelope<string | null> | null;
   activeTerminalIdByWorkspace: Record<string, PersistedValueEnvelope<string>>;
+  pinnedTerminalIdsByWorkspace: Record<string, PersistedValueEnvelope<string[]>>;
   cursorByTerminalId: Record<string, PersistedValueEnvelope<string>>;
   viewStateByTerminalId: Record<string, PersistedValueEnvelope<PersistedTerminalViewState>>;
+  zoomScale: PersistedValueEnvelope<number> | null;
 }
 
 export interface PersistedTerminalViewState {
@@ -40,23 +44,29 @@ export interface TerminalRecoveryState {
 const EMPTY_STATE: PersistedTerminalPageState = {
   selectedWorkspaceId: null,
   activeTerminalIdByWorkspace: {},
+  pinnedTerminalIdsByWorkspace: {},
   cursorByTerminalId: {},
-  viewStateByTerminalId: {}
+  viewStateByTerminalId: {},
+  zoomScale: null
 };
 
 export function readPersistedTerminalPageState(): {
   selectedWorkspaceId: string | null;
   activeTerminalIdByWorkspace: Record<string, string>;
+  pinnedTerminalIdsByWorkspace: Record<string, string[]>;
   cursorByTerminalId: Record<string, string>;
   viewStateByTerminalId: Record<string, PersistedTerminalViewState>;
+  zoomScale: number | null;
 } {
   const state = readRawPersistedTerminalPageState();
 
   return {
     selectedWorkspaceId: state.selectedWorkspaceId?.value ?? null,
     activeTerminalIdByWorkspace: unwrapValueRecord(state.activeTerminalIdByWorkspace),
+    pinnedTerminalIdsByWorkspace: unwrapValueRecord(state.pinnedTerminalIdsByWorkspace),
     cursorByTerminalId: unwrapValueRecord(state.cursorByTerminalId),
-    viewStateByTerminalId: unwrapValueRecord(state.viewStateByTerminalId)
+    viewStateByTerminalId: unwrapValueRecord(state.viewStateByTerminalId),
+    zoomScale: state.zoomScale?.value ?? null
   };
 }
 
@@ -94,6 +104,48 @@ export function persistActiveTerminalId(workspaceId: string, terminalId: string 
 
     return nextState;
   });
+}
+
+export function readPinnedTerminalIds(workspaceId: string): string[] {
+  return readRawPersistedTerminalPageState().pinnedTerminalIdsByWorkspace[workspaceId]?.value ?? [];
+}
+
+export function persistPinnedTerminalIds(workspaceId: string, terminalIds: string[]): void {
+  updatePersistedTerminalPageState((current, updatedAt) => {
+    const nextState: PersistedTerminalPageState = {
+      ...current,
+      pinnedTerminalIdsByWorkspace: {
+        ...current.pinnedTerminalIdsByWorkspace
+      }
+    };
+    const normalizedIds = uniqStrings(terminalIds);
+
+    if (normalizedIds.length === 0) {
+      delete nextState.pinnedTerminalIdsByWorkspace[workspaceId];
+      return nextState;
+    }
+
+    nextState.pinnedTerminalIdsByWorkspace[workspaceId] = {
+      value: normalizedIds,
+      updatedAt
+    };
+
+    return nextState;
+  });
+}
+
+export function readPersistedTerminalZoomScale(): number | null {
+  return readRawPersistedTerminalPageState().zoomScale?.value ?? null;
+}
+
+export function persistTerminalZoomScale(zoomScale: number): void {
+  updatePersistedTerminalPageState((current, updatedAt) => ({
+    ...current,
+    zoomScale: {
+      value: clampZoomScale(zoomScale),
+      updatedAt
+    }
+  }));
 }
 
 export function readPersistedTerminalCursor(terminalId: string): string | null {
@@ -247,12 +299,28 @@ function readRawPersistedTerminalPageState(): PersistedTerminalPageState {
     return {
       selectedWorkspaceId: normalizeNullableValueEnvelope(rawState.selectedWorkspaceId),
       activeTerminalIdByWorkspace: normalizeValueRecord(rawState.activeTerminalIdByWorkspace, normalizeString),
+      pinnedTerminalIdsByWorkspace: normalizeValueRecord(
+        rawState.pinnedTerminalIdsByWorkspace,
+        normalizeStringArray
+      ),
       cursorByTerminalId: normalizeValueRecord(rawState.cursorByTerminalId, normalizeString),
-      viewStateByTerminalId: normalizeValueRecord(rawState.viewStateByTerminalId, normalizeViewState)
+      viewStateByTerminalId: normalizeValueRecord(rawState.viewStateByTerminalId, normalizeViewState),
+      zoomScale: normalizeNullableValueEnvelopeNumber(rawState.zoomScale)
     };
   } catch {
     return EMPTY_STATE;
   }
+}
+
+function normalizeNullableValueEnvelopeNumber(
+  input: unknown
+): PersistedValueEnvelope<number> | null {
+  if (input === null) {
+    return null;
+  }
+
+  const envelope = normalizeValueEnvelope(input, normalizeZoomScale);
+  return envelope ?? null;
 }
 
 function normalizeNullableValueEnvelope(
@@ -329,6 +397,15 @@ function normalizeNullableString(input: unknown): string | null {
   return typeof input === "string" ? input : null;
 }
 
+function normalizeStringArray(input: unknown): string[] | null {
+  if (!Array.isArray(input)) {
+    return null;
+  }
+
+  const normalized = uniqStrings(input.filter((item): item is string => typeof item === "string"));
+  return normalized;
+}
+
 function normalizeViewState(input: unknown): PersistedTerminalViewState | null {
   if (!input || typeof input !== "object") {
     return null;
@@ -370,6 +447,14 @@ function normalizeViewState(input: unknown): PersistedTerminalViewState | null {
     rows,
     viewportY
   };
+}
+
+function normalizeZoomScale(input: unknown): number | null {
+  if (typeof input !== "number" || !Number.isFinite(input)) {
+    return null;
+  }
+
+  return clampZoomScale(input);
 }
 
 function unwrapValueRecord<T>(input: Record<string, PersistedValueEnvelope<T>>): Record<string, T> {
@@ -436,4 +521,12 @@ function isCursorNewer(left: string, right: string): boolean {
   }
 
   return leftCursor > rightCursor;
+}
+
+function uniqStrings(values: string[]): string[] {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+}
+
+function clampZoomScale(value: number): number {
+  return Math.min(MAX_TERMINAL_ZOOM_SCALE, Math.max(MIN_TERMINAL_ZOOM_SCALE, value));
 }

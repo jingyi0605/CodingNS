@@ -128,6 +128,15 @@ export class TerminalInstanceRepository {
       )
       .run(lastActiveAt, id);
   }
+
+  delete(id: string): void {
+    this.db
+      .prepare(
+        `DELETE FROM terminal_instances
+         WHERE id = ?`
+      )
+      .run(id);
+  }
 }
 
 interface TerminalInstanceRow {

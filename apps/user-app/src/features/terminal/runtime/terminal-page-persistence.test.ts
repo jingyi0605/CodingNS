@@ -2,12 +2,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   persistActiveTerminalId,
+  persistPinnedTerminalIds,
   persistSelectedWorkspaceId,
   persistTerminalCursor,
   persistTerminalViewState,
+  persistTerminalZoomScale,
+  readPinnedTerminalIds,
   readPersistedActiveTerminalId,
   readPersistedTerminalCursor,
   readPersistedTerminalPageState,
+  readPersistedTerminalZoomScale,
   readPersistedTerminalViewState,
   readTerminalRecoveryState
 } from "./terminal-page-persistence";
@@ -21,11 +25,15 @@ describe("terminal page persistence", () => {
   it("会记住当前工作区、终端和最后一个输出游标", () => {
     persistSelectedWorkspaceId("workspace-1");
     persistActiveTerminalId("workspace-1", "terminal-1");
+    persistPinnedTerminalIds("workspace-1", ["terminal-2", "terminal-1", "terminal-2"]);
     persistTerminalCursor("terminal-1", "cursor-9");
+    persistTerminalZoomScale(1.2);
 
     expect(readPersistedTerminalPageState().selectedWorkspaceId).toBe("workspace-1");
     expect(readPersistedActiveTerminalId("workspace-1")).toBe("terminal-1");
+    expect(readPinnedTerminalIds("workspace-1")).toEqual(["terminal-2", "terminal-1"]);
     expect(readPersistedTerminalCursor("terminal-1")).toBe("cursor-9");
+    expect(readPersistedTerminalZoomScale()).toBe(1.2);
   });
 
   it("清空终端或游标时会移除旧记录", () => {

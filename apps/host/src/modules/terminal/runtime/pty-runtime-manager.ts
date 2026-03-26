@@ -1,9 +1,15 @@
+import { accessSync, chmodSync, constants, existsSync } from "node:fs";
+import { createRequire } from "node:module";
+import path from "node:path";
 import { EventEmitter } from "node:events";
 
 import { spawn, type IPty } from "node-pty";
 
 import { AppError } from "../../../shared/errors/app-error.js";
 import type { TerminalInstance } from "../../../types/domain.js";
+
+const require = createRequire(import.meta.url);
+let hasEnsuredPtySpawnHelper = false;
 
 export interface TerminalRuntimeExitEvent {
   terminalId: string;
@@ -28,6 +34,8 @@ export class PtyRuntimeManager extends EventEmitter {
 
   start(terminal: TerminalInstance, env: Record<string, string>): void {
     try {
+      ensurePtySpawnHelperExecutable();
+
       const ptyProcess = spawn(terminal.shell, [], {
         cols: 120,
         rows: 30,
@@ -111,5 +119,56 @@ export class PtyRuntimeManager extends EventEmitter {
     for (const terminalId of this.runtimes.keys()) {
       this.close(terminalId);
     }
+  }
+}
+
+function ensurePtySpawnHelperExecutable(): void {
+  if (hasEnsuredPtySpawnHelper || process.platform !== "darwin") {
+    return;
+  }
+
+  const helperPath = resolvePtySpawnHelperPath();
+
+  if (!helperPath) {
+    hasEnsuredPtySpawnHelper = true;
+    return;
+  }
+
+  try {
+    accessSync(helperPath, constants.X_OK);
+    hasEnsuredPtySpawnHelper = true;
+    return;
+  } catch {
+    // 文件存在但不可执行时，自动修复权限。
+  }
+
+  try {
+    chmodSync(helperPath, 0o755);
+    hasEnsuredPtySpawnHelper = true;
+  } catch (error) {
+    throw new AppError({
+      statusCode: 502,
+      errorCode: "PTY_START_FAILED",
+      detail:
+        error instanceof Error
+          ? `node-pty spawn-helper 权限修复失败: ${error.message}`
+          : "node-pty spawn-helper 权限修复失败"
+    });
+  }
+}
+
+function resolvePtySpawnHelperPath(): string | null {
+  try {
+    const packageJsonPath = require.resolve("node-pty/package.json");
+    const helperPath = path.join(
+      path.dirname(packageJsonPath),
+      "prebuilds",
+      `${process.platform}-${process.arch}`,
+      "spawn-helper"
+    );
+
+    return existsSync(helperPath) ? helperPath : null;
+  } catch {
+    return null;
   }
 }

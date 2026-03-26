@@ -10,6 +10,7 @@ export async function registerTerminalRoutes(
   app.get("/api/terminals/shells", terminalController.listShellOptions);
   app.post("/api/terminals", terminalController.createTerminal);
   app.delete("/api/terminals/:terminalId", terminalController.closeTerminal);
+  app.delete("/api/terminals/:terminalId/record", terminalController.deleteTerminal);
   app.post("/api/terminals/:terminalId/input", terminalController.writeInput);
 
   app.get("/api/terminals/templates", terminalController.listTemplates);

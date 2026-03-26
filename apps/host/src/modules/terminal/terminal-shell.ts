@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { accessSync, constants, existsSync } from "node:fs";
 import path from "node:path";
 
 import { AppError } from "../../shared/errors/app-error.js";
@@ -95,15 +95,34 @@ function getPlatformShellOptions(): InternalTerminalShellOption[] {
     return buildWindowsShellOptions();
   }
 
-  const shell = process.env.SHELL ?? "/bin/sh";
+  return buildPosixShellOptions();
+}
+
+function buildPosixShellOptions(): InternalTerminalShellOption[] {
+  // macOS GUI 进程里的 SHELL 可能缺失、失真，甚至带上 `-l` 之类参数。
+  // 终端层真正需要的是“可执行文件路径”，不是一段命令行。
+  const envShellCandidates = splitPosixShellCandidates(process.env.SHELL);
+  const fallbackCandidates =
+    process.platform === "darwin" ? ["/bin/zsh", "/bin/bash", "/bin/sh"] : ["/bin/bash", "/bin/sh"];
+  const shell =
+    resolveFirstExecutablePosixShell([
+      ...envShellCandidates,
+      ...fallbackCandidates,
+      "zsh",
+      "bash",
+      "sh"
+    ]) ??
+    fallbackCandidates[fallbackCandidates.length - 1];
+  const available = canExecutePosixShell(shell);
+
   return [
     {
       id: "default",
       label: "默认 Shell",
       shell,
-      available: true,
-      unavailableReason: null,
-      aliases: [shell, path.basename(shell)]
+      available,
+      unavailableReason: available ? null : "当前没有可执行的 POSIX shell",
+      aliases: uniqNonEmptyStrings([...envShellCandidates, shell, path.basename(shell)])
     }
   ];
 }
@@ -208,6 +227,31 @@ function detectShellType(shell: string): ShellType {
   return "posix";
 }
 
+function splitPosixShellCandidates(shell: string | null | undefined): string[] {
+  const value = shell?.trim();
+
+  if (!value) {
+    return [];
+  }
+
+  const directCandidate = stripWrappingQuotes(value);
+
+  if (
+    !/\s/.test(directCandidate) &&
+    (canExecutePosixShell(directCandidate) || path.isAbsolute(directCandidate))
+  ) {
+    return [directCandidate];
+  }
+
+  const firstToken = stripWrappingQuotes(value.split(/\s+/, 1)[0] ?? "");
+
+  if (!firstToken) {
+    return [];
+  }
+
+  return uniqNonEmptyStrings([firstToken, directCandidate]);
+}
+
 function buildCmdCommandLine(template: TerminalCommandTemplate): string {
   const envPrefix = Object.entries(template.env)
     .map(([key, value]) => `set "${key}=${value.replaceAll('"', '""')}"`)
@@ -249,6 +293,56 @@ function resolveExistingCandidate(candidates: Array<string | null | undefined>):
   }
 
   return null;
+}
+
+function resolveFirstExecutablePosixShell(candidates: Array<string | null | undefined>): string | null {
+  for (const candidate of candidates) {
+    const normalizedCandidate = candidate?.trim();
+
+    if (!normalizedCandidate) {
+      continue;
+    }
+
+    const executablePath = resolveExecutablePosix(normalizedCandidate);
+
+    if (executablePath) {
+      return executablePath;
+    }
+  }
+
+  return null;
+}
+
+function resolveExecutablePosix(shell: string): string | null {
+  if (canExecuteFile(shell)) {
+    return shell;
+  }
+
+  return canResolveExecutable(shell) ? resolveExecutableOnPath(shell) : null;
+}
+
+function canExecutePosixShell(shell: string): boolean {
+  return resolveExecutablePosix(shell) !== null;
+}
+
+function canExecuteFile(filePath: string): boolean {
+  try {
+    accessSync(filePath, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function stripWrappingQuotes(value: string): string {
+  if (
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    return value.slice(1, -1).trim();
+  }
+
+  return value.trim();
 }
 
 function canResolveExecutable(shell: string): boolean {

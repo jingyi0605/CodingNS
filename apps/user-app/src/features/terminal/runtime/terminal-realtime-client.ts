@@ -19,6 +19,7 @@ export interface TerminalOutputChunkDto {
 type TerminalIncomingEvent =
   | { type: "system.connected" }
   | { type: "terminal.subscribed"; terminalId: string }
+  | { type: "terminal.input.accepted"; terminalId: string }
   | { type: "terminal.resize.accepted"; terminalId: string; cols: number; rows: number }
   | {
       type: "terminal.backfill";
@@ -30,6 +31,16 @@ type TerminalIncomingEvent =
   | { type: "terminal.output"; terminalId: string; chunk: TerminalOutputChunkDto }
   | {
       type: "terminal.status";
+      terminal: {
+        id: string;
+        status: "creating" | "running" | "closed" | "error";
+        statusDetail: string | null;
+      };
+    }
+  | {
+      type: "terminal.exit";
+      terminalId: string;
+      requestedClose: boolean;
       terminal: {
         id: string;
         status: "creating" | "running" | "closed" | "error";
@@ -53,6 +64,7 @@ export interface TerminalRealtimeClientOptions {
 export class TerminalRealtimeClient {
   private socket: WebSocket | null = null;
   private disposed = false;
+  private manuallyDisconnected = false;
   private lastCursor: string | null;
   private isSubscribed = false;
   private pendingResize: { cols: number; rows: number } | null = null;
@@ -99,12 +111,23 @@ export class TerminalRealtimeClient {
     this.flushPendingResize();
   }
 
+  disconnect(): void {
+    this.manuallyDisconnected = true;
+    this.isSubscribed = false;
+    const socket = this.socket;
+    this.socket = null;
+    socket?.close();
+    this.options.onConnectionChange("closed");
+  }
+
   reconnectNow(): void {
+    this.manuallyDisconnected = false;
     this.connectionManager.reconnectNow();
   }
 
   close(): void {
     this.disposed = true;
+    this.manuallyDisconnected = true;
     this.connectionManager.close();
     this.socket?.close();
     this.socket = null;
@@ -113,6 +136,10 @@ export class TerminalRealtimeClient {
 
   private connect(forceReset: boolean): void {
     if (this.disposed) {
+      return;
+    }
+
+    if (this.manuallyDisconnected) {
       return;
     }
 
@@ -173,6 +200,10 @@ export class TerminalRealtimeClient {
         return;
       }
 
+      if (payload.type === "terminal.input.accepted") {
+        return;
+      }
+
       if (payload.type === "terminal.backfill") {
         this.lastCursor = payload.latestCursor ?? this.lastCursor;
         this.options.onBackfill(payload);
@@ -185,7 +216,14 @@ export class TerminalRealtimeClient {
         return;
       }
 
-      this.options.onStatus(payload);
+      if (payload.type === "terminal.status") {
+        this.options.onStatus(payload);
+        return;
+      }
+
+      if (payload.type === "terminal.exit") {
+        return;
+      }
     });
 
     socket.addEventListener("close", () => {

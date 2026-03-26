@@ -116,6 +116,10 @@ export class TerminalOutputBuffer {
     };
   }
 
+  clear(terminalId: string): void {
+    this.buffers.delete(terminalId);
+  }
+
   private getOrCreateBuffer(terminalId: string): TerminalBufferState {
     let buffer = this.buffers.get(terminalId);
 

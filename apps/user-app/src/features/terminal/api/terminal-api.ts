@@ -89,6 +89,15 @@ export function closeTerminal(terminalId: string) {
   });
 }
 
+export function deleteTerminalRecord(terminalId: string) {
+  return httpClient.request<{ success: true }>(
+    `/api/terminals/${encodeURIComponent(terminalId)}/record`,
+    {
+      method: "DELETE"
+    }
+  );
+}
+
 export function sendTerminalInput(terminalId: string, content: string) {
   return httpClient.request<{ accepted: true }>(
     `/api/terminals/${encodeURIComponent(terminalId)}/input`,

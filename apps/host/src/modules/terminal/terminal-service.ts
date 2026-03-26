@@ -56,6 +56,7 @@ export class TerminalService extends EventEmitter {
   private readonly activeSubscribers = new Map<string, number>();
   private readonly idleTimers = new Map<string, NodeJS.Timeout>();
   private readonly pendingCloseReasons = new Map<string, TerminalCloseReason>();
+  private readonly pendingDeletedTerminalIds = new Set<string>();
   private isDisposing = false;
 
   constructor(
@@ -187,6 +188,25 @@ export class TerminalService extends EventEmitter {
     return { success: true };
   }
 
+  deleteTerminal(terminalId: string): { success: true } {
+    this.getTerminalOrThrow(terminalId);
+    this.cancelIdleCleanup(terminalId);
+    this.activeSubscribers.delete(terminalId);
+    this.pendingCloseReasons.delete(terminalId);
+    this.lastPersistedActivity.delete(terminalId);
+    this.outputBuffer.clear(terminalId);
+    this.pendingDeletedTerminalIds.add(terminalId);
+    this.terminalInstanceRepository.delete(terminalId);
+
+    if (this.runtimeManager.isRunning(terminalId)) {
+      this.runtimeManager.close(terminalId);
+    } else {
+      this.pendingDeletedTerminalIds.delete(terminalId);
+    }
+
+    return { success: true };
+  }
+
   writeInput(terminalId: string, content: string): { accepted: true } {
     if (!content) {
       throw new AppError({
@@ -309,6 +329,14 @@ export class TerminalService extends EventEmitter {
 
     this.cancelIdleCleanup(event.terminalId);
     this.activeSubscribers.delete(event.terminalId);
+
+    if (this.pendingDeletedTerminalIds.delete(event.terminalId)) {
+      this.pendingCloseReasons.delete(event.terminalId);
+      this.lastPersistedActivity.delete(event.terminalId);
+      this.outputBuffer.clear(event.terminalId);
+      return;
+    }
+
     const closeReason = this.pendingCloseReasons.get(event.terminalId) ?? "user_closed";
     this.pendingCloseReasons.delete(event.terminalId);
     const current = this.getTerminalOrThrow(event.terminalId);

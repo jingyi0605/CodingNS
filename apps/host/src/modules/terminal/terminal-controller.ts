@@ -112,6 +112,13 @@ export class TerminalController {
     reply.send(this.terminalService.closeTerminal(request.params.terminalId));
   };
 
+  readonly deleteTerminal = async (
+    request: FastifyRequest<{ Params: TerminalParams }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(this.terminalService.deleteTerminal(request.params.terminalId));
+  };
+
   readonly writeInput = async (
     request: FastifyRequest<{ Params: TerminalParams; Body: TerminalInputBody }>,
     reply: FastifyReply
