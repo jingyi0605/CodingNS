@@ -676,6 +676,16 @@ function ChevronIcon({ expanded }: { expanded: boolean }) {
   );
 }
 
+function ImportIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="7 10 12 15 17 10" />
+      <line x1="12" y1="15" x2="12" y2="3" />
+    </svg>
+  );
+}
+
 function PlusIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -741,8 +751,11 @@ function SidebarCollapseIcon() {
 function CloneIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-      <rect x="9" y="9" width="10" height="10" rx="2" />
-      <path d="M15 9V7a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2" />
+      <circle cx="18" cy="6" r="3" />
+      <circle cx="6" cy="6" r="3" />
+      <circle cx="18" cy="18" r="3" />
+      <path d="M6 9v6a3 3 0 0 0 3 3h3" />
+      <line x1="18" y1="9" x2="18" y2="15" />
     </svg>
   );
 }
@@ -2377,7 +2390,7 @@ function SidebarContent({
                 disabled={workspaceActionPending}
                 onClick={handleOpenDirectoryBrowser}
               >
-                <PlusIcon />
+                <ImportIcon />
               </button>
               <button
                 type="button"
