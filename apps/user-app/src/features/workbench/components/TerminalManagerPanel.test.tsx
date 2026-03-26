@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -235,8 +235,9 @@ describe("TerminalManagerPanel", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "添加快捷启动项" }));
 
-    expect(await screen.findByRole("dialog", { name: "添加快捷启动项" })).toBeInTheDocument();
-    expect(screen.getByRole("combobox")).toBeInTheDocument();
+    const dialog = await screen.findByRole("dialog", { name: "添加快捷启动项" });
+    expect(dialog).toBeInTheDocument();
+    expect(within(dialog).getAllByRole("combobox")).toHaveLength(2);
 
     await userEvent.click(screen.getByRole("button", { name: "脚本" }));
     await userEvent.type(
@@ -262,7 +263,8 @@ describe("TerminalManagerPanel", () => {
         cwd: "apps/user-app",
         command: "scripts/dev.ps1",
         args: ["-Port", "5173"],
-        port: 5173
+        port: 5173,
+        runtimeType: null
       });
     });
 

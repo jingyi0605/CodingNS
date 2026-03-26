@@ -145,6 +145,8 @@ export const enUS = {
     emptyTemplates: "There is no command template in the current workspace yet.",
     createButton: "Create Terminal",
     creating: "Creating terminal...",
+    creationPendingDescription:
+      "Host is starting the real PTY. This pane will take over as soon as the stream is ready.",
     defaultTerminalName: "Workspace Terminal",
     created: "The terminal has been created and connected to Host.",
     createFailed: "Failed to create terminal.",

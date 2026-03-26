@@ -6,7 +6,6 @@ import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 
 import { t } from "../../../shared/i18n";
-import { useToast, type ToastTone } from "../../../shared/toast";
 import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout";
 import {
   closeTerminal,
@@ -67,6 +66,8 @@ interface TerminalActionMenuState {
   left: number;
 }
 
+type TerminalNoticeTone = "info" | "success" | "warning" | "error";
+
 interface TerminalPaneBindings {
   primary: string | null;
   secondary: string | null;
@@ -93,6 +94,7 @@ interface TerminalWorkspacePaneProps {
   paneId: PaneId;
   paneLabel: string;
   terminal: TerminalDto | null;
+  pendingCreation: boolean;
   zoomScale: number;
   active: boolean;
   connectionState: TerminalConnectionState;
@@ -117,6 +119,9 @@ const MIN_TERMINAL_PIXEL_HEIGHT = 120;
 const MIN_TERMINAL_ZOOM_SCALE = 0.8;
 const MAX_TERMINAL_ZOOM_SCALE = 1.6;
 const TERMINAL_ZOOM_STEP = 0.1;
+const TERMINAL_ACTION_MENU_WIDTH = 196;
+const TERMINAL_ACTION_MENU_OFFSET = 6;
+const TERMINAL_ACTION_MENU_VIEWPORT_GUTTER = 12;
 const INITIAL_PANE_BINDINGS: TerminalPaneBindings = {
   primary: null,
   secondary: null
@@ -130,8 +135,12 @@ export function TerminalPage() {
   const navigate = useNavigate();
   const { navigationGroups } = useWorkbenchShell();
   const terminalActionMenuRef = useRef<HTMLDivElement | null>(null);
+  const terminalActionMenuTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const terminalTabbarScrollRef = useRef<HTMLDivElement | null>(null);
   const toolbarRef = useRef<HTMLDivElement | null>(null);
   const toolbarToggleRef = useRef<HTMLButtonElement | null>(null);
+  const terminalsRef = useRef<TerminalDto[]>([]);
+  const terminalReloadRequestIdRef = useRef(0);
   const paneApiRef = useRef<Record<PaneId, TerminalPaneApi | null>>({
     primary: null,
     secondary: null
@@ -151,6 +160,9 @@ export function TerminalPage() {
     useState<SelectableTerminalRuntimeType>("");
   const [terminals, setTerminals] = useState<TerminalDto[]>([]);
   const [creatingTerminal, setCreatingTerminal] = useState(false);
+  const [pendingTerminalCreationPaneId, setPendingTerminalCreationPaneId] = useState<PaneId | null>(
+    null
+  );
   const [actionMenu, setActionMenu] = useState<TerminalActionMenuState | null>(null);
   const [toolbarOpen, setToolbarOpen] = useState(false);
   const [runtimeFallbackRequest, setRuntimeFallbackRequest] =
@@ -166,13 +178,13 @@ export function TerminalPage() {
     []
   );
   const [zoomScale, setZoomScale] = useState(() => readPersistedTerminalZoomScale() ?? 1);
-  const { showToast } = useToast();
 
+  // 终端页不再弹 toast，保留统一入口，避免把调用点改成一堆分散判断。
   const notifyTerminal = useCallback(
-    (title: string, tone: ToastTone = "info") => {
-      showToast({ title, tone });
+    (_title: string, _tone: TerminalNoticeTone = "info") => {
+      return undefined;
     },
-    [showToast]
+    []
   );
   const registerPaneApi = useCallback((paneId: PaneId, api: TerminalPaneApi | null) => {
     paneApiRef.current[paneId] = api;
@@ -180,6 +192,42 @@ export function TerminalPage() {
   const handleUnauthorized = useCallback(() => {
     navigate("/login", { replace: true });
   }, [navigate]);
+  const updateActionMenuPosition = useCallback(() => {
+    const trigger = terminalActionMenuTriggerRef.current;
+
+    if (!trigger || !trigger.isConnected) {
+      setActionMenu(null);
+      return;
+    }
+
+    const triggerRect = trigger.getBoundingClientRect();
+    const maxLeft = Math.max(
+      TERMINAL_ACTION_MENU_VIEWPORT_GUTTER,
+      window.innerWidth - TERMINAL_ACTION_MENU_WIDTH - TERMINAL_ACTION_MENU_VIEWPORT_GUTTER
+    );
+    const left = clampNumber(
+      triggerRect.right - TERMINAL_ACTION_MENU_WIDTH,
+      TERMINAL_ACTION_MENU_VIEWPORT_GUTTER,
+      maxLeft
+    );
+    const top = Math.max(TERMINAL_ACTION_MENU_VIEWPORT_GUTTER, triggerRect.bottom + TERMINAL_ACTION_MENU_OFFSET);
+
+    setActionMenu((current) => {
+      if (!current) {
+        return current;
+      }
+
+      if (current.left === left && current.top === top) {
+        return current;
+      }
+
+      return {
+        ...current,
+        left,
+        top
+      };
+    });
+  }, []);
 
   const pinnedTerminalIdSet = useMemo(() => new Set(pinnedTerminalIds), [pinnedTerminalIds]);
   const manuallyDisconnectedTerminalIdSet = useMemo(
@@ -200,7 +248,12 @@ export function TerminalPage() {
     () => terminals.find((terminal) => terminal.id === activeTerminalId) ?? null,
     [activeTerminalId, terminals]
   );
-  const visiblePaneIds = splitDirection === "single" ? (["primary"] as PaneId[]) : (["primary", "secondary"] as PaneId[]);
+  const visiblePaneIds =
+    splitDirection === "single" ? (["primary"] as PaneId[]) : (["primary", "secondary"] as PaneId[]);
+
+  useEffect(() => {
+    terminalsRef.current = terminals;
+  }, [terminals]);
 
   function updatePaneBindings(updater: (current: TerminalPaneBindings) => TerminalPaneBindings): void {
     const nextBindings = updater(paneBindingsRef.current);
@@ -226,8 +279,17 @@ export function TerminalPage() {
         preferredPaneId?: PaneId;
       } = {}
     ): Promise<void> => {
+      const requestId = terminalReloadRequestIdRef.current + 1;
+      terminalReloadRequestIdRef.current = requestId;
+
       try {
         const terminalResponse = await listWorkspaceTerminals(workspaceId);
+
+        if (requestId !== terminalReloadRequestIdRef.current) {
+          return;
+        }
+
+        terminalsRef.current = terminalResponse.items;
         setTerminals(terminalResponse.items);
         setManuallyDisconnectedTerminalIds((current) => {
           const existingTerminalIdSet = new Set(terminalResponse.items.map((terminal) => terminal.id));
@@ -264,6 +326,10 @@ export function TerminalPage() {
           })
         );
       } catch (error) {
+        if (requestId !== terminalReloadRequestIdRef.current) {
+          return;
+        }
+
         const detail = error instanceof Error ? error.message : t("terminal.workspaceLoadFailed");
         notifyTerminal(detail, "error");
       }
@@ -338,13 +404,43 @@ export function TerminalPage() {
   }, [activePaneId, paneBindings, selectedWorkspaceId]);
 
   useEffect(() => {
+    if (!actionMenu) {
+      terminalActionMenuTriggerRef.current = null;
+    }
+  }, [actionMenu]);
+
+  useEffect(() => {
+    if (!actionMenu?.terminalId) {
+      return;
+    }
+
+    const tabbarScrollElement = terminalTabbarScrollRef.current;
+    const frameId = window.requestAnimationFrame(() => {
+      updateActionMenuPosition();
+    });
+
+    window.addEventListener("resize", updateActionMenuPosition);
+    window.addEventListener("scroll", updateActionMenuPosition, true);
+    tabbarScrollElement?.addEventListener("scroll", updateActionMenuPosition, { passive: true });
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      window.removeEventListener("resize", updateActionMenuPosition);
+      window.removeEventListener("scroll", updateActionMenuPosition, true);
+      tabbarScrollElement?.removeEventListener("scroll", updateActionMenuPosition);
+    };
+  }, [actionMenu?.terminalId, updateActionMenuPosition]);
+
+  useEffect(() => {
     if (!actionMenu && !toolbarOpen) {
       return;
     }
 
     function handlePointerDown(event: MouseEvent): void {
       const target = event.target as Node;
-      const insideActionMenu = terminalActionMenuRef.current?.contains(target) ?? false;
+      const insideActionMenu =
+        (terminalActionMenuRef.current?.contains(target) ?? false) ||
+        (terminalActionMenuTriggerRef.current?.contains(target) ?? false);
       const insideToolbar =
         (toolbarRef.current?.contains(target) ?? false) ||
         (toolbarToggleRef.current?.contains(target) ?? false);
@@ -365,28 +461,22 @@ export function TerminalPage() {
       }
     }
 
-    function handleViewportShift(): void {
-      setActionMenu(null);
-    }
-
     window.addEventListener("mousedown", handlePointerDown);
     window.addEventListener("keydown", handleEscape);
-    window.addEventListener("resize", handleViewportShift);
-    window.addEventListener("scroll", handleViewportShift, true);
     return () => {
       window.removeEventListener("mousedown", handlePointerDown);
       window.removeEventListener("keydown", handleEscape);
-      window.removeEventListener("resize", handleViewportShift);
-      window.removeEventListener("scroll", handleViewportShift, true);
     };
   }, [actionMenu, toolbarOpen]);
 
   useEffect(() => {
     if (!selectedWorkspaceId) {
+      terminalsRef.current = [];
       setTerminals([]);
       updatePaneBindings(() => INITIAL_PANE_BINDINGS);
       updateActivePane("primary");
       setPaneConnectionStates(INITIAL_CONNECTION_STATES);
+      setPendingTerminalCreationPaneId(null);
       return;
     }
 
@@ -468,12 +558,49 @@ export function TerminalPage() {
     }
   }
 
+  function clearPendingTerminalCreation(paneId: PaneId): void {
+    setPendingTerminalCreationPaneId((current) => (current === paneId ? null : current));
+  }
+
+  function applyCreatedTerminalLocally(terminal: TerminalDto, paneId: PaneId): void {
+    const nextTerminals = upsertTerminal(terminalsRef.current, terminal);
+    terminalsRef.current = nextTerminals;
+    setTerminals(nextTerminals);
+    updatePaneBindings((current) =>
+      normalizePaneBindings({
+        terminals: nextTerminals,
+        currentBindings: {
+          ...current,
+          [paneId]: terminal.id,
+          ...(splitDirectionRef.current === "single"
+            ? {
+                primary: terminal.id,
+                secondary: null
+              }
+            : {})
+        },
+        splitDirection: splitDirectionRef.current,
+        fallbackTerminalId: terminal.id,
+        preferredPaneId: paneId
+      })
+    );
+    setPaneConnectionStates((current) => ({
+      ...current,
+      [paneId]: terminal.status === "running" ? "reconnecting" : "closed"
+    }));
+    setManuallyDisconnectedTerminalIds((current) =>
+      current.filter((item) => item !== terminal.id)
+    );
+  }
+
   async function handleCreateTerminal(): Promise<void> {
     if (!selectedWorkspaceId) {
       return;
     }
 
+    const targetPaneId = activePaneIdRef.current;
     setCreatingTerminal(true);
+    setPendingTerminalCreationPaneId(targetPaneId);
 
     try {
       const terminal = await submitTerminalCreation({
@@ -483,15 +610,19 @@ export function TerminalPage() {
       });
 
       if (!terminal) {
+        clearPendingTerminalCreation(targetPaneId);
         return;
       }
 
+      applyCreatedTerminalLocally(terminal, targetPaneId);
+      clearPendingTerminalCreation(targetPaneId);
       await reloadWorkspaceResources(selectedWorkspaceId, {
         preferredTerminalId: terminal.id,
-        preferredPaneId: activePaneIdRef.current
+        preferredPaneId: targetPaneId
       });
       notifyTerminal(t("terminal.created"), "success");
     } catch (error) {
+      clearPendingTerminalCreation(targetPaneId);
       notifyTerminal(error instanceof Error ? error.message : t("terminal.createFailed"), "error");
     } finally {
       setCreatingTerminal(false);
@@ -541,6 +672,8 @@ export function TerminalPage() {
       return;
     }
 
+    const targetPaneId = activePaneIdRef.current;
+
     try {
       const duplicatedTerminal = await submitTerminalCreation({
         workspaceId: selectedWorkspaceId,
@@ -553,10 +686,11 @@ export function TerminalPage() {
         return;
       }
 
+      applyCreatedTerminalLocally(duplicatedTerminal, targetPaneId);
       setActionMenu(null);
       await reloadWorkspaceResources(selectedWorkspaceId, {
         preferredTerminalId: duplicatedTerminal.id,
-        preferredPaneId: activePaneIdRef.current
+        preferredPaneId: targetPaneId
       });
       notifyTerminal(t("terminal.duplicateSuccess"), "success");
     } catch (error) {
@@ -574,7 +708,9 @@ export function TerminalPage() {
       return;
     }
 
+    const targetPaneId = activePaneIdRef.current;
     setApplyingRuntimeFallback(true);
+    setPendingTerminalCreationPaneId(targetPaneId);
 
     try {
       const terminal = await submitTerminalCreation(
@@ -586,17 +722,21 @@ export function TerminalPage() {
       );
 
       if (!terminal) {
+        clearPendingTerminalCreation(targetPaneId);
         return;
       }
 
+      applyCreatedTerminalLocally(terminal, targetPaneId);
       setSelectedRuntimeType("embedded-pty");
       setRuntimeFallbackRequest(null);
+      clearPendingTerminalCreation(targetPaneId);
       await reloadWorkspaceResources(request.workspaceId, {
         preferredTerminalId: terminal.id,
-        preferredPaneId: activePaneIdRef.current
+        preferredPaneId: targetPaneId
       });
       notifyTerminal(t("terminal.created"), "success");
     } catch (error) {
+      clearPendingTerminalCreation(targetPaneId);
       notifyTerminal(error instanceof Error ? error.message : t("terminal.createFailed"), "error");
     } finally {
       setApplyingRuntimeFallback(false);
@@ -740,7 +880,12 @@ export function TerminalPage() {
       <section className="terminal-shell">
         <header className="terminal-tabbar">
           <div className="terminal-tabbar-main">
-            <div className="terminal-tabbar-scroll" role="tablist" aria-label={t("terminal.title")}>
+            <div
+              ref={terminalTabbarScrollRef}
+              className="terminal-tabbar-scroll"
+              role="tablist"
+              aria-label={t("terminal.title")}
+            >
               {orderedTerminals.map((terminal) => {
                 const isActive = terminal.id === activeTerminalId;
                 const isPinned = pinnedTerminalIdSet.has(terminal.id);
@@ -796,21 +941,24 @@ export function TerminalPage() {
                     <button
                       className="terminal-tab-inline-action"
                       type="button"
+                      data-open={menuOpen}
+                      aria-haspopup="menu"
                       aria-label={t("terminal.moreActions")}
                       aria-expanded={menuOpen}
                       onClick={(event) => {
                         event.stopPropagation();
-                        const triggerRect = event.currentTarget.getBoundingClientRect();
 
-                        setActionMenu((current) =>
-                          current?.terminalId === terminal.id
-                            ? null
-                            : {
-                                terminalId: terminal.id,
-                                top: triggerRect.bottom + 8,
-                                left: Math.max(12, triggerRect.right - 172)
-                              }
-                        );
+                        if (menuOpen) {
+                          setActionMenu(null);
+                          return;
+                        }
+
+                        terminalActionMenuTriggerRef.current = event.currentTarget;
+                        setActionMenu({
+                          terminalId: terminal.id,
+                          top: 0,
+                          left: 0
+                        });
                       }}
                     >
                       ⋯
@@ -818,6 +966,32 @@ export function TerminalPage() {
                   </div>
                 );
               })}
+              {pendingTerminalCreationPaneId ? (
+                <div
+                  className="terminal-tab-shell"
+                  role="presentation"
+                  data-active={activeTerminalId === null && activePaneId === pendingTerminalCreationPaneId}
+                  data-assigned="false"
+                  data-pending="true"
+                >
+                  <div className="terminal-tab" aria-hidden="true">
+                    <span className="terminal-tab-name">
+                      <span
+                        className="terminal-tab-status-dot"
+                        data-status="creating"
+                        aria-hidden="true"
+                      />
+                      <span className="terminal-tab-name-text">{t("terminal.creating")}</span>
+                      <span
+                        className="terminal-tab-runtime"
+                        title={getTerminalRuntimeLabel(selectedRuntimeType || undefined)}
+                      >
+                        {getTerminalRuntimeShortLabel(selectedRuntimeType || undefined)}
+                      </span>
+                    </span>
+                  </div>
+                </div>
+              ) : null}
               <button
                 className="terminal-tab-control"
                 type="button"
@@ -1021,11 +1195,13 @@ export function TerminalPage() {
                     className="terminal-tab-menu-item"
                     role="menuitem"
                     onClick={() => {
+                      setActionMenu(null);
                       void handleDuplicateTerminal(terminal);
                     }}
                   >
                     {t("terminal.duplicateAction")}
                   </button>
+                  <div className="terminal-tab-menu-divider" role="separator" />
                   <button
                     type="button"
                     className="terminal-tab-menu-item"
@@ -1048,11 +1224,13 @@ export function TerminalPage() {
                   >
                     {t("terminal.reconnectAction")}
                   </button>
+                  <div className="terminal-tab-menu-divider" role="separator" />
                   <button
                     type="button"
                     className="terminal-tab-menu-item"
                     role="menuitem"
                     onClick={() => {
+                      setActionMenu(null);
                       void handleCloseTerminal(terminal.id);
                     }}
                   >
@@ -1096,6 +1274,7 @@ export function TerminalPage() {
                   paneId={paneId}
                   paneLabel={paneId === "primary" ? t("terminal.panePrimary") : t("terminal.paneSecondary")}
                   terminal={terminal}
+                  pendingCreation={!terminal && pendingTerminalCreationPaneId === paneId}
                   zoomScale={zoomScale}
                   active={activePaneId === paneId}
                   connectionState={paneConnectionStates[paneId]}
@@ -1120,6 +1299,7 @@ function TerminalWorkspacePane({
   paneId,
   paneLabel,
   terminal,
+  pendingCreation,
   zoomScale,
   active,
   connectionState,
@@ -1368,6 +1548,13 @@ function TerminalWorkspacePane({
       {terminal ? (
         <div className="terminal-canvas">
           <div ref={terminalContainerRef} className="terminal-xterm" />
+        </div>
+      ) : pendingCreation ? (
+        <div className="terminal-empty-state terminal-empty-state-inline terminal-pending-state">
+          <span className="terminal-pane-label">{paneLabel}</span>
+          <span className="terminal-pending-indicator" aria-hidden="true" />
+          <h1>{t("terminal.creating")}</h1>
+          <p>{t("terminal.creationPendingDescription")}</p>
         </div>
       ) : (
         <div className="terminal-empty-state terminal-empty-state-inline">
@@ -1641,6 +1828,10 @@ function clampZoomScale(value: number): number {
   return Math.min(MAX_TERMINAL_ZOOM_SCALE, Math.max(MIN_TERMINAL_ZOOM_SCALE, value));
 }
 
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
 function buildTerminalFontSize(zoomScale: number): number {
   return Math.round(DEFAULT_TERMINAL_FONT_SIZE * clampZoomScale(zoomScale) * 10) / 10;
 }
@@ -1867,4 +2058,16 @@ function downloadTextFile(fileName: string, content: string): void {
 function sanitizeFileName(input: string): string {
   const normalized = input.trim().replace(/[\\/:*?"<>|]+/g, "-");
   return normalized || "terminal";
+}
+
+function upsertTerminal(terminals: TerminalDto[], nextTerminal: TerminalDto): TerminalDto[] {
+  const existingIndex = terminals.findIndex((terminal) => terminal.id === nextTerminal.id);
+
+  if (existingIndex === -1) {
+    return [nextTerminal, ...terminals];
+  }
+
+  const nextTerminals = [...terminals];
+  nextTerminals[existingIndex] = nextTerminal;
+  return nextTerminals;
 }

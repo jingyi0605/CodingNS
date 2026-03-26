@@ -2818,6 +2818,11 @@ a {
   background: color-mix(in srgb, var(--panel-active) 58%, var(--panel-bg));
 }
 
+.terminal-tab-shell[data-pending="true"] {
+  border-color: color-mix(in srgb, #0a84ff 22%, var(--panel-border));
+  background: color-mix(in srgb, #0a84ff 8%, var(--panel-bg-strong));
+}
+
 .terminal-tab {
   display: inline-flex;
   align-items: center;
@@ -2877,6 +2882,8 @@ a {
 
 .terminal-tab-status-dot[data-status="creating"] {
   background: #0a84ff;
+  box-shadow: 0 0 0 4px rgba(10, 132, 255, 0.16);
+  animation: terminal-status-pulse 1.2s ease-in-out infinite;
 }
 
 .terminal-tab-status-dot[data-status="error"] {
@@ -3317,6 +3324,22 @@ a {
   border-radius: 18px;
 }
 
+.terminal-pending-state {
+  gap: 12px;
+  background:
+    radial-gradient(circle at top, rgba(10, 132, 255, 0.14), transparent 56%),
+    rgba(255, 255, 255, 0.52);
+}
+
+.terminal-pending-indicator {
+  width: 42px;
+  height: 42px;
+  border: 2px solid rgba(10, 132, 255, 0.2);
+  border-top-color: #0a84ff;
+  border-radius: 999px;
+  animation: terminal-spinner 0.9s linear infinite;
+}
+
 .terminal-stage-grid[data-layout="single"] .terminal-empty-state-inline {
   border-radius: 0;
   background: transparent;
@@ -3332,6 +3355,25 @@ a {
   max-width: 360px;
   margin: 0;
   line-height: 1.5;
+}
+
+@keyframes terminal-status-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.72;
+  }
+
+  50% {
+    transform: scale(1.2);
+    opacity: 1;
+  }
+}
+
+@keyframes terminal-spinner {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* Auth */

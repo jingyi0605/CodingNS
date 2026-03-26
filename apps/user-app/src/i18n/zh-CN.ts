@@ -134,6 +134,7 @@ export const zhCN = {
     emptyTemplates: "当前工作区还没有命令模板。",
     createButton: "新建终端",
     creating: "正在创建终端…",
+    creationPendingDescription: "Host 正在启动真实 PTY，连上以后这个窗口会立刻接管显示。",
     defaultTerminalName: "工作终端",
     created: "终端已经创建并接入 Host。",
     createFailed: "终端创建失败。",
