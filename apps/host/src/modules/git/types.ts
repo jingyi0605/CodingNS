@@ -69,6 +69,8 @@ export interface GitHistoryItem {
   authoredAt: string;
   subject: string;
   body: string;
+  commitKind: "local" | "remote" | "shared";
+  refs: GitHistoryRef[];
 }
 
 export interface GitHistoryPage {
@@ -76,6 +78,12 @@ export interface GitHistoryPage {
   cursor: string | null;
   nextCursor: string | null;
   totalCount: number;
+}
+
+export interface GitHistoryRef {
+  name: string;
+  kind: "head" | "local" | "remote";
+  remoteName: string | null;
 }
 
 export interface GitBranchItem {
@@ -101,4 +109,5 @@ export interface GitRemoteSyncResult {
 export interface GitUndoCommitResult {
   summary: string;
   commitHash: string;
+  commitSubject: string;
 }

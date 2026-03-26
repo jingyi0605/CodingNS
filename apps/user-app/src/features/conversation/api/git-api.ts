@@ -85,6 +85,8 @@ export interface GitHistoryItemDto {
   authoredAt: string;
   subject: string;
   body: string;
+  commitKind: "local" | "remote" | "shared";
+  refs: GitHistoryRefDto[];
 }
 
 export interface GitHistoryPageDto {
@@ -92,6 +94,12 @@ export interface GitHistoryPageDto {
   cursor: string | null;
   nextCursor: string | null;
   totalCount: number;
+}
+
+export interface GitHistoryRefDto {
+  name: string;
+  kind: "head" | "local" | "remote";
+  remoteName: string | null;
 }
 
 export interface GitBranchItemDto {
@@ -117,6 +125,7 @@ export interface GitRemoteSyncResultDto {
 export interface GitUndoCommitResultDto {
   summary: string;
   commitHash: string;
+  commitSubject: string;
 }
 
 export function getGitStatus(workspaceId: string) {

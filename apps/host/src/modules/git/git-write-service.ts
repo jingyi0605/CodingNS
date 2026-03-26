@@ -242,6 +242,13 @@ export class GitWriteService {
     }
 
     const commitHash = headResult.stdout.trim();
+    const commitSubjectResult = await this.gitCommandRunner.run(
+      repo.repoRoot,
+      ["show", "-s", "--format=%s", "HEAD"],
+      { allowNonZeroExit: true }
+    );
+    const commitSubject =
+      commitSubjectResult.exitCode === 0 ? commitSubjectResult.stdout.trim() : "";
     const resetResult = await this.gitCommandRunner.run(
       repo.repoRoot,
       ["reset", "--soft", "HEAD~1"],
@@ -258,7 +265,8 @@ export class GitWriteService {
 
     return {
       summary: "已撤销上次提交，改动保留在暂存区",
-      commitHash
+      commitHash,
+      commitSubject
     };
   }
 }

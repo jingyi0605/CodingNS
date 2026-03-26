@@ -6,6 +6,7 @@ import type {
   GitChangeItem,
   GitDiffResult,
   GitHistoryItem,
+  GitHistoryRef,
   GitHistoryPage,
   GitRepoSnapshot
 } from "./types.js";
@@ -14,6 +15,16 @@ import type { WorkspaceRepoGuard } from "./workspace-repo-guard.js";
 const MAX_DIFF_OUTPUT = 200_000;
 const DEFAULT_HISTORY_LIMIT = 20;
 const MAX_HISTORY_LIMIT = 50;
+
+interface ParsedGitRef {
+  fullName: string;
+  shortName: string;
+  commitHash: string;
+  kind: "local" | "remote";
+  upstream: string | null;
+  current: boolean;
+  remoteName: string | null;
+}
 
 export class GitReadService {
   constructor(
@@ -95,24 +106,52 @@ export class GitReadService {
     const repo = await this.workspaceRepoGuard.resolve(workspaceId);
     const safeLimit = clampHistoryLimit(limit);
     const offset = parseCursor(cursor);
-    const [logResult, countResult] = await Promise.all([
+    const refsResult = await this.gitCommandRunner.run(repo.repoRoot, [
+      "for-each-ref",
+      "--format=%(refname)%x1f%(refname:short)%x1f%(objectname)%x1f%(upstream:short)%x1f%(HEAD)",
+      "refs/heads",
+      "refs/remotes"
+    ]);
+    const parsedRefs = refsResult.stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => parseGitRefLine(line));
+    const refByShortName = new Map(parsedRefs.map((ref) => [ref.shortName, ref] as const));
+    const currentRef = parsedRefs.find((ref) => ref.kind === "local" && ref.current) ?? null;
+    const [logResult, countResult, divergenceResult] = await Promise.all([
       this.gitCommandRunner.run(repo.repoRoot, [
         "log",
+        "--all",
+        "--topo-order",
         `--skip=${offset}`,
         "-n",
         String(safeLimit + 1),
         "--date=iso-strict",
-        "--pretty=format:%H%x1f%an%x1f%ad%x1f%s%x1f%b%x1e"
+        "--decorate=short",
+        "--pretty=format:%H%x1f%an%x1f%ad%x1f%s%x1f%b%x1f%D%x1e"
       ]),
-      this.gitCommandRunner.run(repo.repoRoot, ["rev-list", "--count", "HEAD"], {
+      this.gitCommandRunner.run(repo.repoRoot, ["rev-list", "--count", "--all"], {
         allowNonZeroExit: true
-      })
+      }),
+      currentRef?.upstream
+        ? this.gitCommandRunner.run(
+            repo.repoRoot,
+            ["rev-list", "--left-right", `${currentRef.shortName}...${currentRef.upstream}`],
+            { allowNonZeroExit: true }
+          )
+        : Promise.resolve({
+            stdout: "",
+            stderr: "",
+            exitCode: 0
+          })
     ]);
+    const divergenceSets = parseHistoryDivergence(divergenceResult.stdout);
     const parsedItems = logResult.stdout
       .split("\u001e")
       .map((entry) => entry.trim())
       .filter(Boolean)
-      .map((entry) => parseHistoryItem(entry));
+      .map((entry) => parseHistoryItem(entry, refByShortName, divergenceSets));
     const hasMore = parsedItems.length > safeLimit;
     const items = hasMore ? parsedItems.slice(0, safeLimit) : parsedItems;
     const totalCount = parseHistoryCount(countResult.stdout);
@@ -201,17 +240,167 @@ function parseStatusLine(line: string): GitChangeItem {
   };
 }
 
-function parseHistoryItem(entry: string): GitHistoryItem {
-  const [commitHash = "", authorName = "", authoredAt = "", subject = "", body = ""] =
+function parseHistoryItem(
+  entry: string,
+  refByShortName: ReadonlyMap<string, ParsedGitRef>,
+  divergenceSets: { local: ReadonlySet<string>; remote: ReadonlySet<string> }
+): GitHistoryItem {
+  const [commitHash = "", authorName = "", authoredAt = "", subject = "", body = "", decoration = ""] =
     entry.split("\u001f");
+  const refs = parseHistoryRefs(decoration, refByShortName);
 
   return {
     commitHash,
     authorName,
     authoredAt,
     subject,
-    body
+    body,
+    commitKind: resolveHistoryCommitKind(commitHash, refs, divergenceSets),
+    refs
   };
+}
+
+function parseGitRefLine(line: string): ParsedGitRef {
+  const [fullName = "", shortName = "", commitHash = "", upstream = "", currentMarker = ""] =
+    line.split("\u001f");
+  const remoteName =
+    fullName.startsWith("refs/remotes/") && shortName.includes("/")
+      ? shortName.split("/")[0] || null
+      : null;
+
+  return {
+    fullName,
+    shortName,
+    commitHash,
+    kind: fullName.startsWith("refs/remotes/") ? "remote" : "local",
+    upstream: upstream || null,
+    current: currentMarker.trim() === "*",
+    remoteName
+  };
+}
+
+function parseHistoryRefs(
+  decoration: string,
+  refByShortName: ReadonlyMap<string, ParsedGitRef>
+): GitHistoryRef[] {
+  if (!decoration.trim()) {
+    return [];
+  }
+
+  const refs: GitHistoryRef[] = [];
+  const seen = new Set<string>();
+
+  for (const rawToken of decoration.split(",")) {
+    const token = rawToken.trim();
+
+    if (!token || token.startsWith("tag: ")) {
+      continue;
+    }
+
+    if (token.startsWith("HEAD -> ")) {
+      const branchName = token.slice("HEAD -> ".length).trim();
+      const key = `head:${branchName}`;
+
+      if (!branchName || seen.has(key)) {
+        continue;
+      }
+
+      refs.push({
+        name: branchName,
+        kind: "head",
+        remoteName: null
+      });
+      seen.add(key);
+      continue;
+    }
+
+    const parsedRef = refByShortName.get(token);
+
+    if (!parsedRef || parsedRef.shortName.endsWith("/HEAD")) {
+      continue;
+    }
+
+    const kind = parsedRef.kind;
+    const key = `${kind}:${parsedRef.shortName}`;
+
+    if (seen.has(key) || (kind === "local" && seen.has(`head:${parsedRef.shortName}`))) {
+      continue;
+    }
+
+    refs.push({
+      name: parsedRef.shortName,
+      kind,
+      remoteName: parsedRef.remoteName
+    });
+    seen.add(key);
+  }
+
+  return refs;
+}
+
+function parseHistoryDivergence(stdout: string): { local: ReadonlySet<string>; remote: ReadonlySet<string> } {
+  const local = new Set<string>();
+  const remote = new Set<string>();
+
+  for (const line of stdout.split(/\r?\n/)) {
+    const entry = line.trim();
+
+    if (!entry) {
+      continue;
+    }
+
+    const side = entry[0];
+    const hash = entry.slice(1).trim();
+
+    if (!hash) {
+      continue;
+    }
+
+    if (side === "<") {
+      local.add(hash);
+      continue;
+    }
+
+    if (side === ">") {
+      remote.add(hash);
+    }
+  }
+
+  return {
+    local,
+    remote
+  };
+}
+
+function resolveHistoryCommitKind(
+  commitHash: string,
+  refs: GitHistoryRef[],
+  divergenceSets: { local: ReadonlySet<string>; remote: ReadonlySet<string> }
+): GitHistoryItem["commitKind"] {
+  if (divergenceSets.local.has(commitHash)) {
+    return "local";
+  }
+
+  if (divergenceSets.remote.has(commitHash)) {
+    return "remote";
+  }
+
+  const hasLocalRef = refs.some((ref) => ref.kind === "head" || ref.kind === "local");
+  const hasRemoteRef = refs.some((ref) => ref.kind === "remote");
+
+  if (hasLocalRef && hasRemoteRef) {
+    return "shared";
+  }
+
+  if (hasLocalRef) {
+    return "local";
+  }
+
+  if (hasRemoteRef) {
+    return "remote";
+  }
+
+  return "shared";
 }
 
 function clampHistoryLimit(limit: number): number {

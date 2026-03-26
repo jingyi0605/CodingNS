@@ -99,6 +99,7 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
   const [panelResizeActive, setPanelResizeActive] = useState(false);
   const splitLayoutRef = useRef<HTMLDivElement | null>(null);
   const treePanelBodyRef = useRef<HTMLDivElement | null>(null);
+  const commitEditorRef = useRef<HTMLTextAreaElement | null>(null);
   const { showToast } = useToast();
 
   useEffect(() => {
@@ -276,6 +277,10 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
       setSelectedPath(null);
     }
   }, [selectedPath, status]);
+
+  useEffect(() => {
+    resizeCommitEditor(commitEditorRef.current);
+  }, [commitSubject]);
 
   useEffect(() => {
     if (isMobileViewport) {
@@ -548,6 +553,7 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
 
     try {
       const result = await undoLastCommit(workspaceId);
+      setCommitSubject(result.commitSubject ?? "");
       showToast({
         title: result.summary || t("git.undoLastCommitSuccess"),
         tone: "success"
@@ -673,9 +679,16 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
         </div>
 
         <div className="git-editor-row">
-          <input
+          <textarea
+            ref={commitEditorRef}
+            rows={1}
             value={commitSubject}
-            onChange={(event) => setCommitSubject(event.target.value)}
+            onChange={(event) => setCommitSubject(normalizeCommitSubject(event.target.value))}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+              }
+            }}
             placeholder={t("git.commitSubjectPlaceholder")}
           />
           <button
@@ -882,10 +895,37 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
               {history.length ? (
                 <>
                   {history.map((item) => (
-                    <article key={item.commitHash} className="git-history-entry">
-                      <span className="git-history-marker" aria-hidden="true" />
+                    <article
+                      key={item.commitHash}
+                      className="git-history-entry"
+                      data-kind={item.commitKind}
+                    >
+                      <span
+                        className="git-history-marker"
+                        data-kind={item.commitKind}
+                        aria-hidden="true"
+                      />
                       <div className="git-history-body">
-                        <strong>{item.subject}</strong>
+                        <div className="git-history-title-row">
+                          <strong title={item.subject}>{item.subject}</strong>
+                          <span className="git-history-kind-badge" data-kind={item.commitKind}>
+                            {formatHistoryCommitKind(item.commitKind)}
+                          </span>
+                        </div>
+                        {item.refs.length > 0 ? (
+                          <div className="git-history-ref-list">
+                            {item.refs.map((ref) => (
+                              <span
+                                key={`${item.commitHash}:${ref.kind}:${ref.name}`}
+                                className="git-history-ref-pill"
+                                data-kind={ref.kind}
+                                data-remote-index={String(resolveRemotePaletteIndex(ref.remoteName))}
+                              >
+                                {ref.name}
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
                         <div className="git-history-meta">
                           <span className="git-history-hash">{item.commitHash.slice(0, 8)}</span>
                           <span>{item.authorName}</span>
@@ -1321,11 +1361,51 @@ function collectSelectionTargets(
 
 function buildCommitDraft(subject: string): CommitDraftDto {
   return {
-    subject: subject.trim(),
+    subject: normalizeCommitSubject(subject).trim(),
     body: null,
     footer: null,
     source: "manual"
   };
+}
+
+function normalizeCommitSubject(subject: string) {
+  return subject.replace(/[\r\n]+/g, " ");
+}
+
+function resizeCommitEditor(editor: HTMLTextAreaElement | null) {
+  if (!editor) {
+    return;
+  }
+
+  editor.style.height = "0px";
+  const nextHeight = Math.min(Math.max(editor.scrollHeight, 34), 120);
+  editor.style.height = `${nextHeight}px`;
+  editor.style.overflowY = editor.scrollHeight > 120 ? "auto" : "hidden";
+}
+
+function formatHistoryCommitKind(kind: GitHistoryItemDto["commitKind"]) {
+  switch (kind) {
+    case "local":
+      return t("git.historyKindLocal");
+    case "remote":
+      return t("git.historyKindRemote");
+    default:
+      return t("git.historyKindShared");
+  }
+}
+
+function resolveRemotePaletteIndex(remoteName: string | null) {
+  if (!remoteName) {
+    return 0;
+  }
+
+  let hash = 0;
+
+  for (const character of remoteName) {
+    hash = (hash * 33 + character.charCodeAt(0)) >>> 0;
+  }
+
+  return hash % 6;
 }
 
 function readError(error: unknown, fallback: string): string {
