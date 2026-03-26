@@ -507,6 +507,9 @@ export class SessionLiveRuntimeService {
 
     if (event.type === "message") {
       const workspace = this.workspaceService.getWorkspaceOrThrow(workspaceId);
+      await this.sessionHistoryService.syncSessionTitle(sessionId).catch(() => {
+        return;
+      });
       const existing = this.sessionIndexRepository.findIndexRecordBySessionId(sessionId);
 
       if (existing) {
@@ -552,6 +555,12 @@ export class SessionLiveRuntimeService {
       event.status === "completed" || event.status === "interrupted" || event.status === "failed"
         ? event.timestamp
         : this.sessionStateRepository.findBySessionAndUser(sessionId, userId)?.completedAt ?? null;
+
+    if (completedAt) {
+      await this.sessionHistoryService.syncSessionTitle(sessionId).catch(() => {
+        return;
+      });
+    }
 
     this.sessionStateRepository.upsert({
       sessionId,

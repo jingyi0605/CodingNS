@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { DatabaseSync } from "node:sqlite";
 
 import { CodexAdapter } from "../dist/index.js";
 
@@ -145,6 +146,97 @@ test("CodexAdapter 能识别 macOS 工作区下的原生会话", async () => {
     assert.equal(sessions[0]?.providerSessionId, threadId);
     assert.equal(sessions[0]?.rawStoreRef, sessionFile);
     assert.equal(sessions[0]?.workspacePath, workspacePath);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("CodexAdapter 读取标题时应优先采用 session_index.jsonl 的 thread_name", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-title-priority-"));
+  const workspacePath = "/Users/jackson/Documents/Code/CodingNS";
+  const sessionDir = join(tempDir, "sessions", "2026", "03", "26");
+  const sessionFile = join(sessionDir, "session.jsonl");
+  const threadId = "12345678-1234-4234-9234-1234567890ab";
+  const summarizedTitle = "修复Markdown查看器样式错位问题";
+  const staleTitle = "markdown查看器的样式存在问题，属于markdown文本的内容显示到了模态框中";
+
+  try {
+    mkdirSync(sessionDir, { recursive: true });
+    writeFileSync(
+      sessionFile,
+      [
+        JSON.stringify({
+          type: "session_meta",
+          payload: {
+            id: threadId,
+            cwd: workspacePath
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-03-26T00:00:00.000Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: staleTitle
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(
+      join(tempDir, "session_index.jsonl"),
+      `${JSON.stringify({
+        id: threadId,
+        thread_name: summarizedTitle,
+        updated_at: "2026-03-26T00:57:20.60362Z"
+      })}\n`,
+      "utf8"
+    );
+
+    const db = new DatabaseSync(join(tempDir, "state_1.sqlite"));
+    db.exec(`
+      CREATE TABLE threads (
+        id TEXT PRIMARY KEY,
+        title TEXT,
+        cwd TEXT,
+        created_at INTEGER,
+        archived INTEGER,
+        first_user_message TEXT,
+        agent_nickname TEXT,
+        agent_role TEXT,
+        rollout_path TEXT
+      );
+    `);
+    db.prepare(
+      `INSERT INTO threads (
+         id,
+         title,
+         cwd,
+         created_at,
+         archived,
+         first_user_message,
+         agent_nickname,
+         agent_role,
+         rollout_path
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      threadId,
+      staleTitle,
+      workspacePath,
+      Math.floor(Date.parse("2026-03-26T00:56:47.042Z") / 1000),
+      0,
+      staleTitle,
+      null,
+      null,
+      sessionFile
+    );
+    db.close();
+
+    const adapter = new CodexAdapter({ homeDir: tempDir });
+    const sessions = await adapter.detectSessions(workspacePath);
+
+    assert.equal(sessions.length, 1);
+    assert.equal(sessions[0]?.title, summarizedTitle);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }

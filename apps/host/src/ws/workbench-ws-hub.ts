@@ -68,6 +68,7 @@ interface UserChannelState {
   workbenchTimer: NodeJS.Timeout | null;
   sidebarTimer: NodeJS.Timeout | null;
   refreshTask: Promise<void> | null;
+  titleSyncTask: Promise<void> | null;
 }
 
 interface FileTreeClientSubscription {
@@ -205,6 +206,26 @@ export class WorkbenchWsHub {
     this.userChannels.delete(userId);
   }
 
+  async broadcastSnapshot(userId: string): Promise<void> {
+    const channel = this.userChannels.get(userId);
+
+    if (!channel) {
+      return;
+    }
+
+    const payload = buildWorkbenchPayload(this.workbenchService.getSnapshot(userId));
+
+    if (payload === channel.lastWorkbenchPayload) {
+      return;
+    }
+
+    channel.lastWorkbenchPayload = payload;
+
+    for (const client of channel.clients) {
+      client.send(payload);
+    }
+  }
+
   private attachClient(client: WebSocket, userId: string, channel: UserChannelState): void {
     channel.clients.add(client);
     this.clientUsers.set(client, userId);
@@ -222,7 +243,8 @@ export class WorkbenchWsHub {
       lastWorkbenchPayload: null,
       workbenchTimer: null,
       sidebarTimer: null,
-      refreshTask: null
+      refreshTask: null,
+      titleSyncTask: null
     };
     channel.workbenchTimer = setInterval(() => {
       if (!this.workbenchService.shouldRefreshSnapshot()) {
@@ -232,10 +254,39 @@ export class WorkbenchWsHub {
       void this.refreshAndBroadcast(userId);
     }, WORKBENCH_REFRESH_INTERVAL_MS);
     channel.sidebarTimer = setInterval(() => {
-      void this.refreshSidebarSubscriptions(userId);
+      void Promise.all([
+        this.syncTitlesAndBroadcast(userId),
+        this.refreshSidebarSubscriptions(userId)
+      ]);
     }, SIDEBAR_REFRESH_INTERVAL_MS);
     this.userChannels.set(userId, channel);
     return channel;
+  }
+
+  private async syncTitlesAndBroadcast(userId: string): Promise<void> {
+    const channel = this.getOrCreateChannel(userId);
+
+    if (channel.titleSyncTask) {
+      return channel.titleSyncTask;
+    }
+
+    channel.titleSyncTask = (async () => {
+      const payload = buildWorkbenchPayload(await this.workbenchService.syncSessionTitles(userId));
+
+      if (payload === channel.lastWorkbenchPayload) {
+        return;
+      }
+
+      channel.lastWorkbenchPayload = payload;
+
+      for (const client of channel.clients) {
+        client.send(payload);
+      }
+    })().finally(() => {
+      channel.titleSyncTask = null;
+    });
+
+    return channel.titleSyncTask;
   }
 
   private async sendWorkbenchSnapshotToClient(

@@ -122,6 +122,16 @@ export class SessionSyncService {
       .sendMessage(providerSessionId, rawStoreRef, content, clientRequestId);
   }
 
+  async readSessionTitle(
+    providerId: string,
+    providerSessionId: string,
+    rawStoreRef: string
+  ): Promise<string> {
+    return this.registry
+      .get(providerId)
+      .readSessionTitle(providerSessionId, rawStoreRef);
+  }
+
   async renameSessionTitle(
     providerId: string,
     providerSessionId: string,

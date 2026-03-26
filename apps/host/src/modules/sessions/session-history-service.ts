@@ -298,6 +298,21 @@ export class SessionHistoryService {
     return this.enrichSessionItem(this.getSessionListItemOrThrow(sessionId, userId));
   }
 
+  async syncSessionTitle(sessionId: string): Promise<void> {
+    const binding = this.getBindingOrThrow(sessionId);
+    await this.syncSessionTitleFromProvider(sessionId, binding);
+  }
+
+  async syncWorkspaceSessionTitles(workspaceId: string, userId: string): Promise<void> {
+    const sessions = this.sessionIndexRepository.listByWorkspace(workspaceId, userId);
+
+    for (const session of sessions) {
+      await this.syncSessionTitle(session.sessionId).catch(() => {
+        return;
+      });
+    }
+  }
+
   async listSessionChangedFiles(
     sessionId: string,
     userId: string

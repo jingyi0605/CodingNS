@@ -71,4 +71,16 @@ export class WorkbenchService {
 
     return snapshot;
   }
+
+  async syncSessionTitles(userId: string): Promise<WorkbenchSnapshot> {
+    const workspaces = this.workspaceRepository.list();
+
+    await Promise.all(
+      workspaces.map((workspace) =>
+        this.sessionHistoryService.syncWorkspaceSessionTitles(workspace.id, userId)
+      )
+    );
+
+    return this.getSnapshot(userId);
+  }
 }

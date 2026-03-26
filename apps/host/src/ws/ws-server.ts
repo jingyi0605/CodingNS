@@ -123,6 +123,10 @@ export function createWsServer(
         }
 
         client.send(JSON.stringify(deduped));
+
+        if (deduped.type === "session.backfill" || deduped.type === "session.delta") {
+          await workbenchWsHub.broadcastSnapshot(authContext.user.userId);
+        }
       };
 
       const runtimeSubscription = sessionLiveRuntimeService.subscribeRuntime(

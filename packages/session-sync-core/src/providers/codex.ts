@@ -556,6 +556,30 @@ export class CodexAdapter implements ProviderAdapter {
     };
   }
 
+  async readSessionTitle(
+    providerSessionId: string,
+    rawStoreRef: string
+  ): Promise<string> {
+    const resolvedStoreRef = this.resolveSessionFilePath(rawStoreRef, providerSessionId);
+    const records = readJsonLines(resolvedStoreRef);
+    const fileSessionId = basename(resolvedStoreRef, ".jsonl");
+    const meta = records.find((record) => record.data.type === "session_meta")?.data;
+    const metaPayload = (meta?.payload ?? {}) as Record<string, unknown>;
+    const sessionIdentity = this.readSessionIdentity(resolvedStoreRef, fileSessionId);
+    const codexSessionId = this.resolveCodexSessionId(metaPayload, providerSessionId || fileSessionId);
+    const threadMetadataIndex = this.readThreadMetadataIndex();
+    const messages = this.parseMessagesFromEntries(resolvedStoreRef, records, codexSessionId);
+
+    return (
+      this.resolveIndexedTitle(threadMetadataIndex, codexSessionId) ??
+      (sessionIdentity
+        ? this.resolveIndexedTitle(threadMetadataIndex, sessionIdentity.threadId)
+        : null) ??
+      resolveCodexFallbackTitle(messages) ??
+      fileSessionId
+    );
+  }
+
   async renameSessionTitle(
     providerSessionId: string,
     rawStoreRef: string,
@@ -753,13 +777,14 @@ export class CodexAdapter implements ProviderAdapter {
         }
 
         const current = index.get(id);
+        const dbTitle = normalizeCodexIndexedTitle(ensureText(row.title)) || null;
         const createdAtSeconds =
           typeof row.created_at === "number"
             ? row.created_at
             : Number.parseInt(ensureText(row.created_at), 10);
 
         index.set(id, {
-          title: normalizeCodexIndexedTitle(ensureText(row.title)) || (current?.title ?? null),
+          title: current?.title ?? dbTitle,
           cwd: ensureText(row.cwd).trim() || (current?.cwd ?? null),
           createdAtMs: Number.isFinite(createdAtSeconds) ? createdAtSeconds * 1000 : null,
           firstUserMessage:

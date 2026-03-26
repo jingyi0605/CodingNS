@@ -156,6 +156,10 @@ export interface ProviderAdapter {
     content: string,
     clientRequestId: string | null
   ): Promise<SendMessageResult>;
+  readSessionTitle(
+    providerSessionId: string,
+    rawStoreRef: string
+  ): Promise<string>;
   renameSessionTitle(
     providerSessionId: string,
     rawStoreRef: string,
