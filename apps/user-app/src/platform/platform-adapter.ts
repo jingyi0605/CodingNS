@@ -31,6 +31,7 @@ export interface DesktopShellBridge {
   readonly supported: boolean;
   openExternal(url: string): Promise<DesktopBridgeResult>;
   showNotification(title: string, body: string): Promise<DesktopBridgeResult>;
+  writeClipboardText(text: string): Promise<DesktopBridgeResult>;
   setWindowState(state: "minimize" | "maximize" | "toggle-maximize" | "close"): Promise<DesktopBridgeResult>;
   readDesktopConfig(): Promise<DesktopBridgeResult<Partial<ClientRuntimeConfig>>>;
   writeDesktopConfig(config: ClientRuntimeConfigPatch): Promise<DesktopBridgeResult>;
@@ -172,6 +173,10 @@ class WebDesktopShellBridge implements DesktopShellBridge {
     return showSystemNotification(title, body);
   }
 
+  writeClipboardText(): Promise<DesktopBridgeResult> {
+    return Promise.resolve(unsupportedResult("当前不是桌面端运行环境。"));
+  }
+
   setWindowState(): Promise<DesktopBridgeResult> {
     return Promise.resolve(unsupportedResult("当前不是桌面端运行环境。"));
   }
@@ -220,6 +225,10 @@ class TauriDesktopShellBridge implements DesktopShellBridge {
     }
 
     return invokeDesktopCommand("show_notification", { title, body });
+  }
+
+  writeClipboardText(text: string): Promise<DesktopBridgeResult> {
+    return invokeDesktopCommand("copy_text", { text });
   }
 
   setWindowState(

@@ -11,6 +11,7 @@ import {
   searchFiles,
   type FileNodeDto
 } from "../api/file-context-api";
+import { usePlatform } from "../../../platform/platform-provider";
 import { useWorkbenchShell } from "./WorkbenchLayout";
 import { FileViewerModal } from "./FileViewerModal";
 import {
@@ -60,6 +61,7 @@ interface DirectorySnapshotRequestOptions {
 
 export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelProps) {
   const {
+    navigationGroups,
     subscribeFileTree,
     requestFileTreeRefresh,
     addFileTreeSnapshotListener
@@ -79,11 +81,13 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
   const [activeTab, setActiveTab] = useState<FilePanelTab>("workspace");
   const [sessionRefreshVersion, setSessionRefreshVersion] = useState(0);
   const [sessionChangeCount, setSessionChangeCount] = useState(0);
+  const [copyPathMenuOpen, setCopyPathMenuOpen] = useState(false);
   const treeCacheRef = useRef<FileTreeCache>({});
   const expandedDirectoriesRef = useRef<string[]>([]);
   const activeDirectoryPathRef = useRef(ROOT_DIRECTORY);
   const restoringWorkspaceSnapshotRef = useRef(false);
   const recentFileActivationRef = useRef<RecentFileActivation | null>(null);
+  const copyPathMenuRef = useRef<HTMLDivElement | null>(null);
   const directoryWaitersRef = useRef(
     new Map<
       string,
@@ -95,6 +99,7 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
     >()
   );
   const { showToast } = useToast();
+  const platform = usePlatform();
 
   useEffect(() => {
     logPerfDebug("file_panel.props", {
@@ -242,8 +247,39 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
     setSelectedPath(null);
     setViewerFilePath(null);
     setSessionRefreshVersion(0);
+    setCopyPathMenuOpen(false);
     recentFileActivationRef.current = null;
   }, [sessionId]);
+
+  useEffect(() => {
+    if (!copyPathMenuOpen) {
+      return;
+    }
+
+    function handleDocumentPointerDown(event: MouseEvent) {
+      if (!(event.target instanceof Node)) {
+        return;
+      }
+
+      if (!copyPathMenuRef.current?.contains(event.target)) {
+        setCopyPathMenuOpen(false);
+      }
+    }
+
+    function handleDocumentKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setCopyPathMenuOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handleDocumentPointerDown);
+    document.addEventListener("keydown", handleDocumentKeyDown);
+
+    return () => {
+      document.removeEventListener("mousedown", handleDocumentPointerDown);
+      document.removeEventListener("keydown", handleDocumentKeyDown);
+    };
+  }, [copyPathMenuOpen]);
 
   useEffect(() => {
     if (!workspaceId) {
@@ -390,6 +426,11 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
 
   const rootItems = treeCache[ROOT_DIRECTORY] ?? [];
   const searchMode = searchVisible && searchResult !== null;
+  const currentWorkspace =
+    navigationGroups.find((group) => group.workspace.id === workspaceId)?.workspace ?? null;
+  // 文件和目录原本分散在两套选中状态里，这里收敛成一个“当前目标路径”，后续按钮逻辑就不用到处打补丁。
+  const selectedTargetPath = resolveSelectedTargetPath(selectedPath, activeDirectoryPath);
+  const canCopySelectedPath = Boolean(currentWorkspace?.path && selectedTargetPath !== null);
 
   async function loadDirectory(directoryPath: string, force = false) {
     if (!workspaceId) {
@@ -819,6 +860,39 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
     }
   }
 
+  async function handleCopyPath(mode: "absolute" | "relative") {
+    const workspacePath = currentWorkspace?.path ?? "";
+
+    if (selectedTargetPath === null || !workspacePath) {
+      setCopyPathMenuOpen(false);
+      return;
+    }
+
+    try {
+      const backendPathStyle = resolveBackendPathStyle(workspacePath);
+      const copiedPath =
+        mode === "absolute"
+          ? buildAbsoluteWorkspacePath(workspacePath, selectedTargetPath, backendPathStyle)
+          : normalizeRelativeClipboardPath(selectedTargetPath, backendPathStyle);
+
+      await writeTextToClipboard(copiedPath, platform);
+      showToast({
+        title:
+          mode === "absolute"
+            ? t("conversation.filePanelCopyAbsolutePathSuccess")
+            : t("conversation.filePanelCopyRelativePathSuccess"),
+        tone: "success"
+      });
+    } catch (error) {
+      showToast({
+        title: error instanceof Error ? error.message : t("conversation.filePanelCopyPathFailed"),
+        tone: "error"
+      });
+    } finally {
+      setCopyPathMenuOpen(false);
+    }
+  }
+
   function renderTree(items: FileNodeDto[], depth: number) {
     return (
       <>
@@ -974,6 +1048,43 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
           {activeTab === "workspace" ? (
             <>
               <div className="file-panel-toolbar" aria-label={t("conversation.filePanelTitle")}>
+                <div className="file-toolbar-menu-shell" ref={copyPathMenuRef}>
+                  <button
+                    className="file-toolbar-button"
+                    type="button"
+                    title={t("conversation.filePanelCopyPath")}
+                    aria-label={t("conversation.filePanelCopyPath")}
+                    aria-haspopup="menu"
+                    aria-expanded={copyPathMenuOpen}
+                    data-active={copyPathMenuOpen}
+                    onClick={() => {
+                      setCopyPathMenuOpen((current) => !current);
+                    }}
+                    disabled={!canCopySelectedPath}
+                  >
+                    <PathCopyIcon />
+                  </button>
+                  {copyPathMenuOpen ? (
+                    <div className="file-toolbar-menu" role="menu">
+                      <button
+                        className="file-toolbar-menu-item"
+                        type="button"
+                        role="menuitem"
+                        onClick={() => void handleCopyPath("absolute")}
+                      >
+                        {t("conversation.filePanelCopyAbsolutePath")}
+                      </button>
+                      <button
+                        className="file-toolbar-menu-item"
+                        type="button"
+                        role="menuitem"
+                        onClick={() => void handleCopyPath("relative")}
+                      >
+                        {t("conversation.filePanelCopyRelativePath")}
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
                 <button
                   className="file-toolbar-button"
                   type="button"
@@ -1114,6 +1225,131 @@ function getCreateBaseDirectory(activeDirectoryPath: string, selectedPath: strin
   return ROOT_DIRECTORY;
 }
 
+function resolveSelectedTargetPath(selectedPath: string | null, activeDirectoryPath: string): string | null {
+  if (selectedPath) {
+    return selectedPath;
+  }
+
+  return activeDirectoryPath || null;
+}
+
+function normalizeRelativeClipboardPath(
+  targetPath: string,
+  pathStyle: BackendPathStyle = "posix"
+): string {
+  if (!targetPath) {
+    return ".";
+  }
+
+  return normalizePathSeparators(targetPath, pathStyle);
+}
+
+function buildAbsoluteWorkspacePath(
+  workspacePath: string,
+  targetPath: string,
+  pathStyle: BackendPathStyle
+): string {
+  // 路径格式必须服从后端 Host，而后端工作区路径本身就是最可靠的事实来源。
+  const normalizedWorkspacePath = normalizePathSeparators(workspacePath, pathStyle);
+  const normalizedTargetPath = normalizeRelativeClipboardPath(targetPath, pathStyle).replace(
+    /^\.[/\\]?/,
+    ""
+  );
+
+  if (!normalizedTargetPath) {
+    return normalizedWorkspacePath;
+  }
+
+  const separator = resolvePathSeparator(pathStyle);
+  const safeTargetPath = normalizedTargetPath.replace(/^[/\\]+/, "");
+
+  if (!safeTargetPath) {
+    return normalizedWorkspacePath;
+  }
+
+  if (normalizedWorkspacePath.endsWith("/") || normalizedWorkspacePath.endsWith("\\")) {
+    return `${normalizedWorkspacePath}${safeTargetPath}`;
+  }
+
+  return `${normalizedWorkspacePath}${separator}${safeTargetPath}`;
+}
+
+type BackendPathStyle = "windows" | "posix";
+
+function resolveBackendPathStyle(workspacePath: string): BackendPathStyle {
+  if (/^[a-zA-Z]:[\\/]/.test(workspacePath) || workspacePath.includes("\\")) {
+    return "windows";
+  }
+
+  return "posix";
+}
+
+function normalizePathSeparators(path: string, pathStyle: BackendPathStyle): string {
+  if (!path) {
+    return path;
+  }
+
+  const separator = resolvePathSeparator(pathStyle);
+  return separator === "\\" ? path.replace(/\//g, "\\") : path.replace(/\\/g, "/");
+}
+
+function resolvePathSeparator(pathStyle: BackendPathStyle): "/" | "\\" {
+  return pathStyle === "windows" ? "\\" : "/";
+}
+
+async function writeTextToClipboard(
+  text: string,
+  platform: ReturnType<typeof usePlatform>
+): Promise<void> {
+  if (platform.isDesktop) {
+    const desktopResult = await platform.bridge.writeClipboardText(text);
+
+    if (desktopResult.ok) {
+      return;
+    }
+  }
+
+  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // 浏览器剪贴板在部分 WebView/权限场景下会失败，继续走兼容回退。
+    }
+  }
+
+  if (copyTextWithExecCommand(text)) {
+    return;
+  }
+
+  throw new Error(t("conversation.filePanelCopyPathFailed"));
+}
+
+function copyTextWithExecCommand(text: string): boolean {
+  if (typeof document === "undefined" || typeof document.execCommand !== "function") {
+    return false;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.top = "-9999px";
+  textarea.style.left = "-9999px";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+
+  try {
+    return document.execCommand("copy");
+  } catch {
+    return false;
+  } finally {
+    document.body.removeChild(textarea);
+  }
+}
+
 function resolveRestoredActiveDirectoryPath(activeDirectoryPath: string, treeCache: FileTreeCache): string {
   if (!activeDirectoryPath) {
     return ROOT_DIRECTORY;
@@ -1252,6 +1488,20 @@ function SearchIcon() {
         d="M11.2 10.1l3 3-1.1 1.1-3-3a5 5 0 1 1 1.1-1.1zM6.8 10.3a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z"
         fill="currentColor"
       />
+    </svg>
+  );
+}
+
+function PathCopyIcon() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <path
+        d="M3.5 4.3h5.2v1.4H4.9v5.4H3.5zm3.8-2.1h5.2v9.5H7.3z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.2"
+      />
+      <path d="M5.7 10.8h4.5" fill="none" stroke="currentColor" strokeWidth="1.2" />
     </svg>
   );
 }

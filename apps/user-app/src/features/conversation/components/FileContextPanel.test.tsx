@@ -31,6 +31,51 @@ const gitApiMock = vi.hoisted(() => ({
   stageGitTargets: vi.fn()
 }));
 
+const clipboardWriteTextMock = vi.hoisted(() => vi.fn());
+
+const workbenchShellMock = vi.hoisted(() => ({
+  navigationGroups: [
+    {
+      workspace: {
+        id: "workspace-1",
+        name: "CodingNS",
+        path: "C:/Code/CodingNS",
+        repoRoot: "C:/Code/CodingNS"
+      },
+      sessions: []
+    }
+  ],
+  subscribeFileTree: vi.fn(),
+  requestFileTreeRefresh: vi.fn(),
+  addFileTreeSnapshotListener: vi.fn(() => () => undefined)
+}));
+
+const platformMock = vi.hoisted(() => ({
+  platform: "web",
+  isDesktop: false,
+  isWeb: true,
+  ui: {
+    osFamily: "unknown",
+    windowControlsStyle: "none",
+    prefersDesktopChrome: false,
+    prefersOverlayTitlebar: false,
+    prefersSystemFontStack: true
+  },
+  bridge: {
+    supported: false,
+    openExternal: vi.fn(),
+    showNotification: vi.fn(),
+    writeClipboardText: vi.fn(),
+    setWindowState: vi.fn(),
+    readDesktopConfig: vi.fn(),
+    writeDesktopConfig: vi.fn(),
+    getRuntimeInfo: vi.fn(),
+    installUpdate: vi.fn(),
+    rollbackToPreviousVersion: vi.fn(),
+    pickDirectory: vi.fn()
+  }
+}));
+
 const rootItemsMock = [
   {
     path: "config.json",
@@ -135,12 +180,36 @@ vi.mock("../api/git-api", () => ({
   stageGitTargets: gitApiMock.stageGitTargets
 }));
 
+vi.mock("./WorkbenchLayout", () => ({
+  useWorkbenchShell: () => workbenchShellMock
+}));
+
+vi.mock("../../../platform/platform-provider", () => ({
+  usePlatform: () => platformMock
+}));
+
 describe("FileContextPanel", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.sessionStorage.clear();
     clearViewSnapshot(WORKSPACE_TREE_SNAPSHOT_KEY);
     clearViewSnapshot(SESSION_COUNT_SNAPSHOT_KEY);
+    Object.defineProperty(window.navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: clipboardWriteTextMock
+      }
+    });
+    platformMock.platform = "web";
+    platformMock.isDesktop = false;
+    platformMock.isWeb = true;
+    platformMock.ui.osFamily = "unknown";
+    platformMock.bridge.supported = false;
+    platformMock.bridge.writeClipboardText.mockResolvedValue({
+      ok: true
+    });
+    workbenchShellMock.navigationGroups[0].workspace.path = "C:/Code/CodingNS";
+    workbenchShellMock.navigationGroups[0].workspace.repoRoot = "C:/Code/CodingNS";
 
     fileApiMock.getFileTree.mockResolvedValue({
       items: [...rootItemsMock]
@@ -616,6 +685,118 @@ describe("FileContextPanel", () => {
 
     expect(fileApiMock.getFileTree).toHaveBeenNthCalledWith(1, "workspace-1", undefined);
     expect(fileApiMock.getFileTree).toHaveBeenNthCalledWith(2, "workspace-1", "apps");
+  });
+
+  it("支持复制当前选中文件的相对路径", async () => {
+    renderPanel();
+
+    await userEvent.click(await screen.findByText("config.json"));
+    await userEvent.click(screen.getByRole("button", { name: t("conversation.filePanelCopyPath") }));
+    await userEvent.click(
+      screen.getByRole("menuitem", { name: t("conversation.filePanelCopyRelativePath") })
+    );
+
+    expect(clipboardWriteTextMock).toHaveBeenCalledWith("config.json");
+    expect(await screen.findByText(t("conversation.filePanelCopyRelativePathSuccess"))).toBeInTheDocument();
+  });
+
+  it("Windows 下复制相对路径会使用反斜杠", async () => {
+    platformMock.ui.osFamily = "windows";
+    fileApiMock.getFileTree.mockResolvedValue({
+      items: [
+        {
+          path: "packages/session-sync-core/src/index.ts",
+          name: "index.ts",
+          kind: "file",
+          size: 42,
+          updatedAt: "2026-03-24T12:00:00.000Z"
+        }
+      ]
+    });
+
+    renderPanel();
+
+    await userEvent.click(await screen.findByText("index.ts"));
+    await userEvent.click(screen.getByRole("button", { name: t("conversation.filePanelCopyPath") }));
+    await userEvent.click(
+      screen.getByRole("menuitem", { name: t("conversation.filePanelCopyRelativePath") })
+    );
+
+    expect(clipboardWriteTextMock).toHaveBeenCalledWith("packages\\session-sync-core\\src\\index.ts");
+  });
+
+  it("支持复制当前选中目录的绝对路径", async () => {
+    platformMock.platform = "desktop";
+    platformMock.isDesktop = true;
+    platformMock.isWeb = false;
+    platformMock.ui.osFamily = "windows";
+    platformMock.bridge.supported = true;
+    fileApiMock.getFileTree.mockImplementation(async (_workspaceId: string, filePath?: string) => ({
+      items:
+        filePath === "apps"
+          ? [
+              {
+                path: "apps/user-app",
+                name: "user-app",
+                kind: "directory",
+                size: null,
+                updatedAt: "2026-03-24T12:00:00.000Z"
+              }
+            ]
+          : [
+              {
+                path: "apps",
+                name: "apps",
+                kind: "directory",
+                size: null,
+                updatedAt: "2026-03-24T12:00:00.000Z"
+              }
+            ]
+    }));
+
+    renderPanel();
+
+    await userEvent.click(await screen.findByText("apps"));
+    await userEvent.click(screen.getByRole("button", { name: t("conversation.filePanelCopyPath") }));
+    await userEvent.click(
+      screen.getByRole("menuitem", { name: t("conversation.filePanelCopyAbsolutePath") })
+    );
+
+    expect(platformMock.bridge.writeClipboardText).toHaveBeenCalledWith("C:\\Code\\CodingNS\\apps");
+    expect(await screen.findByText(t("conversation.filePanelCopyAbsolutePathSuccess"))).toBeInTheDocument();
+  });
+
+  it("macOS 下复制绝对路径会使用正斜杠", async () => {
+    platformMock.platform = "desktop";
+    platformMock.isDesktop = true;
+    platformMock.isWeb = false;
+    platformMock.ui.osFamily = "macos";
+    platformMock.bridge.supported = true;
+    workbenchShellMock.navigationGroups[0].workspace.path = "/Users/jackson/Documents/Code/CodingNS";
+    workbenchShellMock.navigationGroups[0].workspace.repoRoot = "/Users/jackson/Documents/Code/CodingNS";
+    fileApiMock.getFileTree.mockResolvedValue({
+      items: [
+        {
+          path: "packages/session-sync-core/src/index.ts",
+          name: "index.ts",
+          kind: "file",
+          size: 42,
+          updatedAt: "2026-03-24T12:00:00.000Z"
+        }
+      ]
+    });
+
+    renderPanel();
+
+    await userEvent.click(await screen.findByText("index.ts"));
+    await userEvent.click(screen.getByRole("button", { name: t("conversation.filePanelCopyPath") }));
+    await userEvent.click(
+      screen.getByRole("menuitem", { name: t("conversation.filePanelCopyAbsolutePath") })
+    );
+
+    expect(platformMock.bridge.writeClipboardText).toHaveBeenCalledWith(
+      "/Users/jackson/Documents/Code/CodingNS/packages/session-sync-core/src/index.ts"
+    );
   });
 
   it("鍙屽嚮 markdown 鏂囦欢鍚庝細鎵撳紑鏌ョ湅鍣ㄥ苟鏀寔缂栬緫淇濆瓨", async () => {
