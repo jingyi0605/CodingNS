@@ -49,6 +49,7 @@ const LEFT_PANEL_COLLAPSED_KEY = "workbench.left.collapsed";
 const RIGHT_PANEL_COLLAPSED_KEY = "workbench.right.collapsed";
 const LAST_SESSION_PATH_KEY = "workbench.last.session.path";
 const WORKSPACE_COLLAPSED_IDS_KEY = "workbench.workspace.collapsed.ids";
+const SELECTED_WORKSPACE_ID_KEY = "workbench.workspace.selected.id";
 const FAVORITE_SESSION_IDS_KEY = "workbench.session.favorite.ids";
 const WORKBENCH_NAVIGATION_SNAPSHOT_KEY = "workbench.navigation.snapshot";
 
@@ -363,9 +364,26 @@ function readStoredStringArray(key: string) {
   }
 }
 
+function readStoredString(key: string) {
+  try {
+    const raw = window.localStorage.getItem(key)?.trim();
+    return raw ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
 function writeStoredValue(key: string, value: string) {
   try {
     window.localStorage.setItem(key, value);
+  } catch {
+    // 忽略隐私模式或测试环境里的本地存储失败。
+  }
+}
+
+function removeStoredValue(key: string) {
+  try {
+    window.localStorage.removeItem(key);
   } catch {
     // 忽略隐私模式或测试环境里的本地存储失败。
   }
@@ -647,6 +665,16 @@ function MultiSelectIcon() {
       <rect x="14" y="5" width="6" height="6" rx="1.5" />
       <rect x="4" y="13" width="6" height="6" rx="1.5" />
       <path d="M14 16l2 2 4-4" />
+    </svg>
+  );
+}
+
+function WorkspaceSwitchIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <rect x="4" y="6" width="10" height="12" rx="2" />
+      <path d="M10 12h8" />
+      <path d="M15 8l4 4-4 4" />
     </svg>
   );
 }
@@ -1216,6 +1244,7 @@ function SidebarContent({
   workspaceGroups,
   favoriteSessions,
   favoriteSessionIds,
+  activeWorkspaceId,
   workspaceCount,
   sessionCount,
   navigationLoading,
@@ -1223,6 +1252,7 @@ function SidebarContent({
   activeSessionId,
   onRefreshNavigation,
   onSessionUpdated,
+  onSelectWorkspace,
   onToggleWorkspaceCollapse,
   onToggleFavoriteSession,
   onArchiveSession,
@@ -1233,6 +1263,7 @@ function SidebarContent({
   workspaceGroups: WorkspaceSidebarGroup[];
   favoriteSessions: NavigationSessionEntry[];
   favoriteSessionIds: ReadonlySet<string>;
+  activeWorkspaceId: string | null;
   workspaceCount: number;
   sessionCount: number;
   navigationLoading: boolean;
@@ -1240,6 +1271,7 @@ function SidebarContent({
   activeSessionId: string | null;
   onRefreshNavigation: () => Promise<void>;
   onSessionUpdated: (session: SessionSummaryDto) => void;
+  onSelectWorkspace: (workspaceId: string) => void;
   onToggleWorkspaceCollapse: (workspaceId: string) => void;
   onToggleFavoriteSession: (sessionId: string) => void;
   onArchiveSession: (sessionId: string) => Promise<void>;
@@ -2066,6 +2098,19 @@ function SidebarContent({
                   <button
                     type="button"
                     className="workbench-workspace-icon-button"
+                    aria-label={t("shell.switchWorkspace")}
+                    title={t("shell.switchWorkspace")}
+                    aria-pressed={activeWorkspaceId === group.workspace.id}
+                    onClick={() => {
+                      onSelectWorkspace(group.workspace.id);
+                      onClose?.();
+                    }}
+                  >
+                    <WorkspaceSwitchIcon />
+                  </button>
+                  <button
+                    type="button"
+                    className="workbench-workspace-icon-button"
                     aria-label={t("shell.batchSelectSessions")}
                     title={t("shell.batchSelectSessions")}
                     onClick={() => handleStartBatchSelection(group.workspace.id)}
@@ -2705,7 +2750,8 @@ function WorkbenchInfoPanel({
   onTabChange,
   onToggleCollapse,
   currentSessionId,
-  currentWorkspaceId,
+  sessionWorkspaceId,
+  activeWorkspaceId,
   navigationGroups
 }: {
   panelReady: boolean;
@@ -2713,10 +2759,11 @@ function WorkbenchInfoPanel({
   onTabChange: (tab: InfoTab) => void;
   onToggleCollapse?: () => void;
   currentSessionId: string | null;
-  currentWorkspaceId: string | null;
+  sessionWorkspaceId: string | null;
+  activeWorkspaceId: string | null;
   navigationGroups: WorkspaceSessionGroup[];
 }) {
-  const fallbackWorkspaceId = currentWorkspaceId ?? navigationGroups[0]?.workspace.id ?? null;
+  const fallbackWorkspaceId = activeWorkspaceId ?? navigationGroups[0]?.workspace.id ?? null;
 
   return (
     <>
@@ -2759,9 +2806,12 @@ function WorkbenchInfoPanel({
         {!panelReady ? <InfoPanelSkeleton /> : null}
 
         {panelReady && activeTab === "files" ? (
-          currentSessionId && currentWorkspaceId ? (
+          activeWorkspaceId ? (
             <Suspense fallback={<InfoPanelSkeleton />}>
-              <LazyFileContextPanel sessionId={currentSessionId} workspaceId={currentWorkspaceId} />
+              <LazyFileContextPanel
+                sessionId={currentSessionId}
+                workspaceId={activeWorkspaceId}
+              />
             </Suspense>
           ) : (
             <section className="workbench-empty-state minimal">
@@ -2785,7 +2835,7 @@ function WorkbenchInfoPanel({
         {panelReady && activeTab === "terminals" ? (
           <Suspense fallback={<InfoPanelSkeleton />}>
             <LazyTerminalManagerPanel
-              currentWorkspaceId={currentWorkspaceId}
+              currentWorkspaceId={activeWorkspaceId}
               navigationGroups={navigationGroups}
             />
           </Suspense>
@@ -2846,6 +2896,9 @@ export function WorkbenchLayout() {
   );
   const [collapsedWorkspaceIds, setCollapsedWorkspaceIds] = useState(() =>
     readStoredStringArray(WORKSPACE_COLLAPSED_IDS_KEY)
+  );
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(() =>
+    readStoredString(SELECTED_WORKSPACE_ID_KEY)
   );
   const [favoriteSessionIds, setFavoriteSessionIds] = useState(() =>
     readStoredStringArray(FAVORITE_SESSION_IDS_KEY)
@@ -3205,6 +3258,15 @@ export function WorkbenchLayout() {
   }, [favoriteSessionIds]);
 
   useEffect(() => {
+    if (!selectedWorkspaceId) {
+      removeStoredValue(SELECTED_WORKSPACE_ID_KEY);
+      return;
+    }
+
+    writeStoredValue(SELECTED_WORKSPACE_ID_KEY, selectedWorkspaceId);
+  }, [selectedWorkspaceId]);
+
+  useEffect(() => {
     if (infoPanelReady || rightCollapsed) {
       return;
     }
@@ -3236,29 +3298,49 @@ export function WorkbenchLayout() {
     // 只保留当前快照里还存在的偏好状态，避免历史垃圾状态越积越多。
     setCollapsedWorkspaceIds((current) => retainKnownIds(current, knownWorkspaceIds));
     setFavoriteSessionIds((current) => retainKnownIds(current, knownSessionIds));
+    setSelectedWorkspaceId((current) => (current && knownWorkspaceIds.has(current) ? current : null));
   }, [flattenedSessions, navigationGroups, navigationLoading]);
 
   const currentSessionContext =
     flattenedSessions.find((item) => item.session.sessionId === currentSessionId) ?? null;
-  const currentWorkspaceId =
+  const sessionWorkspaceId =
     currentSessionContext?.workspace.id ??
     (currentSessionId ? sessionWorkspaceMap[currentSessionId] ?? null : null);
+  const currentWorkspaceId =
+    sessionWorkspaceId ?? selectedWorkspaceId ?? navigationGroups[0]?.workspace.id ?? null;
+
+  useEffect(() => {
+    if (!sessionWorkspaceId) {
+      return;
+    }
+
+    setSelectedWorkspaceId((current) => (current === sessionWorkspaceId ? current : sessionWorkspaceId));
+  }, [sessionWorkspaceId]);
+
   useEffect(() => {
     logPerfDebug("workbench.current_workspace_resolved", {
       currentSessionId,
+      sessionWorkspaceId,
       currentWorkspaceId,
-      source: currentSessionContext ? "navigation" : "sessionWorkspaceMap"
+      source: sessionWorkspaceId
+        ? currentSessionContext
+          ? "navigation"
+          : "sessionWorkspaceMap"
+        : selectedWorkspaceId
+          ? "workspaceSelection"
+          : "navigationFallback"
     });
-  }, [currentSessionContext, currentSessionId, currentWorkspaceId]);
+  }, [currentSessionContext, currentSessionId, currentWorkspaceId, selectedWorkspaceId, sessionWorkspaceId]);
 
   useEffect(() => {
     logPerfDebug("workbench.info_panel_state", {
       infoPanelReady,
       rightCollapsed,
       currentWorkspaceId,
+      sessionWorkspaceId,
       currentSessionId
     });
-  }, [currentSessionId, currentWorkspaceId, infoPanelReady, rightCollapsed]);
+  }, [currentSessionId, currentWorkspaceId, infoPanelReady, rightCollapsed, sessionWorkspaceId]);
   const activeCenterTab: CenterTab = location.pathname.startsWith("/terminals")
     ? "terminals"
     : "conversation";
@@ -3386,6 +3468,16 @@ export function WorkbenchLayout() {
 
   function ensureInfoPanelReady() {
     setInfoPanelReady(true);
+  }
+
+  function handleSelectWorkspace(workspaceId: string) {
+    setSelectedWorkspaceId(workspaceId);
+    ensureInfoPanelReady();
+
+    // 会话上下文和工作区上下文不能混着用；切到别的工作区时先退回空白工作台。
+    if (currentSessionId && sessionWorkspaceId !== workspaceId) {
+      navigate("/");
+    }
   }
 
   function beginResize(side: "left" | "right", startClientX: number) {
@@ -3545,7 +3637,11 @@ export function WorkbenchLayout() {
 
   const workspaceCount = navigationGroups.length;
   const sessionCount = navigationGroups.reduce((total, item) => total + item.sessions.length, 0);
-  const currentWorkspaceName = currentSessionContext?.workspace.name ?? navigationGroups[0]?.workspace.name ?? null;
+  const currentWorkspaceName =
+    navigationGroups.find((group) => group.workspace.id === currentWorkspaceId)?.workspace.name ??
+    currentSessionContext?.workspace.name ??
+    navigationGroups[0]?.workspace.name ??
+    null;
   const currentSessionTitle = currentSessionContext?.session.title ?? null;
   const showTrafficLightsPadding =
     platform.isDesktop && platform.ui.windowControlsStyle === "traffic-lights";
@@ -3606,6 +3702,7 @@ export function WorkbenchLayout() {
                   workspaceGroups={workspaceSidebarGroups}
                   favoriteSessions={favoriteSessions}
                   favoriteSessionIds={favoriteSessionIdSet}
+                  activeWorkspaceId={currentWorkspaceId}
                   workspaceCount={workspaceCount}
                   sessionCount={sessionCount}
                   navigationLoading={navigationLoading}
@@ -3613,6 +3710,7 @@ export function WorkbenchLayout() {
                   activeSessionId={currentSessionId}
                   onRefreshNavigation={refreshNavigation}
                   onSessionUpdated={upsertNavigationSession}
+                  onSelectWorkspace={handleSelectWorkspace}
                   onToggleWorkspaceCollapse={(workspaceId) =>
                     setCollapsedWorkspaceIds((current) => toggleStoredId(current, workspaceId))
                   }
@@ -3671,7 +3769,8 @@ export function WorkbenchLayout() {
                   }}
                   onToggleCollapse={() => setRightCollapsed(true)}
                   currentSessionId={isDraftSession ? null : currentSessionId}
-                  currentWorkspaceId={currentWorkspaceId}
+                  sessionWorkspaceId={isDraftSession ? null : sessionWorkspaceId}
+                  activeWorkspaceId={currentWorkspaceId}
                   navigationGroups={navigationGroups}
                 />
               </aside>
@@ -3721,6 +3820,7 @@ export function WorkbenchLayout() {
             workspaceGroups={workspaceSidebarGroups}
             favoriteSessions={favoriteSessions}
             favoriteSessionIds={favoriteSessionIdSet}
+            activeWorkspaceId={currentWorkspaceId}
             workspaceCount={workspaceCount}
             sessionCount={sessionCount}
             navigationLoading={navigationLoading}
@@ -3728,6 +3828,7 @@ export function WorkbenchLayout() {
             activeSessionId={currentSessionId}
             onRefreshNavigation={refreshNavigation}
             onSessionUpdated={upsertNavigationSession}
+            onSelectWorkspace={handleSelectWorkspace}
             onToggleWorkspaceCollapse={(workspaceId) =>
               setCollapsedWorkspaceIds((current) => toggleStoredId(current, workspaceId))
             }
@@ -3749,7 +3850,8 @@ export function WorkbenchLayout() {
               setActiveInfoTab(tab);
             }}
             currentSessionId={isDraftSession ? null : currentSessionId}
-            currentWorkspaceId={currentWorkspaceId}
+            sessionWorkspaceId={isDraftSession ? null : sessionWorkspaceId}
+            activeWorkspaceId={currentWorkspaceId}
             navigationGroups={navigationGroups}
           />
         </MobileNavDrawer>

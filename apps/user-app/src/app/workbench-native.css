@@ -527,21 +527,35 @@ body {
 .workbench-workspace-header.minimal {
   padding: 0;
   margin-bottom: var(--space-2);
+  min-width: 0;
 }
 
 .workbench-workspace-toggle {
   display: inline-flex;
   align-items: center;
   gap: var(--space-3);
+  flex: 1 1 auto;
   padding: var(--list-item-padding-y) var(--list-item-padding-x);
+  min-width: 0;
+  overflow: hidden;
   text-align: left;
   color: var(--text-primary);
+}
+
+.workbench-workspace-toggle strong {
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .workbench-workspace-actions {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
+  flex-shrink: 0;
 }
 
 .workbench-workspace-icon-button,
@@ -556,6 +570,17 @@ body {
   border: 1px solid var(--panel-border);
   background: transparent;
   color: var(--text-secondary);
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast),
+    border-color var(--transition-fast),
+    transform var(--transition-fast);
+}
+
+.workbench-workspace-icon-button[aria-pressed="true"] {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 92%, white 8%), var(--accent));
+  color: var(--text-inverse);
+  border-color: color-mix(in srgb, var(--accent) 72%, white 28%);
 }
 
 .workbench-workspace-batch-toolbar {
@@ -617,6 +642,13 @@ body {
   background: var(--panel-hover);
   border-color: var(--panel-border-strong);
   color: var(--text-primary);
+  transform: translateY(-1px);
+}
+
+.workbench-workspace-icon-button[aria-pressed="true"]:hover {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent-hover) 88%, white 12%), var(--accent-hover));
+  color: var(--text-inverse);
+  border-color: color-mix(in srgb, var(--accent-hover) 78%, white 22%);
 }
 
 .workbench-session-list,

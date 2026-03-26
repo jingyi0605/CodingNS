@@ -439,10 +439,10 @@ describe("FileContextPanel", () => {
     clearViewSnapshot(SESSION_COUNT_SNAPSHOT_KEY);
   });
 
-  function renderPanel() {
+  function renderPanel(sessionId: string | null = "session-1", workspaceId = "workspace-1") {
     render(
       <ToastProvider>
-        <FileContextPanel sessionId="session-1" workspaceId="workspace-1" />
+        <FileContextPanel sessionId={sessionId} workspaceId={workspaceId} />
       </ToastProvider>
     );
   }
@@ -493,6 +493,16 @@ describe("FileContextPanel", () => {
     renderPanel();
 
     expect(screen.getByLabelText(`${t("conversation.filePanelSessionTab")} 0`)).toBeInTheDocument();
+  });
+
+  it("只选中项目而没有会话时，仍然显示工作区文件并禁用会话页签", async () => {
+    renderPanel(null);
+
+    expect(await screen.findByText("config.json")).toBeInTheDocument();
+
+    const sessionTab = screen.getByRole("tab", { name: /本次会话 0|Session 0/ });
+    expect(sessionTab).toBeDisabled();
+    expect(screen.queryByText(t("conversation.filePanelSessionNoSession"))).not.toBeInTheDocument();
   });
 
   it("切换到本次会话页签时由会话面板自己加载 changed-files", async () => {

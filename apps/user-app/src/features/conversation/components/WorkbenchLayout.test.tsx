@@ -282,7 +282,7 @@ describe("WorkbenchLayout", () => {
       expect(screen.queryAllByText("会话 Beta")).toHaveLength(0);
     });
 
-    const archiveFolders = screen.getAllByRole("button", { name: /归档文件夹/ });
+    const archiveFolders = screen.getAllByRole("button", { name: /归档会话/ });
     await userEvent.click(archiveFolders[0]!);
 
     expect(await screen.findByRole("dialog", { name: t("shell.archiveModalTitle") })).toBeInTheDocument();
@@ -977,6 +977,61 @@ describe("WorkbenchLayout", () => {
       expect(screen.getAllByText("Private App").length).toBeGreaterThan(0);
     });
   });
+
+  it("支持直接切换到没有会话的项目，并回到空白工作台保留该项目上下文", async () => {
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "会话 Alpha",
+            workspaceId: "workspace-1"
+          })
+        ]
+      },
+      {
+        workspace: createWorkspace("workspace-2", "这是一个名字很长但暂时没有会话的项目"),
+        sessions: []
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/sessions/session-1");
+
+    const emptyWorkspaceGroup = await findWorkspaceGroupByName("这是一个名字很长但暂时没有会话的项目");
+    const emptyWorkspaceScope = within(emptyWorkspaceGroup);
+
+    await userEvent.click(
+      emptyWorkspaceScope.getByRole("button", { name: t("shell.switchWorkspace") })
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("current-path").textContent).toBe("/");
+    });
+
+    expect(window.localStorage.getItem("workbench.workspace.selected.id")).toBe("workspace-2");
+    expect(
+      emptyWorkspaceScope.getByRole("button", { name: t("shell.switchWorkspace") })
+    ).toHaveAttribute("aria-pressed", "true");
+    expect(emptyWorkspaceScope.getByText(t("shell.emptyWorkspaceSessions"))).toBeInTheDocument();
+
+    const sourceWorkspaceGroup = await findWorkspaceGroupByName("项目一");
+    expect(
+      within(sourceWorkspaceGroup).getByRole("button", { name: t("shell.switchWorkspace") })
+    ).toHaveAttribute("aria-pressed", "false");
+  });
+
   it("支持工作区会话批量选择，并可部分选择或全选后批量归档", async () => {
     const sessionTitles: Record<string, string> = {
       "session-1": "Session Alpha",
@@ -1101,6 +1156,7 @@ function renderWorkbenchRoute(initialEntry = "/sessions/session-1") {
       <MemoryRouter initialEntries={[initialEntry]}>
         <Routes>
           <Route element={<WorkbenchLayout />}>
+            <Route index element={<CurrentLocationProbe />} />
             <Route path="/sessions/:sessionId" element={<CurrentLocationProbe />} />
           </Route>
         </Routes>

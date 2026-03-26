@@ -157,7 +157,7 @@ const extensionZhCN = {
     renameInputLabel: "\u4f1a\u8bdd\u540d\u79f0",
     renameInputPlaceholder: "\u8f93\u5165\u65b0\u7684\u4f1a\u8bdd\u540d\u79f0",
     renamingSession: "\u4fdd\u5b58\u4e2d...",
-    archiveFolderLabel: "归档文件夹",
+    archiveFolderLabel: "归档会话",
     archiveAction: "归档会话",
     archiveAdded: "会话已归档",
     unarchiveAction: "取消归档",
@@ -171,6 +171,7 @@ const extensionZhCN = {
     sessionExpandMore: "显示更多会话",
     workspaceCollapse: "收起项目",
     workspaceExpand: "展开项目",
+    switchWorkspace: "切换到此项目",
     createSession: "新建会话",
     createSessionModalTitle: "选择新会话类型",
     createSessionModalDescription: "先选会话类型，再启动真正的会话进程。",
@@ -208,7 +209,7 @@ const extensionZhCN = {
     infoTabsLabel: "\u4fe1\u606f\u680f\u6807\u7b7e",
     leftResizerLabel: "\u8c03\u6574\u5de6\u4fa7\u5bbd\u5ea6",
     rightResizerLabel: "\u8c03\u6574\u53f3\u4fa7\u5bbd\u5ea6",
-    filesPanelEmpty: "\u6587\u4ef6\u7ba1\u7406\u9700\u8981\u5148\u9009\u4e2d\u4e00\u6761\u4f1a\u8bdd\u3002",
+    filesPanelEmpty: "\u5148\u5bfc\u5165\u6216\u9009\u4e2d\u4e00\u4e2a\u9879\u76ee\uff0c\u6587\u4ef6\u7ba1\u7406\u624d\u80fd\u663e\u793a\u3002",
     gitPanelEmpty: "\u5148\u5bfc\u5165\u6216\u9009\u4e2d\u4e00\u4e2a\u5de5\u4f5c\u533a\uff0cGit \u4fe1\u606f\u624d\u80fd\u663e\u793a\u3002",
     infoPanelDeferred: "\u5de6\u4fa7\u4f1a\u8bdd\u5217\u8868\u4f18\u5148\u52a0\u8f7d\uff0c\u53f3\u4fa7\u9644\u5c5e\u9762\u677f\u7a0d\u540e\u518d\u6302\u8f7d\u3002"
   },
@@ -303,6 +304,7 @@ const extensionZhCN = {
     filePanelSessionStageAll: "\u5168\u90e8\u6682\u5b58",
     filePanelSessionStageSuccess: "\u5df2\u628a\u672c\u6b21\u4f1a\u8bdd\u7684\u4fee\u6539\u52a0\u5165\u6682\u5b58\u533a\u3002",
     filePanelSessionLoadFailed: "\u672c\u6b21\u4f1a\u8bdd\u4fee\u6539\u6587\u4ef6\u52a0\u8f7d\u5931\u8d25\u3002",
+    filePanelSessionNoSession: "\u5f53\u524d\u53ea\u9009\u4e2d\u4e86\u9879\u76ee\uff0c\u8fd8\u6ca1\u9009\u4e2d\u4f1a\u8bdd\uff0c\u65e0\u6cd5\u67e5\u770b\u201c\u672c\u6b21\u4f1a\u8bdd\u201d\u6587\u4ef6\u3002",
     filePanelSessionSummary: "\u5df2\u8bc6\u522b\u6587\u4ef6",
     filePanelSessionUnstagedSummary: "\u672a\u6682\u5b58",
     filePanelSessionDeleted: "\u5df2\u5220\u9664"
@@ -594,6 +596,7 @@ const extensionEnUS = {
     createSession: "New Session",
     createSessionModalTitle: "Choose Session Type",
     createSessionModalDescription: "Pick the session type first, then start the actual session process.",
+    switchWorkspace: "Switch to Project",
     createSessionTarget: "Current Project",
     providerClaudeCode: "Claude Code",
     providerCodexDescription: "Create a Codex session for the current default workflow.",
@@ -628,7 +631,7 @@ const extensionEnUS = {
     infoTabsLabel: "Info Sidebar Tabs",
     leftResizerLabel: "Resize Left Sidebar",
     rightResizerLabel: "Resize Right Sidebar",
-    filesPanelEmpty: "Select a session before using file management.",
+    filesPanelEmpty: "Import or select a workspace first to use file management.",
     gitPanelEmpty: "Import or select a workspace first to view Git info.",
     infoPanelDeferred: "The left session list loads first. The right auxiliary panel mounts slightly later."
   },
@@ -726,6 +729,8 @@ const extensionEnUS = {
     filePanelSessionSummary: "Detected Files",
     filePanelSessionUnstagedSummary: "Unstaged",
     filePanelSessionDeleted: "Deleted"
+    filePanelSessionNoSession:
+      "Only the workspace is selected right now. Pick a session before viewing session-scoped files.",
   },
   git: {
     commitMessageTitle: "Commit Message",

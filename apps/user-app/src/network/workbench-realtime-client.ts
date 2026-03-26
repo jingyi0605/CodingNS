@@ -121,12 +121,14 @@ export class WorkbenchRealtimeClient {
   }
 
   requestRefresh(): void {
-    if (this.socket?.readyState !== WebSocket.OPEN) {
+    const socket = this.socket;
+
+    if (!isSocketOpen(socket)) {
       this.pendingRefresh = true;
       return;
     }
 
-    this.socket.send(
+    socket.send(
       JSON.stringify({
         type: "workbench.refresh"
       })
@@ -364,13 +366,20 @@ export class WorkbenchRealtimeClient {
   }
 
   private sendWhenReady(payload: Record<string, unknown>): boolean {
-    if (this.socket?.readyState !== WebSocket.OPEN) {
+    const socket = this.socket;
+
+    if (!isSocketOpen(socket)) {
       return false;
     }
 
-    this.socket.send(JSON.stringify(payload));
+    socket.send(JSON.stringify(payload));
     return true;
   }
+}
+
+function isSocketOpen(socket: WebSocket | null): socket is WebSocket {
+  const openState = typeof WebSocket.OPEN === "number" ? WebSocket.OPEN : 1;
+  return socket !== null && socket.readyState === openState;
 }
 
 function isWorkbenchSnapshot(payload: unknown): payload is WorkbenchSnapshotDto {

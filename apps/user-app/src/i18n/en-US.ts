@@ -228,7 +228,7 @@ export const enUS = {
     filePanelSubtitle:
       "File capabilities here only serve the current session. This is not a heavy IDE shell.",
     filePanelNoWorkspace:
-      "The current session is not bound to a workspace yet. Browsing or attaching files is unavailable.",
+      "There is no selected workspace yet. Browsing or attaching files is unavailable.",
     filePanelRefresh: "Refresh",
     filePanelCopyPath: "Copy Path",
     filePanelCopyAbsolutePath: "Copy Absolute Path",

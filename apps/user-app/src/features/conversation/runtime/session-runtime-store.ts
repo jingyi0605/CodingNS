@@ -922,7 +922,9 @@ function isRuntimeActiveState(state: SessionRunningState | null | undefined): bo
   return state === "starting" || state === "running" || state === "reconnecting";
 }
 
-function isTerminalRuntimeState(state: SessionRunningState | null | undefined): boolean {
+function isTerminalRuntimeState(
+  state: SessionRunningState | null | undefined
+): state is "completed" | "interrupted" | "failed" {
   return state === "completed" || state === "interrupted" || state === "failed";
 }
 

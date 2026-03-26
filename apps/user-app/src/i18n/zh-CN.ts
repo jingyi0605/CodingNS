@@ -173,7 +173,7 @@ export const zhCN = {
     attachmentsLabel: "附件",
     filePanelTitle: "文件管理",
     filePanelSubtitle: "这里的文件能力只服务当前会话，不把页面拉成重型 IDE。",
-    filePanelNoWorkspace: "当前会话还没有绑定工作区，暂时不能浏览或挂载文件。",
+    filePanelNoWorkspace: "当前还没有选中项目，暂时不能浏览或挂载文件。",
     filePanelRefresh: "刷新",
     filePanelCopyPath: "复制路径",
     filePanelCopyAbsolutePath: "复制绝对路径",

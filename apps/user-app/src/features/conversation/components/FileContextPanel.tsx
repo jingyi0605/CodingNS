@@ -21,7 +21,7 @@ import {
 import { SessionChangedFilesPanel } from "./SessionChangedFilesPanel";
 
 interface FileContextPanelProps {
-  sessionId: string;
+  sessionId: string | null | undefined;
   workspaceId: string | null | undefined;
 }
 
@@ -100,6 +100,7 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
   );
   const { showToast } = useToast();
   const platform = usePlatform();
+  const hasSessionContext = Boolean(sessionId?.trim());
 
   useEffect(() => {
     logPerfDebug("file_panel.props", {
@@ -250,6 +251,12 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
     setCopyPathMenuOpen(false);
     recentFileActivationRef.current = null;
   }, [sessionId]);
+
+  useEffect(() => {
+    if (!hasSessionContext && activeTab === "session") {
+      setActiveTab("workspace");
+    }
+  }, [activeTab, hasSessionContext]);
 
   useEffect(() => {
     if (!copyPathMenuOpen) {
@@ -404,7 +411,7 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
   }, [sessionId, showToast, workspaceId]);
 
   useEffect(() => {
-    if (!workspaceId) {
+    if (!workspaceId || !sessionId) {
       setSessionChangeCount(0);
       return;
     }
@@ -1036,7 +1043,14 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
               type="button"
               role="tab"
               aria-selected={activeTab === "session"}
-              onClick={() => setActiveTab("session")}
+              onClick={() => {
+                if (!hasSessionContext) {
+                  return;
+                }
+
+                setActiveTab("session");
+              }}
+              disabled={!hasSessionContext}
             >
               {t("conversation.filePanelSessionTab")}
               <span className="file-panel-tab-badge" aria-label={`${t("conversation.filePanelSessionTab")} ${sessionChangeCount}`}>
@@ -1176,7 +1190,7 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
                 )}
               </div>
             </>
-          ) : (
+          ) : hasSessionContext && sessionId ? (
             <SessionChangedFilesPanel
               sessionId={sessionId}
               workspaceId={workspaceId}
@@ -1186,6 +1200,10 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
               onSelectFile={selectFile}
               onOpenFile={openFileViewer}
             />
+          ) : (
+            <section className="file-panel-section">
+              <p className="status-text">{t("conversation.filePanelSessionNoSession")}</p>
+            </section>
           )}
         </>
       )}
