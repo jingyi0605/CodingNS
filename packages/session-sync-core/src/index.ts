@@ -6,5 +6,7 @@ export * from "./runtime/active-run-registry.js";
 export * from "./runtime/provider-runtime-service.js";
 export * from "./runtime/claude-runtime.js";
 export * from "./runtime/codex-runtime.js";
+export * from "./runtime/opencode-runtime.js";
 export * from "./providers/claude-code.js";
 export * from "./providers/codex.js";
+export * from "./providers/opencode.js";

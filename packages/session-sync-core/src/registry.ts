@@ -5,13 +5,11 @@ export class ProviderRegistry {
 
   constructor(adapters: ProviderAdapter[]) {
     for (const adapter of adapters) {
+      if (this.providers.has(adapter.providerId)) {
+        throw new Error("PROVIDER_ALREADY_REGISTERED");
+      }
+
       this.providers.set(adapter.providerId, adapter);
-    }
-
-    const supported = Array.from(this.providers.keys()).sort();
-
-    if (supported.join(",") !== "claude-code,codex") {
-      throw new Error("PROVIDER_NOT_SUPPORTED");
     }
   }
 
@@ -20,10 +18,6 @@ export class ProviderRegistry {
   }
 
   get(providerId: string): ProviderAdapter {
-    if (providerId !== "claude-code" && providerId !== "codex") {
-      throw new Error("PROVIDER_NOT_SUPPORTED");
-    }
-
     const provider = this.providers.get(providerId);
 
     if (!provider) {

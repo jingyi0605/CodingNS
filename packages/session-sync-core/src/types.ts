@@ -1,6 +1,8 @@
 import type { Stats } from "node:fs";
 
-export type ProviderId = "claude-code" | "codex";
+export const BUILTIN_PROVIDER_IDS = ["claude-code", "codex"] as const;
+export type BuiltinProviderId = (typeof BUILTIN_PROVIDER_IDS)[number];
+export type ProviderId = BuiltinProviderId | (string & {});
 export type SessionRole = "user" | "assistant" | "tool" | "system";
 export type SyncStatus = "idle" | "syncing" | "error";
 export type MessageKind = "text" | "thinking" | "tool_call" | "tool_result";
@@ -44,6 +46,13 @@ export interface ProviderCapabilities {
   supportsAttachments: boolean;
   supportsPermissionPrompt: boolean;
   supportsCheckpoint: boolean;
+  supportsTodo?: boolean;
+  supportsSessionDiff?: boolean;
+  supportsPermissionRequests?: boolean;
+  supportsSessionFork?: boolean;
+  supportsSessionShare?: boolean;
+  supportsAsyncPrompt?: boolean;
+  supportsNativeAgents?: boolean;
   modelOptions?: ProviderModelOption[];
   defaultReasoningLevel?: string | null;
   limitations: string[];
