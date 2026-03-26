@@ -1,4 +1,5 @@
 import { t } from "../../../shared/i18n";
+import { buildSessionTitlePresentation } from "../session-title";
 
 import type { SessionSummaryDto } from "../api/conversation-api";
 
@@ -36,14 +37,14 @@ export function SessionHeader({ session }: SessionHeaderProps) {
     );
   }
 
-  const title = session.title || t("conversation.titleFallback");
-  const titleScale = resolveTitleScale(title);
+  const titlePresentation = buildSessionTitlePresentation(session.title, t("conversation.titleFallback"));
+  const titleScale = resolveTitleScale(titlePresentation.displayTitle);
 
   return (
     <header className="conversation-header">
       <div className="conversation-header-main">
-        <h1 className={`conversation-title is-${titleScale}`} title={title}>
-          {title}
+        <h1 className={`conversation-title is-${titleScale}`} title={titlePresentation.fullTitle}>
+          {titlePresentation.displayTitle}
         </h1>
       </div>
     </header>

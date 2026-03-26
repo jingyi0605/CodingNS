@@ -45,6 +45,7 @@ interface CodexAdapterOptions {
 }
 
 type CodexMessageSource = "event_msg" | "response_item";
+const CODEX_SESSION_TITLE_MAX_LENGTH = 48;
 
 interface CodexHistoryCacheEntry {
   filePath: string;
@@ -507,7 +508,7 @@ export class CodexAdapter implements ProviderAdapter {
       session: {
         provider: this.providerId,
         providerSessionId: sessionId,
-        title: options.initialPrompt?.slice(0, 48) || "New Codex session",
+        title: options.initialPrompt?.slice(0, CODEX_SESSION_TITLE_MAX_LENGTH) || "New Codex session",
         workspacePath,
         rawStoreRef: filePath,
         isArchived: false,
@@ -1060,8 +1061,14 @@ export class CodexAdapter implements ProviderAdapter {
   ): string | null {
     const metadata = index.get(sessionId);
     const indexedTitle = normalizeCodexIndexedTitle(metadata?.title);
+    const normalizedFirstUserMessage = normalizeCodexIndexedTitle(metadata?.firstUserMessage);
 
     if (indexedTitle) {
+      // Codex 有时会把第一条用户消息原样回填成 title，这种脏标题仍然按统一长度预算裁掉。
+      if (normalizedFirstUserMessage && indexedTitle === normalizedFirstUserMessage) {
+        return indexedTitle.slice(0, CODEX_SESSION_TITLE_MAX_LENGTH);
+      }
+
       return indexedTitle;
     }
 
@@ -1930,5 +1937,5 @@ function normalizeCodexIndexedTitle(title: string | null | undefined): string | 
 
 function normalizeCodexMessageTitle(content: string | null | undefined): string | null {
   const normalized = normalizeCodexIndexedTitle(content);
-  return normalized ? normalized.slice(0, 48) : null;
+  return normalized ? normalized.slice(0, CODEX_SESSION_TITLE_MAX_LENGTH) : null;
 }

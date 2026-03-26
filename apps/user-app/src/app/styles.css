@@ -585,6 +585,9 @@ a {
 }
 
 .session-title {
+  display: block;
+  min-width: 0;
+  flex: 1 1 auto;
   font-size: 13px;
   color: var(--text-primary);
   white-space: nowrap;
@@ -4406,7 +4409,11 @@ textarea:focus-visible {
 
 .conversation-title {
   display: block;
+  min-width: 0;
   max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .conversation-header p {

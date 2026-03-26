@@ -42,6 +42,7 @@ import {
   type WorkspaceDto
 } from "../api/conversation-api";
 import { searchFiles, type FileNodeDto } from "../api/file-context-api";
+import { buildSessionTitlePresentation } from "../session-title";
 
 const LEFT_PANEL_WIDTH_KEY = "workbench.left.width";
 const RIGHT_PANEL_WIDTH_KEY = "workbench.right.width";
@@ -938,6 +939,11 @@ function WorkbenchDesktopTitlebar({
   onToggleMaximizeWindow: () => void;
   onCloseWindow: () => void;
 }) {
+  const titlePresentation = buildSessionTitlePresentation(
+    currentSessionTitle,
+    t("workbench.emptyTitle")
+  );
+
   return (
     <header className="workbench-desktop-titlebar surface-card">
       <div
@@ -957,8 +963,12 @@ function WorkbenchDesktopTitlebar({
           <span className="workbench-titlebar-pill">
             {currentWorkspaceName ?? t("conversation.headerWorkspaceUnknown")}
           </span>
-          <h1 className="workbench-titlebar-title" data-testid="workbench-current-session-title">
-            {currentSessionTitle ?? t("workbench.emptyTitle")}
+          <h1
+            className="workbench-titlebar-title"
+            data-testid="workbench-current-session-title"
+            title={titlePresentation.fullTitle}
+          >
+            {titlePresentation.displayTitle}
           </h1>
         </div>
       </div>
@@ -1287,21 +1297,25 @@ function WorkspaceSearchModal({
               {keyword.trim().length === 0 ? (
                 <p className="workbench-search-empty">{t("shell.searchSessionHint")}</p>
               ) : sessionResults.length > 0 ? (
-                sessionResults.map((item) => (
-                  <button
-                    key={item.session.sessionId}
-                    type="button"
-                    className="workbench-search-result-item"
-                    onClick={() => onOpenSession(item.session.sessionId)}
-                  >
-                    <span className="workbench-search-result-title">
-                      {item.session.title || t("common.unknown")}
-                    </span>
-                    <span className="workbench-search-result-meta">
-                      {item.workspace.name} · {formatProviderLabel(item.session.provider, "full")}
-                    </span>
-                  </button>
-                ))
+                sessionResults.map((item) => {
+                  const titlePresentation = buildSessionTitlePresentation(item.session.title, t("common.unknown"));
+
+                  return (
+                    <button
+                      key={item.session.sessionId}
+                      type="button"
+                      className="workbench-search-result-item"
+                      onClick={() => onOpenSession(item.session.sessionId)}
+                    >
+                      <span className="workbench-search-result-title" title={titlePresentation.fullTitle}>
+                        {titlePresentation.displayTitle}
+                      </span>
+                      <span className="workbench-search-result-meta">
+                        {item.workspace.name} · {formatProviderLabel(item.session.provider, "full")}
+                      </span>
+                    </button>
+                  );
+                })
               ) : (
                 <p className="workbench-search-empty">{t("shell.searchSessionEmpty")}</p>
               )}
@@ -1412,6 +1426,7 @@ function SessionCard({
 }) {
   const subagentBadgeLabel =
     session.subagentLabel?.trim() || (isSubagentSession(session) ? t("shell.subagentBadge") : null);
+  const titlePresentation = buildSessionTitlePresentation(session.title, t("common.unknown"));
 
   return (
     <article
@@ -1449,7 +1464,9 @@ function SessionCard({
               data-activity-source={session.activitySource}
               aria-hidden="true"
             />
-            <span className="session-title">{session.title || t("common.unknown")}</span>
+            <span className="session-title" title={titlePresentation.fullTitle}>
+              {titlePresentation.displayTitle}
+            </span>
             {subagentBadgeLabel ? <span className="session-subagent-badge">{subagentBadgeLabel}</span> : null}
           </div>
           <div className="session-meta-row">
@@ -3010,24 +3027,28 @@ function SidebarContent({
       >
         {archiveWorkspaceGroup && archiveWorkspaceGroup.archivedSessions.length > 0 ? (
           <div className="workbench-archive-list">
-            {archiveWorkspaceGroup.archivedSessions.map((session) => (
-              <article key={session.sessionId} className="workbench-archive-item">
-                <div className="workbench-archive-item-main">
-                  <strong>{session.title || t("common.unknown")}</strong>
-                  <p>
-                    {buildSessionMeta(session, archiveWorkspaceGroup.workspace, false)} ·{" "}
-                    {formatProviderLabel(session.provider)}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={() => handleUnarchive(session.sessionId)}
-                >
-                  {t("shell.unarchiveAction")}
-                </button>
-              </article>
-            ))}
+            {archiveWorkspaceGroup.archivedSessions.map((session) => {
+              const titlePresentation = buildSessionTitlePresentation(session.title, t("common.unknown"));
+
+              return (
+                <article key={session.sessionId} className="workbench-archive-item">
+                  <div className="workbench-archive-item-main">
+                    <strong title={titlePresentation.fullTitle}>{titlePresentation.displayTitle}</strong>
+                    <p>
+                      {buildSessionMeta(session, archiveWorkspaceGroup.workspace, false)} ·{" "}
+                      {formatProviderLabel(session.provider)}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => handleUnarchive(session.sessionId)}
+                  >
+                    {t("shell.unarchiveAction")}
+                  </button>
+                </article>
+              );
+            })}
           </div>
         ) : (
           <p className="workbench-section-empty">{t("shell.archiveEmpty")}</p>

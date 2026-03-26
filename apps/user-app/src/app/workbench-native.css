@@ -721,8 +721,14 @@ body {
 }
 
 .session-title {
+  display: block;
+  min-width: 0;
+  flex: 1 1 auto;
   font-size: 13px;
   font-weight: 400;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .session-meta {
@@ -1768,9 +1774,14 @@ body {
 }
 
 .workbench-search-result-title {
+  display: block;
+  min-width: 0;
   font-size: 13px;
   font-weight: 600;
   color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .workbench-search-result-meta {

@@ -305,3 +305,84 @@ test("CodexAdapter 读取标题时应优先采用 session_index.jsonl 的 thread
     rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+test("CodexAdapter 遇到和首条用户消息相同的长标题时应截断到统一长度", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-title-truncate-"));
+  const workspacePath = "/Users/jackson/Documents/Code/CodingNS";
+  const sessionDir = join(tempDir, "sessions", "2026", "03", "26");
+  const sessionFile = join(sessionDir, "session.jsonl");
+  const threadId = "12345678-1234-4234-9234-1234567890ac";
+  const longTitle = "终端管理页面点击加号以后终端实际上加载成功但是页面没有刷新出终端窗口刷新页面后终端才显示";
+
+  try {
+    mkdirSync(sessionDir, { recursive: true });
+    writeFileSync(
+      sessionFile,
+      [
+        JSON.stringify({
+          type: "session_meta",
+          payload: {
+            id: threadId,
+            cwd: workspacePath
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-03-26T00:00:00.000Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: longTitle
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const db = new DatabaseSync(join(tempDir, "state_1.sqlite"));
+    db.exec(`
+      CREATE TABLE threads (
+        id TEXT PRIMARY KEY,
+        title TEXT,
+        cwd TEXT,
+        created_at INTEGER,
+        archived INTEGER,
+        first_user_message TEXT,
+        agent_nickname TEXT,
+        agent_role TEXT,
+        rollout_path TEXT
+      );
+    `);
+    db.prepare(
+      `INSERT INTO threads (
+         id,
+         title,
+         cwd,
+         created_at,
+         archived,
+         first_user_message,
+         agent_nickname,
+         agent_role,
+         rollout_path
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      threadId,
+      longTitle,
+      workspacePath,
+      Math.floor(Date.parse("2026-03-26T00:56:47.042Z") / 1000),
+      0,
+      longTitle,
+      null,
+      null,
+      sessionFile
+    );
+    db.close();
+
+    const adapter = new CodexAdapter({ homeDir: tempDir });
+    const sessions = await adapter.detectSessions(workspacePath);
+
+    assert.equal(sessions.length, 1);
+    assert.equal(sessions[0]?.title, longTitle.slice(0, 48));
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
