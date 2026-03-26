@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -12,10 +13,15 @@ export interface HostConfig {
   terminalIdleTimeoutSeconds: number;
   claudeCodeHomeDir: string;
   codexHomeDir: string;
+  codexCliPath: string;
 }
 
 export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConfig {
   const homeDir = os.homedir();
+  const codexCliPath = resolveCodexCliPath(
+    overrides.codexCliPath ?? process.env.CODINGNS_CODEX_COMMAND,
+    homeDir
+  );
 
   return {
     host: overrides.host ?? process.env.CODINGNS_HOST ?? "0.0.0.0",
@@ -47,6 +53,30 @@ export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConf
     codexHomeDir:
       overrides.codexHomeDir ??
       process.env.CODINGNS_CODEX_HOME ??
-      path.join(homeDir, ".codex")
+      path.join(homeDir, ".codex"),
+    codexCliPath
   };
+}
+
+function resolveCodexCliPath(configuredPath: string | undefined, homeDir: string): string {
+  const normalizedConfiguredPath = configuredPath?.trim();
+
+  if (normalizedConfiguredPath) {
+    return normalizedConfiguredPath;
+  }
+
+  const candidates = [
+    path.resolve(process.cwd(), "node_modules", ".bin", "codex"),
+    path.resolve(process.cwd(), "packages", "session-sync-core", "node_modules", ".bin", "codex"),
+    path.join(homeDir, ".local", "bin", "codex"),
+    process.platform === "darwin" ? "/Applications/Codex.app/Contents/Resources/codex" : null
+  ].filter((value): value is string => Boolean(value));
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return "codex";
 }

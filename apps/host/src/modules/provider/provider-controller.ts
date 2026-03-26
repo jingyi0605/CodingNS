@@ -30,7 +30,7 @@ export class ProviderController {
     }
 
     reply.send(
-      this.sessionHistoryService.getProviderCapabilities(
+      await this.sessionHistoryService.getProviderCapabilities(
         provider,
         request.query.workspaceId?.trim() || null
       )

@@ -774,6 +774,12 @@ function createThreadOptions(request: ProviderRuntimeRunRequest): Record<string,
     options.model = request.options.model;
   }
 
+  const reasoningEffort = normalizeCodexReasoningEffort(request.options.reasoningLevel);
+
+  if (reasoningEffort) {
+    options.modelReasoningEffort = reasoningEffort;
+  }
+
   const additionalDirectories = Array.from(
     new Set(
       request.options.attachments.map((attachment) => dirname(attachment.filePath))
@@ -785,6 +791,30 @@ function createThreadOptions(request: ProviderRuntimeRunRequest): Record<string,
   }
 
   return options;
+}
+
+function normalizeCodexReasoningEffort(value: string | null): string | null {
+  const normalized = value?.trim().toLowerCase() ?? null;
+
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized === "maximum") {
+    return "xhigh";
+  }
+
+  if (
+    normalized === "minimal" ||
+    normalized === "low" ||
+    normalized === "medium" ||
+    normalized === "high" ||
+    normalized === "xhigh"
+  ) {
+    return normalized;
+  }
+
+  return null;
 }
 
 function createCodexInput(request: ProviderRuntimeRunRequest): CodexRuntimeInput {
