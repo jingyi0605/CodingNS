@@ -80,10 +80,16 @@
 
 ## 阶段 1：先拆掉第三家 provider 的硬障碍
 
-- [ ] 1.1 拆 `ProviderId`、`ProviderRegistry` 和 DTO 的两家写死逻辑
-  - 状态：TODO
+- [x] 1.1 拆 `ProviderId`、`ProviderRegistry` 和 DTO 的两家写死逻辑
+  - 状态：DONE
   - 这一步到底做什么：把 session-sync-core、Host、前端 API DTO 中只允许两家 provider 的类型和注册逻辑改成真正可扩展。
   - 做完你能看到什么：OpenCode 至少能作为合法 provider 被系统识别，而不是一上来就被类型和注册表卡死。
+  - 已完成结果：
+    - `session-sync-core` 的 `ProviderId` 已从两家写死联合类型改成“保留内建 provider 字面量 + 允许扩展字符串”
+    - `ProviderRegistry` 已移除 `claude-code,codex` 写死校验，改为按注册表真实内容查找，并补了重复注册保护
+    - Host 中几个把 provider 强行 cast 成两家的绑定点已拆掉
+    - user-app 的 API DTO 和实时消息 DTO 已允许第三家 provider 合法通过类型检查
+    - 已补 `ProviderRegistry` 第三家 provider 注册测试
   - 先依赖什么：0.2
   - 开始前先看：
     - `packages/session-sync-core/src/types.ts`
@@ -102,14 +108,16 @@
     2. provider registry 支持第三家注册
     3. 前后端 DTO 可以接受 `opencode`
   - 怎么验证：
-    - 类型检查
-    - provider registry 单元测试
-    - 前后端基础接口测试
+    - `pnpm --dir packages/session-sync-core build`
+    - `pnpm --dir apps/host exec tsc --noEmit -p tsconfig.json`
+    - `pnpm --dir apps/user-app exec tsc --noEmit -p tsconfig.json`
+    - `pnpm --dir apps/user-app test session-runtime-machine.test.ts`
+    - `node --test packages/session-sync-core/tests/provider-registry.test.mjs`
   - 对应需求：`requirements.md` 需求 1、需求 5
   - 对应设计：`design.md` §3.1、§4.1
 
-- [ ] 1.2 拆前端页面里的 provider 特判，把主流程收口到 capability
-  - 状态：TODO
+- [x] 1.2 拆前端页面里的 provider 特判，把主流程收口到 capability
+  - 状态：DONE
   - 这一步到底做什么：把会话草稿、输入框、模型选择、规则消息展示等地方的 provider 名字判断收口。
   - 做完你能看到什么：前端不会因为多一个 OpenCode 再补一堆散落判断。
   - 先依赖什么：1.1
@@ -129,11 +137,12 @@
   - 怎么验证：
     - 前端单元测试
     - 静态扫描 provider 特判
+    - `pnpm --dir apps/user-app test ComposerPanel.test.tsx`
   - 对应需求：`requirements.md` 需求 1、需求 4、需求 5
   - 对应设计：`design.md` §4.1、§4.6
 
-- [ ] 1.3 阶段检查：第三家 provider 的基础道路打通
-  - 状态：TODO
+- [x] 1.3 阶段检查：第三家 provider 的基础道路打通
+  - 状态：DONE
   - 这一步到底做什么：确认 OpenCode 还没真正接入前，系统已经不再从类型层和页面层排斥第三家 provider。
   - 做完你能看到什么：后续 OpenCode 接入不再是“先和硬编码打架”。
   - 先依赖什么：1.1、1.2
@@ -141,12 +150,17 @@
     - 当前阶段相关代码和测试
   - 主要改哪里：当前阶段相关文件
   - 这一步先不做什么：不碰 OpenCode server。
+  - 已完成结果：
+    - `session-sync-core`、Host、user-app 已经都允许 `opencode` 作为合法 provider 通过主链路
+    - 前端草稿会话、输入框、模型回退、规则消息折叠等入口已收口到 capability / metadata
+    - `WorkbenchLayout`、`session-runtime-store`、`ComposerPanel` 已补齐 OpenCode 入口和基础行为，不再默认回退成 codex
   - 怎么算完成：
     1. provider 第三家可以注册
     2. 前端主链路不再散落两家写死判断
   - 怎么验证：
-    - 回归测试
-    - 人工走查
+    - `pnpm --dir apps/user-app exec tsc --noEmit -p tsconfig.json`
+    - `pnpm --dir apps/user-app exec vitest run src/features/conversation/components/ComposerPanel.test.tsx src/features/conversation/runtime/session-runtime-machine.test.ts src/features/conversation/components/WorkbenchLayout.test.tsx`
+    - 人工走查 provider 特判残留
   - 对应需求：`requirements.md` 需求 1、需求 5
   - 对应设计：`design.md` §3.1、§4.1
 
@@ -154,8 +168,8 @@
 
 ## 阶段 2：接 OpenCode 主链路，不走歪门邪道
 
-- [ ] 2.1 实现 OpenCode provider 的会话发现和历史读取
-  - 状态：TODO
+- [x] 2.1 实现 OpenCode provider 的会话发现和历史读取
+  - 状态：DONE
   - 这一步到底做什么：优先通过 OpenCode 官方 server/sdk 打通 `/session` 和 `/session/:id/message` 相关读取。
   - 做完你能看到什么：项目能把 OpenCode 会话列出来，也能读出历史消息。
   - 先依赖什么：1.3
@@ -164,20 +178,27 @@
     - `design.md` §2.1、§4.3
   - 主要改哪里：
     - `packages/session-sync-core/src/providers/opencode.ts`
+    - `packages/session-sync-core/src/providers/opencode-shared.ts`
     - `apps/host/src/modules/sessions/session-history-service.ts`
   - 这一步先不做什么：先不接实时运行时。
+  - 已完成结果：
+    - `OpenCodeAdapter` 已改成 server 优先、sqlite 兜底的发现和历史读取实现
+    - Host 已注册 `OpenCodeAdapter`，会话发现链路能把 OpenCode 会话写入现有索引
+    - 真实机器上已确认能从 `http://127.0.0.1:41827` 发现 `CodingNS` 工作区下的 OpenCode 会话
   - 怎么算完成：
     1. 能发现 OpenCode session
     2. 能读取 message 和 part
     3. 有稳定 `providerSessionId` 和 `rawRef`
   - 怎么验证：
-    - 本地 OpenCode 样本联调
-    - provider history 集成测试
+    - `pnpm --dir packages/session-sync-core build`
+    - `node --test packages/session-sync-core/tests/opencode-adapter.test.mjs`
+    - `node --input-type=module -e "import { OpenCodeAdapter } from './packages/session-sync-core/dist/index.js'; ... detectSessions('/Users/jackson/Code/CodingNS') ..."`
+    - `curl -sf "http://127.0.0.1:41827/session?directory=%2FUsers%2Fjackson%2FCode%2FCodingNS&roots=true"`
   - 对应需求：`requirements.md` 需求 2、需求 3
   - 对应设计：`design.md` §4.2、§4.3
 
-- [ ] 2.2 实现 OpenCode `part` 归一化和安全降级
-  - 状态：TODO
+- [x] 2.2 实现 OpenCode `part` 归一化和安全降级
+  - 状态：DONE
   - 这一步到底做什么：把 `text`、`reasoning`、`tool`、`step-start`、`step-finish` 先映射好，并为更宽的 part 留出富内容扩展。
   - 做完你能看到什么：OpenCode 消息不会只剩一坨文本，工具和 reasoning 也有基本语义。
   - 先依赖什么：2.1
@@ -186,20 +207,26 @@
     - `design.md` §4.5
   - 主要改哪里：
     - `packages/session-sync-core/src/providers/opencode.ts`
+    - `packages/session-sync-core/src/providers/opencode-shared.ts`
     - `packages/session-sync-core/src/types.ts`
-    - `apps/user-app/src/features/conversation/message-rich-content.ts`
+    - `apps/user-app/src/features/conversation/components/MessageTimeline.tsx`
   - 这一步先不做什么：先不把所有 part 做成富展示组件。
+  - 已完成结果：
+    - 已把 `text`、`reasoning`、`tool`、`step-start`、`step-finish` 归一化到统一消息模型
+    - 对未知 part 类型已保留 `[type]` 标记降级，避免静默丢内容
+    - 真实 OpenCode 历史样本已读到 `thinking/text` 等归一化结果
   - 怎么算完成：
     1. 核心 part 类型可映射
     2. 未完全支持的 part 保留原始引用和类型
   - 怎么验证：
-    - fixture 测试
-    - 前端时间线渲染测试
+    - `node --test packages/session-sync-core/tests/opencode-adapter.test.mjs`
+    - `node --input-type=module -e "import { OpenCodeAdapter } from './packages/session-sync-core/dist/index.js'; ... readSessionHistory(...) ..."`
+    - `pnpm --dir apps/user-app exec vitest run src/features/conversation/components/WorkbenchLayout.test.tsx src/features/conversation/runtime/session-runtime-machine.test.ts`
   - 对应需求：`requirements.md` 需求 3
   - 对应设计：`design.md` §4.5、§6.2
 
 - [ ] 2.3 实现 OpenCode runtime：创建、发送、实时事件和中断
-  - 状态：TODO
+  - 状态：IN_REVIEW
   - 这一步到底做什么：通过 OpenCode server 的 `session/message/event/abort` 链路，打通真实实时运行时。
   - 做完你能看到什么：项目里能真正启动和继续 OpenCode 会话，并收到流式事件。
   - 先依赖什么：2.2
@@ -208,20 +235,34 @@
     - `design.md` §4.4、§5.2
   - 主要改哪里：
     - `packages/session-sync-core/src/runtime/opencode-runtime.ts`
+    - `packages/session-sync-core/src/index.ts`
+    - `apps/host/src/config/env.ts`
+    - `apps/host/src/modules/sessions/session-provider-error-mapper.ts`
+    - `apps/host/src/modules/sessions/session-activity-inspector.ts`
     - `apps/host/src/modules/sessions/session-live-runtime-service.ts`
   - 这一步先不做什么：先不做 `revert/share` UI。
+  - 当前进展：
+    - `OpenCodeRuntimeAdapter` 已实现并导出，Host 已注册 runtime adapter
+    - `start-live` 的延迟建会话逻辑已把 `opencode` 纳入
+    - OpenCode server 地址、数据目录、sqlite 路径已接入 Host 配置
+    - 错误映射和虚拟 `rawStoreRef` 的活动检测兜底已补上
+  - 尚未关账原因：
+    - 为避免主动消耗真实模型请求和打断现有会话，本轮没有执行会创建真实 OpenCode run 的破坏性联调
   - 怎么算完成：
     1. `start-live` 可创建 OpenCode session
     2. 后续发送可继续同一原生 session
     3. 中断和状态事件可用
   - 怎么验证：
-    - 本地 server 联调
-    - runtime 集成测试
+    - `node --test packages/session-sync-core/tests/opencode-runtime.test.mjs`
+    - `pnpm --dir apps/host exec tsc --noEmit -p tsconfig.json`
+    - `pnpm --dir apps/host exec tsx -e "import('./src/modules/sessions/session-live-runtime-service.ts').then(() => console.log('session-live-runtime-service ok'))"`
+    - `pnpm --dir apps/host exec tsx -e "import('./src/modules/sessions/session-history-service.ts').then(() => console.log('session-history-service ok'))"`
+    - 待补：对现成 OpenCode server 做一次非破坏性的 runtime 集成联调
   - 对应需求：`requirements.md` 需求 2、需求 5
   - 对应设计：`design.md` §4.4、§5.2
 
 - [ ] 2.4 阶段检查：OpenCode 主链路打通
-  - 状态：TODO
+  - 状态：IN_REVIEW
   - 这一步到底做什么：确认 OpenCode 已经通过官方 server/sdk 主链路在项目里跑起来。
   - 做完你能看到什么：OpenCode 已经不只是“能读库”，而是真正 provider。
   - 先依赖什么：2.1、2.2、2.3
@@ -229,6 +270,9 @@
     - 当前阶段相关代码和联调结果
   - 主要改哪里：当前阶段相关文件
   - 这一步先不做什么：先不扩高级能力 UI。
+  - 当前判断：
+    - 历史发现、历史读取、能力描述、Host 注册和前端入口已经打通
+    - runtime 代码与 Host 接线已完成，但还差一次不影响现有会话的真实联调来正式关账
   - 怎么算完成：
     1. 会话发现、历史、实时运行都可用
     2. 未支持能力明确降级，不撒谎
@@ -242,8 +286,8 @@
 
 ## 阶段 3：把 OpenCode 特有能力收口到 capability
 
-- [ ] 3.1 扩展 capability descriptor，表达 OpenCode 高级能力
-  - 状态：TODO
+- [x] 3.1 扩展 capability descriptor，表达 OpenCode 高级能力
+  - 状态：DONE
   - 这一步到底做什么：补 `todo`、`diff`、`permission`、`fork`、`share`、`async prompt` 等能力字段。
   - 做完你能看到什么：前端能按能力门控，而不是继续按 provider 名字猜。
   - 先依赖什么：2.4
@@ -255,12 +299,17 @@
     - `apps/user-app/src/features/conversation/api/conversation-api.ts`
     - `apps/user-app/src/features/conversation/capability/*`
   - 这一步先不做什么：先不做所有能力的完整 UI。
+  - 已完成结果：
+    - `ProviderCapabilities` / `ProviderCapabilitiesDto` 已补 `todo`、`diff`、`permission`、`fork`、`share`、`async prompt`、`native agents` 字段
+    - OpenCode provider 已返回这些能力描述
+    - 前端 capability metadata / helper 已能基于 descriptor 控制 OpenCode 入口和基础行为
   - 怎么算完成：
     1. capability 能表达 OpenCode 高级能力
     2. 老客户端能安全忽略未知字段
   - 怎么验证：
-    - capability 契约测试
-    - 前端门控测试
+    - `pnpm --dir packages/session-sync-core build`
+    - `pnpm --dir apps/user-app exec tsc --noEmit -p tsconfig.json`
+    - `pnpm --dir apps/user-app exec vitest run src/features/conversation/components/ComposerPanel.test.tsx src/features/conversation/components/WorkbenchLayout.test.tsx`
   - 对应需求：`requirements.md` 需求 4、需求 6
   - 对应设计：`design.md` §4.6
 
