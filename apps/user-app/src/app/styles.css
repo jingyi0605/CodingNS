@@ -916,18 +916,136 @@ a {
 .workbench-center-placeholder {
   display: flex;
   flex: 1;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 12px;
-  padding: 32px;
-  text-align: center;
-  border-radius: var(--radius-lg);
+  min-height: 0;
+  padding: clamp(20px, 4vw, 40px);
 }
 
-.workbench-center-placeholder h1 {
+.workbench-empty-guide {
+  width: min(100%, 860px);
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(280px, 0.95fr);
+  grid-template-areas:
+    "eyebrow steps"
+    "main steps"
+    "tip tip";
+  overflow: hidden;
+  border-radius: 24px;
+  background: color-mix(in srgb, var(--bg-surface) 96%, transparent);
+  box-shadow:
+    0 16px 36px rgba(15, 23, 42, 0.06),
+    0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.workbench-empty-eyebrow {
+  grid-area: eyebrow;
   margin: 0;
-  font-size: 24px;
+  padding: 22px 28px 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.workbench-empty-main {
+  grid-area: main;
+  display: flex;
+  flex-direction: column;
+  padding: 0 28px 24px;
+}
+
+.workbench-empty-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  justify-content: center;
+  min-height: 100%;
+  max-width: 420px;
+}
+
+.workbench-empty-copy h1 {
+  margin: 0;
+  font-size: clamp(28px, 4vw, 36px);
+  line-height: 1.16;
+  letter-spacing: -0.03em;
+  font-weight: 600;
+}
+
+.workbench-empty-body {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 15px;
+  line-height: 1.7;
+}
+
+.workbench-empty-steps {
+  grid-area: steps;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin: 0;
+  padding: 18px 22px;
+  list-style: none;
+  border-left: 1px solid var(--border-primary);
+  background: color-mix(in srgb, var(--bg-primary) 44%, var(--bg-surface));
+}
+
+.workbench-empty-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 0;
+}
+
+.workbench-empty-step + .workbench-empty-step {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.workbench-empty-step-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  border-radius: 999px;
+  border: 1px solid var(--border-primary);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.workbench-empty-step-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.workbench-empty-step-copy h2 {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.4;
+  font-weight: 600;
+}
+
+.workbench-empty-step-copy p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.workbench-empty-tip {
+  grid-area: tip;
+  margin: 0;
+  padding: 14px 22px 16px;
+  border-top: 1px solid var(--border-primary);
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 /* ========================================
@@ -3550,6 +3668,29 @@ a {
     padding: 12px;
   }
 
+  .workbench-empty-guide {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "eyebrow"
+      "main"
+      "steps"
+      "tip";
+  }
+
+  .workbench-empty-eyebrow {
+    padding: 20px 22px 0;
+  }
+
+  .workbench-empty-main {
+    padding: 0 22px 20px;
+  }
+
+  .workbench-empty-steps {
+    padding: 10px 18px 16px;
+    border-left: none;
+    border-top: 1px solid var(--border-primary);
+  }
+
   .terminal-manager-header,
   .terminal-manager-card-header {
     flex-direction: column;
@@ -3584,6 +3725,34 @@ a {
   .workbench-page,
   .conversation-page-shell {
     padding: 8px;
+  }
+
+  .workbench-center-placeholder {
+    padding: 12px;
+  }
+
+  .workbench-empty-guide {
+    border-radius: 20px;
+  }
+
+  .workbench-empty-eyebrow {
+    padding: 18px 18px 0;
+  }
+
+  .workbench-empty-main {
+    padding: 0 18px 18px;
+  }
+
+  .workbench-empty-copy h1 {
+    font-size: 24px;
+  }
+
+  .workbench-empty-steps {
+    padding: 8px 14px 14px;
+  }
+
+  .workbench-empty-tip {
+    padding: 12px 14px 14px;
   }
 }
 

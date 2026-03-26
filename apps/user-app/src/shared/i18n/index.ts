@@ -234,8 +234,16 @@ const extensionZhCN = {
     infoPanelDeferred: "\u5de6\u4fa7\u4f1a\u8bdd\u5217\u8868\u4f18\u5148\u52a0\u8f7d\uff0c\u53f3\u4fa7\u9644\u5c5e\u9762\u677f\u7a0d\u540e\u518d\u6302\u8f7d\u3002"
   },
   workbench: {
-    emptyTitle: "\u4ece\u5de6\u4fa7\u9009\u4e00\u6761\u4f1a\u8bdd\u5f00\u59cb",
-    emptyBody: "\u4e2d\u95f4\u53ea\u505a\u5bf9\u8bdd\u548c\u7ec8\u7aef\uff0c\u53f3\u4fa7\u53ea\u653e\u6587\u4ef6\u3001Git \u548c\u7ec8\u7aef\u7ba1\u7406\u3002"
+    emptyEyebrow: "\u5f00\u59cb",
+    emptyTitle: "\u5148\u9009\u4e00\u4e2a\u4f1a\u8bdd",
+    emptyBody: "\u4ece\u5de6\u4fa7\u7ee7\u7eed\u4e4b\u524d\u7684\u5185\u5bb9\uff0c\u6216\u65b0\u5efa\u4e00\u4e2a\u4f1a\u8bdd\u3002",
+    emptyResumeTitle: "\u7ee7\u7eed",
+    emptyResumeBody: "\u56de\u5230\u4e0a\u6b21\u505c\u4e0b\u7684\u5730\u65b9\u3002",
+    emptyNewTitle: "\u65b0\u5efa",
+    emptyNewBody: "\u628a\u65b0\u95ee\u9898\u653e\u8fdb\u65b0\u4f1a\u8bdd\u3002",
+    emptyCompanionTitle: "\u67e5\u770b\u8f85\u52a9\u4fe1\u606f",
+    emptyCompanionBody: "\u9700\u8981\u6587\u4ef6\u3001Git \u6216\u7ec8\u7aef\u65f6\uff0c\u518d\u770b\u53f3\u4fa7\u3002",
+    emptyTip: "\u51c6\u5907\u597d\u540e\uff0c\u4ece\u5de6\u4fa7\u9009\u4e00\u4e2a\u4f1a\u8bdd\u5f00\u59cb\u3002"
   },
   conversation: {
     resendButton: "\u91cd\u53d1",
@@ -687,8 +695,16 @@ const extensionEnUS = {
     infoPanelDeferred: "The left session list loads first. The right auxiliary panel mounts slightly later."
   },
   workbench: {
-    emptyTitle: "Select a session from the left to begin",
-    emptyBody: "The center is only for conversation and terminal. Files, Git, and terminal management stay on the right."
+    emptyEyebrow: "Start",
+    emptyTitle: "Choose a session first",
+    emptyBody: "Continue from the left, or create a new session.",
+    emptyResumeTitle: "Continue",
+    emptyResumeBody: "Go back to where you stopped.",
+    emptyNewTitle: "New session",
+    emptyNewBody: "Put a new question into a clean session.",
+    emptyCompanionTitle: "Side details",
+    emptyCompanionBody: "Open files, Git, or terminal on the right when needed.",
+    emptyTip: "When you are ready, pick a session from the left."
   },
   conversation: {
     resendButton: "Resend",

@@ -7,7 +7,12 @@ import { authStore } from "../../auth/store/auth-store";
 import { clearViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import { t } from "../../../shared/i18n";
 import { ToastProvider } from "../../../shared/toast";
-import { WorkbenchLayout } from "./WorkbenchLayout";
+import {
+  WorkbenchLayout,
+  flattenVisibleSessionTree,
+  getTreeNodeChildren,
+  getVisibleSessionTreeNodes
+} from "./WorkbenchLayout";
 
 const WORKBENCH_NAVIGATION_SNAPSHOT_KEY = "workbench.navigation.snapshot";
 
@@ -119,6 +124,26 @@ describe("WorkbenchLayout", () => {
     clearViewSnapshot(WORKBENCH_NAVIGATION_SNAPSHOT_KEY);
     global.fetch = originalFetch;
     global.WebSocket = originalWebSocket;
+  });
+
+  it("会把缺失 children 的侧栏树节点当作空数组处理", () => {
+    const session = createSessionSummary({
+      sessionId: "session-1",
+      title: "根会话",
+      workspaceId: "workspace-1"
+    });
+    const malformedNode = {
+      session,
+      children: undefined
+    } as unknown as Parameters<typeof flattenVisibleSessionTree>[0][number];
+
+    expect(getTreeNodeChildren(malformedNode)).toEqual([]);
+    expect(flattenVisibleSessionTree([malformedNode])).toEqual([session]);
+    expect(
+      getVisibleSessionTreeNodes({
+        visibleSessionTree: [malformedNode, undefined] as never
+      })
+    ).toHaveLength(1);
   });
 
   it("支持收藏、归档恢复，并在新建时进入 draft 会话路由", async () => {

@@ -446,7 +446,6 @@ body {
 .terminal-manager-section,
 .terminal-manager-card,
 .settings-card,
-.workbench-center-placeholder,
 .conversation-header,
 .composer-input-wrapper {
   border-radius: 12px;
@@ -868,8 +867,8 @@ body {
 }
 
 .workbench-center-placeholder {
-  justify-content: flex-start;
-  align-items: flex-start;
+  justify-content: center;
+  align-items: center;
   padding: var(--space-7);
 }
 
@@ -1062,6 +1061,32 @@ body {
   border: 1px solid transparent;
   background: transparent;
   color: var(--text-secondary);
+.workbench-empty-guide {
+  border-radius: 20px;
+  border-color: var(--panel-border);
+  background: var(--panel-bg-strong);
+  box-shadow: none;
+}
+
+.workbench-empty-steps {
+  border-left-color: var(--panel-border);
+  background: var(--panel-bg);
+}
+
+.workbench-empty-step + .workbench-empty-step {
+  border-top-color: var(--panel-border);
+}
+
+.workbench-empty-step-index {
+  border-color: var(--panel-border);
+  background: var(--panel-bg-strong);
+}
+
+.workbench-empty-tip {
+  border-top-color: var(--panel-border);
+  color: var(--text-secondary);
+}
+
 }
 
 .workbench-info-tab.active,

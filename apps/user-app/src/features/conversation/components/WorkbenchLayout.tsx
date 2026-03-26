@@ -114,6 +114,28 @@ interface NavigationSessionTreeNode {
   children: SessionSummaryDto[];
 }
 
+function hasValidTreeNodeSession(
+  node: NavigationSessionTreeNode | null | undefined
+): node is NavigationSessionTreeNode {
+  return Boolean(node?.session);
+}
+
+export function getTreeNodeChildren(
+  node: Pick<NavigationSessionTreeNode, "children"> | null | undefined
+): SessionSummaryDto[] {
+  return Array.isArray(node?.children) ? node.children : [];
+}
+
+export function getVisibleSessionTreeNodes(
+  group: Pick<WorkspaceSidebarGroup, "visibleSessionTree"> | null | undefined
+): NavigationSessionTreeNode[] {
+  if (!Array.isArray(group?.visibleSessionTree)) {
+    return [];
+  }
+
+  return group.visibleSessionTree.filter(hasValidTreeNodeSession);
+}
+
 interface WorkbenchShellContextValue {
   navigationGroups: WorkspaceSessionGroup[];
   navigationLoading: boolean;
@@ -232,8 +254,8 @@ function buildSessionTree(sessions: SessionSummaryDto[]) {
     }));
 }
 
-function flattenVisibleSessionTree(nodes: NavigationSessionTreeNode[]) {
-  return nodes.flatMap((node) => [node.session, ...node.children]);
+export function flattenVisibleSessionTree(nodes: NavigationSessionTreeNode[]) {
+  return nodes.flatMap((node) => [node.session, ...getTreeNodeChildren(node)]);
 }
 
 function resolveVisibleItemCount(
@@ -1640,7 +1662,7 @@ function SidebarContent({
   const activeBatchWorkspaceGroup =
     workspaceGroups.find((group) => group.workspace.id === batchWorkspaceId) ?? null;
   const batchSelectableSessions = useMemo(
-    () => (activeBatchWorkspaceGroup ? flattenVisibleSessionTree(activeBatchWorkspaceGroup.visibleSessionTree) : []),
+    () => (activeBatchWorkspaceGroup ? flattenVisibleSessionTree(getVisibleSessionTreeNodes(activeBatchWorkspaceGroup)) : []),
     [activeBatchWorkspaceGroup]
   );
   const batchSelectableSessionIds = useMemo(
@@ -1854,14 +1876,15 @@ function SidebarContent({
       const next: Record<string, number> = {};
 
       for (const group of workspaceGroups) {
-        const activeRootSessionIndex = group.visibleSessionTree.findIndex(
+        const visibleSessionTree = getVisibleSessionTreeNodes(group);
+        const activeRootSessionIndex = visibleSessionTree.findIndex(
           (node) =>
             node.session.sessionId === activeSessionId ||
-            node.children.some((session) => session.sessionId === activeSessionId)
+            getTreeNodeChildren(node).some((session) => session.sessionId === activeSessionId)
         );
 
         next[group.workspace.id] = resolveVisibleItemCount(
-          group.visibleSessionTree.length,
+          visibleSessionTree.length,
           ROOT_SESSION_PAGE_SIZE,
           current[group.workspace.id],
           activeRootSessionIndex
@@ -1877,15 +1900,17 @@ function SidebarContent({
       const next: Record<string, number> = {};
 
       for (const group of workspaceGroups) {
-        for (const node of group.visibleSessionTree) {
-          if (node.children.length === 0) {
+        for (const node of getVisibleSessionTreeNodes(group)) {
+          const childSessions = getTreeNodeChildren(node);
+
+          if (childSessions.length === 0) {
             continue;
           }
 
-          const activeChildIndex = node.children.findIndex((session) => session.sessionId === activeSessionId);
+          const activeChildIndex = childSessions.findIndex((session) => session.sessionId === activeSessionId);
 
           next[node.session.sessionId] = resolveVisibleItemCount(
-            node.children.length,
+            childSessions.length,
             SUBAGENT_PAGE_SIZE,
             current[node.session.sessionId],
             activeChildIndex
@@ -2507,17 +2532,18 @@ function SidebarContent({
             {!group.isCollapsed ? (
               <>
                 <div className="workbench-session-list">
-                  {group.visibleSessionTree.length === 0 ? (
+                  {getVisibleSessionTreeNodes(group).length === 0 ? (
                     <p className="workbench-session-empty">{t("shell.emptyWorkspaceSessions")}</p>
                   ) : (
-                    group.visibleSessionTree
+                    getVisibleSessionTreeNodes(group)
                       .slice(0, getVisibleWorkspaceSessionCount(group.workspace.id))
                       .map((node) => {
-                      const visibleChildren = node.children.slice(
+                      const childSessions = getTreeNodeChildren(node);
+                      const visibleChildren = childSessions.slice(
                         0,
                         getVisibleSubagentCount(node.session.sessionId)
                       );
-                      const hasMoreSubagents = visibleChildren.length < node.children.length;
+                      const hasMoreSubagents = visibleChildren.length < childSessions.length;
 
                       return (
                         <div key={node.session.sessionId} className="workbench-session-tree-node">
@@ -2561,7 +2587,7 @@ function SidebarContent({
                             }
                           />
 
-                          {node.children.length > 0 ? (
+                          {childSessions.length > 0 ? (
                             <div className="workbench-subsession-list">
                               {visibleChildren.map((session) => (
                                 <SessionCard
@@ -2614,12 +2640,12 @@ function SidebarContent({
                         );
                       })
                   )}
-                  {group.visibleSessionTree.length > getVisibleWorkspaceSessionCount(group.workspace.id) ? (
+                  {getVisibleSessionTreeNodes(group).length > getVisibleWorkspaceSessionCount(group.workspace.id) ? (
                     <button
                       type="button"
                       className="workbench-subsession-expand ghost-button"
                       onClick={() =>
-                        handleExpandWorkspaceSessions(group.workspace.id, group.visibleSessionTree.length)
+                        handleExpandWorkspaceSessions(group.workspace.id, getVisibleSessionTreeNodes(group).length)
                       }
                     >
                       {t("shell.sessionExpandMore")}
