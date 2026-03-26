@@ -2726,44 +2726,64 @@ a {
 .terminal-tabbar {
   position: relative;
   display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  justify-content: center;
-  gap: 0;
+  align-items: center;
   min-width: 0;
-  min-height: 44px;
-  padding: 6px 10px 7px;
-  border-bottom: 1px solid var(--border-primary);
+  min-height: 52px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--panel-separator);
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(245, 245, 246, 0.98)),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--panel-bg-strong) 94%, white 6%),
+      color-mix(in srgb, var(--panel-bg) 98%, transparent 2%)
+    ),
     var(--bg-surface);
-  backdrop-filter: blur(18px);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.45),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.18);
+  backdrop-filter: blur(24px) saturate(150%);
+  overflow: visible;
+  z-index: 24;
 }
 
 .terminal-tabbar-main {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 12px;
+  width: 100%;
   min-width: 0;
 }
 
 .terminal-tabbar-scroll {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   flex: 1;
   min-width: 0;
+  padding: 1px 0;
   overflow-x: auto;
+  overflow-y: visible;
 }
 
 .terminal-tabbar-inline-actions {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   flex: none;
   min-width: 0;
   justify-content: flex-end;
+  position: relative;
+  z-index: 35;
+}
+
+.terminal-toolbar-anchor {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 36px;
 }
 
 .terminal-tab-shell {
@@ -2772,23 +2792,30 @@ a {
   align-items: center;
   gap: 4px;
   flex: none;
-  max-width: 220px;
-  padding-right: 2px;
-  border: 1px solid rgba(15, 23, 42, 0.06);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.72);
+  max-width: 236px;
+  padding: 2px;
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel-bg) 94%, white 6%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.32);
   transition:
     border-color var(--transition-fast),
-    background var(--transition-fast);
+    background var(--transition-fast),
+    box-shadow var(--transition-fast),
+    transform var(--transition-fast);
 }
 
 .terminal-tab-shell[data-active="true"] {
-  border-color: rgba(15, 23, 42, 0.12);
-  background: rgba(255, 255, 255, 0.96);
+  border-color: color-mix(in srgb, var(--accent) 18%, var(--panel-border));
+  background: color-mix(in srgb, var(--panel-bg-strong) 92%, white 8%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.58),
+    0 8px 22px rgba(15, 23, 42, 0.08);
 }
 
 .terminal-tab-shell[data-assigned="true"]:not([data-active="true"]) {
-  border-color: rgba(15, 23, 42, 0.09);
+  border-color: color-mix(in srgb, var(--accent) 12%, var(--panel-border));
+  background: color-mix(in srgb, var(--panel-active) 58%, var(--panel-bg));
 }
 
 .terminal-tab {
@@ -2796,20 +2823,21 @@ a {
   align-items: center;
   gap: 8px;
   flex: 1;
-  max-width: 188px;
+  max-width: 202px;
   min-width: 0;
-  min-height: 30px;
-  border-radius: 999px;
-  padding: 0 10px;
+  min-height: 32px;
+  border-radius: 10px;
+  padding: 0 10px 0 11px;
   background: transparent;
   color: var(--text-secondary);
   transition:
     background var(--transition-fast),
-    color var(--transition-fast);
+    color var(--transition-fast),
+    transform var(--transition-fast);
 }
 
 .terminal-tab:hover {
-  background: rgba(255, 255, 255, 0.88);
+  background: var(--panel-hover);
 }
 
 .terminal-tab[data-active="true"] {
@@ -2824,7 +2852,7 @@ a {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
 }
 
@@ -2872,10 +2900,11 @@ a {
   display: inline-flex;
   align-items: center;
   flex: none;
-  min-height: 18px;
-  padding: 0 6px;
+  min-height: 20px;
+  padding: 0 7px;
   border-radius: 999px;
-  background: rgba(15, 23, 42, 0.06);
+  border: 1px solid color-mix(in srgb, var(--panel-border) 80%, transparent 20%);
+  background: color-mix(in srgb, var(--panel-bg-strong) 90%, white 10%);
   color: var(--text-secondary);
   font-size: 10px;
   font-weight: 700;
@@ -2888,47 +2917,58 @@ a {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 28px;
-  height: 28px;
-  padding: 0 6px;
-  border: none;
-  border-radius: 8px;
-  background: transparent;
+  min-width: 32px;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel-bg-strong) 92%, white 8%);
   color: var(--text-secondary);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4);
   transition:
     background var(--transition-fast),
-    color var(--transition-fast);
+    border-color var(--transition-fast),
+    color var(--transition-fast),
+    box-shadow var(--transition-fast),
+    transform var(--transition-fast);
 }
 
 .terminal-tab-control {
-  padding-left: 4px;
-  padding-right: 4px;
+  padding-left: 6px;
+  padding-right: 6px;
 }
 
 .terminal-toolbar-toggle[data-open="true"] {
-  background: rgba(15, 23, 42, 0.08);
+  background: color-mix(in srgb, var(--panel-active) 70%, var(--panel-bg-strong));
+  border-color: color-mix(in srgb, var(--accent) 24%, var(--panel-border));
   color: var(--text-primary);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    0 10px 24px rgba(15, 23, 42, 0.12);
 }
 
 .terminal-tab-inline-action {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   flex: none;
-  border-radius: 999px;
+  border-radius: 8px;
   color: var(--text-secondary);
   transition:
     background var(--transition-fast),
-    color var(--transition-fast);
+    color var(--transition-fast),
+    transform var(--transition-fast);
 }
 
 .terminal-tab-control:hover,
 .terminal-toolbar-toggle:hover,
 .terminal-tab-inline-action:hover {
-  background: rgba(15, 23, 42, 0.06);
+  background: var(--panel-hover);
+  border-color: var(--panel-border-strong);
   color: var(--text-primary);
+  transform: translateY(-1px);
 }
 
 .terminal-toolbar-icon {
@@ -2946,48 +2986,60 @@ a {
 }
 
 .terminal-toolbar-inline {
+  position: absolute;
+  top: 50%;
+  right: calc(100% + 10px);
+  z-index: 80;
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  width: max-content;
   min-width: 0;
-  max-width: 0;
+  max-width: min(780px, calc(100vw - 420px));
+  padding: 6px;
   overflow: hidden;
   opacity: 0;
-  transform: translateX(8px) scaleX(0.96);
+  visibility: hidden;
+  transform: translate3d(8px, -50%, 0) scale(0.98);
   transform-origin: right center;
   pointer-events: none;
+  border: 1px solid var(--panel-border);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--panel-bg-strong) 92%, white 8%);
+  box-shadow: 0 18px 44px rgba(15, 23, 42, 0.16);
+  backdrop-filter: blur(24px) saturate(160%);
   transition:
-    max-width 220ms cubic-bezier(0.2, 0.9, 0.2, 1),
     opacity 180ms ease,
-    transform 220ms cubic-bezier(0.2, 0.9, 0.2, 1),
-    margin-right 220ms cubic-bezier(0.2, 0.9, 0.2, 1);
+    visibility 180ms ease,
+    transform 220ms cubic-bezier(0.2, 0.9, 0.2, 1);
 }
 
 .terminal-toolbar-inline[data-open="true"] {
-  max-width: 560px;
-  margin-right: 2px;
   opacity: 1;
-  transform: translateX(0) scaleX(1);
+  visibility: visible;
+  transform: translate3d(0, -50%, 0) scale(1);
   pointer-events: auto;
 }
 
 .terminal-toolbar-cluster {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: nowrap;
   min-width: max-content;
-  padding: 1px 0;
+  padding: 0;
 }
 
 .terminal-toolbar-section {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 6px;
-  border: 1px solid rgba(15, 23, 42, 0.05);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.66);
+  min-height: 34px;
+  padding: 4px 6px 4px 10px;
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel-bg) 94%, white 6%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.38);
 }
 
 .terminal-toolbar-label {
@@ -2999,11 +3051,11 @@ a {
 
 .terminal-runtime-select {
   min-width: 118px;
-  height: 28px;
+  height: 30px;
   padding: 0 28px 0 10px;
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel-bg-strong) 92%, white 8%);
   color: var(--text-primary);
   font-size: 12px;
   font-weight: 600;
@@ -3053,10 +3105,10 @@ a {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 3px;
-  border: 1px solid var(--border-primary);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.72);
+  padding: 2px;
+  border: 1px solid var(--panel-border);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--panel-bg-strong) 92%, white 8%);
 }
 
 .terminal-zoom-button,
@@ -3066,7 +3118,7 @@ a {
   justify-content: center;
   min-width: 28px;
   height: 28px;
-  border-radius: 999px;
+  border-radius: 9px;
   padding: 0 8px;
   color: var(--text-primary);
 }
@@ -3086,6 +3138,10 @@ a {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  padding: 2px;
+  border: 1px solid var(--panel-border);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--panel-bg-strong) 92%, white 8%);
 }
 
 .terminal-layout-button,
@@ -3095,27 +3151,30 @@ a {
   justify-content: center;
   min-height: 28px;
   padding: 0 10px;
-  border: 1px solid var(--border-primary);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid var(--panel-border);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--panel-bg-strong) 92%, white 8%);
   color: var(--text-primary);
   font-size: 12px;
   font-weight: 600;
   transition:
     background var(--transition-fast),
     border-color var(--transition-fast),
-    color var(--transition-fast);
+    color var(--transition-fast),
+    transform var(--transition-fast);
 }
 
 .terminal-layout-button[data-active="true"] {
-  border-color: rgba(15, 23, 42, 0.12);
-  background: rgba(15, 23, 42, 0.08);
+  border-color: color-mix(in srgb, var(--accent) 24%, var(--panel-border));
+  background: color-mix(in srgb, var(--panel-active) 72%, var(--panel-bg-strong));
   color: var(--text-primary);
 }
 
 .terminal-layout-button:hover,
 .terminal-toolbar-save:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.98);
+  background: var(--panel-hover);
+  border-color: var(--panel-border-strong);
+  transform: translateY(-1px);
 }
 
 .terminal-toolbar-save:disabled {

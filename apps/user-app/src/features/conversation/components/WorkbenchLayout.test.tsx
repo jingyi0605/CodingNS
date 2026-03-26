@@ -859,6 +859,67 @@ describe("WorkbenchLayout", () => {
     expect(shell?.getAttribute("data-info-ready")).toBe("true");
   });
 
+  it("桌面端收起两侧边栏后保留顶部展开控件而不是退化成汉堡按钮", async () => {
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "会话 Alpha",
+            workspaceId: "workspace-1"
+          })
+        ]
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    const view = renderWorkbenchRoute("/sessions/session-1");
+
+    await findSessionCardByTitle("会话 Alpha");
+
+    await userEvent.click(screen.getByRole("button", { name: t("shell.hideSessionSidebar") }));
+    await userEvent.click(screen.getByRole("button", { name: t("shell.hideInfoSidebar") }));
+
+    const shell = view.container.querySelector(".workbench-shell");
+    const leftRail = view.container.querySelector(
+      '.workbench-collapsed-controls.left[data-visible="true"]'
+    );
+    const rightRail = view.container.querySelector(
+      '.workbench-collapsed-controls.right[data-visible="true"]'
+    );
+
+    expect(shell?.getAttribute("data-left-collapsed")).toBe("true");
+    expect(shell?.getAttribute("data-right-collapsed")).toBe("true");
+    expect(view.container.querySelector(".workbench-edge-toggle")).toBeNull();
+    expect(view.container.querySelector('.workbench-nav[data-collapsed="true"]')).not.toBeNull();
+    expect(view.container.querySelector('.workbench-auxiliary[data-collapsed="true"]')).not.toBeNull();
+    expect(leftRail).not.toBeNull();
+    expect(rightRail).not.toBeNull();
+    expect(
+      within(leftRail as HTMLElement).getByRole("button", { name: t("shell.showSessionSidebar") })
+    ).toBeInTheDocument();
+    expect(
+      within(leftRail as HTMLElement).getByRole("button", { name: t("shell.goBack") })
+    ).toBeInTheDocument();
+    expect(
+      within(leftRail as HTMLElement).getByRole("button", { name: t("shell.goForward") })
+    ).toBeInTheDocument();
+    expect(
+      within(rightRail as HTMLElement).getByRole("button", { name: t("shell.showInfoSidebar") })
+    ).toBeInTheDocument();
+  });
+
   it("导航栏会优先显示缓存快照", async () => {
     const cachedSnapshot = createWorkbenchSnapshot([
       {

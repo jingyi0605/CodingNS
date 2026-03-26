@@ -608,12 +608,42 @@ function InfoPanelSkeleton() {
   );
 }
 
-function SidebarHamburgerButton({
+function SidebarPanelIcon({
+  side,
+  collapsed
+}: {
+  side: "left" | "right";
+  collapsed: boolean;
+}) {
+  const dividerX = side === "left" ? 8.5 : 15.5;
+  const chevronPoints =
+    side === "left"
+      ? collapsed
+        ? "12 9 15 12 12 15"
+        : "15 9 12 12 15 15"
+      : collapsed
+        ? "12 9 9 12 12 15"
+        : "9 9 12 12 9 15";
+
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <line x1={dividerX} y1="4" x2={dividerX} y2="20" />
+      <polyline points={chevronPoints} />
+    </svg>
+  );
+}
+
+function SidebarDockButton({
   ariaLabel,
+  side,
+  collapsed,
   className = "panel-icon-button",
   onClick
 }: {
   ariaLabel: string;
+  side: "left" | "right";
+  collapsed: boolean;
   className?: string;
   onClick: () => void;
 }) {
@@ -625,11 +655,7 @@ function SidebarHamburgerButton({
       title={ariaLabel}
       onClick={onClick}
     >
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <line x1="4" y1="7" x2="20" y2="7" />
-        <line x1="4" y1="12" x2="20" y2="12" />
-        <line x1="4" y1="17" x2="20" y2="17" />
-      </svg>
+      <SidebarPanelIcon side={side} collapsed={collapsed} />
     </button>
   );
 }
@@ -4036,8 +4062,10 @@ export function WorkbenchLayout() {
   );
 
   const shellStyle = {
-    "--workbench-left-width": leftCollapsed ? "0px" : `${leftPanelWidth}px`,
-    "--workbench-right-width": rightCollapsed ? "0px" : `${rightPanelWidth}px`
+    "--workbench-left-width": `${leftPanelWidth}px`,
+    "--workbench-left-current-width": leftCollapsed ? "0px" : `${leftPanelWidth}px`,
+    "--workbench-right-width": `${rightPanelWidth}px`,
+    "--workbench-right-current-width": rightCollapsed ? "0px" : `${rightPanelWidth}px`
   } as CSSProperties;
 
   return (
@@ -4053,9 +4081,9 @@ export function WorkbenchLayout() {
         data-os-family={platform.ui.osFamily}
       >
         <div className="workbench-body-shell">
-          {!leftCollapsed ? (
+          {!isMobileViewport ? (
             <>
-              <aside className="workbench-nav surface-card">
+              <aside className="workbench-nav surface-card" data-collapsed={leftCollapsed}>
                 <SidebarContent
                   workspaceGroups={workspaceSidebarGroups}
                   favoriteSessions={favoriteSessions}
@@ -4087,42 +4115,86 @@ export function WorkbenchLayout() {
               </aside>
               <div
                 className="workbench-side-resizer"
+                data-side="left"
+                data-collapsed={leftCollapsed}
                 role="separator"
                 aria-label={t("shell.leftResizerLabel")}
-                onMouseDown={(event) => beginResize("left", event.clientX)}
+                onMouseDown={
+                  leftCollapsed
+                    ? undefined
+                    : (event) => beginResize("left", event.clientX)
+                }
               />
             </>
           ) : null}
 
           <div className="workbench-main-shell">
-            {!isMobileViewport && leftCollapsed ? (
-              <SidebarHamburgerButton
-                className="workbench-edge-toggle left"
-                ariaLabel={t("shell.showSessionSidebar")}
-                onClick={openLeftPanel}
-              />
-            ) : null}
+            {!isMobileViewport ? (
+              <div className="workbench-collapsed-rail" aria-hidden={!leftCollapsed && !rightCollapsed}>
+                <div
+                  className="workbench-collapsed-controls left"
+                  data-visible={leftCollapsed}
+                >
+                  <SidebarDockButton
+                    className="workbench-nav-toolbar-button workbench-collapsed-button"
+                    ariaLabel={t("shell.showSessionSidebar")}
+                    side="left"
+                    collapsed={true}
+                    onClick={openLeftPanel}
+                  />
+                  <button
+                    type="button"
+                    className="workbench-nav-toolbar-button workbench-collapsed-button"
+                    aria-label={t("shell.goBack")}
+                    title={t("shell.goBack")}
+                    onClick={() => navigate(-1)}
+                  >
+                    <ArrowLeftIcon />
+                  </button>
+                  <button
+                    type="button"
+                    className="workbench-nav-toolbar-button workbench-collapsed-button"
+                    aria-label={t("shell.goForward")}
+                    title={t("shell.goForward")}
+                    onClick={() => navigate(1)}
+                  >
+                    <ArrowRightIcon />
+                  </button>
+                </div>
 
-            {!isMobileViewport && rightCollapsed ? (
-              <SidebarHamburgerButton
-                className="workbench-edge-toggle right"
-                ariaLabel={t("shell.showInfoSidebar")}
-                onClick={openRightPanel}
-              />
+                <div
+                  className="workbench-collapsed-controls right"
+                  data-visible={rightCollapsed}
+                >
+                  <SidebarDockButton
+                    className="workbench-nav-toolbar-button workbench-collapsed-button"
+                    ariaLabel={t("shell.showInfoSidebar")}
+                    side="right"
+                    collapsed={true}
+                    onClick={openRightPanel}
+                  />
+                </div>
+              </div>
             ) : null}
 
             <Outlet />
           </div>
 
-          {!rightCollapsed ? (
+          {!isMobileViewport ? (
             <>
               <div
                 className="workbench-side-resizer"
+                data-side="right"
+                data-collapsed={rightCollapsed}
                 role="separator"
                 aria-label={t("shell.rightResizerLabel")}
-                onMouseDown={(event) => beginResize("right", event.clientX)}
+                onMouseDown={
+                  rightCollapsed
+                    ? undefined
+                    : (event) => beginResize("right", event.clientX)
+                }
               />
-              <aside className="workbench-auxiliary surface-card">
+              <aside className="workbench-auxiliary surface-card" data-collapsed={rightCollapsed}>
                 <WorkbenchInfoPanel
                   panelReady={infoPanelReady}
                   activeTab={activeInfoTab}
