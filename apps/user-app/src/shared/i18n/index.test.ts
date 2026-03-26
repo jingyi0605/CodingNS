@@ -41,4 +41,12 @@ describe("i18n", () => {
     expect(t("conversation.fileViewerHint")).toBe("Opened in {language} mode. Preview and save after editing are supported.");
     expect(t("nonexistent.key")).toBe("nonexistent.key");
   });
+
+  it("空字符串翻译应该按原样返回，不应该回退成 key", () => {
+    clientConfigStore.hydrate(createConfig("zh-CN"));
+    expect(t("git.commitSubjectPlaceholder")).toBe("");
+
+    clientConfigStore.hydrate(createConfig("en-US"));
+    expect(t("git.commitSubjectPlaceholder")).toBe("");
+  });
 });

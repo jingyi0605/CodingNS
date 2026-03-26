@@ -952,7 +952,7 @@ function readValue(key: string, source: DictionaryValue): string {
 
     const nextValue = current[segment];
 
-    if (!nextValue) {
+    if (nextValue === undefined || nextValue === null) {
       return key;
     }
 
