@@ -599,6 +599,7 @@ describe("MessageTimeline", () => {
 
     expect(screen.getByText("请看这张图")).toBeInTheDocument();
     expect(screen.queryByText(/data:image\/png;base64/i)).not.toBeInTheDocument();
+    expect(screen.queryByText("图片附件 1")).not.toBeInTheDocument();
     expect(document.querySelectorAll(".message-attachment-thumbnail")).toHaveLength(1);
 
     const attachmentButton = document.querySelector(".message-attachment-button") as HTMLButtonElement | null;
@@ -652,6 +653,7 @@ describe("MessageTimeline", () => {
     expect(screen.queryByText(/^base64$/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/^image\/png$/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/iVBORw0KGgo/i)).not.toBeInTheDocument();
+    expect(screen.queryByText("图片附件 1")).not.toBeInTheDocument();
     expect(document.querySelectorAll(".message-attachment-thumbnail")).toHaveLength(1);
 
     const attachmentButton = document.querySelector(".message-attachment-button") as HTMLButtonElement | null;
@@ -700,5 +702,6 @@ describe("MessageTimeline", () => {
     expect(screen.getByText("确保主题切换容器里面的主题按钮横向铺满，不要出现仅在左侧出现导致换行的情况")).toBeInTheDocument();
     expect(screen.queryByText(/<image name=\[Image #1\]>/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/"type": "input_image"/i)).not.toBeInTheDocument();
+    expect(screen.queryByText("图片附件 1")).not.toBeInTheDocument();
   });
 });

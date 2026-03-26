@@ -290,18 +290,6 @@ function MessageMarkdownBody({
   );
 }
 
-function formatAttachmentSize(fileSize: number): string {
-  if (fileSize >= 1024 * 1024) {
-    return `${(fileSize / (1024 * 1024)).toFixed(1)} MB`;
-  }
-
-  if (fileSize >= 1024) {
-    return `${Math.max(fileSize / 1024, 0.1).toFixed(1)} KB`;
-  }
-
-  return `${fileSize} B`;
-}
-
 interface AttachmentPreviewSource {
   id: string;
   fileName: string;
@@ -524,16 +512,6 @@ function RichMessageAttachments({
                       : t("conversation.attachmentPreviewUnavailable")}
                   </div>
                 )}
-                <div className="message-attachment-meta">
-                  <span className="message-attachment-title" title={attachment.fileName}>
-                    {attachment.fileName}
-                  </span>
-                  <span className="message-attachment-subtitle">
-                    {attachment.fileSize && attachment.fileSize > 0
-                      ? `${t("conversation.imageAttachmentLabel")} / ${formatAttachmentSize(attachment.fileSize)}`
-                      : t("conversation.imageAttachmentLabel")}
-                  </span>
-                </div>
               </div>
             </button>
           );

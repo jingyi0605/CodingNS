@@ -3686,8 +3686,8 @@ textarea:focus-visible {
 
 .message-attachments {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 220px));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(90px, 110px));
+  gap: 8px;
   justify-content: start;
 }
 
@@ -3705,12 +3705,11 @@ textarea:focus-visible {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 10px;
   width: 100%;
   min-width: 0;
-  padding: 10px;
+  padding: 6px;
   border: 1px solid color-mix(in srgb, var(--border-primary) 80%, transparent);
-  border-radius: 14px;
+  border-radius: 12px;
   background: color-mix(in srgb, var(--bg-hover) 72%, transparent);
   transition:
     transform var(--transition-fast),
@@ -3733,7 +3732,7 @@ textarea:focus-visible {
 .message-attachment-placeholder {
   width: 100%;
   aspect-ratio: 4 / 3;
-  border-radius: 12px;
+  border-radius: 8px;
 }
 
 .message-attachment-thumbnail {
@@ -3746,32 +3745,12 @@ textarea:focus-visible {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 16px;
+  padding: 10px;
   color: var(--text-secondary);
   background:
     linear-gradient(135deg, color-mix(in srgb, var(--bg-primary) 82%, transparent), color-mix(in srgb, var(--bg-hover) 92%, transparent));
-  font-size: 12px;
+  font-size: 11px;
   text-align: center;
-}
-
-.message-attachment-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.message-attachment-title {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 13px;
-  color: var(--text-primary);
-}
-
-.message-attachment-subtitle {
-  font-size: 12px;
-  color: var(--text-secondary);
 }
 
 .message-image-modal {
