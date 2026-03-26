@@ -1,6 +1,6 @@
 import { randomUUID, createHash } from "node:crypto";
-import { existsSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { accessSync, constants, existsSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { delimiter, dirname, isAbsolute, join, sep } from "node:path";
 import { spawn } from "node:child_process";
 
 import {
@@ -351,22 +351,130 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
 }
 
 function resolveClaudeCommand(explicitPath?: string): string {
-  if (explicitPath && existsSync(explicitPath)) {
-    return explicitPath;
+  const explicitCandidate = pickFirstNonEmpty(
+    explicitPath,
+    process.env.CODINGNS_CLAUDE_CODE_COMMAND,
+    process.env.CLAUDE_CODE_COMMAND
+  );
+
+  if (explicitCandidate) {
+    return resolveExecutableCandidate(explicitCandidate) ?? explicitCandidate;
   }
 
-  const appData = process.env.APPDATA;
-  const fallback = appData ? join(appData, "npm", "claude.cmd") : "";
+  const candidates =
+    process.platform === "win32"
+      ? [
+          "claude.cmd",
+          process.env.APPDATA ? join(process.env.APPDATA, "npm", "claude.cmd") : "",
+          process.env.USERPROFILE
+            ? join(process.env.USERPROFILE, "AppData", "Roaming", "npm", "claude.cmd")
+            : "",
+          "claude"
+        ]
+      : ["claude", "/opt/homebrew/bin/claude", "/usr/local/bin/claude", "/usr/bin/claude"];
 
-  if (fallback && existsSync(fallback)) {
-    return fallback;
+  for (const candidate of candidates) {
+    const resolved = resolveExecutableCandidate(candidate);
+
+    if (resolved) {
+      return resolved;
+    }
   }
 
-  return "claude.cmd";
+  return process.platform === "win32" ? "claude.cmd" : "claude";
 }
 
 function shouldSpawnClaudeViaShell(commandPath: string): boolean {
   return process.platform === "win32" && /\.(cmd|bat)$/i.test(commandPath);
+}
+
+function resolveExecutableCandidate(candidate: string): string | null {
+  const trimmed = candidate.trim();
+
+  if (!trimmed) {
+    return null;
+  }
+
+  if (hasPathSegment(trimmed)) {
+    return isExecutableFile(trimmed) ? trimmed : null;
+  }
+
+  return resolveExecutableOnPath(trimmed);
+}
+
+function resolveExecutableOnPath(command: string): string | null {
+  const pathValue = process.env.PATH ?? "";
+
+  if (!pathValue.trim()) {
+    return null;
+  }
+
+  const extensions =
+    process.platform === "win32"
+      ? buildWindowsExecutableExtensions(command)
+      : [""];
+
+  for (const entry of pathValue.split(delimiter)) {
+    const trimmedEntry = entry.trim();
+
+    if (!trimmedEntry) {
+      continue;
+    }
+
+    for (const extension of extensions) {
+      const candidatePath = join(trimmedEntry, `${command}${extension}`);
+
+      if (isExecutableFile(candidatePath)) {
+        return candidatePath;
+      }
+    }
+  }
+
+  return null;
+}
+
+function buildWindowsExecutableExtensions(command: string): string[] {
+  if (/\.[^./\\]+$/.test(command)) {
+    return [""];
+  }
+
+  const pathExtensions = (process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD")
+    .split(";")
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+
+  return ["", ...pathExtensions];
+}
+
+function hasPathSegment(value: string): boolean {
+  return isAbsolute(value) || value.includes(sep) || value.includes("/") || value.includes("\\");
+}
+
+function isExecutableFile(filePath: string): boolean {
+  if (!existsSync(filePath)) {
+    return false;
+  }
+
+  if (process.platform === "win32") {
+    return true;
+  }
+
+  try {
+    accessSync(filePath, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function pickFirstNonEmpty(...values: Array<string | undefined>): string | null {
+  for (const value of values) {
+    if (value && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+
+  return null;
 }
 
 function buildPendingClaudeSessionId(sessionId: string): string {

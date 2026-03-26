@@ -6,7 +6,7 @@
     "preinstall": "node scripts/ensure-pnpm.cjs",
     "dev": "node scripts/show-dev-help.cjs",
     "dev:backend": "node scripts/dev-backend.cjs",
-    "dev:frontend": "corepack pnpm --filter user-app dev",
+    "dev:frontend": "pnpm --filter user-app dev",
     "dev:desktop": "corepack pnpm --dir apps/desktop dev",
     "dev:host": "npm run dev:backend",
     "dev:user-app": "corepack pnpm --dir apps/user-app dev",

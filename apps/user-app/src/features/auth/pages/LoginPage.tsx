@@ -204,6 +204,10 @@ export function LoginPage() {
       navigate(returnTo, { replace: true });
     } catch (error) {
       if (error instanceof ApiError) {
+        if (error.errorCode === "BOOTSTRAP_REQUIRED") {
+          navigate("/bootstrap", { replace: true });
+          return;
+        }
         setStatusText(error.message);
       } else {
         setStatusText(t("auth.authUnavailable"));

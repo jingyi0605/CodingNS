@@ -103,12 +103,12 @@ function getSpawnTarget(args) {
   if (isWindows) {
     return {
       command: "cmd.exe",
-      commandArgs: ["/d", "/s", "/c", "corepack", ...args]
+      commandArgs: ["/d", "/s", "/c", "pnpm", ...args]
     };
   }
 
   return {
-    command: "corepack",
+    command: "pnpm",
     commandArgs: args
   };
 }

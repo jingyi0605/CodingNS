@@ -18,7 +18,7 @@ export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConf
   const homeDir = os.homedir();
 
   return {
-    host: overrides.host ?? process.env.CODINGNS_HOST ?? "127.0.0.1",
+    host: overrides.host ?? process.env.CODINGNS_HOST ?? "0.0.0.0",
     port: overrides.port ?? Number(process.env.CODINGNS_PORT ?? "3002"),
     databasePath:
       overrides.databasePath ??
