@@ -2064,6 +2064,7 @@ a {
   outline: none;
 }
 
+.workbench-shell textarea.composer-input:focus-visible,
 .composer-input:focus-visible {
   outline: none;
   outline-offset: 0;
@@ -3393,6 +3394,12 @@ textarea:focus-visible {
 
 .composer-input:focus {
   outline: none;
+}
+
+.workbench-shell textarea.composer-input:focus-visible,
+.composer-input:focus-visible {
+  outline: none;
+  outline-offset: 0;
 }
 
 /* Controls Bar */

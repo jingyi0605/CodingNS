@@ -1001,8 +1001,14 @@ body {
 }
 
 .composer-input-wrapper:focus-within {
-  border-color: color-mix(in srgb, var(--accent) 40%, var(--panel-border));
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 16%, transparent);
+  border-color: var(--panel-border);
+  box-shadow: none;
+}
+
+.workbench-shell textarea.composer-input:focus-visible,
+.composer-input:focus-visible {
+  outline: none;
+  outline-offset: 0;
 }
 
 .composer-controls {
