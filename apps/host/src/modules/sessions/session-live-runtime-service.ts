@@ -578,6 +578,16 @@ export class SessionLiveRuntimeService {
       };
     }
 
+    if (this.shouldIgnoreClaudeExternalRuntimeUpdate(binding.sessionId)) {
+      this.clearExternalRuntimeSnapshot(binding.sessionId);
+
+      return {
+        accepted: true,
+        ignored: true,
+        sessionId: binding.sessionId
+      };
+    }
+
     await this.applyExternalRuntimeUpdate({
       sessionId: binding.sessionId,
       workspaceId: workspace.id,
@@ -976,6 +986,10 @@ export class SessionLiveRuntimeService {
     userId: string,
     mode: "start" | "continue"
   ): Promise<void> {
+    if (request.provider === "claude-code") {
+      this.clearExternalRuntimeSnapshot(request.sessionId);
+    }
+
     const handle = await this.launchRuntimeRun(request, mode);
     const snapshot = handle.getSnapshot();
     const currentState = this.sessionStateRepository.findBySessionAndUser(request.sessionId, userId);
@@ -1037,6 +1051,29 @@ export class SessionLiveRuntimeService {
     } as const;
 
     const activeRun = this.providerRuntimeService.getSnapshot(input.sessionId);
+    const externalRuntimeSnapshot = this.externalRuntimeSnapshots.get(input.sessionId);
+
+    if (
+      activeRun &&
+      activeRun.provider === "claude-code" &&
+      isActiveRuntimeState(activeRun.runningState)
+    ) {
+      this.clearExternalRuntimeSnapshot(input.sessionId);
+    }
+
+    if (
+      !activeRun &&
+      session.provider === "claude-code" &&
+      externalRuntimeSnapshot &&
+      isActiveRuntimeState(externalRuntimeSnapshot.runningState)
+    ) {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "SESSION_EXTERNAL_RUN_ACTIVE",
+        detail: "当前 Claude 外部会话仍在运行，不能直接追加；请加入队列或等待当前轮结束",
+        field: "sessionId"
+      });
+    }
 
     if (activeRun && isActiveRuntimeState(activeRun.runningState)) {
       await this.providerRuntimeService.submitToActiveRun(input.sessionId, runtimeRequest.options)
@@ -1545,6 +1582,20 @@ export class SessionLiveRuntimeService {
       ...input,
       updatedAt: nowIso()
     });
+  }
+
+  private shouldIgnoreClaudeExternalRuntimeUpdate(sessionId: string): boolean {
+    const runtimeSnapshot = this.providerRuntimeService.getSnapshot(sessionId);
+
+    return Boolean(
+      runtimeSnapshot &&
+      runtimeSnapshot.provider === "claude-code" &&
+      isActiveRuntimeState(runtimeSnapshot.runningState)
+    );
+  }
+
+  private clearExternalRuntimeSnapshot(sessionId: string): void {
+    this.externalRuntimeSnapshots.delete(sessionId);
   }
 }
 

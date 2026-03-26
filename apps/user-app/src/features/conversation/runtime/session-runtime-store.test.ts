@@ -818,6 +818,68 @@ describe("SessionRuntimeStore", () => {
       })
     );
     expect(store.getState().session?.runningState).toBe("running");
+    expect(store.getState().runtimeCanInterrupt).toBe(true);
+  });
+
+  it("Claude 会话上一轮已中断后，再次发送也会立刻恢复可中断状态", async () => {
+    const store = new SessionRuntimeStore("session-1", {
+      initialSession: {
+        sessionId: "session-1",
+        workspaceId: "workspace-1",
+        provider: "claude-code",
+        providerSessionId: "claude-session-1",
+        rawStoreRef: "claude://raw-1",
+        title: "Claude 会话",
+        messageCount: 3,
+        lastMessageAt: "2026-03-24T10:00:00.000Z",
+        createdAt: "2026-03-24T09:00:00.000Z",
+        updatedAt: "2026-03-24T10:00:00.000Z",
+        syncStatus: "idle",
+        syncCursor: "cursor-sync",
+        lastSyncAt: "2026-03-24T10:00:00.000Z",
+        lastErrorCode: null,
+        lastErrorDetail: null,
+        resumedAt: null,
+        runningState: "interrupted",
+        activitySource: "runtime",
+        lastEventAt: "2026-03-24T10:00:01.000Z",
+        completedAt: "2026-03-24T10:00:01.000Z",
+        lastSeenAt: null,
+        activityState: "idle"
+      }
+    });
+
+    mocked.sendLiveMessage.mockResolvedValueOnce({
+      sessionId: "session-1",
+      acceptedAt: "2026-03-24T10:00:03.000Z",
+      clientRequestId: expect.any(String),
+      provider: "claude-code",
+      providerSessionId: "claude-session-1",
+      message: {
+        messageId: "user-message-guidance-2",
+        provider: "claude-code",
+        providerSessionId: "claude-session-1",
+        role: "user",
+        kind: "text",
+        content: "重新开始这一轮",
+        timestamp: "2026-03-24T10:00:03.000Z",
+        sequence: 5,
+        rawRef: "claude://raw#line=5",
+        toolCall: null,
+        attachments: []
+      }
+    });
+
+    (store as any).patch({
+      runtimeHasActiveRun: false,
+      runtimeCanInterrupt: false
+    });
+
+    await store.sendMessage("重新开始这一轮");
+
+    expect(store.getState().session?.runningState).toBe("running");
+    expect(store.getState().runtimeHasActiveRun).toBe(true);
+    expect(store.getState().runtimeCanInterrupt).toBe(true);
   });
 
   it("默认完整权限开启后，sendLiveMessage 会透传 bypassPermissions", async () => {

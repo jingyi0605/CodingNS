@@ -86,6 +86,8 @@ function LiveConversationPage({
   const lastRuntimeErrorSignatureRef = useRef<string | null>(null);
   const session = useSessionRuntimeStore(store, (state) => state.session);
   const capabilities = useSessionRuntimeStore(store, (state) => state.capabilities);
+  const runtimeHasActiveRun = useSessionRuntimeStore(store, (state) => state.runtimeHasActiveRun);
+  const runtimeCanInterrupt = useSessionRuntimeStore(store, (state) => state.runtimeCanInterrupt);
   const messages = useSessionRuntimeStore(store, (state) => state.messages);
   const queuedMessages = useSessionRuntimeStore(store, (state) => state.queuedMessages);
   const contextUsage = useSessionRuntimeStore(store, (state) => state.contextUsage);
@@ -100,13 +102,7 @@ function LiveConversationPage({
   const connectionState = useSessionRuntimeStore(store, (state) => state.connectionState);
   const [deletingQueueItemId, setDeletingQueueItemId] = useState<string | null>(null);
   const [steeringQueueItemId, setSteeringQueueItemId] = useState<string | null>(null);
-  const isRunning =
-    session?.activitySource !== "inferred" &&
-    (
-      session?.runningState === "starting"
-      || session?.runningState === "running"
-      || session?.runningState === "reconnecting"
-    );
+  const isRunning = isSessionRunning(session);
   const canSteerQueuedMessage =
     isRunning &&
     session?.provider === "claude-code" &&
@@ -202,8 +198,10 @@ function LiveConversationPage({
       />
       <ComposerPanel
         capabilities={capabilities}
+        hasActiveRun={runtimeHasActiveRun}
         contextUsage={contextUsage}
         hasPendingQueuedMessages={hasPendingQueuedMessages}
+        canInterrupt={runtimeCanInterrupt}
         isSubmitting={sending}
         isRunning={isRunning}
         onInterrupt={async () => {
@@ -460,6 +458,22 @@ function createDraftCapabilities(provider: ProviderId): ProviderCapabilitiesDto 
     defaultReasoningLevel: provider === "codex" ? null : undefined,
     limitations: []
   };
+}
+
+function isSessionRunning(session: SessionSummaryDto | null): boolean {
+  if (!session) {
+    return false;
+  }
+
+  if (session.activityState === "running") {
+    return true;
+  }
+
+  return (
+    session.runningState === "starting"
+    || session.runningState === "running"
+    || session.runningState === "reconnecting"
+  );
 }
 
 function isDraftSessionId(sessionId: string): boolean {

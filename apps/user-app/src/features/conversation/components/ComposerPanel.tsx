@@ -13,6 +13,8 @@ import type {
 
 interface ComposerPanelProps {
   capabilities: ProviderCapabilitiesDto | null;
+  hasActiveRun?: boolean | null;
+  canInterrupt?: boolean | null;
   contextUsage?: ContextUsageDto | null;
   hasPendingQueuedMessages?: boolean;
   isSubmitting: boolean;
@@ -175,6 +177,8 @@ function mergeImageAttachments(
 
 export function ComposerPanel({
   capabilities,
+  hasActiveRun = null,
+  canInterrupt = null,
   contextUsage = null,
   hasPendingQueuedMessages = false,
   isSubmitting,
@@ -262,27 +266,50 @@ export function ComposerPanel({
     []
   );
   const inRunInputMode = capabilities?.inRunInputMode ?? "none";
-  const canSendDuringRun = isRunning && inRunInputMode !== "none";
-  const canQueueDuringRun = isRunning && typeof onQueueSend === "function";
-  const inRunSendBlocked = isRunning && !canSendDuringRun && !canQueueDuringRun;
+  const isClaudeUnmanagedStreamingRun =
+    provider === "claude-code" &&
+    isRunning &&
+    inRunInputMode === "streaming_guidance" &&
+    hasActiveRun === false;
+  const canStreamDuringRun =
+    isRunning &&
+    inRunInputMode === "streaming_guidance" &&
+    !isClaudeUnmanagedStreamingRun;
+  const canQueueDuringRun =
+    isRunning &&
+    typeof onQueueSend === "function" &&
+    (
+      inRunInputMode === "queued_guidance"
+      || inRunInputMode === "none"
+      || isClaudeUnmanagedStreamingRun
+    );
+  const inRunSendBlocked = isRunning && !canStreamDuringRun && !canQueueDuringRun;
   const hasDraft = content.trim().length > 0 || attachments.length > 0;
+  const interruptAvailable = canInterrupt ?? interruptDecision.allowed;
   const canInterruptNow =
-    isRunning && interruptDecision.allowed && Boolean(onInterrupt) && !interrupting;
+    isRunning && interruptAvailable && Boolean(onInterrupt) && !interrupting;
   // 按钮只保留一个主状态：运行中优先显示停止；只有用户已经写了新内容，才切到可发送态。
   const showInterruptButton =
     canInterruptNow && !hasDraft && !localSubmitting && !isSubmitting;
   const showBusyButton =
     !showInterruptButton &&
     !hasDraft &&
-    (localSubmitting || isSubmitting || (!isRunning && hasPendingQueuedMessages));
+    (
+      localSubmitting
+      || isSubmitting
+      || isRunning
+      || (!isRunning && hasPendingQueuedMessages)
+    );
   const busyButtonLabel =
     localSubmitting || isSubmitting || hasPendingQueuedMessages
       ? t("conversation.sendingState")
       : t("conversation.runtimeRunning");
   const sendButtonLabel = isRunning
-    ? canQueueDuringRun || inRunInputMode === "queued_guidance"
+    ? canQueueDuringRun
         ? t("conversation.queueGuidanceButton")
-        : t("conversation.sendButton")
+        : canStreamDuringRun
+          ? t("conversation.sendGuidanceButton")
+          : t("conversation.sendButton")
     : t("conversation.sendButton");
 
   const handleModelChange = useCallback((modelId: string) => {
@@ -519,9 +546,7 @@ export function ComposerPanel({
       const sendHandler =
         mode === "queue" && onQueueSend
           ? onQueueSend
-          : isRunning && canQueueDuringRun
-            ? onQueueSend!
-            : onSend;
+          : onSend;
 
       await sendHandler(nextContent, {
         model: selectedModelOption?.usesProviderDefault ? undefined : selectedModel || undefined,
@@ -555,11 +580,11 @@ export function ComposerPanel({
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    await submitMessage(isRunning && canQueueDuringRun ? "queue" : "send");
+    await submitMessage(canQueueDuringRun ? "queue" : "send");
   }
 
   async function handleInterrupt(): Promise<void> {
-    if (!interruptDecision.allowed || !onInterrupt || interrupting) {
+    if (!interruptAvailable || !onInterrupt || interrupting) {
       return;
     }
 

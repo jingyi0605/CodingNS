@@ -329,6 +329,168 @@ describe("app routes", () => {
     });
   });
 
+  it("Claude Code 处于 inferred running 时，聊天页仍显示停止按钮", async () => {
+    hydrateAuth();
+
+    const runningClaudeSession = {
+      ...createSessionSummary({
+        sessionId: "session-claude-running",
+        title: "Claude 推断运行中",
+        provider: "claude-code"
+      }),
+      runningState: "running" as const,
+      activitySource: "inferred" as const,
+      activityState: "running" as const
+    };
+
+    installFetchMock({
+      workbenchSnapshot: createWorkbenchSnapshot([
+        {
+          workspace: createWorkspace(),
+          sessions: [runningClaudeSession]
+        }
+      ]),
+      sessions: {
+        "session-claude-running": {
+          detail: runningClaudeSession,
+          capabilities: createCapabilities({ provider: "claude-code" }),
+          history: createHistoryPage([])
+        }
+      }
+    });
+
+    renderConversationRoute("session-claude-running");
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: t("conversation.capabilityInterrupt") })).toBeInTheDocument();
+    });
+    expect(
+      screen.queryByRole("button", { name: t("conversation.queueGuidanceButton") })
+    ).not.toBeInTheDocument();
+  });
+
+  it("Claude Code 运行中但不可中断时，聊天页显示运行中按钮而不是空闲发送按钮", async () => {
+    hydrateAuth();
+
+    const runningClaudeSession = {
+      ...createSessionSummary({
+        sessionId: "session-claude-busy",
+        title: "Claude 忙碌中",
+        provider: "claude-code"
+      }),
+      runningState: "running" as const,
+      activitySource: "inferred" as const,
+      activityState: "running" as const
+    };
+
+    installFetchMock({
+      workbenchSnapshot: createWorkbenchSnapshot([
+        {
+          workspace: createWorkspace(),
+          sessions: [runningClaudeSession]
+        }
+      ]),
+      sessions: {
+        "session-claude-busy": {
+          detail: runningClaudeSession,
+          capabilities: createCapabilities({
+            provider: "claude-code",
+            supportsInterrupt: false
+          }),
+          runtime: {
+            ...createSessionRuntime(runningClaudeSession),
+            provider: "claude-code",
+            canInterrupt: false,
+            inRunInputMode: "streaming_guidance"
+          },
+          history: createHistoryPage([])
+        }
+      }
+    });
+
+    renderConversationRoute("session-claude-busy");
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: t("conversation.runtimeRunning") })).toBeInTheDocument();
+    });
+    expect(
+      screen.queryByRole("button", { name: t("conversation.sendButton") })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: t("conversation.queueGuidanceButton") })
+    ).not.toBeInTheDocument();
+  });
+
+  it("当前应用发起 Claude 新一轮运行后，会立刻切成可中断按钮", async () => {
+    hydrateAuth();
+
+    const claudeSession = {
+      ...createSessionSummary({
+        sessionId: "session-claude-send",
+        title: "Claude 继续会话",
+        provider: "claude-code"
+      }),
+      providerSessionId: "claude-session-1",
+      rawStoreRef: "claude://session-1"
+    };
+
+    installFetchMock({
+      workbenchSnapshot: createWorkbenchSnapshot([
+        {
+          workspace: createWorkspace(),
+          sessions: [claudeSession]
+        }
+      ]),
+      sessions: {
+        "session-claude-send": {
+          detail: claudeSession,
+          capabilities: createCapabilities({
+            provider: "claude-code",
+            supportsInterrupt: false
+          }),
+          history: createHistoryPage([])
+        }
+      },
+      extraHandler: (url, init) => {
+        if (url.endsWith("/api/sessions/session-claude-send/messages/live") && init?.method === "POST") {
+          return createJsonResponse(
+            {
+              sessionId: "session-claude-send",
+              acceptedAt: "2026-03-26T13:48:00.000Z",
+              clientRequestId: "client-claude-live-1",
+              provider: "claude-code",
+              providerSessionId: "claude-session-1",
+              message: createHistoryMessage({
+                messageId: "claude-live-user-1",
+                role: "user",
+                content: "列出目录下最近修改的20个文件",
+                sequence: 2,
+                timestamp: "2026-03-26T13:48:00.000Z"
+              })
+            },
+            201
+          );
+        }
+
+        return null;
+      }
+    });
+
+    renderConversationRoute("session-claude-send");
+
+    await userEvent.type(
+      await screen.findByPlaceholderText(t("conversation.composerPlaceholder")),
+      "列出目录下最近修改的20个文件"
+    );
+    await userEvent.click(screen.getByRole("button", { name: t("conversation.sendButton") }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: t("conversation.capabilityInterrupt") })
+      ).toBeInTheDocument();
+    });
+  });
+
   it("会话 socket 断线后会按游标补齐缺失消息，工作台 socket 不会干扰重连", async () => {
     hydrateAuth();
 
@@ -734,15 +896,22 @@ function createSessionSummary(input: {
   };
 }
 
-function createCapabilities() {
+function createCapabilities(options?: {
+  provider?: "codex" | "claude-code";
+  inRunInputMode?: "none" | "streaming_guidance" | "queued_guidance";
+  supportsInterrupt?: boolean;
+}) {
+  const provider = options?.provider ?? "codex";
+
   return {
-    provider: "codex",
+    provider,
     canStartSession: true,
     canResumeSession: true,
     canSendMessage: true,
-    inRunInputMode: "none",
+    inRunInputMode:
+      options?.inRunInputMode ?? (provider === "claude-code" ? "streaming_guidance" : "none"),
     supportsSubagents: false,
-    supportsInterrupt: true,
+    supportsInterrupt: options?.supportsInterrupt ?? true,
     supportsStructuredToolCalls: true,
     supportsTokenUsage: false,
     supportsAttachments: false,

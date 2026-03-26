@@ -19,6 +19,7 @@ function createDeferred() {
 
 function createCapabilities(options?: {
   supportsAttachments?: boolean;
+  supportsInterrupt?: boolean;
   provider?: "codex" | "claude-code";
   modelOptions?: Array<{
     id: string;
@@ -38,7 +39,7 @@ function createCapabilities(options?: {
     inRunInputMode:
       provider === "claude-code" ? "streaming_guidance" : "none",
     supportsSubagents: false,
-    supportsInterrupt: true,
+    supportsInterrupt: options?.supportsInterrupt ?? true,
     supportsStructuredToolCalls: true,
     supportsTokenUsage: false,
     supportsAttachments: options?.supportsAttachments ?? false,
@@ -177,6 +178,28 @@ describe("ComposerPanel", () => {
     expect(screen.getByLabelText(t("conversation.capabilityInterrupt"))).toBeInTheDocument();
   });
 
+  it("运行时动态可中断时，点击停止会真正调用 onInterrupt", async () => {
+    const onInterrupt = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <ComposerPanel
+        capabilities={createCapabilities({ provider: "claude-code", supportsInterrupt: false })}
+        hasActiveRun
+        canInterrupt
+        isSubmitting={false}
+        isRunning
+        onInterrupt={onInterrupt}
+        onSend={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    fireEvent.click(screen.getByLabelText(t("conversation.capabilityInterrupt")));
+
+    await waitFor(() => {
+      expect(onInterrupt).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("Codex 运行中且不支持直发时，Enter 会改走项目队列", async () => {
     const onSend = vi.fn().mockResolvedValue(undefined);
     const onQueueSend = vi.fn().mockResolvedValue(undefined);
@@ -233,7 +256,25 @@ describe("ComposerPanel", () => {
     expect(screen.queryByLabelText(t("conversation.queueGuidanceButton"))).not.toBeInTheDocument();
   });
 
-  it("Claude 运行中输入草稿后会切到加入队列按钮", async () => {
+  it("运行中但当前不可中断时显示运行中忙碌按钮，而不是空闲发送按钮", () => {
+    render(
+      <ComposerPanel
+        capabilities={createCapabilities({ provider: "claude-code", supportsInterrupt: false })}
+        hasActiveRun={false}
+        canInterrupt={false}
+        isSubmitting={false}
+        isRunning
+        onInterrupt={vi.fn()}
+        onSend={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    expect(screen.getByLabelText(t("conversation.runtimeRunning"))).toBeInTheDocument();
+    expect(screen.queryByLabelText(t("conversation.sendButton"))).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(t("conversation.queueGuidanceButton"))).not.toBeInTheDocument();
+  });
+
+  it("Claude 运行中输入草稿后会切到追加引导按钮", async () => {
     const onSend = vi.fn().mockResolvedValue(undefined);
     const onQueueSend = vi.fn().mockResolvedValue(undefined);
 
@@ -255,8 +296,43 @@ describe("ComposerPanel", () => {
       }
     });
 
-    expect(screen.getByLabelText(t("conversation.queueGuidanceButton"))).toBeInTheDocument();
+    expect(screen.getByLabelText(t("conversation.sendGuidanceButton"))).toBeInTheDocument();
     expect(screen.queryByLabelText(t("conversation.capabilityInterrupt"))).not.toBeInTheDocument();
+
+    fireEvent.submit(document.querySelector(".composer-form")!);
+
+    await waitFor(() => {
+      expect(onSend).toHaveBeenCalledTimes(1);
+    });
+    expect(onQueueSend).not.toHaveBeenCalled();
+  });
+
+  it("未托管的 Claude 运行中输入草稿后会退回加入队列", async () => {
+    const onSend = vi.fn().mockResolvedValue(undefined);
+    const onQueueSend = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <ComposerPanel
+        capabilities={createCapabilities({ provider: "claude-code", supportsInterrupt: false })}
+        hasActiveRun={false}
+        canInterrupt={false}
+        isSubmitting={false}
+        isRunning
+        onInterrupt={vi.fn()}
+        onQueueSend={onQueueSend}
+        onSend={onSend}
+      />
+    );
+
+    const textarea = screen.getByRole("textbox");
+    fireEvent.change(textarea, {
+      target: {
+        value: "这条应该先排队"
+      }
+    });
+
+    expect(screen.getByLabelText(t("conversation.queueGuidanceButton"))).toBeInTheDocument();
+    expect(screen.queryByLabelText(t("conversation.sendGuidanceButton"))).not.toBeInTheDocument();
 
     fireEvent.submit(document.querySelector(".composer-form")!);
 

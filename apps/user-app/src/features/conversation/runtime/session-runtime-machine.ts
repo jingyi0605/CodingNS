@@ -33,6 +33,8 @@ export interface SessionMessageViewModel {
 export interface SessionRuntimeState {
   session: SessionSummaryDto | null;
   capabilities: ProviderCapabilitiesDto | null;
+  runtimeHasActiveRun: boolean | null;
+  runtimeCanInterrupt: boolean | null;
   contextUsage: ContextUsageDto | null;
   messages: SessionMessageViewModel[];
   queuedMessages: SessionQueueItemDto[];
@@ -51,13 +53,15 @@ export function createInitialRuntimeState(
   seed?: Partial<
     Pick<
       SessionRuntimeState,
-      "session" | "capabilities" | "contextUsage" | "messages" | "queuedMessages"
+      "session" | "capabilities" | "runtimeHasActiveRun" | "runtimeCanInterrupt" | "contextUsage" | "messages" | "queuedMessages"
     >
   >
 ): SessionRuntimeState {
   return {
     session: seed?.session ?? null,
     capabilities: seed?.capabilities ?? null,
+    runtimeHasActiveRun: seed?.runtimeHasActiveRun ?? null,
+    runtimeCanInterrupt: seed?.runtimeCanInterrupt ?? null,
     contextUsage: seed?.contextUsage ?? null,
     messages: seed?.messages ?? [],
     queuedMessages: seed?.queuedMessages ?? [],

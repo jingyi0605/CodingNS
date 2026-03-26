@@ -62,6 +62,8 @@ function getDefaultPermissionMode(): string | null {
 interface SessionRuntimeSnapshot {
   session: SessionSummaryDto | null;
   capabilities: ProviderCapabilitiesDto | null;
+  runtimeHasActiveRun: boolean | null;
+  runtimeCanInterrupt: boolean | null;
   contextUsage: ContextUsageDto | null;
   messages: SessionMessageViewModel[];
   queuedMessages: SessionQueueItemDto[];
@@ -100,6 +102,8 @@ export class SessionRuntimeStore {
     this.state = createInitialRuntimeState({
       session: seededSession,
       capabilities: cachedSnapshot?.capabilities ?? null,
+      runtimeHasActiveRun: cachedSnapshot?.runtimeHasActiveRun ?? null,
+      runtimeCanInterrupt: cachedSnapshot?.runtimeCanInterrupt ?? null,
       contextUsage: cachedSnapshot?.contextUsage ?? null,
       messages: seededMessages,
       queuedMessages: cachedSnapshot?.queuedMessages ?? []
@@ -159,6 +163,8 @@ export class SessionRuntimeStore {
     this.state = createInitialRuntimeState({
       session: pickFreshestSessionSummary(this.options.initialSession ?? null, cachedSnapshot?.session ?? null),
       capabilities: cachedSnapshot?.capabilities ?? null,
+      runtimeHasActiveRun: cachedSnapshot?.runtimeHasActiveRun ?? null,
+      runtimeCanInterrupt: cachedSnapshot?.runtimeCanInterrupt ?? null,
       contextUsage: cachedSnapshot?.contextUsage ?? null,
       messages: mergeAuthoritativeMessages(
         cachedSnapshot?.messages ?? [],
@@ -208,7 +214,20 @@ export class SessionRuntimeStore {
 
     this.patch({
       messages: [...this.state.messages, pending],
-      session: withRunningState(this.state.session, "running")
+      session: withRunningState(this.state.session, "running"),
+      runtimeHasActiveRun:
+        this.state.session?.provider === "codex" || this.state.session?.provider === "claude-code"
+          ? true
+          : this.state.runtimeHasActiveRun,
+      // 这次运行是由当前应用主动发起的，runtime adapter 已经持有真实子进程句柄，
+      // 因此在后端回流前就应先把按钮切到可中断态，而不是继续沿用 provider 的静态能力。
+      runtimeCanInterrupt:
+        this.state.session?.provider === "codex"
+          ? true
+          : this.state.session?.provider === "claude-code" &&
+              this.state.session.activitySource !== "inferred"
+            ? true
+          : this.state.runtimeCanInterrupt
     });
 
     try {
@@ -225,7 +244,9 @@ export class SessionRuntimeStore {
     } catch (error) {
       this.patch({
         messages: markPendingAsFailed(this.state.messages, clientRequestId),
-        session: withRunningState(this.state.session, "failed")
+        session: withRunningState(this.state.session, "failed"),
+        runtimeHasActiveRun: false,
+        runtimeCanInterrupt: false
       });
       throw error;
     }
@@ -246,7 +267,18 @@ export class SessionRuntimeStore {
               deliveryState: "sending"
             }
           : item
-      )
+      ),
+      runtimeHasActiveRun:
+        this.state.session?.provider === "codex" || this.state.session?.provider === "claude-code"
+          ? true
+          : this.state.runtimeHasActiveRun,
+      runtimeCanInterrupt:
+        this.state.session?.provider === "codex"
+          ? true
+          : this.state.session?.provider === "claude-code" &&
+              this.state.session.activitySource !== "inferred"
+            ? true
+          : this.state.runtimeCanInterrupt
     });
 
     try {
@@ -316,6 +348,8 @@ export class SessionRuntimeStore {
     await interruptSession(this.sessionId);
     this.patch({
       session: withRunningState(this.state.session, "interrupted"),
+      runtimeHasActiveRun: false,
+      runtimeCanInterrupt: false,
       errorCode: null,
       errorDetail: null
     });
@@ -639,6 +673,8 @@ export class SessionRuntimeStore {
       const runtimeError = resolveRuntimeErrorState(runtime);
       this.patch({
         session: withRunningState(this.state.session, runtime.runningState),
+        runtimeHasActiveRun: runtime.hasActiveRun,
+        runtimeCanInterrupt: runtime.canInterrupt,
         contextUsage: runtime.contextUsage,
         errorCode: runtimeError.errorCode,
         errorDetail: runtimeError.errorDetail
@@ -750,6 +786,8 @@ export class SessionRuntimeStore {
 
       this.patch({
         session: withRunningState(this.state.session, runtime.runningState),
+        runtimeHasActiveRun: runtime.hasActiveRun,
+        runtimeCanInterrupt: runtime.canInterrupt,
         contextUsage: runtime.contextUsage,
         errorCode: runtimeError.errorCode,
         errorDetail: runtimeError.errorDetail
@@ -821,6 +859,12 @@ export class SessionRuntimeStore {
 
     this.patch({
       session: withRunningState(this.state.session, nextRunningState),
+      runtimeHasActiveRun: isRuntimeActiveState(nextRunningState)
+        ? (this.state.runtimeHasActiveRun ?? true)
+        : false,
+      runtimeCanInterrupt: isRuntimeActiveState(nextRunningState)
+        ? this.state.runtimeCanInterrupt
+        : false,
       errorCode: null,
       errorDetail: nextRunningState === event.status ? event.detail : this.state.errorDetail
     });
@@ -839,6 +883,8 @@ export class SessionRuntimeStore {
     this.clearRuntimeRefreshTimer();
     this.patch({
       session: withRunningState(this.state.session, nextRunningState),
+      runtimeHasActiveRun: false,
+      runtimeCanInterrupt: false,
       errorCode: nextRunningState === "failed" ? event.error_code : this.state.errorCode,
       errorDetail: nextRunningState === "failed" ? event.detail : this.state.errorDetail
     });
@@ -851,6 +897,8 @@ export class SessionRuntimeStore {
     this.clearRuntimeRefreshTimer();
     this.patch({
       session: withRunningState(this.state.session, nextRunningState),
+      runtimeHasActiveRun: false,
+      runtimeCanInterrupt: false,
       errorCode: nextRunningState === "interrupted" ? null : this.state.errorCode,
       errorDetail: nextRunningState === "interrupted" ? event.detail : this.state.errorDetail
     });
@@ -921,6 +969,8 @@ export class SessionRuntimeStore {
     writeViewSnapshot<SessionRuntimeSnapshot>(buildSessionRuntimeSnapshotKey(this.sessionId), {
       session: this.state.session,
       capabilities: this.state.capabilities,
+      runtimeHasActiveRun: this.state.runtimeHasActiveRun,
+      runtimeCanInterrupt: this.state.runtimeCanInterrupt,
       contextUsage: this.state.contextUsage,
       messages: buildSnapshotMessages(this.state.messages),
       queuedMessages: this.state.queuedMessages

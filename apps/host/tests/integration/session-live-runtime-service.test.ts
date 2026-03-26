@@ -202,6 +202,101 @@ describe("SessionLiveRuntimeService", () => {
     expect(result.message?.content).toBe("继续补充这轮任务的要求");
   });
 
+  it("Claude 托管 active run 续发消息时会清理外部运行态快照，避免退回灰色不可中止", async () => {
+    const { service, sessionHistoryService, sessionMessageAttachmentService, workspaceService } =
+      createService();
+    const providerRuntimeService = {
+      getSnapshot: vi.fn(() => ({
+        sessionId: "session-1",
+        workspaceId: "workspace-1",
+        provider: "claude-code",
+        providerSessionId: "claude-session-1",
+        rawStoreRef: "/tmp/.claude/projects/workspace/claude-session-1.jsonl",
+        runningState: "running",
+        attachedClients: 1,
+        startedAt: "2026-03-26T10:00:00.000Z",
+        lastEventAt: "2026-03-26T10:00:01.000Z",
+        completedAt: null,
+        detail: null,
+        errorCode: null,
+        supportsInterrupt: true
+      })),
+      submitToActiveRun: vi.fn(async () => ({
+        sessionId: "session-1",
+        workspaceId: "workspace-1",
+        provider: "claude-code",
+        providerSessionId: "claude-session-1",
+        rawStoreRef: "/tmp/.claude/projects/workspace/claude-session-1.jsonl",
+        runningState: "running",
+        attachedClients: 1,
+        startedAt: "2026-03-26T10:00:00.000Z",
+        lastEventAt: "2026-03-26T10:00:02.000Z",
+        completedAt: null,
+        detail: null,
+        errorCode: null,
+        supportsInterrupt: true
+      }))
+    };
+    Object.defineProperty(service, "providerRuntimeService", {
+      value: providerRuntimeService,
+      configurable: true
+    });
+
+    sessionHistoryService.getSession.mockReturnValue({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      providerSessionId: "claude-session-1",
+      rawStoreRef: "/tmp/.claude/projects/workspace/claude-session-1.jsonl",
+      messageCount: 3
+    });
+    sessionHistoryService.getSessionCapabilities.mockResolvedValue({
+      provider: "claude-code",
+      canStartSession: true,
+      canResumeSession: true,
+      canSendMessage: true,
+      inRunInputMode: "streaming_guidance",
+      supportsSubagents: true,
+      supportsInterrupt: false,
+      supportsStructuredToolCalls: true,
+      supportsTokenUsage: true,
+      supportsAttachments: true,
+      supportsPermissionPrompt: true,
+      supportsCheckpoint: false,
+      limitations: []
+    });
+    sessionHistoryService.getBindingOrThrow.mockReturnValue({
+      providerSessionId: "claude-session-1"
+    });
+    sessionHistoryService.findLatestUserMessage.mockResolvedValue(null);
+    workspaceService.getWorkspaceOrThrow.mockReturnValue({
+      id: "workspace-1",
+      path: "/tmp/workspace"
+    });
+    sessionMessageAttachmentService.buildProviderPrompt.mockReturnValue(null);
+    sessionMessageAttachmentService.bindClientRequestToMessage.mockReturnValue([]);
+
+    (service as any).externalRuntimeSnapshots.set("session-1", {
+      sessionId: "session-1",
+      provider: "claude-code",
+      providerSessionId: "claude-session-1",
+      rawStoreRef: "claude://raw-1",
+      runningState: "running",
+      detail: "stale external runtime",
+      updatedAt: "2026-03-26T10:00:01.000Z"
+    });
+
+    await service.sendLiveMessage({
+      sessionId: "session-1",
+      userId: "user-1",
+      content: "继续补充这轮任务的要求",
+      clientRequestId: null
+    });
+
+    expect((service as any).externalRuntimeSnapshots.has("session-1")).toBe(false);
+    expect(providerRuntimeService.submitToActiveRun).toHaveBeenCalledTimes(1);
+  });
+
   it("getSessionRuntime 在 active run 下仍然返回能力层的 inRunInputMode", async () => {
     const { service, sessionHistoryService } = createService();
     const providerRuntimeService = {
@@ -621,6 +716,63 @@ describe("SessionLiveRuntimeService", () => {
     expect((service as any).sendLiveMessageDirect).not.toHaveBeenCalled();
   });
 
+  it("Claude 外部运行态存在时会拒绝直发，避免假装送进当前会话", async () => {
+    const { service, sessionHistoryService } = createService();
+    const providerRuntimeService = {
+      getSnapshot: vi.fn(() => null)
+    };
+    Object.defineProperty(service, "providerRuntimeService", {
+      value: providerRuntimeService,
+      configurable: true
+    });
+
+    sessionHistoryService.getSession.mockReturnValue({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      providerSessionId: "claude-session-1",
+      rawStoreRef: "/tmp/.claude/projects/tmp-workspace/claude-session-1.jsonl",
+      messageCount: 3,
+      runningState: "running"
+    });
+    sessionHistoryService.getSessionCapabilities.mockResolvedValue({
+      provider: "claude-code",
+      canStartSession: true,
+      canResumeSession: true,
+      canSendMessage: true,
+      inRunInputMode: "streaming_guidance",
+      supportsSubagents: true,
+      supportsInterrupt: false,
+      supportsStructuredToolCalls: true,
+      supportsTokenUsage: true,
+      supportsAttachments: true,
+      supportsPermissionPrompt: true,
+      supportsCheckpoint: false,
+      limitations: []
+    });
+
+    (service as any).externalRuntimeSnapshots.set("session-1", {
+      sessionId: "session-1",
+      provider: "claude-code",
+      providerSessionId: "claude-session-1",
+      rawStoreRef: "claude://raw-1",
+      runningState: "running",
+      detail: null,
+      updatedAt: "2026-03-26T10:00:01.000Z"
+    });
+
+    await expect(
+      service.sendLiveMessage({
+        sessionId: "session-1",
+        userId: "user-1",
+        content: "这条不能假装直发",
+        clientRequestId: "client-1"
+      })
+    ).rejects.toMatchObject({
+      errorCode: "SESSION_EXTERNAL_RUN_ACTIVE"
+    });
+  });
+
   it("dispatchNextQueuedMessage 遇到 ACTIVE_RUN_EXISTS 时会回到等待并安排重试", async () => {
     vi.useFakeTimers();
     const { service, sessionHistoryService, sessionSendQueueRepository } = createService();
@@ -904,6 +1056,65 @@ describe("SessionLiveRuntimeService", () => {
     expect(config.bridgeUrl).toContain("/api/providers/claude-code/hook-bridge/events");
     expect(config.command).toContain("claude-hook-bridge.cjs");
     expect(config.supportedEvents).toContain("UserPromptSubmit");
+  });
+
+  it("Claude 托管 active run 存在时会忽略 hook 推断的外部运行态", async () => {
+    const {
+      service,
+      workspaceService,
+      sessionBindingRepository,
+      sessionStateRepository
+    } = createService();
+    const providerRuntimeService = {
+      getSnapshot: vi.fn(() => ({
+        sessionId: "session-1",
+        workspaceId: "workspace-1",
+        provider: "claude-code",
+        providerSessionId: "claude-session-1",
+        rawStoreRef: "/tmp/.claude/projects/tmp-workspace/claude-session-1.jsonl",
+        runningState: "running",
+        attachedClients: 1,
+        startedAt: "2026-03-26T09:00:00.000Z",
+        lastEventAt: "2026-03-26T09:00:01.000Z",
+        completedAt: null,
+        detail: null,
+        errorCode: null,
+        supportsInterrupt: true
+      }))
+    };
+    Object.defineProperty(service, "providerRuntimeService", {
+      value: providerRuntimeService,
+      configurable: true
+    });
+
+    workspaceService.findWorkspaceByPath.mockReturnValue({
+      id: "workspace-1",
+      path: "/tmp/workspace"
+    });
+    sessionBindingRepository.findByProviderSession.mockReturnValue({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      providerSessionId: "claude-session-1",
+      rawStoreRef: "/tmp/.claude/projects/tmp-workspace/claude-session-1.jsonl",
+      createdAt: "2026-03-26T09:00:00.000Z",
+      updatedAt: "2026-03-26T09:00:00.000Z"
+    });
+
+    const result = await service.ingestClaudeHookEvent({
+      hook_event_name: "UserPromptSubmit",
+      session_id: "claude-session-1",
+      cwd: "/tmp/workspace",
+      transcript_path: "/tmp/.claude/projects/tmp-workspace/claude-session-1.jsonl"
+    });
+
+    expect(result).toEqual({
+      accepted: true,
+      ignored: true,
+      sessionId: "session-1"
+    });
+    expect(sessionStateRepository.upsert).not.toHaveBeenCalled();
+    expect((service as any).externalRuntimeSnapshots.has("session-1")).toBe(false);
   });
 
   it("Claude 外部 hook 事件会建立真状态 active run 视图", async () => {
