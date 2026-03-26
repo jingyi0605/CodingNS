@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { t } from "../../../shared/i18n";
+import type { ProviderCapabilitiesDto } from "../api/conversation-api";
 import { ComposerPanel } from "./ComposerPanel";
 
 function createDeferred() {
@@ -23,13 +24,19 @@ function createCapabilities(options?: {
     id: string;
     name: string;
     usesProviderDefault?: boolean;
+    supportedReasoningEfforts?: string[];
   }>;
-}) {
+  defaultReasoningLevel?: string | null;
+}): ProviderCapabilitiesDto {
+  const provider = options?.provider ?? ("codex" as const);
+
   return {
-    provider: options?.provider ?? ("codex" as const),
+    provider,
     canStartSession: true,
     canResumeSession: true,
     canSendMessage: true,
+    inRunInputMode:
+      provider === "claude-code" ? "streaming_guidance" : "none",
     supportsSubagents: false,
     supportsInterrupt: true,
     supportsStructuredToolCalls: true,
@@ -37,7 +44,29 @@ function createCapabilities(options?: {
     supportsAttachments: options?.supportsAttachments ?? false,
     supportsPermissionPrompt: true,
     supportsCheckpoint: false,
-    modelOptions: options?.modelOptions,
+    modelOptions:
+      options?.modelOptions ??
+      (provider === "codex"
+        ? [
+            {
+              id: "provider-default",
+              name: "跟随当前 Codex 配置（当前：gpt-5.4）",
+              usesProviderDefault: true,
+              supportedReasoningEfforts: ["low", "medium", "high", "xhigh"]
+            },
+            {
+              id: "gpt-5.4",
+              name: "gpt-5.4",
+              supportedReasoningEfforts: ["low", "medium", "high", "xhigh"]
+            },
+            {
+              id: "gpt-5.1-codex-mini",
+              name: "gpt-5.1-codex-mini",
+              supportedReasoningEfforts: ["medium", "high"]
+            }
+          ]
+        : undefined),
+    defaultReasoningLevel: options?.defaultReasoningLevel ?? (provider === "codex" ? "high" : undefined),
     limitations: []
   };
 }
@@ -148,6 +177,39 @@ describe("ComposerPanel", () => {
     expect(screen.getByLabelText(t("conversation.capabilityInterrupt"))).toBeInTheDocument();
   });
 
+  it("会在发送按钮旁显示当前上下文占用圆环", () => {
+    const { container } = render(
+      <ComposerPanel
+        capabilities={createCapabilities()}
+        contextUsage={{
+          provider: "codex",
+          promptTokens: 64000,
+          uncachedInputTokens: 40000,
+          cachedInputTokens: 24000,
+          contextWindow: 200000,
+          usageRatio: 0.32,
+          source: "provider-log",
+          contextWindowSource: "provider-log",
+          modelId: "gpt-5.3-codex",
+          capturedAt: "2026-03-26T10:00:00.000Z",
+          isEstimated: false
+        }}
+        isSubmitting={false}
+        onSend={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    const ring = container.querySelector(".composer-context-ring");
+    const tooltip = container.querySelector(".composer-context-tooltip");
+
+    expect(ring).not.toBeNull();
+    expect(tooltip).not.toBeNull();
+    expect(ring).toHaveAttribute("aria-label", `${t("conversation.contextUsageTitle")} 32%`);
+    expect(tooltip?.textContent).toContain(t("conversation.contextUsageTitle"));
+    expect(tooltip?.textContent).toContain("32%");
+    expect(tooltip?.textContent).toContain("64,000 / 200,000 tokens");
+  });
+
   it("粘贴图片后会显示预览卡片", async () => {
     render(
       <ComposerPanel
@@ -178,7 +240,7 @@ describe("ComposerPanel", () => {
     expect(screen.getByAltText(t("conversation.attachmentPreviewAlt"))).toBeInTheDocument();
   });
 
-  it("只有图片附件时也允许提交，并把附件一起传出去", async () => {
+  it("Codex 默认会跟随当前配置发送，并把附件一起传出去", async () => {
     const onSend = vi.fn().mockResolvedValue(undefined);
 
     const { container } = render(
@@ -203,8 +265,8 @@ describe("ComposerPanel", () => {
       expect(onSend).toHaveBeenCalledTimes(1);
     });
     expect(onSend).toHaveBeenCalledWith("", {
-      model: "gpt-5.4",
-      reasoningLevel: "medium",
+      model: undefined,
+      reasoningLevel: "high",
       attachments: [
         {
           fileName: "demo.png",
@@ -223,6 +285,41 @@ describe("ComposerPanel", () => {
       ]
     });
   });
+
+  it("Codex 显式切换模型后会透传实际 model", async () => {
+    const onSend = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <ComposerPanel
+        capabilities={createCapabilities()}
+        isSubmitting={false}
+        onSend={onSend}
+      />
+    );
+
+    fireEvent.change(screen.getByLabelText(t("conversation.modelSelectorLabel")), {
+      target: {
+        value: "gpt-5.4"
+      }
+    });
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: {
+        value: "请输出当前模型"
+      }
+    });
+    fireEvent.submit(document.querySelector(".composer-form")!);
+
+    await waitFor(() => {
+      expect(onSend).toHaveBeenCalledTimes(1);
+    });
+    expect(onSend).toHaveBeenCalledWith("请输出当前模型", {
+      model: "gpt-5.4",
+      reasoningLevel: "high",
+      attachments: [],
+      attachmentMeta: []
+    });
+  });
+
   it("Claude Code 选择 CLI 默认模型时不会强行覆盖 model", async () => {
     const onSend = vi.fn().mockResolvedValue(undefined);
 

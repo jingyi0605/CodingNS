@@ -4,6 +4,7 @@ import { existsSync, readFileSync, readdirSync, renameSync, statSync } from "nod
 import crypto from "node:crypto";
 
 import type {
+  ContextUsageSnapshot,
   DetectSessionsOptions,
   HistoryDirection,
   HistoryPage,
@@ -94,6 +95,12 @@ const SESSION_SUMMARY_CACHE_LIMIT = 512;
 const RECENT_HISTORY_INITIAL_BYTES = 256 * 1024;
 const RECENT_HISTORY_MAX_BYTES = 4 * 1024 * 1024;
 const RECENT_HISTORY_BUFFER_MESSAGES = 24;
+const CODEX_CONFIG_CONTEXT_WINDOW_PATTERN =
+  /(?:^|\n)\s*model_context_window\s*=\s*(\d+)\s*(?:\n|$)/i;
+const KNOWN_CODEX_CONTEXT_WINDOWS = new Map<string, number>([
+  ["gpt-5.3-codex", 400_000],
+  ["codex-mini-latest", 200_000]
+]);
 
 export class CodexAdapter implements ProviderAdapter {
   readonly providerId: ProviderId = "codex";
@@ -664,10 +671,11 @@ export class CodexAdapter implements ProviderAdapter {
       canStartSession: true,
       canResumeSession: true,
       canSendMessage: true,
+      inRunInputMode: "none",
       supportsSubagents: true,
       supportsInterrupt: true,
       supportsStructuredToolCalls: true,
-      supportsTokenUsage: false,
+      supportsTokenUsage: true,
       supportsAttachments: true,
       supportsPermissionPrompt: true,
       supportsCheckpoint: false,
@@ -677,6 +685,70 @@ export class CodexAdapter implements ProviderAdapter {
 
   async getSessionCapabilities(): Promise<ProviderCapabilities> {
     return this.getProviderCapabilities();
+  }
+
+  async readContextUsage(
+    providerSessionId: string,
+    rawStoreRef: string
+  ): Promise<ContextUsageSnapshot | null> {
+    const resolvedStoreRef = this.resolveSessionFilePath(rawStoreRef, providerSessionId);
+    const records = readJsonLines(resolvedStoreRef).map((record) => record.data);
+
+    for (let index = records.length - 1; index >= 0; index -= 1) {
+      const record = records[index];
+
+      if (ensureText(record.type).trim() !== "event_msg") {
+        continue;
+      }
+
+      const payload = ((record.payload ?? {}) as Record<string, unknown>);
+
+      if (ensureText(payload.type).trim() !== "token_count") {
+        continue;
+      }
+
+      const info = ((payload.info ?? {}) as Record<string, unknown>);
+      const lastUsage = ((info.last_token_usage ?? {}) as Record<string, unknown>);
+      const uncachedInputTokens = readNonNegativeInteger(lastUsage.input_tokens);
+      const cachedInputTokens = readNonNegativeInteger(lastUsage.cached_input_tokens);
+
+      if (uncachedInputTokens === null && cachedInputTokens === null) {
+        continue;
+      }
+
+      const promptTokens = uncachedInputTokens ?? 0;
+      const modelId = ensureText(info.model ?? info.model_id).trim() || null;
+      const runtimeContextWindow = readNonNegativeInteger(info.model_context_window);
+      const contextWindow =
+        runtimeContextWindow
+        ?? resolveCodexKnownContextWindow(modelId)
+        ?? readCodexConfigContextWindow(this.options.homeDir);
+
+      if (contextWindow === null || contextWindow <= 0) {
+        return null;
+      }
+
+      return {
+        provider: this.providerId,
+        promptTokens,
+        uncachedInputTokens: uncachedInputTokens ?? 0,
+        cachedInputTokens: cachedInputTokens ?? 0,
+        contextWindow,
+        usageRatio: clampUsageRatio(promptTokens, contextWindow),
+        source: "provider-log",
+        contextWindowSource:
+          runtimeContextWindow !== null
+            ? "provider-log"
+            : resolveCodexKnownContextWindow(modelId) !== null
+              ? "model-map"
+              : "provider-config",
+        modelId,
+        capturedAt: safeDate(record.timestamp, "").trim() || null,
+        isEstimated: runtimeContextWindow === null
+      };
+    }
+
+    return null;
   }
 
   private readThreadMetadataIndex(): Map<string, CodexThreadMetadata> {
@@ -1685,6 +1757,55 @@ function parseStructuredJson(value: string): Record<string, unknown> | null {
   try {
     const parsed = JSON.parse(text) as unknown;
     return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+function readNonNegativeInteger(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+    return Math.trunc(value);
+  }
+
+  if (typeof value === "string" && /^\d+$/.test(value.trim())) {
+    return Number.parseInt(value.trim(), 10);
+  }
+
+  return null;
+}
+
+function clampUsageRatio(promptTokens: number, contextWindow: number): number {
+  if (contextWindow <= 0) {
+    return 0;
+  }
+
+  return Math.min(Math.max(promptTokens / contextWindow, 0), 1);
+}
+
+function resolveCodexKnownContextWindow(modelId: string | null): number | null {
+  if (!modelId) {
+    return null;
+  }
+
+  return KNOWN_CODEX_CONTEXT_WINDOWS.get(modelId) ?? null;
+}
+
+function readCodexConfigContextWindow(homeDir: string): number | null {
+  const configPath = join(homeDir, "config.toml");
+
+  if (!existsSync(configPath)) {
+    return null;
+  }
+
+  try {
+    const content = readFileSync(configPath, "utf8");
+    const matched = content.match(CODEX_CONFIG_CONTEXT_WINDOW_PATTERN);
+
+    if (!matched?.[1]) {
+      return null;
+    }
+
+    return Number.parseInt(matched[1], 10);
   } catch {
     return null;
   }

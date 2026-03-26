@@ -1,5 +1,6 @@
 import { ProviderRegistry } from "./registry.js";
 import type {
+  ContextUsageSnapshot,
   DetectSessionsOptions,
   HistoryDirection,
   HistoryPage,
@@ -152,6 +153,14 @@ export class SessionSyncService {
     return this.registry
       .get(providerId)
       .updateSessionArchiveState(providerSessionId, rawStoreRef, isArchived);
+  }
+
+  async readContextUsage(
+    providerId: string,
+    providerSessionId: string,
+    rawStoreRef: string
+  ): Promise<ContextUsageSnapshot | null> {
+    return this.registry.get(providerId).readContextUsage?.(providerSessionId, rawStoreRef) ?? null;
   }
 }
 

@@ -4,6 +4,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import {
   CapabilityService,
   ClaudeCodeAdapter,
+  type ContextUsageSnapshot,
   CodexAdapter,
   ProviderRegistry,
   SessionSyncService,
@@ -36,6 +37,10 @@ import { SessionChangedFileService } from "./session-changed-file-service.js";
 import { SessionMessageAttachmentService } from "./session-message-attachment-service.js";
 import { mapSessionProviderError } from "./session-provider-error-mapper.js";
 import { enrichClaudeCapabilities } from "../provider/claude-model-options.js";
+import {
+  CodexModelOptionsService,
+  enrichCodexCapabilities
+} from "../provider/codex-model-options.js";
 
 interface StartSessionInput {
   workspaceId: string;
@@ -68,6 +73,7 @@ export class SessionHistoryService {
   private readonly sessionSyncService: SessionSyncService;
   private readonly capabilityService: CapabilityService;
   private readonly claudeCodeHomeDir: string;
+  private readonly codexModelOptionsService: CodexModelOptionsService;
   private readonly workspaceDiscoveryTimestamps = new Map<string, number>();
   private readonly workspaceDiscoveryInflight = new Map<string, Promise<SessionListItem[]>>();
   private readonly workspaceStateRefreshInflight = new Map<string, Promise<void>>();
@@ -94,6 +100,9 @@ export class SessionHistoryService {
     ]);
     this.sessionSyncService = new SessionSyncService(this.providerRegistry);
     this.capabilityService = new CapabilityService(this.providerRegistry);
+    this.codexModelOptionsService = new CodexModelOptionsService({
+      commandPath: config.codexCliPath
+    });
   }
 
   async discoverWorkspaceSessions(
@@ -331,14 +340,25 @@ export class SessionHistoryService {
     );
   }
 
-  getProviderCapabilities(provider: string, workspaceId?: string | null): ProviderCapabilities {
+  getProviderCapabilitiesSnapshot(provider: string): ProviderCapabilities {
+    try {
+      return this.capabilityService.getProviderCapabilities(provider);
+    } catch (error) {
+      throw mapSessionProviderError(error);
+    }
+  }
+
+  async getProviderCapabilities(
+    provider: string,
+    workspaceId?: string | null
+  ): Promise<ProviderCapabilities> {
     try {
       const workspacePath = workspaceId ? this.getWorkspaceOrThrow(workspaceId).path : null;
 
-      return enrichClaudeCapabilities(this.capabilityService.getProviderCapabilities(provider), {
-        claudeHomeDir: this.claudeCodeHomeDir,
+      return await this.enrichProviderCapabilities(
+        this.capabilityService.getProviderCapabilities(provider),
         workspacePath
-      });
+      );
     } catch (error) {
       throw mapSessionProviderError(error);
     }
@@ -350,15 +370,36 @@ export class SessionHistoryService {
 
     return this.capabilityService
       .getSessionCapabilities(binding.provider, binding.providerSessionId)
-      .then((capabilities) =>
-        enrichClaudeCapabilities(capabilities, {
-          claudeHomeDir: this.claudeCodeHomeDir,
-          workspacePath: workspace.path
-        })
-      )
+      .then((capabilities) => this.enrichProviderCapabilities(capabilities, workspace.path))
       .catch((error) => {
         throw mapSessionProviderError(error);
       });
+  }
+
+  private async enrichProviderCapabilities(
+    capabilities: ProviderCapabilities,
+    workspacePath: string | null
+  ): Promise<ProviderCapabilities> {
+    const claudeEnriched = enrichClaudeCapabilities(capabilities, {
+      claudeHomeDir: this.claudeCodeHomeDir,
+      workspacePath
+    });
+
+    return enrichCodexCapabilities(claudeEnriched, this.codexModelOptionsService);
+  }
+
+  async getSessionContextUsage(sessionId: string): Promise<ContextUsageSnapshot | null> {
+    const binding = this.getBindingOrThrow(sessionId);
+
+    try {
+      return await this.sessionSyncService.readContextUsage(
+        binding.provider,
+        binding.providerSessionId,
+        binding.rawStoreRef
+      );
+    } catch (error) {
+      throw mapSessionProviderError(error);
+    }
   }
 
   async resumeSession(sessionId: string): Promise<{

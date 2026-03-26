@@ -104,6 +104,7 @@ describe("SessionRuntimeStore", () => {
       canStartSession: true,
       canResumeSession: true,
       canSendMessage: true,
+      inRunInputMode: "none",
       supportsSubagents: false,
       supportsInterrupt: true,
       supportsStructuredToolCalls: true,
@@ -119,10 +120,12 @@ describe("SessionRuntimeStore", () => {
       hasActiveRun: false,
       canAttach: false,
       canInterrupt: false,
+      inRunInputMode: "none",
       provider: "codex",
       providerSessionId: "raw-1",
       detail: null,
-      updatedAt: "2026-03-24T10:00:00.000Z"
+      updatedAt: "2026-03-24T10:00:00.000Z",
+      contextUsage: null
     });
     mocked.markSessionSeen.mockResolvedValue(undefined);
     mocked.sendSessionMessage.mockResolvedValue(undefined);
@@ -202,6 +205,7 @@ describe("SessionRuntimeStore", () => {
         canStartSession: true,
         canResumeSession: true,
         canSendMessage: true,
+        inRunInputMode: "none",
         supportsSubagents: false,
         supportsInterrupt: true,
         supportsStructuredToolCalls: true,
@@ -210,6 +214,19 @@ describe("SessionRuntimeStore", () => {
         supportsPermissionPrompt: true,
         supportsCheckpoint: false,
         limitations: []
+      },
+      contextUsage: {
+        provider: "codex",
+        promptTokens: 64000,
+        uncachedInputTokens: 40000,
+        cachedInputTokens: 24000,
+        contextWindow: 200000,
+        usageRatio: 0.32,
+        source: "provider-log",
+        contextWindowSource: "provider-log",
+        modelId: "gpt-5.3-codex",
+        capturedAt: "2026-03-24T10:00:00.000Z",
+        isEstimated: false
       },
       messages: []
     });
@@ -300,10 +317,12 @@ describe("SessionRuntimeStore", () => {
       hasActiveRun: true,
       canAttach: true,
       canInterrupt: true,
+      inRunInputMode: "none",
       provider: "codex",
       providerSessionId: "raw-1",
       detail: null,
-      updatedAt: "2026-03-24T10:00:00.000Z"
+      updatedAt: "2026-03-24T10:00:00.000Z",
+      contextUsage: null
     });
     mocked.getSessionMessages.mockResolvedValueOnce({
       messages: [],
@@ -313,6 +332,7 @@ describe("SessionRuntimeStore", () => {
     });
 
     await store.initialize();
+    mocked.getSessionRuntime.mockClear();
 
     const client = mocked.realtimeInstances[0];
     expect(client).toBeDefined();
@@ -350,7 +370,7 @@ describe("SessionRuntimeStore", () => {
     store.destroy();
   });
 
-  it("does not refresh runtime state after envelopes while realtime stays connected", async () => {
+  it("realtime 保持连接时不会因为消息增量而额外轮询 runtime", async () => {
     vi.useFakeTimers();
     const store = new SessionRuntimeStore("session-1");
 
@@ -362,6 +382,7 @@ describe("SessionRuntimeStore", () => {
     });
 
     await store.initialize();
+    mocked.getSessionRuntime.mockClear();
 
     const client = mocked.realtimeInstances[0];
     expect(client).toBeDefined();
@@ -431,10 +452,12 @@ describe("SessionRuntimeStore", () => {
       hasActiveRun: true,
       canAttach: true,
       canInterrupt: true,
+      inRunInputMode: "none",
       provider: "codex",
       providerSessionId: "raw-1",
       detail: null,
-      updatedAt: "2026-03-24T10:00:00.000Z"
+      updatedAt: "2026-03-24T10:00:00.000Z",
+      contextUsage: null
     });
     mocked.getSessionMessages.mockResolvedValue({
       messages: [],
@@ -444,6 +467,7 @@ describe("SessionRuntimeStore", () => {
     });
 
     await store.initialize();
+    mocked.getSessionRuntime.mockClear();
 
     const client = mocked.realtimeInstances[0];
     expect(client).toBeDefined();

@@ -3,6 +3,7 @@ import { existsSync, statSync } from "node:fs";
 import crypto from "node:crypto";
 
 import type {
+  ContextUsageSnapshot,
   DetectSessionsOptions,
   HistoryDirection,
   HistoryPage,
@@ -64,6 +65,7 @@ interface ClaudeSubagentMetadata {
 }
 
 const HISTORY_CACHE_LIMIT = 6;
+const DEFAULT_CLAUDE_CONTEXT_WINDOW = 200_000;
 const CLAUDE_MODEL_OPTIONS: ProviderModelOption[] = [
   {
     id: "provider-default",
@@ -393,6 +395,7 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
       canStartSession: true,
       canResumeSession: true,
       canSendMessage: true,
+      inRunInputMode: "streaming_guidance",
       supportsSubagents: true,
       supportsInterrupt: false,
       supportsStructuredToolCalls: true,
@@ -407,6 +410,47 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
 
   async getSessionCapabilities(): Promise<ProviderCapabilities> {
     return this.getProviderCapabilities();
+  }
+
+  async readContextUsage(
+    providerSessionId: string,
+    rawStoreRef: string
+  ): Promise<ContextUsageSnapshot | null> {
+    statSync(rawStoreRef);
+    const records = readJsonLines(rawStoreRef).map((record) => record.data);
+
+    for (let index = records.length - 1; index >= 0; index -= 1) {
+      const snapshot = extractClaudeUsageSnapshot(records[index]);
+
+      if (!snapshot) {
+        continue;
+      }
+
+      const uncachedInputTokens = readNonNegativeInteger(snapshot.usage.input_tokens) ?? 0;
+      const cacheCreationInputTokens =
+        readNonNegativeInteger(snapshot.usage.cache_creation_input_tokens) ?? 0;
+      const cacheReadInputTokens = readNonNegativeInteger(snapshot.usage.cache_read_input_tokens) ?? 0;
+      const cachedInputTokens = cacheCreationInputTokens + cacheReadInputTokens;
+      const promptTokens = uncachedInputTokens + cachedInputTokens;
+      const modelId = ensureText(snapshot.model ?? snapshot.recordModel).trim() || null;
+      const contextWindow = resolveClaudeContextWindow(modelId);
+
+      return {
+        provider: this.providerId,
+        promptTokens,
+        uncachedInputTokens,
+        cachedInputTokens,
+        contextWindow,
+        usageRatio: clampClaudeUsageRatio(promptTokens, contextWindow),
+        source: "provider-log",
+        contextWindowSource: "model-map",
+        modelId,
+        capturedAt: safeDate(snapshot.timestamp, "").trim() || null,
+        isEstimated: true
+      };
+    }
+
+    return null;
   }
 
   private resolveClaudeTitle(records: Array<Record<string, unknown>>): string {
@@ -784,4 +828,88 @@ function extractClaudeDebugMessageText(content: unknown): string {
     })
     .join("\n")
     .trim();
+}
+
+function extractClaudeUsageSnapshot(record: Record<string, unknown>): {
+  usage: Record<string, unknown>;
+  timestamp: unknown;
+  model: unknown;
+  recordModel: unknown;
+} | null {
+  const directType = ensureText(record.type).trim();
+
+  if (directType === "assistant") {
+    const message = ((record.message ?? {}) as Record<string, unknown>);
+    const usage = ((message.usage ?? {}) as Record<string, unknown>);
+
+    if (Object.keys(usage).length > 0) {
+      return {
+        usage,
+        timestamp: record.timestamp,
+        model: message.model,
+        recordModel: record.model
+      };
+    }
+  }
+
+  if (directType !== "progress") {
+    return null;
+  }
+
+  const data = ((record.data ?? {}) as Record<string, unknown>);
+  const nested = ((data.message ?? {}) as Record<string, unknown>);
+
+  if (ensureText(nested.type).trim() !== "assistant") {
+    return null;
+  }
+
+  const message = ((nested.message ?? {}) as Record<string, unknown>);
+  const usage = ((message.usage ?? {}) as Record<string, unknown>);
+
+  if (Object.keys(usage).length === 0) {
+    return null;
+  }
+
+  return {
+    usage,
+    timestamp: nested.timestamp ?? record.timestamp,
+    model: message.model,
+    recordModel: nested.model ?? record.model
+  };
+}
+
+function readNonNegativeInteger(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+    return Math.trunc(value);
+  }
+
+  if (typeof value === "string" && /^\d+$/.test(value.trim())) {
+    return Number.parseInt(value.trim(), 10);
+  }
+
+  return null;
+}
+
+function resolveClaudeContextWindow(modelId: string | null): number {
+  const normalizedModelId = modelId?.trim().toLowerCase() ?? "";
+
+  if (
+    normalizedModelId.includes("claude") ||
+    normalizedModelId === "sonnet" ||
+    normalizedModelId === "opus" ||
+    normalizedModelId === "haiku" ||
+    normalizedModelId.length === 0
+  ) {
+    return DEFAULT_CLAUDE_CONTEXT_WINDOW;
+  }
+
+  return DEFAULT_CLAUDE_CONTEXT_WINDOW;
+}
+
+function clampClaudeUsageRatio(promptTokens: number, contextWindow: number): number {
+  if (contextWindow <= 0) {
+    return 0;
+  }
+
+  return Math.min(Math.max(promptTokens / contextWindow, 0), 1);
 }

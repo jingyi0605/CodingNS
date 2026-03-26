@@ -219,3 +219,57 @@ test("ClaudeCodeAdapter 能解析 content 为字符串的用户消息", async ()
     rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+test("ClaudeCodeAdapter 会读取 assistant usage 作为压缩后的真实上下文占用", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-claude-usage-"));
+  const workspacePath = "/Users/jackson/Documents/Code/CodingNS";
+  const projectDir = join(tempDir, "projects", "-Users-jackson-Documents-Code-CodingNS");
+  const sessionId = "44444444-4444-4444-8444-444444444444";
+  const rawStoreRef = join(projectDir, `${sessionId}.jsonl`);
+
+  try {
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(
+      rawStoreRef,
+      [
+        JSON.stringify({
+          type: "assistant",
+          sessionId,
+          cwd: workspacePath,
+          timestamp: "2026-03-26T02:00:00.000Z",
+          message: {
+            role: "assistant",
+            model: "claude-sonnet-4-5",
+            usage: {
+              input_tokens: 42000,
+              cache_creation_input_tokens: 6000,
+              cache_read_input_tokens: 2000,
+              output_tokens: 800
+            },
+            content: [{ type: "text", text: "完成了。" }]
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const adapter = new ClaudeCodeAdapter({ homeDir: tempDir });
+    const usage = await adapter.readContextUsage(sessionId, rawStoreRef);
+
+    assert.deepEqual(usage, {
+      provider: "claude-code",
+      promptTokens: 50000,
+      uncachedInputTokens: 42000,
+      cachedInputTokens: 8000,
+      contextWindow: 200000,
+      usageRatio: 0.25,
+      source: "provider-log",
+      contextWindowSource: "model-map",
+      modelId: "claude-sonnet-4-5",
+      capturedAt: "2026-03-26T02:00:00.000Z",
+      isEstimated: true
+    });
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});

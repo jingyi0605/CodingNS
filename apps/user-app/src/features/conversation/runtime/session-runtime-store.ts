@@ -7,6 +7,7 @@ import { logPerfDebug } from "../../../shared/debug/perf-debug";
 import { t } from "../../../shared/i18n";
 import { ApiError } from "../../../shared/network/api-error";
 import {
+  type ContextUsageDto,
   getSessionCapabilities,
   getSessionDetail,
   getSessionMessages,
@@ -50,6 +51,7 @@ const SESSION_RUNTIME_POLL_DELAY_MS = 10_000;
 interface SessionRuntimeSnapshot {
   session: SessionSummaryDto | null;
   capabilities: ProviderCapabilitiesDto | null;
+  contextUsage: ContextUsageDto | null;
   messages: SessionMessageViewModel[];
 }
 
@@ -86,6 +88,7 @@ export class SessionRuntimeStore {
     this.state = createInitialRuntimeState({
       session: seededSession,
       capabilities: cachedSnapshot?.capabilities ?? null,
+      contextUsage: cachedSnapshot?.contextUsage ?? null,
       messages: seededMessages
     });
     this.seenWatermark = seededSession?.lastSeenAt ?? null;
@@ -118,6 +121,10 @@ export class SessionRuntimeStore {
       void this.refreshSessionMetadata();
     }
 
+    if (this.shouldRefreshRuntimeSnapshot()) {
+      void this.refreshRuntimeSnapshot("bootstrap");
+    }
+
     try {
       await this.loadLatestHistory();
       this.scheduleMarkSeen();
@@ -137,6 +144,7 @@ export class SessionRuntimeStore {
     this.state = createInitialRuntimeState({
       session: pickFreshestSessionSummary(this.options.initialSession ?? null, cachedSnapshot?.session ?? null),
       capabilities: cachedSnapshot?.capabilities ?? null,
+      contextUsage: cachedSnapshot?.contextUsage ?? null,
       messages: mergeAuthoritativeMessages(
         cachedSnapshot?.messages ?? [],
         this.sessionId,
@@ -435,6 +443,7 @@ export class SessionRuntimeStore {
     if (
       Object.prototype.hasOwnProperty.call(nextInput, "session")
       || Object.prototype.hasOwnProperty.call(nextInput, "capabilities")
+      || Object.prototype.hasOwnProperty.call(nextInput, "contextUsage")
       || Object.prototype.hasOwnProperty.call(nextInput, "messages")
     ) {
       this.persistSnapshot();
@@ -568,6 +577,7 @@ export class SessionRuntimeStore {
       const runtime = await getSessionRuntime(this.sessionId);
       this.patch({
         session: withRunningState(this.state.session, runtime.runningState),
+        contextUsage: runtime.contextUsage,
         errorCode: null,
         errorDetail: null
       });
@@ -661,6 +671,40 @@ export class SessionRuntimeStore {
     );
   }
 
+  private shouldRefreshRuntimeSnapshot(): boolean {
+    return this.state.contextUsage === null;
+  }
+
+  private async refreshRuntimeSnapshot(reason: string): Promise<void> {
+    logPerfDebug("session_runtime.snapshot.start", {
+      sessionId: this.sessionId,
+      reason
+    });
+
+    try {
+      const runtime = await getSessionRuntime(this.sessionId);
+
+      this.patch({
+        session: withRunningState(this.state.session, runtime.runningState),
+        contextUsage: runtime.contextUsage,
+        errorCode: null,
+        errorDetail: null
+      });
+
+      logPerfDebug("session_runtime.snapshot.end", {
+        sessionId: this.sessionId,
+        reason,
+        hasContextUsage: runtime.contextUsage !== null
+      });
+    } catch (error) {
+      logPerfDebug("session_runtime.snapshot.error", {
+        sessionId: this.sessionId,
+        reason,
+        message: error instanceof Error ? error.message : "unknown"
+      });
+    }
+  }
+
   private async sendMessageWithFallback(
     content: string,
     clientRequestId: string,
@@ -704,6 +748,7 @@ export class SessionRuntimeStore {
 
     if (isTerminalRuntimeState(event.status)) {
       this.clearRuntimeRefreshTimer();
+      void this.refreshRuntimeSnapshot("runtime_terminal");
     }
 
   }
@@ -790,6 +835,7 @@ export class SessionRuntimeStore {
     writeViewSnapshot<SessionRuntimeSnapshot>(buildSessionRuntimeSnapshotKey(this.sessionId), {
       session: this.state.session,
       capabilities: this.state.capabilities,
+      contextUsage: this.state.contextUsage,
       messages: buildSnapshotMessages(this.state.messages)
     });
   }

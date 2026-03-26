@@ -151,6 +151,57 @@ test("CodexAdapter 能识别 macOS 工作区下的原生会话", async () => {
   }
 });
 
+test("CodexAdapter 会读取最近一轮 token_count 作为真实上下文占用", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-usage-"));
+  const sessionFile = join(tempDir, "session.jsonl");
+
+  try {
+    writeFileSync(
+      sessionFile,
+      [
+        JSON.stringify({
+          timestamp: "2026-03-26T00:00:00.000Z",
+          type: "event_msg",
+          payload: {
+            type: "token_count",
+            info: {
+              model: "gpt-5.3-codex",
+              model_context_window: 258400,
+              last_token_usage: {
+                input_tokens: 32000,
+                cached_input_tokens: 8000
+              },
+              total_token_usage: {
+                input_tokens: 500000
+              }
+            }
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const adapter = new CodexAdapter({ homeDir: tempDir });
+    const usage = await adapter.readContextUsage("session-1", sessionFile);
+
+    assert.deepEqual(usage, {
+      provider: "codex",
+      promptTokens: 32000,
+      uncachedInputTokens: 32000,
+      cachedInputTokens: 8000,
+      contextWindow: 258400,
+      usageRatio: 32000 / 258400,
+      source: "provider-log",
+      contextWindowSource: "provider-log",
+      modelId: "gpt-5.3-codex",
+      capturedAt: "2026-03-26T00:00:00.000Z",
+      isEstimated: false
+    });
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("CodexAdapter 读取标题时应优先采用 session_index.jsonl 的 thread_name", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-title-priority-"));
   const workspacePath = "/Users/jackson/Documents/Code/CodingNS";

@@ -14,6 +14,7 @@ export type SessionRunningState =
   | "interrupted"
   | "failed";
 export type SessionActivityState = "idle" | "running" | "completed_unread";
+export type InRunInputMode = "none" | "streaming_guidance" | "queued_guidance";
 export type SessionActivitySource = "none" | "runtime" | "inferred";
 export type HistoryDirection = "forward" | "backward";
 
@@ -52,6 +53,7 @@ export interface ProviderModelOptionDto {
   id: string;
   name: string;
   usesProviderDefault?: boolean;
+  supportedReasoningEfforts?: string[];
 }
 
 export interface ImportWorkspacePayload {
@@ -128,6 +130,7 @@ export interface ProviderCapabilitiesDto {
   canStartSession: boolean;
   canResumeSession: boolean;
   canSendMessage?: boolean;
+  inRunInputMode: InRunInputMode;
   supportsSubagents: boolean;
   supportsInterrupt: boolean;
   supportsStructuredToolCalls: boolean;
@@ -136,6 +139,7 @@ export interface ProviderCapabilitiesDto {
   supportsPermissionPrompt: boolean;
   supportsCheckpoint: boolean;
   modelOptions?: ProviderModelOptionDto[];
+  defaultReasoningLevel?: string | null;
   limitations: string[];
 }
 
@@ -212,10 +216,26 @@ export interface SessionRuntimeDto {
   hasActiveRun: boolean;
   canAttach: boolean;
   canInterrupt: boolean;
+  inRunInputMode: InRunInputMode;
   provider: ProviderId;
   providerSessionId: string;
   detail: string | null;
   updatedAt: string;
+  contextUsage: ContextUsageDto | null;
+}
+
+export interface ContextUsageDto {
+  provider: ProviderId;
+  promptTokens: number;
+  uncachedInputTokens: number;
+  cachedInputTokens: number;
+  contextWindow: number;
+  usageRatio: number;
+  source: "provider-log" | "provider-runtime" | "provider-config" | "model-map";
+  contextWindowSource: "provider-log" | "provider-runtime" | "provider-config" | "model-map";
+  modelId: string | null;
+  capturedAt: string | null;
+  isEstimated: boolean;
 }
 
 export interface InterruptSessionResponseDto {

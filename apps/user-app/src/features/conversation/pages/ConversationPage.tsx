@@ -82,6 +82,7 @@ function LiveConversationPage({
   const session = useSessionRuntimeStore(store, (state) => state.session);
   const capabilities = useSessionRuntimeStore(store, (state) => state.capabilities);
   const messages = useSessionRuntimeStore(store, (state) => state.messages);
+  const contextUsage = useSessionRuntimeStore(store, (state) => state.contextUsage);
   const historyState = useSessionRuntimeStore(store, (state) => state.historyState);
   const loadingOlderMessages = useSessionRuntimeStore(
     store,
@@ -133,6 +134,7 @@ function LiveConversationPage({
       />
       <ComposerPanel
         capabilities={capabilities}
+        contextUsage={contextUsage}
         isSubmitting={sending}
         isRunning={isRunning}
         onInterrupt={async () => {
@@ -219,6 +221,7 @@ function DraftConversationPage({
       />
       <ComposerPanel
         capabilities={capabilities}
+        contextUsage={null}
         isSubmitting={sending}
         isRunning={false}
         onSend={async (content, options) => {
@@ -345,10 +348,11 @@ function createDraftCapabilities(provider: ProviderId): ProviderCapabilitiesDto 
     canStartSession: true,
     canResumeSession: true,
     canSendMessage: true,
+    inRunInputMode: provider === "claude-code" ? "streaming_guidance" : "none",
     supportsSubagents: false,
     supportsInterrupt: false,
     supportsStructuredToolCalls: true,
-    supportsTokenUsage: false,
+    supportsTokenUsage: true,
     supportsAttachments: true,
     supportsPermissionPrompt: true,
     supportsCheckpoint: false,
@@ -361,7 +365,14 @@ function createDraftCapabilities(provider: ProviderId): ProviderCapabilitiesDto 
               usesProviderDefault: true
             }
           ]
-        : undefined,
+        : [
+            {
+              id: "provider-default",
+              name: t("conversation.modelUseCodexConfig"),
+              usesProviderDefault: true
+            }
+          ],
+    defaultReasoningLevel: provider === "codex" ? null : undefined,
     limitations: []
   };
 }

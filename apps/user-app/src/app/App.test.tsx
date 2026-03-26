@@ -688,6 +688,7 @@ function createCapabilities() {
     canStartSession: true,
     canResumeSession: true,
     canSendMessage: true,
+    inRunInputMode: "none",
     supportsSubagents: false,
     supportsInterrupt: true,
     supportsStructuredToolCalls: true,
@@ -706,10 +707,12 @@ function createSessionRuntime(detail: Record<string, unknown>) {
     hasActiveRun: false,
     canAttach: true,
     canInterrupt: true,
+    inRunInputMode: (detail.inRunInputMode as string | undefined) ?? "none",
     provider: detail.provider ?? "codex",
     providerSessionId: detail.providerSessionId ?? "raw-1",
     detail: null,
-    updatedAt: detail.updatedAt ?? "2026-03-23T10:00:00.000Z"
+    updatedAt: detail.updatedAt ?? "2026-03-23T10:00:00.000Z",
+    contextUsage: detail.contextUsage ?? null
   };
 }
 

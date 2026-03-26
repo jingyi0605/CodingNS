@@ -5,6 +5,7 @@ export type SessionRole = "user" | "assistant" | "tool" | "system";
 export type SyncStatus = "idle" | "syncing" | "error";
 export type MessageKind = "text" | "thinking" | "tool_call" | "tool_result";
 export type HistoryDirection = "forward" | "backward";
+export type InRunInputMode = "none" | "streaming_guidance" | "queued_guidance";
 
 export interface NormalizedMessageAttachment {
   id: string;
@@ -27,6 +28,7 @@ export interface ProviderModelOption {
   id: string;
   name: string;
   usesProviderDefault?: boolean;
+  supportedReasoningEfforts?: string[];
 }
 
 export interface ProviderCapabilities {
@@ -34,6 +36,7 @@ export interface ProviderCapabilities {
   canStartSession: boolean;
   canResumeSession: boolean;
   canSendMessage: boolean;
+  inRunInputMode: InRunInputMode;
   supportsSubagents: boolean;
   supportsInterrupt: boolean;
   supportsStructuredToolCalls: boolean;
@@ -42,7 +45,28 @@ export interface ProviderCapabilities {
   supportsPermissionPrompt: boolean;
   supportsCheckpoint: boolean;
   modelOptions?: ProviderModelOption[];
+  defaultReasoningLevel?: string | null;
   limitations: string[];
+}
+
+export type ContextUsageSource =
+  | "provider-log"
+  | "provider-runtime"
+  | "provider-config"
+  | "model-map";
+
+export interface ContextUsageSnapshot {
+  provider: ProviderId;
+  promptTokens: number;
+  uncachedInputTokens: number;
+  cachedInputTokens: number;
+  contextWindow: number;
+  usageRatio: number;
+  source: ContextUsageSource;
+  contextWindowSource: ContextUsageSource;
+  modelId: string | null;
+  capturedAt: string | null;
+  isEstimated: boolean;
 }
 
 export interface ProviderSessionSummary {
@@ -170,6 +194,10 @@ export interface ProviderAdapter {
     rawStoreRef: string,
     isArchived: boolean
   ): Promise<ProviderArchiveUpdateResult>;
+  readContextUsage?(
+    providerSessionId: string,
+    rawStoreRef: string
+  ): Promise<ContextUsageSnapshot | null>;
   getProviderCapabilities(): ProviderCapabilities;
   getSessionCapabilities(providerSessionId: string): Promise<ProviderCapabilities>;
 }

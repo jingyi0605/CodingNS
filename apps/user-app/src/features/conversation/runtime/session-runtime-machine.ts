@@ -1,4 +1,5 @@
 import type {
+  ContextUsageDto,
   DeliveryState,
   HistoryMessageDto,
   ImageAttachmentPayload,
@@ -31,6 +32,7 @@ export interface SessionMessageViewModel {
 export interface SessionRuntimeState {
   session: SessionSummaryDto | null;
   capabilities: ProviderCapabilitiesDto | null;
+  contextUsage: ContextUsageDto | null;
   messages: SessionMessageViewModel[];
   historyState: RuntimeHistoryState;
   loadingOlderMessages: boolean;
@@ -44,11 +46,12 @@ export interface SessionRuntimeState {
 }
 
 export function createInitialRuntimeState(
-  seed?: Partial<Pick<SessionRuntimeState, "session" | "capabilities" | "messages">>
+  seed?: Partial<Pick<SessionRuntimeState, "session" | "capabilities" | "contextUsage" | "messages">>
 ): SessionRuntimeState {
   return {
     session: seed?.session ?? null,
     capabilities: seed?.capabilities ?? null,
+    contextUsage: seed?.contextUsage ?? null,
     messages: seed?.messages ?? [],
     historyState: "idle",
     loadingOlderMessages: false,
@@ -222,12 +225,14 @@ function mergeResolvedUserMessage(
     return authoritative;
   }
 
+  const authoritativeAttachments = authoritative.attachments ?? [];
+
   return {
     ...authoritative,
     sequence: optimistic.sequence,
     timestamp: optimistic.timestamp,
     attachments:
-      authoritative.attachments.length > 0 ? authoritative.attachments : optimistic.attachments ?? [],
+      authoritativeAttachments.length > 0 ? authoritativeAttachments : optimistic.attachments ?? [],
     attachmentPayloads: optimistic.attachmentPayloads ?? null
   };
 }

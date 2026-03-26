@@ -1,7 +1,9 @@
 import {
   type ActiveRunHandle,
   ClaudeRuntimeAdapter,
+  type ContextUsageSnapshot,
   CodexRuntimeAdapter,
+  type InRunInputMode,
   type NormalizedMessageAttachment,
   ProviderRuntimeService,
   type ProviderRuntimeAdapter,
@@ -71,10 +73,12 @@ export interface SessionRuntimeStatusView {
   hasActiveRun: boolean;
   canAttach: boolean;
   canInterrupt: boolean;
+  inRunInputMode: InRunInputMode;
   provider: string;
   providerSessionId: string;
   detail: string | null;
   updatedAt: string;
+  contextUsage: ContextUsageSnapshot | null;
 }
 
 export interface InterruptSessionResult {
@@ -130,7 +134,7 @@ export class SessionLiveRuntimeService {
 
   async startLiveSession(input: StartLiveSessionInput): Promise<LiveMessageAcceptedResult> {
     const requestStartedAt = nowIso();
-    const capabilities = this.sessionHistoryService.getProviderCapabilities(input.provider);
+    const capabilities = this.sessionHistoryService.getProviderCapabilitiesSnapshot(input.provider);
     const workspace = this.workspaceService.getWorkspaceOrThrow(input.workspaceId);
     const sessionId = createId();
     const persistedAttachments = this.persistMessageAttachments(
@@ -241,27 +245,34 @@ export class SessionLiveRuntimeService {
 
     this.ensureCapability(capabilities.canSendMessage, "sessionId", "provider 不支持实时对话");
 
-    await this.startRuntimeRun(
-      {
-        sessionId: input.sessionId,
-        workspaceId: session.workspaceId,
-        workspacePath: workspace.path,
-        provider: session.provider,
-        providerSessionId: runtimeMode === "start" ? null : session.providerSessionId,
-        rawStoreRef: runtimeMode === "start" ? null : session.rawStoreRef,
-        options: {
-          content: input.content,
-          clientRequestId: input.clientRequestId,
-          model: input.runtimeOptions?.model ?? null,
-          reasoningLevel: input.runtimeOptions?.reasoningLevel ?? null,
-          permissionMode: input.runtimeOptions?.permissionMode ?? null,
-          providerPrompt,
-          attachments: persistedAttachments.runtimeAttachments
-        }
-      },
-      input.userId,
-      runtimeMode
-    );
+    const runtimeRequest = {
+      sessionId: input.sessionId,
+      workspaceId: session.workspaceId,
+      workspacePath: workspace.path,
+      provider: session.provider,
+      providerSessionId: runtimeMode === "start" ? null : session.providerSessionId,
+      rawStoreRef: runtimeMode === "start" ? null : session.rawStoreRef,
+      options: {
+        content: input.content,
+        clientRequestId: input.clientRequestId,
+        model: input.runtimeOptions?.model ?? null,
+        reasoningLevel: input.runtimeOptions?.reasoningLevel ?? null,
+        permissionMode: input.runtimeOptions?.permissionMode ?? null,
+        providerPrompt,
+        attachments: persistedAttachments.runtimeAttachments
+      }
+    } as const;
+
+    const activeRun = this.providerRuntimeService.getSnapshot(input.sessionId);
+
+    if (activeRun && (activeRun.runningState === "starting" || activeRun.runningState === "running")) {
+      await this.providerRuntimeService.submitToActiveRun(input.sessionId, runtimeRequest.options)
+        .catch((error) => {
+          throw mapSessionProviderError(error);
+        });
+    } else {
+      await this.startRuntimeRun(runtimeRequest, input.userId, runtimeMode);
+    }
 
     const binding = this.sessionHistoryService.getBindingOrThrow(input.sessionId);
     const acceptedMessage = await this.findAcceptedUserMessage(
@@ -308,6 +319,8 @@ export class SessionLiveRuntimeService {
   async getSessionRuntime(sessionId: string, userId: string): Promise<SessionRuntimeStatusView> {
     const session = this.sessionHistoryService.getSession(sessionId, userId);
     const runtimeSnapshot = this.providerRuntimeService.getSnapshot(sessionId);
+    const capabilities = await this.sessionHistoryService.getSessionCapabilities(sessionId);
+    const contextUsage = await this.sessionHistoryService.getSessionContextUsage(sessionId).catch(() => null);
 
     if (runtimeSnapshot) {
       return {
@@ -318,8 +331,10 @@ export class SessionLiveRuntimeService {
         hasActiveRun: true,
         canAttach: true,
         canInterrupt: runtimeSnapshot.supportsInterrupt,
+        inRunInputMode: capabilities.inRunInputMode,
         detail: runtimeSnapshot.detail,
-        updatedAt: runtimeSnapshot.lastEventAt ?? runtimeSnapshot.startedAt
+        updatedAt: runtimeSnapshot.lastEventAt ?? runtimeSnapshot.startedAt,
+        contextUsage
       };
     }
 
@@ -331,8 +346,10 @@ export class SessionLiveRuntimeService {
       hasActiveRun: false,
       canAttach: false,
       canInterrupt: false,
+      inRunInputMode: capabilities.inRunInputMode,
       detail: null,
-      updatedAt: session.lastEventAt ?? session.updatedAt
+      updatedAt: session.lastEventAt ?? session.updatedAt,
+      contextUsage
     };
   }
 

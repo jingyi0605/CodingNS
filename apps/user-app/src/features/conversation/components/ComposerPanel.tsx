@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 import { decideCapability } from "../capability/capability-gate";
 import type {
+  ContextUsageDto,
   ImageAttachmentPayload,
   MessageAttachmentDto,
   ProviderCapabilitiesDto,
@@ -12,6 +13,7 @@ import type {
 
 interface ComposerPanelProps {
   capabilities: ProviderCapabilitiesDto | null;
+  contextUsage?: ContextUsageDto | null;
   isSubmitting: boolean;
   isRunning?: boolean;
   onInterrupt?: () => Promise<void> | void;
@@ -31,9 +33,10 @@ type ModelOption = {
   name: string;
   provider: ProviderId;
   usesProviderDefault?: boolean;
+  supportedReasoningEfforts?: ReasoningLevel[];
 };
 
-type ReasoningLevel = "low" | "medium" | "high" | "maximum";
+type ReasoningLevel = "low" | "medium" | "high" | "xhigh";
 
 interface ComposerImageAttachment {
   id: string;
@@ -42,12 +45,8 @@ interface ComposerImageAttachment {
 }
 
 const DEFAULT_CLAUDE_MODEL_ID = "provider-default";
+const DEFAULT_CODEX_MODEL_ID = "provider-default";
 const FOCUS_COMPOSER_EVENT = "workbench:focus-composer";
-const MODEL_OPTIONS: ModelOption[] = [
-  { id: "gpt-5.4", name: "GPT-5.4", provider: "codex" },
-  { id: "gpt-4.1", name: "GPT-4.1", provider: "codex" },
-  { id: "gpt-4o", name: "GPT-4o", provider: "codex" }
-];
 
 function createFallbackClaudeModelOptions(): ModelOption[] {
   return [
@@ -60,8 +59,23 @@ function createFallbackClaudeModelOptions(): ModelOption[] {
   ];
 }
 
+function createFallbackCodexModelOptions(): ModelOption[] {
+  return [
+    {
+      id: DEFAULT_CODEX_MODEL_ID,
+      name: t("conversation.modelUseCodexConfig"),
+      provider: "codex",
+      usesProviderDefault: true
+    }
+  ];
+}
+
 function getModelStorageKey(provider: ProviderId): string {
   return `composer-selected-model:${provider}`;
+}
+
+function getReasoningStorageKey(provider: ProviderId): string {
+  return `composer-reasoning-level:${provider}`;
 }
 
 function createAttachmentId(): string {
@@ -151,6 +165,7 @@ function mergeImageAttachments(
 
 export function ComposerPanel({
   capabilities,
+  contextUsage = null,
   isSubmitting,
   isRunning = false,
   onInterrupt,
@@ -158,10 +173,7 @@ export function ComposerPanel({
 }: ComposerPanelProps) {
   const [content, setContent] = useState("");
   const [selectedModel, setSelectedModel] = useState<string>("");
-  const [reasoningLevel, setReasoningLevel] = useState<ReasoningLevel>(() => {
-    const saved = localStorage.getItem("composer-reasoning-level");
-    return (saved as ReasoningLevel) || "medium";
-  });
+  const [reasoningLevel, setReasoningLevel] = useState<ReasoningLevel>("medium");
   const [attachments, setAttachments] = useState<ComposerImageAttachment[]>([]);
   const [showSlashMenu, setShowSlashMenu] = useState(false);
   const [interrupting, setInterrupting] = useState(false);
@@ -186,30 +198,49 @@ export function ComposerPanel({
     [capabilities]
   );
   const availableModels = useMemo(() => {
-    if (provider === "claude-code") {
-      const providerModels = capabilities?.modelOptions?.map((model) => ({
-        ...model,
-        provider
-      }));
+    const providerModels = capabilities?.modelOptions?.map((model) => ({
+      ...model,
+      provider,
+      supportedReasoningEfforts: model.supportedReasoningEfforts?.filter(
+        (effort): effort is ReasoningLevel =>
+          effort === "low" || effort === "medium" || effort === "high" || effort === "xhigh"
+      )
+    }));
 
-      return providerModels?.length ? providerModels : createFallbackClaudeModelOptions();
+    if (providerModels?.length) {
+      return providerModels;
     }
 
-    return MODEL_OPTIONS.filter((model) => model.provider === provider);
+    return provider === "claude-code"
+      ? createFallbackClaudeModelOptions()
+      : createFallbackCodexModelOptions();
   }, [capabilities?.modelOptions, provider]);
   const selectedModelOption = useMemo(
     () => availableModels.find((model) => model.id === selectedModel) ?? null,
     [availableModels, selectedModel]
   );
-  const reasoningLevels = useMemo(
+  const reasoningLevelCatalog = useMemo(
     () => [
       { value: "low" as const, label: t("conversation.reasoningLow") },
       { value: "medium" as const, label: t("conversation.reasoningMedium") },
       { value: "high" as const, label: t("conversation.reasoningHigh") },
-      { value: "maximum" as const, label: t("conversation.reasoningMaximum") }
+      { value: "xhigh" as const, label: t("conversation.reasoningMaximum") }
     ],
     []
   );
+  const availableReasoningLevels = useMemo(() => {
+    if (provider !== "codex") {
+      return [];
+    }
+
+    const supportedEfforts = selectedModelOption?.supportedReasoningEfforts;
+
+    if (!supportedEfforts || supportedEfforts.length === 0) {
+      return reasoningLevelCatalog;
+    }
+
+    return reasoningLevelCatalog.filter((level) => supportedEfforts.includes(level.value));
+  }, [provider, reasoningLevelCatalog, selectedModelOption?.supportedReasoningEfforts]);
   const slashCommands = useMemo(
     () => [
       { command: "/plan", label: t("conversation.slashCommandPlan") },
@@ -234,8 +265,8 @@ export function ComposerPanel({
 
   const handleReasoningLevelChange = useCallback((level: ReasoningLevel) => {
     setReasoningLevel(level);
-    localStorage.setItem("composer-reasoning-level", level);
-  }, []);
+    localStorage.setItem(getReasoningStorageKey(provider), level);
+  }, [provider]);
 
   const mergeAttachments = useCallback((incomingFiles: File[]) => {
     const { accepted, rejectedCount } = collectImageFiles(incomingFiles);
@@ -341,6 +372,42 @@ export function ComposerPanel({
   }, [availableModels, provider, selectedModel]);
 
   useEffect(() => {
+    if (provider !== "codex" || availableReasoningLevels.length === 0) {
+      return;
+    }
+
+    const saved = localStorage.getItem(getReasoningStorageKey(provider));
+
+    if (saved && availableReasoningLevels.some((level) => level.value === saved)) {
+      if (reasoningLevel !== saved) {
+        setReasoningLevel(saved as ReasoningLevel);
+      }
+      return;
+    }
+
+    const providerDefault = capabilities?.defaultReasoningLevel;
+
+    if (
+      providerDefault &&
+      availableReasoningLevels.some((level) => level.value === providerDefault)
+    ) {
+      if (reasoningLevel !== providerDefault) {
+        setReasoningLevel(providerDefault as ReasoningLevel);
+      }
+      localStorage.setItem(getReasoningStorageKey(provider), providerDefault);
+      return;
+    }
+
+    if (availableReasoningLevels.some((level) => level.value === reasoningLevel)) {
+      return;
+    }
+
+    const fallbackLevel = availableReasoningLevels[0]!.value;
+    setReasoningLevel(fallbackLevel);
+    localStorage.setItem(getReasoningStorageKey(provider), fallbackLevel);
+  }, [availableReasoningLevels, capabilities?.defaultReasoningLevel, provider, reasoningLevel]);
+
+  useEffect(() => {
     const textarea = textareaRef.current;
 
     if (!textarea) {
@@ -424,7 +491,8 @@ export function ComposerPanel({
 
       await onSend(nextContent, {
         model: selectedModelOption?.usesProviderDefault ? undefined : selectedModel || undefined,
-        reasoningLevel: provider === "codex" ? reasoningLevel : undefined,
+        reasoningLevel:
+          provider === "codex" && availableReasoningLevels.length > 0 ? reasoningLevel : undefined,
         attachments: payloads,
         attachmentMeta
       });
@@ -620,7 +688,7 @@ export function ComposerPanel({
                     className="composer-select"
                     aria-label={t("conversation.reasoningSelectorLabel")}
                   >
-                    {reasoningLevels.map((level) => (
+                    {availableReasoningLevels.map((level) => (
                       <option key={level.value} value={level.value}>
                         {level.label}
                       </option>
@@ -656,60 +724,166 @@ export function ComposerPanel({
                   <line x1="5" y1="12" x2="19" y2="12" />
                 </svg>
               </button>
+
+              <ContextUsageRing contextUsage={contextUsage} />
             </div>
 
             {interactionActive ? (
-              <button
-                className="composer-send composer-send-busy"
-                type="button"
-                onClick={() => {
-                  if (canInterruptNow) {
-                    void handleInterrupt();
-                  }
-                }}
-                disabled={!canInterruptNow}
-                aria-label={canInterruptNow ? t("conversation.capabilityInterrupt") : interactionLabel ?? t("conversation.sendingState")}
-                title={canInterruptNow ? t("conversation.capabilityInterrupt") : interactionLabel ?? t("conversation.sendingState")}
-              >
-                {canInterruptNow ? (
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                    <rect x="6" y="6" width="12" height="12" />
-                  </svg>
-                ) : (
-                  <svg className="composer-send-spinner" width="18" height="18" viewBox="0 0 24 24" fill="none">
-                    <circle
-                      cx="12"
-                      cy="12"
-                      r="8"
-                      stroke="currentColor"
-                      strokeOpacity="0.28"
-                      strokeWidth="2.5"
-                    />
-                    <path
-                      d="M20 12a8 8 0 0 0-8-8"
-                      stroke="currentColor"
-                      strokeWidth="2.5"
-                      strokeLinecap="round"
-                    />
-                  </svg>
-                )}
-              </button>
+              <div className="composer-send-group">
+                <button
+                  className="composer-send composer-send-busy"
+                  type="button"
+                  onClick={() => {
+                    if (canInterruptNow) {
+                      void handleInterrupt();
+                    }
+                  }}
+                  disabled={!canInterruptNow}
+                  aria-label={canInterruptNow ? t("conversation.capabilityInterrupt") : interactionLabel ?? t("conversation.sendingState")}
+                  title={canInterruptNow ? t("conversation.capabilityInterrupt") : interactionLabel ?? t("conversation.sendingState")}
+                >
+                  {canInterruptNow ? (
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <rect x="6" y="6" width="12" height="12" />
+                    </svg>
+                  ) : (
+                    <svg className="composer-send-spinner" width="18" height="18" viewBox="0 0 24 24" fill="none">
+                      <circle
+                        cx="12"
+                        cy="12"
+                        r="8"
+                        stroke="currentColor"
+                        strokeOpacity="0.28"
+                        strokeWidth="2.5"
+                      />
+                      <path
+                        d="M20 12a8 8 0 0 0-8-8"
+                        stroke="currentColor"
+                        strokeWidth="2.5"
+                        strokeLinecap="round"
+                      />
+                    </svg>
+                  )}
+                </button>
+              </div>
             ) : (
-              <button
-                className="composer-send"
-                type="submit"
-                disabled={isDisabled}
-                aria-label={t("conversation.sendButton")}
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                  <line x1="22" y1="2" x2="11" y2="13" />
-                  <polygon points="22 2 15 22 11 13 2 9 22 2" />
-                </svg>
-              </button>
+              <div className="composer-send-group">
+                <button
+                  className="composer-send"
+                  type="submit"
+                  disabled={isDisabled}
+                  aria-label={t("conversation.sendButton")}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <line x1="22" y1="2" x2="11" y2="13" />
+                    <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                  </svg>
+                </button>
+              </div>
             )}
           </div>
         </div>
       </form>
     </section>
   );
+}
+
+function ContextUsageRing({ contextUsage }: { contextUsage: ContextUsageDto | null }) {
+  const usagePercent = contextUsage ? Math.round(contextUsage.usageRatio * 100) : null;
+  const progress = contextUsage ? Math.max(0, Math.min(contextUsage.usageRatio, 1)) : 0;
+  const stateClassName = getContextUsageStateClassName(progress);
+  const sourceText = contextUsage ? formatContextWindowSource(contextUsage.contextWindowSource) : null;
+  const label = contextUsage
+    ? `${t("conversation.contextUsageTitle")} ${usagePercent}%`
+    : t("conversation.contextUsageUnavailable");
+
+  return (
+    <div
+      className={`composer-context-ring ${stateClassName}`}
+      style={
+        {
+          "--context-usage-progress": `${progress}`
+        } as CSSProperties
+      }
+      aria-label={label}
+      tabIndex={0}
+    >
+      <span className="composer-context-ring-value">
+        {usagePercent === null ? (
+          "--"
+        ) : (
+          <>
+            <span>{usagePercent}</span>
+            <span className="composer-context-ring-suffix">%</span>
+          </>
+        )}
+      </span>
+      <div className="composer-context-tooltip" role="tooltip">
+        {contextUsage ? (
+          <>
+            <div className="composer-context-tooltip-title">
+              {t("conversation.contextUsageTitle")}
+            </div>
+            <div className="composer-context-tooltip-line">
+              {usagePercent}% · {formatTokenCount(contextUsage.promptTokens)} /{" "}
+              {formatTokenCount(contextUsage.contextWindow)} tokens
+            </div>
+            {contextUsage.cachedInputTokens > 0 ? (
+              <div className="composer-context-tooltip-line">
+                {t("conversation.contextUsageCachedTokens").replace(
+                  "{count}",
+                  formatTokenCount(contextUsage.cachedInputTokens)
+                )}
+              </div>
+            ) : null}
+            {sourceText ? (
+              <div className="composer-context-tooltip-meta">{sourceText}</div>
+            ) : null}
+            {contextUsage.isEstimated ? (
+              <div className="composer-context-tooltip-meta">
+                {t("conversation.contextUsageEstimated")}
+              </div>
+            ) : null}
+          </>
+        ) : (
+          <div className="composer-context-tooltip-line">
+            {t("conversation.contextUsageUnavailable")}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function getContextUsageStateClassName(progress: number): string {
+  if (progress >= 0.95) {
+    return "is-critical";
+  }
+
+  if (progress >= 0.8) {
+    return "is-warning";
+  }
+
+  return "is-normal";
+}
+
+function formatContextWindowSource(
+  source: ContextUsageDto["contextWindowSource"]
+): string {
+  switch (source) {
+    case "provider-log":
+      return t("conversation.contextUsageSourceProviderLog");
+    case "provider-runtime":
+      return t("conversation.contextUsageSourceProviderRuntime");
+    case "provider-config":
+      return t("conversation.contextUsageSourceProviderConfig");
+    case "model-map":
+      return t("conversation.contextUsageSourceModelMap");
+    default:
+      return "";
+  }
+}
+
+function formatTokenCount(value: number): string {
+  return new Intl.NumberFormat().format(value);
 }
