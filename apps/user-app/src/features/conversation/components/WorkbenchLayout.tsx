@@ -3955,11 +3955,32 @@ export function WorkbenchLayout() {
 
     const storedSessionPath =
       typeof window === "undefined" ? null : window.localStorage.getItem(LAST_SESSION_PATH_KEY);
-    const fallbackSessionPath = flattenedSessions[0]
-      ? `/sessions/${flattenedSessions[0].session.sessionId}`
-      : "/";
 
-    navigate(storedSessionPath || fallbackSessionPath);
+    // 验证存储的会话路径是否还有效（会话是否还存在于列表中）
+    if (storedSessionPath) {
+      const match = storedSessionPath.match(/^\/sessions\/([^/]+)$/);
+      if (match) {
+        const storedSessionId = match[1];
+        const sessionExists = flattenedSessions.some(
+          (item) => item.session.sessionId === storedSessionId
+        );
+        if (sessionExists) {
+          navigate(storedSessionPath);
+          return;
+        }
+      }
+      // 存储的会话已不存在，清除无效的存储
+      window.localStorage.removeItem(LAST_SESSION_PATH_KEY);
+    }
+
+    // 如果没有任何会话记录，导航到空白页
+    if (flattenedSessions.length === 0) {
+      navigate("/");
+      return;
+    }
+
+    const fallbackSessionPath = `/sessions/${flattenedSessions[0].session.sessionId}`;
+    navigate(fallbackSessionPath);
   }
 
   useEffect(() => {
