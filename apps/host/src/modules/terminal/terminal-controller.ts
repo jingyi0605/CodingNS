@@ -1,6 +1,7 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 
 import { AppError } from "../../shared/errors/app-error.js";
+import type { TerminalRuntimeType } from "../../types/domain.js";
 import { listTerminalShellOptions } from "./terminal-shell.js";
 import type { CommandTemplateService } from "./command-template-service.js";
 import type { TerminalService } from "./terminal-service.js";
@@ -22,6 +23,7 @@ interface CreateTerminalBody {
   name?: string;
   cwd?: string;
   shell?: string;
+  runtimeType?: string;
 }
 
 interface TerminalInputBody {
@@ -36,6 +38,7 @@ interface CommandTemplateBody {
   args?: string[];
   env?: Record<string, string>;
   port?: number | null;
+  runtimeType?: string | null;
 }
 
 interface TemplateListQuery {
@@ -45,6 +48,7 @@ interface TemplateListQuery {
 interface RunTemplateBody {
   terminalId?: string;
   shell?: string;
+  runtimeType?: string;
 }
 
 export class TerminalController {
@@ -93,6 +97,7 @@ export class TerminalController {
       name: request.body.name?.trim(),
       cwd: request.body.cwd?.trim(),
       shell: request.body.shell?.trim(),
+      runtimeType: normalizeRuntimeType(request.body.runtimeType),
       createdByUserId: request.auth!.user.userId
     });
 
@@ -199,7 +204,8 @@ export class TerminalController {
       command: request.body.command,
       args: normalizeArgs(request.body.args),
       env: request.body.env,
-      port: normalizePort(request.body.port)
+      port: normalizePort(request.body.port),
+      runtimeType: normalizeRuntimeType(request.body.runtimeType)
     });
 
     reply.status(201).send(template);
@@ -217,7 +223,8 @@ export class TerminalController {
         command: request.body.command,
         args: normalizeArgs(request.body.args),
         env: request.body.env,
-        port: normalizePort(request.body.port)
+        port: normalizePort(request.body.port),
+        runtimeType: normalizeRuntimeType(request.body.runtimeType)
       })
     );
   };
@@ -238,6 +245,7 @@ export class TerminalController {
         templateId: request.params.templateId,
         terminalId: request.body.terminalId?.trim(),
         shell: request.body.shell?.trim(),
+        runtimeType: normalizeRuntimeType(request.body.runtimeType),
         userId: request.auth!.user.userId
       })
     );
@@ -266,6 +274,41 @@ function normalizeArgs(input?: string[]): string[] {
   }
 
   return input;
+}
+
+function normalizeRuntimeType(
+  input?: string | null
+): TerminalRuntimeType | null | undefined {
+  if (input === undefined) {
+    return undefined;
+  }
+
+  if (input === null) {
+    return null;
+  }
+
+  const value = input.trim();
+
+  if (!value) {
+    return null;
+  }
+
+  if (
+    value === "embedded-pty" ||
+    value === "tmux" ||
+    value === "conpty-powershell" ||
+    value === "conpty-cmd" ||
+    value === "conpty-git-bash"
+  ) {
+    return value;
+  }
+
+  throw new AppError({
+    statusCode: 400,
+    errorCode: "INVALID_INPUT",
+    detail: `不支持的终端 runtimeType：${value}`,
+    field: "runtimeType"
+  });
 }
 
 function normalizePort(input?: number | null): number | null | undefined {

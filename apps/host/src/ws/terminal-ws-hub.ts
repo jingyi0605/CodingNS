@@ -74,6 +74,7 @@ export class TerminalWsHub {
   ): Promise<void> {
     const subscriptions = this.getClientSubscriptions(client);
     subscriptions.get(payload.terminalId)?.close();
+    subscriptions.delete(payload.terminalId);
 
     client.send(
       JSON.stringify({
@@ -131,6 +132,7 @@ export class TerminalWsHub {
 
       subscriptions.set(payload.terminalId, subscription);
     } catch (error) {
+      subscriptions.delete(payload.terminalId);
       const appError =
         error instanceof AppError
           ? error

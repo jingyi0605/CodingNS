@@ -104,4 +104,80 @@ describe("httpClient", () => {
       message: "upstream proxy failed"
     } satisfies Partial<ApiError>);
   });
+
+  it("401 TOKEN_EXPIRED 时会先刷新登录态再重试原请求", async () => {
+    const fetchMock = vi.mocked(fetch);
+    const refreshSpy = vi.spyOn(authStore, "refresh").mockImplementation(async () => {
+      authStore.hydrate({
+        ...session,
+        accessToken: "access-token-next"
+      });
+
+      return authStore.getState().session;
+    });
+
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            detail: "access token 已过期",
+            error_code: "TOKEN_EXPIRED"
+          }),
+          {
+            status: 401,
+            headers: {
+              "Content-Type": "application/json"
+            }
+          }
+        )
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        })
+      );
+
+    await expect(httpClient.request<{ ok: boolean }>("/api/demo")).resolves.toEqual({
+      ok: true
+    });
+
+    expect(refreshSpy).toHaveBeenCalledTimes(1);
+
+    const firstHeaders = new Headers(fetchMock.mock.calls[0]?.[1]?.headers);
+    const secondHeaders = new Headers(fetchMock.mock.calls[1]?.[1]?.headers);
+
+    expect(firstHeaders.get("Authorization")).toBe("Bearer access-token");
+    expect(secondHeaders.get("Authorization")).toBe("Bearer access-token-next");
+  });
+
+  it("403 BOOTSTRAP_REQUIRED 时会清理残留登录态", async () => {
+    const fetchMock = vi.mocked(fetch);
+
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          detail: "系统尚未初始化，请先完成 setup",
+          error_code: "BOOTSTRAP_REQUIRED"
+        }),
+        {
+          status: 403,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      )
+    );
+
+    await expect(httpClient.request("/api/workbench")).rejects.toMatchObject({
+      name: "ApiError",
+      status: 403,
+      errorCode: "BOOTSTRAP_REQUIRED"
+    } satisfies Partial<ApiError>);
+
+    expect(authStore.getState().status).toBe("anonymous");
+    expect(authStore.getState().session).toBeNull();
+  });
 });

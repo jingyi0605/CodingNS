@@ -17,9 +17,10 @@ export class TerminalCommandTemplateRepository {
           args_json,
           env_json,
           port,
+          runtime_type,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         record.id,
@@ -30,6 +31,7 @@ export class TerminalCommandTemplateRepository {
         JSON.stringify(record.args),
         JSON.stringify(record.env),
         record.port,
+        record.runtimeType,
         record.createdAt,
         record.updatedAt
       );
@@ -49,6 +51,7 @@ export class TerminalCommandTemplateRepository {
           args_json,
           env_json,
           port,
+          runtime_type,
           created_at,
           updated_at
         FROM terminal_command_templates
@@ -71,6 +74,7 @@ export class TerminalCommandTemplateRepository {
           args_json,
           env_json,
           port,
+          runtime_type,
           created_at,
           updated_at
         FROM terminal_command_templates
@@ -91,6 +95,7 @@ export class TerminalCommandTemplateRepository {
              args_json = ?,
              env_json = ?,
              port = ?,
+             runtime_type = ?,
              updated_at = ?
          WHERE id = ?`
       )
@@ -101,6 +106,7 @@ export class TerminalCommandTemplateRepository {
         JSON.stringify(record.args),
         JSON.stringify(record.env),
         record.port,
+        record.runtimeType,
         record.updatedAt,
         record.id
       );
@@ -126,6 +132,7 @@ interface TerminalCommandTemplateRow {
   args_json: string;
   env_json: string;
   port: number | null;
+  runtime_type: TerminalCommandTemplate["runtimeType"];
   created_at: string;
   updated_at: string;
 }
@@ -140,6 +147,7 @@ function mapTemplateRow(row: TerminalCommandTemplateRow): TerminalCommandTemplat
     args: JSON.parse(row.args_json) as string[],
     env: JSON.parse(row.env_json) as Record<string, string>,
     port: row.port,
+    runtimeType: row.runtime_type ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };

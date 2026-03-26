@@ -1,10 +1,11 @@
 import type Database from "better-sqlite3";
 
-import type { TerminalInstance, TerminalStatus } from "../../types/domain.js";
+import type { TerminalInstance, TerminalRuntimeType, TerminalStatus } from "../../types/domain.js";
 
 interface UpdateTerminalLifecycleInput {
   id: string;
   status: TerminalStatus;
+  processId: number | null;
   lastActiveAt: string;
   closedAt?: string | null;
   exitCode?: number | null;
@@ -23,14 +24,18 @@ export class TerminalInstanceRepository {
           name,
           cwd,
           shell,
+          runtime_type,
+          runtime_session_id,
+          attach_target,
           status,
+          process_id,
           created_by_user_id,
           created_at,
           last_active_at,
           closed_at,
           exit_code,
           status_detail
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         record.id,
@@ -38,7 +43,11 @@ export class TerminalInstanceRepository {
         record.name,
         record.cwd,
         record.shell,
+        record.runtimeType,
+        record.runtimeSessionId,
+        record.attachTarget,
         record.status,
+        record.processId,
         record.createdByUserId,
         record.createdAt,
         record.lastActiveAt,
@@ -59,7 +68,11 @@ export class TerminalInstanceRepository {
           name,
           cwd,
           shell,
+          runtime_type,
+          runtime_session_id,
+          attach_target,
           status,
+          process_id,
           created_by_user_id,
           created_at,
           last_active_at,
@@ -83,7 +96,11 @@ export class TerminalInstanceRepository {
           name,
           cwd,
           shell,
+          runtime_type,
+          runtime_session_id,
+          attach_target,
           status,
+          process_id,
           created_by_user_id,
           created_at,
           last_active_at,
@@ -98,11 +115,40 @@ export class TerminalInstanceRepository {
       .map((row) => mapTerminalInstanceRow(row as TerminalInstanceRow));
   }
 
+  listRecoverable(): TerminalInstance[] {
+    return this.db
+      .prepare(
+        `SELECT
+          id,
+          workspace_id,
+          name,
+          cwd,
+          shell,
+          runtime_type,
+          runtime_session_id,
+          attach_target,
+          status,
+          process_id,
+          created_by_user_id,
+          created_at,
+          last_active_at,
+          closed_at,
+          exit_code,
+          status_detail
+        FROM terminal_instances
+        WHERE status IN ('creating', 'running')
+        ORDER BY last_active_at DESC, created_at DESC`
+      )
+      .all()
+      .map((row) => mapTerminalInstanceRow(row as TerminalInstanceRow));
+  }
+
   updateLifecycle(input: UpdateTerminalLifecycleInput): void {
     this.db
       .prepare(
         `UPDATE terminal_instances
          SET status = ?,
+             process_id = ?,
              last_active_at = ?,
              closed_at = ?,
              exit_code = ?,
@@ -111,6 +157,7 @@ export class TerminalInstanceRepository {
       )
       .run(
         input.status,
+        input.processId,
         input.lastActiveAt,
         input.closedAt ?? null,
         input.exitCode ?? null,
@@ -145,7 +192,11 @@ interface TerminalInstanceRow {
   name: string;
   cwd: string;
   shell: string;
+  runtime_type: TerminalRuntimeType;
+  runtime_session_id: string;
+  attach_target: string;
   status: TerminalStatus;
+  process_id: number | null;
   created_by_user_id: string;
   created_at: string;
   last_active_at: string;
@@ -161,7 +212,11 @@ function mapTerminalInstanceRow(row: TerminalInstanceRow): TerminalInstance {
     name: row.name,
     cwd: row.cwd,
     shell: row.shell,
+    runtimeType: row.runtime_type,
+    runtimeSessionId: row.runtime_session_id,
+    attachTarget: row.attach_target,
     status: row.status,
+    processId: row.process_id,
     createdByUserId: row.created_by_user_id,
     createdAt: row.created_at,
     lastActiveAt: row.last_active_at,

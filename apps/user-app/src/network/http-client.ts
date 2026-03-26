@@ -73,8 +73,7 @@ class HttpClient {
       const payload = await parseApiErrorPayload(response);
 
       if (
-        response.status === 401 &&
-        payload.error_code === "UNAUTHORIZED" &&
+        shouldAttemptRefresh(response.status, payload.error_code) &&
         !options.skipAuth &&
         !options.retryAfterRefresh
       ) {
@@ -91,6 +90,12 @@ class HttpClient {
           ...options,
           retryAfterRefresh: true
         });
+      }
+
+      // Host 被重置、数据库被替换，或者 bootstrap 状态回退时，
+      // 本地残留的旧登录态已经不可信，继续待在工作台里只会无限打 401/403。
+      if (!options.skipAuth && shouldClearAuthState(response.status, payload.error_code)) {
+        authStore.clear();
       }
 
       throw new ApiError(response.status, payload);
@@ -134,4 +139,24 @@ function buildFallbackApiErrorPayload(status: number, rawDetail?: string): ApiEr
     detail: normalizedDetail || `请求失败（HTTP ${status}）`,
     error_code: status === 401 ? "UNAUTHORIZED" : "HTTP_ERROR"
   };
+}
+
+function shouldAttemptRefresh(status: number, errorCode: string): boolean {
+  if (status !== 401) {
+    return false;
+  }
+
+  return (
+    errorCode === "UNAUTHORIZED" ||
+    errorCode === "TOKEN_EXPIRED" ||
+    errorCode === "TOKEN_INVALID"
+  );
+}
+
+function shouldClearAuthState(status: number, errorCode: string): boolean {
+  if (status === 403 && errorCode === "BOOTSTRAP_REQUIRED") {
+    return true;
+  }
+
+  return shouldAttemptRefresh(status, errorCode);
 }

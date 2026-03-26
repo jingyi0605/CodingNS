@@ -6,7 +6,11 @@ export interface TerminalDto {
   name: string;
   cwd: string;
   shell: string;
+  runtimeType?: string;
+  runtimeSessionId?: string;
+  attachTarget?: string;
   status: "creating" | "running" | "closed" | "error";
+  processId?: number | null;
   createdByUserId: string;
   createdAt: string;
   lastActiveAt: string;
@@ -24,6 +28,7 @@ export interface TerminalTemplateDto {
   args: string[];
   env: Record<string, string>;
   port: number | null;
+  runtimeType?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -76,6 +81,7 @@ export function createTerminal(payload: {
   name?: string;
   cwd?: string;
   shell?: string;
+  runtimeType?: string;
 }) {
   return httpClient.request<TerminalDto>("/api/terminals", {
     method: "POST",
@@ -121,6 +127,7 @@ export function createTerminalTemplate(payload: {
   command: string;
   args: string[];
   port?: number | null;
+  runtimeType?: string | null;
 }) {
   return httpClient.request<TerminalTemplateDto>("/api/terminals/templates", {
     method: "POST",
@@ -128,7 +135,10 @@ export function createTerminalTemplate(payload: {
   });
 }
 
-export function runTerminalTemplate(templateId: string, payload: { terminalId?: string; shell?: string }) {
+export function runTerminalTemplate(
+  templateId: string,
+  payload: { terminalId?: string; shell?: string; runtimeType?: string }
+) {
   return httpClient.request<{
     terminalId: string;
     templateId: string;

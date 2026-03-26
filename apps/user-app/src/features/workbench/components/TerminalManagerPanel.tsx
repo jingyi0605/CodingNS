@@ -16,6 +16,13 @@ import {
   type TerminalTemplateRuntimeStatusDto
 } from "../../terminal/api/terminal-api";
 import {
+  getTerminalRuntimeLabel,
+  listTerminalRuntimeOptions,
+  type SelectableTerminalRuntimeType
+} from "../../terminal/runtime/terminal-runtime-meta";
+import { isTmuxDependencyMissingError } from "../../terminal/runtime/terminal-runtime-errors";
+import { TerminalRuntimeFallbackModal } from "../../terminal/components/TerminalRuntimeFallbackModal";
+import {
   type WorkspaceSessionGroup,
   useWorkbenchShell
 } from "../../conversation/components/WorkbenchLayout";
@@ -48,6 +55,11 @@ interface TerminalManagerSnapshot {
   terminals: TerminalDto[];
   templates: TerminalTemplateDto[];
   templateStatuses: TerminalTemplateRuntimeStatusDto[];
+}
+
+interface TemplateRunFallbackDraft {
+  templateId: string;
+  shell?: string;
 }
 
 interface TemplateVisualStatus {
@@ -256,6 +268,8 @@ export function TerminalManagerPanel({
   const [templateStatuses, setTemplateStatuses] = useState<TerminalTemplateRuntimeStatusDto[]>([]);
   const [shellOptions, setShellOptions] = useState<TerminalShellOptionDto[]>([]);
   const [selectedShellId, setSelectedShellId] = useState("");
+  const [selectedRuntimeType, setSelectedRuntimeType] =
+    useState<SelectableTerminalRuntimeType>("");
   const [launchDraft, setLaunchDraft] = useState<LaunchDraftState>(INITIAL_LAUNCH_DRAFT);
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [expandedTemplateIds, setExpandedTemplateIds] = useState<string[]>([]);
@@ -263,6 +277,10 @@ export function TerminalManagerPanel({
   const [savingTemplate, setSavingTemplate] = useState(false);
   const [runningTemplateId, setRunningTemplateId] = useState<string | null>(null);
   const [stoppingTemplateId, setStoppingTemplateId] = useState<string | null>(null);
+  const [runtimeFallbackDraft, setRuntimeFallbackDraft] = useState<TemplateRunFallbackDraft | null>(
+    null
+  );
+  const [applyingRuntimeFallback, setApplyingRuntimeFallback] = useState(false);
   const { showToast } = useToast();
 
   useEffect(() => {
@@ -276,6 +294,7 @@ export function TerminalManagerPanel({
     () => shellOptions.find((option) => option.id === selectedShellId) ?? null,
     [selectedShellId, shellOptions]
   );
+  const runtimeOptions = useMemo(() => listTerminalRuntimeOptions(), []);
   const runtimeStatusByTemplateId = useMemo(
     () => new Map(templateStatuses.map((status) => [status.templateId, status] as const)),
     [templateStatuses]
@@ -476,9 +495,11 @@ export function TerminalManagerPanel({
         cwd: launchDraft.cwd.trim() || undefined,
         command: launchDraft.target.trim(),
         args: splitArgs(launchDraft.args),
-        port: parsedPort
+        port: parsedPort,
+        runtimeType: selectedRuntimeType || null
       });
       setLaunchDraft(INITIAL_LAUNCH_DRAFT);
+      setSelectedRuntimeType("");
       setCreateModalOpen(false);
       requestTerminalManagerSnapshotRefresh(activeWorkspaceId);
       showToast({
@@ -500,12 +521,49 @@ export function TerminalManagerPanel({
       return;
     }
 
+    const shell = selectedShellOption?.available ? selectedShellOption.shell : undefined;
     setRunningTemplateId(templateId);
 
     try {
       await runTerminalTemplate(templateId, {
-        shell: selectedShellOption?.available ? selectedShellOption.shell : undefined
+        shell
       });
+      requestTerminalManagerSnapshotRefresh(activeWorkspaceId);
+      showToast({
+        title: t("terminalManager.templateRunSuccess"),
+        tone: "success"
+      });
+    } catch (error) {
+      if (isTmuxDependencyMissingError(error)) {
+        setRuntimeFallbackDraft({
+          templateId,
+          shell
+        });
+        return;
+      }
+
+      showToast({
+        title: error instanceof Error ? error.message : t("terminalManager.templateRunFailed"),
+        tone: "error"
+      });
+    } finally {
+      setRunningTemplateId(null);
+    }
+  }
+
+  async function handleConfirmRuntimeFallback() {
+    if (!activeWorkspaceId || !runtimeFallbackDraft) {
+      return;
+    }
+
+    setApplyingRuntimeFallback(true);
+
+    try {
+      await runTerminalTemplate(runtimeFallbackDraft.templateId, {
+        shell: runtimeFallbackDraft.shell,
+        runtimeType: "embedded-pty"
+      });
+      setRuntimeFallbackDraft(null);
       requestTerminalManagerSnapshotRefresh(activeWorkspaceId);
       showToast({
         title: t("terminalManager.templateRunSuccess"),
@@ -517,7 +575,7 @@ export function TerminalManagerPanel({
         tone: "error"
       });
     } finally {
-      setRunningTemplateId(null);
+      setApplyingRuntimeFallback(false);
     }
   }
 
@@ -547,6 +605,20 @@ export function TerminalManagerPanel({
 
   return (
     <section className="conversation-panel surface-card terminal-manager-panel">
+      <TerminalRuntimeFallbackModal
+        open={runtimeFallbackDraft !== null}
+        busy={applyingRuntimeFallback}
+        onClose={() => {
+          if (applyingRuntimeFallback) {
+            return;
+          }
+
+          setRuntimeFallbackDraft(null);
+        }}
+        onConfirmFallback={() => {
+          void handleConfirmRuntimeFallback();
+        }}
+      />
       <div className="terminal-manager-header terminal-manager-desktop-header">
         <div className="terminal-manager-panel-heading">
           <span className="terminal-manager-panel-eyebrow">{t("terminalManager.quickLaunchTitle")}</span>
@@ -589,6 +661,7 @@ export function TerminalManagerPanel({
             type="button"
             disabled={!activeWorkspaceId}
             onClick={() => {
+              setSelectedRuntimeType("");
               setCreateModalOpen(true);
             }}
           >
@@ -631,6 +704,9 @@ export function TerminalManagerPanel({
                       <strong>{template.name}</strong>
                     </div>
                     <div className="terminal-manager-card-tools">
+                      <span className="badge terminal-runtime-badge">
+                        {getTerminalRuntimeLabel(template.runtimeType)}
+                      </span>
                       <span className="badge">
                         {detectTemplateMode(template) === "script"
                           ? t("terminalManager.scriptMode")
@@ -711,6 +787,10 @@ export function TerminalManagerPanel({
                           <strong>{template.cwd}</strong>
                         </div>
                         <div className="terminal-manager-detail-item">
+                          <span>{t("terminal.runtimeField")}</span>
+                          <strong>{getTerminalRuntimeLabel(template.runtimeType)}</strong>
+                        </div>
+                        <div className="terminal-manager-detail-item">
                           <span>{t("terminalManager.updatedAt")}</span>
                           <strong>{formatDate(template.updatedAt)}</strong>
                         </div>
@@ -751,6 +831,7 @@ export function TerminalManagerPanel({
         title={t("terminalManager.createModalTitle")}
         description={t("terminalManager.createModalDescription")}
         onClose={() => {
+          setSelectedRuntimeType("");
           setCreateModalOpen(false);
         }}
       >
@@ -774,6 +855,28 @@ export function TerminalManagerPanel({
             {selectedShellOption?.available === false && selectedShellOption.unavailableReason ? (
               <p className="status-text">{selectedShellOption.unavailableReason}</p>
             ) : null}
+          </div>
+
+          <div className="field-group">
+            <span>{t("terminal.runtimeField")}</span>
+            <select
+              value={selectedRuntimeType}
+              onChange={(event) => {
+                setSelectedRuntimeType(event.target.value as SelectableTerminalRuntimeType);
+              }}
+            >
+              {runtimeOptions.map((option) => (
+                <option key={option.value || "auto"} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <p className="status-text">
+              {
+                runtimeOptions.find((option) => option.value === selectedRuntimeType)?.description ??
+                runtimeOptions[0]?.description
+              }
+            </p>
           </div>
 
           <div
@@ -900,6 +1003,7 @@ export function TerminalManagerPanel({
               className="secondary-button"
               type="button"
               onClick={() => {
+                setSelectedRuntimeType("");
                 setCreateModalOpen(false);
               }}
             >

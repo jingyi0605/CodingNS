@@ -111,6 +111,30 @@ export const enUS = {
     workspaceSection: "Workspace & Terminal",
     workspaceField: "Current Workspace",
     shellField: "Shell for New Terminal",
+    runtimeField: "Runtime",
+    runtimeAutoOption: "Auto",
+    runtimeAutoShortLabel: "auto",
+    runtimeAutoDescription: "Use the Host default policy for this terminal runtime.",
+    runtimeTmuxDescription:
+      "Use a persistent external session, ideal for development terminals that should stay alive.",
+    runtimeEmbeddedDescription:
+      "Managed directly by the current Host and useful as the lightweight fallback.",
+    runtimeMissingDialogTitle: "tmux is not installed on this system",
+    runtimeMissingDialogDescription:
+      "The tmux runtime cannot create a persistent terminal right now. Install tmux first, or temporarily switch to embedded-pty to continue.",
+    runtimeMissingInstallDescription:
+      "Installing tmux is recommended if you want terminals to survive Host restarts.",
+    runtimeMissingInstallMacArm:
+      "macOS (Apple Silicon / Homebrew): arch -arm64 brew install tmux",
+    runtimeMissingInstallMacIntel:
+      "macOS (Intel Mac / Homebrew): brew install tmux",
+    runtimeMissingInstallDebian: "Ubuntu / Debian: sudo apt install tmux",
+    runtimeMissingInstallFedora: "Fedora: sudo dnf install tmux",
+    runtimeMissingFallbackDescription:
+      "If you switch to embedded-pty now, the terminal can still start, but it will not stay as an external persistent session.",
+    runtimeMissingKeepAction: "Not now",
+    runtimeMissingFallbackAction: "Switch to embedded-pty",
+    runtimeMissingFallbackPending: "Switching...",
     shellUnavailable: "Unavailable",
     workspaceLoadFailed: "The workspace or terminal list is not available right now.",
     terminalSection: "Terminal Instances",
@@ -136,10 +160,9 @@ export const enUS = {
       "Some output exceeded the cache window while disconnected. Only the retained part has been restored.",
     connectedHint: "Current output is coming from the real PTY stream on Host.",
     moreActions: "Terminal Actions",
-    copyAction: "Copy",
-    copySuccess: "Terminal content copied.",
-    copyFailed: "Failed to copy terminal content.",
-    copyEmpty: "There is no terminal content to copy.",
+    duplicateAction: "Duplicate Tab",
+    duplicateSuccess: "A new terminal tab has been created with the same setup.",
+    duplicateFailed: "Failed to duplicate the terminal tab.",
     disconnectAction: "Disconnect",
     disconnected: "Terminal connection has been disconnected.",
     reconnectAction: "Reconnect",

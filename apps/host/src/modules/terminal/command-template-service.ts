@@ -3,7 +3,7 @@ import type Database from "better-sqlite3";
 import { AppError } from "../../shared/errors/app-error.js";
 import { createId } from "../../shared/utils/id.js";
 import { nowIso } from "../../shared/utils/time.js";
-import type { TerminalCommandTemplate } from "../../types/domain.js";
+import type { TerminalCommandTemplate, TerminalRuntimeType } from "../../types/domain.js";
 import type { TerminalCommandTemplateRepository } from "../../storage/repositories/terminal-command-template-repository.js";
 import type { WorkspaceService } from "../workspace/workspace-service.js";
 import { resolveWorkspaceCwd } from "./terminal-paths.js";
@@ -22,12 +22,14 @@ interface UpsertCommandTemplateInput {
   args?: string[];
   env?: Record<string, string>;
   port?: number | null;
+  runtimeType?: TerminalRuntimeType | null;
 }
 
 interface RunCommandTemplateInput {
   templateId: string;
   terminalId?: string;
   shell?: string;
+  runtimeType?: TerminalRuntimeType | null;
   userId: string;
 }
 
@@ -113,6 +115,7 @@ export class CommandTemplateService {
       args: input.args ?? [],
       env: input.env ?? {},
       port: normalizePort(input.port),
+      runtimeType: normalizeTemplateRuntimeType(input.runtimeType),
       createdAt: timestamp,
       updatedAt: timestamp
     });
@@ -141,6 +144,10 @@ export class CommandTemplateService {
       args: input.args ?? current.args,
       env: input.env ?? current.env,
       port: input.port === undefined ? current.port : normalizePort(input.port),
+      runtimeType:
+        input.runtimeType === undefined
+          ? current.runtimeType
+          : normalizeTemplateRuntimeType(input.runtimeType),
       updatedAt: nowIso()
     });
 
@@ -185,6 +192,7 @@ export class CommandTemplateService {
         name: `${template.name} 运行`,
         cwd: template.cwd,
         shell: input.shell,
+        runtimeType: input.runtimeType ?? template.runtimeType ?? undefined,
         createdByUserId: input.userId,
         env: template.env
       });
@@ -281,6 +289,12 @@ function buildValidatedTemplate(input: CommandTemplateDraft): TerminalCommandTem
     name,
     command
   };
+}
+
+function normalizeTemplateRuntimeType(
+  input?: TerminalRuntimeType | null
+): TerminalRuntimeType | null {
+  return input ?? null;
 }
 
 function normalizePort(input?: number | null): number | null {

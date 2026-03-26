@@ -228,6 +228,11 @@ CREATE TABLE IF NOT EXISTS terminal_instances (
   name TEXT NOT NULL,
   cwd TEXT NOT NULL,
   shell TEXT NOT NULL,
+  runtime_type TEXT NOT NULL CHECK (
+    runtime_type IN ('embedded-pty', 'tmux', 'conpty-powershell', 'conpty-cmd', 'conpty-git-bash')
+  ),
+  runtime_session_id TEXT NOT NULL,
+  attach_target TEXT NOT NULL,
   status TEXT NOT NULL CHECK (status IN ('creating', 'running', 'closed', 'error')),
   process_id INTEGER,
   created_by_user_id TEXT NOT NULL,
@@ -245,6 +250,31 @@ CREATE INDEX IF NOT EXISTS idx_terminal_instances_workspace_id
 CREATE INDEX IF NOT EXISTS idx_terminal_instances_last_active_at
   ON terminal_instances(last_active_at DESC);
 
+CREATE TABLE IF NOT EXISTS terminal_runtime_sessions (
+  id TEXT PRIMARY KEY,
+  terminal_id TEXT NOT NULL,
+  runtime_type TEXT NOT NULL CHECK (
+    runtime_type IN ('embedded-pty', 'tmux', 'conpty-powershell', 'conpty-cmd', 'conpty-git-bash')
+  ),
+  session_key TEXT NOT NULL,
+  attach_target TEXT NOT NULL,
+  host_instance_id TEXT,
+  agent_pid INTEGER,
+  shell_pid INTEGER,
+  state TEXT NOT NULL CHECK (state IN ('starting', 'running', 'lost', 'closed', 'error')),
+  last_heartbeat_at TEXT,
+  last_checked_at TEXT,
+  last_error_detail TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (terminal_id) REFERENCES terminal_instances(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_terminal_runtime_sessions_terminal_id
+  ON terminal_runtime_sessions(terminal_id);
+CREATE INDEX IF NOT EXISTS idx_terminal_runtime_sessions_state
+  ON terminal_runtime_sessions(state, updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS terminal_command_templates (
   id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL,
@@ -254,6 +284,15 @@ CREATE TABLE IF NOT EXISTS terminal_command_templates (
   args_json TEXT NOT NULL,
   env_json TEXT NOT NULL,
   port INTEGER,
+  runtime_type TEXT CHECK (
+    runtime_type IS NULL OR runtime_type IN (
+      'embedded-pty',
+      'tmux',
+      'conpty-powershell',
+      'conpty-cmd',
+      'conpty-git-bash'
+    )
+  ),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   FOREIGN KEY (workspace_id) REFERENCES workspaces(id),

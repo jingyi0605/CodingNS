@@ -217,7 +217,19 @@ export interface FileContextBinding {
   attachedAt: string;
 }
 
+export type PersistentTerminalRuntimeType =
+  | "tmux"
+  | "conpty-powershell"
+  | "conpty-cmd"
+  | "conpty-git-bash";
+export type TerminalRuntimeType = PersistentTerminalRuntimeType | "embedded-pty";
 export type TerminalStatus = "creating" | "running" | "closed" | "error";
+export type TerminalRuntimeSessionState =
+  | "starting"
+  | "running"
+  | "lost"
+  | "closed"
+  | "error";
 
 export interface TerminalInstance {
   id: string;
@@ -225,6 +237,9 @@ export interface TerminalInstance {
   name: string;
   cwd: string;
   shell: string;
+  runtimeType: TerminalRuntimeType;
+  runtimeSessionId: string;
+  attachTarget: string;
   status: TerminalStatus;
   processId: number | null;
   createdByUserId: string;
@@ -233,6 +248,23 @@ export interface TerminalInstance {
   closedAt: string | null;
   exitCode: number | null;
   statusDetail: string | null;
+}
+
+export interface TerminalRuntimeSession {
+  id: string;
+  terminalId: string;
+  runtimeType: TerminalRuntimeType;
+  sessionKey: string;
+  attachTarget: string;
+  hostInstanceId: string | null;
+  agentPid: number | null;
+  shellPid: number | null;
+  state: TerminalRuntimeSessionState;
+  lastHeartbeatAt: string | null;
+  lastCheckedAt: string | null;
+  lastErrorDetail: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export type TerminalConnectionState = "connected" | "disconnected" | "reconnecting";
@@ -263,6 +295,7 @@ export interface TerminalCommandTemplate {
   args: string[];
   env: Record<string, string>;
   port: number | null;
+  runtimeType: TerminalRuntimeType | null;
   createdAt: string;
   updatedAt: string;
 }

@@ -68,6 +68,7 @@ import { SessionStateRepository } from "../storage/repositories/session-state-re
 import { SessionStatusSnapshotRepository } from "../storage/repositories/session-status-snapshot-repository.js";
 import { TerminalCommandTemplateRepository } from "../storage/repositories/terminal-command-template-repository.js";
 import { TerminalInstanceRepository } from "../storage/repositories/terminal-instance-repository.js";
+import { TerminalRuntimeSessionRepository } from "../storage/repositories/terminal-runtime-session-repository.js";
 import { WorkspaceRepository } from "../storage/repositories/workspace-repository.js";
 import { createDatabaseClient } from "../storage/sqlite/client.js";
 import { TerminalWsHub } from "../ws/terminal-ws-hub.js";
@@ -97,6 +98,7 @@ export function createServer(config: HostConfig) {
     sessionStateRepository: new SessionStateRepository(database.db),
     sessionStatusSnapshotRepository: new SessionStatusSnapshotRepository(database.db),
     terminalInstanceRepository: new TerminalInstanceRepository(database.db),
+    terminalRuntimeSessionRepository: new TerminalRuntimeSessionRepository(database.db),
     terminalCommandTemplateRepository: new TerminalCommandTemplateRepository(database.db)
   };
 
@@ -180,6 +182,7 @@ export function createServer(config: HostConfig) {
   const terminalService = new TerminalService(
     database.db,
     repositories.terminalInstanceRepository,
+    repositories.terminalRuntimeSessionRepository,
     workspaceService,
     config.terminalIdleTimeoutSeconds
   );

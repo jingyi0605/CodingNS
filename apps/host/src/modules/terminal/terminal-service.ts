@@ -1,26 +1,37 @@
 import { EventEmitter } from "node:events";
+import path from "node:path";
 
 import type Database from "better-sqlite3";
 
 import { AppError } from "../../shared/errors/app-error.js";
 import { createId } from "../../shared/utils/id.js";
 import { nowIso } from "../../shared/utils/time.js";
-import type { TerminalInstance, TerminalOutputChunk } from "../../types/domain.js";
+import type {
+  TerminalInstance,
+  TerminalOutputChunk,
+  TerminalRuntimeSession,
+  TerminalRuntimeType
+} from "../../types/domain.js";
 import type { TerminalInstanceRepository } from "../../storage/repositories/terminal-instance-repository.js";
+import type { TerminalRuntimeSessionRepository } from "../../storage/repositories/terminal-runtime-session-repository.js";
 import type { WorkspaceService } from "../workspace/workspace-service.js";
 import { resolveWorkspaceCwd } from "./terminal-paths.js";
 import { getDefaultShell, resolveRequestedShell } from "./terminal-shell.js";
-import { PtyRuntimeManager, type TerminalRuntimeExitEvent } from "./runtime/pty-runtime-manager.js";
 import {
   TerminalOutputBuffer,
   type TerminalBackfillResult
 } from "./runtime/terminal-output-buffer.js";
+import {
+  TerminalRuntimeManager,
+  type RuntimeAttachmentExitEvent
+} from "./runtime/terminal-runtime-manager.js";
 
 interface CreateTerminalInput {
   workspaceId: string;
   name?: string;
   cwd?: string | null;
   shell?: string | null;
+  runtimeType?: TerminalRuntimeType | null;
   createdByUserId: string;
   env?: Record<string, string>;
 }
@@ -51,10 +62,9 @@ export declare interface TerminalService {
 
 export class TerminalService extends EventEmitter {
   private readonly outputBuffer = new TerminalOutputBuffer();
-  private readonly runtimeManager = new PtyRuntimeManager();
+  private readonly runtimeManager = new TerminalRuntimeManager();
   private readonly lastPersistedActivity = new Map<string, number>();
-  private readonly activeSubscribers = new Map<string, number>();
-  private readonly idleTimers = new Map<string, NodeJS.Timeout>();
+  private readonly terminalSubscriptionCounts = new Map<string, number>();
   private readonly pendingCloseReasons = new Map<string, TerminalCloseReason>();
   private readonly pendingDeletedTerminalIds = new Set<string>();
   private isDisposing = false;
@@ -62,8 +72,9 @@ export class TerminalService extends EventEmitter {
   constructor(
     private readonly db: Database.Database,
     private readonly terminalInstanceRepository: TerminalInstanceRepository,
+    private readonly terminalRuntimeSessionRepository: TerminalRuntimeSessionRepository,
     private readonly workspaceService: WorkspaceService,
-    private readonly idleTimeoutSeconds: number
+    _idleTimeoutSeconds: number
   ) {
     super();
 
@@ -73,6 +84,8 @@ export class TerminalService extends EventEmitter {
     this.runtimeManager.on("exit", (event) => {
       this.handleRuntimeExit(event);
     });
+
+    this.recoverRuntimeStates();
   }
 
   createTerminal(input: CreateTerminalInput): TerminalInstance {
@@ -80,13 +93,20 @@ export class TerminalService extends EventEmitter {
     const now = nowIso();
     const shell = resolveRequestedShell(sanitizeShell(input.shell) ?? getDefaultShell());
     const cwd = resolveWorkspaceCwd(workspace.path, input.cwd);
+    const runtimeType = resolveRequestedRuntimeType(input.runtimeType);
+    const runtimeSessionId = createId();
+    const attachTarget = buildAttachTarget(runtimeType, runtimeSessionId);
     const terminal: TerminalInstance = {
       id: createId(),
       workspaceId: workspace.id,
-      name: input.name?.trim() || `终端 ${new Date().toISOString().slice(11, 19)}`,
+      name: input.name?.trim() || buildDefaultTerminalName(cwd),
       cwd,
       shell,
+      runtimeType,
+      runtimeSessionId,
+      attachTarget,
       status: "creating",
+      processId: null,
       createdByUserId: input.createdByUserId,
       createdAt: now,
       lastActiveAt: now,
@@ -94,30 +114,63 @@ export class TerminalService extends EventEmitter {
       exitCode: null,
       statusDetail: null
     };
+    const runtimeSession: TerminalRuntimeSession = {
+      id: runtimeSessionId,
+      terminalId: terminal.id,
+      runtimeType,
+      sessionKey: runtimeSessionId,
+      attachTarget,
+      hostInstanceId: null,
+      agentPid: null,
+      shellPid: null,
+      state: "starting",
+      lastHeartbeatAt: null,
+      lastCheckedAt: now,
+      lastErrorDetail: null,
+      createdAt: now,
+      updatedAt: now
+    };
 
     const persist = this.db.transaction(() => {
       this.terminalInstanceRepository.create(terminal);
+      this.terminalRuntimeSessionRepository.create(runtimeSession);
     });
 
     persist();
 
     try {
-      this.runtimeManager.start(terminal, buildTerminalEnv(input.env));
+      const env = buildTerminalEnv(input.env);
+      const createdInspection = this.runtimeManager.createPersistentSession(
+        terminal,
+        runtimeSession,
+        env
+      );
+      const attachmentProcessId = this.runtimeManager.ensureAttached(terminal, runtimeSession, env);
+      const processId = createdInspection.shellPid ?? attachmentProcessId;
 
       const runningTerminal: TerminalInstance = {
         ...terminal,
-        status: "running"
+        status: "running",
+        processId
       };
       this.terminalInstanceRepository.updateLifecycle({
         id: runningTerminal.id,
         status: runningTerminal.status,
+        processId: runningTerminal.processId,
         lastActiveAt: runningTerminal.lastActiveAt,
         closedAt: null,
         exitCode: null,
         statusDetail: null
       });
+      this.terminalRuntimeSessionRepository.updateState({
+        id: runtimeSession.id,
+        shellPid: processId,
+        state: "running",
+        lastCheckedAt: nowIso(),
+        lastErrorDetail: createdInspection.detail,
+        updatedAt: nowIso()
+      });
       this.emit("status", runningTerminal);
-      this.scheduleIdleCleanup(runningTerminal.id);
 
       return runningTerminal;
     } catch (error) {
@@ -125,10 +178,19 @@ export class TerminalService extends EventEmitter {
       this.terminalInstanceRepository.updateLifecycle({
         id: terminal.id,
         status: "error",
+        processId: terminal.processId,
         lastActiveAt: failedAt,
         closedAt: failedAt,
         exitCode: null,
         statusDetail: error instanceof Error ? error.message : "PTY 启动失败"
+      });
+      this.terminalRuntimeSessionRepository.updateState({
+        id: runtimeSession.id,
+        shellPid: null,
+        state: "error",
+        lastCheckedAt: failedAt,
+        lastErrorDetail: error instanceof Error ? error.message : "PTY 启动失败",
+        updatedAt: failedAt
       });
       const failedTerminal = this.getTerminalOrThrow(terminal.id);
       this.emit("status", failedTerminal);
@@ -138,7 +200,18 @@ export class TerminalService extends EventEmitter {
 
   listTerminals(workspaceId: string): TerminalInstance[] {
     this.workspaceService.getWorkspaceOrThrow(workspaceId);
-    return this.terminalInstanceRepository.listByWorkspace(workspaceId);
+    const terminals = this.terminalInstanceRepository.listByWorkspace(workspaceId);
+    let hasLifecycleChange = false;
+
+    for (const terminal of terminals) {
+      if (this.reconcileTerminalRuntime(terminal)) {
+        hasLifecycleChange = true;
+      }
+    }
+
+    return hasLifecycleChange
+      ? this.terminalInstanceRepository.listByWorkspace(workspaceId)
+      : terminals;
   }
 
   getTerminalOrThrow(terminalId: string): TerminalInstance {
@@ -155,13 +228,26 @@ export class TerminalService extends EventEmitter {
     return terminal;
   }
 
+  getRuntimeSessionOrThrow(runtimeSessionId: string): TerminalRuntimeSession {
+    const session = this.terminalRuntimeSessionRepository.findById(runtimeSessionId);
+
+    if (!session) {
+      throw new AppError({
+        statusCode: 404,
+        errorCode: "RUNTIME_SESSION_NOT_FOUND",
+        detail: "指定终端运行时会话不存在"
+      });
+    }
+
+    return session;
+  }
+
   closeTerminal(
     terminalId: string,
     reason: TerminalCloseReason = "user_closed"
   ): { success: true } {
     const terminal = this.getTerminalOrThrow(terminalId);
-    this.cancelIdleCleanup(terminalId);
-    this.activeSubscribers.delete(terminalId);
+    const session = this.getRuntimeSessionOrThrow(terminal.runtimeSessionId);
     this.pendingCloseReasons.set(terminalId, reason);
 
     if (terminal.status === "closed" || terminal.status === "error") {
@@ -169,38 +255,43 @@ export class TerminalService extends EventEmitter {
       return { success: true };
     }
 
-    if (!this.runtimeManager.isRunning(terminalId)) {
-      const closedAt = nowIso();
-      this.terminalInstanceRepository.updateLifecycle({
-        id: terminalId,
-        status: "closed",
-        lastActiveAt: closedAt,
-        closedAt,
-        exitCode: terminal.exitCode,
-        statusDetail: resolveClosedStatusDetail(reason, terminal.statusDetail)
+    const willEmitExit = this.runtimeManager.terminateSession(terminal, session);
+
+    if (!willEmitExit) {
+      this.finalizeTerminalClosure(terminal, session, {
+        requestedClose: true,
+        exitCode: 0,
+        sessionAlive: false,
+        sessionDetail: null,
+        shellPid: null
       });
-      this.pendingCloseReasons.delete(terminalId);
-      this.emit("status", this.getTerminalOrThrow(terminalId));
-      return { success: true };
     }
 
-    this.runtimeManager.close(terminalId);
     return { success: true };
   }
 
   deleteTerminal(terminalId: string): { success: true } {
-    this.getTerminalOrThrow(terminalId);
-    this.cancelIdleCleanup(terminalId);
-    this.activeSubscribers.delete(terminalId);
+    const terminal = this.getTerminalOrThrow(terminalId);
+    const session = this.getRuntimeSessionOrThrow(terminal.runtimeSessionId);
     this.pendingCloseReasons.delete(terminalId);
     this.lastPersistedActivity.delete(terminalId);
     this.outputBuffer.clear(terminalId);
     this.pendingDeletedTerminalIds.add(terminalId);
-    this.terminalInstanceRepository.delete(terminalId);
+    const deleteRecords = this.db.transaction(() => {
+      this.terminalRuntimeSessionRepository.deleteByTerminalId(terminalId);
+      this.terminalInstanceRepository.delete(terminalId);
+    });
 
-    if (this.runtimeManager.isRunning(terminalId)) {
-      this.runtimeManager.close(terminalId);
-    } else {
+    try {
+      deleteRecords();
+    } catch (error) {
+      this.pendingDeletedTerminalIds.delete(terminalId);
+      throw error;
+    }
+
+    const willEmitExit = this.runtimeManager.terminateSession(terminal, session);
+
+    if (!willEmitExit) {
       this.pendingDeletedTerminalIds.delete(terminalId);
     }
 
@@ -217,8 +308,8 @@ export class TerminalService extends EventEmitter {
       });
     }
 
-    this.reconcileInactiveTerminal(terminalId);
-    this.runtimeManager.write(terminalId, content);
+    const terminal = this.ensureTerminalInteractive(terminalId);
+    this.runtimeManager.write(terminal.id, content);
     this.touchLastActiveAt(terminalId);
 
     return { accepted: true };
@@ -234,8 +325,8 @@ export class TerminalService extends EventEmitter {
       });
     }
 
-    this.reconcileInactiveTerminal(terminalId);
-    this.runtimeManager.resize(terminalId, cols, rows);
+    const terminal = this.ensureTerminalInteractive(terminalId);
+    this.runtimeManager.resize(terminal.id, cols, rows);
     this.touchLastActiveAt(terminalId);
 
     return { accepted: true };
@@ -246,14 +337,6 @@ export class TerminalService extends EventEmitter {
     lastCursor: string | null,
     callbacks: SubscribeTerminalCallbacks
   ): { close(): void } {
-    const terminal = this.reconcileInactiveTerminal(terminalId);
-    const backfill = this.outputBuffer.readSince(terminalId, lastCursor);
-    this.cancelIdleCleanup(terminalId);
-    this.activeSubscribers.set(terminalId, (this.activeSubscribers.get(terminalId) ?? 0) + 1);
-
-    void callbacks.onStatus(terminal);
-    void callbacks.onBackfill(backfill);
-
     const outputListener = (event: { terminalId: string; chunks: TerminalOutputChunk[] }) => {
       if (event.terminalId !== terminalId) {
         return;
@@ -282,25 +365,42 @@ export class TerminalService extends EventEmitter {
     this.on("status", statusListener);
     this.on("exit", exitListener);
 
+    this.retainTerminalSubscription(terminalId);
+
+    try {
+      const current = this.ensureTerminalAttachedForSubscription(terminalId);
+      const backfill = this.outputBuffer.readSince(terminalId, lastCursor);
+
+      void callbacks.onStatus(current);
+      void callbacks.onBackfill(backfill);
+    } catch (error) {
+      this.off("output", outputListener);
+      this.off("status", statusListener);
+      this.off("exit", exitListener);
+      this.releaseTerminalSubscription(terminalId);
+      throw error;
+    }
+
+    let closed = false;
+
     return {
       close: () => {
+        if (closed) {
+          return;
+        }
+
+        closed = true;
         this.off("output", outputListener);
         this.off("status", statusListener);
         this.off("exit", exitListener);
-        this.releaseSubscription(terminalId);
+        this.releaseTerminalSubscription(terminalId);
       }
     };
   }
 
   async dispose(): Promise<void> {
     this.isDisposing = true;
-
-    for (const timer of this.idleTimers.values()) {
-      clearTimeout(timer);
-    }
-
-    this.idleTimers.clear();
-    this.runtimeManager.closeAll();
+    this.runtimeManager.closeAllAttachments();
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
 
@@ -322,13 +422,10 @@ export class TerminalService extends EventEmitter {
     });
   }
 
-  private handleRuntimeExit(event: TerminalRuntimeExitEvent): void {
+  private handleRuntimeExit(event: RuntimeAttachmentExitEvent): void {
     if (this.isDisposing) {
       return;
     }
-
-    this.cancelIdleCleanup(event.terminalId);
-    this.activeSubscribers.delete(event.terminalId);
 
     if (this.pendingDeletedTerminalIds.delete(event.terminalId)) {
       this.pendingCloseReasons.delete(event.terminalId);
@@ -337,31 +434,15 @@ export class TerminalService extends EventEmitter {
       return;
     }
 
-    const closeReason = this.pendingCloseReasons.get(event.terminalId) ?? "user_closed";
-    this.pendingCloseReasons.delete(event.terminalId);
     const current = this.getTerminalOrThrow(event.terminalId);
-    const finishedAt = nowIso();
-    const status =
-      event.requestedClose || event.exitCode === 0 ? ("closed" as const) : ("error" as const);
+    const session = this.getRuntimeSessionOrThrow(current.runtimeSessionId);
 
-    this.terminalInstanceRepository.updateLifecycle({
-      id: event.terminalId,
-      status,
-      lastActiveAt: finishedAt,
-      closedAt: finishedAt,
-      exitCode: event.exitCode,
-      statusDetail:
-        status === "error"
-          ? `终端异常退出，exitCode=${event.exitCode ?? "unknown"}`
-          : resolveClosedStatusDetail(closeReason, current.statusDetail)
-    });
+    if (event.sessionAlive && !event.requestedClose) {
+      this.markTerminalRunning(current, session, event.shellPid, event.sessionDetail);
+      return;
+    }
 
-    const updated = this.getTerminalOrThrow(event.terminalId);
-    this.emit("status", updated);
-    this.emit("exit", {
-      terminal: updated,
-      requestedClose: event.requestedClose
-    });
+    this.finalizeTerminalClosure(current, session, event);
   }
 
   private touchLastActiveAt(terminalId: string): void {
@@ -369,8 +450,6 @@ export class TerminalService extends EventEmitter {
       return;
     }
 
-    this.cancelIdleCleanup(terminalId);
-    const hasSubscribers = (this.activeSubscribers.get(terminalId) ?? 0) > 0;
     const now = Date.now();
     const previous = this.lastPersistedActivity.get(terminalId) ?? 0;
 
@@ -378,85 +457,294 @@ export class TerminalService extends EventEmitter {
       this.lastPersistedActivity.set(terminalId, now);
       this.terminalInstanceRepository.touchLastActiveAt(terminalId, nowIso(new Date(now)));
     }
-
-    if (!hasSubscribers) {
-      // 终端重新活跃后，从当前时刻重新计算空闲清理窗口。
-      this.scheduleIdleCleanup(terminalId);
-    }
   }
 
-  private reconcileInactiveTerminal(terminalId: string): TerminalInstance {
+  private ensureTerminalInteractive(terminalId: string): TerminalInstance {
     const terminal = this.getTerminalOrThrow(terminalId);
+    const session = this.getRuntimeSessionOrThrow(terminal.runtimeSessionId);
+    const nextTerminal = this.ensureTerminalRunning(terminal, session, true);
 
-    if (this.runtimeManager.isRunning(terminalId)) {
-      return terminal;
+    if (nextTerminal.status !== "running") {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "TERMINAL_NOT_RUNNING",
+        detail: nextTerminal.statusDetail ?? "终端当前不可写入"
+      });
     }
 
+    return nextTerminal;
+  }
+
+  private ensureTerminalAttachedForSubscription(terminalId: string): TerminalInstance {
+    const terminal = this.getTerminalOrThrow(terminalId);
+    const session = this.getRuntimeSessionOrThrow(terminal.runtimeSessionId);
+    return this.ensureTerminalRunning(terminal, session, true);
+  }
+
+  private ensureTerminalRunning(
+    terminal: TerminalInstance,
+    session: TerminalRuntimeSession,
+    ensureAttached: boolean
+  ): TerminalInstance {
     if (terminal.status === "closed" || terminal.status === "error") {
       return terminal;
     }
 
+    const inspection = this.runtimeManager.inspectPersistentSession(terminal, session);
+
+    if (!inspection.alive) {
+      if (shouldMarkRuntimeLost(terminal, inspection.detail)) {
+        return this.markTerminalLost(terminal, session, inspection.detail);
+      }
+
+      return this.markTerminalError(terminal, session, inspection.detail ?? buildMissingProcessStatusDetail(terminal));
+    }
+
+    if (ensureAttached) {
+      const attachmentProcessId = this.runtimeManager.ensureAttached(terminal, session, buildTerminalEnv());
+      return this.markTerminalRunning(
+        terminal,
+        session,
+        inspection.shellPid ?? attachmentProcessId,
+        inspection.detail
+      );
+    }
+
+    return this.markTerminalRunning(terminal, session, inspection.shellPid, inspection.detail);
+  }
+
+  private reconcileTerminalRuntime(terminal: TerminalInstance): boolean {
+    if (terminal.status === "closed" || terminal.status === "error") {
+      return false;
+    }
+
+    const before = JSON.stringify({
+      status: terminal.status,
+      processId: terminal.processId,
+      statusDetail: terminal.statusDetail
+    });
+    const session = this.getRuntimeSessionOrThrow(terminal.runtimeSessionId);
+    const nextTerminal = this.ensureTerminalRunning(terminal, session, false);
+    const after = JSON.stringify({
+      status: nextTerminal.status,
+      processId: nextTerminal.processId,
+      statusDetail: nextTerminal.statusDetail
+    });
+
+    return before !== after;
+  }
+
+  private markTerminalRunning(
+    terminal: TerminalInstance,
+    session: TerminalRuntimeSession,
+    processId: number | null,
+    detail: string | null
+  ): TerminalInstance {
+    const shouldUpdate =
+      terminal.status !== "running" ||
+      terminal.processId !== processId ||
+      terminal.closedAt !== null ||
+      (terminal.statusDetail ?? null) !== (detail ?? null) ||
+      session.state !== "running" ||
+      session.shellPid !== processId ||
+      (session.lastErrorDetail ?? null) !== (detail ?? null);
+
+    if (!shouldUpdate) {
+      return terminal;
+    }
+
+    const updatedAt = nowIso();
+    this.terminalInstanceRepository.updateLifecycle({
+      id: terminal.id,
+      status: "running",
+      processId,
+      lastActiveAt: terminal.lastActiveAt,
+      closedAt: null,
+      exitCode: null,
+      statusDetail: detail ?? null
+    });
+    this.terminalRuntimeSessionRepository.updateState({
+      id: session.id,
+      shellPid: processId,
+      state: "running",
+      lastCheckedAt: updatedAt,
+      lastErrorDetail: detail ?? null,
+      updatedAt
+    });
+
+    const updated = this.getTerminalOrThrow(terminal.id);
+    this.emit("status", updated);
+    return updated;
+  }
+
+  private markTerminalLost(
+    terminal: TerminalInstance,
+    session: TerminalRuntimeSession,
+    detail: string | null
+  ): TerminalInstance {
+    const updatedAt = nowIso();
+    this.terminalRuntimeSessionRepository.updateState({
+      id: session.id,
+      shellPid: terminal.processId,
+      state: "lost",
+      lastCheckedAt: updatedAt,
+      lastErrorDetail: detail ?? "RUNTIME_LOST",
+      updatedAt
+    });
+
+    this.terminalInstanceRepository.updateLifecycle({
+      id: terminal.id,
+      status: "running",
+      processId: terminal.processId,
+      lastActiveAt: terminal.lastActiveAt,
+      closedAt: null,
+      exitCode: null,
+      statusDetail: detail ?? terminal.statusDetail
+    });
+
+    const updated = this.getTerminalOrThrow(terminal.id);
+    this.emit("status", updated);
+    return updated;
+  }
+
+  private markTerminalError(
+    terminal: TerminalInstance,
+    session: TerminalRuntimeSession,
+    detail: string
+  ): TerminalInstance {
     const closedAt = nowIso();
     this.terminalInstanceRepository.updateLifecycle({
-      id: terminalId,
-      status: "closed",
+      id: terminal.id,
+      status: "error",
+      processId: terminal.processId,
       lastActiveAt: closedAt,
       closedAt,
       exitCode: terminal.exitCode,
-      statusDetail: resolveClosedStatusDetail("user_closed", terminal.statusDetail)
+      statusDetail: detail
+    });
+    this.terminalRuntimeSessionRepository.updateState({
+      id: session.id,
+      shellPid: terminal.processId,
+      state: "error",
+      lastCheckedAt: closedAt,
+      lastErrorDetail: detail,
+      updatedAt: closedAt
     });
 
-    const closedTerminal = this.getTerminalOrThrow(terminalId);
-    this.emit("status", closedTerminal);
-    return closedTerminal;
+    const updated = this.getTerminalOrThrow(terminal.id);
+    this.emit("status", updated);
+    return updated;
   }
 
-  private releaseSubscription(terminalId: string): void {
-    const current = this.activeSubscribers.get(terminalId) ?? 0;
+  private finalizeTerminalClosure(
+    terminal: TerminalInstance,
+    session: TerminalRuntimeSession,
+    event: Pick<
+      RuntimeAttachmentExitEvent,
+      "requestedClose" | "exitCode" | "sessionAlive" | "sessionDetail" | "shellPid"
+    >
+  ): void {
+    const closeReason = this.pendingCloseReasons.get(terminal.id) ?? "user_closed";
+    this.pendingCloseReasons.delete(terminal.id);
+    const finishedAt = nowIso();
+    const status =
+      event.requestedClose || event.exitCode === 0 ? ("closed" as const) : ("error" as const);
+    const statusDetail =
+      status === "error"
+        ? event.sessionDetail ?? `终端异常退出，exitCode=${event.exitCode ?? "unknown"}`
+        : resolveClosedStatusDetail(closeReason, terminal.statusDetail);
 
-    if (current <= 1) {
-      this.activeSubscribers.delete(terminalId);
-      this.scheduleIdleCleanup(terminalId);
-      return;
-    }
+    this.terminalInstanceRepository.updateLifecycle({
+      id: terminal.id,
+      status,
+      processId: event.shellPid ?? terminal.processId,
+      lastActiveAt: finishedAt,
+      closedAt: finishedAt,
+      exitCode: event.exitCode,
+      statusDetail
+    });
+    this.terminalRuntimeSessionRepository.updateState({
+      id: session.id,
+      shellPid: event.shellPid,
+      state: status === "closed" ? "closed" : "error",
+      lastCheckedAt: finishedAt,
+      lastErrorDetail: status === "error" ? statusDetail : null,
+      updatedAt: finishedAt
+    });
 
-    this.activeSubscribers.set(terminalId, current - 1);
+    const updated = this.getTerminalOrThrow(terminal.id);
+    this.emit("status", updated);
+    this.emit("exit", {
+      terminal: updated,
+      requestedClose: event.requestedClose
+    });
   }
 
-  private scheduleIdleCleanup(terminalId: string): void {
-    this.cancelIdleCleanup(terminalId);
+  private recoverRuntimeStates(): void {
+    const terminals = this.terminalInstanceRepository.listRecoverable();
 
-    if (this.idleTimeoutSeconds <= 0 || !this.runtimeManager.isRunning(terminalId)) {
-      return;
-    }
+    for (const terminal of terminals) {
+      const session = this.terminalRuntimeSessionRepository.findById(terminal.runtimeSessionId);
 
-    const timer = setTimeout(() => {
-      this.idleTimers.delete(terminalId);
-
-      if ((this.activeSubscribers.get(terminalId) ?? 0) > 0) {
-        return;
+      if (!session) {
+        this.markTerminalError(terminal, {
+          id: terminal.runtimeSessionId,
+          terminalId: terminal.id,
+          runtimeType: terminal.runtimeType,
+          sessionKey: terminal.runtimeSessionId,
+          attachTarget: terminal.attachTarget,
+          hostInstanceId: null,
+          agentPid: null,
+          shellPid: terminal.processId,
+          state: "error",
+          lastHeartbeatAt: null,
+          lastCheckedAt: null,
+          lastErrorDetail: "RUNTIME_SESSION_MISSING",
+          createdAt: terminal.createdAt,
+          updatedAt: terminal.lastActiveAt
+        }, "RUNTIME_SESSION_MISSING");
+        continue;
       }
 
-      if (!this.runtimeManager.isRunning(terminalId)) {
-        return;
-      }
-
-      this.closeTerminal(terminalId, "idle_timeout");
-    }, this.idleTimeoutSeconds * 1000);
-
-    timer.unref?.();
-    this.idleTimers.set(terminalId, timer);
+      this.ensureTerminalRunning(terminal, session, false);
+    }
   }
 
-  private cancelIdleCleanup(terminalId: string): void {
-    const timer = this.idleTimers.get(terminalId);
+  private retainTerminalSubscription(terminalId: string): void {
+    const currentCount = this.terminalSubscriptionCounts.get(terminalId) ?? 0;
+    this.terminalSubscriptionCounts.set(terminalId, currentCount + 1);
+  }
 
-    if (!timer) {
+  private releaseTerminalSubscription(terminalId: string): void {
+    const currentCount = this.terminalSubscriptionCounts.get(terminalId) ?? 0;
+
+    if (currentCount <= 1) {
+      this.terminalSubscriptionCounts.delete(terminalId);
+      this.detachRuntimeAttachmentIfIdle(terminalId);
       return;
     }
 
-    clearTimeout(timer);
-    this.idleTimers.delete(terminalId);
+    this.terminalSubscriptionCounts.set(terminalId, currentCount - 1);
+  }
+
+  private detachRuntimeAttachmentIfIdle(terminalId: string): void {
+    if (this.isDisposing) {
+      return;
+    }
+
+    const terminal = this.terminalInstanceRepository.findById(terminalId);
+
+    if (!terminal || terminal.status !== "running") {
+      return;
+    }
+
+    const session = this.terminalRuntimeSessionRepository.findById(terminal.runtimeSessionId);
+
+    if (!session || session.runtimeType === "embedded-pty") {
+      return;
+    }
+
+    this.runtimeManager.detach(terminalId);
   }
 }
 
@@ -479,6 +767,31 @@ function sanitizeShell(shell?: string | null): string | null {
   return value;
 }
 
+function resolveRequestedRuntimeType(input?: TerminalRuntimeType | null): TerminalRuntimeType {
+  const runtimeType = input ?? (process.platform === "win32" ? "embedded-pty" : "tmux");
+
+  if (
+    runtimeType !== "embedded-pty" &&
+    runtimeType !== "tmux"
+  ) {
+    throw new AppError({
+      statusCode: 400,
+      errorCode: "UNSUPPORTED_TERMINAL_RUNTIME",
+      detail: `当前 Host 还未实现 runtime=${runtimeType}`
+    });
+  }
+
+  return runtimeType;
+}
+
+function buildAttachTarget(runtimeType: TerminalRuntimeType, runtimeSessionId: string): string {
+  if (runtimeType === "embedded-pty") {
+    return `embedded:${runtimeSessionId}`;
+  }
+
+  return `${runtimeType}:${runtimeSessionId}`;
+}
+
 function buildTerminalEnv(extraEnv?: Record<string, string>): Record<string, string> {
   const env: Record<string, string> = {};
 
@@ -495,6 +808,32 @@ function buildTerminalEnv(extraEnv?: Record<string, string>): Record<string, str
   return env;
 }
 
+function buildDefaultTerminalName(cwd: string): string {
+  const folderName = path.basename(cwd).trim();
+  return folderName || "终端";
+}
+
+function buildMissingProcessStatusDetail(terminal: TerminalInstance): string {
+  if (terminal.processId && !isProcessAlive(terminal.processId)) {
+    return `终端绑定进程已停止，PID=${terminal.processId}`;
+  }
+
+  if (terminal.processId) {
+    return `终端运行时已经失联，PID=${terminal.processId}`;
+  }
+
+  return "终端运行时已经失联";
+}
+
+function isProcessAlive(processId: number): boolean {
+  try {
+    process.kill(processId, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function resolveClosedStatusDetail(
   reason: TerminalCloseReason,
   currentStatusDetail: string | null
@@ -504,4 +843,11 @@ function resolveClosedStatusDetail(
   }
 
   return currentStatusDetail;
+}
+
+function shouldMarkRuntimeLost(
+  terminal: TerminalInstance,
+  detail: string | null
+): boolean {
+  return terminal.runtimeType !== "embedded-pty" && Boolean(detail?.includes("检查失败"));
 }

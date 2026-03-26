@@ -6,64 +6,73 @@ import { EventEmitter } from "node:events";
 import { spawn, type IPty } from "node-pty";
 
 import { AppError } from "../../../shared/errors/app-error.js";
-import type { TerminalInstance } from "../../../types/domain.js";
 
 const require = createRequire(import.meta.url);
 let hasEnsuredPtySpawnHelper = false;
 
-export interface TerminalRuntimeExitEvent {
-  terminalId: string;
+export interface HostAttachmentExitEvent {
+  attachmentId: string;
   exitCode: number | null;
   requestedClose: boolean;
 }
 
-interface TerminalRuntimeRecord {
+interface HostAttachmentRecord {
   pty: IPty;
   processId: number | null;
 }
 
-export declare interface PtyRuntimeManager {
-  on(event: "output", listener: (event: { terminalId: string; content: string }) => void): this;
-  on(event: "exit", listener: (event: TerminalRuntimeExitEvent) => void): this;
-  emit(event: "output", eventPayload: { terminalId: string; content: string }): boolean;
-  emit(event: "exit", eventPayload: TerminalRuntimeExitEvent): boolean;
+export declare interface PtyHostAttachmentManager {
+  on(event: "output", listener: (event: { attachmentId: string; content: string }) => void): this;
+  on(event: "exit", listener: (event: HostAttachmentExitEvent) => void): this;
+  emit(event: "output", eventPayload: { attachmentId: string; content: string }): boolean;
+  emit(event: "exit", eventPayload: HostAttachmentExitEvent): boolean;
 }
 
-export class PtyRuntimeManager extends EventEmitter {
-  private readonly runtimes = new Map<string, TerminalRuntimeRecord>();
+export class PtyHostAttachmentManager extends EventEmitter {
+  private readonly attachments = new Map<string, HostAttachmentRecord>();
   private readonly requestedClose = new Set<string>();
 
-  start(terminal: TerminalInstance, env: Record<string, string>): number | null {
+  start(
+    attachmentId: string,
+    input: {
+      command: string;
+      args: string[];
+      cwd: string;
+      env: Record<string, string>;
+      cols?: number;
+      rows?: number;
+    }
+  ): number | null {
     try {
       ensurePtySpawnHelperExecutable();
 
-      const ptyProcess = spawn(terminal.shell, [], {
-        cols: 120,
-        rows: 30,
-        cwd: terminal.cwd,
-        env,
+      const ptyProcess = spawn(input.command, input.args, {
+        cols: input.cols ?? 120,
+        rows: input.rows ?? 30,
+        cwd: input.cwd,
+        env: input.env,
         name: "xterm-color"
       });
 
       const processId = normalizeProcessId(ptyProcess.pid);
-      this.runtimes.set(terminal.id, {
+      this.attachments.set(attachmentId, {
         pty: ptyProcess,
         processId
       });
 
       ptyProcess.onData((content) => {
         this.emit("output", {
-          terminalId: terminal.id,
+          attachmentId,
           content
         });
       });
 
       ptyProcess.onExit((event) => {
-        this.runtimes.delete(terminal.id);
-        const requestedClose = this.requestedClose.delete(terminal.id);
+        this.attachments.delete(attachmentId);
+        const requestedClose = this.requestedClose.delete(attachmentId);
 
         this.emit("exit", {
-          terminalId: terminal.id,
+          attachmentId,
           exitCode: event.exitCode ?? null,
           requestedClose
         });
@@ -79,8 +88,8 @@ export class PtyRuntimeManager extends EventEmitter {
     }
   }
 
-  write(terminalId: string, content: string): void {
-    const runtime = this.runtimes.get(terminalId);
+  write(attachmentId: string, content: string): void {
+    const runtime = this.attachments.get(attachmentId);
 
     if (!runtime) {
       throw new AppError({
@@ -93,8 +102,8 @@ export class PtyRuntimeManager extends EventEmitter {
     runtime.pty.write(content);
   }
 
-  resize(terminalId: string, cols: number, rows: number): void {
-    const runtime = this.runtimes.get(terminalId);
+  resize(attachmentId: string, cols: number, rows: number): void {
+    const runtime = this.attachments.get(attachmentId);
 
     if (!runtime) {
       throw new AppError({
@@ -107,24 +116,28 @@ export class PtyRuntimeManager extends EventEmitter {
     runtime.pty.resize(cols, rows);
   }
 
-  close(terminalId: string): void {
-    const runtime = this.runtimes.get(terminalId);
+  close(attachmentId: string): void {
+    const runtime = this.attachments.get(attachmentId);
 
     if (!runtime) {
       return;
     }
 
-    this.requestedClose.add(terminalId);
+    this.requestedClose.add(attachmentId);
     runtime.pty.kill();
   }
 
-  isRunning(terminalId: string): boolean {
-    return this.runtimes.has(terminalId);
+  isRunning(attachmentId: string): boolean {
+    return this.attachments.has(attachmentId);
+  }
+
+  getProcessId(attachmentId: string): number | null {
+    return this.attachments.get(attachmentId)?.processId ?? null;
   }
 
   closeAll(): void {
-    for (const terminalId of this.runtimes.keys()) {
-      this.close(terminalId);
+    for (const attachmentId of this.attachments.keys()) {
+      this.close(attachmentId);
     }
   }
 }

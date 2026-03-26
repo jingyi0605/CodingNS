@@ -34,6 +34,7 @@ type TerminalIncomingEvent =
       terminal: {
         id: string;
         status: "creating" | "running" | "closed" | "error";
+        processId?: number | null;
         statusDetail: string | null;
       };
     }
@@ -44,6 +45,7 @@ type TerminalIncomingEvent =
       terminal: {
         id: string;
         status: "creating" | "running" | "closed" | "error";
+        processId?: number | null;
         statusDetail: string | null;
       };
     }

@@ -22,7 +22,9 @@ export function createDatabaseClient(databasePath: string): DatabaseClient {
   ensureSessionIndexArchiveColumn(db);
   ensureSessionChangedFileTables(db);
   ensureTerminalInstanceProcessIdColumn(db);
+  ensureTerminalRuntimeSchema(db);
   ensureTerminalCommandTemplatePortColumn(db);
+  ensureTerminalCommandTemplateRuntimeTypeColumn(db);
 
   return {
     db,
@@ -161,6 +163,18 @@ function ensureTerminalCommandTemplatePortColumn(db: Database.Database): void {
   db.exec("ALTER TABLE terminal_command_templates ADD COLUMN port INTEGER");
 }
 
+function ensureTerminalCommandTemplateRuntimeTypeColumn(db: Database.Database): void {
+  const columns = db
+    .prepare("PRAGMA table_info(terminal_command_templates)")
+    .all() as Array<{ name: string }>;
+
+  if (columns.some((column) => column.name === "runtime_type")) {
+    return;
+  }
+
+  db.exec("ALTER TABLE terminal_command_templates ADD COLUMN runtime_type TEXT");
+}
+
 function ensureTerminalInstanceProcessIdColumn(db: Database.Database): void {
   const columns = db
     .prepare("PRAGMA table_info(terminal_instances)")
@@ -171,4 +185,119 @@ function ensureTerminalInstanceProcessIdColumn(db: Database.Database): void {
   }
 
   db.exec("ALTER TABLE terminal_instances ADD COLUMN process_id INTEGER");
+}
+
+function ensureTerminalRuntimeSchema(db: Database.Database): void {
+  const columns = db
+    .prepare("PRAGMA table_info(terminal_instances)")
+    .all() as Array<{ name: string }>;
+  const columnNames = new Set(columns.map((column) => column.name));
+
+  if (!columnNames.has("runtime_type")) {
+    db.exec(
+      "ALTER TABLE terminal_instances ADD COLUMN runtime_type TEXT NOT NULL DEFAULT 'embedded-pty'"
+    );
+  }
+
+  if (!columnNames.has("runtime_session_id")) {
+    db.exec("ALTER TABLE terminal_instances ADD COLUMN runtime_session_id TEXT NOT NULL DEFAULT ''");
+  }
+
+  if (!columnNames.has("attach_target")) {
+    db.exec("ALTER TABLE terminal_instances ADD COLUMN attach_target TEXT NOT NULL DEFAULT ''");
+  }
+
+  db.exec(`
+    UPDATE terminal_instances
+    SET runtime_type = 'embedded-pty'
+    WHERE runtime_type IS NULL OR trim(runtime_type) = '';
+
+    UPDATE terminal_instances
+    SET runtime_session_id = 'legacy-' || id
+    WHERE runtime_session_id IS NULL OR trim(runtime_session_id) = '';
+
+    UPDATE terminal_instances
+    SET attach_target = 'embedded:' || id
+    WHERE attach_target IS NULL OR trim(attach_target) = '';
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS terminal_runtime_sessions (
+      id TEXT PRIMARY KEY,
+      terminal_id TEXT NOT NULL,
+      runtime_type TEXT NOT NULL CHECK (
+        runtime_type IN ('embedded-pty', 'tmux', 'conpty-powershell', 'conpty-cmd', 'conpty-git-bash')
+      ),
+      session_key TEXT NOT NULL,
+      attach_target TEXT NOT NULL,
+      host_instance_id TEXT,
+      agent_pid INTEGER,
+      shell_pid INTEGER,
+      state TEXT NOT NULL CHECK (state IN ('starting', 'running', 'lost', 'closed', 'error')),
+      last_heartbeat_at TEXT,
+      last_checked_at TEXT,
+      last_error_detail TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (terminal_id) REFERENCES terminal_instances(id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_terminal_instances_runtime_session_id
+      ON terminal_instances(runtime_session_id);
+
+    CREATE INDEX IF NOT EXISTS idx_terminal_runtime_sessions_terminal_id
+      ON terminal_runtime_sessions(terminal_id);
+
+    CREATE INDEX IF NOT EXISTS idx_terminal_runtime_sessions_state
+      ON terminal_runtime_sessions(state, updated_at DESC);
+  `);
+
+  db.exec(`
+    INSERT INTO terminal_runtime_sessions (
+      id,
+      terminal_id,
+      runtime_type,
+      session_key,
+      attach_target,
+      host_instance_id,
+      agent_pid,
+      shell_pid,
+      state,
+      last_heartbeat_at,
+      last_checked_at,
+      last_error_detail,
+      created_at,
+      updated_at
+    )
+    SELECT
+      terminal_instances.runtime_session_id,
+      terminal_instances.id,
+      terminal_instances.runtime_type,
+      terminal_instances.runtime_session_id,
+      terminal_instances.attach_target,
+      NULL,
+      NULL,
+      terminal_instances.process_id,
+      CASE terminal_instances.status
+        WHEN 'creating' THEN 'starting'
+        WHEN 'running' THEN 'lost'
+        WHEN 'closed' THEN 'closed'
+        ELSE 'error'
+      END,
+      NULL,
+      terminal_instances.last_active_at,
+      CASE
+        WHEN terminal_instances.status = 'error' THEN terminal_instances.status_detail
+        WHEN terminal_instances.status = 'running' THEN 'LEGACY_RUNTIME_REQUIRES_REATTACH'
+        ELSE NULL
+      END,
+      terminal_instances.created_at,
+      terminal_instances.last_active_at
+    FROM terminal_instances
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM terminal_runtime_sessions
+      WHERE terminal_runtime_sessions.id = terminal_instances.runtime_session_id
+    );
+  `);
 }

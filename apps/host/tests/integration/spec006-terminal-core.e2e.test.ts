@@ -111,6 +111,7 @@ describe("spec006 终端核心能力", () => {
     });
     expect(firstTerminalResponse.statusCode).toBe(201);
     expect(firstTerminalResponse.json().status).toBe("running");
+    expect(firstTerminalResponse.json().processId).toEqual(expect.any(Number));
     const firstTerminalId = firstTerminalResponse.json().id as string;
 
     const secondTerminalResponse = await hosted.app.inject({
@@ -125,6 +126,7 @@ describe("spec006 终端核心能力", () => {
       }
     });
     expect(secondTerminalResponse.statusCode).toBe(201);
+    expect(secondTerminalResponse.json().processId).toEqual(expect.any(Number));
     const secondTerminalId = secondTerminalResponse.json().id as string;
 
     const terminalList = await hosted.app.inject({
@@ -528,7 +530,7 @@ describe("spec006 终端核心能力", () => {
     expect(createdTerminal?.shell).toBe(powerShell.shell);
   }, 20000);
 
-  it("在空闲超时后自动清理无人使用的终端", async () => {
+  it("终端在后台常驻，并在绑定进程退出后标记为 error", async () => {
     const fixture = createEmptyFixture();
     activeFixtures.push(fixture);
 
@@ -585,17 +587,43 @@ describe("spec006 终端核心能力", () => {
     });
     expect(created.statusCode).toBe(201);
     const terminalId = created.json().id as string;
+    expect(created.json().processId).toEqual(expect.any(Number));
 
-    const closedTerminal = await waitForTerminalStatus(
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+
+    const stillRunning = await waitForTerminalStatus(
       hosted,
       workspaceId,
       accessToken,
       terminalId,
-      "closed"
+      "running"
     );
-    expect(closedTerminal.id).toBe(terminalId);
-    expect(closedTerminal.status).toBe("closed");
-    expect(closedTerminal.statusDetail).toBe("TERMINAL_IDLE_TIMEOUT");
+    expect(stillRunning.id).toBe(terminalId);
+    expect(stillRunning.processId).toEqual(expect.any(Number));
+
+    const exitResponse = await hosted.app.inject({
+      method: "POST",
+      url: `/api/terminals/${terminalId}/input`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        content: "exit 7\r"
+      }
+    });
+    expect(exitResponse.statusCode).toBe(200);
+
+    const erroredTerminal = await waitForTerminalStatus(
+      hosted,
+      workspaceId,
+      accessToken,
+      terminalId,
+      "error"
+    );
+    expect(erroredTerminal.id).toBe(terminalId);
+    expect(erroredTerminal.status).toBe("error");
+    expect(erroredTerminal.processId).toEqual(expect.any(Number));
+    expect(String(erroredTerminal.statusDetail)).toContain("exitCode=7");
   }, 10000);
 });
 

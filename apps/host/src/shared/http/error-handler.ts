@@ -29,6 +29,15 @@ export function setErrorHandler(
   request: FastifyRequest,
   reply: FastifyReply
 ): FastifyReply {
+  const requestContext = {
+    method: request.method,
+    url: request.url,
+    errorName: error.name,
+    errorMessage: error.message
+  };
+
+  // Host 当前关闭了 Fastify 内置 logger，这里显式写 stderr，避免 500 只有前端提示没有后端痕迹。
+  console.error("[host-error]", requestContext, error);
   request.log.error(error);
 
   if (isAppError(error)) {
