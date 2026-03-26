@@ -2923,6 +2923,49 @@ body {
     0 10px 24px rgba(15, 23, 42, 0.12);
 }
 
+.workbench-shell .terminal-toolbar-toggle-tool {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  padding: 0;
+  border-color: rgba(60, 60, 67, 0.14);
+  border-radius: 9px;
+  background: rgba(246, 246, 248, 0.88);
+  color: rgba(58, 58, 60, 0.82);
+  box-shadow: none;
+  backdrop-filter: blur(18px) saturate(180%);
+}
+
+.workbench-shell .terminal-toolbar-toggle-tool:hover {
+  background: rgba(238, 238, 242, 0.96);
+  border-color: rgba(60, 60, 67, 0.18);
+  color: rgba(28, 28, 30, 0.9);
+  box-shadow: none;
+  transform: none;
+}
+
+.workbench-shell .terminal-toolbar-toggle-tool:active {
+  background: rgba(229, 229, 234, 0.98);
+}
+
+.workbench-shell .terminal-toolbar-toggle-tool[data-open="true"] {
+  background: rgba(229, 229, 234, 0.98);
+  border-color: rgba(60, 60, 67, 0.2);
+  color: rgba(28, 28, 30, 0.94);
+  box-shadow: none;
+}
+
+.workbench-shell .terminal-toolbar-icon-tool {
+  width: 15px;
+  height: 15px;
+}
+
+.workbench-shell .terminal-toolbar-icon-tool svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+}
+
 .workbench-shell .terminal-tab-inline-action {
   width: 28px;
   height: 28px;

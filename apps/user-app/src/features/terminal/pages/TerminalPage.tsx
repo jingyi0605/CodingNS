@@ -1136,7 +1136,7 @@ export function TerminalPage() {
                 <button
                   ref={toolbarToggleRef}
                   type="button"
-                  className="terminal-toolbar-toggle"
+                  className="terminal-toolbar-toggle terminal-toolbar-toggle-tool"
                   data-open={toolbarOpen}
                   aria-label={t("terminal.toolbarToggleAction")}
                   aria-expanded={toolbarOpen}
@@ -1145,9 +1145,21 @@ export function TerminalPage() {
                     setToolbarOpen((current) => !current);
                   }}
                 >
-                  <span className="terminal-toolbar-icon" aria-hidden="true">
-                    <svg viewBox="0 0 16 16" focusable="false">
-                      <path d="M9.86 1.79a.75.75 0 0 1 .83.17l.86.86a.75.75 0 0 1 .18.78l-.57 1.72 1.95 1.95 1.72-.57a.75.75 0 0 1 .78.18l.86.86a.75.75 0 0 1 .17.83l-.47 1.26a4.25 4.25 0 0 1-5.38 2.59l-4.83 4.83a1.75 1.75 0 1 1-2.48-2.48l4.83-4.83a4.25 4.25 0 0 1 2.59-5.38l1.26-.47ZM10.2 3.65l-.64.24a2.75 2.75 0 0 0-1.67 3.48.75.75 0 0 1-.18.77l-5.06 5.06a.25.25 0 1 0 .35.35l5.07-5.06a.75.75 0 0 1 .77-.18 2.75 2.75 0 0 0 3.48-1.67l.24-.64-1.31.44a.75.75 0 0 1-.76-.18L9.94 5.72a.75.75 0 0 1-.18-.76l.44-1.31Z" />
+                  <span className="terminal-toolbar-icon terminal-toolbar-icon-tool" aria-hidden="true">
+                    <svg viewBox="0 0 20 20" fill="none" focusable="false">
+                      <path
+                        d="M13.1 3.3a3.1 3.1 0 0 0-2.4 3.77L4.95 12.82a1.5 1.5 0 1 0 2.12 2.12l5.74-5.74a3.1 3.1 0 0 0 3.77-2.4l-1.76.5a1.06 1.06 0 0 1-1.04-.28l-1.3-1.3a1.06 1.06 0 0 1-.28-1.04l.9-1.38Z"
+                        stroke="currentColor"
+                        strokeWidth="1.35"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                      <path
+                        d="m5.85 11.92 2.22 2.22"
+                        stroke="currentColor"
+                        strokeWidth="1.35"
+                        strokeLinecap="round"
+                      />
                     </svg>
                   </span>
                 </button>
