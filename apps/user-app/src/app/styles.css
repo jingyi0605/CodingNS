@@ -3700,6 +3700,28 @@ textarea:focus-visible {
   color: #fb923c;
 }
 
+.session-runtime-origin-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  flex-shrink: 0;
+  line-height: 1.4;
+}
+
+.session-runtime-origin-badge.inferred {
+  background: rgba(234, 179, 8, 0.15);
+  color: #a16207;
+}
+
+[data-theme="dark"] .session-runtime-origin-badge.inferred {
+  background: rgba(234, 179, 8, 0.2);
+  color: #facc15;
+}
+
 /* ========================================
    Workbench App Refresh
    ======================================== */
@@ -4052,6 +4074,98 @@ textarea:focus-visible {
   padding: 0 10px 8px;
 }
 
+.queued-message-list {
+  position: relative;
+  z-index: 1;
+  margin: 0 12px 8px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 78%, transparent);
+  border-radius: 18px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 94%, transparent), color-mix(in srgb, var(--bg-primary) 98%, transparent));
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.05);
+}
+
+.queued-message-list__header h2,
+.queued-message-list__header p {
+  margin: 0;
+}
+
+.queued-message-list__header h2 {
+  font-size: 14px;
+}
+
+.queued-message-list__header p {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.queued-message-list__items {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.queued-message-item {
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 82%, transparent);
+  background: color-mix(in srgb, var(--bg-hover) 74%, transparent);
+}
+
+.queued-message-item__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+}
+
+.queued-message-item__order {
+  color: var(--text-secondary);
+}
+
+.queued-message-item__status {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+}
+
+.queued-message-item__status--failed {
+  background: color-mix(in srgb, var(--status-danger) 12%, transparent);
+  color: var(--status-danger);
+}
+
+.queued-message-item__content,
+.queued-message-item__error {
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.queued-message-item__content {
+  font-size: 13px;
+}
+
+.queued-message-item__error {
+  font-size: 12px;
+  color: var(--status-danger);
+}
+
+.queued-message-item__delete {
+  margin-top: 10px;
+  padding: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.queued-message-item__delete:disabled {
+  opacity: 0.6;
+}
+
 .message-list {
   display: flex;
   flex-direction: column;
@@ -4367,6 +4481,11 @@ textarea:focus-visible {
 .composer-slash-item:hover {
   background: color-mix(in srgb, var(--bg-active) 80%, transparent);
   transform: translateX(2px);
+}
+
+.composer-send-queue {
+  background: color-mix(in srgb, var(--bg-hover) 82%, transparent);
+  color: var(--text-primary);
 }
 
 .composer-slash-command {
@@ -8906,6 +9025,24 @@ textarea:focus-visible {
   min-width: 0;
 }
 
+.settings-inline-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+.settings-inline-form .settings-text-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.settings-inline-form .settings-button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
 .settings-text-input,
 .settings-select {
   width: 100%;
@@ -9098,6 +9235,15 @@ textarea:focus-visible {
 @media (max-width: 640px) {
   .settings-page {
     padding: 16px 14px 20px;
+  }
+
+  .settings-inline-form {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .settings-inline-form .settings-button {
+    width: 100%;
   }
 
   .settings-title {

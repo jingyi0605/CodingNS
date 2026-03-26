@@ -4,12 +4,17 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
+import { clientConfigStore } from "../config/client-config-store";
 import { serverConfigStore } from "../config/server-config";
 import { LoginPage } from "../features/auth/pages/LoginPage";
 import { authStore } from "../features/auth/store/auth-store";
 import { WorkbenchLayout } from "../features/conversation/components/WorkbenchLayout";
 import { ConversationPage } from "../features/conversation/pages/ConversationPage";
+import { SettingsPage } from "../features/settings/pages/SettingsPage";
+import { PlatformProvider } from "../platform/platform-provider";
 import { t } from "../shared/i18n";
+import { I18nProvider } from "../shared/i18n";
+import { ThemeProvider } from "../shared/theme";
 import { ToastProvider } from "../shared/toast";
 
 interface MockSocketMessage {
@@ -87,6 +92,14 @@ const originalWebSocket = global.WebSocket;
 describe("app routes", () => {
   beforeEach(() => {
     window.localStorage.clear();
+    clientConfigStore.hydrate({
+      platform: "web",
+      hostBaseUrl: "http://127.0.0.1:3002",
+      releaseChannel: "stable",
+      autoReconnect: true,
+      autoCheckUpdate: false,
+      language: "zh-CN"
+    });
     serverConfigStore.reset();
     authStore.clear();
     MockWebSocket.reset();
@@ -205,6 +218,30 @@ describe("app routes", () => {
 
     await waitFor(() => {
       expect(MockWebSocket.instances.some((socket) => socket.url.startsWith("ws://10.10.1.8:4100/ws?"))).toBe(true);
+    });
+  });
+
+  it("设置页点击保存按钮后会更新服务器地址", async () => {
+    renderSettingsPage();
+
+    const addressInput = screen.getByRole("textbox", { name: t("settings.serverAddress") });
+    const saveButton = screen.getByRole("button", { name: t("common.save") });
+
+    expect(saveButton).toBeDisabled();
+
+    await userEvent.clear(addressInput);
+    await userEvent.type(addressInput, "10.10.1.8:4100");
+
+    expect(saveButton).not.toBeDisabled();
+
+    await userEvent.click(saveButton);
+
+    await waitFor(() => {
+      expect(clientConfigStore.getState().hostBaseUrl).toBe("http://10.10.1.8:4100");
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: t("common.save") })).toBeDisabled();
     });
   });
 
@@ -838,6 +875,22 @@ function renderConversationRoute(sessionId: string) {
         </Routes>
       </MemoryRouter>
     </ToastProvider>
+  );
+}
+
+function renderSettingsPage() {
+  return render(
+    <PlatformProvider>
+      <I18nProvider language={clientConfigStore.getState().language}>
+        <ThemeProvider>
+          <MemoryRouter initialEntries={["/settings"]}>
+            <Routes>
+              <Route path="/settings" element={<SettingsPage />} />
+            </Routes>
+          </MemoryRouter>
+        </ThemeProvider>
+      </I18nProvider>
+    </PlatformProvider>
   );
 }
 

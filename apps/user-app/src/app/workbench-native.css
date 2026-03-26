@@ -751,6 +751,20 @@ body {
   text-transform: uppercase;
 }
 
+.session-runtime-origin-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 0 8px;
+  border-radius: var(--radius-pill);
+  border: 1px solid rgba(217, 119, 6, 0.18);
+  background: rgba(245, 158, 11, 0.12);
+  color: #b45309;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
 .workbench-session-actions {
   position: absolute;
   top: 4px;
@@ -1098,6 +1112,24 @@ body {
 
 .settings-row-theme .settings-row-control {
   width: 100%;
+}
+
+.settings-inline-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+.settings-inline-form .settings-text-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.settings-inline-form .settings-button {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .theme-selector {

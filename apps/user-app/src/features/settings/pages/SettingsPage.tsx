@@ -1,3 +1,4 @@
+import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { clientConfigStore, useClientConfigSelector } from "../../../config/client-config-store";
@@ -13,20 +14,39 @@ export function SettingsPage() {
   const { theme, setTheme } = useTheme();
   const runtimeConfig = useClientConfigSelector((state) => state);
   const platform = usePlatform();
+  const [hostBaseUrlDraft, setHostBaseUrlDraft] = useState(runtimeConfig.hostBaseUrl);
+
+  useEffect(() => {
+    setHostBaseUrlDraft(runtimeConfig.hostBaseUrl);
+  }, [runtimeConfig.hostBaseUrl]);
 
   function handleLogout(): void {
     authStore.clear();
     navigate("/login", { replace: true });
   }
 
-  function handleHostBaseUrlChange(value: string): void {
+  function getNormalizedHostBaseUrl(value: string): string | null {
     try {
-      void clientConfigStore.update({
-        hostBaseUrl: normalizeServerBaseUrl(value)
-      });
+      return normalizeServerBaseUrl(value);
     } catch {
-      // 输入过程中允许暂时不合法，真正保存交给 blur 时兜底。
+      return null;
     }
+  }
+
+  const normalizedHostBaseUrlDraft = getNormalizedHostBaseUrl(hostBaseUrlDraft);
+  const canSaveHostBaseUrl =
+    normalizedHostBaseUrlDraft !== null && normalizedHostBaseUrlDraft !== runtimeConfig.hostBaseUrl;
+
+  function handleHostBaseUrlSubmit(event: FormEvent<HTMLFormElement>): void {
+    event.preventDefault();
+
+    if (!normalizedHostBaseUrlDraft) {
+      return;
+    }
+
+    void clientConfigStore.update({
+      hostBaseUrl: normalizedHostBaseUrlDraft
+    });
   }
 
   return (
@@ -81,11 +101,17 @@ export function SettingsPage() {
                 <span className="settings-row-description">{t("settings.serverDescription")}</span>
               </div>
               <div className="settings-row-control settings-row-control-stretch">
-                <input
-                  className="settings-text-input"
-                  defaultValue={runtimeConfig.hostBaseUrl}
-                  onBlur={(event) => handleHostBaseUrlChange(event.target.value)}
-                />
+                <form className="settings-inline-form" onSubmit={handleHostBaseUrlSubmit}>
+                  <input
+                    aria-label={t("settings.serverAddress")}
+                    className="settings-text-input"
+                    value={hostBaseUrlDraft}
+                    onChange={(event) => setHostBaseUrlDraft(event.target.value)}
+                  />
+                  <button className="settings-button" disabled={!canSaveHostBaseUrl} type="submit">
+                    {t("common.save")}
+                  </button>
+                </form>
               </div>
             </div>
 
