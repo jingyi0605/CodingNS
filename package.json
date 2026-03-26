@@ -2,8 +2,14 @@
   "name": "codingns-workspace",
   "private": true,
   "packageManager": "pnpm@10.7.1",
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=9.0.0"
+  },
   "scripts": {
-    "preinstall": "node scripts/ensure-pnpm.cjs",
+    "preinstall": "node scripts/check-node-version.cjs && node scripts/ensure-pnpm.cjs",
+    "postinstall": "echo '\n✅ 依赖安装完成！现在可以运行开发命令了。\n'",
+    "rebuild:native": "node scripts/rebuild-native-modules.cjs",
     "dev": "node scripts/show-dev-help.cjs",
     "dev:backend": "node scripts/dev-backend.cjs",
     "dev:frontend": "pnpm --filter user-app dev",
