@@ -377,7 +377,7 @@ export const zhCN = {
     issueRequired: "Issue 必填",
     issueOptional: "Issue 可选",
     commitSubject: "提交标题",
-    commitSubjectPlaceholder: "",
+    commitSubjectPlaceholder: "在这里输入提交信息",
     commitBody: "提交正文",
     commitBodyPlaceholder: "把这次改动说清楚，别写空话。",
     commitFooter: "提交脚注",

@@ -208,6 +208,8 @@ describe("GitSidebar", () => {
     const editor = await screen.findByRole("textbox");
 
     expect(editor.tagName).toBe("TEXTAREA");
+    expect(screen.queryByRole("heading", { name: "提交信息" })).not.toBeInTheDocument();
+    expect(editor).toHaveAttribute("placeholder", "在这里输入提交信息");
 
     await userEvent.type(editor, "feat: first line{enter}second line");
 

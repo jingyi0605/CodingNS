@@ -461,7 +461,6 @@ const extensionZhCN = {
     filePanelSessionDeleted: "\u5df2\u5220\u9664"
   },
   git: {
-    commitMessageTitle: "\u63d0\u4ea4\u4fe1\u606f",
     recentVersionsTitle: "\u6700\u8fd1\u7248\u672c",
     stagedChangesTitle: "\u6682\u5b58\u7684\u66f4\u6539",
     expandRecentVersions: "\u5c55\u5f00\u6700\u8fd1\u7248\u672c",
@@ -1043,7 +1042,6 @@ const extensionEnUS = {
     filePanelSessionDeleted: "Deleted"
   },
   git: {
-    commitMessageTitle: "Commit Message",
     recentVersionsTitle: "Recent Versions",
     stagedChangesTitle: "Staged Changes",
     expandRecentVersions: "Expand Recent Versions",

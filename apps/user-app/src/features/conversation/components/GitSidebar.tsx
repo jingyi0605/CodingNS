@@ -864,10 +864,6 @@ export function GitSidebar({ className, workspaceId }: GitSidebarProps) {
       data-testid="git-sidebar"
     >
       <section className="git-card git-scaffold-section">
-        <div className="git-section-header">
-          <h3>{t("git.commitMessageTitle")}</h3>
-        </div>
-
         <div className="git-editor-row">
           <textarea
             ref={commitEditorRef}

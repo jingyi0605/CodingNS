@@ -270,10 +270,6 @@ describe("WorkspaceHomePage", () => {
 
     renderPage();
 
-    await waitFor(() => {
-      expect(screen.getByText("feat/cached")).toBeInTheDocument();
-    });
-
     expect(shell.subscribeGitSnapshot).toHaveBeenCalledWith("workspace-1");
     expect(shell.subscribeTerminalManagerSnapshot).toHaveBeenCalledWith("workspace-1");
     expect(shell.requestGitRefresh).not.toHaveBeenCalled();

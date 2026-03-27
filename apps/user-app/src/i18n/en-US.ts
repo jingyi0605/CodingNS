@@ -404,7 +404,7 @@ export const enUS = {
     issueRequired: "Issue Required",
     issueOptional: "Issue Optional",
     commitSubject: "Commit Subject",
-    commitSubjectPlaceholder: "",
+    commitSubjectPlaceholder: "Enter the commit message here",
     commitBody: "Commit Body",
     commitBodyPlaceholder: "Explain the change clearly. Do not write empty words.",
     commitFooter: "Commit Footer",

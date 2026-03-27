@@ -232,9 +232,11 @@ export function ToolsHomePage() {
               <button
                 type="button"
                 className="secondary-button mobile-tools-more-button"
+                aria-label={t("shell.toolsMoreAction")}
+                title={t("shell.toolsMoreAction")}
                 onClick={() => navigate(buildWorkspaceToolProcessesPath(currentWorkspace.id))}
               >
-                {t("shell.toolsMoreAction")}
+                <MoreIcon />
               </button>
             }
             content={
@@ -302,5 +304,15 @@ export function ToolsHomePage() {
         </article>
       )}
     </main>
+  );
+}
+
+function MoreIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <circle cx="12" cy="5" r="1.8" />
+      <circle cx="12" cy="12" r="1.8" />
+      <circle cx="12" cy="19" r="1.8" />
+    </svg>
   );
 }

@@ -138,6 +138,7 @@ describe("ToolsHomePage", () => {
     ).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "进程管理" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "文件管理" })).not.toBeInTheDocument();
+    expect(screen.queryByText("更多")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "更多" }));
 
