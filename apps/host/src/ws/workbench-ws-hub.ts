@@ -13,6 +13,7 @@ import type {
 
 const WORKBENCH_REFRESH_INTERVAL_MS = 60_000;
 const SIDEBAR_REFRESH_INTERVAL_MS = 5_000;
+const GIT_SUBSCRIPTION_MIN_REFRESH_INTERVAL_MS = 15_000;
 
 interface WorkbenchSubscribeMessage {
   type: "workbench.subscribe";
@@ -94,6 +95,8 @@ interface FileTreeClientSubscription {
 interface GitClientSubscription {
   workspaceId: string;
   lastPayload: string | null;
+  lastRequestedAt: number;
+  refreshTask: Promise<void> | null;
 }
 
 interface TerminalManagerClientSubscription {
@@ -162,7 +165,9 @@ export class WorkbenchWsHub {
       case "git.subscribe":
         this.clientGitSubscriptions.set(client, {
           workspaceId: message.workspaceId.trim(),
-          lastPayload: null
+          lastPayload: null,
+          lastRequestedAt: 0,
+          refreshTask: null
         });
         void this.refreshGitSubscription(client);
         return true;
@@ -170,7 +175,9 @@ export class WorkbenchWsHub {
         this.workspacePanelSnapshotService.invalidateGit(message.workspaceId.trim());
         this.clientGitSubscriptions.set(client, {
           workspaceId: message.workspaceId.trim(),
-          lastPayload: null
+          lastPayload: null,
+          lastRequestedAt: 0,
+          refreshTask: null
         });
         void this.refreshGitSubscription(client, true);
         return true;
@@ -479,24 +486,48 @@ export class WorkbenchWsHub {
       return;
     }
 
-    try {
-      const snapshot = await this.workspacePanelSnapshotService.getGitPanelSnapshot(
-        subscription.workspaceId,
-        { force }
-      );
-      const payload = buildGitPayload(snapshot);
-
-      if (payload === subscription.lastPayload) {
-        return;
+    if (subscription.refreshTask) {
+      if (!force) {
+        return subscription.refreshTask;
       }
 
-      subscription.lastPayload = payload;
-      client.send(payload);
-    } catch (error) {
-      this.reportAsyncError("refreshGitSubscription", error, {
-        workspaceId: subscription.workspaceId
-      });
+      await subscription.refreshTask;
     }
+
+    const now = Date.now();
+
+    if (
+      !force
+      && now - subscription.lastRequestedAt < GIT_SUBSCRIPTION_MIN_REFRESH_INTERVAL_MS
+    ) {
+      return;
+    }
+
+    subscription.lastRequestedAt = now;
+    subscription.refreshTask = (async () => {
+      try {
+        const snapshot = await this.workspacePanelSnapshotService.getGitPanelSnapshot(
+          subscription.workspaceId,
+          { force }
+        );
+        const payload = buildGitPayload(snapshot);
+
+        if (payload === subscription.lastPayload) {
+          return;
+        }
+
+        subscription.lastPayload = payload;
+        client.send(payload);
+      } catch (error) {
+        this.reportAsyncError("refreshGitSubscription", error, {
+          workspaceId: subscription.workspaceId
+        });
+      }
+    })().finally(() => {
+      subscription.refreshTask = null;
+    });
+
+    return subscription.refreshTask;
   }
 
   private async refreshTerminalManagerSubscription(

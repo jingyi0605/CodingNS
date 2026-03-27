@@ -11,7 +11,18 @@ export interface ResolvedWorkspaceRepo {
   repoRoot: string;
 }
 
+interface WorkspaceRepoCacheEntry {
+  configuredRepoRoot: string;
+  resolved: ResolvedWorkspaceRepo;
+  cachedAt: number;
+}
+
+const WORKSPACE_REPO_CACHE_MAX_AGE_MS = 30_000;
+
 export class WorkspaceRepoGuard {
+  private readonly resolvedRepoCache = new Map<string, WorkspaceRepoCacheEntry>();
+  private readonly inflightResolutions = new Map<string, Promise<ResolvedWorkspaceRepo>>();
+
   constructor(
     private readonly workspaceService: WorkspaceService,
     private readonly gitCommandRunner: GitCommandRunner
@@ -20,8 +31,10 @@ export class WorkspaceRepoGuard {
   async resolve(workspaceId: string): Promise<ResolvedWorkspaceRepo> {
     const workspace = this.workspaceService.getWorkspaceOrThrow(workspaceId);
     const configuredRepoRoot = path.resolve(workspace.repoRoot ?? workspace.path);
+    const cached = this.resolvedRepoCache.get(workspaceId);
 
     if (!fs.existsSync(configuredRepoRoot) || !fs.statSync(configuredRepoRoot).isDirectory()) {
+      this.resolvedRepoCache.delete(workspaceId);
       throw new AppError({
         statusCode: 400,
         errorCode: "INVALID_WORKSPACE",
@@ -29,46 +42,29 @@ export class WorkspaceRepoGuard {
       });
     }
 
-    const result = await this.gitCommandRunner.run(
-      configuredRepoRoot,
-      ["rev-parse", "--show-toplevel"],
-      {
-        allowNonZeroExit: true,
-        workspaceId,
-        operation: "workspaceRepoGuard.resolve"
-      }
-    );
-
-    if (result.exitCode !== 0) {
-      throw new AppError({
-        statusCode: 404,
-        errorCode: "NOT_GIT_REPOSITORY",
-        detail: "当前工作区不是 Git 仓库"
-      });
+    if (
+      cached
+      && cached.configuredRepoRoot === configuredRepoRoot
+      && Date.now() - cached.cachedAt <= WORKSPACE_REPO_CACHE_MAX_AGE_MS
+    ) {
+      return {
+        workspace,
+        repoRoot: cached.resolved.repoRoot
+      };
     }
 
-    const actualRepoRoot = normalizePath(result.stdout.trim());
+    const inflight = this.inflightResolutions.get(workspaceId);
 
-    if (!actualRepoRoot) {
-      throw new AppError({
-        statusCode: 404,
-        errorCode: "GIT_REPO_NOT_FOUND",
-        detail: "工作区仓库根目录不存在"
-      });
+    if (inflight) {
+      return inflight;
     }
 
-    if (normalizePath(configuredRepoRoot) !== actualRepoRoot) {
-      throw new AppError({
-        statusCode: 400,
-        errorCode: "INVALID_WORKSPACE",
-        detail: "工作区绑定的仓库根目录与真实 Git 根目录不一致"
-      });
-    }
+    const task = this.resolveRepoRoot(workspaceId, workspace, configuredRepoRoot).finally(() => {
+      this.inflightResolutions.delete(workspaceId);
+    });
 
-    return {
-      workspace,
-      repoRoot: actualRepoRoot
-    };
+    this.inflightResolutions.set(workspaceId, task);
+    return await task;
   }
 
   ensureRelativePath(repoRoot: string, targetPath: string): string {
@@ -95,6 +91,64 @@ export class WorkspaceRepoGuard {
     }
 
     return toPosixPath(path.relative(repoRoot, absoluteTarget));
+  }
+
+  private async resolveRepoRoot(
+    workspaceId: string,
+    workspace: Workspace,
+    configuredRepoRoot: string
+  ): Promise<ResolvedWorkspaceRepo> {
+    const result = await this.gitCommandRunner.run(
+      configuredRepoRoot,
+      ["rev-parse", "--show-toplevel"],
+      {
+        allowNonZeroExit: true,
+        workspaceId,
+        operation: "workspaceRepoGuard.resolve"
+      }
+    );
+
+    if (result.exitCode !== 0) {
+      this.resolvedRepoCache.delete(workspaceId);
+      throw new AppError({
+        statusCode: 404,
+        errorCode: "NOT_GIT_REPOSITORY",
+        detail: "当前工作区不是 Git 仓库"
+      });
+    }
+
+    const actualRepoRoot = normalizePath(result.stdout.trim());
+
+    if (!actualRepoRoot) {
+      this.resolvedRepoCache.delete(workspaceId);
+      throw new AppError({
+        statusCode: 404,
+        errorCode: "GIT_REPO_NOT_FOUND",
+        detail: "工作区仓库根目录不存在"
+      });
+    }
+
+    if (normalizePath(configuredRepoRoot) !== actualRepoRoot) {
+      this.resolvedRepoCache.delete(workspaceId);
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "INVALID_WORKSPACE",
+        detail: "工作区绑定的仓库根目录与真实 Git 根目录不一致"
+      });
+    }
+
+    const resolved: ResolvedWorkspaceRepo = {
+      workspace,
+      repoRoot: actualRepoRoot
+    };
+
+    this.resolvedRepoCache.set(workspaceId, {
+      configuredRepoRoot,
+      resolved,
+      cachedAt: Date.now()
+    });
+
+    return resolved;
   }
 }
 

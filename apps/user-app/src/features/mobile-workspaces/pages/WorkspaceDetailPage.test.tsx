@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import { WorkspaceDetailPage } from "./WorkspaceDetailPage";
 
 const mockUseWorkbenchShell = vi.fn();
@@ -135,6 +136,7 @@ function createWorkbenchShell(overrides?: Record<string, unknown>) {
 describe("WorkspaceDetailPage", () => {
   beforeEach(() => {
     mockShowToast.mockReset();
+    window.sessionStorage.clear();
     gitSnapshotListeners.clear();
     mockUseWorkbenchShell.mockReturnValue(createWorkbenchShell());
   });
@@ -150,6 +152,51 @@ describe("WorkspaceDetailPage", () => {
       expect(screen.getByText("main")).toBeInTheDocument();
       expect(screen.getByText("48")).toBeInTheDocument();
     });
+  });
+
+  it("命中新鲜缓存时不会主动刷新 Git 和工作区摘要", async () => {
+    const shell = createWorkbenchShell({
+      workspaceManagementStateById: {}
+    });
+    writeViewSnapshot("git-sidebar.snapshot.workspace-1", {
+      status: {
+        snapshot: {
+          branch: "cached/main"
+        },
+        changes: []
+      }
+    });
+    writeViewSnapshot("workspace-management.summary.workspace-1", {
+      workspaceId: "workspace-1",
+      name: "项目一",
+      path: "/repo/project-one",
+      git: {
+        isRepository: true,
+        repoRoot: "/repo/project-one",
+        currentBranch: "cached/main",
+        commitCount: 99,
+        remotes: [],
+        error: null
+      },
+      codeComposition: {
+        scannedFileCount: 128,
+        truncated: false,
+        items: [],
+        error: null
+      }
+    });
+    mockUseWorkbenchShell.mockReturnValue(shell);
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("cached/main")).toBeInTheDocument();
+    });
+
+    expect(shell.subscribeGitSnapshot).toHaveBeenCalledWith("workspace-1");
+    expect(shell.subscribeWorkspaceManagementSnapshot).toHaveBeenCalledWith("workspace-1");
+    expect(shell.requestGitRefresh).not.toHaveBeenCalled();
+    expect(shell.requestWorkspaceManagementRefresh).not.toHaveBeenCalled();
   });
 
   it("新建会话会先弹出工作区和供应商选择", async () => {

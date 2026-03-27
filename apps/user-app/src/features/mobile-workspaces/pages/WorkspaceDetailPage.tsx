@@ -81,9 +81,27 @@ export function WorkspaceDetailPage() {
     }
 
     subscribeGitSnapshot(workspaceId);
-    requestGitRefresh(workspaceId);
     subscribeWorkspaceManagementSnapshot(workspaceId);
-    requestWorkspaceManagementRefresh(workspaceId);
+
+    const hasCachedGitSnapshot =
+      readViewSnapshot<{ status: unknown }>(
+        buildGitSidebarSnapshotKey(workspaceId),
+        WORKSPACE_MANAGEMENT_SNAPSHOT_CACHE_MAX_AGE_MS
+      )
+      !== null;
+    const hasCachedManagementSnapshot =
+      readViewSnapshot<WorkspaceManagementSummaryDto>(
+        buildWorkspaceManagementSummarySnapshotKey(workspaceId),
+        WORKSPACE_MANAGEMENT_SNAPSHOT_CACHE_MAX_AGE_MS
+      ) !== null;
+
+    if (!hasCachedGitSnapshot) {
+      requestGitRefresh(workspaceId);
+    }
+
+    if (!hasCachedManagementSnapshot) {
+      requestWorkspaceManagementRefresh(workspaceId);
+    }
   }, [
     requestGitRefresh,
     requestWorkspaceManagementRefresh,
@@ -390,6 +408,10 @@ export function WorkspaceDetailPage() {
 
 function buildWorkspaceManagementSummarySnapshotKey(workspaceId: string) {
   return `workspace-management.summary.${workspaceId}`;
+}
+
+function buildGitSidebarSnapshotKey(workspaceId: string) {
+  return `git-sidebar.snapshot.${workspaceId}`;
 }
 
 function createWorkspaceSummaryFallback(

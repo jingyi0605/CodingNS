@@ -16,7 +16,7 @@ import type {
 } from "../workspace/workspace-service.js";
 
 const FILE_TREE_CACHE_MAX_AGE_MS = 5_000;
-const GIT_SNAPSHOT_CACHE_MAX_AGE_MS = 5_000;
+const GIT_SNAPSHOT_CACHE_MAX_AGE_MS = 15_000;
 const TERMINAL_MANAGER_CACHE_MAX_AGE_MS = 4_000;
 const WORKSPACE_MANAGEMENT_CACHE_MAX_AGE_MS = 30_000;
 const GIT_HISTORY_LIMIT = 20;

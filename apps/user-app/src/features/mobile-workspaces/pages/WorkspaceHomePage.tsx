@@ -315,13 +315,7 @@ export function WorkspaceHomePage() {
     subscribeGitSnapshot(workspaceId);
 
     if (hasCachedSnapshot) {
-      const timer = window.setTimeout(() => {
-        requestGitRefresh(workspaceId);
-      }, 1500);
-
-      return () => {
-        window.clearTimeout(timer);
-      };
+      return;
     }
 
     requestGitRefresh(workspaceId);
@@ -347,13 +341,7 @@ export function WorkspaceHomePage() {
     subscribeTerminalManagerSnapshot(workspaceId);
 
     if (hasCachedSnapshot) {
-      const timer = window.setTimeout(() => {
-        requestTerminalManagerRefresh(workspaceId);
-      }, 1500);
-
-      return () => {
-        window.clearTimeout(timer);
-      };
+      return;
     }
 
     requestTerminalManagerRefresh(workspaceId);

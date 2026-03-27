@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import { WorkspaceHomePage } from "./WorkspaceHomePage";
 
 const mockUseWorkbenchShell = vi.fn();
@@ -201,6 +202,7 @@ describe("WorkspaceHomePage", () => {
   beforeEach(() => {
     mockShowToast.mockReset();
     mockUseWorkbenchShell.mockReset();
+    window.sessionStorage.clear();
     gitSnapshotListeners.clear();
     terminalManagerSnapshotListeners.clear();
     mockUseWorkbenchShell.mockReturnValue(createWorkbenchShell());
@@ -248,6 +250,35 @@ describe("WorkspaceHomePage", () => {
     expect(screen.queryByText("整理提交说明")).not.toBeInTheDocument();
     expect(screen.queryByText("待查看结果")).not.toBeInTheDocument();
     expect(screen.queryByText("待查看")).not.toBeInTheDocument();
+  });
+
+  it("命中新鲜缓存时不会主动刷新 Git 和终端面板", async () => {
+    const shell = createWorkbenchShell();
+    writeViewSnapshot("git-sidebar.snapshot.workspace-1", {
+      status: {
+        snapshot: {
+          branch: "feat/cached"
+        },
+        changes: [{ path: "src/cached.ts" }]
+      }
+    });
+    writeViewSnapshot("terminal-manager.snapshot.workspace-1", {
+      terminals: [{ id: "terminal-1", status: "running" }],
+      templates: [],
+      templateStatuses: [{ occupied: false }]
+    });
+    mockUseWorkbenchShell.mockReturnValue(shell);
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("feat/cached")).toBeInTheDocument();
+    });
+
+    expect(shell.subscribeGitSnapshot).toHaveBeenCalledWith("workspace-1");
+    expect(shell.subscribeTerminalManagerSnapshot).toHaveBeenCalledWith("workspace-1");
+    expect(shell.requestGitRefresh).not.toHaveBeenCalled();
+    expect(shell.requestTerminalManagerRefresh).not.toHaveBeenCalled();
   });
 
   it("可以从空会话状态直接继续当前工作", async () => {

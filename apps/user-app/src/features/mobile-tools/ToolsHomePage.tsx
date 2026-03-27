@@ -104,7 +104,12 @@ export function ToolsHomePage() {
         key: "git" as const,
         title: t("shell.gitEntry"),
         body: t("shell.toolGitBody"),
-        render: () => <GitSidebar workspaceId={currentWorkspaceId} />
+        render: () => (
+          <GitSidebar
+            className="mobile-tool-native-panel mobile-tool-git-panel"
+            workspaceId={currentWorkspaceId}
+          />
+        )
       }
     ],
     [currentSessionId, currentWorkspaceId]

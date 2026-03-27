@@ -32,15 +32,19 @@ describe("ToolGitPage", () => {
 
     render(<ToolGitPage />);
 
-    expect(screen.getByRole("main")).toHaveClass("mobile-page-fixed-root", "mobile-tool-panel-page");
+    expect(screen.getByRole("main")).toHaveClass(
+      "mobile-page-fixed-root",
+      "mobile-tool-panel-page",
+      "mobile-tool-git-page"
+    );
     expect(screen.getByTestId("git-sidebar")).toBeInTheDocument();
     expect(screen.getByTestId("git-sidebar")).toHaveAttribute(
       "data-class-name",
-      "mobile-panel-scroll-root mobile-tool-native-panel"
+      "mobile-panel-scroll-root mobile-tool-native-panel mobile-tool-git-panel"
     );
     expect(mockGitSidebar).toHaveBeenCalledWith(
       expect.objectContaining({
-        className: "mobile-panel-scroll-root mobile-tool-native-panel",
+        className: "mobile-panel-scroll-root mobile-tool-native-panel mobile-tool-git-panel",
         workspaceId: "workspace-1"
       })
     );

@@ -178,6 +178,16 @@ describe("GitSidebar", () => {
     });
   });
 
+  it("命中新鲜缓存时不会在挂载后立刻主动刷新", async () => {
+    seedGitSidebarSnapshot();
+
+    renderSidebar();
+
+    expect(await screen.findByText("App.tsx")).toBeInTheDocument();
+    expect(workbenchShellMock.subscribeGitSnapshot).toHaveBeenCalledWith("workspace-1");
+    expect(workbenchShellMock.requestGitRefresh).not.toHaveBeenCalled();
+  });
+
   it("撤销上次提交后会把提交标题回填到输入框", async () => {
     setViewportWidth(1280);
     renderSidebar();
@@ -208,21 +218,48 @@ describe("GitSidebar", () => {
     renderSidebar();
 
     const changesToggle = await screen.findByRole("button", { name: /当前变更/ });
+    const stagedToggle = await screen.findByRole("button", { name: /暂存的更改/ });
     const historyToggle = await screen.findByRole("button", { name: /最近版本/ });
 
     expect(changesToggle).toHaveAttribute("aria-expanded", "true");
+    expect(stagedToggle).toHaveAttribute("aria-expanded", "false");
     expect(historyToggle).toHaveAttribute("aria-expanded", "false");
 
     await userEvent.click(historyToggle);
 
     expect(historyToggle).toHaveAttribute("aria-expanded", "true");
     expect(changesToggle).toHaveAttribute("aria-expanded", "false");
+    expect(stagedToggle).toHaveAttribute("aria-expanded", "false");
     expect(await screen.findByText("feat: local only")).toBeInTheDocument();
     expect(screen.getByText("本地")).toBeInTheDocument();
     expect(screen.getByText("远程")).toBeInTheDocument();
     expect(screen.getByText("已同步")).toBeInTheDocument();
     expect(screen.getByText("origin/main")).toBeInTheDocument();
     expect(screen.getByText("upstream/release")).toBeInTheDocument();
+  });
+
+  it("移动端三区块标题始终可见，并且只允许展开一个区块", async () => {
+    renderSidebar();
+
+    const stagedToggle = await screen.findByRole("button", { name: /暂存的更改/ });
+    const changesToggle = await screen.findByRole("button", { name: /当前变更/ });
+    const historyToggle = await screen.findByRole("button", { name: /最近版本/ });
+
+    expect(stagedToggle).toBeVisible();
+    expect(changesToggle).toBeVisible();
+    expect(historyToggle).toBeVisible();
+
+    await userEvent.click(stagedToggle);
+
+    expect(stagedToggle).toHaveAttribute("aria-expanded", "true");
+    expect(changesToggle).toHaveAttribute("aria-expanded", "false");
+    expect(historyToggle).toHaveAttribute("aria-expanded", "false");
+
+    await userEvent.click(historyToggle);
+
+    expect(stagedToggle).toHaveAttribute("aria-expanded", "false");
+    expect(changesToggle).toHaveAttribute("aria-expanded", "false");
+    expect(historyToggle).toHaveAttribute("aria-expanded", "true");
   });
 
   it("点击刷新会直接重新拉取 Git 快照并同步实时订阅", async () => {
@@ -263,6 +300,10 @@ describe("GitSidebar", () => {
       expect(gitApiMock.getGitStatus).toHaveBeenCalledWith("workspace-1");
       expect(gitApiMock.getGitHistory).toHaveBeenCalledWith("workspace-1", 20, null);
       expect(gitApiMock.getGitBranches).toHaveBeenCalledWith("workspace-1");
+    });
+
+    await waitFor(() => {
+      expect(refreshButton).not.toBeDisabled();
     });
 
     expect(screen.getByText("refresh-target.md")).toBeInTheDocument();
@@ -323,6 +364,22 @@ describe("GitSidebar", () => {
     await waitFor(() => {
       expect(clipboardWriteTextMock).toHaveBeenCalledWith("33333333");
     });
+  });
+
+  it("移动端最近版本标题右侧提供 Git 操作菜单，并复用桌面端菜单内容", async () => {
+    renderSidebar();
+
+    fireEvent.click(await screen.findByRole("button", { name: /最近版本/ }));
+    fireEvent.click(screen.getByRole("button", { name: "操作菜单" }));
+
+    const operationsShell = document.querySelector(".git-mobile-operations-shell") as HTMLElement;
+
+    expect(operationsShell).not.toBeNull();
+    expect(within(operationsShell).getByRole("button", { name: "Fetch" })).toBeInTheDocument();
+    expect(within(operationsShell).getByRole("button", { name: "Pull" })).toBeInTheDocument();
+    expect(within(operationsShell).getByRole("button", { name: "Push" })).toBeInTheDocument();
+    expect(within(operationsShell).getByRole("button", { name: "撤销上次提交" })).toBeInTheDocument();
+    expect(within(operationsShell).getByRole("button", { name: "刷新" })).toBeInTheDocument();
   });
 
   it("已暂存后再次编辑的文件会同时出现在暂存区和当前变更", async () => {

@@ -17,8 +17,11 @@ export function ToolGitPage() {
   }
 
   return (
-    <main className="mobile-feature-page mobile-page-fixed-root mobile-tool-panel-page">
-      <GitSidebar className="mobile-panel-scroll-root mobile-tool-native-panel" workspaceId={currentWorkspaceId} />
+    <main className="mobile-feature-page mobile-page-fixed-root mobile-tool-panel-page mobile-tool-git-page">
+      <GitSidebar
+        className="mobile-panel-scroll-root mobile-tool-native-panel mobile-tool-git-panel"
+        workspaceId={currentWorkspaceId}
+      />
     </main>
   );
 }

@@ -76,6 +76,8 @@ const PANEL_RESIZER_HEIGHT = 8;
 const GIT_MOBILE_BREAKPOINT_PX = 960;
 const GIT_SNAPSHOT_CACHE_MAX_AGE_MS = 60 * 1000;
 const GIT_HISTORY_PAGE_SIZE = 20;
+const MOBILE_GIT_RECORD_BASE_INSET_PX = 9;
+const MOBILE_GIT_RECORD_DEPTH_STEP_PX = 9;
 
 interface GitSidebarSnapshot {
   status: GitStatusDto | null;
@@ -259,13 +261,7 @@ export function GitSidebar({ className, workspaceId }: GitSidebarProps) {
     subscribeGitSnapshot(currentWorkspaceId);
 
     if (hasCachedSnapshot) {
-      const timer = window.setTimeout(() => {
-        requestGitSnapshotRefresh();
-      }, 1500);
-
-      return () => {
-        window.clearTimeout(timer);
-      };
+      return;
     }
 
     requestGitSnapshotRefresh();
@@ -762,6 +758,16 @@ export function GitSidebar({ className, workspaceId }: GitSidebarProps) {
     }
   }, [history, mobileHistoryMenuCommitHash]);
 
+  useEffect(() => {
+    if (!isMobileViewport) {
+      return;
+    }
+
+    if (mobileExpandedSection !== "history" && menuOpen) {
+      setMenuOpen(false);
+    }
+  }, [isMobileViewport, menuOpen, mobileExpandedSection]);
+
   async function copyText(value: string, successMessage: string) {
     try {
       if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
@@ -795,6 +801,61 @@ export function GitSidebar({ className, workspaceId }: GitSidebarProps) {
     }
 
     await handleDiscard(targets);
+  }
+
+  function renderGitOperationsMenu() {
+    return (
+      <div className="git-operations-menu">
+        <div className="git-menu-section">
+          <span className="git-menu-caption">{t("git.currentBranch")}</span>
+          <strong className="git-menu-branch">{currentBranch}</strong>
+        </div>
+
+        <div className="git-menu-section">
+          <span className="git-menu-caption">{t("git.branchTitle")}</span>
+          <div className="git-menu-branch-list">
+            {branches?.local.map((item) => (
+              <button
+                key={item.name}
+                className="git-menu-item"
+                type="button"
+                disabled={actioning || item.current}
+                onClick={() => void handleSwitchBranch(item.name)}
+              >
+                <span>
+                  {item.current
+                    ? `${t("git.switchBranch")} ${item.name}`
+                    : `${t("git.switchBranchTo")} ${item.name}`}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="git-menu-section">
+          <button className="git-menu-item" type="button" disabled={actioning} onClick={() => void handleRemoteAction("fetch")}>
+            <span>{t("git.fetch")}</span>
+          </button>
+          <button className="git-menu-item" type="button" disabled={actioning} onClick={() => void handleRemoteAction("pull")}>
+            <span>{t("git.pull")}</span>
+          </button>
+          <button className="git-menu-item" type="button" disabled={actioning} onClick={() => void handleRemoteAction("push")}>
+            <span>{t("git.push")}</span>
+          </button>
+          <button className="git-menu-item" type="button" disabled={actioning} onClick={() => void handleUndoLastCommit()}>
+            <span>{t("git.undoLastCommit")}</span>
+          </button>
+          <button
+            className="git-menu-item"
+            type="button"
+            disabled={actioning || loading}
+            onClick={() => void handleManualRefresh({ resetTreeScroll: true })}
+          >
+            <span>{t("git.refresh")}</span>
+          </button>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -923,7 +984,24 @@ export function GitSidebar({ className, workspaceId }: GitSidebarProps) {
             expanded={mobileExpandedSection === "history"}
             onToggle={() => setMobileExpandedSection("history")}
             trailingContent={<span className="badge">{currentBranch}</span>}
+            headerAction={
+              <button
+                className="git-icon-button git-mobile-section-action"
+                type="button"
+                aria-label={t("git.operationMenu")}
+                title={t("git.operationMenu")}
+                aria-expanded={menuOpen}
+                onClick={() => {
+                  setMobileExpandedSection("history");
+                  setMenuOpen((current) => !current);
+                }}
+                disabled={actioning}
+              >
+                <MoreIcon />
+              </button>
+            }
           >
+            {menuOpen ? <div className="git-mobile-operations-shell">{renderGitOperationsMenu()}</div> : null}
             <MobileGitHistoryList
               history={history}
               historyLoadingMore={historyLoadingMore}
@@ -1056,54 +1134,7 @@ export function GitSidebar({ className, workspaceId }: GitSidebarProps) {
                   <MoreIcon />
                 </button>
 
-                {menuOpen ? (
-                  <div className="git-operations-menu">
-                    <div className="git-menu-section">
-                      <span className="git-menu-caption">{t("git.currentBranch")}</span>
-                      <strong className="git-menu-branch">{currentBranch}</strong>
-                    </div>
-
-                    <div className="git-menu-section">
-                      <span className="git-menu-caption">{t("git.branchTitle")}</span>
-                      <div className="git-menu-branch-list">
-                        {branches?.local.map((item) => (
-                          <button
-                            key={item.name}
-                            className="git-menu-item"
-                            type="button"
-                            disabled={actioning || item.current}
-                            onClick={() => void handleSwitchBranch(item.name)}
-                          >
-                            <span>{item.current ? `${t("git.switchBranch")} ${item.name}` : `${t("git.switchBranchTo")} ${item.name}`}</span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="git-menu-section">
-                      <button className="git-menu-item" type="button" disabled={actioning} onClick={() => void handleRemoteAction("fetch")}>
-                        <span>{t("git.fetch")}</span>
-                      </button>
-                      <button className="git-menu-item" type="button" disabled={actioning} onClick={() => void handleRemoteAction("pull")}>
-                        <span>{t("git.pull")}</span>
-                      </button>
-                      <button className="git-menu-item" type="button" disabled={actioning} onClick={() => void handleRemoteAction("push")}>
-                        <span>{t("git.push")}</span>
-                      </button>
-                      <button className="git-menu-item" type="button" disabled={actioning} onClick={() => void handleUndoLastCommit()}>
-                        <span>{t("git.undoLastCommit")}</span>
-                      </button>
-                      <button
-                        className="git-menu-item"
-                        type="button"
-                        disabled={actioning || loading}
-                        onClick={() => void handleManualRefresh({ resetTreeScroll: true })}
-                      >
-                        <span>{t("git.refresh")}</span>
-                      </button>
-                    </div>
-                  </div>
-                ) : null}
+                {menuOpen ? renderGitOperationsMenu() : null}
               </div>
             </div>
 
@@ -1326,6 +1357,7 @@ function MobileGitAccordionSection({
   expanded,
   onToggle,
   trailingContent,
+  headerAction,
   children
 }: {
   title: string;
@@ -1333,25 +1365,29 @@ function MobileGitAccordionSection({
   expanded: boolean;
   onToggle: () => void;
   trailingContent?: ReactNode;
+  headerAction?: ReactNode;
   children: ReactNode;
 }) {
   return (
-    <section className="git-mobile-section">
-      <button
-        className="git-mobile-section-toggle"
-        type="button"
-        aria-expanded={expanded}
-        onClick={onToggle}
-      >
-        <span className="git-mobile-section-toggle-main">
-          <TreeChevron expanded={expanded} />
-          <h3>{title}</h3>
-        </span>
-        <span className="git-mobile-section-toggle-meta">
-          {trailingContent}
-          <span className="workbench-section-counter">{count}</span>
-        </span>
-      </button>
+    <section className="git-mobile-section" data-expanded={expanded}>
+      <div className="git-mobile-section-header">
+        <button
+          className="git-mobile-section-toggle"
+          type="button"
+          aria-expanded={expanded}
+          onClick={onToggle}
+        >
+          <span className="git-mobile-section-toggle-main">
+            <TreeChevron expanded={expanded} />
+            <h3>{title}</h3>
+          </span>
+          <span className="git-mobile-section-toggle-meta">
+            {trailingContent}
+            <span className="workbench-section-counter">{count}</span>
+          </span>
+        </button>
+        {headerAction ? <div className="git-mobile-section-header-action">{headerAction}</div> : null}
+      </div>
 
       {expanded ? <div className="git-mobile-section-body">{children}</div> : null}
     </section>
@@ -1514,7 +1550,9 @@ function renderMobileTreeNodes({
             <button
               className="git-mobile-record git-mobile-record-directory"
               type="button"
-              style={{ paddingInlineStart: `${12 + depth * 14}px` }}
+              style={{
+                paddingInlineStart: `${MOBILE_GIT_RECORD_BASE_INSET_PX + depth * MOBILE_GIT_RECORD_DEPTH_STEP_PX}px`
+              }}
               onClick={() => onToggleTreePath(node.path)}
             >
               <span className="git-mobile-record-leading">
@@ -1578,7 +1616,9 @@ function renderMobileTreeNodes({
         <div
           className="git-mobile-record git-mobile-record-file"
           data-active={mobileSelected}
-          style={{ paddingInlineStart: `${12 + depth * 14}px` }}
+          style={{
+            paddingInlineStart: `${MOBILE_GIT_RECORD_BASE_INSET_PX + depth * MOBILE_GIT_RECORD_DEPTH_STEP_PX}px`
+          }}
         >
           <input
             className="git-tree-select-checkbox"
@@ -1710,7 +1750,11 @@ function MobileSwipeRow({
   }
 
   return (
-    <div className="git-mobile-swipe-row">
+    <div
+      className="git-mobile-swipe-row"
+      data-open-state={openState ?? "closed"}
+      data-dragging={dragOffset !== 0}
+    >
       {leadingAction ? (
         <button
           type="button"
