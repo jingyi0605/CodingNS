@@ -293,7 +293,7 @@ export function ConversationFocusQuickNav({
         onClick={handleBubbleClick}
         onKeyDown={handleBubbleKeyDown}
       >
-        {open ? <CloseIcon /> : <QuickNavIcon />}
+        {open ? <CloseIcon /> : <QuickNavIcon side={dockSide} />}
       </button>
 
       {menuVisible ? (
@@ -544,17 +544,23 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
-function QuickNavIcon() {
+function QuickNavIcon({ side }: { side: QuickNavDockSide }) {
+  const pointsLeft = side === "right";
+
   return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-      <circle cx="6" cy="6" r="1.25" fill="currentColor" stroke="none" />
-      <circle cx="12" cy="6" r="1.25" fill="currentColor" stroke="none" />
-      <circle cx="18" cy="6" r="1.25" fill="currentColor" stroke="none" />
-      <circle cx="6" cy="12" r="1.25" fill="currentColor" stroke="none" />
-      <circle cx="12" cy="12" r="1.25" fill="currentColor" stroke="none" />
-      <circle cx="18" cy="12" r="1.25" fill="currentColor" stroke="none" />
-      <path d="M7 18h10" />
-      <path d="M12 15v6" />
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+      {pointsLeft ? (
+        <>
+          <path d="M15.5 7.5 9.5 12l6 4.5" />
+          <path d="M9 12h7.5" />
+        </>
+      ) : (
+        <>
+          <path d="M8.5 7.5 14.5 12l-6 4.5" />
+          <path d="M15 12H7.5" />
+        </>
+      )}
+      <path d="M12 7.5v9" opacity="0.4" />
     </svg>
   );
 }
