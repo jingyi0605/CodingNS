@@ -235,6 +235,76 @@ describe("GitSidebar", () => {
     expect(screen.getByText("refresh-target.md")).toBeInTheDocument();
     expect(workbenchShellMock.requestGitRefresh).toHaveBeenCalledWith("workspace-1");
   });
+
+  it("已暂存后再次编辑的文件会同时出现在暂存区和当前变更", async () => {
+    setViewportWidth(1280);
+    workbenchShellMock.addGitSnapshotListener.mockImplementation((listener: (snapshot: ReturnType<typeof createGitSnapshot>) => void) => {
+      listener(
+        createGitSnapshot(
+          createStatus([], [], [
+            "apps/user-app/src/app/App.tsx"
+          ])
+        )
+      );
+      return () => undefined;
+    });
+
+    renderSidebar();
+
+    const stagedGroup = await findGroup("暂存的更改");
+    const unstagedGroup = await findGroup("当前变更");
+
+    expect(within(stagedGroup).getByText("App.tsx")).toBeInTheDocument();
+    expect(within(unstagedGroup).getByText("App.tsx")).toBeInTheDocument();
+  });
+
+  it("桌面端支持一键暂存全部当前变更", async () => {
+    setViewportWidth(1280);
+    const allPaths = [
+      "apps/user-app/src/app/App.tsx",
+      "apps/user-app/src/app/router.tsx",
+      "docs/guide.md"
+    ];
+
+    workbenchShellMock.addGitSnapshotListener.mockImplementation((listener: (snapshot: ReturnType<typeof createGitSnapshot>) => void) => {
+      listener(createGitSnapshot(createStatus(allPaths)));
+      return () => undefined;
+    });
+
+    renderSidebar();
+
+    const unstagedGroup = await findGroup("当前变更");
+    await userEvent.click(within(unstagedGroup).getByRole("button", { name: "暂存全部" }));
+
+    await waitFor(() => {
+      expect(gitApiMock.stageGitTargets).toHaveBeenCalledWith("workspace-1", allPaths);
+    });
+  });
+
+  it("桌面端支持按文件夹一键放弃改动", async () => {
+    setViewportWidth(1280);
+    const appPaths = [
+      "apps/user-app/src/app/App.tsx",
+      "apps/user-app/src/app/router.tsx"
+    ];
+    const allPaths = [...appPaths, "docs/guide.md"];
+
+    workbenchShellMock.addGitSnapshotListener.mockImplementation((listener: (snapshot: ReturnType<typeof createGitSnapshot>) => void) => {
+      listener(createGitSnapshot(createStatus(allPaths)));
+      return () => undefined;
+    });
+
+    renderSidebar();
+
+    const unstagedGroup = await findGroup("当前变更");
+    await userEvent.click(
+      within(unstagedGroup).getByRole("button", { name: "放弃改动 apps/user-app/src/app" })
+    );
+
+    await waitFor(() => {
+      expect(gitApiMock.discardGitTargets).toHaveBeenCalledWith("workspace-1", appPaths);
+    });
+  });
 });
 
 function renderSidebar() {
@@ -261,7 +331,7 @@ function setViewportWidth(width: number) {
 function createStatus(unstagedPaths = [
   "apps/user-app/src/app/App.tsx",
   "apps/user-app/src/app/router.tsx"
-], stagedPaths: string[] = []) {
+], stagedPaths: string[] = [], mixedPaths: string[] = []) {
   return {
     snapshot: {
       workspaceId: "workspace-1",
@@ -275,15 +345,16 @@ function createStatus(unstagedPaths = [
     },
     changes: [
       ...stagedPaths.map((path) => createChange(path, true)),
+      ...mixedPaths.map((path) => createMixedChange(path)),
       ...unstagedPaths.map((path) => createChange(path, false))
     ]
   };
 }
 
-function createGitSnapshot() {
+function createGitSnapshot(status = createStatus()) {
   return {
     workspaceId: "workspace-1",
-    status: createStatus(),
+    status,
     history: [
       {
         commitHash: "33333333",
@@ -335,5 +406,17 @@ function createChange(path: string, staged: boolean) {
     binary: false,
     stagedStatus: staged ? "M" : null,
     worktreeStatus: staged ? null : "M"
+  };
+}
+
+function createMixedChange(path: string) {
+  return {
+    path,
+    status: "M",
+    staged: true,
+    oldPath: null,
+    binary: false,
+    stagedStatus: "M",
+    worktreeStatus: "M"
   };
 }

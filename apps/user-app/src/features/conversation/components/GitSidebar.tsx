@@ -51,6 +51,8 @@ interface GitTreeFileNode {
   name: string;
   path: string;
   change: GitChangeItemDto;
+  status: string;
+  variant: "staged" | "unstaged";
 }
 
 type GitTreeNode = GitTreeDirectoryNode | GitTreeFileNode;
@@ -681,10 +683,10 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
   }
 
   const allChanges = status?.changes ?? [];
-  const stagedChanges = allChanges.filter((item) => item.staged);
-  const unstagedChanges = allChanges.filter((item) => !item.staged);
-  const stagedTree = buildChangeTree(stagedChanges);
-  const unstagedTree = buildChangeTree(unstagedChanges);
+  const stagedChanges = allChanges.filter((item) => hasVariantChanges(item, "staged"));
+  const unstagedChanges = allChanges.filter((item) => hasVariantChanges(item, "unstaged"));
+  const stagedTree = buildChangeTree(stagedChanges, "staged");
+  const unstagedTree = buildChangeTree(unstagedChanges, "unstaged");
   const collapsedTreePathSet = new Set(collapsedTreePaths);
   const selectedMobilePathSet = new Set(selectedMobilePaths);
   const mobileSelectedStagedTargets = collectSelectionTargets(selectedMobilePaths, allChanges, "staged");
@@ -808,7 +810,7 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
               />
             ) : null}
 
-            <GitChangeGroup
+              <GitChangeGroup
               title={t("git.changesTitle")}
               count={unstagedChanges.length}
               nodes={unstagedTree}
@@ -1028,6 +1030,9 @@ function GitChangeGroup({
   onToggleMobileActionMenu: () => void;
   onClearSelectedTargets: () => void;
 }) {
+  const groupTargets = collectTreeTargets(nodes);
+  const stageActionLabel = variant === "staged" ? t("git.unstageAll") : t("git.stageAll");
+
   return (
     <section className="git-tree-group" data-variant={variant}>
       <div className="git-section-header git-tree-group-header">
@@ -1035,6 +1040,32 @@ function GitChangeGroup({
 
         <div className="git-tree-group-actions">
           <span className="workbench-section-counter">{count}</span>
+          {!isMobileViewport && groupTargets.length > 0 ? (
+            <>
+              <button
+                className="git-icon-button"
+                type="button"
+                aria-label={stageActionLabel}
+                title={stageActionLabel}
+                onClick={() => void onStageToggle(groupTargets, variant === "staged")}
+                disabled={actioning}
+              >
+                <StageIcon staged={variant === "staged"} />
+              </button>
+              {variant === "unstaged" ? (
+                <button
+                  className="git-icon-button danger"
+                  type="button"
+                  aria-label={t("git.discardAll")}
+                  title={t("git.discardAll")}
+                  onClick={() => void onDiscard(groupTargets)}
+                  disabled={actioning}
+                >
+                  <DiscardIcon />
+                </button>
+              ) : null}
+            </>
+          ) : null}
           {isMobileViewport && selectedTargets.length > 0 ? (
             <button
               className="git-icon-button"
@@ -1147,20 +1178,52 @@ function renderTreeNodes({
   return nodes.map((node) => {
     if (node.kind === "directory") {
       const expanded = !collapsedTreePathSet.has(node.path);
+      const directoryTargets = collectTreeTargets(node.children);
+      const stageDirectoryLabel = `${variant === "staged" ? t("git.unstage") : t("git.stage")} ${node.path}`;
+      const discardDirectoryLabel = `${t("git.discard")} ${node.path}`;
 
       return (
-        <div key={`directory:${node.path}`} className="git-tree-node" role="treeitem" aria-expanded={expanded}>
-          <button
-            className="git-tree-trigger"
-            type="button"
-            style={{ paddingInlineStart: `${6 + depth * 8}px` }}
-            onClick={() => onToggleTreePath(node.path)}
-          >
-            <span className="git-tree-chevron" data-expanded={expanded}>
-              <TreeChevron expanded={expanded} />
-            </span>
-            <span className="git-tree-label git-tree-label-directory">{node.name}</span>
-          </button>
+        <div key={`directory:${node.path}`} className="git-tree-node">
+          <div className="git-tree-row" role="treeitem" aria-expanded={expanded}>
+            <button
+              className="git-tree-trigger"
+              type="button"
+              style={{ paddingInlineStart: `${6 + depth * 8}px` }}
+              onClick={() => onToggleTreePath(node.path)}
+            >
+              <span className="git-tree-chevron" data-expanded={expanded}>
+                <TreeChevron expanded={expanded} />
+              </span>
+              <span className="git-tree-label git-tree-label-directory">{node.name}</span>
+            </button>
+
+            {!isMobileViewport && directoryTargets.length > 0 ? (
+              <div className="git-row-actions">
+                <button
+                  className="git-icon-button"
+                  type="button"
+                  aria-label={stageDirectoryLabel}
+                  title={stageDirectoryLabel}
+                  onClick={() => void onStageToggle(directoryTargets, variant === "staged")}
+                  disabled={actioning}
+                >
+                  <StageIcon staged={variant === "staged"} />
+                </button>
+                {variant === "unstaged" ? (
+                  <button
+                    className="git-icon-button danger"
+                    type="button"
+                    aria-label={discardDirectoryLabel}
+                    title={discardDirectoryLabel}
+                    onClick={() => void onDiscard(directoryTargets)}
+                    disabled={actioning}
+                  >
+                    <DiscardIcon />
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
 
           {expanded ? (
             <div className="git-tree-children" role="group">
@@ -1224,8 +1287,8 @@ function renderTreeNodes({
               <span className="git-tree-label">{node.name}</span>
             </span>
             <span className="git-tree-file-meta">
-              <span className="git-status-badge" data-status={node.change.status}>
-                {node.change.status}
+              <span className="git-status-badge" data-status={node.status}>
+                {node.status}
               </span>
             </span>
           </button>
@@ -1257,23 +1320,23 @@ function renderTreeNodes({
           <span className="git-tree-label-wrap">
             <span className="git-tree-label">{node.name}</span>
           </span>
-          <span className="git-tree-file-meta">
-            <span className="git-status-badge" data-status={node.change.status}>
-              {node.change.status}
+            <span className="git-tree-file-meta">
+              <span className="git-status-badge" data-status={node.status}>
+                {node.status}
+              </span>
             </span>
-          </span>
-        </button>
+          </button>
 
         <div className="git-row-actions">
           <button
             className="git-icon-button"
             type="button"
-            aria-label={node.change.staged ? t("git.unstage") : t("git.stage")}
-            title={node.change.staged ? t("git.unstage") : t("git.stage")}
-            onClick={() => void onStageToggle([node.change.path], node.change.staged)}
+            aria-label={node.variant === "staged" ? t("git.unstage") : t("git.stage")}
+            title={node.variant === "staged" ? t("git.unstage") : t("git.stage")}
+            onClick={() => void onStageToggle([node.change.path], node.variant === "staged")}
             disabled={actioning}
           >
-            <StageIcon staged={node.change.staged} />
+            <StageIcon staged={node.variant === "staged"} />
           </button>
           {variant === "unstaged" ? (
             <button
@@ -1302,7 +1365,7 @@ function createMutableDirectory(name: string, path: string): MutableGitTreeDirec
   };
 }
 
-function buildChangeTree(changes: GitChangeItemDto[]): GitTreeNode[] {
+function buildChangeTree(changes: GitChangeItemDto[], variant: "staged" | "unstaged"): GitTreeNode[] {
   const root = createMutableDirectory("", "");
 
   for (const change of changes) {
@@ -1318,7 +1381,9 @@ function buildChangeTree(changes: GitChangeItemDto[]): GitTreeNode[] {
           kind: "file",
           name: segment,
           path: normalizedPath,
-          change
+          change,
+          status: getChangeStatusForVariant(change, variant),
+          variant
         });
         return;
       }
@@ -1397,8 +1462,39 @@ function collectSelectionTargets(
   const selectedSet = new Set(selectedPaths);
 
   return changes
-    .filter((item) => item.staged === (variant === "staged") && selectedSet.has(item.path))
+    .filter((item) => hasVariantChanges(item, variant) && selectedSet.has(item.path))
     .map((item) => item.path);
+}
+
+function collectTreeTargets(nodes: GitTreeNode[]) {
+  const targets: string[] = [];
+  const seen = new Set<string>();
+
+  function visit(node: GitTreeNode) {
+    if (node.kind === "file") {
+      if (!seen.has(node.path)) {
+        seen.add(node.path);
+        targets.push(node.path);
+      }
+      return;
+    }
+
+    node.children.forEach(visit);
+  }
+
+  nodes.forEach(visit);
+
+  return targets;
+}
+
+function hasVariantChanges(change: GitChangeItemDto, variant: "staged" | "unstaged") {
+  return variant === "staged" ? Boolean(change.stagedStatus) : Boolean(change.worktreeStatus);
+}
+
+function getChangeStatusForVariant(change: GitChangeItemDto, variant: "staged" | "unstaged") {
+  return variant === "staged"
+    ? change.stagedStatus ?? change.status
+    : change.worktreeStatus ?? change.status;
 }
 
 function buildCommitDraft(subject: string): CommitDraftDto {
@@ -1549,8 +1645,12 @@ function StageIcon({ staged }: { staged: boolean }) {
 function DiscardIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-      <path d="M9 10L5 14l4 4" />
-      <path d="M5 14h8a6 6 0 1 0 0 12h-1" />
+      <path d="M10 7L6 11l4 4" strokeLinecap="round" strokeLinejoin="round" />
+      <path
+        d="M7 11h7c3.87 0 7 3.13 7 7 0 1.9-.76 3.63-2 4.89"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }

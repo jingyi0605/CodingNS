@@ -75,19 +75,14 @@ export class GitWriteService {
         continue;
       }
 
-      trackedTargets.push(target);
+      if (change.worktreeStatus) {
+        trackedTargets.push(target);
+      }
     }
 
     try {
       if (trackedTargets.length > 0) {
-        await this.gitCommandRunner.run(repoRoot, [
-          "restore",
-          "--source=HEAD",
-          "--staged",
-          "--worktree",
-          "--",
-          ...trackedTargets
-        ]);
+        await this.gitCommandRunner.run(repoRoot, ["restore", "--worktree", "--", ...trackedTargets]);
       }
 
       if (untrackedTargets.length > 0) {

@@ -38,9 +38,53 @@ describe("GitWriteService", () => {
       { allowNonZeroExit: true }
     );
   });
+
+  it("放弃未暂存改动时不会误删已经暂存的内容", async () => {
+    const initialStatus = createStatus([
+      {
+        path: "src/app.tsx",
+        status: "M",
+        staged: true,
+        oldPath: null,
+        binary: false,
+        stagedStatus: "M",
+        worktreeStatus: "M"
+      }
+    ]);
+    const finalStatus = createStatus([
+      {
+        path: "src/app.tsx",
+        status: "M",
+        staged: true,
+        oldPath: null,
+        binary: false,
+        stagedStatus: "M",
+        worktreeStatus: null
+      }
+    ]);
+    const { service, gitCommandRunner } = createWriteService(
+      [
+        {
+          stdout: "",
+          stderr: "",
+          exitCode: 0
+        }
+      ],
+      [initialStatus, finalStatus]
+    );
+
+    await expect(service.discard("workspace-1", ["src/app.tsx"])).resolves.toEqual(finalStatus);
+
+    expect(gitCommandRunner.run).toHaveBeenCalledWith("C:/repo", [
+      "restore",
+      "--worktree",
+      "--",
+      "src/app.tsx"
+    ]);
+  });
 });
 
-function createWriteService(results: GitCommandResult[]) {
+function createWriteService(results: GitCommandResult[], statuses: ReturnType<typeof createStatus>[] = []) {
   const gitCommandRunner = {
     run: vi.fn(async () => {
       const next = results.shift();
@@ -54,6 +98,7 @@ function createWriteService(results: GitCommandResult[]) {
   } satisfies Pick<GitCommandRunner, "run">;
 
   const workspaceRepoGuard = {
+    ensureRelativePath: vi.fn((_repoRoot: string, target: string) => target),
     resolve: vi.fn(async () => ({
       workspace: {
         id: "workspace-1",
@@ -69,7 +114,15 @@ function createWriteService(results: GitCommandResult[]) {
   };
 
   const gitReadService = {
-    getStatus: vi.fn()
+    getStatus: vi.fn(async () => {
+      const next = statuses.shift();
+
+      if (!next) {
+        throw new Error("测试桩缺少 Git 状态返回值");
+      }
+
+      return next;
+    })
   };
 
   return {
@@ -79,5 +132,29 @@ function createWriteService(results: GitCommandResult[]) {
       gitReadService as unknown as GitReadService
     ),
     gitCommandRunner
+  };
+}
+
+function createStatus(changes: Array<{
+  path: string;
+  status: string;
+  staged: boolean;
+  oldPath: string | null;
+  binary: boolean;
+  stagedStatus: string | null;
+  worktreeStatus: string | null;
+}>) {
+  return {
+    snapshot: {
+      workspaceId: "workspace-1",
+      repoRoot: "C:/repo",
+      branch: "main",
+      ahead: 0,
+      behind: 0,
+      hasRemote: true,
+      isDirty: changes.length > 0,
+      lastFetchedAt: null
+    },
+    changes
   };
 }
