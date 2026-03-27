@@ -1923,7 +1923,7 @@ describe("WorkbenchLayout", () => {
     expect(workbenchFetchCount).toBeGreaterThanOrEqual(1);
   });
 
-  it("移动壳不再渲染边缘手柄，会话沉浸态改走快捷导航浮层", async () => {
+  it("移动壳不再渲染边缘手柄，会话沉浸态改走底部一级导航", async () => {
     Object.defineProperty(window, "innerWidth", {
       configurable: true,
       writable: true,
@@ -1947,18 +1947,10 @@ describe("WorkbenchLayout", () => {
       shellMode: "mobile"
     });
 
-    expect(
-      await screen.findByRole("button", { name: t("shell.mobileQuickNavigationAction") })
-    ).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: t("shell.mobileSessionsEntry") })).toBeInTheDocument();
     expect(view.container.querySelector(".mobile-workbench-header")).not.toBeInTheDocument();
     expect(view.container.querySelector(".mobile-sidebar-handle")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: t("shell.showSessionSidebar") })).not.toBeInTheDocument();
-    expect(screen.queryByText(t("shell.mobileWorkspacesEntry"))).not.toBeInTheDocument();
-
-    const quickNavTrigger = screen.getByRole("button", { name: t("shell.mobileQuickNavigationAction") });
-
-    fireEvent.click(quickNavTrigger);
-
     expect(screen.getByRole("button", { name: t("shell.mobileWorkspacesEntry") })).toBeInTheDocument();
     expect(view.container.querySelector(".mobile-nav-drawer.left.open")).not.toBeInTheDocument();
   });
@@ -1992,7 +1984,7 @@ describe("WorkbenchLayout", () => {
     expect(view.container.querySelector(".mobile-nav-drawer.left.open")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: t("shell.showSessionSidebar") })).not.toBeInTheDocument();
     expect(view.container.querySelector(".mobile-workbench-header")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: t("shell.mobileQuickNavigationAction") })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("shell.mobileSessionsEntry") })).toBeInTheDocument();
   });
 
   it("移动端从其他页面回到对话入口时，会优先恢复上一次已进入的会话", async () => {

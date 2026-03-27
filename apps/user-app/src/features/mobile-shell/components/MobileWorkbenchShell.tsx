@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useRef, type CSSProperties, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import { usePlatform } from "../../../platform/platform-provider";
@@ -7,7 +7,6 @@ import { AndroidWorkbenchShell } from "../android/AndroidWorkbenchShell";
 import { useH5ViewportState } from "../h5/useH5ViewportState";
 import { IosWorkbenchShell } from "../ios/IosWorkbenchShell";
 import { AdaptiveMobilePaneLayout, resolveAdaptiveMobilePaneLayout } from "../layouts/AdaptiveMobilePaneLayout";
-import { ConversationFocusQuickNav, type ConversationFocusQuickNavAction } from "./ConversationFocusQuickNav";
 import {
   resolveMobileToolHeaderState,
   resolvePreferredToolsHomeHref
@@ -17,6 +16,7 @@ import type {
   MobileWorkbenchPresentation,
   MobileWorkbenchShellProps
 } from "./mobile-workbench-shell-types";
+import { useConversationFocusTabbar } from "./useConversationFocusTabbar";
 
 export type { MobileWorkbenchEntry, MobileWorkbenchPresentation } from "./mobile-workbench-shell-types";
 
@@ -59,9 +59,16 @@ function BrowserMobileWorkbenchShell({
   const platform = usePlatform();
   const location = useLocation();
   const navigate = useNavigate();
+  const shellRef = useRef<HTMLDivElement | null>(null);
   const h5ViewportState = useH5ViewportState(platform.platform === "web");
   const hideTabbarForKeyboard = platform.platform === "web" && h5ViewportState.keyboardOpen;
   const isConversationFocus = presentation === "conversation-focus";
+  const conversationFocusTabbar = useConversationFocusTabbar({
+    enabled: isConversationFocus,
+    rootRef: shellRef,
+    suspended: hideTabbarForKeyboard,
+    resetKey: `${location.pathname}${location.search}`
+  });
   const paneLayout = resolveAdaptiveMobilePaneLayout({
     viewportClass: platform.viewportClass,
     activeEntry,
@@ -107,38 +114,13 @@ function BrowserMobileWorkbenchShell({
       onClick: onNavigateSettings
     }
   ];
-  const quickActions: ConversationFocusQuickNavAction[] = [
-    {
-      key: "workspaces",
-      label: t("shell.mobileWorkspacesEntry"),
-      icon: <WorkspaceIcon />,
-      onSelect: onNavigateWorkspaces
-    },
-    {
-      key: "terminals",
-      label: t("shell.mobileTerminalsEntry"),
-      icon: <TerminalIcon />,
-      onSelect: onNavigateTerminals
-    },
-    {
-      key: "files",
-      label: t("shell.filesEntry"),
-      icon: <FilesIcon />,
-      onSelect: onNavigateToolFiles
-    },
-    {
-      key: "git",
-      label: t("shell.gitEntry"),
-      icon: <GitBranchIcon />,
-      onSelect: onNavigateToolGit
-    },
-    {
-      key: "processes",
-      label: t("shell.terminalManagerEntry"),
-      icon: <ProcessIcon />,
-      onSelect: onNavigateToolProcesses
-    }
-  ];
+  const shellStyle = (
+    isConversationFocus
+      ? {
+          "--mobile-conversation-tabbar-progress": conversationFocusTabbar.progress.toFixed(4)
+        }
+      : undefined
+  ) as CSSProperties | undefined;
 
   function handleNavigateBackToToolsHome() {
     const preferredToolsHomeHref = resolvePreferredToolsHomeHref(location.pathname, location.search);
@@ -153,13 +135,18 @@ function BrowserMobileWorkbenchShell({
 
   return (
     <div
+      ref={shellRef}
       className="mobile-workbench-shell"
       data-active-entry={activeEntry}
       data-mobile-presentation={presentation}
       data-mobile-runtime={platform.platform}
       data-mobile-keyboard-open={hideTabbarForKeyboard}
       data-pane-layout={paneLayout}
-      data-tabbar-open={!isConversationFocus && !hideTabbarForKeyboard}
+      data-tabbar-open={
+        hideTabbarForKeyboard ? false : isConversationFocus ? conversationFocusTabbar.isOpen : true
+      }
+      data-conversation-tabbar-state={isConversationFocus ? conversationFocusTabbar.state : "default"}
+      style={shellStyle}
     >
       {headerState ? (
         <header className="mobile-workbench-header" data-header-kind="tools">
@@ -207,27 +194,23 @@ function BrowserMobileWorkbenchShell({
         </AdaptiveMobilePaneLayout>
       </div>
 
-      {isConversationFocus ? <ConversationFocusQuickNav actions={quickActions} /> : null}
-
-      {!isConversationFocus ? (
-        <nav className="mobile-workbench-tabbar" aria-label={t("shell.title")} hidden={hideTabbarForKeyboard}>
-          {navItems.map((item) => (
-            <button
-              key={item.key}
-              type="button"
-              className="mobile-workbench-tabbar-item"
-              data-active={item.key === activeEntry}
-              aria-current={item.key === activeEntry ? "page" : undefined}
-              onClick={item.onClick}
-            >
-              <span className="mobile-workbench-tabbar-icon" aria-hidden="true">
-                {item.icon}
-              </span>
-              <span className="mobile-workbench-tabbar-label">{item.label}</span>
-            </button>
-          ))}
-        </nav>
-      ) : null}
+      <nav className="mobile-workbench-tabbar" aria-label={t("shell.title")} hidden={hideTabbarForKeyboard}>
+        {navItems.map((item) => (
+          <button
+            key={item.key}
+            type="button"
+            className="mobile-workbench-tabbar-item"
+            data-active={item.key === activeEntry}
+            aria-current={item.key === activeEntry ? "page" : undefined}
+            onClick={item.onClick}
+          >
+            <span className="mobile-workbench-tabbar-icon" aria-hidden="true">
+              {item.icon}
+            </span>
+            <span className="mobile-workbench-tabbar-label">{item.label}</span>
+          </button>
+        ))}
+      </nav>
     </div>
   );
 }
@@ -285,40 +268,6 @@ function ToolboxIcon() {
       <rect x="3" y="6" width="18" height="13" rx="2" />
       <path d="M3 12h18" />
       <path d="M10 11.5h4" />
-    </svg>
-  );
-}
-
-function FilesIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-      <path d="M4 6.5h7l2 2H20v9A2.5 2.5 0 0 1 17.5 20h-11A2.5 2.5 0 0 1 4 17.5z" />
-      <path d="M4 9h16" />
-    </svg>
-  );
-}
-
-function GitBranchIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-      <circle cx="7" cy="6" r="2" />
-      <circle cx="17" cy="18" r="2" />
-      <circle cx="17" cy="6" r="2" />
-      <path d="M7 8v8a2 2 0 0 0 2 2h6" />
-      <path d="M17 8v6" />
-    </svg>
-  );
-}
-
-function ProcessIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-      <rect x="4" y="5" width="16" height="14" rx="2" />
-      <path d="M8 9h8" />
-      <path d="M8 13h5" />
-      <path d="M16 2v3" />
-      <path d="M12 2v3" />
-      <path d="M8 2v3" />
     </svg>
   );
 }

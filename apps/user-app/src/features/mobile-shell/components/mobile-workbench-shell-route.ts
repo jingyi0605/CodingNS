@@ -179,15 +179,7 @@ export function resolveMobileToolHeaderState({
     || routeMatch.routeKind === "files"
     || routeMatch.routeKind === "git"
   ) {
-    return {
-      title:
-        resolvePrimaryToolTab(pathname, search) === "git"
-          ? t("shell.gitEntry")
-          : t("shell.filesEntry"),
-      showBackButton: false,
-      showMoreButton: true,
-      moreButtonLabel
-    };
+    return null;
   }
 
   return null;

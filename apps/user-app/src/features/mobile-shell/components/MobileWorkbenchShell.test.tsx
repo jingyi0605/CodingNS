@@ -185,148 +185,91 @@ describe("MobileWorkbenchShell", () => {
     ]);
   });
 
-  it("会话沉浸态会移除顶部工具栏，只保留快捷导航浮层", () => {
-    const onNavigateToolGit = vi.fn();
+  it("会话沉浸态会先显示底部导航，并在 3 秒后自动收起", () => {
+    vi.useFakeTimers();
+
     const view = renderMobileShell({
       presentation: "conversation-focus",
       navigationPanel: <div>导航面板</div>,
-      onNavigateToolGit
+      childVariant: "conversation"
     });
+    const shell = view.container.querySelector(".mobile-workbench-shell");
 
     expect(view.container.querySelector(".mobile-workbench-header")).not.toBeInTheDocument();
     expect(view.queryByRole("button", { name: "显示会话列表" })).not.toBeInTheDocument();
     expect(view.queryByRole("button", { name: "更多操作" })).not.toBeInTheDocument();
-    expect(view.getByRole("button", { name: "打开快捷导航" })).toBeInTheDocument();
+    expect(view.queryByRole("button", { name: "打开快捷导航" })).not.toBeInTheDocument();
     expect(view.queryByRole("button", { name: "打开搜索" })).not.toBeInTheDocument();
+    expect(view.getByRole("button", { name: "工作区" })).toBeInTheDocument();
+    expect(shell).toHaveAttribute("data-conversation-tabbar-state", "visible");
 
-    const quickNavTrigger = view.getByRole("button", { name: "打开快捷导航" });
-    fireEvent.keyDown(quickNavTrigger, {
-      key: "Enter"
+    act(() => {
+      vi.advanceTimersByTime(3000);
     });
 
-    expect(view.getByRole("button", { name: "GIT管理" })).toBeInTheDocument();
-    fireEvent.click(view.getByRole("button", { name: "GIT管理" }));
-
-    expect(onNavigateToolGit).toHaveBeenCalledTimes(1);
+    expect(shell).toHaveAttribute("data-conversation-tabbar-state", "hidden");
   });
 
-  it("快捷导航停靠到左侧时会切换成左侧按钮布局", async () => {
-    window.localStorage.setItem(
-      "mobile.conversation.quick-nav.position",
-      JSON.stringify({
-        side: "left",
-        yRatio: 0.45
-      })
-    );
-
-    const view = renderMobileShell({
-      presentation: "conversation-focus"
-    });
-    const quickNavTrigger = view.getByRole("button", { name: "打开快捷导航" });
-
-    await waitFor(() => {
-      expect(quickNavTrigger.closest(".mobile-floating-nav")).toHaveAttribute("data-side", "left");
-    });
-
-    expect(Array.from(quickNavTrigger.children).map((node) => node.className)).toEqual([
-      "mobile-floating-nav-grip",
-      "mobile-floating-nav-main-icon"
-    ]);
-  });
-
-  it("长按 3 秒后会进入移动模式，并在松手后吸附到另一侧边缘", async () => {
+  it("聊天记录到底后再次向上滑动会把底部导航拽出来", () => {
     vi.useFakeTimers();
-
     const view = renderMobileShell({
-      presentation: "conversation-focus"
+      presentation: "conversation-focus",
+      childVariant: "conversation"
     });
-    const quickNavTrigger = view.getByRole("button", { name: "打开快捷导航" });
-    const floatingNav = quickNavTrigger.closest(".mobile-floating-nav");
+    const shell = view.container.querySelector(".mobile-workbench-shell");
+    const messageList = view.container.querySelector(".message-list") as HTMLDivElement | null;
 
-    expect(floatingNav).toHaveAttribute("data-side", "right");
+    expect(messageList).not.toBeNull();
 
-    fireEvent.pointerDown(quickNavTrigger, {
-      button: 0,
-      pointerId: 1,
-      clientX: 360,
-      clientY: 520
+    Object.defineProperty(messageList, "scrollHeight", {
+      configurable: true,
+      value: 1600
+    });
+    Object.defineProperty(messageList, "clientHeight", {
+      configurable: true,
+      value: 600
+    });
+    Object.defineProperty(messageList, "scrollTop", {
+      configurable: true,
+      writable: true,
+      value: 1000
     });
 
     act(() => {
       vi.advanceTimersByTime(3000);
     });
 
-    expect(floatingNav).toHaveAttribute("data-repositioning", "true");
+    expect(shell).toHaveAttribute("data-conversation-tabbar-state", "hidden");
 
-    fireEvent.pointerMove(quickNavTrigger, {
-      button: 0,
-      pointerId: 1,
-      clientX: 20,
-      clientY: 340
+    fireEvent.touchStart(messageList!, {
+      touches: [{ clientY: 620 }]
     });
-    fireEvent.pointerUp(quickNavTrigger, {
-      button: 0,
-      pointerId: 1,
-      clientX: 20,
-      clientY: 340
+    fireEvent.touchMove(messageList!, {
+      touches: [{ clientY: 560 }]
+    });
+    expect(shell).toHaveAttribute("data-conversation-tabbar-state", "dragging");
+
+    fireEvent.touchEnd(messageList!, {
+      changedTouches: [{ clientY: 560 }]
     });
 
-    vi.useRealTimers();
-    await Promise.resolve();
-
-    expect(floatingNav).toHaveAttribute("data-repositioning", "false");
-    expect(window.localStorage.getItem("mobile.conversation.quick-nav.position")).toBeTruthy();
-  });
-
-  it("菜单展开时长按会先播放收起动画，再进入移动模式", () => {
-    vi.useFakeTimers();
-
-    const view = renderMobileShell({
-      presentation: "conversation-focus"
-    });
-    const quickNavTrigger = view.getByRole("button", { name: "打开快捷导航" });
-    const floatingNav = quickNavTrigger.closest(".mobile-floating-nav");
-
-    fireEvent.click(quickNavTrigger);
-    expect(view.getByRole("button", { name: "GIT管理" })).toBeInTheDocument();
-
-    fireEvent.pointerDown(quickNavTrigger, {
-      button: 0,
-      pointerId: 2,
-      clientX: 360,
-      clientY: 520
-    });
+    expect(shell).toHaveAttribute("data-conversation-tabbar-state", "visible");
 
     act(() => {
       vi.advanceTimersByTime(3000);
     });
 
-    expect(floatingNav).toHaveAttribute("data-open", "false");
-    expect(floatingNav).toHaveAttribute("data-preparing-reposition", "true");
-    expect(floatingNav).toHaveAttribute("data-repositioning", "false");
-    expect(view.getByRole("button", { name: "GIT管理" })).toBeInTheDocument();
-
-    act(() => {
-      vi.advanceTimersByTime(220);
-    });
-
-    expect(floatingNav).toHaveAttribute("data-preparing-reposition", "false");
-    expect(floatingNav).toHaveAttribute("data-repositioning", "true");
+    expect(shell).toHaveAttribute("data-conversation-tabbar-state", "hidden");
   });
 
-  it("工具主页显示当前主工具名，并把更多按钮直接映射到进程管理", async () => {
-    const onNavigateToolProcesses = vi.fn();
-    const user = userEvent.setup();
+  it("工具主页不再渲染外层标题栏，避免和页面内头部重复", () => {
     const view = renderMobileShell({
       activeEntry: "tools",
-      route: "/workspaces/workspace-1/tools?tab=git",
-      onNavigateToolProcesses
+      route: "/workspaces/workspace-1/tools?tab=git"
     });
 
-    expect(view.getByRole("heading", { name: "GIT管理" })).toBeInTheDocument();
-    expect(view.queryByRole("button", { name: "打开搜索" })).not.toBeInTheDocument();
-    await user.click(view.getByRole("button", { name: "更多操作" }));
-    expect(onNavigateToolProcesses).toHaveBeenCalledTimes(1);
+    expect(view.container.querySelector(".mobile-workbench-header")).not.toBeInTheDocument();
+    expect(view.queryByRole("button", { name: "更多操作" })).not.toBeInTheDocument();
   });
 
   it("进程管理页会显示返回按钮，并返回最近的主工具页", async () => {
@@ -347,7 +290,7 @@ describe("MobileWorkbenchShell", () => {
     await user.click(view.getByRole("button", { name: "返回" }));
 
     await waitFor(() => {
-      expect(view.getByRole("heading", { name: "GIT管理" })).toBeInTheDocument();
+      expect(view.container.querySelector(".mobile-workbench-header")).not.toBeInTheDocument();
       expect(view.getByTestId("mobile-location")).toHaveTextContent("/workspaces/workspace-1/tools");
     });
   });
@@ -358,6 +301,7 @@ function renderMobileShell(options?: {
   navigationPanel?: ReactNode;
   auxiliaryPanel?: ReactNode;
   presentation?: "default" | "conversation-focus";
+  childVariant?: "workbench" | "conversation";
   route?: string;
   initialEntries?: string[];
   initialIndex?: number;
@@ -390,13 +334,39 @@ function renderMobileShell(options?: {
           onNavigateToolProcesses={options?.onNavigateToolProcesses ?? (() => undefined)}
           onNavigateSettings={() => undefined}
         >
-          <main className="workbench-page">
-            <textarea aria-label="消息输入框" />
-            <LocationProbe />
-          </main>
+          {options?.childVariant === "conversation" ? <ConversationShellFixture /> : <WorkbenchShellFixture />}
         </MobileWorkbenchShell>
       </PlatformProvider>
     </MemoryRouter>
+  );
+}
+
+function WorkbenchShellFixture() {
+  return (
+    <main className="workbench-page">
+      <textarea aria-label="消息输入框" />
+      <LocationProbe />
+    </main>
+  );
+}
+
+function ConversationShellFixture() {
+  return (
+    <main className="workbench-page conversation-page-shell mobile-page-fixed-root mobile-conversation-page">
+      <section className="message-timeline">
+        <div className="message-list">
+          <article className="message-item">
+            <div className="message-content-wrapper">
+              <p>测试消息</p>
+            </div>
+          </article>
+        </div>
+      </section>
+      <section className="composer-panel">
+        <textarea aria-label="消息输入框" />
+      </section>
+      <LocationProbe />
+    </main>
   );
 }
 

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 
@@ -18,6 +18,7 @@ describe("AndroidWorkbenchShell", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
     Object.defineProperty(window, "innerWidth", {
       configurable: true,
@@ -49,47 +50,38 @@ describe("AndroidWorkbenchShell", () => {
     expect(screen.queryByRole("button", { name: t("shell.mobileSearchAction") })).not.toBeInTheDocument();
   });
 
-  it("会话沉浸态会隐藏底部导航，只保留快捷导航浮层", () => {
-    const onNavigateToolGit = vi.fn();
+  it("会话沉浸态会先显示底部导航，3 秒后再自动收起", () => {
+    vi.useFakeTimers();
 
     renderAndroidShell({
       initialEntries: ["/", "/workspaces/workspace-1/sessions/session-1"],
       initialIndex: 1,
-      presentation: "conversation-focus",
-      onNavigateToolGit
+      presentation: "conversation-focus"
     });
+    const shell = document.querySelector(".android-workbench-shell");
 
     expect(document.querySelector(".android-workbench-topbar")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: t("common.back") })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: t("shell.showSessionSidebar") })).not.toBeInTheDocument();
-    expect(screen.queryByText(t("shell.mobileWorkspacesEntry"))).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: t("shell.mobileQuickNavigationAction") })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("shell.mobileWorkspacesEntry") })).toBeInTheDocument();
+    expect(shell).toHaveAttribute("data-conversation-tabbar-state", "visible");
 
-    const quickNavTrigger = screen.getByRole("button", { name: t("shell.mobileQuickNavigationAction") });
-    fireEvent.keyDown(quickNavTrigger, {
-      key: "Enter"
+    act(() => {
+      vi.advanceTimersByTime(3000);
     });
 
-    expect(screen.getByRole("button", { name: t("shell.gitEntry") })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: t("shell.gitEntry") }));
-
-    expect(onNavigateToolGit).toHaveBeenCalledTimes(1);
+    expect(shell).toHaveAttribute("data-conversation-tabbar-state", "hidden");
     expect(screen.queryByRole("button", { name: t("shell.androidMoreAction") })).not.toBeInTheDocument();
   });
 
-  it("工具主页会显示主工具标题，并把更多按钮直连进程管理", () => {
-    const onNavigateToolProcesses = vi.fn();
-
+  it("工具主页不再渲染外层标题栏，避免和页面内头部重复", () => {
     renderAndroidShell({
       activeEntry: "tools",
-      initialEntries: ["/workspaces/workspace-1/tools?tab=files"],
-      onNavigateToolProcesses
+      initialEntries: ["/workspaces/workspace-1/tools?tab=files"]
     });
 
-    expect(screen.getByRole("heading", { name: t("shell.filesEntry") })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: t("shell.mobileSearchAction") })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: t("shell.androidMoreAction") }));
-    expect(onNavigateToolProcesses).toHaveBeenCalledTimes(1);
+    expect(document.querySelector(".android-workbench-topbar")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("shell.androidMoreAction") })).not.toBeInTheDocument();
   });
 
   it("进程管理页会提供返回按钮并回到主工具页", () => {
@@ -106,7 +98,7 @@ describe("AndroidWorkbenchShell", () => {
 
     expect(screen.getByRole("heading", { name: t("shell.terminalManagerEntry") })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: t("common.back") }));
-    expect(screen.getByRole("heading", { name: t("shell.gitEntry") })).toBeInTheDocument();
+    expect(document.querySelector(".android-workbench-topbar")).not.toBeInTheDocument();
     expect(screen.getByTestId("android-location")).toHaveTextContent("/workspaces/workspace-1/tools");
   });
 });
