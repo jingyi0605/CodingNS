@@ -4,6 +4,7 @@ import {
   createContext,
   useContext,
   useEffect,
+  useLayoutEffect,
   lazy,
   useMemo,
   useRef,
@@ -1457,6 +1458,85 @@ function SessionCard({
   const subagentBadgeLabel =
     session.subagentLabel?.trim() || (isSubagentSession(session) ? t("shell.subagentBadge") : null);
   const titlePresentation = buildSessionTitlePresentation(session.title, t("common.unknown"));
+  const menuTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const [menuPositionStyle, setMenuPositionStyle] = useState<CSSProperties | null>(null);
+
+  useLayoutEffect(() => {
+    if (!menuOpen) {
+      setMenuPositionStyle(null);
+      return;
+    }
+
+    const updateMenuPosition = () => {
+      const triggerElement = menuTriggerRef.current;
+
+      if (!triggerElement) {
+        return;
+      }
+
+      const triggerRect = triggerElement.getBoundingClientRect();
+      setMenuPositionStyle({
+        top: `${triggerRect.bottom}px`,
+        left: `${triggerRect.right}px`
+      });
+    };
+
+    updateMenuPosition();
+    window.addEventListener("resize", updateMenuPosition);
+    window.addEventListener("scroll", updateMenuPosition, true);
+
+    return () => {
+      window.removeEventListener("resize", updateMenuPosition);
+      window.removeEventListener("scroll", updateMenuPosition, true);
+    };
+  }, [menuOpen]);
+
+  const sessionMenu =
+    menuOpen && typeof document !== "undefined" && menuPositionStyle
+      ? createPortal(
+          <div
+            className="workbench-session-menu"
+            data-menu-key={menuKey}
+            onClick={(event) => event.stopPropagation()}
+            style={menuPositionStyle}
+          >
+            <button
+              type="button"
+              className="workbench-session-menu-item"
+              onClick={() => {
+                onRename();
+                onCloseMenu();
+              }}
+            >
+              <PencilIcon />
+              <span>{t("shell.renameAction")}</span>
+            </button>
+            <button
+              type="button"
+              className="workbench-session-menu-item"
+              onClick={() => {
+                onToggleFavorite();
+                onCloseMenu();
+              }}
+            >
+              <StarIcon active={isFavorite} />
+              <span>{isFavorite ? t("shell.unfavoriteAction") : t("shell.favoriteAction")}</span>
+            </button>
+            <button
+              type="button"
+              className="workbench-session-menu-item"
+              onClick={() => {
+                onArchive();
+                onCloseMenu();
+              }}
+            >
+              <ArchiveIcon />
+              <span>{t("shell.archiveAction")}</span>
+            </button>
+          </div>,
+          document.body
+        )
+      : null;
 
   return (
     <article
@@ -1537,64 +1617,24 @@ function SessionCard({
 
       {showActions && !selectionMode ? (
         <div className="workbench-session-actions" data-open={menuOpen}>
-        <button
-          type="button"
-          className="workbench-session-menu-trigger"
-          data-open={menuOpen}
-          aria-label={t("shell.sessionMoreAction")}
-          title={t("shell.sessionMoreAction")}
-          aria-expanded={menuOpen}
-          onClick={(event) => {
-            event.stopPropagation();
-            onToggleMenu();
-          }}
-        >
-          <MoreIcon />
-        </button>
-
-        {menuOpen ? (
-          <div
-            className="workbench-session-menu"
-            data-menu-key={menuKey}
-            onClick={(event) => event.stopPropagation()}
+          <button
+            ref={menuTriggerRef}
+            type="button"
+            className="workbench-session-menu-trigger"
+            data-open={menuOpen}
+            aria-label={t("shell.sessionMoreAction")}
+            title={t("shell.sessionMoreAction")}
+            aria-expanded={menuOpen}
+            onClick={(event) => {
+              event.stopPropagation();
+              onToggleMenu();
+            }}
           >
-            <button
-              type="button"
-              className="workbench-session-menu-item"
-              onClick={() => {
-                onRename();
-                onCloseMenu();
-              }}
-            >
-              <PencilIcon />
-              <span>{t("shell.renameAction")}</span>
-            </button>
-            <button
-              type="button"
-              className="workbench-session-menu-item"
-              onClick={() => {
-                onToggleFavorite();
-                onCloseMenu();
-              }}
-            >
-              <StarIcon active={isFavorite} />
-              <span>{isFavorite ? t("shell.unfavoriteAction") : t("shell.favoriteAction")}</span>
-            </button>
-            <button
-              type="button"
-              className="workbench-session-menu-item"
-              onClick={() => {
-                onArchive();
-                onCloseMenu();
-              }}
-            >
-              <ArchiveIcon />
-              <span>{t("shell.archiveAction")}</span>
-            </button>
-          </div>
-        ) : null}
+            <MoreIcon />
+          </button>
         </div>
       ) : null}
+      {sessionMenu}
     </article>
   );
 }
@@ -1943,7 +1983,10 @@ function SidebarContent({
     function handlePointerDown(event: PointerEvent) {
       const target = event.target;
 
-      if (target instanceof HTMLElement && target.closest(".workbench-session-actions")) {
+      if (
+        target instanceof HTMLElement
+        && (target.closest(".workbench-session-actions") || target.closest(".workbench-session-menu"))
+      ) {
         return;
       }
 

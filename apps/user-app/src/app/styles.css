@@ -7601,10 +7601,8 @@ textarea:focus-visible {
 }
 
 .workbench-session-menu {
-  position: absolute;
-  top: calc(100% + 10px);
-  right: 0;
-  z-index: 6;
+  position: fixed;
+  z-index: 2400;
   min-width: 140px;
   display: flex;
   flex-direction: column;
@@ -7614,6 +7612,8 @@ textarea:focus-visible {
   border: 1px solid color-mix(in srgb, var(--border-primary) 82%, transparent);
   background: color-mix(in srgb, var(--bg-surface) 96%, transparent);
   box-shadow: 0 16px 36px rgba(15, 23, 42, 0.14);
+  transform: translateY(-100%);
+  transform-origin: bottom left;
 }
 
 .workbench-session-menu-item {

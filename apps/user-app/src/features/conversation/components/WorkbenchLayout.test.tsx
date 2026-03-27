@@ -347,6 +347,69 @@ describe("WorkbenchLayout", () => {
     });
   });
 
+  it("会话菜单吸附在按钮右侧并与按钮底部对齐", async () => {
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "会话 Alpha",
+            workspaceId: "workspace-1"
+          }),
+          createSessionSummary({
+            sessionId: "session-2",
+            title: "会话 Beta",
+            workspaceId: "workspace-1"
+          })
+        ]
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute();
+
+    const betaCard = await findSessionCardByTitle("会话 Beta");
+    const menuTrigger = within(betaCard).getByRole("button", { name: t("shell.sessionMoreAction") });
+    Object.defineProperty(menuTrigger, "getBoundingClientRect", {
+      configurable: true,
+      value: vi.fn(() => ({
+        top: 120,
+        right: 248,
+        bottom: 150,
+        left: 218,
+        width: 30,
+        height: 30,
+        x: 218,
+        y: 120,
+        toJSON: () => null
+      }))
+    });
+
+    await userEvent.click(menuTrigger);
+
+    const menu = document.querySelector(".workbench-session-menu");
+
+    if (!(menu instanceof HTMLElement)) {
+      throw new Error("未找到会话操作菜单");
+    }
+
+    expect(menu).toHaveStyle({
+      top: "150px",
+      left: "248px"
+    });
+  });
+
   it("支持会话重命名，并立即更新左侧列表标题", async () => {
     let currentSnapshot = createWorkbenchSnapshot([
       {
