@@ -5,6 +5,66 @@ import type { GitCommandRunner, GitCommandResult } from "../../src/modules/git/g
 import type { WorkspaceRepoGuard } from "../../src/modules/git/workspace-repo-guard.js";
 
 describe("GitReadService", () => {
+  it("未跟踪文件只应出现在工作区变更中，不能被误算进暂存区", async () => {
+    const gitCommandRunner = {
+      run: vi.fn(async (_repoRoot: string, args: string[]) => {
+        if (args[0] === "status") {
+          return createResult(["## main", "?? apps/user-app/src/new-file.ts"].join("\n"));
+        }
+
+        if (args[0] === "remote") {
+          return createResult("origin\n");
+        }
+
+        throw new Error(`未预期的 Git 命令: ${args.join(" ")}`);
+      })
+    } satisfies Pick<GitCommandRunner, "run">;
+
+    const workspaceRepoGuard = {
+      resolve: vi.fn(async () => ({
+        workspace: {
+          id: "workspace-1",
+          name: "Git 工作区",
+          path: "C:/repo",
+          repoRoot: "C:/repo",
+          favorite: false,
+          createdAt: "2026-03-23T00:00:00.000Z",
+          updatedAt: "2026-03-23T00:00:00.000Z"
+        },
+        repoRoot: "C:/repo"
+      }))
+    } satisfies Pick<WorkspaceRepoGuard, "resolve">;
+
+    const service = new GitReadService(
+      gitCommandRunner as unknown as GitCommandRunner,
+      workspaceRepoGuard as unknown as WorkspaceRepoGuard
+    );
+
+    await expect(service.getStatus("workspace-1")).resolves.toEqual({
+      snapshot: {
+        workspaceId: "workspace-1",
+        repoRoot: "C:/repo",
+        branch: "main",
+        ahead: 0,
+        behind: 0,
+        hasRemote: true,
+        isDirty: true,
+        lastFetchedAt: null
+      },
+      changes: [
+        {
+          path: "apps/user-app/src/new-file.ts",
+          status: "?",
+          staged: false,
+          oldPath: null,
+          binary: false,
+          stagedStatus: null,
+          worktreeStatus: "?"
+        }
+      ]
+    });
+  });
+
   it("会为历史提交补充本地远程归属与远程标签", async () => {
     const gitCommandRunner = {
       run: vi.fn(async (_repoRoot: string, args: string[]) => {

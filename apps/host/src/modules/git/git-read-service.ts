@@ -278,17 +278,41 @@ function parseStatusLine(line: string): GitChangeItem {
   const renameParts = payload.split(" -> ");
   const oldPath = renameParts.length === 2 ? renameParts[0] : null;
   const normalizedPath = renameParts.length === 2 ? renameParts[1] : payload;
-  const combinedStatus = stagedStatus !== " " && stagedStatus !== "?" ? stagedStatus : worktreeStatus;
+  const normalizedStagedStatus = normalizeStatusColumn(stagedStatus, "staged");
+  const normalizedWorktreeStatus = normalizeStatusColumn(worktreeStatus, "worktree");
+  const combinedStatus = normalizedStagedStatus ?? normalizedWorktreeStatus ?? "?";
 
   return {
     path: normalizedPath,
-    status: combinedStatus.trim() || "?",
-    staged: stagedStatus !== " " && stagedStatus !== "?",
+    status: combinedStatus,
+    staged: normalizedStagedStatus !== null,
     oldPath,
     binary: false,
-    stagedStatus: stagedStatus.trim() || null,
-    worktreeStatus: worktreeStatus.trim() || null
+    stagedStatus: normalizedStagedStatus,
+    worktreeStatus: normalizedWorktreeStatus
   };
+}
+
+function normalizeStatusColumn(
+  status: string,
+  column: "staged" | "worktree"
+): string | null {
+  const normalized = status.trim();
+
+  if (!normalized) {
+    return null;
+  }
+
+  // `??` 表示未跟踪文件，它只属于工作区变更，不能被当作暂存区状态。
+  if (normalized === "?") {
+    return column === "worktree" ? normalized : null;
+  }
+
+  if (normalized === "!") {
+    return null;
+  }
+
+  return normalized;
 }
 
 function parseHistoryItem(
