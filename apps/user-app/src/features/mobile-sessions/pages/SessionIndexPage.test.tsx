@@ -79,9 +79,9 @@ vi.mock("../../conversation/components/WorkbenchLayout", async () => {
 
 function renderPage() {
   return render(
-    <MemoryRouter initialEntries={["/sessions"]}>
+    <MemoryRouter initialEntries={["/workspaces/workspace-1/sessions"]}>
       <Routes>
-        <Route path="/sessions" element={<SessionIndexPage />} />
+        <Route path="/workspaces/:workspaceId/sessions" element={<SessionIndexPage />} />
       </Routes>
     </MemoryRouter>
   );

@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { t } from "../../../shared/i18n";
 import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout";
 import {
+  buildWorkspaceSessionPath,
   buildNavigationSessionTree,
   flattenNavigationSessions
 } from "../../workbench/utils/workbench-navigation";
@@ -146,7 +147,9 @@ export function SessionIndexPage() {
                   isFavorite={favoriteSet.has(rootSessionId)}
                   isActive={currentSessionId === rootSessionId}
                   hasSubsessions={node.children.length > 0}
-                  onActivate={(sessionId) => navigate(`/sessions/${sessionId}`)}
+                  onActivate={(sessionId) =>
+                    navigate(buildWorkspaceSessionPath(node.entry.workspace.id, sessionId))
+                  }
                   onToggleSubsessions={() => toggleSubagentList(rootSessionId)}
                   onToggleFavorite={(sessionId) => {
                     void toggleFavoriteSession(sessionId);
@@ -164,7 +167,9 @@ export function SessionIndexPage() {
                         isFavorite={favoriteSet.has(entry.session.sessionId)}
                         isActive={currentSessionId === entry.session.sessionId}
                         depth={1}
-                        onActivate={(sessionId) => navigate(`/sessions/${sessionId}`)}
+                        onActivate={(sessionId) =>
+                          navigate(buildWorkspaceSessionPath(entry.workspace.id, sessionId))
+                        }
                         onToggleFavorite={(sessionId) => {
                           void toggleFavoriteSession(sessionId);
                         }}

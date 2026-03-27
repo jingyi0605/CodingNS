@@ -19,6 +19,51 @@ export interface WorkbenchNavigationTreeNode {
   children: WorkbenchNavigationEntry[];
 }
 
+export function buildWorkspaceHomePath(): string {
+  return "/workspaces";
+}
+
+export function buildWorkspaceDetailPath(workspaceId: string): string {
+  return `/workspaces/${encodeURIComponent(workspaceId)}`;
+}
+
+export function buildWorkspaceSessionIndexPath(workspaceId: string): string {
+  return `${buildWorkspaceDetailPath(workspaceId)}/sessions`;
+}
+
+export function buildWorkspaceSessionPath(workspaceId: string, sessionId: string): string {
+  return `${buildWorkspaceSessionIndexPath(workspaceId)}/${encodeURIComponent(sessionId)}`;
+}
+
+export function buildWorkspaceToolsPath(workspaceId: string, tab?: "files" | "git"): string {
+  const basePath = `${buildWorkspaceDetailPath(workspaceId)}/tools`;
+
+  if (!tab) {
+    return basePath;
+  }
+
+  const search = new URLSearchParams({
+    tab
+  });
+  return `${basePath}?${search.toString()}`;
+}
+
+export function buildWorkspaceToolFilesPath(workspaceId: string): string {
+  return `${buildWorkspaceDetailPath(workspaceId)}/tools/files`;
+}
+
+export function buildWorkspaceToolGitPath(workspaceId: string): string {
+  return `${buildWorkspaceDetailPath(workspaceId)}/tools/git`;
+}
+
+export function buildWorkspaceToolProcessesPath(workspaceId: string): string {
+  return `${buildWorkspaceDetailPath(workspaceId)}/tools/processes`;
+}
+
+export function buildWorkspaceTerminalsPath(workspaceId: string): string {
+  return `${buildWorkspaceDetailPath(workspaceId)}/terminals`;
+}
+
 export function flattenNavigationSessions(
   groups: readonly WorkbenchNavigationGroup[]
 ): WorkbenchNavigationEntry[] {
@@ -66,11 +111,10 @@ export function buildNavigationSessionTree(
 export function buildDraftSessionPath(workspaceId: string, provider: ProviderId): string {
   const draftId = createDraftSessionId();
   const search = new URLSearchParams({
-    workspaceId,
     provider
   });
 
-  return `/sessions/${draftId}?${search.toString()}`;
+  return `${buildWorkspaceSessionPath(workspaceId, draftId)}?${search.toString()}`;
 }
 
 function createDraftSessionId(): string {

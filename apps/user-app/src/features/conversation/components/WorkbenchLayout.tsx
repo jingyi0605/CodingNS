@@ -60,6 +60,14 @@ import { searchFiles, type FileNodeDto } from "../api/file-context-api";
 import { buildSessionTitlePresentation } from "../session-title";
 import {
   buildDraftSessionPath,
+  buildWorkspaceHomePath,
+  buildWorkspaceSessionIndexPath,
+  buildWorkspaceSessionPath,
+  buildWorkspaceTerminalsPath,
+  buildWorkspaceToolFilesPath,
+  buildWorkspaceToolGitPath,
+  buildWorkspaceToolProcessesPath,
+  buildWorkspaceToolsPath,
   flattenNavigationSessions
 } from "../../workbench/utils/workbench-navigation";
 import { SessionProviderPicker } from "./SessionProviderPicker";
@@ -95,15 +103,28 @@ const WORKSPACE_COMPOSITION_CHART_COLORS = [
 ];
 
 function resolveRouteWorkspaceId(pathname: string, search: string): string | null {
-  const workspaceDetailMatch = matchPath("/workspaces/:workspaceId", pathname);
-  const workspaceIdFromDetail = workspaceDetailMatch?.params.workspaceId?.trim();
+  const workspaceRoutePatterns = [
+    "/workspaces/:workspaceId",
+    "/workspaces/:workspaceId/sessions",
+    "/workspaces/:workspaceId/sessions/:sessionId",
+    "/workspaces/:workspaceId/tools",
+    "/workspaces/:workspaceId/tools/files",
+    "/workspaces/:workspaceId/tools/git",
+    "/workspaces/:workspaceId/tools/processes",
+    "/workspaces/:workspaceId/terminals"
+  ] as const;
 
-  if (workspaceIdFromDetail) {
-    return workspaceIdFromDetail;
+  for (const pattern of workspaceRoutePatterns) {
+    const match = matchPath(pattern, pathname);
+    const workspaceId = match?.params.workspaceId?.trim();
+
+    if (workspaceId) {
+      return workspaceId;
+    }
   }
 
-  const draftSessionMatch = matchPath("/sessions/:sessionId", pathname);
-  const sessionId = draftSessionMatch?.params.sessionId?.trim();
+  const sessionMatch = resolveRouteSessionMatch(pathname);
+  const sessionId = sessionMatch?.sessionId ?? null;
 
   if (!sessionId || !isDraftSessionId(sessionId)) {
     return null;
@@ -118,6 +139,66 @@ function shouldRedirectMobileToWorkspaceHome(pathname: string) {
     pathname.startsWith("/sessions")
     || pathname.startsWith("/terminals")
     || pathname.startsWith("/tools")
+  );
+}
+
+function resolveWorkbenchHomePath(shellMode: WorkbenchShellMode) {
+  return shellMode === "mobile" ? buildWorkspaceHomePath() : "/landing";
+}
+
+function resolveRouteSessionMatch(pathname: string): {
+  sessionId: string;
+  workspaceId: string | null;
+} | null {
+  const scopedSessionMatch = matchPath("/workspaces/:workspaceId/sessions/:sessionId", pathname);
+  const scopedSessionId = scopedSessionMatch?.params.sessionId?.trim();
+
+  if (scopedSessionId) {
+    return {
+      sessionId: scopedSessionId,
+      workspaceId: scopedSessionMatch?.params.workspaceId?.trim() ?? null
+    };
+  }
+
+  const legacySessionMatch = matchPath("/sessions/:sessionId", pathname);
+  const legacySessionId = legacySessionMatch?.params.sessionId?.trim();
+
+  if (legacySessionId) {
+    return {
+      sessionId: legacySessionId,
+      workspaceId: null
+    };
+  }
+
+  return null;
+}
+
+function isSessionsRoute(pathname: string) {
+  return Boolean(
+    matchPath("/sessions", pathname) || matchPath("/workspaces/:workspaceId/sessions", pathname)
+  );
+}
+
+function isSessionDetailRoute(pathname: string) {
+  return Boolean(resolveRouteSessionMatch(pathname));
+}
+
+function isToolsRoute(pathname: string) {
+  return Boolean(
+    matchPath("/tools", pathname)
+    || matchPath("/tools/files", pathname)
+    || matchPath("/tools/git", pathname)
+    || matchPath("/tools/processes", pathname)
+    || matchPath("/workspaces/:workspaceId/tools", pathname)
+    || matchPath("/workspaces/:workspaceId/tools/files", pathname)
+    || matchPath("/workspaces/:workspaceId/tools/git", pathname)
+    || matchPath("/workspaces/:workspaceId/tools/processes", pathname)
+  );
+}
+
+function isTerminalsRoute(pathname: string) {
+  return Boolean(
+    matchPath("/terminals", pathname) || matchPath("/workspaces/:workspaceId/terminals", pathname)
   );
 }
 
@@ -2539,7 +2620,7 @@ function SidebarContent({
         id: `open-${entry.session.sessionId}`,
         label: t("shell.contextOpenSession"),
         onSelect: () => {
-          navigate(`/sessions/${entry.session.sessionId}`);
+          navigate(buildWorkspaceSessionPath(entry.workspace.id, entry.session.sessionId));
           onClose?.();
         }
       },
@@ -2688,7 +2769,7 @@ function SidebarContent({
                       subagentListExpanded={subagentListExpanded}
                       onToggleSubagents={() => handleToggleSubagentList(item.session.sessionId)}
                       onOpen={() => {
-                        navigate(`/sessions/${item.session.sessionId}`);
+                        navigate(buildWorkspaceSessionPath(item.workspace.id, item.session.sessionId));
                         onClose?.();
                       }}
                       onRename={() => handleOpenRenameSession(item.session, item.workspace)}
@@ -2725,7 +2806,7 @@ function SidebarContent({
                             depth={1}
                             showActions={false}
                             onOpen={() => {
-                              navigate(`/sessions/${session.sessionId}`);
+                              navigate(buildWorkspaceSessionPath(item.workspace.id, session.sessionId));
                               onClose?.();
                             }}
                             onRename={() => undefined}
@@ -2942,7 +3023,7 @@ function SidebarContent({
                                 onToggleSelect={() => handleToggleSessionSelection(node.session.sessionId)}
                                 onToggleSubagents={() => handleToggleSubagentList(node.session.sessionId)}
                                 onOpen={() => {
-                                  navigate(`/sessions/${node.session.sessionId}`);
+                                  navigate(buildWorkspaceSessionPath(group.workspace.id, node.session.sessionId));
                                   onClose?.();
                                 }}
                                 onRename={() => handleOpenRenameSession(node.session, group.workspace)}
@@ -2986,7 +3067,7 @@ function SidebarContent({
                                       selected={selectedSessionIdSet.has(session.sessionId)}
                                       onToggleSelect={() => handleToggleSessionSelection(session.sessionId)}
                                       onOpen={() => {
-                                        navigate(`/sessions/${session.sessionId}`);
+                                        navigate(buildWorkspaceSessionPath(group.workspace.id, session.sessionId));
                                         onClose?.();
                                       }}
                                       onRename={() => undefined}
@@ -3935,7 +4016,7 @@ export function WorkbenchLayout({
     logPerfDebug("workbench.apply_snapshot", {
       workspaceCount: snapshot.items.length,
       sessionCount: snapshot.items.reduce((total, item) => total + item.sessions.length, 0),
-      currentSessionId: matchPath("/sessions/:sessionId", location.pathname)?.params.sessionId ?? null
+      currentSessionId: resolveRouteSessionMatch(location.pathname)?.sessionId ?? null
     });
 
     writeViewSnapshot(WORKBENCH_NAVIGATION_SNAPSHOT_KEY, snapshot);
@@ -4268,8 +4349,8 @@ export function WorkbenchLayout({
     };
   }, [infoPanelReady, rightCollapsed]);
 
-  const sessionMatch = matchPath("/sessions/:sessionId", location.pathname);
-  const currentSessionId = sessionMatch?.params.sessionId ?? null;
+  const routeSessionMatch = resolveRouteSessionMatch(location.pathname);
+  const currentSessionId = routeSessionMatch?.sessionId ?? null;
   const isDraftSession = currentSessionId ? isDraftSessionId(currentSessionId) : false;
   const flattenedSessions = useMemo(
     () => flattenNavigationSessions(navigationGroups),
@@ -4349,10 +4430,11 @@ export function WorkbenchLayout({
       currentSessionId
     });
   }, [currentSessionId, currentWorkspaceId, infoPanelReady, rightCollapsed, sessionWorkspaceId]);
-  const activeCenterTab: CenterTab = location.pathname.startsWith("/terminals")
+  const activeCenterTab: CenterTab = isTerminalsRoute(location.pathname)
     ? "terminals"
     : "conversation";
   const isMobileShell = shellMode === "mobile";
+  const workbenchHomePath = resolveWorkbenchHomePath(shellMode);
 
   const workspaceSidebarGroups = useMemo(
     () =>
@@ -4399,15 +4481,15 @@ export function WorkbenchLayout({
   );
   const mobileActiveEntry: MobileWorkbenchEntry = location.pathname.startsWith("/settings")
     ? "settings"
-    : location.pathname.startsWith("/terminals")
+    : isTerminalsRoute(location.pathname)
       ? "terminals"
-    : location.pathname.startsWith("/tools")
+    : isToolsRoute(location.pathname)
       ? "tools"
-    : location.pathname.startsWith("/sessions")
+    : isSessionsRoute(location.pathname) || isSessionDetailRoute(location.pathname)
       ? "sessions"
         : "workspaces";
   const isMobileConversationFocus =
-    isMobileShell && mobileActiveEntry === "sessions" && location.pathname.startsWith("/sessions/");
+    isMobileShell && mobileActiveEntry === "sessions" && isSessionDetailRoute(location.pathname);
   const mobilePaneLayout = resolveAdaptiveMobilePaneLayout({
     viewportClass: platform.viewportClass,
     activeEntry: mobileActiveEntry,
@@ -4494,8 +4576,8 @@ export function WorkbenchLayout({
 
     setMobileNavOpen(false);
     setMobileInfoOpen(false);
-    navigate("/", { replace: true });
-  }, [explicitWorkspaceId, isMobileShell, location.pathname, navigate, navigationLoading]);
+    navigate(workbenchHomePath, { replace: true });
+  }, [explicitWorkspaceId, isMobileShell, location.pathname, navigate, navigationLoading, workbenchHomePath]);
 
   function openLeftPanel() {
     if (isMobileShell) {
@@ -4547,7 +4629,7 @@ export function WorkbenchLayout({
 
     // 会话上下文和工作区上下文不能混着用；切到别的工作区时先退回空白工作台。
     if (currentSessionId && sessionWorkspaceId !== workspaceId) {
-      navigate("/");
+      navigate(workbenchHomePath);
     }
   }
 
@@ -4669,9 +4751,11 @@ export function WorkbenchLayout({
 
     // 验证存储的会话路径是否还有效（会话是否还存在于列表中）
     if (storedSessionPath) {
-      const match = storedSessionPath.match(/^\/sessions\/([^/]+)$/);
-      if (match) {
-        const storedSessionId = match[1];
+      const storedPathname = storedSessionPath.split("?")[0] ?? storedSessionPath;
+      const storedSessionMatch = resolveRouteSessionMatch(storedPathname);
+
+      if (storedSessionMatch) {
+        const storedSessionId = storedSessionMatch.sessionId;
         const sessionExists = flattenedSessions.some(
           (item) => item.session.sessionId === storedSessionId
         );
@@ -4686,11 +4770,14 @@ export function WorkbenchLayout({
 
     // 如果没有任何会话记录，导航到空白页
     if (flattenedSessions.length === 0) {
-      navigate("/");
+      navigate(workbenchHomePath);
       return;
     }
 
-    const fallbackSessionPath = `/sessions/${flattenedSessions[0].session.sessionId}`;
+    const fallbackSessionPath = buildWorkspaceSessionPath(
+      flattenedSessions[0].workspace.id,
+      flattenedSessions[0].session.sessionId
+    );
     navigate(fallbackSessionPath);
   }
 
@@ -4742,7 +4829,11 @@ export function WorkbenchLayout({
 
       if (!event.shiftKey && normalizedKey === "2") {
         event.preventDefault();
-        navigate("/terminals");
+        navigate(
+          currentWorkspaceId
+            ? buildWorkspaceTerminalsPath(currentWorkspaceId)
+            : buildWorkspaceHomePath()
+        );
         return;
       }
 
@@ -4848,7 +4939,11 @@ export function WorkbenchLayout({
       onNavigateConversation={goToConversationTab}
       onNavigateTerminals={() => {
         setMobileNavOpen(false);
-        navigate("/terminals");
+        navigate(
+          currentWorkspaceId
+            ? buildWorkspaceTerminalsPath(currentWorkspaceId)
+            : buildWorkspaceHomePath()
+        );
       }}
       onOpenSearch={() => {
         setMobileNavOpen(false);
@@ -4908,37 +5003,61 @@ export function WorkbenchLayout({
             onNavigateWorkspaces={() => {
               setMobileNavOpen(false);
               setMobileInfoOpen(false);
-              navigate("/");
+              navigate(buildWorkspaceHomePath());
             }}
             onNavigateTerminals={() => {
               setMobileNavOpen(false);
               setMobileInfoOpen(false);
-              navigate("/terminals");
+              navigate(
+                currentWorkspaceId
+                  ? buildWorkspaceTerminalsPath(currentWorkspaceId)
+                  : buildWorkspaceHomePath()
+              );
             }}
             onNavigateSessions={() => {
               setMobileNavOpen(false);
               setMobileInfoOpen(false);
-              navigate("/sessions");
+              navigate(
+                currentWorkspaceId
+                  ? buildWorkspaceSessionIndexPath(currentWorkspaceId)
+                  : buildWorkspaceHomePath()
+              );
             }}
             onNavigateTools={() => {
               setMobileNavOpen(false);
               setMobileInfoOpen(false);
-              navigate("/tools");
+              navigate(
+                currentWorkspaceId
+                  ? buildWorkspaceToolsPath(currentWorkspaceId)
+                  : buildWorkspaceHomePath()
+              );
             }}
             onNavigateToolFiles={() => {
               setMobileNavOpen(false);
               setMobileInfoOpen(false);
-              navigate("/tools/files");
+              navigate(
+                currentWorkspaceId
+                  ? buildWorkspaceToolFilesPath(currentWorkspaceId)
+                  : buildWorkspaceHomePath()
+              );
             }}
             onNavigateToolGit={() => {
               setMobileNavOpen(false);
               setMobileInfoOpen(false);
-              navigate("/tools/git");
+              navigate(
+                currentWorkspaceId
+                  ? buildWorkspaceToolGitPath(currentWorkspaceId)
+                  : buildWorkspaceHomePath()
+              );
             }}
             onNavigateToolProcesses={() => {
               setMobileNavOpen(false);
               setMobileInfoOpen(false);
-              navigate("/tools/processes");
+              navigate(
+                currentWorkspaceId
+                  ? buildWorkspaceToolProcessesPath(currentWorkspaceId)
+                  : buildWorkspaceHomePath()
+              );
             }}
             onNavigateSettings={() => {
               setMobileNavOpen(false);
@@ -4976,7 +5095,13 @@ export function WorkbenchLayout({
                 onRefreshNavigation={refreshNavigation}
                 onSessionUpdated={upsertNavigationSession}
                 onNavigateConversation={goToConversationTab}
-                onNavigateTerminals={() => navigate("/terminals")}
+                onNavigateTerminals={() =>
+                  navigate(
+                    currentWorkspaceId
+                      ? buildWorkspaceTerminalsPath(currentWorkspaceId)
+                      : buildWorkspaceHomePath()
+                  )
+                }
                 onOpenSearch={() => openSearchModal()}
                 onOpenSettings={() => navigate("/settings")}
                 onSelectWorkspace={handleSelectWorkspace}
@@ -5111,7 +5236,8 @@ export function WorkbenchLayout({
         }}
         onOpenSession={(sessionId) => {
           closeSearchModal();
-          navigate(`/sessions/${sessionId}`);
+          const entry = flattenedSessions.find((item) => item.session.sessionId === sessionId) ?? null;
+          navigate(entry ? buildWorkspaceSessionPath(entry.workspace.id, sessionId) : buildWorkspaceHomePath());
         }}
       />
 

@@ -1,5 +1,5 @@
 import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { FitAddon } from "@xterm/addon-fit";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { Terminal } from "@xterm/xterm";
@@ -164,6 +164,7 @@ const INITIAL_CONNECTION_STATES: Record<PaneId, TerminalConnectionState> = {
 export function TerminalPage() {
   const platform = usePlatform();
   const navigate = useNavigate();
+  const { workspaceId: routeWorkspaceIdParam } = useParams();
   const { navigationGroups } = useWorkbenchShell();
   const terminalActionMenuRef = useRef<HTMLDivElement | null>(null);
   const terminalTabbarMainRef = useRef<HTMLDivElement | null>(null);
@@ -185,6 +186,7 @@ export function TerminalPage() {
     () => navigationGroups.map((group) => group.workspace),
     [navigationGroups]
   );
+  const routeWorkspaceId = routeWorkspaceIdParam?.trim() || null;
 
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState("");
   const [shellOptions, setShellOptions] = useState<TerminalShellOptionDto[]>([]);
@@ -493,19 +495,28 @@ export function TerminalPage() {
 
   useEffect(() => {
     const persistedWorkspaceId = readPersistedTerminalPageState().selectedWorkspaceId;
+    const routeSelectedWorkspaceId =
+      routeWorkspaceId && workspaces.some((workspace) => workspace.id === routeWorkspaceId)
+        ? routeWorkspaceId
+        : null;
     const restoredWorkspaceId =
+      routeSelectedWorkspaceId ??
       workspaces.find((workspace) => workspace.id === persistedWorkspaceId)?.id ??
       workspaces[0]?.id ??
       "";
 
     setSelectedWorkspaceId((current) => {
+      if (routeSelectedWorkspaceId) {
+        return routeSelectedWorkspaceId;
+      }
+
       if (current && workspaces.some((workspace) => workspace.id === current)) {
         return current;
       }
 
       return restoredWorkspaceId;
     });
-  }, [workspaces]);
+  }, [routeWorkspaceId, workspaces]);
 
   useEffect(() => {
     persistSelectedWorkspaceId(selectedWorkspaceId || null);

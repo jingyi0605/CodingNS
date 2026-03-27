@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { clientConfigStore } from "../../../config/client-config-store";
@@ -8,6 +8,7 @@ import { authStore } from "../../auth/store/auth-store";
 import { ToastProvider } from "../../../shared/toast";
 import type { WorkspaceSessionGroup } from "../../conversation/components/WorkbenchLayout";
 import type { TerminalDto, TerminalShellOptionDto } from "../api/terminal-api";
+import { persistSelectedWorkspaceId } from "../runtime/terminal-page-persistence";
 import { TerminalPage } from "./TerminalPage";
 
 const originalInnerWidth = window.innerWidth;
@@ -27,6 +28,15 @@ const {
         name: "Demo Workspace",
         path: "/Users/jackson/Code/CodingNS",
         repoRoot: "/Users/jackson/Code/CodingNS"
+      },
+      sessions: []
+    },
+    {
+      workspace: {
+        id: "workspace-2",
+        name: "Docs Workspace",
+        path: "/Users/jackson/Code/Docs",
+        repoRoot: "/Users/jackson/Code/Docs"
       },
       sessions: []
     }
@@ -245,11 +255,14 @@ function buildTerminal(overrides: Partial<TerminalDto> = {}): TerminalDto {
   };
 }
 
-function renderPage() {
+function renderPage(initialEntry = "/workspaces/workspace-1/terminals") {
   return render(
     <ToastProvider>
-      <MemoryRouter initialEntries={["/terminals"]}>
-        <TerminalPage />
+      <MemoryRouter initialEntries={[initialEntry]}>
+        <Routes>
+          <Route path="/terminals" element={<TerminalPage />} />
+          <Route path="/workspaces/:workspaceId/terminals" element={<TerminalPage />} />
+        </Routes>
       </MemoryRouter>
     </ToastProvider>
   );
@@ -595,6 +608,19 @@ describe("TerminalPage", () => {
 
     await waitFor(() => {
       expect(backTab).toHaveAttribute("aria-selected", "true");
+    });
+  });
+
+  it("带 workspaceId 的 scoped 路由会优先于持久化工作区选择", async () => {
+    persistSelectedWorkspaceId("workspace-1");
+    mockListWorkspaceTerminals.mockResolvedValue({
+      items: []
+    });
+
+    renderPage("/workspaces/workspace-2/terminals");
+
+    await waitFor(() => {
+      expect(mockListWorkspaceTerminals).toHaveBeenCalledWith("workspace-2");
     });
   });
 });

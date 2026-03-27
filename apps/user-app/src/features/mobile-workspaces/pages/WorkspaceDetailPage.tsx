@@ -7,6 +7,13 @@ import {
 } from "../../conversation/api/conversation-api";
 import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout";
 import { buildSessionTitlePresentation } from "../../conversation/session-title";
+import {
+  buildWorkspaceSessionPath,
+  buildWorkspaceTerminalsPath,
+  buildWorkspaceToolFilesPath,
+  buildWorkspaceToolGitPath,
+  buildWorkspaceToolProcessesPath
+} from "../../workbench/utils/workbench-navigation";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 
@@ -131,7 +138,7 @@ export function WorkspaceDetailPage() {
         title: t("shell.manageWorkspaceRemoveSuccess"),
         tone: "success"
       });
-      navigate("/", { replace: true });
+      navigate("/workspaces", { replace: true });
     } catch (error) {
       showToast({
         title: error instanceof Error ? error.message : t("shell.manageWorkspaceRemoveFailed"),
@@ -148,7 +155,7 @@ export function WorkspaceDetailPage() {
         <article className="mobile-feature-empty surface-card">
           <h1>{t("shell.workspaceDetailMissingTitle")}</h1>
           <p>{t("shell.workspaceDetailMissingBody")}</p>
-          <button type="button" className="secondary-button" onClick={() => navigate("/")}>
+          <button type="button" className="secondary-button" onClick={() => navigate("/workspaces")}>
             {t("shell.mobileWorkspacesEntry")}
           </button>
         </article>
@@ -177,7 +184,7 @@ export function WorkspaceDetailPage() {
             className="secondary-button"
             onClick={() => {
               selectWorkspace(workspace.id);
-              navigate("/tools?tab=files");
+              navigate(buildWorkspaceToolFilesPath(workspace.id));
             }}
           >
             {t("shell.filesEntry")}
@@ -187,7 +194,7 @@ export function WorkspaceDetailPage() {
             className="secondary-button"
             onClick={() => {
               selectWorkspace(workspace.id);
-              navigate("/terminals");
+              navigate(buildWorkspaceTerminalsPath(workspace.id));
             }}
           >
             {t("shell.terminalsEntry")}
@@ -233,7 +240,7 @@ export function WorkspaceDetailPage() {
             className="secondary-button"
             onClick={() => {
               selectWorkspace(workspace.id);
-              navigate("/tools?tab=git");
+              navigate(buildWorkspaceToolGitPath(workspace.id));
             }}
           >
             {t("shell.gitEntry")}
@@ -243,7 +250,7 @@ export function WorkspaceDetailPage() {
             className="secondary-button"
             onClick={() => {
               selectWorkspace(workspace.id);
-              navigate("/tools/processes");
+              navigate(buildWorkspaceToolProcessesPath(workspace.id));
             }}
           >
             {t("shell.terminalManagerEntry")}
@@ -291,7 +298,7 @@ export function WorkspaceDetailPage() {
                     <button
                       type="button"
                       className="secondary-button"
-                      onClick={() => navigate(`/sessions/${session.sessionId}`)}
+                      onClick={() => navigate(buildWorkspaceSessionPath(workspace.id, session.sessionId))}
                     >
                       {t("shell.contextOpenSession")}
                     </button>

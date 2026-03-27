@@ -394,10 +394,10 @@ describe("WorkbenchLayout", () => {
     await userEvent.click(providerButton as HTMLElement);
 
     await waitFor(() => {
-      expect(screen.getByTestId("current-path").textContent).toMatch(/^\/sessions\/draft-/);
-      expect(screen.getByTestId("current-search").textContent).toBe(
-        "?workspaceId=workspace-1&provider=claude-code"
+      expect(screen.getByTestId("current-path").textContent).toMatch(
+        /^\/workspaces\/workspace-1\/sessions\/draft-/
       );
+      expect(screen.getByTestId("current-search").textContent).toBe("?provider=claude-code");
     });
   });
 
@@ -491,9 +491,10 @@ describe("WorkbenchLayout", () => {
       snapshot: favoriteSnapshot
     });
 
-    const favoriteSection = await screen.findByText(t("shell.favoriteSectionTitle"));
-    expect(favoriteSection).toBeInTheDocument();
-    expect(screen.getAllByText("会话 Beta").length).toBeGreaterThan(0);
+    await waitFor(() => {
+      expect(screen.getByText(t("shell.favoriteSectionTitle"))).toBeInTheDocument();
+      expect(screen.getAllByText("会话 Beta").length).toBeGreaterThan(0);
+    });
   });
 
   it("会话菜单吸附在按钮右侧并与按钮底部对齐", async () => {
@@ -605,7 +606,7 @@ describe("WorkbenchLayout", () => {
       throw new Error(`未处理的请求: ${url}`);
     }) as typeof fetch;
 
-    renderWorkbenchRoute("/sessions/session-1");
+    renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-1");
 
     const sessionCard = await findSessionCardByTitle("旧标题");
 
@@ -742,7 +743,7 @@ describe("WorkbenchLayout", () => {
       throw new Error(`未处理的请求: ${url}`);
     }) as typeof fetch;
 
-    renderWorkbenchRoute("/sessions/root-session");
+    renderWorkbenchRoute("/workspaces/workspace-1/sessions/root-session");
 
     const rootSession = await findSessionCardByTitle("Root Session");
     const rootTreeNode = rootSession.closest(".workbench-session-tree-node") as HTMLElement | null;
@@ -806,7 +807,7 @@ describe("WorkbenchLayout", () => {
       throw new Error(`未处理的请求: ${url}`);
     }) as typeof fetch;
 
-    renderWorkbenchRoute("/sessions/root-session-41");
+    renderWorkbenchRoute("/workspaces/workspace-1/sessions/root-session-41");
 
     const workspaceGroup = await findWorkspaceGroupByName("Project One");
 
@@ -852,7 +853,7 @@ describe("WorkbenchLayout", () => {
       throw new Error(`未处理的请求: ${url}`);
     }) as typeof fetch;
 
-    renderWorkbenchRoute("/sessions/favorite-session-1");
+    renderWorkbenchRoute("/workspaces/workspace-1/sessions/favorite-session-1");
 
     await findSessionCardByTitle("Favorite Session 1");
 
@@ -916,7 +917,7 @@ describe("WorkbenchLayout", () => {
       throw new Error(`未处理的请求: ${url}`);
     }) as typeof fetch;
 
-    renderWorkbenchRoute("/sessions/favorite-root");
+    renderWorkbenchRoute("/workspaces/workspace-1/sessions/favorite-root");
 
     const favoriteTitle = await screen.findByText(t("shell.favoriteSectionTitle"));
     const favoriteSection = favoriteTitle.closest(
@@ -966,7 +967,7 @@ describe("WorkbenchLayout", () => {
       throw new Error(`未处理的请求: ${url}`);
     }) as typeof fetch;
 
-    renderWorkbenchRoute("/sessions/archived-root");
+    renderWorkbenchRoute("/workspaces/workspace-1/sessions/archived-root");
 
     const archiveFolder = await screen.findByRole("button", { name: /归档会话/ });
     await userEvent.click(archiveFolder);
@@ -1030,7 +1031,7 @@ describe("WorkbenchLayout", () => {
       throw new Error(`未处理的请求: ${url}`);
     }) as typeof fetch;
 
-    renderWorkbenchRoute("/sessions/session-1");
+    renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-1");
 
     const conversationTab = await screen.findByRole("tab", { name: t("shell.conversationEntry") });
     const terminalTab = screen.getByRole("tab", { name: t("shell.terminalsEntry") });
@@ -1052,7 +1053,9 @@ describe("WorkbenchLayout", () => {
     await userEvent.click(within(searchDialog).getByRole("button", { name: /搜索目标会话/ }));
 
     await waitFor(() => {
-      expect(screen.getByTestId("current-path").textContent).toBe("/sessions/session-2");
+      expect(screen.getByTestId("current-path").textContent).toBe(
+        "/workspaces/workspace-2/sessions/session-2"
+      );
     });
 
     await userEvent.click(screen.getAllByRole("button", { name: t("shell.searchEntry") })[0]);
@@ -1096,7 +1099,7 @@ describe("WorkbenchLayout", () => {
       throw new Error(`未处理的请求: ${url}`);
     }) as typeof fetch;
 
-    renderWorkbenchRoute("/sessions/session-inferred");
+    renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-inferred");
 
     const sessionCard = await findSessionCardByTitle("External Session");
     expect(sessionCard.querySelector(".session-state-indicator.is-running-inferred")).not.toBeNull();
@@ -1207,7 +1210,7 @@ describe("WorkbenchLayout", () => {
     global.WebSocket = NoSnapshotWebSocket as unknown as typeof WebSocket;
     global.fetch = vi.fn(() => new Promise<Response>(() => undefined)) as typeof fetch;
 
-    const view = renderWorkbenchRoute("/sessions/session-1");
+    const view = renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-1");
     const shell = view.container.querySelector(".workbench-shell");
 
     expect(shell?.getAttribute("data-nav-loading")).toBe("true");
@@ -1246,7 +1249,7 @@ describe("WorkbenchLayout", () => {
       throw new Error(`未处理的请求: ${url}`);
     }) as typeof fetch;
 
-    const view = renderWorkbenchRoute("/sessions/session-1");
+    const view = renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-1");
 
     await findSessionCardByTitle("会话 Alpha");
 
@@ -1302,7 +1305,7 @@ describe("WorkbenchLayout", () => {
       throw new Error("不应该在缓存首屏阶段主动请求 /api/workbench");
     }) as typeof fetch;
 
-    const view = renderWorkbenchRoute("/sessions/session-1");
+    const view = renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-1");
     const shell = view.container.querySelector(".workbench-shell");
 
     expect(shell?.getAttribute("data-nav-loading")).toBe("false");
@@ -1673,7 +1676,7 @@ describe("WorkbenchLayout", () => {
       throw new Error(`未处理的请求: ${url}`);
     }) as typeof fetch;
 
-    renderWorkbenchRoute("/sessions/session-1");
+    renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-1");
 
     const emptyWorkspaceGroup = await findWorkspaceGroupByName("这是一个名字很长但暂时没有会话的项目");
     const emptyWorkspaceScope = within(emptyWorkspaceGroup);
@@ -1683,7 +1686,7 @@ describe("WorkbenchLayout", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByTestId("current-path").textContent).toBe("/");
+      expect(screen.getByTestId("current-path").textContent).toBe("/landing");
     });
 
     expect(window.localStorage.getItem("workbench.workspace.selected.id")).toBe("workspace-2");
@@ -1777,7 +1780,7 @@ describe("WorkbenchLayout", () => {
       throw new Error(`鏈鐞嗙殑璇锋眰: ${url}`);
     }) as typeof fetch;
 
-    renderWorkbenchRoute("/sessions/session-1");
+    renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-1");
 
     const workspaceGroup = await findWorkspaceGroupByName("Project One");
     const workspaceScope = within(workspaceGroup);
@@ -1835,7 +1838,7 @@ describe("WorkbenchLayout", () => {
       }
     ]);
 
-    const view = renderWorkbenchRoute("/sessions/session-1", {
+    const view = renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-1", {
       shellMode: "mobile"
     });
 
@@ -1875,7 +1878,7 @@ describe("WorkbenchLayout", () => {
       }
     ]);
 
-    const view = renderWorkbenchRoute("/sessions/session-1", {
+    const view = renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-1", {
       shellMode: "mobile"
     });
 
@@ -1917,13 +1920,13 @@ describe("WorkbenchLayout", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByTestId("current-path").textContent).toBe("/");
+      expect(screen.getByTestId("current-path").textContent).toBe("/workspaces");
     });
   });
 });
 
 function renderWorkbenchRoute(
-  initialEntry = "/sessions/session-1",
+  initialEntry = "/workspaces/workspace-1/sessions/session-1",
   options?: {
     shellMode?: "desktop" | "mobile";
   }
@@ -1936,6 +1939,15 @@ function renderWorkbenchRoute(
         <Routes>
           <Route element={<WorkbenchLayout shellMode={shellMode} />}>
             <Route index element={<CurrentLocationProbe />} />
+            <Route path="/landing" element={<CurrentLocationProbe />} />
+            <Route path="/workspaces" element={<CurrentLocationProbe />} />
+            <Route path="/workspaces/:workspaceId" element={<CurrentLocationProbe />} />
+            <Route path="/workspaces/:workspaceId/sessions" element={<CurrentLocationProbe />} />
+            <Route
+              path="/workspaces/:workspaceId/sessions/:sessionId"
+              element={<CurrentLocationProbe />}
+            />
+            <Route path="/workspaces/:workspaceId/terminals" element={<CurrentLocationProbe />} />
             <Route path="/sessions/:sessionId" element={<CurrentLocationProbe />} />
             <Route path="/terminals" element={<CurrentLocationProbe />} />
           </Route>

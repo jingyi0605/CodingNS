@@ -10,11 +10,13 @@ import { BootstrapPage } from "../features/auth/pages/BootstrapPage";
 import { LoginPage } from "../features/auth/pages/LoginPage";
 import { useAuthSelector } from "../features/auth/store/auth-store";
 import { ConversationPage } from "../features/conversation/pages/ConversationPage";
+import { useWorkbenchShell } from "../features/conversation/components/WorkbenchLayout";
 import { SessionIndexPage } from "../features/mobile-sessions/pages/SessionIndexPage";
 import { ToolFilesPage } from "../features/mobile-tools/ToolFilesPage";
 import { ToolGitPage } from "../features/mobile-tools/ToolGitPage";
 import { ToolProcessesPage } from "../features/mobile-tools/ToolProcessesPage";
 import { ToolsHomePage } from "../features/mobile-tools/ToolsHomePage";
+import { WorkspaceHomePage } from "../features/mobile-workspaces/pages/WorkspaceHomePage";
 import { WorkspaceDetailPage } from "../features/mobile-workspaces/pages/WorkspaceDetailPage";
 import { WorkbenchShellRoute } from "../features/workbench/components/WorkbenchShellRoute";
 import { WorkbenchLandingPage } from "../features/workbench/pages/WorkbenchLandingPage";
@@ -41,6 +43,12 @@ function RequireAuth() {
   return <Outlet />;
 }
 
+function WorkbenchIndexRedirect() {
+  const { shellMode } = useWorkbenchShell();
+
+  return <Navigate to={shellMode === "mobile" ? "/workspaces" : "/landing"} replace />;
+}
+
 const appRoutes = [
   {
     path: "/bootstrap",
@@ -59,38 +67,46 @@ const appRoutes = [
         children: [
           {
             index: true,
+            element: <WorkbenchIndexRedirect />
+          },
+          {
+            path: "landing",
             element: <WorkbenchLandingPage />
+          },
+          {
+            path: "workspaces",
+            element: <WorkspaceHomePage />
           },
           {
             path: "workspaces/:workspaceId",
             element: <WorkspaceDetailPage />
           },
           {
-            path: "sessions",
+            path: "workspaces/:workspaceId/sessions",
             element: <SessionIndexPage />
           },
           {
-            path: "sessions/:sessionId",
+            path: "workspaces/:workspaceId/sessions/:sessionId",
             element: <ConversationPage />
           },
           {
-            path: "tools",
+            path: "workspaces/:workspaceId/tools",
             element: <ToolsHomePage />
           },
           {
-            path: "tools/files",
+            path: "workspaces/:workspaceId/tools/files",
             element: <ToolFilesPage />
           },
           {
-            path: "tools/git",
+            path: "workspaces/:workspaceId/tools/git",
             element: <ToolGitPage />
           },
           {
-            path: "tools/processes",
+            path: "workspaces/:workspaceId/tools/processes",
             element: <ToolProcessesPage />
           },
           {
-            path: "terminals",
+            path: "workspaces/:workspaceId/terminals",
             lazy: async () => {
               const module = await import("../features/terminal/pages/TerminalPage");
 
@@ -102,6 +118,14 @@ const appRoutes = [
           {
             path: "settings",
             element: <SettingsPage />
+          },
+          {
+            path: "settings/:section",
+            element: <SettingsPage />
+          },
+          {
+            path: "*",
+            element: <WorkbenchIndexRedirect />
           }
         ]
       }

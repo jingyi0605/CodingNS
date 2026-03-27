@@ -88,6 +88,7 @@ class MockWebSocket extends EventTarget {
 
 const originalFetch = global.fetch;
 const originalWebSocket = global.WebSocket;
+const originalInnerWidth = window.innerWidth;
 
 describe("app routes", () => {
   beforeEach(() => {
@@ -112,6 +113,11 @@ describe("app routes", () => {
     vi.useRealTimers();
     global.fetch = originalFetch;
     global.WebSocket = originalWebSocket;
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      writable: true,
+      value: originalInnerWidth
+    });
   });
 
   it("未登录访问受保护页面时会回到登录页", async () => {
@@ -125,7 +131,7 @@ describe("app routes", () => {
       throw new Error(`未处理的请求: ${url}`);
     }) as typeof fetch;
 
-    window.history.pushState({}, "", "/sessions/session-1");
+    window.history.pushState({}, "", "/workspaces/workspace-1/sessions/session-1");
 
     render(<App />);
 
@@ -193,6 +199,46 @@ describe("app routes", () => {
         })
       );
     });
+  });
+
+  it("移动端命中已移除的旧链接时，会兜底回工作区首页", async () => {
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      writable: true,
+      value: 390
+    });
+
+    hydrateAuth();
+    installFetchMock({
+      workbenchSnapshot: createWorkbenchSnapshot([]),
+      sessions: {}
+    });
+
+    window.history.pushState({}, "", "/sessions/legacy-session");
+
+    render(<App />);
+
+    expect(await screen.findByRole("button", { name: t("shell.importWorkspaceTitle") })).toBeInTheDocument();
+  });
+
+  it("桌面端命中已移除的旧链接时，会兜底回桌面落地页", async () => {
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      writable: true,
+      value: 1280
+    });
+
+    hydrateAuth();
+    installFetchMock({
+      workbenchSnapshot: createWorkbenchSnapshot([]),
+      sessions: {}
+    });
+
+    window.history.pushState({}, "", "/tools/processes");
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "先选一个会话" })).toBeInTheDocument();
   });
 
   it("实时连接会跟着当前服务器地址切换", async () => {
@@ -1108,10 +1154,13 @@ function installFetchMock(input: {
 function renderConversationRoute(sessionId: string) {
   return render(
     <ToastProvider>
-      <MemoryRouter initialEntries={[`/sessions/${sessionId}`]}>
+      <MemoryRouter initialEntries={[`/workspaces/workspace-1/sessions/${sessionId}`]}>
         <Routes>
           <Route element={<WorkbenchLayout />}>
-            <Route path="/sessions/:sessionId" element={<ConversationPage />} />
+            <Route
+              path="/workspaces/:workspaceId/sessions/:sessionId"
+              element={<ConversationPage />}
+            />
           </Route>
         </Routes>
       </MemoryRouter>

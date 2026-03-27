@@ -30,17 +30,19 @@ import {
   isDraftProviderSupported,
   shouldSupportRunSteering
 } from "../capability/provider-ui";
+import { buildWorkspaceSessionPath } from "../../workbench/utils/workbench-navigation";
 
 const RUNTIME_TIMEOUT_TOAST_DELAY_MS = 15_000;
 
 export function ConversationPage() {
-  const { sessionId = "" } = useParams();
+  const { sessionId = "", workspaceId: routeWorkspaceIdParam } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
   const searchParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
+  const routeWorkspaceId = routeWorkspaceIdParam?.trim() || null;
   const draftContext = useMemo(
-    () => parseDraftContext(sessionId, searchParams),
-    [searchParams, sessionId]
+    () => parseDraftContext(sessionId, routeWorkspaceId, searchParams),
+    [routeWorkspaceId, searchParams, sessionId]
   );
   const liveBootstrapMessages = useMemo(
     () => parseLiveBootstrapMessages(sessionId, location.state),
@@ -360,7 +362,7 @@ function DraftConversationPage({
     return () => {
       disposed = true;
     };
-  }, [draft.provider]);
+  }, [draft.provider, draft.workspaceId]);
 
   return (
     <main className="workbench-page conversation-page-shell mobile-page-fixed-root">
@@ -413,7 +415,7 @@ function DraftConversationPage({
             }
 
             setSessionWorkspace(created.sessionId, draft.workspaceId);
-            navigate(`/sessions/${created.sessionId}`, {
+            navigate(buildWorkspaceSessionPath(draft.workspaceId, created.sessionId), {
               replace: true,
               state: created.message
                 ? {
@@ -445,13 +447,14 @@ interface DraftConversationContext {
 
 function parseDraftContext(
   sessionId: string,
+  routeWorkspaceId: string | null,
   searchParams: URLSearchParams
 ): DraftConversationContext | null {
   if (!isDraftSessionId(sessionId)) {
     return null;
   }
 
-  const workspaceId = searchParams.get("workspaceId")?.trim();
+  const workspaceId = routeWorkspaceId ?? searchParams.get("workspaceId")?.trim() ?? null;
   const provider = searchParams.get("provider")?.trim() ?? null;
 
   if (!workspaceId || !isDraftProviderSupported(provider)) {
