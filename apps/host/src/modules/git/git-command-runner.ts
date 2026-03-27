@@ -2,10 +2,14 @@ import { spawn } from "node:child_process";
 
 import { AppError } from "../../shared/errors/app-error.js";
 
+const GIT_COMMAND_SLOW_THRESHOLD_MS = 3_000;
+
 interface GitCommandOptions {
   allowNonZeroExit?: boolean;
   timeoutMs?: number;
   env?: NodeJS.ProcessEnv;
+  workspaceId?: string;
+  operation?: string;
 }
 
 export interface GitCommandResult {
@@ -20,6 +24,7 @@ export class GitCommandRunner {
     args: string[],
     options: GitCommandOptions = {}
   ): Promise<GitCommandResult> {
+    const startedAt = Date.now();
     const timeoutMs = options.timeoutMs ?? 15_000;
     const effectiveArgs = ["-c", "core.quotepath=false", ...args];
     const env = options.env ? { ...process.env, ...options.env } : process.env;
@@ -48,6 +53,18 @@ export class GitCommandRunner {
       const timer = setTimeout(() => {
         child.kill("SIGTERM");
         finish(() => {
+          console.error("[git-command-timeout]", {
+            workspaceId: options.workspaceId ?? null,
+            operation: options.operation ?? null,
+            repoRoot,
+            args,
+            command: `git ${args.join(" ")}`,
+            timeoutMs,
+            durationMs: Date.now() - startedAt,
+            pid: child.pid ?? null,
+            stdoutLength: stdout.length,
+            stderrLength: stderr.length
+          });
           reject(
             new AppError({
               statusCode: 504,
@@ -81,6 +98,24 @@ export class GitCommandRunner {
       child.on("close", (exitCode) => {
         finish(() => {
           const code = exitCode ?? 1;
+          const durationMs = Date.now() - startedAt;
+
+          if (durationMs >= GIT_COMMAND_SLOW_THRESHOLD_MS) {
+            console.warn("[git-command-slow]", {
+              workspaceId: options.workspaceId ?? null,
+              operation: options.operation ?? null,
+              repoRoot,
+              args,
+              command: `git ${args.join(" ")}`,
+              timeoutMs,
+              slowThresholdMs: GIT_COMMAND_SLOW_THRESHOLD_MS,
+              durationMs,
+              exitCode: code,
+              pid: child.pid ?? null,
+              stdoutLength: stdout.length,
+              stderrLength: stderr.length
+            });
+          }
 
           if (code !== 0 && !options.allowNonZeroExit) {
             reject(

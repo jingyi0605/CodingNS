@@ -229,7 +229,8 @@ export class WorkspaceService {
     try {
       await this.gitCommandRunner.run(parentPath, ["clone", repositoryUrl, directoryName], {
         timeoutMs: GIT_CLONE_TIMEOUT_MS,
-        env: authContext?.env
+        env: authContext?.env,
+        operation: "workspace.cloneWorkspace"
       });
 
       return this.importWorkspace(targetPath, input.name?.trim());
@@ -311,54 +312,77 @@ export class WorkspaceService {
       };
     }
 
-    const repoRootResult = await this.gitCommandRunner.run(workspacePath, ["rev-parse", "--show-toplevel"], {
-      allowNonZeroExit: true
-    });
+    try {
+      const repoRootResult = await this.gitCommandRunner.run(
+        workspacePath,
+        ["rev-parse", "--show-toplevel"],
+        {
+          allowNonZeroExit: true,
+          workspaceId: workspace.id,
+          operation: "workspace.readGitSummary"
+        }
+      );
 
-    if (repoRootResult.exitCode !== 0) {
+      if (repoRootResult.exitCode !== 0) {
+        return {
+          isRepository: false,
+          repoRoot: null,
+          currentBranch: null,
+          commitCount: null,
+          remotes: [],
+          error: "当前工作区不是 Git 仓库"
+        };
+      }
+
+      const repoRoot = repoRootResult.stdout.trim();
+
+      if (!repoRoot) {
+        return {
+          isRepository: false,
+          repoRoot: null,
+          currentBranch: null,
+          commitCount: null,
+          remotes: [],
+          error: "Git 仓库根目录解析失败"
+        };
+      }
+
+      const [branchResult, commitCountResult, remoteResult] = await Promise.all([
+        this.gitCommandRunner.run(repoRoot, ["branch", "--show-current"], {
+          allowNonZeroExit: true,
+          workspaceId: workspace.id,
+          operation: "workspace.readGitSummary"
+        }),
+        this.gitCommandRunner.run(repoRoot, ["rev-list", "--count", "--all"], {
+          allowNonZeroExit: true,
+          workspaceId: workspace.id,
+          operation: "workspace.readGitSummary"
+        }),
+        this.gitCommandRunner.run(repoRoot, ["remote", "-v"], {
+          allowNonZeroExit: true,
+          workspaceId: workspace.id,
+          operation: "workspace.readGitSummary"
+        })
+      ]);
+
+      return {
+        isRepository: true,
+        repoRoot,
+        currentBranch: normalizeGitOutput(branchResult.stdout),
+        commitCount: parseGitCommitCount(commitCountResult.stdout),
+        remotes: parseGitRemotes(remoteResult.stdout),
+        error: null
+      };
+    } catch (error) {
       return {
         isRepository: false,
         repoRoot: null,
         currentBranch: null,
         commitCount: null,
         remotes: [],
-        error: "当前工作区不是 Git 仓库"
+        error: mapWorkspaceGitSummaryError(error)
       };
     }
-
-    const repoRoot = repoRootResult.stdout.trim();
-
-    if (!repoRoot) {
-      return {
-        isRepository: false,
-        repoRoot: null,
-        currentBranch: null,
-        commitCount: null,
-        remotes: [],
-        error: "Git 仓库根目录解析失败"
-      };
-    }
-
-    const [branchResult, commitCountResult, remoteResult] = await Promise.all([
-      this.gitCommandRunner.run(repoRoot, ["branch", "--show-current"], {
-        allowNonZeroExit: true
-      }),
-      this.gitCommandRunner.run(repoRoot, ["rev-list", "--count", "--all"], {
-        allowNonZeroExit: true
-      }),
-      this.gitCommandRunner.run(repoRoot, ["remote", "-v"], {
-        allowNonZeroExit: true
-      })
-    ]);
-
-    return {
-      isRepository: true,
-      repoRoot,
-      currentBranch: normalizeGitOutput(branchResult.stdout),
-      commitCount: parseGitCommitCount(commitCountResult.stdout),
-      remotes: parseGitRemotes(remoteResult.stdout),
-      error: null
-    };
   }
 }
 
@@ -602,6 +626,22 @@ function mapGitCloneCommandError(detail: string): AppError {
     errorCode: "GIT_CLONE_FAILED",
     detail: detail.trim() || "Git clone 失败"
   });
+}
+
+function mapWorkspaceGitSummaryError(error: unknown): string {
+  if (isAppError(error)) {
+    if (error.errorCode === "GIT_COMMAND_TIMEOUT") {
+      return "Git 信息读取超时，请稍后重试";
+    }
+
+    return error.message;
+  }
+
+  if (error instanceof Error && error.message.trim()) {
+    return error.message;
+  }
+
+  return "Git 信息读取失败";
 }
 
 function listDirectoryRoots(): WorkspaceDirectoryOption[] {

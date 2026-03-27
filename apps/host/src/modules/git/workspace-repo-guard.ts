@@ -32,7 +32,11 @@ export class WorkspaceRepoGuard {
     const result = await this.gitCommandRunner.run(
       configuredRepoRoot,
       ["rev-parse", "--show-toplevel"],
-      { allowNonZeroExit: true }
+      {
+        allowNonZeroExit: true,
+        workspaceId,
+        operation: "workspaceRepoGuard.resolve"
+      }
     );
 
     if (result.exitCode !== 0) {

@@ -1,5 +1,6 @@
 import type { WebSocket } from "ws";
 
+import { AppError } from "../shared/errors/app-error.js";
 import type { AuthContext } from "../modules/auth/auth-service.js";
 import type { WorkbenchService, WorkbenchSnapshot } from "../modules/workbench/workbench-service.js";
 import type {
@@ -207,22 +208,26 @@ export class WorkbenchWsHub {
   }
 
   async broadcastSnapshot(userId: string): Promise<void> {
-    const channel = this.userChannels.get(userId);
+    try {
+      const channel = this.userChannels.get(userId);
 
-    if (!channel) {
-      return;
-    }
+      if (!channel) {
+        return;
+      }
 
-    const payload = buildWorkbenchPayload(this.workbenchService.getSnapshot(userId));
+      const payload = buildWorkbenchPayload(this.workbenchService.getSnapshot(userId));
 
-    if (payload === channel.lastWorkbenchPayload) {
-      return;
-    }
+      if (payload === channel.lastWorkbenchPayload) {
+        return;
+      }
 
-    channel.lastWorkbenchPayload = payload;
+      channel.lastWorkbenchPayload = payload;
 
-    for (const client of channel.clients) {
-      client.send(payload);
+      for (const client of channel.clients) {
+        client.send(payload);
+      }
+    } catch (error) {
+      this.reportAsyncError("broadcastSnapshot", error, { userId });
     }
   }
 
@@ -251,13 +256,17 @@ export class WorkbenchWsHub {
         return;
       }
 
-      void this.refreshAndBroadcast(userId);
+      void this.refreshAndBroadcast(userId).catch((error) => {
+        this.reportAsyncError("workbenchTimer", error, { userId });
+      });
     }, WORKBENCH_REFRESH_INTERVAL_MS);
     channel.sidebarTimer = setInterval(() => {
       void Promise.all([
         this.syncTitlesAndBroadcast(userId),
         this.refreshSidebarSubscriptions(userId)
-      ]);
+      ]).catch((error) => {
+        this.reportAsyncError("sidebarTimer", error, { userId });
+      });
     }, SIDEBAR_REFRESH_INTERVAL_MS);
     this.userChannels.set(userId, channel);
     return channel;
@@ -271,16 +280,20 @@ export class WorkbenchWsHub {
     }
 
     channel.titleSyncTask = (async () => {
-      const payload = buildWorkbenchPayload(await this.workbenchService.syncSessionTitles(userId));
+      try {
+        const payload = buildWorkbenchPayload(await this.workbenchService.syncSessionTitles(userId));
 
-      if (payload === channel.lastWorkbenchPayload) {
-        return;
-      }
+        if (payload === channel.lastWorkbenchPayload) {
+          return;
+        }
 
-      channel.lastWorkbenchPayload = payload;
+        channel.lastWorkbenchPayload = payload;
 
-      for (const client of channel.clients) {
-        client.send(payload);
+        for (const client of channel.clients) {
+          client.send(payload);
+        }
+      } catch (error) {
+        this.reportAsyncError("syncTitlesAndBroadcast", error, { userId });
       }
     })().finally(() => {
       channel.titleSyncTask = null;
@@ -294,9 +307,13 @@ export class WorkbenchWsHub {
     userId: string,
     channel: UserChannelState
   ): Promise<void> {
-    const payload = buildWorkbenchPayload(this.workbenchService.getSnapshot(userId));
-    channel.lastWorkbenchPayload = payload;
-    client.send(payload);
+    try {
+      const payload = buildWorkbenchPayload(this.workbenchService.getSnapshot(userId));
+      channel.lastWorkbenchPayload = payload;
+      client.send(payload);
+    } catch (error) {
+      this.reportAsyncError("sendWorkbenchSnapshotToClient", error, { userId });
+    }
   }
 
   private async refreshAndBroadcast(userId: string, force = false): Promise<void> {
@@ -311,17 +328,21 @@ export class WorkbenchWsHub {
     }
 
     channel.refreshTask = (async () => {
-      const snapshot = await this.workbenchService.refreshSnapshot(userId);
-      const payload = buildWorkbenchPayload(snapshot);
+      try {
+        const snapshot = await this.workbenchService.refreshSnapshot(userId);
+        const payload = buildWorkbenchPayload(snapshot);
 
-      if (payload === channel.lastWorkbenchPayload) {
-        return;
-      }
+        if (payload === channel.lastWorkbenchPayload) {
+          return;
+        }
 
-      channel.lastWorkbenchPayload = payload;
+        channel.lastWorkbenchPayload = payload;
 
-      for (const client of channel.clients) {
-        client.send(payload);
+        for (const client of channel.clients) {
+          client.send(payload);
+        }
+      } catch (error) {
+        this.reportAsyncError("refreshAndBroadcast", error, { userId });
       }
     })().finally(() => {
       channel.refreshTask = null;
@@ -339,7 +360,7 @@ export class WorkbenchWsHub {
 
     await Promise.all(
       [...channel.clients].map(async (client) => {
-        await Promise.all([
+        await Promise.allSettled([
           this.refreshFileTreeSubscriptions(client),
           this.refreshGitSubscription(client),
           this.refreshTerminalManagerSubscription(client)
@@ -386,23 +407,29 @@ export class WorkbenchWsHub {
       return;
     }
 
-    const uniquePaths = normalizePanelPaths(subscription.paths);
+    try {
+      const uniquePaths = normalizePanelPaths(subscription.paths);
 
-    for (const path of uniquePaths) {
-      const snapshot = await this.workspacePanelSnapshotService.getFileTreeSnapshot(
-        subscription.workspaceId,
-        path,
-        { force }
-      );
-      const payload = buildFileTreePayload(snapshot);
-      const lastPayload = subscription.lastPayloadByPath.get(path) ?? null;
+      for (const path of uniquePaths) {
+        const snapshot = await this.workspacePanelSnapshotService.getFileTreeSnapshot(
+          subscription.workspaceId,
+          path,
+          { force }
+        );
+        const payload = buildFileTreePayload(snapshot);
+        const lastPayload = subscription.lastPayloadByPath.get(path) ?? null;
 
-      if (payload === lastPayload) {
-        continue;
+        if (payload === lastPayload) {
+          continue;
+        }
+
+        subscription.lastPayloadByPath.set(path, payload);
+        client.send(payload);
       }
-
-      subscription.lastPayloadByPath.set(path, payload);
-      client.send(payload);
+    } catch (error) {
+      this.reportAsyncError("refreshFileTreeSubscriptions", error, {
+        workspaceId: subscription.workspaceId
+      });
     }
   }
 
@@ -413,18 +440,24 @@ export class WorkbenchWsHub {
       return;
     }
 
-    const snapshot = await this.workspacePanelSnapshotService.getGitPanelSnapshot(
-      subscription.workspaceId,
-      { force }
-    );
-    const payload = buildGitPayload(snapshot);
+    try {
+      const snapshot = await this.workspacePanelSnapshotService.getGitPanelSnapshot(
+        subscription.workspaceId,
+        { force }
+      );
+      const payload = buildGitPayload(snapshot);
 
-    if (payload === subscription.lastPayload) {
-      return;
+      if (payload === subscription.lastPayload) {
+        return;
+      }
+
+      subscription.lastPayload = payload;
+      client.send(payload);
+    } catch (error) {
+      this.reportAsyncError("refreshGitSubscription", error, {
+        workspaceId: subscription.workspaceId
+      });
     }
-
-    subscription.lastPayload = payload;
-    client.send(payload);
   }
 
   private async refreshTerminalManagerSubscription(
@@ -437,18 +470,47 @@ export class WorkbenchWsHub {
       return;
     }
 
-    const snapshot = await this.workspacePanelSnapshotService.getTerminalManagerSnapshot(
-      subscription.workspaceId,
-      { force }
-    );
-    const payload = buildTerminalManagerPayload(snapshot);
+    try {
+      const snapshot = await this.workspacePanelSnapshotService.getTerminalManagerSnapshot(
+        subscription.workspaceId,
+        { force }
+      );
+      const payload = buildTerminalManagerPayload(snapshot);
 
-    if (payload === subscription.lastPayload) {
-      return;
+      if (payload === subscription.lastPayload) {
+        return;
+      }
+
+      subscription.lastPayload = payload;
+      client.send(payload);
+    } catch (error) {
+      this.reportAsyncError("refreshTerminalManagerSubscription", error, {
+        workspaceId: subscription.workspaceId
+      });
     }
+  }
 
-    subscription.lastPayload = payload;
-    client.send(payload);
+  private reportAsyncError(
+    scope: string,
+    error: unknown,
+    context: { userId?: string; workspaceId?: string } = {}
+  ): void {
+    const appError =
+      error instanceof AppError
+        ? error
+        : new AppError({
+            statusCode: 500,
+            errorCode: "INTERNAL_ERROR",
+            detail: error instanceof Error ? error.message : "未知错误"
+          });
+
+    console.error("[workbench-ws-error]", {
+      scope,
+      userId: context.userId,
+      workspaceId: context.workspaceId,
+      errorCode: appError.errorCode,
+      detail: appError.message
+    });
   }
 }
 

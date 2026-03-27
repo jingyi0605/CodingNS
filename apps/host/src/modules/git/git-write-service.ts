@@ -24,7 +24,10 @@ export class GitWriteService {
     const repo = await this.workspaceRepoGuard.resolve(workspaceId);
     const relativeTargets = ensureTargets(repo.repoRoot, targets, this.workspaceRepoGuard);
 
-    await this.gitCommandRunner.run(repo.repoRoot, ["add", "--", ...relativeTargets]);
+    await this.gitCommandRunner.run(repo.repoRoot, ["add", "--", ...relativeTargets], {
+      workspaceId,
+      operation: "gitWrite.stage"
+    });
 
     return await this.gitReadService.getStatus(workspaceId);
   }
@@ -45,7 +48,14 @@ export class GitWriteService {
       }
     }
 
-    await this.gitCommandRunner.run(status.snapshot.repoRoot, ["reset", "HEAD", "--", ...relativeTargets]);
+    await this.gitCommandRunner.run(
+      status.snapshot.repoRoot,
+      ["reset", "HEAD", "--", ...relativeTargets],
+      {
+        workspaceId,
+        operation: "gitWrite.unstage"
+      }
+    );
 
     return await this.gitReadService.getStatus(workspaceId);
   }
@@ -82,11 +92,17 @@ export class GitWriteService {
 
     try {
       if (trackedTargets.length > 0) {
-        await this.gitCommandRunner.run(repoRoot, ["restore", "--worktree", "--", ...trackedTargets]);
+        await this.gitCommandRunner.run(repoRoot, ["restore", "--worktree", "--", ...trackedTargets], {
+          workspaceId,
+          operation: "gitWrite.discard"
+        });
       }
 
       if (untrackedTargets.length > 0) {
-        await this.gitCommandRunner.run(repoRoot, ["clean", "-fd", "--", ...untrackedTargets]);
+        await this.gitCommandRunner.run(repoRoot, ["clean", "-fd", "--", ...untrackedTargets], {
+          workspaceId,
+          operation: "gitWrite.discard"
+        });
       }
     } catch (error) {
       if (error instanceof AppError) {
@@ -105,11 +121,14 @@ export class GitWriteService {
 
   async commit(workspaceId: string, draft: CommitDraft): Promise<{ commitHash: string }> {
     const repo = await this.workspaceRepoGuard.resolve(workspaceId);
-    const stagedNames = await this.gitCommandRunner.run(repo.repoRoot, [
-      "diff",
-      "--cached",
-      "--name-only"
-    ]);
+    const stagedNames = await this.gitCommandRunner.run(
+      repo.repoRoot,
+      ["diff", "--cached", "--name-only"],
+      {
+        workspaceId,
+        operation: "gitWrite.commit"
+      }
+    );
 
     if (!stagedNames.stdout.trim()) {
       throw new AppError({
@@ -125,9 +144,14 @@ export class GitWriteService {
 
     try {
       await this.gitCommandRunner.run(repo.repoRoot, ["commit", "--file", messagePath], {
-        timeoutMs: 30_000
+        timeoutMs: 30_000,
+        workspaceId,
+        operation: "gitWrite.commit"
       });
-      const hashResult = await this.gitCommandRunner.run(repo.repoRoot, ["rev-parse", "HEAD"]);
+      const hashResult = await this.gitCommandRunner.run(repo.repoRoot, ["rev-parse", "HEAD"], {
+        workspaceId,
+        operation: "gitWrite.commit"
+      });
 
       return {
         commitHash: hashResult.stdout.trim()
@@ -167,7 +191,12 @@ export class GitWriteService {
     const result = await this.gitCommandRunner.run(
       repo.repoRoot,
       create ? ["switch", "-c", trimmedBranchName] : ["switch", trimmedBranchName],
-      { allowNonZeroExit: true, timeoutMs: 30_000 }
+      {
+        allowNonZeroExit: true,
+        timeoutMs: 30_000,
+        workspaceId,
+        operation: "gitWrite.switchBranch"
+      }
     );
 
     if (result.exitCode !== 0) {
@@ -186,7 +215,11 @@ export class GitWriteService {
     const remoteUrl = await this.gitCommandRunner.run(
       repo.repoRoot,
       ["remote", "get-url", "origin"],
-      { allowNonZeroExit: true }
+      {
+        allowNonZeroExit: true,
+        workspaceId,
+        operation: "gitWrite.syncRemote"
+      }
     );
 
     if (remoteUrl.exitCode !== 0 || !remoteUrl.stdout.trim()) {
@@ -207,7 +240,9 @@ export class GitWriteService {
             : ["push", "--set-upstream", "origin", currentBranch];
     const result = await this.gitCommandRunner.run(repo.repoRoot, args, {
       allowNonZeroExit: true,
-      timeoutMs: 60_000
+      timeoutMs: 60_000,
+      workspaceId,
+      operation: "gitWrite.syncRemote"
     });
 
     if (result.exitCode !== 0) {
@@ -225,7 +260,9 @@ export class GitWriteService {
   async undoLastCommit(workspaceId: string): Promise<GitUndoCommitResult> {
     const repo = await this.workspaceRepoGuard.resolve(workspaceId);
     const headResult = await this.gitCommandRunner.run(repo.repoRoot, ["rev-parse", "HEAD"], {
-      allowNonZeroExit: true
+      allowNonZeroExit: true,
+      workspaceId,
+      operation: "gitWrite.undoLastCommit"
     });
 
     if (headResult.exitCode !== 0 || !headResult.stdout.trim()) {
@@ -240,14 +277,23 @@ export class GitWriteService {
     const commitSubjectResult = await this.gitCommandRunner.run(
       repo.repoRoot,
       ["show", "-s", "--format=%s", "HEAD"],
-      { allowNonZeroExit: true }
+      {
+        allowNonZeroExit: true,
+        workspaceId,
+        operation: "gitWrite.undoLastCommit"
+      }
     );
     const commitSubject =
       commitSubjectResult.exitCode === 0 ? commitSubjectResult.stdout.trim() : "";
     const resetResult = await this.gitCommandRunner.run(
       repo.repoRoot,
       ["reset", "--soft", "HEAD~1"],
-      { allowNonZeroExit: true, timeoutMs: 30_000 }
+      {
+        allowNonZeroExit: true,
+        timeoutMs: 30_000,
+        workspaceId,
+        operation: "gitWrite.undoLastCommit"
+      }
     );
 
     if (resetResult.exitCode !== 0) {

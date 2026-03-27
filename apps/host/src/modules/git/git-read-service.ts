@@ -41,11 +41,18 @@ export class GitReadService {
       "--porcelain=1",
       "--branch",
       "--untracked-files=all"
-    ]);
+    ], {
+      workspaceId,
+      operation: "gitRead.getStatus"
+    });
     const remoteResult = await this.gitCommandRunner.run(
       repo.repoRoot,
       ["remote", "get-url", "origin"],
-      { allowNonZeroExit: true }
+      {
+        allowNonZeroExit: true,
+        workspaceId,
+        operation: "gitRead.getStatus"
+      }
     );
     const lines = statusResult.stdout
       .split(/\r?\n/)
@@ -76,12 +83,19 @@ export class GitReadService {
     const diffArgs = staged
       ? ["diff", "--cached", "--", relativePath]
       : ["diff", "--", relativePath];
-    const diffResult = await this.gitCommandRunner.run(repo.repoRoot, diffArgs);
+    const diffResult = await this.gitCommandRunner.run(repo.repoRoot, diffArgs, {
+      workspaceId,
+      operation: "gitRead.getDiff"
+    });
     const numstatResult = await this.gitCommandRunner.run(
       repo.repoRoot,
       staged
         ? ["diff", "--cached", "--numstat", "--", relativePath]
-        : ["diff", "--numstat", "--", relativePath]
+        : ["diff", "--numstat", "--", relativePath],
+      {
+        workspaceId,
+        operation: "gitRead.getDiff"
+      }
     );
     const binary = numstatResult.stdout
       .split(/\r?\n/)
@@ -106,12 +120,19 @@ export class GitReadService {
     const repo = await this.workspaceRepoGuard.resolve(workspaceId);
     const safeLimit = clampHistoryLimit(limit);
     const offset = parseCursor(cursor);
-    const refsResult = await this.gitCommandRunner.run(repo.repoRoot, [
-      "for-each-ref",
-      "--format=%(refname)%00%(refname:short)%00%(objectname)%00%(upstream:short)%00%(HEAD)",
-      "refs/heads",
-      "refs/remotes"
-    ]);
+    const refsResult = await this.gitCommandRunner.run(
+      repo.repoRoot,
+      [
+        "for-each-ref",
+        "--format=%(refname)%00%(refname:short)%00%(objectname)%00%(upstream:short)%00%(HEAD)",
+        "refs/heads",
+        "refs/remotes"
+      ],
+      {
+        workspaceId,
+        operation: "gitRead.getHistory"
+      }
+    );
     const parsedRefs = refsResult.stdout
       .split(/\r?\n/)
       .map((line) => line.trimEnd())
@@ -120,25 +141,38 @@ export class GitReadService {
     const refByShortName = new Map(parsedRefs.map((ref) => [ref.shortName, ref] as const));
     const currentRef = parsedRefs.find((ref) => ref.kind === "local" && ref.current) ?? null;
     const [logResult, countResult, divergenceResult] = await Promise.all([
-      this.gitCommandRunner.run(repo.repoRoot, [
-        "log",
-        "--all",
-        "--topo-order",
-        `--skip=${offset}`,
-        "-n",
-        String(safeLimit + 1),
-        "--date=iso-strict",
-        "--decorate=short",
-        "--pretty=format:%H%x1f%an%x1f%ad%x1f%s%x1f%b%x1f%D%x1e"
-      ]),
+      this.gitCommandRunner.run(
+        repo.repoRoot,
+        [
+          "log",
+          "--all",
+          "--topo-order",
+          `--skip=${offset}`,
+          "-n",
+          String(safeLimit + 1),
+          "--date=iso-strict",
+          "--decorate=short",
+          "--pretty=format:%H%x1f%an%x1f%ad%x1f%s%x1f%b%x1f%D%x1e"
+        ],
+        {
+          workspaceId,
+          operation: "gitRead.getHistory"
+        }
+      ),
       this.gitCommandRunner.run(repo.repoRoot, ["rev-list", "--count", "--all"], {
-        allowNonZeroExit: true
+        allowNonZeroExit: true,
+        workspaceId,
+        operation: "gitRead.getHistory"
       }),
       currentRef?.upstream
         ? this.gitCommandRunner.run(
             repo.repoRoot,
             ["rev-list", "--left-right", `${currentRef.shortName}...${currentRef.upstream}`],
-            { allowNonZeroExit: true }
+            {
+              allowNonZeroExit: true,
+              workspaceId,
+              operation: "gitRead.getHistory"
+            }
           )
         : Promise.resolve({
             stdout: "",
@@ -167,17 +201,34 @@ export class GitReadService {
   async getBranches(workspaceId: string): Promise<GitBranchSnapshot> {
     const repo = await this.workspaceRepoGuard.resolve(workspaceId);
     const [statusResult, localResult, remoteResult] = await Promise.all([
-      this.gitCommandRunner.run(repo.repoRoot, ["status", "--porcelain=1", "--branch"]),
-      this.gitCommandRunner.run(repo.repoRoot, [
-        "for-each-ref",
-        "--format=%(refname:short)%x1f%(upstream:short)%x1f%(HEAD)",
-        "refs/heads"
-      ]),
-      this.gitCommandRunner.run(repo.repoRoot, [
-        "for-each-ref",
-        "--format=%(refname:short)",
-        "refs/remotes"
-      ])
+      this.gitCommandRunner.run(repo.repoRoot, ["status", "--porcelain=1", "--branch"], {
+        workspaceId,
+        operation: "gitRead.getBranches"
+      }),
+      this.gitCommandRunner.run(
+        repo.repoRoot,
+        [
+          "for-each-ref",
+          "--format=%(refname:short)%x1f%(upstream:short)%x1f%(HEAD)",
+          "refs/heads"
+        ],
+        {
+          workspaceId,
+          operation: "gitRead.getBranches"
+        }
+      ),
+      this.gitCommandRunner.run(
+        repo.repoRoot,
+        [
+          "for-each-ref",
+          "--format=%(refname:short)",
+          "refs/remotes"
+        ],
+        {
+          workspaceId,
+          operation: "gitRead.getBranches"
+        }
+      )
     ]);
     const currentBranch = parseBranchHeader(
       statusResult.stdout.split(/\r?\n/).find((line) => line.startsWith("##")) ?? "## HEAD"
