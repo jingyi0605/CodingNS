@@ -13,7 +13,7 @@ export interface ThemeDefinition {
 export const THEMES: ThemeDefinition[] = [
   { id: "light", labelKey: "theme.light", color: "#f6f4ef" },
   { id: "dark", labelKey: "theme.dark", color: "#1b1b1b" },
-  { id: "sky-blue", labelKey: "theme.skyBlue", color: "#2563eb" },
+  { id: "sky-blue", labelKey: "theme.skyBlue", color: "#00f0ff" },
   { id: "eye-green", labelKey: "theme.eyeGreen", color: "#16a34a" }
 ];
 

@@ -111,26 +111,55 @@
 
 /* Sky Blue Theme */
 [data-theme="sky-blue"] {
-  --bg-primary: #f0f7ff;
-  --bg-surface: #ffffff;
-  --bg-sidebar: #e8f2ff;
-  --bg-hover: rgba(37, 99, 235, 0.04);
-  --bg-active: rgba(37, 99, 235, 0.1);
+  --bg-primary: #040814;
+  --bg-surface: rgba(11, 18, 43, 0.9);
+  --bg-sidebar: rgba(7, 12, 31, 0.94);
+  --bg-hover: rgba(0, 240, 255, 0.12);
+  --bg-active: rgba(255, 60, 247, 0.2);
 
-  --text-primary: #1e3a5f;
-  --text-secondary: #4a6fa5;
-  --text-tertiary: #7a9bc5;
-  --text-inverse: #ffffff;
+  --text-primary: #f5f7ff;
+  --text-secondary: #ced8ff;
+  --text-tertiary: #93a8ea;
+  --text-inverse: #02030a;
 
-  --border-primary: rgba(37, 99, 235, 0.1);
-  --border-subtle: rgba(37, 99, 235, 0.06);
-  --accent: #2563eb;
-  --accent-hover: #1d4ed8;
+  --border-primary: rgba(0, 240, 255, 0.22);
+  --border-subtle: rgba(255, 60, 247, 0.16);
+  --accent: #00f0ff;
+  --accent-hover: #5ff8ff;
+  --cyber-grid-line: rgba(0, 240, 255, 0.11);
+  --cyber-grid-line-strong: rgba(255, 60, 247, 0.08);
+  --cyber-glow-cyan: rgba(0, 240, 255, 0.24);
+  --cyber-glow-pink: rgba(255, 60, 247, 0.2);
+  --cyber-glow-amber: rgba(255, 191, 60, 0.16);
+  --cyber-panel-highlight: rgba(255, 255, 255, 0.06);
 
-  --success: #10b981;
-  --warning: #f59e0b;
-  --error: #ef4444;
-  color-scheme: light;
+  --success: #4dff8b;
+  --warning: #ffbf3c;
+  --error: #ff4d8d;
+  --code-block-surface: rgba(4, 12, 32, 0.96);
+  --code-block-header-bg: rgba(11, 19, 47, 0.96);
+  --code-block-border: rgba(0, 240, 255, 0.16);
+  --code-block-text: #e7f7ff;
+  --code-block-gutter: rgba(146, 166, 219, 0.74);
+  --code-token-comment: #5a6c9d;
+  --code-token-string: #8dffbc;
+  --code-token-keyword: #67e8f9;
+  --code-token-number: #ffa3cf;
+  --code-token-operator: #d7e3ff;
+  --code-token-tag: #ff6df0;
+  --code-token-attr: #ffd166;
+  --code-token-literal: #b794ff;
+  --patch-diff-surface: rgba(5, 12, 30, 0.94);
+  --patch-diff-text: #e0f7ff;
+  --patch-diff-muted: rgba(157, 169, 214, 0.72);
+  --patch-diff-line-border: rgba(0, 240, 255, 0.12);
+  --patch-diff-added-bg: rgba(77, 255, 139, 0.12);
+  --patch-diff-removed-bg: rgba(255, 77, 141, 0.12);
+  --patch-diff-hunk-bg: rgba(255, 60, 247, 0.16);
+  --patch-diff-hunk-text: #ffd2fb;
+  --patch-diff-meta-bg: rgba(0, 240, 255, 0.08);
+  --patch-diff-meta-text: #8ceeff;
+  color-scheme: dark;
 }
 
 /* Eye Green Theme */
@@ -4968,12 +4997,32 @@ textarea:focus-visible {
   --app-glow-surface: rgba(18, 18, 18, 0.76);
 }
 
+[data-theme="sky-blue"] {
+  --app-shell-edge: rgba(0, 240, 255, 0.18);
+  --app-shadow-soft:
+    0 0 0 1px rgba(0, 240, 255, 0.06),
+    0 22px 52px rgba(2, 6, 22, 0.56),
+    0 0 38px rgba(0, 240, 255, 0.08);
+  --app-shadow-strong:
+    0 0 0 1px rgba(255, 60, 247, 0.1),
+    0 30px 72px rgba(1, 4, 18, 0.72),
+    0 0 54px rgba(255, 60, 247, 0.14);
+  --app-glow-primary: rgba(0, 240, 255, 0.24);
+  --app-glow-surface: rgba(6, 11, 28, 0.82);
+}
+
 .surface-card {
   border-radius: 22px;
   border-color: var(--app-shell-edge);
   box-shadow: var(--app-shadow-soft);
   backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
+}
+
+[data-theme="sky-blue"] .surface-card {
+  background:
+    linear-gradient(180deg, rgba(15, 24, 58, 0.92), rgba(6, 12, 31, 0.94)),
+    rgba(8, 12, 28, 0.92);
 }
 
 .workbench-shell {
@@ -4984,6 +5033,14 @@ textarea:focus-visible {
     radial-gradient(circle at 0% 0%, color-mix(in srgb, var(--accent) 10%, transparent) 0, transparent 32%),
     radial-gradient(circle at 100% 0%, rgba(52, 199, 89, 0.1) 0, transparent 28%),
     linear-gradient(180deg, color-mix(in srgb, var(--bg-primary) 92%, #ffffff 8%), var(--bg-primary));
+}
+
+[data-theme="sky-blue"] .workbench-shell {
+  background:
+    radial-gradient(circle at 8% 0%, rgba(0, 240, 255, 0.22) 0, transparent 30%),
+    radial-gradient(circle at 100% 8%, rgba(255, 60, 247, 0.18) 0, transparent 28%),
+    radial-gradient(circle at 50% 100%, rgba(255, 191, 60, 0.12) 0, transparent 26%),
+    linear-gradient(135deg, rgba(7, 12, 31, 0.98), rgba(3, 8, 24, 0.98) 42%, rgba(10, 6, 38, 0.98));
 }
 
 .workbench-shell::before,
@@ -5012,6 +5069,14 @@ textarea:focus-visible {
   background: rgba(52, 199, 89, 0.14);
 }
 
+[data-theme="sky-blue"] .workbench-shell::before {
+  background: rgba(0, 240, 255, 0.2);
+}
+
+[data-theme="sky-blue"] .workbench-shell::after {
+  background: rgba(255, 60, 247, 0.18);
+}
+
 .workbench-nav,
 .workbench-auxiliary,
 .workbench-main-shell {
@@ -5025,6 +5090,14 @@ textarea:focus-visible {
     box-shadow 220ms ease,
     border-color 220ms ease,
     background 220ms ease;
+}
+
+[data-theme="sky-blue"] .workbench-nav,
+[data-theme="sky-blue"] .workbench-auxiliary,
+[data-theme="sky-blue"] .workbench-main-shell {
+  background:
+    linear-gradient(180deg, rgba(13, 22, 53, 0.94), rgba(5, 10, 29, 0.9)),
+    rgba(7, 12, 31, 0.88);
 }
 
 .workbench-nav:hover,
@@ -13159,4 +13232,257 @@ textarea:focus-visible {
   z-index: 24;
   border-radius: 18px;
   box-shadow: 0 18px 36px rgba(15, 23, 42, 0.16);
+}
+
+/* ========================================
+   Cyber Neon Overrides
+   ======================================== */
+
+[data-theme="sky-blue"] .workbench-shell::before {
+  background:
+    radial-gradient(circle at 16% 18%, rgba(0, 240, 255, 0.34) 0, transparent 16%),
+    radial-gradient(circle at 84% 16%, rgba(255, 60, 247, 0.26) 0, transparent 18%),
+    radial-gradient(circle at 50% 100%, rgba(255, 191, 60, 0.16) 0, transparent 22%);
+  opacity: 0.94;
+  filter: blur(56px);
+  animation: cyberOrbFloat 12s ease-in-out infinite alternate;
+}
+
+[data-theme="sky-blue"] .workbench-shell::after {
+  background:
+    linear-gradient(115deg, transparent 18%, rgba(0, 240, 255, 0.08) 34%, transparent 46%),
+    linear-gradient(295deg, transparent 22%, rgba(255, 60, 247, 0.08) 44%, transparent 56%);
+  opacity: 1;
+  filter: blur(0);
+  mix-blend-mode: screen;
+  animation: cyberSweepBeam 7.2s linear infinite;
+}
+
+[data-theme="sky-blue"] .workbench-nav,
+[data-theme="sky-blue"] .workbench-auxiliary,
+[data-theme="sky-blue"] .workbench-main-shell {
+  isolation: isolate;
+  backdrop-filter: blur(26px) saturate(188%);
+  -webkit-backdrop-filter: blur(26px) saturate(188%);
+}
+
+[data-theme="sky-blue"] .workbench-nav::before,
+[data-theme="sky-blue"] .workbench-auxiliary::before,
+[data-theme="sky-blue"] .workbench-main-shell::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  background:
+    linear-gradient(180deg, var(--cyber-panel-highlight), transparent 24%),
+    repeating-linear-gradient(180deg, transparent 0 18px, var(--cyber-grid-line) 18px 19px),
+    repeating-linear-gradient(90deg, transparent 0 28px, var(--cyber-grid-line-strong) 28px 29px);
+  opacity: 0.96;
+  mix-blend-mode: screen;
+  animation: cyberGridDrift 20s linear infinite;
+}
+
+[data-theme="sky-blue"] .workbench-nav::after,
+[data-theme="sky-blue"] .workbench-auxiliary::after,
+[data-theme="sky-blue"] .workbench-main-shell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  background:
+    radial-gradient(circle at 18% 22%, rgba(0, 240, 255, 0.28) 0 1.4px, transparent 2.2px),
+    radial-gradient(circle at 74% 36%, rgba(255, 60, 247, 0.24) 0 1.2px, transparent 2px),
+    radial-gradient(circle at 56% 72%, rgba(255, 191, 60, 0.22) 0 1.1px, transparent 1.9px),
+    radial-gradient(circle at 84% 18%, rgba(0, 240, 255, 0.22) 0 1px, transparent 1.8px);
+  opacity: 1;
+  mix-blend-mode: screen;
+  animation: cyberParticleDrift 14s ease-in-out infinite alternate;
+}
+
+[data-theme="sky-blue"] .workbench-nav > *,
+[data-theme="sky-blue"] .workbench-auxiliary > *,
+[data-theme="sky-blue"] .workbench-main-shell > * {
+  position: relative;
+  z-index: 1;
+}
+
+[data-theme="sky-blue"] .workbench-nav-stats span,
+[data-theme="sky-blue"] .conversation-header-label,
+[data-theme="sky-blue"] .conversation-header-subline {
+  color: #eff8ff;
+  background:
+    linear-gradient(135deg, rgba(0, 240, 255, 0.14), rgba(255, 60, 247, 0.1)),
+    rgba(6, 12, 31, 0.72);
+  border-color: rgba(0, 240, 255, 0.26);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 0 24px rgba(0, 240, 255, 0.12),
+    0 0 42px rgba(255, 60, 247, 0.05);
+}
+
+[data-theme="sky-blue"] .workbench-import-card.minimal,
+[data-theme="sky-blue"] .workbench-workspace-group,
+[data-theme="sky-blue"] .tool-call-item,
+[data-theme="sky-blue"] .rules-message-card,
+[data-theme="sky-blue"] .git-card,
+[data-theme="sky-blue"] .file-panel-section {
+  background:
+    linear-gradient(180deg, rgba(15, 24, 58, 0.94), rgba(7, 12, 31, 0.9)),
+    rgba(7, 12, 31, 0.84);
+  border-color: rgba(0, 240, 255, 0.18);
+  box-shadow:
+    0 18px 46px rgba(2, 6, 22, 0.56),
+    0 0 32px rgba(0, 240, 255, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+[data-theme="sky-blue"] .workbench-session-card {
+  background:
+    linear-gradient(180deg, rgba(10, 18, 43, 0.3), rgba(10, 18, 43, 0.08));
+  border-color: rgba(0, 240, 255, 0.05);
+}
+
+[data-theme="sky-blue"] .workbench-session-card:hover {
+  background:
+    linear-gradient(135deg, rgba(0, 240, 255, 0.12), rgba(255, 60, 247, 0.08)),
+    rgba(10, 18, 43, 0.3);
+  border-color: rgba(0, 240, 255, 0.18);
+  box-shadow:
+    0 0 20px rgba(0, 240, 255, 0.12),
+    0 0 34px rgba(255, 60, 247, 0.06);
+}
+
+[data-theme="sky-blue"] .workbench-session-card[data-active="true"] {
+  background:
+    linear-gradient(135deg, rgba(0, 240, 255, 0.18), rgba(255, 60, 247, 0.14)),
+    rgba(10, 18, 43, 0.44);
+  border-color: rgba(0, 240, 255, 0.3);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 0 0 1px rgba(255, 60, 247, 0.12),
+    0 0 28px rgba(0, 240, 255, 0.22),
+    0 0 46px rgba(255, 60, 247, 0.1);
+}
+
+[data-theme="sky-blue"] .session-title {
+  color: #f8fbff;
+  font-weight: 600;
+  text-shadow: 0 0 12px rgba(0, 240, 255, 0.08);
+}
+
+[data-theme="sky-blue"] .session-meta {
+  color: rgba(206, 216, 255, 0.74);
+}
+
+[data-theme="sky-blue"] .settings-page {
+  position: relative;
+  background:
+    radial-gradient(circle at top right, rgba(255, 60, 247, 0.18), transparent 24%),
+    radial-gradient(circle at top left, rgba(0, 240, 255, 0.2), transparent 26%),
+    radial-gradient(circle at 50% 120%, rgba(255, 191, 60, 0.12), transparent 28%),
+    linear-gradient(180deg, rgba(6, 12, 31, 0.98), rgba(4, 8, 24, 0.98));
+}
+
+[data-theme="sky-blue"] .settings-page::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(105deg, transparent 0 26%, rgba(0, 240, 255, 0.08) 36%, transparent 46%),
+    linear-gradient(285deg, transparent 0 38%, rgba(255, 60, 247, 0.08) 50%, transparent 62%);
+  mix-blend-mode: screen;
+  animation: cyberSweepBeam 9s linear infinite;
+}
+
+[data-theme="sky-blue"] .settings-title {
+  color: #f7fbff;
+  text-shadow:
+    0 0 20px rgba(0, 240, 255, 0.12),
+    0 0 32px rgba(255, 60, 247, 0.06);
+}
+
+[data-theme="sky-blue"] .settings-section-title {
+  color: #7df4ff;
+  letter-spacing: 0.16em;
+}
+
+[data-theme="sky-blue"] .settings-card,
+[data-theme="sky-blue"] .settings-release-notes,
+[data-theme="sky-blue"] .theme-card {
+  background:
+    linear-gradient(180deg, rgba(15, 24, 58, 0.94), rgba(7, 12, 31, 0.92)),
+    rgba(7, 12, 31, 0.9);
+  border-color: rgba(0, 240, 255, 0.2);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 18px 42px rgba(2, 6, 22, 0.5),
+    0 0 30px rgba(0, 240, 255, 0.06);
+}
+
+[data-theme="sky-blue"] .settings-row-description,
+[data-theme="sky-blue"] .settings-release-meta,
+[data-theme="sky-blue"] .settings-release-notes p,
+[data-theme="sky-blue"] .settings-release-status {
+  color: rgba(206, 216, 255, 0.82);
+}
+
+[data-theme="sky-blue"] .theme-card.active {
+  background:
+    linear-gradient(135deg, rgba(0, 240, 255, 0.18), rgba(255, 60, 247, 0.14)),
+    rgba(10, 18, 43, 0.56);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.04),
+    0 0 0 1px rgba(0, 240, 255, 0.24),
+    0 0 28px rgba(0, 240, 255, 0.18),
+    0 0 48px rgba(255, 60, 247, 0.08);
+}
+
+[data-theme="sky-blue"] .theme-label,
+[data-theme="sky-blue"] .settings-row-title,
+[data-theme="sky-blue"] .workbench-section-heading-main,
+[data-theme="sky-blue"] .workbench-nav-header h1 {
+  text-shadow:
+    0 0 14px rgba(0, 240, 255, 0.12),
+    0 0 28px rgba(255, 60, 247, 0.04);
+}
+
+@keyframes cyberGridDrift {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+  100% {
+    transform: translate3d(0, 22px, 0);
+  }
+}
+
+@keyframes cyberParticleDrift {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  100% {
+    transform: translate3d(-14px, 12px, 0) scale(1.04);
+  }
+}
+
+@keyframes cyberOrbFloat {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  100% {
+    transform: translate3d(22px, -18px, 0) scale(1.08);
+  }
+}
+
+@keyframes cyberSweepBeam {
+  0% {
+    transform: translate3d(-12%, 0, 0);
+  }
+  100% {
+    transform: translate3d(12%, 0, 0);
+  }
 }

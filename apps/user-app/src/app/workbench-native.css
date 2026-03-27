@@ -63,6 +63,21 @@
   --content-surface: rgba(24, 24, 24, 0.92);
 }
 
+[data-theme="sky-blue"] {
+  --app-bg: #040814;
+  --panel-bg: rgba(8, 14, 35, 0.84);
+  --panel-bg-strong: rgba(12, 20, 48, 0.92);
+  --panel-border: rgba(0, 240, 255, 0.16);
+  --panel-border-strong: rgba(255, 60, 247, 0.24);
+  --panel-separator: rgba(0, 240, 255, 0.1);
+  --panel-hover: rgba(0, 240, 255, 0.08);
+  --panel-active: rgba(255, 60, 247, 0.16);
+  --panel-shadow: 0 18px 42px rgba(1, 4, 18, 0.56);
+  --sidebar-surface: rgba(6, 12, 31, 0.9);
+  --inspector-surface: rgba(8, 15, 36, 0.92);
+  --content-surface: rgba(10, 18, 43, 0.88);
+}
+
 [data-runtime-platform="desktop"][data-os-family="macos"] {
   --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
   --font-mono: "SF Mono", "SFMono-Regular", "Menlo", "Consolas", monospace;
@@ -95,6 +110,15 @@ body {
   box-shadow: none;
 }
 
+[data-theme="sky-blue"] .surface-card {
+  background:
+    linear-gradient(180deg, rgba(15, 24, 58, 0.94), rgba(7, 12, 31, 0.96)),
+    rgba(10, 18, 43, 0.92);
+  box-shadow:
+    0 22px 48px rgba(2, 4, 16, 0.48),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
 .workbench-shell {
   display: flex;
   flex-direction: column;
@@ -104,6 +128,13 @@ body {
     radial-gradient(circle at top left, rgba(255, 255, 255, 0.46), transparent 28%),
     linear-gradient(180deg, rgba(255, 255, 255, 0.28), transparent 18%),
     var(--app-bg);
+}
+
+[data-theme="sky-blue"] .workbench-shell {
+  background:
+    radial-gradient(circle at 8% 0%, rgba(0, 240, 255, 0.24), transparent 28%),
+    radial-gradient(circle at 92% 12%, rgba(255, 60, 247, 0.18), transparent 24%),
+    linear-gradient(135deg, rgba(6, 12, 31, 0.98), rgba(3, 8, 24, 0.98) 42%, rgba(10, 6, 38, 0.98));
 }
 
 /* 工作台默认禁止拖拽选中文本，只对白名单区域放开。 */
@@ -197,6 +228,18 @@ body {
 
 .workbench-titlebar-logo:hover {
   filter: drop-shadow(0 0 10px rgba(0, 212, 255, 0.6));
+}
+
+[data-theme="sky-blue"] .workbench-titlebar-logo {
+  filter:
+    drop-shadow(0 0 10px rgba(0, 240, 255, 0.8))
+    drop-shadow(0 0 20px rgba(255, 60, 247, 0.36));
+}
+
+[data-theme="sky-blue"] .workbench-titlebar-logo:hover {
+  filter:
+    drop-shadow(0 0 14px rgba(0, 240, 255, 0.92))
+    drop-shadow(0 0 28px rgba(255, 60, 247, 0.52));
 }
 
 .workbench-titlebar-brand-text {
@@ -3064,6 +3107,54 @@ body {
   background: rgba(255, 255, 255, 0.09);
 }
 
+[data-theme="sky-blue"] .workbench-shell {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 0 0 1px rgba(0, 240, 255, 0.06);
+}
+
+[data-theme="sky-blue"] .workbench-body-shell {
+  border-color: rgba(0, 240, 255, 0.12);
+  background:
+    linear-gradient(180deg, rgba(10, 18, 43, 0.94), rgba(5, 10, 28, 0.96));
+  box-shadow:
+    0 20px 48px rgba(1, 3, 14, 0.44),
+    0 0 32px rgba(0, 240, 255, 0.06);
+}
+
+[data-theme="sky-blue"] .workbench-nav,
+[data-theme="sky-blue"] .workbench-main-shell,
+[data-theme="sky-blue"] .workbench-auxiliary {
+  background:
+    linear-gradient(180deg, rgba(14, 24, 58, 0.94), rgba(6, 12, 31, 0.9));
+}
+
+[data-theme="sky-blue"] .workbench-nav-toolbar-button,
+[data-theme="sky-blue"] .workbench-workspace-icon-button,
+[data-theme="sky-blue"] .workbench-workspace-create,
+[data-theme="sky-blue"] .workbench-nav-settings-button,
+[data-theme="sky-blue"] .workbench-info-tab {
+  color: rgba(238, 245, 255, 0.8);
+}
+
+[data-theme="sky-blue"] .workbench-session-card:hover,
+[data-theme="sky-blue"] .workbench-session-card[data-active="true"],
+[data-theme="sky-blue"] .workbench-nav-segment-button.active,
+[data-theme="sky-blue"] .workbench-nav-segment-button[data-open="true"],
+[data-theme="sky-blue"] .workbench-info-tab.active,
+[data-theme="sky-blue"] .workbench-nav-settings-button:hover,
+[data-theme="sky-blue"] .workbench-archive-folder:hover,
+[data-theme="sky-blue"] .composer-input-wrapper,
+[data-theme="sky-blue"] .secondary-button,
+[data-theme="sky-blue"] .settings-button {
+  background: rgba(0, 240, 255, 0.1);
+}
+
+[data-theme="sky-blue"] .workbench-auxiliary .file-tree-item:hover,
+[data-theme="sky-blue"] .workbench-auxiliary .file-session-list-button:hover {
+  background: rgba(0, 240, 255, 0.08);
+}
+
 [data-theme="dark"] .workbench-auxiliary .file-tree-item[data-active="true"],
 [data-theme="dark"] .workbench-auxiliary .file-session-list-button[data-active="true"] {
   background: rgba(255, 255, 255, 0.14);
@@ -3533,4 +3624,205 @@ body {
   transition:
     padding-left 220ms cubic-bezier(0.2, 0.9, 0.2, 1),
     padding-right 220ms cubic-bezier(0.2, 0.9, 0.2, 1);
+}
+
+/* ========================================
+   Cyber Neon Overrides
+   ======================================== */
+
+[data-theme="sky-blue"] .workbench-shell::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  width: auto;
+  height: auto;
+  border-radius: 0;
+  filter: none;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(180deg, transparent 0 14px, rgba(0, 240, 255, 0.04) 14px 15px),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 16%);
+  opacity: 0.96;
+  mix-blend-mode: screen;
+}
+
+[data-theme="sky-blue"] .workbench-shell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  width: auto;
+  height: auto;
+  border-radius: 0;
+  filter: none;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 12% 14%, rgba(0, 240, 255, 0.24) 0 1.5px, transparent 2.4px),
+    radial-gradient(circle at 84% 22%, rgba(255, 60, 247, 0.18) 0 1.3px, transparent 2.2px),
+    radial-gradient(circle at 66% 78%, rgba(255, 191, 60, 0.16) 0 1.1px, transparent 2px);
+  opacity: 1;
+  mix-blend-mode: screen;
+}
+
+[data-theme="sky-blue"] .workbench-titlebar-pill,
+[data-theme="sky-blue"] .workbench-desktop-segment,
+[data-theme="sky-blue"] .workbench-toolbar-button {
+  border-color: rgba(0, 240, 255, 0.18);
+  color: rgba(238, 245, 255, 0.86);
+  background:
+    linear-gradient(135deg, rgba(0, 240, 255, 0.08), rgba(255, 60, 247, 0.06)),
+    rgba(6, 12, 31, 0.64);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 0 20px rgba(0, 240, 255, 0.06);
+}
+
+[data-theme="sky-blue"] .workbench-toolbar-button:hover,
+[data-theme="sky-blue"] .workbench-toolbar-button[aria-pressed="true"] {
+  color: #f7fbff;
+  border-color: rgba(0, 240, 255, 0.26);
+  background:
+    linear-gradient(135deg, rgba(0, 240, 255, 0.14), rgba(255, 60, 247, 0.08)),
+    rgba(8, 15, 36, 0.78);
+  box-shadow:
+    0 0 24px rgba(0, 240, 255, 0.16),
+    0 0 40px rgba(255, 60, 247, 0.06);
+}
+
+[data-theme="sky-blue"] .workbench-nav,
+[data-theme="sky-blue"] .workbench-main-shell,
+[data-theme="sky-blue"] .workbench-auxiliary {
+  position: relative;
+  isolation: isolate;
+}
+
+[data-theme="sky-blue"] .workbench-nav::before,
+[data-theme="sky-blue"] .workbench-main-shell::before,
+[data-theme="sky-blue"] .workbench-auxiliary::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.05), transparent 18%),
+    repeating-linear-gradient(180deg, transparent 0 18px, rgba(0, 240, 255, 0.04) 18px 19px),
+    repeating-linear-gradient(90deg, transparent 0 28px, rgba(255, 60, 247, 0.03) 28px 29px);
+  opacity: 0.9;
+  mix-blend-mode: screen;
+}
+
+[data-theme="sky-blue"] .workbench-nav > *,
+[data-theme="sky-blue"] .workbench-main-shell > *,
+[data-theme="sky-blue"] .workbench-auxiliary > * {
+  position: relative;
+  z-index: 1;
+}
+
+[data-theme="sky-blue"] .workbench-nav-header h1,
+[data-theme="sky-blue"] .workbench-section-heading-main,
+[data-theme="sky-blue"] .settings-title,
+[data-theme="sky-blue"] .settings-row-title {
+  color: #f7fbff;
+  text-shadow: 0 0 18px rgba(0, 240, 255, 0.08);
+}
+
+[data-theme="sky-blue"] .workbench-nav-header p,
+[data-theme="sky-blue"] .settings-row-description,
+[data-theme="sky-blue"] .workbench-nav-stats,
+[data-theme="sky-blue"] .workbench-nav-stats span {
+  color: rgba(206, 216, 255, 0.82);
+}
+
+[data-theme="sky-blue"] .workbench-nav-segment-button {
+  border: 1px solid transparent;
+  color: rgba(226, 240, 255, 0.88);
+  text-shadow: 0 0 12px rgba(0, 240, 255, 0.08);
+}
+
+[data-theme="sky-blue"] .workbench-nav-segment-button.active,
+[data-theme="sky-blue"] .workbench-nav-segment-button[data-open="true"] {
+  background:
+    linear-gradient(135deg, rgba(0, 240, 255, 0.18), rgba(255, 60, 247, 0.14)),
+    rgba(9, 18, 43, 0.72);
+  border-color: rgba(0, 240, 255, 0.24);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 0 28px rgba(0, 240, 255, 0.18),
+    0 0 48px rgba(255, 60, 247, 0.08);
+  color: #ffffff;
+}
+
+[data-theme="sky-blue"] .workbench-nav-segment-button:hover {
+  background:
+    linear-gradient(135deg, rgba(0, 240, 255, 0.1), rgba(255, 60, 247, 0.08)),
+    rgba(9, 18, 43, 0.56);
+  border-color: rgba(0, 240, 255, 0.16);
+  color: #f8fbff;
+}
+
+[data-theme="sky-blue"] .workbench-section-block,
+[data-theme="sky-blue"] .workbench-workspace-group,
+[data-theme="sky-blue"] .workbench-archive-folder,
+[data-theme="sky-blue"] .conversation-header,
+[data-theme="sky-blue"] .composer-input-wrapper,
+[data-theme="sky-blue"] .workbench-search-result-item,
+[data-theme="sky-blue"] .workbench-search-empty,
+[data-theme="sky-blue"] .workbench-search-mode-switch,
+[data-theme="sky-blue"] .settings-card,
+[data-theme="sky-blue"] .theme-card,
+[data-theme="sky-blue"] .settings-release-notes {
+  border: 1px solid rgba(0, 240, 255, 0.16);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 14px 32px rgba(1, 4, 18, 0.34);
+}
+
+[data-theme="sky-blue"] .workbench-workspace-group {
+  background:
+    linear-gradient(180deg, rgba(12, 22, 54, 0.94), rgba(7, 12, 31, 0.88)),
+    rgba(6, 12, 31, 0.82);
+  border-color: rgba(0, 240, 255, 0.18);
+}
+
+[data-theme="sky-blue"] .workbench-session-card,
+[data-theme="sky-blue"] .workbench-session-card[data-depth="1"] {
+  border: 1px solid rgba(0, 240, 255, 0.04);
+  background:
+    linear-gradient(180deg, rgba(10, 18, 43, 0.34), rgba(10, 18, 43, 0.14));
+}
+
+[data-theme="sky-blue"] .workbench-session-card:hover,
+[data-theme="sky-blue"] .workbench-session-card[data-active="true"] {
+  border-color: rgba(0, 240, 255, 0.2);
+}
+
+[data-theme="sky-blue"] .workbench-session-link {
+  border-radius: 11px;
+}
+
+[data-theme="sky-blue"] .session-title {
+  color: #f8fbff;
+  font-weight: 600;
+}
+
+[data-theme="sky-blue"] .session-meta {
+  color: rgba(206, 216, 255, 0.74);
+}
+
+[data-theme="sky-blue"] .workbench-nav-settings-button:hover,
+[data-theme="sky-blue"] .workbench-workspace-icon-button:hover,
+[data-theme="sky-blue"] .workbench-workspace-create:hover,
+[data-theme="sky-blue"] .workbench-nav-toolbar-button:hover {
+  border-color: rgba(0, 240, 255, 0.18);
+  box-shadow:
+    0 0 18px rgba(0, 240, 255, 0.14),
+    0 0 32px rgba(255, 60, 247, 0.05);
 }

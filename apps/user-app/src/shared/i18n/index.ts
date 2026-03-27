@@ -73,7 +73,7 @@ const extensionZhCN = {
     subtitle: "\u7ba1\u7406\u4ee3\u7801\u9879\u76ee\u91cc\u7684 AI \u4f1a\u8bdd",
     mobileWorkspacesEntry: "\u5de5\u4f5c\u533a",
     mobileTerminalsEntry: "\u7ec8\u7aef",
-    mobileSessionsEntry: "\u4f1a\u8bdd",
+    mobileSessionsEntry: "\u5bf9\u8bdd",
     mobileToolsEntry: "\u5de5\u5177",
     mobileSettingsEntry: "\u8bbe\u7f6e",
     mobileNavigationAction: "\u6253\u5f00\u5de5\u4f5c\u53f0\u83dc\u5355",
@@ -83,6 +83,10 @@ const extensionZhCN = {
     mobileQuickNavigationTitle: "\u5feb\u6377\u8df3\u8f6c",
     mobileRevealNavigationAction: "\u663e\u793a\u4e3b\u5bfc\u822a",
     mobileHideNavigationAction: "\u6536\u8d77\u4e3b\u5bfc\u822a",
+    mobileConversationPreviewTitle: "\u5feb\u901f\u9884\u89c8",
+    mobileConversationCurrentWorkspaceSection: "\u5f53\u524d\u5de5\u4f5c\u533a",
+    mobileConversationCollapsePreviewAction: "\u6536\u8d77\u9884\u89c8",
+    mobileConversationRestorePreviewAction: "\u6062\u590d\u4f1a\u8bdd\u9884\u89c8",
     iosMoreAction: "\u66f4\u591a\u64cd\u4f5c",
     androidMoreAction: "\u66f4\u591a\u64cd\u4f5c",
     conversationEntry: "\u5bf9\u8bdd",
@@ -565,7 +569,7 @@ const extensionZhCN = {
   theme: {
     light: "\u6d45\u8272",
     dark: "\u6df1\u8272",
-    skyBlue: "\u5929\u7a7a\u84dd",
+    skyBlue: "\u8d5b\u535a\u70ab",
     eyeGreen: "\u62a4\u773c\u7eff",
     switchLabel: "\u4e3b\u9898"
   }
@@ -635,7 +639,7 @@ const extensionEnUS = {
     subtitle: "Manage AI sessions inside code projects",
     mobileWorkspacesEntry: "Workspaces",
     mobileTerminalsEntry: "Terminal",
-    mobileSessionsEntry: "Sessions",
+    mobileSessionsEntry: "Conversation",
     mobileToolsEntry: "Tools",
     mobileSettingsEntry: "Settings",
     mobileNavigationAction: "Open workbench menu",
@@ -645,6 +649,10 @@ const extensionEnUS = {
     mobileQuickNavigationTitle: "Quick navigation",
     mobileRevealNavigationAction: "Show primary navigation",
     mobileHideNavigationAction: "Hide primary navigation",
+    mobileConversationPreviewTitle: "Quick Preview",
+    mobileConversationCurrentWorkspaceSection: "Current Workspace",
+    mobileConversationCollapsePreviewAction: "Hide Preview",
+    mobileConversationRestorePreviewAction: "Restore Session Preview",
     iosMoreAction: "More actions",
     androidMoreAction: "More actions",
     conversationEntry: "Conversation",
@@ -1128,7 +1136,7 @@ const extensionEnUS = {
   theme: {
     light: "Light",
     dark: "Dark",
-    skyBlue: "Sky Blue",
+    skyBlue: "Cyber Neon",
     eyeGreen: "Eye Green",
     switchLabel: "Theme"
   }

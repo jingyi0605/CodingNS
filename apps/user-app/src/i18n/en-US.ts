@@ -463,7 +463,7 @@ export const enUS = {
   theme: {
     light: "Light",
     dark: "Dark",
-    skyBlue: "Sky Blue",
+    skyBlue: "Cyber Neon",
     eyeGreen: "Eye Green",
     switchLabel: "Theme"
   },
