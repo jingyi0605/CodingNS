@@ -5,8 +5,10 @@ import { clientConfigStore } from "../../../config/client-config-store";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 import {
+  getProviderCapabilities,
   startLiveSession,
   type HistoryMessageDto,
+  type ProviderCapabilitiesDto,
   type ProviderId,
   type SessionSummaryDto
 } from "../api/conversation-api";
@@ -399,10 +401,11 @@ function DraftConversationPage({
   const [mobilePreviewMode, setMobilePreviewMode] = useState<MobileConversationPreviewMode>(() =>
     readMobileConversationPreviewMode()
   );
-  const capabilities = useMemo(
+  const fallbackCapabilities = useMemo(
     () => createProviderDraftCapabilities(draft.provider),
     [draft.provider]
   );
+  const [capabilities, setCapabilities] = useState<ProviderCapabilitiesDto>(fallbackCapabilities);
   const showInlineHeader = shellMode !== "mobile";
   const session = useMemo(() => createDraftSessionSummary(draft), [draft]);
   const mobilePreviewItems = useMemo(
@@ -430,6 +433,27 @@ function DraftConversationPage({
       setSessionWorkspace(draft.sessionId, null);
     };
   }, [draft.sessionId, draft.workspaceId, setSessionWorkspace]);
+
+  useEffect(() => {
+    let disposed = false;
+
+    // 草稿页先用本地兜底能力，随后再按 provider + workspace 拉真实模型列表。
+    setCapabilities(fallbackCapabilities);
+
+    void getProviderCapabilities(draft.provider, draft.workspaceId)
+      .then((nextCapabilities) => {
+        if (!disposed) {
+          setCapabilities(nextCapabilities);
+        }
+      })
+      .catch(() => {
+        return;
+      });
+
+    return () => {
+      disposed = true;
+    };
+  }, [draft.provider, draft.workspaceId, fallbackCapabilities]);
 
   return (
     <main
