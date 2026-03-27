@@ -12739,9 +12739,17 @@ textarea:focus-visible {
 }
 
 .mobile-tools-more-button {
-  min-height: 2.25rem;
-  padding-inline: 0.9rem;
-  white-space: nowrap;
+  width: 2.4rem;
+  min-width: 2.4rem;
+  min-height: 2.4rem;
+  padding: 0;
+  border-radius: 1rem;
+  flex-shrink: 0;
+}
+
+.mobile-tools-more-button svg {
+  width: 1rem;
+  height: 1rem;
 }
 
 .mobile-tools-switcher {
@@ -13083,6 +13091,7 @@ textarea:focus-visible {
 }
 
 .mobile-tool-process-panel .terminal-manager-desktop-header {
+  align-items: stretch;
   gap: 1rem;
   padding: 0.15rem 0 0;
 }
@@ -13120,6 +13129,7 @@ textarea:focus-visible {
 }
 
 .mobile-tool-process-panel .terminal-manager-overview {
+  width: 100%;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.6rem;
 }
@@ -13152,6 +13162,7 @@ textarea:focus-visible {
 
 .mobile-tool-process-panel .terminal-manager-toolbar {
   display: grid;
+  width: 100%;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.75rem;
   align-items: stretch;
@@ -13182,9 +13193,15 @@ textarea:focus-visible {
 }
 
 .mobile-tool-process-panel .terminal-manager-section-header {
-  align-items: flex-end;
+  align-items: flex-start;
   gap: 0.75rem;
   padding: 0 0.2rem;
+}
+
+.mobile-tool-process-panel .terminal-manager-section-header > div {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: left;
 }
 
 .mobile-tool-process-panel .terminal-manager-section-header h3 {
@@ -13280,6 +13297,211 @@ textarea:focus-visible {
     0 1px 0 rgba(255, 255, 255, 0.84) inset;
 }
 
+.terminal-manager-mobile-modal {
+  width: min(100%, 42rem);
+  max-height: min(88vh, 52rem);
+  padding: 1.25rem;
+  border-radius: 1.9rem;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.9)),
+    color-mix(in srgb, var(--bg-surface) 96%, transparent);
+  box-shadow:
+    0 24px 60px rgba(15, 23, 42, 0.18),
+    0 1px 0 rgba(255, 255, 255, 0.88) inset;
+}
+
+.terminal-manager-mobile-modal .workbench-modal-title-wrap h2 {
+  font-size: 1.2rem;
+  letter-spacing: -0.03em;
+}
+
+.terminal-manager-mobile-modal .workbench-modal-title-wrap p {
+  font-size: 0.96rem;
+  line-height: 1.5;
+}
+
+.terminal-manager-mobile-modal .terminal-manager-modal-form {
+  gap: 1rem;
+}
+
+.terminal-manager-mobile-modal .terminal-manager-mode-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: 100%;
+  gap: 0.7rem;
+  flex-wrap: nowrap;
+}
+
+.terminal-manager-mobile-modal .terminal-manager-mode-row .workbench-info-tab {
+  width: 100%;
+  min-width: 0;
+  min-height: 3.1rem;
+  padding: 0.78rem 0.9rem;
+  border-radius: 1rem;
+  font-size: 0.98rem;
+  font-weight: 600;
+}
+
+.terminal-manager-mobile-modal .field-group {
+  gap: 0.55rem;
+}
+
+.terminal-manager-mobile-modal .field-group > span {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.terminal-manager-mobile-picker {
+  gap: 0.7rem;
+}
+
+.terminal-manager-mobile-picker-trigger {
+  display: flex;
+  width: 100%;
+  min-height: 3.5rem;
+  align-items: center;
+  gap: 0.8rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 62%, transparent);
+  border-radius: 1rem;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-primary) 92%, white 8%), color-mix(in srgb, var(--bg-primary) 82%, white 18%));
+  color: var(--text-primary);
+  text-align: left;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.78),
+    0 6px 16px rgba(15, 23, 42, 0.04);
+}
+
+.terminal-manager-mobile-picker-trigger[aria-expanded="true"] {
+  border-color: color-mix(in srgb, var(--accent) 42%, transparent);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+
+.terminal-manager-mobile-picker-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.18rem;
+}
+
+.terminal-manager-mobile-picker-copy strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 1rem;
+  font-weight: 590;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-manager-mobile-picker-copy span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-manager-mobile-picker-chevron {
+  width: 1.05rem;
+  height: 1.05rem;
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  transition: transform 180ms ease;
+}
+
+.terminal-manager-mobile-picker-chevron[data-expanded="true"] {
+  transform: rotate(180deg);
+}
+
+.terminal-manager-mobile-picker-list {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 62%, transparent);
+  border-radius: 1rem;
+  background: color-mix(in srgb, var(--bg-primary) 95%, white 5%);
+  box-shadow:
+    0 14px 28px rgba(15, 23, 42, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.74);
+}
+
+.terminal-manager-mobile-picker-option {
+  display: flex;
+  width: 100%;
+  min-height: 3.4rem;
+  align-items: center;
+  gap: 0.8rem;
+  padding: 0.85rem 1rem;
+  border: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-primary) 56%, transparent);
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+}
+
+.terminal-manager-mobile-picker-option:last-child {
+  border-bottom: none;
+}
+
+.terminal-manager-mobile-picker-option[aria-selected="true"] {
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+
+.terminal-manager-mobile-picker-option:disabled {
+  opacity: 0.5;
+}
+
+.terminal-manager-mobile-picker-option-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.terminal-manager-mobile-picker-option-copy strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 0.98rem;
+  font-weight: 560;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-manager-mobile-picker-option-copy span {
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.terminal-manager-mobile-picker-option-indicator {
+  display: inline-flex;
+  width: 1.25rem;
+  height: 1.25rem;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+}
+
+.terminal-manager-mobile-picker-option[aria-selected="true"] .terminal-manager-mobile-picker-option-indicator {
+  color: var(--accent);
+}
+
+.terminal-manager-mobile-picker-option-indicator svg {
+  width: 1rem;
+  height: 1rem;
+}
+
 @media (max-width: 360px) {
   .mobile-tool-process-panel.terminal-manager-panel {
     padding-left: 0.85rem;
@@ -13302,6 +13524,16 @@ textarea:focus-visible {
   .mobile-tool-process-panel .terminal-manager-toolbar .primary-button {
     padding-inline: 0.7rem;
     font-size: 0.88rem;
+  }
+
+  .terminal-manager-mobile-modal {
+    padding: 1rem;
+    border-radius: 1.6rem;
+  }
+
+  .terminal-manager-mobile-picker-trigger,
+  .terminal-manager-mobile-picker-option {
+    padding-inline: 0.85rem;
   }
 }
 
@@ -13966,6 +14198,21 @@ textarea:focus-visible {
   padding: 0 14px 8px;
 }
 
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .mobile-conversation-main,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .mobile-conversation-main,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .mobile-conversation-main {
+  padding-bottom: calc(
+    var(--mobile-conversation-tabbar-progress) * var(--mobile-workbench-tabbar-height, 0px)
+  );
+  transition: padding-bottom 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"][data-conversation-tabbar-state="dragging"] .mobile-conversation-main,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"][data-conversation-tabbar-state="dragging"] .mobile-conversation-main,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"][data-conversation-tabbar-state="dragging"] .mobile-conversation-main {
+  transition: none;
+}
+
 .mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .message-list,
 .ios-workbench-shell[data-mobile-presentation="conversation-focus"] .message-list,
 .android-workbench-shell[data-mobile-presentation="conversation-focus"] .message-list {
@@ -14104,7 +14351,7 @@ textarea:focus-visible {
 .mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .composer-panel,
 .ios-workbench-shell[data-mobile-presentation="conversation-focus"] .composer-panel,
 .android-workbench-shell[data-mobile-presentation="conversation-focus"] .composer-panel {
-  z-index: 60;
+  z-index: 16;
 }
 
 .mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .mobile-workbench-tabbar,
@@ -14114,7 +14361,7 @@ textarea:focus-visible {
   right: 0;
   bottom: 0;
   left: 0;
-  z-index: 28;
+  z-index: 72;
   box-shadow: 0 -18px 36px rgba(15, 23, 42, 0.12);
   transform: translateY(
     calc((1 - var(--mobile-conversation-tabbar-progress)) * (100% + env(safe-area-inset-bottom, 0px)))

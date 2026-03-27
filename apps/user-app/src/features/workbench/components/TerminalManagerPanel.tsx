@@ -190,13 +190,15 @@ function TerminalManagerModal({
   title,
   description,
   onClose,
-  children
+  children,
+  className
 }: {
   open: boolean;
   title: string;
   description: string;
   onClose: () => void;
   children: ReactNode;
+  className?: string;
 }) {
   useEffect(() => {
     if (!open) {
@@ -228,7 +230,9 @@ function TerminalManagerModal({
         onClick={onClose}
       />
       <section
-        className="workbench-modal-card surface-card terminal-manager-modal-card"
+        className={["workbench-modal-card", "surface-card", "terminal-manager-modal-card", className]
+          .filter(Boolean)
+          .join(" ")}
         role="dialog"
         aria-modal="true"
         aria-label={title}
@@ -251,6 +255,129 @@ function TerminalManagerModal({
       </section>
     </div>,
     document.body
+  );
+}
+
+interface MobilePickerOption {
+  value: string;
+  label: string;
+  description?: string | null;
+  disabled?: boolean;
+}
+
+function TerminalManagerMobilePicker({
+  label,
+  value,
+  options,
+  open,
+  onToggle,
+  onChange
+}: {
+  label: string;
+  value: string;
+  options: MobilePickerOption[];
+  open: boolean;
+  onToggle: () => void;
+  onChange: (value: string) => void;
+}) {
+  const selectedOption = options.find((option) => option.value === value) ?? options[0] ?? null;
+
+  return (
+    <div className="field-group terminal-manager-mobile-picker">
+      <span>{label}</span>
+      <button
+        type="button"
+        className="terminal-manager-mobile-picker-trigger"
+        aria-label={`${label} ${selectedOption?.label ?? ""}`.trim()}
+        aria-expanded={open ? "true" : "false"}
+        onClick={onToggle}
+      >
+        <span className="terminal-manager-mobile-picker-copy">
+          <strong>{selectedOption?.label ?? t("common.unknown")}</strong>
+          {selectedOption?.description ? <span>{selectedOption.description}</span> : null}
+        </span>
+        <ChevronDownIcon expanded={open} />
+      </button>
+      {open ? (
+        <div className="terminal-manager-mobile-picker-list" role="listbox" aria-label={label}>
+          {options.map((option) => {
+            const selected = option.value === value;
+
+            return (
+              <button
+                key={option.value || "__empty__"}
+                type="button"
+                role="option"
+                className="terminal-manager-mobile-picker-option"
+                aria-selected={selected}
+                disabled={option.disabled}
+                onClick={() => {
+                  onChange(option.value);
+                }}
+              >
+                <span className="terminal-manager-mobile-picker-option-copy">
+                  <strong>{option.label}</strong>
+                  {option.description ? <span>{option.description}</span> : null}
+                </span>
+                <span className="terminal-manager-mobile-picker-option-indicator" aria-hidden="true">
+                  {selected ? <CheckIcon /> : <ChevronRightIcon />}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ChevronDownIcon({ expanded }: { expanded: boolean }) {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      aria-hidden="true"
+      className="terminal-manager-mobile-picker-chevron"
+      data-expanded={expanded ? "true" : "false"}
+    >
+      <path
+        d="M4 6.5L8 10l4-3.5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.7"
+      />
+    </svg>
+  );
+}
+
+function ChevronRightIcon() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <path
+        d="M6 3.5L10.5 8 6 12.5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.6"
+      />
+    </svg>
+  );
+}
+
+function CheckIcon() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <path
+        d="M3.5 8.5L6.5 11.5L12.5 5.5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.8"
+      />
+    </svg>
   );
 }
 
@@ -283,7 +410,9 @@ export function TerminalManagerPanel({
     null
   );
   const [applyingRuntimeFallback, setApplyingRuntimeFallback] = useState(false);
+  const [openMobilePicker, setOpenMobilePicker] = useState<"shell" | "runtime" | null>(null);
   const { showToast } = useToast();
+  const isMobileProcessPanel = className?.includes("mobile-tool-process-panel") ?? false;
 
   useEffect(() => {
     logPerfDebug("terminal_manager.props", {
@@ -332,6 +461,12 @@ export function TerminalManagerPanel({
 
     requestTerminalManagerSnapshotRefresh(activeWorkspaceId);
   }, [activeWorkspaceId, createModalOpen, shellOptions.length]);
+
+  useEffect(() => {
+    if (!createModalOpen) {
+      setOpenMobilePicker(null);
+    }
+  }, [createModalOpen]);
 
   useEffect(() => {
     if (!activeWorkspaceId) {
@@ -830,54 +965,107 @@ export function TerminalManagerPanel({
         open={createModalOpen}
         title={t("terminalManager.createModalTitle")}
         description={t("terminalManager.createModalDescription")}
+        className={isMobileProcessPanel ? "terminal-manager-mobile-modal" : undefined}
         onClose={() => {
           setSelectedRuntimeType("");
           setCreateModalOpen(false);
         }}
       >
         <section className="terminal-manager-modal-form">
-          <div className="field-group">
-            <span>{t("terminalManager.shellField")}</span>
-            <select
-              value={selectedShellId}
-              onChange={(event) => {
-                setSelectedShellId(event.target.value);
-              }}
-            >
-              {shellOptions.map((option) => (
-                <option key={option.id} value={option.id} disabled={!option.available}>
-                  {option.available
-                    ? option.label
-                    : `${option.label} - ${t("terminalManager.shellUnavailable")}`}
-                </option>
-              ))}
-            </select>
-            {selectedShellOption?.available === false && selectedShellOption.unavailableReason ? (
-              <p className="status-text">{selectedShellOption.unavailableReason}</p>
-            ) : null}
-          </div>
+          {isMobileProcessPanel ? (
+            <>
+              <TerminalManagerMobilePicker
+                label={t("terminalManager.shellField")}
+                value={selectedShellId}
+                open={openMobilePicker === "shell"}
+                options={shellOptions.map((option) => ({
+                  value: option.id,
+                  label: option.label,
+                  description: option.available ? null : option.unavailableReason ?? t("terminalManager.shellUnavailable"),
+                  disabled: !option.available
+                }))}
+                onToggle={() => {
+                  setOpenMobilePicker((current) => (current === "shell" ? null : "shell"));
+                }}
+                onChange={(value) => {
+                  setSelectedShellId(value);
+                  setOpenMobilePicker(null);
+                }}
+              />
+              {selectedShellOption?.available === false && selectedShellOption.unavailableReason ? (
+                <p className="status-text">{selectedShellOption.unavailableReason}</p>
+              ) : null}
 
-          <div className="field-group">
-            <span>{t("terminal.runtimeField")}</span>
-            <select
-              value={selectedRuntimeType}
-              onChange={(event) => {
-                setSelectedRuntimeType(event.target.value as SelectableTerminalRuntimeType);
-              }}
-            >
-              {runtimeOptions.map((option) => (
-                <option key={option.value || "auto"} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-            <p className="status-text">
-              {
-                runtimeOptions.find((option) => option.value === selectedRuntimeType)?.description ??
-                runtimeOptions[0]?.description
-              }
-            </p>
-          </div>
+              <TerminalManagerMobilePicker
+                label={t("terminal.runtimeField")}
+                value={selectedRuntimeType}
+                open={openMobilePicker === "runtime"}
+                options={runtimeOptions.map((option) => ({
+                  value: option.value,
+                  label: option.label,
+                  description: option.description
+                }))}
+                onToggle={() => {
+                  setOpenMobilePicker((current) => (current === "runtime" ? null : "runtime"));
+                }}
+                onChange={(value) => {
+                  setSelectedRuntimeType(value as SelectableTerminalRuntimeType);
+                  setOpenMobilePicker(null);
+                }}
+              />
+              <p className="status-text">
+                {
+                  runtimeOptions.find((option) => option.value === selectedRuntimeType)?.description ??
+                  runtimeOptions[0]?.description
+                }
+              </p>
+            </>
+          ) : (
+            <>
+              <div className="field-group">
+                <span>{t("terminalManager.shellField")}</span>
+                <select
+                  value={selectedShellId}
+                  onChange={(event) => {
+                    setSelectedShellId(event.target.value);
+                  }}
+                >
+                  {shellOptions.map((option) => (
+                    <option key={option.id} value={option.id} disabled={!option.available}>
+                      {option.available
+                        ? option.label
+                        : `${option.label} - ${t("terminalManager.shellUnavailable")}`}
+                    </option>
+                  ))}
+                </select>
+                {selectedShellOption?.available === false && selectedShellOption.unavailableReason ? (
+                  <p className="status-text">{selectedShellOption.unavailableReason}</p>
+                ) : null}
+              </div>
+
+              <div className="field-group">
+                <span>{t("terminal.runtimeField")}</span>
+                <select
+                  value={selectedRuntimeType}
+                  onChange={(event) => {
+                    setSelectedRuntimeType(event.target.value as SelectableTerminalRuntimeType);
+                  }}
+                >
+                  {runtimeOptions.map((option) => (
+                    <option key={option.value || "auto"} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="status-text">
+                  {
+                    runtimeOptions.find((option) => option.value === selectedRuntimeType)?.description ??
+                    runtimeOptions[0]?.description
+                  }
+                </p>
+              </div>
+            </>
+          )}
 
           <div
             className="terminal-manager-mode-row"
