@@ -488,6 +488,17 @@
   box-shadow: 12px 0 34px color-mix(in srgb, #000 10%, transparent);
   backdrop-filter: blur(16px);
   overflow: hidden;
+  touch-action: pan-y;
+  will-change: transform;
+  transition: transform 220ms ease;
+}
+
+.mobile-conversation-preview-rail[data-dragging="true"] {
+  transition: none;
+}
+
+.mobile-conversation-preview-rail[data-dragging="true"] button {
+  pointer-events: none;
 }
 
 .mobile-conversation-preview-list {

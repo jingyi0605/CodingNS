@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type TouchEvent as ReactTouchEvent } from "react";
 import { createPortal } from "react-dom";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 
@@ -328,6 +328,9 @@ function LiveConversationPage({
           onOpenArchiveFolder={() => {
             setArchiveFolderOpen(true);
           }}
+          onRequestClose={() => {
+            setMobilePreviewMode("immersive");
+          }}
           onActivate={(entry) => {
             writeMobileConversationPreviewMode("preview");
             navigate(buildWorkspaceSessionPath(entry.workspace.id, entry.session.sessionId));
@@ -638,6 +641,9 @@ function DraftConversationPage({
           favoriteItems={mobileFavoritePreviewItems}
           items={mobilePreviewItems}
           workspaceSectionLabel={t("shell.mobileConversationCurrentWorkspaceSection")}
+          onRequestClose={() => {
+            setMobilePreviewMode("immersive");
+          }}
           onActivate={(entry) => {
             writeMobileConversationPreviewMode("preview");
             navigate(buildWorkspaceSessionPath(entry.workspace.id, entry.session.sessionId));
@@ -842,6 +848,7 @@ function MobileConversationPreviewRail({
   archiveFolderActionLabel,
   onArchiveActiveSession,
   onOpenArchiveFolder,
+  onRequestClose,
   onActivate
 }: {
   open: boolean;
@@ -859,14 +866,110 @@ function MobileConversationPreviewRail({
   archiveFolderActionLabel?: string;
   onArchiveActiveSession?: (() => void | Promise<void>) | null;
   onOpenArchiveFolder?: (() => void) | null;
+  onRequestClose?: (() => void) | null;
   onActivate: (entry: WorkbenchNavigationEntry) => void;
 }) {
+  const railRef = useRef<HTMLElement | null>(null);
+  const [dragOffsetX, setDragOffsetX] = useState(0);
+  const [isDragging, setIsDragging] = useState(false);
+  const gestureRef = useRef<{
+    startX: number;
+    startY: number;
+    dragging: boolean;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      gestureRef.current = null;
+      setDragOffsetX(0);
+      setIsDragging(false);
+    }
+  }, [open]);
+
   if (!open) {
     return null;
   }
 
+  function handleTouchStart(event: ReactTouchEvent<HTMLElement>) {
+    const touch = event.touches[0];
+
+    if (!touch) {
+      return;
+    }
+
+    gestureRef.current = {
+      startX: touch.clientX,
+      startY: touch.clientY,
+      dragging: false
+    };
+  }
+
+  function handleTouchMove(event: ReactTouchEvent<HTMLElement>) {
+    const gesture = gestureRef.current;
+    const touch = event.touches[0];
+
+    if (!gesture || !touch) {
+      return;
+    }
+
+    const deltaX = touch.clientX - gesture.startX;
+    const deltaY = touch.clientY - gesture.startY;
+
+    if (!gesture.dragging) {
+      if (Math.abs(deltaX) < 8 && Math.abs(deltaY) < 8) {
+        return;
+      }
+
+      if (Math.abs(deltaX) <= Math.abs(deltaY) || deltaX >= 0) {
+        gestureRef.current = null;
+        return;
+      }
+
+      gesture.dragging = true;
+      setIsDragging(true);
+    }
+
+    event.preventDefault();
+    setDragOffsetX(Math.min(deltaX, 0));
+  }
+
+  function handleTouchEnd() {
+    const gesture = gestureRef.current;
+    gestureRef.current = null;
+
+    if (!gesture?.dragging) {
+      setDragOffsetX(0);
+      setIsDragging(false);
+      return;
+    }
+
+    const railWidth = railRef.current?.offsetWidth ?? 0;
+    const closeThreshold = Math.max(56, railWidth * 0.24);
+
+    if (Math.abs(dragOffsetX) >= closeThreshold) {
+      onRequestClose?.();
+      setDragOffsetX(0);
+      setIsDragging(false);
+      return;
+    }
+
+    setDragOffsetX(0);
+    setIsDragging(false);
+  }
+
   return (
-    <aside className="mobile-conversation-preview-rail surface-card">
+    <aside
+      ref={railRef}
+      className="mobile-conversation-preview-rail surface-card"
+      data-dragging={isDragging}
+      style={{
+        transform: dragOffsetX === 0 ? undefined : `translateX(${dragOffsetX}px)`
+      }}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+      onTouchCancel={handleTouchEnd}
+    >
       <section className="mobile-conversation-preview-group mobile-conversation-preview-list-favorites">
         <div className="mobile-conversation-preview-group-heading">
           {t("shell.favoriteSectionTitle")}
