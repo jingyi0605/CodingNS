@@ -3,11 +3,13 @@ import {
   useCallback,
   createContext,
   useContext,
+  type Dispatch,
   useEffect,
   useLayoutEffect,
   lazy,
   useMemo,
   useRef,
+  type SetStateAction,
   useState,
   type CSSProperties,
   type FormEvent,
@@ -1803,9 +1805,13 @@ function SidebarContent({
   onOpenSettings,
   onSelectWorkspace,
   onToggleWorkspaceCollapse,
+  subscribeGitSnapshot,
+  requestGitRefresh,
   onToggleFavoriteSession,
   onArchiveSession,
   onUnarchiveSession,
+  workspaceManagementStateById,
+  setWorkspaceManagementStateById,
   onClose,
   onToggleCollapse
 }: {
@@ -1827,9 +1833,13 @@ function SidebarContent({
   onOpenSettings: () => void;
   onSelectWorkspace: (workspaceId: string) => void;
   onToggleWorkspaceCollapse: (workspaceId: string) => void;
+  subscribeGitSnapshot: (workspaceId: string) => void;
+  requestGitRefresh: (workspaceId: string) => void;
   onToggleFavoriteSession: (sessionId: string) => Promise<void>;
   onArchiveSession: (sessionId: string) => Promise<void>;
   onUnarchiveSession: (sessionId: string) => Promise<void>;
+  workspaceManagementStateById: Record<string, WorkspaceManagementViewState>;
+  setWorkspaceManagementStateById: Dispatch<SetStateAction<Record<string, WorkspaceManagementViewState>>>;
   onClose?: () => void;
   onToggleCollapse?: () => void;
 }) {
@@ -1844,9 +1854,6 @@ function SidebarContent({
   });
   const [workspaceManagerOpen, setWorkspaceManagerOpen] = useState(false);
   const [expandedManagedWorkspaceIds, setExpandedManagedWorkspaceIds] = useState<string[]>([]);
-  const [workspaceManagementStateById, setWorkspaceManagementStateById] = useState<
-    Record<string, WorkspaceManagementViewState>
-  >({});
   const [workspaceRemovalTarget, setWorkspaceRemovalTarget] = useState<WorkspaceDto | null>(null);
   const [removingWorkspaceId, setRemovingWorkspaceId] = useState<string | null>(null);
   const [cloneWorkspaceOpen, setCloneWorkspaceOpen] = useState(false);
@@ -3984,6 +3991,9 @@ export function WorkbenchLayout({
   const [codeSearchLoading, setCodeSearchLoading] = useState(false);
   const [codeSearchError, setCodeSearchError] = useState<string | null>(null);
   const [codeSearchResults, setCodeSearchResults] = useState<FileNodeDto[]>([]);
+  const [workspaceManagementStateById, setWorkspaceManagementStateById] = useState<
+    Record<string, WorkspaceManagementViewState>
+  >({});
 
   useEffect(() => {
     showToastRef.current = showToast;
@@ -4957,9 +4967,13 @@ export function WorkbenchLayout({
       onToggleWorkspaceCollapse={(workspaceId) =>
         setCollapsedWorkspaceIds((current) => toggleStoredId(current, workspaceId))
       }
+      subscribeGitSnapshot={subscribeGitSnapshot}
+      requestGitRefresh={requestGitRefresh}
       onToggleFavoriteSession={toggleFavoriteSession}
       onArchiveSession={(sessionId) => commitNavigationArchiveState(sessionId, true)}
       onUnarchiveSession={(sessionId) => commitNavigationArchiveState(sessionId, false)}
+      workspaceManagementStateById={workspaceManagementStateById}
+      setWorkspaceManagementStateById={setWorkspaceManagementStateById}
       onClose={() => setMobileNavOpen(false)}
     />
   ) : null;
@@ -5108,9 +5122,13 @@ export function WorkbenchLayout({
                 onToggleWorkspaceCollapse={(workspaceId) =>
                   setCollapsedWorkspaceIds((current) => toggleStoredId(current, workspaceId))
                 }
+                subscribeGitSnapshot={subscribeGitSnapshot}
+                requestGitRefresh={requestGitRefresh}
                 onToggleFavoriteSession={toggleFavoriteSession}
                 onArchiveSession={(sessionId) => commitNavigationArchiveState(sessionId, true)}
                 onUnarchiveSession={(sessionId) => commitNavigationArchiveState(sessionId, false)}
+                workspaceManagementStateById={workspaceManagementStateById}
+                setWorkspaceManagementStateById={setWorkspaceManagementStateById}
                 onToggleCollapse={() => setLeftCollapsed(true)}
               />
             </aside>
