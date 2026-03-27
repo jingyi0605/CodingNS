@@ -1,4 +1,5 @@
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -36,101 +37,106 @@ vi.mock("../../../shared/toast", () => ({
   })
 }));
 
+function createWorkbenchShell(overrides?: Record<string, unknown>) {
+  return {
+    navigationGroups: [
+      {
+        workspace: {
+          id: "workspace-1",
+          name: "项目一",
+          path: "/repo/project-one"
+        },
+        sessions: [
+          {
+            sessionId: "session-1",
+            title: "会话 Alpha",
+            provider: "codex",
+            messageCount: 3,
+            isArchived: false
+          },
+          {
+            sessionId: "session-2",
+            title: "会话 Beta",
+            provider: "claude-code",
+            messageCount: 1,
+            isArchived: true
+          }
+        ]
+      }
+    ],
+    currentWorkspaceId: "workspace-1",
+    favoriteSessionIds: [],
+    workspaceManagementStateById: {
+      "workspace-1": {
+        detail: {
+          workspaceId: "workspace-1",
+          name: "项目一",
+          path: "/repo/project-one",
+          git: {
+            isRepository: true,
+            repoRoot: "/repo/project-one",
+            currentBranch: "main",
+            commitCount: 12,
+            remotes: [],
+            error: null
+          },
+          codeComposition: {
+            scannedFileCount: 48,
+            truncated: false,
+            items: [],
+            error: null
+          }
+        },
+        loading: false,
+        error: null
+      }
+    },
+    selectWorkspace: vi.fn(),
+    subscribeGitSnapshot: vi.fn(),
+    subscribeWorkspaceManagementSnapshot: vi.fn(),
+    requestGitRefresh: vi.fn((workspaceId: string) => {
+      queueMicrotask(() => {
+        gitSnapshotListeners.forEach((listener) => {
+          listener({
+            workspaceId,
+            status: {
+              snapshot: {
+                branch: "main"
+              },
+              changes: []
+            }
+          });
+        });
+      });
+    }),
+    requestWorkspaceManagementRefresh: vi.fn(),
+    addGitSnapshotListener: (listener: (snapshot: {
+      workspaceId: string;
+      status: {
+        snapshot: {
+          branch: string | null;
+        };
+        changes: unknown[];
+      };
+    }) => void) => {
+      gitSnapshotListeners.add(listener);
+      return () => {
+        gitSnapshotListeners.delete(listener);
+      };
+    },
+    toggleFavoriteSession: vi.fn(async () => undefined),
+    archiveSession: vi.fn(async () => undefined),
+    unarchiveSession: vi.fn(async () => undefined),
+    startDraftSession: vi.fn(),
+    ...overrides
+  };
+}
+
 describe("WorkspaceDetailPage", () => {
   beforeEach(() => {
     mockShowToast.mockReset();
     gitSnapshotListeners.clear();
-    mockUseWorkbenchShell.mockReturnValue({
-      navigationGroups: [
-        {
-          workspace: {
-            id: "workspace-1",
-            name: "项目一",
-            path: "/repo/project-one"
-          },
-          sessions: [
-            {
-              sessionId: "session-1",
-              title: "会话 Alpha",
-              provider: "codex",
-              messageCount: 3,
-              isArchived: false
-            },
-            {
-              sessionId: "session-2",
-              title: "会话 Beta",
-              provider: "claude-code",
-              messageCount: 1,
-              isArchived: true
-            }
-          ]
-        }
-      ],
-      currentWorkspaceId: "workspace-1",
-      favoriteSessionIds: [],
-      workspaceManagementStateById: {
-        "workspace-1": {
-          detail: {
-            workspaceId: "workspace-1",
-            name: "项目一",
-            path: "/repo/project-one",
-            git: {
-              isRepository: true,
-              repoRoot: "/repo/project-one",
-              currentBranch: "main",
-              commitCount: 12,
-              remotes: [],
-              error: null
-            },
-            codeComposition: {
-              scannedFileCount: 48,
-              truncated: false,
-              items: [],
-              error: null
-            }
-          },
-          loading: false,
-          error: null
-        }
-      },
-      selectWorkspace: vi.fn(),
-      subscribeGitSnapshot: vi.fn(),
-      subscribeWorkspaceManagementSnapshot: vi.fn(),
-      requestGitRefresh: vi.fn((workspaceId: string) => {
-        queueMicrotask(() => {
-          gitSnapshotListeners.forEach((listener) => {
-            listener({
-              workspaceId,
-              status: {
-                snapshot: {
-                  branch: "main"
-                },
-                changes: []
-              }
-            });
-          });
-        });
-      }),
-      requestWorkspaceManagementRefresh: vi.fn(),
-      addGitSnapshotListener: (listener: (snapshot: {
-        workspaceId: string;
-        status: {
-          snapshot: {
-            branch: string | null;
-          };
-          changes: unknown[];
-        };
-      }) => void) => {
-        gitSnapshotListeners.add(listener);
-        return () => {
-          gitSnapshotListeners.delete(listener);
-        };
-      },
-      toggleFavoriteSession: vi.fn(async () => undefined),
-      archiveSession: vi.fn(async () => undefined),
-      unarchiveSession: vi.fn(async () => undefined),
-      startDraftSession: vi.fn()
-    });
+    mockUseWorkbenchShell.mockReturnValue(createWorkbenchShell());
   });
 
   it("会展示项目摘要和会话列表", async () => {
@@ -144,6 +150,36 @@ describe("WorkspaceDetailPage", () => {
       expect(screen.getByText("main")).toBeInTheDocument();
       expect(screen.getByText("48")).toBeInTheDocument();
     });
+  });
+
+  it("新建会话会先弹出工作区和供应商选择", async () => {
+    const user = userEvent.setup();
+    const startDraftSession = vi.fn();
+
+    mockUseWorkbenchShell.mockReturnValue(createWorkbenchShell({
+      navigationGroups: [
+        {
+          workspace: {
+            id: "workspace-1",
+            name: "项目一",
+            path: "/repo/project-one"
+          },
+          sessions: []
+        }
+      ],
+      currentWorkspaceId: "workspace-1",
+      startDraftSession
+    }));
+
+    renderPage();
+
+    await user.click(screen.getByRole("button", { name: "新建会话" }));
+
+    expect(screen.getByRole("button", { name: /选择工作区 项目一/ })).toHaveTextContent("项目一");
+
+    await user.click(screen.getByRole("button", { name: "OpenCode" }));
+
+    expect(startDraftSession).toHaveBeenCalledWith("workspace-1", "opencode");
   });
 });
 

@@ -7,19 +7,28 @@ import { WorkspaceHomePage } from "./WorkspaceHomePage";
 
 const mockUseWorkbenchShell = vi.fn();
 const mockShowToast = vi.fn();
-const mockListWorkspaceTerminals = vi.fn();
-const mockGetGitStatus = vi.fn();
+const gitSnapshotListeners = new Set<
+  (snapshot: {
+    workspaceId: string;
+    status: {
+      snapshot: {
+        branch: string | null;
+      };
+      changes: Array<{ path: string }>;
+    };
+  }) => void
+>();
+const terminalManagerSnapshotListeners = new Set<
+  (snapshot: {
+    workspaceId: string;
+    terminals: Array<{ id: string; status: string }>;
+    templates: unknown[];
+    templateStatuses: Array<{ occupied: boolean }>;
+  }) => void
+>();
 
 vi.mock("../../conversation/components/WorkbenchLayout", () => ({
   useWorkbenchShell: () => mockUseWorkbenchShell()
-}));
-
-vi.mock("../../terminal/api/terminal-api", () => ({
-  listWorkspaceTerminals: (...args: unknown[]) => mockListWorkspaceTerminals(...args)
-}));
-
-vi.mock("../../conversation/api/git-api", () => ({
-  getGitStatus: (...args: unknown[]) => mockGetGitStatus(...args)
 }));
 
 vi.mock("../../../shared/toast", () => ({
@@ -58,6 +67,37 @@ function createSession(overrides: Record<string, unknown>) {
 }
 
 function createWorkbenchShell(overrides?: Record<string, unknown>) {
+  const emitGitSnapshot = (workspaceId: string) => {
+    gitSnapshotListeners.forEach((listener) => {
+      listener({
+        workspaceId,
+        status: {
+          snapshot: {
+            branch: workspaceId === "workspace-1" ? "feat/mobile-home" : "main"
+          },
+          changes: [{ path: "src/home.tsx" }, { path: "src/app.css" }]
+        }
+      });
+    });
+  };
+  const emitTerminalManagerSnapshot = (workspaceId: string) => {
+    terminalManagerSnapshotListeners.forEach((listener) => {
+      listener({
+        workspaceId,
+        terminals:
+          workspaceId === "workspace-1"
+            ? [
+                { id: "terminal-1", status: "running" },
+                { id: "terminal-2", status: "creating" },
+                { id: "terminal-3", status: "closed" }
+              ]
+            : [],
+        templates: [],
+        templateStatuses: [{ occupied: true }]
+      });
+    });
+  };
+
   return {
     navigationGroups: [
       {
@@ -118,21 +158,40 @@ function createWorkbenchShell(overrides?: Record<string, unknown>) {
     refreshNavigation: vi.fn(),
     selectWorkspace: vi.fn(),
     startDraftSession: vi.fn(),
+    subscribeGitSnapshot: vi.fn(),
+    requestGitRefresh: vi.fn((workspaceId: string) => {
+      queueMicrotask(() => {
+        emitGitSnapshot(workspaceId);
+      });
+    }),
+    addGitSnapshotListener: (listener: (snapshot: {
+      workspaceId: string;
+      status: {
+        snapshot: {
+          branch: string | null;
+        };
+        changes: Array<{ path: string }>;
+      };
+    }) => void) => {
+      gitSnapshotListeners.add(listener);
+      return () => undefined;
+    },
     subscribeTerminalManagerSnapshot: vi.fn(),
-    requestTerminalManagerRefresh: vi.fn(),
+    requestTerminalManagerRefresh: vi.fn((workspaceId: string) => {
+      queueMicrotask(() => {
+        emitTerminalManagerSnapshot(workspaceId);
+      });
+    }),
     addTerminalManagerSnapshotListener: (listener: (snapshot: {
       workspaceId: string;
       templateStatuses: Array<{ occupied: boolean }>;
-      terminals: unknown[];
+      terminals: Array<{ id: string; status: string }>;
       templates: unknown[];
     }) => void) => {
-      listener({
-        workspaceId: "workspace-1",
-        terminals: [],
-        templates: [],
-        templateStatuses: [{ occupied: true }]
-      });
-      return () => undefined;
+      terminalManagerSnapshotListeners.add(listener);
+      return () => {
+        terminalManagerSnapshotListeners.delete(listener);
+      };
     },
     ...overrides
   };
@@ -141,23 +200,9 @@ function createWorkbenchShell(overrides?: Record<string, unknown>) {
 describe("WorkspaceHomePage", () => {
   beforeEach(() => {
     mockShowToast.mockReset();
-    mockListWorkspaceTerminals.mockReset();
-    mockGetGitStatus.mockReset();
     mockUseWorkbenchShell.mockReset();
-
-    mockListWorkspaceTerminals.mockResolvedValue({
-      items: [
-        { id: "terminal-1", status: "running" },
-        { id: "terminal-2", status: "creating" },
-        { id: "terminal-3", status: "closed" }
-      ]
-    });
-    mockGetGitStatus.mockResolvedValue({
-      snapshot: {
-        branch: "feat/mobile-home"
-      },
-      changes: [{ path: "src/home.tsx" }, { path: "src/app.css" }]
-    });
+    gitSnapshotListeners.clear();
+    terminalManagerSnapshotListeners.clear();
     mockUseWorkbenchShell.mockReturnValue(createWorkbenchShell());
   });
 
@@ -166,6 +211,8 @@ describe("WorkspaceHomePage", () => {
 
     expect(screen.getByRole("button", { name: "切换工作区" })).toBeInTheDocument();
     expect(screen.getByText("/repo/project-one")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "项目详情" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "新建会话" })).toBeInTheDocument();
     expect(screen.getByText("活动会话")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "查看全部会话" })).toBeInTheDocument();
     expect(screen.getByText("收藏会话")).toBeInTheDocument();
@@ -225,9 +272,11 @@ describe("WorkspaceHomePage", () => {
 
     renderPage();
 
-    await user.click(screen.getByRole("button", { name: /新建会话/ }));
+    await user.click(screen.getAllByRole("button", { name: /新建会话/ })[0]);
+    expect(screen.getByRole("button", { name: /选择工作区 项目一/ })).toHaveTextContent("项目一");
+    await user.click(screen.getByRole("button", { name: "Claude Code" }));
 
-    expect(startDraftSession).toHaveBeenCalledWith("workspace-1", "codex");
+    expect(startDraftSession).toHaveBeenCalledWith("workspace-1", "claude-code");
     expect(screen.queryByRole("button", { name: "Codex" })).not.toBeInTheDocument();
   });
 
@@ -252,6 +301,19 @@ describe("WorkspaceHomePage", () => {
     await waitFor(() => {
       expect(screen.queryByRole("dialog", { name: "工作区" })).not.toBeInTheDocument();
     });
+  });
+
+  it("会把添加项目和 Clone 项目放进工作区切换弹层", async () => {
+    const user = userEvent.setup();
+
+    renderPage();
+
+    await user.click(screen.getByRole("button", { name: "切换工作区" }));
+
+    const dialog = screen.getByRole("dialog", { name: "工作区" });
+
+    expect(within(dialog).getByRole("button", { name: "添加项目" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Clone项目" })).toBeInTheDocument();
   });
 });
 

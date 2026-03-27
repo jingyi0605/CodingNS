@@ -3,12 +3,16 @@ import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 
 import {
+  readViewSnapshot,
+  writeViewSnapshot
+} from "../../../shared/cache/view-snapshot-cache";
+import {
   cloneWorkspace,
   importWorkspace,
   type CloneWorkspacePayload,
+  type ProviderId,
   type SessionSummaryDto
 } from "../../conversation/api/conversation-api";
-import { getGitStatus } from "../../conversation/api/git-api";
 import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout";
 import {
   buildWorkspaceDetailPath,
@@ -18,19 +22,39 @@ import {
   buildWorkspaceTerminalsPath,
   buildWorkspaceToolsPath
 } from "../../workbench/utils/workbench-navigation";
-import { listWorkspaceTerminals } from "../../terminal/api/terminal-api";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
+import { MobileCreateSessionSheet } from "../../mobile-sessions/components/MobileCreateSessionSheet";
 
 type WorkspaceActionMode = "import" | "clone" | null;
-type WorkspaceSheetMode = "switcher" | "actions" | null;
+type WorkspaceSheetMode = "switcher" | null;
 
 interface WorkspaceDashboardState {
-  readonly loading: boolean;
+  readonly gitLoading: boolean;
+  readonly terminalLoading: boolean;
   readonly branch: string | null;
   readonly activeTerminalCount: number | null;
   readonly changedFileCount: number | null;
   readonly quickLaunchRunning: boolean | null;
+}
+
+interface WorkspaceHomeGitSnapshotCache {
+  readonly status: {
+    readonly snapshot: {
+      readonly branch: string | null;
+    };
+    readonly changes: Array<{ path: string }>;
+  } | null;
+}
+
+interface WorkspaceHomeTerminalManagerSnapshotCache {
+  readonly terminals: Array<{
+    readonly status: string;
+  }>;
+  readonly templates: unknown[];
+  readonly templateStatuses: Array<{
+    readonly occupied: boolean;
+  }>;
 }
 
 interface WorkspaceSheetProps {
@@ -101,6 +125,8 @@ function renderSheet(content: ReactNode) {
   return createPortal(content, document.body);
 }
 
+const WORKSPACE_HOME_SNAPSHOT_CACHE_MAX_AGE_MS = 60 * 1000;
+
 export function WorkspaceHomePage() {
   const navigate = useNavigate();
   const { showToast } = useToast();
@@ -110,15 +136,20 @@ export function WorkspaceHomePage() {
     refreshNavigation,
     selectWorkspace,
     startDraftSession,
+    subscribeGitSnapshot,
+    requestGitRefresh,
+    addGitSnapshotListener,
     subscribeTerminalManagerSnapshot,
     requestTerminalManagerRefresh,
     addTerminalManagerSnapshotListener
   } = useWorkbenchShell();
   const [actionMode, setActionMode] = useState<WorkspaceActionMode>(null);
+  const [createSessionOpen, setCreateSessionOpen] = useState(false);
   const [sheetMode, setSheetMode] = useState<WorkspaceSheetMode>(null);
   const [submitting, setSubmitting] = useState(false);
   const [dashboardState, setDashboardState] = useState<WorkspaceDashboardState>({
-    loading: false,
+    gitLoading: false,
+    terminalLoading: false,
     branch: null,
     activeTerminalCount: null,
     changedFileCount: null,
@@ -152,12 +183,12 @@ export function WorkspaceHomePage() {
   const favoriteSessionList = favoriteSessions.slice(0, 6);
 
   useEffect(() => {
-    let disposed = false;
     const workspaceId = currentWorkspace?.id ?? null;
 
     if (!workspaceId) {
       setDashboardState({
-        loading: false,
+        gitLoading: false,
+        terminalLoading: false,
         branch: null,
         activeTerminalCount: null,
         changedFileCount: null,
@@ -166,37 +197,71 @@ export function WorkspaceHomePage() {
       return;
     }
 
+    const cachedSnapshot = readViewSnapshot<WorkspaceHomeGitSnapshotCache>(
+      buildGitSidebarSnapshotKey(workspaceId),
+      WORKSPACE_HOME_SNAPSHOT_CACHE_MAX_AGE_MS
+    );
+
     setDashboardState((current) => ({
       ...current,
-      loading: true
+      gitLoading: cachedSnapshot === null,
+      branch: cachedSnapshot?.status?.snapshot.branch ?? null,
+      changedFileCount: cachedSnapshot?.status?.changes.length ?? null
     }));
+  }, [currentWorkspace?.id]);
 
-    void Promise.allSettled([
-      listWorkspaceTerminals(workspaceId),
-      getGitStatus(workspaceId)
-    ]).then(([terminalResult, gitResult]) => {
-      if (disposed) {
+  useEffect(() => {
+    const workspaceId = currentWorkspace?.id ?? null;
+
+    if (!workspaceId) {
+      return;
+    }
+
+    return addGitSnapshotListener((snapshot) => {
+      if (snapshot.workspaceId !== workspaceId) {
         return;
       }
 
+      writeViewSnapshot<WorkspaceHomeGitSnapshotCache>(buildGitSidebarSnapshotKey(workspaceId), {
+        status: snapshot.status
+      });
       setDashboardState((current) => ({
         ...current,
-        loading: false,
-        branch: gitResult.status === "fulfilled" ? gitResult.value.snapshot.branch : null,
-        activeTerminalCount:
-          terminalResult.status === "fulfilled"
-            ? terminalResult.value.items.filter((terminal) => isTerminalActive(terminal.status)).length
-            : null,
-        changedFileCount:
-          gitResult.status === "fulfilled"
-            ? gitResult.value.changes.length
-            : null
+        gitLoading: false,
+        branch: snapshot.status.snapshot.branch,
+        changedFileCount: snapshot.status.changes.length
       }));
     });
+  }, [addGitSnapshotListener, currentWorkspace?.id]);
 
-    return () => {
-      disposed = true;
-    };
+  useEffect(() => {
+    const workspaceId = currentWorkspace?.id ?? null;
+
+    if (!workspaceId) {
+      setDashboardState((current) => ({
+        ...current,
+        gitLoading: false,
+        branch: null,
+        changedFileCount: null,
+      }));
+      return;
+    }
+
+    const cachedSnapshot = readViewSnapshot<WorkspaceHomeTerminalManagerSnapshotCache>(
+      buildTerminalManagerSnapshotKey(workspaceId),
+      WORKSPACE_HOME_SNAPSHOT_CACHE_MAX_AGE_MS
+    );
+
+    setDashboardState((current) => ({
+      ...current,
+      terminalLoading: cachedSnapshot === null,
+      activeTerminalCount: cachedSnapshot
+        ? cachedSnapshot.terminals.filter((terminal) => isTerminalActive(terminal.status)).length
+        : null,
+      quickLaunchRunning: cachedSnapshot
+        ? cachedSnapshot.templateStatuses.some((status) => status.occupied)
+        : null
+    }));
   }, [currentWorkspace?.id]);
 
   useEffect(() => {
@@ -205,26 +270,94 @@ export function WorkspaceHomePage() {
     if (!workspaceId) {
       setDashboardState((current) => ({
         ...current,
+        terminalLoading: false,
+        activeTerminalCount: null,
         quickLaunchRunning: null
       }));
       return;
     }
-
-    subscribeTerminalManagerSnapshot(workspaceId);
-    requestTerminalManagerRefresh(workspaceId);
 
     return addTerminalManagerSnapshotListener((snapshot) => {
       if (snapshot.workspaceId !== workspaceId) {
         return;
       }
 
+      writeViewSnapshot<WorkspaceHomeTerminalManagerSnapshotCache>(
+        buildTerminalManagerSnapshotKey(workspaceId),
+        {
+          terminals: snapshot.terminals,
+          templates: snapshot.templates,
+          templateStatuses: snapshot.templateStatuses
+        }
+      );
       setDashboardState((current) => ({
         ...current,
+        terminalLoading: false,
+        activeTerminalCount: snapshot.terminals.filter((terminal) => isTerminalActive(terminal.status)).length,
         quickLaunchRunning: snapshot.templateStatuses.some((status) => status.occupied)
       }));
     });
+  }, [addTerminalManagerSnapshotListener, currentWorkspace?.id]);
+
+  useEffect(() => {
+    const workspaceId = currentWorkspace?.id ?? null;
+
+    if (!workspaceId) {
+      return;
+    }
+
+    const hasCachedSnapshot =
+      readViewSnapshot<WorkspaceHomeGitSnapshotCache>(
+        buildGitSidebarSnapshotKey(workspaceId),
+        WORKSPACE_HOME_SNAPSHOT_CACHE_MAX_AGE_MS
+      ) !== null;
+
+    subscribeGitSnapshot(workspaceId);
+
+    if (hasCachedSnapshot) {
+      const timer = window.setTimeout(() => {
+        requestGitRefresh(workspaceId);
+      }, 1500);
+
+      return () => {
+        window.clearTimeout(timer);
+      };
+    }
+
+    requestGitRefresh(workspaceId);
   }, [
-    addTerminalManagerSnapshotListener,
+    currentWorkspace?.id,
+    requestGitRefresh,
+    subscribeGitSnapshot
+  ]);
+
+  useEffect(() => {
+    const workspaceId = currentWorkspace?.id ?? null;
+
+    if (!workspaceId) {
+      return;
+    }
+
+    const hasCachedSnapshot =
+      readViewSnapshot<WorkspaceHomeTerminalManagerSnapshotCache>(
+        buildTerminalManagerSnapshotKey(workspaceId),
+        WORKSPACE_HOME_SNAPSHOT_CACHE_MAX_AGE_MS
+      ) !== null;
+
+    subscribeTerminalManagerSnapshot(workspaceId);
+
+    if (hasCachedSnapshot) {
+      const timer = window.setTimeout(() => {
+        requestTerminalManagerRefresh(workspaceId);
+      }, 1500);
+
+      return () => {
+        window.clearTimeout(timer);
+      };
+    }
+
+    requestTerminalManagerRefresh(workspaceId);
+  }, [
     currentWorkspace?.id,
     requestTerminalManagerRefresh,
     subscribeTerminalManagerSnapshot
@@ -350,7 +483,12 @@ export function WorkspaceHomePage() {
       return;
     }
 
-    startDraftSession(currentWorkspace.id, "codex");
+    setCreateSessionOpen(true);
+  }
+
+  function handleSelectSessionProvider(workspaceId: string, provider: ProviderId) {
+    setCreateSessionOpen(false);
+    startDraftSession(workspaceId, provider);
   }
 
   function handleOpenWorkspaceDetail() {
@@ -380,12 +518,12 @@ export function WorkspaceHomePage() {
     },
     {
       label: t("shell.workspaceHomeMetricTerminal"),
-      value: dashboardState.loading ? "…" : dashboardState.activeTerminalCount ?? "—",
+      value: dashboardState.terminalLoading ? "…" : dashboardState.activeTerminalCount ?? "—",
       onClick: currentWorkspace ? openCurrentWorkspaceTerminals : undefined
     },
     {
       label: t("shell.workspaceHomeMetricChanges"),
-      value: dashboardState.loading ? "…" : dashboardState.changedFileCount ?? "—",
+      value: dashboardState.gitLoading ? "…" : dashboardState.changedFileCount ?? "—",
       onClick: currentWorkspace ? openCurrentWorkspaceGit : undefined
     }
   ] as const;
@@ -432,14 +570,6 @@ export function WorkspaceHomePage() {
                     {dashboardState.branch}
                   </span>
                 ) : null}
-                <button
-                  type="button"
-                  className="mobile-workspace-home-more-button"
-                  aria-label={t("shell.iosMoreAction")}
-                  onClick={() => setSheetMode("actions")}
-                >
-                  <MoreIcon />
-                </button>
               </div>
             </div>
             <p className="mobile-workspace-home-path">{currentWorkspace.path}</p>
@@ -462,6 +592,25 @@ export function WorkspaceHomePage() {
                   </div>
                 )
               )}
+            </div>
+          </section>
+
+          <section className="mobile-workspace-home-section">
+            <div className="mobile-workspace-home-primary-actions">
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={handleOpenWorkspaceDetail}
+              >
+                {t("shell.workspaceDetailTitle")}
+              </button>
+              <button
+                type="button"
+                className="primary-button"
+                onClick={handleStartSession}
+              >
+                {t("shell.createSession")}
+              </button>
             </div>
           </section>
 
@@ -622,40 +771,7 @@ export function WorkspaceHomePage() {
                   </button>
                 ))}
               </div>
-            </WorkspaceHomeSheet>
-          )
-        : null}
-
-      {sheetMode === "actions" && currentWorkspace
-        ? renderSheet(
-            <WorkspaceHomeSheet title={currentWorkspace.name} onClose={() => setSheetMode(null)}>
               <div className="mobile-workspace-home-group mobile-workspace-home-sheet-group">
-                <button
-                  type="button"
-                  className="mobile-workspace-home-row mobile-workspace-home-sheet-row"
-                  onClick={() => {
-                    setSheetMode(null);
-                    handleStartSession();
-                  }}
-                >
-                  <span className="mobile-workspace-home-row-label">{t("shell.createSession")}</span>
-                  <span className="mobile-workspace-home-row-trailing">
-                    <ChevronRightIcon />
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  className="mobile-workspace-home-row mobile-workspace-home-sheet-row"
-                  onClick={() => {
-                    setSheetMode(null);
-                    handleOpenWorkspaceDetail();
-                  }}
-                >
-                  <span className="mobile-workspace-home-row-label">{t("shell.workspaceDetailTitle")}</span>
-                  <span className="mobile-workspace-home-row-trailing">
-                    <ChevronRightIcon />
-                  </span>
-                </button>
                 <button
                   type="button"
                   className="mobile-workspace-home-row mobile-workspace-home-sheet-row"
@@ -800,8 +916,24 @@ export function WorkspaceHomePage() {
             </WorkspaceHomeSheet>
           )
         : null}
+
+      <MobileCreateSessionSheet
+        open={createSessionOpen}
+        workspaces={navigationGroups.map((group) => group.workspace)}
+        initialWorkspaceId={currentWorkspace?.id ?? currentWorkspaceId ?? null}
+        onClose={() => setCreateSessionOpen(false)}
+        onSelect={handleSelectSessionProvider}
+      />
     </main>
   );
+}
+
+function buildGitSidebarSnapshotKey(workspaceId: string) {
+  return `git-sidebar.snapshot.${workspaceId}`;
+}
+
+function buildTerminalManagerSnapshotKey(workspaceId: string) {
+  return `terminal-manager.snapshot.${workspaceId}`;
 }
 
 function WorkspaceHomeSheet({ title, onClose, children }: WorkspaceSheetProps) {
@@ -858,16 +990,6 @@ function ChevronRightIcon() {
         strokeLinejoin="round"
         strokeWidth="1.6"
       />
-    </svg>
-  );
-}
-
-function MoreIcon() {
-  return (
-    <svg viewBox="0 0 16 16" aria-hidden="true">
-      <circle cx="3" cy="8" r="1.2" fill="currentColor" />
-      <circle cx="8" cy="8" r="1.2" fill="currentColor" />
-      <circle cx="13" cy="8" r="1.2" fill="currentColor" />
     </svg>
   );
 }

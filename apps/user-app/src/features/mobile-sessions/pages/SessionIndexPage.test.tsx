@@ -96,54 +96,52 @@ describe("SessionIndexPage", () => {
     vi.useRealTimers();
   });
 
-  it("渲染最近、收藏和当前工作区三个区块", () => {
+  it("渲染当前工作区的对话列表", () => {
     renderPage();
 
-    expect(screen.getByRole("heading", { level: 2, name: "会话" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 2, name: "收藏会话" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 2, name: "项目一" })).toBeInTheDocument();
+    expect(screen.getByText("对话")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "项目一" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "当前工作区" })).toBeInTheDocument();
   });
 
-  it("已收藏会话不会再出现在当前工作区区块里", () => {
+  it("当前工作区列表会保留收藏会话，但不会混入其他工作区会话", () => {
     renderPage();
 
-    const favoriteSection = screen.getByRole("heading", { level: 2, name: "收藏会话" }).closest("section");
-    const workspaceSection = screen.getByRole("heading", { level: 2, name: "项目一" }).closest("section");
+    const workspaceSection = screen.getByRole("heading", { level: 2, name: "当前工作区" }).closest("section");
 
-    if (!favoriteSection || !workspaceSection) {
+    if (!workspaceSection) {
       throw new Error("未找到目标区块");
     }
 
-    expect(within(favoriteSection).getByText("会话 Beta")).toBeInTheDocument();
-    expect(within(workspaceSection).queryByText("会话 Beta")).not.toBeInTheDocument();
+    expect(within(workspaceSection).getByText("会话 Alpha")).toBeInTheDocument();
+    expect(within(workspaceSection).getByText("会话 Beta")).toBeInTheDocument();
+    expect(within(workspaceSection).queryByText("会话 Gamma")).not.toBeInTheDocument();
   });
 
-  it("新建会话按钮会调用 startDraftSession", async () => {
+  it("新建会话按钮会先选择工作区和供应商再调用 startDraftSession", async () => {
     const user = userEvent.setup();
     renderPage();
 
     await user.click(screen.getByRole("button", { name: "新建会话" }));
+    await user.click(screen.getByRole("button", { name: /选择工作区 项目一/ }));
+    await user.click(screen.getByRole("button", { name: /Project Two/ }));
+    await user.click(screen.getByRole("button", { name: "OpenCode" }));
 
-    expect(contextValue.startDraftSession).toHaveBeenCalledWith("workspace-1", "codex");
-  });
+    expect(contextValue.startDraftSession).toHaveBeenCalledWith("workspace-2", "opencode");
+  }, 10000);
 
   it("列表操作按钮会调用上下文函数", async () => {
     const user = userEvent.setup();
     renderPage();
 
-    const recentSection = screen.getByRole("heading", { level: 2, name: "会话" }).closest("section");
-    const favoriteSection = screen.getByRole("heading", { level: 2, name: "收藏会话" }).closest("section");
+    const workspaceSection = screen.getByRole("heading", { level: 2, name: "当前工作区" }).closest("section");
 
-    if (!recentSection || !favoriteSection) {
+    if (!workspaceSection) {
       throw new Error("未找到会话区块");
     }
 
-    const alphaEntry = within(recentSection)
-      .getByRole("button", { name: "会话 Alpha 项目一 Codex" })
-      .closest("article");
-    const betaEntry = within(favoriteSection)
-      .getByRole("button", { name: "会话 Beta 项目一 Claude" })
-      .closest("article");
+    const alphaEntry = within(workspaceSection).getByText("会话 Alpha").closest("article");
+    const betaEntry = within(workspaceSection).getByText("会话 Beta").closest("article");
 
     if (!alphaEntry || !betaEntry) {
       throw new Error("未找到会话列表项");
@@ -165,7 +163,7 @@ describe("SessionIndexPage", () => {
     await user.click(renameButton);
     expect(contextValue.renameSession).toHaveBeenCalledWith("session-1", "New Title");
     promptSpy.mockRestore();
-  });
+  }, 10000);
 
   it("主会话长按后会展开和收起子会话列表", () => {
     vi.useFakeTimers();
@@ -173,13 +171,19 @@ describe("SessionIndexPage", () => {
 
     expect(screen.queryByText("子代理 Beta-1")).not.toBeInTheDocument();
 
-    const favoriteSection = screen.getByRole("heading", { level: 2, name: "收藏会话" }).closest("section");
+    const workspaceSection = screen.getByRole("heading", { level: 2, name: "当前工作区" }).closest("section");
 
-    if (!favoriteSection) {
-      throw new Error("未找到收藏会话区块");
+    if (!workspaceSection) {
+      throw new Error("未找到当前工作区会话区块");
     }
 
-    const betaButton = within(favoriteSection).getByRole("button", { name: "会话 Beta 项目一 Claude" });
+    const betaEntry = within(workspaceSection).getByText("会话 Beta").closest("article");
+
+    if (!betaEntry) {
+      throw new Error("未找到 Beta 会话");
+    }
+
+    const betaButton = within(betaEntry).getAllByRole("button")[0];
 
     fireEvent.pointerDown(betaButton, { pointerType: "touch" });
     act(() => {
@@ -187,7 +191,7 @@ describe("SessionIndexPage", () => {
     });
     fireEvent.pointerUp(betaButton, { pointerType: "touch" });
 
-    expect(within(favoriteSection).getByText("子代理 Beta-1")).toBeInTheDocument();
+    expect(within(workspaceSection).getByText("子代理 Beta-1")).toBeInTheDocument();
 
     fireEvent.pointerDown(betaButton, { pointerType: "touch" });
     act(() => {
@@ -195,6 +199,6 @@ describe("SessionIndexPage", () => {
     });
     fireEvent.pointerUp(betaButton, { pointerType: "touch" });
 
-    expect(within(favoriteSection).queryByText("子代理 Beta-1")).not.toBeInTheDocument();
+    expect(within(workspaceSection).queryByText("子代理 Beta-1")).not.toBeInTheDocument();
   });
 });

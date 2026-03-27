@@ -4,9 +4,11 @@ import { useNavigate, useParams } from "react-router-dom";
 import { readViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import {
   removeWorkspace,
+  type ProviderId,
   type WorkspaceManagementSummaryDto
 } from "../../conversation/api/conversation-api";
 import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout";
+import { MobileCreateSessionSheet } from "../../mobile-sessions/components/MobileCreateSessionSheet";
 import { buildSessionTitlePresentation } from "../../conversation/session-title";
 import {
   buildWorkspaceSessionPath,
@@ -19,7 +21,15 @@ import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 
 function getProviderLabel(provider: string) {
-  return provider === "codex" ? t("conversation.providerCodex") : t("conversation.providerClaude");
+  if (provider === "codex") {
+    return t("conversation.providerCodex");
+  }
+
+  if (provider === "opencode") {
+    return t("conversation.providerOpenCode");
+  }
+
+  return t("conversation.providerClaude");
 }
 
 const WORKSPACE_MANAGEMENT_SNAPSHOT_CACHE_MAX_AGE_MS = 60 * 1000;
@@ -44,6 +54,7 @@ export function WorkspaceDetailPage() {
     startDraftSession
   } = useWorkbenchShell();
   const [removing, setRemoving] = useState(false);
+  const [createSessionOpen, setCreateSessionOpen] = useState(false);
 
   const workspaceGroup = navigationGroups.find((group) => group.workspace.id === workspaceId) ?? null;
   const workspace = workspaceGroup?.workspace ?? null;
@@ -145,6 +156,11 @@ export function WorkspaceDetailPage() {
     }
   }
 
+  function handleSelectSessionProvider(targetWorkspaceId: string, provider: ProviderId) {
+    setCreateSessionOpen(false);
+    startDraftSession(targetWorkspaceId, provider);
+  }
+
   if (!workspace) {
     return (
       <main className="mobile-feature-page mobile-page-scroll-root">
@@ -171,7 +187,7 @@ export function WorkspaceDetailPage() {
           <button
             type="button"
             className="primary-button"
-            onClick={() => startDraftSession(workspace.id, "codex")}
+            onClick={() => setCreateSessionOpen(true)}
           >
             {t("shell.createSession")}
           </button>
@@ -360,6 +376,14 @@ export function WorkspaceDetailPage() {
           </div>
         </section>
       ) : null}
+
+      <MobileCreateSessionSheet
+        open={createSessionOpen}
+        workspaces={navigationGroups.map((group) => group.workspace)}
+        initialWorkspaceId={currentWorkspaceId ?? workspace.id}
+        onClose={() => setCreateSessionOpen(false)}
+        onSelect={handleSelectSessionProvider}
+      />
     </main>
   );
 }
