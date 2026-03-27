@@ -24,6 +24,7 @@ const navigationGroups = [
         title: "会话 Beta",
         provider: "claude-code",
         workspaceId: "workspace-1",
+        isFavorite: true,
         lastMessageAt: "2026-03-27T09:00:00Z"
       },
       {
@@ -61,9 +62,9 @@ const contextValue = {
   currentSessionId: "session-1",
   favoriteSessionIds: ["session-2"],
   navigationLoading: false,
-  toggleFavoriteSession: vi.fn(),
-  archiveSession: vi.fn(),
-  unarchiveSession: vi.fn(),
+  toggleFavoriteSession: vi.fn(async () => undefined),
+  archiveSession: vi.fn(async () => undefined),
+  unarchiveSession: vi.fn(async () => undefined),
   renameSession: vi.fn(),
   startDraftSession: vi.fn()
 };
@@ -101,6 +102,20 @@ describe("SessionIndexPage", () => {
     expect(screen.getByRole("heading", { level: 2, name: "会话" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 2, name: "收藏会话" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 2, name: "项目一" })).toBeInTheDocument();
+  });
+
+  it("已收藏会话不会再出现在当前工作区区块里", () => {
+    renderPage();
+
+    const favoriteSection = screen.getByRole("heading", { level: 2, name: "收藏会话" }).closest("section");
+    const workspaceSection = screen.getByRole("heading", { level: 2, name: "项目一" }).closest("section");
+
+    if (!favoriteSection || !workspaceSection) {
+      throw new Error("未找到目标区块");
+    }
+
+    expect(within(favoriteSection).getByText("会话 Beta")).toBeInTheDocument();
+    expect(within(workspaceSection).queryByText("会话 Beta")).not.toBeInTheDocument();
   });
 
   it("新建会话按钮会调用 startDraftSession", async () => {

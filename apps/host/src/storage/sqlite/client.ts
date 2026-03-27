@@ -150,7 +150,7 @@ function ensureSessionStateSchema(db: Database.Database): void {
     .all() as Array<{ name: string }>;
   const columnNames = new Set(columns.map((column) => column.name));
 
-  if (columnNames.has("activity_source") && !columnNames.has("is_archived")) {
+  if (columnNames.has("activity_source") && columnNames.has("favorite")) {
     return;
   }
 
@@ -174,6 +174,7 @@ function ensureSessionStateSchema(db: Database.Database): void {
   const lastEventAtExpr = columnNames.has("last_event_at") ? "last_event_at" : "NULL";
   const completedAtExpr = columnNames.has("completed_at") ? "completed_at" : "NULL";
   const lastSeenAtExpr = columnNames.has("last_seen_at") ? "last_seen_at" : "NULL";
+  const favoriteExpr = columnNames.has("favorite") ? "favorite" : "0";
   const updatedAtExpr = columnNames.has("updated_at") ? "updated_at" : "CURRENT_TIMESTAMP";
 
   db.exec(`
@@ -184,6 +185,7 @@ function ensureSessionStateSchema(db: Database.Database): void {
         running_state IN ('idle', 'starting', 'running', 'completed', 'interrupted', 'failed')
       ),
       activity_source TEXT NOT NULL CHECK (activity_source IN ('none', 'runtime', 'inferred')),
+      favorite INTEGER NOT NULL DEFAULT 0 CHECK (favorite IN (0, 1)),
       last_event_at TEXT,
       completed_at TEXT,
       last_seen_at TEXT,
@@ -198,6 +200,7 @@ function ensureSessionStateSchema(db: Database.Database): void {
       user_id,
       running_state,
       activity_source,
+      favorite,
       last_event_at,
       completed_at,
       last_seen_at,
@@ -208,6 +211,7 @@ function ensureSessionStateSchema(db: Database.Database): void {
       user_id,
       ${runningStateExpr},
       ${activitySourceExpr},
+      ${favoriteExpr},
       ${lastEventAtExpr},
       ${completedAtExpr},
       ${lastSeenAtExpr},

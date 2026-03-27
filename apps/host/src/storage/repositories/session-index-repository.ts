@@ -75,6 +75,7 @@ export class SessionIndexRepository {
            snapshots.resumed_at AS resumed_at,
            states.running_state AS running_state,
            COALESCE(states.activity_source, 'none') AS activity_source,
+           COALESCE(states.favorite, 0) AS favorite,
            indices.is_archived AS is_archived,
            states.last_event_at AS last_event_at,
            states.completed_at AS completed_at,
@@ -117,6 +118,7 @@ export class SessionIndexRepository {
            snapshots.resumed_at AS resumed_at,
            states.running_state AS running_state,
            COALESCE(states.activity_source, 'none') AS activity_source,
+           COALESCE(states.favorite, 0) AS favorite,
            indices.is_archived AS is_archived,
            states.last_event_at AS last_event_at,
            states.completed_at AS completed_at,
@@ -191,6 +193,7 @@ interface SessionListItemRow {
   resumed_at: string | null;
   running_state: SessionListItem["runningState"];
   activity_source: SessionListItem["activitySource"];
+  favorite: number;
   is_archived: number;
   last_event_at: string | null;
   completed_at: string | null;
@@ -238,6 +241,7 @@ function mapSessionListItemRow(row: SessionListItemRow): SessionListItem {
     isSubagent: row.is_subagent === 1,
     subagentLabel: row.subagent_label,
     title: row.title,
+    isFavorite: row.favorite === 1,
     messageCount: row.message_count,
     lastMessageAt: row.last_message_at,
     createdAt: row.created_at,

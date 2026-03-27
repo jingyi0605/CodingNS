@@ -61,6 +61,12 @@ interface ArchiveSessionInput {
   isArchived: boolean;
 }
 
+interface FavoriteSessionInput {
+  sessionId: string;
+  userId: string;
+  isFavorite: boolean;
+}
+
 export interface SessionHistoryEnvelope {
   type: "session.backfill" | "session.delta";
   sessionId: string;
@@ -77,10 +83,15 @@ interface SessionRelationDescriptor {
 interface PersistedSessionDescriptor {
   session: Awaited<
     ReturnType<SessionSyncService["discoverWorkspaceSessions"]>
-  >[number];
+  >["sessions"][number];
   sessionId: string;
   createdAt: string;
   existingIndex: SessionIndexRecord | null;
+}
+
+interface WorkspaceDiscoveryStatus {
+  refreshedAt: number;
+  isComplete: boolean;
 }
 
 export class SessionHistoryService {
@@ -90,7 +101,7 @@ export class SessionHistoryService {
   private readonly claudeCodeHomeDir: string;
   private readonly codexModelOptionsService: CodexModelOptionsService;
   private readonly openCodeModelOptionsService: OpenCodeModelOptionsService;
-  private readonly workspaceDiscoveryTimestamps = new Map<string, number>();
+  private readonly workspaceDiscoveryStatuses = new Map<string, WorkspaceDiscoveryStatus>();
   private readonly workspaceDiscoveryInflight = new Map<string, Promise<SessionListItem[]>>();
   private readonly workspaceStateRefreshInflight = new Map<string, Promise<void>>();
   private readonly workspaceSessionRelations = new Map<
@@ -143,9 +154,15 @@ export class SessionHistoryService {
   ): Promise<SessionListItem[]> {
     const maxAgeMs = options?.maxAgeMs ?? 0;
     const force = options?.force ?? false;
-    const lastRefreshedAt = this.workspaceDiscoveryTimestamps.get(workspaceId) ?? 0;
+    const discoveryStatus = this.workspaceDiscoveryStatuses.get(workspaceId);
+    const lastRefreshedAt = discoveryStatus?.refreshedAt ?? 0;
 
-    if (!force && maxAgeMs > 0 && Date.now() - lastRefreshedAt <= maxAgeMs) {
+    if (
+      !force &&
+      discoveryStatus?.isComplete === true &&
+      maxAgeMs > 0 &&
+      Date.now() - lastRefreshedAt <= maxAgeMs
+    ) {
       return this.listWorkspaceSessions(workspaceId, userId);
     }
 
@@ -172,8 +189,17 @@ export class SessionHistoryService {
       return true;
     }
 
-    const lastRefreshedAt = this.workspaceDiscoveryTimestamps.get(workspaceId) ?? 0;
-    return Date.now() - lastRefreshedAt > maxAgeMs;
+    const discoveryStatus = this.workspaceDiscoveryStatuses.get(workspaceId);
+
+    if (!discoveryStatus) {
+      return true;
+    }
+
+    if (!discoveryStatus.isComplete) {
+      return true;
+    }
+
+    return Date.now() - discoveryStatus.refreshedAt > maxAgeMs;
   }
 
   async readSessionHistory(
@@ -416,7 +442,6 @@ export class SessionHistoryService {
       claudeHomeDir: this.claudeCodeHomeDir,
       workspacePath
     });
-
     const codexEnriched = await enrichCodexCapabilities(
       claudeEnriched,
       this.codexModelOptionsService
@@ -538,6 +563,7 @@ export class SessionHistoryService {
           userId: input.userId,
           runningState: "idle",
           activitySource: "none",
+          favorite: false,
           lastEventAt: result.session.lastMessageAt,
           completedAt: null,
           lastSeenAt: null,
@@ -680,10 +706,37 @@ export class SessionHistoryService {
       userId,
       runningState: existing?.runningState ?? "idle",
       activitySource: existing?.activitySource ?? "none",
+      favorite: existing?.favorite ?? false,
       lastEventAt: existing?.lastEventAt ?? null,
       completedAt: existing?.completedAt ?? null,
       lastSeenAt: seenAt,
       updatedAt: seenAt
+    });
+  }
+
+  async updateSessionFavoriteState(input: FavoriteSessionInput): Promise<SessionListItem> {
+    this.getBindingOrThrow(input.sessionId);
+    const existingItem = this.getSessionListItemOrThrow(input.sessionId, input.userId);
+    const currentState =
+      this.sessionStateRepository.findBySessionAndUser(input.sessionId, input.userId) ??
+      (await this.refreshSessionState(input.sessionId, input.userId));
+    const timestamp = nowIso();
+
+    this.sessionStateRepository.upsert({
+      sessionId: input.sessionId,
+      userId: input.userId,
+      runningState: currentState?.runningState ?? "idle",
+      activitySource: currentState?.activitySource ?? "none",
+      favorite: input.isFavorite,
+      lastEventAt: currentState?.lastEventAt ?? existingItem.lastEventAt ?? null,
+      completedAt: currentState?.completedAt ?? existingItem.completedAt ?? null,
+      lastSeenAt: currentState?.lastSeenAt ?? existingItem.lastSeenAt ?? null,
+      updatedAt: timestamp
+    });
+
+    return this.enrichSessionItem({
+      ...this.getSessionListItemOrThrow(input.sessionId, input.userId),
+      isFavorite: input.isFavorite
     });
   }
 
@@ -829,13 +882,14 @@ export class SessionHistoryService {
         this.sessionIndexRepository.listByWorkspace(workspaceId, userId),
         workspace.path
       );
-      const sessions = await this.sessionSyncService
+      const discovery = await this.sessionSyncService
         .discoverWorkspaceSessions(workspace.path, {
           knownSessions
         })
         .catch((error) => {
           throw mapSessionProviderError(error);
         });
+      const sessions = discovery.sessions;
       discoverDurationMs = Date.now() - discoverStartedAt;
       const timestamp = nowIso();
       const discoveredSessionIds = new Map<string, string>();
@@ -872,7 +926,7 @@ export class SessionHistoryService {
             provider: session.provider,
             title: session.title,
             messageCount: session.messageCount,
-            isArchived: session.isArchived ?? existingIndex?.isArchived ?? false,
+            isArchived: resolveDiscoveredArchiveState(existingIndex?.isArchived ?? false, session.isArchived),
             lastMessageAt: session.lastMessageAt,
             createdAt,
             updatedAt: timestamp
@@ -913,10 +967,10 @@ export class SessionHistoryService {
             subagentLabel: relation?.subagentLabel ?? null,
             title: persistedSession.session.title,
             messageCount: persistedSession.session.messageCount,
-            isArchived:
-              persistedSession.session.isArchived ??
-              persistedSession.existingIndex?.isArchived ??
-              false,
+            isArchived: resolveDiscoveredArchiveState(
+              persistedSession.existingIndex?.isArchived ?? false,
+              persistedSession.session.isArchived
+            ),
             lastMessageAt: persistedSession.session.lastMessageAt,
             createdAt: persistedSession.createdAt,
             updatedAt: timestamp
@@ -927,7 +981,9 @@ export class SessionHistoryService {
       const persistStartedAt = Date.now();
       persist();
       persistDurationMs = Date.now() - persistStartedAt;
-      this.cleanupStaleHiddenSessions(workspaceId, userId, sessions);
+      if (discovery.isComplete) {
+        this.cleanupStaleHiddenSessions(workspaceId, userId, sessions);
+      }
       this.workspaceSessionRelations.set(
         workspaceId,
         this.buildWorkspaceSessionRelationMap(sessions, discoveredSessionIds)
@@ -935,7 +991,10 @@ export class SessionHistoryService {
 
       const items = this.sessionIndexRepository.listByWorkspace(workspaceId, userId);
       const recentItems = items.slice(0, refreshStateCount);
-      this.workspaceDiscoveryTimestamps.set(workspaceId, Date.now());
+      this.workspaceDiscoveryStatuses.set(workspaceId, {
+        refreshedAt: Date.now(),
+        isComplete: discovery.isComplete
+      });
 
       if (refreshStateMode === "inline") {
         await this.refreshRecentSessionStates(recentItems, userId);
@@ -954,6 +1013,7 @@ export class SessionHistoryService {
           knownSessions: knownSessions.length,
           discoveredSessions: sessions.length,
           returnedSessions: nextItems.length,
+          discoveryComplete: discovery.isComplete,
           refreshedStates: Math.min(items.length, refreshStateCount),
           discoverMs: discoverDurationMs,
           persistMs: persistDurationMs,
@@ -1445,26 +1505,20 @@ export class SessionHistoryService {
     sessions: SessionListItem[],
     workspacePath: string
   ) {
-    return sessions.flatMap((session) => {
+    return sessions.map((session) => {
       const stats = safeStat(session.rawStoreRef);
 
-      if (!stats) {
-        return [];
-      }
-
-      return [
-        {
-          provider: session.provider,
-          providerSessionId: session.providerSessionId,
-          title: session.title,
-          workspacePath,
-          rawStoreRef: session.rawStoreRef,
-          lastMessageAt: session.lastMessageAt,
-          messageCount: session.messageCount,
-          sourceMtimeMs: stats.mtimeMs,
-          sourceSizeBytes: stats.size
-        }
-      ];
+      return {
+        provider: session.provider,
+        providerSessionId: session.providerSessionId,
+        title: session.title,
+        workspacePath,
+        rawStoreRef: session.rawStoreRef,
+        lastMessageAt: session.lastMessageAt,
+        messageCount: session.messageCount,
+        sourceMtimeMs: stats?.mtimeMs,
+        sourceSizeBytes: stats?.size
+      };
     });
   }
 
@@ -1487,6 +1541,7 @@ export class SessionHistoryService {
       runningState: inspection.runningState === "running" ? "running" : "idle",
       activitySource:
         inspection.lastEventAt || inspection.completedAtCandidate ? "inferred" : "none",
+      favorite: current?.favorite ?? false,
       lastEventAt: inspection.lastEventAt,
       completedAt: inspection.completedAtCandidate,
       lastSeenAt: current?.lastSeenAt ?? null,
@@ -1534,6 +1589,17 @@ function clampLimit(limit: number): number {
 
 function buildProviderSessionKey(provider: string, providerSessionId: string): string {
   return `${provider}::${providerSessionId}`;
+}
+
+function resolveDiscoveredArchiveState(
+  existingArchived: boolean,
+  discoveredArchived: boolean | null | undefined
+): boolean {
+  if (existingArchived) {
+    return true;
+  }
+
+  return discoveredArchived === true;
 }
 
 function isMessageAtOrAfter(timestamp: string, minTimestamp: string | null): boolean {

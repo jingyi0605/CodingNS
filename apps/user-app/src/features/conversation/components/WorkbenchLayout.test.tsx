@@ -206,6 +206,60 @@ describe("WorkbenchLayout", () => {
         return createJsonResponse(currentSnapshot);
       }
 
+      if (url.endsWith("/api/sessions/session-2/favorite") && init?.method === "PATCH") {
+        const payload = JSON.parse(String(init?.body ?? "{}")) as { favorite?: boolean };
+        const favorite = payload.favorite === true;
+        const nextSession = createSessionSummary({
+          sessionId: "session-2",
+          title: "会话 Beta",
+          workspaceId: "workspace-1",
+          isFavorite: favorite
+        });
+
+        currentSnapshot = createWorkbenchSnapshot([
+          {
+            workspace: createWorkspace("workspace-1", "项目一"),
+            sessions: [
+              createSessionSummary({
+                sessionId: "session-1",
+                title: "会话 Alpha",
+                workspaceId: "workspace-1"
+              }),
+              createSessionSummary({
+                sessionId: "session-1-sub",
+                title: "子代理探索",
+                workspaceId: "workspace-1",
+                parentSessionId: "session-1",
+                isSubagent: true,
+                subagentLabel: "worker · Banach"
+              }),
+              createSessionSummary({
+                sessionId: "session-1-sub-nested",
+                title: "子代理深挖",
+                workspaceId: "workspace-1",
+                parentSessionId: "session-1-sub",
+                isSubagent: true,
+                subagentLabel: "explorer · Turing"
+              }),
+              nextSession
+            ]
+          },
+          {
+            workspace: createWorkspace("workspace-2", "项目二"),
+            sessions: [
+              createSessionSummary({
+                sessionId: "session-3",
+                title: "会话 Gamma",
+                workspaceId: "workspace-2"
+              })
+            ]
+          }
+        ]);
+        MockWebSocket.workbenchSnapshot = currentSnapshot;
+
+        return createJsonResponse(nextSession);
+      }
+
       if (url.includes("/api/sessions/session-2/archive")) {
         const payload = JSON.parse(String(init?.body ?? "{}")) as { archived?: boolean };
         const archived = payload.archived === true;
@@ -213,7 +267,8 @@ describe("WorkbenchLayout", () => {
           sessionId: "session-2",
           title: "会话 Beta",
           workspaceId: "workspace-1",
-          isArchived: archived
+          isArchived: archived,
+          isFavorite: true
         });
 
         currentSnapshot = createWorkbenchSnapshot([
@@ -292,9 +347,6 @@ describe("WorkbenchLayout", () => {
       .closest(".workbench-section-block") as HTMLElement | null;
     expect(favoriteSection).not.toBeNull();
     expect(within(favoriteSection!).getByText("会话 Beta")).toBeInTheDocument();
-    await waitFor(() => {
-      expect(window.localStorage.getItem("workbench.session.favorite.ids")).toContain("session-2");
-    });
 
     firstView.unmount();
 
@@ -307,6 +359,8 @@ describe("WorkbenchLayout", () => {
     await waitFor(() => {
       expect(within(favoriteSectionAfterReload!).getByText("会话 Beta")).toBeInTheDocument();
     });
+    const workspaceGroupAfterReload = await findWorkspaceGroupByName("项目一");
+    expect(within(workspaceGroupAfterReload).queryByText("会话 Beta")).not.toBeInTheDocument();
 
     const betaCardAfterReload = await findSessionCardByTitle("会话 Beta");
 
@@ -345,6 +399,101 @@ describe("WorkbenchLayout", () => {
         "?workspaceId=workspace-1&provider=claude-code"
       );
     });
+  });
+
+  it("收藏会话在快照短暂缺失后恢复时，不会被前端错误清掉", async () => {
+    const favoriteSession = createSessionSummary({
+      sessionId: "session-2",
+      title: "会话 Beta",
+      workspaceId: "workspace-1",
+      provider: "opencode",
+      isFavorite: true
+    });
+    const fullSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "会话 Alpha",
+            workspaceId: "workspace-1"
+          }),
+          createSessionSummary({
+            sessionId: "session-2",
+            title: "会话 Beta",
+            workspaceId: "workspace-1",
+            provider: "opencode"
+          })
+        ]
+      }
+    ]);
+    let currentSnapshot = fullSnapshot;
+    const favoriteSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "会话 Alpha",
+            workspaceId: "workspace-1"
+          }),
+          favoriteSession
+        ]
+      }
+    ]);
+    const missingFavoriteSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "会话 Alpha",
+            workspaceId: "workspace-1"
+          })
+        ]
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      if (url.endsWith("/api/sessions/session-2/favorite") && init?.method === "PATCH") {
+        currentSnapshot = favoriteSnapshot;
+        MockWebSocket.workbenchSnapshot = favoriteSnapshot;
+        return createJsonResponse(favoriteSession);
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute();
+
+    const betaCard = await findSessionCardByTitle("会话 Beta");
+    await userEvent.click(within(betaCard).getByRole("button", { name: t("shell.sessionMoreAction") }));
+    await userEvent.click(screen.getByRole("button", { name: t("shell.favoriteAction") }));
+
+    MockWebSocket.instances[0]?.dispatchMessage({
+      type: "workbench.snapshot",
+      snapshot: missingFavoriteSnapshot
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText("会话 Beta")).not.toBeInTheDocument();
+    });
+
+    MockWebSocket.instances[0]?.dispatchMessage({
+      type: "workbench.snapshot",
+      snapshot: favoriteSnapshot
+    });
+
+    const favoriteSection = await screen.findByText(t("shell.favoriteSectionTitle"));
+    expect(favoriteSection).toBeInTheDocument();
+    expect(screen.getAllByText("会话 Beta").length).toBeGreaterThan(0);
   });
 
   it("会话菜单吸附在按钮右侧并与按钮底部对齐", async () => {
@@ -404,6 +553,7 @@ describe("WorkbenchLayout", () => {
       throw new Error("未找到会话操作菜单");
     }
 
+    expect(menu).not.toHaveAttribute("data-placement");
     expect(menu).toHaveStyle({
       top: "150px",
       left: "248px"
@@ -677,7 +827,8 @@ describe("WorkbenchLayout", () => {
       ...createSessionSummary({
         sessionId: `favorite-session-${index + 1}`,
         title: `Favorite Session ${index + 1}`,
-        workspaceId: "workspace-1"
+        workspaceId: "workspace-1",
+        isFavorite: true
       }),
       lastMessageAt: `2026-03-24T11:${String(59 - index).padStart(2, "0")}:00.000Z`,
       updatedAt: `2026-03-24T11:${String(59 - index).padStart(2, "0")}:00.000Z`
@@ -689,10 +840,6 @@ describe("WorkbenchLayout", () => {
       }
     ]);
 
-    window.localStorage.setItem(
-      "workbench.session.favorite.ids",
-      JSON.stringify(sessions.map((session) => session.sessionId))
-    );
     MockWebSocket.workbenchSnapshot = currentSnapshot;
 
     global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
@@ -735,7 +882,8 @@ describe("WorkbenchLayout", () => {
             ...createSessionSummary({
               sessionId: "favorite-root",
               title: "Favorite Root",
-              workspaceId: "workspace-1"
+              workspaceId: "workspace-1",
+              isFavorite: true
             }),
             lastMessageAt: "2026-03-24T11:00:00.000Z",
             updatedAt: "2026-03-24T11:00:00.000Z"
@@ -756,7 +904,6 @@ describe("WorkbenchLayout", () => {
       }
     ]);
 
-    window.localStorage.setItem("workbench.session.favorite.ids", JSON.stringify(["favorite-root"]));
     MockWebSocket.workbenchSnapshot = currentSnapshot;
 
     global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
@@ -1830,7 +1977,7 @@ function createSessionSummary(input: {
   sessionId: string;
   title: string;
   workspaceId: string;
-  provider?: "codex" | "claude-code";
+  provider?: "codex" | "claude-code" | "opencode";
   isArchived?: boolean;
   parentSessionId?: string | null;
   isSubagent?: boolean;
@@ -1838,14 +1985,18 @@ function createSessionSummary(input: {
   runningState?: "idle" | "starting" | "running" | "completed" | "interrupted" | "failed";
   activitySource?: "none" | "runtime" | "inferred";
   activityState?: "idle" | "running" | "completed_unread";
+  isFavorite?: boolean;
 }) {
+  const provider = input.provider ?? "codex";
+
   return {
     sessionId: input.sessionId,
     workspaceId: input.workspaceId,
-    provider: input.provider ?? "codex",
+    provider,
     providerSessionId: `raw-${input.sessionId}`,
-    rawStoreRef: `codex://${input.sessionId}`,
+    rawStoreRef: `${provider}://${input.sessionId}`,
     isArchived: input.isArchived ?? false,
+    isFavorite: input.isFavorite ?? false,
     parentSessionId: input.parentSessionId ?? null,
     isSubagent: input.isSubagent ?? false,
     subagentLabel: input.subagentLabel ?? null,

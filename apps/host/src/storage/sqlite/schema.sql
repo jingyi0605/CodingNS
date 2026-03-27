@@ -131,6 +131,7 @@ CREATE TABLE IF NOT EXISTS session_states (
     running_state IN ('idle', 'starting', 'running', 'completed', 'interrupted', 'failed')
   ),
   activity_source TEXT NOT NULL CHECK (activity_source IN ('none', 'runtime', 'inferred')),
+  favorite INTEGER NOT NULL DEFAULT 0 CHECK (favorite IN (0, 1)),
   last_event_at TEXT,
   completed_at TEXT,
   last_seen_at TEXT,

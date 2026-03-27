@@ -6,8 +6,8 @@ import type {
   HistoryPage,
   ProviderCapabilities,
   ProviderArchiveUpdateResult,
+  ProviderSessionDiscovery,
   ProviderRealtimeEvent,
-  ProviderSessionSummary,
   ProviderSubscription,
   ResumeSessionResult,
   SendMessageResult,
@@ -37,14 +37,26 @@ export class SessionSyncService {
   async discoverWorkspaceSessions(
     workspacePath: string,
     options?: DetectSessionsOptions
-  ): Promise<ProviderSessionSummary[]> {
-    const sessions = await Promise.all(
-      this.registry.list().map((provider) => provider.detectSessions(workspacePath, options))
+  ): Promise<ProviderSessionDiscovery> {
+    const discoveries = await Promise.all(
+      this.registry.list().map(async (provider) => {
+        if (provider.detectSessionsDetailed) {
+          return provider.detectSessionsDetailed(workspacePath, options);
+        }
+
+        return {
+          sessions: await provider.detectSessions(workspacePath, options),
+          isComplete: true
+        } satisfies ProviderSessionDiscovery;
+      })
     );
 
-    return sessions
-      .flat()
-      .sort((left, right) => (right.lastMessageAt ?? "").localeCompare(left.lastMessageAt ?? ""));
+    return {
+      sessions: discoveries
+        .flatMap((discovery) => discovery.sessions)
+        .sort((left, right) => (right.lastMessageAt ?? "").localeCompare(left.lastMessageAt ?? "")),
+      isComplete: discoveries.every((discovery) => discovery.isComplete)
+    };
   }
 
   async readHistory(

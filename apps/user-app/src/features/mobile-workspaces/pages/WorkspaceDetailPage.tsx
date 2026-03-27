@@ -298,7 +298,9 @@ export function WorkspaceDetailPage() {
                     <button
                       type="button"
                       className="secondary-button"
-                      onClick={() => toggleFavoriteSession(session.sessionId)}
+                      onClick={() => {
+                        void toggleFavoriteSession(session.sessionId);
+                      }}
                     >
                       {favoriteSessionIds.includes(session.sessionId)
                         ? t("shell.unfavoriteAction")

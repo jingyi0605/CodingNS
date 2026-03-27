@@ -55,8 +55,16 @@ export function SessionIndexPage() {
     [favoriteSet, visibleTree]
   );
   const workspaceTree = useMemo(
-    () => (currentWorkspaceId ? visibleTree.filter((node) => node.entry.workspace.id === currentWorkspaceId) : []),
-    [currentWorkspaceId, visibleTree]
+    () =>
+      currentWorkspaceId
+        ? visibleTree.filter(
+            (node) =>
+              node.entry.workspace.id === currentWorkspaceId &&
+              !favoriteSet.has(node.entry.session.sessionId) &&
+              !node.children.some((entry) => favoriteSet.has(entry.session.sessionId))
+          )
+        : [],
+    [currentWorkspaceId, favoriteSet, visibleTree]
   );
   const workspaceName =
     currentWorkspaceId &&
@@ -140,7 +148,9 @@ export function SessionIndexPage() {
                   hasSubsessions={node.children.length > 0}
                   onActivate={(sessionId) => navigate(`/sessions/${sessionId}`)}
                   onToggleSubsessions={() => toggleSubagentList(rootSessionId)}
-                  onToggleFavorite={(sessionId) => toggleFavoriteSession(sessionId)}
+                  onToggleFavorite={(sessionId) => {
+                    void toggleFavoriteSession(sessionId);
+                  }}
                   onArchive={(sessionId) => archiveSession(sessionId)}
                   onUnarchive={(sessionId) => unarchiveSession(sessionId)}
                   onRename={(sessionId, title) => renameSession(sessionId, title)}
@@ -155,7 +165,9 @@ export function SessionIndexPage() {
                         isActive={currentSessionId === entry.session.sessionId}
                         depth={1}
                         onActivate={(sessionId) => navigate(`/sessions/${sessionId}`)}
-                        onToggleFavorite={(sessionId) => toggleFavoriteSession(sessionId)}
+                        onToggleFavorite={(sessionId) => {
+                          void toggleFavoriteSession(sessionId);
+                        }}
                         onArchive={(sessionId) => archiveSession(sessionId)}
                         onUnarchive={(sessionId) => unarchiveSession(sessionId)}
                         onRename={(sessionId, title) => renameSession(sessionId, title)}

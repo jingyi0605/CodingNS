@@ -3,17 +3,34 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import WebSocket from "ws";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { resolveHostConfig } from "../../src/config/env.js";
+import { SessionChangedFileService } from "../../src/modules/sessions/session-changed-file-service.js";
+import { SessionHistoryService } from "../../src/modules/sessions/session-history-service.js";
+import { SessionMessageAttachmentService } from "../../src/modules/sessions/session-message-attachment-service.js";
+import { nowIso } from "../../src/shared/utils/time.js";
+import { SessionBindingRepository } from "../../src/storage/repositories/session-binding-repository.js";
+import { SessionChangedFileRepository } from "../../src/storage/repositories/session-changed-file-repository.js";
+import { SessionIndexRepository } from "../../src/storage/repositories/session-index-repository.js";
+import { SessionMessageAttachmentRepository } from "../../src/storage/repositories/session-message-attachment-repository.js";
+import { SessionStateRepository } from "../../src/storage/repositories/session-state-repository.js";
+import { SessionStatusSnapshotRepository } from "../../src/storage/repositories/session-status-snapshot-repository.js";
+import { WorkspaceRepository } from "../../src/storage/repositories/workspace-repository.js";
+import { createDatabaseClient } from "../../src/storage/sqlite/client.js";
 
 import {
+  createEmptyFixture,
   createProviderFixture,
   createTestApp,
   destroyFixture,
+  type EmptyFixture,
   type ProviderFixture
 } from "../helpers/test-app.js";
 
 const activeClosers: Array<() => Promise<void> | void> = [];
 const activeFixtures: ProviderFixture[] = [];
+const activeEmptyFixtures: EmptyFixture[] = [];
 
 function createWsMessageQueue(socket: WebSocket) {
   const pending: string[] = [];
@@ -70,9 +87,239 @@ afterEach(async () => {
       destroyFixture(fixture);
     }
   }
+
+  while (activeEmptyFixtures.length > 0) {
+    const fixture = activeEmptyFixtures.pop();
+
+    if (fixture) {
+      destroyFixture(fixture);
+    }
+  }
 });
 
 describe("spec002 会话同步核心", () => {
+  it("host 会把 opencode 已知会话传给发现链路，并把不完整发现视为未完成刷新", async () => {
+    const fixture = createEmptyFixture();
+    const config = resolveHostConfig({
+      databasePath: ":memory:",
+      claudeCodeHomeDir: fixture.claudeHomeDir,
+      codexHomeDir: fixture.codexHomeDir
+    });
+    const database = createDatabaseClient(":memory:");
+    const workspaceRepository = new WorkspaceRepository(database.db);
+    const sessionBindingRepository = new SessionBindingRepository(database.db);
+    const sessionIndexRepository = new SessionIndexRepository(database.db);
+    const sessionStateRepository = new SessionStateRepository(database.db);
+    const sessionStatusSnapshotRepository = new SessionStatusSnapshotRepository(database.db);
+    const sessionChangedFileService = new SessionChangedFileService(
+      new SessionChangedFileRepository(database.db)
+    );
+    const sessionMessageAttachmentService = new SessionMessageAttachmentService(
+      new SessionMessageAttachmentRepository(database.db),
+      config
+    );
+    const sessionHistoryService = new SessionHistoryService(
+      database.db,
+      workspaceRepository,
+      sessionBindingRepository,
+      sessionChangedFileService,
+      sessionIndexRepository,
+      sessionMessageAttachmentService,
+      sessionStateRepository,
+      sessionStatusSnapshotRepository,
+      config
+    );
+    const timestamp = nowIso();
+
+    activeEmptyFixtures.push(fixture);
+    activeClosers.push(() => database.close());
+
+    workspaceRepository.create({
+      id: "workspace-1",
+      name: "Fixture Workspace",
+      path: fixture.workspaceDir,
+      repoRoot: fixture.workspaceDir,
+      favorite: false,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      removedAt: null
+    });
+    sessionBindingRepository.upsert({
+      sessionId: "host-session-1",
+      workspaceId: "workspace-1",
+      provider: "opencode",
+      providerSessionId: "op-s-1",
+      rawStoreRef: "opencode://session/op-s-1",
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+    sessionIndexRepository.upsert({
+      sessionId: "host-session-1",
+      workspaceId: "workspace-1",
+      provider: "opencode",
+      title: "OpenCode Session",
+      messageCount: 3,
+      isArchived: false,
+      lastMessageAt: timestamp,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+
+    const discoverMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        sessions: [],
+        isComplete: false
+      })
+      .mockResolvedValueOnce({
+        sessions: [],
+        isComplete: true
+      });
+
+    (
+      sessionHistoryService as unknown as {
+        sessionSyncService: {
+          discoverWorkspaceSessions: typeof discoverMock;
+        };
+      }
+    ).sessionSyncService = {
+      discoverWorkspaceSessions: discoverMock
+    };
+
+    await sessionHistoryService.discoverWorkspaceSessions("workspace-1", "user-1", {
+      force: true
+    });
+
+    const firstCallOptions = discoverMock.mock.calls[0]?.[1];
+    expect(firstCallOptions?.knownSessions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          provider: "opencode",
+          providerSessionId: "op-s-1",
+          rawStoreRef: "opencode://session/op-s-1"
+        })
+      ])
+    );
+    expect(sessionHistoryService.needsWorkspaceDiscovery("workspace-1", 15_000)).toBe(true);
+
+    await sessionHistoryService.discoverWorkspaceSessions("workspace-1", "user-1", {
+      force: true
+    });
+
+    expect(sessionHistoryService.needsWorkspaceDiscovery("workspace-1", 15_000)).toBe(false);
+  });
+
+  it("本地已归档的 opencode 会话不会被后续发现结果重新放回普通列表", async () => {
+    const fixture = createEmptyFixture();
+    const config = resolveHostConfig({
+      databasePath: ":memory:",
+      claudeCodeHomeDir: fixture.claudeHomeDir,
+      codexHomeDir: fixture.codexHomeDir
+    });
+    const database = createDatabaseClient(":memory:");
+    const workspaceRepository = new WorkspaceRepository(database.db);
+    const sessionBindingRepository = new SessionBindingRepository(database.db);
+    const sessionIndexRepository = new SessionIndexRepository(database.db);
+    const sessionStateRepository = new SessionStateRepository(database.db);
+    const sessionStatusSnapshotRepository = new SessionStatusSnapshotRepository(database.db);
+    const sessionChangedFileService = new SessionChangedFileService(
+      new SessionChangedFileRepository(database.db)
+    );
+    const sessionMessageAttachmentService = new SessionMessageAttachmentService(
+      new SessionMessageAttachmentRepository(database.db),
+      config
+    );
+    const sessionHistoryService = new SessionHistoryService(
+      database.db,
+      workspaceRepository,
+      sessionBindingRepository,
+      sessionChangedFileService,
+      sessionIndexRepository,
+      sessionMessageAttachmentService,
+      sessionStateRepository,
+      sessionStatusSnapshotRepository,
+      config
+    );
+    const timestamp = nowIso();
+
+    activeEmptyFixtures.push(fixture);
+    activeClosers.push(() => database.close());
+
+    workspaceRepository.create({
+      id: "workspace-1",
+      name: "Fixture Workspace",
+      path: fixture.workspaceDir,
+      repoRoot: fixture.workspaceDir,
+      favorite: false,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      removedAt: null
+    });
+    sessionBindingRepository.upsert({
+      sessionId: "host-session-archived",
+      workspaceId: "workspace-1",
+      provider: "opencode",
+      providerSessionId: "op-archived-1",
+      rawStoreRef: "opencode://session/op-archived-1",
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+    sessionIndexRepository.upsert({
+      sessionId: "host-session-archived",
+      workspaceId: "workspace-1",
+      provider: "opencode",
+      title: "Archived OpenCode Session",
+      messageCount: 3,
+      isArchived: true,
+      lastMessageAt: timestamp,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+
+    const discoverMock = vi.fn().mockResolvedValue({
+      sessions: [
+        {
+          provider: "opencode",
+          providerSessionId: "op-archived-1",
+          title: "Archived OpenCode Session",
+          workspacePath: fixture.workspaceDir,
+          rawStoreRef: "opencode://session/op-archived-1",
+          isArchived: false,
+          lastMessageAt: timestamp,
+          messageCount: 3
+        }
+      ],
+      isComplete: true
+    });
+
+    (
+      sessionHistoryService as unknown as {
+        sessionSyncService: {
+          discoverWorkspaceSessions: typeof discoverMock;
+        };
+      }
+    ).sessionSyncService = {
+      discoverWorkspaceSessions: discoverMock
+    };
+
+    const items = await sessionHistoryService.discoverWorkspaceSessions("workspace-1", "user-1", {
+      force: true
+    });
+
+    expect(items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sessionId: "host-session-archived",
+          provider: "opencode",
+          isArchived: true
+        })
+      ])
+    );
+    expect(
+      sessionIndexRepository.findIndexRecordBySessionId("host-session-archived")?.isArchived
+    ).toBe(true);
+  });
+
   it("打通 bootstrap、导入工作区、发现会话、历史读取、能力查询、续接和新建会话", async () => {
     const fixture = createProviderFixture();
     activeFixtures.push(fixture);
@@ -157,6 +404,60 @@ describe("spec002 会话同步核心", () => {
 
     expect(claudeSession?.title).toBe("Claude 样本会话");
     expect(codexSession).toBeTruthy();
+
+    const favoriteUpdated = await hosted.app.inject({
+      method: "PATCH",
+      url: `/api/sessions/${codexSession.sessionId}/favorite`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        favorite: true
+      }
+    });
+    expect(favoriteUpdated.statusCode).toBe(200);
+    expect(favoriteUpdated.json()).toMatchObject({
+      sessionId: codexSession.sessionId,
+      isFavorite: true
+    });
+
+    const sessionsAfterFavorite = await hosted.app.inject({
+      method: "GET",
+      url: `/api/sessions?workspaceId=${workspaceId}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(sessionsAfterFavorite.statusCode).toBe(200);
+    expect(
+      sessionsAfterFavorite
+        .json()
+        .items.find((item: { sessionId: string }) => item.sessionId === codexSession.sessionId)
+    ).toMatchObject({
+      sessionId: codexSession.sessionId,
+      isFavorite: true
+    });
+
+    const workbenchAfterFavorite = await hosted.app.inject({
+      method: "GET",
+      url: "/api/workbench",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(workbenchAfterFavorite.statusCode).toBe(200);
+    expect(
+      workbenchAfterFavorite
+        .json()
+        .items
+        .flatMap((item: { sessions?: Array<{ sessionId: string; isFavorite?: boolean }> }) =>
+          Array.isArray(item.sessions) ? item.sessions : []
+        )
+        .find((item: { sessionId: string }) => item.sessionId === codexSession.sessionId)
+    ).toMatchObject({
+      sessionId: codexSession.sessionId,
+      isFavorite: true
+    });
 
     const firstHistory = await hosted.app.inject({
       method: "GET",

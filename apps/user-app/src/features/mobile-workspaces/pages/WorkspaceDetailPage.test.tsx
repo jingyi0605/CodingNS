@@ -71,7 +71,7 @@ describe("WorkspaceDetailPage", () => {
       currentWorkspaceId: "workspace-1",
       favoriteSessionIds: [],
       selectWorkspace: vi.fn(),
-      toggleFavoriteSession: vi.fn(),
+      toggleFavoriteSession: vi.fn(async () => undefined),
       archiveSession: vi.fn(async () => undefined),
       unarchiveSession: vi.fn(async () => undefined),
       startDraftSession: vi.fn()

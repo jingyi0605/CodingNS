@@ -142,6 +142,7 @@ export interface SessionSummaryDto {
   isSubagent?: boolean;
   subagentLabel?: string | null;
   isArchived?: boolean;
+  isFavorite?: boolean;
   title: string;
   messageCount: number;
   lastMessageAt: string | null;
@@ -425,6 +426,13 @@ export function updateSessionArchiveState(sessionId: string, archived: boolean) 
   return httpClient.request<SessionSummaryDto>(`/api/sessions/${encodeURIComponent(sessionId)}/archive`, {
     method: "PATCH",
     body: JSON.stringify({ archived })
+  });
+}
+
+export function updateSessionFavoriteState(sessionId: string, favorite: boolean) {
+  return httpClient.request<SessionSummaryDto>(`/api/sessions/${encodeURIComponent(sessionId)}/favorite`, {
+    method: "PATCH",
+    body: JSON.stringify({ favorite })
   });
 }
 

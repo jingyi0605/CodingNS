@@ -13,6 +13,7 @@ export class SessionStateRepository {
            user_id,
            running_state,
            activity_source,
+           favorite,
            last_event_at,
            completed_at,
            last_seen_at,
@@ -33,14 +34,16 @@ export class SessionStateRepository {
            user_id,
            running_state,
            activity_source,
+           favorite,
            last_event_at,
            completed_at,
            last_seen_at,
            updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(session_id, user_id) DO UPDATE SET
            running_state = excluded.running_state,
            activity_source = excluded.activity_source,
+           favorite = excluded.favorite,
            last_event_at = excluded.last_event_at,
            completed_at = excluded.completed_at,
            last_seen_at = excluded.last_seen_at,
@@ -51,6 +54,7 @@ export class SessionStateRepository {
         record.userId,
         record.runningState,
         record.activitySource,
+        record.favorite ? 1 : 0,
         record.lastEventAt,
         record.completedAt,
         record.lastSeenAt,
@@ -64,6 +68,7 @@ interface SessionStateRow {
   user_id: string;
   running_state: SessionStateRecord["runningState"];
   activity_source: SessionStateRecord["activitySource"];
+  favorite: number;
   last_event_at: string | null;
   completed_at: string | null;
   last_seen_at: string | null;
@@ -76,6 +81,7 @@ function mapSessionStateRow(row: SessionStateRow): SessionStateRecord {
     userId: row.user_id,
     runningState: row.running_state,
     activitySource: row.activity_source,
+    favorite: row.favorite === 1,
     lastEventAt: row.last_event_at,
     completedAt: row.completed_at,
     lastSeenAt: row.last_seen_at,

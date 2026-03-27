@@ -41,6 +41,122 @@ test("OpenCodeAdapter 能按 workspace 发现会话并返回稳定 rawStoreRef",
   }
 });
 
+test("OpenCodeAdapter 会用 knownSessions 补回 server 短暂漏掉的会话，并标记发现结果不完整", async (context) => {
+  const fixture = createOpenCodeFixture();
+  const originalFetch = globalThis.fetch;
+  const db = new DatabaseSync(fixture.dbPath);
+
+  db.prepare(
+    `INSERT INTO session (
+      id,
+      project_id,
+      parent_id,
+      slug,
+      directory,
+      title,
+      version,
+      time_created,
+      time_updated,
+      time_archived,
+      workspace_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    "ses_hidden",
+    "global",
+    null,
+    "hidden",
+    "/workspace/demo",
+    "Hidden Session",
+    "v1",
+    1_700_000_030_000,
+    1_700_000_040_000,
+    null,
+    null
+  );
+  db.prepare(
+    `INSERT INTO message (id, session_id, time_created, time_updated, data)
+     VALUES (?, ?, ?, ?, ?)`
+  ).run(
+    "msg_hidden_user",
+    "ses_hidden",
+    1_700_000_030_100,
+    1_700_000_030_100,
+    JSON.stringify({
+      role: "user",
+      time: {
+        created: 1_700_000_030_100
+      }
+    })
+  );
+  db.prepare(
+    `INSERT INTO part (id, message_id, session_id, time_created, time_updated, data)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(
+    "prt_hidden_text",
+    "msg_hidden_user",
+    "ses_hidden",
+    1_700_000_030_200,
+    1_700_000_030_200,
+    JSON.stringify({
+      type: "text",
+      text: "retained"
+    })
+  );
+  db.close();
+
+  globalThis.fetch = async (input) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+
+    if (url === "http://127.0.0.1:41827/session?directory=%2Fworkspace%2Fdemo&roots=true") {
+      return jsonResponse([
+        {
+          id: "ses_demo",
+          directory: "/workspace/demo",
+          title: "Demo Session",
+          time: {
+            created: 1_700_000_000_000,
+            updated: 1_700_000_020_000
+          }
+        }
+      ]);
+    }
+
+    throw new Error(`unexpected request: ${url}`);
+  };
+
+  context.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  try {
+    const adapter = new OpenCodeAdapter({
+      baseUrl: "http://127.0.0.1:41827",
+      dbPath: fixture.dbPath
+    });
+    const discovery = await adapter.detectSessionsDetailed("/workspace/demo", {
+      knownSessions: [
+        {
+          provider: "opencode",
+          providerSessionId: "ses_hidden",
+          title: "Hidden Session",
+          workspacePath: "/workspace/demo",
+          rawStoreRef: "opencode://session/ses_hidden",
+          lastMessageAt: "2023-11-14T22:18:50.100Z",
+          messageCount: 1
+        }
+      ]
+    });
+
+    assert.equal(discovery.isComplete, false);
+    assert.deepEqual(
+      discovery.sessions.map((session) => session.providerSessionId).sort(),
+      ["ses_demo", "ses_hidden"]
+    );
+  } finally {
+    fixture.dispose();
+  }
+});
+
 test("OpenCodeAdapter 能把核心 part 类型映射到统一消息模型", async () => {
   const fixture = createOpenCodeFixture();
 

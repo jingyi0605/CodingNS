@@ -67,6 +67,10 @@ interface ArchiveSessionBody {
   archived?: boolean;
 }
 
+interface FavoriteSessionBody {
+  favorite?: boolean;
+}
+
 function requireUserId(request: FastifyRequest): string {
   const userId = request.auth?.user.userId;
 
@@ -334,6 +338,19 @@ export class SessionController {
         sessionId: request.params.sessionId,
         userId: requireUserId(request),
         isArchived: request.body.archived === true
+      })
+    );
+  };
+
+  readonly updateFavoriteState = async (
+    request: FastifyRequest<{ Params: SessionParams; Body: FavoriteSessionBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(
+      await this.sessionHistoryService.updateSessionFavoriteState({
+        sessionId: request.params.sessionId,
+        userId: requireUserId(request),
+        isFavorite: request.body.favorite === true
       })
     );
   };

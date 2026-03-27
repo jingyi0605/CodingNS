@@ -99,6 +99,11 @@ export interface ProviderArchiveUpdateResult {
   isArchived: boolean;
 }
 
+export interface ProviderSessionDiscovery {
+  sessions: ProviderSessionSummary[];
+  isComplete: boolean;
+}
+
 export interface DetectSessionsOptions {
   knownSessions?: ProviderSessionSummary[];
 }
@@ -161,6 +166,10 @@ export interface ProviderAdapter {
     workspacePath: string,
     options?: DetectSessionsOptions
   ): Promise<ProviderSessionSummary[]>;
+  detectSessionsDetailed?(
+    workspacePath: string,
+    options?: DetectSessionsOptions
+  ): Promise<ProviderSessionDiscovery>;
   readRecentSessionHistory?(
     providerSessionId: string,
     rawStoreRef: string,

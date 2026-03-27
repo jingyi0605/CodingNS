@@ -103,6 +103,7 @@ export interface SessionStateRecord {
   userId: string;
   runningState: SessionRunningState;
   activitySource: SessionActivitySource;
+  favorite: boolean;
   lastEventAt: string | null;
   completedAt: string | null;
   lastSeenAt: string | null;
@@ -151,6 +152,7 @@ export interface SessionListItem {
   isSubagent?: boolean;
   subagentLabel?: string | null;
   isArchived: boolean;
+  isFavorite: boolean;
   title: string;
   messageCount: number;
   lastMessageAt: string | null;

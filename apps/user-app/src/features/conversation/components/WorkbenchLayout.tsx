@@ -47,6 +47,7 @@ import {
   removeWorkspace,
   renameSessionTitle,
   updateSessionArchiveState,
+  updateSessionFavoriteState,
   type ProviderId,
   type SessionSummaryDto,
   type WorkbenchSnapshotDto,
@@ -70,7 +71,6 @@ const RIGHT_PANEL_COLLAPSED_KEY = "workbench.right.collapsed";
 const LAST_SESSION_PATH_KEY = "workbench.last.session.path";
 const WORKSPACE_COLLAPSED_IDS_KEY = "workbench.workspace.collapsed.ids";
 const SELECTED_WORKSPACE_ID_KEY = "workbench.workspace.selected.id";
-const FAVORITE_SESSION_IDS_KEY = "workbench.session.favorite.ids";
 const WORKBENCH_NAVIGATION_SNAPSHOT_KEY = "workbench.navigation.snapshot";
 
 const DEFAULT_LEFT_PANEL_WIDTH = 280;
@@ -93,6 +93,22 @@ const WORKSPACE_COMPOSITION_CHART_COLORS = [
   "#dc2626",
   "#64748b"
 ];
+
+function truncateMobileHeaderTitle(title: string) {
+  const normalized = title.trim();
+
+  if (!normalized) {
+    return normalized;
+  }
+
+  const glyphs = Array.from(normalized);
+
+  if (glyphs.length <= 10) {
+    return normalized;
+  }
+
+  return `${glyphs.slice(0, 10).join("")}…`;
+}
 
 const LazyFileContextPanel = lazy(async () => {
   const module = await import("./FileContextPanel");
@@ -194,7 +210,7 @@ interface WorkbenchShellContextValue {
     listener: (snapshot: TerminalManagerRealtimeSnapshotDto) => void
   ) => () => void;
   selectWorkspace: (workspaceId: string) => void;
-  toggleFavoriteSession: (sessionId: string) => void;
+  toggleFavoriteSession: (sessionId: string) => Promise<void>;
   archiveSession: (sessionId: string) => Promise<void>;
   unarchiveSession: (sessionId: string) => Promise<void>;
   renameSession: (sessionId: string, title: string) => Promise<SessionSummaryDto>;
@@ -617,6 +633,43 @@ function updateSessionArchivedStateInGroups(
       return {
         ...session,
         isArchived
+      };
+    });
+
+    return groupChanged
+      ? {
+          ...group,
+          sessions: nextSessions
+        }
+      : group;
+  });
+
+  return changed ? nextGroups : groups;
+}
+
+function updateSessionFavoriteStateInGroups(
+  groups: WorkspaceSessionGroup[],
+  sessionId: string,
+  isFavorite: boolean
+): WorkspaceSessionGroup[] {
+  let changed = false;
+
+  const nextGroups = groups.map((group) => {
+    let groupChanged = false;
+    const nextSessions = group.sessions.map((session) => {
+      if (session.sessionId !== sessionId) {
+        return session;
+      }
+
+      if ((session.isFavorite === true) === isFavorite) {
+        return session;
+      }
+
+      changed = true;
+      groupChanged = true;
+      return {
+        ...session,
+        isFavorite
       };
     });
 
@@ -1682,7 +1735,7 @@ function SidebarContent({
   onOpenSettings: () => void;
   onSelectWorkspace: (workspaceId: string) => void;
   onToggleWorkspaceCollapse: (workspaceId: string) => void;
-  onToggleFavoriteSession: (sessionId: string) => void;
+  onToggleFavoriteSession: (sessionId: string) => Promise<void>;
   onArchiveSession: (sessionId: string) => Promise<void>;
   onUnarchiveSession: (sessionId: string) => Promise<void>;
   onClose?: () => void;
@@ -2260,7 +2313,7 @@ function SidebarContent({
 
   function getFavoriteChildSessions(sessionId: string) {
     for (const group of workspaceGroups) {
-      const node = getVisibleSessionTreeNodes(group).find((item) => item.session.sessionId === sessionId);
+      const node = buildSessionTree(group.visibleSessions).find((item) => item.session.sessionId === sessionId);
 
       if (node) {
         return getTreeNodeChildren(node);
@@ -2310,14 +2363,22 @@ function SidebarContent({
     }
   }
 
-  function handleToggleFavorite(sessionId: string) {
+  async function handleToggleFavorite(sessionId: string) {
     const isFavorite = favoriteSessionIds.has(sessionId);
     setOpenSessionMenuKey(null);
-    onToggleFavoriteSession(sessionId);
-    showToast({
-      title: isFavorite ? t("shell.favoriteRemoved") : t("shell.favoriteAdded"),
-      tone: "success"
-    });
+
+    try {
+      await onToggleFavoriteSession(sessionId);
+      showToast({
+        title: isFavorite ? t("shell.favoriteRemoved") : t("shell.favoriteAdded"),
+        tone: "success"
+      });
+    } catch (error) {
+      showToast({
+        title: error instanceof Error ? error.message : t("shell.favoriteToggleFailed"),
+        tone: "error"
+      });
+    }
   }
 
   async function handleArchive(sessionId: string) {
@@ -3819,9 +3880,6 @@ export function WorkbenchLayout({
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(() =>
     readStoredString(SELECTED_WORKSPACE_ID_KEY)
   );
-  const [favoriteSessionIds, setFavoriteSessionIds] = useState(() =>
-    readStoredStringArray(FAVORITE_SESSION_IDS_KEY)
-  );
   const [infoPanelReady, setInfoPanelReady] = useState(false);
   const [activeInfoTab, setActiveInfoTab] = useState<InfoTab>("files");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -4177,10 +4235,6 @@ export function WorkbenchLayout({
   }, [collapsedWorkspaceIds]);
 
   useEffect(() => {
-    writeStoredValue(FAVORITE_SESSION_IDS_KEY, JSON.stringify(favoriteSessionIds));
-  }, [favoriteSessionIds]);
-
-  useEffect(() => {
     if (!selectedWorkspaceId) {
       removeStoredValue(SELECTED_WORKSPACE_ID_KEY);
       return;
@@ -4211,6 +4265,13 @@ export function WorkbenchLayout({
     [navigationGroups]
   );
   const collapsedWorkspaceIdSet = useMemo(() => new Set(collapsedWorkspaceIds), [collapsedWorkspaceIds]);
+  const favoriteSessionIds = useMemo(
+    () =>
+      flattenedSessions
+        .filter((item) => item.session.isFavorite === true)
+        .map((item) => item.session.sessionId),
+    [flattenedSessions]
+  );
   const favoriteSessionIdSet = useMemo(() => new Set(favoriteSessionIds), [favoriteSessionIds]);
 
   useEffect(() => {
@@ -4219,13 +4280,11 @@ export function WorkbenchLayout({
     }
 
     const knownWorkspaceIds = new Set(navigationGroups.map((group) => group.workspace.id));
-    const knownSessionIds = new Set(flattenedSessions.map((item) => item.session.sessionId));
 
-    // 只保留当前快照里还存在的偏好状态，避免历史垃圾状态越积越多。
+    // 工作区选择必须跟随当前快照收敛，否则会指向已经不存在的工作区。
     setCollapsedWorkspaceIds((current) => retainKnownIds(current, knownWorkspaceIds));
-    setFavoriteSessionIds((current) => retainKnownIds(current, knownSessionIds));
     setSelectedWorkspaceId((current) => (current && knownWorkspaceIds.has(current) ? current : null));
-  }, [flattenedSessions, navigationGroups, navigationLoading]);
+  }, [navigationGroups, navigationLoading]);
 
   const currentSessionContext =
     flattenedSessions.find((item) => item.session.sessionId === currentSessionId) ?? null;
@@ -4295,10 +4354,14 @@ export function WorkbenchLayout({
             const parentSession = group.sessions.find((item) => item.sessionId === parentSessionId);
             return !parentSession || !isArchivedSession(parentSession);
           })
+        ).filter(
+          (node) =>
+            !favoriteSessionIdSet.has(node.session.sessionId)
+            && !getTreeNodeChildren(node).some((session) => favoriteSessionIdSet.has(session.sessionId))
         ),
         isCollapsed: collapsedWorkspaceIdSet.has(group.workspace.id)
       })),
-    [collapsedWorkspaceIdSet, navigationGroups]
+    [collapsedWorkspaceIdSet, favoriteSessionIdSet, navigationGroups]
   );
 
   const favoriteSessions = useMemo(
@@ -4311,6 +4374,10 @@ export function WorkbenchLayout({
       ),
     [favoriteSessionIdSet, flattenedSessions]
   );
+  const currentNavigationSession =
+    currentSessionId
+      ? flattenedSessions.find((item) => item.session.sessionId === currentSessionId)?.session ?? null
+      : null;
   const currentWorkspace =
     navigationGroups.find((group) => group.workspace.id === currentWorkspaceId)?.workspace ?? null;
   const mobileActiveEntry: MobileWorkbenchEntry = location.pathname.startsWith("/settings")
@@ -4322,7 +4389,7 @@ export function WorkbenchLayout({
     : location.pathname.startsWith("/sessions")
       ? "sessions"
         : "workspaces";
-  const mobileHeaderTitle =
+  const mobileDefaultHeaderTitle =
     mobileActiveEntry === "settings"
       ? t("shell.mobileSettingsEntry")
       : mobileActiveEntry === "terminals"
@@ -4332,8 +4399,25 @@ export function WorkbenchLayout({
         : mobileActiveEntry === "sessions"
           ? t("shell.mobileSessionsEntry")
           : t("shell.mobileWorkspacesEntry");
-  const mobileHeaderSubtitle =
-    mobileActiveEntry === "settings" ? null : currentWorkspace?.name ?? null;
+  const isMobileConversationFocus =
+    isMobileShell && mobileActiveEntry === "sessions" && location.pathname.startsWith("/sessions/");
+  const mobileConversationTitle = useMemo(() => {
+    if (!isMobileConversationFocus) {
+      return null;
+    }
+
+    const currentTitle =
+      currentNavigationSession?.title
+      ?? buildSessionTitlePresentation("", t("conversation.titleFallback")).displayTitle;
+
+    return truncateMobileHeaderTitle(
+      buildSessionTitlePresentation(currentTitle, t("conversation.titleFallback")).displayTitle
+    );
+  }, [currentNavigationSession?.title, isMobileConversationFocus]);
+  const mobileHeaderTitle = isMobileConversationFocus
+    ? (mobileConversationTitle ?? mobileDefaultHeaderTitle)
+    : mobileDefaultHeaderTitle;
+  const mobileHeaderSubtitle = mobileActiveEntry === "settings" ? null : currentWorkspace?.name ?? null;
   const mobilePaneLayout = resolveAdaptiveMobilePaneLayout({
     viewportClass: platform.viewportClass,
     activeEntry: mobileActiveEntry,
@@ -4463,9 +4547,28 @@ export function WorkbenchLayout({
     }
   }
 
-  const toggleFavoriteSession = useCallback((sessionId: string) => {
-    setFavoriteSessionIds((current) => toggleStoredId(current, sessionId));
-  }, []);
+  const toggleFavoriteSession = useCallback(
+    async (sessionId: string) => {
+      const currentSession = flattenedSessions.find((item) => item.session.sessionId === sessionId)?.session ?? null;
+      const nextFavorite = currentSession?.isFavorite !== true;
+
+      setNavigationGroups((current) =>
+        updateSessionFavoriteStateInGroups(current, sessionId, nextFavorite)
+      );
+
+      try {
+        const session = await updateSessionFavoriteState(sessionId, nextFavorite);
+        upsertNavigationSession(session);
+        requestNavigationRefresh();
+      } catch (error) {
+        setNavigationGroups((current) =>
+          updateSessionFavoriteStateInGroups(current, sessionId, !nextFavorite)
+        );
+        throw error;
+      }
+    },
+    [flattenedSessions, requestNavigationRefresh, upsertNavigationSession]
+  );
 
   const startDraftSession = useCallback(
     (workspaceId: string, provider: ProviderId) => {
@@ -4755,9 +4858,7 @@ export function WorkbenchLayout({
       onToggleWorkspaceCollapse={(workspaceId) =>
         setCollapsedWorkspaceIds((current) => toggleStoredId(current, workspaceId))
       }
-      onToggleFavoriteSession={(sessionId) =>
-        setFavoriteSessionIds((current) => toggleStoredId(current, sessionId))
-      }
+      onToggleFavoriteSession={toggleFavoriteSession}
       onArchiveSession={(sessionId) => commitNavigationArchiveState(sessionId, true)}
       onUnarchiveSession={(sessionId) => commitNavigationArchiveState(sessionId, false)}
       onClose={() => setMobileNavOpen(false)}
@@ -4785,6 +4886,7 @@ export function WorkbenchLayout({
             activeEntry={mobileActiveEntry}
             title={mobileHeaderTitle}
             subtitle={mobileHeaderSubtitle}
+            presentation={isMobileConversationFocus ? "conversation-focus" : "default"}
             navigationPanel={mobileNavigationPanel}
             auxiliaryPanel={mobileAuxiliaryPanel}
             onOpenNavigation={() => {
@@ -4864,9 +4966,7 @@ export function WorkbenchLayout({
                 onToggleWorkspaceCollapse={(workspaceId) =>
                   setCollapsedWorkspaceIds((current) => toggleStoredId(current, workspaceId))
                 }
-                onToggleFavoriteSession={(sessionId) =>
-                  setFavoriteSessionIds((current) => toggleStoredId(current, sessionId))
-                }
+                onToggleFavoriteSession={toggleFavoriteSession}
                 onArchiveSession={(sessionId) => commitNavigationArchiveState(sessionId, true)}
                 onUnarchiveSession={(sessionId) => commitNavigationArchiveState(sessionId, false)}
                 onToggleCollapse={() => setLeftCollapsed(true)}
@@ -5051,7 +5151,7 @@ function MobileNavDrawer({
   );
 }
 
-export function useWorkbenchShell() {
+export function useWorkbenchShell(): WorkbenchShellContextValue {
   const context = useContext(WorkbenchShellContext);
   return (
     context ?? {
@@ -5074,7 +5174,7 @@ export function useWorkbenchShell() {
       requestTerminalManagerRefresh: () => undefined,
       addTerminalManagerSnapshotListener: () => () => undefined,
       selectWorkspace: () => undefined,
-      toggleFavoriteSession: () => undefined,
+      toggleFavoriteSession: async () => undefined,
       archiveSession: async () => undefined,
       unarchiveSession: async () => undefined,
       renameSession: async () => {
