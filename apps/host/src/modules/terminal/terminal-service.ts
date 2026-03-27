@@ -289,7 +289,19 @@ export class TerminalService extends EventEmitter {
       throw error;
     }
 
-    const willEmitExit = this.runtimeManager.terminateSession(terminal, session);
+    let willEmitExit = false;
+
+    try {
+      willEmitExit = this.runtimeManager.terminateSession(terminal, session);
+    } catch (error) {
+      this.pendingDeletedTerminalIds.delete(terminalId);
+      console.warn("[terminal-delete-runtime-cleanup-failed]", {
+        terminalId,
+        runtimeSessionId: session.id,
+        runtimeType: session.runtimeType,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
 
     if (!willEmitExit) {
       this.pendingDeletedTerminalIds.delete(terminalId);

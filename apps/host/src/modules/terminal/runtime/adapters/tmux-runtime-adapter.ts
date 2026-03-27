@@ -139,7 +139,7 @@ export class TmuxRuntimeAdapter implements TerminalRuntimeAdapter {
     if (result.status !== 0) {
       const detail = result.stderr.trim() || result.stdout.trim();
 
-      if (detail.includes("can't find session")) {
+      if (isIgnorableTerminateDetail(detail)) {
         return;
       }
 
@@ -206,6 +206,14 @@ function formatTmuxErrorDetail(actionLabel: string, message: string): string {
   }
 
   return `tmux 会话${actionLabel}失败：${message}`;
+}
+
+function isIgnorableTerminateDetail(detail: string): boolean {
+  return (
+    detail.includes("can't find session") ||
+    detail.includes("no server running on") ||
+    detail.includes("failed to connect to server")
+  );
 }
 
 function buildShellBootstrapScript(shell: string, env: Record<string, string>): string {
