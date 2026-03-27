@@ -169,8 +169,12 @@ html,
 body {
   margin: 0;
   padding: 0;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   height: 100vh;
   overflow: hidden;
+  overflow-x: hidden;
   font-family: var(--font-sans);
   font-size: 14px;
   line-height: 1.5;
@@ -181,8 +185,12 @@ body {
 }
 
 #root {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   height: 100vh;
   overflow: hidden;
+  overflow-x: hidden;
 }
 
 button,
@@ -209,8 +217,12 @@ a {
    ======================================== */
 
 .app-shell {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   height: 100vh;
   overflow: hidden;
+  overflow-x: hidden;
 }
 
 .toast-viewport {
@@ -326,8 +338,12 @@ a {
 
 .workbench-shell {
   display: flex;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   height: 100vh;
   overflow: hidden;
+  overflow-x: hidden;
   background: var(--bg-primary);
 }
 
@@ -366,12 +382,16 @@ a {
   --mobile-shell-safe-bottom: env(safe-area-inset-bottom, 0px);
   display: flex;
   flex-direction: column;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   height: 100vh;
   height: var(--mobile-shell-viewport-height, 100dvh);
   min-height: 0;
   overscroll-behavior: none;
   gap: 0;
   overflow: hidden;
+  overflow-x: hidden;
   padding:
     calc(var(--mobile-shell-safe-top) + 4px)
     0
@@ -465,6 +485,7 @@ a {
 .mobile-workbench-content {
   display: flex;
   flex: 1;
+  min-width: 0;
   min-height: 0;
   overflow: hidden;
   overscroll-behavior: contain;
@@ -530,6 +551,7 @@ a {
 .mobile-workbench-content .mobile-adaptive-pane-main > .settings-page,
 .mobile-workbench-content .mobile-adaptive-pane-main > .mobile-feature-page {
   flex: 1;
+  min-width: 0;
   min-height: 0;
   overflow: hidden;
   border-radius: 0;
@@ -597,11 +619,15 @@ a {
 .ios-workbench-shell {
   display: flex;
   flex-direction: column;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   height: 100vh;
   height: var(--mobile-shell-viewport-height, 100dvh);
   min-height: 0;
   gap: 0;
   overflow: hidden;
+  overflow-x: hidden;
   padding:
     calc(env(safe-area-inset-top, 0px) + 4px)
     0
@@ -612,6 +638,7 @@ a {
 .ios-workbench-content {
   display: flex;
   flex: 1;
+  min-width: 0;
   min-height: 0;
   overflow: hidden;
 }
@@ -627,6 +654,7 @@ a {
 .ios-workbench-content .mobile-adaptive-pane-main > .settings-page,
 .ios-workbench-content .mobile-adaptive-pane-main > .mobile-feature-page {
   flex: 1;
+  min-width: 0;
   min-height: 0;
   overflow: hidden;
   border-radius: 0;
@@ -687,11 +715,15 @@ a {
 .android-workbench-shell {
   display: flex;
   flex-direction: column;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   height: 100vh;
   height: var(--mobile-shell-viewport-height, 100dvh);
   min-height: 0;
   gap: 0;
   overflow: hidden;
+  overflow-x: hidden;
   padding:
     calc(env(safe-area-inset-top, 0px) + 4px)
     0
@@ -702,6 +734,7 @@ a {
 .android-workbench-content {
   display: flex;
   flex: 1;
+  min-width: 0;
   min-height: 0;
   overflow: hidden;
 }
@@ -717,6 +750,7 @@ a {
 .android-workbench-content .mobile-adaptive-pane-main > .settings-page,
 .android-workbench-content .mobile-adaptive-pane-main > .mobile-feature-page {
   flex: 1;
+  min-width: 0;
   min-height: 0;
   overflow: hidden;
   border-radius: 0;
@@ -11462,6 +11496,9 @@ textarea:focus-visible {
   display: flex;
   flex-direction: column;
   gap: 1rem;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   min-height: 0;
   padding: 1rem;
   box-sizing: border-box;
@@ -11575,6 +11612,9 @@ textarea:focus-visible {
   display: flex;
   flex-direction: column;
   gap: 1.25rem;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   padding-top: 0.65rem;
 }
 
@@ -11583,6 +11623,9 @@ textarea:focus-visible {
   display: flex;
   flex-direction: column;
   gap: 0.55rem;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .mobile-workspace-home-toolbar-top,
@@ -11670,6 +11713,8 @@ textarea:focus-visible {
 
 .mobile-workspace-home-path {
   margin: 0;
+  max-width: 100%;
+  overflow: hidden;
   color: var(--text-secondary);
   font-size: 0.82rem;
   line-height: 1.45;
@@ -11679,23 +11724,36 @@ textarea:focus-visible {
 .mobile-workspace-home-toolbar-summary {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   margin-top: 0.15rem;
+  padding: 0.1rem 0 0.2rem;
+  overflow: hidden;
+  box-sizing: border-box;
   border-top: 1px solid color-mix(in srgb, var(--border-primary) 82%, transparent);
   border-bottom: 1px solid color-mix(in srgb, var(--border-primary) 82%, transparent);
 }
 
 .mobile-workspace-home-toolbar-metric {
   display: flex;
-  min-width: 0;
   flex-direction: column;
-  gap: 0.12rem;
-  padding: 0.85rem 0.1rem 0.8rem;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 0.16rem;
+  min-height: 3rem;
+  padding: 0.58rem 0.45rem 0.52rem;
   border: 0;
   border-right: 1px solid color-mix(in srgb, var(--border-primary) 82%, transparent);
   border-bottom: 1px solid color-mix(in srgb, var(--border-primary) 82%, transparent);
   background: transparent;
   color: inherit;
   text-align: left;
+  box-sizing: border-box;
+  overflow: hidden;
 }
 
 .mobile-workspace-home-toolbar-metric:nth-child(2n) {
@@ -11706,18 +11764,34 @@ textarea:focus-visible {
   border-bottom: 0;
 }
 
+.mobile-workspace-home-toolbar-metric:last-child {
+  border-right: 0;
+}
+
 .mobile-workspace-home-toolbar-metric-value {
-  font-size: 1.28rem;
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  font-size: 1.05rem;
   font-weight: 700;
-  line-height: 1.05;
+  line-height: 1;
   letter-spacing: -0.02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .mobile-workspace-home-toolbar-metric-label {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
   color: var(--text-secondary);
-  font-size: 0.78rem;
+  font-size: 0.74rem;
   font-weight: 500;
-  line-height: 1.35;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: normal;
+  word-break: break-all;
 }
 
 .mobile-workspace-home-section-title {
@@ -11730,11 +11804,15 @@ textarea:focus-visible {
 
 .mobile-workspace-home-group {
   overflow: hidden;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   border: 1px solid color-mix(in srgb, var(--border-primary) 88%, transparent);
   border-radius: 1.2rem;
   background:
     linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 98%, transparent), var(--bg-surface)),
     var(--bg-surface);
+  box-sizing: border-box;
 }
 
 .mobile-workspace-home-row {
@@ -11743,6 +11821,7 @@ textarea:focus-visible {
   justify-content: space-between;
   gap: 0.75rem;
   width: 100%;
+  min-width: 0;
   min-height: 3.25rem;
   padding: 0.9rem 1rem;
   border: 0;
@@ -11750,6 +11829,8 @@ textarea:focus-visible {
   background: transparent;
   color: inherit;
   text-align: left;
+  box-sizing: border-box;
+  overflow: hidden;
 }
 
 .mobile-workspace-home-row:last-child {
@@ -11796,6 +11877,9 @@ textarea:focus-visible {
 }
 
 .mobile-workspace-home-session-title {
+  display: block;
+  width: 100%;
+  max-width: 100%;
   overflow: hidden;
   font-size: 0.98rem;
   font-weight: 600;
@@ -11804,6 +11888,9 @@ textarea:focus-visible {
 }
 
 .mobile-workspace-home-session-meta {
+  display: block;
+  width: 100%;
+  max-width: 100%;
   overflow: hidden;
   color: var(--text-secondary);
   font-size: 0.78rem;
@@ -11905,24 +11992,6 @@ textarea:focus-visible {
   color: var(--accent);
   font-size: 1rem;
   font-weight: 700;
-}
-
-@media (min-width: 768px) {
-  .mobile-workspace-home-toolbar-summary {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-
-  .mobile-workspace-home-toolbar-metric {
-    border-bottom: 0;
-  }
-
-  .mobile-workspace-home-toolbar-metric:nth-child(2n) {
-    border-right: 1px solid color-mix(in srgb, var(--border-primary) 82%, transparent);
-  }
-
-  .mobile-workspace-home-toolbar-metric:last-child {
-    border-right: 0;
-  }
 }
 
 .mobile-workspace-card-main,
@@ -12266,6 +12335,50 @@ textarea:focus-visible {
   pointer-events: auto;
 }
 
+.mobile-floating-nav-dock-handle {
+  position: absolute;
+  top: 8px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 40px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 72%, transparent);
+  background: color-mix(in srgb, var(--bg-surface) 92%, transparent);
+  color: color-mix(in srgb, var(--text-secondary) 78%, white 22%);
+  box-shadow: 0 14px 26px rgba(15, 23, 42, 0.12);
+  backdrop-filter: blur(16px) saturate(138%);
+  -webkit-backdrop-filter: blur(16px) saturate(138%);
+  touch-action: none;
+  transition:
+    opacity var(--transition-fast),
+    transform var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.mobile-floating-nav[data-side="left"] .mobile-floating-nav-dock-handle {
+  left: calc(100% - 8px);
+  border-radius: 0 999px 999px 0;
+}
+
+.mobile-floating-nav[data-side="right"] .mobile-floating-nav-dock-handle {
+  right: calc(100% - 8px);
+  border-radius: 999px 0 0 999px;
+}
+
+.mobile-floating-nav[data-open="true"] .mobile-floating-nav-dock-handle {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.mobile-floating-nav[data-repositioning="true"] .mobile-floating-nav-dock-handle {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--border-primary));
+  transform: scale(1.04);
+}
+
 .mobile-floating-nav-bubble {
   position: relative;
   z-index: 2;
@@ -12289,6 +12402,16 @@ textarea:focus-visible {
     color var(--transition-fast);
 }
 
+.mobile-floating-nav[data-side="left"] .mobile-floating-nav-bubble {
+  border-top-left-radius: 1.1rem;
+  border-bottom-left-radius: 1.1rem;
+}
+
+.mobile-floating-nav[data-side="right"] .mobile-floating-nav-bubble {
+  border-top-right-radius: 1.1rem;
+  border-bottom-right-radius: 1.1rem;
+}
+
 .mobile-floating-nav[data-open="true"] .mobile-floating-nav-bubble {
   color: var(--accent);
   border-color: color-mix(in srgb, var(--accent) 26%, var(--border-primary));
@@ -12307,12 +12430,12 @@ textarea:focus-visible {
   position: relative;
   width: 100%;
   height: 100%;
+  overflow: hidden;
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--border-primary) 72%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border-primary) 66%, transparent);
   background:
-    radial-gradient(circle at center, color-mix(in srgb, var(--bg-primary) 92%, transparent) 0 42px, transparent 43px),
-    radial-gradient(circle at center, transparent 0 56px, color-mix(in srgb, var(--bg-surface) 96%, transparent) 57px 100%),
-    radial-gradient(circle at center, color-mix(in srgb, white 18%, transparent), transparent 72%);
+    radial-gradient(circle at center, color-mix(in srgb, #66f0b1 58%, #58b8ff 42%) 0 44px, color-mix(in srgb, white 76%, transparent) 45px 58px, transparent 59px),
+    radial-gradient(circle at center, color-mix(in srgb, white 98%, transparent), color-mix(in srgb, var(--bg-surface) 95%, white 5%));
   box-shadow:
     0 22px 42px rgba(15, 23, 42, 0.2),
     inset 0 1px 0 rgba(255, 255, 255, 0.18);
@@ -12320,39 +12443,21 @@ textarea:focus-visible {
   -webkit-backdrop-filter: blur(18px) saturate(145%);
 }
 
+.mobile-floating-nav[data-side="right"] .mobile-radial-nav-wheel {
+  clip-path: inset(0 50% 0 0);
+}
+
+.mobile-floating-nav[data-side="left"] .mobile-radial-nav-wheel {
+  clip-path: inset(0 0 0 50%);
+}
+
 .mobile-radial-nav-wheel::before {
   content: "";
   position: absolute;
-  inset: 41px;
+  inset: 22px;
   border-radius: 999px;
-  border: 1px dashed color-mix(in srgb, var(--border-primary) 48%, transparent);
-  opacity: 0.65;
-}
-
-.mobile-radial-nav-center {
-  position: absolute;
-  inset: 50%;
-  width: 78px;
-  height: 78px;
-  margin: -39px 0 0 -39px;
-  border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--border-primary) 72%, transparent);
-  background:
-    radial-gradient(circle at center, color-mix(in srgb, white 16%, var(--bg-surface)), color-mix(in srgb, var(--bg-primary) 94%, transparent));
-  box-shadow:
-    0 10px 24px rgba(15, 23, 42, 0.12),
-    inset 0 1px 0 rgba(255, 255, 255, 0.18);
-}
-
-.mobile-radial-nav-center-dot {
-  position: absolute;
-  inset: 50%;
-  width: 8px;
-  height: 8px;
-  margin: -4px 0 0 -4px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--accent) 88%, white 12%);
-  box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border-primary) 36%, transparent);
+  opacity: 0.6;
 }
 
 .mobile-radial-nav-action {
@@ -12369,9 +12474,9 @@ textarea:focus-visible {
   height: 76px;
   margin: -38px 0 0 -38px;
   padding: 8px 7px;
-  border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--border-primary) 72%, transparent);
-  background: color-mix(in srgb, var(--bg-hover) 68%, transparent);
+  border: 0;
+  border-radius: 1.25rem;
+  background: transparent;
   color: var(--text-primary);
   text-align: center;
   pointer-events: auto;
@@ -12385,8 +12490,7 @@ textarea:focus-visible {
 .mobile-radial-nav-action:hover,
 .mobile-radial-nav-action:focus-visible,
 .mobile-radial-nav-action[data-active="true"] {
-  background: color-mix(in srgb, var(--bg-active) 82%, transparent);
-  border-color: color-mix(in srgb, var(--accent) 24%, var(--border-primary));
+  background: color-mix(in srgb, var(--bg-active) 74%, white 26%);
   box-shadow:
     0 12px 26px rgba(15, 23, 42, 0.12),
     0 0 0 4px color-mix(in srgb, var(--accent) 12%, transparent);

@@ -9,7 +9,7 @@ import {
   rollbackDesktopUpdate
 } from "../platform/desktop/release-manager";
 
-export function ReleasePanel({ enabled }: { enabled: boolean }) {
+export function ReleasePanel() {
   const platform = createPlatformAdapter();
   const [loading, setLoading] = useState(false);
   const [installing, setInstalling] = useState(false);
@@ -93,14 +93,6 @@ export function ReleasePanel({ enabled }: { enabled: boolean }) {
     } finally {
       setInstalling(false);
     }
-  }
-
-  if (!enabled) {
-    return (
-      <div className="settings-release-card">
-        <p className="settings-row-description">{t("settings.releaseDesktopOnly")}</p>
-      </div>
-    );
   }
 
   return (
