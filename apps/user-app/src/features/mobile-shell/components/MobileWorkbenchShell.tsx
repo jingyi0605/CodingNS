@@ -1,22 +1,24 @@
 import type { ReactNode } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 
 import { usePlatform } from "../../../platform/platform-provider";
 import { t } from "../../../shared/i18n";
 import { AndroidWorkbenchShell } from "../android/AndroidWorkbenchShell";
-import { IosWorkbenchShell } from "../ios/IosWorkbenchShell";
 import { useH5ViewportState } from "../h5/useH5ViewportState";
+import { IosWorkbenchShell } from "../ios/IosWorkbenchShell";
+import { AdaptiveMobilePaneLayout, resolveAdaptiveMobilePaneLayout } from "../layouts/AdaptiveMobilePaneLayout";
+import { ConversationFocusQuickNav, type ConversationFocusQuickNavAction } from "./ConversationFocusQuickNav";
 import {
-  AdaptiveMobilePaneLayout,
-  resolveAdaptiveMobilePaneLayout,
-  shouldDockAuxiliaryPanel,
-  shouldDockNavigationPanel
-} from "../layouts/AdaptiveMobilePaneLayout";
+  resolveMobileToolHeaderState,
+  resolvePreferredToolsHomeHref
+} from "./mobile-workbench-shell-route";
 import type {
   MobileWorkbenchEntry,
+  MobileWorkbenchPresentation,
   MobileWorkbenchShellProps
 } from "./mobile-workbench-shell-types";
 
-export type { MobileWorkbenchEntry } from "./mobile-workbench-shell-types";
+export type { MobileWorkbenchEntry, MobileWorkbenchPresentation } from "./mobile-workbench-shell-types";
 
 interface MobileNavItem {
   readonly key: MobileWorkbenchEntry;
@@ -25,118 +27,54 @@ interface MobileNavItem {
   readonly onClick: () => void;
 }
 
-export function MobileWorkbenchShell({
-  activeEntry,
-  title,
-  subtitle,
-  children,
-  navigationPanel,
-  auxiliaryPanel,
-  onOpenNavigation,
-  onOpenSearch,
-  onOpenAuxiliary,
-  onNavigateWorkspaces,
-  onNavigateTerminals,
-  onNavigateSessions,
-  onNavigateTools,
-  onNavigateSettings
-}: MobileWorkbenchShellProps) {
+export function MobileWorkbenchShell(props: MobileWorkbenchShellProps) {
   const platform = usePlatform();
 
   if (platform.platform === "ios") {
-    return (
-      <IosWorkbenchShell
-        activeEntry={activeEntry}
-        title={title}
-        subtitle={subtitle}
-        navigationPanel={navigationPanel}
-        auxiliaryPanel={auxiliaryPanel}
-        onOpenNavigation={onOpenNavigation}
-        onOpenSearch={onOpenSearch}
-        onOpenAuxiliary={onOpenAuxiliary}
-        onNavigateWorkspaces={onNavigateWorkspaces}
-        onNavigateTerminals={onNavigateTerminals}
-        onNavigateSessions={onNavigateSessions}
-        onNavigateTools={onNavigateTools}
-        onNavigateSettings={onNavigateSettings}
-      >
-        {children}
-      </IosWorkbenchShell>
-    );
+    return <IosWorkbenchShell {...props} />;
   }
 
   if (platform.platform === "android") {
-    return (
-      <AndroidWorkbenchShell
-        activeEntry={activeEntry}
-        title={title}
-        subtitle={subtitle}
-        navigationPanel={navigationPanel}
-        auxiliaryPanel={auxiliaryPanel}
-        onOpenNavigation={onOpenNavigation}
-        onOpenSearch={onOpenSearch}
-        onOpenAuxiliary={onOpenAuxiliary}
-        onNavigateWorkspaces={onNavigateWorkspaces}
-        onNavigateTerminals={onNavigateTerminals}
-        onNavigateSessions={onNavigateSessions}
-        onNavigateTools={onNavigateTools}
-        onNavigateSettings={onNavigateSettings}
-      >
-        {children}
-      </AndroidWorkbenchShell>
-    );
+    return <AndroidWorkbenchShell {...props} />;
   }
 
-  return (
-    <BrowserMobileWorkbenchShell
-      activeEntry={activeEntry}
-      title={title}
-      subtitle={subtitle}
-      navigationPanel={navigationPanel}
-      auxiliaryPanel={auxiliaryPanel}
-      onOpenNavigation={onOpenNavigation}
-      onOpenSearch={onOpenSearch}
-      onOpenAuxiliary={onOpenAuxiliary}
-      onNavigateWorkspaces={onNavigateWorkspaces}
-      onNavigateTerminals={onNavigateTerminals}
-      onNavigateSessions={onNavigateSessions}
-      onNavigateTools={onNavigateTools}
-      onNavigateSettings={onNavigateSettings}
-    >
-      {children}
-    </BrowserMobileWorkbenchShell>
-  );
+  return <BrowserMobileWorkbenchShell {...props} />;
 }
 
 function BrowserMobileWorkbenchShell({
   activeEntry,
-  title,
-  subtitle,
+  presentation = "default",
   children,
   navigationPanel,
   auxiliaryPanel,
-  onOpenNavigation,
-  onOpenSearch,
-  onOpenAuxiliary,
   onNavigateWorkspaces,
   onNavigateTerminals,
   onNavigateSessions,
   onNavigateTools,
+  onNavigateToolFiles,
+  onNavigateToolGit,
+  onNavigateToolProcesses,
   onNavigateSettings
 }: MobileWorkbenchShellProps) {
   const platform = usePlatform();
+  const location = useLocation();
+  const navigate = useNavigate();
   const h5ViewportState = useH5ViewportState(platform.platform === "web");
   const hideTabbarForKeyboard = platform.platform === "web" && h5ViewportState.keyboardOpen;
+  const isConversationFocus = presentation === "conversation-focus";
   const paneLayout = resolveAdaptiveMobilePaneLayout({
     viewportClass: platform.viewportClass,
     activeEntry,
     hasNavigationPanel: Boolean(navigationPanel),
     hasAuxiliaryPanel: Boolean(auxiliaryPanel)
   });
-  const navigationDocked = shouldDockNavigationPanel(paneLayout);
-  const auxiliaryDocked = shouldDockAuxiliaryPanel(paneLayout);
-
-  // 移动端主导航只保留一级目的地，复杂操作都从页面内或顶部按钮进入。
+  const headerState = resolveMobileToolHeaderState({
+    activeEntry,
+    presentation,
+    pathname: location.pathname,
+    search: location.search,
+    moreButtonLabel: t("shell.iosMoreAction")
+  });
   const navItems: MobileNavItem[] = [
     {
       key: "workspaces",
@@ -169,54 +107,91 @@ function BrowserMobileWorkbenchShell({
       onClick: onNavigateSettings
     }
   ];
+  const quickActions: ConversationFocusQuickNavAction[] = [
+    {
+      key: "workspaces",
+      label: t("shell.mobileWorkspacesEntry"),
+      icon: <WorkspaceIcon />,
+      onSelect: onNavigateWorkspaces
+    },
+    {
+      key: "terminals",
+      label: t("shell.mobileTerminalsEntry"),
+      icon: <TerminalIcon />,
+      onSelect: onNavigateTerminals
+    },
+    {
+      key: "files",
+      label: t("shell.filesEntry"),
+      icon: <FilesIcon />,
+      onSelect: onNavigateToolFiles
+    },
+    {
+      key: "git",
+      label: t("shell.gitEntry"),
+      icon: <GitBranchIcon />,
+      onSelect: onNavigateToolGit
+    },
+    {
+      key: "processes",
+      label: t("shell.terminalManagerEntry"),
+      icon: <ProcessIcon />,
+      onSelect: onNavigateToolProcesses
+    },
+    {
+      key: "settings",
+      label: t("shell.mobileSettingsEntry"),
+      icon: <SettingsIcon />,
+      onSelect: onNavigateSettings
+    }
+  ];
+
+  function handleNavigateBackToToolsHome() {
+    navigate(resolvePreferredToolsHomeHref(), { replace: true });
+  }
 
   return (
     <div
       className="mobile-workbench-shell"
       data-active-entry={activeEntry}
+      data-mobile-presentation={presentation}
       data-mobile-runtime={platform.platform}
       data-mobile-keyboard-open={hideTabbarForKeyboard}
       data-pane-layout={paneLayout}
+      data-tabbar-open={!isConversationFocus && !hideTabbarForKeyboard}
     >
-      <header className="mobile-workbench-header surface-card">
-        <div className="mobile-workbench-header-leading">
-          {!navigationDocked ? (
-            <button
-              type="button"
-              className="mobile-workbench-header-button"
-              aria-label={t("shell.mobileNavigationAction")}
-              onClick={onOpenNavigation}
-            >
-              <NavigationIcon />
-            </button>
-          ) : null}
-          <div className="mobile-workbench-header-copy">
-            <h1>{title}</h1>
-            {subtitle ? <p>{subtitle}</p> : null}
+      {headerState ? (
+        <header className="mobile-workbench-header" data-header-kind="tools">
+          <div className="mobile-workbench-header-leading">
+            {headerState.showBackButton ? (
+              <button
+                type="button"
+                className="mobile-workbench-header-button"
+                aria-label={t("common.back")}
+                onClick={handleNavigateBackToToolsHome}
+              >
+                <ArrowBackIcon />
+              </button>
+            ) : null}
+            <div className="mobile-workbench-header-copy">
+              <h1>{headerState.title}</h1>
+            </div>
           </div>
-        </div>
 
-        <div className="mobile-workbench-header-actions">
-          <button
-            type="button"
-            className="mobile-workbench-header-button"
-            aria-label={t("shell.mobileSearchAction")}
-            onClick={onOpenSearch}
-          >
-            <SearchIcon />
-          </button>
-          {!auxiliaryDocked ? (
-            <button
-              type="button"
-              className="mobile-workbench-header-button"
-              aria-label={t("shell.mobileAuxiliaryAction")}
-              onClick={onOpenAuxiliary}
-            >
-              <PanelIcon />
-            </button>
-          ) : null}
-        </div>
-      </header>
+          <div className="mobile-workbench-header-actions">
+            {headerState.showMoreButton ? (
+              <button
+                type="button"
+                className="mobile-workbench-header-button mobile-tools-more-button"
+                aria-label={headerState.moreButtonLabel}
+                onClick={onNavigateToolProcesses}
+              >
+                <MoreIcon />
+              </button>
+            ) : null}
+          </div>
+        </header>
+      ) : null}
 
       <div className="mobile-workbench-content">
         <AdaptiveMobilePaneLayout
@@ -231,56 +206,46 @@ function BrowserMobileWorkbenchShell({
         </AdaptiveMobilePaneLayout>
       </div>
 
-      <nav
-        className="mobile-workbench-tabbar surface-card"
-        aria-label={t("shell.title")}
-        hidden={hideTabbarForKeyboard}
-      >
-        {navItems.map((item) => (
-          <button
-            key={item.key}
-            type="button"
-            className="mobile-workbench-tabbar-item"
-            data-active={item.key === activeEntry}
-            aria-current={item.key === activeEntry ? "page" : undefined}
-            onClick={item.onClick}
-          >
-            <span className="mobile-workbench-tabbar-icon" aria-hidden="true">
-              {item.icon}
-            </span>
-            <span className="mobile-workbench-tabbar-label">{item.label}</span>
-          </button>
-        ))}
-      </nav>
+      {isConversationFocus ? <ConversationFocusQuickNav actions={quickActions} /> : null}
+
+      {!isConversationFocus ? (
+        <nav className="mobile-workbench-tabbar" aria-label={t("shell.title")} hidden={hideTabbarForKeyboard}>
+          {navItems.map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              className="mobile-workbench-tabbar-item"
+              data-active={item.key === activeEntry}
+              aria-current={item.key === activeEntry ? "page" : undefined}
+              onClick={item.onClick}
+            >
+              <span className="mobile-workbench-tabbar-icon" aria-hidden="true">
+                {item.icon}
+              </span>
+              <span className="mobile-workbench-tabbar-label">{item.label}</span>
+            </button>
+          ))}
+        </nav>
+      ) : null}
     </div>
   );
 }
 
-function NavigationIcon() {
+function ArrowBackIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9">
-      <line x1="4" y1="7" x2="20" y2="7" />
-      <line x1="4" y1="12" x2="20" y2="12" />
-      <line x1="4" y1="17" x2="16" y2="17" />
+      <path d="m15 18-6-6 6-6" />
+      <path d="M21 12H9" />
     </svg>
   );
 }
 
-function SearchIcon() {
+function MoreIcon() {
   return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9">
-      <circle cx="11" cy="11" r="6.5" />
-      <line x1="20" y1="20" x2="16.6" y2="16.6" />
-    </svg>
-  );
-}
-
-function PanelIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9">
-      <rect x="3" y="4" width="18" height="16" rx="2" />
-      <line x1="9" y1="4" x2="9" y2="20" />
-      <line x1="15" y1="4" x2="15" y2="20" />
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <circle cx="12" cy="5" r="1.8" />
+      <circle cx="12" cy="12" r="1.8" />
+      <circle cx="12" cy="19" r="1.8" />
     </svg>
   );
 }
@@ -319,6 +284,40 @@ function ToolboxIcon() {
       <rect x="3" y="6" width="18" height="13" rx="2" />
       <path d="M3 12h18" />
       <path d="M10 11.5h4" />
+    </svg>
+  );
+}
+
+function FilesIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M4 6.5h7l2 2H20v9A2.5 2.5 0 0 1 17.5 20h-11A2.5 2.5 0 0 1 4 17.5z" />
+      <path d="M4 9h16" />
+    </svg>
+  );
+}
+
+function GitBranchIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <circle cx="7" cy="6" r="2" />
+      <circle cx="17" cy="18" r="2" />
+      <circle cx="17" cy="6" r="2" />
+      <path d="M7 8v8a2 2 0 0 0 2 2h6" />
+      <path d="M17 8v6" />
+    </svg>
+  );
+}
+
+function ProcessIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <rect x="4" y="5" width="16" height="14" rx="2" />
+      <path d="M8 9h8" />
+      <path d="M8 13h5" />
+      <path d="M16 2v3" />
+      <path d="M12 2v3" />
+      <path d="M8 2v3" />
     </svg>
   );
 }

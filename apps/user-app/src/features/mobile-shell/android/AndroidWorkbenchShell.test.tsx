@@ -1,5 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 
@@ -28,58 +27,100 @@ describe("AndroidWorkbenchShell", () => {
     window.history.replaceState({}, "", "/");
   });
 
-  it("会在详情路由提供显式返回按钮，并沿当前 back stack 返回", async () => {
-    const user = userEvent.setup();
-
+  it("详情路由不再渲染顶部返回栏，但会保留底部一级导航", () => {
     renderAndroidShell({
       initialEntries: ["/", "/sessions/session-1"],
       initialIndex: 1
     });
 
-    expect(screen.getByRole("button", { name: t("common.back") })).toBeInTheDocument();
+    expect(document.querySelector(".android-workbench-topbar")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("common.back") })).not.toBeInTheDocument();
     expect(screen.getByTestId("android-location")).toHaveTextContent("/sessions/session-1");
-
-    await user.click(screen.getByRole("button", { name: t("common.back") }));
-
-    await waitFor(() => {
-      expect(screen.getByTestId("android-location")).toHaveTextContent("/");
-    });
+    expect(screen.getByRole("button", { name: t("shell.mobileSessionsEntry") })).toBeInTheDocument();
   });
 
-  it("会把次操作放进 bottom sheet，并触发工具面板入口", async () => {
-    const onOpenAuxiliary = vi.fn();
-    const user = userEvent.setup();
+  it("默认移动页不再提供顶部更多操作入口", () => {
+    renderAndroidShell();
+
+    expect(document.querySelector(".android-workbench-topbar")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("shell.androidMoreAction") })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("shell.mobileSearchAction") })).not.toBeInTheDocument();
+  });
+
+  it("会话沉浸态会隐藏底部导航，只保留快捷导航浮层", () => {
+    const onNavigateToolGit = vi.fn();
 
     renderAndroidShell({
-      onOpenAuxiliary
+      initialEntries: ["/", "/sessions/session-1"],
+      initialIndex: 1,
+      presentation: "conversation-focus",
+      onNavigateToolGit
     });
 
-    await user.click(screen.getByRole("button", { name: t("shell.androidMoreAction") }));
+    expect(document.querySelector(".android-workbench-topbar")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("common.back") })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("shell.showSessionSidebar") })).not.toBeInTheDocument();
+    expect(screen.queryByText(t("shell.mobileWorkspacesEntry"))).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("shell.mobileQuickNavigationAction") })).toBeInTheDocument();
 
-    const dialog = screen.getByRole("dialog", { name: t("shell.androidMoreAction") });
-
-    expect(dialog).toBeInTheDocument();
-    expect(within(dialog).getByRole("button", { name: t("shell.mobileAuxiliaryAction") })).toBeInTheDocument();
-    expect(within(dialog).queryByRole("button", { name: t("shell.mobileNavigationAction") })).not.toBeInTheDocument();
-
-    await user.click(within(dialog).getByRole("button", { name: t("shell.mobileAuxiliaryAction") }));
-
-    expect(onOpenAuxiliary).toHaveBeenCalledTimes(1);
-    await waitFor(() => {
-      expect(screen.queryByRole("dialog", { name: t("shell.androidMoreAction") })).not.toBeInTheDocument();
+    const quickNavTrigger = screen.getByRole("button", { name: t("shell.mobileQuickNavigationAction") });
+    fireEvent.keyDown(quickNavTrigger, {
+      key: "Enter"
     });
+
+    expect(screen.getByRole("button", { name: t("shell.gitEntry") })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: t("shell.gitEntry") }));
+
+    expect(onNavigateToolGit).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: t("shell.androidMoreAction") })).not.toBeInTheDocument();
+  });
+
+  it("工具主页会显示主工具标题，并把更多按钮直连进程管理", () => {
+    const onNavigateToolProcesses = vi.fn();
+
+    renderAndroidShell({
+      activeEntry: "tools",
+      initialEntries: ["/tools?tab=files"],
+      onNavigateToolProcesses
+    });
+
+    expect(screen.getByRole("heading", { name: t("shell.filesEntry") })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("shell.mobileSearchAction") })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: t("shell.androidMoreAction") }));
+    expect(onNavigateToolProcesses).toHaveBeenCalledTimes(1);
+  });
+
+  it("进程管理页会提供返回按钮并回到主工具页", () => {
+    window.localStorage.setItem("mobile.tools.last-primary-tool", "git");
+
+    renderAndroidShell({
+      activeEntry: "tools",
+      initialEntries: ["/tools?tab=git", "/tools/processes"],
+      initialIndex: 1
+    });
+
+    expect(screen.getByRole("heading", { name: t("shell.terminalManagerEntry") })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: t("common.back") }));
+    expect(screen.getByRole("heading", { name: t("shell.gitEntry") })).toBeInTheDocument();
+    expect(screen.getByTestId("android-location")).toHaveTextContent("/tools");
   });
 });
 
 function renderAndroidShell({
   initialEntries = ["/"],
   initialIndex,
-  onOpenAuxiliary
+  presentation,
+  activeEntry,
+  onNavigateToolGit,
+  onNavigateToolProcesses
 }: {
   initialEntries?: string[];
   initialIndex?: number;
-  onOpenAuxiliary?: () => void;
-}) {
+  presentation?: "default" | "conversation-focus";
+  activeEntry?: "workspaces" | "terminals" | "sessions" | "tools" | "settings";
+  onNavigateToolGit?: () => void;
+  onNavigateToolProcesses?: () => void;
+} = {}) {
   return render(
     <MemoryRouter initialEntries={initialEntries} initialIndex={initialIndex}>
       <Routes>
@@ -87,18 +128,20 @@ function renderAndroidShell({
           path="*"
           element={
             <AndroidWorkbenchShell
-              activeEntry="sessions"
-              title="会话"
-              subtitle="当前工作区"
+              activeEntry={activeEntry ?? "sessions"}
+              presentation={presentation ?? "default"}
               navigationPanel={<div>导航面板</div>}
               auxiliaryPanel={<div>辅助面板</div>}
               onOpenNavigation={() => undefined}
               onOpenSearch={() => undefined}
-              onOpenAuxiliary={onOpenAuxiliary ?? (() => undefined)}
+              onOpenAuxiliary={() => undefined}
               onNavigateWorkspaces={() => undefined}
               onNavigateTerminals={() => undefined}
               onNavigateSessions={() => undefined}
               onNavigateTools={() => undefined}
+              onNavigateToolFiles={() => undefined}
+              onNavigateToolGit={onNavigateToolGit ?? (() => undefined)}
+              onNavigateToolProcesses={onNavigateToolProcesses ?? (() => undefined)}
               onNavigateSettings={() => undefined}
             >
               <LocationProbe />

@@ -1,19 +1,21 @@
-import { createPortal } from "react-dom";
-import { useEffect, useState, type ReactNode } from "react";
+import { type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import { usePlatform } from "../../../platform/platform-provider";
 import { t } from "../../../shared/i18n";
+import {
+  ConversationFocusQuickNav,
+  type ConversationFocusQuickNavAction
+} from "../components/ConversationFocusQuickNav";
+import {
+  resolveMobileToolHeaderState,
+  resolvePreferredToolsHomeHref
+} from "../components/mobile-workbench-shell-route";
 import type {
   MobileWorkbenchEntry,
   MobileWorkbenchShellProps
 } from "../components/mobile-workbench-shell-types";
-import {
-  AdaptiveMobilePaneLayout,
-  resolveAdaptiveMobilePaneLayout,
-  shouldDockAuxiliaryPanel,
-  shouldDockNavigationPanel
-} from "../layouts/AdaptiveMobilePaneLayout";
+import { AdaptiveMobilePaneLayout, resolveAdaptiveMobilePaneLayout } from "../layouts/AdaptiveMobilePaneLayout";
 
 interface IosTabItem {
   readonly key: MobileWorkbenchEntry;
@@ -22,70 +24,38 @@ interface IosTabItem {
   readonly onClick: () => void;
 }
 
-function isTopLevelPath(pathname: string): boolean {
-  return (
-    pathname === "/" ||
-    pathname === "/sessions" ||
-    pathname === "/tools" ||
-    pathname === "/settings" ||
-    pathname === "/terminals"
-  );
-}
-
 export function IosWorkbenchShell({
   activeEntry,
-  title,
-  subtitle,
+  presentation = "default",
   children,
   navigationPanel,
   auxiliaryPanel,
-  onOpenNavigation,
-  onOpenSearch,
-  onOpenAuxiliary,
   onNavigateWorkspaces,
   onNavigateTerminals,
   onNavigateSessions,
   onNavigateTools,
+  onNavigateToolFiles,
+  onNavigateToolGit,
+  onNavigateToolProcesses,
   onNavigateSettings
 }: MobileWorkbenchShellProps) {
   const platform = usePlatform();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const isConversationFocus = presentation === "conversation-focus";
   const paneLayout = resolveAdaptiveMobilePaneLayout({
     viewportClass: platform.viewportClass,
     activeEntry,
     hasNavigationPanel: Boolean(navigationPanel),
     hasAuxiliaryPanel: Boolean(auxiliaryPanel)
   });
-  const location = useLocation();
-  const navigate = useNavigate();
-  const [actionSheetOpen, setActionSheetOpen] = useState(false);
-  const showBackButton = !isTopLevelPath(location.pathname);
-  const navigationDocked = shouldDockNavigationPanel(paneLayout);
-  const auxiliaryDocked = shouldDockAuxiliaryPanel(paneLayout);
-  const allowNavigationAction = !navigationDocked && showBackButton;
-  const allowAuxiliaryAction = !auxiliaryDocked;
-  const showMoreButton = allowNavigationAction || allowAuxiliaryAction;
-
-  useEffect(() => {
-    setActionSheetOpen(false);
-  }, [location.pathname, location.search]);
-
-  useEffect(() => {
-    if (!actionSheetOpen) {
-      return;
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        setActionSheetOpen(false);
-      }
-    }
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [actionSheetOpen]);
-
+  const headerState = resolveMobileToolHeaderState({
+    activeEntry,
+    presentation,
+    pathname: location.pathname,
+    search: location.search,
+    moreButtonLabel: t("shell.iosMoreAction")
+  });
   const navItems: IosTabItem[] = [
     {
       key: "workspaces",
@@ -118,84 +88,91 @@ export function IosWorkbenchShell({
       onClick: onNavigateSettings
     }
   ];
-
-  function handleNavigateBack() {
-    if (typeof window !== "undefined" && window.history.length > 1) {
-      navigate(-1);
-      return;
+  const quickActions: ConversationFocusQuickNavAction[] = [
+    {
+      key: "workspaces",
+      label: t("shell.mobileWorkspacesEntry"),
+      icon: <WorkspaceIcon />,
+      onSelect: onNavigateWorkspaces
+    },
+    {
+      key: "terminals",
+      label: t("shell.mobileTerminalsEntry"),
+      icon: <TerminalIcon />,
+      onSelect: onNavigateTerminals
+    },
+    {
+      key: "files",
+      label: t("shell.filesEntry"),
+      icon: <FilesIcon />,
+      onSelect: onNavigateToolFiles
+    },
+    {
+      key: "git",
+      label: t("shell.gitEntry"),
+      icon: <GitBranchIcon />,
+      onSelect: onNavigateToolGit
+    },
+    {
+      key: "processes",
+      label: t("shell.terminalManagerEntry"),
+      icon: <ProcessIcon />,
+      onSelect: onNavigateToolProcesses
+    },
+    {
+      key: "settings",
+      label: t("shell.mobileSettingsEntry"),
+      icon: <SettingsIcon />,
+      onSelect: onNavigateSettings
     }
+  ];
 
-    onNavigateWorkspaces();
-  }
-
-  function closeActionSheet() {
-    setActionSheetOpen(false);
-  }
-
-  function openNavigationFromSheet() {
-    closeActionSheet();
-    onOpenNavigation();
-  }
-
-  function openAuxiliaryFromSheet() {
-    closeActionSheet();
-    onOpenAuxiliary();
+  function handleNavigateBackToToolsHome() {
+    navigate(resolvePreferredToolsHomeHref(), { replace: true });
   }
 
   return (
-    <div className="ios-workbench-shell" data-active-entry={activeEntry}>
-      <header className="ios-workbench-nav surface-card">
-        <div className="ios-workbench-nav-leading">
-          {showBackButton ? (
-            <button
-              type="button"
-              className="ios-workbench-back-button"
-              aria-label={t("common.back")}
-              onClick={handleNavigateBack}
-            >
-              <ChevronLeftIcon />
-              <span>{t("common.back")}</span>
-            </button>
-          ) : !navigationDocked ? (
-            <button
-              type="button"
-              className="ios-workbench-icon-button"
-              aria-label={t("shell.mobileNavigationAction")}
-              onClick={onOpenNavigation}
-            >
-              <NavigationIcon />
-            </button>
-          ) : (
-            <span className="ios-workbench-nav-spacer" aria-hidden="true" />
-          )}
-        </div>
+    <div
+      className="ios-workbench-shell"
+      data-active-entry={activeEntry}
+      data-mobile-presentation={presentation}
+      data-pane-layout={paneLayout}
+      data-tabbar-open={!isConversationFocus}
+    >
+      {headerState ? (
+        <header className="ios-workbench-nav" data-header-kind="tools">
+          <div className="ios-workbench-nav-leading">
+            {headerState.showBackButton ? (
+              <button
+                type="button"
+                className="ios-workbench-back-button"
+                aria-label={t("common.back")}
+                onClick={handleNavigateBackToToolsHome}
+              >
+                <ChevronLeftIcon />
+                <span>{t("common.back")}</span>
+              </button>
+            ) : null}
+          </div>
 
-        <div className="ios-workbench-nav-copy">
-          <h1>{title}</h1>
-          {subtitle ? <p>{subtitle}</p> : null}
-        </div>
+          <div className="ios-workbench-nav-copy">
+            <h1>{headerState.title}</h1>
+          </div>
 
-        <div className="ios-workbench-nav-actions">
-          <button
-            type="button"
-            className="ios-workbench-icon-button"
-            aria-label={t("shell.mobileSearchAction")}
-            onClick={onOpenSearch}
-          >
-            <SearchIcon />
-          </button>
-          {showMoreButton ? (
-            <button
-              type="button"
-              className="ios-workbench-icon-button"
-              aria-label={t("shell.iosMoreAction")}
-              onClick={() => setActionSheetOpen(true)}
-            >
-              <MoreIcon />
-            </button>
-          ) : null}
-        </div>
-      </header>
+          <div className="ios-workbench-nav-actions">
+            {headerState.showMoreButton ? (
+              <button
+                type="button"
+                className="ios-workbench-icon-button"
+                aria-label={headerState.moreButtonLabel}
+                onClick={onNavigateToolProcesses}
+              >
+                <MoreIcon />
+              </button>
+            ) : null}
+          </div>
+        </header>
+      ) : null}
 
       <div className="ios-workbench-content">
         <AdaptiveMobilePaneLayout
@@ -210,100 +187,45 @@ export function IosWorkbenchShell({
         </AdaptiveMobilePaneLayout>
       </div>
 
-      <nav className="ios-workbench-tabbar surface-card" aria-label={t("shell.title")}>
-        {navItems.map((item) => (
-          <button
-            key={item.key}
-            type="button"
-            className="ios-workbench-tabbar-item"
-            data-active={item.key === activeEntry}
-            aria-current={item.key === activeEntry ? "page" : undefined}
-            onClick={item.onClick}
-          >
-            <span className="ios-workbench-tabbar-icon" aria-hidden="true">
-              {item.icon}
-            </span>
-            <span className="ios-workbench-tabbar-label">{item.label}</span>
-          </button>
-        ))}
-      </nav>
+      {isConversationFocus ? <ConversationFocusQuickNav actions={quickActions} /> : null}
 
-      {actionSheetOpen && showMoreButton && typeof document !== "undefined"
-        ? createPortal(
-            <div className="ios-action-sheet-overlay" role="presentation" onClick={closeActionSheet}>
-              <div
-                className="ios-action-sheet"
-                role="dialog"
-                aria-modal="true"
-                aria-label={t("shell.iosMoreAction")}
-                onClick={(event) => event.stopPropagation()}
-              >
-                <div className="ios-action-sheet-group surface-card">
-                  <div className="ios-action-sheet-header">
-                    <strong>{title}</strong>
-                    <span>{subtitle ?? t("shell.title")}</span>
-                  </div>
-                  {allowNavigationAction ? (
-                    <button type="button" className="ios-action-sheet-button" onClick={openNavigationFromSheet}>
-                      {t("shell.mobileNavigationAction")}
-                    </button>
-                  ) : null}
-                  {allowAuxiliaryAction ? (
-                    <button type="button" className="ios-action-sheet-button" onClick={openAuxiliaryFromSheet}>
-                      {t("shell.mobileAuxiliaryAction")}
-                    </button>
-                  ) : null}
-                </div>
-                <button
-                  type="button"
-                  className="ios-action-sheet-cancel surface-card"
-                  onClick={closeActionSheet}
-                >
-                  {t("common.cancel")}
-                </button>
-              </div>
-            </div>,
-            document.body
-          )
-        : null}
+      {!isConversationFocus ? (
+        <nav className="ios-workbench-tabbar" aria-label={t("shell.title")}>
+          {navItems.map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              className="ios-workbench-tabbar-item"
+              data-active={item.key === activeEntry}
+              aria-current={item.key === activeEntry ? "page" : undefined}
+              onClick={item.onClick}
+            >
+              <span className="ios-workbench-tabbar-icon" aria-hidden="true">
+                {item.icon}
+              </span>
+              <span className="ios-workbench-tabbar-label">{item.label}</span>
+            </button>
+          ))}
+        </nav>
+      ) : null}
     </div>
   );
 }
 
-function NavigationIcon() {
+function ChevronLeftIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.85">
-      <line x1="4" y1="7" x2="20" y2="7" />
-      <line x1="4" y1="12" x2="20" y2="12" />
-      <line x1="4" y1="17" x2="16" y2="17" />
-    </svg>
-  );
-}
-
-function SearchIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.85">
-      <circle cx="11" cy="11" r="6.5" />
-      <line x1="20" y1="20" x2="16.6" y2="16.6" />
+      <path d="m15 18-6-6 6-6" />
     </svg>
   );
 }
 
 function MoreIcon() {
   return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.85">
-      <circle cx="12" cy="12" r="8.4" />
-      <circle cx="8.3" cy="12" r="0.9" fill="currentColor" stroke="none" />
-      <circle cx="12" cy="12" r="0.9" fill="currentColor" stroke="none" />
-      <circle cx="15.7" cy="12" r="0.9" fill="currentColor" stroke="none" />
-    </svg>
-  );
-}
-
-function ChevronLeftIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M15 18l-6-6 6-6" />
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <circle cx="12" cy="5" r="1.8" />
+      <circle cx="12" cy="12" r="1.8" />
+      <circle cx="12" cy="19" r="1.8" />
     </svg>
   );
 }
@@ -342,6 +264,40 @@ function ToolboxIcon() {
       <rect x="3" y="6" width="18" height="13" rx="2" />
       <path d="M3 12h18" />
       <path d="M10 11.5h4" />
+    </svg>
+  );
+}
+
+function FilesIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M4 6.5h7l2 2H20v9A2.5 2.5 0 0 1 17.5 20h-11A2.5 2.5 0 0 1 4 17.5z" />
+      <path d="M4 9h16" />
+    </svg>
+  );
+}
+
+function GitBranchIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <circle cx="7" cy="6" r="2" />
+      <circle cx="17" cy="18" r="2" />
+      <circle cx="17" cy="6" r="2" />
+      <path d="M7 8v8a2 2 0 0 0 2 2h6" />
+      <path d="M17 8v6" />
+    </svg>
+  );
+}
+
+function ProcessIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <rect x="4" y="5" width="16" height="14" rx="2" />
+      <path d="M8 9h8" />
+      <path d="M8 13h5" />
+      <path d="M16 2v3" />
+      <path d="M12 2v3" />
+      <path d="M8 2v3" />
     </svg>
   );
 }

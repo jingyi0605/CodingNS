@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -1815,7 +1815,7 @@ describe("WorkbenchLayout", () => {
     expect(workbenchFetchCount).toBeGreaterThanOrEqual(1);
   });
 
-  it("移动壳不再渲染边缘手柄，主导航改走顶部可见入口", async () => {
+  it("移动壳不再渲染边缘手柄，会话沉浸态改走快捷导航浮层", async () => {
     Object.defineProperty(window, "innerWidth", {
       configurable: true,
       writable: true,
@@ -1828,7 +1828,7 @@ describe("WorkbenchLayout", () => {
         sessions: [
           createSessionSummary({
             sessionId: "session-1",
-            title: "会话 Alpha",
+            title: "这是一个非常非常长的会话标题",
             workspaceId: "workspace-1"
           })
         ]
@@ -1840,17 +1840,19 @@ describe("WorkbenchLayout", () => {
     });
 
     expect(
-      await screen.findByRole("button", { name: t("shell.mobileNavigationAction") })
+      await screen.findByRole("button", { name: t("shell.mobileQuickNavigationAction") })
     ).toBeInTheDocument();
+    expect(view.container.querySelector(".mobile-workbench-header")).not.toBeInTheDocument();
     expect(view.container.querySelector(".mobile-sidebar-handle")).not.toBeInTheDocument();
-    expect(screen.queryByText("会话 Alpha")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("shell.showSessionSidebar") })).not.toBeInTheDocument();
+    expect(screen.queryByText(t("shell.mobileWorkspacesEntry"))).not.toBeInTheDocument();
 
-    await userEvent.click(
-      screen.getByRole("button", { name: t("shell.mobileNavigationAction") })
-    );
+    const quickNavTrigger = screen.getByRole("button", { name: t("shell.mobileQuickNavigationAction") });
 
-    expect(await screen.findByText("会话 Alpha")).toBeInTheDocument();
-    expect(view.container.querySelector(".mobile-nav-drawer.left.open")).toBeInTheDocument();
+    fireEvent.click(quickNavTrigger);
+
+    expect(screen.getByRole("button", { name: t("shell.mobileWorkspacesEntry") })).toBeInTheDocument();
+    expect(view.container.querySelector(".mobile-nav-drawer.left.open")).not.toBeInTheDocument();
   });
 
   it("medium 宽度移动壳会把导航面板常驻到主内容旁边", async () => {
@@ -1880,8 +1882,9 @@ describe("WorkbenchLayout", () => {
     expect(await screen.findByText("会话 Alpha")).toBeInTheDocument();
     expect(view.container.querySelector(".mobile-adaptive-pane-panel-navigation")).toBeInTheDocument();
     expect(view.container.querySelector(".mobile-nav-drawer.left.open")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: t("shell.mobileNavigationAction") })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: t("shell.mobileAuxiliaryAction") })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("shell.showSessionSidebar") })).not.toBeInTheDocument();
+    expect(view.container.querySelector(".mobile-workbench-header")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("shell.mobileQuickNavigationAction") })).toBeInTheDocument();
   });
 
   it("移动端在失去工作区选中状态后，会退回工作区首页", async () => {

@@ -1,5 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 
@@ -28,58 +27,108 @@ describe("IosWorkbenchShell", () => {
     window.history.replaceState({}, "", "/");
   });
 
-  it("会在详情路由显示显式返回按钮，并按导航栈返回上一页", async () => {
-    const user = userEvent.setup();
-
+  it("详情路由不再渲染顶部标题栏，但会保留底部一级导航", () => {
     renderIosShell({
       initialEntries: ["/", "/sessions/session-1"],
       initialIndex: 1
     });
 
-    expect(screen.getByRole("button", { name: t("common.back") })).toBeInTheDocument();
+    expect(document.querySelector(".ios-workbench-nav")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("common.back") })).not.toBeInTheDocument();
     expect(screen.getByTestId("ios-location")).toHaveTextContent("/sessions/session-1");
-
-    await user.click(screen.getByRole("button", { name: t("common.back") }));
-
-    await waitFor(() => {
-      expect(screen.getByTestId("ios-location")).toHaveTextContent("/");
-    });
+    expect(screen.getByRole("button", { name: t("shell.mobileSessionsEntry") })).toBeInTheDocument();
   });
 
-  it("会把次操作收进 action sheet，并触发信息面板入口", async () => {
-    const onOpenAuxiliary = vi.fn();
-    const user = userEvent.setup();
+  it("默认移动页不再提供顶部更多操作入口", () => {
+    renderIosShell();
+
+    expect(document.querySelector(".ios-workbench-nav")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("shell.iosMoreAction") })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("shell.mobileSearchAction") })).not.toBeInTheDocument();
+  });
+
+  it("会话沉浸态会隐藏底部导航，只保留快捷导航浮层", () => {
+    const onNavigateToolGit = vi.fn();
 
     renderIosShell({
-      onOpenAuxiliary
+      initialEntries: ["/", "/sessions/session-1"],
+      initialIndex: 1,
+      presentation: "conversation-focus",
+      onNavigateToolGit
     });
 
-    await user.click(screen.getByRole("button", { name: t("shell.iosMoreAction") }));
+    expect(document.querySelector(".ios-workbench-nav")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("common.back") })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("shell.showSessionSidebar") })).not.toBeInTheDocument();
+    expect(screen.queryByText(t("shell.mobileWorkspacesEntry"))).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("shell.mobileQuickNavigationAction") })).toBeInTheDocument();
 
-    const dialog = screen.getByRole("dialog", { name: t("shell.iosMoreAction") });
-
-    expect(dialog).toBeInTheDocument();
-    expect(within(dialog).getByRole("button", { name: t("shell.mobileAuxiliaryAction") })).toBeInTheDocument();
-    expect(within(dialog).queryByRole("button", { name: t("shell.mobileNavigationAction") })).not.toBeInTheDocument();
-
-    await user.click(within(dialog).getByRole("button", { name: t("shell.mobileAuxiliaryAction") }));
-
-    expect(onOpenAuxiliary).toHaveBeenCalledTimes(1);
-    await waitFor(() => {
-      expect(screen.queryByRole("dialog", { name: t("shell.iosMoreAction") })).not.toBeInTheDocument();
+    const quickNavTrigger = screen.getByRole("button", { name: t("shell.mobileQuickNavigationAction") });
+    fireEvent.keyDown(quickNavTrigger, {
+      key: "Enter"
     });
+
+    expect(screen.getByRole("button", { name: t("shell.gitEntry") })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: t("shell.gitEntry") }));
+
+    expect(onNavigateToolGit).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: t("shell.iosMoreAction") })).not.toBeInTheDocument();
+  });
+
+  it("首页模式默认就是无顶部标题栏，只保留内容区和底部导航", () => {
+    const view = renderIosShell();
+
+    expect(view.container.querySelector(".ios-workbench-nav")).not.toBeInTheDocument();
+    expect(screen.getByText(t("shell.mobileWorkspacesEntry"))).toBeInTheDocument();
+    expect(screen.getByTestId("ios-location")).toHaveTextContent("/");
+  });
+
+  it("工具主页会显示主工具标题，并把更多按钮直连进程管理", () => {
+    const onNavigateToolProcesses = vi.fn();
+
+    renderIosShell({
+      activeEntry: "tools",
+      initialEntries: ["/tools?tab=files"],
+      onNavigateToolProcesses
+    });
+
+    expect(screen.getByRole("heading", { name: t("shell.filesEntry") })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("shell.mobileSearchAction") })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: t("shell.iosMoreAction") }));
+    expect(onNavigateToolProcesses).toHaveBeenCalledTimes(1);
+  });
+
+  it("进程管理页会提供返回按钮并回到主工具页", () => {
+    window.localStorage.setItem("mobile.tools.last-primary-tool", "git");
+
+    renderIosShell({
+      activeEntry: "tools",
+      initialEntries: ["/tools?tab=git", "/tools/processes"],
+      initialIndex: 1
+    });
+
+    expect(screen.getByRole("heading", { name: t("shell.terminalManagerEntry") })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: t("common.back") }));
+    expect(screen.getByRole("heading", { name: t("shell.gitEntry") })).toBeInTheDocument();
+    expect(screen.getByTestId("ios-location")).toHaveTextContent("/tools");
   });
 });
 
 function renderIosShell({
   initialEntries = ["/"],
   initialIndex,
-  onOpenAuxiliary
+  presentation,
+  activeEntry,
+  onNavigateToolGit,
+  onNavigateToolProcesses
 }: {
   initialEntries?: string[];
   initialIndex?: number;
-  onOpenAuxiliary?: () => void;
-}) {
+  presentation?: "default" | "conversation-focus";
+  activeEntry?: "workspaces" | "terminals" | "sessions" | "tools" | "settings";
+  onNavigateToolGit?: () => void;
+  onNavigateToolProcesses?: () => void;
+} = {}) {
   return render(
     <MemoryRouter initialEntries={initialEntries} initialIndex={initialIndex}>
       <Routes>
@@ -87,18 +136,20 @@ function renderIosShell({
           path="*"
           element={
             <IosWorkbenchShell
-              activeEntry="sessions"
-              title="会话"
-              subtitle="当前工作区"
+              activeEntry={activeEntry ?? "sessions"}
+              presentation={presentation ?? "default"}
               navigationPanel={<div>导航面板</div>}
               auxiliaryPanel={<div>辅助面板</div>}
               onOpenNavigation={() => undefined}
               onOpenSearch={() => undefined}
-              onOpenAuxiliary={onOpenAuxiliary ?? (() => undefined)}
+              onOpenAuxiliary={() => undefined}
               onNavigateWorkspaces={() => undefined}
               onNavigateTerminals={() => undefined}
               onNavigateSessions={() => undefined}
               onNavigateTools={() => undefined}
+              onNavigateToolFiles={() => undefined}
+              onNavigateToolGit={onNavigateToolGit ?? (() => undefined)}
+              onNavigateToolProcesses={onNavigateToolProcesses ?? (() => undefined)}
               onNavigateSettings={() => undefined}
             >
               <LocationProbe />

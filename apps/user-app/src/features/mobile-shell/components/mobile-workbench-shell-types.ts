@@ -1,11 +1,11 @@
 import type { ReactNode } from "react";
 
 export type MobileWorkbenchEntry = "workspaces" | "terminals" | "sessions" | "tools" | "settings";
+export type MobileWorkbenchPresentation = "default" | "conversation-focus";
 
 export interface MobileWorkbenchShellProps {
   readonly activeEntry: MobileWorkbenchEntry;
-  readonly title: string;
-  readonly subtitle?: string | null;
+  readonly presentation?: MobileWorkbenchPresentation;
   readonly children: ReactNode;
   readonly navigationPanel?: ReactNode;
   readonly auxiliaryPanel?: ReactNode;
@@ -16,5 +16,8 @@ export interface MobileWorkbenchShellProps {
   readonly onNavigateTerminals: () => void;
   readonly onNavigateSessions: () => void;
   readonly onNavigateTools: () => void;
+  readonly onNavigateToolFiles: () => void;
+  readonly onNavigateToolGit: () => void;
+  readonly onNavigateToolProcesses: () => void;
   readonly onNavigateSettings: () => void;
 }

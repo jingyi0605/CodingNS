@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
 
-import { act, render, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { PlatformProvider } from "../../../platform/platform-provider";
@@ -159,8 +160,9 @@ describe("MobileWorkbenchShell", () => {
       "data-pane-layout",
       "medium-navigation"
     );
+    expect(view.container.querySelector(".mobile-workbench-header")).not.toBeInTheDocument();
     expect(view.queryByRole("button", { name: "打开工作台菜单" })).not.toBeInTheDocument();
-    expect(view.getByRole("button", { name: "打开工具面板" })).toBeInTheDocument();
+    expect(view.queryByRole("button", { name: "打开工具面板" })).not.toBeInTheDocument();
   });
 
   it("底部导航会显示工作区、终端、会话、工具、设置五个一级入口", () => {
@@ -178,34 +180,115 @@ describe("MobileWorkbenchShell", () => {
       "设置"
     ]);
   });
+
+  it("会话沉浸态会移除顶部工具栏，只保留快捷导航浮层", () => {
+    const onNavigateToolGit = vi.fn();
+    const view = renderMobileShell({
+      presentation: "conversation-focus",
+      navigationPanel: <div>导航面板</div>,
+      onNavigateToolGit
+    });
+
+    expect(view.container.querySelector(".mobile-workbench-header")).not.toBeInTheDocument();
+    expect(view.queryByRole("button", { name: "显示会话列表" })).not.toBeInTheDocument();
+    expect(view.queryByRole("button", { name: "更多操作" })).not.toBeInTheDocument();
+    expect(view.getByRole("button", { name: "打开快捷导航" })).toBeInTheDocument();
+    expect(view.queryByRole("button", { name: "打开搜索" })).not.toBeInTheDocument();
+
+    const quickNavTrigger = view.getByRole("button", { name: "打开快捷导航" });
+    fireEvent.keyDown(quickNavTrigger, {
+      key: "Enter"
+    });
+
+    expect(view.getByRole("button", { name: "GIT管理" })).toBeInTheDocument();
+    fireEvent.click(view.getByRole("button", { name: "GIT管理" }));
+
+    expect(onNavigateToolGit).toHaveBeenCalledTimes(1);
+  });
+
+  it("工具主页显示当前主工具名，并把更多按钮直接映射到进程管理", async () => {
+    const onNavigateToolProcesses = vi.fn();
+    const user = userEvent.setup();
+    const view = renderMobileShell({
+      activeEntry: "tools",
+      route: "/tools?tab=git",
+      onNavigateToolProcesses
+    });
+
+    expect(view.getByRole("heading", { name: "GIT管理" })).toBeInTheDocument();
+    expect(view.queryByRole("button", { name: "打开搜索" })).not.toBeInTheDocument();
+    await user.click(view.getByRole("button", { name: "更多操作" }));
+    expect(onNavigateToolProcesses).toHaveBeenCalledTimes(1);
+  });
+
+  it("进程管理页会显示返回按钮，并返回最近的主工具页", async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem("mobile.tools.last-primary-tool", "git");
+
+    const view = renderMobileShell({
+      activeEntry: "tools",
+      initialEntries: ["/tools?tab=git", "/tools/processes"],
+      initialIndex: 1
+    });
+
+    expect(view.getByRole("heading", { name: "进程管理" })).toBeInTheDocument();
+
+    await user.click(view.getByRole("button", { name: "返回" }));
+
+    await waitFor(() => {
+      expect(view.getByRole("heading", { name: "GIT管理" })).toBeInTheDocument();
+      expect(view.getByTestId("mobile-location")).toHaveTextContent("/tools");
+    });
+  });
 });
 
 function renderMobileShell(options?: {
   activeEntry?: "workspaces" | "terminals" | "sessions" | "tools" | "settings";
   navigationPanel?: ReactNode;
   auxiliaryPanel?: ReactNode;
+  presentation?: "default" | "conversation-focus";
+  route?: string;
+  initialEntries?: string[];
+  initialIndex?: number;
+  onNavigateToolFiles?: () => void;
+  onNavigateToolGit?: () => void;
+  onNavigateToolProcesses?: () => void;
 }) {
   return render(
-    <PlatformProvider>
-      <MobileWorkbenchShell
-        activeEntry={options?.activeEntry ?? "sessions"}
-        title="会话"
-        subtitle="当前工作区"
-        navigationPanel={options?.navigationPanel}
-        auxiliaryPanel={options?.auxiliaryPanel}
-        onOpenNavigation={() => undefined}
-        onOpenSearch={() => undefined}
-        onOpenAuxiliary={() => undefined}
-        onNavigateWorkspaces={() => undefined}
-        onNavigateTerminals={() => undefined}
-        onNavigateSessions={() => undefined}
-        onNavigateTools={() => undefined}
-        onNavigateSettings={() => undefined}
-      >
-        <main className="workbench-page">
-          <textarea aria-label="消息输入框" />
-        </main>
-      </MobileWorkbenchShell>
-    </PlatformProvider>
+    <MemoryRouter
+      initialEntries={options?.initialEntries ?? [options?.route ?? "/sessions"]}
+      initialIndex={options?.initialIndex}
+    >
+      <PlatformProvider>
+        <MobileWorkbenchShell
+          activeEntry={options?.activeEntry ?? "sessions"}
+          presentation={options?.presentation ?? "default"}
+          navigationPanel={options?.navigationPanel}
+          auxiliaryPanel={options?.auxiliaryPanel}
+          onOpenNavigation={() => undefined}
+          onOpenSearch={() => undefined}
+          onOpenAuxiliary={() => undefined}
+          onNavigateWorkspaces={() => undefined}
+          onNavigateTerminals={() => undefined}
+          onNavigateSessions={() => undefined}
+          onNavigateTools={() => undefined}
+          onNavigateToolFiles={options?.onNavigateToolFiles ?? (() => undefined)}
+          onNavigateToolGit={options?.onNavigateToolGit ?? (() => undefined)}
+          onNavigateToolProcesses={options?.onNavigateToolProcesses ?? (() => undefined)}
+          onNavigateSettings={() => undefined}
+        >
+          <main className="workbench-page">
+            <textarea aria-label="消息输入框" />
+            <LocationProbe />
+          </main>
+        </MobileWorkbenchShell>
+      </PlatformProvider>
+    </MemoryRouter>
   );
+}
+
+function LocationProbe() {
+  const location = useLocation();
+
+  return <span data-testid="mobile-location">{location.pathname}</span>;
 }

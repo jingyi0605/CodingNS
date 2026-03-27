@@ -94,22 +94,6 @@ const WORKSPACE_COMPOSITION_CHART_COLORS = [
   "#64748b"
 ];
 
-function truncateMobileHeaderTitle(title: string) {
-  const normalized = title.trim();
-
-  if (!normalized) {
-    return normalized;
-  }
-
-  const glyphs = Array.from(normalized);
-
-  if (glyphs.length <= 10) {
-    return normalized;
-  }
-
-  return `${glyphs.slice(0, 10).join("")}…`;
-}
-
 function resolveRouteWorkspaceId(pathname: string, search: string): string | null {
   const workspaceDetailMatch = matchPath("/workspaces/:workspaceId", pathname);
   const workspaceIdFromDetail = workspaceDetailMatch?.params.workspaceId?.trim();
@@ -4413,12 +4397,6 @@ export function WorkbenchLayout({
       ),
     [favoriteSessionIdSet, flattenedSessions]
   );
-  const currentNavigationSession =
-    currentSessionId
-      ? flattenedSessions.find((item) => item.session.sessionId === currentSessionId)?.session ?? null
-      : null;
-  const currentWorkspace =
-    navigationGroups.find((group) => group.workspace.id === currentWorkspaceId)?.workspace ?? null;
   const mobileActiveEntry: MobileWorkbenchEntry = location.pathname.startsWith("/settings")
     ? "settings"
     : location.pathname.startsWith("/terminals")
@@ -4428,35 +4406,8 @@ export function WorkbenchLayout({
     : location.pathname.startsWith("/sessions")
       ? "sessions"
         : "workspaces";
-  const mobileDefaultHeaderTitle =
-    mobileActiveEntry === "settings"
-      ? t("shell.mobileSettingsEntry")
-      : mobileActiveEntry === "terminals"
-        ? t("shell.mobileTerminalsEntry")
-      : mobileActiveEntry === "tools"
-        ? t("shell.mobileToolsEntry")
-        : mobileActiveEntry === "sessions"
-          ? t("shell.mobileSessionsEntry")
-          : t("shell.mobileWorkspacesEntry");
   const isMobileConversationFocus =
     isMobileShell && mobileActiveEntry === "sessions" && location.pathname.startsWith("/sessions/");
-  const mobileConversationTitle = useMemo(() => {
-    if (!isMobileConversationFocus) {
-      return null;
-    }
-
-    const currentTitle =
-      currentNavigationSession?.title
-      ?? buildSessionTitlePresentation("", t("conversation.titleFallback")).displayTitle;
-
-    return truncateMobileHeaderTitle(
-      buildSessionTitlePresentation(currentTitle, t("conversation.titleFallback")).displayTitle
-    );
-  }, [currentNavigationSession?.title, isMobileConversationFocus]);
-  const mobileHeaderTitle = isMobileConversationFocus
-    ? (mobileConversationTitle ?? mobileDefaultHeaderTitle)
-    : mobileDefaultHeaderTitle;
-  const mobileHeaderSubtitle = mobileActiveEntry === "settings" ? null : currentWorkspace?.name ?? null;
   const mobilePaneLayout = resolveAdaptiveMobilePaneLayout({
     viewportClass: platform.viewportClass,
     activeEntry: mobileActiveEntry,
@@ -4937,8 +4888,6 @@ export function WorkbenchLayout({
         <>
           <MobileWorkbenchShell
             activeEntry={mobileActiveEntry}
-            title={mobileHeaderTitle}
-            subtitle={mobileHeaderSubtitle}
             presentation={isMobileConversationFocus ? "conversation-focus" : "default"}
             navigationPanel={mobileNavigationPanel}
             auxiliaryPanel={mobileAuxiliaryPanel}
@@ -4975,6 +4924,21 @@ export function WorkbenchLayout({
               setMobileNavOpen(false);
               setMobileInfoOpen(false);
               navigate("/tools");
+            }}
+            onNavigateToolFiles={() => {
+              setMobileNavOpen(false);
+              setMobileInfoOpen(false);
+              navigate("/tools/files");
+            }}
+            onNavigateToolGit={() => {
+              setMobileNavOpen(false);
+              setMobileInfoOpen(false);
+              navigate("/tools/git");
+            }}
+            onNavigateToolProcesses={() => {
+              setMobileNavOpen(false);
+              setMobileInfoOpen(false);
+              navigate("/tools/processes");
             }}
             onNavigateSettings={() => {
               setMobileNavOpen(false);
