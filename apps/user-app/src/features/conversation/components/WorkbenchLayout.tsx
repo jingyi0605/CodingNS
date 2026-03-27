@@ -854,13 +854,17 @@ function mergeWorkspaceManagementDetailWithGitSnapshot(
   detail: WorkspaceManagementSummaryDto,
   snapshot: GitRealtimeSnapshotDto
 ): WorkspaceManagementSummaryDto {
+  const repoRoot = snapshot.status?.snapshot.repoRoot ?? detail.git.repoRoot;
+  const currentBranch =
+    snapshot.status?.snapshot.branch ?? snapshot.branches?.currentBranch ?? detail.git.currentBranch ?? null;
+
   return {
     ...detail,
     git: {
       ...detail.git,
-      isRepository: true,
-      repoRoot: snapshot.status.snapshot.repoRoot,
-      currentBranch: snapshot.status.snapshot.branch,
+      isRepository: detail.git.isRepository || Boolean(repoRoot),
+      repoRoot,
+      currentBranch,
       error: null
     }
   };
@@ -2014,7 +2018,7 @@ function SidebarContent({
           buildWorkspaceManagementSummarySnapshotKey(group.workspace.id),
           WORKSPACE_MANAGEMENT_SNAPSHOT_CACHE_MAX_AGE_MS
         );
-        const cachedGitSnapshot = readViewSnapshot<Pick<GitRealtimeSnapshotDto, "status">>(
+        const cachedGitSnapshot = readViewSnapshot<Pick<GitRealtimeSnapshotDto, "status" | "branches">>(
           buildGitSidebarSnapshotKey(group.workspace.id),
           WORKSPACE_MANAGEMENT_SNAPSHOT_CACHE_MAX_AGE_MS
         );
@@ -2024,18 +2028,14 @@ function SidebarContent({
           group.workspace
         );
 
-        if (cachedGitSnapshot) {
+        if (cachedGitSnapshot?.status || cachedGitSnapshot?.branches) {
           nextDetail = mergeWorkspaceManagementDetailWithGitSnapshot(nextDetail, {
             workspaceId: group.workspace.id,
-            status: cachedGitSnapshot.status,
+            status: cachedGitSnapshot.status ?? null,
             history: [],
             historyTotalCount: 0,
             historyNextCursor: null,
-            branches: {
-              currentBranch: cachedGitSnapshot.status.snapshot.branch,
-              local: [],
-              remote: []
-            }
+            branches: cachedGitSnapshot.branches ?? null
           });
         }
 
@@ -4399,7 +4399,11 @@ export function WorkbenchLayout({
       },
       onGitSnapshot: (snapshot) => {
         writeViewSnapshot(buildGitSidebarSnapshotKey(snapshot.workspaceId), {
-          status: snapshot.status
+          status: snapshot.status,
+          history: snapshot.history,
+          historyTotalCount: snapshot.historyTotalCount,
+          historyNextCursor: snapshot.historyNextCursor,
+          branches: snapshot.branches
         });
         setWorkspaceManagementStateById((current) => {
           const workspace =

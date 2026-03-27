@@ -1646,6 +1646,74 @@ describe("WorkbenchLayout", () => {
     expect(screen.getAllByText("项目二").length).toBeGreaterThan(0);
   });
 
+  it("收到空 git 快照并写入缓存后，重新挂载工作台也不会崩溃", async () => {
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "会话 Alpha",
+            workspaceId: "workspace-1"
+          })
+        ]
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    const firstView = renderWorkbenchRoute();
+
+    expect(await findSessionCardByTitle("会话 Alpha")).toBeInTheDocument();
+
+    MockWebSocket.instances[0]?.dispatchMessage({
+      type: "git.snapshot",
+      snapshot: {
+        workspaceId: "workspace-1",
+        status: null,
+        history: [],
+        historyTotalCount: 0,
+        historyNextCursor: null,
+        branches: null
+      }
+    });
+
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.manageWorkspaceAction") }));
+
+    const firstManagerDialog = await screen.findByRole("dialog", {
+      name: t("shell.manageWorkspaceTitle")
+    });
+
+    await userEvent.click(within(firstManagerDialog).getByRole("button", { name: /项目一/ }));
+
+    expect((await within(firstManagerDialog).findAllByText("C:/repo/workspace-1")).length).toBeGreaterThan(0);
+
+    firstView.unmount();
+
+    renderWorkbenchRoute();
+
+    expect(await findSessionCardByTitle("会话 Alpha")).toBeInTheDocument();
+
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.manageWorkspaceAction") }));
+
+    const secondManagerDialog = await screen.findByRole("dialog", {
+      name: t("shell.manageWorkspaceTitle")
+    });
+
+    await userEvent.click(within(secondManagerDialog).getByRole("button", { name: /项目一/ }));
+
+    expect((await within(secondManagerDialog).findAllByText("C:/repo/workspace-1")).length).toBeGreaterThan(0);
+  });
+
   it("支持直接切换到没有会话的项目，并回到空白工作台保留该项目上下文", async () => {
     const currentSnapshot = createWorkbenchSnapshot([
       {

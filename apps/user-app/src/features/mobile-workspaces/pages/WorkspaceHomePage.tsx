@@ -222,14 +222,12 @@ export function WorkspaceHomePage() {
         return;
       }
 
-      writeViewSnapshot<WorkspaceHomeGitSnapshotCache>(buildGitSidebarSnapshotKey(workspaceId), {
-        status: snapshot.status
-      });
+      writeViewSnapshot(buildGitSidebarSnapshotKey(workspaceId), snapshot);
       setDashboardState((current) => ({
         ...current,
         gitLoading: false,
-        branch: snapshot.status.snapshot.branch,
-        changedFileCount: snapshot.status.changes.length
+        branch: snapshot.status?.snapshot.branch ?? snapshot.branches?.currentBranch ?? null,
+        changedFileCount: snapshot.status?.changes.length ?? null
       }));
     });
   }, [addGitSnapshotListener, currentWorkspace?.id]);

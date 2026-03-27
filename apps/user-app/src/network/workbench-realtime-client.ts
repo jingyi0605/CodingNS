@@ -9,9 +9,8 @@ import type {
 import type { FileNodeDto } from "../features/conversation/api/file-context-api";
 import type {
   GitBranchSnapshotDto,
-  GitChangeItemDto,
   GitHistoryItemDto,
-  GitRepoSnapshotDto
+  GitStatusDto
 } from "../features/conversation/api/git-api";
 import type {
   TerminalDto,
@@ -44,14 +43,11 @@ interface FileTreeSnapshotEvent {
 
 export interface GitRealtimeSnapshotDto {
   workspaceId: string;
-  status: {
-    snapshot: GitRepoSnapshotDto;
-    changes: GitChangeItemDto[];
-  };
+  status: GitStatusDto | null;
   history: GitHistoryItemDto[];
   historyTotalCount: number;
   historyNextCursor: string | null;
-  branches: GitBranchSnapshotDto;
+  branches: GitBranchSnapshotDto | null;
 }
 
 interface GitSnapshotEvent {

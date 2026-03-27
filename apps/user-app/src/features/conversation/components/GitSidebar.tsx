@@ -207,7 +207,7 @@ export function GitSidebar({ className, workspaceId }: GitSidebarProps) {
     logPerfDebug("git_sidebar.snapshot", {
       workspaceId: currentWorkspaceId,
       cached: Boolean(cachedSnapshot),
-      cachedHistoryCount: cachedSnapshot?.history.length ?? 0,
+      cachedHistoryCount: cachedSnapshot?.history?.length ?? 0,
       cachedChangedCount: cachedSnapshot?.status?.changes.length ?? 0
     });
 
@@ -237,9 +237,9 @@ export function GitSidebar({ className, workspaceId }: GitSidebarProps) {
 
       logPerfDebug("git_sidebar.snapshot_received", {
         workspaceId: snapshot.workspaceId,
-        changedCount: snapshot.status.changes.length,
+        changedCount: snapshot.status?.changes.length ?? 0,
         historyCount: snapshot.history.length,
-        branchCount: snapshot.branches.local.length + snapshot.branches.remote.length
+        branchCount: (snapshot.branches?.local.length ?? 0) + (snapshot.branches?.remote.length ?? 0)
       });
       applyGitSnapshot(snapshot);
       setLoading(false);
@@ -335,10 +335,10 @@ export function GitSidebar({ className, workspaceId }: GitSidebarProps) {
 
   function applyGitSnapshot(snapshot: GitSidebarSnapshot) {
     setStatus(snapshot.status);
-    setHistory(snapshot.history);
-    setHistoryTotalCount(snapshot.historyTotalCount);
-    setHistoryNextCursor(snapshot.historyNextCursor);
-    setBranches(snapshot.branches);
+    setHistory(Array.isArray(snapshot.history) ? snapshot.history : []);
+    setHistoryTotalCount(typeof snapshot.historyTotalCount === "number" ? snapshot.historyTotalCount : 0);
+    setHistoryNextCursor(typeof snapshot.historyNextCursor === "string" ? snapshot.historyNextCursor : null);
+    setBranches(snapshot.branches ?? null);
   }
 
   function requestGitSnapshotRefresh(options?: { resetTreeScroll?: boolean }) {

@@ -849,7 +849,7 @@ function MobileConversationPreviewRail({
   workspaceSectionLabel: string;
   archiveCurrentActionLabel?: string;
   archiveFolderActionLabel?: string;
-  onArchiveActiveSession?: (() => Promise<void>) | null;
+  onArchiveActiveSession?: (() => void | Promise<void>) | null;
   onOpenArchiveFolder?: (() => void) | null;
   onActivate: (entry: WorkbenchNavigationEntry) => void;
 }) {

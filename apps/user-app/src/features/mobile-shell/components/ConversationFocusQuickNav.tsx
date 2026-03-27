@@ -348,7 +348,7 @@ export function ConversationFocusQuickNav({
   );
 }
 
-function resolveInitialPosition(shellElement: HTMLElement | null) {
+function resolveInitialPosition(shellElement: HTMLElement | null): FloatingQuickNavPosition {
   const bounds = getBubbleBounds(shellElement);
   const storedPosition = readStoredPosition();
 
@@ -374,7 +374,7 @@ function clearLongPressTimer(timerRef: { current: number | null }) {
 function clampPosition(
   shellElement: HTMLElement | null,
   position: FloatingQuickNavPosition | null
-) {
+): FloatingQuickNavPosition {
   const bounds = getBubbleBounds(shellElement);
 
   if (!position) {
