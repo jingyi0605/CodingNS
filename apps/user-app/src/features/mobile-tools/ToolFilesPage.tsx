@@ -1,9 +1,11 @@
-import { FileContextPanel } from "../conversation/components/FileContextPanel";
+import { Navigate } from "react-router-dom";
+
 import { useWorkbenchShell } from "../conversation/components/WorkbenchLayout";
+import { buildWorkspaceToolsPath } from "../workbench/utils/workbench-navigation";
 import { t } from "../../shared/i18n";
 
 export function ToolFilesPage() {
-  const { currentWorkspaceId, currentSessionId } = useWorkbenchShell();
+  const { currentWorkspaceId } = useWorkbenchShell();
 
   if (!currentWorkspaceId) {
     return (
@@ -16,13 +18,5 @@ export function ToolFilesPage() {
     );
   }
 
-  return (
-    <main className="mobile-feature-page mobile-page-fixed-root mobile-tool-panel-page">
-      <FileContextPanel
-        className="mobile-panel-scroll-root mobile-tool-native-panel"
-        sessionId={currentSessionId}
-        workspaceId={currentWorkspaceId}
-      />
-    </main>
-  );
+  return <Navigate to={buildWorkspaceToolsPath(currentWorkspaceId, "files")} replace />;
 }

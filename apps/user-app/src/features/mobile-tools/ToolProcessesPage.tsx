@@ -17,9 +17,9 @@ export function ToolProcessesPage() {
   }
 
   return (
-    <main className="mobile-feature-page mobile-page-fixed-root mobile-tool-panel-page">
+    <main className="mobile-feature-page mobile-page-fixed-root mobile-tool-panel-page mobile-tool-process-page">
       <TerminalManagerPanel
-        className="mobile-panel-scroll-root mobile-tool-native-panel"
+        className="mobile-panel-scroll-root mobile-tool-native-panel mobile-tool-process-panel"
         currentWorkspaceId={currentWorkspaceId}
         navigationGroups={navigationGroups}
       />

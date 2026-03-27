@@ -13,6 +13,7 @@ import {
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout";
+import { MobileWorkspaceSwitcherHeader } from "../../mobile-shell/components/MobileWorkspaceSwitcherHeader";
 import {
   closeTerminal,
   createTerminal,
@@ -222,6 +223,14 @@ export function TerminalPage() {
     {}
   );
   const [zoomScale, setZoomScale] = useState(() => readPersistedTerminalZoomScale() ?? 1);
+  const currentWorkspace = useMemo(
+    () => workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? null,
+    [selectedWorkspaceId, workspaces]
+  );
+  const mobileHeaderWorkspace = useMemo(
+    () => currentWorkspace ?? workspaces[0] ?? null,
+    [currentWorkspace, workspaces]
+  );
   const { dismissToast, showToast } = useToast();
 
   // 终端页不再弹 toast，保留统一入口，避免把调用点改成一堆分散判断。
@@ -338,6 +347,12 @@ export function TerminalPage() {
     () => orderedTerminals.findIndex((terminal) => terminal.id === activeTerminalId),
     [activeTerminalId, orderedTerminals]
   );
+  const mobileHeaderConnectionState: TerminalConnectionState =
+    activeTerminal?.status === "running" ? effectivePaneConnectionStates[effectiveActivePaneId] : "closed";
+  const mobileHeaderRuntimeLabel = activeTerminal
+    ? getTerminalRuntimeLabel(activeTerminal.runtimeType)
+    : runtimeOptions.find((option) => option.value === selectedRuntimeType)?.label ??
+      t("terminal.runtimeAutoOption");
 
   useEffect(() => {
     terminalsRef.current = terminals;
@@ -1285,6 +1300,36 @@ export function TerminalPage() {
         }}
       />
       <section className="terminal-shell" data-mobile={isMobileTerminalPage}>
+        {isMobileTerminalPage ? (
+          <MobileWorkspaceSwitcherHeader
+            className="terminal-mobile-page-header"
+            currentWorkspace={mobileHeaderWorkspace}
+            workspaces={workspaces}
+            onSelectWorkspace={(workspaceId) => {
+              setSelectedWorkspaceId(workspaceId);
+            }}
+            content={
+              <div className="terminal-mobile-header-pill-row" aria-label={t("terminal.workspaceSection")}>
+                <span className="terminal-mobile-header-pill terminal-mobile-header-pill-primary">
+                  {activeTerminal?.name ?? t("terminal.stageEmptyTitle")}
+                </span>
+                <span className="terminal-mobile-header-pill">{mobileHeaderRuntimeLabel}</span>
+                <span className="terminal-mobile-header-pill">
+                  {t(`terminal.connection.${mobileHeaderConnectionState}`)}
+                </span>
+                {orderedTerminals.length > 1 ? (
+                  <span className="terminal-mobile-header-pill">
+                    {t("terminal.mobileSwipePosition", {
+                      current: activeTerminalIndex >= 0 ? activeTerminalIndex + 1 : 1,
+                      total: orderedTerminals.length
+                    })}
+                  </span>
+                ) : null}
+              </div>
+            }
+          />
+        ) : null}
+
         <header className="terminal-tabbar">
           <div ref={terminalTabbarMainRef} className="terminal-tabbar-main">
             <div

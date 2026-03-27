@@ -100,7 +100,11 @@ export function ToolsHomePage() {
         key: "files" as const,
         title: t("shell.filesEntry"),
         render: () => (
-          <FileContextPanel sessionId={currentSessionId} workspaceId={currentWorkspaceId} />
+          <FileContextPanel
+            sessionId={currentSessionId}
+            workspaceId={currentWorkspaceId}
+            hideHeading
+          />
         )
       },
       {
@@ -224,21 +228,17 @@ export function ToolsHomePage() {
               selectWorkspace(workspaceId);
               navigate(buildWorkspaceToolsPath(workspaceId, activeTool));
             }}
+            trailing={
+              <button
+                type="button"
+                className="secondary-button mobile-tools-more-button"
+                onClick={() => navigate(buildWorkspaceToolProcessesPath(currentWorkspace.id))}
+              >
+                {t("shell.toolsMoreAction")}
+              </button>
+            }
             content={
               <div className="mobile-tools-switcher" aria-label={t("shell.mobileToolsEntry")}>
-                <div className="mobile-tools-switcher-actions">
-                  <p className="mobile-tools-switcher-note">
-                    {t("shell.toolsOverviewBody", { name: currentWorkspace.name })}
-                  </p>
-                  <button
-                    type="button"
-                    className="secondary-button mobile-tools-process-button"
-                    onClick={() => navigate(buildWorkspaceToolProcessesPath(currentWorkspace.id))}
-                  >
-                    {t("shell.terminalManagerEntry")}
-                  </button>
-                </div>
-
                 <div className="mobile-tools-segmented-control" role="tablist" aria-label={t("shell.mobileToolsEntry")}>
                   {primaryTools.map((tool) => {
                     const selected = tool.key === activeTool;

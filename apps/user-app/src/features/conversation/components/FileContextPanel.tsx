@@ -23,6 +23,7 @@ interface FileContextPanelProps {
   className?: string;
   sessionId: string | null | undefined;
   workspaceId: string | null | undefined;
+  hideHeading?: boolean;
 }
 
 type FileTreeCache = Record<string, FileNodeDto[]>;
@@ -60,7 +61,7 @@ interface DirectorySnapshotRequestOptions {
   force?: boolean;
 }
 
-export function FileContextPanel({ className, sessionId, workspaceId }: FileContextPanelProps) {
+export function FileContextPanel({ className, sessionId, workspaceId, hideHeading = false }: FileContextPanelProps) {
   const {
     navigationGroups,
     subscribeFileTree,
@@ -1017,9 +1018,11 @@ export function FileContextPanel({ className, sessionId, workspaceId }: FileCont
               setSessionRefreshVersion((current) => current + 1);
             }}
           />
-          <div className="file-panel-heading-row">
-            <h2 className="file-panel-heading">{t("conversation.filePanelTitle")}</h2>
-          </div>
+          {hideHeading ? null : (
+            <div className="file-panel-heading-row">
+              <h2 className="file-panel-heading">{t("conversation.filePanelTitle")}</h2>
+            </div>
+          )}
           <div className="file-panel-tabs" role="tablist" aria-label={t("conversation.filePanelTitle")}>
             <button
               className={activeTab === "workspace" ? "file-panel-tab active" : "file-panel-tab"}

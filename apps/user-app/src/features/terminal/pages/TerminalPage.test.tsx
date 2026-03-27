@@ -631,6 +631,9 @@ describe("TerminalPage", () => {
     const user = userEvent.setup();
     const view = renderPage();
 
+    expect(await screen.findByRole("heading", { name: "Demo Workspace" })).toBeInTheDocument();
+    expect(screen.getByText("/Users/jackson/Code/CodingNS")).toBeInTheDocument();
+
     const frontTab = await screen.findByRole("tab", { name: /前端/i });
     const backTab = await screen.findByRole("tab", { name: /后端/i });
 

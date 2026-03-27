@@ -4,8 +4,10 @@ import { useNavigate } from "react-router-dom";
 import { t } from "../../../shared/i18n";
 import type { ProviderId } from "../../conversation/api/conversation-api";
 import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout";
+import { MobileWorkspaceSwitcherHeader } from "../../mobile-shell/components/MobileWorkspaceSwitcherHeader";
 import { MobileCreateSessionSheet } from "../components/MobileCreateSessionSheet";
 import {
+  buildWorkspaceSessionIndexPath,
   buildWorkspaceSessionPath,
   buildNavigationSessionTree,
   flattenNavigationSessions,
@@ -23,6 +25,7 @@ export function SessionIndexPage() {
     currentWorkspaceId,
     currentSessionId,
     navigationLoading,
+    selectWorkspace,
     toggleFavoriteSession,
     archiveSession,
     unarchiveSession,
@@ -34,7 +37,6 @@ export function SessionIndexPage() {
     navigationGroups.find((group) => group.workspace.id === currentWorkspaceId) ??
     navigationGroups[0] ??
     null;
-  const flattenedSessions = useMemo(() => flattenNavigationSessions(navigationGroups), [navigationGroups]);
   const favoriteSet = useMemo(() => new Set(favoriteSessionIds), [favoriteSessionIds]);
   const currentWorkspaceEntries = useMemo(
     () =>
@@ -47,7 +49,6 @@ export function SessionIndexPage() {
     () => buildNavigationSessionTree(currentWorkspaceEntries),
     [currentWorkspaceEntries]
   );
-  const workspaceName = currentWorkspaceGroup?.workspace.name ?? null;
   const fallbackWorkspaceId = currentWorkspaceGroup?.workspace.id ?? "";
   const canStartSession = Boolean(fallbackWorkspaceId);
   const [expandedSubagentRootIds, setExpandedSubagentRootIds] = useState<string[]>([]);
@@ -88,95 +89,97 @@ export function SessionIndexPage() {
   }
 
   function handleActivateSession(workspaceId: string, sessionId: string) {
-    writeMobileConversationPreviewMode("preview");
+    writeMobileConversationPreviewMode("immersive");
     navigate(buildWorkspaceSessionPath(workspaceId, sessionId));
   }
 
   function handleSelectSessionProvider(workspaceId: string, provider: ProviderId) {
     setCreateSessionOpen(false);
+    writeMobileConversationPreviewMode("immersive");
     startDraftSession(workspaceId, provider);
   }
 
   return (
-    <main className="session-index-page mobile-page-scroll-root">
-      <section className="session-index-sheet surface-card">
-        <header className="session-index-header">
-          <div>
-            <p className="session-index-subtitle">{t("shell.mobileSessionsEntry")}</p>
-            <h1>{workspaceName ?? t("shell.sessionCount")}</h1>
-            <p className="session-index-description">{t("shell.mobileConversationCurrentWorkspaceSection")}</p>
-          </div>
+    <main className="session-index-page mobile-feature-page mobile-page-scroll-root">
+      <MobileWorkspaceSwitcherHeader
+        currentWorkspace={currentWorkspaceGroup?.workspace ?? null}
+        workspaces={navigationGroups.map((group) => group.workspace)}
+        onSelectWorkspace={(workspaceId) => {
+          selectWorkspace(workspaceId);
+          navigate(buildWorkspaceSessionIndexPath(workspaceId));
+        }}
+        content={
           <button
             type="button"
-            className="primary-button"
+            className="primary-button mobile-session-index-create-button"
             disabled={navigationLoading || !canStartSession}
             onClick={() => setCreateSessionOpen(true)}
           >
             {t("shell.createSession")}
           </button>
+        }
+      />
+
+      <section className="session-section session-section-sheet">
+        <header className="session-section-heading">
+          <div>
+            <h2>{t("shell.mobileConversationCurrentWorkspaceSection")}</h2>
+          </div>
+          <span className="session-section-count">{visibleTree.length}</span>
         </header>
+        {visibleTree.length === 0 ? (
+          <p className="session-section-empty">
+            {navigationLoading ? t("shell.searchSessionHint") : t("shell.emptyWorkspaceSessions")}
+          </p>
+        ) : (
+          <div className="session-current-workspace-list">
+            {visibleTree.map((node) => {
+              const rootSessionId = node.entry.session.sessionId;
+              const isExpanded = expandedSubagentRootIds.includes(rootSessionId);
 
-        <section className="session-section session-section-sheet">
-          <header className="session-section-heading">
-            <div>
-              <h2>{t("shell.mobileConversationCurrentWorkspaceSection")}</h2>
-            </div>
-            <span className="session-section-count">{visibleTree.length}</span>
-          </header>
-          {visibleTree.length === 0 ? (
-            <p className="session-section-empty">
-              {navigationLoading ? t("shell.searchSessionHint") : t("shell.emptyWorkspaceSessions")}
-            </p>
-          ) : (
-            <div className="session-current-workspace-list">
-              {visibleTree.map((node) => {
-                const rootSessionId = node.entry.session.sessionId;
-                const isExpanded = expandedSubagentRootIds.includes(rootSessionId);
-
-                return (
-                  <div key={`${node.entry.workspace.id}:${rootSessionId}`} className="session-list-tree-node">
-                    <SessionListItem
-                      entry={node.entry}
-                      isFavorite={favoriteSet.has(rootSessionId)}
-                      isActive={currentSessionId === rootSessionId}
-                      variant="mobile"
-                      hasSubsessions={node.children.length > 0}
-                      onActivate={(sessionId) => handleActivateSession(node.entry.workspace.id, sessionId)}
-                      onToggleSubsessions={() => toggleSubagentList(rootSessionId)}
-                      onToggleFavorite={(sessionId) => {
-                        void toggleFavoriteSession(sessionId);
-                      }}
-                      onArchive={(sessionId) => archiveSession(sessionId)}
-                      onUnarchive={(sessionId) => unarchiveSession(sessionId)}
-                      onRename={(sessionId, title) => renameSession(sessionId, title)}
-                    />
-                    {isExpanded && node.children.length > 0 ? (
-                      <div className="session-list-children">
-                        {node.children.map((entry) => (
-                          <SessionListItem
-                            key={`${entry.workspace.id}:${entry.session.sessionId}`}
-                            entry={entry}
-                            isFavorite={favoriteSet.has(entry.session.sessionId)}
-                            isActive={currentSessionId === entry.session.sessionId}
-                            depth={1}
-                            variant="mobile"
-                            onActivate={(sessionId) => handleActivateSession(entry.workspace.id, sessionId)}
-                            onToggleFavorite={(sessionId) => {
-                              void toggleFavoriteSession(sessionId);
-                            }}
-                            onArchive={(sessionId) => archiveSession(sessionId)}
-                            onUnarchive={(sessionId) => unarchiveSession(sessionId)}
-                            onRename={(sessionId, title) => renameSession(sessionId, title)}
-                          />
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </section>
+              return (
+                <div key={`${node.entry.workspace.id}:${rootSessionId}`} className="session-list-tree-node">
+                  <SessionListItem
+                    entry={node.entry}
+                    isFavorite={favoriteSet.has(rootSessionId)}
+                    isActive={currentSessionId === rootSessionId}
+                    variant="mobile"
+                    hasSubsessions={node.children.length > 0}
+                    onActivate={(sessionId) => handleActivateSession(node.entry.workspace.id, sessionId)}
+                    onToggleSubsessions={() => toggleSubagentList(rootSessionId)}
+                    onToggleFavorite={(sessionId) => {
+                      void toggleFavoriteSession(sessionId);
+                    }}
+                    onArchive={(sessionId) => archiveSession(sessionId)}
+                    onUnarchive={(sessionId) => unarchiveSession(sessionId)}
+                    onRename={(sessionId, title) => renameSession(sessionId, title)}
+                  />
+                  {isExpanded && node.children.length > 0 ? (
+                    <div className="session-list-children">
+                      {node.children.map((entry) => (
+                        <SessionListItem
+                          key={`${entry.workspace.id}:${entry.session.sessionId}`}
+                          entry={entry}
+                          isFavorite={favoriteSet.has(entry.session.sessionId)}
+                          isActive={currentSessionId === entry.session.sessionId}
+                          depth={1}
+                          variant="mobile"
+                          onActivate={(sessionId) => handleActivateSession(entry.workspace.id, sessionId)}
+                          onToggleFavorite={(sessionId) => {
+                            void toggleFavoriteSession(sessionId);
+                          }}
+                          onArchive={(sessionId) => archiveSession(sessionId)}
+                          onUnarchive={(sessionId) => unarchiveSession(sessionId)}
+                          onRename={(sessionId, title) => renameSession(sessionId, title)}
+                        />
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </section>
 
       <MobileCreateSessionSheet

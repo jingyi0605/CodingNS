@@ -1,55 +1,18 @@
 .session-index-page {
   display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding: 1rem 0.85rem calc(1rem + env(safe-area-inset-bottom, 0px));
-  background:
-    radial-gradient(circle at top, color-mix(in srgb, var(--accent) 8%, transparent), transparent 48%),
-    linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 72%, transparent), transparent 18%),
-    var(--bg-primary);
-}
-
-.session-index-sheet {
-  width: min(100%, 760px);
-  margin: 0 auto;
-  overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--border-primary) 86%, transparent);
-  border-radius: 1.35rem;
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 99%, transparent), var(--bg-surface)),
-    var(--bg-surface);
-  box-shadow: 0 20px 52px color-mix(in srgb, #000 14%, transparent);
-}
-
-.session-index-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
+  flex-direction: column;
   gap: 1rem;
-  padding: 1rem 1rem 0.85rem;
-  border-bottom: 1px solid color-mix(in srgb, var(--border-primary) 82%, transparent);
-}
-
-.session-index-subtitle {
-  margin: 0;
-  font-size: 0.8rem;
-  color: var(--text-muted);
-}
-
-.session-index-description {
-  margin: 0.35rem 0 0;
-  color: var(--text-muted);
-  font-size: 0.84rem;
+  padding-top: 0.65rem;
 }
 
 .session-section {
-  padding: 1rem;
+  padding: 0;
 }
 
 .session-section-sheet {
   background: transparent;
   border: 0;
-  padding-top: 0.85rem;
+  padding-top: 0;
 }
 
 .session-section-heading {
@@ -58,6 +21,7 @@
   align-items: baseline;
   gap: 1rem;
   margin-bottom: 0.75rem;
+  padding: 0 0.15rem;
 }
 
 .session-section-description {
@@ -80,8 +44,13 @@
 .session-current-workspace-list {
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--border-primary) 84%, transparent);
-  border-radius: 1.05rem;
-  background: color-mix(in srgb, var(--bg-primary) 74%, var(--bg-surface));
+  border-radius: 1.2rem;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 98%, transparent), var(--bg-surface)),
+    var(--bg-surface);
+  box-shadow:
+    0 0 0 0.5px color-mix(in srgb, rgba(255, 255, 255, 0.74) 54%, transparent),
+    0 12px 28px rgba(15, 23, 42, 0.05);
 }
 
 .session-list-tree-node {
@@ -323,10 +292,53 @@
     width 220ms ease;
 }
 
-.mobile-conversation-page[data-mobile-shell="true"][data-preview-mode="preview"] .mobile-conversation-header {
+.mobile-conversation-page[data-mobile-shell="true"][data-preview-mode="preview"] .mobile-conversation-header:not(.mobile-conversation-header-embedded) {
   width: calc(100% - var(--mobile-conversation-preview-width));
   margin-left: var(--mobile-conversation-preview-width);
   padding-left: 0;
+}
+
+.mobile-conversation-page[data-mobile-shell="true"][data-preview-mode="preview"] .mobile-conversation-page-header {
+  width: calc(100% - var(--mobile-conversation-preview-width));
+  margin-left: var(--mobile-conversation-preview-width);
+}
+
+.mobile-conversation-page-header .mobile-workspace-home-toolbar-top {
+  align-items: center;
+}
+
+.mobile-conversation-page-header .mobile-workspace-home-switcher {
+  flex: 0 0 auto;
+  max-width: none;
+  min-width: max-content;
+}
+
+.mobile-conversation-page-header .mobile-workspace-home-switcher-label {
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.mobile-conversation-page-header .mobile-workspace-home-toolbar-actions {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  justify-content: flex-end;
+}
+
+.mobile-conversation-toolbar-title {
+  display: -webkit-box;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 0.95rem;
+  font-weight: 600;
+  line-height: 1.25;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .mobile-conversation-header-toggle {
@@ -362,6 +374,31 @@
   border-radius: 0;
 }
 
+.mobile-conversation-header-embedded {
+  position: static;
+  top: auto;
+  z-index: auto;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  backdrop-filter: none;
+  transition: none;
+}
+
+.mobile-conversation-header-embedded .mobile-conversation-header-toggle[data-preview-mode="preview"] {
+  align-self: center;
+  width: 2rem;
+  height: 2rem;
+  margin: 0;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 82%, transparent);
+  border-radius: 999px;
+}
+
+.mobile-conversation-header-embedded .mobile-conversation-header-copy h1 {
+  font-size: 1rem;
+}
+
 .mobile-conversation-header-copy {
   display: flex;
   flex: 1 1 auto;
@@ -380,6 +417,16 @@
   line-height: 1.3;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.mobile-conversation-page-header {
+  padding: 0.85rem 1rem 0.55rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-primary) 78%, transparent);
+  background: color-mix(in srgb, var(--bg-surface) 96%, transparent);
+  backdrop-filter: blur(16px);
+  transition:
+    margin-left 220ms ease,
+    width 220ms ease;
 }
 
 .mobile-conversation-stage {

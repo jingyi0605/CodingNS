@@ -39,15 +39,19 @@ describe("ToolProcessesPage", () => {
 
     render(<ToolProcessesPage />);
 
-    expect(screen.getByRole("main")).toHaveClass("mobile-page-fixed-root", "mobile-tool-panel-page");
+    expect(screen.getByRole("main")).toHaveClass(
+      "mobile-page-fixed-root",
+      "mobile-tool-panel-page",
+      "mobile-tool-process-page"
+    );
     expect(screen.getByTestId("terminal-panel")).toBeInTheDocument();
     expect(screen.getByTestId("terminal-panel")).toHaveAttribute(
       "data-class-name",
-      "mobile-panel-scroll-root mobile-tool-native-panel"
+      "mobile-panel-scroll-root mobile-tool-native-panel mobile-tool-process-panel"
     );
     expect(mockTerminalManagerPanel).toHaveBeenCalledWith(
       expect.objectContaining({
-        className: "mobile-panel-scroll-root mobile-tool-native-panel",
+        className: "mobile-panel-scroll-root mobile-tool-native-panel mobile-tool-process-panel",
         currentWorkspaceId: "workspace-1",
         navigationGroups: []
       })

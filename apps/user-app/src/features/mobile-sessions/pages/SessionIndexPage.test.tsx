@@ -99,7 +99,7 @@ describe("SessionIndexPage", () => {
   it("渲染当前工作区的对话列表", () => {
     renderPage();
 
-    expect(screen.getByText("对话")).toBeInTheDocument();
+    expect(screen.queryByText("对话")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 1, name: "项目一" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 2, name: "当前工作区" })).toBeInTheDocument();
   });

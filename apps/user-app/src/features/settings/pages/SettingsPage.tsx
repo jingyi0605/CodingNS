@@ -14,6 +14,7 @@ import { LanguageSwitcher, t } from "../../../shared/i18n";
 import { THEMES, getThemeLabel, useTheme, type ThemeId } from "../../../shared/theme";
 import { ReleasePanel } from "../../../settings/ReleasePanel";
 import { authStore } from "../../auth/store/auth-store";
+import { MobilePageHeader } from "../../mobile-shell/components/MobilePageHeader";
 
 type SettingsSectionId =
   | "appearance"
@@ -432,9 +433,7 @@ function MobileSettingsPage({ model }: { model: SettingsPageModel }) {
     return (
       <div className="settings-page settings-page-mobile mobile-page-scroll-root">
         <div className="settings-mobile-container">
-          <section className="settings-mobile-hero">
-            <h1 className="settings-mobile-large-title">{t("settings.title")}</h1>
-          </section>
+          <MobilePageHeader title={t("settings.title")} />
 
           <section className="settings-mobile-group-section">
             <div className="settings-mobile-card">
@@ -471,10 +470,11 @@ function MobileSettingsPage({ model }: { model: SettingsPageModel }) {
   return (
     <div className="settings-page settings-page-mobile mobile-page-scroll-root">
       <div className="settings-mobile-container">
-        <section className="settings-mobile-hero settings-mobile-detail-hero">
-          <h1 className="settings-mobile-large-title">{currentSection.title}</h1>
-          <p className="settings-mobile-hero-text">{currentSection.description}</p>
-        </section>
+        <MobilePageHeader
+          className="settings-mobile-detail-header"
+          title={currentSection.title}
+          description={currentSection.description}
+        />
 
         {activeSection === "appearance" ? <MobileAppearanceSection model={model} /> : null}
         {activeSection === "server-connection" ? <MobileServerConnectionSection model={model} /> : null}

@@ -26,7 +26,12 @@ vi.mock("../conversation/components/WorkbenchLayout", () => ({
 }));
 
 vi.mock("../conversation/components/FileContextPanel", () => ({
-  FileContextPanel: () => <div>文件面板</div>
+  FileContextPanel: ({ hideHeading }: { hideHeading?: boolean }) => (
+    <div>
+      {hideHeading ? null : <h2 className="file-panel-heading">文件管理</h2>}
+      <div>文件面板</div>
+    </div>
+  )
 }));
 
 vi.mock("../conversation/components/GitSidebar", () => ({
@@ -84,6 +89,7 @@ describe("ToolsHomePage", () => {
               </>
             }
           />
+          <Route path="/workspaces/:workspaceId/tools/processes" element={<LocationProbe />} />
         </Routes>
       </MemoryRouter>
     );
@@ -104,6 +110,39 @@ describe("ToolsHomePage", () => {
       expect(screen.getByTestId("location-probe")).toHaveTextContent(
         "/workspaces/workspace-1/tools?tab=git"
       );
+    });
+  });
+
+  it("工具页会移除旧说明区，并把进程管理入口收进右上角更多按钮", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <MemoryRouter initialEntries={["/workspaces/workspace-1/tools?tab=files"]}>
+        <Routes>
+          <Route
+            path="/workspaces/:workspaceId/tools"
+            element={
+              <>
+                <ToolsHomePage />
+                <LocationProbe />
+              </>
+            }
+          />
+          <Route path="/workspaces/:workspaceId/tools/processes" element={<LocationProbe />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(
+      screen.queryByText("当前项目：CodingNS。文件、Git、终端和进程都从这里进。")
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "进程管理" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "文件管理" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "更多" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("location-probe")).toHaveTextContent("/workspaces/workspace-1/tools/processes");
     });
   });
 });

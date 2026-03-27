@@ -39,6 +39,7 @@ import {
   flattenNavigationSessions,
   type WorkbenchNavigationEntry
 } from "../../workbench/utils/workbench-navigation";
+import { MobileWorkspaceSwitcherHeader } from "../../mobile-shell/components/MobileWorkspaceSwitcherHeader";
 import {
   readMobileConversationPreviewMode,
   writeMobileConversationPreviewMode,
@@ -156,6 +157,10 @@ function LiveConversationPage({
     () => new Set(favoriteSessions.map((item) => item.session.sessionId)),
     [favoriteSessions]
   );
+  const mobileWorkspaces = useMemo(
+    () => navigationGroups.map((group) => group.workspace),
+    [navigationGroups]
+  );
   const mobilePreviewItems = useMemo(
     () =>
       buildMobilePreviewItems(
@@ -175,6 +180,10 @@ function LiveConversationPage({
         ? navigationGroups.find((group) => group.workspace.id === mobileWorkspaceId) ?? null
         : null,
     [mobileWorkspaceId, navigationGroups]
+  );
+  const mobileSessionTitlePresentation = useMemo(
+    () => buildSessionTitlePresentation((session ?? navigationSession)?.title ?? null, t("conversation.titleFallback")),
+    [navigationSession, session]
   );
   const mobileArchivedSessions = useMemo(
     () =>
@@ -284,12 +293,24 @@ function LiveConversationPage({
       >
         {showInlineHeader ? <SessionHeader session={session ?? navigationSession} /> : null}
         {!showInlineHeader ? (
-          <MobileConversationHeader
-            session={session ?? navigationSession}
-            previewMode={mobilePreviewMode}
-            onTogglePreview={() => {
+          <MobileWorkspaceSwitcherHeader
+            className="mobile-conversation-page-header"
+            currentWorkspace={mobileArchiveWorkspaceGroup?.workspace ?? mobileWorkspaces[0] ?? null}
+            workspaces={mobileWorkspaces}
+            heading={mobileSessionTitlePresentation.fullTitle}
+            triggerAriaLabel={
+              mobilePreviewMode === "preview"
+                ? t("shell.hideSessionSidebar")
+                : t("shell.showSessionSidebar")
+            }
+            onTriggerClick={() => {
               setMobilePreviewMode((current) => (current === "preview" ? "immersive" : "preview"));
             }}
+            trailing={
+              <span className="mobile-conversation-toolbar-title" title={mobileSessionTitlePresentation.fullTitle}>
+                {mobileSessionTitlePresentation.displayTitle}
+              </span>
+            }
           />
         ) : null}
         {!showInlineHeader ? (
@@ -507,6 +528,7 @@ function DraftConversationPage({
     shellMode,
     navigationGroups,
     requestNavigationRefresh,
+    selectWorkspace,
     setSessionWorkspace,
     upsertNavigationSession,
     favoriteSessions
@@ -526,6 +548,14 @@ function DraftConversationPage({
   const mobileFavoriteSessionIdSet = useMemo(
     () => new Set(favoriteSessions.map((item) => item.session.sessionId)),
     [favoriteSessions]
+  );
+  const mobileWorkspaces = useMemo(
+    () => navigationGroups.map((group) => group.workspace),
+    [navigationGroups]
+  );
+  const mobileSessionTitlePresentation = useMemo(
+    () => buildSessionTitlePresentation(session.title ?? null, t("conversation.titleFallback")),
+    [session]
   );
   const mobilePreviewItems = useMemo(
     () => buildMobilePreviewItems(navigationGroups, draft.workspaceId, mobileFavoriteSessionIdSet),
@@ -581,12 +611,24 @@ function DraftConversationPage({
     >
       {showInlineHeader ? <SessionHeader session={session} /> : null}
       {!showInlineHeader ? (
-        <MobileConversationHeader
-          session={session}
-          previewMode={mobilePreviewMode}
-          onTogglePreview={() => {
+        <MobileWorkspaceSwitcherHeader
+          className="mobile-conversation-page-header"
+          currentWorkspace={mobileWorkspaces.find((workspace) => workspace.id === draft.workspaceId) ?? mobileWorkspaces[0] ?? null}
+          workspaces={mobileWorkspaces}
+          heading={mobileSessionTitlePresentation.fullTitle}
+          triggerAriaLabel={
+            mobilePreviewMode === "preview"
+              ? t("shell.hideSessionSidebar")
+              : t("shell.showSessionSidebar")
+          }
+          onTriggerClick={() => {
             setMobilePreviewMode((current) => (current === "preview" ? "immersive" : "preview"));
           }}
+          trailing={
+            <span className="mobile-conversation-toolbar-title" title={mobileSessionTitlePresentation.fullTitle}>
+              {mobileSessionTitlePresentation.displayTitle}
+            </span>
+          }
         />
       ) : null}
       {!showInlineHeader ? (
@@ -790,40 +832,6 @@ function buildMobileFavoritePreviewItems(
     }));
 }
 
-function MobileConversationHeader({
-  session,
-  previewMode,
-  onTogglePreview
-}: {
-  session: SessionSummaryDto | null;
-  previewMode: MobileConversationPreviewMode;
-  onTogglePreview: () => void;
-}) {
-  const titlePresentation = buildSessionTitlePresentation(session?.title ?? null, t("conversation.titleFallback"));
-  const toggleLabel =
-    previewMode === "preview"
-      ? t("shell.mobileConversationCollapsePreviewAction")
-      : t("shell.mobileConversationRestorePreviewAction");
-
-  return (
-    <header className="mobile-conversation-header">
-      <button
-        type="button"
-        className="mobile-conversation-header-toggle"
-        aria-label={toggleLabel}
-        title={toggleLabel}
-        data-preview-mode={previewMode}
-        onClick={onTogglePreview}
-      >
-        <MobileConversationPreviewToggleIcon previewMode={previewMode} />
-      </button>
-      <div className="mobile-conversation-header-copy">
-        <h1 title={titlePresentation.fullTitle}>{titlePresentation.displayTitle}</h1>
-      </div>
-    </header>
-  );
-}
-
 function MobileConversationPreviewRail({
   open,
   activeSessionId,
@@ -1012,26 +1020,6 @@ function formatMobilePreviewTime(value: string | null) {
     hour: "2-digit",
     minute: "2-digit"
   });
-}
-
-function MobileConversationPreviewToggleIcon({
-  previewMode
-}: {
-  previewMode: MobileConversationPreviewMode;
-}) {
-  if (previewMode === "preview") {
-    return (
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <polyline points="15 18 9 12 15 6" />
-      </svg>
-    );
-  }
-
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <polyline points="9 18 15 12 9 6" />
-    </svg>
-  );
 }
 
 function ConversationArchiveConfirmModal({

@@ -1,5 +1,7 @@
-import { GitSidebar } from "../conversation/components/GitSidebar";
+import { Navigate } from "react-router-dom";
+
 import { useWorkbenchShell } from "../conversation/components/WorkbenchLayout";
+import { buildWorkspaceToolsPath } from "../workbench/utils/workbench-navigation";
 import { t } from "../../shared/i18n";
 
 export function ToolGitPage() {
@@ -16,12 +18,5 @@ export function ToolGitPage() {
     );
   }
 
-  return (
-    <main className="mobile-feature-page mobile-page-fixed-root mobile-tool-panel-page mobile-tool-git-page">
-      <GitSidebar
-        className="mobile-panel-scroll-root mobile-tool-native-panel mobile-tool-git-panel"
-        workspaceId={currentWorkspaceId}
-      />
-    </main>
-  );
+  return <Navigate to={buildWorkspaceToolsPath(currentWorkspaceId, "git")} replace />;
 }
