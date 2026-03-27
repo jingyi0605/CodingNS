@@ -43,6 +43,7 @@ export function AndroidWorkbenchShell({
   onOpenSearch,
   onOpenAuxiliary,
   onNavigateWorkspaces,
+  onNavigateTerminals,
   onNavigateSessions,
   onNavigateTools,
   onNavigateSettings
@@ -97,6 +98,12 @@ export function AndroidWorkbenchShell({
       label: t("shell.mobileSessionsEntry"),
       icon: <ConversationIcon />,
       onClick: onNavigateSessions
+    },
+    {
+      key: "terminals",
+      label: t("shell.mobileTerminalsEntry"),
+      icon: <TerminalIcon />,
+      onClick: onNavigateTerminals
     },
     {
       key: "tools",
@@ -309,6 +316,16 @@ function ConversationIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
       <path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+    </svg>
+  );
+}
+
+function TerminalIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <rect x="3" y="4" width="18" height="16" rx="2.5" />
+      <path d="m7.5 9 3 3-3 3" />
+      <path d="M12.5 15H17" />
     </svg>
   );
 }

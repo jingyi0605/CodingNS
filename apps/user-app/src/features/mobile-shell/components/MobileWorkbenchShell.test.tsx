@@ -162,10 +162,26 @@ describe("MobileWorkbenchShell", () => {
     expect(view.queryByRole("button", { name: "打开工作台菜单" })).not.toBeInTheDocument();
     expect(view.getByRole("button", { name: "打开工具面板" })).toBeInTheDocument();
   });
+
+  it("底部导航会显示工作区、终端、会话、工具、设置五个一级入口", () => {
+    const view = renderMobileShell({
+      activeEntry: "terminals"
+    });
+
+    const tabbarItems = Array.from(view.container.querySelectorAll(".mobile-workbench-tabbar-item"));
+    expect(tabbarItems).toHaveLength(5);
+    expect(tabbarItems.map((item) => item.textContent?.trim())).toEqual([
+      "工作区",
+      "会话",
+      "终端",
+      "工具",
+      "设置"
+    ]);
+  });
 });
 
 function renderMobileShell(options?: {
-  activeEntry?: "workspaces" | "sessions" | "tools" | "settings";
+  activeEntry?: "workspaces" | "terminals" | "sessions" | "tools" | "settings";
   navigationPanel?: ReactNode;
   auxiliaryPanel?: ReactNode;
 }) {
@@ -181,6 +197,7 @@ function renderMobileShell(options?: {
         onOpenSearch={() => undefined}
         onOpenAuxiliary={() => undefined}
         onNavigateWorkspaces={() => undefined}
+        onNavigateTerminals={() => undefined}
         onNavigateSessions={() => undefined}
         onNavigateTools={() => undefined}
         onNavigateSettings={() => undefined}

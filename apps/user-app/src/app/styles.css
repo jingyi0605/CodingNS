@@ -463,7 +463,8 @@ a {
 }
 
 .mobile-adaptive-pane-layout[data-pane-layout="compact"] {
-  display: block;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .mobile-adaptive-pane-main {
@@ -521,7 +522,7 @@ a {
 
 .mobile-workbench-tabbar {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
   min-height: calc(64px + var(--mobile-shell-safe-bottom));
   padding: 8px 8px calc(8px + var(--mobile-shell-safe-bottom));
@@ -719,7 +720,7 @@ a {
 
 .ios-workbench-tabbar {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 4px;
   padding: 8px 10px calc(10px + env(safe-area-inset-bottom, 0px));
   border-radius: 24px;
@@ -959,7 +960,7 @@ a {
 
 .android-workbench-bottom-nav {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 6px;
   padding: 8px 10px calc(10px + env(safe-area-inset-bottom, 0px));
   border-radius: 26px;
@@ -2341,6 +2342,7 @@ a {
   display: flex;
   flex-direction: column;
   height: 100%;
+  min-height: 0;
   overflow: hidden;
   padding: 0;
 }
@@ -2382,6 +2384,7 @@ a {
 
 .message-timeline {
   flex: 1;
+  min-height: 0;
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -2412,9 +2415,13 @@ a {
 
 .message-list {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
 }
 
 /* Message Item */
@@ -4103,6 +4110,22 @@ a {
   opacity: 0.55;
 }
 
+.terminal-mobile-gesture-hint {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 14px 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.terminal-mobile-gesture-hint strong {
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .terminal-stage-surface {
   display: flex;
   flex: 1;
@@ -4132,6 +4155,10 @@ a {
 }
 
 .terminal-stage-grid[data-layout="single"] {
+  gap: 0;
+}
+
+.terminal-stage-grid[data-mobile="true"] {
   gap: 0;
 }
 
@@ -7101,8 +7128,8 @@ textarea:focus-visible {
   }
 
   .message-list {
-    padding-left: 0;
-    padding-right: 0;
+    padding-left: 4px;
+    padding-right: 4px;
   }
 
   .composer-controls {
@@ -8134,12 +8161,12 @@ textarea:focus-visible {
 }
 
 .message-timeline {
-  padding: 0 8px 6px;
+  padding: 0 12px 8px;
 }
 
 .message-list {
   gap: 6px;
-  padding: 6px 0 2px;
+  padding: 8px 4px 4px;
 }
 
 .message-item {

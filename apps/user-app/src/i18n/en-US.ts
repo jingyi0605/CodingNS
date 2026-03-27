@@ -194,6 +194,8 @@ export const enUS = {
     zoomOutAction: "Zoom out terminal display",
     zoomResetAction: "Reset terminal zoom",
     toolbarToggleAction: "Open terminal toolbar",
+    mobileSwipeHint: "Swipe left or right to switch terminals",
+    mobileSwipePosition: "{current} / {total}",
     layoutLabel: "Layout",
     layoutSingleAction: "Single pane",
     layoutVerticalAction: "Split left and right",

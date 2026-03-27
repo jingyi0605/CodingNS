@@ -96,6 +96,7 @@ function renderIosShell({
               onOpenSearch={() => undefined}
               onOpenAuxiliary={onOpenAuxiliary ?? (() => undefined)}
               onNavigateWorkspaces={() => undefined}
+              onNavigateTerminals={() => undefined}
               onNavigateSessions={() => undefined}
               onNavigateTools={() => undefined}
               onNavigateSettings={() => undefined}

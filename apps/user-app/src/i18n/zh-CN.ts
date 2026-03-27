@@ -177,6 +177,8 @@ export const zhCN = {
     zoomOutAction: "缩小终端显示",
     zoomResetAction: "恢复默认缩放",
     toolbarToggleAction: "展开终端工具栏",
+    mobileSwipeHint: "左右滑动切换终端",
+    mobileSwipePosition: "{current} / {total}",
     layoutLabel: "分栏布局",
     layoutSingleAction: "单栏显示",
     layoutVerticalAction: "左右分栏",

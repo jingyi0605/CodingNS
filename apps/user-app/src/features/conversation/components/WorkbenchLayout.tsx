@@ -4315,7 +4315,9 @@ export function WorkbenchLayout({
     navigationGroups.find((group) => group.workspace.id === currentWorkspaceId)?.workspace ?? null;
   const mobileActiveEntry: MobileWorkbenchEntry = location.pathname.startsWith("/settings")
     ? "settings"
-    : location.pathname.startsWith("/terminals") || location.pathname.startsWith("/tools")
+    : location.pathname.startsWith("/terminals")
+      ? "terminals"
+    : location.pathname.startsWith("/tools")
       ? "tools"
     : location.pathname.startsWith("/sessions")
       ? "sessions"
@@ -4323,6 +4325,8 @@ export function WorkbenchLayout({
   const mobileHeaderTitle =
     mobileActiveEntry === "settings"
       ? t("shell.mobileSettingsEntry")
+      : mobileActiveEntry === "terminals"
+        ? t("shell.mobileTerminalsEntry")
       : mobileActiveEntry === "tools"
         ? t("shell.mobileToolsEntry")
         : mobileActiveEntry === "sessions"
@@ -4801,6 +4805,11 @@ export function WorkbenchLayout({
               setMobileNavOpen(false);
               setMobileInfoOpen(false);
               navigate("/");
+            }}
+            onNavigateTerminals={() => {
+              setMobileNavOpen(false);
+              setMobileInfoOpen(false);
+              navigate("/terminals");
             }}
             onNavigateSessions={() => {
               setMobileNavOpen(false);

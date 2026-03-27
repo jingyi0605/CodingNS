@@ -5,6 +5,7 @@ import { SerializeAddon } from "@xterm/addon-serialize";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 
+import { usePlatform } from "../../../platform/platform-provider";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout";
@@ -99,8 +100,10 @@ interface TerminalWorkspacePaneProps {
   pendingCreation: boolean;
   zoomScale: number;
   active: boolean;
+  allowSwipeSwitch?: boolean;
   connectionState: TerminalConnectionState;
   onActivate: (paneId: PaneId) => void;
+  onSwipeTerminal?: (direction: "previous" | "next") => void;
   onConnectionChange: (paneId: PaneId, state: TerminalConnectionState) => void;
   onTerminalStatus: (terminal: Pick<TerminalDto, "id" | "status" | "statusDetail" | "processId">) => void;
   onRequireReload: () => Promise<void> | void;
@@ -147,6 +150,8 @@ const TERMINAL_MUTATION_POLL_ATTEMPTS = 10;
 const TERMINAL_ACTION_MENU_WIDTH = 196;
 const TERMINAL_ACTION_MENU_OFFSET = 6;
 const TERMINAL_ACTION_MENU_EDGE_PADDING = 8;
+const TERMINAL_MOBILE_SWIPE_THRESHOLD = 72;
+const TERMINAL_MOBILE_SWIPE_OFF_AXIS_THRESHOLD = 48;
 const INITIAL_PANE_BINDINGS: TerminalPaneBindings = {
   primary: null,
   secondary: null
@@ -157,6 +162,7 @@ const INITIAL_CONNECTION_STATES: Record<PaneId, TerminalConnectionState> = {
 };
 
 export function TerminalPage() {
+  const platform = usePlatform();
   const navigate = useNavigate();
   const { navigationGroups } = useWorkbenchShell();
   const terminalActionMenuRef = useRef<HTMLDivElement | null>(null);
@@ -288,7 +294,30 @@ export function TerminalPage() {
     [selectedShellId, shellOptions]
   );
   const runtimeOptions = useMemo(() => listTerminalRuntimeOptions(), []);
-  const activeTerminalId = paneBindings[activePaneId];
+  const isMobileTerminalPage = !platform.isDesktop && !(platform.isWeb && platform.viewportClass === "expanded");
+  const effectiveSplitDirection: SplitDirection = isMobileTerminalPage ? "single" : splitDirection;
+  const effectiveActivePaneId: PaneId = isMobileTerminalPage ? "primary" : activePaneId;
+  const effectivePaneBindings = useMemo<TerminalPaneBindings>(() => {
+    if (!isMobileTerminalPage) {
+      return paneBindings;
+    }
+
+    return {
+      primary: paneBindings[activePaneId] ?? paneBindings.primary,
+      secondary: null
+    };
+  }, [activePaneId, isMobileTerminalPage, paneBindings]);
+  const effectivePaneConnectionStates = useMemo<Record<PaneId, TerminalConnectionState>>(() => {
+    if (!isMobileTerminalPage) {
+      return paneConnectionStates;
+    }
+
+    return {
+      primary: paneConnectionStates[activePaneId] ?? paneConnectionStates.primary,
+      secondary: "closed"
+    };
+  }, [activePaneId, isMobileTerminalPage, paneConnectionStates]);
+  const activeTerminalId = effectivePaneBindings[effectiveActivePaneId];
   const activeTerminal = useMemo(
     () => terminals.find((terminal) => terminal.id === activeTerminalId) ?? null,
     [activeTerminalId, terminals]
@@ -298,7 +327,13 @@ export function TerminalPage() {
     [actionMenu, terminals]
   );
   const visiblePaneIds =
-    splitDirection === "single" ? (["primary"] as PaneId[]) : (["primary", "secondary"] as PaneId[]);
+    effectiveSplitDirection === "single"
+      ? (["primary"] as PaneId[])
+      : (["primary", "secondary"] as PaneId[]);
+  const activeTerminalIndex = useMemo(
+    () => orderedTerminals.findIndex((terminal) => terminal.id === activeTerminalId),
+    [activeTerminalId, orderedTerminals]
+  );
 
   useEffect(() => {
     terminalsRef.current = terminals;
@@ -414,6 +449,37 @@ export function TerminalPage() {
   useEffect(() => {
     splitDirectionRef.current = splitDirection;
   }, [splitDirection]);
+
+  useEffect(() => {
+    if (!isMobileTerminalPage) {
+      return;
+    }
+
+    const focusedTerminalId = paneBindingsRef.current[activePaneIdRef.current] ?? paneBindingsRef.current.primary;
+    const needsSinglePane = splitDirectionRef.current !== "single";
+    const needsPrimaryFocus = activePaneIdRef.current !== "primary";
+    const needsBindingReset =
+      paneBindingsRef.current.secondary !== null || paneBindingsRef.current.primary !== focusedTerminalId;
+
+    if (!needsSinglePane && !needsPrimaryFocus && !needsBindingReset) {
+      return;
+    }
+
+    updatePaneBindings(() => ({
+      primary: focusedTerminalId,
+      secondary: null
+    }));
+    updateSplitDirection("single");
+    updateActivePane("primary");
+    setPaneConnectionStates((current) =>
+      current.secondary === "closed"
+        ? current
+        : {
+            ...current,
+            secondary: "closed"
+          }
+    );
+  }, [isMobileTerminalPage]);
 
   useEffect(() => {
     void (async () => {
@@ -659,20 +725,23 @@ export function TerminalPage() {
   }
 
   function bindTerminalToPane(terminalId: string, paneId: PaneId): void {
+    const targetPaneId: PaneId = isMobileTerminalPage ? "primary" : paneId;
+    const nextSplitDirection: SplitDirection = isMobileTerminalPage ? "single" : splitDirectionRef.current;
+
     updatePaneBindings((current) => {
       const nextBindings: TerminalPaneBindings =
-        splitDirectionRef.current === "single"
+        nextSplitDirection === "single"
           ? {
               primary: terminalId,
               secondary: null
             }
           : {
               ...current,
-              [paneId]: terminalId
+              [targetPaneId]: terminalId
             };
 
-      if (splitDirectionRef.current !== "single") {
-        const siblingPaneId = paneId === "primary" ? "secondary" : "primary";
+      if (nextSplitDirection !== "single") {
+        const siblingPaneId = targetPaneId === "primary" ? "secondary" : "primary";
 
         if (nextBindings[siblingPaneId] === terminalId) {
           nextBindings[siblingPaneId] = pickAnotherTerminalId(terminals, terminalId);
@@ -682,9 +751,9 @@ export function TerminalPage() {
       return normalizePaneBindings({
         terminals,
         currentBindings: nextBindings,
-        splitDirection: splitDirectionRef.current,
+        splitDirection: nextSplitDirection,
         fallbackTerminalId: terminalId,
-        preferredPaneId: paneId
+        preferredPaneId: targetPaneId
       });
     });
     setManuallyDisconnectedTerminalIds((current) =>
@@ -718,6 +787,8 @@ export function TerminalPage() {
   }
 
   function applyCreatedTerminalLocally(terminal: TerminalDto, paneId: PaneId): void {
+    const targetPaneId: PaneId = isMobileTerminalPage ? "primary" : paneId;
+    const nextSplitDirection: SplitDirection = isMobileTerminalPage ? "single" : splitDirectionRef.current;
     const nextTerminals = upsertTerminal(terminalsRef.current, terminal);
     terminalsRef.current = nextTerminals;
     setTerminals(nextTerminals);
@@ -726,22 +797,22 @@ export function TerminalPage() {
         terminals: nextTerminals,
         currentBindings: {
           ...current,
-          [paneId]: terminal.id,
-          ...(splitDirectionRef.current === "single"
+          [targetPaneId]: terminal.id,
+          ...(nextSplitDirection === "single"
             ? {
                 primary: terminal.id,
                 secondary: null
               }
             : {})
         },
-        splitDirection: splitDirectionRef.current,
+        splitDirection: nextSplitDirection,
         fallbackTerminalId: terminal.id,
-        preferredPaneId: paneId
+        preferredPaneId: targetPaneId
       })
     );
     setPaneConnectionStates((current) => ({
       ...current,
-      [paneId]: terminal.status === "running" ? "reconnecting" : "closed"
+      [targetPaneId]: terminal.status === "running" ? "reconnecting" : "closed"
     }));
     setManuallyDisconnectedTerminalIds((current) =>
       current.filter((item) => item !== terminal.id)
@@ -753,7 +824,7 @@ export function TerminalPage() {
       return;
     }
 
-    const targetPaneId = activePaneIdRef.current;
+    const targetPaneId: PaneId = isMobileTerminalPage ? "primary" : activePaneIdRef.current;
     setCreatingTerminal(true);
     setPendingTerminalCreationPaneId(targetPaneId);
 
@@ -893,7 +964,7 @@ export function TerminalPage() {
       return;
     }
 
-    const targetPaneId = activePaneIdRef.current;
+    const targetPaneId: PaneId = isMobileTerminalPage ? "primary" : activePaneIdRef.current;
 
     try {
       const duplicatedTerminal = await submitTerminalCreation({
@@ -929,7 +1000,7 @@ export function TerminalPage() {
       return;
     }
 
-    const targetPaneId = activePaneIdRef.current;
+    const targetPaneId: PaneId = isMobileTerminalPage ? "primary" : activePaneIdRef.current;
     setApplyingRuntimeFallback(true);
     setPendingTerminalCreationPaneId(targetPaneId);
 
@@ -981,7 +1052,12 @@ export function TerminalPage() {
   }
 
   function handleDisconnectTerminal(terminalId: string): void {
-    const paneId = findPaneIdByTerminalId(terminalId, paneBindings, splitDirection, activePaneId);
+    const paneId = findPaneIdByTerminalId(
+      terminalId,
+      effectivePaneBindings,
+      effectiveSplitDirection,
+      effectiveActivePaneId
+    );
 
     if (!paneId) {
       return;
@@ -1004,7 +1080,12 @@ export function TerminalPage() {
   }
 
   function handleReconnectTerminal(terminalId: string): void {
-    const paneId = findPaneIdByTerminalId(terminalId, paneBindings, splitDirection, activePaneId);
+    const paneId = findPaneIdByTerminalId(
+      terminalId,
+      effectivePaneBindings,
+      effectiveSplitDirection,
+      effectiveActivePaneId
+    );
 
     if (!paneId) {
       return;
@@ -1027,6 +1108,10 @@ export function TerminalPage() {
   }
 
   function applySplitLayout(nextDirection: SplitDirection): void {
+    if (isMobileTerminalPage) {
+      return;
+    }
+
     if (nextDirection === "single") {
       updatePaneBindings((current) => {
         const focusedTerminalId =
@@ -1062,8 +1147,8 @@ export function TerminalPage() {
     try {
       const content = readTerminalContent({
         terminalId: activeTerminal.id,
-        splitDirection,
-        paneBindings,
+        splitDirection: effectiveSplitDirection,
+        paneBindings: effectivePaneBindings,
         paneApiById: paneApiRef.current
       });
 
@@ -1082,6 +1167,22 @@ export function TerminalPage() {
     }
   }
 
+  function handleSwipeTerminal(direction: "previous" | "next"): void {
+    if (!isMobileTerminalPage || orderedTerminals.length < 2) {
+      return;
+    }
+
+    const currentIndex = activeTerminalIndex >= 0 ? activeTerminalIndex : 0;
+    const nextIndex = direction === "next" ? currentIndex + 1 : currentIndex - 1;
+    const nextTerminal = orderedTerminals[nextIndex] ?? null;
+
+    if (!nextTerminal) {
+      return;
+    }
+
+    bindTerminalToPane(nextTerminal.id, "primary");
+  }
+
   return (
     <main className="terminal-layout">
       <TerminalRuntimeFallbackModal
@@ -1098,7 +1199,7 @@ export function TerminalPage() {
           void handleConfirmRuntimeFallback();
         }}
       />
-      <section className="terminal-shell">
+      <section className="terminal-shell" data-mobile={isMobileTerminalPage}>
         <header className="terminal-tabbar">
           <div ref={terminalTabbarMainRef} className="terminal-tabbar-main">
             <div
@@ -1116,8 +1217,8 @@ export function TerminalPage() {
                   ? "creating"
                   : resolveTerminalIndicatorStatus({
                       terminal,
-                      paneBindings,
-                      paneConnectionStates,
+                      paneBindings: effectivePaneBindings,
+                      paneConnectionStates: effectivePaneConnectionStates,
                       manuallyDisconnectedTerminalIdSet
                     });
 
@@ -1126,7 +1227,11 @@ export function TerminalPage() {
                     key={terminal.id}
                     className="terminal-tab-shell"
                     data-active={isActive}
-                    data-assigned={isTerminalAssigned(terminal.id, paneBindings, splitDirection)}
+                    data-assigned={isTerminalAssigned(
+                      terminal.id,
+                      effectivePaneBindings,
+                      effectiveSplitDirection
+                    )}
                   >
                     <button
                       className="terminal-tab"
@@ -1325,44 +1430,46 @@ export function TerminalPage() {
                       </div>
                     </div>
 
-                    <div className="terminal-toolbar-section">
-                      <span className="terminal-toolbar-label">{t("terminal.layoutLabel")}</span>
-                      <div className="terminal-layout-switcher">
-                        <button
-                          type="button"
-                          className="terminal-layout-button"
-                          data-active={splitDirection === "single"}
-                          aria-label={t("terminal.layoutSingleAction")}
-                          onClick={() => {
-                            applySplitLayout("single");
-                          }}
-                        >
-                          1
-                        </button>
-                        <button
-                          type="button"
-                          className="terminal-layout-button"
-                          data-active={splitDirection === "vertical"}
-                          aria-label={t("terminal.layoutVerticalAction")}
-                          onClick={() => {
-                            applySplitLayout("vertical");
-                          }}
-                        >
-                          ||
-                        </button>
-                        <button
-                          type="button"
-                          className="terminal-layout-button"
-                          data-active={splitDirection === "horizontal"}
-                          aria-label={t("terminal.layoutHorizontalAction")}
-                          onClick={() => {
-                            applySplitLayout("horizontal");
-                          }}
-                        >
-                          =
-                        </button>
+                    {!isMobileTerminalPage ? (
+                      <div className="terminal-toolbar-section">
+                        <span className="terminal-toolbar-label">{t("terminal.layoutLabel")}</span>
+                        <div className="terminal-layout-switcher">
+                          <button
+                            type="button"
+                            className="terminal-layout-button"
+                            data-active={splitDirection === "single"}
+                            aria-label={t("terminal.layoutSingleAction")}
+                            onClick={() => {
+                              applySplitLayout("single");
+                            }}
+                          >
+                            1
+                          </button>
+                          <button
+                            type="button"
+                            className="terminal-layout-button"
+                            data-active={splitDirection === "vertical"}
+                            aria-label={t("terminal.layoutVerticalAction")}
+                            onClick={() => {
+                              applySplitLayout("vertical");
+                            }}
+                          >
+                            ||
+                          </button>
+                          <button
+                            type="button"
+                            className="terminal-layout-button"
+                            data-active={splitDirection === "horizontal"}
+                            aria-label={t("terminal.layoutHorizontalAction")}
+                            onClick={() => {
+                              applySplitLayout("horizontal");
+                            }}
+                          >
+                            =
+                          </button>
+                        </div>
                       </div>
-                    </div>
+                    ) : null}
 
                     <button
                       type="button"
@@ -1414,10 +1521,10 @@ export function TerminalPage() {
                 ref={terminalActionMenuRef}
                 actionMenu={actionMenu}
                 terminal={actionMenuTerminal}
-                paneBindings={paneBindings}
-                splitDirection={splitDirection}
-                activePaneId={activePaneId}
-                paneConnectionStates={paneConnectionStates}
+                paneBindings={effectivePaneBindings}
+                splitDirection={effectiveSplitDirection}
+                activePaneId={effectiveActivePaneId}
+                paneConnectionStates={effectivePaneConnectionStates}
                 pinnedTerminalIdSet={pinnedTerminalIdSet}
                 manuallyDisconnectedTerminalIdSet={manuallyDisconnectedTerminalIdSet}
                 pendingMutation={terminalMutations[actionMenuTerminal.id] ?? null}
@@ -1437,10 +1544,22 @@ export function TerminalPage() {
           </div>
         </header>
 
+        {isMobileTerminalPage && orderedTerminals.length > 1 ? (
+          <div className="terminal-mobile-gesture-hint">
+            <span>{t("terminal.mobileSwipeHint")}</span>
+            <strong>
+              {t("terminal.mobileSwipePosition", {
+                current: activeTerminalIndex >= 0 ? activeTerminalIndex + 1 : 1,
+                total: orderedTerminals.length
+              })}
+            </strong>
+          </div>
+        ) : null}
+
         <div className="terminal-stage-surface">
-          <div className="terminal-stage-grid" data-layout={splitDirection}>
+          <div className="terminal-stage-grid" data-layout={effectiveSplitDirection} data-mobile={isMobileTerminalPage}>
             {visiblePaneIds.map((paneId) => {
-              const terminalId = paneBindings[paneId];
+              const terminalId = effectivePaneBindings[paneId];
               const terminal = terminals.find((item) => item.id === terminalId) ?? null;
 
               return (
@@ -1451,9 +1570,11 @@ export function TerminalPage() {
                   terminal={terminal}
                   pendingCreation={!terminal && pendingTerminalCreationPaneId === paneId}
                   zoomScale={zoomScale}
-                  active={activePaneId === paneId}
-                  connectionState={paneConnectionStates[paneId]}
+                  active={effectiveActivePaneId === paneId}
+                  allowSwipeSwitch={isMobileTerminalPage && orderedTerminals.length > 1}
+                  connectionState={effectivePaneConnectionStates[paneId]}
                   onActivate={activatePane}
+                  onSwipeTerminal={handleSwipeTerminal}
                   onConnectionChange={handlePaneConnectionChange}
                   onTerminalStatus={handleTerminalStatus}
                   onRequireReload={requestReload}
@@ -1655,8 +1776,10 @@ function TerminalWorkspacePane({
   pendingCreation,
   zoomScale,
   active,
+  allowSwipeSwitch = false,
   connectionState,
   onActivate,
+  onSwipeTerminal,
   onConnectionChange,
   onTerminalStatus,
   onRequireReload,
@@ -1665,6 +1788,7 @@ function TerminalWorkspacePane({
   notifyTerminal
 }: TerminalWorkspacePaneProps) {
   const terminalContainerRef = useRef<HTMLDivElement | null>(null);
+  const touchStartRef = useRef<{ x: number; y: number } | null>(null);
   const realtimeClientRef = useRef<TerminalRealtimeClient | null>(null);
   const viewportRuntimeRef = useRef<TerminalViewportRuntime | null>(null);
   const activeCursorRef = useRef<string | null>(null);
@@ -1896,6 +2020,52 @@ function TerminalWorkspacePane({
       }}
       onClick={() => {
         viewportRuntimeRef.current?.focus();
+      }}
+      onTouchStart={(event) => {
+        if (!allowSwipeSwitch) {
+          return;
+        }
+
+        const touch = event.touches[0];
+
+        if (!touch) {
+          return;
+        }
+
+        touchStartRef.current = {
+          x: touch.clientX,
+          y: touch.clientY
+        };
+      }}
+      onTouchEnd={(event) => {
+        if (!allowSwipeSwitch || !onSwipeTerminal) {
+          touchStartRef.current = null;
+          return;
+        }
+
+        const startPoint = touchStartRef.current;
+        const touch = event.changedTouches[0];
+        touchStartRef.current = null;
+
+        if (!startPoint || !touch) {
+          return;
+        }
+
+        const deltaX = touch.clientX - startPoint.x;
+        const deltaY = touch.clientY - startPoint.y;
+
+        if (
+          Math.abs(deltaX) < TERMINAL_MOBILE_SWIPE_THRESHOLD ||
+          Math.abs(deltaY) > TERMINAL_MOBILE_SWIPE_OFF_AXIS_THRESHOLD ||
+          Math.abs(deltaX) <= Math.abs(deltaY)
+        ) {
+          return;
+        }
+
+        onSwipeTerminal(deltaX < 0 ? "next" : "previous");
+      }}
+      onTouchCancel={() => {
+        touchStartRef.current = null;
       }}
     >
       {terminal ? (

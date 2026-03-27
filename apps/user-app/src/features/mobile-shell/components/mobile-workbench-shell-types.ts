@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-export type MobileWorkbenchEntry = "workspaces" | "sessions" | "tools" | "settings";
+export type MobileWorkbenchEntry = "workspaces" | "terminals" | "sessions" | "tools" | "settings";
 
 export interface MobileWorkbenchShellProps {
   readonly activeEntry: MobileWorkbenchEntry;
@@ -13,6 +13,7 @@ export interface MobileWorkbenchShellProps {
   readonly onOpenSearch: () => void;
   readonly onOpenAuxiliary: () => void;
   readonly onNavigateWorkspaces: () => void;
+  readonly onNavigateTerminals: () => void;
   readonly onNavigateSessions: () => void;
   readonly onNavigateTools: () => void;
   readonly onNavigateSettings: () => void;

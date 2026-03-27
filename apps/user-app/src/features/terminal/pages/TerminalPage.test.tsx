@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -9,6 +9,8 @@ import { ToastProvider } from "../../../shared/toast";
 import type { WorkspaceSessionGroup } from "../../conversation/components/WorkbenchLayout";
 import type { TerminalDto, TerminalShellOptionDto } from "../api/terminal-api";
 import { TerminalPage } from "./TerminalPage";
+
+const originalInnerWidth = window.innerWidth;
 
 const {
   navigationGroups,
@@ -312,6 +314,11 @@ describe("TerminalPage", () => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
     global.WebSocket = originalWebSocket;
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      writable: true,
+      value: originalInnerWidth
+    });
 
     if (originalFonts) {
       Object.defineProperty(document, "fonts", originalFonts);
@@ -531,6 +538,63 @@ describe("TerminalPage", () => {
     });
     await waitFor(() => {
       expect(screen.queryByText("异常终端")).not.toBeInTheDocument();
+    });
+  });
+
+  it("移动端会隐藏分栏按钮，并支持左右滑动切换终端", async () => {
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      writable: true,
+      value: 390
+    });
+
+    mockListWorkspaceTerminals.mockResolvedValue({
+      items: [
+        buildTerminal({
+          id: "terminal-1",
+          name: "前端",
+          lastActiveAt: "2026-03-26T08:10:00.000Z"
+        }),
+        buildTerminal({
+          id: "terminal-2",
+          name: "后端",
+          runtimeSessionId: "session-2",
+          attachTarget: "tmux://session-2",
+          processId: 4567,
+          lastActiveAt: "2026-03-26T08:00:00.000Z"
+        })
+      ]
+    });
+
+    const user = userEvent.setup();
+    const view = renderPage();
+
+    const frontTab = await screen.findByRole("tab", { name: /前端/i });
+    const backTab = await screen.findByRole("tab", { name: /后端/i });
+
+    expect(screen.getByText("左右滑动切换终端")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "展开终端工具栏" }));
+    expect(screen.queryByRole("button", { name: "左右分栏" })).not.toBeInTheDocument();
+
+    const pane = view.container.querySelector(".terminal-pane-card");
+
+    if (!(pane instanceof HTMLElement)) {
+      throw new Error("未找到终端舞台");
+    }
+
+    expect(frontTab).toHaveAttribute("aria-selected", "true");
+    expect(backTab).toHaveAttribute("aria-selected", "false");
+
+    fireEvent.touchStart(pane, {
+      touches: [{ clientX: 260, clientY: 120 }]
+    });
+    fireEvent.touchEnd(pane, {
+      changedTouches: [{ clientX: 90, clientY: 128 }]
+    });
+
+    await waitFor(() => {
+      expect(backTab).toHaveAttribute("aria-selected", "true");
     });
   });
 });
