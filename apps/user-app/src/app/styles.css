@@ -12496,6 +12496,41 @@ textarea:focus-visible {
   color: var(--text-tertiary);
 }
 
+.mobile-create-session-provider-block .session-provider-grid {
+  gap: 0.65rem;
+}
+
+.mobile-create-session-provider-block .session-provider-card {
+  gap: 0.8rem;
+  min-height: 4.75rem;
+  padding: 0.65rem 0.9rem;
+  border-radius: 1px;
+}
+
+.mobile-create-session-provider-block .session-provider-card-icon {
+  width: 4rem;
+  height: 4rem;
+  border-radius: 1.15rem;
+}
+
+.mobile-create-session-provider-block .session-provider-card-icon img {
+  width: 2rem;
+  height: 2rem;
+}
+
+.mobile-create-session-provider-block .session-provider-card-copy {
+  gap: 0.3rem;
+}
+
+.mobile-create-session-provider-block .session-provider-card-copy strong {
+  font-size: 0.98rem;
+  line-height: 1.2;
+}
+
+.mobile-create-session-provider-block .session-provider-card-status {
+  font-size: 0.76rem;
+}
+
 .mobile-provider-card,
 .mobile-tool-card,
 .mobile-session-card-button {
