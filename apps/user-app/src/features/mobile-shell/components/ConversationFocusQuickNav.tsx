@@ -16,7 +16,8 @@ const BUBBLE_SIZE_PX = 54;
 const WHEEL_SIZE_PX = 320;
 const ACTION_ORBIT_RADIUS_PX = 118;
 const EDGE_MARGIN_PX = 12;
-const BOTTOM_CLEARANCE_PX = 118;
+// 底部留白需要覆盖半圆菜单向下展开的实际高度，避免默认停靠点过低导致菜单被裁切。
+const BOTTOM_CLEARANCE_PX = Math.ceil(WHEEL_SIZE_PX / 2 - BUBBLE_SIZE_PX / 2 + EDGE_MARGIN_PX);
 const DRAG_THRESHOLD_PX = 6;
 const LONG_PRESS_DURATION_MS = 3000;
 const MENU_ANIMATION_MS = 220;
@@ -559,22 +560,14 @@ function clamp(value: number, min: number, max: number) {
 }
 
 function QuickNavIcon({ side }: { side: QuickNavDockSide }) {
-  const pointsLeft = side === "right";
-
   return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
-      {pointsLeft ? (
-        <>
-          <path d="M15.5 7.5 9.5 12l6 4.5" />
-          <path d="M9 12h7.5" />
-        </>
-      ) : (
-        <>
-          <path d="M8.5 7.5 14.5 12l-6 4.5" />
-          <path d="M15 12H7.5" />
-        </>
-      )}
-      <path d="M12 7.5v9" opacity="0.4" />
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="4.75" y="5" width="5.5" height="5.5" rx="1.7" />
+      <rect x="13.75" y="5" width="5.5" height="5.5" rx="1.7" opacity="0.72" />
+      <rect x="4.75" y="13.5" width="5.5" height="5.5" rx="1.7" opacity="0.72" />
+      <path d="M13.75 16.25h5.5" />
+      <path d="M16.5 13.5v5.5" />
+      {side === "left" ? <path d="M3.6 12h1.8" opacity="0.34" /> : <path d="M18.6 12h1.8" opacity="0.34" />}
     </svg>
   );
 }
