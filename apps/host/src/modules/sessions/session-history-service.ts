@@ -43,6 +43,10 @@ import {
   CodexModelOptionsService,
   enrichCodexCapabilities
 } from "../provider/codex-model-options.js";
+import {
+  OpenCodeModelOptionsService,
+  enrichOpenCodeCapabilities
+} from "../provider/opencode-model-options.js";
 
 interface StartSessionInput {
   workspaceId: string;
@@ -85,6 +89,7 @@ export class SessionHistoryService {
   private readonly capabilityService: CapabilityService;
   private readonly claudeCodeHomeDir: string;
   private readonly codexModelOptionsService: CodexModelOptionsService;
+  private readonly openCodeModelOptionsService: OpenCodeModelOptionsService;
   private readonly workspaceDiscoveryTimestamps = new Map<string, number>();
   private readonly workspaceDiscoveryInflight = new Map<string, Promise<SessionListItem[]>>();
   private readonly workspaceStateRefreshInflight = new Map<string, Promise<void>>();
@@ -119,6 +124,11 @@ export class SessionHistoryService {
     this.capabilityService = new CapabilityService(this.providerRegistry);
     this.codexModelOptionsService = new CodexModelOptionsService({
       commandPath: config.codexCliPath
+    });
+    this.openCodeModelOptionsService = new OpenCodeModelOptionsService({
+      baseUrl: config.opencodeBaseUrl,
+      baseUrlResolver: config.opencodeBaseUrlResolver?.resolve.bind(config.opencodeBaseUrlResolver),
+      commandPath: config.opencodeCliPath
     });
   }
 
@@ -407,7 +417,16 @@ export class SessionHistoryService {
       workspacePath
     });
 
-    return enrichCodexCapabilities(claudeEnriched, this.codexModelOptionsService);
+    const codexEnriched = await enrichCodexCapabilities(
+      claudeEnriched,
+      this.codexModelOptionsService
+    );
+
+    return enrichOpenCodeCapabilities(
+      codexEnriched,
+      this.openCodeModelOptionsService,
+      workspacePath
+    );
   }
 
   async getSessionContextUsage(sessionId: string): Promise<ContextUsageSnapshot | null> {

@@ -735,7 +735,7 @@ export class SessionRuntimeStore {
       );
     }
 
-    if (this.state.capabilities === null) {
+    if (shouldRefreshCapabilities(this.state.capabilities)) {
       tasks.push(
         getSessionCapabilities(this.sessionId)
           .then((capabilities) => {
@@ -759,7 +759,7 @@ export class SessionRuntimeStore {
   private shouldRefreshSessionDetail(): boolean {
     return (
       this.state.session === null
-      || this.state.capabilities === null
+      || shouldRefreshCapabilities(this.state.capabilities)
       || this.state.session.runningState === null
     );
   }
@@ -1057,6 +1057,20 @@ function isTerminalRuntimeState(
   state: SessionRunningState | null | undefined
 ): state is "completed" | "interrupted" | "failed" {
   return state === "completed" || state === "interrupted" || state === "failed";
+}
+
+function shouldRefreshCapabilities(capabilities: ProviderCapabilitiesDto | null): boolean {
+  if (capabilities === null) {
+    return true;
+  }
+
+  const modelOptions = capabilities.modelOptions ?? [];
+
+  if (modelOptions.length === 0) {
+    return true;
+  }
+
+  return modelOptions.every((option) => option.usesProviderDefault === true);
 }
 
 function resolveEnvelopeRunningState(

@@ -336,6 +336,17 @@ describe("SessionRuntimeStore", () => {
         supportsAttachments: false,
         supportsPermissionPrompt: true,
         supportsCheckpoint: false,
+        modelOptions: [
+          {
+            id: "provider-default",
+            name: "跟随 CLI 默认模型",
+            usesProviderDefault: true
+          },
+          {
+            id: "gpt-5.4",
+            name: "gpt-5.4"
+          }
+        ],
         limitations: []
       },
       contextUsage: {
@@ -369,6 +380,125 @@ describe("SessionRuntimeStore", () => {
     expect(mocked.getSessionCapabilities).not.toHaveBeenCalled();
     expect(mocked.getSessionRuntime).not.toHaveBeenCalled();
     expect(mocked.getSessionMessages).toHaveBeenCalledTimes(1);
+
+    store.destroy();
+  });
+
+  it("缓存里只有 provider-default 时，会重新刷新 capabilities", async () => {
+    vi.useFakeTimers();
+    writeViewSnapshot(SESSION_RUNTIME_SNAPSHOT_KEY, {
+      session: {
+        sessionId: "session-1",
+        workspaceId: "workspace-1",
+        provider: "opencode",
+        providerSessionId: "raw-1",
+        rawStoreRef: "opencode://raw-1",
+        title: "会话 1",
+        messageCount: 60,
+        lastMessageAt: "2026-03-24T10:00:00.000Z",
+        createdAt: "2026-03-24T09:00:00.000Z",
+        updatedAt: "2026-03-24T10:00:00.000Z",
+        syncStatus: "idle",
+        syncCursor: "cursor-sync",
+        lastSyncAt: "2026-03-24T10:00:00.000Z",
+        lastErrorCode: null,
+        lastErrorDetail: null,
+        resumedAt: null,
+        runningState: "idle",
+        activitySource: "none",
+        lastEventAt: "2026-03-24T10:00:00.000Z",
+        completedAt: null,
+        lastSeenAt: null,
+        activityState: "idle"
+      },
+      capabilities: {
+        provider: "opencode",
+        canStartSession: true,
+        canResumeSession: true,
+        canSendMessage: true,
+        inRunInputMode: "none",
+        supportsSubagents: false,
+        supportsInterrupt: true,
+        supportsStructuredToolCalls: true,
+        supportsTokenUsage: false,
+        supportsAttachments: false,
+        supportsPermissionPrompt: true,
+        supportsCheckpoint: false,
+        modelOptions: [
+          {
+            id: "provider-default",
+            name: "跟随 OpenCode 默认模型",
+            usesProviderDefault: true
+          }
+        ],
+        limitations: []
+      },
+      contextUsage: {
+        provider: "opencode",
+        promptTokens: 100,
+        uncachedInputTokens: 100,
+        cachedInputTokens: 0,
+        contextWindow: 200000,
+        usageRatio: 0.001,
+        source: "provider-runtime",
+        contextWindowSource: "provider-runtime",
+        modelId: "opencode/gpt-5-nano",
+        capturedAt: "2026-03-24T10:00:00.000Z",
+        isEstimated: false
+      },
+      messages: [],
+      queuedMessages: []
+    });
+    mocked.getSessionCapabilities.mockResolvedValueOnce({
+      provider: "opencode",
+      canStartSession: true,
+      canResumeSession: true,
+      canSendMessage: true,
+      inRunInputMode: "none",
+      supportsSubagents: false,
+      supportsInterrupt: true,
+      supportsStructuredToolCalls: true,
+      supportsTokenUsage: false,
+      supportsAttachments: false,
+      supportsPermissionPrompt: true,
+      supportsCheckpoint: false,
+      modelOptions: [
+        {
+          id: "provider-default",
+          name: "跟随 OpenCode 默认模型",
+          usesProviderDefault: true
+        },
+        {
+          id: "opencode/gpt-5-nano",
+          name: "opencode/gpt-5-nano"
+        }
+      ],
+      limitations: []
+    });
+
+    const store = new SessionRuntimeStore("session-1");
+
+    mocked.getSessionMessages.mockResolvedValueOnce({
+      messages: [],
+      cursor: "cursor-latest",
+      nextCursor: null,
+      total: 0
+    });
+
+    await store.initialize();
+
+    expect(mocked.getSessionCapabilities).toHaveBeenCalledTimes(1);
+    expect(store.getState().capabilities?.modelOptions).toEqual([
+      {
+        id: "provider-default",
+        name: "跟随 OpenCode 默认模型",
+        usesProviderDefault: true
+      },
+      {
+        id: "opencode/gpt-5-nano",
+        name: "opencode/gpt-5-nano"
+      }
+    ]);
 
     store.destroy();
   });

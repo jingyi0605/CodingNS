@@ -20,7 +20,7 @@ function createDeferred() {
 function createCapabilities(options?: {
   supportsAttachments?: boolean;
   supportsInterrupt?: boolean;
-  provider?: "codex" | "claude-code";
+  provider?: "codex" | "claude-code" | "opencode";
   modelOptions?: Array<{
     id: string;
     name: string;
@@ -66,6 +66,18 @@ function createCapabilities(options?: {
               supportedReasoningEfforts: ["medium", "high"]
             }
           ]
+        : provider === "opencode"
+          ? [
+              {
+                id: "provider-default",
+                name: "跟随 OpenCode 默认模型",
+                usesProviderDefault: true
+              },
+              {
+                id: "opencode/gpt-5-nano",
+                name: "opencode/gpt-5-nano"
+              }
+            ]
         : undefined),
     defaultReasoningLevel: options?.defaultReasoningLevel ?? (provider === "codex" ? "high" : undefined),
     limitations: []
@@ -82,6 +94,11 @@ class MockFileReader {
     this.result = "data:image/png;base64,ZmFrZQ==";
     this.onload?.();
   }
+}
+
+function chooseOption(triggerLabel: string, optionLabel: string) {
+  fireEvent.click(screen.getByLabelText(triggerLabel));
+  fireEvent.click(screen.getByRole("option", { name: optionLabel }));
 }
 
 describe("ComposerPanel", () => {
@@ -430,14 +447,27 @@ describe("ComposerPanel", () => {
       />
     );
 
-    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const textarea = screen.getByRole("textbox");
     const file = new File(["demo"], "demo.png", { type: "image/png" });
 
-    fireEvent.change(input, {
-      target: {
-        files: [file]
+    expect(container.querySelector(".composer-attach-btn")).toBeNull();
+
+    fireEvent.paste(textarea, {
+      clipboardData: {
+        items: [
+          {
+            kind: "file",
+            type: "image/png",
+            getAsFile: () => file
+          }
+        ]
       }
     });
+
+    await waitFor(() => {
+      expect(screen.getByText("demo.png")).toBeInTheDocument();
+    });
+
     fireEvent.submit(container.querySelector(".composer-form")!);
 
     await waitFor(() => {
@@ -476,11 +506,7 @@ describe("ComposerPanel", () => {
       />
     );
 
-    fireEvent.change(screen.getByLabelText(t("conversation.modelSelectorLabel")), {
-      target: {
-        value: "gpt-5.4"
-      }
-    });
+    chooseOption(t("conversation.modelSelectorLabel"), "gpt-5.4");
     fireEvent.change(screen.getByRole("textbox"), {
       target: {
         value: "请输出当前模型"
@@ -535,6 +561,38 @@ describe("ComposerPanel", () => {
     });
     expect(onSend).toHaveBeenCalledWith("请回复OK", {
       model: undefined,
+      reasoningLevel: undefined,
+      attachments: [],
+      attachmentMeta: []
+    });
+  });
+
+  it("OpenCode 显式切换模型后会透传 provider/model", async () => {
+    const onSend = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <ComposerPanel
+        capabilities={createCapabilities({
+          provider: "opencode"
+        })}
+        isSubmitting={false}
+        onSend={onSend}
+      />
+    );
+
+    chooseOption(t("conversation.modelSelectorLabel"), "opencode/gpt-5-nano");
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: {
+        value: "请返回当前模型标识"
+      }
+    });
+    fireEvent.submit(document.querySelector(".composer-form")!);
+
+    await waitFor(() => {
+      expect(onSend).toHaveBeenCalledTimes(1);
+    });
+    expect(onSend).toHaveBeenCalledWith("请返回当前模型标识", {
+      model: "opencode/gpt-5-nano",
       reasoningLevel: undefined,
       attachments: [],
       attachmentMeta: []

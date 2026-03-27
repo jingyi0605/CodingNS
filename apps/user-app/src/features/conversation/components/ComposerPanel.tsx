@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties } from "react";
 
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
@@ -63,6 +63,11 @@ interface ComposerImageAttachment {
   id: string;
   file: File;
   previewUrl: string;
+}
+
+interface ComposerSelectOption {
+  value: string;
+  label: string;
 }
 
 const DEFAULT_CLAUDE_MODEL_ID = "provider-default";
@@ -227,7 +232,6 @@ export function ComposerPanel({
   const [showSlashMenu, setShowSlashMenu] = useState(false);
   const [interrupting, setInterrupting] = useState(false);
   const [localSubmitting, setLocalSubmitting] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const submitLockRef = useRef(false);
   const attachmentRegistryRef = useRef(new Set<string>());
@@ -290,6 +294,22 @@ export function ComposerPanel({
 
     return reasoningLevelCatalog.filter((level) => supportedEfforts.includes(level.value));
   }, [reasoningSelectorEnabled, reasoningLevelCatalog, selectedModelOption?.supportedReasoningEfforts]);
+  const modelSelectOptions = useMemo<ComposerSelectOption[]>(
+    () =>
+      availableModels.map((model) => ({
+        value: model.id,
+        label: model.name
+      })),
+    [availableModels]
+  );
+  const reasoningSelectOptions = useMemo<ComposerSelectOption[]>(
+    () =>
+      availableReasoningLevels.map((level) => ({
+        value: level.value,
+        label: level.label
+      })),
+    [availableReasoningLevels]
+  );
   const slashCommands = useMemo(
     () => [
       { command: "/plan", label: t("conversation.slashCommandPlan") },
@@ -377,18 +397,6 @@ export function ComposerPanel({
     });
   }, [showToast]);
 
-  const handleFileSelect = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = event.target.files;
-
-    if (files && files.length > 0) {
-      mergeAttachments(Array.from(files));
-    }
-
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
-  }, [mergeAttachments]);
-
   const removeAttachment = useCallback((attachmentId: string) => {
     setAttachments((current) => {
       const target = current.find((item) => item.id === attachmentId);
@@ -401,18 +409,6 @@ export function ComposerPanel({
       return current.filter((item) => item.id !== attachmentId);
     });
   }, []);
-
-  const openFilePicker = useCallback(() => {
-    if (!attachmentDecision.allowed) {
-      showToast({
-        title: attachmentDecision.reason ?? t("conversation.capabilityDenied"),
-        tone: "error"
-      });
-      return;
-    }
-
-    fileInputRef.current?.click();
-  }, [attachmentDecision.allowed, attachmentDecision.reason, showToast]);
 
   const handleSlashCommand = useCallback(() => {
     setShowSlashMenu((current) => !current);
@@ -642,15 +638,6 @@ export function ComposerPanel({
     <section className="composer-panel">
       <form className="composer-form" onSubmit={handleSubmit}>
         <div className="composer-input-container">
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            style={{ display: "none" }}
-            onChange={handleFileSelect}
-            accept="image/*"
-          />
-
           {attachments.length > 0 ? (
             <div className="composer-attachments">
               {attachments.map((attachment) => (
@@ -754,42 +741,21 @@ export function ComposerPanel({
                 {renderProviderIcon(provider)}
               </div>
 
-              <div className="composer-select-wrapper">
-                <select
-                  value={selectedModel}
-                  onChange={(event) => handleModelChange(event.target.value)}
-                  className="composer-select"
-                  aria-label={t("conversation.modelSelectorLabel")}
-                >
-                  {availableModels.map((model) => (
-                    <option key={model.id} value={model.id}>
-                      {model.name}
-                    </option>
-                  ))}
-                </select>
-                <svg className="composer-select-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <polyline points="6 9 12 15 18 9" />
-                </svg>
-              </div>
+              <MacSelect
+                ariaLabel={t("conversation.modelSelectorLabel")}
+                value={selectedModel}
+                options={modelSelectOptions}
+                onChange={handleModelChange}
+              />
 
               {reasoningSelectorEnabled && availableReasoningLevels.length > 0 ? (
-                <div className="composer-select-wrapper">
-                  <select
-                    value={reasoningLevel}
-                    onChange={(event) => handleReasoningLevelChange(event.target.value as ReasoningLevel)}
-                    className="composer-select"
-                    aria-label={t("conversation.reasoningSelectorLabel")}
-                  >
-                    {availableReasoningLevels.map((level) => (
-                      <option key={level.value} value={level.value}>
-                        {level.label}
-                      </option>
-                    ))}
-                  </select>
-                  <svg className="composer-select-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <polyline points="6 9 12 15 18 9" />
-                  </svg>
-                </div>
+                <MacSelect
+                  ariaLabel={t("conversation.reasoningSelectorLabel")}
+                  value={reasoningLevel}
+                  options={reasoningSelectOptions}
+                  onChange={(value) => handleReasoningLevelChange(value as ReasoningLevel)}
+                  compact
+                />
               ) : null}
 
               {slashMenuEnabled ? (
@@ -803,19 +769,6 @@ export function ComposerPanel({
                   <span>{t("conversation.slashMenu")}</span>
                 </button>
               ) : null}
-
-              <button
-                type="button"
-                className="composer-attach-btn"
-                onClick={openFilePicker}
-                title={`${t("conversation.attachFiles")} · ${t("conversation.pasteImagesHint")}`}
-                disabled={!attachmentDecision.allowed || inRunSendBlocked}
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <line x1="12" y1="5" x2="12" y2="19" />
-                  <line x1="5" y1="12" x2="19" y2="12" />
-                </svg>
-              </button>
 
               <ContextUsageRing contextUsage={contextUsage} />
             </div>
@@ -903,6 +856,120 @@ function renderProviderIcon(provider: ProviderId) {
       <circle cx="12" cy="12" r="9" />
       <path d="M12 8v8M8 12h8" />
     </svg>
+  );
+}
+
+function MacSelect({
+  ariaLabel,
+  value,
+  options,
+  onChange,
+  compact = false
+}: {
+  ariaLabel: string;
+  value: string;
+  options: ComposerSelectOption[];
+  onChange: (value: string) => void;
+  compact?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const listboxId = useId();
+  const selectedOption = options.find((option) => option.value === value) ?? options[0] ?? null;
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      if (!wrapperRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    }
+
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    }
+
+    window.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("keydown", handleEscape);
+
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("keydown", handleEscape);
+    };
+  }, [open]);
+
+  if (!selectedOption) {
+    return null;
+  }
+
+  return (
+    <div
+      ref={wrapperRef}
+      className={`composer-mac-select ${compact ? "is-compact" : ""}`}
+      data-open={open ? "true" : "false"}
+    >
+      <button
+        type="button"
+        className="composer-mac-select-trigger"
+        aria-label={ariaLabel}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={listboxId}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span className="composer-mac-select-label">{selectedOption.label}</span>
+        <svg
+          className="composer-mac-select-chevron"
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+        >
+          <polyline points="6 14 12 8 18 14" />
+        </svg>
+      </button>
+
+      {open ? (
+        <div className="composer-mac-select-popover" role="presentation">
+          <div
+            id={listboxId}
+            className="composer-mac-select-list"
+            role="listbox"
+            aria-label={ariaLabel}
+          >
+            {options.map((option) => {
+              const selected = option.value === value;
+
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  role="option"
+                  aria-selected={selected}
+                  className={`composer-mac-select-option ${selected ? "is-selected" : ""}`}
+                  onClick={() => {
+                    onChange(option.value);
+                    setOpen(false);
+                  }}
+                >
+                  <span className="composer-mac-select-option-check" aria-hidden="true">
+                    {selected ? "✓" : ""}
+                  </span>
+                  <span className="composer-mac-select-option-label">{option.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+    </div>
   );
 }
 

@@ -4604,7 +4604,8 @@ textarea:focus-visible {
     0 2px 12px rgba(0, 0, 0, 0.08),
     0 0 1px rgba(0, 0, 0, 0.05);
   transition: all 200ms ease;
-  overflow: hidden;
+  overflow: visible;
+  isolation: isolate;
 }
 
 [data-theme="dark"] .composer-input-container {
@@ -4748,24 +4749,28 @@ textarea:focus-visible {
 
 /* Controls Bar */
 .composer-controls {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
+  min-width: 0;
   padding: 8px 12px 12px;
   border-top: 1px solid var(--border-subtle);
 }
 
 .composer-controls-left {
   display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
   align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 
 /* Provider Logo */
 .composer-provider-logo {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: center;
   width: 28px;
@@ -4775,42 +4780,182 @@ textarea:focus-visible {
   color: var(--text-secondary);
 }
 
-/* Select Wrapper */
-.composer-select-wrapper {
+/* macOS Select */
+.composer-mac-select {
   position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: min(220px, 34vw);
+  z-index: 2;
 }
 
-.composer-select {
-  appearance: none;
-  height: 28px;
-  padding: 0 24px 0 10px;
-  border: 1px solid var(--border-primary);
-  border-radius: 8px;
-  background: var(--bg-primary);
-  font-size: 12px;
-  font-weight: 500;
+.composer-mac-select[data-open="true"] {
+  z-index: 30;
+}
+
+.composer-mac-select-trigger {
+  display: inline-flex;
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 34px;
+  padding: 0 12px 0 14px;
+  border-radius: 16px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 86%, rgba(255, 255, 255, 0.4));
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 94%, white 6%), color-mix(in srgb, var(--bg-surface) 88%, transparent)),
+    color-mix(in srgb, var(--bg-surface) 92%, transparent);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.6) inset,
+    0 10px 28px rgba(15, 23, 42, 0.1);
+  backdrop-filter: blur(22px) saturate(145%);
+  -webkit-backdrop-filter: blur(22px) saturate(145%);
   color: var(--text-primary);
-  cursor: pointer;
-  transition: all 120ms;
+  transition:
+    border-color var(--transition-fast),
+    background var(--transition-fast),
+    box-shadow var(--transition-fast),
+    transform var(--transition-fast);
 }
 
-.composer-select:hover {
-  background: var(--bg-hover);
-  border-color: var(--border-subtle);
+.composer-mac-select-trigger:hover {
+  border-color: color-mix(in srgb, var(--accent) 18%, var(--border-primary));
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.7) inset,
+    0 12px 30px rgba(15, 23, 42, 0.12);
 }
 
-.composer-select:focus {
+.composer-mac-select[data-open="true"] .composer-mac-select-trigger {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--border-primary));
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.72) inset,
+    0 14px 34px rgba(15, 23, 42, 0.14);
+}
+
+.composer-mac-select-trigger:active {
+  transform: translateY(1px);
+}
+
+.composer-mac-select-trigger:focus-visible {
   outline: none;
-  border-color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 36%, var(--border-primary));
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent),
+    0 1px 0 rgba(255, 255, 255, 0.72) inset,
+    0 14px 34px rgba(15, 23, 42, 0.14);
 }
 
-.composer-select-arrow {
-  position: absolute;
-  right: 8px;
-  top: 50%;
-  transform: translateY(-50%);
-  pointer-events: none;
+.composer-mac-select-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.composer-mac-select-chevron {
+  flex: 0 0 auto;
   color: var(--text-tertiary);
+  transition: transform var(--transition-fast);
+}
+
+.composer-mac-select[data-open="true"] .composer-mac-select-chevron {
+  transform: rotate(180deg);
+}
+
+.composer-mac-select-popover {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 10px);
+  z-index: 40;
+  width: max(100%, min(300px, calc(100vw - 96px)));
+  padding: 8px;
+  border-radius: 20px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 84%, rgba(255, 255, 255, 0.45));
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 94%, white 6%), color-mix(in srgb, var(--bg-surface) 88%, transparent)),
+    color-mix(in srgb, var(--bg-surface) 90%, transparent);
+  box-shadow:
+    0 22px 44px rgba(15, 23, 42, 0.16),
+    0 1px 0 rgba(255, 255, 255, 0.7) inset;
+  backdrop-filter: blur(28px) saturate(155%);
+  -webkit-backdrop-filter: blur(28px) saturate(155%);
+}
+
+.composer-mac-select-list {
+  display: flex;
+  max-height: 280px;
+  flex-direction: column;
+  gap: 4px;
+  overflow-y: auto;
+}
+
+.composer-mac-select-option {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 12px;
+  border-radius: 12px;
+  color: var(--text-primary);
+  text-align: left;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast),
+    transform var(--transition-fast);
+}
+
+.composer-mac-select-option:hover {
+  background: color-mix(in srgb, var(--bg-hover) 88%, transparent);
+}
+
+.composer-mac-select-option:active {
+  transform: scale(0.99);
+}
+
+.composer-mac-select-option.is-selected {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 78%, white 10%), color-mix(in srgb, var(--accent) 90%, transparent));
+  color: var(--text-inverse);
+}
+
+.composer-mac-select-option-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 18px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.composer-mac-select-option-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.composer-mac-select.is-compact .composer-mac-select-trigger {
+  min-height: 32px;
+  padding-inline: 12px;
+}
+
+.composer-mac-select.is-compact {
+  flex: 0 1 clamp(64px, 9vw, 96px);
+  min-width: 0;
+  max-width: 96px;
+}
+
+.composer-mac-select.is-compact .composer-mac-select-popover {
+  width: max(100%, 140px);
 }
 
 /* Slash Button */
@@ -4859,15 +5004,16 @@ textarea:focus-visible {
 
 .composer-send-group {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 8px;
-  flex-shrink: 0;
 }
 
 .composer-context-ring {
   --context-usage-progress: 0;
   --context-usage-tone: color-mix(in srgb, var(--accent) 76%, #0f766e 24%);
   position: relative;
+  flex: 0 0 auto;
   width: 28px;
   height: 28px;
   display: inline-flex;
@@ -5367,7 +5513,7 @@ textarea:focus-visible {
 .conversation-header,
 .composer-panel {
   position: relative;
-  z-index: 1;
+  z-index: 12;
 }
 
 .conversation-header {
@@ -7134,8 +7280,6 @@ textarea:focus-visible {
 
   .composer-controls {
     align-items: center;
-    flex-direction: row;
-    justify-content: space-between;
     gap: 8px;
   }
 
@@ -7151,6 +7295,26 @@ textarea:focus-visible {
 
   .composer-controls-left::-webkit-scrollbar {
     display: none;
+  }
+
+  .composer-mac-select-trigger {
+    min-width: 0;
+  }
+
+  .composer-mac-select {
+    flex-basis: clamp(132px, 40vw, 208px);
+    min-width: 120px;
+    max-width: min(208px, 52vw);
+  }
+
+  .composer-mac-select-popover {
+    width: max(100%, min(260px, calc(100vw - 72px)));
+  }
+
+  .composer-mac-select.is-compact {
+    flex-basis: clamp(72px, 20vw, 104px);
+    min-width: 68px;
+    max-width: 104px;
   }
 
   .composer-send {
@@ -8252,10 +8416,14 @@ textarea:focus-visible {
   border-radius: 10px;
 }
 
-.composer-select {
-  min-height: 30px;
-  padding: 0 30px 0 10px;
-  font-size: 12px;
+.composer-mac-select-trigger {
+  min-height: 32px;
+  max-width: min(300px, calc(100vw - 156px));
+  padding-inline: 12px;
+}
+
+.composer-mac-select-popover {
+  width: min(320px, calc(100vw - 100px));
 }
 
 .composer-slash-btn,
