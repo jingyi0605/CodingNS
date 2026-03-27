@@ -7,6 +7,7 @@ import {
   type CloneWorkspacePayload
 } from "../../conversation/api/conversation-api";
 import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout";
+import { SessionProviderPicker } from "../../conversation/components/SessionProviderPicker";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 
@@ -292,26 +293,7 @@ export function WorkspaceHomePage() {
               </p>
             </div>
           </div>
-          <div className="mobile-provider-grid">
-            <button
-              type="button"
-              className="mobile-provider-card"
-              aria-label={t("conversation.providerCodex")}
-              onClick={() => startDraftSession(currentWorkspace.id, "codex")}
-            >
-              <strong>{t("conversation.providerCodex")}</strong>
-              <p>{t("shell.providerCodexDescription")}</p>
-            </button>
-            <button
-              type="button"
-              className="mobile-provider-card"
-              aria-label={t("conversation.providerClaude")}
-              onClick={() => startDraftSession(currentWorkspace.id, "claude-code")}
-            >
-              <strong>{t("conversation.providerClaude")}</strong>
-              <p>{t("shell.providerClaudeDescription")}</p>
-            </button>
-          </div>
+          <SessionProviderPicker onSelect={(provider) => startDraftSession(currentWorkspace.id, provider)} />
         </section>
       ) : null}
 

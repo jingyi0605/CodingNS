@@ -82,6 +82,8 @@ describe("WorkspaceHomePage", () => {
     renderPage();
 
     await user.click(screen.getByRole("button", { name: "当前项目 项目一 新建会话" }));
+    expect(screen.getByRole("button", { name: "Claude Code" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "OpenCode" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Codex" }));
 
     expect(startDraftSession).toHaveBeenCalledWith("workspace-1", "codex");

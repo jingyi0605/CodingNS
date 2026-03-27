@@ -60,6 +60,7 @@ import {
   buildDraftSessionPath,
   flattenNavigationSessions
 } from "../../workbench/utils/workbench-navigation";
+import { SessionProviderPicker } from "./SessionProviderPicker";
 
 const LEFT_PANEL_WIDTH_KEY = "workbench.left.width";
 const RIGHT_PANEL_WIDTH_KEY = "workbench.right.width";
@@ -1168,12 +1169,14 @@ function SidebarModal({
   open,
   title,
   description,
+  className,
   onClose,
   children
 }: {
   open: boolean;
   title: string;
   description: string;
+  className?: string;
   onClose: () => void;
   children: ReactNode;
 }) {
@@ -1211,7 +1214,12 @@ function SidebarModal({
         aria-label={t("common.close")}
         onClick={onClose}
       />
-      <section className="workbench-modal-card surface-card" role="dialog" aria-modal="true" aria-label={title}>
+      <section
+        className={`workbench-modal-card surface-card${className ? ` ${className}` : ""}`}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+      >
         <div className="workbench-modal-header">
           <div className="workbench-modal-title-wrap">
             <h2>{title}</h2>
@@ -3486,6 +3494,7 @@ function SidebarContent({
       <SidebarModal
         open={createSessionWorkspace !== null}
         title={t("shell.createSessionModalTitle")}
+        className="workbench-create-session-modal"
         description={
           createSessionWorkspace
             ? `${t("shell.createSessionTarget")} · ${createSessionWorkspace.name}`
@@ -3493,73 +3502,19 @@ function SidebarContent({
         }
         onClose={() => setCreateSessionWorkspaceId(null)}
       >
-        <div className="workbench-provider-grid">
-          <button
-            type="button"
-            className="workbench-provider-option"
-            disabled={Boolean(actionWorkspaceId)}
-            onClick={() =>
-              createSessionWorkspace
-                ? void handleStartSession(createSessionWorkspace.id, "codex")
-                : undefined
+        <SessionProviderPicker
+          disabled={Boolean(actionWorkspaceId)}
+          pendingProvider={
+            actionWorkspaceId === createSessionWorkspace?.id ? actionProvider ?? null : null
+          }
+          onSelect={(provider) => {
+            if (!createSessionWorkspace) {
+              return;
             }
-          >
-            <span className="workbench-provider-badge">{formatProviderLabel("codex", "full")}</span>
-            <strong>{formatProviderLabel("codex", "full")}</strong>
-            <p>{t("shell.providerCodexDescription")}</p>
-            <span className="workbench-provider-hint">
-              {actionWorkspaceId === createSessionWorkspace?.id && actionProvider === "codex"
-                ? t("shell.startingSession")
-                : t("shell.providerOptionHint")}
-            </span>
-          </button>
 
-          <button
-            type="button"
-            className="workbench-provider-option"
-            disabled={Boolean(actionWorkspaceId)}
-            onClick={() =>
-              createSessionWorkspace
-                ? void handleStartSession(createSessionWorkspace.id, "claude-code")
-                : undefined
-            }
-          >
-            <span className="workbench-provider-badge">
-              {formatProviderLabel("claude-code", "full")}
-            </span>
-            <strong>{formatProviderLabel("claude-code", "full")}</strong>
-            <p>{t("shell.providerClaudeDescription")}</p>
-            <span className="workbench-provider-hint">
-              {actionWorkspaceId === createSessionWorkspace?.id &&
-              actionProvider === "claude-code"
-                ? t("shell.startingSession")
-                : t("shell.providerOptionHint")}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            className="workbench-provider-option"
-            disabled={Boolean(actionWorkspaceId)}
-            onClick={() =>
-              createSessionWorkspace
-                ? void handleStartSession(createSessionWorkspace.id, "opencode")
-                : undefined
-            }
-          >
-            <span className="workbench-provider-badge">
-              {formatProviderLabel("opencode", "full")}
-            </span>
-            <strong>{formatProviderLabel("opencode", "full")}</strong>
-            <p>{t("shell.providerOpenCodeDescription")}</p>
-            <span className="workbench-provider-hint">
-              {actionWorkspaceId === createSessionWorkspace?.id &&
-              actionProvider === "opencode"
-                ? t("shell.startingSession")
-                : t("shell.providerOptionHint")}
-            </span>
-          </button>
-        </div>
+            void handleStartSession(createSessionWorkspace.id, provider);
+          }}
+        />
       </SidebarModal>
 
       <SidebarModal
