@@ -85,6 +85,49 @@ function resolveToolCall(message: SessionMessageViewModel): ResolvedToolCall | n
   };
 }
 
+function getToolDisplayName(name: string): string {
+  if (name === "shell_command" || name === "tool") {
+    return t("conversation.roleTool");
+  }
+
+  return name;
+}
+
+function parseToolInputRecord(input: string): Record<string, unknown> | null {
+  if (!input.trim()) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(input) as unknown;
+
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return null;
+    }
+
+    return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function getToolPreview(tool: ResolvedToolCall): string {
+  const parsedInput = parseToolInputRecord(tool.input);
+  const command =
+    parsedInput && typeof parsedInput.command === "string" ? parsedInput.command.trim() : "";
+
+  if (command) {
+    return `${t("conversation.toolPreviewCommand")}：${command}`;
+  }
+
+  if (tool.name === "read_thread_terminal") {
+    return t("conversation.toolPreviewTerminal");
+  }
+
+  const previewSource = tool.input || tool.error || tool.output || t("conversation.toolResultEmpty");
+  return previewSource.length > 60 ? `${previewSource.slice(0, 60)}...` : previewSource;
+}
+
 function mergeToolMessages(messages: SessionMessageViewModel[]): ToolMessageGroup | null {
   const tools = messages
     .map((message) => ({
@@ -859,6 +902,7 @@ function ApplyPatchToolItem({
 function ToolCallItem({ group }: { group: ToolMessageGroup }) {
   const [expanded, setExpanded] = useState(false);
   const { tool, hasRequest, hasResult } = group;
+  const toolDisplayName = getToolDisplayName(tool.name);
   const applyPatchPreview = useMemo(
     () => (tool.name === "apply_patch" ? parseApplyPatchPreview(tool.input) : null),
     [tool.input, tool.name]
@@ -868,8 +912,7 @@ function ToolCallItem({ group }: { group: ToolMessageGroup }) {
     return <ApplyPatchToolItem tool={tool} preview={applyPatchPreview} />;
   }
 
-  const previewSource = tool.input || tool.error || tool.output || t("conversation.toolResultEmpty");
-  const preview = previewSource.length > 60 ? `${previewSource.slice(0, 60)}...` : previewSource;
+  const preview = getToolPreview(tool);
   const hasDetails = Boolean(tool.input || tool.output || tool.error);
 
   return (
@@ -880,7 +923,7 @@ function ToolCallItem({ group }: { group: ToolMessageGroup }) {
         onClick={() => hasDetails && setExpanded((current) => !current)}
       >
         <div className="tool-call-info">
-          <span className="tool-call-name">{tool.name}</span>
+          <span className="tool-call-name">{toolDisplayName}</span>
           <span className="tool-call-input-preview">{preview}</span>
         </div>
         <div className="tool-call-meta">

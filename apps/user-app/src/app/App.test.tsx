@@ -936,9 +936,9 @@ it("统一消息抽象会渲染 codex 工具调用", async () => {
 
   renderConversationRoute("session-tools");
 
-  expect(await screen.findByText("shell_command")).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: new RegExp(`^${t("conversation.roleTool")}`) })).toBeInTheDocument();
 
-  await userEvent.click(screen.getByRole("button", { name: /shell_command/ }));
+  await userEvent.click(screen.getByRole("button", { name: new RegExp(`^${t("conversation.roleTool")}`) }));
 
   expect(
     (await screen.findAllByText((content) => content.includes("error_code: 0"))).length

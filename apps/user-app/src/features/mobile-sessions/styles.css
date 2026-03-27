@@ -191,3 +191,66 @@
 .session-action-menu-item:hover {
   background: var(--surface-press);
 }
+
+.mobile-conversation-page[data-mobile-shell="true"] .tool-call-header,
+.mobile-conversation-page[data-mobile-shell="true"] .tool-call-info {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.mobile-conversation-page[data-mobile-shell="true"] .tool-call-info {
+  flex-wrap: nowrap;
+  align-items: center;
+}
+
+.mobile-conversation-page[data-mobile-shell="true"] .tool-call-name,
+.mobile-conversation-page[data-mobile-shell="true"] .tool-call-meta {
+  flex: 0 0 auto;
+}
+
+.mobile-conversation-page[data-mobile-shell="true"] .tool-call-name {
+  flex: 0 0 auto;
+  min-width: auto;
+  max-width: none;
+  white-space: nowrap;
+}
+
+.mobile-conversation-page[data-mobile-shell="true"] .tool-call-input-preview {
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.mobile-conversation-page[data-mobile-shell="true"] .apply-patch-summary-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  flex-wrap: nowrap;
+  align-items: center;
+  min-width: 0;
+}
+
+
+.mobile-conversation-page[data-mobile-shell="true"] .apply-patch-summary-file {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.mobile-conversation-page[data-mobile-shell="true"] .apply-patch-summary-stats {
+  width: auto;
+  min-width: 0;
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  white-space: nowrap;
+}

@@ -119,11 +119,12 @@ describe("MessageTimeline", () => {
       />
     );
 
-    expect(screen.getByText("shell_command")).toBeInTheDocument();
+    expect(screen.getByText(t("conversation.roleTool"))).toBeInTheDocument();
+    expect(screen.getByText("命令：git status --short")).toBeInTheDocument();
     expect(document.querySelectorAll(".tool-message-row")).toHaveLength(1);
     expect(screen.queryByText(t("conversation.toolStatusCompleted"))).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: /shell_command/ }));
+    await userEvent.click(screen.getByRole("button", { name: new RegExp(`^${t("conversation.roleTool")}`) }));
 
     expect(screen.getByText(t("conversation.toolInputLabel"))).toBeInTheDocument();
     expect(screen.getAllByText(t("conversation.toolResultLabel")).length).toBeGreaterThan(0);
@@ -183,7 +184,7 @@ describe("MessageTimeline", () => {
 
     expect(document.querySelectorAll(".tool-message-row")).toHaveLength(1);
 
-    await userEvent.click(screen.getByRole("button", { name: /shell_command/ }));
+    await userEvent.click(screen.getByRole("button", { name: new RegExp(`^${t("conversation.roleTool")}`) }));
 
     expect(screen.getByText("C:/Code/FamilyClaw")).toBeInTheDocument();
   });
@@ -329,9 +330,9 @@ describe("MessageTimeline", () => {
       />
     );
 
-    expect(screen.getByText("tool")).toBeInTheDocument();
+    expect(screen.getByText(t("conversation.roleTool"))).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: /tool/ }));
+    await userEvent.click(screen.getByRole("button", { name: new RegExp(`^${t("conversation.roleTool")}`) }));
 
     expect(screen.getAllByText("legacy tool output").length).toBeGreaterThan(0);
   });
@@ -528,7 +529,7 @@ describe("MessageTimeline", () => {
 
     expect(document.querySelectorAll(".tool-message-row")).toHaveLength(2);
 
-    await userEvent.click(screen.getByRole("button", { name: /shell_command/ }));
+    await userEvent.click(screen.getByRole("button", { name: new RegExp(`^${t("conversation.roleTool")}`) }));
     expect(screen.getByText((content) => content.includes("M src/main.ts"))).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: /read_thread_terminal/ }));
