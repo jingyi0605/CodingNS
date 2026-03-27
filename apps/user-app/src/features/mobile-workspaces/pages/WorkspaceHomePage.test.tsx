@@ -76,17 +76,27 @@ function createWorkbenchShell(overrides?: Record<string, unknown>) {
           }),
           createSession({
             sessionId: "session-2",
-            title: "整理提交说明",
+            title: "收藏的上下文",
             provider: "claude-code",
             lastMessageAt: "2026-03-27T08:00:00.000Z",
             updatedAt: "2026-03-27T08:00:00.000Z",
             lastEventAt: "2026-03-27T08:00:00.000Z",
-            runningState: "completed",
-            activityState: "completed_unread",
-            completedAt: "2026-03-27T08:00:00.000Z"
+            runningState: "idle",
+            activityState: "idle",
+            isFavorite: true
           }),
           createSession({
             sessionId: "session-3",
+            title: "待查看结果",
+            lastMessageAt: "2026-03-27T07:30:00.000Z",
+            updatedAt: "2026-03-27T07:30:00.000Z",
+            lastEventAt: "2026-03-27T07:30:00.000Z",
+            runningState: "completed",
+            activityState: "completed_unread",
+            completedAt: "2026-03-27T07:30:00.000Z"
+          }),
+          createSession({
+            sessionId: "session-4",
             title: "旧会话",
             lastMessageAt: "2026-03-26T08:00:00.000Z",
             updatedAt: "2026-03-26T08:00:00.000Z",
@@ -108,6 +118,22 @@ function createWorkbenchShell(overrides?: Record<string, unknown>) {
     refreshNavigation: vi.fn(),
     selectWorkspace: vi.fn(),
     startDraftSession: vi.fn(),
+    subscribeTerminalManagerSnapshot: vi.fn(),
+    requestTerminalManagerRefresh: vi.fn(),
+    addTerminalManagerSnapshotListener: (listener: (snapshot: {
+      workspaceId: string;
+      templateStatuses: Array<{ occupied: boolean }>;
+      terminals: unknown[];
+      templates: unknown[];
+    }) => void) => {
+      listener({
+        workspaceId: "workspace-1",
+        terminals: [],
+        templates: [],
+        templateStatuses: [{ occupied: true }]
+      });
+      return () => undefined;
+    },
     ...overrides
   };
 }
@@ -140,35 +166,41 @@ describe("WorkspaceHomePage", () => {
 
     expect(screen.getByRole("button", { name: "切换工作区" })).toBeInTheDocument();
     expect(screen.getByText("/repo/project-one")).toBeInTheDocument();
-    expect(screen.getByText("当前工作区")).toBeInTheDocument();
-    expect(screen.getByText("会话")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "全部" })).toBeInTheDocument();
+    expect(screen.getByText("活动会话")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "查看全部会话" })).toBeInTheDocument();
+    expect(screen.getByText("收藏会话")).toBeInTheDocument();
+    expect(screen.getByLabelText("当前工作区")).toBeInTheDocument();
+    expect(screen.getByText("快捷启动进程")).toBeInTheDocument();
+    expect(screen.getByText("等待输入")).toBeInTheDocument();
 
-    expect(screen.queryByText("当前项目")).not.toBeInTheDocument();
-    expect(screen.queryByText("工作状态")).not.toBeInTheDocument();
-    expect(screen.queryByText("当前活动")).not.toBeInTheDocument();
-
-    const activeTerminalRow = screen.getByText("活动终端").closest("button");
-    const changedFilesRow = screen.getByText("未提交文件").closest("button");
+    const activeTerminalRow = screen.getByText("终端").closest("button");
+    const changedFilesRow = screen.getByText("变更").closest("button");
+    const processRow = screen.getByText("快捷启动进程").closest("button");
+    const waitingInputRow = screen.getByText("等待输入").closest("button");
 
     expect(activeTerminalRow).not.toBeNull();
     expect(changedFilesRow).not.toBeNull();
+    expect(processRow).not.toBeNull();
+    expect(waitingInputRow).not.toBeNull();
 
     await waitFor(() => {
       expect(screen.getByText("feat/mobile-home")).toBeInTheDocument();
       expect(within(activeTerminalRow as HTMLElement).getByText("2")).toBeInTheDocument();
       expect(within(changedFilesRow as HTMLElement).getByText("2")).toBeInTheDocument();
+      expect(within(processRow as HTMLElement).getByText("运行中")).toBeInTheDocument();
+      expect(within(waitingInputRow as HTMLElement).getByText("1")).toBeInTheDocument();
     });
 
-    expect(screen.getByText("活动会话")).toBeInTheDocument();
-    expect(screen.getByText("待查看会话")).toBeInTheDocument();
-    expect(screen.getByText("活动终端")).toBeInTheDocument();
-    expect(screen.getByText("未提交文件")).toBeInTheDocument();
+    expect(screen.getByText((_, element) => element?.textContent === "活动")).toBeInTheDocument();
+    expect(screen.getByText((_, element) => element?.textContent === "待看")).toBeInTheDocument();
+    expect(screen.getByText((_, element) => element?.textContent === "终端")).toBeInTheDocument();
+    expect(screen.getByText((_, element) => element?.textContent === "变更")).toBeInTheDocument();
 
     expect(screen.getByText("修复首页布局")).toBeInTheDocument();
-    expect(screen.getByText("整理提交说明")).toBeInTheDocument();
-    expect(screen.getByText("运行中")).toBeInTheDocument();
-    expect(screen.getByText("待查看")).toBeInTheDocument();
+    expect(screen.getByText("收藏的上下文")).toBeInTheDocument();
+    expect(screen.queryByText("整理提交说明")).not.toBeInTheDocument();
+    expect(screen.queryByText("待查看结果")).not.toBeInTheDocument();
+    expect(screen.queryByText("待查看")).not.toBeInTheDocument();
   });
 
   it("可以从空会话状态直接继续当前工作", async () => {

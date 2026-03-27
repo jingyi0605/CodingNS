@@ -10,19 +10,27 @@ import {
 } from "../../conversation/api/conversation-api";
 import { getGitStatus } from "../../conversation/api/git-api";
 import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout";
+import {
+  buildWorkspaceDetailPath,
+  buildWorkspaceSessionIndexPath,
+  buildWorkspaceSessionPath,
+  buildWorkspaceToolProcessesPath,
+  buildWorkspaceTerminalsPath,
+  buildWorkspaceToolsPath
+} from "../../workbench/utils/workbench-navigation";
 import { listWorkspaceTerminals } from "../../terminal/api/terminal-api";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 
 type WorkspaceActionMode = "import" | "clone" | null;
 type WorkspaceSheetMode = "switcher" | "actions" | null;
-type WorkspaceActivityTone = "accent" | "error" | "muted" | "running";
 
 interface WorkspaceDashboardState {
   readonly loading: boolean;
   readonly branch: string | null;
   readonly activeTerminalCount: number | null;
   readonly changedFileCount: number | null;
+  readonly quickLaunchRunning: boolean | null;
 }
 
 interface WorkspaceSheetProps {
@@ -42,6 +50,10 @@ function isSessionRunning(session: SessionSummaryDto) {
     || session.runningState === "running"
     || session.runningState === "reconnecting"
   );
+}
+
+function isSessionWaitingForInput(session: SessionSummaryDto) {
+  return session.activityState === "idle" && isSessionRunning(session) === false;
 }
 
 function isTerminalActive(status: string) {
@@ -81,65 +93,6 @@ function formatActivityTime(value: string | null) {
   });
 }
 
-function getSessionActivityState(session: SessionSummaryDto): {
-  label: string;
-  tone: WorkspaceActivityTone;
-} {
-  if (session.activityState === "running" || session.runningState === "running") {
-    return {
-      label: t("shell.workspaceHomeSessionStatusRunning"),
-      tone: "running"
-    };
-  }
-
-  if (session.runningState === "starting") {
-    return {
-      label: t("shell.workspaceHomeSessionStatusStarting"),
-      tone: "running"
-    };
-  }
-
-  if (session.runningState === "reconnecting") {
-    return {
-      label: t("shell.workspaceHomeSessionStatusReconnecting"),
-      tone: "running"
-    };
-  }
-
-  if (session.activityState === "completed_unread") {
-    return {
-      label: t("shell.workspaceHomeSessionStatusUnread"),
-      tone: "accent"
-    };
-  }
-
-  if (session.runningState === "failed") {
-    return {
-      label: t("shell.workspaceHomeSessionStatusFailed"),
-      tone: "error"
-    };
-  }
-
-  if (session.runningState === "interrupted") {
-    return {
-      label: t("shell.workspaceHomeSessionStatusInterrupted"),
-      tone: "muted"
-    };
-  }
-
-  if (session.runningState === "completed") {
-    return {
-      label: t("shell.workspaceHomeSessionStatusCompleted"),
-      tone: "muted"
-    };
-  }
-
-  return {
-    label: t("shell.workspaceHomeSessionStatusIdle"),
-    tone: "muted"
-  };
-}
-
 function renderSheet(content: ReactNode) {
   if (typeof document === "undefined") {
     return null;
@@ -156,7 +109,10 @@ export function WorkspaceHomePage() {
     currentWorkspaceId,
     refreshNavigation,
     selectWorkspace,
-    startDraftSession
+    startDraftSession,
+    subscribeTerminalManagerSnapshot,
+    requestTerminalManagerRefresh,
+    addTerminalManagerSnapshotListener
   } = useWorkbenchShell();
   const [actionMode, setActionMode] = useState<WorkspaceActionMode>(null);
   const [sheetMode, setSheetMode] = useState<WorkspaceSheetMode>(null);
@@ -165,7 +121,8 @@ export function WorkspaceHomePage() {
     loading: false,
     branch: null,
     activeTerminalCount: null,
-    changedFileCount: null
+    changedFileCount: null,
+    quickLaunchRunning: null
   });
   const [importPath, setImportPath] = useState("");
   const [importName, setImportName] = useState("");
@@ -188,8 +145,11 @@ export function WorkspaceHomePage() {
     .filter(isVisibleSession)
     .sort(sortSessionsByActivity);
   const activeSessions = visibleSessions.filter(isSessionRunning);
+  const waitingInputSessions = visibleSessions.filter(isSessionWaitingForInput);
   const unreadSessions = visibleSessions.filter((session) => session.activityState === "completed_unread");
-  const sessionList = visibleSessions.slice(0, 6);
+  const favoriteSessions = visibleSessions.filter((session) => session.isFavorite === true);
+  const sessionList = activeSessions.slice(0, 6);
+  const favoriteSessionList = favoriteSessions.slice(0, 6);
 
   useEffect(() => {
     let disposed = false;
@@ -200,7 +160,8 @@ export function WorkspaceHomePage() {
         loading: false,
         branch: null,
         activeTerminalCount: null,
-        changedFileCount: null
+        changedFileCount: null,
+        quickLaunchRunning: null
       });
       return;
     }
@@ -218,7 +179,8 @@ export function WorkspaceHomePage() {
         return;
       }
 
-      setDashboardState({
+      setDashboardState((current) => ({
+        ...current,
         loading: false,
         branch: gitResult.status === "fulfilled" ? gitResult.value.snapshot.branch : null,
         activeTerminalCount:
@@ -229,13 +191,44 @@ export function WorkspaceHomePage() {
           gitResult.status === "fulfilled"
             ? gitResult.value.changes.length
             : null
-      });
+      }));
     });
 
     return () => {
       disposed = true;
     };
   }, [currentWorkspace?.id]);
+
+  useEffect(() => {
+    const workspaceId = currentWorkspace?.id ?? null;
+
+    if (!workspaceId) {
+      setDashboardState((current) => ({
+        ...current,
+        quickLaunchRunning: null
+      }));
+      return;
+    }
+
+    subscribeTerminalManagerSnapshot(workspaceId);
+    requestTerminalManagerRefresh(workspaceId);
+
+    return addTerminalManagerSnapshotListener((snapshot) => {
+      if (snapshot.workspaceId !== workspaceId) {
+        return;
+      }
+
+      setDashboardState((current) => ({
+        ...current,
+        quickLaunchRunning: snapshot.templateStatuses.some((status) => status.occupied)
+      }));
+    });
+  }, [
+    addTerminalManagerSnapshotListener,
+    currentWorkspace?.id,
+    requestTerminalManagerRefresh,
+    subscribeTerminalManagerSnapshot
+  ]);
 
   async function handleImportWorkspace(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -261,7 +254,7 @@ export function WorkspaceHomePage() {
         description: workspace.path,
         tone: "success"
       });
-      navigate(`/workspaces/${workspace.id}`);
+      navigate(buildWorkspaceDetailPath(workspace.id));
     } catch (error) {
       showToast({
         title: error instanceof Error ? error.message : t("shell.importFailed"),
@@ -306,7 +299,7 @@ export function WorkspaceHomePage() {
         description: workspace.path,
         tone: "success"
       });
-      navigate(`/workspaces/${workspace.id}`);
+      navigate(buildWorkspaceDetailPath(workspace.id));
     } catch (error) {
       showToast({
         title: error instanceof Error ? error.message : t("shell.cloneFailed"),
@@ -323,7 +316,7 @@ export function WorkspaceHomePage() {
     }
 
     selectWorkspace(currentWorkspace.id);
-    navigate("/tools?tab=git");
+    navigate(buildWorkspaceToolsPath(currentWorkspace.id, "git"));
   }
 
   function openCurrentWorkspaceTerminals() {
@@ -332,11 +325,24 @@ export function WorkspaceHomePage() {
     }
 
     selectWorkspace(currentWorkspace.id);
-    navigate("/terminals");
+    navigate(buildWorkspaceTerminalsPath(currentWorkspace.id));
+  }
+
+  function openCurrentWorkspaceProcesses() {
+    if (!currentWorkspace) {
+      return;
+    }
+
+    selectWorkspace(currentWorkspace.id);
+    navigate(buildWorkspaceToolProcessesPath(currentWorkspace.id));
   }
 
   function openSessionIndex() {
-    navigate("/sessions");
+    if (!currentWorkspace) {
+      return;
+    }
+
+    navigate(buildWorkspaceSessionIndexPath(currentWorkspace.id));
   }
 
   function handleStartSession() {
@@ -353,7 +359,7 @@ export function WorkspaceHomePage() {
     }
 
     selectWorkspace(currentWorkspace.id);
-    navigate(`/workspaces/${currentWorkspace.id}`);
+    navigate(buildWorkspaceDetailPath(currentWorkspace.id));
   }
 
   function handleSelectWorkspace(workspaceId: string) {
@@ -363,24 +369,42 @@ export function WorkspaceHomePage() {
 
   const statusRows = [
     {
-      label: t("shell.workspaceHomeActiveSessionCount"),
+      label: t("shell.workspaceHomeMetricActive"),
       value: activeSessions.length,
       onClick: visibleSessions.length > 0 ? openSessionIndex : undefined
     },
     {
-      label: t("shell.workspaceHomeUnreadSessionCount"),
+      label: t("shell.workspaceHomeMetricUnread"),
       value: unreadSessions.length,
       onClick: visibleSessions.length > 0 ? openSessionIndex : undefined
     },
     {
-      label: t("shell.workspaceHomeActiveTerminalCount"),
+      label: t("shell.workspaceHomeMetricTerminal"),
       value: dashboardState.loading ? "…" : dashboardState.activeTerminalCount ?? "—",
       onClick: currentWorkspace ? openCurrentWorkspaceTerminals : undefined
     },
     {
-      label: t("shell.workspaceHomeChangedFileCount"),
+      label: t("shell.workspaceHomeMetricChanges"),
       value: dashboardState.loading ? "…" : dashboardState.changedFileCount ?? "—",
       onClick: currentWorkspace ? openCurrentWorkspaceGit : undefined
+    }
+  ] as const;
+
+  const quickStatusRows = [
+    {
+      label: t("shell.workspaceHomeQuickLaunchStatusLabel"),
+      value:
+        dashboardState.quickLaunchRunning === null
+          ? "…"
+          : dashboardState.quickLaunchRunning
+            ? t("shell.workspaceHomeQuickLaunchRunning")
+            : t("shell.workspaceHomeQuickLaunchStopped"),
+      onClick: currentWorkspace ? openCurrentWorkspaceProcesses : undefined
+    },
+    {
+      label: t("shell.workspaceHomeWaitingInputLabel"),
+      value: waitingInputSessions.length,
+      onClick: visibleSessions.length > 0 ? openSessionIndex : undefined
     }
   ] as const;
 
@@ -419,31 +443,22 @@ export function WorkspaceHomePage() {
               </div>
             </div>
             <p className="mobile-workspace-home-path">{currentWorkspace.path}</p>
-          </section>
-
-          <section className="mobile-workspace-home-section">
-            <p className="mobile-workspace-home-section-title">{t("shell.workspaceHomeStatusSectionTitle")}</p>
-            <div className="mobile-workspace-home-group">
+            <div className="mobile-workspace-home-toolbar-summary" aria-label={t("shell.workspaceHomeStatusSectionTitle")}>
               {statusRows.map((row) =>
                 row.onClick ? (
                   <button
                     key={row.label}
                     type="button"
-                    className="mobile-workspace-home-row"
+                    className="mobile-workspace-home-toolbar-metric"
                     onClick={row.onClick}
                   >
-                    <span className="mobile-workspace-home-row-label">{row.label}</span>
-                    <span className="mobile-workspace-home-row-trailing">
-                      <strong>{row.value}</strong>
-                      <ChevronRightIcon />
-                    </span>
+                    <strong className="mobile-workspace-home-toolbar-metric-value">{row.value}</strong>
+                    <span className="mobile-workspace-home-toolbar-metric-label">{row.label}</span>
                   </button>
                 ) : (
-                  <div key={row.label} className="mobile-workspace-home-row" role="listitem">
-                    <span className="mobile-workspace-home-row-label">{row.label}</span>
-                    <span className="mobile-workspace-home-row-trailing">
-                      <strong>{row.value}</strong>
-                    </span>
+                  <div key={row.label} className="mobile-workspace-home-toolbar-metric" role="listitem">
+                    <strong className="mobile-workspace-home-toolbar-metric-value">{row.value}</strong>
+                    <span className="mobile-workspace-home-toolbar-metric-label">{row.label}</span>
                   </div>
                 )
               )}
@@ -451,9 +466,28 @@ export function WorkspaceHomePage() {
           </section>
 
           <section className="mobile-workspace-home-section">
+            <div className="mobile-workspace-home-group">
+              {quickStatusRows.map((row) => (
+                <button
+                  key={row.label}
+                  type="button"
+                  className="mobile-workspace-home-row"
+                  onClick={row.onClick}
+                >
+                  <span className="mobile-workspace-home-row-label">{row.label}</span>
+                  <span className="mobile-workspace-home-row-trailing">
+                    <strong>{row.value}</strong>
+                    <ChevronRightIcon />
+                  </span>
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <section className="mobile-workspace-home-section">
             <div className="mobile-workspace-home-section-header">
-              <p className="mobile-workspace-home-section-title">{t("shell.mobileSessionsEntry")}</p>
-              {visibleSessions.length > 0 ? (
+              <p className="mobile-workspace-home-section-title">{t("shell.workspaceHomeActiveSessionsSectionTitle")}</p>
+              {currentWorkspace ? (
                 <button
                   type="button"
                   className="mobile-workspace-home-link-button"
@@ -480,14 +514,14 @@ export function WorkspaceHomePage() {
                 </button>
               ) : (
                 sessionList.map((session) => {
-                  const activityState = getSessionActivityState(session);
-
                   return (
                     <button
                       key={session.sessionId}
                       type="button"
                       className="mobile-workspace-home-row mobile-workspace-home-session-row"
-                      onClick={() => navigate(`/sessions/${session.sessionId}`)}
+                      onClick={() =>
+                        navigate(buildWorkspaceSessionPath(currentWorkspace.id, session.sessionId))
+                      }
                     >
                       <div className="mobile-workspace-home-session-main">
                         <span className="mobile-workspace-home-session-title">
@@ -498,12 +532,6 @@ export function WorkspaceHomePage() {
                         </span>
                       </div>
                       <span className="mobile-workspace-home-row-trailing">
-                        <span
-                          className="mobile-workspace-home-session-status"
-                          data-tone={activityState.tone}
-                        >
-                          {activityState.label}
-                        </span>
                         <ChevronRightIcon />
                       </span>
                     </button>
@@ -512,6 +540,38 @@ export function WorkspaceHomePage() {
               )}
             </div>
           </section>
+
+          {favoriteSessionList.length > 0 ? (
+            <section className="mobile-workspace-home-section">
+              <div className="mobile-workspace-home-section-header">
+                <p className="mobile-workspace-home-section-title">{t("shell.favoriteSectionTitle")}</p>
+              </div>
+              <div className="mobile-workspace-home-group">
+                {favoriteSessionList.map((session) => (
+                  <button
+                    key={session.sessionId}
+                    type="button"
+                    className="mobile-workspace-home-row mobile-workspace-home-session-row"
+                    onClick={() =>
+                      navigate(buildWorkspaceSessionPath(currentWorkspace.id, session.sessionId))
+                    }
+                  >
+                    <div className="mobile-workspace-home-session-main">
+                      <span className="mobile-workspace-home-session-title">
+                        {session.title || t("common.unknown")}
+                      </span>
+                      <span className="mobile-workspace-home-session-meta">
+                        {getProviderLabel(session.provider)} · {formatActivityTime(getSessionActivityTime(session))}
+                      </span>
+                    </div>
+                    <span className="mobile-workspace-home-row-trailing">
+                      <ChevronRightIcon />
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          ) : null}
         </>
       ) : (
         <section className="mobile-workspace-home-section mobile-workspace-home-empty">
