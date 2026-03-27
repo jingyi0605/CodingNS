@@ -6,7 +6,6 @@ import { t } from "../../../shared/i18n";
 import { ApiError } from "../../../shared/network/api-error";
 import { useToast } from "../../../shared/toast";
 import {
-  getFileTree,
   operateFile,
   searchFiles,
   type FileNodeDto
@@ -59,7 +58,6 @@ interface LoadRootTreeOptions {
 
 interface DirectorySnapshotRequestOptions {
   force?: boolean;
-  mode?: "snapshot-first" | "api-first";
 }
 
 export function FileContextPanel({ className, sessionId, workspaceId }: FileContextPanelProps) {
@@ -351,8 +349,7 @@ export function FileContextPanel({ className, sessionId, workspaceId }: FileCont
 
       try {
         const response = await requestDirectorySnapshot(ROOT_DIRECTORY, {
-          force: true,
-          mode: "api-first"
+          force: true
         });
 
         if (!cancelled) {
@@ -396,7 +393,6 @@ export function FileContextPanel({ className, sessionId, workspaceId }: FileCont
           currentWorkspaceId,
           collectSubscribedDirectories(expandedDirectoriesRef.current, activeDirectoryPathRef.current)
         );
-        requestFileTreeRefresh(currentWorkspaceId, [ROOT_DIRECTORY]);
         void loadRootTree({ silent: true });
       }, 1500);
 
@@ -463,8 +459,7 @@ export function FileContextPanel({ className, sessionId, workspaceId }: FileCont
 
     try {
       const items = await requestDirectorySnapshot(directoryPath, {
-        force,
-        mode: "api-first"
+        force
       });
 
       updateTreeCache((previous) => ({
@@ -508,8 +503,7 @@ export function FileContextPanel({ className, sessionId, workspaceId }: FileCont
     const entries = await Promise.all(
       targetDirectories.map(async (directoryPath) => {
         const items = await requestDirectorySnapshot(directoryPath, {
-          force: true,
-          mode: "api-first"
+          force: true
         });
         return [directoryPath, items] as const;
       })
@@ -553,20 +547,7 @@ export function FileContextPanel({ className, sessionId, workspaceId }: FileCont
 
     subscribeFileTree(workspaceId, subscribedDirectories);
     requestFileTreeRefresh(workspaceId, [directoryPath]);
-
-    if (options?.mode === "api-first") {
-      const response = await getFileTree(workspaceId, directoryPath || undefined);
-      resolveDirectoryWaiters(directoryPath, response.items);
-      return response.items;
-    }
-
-    try {
-      return await waitForDirectorySnapshot(directoryPath);
-    } catch {
-      const response = await getFileTree(workspaceId, directoryPath || undefined);
-      resolveDirectoryWaiters(directoryPath, response.items);
-      return response.items;
-    }
+    return waitForDirectorySnapshot(directoryPath);
   }
 
   function waitForDirectorySnapshot(

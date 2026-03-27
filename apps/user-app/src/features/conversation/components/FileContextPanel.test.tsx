@@ -32,6 +32,9 @@ const gitApiMock = vi.hoisted(() => ({
 }));
 
 const clipboardWriteTextMock = vi.hoisted(() => vi.fn());
+const fileTreeSnapshotListeners = new Set<
+  (snapshot: { workspaceId: string; path: string; items: unknown[] }) => void
+>();
 
 const workbenchShellMock = vi.hoisted(() => ({
   navigationGroups: [
@@ -47,7 +50,16 @@ const workbenchShellMock = vi.hoisted(() => ({
   ],
   subscribeFileTree: vi.fn(),
   requestFileTreeRefresh: vi.fn(),
-  addFileTreeSnapshotListener: vi.fn(() => () => undefined)
+  addFileTreeSnapshotListener: vi.fn((listener: (snapshot: {
+    workspaceId: string;
+    path: string;
+    items: unknown[];
+  }) => void) => {
+    fileTreeSnapshotListeners.add(listener);
+    return () => {
+      fileTreeSnapshotListeners.delete(listener);
+    };
+  })
 }));
 
 const platformMock = vi.hoisted(() => ({
@@ -191,6 +203,7 @@ vi.mock("../../../platform/platform-provider", () => ({
 describe("FileContextPanel", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    fileTreeSnapshotListeners.clear();
     window.sessionStorage.clear();
     clearViewSnapshot(WORKSPACE_TREE_SNAPSHOT_KEY);
     clearViewSnapshot(SESSION_COUNT_SNAPSHOT_KEY);
@@ -214,6 +227,31 @@ describe("FileContextPanel", () => {
     fileApiMock.getFileTree.mockResolvedValue({
       items: [...rootItemsMock]
     });
+
+    workbenchShellMock.requestFileTreeRefresh.mockImplementation(
+      async (workspaceId: string, paths?: string[]) => {
+        const targetPaths = paths && paths.length > 0 ? paths : [""];
+
+        await Promise.all(
+          targetPaths.map(async (path) => {
+            const response = await fileApiMock.getFileTree(
+              workspaceId,
+              path ? path : undefined
+            );
+
+            queueMicrotask(() => {
+              fileTreeSnapshotListeners.forEach((listener) => {
+                listener({
+                  workspaceId,
+                  path,
+                  items: response.items
+                });
+              });
+            });
+          })
+        );
+      }
+    );
 
     fileApiMock.operateFile.mockResolvedValue({
       success: true,
