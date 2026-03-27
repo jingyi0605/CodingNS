@@ -31,7 +31,8 @@ import {
   WorkbenchRealtimeClient,
   type FileTreeRealtimeSnapshotDto,
   type GitRealtimeSnapshotDto,
-  type TerminalManagerRealtimeSnapshotDto
+  type TerminalManagerRealtimeSnapshotDto,
+  type WorkspaceManagementRealtimeSnapshotDto
 } from "../../../network/workbench-realtime-client";
 import { showDesktopContextMenu } from "../../../platform/desktop/desktop-context-menu";
 import { usePlatform } from "../../../platform/platform-provider";
@@ -44,7 +45,6 @@ import {
   browseWorkspaceDirectories,
   cloneWorkspace,
   getWorkbenchSnapshot,
-  getWorkspaceManagementSummary,
   importWorkspace,
   removeWorkspace,
   renameSessionTitle,
@@ -93,6 +93,7 @@ const FAVORITE_SESSION_PAGE_SIZE = 20;
 const ROOT_SESSION_PAGE_SIZE = 40;
 const SUBAGENT_PAGE_SIZE = 5;
 const WORKBENCH_NAVIGATION_CACHE_MAX_AGE_MS = 30 * 60 * 1000;
+const WORKSPACE_MANAGEMENT_SNAPSHOT_CACHE_MAX_AGE_MS = 60 * 1000;
 const FOCUS_COMPOSER_EVENT = "workbench:focus-composer";
 const WORKSPACE_COMPOSITION_CHART_MAX_ITEMS = 5;
 const WORKSPACE_COMPOSITION_CHART_COLORS = [
@@ -298,6 +299,12 @@ interface WorkbenchShellContextValue {
   subscribeGitSnapshot: (workspaceId: string) => void;
   requestGitRefresh: (workspaceId: string) => void;
   addGitSnapshotListener: (listener: (snapshot: GitRealtimeSnapshotDto) => void) => () => void;
+  subscribeWorkspaceManagementSnapshot: (workspaceId: string) => void;
+  requestWorkspaceManagementRefresh: (workspaceId: string) => void;
+  addWorkspaceManagementSnapshotListener: (
+    listener: (snapshot: WorkspaceManagementRealtimeSnapshotDto) => void
+  ) => () => void;
+  workspaceManagementStateById: Record<string, WorkspaceManagementViewState>;
   subscribeTerminalManagerSnapshot: (workspaceId: string) => void;
   requestTerminalManagerRefresh: (workspaceId: string) => void;
   addTerminalManagerSnapshotListener: (
@@ -785,6 +792,76 @@ function toggleStoredId(items: string[], id: string) {
 function retainKnownIds(items: string[], knownIds: ReadonlySet<string>) {
   const nextItems = items.filter((item) => knownIds.has(item));
   return nextItems.length === items.length ? items : nextItems;
+}
+
+function buildWorkspaceManagementSummarySnapshotKey(workspaceId: string) {
+  return `workspace-management.summary.${workspaceId}`;
+}
+
+function buildGitSidebarSnapshotKey(workspaceId: string) {
+  return `git-sidebar.snapshot.${workspaceId}`;
+}
+
+function createWorkspaceManagementFallback(
+  workspace: WorkspaceDto,
+  existingDetail?: WorkspaceManagementSummaryDto | null
+): WorkspaceManagementSummaryDto {
+  const repoRoot = existingDetail?.git.repoRoot ?? workspace.repoRoot ?? null;
+
+  return {
+    workspaceId: workspace.id,
+    name: workspace.name,
+    path: workspace.path,
+    git: {
+      isRepository: existingDetail?.git.isRepository ?? Boolean(repoRoot),
+      repoRoot,
+      currentBranch: existingDetail?.git.currentBranch ?? null,
+      commitCount: existingDetail?.git.commitCount ?? null,
+      remotes: existingDetail?.git.remotes ?? [],
+      error: existingDetail?.git.error ?? null
+    },
+    codeComposition: existingDetail?.codeComposition ?? {
+      scannedFileCount: 0,
+      truncated: false,
+      items: [],
+      error: null
+    }
+  };
+}
+
+function mergeWorkspaceManagementDetailWithWorkspace(
+  detail: WorkspaceManagementSummaryDto,
+  workspace: WorkspaceDto
+): WorkspaceManagementSummaryDto {
+  const repoRoot = detail.git.repoRoot ?? workspace.repoRoot ?? null;
+
+  return {
+    ...detail,
+    workspaceId: workspace.id,
+    name: workspace.name,
+    path: workspace.path,
+    git: {
+      ...detail.git,
+      isRepository: detail.git.isRepository || Boolean(repoRoot),
+      repoRoot
+    }
+  };
+}
+
+function mergeWorkspaceManagementDetailWithGitSnapshot(
+  detail: WorkspaceManagementSummaryDto,
+  snapshot: GitRealtimeSnapshotDto
+): WorkspaceManagementSummaryDto {
+  return {
+    ...detail,
+    git: {
+      ...detail.git,
+      isRepository: true,
+      repoRoot: snapshot.status.snapshot.repoRoot,
+      currentBranch: snapshot.status.snapshot.branch,
+      error: null
+    }
+  };
 }
 
 function SkeletonLines({
@@ -1807,6 +1884,8 @@ function SidebarContent({
   onToggleWorkspaceCollapse,
   subscribeGitSnapshot,
   requestGitRefresh,
+  subscribeWorkspaceManagementSnapshot,
+  requestWorkspaceManagementRefresh,
   onToggleFavoriteSession,
   onArchiveSession,
   onUnarchiveSession,
@@ -1835,6 +1914,8 @@ function SidebarContent({
   onToggleWorkspaceCollapse: (workspaceId: string) => void;
   subscribeGitSnapshot: (workspaceId: string) => void;
   requestGitRefresh: (workspaceId: string) => void;
+  subscribeWorkspaceManagementSnapshot: (workspaceId: string) => void;
+  requestWorkspaceManagementRefresh: (workspaceId: string) => void;
   onToggleFavoriteSession: (sessionId: string) => Promise<void>;
   onArchiveSession: (sessionId: string) => Promise<void>;
   onUnarchiveSession: (sessionId: string) => Promise<void>;
@@ -1914,6 +1995,68 @@ function SidebarContent({
   const allBatchSessionsSelected =
     batchSelectableSessionIds.length > 0 && selectedSessionIds.length === batchSelectableSessionIds.length;
   const workspaceActionPending = importingWorkspace || cloningWorkspace;
+
+  useEffect(() => {
+    setWorkspaceManagementStateById((current) => {
+      const knownWorkspaceIds = new Set(workspaceGroups.map((group) => group.workspace.id));
+      const nextState: Record<string, WorkspaceManagementViewState> = {};
+
+      Object.entries(current).forEach(([workspaceId, state]) => {
+        if (knownWorkspaceIds.has(workspaceId)) {
+          nextState[workspaceId] = state;
+        }
+      });
+
+      workspaceGroups.forEach((group) => {
+        const cachedDetail = readViewSnapshot<WorkspaceManagementSummaryDto>(
+          buildWorkspaceManagementSummarySnapshotKey(group.workspace.id),
+          WORKSPACE_MANAGEMENT_SNAPSHOT_CACHE_MAX_AGE_MS
+        );
+        const cachedGitSnapshot = readViewSnapshot<Pick<GitRealtimeSnapshotDto, "status">>(
+          buildGitSidebarSnapshotKey(group.workspace.id),
+          WORKSPACE_MANAGEMENT_SNAPSHOT_CACHE_MAX_AGE_MS
+        );
+        const currentState = nextState[group.workspace.id];
+        let nextDetail = mergeWorkspaceManagementDetailWithWorkspace(
+          currentState?.detail ?? cachedDetail ?? createWorkspaceManagementFallback(group.workspace),
+          group.workspace
+        );
+
+        if (cachedGitSnapshot) {
+          nextDetail = mergeWorkspaceManagementDetailWithGitSnapshot(nextDetail, {
+            workspaceId: group.workspace.id,
+            status: cachedGitSnapshot.status,
+            history: [],
+            historyTotalCount: 0,
+            historyNextCursor: null,
+            branches: {
+              currentBranch: cachedGitSnapshot.status.snapshot.branch,
+              local: [],
+              remote: []
+            }
+          });
+        }
+
+        nextState[group.workspace.id] = {
+          detail: nextDetail,
+          loading: false,
+          error: null
+        };
+      });
+
+      const currentKeys = Object.keys(current);
+      const nextKeys = Object.keys(nextState);
+
+      if (
+        currentKeys.length === nextKeys.length
+        && nextKeys.every((workspaceId) => current[workspaceId] === nextState[workspaceId])
+      ) {
+        return current;
+      }
+
+      return nextState;
+    });
+  }, [workspaceGroups]);
 
   const notifyWorkspaceImported = useCallback(
     async (workspacePath: string) => {
@@ -2042,41 +2185,6 @@ function SidebarContent({
     }
   }, [cloneForm, notifyWorkspaceCloned, onRefreshNavigation, showToast]);
 
-  const loadWorkspaceManagementSummary = useCallback(
-    async (workspaceId: string) => {
-      setWorkspaceManagementStateById((current) => ({
-        ...current,
-        [workspaceId]: {
-          detail: current[workspaceId]?.detail ?? null,
-          loading: true,
-          error: null
-        }
-      }));
-
-      try {
-        const detail = await getWorkspaceManagementSummary(workspaceId);
-        setWorkspaceManagementStateById((current) => ({
-          ...current,
-          [workspaceId]: {
-            detail,
-            loading: false,
-            error: null
-          }
-        }));
-      } catch (error) {
-        setWorkspaceManagementStateById((current) => ({
-          ...current,
-          [workspaceId]: {
-            detail: current[workspaceId]?.detail ?? null,
-            loading: false,
-            error: error instanceof Error ? error.message : t("shell.manageWorkspaceLoadFailed")
-          }
-        }));
-      }
-    },
-    []
-  );
-
   function handleToggleManagedWorkspace(workspaceId: string) {
     const isExpanded = expandedManagedWorkspaceIds.includes(workspaceId);
 
@@ -2086,12 +2194,10 @@ function SidebarContent({
     }
 
     setExpandedManagedWorkspaceIds((current) => [...current, workspaceId]);
-
-    const currentState = workspaceManagementStateById[workspaceId];
-
-    if (!currentState || (!currentState.loading && currentState.detail === null)) {
-      void loadWorkspaceManagementSummary(workspaceId);
-    }
+    subscribeGitSnapshot(workspaceId);
+    requestGitRefresh(workspaceId);
+    subscribeWorkspaceManagementSnapshot(workspaceId);
+    requestWorkspaceManagementRefresh(workspaceId);
   }
 
   async function handleConfirmWorkspaceRemoval() {
@@ -3940,6 +4046,9 @@ export function WorkbenchLayout({
   const workbenchRealtimeClientRef = useRef<WorkbenchRealtimeClient | null>(null);
   const fileTreeSnapshotListenersRef = useRef(new Set<(snapshot: FileTreeRealtimeSnapshotDto) => void>());
   const gitSnapshotListenersRef = useRef(new Set<(snapshot: GitRealtimeSnapshotDto) => void>());
+  const workspaceManagementSnapshotListenersRef = useRef(
+    new Set<(snapshot: WorkspaceManagementRealtimeSnapshotDto) => void>()
+  );
   const terminalManagerSnapshotListenersRef = useRef(
     new Set<(snapshot: TerminalManagerRealtimeSnapshotDto) => void>()
   );
@@ -3947,6 +4056,8 @@ export function WorkbenchLayout({
   const pendingFileTreeRefreshRef = useRef<{ workspaceId: string; paths?: string[] } | null>(null);
   const gitWorkspaceSubscriptionRef = useRef<string | null>(null);
   const pendingGitRefreshWorkspaceIdRef = useRef<string | null>(null);
+  const workspaceManagementSubscriptionRef = useRef<string | null>(null);
+  const pendingWorkspaceManagementRefreshWorkspaceIdRef = useRef<string | null>(null);
   const terminalManagerWorkspaceSubscriptionRef = useRef<string | null>(null);
   const pendingTerminalManagerRefreshWorkspaceIdRef = useRef<string | null>(null);
   const showToastRef = useRef(showToast);
@@ -4127,6 +4238,34 @@ export function WorkbenchLayout({
     []
   );
 
+  const subscribeWorkspaceManagementSnapshot = useCallback((workspaceId: string) => {
+    workspaceManagementSubscriptionRef.current = workspaceId;
+    workbenchRealtimeClientRef.current?.subscribeWorkspaceManagement(workspaceId);
+  }, []);
+
+  const requestWorkspaceManagementRefresh = useCallback((workspaceId: string) => {
+    pendingWorkspaceManagementRefreshWorkspaceIdRef.current = workspaceId;
+    setWorkspaceManagementStateById((current) => ({
+      ...current,
+      [workspaceId]: {
+        detail: current[workspaceId]?.detail ?? null,
+        loading: true,
+        error: null
+      }
+    }));
+    workbenchRealtimeClientRef.current?.requestWorkspaceManagementRefresh(workspaceId);
+  }, []);
+
+  const addWorkspaceManagementSnapshotListener = useCallback(
+    (listener: (snapshot: WorkspaceManagementRealtimeSnapshotDto) => void) => {
+      workspaceManagementSnapshotListenersRef.current.add(listener);
+      return () => {
+        workspaceManagementSnapshotListenersRef.current.delete(listener);
+      };
+    },
+    []
+  );
+
   const subscribeTerminalManagerSnapshot = useCallback((workspaceId: string) => {
     terminalManagerWorkspaceSubscriptionRef.current = workspaceId;
     workbenchRealtimeClientRef.current?.subscribeTerminalManager(workspaceId);
@@ -4224,8 +4363,8 @@ export function WorkbenchLayout({
         return;
       }
 
-      logPerfDebug("workbench.refresh_navigation.fallback_triggered");
-      void refreshNavigation();
+      logPerfDebug("workbench.refresh_navigation.ws_fallback_triggered");
+      workbenchRealtimeClientRef.current?.requestRefresh();
     }, 1200);
 
     const client = new WorkbenchRealtimeClient({
@@ -4257,7 +4396,53 @@ export function WorkbenchLayout({
         fileTreeSnapshotListenersRef.current.forEach((listener) => listener(snapshot));
       },
       onGitSnapshot: (snapshot) => {
+        writeViewSnapshot(buildGitSidebarSnapshotKey(snapshot.workspaceId), {
+          status: snapshot.status
+        });
+        setWorkspaceManagementStateById((current) => {
+          const workspace =
+            navigationGroups.find((group) => group.workspace.id === snapshot.workspaceId)?.workspace ?? null;
+
+          if (!workspace) {
+            return current;
+          }
+
+          const currentState = current[snapshot.workspaceId];
+          const nextDetail = mergeWorkspaceManagementDetailWithGitSnapshot(
+            mergeWorkspaceManagementDetailWithWorkspace(
+              currentState?.detail ?? createWorkspaceManagementFallback(workspace),
+              workspace
+            ),
+            snapshot
+          );
+
+          writeViewSnapshot(
+            buildWorkspaceManagementSummarySnapshotKey(snapshot.workspaceId),
+            nextDetail
+          );
+
+          return {
+            ...current,
+            [snapshot.workspaceId]: {
+              detail: nextDetail,
+              loading: false,
+              error: null
+            }
+          };
+        });
         gitSnapshotListenersRef.current.forEach((listener) => listener(snapshot));
+      },
+      onWorkspaceManagementSnapshot: (snapshot) => {
+        writeViewSnapshot(buildWorkspaceManagementSummarySnapshotKey(snapshot.workspaceId), snapshot);
+        setWorkspaceManagementStateById((current) => ({
+          ...current,
+          [snapshot.workspaceId]: {
+            detail: snapshot,
+            loading: false,
+            error: null
+          }
+        }));
+        workspaceManagementSnapshotListenersRef.current.forEach((listener) => listener(snapshot));
       },
       onTerminalManagerSnapshot: (snapshot) => {
         terminalManagerSnapshotListenersRef.current.forEach((listener) => listener(snapshot));
@@ -4273,6 +4458,9 @@ export function WorkbenchLayout({
     const pendingFileTreeRefresh = pendingFileTreeRefreshRef.current;
     const gitWorkspaceSubscription = gitWorkspaceSubscriptionRef.current;
     const pendingGitRefreshWorkspaceId = pendingGitRefreshWorkspaceIdRef.current;
+    const workspaceManagementSubscription = workspaceManagementSubscriptionRef.current;
+    const pendingWorkspaceManagementRefreshWorkspaceId =
+      pendingWorkspaceManagementRefreshWorkspaceIdRef.current;
     const terminalManagerWorkspaceSubscription = terminalManagerWorkspaceSubscriptionRef.current;
     const pendingTerminalManagerRefreshWorkspaceId =
       pendingTerminalManagerRefreshWorkspaceIdRef.current;
@@ -4285,6 +4473,10 @@ export function WorkbenchLayout({
       client.subscribeGit(gitWorkspaceSubscription);
     }
 
+    if (workspaceManagementSubscription) {
+      client.subscribeWorkspaceManagement(workspaceManagementSubscription);
+    }
+
     if (terminalManagerWorkspaceSubscription) {
       client.subscribeTerminalManager(terminalManagerWorkspaceSubscription);
     }
@@ -4295,6 +4487,10 @@ export function WorkbenchLayout({
 
     if (pendingGitRefreshWorkspaceId) {
       client.requestGitRefresh(pendingGitRefreshWorkspaceId);
+    }
+
+    if (pendingWorkspaceManagementRefreshWorkspaceId) {
+      client.requestWorkspaceManagementRefresh(pendingWorkspaceManagementRefreshWorkspaceId);
     }
 
     if (pendingTerminalManagerRefreshWorkspaceId) {
@@ -4314,7 +4510,7 @@ export function WorkbenchLayout({
       }
       client.close();
     };
-  }, [navigate, refreshNavigation]);
+  }, [navigate]);
 
   useEffect(() => {
     writeStoredValue(LEFT_PANEL_WIDTH_KEY, String(leftPanelWidth));
@@ -4746,14 +4942,46 @@ export function WorkbenchLayout({
   }
 
   function goToConversationTab() {
+    if (navigateToRememberedConversation()) {
+      return;
+    }
+
+    // 桌面端保留老行为：没有明确上下文时直接落到最近一条会话。
+    if (flattenedSessions.length === 0) {
+      navigate(workbenchHomePath);
+      return;
+    }
+
+    const fallbackSessionPath = buildWorkspaceSessionPath(
+      flattenedSessions[0].workspace.id,
+      flattenedSessions[0].session.sessionId
+    );
+    navigate(fallbackSessionPath);
+  }
+
+  function goToMobileSessionsEntry() {
+    if (navigateToRememberedConversation()) {
+      return;
+    }
+
+    // 移动端没选中过会话时，应该先回当前工作区的会话列表，而不是强行打开第一条。
+    if (currentWorkspaceId) {
+      navigate(buildWorkspaceSessionIndexPath(currentWorkspaceId));
+      return;
+    }
+
+    navigate(workbenchHomePath);
+  }
+
+  function navigateToRememberedConversation() {
     if (currentSessionId) {
       navigate(`${location.pathname}${location.search}`);
-      return;
+      return true;
     }
 
     if (lastDraftSessionPathRef.current) {
       navigate(lastDraftSessionPathRef.current);
-      return;
+      return true;
     }
 
     const storedSessionPath =
@@ -4771,24 +4999,14 @@ export function WorkbenchLayout({
         );
         if (sessionExists) {
           navigate(storedSessionPath);
-          return;
+          return true;
         }
       }
       // 存储的会话已不存在，清除无效的存储
       window.localStorage.removeItem(LAST_SESSION_PATH_KEY);
     }
 
-    // 如果没有任何会话记录，导航到空白页
-    if (flattenedSessions.length === 0) {
-      navigate(workbenchHomePath);
-      return;
-    }
-
-    const fallbackSessionPath = buildWorkspaceSessionPath(
-      flattenedSessions[0].workspace.id,
-      flattenedSessions[0].session.sessionId
-    );
-    navigate(fallbackSessionPath);
+    return false;
   }
 
   useEffect(() => {
@@ -4883,6 +5101,10 @@ export function WorkbenchLayout({
       subscribeGitSnapshot,
       requestGitRefresh,
       addGitSnapshotListener,
+      subscribeWorkspaceManagementSnapshot,
+      requestWorkspaceManagementRefresh,
+      addWorkspaceManagementSnapshotListener,
+      workspaceManagementStateById,
       subscribeTerminalManagerSnapshot,
       requestTerminalManagerRefresh,
       addTerminalManagerSnapshotListener,
@@ -4899,6 +5121,7 @@ export function WorkbenchLayout({
     [
       addFileTreeSnapshotListener,
       addGitSnapshotListener,
+      addWorkspaceManagementSnapshotListener,
       addTerminalManagerSnapshotListener,
       commitNavigationArchiveState,
       currentSessionId,
@@ -4911,15 +5134,18 @@ export function WorkbenchLayout({
       navigationLoading,
       requestFileTreeRefresh,
       requestGitRefresh,
+      requestWorkspaceManagementRefresh,
       refreshNavigation,
       requestNavigationRefresh,
       requestTerminalManagerRefresh,
       renameNavigationSession,
+      workspaceManagementStateById,
       shellMode,
       startDraftSession,
       setSessionWorkspace,
       subscribeFileTree,
       subscribeGitSnapshot,
+      subscribeWorkspaceManagementSnapshot,
       subscribeTerminalManagerSnapshot,
       toggleFavoriteSession,
       upsertNavigationSession
@@ -4969,6 +5195,8 @@ export function WorkbenchLayout({
       }
       subscribeGitSnapshot={subscribeGitSnapshot}
       requestGitRefresh={requestGitRefresh}
+      subscribeWorkspaceManagementSnapshot={subscribeWorkspaceManagementSnapshot}
+      requestWorkspaceManagementRefresh={requestWorkspaceManagementRefresh}
       onToggleFavoriteSession={toggleFavoriteSession}
       onArchiveSession={(sessionId) => commitNavigationArchiveState(sessionId, true)}
       onUnarchiveSession={(sessionId) => commitNavigationArchiveState(sessionId, false)}
@@ -5031,11 +5259,7 @@ export function WorkbenchLayout({
             onNavigateSessions={() => {
               setMobileNavOpen(false);
               setMobileInfoOpen(false);
-              navigate(
-                currentWorkspaceId
-                  ? buildWorkspaceSessionIndexPath(currentWorkspaceId)
-                  : buildWorkspaceHomePath()
-              );
+              goToMobileSessionsEntry();
             }}
             onNavigateTools={() => {
               setMobileNavOpen(false);
@@ -5124,6 +5348,8 @@ export function WorkbenchLayout({
                 }
                 subscribeGitSnapshot={subscribeGitSnapshot}
                 requestGitRefresh={requestGitRefresh}
+                subscribeWorkspaceManagementSnapshot={subscribeWorkspaceManagementSnapshot}
+                requestWorkspaceManagementRefresh={requestWorkspaceManagementRefresh}
                 onToggleFavoriteSession={toggleFavoriteSession}
                 onArchiveSession={(sessionId) => commitNavigationArchiveState(sessionId, true)}
                 onUnarchiveSession={(sessionId) => commitNavigationArchiveState(sessionId, false)}
@@ -5331,6 +5557,10 @@ export function useWorkbenchShell(): WorkbenchShellContextValue {
       subscribeGitSnapshot: () => undefined,
       requestGitRefresh: () => undefined,
       addGitSnapshotListener: () => () => undefined,
+      subscribeWorkspaceManagementSnapshot: () => undefined,
+      requestWorkspaceManagementRefresh: () => undefined,
+      addWorkspaceManagementSnapshotListener: () => () => undefined,
+      workspaceManagementStateById: {},
       subscribeTerminalManagerSnapshot: () => undefined,
       requestTerminalManagerRefresh: () => undefined,
       addTerminalManagerSnapshotListener: () => () => undefined,

@@ -103,6 +103,8 @@ describe("WorkbenchLayout", () => {
     window.localStorage.clear();
     window.sessionStorage.clear();
     clearViewSnapshot(WORKBENCH_NAVIGATION_SNAPSHOT_KEY);
+    clearViewSnapshot("workspace-management.summary.workspace-1");
+    clearViewSnapshot("git-sidebar.snapshot.workspace-1");
     authStore.clear();
     MockWebSocket.reset();
     global.WebSocket = MockWebSocket as unknown as typeof WebSocket;
@@ -1515,70 +1517,67 @@ describe("WorkbenchLayout", () => {
     ]);
 
     MockWebSocket.workbenchSnapshot = currentSnapshot;
+    writeViewSnapshot("workspace-management.summary.workspace-1", {
+      workspaceId: "workspace-1",
+      name: "项目一",
+      path: "C:/repo/workspace-1",
+      git: {
+        isRepository: true,
+        repoRoot: "C:/repo/workspace-1",
+        currentBranch: "main",
+        commitCount: 42,
+        remotes: [
+          {
+            name: "origin",
+            url: "https://example.com/team/workspace-1.git"
+          }
+        ],
+        error: null
+      },
+      codeComposition: {
+        scannedFileCount: 18,
+        truncated: false,
+        error: null,
+        items: [
+          {
+            type: "TypeScript",
+            count: 7,
+            ratio: 7 / 18
+          },
+          {
+            type: "Markdown",
+            count: 3,
+            ratio: 3 / 18
+          },
+          {
+            type: "JSON",
+            count: 3,
+            ratio: 3 / 18
+          },
+          {
+            type: "YAML",
+            count: 2,
+            ratio: 2 / 18
+          },
+          {
+            type: "CSS",
+            count: 2,
+            ratio: 2 / 18
+          },
+          {
+            type: "Python",
+            count: 1,
+            ratio: 1 / 18
+          }
+        ]
+      }
+    });
 
     global.fetch = vi.fn(async (rawInput: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
 
       if (url.endsWith("/api/workbench")) {
         return createJsonResponse(currentSnapshot);
-      }
-
-      if (url.endsWith("/api/workspaces/workspace-1/management")) {
-        return createJsonResponse({
-          workspaceId: "workspace-1",
-          name: "项目一",
-          path: "C:/repo/workspace-1",
-          git: {
-            isRepository: true,
-            repoRoot: "C:/repo/workspace-1",
-            currentBranch: "main",
-            commitCount: 42,
-            remotes: [
-              {
-                name: "origin",
-                url: "https://example.com/team/workspace-1.git"
-              }
-            ],
-            error: null
-          },
-          codeComposition: {
-            scannedFileCount: 18,
-            truncated: false,
-            error: null,
-            items: [
-              {
-                type: "TypeScript",
-                count: 7,
-                ratio: 7 / 18
-              },
-              {
-                type: "Markdown",
-                count: 3,
-                ratio: 3 / 18
-              },
-              {
-                type: "JSON",
-                count: 3,
-                ratio: 3 / 18
-              },
-              {
-                type: "YAML",
-                count: 2,
-                ratio: 2 / 18
-              },
-              {
-                type: "CSS",
-                count: 2,
-                ratio: 2 / 18
-              },
-              {
-                type: "Python",
-                count: 1,
-                ratio: 1 / 18
-              }
-            ]
-          }
-        });
       }
 
       if (url.endsWith("/api/workspaces/workspace-1") && init?.method === "DELETE") {
@@ -1888,6 +1887,51 @@ describe("WorkbenchLayout", () => {
     expect(screen.queryByRole("button", { name: t("shell.showSessionSidebar") })).not.toBeInTheDocument();
     expect(view.container.querySelector(".mobile-workbench-header")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: t("shell.mobileQuickNavigationAction") })).toBeInTheDocument();
+  });
+
+  it("移动端从其他页面回到对话入口时，会优先恢复上一次已进入的会话", async () => {
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      writable: true,
+      value: 390
+    });
+
+    MockWebSocket.workbenchSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "会话 Alpha",
+            workspaceId: "workspace-1"
+          })
+        ]
+      }
+    ]);
+
+    window.localStorage.setItem(
+      WORKBENCH_NAVIGATION_SNAPSHOT_KEY,
+      JSON.stringify({
+        value: MockWebSocket.workbenchSnapshot,
+        createdAt: Date.now()
+      })
+    );
+    window.localStorage.setItem(
+      "workbench.last.session.path",
+      "/workspaces/workspace-1/sessions/session-1"
+    );
+
+    renderWorkbenchRoute("/workspaces/workspace-1/terminals", {
+      shellMode: "mobile"
+    });
+
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.mobileSessionsEntry") }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("current-path").textContent).toBe(
+        "/workspaces/workspace-1/sessions/session-1"
+      );
+    });
   });
 
   it("移动端在失去工作区选中状态后，会退回工作区首页", async () => {

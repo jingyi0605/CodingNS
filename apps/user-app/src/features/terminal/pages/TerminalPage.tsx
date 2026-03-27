@@ -6,6 +6,10 @@ import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 
 import { usePlatform } from "../../../platform/platform-provider";
+import {
+  readViewSnapshot,
+  writeViewSnapshot
+} from "../../../shared/cache/view-snapshot-cache";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout";
@@ -13,10 +17,8 @@ import {
   closeTerminal,
   createTerminal,
   deleteTerminalRecord,
-  listTerminalShellOptions,
   listWorkspaceTerminals,
-  type TerminalDto,
-  type TerminalShellOptionDto
+  type TerminalDto
 } from "../api/terminal-api";
 import {
   persistActiveTerminalId,
@@ -152,6 +154,7 @@ const TERMINAL_ACTION_MENU_OFFSET = 6;
 const TERMINAL_ACTION_MENU_EDGE_PADDING = 8;
 const TERMINAL_MOBILE_SWIPE_THRESHOLD = 72;
 const TERMINAL_MOBILE_SWIPE_OFF_AXIS_THRESHOLD = 48;
+const TERMINAL_MANAGER_SNAPSHOT_CACHE_MAX_AGE_MS = 60 * 1000;
 const INITIAL_PANE_BINDINGS: TerminalPaneBindings = {
   primary: null,
   secondary: null
@@ -165,7 +168,12 @@ export function TerminalPage() {
   const platform = usePlatform();
   const navigate = useNavigate();
   const { workspaceId: routeWorkspaceIdParam } = useParams();
-  const { navigationGroups } = useWorkbenchShell();
+  const {
+    navigationGroups,
+    subscribeTerminalManagerSnapshot,
+    requestTerminalManagerRefresh,
+    addTerminalManagerSnapshotListener
+  } = useWorkbenchShell();
   const terminalActionMenuRef = useRef<HTMLDivElement | null>(null);
   const terminalTabbarMainRef = useRef<HTMLDivElement | null>(null);
   const terminalTabbarScrollRef = useRef<HTMLDivElement | null>(null);
@@ -189,8 +197,6 @@ export function TerminalPage() {
   const routeWorkspaceId = routeWorkspaceIdParam?.trim() || null;
 
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState("");
-  const [shellOptions, setShellOptions] = useState<TerminalShellOptionDto[]>([]);
-  const [selectedShellId, setSelectedShellId] = useState("");
   const [selectedRuntimeType, setSelectedRuntimeType] =
     useState<SelectableTerminalRuntimeType>("");
   const [terminals, setTerminals] = useState<TerminalDto[]>([]);
@@ -291,10 +297,6 @@ export function TerminalPage() {
     () => sortTerminals(terminals, pinnedTerminalIdSet),
     [pinnedTerminalIdSet, terminals]
   );
-  const selectedShellOption = useMemo(
-    () => shellOptions.find((option) => option.id === selectedShellId) ?? null,
-    [selectedShellId, shellOptions]
-  );
   const runtimeOptions = useMemo(() => listTerminalRuntimeOptions(), []);
   const isMobileTerminalPage = !platform.isDesktop && !(platform.isWeb && platform.viewportClass === "expanded");
   const effectiveSplitDirection: SplitDirection = isMobileTerminalPage ? "single" : splitDirection;
@@ -357,6 +359,62 @@ export function TerminalPage() {
     setSplitDirection(nextDirection);
   }
 
+  const applyWorkspaceTerminalCollection = useCallback(
+    (
+      workspaceId: string,
+      nextTerminals: TerminalDto[],
+      options: {
+        preferredTerminalId?: string | null;
+        preferredPaneId?: PaneId;
+      } = {}
+    ): void => {
+      if (selectedWorkspaceIdRef.current !== workspaceId) {
+        return;
+      }
+
+      terminalsRef.current = nextTerminals;
+      setTerminals(nextTerminals);
+      setManuallyDisconnectedTerminalIds((current) => {
+        const existingTerminalIdSet = new Set(nextTerminals.map((terminal) => terminal.id));
+        return current.filter((terminalId) => existingTerminalIdSet.has(terminalId));
+      });
+      setPinnedTerminalIds((current) => {
+        const existingTerminalIdSet = new Set(nextTerminals.map((terminal) => terminal.id));
+        const nextPinnedIds = current.filter((terminalId) => existingTerminalIdSet.has(terminalId));
+
+        if (nextPinnedIds.length !== current.length) {
+          persistPinnedTerminalIds(workspaceId, nextPinnedIds);
+        }
+
+        return nextPinnedIds;
+      });
+
+      const persistedTerminalId = readPersistedActiveTerminalId(workspaceId);
+      const nextActiveTerminalId =
+        pickActiveTerminalAfterReload({
+          terminals: nextTerminals,
+          preferredTerminalId: options.preferredTerminalId,
+          currentActiveTerminalId:
+            paneBindingsRef.current[activePaneIdRef.current] ?? paneBindingsRef.current.primary,
+          persistedTerminalId
+        })?.id ?? null;
+
+      setPaneBindings((current) => {
+        const nextBindings = normalizePaneBindings({
+          terminals: nextTerminals,
+          currentBindings: current,
+          splitDirection: splitDirectionRef.current,
+          fallbackTerminalId: nextActiveTerminalId,
+          preferredPaneId: options.preferredPaneId ?? activePaneIdRef.current
+        });
+
+        paneBindingsRef.current = nextBindings;
+        return nextBindings;
+      });
+    },
+    []
+  );
+
   const reloadWorkspaceResources = useCallback(
     async (
       workspaceId: string,
@@ -378,42 +436,7 @@ export function TerminalPage() {
           return;
         }
 
-        terminalsRef.current = terminalResponse.items;
-        setTerminals(terminalResponse.items);
-        setManuallyDisconnectedTerminalIds((current) => {
-          const existingTerminalIdSet = new Set(terminalResponse.items.map((terminal) => terminal.id));
-          return current.filter((terminalId) => existingTerminalIdSet.has(terminalId));
-        });
-        setPinnedTerminalIds((current) => {
-          const existingTerminalIdSet = new Set(terminalResponse.items.map((terminal) => terminal.id));
-          const nextPinnedIds = current.filter((terminalId) => existingTerminalIdSet.has(terminalId));
-
-          if (nextPinnedIds.length !== current.length) {
-            persistPinnedTerminalIds(workspaceId, nextPinnedIds);
-          }
-
-          return nextPinnedIds;
-        });
-
-        const persistedTerminalId = readPersistedActiveTerminalId(workspaceId);
-        const nextActiveTerminalId =
-          pickActiveTerminalAfterReload({
-            terminals: terminalResponse.items,
-            preferredTerminalId: options.preferredTerminalId,
-            currentActiveTerminalId:
-              paneBindingsRef.current[activePaneIdRef.current] ?? paneBindingsRef.current.primary,
-            persistedTerminalId
-          })?.id ?? null;
-
-        updatePaneBindings((current) =>
-          normalizePaneBindings({
-            terminals: terminalResponse.items,
-            currentBindings: current,
-            splitDirection: splitDirectionRef.current,
-            fallbackTerminalId: nextActiveTerminalId,
-            preferredPaneId: options.preferredPaneId ?? activePaneIdRef.current
-          })
-        );
+        applyWorkspaceTerminalCollection(workspaceId, terminalResponse.items, options);
       } catch (error) {
         if (
           requestId !== terminalReloadRequestIdRef.current ||
@@ -426,7 +449,7 @@ export function TerminalPage() {
         notifyTerminal(detail, "error");
       }
     },
-    [notifyTerminal]
+    [applyWorkspaceTerminalCollection, notifyTerminal]
   );
   const requestReload = useCallback(() => {
     if (!selectedWorkspaceId) {
@@ -484,16 +507,6 @@ export function TerminalPage() {
   }, [isMobileTerminalPage]);
 
   useEffect(() => {
-    void (async () => {
-      const shellResponse = await listTerminalShellOptions();
-      setShellOptions(shellResponse.items);
-      setSelectedShellId(pickDefaultShellId(shellResponse.items));
-    })().catch(() => {
-      notifyTerminal(t("terminal.workspaceLoadFailed"), "error");
-    });
-  }, [notifyTerminal]);
-
-  useEffect(() => {
     const persistedWorkspaceId = readPersistedTerminalPageState().selectedWorkspaceId;
     const routeSelectedWorkspaceId =
       routeWorkspaceId && workspaces.some((workspace) => workspace.id === routeWorkspaceId)
@@ -544,6 +557,26 @@ export function TerminalPage() {
       setActionMenu(null);
     }
   }, [actionMenu, terminals]);
+
+  useEffect(() => {
+    if (!selectedWorkspaceId) {
+      return;
+    }
+
+    return addTerminalManagerSnapshotListener((snapshot) => {
+      if (snapshot.workspaceId !== selectedWorkspaceId) {
+        return;
+      }
+
+      writeViewSnapshot(buildTerminalManagerSnapshotKey(selectedWorkspaceId), {
+        terminals: snapshot.terminals,
+        templates: snapshot.templates,
+        templateStatuses: snapshot.templateStatuses,
+        shellOptions: snapshot.shellOptions
+      });
+      applyWorkspaceTerminalCollection(snapshot.workspaceId, snapshot.terminals);
+    });
+  }, [addTerminalManagerSnapshotListener, applyWorkspaceTerminalCollection, selectedWorkspaceId]);
 
   useEffect(() => {
     if (!actionMenu) {
@@ -618,8 +651,50 @@ export function TerminalPage() {
       return;
     }
 
-    void reloadWorkspaceResources(selectedWorkspaceId);
-  }, [reloadWorkspaceResources, selectedWorkspaceId]);
+    updateActivePane("primary");
+    setPaneConnectionStates(INITIAL_CONNECTION_STATES);
+    setPendingTerminalCreationPaneId(null);
+
+    const cachedSnapshot = readViewSnapshot<{
+      terminals: TerminalDto[];
+      templates: unknown[];
+      templateStatuses: Array<{ occupied: boolean }>;
+      shellOptions?: unknown[];
+    }>(
+      buildTerminalManagerSnapshotKey(selectedWorkspaceId),
+      TERMINAL_MANAGER_SNAPSHOT_CACHE_MAX_AGE_MS
+    );
+
+    if (cachedSnapshot) {
+      applyWorkspaceTerminalCollection(selectedWorkspaceId, cachedSnapshot.terminals);
+    } else {
+      terminalsRef.current = [];
+      setTerminals([]);
+      updatePaneBindings(() => INITIAL_PANE_BINDINGS);
+      updateActivePane("primary");
+      setPaneConnectionStates(INITIAL_CONNECTION_STATES);
+      setPendingTerminalCreationPaneId(null);
+    }
+
+    subscribeTerminalManagerSnapshot(selectedWorkspaceId);
+
+    if (cachedSnapshot) {
+      const timer = window.setTimeout(() => {
+        requestTerminalManagerRefresh(selectedWorkspaceId);
+      }, 1500);
+
+      return () => {
+        window.clearTimeout(timer);
+      };
+    }
+
+    requestTerminalManagerRefresh(selectedWorkspaceId);
+  }, [
+    applyWorkspaceTerminalCollection,
+    requestTerminalManagerRefresh,
+    selectedWorkspaceId,
+    subscribeTerminalManagerSnapshot
+  ]);
 
   useEffect(() => {
     if (!selectedWorkspaceId) {
@@ -842,7 +917,6 @@ export function TerminalPage() {
     try {
       const terminal = await submitTerminalCreation({
         workspaceId: selectedWorkspaceId,
-        shell: selectedShellOption?.available ? selectedShellOption.shell : undefined,
         runtimeType: selectedRuntimeType || undefined
       });
 
@@ -1357,11 +1431,7 @@ export function TerminalPage() {
                 type="button"
                 aria-label={t("terminal.createButton")}
                 title={t("terminal.createButton")}
-                disabled={
-                  !selectedWorkspaceId ||
-                  creatingTerminal ||
-                  (selectedShellOption?.available === false && shellOptions.length > 0)
-                }
+                disabled={!selectedWorkspaceId || creatingTerminal}
                 onClick={() => {
                   void handleCreateTerminal();
                 }}
@@ -2326,15 +2396,6 @@ function replaceTerminalChunks(terminal: Terminal, chunks: TerminalOutputChunkDt
   terminal.write(chunks.map((chunk) => chunk.content).join(""));
 }
 
-function pickDefaultShellId(options: TerminalShellOptionDto[]): string {
-  return (
-    options.find((option) => option.id === "cmd" && option.available)?.id ??
-    options.find((option) => option.available)?.id ??
-    options[0]?.id ??
-    ""
-  );
-}
-
 function hasUsableContainerSize(container: HTMLDivElement): boolean {
   return (
     container.clientWidth >= MIN_TERMINAL_PIXEL_WIDTH &&
@@ -2573,6 +2634,10 @@ function findPaneIdByTerminalId(
 
 function buildTerminalMutationToastId(terminalId: string): string {
   return `terminal-mutation-${terminalId}`;
+}
+
+function buildTerminalManagerSnapshotKey(workspaceId: string) {
+  return `terminal-manager.snapshot.${workspaceId}`;
 }
 
 function waitForNextMutationPoll(): Promise<void> {

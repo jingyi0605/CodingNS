@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
+import { readViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import {
-  getWorkspaceManagementSummary,
-  removeWorkspace
+  removeWorkspace,
+  type WorkspaceManagementSummaryDto
 } from "../../conversation/api/conversation-api";
 import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout";
 import { buildSessionTitlePresentation } from "../../conversation/session-title";
@@ -21,6 +22,8 @@ function getProviderLabel(provider: string) {
   return provider === "codex" ? t("conversation.providerCodex") : t("conversation.providerClaude");
 }
 
+const WORKSPACE_MANAGEMENT_SNAPSHOT_CACHE_MAX_AGE_MS = 60 * 1000;
+
 export function WorkspaceDetailPage() {
   const { workspaceId = "" } = useParams();
   const navigate = useNavigate();
@@ -29,21 +32,17 @@ export function WorkspaceDetailPage() {
     navigationGroups,
     currentWorkspaceId,
     favoriteSessionIds,
+    workspaceManagementStateById,
     selectWorkspace,
+    subscribeGitSnapshot,
+    requestGitRefresh,
+    subscribeWorkspaceManagementSnapshot,
+    requestWorkspaceManagementRefresh,
     toggleFavoriteSession,
     archiveSession,
     unarchiveSession,
     startDraftSession
   } = useWorkbenchShell();
-  const [detailState, setDetailState] = useState<{
-    loading: boolean;
-    error: string | null;
-    summary: Awaited<ReturnType<typeof getWorkspaceManagementSummary>> | null;
-  }>({
-    loading: true,
-    error: null,
-    summary: null
-  });
   const [removing, setRemoving] = useState(false);
 
   const workspaceGroup = navigationGroups.find((group) => group.workspace.id === workspaceId) ?? null;
@@ -66,51 +65,48 @@ export function WorkspaceDetailPage() {
   }, [selectWorkspace, workspaceId]);
 
   useEffect(() => {
-    let disposed = false;
-
     if (!workspaceId) {
-      setDetailState({
-        loading: false,
-        error: null,
-        summary: null
-      });
       return;
     }
 
-    setDetailState({
-      loading: true,
-      error: null,
-      summary: null
-    });
+    subscribeGitSnapshot(workspaceId);
+    requestGitRefresh(workspaceId);
+    subscribeWorkspaceManagementSnapshot(workspaceId);
+    requestWorkspaceManagementRefresh(workspaceId);
+  }, [
+    requestGitRefresh,
+    requestWorkspaceManagementRefresh,
+    subscribeGitSnapshot,
+    subscribeWorkspaceManagementSnapshot,
+    workspaceId
+  ]);
 
-    void getWorkspaceManagementSummary(workspaceId)
-      .then((summary) => {
-        if (disposed) {
-          return;
-        }
+  const detailState = useMemo(() => {
+    if (!workspaceId) {
+      return {
+        loading: false,
+        error: null,
+        hasMeaningfulSummary: false,
+        summary: null as WorkspaceManagementSummaryDto | null
+      };
+    }
 
-        setDetailState({
-          loading: false,
-          error: null,
-          summary
-        });
-      })
-      .catch((error) => {
-        if (disposed) {
-          return;
-        }
+    const cachedSummary = readViewSnapshot<WorkspaceManagementSummaryDto>(
+      buildWorkspaceManagementSummarySnapshotKey(workspaceId),
+      WORKSPACE_MANAGEMENT_SNAPSHOT_CACHE_MAX_AGE_MS
+    );
+    const sharedState = workspaceManagementStateById[workspaceId] ?? null;
+    const summary =
+      sharedState?.detail ??
+      (workspace ? createWorkspaceSummaryFallback(workspace, cachedSummary) : cachedSummary ?? null);
 
-        setDetailState({
-          loading: false,
-          error: error instanceof Error ? error.message : t("shell.manageWorkspaceLoadFailed"),
-          summary: null
-        });
-      });
-
-    return () => {
-      disposed = true;
+    return {
+      loading: sharedState?.loading ?? false,
+      error: sharedState?.error ?? null,
+      hasMeaningfulSummary: hasMeaningfulWorkspaceSummary(summary),
+      summary
     };
-  }, [workspaceId]);
+  }, [workspace, workspaceId, workspaceManagementStateById]);
 
   async function handleRemoveWorkspace() {
     if (!workspace) {
@@ -212,7 +208,7 @@ export function WorkspaceDetailPage() {
             <span className="mobile-feature-badge">{t("shell.switchWorkspace")}</span>
           ) : null}
         </div>
-        {detailState.loading ? <p>{t("common.loading")}</p> : null}
+        {detailState.loading && detailState.summary === null ? <p>{t("common.loading")}</p> : null}
         {detailState.error ? <p className="status-text" data-tone="error">{detailState.error}</p> : null}
         {detailState.summary ? (
           <div className="mobile-detail-grid">
@@ -226,11 +222,11 @@ export function WorkspaceDetailPage() {
             </div>
             <div className="mobile-detail-metric">
               <span>{t("shell.manageWorkspaceGitCommitCount")}</span>
-              <strong>{detailState.summary.git.commitCount ?? 0}</strong>
+              <strong>{detailState.hasMeaningfulSummary ? detailState.summary.git.commitCount ?? 0 : "—"}</strong>
             </div>
             <div className="mobile-detail-metric">
               <span>{t("shell.manageWorkspaceCodeCompositionFiles")}</span>
-              <strong>{detailState.summary.codeComposition.scannedFileCount}</strong>
+              <strong>{detailState.hasMeaningfulSummary ? detailState.summary.codeComposition.scannedFileCount : "—"}</strong>
             </div>
           </div>
         ) : null}
@@ -365,5 +361,58 @@ export function WorkspaceDetailPage() {
         </section>
       ) : null}
     </main>
+  );
+}
+
+function buildWorkspaceManagementSummarySnapshotKey(workspaceId: string) {
+  return `workspace-management.summary.${workspaceId}`;
+}
+
+function createWorkspaceSummaryFallback(
+  workspace: {
+    id: string;
+    name: string;
+    path: string;
+    repoRoot?: string | null;
+  },
+  existingSummary?: WorkspaceManagementSummaryDto | null
+): WorkspaceManagementSummaryDto {
+  const repoRoot = existingSummary?.git.repoRoot ?? workspace.repoRoot ?? null;
+
+  return {
+    workspaceId: workspace.id,
+    name: workspace.name,
+    path: workspace.path,
+    git: {
+      isRepository: existingSummary?.git.isRepository ?? Boolean(repoRoot),
+      repoRoot,
+      currentBranch: existingSummary?.git.currentBranch ?? null,
+      commitCount: existingSummary?.git.commitCount ?? null,
+      remotes: existingSummary?.git.remotes ?? [],
+      error: existingSummary?.git.error ?? null
+    },
+    codeComposition: existingSummary?.codeComposition ?? {
+      scannedFileCount: 0,
+      truncated: false,
+      items: [],
+      error: null
+    }
+  };
+}
+
+function hasMeaningfulWorkspaceSummary(summary: WorkspaceManagementSummaryDto | null): boolean {
+  if (!summary) {
+    return false;
+  }
+
+  return (
+    summary.git.isRepository
+    || summary.git.repoRoot !== null
+    || summary.git.currentBranch !== null
+    || summary.git.commitCount !== null
+    || summary.git.remotes.length > 0
+    || summary.codeComposition.scannedFileCount > 0
+    || summary.codeComposition.items.length > 0
+    || summary.codeComposition.error !== null
   );
 }

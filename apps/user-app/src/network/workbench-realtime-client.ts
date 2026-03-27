@@ -2,7 +2,10 @@ import { getHostWebSocketUrl } from "../config/env";
 import { authStore } from "../features/auth/store/auth-store";
 import { ConnectionManager } from "./connection-manager";
 
-import type { WorkbenchSnapshotDto } from "../features/conversation/api/conversation-api";
+import type {
+  WorkbenchSnapshotDto,
+  WorkspaceManagementSummaryDto
+} from "../features/conversation/api/conversation-api";
 import type { FileNodeDto } from "../features/conversation/api/file-context-api";
 import type {
   GitBranchSnapshotDto,
@@ -12,6 +15,7 @@ import type {
 } from "../features/conversation/api/git-api";
 import type {
   TerminalDto,
+  TerminalShellOptionDto,
   TerminalTemplateDto,
   TerminalTemplateRuntimeStatusDto
 } from "../features/terminal/api/terminal-api";
@@ -60,11 +64,19 @@ export interface TerminalManagerRealtimeSnapshotDto {
   terminals: TerminalDto[];
   templates: TerminalTemplateDto[];
   templateStatuses: TerminalTemplateRuntimeStatusDto[];
+  shellOptions: TerminalShellOptionDto[];
 }
 
 interface TerminalManagerSnapshotEvent {
   type: "terminalManager.snapshot";
   snapshot: TerminalManagerRealtimeSnapshotDto;
+}
+
+export type WorkspaceManagementRealtimeSnapshotDto = WorkspaceManagementSummaryDto;
+
+interface WorkspaceManagementSnapshotEvent {
+  type: "workspaceManagement.snapshot";
+  snapshot: WorkspaceManagementRealtimeSnapshotDto;
 }
 
 interface SessionErrorEvent {
@@ -78,6 +90,7 @@ type IncomingEvent =
   | FileTreeSnapshotEvent
   | GitSnapshotEvent
   | TerminalManagerSnapshotEvent
+  | WorkspaceManagementSnapshotEvent
   | SystemConnectedEvent
   | SessionErrorEvent;
 
@@ -87,6 +100,7 @@ export interface WorkbenchRealtimeClientOptions {
   onFileTreeSnapshot?: (snapshot: FileTreeRealtimeSnapshotDto) => void;
   onGitSnapshot?: (snapshot: GitRealtimeSnapshotDto) => void;
   onTerminalManagerSnapshot?: (snapshot: TerminalManagerRealtimeSnapshotDto) => void;
+  onWorkspaceManagementSnapshot?: (snapshot: WorkspaceManagementRealtimeSnapshotDto) => void;
   onUnauthorized: () => void;
 }
 
@@ -97,13 +111,18 @@ export class WorkbenchRealtimeClient {
   private fileTreeSubscription: { workspaceId: string; paths: string[] } | null = null;
   private gitWorkspaceId: string | null = null;
   private terminalManagerWorkspaceId: string | null = null;
+  private workspaceManagementWorkspaceId: string | null = null;
   private pendingFileTreeRefresh: { workspaceId: string; paths: string[] } | null = null;
   private pendingGitRefreshWorkspaceId: string | null = null;
   private pendingTerminalManagerRefreshWorkspaceId: string | null = null;
+  private pendingWorkspaceManagementRefreshWorkspaceId: string | null = null;
   private readonly fileTreeListeners = new Set<(snapshot: FileTreeRealtimeSnapshotDto) => void>();
   private readonly gitListeners = new Set<(snapshot: GitRealtimeSnapshotDto) => void>();
   private readonly terminalManagerListeners = new Set<
     (snapshot: TerminalManagerRealtimeSnapshotDto) => void
+  >();
+  private readonly workspaceManagementListeners = new Set<
+    (snapshot: WorkspaceManagementRealtimeSnapshotDto) => void
   >();
   private readonly connectionManager: ConnectionManager;
 
@@ -204,6 +223,25 @@ export class WorkbenchRealtimeClient {
     }
   }
 
+  subscribeWorkspaceManagement(workspaceId: string): void {
+    this.workspaceManagementWorkspaceId = workspaceId;
+    this.sendWhenReady({
+      type: "workspaceManagement.subscribe",
+      workspaceId
+    });
+  }
+
+  requestWorkspaceManagementRefresh(workspaceId: string): void {
+    if (!this.sendWhenReady({
+      type: "workspaceManagement.refresh",
+      workspaceId
+    })) {
+      this.pendingWorkspaceManagementRefreshWorkspaceId = workspaceId;
+    } else {
+      this.pendingWorkspaceManagementRefreshWorkspaceId = null;
+    }
+  }
+
   addFileTreeSnapshotListener(
     listener: (snapshot: FileTreeRealtimeSnapshotDto) => void
   ): () => void {
@@ -226,6 +264,15 @@ export class WorkbenchRealtimeClient {
     this.terminalManagerListeners.add(listener);
     return () => {
       this.terminalManagerListeners.delete(listener);
+    };
+  }
+
+  addWorkspaceManagementSnapshotListener(
+    listener: (snapshot: WorkspaceManagementRealtimeSnapshotDto) => void
+  ): () => void {
+    this.workspaceManagementListeners.add(listener);
+    return () => {
+      this.workspaceManagementListeners.delete(listener);
     };
   }
 
@@ -307,6 +354,19 @@ export class WorkbenchRealtimeClient {
       if (this.pendingTerminalManagerRefreshWorkspaceId) {
         this.requestTerminalManagerRefresh(this.pendingTerminalManagerRefreshWorkspaceId);
       }
+
+      if (this.workspaceManagementWorkspaceId) {
+        socket.send(
+          JSON.stringify({
+            type: "workspaceManagement.subscribe",
+            workspaceId: this.workspaceManagementWorkspaceId
+          })
+        );
+      }
+
+      if (this.pendingWorkspaceManagementRefreshWorkspaceId) {
+        this.requestWorkspaceManagementRefresh(this.pendingWorkspaceManagementRefreshWorkspaceId);
+      }
     });
 
     socket.addEventListener("message", (raw) => {
@@ -340,6 +400,12 @@ export class WorkbenchRealtimeClient {
       if (payload.type === "terminalManager.snapshot") {
         this.options.onTerminalManagerSnapshot?.(payload.snapshot);
         this.terminalManagerListeners.forEach((listener) => listener(payload.snapshot));
+        return;
+      }
+
+      if (payload.type === "workspaceManagement.snapshot") {
+        this.options.onWorkspaceManagementSnapshot?.(payload.snapshot);
+        this.workspaceManagementListeners.forEach((listener) => listener(payload.snapshot));
         return;
       }
 

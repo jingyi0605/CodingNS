@@ -7,6 +7,7 @@ import type {
   FileTreeSnapshot,
   GitPanelSnapshot,
   TerminalManagerSnapshot,
+  WorkspaceManagementSnapshot,
   WorkspacePanelSnapshotService
 } from "../modules/workbench/workspace-panel-snapshot-service.js";
 
@@ -53,6 +54,16 @@ interface TerminalManagerRefreshMessage {
   workspaceId: string;
 }
 
+interface WorkspaceManagementSubscribeMessage {
+  type: "workspaceManagement.subscribe";
+  workspaceId: string;
+}
+
+interface WorkspaceManagementRefreshMessage {
+  type: "workspaceManagement.refresh";
+  workspaceId: string;
+}
+
 type WorkbenchMessage =
   | WorkbenchSubscribeMessage
   | WorkbenchRefreshMessage
@@ -61,7 +72,9 @@ type WorkbenchMessage =
   | GitSubscribeMessage
   | GitRefreshMessage
   | TerminalManagerSubscribeMessage
-  | TerminalManagerRefreshMessage;
+  | TerminalManagerRefreshMessage
+  | WorkspaceManagementSubscribeMessage
+  | WorkspaceManagementRefreshMessage;
 
 interface UserChannelState {
   clients: Set<WebSocket>;
@@ -88,6 +101,11 @@ interface TerminalManagerClientSubscription {
   lastPayload: string | null;
 }
 
+interface WorkspaceManagementClientSubscription {
+  workspaceId: string;
+  lastPayload: string | null;
+}
+
 export class WorkbenchWsHub {
   private readonly clientUsers = new WeakMap<WebSocket, string>();
   private readonly userChannels = new Map<string, UserChannelState>();
@@ -96,6 +114,10 @@ export class WorkbenchWsHub {
   private readonly clientTerminalManagerSubscriptions = new WeakMap<
     WebSocket,
     TerminalManagerClientSubscription
+  >();
+  private readonly clientWorkspaceManagementSubscriptions = new WeakMap<
+    WebSocket,
+    WorkspaceManagementClientSubscription
   >();
 
   constructor(
@@ -167,6 +189,21 @@ export class WorkbenchWsHub {
         });
         void this.refreshTerminalManagerSubscription(client, true);
         return true;
+      case "workspaceManagement.subscribe":
+        this.clientWorkspaceManagementSubscriptions.set(client, {
+          workspaceId: message.workspaceId.trim(),
+          lastPayload: null
+        });
+        void this.refreshWorkspaceManagementSubscription(client);
+        return true;
+      case "workspaceManagement.refresh":
+        this.workspacePanelSnapshotService.invalidateWorkspaceManagement(message.workspaceId.trim());
+        this.clientWorkspaceManagementSubscriptions.set(client, {
+          workspaceId: message.workspaceId.trim(),
+          lastPayload: null
+        });
+        void this.refreshWorkspaceManagementSubscription(client, true);
+        return true;
       default:
         return false;
     }
@@ -191,6 +228,7 @@ export class WorkbenchWsHub {
     this.clientFileTreeSubscriptions.delete(client);
     this.clientGitSubscriptions.delete(client);
     this.clientTerminalManagerSubscriptions.delete(client);
+    this.clientWorkspaceManagementSubscriptions.delete(client);
 
     if (channel.clients.size > 0) {
       return;
@@ -363,7 +401,8 @@ export class WorkbenchWsHub {
         await Promise.allSettled([
           this.refreshFileTreeSubscriptions(client),
           this.refreshGitSubscription(client),
-          this.refreshTerminalManagerSubscription(client)
+          this.refreshTerminalManagerSubscription(client),
+          this.refreshWorkspaceManagementSubscription(client)
         ]);
       })
     );
@@ -490,6 +529,36 @@ export class WorkbenchWsHub {
     }
   }
 
+  private async refreshWorkspaceManagementSubscription(
+    client: WebSocket,
+    force = false
+  ): Promise<void> {
+    const subscription = this.clientWorkspaceManagementSubscriptions.get(client);
+
+    if (!subscription) {
+      return;
+    }
+
+    try {
+      const snapshot = await this.workspacePanelSnapshotService.getWorkspaceManagementSnapshot(
+        subscription.workspaceId,
+        { force }
+      );
+      const payload = buildWorkspaceManagementPayload(snapshot);
+
+      if (payload === subscription.lastPayload) {
+        return;
+      }
+
+      subscription.lastPayload = payload;
+      client.send(payload);
+    } catch (error) {
+      this.reportAsyncError("refreshWorkspaceManagementSubscription", error, {
+        workspaceId: subscription.workspaceId
+      });
+    }
+  }
+
   private reportAsyncError(
     scope: string,
     error: unknown,
@@ -548,6 +617,8 @@ function parseWorkbenchMessage(payload: unknown): WorkbenchMessage | null {
         : null;
     case "terminalManager.subscribe":
     case "terminalManager.refresh":
+    case "workspaceManagement.subscribe":
+    case "workspaceManagement.refresh":
       return typeof candidate.workspaceId === "string"
         ? {
             type: candidate.type,
@@ -594,6 +665,13 @@ function buildGitPayload(snapshot: GitPanelSnapshot): string {
 function buildTerminalManagerPayload(snapshot: TerminalManagerSnapshot): string {
   return JSON.stringify({
     type: "terminalManager.snapshot",
+    snapshot
+  });
+}
+
+function buildWorkspaceManagementPayload(snapshot: WorkspaceManagementSnapshot): string {
+  return JSON.stringify({
+    type: "workspaceManagement.snapshot",
     snapshot
   });
 }

@@ -7,7 +7,6 @@ import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 import {
   createTerminalTemplate,
-  listTerminalShellOptions,
   runTerminalTemplate,
   stopTerminalTemplateProcess,
   type TerminalShellOptionDto,
@@ -56,6 +55,7 @@ interface TerminalManagerSnapshot {
   terminals: TerminalDto[];
   templates: TerminalTemplateDto[];
   templateStatuses: TerminalTemplateRuntimeStatusDto[];
+  shellOptions: TerminalShellOptionDto[];
 }
 
 interface TemplateRunFallbackDraft {
@@ -312,36 +312,26 @@ export function TerminalManagerPanel({
   const unavailableShellSelected = selectedShellOption?.available === false && shellOptions.length > 0;
 
   useEffect(() => {
-    let cancelled = false;
-
-    void (async () => {
-      try {
-        logPerfDebug("terminal_manager.shell_options.start");
-        const response = await listTerminalShellOptions();
-
-        if (cancelled) {
-          return;
-        }
-
-        setShellOptions(response.items);
-        setSelectedShellId((current) => current || pickDefaultShellId(response.items));
-        logPerfDebug("terminal_manager.shell_options.end", {
-          count: response.items.length
-        });
-      } catch (error) {
-        if (!cancelled) {
-          showToast({
-            title: error instanceof Error ? error.message : t("terminalManager.shellLoadFailed"),
-            tone: "error"
-          });
-        }
+    setSelectedShellId((current) => {
+      if (!shellOptions.length) {
+        return "";
       }
-    })();
 
-    return () => {
-      cancelled = true;
-    };
-  }, [showToast]);
+      if (current && shellOptions.some((option) => option.id === current)) {
+        return current;
+      }
+
+      return pickDefaultShellId(shellOptions);
+    });
+  }, [shellOptions]);
+
+  useEffect(() => {
+    if (!createModalOpen || !activeWorkspaceId || shellOptions.length > 0) {
+      return;
+    }
+
+    requestTerminalManagerSnapshotRefresh(activeWorkspaceId);
+  }, [activeWorkspaceId, createModalOpen, shellOptions.length]);
 
   useEffect(() => {
     if (!activeWorkspaceId) {
@@ -368,11 +358,13 @@ export function TerminalManagerPanel({
       setTerminals(cachedSnapshot.terminals);
       setTemplates(cachedSnapshot.templates);
       setTemplateStatuses(cachedSnapshot.templateStatuses);
+      setShellOptions(cachedSnapshot.shellOptions ?? []);
       setLoading(false);
     } else {
       setTerminals([]);
       setTemplates([]);
       setTemplateStatuses([]);
+      setShellOptions([]);
       setLoading(true);
     }
   }, [activeWorkspaceId]);
@@ -432,14 +424,16 @@ export function TerminalManagerPanel({
     writeViewSnapshot<TerminalManagerSnapshot>(buildTerminalManagerSnapshotKey(activeWorkspaceId), {
       terminals,
       templates,
-      templateStatuses
+      templateStatuses,
+      shellOptions
     });
-  }, [activeWorkspaceId, templateStatuses, templates, terminals]);
+  }, [activeWorkspaceId, shellOptions, templateStatuses, templates, terminals]);
 
   function applyTerminalManagerSnapshot(snapshot: TerminalManagerSnapshot) {
     setTerminals(snapshot.terminals);
     setTemplates(snapshot.templates);
     setTemplateStatuses(snapshot.templateStatuses);
+    setShellOptions(snapshot.shellOptions ?? []);
   }
 
   function requestTerminalManagerSnapshotRefresh(workspaceId: string) {

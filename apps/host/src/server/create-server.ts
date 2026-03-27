@@ -196,7 +196,8 @@ export function createServer(config: HostConfig) {
     fileTreeService,
     gitReadService,
     terminalService,
-    commandTemplateService
+    commandTemplateService,
+    workspaceService
   );
 
   const bootstrapController = new BootstrapController(bootstrapService);

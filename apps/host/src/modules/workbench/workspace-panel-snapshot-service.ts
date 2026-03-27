@@ -9,10 +9,16 @@ import type {
 } from "../git/types.js";
 import type { CommandTemplateService } from "../terminal/command-template-service.js";
 import type { TerminalService } from "../terminal/terminal-service.js";
+import { listTerminalShellOptions, type TerminalShellOption } from "../terminal/terminal-shell.js";
+import type {
+  WorkspaceManagementSummary,
+  WorkspaceService
+} from "../workspace/workspace-service.js";
 
 const FILE_TREE_CACHE_MAX_AGE_MS = 5_000;
 const GIT_SNAPSHOT_CACHE_MAX_AGE_MS = 5_000;
 const TERMINAL_MANAGER_CACHE_MAX_AGE_MS = 4_000;
+const WORKSPACE_MANAGEMENT_CACHE_MAX_AGE_MS = 30_000;
 const GIT_HISTORY_LIMIT = 20;
 
 export interface FileTreeSnapshot {
@@ -38,7 +44,10 @@ export interface TerminalManagerSnapshot {
   terminals: TerminalInstance[];
   templates: ReturnType<CommandTemplateService["listTemplates"]>;
   templateStatuses: TerminalTemplateRuntimeStatus[];
+  shellOptions: TerminalShellOption[];
 }
+
+export type WorkspaceManagementSnapshot = WorkspaceManagementSummary;
 
 interface SnapshotCacheEntry<TSnapshot> {
   snapshot: TSnapshot;
@@ -52,15 +61,24 @@ export class WorkspacePanelSnapshotService {
     string,
     SnapshotCacheEntry<TerminalManagerSnapshot>
   >();
+  private readonly workspaceManagementCache = new Map<
+    string,
+    SnapshotCacheEntry<WorkspaceManagementSnapshot>
+  >();
   private readonly fileTreeInflight = new Map<string, Promise<FileTreeSnapshot>>();
   private readonly gitInflight = new Map<string, Promise<GitPanelSnapshot>>();
   private readonly terminalManagerInflight = new Map<string, Promise<TerminalManagerSnapshot>>();
+  private readonly workspaceManagementInflight = new Map<
+    string,
+    Promise<WorkspaceManagementSnapshot>
+  >();
 
   constructor(
     private readonly fileTreeService: FileTreeService,
     private readonly gitReadService: GitReadService,
     private readonly terminalService: TerminalService,
-    private readonly commandTemplateService: CommandTemplateService
+    private readonly commandTemplateService: CommandTemplateService,
+    private readonly workspaceService: WorkspaceService
   ) {}
 
   async getFileTreeSnapshot(
@@ -176,7 +194,8 @@ export class WorkspacePanelSnapshotService {
         workspaceId,
         terminals,
         templates,
-        templateStatuses
+        templateStatuses,
+        shellOptions: listTerminalShellOptions()
       };
 
       this.terminalManagerCache.set(workspaceId, {
@@ -190,6 +209,43 @@ export class WorkspacePanelSnapshotService {
     });
 
     this.terminalManagerInflight.set(workspaceId, task);
+    return task;
+  }
+
+  async getWorkspaceManagementSnapshot(
+    workspaceId: string,
+    options?: { force?: boolean }
+  ): Promise<WorkspaceManagementSnapshot> {
+    const cached = this.workspaceManagementCache.get(workspaceId);
+
+    if (
+      !options?.force &&
+      cached &&
+      !isExpired(cached.cachedAt, WORKSPACE_MANAGEMENT_CACHE_MAX_AGE_MS)
+    ) {
+      return cached.snapshot;
+    }
+
+    const inflight = this.workspaceManagementInflight.get(workspaceId);
+
+    if (inflight) {
+      return inflight;
+    }
+
+    const task = this.workspaceService.getManagementSummary(workspaceId)
+      .then((snapshot) => {
+        this.workspaceManagementCache.set(workspaceId, {
+          snapshot,
+          cachedAt: Date.now()
+        });
+
+        return snapshot;
+      })
+      .finally(() => {
+        this.workspaceManagementInflight.delete(workspaceId);
+      });
+
+    this.workspaceManagementInflight.set(workspaceId, task);
     return task;
   }
 
@@ -215,6 +271,10 @@ export class WorkspacePanelSnapshotService {
 
   invalidateTerminalManager(workspaceId: string): void {
     this.terminalManagerCache.delete(workspaceId);
+  }
+
+  invalidateWorkspaceManagement(workspaceId: string): void {
+    this.workspaceManagementCache.delete(workspaceId);
   }
 }
 

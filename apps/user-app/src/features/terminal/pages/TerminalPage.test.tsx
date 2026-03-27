@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { clientConfigStore } from "../../../config/client-config-store";
 import { authStore } from "../../auth/store/auth-store";
+import { writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import { ToastProvider } from "../../../shared/toast";
 import type { WorkspaceSessionGroup } from "../../conversation/components/WorkbenchLayout";
 import type { TerminalDto, TerminalShellOptionDto } from "../api/terminal-api";
@@ -19,7 +20,11 @@ const {
   mockCreateTerminal,
   mockDeleteTerminalRecord,
   mockListTerminalShellOptions,
-  mockListWorkspaceTerminals
+  mockListWorkspaceTerminals,
+  mockSubscribeTerminalManagerSnapshot,
+  mockRequestTerminalManagerRefresh,
+  terminalManagerSnapshotListeners,
+  terminalManagerSnapshotByWorkspace
 } = vi.hoisted(() => ({
   navigationGroups: [
     {
@@ -45,17 +50,81 @@ const {
   mockCreateTerminal: vi.fn(),
   mockDeleteTerminalRecord: vi.fn(),
   mockListTerminalShellOptions: vi.fn(),
-  mockListWorkspaceTerminals: vi.fn()
+  mockListWorkspaceTerminals: vi.fn(),
+  mockSubscribeTerminalManagerSnapshot: vi.fn(),
+  mockRequestTerminalManagerRefresh: vi.fn(),
+  terminalManagerSnapshotListeners: new Set<
+    (snapshot: {
+      workspaceId: string;
+      terminals: TerminalDto[];
+      templates: unknown[];
+      templateStatuses: Array<{ occupied: boolean }>;
+    }) => void
+  >(),
+  terminalManagerSnapshotByWorkspace: new Map<
+    string,
+    {
+      workspaceId: string;
+      terminals: TerminalDto[];
+      templates: unknown[];
+      templateStatuses: Array<{ occupied: boolean }>;
+    }
+  >()
 }));
+
+function setTerminalManagerSnapshot(workspaceId: string, terminals: TerminalDto[]) {
+  const snapshot = {
+    workspaceId,
+    terminals,
+    templates: [],
+    templateStatuses: []
+  };
+
+  terminalManagerSnapshotByWorkspace.set(workspaceId, snapshot);
+  writeViewSnapshot(`terminal-manager.snapshot.${workspaceId}`, snapshot);
+}
+
+function emitTerminalManagerSnapshot(workspaceId: string) {
+  const snapshot = terminalManagerSnapshotByWorkspace.get(workspaceId) ?? {
+    workspaceId,
+    terminals: [],
+    templates: [],
+    templateStatuses: []
+  };
+
+  terminalManagerSnapshotListeners.forEach((listener) => {
+    listener(snapshot);
+  });
+}
+
+const workbenchShell = {
+  navigationGroups,
+  subscribeTerminalManagerSnapshot: mockSubscribeTerminalManagerSnapshot,
+  requestTerminalManagerRefresh: (workspaceId: string) => {
+    mockRequestTerminalManagerRefresh(workspaceId);
+    queueMicrotask(() => {
+      emitTerminalManagerSnapshot(workspaceId);
+    });
+  },
+  addTerminalManagerSnapshotListener: (listener: (snapshot: {
+    workspaceId: string;
+    terminals: TerminalDto[];
+    templates: unknown[];
+    templateStatuses: Array<{ occupied: boolean }>;
+  }) => void) => {
+    terminalManagerSnapshotListeners.add(listener);
+    return () => {
+      terminalManagerSnapshotListeners.delete(listener);
+    };
+  }
+};
 
 vi.mock("../../conversation/components/WorkbenchLayout", async () => {
   const actual = await vi.importActual("../../conversation/components/WorkbenchLayout");
 
   return {
     ...actual,
-    useWorkbenchShell: () => ({
-      navigationGroups
-    })
+    useWorkbenchShell: () => workbenchShell
   };
 });
 
@@ -300,7 +369,12 @@ describe("TerminalPage", () => {
     mockDeleteTerminalRecord.mockReset();
     mockListTerminalShellOptions.mockReset();
     mockListWorkspaceTerminals.mockReset();
+    mockSubscribeTerminalManagerSnapshot.mockReset();
+    mockRequestTerminalManagerRefresh.mockReset();
+    terminalManagerSnapshotListeners.clear();
+    terminalManagerSnapshotByWorkspace.clear();
     mockListTerminalShellOptions.mockResolvedValue(buildShellOption());
+    setTerminalManagerSnapshot("workspace-1", []);
     vi.stubGlobal("WebSocket", MockWebSocket as unknown as typeof WebSocket);
     vi.stubGlobal(
       "ResizeObserver",
@@ -341,18 +415,17 @@ describe("TerminalPage", () => {
     Reflect.deleteProperty(document, "fonts");
   });
 
-  it("点击加号后会先显示创建中的窗口，并且旧列表请求不会冲掉新终端", async () => {
-    const initialListDeferred = createDeferred<{ items: TerminalDto[] }>();
-    const postCreateListDeferred = createDeferred<{ items: TerminalDto[] }>();
+  it("点击加号后会先显示创建中的窗口，并在创建完成后接入真实终端", async () => {
     const createTerminalDeferred = createDeferred<TerminalDto>();
     const createdTerminal = buildTerminal();
 
-    mockListWorkspaceTerminals
-      .mockImplementationOnce(() => initialListDeferred.promise)
-      .mockImplementationOnce(() => postCreateListDeferred.promise);
+    mockListWorkspaceTerminals.mockResolvedValueOnce({
+      items: [createdTerminal]
+    });
     mockCreateTerminal.mockImplementationOnce(() => createTerminalDeferred.promise);
 
     renderPage();
+    expect(mockListTerminalShellOptions).not.toHaveBeenCalled();
 
     const createButton = await screen.findByRole("button", { name: "新建终端" });
 
@@ -370,23 +443,11 @@ describe("TerminalPage", () => {
     createTerminalDeferred.resolve(createdTerminal);
 
     await waitFor(() => {
-      expect(mockListWorkspaceTerminals).toHaveBeenCalledTimes(2);
+      expect(mockListWorkspaceTerminals).toHaveBeenCalledTimes(1);
     });
 
     await waitFor(() => {
       expect(screen.getByTestId("mock-xterm")).toBeInTheDocument();
-    });
-
-    initialListDeferred.resolve({
-      items: []
-    });
-
-    await waitFor(() => {
-      expect(screen.getByTestId("mock-xterm")).toBeInTheDocument();
-    });
-
-    postCreateListDeferred.resolve({
-      items: [createdTerminal]
     });
 
     await waitFor(() => {
@@ -395,21 +456,19 @@ describe("TerminalPage", () => {
   });
 
   it("分栏模式下的标签菜单会明确显示主副分栏绑定动作", async () => {
-    mockListWorkspaceTerminals.mockResolvedValue({
-      items: [
-        buildTerminal({
-          id: "terminal-1",
-          name: "前端"
-        }),
-        buildTerminal({
-          id: "terminal-2",
-          name: "后端",
-          runtimeSessionId: "session-2",
-          attachTarget: "tmux://session-2",
-          processId: 4567
-        })
-      ]
-    });
+    setTerminalManagerSnapshot("workspace-1", [
+      buildTerminal({
+        id: "terminal-1",
+        name: "前端"
+      }),
+      buildTerminal({
+        id: "terminal-2",
+        name: "后端",
+        runtimeSessionId: "session-2",
+        attachTarget: "tmux://session-2",
+        processId: 4567
+      })
+    ]);
 
     renderPage();
 
@@ -435,23 +494,21 @@ describe("TerminalPage", () => {
   });
 
   it("运行中和异常终端的菜单只显示各自允许的生命周期动作", async () => {
-    mockListWorkspaceTerminals.mockResolvedValue({
-      items: [
-        buildTerminal({
-          id: "terminal-running",
-          name: "运行中终端"
-        }),
-        buildTerminal({
-          id: "terminal-error",
-          name: "异常终端",
-          runtimeSessionId: "session-2",
-          attachTarget: "tmux://session-2",
-          status: "error",
-          processId: null,
-          statusDetail: "tmux exited"
-        })
-      ]
-    });
+    setTerminalManagerSnapshot("workspace-1", [
+      buildTerminal({
+        id: "terminal-running",
+        name: "运行中终端"
+      }),
+      buildTerminal({
+        id: "terminal-error",
+        name: "异常终端",
+        runtimeSessionId: "session-2",
+        attachTarget: "tmux://session-2",
+        status: "error",
+        processId: null,
+        statusDetail: "tmux exited"
+      })
+    ]);
 
     renderPage();
 
@@ -484,13 +541,10 @@ describe("TerminalPage", () => {
       statusDetail: "user_closed"
     });
 
-    mockListWorkspaceTerminals
-      .mockResolvedValueOnce({
-        items: [runningTerminal]
-      })
-      .mockResolvedValueOnce({
-        items: [closedTerminal]
-      });
+    setTerminalManagerSnapshot("workspace-1", [runningTerminal]);
+    mockListWorkspaceTerminals.mockResolvedValueOnce({
+      items: [closedTerminal]
+    });
     mockCloseTerminal.mockImplementationOnce(() => closeDeferred.promise);
 
     renderPage();
@@ -507,7 +561,7 @@ describe("TerminalPage", () => {
     });
 
     await waitFor(() => {
-      expect(mockListWorkspaceTerminals).toHaveBeenCalledTimes(2);
+      expect(mockListWorkspaceTerminals).toHaveBeenCalledTimes(1);
     });
     await waitFor(() => {
       expect(screen.queryByText("关闭中")).not.toBeInTheDocument();
@@ -524,13 +578,10 @@ describe("TerminalPage", () => {
       statusDetail: "tmux exited"
     });
 
-    mockListWorkspaceTerminals
-      .mockResolvedValueOnce({
-        items: [erroredTerminal]
-      })
-      .mockResolvedValueOnce({
-        items: []
-      });
+    setTerminalManagerSnapshot("workspace-1", [erroredTerminal]);
+    mockListWorkspaceTerminals.mockResolvedValueOnce({
+      items: []
+    });
     mockDeleteTerminalRecord.mockImplementationOnce(() => deleteDeferred.promise);
 
     renderPage();
@@ -547,7 +598,7 @@ describe("TerminalPage", () => {
     });
 
     await waitFor(() => {
-      expect(mockListWorkspaceTerminals).toHaveBeenCalledTimes(2);
+      expect(mockListWorkspaceTerminals).toHaveBeenCalledTimes(1);
     });
     await waitFor(() => {
       expect(screen.queryByText("异常终端")).not.toBeInTheDocument();
@@ -561,23 +612,21 @@ describe("TerminalPage", () => {
       value: 390
     });
 
-    mockListWorkspaceTerminals.mockResolvedValue({
-      items: [
-        buildTerminal({
-          id: "terminal-1",
-          name: "前端",
-          lastActiveAt: "2026-03-26T08:10:00.000Z"
-        }),
-        buildTerminal({
-          id: "terminal-2",
-          name: "后端",
-          runtimeSessionId: "session-2",
-          attachTarget: "tmux://session-2",
-          processId: 4567,
-          lastActiveAt: "2026-03-26T08:00:00.000Z"
-        })
-      ]
-    });
+    setTerminalManagerSnapshot("workspace-1", [
+      buildTerminal({
+        id: "terminal-1",
+        name: "前端",
+        lastActiveAt: "2026-03-26T08:10:00.000Z"
+      }),
+      buildTerminal({
+        id: "terminal-2",
+        name: "后端",
+        runtimeSessionId: "session-2",
+        attachTarget: "tmux://session-2",
+        processId: 4567,
+        lastActiveAt: "2026-03-26T08:00:00.000Z"
+      })
+    ]);
 
     const user = userEvent.setup();
     const view = renderPage();
@@ -613,14 +662,23 @@ describe("TerminalPage", () => {
 
   it("带 workspaceId 的 scoped 路由会优先于持久化工作区选择", async () => {
     persistSelectedWorkspaceId("workspace-1");
-    mockListWorkspaceTerminals.mockResolvedValue({
-      items: []
-    });
+    setTerminalManagerSnapshot(
+      "workspace-2",
+      [
+        buildTerminal({
+          id: "terminal-docs",
+          workspaceId: "workspace-2",
+          name: "Docs 终端",
+          cwd: "/Users/jackson/Code/Docs"
+        })
+      ]
+    );
 
     renderPage("/workspaces/workspace-2/terminals");
 
     await waitFor(() => {
-      expect(mockListWorkspaceTerminals).toHaveBeenCalledWith("workspace-2");
+      expect(screen.getByText("Docs 终端")).toBeInTheDocument();
     });
+    expect(mockListWorkspaceTerminals).not.toHaveBeenCalled();
   });
 });

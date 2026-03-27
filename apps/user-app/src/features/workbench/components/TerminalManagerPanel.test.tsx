@@ -7,6 +7,7 @@ import { authStore } from "../../auth/store/auth-store";
 import type { WorkspaceSessionGroup } from "../../conversation/components/WorkbenchLayout";
 import type {
   TerminalDto,
+  TerminalShellOptionDto,
   TerminalTemplateDto,
   TerminalTemplateRuntimeStatusDto
 } from "../../terminal/api/terminal-api";
@@ -17,6 +18,7 @@ interface MockTerminalManagerSnapshot {
   terminals: TerminalDto[];
   templates: TerminalTemplateDto[];
   templateStatuses: TerminalTemplateRuntimeStatusDto[];
+  shellOptions: TerminalShellOptionDto[];
 }
 
 let terminalManagerSnapshotListener: ((snapshot: MockTerminalManagerSnapshot) => void) | null = null;
@@ -24,7 +26,16 @@ let buildMockSnapshot = (): MockTerminalManagerSnapshot => ({
   workspaceId: "workspace-1",
   terminals: [],
   templates: [],
-  templateStatuses: []
+  templateStatuses: [],
+  shellOptions: [
+    {
+      id: "powershell",
+      label: "PowerShell",
+      shell: "powershell.exe",
+      available: true,
+      unavailableReason: null
+    }
+  ]
 });
 
 vi.mock("../../conversation/components/WorkbenchLayout", async () => {
@@ -95,7 +106,16 @@ describe("TerminalManagerPanel", () => {
       workspaceId: "workspace-1",
       terminals: [],
       templates: [],
-      templateStatuses: []
+      templateStatuses: [],
+      shellOptions: [
+        {
+          id: "powershell",
+          label: "PowerShell",
+          shell: "powershell.exe",
+          available: true,
+          unavailableReason: null
+        }
+      ]
     });
     authStore.hydrate({
       accessToken: "access-token",
@@ -121,6 +141,15 @@ describe("TerminalManagerPanel", () => {
     buildMockSnapshot = () => ({
       workspaceId: "workspace-1",
       terminals: [],
+      shellOptions: [
+        {
+          id: "powershell",
+          label: "PowerShell",
+          shell: "powershell.exe",
+          available: true,
+          unavailableReason: null
+        }
+      ],
       templates: [
         {
           id: "template-1",
@@ -161,20 +190,6 @@ describe("TerminalManagerPanel", () => {
     global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input.toString();
 
-      if (url.endsWith("/api/terminals/shells")) {
-        return createJsonResponse({
-          items: [
-            {
-              id: "powershell",
-              label: "PowerShell",
-              shell: "powershell.exe",
-              available: true,
-              unavailableReason: null
-            }
-          ]
-        });
-      }
-
       if (url.endsWith("/api/terminals/templates") && init?.method === "POST") {
         savedTemplateBody = JSON.parse(String(init.body)) as Record<string, unknown>;
         return createJsonResponse({
@@ -205,6 +220,7 @@ describe("TerminalManagerPanel", () => {
     }) as typeof fetch;
 
     renderPanel();
+    expect(global.fetch).not.toHaveBeenCalled();
 
     expect(screen.queryByText("当前工作区")).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
@@ -233,7 +249,9 @@ describe("TerminalManagerPanel", () => {
     });
     expect(await screen.findByText("端口暂未被占用")).toBeInTheDocument();
 
+    const fetchCallCountBeforeOpen = (global.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
     await userEvent.click(screen.getByRole("button", { name: "添加快捷启动项" }));
+    expect((global.fetch as ReturnType<typeof vi.fn>).mock.calls.length).toBe(fetchCallCountBeforeOpen);
 
     const dialog = await screen.findByRole("dialog", { name: "添加快捷启动项" });
     expect(dialog).toBeInTheDocument();

@@ -6,7 +6,17 @@ import { WorkspaceDetailPage } from "./WorkspaceDetailPage";
 
 const mockUseWorkbenchShell = vi.fn();
 const mockShowToast = vi.fn();
-const mockGetWorkspaceManagementSummary = vi.fn();
+const gitSnapshotListeners = new Set<
+  (snapshot: {
+    workspaceId: string;
+    status: {
+      snapshot: {
+        branch: string | null;
+      };
+      changes: unknown[];
+    };
+  }) => void
+>();
 
 vi.mock("../../conversation/components/WorkbenchLayout", () => ({
   useWorkbenchShell: () => mockUseWorkbenchShell()
@@ -16,8 +26,6 @@ vi.mock("../../conversation/api/conversation-api", async () => {
   const actual = await vi.importActual("../../conversation/api/conversation-api");
   return {
     ...actual,
-    getWorkspaceManagementSummary: (...args: unknown[]) =>
-      mockGetWorkspaceManagementSummary(...args),
     removeWorkspace: vi.fn()
   };
 });
@@ -31,17 +39,7 @@ vi.mock("../../../shared/toast", () => ({
 describe("WorkspaceDetailPage", () => {
   beforeEach(() => {
     mockShowToast.mockReset();
-    mockGetWorkspaceManagementSummary.mockReset();
-    mockGetWorkspaceManagementSummary.mockResolvedValue({
-      path: "/repo/project-one",
-      git: {
-        currentBranch: "main",
-        commitCount: 12
-      },
-      codeComposition: {
-        scannedFileCount: 48
-      }
-    });
+    gitSnapshotListeners.clear();
     mockUseWorkbenchShell.mockReturnValue({
       navigationGroups: [
         {
@@ -70,7 +68,64 @@ describe("WorkspaceDetailPage", () => {
       ],
       currentWorkspaceId: "workspace-1",
       favoriteSessionIds: [],
+      workspaceManagementStateById: {
+        "workspace-1": {
+          detail: {
+            workspaceId: "workspace-1",
+            name: "项目一",
+            path: "/repo/project-one",
+            git: {
+              isRepository: true,
+              repoRoot: "/repo/project-one",
+              currentBranch: "main",
+              commitCount: 12,
+              remotes: [],
+              error: null
+            },
+            codeComposition: {
+              scannedFileCount: 48,
+              truncated: false,
+              items: [],
+              error: null
+            }
+          },
+          loading: false,
+          error: null
+        }
+      },
       selectWorkspace: vi.fn(),
+      subscribeGitSnapshot: vi.fn(),
+      subscribeWorkspaceManagementSnapshot: vi.fn(),
+      requestGitRefresh: vi.fn((workspaceId: string) => {
+        queueMicrotask(() => {
+          gitSnapshotListeners.forEach((listener) => {
+            listener({
+              workspaceId,
+              status: {
+                snapshot: {
+                  branch: "main"
+                },
+                changes: []
+              }
+            });
+          });
+        });
+      }),
+      requestWorkspaceManagementRefresh: vi.fn(),
+      addGitSnapshotListener: (listener: (snapshot: {
+        workspaceId: string;
+        status: {
+          snapshot: {
+            branch: string | null;
+          };
+          changes: unknown[];
+        };
+      }) => void) => {
+        gitSnapshotListeners.add(listener);
+        return () => {
+          gitSnapshotListeners.delete(listener);
+        };
+      },
       toggleFavoriteSession: vi.fn(async () => undefined),
       archiveSession: vi.fn(async () => undefined),
       unarchiveSession: vi.fn(async () => undefined),
@@ -82,7 +137,7 @@ describe("WorkspaceDetailPage", () => {
     renderPage();
 
     expect(screen.getByRole("heading", { name: "项目一" })).toBeInTheDocument();
-    expect(screen.getByText("/repo/project-one")).toBeInTheDocument();
+    expect(screen.getAllByText("/repo/project-one")).toHaveLength(2);
     expect(screen.getByText("会话 Alpha")).toBeInTheDocument();
 
     await waitFor(() => {
