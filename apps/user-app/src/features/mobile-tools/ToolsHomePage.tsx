@@ -1,78 +1,245 @@
-import { useNavigate } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState, type TouchEvent as ReactTouchEvent } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 
+import { FileContextPanel } from "../conversation/components/FileContextPanel";
+import { GitSidebar } from "../conversation/components/GitSidebar";
 import { useWorkbenchShell } from "../conversation/components/WorkbenchLayout";
 import { t } from "../../shared/i18n";
 
+type PrimaryToolKey = "files" | "git";
+
+const LAST_PRIMARY_TOOL_KEY = "mobile.tools.last-primary-tool";
+const PRIMARY_TOOL_ORDER: PrimaryToolKey[] = ["files", "git"];
+const TOOL_SWIPE_THRESHOLD_PX = 56;
+const TOOL_SWIPE_DOMINANCE_RATIO = 1.2;
+
+export function resolvePrimaryToolFromSearch(
+  searchTab: string | null,
+  fallbackTool: PrimaryToolKey
+): PrimaryToolKey {
+  if (searchTab === "git") {
+    return "git";
+  }
+
+  if (searchTab === "files") {
+    return "files";
+  }
+
+  return fallbackTool;
+}
+
+export function resolvePrimaryToolAfterSwipe(
+  activeTool: PrimaryToolKey,
+  touchStart: { x: number; y: number } | null,
+  touchEnd: { x: number; y: number }
+): PrimaryToolKey {
+  if (!touchStart) {
+    return activeTool;
+  }
+
+  const deltaX = touchEnd.x - touchStart.x;
+  const deltaY = touchEnd.y - touchStart.y;
+
+  if (Math.abs(deltaX) < TOOL_SWIPE_THRESHOLD_PX) {
+    return activeTool;
+  }
+
+  if (Math.abs(deltaX) < Math.abs(deltaY) * TOOL_SWIPE_DOMINANCE_RATIO) {
+    return activeTool;
+  }
+
+  const activeToolIndex = PRIMARY_TOOL_ORDER.indexOf(activeTool);
+  const nextIndex =
+    deltaX < 0
+      ? Math.min(PRIMARY_TOOL_ORDER.length - 1, activeToolIndex + 1)
+      : Math.max(0, activeToolIndex - 1);
+
+  return PRIMARY_TOOL_ORDER[nextIndex] ?? activeTool;
+}
+
+function readStoredPrimaryTool(): PrimaryToolKey {
+  if (typeof window === "undefined") {
+    return "files";
+  }
+
+  try {
+    const storedValue = window.localStorage.getItem(LAST_PRIMARY_TOOL_KEY);
+    return storedValue === "git" ? "git" : "files";
+  } catch {
+    return "files";
+  }
+}
+
 export function ToolsHomePage() {
+  const location = useLocation();
   const navigate = useNavigate();
-  const { navigationGroups, currentWorkspaceId } = useWorkbenchShell();
+  const { navigationGroups, currentWorkspaceId, currentSessionId } = useWorkbenchShell();
   const currentWorkspace =
     navigationGroups.find((group) => group.workspace.id === currentWorkspaceId)?.workspace ?? null;
+  const searchTab = new URLSearchParams(location.search).get("tab");
+  const [activeTool, setActiveTool] = useState<PrimaryToolKey>(() => {
+    return resolvePrimaryToolFromSearch(searchTab, readStoredPrimaryTool());
+  });
+  const [visitedTools, setVisitedTools] = useState<Record<PrimaryToolKey, boolean>>(() => {
+    const initialTool = resolvePrimaryToolFromSearch(searchTab, readStoredPrimaryTool());
 
-  const toolCards = [
-    {
-      key: "files",
-      title: t("shell.filesEntry"),
-      body: t("shell.toolFilesBody"),
-      onClick: () => navigate("/tools/files")
-    },
-    {
-      key: "git",
-      title: t("shell.gitEntry"),
-      body: t("shell.toolGitBody"),
-      onClick: () => navigate("/tools/git")
-    },
-    {
-      key: "terminals",
-      title: t("shell.terminalsEntry"),
-      body: t("shell.toolTerminalsBody"),
-      onClick: () => navigate("/terminals")
-    },
-    {
-      key: "processes",
-      title: t("shell.terminalManagerEntry"),
-      body: t("shell.toolProcessesBody"),
-      onClick: () => navigate("/tools/processes")
+    return {
+      files: initialTool === "files",
+      git: initialTool === "git"
+    };
+  });
+  const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+
+  const primaryTools = useMemo(
+    () => [
+      {
+        key: "files" as const,
+        title: t("shell.filesEntry"),
+        body: t("shell.toolFilesBody"),
+        render: () => (
+          <FileContextPanel sessionId={currentSessionId} workspaceId={currentWorkspaceId} />
+        )
+      },
+      {
+        key: "git" as const,
+        title: t("shell.gitEntry"),
+        body: t("shell.toolGitBody"),
+        render: () => <GitSidebar workspaceId={currentWorkspaceId} />
+      }
+    ],
+    [currentSessionId, currentWorkspaceId]
+  );
+  const activeToolIndex = PRIMARY_TOOL_ORDER.indexOf(activeTool);
+
+  useEffect(() => {
+    setVisitedTools((current) => ({
+      ...current,
+      [activeTool]: true
+    }));
+  }, [activeTool]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
     }
-  ];
+
+    try {
+      window.localStorage.setItem(LAST_PRIMARY_TOOL_KEY, activeTool);
+    } catch {
+      // 忽略隐私模式或测试环境里的本地存储失败。
+    }
+  }, [activeTool]);
+
+  useEffect(() => {
+    if (searchTab === activeTool) {
+      return;
+    }
+
+    const nextSearchParams = new URLSearchParams(location.search);
+    nextSearchParams.set("tab", activeTool);
+    navigate(
+      {
+        pathname: location.pathname,
+        search: `?${nextSearchParams.toString()}`
+      },
+      { replace: true }
+    );
+  }, [activeTool, location.pathname, location.search, navigate, searchTab]);
+
+  useEffect(() => {
+    const nextTool = searchTab === "git" ? "git" : searchTab === "files" ? "files" : null;
+
+    if (nextTool && nextTool !== activeTool) {
+      setActiveTool(nextTool);
+    }
+  }, [activeTool, searchTab]);
+
+  function selectPrimaryTool(nextTool: PrimaryToolKey) {
+    if (nextTool === activeTool) {
+      return;
+    }
+
+    setActiveTool(nextTool);
+  }
+
+  function switchPrimaryTool(step: -1 | 1) {
+    const nextIndex = Math.min(PRIMARY_TOOL_ORDER.length - 1, Math.max(0, activeToolIndex + step));
+    const nextTool = PRIMARY_TOOL_ORDER[nextIndex];
+
+    if (nextTool) {
+      selectPrimaryTool(nextTool);
+    }
+  }
+
+  function handleTouchStart(event: ReactTouchEvent<HTMLElement>) {
+    if (event.changedTouches.length !== 1) {
+      touchStartRef.current = null;
+      return;
+    }
+
+    const touchPoint = event.changedTouches[0];
+    touchStartRef.current = {
+      x: touchPoint.clientX,
+      y: touchPoint.clientY
+    };
+  }
+
+  function handleTouchEnd(event: ReactTouchEvent<HTMLElement>) {
+    const touchStart = touchStartRef.current;
+    touchStartRef.current = null;
+
+    if (event.changedTouches.length !== 1) {
+      return;
+    }
+
+    const touchPoint = event.changedTouches[0];
+    const nextTool = resolvePrimaryToolAfterSwipe(activeTool, touchStart, {
+      x: touchPoint.clientX,
+      y: touchPoint.clientY
+    });
+
+    if (nextTool !== activeTool) {
+      selectPrimaryTool(nextTool);
+    }
+  }
 
   return (
-    <main className="mobile-feature-page mobile-tools-home-page">
-      <section className="mobile-feature-hero surface-card">
-        <div className="mobile-feature-hero-copy">
-          <p className="mobile-feature-eyebrow">{t("shell.mobileToolsEntry")}</p>
-          <h1>{t("shell.toolsOverviewTitle")}</h1>
-          <p>
-            {currentWorkspace
-              ? t("shell.toolsOverviewBody", { name: currentWorkspace.name })
-              : t("shell.toolsOverviewBodyEmpty")}
-          </p>
-        </div>
-      </section>
-
+    <main className="mobile-feature-page mobile-page-fixed-root mobile-tools-workspace-page">
       {currentWorkspace ? (
-        <section className="mobile-feature-section">
-          <div className="mobile-feature-section-header">
-            <div>
-              <h2>{currentWorkspace.name}</h2>
-              <p>{currentWorkspace.path}</p>
-            </div>
-          </div>
-          <div className="mobile-feature-grid">
-            {toolCards.map((card) => (
-              <button
-                key={card.key}
-                type="button"
-                className="mobile-tool-card surface-card"
-                aria-label={card.title}
-                onClick={card.onClick}
+        <>
+          <section
+            className="mobile-tools-stage"
+            data-active-tool={activeTool}
+            data-testid="mobile-tools-stage"
+            onTouchStart={handleTouchStart}
+            onTouchEnd={handleTouchEnd}
+            onTouchCancel={() => {
+              touchStartRef.current = null;
+            }}
+          >
+            <div className="mobile-tools-stage-viewport">
+              <div
+                className="mobile-tools-stage-track"
+                style={{ transform: `translateX(-${activeToolIndex * 100}%)` }}
               >
-                <strong>{card.title}</strong>
-                <p>{card.body}</p>
-              </button>
-            ))}
-          </div>
-        </section>
+                {primaryTools.map((tool) => (
+                  <article
+                    key={tool.key}
+                    id={`mobile-tool-panel-${tool.key}`}
+                    role="tabpanel"
+                    aria-label={tool.title}
+                    aria-hidden={tool.key !== activeTool}
+                    className="mobile-tools-stage-panel"
+                  >
+                    <div className="mobile-tools-stage-panel-shell">
+                      {visitedTools[tool.key] ? tool.render() : null}
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </div>
+          </section>
+        </>
       ) : (
         <article className="mobile-feature-empty surface-card">
           <p>{t("shell.emptyNavigationBody")}</p>

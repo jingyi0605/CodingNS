@@ -144,7 +144,7 @@ export function WorkspaceDetailPage() {
 
   if (!workspace) {
     return (
-      <main className="mobile-feature-page">
+      <main className="mobile-feature-page mobile-page-scroll-root">
         <article className="mobile-feature-empty surface-card">
           <h1>{t("shell.workspaceDetailMissingTitle")}</h1>
           <p>{t("shell.workspaceDetailMissingBody")}</p>
@@ -157,7 +157,7 @@ export function WorkspaceDetailPage() {
   }
 
   return (
-    <main className="mobile-feature-page mobile-workspace-detail-page">
+    <main className="mobile-feature-page mobile-page-scroll-root mobile-workspace-detail-page">
       <section className="mobile-feature-hero surface-card">
         <div className="mobile-feature-hero-copy">
           <p className="mobile-feature-eyebrow">{t("shell.workspaceDetailTitle")}</p>
@@ -177,7 +177,7 @@ export function WorkspaceDetailPage() {
             className="secondary-button"
             onClick={() => {
               selectWorkspace(workspace.id);
-              navigate("/tools/files");
+              navigate("/tools?tab=files");
             }}
           >
             {t("shell.filesEntry")}
@@ -233,7 +233,7 @@ export function WorkspaceDetailPage() {
             className="secondary-button"
             onClick={() => {
               selectWorkspace(workspace.id);
-              navigate("/tools/git");
+              navigate("/tools?tab=git");
             }}
           >
             {t("shell.gitEntry")}

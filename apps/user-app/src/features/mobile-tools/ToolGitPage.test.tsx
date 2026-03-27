@@ -5,13 +5,17 @@ import { ToolGitPage } from "./ToolGitPage";
 import { t } from "../../shared/i18n";
 
 const mockUseWorkbenchShell = vi.fn();
+const mockGitSidebar = vi.fn();
 
 vi.mock("../conversation/components/WorkbenchLayout", () => ({
   useWorkbenchShell: () => mockUseWorkbenchShell()
 }));
 
 vi.mock("../conversation/components/GitSidebar", () => ({
-  GitSidebar: () => <div data-testid="git-sidebar" />
+  GitSidebar: (props: { className?: string; workspaceId: string }) => {
+    mockGitSidebar(props);
+    return <div data-testid="git-sidebar" data-class-name={props.className} />;
+  }
 }));
 
 describe("ToolGitPage", () => {
@@ -28,7 +32,17 @@ describe("ToolGitPage", () => {
 
     render(<ToolGitPage />);
 
+    expect(screen.getByRole("main")).toHaveClass("mobile-page-fixed-root", "mobile-tool-panel-page");
     expect(screen.getByTestId("git-sidebar")).toBeInTheDocument();
-    expect(screen.getByText(t("shell.gitEntry"))).toBeInTheDocument();
+    expect(screen.getByTestId("git-sidebar")).toHaveAttribute(
+      "data-class-name",
+      "mobile-panel-scroll-root mobile-tool-native-panel"
+    );
+    expect(mockGitSidebar).toHaveBeenCalledWith(
+      expect.objectContaining({
+        className: "mobile-panel-scroll-root mobile-tool-native-panel",
+        workspaceId: "workspace-1"
+      })
+    );
   });
 });

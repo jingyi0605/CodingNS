@@ -36,6 +36,7 @@ import {
 import { useWorkbenchShell } from "./WorkbenchLayout";
 
 interface GitSidebarProps {
+  className?: string;
   workspaceId: string | null | undefined;
 }
 
@@ -80,7 +81,7 @@ interface GitSidebarSnapshot {
   branches: GitBranchSnapshotDto | null;
 }
 
-export function GitSidebar({ workspaceId }: GitSidebarProps) {
+export function GitSidebar({ className, workspaceId }: GitSidebarProps) {
   const { subscribeGitSnapshot, requestGitRefresh, addGitSnapshotListener } = useWorkbenchShell();
   const [status, setStatus] = useState<GitStatusDto | null>(null);
   const [history, setHistory] = useState<GitHistoryItemDto[]>([]);
@@ -716,7 +717,10 @@ export function GitSidebar({ workspaceId }: GitSidebarProps) {
   ]);
 
   return (
-    <section className="conversation-panel surface-card git-sidebar" data-testid="git-sidebar">
+    <section
+      className={["conversation-panel", "surface-card", "git-sidebar", className].filter(Boolean).join(" ")}
+      data-testid="git-sidebar"
+    >
       <section className="git-card git-scaffold-section">
         <div className="git-section-header">
           <h3>{t("git.commitMessageTitle")}</h3>

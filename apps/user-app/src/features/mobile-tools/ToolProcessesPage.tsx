@@ -7,7 +7,7 @@ export function ToolProcessesPage() {
 
   if (!currentWorkspaceId) {
     return (
-      <main className="mobile-feature-page">
+      <main className="mobile-feature-page mobile-page-scroll-root">
         <article className="mobile-feature-empty surface-card">
           <h1>{t("shell.terminalManagerEntry")}</h1>
           <p>{t("shell.toolsWorkspaceRequiredBody")}</p>
@@ -17,16 +17,12 @@ export function ToolProcessesPage() {
   }
 
   return (
-    <main className="mobile-feature-page mobile-tool-panel-page">
-      <section className="mobile-feature-panel surface-card">
-        <div className="mobile-feature-section-header">
-          <div>
-            <h1>{t("shell.terminalManagerEntry")}</h1>
-            <p>{t("shell.toolProcessesBody")}</p>
-          </div>
-        </div>
-        <TerminalManagerPanel currentWorkspaceId={currentWorkspaceId} navigationGroups={navigationGroups} />
-      </section>
+    <main className="mobile-feature-page mobile-page-fixed-root mobile-tool-panel-page">
+      <TerminalManagerPanel
+        className="mobile-panel-scroll-root mobile-tool-native-panel"
+        currentWorkspaceId={currentWorkspaceId}
+        navigationGroups={navigationGroups}
+      />
     </main>
   );
 }

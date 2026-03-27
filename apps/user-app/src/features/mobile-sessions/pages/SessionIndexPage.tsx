@@ -184,7 +184,7 @@ export function SessionIndexPage() {
   );
 
   return (
-    <main className="session-index-page">
+    <main className="session-index-page mobile-page-scroll-root">
       <div className="session-index-header">
         <div>
           <p className="session-index-subtitle">{t("shell.mobileSessionsEntry")}</p>

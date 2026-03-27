@@ -370,15 +370,96 @@ a {
   height: var(--mobile-shell-viewport-height, 100dvh);
   min-height: 0;
   overscroll-behavior: none;
-  gap: var(--mobile-shell-edge-gap);
+  gap: 0;
   overflow: hidden;
   padding:
-    calc(var(--mobile-shell-edge-gap) + var(--mobile-shell-safe-top))
-    var(--mobile-shell-edge-gap)
-    var(--mobile-shell-edge-gap);
-  background:
-    radial-gradient(circle at top, color-mix(in srgb, var(--accent) 7%, transparent), transparent 38%),
-    var(--bg-primary);
+    calc(var(--mobile-shell-safe-top) + 4px)
+    0
+    0;
+  background: var(--bg-primary);
+}
+
+.mobile-workbench-header,
+.ios-workbench-nav,
+.android-workbench-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 48px;
+  gap: 12px;
+  padding: 6px 12px 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-primary) 82%, transparent);
+  background: color-mix(in srgb, var(--bg-primary) 96%, transparent);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+.mobile-workbench-header-leading,
+.mobile-workbench-header-actions,
+.ios-workbench-nav-leading,
+.ios-workbench-nav-actions,
+.android-workbench-topbar-leading,
+.android-workbench-topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.mobile-workbench-header-copy,
+.ios-workbench-nav-copy,
+.android-workbench-topbar-copy {
+  min-width: 0;
+}
+
+.mobile-workbench-header-copy h1,
+.ios-workbench-nav-copy h1,
+.android-workbench-topbar-copy h1 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.mobile-workbench-header-button,
+.ios-workbench-icon-button,
+.android-workbench-icon-button,
+.ios-workbench-back-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  height: 36px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-secondary);
+  transition:
+    transform var(--transition-fast),
+    background var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.mobile-workbench-header-button:hover,
+.ios-workbench-icon-button:hover,
+.android-workbench-icon-button:hover,
+.ios-workbench-back-button:hover {
+  background: color-mix(in srgb, var(--bg-hover) 82%, transparent);
+  color: var(--text-primary);
+}
+
+.mobile-workbench-header-button:active,
+.ios-workbench-icon-button:active,
+.android-workbench-icon-button:active,
+.ios-workbench-back-button:active {
+  transform: scale(0.97);
+}
+
+.ios-workbench-back-button {
+  gap: 4px;
+  padding-left: 4px;
+  padding-right: 8px;
 }
 
 .mobile-workbench-content {
@@ -442,28 +523,30 @@ a {
 .mobile-workbench-content > .conversation-page-shell,
 .mobile-workbench-content > .terminal-layout,
 .mobile-workbench-content > .settings-page,
+.mobile-workbench-content > .mobile-feature-page,
 .mobile-workbench-content .mobile-adaptive-pane-main > .workbench-page,
 .mobile-workbench-content .mobile-adaptive-pane-main > .conversation-page-shell,
 .mobile-workbench-content .mobile-adaptive-pane-main > .terminal-layout,
-.mobile-workbench-content .mobile-adaptive-pane-main > .settings-page {
+.mobile-workbench-content .mobile-adaptive-pane-main > .settings-page,
+.mobile-workbench-content .mobile-adaptive-pane-main > .mobile-feature-page {
   flex: 1;
   min-height: 0;
   overflow: hidden;
-  border-radius: 20px;
-  border: 1px solid var(--border-primary);
-  background: color-mix(in srgb, var(--bg-surface) 96%, transparent);
+  border-radius: 0;
+  border: none;
+  background: var(--bg-primary);
 }
 
 .mobile-workbench-tabbar {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 8px;
+  gap: 2px;
   min-height: calc(64px + var(--mobile-shell-safe-bottom));
   padding: 8px 8px calc(8px + var(--mobile-shell-safe-bottom));
-  border-radius: 20px;
-  background: color-mix(in srgb, var(--bg-surface) 96%, transparent);
-  backdrop-filter: blur(18px) saturate(140%);
-  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  border-top: 1px solid color-mix(in srgb, var(--border-primary) 82%, transparent);
+  background: color-mix(in srgb, var(--bg-primary) 96%, transparent);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
 }
 
 .mobile-workbench-shell[data-mobile-runtime="web"][data-mobile-keyboard-open="true"] {
@@ -482,7 +565,7 @@ a {
   justify-content: center;
   gap: 4px;
   padding: 8px 6px;
-  border-radius: 16px;
+  border-radius: 12px;
   color: var(--text-secondary);
   transition:
     background var(--transition-fast),
@@ -492,7 +575,7 @@ a {
 
 .mobile-workbench-tabbar-item[data-active="true"] {
   color: var(--accent);
-  background: var(--bg-active);
+  background: color-mix(in srgb, var(--bg-active) 62%, transparent);
 }
 
 .mobile-workbench-tabbar-item:active {
@@ -517,16 +600,13 @@ a {
   height: 100vh;
   height: var(--mobile-shell-viewport-height, 100dvh);
   min-height: 0;
-  gap: 10px;
+  gap: 0;
   overflow: hidden;
   padding:
-    calc(6px + env(safe-area-inset-top, 0px))
-    6px
-    calc(8px + env(safe-area-inset-bottom, 0px));
-  background:
-    radial-gradient(circle at top, color-mix(in srgb, var(--accent) 6%, transparent), transparent 34%),
-    linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 38%, transparent), transparent 18%),
-    var(--bg-primary);
+    calc(env(safe-area-inset-top, 0px) + 4px)
+    0
+    0;
+  background: var(--bg-primary);
 }
 
 .ios-workbench-content {
@@ -540,27 +620,29 @@ a {
 .ios-workbench-content > .conversation-page-shell,
 .ios-workbench-content > .terminal-layout,
 .ios-workbench-content > .settings-page,
+.ios-workbench-content > .mobile-feature-page,
 .ios-workbench-content .mobile-adaptive-pane-main > .workbench-page,
 .ios-workbench-content .mobile-adaptive-pane-main > .conversation-page-shell,
 .ios-workbench-content .mobile-adaptive-pane-main > .terminal-layout,
-.ios-workbench-content .mobile-adaptive-pane-main > .settings-page {
+.ios-workbench-content .mobile-adaptive-pane-main > .settings-page,
+.ios-workbench-content .mobile-adaptive-pane-main > .mobile-feature-page {
   flex: 1;
   min-height: 0;
   overflow: hidden;
-  border-radius: 22px;
-  border: 1px solid color-mix(in srgb, var(--border-primary) 90%, transparent);
-  background: color-mix(in srgb, var(--bg-surface) 98%, transparent);
+  border-radius: 0;
+  border: none;
+  background: var(--bg-primary);
 }
 
 .ios-workbench-tabbar {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 4px;
+  gap: 2px;
   padding: 8px 10px calc(10px + env(safe-area-inset-bottom, 0px));
-  border-radius: 24px;
-  background: color-mix(in srgb, var(--bg-surface) 96%, transparent);
-  backdrop-filter: blur(24px) saturate(150%);
-  -webkit-backdrop-filter: blur(24px) saturate(150%);
+  border-top: 1px solid color-mix(in srgb, var(--border-primary) 82%, transparent);
+  background: color-mix(in srgb, var(--bg-primary) 96%, transparent);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
 }
 
 .ios-workbench-tabbar-item {
@@ -571,7 +653,7 @@ a {
   justify-content: center;
   gap: 4px;
   padding: 6px 4px;
-  border-radius: 18px;
+  border-radius: 12px;
   color: var(--text-secondary);
   transition:
     color var(--transition-fast),
@@ -581,7 +663,7 @@ a {
 
 .ios-workbench-tabbar-item[data-active="true"] {
   color: var(--accent);
-  background: color-mix(in srgb, var(--bg-active) 88%, transparent);
+  background: color-mix(in srgb, var(--bg-active) 62%, transparent);
 }
 
 .ios-workbench-tabbar-item:active {
@@ -608,16 +690,13 @@ a {
   height: 100vh;
   height: var(--mobile-shell-viewport-height, 100dvh);
   min-height: 0;
-  gap: 10px;
+  gap: 0;
   overflow: hidden;
   padding:
-    calc(8px + env(safe-area-inset-top, 0px))
-    8px
-    calc(10px + env(safe-area-inset-bottom, 0px));
-  background:
-    radial-gradient(circle at top, color-mix(in srgb, var(--accent) 8%, transparent), transparent 36%),
-    linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 26%, transparent), transparent 22%),
-    var(--bg-primary);
+    calc(env(safe-area-inset-top, 0px) + 4px)
+    0
+    0;
+  background: var(--bg-primary);
 }
 
 .android-workbench-content {
@@ -631,25 +710,27 @@ a {
 .android-workbench-content > .conversation-page-shell,
 .android-workbench-content > .terminal-layout,
 .android-workbench-content > .settings-page,
+.android-workbench-content > .mobile-feature-page,
 .android-workbench-content .mobile-adaptive-pane-main > .workbench-page,
 .android-workbench-content .mobile-adaptive-pane-main > .conversation-page-shell,
 .android-workbench-content .mobile-adaptive-pane-main > .terminal-layout,
-.android-workbench-content .mobile-adaptive-pane-main > .settings-page {
+.android-workbench-content .mobile-adaptive-pane-main > .settings-page,
+.android-workbench-content .mobile-adaptive-pane-main > .mobile-feature-page {
   flex: 1;
   min-height: 0;
   overflow: hidden;
-  border-radius: 24px;
-  border: 1px solid color-mix(in srgb, var(--border-primary) 88%, transparent);
-  background: color-mix(in srgb, var(--bg-surface) 98%, transparent);
+  border-radius: 0;
+  border: none;
+  background: var(--bg-primary);
 }
 
 .android-workbench-bottom-nav {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 6px;
+  gap: 2px;
   padding: 8px 10px calc(10px + env(safe-area-inset-bottom, 0px));
-  border-radius: 26px;
-  background: color-mix(in srgb, var(--bg-surface) 97%, transparent);
+  border-top: 1px solid color-mix(in srgb, var(--border-primary) 82%, transparent);
+  background: color-mix(in srgb, var(--bg-primary) 96%, transparent);
 }
 
 .android-workbench-bottom-nav-item {
@@ -660,7 +741,7 @@ a {
   justify-content: center;
   gap: 4px;
   padding: 8px 6px;
-  border-radius: 18px;
+  border-radius: 12px;
   color: var(--text-secondary);
   transition:
     background var(--transition-fast),
@@ -670,7 +751,7 @@ a {
 
 .android-workbench-bottom-nav-item[data-active="true"] {
   color: var(--accent);
-  background: color-mix(in srgb, var(--bg-active) 84%, transparent);
+  background: color-mix(in srgb, var(--bg-active) 62%, transparent);
 }
 
 .android-workbench-bottom-nav-item:active {
@@ -10733,6 +10814,7 @@ textarea:focus-visible {
   display: flex;
   flex-direction: column;
   gap: 22px;
+  padding-bottom: 104px;
 }
 
 .settings-mobile-hero {
@@ -11121,6 +11203,41 @@ textarea:focus-visible {
   border-top: none;
 }
 
+.settings-footer-with-logout {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-bottom: max(14px, env(safe-area-inset-bottom, 0px));
+  background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--bg-primary) 94%, transparent) 32%, var(--bg-primary));
+}
+
+.settings-button-sticky {
+  width: 100%;
+  min-height: 42px;
+}
+
+.settings-mobile-sticky-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  padding:
+    14px
+    16px
+    calc(14px + env(safe-area-inset-bottom, 0px));
+  background:
+    linear-gradient(180deg, transparent, color-mix(in srgb, var(--bg-primary) 88%, transparent) 28%, var(--bg-primary));
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+.settings-mobile-danger-button-sticky {
+  width: 100%;
+  min-height: 50px;
+  border-radius: 16px;
+}
+
 [data-theme="dark"] .settings-page-mobile {
   background:
     radial-gradient(circle at top, rgba(10, 132, 255, 0.12), transparent 28%),
@@ -11247,6 +11364,12 @@ textarea:focus-visible {
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.04),
     0 10px 22px rgba(0, 0, 0, 0.22);
+}
+
+[data-theme="dark"] .settings-footer-with-logout,
+[data-theme="dark"] .settings-mobile-sticky-footer {
+  background:
+    linear-gradient(180deg, transparent, rgba(13, 13, 13, 0.86) 26%, rgba(13, 13, 13, 0.96));
 }
 
 [data-theme="dark"] .settings-mobile-switch-track {
@@ -11445,151 +11568,296 @@ textarea:focus-visible {
   padding: 1rem;
 }
 
-.mobile-workspace-home-primary,
-.mobile-workspace-home-activity {
+.mobile-workspace-home-page {
   display: flex;
   flex-direction: column;
-  gap: 0.9rem;
-  padding: 1rem;
+  gap: 1.25rem;
+  padding-top: 0.65rem;
 }
 
-.mobile-workspace-home-primary {
+.mobile-workspace-home-toolbar,
+.mobile-workspace-home-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.mobile-workspace-home-toolbar-top,
+.mobile-workspace-home-section-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.mobile-workspace-home-toolbar-top {
+  justify-content: space-between;
+}
+
+.mobile-workspace-home-section-header {
+  justify-content: space-between;
+}
+
+.mobile-workspace-home-toolbar-actions {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.55rem;
+  margin-left: auto;
+}
+
+.mobile-workspace-home-switcher,
+.mobile-workspace-home-more-button,
+.mobile-workspace-home-link-button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.mobile-workspace-home-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+  padding: 0;
+  font-size: 1.45rem;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+
+.mobile-workspace-home-switcher-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-workspace-home-switcher svg,
+.mobile-workspace-home-more-button svg,
+.mobile-workspace-home-row svg {
+  width: 1rem;
+  height: 1rem;
+}
+
+.mobile-workspace-home-branch {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.65rem;
+  max-width: 8.5rem;
+  padding: 0.15rem 0.6rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-tertiary) 92%, transparent);
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-workspace-home-more-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border-radius: 999px;
+  color: var(--text-secondary);
+}
+
+.mobile-workspace-home-path {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  line-height: 1.45;
+  word-break: break-all;
+}
+
+.mobile-workspace-home-section-title {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.mobile-workspace-home-group {
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 88%, transparent);
+  border-radius: 1.2rem;
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--accent) 10%, var(--bg-surface)), var(--bg-surface)),
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 98%, transparent), var(--bg-surface)),
     var(--bg-surface);
 }
 
-.mobile-workspace-home-primary-header,
-.mobile-workspace-home-activity-main,
-.mobile-workspace-home-activity-badges {
+.mobile-workspace-home-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
+  width: 100%;
+  min-height: 3.25rem;
+  padding: 0.9rem 1rem;
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-primary) 82%, transparent);
+  background: transparent;
+  color: inherit;
+  text-align: left;
 }
 
-.mobile-workspace-home-primary-header-spacer {
-  width: 1px;
-  height: 1px;
+.mobile-workspace-home-row:last-child {
+  border-bottom: 0;
 }
 
-.mobile-workspace-home-primary-copy,
-.mobile-workspace-home-activity-copy {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
+.mobile-workspace-home-row-label {
+  min-width: 0;
+  font-size: 0.98rem;
+  font-weight: 500;
 }
 
-.mobile-workspace-home-primary-copy h1,
-.mobile-workspace-home-activity-copy h3 {
-  margin: 0;
-}
-
-.mobile-workspace-home-primary-copy h1 {
-  font-size: 1.8rem;
-  line-height: 1.05;
-  letter-spacing: -0.02em;
-}
-
-.mobile-workspace-home-primary-path {
-  word-break: break-all;
-}
-
-.mobile-workspace-home-branch,
-.mobile-workspace-home-provider,
-.mobile-workspace-home-activity-state {
+.mobile-workspace-home-row-trailing {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  min-height: 2rem;
-  padding: 0.25rem 0.75rem;
-  border-radius: 999px;
-  font-size: 0.82rem;
+  gap: 0.45rem;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.mobile-workspace-home-row-trailing strong {
+  color: var(--text-primary);
+  font-size: 1rem;
   font-weight: 600;
 }
 
-.mobile-workspace-home-branch,
-.mobile-workspace-home-provider {
-  border: 1px solid color-mix(in srgb, var(--border-primary) 88%, transparent);
-  background: color-mix(in srgb, var(--bg-surface) 92%, transparent);
-  color: var(--text-secondary);
+.mobile-workspace-home-link-button {
+  padding: 0;
+  color: var(--accent);
+  font-size: 0.9rem;
+  font-weight: 600;
 }
 
-.mobile-workspace-home-activity-badges {
-  justify-content: flex-start;
-  flex-wrap: wrap;
-}
-
-.mobile-workspace-home-activity-main.is-empty {
+.mobile-workspace-home-session-row {
   align-items: flex-start;
 }
 
-.mobile-workspace-home-activity-state {
-  border: 1px solid transparent;
+.mobile-workspace-home-session-main {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 0.18rem;
 }
 
-.mobile-workspace-home-activity-state[data-tone="running"] {
-  background: color-mix(in srgb, #34c759 16%, var(--bg-surface));
-  border-color: color-mix(in srgb, #34c759 32%, transparent);
+.mobile-workspace-home-session-title {
+  overflow: hidden;
+  font-size: 0.98rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-workspace-home-session-meta {
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-workspace-home-session-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.45rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.mobile-workspace-home-session-status[data-tone="running"] {
+  background: color-mix(in srgb, #34c759 14%, var(--bg-surface));
   color: #1f8f46;
 }
 
-.mobile-workspace-home-activity-state[data-tone="accent"] {
+.mobile-workspace-home-session-status[data-tone="accent"] {
   background: color-mix(in srgb, var(--accent) 12%, var(--bg-surface));
-  border-color: color-mix(in srgb, var(--accent) 26%, transparent);
   color: var(--accent);
 }
 
-.mobile-workspace-home-activity-state[data-tone="error"] {
+.mobile-workspace-home-session-status[data-tone="error"] {
   background: color-mix(in srgb, var(--status-danger) 12%, var(--bg-surface));
-  border-color: color-mix(in srgb, var(--status-danger) 28%, transparent);
   color: var(--status-danger);
 }
 
-.mobile-workspace-home-activity-state[data-tone="muted"] {
-  background: var(--bg-tertiary);
-  border-color: color-mix(in srgb, var(--border-primary) 92%, transparent);
+.mobile-workspace-home-session-status[data-tone="muted"] {
+  background: color-mix(in srgb, var(--bg-tertiary) 92%, transparent);
   color: var(--text-secondary);
 }
 
-.mobile-workspace-home-metrics-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.75rem;
+.mobile-workspace-home-empty {
+  padding-top: 0.25rem;
 }
 
-.mobile-workspace-home-metric {
+.ios-action-sheet-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 39;
   display: flex;
-  flex-direction: column;
-  gap: 0.45rem;
-  padding: 0.9rem;
-  border-radius: 1rem;
-  border: 1px solid var(--border-primary);
-  background: color-mix(in srgb, var(--bg-surface) 94%, transparent);
+  align-items: flex-end;
+  background: color-mix(in srgb, #000 18%, transparent);
+  backdrop-filter: blur(8px);
 }
 
-.mobile-workspace-home-metric span,
-.mobile-workspace-home-status-text,
-.mobile-workspace-home-empty-title {
+.mobile-workspace-home-sheet {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 40;
+  padding: 0 0.75rem max(0.75rem, env(safe-area-inset-bottom));
+}
+
+.mobile-workspace-home-sheet-card {
+  overflow: hidden;
+  border-radius: 1.2rem;
+  background: color-mix(in srgb, var(--bg-surface) 98%, transparent);
+  box-shadow: 0 18px 40px color-mix(in srgb, #000 16%, transparent);
+}
+
+.mobile-workspace-home-sheet-header {
+  display: flex;
+  justify-content: center;
+  padding: 0.95rem 1rem 0.75rem;
   color: var(--text-secondary);
-}
-
-.mobile-workspace-home-metric span {
   font-size: 0.82rem;
 }
 
-.mobile-workspace-home-metric strong {
-  font-size: 1.55rem;
-  line-height: 1;
+.mobile-workspace-home-sheet-group {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
-.mobile-workspace-home-status-text,
-.mobile-workspace-home-empty-title {
-  margin: 0;
+.mobile-workspace-home-sheet-row {
+  min-height: 3.5rem;
+  padding-right: 1rem;
+  padding-left: 1rem;
 }
 
-.mobile-workspace-home-empty-title {
-  font-weight: 600;
+.mobile-workspace-home-form {
+  padding: 0 1rem 1rem;
+}
+
+.ios-action-sheet-cancel {
+  width: 100%;
+  margin-top: 0.5rem;
+  padding: 0.95rem 1rem;
+  border: 0;
+  border-radius: 1rem;
+  background: color-mix(in srgb, var(--bg-surface) 99%, transparent);
+  color: var(--accent);
+  font-size: 1rem;
+  font-weight: 700;
 }
 
 .mobile-workspace-card-main,
@@ -11740,23 +12008,33 @@ textarea:focus-visible {
 }
 
 .mobile-tools-stage-panel:first-child {
-  padding-right: 0.4rem;
+  padding-right: 0;
 }
 
 .mobile-tools-stage-panel:last-child {
-  padding-left: 0.4rem;
+  padding-left: 0;
 }
 
 .mobile-tools-stage-panel-shell {
   height: 100%;
   min-height: 0;
   overflow: hidden;
-  padding: 0 0.7rem 0.7rem;
+  padding: 0;
 }
 
 .mobile-tools-stage-panel-shell > * {
   height: 100%;
   min-height: 0;
+}
+
+.mobile-tool-panel-page .conversation-panel.surface-card,
+.mobile-tool-panel-page .terminal-manager-panel.conversation-panel.surface-card,
+.mobile-tools-stage-panel-shell > .conversation-panel.surface-card,
+.mobile-tools-stage-panel-shell > .terminal-manager-panel.conversation-panel.surface-card {
+  border: none;
+  border-radius: 0;
+  background: var(--bg-primary);
+  box-shadow: none;
 }
 
 .mobile-tools-menu-overlay {

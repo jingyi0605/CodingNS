@@ -1184,7 +1184,7 @@ export function TerminalPage() {
   }
 
   return (
-    <main className="terminal-layout">
+    <main className="terminal-layout mobile-page-fixed-root">
       <TerminalRuntimeFallbackModal
         open={runtimeFallbackRequest !== null}
         busy={applyingRuntimeFallback}

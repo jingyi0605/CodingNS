@@ -21,6 +21,7 @@ import {
 import { SessionChangedFilesPanel } from "./SessionChangedFilesPanel";
 
 interface FileContextPanelProps {
+  className?: string;
   sessionId: string | null | undefined;
   workspaceId: string | null | undefined;
 }
@@ -61,7 +62,7 @@ interface DirectorySnapshotRequestOptions {
   mode?: "snapshot-first" | "api-first";
 }
 
-export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelProps) {
+export function FileContextPanel({ className, sessionId, workspaceId }: FileContextPanelProps) {
   const {
     navigationGroups,
     subscribeFileTree,
@@ -1014,7 +1015,10 @@ export function FileContextPanel({ sessionId, workspaceId }: FileContextPanelPro
   }
 
   return (
-    <section className="conversation-panel surface-card file-panel" data-testid="file-context-panel">
+    <section
+      className={["conversation-panel", "surface-card", "file-panel", className].filter(Boolean).join(" ")}
+      data-testid="file-context-panel"
+    >
       {!workspaceId ? (
         <section className="file-panel-section">
           <p className="status-text">{t("conversation.filePanelNoWorkspace")}</p>

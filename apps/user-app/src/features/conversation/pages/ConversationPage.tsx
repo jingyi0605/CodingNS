@@ -62,6 +62,7 @@ function LiveConversationPage({
   bootstrapMessages: HistoryMessageDto[];
 }) {
   const {
+    shellMode,
     navigationGroups,
     requestNavigationRefresh,
     setSessionWorkspace,
@@ -121,6 +122,7 @@ function LiveConversationPage({
   const hasPendingQueuedMessages = queuedMessages.some(
     (item) => item.status === "queued" || item.status === "dispatching"
   );
+  const showInlineHeader = shellMode !== "mobile";
 
   useEffect(() => {
     store.applyNavigationSession(navigationSession);
@@ -207,8 +209,8 @@ function LiveConversationPage({
   }, [dismissToast, runtimeErrorCode, runtimeErrorDetail, session?.provider, showToast]);
 
   return (
-    <main className="workbench-page conversation-page-shell">
-      <SessionHeader session={session ?? navigationSession} />
+    <main className="workbench-page conversation-page-shell mobile-page-fixed-root">
+      {showInlineHeader ? <SessionHeader session={session ?? navigationSession} /> : null}
       <ConnectionBanner connectionState={connectionState} onReconnect={() => store.reconnect()} />
       <MessageTimeline
         sessionId={sessionId}
@@ -321,6 +323,7 @@ function DraftConversationPage({
   navigate: ReturnType<typeof useNavigate>;
 }) {
   const {
+    shellMode,
     requestNavigationRefresh,
     setSessionWorkspace,
     upsertNavigationSession
@@ -330,6 +333,7 @@ function DraftConversationPage({
   const [capabilities, setCapabilities] = useState<ProviderCapabilitiesDto>(() =>
     createProviderDraftCapabilities(draft.provider)
   );
+  const showInlineHeader = shellMode !== "mobile";
   const session = useMemo(() => createDraftSessionSummary(draft), [draft]);
   useEffect(() => {
     setSessionWorkspace(draft.sessionId, draft.workspaceId);
@@ -359,8 +363,8 @@ function DraftConversationPage({
   }, [draft.provider]);
 
   return (
-    <main className="workbench-page conversation-page-shell">
-      <SessionHeader session={session} />
+    <main className="workbench-page conversation-page-shell mobile-page-fixed-root">
+      {showInlineHeader ? <SessionHeader session={session} /> : null}
       <ConnectionBanner connectionState="closed" onReconnect={() => {}} />
       <MessageTimeline
         sessionId={draft.sessionId}

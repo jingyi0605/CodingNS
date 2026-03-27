@@ -1,55 +1,33 @@
-import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
-import { ToolsHomePage } from "./ToolsHomePage";
-import { t } from "../../shared/i18n";
-
-const mockNavigate = vi.fn();
-const mockUseWorkbenchShell = vi.fn();
-
-vi.mock("react-router-dom", () => ({
-  useNavigate: () => mockNavigate
-}));
-
-vi.mock("../conversation/components/WorkbenchLayout", () => ({
-  useWorkbenchShell: () => mockUseWorkbenchShell()
-}));
+import {
+  resolvePrimaryToolAfterSwipe,
+  resolvePrimaryToolFromSearch
+} from "./ToolsHomePage";
 
 describe("ToolsHomePage", () => {
-  beforeEach(() => {
-    mockNavigate.mockReset();
-    mockUseWorkbenchShell.mockReturnValue({
-      currentWorkspaceId: "workspace-1",
-      navigationGroups: [
-        {
-          workspace: {
-            id: "workspace-1",
-            name: "项目一",
-            path: "/repo/project-one"
-          },
-          sessions: []
-        }
-      ]
-    });
+  it("默认优先使用 URL 指定的主工具，否则回退到持久化结果", () => {
+    expect(resolvePrimaryToolFromSearch("files", "git")).toBe("files");
+    expect(resolvePrimaryToolFromSearch("git", "files")).toBe("git");
+    expect(resolvePrimaryToolFromSearch(null, "files")).toBe("files");
   });
 
-  it("renders primary tool cards", () => {
-    render(<ToolsHomePage />);
-
-    expect(screen.getByText(t("shell.filesEntry"))).toBeInTheDocument();
-    expect(screen.getByText(t("shell.gitEntry"))).toBeInTheDocument();
-    expect(screen.getByText(t("shell.terminalsEntry"))).toBeInTheDocument();
-    expect(screen.getByText(t("shell.terminalManagerEntry"))).toBeInTheDocument();
+  it("水平滑动会在文件和 Git 主工具之间切换", () => {
+    expect(
+      resolvePrimaryToolAfterSwipe("files", { x: 240, y: 80 }, { x: 120, y: 88 })
+    ).toBe("git");
+    expect(
+      resolvePrimaryToolAfterSwipe("git", { x: 120, y: 88 }, { x: 240, y: 80 })
+    ).toBe("files");
   });
 
-  it("opens the terminal page from the tool card", async () => {
-    const user = userEvent.setup();
-
-    render(<ToolsHomePage />);
-
-    await user.click(screen.getByRole("button", { name: /终端/i }));
-
-    expect(mockNavigate).toHaveBeenCalledWith("/terminals");
+  it("垂直手势或位移过小不应该切换主工具", () => {
+    expect(
+      resolvePrimaryToolAfterSwipe("files", { x: 240, y: 80 }, { x: 210, y: 84 })
+    ).toBe("files");
+    expect(
+      resolvePrimaryToolAfterSwipe("files", { x: 240, y: 80 }, { x: 200, y: 160 })
+    ).toBe("files");
+    expect(resolvePrimaryToolAfterSwipe("files", null, { x: 120, y: 88 })).toBe("files");
   });
 });

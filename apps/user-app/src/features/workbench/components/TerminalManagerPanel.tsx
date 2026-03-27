@@ -28,6 +28,7 @@ import {
 } from "../../conversation/components/WorkbenchLayout";
 
 interface TerminalManagerPanelProps {
+  className?: string;
   currentWorkspaceId: string | null;
   navigationGroups: WorkspaceSessionGroup[];
 }
@@ -254,6 +255,7 @@ function TerminalManagerModal({
 }
 
 export function TerminalManagerPanel({
+  className,
   currentWorkspaceId,
   navigationGroups
 }: TerminalManagerPanelProps) {
@@ -604,7 +606,11 @@ export function TerminalManagerPanel({
   }
 
   return (
-    <section className="conversation-panel surface-card terminal-manager-panel">
+    <section
+      className={["conversation-panel", "surface-card", "terminal-manager-panel", className]
+        .filter(Boolean)
+        .join(" ")}
+    >
       <TerminalRuntimeFallbackModal
         open={runtimeFallbackDraft !== null}
         busy={applyingRuntimeFallback}
