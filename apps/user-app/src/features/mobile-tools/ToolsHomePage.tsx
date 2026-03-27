@@ -4,6 +4,8 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { FileContextPanel } from "../conversation/components/FileContextPanel";
 import { GitSidebar } from "../conversation/components/GitSidebar";
 import { useWorkbenchShell } from "../conversation/components/WorkbenchLayout";
+import { MobileWorkspaceSwitcherHeader } from "../mobile-shell/components/MobileWorkspaceSwitcherHeader";
+import { buildWorkspaceToolProcessesPath, buildWorkspaceToolsPath } from "../workbench/utils/workbench-navigation";
 import { t } from "../../shared/i18n";
 
 type PrimaryToolKey = "files" | "git";
@@ -73,15 +75,17 @@ function readStoredPrimaryTool(): PrimaryToolKey {
 export function ToolsHomePage() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { navigationGroups, currentWorkspaceId, currentSessionId } = useWorkbenchShell();
+  const { navigationGroups, currentWorkspaceId, currentSessionId, selectWorkspace } = useWorkbenchShell();
   const currentWorkspace =
-    navigationGroups.find((group) => group.workspace.id === currentWorkspaceId)?.workspace ?? null;
+    navigationGroups.find((group) => group.workspace.id === currentWorkspaceId)?.workspace
+    ?? navigationGroups[0]?.workspace
+    ?? null;
   const searchTab = new URLSearchParams(location.search).get("tab");
-  const [activeTool, setActiveTool] = useState<PrimaryToolKey>(() => {
-    return resolvePrimaryToolFromSearch(searchTab, readStoredPrimaryTool());
-  });
+  const storedPrimaryToolRef = useRef<PrimaryToolKey>(readStoredPrimaryTool());
+  // URL 是主工具切换的唯一真相源，避免本地 state 和查询参数互相回写造成抖动。
+  const activeTool = resolvePrimaryToolFromSearch(searchTab, storedPrimaryToolRef.current);
   const [visitedTools, setVisitedTools] = useState<Record<PrimaryToolKey, boolean>>(() => {
-    const initialTool = resolvePrimaryToolFromSearch(searchTab, readStoredPrimaryTool());
+    const initialTool = resolvePrimaryToolFromSearch(searchTab, storedPrimaryToolRef.current);
 
     return {
       files: initialTool === "files",
@@ -95,7 +99,6 @@ export function ToolsHomePage() {
       {
         key: "files" as const,
         title: t("shell.filesEntry"),
-        body: t("shell.toolFilesBody"),
         render: () => (
           <FileContextPanel sessionId={currentSessionId} workspaceId={currentWorkspaceId} />
         )
@@ -103,7 +106,6 @@ export function ToolsHomePage() {
       {
         key: "git" as const,
         title: t("shell.gitEntry"),
-        body: t("shell.toolGitBody"),
         render: () => (
           <GitSidebar
             className="mobile-tool-native-panel mobile-tool-git-panel"
@@ -124,6 +126,8 @@ export function ToolsHomePage() {
   }, [activeTool]);
 
   useEffect(() => {
+    storedPrimaryToolRef.current = activeTool;
+
     if (typeof window === "undefined") {
       return;
     }
@@ -151,20 +155,20 @@ export function ToolsHomePage() {
     );
   }, [activeTool, location.pathname, location.search, navigate, searchTab]);
 
-  useEffect(() => {
-    const nextTool = searchTab === "git" ? "git" : searchTab === "files" ? "files" : null;
-
-    if (nextTool && nextTool !== activeTool) {
-      setActiveTool(nextTool);
-    }
-  }, [activeTool, searchTab]);
-
   function selectPrimaryTool(nextTool: PrimaryToolKey) {
     if (nextTool === activeTool) {
       return;
     }
 
-    setActiveTool(nextTool);
+    const nextSearchParams = new URLSearchParams(location.search);
+    nextSearchParams.set("tab", nextTool);
+    navigate(
+      {
+        pathname: location.pathname,
+        search: `?${nextSearchParams.toString()}`
+      },
+      { replace: true }
+    );
   }
 
   function switchPrimaryTool(step: -1 | 1) {
@@ -212,6 +216,53 @@ export function ToolsHomePage() {
     <main className="mobile-feature-page mobile-page-fixed-root mobile-tools-workspace-page">
       {currentWorkspace ? (
         <>
+          <MobileWorkspaceSwitcherHeader
+            className="mobile-tools-page-header"
+            currentWorkspace={currentWorkspace}
+            workspaces={navigationGroups.map((group) => group.workspace)}
+            onSelectWorkspace={(workspaceId) => {
+              selectWorkspace(workspaceId);
+              navigate(buildWorkspaceToolsPath(workspaceId, activeTool));
+            }}
+            content={
+              <div className="mobile-tools-switcher" aria-label={t("shell.mobileToolsEntry")}>
+                <div className="mobile-tools-switcher-actions">
+                  <p className="mobile-tools-switcher-note">
+                    {t("shell.toolsOverviewBody", { name: currentWorkspace.name })}
+                  </p>
+                  <button
+                    type="button"
+                    className="secondary-button mobile-tools-process-button"
+                    onClick={() => navigate(buildWorkspaceToolProcessesPath(currentWorkspace.id))}
+                  >
+                    {t("shell.terminalManagerEntry")}
+                  </button>
+                </div>
+
+                <div className="mobile-tools-segmented-control" role="tablist" aria-label={t("shell.mobileToolsEntry")}>
+                  {primaryTools.map((tool) => {
+                    const selected = tool.key === activeTool;
+
+                    return (
+                      <button
+                        key={tool.key}
+                        type="button"
+                        role="tab"
+                        className="mobile-tools-segmented-button"
+                        data-active={selected}
+                        aria-selected={selected}
+                        aria-controls={`mobile-tool-panel-${tool.key}`}
+                        onClick={() => selectPrimaryTool(tool.key)}
+                      >
+                        {tool.title}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            }
+          />
+
           <section
             className="mobile-tools-stage"
             data-active-tool={activeTool}
