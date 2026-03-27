@@ -1883,6 +1883,40 @@ describe("WorkbenchLayout", () => {
     expect(screen.queryByRole("button", { name: t("shell.mobileNavigationAction") })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: t("shell.mobileAuxiliaryAction") })).toBeInTheDocument();
   });
+
+  it("移动端在失去工作区选中状态后，会退回工作区首页", async () => {
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      writable: true,
+      value: 390
+    });
+
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: []
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/terminals", {
+      shellMode: "mobile"
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("current-path").textContent).toBe("/");
+    });
+  });
 });
 
 function renderWorkbenchRoute(
@@ -1900,6 +1934,7 @@ function renderWorkbenchRoute(
           <Route element={<WorkbenchLayout shellMode={shellMode} />}>
             <Route index element={<CurrentLocationProbe />} />
             <Route path="/sessions/:sessionId" element={<CurrentLocationProbe />} />
+            <Route path="/terminals" element={<CurrentLocationProbe />} />
           </Route>
         </Routes>
       </MemoryRouter>

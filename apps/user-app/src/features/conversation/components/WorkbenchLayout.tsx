@@ -110,6 +110,33 @@ function truncateMobileHeaderTitle(title: string) {
   return `${glyphs.slice(0, 10).join("")}…`;
 }
 
+function resolveRouteWorkspaceId(pathname: string, search: string): string | null {
+  const workspaceDetailMatch = matchPath("/workspaces/:workspaceId", pathname);
+  const workspaceIdFromDetail = workspaceDetailMatch?.params.workspaceId?.trim();
+
+  if (workspaceIdFromDetail) {
+    return workspaceIdFromDetail;
+  }
+
+  const draftSessionMatch = matchPath("/sessions/:sessionId", pathname);
+  const sessionId = draftSessionMatch?.params.sessionId?.trim();
+
+  if (!sessionId || !isDraftSessionId(sessionId)) {
+    return null;
+  }
+
+  const draftWorkspaceId = new URLSearchParams(search).get("workspaceId")?.trim();
+  return draftWorkspaceId || null;
+}
+
+function shouldRedirectMobileToWorkspaceHome(pathname: string) {
+  return (
+    pathname.startsWith("/sessions")
+    || pathname.startsWith("/terminals")
+    || pathname.startsWith("/tools")
+  );
+}
+
 const LazyFileContextPanel = lazy(async () => {
   const module = await import("./FileContextPanel");
 
@@ -4291,8 +4318,10 @@ export function WorkbenchLayout({
   const sessionWorkspaceId =
     currentSessionContext?.workspace.id ??
     (currentSessionId ? sessionWorkspaceMap[currentSessionId] ?? null : null);
+  const routeWorkspaceId = resolveRouteWorkspaceId(location.pathname, location.search);
+  const explicitWorkspaceId = sessionWorkspaceId ?? routeWorkspaceId ?? selectedWorkspaceId ?? null;
   const currentWorkspaceId =
-    sessionWorkspaceId ?? selectedWorkspaceId ?? navigationGroups[0]?.workspace.id ?? null;
+    explicitWorkspaceId ?? navigationGroups[0]?.workspace.id ?? null;
 
   useEffect(() => {
     if (!sessionWorkspaceId) {
@@ -4306,16 +4335,26 @@ export function WorkbenchLayout({
     logPerfDebug("workbench.current_workspace_resolved", {
       currentSessionId,
       sessionWorkspaceId,
+      routeWorkspaceId,
       currentWorkspaceId,
       source: sessionWorkspaceId
         ? currentSessionContext
           ? "navigation"
           : "sessionWorkspaceMap"
+        : routeWorkspaceId
+          ? "route"
         : selectedWorkspaceId
           ? "workspaceSelection"
           : "navigationFallback"
     });
-  }, [currentSessionContext, currentSessionId, currentWorkspaceId, selectedWorkspaceId, sessionWorkspaceId]);
+  }, [
+    currentSessionContext,
+    currentSessionId,
+    currentWorkspaceId,
+    routeWorkspaceId,
+    selectedWorkspaceId,
+    sessionWorkspaceId
+  ]);
 
   useEffect(() => {
     logPerfDebug("workbench.info_panel_state", {
@@ -4492,6 +4531,20 @@ export function WorkbenchLayout({
     setMobileNavOpen(false);
     setMobileInfoOpen(false);
   }, [isMobileShell]);
+
+  useEffect(() => {
+    if (!isMobileShell || navigationLoading) {
+      return;
+    }
+
+    if (!shouldRedirectMobileToWorkspaceHome(location.pathname) || explicitWorkspaceId) {
+      return;
+    }
+
+    setMobileNavOpen(false);
+    setMobileInfoOpen(false);
+    navigate("/", { replace: true });
+  }, [explicitWorkspaceId, isMobileShell, location.pathname, navigate, navigationLoading]);
 
   function openLeftPanel() {
     if (isMobileShell) {
