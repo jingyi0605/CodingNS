@@ -118,17 +118,18 @@ export function IosWorkbenchShell({
       label: t("shell.terminalManagerEntry"),
       icon: <ProcessIcon />,
       onSelect: onNavigateToolProcesses
-    },
-    {
-      key: "settings",
-      label: t("shell.mobileSettingsEntry"),
-      icon: <SettingsIcon />,
-      onSelect: onNavigateSettings
     }
   ];
 
   function handleNavigateBackToToolsHome() {
-    navigate(resolvePreferredToolsHomeHref(), { replace: true });
+    const preferredToolsHomeHref = resolvePreferredToolsHomeHref(location.pathname, location.search);
+
+    if (!preferredToolsHomeHref) {
+      onNavigateTools();
+      return;
+    }
+
+    navigate(preferredToolsHomeHref, { replace: true });
   }
 
   return (

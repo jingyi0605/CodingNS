@@ -29,13 +29,15 @@ describe("AndroidWorkbenchShell", () => {
 
   it("详情路由不再渲染顶部返回栏，但会保留底部一级导航", () => {
     renderAndroidShell({
-      initialEntries: ["/", "/sessions/session-1"],
+      initialEntries: ["/", "/workspaces/workspace-1/sessions/session-1"],
       initialIndex: 1
     });
 
     expect(document.querySelector(".android-workbench-topbar")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: t("common.back") })).not.toBeInTheDocument();
-    expect(screen.getByTestId("android-location")).toHaveTextContent("/sessions/session-1");
+    expect(screen.getByTestId("android-location")).toHaveTextContent(
+      "/workspaces/workspace-1/sessions/session-1"
+    );
     expect(screen.getByRole("button", { name: t("shell.mobileSessionsEntry") })).toBeInTheDocument();
   });
 
@@ -51,7 +53,7 @@ describe("AndroidWorkbenchShell", () => {
     const onNavigateToolGit = vi.fn();
 
     renderAndroidShell({
-      initialEntries: ["/", "/sessions/session-1"],
+      initialEntries: ["/", "/workspaces/workspace-1/sessions/session-1"],
       initialIndex: 1,
       presentation: "conversation-focus",
       onNavigateToolGit
@@ -80,7 +82,7 @@ describe("AndroidWorkbenchShell", () => {
 
     renderAndroidShell({
       activeEntry: "tools",
-      initialEntries: ["/tools?tab=files"],
+      initialEntries: ["/workspaces/workspace-1/tools?tab=files"],
       onNavigateToolProcesses
     });
 
@@ -95,14 +97,17 @@ describe("AndroidWorkbenchShell", () => {
 
     renderAndroidShell({
       activeEntry: "tools",
-      initialEntries: ["/tools?tab=git", "/tools/processes"],
+      initialEntries: [
+        "/workspaces/workspace-1/tools?tab=git",
+        "/workspaces/workspace-1/tools/processes"
+      ],
       initialIndex: 1
     });
 
     expect(screen.getByRole("heading", { name: t("shell.terminalManagerEntry") })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: t("common.back") }));
     expect(screen.getByRole("heading", { name: t("shell.gitEntry") })).toBeInTheDocument();
-    expect(screen.getByTestId("android-location")).toHaveTextContent("/tools");
+    expect(screen.getByTestId("android-location")).toHaveTextContent("/workspaces/workspace-1/tools");
   });
 });
 

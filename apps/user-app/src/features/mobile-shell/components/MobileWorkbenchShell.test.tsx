@@ -63,6 +63,7 @@ describe("MobileWorkbenchShell", () => {
     document.body.style.removeProperty("--mobile-shell-viewport-height");
     document.body.style.removeProperty("--mobile-shell-keyboard-inset");
 
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -206,12 +207,92 @@ describe("MobileWorkbenchShell", () => {
     expect(onNavigateToolGit).toHaveBeenCalledTimes(1);
   });
 
+  it("长按 3 秒后会进入移动模式，并在松手后吸附到另一侧边缘", async () => {
+    vi.useFakeTimers();
+
+    const view = renderMobileShell({
+      presentation: "conversation-focus"
+    });
+    const quickNavTrigger = view.getByRole("button", { name: "打开快捷导航" });
+    const floatingNav = quickNavTrigger.closest(".mobile-floating-nav");
+
+    expect(floatingNav).toHaveAttribute("data-side", "right");
+
+    fireEvent.pointerDown(quickNavTrigger, {
+      button: 0,
+      pointerId: 1,
+      clientX: 360,
+      clientY: 520
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(3000);
+    });
+
+    expect(floatingNav).toHaveAttribute("data-repositioning", "true");
+
+    fireEvent.pointerMove(quickNavTrigger, {
+      button: 0,
+      pointerId: 1,
+      clientX: 20,
+      clientY: 340
+    });
+    fireEvent.pointerUp(quickNavTrigger, {
+      button: 0,
+      pointerId: 1,
+      clientX: 20,
+      clientY: 340
+    });
+
+    vi.useRealTimers();
+    await Promise.resolve();
+
+    expect(floatingNav).toHaveAttribute("data-repositioning", "false");
+    expect(window.localStorage.getItem("mobile.conversation.quick-nav.position")).toBeTruthy();
+  });
+
+  it("菜单展开时长按会先播放收起动画，再进入移动模式", () => {
+    vi.useFakeTimers();
+
+    const view = renderMobileShell({
+      presentation: "conversation-focus"
+    });
+    const quickNavTrigger = view.getByRole("button", { name: "打开快捷导航" });
+    const floatingNav = quickNavTrigger.closest(".mobile-floating-nav");
+
+    fireEvent.click(quickNavTrigger);
+    expect(view.getByRole("button", { name: "GIT管理" })).toBeInTheDocument();
+
+    fireEvent.pointerDown(quickNavTrigger, {
+      button: 0,
+      pointerId: 2,
+      clientX: 360,
+      clientY: 520
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(3000);
+    });
+
+    expect(floatingNav).toHaveAttribute("data-open", "false");
+    expect(floatingNav).toHaveAttribute("data-preparing-reposition", "true");
+    expect(floatingNav).toHaveAttribute("data-repositioning", "false");
+    expect(view.getByRole("button", { name: "GIT管理" })).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(220);
+    });
+
+    expect(floatingNav).toHaveAttribute("data-preparing-reposition", "false");
+    expect(floatingNav).toHaveAttribute("data-repositioning", "true");
+  });
+
   it("工具主页显示当前主工具名，并把更多按钮直接映射到进程管理", async () => {
     const onNavigateToolProcesses = vi.fn();
     const user = userEvent.setup();
     const view = renderMobileShell({
       activeEntry: "tools",
-      route: "/tools?tab=git",
+      route: "/workspaces/workspace-1/tools?tab=git",
       onNavigateToolProcesses
     });
 
@@ -227,7 +308,10 @@ describe("MobileWorkbenchShell", () => {
 
     const view = renderMobileShell({
       activeEntry: "tools",
-      initialEntries: ["/tools?tab=git", "/tools/processes"],
+      initialEntries: [
+        "/workspaces/workspace-1/tools?tab=git",
+        "/workspaces/workspace-1/tools/processes"
+      ],
       initialIndex: 1
     });
 
@@ -237,7 +321,7 @@ describe("MobileWorkbenchShell", () => {
 
     await waitFor(() => {
       expect(view.getByRole("heading", { name: "GIT管理" })).toBeInTheDocument();
-      expect(view.getByTestId("mobile-location")).toHaveTextContent("/tools");
+      expect(view.getByTestId("mobile-location")).toHaveTextContent("/workspaces/workspace-1/tools");
     });
   });
 });
@@ -256,7 +340,9 @@ function renderMobileShell(options?: {
 }) {
   return render(
     <MemoryRouter
-      initialEntries={options?.initialEntries ?? [options?.route ?? "/sessions"]}
+      initialEntries={
+        options?.initialEntries ?? [options?.route ?? "/workspaces/workspace-1/sessions"]
+      }
       initialIndex={options?.initialIndex}
     >
       <PlatformProvider>

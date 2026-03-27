@@ -2,6 +2,7 @@ import {
   useEffect,
   useRef,
   useState,
+  type ReactNode,
   type PointerEvent as ReactPointerEvent,
   type UIEvent
 } from "react";
@@ -65,6 +66,9 @@ interface MutableGitTreeDirectoryNode {
   children: Map<string, MutableGitTreeDirectoryNode | GitTreeFileNode>;
 }
 
+type MobileGitSectionKey = "staged" | "unstaged" | "history";
+type MobileSwipeDirection = "leading" | "trailing";
+
 const DEFAULT_TREE_PANEL_RATIO = 56;
 const MIN_TREE_PANEL_RATIO = 28;
 const MAX_TREE_PANEL_RATIO = 72;
@@ -101,6 +105,12 @@ export function GitSidebar({ className, workspaceId }: GitSidebarProps) {
   );
   const [selectedMobilePaths, setSelectedMobilePaths] = useState<string[]>([]);
   const [mobileActionMenuVariant, setMobileActionMenuVariant] = useState<"staged" | "unstaged" | null>(null);
+  const [mobileExpandedSection, setMobileExpandedSection] = useState<MobileGitSectionKey>("unstaged");
+  const [mobileHistoryMenuCommitHash, setMobileHistoryMenuCommitHash] = useState<string | null>(null);
+  const [mobileSwipeRowState, setMobileSwipeRowState] = useState<{
+    path: string;
+    direction: MobileSwipeDirection;
+  } | null>(null);
   const [treePanelRatio, setTreePanelRatio] = useState(DEFAULT_TREE_PANEL_RATIO);
   const [panelResizeActive, setPanelResizeActive] = useState(false);
   const splitLayoutRef = useRef<HTMLDivElement | null>(null);
@@ -125,6 +135,9 @@ export function GitSidebar({ className, workspaceId }: GitSidebarProps) {
     setMenuOpen(false);
     setSelectedMobilePaths([]);
     setMobileActionMenuVariant(null);
+    setMobileExpandedSection("unstaged");
+    setMobileHistoryMenuCommitHash(null);
+    setMobileSwipeRowState(null);
     setPanelResizeActive(false);
     setTreePanelRatio(DEFAULT_TREE_PANEL_RATIO);
   }, [workspaceId]);
@@ -295,6 +308,8 @@ export function GitSidebar({ className, workspaceId }: GitSidebarProps) {
 
     setSelectedMobilePaths([]);
     setMobileActionMenuVariant(null);
+    setMobileHistoryMenuCommitHash(null);
+    setMobileSwipeRowState(null);
   }, [isMobileViewport]);
 
   useEffect(() => {
@@ -716,6 +731,72 @@ export function GitSidebar({ className, workspaceId }: GitSidebarProps) {
     mobileSelectedUnstagedTargets.length
   ]);
 
+  useEffect(() => {
+    if (!isMobileViewport) {
+      return;
+    }
+
+    const nextDefaultSection: MobileGitSectionKey =
+      unstagedChanges.length > 0 ? "unstaged" : stagedChanges.length > 0 ? "staged" : "history";
+
+    setMobileExpandedSection((current) => {
+      if (current === "unstaged" && unstagedChanges.length > 0) {
+        return current;
+      }
+
+      if (current === "staged" && stagedChanges.length > 0) {
+        return current;
+      }
+
+      return nextDefaultSection;
+    });
+  }, [isMobileViewport, stagedChanges.length, unstagedChanges.length]);
+
+  useEffect(() => {
+    if (!mobileHistoryMenuCommitHash) {
+      return;
+    }
+
+    if (!history.some((item) => item.commitHash === mobileHistoryMenuCommitHash)) {
+      setMobileHistoryMenuCommitHash(null);
+    }
+  }, [history, mobileHistoryMenuCommitHash]);
+
+  async function copyText(value: string, successMessage: string) {
+    try {
+      if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
+        throw new Error("clipboard unavailable");
+      }
+
+      await navigator.clipboard.writeText(value);
+      showToast({
+        title: successMessage,
+        tone: "success"
+      });
+    } catch {
+      showToast({
+        title: t("common.copyContentFailed"),
+        tone: "error"
+      });
+    }
+  }
+
+  async function handleDiscardWithConfirm(targets: string[], label: string) {
+    if (typeof window !== "undefined") {
+      const confirmed = window.confirm(
+        t("git.discardConfirm", {
+          path: label
+        })
+      );
+
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    await handleDiscard(targets);
+  }
+
   return (
     <section
       className={["conversation-panel", "surface-card", "git-sidebar", className].filter(Boolean).join(" ")}
@@ -778,18 +859,134 @@ export function GitSidebar({ className, workspaceId }: GitSidebarProps) {
         </div>
       </section>
 
-      <div
-        ref={splitLayoutRef}
-        className="git-content-split"
-        style={{ gridTemplateRows: splitRows }}
-      >
-        <section className="git-card git-tree-panel">
-          <div ref={treePanelBodyRef} className="git-tree-panel-body">
-            {stagedChanges.length > 0 ? (
+      {isMobileViewport ? (
+        <div className="git-mobile-sections">
+          <MobileGitAccordionSection
+            title={t("git.stagedChangesTitle")}
+            count={stagedChanges.length}
+            expanded={mobileExpandedSection === "staged"}
+            onToggle={() => setMobileExpandedSection("staged")}
+          >
+            <MobileGitChangeSection
+              title={t("git.stagedChangesTitle")}
+              nodes={stagedTree}
+              collapsedTreePathSet={collapsedTreePathSet}
+              onToggleTreePath={toggleTreePath}
+              onToggleMobileSelection={toggleMobileSelection}
+              selectedMobilePathSet={selectedMobilePathSet}
+              selectedTargets={mobileSelectedStagedTargets}
+              actioning={actioning}
+              variant="staged"
+              swipeRowState={mobileSwipeRowState}
+              onSwipeRowChange={setMobileSwipeRowState}
+              onStageToggle={handleStageToggle}
+              onDiscardWithConfirm={handleDiscardWithConfirm}
+              onClearSelectedTargets={() =>
+                setSelectedMobilePaths((current) =>
+                  current.filter((path) => !mobileSelectedStagedTargets.includes(path))
+                )
+              }
+            />
+          </MobileGitAccordionSection>
+
+          <MobileGitAccordionSection
+            title={t("git.changesTitle")}
+            count={unstagedChanges.length}
+            expanded={mobileExpandedSection === "unstaged"}
+            onToggle={() => setMobileExpandedSection("unstaged")}
+          >
+            <MobileGitChangeSection
+              title={t("git.changesTitle")}
+              nodes={unstagedTree}
+              collapsedTreePathSet={collapsedTreePathSet}
+              onToggleTreePath={toggleTreePath}
+              onToggleMobileSelection={toggleMobileSelection}
+              selectedMobilePathSet={selectedMobilePathSet}
+              selectedTargets={mobileSelectedUnstagedTargets}
+              actioning={actioning}
+              variant="unstaged"
+              swipeRowState={mobileSwipeRowState}
+              onSwipeRowChange={setMobileSwipeRowState}
+              onStageToggle={handleStageToggle}
+              onDiscardWithConfirm={handleDiscardWithConfirm}
+              onClearSelectedTargets={() =>
+                setSelectedMobilePaths((current) =>
+                  current.filter((path) => !mobileSelectedUnstagedTargets.includes(path))
+                )
+              }
+            />
+          </MobileGitAccordionSection>
+
+          <MobileGitAccordionSection
+            title={t("git.recentVersionsTitle")}
+            count={historyTotalCount}
+            expanded={mobileExpandedSection === "history"}
+            onToggle={() => setMobileExpandedSection("history")}
+            trailingContent={<span className="badge">{currentBranch}</span>}
+          >
+            <MobileGitHistoryList
+              history={history}
+              historyLoadingMore={historyLoadingMore}
+              hasMore={Boolean(historyNextCursor)}
+              actioning={actioning}
+              openCommitHash={mobileHistoryMenuCommitHash}
+              onToggleMenu={(commitHash) =>
+                setMobileHistoryMenuCommitHash((current) =>
+                  current === commitHash ? null : commitHash
+                )
+              }
+              onCopyCommitHash={(commitHash) =>
+                void copyText(commitHash, t("git.copyCommitHashSuccess"))
+              }
+              onCopyCommitSubject={(subject) =>
+                void copyText(subject, t("git.copyCommitSubjectSuccess"))
+              }
+              onUndoLastCommit={() => void handleUndoLastCommit()}
+              onLoadMore={() => void loadMoreHistory()}
+            />
+          </MobileGitAccordionSection>
+        </div>
+      ) : (
+        <div
+          ref={splitLayoutRef}
+          className="git-content-split"
+          style={{ gridTemplateRows: splitRows }}
+        >
+          <section className="git-card git-tree-panel">
+            <div ref={treePanelBodyRef} className="git-tree-panel-body">
+              {stagedChanges.length > 0 ? (
+                <GitChangeGroup
+                  title={t("git.stagedChangesTitle")}
+                  count={stagedChanges.length}
+                  nodes={stagedTree}
+                  selectedPath={selectedPath}
+                  collapsedTreePathSet={collapsedTreePathSet}
+                  onToggleTreePath={toggleTreePath}
+                  onSelectFile={setSelectedPath}
+                  onToggleMobileSelection={toggleMobileSelection}
+                  onStageToggle={handleStageToggle}
+                  onDiscard={handleDiscard}
+                  actioning={actioning}
+                  variant="staged"
+                  isMobileViewport={isMobileViewport}
+                  selectedMobilePathSet={selectedMobilePathSet}
+                  selectedTargets={mobileSelectedStagedTargets}
+                  mobileActionMenuOpen={mobileActionMenuVariant === "staged"}
+                  onToggleMobileActionMenu={() =>
+                    setMobileActionMenuVariant((current) => (current === "staged" ? null : "staged"))
+                  }
+                  onClearSelectedTargets={() =>
+                    setSelectedMobilePaths((current) =>
+                      current.filter((path) => !mobileSelectedStagedTargets.includes(path))
+                    )
+                  }
+                />
+              ) : null}
+
               <GitChangeGroup
-                title={t("git.stagedChangesTitle")}
-                count={stagedChanges.length}
-                nodes={stagedTree}
+                title={t("git.changesTitle")}
+                count={unstagedChanges.length}
+                nodes={unstagedTree}
                 selectedPath={selectedPath}
                 collapsedTreePathSet={collapsedTreePathSet}
                 onToggleTreePath={toggleTreePath}
@@ -798,199 +995,172 @@ export function GitSidebar({ className, workspaceId }: GitSidebarProps) {
                 onStageToggle={handleStageToggle}
                 onDiscard={handleDiscard}
                 actioning={actioning}
-                variant="staged"
+                variant="unstaged"
                 isMobileViewport={isMobileViewport}
                 selectedMobilePathSet={selectedMobilePathSet}
-                selectedTargets={mobileSelectedStagedTargets}
-                mobileActionMenuOpen={mobileActionMenuVariant === "staged"}
+                selectedTargets={mobileSelectedUnstagedTargets}
+                mobileActionMenuOpen={mobileActionMenuVariant === "unstaged"}
                 onToggleMobileActionMenu={() =>
-                  setMobileActionMenuVariant((current) => (current === "staged" ? null : "staged"))
+                  setMobileActionMenuVariant((current) => (current === "unstaged" ? null : "unstaged"))
                 }
                 onClearSelectedTargets={() =>
                   setSelectedMobilePaths((current) =>
-                    current.filter((path) => !mobileSelectedStagedTargets.includes(path))
+                    current.filter((path) => !mobileSelectedUnstagedTargets.includes(path))
                   )
                 }
               />
-            ) : null}
+            </div>
+          </section>
 
-              <GitChangeGroup
-              title={t("git.changesTitle")}
-              count={unstagedChanges.length}
-              nodes={unstagedTree}
-              selectedPath={selectedPath}
-              collapsedTreePathSet={collapsedTreePathSet}
-              onToggleTreePath={toggleTreePath}
-              onSelectFile={setSelectedPath}
-              onToggleMobileSelection={toggleMobileSelection}
-              onStageToggle={handleStageToggle}
-              onDiscard={handleDiscard}
-              actioning={actioning}
-              variant="unstaged"
-              isMobileViewport={isMobileViewport}
-              selectedMobilePathSet={selectedMobilePathSet}
-              selectedTargets={mobileSelectedUnstagedTargets}
-              mobileActionMenuOpen={mobileActionMenuVariant === "unstaged"}
-              onToggleMobileActionMenu={() =>
-                setMobileActionMenuVariant((current) => (current === "unstaged" ? null : "unstaged"))
-              }
-              onClearSelectedTargets={() =>
-                setSelectedMobilePaths((current) =>
-                  current.filter((path) => !mobileSelectedUnstagedTargets.includes(path))
-                )
-              }
-            />
-          </div>
-        </section>
+          <button
+            className="git-panel-divider"
+            type="button"
+            role="separator"
+            aria-label={t("git.resizePanels")}
+            aria-orientation="horizontal"
+            aria-valuemin={MIN_TREE_PANEL_RATIO}
+            aria-valuemax={MAX_TREE_PANEL_RATIO}
+            aria-valuenow={historyExpanded ? safeTreePanelRatio : MAX_TREE_PANEL_RATIO}
+            data-dragging={panelResizeActive}
+            onPointerDown={handlePanelResizeStart}
+          >
+            <span className="git-panel-divider-handle" aria-hidden="true" />
+          </button>
 
-        <button
-          className="git-panel-divider"
-          type="button"
-          role="separator"
-          aria-label={t("git.resizePanels")}
-          aria-orientation="horizontal"
-          aria-valuemin={MIN_TREE_PANEL_RATIO}
-          aria-valuemax={MAX_TREE_PANEL_RATIO}
-          aria-valuenow={historyExpanded ? safeTreePanelRatio : MAX_TREE_PANEL_RATIO}
-          data-dragging={panelResizeActive}
-          onPointerDown={handlePanelResizeStart}
-        >
-          <span className="git-panel-divider-handle" aria-hidden="true" />
-        </button>
-
-        <section className="git-card git-history-section">
-          <div className="git-history-topbar">
-            <button
-              className="git-section-toggle"
-              type="button"
-              aria-expanded={historyExpanded}
-              aria-label={historyExpanded ? t("git.collapseRecentVersions") : t("git.expandRecentVersions")}
-              onClick={() => setHistoryExpanded((current) => !current)}
-            >
-              <span className="git-section-toggle-main">
-                <TreeChevron expanded={historyExpanded} />
-                <span>{t("git.recentVersionsTitle")}</span>
-              </span>
-              <span className="workbench-section-counter">{historyTotalCount}</span>
-            </button>
-
-            <div className="git-history-actions">
-              <span className="badge">{currentBranch}</span>
+          <section className="git-card git-history-section">
+            <div className="git-history-topbar">
               <button
-                className="git-icon-button"
+                className="git-section-toggle"
                 type="button"
-                aria-label={t("git.operationMenu")}
-                title={t("git.operationMenu")}
-                onClick={() => setMenuOpen((current) => !current)}
-                disabled={actioning}
+                aria-expanded={historyExpanded}
+                aria-label={historyExpanded ? t("git.collapseRecentVersions") : t("git.expandRecentVersions")}
+                onClick={() => setHistoryExpanded((current) => !current)}
               >
-                <MoreIcon />
+                <span className="git-section-toggle-main">
+                  <TreeChevron expanded={historyExpanded} />
+                  <span>{t("git.recentVersionsTitle")}</span>
+                </span>
+                <span className="workbench-section-counter">{historyTotalCount}</span>
               </button>
 
-              {menuOpen ? (
-                <div className="git-operations-menu">
-                  <div className="git-menu-section">
-                    <span className="git-menu-caption">{t("git.currentBranch")}</span>
-                    <strong className="git-menu-branch">{currentBranch}</strong>
-                  </div>
+              <div className="git-history-actions">
+                <span className="badge">{currentBranch}</span>
+                <button
+                  className="git-icon-button"
+                  type="button"
+                  aria-label={t("git.operationMenu")}
+                  title={t("git.operationMenu")}
+                  onClick={() => setMenuOpen((current) => !current)}
+                  disabled={actioning}
+                >
+                  <MoreIcon />
+                </button>
 
-                  <div className="git-menu-section">
-                    <span className="git-menu-caption">{t("git.branchTitle")}</span>
-                    <div className="git-menu-branch-list">
-                      {branches?.local.map((item) => (
-                        <button
-                          key={item.name}
-                          className="git-menu-item"
-                          type="button"
-                          disabled={actioning || item.current}
-                          onClick={() => void handleSwitchBranch(item.name)}
-                        >
-                          <span>{item.current ? `${t("git.switchBranch")} ${item.name}` : `${t("git.switchBranchTo")} ${item.name}`}</span>
-                        </button>
-                      ))}
+                {menuOpen ? (
+                  <div className="git-operations-menu">
+                    <div className="git-menu-section">
+                      <span className="git-menu-caption">{t("git.currentBranch")}</span>
+                      <strong className="git-menu-branch">{currentBranch}</strong>
+                    </div>
+
+                    <div className="git-menu-section">
+                      <span className="git-menu-caption">{t("git.branchTitle")}</span>
+                      <div className="git-menu-branch-list">
+                        {branches?.local.map((item) => (
+                          <button
+                            key={item.name}
+                            className="git-menu-item"
+                            type="button"
+                            disabled={actioning || item.current}
+                            onClick={() => void handleSwitchBranch(item.name)}
+                          >
+                            <span>{item.current ? `${t("git.switchBranch")} ${item.name}` : `${t("git.switchBranchTo")} ${item.name}`}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="git-menu-section">
+                      <button className="git-menu-item" type="button" disabled={actioning} onClick={() => void handleRemoteAction("fetch")}>
+                        <span>{t("git.fetch")}</span>
+                      </button>
+                      <button className="git-menu-item" type="button" disabled={actioning} onClick={() => void handleRemoteAction("pull")}>
+                        <span>{t("git.pull")}</span>
+                      </button>
+                      <button className="git-menu-item" type="button" disabled={actioning} onClick={() => void handleRemoteAction("push")}>
+                        <span>{t("git.push")}</span>
+                      </button>
+                      <button className="git-menu-item" type="button" disabled={actioning} onClick={() => void handleUndoLastCommit()}>
+                        <span>{t("git.undoLastCommit")}</span>
+                      </button>
+                      <button
+                        className="git-menu-item"
+                        type="button"
+                        disabled={actioning || loading}
+                        onClick={() => void handleManualRefresh({ resetTreeScroll: true })}
+                      >
+                        <span>{t("git.refresh")}</span>
+                      </button>
                     </div>
                   </div>
-
-                  <div className="git-menu-section">
-                    <button className="git-menu-item" type="button" disabled={actioning} onClick={() => void handleRemoteAction("fetch")}>
-                      <span>{t("git.fetch")}</span>
-                    </button>
-                    <button className="git-menu-item" type="button" disabled={actioning} onClick={() => void handleRemoteAction("pull")}>
-                      <span>{t("git.pull")}</span>
-                    </button>
-                    <button className="git-menu-item" type="button" disabled={actioning} onClick={() => void handleRemoteAction("push")}>
-                      <span>{t("git.push")}</span>
-                    </button>
-                    <button className="git-menu-item" type="button" disabled={actioning} onClick={() => void handleUndoLastCommit()}>
-                      <span>{t("git.undoLastCommit")}</span>
-                    </button>
-                    <button
-                      className="git-menu-item"
-                      type="button"
-                      disabled={actioning || loading}
-                      onClick={() => void handleManualRefresh({ resetTreeScroll: true })}
-                    >
-                      <span>{t("git.refresh")}</span>
-                    </button>
-                  </div>
-                </div>
-              ) : null}
+                ) : null}
+              </div>
             </div>
-          </div>
 
-          {historyExpanded ? (
-            <div className="git-history-list" onScroll={handleHistoryScroll}>
-              {history.length ? (
-                <>
-                  {history.map((item) => (
-                    <article
-                      key={item.commitHash}
-                      className="git-history-entry"
-                      data-kind={item.commitKind}
-                    >
-                      <span
-                        className="git-history-marker"
+            {historyExpanded ? (
+              <div className="git-history-list" onScroll={handleHistoryScroll}>
+                {history.length ? (
+                  <>
+                    {history.map((item) => (
+                      <article
+                        key={item.commitHash}
+                        className="git-history-entry"
                         data-kind={item.commitKind}
-                        aria-hidden="true"
-                      />
-                      <div className="git-history-body">
-                        <div className="git-history-title-row">
-                          <strong title={item.subject}>{item.subject}</strong>
-                          <span className="git-history-kind-badge" data-kind={item.commitKind}>
-                            {formatHistoryCommitKind(item.commitKind)}
-                          </span>
-                        </div>
-                        {item.refs.length > 0 ? (
-                          <div className="git-history-ref-list">
-                            {item.refs.map((ref) => (
-                              <span
-                                key={`${item.commitHash}:${ref.kind}:${ref.name}`}
-                                className="git-history-ref-pill"
-                                data-kind={ref.kind}
-                                data-remote-index={String(resolveRemotePaletteIndex(ref.remoteName))}
-                              >
-                                {ref.name}
-                              </span>
-                            ))}
+                      >
+                        <span
+                          className="git-history-marker"
+                          data-kind={item.commitKind}
+                          aria-hidden="true"
+                        />
+                        <div className="git-history-body">
+                          <div className="git-history-title-row">
+                            <strong title={item.subject}>{item.subject}</strong>
+                            <span className="git-history-kind-badge" data-kind={item.commitKind}>
+                              {formatHistoryCommitKind(item.commitKind)}
+                            </span>
                           </div>
-                        ) : null}
-                        <div className="git-history-meta">
-                          <span className="git-history-hash">{item.commitHash.slice(0, 8)}</span>
-                          <span>{item.authorName}</span>
-                          <time dateTime={item.authoredAt}>{formatCommitTime(item.authoredAt)}</time>
+                          {item.refs.length > 0 ? (
+                            <div className="git-history-ref-list">
+                              {item.refs.map((ref) => (
+                                <span
+                                  key={`${item.commitHash}:${ref.kind}:${ref.name}`}
+                                  className="git-history-ref-pill"
+                                  data-kind={ref.kind}
+                                  data-remote-index={String(resolveRemotePaletteIndex(ref.remoteName))}
+                                >
+                                  {ref.name}
+                                </span>
+                              ))}
+                            </div>
+                          ) : null}
+                          <div className="git-history-meta">
+                            <span className="git-history-hash">{item.commitHash.slice(0, 8)}</span>
+                            <span>{item.authorName}</span>
+                            <time dateTime={item.authoredAt}>{formatCommitTime(item.authoredAt)}</time>
+                          </div>
                         </div>
-                      </div>
-                    </article>
-                  ))}
-                  {historyLoadingMore ? <p className="git-history-loading">{t("git.refreshNow")}...</p> : null}
-                </>
-              ) : (
-                <p className="status-text">{t("git.noHistory")}</p>
-              )}
-            </div>
-          ) : null}
-        </section>
-      </div>
+                      </article>
+                    ))}
+                    {historyLoadingMore ? <p className="git-history-loading">{t("git.refreshNow")}...</p> : null}
+                  </>
+                ) : (
+                  <p className="status-text">{t("git.noHistory")}</p>
+                )}
+              </div>
+            ) : null}
+          </section>
+        </div>
+      )}
     </section>
   );
 }
@@ -1147,6 +1317,551 @@ function GitChangeGroup({
         )}
       </div>
     </section>
+  );
+}
+
+function MobileGitAccordionSection({
+  title,
+  count,
+  expanded,
+  onToggle,
+  trailingContent,
+  children
+}: {
+  title: string;
+  count: number;
+  expanded: boolean;
+  onToggle: () => void;
+  trailingContent?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <section className="git-mobile-section">
+      <button
+        className="git-mobile-section-toggle"
+        type="button"
+        aria-expanded={expanded}
+        onClick={onToggle}
+      >
+        <span className="git-mobile-section-toggle-main">
+          <TreeChevron expanded={expanded} />
+          <h3>{title}</h3>
+        </span>
+        <span className="git-mobile-section-toggle-meta">
+          {trailingContent}
+          <span className="workbench-section-counter">{count}</span>
+        </span>
+      </button>
+
+      {expanded ? <div className="git-mobile-section-body">{children}</div> : null}
+    </section>
+  );
+}
+
+function MobileGitChangeSection({
+  title,
+  nodes,
+  collapsedTreePathSet,
+  onToggleTreePath,
+  onToggleMobileSelection,
+  selectedMobilePathSet,
+  selectedTargets,
+  actioning,
+  variant,
+  swipeRowState,
+  onSwipeRowChange,
+  onStageToggle,
+  onDiscardWithConfirm,
+  onClearSelectedTargets
+}: {
+  title: string;
+  nodes: GitTreeNode[];
+  collapsedTreePathSet: ReadonlySet<string>;
+  onToggleTreePath: (path: string) => void;
+  onToggleMobileSelection: (filePath: string) => void;
+  selectedMobilePathSet: ReadonlySet<string>;
+  selectedTargets: string[];
+  actioning: boolean;
+  variant: "staged" | "unstaged";
+  swipeRowState: { path: string; direction: MobileSwipeDirection } | null;
+  onSwipeRowChange: (state: { path: string; direction: MobileSwipeDirection } | null) => void;
+  onStageToggle: (targets: string[], staged: boolean) => Promise<void>;
+  onDiscardWithConfirm: (targets: string[], label: string) => Promise<void>;
+  onClearSelectedTargets: () => void;
+}) {
+  return (
+    <div className="git-mobile-record-shell">
+      {selectedTargets.length > 0 ? (
+        <div className="git-mobile-selection-toolbar">
+          <span className="git-mobile-selection-count">
+            {t("git.selectedFiles")} {selectedTargets.length}
+          </span>
+          <div className="git-mobile-selection-actions">
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={actioning}
+              onClick={() => void onStageToggle(selectedTargets, variant === "staged")}
+            >
+              {variant === "staged" ? t("git.unstage") : t("git.stage")}
+            </button>
+            {variant === "unstaged" ? (
+              <button
+                type="button"
+                className="secondary-button workbench-danger-button"
+                disabled={actioning}
+                onClick={() => void onDiscardWithConfirm(selectedTargets, `${selectedTargets.length}`)}
+              >
+                {t("git.discard")}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={actioning}
+              onClick={onClearSelectedTargets}
+            >
+              {t("git.clearSelection")}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      <div className="git-mobile-record-list" role="tree" aria-label={title}>
+        {nodes.length ? (
+          renderMobileTreeNodes({
+            nodes,
+            depth: 0,
+            collapsedTreePathSet,
+            onToggleTreePath,
+            onToggleMobileSelection,
+            selectedMobilePathSet,
+            actioning,
+            variant,
+            swipeRowState,
+            onSwipeRowChange,
+            onStageToggle,
+            onDiscardWithConfirm
+          })
+        ) : (
+          <p className="git-tree-status">{t("git.noChanges")}</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function renderMobileTreeNodes({
+  nodes,
+  depth,
+  collapsedTreePathSet,
+  onToggleTreePath,
+  onToggleMobileSelection,
+  selectedMobilePathSet,
+  actioning,
+  variant,
+  swipeRowState,
+  onSwipeRowChange,
+  onStageToggle,
+  onDiscardWithConfirm
+}: {
+  nodes: GitTreeNode[];
+  depth: number;
+  collapsedTreePathSet: ReadonlySet<string>;
+  onToggleTreePath: (path: string) => void;
+  onToggleMobileSelection: (filePath: string) => void;
+  selectedMobilePathSet: ReadonlySet<string>;
+  actioning: boolean;
+  variant: "staged" | "unstaged";
+  swipeRowState: { path: string; direction: MobileSwipeDirection } | null;
+  onSwipeRowChange: (state: { path: string; direction: MobileSwipeDirection } | null) => void;
+  onStageToggle: (targets: string[], staged: boolean) => Promise<void>;
+  onDiscardWithConfirm: (targets: string[], label: string) => Promise<void>;
+}) {
+  return nodes.map((node) => {
+    if (node.kind === "directory") {
+      const expanded = !collapsedTreePathSet.has(node.path);
+      const directoryTargets = collectTreeTargets(node.children);
+      const rowKey = `directory:${node.path}`;
+
+      return (
+        <div key={rowKey} className="git-mobile-record-branch">
+          <MobileSwipeRow
+            rowKey={rowKey}
+            openState={swipeRowState?.path === rowKey ? swipeRowState.direction : null}
+            onOpenStateChange={(direction) =>
+              onSwipeRowChange(direction ? { path: rowKey, direction } : null)
+            }
+            leadingAction={
+              directoryTargets.length > 0
+                ? {
+                    label: variant === "staged" ? t("git.unstage") : t("git.stage"),
+                    tone: "accent",
+                    onPress: () => void onStageToggle(directoryTargets, variant === "staged")
+                  }
+                : null
+            }
+            trailingAction={
+              variant === "unstaged" && directoryTargets.length > 0
+                ? {
+                    label: t("git.discard"),
+                    tone: "danger",
+                    onPress: () => void onDiscardWithConfirm(directoryTargets, node.path)
+                  }
+                : null
+            }
+          >
+            <button
+              className="git-mobile-record git-mobile-record-directory"
+              type="button"
+              style={{ paddingInlineStart: `${12 + depth * 14}px` }}
+              onClick={() => onToggleTreePath(node.path)}
+            >
+              <span className="git-mobile-record-leading">
+                <span className="git-tree-chevron" data-expanded={expanded}>
+                  <TreeChevron expanded={expanded} />
+                </span>
+                <span className="git-mobile-record-title">{node.name}</span>
+              </span>
+              <span className="git-mobile-record-meta">{directoryTargets.length}</span>
+            </button>
+          </MobileSwipeRow>
+
+          {expanded ? (
+            <div className="git-mobile-record-children" role="group">
+              {renderMobileTreeNodes({
+                nodes: node.children,
+                depth: depth + 1,
+                collapsedTreePathSet,
+                onToggleTreePath,
+                onToggleMobileSelection,
+                selectedMobilePathSet,
+                actioning,
+                variant,
+                swipeRowState,
+                onSwipeRowChange,
+                onStageToggle,
+                onDiscardWithConfirm
+              })}
+            </div>
+          ) : null}
+        </div>
+      );
+    }
+
+    const rowKey = `file:${node.path}`;
+    const mobileSelected = selectedMobilePathSet.has(node.path);
+
+    return (
+      <MobileSwipeRow
+        key={rowKey}
+        rowKey={rowKey}
+        openState={swipeRowState?.path === rowKey ? swipeRowState.direction : null}
+        onOpenStateChange={(direction) =>
+          onSwipeRowChange(direction ? { path: rowKey, direction } : null)
+        }
+        leadingAction={{
+          label: variant === "staged" ? t("git.unstage") : t("git.stage"),
+          tone: "accent",
+          onPress: () => void onStageToggle([node.change.path], variant === "staged")
+        }}
+        trailingAction={
+          variant === "unstaged"
+            ? {
+                label: t("git.discard"),
+                tone: "danger",
+                onPress: () => void onDiscardWithConfirm([node.change.path], node.path)
+              }
+            : null
+        }
+      >
+        <div
+          className="git-mobile-record git-mobile-record-file"
+          data-active={mobileSelected}
+          style={{ paddingInlineStart: `${12 + depth * 14}px` }}
+        >
+          <input
+            className="git-tree-select-checkbox"
+            type="checkbox"
+            checked={mobileSelected}
+            aria-label={`${t("git.selectFile")} ${node.name}`}
+            onChange={() => onToggleMobileSelection(node.change.path)}
+          />
+          <button
+            className="git-mobile-record-file-main"
+            type="button"
+            onClick={() => onToggleMobileSelection(node.change.path)}
+          >
+            <span
+              className="git-tree-file-icon"
+              data-kind={resolveFileTreeIconKind(node.name)}
+              aria-hidden="true"
+            >
+              {resolveFileTreeIconLabel(node.name)}
+            </span>
+            <span className="git-mobile-record-copy">
+              <span className="git-mobile-record-title">{node.name}</span>
+              <span className="git-mobile-record-path">{node.path}</span>
+            </span>
+            <span className="git-status-badge" data-status={node.status}>
+              {node.status}
+            </span>
+          </button>
+        </div>
+      </MobileSwipeRow>
+    );
+  });
+}
+
+function MobileSwipeRow({
+  rowKey,
+  openState,
+  onOpenStateChange,
+  leadingAction,
+  trailingAction,
+  children
+}: {
+  rowKey: string;
+  openState: MobileSwipeDirection | null;
+  onOpenStateChange: (direction: MobileSwipeDirection | null) => void;
+  leadingAction: { label: string; tone: "accent" | "danger"; onPress: () => void } | null;
+  trailingAction: { label: string; tone: "accent" | "danger"; onPress: () => void } | null;
+  children: ReactNode;
+}) {
+  const pointerStateRef = useRef<{ pointerId: number; startX: number } | null>(null);
+  const [dragOffset, setDragOffset] = useState(0);
+
+  useEffect(() => {
+    if (!openState) {
+      setDragOffset(0);
+    }
+  }, [openState, rowKey]);
+
+  const resolvedOffset =
+    dragOffset !== 0
+      ? dragOffset
+      : openState === "leading"
+        ? 78
+        : openState === "trailing"
+          ? -78
+          : 0;
+
+  function handlePointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) {
+      return;
+    }
+
+    pointerStateRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX
+    };
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  }
+
+  function handlePointerMove(event: ReactPointerEvent<HTMLDivElement>) {
+    const pointerState = pointerStateRef.current;
+
+    if (!pointerState || pointerState.pointerId !== event.pointerId) {
+      return;
+    }
+
+    const maxLeading = leadingAction ? 88 : 0;
+    const maxTrailing = trailingAction ? 88 : 0;
+    const nextOffset = Math.max(-maxTrailing, Math.min(maxLeading, event.clientX - pointerState.startX));
+    setDragOffset(nextOffset);
+  }
+
+  function handlePointerUp(event: ReactPointerEvent<HTMLDivElement>) {
+    const pointerState = pointerStateRef.current;
+
+    if (!pointerState || pointerState.pointerId !== event.pointerId) {
+      return;
+    }
+
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+    pointerStateRef.current = null;
+
+    if (dragOffset >= 44 && leadingAction) {
+      onOpenStateChange("leading");
+      setDragOffset(0);
+      return;
+    }
+
+    if (dragOffset <= -44 && trailingAction) {
+      onOpenStateChange("trailing");
+      setDragOffset(0);
+      return;
+    }
+
+    onOpenStateChange(null);
+    setDragOffset(0);
+  }
+
+  function handlePointerCancel(event: ReactPointerEvent<HTMLDivElement>) {
+    const pointerState = pointerStateRef.current;
+
+    if (!pointerState || pointerState.pointerId !== event.pointerId) {
+      return;
+    }
+
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+    pointerStateRef.current = null;
+    setDragOffset(0);
+  }
+
+  return (
+    <div className="git-mobile-swipe-row">
+      {leadingAction ? (
+        <button
+          type="button"
+          className="git-mobile-swipe-action leading"
+          data-tone={leadingAction.tone}
+          onClick={() => {
+            onOpenStateChange(null);
+            leadingAction.onPress();
+          }}
+        >
+          {leadingAction.label}
+        </button>
+      ) : null}
+
+      {trailingAction ? (
+        <button
+          type="button"
+          className="git-mobile-swipe-action trailing"
+          data-tone={trailingAction.tone}
+          onClick={() => {
+            onOpenStateChange(null);
+            trailingAction.onPress();
+          }}
+        >
+          {trailingAction.label}
+        </button>
+      ) : null}
+
+      <div
+        className="git-mobile-swipe-content"
+        style={{ transform: `translateX(${resolvedOffset}px)` }}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerCancel}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function MobileGitHistoryList({
+  history,
+  historyLoadingMore,
+  hasMore,
+  actioning,
+  openCommitHash,
+  onToggleMenu,
+  onCopyCommitHash,
+  onCopyCommitSubject,
+  onUndoLastCommit,
+  onLoadMore
+}: {
+  history: GitHistoryItemDto[];
+  historyLoadingMore: boolean;
+  hasMore: boolean;
+  actioning: boolean;
+  openCommitHash: string | null;
+  onToggleMenu: (commitHash: string) => void;
+  onCopyCommitHash: (commitHash: string) => void;
+  onCopyCommitSubject: (subject: string) => void;
+  onUndoLastCommit: () => void;
+  onLoadMore: () => void;
+}) {
+  if (!history.length) {
+    return <p className="git-tree-status">{t("git.noHistory")}</p>;
+  }
+
+  return (
+    <div className="git-mobile-history-list">
+      {history.map((item, index) => {
+        const menuOpen = openCommitHash === item.commitHash;
+        const canUndo = index === 0 && item.commitKind === "local";
+
+        return (
+          <article key={item.commitHash} className="git-mobile-history-entry" data-kind={item.commitKind}>
+            <div className="git-mobile-history-entry-main">
+              <span className="git-history-marker" data-kind={item.commitKind} aria-hidden="true" />
+              <div className="git-mobile-history-copy">
+                <div className="git-history-title-row">
+                  <strong title={item.subject}>{item.subject}</strong>
+                  <span className="git-history-kind-badge" data-kind={item.commitKind}>
+                    {formatHistoryCommitKind(item.commitKind)}
+                  </span>
+                </div>
+                {item.refs.length > 0 ? (
+                  <div className="git-history-ref-list">
+                    {item.refs.map((ref) => (
+                      <span
+                        key={`${item.commitHash}:${ref.kind}:${ref.name}`}
+                        className="git-history-ref-pill"
+                        data-kind={ref.kind}
+                        data-remote-index={String(resolveRemotePaletteIndex(ref.remoteName))}
+                      >
+                        {ref.name}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+                <div className="git-history-meta">
+                  <span className="git-history-hash">{item.commitHash.slice(0, 8)}</span>
+                  <span>{item.authorName}</span>
+                  <time dateTime={item.authoredAt}>{formatCommitTime(item.authoredAt)}</time>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="git-icon-button"
+                aria-label={t("git.historyItemMenu")}
+                onClick={() => onToggleMenu(item.commitHash)}
+              >
+                <MoreIcon />
+              </button>
+            </div>
+
+            {menuOpen ? (
+              <div className="git-mobile-history-menu">
+                <button type="button" className="git-menu-item" onClick={() => onCopyCommitHash(item.commitHash)}>
+                  <span>{t("git.copyCommitHash")}</span>
+                </button>
+                <button type="button" className="git-menu-item" onClick={() => onCopyCommitSubject(item.subject)}>
+                  <span>{t("git.copyCommitSubject")}</span>
+                </button>
+                {canUndo ? (
+                  <button
+                    type="button"
+                    className="git-menu-item"
+                    disabled={actioning}
+                    onClick={onUndoLastCommit}
+                  >
+                    <span>{t("git.undoLastCommit")}</span>
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+          </article>
+        );
+      })}
+
+      {hasMore ? (
+        <button
+          type="button"
+          className="secondary-button git-mobile-history-more"
+          disabled={historyLoadingMore}
+          onClick={onLoadMore}
+        >
+          {historyLoadingMore ? `${t("git.refreshNow")}...` : t("common.loadMore")}
+        </button>
+      ) : null}
+    </div>
   );
 }
 

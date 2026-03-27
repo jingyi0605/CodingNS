@@ -29,13 +29,15 @@ describe("IosWorkbenchShell", () => {
 
   it("详情路由不再渲染顶部标题栏，但会保留底部一级导航", () => {
     renderIosShell({
-      initialEntries: ["/", "/sessions/session-1"],
+      initialEntries: ["/", "/workspaces/workspace-1/sessions/session-1"],
       initialIndex: 1
     });
 
     expect(document.querySelector(".ios-workbench-nav")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: t("common.back") })).not.toBeInTheDocument();
-    expect(screen.getByTestId("ios-location")).toHaveTextContent("/sessions/session-1");
+    expect(screen.getByTestId("ios-location")).toHaveTextContent(
+      "/workspaces/workspace-1/sessions/session-1"
+    );
     expect(screen.getByRole("button", { name: t("shell.mobileSessionsEntry") })).toBeInTheDocument();
   });
 
@@ -51,7 +53,7 @@ describe("IosWorkbenchShell", () => {
     const onNavigateToolGit = vi.fn();
 
     renderIosShell({
-      initialEntries: ["/", "/sessions/session-1"],
+      initialEntries: ["/", "/workspaces/workspace-1/sessions/session-1"],
       initialIndex: 1,
       presentation: "conversation-focus",
       onNavigateToolGit
@@ -88,7 +90,7 @@ describe("IosWorkbenchShell", () => {
 
     renderIosShell({
       activeEntry: "tools",
-      initialEntries: ["/tools?tab=files"],
+      initialEntries: ["/workspaces/workspace-1/tools?tab=files"],
       onNavigateToolProcesses
     });
 
@@ -103,14 +105,17 @@ describe("IosWorkbenchShell", () => {
 
     renderIosShell({
       activeEntry: "tools",
-      initialEntries: ["/tools?tab=git", "/tools/processes"],
+      initialEntries: [
+        "/workspaces/workspace-1/tools?tab=git",
+        "/workspaces/workspace-1/tools/processes"
+      ],
       initialIndex: 1
     });
 
     expect(screen.getByRole("heading", { name: t("shell.terminalManagerEntry") })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: t("common.back") }));
     expect(screen.getByRole("heading", { name: t("shell.gitEntry") })).toBeInTheDocument();
-    expect(screen.getByTestId("ios-location")).toHaveTextContent("/tools");
+    expect(screen.getByTestId("ios-location")).toHaveTextContent("/workspaces/workspace-1/tools");
   });
 });
 

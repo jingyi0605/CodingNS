@@ -1,7 +1,8 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { clearViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import { ToastProvider } from "../../../shared/toast";
 import { GitSidebar } from "./GitSidebar";
 
@@ -24,6 +25,8 @@ const workbenchShellMock = vi.hoisted(() => ({
   requestGitRefresh: vi.fn(),
   addGitSnapshotListener: vi.fn()
 }));
+const clipboardWriteTextMock = vi.hoisted(() => vi.fn());
+const GIT_SIDEBAR_SNAPSHOT_KEY = "git-sidebar.snapshot.workspace-1";
 
 vi.mock("../api/git-api", () => ({
   getGitStatus: gitApiMock.getGitStatus,
@@ -47,6 +50,14 @@ describe("GitSidebar", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     setViewportWidth(430);
+    window.sessionStorage.clear();
+    clearViewSnapshot(GIT_SIDEBAR_SNAPSHOT_KEY);
+    Object.defineProperty(window.navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: clipboardWriteTextMock
+      }
+    });
 
     gitApiMock.getGitStatus.mockResolvedValue(createStatus());
     gitApiMock.getGitHistory.mockResolvedValue({
@@ -132,15 +143,12 @@ describe("GitSidebar", () => {
     });
   });
 
-  it("移动端先勾选文件后才显示组级操作菜单，并支持多选暂存", async () => {
+  it("移动端多选文件后会显示选择工具条，并支持批量暂存", async () => {
     renderSidebar();
 
     const unstagedGroup = await findGroup("当前变更");
 
-    expect(
-      within(unstagedGroup).queryByRole("button", { name: "操作菜单" })
-    ).not.toBeInTheDocument();
-    expect(within(unstagedGroup).queryByRole("button", { name: "暂存" })).not.toBeInTheDocument();
+    expect(within(unstagedGroup).queryByText(/已选文件\s*2/)).not.toBeInTheDocument();
 
     await userEvent.click(
       within(unstagedGroup).getByRole("checkbox", { name: "选中文件 App.tsx" })
@@ -149,9 +157,14 @@ describe("GitSidebar", () => {
       within(unstagedGroup).getByRole("checkbox", { name: "选中文件 router.tsx" })
     );
 
-    const actionMenuButton = within(unstagedGroup).getByRole("button", { name: "操作菜单" });
-    await userEvent.click(actionMenuButton);
-    await userEvent.click(within(unstagedGroup).getByRole("button", { name: "暂存" }));
+    const selectionToolbar = unstagedGroup.querySelector(".git-mobile-selection-toolbar") as HTMLElement | null;
+
+    expect(selectionToolbar).not.toBeNull();
+    expect(within(selectionToolbar as HTMLElement).getByText(/已选文件\s*2/)).toBeInTheDocument();
+
+    await userEvent.click(
+      within(selectionToolbar as HTMLElement).getByRole("button", { name: "暂存" })
+    );
 
     await waitFor(() => {
       expect(gitApiMock.stageGitTargets).toHaveBeenCalledWith("workspace-1", [
@@ -159,9 +172,14 @@ describe("GitSidebar", () => {
         "apps/user-app/src/app/router.tsx"
       ]);
     });
+
+    await waitFor(() => {
+      expect(within(unstagedGroup).queryByText(/已选文件\s*2/)).not.toBeInTheDocument();
+    });
   });
 
   it("撤销上次提交后会把提交标题回填到输入框", async () => {
+    setViewportWidth(1280);
     renderSidebar();
 
     await userEvent.click(await screen.findByRole("button", { name: "操作菜单" }));
@@ -189,6 +207,16 @@ describe("GitSidebar", () => {
   it("最近版本列表会渲染本地远程状态和远程标签", async () => {
     renderSidebar();
 
+    const changesToggle = await screen.findByRole("button", { name: /当前变更/ });
+    const historyToggle = await screen.findByRole("button", { name: /最近版本/ });
+
+    expect(changesToggle).toHaveAttribute("aria-expanded", "true");
+    expect(historyToggle).toHaveAttribute("aria-expanded", "false");
+
+    await userEvent.click(historyToggle);
+
+    expect(historyToggle).toHaveAttribute("aria-expanded", "true");
+    expect(changesToggle).toHaveAttribute("aria-expanded", "false");
     expect(await screen.findByText("feat: local only")).toBeInTheDocument();
     expect(screen.getByText("本地")).toBeInTheDocument();
     expect(screen.getByText("远程")).toBeInTheDocument();
@@ -220,10 +248,16 @@ describe("GitSidebar", () => {
       local: [{ name: "feature/refresh", current: true, upstream: null, remote: false }],
       remote: []
     });
+    seedGitSidebarSnapshot();
 
     renderSidebar();
 
-    await userEvent.click(await screen.findByRole("button", { name: "刷新" }));
+    expect(await screen.findByText("App.tsx")).toBeInTheDocument();
+
+    const refreshButton = await screen.findByRole("button", { name: "刷新" });
+
+    expect(refreshButton).not.toBeDisabled();
+    fireEvent.click(refreshButton);
 
     await waitFor(() => {
       expect(gitApiMock.getGitStatus).toHaveBeenCalledWith("workspace-1");
@@ -231,9 +265,64 @@ describe("GitSidebar", () => {
       expect(gitApiMock.getGitBranches).toHaveBeenCalledWith("workspace-1");
     });
 
-    expect(await screen.findByText("feat: refreshed snapshot")).toBeInTheDocument();
     expect(screen.getByText("refresh-target.md")).toBeInTheDocument();
+    await userEvent.click(await screen.findByRole("button", { name: /最近版本/ }));
+    expect(await screen.findByText("feat: refreshed snapshot")).toBeInTheDocument();
     expect(workbenchShellMock.requestGitRefresh).toHaveBeenCalledWith("workspace-1");
+  });
+
+  it("移动端未提交记录的放弃改动操作会二次确认", async () => {
+    const confirmMock = vi.spyOn(window, "confirm").mockReturnValue(true);
+    renderSidebar();
+
+    const title = await screen.findByText("App.tsx");
+    const swipeRow = title.closest(".git-mobile-swipe-row") as HTMLElement | null;
+    const swipeContent = swipeRow?.querySelector(".git-mobile-swipe-content") as HTMLElement | null;
+
+    expect(swipeRow).not.toBeNull();
+    expect(swipeContent).not.toBeNull();
+
+    fireEvent.pointerDown(swipeContent as HTMLElement, {
+      button: 0,
+      pointerId: 1,
+      clientX: 120
+    });
+    fireEvent.pointerMove(swipeContent as HTMLElement, {
+      pointerId: 1,
+      clientX: 56
+    });
+    fireEvent.pointerUp(swipeContent as HTMLElement, {
+      pointerId: 1,
+      clientX: 56
+    });
+
+    fireEvent.click(within(swipeRow as HTMLElement).getByRole("button", { name: "放弃改动" }));
+
+    await waitFor(() => {
+      expect(confirmMock).toHaveBeenCalledWith("确认放弃这些改动吗？apps/user-app/src/app/App.tsx");
+      expect(gitApiMock.discardGitTargets).toHaveBeenCalledWith("workspace-1", [
+        "apps/user-app/src/app/App.tsx"
+      ]);
+    });
+
+    confirmMock.mockRestore();
+  });
+
+  it("移动端最近版本条目提供操作菜单，并支持复制 Commit Hash", async () => {
+    renderSidebar();
+
+    fireEvent.click(await screen.findByRole("button", { name: /最近版本/ }));
+    fireEvent.click(screen.getAllByRole("button", { name: "版本操作" })[0]);
+
+    expect(screen.getByRole("button", { name: "复制 Commit Hash" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "复制提交标题" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "撤销上次提交" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "复制 Commit Hash" }));
+
+    await waitFor(() => {
+      expect(clipboardWriteTextMock).toHaveBeenCalledWith("33333333");
+    });
   });
 
   it("已暂存后再次编辑的文件会同时出现在暂存区和当前变更", async () => {
@@ -325,6 +414,18 @@ function setViewportWidth(width: number) {
     configurable: true,
     writable: true,
     value: width
+  });
+}
+
+function seedGitSidebarSnapshot() {
+  const snapshot = createGitSnapshot();
+
+  writeViewSnapshot(GIT_SIDEBAR_SNAPSHOT_KEY, {
+    status: snapshot.status,
+    history: snapshot.history,
+    historyTotalCount: snapshot.historyTotalCount,
+    historyNextCursor: snapshot.historyNextCursor,
+    branches: snapshot.branches
   });
 }
 

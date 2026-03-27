@@ -6393,6 +6393,262 @@ textarea:focus-visible {
   box-shadow: 0 18px 42px rgba(0, 0, 0, 0.18);
 }
 
+.git-mobile-sections {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+}
+
+.git-mobile-section {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: transparent;
+  border: 0;
+  overflow: hidden;
+}
+
+.git-mobile-section-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  min-height: 52px;
+  padding: 0 16px;
+  background: color-mix(in srgb, var(--bg-surface) 98%, transparent);
+  border-top: 1px solid color-mix(in srgb, var(--border-primary) 44%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--border-primary) 44%, transparent);
+  color: var(--text-primary);
+  text-align: left;
+}
+
+.git-mobile-section-toggle-main,
+.git-mobile-section-toggle-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.git-mobile-section-toggle-main {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.git-mobile-section-toggle-main h3 {
+  margin: 0;
+  font: inherit;
+}
+
+.git-mobile-section-toggle-meta {
+  color: var(--text-secondary);
+}
+
+.git-mobile-section-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  background: color-mix(in srgb, var(--bg-surface) 98%, transparent);
+}
+
+.git-mobile-record-shell {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.git-mobile-selection-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 16px 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-primary) 42%, transparent);
+  background: color-mix(in srgb, var(--bg-surface) 96%, transparent);
+}
+
+.git-mobile-selection-count {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.git-mobile-selection-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.git-mobile-selection-actions > button {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.git-mobile-record-list,
+.git-mobile-history-list {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  overflow: auto;
+}
+
+.git-mobile-swipe-row {
+  position: relative;
+  overflow: hidden;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-primary) 48%, transparent);
+}
+
+.git-mobile-swipe-action {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 78px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  color: white;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.git-mobile-swipe-action.leading {
+  left: 0;
+}
+
+.git-mobile-swipe-action.trailing {
+  right: 0;
+}
+
+.git-mobile-swipe-action[data-tone="accent"] {
+  background: color-mix(in srgb, var(--accent) 88%, #ffffff 12%);
+}
+
+.git-mobile-swipe-action[data-tone="danger"] {
+  background: color-mix(in srgb, var(--error) 86%, #ffffff 14%);
+}
+
+.git-mobile-swipe-content {
+  position: relative;
+  z-index: 1;
+  background: color-mix(in srgb, var(--bg-surface) 99%, transparent);
+  transition: transform 180ms ease;
+  touch-action: pan-y;
+}
+
+.git-mobile-record,
+.git-mobile-history-entry-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 56px;
+  padding: 0 16px;
+  color: var(--text-primary);
+  text-align: left;
+}
+
+.git-mobile-record-file {
+  gap: 8px;
+}
+
+.git-mobile-record[data-active="true"],
+.git-mobile-record-file-main[data-active="true"] {
+  background: color-mix(in srgb, var(--bg-active) 52%, transparent);
+}
+
+.git-mobile-record-leading,
+.git-mobile-record-copy {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.git-mobile-record-copy {
+  flex: 1;
+  gap: 4px;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.git-mobile-record-title {
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-mobile-record-path {
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.3;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-mobile-record-meta {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.git-mobile-record-file-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+  text-align: left;
+}
+
+.git-mobile-record-children {
+  display: flex;
+  flex-direction: column;
+}
+
+.git-mobile-history-entry {
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-primary) 48%, transparent);
+}
+
+.git-mobile-history-entry-main {
+  align-items: flex-start;
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+
+.git-mobile-history-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.git-mobile-history-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 16px 12px 48px;
+  background: color-mix(in srgb, var(--bg-surface) 99%, transparent);
+}
+
+.git-mobile-history-more {
+  margin: 12px 14px 14px;
+}
+
 .git-icon-button {
   display: inline-flex;
   align-items: center;
@@ -11742,10 +11998,10 @@ textarea:focus-visible {
   min-width: 0;
   max-width: 100%;
   align-items: flex-start;
-  justify-content: center;
-  gap: 0.16rem;
-  min-height: 3rem;
-  padding: 0.58rem 0.45rem 0.52rem;
+  justify-content: flex-start;
+  gap: 0.24rem;
+  min-height: 4.4rem;
+  padding: 0.88rem 0.7rem 0.78rem;
   border: 0;
   border-right: 1px solid color-mix(in srgb, var(--border-primary) 82%, transparent);
   border-bottom: 1px solid color-mix(in srgb, var(--border-primary) 82%, transparent);
@@ -11772,9 +12028,9 @@ textarea:focus-visible {
   display: block;
   width: 100%;
   overflow: hidden;
-  font-size: 1.05rem;
+  font-size: 1.65rem;
   font-weight: 700;
-  line-height: 1;
+  line-height: 1.02;
   letter-spacing: -0.02em;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -11786,12 +12042,11 @@ textarea:focus-visible {
   min-width: 0;
   overflow: hidden;
   color: var(--text-secondary);
-  font-size: 0.74rem;
-  font-weight: 500;
+  font-size: 0.9rem;
+  font-weight: 600;
   line-height: 1.2;
   text-overflow: ellipsis;
-  white-space: normal;
-  word-break: break-all;
+  white-space: nowrap;
 }
 
 .mobile-workspace-home-section-title {
@@ -11838,9 +12093,15 @@ textarea:focus-visible {
 }
 
 .mobile-workspace-home-row-label {
+  display: block;
+  flex: 1 1 0;
+  width: 0;
   min-width: 0;
+  overflow: hidden;
   font-size: 0.98rem;
   font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .mobile-workspace-home-row-trailing {
@@ -11870,10 +12131,12 @@ textarea:focus-visible {
 
 .mobile-workspace-home-session-main {
   display: flex;
+  width: 0;
   min-width: 0;
-  flex: 1 1 auto;
+  flex: 1 1 0;
   flex-direction: column;
   gap: 0.18rem;
+  overflow: hidden;
 }
 
 .mobile-workspace-home-session-title {
@@ -12330,100 +12593,130 @@ textarea:focus-visible {
 .mobile-floating-nav {
   position: absolute;
   z-index: 26;
-  width: 56px;
-  height: 56px;
+  width: 54px;
+  height: 54px;
+  overflow: visible;
   pointer-events: auto;
-}
-
-.mobile-floating-nav-dock-handle {
-  position: absolute;
-  top: 8px;
-  z-index: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 40px;
-  border: 1px solid color-mix(in srgb, var(--border-primary) 72%, transparent);
-  background: color-mix(in srgb, var(--bg-surface) 92%, transparent);
-  color: color-mix(in srgb, var(--text-secondary) 78%, white 22%);
-  box-shadow: 0 14px 26px rgba(15, 23, 42, 0.12);
-  backdrop-filter: blur(16px) saturate(138%);
-  -webkit-backdrop-filter: blur(16px) saturate(138%);
-  touch-action: none;
-  transition:
-    opacity var(--transition-fast),
-    transform var(--transition-fast),
-    border-color var(--transition-fast),
-    color var(--transition-fast);
-}
-
-.mobile-floating-nav[data-side="left"] .mobile-floating-nav-dock-handle {
-  left: calc(100% - 8px);
-  border-radius: 0 999px 999px 0;
-}
-
-.mobile-floating-nav[data-side="right"] .mobile-floating-nav-dock-handle {
-  right: calc(100% - 8px);
-  border-radius: 999px 0 0 999px;
-}
-
-.mobile-floating-nav[data-open="true"] .mobile-floating-nav-dock-handle {
-  opacity: 0;
-  pointer-events: none;
-}
-
-.mobile-floating-nav[data-repositioning="true"] .mobile-floating-nav-dock-handle {
-  color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 28%, var(--border-primary));
-  transform: scale(1.04);
 }
 
 .mobile-floating-nav-bubble {
   position: relative;
-  z-index: 2;
+  z-index: 3;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 56px;
-  height: 56px;
-  border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--border-primary) 72%, transparent);
+  width: 54px;
+  height: 54px;
+  border: 1px solid color-mix(in srgb, white 88%, rgba(148, 163, 184, 0.42));
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 96%, transparent), color-mix(in srgb, var(--bg-primary) 94%, transparent));
-  color: var(--text-secondary);
-  box-shadow: 0 18px 36px rgba(15, 23, 42, 0.16);
-  backdrop-filter: blur(18px) saturate(145%);
-  -webkit-backdrop-filter: blur(18px) saturate(145%);
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(246, 249, 252, 0.94));
+  color: color-mix(in srgb, var(--text-secondary) 72%, #7c8798 28%);
+  box-shadow:
+    0 14px 28px rgba(15, 23, 42, 0.1),
+    0 1px 0 rgba(255, 255, 255, 0.96) inset,
+    0 -8px 18px rgba(255, 255, 255, 0.34) inset;
+  backdrop-filter: blur(24px) saturate(145%);
+  -webkit-backdrop-filter: blur(24px) saturate(145%);
   touch-action: none;
+  cursor: pointer;
   transition:
-    transform var(--transition-fast),
+    opacity var(--transition-fast),
+    transform 180ms cubic-bezier(0.2, 0.9, 0.2, 1),
     border-color var(--transition-fast),
-    color var(--transition-fast);
+    color var(--transition-fast),
+    box-shadow var(--transition-fast);
 }
 
 .mobile-floating-nav[data-side="left"] .mobile-floating-nav-bubble {
-  border-top-left-radius: 1.1rem;
-  border-bottom-left-radius: 1.1rem;
+  border-radius: 999px 1rem 1rem 999px;
+  box-shadow:
+    12px 0 24px rgba(15, 23, 42, 0.1),
+    0 1px 0 rgba(255, 255, 255, 0.96) inset,
+    0 -8px 18px rgba(255, 255, 255, 0.34) inset;
 }
 
 .mobile-floating-nav[data-side="right"] .mobile-floating-nav-bubble {
-  border-top-right-radius: 1.1rem;
-  border-bottom-right-radius: 1.1rem;
+  border-radius: 1rem 999px 999px 1rem;
+  box-shadow:
+    -12px 0 24px rgba(15, 23, 42, 0.1),
+    0 1px 0 rgba(255, 255, 255, 0.96) inset,
+    0 -8px 18px rgba(255, 255, 255, 0.34) inset;
+}
+
+.mobile-floating-nav-bubble::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  width: 12px;
+  height: 28px;
+  border-radius: 999px;
+  background:
+    radial-gradient(circle, rgba(148, 163, 184, 0.56) 0 1px, transparent 1.05px) center / 5px 5px repeat-y;
+  transform: translateY(-50%);
+  opacity: 0.82;
+}
+
+.mobile-floating-nav[data-side="left"] .mobile-floating-nav-bubble::before {
+  right: 7px;
+}
+
+.mobile-floating-nav[data-side="right"] .mobile-floating-nav-bubble::before {
+  left: 7px;
 }
 
 .mobile-floating-nav[data-open="true"] .mobile-floating-nav-bubble {
-  color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 26%, var(--border-primary));
+  color: color-mix(in srgb, var(--accent) 70%, #3b82f6 30%);
+  border-color: color-mix(in srgb, white 82%, var(--accent));
+  transform: scale(0.97);
+  box-shadow:
+    0 16px 30px rgba(15, 23, 42, 0.11),
+    0 0 0 6px color-mix(in srgb, var(--accent) 10%, transparent),
+    0 1px 0 rgba(255, 255, 255, 0.96) inset;
+}
+
+.mobile-floating-nav[data-preparing-reposition="true"] .mobile-floating-nav-bubble {
+  transform: scale(0.94);
+  opacity: 0.92;
+}
+
+.mobile-floating-nav[data-repositioning="true"] .mobile-floating-nav-bubble {
+  color: color-mix(in srgb, var(--accent) 74%, #22c55e 26%);
+  border-color: color-mix(in srgb, white 76%, var(--accent));
+  cursor: grabbing;
+  box-shadow:
+    0 18px 36px rgba(15, 23, 42, 0.16),
+    0 0 0 8px color-mix(in srgb, var(--accent) 12%, transparent),
+    0 1px 0 rgba(255, 255, 255, 0.98) inset;
 }
 
 .mobile-radial-nav-panel {
   position: absolute;
-  left: calc(50% - 130px);
-  top: calc(50% - 130px);
-  width: 260px;
-  height: 260px;
+  left: calc(50% - 160px);
+  top: calc(50% - 160px);
+  width: 320px;
+  height: 320px;
   pointer-events: none;
+  opacity: 0;
+  transform: scale(0.78);
+  transition:
+    opacity 220ms ease,
+    transform 220ms cubic-bezier(0.2, 0.9, 0.2, 1),
+    filter 220ms ease;
+  filter: blur(8px);
+}
+
+.mobile-floating-nav[data-open="true"] .mobile-radial-nav-panel {
+  opacity: 1;
+  transform: scale(1);
+  filter: blur(0);
+}
+
+.mobile-floating-nav[data-side="left"] .mobile-radial-nav-panel {
+  transform-origin: left center;
+}
+
+.mobile-floating-nav[data-side="right"] .mobile-radial-nav-panel {
+  transform-origin: right center;
 }
 
 .mobile-radial-nav-wheel {
@@ -12432,15 +12725,15 @@ textarea:focus-visible {
   height: 100%;
   overflow: hidden;
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--border-primary) 66%, transparent);
+  border: 1px solid rgba(255, 255, 255, 0.98);
   background:
-    radial-gradient(circle at center, color-mix(in srgb, #66f0b1 58%, #58b8ff 42%) 0 44px, color-mix(in srgb, white 76%, transparent) 45px 58px, transparent 59px),
-    radial-gradient(circle at center, color-mix(in srgb, white 98%, transparent), color-mix(in srgb, var(--bg-surface) 95%, white 5%));
+    radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.985) 0 94px, rgba(249, 250, 252, 0.965) 95px 140px, rgba(245, 246, 248, 0.93) 141px 100%);
   box-shadow:
-    0 22px 42px rgba(15, 23, 42, 0.2),
-    inset 0 1px 0 rgba(255, 255, 255, 0.18);
-  backdrop-filter: blur(18px) saturate(145%);
-  -webkit-backdrop-filter: blur(18px) saturate(145%);
+    0 24px 48px rgba(15, 23, 42, 0.13),
+    inset 0 1px 0 rgba(255, 255, 255, 0.96),
+    inset 0 -12px 28px rgba(243, 244, 246, 0.72);
+  backdrop-filter: blur(22px) saturate(120%);
+  -webkit-backdrop-filter: blur(22px) saturate(120%);
 }
 
 .mobile-floating-nav[data-side="right"] .mobile-radial-nav-wheel {
@@ -12454,10 +12747,27 @@ textarea:focus-visible {
 .mobile-radial-nav-wheel::before {
   content: "";
   position: absolute;
-  inset: 22px;
+  inset: 26px;
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--border-primary) 36%, transparent);
-  opacity: 0.6;
+  border: 1px solid rgba(255, 255, 255, 0.88);
+  opacity: 0.58;
+}
+
+.mobile-radial-nav-core {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 64px;
+  height: 64px;
+  border-radius: 999px;
+  background:
+    radial-gradient(circle at 50% 36%, rgba(255, 255, 255, 0.9), rgba(251, 251, 252, 0.72) 58%, rgba(247, 248, 249, 0.24) 100%);
+  box-shadow:
+    0 6px 14px rgba(15, 23, 42, 0.035),
+    0 0 0 1px rgba(255, 255, 255, 0.54) inset;
+  opacity: 0.52;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
 }
 
 .mobile-radial-nav-action {
@@ -12469,45 +12779,62 @@ textarea:focus-visible {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: 2px;
   width: 76px;
   height: 76px;
   margin: -38px 0 0 -38px;
-  padding: 8px 7px;
+  padding: 6px 6px 4px;
   border: 0;
-  border-radius: 1.25rem;
+  border-radius: 999px;
   background: transparent;
-  color: var(--text-primary);
+  color: color-mix(in srgb, var(--text-primary) 92%, #1f2937 8%);
   text-align: center;
   pointer-events: auto;
-  transform: translate(var(--radial-nav-x), var(--radial-nav-y));
+  opacity: 0;
+  transform: translate(var(--radial-nav-x), var(--radial-nav-y)) scale(0.7);
   transition:
+    opacity 180ms ease,
+    transform 220ms cubic-bezier(0.2, 0.9, 0.2, 1),
     background var(--transition-fast),
     border-color var(--transition-fast),
     box-shadow var(--transition-fast);
+  transition-delay: calc(var(--radial-nav-index, 0) * 16ms);
+}
+
+.mobile-floating-nav[data-open="true"] .mobile-radial-nav-action {
+  opacity: 1;
+  transform: translate(var(--radial-nav-x), var(--radial-nav-y)) scale(1);
 }
 
 .mobile-radial-nav-action:hover,
 .mobile-radial-nav-action:focus-visible,
 .mobile-radial-nav-action[data-active="true"] {
-  background: color-mix(in srgb, var(--bg-active) 74%, white 26%);
+  background: rgba(60, 60, 67, 0.08);
   box-shadow:
-    0 12px 26px rgba(15, 23, 42, 0.12),
-    0 0 0 4px color-mix(in srgb, var(--accent) 12%, transparent);
+    0 1px 3px rgba(15, 23, 42, 0.03);
 }
 
 .mobile-radial-nav-action-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: var(--accent);
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  border: none;
+  background: transparent;
+  color: color-mix(in srgb, var(--text-primary) 90%, #374151 10%);
+  box-shadow: none;
 }
 
 .mobile-radial-nav-action-label {
   min-width: 0;
-  font-size: 10px;
-  line-height: 1.2;
-  font-weight: 600;
+  max-width: 70px;
+  font-size: 9px;
+  line-height: 1.1;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: color-mix(in srgb, var(--text-secondary) 88%, #6b7280 12%);
   overflow-wrap: anywhere;
 }
 
