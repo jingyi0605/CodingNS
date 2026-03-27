@@ -396,11 +396,12 @@ describe("ComposerPanel", () => {
     );
 
     const ring = container.querySelector(".composer-context-ring");
-    const tooltip = container.querySelector(".composer-context-tooltip");
 
     expect(ring).not.toBeNull();
-    expect(tooltip).not.toBeNull();
     expect(ring).toHaveAttribute("aria-label", `${t("conversation.contextUsageTitle")} 32%`);
+    fireEvent.click(ring!);
+
+    const tooltip = screen.getByRole("tooltip");
     expect(tooltip?.textContent).toContain(t("conversation.contextUsageTitle"));
     expect(tooltip?.textContent).toContain("32%");
     expect(tooltip?.textContent).toContain("64,000 / 200,000 tokens");
@@ -523,6 +524,37 @@ describe("ComposerPanel", () => {
       attachments: [],
       attachmentMeta: []
     });
+  });
+
+  it("provider-default 在工具栏和下拉里都显示为默认短标签", () => {
+    render(
+      <ComposerPanel
+        capabilities={createCapabilities({
+          provider: "claude-code",
+          modelOptions: [
+            {
+              id: "provider-default",
+              name: "跟随 CLI 默认模型（当前：kimi-k2.5）",
+              usesProviderDefault: true
+            },
+            {
+              id: "sonnet",
+              name: "Sonnet"
+            }
+          ]
+        })}
+        isSubmitting={false}
+        onSend={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    expect(screen.getByRole("button", { name: t("conversation.modelSelectorLabel") })).toHaveTextContent("默认");
+    expect(screen.queryByText("跟随 CLI 默认模型（当前：kimi-k2.5）")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: t("conversation.modelSelectorLabel") }));
+
+    expect(screen.getByRole("option", { name: "默认" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "跟随 CLI 默认模型（当前：kimi-k2.5）" })).not.toBeInTheDocument();
   });
 
   it("Claude Code 选择 CLI 默认模型时不会强行覆盖 model", async () => {

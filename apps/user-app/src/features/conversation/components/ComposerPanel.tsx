@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties } from "react";
+import { createPortal } from "react-dom";
 
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
@@ -74,6 +75,7 @@ const DEFAULT_CLAUDE_MODEL_ID = "provider-default";
 const DEFAULT_CODEX_MODEL_ID = "provider-default";
 const DEFAULT_OPENCODE_MODEL_ID = "provider-default";
 const FOCUS_COMPOSER_EVENT = "workbench:focus-composer";
+const PROVIDER_DEFAULT_MODEL_ID = "provider-default";
 
 function createFallbackClaudeModelOptions(): ModelOption[] {
   return [
@@ -126,6 +128,10 @@ function getModelStorageKey(provider: ProviderId): string {
 
 function getReasoningStorageKey(provider: ProviderId): string {
   return `composer-reasoning-level:${provider}`;
+}
+
+function isProviderDefaultModel(model: Pick<ModelOption, "id" | "usesProviderDefault">): boolean {
+  return model.usesProviderDefault === true || model.id === PROVIDER_DEFAULT_MODEL_ID;
 }
 
 function createAttachmentId(): string {
@@ -298,7 +304,7 @@ export function ComposerPanel({
     () =>
       availableModels.map((model) => ({
         value: model.id,
-        label: model.name
+        label: isProviderDefaultModel(model) ? t("conversation.modelUseCliDefault") : model.name
       })),
     [availableModels]
   );
@@ -874,8 +880,44 @@ function MacSelect({
 }) {
   const [open, setOpen] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const [popoverStyle, setPopoverStyle] = useState<CSSProperties | null>(null);
   const listboxId = useId();
   const selectedOption = options.find((option) => option.value === value) ?? options[0] ?? null;
+
+  const updatePopoverStyle = useCallback(() => {
+    const trigger = triggerRef.current;
+
+    if (!trigger || typeof window === "undefined") {
+      return;
+    }
+
+    const rect = trigger.getBoundingClientRect();
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const edgePadding = 12;
+    const gap = 10;
+    const maxWidth = Math.max(160, viewportWidth - edgePadding * 2);
+    const preferredWidth = compact ? 140 : 220;
+    const width = Math.min(maxWidth, Math.max(rect.width, preferredWidth));
+    const left = Math.min(
+      Math.max(edgePadding, rect.left),
+      Math.max(edgePadding, viewportWidth - width - edgePadding)
+    );
+    const spaceAbove = rect.top - edgePadding;
+    const spaceBelow = viewportHeight - rect.bottom - edgePadding;
+    const shouldPlaceAbove = spaceAbove >= 180 || spaceAbove >= spaceBelow;
+
+    setPopoverStyle({
+      position: "fixed",
+      left,
+      width,
+      maxWidth,
+      top: shouldPlaceAbove ? undefined : rect.bottom + gap,
+      bottom: shouldPlaceAbove ? viewportHeight - rect.top + gap : undefined
+    });
+  }, [compact]);
 
   useEffect(() => {
     if (!open) {
@@ -883,7 +925,12 @@ function MacSelect({
     }
 
     function handlePointerDown(event: PointerEvent) {
-      if (!wrapperRef.current?.contains(event.target as Node)) {
+      const target = event.target as Node;
+
+      if (
+        !wrapperRef.current?.contains(target)
+        && !popoverRef.current?.contains(target)
+      ) {
         setOpen(false);
       }
     }
@@ -896,12 +943,17 @@ function MacSelect({
 
     window.addEventListener("pointerdown", handlePointerDown);
     window.addEventListener("keydown", handleEscape);
+    window.addEventListener("resize", updatePopoverStyle);
+    window.addEventListener("scroll", updatePopoverStyle, true);
+    updatePopoverStyle();
 
     return () => {
       window.removeEventListener("pointerdown", handlePointerDown);
       window.removeEventListener("keydown", handleEscape);
+      window.removeEventListener("resize", updatePopoverStyle);
+      window.removeEventListener("scroll", updatePopoverStyle, true);
     };
-  }, [open]);
+  }, [open, updatePopoverStyle]);
 
   if (!selectedOption) {
     return null;
@@ -914,6 +966,7 @@ function MacSelect({
       data-open={open ? "true" : "false"}
     >
       <button
+        ref={triggerRef}
         type="button"
         className="composer-mac-select-trigger"
         aria-label={ariaLabel}
@@ -936,44 +989,57 @@ function MacSelect({
         </svg>
       </button>
 
-      {open ? (
-        <div className="composer-mac-select-popover" role="presentation">
-          <div
-            id={listboxId}
-            className="composer-mac-select-list"
-            role="listbox"
-            aria-label={ariaLabel}
-          >
-            {options.map((option) => {
-              const selected = option.value === value;
+      {open && popoverStyle && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              ref={popoverRef}
+              className="composer-mac-select-popover"
+              style={popoverStyle}
+              role="presentation"
+            >
+              <div
+                id={listboxId}
+                className="composer-mac-select-list"
+                role="listbox"
+                aria-label={ariaLabel}
+              >
+                {options.map((option) => {
+                  const selected = option.value === value;
 
-              return (
-                <button
-                  key={option.value}
-                  type="button"
-                  role="option"
-                  aria-selected={selected}
-                  className={`composer-mac-select-option ${selected ? "is-selected" : ""}`}
-                  onClick={() => {
-                    onChange(option.value);
-                    setOpen(false);
-                  }}
-                >
-                  <span className="composer-mac-select-option-check" aria-hidden="true">
-                    {selected ? "✓" : ""}
-                  </span>
-                  <span className="composer-mac-select-option-label">{option.label}</span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      ) : null}
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      role="option"
+                      aria-selected={selected}
+                      className={`composer-mac-select-option ${selected ? "is-selected" : ""}`}
+                      onClick={() => {
+                        onChange(option.value);
+                        setOpen(false);
+                      }}
+                    >
+                      <span className="composer-mac-select-option-check" aria-hidden="true">
+                        {selected ? "✓" : ""}
+                      </span>
+                      <span className="composer-mac-select-option-label">{option.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
     </div>
   );
 }
 
 function ContextUsageRing({ contextUsage }: { contextUsage: ContextUsageDto | null }) {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const tooltipRef = useRef<HTMLDivElement>(null);
+  const [tooltipStyle, setTooltipStyle] = useState<CSSProperties | null>(null);
+  const tooltipId = useId();
   const usagePercent = contextUsage ? Math.round(contextUsage.usageRatio * 100) : null;
   const progress = contextUsage ? Math.max(0, Math.min(contextUsage.usageRatio, 1)) : 0;
   const stateClassName = getContextUsageStateClassName(progress);
@@ -982,61 +1048,147 @@ function ContextUsageRing({ contextUsage }: { contextUsage: ContextUsageDto | nu
     ? `${t("conversation.contextUsageTitle")} ${usagePercent}%`
     : t("conversation.contextUsageUnavailable");
 
-  return (
-    <div
-      className={`composer-context-ring ${stateClassName}`}
-      style={
-        {
-          "--context-usage-progress": `${progress}`
-        } as CSSProperties
+  const updateTooltipStyle = useCallback(() => {
+    const trigger = triggerRef.current;
+
+    if (!trigger || typeof window === "undefined") {
+      return;
+    }
+
+    const rect = trigger.getBoundingClientRect();
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const edgePadding = 12;
+    const gap = 10;
+    const width = Math.min(240, Math.max(188, viewportWidth - edgePadding * 2));
+    const left = Math.min(
+      Math.max(edgePadding, rect.left + rect.width / 2 - width / 2),
+      Math.max(edgePadding, viewportWidth - width - edgePadding)
+    );
+    const spaceAbove = rect.top - edgePadding;
+    const spaceBelow = viewportHeight - rect.bottom - edgePadding;
+    const shouldPlaceAbove = spaceAbove >= 140 || spaceAbove >= spaceBelow;
+
+    setTooltipStyle({
+      position: "fixed",
+      left,
+      width,
+      maxWidth: viewportWidth - edgePadding * 2,
+      top: shouldPlaceAbove ? undefined : rect.bottom + gap,
+      bottom: shouldPlaceAbove ? viewportHeight - rect.top + gap : undefined
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target as Node;
+
+      if (!triggerRef.current?.contains(target) && !tooltipRef.current?.contains(target)) {
+        setOpen(false);
       }
-      aria-label={label}
-      tabIndex={0}
-    >
-      <span className="composer-context-ring-value">
-        {usagePercent === null ? (
-          "--"
-        ) : (
-          <>
-            <span>{usagePercent}</span>
-            <span className="composer-context-ring-suffix">%</span>
-          </>
-        )}
-      </span>
-      <div className="composer-context-tooltip" role="tooltip">
-        {contextUsage ? (
-          <>
-            <div className="composer-context-tooltip-title">
-              {t("conversation.contextUsageTitle")}
-            </div>
-            <div className="composer-context-tooltip-line">
-              {usagePercent}% · {formatTokenCount(contextUsage.promptTokens)} /{" "}
-              {formatTokenCount(contextUsage.contextWindow)} tokens
-            </div>
-            {contextUsage.cachedInputTokens > 0 ? (
-              <div className="composer-context-tooltip-line">
-                {t("conversation.contextUsageCachedTokens").replace(
-                  "{count}",
-                  formatTokenCount(contextUsage.cachedInputTokens)
-                )}
-              </div>
-            ) : null}
-            {sourceText ? (
-              <div className="composer-context-tooltip-meta">{sourceText}</div>
-            ) : null}
-            {contextUsage.isEstimated ? (
-              <div className="composer-context-tooltip-meta">
-                {t("conversation.contextUsageEstimated")}
-              </div>
-            ) : null}
-          </>
-        ) : (
-          <div className="composer-context-tooltip-line">
-            {t("conversation.contextUsageUnavailable")}
-          </div>
-        )}
-      </div>
-    </div>
+    }
+
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    }
+
+    window.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("keydown", handleEscape);
+    window.addEventListener("resize", updateTooltipStyle);
+    window.addEventListener("scroll", updateTooltipStyle, true);
+    updateTooltipStyle();
+
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("keydown", handleEscape);
+      window.removeEventListener("resize", updateTooltipStyle);
+      window.removeEventListener("scroll", updateTooltipStyle, true);
+    };
+  }, [open, updateTooltipStyle]);
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        className={`composer-context-ring ${stateClassName}`}
+        style={
+          {
+            "--context-usage-progress": `${progress}`
+          } as CSSProperties
+        }
+        aria-label={label}
+        aria-expanded={open}
+        aria-describedby={open ? tooltipId : undefined}
+        onClick={() => setOpen((current) => !current)}
+        onMouseEnter={() => setOpen(true)}
+        onMouseLeave={() => setOpen(false)}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+      >
+        <span className="composer-context-ring-value">
+          {usagePercent === null ? (
+            "--"
+          ) : (
+            <>
+              <span>{usagePercent}</span>
+              <span className="composer-context-ring-suffix">%</span>
+            </>
+          )}
+        </span>
+      </button>
+
+      {open && tooltipStyle && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              ref={tooltipRef}
+              id={tooltipId}
+              className="composer-context-tooltip"
+              style={tooltipStyle}
+              role="tooltip"
+            >
+              {contextUsage ? (
+                <>
+                  <div className="composer-context-tooltip-title">
+                    {t("conversation.contextUsageTitle")}
+                  </div>
+                  <div className="composer-context-tooltip-line">
+                    {usagePercent}% · {formatTokenCount(contextUsage.promptTokens)} /{" "}
+                    {formatTokenCount(contextUsage.contextWindow)} tokens
+                  </div>
+                  {contextUsage.cachedInputTokens > 0 ? (
+                    <div className="composer-context-tooltip-line">
+                      {t("conversation.contextUsageCachedTokens").replace(
+                        "{count}",
+                        formatTokenCount(contextUsage.cachedInputTokens)
+                      )}
+                    </div>
+                  ) : null}
+                  {sourceText ? (
+                    <div className="composer-context-tooltip-meta">{sourceText}</div>
+                  ) : null}
+                  {contextUsage.isEstimated ? (
+                    <div className="composer-context-tooltip-meta">
+                      {t("conversation.contextUsageEstimated")}
+                    </div>
+                  ) : null}
+                </>
+              ) : (
+                <div className="composer-context-tooltip-line">
+                  {t("conversation.contextUsageUnavailable")}
+                </div>
+              )}
+            </div>,
+            document.body
+          )
+        : null}
+    </>
   );
 }
 

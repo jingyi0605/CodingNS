@@ -4523,6 +4523,7 @@ textarea:focus-visible {
   align-items: center;
   gap: 8px;
   flex-wrap: nowrap;
+  overflow: visible;
 }
 
 /* Provider Logo */
@@ -4541,14 +4542,15 @@ textarea:focus-visible {
 /* macOS Select */
 .composer-mac-select {
   position: relative;
-  flex: 1 1 0;
+  flex: 0 1 auto;
+  width: fit-content;
   min-width: 0;
   max-width: min(220px, 34vw);
   z-index: 2;
 }
 
 .composer-mac-select[data-open="true"] {
-  z-index: 30;
+  z-index: 80;
 }
 
 .composer-mac-select-trigger {
@@ -4607,6 +4609,7 @@ textarea:focus-visible {
 }
 
 .composer-mac-select-label {
+  display: block;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4630,7 +4633,7 @@ textarea:focus-visible {
   position: absolute;
   left: 0;
   bottom: calc(100% + 10px);
-  z-index: 40;
+  z-index: 90;
   width: max(100%, min(300px, calc(100vw - 96px)));
   padding: 8px;
   border-radius: 20px;
@@ -4707,7 +4710,8 @@ textarea:focus-visible {
 }
 
 .composer-mac-select.is-compact {
-  flex: 0 1 clamp(64px, 9vw, 96px);
+  flex: 0 1 auto;
+  width: fit-content;
   min-width: 0;
   max-width: 96px;
 }
@@ -4778,11 +4782,14 @@ textarea:focus-visible {
   align-items: center;
   justify-content: center;
   border-radius: 50%;
+  padding: 0;
+  border: none;
   background:
     radial-gradient(circle at center, var(--bg-surface) 62%, transparent 63%),
     conic-gradient(var(--context-usage-tone) calc(var(--context-usage-progress) * 1turn), color-mix(in srgb, var(--border-primary) 70%, transparent) 0);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-primary) 78%, transparent);
   color: var(--text-secondary);
+  cursor: pointer;
   transition:
     transform 160ms ease,
     box-shadow 160ms ease,
@@ -4792,6 +4799,7 @@ textarea:focus-visible {
 
 .composer-context-ring:hover,
 .composer-context-ring:focus-visible {
+  z-index: 70;
   transform: translateY(-1px);
   box-shadow:
     inset 0 0 0 1px color-mix(in srgb, var(--border-primary) 92%, transparent),
@@ -4827,10 +4835,8 @@ textarea:focus-visible {
 }
 
 .composer-context-tooltip {
-  position: absolute;
-  left: 50%;
-  bottom: calc(100% + 10px);
-  transform: translateX(-50%) translateY(6px);
+  position: fixed;
+  transform: translateY(0);
   min-width: 188px;
   max-width: 240px;
   padding: 10px 12px;
@@ -4843,33 +4849,7 @@ textarea:focus-visible {
     0 4px 12px rgba(15, 23, 42, 0.08);
   color: var(--text-primary);
   pointer-events: none;
-  opacity: 0;
-  visibility: hidden;
-  transition:
-    opacity 160ms ease,
-    transform 160ms ease,
-    visibility 160ms ease;
-  z-index: 20;
-}
-
-.composer-context-tooltip::after {
-  content: "";
-  position: absolute;
-  left: 50%;
-  top: calc(100% - 1px);
-  width: 10px;
-  height: 10px;
-  border-right: 1px solid color-mix(in srgb, var(--border-primary) 82%, transparent);
-  border-bottom: 1px solid color-mix(in srgb, var(--border-primary) 82%, transparent);
-  background: color-mix(in srgb, var(--bg-primary) 98%, #ffffff 2%);
-  transform: translateX(-50%) rotate(45deg);
-}
-
-.composer-context-ring:hover .composer-context-tooltip,
-.composer-context-ring:focus-visible .composer-context-tooltip {
-  opacity: 1;
-  visibility: visible;
-  transform: translateX(-50%) translateY(0);
+  z-index: 80;
 }
 
 .composer-context-tooltip-title {
@@ -5315,7 +5295,7 @@ textarea:focus-visible {
 .conversation-header,
 .composer-panel {
   position: relative;
-  z-index: 12;
+  z-index: 16;
 }
 
 .conversation-header {
@@ -5805,6 +5785,8 @@ textarea:focus-visible {
 .composer-slash-menu {
   display: flex;
   flex-direction: column;
+  position: relative;
+  z-index: 70;
   gap: 8px;
   margin: 0 16px 8px;
   padding: 12px;
@@ -7360,8 +7342,8 @@ textarea:focus-visible {
   }
 
   .composer-mac-select {
-    flex-basis: clamp(132px, 40vw, 208px);
-    min-width: 120px;
+    flex-basis: auto;
+    min-width: 0;
     max-width: min(208px, 52vw);
   }
 
@@ -7370,8 +7352,8 @@ textarea:focus-visible {
   }
 
   .composer-mac-select.is-compact {
-    flex-basis: clamp(72px, 20vw, 104px);
-    min-width: 68px;
+    flex-basis: auto;
+    min-width: 0;
     max-width: 104px;
   }
 
@@ -13209,6 +13191,7 @@ textarea:focus-visible {
 .mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .composer-panel,
 .ios-workbench-shell[data-mobile-presentation="conversation-focus"] .composer-panel,
 .android-workbench-shell[data-mobile-presentation="conversation-focus"] .composer-panel {
+  z-index: 60;
   padding: 8px 10px calc(10px + env(safe-area-inset-bottom, 0px));
   border-top: 1px solid color-mix(in srgb, var(--border-primary) 70%, transparent);
   background:
