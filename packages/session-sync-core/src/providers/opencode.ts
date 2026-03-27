@@ -14,6 +14,7 @@ import type {
   ProviderCapabilities,
   ProviderId,
   ProviderRealtimeEvent,
+  ProviderSessionDiscovery,
   ProviderSessionSummary,
   ProviderSubscription,
   ResumeSessionResult,
@@ -43,11 +44,12 @@ import {
 } from "./opencode-shared.js";
 
 const DEFAULT_DATA_DIR = join(homedir(), ".local", "share", "opencode");
-const DEFAULT_BASE_URL = process.env.CODINGNS_OPENCODE_BASE_URL ?? "http://127.0.0.1:4096";
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 const DEFAULT_POLL_INTERVAL_MS = 800;
 const MIN_POLL_INTERVAL_MS = 200;
 const DEFAULT_SERVER_PAGE_LIMIT = 100;
+const TIMEOUT_WARNING_THRESHOLD_MS = 15_000;
+const MAX_CONSECUTIVE_TIMEOUTS = 5;
 
 interface OpenCodeAdapterOptions {
   baseUrl?: string;
@@ -56,6 +58,11 @@ interface OpenCodeAdapterOptions {
   dbPath?: string;
   pollIntervalMs?: number;
   requestTimeoutMs?: number;
+}
+
+interface TimeoutRetryState {
+  startedAtMs: number;
+  timeoutCount: number;
 }
 
 interface SessionSummaryRow {
@@ -106,13 +113,26 @@ export class OpenCodeAdapter implements ProviderAdapter {
 
   async detectSessions(
     workspacePath: string,
-    _options?: DetectSessionsOptions
+    options?: DetectSessionsOptions
   ): Promise<ProviderSessionSummary[]> {
-    const targetPath = normalizeWorkspacePath(workspacePath);
-    const serverSessions = await this.tryDetectSessionsFromServer(targetPath);
+    const discovery = await this.detectSessionsDetailed(workspacePath, options);
+    return discovery.sessions;
+  }
 
-    if (serverSessions) {
-      return serverSessions;
+  async detectSessionsDetailed(
+    workspacePath: string,
+    options?: DetectSessionsOptions
+  ): Promise<ProviderSessionDiscovery> {
+    const targetPath = normalizeWorkspacePath(workspacePath);
+    const knownSessions = (options?.knownSessions ?? []).filter(
+      (session) =>
+        session.provider === this.providerId &&
+        workspaceMatches(targetPath, normalizeWorkspacePath(session.workspacePath))
+    );
+    const serverDiscovery = await this.tryDetectSessionsFromServer(targetPath, knownSessions);
+
+    if (serverDiscovery) {
+      return serverDiscovery;
     }
 
     const rows = this.withReadonlyDb((db) => {
@@ -140,11 +160,14 @@ export class OpenCodeAdapter implements ProviderAdapter {
       ).all() as SessionSummaryRow[];
     });
 
-    return rows
-      .map((row) => this.normalizeSqliteSessionSummaryRow(row))
-      .filter((summary): summary is ProviderSessionSummary => summary !== null)
-      .filter((summary) => workspaceMatches(targetPath, normalizeWorkspacePath(summary.workspacePath)))
-      .sort((left, right) => (right.lastMessageAt ?? "").localeCompare(left.lastMessageAt ?? ""));
+    return {
+      sessions: rows
+        .map((row) => this.normalizeSqliteSessionSummaryRow(row))
+        .filter((summary): summary is ProviderSessionSummary => summary !== null)
+        .filter((summary) => workspaceMatches(targetPath, normalizeWorkspacePath(summary.workspacePath)))
+        .sort((left, right) => (right.lastMessageAt ?? "").localeCompare(left.lastMessageAt ?? "")),
+      isComplete: true
+    };
   }
 
   async readRecentSessionHistory(
@@ -395,8 +418,9 @@ export class OpenCodeAdapter implements ProviderAdapter {
   }
 
   private async tryDetectSessionsFromServer(
-    targetPath: string
-  ): Promise<ProviderSessionSummary[] | null> {
+    targetPath: string,
+    knownSessions: ProviderSessionSummary[]
+  ): Promise<ProviderSessionDiscovery | null> {
     try {
       const response = await this.fetchJson<OpenCodeServerSession[]>("/session", {
         query: {
@@ -408,12 +432,44 @@ export class OpenCodeAdapter implements ProviderAdapter {
         .map((session) => ensureText(session.id).trim())
         .filter((value) => value.length > 0);
       const metadata = this.readSessionMetadata(ids);
-
-      return response.data
+      const serverSessions = response.data
         .map((session) => this.normalizeServerSessionSummary(session, metadata))
         .filter((summary): summary is ProviderSessionSummary => summary !== null)
         .filter((summary) => workspaceMatches(targetPath, normalizeWorkspacePath(summary.workspacePath)))
         .sort((left, right) => (right.lastMessageAt ?? "").localeCompare(left.lastMessageAt ?? ""));
+      const mergedSessions = new Map(
+        serverSessions.map((session) => [session.providerSessionId, session] as const)
+      );
+      const missingKnownSessions = knownSessions.filter(
+        (session) => !mergedSessions.has(session.providerSessionId)
+      );
+      let isComplete = true;
+
+      if (missingKnownSessions.length > 0) {
+        const recoveredSessions = this.readSessionSummariesByIds(
+          missingKnownSessions.map((session) => session.providerSessionId),
+          targetPath
+        );
+
+        if (recoveredSessions === null) {
+          isComplete = false;
+        } else if (recoveredSessions.length > 0) {
+          isComplete = false;
+
+          for (const session of recoveredSessions) {
+            if (!mergedSessions.has(session.providerSessionId)) {
+              mergedSessions.set(session.providerSessionId, session);
+            }
+          }
+        }
+      }
+
+      return {
+        sessions: [...mergedSessions.values()].sort(
+          (left, right) => (right.lastMessageAt ?? "").localeCompare(left.lastMessageAt ?? "")
+        ),
+        isComplete
+      };
     } catch (error) {
       if (isServerUnavailableError(error)) {
         return null;
@@ -597,7 +653,11 @@ export class OpenCodeAdapter implements ProviderAdapter {
   private async resolveBaseUrl(refresh = false): Promise<string> {
     const resolved = this.options.baseUrlResolver
       ? await this.options.baseUrlResolver({ refresh })
-      : (this.options.baseUrl?.trim() || DEFAULT_BASE_URL);
+      : this.options.baseUrl?.trim();
+
+    if (!resolved) {
+      throw new Error("SERVER_UNAVAILABLE");
+    }
 
     return resolved.trim().replace(/\/+$/, "");
   }
@@ -653,7 +713,8 @@ export class OpenCodeAdapter implements ProviderAdapter {
       body?: string;
       query?: Record<string, string | undefined>;
     },
-    refresh: boolean
+    refresh: boolean,
+    timeoutState: TimeoutRetryState = createTimeoutRetryState()
   ): Promise<SessionPageResponse<T>> {
     const url = new URL(pathname, `${await this.resolveBaseUrl(refresh)}/`);
 
@@ -683,15 +744,21 @@ export class OpenCodeAdapter implements ProviderAdapter {
       clearTimeout(timer);
 
       if (error instanceof Error && error.name === "AbortError") {
-        if (!refresh && this.options.baseUrlResolver) {
-          return this.fetchJsonWithRetry(pathname, input, true);
+        const nextTimeoutState = advanceTimeoutRetryState(timeoutState);
+
+        if (!shouldSurfaceTimeout(nextTimeoutState)) {
+          if (!refresh && this.options.baseUrlResolver) {
+            return this.fetchJsonWithRetry(pathname, input, true, nextTimeoutState);
+          }
+
+          return this.fetchJsonWithRetry(pathname, input, refresh, nextTimeoutState);
         }
 
-        throw new Error("SERVER_UNAVAILABLE");
+        throw new Error("SERVER_TIMEOUT");
       }
 
       if (!refresh && this.options.baseUrlResolver) {
-        return this.fetchJsonWithRetry(pathname, input, true);
+        return this.fetchJsonWithRetry(pathname, input, true, timeoutState);
       }
 
       throw new Error("SERVER_UNAVAILABLE");
@@ -880,6 +947,51 @@ export class OpenCodeAdapter implements ProviderAdapter {
     });
   }
 
+  private readSessionSummariesByIds(
+    sessionIds: string[],
+    targetPath: string
+  ): ProviderSessionSummary[] | null {
+    if (sessionIds.length === 0) {
+      return [];
+    }
+
+    if (!existsSync(this.resolveDbPath())) {
+      return null;
+    }
+
+    return this.withReadonlyDb((db) => {
+      const placeholders = sessionIds.map(() => "?").join(", ");
+      const rows = db.prepare(
+        `SELECT
+           s.id AS id,
+           s.parent_id AS parent_id,
+           s.directory AS directory,
+           s.title AS title,
+           s.time_created AS time_created,
+           s.time_updated AS time_updated,
+           s.time_archived AS time_archived,
+           COALESCE(stats.message_count, 0) AS message_count,
+           stats.last_message_time_ms AS last_message_time_ms
+         FROM session s
+         LEFT JOIN (
+           SELECT
+             session_id,
+             COUNT(*) AS message_count,
+             MAX(COALESCE(time_updated, time_created)) AS last_message_time_ms
+           FROM message
+           GROUP BY session_id
+         ) AS stats
+           ON stats.session_id = s.id
+         WHERE s.id IN (${placeholders})`
+      ).all(...sessionIds) as SessionSummaryRow[];
+
+      return rows
+        .map((row) => this.normalizeSqliteSessionSummaryRow(row))
+        .filter((summary): summary is ProviderSessionSummary => summary !== null)
+        .filter((summary) => workspaceMatches(targetPath, normalizeWorkspacePath(summary.workspacePath)));
+    });
+  }
+
   private readSessionMessagesFromSqlite(sessionId: string): NormalizedMessage[] {
     this.assertSessionExistsOnSqlite(sessionId);
 
@@ -990,4 +1102,25 @@ async function safeReadResponseText(response: Response): Promise<string> {
 
 function isServerUnavailableError(error: unknown): boolean {
   return error instanceof Error && error.message === "SERVER_UNAVAILABLE";
+}
+
+function createTimeoutRetryState(): TimeoutRetryState {
+  return {
+    startedAtMs: Date.now(),
+    timeoutCount: 0
+  };
+}
+
+function advanceTimeoutRetryState(state: TimeoutRetryState): TimeoutRetryState {
+  return {
+    startedAtMs: state.startedAtMs,
+    timeoutCount: state.timeoutCount + 1
+  };
+}
+
+function shouldSurfaceTimeout(state: TimeoutRetryState): boolean {
+  return (
+    state.timeoutCount >= MAX_CONSECUTIVE_TIMEOUTS
+    || Date.now() - state.startedAtMs >= TIMEOUT_WARNING_THRESHOLD_MS
+  );
 }

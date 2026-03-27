@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -419,6 +419,64 @@ describe("app routes", () => {
     expect(
       screen.queryByRole("button", { name: t("conversation.queueGuidanceButton") })
     ).not.toBeInTheDocument();
+  });
+
+  it("OpenCode 超时类 runtime error 会延迟 15 秒再提示", async () => {
+    hydrateAuth();
+
+    const opencodeSession = createSessionSummary({
+      sessionId: "session-opencode-timeout",
+      title: "OpenCode 超时测试",
+      provider: "opencode"
+    });
+
+    installFetchMock({
+      workbenchSnapshot: createWorkbenchSnapshot([
+        {
+          workspace: createWorkspace(),
+          sessions: [opencodeSession]
+        }
+      ]),
+      sessions: {
+        "session-opencode-timeout": {
+          detail: opencodeSession,
+          capabilities: createCapabilities({ provider: "opencode" }),
+          history: createHistoryPage([])
+        }
+      }
+    });
+
+    renderConversationRoute("session-opencode-timeout");
+
+    await waitFor(() => {
+      expect(getSessionSockets()).toHaveLength(1);
+    });
+
+    vi.useFakeTimers();
+
+    await act(async () => {
+      getSessionSockets()[0]?.dispatchMessage({
+        type: "session.runtime_error",
+        sessionId: "session-opencode-timeout",
+        error_code: "OPENCODE_REQUEST_TIMEOUT",
+        detail: "SERVER_TIMEOUT",
+        timestamp: "2026-03-27T10:00:00.000Z"
+      });
+    });
+
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+    await act(async () => {
+      vi.advanceTimersByTime(14_000);
+    });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+    await act(async () => {
+      vi.advanceTimersByTime(1_000);
+      await Promise.resolve();
+    });
+
+    expect(screen.getByRole("alert")).toHaveTextContent("SERVER_TIMEOUT");
   });
 
   it("当前应用发起 Claude 新一轮运行后，会立刻切成可中断按钮", async () => {
@@ -867,7 +925,7 @@ function createSessionSummary(input: {
   sessionId: string;
   title: string;
   workspaceId?: string;
-  provider?: "codex" | "claude-code";
+  provider?: "codex" | "claude-code" | "opencode";
 }) {
   return {
     sessionId: input.sessionId,
@@ -896,7 +954,7 @@ function createSessionSummary(input: {
 }
 
 function createCapabilities(options?: {
-  provider?: "codex" | "claude-code";
+  provider?: "codex" | "claude-code" | "opencode";
   inRunInputMode?: "none" | "streaming_guidance" | "queued_guidance";
   supportsInterrupt?: boolean;
 }) {

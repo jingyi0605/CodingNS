@@ -11,6 +11,7 @@ export interface HostConfig {
   port: number;
   databasePath: string;
   opencodeBaseUrl: string;
+  opencodeCliPath: string;
   opencodeBaseUrlResolver?: OpenCodeBaseUrlResolver;
   opencodeDataDir: string;
   opencodeDbPath: string;
@@ -44,18 +45,25 @@ export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConf
     overrides.codexCliPath ?? process.env.CODINGNS_CODEX_COMMAND,
     homeDir
   );
-  const configuredOpenCodeBaseUrl =
-    overrides.opencodeBaseUrl ?? process.env.CODINGNS_OPENCODE_BASE_URL ?? null;
+  const opencodeCliPath = resolveOpenCodeCliPath(
+    overrides.opencodeCliPath ?? process.env.CODINGNS_OPENCODE_COMMAND,
+    homeDir
+  );
+  const configuredOpenCodeBaseUrl = normalizeOptionalText(
+    overrides.opencodeBaseUrl ?? process.env.CODINGNS_OPENCODE_BASE_URL ?? null
+  );
 
   return {
     host: overrides.host ?? process.env.CODINGNS_HOST ?? "0.0.0.0",
     port: overrides.port ?? Number(process.env.CODINGNS_PORT ?? "3002"),
     databasePath,
-    opencodeBaseUrl: configuredOpenCodeBaseUrl ?? "http://127.0.0.1:4096",
+    opencodeBaseUrl: configuredOpenCodeBaseUrl ?? "",
+    opencodeCliPath,
     opencodeBaseUrlResolver:
       overrides.opencodeBaseUrlResolver
       ?? new OpenCodeBaseUrlResolver({
-        configuredBaseUrl: configuredOpenCodeBaseUrl
+        configuredBaseUrl: configuredOpenCodeBaseUrl,
+        commandPath: opencodeCliPath
       }),
     opencodeDataDir,
     opencodeDbPath,
@@ -122,6 +130,28 @@ function resolveCodexCliPath(configuredPath: string | undefined, homeDir: string
   return "codex";
 }
 
+function resolveOpenCodeCliPath(configuredPath: string | undefined, homeDir: string): string {
+  const normalizedConfiguredPath = configuredPath?.trim();
+
+  if (normalizedConfiguredPath) {
+    return normalizedConfiguredPath;
+  }
+
+  const candidates = [
+    path.resolve(process.cwd(), "node_modules", ".bin", "opencode"),
+    path.join(homeDir, ".opencode", "bin", "opencode"),
+    path.join(homeDir, ".local", "bin", "opencode")
+  ];
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return "opencode";
+}
+
 function resolvePersistentSecret(secretPath: string): string {
   try {
     if (existsSync(secretPath)) {
@@ -139,4 +169,9 @@ function resolvePersistentSecret(secretPath: string): string {
   } catch {
     return crypto.randomBytes(24).toString("hex");
   }
+}
+
+function normalizeOptionalText(value: string | null | undefined): string | null {
+  const normalized = value?.trim();
+  return normalized && normalized.length > 0 ? normalized : null;
 }

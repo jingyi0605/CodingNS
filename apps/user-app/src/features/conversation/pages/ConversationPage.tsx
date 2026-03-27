@@ -31,6 +31,8 @@ import {
   shouldSupportRunSteering
 } from "../capability/provider-ui";
 
+const RUNTIME_TIMEOUT_TOAST_DELAY_MS = 15_000;
+
 export function ConversationPage() {
   const { sessionId = "" } = useParams();
   const location = useLocation();
@@ -91,6 +93,8 @@ function LiveConversationPage({
   const store = storeRef.current;
   const { showToast, dismissToast } = useToast();
   const lastRuntimeErrorSignatureRef = useRef<string | null>(null);
+  const pendingRuntimeErrorSignatureRef = useRef<string | null>(null);
+  const delayedRuntimeToastTimerRef = useRef<number | null>(null);
   const session = useSessionRuntimeStore(store, (state) => state.session);
   const capabilities = useSessionRuntimeStore(store, (state) => state.capabilities);
   const runtimeHasActiveRun = useSessionRuntimeStore(store, (state) => state.runtimeHasActiveRun);
@@ -139,7 +143,22 @@ function LiveConversationPage({
   }, [session?.workspaceId, sessionId, setSessionWorkspace]);
 
   useEffect(() => {
+    return () => {
+      if (delayedRuntimeToastTimerRef.current !== null) {
+        window.clearTimeout(delayedRuntimeToastTimerRef.current);
+        delayedRuntimeToastTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     if (!runtimeErrorCode || !runtimeErrorDetail) {
+      if (delayedRuntimeToastTimerRef.current !== null) {
+        window.clearTimeout(delayedRuntimeToastTimerRef.current);
+        delayedRuntimeToastTimerRef.current = null;
+      }
+
+      pendingRuntimeErrorSignatureRef.current = null;
       lastRuntimeErrorSignatureRef.current = null;
       dismissToast("conversation-runtime-error");
       return;
@@ -147,10 +166,36 @@ function LiveConversationPage({
 
     const signature = `${runtimeErrorCode}:${runtimeErrorDetail}`;
 
-    if (lastRuntimeErrorSignatureRef.current === signature) {
+    if (
+      lastRuntimeErrorSignatureRef.current === signature
+      || pendingRuntimeErrorSignatureRef.current === signature
+    ) {
       return;
     }
 
+    if (delayedRuntimeToastTimerRef.current !== null) {
+      window.clearTimeout(delayedRuntimeToastTimerRef.current);
+      delayedRuntimeToastTimerRef.current = null;
+    }
+
+    if (shouldDelayRuntimeErrorToast(session?.provider ?? null, runtimeErrorCode, runtimeErrorDetail)) {
+      pendingRuntimeErrorSignatureRef.current = signature;
+      delayedRuntimeToastTimerRef.current = window.setTimeout(() => {
+        pendingRuntimeErrorSignatureRef.current = null;
+        delayedRuntimeToastTimerRef.current = null;
+        lastRuntimeErrorSignatureRef.current = signature;
+        showToast({
+          id: "conversation-runtime-error",
+          title: t("conversation.runtimeErrorTitle"),
+          description: runtimeErrorDetail,
+          tone: "error",
+          durationMs: null
+        });
+      }, RUNTIME_TIMEOUT_TOAST_DELAY_MS);
+      return;
+    }
+
+    pendingRuntimeErrorSignatureRef.current = null;
     lastRuntimeErrorSignatureRef.current = signature;
     showToast({
       id: "conversation-runtime-error",
@@ -159,7 +204,7 @@ function LiveConversationPage({
       tone: "error",
       durationMs: null
     });
-  }, [dismissToast, runtimeErrorCode, runtimeErrorDetail, showToast]);
+  }, [dismissToast, runtimeErrorCode, runtimeErrorDetail, session?.provider, showToast]);
 
   return (
     <main className="workbench-page conversation-page-shell">
@@ -247,6 +292,24 @@ function LiveConversationPage({
         }}
       />
     </main>
+  );
+}
+
+function shouldDelayRuntimeErrorToast(
+  provider: ProviderId | null,
+  errorCode: string,
+  errorDetail: string
+): boolean {
+  if (provider !== "opencode") {
+    return false;
+  }
+
+  return (
+    errorCode === "OPENCODE_REQUEST_TIMEOUT"
+    || errorCode === "PROVIDER_RUNTIME_TIMEOUT"
+    || /\bSERVER_TIMEOUT\b/i.test(errorDetail)
+    || /timeout/i.test(errorDetail)
+    || /超时/.test(errorDetail)
   );
 }
 

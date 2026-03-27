@@ -209,6 +209,60 @@ test("OpenCodeRuntimeAdapter 会把网络失败收口成 SERVER_UNAVAILABLE", as
   );
 });
 
+test("OpenCodeRuntimeAdapter 只有连续超时达到阈值后才会收口成 SERVER_TIMEOUT", async (context) => {
+  const originalFetch = globalThis.fetch;
+  let attempts = 0;
+
+  globalThis.fetch = async (_input, init = {}) => {
+    attempts += 1;
+
+    return await new Promise((_resolve, reject) => {
+      init.signal?.addEventListener("abort", () => {
+        reject(new DOMException("The operation was aborted.", "AbortError"));
+      });
+    });
+  };
+
+  context.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const adapter = new OpenCodeRuntimeAdapter({
+    baseUrl: "http://127.0.0.1:4096",
+    requestTimeoutMs: 1_000
+  });
+
+  await assert.rejects(
+    () =>
+      adapter.startSession(
+        {
+          sessionId: "local-session-timeout",
+          workspaceId: "workspace-1",
+          workspacePath: "/Users/jackson/Code/CodingNS",
+          provider: "opencode",
+          providerSessionId: null,
+          rawStoreRef: null,
+          options: {
+            content: "测试超时重试",
+            clientRequestId: null,
+            model: null,
+            reasoningLevel: null,
+            permissionMode: null,
+            providerPrompt: null,
+            attachments: []
+          }
+        },
+        {
+          updateSessionBinding() {},
+          async emit() {}
+        }
+      ),
+    (error) => error instanceof Error && error.message === "SERVER_TIMEOUT"
+  );
+
+  assert.equal(attempts, 5);
+});
+
 test("OpenCodeRuntimeAdapter 会在 resolver 刷新后切换到新的 server 地址", async (context) => {
   const originalFetch = globalThis.fetch;
   let currentBaseUrl = "http://127.0.0.1:4096";

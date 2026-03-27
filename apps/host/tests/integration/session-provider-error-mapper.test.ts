@@ -18,4 +18,12 @@ describe("mapSessionProviderError", () => {
     expect(mapped.errorCode).toBe("IN_RUN_INPUT_NOT_SUPPORTED");
     expect(mapped.message).toContain("运行中继续输入");
   });
+
+  it("会把 SERVER_TIMEOUT 映射成稳定的超时错误", () => {
+    const mapped = mapSessionProviderError(new Error("SERVER_TIMEOUT"));
+
+    expect(mapped.statusCode).toBe(503);
+    expect(mapped.errorCode).toBe("PROVIDER_RUNTIME_TIMEOUT");
+    expect(mapped.message).toContain("请求超时");
+  });
 });

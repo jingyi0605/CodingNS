@@ -66,6 +66,14 @@ export function mapSessionProviderError(error: unknown): AppError {
     });
   }
 
+  if (error instanceof Error && error.message === "SERVER_TIMEOUT") {
+    return new AppError({
+      statusCode: 503,
+      errorCode: "PROVIDER_RUNTIME_TIMEOUT",
+      detail: "provider 服务请求超时，请确认 OpenCode server 正在运行且响应正常"
+    });
+  }
+
   if (error instanceof Error && error.message === "OPENCODE_DB_NOT_FOUND") {
     return new AppError({
       statusCode: 404,

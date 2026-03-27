@@ -1,14 +1,13 @@
 import { spawnSync } from "node:child_process";
-
-const DEFAULT_OPENCODE_BASE_URL = "http://127.0.0.1:4096";
 const DEFAULT_CACHE_TTL_MS = 5_000;
 const DEFAULT_PROBE_TIMEOUT_MS = 800;
 
 interface OpenCodeBaseUrlResolverOptions {
   configuredBaseUrl?: string | null;
-  fallbackBaseUrl?: string;
+  commandPath?: string | null;
   cacheTtlMs?: number;
   inspectProcessList?: () => string;
+  inspectListeningSockets?: (pid: number) => OpenCodeListeningSocket[];
   probeBaseUrl?: (baseUrl: string) => Promise<boolean>;
   now?: () => number;
 }
@@ -17,11 +16,22 @@ interface ResolveBaseUrlInput {
   refresh?: boolean;
 }
 
+interface OpenCodeServeProcessRecord {
+  pid: number;
+  command: string;
+}
+
+interface OpenCodeListeningSocket {
+  hostname: string;
+  port: number;
+}
+
 export class OpenCodeBaseUrlResolver {
   private readonly configuredBaseUrl: string | null;
-  private readonly fallbackBaseUrl: string;
+  private readonly commandPath: string | null;
   private readonly cacheTtlMs: number;
   private readonly inspectProcessList: () => string;
+  private readonly inspectListeningSockets: (pid: number) => OpenCodeListeningSocket[];
   private readonly probeBaseUrl: (baseUrl: string) => Promise<boolean>;
   private readonly now: () => number;
   private cachedBaseUrl: string | null = null;
@@ -30,11 +40,10 @@ export class OpenCodeBaseUrlResolver {
 
   constructor(options: OpenCodeBaseUrlResolverOptions = {}) {
     this.configuredBaseUrl = normalizeBaseUrl(options.configuredBaseUrl ?? null);
-    this.fallbackBaseUrl =
-      normalizeBaseUrl(options.fallbackBaseUrl ?? DEFAULT_OPENCODE_BASE_URL)
-      ?? DEFAULT_OPENCODE_BASE_URL;
+    this.commandPath = normalizeCommandPath(options.commandPath ?? null);
     this.cacheTtlMs = Math.max(500, Math.floor(options.cacheTtlMs ?? DEFAULT_CACHE_TTL_MS));
     this.inspectProcessList = options.inspectProcessList ?? readProcessList;
+    this.inspectListeningSockets = options.inspectListeningSockets ?? readListeningSockets;
     this.probeBaseUrl = options.probeBaseUrl ?? probeOpenCodeBaseUrl;
     this.now = options.now ?? Date.now;
   }
@@ -64,10 +73,14 @@ export class OpenCodeBaseUrlResolver {
   }
 
   private async discoverAvailableBaseUrl(): Promise<string> {
+    const serveProcesses = parseServeProcesses(this.inspectProcessList(), this.commandPath);
     const candidates = dedupeBaseUrls([
       this.cachedBaseUrl,
-      ...parseServeBaseUrls(this.inspectProcessList()),
-      this.fallbackBaseUrl
+      ...serveProcesses.flatMap((record) => {
+        return this.inspectListeningSockets(record.pid).map((socket) => {
+          return `http://${formatHostname(normalizeHostname(socket.hostname))}:${socket.port}`;
+        });
+      })
     ]);
 
     for (const candidate of candidates) {
@@ -79,7 +92,7 @@ export class OpenCodeBaseUrlResolver {
     }
 
     this.cachedAt = this.now();
-    return this.cachedBaseUrl ?? this.fallbackBaseUrl;
+    throw new Error("SERVER_UNAVAILABLE");
   }
 }
 
@@ -95,8 +108,8 @@ function readProcessList(): string {
   return result.stdout ?? "";
 }
 
-function parseServeBaseUrls(output: string): string[] {
-  const records: Array<{ pid: number; baseUrl: string }> = [];
+function parseServeProcesses(output: string, commandPath: string | null): OpenCodeServeProcessRecord[] {
+  const records: OpenCodeServeProcessRecord[] = [];
 
   for (const line of output.split(/\r?\n/)) {
     const trimmed = line.trim();
@@ -114,37 +127,27 @@ function parseServeBaseUrls(output: string): string[] {
     const pid = Number(matched[1]);
     const command = matched[2];
 
-    if (!command.includes("opencode") || !/\sserve(?:\s|$)/.test(command)) {
+    if (!isOpenCodeServeCommand(command, commandPath)) {
       continue;
     }
 
-    const port = extractFlagValue(command, "--port");
-
-    if (!port || !/^\d+$/.test(port)) {
-      continue;
-    }
-
-    const hostname = normalizeHostname(extractFlagValue(command, "--hostname"));
     records.push({
       pid,
-      baseUrl: `http://${formatHostname(hostname)}:${port}`
+      command
     });
   }
 
   return records
     .sort((left, right) => right.pid - left.pid)
-    .map((record) => record.baseUrl);
-}
-
-function extractFlagValue(command: string, flag: string): string | null {
-  const matched = command.match(new RegExp(`${escapeRegExp(flag)}\\s+([^\\s]+)`));
-  return matched?.[1] ?? null;
+    .filter((record, index, array) => {
+      return array.findIndex((candidate) => candidate.pid === record.pid) === index;
+    });
 }
 
 function normalizeHostname(value: string | null): string {
   const normalized = value?.trim();
 
-  if (!normalized || normalized === "0.0.0.0") {
+  if (!normalized || normalized === "0.0.0.0" || normalized === "*") {
     return "127.0.0.1";
   }
 
@@ -161,6 +164,41 @@ function formatHostname(value: string): string {
   }
 
   return value;
+}
+
+function readListeningSockets(pid: number): OpenCodeListeningSocket[] {
+  const result = spawnSync(
+    "lsof",
+    ["-Pan", "-n", "-a", "-p", String(pid), "-iTCP", "-sTCP:LISTEN"],
+    {
+      encoding: "utf8"
+    }
+  );
+
+  if (result.status !== 0) {
+    return [];
+  }
+
+  const records: OpenCodeListeningSocket[] = [];
+
+  for (const line of (result.stdout ?? "").split(/\r?\n/)) {
+    const matched = line.match(/\sTCP\s+(.+?)\s+\(LISTEN\)$/);
+
+    if (!matched) {
+      continue;
+    }
+
+    const endpoint = matched[1]?.trim() ?? "";
+    const parsed = parseSocketEndpoint(endpoint);
+
+    if (!parsed) {
+      continue;
+    }
+
+    records.push(parsed);
+  }
+
+  return dedupeListeningSockets(records).sort(compareListeningSockets);
 }
 
 function normalizeBaseUrl(value: string | null): string | null {
@@ -189,6 +227,125 @@ function dedupeBaseUrls(values: Array<string | null | undefined>): string[] {
   }
 
   return result;
+}
+
+function normalizeCommandPath(value: string | null): string | null {
+  const normalized = value?.trim();
+
+  if (!normalized) {
+    return null;
+  }
+
+  return normalized;
+}
+
+function isOpenCodeServeCommand(command: string, commandPath: string | null): boolean {
+  if (!/\sserve(?:\s|$)/.test(command)) {
+    return false;
+  }
+
+  const normalizedCommand = command.trim();
+  const markers = new Set<string>(["opencode"]);
+
+  if (commandPath) {
+    markers.add(commandPath);
+    const baseName = commandPath.split(/[\\/]/).pop()?.replace(/^[.]+/, "").trim();
+
+    if (baseName) {
+      markers.add(baseName);
+    }
+  }
+
+  for (const marker of markers) {
+    const normalizedMarker = marker.trim();
+
+    if (!normalizedMarker) {
+      continue;
+    }
+
+    if (normalizedCommand.includes(normalizedMarker)) {
+      return true;
+    }
+
+    if (new RegExp(`(^|[\\\\/\\s])\\.?${escapeRegExp(normalizedMarker)}(?:\\s|$)`, "i").test(normalizedCommand)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function parseSocketEndpoint(endpoint: string): OpenCodeListeningSocket | null {
+  const trimmed = endpoint.trim();
+
+  if (!trimmed) {
+    return null;
+  }
+
+  const separatorIndex = trimmed.lastIndexOf(":");
+
+  if (separatorIndex <= 0) {
+    return null;
+  }
+
+  const rawHostname = trimmed.slice(0, separatorIndex).trim();
+  const rawPort = trimmed.slice(separatorIndex + 1).trim();
+
+  if (!/^\d+$/.test(rawPort)) {
+    return null;
+  }
+
+  const hostname = rawHostname.startsWith("[") && rawHostname.endsWith("]")
+    ? rawHostname.slice(1, -1)
+    : rawHostname;
+
+  return {
+    hostname,
+    port: Number(rawPort)
+  };
+}
+
+function dedupeListeningSockets(values: OpenCodeListeningSocket[]): OpenCodeListeningSocket[] {
+  const result: OpenCodeListeningSocket[] = [];
+  const seen = new Set<string>();
+
+  for (const value of values) {
+    const normalizedHostname = normalizeHostname(value.hostname);
+    const key = `${normalizedHostname}:${value.port}`;
+
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    result.push({
+      hostname: normalizedHostname,
+      port: value.port
+    });
+  }
+
+  return result;
+}
+
+function compareListeningSockets(
+  left: OpenCodeListeningSocket,
+  right: OpenCodeListeningSocket
+): number {
+  return scoreListeningSocket(right) - scoreListeningSocket(left);
+}
+
+function scoreListeningSocket(value: OpenCodeListeningSocket): number {
+  const hostname = normalizeHostname(value.hostname);
+
+  if (hostname === "127.0.0.1") {
+    return 3;
+  }
+
+  if (hostname === "::1") {
+    return 2;
+  }
+
+  return 1;
 }
 
 async function probeOpenCodeBaseUrl(baseUrl: string): Promise<boolean> {

@@ -15,13 +15,19 @@ import type {
   RuntimeRunState
 } from "./types.js";
 
-const DEFAULT_BASE_URL = process.env.CODINGNS_OPENCODE_BASE_URL ?? "http://127.0.0.1:4096";
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
+const TIMEOUT_WARNING_THRESHOLD_MS = 15_000;
+const MAX_CONSECUTIVE_TIMEOUTS = 5;
 
 interface OpenCodeRuntimeOptions {
   baseUrl?: string;
   baseUrlResolver?: (input?: { refresh?: boolean }) => Promise<string> | string;
   requestTimeoutMs?: number;
+}
+
+interface TimeoutRetryState {
+  startedAtMs: number;
+  timeoutCount: number;
 }
 
 interface OpenCodeRuntimeState {
@@ -125,7 +131,7 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
         status: "failed",
         providerSessionId: state.providerSessionId,
         rawStoreRef: state.rawStoreRef,
-        errorCode: "OPENCODE_RUNTIME_FAILED",
+        errorCode: mapOpenCodeRuntimeErrorCode(error),
         detail: error instanceof Error ? error.message : "opencode runtime failed",
         timestamp: nextTimestamp()
       });
@@ -490,7 +496,11 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
   private async resolveBaseUrl(refresh = false): Promise<string> {
     const resolved = this.options.baseUrlResolver
       ? await this.options.baseUrlResolver({ refresh })
-      : (this.options.baseUrl?.trim() || DEFAULT_BASE_URL);
+      : this.options.baseUrl?.trim();
+
+    if (!resolved) {
+      throw new Error("SERVER_UNAVAILABLE");
+    }
 
     return resolved.trim().replace(/\/+$/, "");
   }
@@ -527,7 +537,8 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
       query?: Record<string, string | undefined>;
       signal?: AbortSignal;
     },
-    refresh: boolean
+    refresh: boolean,
+    timeoutState: TimeoutRetryState = createTimeoutRetryState()
   ): Promise<Response> {
     const url = new URL(pathname, `${await this.resolveBaseUrl(refresh)}/`);
 
@@ -567,16 +578,26 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
       return response;
     } catch (error) {
       if (controller.signal.aborted) {
-        if (!refresh && this.options.baseUrlResolver && !input.signal?.aborted) {
-          return this.fetchResponseWithRetry(pathname, input, true);
+        if (input.signal?.aborted) {
+          throw error;
         }
 
-        throw new Error("SERVER_UNAVAILABLE");
+        const nextTimeoutState = advanceTimeoutRetryState(timeoutState);
+
+        if (!shouldSurfaceTimeout(nextTimeoutState)) {
+          if (!refresh && this.options.baseUrlResolver) {
+            return this.fetchResponseWithRetry(pathname, input, true, nextTimeoutState);
+          }
+
+          return this.fetchResponseWithRetry(pathname, input, refresh, nextTimeoutState);
+        }
+
+        throw new Error("SERVER_TIMEOUT");
       }
 
       if (isRuntimeRequestUnavailable(error)) {
         if (!refresh && this.options.baseUrlResolver) {
-          return this.fetchResponseWithRetry(pathname, input, true);
+          return this.fetchResponseWithRetry(pathname, input, true, timeoutState);
         }
 
         throw new Error("SERVER_UNAVAILABLE");
@@ -794,10 +815,6 @@ function isRuntimeRequestUnavailable(error: unknown): boolean {
     return false;
   }
 
-  if (error.name === "AbortError") {
-    return true;
-  }
-
   const cause = "cause" in error ? error.cause : null;
 
   if (cause && typeof cause === "object" && "code" in cause) {
@@ -809,4 +826,41 @@ function isRuntimeRequestUnavailable(error: unknown): boolean {
   }
 
   return error.message === "fetch failed";
+}
+
+function createTimeoutRetryState(): TimeoutRetryState {
+  return {
+    startedAtMs: Date.now(),
+    timeoutCount: 0
+  };
+}
+
+function advanceTimeoutRetryState(state: TimeoutRetryState): TimeoutRetryState {
+  return {
+    startedAtMs: state.startedAtMs,
+    timeoutCount: state.timeoutCount + 1
+  };
+}
+
+function shouldSurfaceTimeout(state: TimeoutRetryState): boolean {
+  return (
+    state.timeoutCount >= MAX_CONSECUTIVE_TIMEOUTS
+    || Date.now() - state.startedAtMs >= TIMEOUT_WARNING_THRESHOLD_MS
+  );
+}
+
+function mapOpenCodeRuntimeErrorCode(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return "OPENCODE_RUNTIME_FAILED";
+  }
+
+  if (error.message === "SERVER_TIMEOUT") {
+    return "OPENCODE_REQUEST_TIMEOUT";
+  }
+
+  if (error.message === "SERVER_UNAVAILABLE") {
+    return "OPENCODE_SERVER_UNAVAILABLE";
+  }
+
+  return "OPENCODE_RUNTIME_FAILED";
 }
