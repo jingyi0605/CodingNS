@@ -381,72 +381,6 @@ a {
     var(--bg-primary);
 }
 
-.mobile-workbench-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 12px;
-  border-radius: 18px;
-  background: color-mix(in srgb, var(--bg-surface) 94%, transparent);
-  backdrop-filter: blur(18px) saturate(135%);
-  -webkit-backdrop-filter: blur(18px) saturate(135%);
-}
-
-.mobile-workbench-header-leading,
-.mobile-workbench-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.mobile-workbench-header-copy {
-  min-width: 0;
-}
-
-.mobile-workbench-header-copy h1 {
-  margin: 0;
-  font-size: 17px;
-  font-weight: 600;
-  line-height: 1.2;
-}
-
-.mobile-workbench-header-copy p {
-  margin: 3px 0 0;
-  color: var(--text-secondary);
-  font-size: 12px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.mobile-workbench-header-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  border-radius: 14px;
-  border: 1px solid var(--border-primary);
-  background: color-mix(in srgb, var(--bg-surface) 90%, transparent);
-  color: var(--text-secondary);
-  transition:
-    transform var(--transition-fast),
-    background var(--transition-fast),
-    color var(--transition-fast),
-    border-color var(--transition-fast);
-}
-
-.mobile-workbench-header-button:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}
-
-.mobile-workbench-header-button:active {
-  transform: scale(0.97);
-}
-
 .mobile-workbench-content {
   display: flex;
   flex: 1;
@@ -595,106 +529,6 @@ a {
     var(--bg-primary);
 }
 
-.ios-workbench-nav {
-  display: grid;
-  grid-template-columns: minmax(0, auto) minmax(0, 1fr) minmax(0, auto);
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  border-radius: 20px;
-  background: color-mix(in srgb, var(--bg-surface) 96%, transparent);
-  backdrop-filter: blur(22px) saturate(145%);
-  -webkit-backdrop-filter: blur(22px) saturate(145%);
-}
-
-.ios-workbench-nav-leading,
-.ios-workbench-nav-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-
-.ios-workbench-nav-spacer {
-  width: 36px;
-  height: 36px;
-  flex: 0 0 36px;
-}
-
-.ios-workbench-nav-actions {
-  justify-content: flex-end;
-}
-
-.ios-workbench-nav-copy {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 2px;
-  text-align: center;
-}
-
-.ios-workbench-nav-copy h1 {
-  margin: 0;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 17px;
-  font-weight: 600;
-  line-height: 1.15;
-}
-
-.ios-workbench-nav-copy p {
-  margin: 0;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-secondary);
-  font-size: 11px;
-  line-height: 1.2;
-}
-
-.ios-workbench-icon-button,
-.ios-workbench-back-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 36px;
-  border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--border-primary) 88%, transparent);
-  background: color-mix(in srgb, var(--bg-surface) 92%, transparent);
-  color: var(--accent);
-  transition:
-    background var(--transition-fast),
-    transform var(--transition-fast),
-    border-color var(--transition-fast);
-}
-
-.ios-workbench-icon-button {
-  width: 36px;
-  padding: 0;
-}
-
-.ios-workbench-back-button {
-  gap: 2px;
-  padding: 0 10px 0 8px;
-  font-size: 14px;
-  font-weight: 500;
-}
-
-.ios-workbench-icon-button:hover,
-.ios-workbench-back-button:hover {
-  background: var(--bg-hover);
-}
-
-.ios-workbench-icon-button:active,
-.ios-workbench-back-button:active {
-  transform: scale(0.97);
-}
-
 .ios-workbench-content {
   display: flex;
   flex: 1;
@@ -768,73 +602,6 @@ a {
   line-height: 1.2;
 }
 
-.ios-action-sheet-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 140;
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  padding:
-    12px
-    12px
-    calc(12px + env(safe-area-inset-bottom, 0px));
-  background: rgba(15, 23, 42, 0.22);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-}
-
-.ios-action-sheet {
-  width: min(100%, 520px);
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.ios-action-sheet-group,
-.ios-action-sheet-cancel {
-  overflow: hidden;
-  border-radius: 22px;
-  background: color-mix(in srgb, var(--bg-surface) 97%, transparent);
-}
-
-.ios-action-sheet-header {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 14px 20px 12px;
-  text-align: center;
-  color: var(--text-secondary);
-  font-size: 12px;
-}
-
-.ios-action-sheet-header strong {
-  color: var(--text-primary);
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.ios-action-sheet-button,
-.ios-action-sheet-cancel {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 54px;
-  border-top: 1px solid color-mix(in srgb, var(--border-primary) 84%, transparent);
-  color: var(--accent);
-  font-size: 17px;
-  font-weight: 500;
-}
-
-.ios-action-sheet-group .ios-action-sheet-button:first-of-type {
-  border-top: none;
-}
-
-.ios-action-sheet-cancel {
-  border-top: none;
-  font-weight: 600;
-}
-
 .android-workbench-shell {
   display: flex;
   flex-direction: column;
@@ -851,88 +618,6 @@ a {
     radial-gradient(circle at top, color-mix(in srgb, var(--accent) 8%, transparent), transparent 36%),
     linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 26%, transparent), transparent 22%),
     var(--bg-primary);
-}
-
-.android-workbench-topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 12px;
-  border-radius: 24px;
-  background: color-mix(in srgb, var(--bg-surface) 98%, transparent);
-}
-
-.android-workbench-topbar-leading,
-.android-workbench-topbar-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-
-.android-workbench-topbar-spacer {
-  width: 40px;
-  height: 40px;
-  flex: 0 0 40px;
-}
-
-.android-workbench-topbar-copy {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.android-workbench-topbar-overline {
-  color: var(--text-secondary);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.android-workbench-topbar-copy h1 {
-  margin: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 20px;
-  font-weight: 600;
-  line-height: 1.2;
-}
-
-.android-workbench-topbar-copy p {
-  margin: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-secondary);
-  font-size: 12px;
-}
-
-.android-workbench-icon-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  border-radius: 14px;
-  border: 1px solid color-mix(in srgb, var(--border-primary) 88%, transparent);
-  background: color-mix(in srgb, var(--bg-surface) 94%, transparent);
-  color: var(--text-primary);
-  transition:
-    transform var(--transition-fast),
-    background var(--transition-fast),
-    border-color var(--transition-fast);
-}
-
-.android-workbench-icon-button:hover {
-  background: var(--bg-hover);
-}
-
-.android-workbench-icon-button:active {
-  transform: scale(0.97);
 }
 
 .android-workbench-content {
@@ -1004,77 +689,6 @@ a {
   white-space: nowrap;
   font-size: 11px;
   line-height: 1.2;
-}
-
-.android-bottom-sheet-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 140;
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  padding: 0;
-  background: rgba(15, 23, 42, 0.22);
-}
-
-.android-bottom-sheet {
-  width: min(100%, 560px);
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-  padding:
-    10px
-    18px
-    calc(18px + env(safe-area-inset-bottom, 0px));
-  border-radius: 28px 28px 0 0;
-  background: color-mix(in srgb, var(--bg-surface) 99%, transparent);
-  box-shadow: 0 -18px 42px rgba(15, 23, 42, 0.18);
-}
-
-.android-bottom-sheet-handle {
-  width: 40px;
-  height: 4px;
-  margin: 0 auto 12px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--text-tertiary) 55%, transparent);
-}
-
-.android-bottom-sheet-header {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-bottom: 8px;
-}
-
-.android-bottom-sheet-header strong {
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.android-bottom-sheet-header span {
-  color: var(--text-secondary);
-  font-size: 13px;
-}
-
-.android-bottom-sheet-action,
-.android-bottom-sheet-close {
-  display: inline-flex;
-  min-height: 52px;
-  align-items: center;
-  justify-content: flex-start;
-  padding: 0 4px;
-  border-bottom: 1px solid color-mix(in srgb, var(--border-primary) 78%, transparent);
-  color: var(--text-primary);
-  font-size: 15px;
-  font-weight: 500;
-}
-
-.android-bottom-sheet-close {
-  justify-content: center;
-  margin-top: 8px;
-  border-bottom: none;
-  border-radius: 18px;
-  background: color-mix(in srgb, var(--bg-hover) 90%, transparent);
 }
 
 .workbench-side-resizer {
@@ -8725,11 +8339,15 @@ textarea:focus-visible {
 
 .tool-message-row .tool-call-item {
   width: min(680px, 100%);
+  max-width: 100%;
+  min-width: 0;
 }
 
 .tool-call-item {
   border-radius: 12px;
   box-shadow: none;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .tool-call-header {
@@ -8738,10 +8356,14 @@ textarea:focus-visible {
   padding: 0 8px;
   background: color-mix(in srgb, var(--bg-hover) 62%, transparent);
   font-size: 12px;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .tool-call-info {
   gap: 8px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .tool-call-name {
@@ -8752,6 +8374,9 @@ textarea:focus-visible {
 .tool-call-input-preview {
   font-size: 11px;
   line-height: 1.35;
+  display: block;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .tool-call-meta {
@@ -8762,10 +8387,13 @@ textarea:focus-visible {
   gap: 0;
   padding: 0;
   background: color-mix(in srgb, var(--bg-primary) 96%, transparent);
+  min-width: 0;
+  max-width: 100%;
 }
 
 .tool-call-section {
   gap: 0;
+  min-width: 0;
 }
 
 .tool-call-section + .tool-call-section {
@@ -8782,6 +8410,11 @@ textarea:focus-visible {
   padding: 0 8px 7px;
   font-size: 11px;
   line-height: 1.45;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .apply-patch-item {
@@ -8793,6 +8426,8 @@ textarea:focus-visible {
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--border-primary) 78%, transparent);
   background: linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 95%, transparent), color-mix(in srgb, var(--bg-primary) 98%, transparent));
+  max-width: 100%;
+  min-width: 0;
 }
 
 .apply-patch-stat-pill {
@@ -8827,6 +8462,8 @@ textarea:focus-visible {
   min-height: 34px;
   gap: 8px;
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
   padding: 0 8px;
   border: none;
   border-radius: 0;
@@ -8859,6 +8496,7 @@ textarea:focus-visible {
 
 .apply-patch-summary-file {
   min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -8871,6 +8509,7 @@ textarea:focus-visible {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  min-width: 0;
   font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1.35;
@@ -11054,11 +10693,650 @@ textarea:focus-visible {
   }
 }
 
+.settings-page-mobile {
+  padding: 18px 16px 32px;
+  background:
+    radial-gradient(circle at top, color-mix(in srgb, var(--accent) 10%, transparent), transparent 34%),
+    linear-gradient(180deg, color-mix(in srgb, white 55%, var(--bg-primary)), color-mix(in srgb, var(--bg-primary) 96%, white 4%) 18%, var(--bg-primary) 72%);
+  font-family: "SF Pro Display", "SF Pro Text", -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+.mobile-workbench-shell[data-active-entry="settings"],
+.ios-workbench-shell[data-active-entry="settings"],
+.android-workbench-shell[data-active-entry="settings"] {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 18%, transparent), transparent 18%),
+    var(--bg-primary);
+}
+
+.mobile-workbench-shell[data-active-entry="settings"] .mobile-workbench-content,
+.ios-workbench-shell[data-active-entry="settings"] .ios-workbench-content,
+.android-workbench-shell[data-active-entry="settings"] .android-workbench-content {
+  padding: 0;
+}
+
+.mobile-workbench-shell[data-active-entry="settings"] .mobile-workbench-content > .settings-page,
+.mobile-workbench-shell[data-active-entry="settings"] .mobile-workbench-content .mobile-adaptive-pane-main > .settings-page,
+.ios-workbench-shell[data-active-entry="settings"] .ios-workbench-content > .settings-page,
+.ios-workbench-shell[data-active-entry="settings"] .ios-workbench-content .mobile-adaptive-pane-main > .settings-page,
+.android-workbench-shell[data-active-entry="settings"] .android-workbench-content > .settings-page,
+.android-workbench-shell[data-active-entry="settings"] .android-workbench-content .mobile-adaptive-pane-main > .settings-page {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.settings-mobile-container {
+  max-width: 720px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.settings-mobile-hero {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 6px 6px 0;
+}
+
+.settings-mobile-detail-hero {
+  padding-bottom: 2px;
+}
+
+.settings-mobile-large-title {
+  margin: 0;
+  font-size: 34px;
+  line-height: 1.06;
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  color: var(--text-primary);
+}
+
+.settings-mobile-hero-text,
+.settings-mobile-group-note,
+.settings-mobile-nav-description,
+.settings-mobile-row-description {
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+
+.settings-mobile-hero-text {
+  font-size: 15px;
+  max-width: 32rem;
+}
+
+.settings-mobile-group-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-mobile-group-title {
+  margin: 0;
+  padding: 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  letter-spacing: -0.01em;
+}
+
+.settings-mobile-group-note {
+  padding: 0 8px;
+  font-size: 13px;
+  max-width: 34rem;
+}
+
+.settings-mobile-card {
+  position: relative;
+  overflow: hidden;
+  border-radius: 18px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 62%, rgba(255, 255, 255, 0.65));
+  background:
+    linear-gradient(180deg, color-mix(in srgb, rgba(255, 255, 255, 0.9) 72%, var(--bg-surface)), color-mix(in srgb, var(--bg-surface) 96%, white 4%)),
+    color-mix(in srgb, var(--bg-surface) 96%, white 4%);
+  box-shadow:
+    0 0 0 0.5px color-mix(in srgb, rgba(255, 255, 255, 0.75) 58%, transparent),
+    0 10px 30px rgba(15, 23, 42, 0.05),
+    0 1px 0 rgba(255, 255, 255, 0.72) inset;
+  backdrop-filter: blur(20px) saturate(130%);
+  -webkit-backdrop-filter: blur(20px) saturate(130%);
+}
+
+.settings-mobile-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.9), transparent);
+  pointer-events: none;
+}
+
+.settings-mobile-card > .settings-mobile-nav-row:not(:last-child),
+.settings-mobile-card > .settings-mobile-form-row:not(:last-child),
+.settings-mobile-card > .settings-mobile-static-row:not(:last-child),
+.settings-mobile-card > .settings-mobile-choice-row:not(:last-child) {
+  border-bottom: 1px solid color-mix(in srgb, var(--border-primary) 44%, transparent);
+}
+
+.settings-mobile-nav-row,
+.settings-mobile-choice-row {
+  width: 100%;
+  padding: 15px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--transition-fast),
+    transform var(--transition-fast);
+}
+
+.settings-mobile-nav-row:active,
+.settings-mobile-choice-row:active {
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+}
+
+.settings-mobile-form-row,
+.settings-mobile-static-row {
+  padding: 15px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-mobile-form-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+}
+
+.settings-mobile-nav-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, white 78%, var(--bg-surface)), color-mix(in srgb, var(--accent) 8%, var(--bg-primary)));
+  color: color-mix(in srgb, var(--accent) 82%, var(--text-primary));
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.72) inset,
+    0 0 0 0.5px color-mix(in srgb, var(--border-primary) 56%, transparent);
+}
+
+.settings-mobile-nav-icon svg,
+.settings-mobile-nav-trailing svg,
+.settings-mobile-choice-indicator svg {
+  width: 18px;
+  height: 18px;
+}
+
+.settings-mobile-nav-copy,
+.settings-mobile-row-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+
+.settings-mobile-nav-title,
+.settings-mobile-row-title,
+.settings-mobile-choice-label {
+  font-size: 16px;
+  font-weight: 590;
+  color: var(--text-primary);
+  letter-spacing: -0.015em;
+}
+
+.settings-mobile-nav-description,
+.settings-mobile-row-description {
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.settings-mobile-nav-trailing {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+.settings-mobile-nav-value {
+  max-width: 124px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.settings-mobile-language-switcher {
+  width: 100%;
+}
+
+.settings-mobile-language-switcher .language-switcher-options {
+  width: 100%;
+  justify-content: space-between;
+  padding: 3px;
+  border-radius: 999px;
+  border-color: color-mix(in srgb, var(--border-primary) 64%, transparent);
+  background: color-mix(in srgb, var(--bg-primary) 84%, white 16%);
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.06);
+}
+
+.settings-mobile-language-switcher .language-switcher-option {
+  flex: 1 1 0;
+  min-height: 34px;
+  font-size: 14px;
+}
+
+.settings-mobile-language-switcher .language-switcher-option.active {
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.08),
+    0 0 0 0.5px color-mix(in srgb, var(--border-primary) 45%, transparent);
+}
+
+.settings-mobile-choice-leading {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+
+.settings-mobile-choice-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 0.5px solid color-mix(in srgb, var(--border-primary) 82%, transparent);
+  flex-shrink: 0;
+  box-shadow: 0 0 0 3px color-mix(in srgb, white 78%, transparent);
+}
+
+.settings-mobile-choice-row.active {
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+}
+
+.settings-mobile-choice-indicator {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: transparent;
+  background: color-mix(in srgb, var(--bg-primary) 92%, white 8%);
+  border: 0.5px solid color-mix(in srgb, var(--border-primary) 64%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+}
+
+.settings-mobile-choice-row.active .settings-mobile-choice-indicator {
+  color: white;
+  background: linear-gradient(180deg, color-mix(in srgb, white 12%, var(--accent)), var(--accent));
+  border-color: color-mix(in srgb, var(--accent) 28%, transparent);
+  box-shadow:
+    0 1px 2px rgba(10, 132, 255, 0.26),
+    inset 0 1px 0 rgba(255, 255, 255, 0.24);
+}
+
+.settings-mobile-input,
+.settings-mobile-select {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding-left: 14px;
+  padding-right: 14px;
+  border-radius: 12px;
+  border: 0.5px solid color-mix(in srgb, var(--border-primary) 60%, transparent);
+  background: color-mix(in srgb, var(--bg-primary) 88%, white 12%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.7),
+    inset 0 -1px 0 rgba(15, 23, 42, 0.02);
+}
+
+.settings-mobile-primary-button,
+.settings-mobile-danger-button {
+  width: 100%;
+  min-height: 46px;
+  border: none;
+  border-radius: 14px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    transform var(--transition-fast),
+    opacity var(--transition-fast),
+    background var(--transition-fast);
+}
+
+.settings-mobile-primary-button {
+  background: linear-gradient(180deg, color-mix(in srgb, white 10%, var(--accent)), var(--accent));
+  color: #ffffff;
+  box-shadow:
+    0 10px 22px rgba(10, 132, 255, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+
+.settings-mobile-primary-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.settings-mobile-danger-button {
+  background: linear-gradient(180deg, color-mix(in srgb, white 22%, color-mix(in srgb, var(--error) 12%, var(--bg-primary))), color-mix(in srgb, var(--error) 14%, var(--bg-primary)));
+  color: var(--error);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.66),
+    0 6px 18px rgba(239, 68, 68, 0.05);
+}
+
+.settings-mobile-primary-button:hover:not(:disabled),
+.settings-mobile-danger-button:hover {
+  transform: translateY(-1px);
+}
+
+.settings-mobile-switch {
+  position: relative;
+  display: inline-flex;
+  align-self: flex-start;
+  cursor: pointer;
+}
+
+.settings-mobile-switch input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.settings-mobile-switch-track {
+  width: 52px;
+  height: 32px;
+  position: relative;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-hover) 82%, var(--bg-primary));
+  border: 0.5px solid color-mix(in srgb, var(--border-primary) 68%, transparent);
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.06);
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.settings-mobile-switch-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow:
+    0 2px 8px rgba(15, 23, 42, 0.16),
+    0 0 0 0.5px rgba(15, 23, 42, 0.04);
+  transition: transform var(--transition-fast);
+}
+
+.settings-mobile-switch input:checked + .settings-mobile-switch-track {
+  background: color-mix(in srgb, var(--accent) 88%, white 12%);
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+}
+
+.settings-mobile-switch input:checked + .settings-mobile-switch-track .settings-mobile-switch-thumb {
+  transform: translateX(20px);
+}
+
+.settings-mobile-release-card .settings-release-card {
+  padding: 16px;
+}
+
+.settings-mobile-release-card .settings-release-actions {
+  display: grid;
+  grid-template-columns: 1fr;
+}
+
+.settings-mobile-release-card .primary-button,
+.settings-mobile-release-card .secondary-button {
+  width: 100%;
+}
+
+.settings-footer-mobile {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
+[data-theme="dark"] .settings-page-mobile {
+  background:
+    radial-gradient(circle at top, rgba(10, 132, 255, 0.12), transparent 28%),
+    linear-gradient(180deg, #090909, #0b0b0c 16%, #0d0d0d 55%, #0a0a0a);
+}
+
+[data-theme="dark"] .mobile-workbench-shell[data-active-entry="settings"],
+[data-theme="dark"] .ios-workbench-shell[data-active-entry="settings"],
+[data-theme="dark"] .android-workbench-shell[data-active-entry="settings"] {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 14%),
+    #080808;
+}
+
+[data-theme="dark"] .settings-mobile-group-title,
+[data-theme="dark"] .settings-mobile-group-note,
+[data-theme="dark"] .settings-mobile-row-description,
+[data-theme="dark"] .settings-mobile-nav-description,
+[data-theme="dark"] .settings-mobile-hero-text {
+  color: rgba(235, 235, 245, 0.6);
+}
+
+[data-theme="dark"] .settings-mobile-card {
+  border-color: rgba(255, 255, 255, 0.08);
+  background:
+    linear-gradient(180deg, rgba(28, 28, 30, 0.98), rgba(18, 18, 20, 0.98)),
+    #141416;
+  box-shadow:
+    0 0 0 0.5px rgba(255, 255, 255, 0.04),
+    0 14px 34px rgba(0, 0, 0, 0.36),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(18px) saturate(120%);
+  -webkit-backdrop-filter: blur(18px) saturate(120%);
+}
+
+[data-theme="dark"] .settings-mobile-card::before {
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.07), transparent);
+}
+
+[data-theme="dark"] .settings-mobile-card > .settings-mobile-nav-row:not(:last-child),
+[data-theme="dark"] .settings-mobile-card > .settings-mobile-form-row:not(:last-child),
+[data-theme="dark"] .settings-mobile-card > .settings-mobile-static-row:not(:last-child),
+[data-theme="dark"] .settings-mobile-card > .settings-mobile-choice-row:not(:last-child) {
+  border-bottom-color: rgba(255, 255, 255, 0.06);
+}
+
+[data-theme="dark"] .settings-mobile-nav-row:active,
+[data-theme="dark"] .settings-mobile-choice-row:active,
+[data-theme="dark"] .settings-mobile-choice-row.active {
+  background: rgba(10, 132, 255, 0.1);
+}
+
+[data-theme="dark"] .settings-mobile-nav-icon {
+  background:
+    linear-gradient(180deg, rgba(36, 36, 40, 0.96), rgba(22, 22, 24, 0.96));
+  color: #4da3ff;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 0 0 0.5px rgba(255, 255, 255, 0.04);
+}
+
+[data-theme="dark"] .settings-mobile-nav-value {
+  color: rgba(235, 235, 245, 0.62);
+}
+
+[data-theme="dark"] .settings-mobile-language-switcher .language-switcher-options {
+  border-color: rgba(255, 255, 255, 0.07);
+  background: rgba(10, 10, 12, 0.96);
+  box-shadow:
+    inset 0 1px 2px rgba(0, 0, 0, 0.42),
+    0 0 0 0.5px rgba(255, 255, 255, 0.03);
+}
+
+[data-theme="dark"] .settings-mobile-language-switcher .language-switcher-option {
+  color: rgba(235, 235, 245, 0.6);
+}
+
+[data-theme="dark"] .settings-mobile-language-switcher .language-switcher-option.active {
+  color: #4da3ff;
+  background: rgba(10, 132, 255, 0.18);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 0 0 0.5px rgba(10, 132, 255, 0.16);
+}
+
+[data-theme="dark"] .settings-mobile-choice-dot {
+  border-color: rgba(255, 255, 255, 0.14);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.05);
+}
+
+[data-theme="dark"] .settings-mobile-choice-indicator {
+  background: #0c0c0d;
+  border-color: rgba(255, 255, 255, 0.1);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+[data-theme="dark"] .settings-mobile-choice-row.active .settings-mobile-choice-indicator {
+  background: linear-gradient(180deg, #3f9eff, #0a84ff);
+  border-color: rgba(77, 163, 255, 0.34);
+  box-shadow:
+    0 4px 12px rgba(10, 132, 255, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+
+[data-theme="dark"] .settings-mobile-input,
+[data-theme="dark"] .settings-mobile-select {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: #0c0c0d;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.03),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.24);
+}
+
+[data-theme="dark"] .settings-mobile-primary-button {
+  background: linear-gradient(180deg, #2b95ff, #0a84ff);
+  box-shadow:
+    0 10px 22px rgba(10, 132, 255, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.16);
+}
+
+[data-theme="dark"] .settings-mobile-danger-button {
+  background: linear-gradient(180deg, rgba(82, 21, 18, 0.92), rgba(58, 13, 12, 0.96));
+  color: #ff6961;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 10px 22px rgba(0, 0, 0, 0.22);
+}
+
+[data-theme="dark"] .settings-mobile-switch-track {
+  background: #2b2b2f;
+  border-color: rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+
+[data-theme="dark"] .settings-mobile-switch-thumb {
+  background: #f5f5f7;
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.34),
+    0 0 0 0.5px rgba(255, 255, 255, 0.04);
+}
+
+[data-theme="dark"] .settings-mobile-switch input:checked + .settings-mobile-switch-track {
+  background: #0a84ff;
+  border-color: rgba(77, 163, 255, 0.28);
+}
+
+[data-theme="dark"] .settings-runtime-badge {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+@media (min-width: 641px) {
+  .settings-page-mobile {
+    padding: 22px 20px 40px;
+  }
+
+  .settings-mobile-form-row,
+  .settings-mobile-static-row {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .settings-mobile-form-row .settings-mobile-row-copy,
+  .settings-mobile-static-row .settings-mobile-row-copy {
+    max-width: 58%;
+  }
+
+  .settings-mobile-select {
+    width: 210px;
+  }
+
+  .settings-mobile-language-switcher {
+    width: auto;
+    min-width: 280px;
+  }
+
+  .settings-mobile-form-stack {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .settings-mobile-primary-button {
+    width: auto;
+    min-width: 108px;
+  }
+
+  .settings-mobile-nav-value {
+    max-width: 180px;
+  }
+}
+
+/* 移动端滚动模型：
+   1. 壳层只负责裁剪，不接管滚动。
+   2. 普通页面由页面根节点滚动。
+   3. 重型页面固定根节点，只让内部主面板滚动。 */
+.mobile-page-scroll-root {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+}
+
+.mobile-page-fixed-root {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .mobile-feature-page {
   display: flex;
   flex-direction: column;
   gap: 1rem;
-  min-height: 100%;
+  min-height: 0;
   padding: 1rem;
   box-sizing: border-box;
 }
@@ -11167,6 +11445,153 @@ textarea:focus-visible {
   padding: 1rem;
 }
 
+.mobile-workspace-home-primary,
+.mobile-workspace-home-activity {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  padding: 1rem;
+}
+
+.mobile-workspace-home-primary {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--accent) 10%, var(--bg-surface)), var(--bg-surface)),
+    var(--bg-surface);
+}
+
+.mobile-workspace-home-primary-header,
+.mobile-workspace-home-activity-main,
+.mobile-workspace-home-activity-badges {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.mobile-workspace-home-primary-header-spacer {
+  width: 1px;
+  height: 1px;
+}
+
+.mobile-workspace-home-primary-copy,
+.mobile-workspace-home-activity-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.mobile-workspace-home-primary-copy h1,
+.mobile-workspace-home-activity-copy h3 {
+  margin: 0;
+}
+
+.mobile-workspace-home-primary-copy h1 {
+  font-size: 1.8rem;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+}
+
+.mobile-workspace-home-primary-path {
+  word-break: break-all;
+}
+
+.mobile-workspace-home-branch,
+.mobile-workspace-home-provider,
+.mobile-workspace-home-activity-state {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2rem;
+  padding: 0.25rem 0.75rem;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.mobile-workspace-home-branch,
+.mobile-workspace-home-provider {
+  border: 1px solid color-mix(in srgb, var(--border-primary) 88%, transparent);
+  background: color-mix(in srgb, var(--bg-surface) 92%, transparent);
+  color: var(--text-secondary);
+}
+
+.mobile-workspace-home-activity-badges {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+.mobile-workspace-home-activity-main.is-empty {
+  align-items: flex-start;
+}
+
+.mobile-workspace-home-activity-state {
+  border: 1px solid transparent;
+}
+
+.mobile-workspace-home-activity-state[data-tone="running"] {
+  background: color-mix(in srgb, #34c759 16%, var(--bg-surface));
+  border-color: color-mix(in srgb, #34c759 32%, transparent);
+  color: #1f8f46;
+}
+
+.mobile-workspace-home-activity-state[data-tone="accent"] {
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-surface));
+  border-color: color-mix(in srgb, var(--accent) 26%, transparent);
+  color: var(--accent);
+}
+
+.mobile-workspace-home-activity-state[data-tone="error"] {
+  background: color-mix(in srgb, var(--status-danger) 12%, var(--bg-surface));
+  border-color: color-mix(in srgb, var(--status-danger) 28%, transparent);
+  color: var(--status-danger);
+}
+
+.mobile-workspace-home-activity-state[data-tone="muted"] {
+  background: var(--bg-tertiary);
+  border-color: color-mix(in srgb, var(--border-primary) 92%, transparent);
+  color: var(--text-secondary);
+}
+
+.mobile-workspace-home-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.mobile-workspace-home-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.9rem;
+  border-radius: 1rem;
+  border: 1px solid var(--border-primary);
+  background: color-mix(in srgb, var(--bg-surface) 94%, transparent);
+}
+
+.mobile-workspace-home-metric span,
+.mobile-workspace-home-status-text,
+.mobile-workspace-home-empty-title {
+  color: var(--text-secondary);
+}
+
+.mobile-workspace-home-metric span {
+  font-size: 0.82rem;
+}
+
+.mobile-workspace-home-metric strong {
+  font-size: 1.55rem;
+  line-height: 1;
+}
+
+.mobile-workspace-home-status-text,
+.mobile-workspace-home-empty-title {
+  margin: 0;
+}
+
+.mobile-workspace-home-empty-title {
+  font-weight: 600;
+}
+
 .mobile-workspace-card-main,
 .mobile-session-card-main {
   display: flex;
@@ -11241,6 +11666,138 @@ textarea:focus-visible {
   gap: 0.75rem;
 }
 
+.mobile-tools-workspace-page {
+  padding: 0;
+  gap: 0;
+}
+
+.mobile-tools-native-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.9rem 1rem 0.7rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-primary) 70%, transparent);
+  background: color-mix(in srgb, var(--bg-primary) 96%, transparent);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+.mobile-tools-native-bar-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.18rem;
+  min-width: 0;
+}
+
+.mobile-tools-native-bar-label {
+  margin: 0;
+}
+
+.mobile-tools-native-bar-label {
+  font-size: 1.15rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.mobile-tools-more-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 999px;
+  color: var(--text-secondary);
+}
+
+.mobile-tools-stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+  background: var(--bg-primary);
+}
+
+.mobile-tools-stage-viewport {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  touch-action: pan-y;
+}
+
+.mobile-tools-stage-track {
+  display: flex;
+  height: 100%;
+  width: 100%;
+  transition: transform 220ms ease;
+  will-change: transform;
+}
+
+.mobile-tools-stage-panel {
+  flex: 0 0 100%;
+  min-width: 100%;
+  min-height: 0;
+}
+
+.mobile-tools-stage-panel:first-child {
+  padding-right: 0.4rem;
+}
+
+.mobile-tools-stage-panel:last-child {
+  padding-left: 0.4rem;
+}
+
+.mobile-tools-stage-panel-shell {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0 0.7rem 0.7rem;
+}
+
+.mobile-tools-stage-panel-shell > * {
+  height: 100%;
+  min-height: 0;
+}
+
+.mobile-tools-menu-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 150;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 0 0.75rem calc(0.75rem + env(safe-area-inset-bottom, 0px));
+  background: rgba(15, 23, 42, 0.18);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.mobile-tools-menu-sheet {
+  width: min(100%, 28rem);
+  overflow: hidden;
+  border-radius: 1.35rem;
+  background: color-mix(in srgb, var(--bg-surface) 96%, transparent);
+  box-shadow: 0 20px 48px rgba(15, 23, 42, 0.16);
+}
+
+.mobile-tools-menu-action,
+.mobile-tools-menu-cancel {
+  width: 100%;
+  min-height: 3.3rem;
+  padding: 0.9rem 1rem;
+  font-size: 1rem;
+  text-align: center;
+}
+
+.mobile-tools-menu-action {
+  border-bottom: 1px solid color-mix(in srgb, var(--border-primary) 70%, transparent);
+  font-weight: 600;
+}
+
+.mobile-tools-menu-cancel {
+  color: var(--text-secondary);
+}
+
 .mobile-session-card-button {
   width: 100%;
   padding: 0;
@@ -11300,7 +11857,24 @@ textarea:focus-visible {
 }
 
 .mobile-tool-panel-page .mobile-feature-panel {
-  min-height: 100%;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.mobile-tool-panel-page .mobile-feature-section-header {
+  flex: 0 0 auto;
+}
+
+.mobile-tool-panel-page .mobile-panel-scroll-root {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
 }
 
 @media (min-width: 768px) {
@@ -11311,6 +11885,21 @@ textarea:focus-visible {
   .mobile-feature-hero {
     padding: 1.2rem;
   }
+
+  .mobile-workspace-home-metrics-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .mobile-tools-native-bar {
+    padding-right: 1.25rem;
+    padding-left: 1.25rem;
+  }
+
+  .mobile-tools-stage-panel-shell {
+    padding-right: 1rem;
+    padding-bottom: 1rem;
+    padding-left: 1rem;
+  }
 }
 
 .file-panel-heading-row {
@@ -11320,4 +11909,477 @@ textarea:focus-visible {
 .file-panel-heading {
   margin: 0;
   font-size: 0.95rem;
+}
+
+/* ========================================
+   Mobile Conversation Focus
+   ======================================== */
+
+.mobile-floating-nav {
+  position: absolute;
+  z-index: 26;
+  width: 56px;
+  height: 56px;
+  pointer-events: auto;
+}
+
+.mobile-floating-nav-bubble {
+  position: relative;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 72%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 96%, transparent), color-mix(in srgb, var(--bg-primary) 94%, transparent));
+  color: var(--text-secondary);
+  box-shadow: 0 18px 36px rgba(15, 23, 42, 0.16);
+  backdrop-filter: blur(18px) saturate(145%);
+  -webkit-backdrop-filter: blur(18px) saturate(145%);
+  touch-action: none;
+  transition:
+    transform var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.mobile-floating-nav[data-open="true"] .mobile-floating-nav-bubble {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 26%, var(--border-primary));
+}
+
+.mobile-radial-nav-panel {
+  position: absolute;
+  left: calc(50% - 130px);
+  top: calc(50% - 130px);
+  width: 260px;
+  height: 260px;
+  pointer-events: none;
+}
+
+.mobile-radial-nav-wheel {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 72%, transparent);
+  background:
+    radial-gradient(circle at center, color-mix(in srgb, var(--bg-primary) 92%, transparent) 0 42px, transparent 43px),
+    radial-gradient(circle at center, transparent 0 56px, color-mix(in srgb, var(--bg-surface) 96%, transparent) 57px 100%),
+    radial-gradient(circle at center, color-mix(in srgb, white 18%, transparent), transparent 72%);
+  box-shadow:
+    0 22px 42px rgba(15, 23, 42, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  backdrop-filter: blur(18px) saturate(145%);
+  -webkit-backdrop-filter: blur(18px) saturate(145%);
+}
+
+.mobile-radial-nav-wheel::before {
+  content: "";
+  position: absolute;
+  inset: 41px;
+  border-radius: 999px;
+  border: 1px dashed color-mix(in srgb, var(--border-primary) 48%, transparent);
+  opacity: 0.65;
+}
+
+.mobile-radial-nav-center {
+  position: absolute;
+  inset: 50%;
+  width: 78px;
+  height: 78px;
+  margin: -39px 0 0 -39px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 72%, transparent);
+  background:
+    radial-gradient(circle at center, color-mix(in srgb, white 16%, var(--bg-surface)), color-mix(in srgb, var(--bg-primary) 94%, transparent));
+  box-shadow:
+    0 10px 24px rgba(15, 23, 42, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+
+.mobile-radial-nav-center-dot {
+  position: absolute;
+  inset: 50%;
+  width: 8px;
+  height: 8px;
+  margin: -4px 0 0 -4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 88%, white 12%);
+  box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.mobile-radial-nav-action {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 76px;
+  height: 76px;
+  margin: -38px 0 0 -38px;
+  padding: 8px 7px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 72%, transparent);
+  background: color-mix(in srgb, var(--bg-hover) 68%, transparent);
+  color: var(--text-primary);
+  text-align: center;
+  pointer-events: auto;
+  transform: translate(var(--radial-nav-x), var(--radial-nav-y));
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.mobile-radial-nav-action:hover,
+.mobile-radial-nav-action:focus-visible,
+.mobile-radial-nav-action[data-active="true"] {
+  background: color-mix(in srgb, var(--bg-active) 82%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 24%, var(--border-primary));
+  box-shadow:
+    0 12px 26px rgba(15, 23, 42, 0.12),
+    0 0 0 4px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.mobile-radial-nav-action-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+}
+
+.mobile-radial-nav-action-label {
+  min-width: 0;
+  font-size: 10px;
+  line-height: 1.2;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"],
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"],
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] {
+  position: relative;
+  gap: 0;
+  padding:
+    calc(6px + env(safe-area-inset-top, 0px))
+    0
+    0;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 22%, transparent), transparent 20%),
+    var(--bg-primary);
+}
+
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .mobile-workbench-content,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .ios-workbench-content,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .android-workbench-content {
+  position: relative;
+  padding: 0;
+}
+
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .mobile-workbench-content > .conversation-page-shell,
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .mobile-workbench-content .mobile-adaptive-pane-main > .conversation-page-shell,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .ios-workbench-content > .conversation-page-shell,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .ios-workbench-content .mobile-adaptive-pane-main > .conversation-page-shell,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .android-workbench-content > .conversation-page-shell,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .android-workbench-content .mobile-adaptive-pane-main > .conversation-page-shell {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .conversation-page-shell::before,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .conversation-page-shell::before,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .conversation-page-shell::before {
+  display: none;
+}
+
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .conversation-header,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .conversation-header,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .conversation-header {
+  display: none;
+}
+
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .message-timeline,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .message-timeline,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .message-timeline {
+  padding: 0;
+}
+
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .message-list,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .message-list,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .message-list {
+  gap: 0;
+  padding: 4px 0 0;
+}
+
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .message-item,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .message-item,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .message-item {
+  gap: 0;
+  padding: 12px 16px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-primary) 62%, transparent);
+}
+
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .message-content-wrapper,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .message-content-wrapper,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .message-content-wrapper {
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .assistant-message,
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .system-message,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .assistant-message,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .system-message,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .assistant-message,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .system-message {
+  display: block;
+}
+
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .assistant-message .message-avatar,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .assistant-message .message-avatar,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .assistant-message .message-avatar {
+  display: none;
+}
+
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .user-message,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .user-message,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .user-message {
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .user-message .message-content-wrapper,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .user-message .message-content-wrapper,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .user-message .message-content-wrapper {
+  width: auto;
+  max-width: 100%;
+}
+
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .tool-message-row,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .tool-message-row,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .tool-message-row {
+  padding: 8px 16px 6px;
+}
+
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .tool-call-item,
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .rules-message-card,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .tool-call-item,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .rules-message-card,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .tool-call-item,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .rules-message-card {
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .tool-call-item,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .tool-call-item,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .tool-call-item {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow: visible;
+  border: none;
+  background: transparent;
+}
+
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .tool-call-header,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .tool-call-header,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .tool-call-header {
+  position: relative;
+  align-items: flex-start;
+  min-height: 0;
+  gap: 6px;
+  padding: 0 0 0 16px;
+  background: transparent;
+}
+
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .tool-call-header::before,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .tool-call-header::before,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .tool-call-header::before,
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .apply-patch-summary-row::before,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .apply-patch-summary-row::before,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .apply-patch-summary-row::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 7px;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 84%, white 16%);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .tool-call-info,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .tool-call-info,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .tool-call-info {
+  flex: 1;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .tool-call-name,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .tool-call-name,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .tool-call-name {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .tool-call-input-preview,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .tool-call-input-preview,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .tool-call-input-preview {
+  flex: 1 1 100%;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-primary);
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .tool-call-meta,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .tool-call-meta,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .tool-call-meta {
+  padding-top: 2px;
+}
+
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .tool-call-output,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .tool-call-output,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .tool-call-output {
+  margin: 4px 0 0 16px;
+  padding: 0 0 0 10px;
+  border-left: 1px solid color-mix(in srgb, var(--border-primary) 72%, transparent);
+  background: transparent;
+}
+
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .tool-call-section + .tool-call-section,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .tool-call-section + .tool-call-section,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .tool-call-section + .tool-call-section {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: none;
+}
+
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .tool-call-section-label,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .tool-call-section-label,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .tool-call-section-label {
+  padding: 0 0 3px;
+  font-size: 9px;
+}
+
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .tool-call-output pre,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .tool-call-output pre,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .tool-call-output pre {
+  padding: 0;
+}
+
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .apply-patch-item,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .apply-patch-item,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .apply-patch-item {
+  gap: 0;
+  overflow: visible;
+  border: none;
+  background: transparent;
+}
+
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .apply-patch-summary-row,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .apply-patch-summary-row,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .apply-patch-summary-row {
+  position: relative;
+  display: flex;
+  min-height: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 8px;
+  padding: 0 0 0 16px;
+  background: transparent;
+}
+
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .apply-patch-summary-row + .apply-patch-summary-row,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .apply-patch-summary-row + .apply-patch-summary-row,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .apply-patch-summary-row + .apply-patch-summary-row {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--border-primary) 68%, transparent);
+}
+
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .apply-patch-summary-row:hover,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .apply-patch-summary-row:hover,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .apply-patch-summary-row:hover {
+  background: transparent;
+}
+
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .apply-patch-summary-file,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .apply-patch-summary-file,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .apply-patch-summary-file {
+  flex: 1 1 100%;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .apply-patch-summary-stats,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .apply-patch-summary-stats,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .apply-patch-summary-stats {
+  width: 100%;
+  justify-content: flex-start;
+}
+
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .queued-message-list,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .queued-message-list,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .queued-message-list {
+  margin: 0;
+  padding: 4px 16px 8px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .composer-panel,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .composer-panel,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .composer-panel {
+  padding: 8px 10px calc(10px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid color-mix(in srgb, var(--border-primary) 70%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-primary) 0%, transparent), color-mix(in srgb, var(--bg-surface) 92%, transparent));
+  box-shadow: none;
+}
+
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .composer-input-container,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .composer-input-container,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .composer-input-container {
+  box-shadow: none;
+}
+
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .mobile-workbench-tabbar.is-transient,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .ios-workbench-tabbar.is-transient,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .android-workbench-bottom-nav.is-transient {
+  position: absolute;
+  right: 10px;
+  bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+  left: 10px;
+  z-index: 24;
+  border-radius: 18px;
+  box-shadow: 0 18px 36px rgba(15, 23, 42, 0.16);
 }
