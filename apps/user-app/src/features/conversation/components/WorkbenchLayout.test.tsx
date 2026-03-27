@@ -1341,8 +1341,28 @@ describe("WorkbenchLayout", () => {
           currentPath: "C:/srv/projects",
           parentPath: "C:/srv",
           roots: [{ path: "C:/", name: "C:\\" }],
-          items: [{ path: "C:/srv/projects/server-app", name: "server-app" }]
+          items: []
         });
+      }
+
+      if (url.endsWith("/api/workspaces/directories") && init?.method === "POST") {
+        const payload = JSON.parse(String(init?.body ?? "{}")) as {
+          parentPath?: string;
+          directoryName?: string;
+        };
+
+        expect(payload).toEqual({
+          parentPath: "C:/srv/projects",
+          directoryName: "server-app"
+        });
+
+        return createJsonResponse(
+          {
+            path: "C:/srv/projects/server-app",
+            name: "server-app"
+          },
+          201
+        );
       }
 
       if (url.endsWith("/api/workspaces/import") && init?.method === "POST") {
@@ -1382,9 +1402,27 @@ describe("WorkbenchLayout", () => {
     const dialog = await screen.findByRole("dialog", { name: t("shell.importBrowserTitle") });
     expect(within(dialog).getByDisplayValue("C:/srv/projects")).toBeInTheDocument();
 
-    await userEvent.click(within(dialog).getByRole("button", { name: /server-app/i }));
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: t("shell.importBrowserCreateDirectory") })
+    );
+
+    const createDialog = await screen.findByRole("dialog", {
+      name: t("shell.importBrowserCreateDirectoryTitle")
+    });
+    await userEvent.type(
+      within(createDialog).getByRole("textbox", {
+        name: t("shell.importBrowserCreateDirectoryLabel")
+      }),
+      "server-app"
+    );
+    await userEvent.click(
+      within(createDialog).getByRole("button", {
+        name: t("shell.importBrowserCreateDirectorySubmit")
+      })
+    );
 
     await waitFor(() => {
+      expect(within(dialog).getByDisplayValue("C:/srv/projects/server-app")).toBeInTheDocument();
       expect(within(dialog).getByText("C:/srv/projects/server-app")).toBeInTheDocument();
     });
 

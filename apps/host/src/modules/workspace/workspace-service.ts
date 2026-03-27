@@ -21,6 +21,11 @@ export interface WorkspaceDirectoryBrowseResult {
   items: WorkspaceDirectoryOption[];
 }
 
+export interface WorkspaceCreatedDirectoryResult {
+  path: string;
+  name: string;
+}
+
 type WorkspaceCloneAuth =
   | {
       mode?: "none";
@@ -188,6 +193,41 @@ export class WorkspaceService {
           name: entry.name
         }))
         .sort((left, right) => left.name.localeCompare(right.name))
+    };
+  }
+
+  createDirectory(parentPath: string, directoryName: string): WorkspaceCreatedDirectoryResult {
+    const normalizedParentPath = parentPath.trim();
+
+    if (!normalizedParentPath) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "INVALID_INPUT",
+        detail: "父目录不能为空",
+        field: "parentPath"
+      });
+    }
+
+    const resolvedParentPath = path.resolve(normalizedParentPath);
+    ensureExistingDirectory(resolvedParentPath, "parentPath");
+
+    const normalizedDirectoryName = normalizeSingleDirectoryName(directoryName, "directoryName");
+    const targetPath = path.join(resolvedParentPath, normalizedDirectoryName);
+
+    if (fs.existsSync(targetPath)) {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "WORKSPACE_DIRECTORY_EXISTS",
+        detail: "目标目录已经存在",
+        field: "directoryName"
+      });
+    }
+
+    fs.mkdirSync(targetPath);
+
+    return {
+      path: targetPath,
+      name: normalizedDirectoryName
     };
   }
 
@@ -451,14 +491,25 @@ function ensureExistingDirectory(targetPath: string, field: string): void {
 
 function normalizeCloneDirectoryName(directoryName: string | undefined, repositoryUrl: string): string {
   const rawValue = directoryName?.trim() || deriveDirectoryNameFromRepository(repositoryUrl);
-  const normalized = rawValue.trim();
+  return normalizeSingleDirectoryName(rawValue, "directoryName");
+}
+
+function deriveDirectoryNameFromRepository(repositoryUrl: string): string {
+  const normalized = repositoryUrl.trim().replace(/\\/g, "/").replace(/[\/]+$/, "");
+  const lastSlashIndex = Math.max(normalized.lastIndexOf("/"), normalized.lastIndexOf(":"));
+  const rawName = lastSlashIndex >= 0 ? normalized.slice(lastSlashIndex + 1) : normalized;
+  return rawName.replace(/\.git$/i, "");
+}
+
+function normalizeSingleDirectoryName(rawValue: string | undefined, field: string): string {
+  const normalized = rawValue?.trim() || "";
 
   if (!normalized) {
     throw new AppError({
       statusCode: 400,
       errorCode: "INVALID_INPUT",
       detail: "目标目录名不能为空",
-      field: "directoryName"
+      field
     });
   }
 
@@ -474,18 +525,11 @@ function normalizeCloneDirectoryName(directoryName: string | undefined, reposito
       statusCode: 400,
       errorCode: "INVALID_INPUT",
       detail: "目标目录名无效，必须是单层目录名",
-      field: "directoryName"
+      field
     });
   }
 
   return normalized;
-}
-
-function deriveDirectoryNameFromRepository(repositoryUrl: string): string {
-  const normalized = repositoryUrl.trim().replace(/\\/g, "/").replace(/[\/]+$/, "");
-  const lastSlashIndex = Math.max(normalized.lastIndexOf("/"), normalized.lastIndexOf(":"));
-  const rawName = lastSlashIndex >= 0 ? normalized.slice(lastSlashIndex + 1) : normalized;
-  return rawName.replace(/\.git$/i, "");
 }
 
 function createGitAuthContext(auth: WorkspaceCloneAuth | null | undefined): GitAuthContext | null {

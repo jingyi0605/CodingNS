@@ -32,6 +32,11 @@ interface BrowseWorkspaceQuery {
   path?: string;
 }
 
+interface CreateWorkspaceDirectoryBody {
+  parentPath?: string;
+  directoryName?: string;
+}
+
 interface WorkspaceParams {
   workspaceId: string;
 }
@@ -50,6 +55,18 @@ export class WorkspaceController {
     reply: FastifyReply
   ): Promise<void> => {
     reply.send(this.workspaceService.browseDirectories(request.query.path?.trim()));
+  };
+
+  readonly createDirectory = async (
+    request: FastifyRequest<{ Body: CreateWorkspaceDirectoryBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.status(201).send(
+      this.workspaceService.createDirectory(
+        request.body.parentPath?.trim() || "",
+        request.body.directoryName?.trim() || ""
+      )
+    );
   };
 
   readonly import = async (

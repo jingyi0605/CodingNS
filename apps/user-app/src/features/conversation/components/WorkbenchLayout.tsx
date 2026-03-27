@@ -42,10 +42,7 @@ import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 import { authStore } from "../../auth/store/auth-store";
 import {
-  browseWorkspaceDirectories,
-  cloneWorkspace,
   getWorkbenchSnapshot,
-  importWorkspace,
   removeWorkspace,
   renameSessionTitle,
   updateSessionArchiveState,
@@ -54,7 +51,6 @@ import {
   type SessionSummaryDto,
   type WorkbenchSnapshotDto,
   type WorkspaceCodeCompositionItemDto,
-  type WorkspaceDirectoryOptionDto,
   type WorkspaceManagementSummaryDto,
   type WorkspaceDto
 } from "../api/conversation-api";
@@ -74,6 +70,9 @@ import {
   type WorkbenchNavigationEntry
 } from "../../workbench/utils/workbench-navigation";
 import { SessionProviderPicker } from "./SessionProviderPicker";
+import { WorkbenchModal as SidebarModal } from "./WorkbenchModal";
+import { WorkspaceCloneModal } from "./WorkspaceCloneModal";
+import { WorkspaceImportBrowserModal } from "./WorkspaceImportBrowserModal";
 
 const LEFT_PANEL_WIDTH_KEY = "workbench.left.width";
 const RIGHT_PANEL_WIDTH_KEY = "workbench.right.width";
@@ -323,29 +322,11 @@ interface WorkbenchShellContextValue {
   markNavigationSessionSeen: (sessionId: string, seenAt?: string) => void;
 }
 
-interface ImportWorkspaceFormState {
-  path: string;
-  name: string;
-}
-
-interface CloneWorkspaceFormState {
-  repositoryUrl: string;
-  parentPath: string;
-  directoryName: string;
-  name: string;
-  authMode: "none" | "basic" | "token";
-  username: string;
-  password: string;
-  token: string;
-}
-
 interface WorkspaceManagementViewState {
   detail: WorkspaceManagementSummaryDto | null;
   loading: boolean;
   error: string | null;
 }
-
-type DirectoryBrowserMode = "import" | "clone";
 
 type CenterTab = "conversation" | "terminals";
 type InfoTab = "files" | "git" | "terminals";
@@ -1396,82 +1377,6 @@ function WorkbenchDesktopTitlebar({
   );
 }
 
-function SidebarModal({
-  open,
-  title,
-  description,
-  className,
-  onClose,
-  children
-}: {
-  open: boolean;
-  title: string;
-  description: string;
-  className?: string;
-  onClose: () => void;
-  children: ReactNode;
-}) {
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    }
-
-    window.addEventListener("keydown", handleKeyDown);
-
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [onClose, open]);
-
-  if (!open) {
-    return null;
-  }
-
-  if (typeof document === "undefined") {
-    return null;
-  }
-
-  return createPortal(
-    <div className="workbench-modal-layer">
-      <button
-        type="button"
-        className="workbench-modal-backdrop"
-        aria-label={t("common.close")}
-        onClick={onClose}
-      />
-      <section
-        className={`workbench-modal-card surface-card${className ? ` ${className}` : ""}`}
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-      >
-        <div className="workbench-modal-header">
-          <div className="workbench-modal-title-wrap">
-            <h2>{title}</h2>
-            <p>{description}</p>
-          </div>
-          <button
-            type="button"
-            className="workbench-modal-close"
-            aria-label={t("common.close")}
-            onClick={onClose}
-          >
-            <CloseIcon />
-          </button>
-        </div>
-        <div className="workbench-modal-body">{children}</div>
-      </section>
-    </div>,
-    document.body
-  );
-}
-
 function WorkspaceSearchModal({
   open,
   mode,
@@ -1933,36 +1838,12 @@ function SidebarContent({
   const navigate = useNavigate();
   const platform = usePlatform();
   const { showToast } = useToast();
-  const [importingWorkspace, setImportingWorkspace] = useState(false);
-  const [cloningWorkspace, setCloningWorkspace] = useState(false);
-  const [importForm, setImportForm] = useState<ImportWorkspaceFormState>({
-    path: "",
-    name: ""
-  });
+  const [importBrowserOpen, setImportBrowserOpen] = useState(false);
+  const [cloneBrowserOpen, setCloneBrowserOpen] = useState(false);
   const [workspaceManagerOpen, setWorkspaceManagerOpen] = useState(false);
   const [expandedManagedWorkspaceIds, setExpandedManagedWorkspaceIds] = useState<string[]>([]);
   const [workspaceRemovalTarget, setWorkspaceRemovalTarget] = useState<WorkspaceDto | null>(null);
   const [removingWorkspaceId, setRemovingWorkspaceId] = useState<string | null>(null);
-  const [cloneWorkspaceOpen, setCloneWorkspaceOpen] = useState(false);
-  const [cloneForm, setCloneForm] = useState<CloneWorkspaceFormState>({
-    repositoryUrl: "",
-    parentPath: "",
-    directoryName: "",
-    name: "",
-    authMode: "none",
-    username: "",
-    password: "",
-    token: ""
-  });
-  const [directoryBrowserOpen, setDirectoryBrowserOpen] = useState(false);
-  const [directoryBrowserMode, setDirectoryBrowserMode] = useState<DirectoryBrowserMode>("import");
-  const [directoryBrowserLoading, setDirectoryBrowserLoading] = useState(false);
-  const [directoryBrowserError, setDirectoryBrowserError] = useState<string | null>(null);
-  const [directoryBrowserCurrentPath, setDirectoryBrowserCurrentPath] = useState("");
-  const [directoryBrowserInputPath, setDirectoryBrowserInputPath] = useState("");
-  const [directoryBrowserParentPath, setDirectoryBrowserParentPath] = useState<string | null>(null);
-  const [directoryBrowserRoots, setDirectoryBrowserRoots] = useState<WorkspaceDirectoryOptionDto[]>([]);
-  const [directoryBrowserItems, setDirectoryBrowserItems] = useState<WorkspaceDirectoryOptionDto[]>([]);
   const [actionWorkspaceId, setActionWorkspaceId] = useState<string | null>(null);
   const [actionProvider, setActionProvider] = useState<ProviderId | null>(null);
   const [createSessionWorkspaceId, setCreateSessionWorkspaceId] = useState<string | null>(null);
@@ -2000,7 +1881,6 @@ function SidebarContent({
   const selectedSessionIdSet = useMemo(() => new Set(selectedSessionIds), [selectedSessionIds]);
   const allBatchSessionsSelected =
     batchSelectableSessionIds.length > 0 && selectedSessionIds.length === batchSelectableSessionIds.length;
-  const workspaceActionPending = importingWorkspace || cloningWorkspace;
 
   useEffect(() => {
     setWorkspaceManagementStateById((current) => {
@@ -2060,132 +1940,21 @@ function SidebarContent({
     });
   }, [workspaceGroups]);
 
-  const notifyWorkspaceImported = useCallback(
-    async (workspacePath: string) => {
-      showToast({
-        title: t("shell.importSuccess"),
-        description: workspacePath,
-        tone: "success"
-      });
-      await platform.bridge.showNotification(t("shell.importSuccess"), workspacePath);
-    },
-    [platform.bridge, showToast]
-  );
-
-  const notifyWorkspaceCloned = useCallback(
-    async (workspacePath: string) => {
-      showToast({
-        title: t("shell.cloneSuccess"),
-        description: workspacePath,
-        tone: "success"
-      });
-      await platform.bridge.showNotification(t("shell.cloneSuccess"), workspacePath);
-    },
-    [platform.bridge, showToast]
-  );
-
-  const commitWorkspaceImport = useCallback(
-    async (workspacePath: string, workspaceName?: string) => {
-      const trimmedPath = workspacePath.trim();
-
-      if (!trimmedPath) {
-        return false;
-      }
-
-      setImportingWorkspace(true);
-
-      try {
-        await importWorkspace({
-          path: trimmedPath,
-          name: workspaceName?.trim() || undefined
-        });
-        setImportForm({ path: "", name: "" });
-        setDirectoryBrowserOpen(false);
-        await onRefreshNavigation();
-        await notifyWorkspaceImported(trimmedPath);
-        return true;
-      } catch (error) {
-        showToast({
-          title: error instanceof Error ? error.message : t("shell.importFailed"),
-          tone: "error"
-        });
-        return false;
-      } finally {
-        setImportingWorkspace(false);
-      }
-    },
-    [notifyWorkspaceImported, onRefreshNavigation, showToast]
-  );
-
-  const commitWorkspaceClone = useCallback(async () => {
-    const repositoryUrl = cloneForm.repositoryUrl.trim();
-    const parentPath = cloneForm.parentPath.trim();
-
-    if (!repositoryUrl) {
-      showToast({
-        title: t("shell.cloneRepoRequired"),
-        tone: "error"
-      });
-      return false;
-    }
-
-    if (!parentPath) {
-      showToast({
-        title: t("shell.clonePathRequired"),
-        tone: "error"
-      });
-      return false;
-    }
-
-    setCloningWorkspace(true);
-
-    try {
-      const workspace = await cloneWorkspace({
-        repositoryUrl,
-        parentPath,
-        directoryName: cloneForm.directoryName.trim() || undefined,
-        name: cloneForm.name.trim() || undefined,
-        auth:
-          cloneForm.authMode === "none"
-            ? { mode: "none" }
-            : cloneForm.authMode === "basic"
-              ? {
-                  mode: "basic",
-                  username: cloneForm.username.trim(),
-                  password: cloneForm.password
-                }
-              : {
-                  mode: "token",
-                  username: cloneForm.username.trim() || undefined,
-                  token: cloneForm.token
-                }
-      });
-
-      setCloneForm({
-        repositoryUrl: "",
-        parentPath: "",
-        directoryName: "",
-        name: "",
-        authMode: "none",
-        username: "",
-        password: "",
-        token: ""
-      });
-      setCloneWorkspaceOpen(false);
-      setDirectoryBrowserOpen(false);
+  const handleWorkspaceImported = useCallback(
+    async (workspace: WorkspaceDto) => {
       await onRefreshNavigation();
-      await notifyWorkspaceCloned(workspace.path);
-      return true;
-    } catch (error) {
-      showToast({
-        title: error instanceof Error ? error.message : t("shell.cloneFailed"),
-        tone: "error"
-      });
-      return false;
-    } finally {
-      setCloningWorkspace(false);
-    }
-  }, [cloneForm, notifyWorkspaceCloned, onRefreshNavigation, showToast]);
+      await platform.bridge.showNotification(t("shell.importSuccess"), workspace.path);
+    },
+    [onRefreshNavigation, platform.bridge]
+  );
+
+  const handleWorkspaceCloned = useCallback(
+    async (workspace: WorkspaceDto) => {
+      await onRefreshNavigation();
+      await platform.bridge.showNotification(t("shell.cloneSuccess"), workspace.path);
+    },
+    [onRefreshNavigation, platform.bridge]
+  );
 
   function handleToggleManagedWorkspace(workspaceId: string) {
     const isExpanded = expandedManagedWorkspaceIds.includes(workspaceId);
@@ -2394,92 +2163,12 @@ function SidebarContent({
     });
   }, [activeSessionId, workspaceGroups]);
 
-  async function loadDirectoryBrowser(targetPath?: string) {
-    setDirectoryBrowserLoading(true);
-    setDirectoryBrowserError(null);
-
-    try {
-      const snapshot = await browseWorkspaceDirectories(targetPath);
-      setDirectoryBrowserCurrentPath(snapshot.currentPath);
-      setDirectoryBrowserInputPath(snapshot.currentPath);
-      setDirectoryBrowserParentPath(snapshot.parentPath);
-      setDirectoryBrowserRoots(snapshot.roots);
-      setDirectoryBrowserItems(snapshot.items);
-      if (directoryBrowserMode === "clone") {
-        setCloneForm((current) => ({
-          ...current,
-          parentPath: snapshot.currentPath
-        }));
-      } else {
-        setImportForm((current) => ({
-          ...current,
-          path: snapshot.currentPath
-        }));
-      }
-    } catch (error) {
-      setDirectoryBrowserCurrentPath("");
-      setDirectoryBrowserParentPath(null);
-      setDirectoryBrowserItems([]);
-      setDirectoryBrowserError(error instanceof Error ? error.message : t("shell.importBrowserBrowseFailed"));
-    } finally {
-      setDirectoryBrowserLoading(false);
-    }
-  }
-
   function handleOpenDirectoryBrowser() {
-    setDirectoryBrowserMode("import");
-    setDirectoryBrowserOpen(true);
-    void loadDirectoryBrowser(importForm.path || undefined);
+    setImportBrowserOpen(true);
   }
 
   function handleOpenCloneWorkspace() {
-    setCloneWorkspaceOpen(true);
-  }
-
-  function handleCloseCloneWorkspace() {
-    if (cloningWorkspace) {
-      return;
-    }
-
-    setCloneWorkspaceOpen(false);
-  }
-
-  function handleOpenCloneDirectoryBrowser() {
-    setDirectoryBrowserMode("clone");
-    setDirectoryBrowserOpen(true);
-    void loadDirectoryBrowser(cloneForm.parentPath || undefined);
-  }
-
-  function handleCloseDirectoryBrowser() {
-    if (workspaceActionPending) {
-      return;
-    }
-
-    setDirectoryBrowserOpen(false);
-    setDirectoryBrowserError(null);
-  }
-
-  async function handleDirectoryBrowserSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    await loadDirectoryBrowser(directoryBrowserInputPath);
-  }
-
-  async function handleImportCurrentDirectory() {
-    await commitWorkspaceImport(directoryBrowserCurrentPath, importForm.name);
-  }
-
-  function handleApplyCurrentDirectory() {
-    if (directoryBrowserMode === "clone") {
-      setCloneForm((current) => ({
-        ...current,
-        parentPath: directoryBrowserCurrentPath
-      }));
-      setDirectoryBrowserOpen(false);
-      setDirectoryBrowserError(null);
-      return;
-    }
-
-    void handleImportCurrentDirectory();
+    setCloneBrowserOpen(true);
   }
 
   function getVisibleSubagentCount(sessionId: string) {
@@ -2994,9 +2683,8 @@ function SidebarContent({
               <button
                 type="button"
                 className="workbench-workspace-icon-button"
-                aria-label={importingWorkspace ? t("shell.importSubmitting") : t("shell.importWorkspaceTitle")}
-                title={importingWorkspace ? t("shell.importSubmitting") : t("shell.importWorkspaceTitle")}
-                disabled={workspaceActionPending}
+                aria-label={t("shell.importWorkspaceTitle")}
+                title={t("shell.importWorkspaceTitle")}
                 onClick={handleOpenDirectoryBrowser}
               >
                 <ImportIcon />
@@ -3004,9 +2692,8 @@ function SidebarContent({
               <button
                 type="button"
                 className="workbench-workspace-icon-button"
-                aria-label={cloningWorkspace ? t("shell.cloneSubmitting") : t("shell.cloneWorkspaceTitle")}
-                title={cloningWorkspace ? t("shell.cloneSubmitting") : t("shell.cloneWorkspaceTitle")}
-                disabled={workspaceActionPending}
+                aria-label={t("shell.cloneWorkspaceTitle")}
+                title={t("shell.cloneWorkspaceTitle")}
                 onClick={handleOpenCloneWorkspace}
               >
                 <CloneIcon />
@@ -3500,307 +3187,17 @@ function SidebarContent({
         </div>
       </SidebarModal>
 
-      <SidebarModal
-        open={cloneWorkspaceOpen}
-        title={t("shell.cloneWorkspaceTitle")}
-        description={t("shell.cloneWorkspaceHint")}
-        onClose={handleCloseCloneWorkspace}
-      >
-        <form
-          className="workbench-clone-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void commitWorkspaceClone();
-          }}
-        >
-          <label className="workbench-modal-field">
-            <span>{t("shell.cloneRepositoryLabel")}</span>
-            <input
-              type="text"
-              value={cloneForm.repositoryUrl}
-              placeholder={t("shell.cloneRepositoryPlaceholder")}
-              onChange={(event) =>
-                setCloneForm((current) => ({
-                  ...current,
-                  repositoryUrl: event.target.value
-                }))
-              }
-            />
-          </label>
+      <WorkspaceCloneModal
+        open={cloneBrowserOpen}
+        onClose={() => setCloneBrowserOpen(false)}
+        onCloned={handleWorkspaceCloned}
+      />
 
-          <label className="workbench-modal-field">
-            <span>{t("shell.cloneParentPathLabel")}</span>
-            <div className="workbench-modal-inline-field">
-              <input
-                type="text"
-                value={cloneForm.parentPath}
-                placeholder={t("shell.cloneParentPathPlaceholder")}
-                onChange={(event) =>
-                  setCloneForm((current) => ({
-                    ...current,
-                    parentPath: event.target.value
-                  }))
-                }
-              />
-              <button
-                type="button"
-                className="secondary-button"
-                disabled={workspaceActionPending}
-                onClick={handleOpenCloneDirectoryBrowser}
-              >
-                {t("shell.clonePickDirectory")}
-              </button>
-            </div>
-          </label>
-
-          <label className="workbench-modal-field">
-            <span>{t("shell.cloneDirectoryNameLabel")}</span>
-            <input
-              type="text"
-              value={cloneForm.directoryName}
-              placeholder={t("shell.cloneDirectoryNamePlaceholder")}
-              onChange={(event) =>
-                setCloneForm((current) => ({
-                  ...current,
-                  directoryName: event.target.value
-                }))
-              }
-            />
-          </label>
-
-          <label className="workbench-modal-field">
-            <span>{t("shell.importNameLabel")}</span>
-            <input
-              type="text"
-              value={cloneForm.name}
-              placeholder={t("shell.importNamePlaceholder")}
-              onChange={(event) =>
-                setCloneForm((current) => ({
-                  ...current,
-                  name: event.target.value
-                }))
-              }
-            />
-          </label>
-
-          <label className="workbench-modal-field">
-            <span>{t("shell.cloneAuthModeLabel")}</span>
-            <select
-              value={cloneForm.authMode}
-              onChange={(event) =>
-                setCloneForm((current) => ({
-                  ...current,
-                  authMode: event.target.value as CloneWorkspaceFormState["authMode"]
-                }))
-              }
-            >
-              <option value="none">{t("shell.cloneAuthModeNone")}</option>
-              <option value="basic">{t("shell.cloneAuthModeBasic")}</option>
-              <option value="token">{t("shell.cloneAuthModeToken")}</option>
-            </select>
-          </label>
-
-          {cloneForm.authMode === "basic" ? (
-            <>
-              <label className="workbench-modal-field">
-                <span>{t("shell.cloneUsernameLabel")}</span>
-                <input
-                  type="text"
-                  value={cloneForm.username}
-                  placeholder={t("shell.cloneUsernamePlaceholder")}
-                  autoComplete="username"
-                  onChange={(event) =>
-                    setCloneForm((current) => ({
-                      ...current,
-                      username: event.target.value
-                    }))
-                  }
-                />
-              </label>
-              <label className="workbench-modal-field">
-                <span>{t("shell.clonePasswordLabel")}</span>
-                <input
-                  type="password"
-                  value={cloneForm.password}
-                  placeholder={t("shell.clonePasswordPlaceholder")}
-                  autoComplete="current-password"
-                  onChange={(event) =>
-                    setCloneForm((current) => ({
-                      ...current,
-                      password: event.target.value
-                    }))
-                  }
-                />
-              </label>
-            </>
-          ) : null}
-
-          {cloneForm.authMode === "token" ? (
-            <>
-              <label className="workbench-modal-field">
-                <span>{t("shell.cloneUsernameLabel")}</span>
-                <input
-                  type="text"
-                  value={cloneForm.username}
-                  placeholder={t("shell.cloneTokenUsernamePlaceholder")}
-                  onChange={(event) =>
-                    setCloneForm((current) => ({
-                      ...current,
-                      username: event.target.value
-                    }))
-                  }
-                />
-              </label>
-              <label className="workbench-modal-field">
-                <span>{t("shell.cloneTokenLabel")}</span>
-                <input
-                  type="password"
-                  value={cloneForm.token}
-                  placeholder={t("shell.cloneTokenPlaceholder")}
-                  onChange={(event) =>
-                    setCloneForm((current) => ({
-                      ...current,
-                      token: event.target.value
-                    }))
-                  }
-                />
-              </label>
-            </>
-          ) : null}
-
-          <p className="workbench-import-hint">{t("shell.cloneHint")}</p>
-
-          <div className="workbench-modal-actions">
-            <button
-              type="button"
-              className="secondary-button"
-              disabled={workspaceActionPending}
-              onClick={handleCloseCloneWorkspace}
-            >
-              {t("common.cancel")}
-            </button>
-            <button type="submit" className="primary-button" disabled={workspaceActionPending}>
-              {cloningWorkspace ? t("shell.cloneSubmitting") : t("shell.cloneSubmit")}
-            </button>
-          </div>
-        </form>
-      </SidebarModal>
-
-      <SidebarModal
-        open={directoryBrowserOpen}
-        title={directoryBrowserMode === "clone" ? t("shell.cloneBrowserTitle") : t("shell.importBrowserTitle")}
-        description={
-          directoryBrowserMode === "clone"
-            ? t("shell.cloneBrowserDescription")
-            : t("shell.importBrowserDescription")
-        }
-        onClose={handleCloseDirectoryBrowser}
-      >
-        <form className="workbench-directory-browser-form" onSubmit={handleDirectoryBrowserSubmit}>
-          <label className="workbench-modal-field">
-            <span>{t("shell.importBrowserCurrentPath")}</span>
-            <input
-              type="text"
-              value={directoryBrowserInputPath}
-              placeholder={t("shell.importPathPlaceholder")}
-              onChange={(event) => setDirectoryBrowserInputPath(event.target.value)}
-            />
-          </label>
-          <div className="workbench-directory-browser-toolbar">
-            <button
-              type="button"
-              className="secondary-button"
-              disabled={directoryBrowserLoading || !directoryBrowserParentPath}
-              onClick={() => {
-                if (!directoryBrowserParentPath) {
-                  return;
-                }
-
-                void loadDirectoryBrowser(directoryBrowserParentPath);
-              }}
-            >
-              {t("shell.importBrowserOpenParent")}
-            </button>
-            <button type="submit" className="secondary-button" disabled={directoryBrowserLoading}>
-              {t("shell.importBrowserOpenPath")}
-            </button>
-          </div>
-        </form>
-
-        <section className="workbench-directory-browser-panel">
-          <div className="workbench-directory-browser-section">
-            <span className="workbench-directory-browser-section-title">{t("shell.importBrowserRoots")}</span>
-            <div className="workbench-directory-browser-root-list">
-              {directoryBrowserRoots.map((item) => (
-                <button
-                  key={item.path}
-                  type="button"
-                  className="workbench-directory-browser-chip"
-                  disabled={directoryBrowserLoading}
-                  onClick={() => {
-                    void loadDirectoryBrowser(item.path);
-                  }}
-                >
-                  {item.name}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="workbench-directory-browser-current-path">{directoryBrowserCurrentPath}</div>
-
-          {directoryBrowserError ? (
-            <p className="workbench-directory-browser-status status-text" data-tone="error">
-              {directoryBrowserError}
-            </p>
-          ) : null}
-
-          {directoryBrowserLoading ? (
-            <p className="workbench-directory-browser-status status-text">{t("common.loading")}</p>
-          ) : directoryBrowserItems.length > 0 ? (
-            <div className="workbench-directory-browser-list">
-              {directoryBrowserItems.map((item) => (
-                <button
-                  key={item.path}
-                  type="button"
-                  className="workbench-directory-browser-item"
-                  onClick={() => {
-                    void loadDirectoryBrowser(item.path);
-                  }}
-                >
-                  <span className="workbench-directory-browser-item-name">{item.name}</span>
-                  <span className="workbench-directory-browser-item-path">{item.path}</span>
-                </button>
-              ))}
-            </div>
-          ) : (
-            <p className="workbench-directory-browser-status status-text">{t("shell.importBrowserEmpty")}</p>
-          )}
-        </section>
-
-        <div className="workbench-modal-actions">
-          <button
-            type="button"
-            className="secondary-button"
-            disabled={workspaceActionPending}
-            onClick={handleCloseDirectoryBrowser}
-          >
-            {t("common.cancel")}
-          </button>
-          <button
-            type="button"
-            className="primary-button"
-            disabled={workspaceActionPending || directoryBrowserLoading || !directoryBrowserCurrentPath}
-            onClick={handleApplyCurrentDirectory}
-          >
-            {directoryBrowserMode === "clone"
-              ? t("shell.cloneBrowserSubmit")
-              : importingWorkspace
-                ? t("shell.importSubmitting")
-                : t("shell.importBrowserSubmit")}
-          </button>
-        </div>
-      </SidebarModal>
+      <WorkspaceImportBrowserModal
+        open={importBrowserOpen}
+        onClose={() => setImportBrowserOpen(false)}
+        onImported={handleWorkspaceImported}
+      />
 
       <SidebarModal
         open={createSessionWorkspace !== null}
@@ -4966,11 +4363,11 @@ export function WorkbenchLayout({
   }
 
   function goToMobileSessionsEntry() {
-    if (navigateToRememberedConversation()) {
+    if (navigateToRememberedConversation(currentWorkspaceId)) {
       return;
     }
 
-    // 移动端没选中过会话时，应该先回当前工作区的会话列表，而不是强行打开第一条。
+    // 工作区已经变化时，回到当前工作区的会话列表，而不是跳回旧会话。
     if (currentWorkspaceId) {
       navigate(buildWorkspaceSessionIndexPath(currentWorkspaceId));
       return;
@@ -4979,13 +4376,33 @@ export function WorkbenchLayout({
     navigate(workbenchHomePath);
   }
 
-  function navigateToRememberedConversation() {
+  function navigateToRememberedConversation(preferredWorkspaceId?: string | null) {
     if (currentSessionId) {
+      if (
+        preferredWorkspaceId
+        && sessionWorkspaceId
+        && sessionWorkspaceId !== preferredWorkspaceId
+      ) {
+        return false;
+      }
+
       navigate(`${location.pathname}${location.search}`);
       return true;
     }
 
     if (lastDraftSessionPathRef.current) {
+      if (preferredWorkspaceId) {
+        const [draftPathname, draftSearch = ""] = lastDraftSessionPathRef.current.split("?");
+        const draftWorkspaceId = resolveRouteWorkspaceId(
+          draftPathname ?? lastDraftSessionPathRef.current,
+          draftSearch ? `?${draftSearch}` : ""
+        );
+
+        if (draftWorkspaceId && draftWorkspaceId !== preferredWorkspaceId) {
+          return false;
+        }
+      }
+
       navigate(lastDraftSessionPathRef.current);
       return true;
     }
@@ -5000,10 +4417,16 @@ export function WorkbenchLayout({
 
       if (storedSessionMatch) {
         const storedSessionId = storedSessionMatch.sessionId;
-        const sessionExists = flattenedSessions.some(
-          (item) => item.session.sessionId === storedSessionId
-        );
-        if (sessionExists) {
+        const storedSessionEntry =
+          flattenedSessions.find((item) => item.session.sessionId === storedSessionId) ?? null;
+        const storedSessionWorkspaceId =
+          storedSessionMatch.workspaceId ?? storedSessionEntry?.workspace.id ?? null;
+        const sessionExists = storedSessionEntry !== null;
+
+        if (
+          sessionExists
+          && (!preferredWorkspaceId || storedSessionWorkspaceId === preferredWorkspaceId)
+        ) {
           navigate(storedSessionPath);
           return true;
         }

@@ -186,6 +186,34 @@ describe("spec001 host 地基主链路", () => {
       ])
     );
 
+    const createdProjectDir = path.join(fixture.workspaceDir, "created-project");
+    const createDirectoryResponse = await hosted.app.inject({
+      method: "POST",
+      url: "/api/workspaces/directories",
+      headers: {
+        authorization: `Bearer ${loginBody.accessToken}`
+      },
+      payload: {
+        parentPath: fixture.workspaceDir,
+        directoryName: "created-project"
+      }
+    });
+    expect(createDirectoryResponse.statusCode).toBe(201);
+    expect(createDirectoryResponse.json()).toEqual({
+      path: createdProjectDir,
+      name: "created-project"
+    });
+
+    const createdDirectoryBrowseResponse = await hosted.app.inject({
+      method: "GET",
+      url: `/api/workspaces/browse?path=${encodeURIComponent(createdProjectDir)}`,
+      headers: {
+        authorization: `Bearer ${loginBody.accessToken}`
+      }
+    });
+    expect(createdDirectoryBrowseResponse.statusCode).toBe(200);
+    expect(createdDirectoryBrowseResponse.json().currentPath).toBe(path.resolve(createdProjectDir));
+
     const refreshResponse = await hosted.app.inject({
       method: "POST",
       url: "/api/auth/refresh",

@@ -11956,7 +11956,7 @@ textarea:focus-visible {
   padding-top: 0.65rem;
 }
 
-.mobile-workspace-home-toolbar,
+.mobile-workspace-home-header,
 .mobile-workspace-home-section {
   display: flex;
   flex-direction: column;
@@ -11971,9 +11971,6 @@ textarea:focus-visible {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-}
-
-.mobile-workspace-home-toolbar-top {
   justify-content: space-between;
 }
 

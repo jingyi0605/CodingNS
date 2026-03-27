@@ -132,6 +132,16 @@ export interface WorkspaceDirectoryBrowseDto {
   items: WorkspaceDirectoryOptionDto[];
 }
 
+export interface CreateWorkspaceDirectoryPayload {
+  parentPath: string;
+  directoryName: string;
+}
+
+export interface WorkspaceCreatedDirectoryDto {
+  path: string;
+  name: string;
+}
+
 export interface SessionSummaryDto {
   sessionId: string;
   workspaceId: string;
@@ -384,6 +394,13 @@ export function browseWorkspaceDirectories(targetPath?: string) {
   return httpClient.request<WorkspaceDirectoryBrowseDto>(
     `/api/workspaces/browse${search.size > 0 ? `?${search.toString()}` : ""}`
   );
+}
+
+export function createWorkspaceDirectory(payload: CreateWorkspaceDirectoryPayload) {
+  return httpClient.request<WorkspaceCreatedDirectoryDto>("/api/workspaces/directories", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
 }
 
 export function listWorkspaceSessions(workspaceId: string) {

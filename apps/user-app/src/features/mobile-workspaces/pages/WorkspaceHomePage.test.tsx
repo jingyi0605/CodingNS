@@ -233,7 +233,6 @@ describe("WorkspaceHomePage", () => {
     expect(waitingInputRow).not.toBeNull();
 
     await waitFor(() => {
-      expect(screen.getByText("feat/mobile-home")).toBeInTheDocument();
       expect(within(activeTerminalRow as HTMLElement).getByText("2")).toBeInTheDocument();
       expect(within(changedFilesRow as HTMLElement).getByText("2")).toBeInTheDocument();
       expect(within(processRow as HTMLElement).getByText("运行中")).toBeInTheDocument();
@@ -345,6 +344,32 @@ describe("WorkspaceHomePage", () => {
 
     expect(within(dialog).getByRole("button", { name: "添加项目" })).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "Clone项目" })).toBeInTheDocument();
+  });
+
+  it("移动端添加项目会复用服务器目录导入模态框", async () => {
+    const user = userEvent.setup();
+
+    renderPage();
+
+    await user.click(screen.getByRole("button", { name: "切换工作区" }));
+    await user.click(screen.getByRole("button", { name: "添加项目" }));
+
+    expect(await screen.findByRole("dialog", { name: "选择服务器目录" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "新建文件夹" })).toBeInTheDocument();
+    expect(screen.queryByText("项目路径")).not.toBeInTheDocument();
+  });
+
+  it("移动端 Clone 项目会复用桌面端同款 Clone 模态框", async () => {
+    const user = userEvent.setup();
+
+    renderPage();
+
+    await user.click(screen.getByRole("button", { name: "切换工作区" }));
+    await user.click(screen.getByRole("button", { name: "Clone项目" }));
+
+    expect(await screen.findByRole("dialog", { name: "Clone项目" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "选择目录" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "认证方式" })).toBeInTheDocument();
   });
 });
 

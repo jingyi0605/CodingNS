@@ -1,5 +1,4 @@
-import { createPortal } from "react-dom";
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import {
@@ -7,12 +6,12 @@ import {
   writeViewSnapshot
 } from "../../../shared/cache/view-snapshot-cache";
 import {
-  cloneWorkspace,
-  importWorkspace,
-  type CloneWorkspacePayload,
   type ProviderId,
-  type SessionSummaryDto
+  type SessionSummaryDto,
+  type WorkspaceDto
 } from "../../conversation/api/conversation-api";
+import { WorkspaceCloneModal } from "../../conversation/components/WorkspaceCloneModal";
+import { WorkspaceImportBrowserModal } from "../../conversation/components/WorkspaceImportBrowserModal";
 import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout";
 import {
   buildWorkspaceDetailPath,
@@ -23,11 +22,10 @@ import {
   buildWorkspaceToolsPath
 } from "../../workbench/utils/workbench-navigation";
 import { t } from "../../../shared/i18n";
-import { useToast } from "../../../shared/toast";
 import { MobileCreateSessionSheet } from "../../mobile-sessions/components/MobileCreateSessionSheet";
+import { MobileWorkspaceSwitcherHeader } from "../../mobile-shell/components/MobileWorkspaceSwitcherHeader";
 
 type WorkspaceActionMode = "import" | "clone" | null;
-type WorkspaceSheetMode = "switcher" | null;
 
 interface WorkspaceDashboardState {
   readonly gitLoading: boolean;
@@ -55,12 +53,6 @@ interface WorkspaceHomeTerminalManagerSnapshotCache {
   readonly templateStatuses: Array<{
     readonly occupied: boolean;
   }>;
-}
-
-interface WorkspaceSheetProps {
-  readonly title: string;
-  readonly onClose: () => void;
-  readonly children: ReactNode;
 }
 
 function isVisibleSession(session: SessionSummaryDto) {
@@ -117,19 +109,10 @@ function formatActivityTime(value: string | null) {
   });
 }
 
-function renderSheet(content: ReactNode) {
-  if (typeof document === "undefined") {
-    return null;
-  }
-
-  return createPortal(content, document.body);
-}
-
 const WORKSPACE_HOME_SNAPSHOT_CACHE_MAX_AGE_MS = 60 * 1000;
 
 export function WorkspaceHomePage() {
   const navigate = useNavigate();
-  const { showToast } = useToast();
   const {
     navigationGroups,
     currentWorkspaceId,
@@ -145,8 +128,6 @@ export function WorkspaceHomePage() {
   } = useWorkbenchShell();
   const [actionMode, setActionMode] = useState<WorkspaceActionMode>(null);
   const [createSessionOpen, setCreateSessionOpen] = useState(false);
-  const [sheetMode, setSheetMode] = useState<WorkspaceSheetMode>(null);
-  const [submitting, setSubmitting] = useState(false);
   const [dashboardState, setDashboardState] = useState<WorkspaceDashboardState>({
     gitLoading: false,
     terminalLoading: false,
@@ -154,17 +135,6 @@ export function WorkspaceHomePage() {
     activeTerminalCount: null,
     changedFileCount: null,
     quickLaunchRunning: null
-  });
-  const [importPath, setImportPath] = useState("");
-  const [importName, setImportName] = useState("");
-  const [cloneForm, setCloneForm] = useState<CloneWorkspacePayload>({
-    repositoryUrl: "",
-    parentPath: "",
-    directoryName: "",
-    name: "",
-    auth: {
-      mode: "none"
-    }
   });
 
   const currentWorkspaceGroup =
@@ -349,84 +319,18 @@ export function WorkspaceHomePage() {
     subscribeTerminalManagerSnapshot
   ]);
 
-  async function handleImportWorkspace(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    if (!importPath.trim()) {
-      return;
-    }
-
-    setSubmitting(true);
-
-    try {
-      const workspace = await importWorkspace({
-        path: importPath.trim(),
-        name: importName.trim() || undefined
-      });
-      await refreshNavigation();
-      selectWorkspace(workspace.id);
-      setImportPath("");
-      setImportName("");
-      setActionMode(null);
-      showToast({
-        title: t("shell.importSuccess"),
-        description: workspace.path,
-        tone: "success"
-      });
-      navigate(buildWorkspaceDetailPath(workspace.id));
-    } catch (error) {
-      showToast({
-        title: error instanceof Error ? error.message : t("shell.importFailed"),
-        tone: "error"
-      });
-    } finally {
-      setSubmitting(false);
-    }
+  async function handleWorkspaceImported(workspace: WorkspaceDto) {
+    await refreshNavigation();
+    selectWorkspace(workspace.id);
+    setActionMode(null);
+    navigate(buildWorkspaceDetailPath(workspace.id));
   }
 
-  async function handleCloneWorkspace(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    if (!cloneForm.repositoryUrl?.trim() || !cloneForm.parentPath?.trim()) {
-      return;
-    }
-
-    setSubmitting(true);
-
-    try {
-      const workspace = await cloneWorkspace({
-        repositoryUrl: cloneForm.repositoryUrl.trim(),
-        parentPath: cloneForm.parentPath.trim(),
-        directoryName: cloneForm.directoryName?.trim() || undefined,
-        name: cloneForm.name?.trim() || undefined,
-        auth: cloneForm.auth
-      });
-      await refreshNavigation();
-      selectWorkspace(workspace.id);
-      setCloneForm({
-        repositoryUrl: "",
-        parentPath: "",
-        directoryName: "",
-        name: "",
-        auth: {
-          mode: "none"
-        }
-      });
-      setActionMode(null);
-      showToast({
-        title: t("shell.cloneSuccess"),
-        description: workspace.path,
-        tone: "success"
-      });
-      navigate(buildWorkspaceDetailPath(workspace.id));
-    } catch (error) {
-      showToast({
-        title: error instanceof Error ? error.message : t("shell.cloneFailed"),
-        tone: "error"
-      });
-    } finally {
-      setSubmitting(false);
-    }
+  async function handleWorkspaceCloned(workspace: WorkspaceDto) {
+    await refreshNavigation();
+    selectWorkspace(workspace.id);
+    setActionMode(null);
+    navigate(buildWorkspaceDetailPath(workspace.id));
   }
 
   function openCurrentWorkspaceGit() {
@@ -488,7 +392,6 @@ export function WorkspaceHomePage() {
 
   function handleSelectWorkspace(workspaceId: string) {
     selectWorkspace(workspaceId);
-    setSheetMode(null);
   }
 
   const statusRows = [
@@ -536,50 +439,66 @@ export function WorkspaceHomePage() {
     <main className="mobile-feature-page mobile-page-scroll-root mobile-workspace-home-page">
       {currentWorkspace ? (
         <>
-          <section className="mobile-workspace-home-toolbar">
-            <div className="mobile-workspace-home-toolbar-top">
-              <button
-                type="button"
-                className="mobile-workspace-home-switcher"
-                aria-label={t("shell.workspaceHomeSwitcherLabel")}
-                onClick={() => setSheetMode("switcher")}
+          <MobileWorkspaceSwitcherHeader
+            currentWorkspace={currentWorkspace}
+            workspaces={navigationGroups.map((group) => group.workspace)}
+            onSelectWorkspace={handleSelectWorkspace}
+            content={
+              <div
+                className="mobile-workspace-home-toolbar-summary"
+                aria-label={t("shell.workspaceHomeStatusSectionTitle")}
               >
-                <span className="mobile-workspace-home-switcher-label">{currentWorkspace.name}</span>
-                <ChevronDownIcon />
-              </button>
-              <div className="mobile-workspace-home-toolbar-actions">
-                {dashboardState.branch ? (
-                  <span
-                    className="mobile-workspace-home-branch"
-                    aria-label={`${t("shell.workspaceHomeCurrentBranchLabel")} ${dashboardState.branch}`}
-                  >
-                    {dashboardState.branch}
-                  </span>
-                ) : null}
+                {statusRows.map((row) =>
+                  row.onClick ? (
+                    <button
+                      key={row.label}
+                      type="button"
+                      className="mobile-workspace-home-toolbar-metric"
+                      onClick={row.onClick}
+                    >
+                      <strong className="mobile-workspace-home-toolbar-metric-value">{row.value}</strong>
+                      <span className="mobile-workspace-home-toolbar-metric-label">{row.label}</span>
+                    </button>
+                  ) : (
+                    <div key={row.label} className="mobile-workspace-home-toolbar-metric" role="listitem">
+                      <strong className="mobile-workspace-home-toolbar-metric-value">{row.value}</strong>
+                      <span className="mobile-workspace-home-toolbar-metric-label">{row.label}</span>
+                    </div>
+                  )
+                )}
               </div>
-            </div>
-            <p className="mobile-workspace-home-path">{currentWorkspace.path}</p>
-            <div className="mobile-workspace-home-toolbar-summary" aria-label={t("shell.workspaceHomeStatusSectionTitle")}>
-              {statusRows.map((row) =>
-                row.onClick ? (
-                  <button
-                    key={row.label}
-                    type="button"
-                    className="mobile-workspace-home-toolbar-metric"
-                    onClick={row.onClick}
-                  >
-                    <strong className="mobile-workspace-home-toolbar-metric-value">{row.value}</strong>
-                    <span className="mobile-workspace-home-toolbar-metric-label">{row.label}</span>
-                  </button>
-                ) : (
-                  <div key={row.label} className="mobile-workspace-home-toolbar-metric" role="listitem">
-                    <strong className="mobile-workspace-home-toolbar-metric-value">{row.value}</strong>
-                    <span className="mobile-workspace-home-toolbar-metric-label">{row.label}</span>
-                  </div>
-                )
-              )}
-            </div>
-          </section>
+            }
+            sheetContent={(closeSheet) => (
+              <div className="mobile-workspace-home-group mobile-workspace-home-sheet-group">
+                <button
+                  type="button"
+                  className="mobile-workspace-home-row mobile-workspace-home-sheet-row"
+                  onClick={() => {
+                    closeSheet();
+                    setActionMode("import");
+                  }}
+                >
+                  <span className="mobile-workspace-home-row-label">{t("shell.importWorkspaceTitle")}</span>
+                  <span className="mobile-workspace-home-row-trailing">
+                    <ChevronRightIcon />
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className="mobile-workspace-home-row mobile-workspace-home-sheet-row"
+                  onClick={() => {
+                    closeSheet();
+                    setActionMode("clone");
+                  }}
+                >
+                  <span className="mobile-workspace-home-row-label">{t("shell.cloneWorkspaceTitle")}</span>
+                  <span className="mobile-workspace-home-row-trailing">
+                    <ChevronRightIcon />
+                  </span>
+                </button>
+              </div>
+            )}
+          />
 
           <section className="mobile-workspace-home-section">
             <div className="mobile-workspace-home-primary-actions">
@@ -736,172 +655,17 @@ export function WorkspaceHomePage() {
         </section>
       )}
 
-      {sheetMode === "switcher"
-        ? renderSheet(
-            <WorkspaceHomeSheet title={t("shell.workspaceHomeSwitcherTitle")} onClose={() => setSheetMode(null)}>
-              <div className="mobile-workspace-home-group mobile-workspace-home-sheet-group">
-                {navigationGroups.map((group) => (
-                  <button
-                    key={group.workspace.id}
-                    type="button"
-                    className="mobile-workspace-home-row mobile-workspace-home-sheet-row"
-                    onClick={() => handleSelectWorkspace(group.workspace.id)}
-                  >
-                    <div className="mobile-workspace-home-session-main">
-                      <span className="mobile-workspace-home-session-title">{group.workspace.name}</span>
-                      <span className="mobile-workspace-home-session-meta">{group.workspace.path}</span>
-                    </div>
-                    <span className="mobile-workspace-home-row-trailing">
-                      {group.workspace.id === currentWorkspace?.id ? <CheckIcon /> : <ChevronRightIcon />}
-                    </span>
-                  </button>
-                ))}
-              </div>
-              <div className="mobile-workspace-home-group mobile-workspace-home-sheet-group">
-                <button
-                  type="button"
-                  className="mobile-workspace-home-row mobile-workspace-home-sheet-row"
-                  onClick={() => {
-                    setSheetMode(null);
-                    setActionMode("import");
-                  }}
-                >
-                  <span className="mobile-workspace-home-row-label">{t("shell.importWorkspaceTitle")}</span>
-                  <span className="mobile-workspace-home-row-trailing">
-                    <ChevronRightIcon />
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  className="mobile-workspace-home-row mobile-workspace-home-sheet-row"
-                  onClick={() => {
-                    setSheetMode(null);
-                    setActionMode("clone");
-                  }}
-                >
-                  <span className="mobile-workspace-home-row-label">{t("shell.cloneWorkspaceTitle")}</span>
-                  <span className="mobile-workspace-home-row-trailing">
-                    <ChevronRightIcon />
-                  </span>
-                </button>
-              </div>
-            </WorkspaceHomeSheet>
-          )
-        : null}
+      <WorkspaceImportBrowserModal
+        open={actionMode === "import"}
+        onClose={() => setActionMode(null)}
+        onImported={handleWorkspaceImported}
+      />
 
-      {actionMode === "import"
-        ? renderSheet(
-            <WorkspaceHomeSheet title={t("shell.importWorkspaceTitle")} onClose={() => setActionMode(null)}>
-              <form className="mobile-feature-form mobile-workspace-home-form" onSubmit={handleImportWorkspace}>
-                <label className="mobile-feature-field">
-                  <span>{t("shell.importPathLabel")}</span>
-                  <input
-                    value={importPath}
-                    placeholder={t("shell.importPathPlaceholder")}
-                    onChange={(event) => setImportPath(event.target.value)}
-                  />
-                </label>
-                <label className="mobile-feature-field">
-                  <span>{t("shell.importNameLabel")}</span>
-                  <input
-                    value={importName}
-                    placeholder={t("shell.importNamePlaceholder")}
-                    onChange={(event) => setImportName(event.target.value)}
-                  />
-                </label>
-                <div className="mobile-feature-inline-actions">
-                  <button type="button" className="secondary-button" onClick={() => setActionMode(null)}>
-                    {t("common.cancel")}
-                  </button>
-                  <button
-                    type="submit"
-                    className="primary-button"
-                    disabled={submitting || !importPath.trim()}
-                  >
-                    {submitting ? t("shell.importSubmitting") : t("shell.importSubmit")}
-                  </button>
-                </div>
-              </form>
-            </WorkspaceHomeSheet>
-          )
-        : null}
-
-      {actionMode === "clone"
-        ? renderSheet(
-            <WorkspaceHomeSheet title={t("shell.cloneWorkspaceTitle")} onClose={() => setActionMode(null)}>
-              <form className="mobile-feature-form mobile-workspace-home-form" onSubmit={handleCloneWorkspace}>
-                <label className="mobile-feature-field">
-                  <span>{t("shell.cloneRepositoryLabel")}</span>
-                  <input
-                    value={cloneForm.repositoryUrl ?? ""}
-                    placeholder={t("shell.cloneRepositoryPlaceholder")}
-                    onChange={(event) =>
-                      setCloneForm((current) => ({
-                        ...current,
-                        repositoryUrl: event.target.value
-                      }))
-                    }
-                  />
-                </label>
-                <label className="mobile-feature-field">
-                  <span>{t("shell.cloneParentPathLabel")}</span>
-                  <input
-                    value={cloneForm.parentPath ?? ""}
-                    placeholder={t("shell.cloneParentPathPlaceholder")}
-                    onChange={(event) =>
-                      setCloneForm((current) => ({
-                        ...current,
-                        parentPath: event.target.value
-                      }))
-                    }
-                  />
-                </label>
-                <label className="mobile-feature-field">
-                  <span>{t("shell.cloneDirectoryNameLabel")}</span>
-                  <input
-                    value={cloneForm.directoryName ?? ""}
-                    placeholder={t("shell.cloneDirectoryNamePlaceholder")}
-                    onChange={(event) =>
-                      setCloneForm((current) => ({
-                        ...current,
-                        directoryName: event.target.value
-                      }))
-                    }
-                  />
-                </label>
-                <label className="mobile-feature-field">
-                  <span>{t("shell.importNameLabel")}</span>
-                  <input
-                    value={cloneForm.name ?? ""}
-                    placeholder={t("shell.importNamePlaceholder")}
-                    onChange={(event) =>
-                      setCloneForm((current) => ({
-                        ...current,
-                        name: event.target.value
-                      }))
-                    }
-                  />
-                </label>
-                <div className="mobile-feature-inline-actions">
-                  <button type="button" className="secondary-button" onClick={() => setActionMode(null)}>
-                    {t("common.cancel")}
-                  </button>
-                  <button
-                    type="submit"
-                    className="primary-button"
-                    disabled={
-                      submitting
-                      || !cloneForm.repositoryUrl?.trim()
-                      || !cloneForm.parentPath?.trim()
-                    }
-                  >
-                    {submitting ? t("shell.cloneSubmitting") : t("shell.cloneSubmit")}
-                  </button>
-                </div>
-              </form>
-            </WorkspaceHomeSheet>
-          )
-        : null}
+      <WorkspaceCloneModal
+        open={actionMode === "clone"}
+        onClose={() => setActionMode(null)}
+        onCloned={handleWorkspaceCloned}
+      />
 
       <MobileCreateSessionSheet
         open={createSessionOpen}
@@ -922,49 +686,6 @@ function buildTerminalManagerSnapshotKey(workspaceId: string) {
   return `terminal-manager.snapshot.${workspaceId}`;
 }
 
-function WorkspaceHomeSheet({ title, onClose, children }: WorkspaceSheetProps) {
-  return (
-    <div className="ios-action-sheet-overlay" role="presentation" onClick={onClose}>
-      <div
-        className="mobile-workspace-home-sheet"
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="mobile-workspace-home-sheet-card">
-          <div className="mobile-workspace-home-sheet-header">
-            <strong>{title}</strong>
-          </div>
-          {children}
-        </div>
-        <button
-          type="button"
-          className="ios-action-sheet-cancel"
-          onClick={onClose}
-        >
-          {t("common.cancel")}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function ChevronDownIcon() {
-  return (
-    <svg viewBox="0 0 16 16" aria-hidden="true">
-      <path
-        d="M4 6.5L8 10l4-3.5"
-        fill="none"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth="1.6"
-      />
-    </svg>
-  );
-}
-
 function ChevronRightIcon() {
   return (
     <svg viewBox="0 0 16 16" aria-hidden="true">
@@ -975,21 +696,6 @@ function ChevronRightIcon() {
         strokeLinecap="round"
         strokeLinejoin="round"
         strokeWidth="1.6"
-      />
-    </svg>
-  );
-}
-
-function CheckIcon() {
-  return (
-    <svg viewBox="0 0 16 16" aria-hidden="true">
-      <path
-        d="M3.5 8.5L6.5 11.5L12.5 5.5"
-        fill="none"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth="1.8"
       />
     </svg>
   );
