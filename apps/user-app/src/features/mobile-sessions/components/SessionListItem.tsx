@@ -10,6 +10,8 @@ interface WorkbenchNavigationEntry {
     readonly title: string | null;
     readonly workspaceId: string;
     readonly provider: string;
+    readonly lastMessageAt?: string | null;
+    readonly updatedAt?: string | null;
     readonly activityState?: string | null;
     readonly isArchived?: boolean;
   };
@@ -24,7 +26,9 @@ interface SessionListItemProps {
   readonly isFavorite: boolean;
   readonly isActive?: boolean;
   readonly depth?: 0 | 1;
+  readonly variant?: "default" | "mobile";
   readonly hasSubsessions?: boolean;
+  readonly showActions?: boolean;
   readonly onActivate: (sessionId: string) => void;
   readonly onToggleSubsessions?: () => void;
   readonly onToggleFavorite: (sessionId: string) => void;
@@ -38,7 +42,9 @@ export function SessionListItem({
   isFavorite,
   isActive = false,
   depth = 0,
+  variant = "default",
   hasSubsessions = false,
+  showActions = true,
   onActivate,
   onToggleSubsessions,
   onToggleFavorite,
@@ -57,6 +63,12 @@ export function SessionListItem({
       : session.provider === "opencode"
         ? t("conversation.providerOpenCode")
         : t("conversation.providerClaude");
+  const mobileMeta = [
+    providerLabel,
+    formatActivityTime(session.lastMessageAt ?? session.updatedAt ?? null)
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   useEffect(() => {
     return () => {
@@ -128,6 +140,7 @@ export function SessionListItem({
       data-depth={depth}
       data-active={isActive}
       data-has-subsessions={hasSubsessions}
+      data-variant={variant}
     >
       <button
         type="button"
@@ -149,35 +162,43 @@ export function SessionListItem({
         <div className="session-list-copy">
           <div className="session-list-title">{title || t("shell.searchEntry")}</div>
           <div className="session-list-meta">
-            <span>{workspace.name}</span>
-            <span aria-hidden="true">·</span>
-            <span>{providerLabel}</span>
+            {variant === "mobile" ? (
+              <span>{mobileMeta}</span>
+            ) : (
+              <>
+                <span>{workspace.name}</span>
+                <span aria-hidden="true">·</span>
+                <span>{providerLabel}</span>
+              </>
+            )}
           </div>
         </div>
       </button>
-      <div className="session-list-actions">
-        <button
-          type="button"
-          className="ghost-button"
-          aria-expanded={menuOpen}
-          onClick={() => setMenuOpen((current) => !current)}
-        >
-          {t("shell.sessionMoreAction")}
-        </button>
-        {menuOpen ? (
-          <div className="session-action-menu surface-card" role="menu" aria-label={t("shell.sessionMoreAction")}>
-            <button type="button" className="session-action-menu-item" role="menuitem" onClick={handleToggleFavoriteEntry}>
-              {isFavorite ? t("shell.unfavoriteAction") : t("shell.favoriteAction")}
-            </button>
-            <button type="button" className="session-action-menu-item" role="menuitem" onClick={() => void handleArchiveEntry()}>
-              {session.isArchived ? t("shell.unarchiveAction") : t("shell.archiveAction")}
-            </button>
-            <button type="button" className="session-action-menu-item" role="menuitem" onClick={() => void handleRename()}>
-              {t("shell.renameAction")}
-            </button>
-          </div>
-        ) : null}
-      </div>
+      {showActions ? (
+        <div className="session-list-actions">
+          <button
+            type="button"
+            className="ghost-button"
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen((current) => !current)}
+          >
+            {t("shell.sessionMoreAction")}
+          </button>
+          {menuOpen ? (
+            <div className="session-action-menu surface-card" role="menu" aria-label={t("shell.sessionMoreAction")}>
+              <button type="button" className="session-action-menu-item" role="menuitem" onClick={handleToggleFavoriteEntry}>
+                {isFavorite ? t("shell.unfavoriteAction") : t("shell.favoriteAction")}
+              </button>
+              <button type="button" className="session-action-menu-item" role="menuitem" onClick={() => void handleArchiveEntry()}>
+                {session.isArchived ? t("shell.unarchiveAction") : t("shell.archiveAction")}
+              </button>
+              <button type="button" className="session-action-menu-item" role="menuitem" onClick={() => void handleRename()}>
+                {t("shell.renameAction")}
+              </button>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </article>
   );
 }
@@ -200,4 +221,17 @@ function resolveSessionListIndicatorClassName(input: {
   }
 
   return "session-list-indicator is-idle";
+}
+
+function formatActivityTime(value: string | null) {
+  if (!value) {
+    return t("common.unknown");
+  }
+
+  return new Date(value).toLocaleString(undefined, {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
 }

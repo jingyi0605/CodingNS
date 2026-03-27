@@ -169,7 +169,7 @@ describe("MobileWorkbenchShell", () => {
     expect(view.queryByRole("button", { name: "打开工具面板" })).not.toBeInTheDocument();
   });
 
-  it("底部导航会显示工作区、终端、会话、工具、设置五个一级入口", () => {
+  it("底部导航会显示工作区、终端、对话、工具、设置五个一级入口", () => {
     const view = renderMobileShell({
       activeEntry: "terminals"
     });
@@ -178,7 +178,7 @@ describe("MobileWorkbenchShell", () => {
     expect(tabbarItems).toHaveLength(5);
     expect(tabbarItems.map((item) => item.textContent?.trim())).toEqual([
       "工作区",
-      "会话",
+      "对话",
       "终端",
       "工具",
       "设置"

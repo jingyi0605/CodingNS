@@ -70,7 +70,8 @@ import {
   buildWorkspaceToolGitPath,
   buildWorkspaceToolProcessesPath,
   buildWorkspaceToolsPath,
-  flattenNavigationSessions
+  flattenNavigationSessions,
+  type WorkbenchNavigationEntry
 } from "../../workbench/utils/workbench-navigation";
 import { SessionProviderPicker } from "./SessionProviderPicker";
 
@@ -289,6 +290,7 @@ interface WorkbenchShellContextValue {
   currentWorkspaceId: string | null;
   currentSessionId: string | null;
   favoriteSessionIds: string[];
+  favoriteSessions: WorkbenchNavigationEntry[];
   refreshNavigation: () => Promise<void>;
   requestNavigationRefresh: () => void;
   subscribeFileTree: (workspaceId: string, paths: string[]) => void;
@@ -5093,6 +5095,7 @@ export function WorkbenchLayout({
       currentWorkspaceId,
       currentSessionId,
       favoriteSessionIds,
+      favoriteSessions,
       refreshNavigation,
       requestNavigationRefresh,
       subscribeFileTree,
@@ -5127,6 +5130,7 @@ export function WorkbenchLayout({
       currentSessionId,
       currentWorkspaceId,
       favoriteSessionIds,
+      favoriteSessions,
       handleSelectWorkspace,
       markNavigationSessionSeen,
       navigationError,
@@ -5549,6 +5553,7 @@ export function useWorkbenchShell(): WorkbenchShellContextValue {
       currentWorkspaceId: null,
       currentSessionId: null,
       favoriteSessionIds: [],
+      favoriteSessions: [],
       refreshNavigation: async () => undefined,
       requestNavigationRefresh: () => undefined,
       subscribeFileTree: () => undefined,

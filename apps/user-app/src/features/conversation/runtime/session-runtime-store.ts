@@ -73,6 +73,7 @@ export class SessionRuntimeStore {
   private state: SessionRuntimeState;
   private listeners = new Set<RuntimeListener>();
   private realtimeClient: RealtimeClient | null = null;
+  private historyBootstrapReadyTimer: number | null = null;
   private markSeenTimer: number | null = null;
   private markSeenInFlight = false;
   private lastMarkSeenRequestAt = 0;
@@ -123,13 +124,15 @@ export class SessionRuntimeStore {
   async initialize(): Promise<void> {
     const bootstrapMessages = this.options.bootstrapMessages ?? [];
     const mergedMessages = mergeAuthoritativeMessages(this.state.messages, this.sessionId, bootstrapMessages);
+    const hasBootstrappedMessages = mergedMessages.length > 0;
 
     this.patch({
       messages: mergedMessages,
-      historyState: "loading",
+      historyState: resolveInitialHistoryState(this.state.session, mergedMessages.length),
       loadingOlderMessages: false,
       olderCursor: null,
-      hasOlderMessages: false,
+      hasOlderMessages: inferHasOlderMessages(this.state.session, mergedMessages.length),
+      pagesLoaded: hasBootstrappedMessages ? Math.max(this.state.pagesLoaded, 1) : 0,
       errorCode: null,
       errorDetail: null
     });
@@ -145,15 +148,20 @@ export class SessionRuntimeStore {
     void this.refreshQueue();
 
     try {
-      await this.loadLatestHistory();
-      this.scheduleMarkSeen();
       this.startRealtime();
+
+      if (hasBootstrappedMessages) {
+        this.scheduleMarkSeen();
+      } else if (this.state.historyState === "loading") {
+        this.scheduleHistoryBootstrapReady();
+      }
     } catch (error) {
       this.handleError(error);
     }
   }
 
   async reload(): Promise<void> {
+    this.clearHistoryBootstrapReadyTimer();
     this.realtimeClient?.close();
     this.realtimeClient = null;
     const cachedSnapshot = readViewSnapshot<SessionRuntimeSnapshot>(
@@ -190,7 +198,8 @@ export class SessionRuntimeStore {
     }
 
     this.patch({
-      session: nextSession
+      session: nextSession,
+      hasOlderMessages: inferHasOlderMessages(nextSession, this.state.messages.length)
     });
   }
 
@@ -357,7 +366,7 @@ export class SessionRuntimeStore {
     if (
       this.state.historyState !== "ready" ||
       this.state.loadingOlderMessages ||
-      !this.state.olderCursor
+      (!this.state.olderCursor && !this.state.hasOlderMessages)
     ) {
       return;
     }
@@ -369,10 +378,13 @@ export class SessionRuntimeStore {
     });
 
     try {
+      const isBootstrapOlderLoad = !this.state.olderCursor;
       const page = await getSessionMessages(
         this.sessionId,
-        this.state.olderCursor,
-        INITIAL_HISTORY_LIMIT,
+        isBootstrapOlderLoad ? null : this.state.olderCursor,
+        isBootstrapOlderLoad
+          ? Math.min(100, Math.max(INITIAL_HISTORY_LIMIT, this.state.messages.length + INITIAL_HISTORY_LIMIT))
+          : INITIAL_HISTORY_LIMIT,
         "backward"
       );
       const merged = mergeAuthoritativeMessages(this.state.messages, this.sessionId, page.messages);
@@ -395,6 +407,7 @@ export class SessionRuntimeStore {
   }
 
   destroy(): void {
+    this.clearHistoryBootstrapReadyTimer();
     this.realtimeClient?.close();
     this.realtimeClient = null;
 
@@ -441,7 +454,15 @@ export class SessionRuntimeStore {
       cursor: this.state.lastCursor,
       limit: REALTIME_LIMIT,
       onSubscribed: () => {
-        this.patch({ connectionState: "connected" });
+        this.patch({
+          connectionState: "connected",
+          historyState:
+            this.state.historyState === "loading" && resolveKnownMessageCount(this.state.session) === 0
+              ? "ready"
+              : this.state.historyState,
+          hasOlderMessages: inferHasOlderMessages(this.state.session, this.state.messages.length)
+        });
+        this.scheduleHistoryBootstrapReady();
       },
       onConnectionChange: (connectionState) => {
         const previousConnectionState = this.state.connectionState;
@@ -474,10 +495,17 @@ export class SessionRuntimeStore {
         this.scheduleRuntimeRefresh("poll", "connection_state_change");
       },
       onEnvelope: (event) => {
+        this.clearHistoryBootstrapReadyTimer();
         const merged = mergeAuthoritativeMessages(this.state.messages, this.sessionId, event.messages);
         this.patch({
           messages: merged,
           lastCursor: event.cursor,
+          historyState: "ready",
+          hasOlderMessages: inferHasOlderMessages(this.state.session, merged.length),
+          pagesLoaded:
+            event.type === "session.backfill"
+              ? Math.max(this.state.pagesLoaded, merged.length > 0 ? 1 : 0)
+              : this.state.pagesLoaded,
           session: withRunningState(
             this.state.session,
             resolveEnvelopeRunningState(event.type, this.state.session?.runningState)
@@ -542,6 +570,7 @@ export class SessionRuntimeStore {
   }
 
   private handleError(error: unknown): void {
+    this.clearHistoryBootstrapReadyTimer();
     const detail = error instanceof Error ? error.message : "unknown";
     this.patch({
       historyState: "error",
@@ -621,6 +650,40 @@ export class SessionRuntimeStore {
     window.clearTimeout(this.runtimeRefreshTimer);
     this.runtimeRefreshTimer = null;
     this.runtimeRefreshMode = null;
+  }
+
+  private scheduleHistoryBootstrapReady(): void {
+    if (this.state.historyState !== "loading") {
+      this.clearHistoryBootstrapReadyTimer();
+      return;
+    }
+
+    if (this.historyBootstrapReadyTimer !== null) {
+      return;
+    }
+
+    this.historyBootstrapReadyTimer = window.setTimeout(() => {
+      this.historyBootstrapReadyTimer = null;
+
+      if (this.state.historyState !== "loading") {
+        return;
+      }
+
+      this.patch({
+        historyState: "ready",
+        hasOlderMessages: inferHasOlderMessages(this.state.session, this.state.messages.length),
+        pagesLoaded: this.state.messages.length > 0 ? Math.max(this.state.pagesLoaded, 1) : 0
+      });
+    }, 500);
+  }
+
+  private clearHistoryBootstrapReadyTimer(): void {
+    if (this.historyBootstrapReadyTimer === null) {
+      return;
+    }
+
+    window.clearTimeout(this.historyBootstrapReadyTimer);
+    this.historyBootstrapReadyTimer = null;
   }
 
   private scheduleRuntimeRefresh(mode: RuntimeRefreshMode, reason: string): void {
@@ -1015,6 +1078,35 @@ export function summarizeCapabilities(capabilities: ProviderCapabilitiesDto | nu
 
 export function connectionTone(state: RuntimeConnectionState) {
   return state;
+}
+
+function resolveKnownMessageCount(session: SessionSummaryDto | null): number | null {
+  const messageCount = session?.messageCount;
+  return typeof messageCount === "number" && Number.isFinite(messageCount) ? messageCount : null;
+}
+
+function resolveInitialHistoryState(
+  session: SessionSummaryDto | null,
+  loadedMessageCount: number
+): "loading" | "ready" {
+  if (loadedMessageCount > 0) {
+    return "ready";
+  }
+
+  return resolveKnownMessageCount(session) === 0 ? "ready" : "loading";
+}
+
+function inferHasOlderMessages(
+  session: SessionSummaryDto | null,
+  loadedMessageCount: number
+): boolean {
+  const knownMessageCount = resolveKnownMessageCount(session);
+
+  if (knownMessageCount !== null) {
+    return knownMessageCount > loadedMessageCount;
+  }
+
+  return loadedMessageCount >= REALTIME_LIMIT;
 }
 
 function withRunningState<T extends { runningState: SessionRunningState | null }>(

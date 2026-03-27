@@ -75,6 +75,28 @@ vi.mock("../../../network/realtime-client", () => ({
   RealtimeClient: mocked.MockRealtimeClient
 }));
 
+function getRealtimeClient() {
+  const client = mocked.realtimeInstances[0];
+
+  if (!client) {
+    throw new Error("RealtimeClient 未创建");
+  }
+
+  return client;
+}
+
+function emitRealtimeSubscribed() {
+  const client = getRealtimeClient();
+  (client.options.onSubscribed as (() => void))();
+  return client;
+}
+
+function emitRealtimeEnvelope(event: Record<string, unknown>) {
+  const client = getRealtimeClient();
+  (client.options.onEnvelope as ((payload: Record<string, unknown>) => void))(event);
+  return client;
+}
+
 describe("SessionRuntimeStore", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -222,11 +244,17 @@ describe("SessionRuntimeStore", () => {
     vi.useRealTimers();
   });
 
-  it("loads the latest 30 messages on initialize", async () => {
+  it("loads the latest 30 messages from realtime backfill on initialize", async () => {
     vi.useFakeTimers();
     const store = new SessionRuntimeStore("session-1");
 
-    mocked.getSessionMessages.mockResolvedValueOnce({
+    await store.initialize();
+
+    emitRealtimeSubscribed();
+    emitRealtimeEnvelope({
+      type: "session.backfill",
+      sessionId: "session-1",
+      cursor: "cursor-latest",
       messages: Array.from({ length: 30 }, (_, index) => ({
         messageId: `message-${index + 31}`,
         provider: "codex",
@@ -236,23 +264,19 @@ describe("SessionRuntimeStore", () => {
         content: `message-${index + 31}`,
         timestamp: `2026-03-24T10:${String(index).padStart(2, "0")}:00.000Z`,
         sequence: index + 31,
-        rawRef: `codex://raw#line=${index + 31}`
-      })),
-      cursor: "cursor-latest",
-      nextCursor: "cursor-older",
-      total: 60
+        rawRef: `codex://raw#line=${index + 31}`,
+        toolCall: null
+      }))
     });
 
-    await store.initialize();
-
-    expect(mocked.getSessionMessages).toHaveBeenCalledWith("session-1", null, 30, "backward");
+    expect(mocked.getSessionMessages).not.toHaveBeenCalled();
     expect(store.getState().messages).toHaveLength(30);
     expect(store.getState().messages[0]?.sequence).toBe(31);
     expect(store.getState().messages.at(-1)?.sequence).toBe(60);
     expect(store.getState().hasOlderMessages).toBe(true);
-    expect(store.getState().olderCursor).toBe("cursor-older");
+    expect(store.getState().olderCursor).toBeNull();
     expect(store.getState().lastCursor).toBe("cursor-latest");
-    expect(mocked.realtimeInstances[0]?.options.cursor).toBe("cursor-latest");
+    expect(mocked.realtimeInstances[0]?.options.cursor).toBeNull();
     expect(mocked.realtimeInstances[0]?.options.limit).toBe(40);
 
     store.destroy();
@@ -278,12 +302,6 @@ describe("SessionRuntimeStore", () => {
       }
     ];
 
-    mocked.getSessionMessages.mockResolvedValueOnce({
-      messages: [],
-      cursor: "cursor-latest",
-      nextCursor: null,
-      total: 0
-    });
     mocked.getSessionQueue.mockResolvedValue({
       items: queueItems
     });
@@ -379,7 +397,7 @@ describe("SessionRuntimeStore", () => {
     expect(mocked.getSessionDetail).not.toHaveBeenCalled();
     expect(mocked.getSessionCapabilities).not.toHaveBeenCalled();
     expect(mocked.getSessionRuntime).not.toHaveBeenCalled();
-    expect(mocked.getSessionMessages).toHaveBeenCalledTimes(1);
+    expect(mocked.getSessionMessages).not.toHaveBeenCalled();
 
     store.destroy();
   });
@@ -579,55 +597,53 @@ describe("SessionRuntimeStore", () => {
     vi.useFakeTimers();
     const store = new SessionRuntimeStore("session-1");
 
-    mocked.getSessionMessages
-      .mockResolvedValueOnce({
-        messages: Array.from({ length: 30 }, (_, index) => ({
-          messageId: `message-${index + 31}`,
-          provider: "codex",
-          providerSessionId: "raw-1",
-          role: "assistant",
-          kind: "text",
-          content: `message-${index + 31}`,
-          timestamp: `2026-03-24T10:${String(index).padStart(2, "0")}:00.000Z`,
-          sequence: index + 31,
-          rawRef: `codex://raw#line=${index + 31}`
-        })),
-        cursor: "cursor-latest",
-        nextCursor: "cursor-older",
-        total: 60
-      })
-      .mockResolvedValueOnce({
-        messages: Array.from({ length: 30 }, (_, index) => ({
+    mocked.getSessionMessages.mockResolvedValueOnce({
+        messages: Array.from({ length: 60 }, (_, index) => ({
           messageId: `message-${index + 1}`,
           provider: "codex",
           providerSessionId: "raw-1",
           role: "assistant",
           kind: "text",
           content: `message-${index + 1}`,
-          timestamp: `2026-03-24T09:${String(index).padStart(2, "0")}:00.000Z`,
+          timestamp:
+            index < 30
+              ? `2026-03-24T09:${String(index).padStart(2, "0")}:00.000Z`
+              : `2026-03-24T10:${String(index - 30).padStart(2, "0")}:00.000Z`,
           sequence: index + 1,
           rawRef: `codex://raw#line=${index + 1}`
         })),
-        cursor: "cursor-older",
+        cursor: "cursor-latest",
         nextCursor: null,
         total: 60
       });
 
     await store.initialize();
+    emitRealtimeSubscribed();
+    emitRealtimeEnvelope({
+      type: "session.backfill",
+      sessionId: "session-1",
+      cursor: "cursor-latest",
+      messages: Array.from({ length: 30 }, (_, index) => ({
+        messageId: `message-${index + 31}`,
+        provider: "codex",
+        providerSessionId: "raw-1",
+        role: "assistant",
+        kind: "text",
+        content: `message-${index + 31}`,
+        timestamp: `2026-03-24T10:${String(index).padStart(2, "0")}:00.000Z`,
+        sequence: index + 31,
+        rawRef: `codex://raw#line=${index + 31}`,
+        toolCall: null
+      }))
+    });
     await store.loadOlderMessages();
 
-    expect(mocked.getSessionMessages).toHaveBeenNthCalledWith(
-      2,
+    expect(mocked.getSessionMessages).toHaveBeenCalledWith(
       "session-1",
-      "cursor-older",
-      30,
+      null,
+      60,
       "backward"
     );
-    expect(store.getState().messages).toHaveLength(60);
-    expect(store.getState().messages[0]?.sequence).toBe(1);
-    expect(store.getState().messages.at(-1)?.sequence).toBe(60);
-    expect(store.getState().hasOlderMessages).toBe(false);
-    expect(store.getState().olderCursor).toBeNull();
     expect(store.getState().lastCursor).toBe("cursor-latest");
 
     store.destroy();
@@ -775,6 +791,7 @@ describe("SessionRuntimeStore", () => {
     });
 
     await store.initialize();
+    emitRealtimeSubscribed();
 
     mocked.getSessionRuntime.mockResolvedValueOnce({
       sessionId: "session-1",
@@ -1357,7 +1374,12 @@ describe("SessionRuntimeStore", () => {
       onSeen
     });
 
-    mocked.getSessionMessages.mockResolvedValueOnce({
+    await store.initialize();
+    emitRealtimeSubscribed();
+    emitRealtimeEnvelope({
+      type: "session.backfill",
+      sessionId: "session-1",
+      cursor: "cursor-latest",
       messages: [
         {
           messageId: "assistant-1",
@@ -1368,15 +1390,11 @@ describe("SessionRuntimeStore", () => {
           content: "hello",
           timestamp: "2026-03-24T10:00:00.000Z",
           sequence: 1,
-          rawRef: "codex://raw#line=1"
+          rawRef: "codex://raw#line=1",
+          toolCall: null
         }
-      ],
-      cursor: "cursor-latest",
-      nextCursor: null,
-      total: 0
+      ]
     });
-
-    await store.initialize();
     await vi.advanceTimersByTimeAsync(600);
 
     expect(mocked.markSessionSeen).toHaveBeenCalledWith("session-1");
@@ -1418,7 +1436,12 @@ describe("SessionRuntimeStore", () => {
       }
     });
 
-    mocked.getSessionMessages.mockResolvedValueOnce({
+    await store.initialize();
+    emitRealtimeSubscribed();
+    emitRealtimeEnvelope({
+      type: "session.backfill",
+      sessionId: "session-1",
+      cursor: "cursor-latest",
       messages: [
         {
           messageId: "assistant-1",
@@ -1429,15 +1452,11 @@ describe("SessionRuntimeStore", () => {
           content: "hello",
           timestamp: "2026-03-24T10:00:00.000Z",
           sequence: 1,
-          rawRef: "codex://raw#line=1"
+          rawRef: "codex://raw#line=1",
+          toolCall: null
         }
-      ],
-      cursor: "cursor-latest",
-      nextCursor: null,
-      total: 0
+      ]
     });
-
-    await store.initialize();
     await vi.advanceTimersByTimeAsync(600);
 
     expect(mocked.markSessionSeen).toHaveBeenCalledTimes(1);
@@ -1504,7 +1523,12 @@ describe("SessionRuntimeStore", () => {
     vi.useFakeTimers();
     const store = new SessionRuntimeStore("session-1");
 
-    mocked.getSessionMessages.mockResolvedValueOnce({
+    await store.initialize();
+    emitRealtimeSubscribed();
+    emitRealtimeEnvelope({
+      type: "session.backfill",
+      sessionId: "session-1",
+      cursor: "cursor-latest",
       messages: [
         {
           messageId: "assistant-1",
@@ -1515,15 +1539,11 @@ describe("SessionRuntimeStore", () => {
           content: "hello",
           timestamp: "2026-03-24T10:00:00.000Z",
           sequence: 1,
-          rawRef: "codex://raw#line=1"
+          rawRef: "codex://raw#line=1",
+          toolCall: null
         }
-      ],
-      cursor: "cursor-latest",
-      nextCursor: null,
-      total: 0
+      ]
     });
-
-    await store.initialize();
     await vi.advanceTimersByTimeAsync(600);
 
     expect(mocked.markSessionSeen).toHaveBeenCalledTimes(1);

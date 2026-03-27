@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 
 import { clientConfigStore } from "../../../config/client-config-store";
@@ -33,6 +34,7 @@ import {
 } from "../capability/provider-ui";
 import {
   buildNavigationSessionTree,
+  buildWorkspaceSessionIndexPath,
   buildWorkspaceSessionPath,
   flattenNavigationSessions,
   type WorkbenchNavigationEntry
@@ -79,13 +81,21 @@ function LiveConversationPage({
     shellMode,
     navigationGroups,
     requestNavigationRefresh,
+    selectWorkspace,
     setSessionWorkspace,
-    markNavigationSessionSeen
+    markNavigationSessionSeen,
+    favoriteSessions,
+    archiveSession,
+    unarchiveSession
   } = useWorkbenchShell();
   const navigate = useNavigate();
   const storeRef = useRef<SessionRuntimeStore | null>(null);
   const currentSessionIdRef = useRef<string | null>(null);
   const [sending, setSending] = useState(false);
+  const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
+  const [archiveFolderOpen, setArchiveFolderOpen] = useState(false);
+  const [archiveRestoreSessionId, setArchiveRestoreSessionId] = useState<string | null>(null);
+  const [archiveSubmitting, setArchiveSubmitting] = useState(false);
   const [mobilePreviewMode, setMobilePreviewMode] = useState<MobileConversationPreviewMode>(() =>
     readMobileConversationPreviewMode()
   );
@@ -141,19 +151,38 @@ function LiveConversationPage({
     (item) => item.status === "queued" || item.status === "dispatching"
   );
   const showInlineHeader = shellMode !== "mobile";
-  const mobileWorkspaceId =
-    session?.workspaceId ?? navigationSession?.workspaceId ?? currentSessionIdRef.current ?? null;
+  const mobileWorkspaceId = session?.workspaceId ?? navigationSession?.workspaceId ?? null;
+  const mobileFavoriteSessionIdSet = useMemo(
+    () => new Set(favoriteSessions.map((item) => item.session.sessionId)),
+    [favoriteSessions]
+  );
   const mobilePreviewItems = useMemo(
-    () => buildMobilePreviewItems(navigationGroups, session?.workspaceId ?? navigationSession?.workspaceId ?? null),
-    [navigationGroups, navigationSession?.workspaceId, session?.workspaceId]
-  );
-  const mobileWorkspaceName = useMemo(
     () =>
-      navigationGroups.find((group) => group.workspace.id === (session?.workspaceId ?? navigationSession?.workspaceId))
-        ?.workspace.name ?? null,
-    [navigationGroups, navigationSession?.workspaceId, session?.workspaceId]
+      buildMobilePreviewItems(
+        navigationGroups,
+        session?.workspaceId ?? navigationSession?.workspaceId ?? null,
+        mobileFavoriteSessionIdSet
+      ),
+    [mobileFavoriteSessionIdSet, navigationGroups, navigationSession?.workspaceId, session?.workspaceId]
   );
-
+  const mobileFavoritePreviewItems = useMemo(
+    () => buildMobileFavoritePreviewItems(favoriteSessions),
+    [favoriteSessions]
+  );
+  const mobileArchiveWorkspaceGroup = useMemo(
+    () =>
+      mobileWorkspaceId
+        ? navigationGroups.find((group) => group.workspace.id === mobileWorkspaceId) ?? null
+        : null,
+    [mobileWorkspaceId, navigationGroups]
+  );
+  const mobileArchivedSessions = useMemo(
+    () =>
+      mobileArchiveWorkspaceGroup?.sessions.filter(
+        (item) => item.isArchived === true && !(item.parentSessionId?.trim() || null)
+      ) ?? [],
+    [mobileArchiveWorkspaceGroup]
+  );
   useEffect(() => {
     if (shellMode !== "mobile") {
       return;
@@ -247,120 +276,205 @@ function LiveConversationPage({
   }, [dismissToast, runtimeErrorCode, runtimeErrorDetail, session?.provider, showToast]);
 
   return (
-    <main
-      className="workbench-page conversation-page-shell mobile-page-fixed-root mobile-conversation-page"
-      data-mobile-shell={!showInlineHeader}
-      data-preview-mode={!showInlineHeader ? mobilePreviewMode : undefined}
-    >
-      {showInlineHeader ? <SessionHeader session={session ?? navigationSession} /> : null}
-      {!showInlineHeader ? (
-        <MobileConversationHeader
-          session={session ?? navigationSession}
-          previewMode={mobilePreviewMode}
-          onTogglePreview={() => {
-            setMobilePreviewMode((current) => (current === "preview" ? "immersive" : "preview"));
-          }}
-        />
-      ) : null}
-      {!showInlineHeader ? (
+    <>
+      <main
+        className="workbench-page conversation-page-shell mobile-page-fixed-root mobile-conversation-page"
+        data-mobile-shell={!showInlineHeader}
+        data-preview-mode={!showInlineHeader ? mobilePreviewMode : undefined}
+      >
+        {showInlineHeader ? <SessionHeader session={session ?? navigationSession} /> : null}
+        {!showInlineHeader ? (
+          <MobileConversationHeader
+            session={session ?? navigationSession}
+            previewMode={mobilePreviewMode}
+            onTogglePreview={() => {
+              setMobilePreviewMode((current) => (current === "preview" ? "immersive" : "preview"));
+            }}
+          />
+        ) : null}
+        {!showInlineHeader ? (
         <MobileConversationPreviewRail
           open={mobilePreviewMode === "preview"}
-          workspaceName={mobileWorkspaceName}
           activeSessionId={sessionId}
+          favoriteItems={mobileFavoritePreviewItems}
           items={mobilePreviewItems}
+          workspaceSectionLabel={t("shell.mobileConversationCurrentWorkspaceSection")}
+          archiveCurrentActionLabel={t("shell.archiveCurrentSessionAction")}
+          archiveFolderActionLabel={t("shell.archiveFolderAction")}
+          onArchiveActiveSession={() => {
+            setArchiveConfirmOpen(true);
+          }}
+          onOpenArchiveFolder={() => {
+            setArchiveFolderOpen(true);
+          }}
           onActivate={(entry) => {
             writeMobileConversationPreviewMode("preview");
             navigate(buildWorkspaceSessionPath(entry.workspace.id, entry.session.sessionId));
-          }}
-        />
-      ) : null}
-      <div className="mobile-conversation-stage">
-        <div className="mobile-conversation-main">
-          <ConnectionBanner connectionState={connectionState} onReconnect={() => store.reconnect()} />
-          <MessageTimeline
-            sessionId={sessionId}
-            messages={messages}
-            historyState={historyState}
-            loadingOlderMessages={loadingOlderMessages}
-            hasOlderMessages={hasOlderMessages}
-            provider={session?.provider ?? null}
-            onLoadOlderMessages={() => {
-              void store.loadOlderMessages();
-            }}
-            onRetryMessage={(clientRequestId: string) => {
-              void store.retryMessage(clientRequestId);
             }}
           />
-          <QueuedMessageList
-            items={queuedMessages}
-            deletingQueueItemId={deletingQueueItemId}
-            steeringQueueItemId={steeringQueueItemId}
-            canSteer={canSteerQueuedMessage}
-            onDelete={async (queueItemId) => {
-              setDeletingQueueItemId(queueItemId);
+        ) : null}
+        <div className="mobile-conversation-stage">
+          <div className="mobile-conversation-main">
+            <ConnectionBanner connectionState={connectionState} onReconnect={() => store.reconnect()} />
+            <MessageTimeline
+              sessionId={sessionId}
+              messages={messages}
+              historyState={historyState}
+              loadingOlderMessages={loadingOlderMessages}
+              hasOlderMessages={hasOlderMessages}
+              provider={session?.provider ?? null}
+              onLoadOlderMessages={() => {
+                void store.loadOlderMessages();
+              }}
+              onRetryMessage={(clientRequestId: string) => {
+                void store.retryMessage(clientRequestId);
+              }}
+            />
+            <QueuedMessageList
+              items={queuedMessages}
+              deletingQueueItemId={deletingQueueItemId}
+              steeringQueueItemId={steeringQueueItemId}
+              canSteer={canSteerQueuedMessage}
+              onDelete={async (queueItemId) => {
+                setDeletingQueueItemId(queueItemId);
 
-              try {
-                await store.deleteQueuedMessage(queueItemId);
-              } finally {
-                setDeletingQueueItemId(null);
-              }
-            }}
-            onSteer={async (queueItemId) => {
-              setSteeringQueueItemId(queueItemId);
+                try {
+                  await store.deleteQueuedMessage(queueItemId);
+                } finally {
+                  setDeletingQueueItemId(null);
+                }
+              }}
+              onSteer={async (queueItemId) => {
+                setSteeringQueueItemId(queueItemId);
 
-              try {
-                await store.steerQueuedMessage(queueItemId);
+                try {
+                  await store.steerQueuedMessage(queueItemId);
+                  requestNavigationRefresh();
+                } finally {
+                  setSteeringQueueItemId(null);
+                }
+              }}
+            />
+            <ComposerPanel
+              capabilities={capabilities}
+              hasActiveRun={runtimeHasActiveRun}
+              contextUsage={contextUsage}
+              hasPendingQueuedMessages={hasPendingQueuedMessages}
+              canInterrupt={runtimeCanInterrupt}
+              isSubmitting={sending}
+              isRunning={isRunning}
+              onInterrupt={async () => {
+                await store.interrupt();
                 requestNavigationRefresh();
-              } finally {
-                setSteeringQueueItemId(null);
-              }
-            }}
-          />
-          <ComposerPanel
-            capabilities={capabilities}
-            hasActiveRun={runtimeHasActiveRun}
-            contextUsage={contextUsage}
-            hasPendingQueuedMessages={hasPendingQueuedMessages}
-            canInterrupt={runtimeCanInterrupt}
-            isSubmitting={sending}
-            isRunning={isRunning}
-            onInterrupt={async () => {
-              await store.interrupt();
-              requestNavigationRefresh();
-            }}
-            onSend={async (content, options) => {
-              setSending(true);
+              }}
+              onSend={async (content, options) => {
+                setSending(true);
 
-              try {
-                await store.sendMessage(content, {
-                  model: options?.model,
-                  reasoningLevel: options?.reasoningLevel,
-                  attachments: options?.attachments,
-                  attachmentMeta: options?.attachmentMeta
-                });
-                requestNavigationRefresh();
-              } finally {
-                setSending(false);
-              }
-            }}
-            onQueueSend={async (content, options) => {
-              setSending(true);
+                try {
+                  await store.sendMessage(content, {
+                    model: options?.model,
+                    reasoningLevel: options?.reasoningLevel,
+                    attachments: options?.attachments,
+                    attachmentMeta: options?.attachmentMeta
+                  });
+                  requestNavigationRefresh();
+                } finally {
+                  setSending(false);
+                }
+              }}
+              onQueueSend={async (content, options) => {
+                setSending(true);
 
-              try {
-                await store.enqueueMessage(content, {
-                  model: options?.model,
-                  reasoningLevel: options?.reasoningLevel,
-                  attachments: options?.attachments,
-                  attachmentMeta: options?.attachmentMeta
-                });
-              } finally {
-                setSending(false);
-              }
-            }}
-          />
+                try {
+                  await store.enqueueMessage(content, {
+                    model: options?.model,
+                    reasoningLevel: options?.reasoningLevel,
+                    attachments: options?.attachments,
+                    attachmentMeta: options?.attachmentMeta
+                  });
+                } finally {
+                  setSending(false);
+                }
+              }}
+            />
+          </div>
         </div>
-      </div>
-    </main>
+      </main>
+      <ConversationArchiveConfirmModal
+        open={archiveConfirmOpen}
+        busy={archiveSubmitting}
+        onClose={() => {
+          if (archiveSubmitting) {
+            return;
+          }
+
+          setArchiveConfirmOpen(false);
+        }}
+        onConfirm={async () => {
+          if (archiveSubmitting) {
+            return;
+          }
+
+          setArchiveSubmitting(true);
+
+          try {
+            await archiveSession(sessionId);
+            setArchiveConfirmOpen(false);
+            showToast({
+              title: t("shell.archiveAdded"),
+              tone: "success"
+            });
+
+            if (mobileWorkspaceId) {
+              selectWorkspace(mobileWorkspaceId);
+              writeMobileConversationPreviewMode("preview");
+              navigate(buildWorkspaceSessionIndexPath(mobileWorkspaceId));
+              return;
+            }
+
+            navigate("/workspaces");
+          } catch (error) {
+            showToast({
+              title: error instanceof Error ? error.message : t("shell.navigationLoadFailed"),
+              tone: "error"
+            });
+          } finally {
+            setArchiveSubmitting(false);
+          }
+        }}
+      />
+      <ConversationArchiveFolderModal
+        open={archiveFolderOpen}
+        workspaceName={mobileArchiveWorkspaceGroup?.workspace.name ?? null}
+        sessions={mobileArchivedSessions}
+        restoringSessionId={archiveRestoreSessionId}
+        onClose={() => {
+          if (archiveRestoreSessionId) {
+            return;
+          }
+
+          setArchiveFolderOpen(false);
+        }}
+        onRestore={async (restoreSessionId) => {
+          setArchiveRestoreSessionId(restoreSessionId);
+
+          try {
+            await unarchiveSession(restoreSessionId);
+            showToast({
+              title: t("shell.archiveRestored"),
+              tone: "success"
+            });
+          } catch (error) {
+            showToast({
+              title: error instanceof Error ? error.message : t("shell.navigationLoadFailed"),
+              tone: "error"
+            });
+          } finally {
+            setArchiveRestoreSessionId(null);
+          }
+        }}
+      />
+    </>
   );
 }
 
@@ -394,7 +508,8 @@ function DraftConversationPage({
     navigationGroups,
     requestNavigationRefresh,
     setSessionWorkspace,
-    upsertNavigationSession
+    upsertNavigationSession,
+    favoriteSessions
   } = useWorkbenchShell();
   const [sending, setSending] = useState(false);
   const [draftMessages, setDraftMessages] = useState<SessionMessageViewModel[]>([]);
@@ -408,14 +523,17 @@ function DraftConversationPage({
   const [capabilities, setCapabilities] = useState<ProviderCapabilitiesDto>(fallbackCapabilities);
   const showInlineHeader = shellMode !== "mobile";
   const session = useMemo(() => createDraftSessionSummary(draft), [draft]);
-  const mobilePreviewItems = useMemo(
-    () => buildMobilePreviewItems(navigationGroups, draft.workspaceId),
-    [draft.workspaceId, navigationGroups]
+  const mobileFavoriteSessionIdSet = useMemo(
+    () => new Set(favoriteSessions.map((item) => item.session.sessionId)),
+    [favoriteSessions]
   );
-  const mobileWorkspaceName = useMemo(
-    () =>
-      navigationGroups.find((group) => group.workspace.id === draft.workspaceId)?.workspace.name ?? null,
-    [draft.workspaceId, navigationGroups]
+  const mobilePreviewItems = useMemo(
+    () => buildMobilePreviewItems(navigationGroups, draft.workspaceId, mobileFavoriteSessionIdSet),
+    [draft.workspaceId, mobileFavoriteSessionIdSet, navigationGroups]
+  );
+  const mobileFavoritePreviewItems = useMemo(
+    () => buildMobileFavoritePreviewItems(favoriteSessions),
+    [favoriteSessions]
   );
 
   useEffect(() => {
@@ -474,9 +592,10 @@ function DraftConversationPage({
       {!showInlineHeader ? (
         <MobileConversationPreviewRail
           open={mobilePreviewMode === "preview"}
-          workspaceName={mobileWorkspaceName}
           activeSessionId={draft.sessionId}
+          favoriteItems={mobileFavoritePreviewItems}
           items={mobilePreviewItems}
+          workspaceSectionLabel={t("shell.mobileConversationCurrentWorkspaceSection")}
           onActivate={(entry) => {
             writeMobileConversationPreviewMode("preview");
             navigate(buildWorkspaceSessionPath(entry.workspace.id, entry.session.sessionId));
@@ -624,7 +743,8 @@ function createDraftSessionSummary(draft: DraftConversationContext): SessionSumm
 
 function buildMobilePreviewItems(
   navigationGroups: ReturnType<typeof useWorkbenchShell>["navigationGroups"],
-  workspaceId: string | null
+  workspaceId: string | null,
+  excludedSessionIds: ReadonlySet<string>
 ) {
   if (!workspaceId) {
     return [] as Array<{
@@ -643,7 +763,9 @@ function buildMobilePreviewItems(
   }
 
   const tree = buildNavigationSessionTree(
-    flattenNavigationSessions([workspaceGroup]).filter((entry) => !entry.session.isArchived)
+    flattenNavigationSessions([workspaceGroup]).filter(
+      (entry) => !entry.session.isArchived && !excludedSessionIds.has(entry.session.sessionId)
+    )
   );
 
   return tree.flatMap((node) => [
@@ -656,6 +778,16 @@ function buildMobilePreviewItems(
       depth: 1 as const
     }))
   ]);
+}
+
+function buildMobileFavoritePreviewItems(
+  favoriteSessions: readonly WorkbenchNavigationEntry[]
+) {
+  return favoriteSessions
+    .map((entry) => ({
+      entry,
+      depth: 0 as const
+    }));
 }
 
 function MobileConversationHeader({
@@ -694,18 +826,31 @@ function MobileConversationHeader({
 
 function MobileConversationPreviewRail({
   open,
-  workspaceName,
   activeSessionId,
+  favoriteItems,
   items,
+  workspaceSectionLabel,
+  archiveCurrentActionLabel,
+  archiveFolderActionLabel,
+  onArchiveActiveSession,
+  onOpenArchiveFolder,
   onActivate
 }: {
   open: boolean;
-  workspaceName: string | null;
   activeSessionId: string;
+  favoriteItems: Array<{
+    entry: WorkbenchNavigationEntry;
+    depth: 0 | 1;
+  }>;
   items: Array<{
     entry: WorkbenchNavigationEntry;
     depth: 0 | 1;
   }>;
+  workspaceSectionLabel: string;
+  archiveCurrentActionLabel?: string;
+  archiveFolderActionLabel?: string;
+  onArchiveActiveSession?: (() => Promise<void>) | null;
+  onOpenArchiveFolder?: (() => void) | null;
   onActivate: (entry: WorkbenchNavigationEntry) => void;
 }) {
   if (!open) {
@@ -714,47 +859,110 @@ function MobileConversationPreviewRail({
 
   return (
     <aside className="mobile-conversation-preview-rail surface-card">
-      <div className="mobile-conversation-preview-copy">
-        <span>{t("shell.mobileConversationPreviewTitle")}</span>
-        <strong>{workspaceName ?? t("shell.workspaceSectionTitle")}</strong>
-      </div>
+      <section className="mobile-conversation-preview-group mobile-conversation-preview-list-favorites">
+        <div className="mobile-conversation-preview-group-heading">
+          {t("shell.favoriteSectionTitle")}
+        </div>
+        {favoriteItems.length > 0 ? (
+          <div className="mobile-conversation-preview-list mobile-conversation-preview-list-static">
+            {favoriteItems.map((item) => (
+              <button
+                key={`favorite:${item.entry.workspace.id}:${item.entry.session.sessionId}`}
+                type="button"
+                className="mobile-conversation-preview-item"
+                data-active={item.entry.session.sessionId === activeSessionId}
+                onClick={() => onActivate(item.entry)}
+              >
+                <span
+                  className={resolvePreviewIndicatorClassName(
+                    item.entry.session.activityState ?? null,
+                    item.entry.session.sessionId === activeSessionId
+                  )}
+                  aria-hidden="true"
+                />
+                <span className="mobile-conversation-preview-item-copy">
+                  <span className="mobile-conversation-preview-item-title">
+                    {item.entry.session.title || t("common.unknown")}
+                  </span>
+                  <span className="mobile-conversation-preview-item-meta">
+                    {formatMobilePreviewMeta(
+                      item.entry.session.provider,
+                      item.entry.session.lastMessageAt ?? item.entry.session.updatedAt,
+                      item.entry.workspace.name
+                    )}
+                  </span>
+                </span>
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </section>
 
-      <div className="mobile-conversation-preview-section-heading">
-        {t("shell.mobileConversationCurrentWorkspaceSection")}
-      </div>
+      <section className="mobile-conversation-preview-group mobile-conversation-preview-group-workspace">
+        <div className="mobile-conversation-preview-group-heading">
+          {workspaceSectionLabel}
+        </div>
+        <div className="mobile-conversation-preview-list">
+          {items.length === 0 ? (
+            <p className="mobile-conversation-preview-empty">{t("shell.emptyWorkspaceSessions")}</p>
+          ) : (
+            items.map((item) => (
+              <button
+                key={`${item.entry.workspace.id}:${item.entry.session.sessionId}`}
+                type="button"
+                className="mobile-conversation-preview-item"
+                data-active={item.entry.session.sessionId === activeSessionId}
+                data-depth={item.depth}
+                onClick={() => onActivate(item.entry)}
+              >
+                <span
+                  className={resolvePreviewIndicatorClassName(
+                    item.entry.session.activityState ?? null,
+                    item.entry.session.sessionId === activeSessionId
+                  )}
+                  aria-hidden="true"
+                />
+                <span className="mobile-conversation-preview-item-copy">
+                  <span className="mobile-conversation-preview-item-title">
+                    {item.entry.session.title || t("common.unknown")}
+                  </span>
+                  <span className="mobile-conversation-preview-item-meta">
+                    {formatMobilePreviewMeta(
+                      item.entry.session.provider,
+                      item.entry.session.lastMessageAt ?? item.entry.session.updatedAt
+                    )}
+                  </span>
+                </span>
+              </button>
+            ))
+          )}
+        </div>
+      </section>
 
-      <div className="mobile-conversation-preview-list">
-        {items.length === 0 ? (
-          <p className="mobile-conversation-preview-empty">{t("shell.emptyWorkspaceSessions")}</p>
-        ) : (
-          items.map((item) => (
+      {(archiveCurrentActionLabel && onArchiveActiveSession) || (archiveFolderActionLabel && onOpenArchiveFolder) ? (
+        <section className="mobile-conversation-preview-group mobile-conversation-preview-group-archive">
+          {archiveCurrentActionLabel && onArchiveActiveSession ? (
             <button
-              key={`${item.entry.workspace.id}:${item.entry.session.sessionId}`}
               type="button"
-              className="mobile-conversation-preview-item"
-              data-active={item.entry.session.sessionId === activeSessionId}
-              data-depth={item.depth}
-              onClick={() => onActivate(item.entry)}
+              className="mobile-conversation-preview-archive-button"
+              onClick={() => {
+                void onArchiveActiveSession();
+              }}
             >
-              <span
-                className={resolvePreviewIndicatorClassName(
-                  item.entry.session.activityState ?? null,
-                  item.entry.session.sessionId === activeSessionId
-                )}
-                aria-hidden="true"
-              />
-              <span className="mobile-conversation-preview-item-copy">
-                <span className="mobile-conversation-preview-item-title">
-                  {item.entry.session.title || t("common.unknown")}
-                </span>
-                <span className="mobile-conversation-preview-item-meta">
-                  {formatMobilePreviewMeta(item.entry.session.provider, item.entry.session.lastMessageAt ?? item.entry.session.updatedAt)}
-                </span>
-              </span>
+              {archiveCurrentActionLabel}
             </button>
-          ))
-        )}
-      </div>
+          ) : null}
+          {archiveFolderActionLabel && onOpenArchiveFolder ? (
+            <button
+              type="button"
+              className="mobile-conversation-preview-archive-button"
+              onClick={onOpenArchiveFolder}
+            >
+              {archiveFolderActionLabel}
+            </button>
+          ) : null}
+        </section>
+      ) : null}
     </aside>
   );
 }
@@ -771,8 +979,14 @@ function resolvePreviewIndicatorClassName(activityState: string | null, isActive
   return "mobile-conversation-preview-indicator is-idle";
 }
 
-function formatMobilePreviewMeta(provider: ProviderId, value: string | null) {
-  return [formatMobileProviderLabel(provider), formatMobilePreviewTime(value)].join(" · ");
+function formatMobilePreviewMeta(
+  provider: ProviderId,
+  value: string | null,
+  workspaceName?: string | null
+) {
+  return [workspaceName ?? null, formatMobileProviderLabel(provider), formatMobilePreviewTime(value)]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 function formatMobileProviderLabel(provider: ProviderId) {
@@ -817,6 +1031,186 @@ function MobileConversationPreviewToggleIcon({
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
       <polyline points="9 18 15 12 9 6" />
     </svg>
+  );
+}
+
+function ConversationArchiveConfirmModal({
+  open,
+  busy,
+  onClose,
+  onConfirm
+}: {
+  open: boolean;
+  busy: boolean;
+  onClose: () => void;
+  onConfirm: () => void | Promise<void>;
+}) {
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape" && !busy) {
+        onClose();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [busy, onClose, open]);
+
+  if (!open || typeof document === "undefined") {
+    return null;
+  }
+
+  return createPortal(
+    <div className="workbench-modal-layer">
+      <button
+        type="button"
+        className="workbench-modal-backdrop"
+        aria-label={t("common.close")}
+        disabled={busy}
+        onClick={onClose}
+      />
+      <section
+        className="workbench-modal-card surface-card"
+        role="dialog"
+        aria-modal="true"
+        aria-label={t("shell.archiveConfirmTitle")}
+      >
+        <div className="workbench-modal-header">
+          <div className="workbench-modal-title-wrap">
+            <h2>{t("shell.archiveConfirmTitle")}</h2>
+            <p>{t("shell.archiveConfirmDescription")}</p>
+          </div>
+        </div>
+        <div className="workbench-modal-body">
+          <div className="workbench-modal-actions">
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={busy}
+              onClick={onClose}
+            >
+              {t("common.cancel")}
+            </button>
+            <button
+              type="button"
+              className="secondary-button workbench-danger-button"
+              disabled={busy}
+              onClick={() => {
+                void onConfirm();
+              }}
+            >
+              {t("shell.archiveAction")}
+            </button>
+          </div>
+        </div>
+      </section>
+    </div>,
+    document.body
+  );
+}
+
+function ConversationArchiveFolderModal({
+  open,
+  workspaceName,
+  sessions,
+  restoringSessionId,
+  onClose,
+  onRestore
+}: {
+  open: boolean;
+  workspaceName: string | null;
+  sessions: SessionSummaryDto[];
+  restoringSessionId: string | null;
+  onClose: () => void;
+  onRestore: (sessionId: string) => void | Promise<void>;
+}) {
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape" && !restoringSessionId) {
+        onClose();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [onClose, open, restoringSessionId]);
+
+  if (!open || typeof document === "undefined") {
+    return null;
+  }
+
+  return createPortal(
+    <div className="workbench-modal-layer">
+      <button
+        type="button"
+        className="workbench-modal-backdrop"
+        aria-label={t("common.close")}
+        disabled={Boolean(restoringSessionId)}
+        onClick={onClose}
+      />
+      <section
+        className="workbench-modal-card surface-card"
+        role="dialog"
+        aria-modal="true"
+        aria-label={t("shell.archiveModalTitle")}
+      >
+        <div className="workbench-modal-header">
+          <div className="workbench-modal-title-wrap">
+            <h2>{t("shell.archiveModalTitle")}</h2>
+            <p>
+              {workspaceName
+                ? `${workspaceName} · ${t("shell.archiveModalDescription")}`
+                : t("shell.archiveModalDescription")}
+            </p>
+          </div>
+        </div>
+        <div className="workbench-modal-body">
+          {sessions.length > 0 ? (
+            <div className="workbench-archive-list">
+              {sessions.map((session) => {
+                const titlePresentation = buildSessionTitlePresentation(session.title, t("common.unknown"));
+
+                return (
+                  <article key={session.sessionId} className="workbench-archive-item">
+                    <div className="workbench-archive-item-main">
+                      <strong title={titlePresentation.fullTitle}>{titlePresentation.displayTitle}</strong>
+                      <p>{formatMobilePreviewMeta(session.provider, session.lastMessageAt ?? session.updatedAt)}</p>
+                    </div>
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      disabled={restoringSessionId === session.sessionId}
+                      onClick={() => {
+                        void onRestore(session.sessionId);
+                      }}
+                    >
+                      {t("shell.unarchiveAction")}
+                    </button>
+                  </article>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="workbench-section-empty">{t("shell.archiveEmpty")}</p>
+          )}
+        </div>
+      </section>
+    </div>,
+    document.body
   );
 }
 

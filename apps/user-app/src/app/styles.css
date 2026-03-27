@@ -12803,17 +12803,193 @@ textarea:focus-visible {
   border-bottom: none;
 }
 
+.mobile-tool-git-panel .git-mobile-section-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 6px;
+  padding-right: 8px;
+  background: var(--bg-primary);
+}
+
 .mobile-tool-git-panel .git-mobile-section-toggle {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   min-height: 44px;
-  padding: 0 12px;
+  padding: 0 8px 0 12px;
   border-top: none;
   border-bottom: none;
   background: var(--bg-primary);
 }
 
+.mobile-tool-git-panel .git-mobile-section-toggle-meta {
+  white-space: nowrap;
+}
+
+.mobile-tool-git-panel .git-mobile-section-header-action {
+  position: static;
+  transform: none;
+  z-index: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  pointer-events: auto;
+}
+
+.mobile-tool-git-panel .git-mobile-section-action {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  width: 26px;
+  height: 26px;
+  border-radius: 9px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 78%, transparent);
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--bg-surface) 96%, #ffffff 4%),
+      color-mix(in srgb, var(--bg-surface) 88%, transparent)
+    );
+  color: color-mix(in srgb, var(--text-secondary) 82%, var(--accent) 18%);
+  box-shadow:
+    0 4px 10px color-mix(in srgb, #0f172a 10%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  transition:
+    transform 180ms ease,
+    border-color 180ms ease,
+    color 180ms ease,
+    box-shadow 220ms ease,
+    background 220ms ease;
+}
+
+/* 强制最近版本标题与操作按钮保持同一行，避免被后续样式覆盖导致换行。 */
+.mobile-tool-panel-page.mobile-tool-git-page .mobile-tool-git-panel .git-mobile-section-header {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) auto !important;
+  align-items: center !important;
+}
+
+.mobile-tool-panel-page.mobile-tool-git-page .mobile-tool-git-panel .git-mobile-section-header-action {
+  position: static !important;
+  transform: none !important;
+}
+
+.mobile-tool-git-panel .git-mobile-section-action svg {
+  width: 14px;
+  height: 14px;
+}
+
+.mobile-tool-git-panel .git-mobile-section-action::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--accent) 16%, transparent),
+      color-mix(in srgb, var(--accent) 4%, transparent)
+    );
+  opacity: 0;
+  transition: opacity 180ms ease;
+}
+
+.mobile-tool-git-panel .git-mobile-section-action::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 11px;
+  z-index: -2;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  opacity: 0;
+  transform: scale(0.86);
+  transition:
+    opacity 220ms ease,
+    transform 220ms ease;
+}
+
+.mobile-tool-git-panel .git-mobile-section-action:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--accent) 36%, transparent);
+  color: var(--accent);
+  box-shadow:
+    0 8px 16px color-mix(in srgb, var(--accent) 14%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.66);
+}
+
+.mobile-tool-git-panel .git-mobile-section-action:hover:not(:disabled)::before {
+  opacity: 1;
+}
+
+.mobile-tool-git-panel .git-mobile-section-action:active:not(:disabled) {
+  transform: scale(0.94);
+  box-shadow:
+    0 2px 6px color-mix(in srgb, #0f172a 12%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.4);
+}
+
+.mobile-tool-git-panel .git-mobile-section-action[aria-expanded="true"] {
+  border-color: color-mix(in srgb, var(--accent) 44%, transparent);
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--accent) 18%, var(--bg-surface)),
+      color-mix(in srgb, var(--accent) 10%, var(--bg-surface))
+    );
+  color: var(--accent);
+  box-shadow:
+    0 10px 20px color-mix(in srgb, var(--accent) 18%, transparent),
+    inset 0 1px 0 color-mix(in srgb, #ffffff 70%, transparent);
+}
+
+.mobile-tool-git-panel .git-mobile-section-action[aria-expanded="true"]::before {
+  opacity: 1;
+}
+
+.mobile-tool-git-panel .git-mobile-section-action[aria-expanded="true"]::after {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.mobile-tool-git-panel .git-mobile-section-action:focus-visible {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 52%, transparent);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent),
+    0 10px 20px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.mobile-tool-git-panel .git-mobile-section-action:disabled {
+  opacity: 0.55;
+  transform: none;
+  box-shadow: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mobile-tool-git-panel .git-mobile-section-action,
+  .mobile-tool-git-panel .git-mobile-section-action::before,
+  .mobile-tool-git-panel .git-mobile-section-action::after {
+    transition: none;
+  }
+}
+
 .mobile-tool-git-panel .git-mobile-section-body {
   background: var(--bg-primary);
   border-top: 1px solid color-mix(in srgb, var(--border-primary) 36%, transparent);
+}
+
+.mobile-tool-git-panel .git-mobile-operations-shell {
+  padding: 8px 8px 0;
+  background: var(--bg-primary);
+}
+
+.mobile-tool-git-panel .git-mobile-operations-shell .git-operations-menu {
+  position: static;
+  width: 100%;
+  border-radius: 10px;
+  box-shadow: none;
 }
 
 .mobile-tool-git-panel .git-mobile-record-shell {
