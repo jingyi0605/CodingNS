@@ -63,6 +63,9 @@ describe("MobileWorkbenchShell", () => {
     document.body.style.removeProperty("--mobile-shell-viewport-height");
     document.body.style.removeProperty("--mobile-shell-keyboard-inset");
 
+    window.localStorage.removeItem("mobile.conversation.quick-nav.position");
+    window.localStorage.removeItem("mobile.tools.last-primary-tool");
+
     vi.useRealTimers();
     vi.restoreAllMocks();
   });
@@ -205,6 +208,30 @@ describe("MobileWorkbenchShell", () => {
     fireEvent.click(view.getByRole("button", { name: "GIT管理" }));
 
     expect(onNavigateToolGit).toHaveBeenCalledTimes(1);
+  });
+
+  it("快捷导航停靠到左侧时会切换成左侧按钮布局", async () => {
+    window.localStorage.setItem(
+      "mobile.conversation.quick-nav.position",
+      JSON.stringify({
+        side: "left",
+        yRatio: 0.45
+      })
+    );
+
+    const view = renderMobileShell({
+      presentation: "conversation-focus"
+    });
+    const quickNavTrigger = view.getByRole("button", { name: "打开快捷导航" });
+
+    await waitFor(() => {
+      expect(quickNavTrigger.closest(".mobile-floating-nav")).toHaveAttribute("data-side", "left");
+    });
+
+    expect(Array.from(quickNavTrigger.children).map((node) => node.className)).toEqual([
+      "mobile-floating-nav-grip",
+      "mobile-floating-nav-main-icon"
+    ]);
   });
 
   it("长按 3 秒后会进入移动模式，并在松手后吸附到另一侧边缘", async () => {

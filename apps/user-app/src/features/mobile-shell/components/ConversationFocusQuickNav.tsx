@@ -293,7 +293,21 @@ export function ConversationFocusQuickNav({
         onClick={handleBubbleClick}
         onKeyDown={handleBubbleKeyDown}
       >
-        {open ? <CloseIcon /> : <QuickNavIcon side={dockSide} />}
+        {dockSide === "left" ? (
+          <>
+            <span className="mobile-floating-nav-grip" aria-hidden="true" />
+            <span className="mobile-floating-nav-main-icon" aria-hidden="true">
+              {open ? <CloseIcon /> : <QuickNavIcon side={dockSide} />}
+            </span>
+          </>
+        ) : (
+          <>
+            <span className="mobile-floating-nav-main-icon" aria-hidden="true">
+              {open ? <CloseIcon /> : <QuickNavIcon side={dockSide} />}
+            </span>
+            <span className="mobile-floating-nav-grip" aria-hidden="true" />
+          </>
+        )}
       </button>
 
       {menuVisible ? (
