@@ -44,21 +44,19 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
-
-      - name: Enable pnpm
-        shell: bash
-        run: |
-          corepack enable
-          corepack prepare pnpm@${PNPM_VERSION} --activate
-          pnpm --version
 
       - name: Setup Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -81,7 +79,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: corepack pnpm --dir apps/desktop build -- ${{ matrix.tauri_args }}
+        run: pnpm --dir apps/desktop build -- ${{ matrix.tauri_args }}
 
       - name: Upload bundle artifacts
         uses: actions/upload-artifact@v4
