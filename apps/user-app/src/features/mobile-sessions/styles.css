@@ -249,8 +249,14 @@
 }
 
 .mobile-conversation-page[data-mobile-shell="true"] {
-  --mobile-conversation-preview-width: clamp(164px, 42vw, 204px);
-  --mobile-conversation-preview-gap: 0;
+  --mobile-conversation-preview-default-width: 33.333vw;
+  --mobile-conversation-preview-max-width: 60vw;
+  --mobile-conversation-preview-width: 0px;
+  --mobile-conversation-preview-gap: 5px;
+  --mobile-conversation-preview-progress: 0;
+  --mobile-conversation-preview-offset: calc(
+    var(--mobile-conversation-preview-width) + var(--mobile-conversation-preview-gap)
+  );
   background:
     linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 28%, transparent), transparent 18%),
     var(--bg-primary);
@@ -287,20 +293,34 @@
   border-bottom: 1px solid color-mix(in srgb, var(--border-primary) 78%, transparent);
   background: color-mix(in srgb, var(--bg-surface) 96%, transparent);
   backdrop-filter: blur(16px);
-  transition:
-    margin-left 220ms ease,
-    width 220ms ease;
+  transition: transform 220ms ease;
+  will-change: transform;
 }
 
-.mobile-conversation-page[data-mobile-shell="true"][data-preview-mode="preview"] .mobile-conversation-header:not(.mobile-conversation-header-embedded) {
-  width: calc(100% - var(--mobile-conversation-preview-width));
-  margin-left: var(--mobile-conversation-preview-width);
-  padding-left: 0;
+.mobile-conversation-header:not(.mobile-conversation-header-embedded),
+.mobile-conversation-page-header,
+.mobile-conversation-stage {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  transform: translateX(0);
+  will-change: transform, width;
 }
 
-.mobile-conversation-page[data-mobile-shell="true"][data-preview-mode="preview"] .mobile-conversation-page-header {
-  width: calc(100% - var(--mobile-conversation-preview-width));
-  margin-left: var(--mobile-conversation-preview-width);
+.mobile-conversation-page[data-mobile-shell="true"][data-preview-mode="preview"] .mobile-conversation-header:not(.mobile-conversation-header-embedded),
+.mobile-conversation-page[data-mobile-shell="true"][data-preview-mode="preview"] .mobile-conversation-page-header,
+.mobile-conversation-page[data-mobile-shell="true"][data-preview-mode="preview"] .mobile-conversation-stage {
+  width: calc(100% - var(--mobile-conversation-preview-offset));
+  max-width: calc(100% - var(--mobile-conversation-preview-offset));
+  transform: translateX(var(--mobile-conversation-preview-offset));
+}
+
+.mobile-conversation-page[data-mobile-shell="true"][data-preview-dragging="true"] .mobile-conversation-header,
+.mobile-conversation-page[data-mobile-shell="true"][data-preview-dragging="true"] .mobile-conversation-page-header,
+.mobile-conversation-page[data-mobile-shell="true"][data-preview-dragging="true"] .mobile-conversation-stage,
+.mobile-conversation-page[data-mobile-shell="true"][data-preview-dragging="true"] .mobile-conversation-main,
+.mobile-conversation-page[data-mobile-shell="true"][data-preview-dragging="true"] .mobile-conversation-preview-rail {
+  transition: none;
 }
 
 .mobile-conversation-page-header .mobile-workspace-home-toolbar-top {
@@ -424,9 +444,7 @@
   border-bottom: 1px solid color-mix(in srgb, var(--border-primary) 78%, transparent);
   background: color-mix(in srgb, var(--bg-surface) 96%, transparent);
   backdrop-filter: blur(16px);
-  transition:
-    margin-left 220ms ease,
-    width 220ms ease;
+  transition: transform 220ms ease;
 }
 
 .mobile-conversation-stage {
@@ -440,13 +458,8 @@
   overflow: hidden;
   box-sizing: border-box;
   gap: 0;
-  transition:
-    padding-left 220ms ease,
-    width 220ms ease;
-}
-
-.mobile-conversation-page[data-mobile-shell="true"][data-preview-mode="preview"] .mobile-conversation-stage {
-  padding-left: var(--mobile-conversation-preview-width);
+  touch-action: pan-y;
+  transition: transform 220ms ease;
 }
 
 .mobile-conversation-main {
@@ -459,20 +472,25 @@
   flex-direction: column;
   overflow: hidden;
   box-sizing: border-box;
-  transition: width 220ms ease;
+  box-shadow:
+    calc(-14px * var(--mobile-conversation-preview-progress))
+    0
+    32px
+    rgba(15, 23, 42, calc(0.03 + var(--mobile-conversation-preview-progress) * 0.08));
+  transition: box-shadow 220ms ease;
 }
 
 .mobile-conversation-page[data-mobile-shell="true"] .mobile-conversation-preview-rail.surface-card,
 .mobile-conversation-preview-rail {
   position: absolute;
-  top: 0;
-  left: 0;
-  bottom: 0;
+  top: var(--mobile-conversation-preview-gap);
+  left: var(--mobile-conversation-preview-gap);
+  bottom: var(--mobile-conversation-preview-gap);
   z-index: 11;
   display: flex;
   width: var(--mobile-conversation-preview-width);
-  max-width: var(--mobile-conversation-preview-width);
-  min-height: 100%;
+  max-width: min(var(--mobile-conversation-preview-width), var(--mobile-conversation-preview-max-width));
+  min-height: calc(100% - var(--mobile-conversation-preview-gap) * 2);
   min-width: 0;
   flex-direction: column;
   gap: 0.55rem;
@@ -481,16 +499,20 @@
   border-right: 1px solid color-mix(in srgb, var(--border-primary) 86%, transparent);
   border-bottom: 0;
   border-left: 0;
-  border-radius: 0 !important;
-  border-top-right-radius: 0 !important;
-  border-bottom-right-radius: 0 !important;
+  border-radius: 16px !important;
+  border-top-right-radius: 16px !important;
+  border-bottom-right-radius: 16px !important;
   background: color-mix(in srgb, var(--bg-surface) 94%, transparent);
-  box-shadow: 12px 0 34px color-mix(in srgb, #000 10%, transparent);
+  box-shadow:
+    12px 0 34px color-mix(in srgb, #000 calc(8% + var(--mobile-conversation-preview-progress) * 10%), transparent);
   backdrop-filter: blur(16px);
   overflow: hidden;
   touch-action: pan-y;
   will-change: transform;
-  transition: transform 220ms ease;
+  transition:
+    width 220ms ease,
+    max-width 220ms ease,
+    box-shadow 220ms ease;
 }
 
 .mobile-conversation-preview-rail[data-dragging="true"] {
@@ -534,6 +556,12 @@
 .mobile-conversation-preview-group-archive {
   padding-top: 0.65rem;
   border-top: 1px solid color-mix(in srgb, var(--border-primary) 82%, transparent);
+}
+
+.mobile-conversation-preview-group-workspace {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .mobile-conversation-preview-group-heading {
@@ -637,7 +665,7 @@
 
 @media (max-width: 420px) {
   .mobile-conversation-page[data-mobile-shell="true"] {
-    --mobile-conversation-preview-width: clamp(152px, 40vw, 188px);
+    --mobile-conversation-preview-default-width: 33.333vw;
   }
 
   .mobile-conversation-preview-rail {

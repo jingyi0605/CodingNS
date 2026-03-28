@@ -14171,6 +14171,15 @@ textarea:focus-visible {
   z-index: 16;
 }
 
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .composer-input-container,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .composer-input-container,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .composer-input-container {
+  box-sizing: border-box;
+  width: auto;
+  max-width: calc(100% - 10px);
+  margin: 5px;
+}
+
 .mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .mobile-workbench-tabbar,
 .ios-workbench-shell[data-mobile-presentation="conversation-focus"] .ios-workbench-tabbar,
 .android-workbench-shell[data-mobile-presentation="conversation-focus"] .android-workbench-bottom-nav {

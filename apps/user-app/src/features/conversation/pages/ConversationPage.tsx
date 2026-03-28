@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type TouchEvent as ReactTouchEvent } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type TouchEvent as ReactTouchEvent
+} from "react";
 import { createPortal } from "react-dom";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 
@@ -48,6 +55,13 @@ import {
 import "../../mobile-sessions/styles.css";
 
 const RUNTIME_TIMEOUT_TOAST_DELAY_MS = 15_000;
+const MOBILE_PREVIEW_DEFAULT_RATIO = 1 / 3;
+const MOBILE_PREVIEW_MAX_RATIO = 0.6;
+const MOBILE_PREVIEW_GESTURE_DIRECTION_LOCK_PX = 12;
+const MOBILE_PREVIEW_OPEN_THRESHOLD_PX = 72;
+const MOBILE_PREVIEW_EXPAND_THRESHOLD_PX = 48;
+const MOBILE_PREVIEW_CLOSE_THRESHOLD_PX = 52;
+const MOBILE_PREVIEW_EDGE_ACTIVATION_PX = 28;
 
 export function ConversationPage() {
   const { sessionId = "", workspaceId: routeWorkspaceIdParam } = useParams();
@@ -97,9 +111,6 @@ function LiveConversationPage({
   const [archiveFolderOpen, setArchiveFolderOpen] = useState(false);
   const [archiveRestoreSessionId, setArchiveRestoreSessionId] = useState<string | null>(null);
   const [archiveSubmitting, setArchiveSubmitting] = useState(false);
-  const [mobilePreviewMode, setMobilePreviewMode] = useState<MobileConversationPreviewMode>(() =>
-    readMobileConversationPreviewMode()
-  );
   const navigationSession = useMemo(
     () =>
       navigationGroups
@@ -152,6 +163,7 @@ function LiveConversationPage({
     (item) => item.status === "queued" || item.status === "dispatching"
   );
   const showInlineHeader = shellMode !== "mobile";
+  const mobilePreview = useMobileConversationPreviewController(!showInlineHeader);
   const mobileWorkspaceId = session?.workspaceId ?? navigationSession?.workspaceId ?? null;
   const mobileFavoriteSessionIdSet = useMemo(
     () => new Set(favoriteSessions.map((item) => item.session.sessionId)),
@@ -192,14 +204,6 @@ function LiveConversationPage({
       ) ?? [],
     [mobileArchiveWorkspaceGroup]
   );
-  useEffect(() => {
-    if (shellMode !== "mobile") {
-      return;
-    }
-
-    writeMobileConversationPreviewMode(mobilePreviewMode);
-  }, [mobilePreviewMode, shellMode]);
-
   useEffect(() => {
     store.applyNavigationSession(navigationSession);
   }, [navigationSession, store]);
@@ -289,7 +293,9 @@ function LiveConversationPage({
       <main
         className="workbench-page conversation-page-shell mobile-page-fixed-root mobile-conversation-page"
         data-mobile-shell={!showInlineHeader}
-        data-preview-mode={!showInlineHeader ? mobilePreviewMode : undefined}
+        data-preview-mode={!showInlineHeader ? mobilePreview.displayMode : undefined}
+        data-preview-dragging={!showInlineHeader ? mobilePreview.isDragging : undefined}
+        style={!showInlineHeader ? mobilePreview.pageStyle : undefined}
       >
         {showInlineHeader ? <SessionHeader session={session ?? navigationSession} /> : null}
         {!showInlineHeader ? (
@@ -299,12 +305,12 @@ function LiveConversationPage({
             workspaces={mobileWorkspaces}
             heading={mobileSessionTitlePresentation.fullTitle}
             triggerAriaLabel={
-              mobilePreviewMode === "preview"
+              mobilePreview.displayMode === "preview"
                 ? t("shell.hideSessionSidebar")
                 : t("shell.showSessionSidebar")
             }
             onTriggerClick={() => {
-              setMobilePreviewMode((current) => (current === "preview" ? "immersive" : "preview"));
+              mobilePreview.togglePreview();
             }}
             trailing={
               <span className="mobile-conversation-toolbar-title" title={mobileSessionTitlePresentation.fullTitle}>
@@ -314,30 +320,30 @@ function LiveConversationPage({
           />
         ) : null}
         {!showInlineHeader ? (
-        <MobileConversationPreviewRail
-          open={mobilePreviewMode === "preview"}
-          activeSessionId={sessionId}
-          favoriteItems={mobileFavoritePreviewItems}
-          items={mobilePreviewItems}
-          workspaceSectionLabel={t("shell.mobileConversationCurrentWorkspaceSection")}
-          archiveCurrentActionLabel={t("shell.archiveCurrentSessionAction")}
-          archiveFolderActionLabel={t("shell.archiveFolderAction")}
-          onArchiveActiveSession={() => {
-            setArchiveConfirmOpen(true);
-          }}
-          onOpenArchiveFolder={() => {
-            setArchiveFolderOpen(true);
-          }}
-          onRequestClose={() => {
-            setMobilePreviewMode("immersive");
-          }}
-          onActivate={(entry) => {
-            writeMobileConversationPreviewMode("preview");
-            navigate(buildWorkspaceSessionPath(entry.workspace.id, entry.session.sessionId));
+          <MobileConversationPreviewRail
+            visible={mobilePreview.isVisible}
+            widthPx={mobilePreview.previewWidthPx}
+            isDragging={mobilePreview.isDragging}
+            gestureHandlers={mobilePreview.railGestureHandlers}
+            activeSessionId={sessionId}
+            favoriteItems={mobileFavoritePreviewItems}
+            items={mobilePreviewItems}
+            workspaceSectionLabel={t("shell.mobileConversationCurrentWorkspaceSection")}
+            archiveCurrentActionLabel={t("shell.archiveCurrentSessionAction")}
+            archiveFolderActionLabel={t("shell.archiveFolderAction")}
+            onArchiveActiveSession={() => {
+              setArchiveConfirmOpen(true);
+            }}
+            onOpenArchiveFolder={() => {
+              setArchiveFolderOpen(true);
+            }}
+            onActivate={(entry) => {
+              writeMobileConversationPreviewMode("preview");
+              navigate(buildWorkspaceSessionPath(entry.workspace.id, entry.session.sessionId));
             }}
           />
         ) : null}
-        <div className="mobile-conversation-stage">
+        <div className="mobile-conversation-stage" {...(!showInlineHeader ? mobilePreview.mainGestureHandlers : {})}>
           <div className="mobile-conversation-main">
             <ConnectionBanner connectionState={connectionState} onReconnect={() => store.reconnect()} />
             <MessageTimeline
@@ -538,15 +544,13 @@ function DraftConversationPage({
   } = useWorkbenchShell();
   const [sending, setSending] = useState(false);
   const [draftMessages, setDraftMessages] = useState<SessionMessageViewModel[]>([]);
-  const [mobilePreviewMode, setMobilePreviewMode] = useState<MobileConversationPreviewMode>(() =>
-    readMobileConversationPreviewMode()
-  );
   const fallbackCapabilities = useMemo(
     () => createProviderDraftCapabilities(draft.provider),
     [draft.provider]
   );
   const [capabilities, setCapabilities] = useState<ProviderCapabilitiesDto>(fallbackCapabilities);
   const showInlineHeader = shellMode !== "mobile";
+  const mobilePreview = useMobileConversationPreviewController(!showInlineHeader);
   const session = useMemo(() => createDraftSessionSummary(draft), [draft]);
   const mobileFavoriteSessionIdSet = useMemo(
     () => new Set(favoriteSessions.map((item) => item.session.sessionId)),
@@ -568,14 +572,6 @@ function DraftConversationPage({
     () => buildMobileFavoritePreviewItems(favoriteSessions),
     [favoriteSessions]
   );
-
-  useEffect(() => {
-    if (shellMode !== "mobile") {
-      return;
-    }
-
-    writeMobileConversationPreviewMode(mobilePreviewMode);
-  }, [mobilePreviewMode, shellMode]);
 
   useEffect(() => {
     setSessionWorkspace(draft.sessionId, draft.workspaceId);
@@ -610,7 +606,9 @@ function DraftConversationPage({
     <main
       className="workbench-page conversation-page-shell mobile-page-fixed-root mobile-conversation-page"
       data-mobile-shell={!showInlineHeader}
-      data-preview-mode={!showInlineHeader ? mobilePreviewMode : undefined}
+      data-preview-mode={!showInlineHeader ? mobilePreview.displayMode : undefined}
+      data-preview-dragging={!showInlineHeader ? mobilePreview.isDragging : undefined}
+      style={!showInlineHeader ? mobilePreview.pageStyle : undefined}
     >
       {showInlineHeader ? <SessionHeader session={session} /> : null}
       {!showInlineHeader ? (
@@ -620,12 +618,12 @@ function DraftConversationPage({
           workspaces={mobileWorkspaces}
           heading={mobileSessionTitlePresentation.fullTitle}
           triggerAriaLabel={
-            mobilePreviewMode === "preview"
+            mobilePreview.displayMode === "preview"
               ? t("shell.hideSessionSidebar")
               : t("shell.showSessionSidebar")
           }
           onTriggerClick={() => {
-            setMobilePreviewMode((current) => (current === "preview" ? "immersive" : "preview"));
+            mobilePreview.togglePreview();
           }}
           trailing={
             <span className="mobile-conversation-toolbar-title" title={mobileSessionTitlePresentation.fullTitle}>
@@ -636,21 +634,21 @@ function DraftConversationPage({
       ) : null}
       {!showInlineHeader ? (
         <MobileConversationPreviewRail
-          open={mobilePreviewMode === "preview"}
+          visible={mobilePreview.isVisible}
+          widthPx={mobilePreview.previewWidthPx}
+          isDragging={mobilePreview.isDragging}
+          gestureHandlers={mobilePreview.railGestureHandlers}
           activeSessionId={draft.sessionId}
           favoriteItems={mobileFavoritePreviewItems}
           items={mobilePreviewItems}
           workspaceSectionLabel={t("shell.mobileConversationCurrentWorkspaceSection")}
-          onRequestClose={() => {
-            setMobilePreviewMode("immersive");
-          }}
           onActivate={(entry) => {
             writeMobileConversationPreviewMode("preview");
             navigate(buildWorkspaceSessionPath(entry.workspace.id, entry.session.sessionId));
           }}
         />
       ) : null}
-      <div className="mobile-conversation-stage">
+      <div className="mobile-conversation-stage" {...(!showInlineHeader ? mobilePreview.mainGestureHandlers : {})}>
         <div className="mobile-conversation-main">
           <ConnectionBanner connectionState="closed" onReconnect={() => {}} />
           <MessageTimeline
@@ -838,8 +836,254 @@ function buildMobileFavoritePreviewItems(
     }));
 }
 
+interface MobileConversationPreviewGestureHandlers {
+  onTouchStart: (event: ReactTouchEvent<HTMLElement>) => void;
+  onTouchMove: (event: ReactTouchEvent<HTMLElement>) => void;
+  onTouchEnd: () => void;
+  onTouchCancel: () => void;
+}
+
+function useMobileConversationPreviewController(enabled: boolean) {
+  const [previewMode, setPreviewMode] = useState<MobileConversationPreviewMode>(() =>
+    enabled ? readMobileConversationPreviewMode() : "immersive"
+  );
+  const [viewportWidth, setViewportWidth] = useState(() => resolvePreviewViewportWidth());
+  const [previewWidthMode, setPreviewWidthMode] = useState<"closed" | "default" | "expanded">(() =>
+    enabled && readMobileConversationPreviewMode() === "preview" ? "default" : "closed"
+  );
+  const previewWidthModeRef = useRef(previewWidthMode);
+  const gestureRef = useRef<{
+    source: "main" | "rail";
+    startX: number;
+    startY: number;
+    lastX: number;
+    lastY: number;
+    horizontalLocked: boolean;
+  } | null>(null);
+
+  useEffect(() => {
+    previewWidthModeRef.current = previewWidthMode;
+  }, [previewWidthMode]);
+
+  useEffect(() => {
+    if (!enabled) {
+      gestureRef.current = null;
+      previewWidthModeRef.current = "closed";
+      setPreviewWidthMode("closed");
+      setPreviewMode("immersive");
+      return;
+    }
+
+    const storedMode = readMobileConversationPreviewMode();
+    setPreviewMode(storedMode);
+    setPreviewWidthMode(storedMode === "preview" ? "default" : "closed");
+  }, [enabled]);
+
+  useEffect(() => {
+    if (!enabled) {
+      return;
+    }
+
+    writeMobileConversationPreviewMode(previewMode);
+  }, [enabled, previewMode]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    function handleResize() {
+      setViewportWidth(resolvePreviewViewportWidth());
+    }
+
+    handleResize();
+    window.addEventListener("resize", handleResize);
+
+    return () => {
+      window.removeEventListener("resize", handleResize);
+    };
+  }, []);
+
+  function setPreviewWidthState(nextMode: "closed" | "default" | "expanded") {
+    previewWidthModeRef.current = nextMode;
+    setPreviewWidthMode(nextMode);
+  }
+
+  function openPreview(nextMode: "default" | "expanded" = "default") {
+    setPreviewWidthState(nextMode);
+    setPreviewMode("preview");
+  }
+
+  function closePreview() {
+    setPreviewWidthState("closed");
+    setPreviewMode("immersive");
+  }
+
+  function expandPreview() {
+    setPreviewWidthState("expanded");
+    setPreviewMode("preview");
+  }
+
+  function togglePreview() {
+    if (previewWidthModeRef.current !== "closed") {
+      closePreview();
+      return;
+    }
+
+    openPreview();
+  }
+
+  function handleTouchStart(source: "main" | "rail", event: ReactTouchEvent<HTMLElement>) {
+    if (!enabled || event.touches.length !== 1) {
+      gestureRef.current = null;
+      return;
+    }
+
+    if (shouldIgnorePreviewGestureTarget(event.target)) {
+      gestureRef.current = null;
+      return;
+    }
+
+    const touch = event.touches[0];
+
+    if (!touch) {
+      gestureRef.current = null;
+      return;
+    }
+
+    if (source === "main") {
+      if (previewWidthModeRef.current !== "closed" || touch.clientX > MOBILE_PREVIEW_EDGE_ACTIVATION_PX) {
+        gestureRef.current = null;
+        return;
+      }
+    } else if (previewWidthModeRef.current === "closed") {
+      gestureRef.current = null;
+      return;
+    }
+
+    gestureRef.current = {
+      source,
+      startX: touch.clientX,
+      startY: touch.clientY,
+      lastX: touch.clientX,
+      lastY: touch.clientY,
+      horizontalLocked: false
+    };
+  }
+
+  function handleTouchMove(event: ReactTouchEvent<HTMLElement>) {
+    const gesture = gestureRef.current;
+    const touch = event.touches[0];
+
+    if (!enabled || !gesture || !touch) {
+      return;
+    }
+
+    const deltaX = touch.clientX - gesture.startX;
+    const deltaY = touch.clientY - gesture.startY;
+    gesture.lastX = touch.clientX;
+    gesture.lastY = touch.clientY;
+
+    if (!gesture.horizontalLocked) {
+      if (
+        Math.abs(deltaX) < MOBILE_PREVIEW_GESTURE_DIRECTION_LOCK_PX
+        && Math.abs(deltaY) < MOBILE_PREVIEW_GESTURE_DIRECTION_LOCK_PX
+      ) {
+        return;
+      }
+
+      if (Math.abs(deltaX) <= Math.abs(deltaY)) {
+        gestureRef.current = null;
+        return;
+      }
+
+      if (gesture.source === "main" && deltaX <= 0) {
+        gestureRef.current = null;
+        return;
+      }
+
+      gesture.horizontalLocked = true;
+    }
+
+    event.preventDefault();
+  }
+
+  function settlePreviewGesture() {
+    const gesture = gestureRef.current;
+    gestureRef.current = null;
+
+    if (!gesture?.horizontalLocked) {
+      return;
+    }
+
+    const deltaX = gesture.lastX - gesture.startX;
+
+    if (gesture.source === "main") {
+      if (deltaX >= MOBILE_PREVIEW_OPEN_THRESHOLD_PX) {
+        openPreview("default");
+      }
+      return;
+    }
+
+    if (deltaX <= -MOBILE_PREVIEW_CLOSE_THRESHOLD_PX) {
+      closePreview();
+      return;
+    }
+
+    if (
+      deltaX >= MOBILE_PREVIEW_EXPAND_THRESHOLD_PX
+      && previewWidthModeRef.current === "default"
+    ) {
+      expandPreview();
+    }
+  }
+
+  const previewWidthRatio =
+    previewWidthMode === "expanded"
+      ? MOBILE_PREVIEW_MAX_RATIO
+      : previewWidthMode === "default"
+        ? MOBILE_PREVIEW_DEFAULT_RATIO
+        : 0;
+  const previewWidthPx = Math.round(viewportWidth * previewWidthRatio * 100) / 100;
+  const previewProgress = previewWidthRatio === 0 ? 0 : previewWidthRatio / MOBILE_PREVIEW_MAX_RATIO;
+  const pageStyle = {
+    "--mobile-conversation-preview-default-width": `${Math.round(viewportWidth * MOBILE_PREVIEW_DEFAULT_RATIO * 100) / 100}px`,
+    "--mobile-conversation-preview-max-width": `${Math.round(viewportWidth * MOBILE_PREVIEW_MAX_RATIO * 100) / 100}px`,
+    "--mobile-conversation-preview-width": `${previewWidthPx}px`,
+    "--mobile-conversation-preview-progress": previewProgress.toFixed(4)
+  } as CSSProperties;
+
+  const mainGestureHandlers: MobileConversationPreviewGestureHandlers = {
+    onTouchStart: (event) => handleTouchStart("main", event),
+    onTouchMove: handleTouchMove,
+    onTouchEnd: settlePreviewGesture,
+    onTouchCancel: settlePreviewGesture
+  };
+  const railGestureHandlers: MobileConversationPreviewGestureHandlers = {
+    onTouchStart: (event) => handleTouchStart("rail", event),
+    onTouchMove: handleTouchMove,
+    onTouchEnd: settlePreviewGesture,
+    onTouchCancel: settlePreviewGesture
+  };
+
+  return {
+    closePreview,
+    displayMode: previewWidthMode === "closed" ? "immersive" : "preview",
+    isDragging: false,
+    isVisible: previewWidthMode !== "closed",
+    mainGestureHandlers,
+    pageStyle,
+    previewWidthPx,
+    railGestureHandlers,
+    togglePreview
+  };
+}
+
 function MobileConversationPreviewRail({
-  open,
+  visible,
+  widthPx,
+  isDragging,
+  gestureHandlers,
   activeSessionId,
   favoriteItems,
   items,
@@ -848,10 +1092,12 @@ function MobileConversationPreviewRail({
   archiveFolderActionLabel,
   onArchiveActiveSession,
   onOpenArchiveFolder,
-  onRequestClose,
   onActivate
 }: {
-  open: boolean;
+  visible: boolean;
+  widthPx: number;
+  isDragging: boolean;
+  gestureHandlers: MobileConversationPreviewGestureHandlers;
   activeSessionId: string;
   favoriteItems: Array<{
     entry: WorkbenchNavigationEntry;
@@ -866,109 +1112,18 @@ function MobileConversationPreviewRail({
   archiveFolderActionLabel?: string;
   onArchiveActiveSession?: (() => void | Promise<void>) | null;
   onOpenArchiveFolder?: (() => void) | null;
-  onRequestClose?: (() => void) | null;
   onActivate: (entry: WorkbenchNavigationEntry) => void;
 }) {
-  const railRef = useRef<HTMLElement | null>(null);
-  const [dragOffsetX, setDragOffsetX] = useState(0);
-  const [isDragging, setIsDragging] = useState(false);
-  const gestureRef = useRef<{
-    startX: number;
-    startY: number;
-    dragging: boolean;
-  } | null>(null);
-
-  useEffect(() => {
-    if (!open) {
-      gestureRef.current = null;
-      setDragOffsetX(0);
-      setIsDragging(false);
-    }
-  }, [open]);
-
-  if (!open) {
+  if (!visible) {
     return null;
-  }
-
-  function handleTouchStart(event: ReactTouchEvent<HTMLElement>) {
-    const touch = event.touches[0];
-
-    if (!touch) {
-      return;
-    }
-
-    gestureRef.current = {
-      startX: touch.clientX,
-      startY: touch.clientY,
-      dragging: false
-    };
-  }
-
-  function handleTouchMove(event: ReactTouchEvent<HTMLElement>) {
-    const gesture = gestureRef.current;
-    const touch = event.touches[0];
-
-    if (!gesture || !touch) {
-      return;
-    }
-
-    const deltaX = touch.clientX - gesture.startX;
-    const deltaY = touch.clientY - gesture.startY;
-
-    if (!gesture.dragging) {
-      if (Math.abs(deltaX) < 8 && Math.abs(deltaY) < 8) {
-        return;
-      }
-
-      if (Math.abs(deltaX) <= Math.abs(deltaY) || deltaX >= 0) {
-        gestureRef.current = null;
-        return;
-      }
-
-      gesture.dragging = true;
-      setIsDragging(true);
-    }
-
-    event.preventDefault();
-    setDragOffsetX(Math.min(deltaX, 0));
-  }
-
-  function handleTouchEnd() {
-    const gesture = gestureRef.current;
-    gestureRef.current = null;
-
-    if (!gesture?.dragging) {
-      setDragOffsetX(0);
-      setIsDragging(false);
-      return;
-    }
-
-    const railWidth = railRef.current?.offsetWidth ?? 0;
-    const closeThreshold = Math.max(56, railWidth * 0.24);
-
-    if (Math.abs(dragOffsetX) >= closeThreshold) {
-      onRequestClose?.();
-      setDragOffsetX(0);
-      setIsDragging(false);
-      return;
-    }
-
-    setDragOffsetX(0);
-    setIsDragging(false);
   }
 
   return (
     <aside
-      ref={railRef}
       className="mobile-conversation-preview-rail surface-card"
       data-dragging={isDragging}
-      style={{
-        transform: dragOffsetX === 0 ? undefined : `translateX(${dragOffsetX}px)`
-      }}
-      onTouchStart={handleTouchStart}
-      onTouchMove={handleTouchMove}
-      onTouchEnd={handleTouchEnd}
-      onTouchCancel={handleTouchEnd}
+      style={{ width: `${widthPx}px`, maxWidth: `${widthPx}px` }}
+      {...gestureHandlers}
     >
       <section className="mobile-conversation-preview-group mobile-conversation-preview-list-favorites">
         <div className="mobile-conversation-preview-group-heading">
@@ -1013,7 +1168,7 @@ function MobileConversationPreviewRail({
         <div className="mobile-conversation-preview-group-heading">
           {workspaceSectionLabel}
         </div>
-        <div className="mobile-conversation-preview-list">
+        <div className="mobile-conversation-preview-list" data-preview-gesture="ignore">
           {items.length === 0 ? (
             <p className="mobile-conversation-preview-empty">{t("shell.emptyWorkspaceSessions")}</p>
           ) : (
@@ -1075,6 +1230,26 @@ function MobileConversationPreviewRail({
         </section>
       ) : null}
     </aside>
+  );
+}
+
+function resolvePreviewViewportWidth() {
+  if (typeof window === "undefined") {
+    return 390;
+  }
+
+  return Math.max(window.innerWidth || 390, 320);
+}
+
+function shouldIgnorePreviewGestureTarget(target: EventTarget | null) {
+  if (!(target instanceof Element)) {
+    return false;
+  }
+
+  return Boolean(
+    target.closest(
+      "input, textarea, select, option, label, [contenteditable='true'], [data-preview-gesture='ignore']"
+    )
   );
 }
 

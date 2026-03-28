@@ -418,9 +418,7 @@ function resolveConversationGestureSurface(target: EventTarget | null) {
     return null;
   }
 
-  return target.closest<HTMLElement>(
-    ".message-list, .composer-panel, .mobile-conversation-main, .conversation-page-shell"
-  );
+  return target.closest<HTMLElement>(".composer-panel");
 }
 
 function clamp(value: number, min: number, max: number) {

@@ -264,6 +264,39 @@ describe("MobileWorkbenchShell", () => {
     expect(shell).toHaveAttribute("data-conversation-tabbar-state", "hidden");
   });
 
+  it("在消息列表上滑不会误触发底部导航拖拽", () => {
+    vi.useFakeTimers();
+    const view = renderMobileShell({
+      presentation: "conversation-focus",
+      childVariant: "conversation"
+    });
+    const shell = view.container.querySelector(".mobile-workbench-shell");
+    const messageList = view.container.querySelector(".message-list") as HTMLElement | null;
+
+    expect(messageList).not.toBeNull();
+
+    act(() => {
+      vi.advanceTimersByTime(3000);
+    });
+
+    expect(shell).toHaveAttribute("data-conversation-tabbar-state", "hidden");
+
+    fireEvent.touchStart(messageList!, {
+      touches: [{ clientY: 620 }]
+    });
+    fireEvent.touchMove(messageList!, {
+      touches: [{ clientY: 560 }]
+    });
+
+    expect(shell).toHaveAttribute("data-conversation-tabbar-state", "hidden");
+
+    fireEvent.touchEnd(messageList!, {
+      changedTouches: [{ clientY: 560 }]
+    });
+
+    expect(shell).toHaveAttribute("data-conversation-tabbar-state", "hidden");
+  });
+
   it("底部导航显示时，在聊天区下滑可以把它拽回隐藏", () => {
     vi.useFakeTimers();
     const view = renderMobileShell({
