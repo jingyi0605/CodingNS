@@ -21,7 +21,7 @@
 ## 术语表
 
 - **Standalone Build（独立构建）**：包含后端运行代码、前端静态资源和必要运行时文件的一套发布产物
-- **Service Package（服务包）**：发布到 npm 的 `codingns` 包，安装后可直接运行
+- **Service Package（服务包）**：发布到 npm 的 `@jingyi0605/codingns` 包，安装后可直接运行
 - **CLI Entry（命令行入口）**：用户执行的 `codingns` 命令
 - **Static Hosting（静态托管）**：后端直接返回前端构建产物，而不是再依赖 Vite 开发服务器
 - **Process Manager（进程管理器）**：如 `pm2` 这类负责守护、重启和开机启动的工具
@@ -30,7 +30,7 @@
 
 ### In Scope
 
-- 新增一个可发布的 `codingns` npm 服务包
+- 新增一个可发布的 `@jingyi0605/codingns` npm 服务包
 - 定义统一构建输出，包含后端代码和前端静态资源
 - 提供 `codingns start` CLI 入口，并支持端口等启动参数
 - 让后端能够托管前端静态文件和 SPA 路由
@@ -137,7 +137,7 @@
 
 ## 成功定义
 
-- 用户可以通过 `npm install -g codingns` 或 `npx codingns start --port <port>` 运行完整服务
+- 用户可以通过 `npm install -g @jingyi0605/codingns` 或 `npx @jingyi0605/codingns start --port <port>` 运行完整服务
 - 不需要单独启动前端开发服务器也能访问页面
 - `build:standalone` 可以稳定产出可发布内容
 - `pm2` 可以直接托管 `codingns start` 命令

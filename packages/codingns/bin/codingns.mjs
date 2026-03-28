@@ -53,7 +53,7 @@ await startHost({
   webUiDir: path.join(distRoot, "public"),
   databasePath: path.join(dataDir, "host.sqlite"),
   releaseManifestRoot: path.join(dataDir, "releases"),
-  serverUpdatePackageName: "codingns"
+  serverUpdatePackageName: "@jingyi0605/codingns"
 });
 
 function parseArgs(argv) {

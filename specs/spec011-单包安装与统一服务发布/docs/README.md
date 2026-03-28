@@ -6,6 +6,6 @@
 
 - `20260328-PM2部署示例.md`：怎么安装、启动、守护和开机自启
 - `验收清单.md`：怎么确认服务包真的能跑
-- `发布说明.md`：怎么执行 `build:standalone`、`npm pack` 和发布前检查
+- `20260328-npm服务包发布说明.md`：怎么执行 `build:standalone`、`npm pack`、`npm publish` 和 GitHub Actions 自动发布
 
 如果当前还没写详细补充材料，先保留本文件。

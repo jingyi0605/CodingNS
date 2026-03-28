@@ -1,0 +1,61 @@
+name: npm-publish
+
+on:
+  push:
+    tags:
+      - "v*"
+
+env:
+  NODE_VERSION: "22"
+  PNPM_VERSION: "10.7.1"
+
+jobs:
+  publish-npm:
+    name: publish-npm
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          registry-url: https://registry.npmjs.org
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Enable pnpm
+        shell: bash
+        run: |
+          corepack enable
+          corepack prepare pnpm@${PNPM_VERSION} --activate
+          pnpm --version
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify package version matches git tag
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          package_version="$(node -p "require('./packages/codingns/package.json').version")"
+          expected_tag="v${package_version}"
+
+          if [[ "${GITHUB_REF_NAME}" != "${expected_tag}" ]]; then
+            echo "Git tag ${GITHUB_REF_NAME} 和包版本 ${package_version} 不一致" >&2
+            exit 1
+          fi
+
+      - name: Publish npm package
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/publish-npm-package.sh --provenance

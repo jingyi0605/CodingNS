@@ -13,7 +13,7 @@
 
 ## 计划覆盖
 
-- 新增可发布的 `codingns` 服务包
+- 新增可发布的 `@jingyi0605/codingns` 服务包
 - 增加统一 CLI 入口 `codingns start --port`
 - 增加 `build:standalone` 构建链路
 - 后端托管前端静态资源和 SPA 路由

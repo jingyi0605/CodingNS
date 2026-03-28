@@ -1,17 +1,19 @@
-# codingns
+# @jingyi0605/codingns
 
-`codingns` 是项目的第一版统一服务包。
+`@jingyi0605/codingns` 是项目的第一版统一服务包。
+
+安装名是 `@jingyi0605/codingns`，实际命令仍然是 `codingns`。
 
 安装后可以直接启动完整服务，不需要再分别启动前端和后端：
 
 ```bash
-npx codingns start --port 3002
+npx @jingyi0605/codingns start --port 3002
 ```
 
 或者：
 
 ```bash
-npm install -g codingns
+npm install -g @jingyi0605/codingns
 codingns start --port 3002
 ```
 

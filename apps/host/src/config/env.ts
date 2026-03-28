@@ -107,7 +107,7 @@ export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConf
     serverUpdatePackageName:
       overrides.serverUpdatePackageName ??
       process.env.CODINGNS_SERVER_UPDATE_PACKAGE_NAME ??
-      "codingns",
+      "@jingyi0605/codingns",
     npmRegistryBaseUrl:
       overrides.npmRegistryBaseUrl ??
       process.env.CODINGNS_NPM_REGISTRY_BASE_URL ??

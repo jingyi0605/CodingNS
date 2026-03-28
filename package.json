@@ -21,6 +21,8 @@
     "build:standalone": "pnpm --dir packages/codingns build",
     "build:desktop": "pnpm --dir apps/desktop build",
     "package:apps": "bash scripts/build-packages.sh",
+    "publish:npm": "bash scripts/publish-npm-package.sh",
+    "publish:npm:dry-run": "bash scripts/publish-npm-package.sh --dry-run",
     "test:host": "pnpm --dir packages/session-sync-core build && pnpm --filter host test",
     "build:user-app": "pnpm --dir apps/user-app build",
     "test:user-app": "pnpm --dir apps/user-app test"
