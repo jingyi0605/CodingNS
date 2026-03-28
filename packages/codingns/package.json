@@ -25,7 +25,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@codingns/session-sync-core": "0.1.0",
+    "@codingns/session-sync-core": "workspace:*",
     "better-sqlite3": "^12.8.0",
     "fastify": "^5.8.2",
     "node-pty": "^1.0.0",
