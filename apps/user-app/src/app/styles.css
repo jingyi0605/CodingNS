@@ -4150,15 +4150,16 @@ a {
 }
 
 .terminal-xterm {
+  --terminal-bottom-gap: max(28px, env(safe-area-inset-bottom, 0px));
   width: 100%;
   height: 100%;
   min-width: 0;
   min-height: 0;
-  padding: 10px;
+  padding: 10px 10px calc(10px + var(--terminal-bottom-gap));
 }
 
 .terminal-xterm .xterm {
-  height: 100%;
+  height: calc(100% - var(--terminal-bottom-gap));
   max-width: 100%;
 }
 
@@ -4184,40 +4185,6 @@ a {
 .terminal-xterm .xterm-viewport::-webkit-scrollbar-thumb {
   border-radius: 999px;
   background: rgba(121, 169, 255, 0.32);
-}
-
-.terminal-debug-panel {
-  position: absolute;
-  right: 12px;
-  bottom: 12px;
-  z-index: 2;
-  display: grid;
-  gap: 2px;
-  min-width: 148px;
-  max-width: min(220px, calc(100% - 24px));
-  padding: 8px 10px;
-  border: 1px solid rgba(121, 169, 255, 0.18);
-  border-radius: 10px;
-  background: rgba(9, 18, 31, 0.72);
-  color: rgba(245, 248, 255, 0.92);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  line-height: 1.35;
-  pointer-events: none;
-  backdrop-filter: blur(8px);
-}
-
-.terminal-debug-panel strong {
-  margin-bottom: 2px;
-  color: #ffffff;
-  font-size: 11px;
-}
-
-[data-theme="light"] .terminal-debug-panel,
-:root:not([data-theme]) .terminal-debug-panel {
-  border-color: rgba(15, 23, 42, 0.12);
-  background: rgba(255, 255, 255, 0.84);
-  color: rgba(15, 23, 42, 0.88);
 }
 
 .terminal-empty-state {

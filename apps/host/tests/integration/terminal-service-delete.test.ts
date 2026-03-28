@@ -1,15 +1,32 @@
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AppError } from "../../src/shared/errors/app-error.js";
 import { TerminalService } from "../../src/modules/terminal/terminal-service.js";
+import { TerminalLogFileRepository } from "../../src/storage/repositories/terminal-log-file-repository.js";
+import { TerminalLogSegmentRepository } from "../../src/storage/repositories/terminal-log-segment-repository.js";
+import { createDatabaseClient } from "../../src/storage/sqlite/client.js";
 import type {
   TerminalInstance,
   TerminalRuntimeSession
 } from "../../src/types/domain.js";
 
+const tempDirs: string[] = [];
+
 describe("TerminalService.deleteTerminal", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+
+    while (tempDirs.length > 0) {
+      const tempDir = tempDirs.pop();
+
+      if (tempDir) {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    }
   });
 
   it("删库后 runtime 清理失败时仍然返回成功并清理挂起删除标记", () => {
@@ -94,4 +111,252 @@ describe("TerminalService.deleteTerminal", () => {
     );
     expect((service as any).pendingDeletedTerminalIds.size).toBe(0);
   });
+
+  it("关闭终端时会先 flush 再清理日志索引和文件", () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-terminal-close-log-cleanup-"));
+    tempDirs.push(tempDir);
+    const database = createDatabaseClient(":memory:");
+    const fileRepository = new TerminalLogFileRepository(database.db);
+    const segmentRepository = new TerminalLogSegmentRepository(database.db);
+
+    seedTerminalLogDependencies(database.db, "terminal-2");
+
+    const terminal = createTerminalFixture("terminal-2", "session-2");
+    const session = createSessionFixture("terminal-2", "session-2");
+    const terminalRepo = createMutableTerminalRepository(terminal);
+    const runtimeRepo = createMutableRuntimeRepository(session);
+    const service = new TerminalService(
+      database.db,
+      terminalRepo as never,
+      runtimeRepo as never,
+      {} as never,
+      900,
+      {
+        terminalLogRootDir: tempDir,
+        terminalLogFileRepository: fileRepository,
+        terminalLogSegmentRepository: segmentRepository
+      }
+    );
+
+    (service as any).runtimeManager = {
+      terminateSession: vi.fn(() => false)
+    };
+
+    (service as any).handleRuntimeOutput("terminal-2", "before-close\n");
+
+    expect(service.closeTerminal("terminal-2")).toEqual({ success: true });
+    expect(fileRepository.listByTerminalId("terminal-2")).toEqual([]);
+    expect(segmentRepository.listByTerminalId("terminal-2")).toEqual([]);
+    expect(existsSync(path.join(tempDir, "terminal-2"))).toBe(false);
+
+    database.close();
+  });
+
+  it("删除终端且没有 exit 回调时也会清理日志索引和文件", () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-terminal-delete-log-cleanup-"));
+    tempDirs.push(tempDir);
+    const database = createDatabaseClient(":memory:");
+    const fileRepository = new TerminalLogFileRepository(database.db);
+    const segmentRepository = new TerminalLogSegmentRepository(database.db);
+
+    seedTerminalLogDependencies(database.db, "terminal-3");
+
+    const terminal = createTerminalFixture("terminal-3", "session-3");
+    const session = createSessionFixture("terminal-3", "session-3");
+    const terminalRepo = createMutableTerminalRepository(terminal);
+    const runtimeRepo = createMutableRuntimeRepository(session);
+    const service = new TerminalService(
+      database.db,
+      terminalRepo as never,
+      runtimeRepo as never,
+      {} as never,
+      900,
+      {
+        terminalLogRootDir: tempDir,
+        terminalLogFileRepository: fileRepository,
+        terminalLogSegmentRepository: segmentRepository
+      }
+    );
+
+    (service as any).runtimeManager = {
+      terminateSession: vi.fn(() => false)
+    };
+
+    (service as any).handleRuntimeOutput("terminal-3", "before-delete\n");
+
+    expect(service.deleteTerminal("terminal-3")).toEqual({ success: true });
+    expect(fileRepository.listByTerminalId("terminal-3")).toEqual([]);
+    expect(segmentRepository.listByTerminalId("terminal-3")).toEqual([]);
+    expect(existsSync(path.join(tempDir, "terminal-3"))).toBe(false);
+
+    database.close();
+  });
 });
+
+function createTerminalFixture(
+  terminalId: string,
+  sessionId = `session-for-${terminalId}`
+): TerminalInstance {
+  return {
+    id: terminalId,
+    workspaceId: "workspace-1",
+    name: "测试终端",
+    cwd: "/tmp",
+    shell: "/bin/zsh",
+    runtimeType: "tmux",
+    runtimeSessionId: sessionId,
+    attachTarget: sessionId,
+    status: "running",
+    processId: 123,
+    createdByUserId: "user-1",
+    createdAt: "2026-03-27T08:00:00.000Z",
+    lastActiveAt: "2026-03-27T08:00:00.000Z",
+    closedAt: null,
+    exitCode: null,
+    statusDetail: null
+  };
+}
+
+function createSessionFixture(terminalId: string, sessionId: string): TerminalRuntimeSession {
+  return {
+    id: sessionId,
+    terminalId,
+    runtimeType: "tmux",
+    sessionKey: sessionId,
+    attachTarget: sessionId,
+    hostInstanceId: null,
+    agentPid: null,
+    shellPid: 123,
+    state: "running",
+    lastHeartbeatAt: null,
+    lastCheckedAt: "2026-03-27T08:00:00.000Z",
+    lastErrorDetail: null,
+    createdAt: "2026-03-27T08:00:00.000Z",
+    updatedAt: "2026-03-27T08:00:00.000Z"
+  };
+}
+
+function createMutableTerminalRepository(terminal: TerminalInstance) {
+  let current: TerminalInstance | null = terminal;
+
+  return {
+    findById: vi.fn((id: string) => (current?.id === id ? current : null)),
+    delete: vi.fn((id: string) => {
+      if (current?.id === id) {
+        current = null;
+      }
+    }),
+    listRecoverable: vi.fn(() => []),
+    updateLifecycle: vi.fn((input: Partial<TerminalInstance> & { id: string }) => {
+      if (!current || current.id !== input.id) {
+        return;
+      }
+
+      current = {
+        ...current,
+        ...input
+      };
+    }),
+    touchLastActiveAt: vi.fn()
+  };
+}
+
+function createMutableRuntimeRepository(session: TerminalRuntimeSession) {
+  let current: TerminalRuntimeSession | null = session;
+
+  return {
+    findById: vi.fn((id: string) => (current?.id === id ? current : null)),
+    deleteByTerminalId: vi.fn((terminalId: string) => {
+      if (current?.terminalId === terminalId) {
+        current = null;
+      }
+    }),
+    updateState: vi.fn((input: Partial<TerminalRuntimeSession> & { id: string }) => {
+      if (!current || current.id !== input.id) {
+        return;
+      }
+
+      current = {
+        ...current,
+        ...input
+      };
+    })
+  };
+}
+
+function seedTerminalLogDependencies(
+  db: ReturnType<typeof createDatabaseClient>["db"],
+  terminalId: string
+): void {
+  db.exec(`
+    INSERT INTO auth_users (
+      id,
+      username,
+      password_hash,
+      role,
+      created_at,
+      updated_at
+    ) VALUES (
+      'user-1',
+      'admin',
+      'hash',
+      'admin',
+      '2026-03-28T09:00:00.000Z',
+      '2026-03-28T09:00:00.000Z'
+    );
+
+    INSERT INTO workspaces (
+      id,
+      name,
+      path,
+      repo_root,
+      favorite,
+      created_at,
+      updated_at
+    ) VALUES (
+      'workspace-1',
+      'workspace',
+      '/tmp/workspace',
+      '/tmp/workspace',
+      0,
+      '2026-03-28T09:00:00.000Z',
+      '2026-03-28T09:00:00.000Z'
+    );
+
+    INSERT INTO terminal_instances (
+      id,
+      workspace_id,
+      name,
+      cwd,
+      shell,
+      runtime_type,
+      runtime_session_id,
+      attach_target,
+      status,
+      process_id,
+      created_by_user_id,
+      created_at,
+      last_active_at,
+      closed_at,
+      exit_code,
+      status_detail
+    ) VALUES (
+      '${terminalId}',
+      'workspace-1',
+      'terminal',
+      '/tmp/workspace',
+      '/bin/zsh',
+      'embedded-pty',
+      'runtime-${terminalId}',
+      'embedded:${terminalId}',
+      'running',
+      123,
+      'user-1',
+      '2026-03-28T09:30:00.000Z',
+      '2026-03-28T09:31:00.000Z',
+      NULL,
+      NULL,
+      NULL
+    );
+  `);
+}

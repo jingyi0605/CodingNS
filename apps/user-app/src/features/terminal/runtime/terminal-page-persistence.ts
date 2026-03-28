@@ -34,6 +34,8 @@ export interface PersistedTerminalViewState {
   cols: number;
   rows: number;
   viewportY: number;
+  historyBeforeSeq: number | null;
+  historyHasOlder: boolean;
 }
 
 export interface TerminalRecoveryState {
@@ -420,7 +422,11 @@ function normalizeViewState(input: unknown): PersistedTerminalViewState | null {
     (candidate.cursor !== null && candidate.cursor !== undefined && typeof candidate.cursor !== "string") ||
     !Number.isInteger(candidate.cols) ||
     !Number.isInteger(candidate.rows) ||
-    !Number.isInteger(candidate.viewportY)
+    !Number.isInteger(candidate.viewportY) ||
+    (candidate.historyBeforeSeq !== null &&
+      candidate.historyBeforeSeq !== undefined &&
+      !Number.isInteger(candidate.historyBeforeSeq)) ||
+    (candidate.historyHasOlder !== undefined && typeof candidate.historyHasOlder !== "boolean")
   ) {
     return null;
   }
@@ -445,7 +451,10 @@ function normalizeViewState(input: unknown): PersistedTerminalViewState | null {
     cursor: typeof candidate.cursor === "string" ? candidate.cursor : null,
     cols,
     rows,
-    viewportY
+    viewportY,
+    historyBeforeSeq:
+      typeof candidate.historyBeforeSeq === "number" ? candidate.historyBeforeSeq : null,
+    historyHasOlder: typeof candidate.historyHasOlder === "boolean" ? candidate.historyHasOlder : true
   };
 }
 

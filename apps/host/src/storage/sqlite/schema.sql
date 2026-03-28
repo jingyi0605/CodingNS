@@ -280,6 +280,43 @@ CREATE INDEX IF NOT EXISTS idx_terminal_runtime_sessions_terminal_id
 CREATE INDEX IF NOT EXISTS idx_terminal_runtime_sessions_state
   ON terminal_runtime_sessions(state, updated_at DESC);
 
+CREATE TABLE IF NOT EXISTS terminal_log_files (
+  id TEXT PRIMARY KEY,
+  terminal_id TEXT NOT NULL,
+  relative_path TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('active', 'sealed', 'deleting')),
+  start_seq INTEGER NOT NULL,
+  end_seq INTEGER,
+  size_bytes INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (terminal_id) REFERENCES terminal_instances(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_terminal_log_files_terminal_id
+  ON terminal_log_files(terminal_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_terminal_log_files_terminal_status
+  ON terminal_log_files(terminal_id, status, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS terminal_log_segments (
+  id TEXT PRIMARY KEY,
+  terminal_id TEXT NOT NULL,
+  file_id TEXT NOT NULL,
+  start_seq INTEGER NOT NULL,
+  end_seq INTEGER NOT NULL,
+  start_offset INTEGER NOT NULL,
+  end_offset INTEGER NOT NULL,
+  byte_length INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (terminal_id) REFERENCES terminal_instances(id) ON DELETE CASCADE,
+  FOREIGN KEY (file_id) REFERENCES terminal_log_files(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_terminal_log_segments_terminal_id_start_seq
+  ON terminal_log_segments(terminal_id, start_seq DESC);
+CREATE INDEX IF NOT EXISTS idx_terminal_log_segments_file_id
+  ON terminal_log_segments(file_id, start_offset ASC);
+
 CREATE TABLE IF NOT EXISTS terminal_command_templates (
   id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL,

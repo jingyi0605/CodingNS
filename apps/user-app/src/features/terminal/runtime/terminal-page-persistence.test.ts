@@ -53,7 +53,9 @@ describe("terminal page persistence", () => {
       cursor: "cursor-10",
       cols: 120,
       rows: 30,
-      viewportY: 18
+      viewportY: 18,
+      historyBeforeSeq: 8,
+      historyHasOlder: true
     });
 
     expect(readPersistedTerminalViewState("terminal-1")).toEqual({
@@ -61,7 +63,9 @@ describe("terminal page persistence", () => {
       cursor: "cursor-10",
       cols: 120,
       rows: 30,
-      viewportY: 18
+      viewportY: 18,
+      historyBeforeSeq: 8,
+      historyHasOlder: true
     });
 
     persistTerminalViewState("terminal-1", null);
@@ -89,14 +93,18 @@ describe("terminal page persistence", () => {
       cursor: "12",
       cols: 120,
       rows: 30,
-      viewportY: 5
+      viewportY: 5,
+      historyBeforeSeq: 10,
+      historyHasOlder: true
     });
     persistTerminalViewState("terminal-1", {
       content: "older",
       cursor: "9",
       cols: 120,
       rows: 30,
-      viewportY: 2
+      viewportY: 2,
+      historyBeforeSeq: 4,
+      historyHasOlder: true
     });
 
     expect(readPersistedTerminalViewState("terminal-1")?.content).toBe("newer");
@@ -113,7 +121,9 @@ describe("terminal page persistence", () => {
       cursor: "10",
       cols: 120,
       rows: 30,
-      viewportY: 4
+      viewportY: 4,
+      historyBeforeSeq: 3,
+      historyHasOlder: true
     });
     persistTerminalCursor("terminal-1", "14");
 

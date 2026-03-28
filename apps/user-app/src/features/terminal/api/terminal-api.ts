@@ -50,6 +50,16 @@ export interface TerminalTemplateRuntimeStatusDto {
   processCommandLine: string | null;
 }
 
+export interface TerminalHistoryPageDto {
+  terminalId: string;
+  content: string;
+  lineCount: number;
+  anchorLine: number;
+  replaceContent?: boolean;
+  hasMore: boolean;
+  nextBeforeSeq: number | null;
+}
+
 export function listTerminalShellOptions() {
   return httpClient.request<{ items: TerminalShellOptionDto[] }>("/api/terminals/shells");
 }
@@ -111,6 +121,27 @@ export function sendTerminalInput(terminalId: string, content: string) {
       method: "POST",
       body: JSON.stringify({ content })
     }
+  );
+}
+
+export function readTerminalHistory(
+  terminalId: string,
+  options: { beforeSeq?: number | null; limit?: number } = {}
+) {
+  const searchParams = new URLSearchParams();
+
+  if (typeof options.beforeSeq === "number") {
+    searchParams.set("beforeSeq", String(options.beforeSeq));
+  }
+
+  if (typeof options.limit === "number") {
+    searchParams.set("limit", String(options.limit));
+  }
+
+  const suffix = searchParams.toString();
+
+  return httpClient.request<TerminalHistoryPageDto>(
+    `/api/terminals/${encodeURIComponent(terminalId)}/history${suffix ? `?${suffix}` : ""}`
   );
 }
 

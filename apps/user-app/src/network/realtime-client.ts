@@ -35,6 +35,13 @@ interface SessionEnvelopeEvent {
   }>;
 }
 
+export interface SessionRuntimeMessageEvent {
+  type: "session.runtime_message";
+  sessionId: string;
+  message: SessionEnvelopeEvent["messages"][number];
+  source: "runtime";
+}
+
 export interface SessionRuntimeStatusEvent {
   type: "session.runtime_status";
   sessionId: string;
@@ -68,6 +75,7 @@ interface SessionErrorEvent {
 type IncomingEvent =
   | SessionSubscribedEvent
   | SessionEnvelopeEvent
+  | SessionRuntimeMessageEvent
   | SessionRuntimeStatusEvent
   | SessionRuntimeErrorEvent
   | SessionInterruptedEvent
@@ -80,6 +88,7 @@ export interface RealtimeClientOptions {
   onConnectionChange: (state: RuntimeConnectionState) => void;
   onSubscribed: () => void;
   onEnvelope: (event: SessionEnvelopeEvent) => void;
+  onRuntimeMessage: (event: SessionRuntimeMessageEvent) => void;
   onRuntimeStatus: (event: SessionRuntimeStatusEvent) => void;
   onRuntimeError: (event: SessionRuntimeErrorEvent) => void;
   onInterrupted: (event: SessionInterruptedEvent) => void;
@@ -180,6 +189,11 @@ export class RealtimeClient {
 
       if (payload.type === "session.runtime_status") {
         this.options.onRuntimeStatus(payload);
+        return;
+      }
+
+      if (payload.type === "session.runtime_message") {
+        this.options.onRuntimeMessage(payload);
         return;
       }
 

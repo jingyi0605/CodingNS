@@ -292,6 +292,32 @@ export interface TerminalOutputChunk {
   timestamp: string;
 }
 
+export type TerminalLogFileStatus = "active" | "sealed" | "deleting";
+
+export interface TerminalLogFile {
+  id: string;
+  terminalId: string;
+  relativePath: string;
+  status: TerminalLogFileStatus;
+  startSeq: number;
+  endSeq: number | null;
+  sizeBytes: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TerminalLogSegment {
+  id: string;
+  terminalId: string;
+  fileId: string;
+  startSeq: number;
+  endSeq: number;
+  startOffset: number;
+  endOffset: number;
+  byteLength: number;
+  createdAt: string;
+}
+
 export interface TerminalCommandTemplate {
   id: string;
   workspaceId: string;

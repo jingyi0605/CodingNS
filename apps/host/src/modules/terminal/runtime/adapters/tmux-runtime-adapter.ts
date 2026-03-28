@@ -152,6 +152,37 @@ export class TmuxRuntimeAdapter implements TerminalRuntimeAdapter {
   }
 }
 
+export function captureTmuxPaneContent(sessionKey: string): string {
+  ensureTmuxSupported();
+
+  const result = runTmuxCommand(
+    ["capture-pane", "-p", "-S", "-20000", "-t", sessionKey],
+    {
+      errorCode: "RUNTIME_CAPTURE_FAILED",
+      actionLabel: "抓取",
+      tolerateMissingBinary: true
+    }
+  );
+
+  if (result.error) {
+    throw new AppError({
+      statusCode: 502,
+      errorCode: "RUNTIME_CAPTURE_FAILED",
+      detail: formatTmuxErrorDetail("抓取", result.error.message)
+    });
+  }
+
+  if (result.status !== 0) {
+    throw new AppError({
+      statusCode: 502,
+      errorCode: "RUNTIME_CAPTURE_FAILED",
+      detail: result.stderr.trim() || result.stdout.trim() || "tmux pane 历史抓取失败"
+    });
+  }
+
+  return result.stdout;
+}
+
 function ensureTmuxSupported(): void {
   if (process.platform === "win32") {
     throw new AppError({

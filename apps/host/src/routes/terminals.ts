@@ -8,6 +8,7 @@ export async function registerTerminalRoutes(
 ): Promise<void> {
   app.get("/api/terminals", terminalController.listTerminals);
   app.get("/api/terminals/shells", terminalController.listShellOptions);
+  app.get("/api/terminals/:terminalId/history", terminalController.readHistory);
   app.post("/api/terminals", terminalController.createTerminal);
   app.delete("/api/terminals/:terminalId", terminalController.closeTerminal);
   app.delete("/api/terminals/:terminalId/record", terminalController.deleteTerminal);

@@ -13,10 +13,16 @@ import type {
   TerminalRuntimeType
 } from "../../types/domain.js";
 import type { TerminalInstanceRepository } from "../../storage/repositories/terminal-instance-repository.js";
+import type { TerminalLogFileRepository } from "../../storage/repositories/terminal-log-file-repository.js";
+import type { TerminalLogSegmentRepository } from "../../storage/repositories/terminal-log-segment-repository.js";
 import type { TerminalRuntimeSessionRepository } from "../../storage/repositories/terminal-runtime-session-repository.js";
 import type { WorkspaceService } from "../workspace/workspace-service.js";
 import { resolveWorkspaceCwd } from "./terminal-paths.js";
 import { getDefaultShell, resolveRequestedShell } from "./terminal-shell.js";
+import type { TerminalHistoryPageDto } from "./terminal-history.js";
+import { captureTmuxPaneContent } from "./runtime/adapters/tmux-runtime-adapter.js";
+import { TerminalLogFileStore } from "./runtime/terminal-log-file-store.js";
+import { TerminalLogSpooler } from "./runtime/terminal-log-spooler.js";
 import {
   TerminalOutputBuffer,
   type TerminalBackfillResult
@@ -45,6 +51,12 @@ interface SubscribeTerminalCallbacks {
 
 type TerminalCloseReason = "user_closed" | "idle_timeout";
 
+interface TerminalServiceOptions {
+  terminalLogRootDir?: string;
+  terminalLogFileRepository?: TerminalLogFileRepository;
+  terminalLogSegmentRepository?: TerminalLogSegmentRepository;
+}
+
 export declare interface TerminalService {
   on(event: "output", listener: (event: { terminalId: string; chunks: TerminalOutputChunk[] }) => void): this;
   on(event: "status", listener: (terminal: TerminalInstance) => void): this;
@@ -67,6 +79,10 @@ export class TerminalService extends EventEmitter {
   private readonly terminalSubscriptionCounts = new Map<string, number>();
   private readonly pendingCloseReasons = new Map<string, TerminalCloseReason>();
   private readonly pendingDeletedTerminalIds = new Set<string>();
+  private readonly terminalLogSpooler: TerminalLogSpooler | null;
+  private readonly terminalLogFileRepository: TerminalLogFileRepository | null;
+  private readonly terminalLogSegmentRepository: TerminalLogSegmentRepository | null;
+  private readonly terminalLogFileStore: TerminalLogFileStore | null;
   private isDisposing = false;
 
   constructor(
@@ -74,9 +90,27 @@ export class TerminalService extends EventEmitter {
     private readonly terminalInstanceRepository: TerminalInstanceRepository,
     private readonly terminalRuntimeSessionRepository: TerminalRuntimeSessionRepository,
     private readonly workspaceService: WorkspaceService,
-    _idleTimeoutSeconds: number
+    _idleTimeoutSeconds: number,
+    options: TerminalServiceOptions = {}
   ) {
     super();
+
+    this.terminalLogFileRepository = options.terminalLogFileRepository ?? null;
+    this.terminalLogSegmentRepository = options.terminalLogSegmentRepository ?? null;
+    this.terminalLogFileStore = options.terminalLogRootDir
+      ? new TerminalLogFileStore(options.terminalLogRootDir)
+      : null;
+
+    this.terminalLogSpooler =
+      options.terminalLogRootDir &&
+      options.terminalLogFileRepository &&
+      options.terminalLogSegmentRepository
+        ? new TerminalLogSpooler({
+            logRootDir: options.terminalLogRootDir,
+            fileRepository: options.terminalLogFileRepository,
+            segmentRepository: options.terminalLogSegmentRepository
+          })
+        : null;
 
     this.runtimeManager.on("output", (event) => {
       this.handleRuntimeOutput(event.terminalId, event.content);
@@ -255,6 +289,7 @@ export class TerminalService extends EventEmitter {
       return { success: true };
     }
 
+    this.flushTerminalLogs(terminalId);
     const willEmitExit = this.runtimeManager.terminateSession(terminal, session);
 
     if (!willEmitExit) {
@@ -275,7 +310,7 @@ export class TerminalService extends EventEmitter {
     const session = this.getRuntimeSessionOrThrow(terminal.runtimeSessionId);
     this.pendingCloseReasons.delete(terminalId);
     this.lastPersistedActivity.delete(terminalId);
-    this.outputBuffer.clear(terminalId);
+    this.flushTerminalLogs(terminalId);
     this.pendingDeletedTerminalIds.add(terminalId);
     const deleteRecords = this.db.transaction(() => {
       this.terminalRuntimeSessionRepository.deleteByTerminalId(terminalId);
@@ -295,6 +330,7 @@ export class TerminalService extends EventEmitter {
       willEmitExit = this.runtimeManager.terminateSession(terminal, session);
     } catch (error) {
       this.pendingDeletedTerminalIds.delete(terminalId);
+      this.clearTerminalLogs(terminalId);
       console.warn("[terminal-delete-runtime-cleanup-failed]", {
         terminalId,
         runtimeSessionId: session.id,
@@ -305,6 +341,7 @@ export class TerminalService extends EventEmitter {
 
     if (!willEmitExit) {
       this.pendingDeletedTerminalIds.delete(terminalId);
+      this.clearTerminalLogs(terminalId);
     }
 
     return { success: true };
@@ -412,8 +449,137 @@ export class TerminalService extends EventEmitter {
 
   async dispose(): Promise<void> {
     this.isDisposing = true;
+    this.terminalLogSpooler?.flushAll();
     this.runtimeManager.closeAllAttachments();
     await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  readTerminalHistory(
+    terminalId: string,
+    beforeSeq: number | null,
+    limit: number
+  ): TerminalHistoryPageDto {
+    const terminal = this.getTerminalOrThrow(terminalId);
+    const runtimeSession =
+      terminal.runtimeSessionId
+        ? this.terminalRuntimeSessionRepository.findById(terminal.runtimeSessionId)
+        : null;
+
+    if (beforeSeq === 1 && runtimeSession?.runtimeType === "tmux") {
+      const capturedContent = normalizeTerminalHistoryContent(
+        captureTmuxPaneContent(runtimeSession.sessionKey)
+      );
+      const capturedLineCount = countTerminalHistoryLines(capturedContent);
+
+      return {
+        terminalId,
+        content: capturedContent,
+        lineCount: capturedLineCount,
+        anchorLine: 0,
+        replaceContent: true,
+        hasMore: false,
+        nextBeforeSeq: null
+      };
+    }
+
+    const historyPage = this.readTerminalHistorySegments(terminalId, beforeSeq, limit);
+    const orderedSegments = [...historyPage.segments].reverse();
+    const content = normalizeTerminalHistoryContent(
+      orderedSegments.map((segment) => segment.content).join("")
+    );
+    const lineCount = countTerminalHistoryLines(content);
+    const shouldFallbackToTmuxPane =
+      runtimeSession?.runtimeType === "tmux" &&
+      !historyPage.hasMore &&
+      historyPage.nextBeforeSeq === 1;
+
+    return {
+      terminalId,
+      content,
+      lineCount,
+      anchorLine: lineCount,
+      hasMore: shouldFallbackToTmuxPane ? true : historyPage.hasMore,
+      nextBeforeSeq: historyPage.nextBeforeSeq
+    };
+  }
+
+  private readTerminalHistorySegments(
+    terminalId: string,
+    beforeSeq: number | null,
+    limit: number
+  ): {
+    terminalId: string;
+    segments: Array<{
+      id: string;
+      fileId: string;
+      startSeq: number;
+      endSeq: number;
+      content: string;
+      byteLength: number;
+      createdAt: string;
+    }>;
+    hasMore: boolean;
+    nextBeforeSeq: number | null;
+  } {
+    this.getTerminalOrThrow(terminalId);
+
+    if (!this.terminalLogSegmentRepository || !this.terminalLogFileRepository || !this.terminalLogFileStore) {
+      return {
+        terminalId,
+        segments: [],
+        hasMore: false,
+        nextBeforeSeq: null
+      };
+    }
+
+    const terminalLogSegmentRepository = this.terminalLogSegmentRepository;
+    const terminalLogFileRepository = this.terminalLogFileRepository;
+    const terminalLogFileStore = this.terminalLogFileStore;
+    const segments = this.terminalLogSegmentRepository.listBeforeSeq(terminalId, beforeSeq, limit);
+    const historySegments = segments.map((segment) => {
+      const logFile = terminalLogFileRepository.findById(segment.fileId);
+
+      if (!logFile) {
+        throw new AppError({
+          statusCode: 409,
+          errorCode: "TERMINAL_LOG_INDEX_INVALID",
+          detail: "终端日志索引缺少对应文件记录"
+        });
+      }
+
+      try {
+        return {
+          id: segment.id,
+          fileId: segment.fileId,
+          startSeq: segment.startSeq,
+          endSeq: segment.endSeq,
+          content: terminalLogFileStore.read(
+            logFile.relativePath,
+            segment.startOffset,
+            segment.byteLength
+          ),
+          byteLength: segment.byteLength,
+          createdAt: segment.createdAt
+        };
+      } catch (error) {
+        throw new AppError({
+          statusCode: 409,
+          errorCode: "TERMINAL_LOG_FILE_MISSING",
+          detail: error instanceof Error ? error.message : "终端日志文件不存在，无法回放历史"
+        });
+      }
+    });
+    const oldestSeq = historySegments.at(-1)?.startSeq ?? null;
+    const hasMore = oldestSeq !== null
+      ? terminalLogSegmentRepository.listBeforeSeq(terminalId, oldestSeq, 1).length > 0
+      : false;
+
+    return {
+      terminalId,
+      segments: historySegments,
+      hasMore,
+      nextBeforeSeq: oldestSeq
+    };
   }
 
   private handleRuntimeOutput(terminalId: string, content: string): void {
@@ -427,6 +593,7 @@ export class TerminalService extends EventEmitter {
       return;
     }
 
+    this.terminalLogSpooler?.appendChunks(terminalId, chunks);
     this.touchLastActiveAt(terminalId);
     this.emit("output", {
       terminalId,
@@ -442,10 +609,11 @@ export class TerminalService extends EventEmitter {
     if (this.pendingDeletedTerminalIds.delete(event.terminalId)) {
       this.pendingCloseReasons.delete(event.terminalId);
       this.lastPersistedActivity.delete(event.terminalId);
-      this.outputBuffer.clear(event.terminalId);
+      this.clearTerminalLogs(event.terminalId);
       return;
     }
 
+    this.flushTerminalLogs(event.terminalId);
     const current = this.getTerminalOrThrow(event.terminalId);
     const session = this.getRuntimeSessionOrThrow(current.runtimeSessionId);
 
@@ -690,6 +858,10 @@ export class TerminalService extends EventEmitter {
       terminal: updated,
       requestedClose: event.requestedClose
     });
+
+    if (status === "closed") {
+      this.clearTerminalLogs(terminal.id);
+    }
   }
 
   private recoverRuntimeStates(): void {
@@ -758,6 +930,39 @@ export class TerminalService extends EventEmitter {
 
     this.runtimeManager.detach(terminalId);
   }
+
+  private flushTerminalLogs(terminalId: string): void {
+    this.terminalLogSpooler?.flushTerminal(terminalId);
+  }
+
+  private clearTerminalLogs(terminalId: string): void {
+    this.outputBuffer.clear(terminalId);
+    this.terminalLogSegmentRepository?.deleteByTerminalId(terminalId);
+    this.terminalLogFileRepository?.deleteByTerminalId(terminalId);
+    this.terminalLogSpooler?.deleteTerminalLogs(terminalId);
+  }
+}
+
+function normalizeTerminalHistoryContent(content: string): string {
+  return content
+    .replace(/\u001b\][^\u0007]*(?:\u0007|\u001b\\)/g, "")
+    .replace(/\u001bP[\s\S]*?\u001b\\/g, "")
+    .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "")
+    .replace(/\r/g, "");
+}
+
+function countTerminalHistoryLines(content: string): number {
+  if (!content) {
+    return 0;
+  }
+
+  const normalized = content.endsWith("\n") ? content.slice(0, -1) : content;
+
+  if (!normalized) {
+    return 0;
+  }
+
+  return normalized.split("\n").length;
 }
 
 function sanitizeShell(shell?: string | null): string | null {

@@ -21,6 +21,9 @@ const {
   mockDeleteTerminalRecord,
   mockListTerminalShellOptions,
   mockListWorkspaceTerminals,
+  mockXtermInstances,
+  mockTerminalWheelHandlers,
+  mockReadTerminalHistory,
   mockSubscribeTerminalManagerSnapshot,
   mockRequestTerminalManagerRefresh,
   terminalManagerSnapshotListeners,
@@ -51,6 +54,20 @@ const {
   mockDeleteTerminalRecord: vi.fn(),
   mockListTerminalShellOptions: vi.fn(),
   mockListWorkspaceTerminals: vi.fn(),
+  mockXtermInstances: [] as Array<{
+    buffer: {
+      active: {
+        length: number;
+        viewportY: number;
+        baseY: number;
+        getLine: () => null;
+      };
+    };
+    triggerScroll: (viewportY: number) => void;
+    triggerWheel: (deltaY: number, deltaMode?: number) => boolean;
+  }>,
+  mockTerminalWheelHandlers: [] as Array<((event: WheelEvent) => boolean) | null>,
+  mockReadTerminalHistory: vi.fn(),
   mockSubscribeTerminalManagerSnapshot: vi.fn(),
   mockRequestTerminalManagerRefresh: vi.fn(),
   terminalManagerSnapshotListeners: new Set<
@@ -148,7 +165,8 @@ vi.mock("../api/terminal-api", async () => {
     createTerminal: mockCreateTerminal,
     deleteTerminalRecord: mockDeleteTerminalRecord,
     listTerminalShellOptions: mockListTerminalShellOptions,
-    listWorkspaceTerminals: mockListWorkspaceTerminals
+    listWorkspaceTerminals: mockListWorkspaceTerminals,
+    readTerminalHistory: mockReadTerminalHistory
   };
 });
 
@@ -176,19 +194,27 @@ vi.mock("@xterm/addon-serialize", () => ({
 }));
 
 vi.mock("@xterm/xterm", () => ({
-  Terminal: class {
+  Terminal: class MockTerminal {
     cols = 120;
     rows = 30;
     options = {
       fontSize: 14
     };
+    private scrollHandler: ((viewportY: number) => void) | null = null;
+    private wheelHandler: ((viewportY: WheelEvent) => boolean) | null = null;
     buffer = {
       active: {
         length: 0,
         viewportY: 0,
+        baseY: 0,
         getLine: () => null
       }
     };
+
+    constructor() {
+      mockXtermInstances.push(this);
+      mockTerminalWheelHandlers.push(null);
+    }
 
     loadAddon() {
       return undefined;
@@ -208,6 +234,22 @@ vi.mock("@xterm/xterm", () => ({
           return undefined;
         }
       };
+    }
+
+    onScroll(handler: (viewportY: number) => void) {
+      this.scrollHandler = handler;
+      return {
+        dispose: () => {
+          if (this.scrollHandler === handler) {
+            this.scrollHandler = null;
+          }
+        }
+      };
+    }
+
+    attachCustomWheelEventHandler(handler: (event: WheelEvent) => boolean) {
+      this.wheelHandler = handler;
+      mockTerminalWheelHandlers[mockTerminalWheelHandlers.length - 1] = handler;
     }
 
     open(container: HTMLElement) {
@@ -230,6 +272,27 @@ vi.mock("@xterm/xterm", () => ({
 
     scrollToLine() {
       return undefined;
+    }
+
+    scrollLines(lines: number) {
+      const nextViewportY = Math.max(
+        0,
+        Math.min(this.buffer.active.baseY, this.buffer.active.viewportY + lines)
+      );
+      this.buffer.active.viewportY = nextViewportY;
+      this.scrollHandler?.(this.buffer.active.viewportY);
+    }
+
+    triggerScroll(viewportY: number) {
+      this.buffer.active.viewportY = viewportY;
+      this.scrollHandler?.(viewportY);
+    }
+
+    triggerWheel(deltaY: number, deltaMode = 0) {
+      return this.wheelHandler?.({
+        deltaY,
+        deltaMode
+      } as WheelEvent) ?? true;
     }
 
     dispose() {
@@ -380,11 +443,22 @@ describe("TerminalPage", () => {
     mockDeleteTerminalRecord.mockReset();
     mockListTerminalShellOptions.mockReset();
     mockListWorkspaceTerminals.mockReset();
+    mockXtermInstances.length = 0;
+    mockTerminalWheelHandlers.length = 0;
+    mockReadTerminalHistory.mockReset();
     mockSubscribeTerminalManagerSnapshot.mockReset();
     mockRequestTerminalManagerRefresh.mockReset();
     terminalManagerSnapshotListeners.clear();
     terminalManagerSnapshotByWorkspace.clear();
     mockListTerminalShellOptions.mockResolvedValue(buildShellOption());
+    mockReadTerminalHistory.mockResolvedValue({
+      terminalId: "terminal-1",
+      content: "",
+      lineCount: 0,
+      anchorLine: 0,
+      hasMore: false,
+      nextBeforeSeq: null
+    });
     setTerminalManagerSnapshot("workspace-1", []);
     vi.stubGlobal("WebSocket", MockWebSocket as unknown as typeof WebSocket);
     vi.stubGlobal(
@@ -739,5 +813,210 @@ describe("TerminalPage", () => {
       expect(screen.getByText("Docs 终端")).toBeInTheDocument();
     });
     expect(mockListWorkspaceTerminals).not.toHaveBeenCalled();
+  });
+
+  it("滚到终端顶部时会继续加载更早历史", async () => {
+    setTerminalManagerSnapshot("workspace-1", [buildTerminal()]);
+
+    renderPage();
+
+    await screen.findByText("工作终端");
+    await waitFor(() => {
+      expect(screen.getByTestId("mock-xterm")).toBeInTheDocument();
+    });
+
+    const socket = MockWebSocket.instances[0];
+
+    if (!socket) {
+      throw new Error("未建立终端 WebSocket 连接");
+    }
+
+    socket.dispatchMessage({
+      type: "terminal.backfill",
+      terminalId: "terminal-1",
+      truncated: false,
+      cursorReset: false,
+      latestCursor: "4",
+      chunks: [
+        {
+          terminalId: "terminal-1",
+          cursor: "3",
+          stream: "stdout",
+          content: "old line\r\n",
+          timestamp: "2026-03-26T08:00:00.000Z"
+        },
+        {
+          terminalId: "terminal-1",
+          cursor: "4",
+          stream: "stdout",
+          content: "new line\r\n",
+          timestamp: "2026-03-26T08:00:01.000Z"
+        }
+      ]
+    });
+
+    const terminal = mockXtermInstances.at(-1);
+
+    if (!terminal) {
+      throw new Error("未创建 xterm 实例");
+    }
+
+    terminal.triggerScroll(0);
+
+    await waitFor(() => {
+      expect(mockReadTerminalHistory).toHaveBeenCalledWith("terminal-1", {
+        beforeSeq: 3,
+        limit: 20
+      });
+    });
+  });
+
+  it("终端没有发生原生视口滚动时，不会因为滚轮事件就主动拉取更早历史", async () => {
+    setTerminalManagerSnapshot("workspace-1", [buildTerminal()]);
+
+    renderPage();
+
+    await screen.findByText("工作终端");
+    await waitFor(() => {
+      expect(screen.getByTestId("mock-xterm")).toBeInTheDocument();
+    });
+
+    const socket = MockWebSocket.instances[0];
+
+    if (!socket) {
+      throw new Error("未建立终端 WebSocket 连接");
+    }
+
+    socket.dispatchMessage({
+      type: "terminal.backfill",
+      terminalId: "terminal-1",
+      truncated: false,
+      cursorReset: false,
+      latestCursor: "2",
+      chunks: [
+        {
+          terminalId: "terminal-1",
+          cursor: "2",
+          stream: "stdout",
+          content: "single page\r\n",
+          timestamp: "2026-03-26T08:00:00.000Z"
+        }
+      ]
+    });
+
+    const terminal = mockXtermInstances.at(-1);
+
+    if (!terminal) {
+      throw new Error("未创建 xterm 实例");
+    }
+
+    const handled = terminal.triggerWheel(-120);
+
+    expect(handled).toBe(false);
+    await waitFor(() => {
+      expect(mockReadTerminalHistory).toHaveBeenCalledWith("terminal-1", {
+        beforeSeq: 2,
+        limit: 20
+      });
+    });
+  });
+
+  it("触摸滑动会推动终端原生视口，而不是只更新调试计数", async () => {
+    setTerminalManagerSnapshot("workspace-1", [buildTerminal()]);
+
+    renderPage();
+
+    const terminalMarker = await screen.findByTestId("mock-xterm");
+    const viewportHost = terminalMarker.parentElement;
+    const terminal = mockXtermInstances.at(-1);
+
+    if (!(viewportHost instanceof HTMLElement) || !terminal) {
+      throw new Error("未找到终端视口");
+    }
+
+    terminal.buffer.active.baseY = 40;
+    terminal.buffer.active.viewportY = 10;
+
+    fireEvent.touchStart(viewportHost, {
+      touches: [{ clientX: 24, clientY: 160 }]
+    });
+    fireEvent.touchMove(viewportHost, {
+      touches: [{ clientX: 26, clientY: 118 }]
+    });
+
+    expect(terminal.buffer.active.viewportY).toBeGreaterThan(10);
+  });
+
+  it("移动端触摸结束后会继续惯性滑动一小段", async () => {
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      writable: true,
+      value: 390
+    });
+
+    setTerminalManagerSnapshot("workspace-1", [buildTerminal()]);
+
+    renderPage();
+
+    const terminalMarker = await screen.findByTestId("mock-xterm");
+    const viewportHost = terminalMarker.parentElement;
+    const terminal = mockXtermInstances.at(-1);
+
+    if (!(viewportHost instanceof HTMLElement) || !terminal) {
+      throw new Error("未找到终端视口");
+    }
+
+    terminal.buffer.active.baseY = 80;
+    terminal.buffer.active.viewportY = 10;
+
+    let perfNow = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => perfNow);
+
+    let nextRafId = 0;
+    const rafCallbacks = new Map<number, FrameRequestCallback>();
+    vi.stubGlobal(
+      "requestAnimationFrame",
+      ((callback: FrameRequestCallback) => {
+        nextRafId += 1;
+        rafCallbacks.set(nextRafId, callback);
+        return nextRafId;
+      }) as typeof requestAnimationFrame
+    );
+    vi.stubGlobal(
+      "cancelAnimationFrame",
+      ((id: number) => {
+        rafCallbacks.delete(id);
+      }) as typeof cancelAnimationFrame
+    );
+
+    fireEvent.touchStart(viewportHost, {
+      touches: [{ clientX: 24, clientY: 180 }]
+    });
+    perfNow = 20;
+    fireEvent.touchMove(viewportHost, {
+      touches: [{ clientX: 26, clientY: 124 }]
+    });
+
+    const viewportAfterTouchMove = terminal.buffer.active.viewportY;
+
+    fireEvent.touchEnd(viewportHost, {
+      changedTouches: [{ clientX: 26, clientY: 124 }]
+    });
+
+    let frameAt = 36;
+
+    for (let index = 0; index < 4; index += 1) {
+      const callbacks = [...rafCallbacks.values()];
+      rafCallbacks.clear();
+
+      callbacks.forEach((callback) => {
+        callback(frameAt);
+      });
+      perfNow = frameAt;
+      frameAt += 16;
+    }
+
+    expect(viewportAfterTouchMove).toBeGreaterThan(10);
+    expect(terminal.buffer.active.viewportY).toBeGreaterThan(viewportAfterTouchMove);
   });
 });

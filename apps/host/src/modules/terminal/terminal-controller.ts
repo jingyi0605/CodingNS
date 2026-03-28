@@ -14,6 +14,11 @@ interface TerminalParams {
   terminalId: string;
 }
 
+interface TerminalHistoryQuery {
+  beforeSeq?: string;
+  limit?: string;
+}
+
 interface CommandTemplateParams {
   templateId: string;
 }
@@ -122,6 +127,16 @@ export class TerminalController {
     reply: FastifyReply
   ): Promise<void> => {
     reply.send(this.terminalService.deleteTerminal(request.params.terminalId));
+  };
+
+  readonly readHistory = async (
+    request: FastifyRequest<{ Params: TerminalParams; Querystring: TerminalHistoryQuery }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    const beforeSeq = normalizeOptionalInteger(request.query.beforeSeq, "beforeSeq");
+    const limit = normalizePositiveInteger(request.query.limit, 20, 100, "limit");
+
+    reply.send(this.terminalService.readTerminalHistory(request.params.terminalId, beforeSeq, limit));
   };
 
   readonly writeInput = async (
@@ -330,4 +345,47 @@ function normalizePort(input?: number | null): number | null | undefined {
   }
 
   return input;
+}
+
+function normalizeOptionalInteger(input: string | undefined, field: string): number | null {
+  if (input === undefined || input.trim() === "") {
+    return null;
+  }
+
+  const value = Number(input);
+
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new AppError({
+      statusCode: 400,
+      errorCode: "INVALID_INPUT",
+      detail: `${field} 必须是正整数`,
+      field
+    });
+  }
+
+  return value;
+}
+
+function normalizePositiveInteger(
+  input: string | undefined,
+  fallback: number,
+  max: number,
+  field: string
+): number {
+  if (input === undefined || input.trim() === "") {
+    return fallback;
+  }
+
+  const value = Number(input);
+
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new AppError({
+      statusCode: 400,
+      errorCode: "INVALID_INPUT",
+      detail: `${field} 必须是正整数`,
+      field
+    });
+  }
+
+  return Math.min(value, max);
 }

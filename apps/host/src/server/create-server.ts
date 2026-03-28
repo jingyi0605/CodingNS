@@ -1,3 +1,5 @@
+import path from "node:path";
+
 import Fastify from "fastify";
 
 import type { HostConfig } from "../config/env.js";
@@ -68,6 +70,8 @@ import { SessionStateRepository } from "../storage/repositories/session-state-re
 import { SessionStatusSnapshotRepository } from "../storage/repositories/session-status-snapshot-repository.js";
 import { TerminalCommandTemplateRepository } from "../storage/repositories/terminal-command-template-repository.js";
 import { TerminalInstanceRepository } from "../storage/repositories/terminal-instance-repository.js";
+import { TerminalLogFileRepository } from "../storage/repositories/terminal-log-file-repository.js";
+import { TerminalLogSegmentRepository } from "../storage/repositories/terminal-log-segment-repository.js";
 import { TerminalRuntimeSessionRepository } from "../storage/repositories/terminal-runtime-session-repository.js";
 import { WorkspaceRepository } from "../storage/repositories/workspace-repository.js";
 import { createDatabaseClient } from "../storage/sqlite/client.js";
@@ -99,6 +103,8 @@ export function createServer(config: HostConfig) {
     sessionStateRepository: new SessionStateRepository(database.db),
     sessionStatusSnapshotRepository: new SessionStatusSnapshotRepository(database.db),
     terminalInstanceRepository: new TerminalInstanceRepository(database.db),
+    terminalLogFileRepository: new TerminalLogFileRepository(database.db),
+    terminalLogSegmentRepository: new TerminalLogSegmentRepository(database.db),
     terminalRuntimeSessionRepository: new TerminalRuntimeSessionRepository(database.db),
     terminalCommandTemplateRepository: new TerminalCommandTemplateRepository(database.db)
   };
@@ -185,7 +191,12 @@ export function createServer(config: HostConfig) {
     repositories.terminalInstanceRepository,
     repositories.terminalRuntimeSessionRepository,
     workspaceService,
-    config.terminalIdleTimeoutSeconds
+    config.terminalIdleTimeoutSeconds,
+    {
+      terminalLogRootDir: path.join(path.dirname(config.databasePath), "terminal-logs"),
+      terminalLogFileRepository: repositories.terminalLogFileRepository,
+      terminalLogSegmentRepository: repositories.terminalLogSegmentRepository
+    }
   );
   const commandTemplateService = new CommandTemplateService(
     database.db,

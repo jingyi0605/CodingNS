@@ -71,34 +71,17 @@ interface TerminalViewportRuntime {
   restoredFromSnapshot: boolean;
   focus: () => void;
   reflow: () => void;
-  prependHistory: (content: string) => Promise<void>;
+  prependHistory: (
+    content: string,
+    anchorLine?: number,
+    options?: { replaceContent?: boolean }
+  ) => Promise<void>;
   readPlainText: () => string;
   setFontSize: (fontSize: number) => void;
   applyTheme: () => void;
   persistNow: () => void;
   schedulePersist: () => void;
   dispose: () => void;
-}
-
-interface TerminalViewportDebugSnapshot {
-  rows: number;
-  cols: number;
-  baseY: number;
-  viewportY: number;
-  bufferLength: number;
-  scrollTop: number;
-  viewportHeight: number;
-  wheelCount: number;
-  lastWheelDelta: number | null;
-  touchCount: number;
-  lastTouchLines: number | null;
-}
-
-interface TerminalPaneDebugState extends TerminalViewportDebugSnapshot {
-  beforeSeq: number | null;
-  oldestSeq: number | null;
-  hasOlder: boolean;
-  loadingOlder: boolean;
 }
 
 interface TerminalActionMenuState {
@@ -204,6 +187,14 @@ const TERMINAL_MOBILE_SWIPE_THRESHOLD = 72;
 const TERMINAL_MOBILE_SWIPE_OFF_AXIS_THRESHOLD = 48;
 const TERMINAL_MANAGER_SNAPSHOT_CACHE_MAX_AGE_MS = 60 * 1000;
 const TERMINAL_HISTORY_PAGE_LIMIT = 20;
+const TERMINAL_HISTORY_AUTO_PREFETCH_MAX_PAGES = 6;
+const TERMINAL_TOUCH_LINE_HEIGHT_PX = 14;
+const TERMINAL_TOUCH_MOMENTUM_GAIN = 2;
+const TERMINAL_TOUCH_MOMENTUM_MIN_LINES_PER_MS = 0.06;
+const TERMINAL_TOUCH_MOMENTUM_MAX_LINES_PER_MS = 0.9;
+const TERMINAL_TOUCH_MOMENTUM_FRICTION = 0.97;
+const TERMINAL_TOUCH_MOMENTUM_MAX_DURATION_MS = 3600;
+const TERMINAL_TOUCH_MOMENTUM_MAX_IDLE_FRAMES = 3;
 const INITIAL_PANE_BINDINGS: TerminalPaneBindings = {
   primary: null,
   secondary: null
@@ -212,30 +203,6 @@ const INITIAL_CONNECTION_STATES: Record<PaneId, TerminalConnectionState> = {
   primary: "closed",
   secondary: "closed"
 };
-const INITIAL_TERMINAL_VIEWPORT_DEBUG_STATE: TerminalPaneDebugState = {
-  rows: 0,
-  cols: 0,
-  baseY: 0,
-  viewportY: 0,
-  bufferLength: 0,
-  scrollTop: 0,
-  viewportHeight: 0,
-  wheelCount: 0,
-  lastWheelDelta: null,
-  touchCount: 0,
-  lastTouchLines: null,
-  beforeSeq: null,
-  oldestSeq: null,
-  hasOlder: true,
-  loadingOlder: false
-};
-
-function createInitialTerminalViewportDebugState(): TerminalPaneDebugState {
-  return {
-    ...INITIAL_TERMINAL_VIEWPORT_DEBUG_STATE
-  };
-}
-
 export function TerminalPage() {
   const platform = usePlatform();
   const dragRegionProps = platform.isDesktop ? { "data-tauri-drag-region": true } : {};
@@ -2608,23 +2575,6 @@ function TerminalWorkspacePane({
   const activeRecoveryStateRef = useRef<"idle_closed" | null>(null);
   const activeTerminalStatusRef = useRef<TerminalDto["status"] | null>(terminal?.status ?? null);
   const activePaneRef = useRef(active);
-  const [debugState, setDebugState] = useState<TerminalPaneDebugState>(
-    createInitialTerminalViewportDebugState
-  );
-
-  const syncHistoryDebugState = useCallback(
-    (patch: Partial<TerminalPaneDebugState> = {}) => {
-      setDebugState((current) => ({
-        ...current,
-        beforeSeq: nextHistoryBeforeSeqRef.current,
-        oldestSeq: oldestLoadedSeqRef.current,
-        hasOlder: hasOlderHistoryRef.current,
-        loadingOlder: loadingOlderHistoryRef.current,
-        ...patch
-      }));
-    },
-    []
-  );
 
   const updateOldestLoadedSeq = useCallback((cursor: string | null | undefined) => {
     const value = Number(cursor);
@@ -2638,8 +2588,7 @@ function TerminalWorkspacePane({
         ? value
         : Math.min(oldestLoadedSeqRef.current, value);
     nextHistoryBeforeSeqRef.current = oldestLoadedSeqRef.current;
-    syncHistoryDebugState();
-  }, [syncHistoryDebugState]);
+  }, []);
 
   const handleOlderHistoryPage = useCallback(
     async (payload: TerminalHistoryPageDto): Promise<void> => {
@@ -2649,32 +2598,37 @@ function TerminalWorkspacePane({
         return;
       }
 
-      if (payload.segments.length === 0) {
+      if (!payload.content) {
         hasOlderHistoryRef.current = payload.hasMore;
         nextHistoryBeforeSeqRef.current = payload.nextBeforeSeq;
-        syncHistoryDebugState();
         return;
       }
 
-      const orderedSegments = [...payload.segments].reverse();
-      const content = orderedSegments.map((segment) => segment.content).join("");
+      const currentLineCount = countTerminalPlainTextLines(runtime.readPlainText());
+      const anchorLine = payload.replaceContent
+        ? Math.max(0, payload.lineCount - currentLineCount)
+        : payload.anchorLine;
 
-      if (!content) {
-        hasOlderHistoryRef.current = payload.hasMore;
-        nextHistoryBeforeSeqRef.current = payload.nextBeforeSeq;
-        syncHistoryDebugState();
-        return;
-      }
-
-      await runtime.prependHistory(content);
-      oldestLoadedSeqRef.current = orderedSegments[0]?.startSeq ?? oldestLoadedSeqRef.current;
+      await runtime.prependHistory(payload.content, anchorLine, {
+        replaceContent: payload.replaceContent === true
+      });
+      oldestLoadedSeqRef.current = payload.nextBeforeSeq ?? oldestLoadedSeqRef.current;
       nextHistoryBeforeSeqRef.current = payload.nextBeforeSeq;
       hasOlderHistoryRef.current = payload.hasMore;
       runtime.schedulePersist();
-      syncHistoryDebugState();
     },
-    [syncHistoryDebugState]
+    []
   );
+
+  const shouldAutoPrefetchHistory = useCallback((): boolean => {
+    const runtime = viewportRuntimeRef.current;
+
+    if (!runtime) {
+      return false;
+    }
+
+    return runtime.terminal.buffer.active.baseY === 0;
+  }, []);
 
   const loadOlderHistory = useCallback(async () => {
     if (!terminal?.id || loadingOlderHistoryRef.current || !hasOlderHistoryRef.current) {
@@ -2688,15 +2642,26 @@ function TerminalWorkspacePane({
     }
 
     loadingOlderHistoryRef.current = true;
-    syncHistoryDebugState();
 
     try {
-      const payload = await readTerminalHistory(terminal.id, {
-        beforeSeq,
-        limit: TERMINAL_HISTORY_PAGE_LIMIT
-      });
+      let nextBeforeSeq: number | null = beforeSeq;
+      let remainingPages = TERMINAL_HISTORY_AUTO_PREFETCH_MAX_PAGES;
 
-      await handleOlderHistoryPage(payload);
+      while (nextBeforeSeq !== null && remainingPages > 0) {
+        const payload = await readTerminalHistory(terminal.id, {
+          beforeSeq: nextBeforeSeq,
+          limit: TERMINAL_HISTORY_PAGE_LIMIT
+        });
+
+        await handleOlderHistoryPage(payload);
+        remainingPages -= 1;
+
+        if (!payload.hasMore || !shouldAutoPrefetchHistory()) {
+          break;
+        }
+
+        nextBeforeSeq = payload.nextBeforeSeq;
+      }
     } catch (error) {
       notifyTerminal(
         error instanceof Error ? error.message : t("conversation.historyLoadFailed"),
@@ -2704,9 +2669,13 @@ function TerminalWorkspacePane({
       );
     } finally {
       loadingOlderHistoryRef.current = false;
-      syncHistoryDebugState();
     }
-  }, [handleOlderHistoryPage, notifyTerminal, syncHistoryDebugState, terminal?.id]);
+  }, [
+    handleOlderHistoryPage,
+    notifyTerminal,
+    shouldAutoPrefetchHistory,
+    terminal?.id
+  ]);
 
   useEffect(() => {
     activeTerminalStatusRef.current = terminal?.status ?? null;
@@ -2768,7 +2737,12 @@ function TerminalWorkspacePane({
       container: terminalContainerRef.current,
       restoredViewState: persistedViewState,
       fontSize: buildTerminalFontSize(zoomScale),
+      enableTouchMomentum: isMobileLayout,
       getCursor: () => activeCursorRef.current,
+      getHistoryPaging: () => ({
+        beforeSeq: nextHistoryBeforeSeqRef.current,
+        hasOlder: hasOlderHistoryRef.current
+      }),
       canResize: () => activeTerminalStatusRef.current === "running",
       onInput: (content) => {
         realtimeClientRef.current?.sendInput(content);
@@ -2778,16 +2752,6 @@ function TerminalWorkspacePane({
       },
       onViewportTop: () => {
         void loadOlderHistory();
-      },
-      onDebugStateChange: (snapshot) => {
-        setDebugState((current) => ({
-          ...current,
-          ...snapshot,
-          beforeSeq: nextHistoryBeforeSeqRef.current,
-          oldestSeq: oldestLoadedSeqRef.current,
-          hasOlder: hasOlderHistoryRef.current,
-          loadingOlder: loadingOlderHistoryRef.current
-        }));
       },
       onViewStateChange: (viewState) => {
         persistTerminalViewState(terminal.id, viewState);
@@ -2832,7 +2796,6 @@ function TerminalWorkspacePane({
       nextHistoryBeforeSeqRef.current = null;
       hasOlderHistoryRef.current = true;
       loadingOlderHistoryRef.current = false;
-      setDebugState(createInitialTerminalViewportDebugState());
       return;
     }
 
@@ -2840,11 +2803,13 @@ function TerminalWorkspacePane({
     const persistedViewState = recoveryState.viewState;
     const resumeCursor = recoveryState.resumeCursor;
     activeCursorRef.current = resumeCursor;
-    oldestLoadedSeqRef.current = null;
-    nextHistoryBeforeSeqRef.current = null;
-    hasOlderHistoryRef.current = true;
+    oldestLoadedSeqRef.current = persistedViewState?.historyBeforeSeq ?? null;
+    nextHistoryBeforeSeqRef.current = persistedViewState?.historyBeforeSeq ?? null;
+    hasOlderHistoryRef.current =
+      persistedViewState?.historyHasOlder === false && terminal.runtimeType === "tmux"
+        ? true
+        : (persistedViewState?.historyHasOlder ?? true);
     loadingOlderHistoryRef.current = false;
-    syncHistoryDebugState();
 
     const client = new TerminalRealtimeClient({
       terminalId: terminal.id,
@@ -2912,7 +2877,6 @@ function TerminalWorkspacePane({
         activeCursorRef.current = event.chunk.cursor;
         updateOldestLoadedSeq(event.chunk.cursor);
         persistTerminalCursor(terminal.id, event.chunk.cursor);
-        syncHistoryDebugState();
       },
       onStatus: (event) => {
         onTerminalStatus({
@@ -2975,7 +2939,6 @@ function TerminalWorkspacePane({
     onTerminalStatus,
     onUnauthorized,
     paneId,
-    syncHistoryDebugState,
     terminal?.id,
     updateOldestLoadedSeq
   ]);
@@ -3041,24 +3004,6 @@ function TerminalWorkspacePane({
       {terminal ? (
         <div className="terminal-canvas">
           <div ref={terminalContainerRef} className="terminal-xterm" />
-          <div className="terminal-debug-panel" aria-live="off">
-            <strong>{t("terminal.debugPanelTitle")}</strong>
-            <span>{t("terminal.debugRowsLabel")}: {debugState.rows}</span>
-            <span>{t("terminal.debugColsLabel")}: {debugState.cols}</span>
-            <span>{t("terminal.debugBaseYLabel")}: {debugState.baseY}</span>
-            <span>{t("terminal.debugViewportYLabel")}: {debugState.viewportY}</span>
-            <span>{t("terminal.debugBufferLengthLabel")}: {debugState.bufferLength}</span>
-            <span>{t("terminal.debugBeforeSeqLabel")}: {formatDebugValue(debugState.beforeSeq)}</span>
-            <span>{t("terminal.debugOldestSeqLabel")}: {formatDebugValue(debugState.oldestSeq)}</span>
-            <span>{t("terminal.debugHasOlderLabel")}: {debugState.hasOlder ? "1" : "0"}</span>
-            <span>{t("terminal.debugLoadingOlderLabel")}: {debugState.loadingOlder ? "1" : "0"}</span>
-            <span>{t("terminal.debugWheelCountLabel")}: {debugState.wheelCount}</span>
-            <span>{t("terminal.debugLastWheelLabel")}: {formatDebugValue(debugState.lastWheelDelta)}</span>
-            <span>{t("terminal.debugTouchCountLabel")}: {debugState.touchCount}</span>
-            <span>{t("terminal.debugLastTouchLabel")}: {formatDebugValue(debugState.lastTouchLines)}</span>
-            <span>{t("terminal.debugScrollTopLabel")}: {debugState.scrollTop}</span>
-            <span>{t("terminal.debugViewportHeightLabel")}: {debugState.viewportHeight}</span>
-          </div>
         </div>
       ) : pendingCreation ? (
         <div className="terminal-empty-state terminal-empty-state-inline terminal-pending-state">
@@ -3111,12 +3056,16 @@ function createTerminalViewportRuntime(input: {
   container: HTMLDivElement;
   restoredViewState: PersistedTerminalViewState | null;
   fontSize: number;
+  enableTouchMomentum?: boolean;
   getCursor: () => string | null;
+  getHistoryPaging: () => {
+    beforeSeq: number | null;
+    hasOlder: boolean;
+  };
   canResize: () => boolean;
   onInput: (content: string) => void;
   onResize: (dimensions: { cols: number; rows: number }) => void;
   onViewportTop?: () => void;
-  onDebugStateChange?: (snapshot: TerminalViewportDebugSnapshot) => void;
   onViewStateChange: (viewState: PersistedTerminalViewState | null) => void;
 }): TerminalViewportRuntime {
   const initialTheme = readTerminalVisualTheme();
@@ -3139,10 +3088,11 @@ function createTerminalViewportRuntime(input: {
   let lastFittedRows = terminal.rows;
   let touchPoint: { x: number; y: number } | null = null;
   let pendingTouchLines = 0;
-  let wheelCount = 0;
-  let lastWheelDelta: number | null = null;
-  let touchCount = 0;
-  let lastTouchLines: number | null = null;
+  let touchVelocityLinesPerMs = 0;
+  let lastTouchMoveAt = 0;
+  let touchMomentumFrameId: number | null = null;
+  let touchMomentumRemainder = 0;
+  let touchMomentumEligible = false;
 
   terminal.loadAddon(fitAddon);
   terminal.loadAddon(serializeAddon);
@@ -3156,7 +3106,6 @@ function createTerminalViewportRuntime(input: {
             input.onViewportTop?.();
           }
           schedulePersist();
-          publishDebugState();
         })
       : null;
   terminal.onResize(({ cols, rows }) => {
@@ -3166,7 +3115,6 @@ function createTerminalViewportRuntime(input: {
       input.onResize({ cols, rows });
     }
     schedulePersist();
-    publishDebugState();
   });
 
   input.container.replaceChildren();
@@ -3180,6 +3128,8 @@ function createTerminalViewportRuntime(input: {
       : xtermRootElement instanceof HTMLElement
         ? xtermRootElement
         : input.container;
+  const interactionTarget =
+    xtermRootElement instanceof HTMLElement ? xtermRootElement : input.container;
 
   // 默认交给 xterm 原生视口处理滚动，这里只做诊断采样，不再自己模拟滚动。
   scrollTarget.style.touchAction = "pan-y";
@@ -3188,18 +3138,135 @@ function createTerminalViewportRuntime(input: {
     scrollTarget.style.webkitOverflowScrolling = "touch";
   }
 
-  const handleDebugWheel = (event: WheelEvent) => {
+  const handleWheelIntent = (event: WheelEvent): boolean => {
     if (disposed || event.deltaY === 0) {
+      return false;
+    }
+
+    const isAtTop = terminal.buffer.active.viewportY === 0;
+    const hasScrollback = terminal.buffer.active.baseY > 0;
+
+    // 没有 scrollback 时，禁止 xterm 把滚轮转成上下键发给 PTY。
+    if (!hasScrollback) {
+      if (event.deltaY < 0 && isAtTop) {
+        input.onViewportTop?.();
+      }
+      return false;
+    }
+
+    return true;
+  };
+
+  const hasTerminalScrollback = (): boolean => {
+    return terminal.buffer.active.baseY > 0 || terminal.buffer.active.viewportY > 0;
+  };
+
+  const stopTouchMomentum = (): void => {
+    if (touchMomentumFrameId !== null) {
+      window.cancelAnimationFrame(touchMomentumFrameId);
+      touchMomentumFrameId = null;
+    }
+    touchMomentumRemainder = 0;
+  };
+
+  const handleTouchScrollIntent = (lines: number): boolean => {
+    if (disposed || lines === 0) {
+      return false;
+    }
+
+    const isAtTop = terminal.buffer.active.viewportY === 0;
+    const previousViewportY = terminal.buffer.active.viewportY;
+    const hasScrollback = hasTerminalScrollback();
+
+    if (hasScrollback) {
+      terminal.scrollLines(lines);
+      const didScroll = terminal.buffer.active.viewportY !== previousViewportY;
+      schedulePersist();
+      return didScroll;
+    }
+
+    if (lines < 0 && isAtTop) {
+      input.onViewportTop?.();
+    }
+
+    return false;
+  };
+
+  const startTouchMomentum = (): void => {
+    if (!input.enableTouchMomentum) {
+      touchVelocityLinesPerMs = 0;
       return;
     }
 
-    wheelCount += 1;
-    lastWheelDelta = truncateTowardZero(normalizeTerminalWheelDelta(event));
-    publishDebugState();
+    stopTouchMomentum();
+
+    if (
+      !touchMomentumEligible ||
+      !hasTerminalScrollback() ||
+      Math.abs(touchVelocityLinesPerMs) < TERMINAL_TOUCH_MOMENTUM_MIN_LINES_PER_MS
+    ) {
+      touchVelocityLinesPerMs = 0;
+      return;
+    }
+
+    let lastFrameAt = performance.now();
+    let elapsedTotalMs = 0;
+    let idleFrameCount = 0;
+
+    const step = (frameAt: number) => {
+      if (disposed) {
+        stopTouchMomentum();
+        return;
+      }
+
+      const elapsedMs = Math.max(1, frameAt - lastFrameAt);
+      lastFrameAt = frameAt;
+      elapsedTotalMs += elapsedMs;
+      touchMomentumRemainder += touchVelocityLinesPerMs * elapsedMs;
+      const lines = truncateTowardZero(touchMomentumRemainder);
+
+      if (lines !== 0) {
+        idleFrameCount = 0;
+        touchMomentumRemainder -= lines;
+        const didScroll = handleTouchScrollIntent(lines);
+
+        if (!didScroll) {
+          touchVelocityLinesPerMs = 0;
+          stopTouchMomentum();
+          return;
+        }
+      } else {
+        idleFrameCount += 1;
+      }
+
+      touchVelocityLinesPerMs *= Math.pow(
+        TERMINAL_TOUCH_MOMENTUM_FRICTION,
+        elapsedMs / 16
+      );
+
+      if (
+        idleFrameCount >= TERMINAL_TOUCH_MOMENTUM_MAX_IDLE_FRAMES ||
+        elapsedTotalMs >= TERMINAL_TOUCH_MOMENTUM_MAX_DURATION_MS ||
+        Math.abs(touchVelocityLinesPerMs) < TERMINAL_TOUCH_MOMENTUM_MIN_LINES_PER_MS
+      ) {
+        touchVelocityLinesPerMs = 0;
+        stopTouchMomentum();
+        return;
+      }
+
+      touchMomentumFrameId = window.requestAnimationFrame(step);
+    };
+
+    touchMomentumFrameId = window.requestAnimationFrame(step);
   };
 
   const handleTouchStart = (event: globalThis.TouchEvent) => {
     const touch = event.touches[0];
+
+    stopTouchMomentum();
+    touchVelocityLinesPerMs = 0;
+    touchMomentumEligible = false;
+    lastTouchMoveAt = performance.now();
 
     if (!touch) {
       touchPoint = null;
@@ -3234,14 +3301,34 @@ function createTerminalViewportRuntime(input: {
       return;
     }
 
-    pendingTouchLines += -deltaY / 14;
+    event.preventDefault();
+
+    const now = performance.now();
+    const elapsedMs = Math.max(1, now - lastTouchMoveAt);
+    lastTouchMoveAt = now;
+    const linesDelta = -deltaY / TERMINAL_TOUCH_LINE_HEIGHT_PX;
+    pendingTouchLines += linesDelta;
     const lines = truncateTowardZero(pendingTouchLines);
 
     if (lines !== 0) {
       pendingTouchLines -= lines;
-      touchCount += 1;
-      lastTouchLines = lines;
-      publishDebugState();
+      const didScroll = handleTouchScrollIntent(lines);
+
+      if (input.enableTouchMomentum && didScroll) {
+        const nextVelocity = clampNumber(
+          (lines / elapsedMs) * TERMINAL_TOUCH_MOMENTUM_GAIN,
+          -TERMINAL_TOUCH_MOMENTUM_MAX_LINES_PER_MS,
+          TERMINAL_TOUCH_MOMENTUM_MAX_LINES_PER_MS
+        );
+        touchVelocityLinesPerMs =
+          touchVelocityLinesPerMs === 0
+            ? nextVelocity
+            : touchVelocityLinesPerMs * 0.35 + nextVelocity * 0.65;
+        touchMomentumEligible = true;
+      } else if (!didScroll) {
+        touchVelocityLinesPerMs = 0;
+        touchMomentumEligible = false;
+      }
     }
 
     touchPoint = {
@@ -3250,16 +3337,27 @@ function createTerminalViewportRuntime(input: {
     };
   };
 
+  const handleTouchEnd = () => {
+    touchPoint = null;
+    pendingTouchLines = 0;
+    startTouchMomentum();
+  };
+
   const clearTouchScrollState = () => {
     touchPoint = null;
     pendingTouchLines = 0;
+    touchVelocityLinesPerMs = 0;
+    touchMomentumEligible = false;
+    stopTouchMomentum();
   };
 
-  scrollTarget.addEventListener("wheel", handleDebugWheel, { passive: true });
-  scrollTarget.addEventListener("touchstart", handleTouchStart, { passive: true });
-  scrollTarget.addEventListener("touchmove", handleTouchMove, { passive: true });
-  scrollTarget.addEventListener("touchend", clearTouchScrollState, { passive: true });
-  scrollTarget.addEventListener("touchcancel", clearTouchScrollState, { passive: true });
+  if (typeof terminal.attachCustomWheelEventHandler === "function") {
+    terminal.attachCustomWheelEventHandler(handleWheelIntent);
+  }
+  interactionTarget.addEventListener("touchstart", handleTouchStart, { passive: true });
+  interactionTarget.addEventListener("touchmove", handleTouchMove, { passive: false });
+  interactionTarget.addEventListener("touchend", handleTouchEnd, { passive: true });
+  interactionTarget.addEventListener("touchcancel", clearTouchScrollState, { passive: true });
 
   if (input.restoredViewState?.content) {
     terminal.write(input.restoredViewState.content, () => {
@@ -3271,13 +3369,11 @@ function createTerminalViewportRuntime(input: {
 
       void waitForStableContainer().then(() => {
         fitToContainer();
-        publishDebugState();
       });
     });
   } else {
     void waitForStableContainer().then(() => {
       fitToContainer();
-      publishDebugState();
     });
   }
 
@@ -3296,7 +3392,6 @@ function createTerminalViewportRuntime(input: {
     void document.fonts.ready.then(() => {
       window.requestAnimationFrame(() => {
         fitToContainer();
-        publishDebugState();
       });
     });
   }
@@ -3323,7 +3418,14 @@ function createTerminalViewportRuntime(input: {
       persistTimer = null;
     }
 
-    input.onViewStateChange(buildPersistedTerminalViewState(terminal, serializeAddon, input.getCursor()));
+    input.onViewStateChange(
+      buildPersistedTerminalViewState(
+        terminal,
+        serializeAddon,
+        input.getCursor(),
+        input.getHistoryPaging()
+      )
+    );
   }
 
   function schedulePersist(): void {
@@ -3338,22 +3440,6 @@ function createTerminalViewportRuntime(input: {
     persistTimer = window.setTimeout(() => {
       persistNow();
     }, 200);
-  }
-
-  function publishDebugState(): void {
-    input.onDebugStateChange?.({
-      rows: terminal.rows,
-      cols: terminal.cols,
-      baseY: terminal.buffer.active.baseY,
-      viewportY: terminal.buffer.active.viewportY,
-      bufferLength: terminal.buffer.active.length,
-      scrollTop: scrollTarget instanceof HTMLElement ? scrollTarget.scrollTop : 0,
-      viewportHeight: scrollTarget instanceof HTMLElement ? scrollTarget.clientHeight : 0,
-      wheelCount,
-      lastWheelDelta,
-      touchCount,
-      lastTouchLines
-    });
   }
 
   function fitToContainer(): void {
@@ -3378,7 +3464,6 @@ function createTerminalViewportRuntime(input: {
     hasCommittedFit = true;
     lastFittedCols = terminal.cols;
     lastFittedRows = terminal.rows;
-    publishDebugState();
   }
 
   function applyTheme(): void {
@@ -3396,28 +3481,25 @@ function createTerminalViewportRuntime(input: {
     reflow: () => {
       fitToContainer();
     },
-    prependHistory: async (content: string) => {
+    prependHistory: async (
+      content: string,
+      anchorLine = countTerminalPlainTextLines(content),
+      options: { replaceContent?: boolean } = {}
+    ) => {
       if (!content) {
         return;
       }
 
       const previousViewportY = terminal.buffer.active.viewportY;
-      const snapshot = serializeAddon.serialize({
-        scrollback: PERSISTED_TERMINAL_SCROLLBACK
-      });
-
-      if (!snapshot) {
-        terminal.write(content);
-        schedulePersist();
-        return;
-      }
-
-      const estimatedAddedLines = estimateTerminalContentLines(content, Math.max(terminal.cols, 1));
+      const currentText = readTerminalPlainText(terminal);
+      const nextText = options.replaceContent
+        ? normalizeTerminalPlainTextBlock(content)
+        : mergeTerminalPlainText(content, currentText);
 
       await new Promise<void>((resolve) => {
         terminal.reset();
-        terminal.write(`${content}${snapshot}`, () => {
-          const targetViewportY = Math.max(0, previousViewportY + estimatedAddedLines);
+        terminal.write(formatPlainTextForTerminalWrite(nextText), () => {
+          const targetViewportY = Math.max(0, previousViewportY + Math.max(anchorLine, 0));
 
           if (targetViewportY > 0) {
             terminal.scrollToLine(targetViewportY);
@@ -3426,7 +3508,7 @@ function createTerminalViewportRuntime(input: {
           resolve();
         });
       });
-      publishDebugState();
+      schedulePersist();
     },
     readPlainText: () => {
       return readTerminalPlainText(terminal);
@@ -3439,7 +3521,6 @@ function createTerminalViewportRuntime(input: {
       terminal.options.fontSize = fontSize;
       fitToContainer();
       schedulePersist();
-      publishDebugState();
     },
     applyTheme,
     persistNow,
@@ -3449,33 +3530,17 @@ function createTerminalViewportRuntime(input: {
       if (persistTimer !== null) {
         window.clearTimeout(persistTimer);
       }
-      scrollTarget.removeEventListener("wheel", handleDebugWheel);
-      scrollTarget.removeEventListener("touchstart", handleTouchStart);
-      scrollTarget.removeEventListener("touchmove", handleTouchMove);
-      scrollTarget.removeEventListener("touchend", clearTouchScrollState);
-      scrollTarget.removeEventListener("touchcancel", clearTouchScrollState);
+      interactionTarget.removeEventListener("touchstart", handleTouchStart);
+      interactionTarget.removeEventListener("touchmove", handleTouchMove);
+      interactionTarget.removeEventListener("touchend", handleTouchEnd);
+      interactionTarget.removeEventListener("touchcancel", clearTouchScrollState);
+      stopTouchMomentum();
       scrollSubscription?.dispose();
       resizeObserver?.disconnect();
       terminal.dispose();
       input.container.replaceChildren();
     }
   };
-}
-
-function formatDebugValue(value: number | null): string {
-  return value === null ? "-" : String(value);
-}
-
-function normalizeTerminalWheelDelta(event: WheelEvent): number {
-  if (event.deltaMode === 1) {
-    return event.deltaY;
-  }
-
-  if (event.deltaMode === 2) {
-    return event.deltaY * 12;
-  }
-
-  return event.deltaY / 16;
 }
 
 function truncateTowardZero(value: number): number {
@@ -3485,7 +3550,11 @@ function truncateTowardZero(value: number): number {
 function buildPersistedTerminalViewState(
   terminal: Terminal,
   serializeAddon: SerializeAddon,
-  cursor: string | null
+  cursor: string | null,
+  historyPaging: {
+    beforeSeq: number | null;
+    hasOlder: boolean;
+  }
 ): PersistedTerminalViewState | null {
   const content = serializeAddon.serialize({
     scrollback: PERSISTED_TERMINAL_SCROLLBACK
@@ -3500,28 +3569,10 @@ function buildPersistedTerminalViewState(
     cursor,
     cols: terminal.cols,
     rows: terminal.rows,
-    viewportY: terminal.buffer.active.viewportY
+    viewportY: terminal.buffer.active.viewportY,
+    historyBeforeSeq: historyPaging.beforeSeq,
+    historyHasOlder: historyPaging.hasOlder
   };
-}
-
-function estimateTerminalContentLines(content: string, cols: number): number {
-  if (!content) {
-    return 0;
-  }
-
-  const normalized = stripAnsiSequences(content).replace(/\r/g, "");
-  const lines = normalized.split("\n");
-  let total = 0;
-
-  for (const line of lines) {
-    total += Math.max(1, Math.ceil(line.length / Math.max(cols, 1)));
-  }
-
-  return total;
-}
-
-function stripAnsiSequences(content: string): string {
-  return content.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
 }
 
 function appendTerminalChunks(terminal: Terminal, chunks: TerminalOutputChunkDto[]): void {
@@ -3782,6 +3833,39 @@ function readTerminalPlainText(terminal: Terminal): string {
   }
 
   return lines.join("\n").trimEnd();
+}
+
+function mergeTerminalPlainText(olderContent: string, currentContent: string): string {
+  const normalizedOlder = normalizeTerminalPlainTextBlock(olderContent);
+  const normalizedCurrent = normalizeTerminalPlainTextBlock(currentContent);
+
+  if (!normalizedOlder) {
+    return normalizedCurrent;
+  }
+
+  if (!normalizedCurrent) {
+    return normalizedOlder;
+  }
+
+  return `${normalizedOlder}\n${normalizedCurrent}`;
+}
+
+function normalizeTerminalPlainTextBlock(content: string): string {
+  return content.replace(/\r/g, "").replace(/\n+$/g, "").trimEnd();
+}
+
+function formatPlainTextForTerminalWrite(content: string): string {
+  return content.replace(/\r?\n/g, "\r\n");
+}
+
+function countTerminalPlainTextLines(content: string): number {
+  const normalized = normalizeTerminalPlainTextBlock(content);
+
+  if (!normalized) {
+    return 0;
+  }
+
+  return normalized.split("\n").length;
 }
 
 function normalizePaneBindings(input: {
