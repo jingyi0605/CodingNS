@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-import { act, fireEvent, render, waitFor } from "@testing-library/react";
+import { act, createEvent, fireEvent, render, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -323,6 +323,42 @@ describe("MobileWorkbenchShell", () => {
     });
 
     expect(shell).toHaveAttribute("data-conversation-tabbar-state", "hidden");
+  });
+
+  it("聊天区 touchmove 已经不可取消时，不会再强行拦截滚动", () => {
+    vi.useFakeTimers();
+    const view = renderMobileShell({
+      presentation: "conversation-focus",
+      childVariant: "conversation"
+    });
+    const shell = view.container.querySelector(".mobile-workbench-shell");
+    const composerPanel = view.container.querySelector(".composer-panel") as HTMLElement | null;
+
+    expect(composerPanel).not.toBeNull();
+
+    act(() => {
+      vi.advanceTimersByTime(3000);
+    });
+
+    expect(shell).toHaveAttribute("data-conversation-tabbar-state", "hidden");
+
+    fireEvent.touchStart(composerPanel!, {
+      touches: [{ clientY: 620, identifier: 1 }]
+    });
+
+    const touchMoveEvent = createEvent.touchMove(composerPanel!, {
+      touches: [{ clientY: 560, identifier: 1 }]
+    });
+    const preventDefaultSpy = vi.spyOn(touchMoveEvent, "preventDefault");
+    Object.defineProperty(touchMoveEvent, "cancelable", {
+      configurable: true,
+      value: false
+    });
+
+    fireEvent(composerPanel!, touchMoveEvent);
+
+    expect(preventDefaultSpy).not.toHaveBeenCalled();
+    expect(shell).toHaveAttribute("data-conversation-tabbar-state", "dragging");
   });
 
   it("工具主页不再渲染外层标题栏，避免和页面内头部重复", () => {

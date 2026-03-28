@@ -1005,7 +1005,6 @@ function useMobileConversationPreviewController(enabled: boolean) {
       gesture.horizontalLocked = true;
     }
 
-    event.preventDefault();
   }
 
   function settlePreviewGesture(event?: ReactTouchEvent<HTMLElement>) {

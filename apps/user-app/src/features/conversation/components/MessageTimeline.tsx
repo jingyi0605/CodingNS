@@ -792,9 +792,9 @@ function ApplyPatchToolItem({
   return (
     <>
       <div className="tool-call-item apply-patch-item">
-        {preview.files.map((file) => (
+        {preview.files.map((file, index) => (
           <button
-            key={`${file.path}:${file.nextPath ?? ""}`}
+            key={buildApplyPatchFileRenderKey(file, index)}
             type="button"
             className="apply-patch-summary-row"
             onClick={() => setIsModalOpen(true)}
@@ -849,8 +849,11 @@ function ApplyPatchToolItem({
                   {preview.files.length === 0 ? (
                     <p className="status-text">{t("conversation.applyPatchEmpty")}</p>
                   ) : (
-                    preview.files.map((file) => (
-                      <section key={`${file.path}:${file.nextPath ?? ""}`} className="apply-patch-file-panel">
+                    preview.files.map((file, index) => (
+                      <section
+                        key={buildApplyPatchFileRenderKey(file, index)}
+                        className="apply-patch-file-panel"
+                      >
                         <div className="apply-patch-file-panel-header">
                           <div className="apply-patch-file-panel-title">
                             <span className="apply-patch-summary-label">{getApplyPatchActionLabel(file.action)}</span>
@@ -978,6 +981,10 @@ function buildApplyPatchFullPathLabel(file: ApplyPatchFileChange) {
   }
 
   return file.nextPath ?? file.path;
+}
+
+function buildApplyPatchFileRenderKey(file: ApplyPatchFileChange, index: number) {
+  return `${file.path}:${file.nextPath ?? ""}:${index}`;
 }
 
 function resolveApplyPatchLineClassName(kind: ApplyPatchFileChange["lines"][number]["kind"]) {

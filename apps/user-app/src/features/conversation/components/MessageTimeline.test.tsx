@@ -35,6 +35,19 @@ const SAMPLE_APPLY_PATCH_INPUT = `*** Begin Patch
  }
 *** End Patch`;
 
+const SAMPLE_DUPLICATE_APPLY_PATCH_INPUT = `*** Begin Patch
+*** Update File: /Users/jackson/Code/CodingNS/apps/user-app/src/app/styles.css
+@@
+ .message-item {
++  gap: 8px;
+ }
+*** Update File: /Users/jackson/Code/CodingNS/apps/user-app/src/app/styles.css
+@@
+ .user-message {
++  width: 100%;
+ }
+*** End Patch`;
+
 function createTextMessage(content: string): SessionMessageViewModel {
   return {
     id: "message-1",
@@ -386,6 +399,51 @@ describe("MessageTimeline", () => {
     const diffViewText = document.querySelector(".apply-patch-diff-view")?.textContent ?? "";
     expect(diffViewText).toContain("+  gap: 8px;");
     expect(diffViewText).toContain("-  padding: 10px 14px;");
+  });
+
+  it("同一文件出现多个 patch 段时不会因为重复 key 报警", () => {
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      render(
+        <MessageTimeline
+          historyState="ready"
+          provider="codex"
+          onRetryMessage={vi.fn()}
+          messages={[
+            {
+              id: "tool-call-duplicate-apply-patch",
+              sessionId: "session-1",
+              role: "tool",
+              kind: "tool_call",
+              content: SAMPLE_DUPLICATE_APPLY_PATCH_INPUT,
+              toolCall: {
+                callId: "call-duplicate-apply-patch",
+                name: "apply_patch",
+                input: SAMPLE_DUPLICATE_APPLY_PATCH_INPUT,
+                output: null,
+                error: null,
+                status: "running"
+              },
+              timestamp: "2026-03-23T10:00:02.000Z",
+              sequence: 2,
+              rawRef: "codex://raw#line=duplicate-apply-patch",
+              deliveryState: "sent",
+              clientRequestId: null
+            }
+          ]}
+        />
+      );
+
+      const duplicateKeyCalls = consoleErrorSpy.mock.calls.filter(
+        ([firstArg]) =>
+          typeof firstArg === "string" && firstArg.includes("Encountered two children with the same key")
+      );
+
+      expect(screen.getAllByRole("button", { name: /styles\.css/i })).toHaveLength(2);
+      expect(duplicateKeyCalls).toHaveLength(0);
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
   });
 
   it("滚到顶部时会触发加载更早消息", () => {

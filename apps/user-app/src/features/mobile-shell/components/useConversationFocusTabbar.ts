@@ -156,7 +156,7 @@ export function useConversationFocusTabbar({
         return;
       }
 
-      event.preventDefault();
+      preventDefaultIfCancelable(event);
 
       gesture.dragging = true;
       gesture.latestProgress = resolveDragProgress(gesture.initialState, dragDistance);
@@ -270,7 +270,7 @@ export function useConversationFocusTabbar({
         return;
       }
 
-      event.preventDefault();
+      preventDefaultIfCancelable(event);
 
       gesture.dragging = true;
       gesture.latestProgress = resolveDragProgress(gesture.initialState, dragDistance);
@@ -423,4 +423,10 @@ function resolveConversationGestureSurface(target: EventTarget | null) {
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
+}
+
+function preventDefaultIfCancelable(event: Pick<Event, "cancelable" | "preventDefault">) {
+  if (event.cancelable) {
+    event.preventDefault();
+  }
 }

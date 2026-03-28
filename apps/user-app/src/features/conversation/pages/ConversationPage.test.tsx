@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { createEvent, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -181,6 +181,47 @@ describe("ConversationPage", () => {
     });
     fireEvent.touchEnd(stage);
 
+    expect(screen.getByText("历史会话 Alpha")).toBeInTheDocument();
+    expect(parseFloat(page.style.getPropertyValue("--mobile-conversation-preview-width"))).toBeCloseTo(130, 0);
+  });
+
+  it("移动端滑出侧边会话栏时，不会在 touchmove 里调用 preventDefault", async () => {
+    mockGetProviderCapabilities.mockResolvedValue({
+      provider: "codex",
+      canStartSession: true,
+      canResumeSession: true,
+      canSendMessage: true,
+      inRunInputMode: "none",
+      supportsSubagents: false,
+      supportsInterrupt: true,
+      supportsStructuredToolCalls: true,
+      supportsTokenUsage: true,
+      supportsAttachments: true,
+      supportsPermissionPrompt: true,
+      supportsCheckpoint: false,
+      modelOptions: [{ id: "provider-default", name: "跟随 CLI 默认模型", usesProviderDefault: true }],
+      limitations: []
+    });
+    mockUseWorkbenchShell.mockReturnValue(createMobileWorkbenchShellValue());
+    window.localStorage.setItem("mobile.conversation.preview.mode", "immersive");
+
+    const view = renderDraftConversationPage();
+    const page = view.container.querySelector(".mobile-conversation-page") as HTMLElement;
+    const stage = view.container.querySelector(".mobile-conversation-stage") as HTMLElement;
+
+    fireEvent.touchStart(stage, {
+      touches: [{ clientX: 20, clientY: 120 }]
+    });
+
+    const touchMoveEvent = createEvent.touchMove(stage, {
+      touches: [{ clientX: 420, clientY: 126 }]
+    });
+    const preventDefaultSpy = vi.spyOn(touchMoveEvent, "preventDefault");
+
+    fireEvent(stage, touchMoveEvent);
+    fireEvent.touchEnd(stage);
+
+    expect(preventDefaultSpy).not.toHaveBeenCalled();
     expect(screen.getByText("历史会话 Alpha")).toBeInTheDocument();
     expect(parseFloat(page.style.getPropertyValue("--mobile-conversation-preview-width"))).toBeCloseTo(130, 0);
   });
