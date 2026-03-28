@@ -220,6 +220,62 @@ test("ClaudeCodeAdapter 能解析 content 为字符串的用户消息", async ()
   }
 });
 
+test("ClaudeCodeAdapter 会把同一条 Claude thinking 的 progress 与最终消息并成一条历史记录", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-claude-thinking-merge-"));
+  const workspacePath = "/Users/jackson/Documents/Code/CodingNS";
+  const projectDir = join(tempDir, "projects", "-Users-jackson-Documents-Code-CodingNS");
+  const sessionId = "34343434-3434-4434-8434-343434343434";
+  const rawStoreRef = join(projectDir, `${sessionId}.jsonl`);
+
+  try {
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(
+      rawStoreRef,
+      [
+        JSON.stringify({
+          type: "progress",
+          sessionId,
+          cwd: workspacePath,
+          timestamp: "2026-03-28T01:00:00.000Z",
+          data: {
+            message: {
+              type: "assistant",
+              timestamp: "2026-03-28T01:00:00.000Z",
+              message: {
+                id: "msg-thinking-1",
+                role: "assistant",
+                content: [{ type: "thinking", thinking: "先想" }]
+              }
+            }
+          }
+        }),
+        JSON.stringify({
+          type: "assistant",
+          sessionId,
+          cwd: workspacePath,
+          timestamp: "2026-03-28T01:00:01.000Z",
+          message: {
+            id: "msg-thinking-1",
+            role: "assistant",
+            content: [{ type: "thinking", thinking: "先想\n再回答" }]
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const adapter = new ClaudeCodeAdapter({ homeDir: tempDir });
+    const page = await adapter.readSessionHistory(sessionId, rawStoreRef, null, 20, "forward");
+
+    assert.equal(page.messages.length, 1);
+    assert.equal(page.messages[0]?.kind, "thinking");
+    assert.equal(page.messages[0]?.content, "先想\n再回答");
+    assert.match(page.messages[0]?.rawRef ?? "", /#line=1&part=0$/);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("ClaudeCodeAdapter 会读取 assistant usage 作为压缩后的真实上下文占用", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "codingns-claude-usage-"));
   const workspacePath = "/Users/jackson/Documents/Code/CodingNS";

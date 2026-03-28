@@ -1,19 +1,25 @@
-import { randomUUID, createHash } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { accessSync, constants, existsSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { delimiter, dirname, isAbsolute, join, sep } from "node:path";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 
 import {
-  createRawRef,
+  buildClaudeStableRawRef,
+  normalizeClaudeMessagePart,
+  normalizeClaudeMessageParts,
+  readClaudeMessageId,
+  toClaudeRecord,
+  type ClaudeMessageEnvelope,
+  type ClaudeStableMessageRef
+} from "../claude-message-utils.js";
+import {
   ensureDirectory,
   ensureText,
-  extractTextBlocks,
   nextTimestamp,
   safeDate,
   stringifyStructuredValue,
   workspaceSlug
 } from "../providers/utils.js";
-import type { MessageKind, NormalizedMessage } from "../types.js";
 import type {
   ProviderRuntimeAdapter,
   ProviderRuntimeEventSink,
@@ -26,12 +32,22 @@ interface ClaudeRuntimeOptions {
   commandPath?: string;
 }
 
-interface ClaudeMessageEnvelope {
+interface ClaudeStreamPartState {
+  part: Record<string, unknown>;
+  jsonBuffer?: string;
+}
+
+interface ClaudeStreamMessageState {
   type: "user" | "assistant";
+  messageId: string | null;
   timestamp: unknown;
-  message: {
-    content?: Array<Record<string, unknown>>;
-  };
+  partsByIndex: Map<number, ClaudeStreamPartState>;
+  stopReason?: string | null;
+}
+
+interface ClaudeStreamEventState {
+  currentMessageKey: string | null;
+  messages: Map<string, ClaudeStreamMessageState>;
 }
 
 interface ClaudeStreamingUserInput {
@@ -44,8 +60,6 @@ interface ClaudeStreamingUserInput {
     }>;
   };
 }
-
-type ClaudeToolStatus = "running" | "completed" | "failed";
 
 /**
  * Claude 真实运行时：通过 claude.cmd 流式读取事件，而不是伪造写文件。
@@ -145,6 +159,11 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
 
     let sequence = 0;
     const toolNameById = new Map<string, string>();
+    const stableMessageRefByIdentity = new Map<string, ClaudeStableMessageRef>();
+    const streamEventState: ClaudeStreamEventState = {
+      currentMessageKey: null,
+      messages: new Map()
+    };
     let interrupted = false;
     let completed = false;
     let fatalWriteError: string | null = null;
@@ -276,6 +295,8 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
           return false;
         }
 
+        stableMessageRefByIdentity.clear();
+
         const settle = result.kind === "complete"
           ? emitRuntimeComplete("complete", result.detail)
           : emitRuntimeError(result.detail, result.errorCode);
@@ -306,11 +327,13 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
             onParsed: handleControlLine,
             refreshBinding,
             sink,
-            sequenceRef: () => {
+            allocateSequence: () => {
               sequence += 1;
               return sequence;
             },
-            toolNameById
+            toolNameById,
+            stableMessageRefByIdentity,
+            streamEventState
           });
         }
       });
@@ -391,8 +414,10 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
       rawStoreRef: string;
     };
     sink: ProviderRuntimeEventSink;
-    sequenceRef: () => number;
+    allocateSequence: () => number;
     toolNameById: Map<string, string>;
+    stableMessageRefByIdentity: Map<string, ClaudeStableMessageRef>;
+    streamEventState: ClaudeStreamEventState;
   }): Promise<void> {
     let parsed: Record<string, unknown>;
 
@@ -407,21 +432,36 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
     }
 
     const binding = input.refreshBinding(parsed);
-    const envelopes = collectMessageEnvelopes(parsed);
+    const envelopes = collectMessageEnvelopes(parsed, input.streamEventState);
 
     for (const envelope of envelopes) {
-      const parts = Array.isArray(envelope.message.content) ? envelope.message.content : [];
+      const parts = normalizeClaudeMessageParts(envelope.message.content);
 
       for (let partIndex = 0; partIndex < parts.length; partIndex += 1) {
         const part = parts[partIndex];
-        const normalized = normalizePart({
+        const normalized = normalizeClaudeMessagePart({
           part,
           envelope,
           providerSessionId: binding.providerSessionId,
-          rawStoreRef: binding.rawStoreRef,
           partIndex,
-          sequence: input.sequenceRef(),
-          toolNameById: input.toolNameById
+          timestamp: safeDate(envelope.timestamp, nextTimestamp()),
+          toolNameById: input.toolNameById,
+          resolveStableMessageRef: (identity) => {
+            const existing = input.stableMessageRefByIdentity.get(identity);
+
+            if (existing) {
+              return existing;
+            }
+
+            const sequence = input.allocateSequence();
+            const created: ClaudeStableMessageRef = {
+              sequence,
+              rawRef: buildClaudeStableRawRef(binding.rawStoreRef, sequence, partIndex)
+            };
+
+            input.stableMessageRefByIdentity.set(identity, created);
+            return created;
+          }
         });
 
         if (!normalized) {
@@ -734,15 +774,25 @@ function readClaudeResultOutcome(record: Record<string, unknown>):
   };
 }
 
-function collectMessageEnvelopes(record: Record<string, unknown>): ClaudeMessageEnvelope[] {
+function collectMessageEnvelopes(
+  record: Record<string, unknown>,
+  streamEventState: ClaudeStreamEventState
+): ClaudeMessageEnvelope[] {
+  if (ensureText(record.type).trim() === "stream_event") {
+    return collectStreamEventEnvelopes(record, streamEventState);
+  }
+
   const envelopes: ClaudeMessageEnvelope[] = [];
-  const directType = ensureText(record.type);
+  const directType = ensureText(record.type).trim();
+  const directMessage = toClaudeRecord(record.message);
 
   if (directType === "user" || directType === "assistant") {
     envelopes.push({
       type: directType,
+      source: "direct",
+      messageId: readClaudeMessageId(directMessage, record),
       timestamp: record.timestamp,
-      message: ((record.message ?? {}) as ClaudeMessageEnvelope["message"])
+      message: directMessage as ClaudeMessageEnvelope["message"]
     });
   }
 
@@ -760,11 +810,9 @@ function readProgressEnvelope(record: Record<string, unknown>): ClaudeMessageEnv
     return null;
   }
 
-  const nested = (((record.data ?? {}) as Record<string, unknown>).message ?? {}) as Record<
-    string,
-    unknown
-  >;
-  const nestedType = ensureText(nested.type);
+  const nested = toClaudeRecord(toClaudeRecord(record.data).message);
+  const nestedType = ensureText(nested.type).trim();
+  const nestedMessage = toClaudeRecord(nested.message);
 
   if (nestedType !== "user" && nestedType !== "assistant") {
     return null;
@@ -772,153 +820,241 @@ function readProgressEnvelope(record: Record<string, unknown>): ClaudeMessageEnv
 
   return {
     type: nestedType,
+    source: "progress",
+    messageId: readClaudeMessageId(nestedMessage, nested),
     timestamp: nested.timestamp ?? record.timestamp,
-    message: ((nested.message ?? {}) as ClaudeMessageEnvelope["message"])
+    message: nestedMessage as ClaudeMessageEnvelope["message"]
   };
 }
 
-function normalizePart(input: {
-  part: Record<string, unknown>;
-  envelope: ClaudeMessageEnvelope;
-  providerSessionId: string;
-  rawStoreRef: string;
-  partIndex: number;
-  sequence: number;
-  toolNameById: Map<string, string>;
-}): NormalizedMessage | null {
-  const { part, envelope, providerSessionId, rawStoreRef, partIndex, sequence, toolNameById } = input;
-  const partType = ensureText(part.type);
-  const timestamp = safeDate(envelope.timestamp, nextTimestamp());
-  const rawRef = createRawRef("claude-code", rawStoreRef, sequence, partIndex);
+function collectStreamEventEnvelopes(
+  record: Record<string, unknown>,
+  state: ClaudeStreamEventState
+): ClaudeMessageEnvelope[] {
+  const event = toClaudeRecord(record.event);
+  const eventType = ensureText(event.type).trim();
 
-  if (envelope.type === "user") {
-    if (partType === "tool_result") {
-      const callId = ensureText(part.tool_use_id).trim() || rawRef;
-      const output = extractTextBlocks(part.content).trim() || stringifyStructuredValue(part.content);
-      const isError = Boolean(part.is_error);
+  if (!eventType) {
+    return [];
+  }
 
-      if (output.length === 0) {
-        return null;
-      }
+  if (eventType === "message_start") {
+    const message = toClaudeRecord(event.message);
+    const role = ensureText(message.role).trim();
 
-      return createMessage({
-        providerSessionId,
-        rawRef,
-        sequence,
-        timestamp,
-        role: "tool",
-        kind: "tool_result",
-        content: output,
-        toolCall: {
-          callId,
-          name: toolNameById.get(callId) ?? "tool",
-          input: "",
-          output: isError ? null : output,
-          error: isError ? output : null,
-          status: isError ? "failed" : "completed"
-        }
+    if (role !== "user" && role !== "assistant") {
+      return [];
+    }
+
+    const messageId = readClaudeMessageId(message, message);
+    const messageKey = messageId || `stream:${randomUUID()}`;
+    const messageState: ClaudeStreamMessageState = {
+      type: role,
+      messageId,
+      timestamp: message.timestamp ?? record.timestamp,
+      partsByIndex: new Map()
+    };
+    const initialParts = normalizeClaudeMessageParts(message.content);
+
+    initialParts.forEach((part, partIndex) => {
+      messageState.partsByIndex.set(partIndex, {
+        part: { ...part }
       });
-    }
-
-    const content = extractTextBlocks(part).trim();
-
-    if (!content) {
-      return null;
-    }
-
-    return createMessage({
-      providerSessionId,
-      rawRef,
-      sequence,
-      timestamp,
-      role: "user",
-      kind: "text",
-      content,
-      toolCall: null
     });
+
+    state.currentMessageKey = messageKey;
+    state.messages.set(messageKey, messageState);
+    return [];
   }
 
-  if (partType === "tool_use") {
-    const callId = ensureText(part.id).trim() || rawRef;
-    const name = ensureText(part.name).trim() || "tool";
-    const toolInput = stringifyStructuredValue(part.input);
-    toolNameById.set(callId, name);
+  const messageKey = resolveClaudeStreamMessageKey(record, state);
 
-    if (!name && !toolInput) {
-      return null;
+  if (!messageKey) {
+    return [];
+  }
+
+  const messageState = state.messages.get(messageKey);
+
+  if (!messageState) {
+    return [];
+  }
+
+  if (record.timestamp !== undefined && record.timestamp !== null) {
+    messageState.timestamp = record.timestamp;
+  }
+
+  if (eventType === "content_block_start") {
+    const partIndex = readClaudeContentBlockIndex(event);
+
+    if (partIndex < 0) {
+      return [];
     }
 
-    return createMessage({
-      providerSessionId,
-      rawRef,
-      sequence,
-      timestamp,
-      role: "tool",
-      kind: "tool_call",
-      content: toolInput,
-      toolCall: {
-        callId,
-        name,
-        input: toolInput,
-        output: null,
-        error: null,
-        status: "running"
-      }
-    });
+    const contentBlock = toClaudeRecord(event.content_block);
+    const partState: ClaudeStreamPartState = {
+      part: { ...contentBlock }
+    };
+
+    if (ensureText(contentBlock.type).trim() === "tool_use") {
+      partState.jsonBuffer = serializeClaudeToolInput(contentBlock.input);
+    }
+
+    messageState.partsByIndex.set(partIndex, partState);
+    return [buildClaudeStreamEnvelope(messageState, partIndex)];
   }
 
-  const content =
-    partType === "thinking"
-      ? extractTextBlocks(part.thinking).trim()
-      : extractTextBlocks(part).trim();
+  if (eventType === "content_block_delta") {
+    const partIndex = readClaudeContentBlockIndex(event);
 
-  if (!content) {
-    return null;
+    if (partIndex < 0) {
+      return [];
+    }
+
+    const partState = messageState.partsByIndex.get(partIndex);
+
+    if (!partState) {
+      return [];
+    }
+
+    applyClaudeContentBlockDelta(partState, toClaudeRecord(event.delta));
+    return [buildClaudeStreamEnvelope(messageState, partIndex)];
   }
 
-  return createMessage({
-    providerSessionId,
-    rawRef,
-    sequence,
-    timestamp,
-    role: "assistant",
-    kind: partType === "thinking" ? "thinking" : "text",
-    content,
-    toolCall: null
-  });
+  if (eventType === "content_block_stop") {
+    const partIndex = readClaudeContentBlockIndex(event);
+
+    if (partIndex < 0 || !messageState.partsByIndex.has(partIndex)) {
+      return [];
+    }
+
+    return [buildClaudeStreamEnvelope(messageState, partIndex)];
+  }
+
+  if (eventType === "message_delta") {
+    const delta = toClaudeRecord(event.delta);
+    messageState.stopReason = ensureText(delta.stop_reason).trim() || null;
+    return [];
+  }
+
+  if (eventType === "message_stop") {
+    state.messages.delete(messageKey);
+
+    if (state.currentMessageKey === messageKey) {
+      state.currentMessageKey = null;
+    }
+  }
+
+  return [];
 }
 
-function createMessage(input: {
-  providerSessionId: string;
-  rawRef: string;
-  sequence: number;
-  timestamp: string;
-  role: "user" | "assistant" | "tool";
-  kind: MessageKind;
-  content: string;
-  toolCall:
-    | {
-        callId: string;
-        name: string;
-        input: string;
-        output: string | null;
-        error: string | null;
-        status: ClaudeToolStatus;
-      }
-    | null;
-}): NormalizedMessage {
-  const { providerSessionId, rawRef, sequence, timestamp, role, kind, content, toolCall } = input;
+function resolveClaudeStreamMessageKey(
+  record: Record<string, unknown>,
+  state: ClaudeStreamEventState
+): string | null {
+  const event = toClaudeRecord(record.event);
+  const eventMessage = toClaudeRecord(event.message);
+  const eventDelta = toClaudeRecord(event.delta);
+  const directKey =
+    readClaudeMessageId(eventMessage, eventMessage)
+    || ensureText(event.message_id).trim()
+    || ensureText(eventDelta.message_id).trim()
+    || ensureText(record.message_id).trim();
+
+  if (directKey.length > 0 && state.messages.has(directKey)) {
+    state.currentMessageKey = directKey;
+    return directKey;
+  }
+
+  if (state.currentMessageKey && state.messages.has(state.currentMessageKey)) {
+    return state.currentMessageKey;
+  }
+
+  return directKey.length > 0 ? directKey : null;
+}
+
+function readClaudeContentBlockIndex(event: Record<string, unknown>): number {
+  const candidates = [event.index, event.content_block_index, event.contentBlockIndex];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === "number" && Number.isInteger(candidate) && candidate >= 0) {
+      return candidate;
+    }
+  }
+
+  return -1;
+}
+
+function buildClaudeStreamEnvelope(
+  messageState: ClaudeStreamMessageState,
+  partIndex: number
+): ClaudeMessageEnvelope {
+  const content: unknown[] = Array.from({ length: partIndex + 1 }, (_, index) =>
+    index === partIndex ? { ...(messageState.partsByIndex.get(partIndex)?.part ?? {}) } : ""
+  );
 
   return {
-    messageId: createHash("sha1").update(rawRef).digest("hex"),
-    provider: "claude-code",
-    providerSessionId,
-    role,
-    kind,
-    content,
-    toolCall,
-    timestamp,
-    sequence,
-    rawRef
+    type: messageState.type,
+    source: "stream_event",
+    messageId: messageState.messageId,
+    timestamp: messageState.timestamp,
+    message: {
+      content
+    }
   };
+}
+
+function applyClaudeContentBlockDelta(
+  partState: ClaudeStreamPartState,
+  delta: Record<string, unknown>
+): void {
+  const deltaType = ensureText(delta.type).trim();
+
+  if (deltaType === "text_delta") {
+    partState.part.text = `${ensureText(partState.part.text)}${ensureText(delta.text)}`;
+    return;
+  }
+
+  if (deltaType === "thinking_delta") {
+    partState.part.type = ensureText(partState.part.type).trim() || "thinking";
+    partState.part.thinking = `${ensureText(partState.part.thinking)}${ensureText(delta.thinking)}`;
+    return;
+  }
+
+  if (deltaType === "input_json_delta") {
+    partState.part.type = ensureText(partState.part.type).trim() || "tool_use";
+    const nextBuffer = `${partState.jsonBuffer ?? ""}${ensureText(delta.partial_json)}`;
+    partState.jsonBuffer = nextBuffer;
+    partState.part.input = parseClaudePartialJson(nextBuffer);
+    return;
+  }
+
+  if (deltaType === "signature_delta") {
+    partState.part.signature = `${ensureText(partState.part.signature)}${ensureText(delta.signature)}`;
+  }
+}
+
+function parseClaudePartialJson(value: string): unknown {
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    return "";
+  }
+
+  try {
+    return JSON.parse(trimmed) as unknown;
+  } catch {
+    return trimmed;
+  }
+}
+
+function serializeClaudeToolInput(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (value === undefined || value === null) {
+    return "";
+  }
+
+  return stringifyStructuredValue(value);
 }

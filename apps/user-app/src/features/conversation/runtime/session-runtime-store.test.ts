@@ -97,6 +97,12 @@ function emitRealtimeEnvelope(event: Record<string, unknown>) {
   return client;
 }
 
+function emitRealtimeRuntimeMessage(event: Record<string, unknown>) {
+  const client = getRealtimeClient();
+  (client.options.onRuntimeMessage as ((payload: Record<string, unknown>) => void))(event);
+  return client;
+}
+
 describe("SessionRuntimeStore", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -708,6 +714,57 @@ describe("SessionRuntimeStore", () => {
     });
 
     expect(store.getState().session?.runningState).toBe("completed");
+
+    store.destroy();
+  });
+
+  it("收到 session.runtime_message 时会直接合并正文，不等历史轮询", async () => {
+    const store = new SessionRuntimeStore("session-1");
+    await store.initialize();
+    emitRealtimeSubscribed();
+
+    emitRealtimeRuntimeMessage({
+      type: "session.runtime_message",
+      sessionId: "session-1",
+      source: "runtime",
+      message: {
+        messageId: "assistant-runtime-1",
+        provider: "opencode",
+        providerSessionId: "thread-1",
+        role: "assistant",
+        kind: "text",
+        content: "第一段",
+        timestamp: "2026-03-28T10:00:00.000Z",
+        sequence: 70,
+        rawRef: "opencode://session/thread-1/message/assistant-1/part/text-1",
+        toolCall: null
+      }
+    });
+
+    expect(store.getState().messages.at(-1)?.id).toBe("assistant-runtime-1");
+    expect(store.getState().messages.at(-1)?.content).toBe("第一段");
+    expect(store.getState().historyState).toBe("ready");
+
+    emitRealtimeRuntimeMessage({
+      type: "session.runtime_message",
+      sessionId: "session-1",
+      source: "runtime",
+      message: {
+        messageId: "assistant-runtime-1",
+        provider: "opencode",
+        providerSessionId: "thread-1",
+        role: "assistant",
+        kind: "text",
+        content: "第一段\n第二段",
+        timestamp: "2026-03-28T10:00:01.000Z",
+        sequence: 70,
+        rawRef: "opencode://session/thread-1/message/assistant-1/part/text-1",
+        toolCall: null
+      }
+    });
+
+    expect(store.getState().messages).toHaveLength(1);
+    expect(store.getState().messages[0]?.content).toBe("第一段\n第二段");
 
     store.destroy();
   });

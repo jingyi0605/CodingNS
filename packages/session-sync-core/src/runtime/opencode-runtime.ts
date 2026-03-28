@@ -37,8 +37,10 @@ interface OpenCodeRuntimeState {
   readonly sink: ProviderRuntimeEventSink;
   readonly messageInfoById: Map<string, Record<string, unknown>>;
   readonly partById: Map<string, Record<string, unknown>>;
+  readonly messageIdByPartId: Map<string, string>;
   readonly partIdsByMessageId: Map<string, Set<string>>;
   readonly emittedPartSignatures: Map<string, string>;
+  readonly emittedSequenceByPartId: Map<string, number>;
 }
 
 export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
@@ -103,8 +105,10 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
           sink,
           messageInfoById: new Map(),
           partById: new Map(),
+          messageIdByPartId: new Map(),
           partIdsByMessageId: new Map(),
-          emittedPartSignatures: new Map()
+          emittedPartSignatures: new Map(),
+          emittedSequenceByPartId: new Map()
         },
         abortController.signal
       )
@@ -314,6 +318,7 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
 
       const merged = mergeRecords(state.partById.get(partId), part);
       state.partById.set(partId, merged);
+      state.messageIdByPartId.set(partId, messageId);
 
       const knownPartIds = state.partIdsByMessageId.get(messageId) ?? new Set<string>();
       knownPartIds.add(partId);
@@ -326,6 +331,7 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
     if (eventType === "message.part.delta") {
       const properties = toJsonRecord(event.properties) ?? {};
       const partId = ensureText(properties.partID).trim();
+      const messageId = ensureText(properties.messageID).trim();
       const sessionId = ensureText(properties.sessionID).trim();
 
       if (!partId || sessionId !== state.providerSessionId) {
@@ -335,13 +341,32 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
       const existing = state.partById.get(partId) ?? {};
       const field = ensureText(properties.field).trim();
       const delta = ensureText(properties.delta);
-      const nextPart = { ...existing };
+      const knownMessageId = messageId || state.messageIdByPartId.get(partId) || "";
+      const nextPart: Record<string, unknown> = {
+        ...existing,
+        id: ensureText(existing.id).trim() || partId,
+        messageID: ensureText(existing.messageID).trim() || knownMessageId,
+        sessionID: ensureText(existing.sessionID).trim() || state.providerSessionId
+      };
 
       if (field === "text") {
+        if (!ensureText(nextPart.type).trim()) {
+          nextPart.type = "text";
+        }
+
         nextPart.text = `${ensureText(existing.text)}${delta}`;
       }
 
       state.partById.set(partId, nextPart);
+
+      if (knownMessageId) {
+        state.messageIdByPartId.set(partId, knownMessageId);
+        const knownPartIds = state.partIdsByMessageId.get(knownMessageId) ?? new Set<string>();
+        knownPartIds.add(partId);
+        state.partIdsByMessageId.set(knownMessageId, knownPartIds);
+      }
+
+      await this.emitNormalizedPartMessage(nextPart, state);
       return false;
     }
 
@@ -356,13 +381,16 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
       return;
     }
 
-    const messageId = ensureText(partPayload.messageID).trim();
     const partId = ensureText(partPayload.id).trim();
+    const messageId =
+      ensureText(partPayload.messageID).trim() || state.messageIdByPartId.get(partId) || "";
     const messagePayload = state.messageInfoById.get(messageId);
 
     if (!messageId || !partId || !messagePayload) {
       return;
     }
+
+    state.messageIdByPartId.set(partId, messageId);
 
     const normalized = normalizeOpenCodePartMessage({
       sessionId: state.providerSessionId,
@@ -390,7 +418,13 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
       return;
     }
 
-    state.sequence += 1;
+    const currentSequence =
+      state.emittedSequenceByPartId.get(partId)
+      ?? (() => {
+        state.sequence += 1;
+        state.emittedSequenceByPartId.set(partId, state.sequence);
+        return state.sequence;
+      })();
     state.emittedPartSignatures.set(partId, signature);
 
     await state.sink.emit({
@@ -399,7 +433,7 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
       rawStoreRef: state.rawStoreRef,
       message: {
         ...normalized,
-        sequence: state.sequence
+        sequence: currentSequence
       },
       status: "running",
       timestamp: normalized.timestamp,

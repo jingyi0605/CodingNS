@@ -12,7 +12,8 @@ function createService() {
     getBindingOrThrow: vi.fn(),
     findLatestUserMessage: vi.fn(),
     persistSessionBinding: vi.fn(),
-    syncSessionTitle: vi.fn()
+    syncSessionTitle: vi.fn(),
+    readRecentHistoryEnvelope: vi.fn()
   };
   const sessionMessageAttachmentService = {
     persistImageAttachments: vi.fn(() => ({
@@ -1265,5 +1266,67 @@ describe("SessionLiveRuntimeService", () => {
         activitySource: "runtime"
       })
     );
+  });
+
+  it("subscribeRuntime 会把 runtime message 映射成 session.runtime_message", async () => {
+    const { service } = createService();
+    const runtimeListeners: Array<(event: Record<string, unknown>) => Promise<void>> = [];
+    const providerRuntimeService = {
+      getSnapshot: vi.fn(() => null),
+      subscribe: vi.fn((_sessionId: string, listener: (event: Record<string, unknown>) => Promise<void>) => {
+        runtimeListeners.push(listener);
+        return {
+          close: vi.fn()
+        };
+      })
+    };
+    Object.defineProperty(service, "providerRuntimeService", {
+      value: providerRuntimeService,
+      configurable: true
+    });
+
+    const envelopes: Array<Record<string, unknown>> = [];
+    const subscription = service.subscribeRuntime("session-1", (envelope) => {
+      envelopes.push(envelope as Record<string, unknown>);
+    });
+
+    await runtimeListeners[0]?.({
+      type: "message",
+      sessionId: "session-1",
+      provider: "opencode",
+      providerSessionId: "provider-session-1",
+      rawStoreRef: "opencode://session/provider-session-1",
+      timestamp: "2026-03-28T10:00:00.000Z",
+      detail: null,
+      errorCode: null,
+      rawEventRef: "opencode://session/provider-session-1/message/msg-1/part/text-1",
+      status: null,
+      message: {
+        messageId: "msg-1",
+        provider: "opencode",
+        providerSessionId: "provider-session-1",
+        role: "assistant",
+        kind: "text",
+        content: "第一段",
+        toolCall: null,
+        timestamp: "2026-03-28T10:00:00.000Z",
+        sequence: 1,
+        rawRef: "opencode://session/provider-session-1/message/msg-1/part/text-1"
+      }
+    });
+
+    expect(envelopes).toEqual([
+      {
+        type: "session.runtime_message",
+        sessionId: "session-1",
+        source: "runtime",
+        message: expect.objectContaining({
+          messageId: "msg-1",
+          content: "第一段"
+        })
+      }
+    ]);
+
+    subscription.close();
   });
 });

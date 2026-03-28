@@ -94,6 +94,18 @@ interface WorkspaceDiscoveryStatus {
   isComplete: boolean;
 }
 
+interface SessionStateRecordRow {
+  session_id: string;
+  user_id: string;
+  running_state: SessionStateRecord["runningState"];
+  activity_source: SessionStateRecord["activitySource"];
+  favorite: number;
+  last_event_at: string | null;
+  completed_at: string | null;
+  last_seen_at: string | null;
+  updated_at: string;
+}
+
 export class SessionHistoryService {
   private readonly providerRegistry: ProviderRegistry;
   private readonly sessionSyncService: SessionSyncService;
@@ -695,6 +707,50 @@ export class SessionHistoryService {
     };
   }
 
+  async readRecentHistoryEnvelope(
+    sessionId: string,
+    limit = 20
+  ): Promise<SessionHistoryEnvelope | null> {
+    const binding = this.getBindingOrThrow(sessionId);
+
+    if (shouldSkipClaudePendingBinding(binding)) {
+      return null;
+    }
+
+    const currentIndex = this.sessionIndexRepository.findIndexRecordBySessionId(sessionId);
+    const page = await this.readPage(
+      sessionId,
+      binding.provider,
+      binding.providerSessionId,
+      binding.rawStoreRef,
+      null,
+      clampLimit(limit),
+      "backward",
+      currentIndex?.messageCount ?? null
+    );
+
+    if (!page.messages.some((message) => message.role !== "user")) {
+      return null;
+    }
+
+    await this.syncSessionTitleFromProvider(sessionId, binding);
+    this.upsertSnapshot(sessionId, {
+      syncStatus: "idle",
+      syncCursor: page.cursor,
+      lastSyncAt: nowIso(),
+      lastErrorCode: null,
+      lastErrorDetail: null,
+      resumedAt: this.sessionStatusSnapshotRepository.findBySessionId(sessionId)?.resumedAt ?? null
+    });
+
+    return {
+      type: "session.delta",
+      sessionId,
+      cursor: page.cursor,
+      messages: page.messages
+    };
+  }
+
   async markSessionSeen(sessionId: string, userId: string): Promise<void> {
     const existing =
       this.sessionStateRepository.findBySessionAndUser(sessionId, userId) ??
@@ -843,26 +899,53 @@ export class SessionHistoryService {
       return;
     }
 
-    const currentBinding = this.sessionBindingRepository.findBySessionId(sessionId);
-    const currentIndex = this.sessionIndexRepository.findIndexRecordBySessionId(sessionId);
-    const timestamp = nowIso();
-
-    this.sessionBindingRepository.upsert({
-      sessionId,
-      workspaceId,
+    const resolvedSnapshot = {
       provider: snapshot.provider,
       providerSessionId: snapshot.providerSessionId,
-      rawStoreRef: snapshot.rawStoreRef,
-      createdAt: currentBinding?.createdAt ?? timestamp,
-      updatedAt: timestamp
-    });
+      rawStoreRef: snapshot.rawStoreRef
+    };
+    const currentBinding = this.sessionBindingRepository.findBySessionId(sessionId);
+    const timestamp = nowIso();
+    const duplicateBinding = this.findPendingBindingDuplicate(
+      sessionId,
+      currentBinding,
+      resolvedSnapshot
+    );
 
-    if (currentIndex) {
-      this.sessionIndexRepository.upsert({
-        ...currentIndex,
+    this.db.transaction(() => {
+      if (duplicateBinding) {
+        // 新建运行时会话会先写入 pending 绑定，后台发现链路可能在真 ID 回填前先落一条重复记录。
+        // 这里保留当前 runtime session，把扫描出的重复会话并回当前会话，避免 provider_session_id 撞唯一键。
+        this.mergeSessionIntoTarget({
+          workspaceId,
+          targetSessionId: sessionId,
+          sourceSessionId: duplicateBinding.sessionId,
+          provider: resolvedSnapshot.provider,
+          timestamp
+        });
+      }
+
+      const currentIndex = this.sessionIndexRepository.findIndexRecordBySessionId(sessionId);
+
+      this.sessionBindingRepository.upsert({
+        sessionId,
+        workspaceId,
+        provider: resolvedSnapshot.provider,
+        providerSessionId: resolvedSnapshot.providerSessionId,
+        rawStoreRef: resolvedSnapshot.rawStoreRef,
+        createdAt:
+          pickEarlierIso(currentBinding?.createdAt ?? null, duplicateBinding?.createdAt ?? null)
+          ?? timestamp,
         updatedAt: timestamp
       });
-    }
+
+      if (currentIndex) {
+        this.sessionIndexRepository.upsert({
+          ...currentIndex,
+          updatedAt: timestamp
+        });
+      }
+    })();
   }
 
   private async runDiscoverWorkspaceSessions(
@@ -1262,6 +1345,10 @@ export class SessionHistoryService {
       return;
     }
 
+    if (shouldSkipClaudePendingBinding(binding)) {
+      return;
+    }
+
     const nextTitle = (
       await this.sessionSyncService.readSessionTitle(
         binding.provider,
@@ -1476,29 +1563,289 @@ export class SessionHistoryService {
   private deleteSessionsByIds(sessionIds: string[]): void {
     const remove = this.db.transaction((ids: string[]) => {
       for (const sessionId of ids) {
-        this.sessionChangedFileService.deleteBySessionId(sessionId);
-        this.db
-          .prepare("DELETE FROM session_message_attachments WHERE session_id = ?")
-          .run(sessionId);
-        this.db
-          .prepare("DELETE FROM session_file_context_bindings WHERE session_id = ?")
-          .run(sessionId);
-        this.db
-          .prepare("DELETE FROM session_states WHERE session_id = ?")
-          .run(sessionId);
-        this.db
-          .prepare("DELETE FROM session_status_snapshots WHERE session_id = ?")
-          .run(sessionId);
-        this.db
-          .prepare("DELETE FROM session_indices WHERE session_id = ?")
-          .run(sessionId);
-        this.db
-          .prepare("DELETE FROM session_bindings WHERE session_id = ?")
-          .run(sessionId);
+        this.deleteSessionById(sessionId);
       }
     });
 
     remove(sessionIds);
+  }
+
+  private findPendingBindingDuplicate(
+    sessionId: string,
+    currentBinding: SessionBinding | null,
+    snapshot: { provider: string; providerSessionId: string; rawStoreRef: string }
+  ): SessionBinding | null {
+    if (!currentBinding || !isPendingBindingValue(currentBinding.providerSessionId)) {
+      return null;
+    }
+
+    if (isPendingBindingValue(snapshot.providerSessionId)) {
+      return null;
+    }
+
+    const existing =
+      this.sessionBindingRepository.findByProviderSession(
+        snapshot.provider,
+        snapshot.providerSessionId
+      ) ?? this.sessionBindingRepository.findByRawStoreRef(snapshot.provider, snapshot.rawStoreRef);
+
+    if (!existing || existing.sessionId === sessionId) {
+      return null;
+    }
+
+    return existing;
+  }
+
+  private mergeSessionIntoTarget(input: {
+    workspaceId: string;
+    targetSessionId: string;
+    sourceSessionId: string;
+    provider: string;
+    timestamp: string;
+  }): void {
+    if (input.targetSessionId === input.sourceSessionId) {
+      return;
+    }
+
+    const targetBinding = this.sessionBindingRepository.findBySessionId(input.targetSessionId);
+    const sourceBinding = this.sessionBindingRepository.findBySessionId(input.sourceSessionId);
+
+    if (!targetBinding || !sourceBinding) {
+      return;
+    }
+
+    const targetIndex = this.sessionIndexRepository.findIndexRecordBySessionId(input.targetSessionId);
+    const sourceIndex = this.sessionIndexRepository.findIndexRecordBySessionId(input.sourceSessionId);
+    const targetSnapshot = this.sessionStatusSnapshotRepository.findBySessionId(input.targetSessionId);
+    const sourceSnapshot = this.sessionStatusSnapshotRepository.findBySessionId(input.sourceSessionId);
+    const targetStates = this.listSessionStatesBySessionId(input.targetSessionId);
+    const sourceStates = this.listSessionStatesBySessionId(input.sourceSessionId);
+    const targetStateByUserId = new Map(targetStates.map((state) => [state.userId, state] as const));
+
+    this.copyChangedFilesToTarget(input.targetSessionId, input.sourceSessionId);
+    this.copyChangedFileIndexStateToTarget(input.targetSessionId, input.sourceSessionId);
+
+    for (const sourceState of sourceStates) {
+      this.sessionStateRepository.upsert(
+        mergeSessionStateRecord(
+          targetStateByUserId.get(sourceState.userId) ?? null,
+          {
+            ...sourceState,
+            sessionId: input.targetSessionId
+          }
+        )
+      );
+    }
+
+    const mergedIndex = mergeSessionIndexRecord({
+      targetSessionId: input.targetSessionId,
+      workspaceId: input.workspaceId,
+      provider: input.provider,
+      target: targetIndex,
+      source: sourceIndex,
+      timestamp: input.timestamp
+    });
+
+    if (mergedIndex) {
+      this.sessionIndexRepository.upsert(mergedIndex);
+    }
+
+    const mergedSnapshot = mergeSessionStatusSnapshot({
+      targetSessionId: input.targetSessionId,
+      target: targetSnapshot,
+      source: sourceSnapshot,
+      timestamp: input.timestamp
+    });
+
+    if (mergedSnapshot) {
+      this.sessionStatusSnapshotRepository.upsert(mergedSnapshot);
+    }
+
+    this.db
+      .prepare(
+        `UPDATE session_indices
+         SET parent_session_id = ?
+         WHERE parent_session_id = ?`
+      )
+      .run(input.targetSessionId, input.sourceSessionId);
+    this.db
+      .prepare(
+        `UPDATE session_message_attachments
+         SET session_id = ?
+         WHERE session_id = ?`
+      )
+      .run(input.targetSessionId, input.sourceSessionId);
+    this.db
+      .prepare(
+        `UPDATE session_file_context_bindings
+         SET session_id = ?
+         WHERE session_id = ?`
+      )
+      .run(input.targetSessionId, input.sourceSessionId);
+    this.db
+      .prepare(
+        `UPDATE session_send_queue
+         SET session_id = ?
+         WHERE session_id = ?`
+      )
+      .run(input.targetSessionId, input.sourceSessionId);
+
+    this.db
+      .prepare("DELETE FROM session_changed_files WHERE session_id = ?")
+      .run(input.sourceSessionId);
+    this.db
+      .prepare("DELETE FROM session_changed_file_states WHERE session_id = ?")
+      .run(input.sourceSessionId);
+    this.db
+      .prepare("DELETE FROM session_states WHERE session_id = ?")
+      .run(input.sourceSessionId);
+    this.db
+      .prepare("DELETE FROM session_status_snapshots WHERE session_id = ?")
+      .run(input.sourceSessionId);
+    this.db
+      .prepare("DELETE FROM session_indices WHERE session_id = ?")
+      .run(input.sourceSessionId);
+    this.db
+      .prepare("DELETE FROM session_bindings WHERE session_id = ?")
+      .run(input.sourceSessionId);
+
+    this.rewriteWorkspaceSessionRelations(
+      input.workspaceId,
+      input.targetSessionId,
+      input.sourceSessionId,
+      targetIndex,
+      sourceIndex
+    );
+  }
+
+  private listSessionStatesBySessionId(sessionId: string): SessionStateRecord[] {
+    return this.db
+      .prepare(
+        `SELECT
+           session_id AS session_id,
+           user_id AS user_id,
+           running_state AS running_state,
+           activity_source AS activity_source,
+           favorite AS favorite,
+           last_event_at AS last_event_at,
+           completed_at AS completed_at,
+           last_seen_at AS last_seen_at,
+           updated_at AS updated_at
+         FROM session_states
+         WHERE session_id = ?`
+      )
+      .all(sessionId)
+      .map((row) => mapSessionStateRecordRow(row as SessionStateRecordRow));
+  }
+
+  private copyChangedFilesToTarget(targetSessionId: string, sourceSessionId: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO session_changed_files (
+           session_id,
+           workspace_id,
+           path,
+           first_detected_at,
+           last_detected_at,
+           last_tool_name
+         )
+         SELECT ?, workspace_id, path, first_detected_at, last_detected_at, last_tool_name
+         FROM session_changed_files
+         WHERE session_id = ?
+         ON CONFLICT(session_id, path) DO UPDATE SET
+           workspace_id = excluded.workspace_id,
+           first_detected_at = MIN(session_changed_files.first_detected_at, excluded.first_detected_at),
+           last_detected_at = MAX(session_changed_files.last_detected_at, excluded.last_detected_at),
+           last_tool_name = COALESCE(excluded.last_tool_name, session_changed_files.last_tool_name)`
+      )
+      .run(targetSessionId, sourceSessionId);
+  }
+
+  private copyChangedFileIndexStateToTarget(targetSessionId: string, sourceSessionId: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO session_changed_file_states (
+           session_id,
+           indexed_at,
+           updated_at
+         )
+         SELECT ?, indexed_at, updated_at
+         FROM session_changed_file_states
+         WHERE session_id = ?
+         ON CONFLICT(session_id) DO UPDATE SET
+           indexed_at = MIN(session_changed_file_states.indexed_at, excluded.indexed_at),
+           updated_at = MAX(session_changed_file_states.updated_at, excluded.updated_at)`
+      )
+      .run(targetSessionId, sourceSessionId);
+  }
+
+  private rewriteWorkspaceSessionRelations(
+    workspaceId: string,
+    targetSessionId: string,
+    sourceSessionId: string,
+    targetIndex: SessionIndexRecord | null,
+    sourceIndex: SessionIndexRecord | null
+  ): void {
+    const relationMap = this.workspaceSessionRelations.get(workspaceId);
+
+    if (!relationMap) {
+      return;
+    }
+
+    const sourceRelation = relationMap.get(sourceSessionId);
+    const targetRelation = relationMap.get(targetSessionId);
+    const fallbackParentSessionId =
+      targetIndex?.parentSessionId ?? sourceIndex?.parentSessionId ?? null;
+
+    relationMap.delete(sourceSessionId);
+    relationMap.set(targetSessionId, {
+      parentSessionId:
+        targetRelation?.parentSessionId ?? sourceRelation?.parentSessionId ?? fallbackParentSessionId,
+      isSubagent: Boolean(
+        targetRelation?.isSubagent
+        || sourceRelation?.isSubagent
+        || targetIndex?.isSubagent
+        || sourceIndex?.isSubagent
+        || fallbackParentSessionId
+      ),
+      subagentLabel:
+        targetRelation?.subagentLabel
+        ?? sourceRelation?.subagentLabel
+        ?? targetIndex?.subagentLabel
+        ?? sourceIndex?.subagentLabel
+        ?? null
+    });
+
+    for (const relation of relationMap.values()) {
+      if (relation.parentSessionId === sourceSessionId) {
+        relation.parentSessionId = targetSessionId;
+      }
+    }
+  }
+
+  private deleteSessionById(sessionId: string): void {
+    this.sessionChangedFileService.deleteBySessionId(sessionId);
+    this.db
+      .prepare("DELETE FROM session_message_attachments WHERE session_id = ?")
+      .run(sessionId);
+    this.db
+      .prepare("DELETE FROM session_send_queue WHERE session_id = ?")
+      .run(sessionId);
+    this.db
+      .prepare("DELETE FROM session_file_context_bindings WHERE session_id = ?")
+      .run(sessionId);
+    this.db
+      .prepare("DELETE FROM session_states WHERE session_id = ?")
+      .run(sessionId);
+    this.db
+      .prepare("DELETE FROM session_status_snapshots WHERE session_id = ?")
+      .run(sessionId);
+    this.db
+      .prepare("DELETE FROM session_indices WHERE session_id = ?")
+      .run(sessionId);
+    this.db
+      .prepare("DELETE FROM session_bindings WHERE session_id = ?")
+      .run(sessionId);
   }
 
   private buildKnownSessionSummaries(
@@ -1606,8 +1953,225 @@ function clampLimit(limit: number): number {
   return Math.max(1, Math.min(Math.trunc(limit), 100));
 }
 
+function mapSessionStateRecordRow(row: SessionStateRecordRow): SessionStateRecord {
+  return {
+    sessionId: row.session_id,
+    userId: row.user_id,
+    runningState: row.running_state,
+    activitySource: row.activity_source,
+    favorite: row.favorite === 1,
+    lastEventAt: row.last_event_at,
+    completedAt: row.completed_at,
+    lastSeenAt: row.last_seen_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function mergeSessionStateRecord(
+  target: SessionStateRecord | null,
+  source: SessionStateRecord
+): SessionStateRecord {
+  if (!target) {
+    return source;
+  }
+
+  const preferred = pickPreferredSessionState(target, source);
+
+  return {
+    sessionId: source.sessionId,
+    userId: source.userId,
+    runningState: preferred.runningState,
+    activitySource: preferred.activitySource,
+    favorite: target.favorite || source.favorite,
+    lastEventAt: pickLaterIso(target.lastEventAt, source.lastEventAt),
+    completedAt: pickLaterIso(target.completedAt, source.completedAt),
+    lastSeenAt: pickLaterIso(target.lastSeenAt, source.lastSeenAt),
+    updatedAt: pickLaterIso(target.updatedAt, source.updatedAt) ?? preferred.updatedAt
+  };
+}
+
+function pickPreferredSessionState(
+  left: SessionStateRecord,
+  right: SessionStateRecord
+): SessionStateRecord {
+  const leftPriority = scoreSessionState(left);
+  const rightPriority = scoreSessionState(right);
+
+  if (leftPriority !== rightPriority) {
+    return leftPriority > rightPriority ? left : right;
+  }
+
+  return (pickLaterIso(left.updatedAt, right.updatedAt) ?? left.updatedAt) === right.updatedAt
+    ? right
+    : left;
+}
+
+function scoreSessionState(record: SessionStateRecord): number {
+  if (
+    record.activitySource === "runtime"
+    && (record.runningState === "starting" || record.runningState === "running")
+  ) {
+    return 6;
+  }
+
+  if (record.activitySource === "runtime") {
+    return 5;
+  }
+
+  if (record.activitySource === "inferred" && record.runningState === "running") {
+    return 4;
+  }
+
+  if (record.activitySource === "inferred") {
+    return 3;
+  }
+
+  return record.favorite ? 2 : 1;
+}
+
+function mergeSessionIndexRecord(input: {
+  targetSessionId: string;
+  workspaceId: string;
+  provider: string;
+  target: SessionIndexRecord | null;
+  source: SessionIndexRecord | null;
+  timestamp: string;
+}): SessionIndexRecord | null {
+  if (!input.target && !input.source) {
+    return null;
+  }
+
+  return {
+    sessionId: input.targetSessionId,
+    workspaceId: input.workspaceId,
+    provider: (input.target?.provider ?? input.source?.provider ?? input.provider) as SessionIndexRecord["provider"],
+    parentSessionId: input.target?.parentSessionId ?? input.source?.parentSessionId ?? null,
+    isSubagent: Boolean(input.target?.isSubagent || input.source?.isSubagent),
+    subagentLabel: input.target?.subagentLabel ?? input.source?.subagentLabel ?? null,
+    title: pickPreferredSessionTitle(input.target?.title ?? null, input.source?.title ?? null),
+    messageCount: Math.max(input.target?.messageCount ?? 0, input.source?.messageCount ?? 0),
+    isArchived: Boolean(input.target?.isArchived || input.source?.isArchived),
+    lastMessageAt: pickLaterIso(input.target?.lastMessageAt ?? null, input.source?.lastMessageAt ?? null),
+    createdAt: pickEarlierIso(input.target?.createdAt ?? null, input.source?.createdAt ?? null) ?? input.timestamp,
+    updatedAt: input.timestamp
+  };
+}
+
+function mergeSessionStatusSnapshot(input: {
+  targetSessionId: string;
+  target: SessionStatusSnapshot | null;
+  source: SessionStatusSnapshot | null;
+  timestamp: string;
+}): SessionStatusSnapshot | null {
+  if (!input.target && !input.source) {
+    return null;
+  }
+
+  const preferred = pickPreferredSnapshot(input.target, input.source);
+
+  return {
+    sessionId: input.targetSessionId,
+    syncStatus: preferred?.syncStatus ?? "idle",
+    syncCursor: input.target?.syncCursor ?? input.source?.syncCursor ?? null,
+    lastSyncAt: pickLaterIso(input.target?.lastSyncAt ?? null, input.source?.lastSyncAt ?? null),
+    lastErrorCode: preferred?.lastErrorCode ?? null,
+    lastErrorDetail: preferred?.lastErrorDetail ?? null,
+    resumedAt: pickLaterIso(input.target?.resumedAt ?? null, input.source?.resumedAt ?? null),
+    updatedAt: input.timestamp
+  };
+}
+
+function pickPreferredSnapshot(
+  left: SessionStatusSnapshot | null,
+  right: SessionStatusSnapshot | null
+): SessionStatusSnapshot | null {
+  if (!left) {
+    return right;
+  }
+
+  if (!right) {
+    return left;
+  }
+
+  if (left.syncStatus === "error" && right.syncStatus !== "error") {
+    return left;
+  }
+
+  if (right.syncStatus === "error" && left.syncStatus !== "error") {
+    return right;
+  }
+
+  return (pickLaterIso(left.updatedAt, right.updatedAt) ?? left.updatedAt) === right.updatedAt
+    ? right
+    : left;
+}
+
+function pickPreferredSessionTitle(target: string | null, source: string | null): string {
+  const normalizedTarget = target?.trim() ?? "";
+  const normalizedSource = source?.trim() ?? "";
+
+  if (!normalizedTarget) {
+    return normalizedSource;
+  }
+
+  if (!normalizedSource) {
+    return normalizedTarget;
+  }
+
+  if (looksLikeGeneratedSessionTitle(normalizedTarget) && !looksLikeGeneratedSessionTitle(normalizedSource)) {
+    return normalizedSource;
+  }
+
+  return normalizedTarget;
+}
+
+function looksLikeGeneratedSessionTitle(title: string): boolean {
+  return /^(Claude|Codex|OpenCode)\s+会话\b/i.test(title);
+}
+
+function pickEarlierIso(left: string | null, right: string | null): string | null {
+  if (!left) {
+    return right;
+  }
+
+  if (!right) {
+    return left;
+  }
+
+  return left.localeCompare(right) <= 0 ? left : right;
+}
+
+function pickLaterIso(left: string | null, right: string | null): string | null {
+  if (!left) {
+    return right;
+  }
+
+  if (!right) {
+    return left;
+  }
+
+  return left.localeCompare(right) >= 0 ? left : right;
+}
+
 function buildProviderSessionKey(provider: string, providerSessionId: string): string {
   return `${provider}::${providerSessionId}`;
+}
+
+function shouldSkipClaudePendingBinding(binding: Pick<SessionBinding, "provider" | "providerSessionId" | "rawStoreRef">): boolean {
+  if (binding.provider !== "claude-code") {
+    return false;
+  }
+
+  if (isPendingBindingValue(binding.providerSessionId)) {
+    return true;
+  }
+
+  const normalizedRawStoreRef = binding.rawStoreRef.replaceAll("\\", "/").toLowerCase();
+  return normalizedRawStoreRef.includes("/.pending-");
+}
+
+function isPendingBindingValue(value: string): boolean {
+  return value.trim().toLowerCase().startsWith("pending://");
 }
 
 function resolveDiscoveredArchiveState(

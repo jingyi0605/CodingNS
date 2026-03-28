@@ -31,6 +31,7 @@ import {
 } from "../api/conversation-api";
 import type {
   SessionInterruptedEvent,
+  SessionRuntimeMessageEvent,
   SessionRuntimeErrorEvent,
   SessionRuntimeStatusEvent
 } from "../../../network/realtime-client";
@@ -518,6 +519,9 @@ export class SessionRuntimeStore {
           void this.refreshQueue();
         }
       },
+      onRuntimeMessage: (event) => {
+        this.handleRuntimeMessage(event);
+      },
       onRuntimeStatus: (event) => {
         this.handleRuntimeStatus(event);
       },
@@ -932,6 +936,26 @@ export class SessionRuntimeStore {
       void this.refreshRuntimeSnapshot("runtime_terminal");
     }
 
+  }
+
+  private handleRuntimeMessage(event: SessionRuntimeMessageEvent): void {
+    this.clearHistoryBootstrapReadyTimer();
+    const merged = mergeAuthoritativeMessages(this.state.messages, this.sessionId, [event.message]);
+
+    this.patch({
+      messages: merged,
+      historyState: "ready",
+      hasOlderMessages: inferHasOlderMessages(this.state.session, merged.length),
+      session: withRunningState(
+        this.state.session,
+        resolveEnvelopeRunningState("session.delta", this.state.session?.runningState)
+      )
+    });
+    this.scheduleMarkSeen();
+
+    if (this.state.queuedMessages.length > 0) {
+      void this.refreshQueue();
+    }
   }
 
   private handleRuntimeError(event: SessionRuntimeErrorEvent): void {

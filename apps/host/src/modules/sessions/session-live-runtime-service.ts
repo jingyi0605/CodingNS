@@ -153,8 +153,16 @@ export interface SessionInterruptedEnvelope {
   timestamp: string;
 }
 
+export interface SessionRuntimeMessageEnvelope {
+  type: "session.runtime_message";
+  sessionId: string;
+  message: SendMessageResult["message"];
+  source: "runtime";
+}
+
 export type SessionRuntimeEnvelope =
   | SessionHistoryEnvelope
+  | SessionRuntimeMessageEnvelope
   | SessionRuntimeStatusEnvelope
   | SessionRuntimeErrorEnvelope
   | SessionInterruptedEnvelope;
@@ -194,8 +202,10 @@ export class SessionLiveRuntimeService {
   private readonly externalRuntimeSnapshots = new Map<string, ExternalRuntimeSnapshot>();
   private readonly runtimeListeners = new Map<
     string,
-    Set<(envelope: SessionRuntimeEnvelope) => Promise<void> | void>
+    Set<(envelope: SessionRuntimeEnvelope | SessionHistoryEnvelope) => Promise<void> | void>
   >();
+  private readonly runtimeMessageSeenSessions = new Set<string>();
+  private readonly runtimeHistoryFallbackSentSessions = new Set<string>();
   private readonly queueDispatchSessions = new Set<string>();
   private readonly queueRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -256,6 +266,7 @@ export class SessionLiveRuntimeService {
     );
     const snapshot = handle.getSnapshot();
 
+    this.attachRuntimePersistence(handle, sessionId, workspace.id, input.userId);
     this.createRuntimeBackedSession({
       sessionId,
       workspaceId: workspace.id,
@@ -264,7 +275,6 @@ export class SessionLiveRuntimeService {
       initialContent: input.content,
       snapshot
     });
-    this.attachRuntimePersistence(handle, sessionId, workspace.id, input.userId);
 
     const binding = this.sessionHistoryService.getBindingOrThrow(sessionId);
     const acceptedMessage = await this.findAcceptedUserMessage(
@@ -711,7 +721,7 @@ export class SessionLiveRuntimeService {
 
   subscribeRuntime(
     sessionId: string,
-    onEnvelope: (envelope: SessionRuntimeEnvelope) => Promise<void> | void
+    onEnvelope: (envelope: SessionRuntimeEnvelope | SessionHistoryEnvelope) => Promise<void> | void
   ): ProviderSubscription {
     const runtimeSnapshot = this.providerRuntimeService.getSnapshot(sessionId);
     const externalRuntimeSnapshot = this.externalRuntimeSnapshots.get(sessionId) ?? null;
@@ -760,6 +770,8 @@ export class SessionLiveRuntimeService {
       clearTimeout(timer);
     });
     this.queueRetryTimers.clear();
+    this.runtimeMessageSeenSessions.clear();
+    this.runtimeHistoryFallbackSentSessions.clear();
     await this.providerRuntimeService.dispose();
     this.externalRuntimeSnapshots.clear();
     this.runtimeListeners.clear();
@@ -767,7 +779,7 @@ export class SessionLiveRuntimeService {
 
   private subscribeExternalRuntime(
     sessionId: string,
-    listener: (envelope: SessionRuntimeEnvelope) => Promise<void> | void
+    listener: (envelope: SessionRuntimeEnvelope | SessionHistoryEnvelope) => Promise<void> | void
   ): ProviderSubscription {
     const listeners = this.runtimeListeners.get(sessionId) ?? new Set();
     listeners.add(listener);
@@ -796,7 +808,9 @@ export class SessionLiveRuntimeService {
     };
   }
 
-  private async emitExternalRuntimeEnvelope(envelope: SessionRuntimeEnvelope): Promise<void> {
+  private async emitExternalRuntimeEnvelope(
+    envelope: SessionRuntimeEnvelope | SessionHistoryEnvelope
+  ): Promise<void> {
     const listeners = this.runtimeListeners.get(envelope.sessionId);
 
     if (!listeners || listeners.size === 0) {
@@ -991,6 +1005,9 @@ export class SessionLiveRuntimeService {
     userId: string,
     mode: "start" | "continue"
   ): Promise<void> {
+    this.runtimeMessageSeenSessions.delete(request.sessionId);
+    this.runtimeHistoryFallbackSentSessions.delete(request.sessionId);
+
     if (request.provider === "claude-code") {
       this.clearExternalRuntimeSnapshot(request.sessionId);
     }
@@ -999,6 +1016,7 @@ export class SessionLiveRuntimeService {
     const snapshot = handle.getSnapshot();
     const currentState = this.sessionStateRepository.findBySessionAndUser(request.sessionId, userId);
 
+    this.attachRuntimePersistence(handle, request.sessionId, request.workspaceId, userId);
     this.sessionHistoryService.persistSessionBinding(request.sessionId, request.workspaceId, snapshot);
     this.sessionStateRepository.upsert({
       sessionId: request.sessionId,
@@ -1011,7 +1029,6 @@ export class SessionLiveRuntimeService {
       lastSeenAt: currentState?.lastSeenAt ?? null,
       updatedAt: nowIso()
     });
-    this.attachRuntimePersistence(handle, request.sessionId, request.workspaceId, userId);
   }
 
   private async sendLiveMessageDirect(
@@ -1398,6 +1415,8 @@ export class SessionLiveRuntimeService {
     const shouldPreserveTerminalState = isTerminalSessionRunningState(currentRunningState);
 
     if (event.type === "message") {
+      this.runtimeMessageSeenSessions.add(sessionId);
+      this.runtimeHistoryFallbackSentSessions.delete(sessionId);
       const workspace = this.workspaceService.getWorkspaceOrThrow(workspaceId);
       await this.sessionHistoryService.syncSessionTitle(sessionId).catch(() => {
         return;
@@ -1466,6 +1485,7 @@ export class SessionLiveRuntimeService {
         lastErrorDetail: null,
         resumedAt: this.sessionStatusSnapshotRepository.findBySessionId(sessionId)?.resumedAt ?? null
       });
+      await this.maybeEmitRuntimeHistoryFallback(sessionId, event);
       return;
     }
 
@@ -1501,6 +1521,8 @@ export class SessionLiveRuntimeService {
       lastErrorDetail: event.type === "error" ? (event.detail ?? "runtime failed") : null,
       resumedAt: this.sessionStatusSnapshotRepository.findBySessionId(sessionId)?.resumedAt ?? null
     });
+
+    await this.maybeEmitRuntimeHistoryFallback(sessionId, event);
 
     if (isTerminalRuntimeEventStatus(event.status)) {
       void this.dispatchNextQueuedMessage(sessionId);
@@ -1546,7 +1568,12 @@ export class SessionLiveRuntimeService {
     event: RuntimeEvent
   ): SessionRuntimeEnvelope | null {
     if (event.type === "message") {
-      return null;
+      return {
+        type: "session.runtime_message",
+        sessionId,
+        message: event.message,
+        source: "runtime"
+      };
     }
 
     if (event.type === "error") {
@@ -1575,6 +1602,40 @@ export class SessionLiveRuntimeService {
       detail: event.detail,
       timestamp: event.timestamp
     };
+  }
+
+  private async maybeEmitRuntimeHistoryFallback(
+    sessionId: string,
+    event: RuntimeEvent
+  ): Promise<void> {
+    if (event.provider !== "claude-code") {
+      return;
+    }
+
+    if (event.status === "starting") {
+      return;
+    }
+
+    if (this.runtimeMessageSeenSessions.has(sessionId)) {
+      return;
+    }
+
+    if (this.runtimeHistoryFallbackSentSessions.has(sessionId)) {
+      return;
+    }
+
+    const envelope = await Promise.resolve(
+      this.sessionHistoryService.readRecentHistoryEnvelope(sessionId)
+    ).catch(() => {
+      return null;
+    });
+
+    if (!envelope) {
+      return;
+    }
+
+    this.runtimeHistoryFallbackSentSessions.add(sessionId);
+    await this.emitExternalRuntimeEnvelope(envelope);
   }
 
   private ensureCapability(enabled: boolean, field: string, detail: string): void {

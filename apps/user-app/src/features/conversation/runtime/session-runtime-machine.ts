@@ -167,7 +167,13 @@ export function mergeAuthoritativeMessages(
       nextById.delete(optimisticMessageId);
     }
 
-    nextById.set(message.messageId, nextMessage);
+    const currentMessage = nextById.get(message.messageId) ?? null;
+    nextById.set(
+      message.messageId,
+      currentMessage
+        ? mergeAuthoritativeVersion(currentMessage, nextMessage)
+        : nextMessage
+    );
   }
 
   return sortMessages(Array.from(nextById.values()));
@@ -289,6 +295,37 @@ function mergeResolvedUserMessage(
   };
 }
 
+function mergeAuthoritativeVersion(
+  current: SessionMessageViewModel,
+  incoming: SessionMessageViewModel
+): SessionMessageViewModel {
+  if (current.id !== incoming.id) {
+    return incoming;
+  }
+
+  if (
+    current.role !== incoming.role
+    || current.kind !== incoming.kind
+    || current.rawRef !== incoming.rawRef
+  ) {
+    return pickNewerAuthoritativeMessage(current, incoming);
+  }
+
+  const mergedToolCall = mergeToolCall(current.toolCall, incoming.toolCall);
+  const content = pickPreferredContent(current.content, incoming.content, current.timestamp, incoming.timestamp);
+  const attachments = pickPreferredAttachments(current.attachments, incoming.attachments);
+
+  return {
+    ...pickNewerAuthoritativeMessage(current, incoming),
+    content,
+    toolCall: mergedToolCall,
+    attachments,
+    attachmentPayloads: current.attachmentPayloads ?? incoming.attachmentPayloads ?? null,
+    timestamp: current.timestamp.localeCompare(incoming.timestamp) >= 0 ? current.timestamp : incoming.timestamp,
+    sequence: Math.max(current.sequence, incoming.sequence)
+  };
+}
+
 function shouldPreserveOptimisticPlacement(
   optimistic: SessionMessageViewModel,
   authoritative: SessionMessageViewModel
@@ -396,6 +433,125 @@ function pickPreferredCodexTextMessage(
   }
 
   return right;
+}
+
+function mergeToolCall(
+  current: SessionMessageViewModel["toolCall"],
+  incoming: SessionMessageViewModel["toolCall"]
+): SessionMessageViewModel["toolCall"] {
+  if (!current) {
+    return incoming;
+  }
+
+  if (!incoming) {
+    return current;
+  }
+
+  const preferred = pickHigherPriorityToolCall(current, incoming);
+
+  return {
+    ...preferred,
+    input: pickLongerText(current.input, incoming.input),
+    output: pickLongerNullableText(current.output, incoming.output),
+    error: pickLongerNullableText(current.error, incoming.error)
+  };
+}
+
+function pickHigherPriorityToolCall(
+  current: NonNullable<SessionMessageViewModel["toolCall"]>,
+  incoming: NonNullable<SessionMessageViewModel["toolCall"]>
+): NonNullable<SessionMessageViewModel["toolCall"]> {
+  const currentPriority = toolCallStatusPriority(current.status);
+  const incomingPriority = toolCallStatusPriority(incoming.status);
+
+  if (incomingPriority !== currentPriority) {
+    return incomingPriority > currentPriority ? incoming : current;
+  }
+
+  return incoming;
+}
+
+function toolCallStatusPriority(status: NonNullable<SessionMessageViewModel["toolCall"]>["status"]): number {
+  if (status === "running") {
+    return 0;
+  }
+
+  return 1;
+}
+
+function pickPreferredContent(
+  current: string,
+  incoming: string,
+  currentTimestamp: string,
+  incomingTimestamp: string
+): string {
+  const normalizedCurrent = normalizeComparableCodexText(current);
+  const normalizedIncoming = normalizeComparableCodexText(incoming);
+
+  if (normalizedCurrent === normalizedIncoming) {
+    return current.length >= incoming.length ? current : incoming;
+  }
+
+  if (
+    normalizedCurrent.length > normalizedIncoming.length
+    && normalizedCurrent.includes(normalizedIncoming)
+  ) {
+    return current;
+  }
+
+  if (
+    normalizedIncoming.length > normalizedCurrent.length
+    && normalizedIncoming.includes(normalizedCurrent)
+  ) {
+    return incoming;
+  }
+
+  return incomingTimestamp.localeCompare(currentTimestamp) >= 0 ? incoming : current;
+}
+
+function pickPreferredAttachments(
+  current: SessionMessageViewModel["attachments"],
+  incoming: SessionMessageViewModel["attachments"]
+): SessionMessageViewModel["attachments"] {
+  const currentCount = current?.length ?? 0;
+  const incomingCount = incoming?.length ?? 0;
+
+  if (incomingCount !== currentCount) {
+    return incomingCount > currentCount ? incoming : current;
+  }
+
+  return incoming ?? current;
+}
+
+function pickLongerText(current: string, incoming: string): string {
+  return incoming.length > current.length ? incoming : current;
+}
+
+function pickLongerNullableText(current: string | null, incoming: string | null): string | null {
+  if (current === null) {
+    return incoming;
+  }
+
+  if (incoming === null) {
+    return current;
+  }
+
+  return pickLongerText(current, incoming);
+}
+
+function pickNewerAuthoritativeMessage(
+  current: SessionMessageViewModel,
+  incoming: SessionMessageViewModel
+): SessionMessageViewModel {
+  if (incoming.timestamp !== current.timestamp) {
+    return incoming.timestamp.localeCompare(current.timestamp) >= 0 ? incoming : current;
+  }
+
+  if (incoming.sequence !== current.sequence) {
+    return incoming.sequence >= current.sequence ? incoming : current;
+  }
+
+  return incoming;
 }
 
 function normalizeComparableCodexText(content: string): string {

@@ -99,6 +99,7 @@ export interface RealtimeClientOptions {
 export class RealtimeClient {
   private socket: WebSocket | null = null;
   private disposed = false;
+  private authRecoveryInFlight = false;
   private latestCursor: string | null;
   private readonly connectionManager: ConnectionManager;
 
@@ -179,7 +180,7 @@ export class RealtimeClient {
 
       if (payload.type === "session.error") {
         if (payload.error_code === "UNAUTHORIZED") {
-          this.options.onUnauthorized();
+          this.handleUnauthorized();
           return;
         }
 
@@ -225,6 +226,37 @@ export class RealtimeClient {
       }
 
       this.connectionManager.markTransientFailure();
+    });
+  }
+
+  private handleUnauthorized(): void {
+    if (this.authRecoveryInFlight || this.disposed) {
+      return;
+    }
+
+    this.authRecoveryInFlight = true;
+    const socket = this.socket;
+    this.socket = null;
+    socket?.close();
+
+    void authStore.refresh().then((result) => {
+      this.authRecoveryInFlight = false;
+
+      if (this.disposed) {
+        return;
+      }
+
+      if (result.status === "refreshed") {
+        this.connectionManager.reconnectNow();
+        return;
+      }
+
+      if (result.status === "deferred") {
+        this.connectionManager.markDisconnected();
+        return;
+      }
+
+      this.options.onUnauthorized();
     });
   }
 }

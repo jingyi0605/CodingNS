@@ -9,6 +9,7 @@ import {
   toViewMessage,
   type SessionMessageViewModel
 } from "./session-runtime-machine";
+import type { ToolCallDto } from "../api/conversation-api";
 
 const SAMPLE_IMAGE_DATA_URL =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aF9sAAAAASUVORK5CYII=";
@@ -23,6 +24,7 @@ function createHistoryMessage(overrides: {
   sequence: number;
   rawRef: string;
   kind?: "text" | "thinking" | "tool_call" | "tool_result";
+  toolCall?: ToolCallDto | null;
   attachments?: Array<{
     id: string;
     kind: "image";
@@ -105,6 +107,98 @@ describe("session runtime machine", () => {
 
     expect(merged).toHaveLength(2);
     expect(merged.map((item) => item.id)).toEqual(["m-1", "m-2"]);
+  });
+
+  it("同一 messageId 内容增长时会保留更新后的版本", () => {
+    const merged = mergeAuthoritativeMessages(
+      [
+        toViewMessage(
+          "session-1",
+          createHistoryMessage({
+            messageId: "runtime-1",
+            provider: "opencode",
+            providerSessionId: "thread-1",
+            role: "assistant",
+            content: "第一段",
+            timestamp: "2026-03-28T10:00:00.000Z",
+            sequence: 10,
+            rawRef: "opencode://session/thread-1/message/assistant-1/part/text-1"
+          })
+        )
+      ],
+      "session-1",
+      [
+        createHistoryMessage({
+          messageId: "runtime-1",
+          provider: "opencode",
+          providerSessionId: "thread-1",
+          role: "assistant",
+          content: "第一段\n第二段",
+          timestamp: "2026-03-28T10:00:01.000Z",
+          sequence: 10,
+          rawRef: "opencode://session/thread-1/message/assistant-1/part/text-1"
+        })
+      ]
+    );
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0].id).toBe("runtime-1");
+    expect(merged[0].content).toBe("第一段\n第二段");
+  });
+
+  it("同一工具消息收到完成结果后会覆盖 running 状态", () => {
+    const merged = mergeAuthoritativeMessages(
+      [
+        toViewMessage(
+          "session-1",
+          createHistoryMessage({
+            messageId: "tool-1",
+            provider: "opencode",
+            providerSessionId: "thread-1",
+            role: "tool",
+            kind: "tool_result",
+            content: "",
+            timestamp: "2026-03-28T10:00:00.000Z",
+            sequence: 11,
+            rawRef: "opencode://session/thread-1/message/assistant-1/part/tool-1",
+            toolCall: {
+              callId: "tool-1",
+              name: "shell_command",
+              input: "{\"command\":\"pwd\"}",
+              output: null,
+              error: null,
+              status: "running"
+            }
+          })
+        )
+      ],
+      "session-1",
+      [
+        createHistoryMessage({
+          messageId: "tool-1",
+          provider: "opencode",
+          providerSessionId: "thread-1",
+          role: "tool",
+          kind: "tool_result",
+          content: "/tmp/workspace",
+          timestamp: "2026-03-28T10:00:01.000Z",
+          sequence: 11,
+          rawRef: "opencode://session/thread-1/message/assistant-1/part/tool-1",
+          toolCall: {
+            callId: "tool-1",
+            name: "shell_command",
+            input: "{\"command\":\"pwd\"}",
+            output: "/tmp/workspace",
+            error: null,
+            status: "completed"
+          }
+        })
+      ]
+    );
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0].toolCall?.status).toBe("completed");
+    expect(merged[0].toolCall?.output).toBe("/tmp/workspace");
   });
 
   it("会折叠 codex 历史里只差末尾换行的重复文本消息", () => {

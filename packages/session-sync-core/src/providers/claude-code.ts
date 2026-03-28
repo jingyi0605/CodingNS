@@ -2,6 +2,15 @@ import { basename, join } from "node:path";
 import { existsSync, statSync } from "node:fs";
 import crypto from "node:crypto";
 
+import {
+  buildClaudeStableRawRef,
+  normalizeClaudeMessagePart,
+  normalizeClaudeMessageParts,
+  readClaudeMessageId,
+  toClaudeRecord,
+  type ClaudeMessageEnvelope,
+  type ClaudeStableMessageRef
+} from "../claude-message-utils.js";
 import type {
   ContextUsageSnapshot,
   DetectSessionsOptions,
@@ -25,7 +34,6 @@ import {
   createRawRef,
   encodeCursor,
   ensureDirectory,
-  extractTextBlocks,
   ensureText,
   messageIdFromRawRef,
   nextTimestamp,
@@ -34,21 +42,12 @@ import {
   readJsonLines,
   safeDate,
   sliceHistory,
-  stringifyStructuredValue,
   walkJsonlFiles,
   workspaceSlug
 } from "./utils.js";
 
 interface ClaudeCodeAdapterOptions {
   homeDir: string;
-}
-
-interface ClaudeMessageEnvelope {
-  type: "user" | "assistant";
-  timestamp: unknown;
-  message: {
-    content?: unknown;
-  };
 }
 
 interface ClaudeHistoryCacheEntry {
@@ -356,6 +355,10 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
     providerSessionId: string,
     rawStoreRef: string
   ): Promise<string> {
+    if (isPendingClaudeRuntimeRef(providerSessionId, rawStoreRef)) {
+      return "";
+    }
+
     statSync(rawStoreRef);
     const records = readJsonLines(rawStoreRef).map((record) => record.data);
     const messages = this.parseMessages(rawStoreRef, records, providerSessionId);
@@ -528,147 +531,71 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
     records: Array<Record<string, unknown>>,
     providerSessionId = basename(filePath, ".jsonl")
   ): NormalizedMessage[] {
-    const messages: NormalizedMessage[] = [];
+    const messageIdsInOrder: string[] = [];
+    const messagesById = new Map<string, NormalizedMessage>();
     const toolNameById = new Map<string, string>();
+    const stableMessageRefByIdentity = new Map<string, ClaudeStableMessageRef>();
     let sequence = 0;
 
-    records.forEach((record, index) => {
-      const lineNumber = index + 1;
-
+    records.forEach((record) => {
       this.collectMessageEnvelopes(record).forEach((envelope) => {
         const parts = normalizeClaudeMessageParts(envelope.message.content);
 
         parts.forEach((part, partIndex) => {
-          const partType = ensureText(part.type);
-          const rawRef = createRawRef(this.providerId, filePath, lineNumber, partIndex);
+          const normalized = normalizeClaudeMessagePart({
+            part,
+            envelope,
+            providerSessionId,
+            partIndex,
+            timestamp: safeDate(envelope.timestamp, nextTimestamp()),
+            toolNameById,
+            resolveStableMessageRef: (identity) => {
+              const existing = stableMessageRefByIdentity.get(identity);
 
-          if (envelope.type === "user") {
-            if (partType === "tool_result") {
-              const callId = ensureText(part.tool_use_id).trim() || rawRef;
-              const toolName = toolNameById.get(callId) ?? "tool";
-              const output = extractTextBlocks(part.content).trim() || stringifyStructuredValue(part.content);
-              const isError = Boolean(part.is_error);
-
-              if (output.length === 0) {
-                return;
+              if (existing) {
+                return existing;
               }
 
               sequence += 1;
-              messages.push({
-                messageId: messageIdFromRawRef(rawRef),
-                provider: this.providerId,
-                providerSessionId,
-                role: "tool",
-                kind: "tool_result",
-                content: output,
-                toolCall: {
-                  callId,
-                  name: toolName,
-                  input: "",
-                  output: isError ? null : output,
-                  error: isError ? output : null,
-                  status: isError ? "failed" : "completed"
-                },
-                timestamp: safeDate(envelope.timestamp, nextTimestamp()),
+              const created: ClaudeStableMessageRef = {
                 sequence,
-                rawRef
-              });
-              return;
+                rawRef: buildClaudeStableRawRef(filePath, sequence, partIndex)
+              };
+              stableMessageRefByIdentity.set(identity, created);
+              return created;
             }
-
-            const content = extractTextBlocks(part).trim();
-
-            if (content.length === 0) {
-              return;
-            }
-
-            sequence += 1;
-            messages.push({
-              messageId: messageIdFromRawRef(rawRef),
-              provider: this.providerId,
-              providerSessionId,
-              role: "user",
-              kind: "text",
-              content,
-              toolCall: null,
-              timestamp: safeDate(envelope.timestamp, nextTimestamp()),
-              sequence,
-              rawRef
-            });
-            return;
-          }
-
-          if (partType === "tool_use") {
-            const callId = ensureText(part.id).trim() || rawRef;
-            const name = ensureText(part.name).trim() || "tool";
-            const input = stringifyStructuredValue(part.input);
-            toolNameById.set(callId, name);
-
-            if (name.length === 0 && input.length === 0) {
-              return;
-            }
-
-            sequence += 1;
-            messages.push({
-              messageId: messageIdFromRawRef(rawRef),
-              provider: this.providerId,
-              providerSessionId,
-              role: "tool",
-              kind: "tool_call",
-              content: input,
-              toolCall: {
-                callId,
-                name,
-                input,
-                output: null,
-                error: null,
-                status: "running"
-              },
-              timestamp: safeDate(envelope.timestamp, nextTimestamp()),
-              sequence,
-              rawRef
-            });
-            return;
-          }
-
-          const content =
-            partType === "thinking"
-              ? extractTextBlocks(part.thinking).trim()
-              : extractTextBlocks(part).trim();
-
-          if (content.length === 0) {
-            return;
-          }
-
-          sequence += 1;
-          messages.push({
-            messageId: messageIdFromRawRef(rawRef),
-            provider: this.providerId,
-            providerSessionId,
-            role: "assistant",
-            kind: partType === "thinking" ? "thinking" : "text",
-            content,
-            toolCall: null,
-            timestamp: safeDate(envelope.timestamp, nextTimestamp()),
-            sequence,
-            rawRef
           });
+
+          if (!normalized) {
+            return;
+          }
+
+          if (!messagesById.has(normalized.messageId)) {
+            messageIdsInOrder.push(normalized.messageId);
+          }
+
+          messagesById.set(normalized.messageId, normalized);
         });
       });
     });
 
-    return messages;
+    return messageIdsInOrder
+      .map((messageId) => messagesById.get(messageId) ?? null)
+      .filter((message): message is NormalizedMessage => message !== null);
   }
 
   private collectMessageEnvelopes(record: Record<string, unknown>): ClaudeMessageEnvelope[] {
     const envelopes: ClaudeMessageEnvelope[] = [];
     const directType = ensureText(record.type);
+    const directMessage = toClaudeRecord(record.message);
 
     if (directType === "user" || directType === "assistant") {
       envelopes.push({
         type: directType,
+        source: "direct",
+        messageId: readClaudeMessageId(directMessage, record),
         timestamp: record.timestamp,
-        message: ((record.message ?? {}) as ClaudeMessageEnvelope["message"])
+        message: directMessage as ClaudeMessageEnvelope["message"]
       });
     }
 
@@ -686,8 +613,9 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
       return null;
     }
 
-    const nested = (((record.data ?? {}) as Record<string, unknown>).message ?? {}) as Record<string, unknown>;
+    const nested = toClaudeRecord(toClaudeRecord(record.data).message);
     const nestedType = ensureText(nested.type);
+    const nestedMessage = toClaudeRecord(nested.message);
 
     if (nestedType !== "user" && nestedType !== "assistant") {
       return null;
@@ -695,10 +623,21 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
 
     return {
       type: nestedType,
+      source: "progress",
+      messageId: readClaudeMessageId(nestedMessage, nested),
       timestamp: nested.timestamp ?? record.timestamp,
-      message: ((nested.message ?? {}) as ClaudeMessageEnvelope["message"])
+      message: nestedMessage as ClaudeMessageEnvelope["message"]
     };
   }
+}
+
+function isPendingClaudeRuntimeRef(providerSessionId: string, rawStoreRef: string): boolean {
+  if (providerSessionId.trim().toLowerCase().startsWith("pending://")) {
+    return true;
+  }
+
+  const normalizedRawStoreRef = rawStoreRef.replaceAll("\\", "/").toLowerCase();
+  return normalizedRawStoreRef.includes("/.pending-");
 }
 
 function buildClaudeSubagentMetadataIndex(
@@ -734,38 +673,6 @@ function parseClaudeSubagentMetadata(filePath: string): ClaudeSubagentMetadata |
     providerSessionId: `${parentProviderSessionId}::${agentFileName}`,
     parentProviderSessionId
   };
-}
-
-function normalizeClaudeMessageParts(content: unknown): Array<Record<string, unknown>> {
-  if (content === undefined || content === null) {
-    return [];
-  }
-
-  const items = Array.isArray(content) ? content : [content];
-
-  return items
-    .map((item) => {
-      if (typeof item === "string") {
-        return {
-          type: "text",
-          text: item
-        };
-      }
-
-      if (!item || typeof item !== "object") {
-        const text = ensureText(item).trim();
-
-        return text.length > 0
-          ? {
-              type: "text",
-              text
-            }
-          : null;
-      }
-
-      return item as Record<string, unknown>;
-    })
-    .filter((item): item is Record<string, unknown> => item !== null);
 }
 
 function shouldHideClaudeDebugSession(filePath: string): boolean {

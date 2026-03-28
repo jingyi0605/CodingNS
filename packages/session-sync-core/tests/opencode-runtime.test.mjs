@@ -160,6 +160,131 @@ test("OpenCodeRuntimeAdapter 会创建会话、发送消息并消费 SSE 事件"
   assert.equal(completeEvent.status, "completed");
 });
 
+test("OpenCodeRuntimeAdapter 会把同一个 part 的 delta 更新映射为同一逻辑消息", async (context) => {
+  const originalFetch = globalThis.fetch;
+  const events = [];
+
+  globalThis.fetch = async (input, init = {}) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const method = init.method ?? "GET";
+
+    if (url.startsWith("http://127.0.0.1:41827/session?") && method === "POST") {
+      return jsonResponse({ id: "ses_runtime_delta" });
+    }
+
+    if (url === "http://127.0.0.1:41827/event" && method === "GET") {
+      return sseResponse([
+        {
+          payload: {
+            type: "message.updated",
+            properties: {
+              info: {
+                id: "msg_runtime_delta",
+                sessionID: "ses_runtime_delta",
+                role: "assistant",
+                time: {
+                  created: 1
+                }
+              }
+            }
+          }
+        },
+        {
+          payload: {
+            type: "message.part.updated",
+            properties: {
+              part: {
+                id: "prt_runtime_delta",
+                messageID: "msg_runtime_delta",
+                sessionID: "ses_runtime_delta",
+                type: "text",
+                text: "Open",
+                time: {
+                  start: 1,
+                  end: 1
+                }
+              }
+            }
+          }
+        },
+        {
+          payload: {
+            type: "message.part.delta",
+            properties: {
+              partID: "prt_runtime_delta",
+              messageID: "msg_runtime_delta",
+              sessionID: "ses_runtime_delta",
+              field: "text",
+              delta: "Code"
+            }
+          }
+        },
+        {
+          payload: {
+            type: "session.idle",
+            properties: {
+              sessionID: "ses_runtime_delta"
+            }
+          }
+        }
+      ]);
+    }
+
+    if (url === "http://127.0.0.1:41827/session/ses_runtime_delta/message" && method === "POST") {
+      return jsonResponse({});
+    }
+
+    throw new Error(`unexpected request: ${method} ${url}`);
+  };
+
+  context.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const adapter = new OpenCodeRuntimeAdapter({
+    baseUrl: "http://127.0.0.1:41827",
+    requestTimeoutMs: 1_000
+  });
+
+  const launch = await adapter.startSession(
+    {
+      sessionId: "local-session-delta",
+      workspaceId: "workspace-1",
+      workspacePath: "/Users/jackson/Code/CodingNS",
+      provider: "opencode",
+      providerSessionId: null,
+      rawStoreRef: null,
+      options: {
+        content: "测试 delta 更新",
+        clientRequestId: null,
+        model: null,
+        reasoningLevel: null,
+        permissionMode: null,
+        providerPrompt: null,
+        attachments: []
+      }
+    },
+    {
+      updateSessionBinding() {},
+      async emit(event) {
+        events.push(event);
+      }
+    }
+  );
+
+  await launch.completed;
+
+  const messageEvents = events.filter((event) => event.type === "message");
+  assert.equal(messageEvents.length, 2);
+  assert.deepEqual(
+    messageEvents.map((event) => event.message.content),
+    ["Open", "OpenCode"]
+  );
+  assert.equal(messageEvents[0].message.messageId, messageEvents[1].message.messageId);
+  assert.equal(messageEvents[0].message.rawRef, messageEvents[1].message.rawRef);
+  assert.equal(messageEvents[0].message.sequence, messageEvents[1].message.sequence);
+});
+
 test("OpenCodeRuntimeAdapter 会把网络失败收口成 SERVER_UNAVAILABLE", async (context) => {
   const originalFetch = globalThis.fetch;
 

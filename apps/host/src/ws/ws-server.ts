@@ -27,6 +27,11 @@ interface CombinedSubscription {
   close(): void;
 }
 
+interface SeenMessageEntry {
+  signature: string;
+  source: "history" | "runtime";
+}
+
 export function createWsServer(
   server: Server,
   wsAuthGuard: WsAuthGuard,
@@ -114,9 +119,9 @@ export function createWsServer(
         })
       );
 
-      const sentMessageIds = new Set<string>();
+      const seenMessages = new Map<string, SeenMessageEntry>();
       const forwardEnvelope = async (envelope: SessionHistoryEnvelope | SessionRuntimeEnvelope) => {
-        const deduped = dedupeEnvelopeMessages(envelope, sentMessageIds);
+        const deduped = dedupeEnvelopeMessages(envelope, seenMessages);
 
         if (!deduped) {
           return;
@@ -127,6 +132,7 @@ export function createWsServer(
         if (
           deduped.type === "session.backfill" ||
           deduped.type === "session.delta" ||
+          deduped.type === "session.runtime_message" ||
           deduped.type === "session.runtime_status" ||
           deduped.type === "session.runtime_error" ||
           deduped.type === "session.interrupted"
@@ -212,19 +218,18 @@ function isSessionSubscribeMessage(payload: unknown): payload is SessionSubscrib
 
 function dedupeEnvelopeMessages(
   envelope: SessionHistoryEnvelope | SessionRuntimeEnvelope,
-  sentMessageIds: Set<string>
+  seenMessages: Map<string, SeenMessageEntry>
 ): SessionHistoryEnvelope | SessionRuntimeEnvelope | null {
+  if (envelope.type === "session.runtime_message") {
+    return shouldForwardMessage(envelope.message, "runtime", seenMessages) ? envelope : null;
+  }
+
   if (envelope.type !== "session.backfill" && envelope.type !== "session.delta") {
     return envelope;
   }
 
   const messages = envelope.messages.filter((message) => {
-    if (sentMessageIds.has(message.messageId)) {
-      return false;
-    }
-
-    sentMessageIds.add(message.messageId);
-    return true;
+    return shouldForwardMessage(message, "history", seenMessages);
   });
 
   if (messages.length === 0) {
@@ -235,6 +240,97 @@ function dedupeEnvelopeMessages(
     ...envelope,
     messages
   };
+}
+
+function shouldForwardMessage(
+  message: SessionHistoryEnvelope["messages"][number],
+  source: "history" | "runtime",
+  seenMessages: Map<string, SeenMessageEntry>
+): boolean {
+  const signature = buildMessageSignature(message);
+  const previous = seenMessages.get(message.messageId);
+
+  if (previous && previous.signature === signature) {
+    return false;
+  }
+
+  if (
+    previous &&
+    previous.source === "runtime" &&
+    source === "history" &&
+    isOlderMessageVersion(message, previous.signature)
+  ) {
+    return false;
+  }
+
+  seenMessages.set(message.messageId, {
+    signature,
+    source
+  });
+  return true;
+}
+
+function buildMessageSignature(
+  message: SessionHistoryEnvelope["messages"][number]
+): string {
+  return JSON.stringify({
+    provider: message.provider,
+    providerSessionId: message.providerSessionId,
+    role: message.role,
+    kind: message.kind ?? null,
+    content: message.content,
+    timestamp: message.timestamp,
+    rawRef: message.rawRef,
+    attachments: message.attachments ?? [],
+    toolCall: message.toolCall
+      ? {
+          callId: message.toolCall.callId,
+          status: message.toolCall.status,
+          input: message.toolCall.input,
+          output: message.toolCall.output,
+          error: message.toolCall.error
+        }
+      : null
+  });
+}
+
+function isOlderMessageVersion(
+  message: SessionHistoryEnvelope["messages"][number],
+  previousSignature: string
+): boolean {
+  try {
+    const previous = JSON.parse(previousSignature) as {
+      content?: string;
+      timestamp?: string;
+      toolCall?: {
+        status?: string;
+        output?: string | null;
+        error?: string | null;
+      } | null;
+    };
+    const previousContent = typeof previous.content === "string" ? previous.content : "";
+    const nextContent = typeof message.content === "string" ? message.content : "";
+
+    if (previousContent.length > nextContent.length && previousContent.includes(nextContent)) {
+      return true;
+    }
+
+    const previousTimestamp = typeof previous.timestamp === "string" ? previous.timestamp : "";
+
+    if (previousTimestamp && message.timestamp < previousTimestamp) {
+      return true;
+    }
+
+    const previousStatus = previous.toolCall?.status ?? null;
+    const nextStatus = message.toolCall?.status ?? null;
+
+    return (
+      (previousStatus === "completed" || previousStatus === "failed")
+      && nextStatus === "running"
+    );
+  } catch {
+    return false;
+  }
 }
 
 function sendWsError(
