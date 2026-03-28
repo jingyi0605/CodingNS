@@ -11,7 +11,7 @@ import { normalizeServerBaseUrl } from "./server-config-shared";
 const STORAGE_KEY = "codingns.client.runtime-config";
 
 export function canConfigureHostBaseUrl(platform: RuntimePlatform): boolean {
-  return platform === "desktop";
+  return platform === "desktop" || platform === "ios" || platform === "android";
 }
 
 function normalizeLanguage(value?: string | null): AppLanguage {

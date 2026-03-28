@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "码不能停",
+  "productName": "CodingNS",
   "version": "0.1.0",
   "identifier": "com.codingns.userapp",
   "build": {
@@ -12,11 +12,20 @@
   "app": {
     "windows": [
       {
-        "title": "码不能停",
-        "width": 800,
-        "height": 600,
+        "label": "main",
+        "title": "CodingNS",
+        "width": 1440,
+        "height": 920,
+        "minWidth": 1100,
+        "minHeight": 720,
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "hiddenTitle": true,
+        "titleBarStyle": "Overlay",
+        "trafficLightPosition": {
+          "x": 18,
+          "y": 16
+        }
       }
     ],
     "security": {

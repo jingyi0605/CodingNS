@@ -11,7 +11,9 @@ out/
 .output/
 .next/
 .nuxt/
-
+vendor/*
+!vendor/wry-0.54.4/
+!vendor/wry-0.54.4/**
 
 # Electron / Tauri
 release/
@@ -85,4 +87,6 @@ apps/host/apps/host/*
 apps/host/runtime/
 UsersjacksonAndroidSdk/
 apps/user-app/src-tauri/gen/android/
+apps/user-app/src-tauri/gen/apple/assets/index.html
+apps/user-app/src-tauri/gen/apple/assets/assets/
 apps/host/claude-hook-token

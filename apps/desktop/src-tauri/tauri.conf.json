@@ -1,6 +1,6 @@
 {
   "$schema": "../../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "CodingNS Desktop",
+  "productName": "CodingNS",
   "version": "0.1.0",
   "identifier": "com.codingns.desktop",
   "build": {
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "CodingNS Desktop",
+        "title": "CodingNS",
         "width": 1440,
         "height": 920,
         "minWidth": 1100,

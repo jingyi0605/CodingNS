@@ -698,22 +698,23 @@ a {
 }
 
 .ios-workbench-shell {
-  --mobile-workbench-tabbar-height: calc(58px + env(safe-area-inset-bottom, 0px));
-  position: fixed;
-  inset: 0;
+  --mobile-shell-safe-top: env(safe-area-inset-top, 0px);
+  --mobile-shell-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --mobile-workbench-tabbar-height: calc(58px + var(--mobile-shell-safe-bottom));
   display: flex;
   flex-direction: column;
   width: 100%;
   min-width: 0;
   max-width: 100%;
-  height: auto;
-  min-height: var(--mobile-shell-viewport-height, 100dvh);
+  height: 100vh;
+  height: var(--mobile-shell-viewport-height, 100dvh);
+  min-height: 0;
   gap: 0;
   overscroll-behavior: none;
   overflow: hidden;
   overflow-x: hidden;
   padding:
-    calc(env(safe-area-inset-top, 0px) + 4px)
+    calc(var(--mobile-shell-safe-top) + 4px)
     0
     0;
   background: var(--bg-primary);
@@ -727,7 +728,7 @@ a {
   min-height: 0;
   position: relative;
   box-sizing: border-box;
-  padding-bottom: var(--mobile-workbench-tabbar-height);
+  padding-bottom: calc(var(--mobile-workbench-tabbar-height) - var(--mobile-shell-safe-bottom));
   overscroll-behavior: contain;
   overflow: hidden;
 }
@@ -752,17 +753,16 @@ a {
 }
 
 .ios-workbench-tabbar {
-  position: absolute;
+  position: fixed;
   right: 0;
-  bottom: 0;
+  bottom: calc(-1 * var(--mobile-shell-safe-bottom));
   left: 0;
-  z-index: 40;
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 2px;
   box-sizing: border-box;
-  height: var(--mobile-workbench-tabbar-height);
-  padding: 8px 10px env(safe-area-inset-bottom, 0px);
+  min-height: var(--mobile-workbench-tabbar-height);
+  padding: 8px 10px calc(10px + var(--mobile-shell-safe-bottom));
   border-top: 1px solid color-mix(in srgb, var(--border-primary) 82%, transparent);
   background: color-mix(in srgb, var(--bg-primary) 96%, transparent);
   backdrop-filter: blur(24px);
@@ -770,6 +770,7 @@ a {
   box-shadow: 0 -10px 24px rgba(15, 23, 42, 0.08);
   flex-shrink: 0;
   align-items: stretch;
+  z-index: 40;
 }
 
 .ios-workbench-tabbar-item {
@@ -11897,7 +11898,7 @@ textarea:focus-visible {
 }
 
 .ios-workbench-shell[data-active-entry="settings"] .ios-workbench-content {
-  padding: 0 0 var(--mobile-workbench-tabbar-height);
+  padding: 0;
 }
 
 .mobile-workbench-shell[data-active-entry="settings"] .mobile-workbench-content > .settings-page,
@@ -13709,6 +13710,7 @@ textarea:focus-visible {
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
+  min-width: 0;
   padding: 0.85rem;
   border-radius: 0.85rem;
   background: var(--bg-tertiary);
@@ -13717,6 +13719,257 @@ textarea:focus-visible {
 .mobile-detail-metric span {
   color: var(--text-secondary);
   font-size: 0.82rem;
+}
+
+.mobile-detail-metric strong {
+  display: block;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.mobile-workspace-detail-page {
+  gap: 1rem;
+  padding-bottom: calc(1.25rem + env(safe-area-inset-bottom, 0px));
+}
+
+.mobile-workspace-detail-page .mobile-feature-section-header > div {
+  min-width: 0;
+}
+
+.mobile-workspace-detail-hero {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 72%, white 28%);
+  background:
+    radial-gradient(circle at top right, color-mix(in srgb, var(--accent) 14%, transparent) 0, transparent 48%),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--bg-surface) 98%, white 2%),
+      color-mix(in srgb, var(--bg-primary) 96%, transparent)
+    );
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.72) inset,
+    0 18px 42px rgba(15, 23, 42, 0.08);
+}
+
+.mobile-workspace-detail-hero::before {
+  content: "";
+  position: absolute;
+  right: -2.8rem;
+  bottom: -3.4rem;
+  width: 10rem;
+  height: 10rem;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent) 12%, white 88%);
+  filter: blur(10px);
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.mobile-workspace-detail-hero > * {
+  position: relative;
+  z-index: 1;
+}
+
+.mobile-workspace-detail-hero-topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.mobile-workspace-detail-path {
+  padding: 0.88rem 1rem;
+  border-radius: 1rem;
+  background: color-mix(in srgb, var(--bg-primary) 86%, white 14%);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-primary) 62%, transparent);
+  color: var(--text-primary) !important;
+  font-size: 0.96rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.mobile-workspace-detail-hero-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.6rem;
+}
+
+.mobile-workspace-detail-hero-actions > button {
+  min-width: 0;
+  justify-content: center;
+  padding-inline: 0.7rem;
+  border-radius: 1rem;
+}
+
+.mobile-workspace-detail-summary-panel,
+.mobile-workspace-composition-panel {
+  gap: 1rem;
+}
+
+.mobile-workspace-detail-switch-button {
+  min-height: 2.2rem;
+  padding: 0.45rem 0.8rem;
+  border-radius: 999px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.mobile-workspace-detail-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.mobile-detail-metric-wide {
+  grid-column: 1 / -1;
+}
+
+.mobile-session-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.78rem 0.9rem;
+  border-radius: 1rem;
+}
+
+.mobile-session-row-primary {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.mobile-session-row-primary-static {
+  pointer-events: none;
+}
+
+.mobile-session-row-title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 0.98rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-session-row-provider {
+  flex: 0 0 auto;
+  max-width: 7rem;
+  overflow: hidden;
+  padding: 0.26rem 0.58rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-tertiary));
+  color: var(--text-secondary);
+  font-size: 0.74rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-session-row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
+
+.mobile-session-row-count {
+  min-width: 1.85rem;
+  padding-inline: 0.5rem;
+}
+
+.mobile-session-row-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 1px solid var(--border-primary);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-primary) 96%, transparent);
+  color: var(--text-secondary);
+  transition:
+    color var(--transition-fast),
+    border-color var(--transition-fast),
+    transform var(--transition-fast);
+}
+
+.mobile-session-row-action:hover {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--border-primary));
+}
+
+.mobile-session-row-action:active {
+  transform: scale(0.96);
+}
+
+.mobile-session-row-action svg {
+  width: 0.95rem;
+  height: 0.95rem;
+}
+
+.mobile-session-row-restore {
+  min-height: 2rem;
+  padding: 0.35rem 0.75rem;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.mobile-workspace-composition-panel .workbench-manage-type-chart {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 1rem;
+}
+
+.mobile-workspace-composition-panel .workbench-manage-type-chart-ring {
+  width: 144px;
+  height: 144px;
+  flex: 0 0 144px;
+  margin: 0 auto;
+  background:
+    radial-gradient(circle at center, var(--bg-primary) 56%, transparent 57%),
+    var(--workbench-manage-chart-background);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--border-primary) 78%, transparent),
+    0 12px 28px rgba(15, 23, 42, 0.08);
+}
+
+.mobile-workspace-composition-note {
+  font-size: 0.83rem;
+  color: var(--text-tertiary);
+}
+
+@media (max-width: 420px) {
+  .mobile-workspace-detail-hero-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .mobile-workspace-detail-hero-actions > button:first-child {
+    grid-column: 1 / -1;
+  }
+
+  .mobile-workspace-detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .mobile-detail-metric-wide {
+    grid-column: auto;
+  }
+
+  .mobile-session-row-provider {
+    display: none;
+  }
+
+  .mobile-session-row {
+    padding: 0.72rem 0.8rem;
+  }
 }
 
 .mobile-tool-panel-page .mobile-feature-panel {

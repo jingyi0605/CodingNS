@@ -1,8 +1,6 @@
 use std::io::Write;
 use std::process::{Command, Stdio};
-
-#[cfg(target_os = "ios")]
-use std::ffi::CString;
+use tauri::{AppHandle, Manager, WebviewWindow};
 
 #[cfg(target_os = "android")]
 use std::mem::ManuallyDrop;
@@ -14,14 +12,54 @@ use jni::{
   JNIEnv
 };
 
+#[cfg(target_os = "ios")]
+use objc2::{class, msg_send, runtime::AnyObject};
+
 #[tauri::command]
 fn copy_text(text: String) -> Result<(), String> {
   copy_text_to_system_clipboard(&text)
 }
 
 #[tauri::command]
-fn perform_haptic_feedback(kind: String) -> Result<(), String> {
-  perform_platform_haptic_feedback(&kind)
+fn perform_haptic_feedback(app: AppHandle, kind: String) -> Result<(), String> {
+  perform_platform_haptic_feedback(Some(&app), &kind)
+}
+
+#[tauri::command]
+fn set_window_state(app: AppHandle, state: String) -> Result<(), String> {
+  let window = app
+    .get_webview_window("main")
+    .ok_or_else(|| "找不到主窗口".to_string())?;
+
+  apply_window_state(&window, &state)
+}
+
+fn apply_window_state(window: &WebviewWindow, state: &str) -> Result<(), String> {
+  // iOS / Android 没有桌面窗口管理语义，直接明确返回不支持，
+  // 不要硬把桌面 API 编译到移动端。
+  #[cfg(any(target_os = "ios", target_os = "android"))]
+  {
+    let _ = window;
+    let _ = state;
+    return Err("当前平台不支持窗口控制".to_string());
+  }
+
+  #[cfg(not(any(target_os = "ios", target_os = "android")))]
+  {
+  match state {
+    "minimize" => window.minimize().map_err(|error| error.to_string()),
+    "maximize" => window.maximize().map_err(|error| error.to_string()),
+    "toggle-maximize" => {
+      if window.is_maximized().map_err(|error| error.to_string())? {
+        window.unmaximize().map_err(|error| error.to_string())
+      } else {
+        window.maximize().map_err(|error| error.to_string())
+      }
+    }
+    "close" => window.close().map_err(|error| error.to_string()),
+    _ => Err(format!("不支持的窗口状态: {state}"))
+  }
+  }
 }
 
 fn copy_text_to_system_clipboard(text: &str) -> Result<(), String> {
@@ -90,15 +128,16 @@ fn run_clipboard_command(command: &str, args: &[&str], text: &str) -> Result<(),
   })
 }
 
-fn perform_platform_haptic_feedback(_kind: &str) -> Result<(), String> {
+fn perform_platform_haptic_feedback(app: Option<&AppHandle>, kind: &str) -> Result<(), String> {
   #[cfg(target_os = "android")]
   {
-    return perform_android_haptic_feedback(_kind);
+    let _ = app;
+    return perform_android_haptic_feedback(kind);
   }
 
   #[cfg(target_os = "ios")]
   {
-    return perform_ios_haptic_feedback(_kind);
+    return perform_ios_haptic_feedback(app, kind);
   }
 
   #[allow(unreachable_code)]
@@ -176,25 +215,130 @@ fn read_android_haptic_constant(env: &mut JNIEnv, field_name: &str) -> Option<i3
 }
 
 #[cfg(target_os = "ios")]
-unsafe extern "C" {
-  fn codingns_perform_haptic_feedback(kind: *const std::os::raw::c_char);
+fn perform_ios_haptic_feedback(app: Option<&AppHandle>, kind: &str) -> Result<(), String> {
+  let Some(app) = app.cloned() else {
+    return Err("缺少 iOS App 上下文，无法触发触觉反馈".to_string());
+  };
+  let resolved_kind = kind.to_string();
+
+  app
+    .run_on_main_thread(move || unsafe {
+      trigger_ios_haptic_feedback(&resolved_kind);
+    })
+    .map_err(|error| format!("切换到 iOS 主线程失败: {error}"))
 }
 
 #[cfg(target_os = "ios")]
-fn perform_ios_haptic_feedback(kind: &str) -> Result<(), String> {
-  let haptic_kind = CString::new(kind).map_err(|error| format!("iOS 触觉参数非法: {error}"))?;
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct NativeCGPoint {
+  x: f64,
+  y: f64,
+}
 
-  unsafe {
-    codingns_perform_haptic_feedback(haptic_kind.as_ptr());
+#[cfg(target_os = "ios")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct NativeCGSize {
+  width: f64,
+  height: f64,
+}
+
+#[cfg(target_os = "ios")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct NativeCGRect {
+  origin: NativeCGPoint,
+  size: NativeCGSize,
+}
+
+#[cfg(target_os = "ios")]
+unsafe fn trigger_ios_haptic_feedback(kind: &str) {
+  match kind {
+    "selection" | "gesture" => {
+      let generator: *mut AnyObject = msg_send![class!(UISelectionFeedbackGenerator), new];
+      let (): () = msg_send![generator, prepare];
+      let (): () = msg_send![generator, selectionChanged];
+    }
+    "success" | "warning" | "error" => {
+      let generator: *mut AnyObject = msg_send![class!(UINotificationFeedbackGenerator), new];
+      let notification_type: isize = match kind {
+        "success" => 0,
+        "warning" => 1,
+        "error" => 2,
+        _ => 0
+      };
+      let (): () = msg_send![generator, prepare];
+      let (): () = msg_send![generator, notificationOccurred: notification_type];
+    }
+    _ => {
+      let impact_style: isize = if kind == "action" { 1 } else { 0 };
+      let generator: *mut AnyObject = msg_send![class!(UIImpactFeedbackGenerator), alloc];
+      let generator: *mut AnyObject = msg_send![generator, initWithStyle: impact_style];
+      let (): () = msg_send![generator, prepare];
+      let (): () = msg_send![generator, impactOccurred];
+    }
+  }
+}
+
+#[cfg(target_os = "ios")]
+unsafe fn expand_ios_webview_to_window(
+  webview: *mut std::ffi::c_void,
+  view_controller: *mut std::ffi::c_void,
+) {
+  const FULL_RESIZE_MASK: usize = 31;
+  const CONTENT_INSET_ADJUSTMENT_NEVER: isize = 2;
+
+  let webview = webview.cast::<AnyObject>();
+  let view_controller = view_controller.cast::<AnyObject>();
+  if webview.is_null() || view_controller.is_null() {
+    return;
   }
 
-  Ok(())
+  let controller_view: *mut AnyObject = msg_send![view_controller, view];
+  if controller_view.is_null() {
+    return;
+  }
+
+  let window: *mut AnyObject = msg_send![controller_view, window];
+  let bounds: NativeCGRect = if window.is_null() {
+    msg_send![controller_view, bounds]
+  } else {
+    msg_send![window, bounds]
+  };
+
+  let (): () = msg_send![controller_view, setFrame: bounds];
+  let (): () = msg_send![webview, setFrame: bounds];
+  let (): () = msg_send![webview, setAutoresizingMask: FULL_RESIZE_MASK];
+  let (): () = msg_send![controller_view, setNeedsLayout];
+  let (): () = msg_send![controller_view, layoutIfNeeded];
+
+  let scroll_view: *mut AnyObject = msg_send![webview, scrollView];
+  if !scroll_view.is_null() {
+    let (): () = msg_send![
+      scroll_view,
+      setContentInsetAdjustmentBehavior: CONTENT_INSET_ADJUSTMENT_NEVER
+    ];
+  }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
     .setup(|app| {
+      #[cfg(target_os = "ios")]
+      {
+        // iOS 默认把 WebView 尺寸裁到 safe area，网页底栏永远贴不到屏幕最底部。
+        // 这里直接把 WKWebView 拉到窗口全尺寸，让底部导航真正进入 home indicator 安全区。
+        if let Some(webview) = app.get_webview("main") {
+          webview
+            .with_webview(|webview| unsafe {
+              expand_ios_webview_to_window(webview.inner(), webview.view_controller());
+            })
+            .map_err(|error| format!("扩展 iOS WebView 失败: {error}"))?;
+        }
+      }
+
       if cfg!(debug_assertions) {
         app.handle().plugin(
           tauri_plugin_log::Builder::default()
@@ -204,7 +348,11 @@ pub fn run() {
       }
       Ok(())
     })
-    .invoke_handler(tauri::generate_handler![copy_text, perform_haptic_feedback])
+    .invoke_handler(tauri::generate_handler![
+      copy_text,
+      set_window_state,
+      perform_haptic_feedback
+    ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
 }

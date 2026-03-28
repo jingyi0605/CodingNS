@@ -44,7 +44,8 @@ export function AndroidWorkbenchShell({
   const shellRef = useRef<HTMLDivElement | null>(null);
   const isConversationFocus = presentation === "conversation-focus";
   const conversationFocusTabbar = useConversationFocusTabbar({
-    enabled: isConversationFocus,
+    // 原生 App 底栏应保持常驻，不使用 H5 那套自动隐藏手势。
+    enabled: false,
     rootRef: shellRef,
     resetKey: `${location.pathname}${location.search}`
   });
