@@ -15,7 +15,6 @@
 - macOS Apple Silicon：`.dmg`
 - macOS Intel：`.dmg`
 - Windows：`.msi` 和 `NSIS .exe`
-- Ubuntu：`.deb`
 
 说明：
 
@@ -54,7 +53,7 @@ v*
 会执行多平台构建，并且在构建完成后：
 
 - 创建或更新同名 GitHub Release
-- 把 `.dmg`、`.msi`、`.exe`、`.deb` 上传到 Release assets
+- 把 `.dmg`、`.msi`、`.exe` 上传到 Release assets
 
 ## 产物对应关系
 
@@ -84,39 +83,6 @@ v*
 - `apps/desktop/src-tauri/target/release/bundle/msi/*.msi`
 - `apps/desktop/src-tauri/target/release/bundle/nsis/*.exe`
 
-### Ubuntu
-
-构建命令会显式指定：
-
-```text
---bundles deb
-```
-
-主要看这个路径：
-
-- `apps/desktop/src-tauri/target/release/bundle/deb/*.deb`
-
-所以，问题的答案很直接：
-
-可以，当前工作流已经支持自动生成 Ubuntu 的 `.deb`。
-
-## 当前 Linux runner 依赖
-
-Ubuntu 构建机会先安装这些依赖：
-
-- `libwebkit2gtk-4.1-dev`
-- `build-essential`
-- `curl`
-- `wget`
-- `file`
-- `libxdo-dev`
-- `libssl-dev`
-- `libayatana-appindicator3-dev`
-- `librsvg2-dev`
-- `patchelf`
-
-这是为了让 Tauri 的 Linux 打包链路能正常工作。
-
 ## 当前签名状态
 
 现在这套工作流的目标是“稳定出包”，不是“完整签名发布”。
@@ -125,7 +91,6 @@ Ubuntu 构建机会先安装这些依赖：
 
 - 可以自动产出 macOS `.dmg`
 - 可以自动产出 Windows 安装包
-- 可以自动产出 Ubuntu `.deb`
 - 还没有接入 macOS 签名 / notarization
 - 还没有接入 Windows 代码签名
 
