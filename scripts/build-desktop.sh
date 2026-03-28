@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# CodingNS Desktop 一键构建脚本
+# CodingNS 一键构建脚本
 # 支持 macOS、Windows、Ubuntu 三平台安装包构建
 #
 # 用法:
@@ -186,8 +186,31 @@ check_linux_deps() {
 install_deps() {
     log_info "安装项目依赖..."
     cd "$REPO_DIR"
-    pnpm install --frozen-lockfile
-    log_success "依赖安装完成"
+
+    if [[ -d "$REPO_DIR/node_modules" && -d "$REPO_DIR/apps/desktop/node_modules" && -d "$REPO_DIR/apps/user-app/node_modules" ]]; then
+        log_info "检测到工作区依赖已存在，跳过 pnpm install。"
+        return 0
+    fi
+
+    if pnpm install --frozen-lockfile; then
+        log_success "依赖安装完成（frozen-lockfile）"
+        return 0
+    fi
+
+    log_warn "pnpm-lock.yaml 与 package.json 当前不同步，严格安装失败。"
+    log_warn "回退到 --no-frozen-lockfile 继续安装，请后续补齐锁文件。"
+    if pnpm install --no-frozen-lockfile; then
+        log_success "依赖安装完成"
+        return 0
+    fi
+
+    if [[ -d "$REPO_DIR/node_modules" && -d "$REPO_DIR/apps/desktop/node_modules" && -d "$REPO_DIR/apps/user-app/node_modules" ]]; then
+        log_warn "pnpm install 失败，但现有 node_modules 已存在，继续使用当前依赖打包。"
+        return 0
+    fi
+
+    log_error "依赖安装失败，且当前工作区没有可复用的 node_modules。"
+    return 1
 }
 
 build_macos() {
@@ -221,8 +244,8 @@ EOF
     echo ""
     log_info "产物位置:"
 
-    if [[ -f "$OUTPUT_DIR/macos/CodingNS Desktop.app" ]]; then
-        log_success "  .app: $OUTPUT_DIR/macos/CodingNS Desktop.app"
+    if [[ -f "$OUTPUT_DIR/macos/CodingNS.app" ]]; then
+        log_success "  .app: $OUTPUT_DIR/macos/CodingNS.app"
     fi
 
     if compgen -G "$OUTPUT_DIR/dmg/*.dmg" > /dev/null; then
@@ -355,7 +378,7 @@ build_linux_with_docker() {
 print_banner() {
     echo ""
     echo "╔═══════════════════════════════════════════╗"
-    echo "║     CodingNS Desktop 构建脚本 v1.0        ║"
+    echo "║         CodingNS 构建脚本 v1.0            ║"
     echo "╚═══════════════════════════════════════════╝"
     echo ""
 }

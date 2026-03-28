@@ -20,6 +20,7 @@
     "build:host": "pnpm --dir packages/session-sync-core build && pnpm --filter host build",
     "build:standalone": "pnpm --dir packages/codingns build",
     "build:desktop": "pnpm --dir apps/desktop build",
+    "package:apps": "bash scripts/build-packages.sh",
     "test:host": "pnpm --dir packages/session-sync-core build && pnpm --filter host test",
     "build:user-app": "pnpm --dir apps/user-app build",
     "test:user-app": "pnpm --dir apps/user-app test"
