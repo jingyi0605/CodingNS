@@ -59,6 +59,7 @@ const {
       terminals: TerminalDto[];
       templates: unknown[];
       templateStatuses: Array<{ occupied: boolean }>;
+      shellOptions?: TerminalShellOptionDto[];
     }) => void
   >(),
   terminalManagerSnapshotByWorkspace: new Map<
@@ -68,16 +69,22 @@ const {
       terminals: TerminalDto[];
       templates: unknown[];
       templateStatuses: Array<{ occupied: boolean }>;
+      shellOptions?: TerminalShellOptionDto[];
     }
   >()
 }));
 
-function setTerminalManagerSnapshot(workspaceId: string, terminals: TerminalDto[]) {
+function setTerminalManagerSnapshot(
+  workspaceId: string,
+  terminals: TerminalDto[],
+  shellOptions: TerminalShellOptionDto[] = []
+) {
   const snapshot = {
     workspaceId,
     terminals,
     templates: [],
-    templateStatuses: []
+    templateStatuses: [],
+    shellOptions
   };
 
   terminalManagerSnapshotByWorkspace.set(workspaceId, snapshot);
@@ -89,7 +96,8 @@ function emitTerminalManagerSnapshot(workspaceId: string) {
     workspaceId,
     terminals: [],
     templates: [],
-    templateStatuses: []
+    templateStatuses: [],
+    shellOptions: []
   };
 
   terminalManagerSnapshotListeners.forEach((listener) => {
@@ -99,6 +107,8 @@ function emitTerminalManagerSnapshot(workspaceId: string) {
 
 const workbenchShell = {
   navigationGroups,
+  currentWorkspaceId: "workspace-1",
+  selectWorkspace: vi.fn(),
   subscribeTerminalManagerSnapshot: mockSubscribeTerminalManagerSnapshot,
   requestTerminalManagerRefresh: (workspaceId: string) => {
     mockRequestTerminalManagerRefresh(workspaceId);
@@ -111,6 +121,7 @@ const workbenchShell = {
     terminals: TerminalDto[];
     templates: unknown[];
     templateStatuses: Array<{ occupied: boolean }>;
+    shellOptions?: TerminalShellOptionDto[];
   }) => void) => {
     terminalManagerSnapshotListeners.add(listener);
     return () => {
@@ -605,7 +616,7 @@ describe("TerminalPage", () => {
     });
   });
 
-  it("移动端会隐藏分栏按钮，并支持左右滑动切换终端", async () => {
+  it("移动端会改成右滑呼出快捷终端抽屉，并从抽屉里切换终端", async () => {
     Object.defineProperty(window, "innerWidth", {
       configurable: true,
       writable: true,
@@ -634,32 +645,77 @@ describe("TerminalPage", () => {
     expect(await screen.findByRole("heading", { name: "Demo Workspace" })).toBeInTheDocument();
     expect(screen.getByText("/Users/jackson/Code/CodingNS")).toBeInTheDocument();
 
-    const frontTab = await screen.findByRole("tab", { name: /前端/i });
-    const backTab = await screen.findByRole("tab", { name: /后端/i });
+    expect(screen.queryByText("还没有选中终端")).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /前端/i })).not.toBeInTheDocument();
 
-    expect(screen.getByText("左右滑动切换终端")).toBeInTheDocument();
+    const swipeZone = view.container.querySelector(".terminal-mobile-edge-swipe-zone");
 
-    await user.click(screen.getByRole("button", { name: "展开终端工具栏" }));
-    expect(screen.queryByRole("button", { name: "左右分栏" })).not.toBeInTheDocument();
-
-    const pane = view.container.querySelector(".terminal-pane-card");
-
-    if (!(pane instanceof HTMLElement)) {
-      throw new Error("未找到终端舞台");
+    if (!(swipeZone instanceof HTMLElement)) {
+      throw new Error("未找到移动端侧滑手势区");
     }
 
-    expect(frontTab).toHaveAttribute("aria-selected", "true");
-    expect(backTab).toHaveAttribute("aria-selected", "false");
+    fireEvent.touchStart(swipeZone, {
+      touches: [{ clientX: 10, clientY: 120 }]
+    });
+    fireEvent.touchEnd(swipeZone, {
+      changedTouches: [{ clientX: 140, clientY: 128 }]
+    });
 
-    fireEvent.touchStart(pane, {
-      touches: [{ clientX: 260, clientY: 120 }]
-    });
-    fireEvent.touchEnd(pane, {
-      changedTouches: [{ clientX: 90, clientY: 128 }]
-    });
+    expect(await screen.findByText("快捷终端")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /后端/ })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /后端/ }));
 
     await waitFor(() => {
-      expect(backTab).toHaveAttribute("aria-selected", "true");
+      expect(screen.queryByText("快捷终端")).not.toBeInTheDocument();
+    });
+
+  });
+
+  it("移动端空状态会先选择终端类型和会话方式，再创建终端", async () => {
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      writable: true,
+      value: 390
+    });
+
+    const createdTerminal = buildTerminal({
+      id: "terminal-mobile-created",
+      name: "移动端终端"
+    });
+    mockCreateTerminal.mockResolvedValueOnce(createdTerminal);
+    mockListWorkspaceTerminals.mockResolvedValueOnce({
+      items: [createdTerminal]
+    });
+    setTerminalManagerSnapshot("workspace-1", [], [
+      {
+        id: "zsh",
+        label: "zsh",
+        shell: "/bin/zsh",
+        available: true,
+        unavailableReason: null
+      }
+    ]);
+
+    renderPage();
+
+    const createButtons = await screen.findAllByRole("button", { name: "新建终端" });
+    await userEvent.click(createButtons[0]!);
+
+    expect(await screen.findByRole("dialog", { name: "新建终端" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /tmux（持久会话）/ })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /runtime（当前会话）/ }));
+    await userEvent.click(screen.getByRole("button", { name: "创建这个终端" }));
+
+    await waitFor(() => {
+      expect(mockCreateTerminal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workspaceId: "workspace-1",
+          shell: "/bin/zsh",
+          runtimeType: "embedded-pty"
+        })
+      );
     });
   });
 

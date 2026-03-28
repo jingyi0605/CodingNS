@@ -1,4 +1,12 @@
-import { forwardRef, useCallback, useEffect, useMemo, useRef, useState, type TouchEvent } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type TouchEvent as ReactTouchEvent
+} from "react";
 import { createPortal } from "react-dom";
 import { useNavigate, useParams } from "react-router-dom";
 import { FitAddon } from "@xterm/addon-fit";
@@ -1439,7 +1447,7 @@ export function TerminalPage() {
     setMobileQuickDrawerOpen(false);
   }
 
-  function handleMobileStageTouchStart(event: TouchEvent<HTMLDivElement>): void {
+  function handleMobileStageTouchStart(event: ReactTouchEvent<HTMLDivElement>): void {
     if (!isMobileTerminalPage || mobileQuickDrawerOpen) {
       return;
     }
@@ -1456,7 +1464,7 @@ export function TerminalPage() {
     };
   }
 
-  function handleMobileStageTouchEnd(event: TouchEvent<HTMLDivElement>): void {
+  function handleMobileStageTouchEnd(event: ReactTouchEvent<HTMLDivElement>): void {
     if (!isMobileTerminalPage || mobileQuickDrawerOpen) {
       mobileStageTouchStartRef.current = null;
       return;
@@ -2955,6 +2963,8 @@ function createTerminalViewportRuntime(input: {
   let hasCommittedFit = false;
   let lastFittedCols = terminal.cols;
   let lastFittedRows = terminal.rows;
+  let touchPoint: { x: number; y: number } | null = null;
+  let pendingTouchLines = 0;
 
   terminal.loadAddon(fitAddon);
   terminal.loadAddon(serializeAddon);
@@ -2973,6 +2983,97 @@ function createTerminalViewportRuntime(input: {
   input.container.replaceChildren();
   terminal.open(input.container);
   input.container.style.background = initialTheme.background ?? "";
+  const xtermRootElement = input.container.querySelector(".xterm");
+  const scrollTarget =
+    xtermRootElement instanceof HTMLElement
+      ? xtermRootElement
+      : input.container;
+
+  scrollTarget.style.touchAction = "none";
+
+  const handleWheelScroll = (event: WheelEvent) => {
+    if (disposed || event.deltaY === 0) {
+      return false;
+    }
+
+    event.preventDefault();
+    const lines = truncateTowardZero(normalizeTerminalWheelDelta(event));
+
+    if (lines !== 0) {
+      terminal.scrollLines(lines);
+      schedulePersist();
+    }
+
+    return false;
+  };
+
+  if (typeof terminal.attachCustomWheelEventHandler === "function") {
+    terminal.attachCustomWheelEventHandler(handleWheelScroll);
+  } else {
+    scrollTarget.addEventListener("wheel", handleWheelScroll, { passive: false });
+  }
+
+  const handleTouchStart = (event: globalThis.TouchEvent) => {
+    const touch = event.touches[0];
+
+    if (!touch) {
+      touchPoint = null;
+      return;
+    }
+
+    touchPoint = {
+      x: touch.clientX,
+      y: touch.clientY
+    };
+  };
+
+  const handleTouchMove = (event: globalThis.TouchEvent) => {
+    if (!touchPoint) {
+      return;
+    }
+
+    const touch = event.touches[0];
+
+    if (!touch) {
+      return;
+    }
+
+    const deltaX = touch.clientX - touchPoint.x;
+    const deltaY = touch.clientY - touchPoint.y;
+
+    if (Math.abs(deltaY) <= Math.abs(deltaX)) {
+      touchPoint = {
+        x: touch.clientX,
+        y: touch.clientY
+      };
+      return;
+    }
+
+    event.preventDefault();
+    pendingTouchLines += -deltaY / 14;
+    const lines = truncateTowardZero(pendingTouchLines);
+
+    if (lines !== 0) {
+      pendingTouchLines -= lines;
+      terminal.scrollLines(lines);
+      schedulePersist();
+    }
+
+    touchPoint = {
+      x: touch.clientX,
+      y: touch.clientY
+    };
+  };
+
+  const clearTouchScrollState = () => {
+    touchPoint = null;
+    pendingTouchLines = 0;
+  };
+
+  scrollTarget.addEventListener("touchstart", handleTouchStart, { passive: true });
+  scrollTarget.addEventListener("touchmove", handleTouchMove, { passive: false });
+  scrollTarget.addEventListener("touchend", clearTouchScrollState, { passive: true });
+  scrollTarget.addEventListener("touchcancel", clearTouchScrollState, { passive: true });
 
   if (input.restoredViewState?.content) {
     terminal.write(input.restoredViewState.content, () => {
@@ -3109,11 +3210,34 @@ function createTerminalViewportRuntime(input: {
       if (persistTimer !== null) {
         window.clearTimeout(persistTimer);
       }
+      if (typeof terminal.attachCustomWheelEventHandler !== "function") {
+        scrollTarget.removeEventListener("wheel", handleWheelScroll);
+      }
+      scrollTarget.removeEventListener("touchstart", handleTouchStart);
+      scrollTarget.removeEventListener("touchmove", handleTouchMove);
+      scrollTarget.removeEventListener("touchend", clearTouchScrollState);
+      scrollTarget.removeEventListener("touchcancel", clearTouchScrollState);
       resizeObserver?.disconnect();
       terminal.dispose();
       input.container.replaceChildren();
     }
   };
+}
+
+function normalizeTerminalWheelDelta(event: WheelEvent): number {
+  if (event.deltaMode === 1) {
+    return event.deltaY;
+  }
+
+  if (event.deltaMode === 2) {
+    return event.deltaY * 12;
+  }
+
+  return event.deltaY / 16;
+}
+
+function truncateTowardZero(value: number): number {
+  return value < 0 ? Math.ceil(value) : Math.floor(value);
 }
 
 function buildPersistedTerminalViewState(

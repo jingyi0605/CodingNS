@@ -59,6 +59,11 @@
   --patch-diff-hunk-text: #1d4ed8;
   --patch-diff-meta-bg: rgba(148, 163, 184, 0.08);
   --patch-diff-meta-text: #475569;
+  --terminal-theme-background: var(--bg-primary);
+  --terminal-theme-foreground: #1a1a1a;
+  --terminal-theme-cursor: #1a1a1a;
+  --terminal-theme-cursor-accent: var(--bg-primary);
+  --terminal-theme-selection: rgba(0, 122, 255, 0.18);
   color-scheme: light;
 }
 
@@ -106,6 +111,11 @@
   --patch-diff-hunk-text: #bfdbfe;
   --patch-diff-meta-bg: rgba(148, 163, 184, 0.08);
   --patch-diff-meta-text: #cbd5e1;
+  --terminal-theme-background: #09121f;
+  --terminal-theme-foreground: #d6e6ff;
+  --terminal-theme-cursor: #f5f8ff;
+  --terminal-theme-cursor-accent: #09121f;
+  --terminal-theme-selection: rgba(121, 169, 255, 0.28);
   color-scheme: dark;
 }
 
@@ -138,6 +148,11 @@
   --error: #ff4d8d;
   --code-block-surface: rgba(4, 12, 32, 0.96);
   --code-block-header-bg: rgba(11, 19, 47, 0.96);
+  --terminal-theme-background: #09121f;
+  --terminal-theme-foreground: #d6e6ff;
+  --terminal-theme-cursor: #f5f8ff;
+  --terminal-theme-cursor-accent: #09121f;
+  --terminal-theme-selection: rgba(121, 169, 255, 0.28);
   --code-block-border: rgba(0, 240, 255, 0.16);
   --code-block-text: #e7f7ff;
   --code-block-gutter: rgba(146, 166, 219, 0.74);
@@ -3422,13 +3437,11 @@ a {
 }
 
 .terminal-mobile-page-header {
-  padding: 0.65rem 0.9rem 0.75rem;
-  border-bottom: 1px solid color-mix(in srgb, var(--border-primary) 68%, transparent);
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--bg-primary) 97%, transparent), color-mix(in srgb, var(--bg-primary) 94%, transparent)),
-    var(--bg-primary);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
+  padding: 0.65rem 1rem 0.55rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-primary) 78%, transparent);
+  background: color-mix(in srgb, var(--bg-surface) 96%, transparent);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
 }
 
 .terminal-mobile-header-actions {
@@ -4046,7 +4059,7 @@ a {
 .terminal-stage-surface-mobile {
   position: relative;
   padding: 0;
-  background: #09121f;
+  background: var(--terminal-theme-background);
 }
 
 .terminal-mobile-edge-swipe-zone {
@@ -4087,7 +4100,7 @@ a {
 }
 
 .terminal-shell[data-mobile="true"] {
-  background: #09121f;
+  background: var(--terminal-theme-background);
 }
 
 .terminal-shell[data-mobile="true"] .terminal-pane-card,
@@ -4151,10 +4164,15 @@ a {
   overflow: hidden;
   border: none;
   border-radius: 18px;
-  background: #09121f;
+  background: var(--terminal-theme-background);
   box-shadow:
     0 16px 40px rgba(9, 18, 31, 0.12),
     inset 0 0 0 1px rgba(121, 169, 255, 0.08);
+}
+
+[data-theme="light"] .terminal-canvas,
+:root:not([data-theme]) .terminal-canvas {
+  box-shadow: none;
 }
 
 .terminal-stage-grid[data-layout="single"] .terminal-canvas {
@@ -4242,18 +4260,18 @@ a {
   gap: 1rem;
   background:
     radial-gradient(circle at top, rgba(37, 99, 235, 0.18), transparent 42%),
-    #09121f;
-  color: rgba(214, 230, 255, 0.82);
+    var(--terminal-theme-background);
+  color: color-mix(in srgb, var(--terminal-theme-foreground) 82%, transparent);
 }
 
 .terminal-mobile-empty-state h1 {
-  color: #f5f8ff;
+  color: var(--terminal-theme-foreground);
   font-size: 1.35rem;
 }
 
 .terminal-mobile-empty-state p {
   max-width: 20rem;
-  color: rgba(214, 230, 255, 0.74);
+  color: color-mix(in srgb, var(--terminal-theme-foreground) 74%, transparent);
 }
 
 .terminal-mobile-empty-actions {
@@ -10548,11 +10566,15 @@ textarea:focus-visible {
   font-size: 13px;
   color: var(--cyber-text-dim);
   letter-spacing: 2px;
+  white-space: nowrap;
 }
 
 /* Typewriter Effect */
 .typewriter-text {
-  display: inline;
+  display: inline-flex;
+  align-items: baseline;
+  flex-wrap: nowrap;
+  white-space: nowrap;
 }
 
 .typewriter-cursor {
@@ -11445,6 +11467,11 @@ textarea:focus-visible {
   margin: 0 0 8px;
   color: var(--text-primary);
   font-weight: 600;
+}
+
+.settings-release-command {
+  font-family: var(--font-mono);
+  word-break: break-all;
 }
 
 .settings-release-markdown > :first-child {
