@@ -216,4 +216,108 @@ describe("sqlite 启动引导", () => {
       expect.arrayContaining(["parent_session_id", "is_subagent", "subagent_label"])
     );
   });
+
+  it("可以在旧数据库上补齐终端日志索引表", async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-terminal-log-bootstrap-"));
+    tempDirs.push(tempDir);
+    const databasePath = path.join(tempDir, "host.sqlite");
+    const { default: Database } = await import("better-sqlite3");
+    const seed = new Database(databasePath);
+
+    seed.exec(`
+      CREATE TABLE auth_users (
+        id TEXT PRIMARY KEY
+      );
+
+      CREATE TABLE workspaces (
+        id TEXT PRIMARY KEY
+      );
+
+      CREATE TABLE terminal_instances (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        cwd TEXT NOT NULL,
+        shell TEXT NOT NULL,
+        runtime_type TEXT NOT NULL,
+        runtime_session_id TEXT NOT NULL,
+        attach_target TEXT NOT NULL,
+        status TEXT NOT NULL,
+        process_id INTEGER,
+        created_by_user_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        last_active_at TEXT NOT NULL,
+        closed_at TEXT,
+        exit_code INTEGER,
+        status_detail TEXT
+      );
+
+      CREATE TABLE terminal_runtime_sessions (
+        id TEXT PRIMARY KEY,
+        terminal_id TEXT NOT NULL,
+        runtime_type TEXT NOT NULL,
+        session_key TEXT NOT NULL,
+        attach_target TEXT NOT NULL,
+        host_instance_id TEXT,
+        agent_pid INTEGER,
+        shell_pid INTEGER,
+        state TEXT NOT NULL,
+        last_heartbeat_at TEXT,
+        last_checked_at TEXT,
+        last_error_detail TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    `);
+    seed.close();
+
+    const client = createDatabaseClient(databasePath);
+    const logFileColumns = client.db
+      .prepare("PRAGMA table_info(terminal_log_files)")
+      .all() as Array<{ name: string }>;
+    const logSegmentColumns = client.db
+      .prepare("PRAGMA table_info(terminal_log_segments)")
+      .all() as Array<{ name: string }>;
+    const logFileIndex = client.db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_terminal_log_files_terminal_id'"
+      )
+      .get() as { name: string } | undefined;
+    const logSegmentIndex = client.db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_terminal_log_segments_terminal_id_start_seq'"
+      )
+      .get() as { name: string } | undefined;
+
+    client.close();
+
+    expect(logFileColumns.map((column) => column.name)).toEqual(
+      expect.arrayContaining([
+        "id",
+        "terminal_id",
+        "relative_path",
+        "status",
+        "start_seq",
+        "end_seq",
+        "size_bytes",
+        "created_at",
+        "updated_at"
+      ])
+    );
+    expect(logSegmentColumns.map((column) => column.name)).toEqual(
+      expect.arrayContaining([
+        "id",
+        "terminal_id",
+        "file_id",
+        "start_seq",
+        "end_seq",
+        "start_offset",
+        "end_offset",
+        "byte_length",
+        "created_at"
+      ])
+    );
+    expect(logFileIndex?.name).toBe("idx_terminal_log_files_terminal_id");
+    expect(logSegmentIndex?.name).toBe("idx_terminal_log_segments_terminal_id_start_seq");
+  });
 });

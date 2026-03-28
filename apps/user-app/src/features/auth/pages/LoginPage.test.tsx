@@ -141,6 +141,32 @@ describe("LoginPage", () => {
 
     expect(screen.getByRole("button", { name: new RegExp(t("auth.serverSettings")) })).toBeInTheDocument();
   });
+
+  it("iOS 客户端登录页也允许打开服务器设置", async () => {
+    mockNavigator({
+      userAgent:
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
+      platform: "iPhone"
+    });
+    window.__TAURI_INTERNALS__ = {
+      invoke: vi.fn()
+    };
+    clientConfigStore.hydrate({
+      platform: "ios",
+      hostBaseUrl: "http://127.0.0.1:3002",
+      releaseChannel: "stable",
+      autoReconnect: true,
+      autoCheckUpdate: false,
+      language: "zh-CN",
+      defaultPermissionMode: "default"
+    });
+
+    renderLoginPage();
+
+    expect(
+      await screen.findByRole("button", { name: new RegExp(t("auth.serverSettings")) })
+    ).toBeInTheDocument();
+  });
 });
 
 function renderLoginPage() {

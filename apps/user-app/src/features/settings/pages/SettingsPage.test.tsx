@@ -74,6 +74,37 @@ describe("SettingsPage", () => {
     serverView.unmount();
   });
 
+  it("iOS 客户端使用移动布局时仍然允许修改服务器地址", async () => {
+    window.__TAURI_INTERNALS__ = {
+      invoke: vi.fn()
+    };
+    clientConfigStore.hydrate({
+      platform: "ios",
+      hostBaseUrl: "http://127.0.0.1:3002",
+      releaseChannel: "stable",
+      autoReconnect: true,
+      autoCheckUpdate: true,
+      language: "zh-CN",
+      defaultPermissionMode: "default"
+    });
+    setViewportWidth(390);
+
+    renderSettingsPage();
+
+    await userEvent.click(screen.getByRole("button", { name: new RegExp(t("settings.serverConnection")) }));
+
+    const addressInput = await screen.findByRole("textbox", { name: t("settings.serverAddress") });
+    const saveButton = screen.getByRole("button", { name: t("common.save") });
+
+    await userEvent.clear(addressInput);
+    await userEvent.type(addressInput, "10.10.1.8:4100");
+    await userEvent.click(saveButton);
+
+    await waitFor(() => {
+      expect(clientConfigStore.getState().hostBaseUrl).toBe("http://10.10.1.8:4100");
+    });
+  });
+
   it("桌面端仍然允许修改服务器地址", async () => {
     window.__TAURI_INTERNALS__ = {
       invoke: vi.fn()
