@@ -210,7 +210,7 @@ describe("MobileWorkbenchShell", () => {
     expect(shell).toHaveAttribute("data-conversation-tabbar-state", "hidden");
   });
 
-  it("聊天记录到底后再次向上滑动会把底部导航拽出来", () => {
+  it("聊天区没有滚到底时，在输入区上滑也能把底部导航拽出来", () => {
     vi.useFakeTimers();
     const view = renderMobileShell({
       presentation: "conversation-focus",
@@ -218,8 +218,10 @@ describe("MobileWorkbenchShell", () => {
     });
     const shell = view.container.querySelector(".mobile-workbench-shell");
     const messageList = view.container.querySelector(".message-list") as HTMLDivElement | null;
+    const composerPanel = view.container.querySelector(".composer-panel") as HTMLElement | null;
 
     expect(messageList).not.toBeNull();
+    expect(composerPanel).not.toBeNull();
 
     Object.defineProperty(messageList, "scrollHeight", {
       configurable: true,
@@ -232,7 +234,7 @@ describe("MobileWorkbenchShell", () => {
     Object.defineProperty(messageList, "scrollTop", {
       configurable: true,
       writable: true,
-      value: 1000
+      value: 180
     });
 
     act(() => {
@@ -241,15 +243,15 @@ describe("MobileWorkbenchShell", () => {
 
     expect(shell).toHaveAttribute("data-conversation-tabbar-state", "hidden");
 
-    fireEvent.touchStart(messageList!, {
+    fireEvent.touchStart(composerPanel!, {
       touches: [{ clientY: 620 }]
     });
-    fireEvent.touchMove(messageList!, {
+    fireEvent.touchMove(composerPanel!, {
       touches: [{ clientY: 560 }]
     });
     expect(shell).toHaveAttribute("data-conversation-tabbar-state", "dragging");
 
-    fireEvent.touchEnd(messageList!, {
+    fireEvent.touchEnd(composerPanel!, {
       changedTouches: [{ clientY: 560 }]
     });
 

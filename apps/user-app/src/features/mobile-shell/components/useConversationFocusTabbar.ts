@@ -4,7 +4,6 @@ const AUTO_HIDE_DELAY_MS = 3000;
 const DRAG_START_THRESHOLD_PX = 10;
 const REVEAL_DRAG_DISTANCE_PX = 84;
 const REVEAL_THRESHOLD = 0.36;
-const BOTTOM_THRESHOLD_PX = 12;
 
 export type ConversationFocusTabbarState = "visible" | "hidden" | "dragging";
 
@@ -23,7 +22,6 @@ interface UseConversationFocusTabbarResult {
 
 interface DragGestureState {
   readonly startY: number;
-  readonly scrollElement: HTMLElement;
   readonly pointerType: "touch" | "pointer";
   dragging: boolean;
   latestProgress: number;
@@ -112,16 +110,15 @@ export function useConversationFocusTabbar({
       }
 
       const touchPoint = event.touches[0];
-      const scrollElement = resolveMessageListFromEventTarget(event.target);
+      const gestureSurface = resolveConversationGestureSurface(event.target);
 
-      if (!touchPoint || !scrollElement) {
+      if (!touchPoint || !gestureSurface) {
         dragGestureRef.current = null;
         return;
       }
 
       dragGestureRef.current = {
         startY: touchPoint.clientY,
-        scrollElement,
         pointerType: "touch",
         dragging: false,
         latestProgress: progressRef.current
@@ -137,13 +134,12 @@ export function useConversationFocusTabbar({
 
       const touchPoint = event.touches[0];
 
-      if (!touchPoint || !isScrollContainerAtBottom(gesture.scrollElement)) {
+      if (!touchPoint) {
         return;
       }
 
       const upwardDistance = gesture.startY - touchPoint.clientY;
 
-      // 必须满足“已经到底，再继续向上拽”这个前提，才允许把底部导航拖出来。
       if (upwardDistance <= DRAG_START_THRESHOLD_PX && !gesture.dragging) {
         return;
       }
@@ -198,16 +194,15 @@ export function useConversationFocusTabbar({
         return;
       }
 
-      const scrollElement = resolveMessageListFromEventTarget(event.target);
+      const gestureSurface = resolveConversationGestureSurface(event.target);
 
-      if (!scrollElement) {
+      if (!gestureSurface) {
         dragGestureRef.current = null;
         return;
       }
 
       dragGestureRef.current = {
         startY: event.clientY,
-        scrollElement,
         pointerType: "pointer",
         dragging: false,
         latestProgress: progressRef.current
@@ -218,10 +213,6 @@ export function useConversationFocusTabbar({
       const gesture = dragGestureRef.current;
 
       if (!gesture || gesture.pointerType !== "pointer" || stateRef.current === "visible") {
-        return;
-      }
-
-      if (!isScrollContainerAtBottom(gesture.scrollElement)) {
         return;
       }
 
@@ -303,16 +294,14 @@ function clearAutoHideTimer(timerRef: { current: number | null }) {
   timerRef.current = null;
 }
 
-function isScrollContainerAtBottom(element: HTMLElement) {
-  return element.scrollHeight - element.clientHeight - element.scrollTop <= BOTTOM_THRESHOLD_PX;
-}
-
-function resolveMessageListFromEventTarget(target: EventTarget | null) {
+function resolveConversationGestureSurface(target: EventTarget | null) {
   if (!(target instanceof Element)) {
     return null;
   }
 
-  return target.closest<HTMLElement>(".message-list");
+  return target.closest<HTMLElement>(
+    ".message-list, .composer-panel, .mobile-conversation-main, .conversation-page-shell"
+  );
 }
 
 function clamp(value: number, min: number, max: number) {
