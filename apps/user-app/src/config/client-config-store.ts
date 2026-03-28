@@ -1,18 +1,24 @@
 import { useSyncExternalStore } from "react";
 
 import type { ClientRuntimeConfig, ClientRuntimeConfigPatch } from "./client-config-types";
-import { loadClientRuntimeConfig, persistClientRuntimeConfig } from "./client-config-service";
+import {
+  loadClientRuntimeConfig,
+  persistClientRuntimeConfig,
+  resolveDefaultHostBaseUrl
+} from "./client-config-service";
 import { resolveRuntimePlatform } from "../platform/platform-adapter";
 
 type Listener = () => void;
 
 function createFallbackState(): ClientRuntimeConfig {
+  const platform = resolveRuntimePlatform();
+
   return {
-    platform: resolveRuntimePlatform(),
-    hostBaseUrl: "http://127.0.0.1:3002",
+    platform,
+    hostBaseUrl: resolveDefaultHostBaseUrl(platform),
     releaseChannel: "stable",
     autoReconnect: true,
-    autoCheckUpdate: resolveRuntimePlatform() === "desktop",
+    autoCheckUpdate: platform === "desktop",
     language: "zh-CN",
     defaultPermissionMode: "default"
   };

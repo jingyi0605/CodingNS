@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
+import { canConfigureHostBaseUrl } from "../../../config/client-config-service";
 import { serverConfigStore, useServerConfigSelector } from "../../../config/server-config";
 import { authGateway } from "../../../auth/auth-gateway";
 import { probeHost } from "../../../network/host-probe";
@@ -29,6 +30,10 @@ function ParticleField() {
     if (!ctx) return;
 
     let animationId: number;
+    const handleResize = () => {
+      resize();
+      createParticles();
+    };
     let particles: Array<{
       x: number;
       y: number;
@@ -98,12 +103,10 @@ function ParticleField() {
     createParticles();
     draw();
 
-    window.addEventListener("resize", () => {
-      resize();
-      createParticles();
-    });
+    window.addEventListener("resize", handleResize);
 
     return () => {
+      window.removeEventListener("resize", handleResize);
       cancelAnimationFrame(animationId);
     };
   }, []);
@@ -127,6 +130,7 @@ function TypewriterText({ text }: { text: string }) {
 
   useEffect(() => {
     let index = 0;
+    let cursorTimeoutId: number | null = null;
     const interval = setInterval(() => {
       if (index <= text.length) {
         setDisplayText(text.slice(0, index));
@@ -134,11 +138,17 @@ function TypewriterText({ text }: { text: string }) {
       } else {
         clearInterval(interval);
         // Hide cursor after typing complete
-        setTimeout(() => setShowCursor(false), 1000);
+        cursorTimeoutId = window.setTimeout(() => setShowCursor(false), 1000);
       }
     }, 50);
 
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+
+      if (cursorTimeoutId !== null) {
+        window.clearTimeout(cursorTimeoutId);
+      }
+    };
   }, [text]);
 
   return (
@@ -154,6 +164,7 @@ export function LoginPage() {
   const t = useT();
   const [searchParams] = useSearchParams();
   const platform = usePlatform();
+  const canConfigureServerAddress = canConfigureHostBaseUrl(platform.platform);
   const rememberPasswordSupported = useMemo(() => supportsRememberPassword(platform), [platform]);
   const rememberedLogin = useMemo(
     () => (rememberPasswordSupported ? readRememberedLoginCredentials() : null),
@@ -404,22 +415,24 @@ export function LoginPage() {
           </form>
 
           {/* Server Settings Button */}
-          <div className="cyber-footer">
-            <div className="cyber-divider">
-              <span className="cyber-divider-line" />
-              <span className="cyber-divider-text">//</span>
-              <span className="cyber-divider-line" />
+          {canConfigureServerAddress ? (
+            <div className="cyber-footer">
+              <div className="cyber-divider">
+                <span className="cyber-divider-line" />
+                <span className="cyber-divider-text">//</span>
+                <span className="cyber-divider-line" />
+              </div>
+              <button
+                className="cyber-server-btn"
+                onClick={() => setShowServerModal(true)}
+                type="button"
+              >
+                <span className="cyber-server-icon">⚙</span>
+                <span className="cyber-server-text">{t("auth.serverSettings")}</span>
+                <span className="cyber-server-current">{persistedServerBaseUrl}</span>
+              </button>
             </div>
-            <button
-              className="cyber-server-btn"
-              onClick={() => setShowServerModal(true)}
-              type="button"
-            >
-              <span className="cyber-server-icon">⚙</span>
-              <span className="cyber-server-text">{t("auth.serverSettings")}</span>
-              <span className="cyber-server-current">{persistedServerBaseUrl}</span>
-            </button>
-          </div>
+          ) : null}
         </div>
 
         {/* Version / Credits */}
@@ -431,12 +444,14 @@ export function LoginPage() {
       </div>
 
       {/* Server Settings Modal */}
-      <ServerSettingsModal
-        isOpen={showServerModal}
-        onClose={() => setShowServerModal(false)}
-        onSave={handleServerSettingsSave}
-        theme={loginTheme}
-      />
+      {canConfigureServerAddress ? (
+        <ServerSettingsModal
+          isOpen={showServerModal}
+          onClose={() => setShowServerModal(false)}
+          onSave={handleServerSettingsSave}
+          theme={loginTheme}
+        />
+      ) : null}
     </main>
   );
 }

@@ -19,6 +19,11 @@ export function createAuthGuard(authService: AuthService) {
   return async function authGuard(request: FastifyRequest, reply: FastifyReply): Promise<void> {
     const routePath = request.url.split("?")[0] ?? request.url;
 
+    // 页面壳、静态资源和前端路由必须允许匿名访问，真正受保护的是 API。
+    if (!routePath.startsWith("/api/")) {
+      return;
+    }
+
     if (isPublicRoute(request.method, routePath)) {
       return;
     }

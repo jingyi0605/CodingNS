@@ -75,6 +75,7 @@ import { TerminalWsHub } from "../ws/terminal-ws-hub.js";
 import { WorkbenchWsHub } from "../ws/workbench-ws-hub.js";
 import { createWsServer } from "../ws/ws-server.js";
 import { WsAuthGuard } from "../ws/ws-auth-guard.js";
+import { registerStaticWebRoutes } from "./static-web.js";
 
 export function createServer(config: HostConfig) {
   const app = Fastify({
@@ -258,6 +259,10 @@ export function createServer(config: HostConfig) {
   void registerTerminalRoutes(app, terminalController);
   void registerProviderRoutes(app, providerController);
   void registerGitRoutes(app, gitController);
+
+  if (config.webUiDir) {
+    registerStaticWebRoutes(app, config.webUiDir);
+  }
 
   app.addHook("onClose", async () => {
     await terminalService.dispose();

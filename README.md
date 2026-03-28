@@ -33,8 +33,29 @@ pnpm dev:backend    # 启动后端服务
 pnpm dev:frontend   # 启动前端应用
 pnpm dev:desktop    # 启动桌面应用
 pnpm build:host     # 构建 host
+pnpm build:standalone # 构建可发布的统一服务包
 pnpm test:host      # 测试 host
 ```
+
+## 独立服务包
+
+如果你要交付一个前后端合并后的统一服务包，使用：
+
+```bash
+pnpm build:standalone
+cd packages/codingns
+npm pack
+```
+
+打包后会生成 `codingns-0.1.0.tgz`，可以直接用下面的方式启动：
+
+```bash
+npm exec --yes --package ./codingns-0.1.0.tgz codingns -- start --port 3002
+```
+
+PM2 托管示例请查看：
+
+- [spec011 PM2 部署示例](./specs/spec011-单包安装与统一服务发布/docs/20260328-PM2部署示例.md)
 
 ## 系统要求
 

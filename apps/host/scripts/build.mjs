@@ -8,13 +8,15 @@ const sourceSchemaPath = path.join(appPath, "src", "storage", "sqlite", "schema.
 const outputSchemaPath = path.join(appPath, ".build", "src", "storage", "sqlite", "schema.sql");
 
 execFileSync(
-  process.platform === "win32" ? "node.exe" : "node",
+  "pnpm",
   [
-    path.join(appPath, "..", "..", "node_modules", "typescript", "bin", "tsc"),
+    "exec",
+    "tsc",
     "-p",
     path.join(appPath, "tsconfig.json")
   ],
   {
+    cwd: appPath,
     stdio: "inherit"
   }
 );

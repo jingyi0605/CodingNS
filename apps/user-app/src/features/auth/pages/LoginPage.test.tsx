@@ -102,6 +102,7 @@ describe("LoginPage", () => {
 
     expect(passwordInput.value).toBe("");
     expect(screen.queryByRole("checkbox", { name: t("auth.rememberPassword") })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: new RegExp(t("auth.serverSettings")) })).not.toBeInTheDocument();
   });
 
   it("Windows 客户端会显示保存密码并回填已保存凭据", async () => {
@@ -137,6 +138,8 @@ describe("LoginPage", () => {
     await waitFor(() => {
       expect(clientConfigStore.getState().hostBaseUrl).toBe("http://10.10.1.8:4100");
     });
+
+    expect(screen.getByRole("button", { name: new RegExp(t("auth.serverSettings")) })).toBeInTheDocument();
   });
 });
 

@@ -89,6 +89,7 @@ class MockWebSocket extends EventTarget {
 const originalFetch = global.fetch;
 const originalWebSocket = global.WebSocket;
 const originalInnerWidth = window.innerWidth;
+const originalTauriInternals = window.__TAURI_INTERNALS__;
 
 describe("app routes", () => {
   beforeEach(() => {
@@ -118,6 +119,13 @@ describe("app routes", () => {
       writable: true,
       value: originalInnerWidth
     });
+
+    if (originalTauriInternals) {
+      window.__TAURI_INTERNALS__ = originalTauriInternals;
+      return;
+    }
+
+    delete window.__TAURI_INTERNALS__;
   });
 
   it("未登录访问受保护页面时会回到登录页", async () => {
@@ -139,6 +147,19 @@ describe("app routes", () => {
   });
 
   it("登录页切换服务器后会把登录请求发到新地址", async () => {
+    window.__TAURI_INTERNALS__ = {
+      invoke: vi.fn()
+    };
+    clientConfigStore.hydrate({
+      platform: "desktop",
+      hostBaseUrl: "http://127.0.0.1:3002",
+      releaseChannel: "stable",
+      autoReconnect: true,
+      autoCheckUpdate: true,
+      language: "zh-CN",
+      defaultPermissionMode: "default"
+    });
+
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input.toString();
 
@@ -242,7 +263,23 @@ describe("app routes", () => {
   });
 
   it("实时连接会跟着当前服务器地址切换", async () => {
+    window.__TAURI_INTERNALS__ = {
+      invoke: vi.fn()
+    };
+    clientConfigStore.hydrate({
+      platform: "desktop",
+      hostBaseUrl: "http://127.0.0.1:3002",
+      releaseChannel: "stable",
+      autoReconnect: true,
+      autoCheckUpdate: true,
+      language: "zh-CN",
+      defaultPermissionMode: "default"
+    });
+
     serverConfigStore.setBaseUrl("http://10.10.1.8:4100");
+    await waitFor(() => {
+      expect(clientConfigStore.getState().hostBaseUrl).toBe("http://10.10.1.8:4100");
+    });
     hydrateAuth();
 
     installFetchMock({
@@ -269,6 +306,19 @@ describe("app routes", () => {
   });
 
   it("设置页点击保存按钮后会更新服务器地址", async () => {
+    window.__TAURI_INTERNALS__ = {
+      invoke: vi.fn()
+    };
+    clientConfigStore.hydrate({
+      platform: "desktop",
+      hostBaseUrl: "http://127.0.0.1:3002",
+      releaseChannel: "stable",
+      autoReconnect: true,
+      autoCheckUpdate: true,
+      language: "zh-CN",
+      defaultPermissionMode: "default"
+    });
+
     renderSettingsPage();
 
     const addressInput = screen.getByRole("textbox", { name: t("settings.serverAddress") });
