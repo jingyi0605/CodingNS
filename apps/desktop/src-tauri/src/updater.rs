@@ -16,8 +16,8 @@ use tauri::{AppHandle, Manager};
 
 use crate::rollback;
 
-const GITHUB_RELEASES_OWNER: &str = "placeholder-owner";
-const GITHUB_RELEASES_REPO: &str = "placeholder-repo";
+const GITHUB_RELEASES_OWNER: &str = "jingyi0605";
+const GITHUB_RELEASES_REPO: &str = "CodingNS";
 const GITHUB_API_ACCEPT: &str = "application/vnd.github+json";
 const GITHUB_USER_AGENT: &str = "CodingNS-Desktop-Updater";
 
@@ -318,13 +318,30 @@ fn select_release<'a>(releases: &'a [GitHubRelease], channel: &str) -> Option<&'
     if channel.eq_ignore_ascii_case("beta") {
         return releases
             .iter()
+            .filter(|release| matches_client_release_tag(&release.tag_name))
             .find(|release| !release.draft && release.prerelease)
-            .or_else(|| releases.iter().find(|release| !release.draft));
+            .or_else(|| {
+                releases
+                    .iter()
+                    .filter(|release| matches_client_release_tag(&release.tag_name))
+                    .find(|release| !release.draft)
+            });
     }
 
     releases
         .iter()
+        .filter(|release| matches_client_release_tag(&release.tag_name))
         .find(|release| !release.draft && !release.prerelease)
+}
+
+fn matches_client_release_tag(tag_name: &str) -> bool {
+    let trimmed = tag_name.trim();
+
+    if !(trimmed.starts_with('v') || trimmed.starts_with('V')) {
+        return false;
+    }
+
+    Version::parse(trimmed.trim_start_matches(['v', 'V'])).is_ok()
 }
 
 fn build_release_manifest(client: &Client, channel: &str, platform: &str, release: &GitHubRelease) -> ReleaseManifest {
@@ -460,4 +477,55 @@ fn resolve_release_platform() -> &'static str {
 
     #[allow(unreachable_code)]
     "unknown"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn build_release(tag_name: &str, prerelease: bool, draft: bool) -> GitHubRelease {
+        GitHubRelease {
+            tag_name: tag_name.to_string(),
+            name: None,
+            body: None,
+            html_url: String::new(),
+            published_at: None,
+            draft,
+            prerelease,
+            assets: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn should_only_accept_v_prefixed_client_tags() {
+        assert!(matches_client_release_tag("v1.0.0"));
+        assert!(matches_client_release_tag("V1.2.3-beta.1"));
+        assert!(!matches_client_release_tag("1.0.0"));
+        assert!(!matches_client_release_tag("client_v1.0.0"));
+        assert!(!matches_client_release_tag("server_v1.0.0"));
+    }
+
+    #[test]
+    fn should_ignore_non_client_tags_when_selecting_stable_release() {
+        let releases = vec![
+            build_release("server_v2.0.0", false, false),
+            build_release("v1.2.3", false, false),
+        ];
+
+        let selected = select_release(&releases, "stable").expect("expected stable release");
+
+        assert_eq!(selected.tag_name, "v1.2.3");
+    }
+
+    #[test]
+    fn should_prefer_beta_release_for_beta_channel() {
+        let releases = vec![
+            build_release("v1.2.4-beta.1", true, false),
+            build_release("v1.2.3", false, false),
+        ];
+
+        let selected = select_release(&releases, "beta").expect("expected beta release");
+
+        assert_eq!(selected.tag_name, "v1.2.4-beta.1");
+    }
 }

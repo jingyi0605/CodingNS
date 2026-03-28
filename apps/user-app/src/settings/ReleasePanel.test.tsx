@@ -55,7 +55,7 @@ describe("ReleasePanel", () => {
             notes: "## 本次更新\n- 修掉旧的 manifest 检查逻辑\n- 改成直接读取 GitHub Release",
             packageUrl: "https://example.com/CodingNS-0.2.0.dmg",
             signature: null,
-            htmlUrl: "https://github.com/placeholder-owner/placeholder-repo/releases/tag/v0.2.0",
+            htmlUrl: "https://github.com/jingyi0605/CodingNS/releases/tag/v0.2.0",
             publishedAt: "2026-03-28T08:00:00.000Z"
           }
         };
@@ -63,7 +63,7 @@ describe("ReleasePanel", () => {
 
       if (command === "open_external") {
         expect(args).toEqual({
-          url: "https://github.com/placeholder-owner/placeholder-repo/releases/tag/v0.2.0"
+          url: "https://github.com/jingyi0605/CodingNS/releases/tag/v0.2.0"
         });
         return null;
       }
@@ -96,7 +96,7 @@ describe("ReleasePanel", () => {
 
     await waitFor(() => {
       expect(invoke).toHaveBeenCalledWith("open_external", {
-        url: "https://github.com/placeholder-owner/placeholder-repo/releases/tag/v0.2.0"
+        url: "https://github.com/jingyi0605/CodingNS/releases/tag/v0.2.0"
       });
     });
   });
