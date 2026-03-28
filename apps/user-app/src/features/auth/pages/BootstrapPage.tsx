@@ -10,8 +10,8 @@ export function BootstrapPage() {
   const navigate = useNavigate();
   const serverBaseUrl = useServerConfigSelector((state) => state.baseUrl);
   const [username, setUsername] = useState("admin");
-  const [password, setPassword] = useState("123456aA?!");
-  const [confirmPassword, setConfirmPassword] = useState("123456aA?!");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [statusText, setStatusText] = useState<string | null>(null);
   const [statusTone, setStatusTone] = useState<"error" | "success">("error");
   const [loading, setLoading] = useState(false);

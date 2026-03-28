@@ -4,10 +4,17 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { serverConfigStore, useServerConfigSelector } from "../../../config/server-config";
 import { authGateway } from "../../../auth/auth-gateway";
 import { probeHost } from "../../../network/host-probe";
+import { usePlatform } from "../../../platform/platform-provider";
 import { LanguageSwitcher, t, useT } from "../../../shared/i18n";
 import { ApiError } from "../../../shared/network/api-error";
 import { useTheme } from "../../../shared/theme";
 import { authStore, useAuthSelector } from "../store/auth-store";
+import {
+  clearRememberedLoginCredentials,
+  persistRememberedLoginCredentials,
+  readRememberedLoginCredentials,
+  supportsRememberPassword
+} from "../store/remembered-login";
 import { ServerSettingsModal } from "../components/ServerSettingsModal";
 
 // Animated background particles
@@ -146,8 +153,16 @@ export function LoginPage() {
   const navigate = useNavigate();
   const t = useT();
   const [searchParams] = useSearchParams();
-  const [username, setUsername] = useState("admin");
-  const [password, setPassword] = useState("123456aA?!");
+  const platform = usePlatform();
+  const rememberPasswordSupported = useMemo(() => supportsRememberPassword(platform), [platform]);
+  const rememberedLogin = useMemo(
+    () => (rememberPasswordSupported ? readRememberedLoginCredentials() : null),
+    [rememberPasswordSupported]
+  );
+  const rememberedServerBaseUrl = rememberedLogin?.serverBaseUrl ?? null;
+  const [username, setUsername] = useState(() => rememberedLogin?.username ?? "admin");
+  const [password, setPassword] = useState(() => rememberedLogin?.password ?? "");
+  const [rememberPassword, setRememberPassword] = useState(() => Boolean(rememberedLogin));
   const persistedServerBaseUrl = useServerConfigSelector((state) => state.baseUrl);
   const [probeServerBaseUrl, setProbeServerBaseUrl] = useState(persistedServerBaseUrl);
   const [statusText, setStatusText] = useState<string | null>(null);
@@ -162,6 +177,19 @@ export function LoginPage() {
   const loginTheme = useMemo(() => {
     return theme === "light" ? "light" : "dark";
   }, [theme]);
+
+  useEffect(() => {
+    if (
+      !rememberPasswordSupported ||
+      !rememberedServerBaseUrl ||
+      rememberedServerBaseUrl === persistedServerBaseUrl
+    ) {
+      return;
+    }
+
+    serverConfigStore.setBaseUrl(rememberedServerBaseUrl);
+    setProbeServerBaseUrl(rememberedServerBaseUrl);
+  }, [persistedServerBaseUrl, rememberPasswordSupported, rememberedServerBaseUrl]);
 
   useEffect(() => {
     if (authStatus === "authenticated") {
@@ -199,8 +227,21 @@ export function LoginPage() {
     setStatusText(null);
     setProbeServerBaseUrl(persistedServerBaseUrl);
 
+    if (rememberPasswordSupported && !rememberPassword) {
+      clearRememberedLoginCredentials();
+    }
+
     try {
-      await authGateway.login(username, password);
+      await authGateway.login(username, password, persistedServerBaseUrl);
+
+      if (rememberPasswordSupported && rememberPassword) {
+        persistRememberedLoginCredentials({
+          username,
+          password,
+          serverBaseUrl: persistedServerBaseUrl
+        });
+      }
+
       navigate(returnTo, { replace: true });
     } catch (error) {
       if (error instanceof ApiError) {
@@ -317,6 +358,18 @@ export function LoginPage() {
                 autoComplete="current-password"
               />
             </div>
+
+            {rememberPasswordSupported ? (
+              <label className="cyber-remember-toggle">
+                <input
+                  aria-label={t("auth.rememberPassword")}
+                  type="checkbox"
+                  checked={rememberPassword}
+                  onChange={(event) => setRememberPassword(event.target.checked)}
+                />
+                <span>{t("auth.rememberPassword")}</span>
+              </label>
+            ) : null}
 
             {/* Status Message */}
             {statusText ? (
