@@ -5,12 +5,20 @@ import { readViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import {
   removeWorkspace,
   type ProviderId,
+  type SessionSummaryDto,
   type WorkspaceManagementSummaryDto
 } from "../../conversation/api/conversation-api";
 import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout";
+import { MobileWorkspaceSwitcherHeader } from "../../mobile-shell/components/MobileWorkspaceSwitcherHeader";
 import { MobileCreateSessionSheet } from "../../mobile-sessions/components/MobileCreateSessionSheet";
 import { buildSessionTitlePresentation } from "../../conversation/session-title";
 import {
+  buildWorkspaceCompositionChartItems,
+  createWorkspaceCompositionChartStyle,
+  formatWorkspaceCompositionRatio
+} from "../../workbench/utils/workspace-composition-chart";
+import {
+  buildWorkspaceDetailPath,
   buildWorkspaceSessionPath,
   buildWorkspaceTerminalsPath,
   buildWorkspaceToolFilesPath,
@@ -32,7 +40,24 @@ function getProviderLabel(provider: string) {
   return t("conversation.providerClaude");
 }
 
+function isVisibleSession(session: SessionSummaryDto) {
+  return session.isArchived !== true && session.isSubagent !== true;
+}
+
+function isArchivedSession(session: SessionSummaryDto) {
+  return session.isArchived === true && session.isSubagent !== true;
+}
+
+function getSessionActivityTime(session: Partial<SessionSummaryDto>) {
+  return session.lastEventAt ?? session.lastMessageAt ?? session.updatedAt ?? session.createdAt ?? "";
+}
+
+function sortSessionsByActivity(left: SessionSummaryDto, right: SessionSummaryDto) {
+  return getSessionActivityTime(right).localeCompare(getSessionActivityTime(left));
+}
+
 const WORKSPACE_MANAGEMENT_SNAPSHOT_CACHE_MAX_AGE_MS = 60 * 1000;
+const ARCHIVED_SESSIONS_PAGE_SIZE = 10;
 
 export function WorkspaceDetailPage() {
   const { workspaceId = "" } = useParams();
@@ -55,15 +80,16 @@ export function WorkspaceDetailPage() {
   } = useWorkbenchShell();
   const [removing, setRemoving] = useState(false);
   const [createSessionOpen, setCreateSessionOpen] = useState(false);
+  const [visibleArchivedCount, setVisibleArchivedCount] = useState(ARCHIVED_SESSIONS_PAGE_SIZE);
 
   const workspaceGroup = navigationGroups.find((group) => group.workspace.id === workspaceId) ?? null;
   const workspace = workspaceGroup?.workspace ?? null;
   const visibleSessions = useMemo(
-    () => workspaceGroup?.sessions.filter((session) => session.isArchived !== true) ?? [],
+    () => [...(workspaceGroup?.sessions ?? [])].filter(isVisibleSession).sort(sortSessionsByActivity),
     [workspaceGroup]
   );
   const archivedSessions = useMemo(
-    () => workspaceGroup?.sessions.filter((session) => session.isArchived === true) ?? [],
+    () => [...(workspaceGroup?.sessions ?? [])].filter(isArchivedSession).sort(sortSessionsByActivity),
     [workspaceGroup]
   );
 
@@ -110,6 +136,10 @@ export function WorkspaceDetailPage() {
     workspaceId
   ]);
 
+  useEffect(() => {
+    setVisibleArchivedCount(ARCHIVED_SESSIONS_PAGE_SIZE);
+  }, [workspaceId]);
+
   const detailState = useMemo(() => {
     if (!workspaceId) {
       return {
@@ -136,6 +166,24 @@ export function WorkspaceDetailPage() {
       summary
     };
   }, [workspace, workspaceId, workspaceManagementStateById]);
+  const compositionChartItems = useMemo(
+    () =>
+      detailState.summary
+        ? buildWorkspaceCompositionChartItems(
+            detailState.summary.codeComposition.items,
+            t("shell.manageWorkspaceCodeCompositionOther")
+          )
+        : [],
+    [detailState.summary]
+  );
+  const compositionChartStyle = useMemo(
+    () => (compositionChartItems.length > 0 ? createWorkspaceCompositionChartStyle(compositionChartItems) : undefined),
+    [compositionChartItems]
+  );
+  const visibleArchivedSessions = useMemo(
+    () => archivedSessions.slice(0, visibleArchivedCount),
+    [archivedSessions, visibleArchivedCount]
+  );
 
   async function handleRemoveWorkspace() {
     if (!workspace) {
@@ -194,206 +242,286 @@ export function WorkspaceDetailPage() {
   }
 
   return (
-    <main className="mobile-feature-page mobile-page-scroll-root mobile-workspace-detail-page">
-      <section className="mobile-feature-hero surface-card">
-        <div className="mobile-feature-hero-copy">
-          <p className="mobile-feature-eyebrow">{t("shell.workspaceDetailTitle")}</p>
-          <h1>{workspace.name}</h1>
-          <p>{workspace.path}</p>
-        </div>
-        <div className="mobile-feature-hero-actions">
-          <button
-            type="button"
-            className="primary-button"
-            onClick={() => setCreateSessionOpen(true)}
-          >
-            {t("shell.createSession")}
-          </button>
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={() => {
-              selectWorkspace(workspace.id);
-              navigate(buildWorkspaceToolFilesPath(workspace.id));
-            }}
-          >
-            {t("shell.filesEntry")}
-          </button>
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={() => {
-              selectWorkspace(workspace.id);
-              navigate(buildWorkspaceTerminalsPath(workspace.id));
-            }}
-          >
-            {t("shell.terminalsEntry")}
-          </button>
-        </div>
-      </section>
-
-      <section className="mobile-feature-panel surface-card">
-        <div className="mobile-feature-section-header">
-          <div>
-            <h2>{t("shell.workspaceDetailSummaryTitle")}</h2>
-            <p>{t("shell.workspaceDetailSummaryBody")}</p>
+    <main className="mobile-feature-page mobile-page-scroll-root mobile-page-with-top-header mobile-workspace-detail-page">
+      <MobileWorkspaceSwitcherHeader
+        currentWorkspace={workspace}
+        workspaces={navigationGroups.map((group) => group.workspace)}
+        heading={t("shell.workspaceDetailTitle")}
+        triggerLabel={workspace.name}
+        onSelectWorkspace={(targetWorkspaceId) => {
+          selectWorkspace(targetWorkspaceId);
+          navigate(buildWorkspaceDetailPath(targetWorkspaceId));
+        }}
+        content={
+          <div className="mobile-workspace-detail-header-actions">
+            <button
+              type="button"
+              className="primary-button"
+              onClick={() => setCreateSessionOpen(true)}
+            >
+              {t("shell.createSession")}
+            </button>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => {
+                selectWorkspace(workspace.id);
+                navigate(buildWorkspaceToolFilesPath(workspace.id));
+              }}
+            >
+              {t("shell.filesEntry")}
+            </button>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => {
+                selectWorkspace(workspace.id);
+                navigate(buildWorkspaceTerminalsPath(workspace.id));
+              }}
+            >
+              {t("shell.terminalsEntry")}
+            </button>
           </div>
-          {currentWorkspaceId === workspace.id ? (
-            <span className="mobile-feature-badge">{t("shell.switchWorkspace")}</span>
+        }
+      />
+
+      <div className="mobile-page-top-body mobile-workspace-detail-body">
+        <section className="mobile-feature-panel surface-card mobile-workspace-detail-summary-panel">
+          <div className="mobile-feature-section-header">
+            <div>
+              <h2>{t("shell.workspaceDetailSummaryTitle")}</h2>
+            </div>
+            {currentWorkspaceId !== workspace.id ? (
+              <button
+                type="button"
+                className="secondary-button mobile-workspace-detail-switch-button"
+                onClick={() => selectWorkspace(workspace.id)}
+              >
+                {t("shell.switchWorkspace")}
+              </button>
+            ) : null}
+          </div>
+          {detailState.loading && detailState.summary === null ? <p>{t("common.loading")}</p> : null}
+          {detailState.error ? <p className="status-text" data-tone="error">{detailState.error}</p> : null}
+          {detailState.summary ? (
+            <div className="mobile-detail-grid mobile-workspace-detail-grid">
+              <div className="mobile-detail-metric mobile-detail-metric-wide">
+                <span>{t("shell.manageWorkspacePathLabel")}</span>
+                <strong title={detailState.summary.path}>{detailState.summary.path}</strong>
+              </div>
+              <div className="mobile-detail-metric">
+                <span>{t("shell.manageWorkspaceCurrentBranch")}</span>
+                <strong title={detailState.summary.git.currentBranch ?? t("common.unknown")}>
+                  {detailState.summary.git.currentBranch ?? t("common.unknown")}
+                </strong>
+              </div>
+              <div className="mobile-detail-metric">
+                <span>{t("shell.manageWorkspaceGitCommitCount")}</span>
+                <strong>{detailState.hasMeaningfulSummary ? detailState.summary.git.commitCount ?? 0 : "—"}</strong>
+              </div>
+              <div className="mobile-detail-metric">
+                <span>{t("shell.manageWorkspaceCodeCompositionFiles")}</span>
+                <strong>{detailState.hasMeaningfulSummary ? detailState.summary.codeComposition.scannedFileCount : "—"}</strong>
+              </div>
+            </div>
           ) : null}
-        </div>
-        {detailState.loading && detailState.summary === null ? <p>{t("common.loading")}</p> : null}
-        {detailState.error ? <p className="status-text" data-tone="error">{detailState.error}</p> : null}
-        {detailState.summary ? (
-          <div className="mobile-detail-grid">
-            <div className="mobile-detail-metric">
-              <span>{t("shell.manageWorkspacePathLabel")}</span>
-              <strong>{detailState.summary.path}</strong>
-            </div>
-            <div className="mobile-detail-metric">
-              <span>{t("shell.manageWorkspaceCurrentBranch")}</span>
-              <strong>{detailState.summary.git.currentBranch ?? t("common.unknown")}</strong>
-            </div>
-            <div className="mobile-detail-metric">
-              <span>{t("shell.manageWorkspaceGitCommitCount")}</span>
-              <strong>{detailState.hasMeaningfulSummary ? detailState.summary.git.commitCount ?? 0 : "—"}</strong>
-            </div>
-            <div className="mobile-detail-metric">
-              <span>{t("shell.manageWorkspaceCodeCompositionFiles")}</span>
-              <strong>{detailState.hasMeaningfulSummary ? detailState.summary.codeComposition.scannedFileCount : "—"}</strong>
-            </div>
+          <div className="mobile-feature-inline-actions mobile-workspace-detail-summary-actions">
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => {
+                selectWorkspace(workspace.id);
+                navigate(buildWorkspaceToolGitPath(workspace.id));
+              }}
+            >
+              {t("shell.gitEntry")}
+            </button>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => {
+                selectWorkspace(workspace.id);
+                navigate(buildWorkspaceToolProcessesPath(workspace.id));
+              }}
+            >
+              {t("shell.terminalManagerEntry")}
+            </button>
+            <button
+              type="button"
+              className="secondary-button workbench-danger-button"
+              disabled={removing}
+              onClick={() => {
+                void handleRemoveWorkspace();
+              }}
+            >
+              {removing ? t("shell.manageWorkspaceRemoving") : t("shell.manageWorkspaceRemoveAction")}
+            </button>
           </div>
-        ) : null}
-        <div className="mobile-feature-inline-actions">
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={() => {
-              selectWorkspace(workspace.id);
-              navigate(buildWorkspaceToolGitPath(workspace.id));
-            }}
-          >
-            {t("shell.gitEntry")}
-          </button>
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={() => {
-              selectWorkspace(workspace.id);
-              navigate(buildWorkspaceToolProcessesPath(workspace.id));
-            }}
-          >
-            {t("shell.terminalManagerEntry")}
-          </button>
-          <button
-            type="button"
-            className="secondary-button workbench-danger-button"
-            disabled={removing}
-            onClick={() => {
-              void handleRemoveWorkspace();
-            }}
-          >
-            {removing ? t("shell.manageWorkspaceRemoving") : t("shell.manageWorkspaceRemoveAction")}
-          </button>
-        </div>
-      </section>
+        </section>
 
-      <section className="mobile-feature-section">
-        <div className="mobile-feature-section-header">
-          <div>
-            <h2>{t("shell.recentSessionsSectionTitle")}</h2>
-            <p>{t("shell.workspaceSessionListBody")}</p>
+        <section className="mobile-feature-panel surface-card mobile-workspace-composition-panel">
+          <div className="mobile-feature-section-header">
+            <div>
+              <h2>{t("shell.manageWorkspaceCodeCompositionLabel")}</h2>
+            </div>
+            {detailState.summary ? (
+              <span className="mobile-feature-counter">
+                {detailState.summary.codeComposition.scannedFileCount}
+              </span>
+            ) : null}
           </div>
-          <span className="mobile-feature-counter">{visibleSessions.length}</span>
-        </div>
-        <div className="mobile-feature-stack">
-          {visibleSessions.length === 0 ? (
-            <article className="mobile-feature-empty surface-card">
-              <p>{t("shell.emptyWorkspaceSessions")}</p>
-            </article>
-          ) : (
-            visibleSessions.map((session) => {
-              const titlePresentation = buildSessionTitlePresentation(session.title, t("common.unknown"));
+          {detailState.loading && detailState.summary === null ? <p>{t("common.loading")}</p> : null}
+          {detailState.summary ? (
+            compositionChartItems.length > 0 ? (
+              <div className="workbench-manage-type-chart">
+                <div
+                  className="workbench-manage-type-chart-ring"
+                  style={compositionChartStyle}
+                  aria-hidden="true"
+                >
+                  <strong className="workbench-manage-type-chart-total">
+                    {detailState.summary.codeComposition.scannedFileCount}
+                  </strong>
+                  <span className="workbench-manage-type-chart-caption">
+                    {t("shell.manageWorkspaceCodeCompositionFiles")}
+                  </span>
+                </div>
 
-              return (
-                <article key={session.sessionId} className="mobile-session-card surface-card">
-                  <div className="mobile-session-card-main">
-                    <div>
-                      <h3 title={titlePresentation.fullTitle}>{titlePresentation.displayTitle}</h3>
-                      <p>{getProviderLabel(session.provider)}</p>
+                <div className="workbench-manage-type-list">
+                  {compositionChartItems.map((item) => (
+                    <div key={item.key} className="workbench-manage-type-item">
+                      <span className="workbench-manage-type-meta">
+                        <span
+                          className="workbench-manage-type-swatch"
+                          style={{ backgroundColor: item.color }}
+                          aria-hidden="true"
+                        />
+                        <span className="workbench-manage-type-name">{item.type}</span>
+                      </span>
+                      <span>
+                        {item.count} · {formatWorkspaceCompositionRatio(item)}
+                      </span>
                     </div>
-                    <span className="mobile-feature-badge">{session.messageCount}</span>
-                  </div>
-                  <div className="mobile-feature-inline-actions">
-                    <button
-                      type="button"
-                      className="secondary-button"
-                      onClick={() => navigate(buildWorkspaceSessionPath(workspace.id, session.sessionId))}
-                    >
-                      {t("shell.contextOpenSession")}
-                    </button>
-                    <button
-                      type="button"
-                      className="secondary-button"
-                      onClick={() => {
-                        void toggleFavoriteSession(session.sessionId);
-                      }}
-                    >
-                      {favoriteSessionIds.includes(session.sessionId)
-                        ? t("shell.unfavoriteAction")
-                        : t("shell.favoriteAction")}
-                    </button>
-                    <button
-                      type="button"
-                      className="secondary-button"
-                      onClick={() => {
-                        void archiveSession(session.sessionId);
-                      }}
-                    >
-                      {t("shell.archiveAction")}
-                    </button>
-                  </div>
-                </article>
-              );
-            })
-          )}
-        </div>
-      </section>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <p>{detailState.summary.codeComposition.error ?? t("shell.manageWorkspaceNoCodeComposition")}</p>
+            )
+          ) : null}
+          {detailState.summary?.codeComposition.truncated ? (
+            <p className="mobile-workspace-composition-note">
+              {t("shell.manageWorkspaceCodeTruncated", {
+                count: detailState.summary.codeComposition.scannedFileCount
+              })}
+            </p>
+          ) : null}
+        </section>
 
-      {archivedSessions.length > 0 ? (
         <section className="mobile-feature-section">
           <div className="mobile-feature-section-header">
             <div>
-              <h2>{t("shell.archiveModalTitle")}</h2>
-              <p>{t("shell.archiveModalDescription")}</p>
+              <h2>{t("shell.recentSessionsSectionTitle")}</h2>
             </div>
-            <span className="mobile-feature-counter">{archivedSessions.length}</span>
+            <span className="mobile-feature-counter">{visibleSessions.length}</span>
           </div>
           <div className="mobile-feature-stack">
-            {archivedSessions.map((session) => (
-              <article key={session.sessionId} className="mobile-session-card surface-card">
-                <div className="mobile-session-card-main">
-                  <div>
-                    <h3>{session.title}</h3>
-                    <p>{getProviderLabel(session.provider)}</p>
-                  </div>
-                </div>
-                <div className="mobile-feature-inline-actions">
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    onClick={() => {
-                      void unarchiveSession(session.sessionId);
-                    }}
-                  >
-                    {t("shell.unarchiveAction")}
-                  </button>
-                </div>
+            {visibleSessions.length === 0 ? (
+              <article className="mobile-feature-empty surface-card">
+                <p>{t("shell.emptyWorkspaceSessions")}</p>
               </article>
-            ))}
+            ) : (
+              visibleSessions.map((session) => {
+                const titlePresentation = buildSessionTitlePresentation(session.title, t("common.unknown"));
+                const isFavorite = favoriteSessionIds.includes(session.sessionId);
+
+                return (
+                  <article key={session.sessionId} className="mobile-session-row surface-card">
+                    <button
+                      type="button"
+                      className="mobile-session-row-primary"
+                      onClick={() => navigate(buildWorkspaceSessionPath(workspace.id, session.sessionId))}
+                    >
+                      <span className="mobile-session-row-title" title={titlePresentation.fullTitle}>
+                        {titlePresentation.displayTitle}
+                      </span>
+                      <span className="mobile-session-row-provider">{getProviderLabel(session.provider)}</span>
+                    </button>
+                    <div className="mobile-session-row-actions">
+                      <span className="mobile-feature-badge mobile-session-row-count">{session.messageCount}</span>
+                      <button
+                        type="button"
+                        className="mobile-session-row-action"
+                        aria-label={isFavorite ? t("shell.unfavoriteAction") : t("shell.favoriteAction")}
+                        title={isFavorite ? t("shell.unfavoriteAction") : t("shell.favoriteAction")}
+                        onClick={() => {
+                          void toggleFavoriteSession(session.sessionId);
+                        }}
+                      >
+                        <FavoriteIcon active={isFavorite} />
+                      </button>
+                      <button
+                        type="button"
+                        className="mobile-session-row-action"
+                        aria-label={t("shell.archiveAction")}
+                        title={t("shell.archiveAction")}
+                        onClick={() => {
+                          void archiveSession(session.sessionId);
+                        }}
+                      >
+                        <ArchiveIcon />
+                      </button>
+                    </div>
+                  </article>
+                );
+              })
+            )}
           </div>
         </section>
-      ) : null}
+
+        {archivedSessions.length > 0 ? (
+          <section className="mobile-feature-section">
+            <div className="mobile-feature-section-header">
+              <div>
+                <h2>{t("shell.archiveModalTitle")}</h2>
+              </div>
+              <span className="mobile-feature-counter">{archivedSessions.length}</span>
+            </div>
+            <div className="mobile-feature-stack">
+              {visibleArchivedSessions.map((session) => (
+                <article key={session.sessionId} className="mobile-session-row surface-card">
+                  <div className="mobile-session-row-primary mobile-session-row-primary-static">
+                    <span className="mobile-session-row-title" title={session.title}>{session.title}</span>
+                    <span className="mobile-session-row-provider">{getProviderLabel(session.provider)}</span>
+                  </div>
+                  <div className="mobile-session-row-actions">
+                    <button
+                      type="button"
+                      className="secondary-button mobile-session-row-restore"
+                      onClick={() => {
+                        void unarchiveSession(session.sessionId);
+                      }}
+                    >
+                      {t("shell.unarchiveAction")}
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+            {visibleArchivedSessions.length < archivedSessions.length ? (
+              <button
+                type="button"
+                className="secondary-button mobile-workspace-detail-expand-button"
+                onClick={() => {
+                  setVisibleArchivedCount((current) => current + ARCHIVED_SESSIONS_PAGE_SIZE);
+                }}
+              >
+                {t("shell.archiveExpandMore")}
+              </button>
+            ) : null}
+          </section>
+        ) : null}
+      </div>
 
       <MobileCreateSessionSheet
         open={createSessionOpen}
@@ -403,6 +531,25 @@ export function WorkspaceDetailPage() {
         onSelect={handleSelectSessionProvider}
       />
     </main>
+  );
+}
+
+function FavoriteIcon({ active }: { active: boolean }) {
+  return (
+    <svg viewBox="0 0 24 24" fill={active ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.8">
+      <path d="m12 3.6 2.6 5.2 5.7.8-4.1 4 1 5.7L12 16.5 6.8 19.3l1-5.7-4.1-4 5.7-.8Z" />
+    </svg>
+  );
+}
+
+function ArchiveIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M4 7.5h16" />
+      <path d="M6.4 7.5h11.2l-.9 10.2a2 2 0 0 1-2 1.8H9.3a2 2 0 0 1-2-1.8Z" />
+      <path d="M8 4.5h8a1.5 1.5 0 0 1 1.5 1.5v1.5h-11V6A1.5 1.5 0 0 1 8 4.5Z" />
+      <path d="M10 11.5h4" />
+    </svg>
   );
 }
 

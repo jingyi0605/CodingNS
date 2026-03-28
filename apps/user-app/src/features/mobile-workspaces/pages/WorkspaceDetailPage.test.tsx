@@ -84,7 +84,23 @@ function createWorkbenchShell(overrides?: Record<string, unknown>) {
           codeComposition: {
             scannedFileCount: 48,
             truncated: false,
-            items: [],
+            items: [
+              {
+                type: "TypeScript",
+                count: 24,
+                ratio: 0.5
+              },
+              {
+                type: "Markdown",
+                count: 12,
+                ratio: 0.25
+              },
+              {
+                type: "JSON",
+                count: 12,
+                ratio: 0.25
+              }
+            ],
             error: null
           }
         },
@@ -144,14 +160,22 @@ describe("WorkspaceDetailPage", () => {
   it("会展示项目摘要和会话列表", async () => {
     renderPage();
 
-    expect(screen.getByRole("heading", { name: "项目一" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "切换工作区" })).toHaveTextContent("项目一");
     expect(screen.getAllByText("/repo/project-one")).toHaveLength(2);
     expect(screen.getByText("会话 Alpha")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "收藏会话" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "归档会话" })).toBeInTheDocument();
 
     await waitFor(() => {
       expect(screen.getByText("main")).toBeInTheDocument();
-      expect(screen.getByText("48")).toBeInTheDocument();
+      expect(screen.getAllByText("48").length).toBeGreaterThan(0);
+      expect(screen.getByText("TypeScript")).toBeInTheDocument();
+      expect(document.querySelector(".workbench-manage-type-chart-ring")).not.toBeNull();
     });
+
+    const compositionHeading = screen.getByRole("heading", { name: "代码类型组成" });
+    const recentHeading = screen.getByRole("heading", { name: "最近会话" });
+    expect(Boolean(compositionHeading.compareDocumentPosition(recentHeading) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
   });
 
   it("命中新鲜缓存时不会主动刷新 Git 和工作区摘要", async () => {
@@ -227,6 +251,52 @@ describe("WorkspaceDetailPage", () => {
     await user.click(screen.getByRole("button", { name: "OpenCode" }));
 
     expect(startDraftSession).toHaveBeenCalledWith("workspace-1", "opencode");
+  });
+
+  it("归档会话默认显示最近 10 条，并支持继续加载", async () => {
+    const user = userEvent.setup();
+    const archivedSessions = Array.from({ length: 15 }, (_, index) => ({
+      sessionId: `archived-${index + 1}`,
+      title: `归档会话 ${index + 1}`,
+      provider: "codex",
+      messageCount: index + 1,
+      isArchived: true,
+      updatedAt: `2026-03-${String(28 - index).padStart(2, "0")}T10:00:00.000Z`,
+      createdAt: `2026-03-${String(28 - index).padStart(2, "0")}T09:00:00.000Z`,
+      lastEventAt: `2026-03-${String(28 - index).padStart(2, "0")}T11:00:00.000Z`
+    }));
+
+    mockUseWorkbenchShell.mockReturnValue(createWorkbenchShell({
+      navigationGroups: [
+        {
+          workspace: {
+            id: "workspace-1",
+            name: "项目一",
+            path: "/repo/project-one"
+          },
+          sessions: [
+            {
+              sessionId: "session-1",
+              title: "会话 Alpha",
+              provider: "codex",
+              messageCount: 3,
+              isArchived: false
+            },
+            ...archivedSessions
+          ]
+        }
+      ]
+    }));
+
+    renderPage();
+
+    expect(screen.getAllByRole("button", { name: "取消归档" })).toHaveLength(10);
+    expect(screen.getByRole("button", { name: "查看更多归档会话" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "查看更多归档会话" }));
+
+    expect(screen.getAllByRole("button", { name: "取消归档" })).toHaveLength(15);
+    expect(screen.queryByRole("button", { name: "查看更多归档会话" })).not.toBeInTheDocument();
   });
 });
 

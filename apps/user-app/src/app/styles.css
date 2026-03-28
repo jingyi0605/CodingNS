@@ -458,7 +458,7 @@ a {
   overflow: hidden;
   overflow-x: hidden;
   padding:
-    calc(var(--mobile-shell-safe-top) + 4px)
+    var(--mobile-shell-safe-top)
     0
     0;
   background: var(--bg-primary);
@@ -619,13 +619,13 @@ a {
 .mobile-workbench-content > .workbench-page,
 .mobile-workbench-content > .conversation-page-shell,
 .mobile-workbench-content > .terminal-layout,
-.mobile-workbench-content > .settings-page,
-.mobile-workbench-content > .mobile-feature-page,
+.mobile-workbench-content > .settings-page.mobile-page-fixed-root,
+.mobile-workbench-content > .mobile-feature-page.mobile-page-fixed-root,
 .mobile-workbench-content .mobile-adaptive-pane-main > .workbench-page,
 .mobile-workbench-content .mobile-adaptive-pane-main > .conversation-page-shell,
 .mobile-workbench-content .mobile-adaptive-pane-main > .terminal-layout,
-.mobile-workbench-content .mobile-adaptive-pane-main > .settings-page,
-.mobile-workbench-content .mobile-adaptive-pane-main > .mobile-feature-page {
+.mobile-workbench-content .mobile-adaptive-pane-main > .settings-page.mobile-page-fixed-root,
+.mobile-workbench-content .mobile-adaptive-pane-main > .mobile-feature-page.mobile-page-fixed-root {
   flex: 1;
   min-width: 0;
   min-height: 0;
@@ -714,7 +714,7 @@ a {
   overflow: hidden;
   overflow-x: hidden;
   padding:
-    calc(var(--mobile-shell-safe-top) + 4px)
+    var(--mobile-shell-safe-top)
     0
     0;
   background: var(--bg-primary);
@@ -736,13 +736,13 @@ a {
 .ios-workbench-content > .workbench-page,
 .ios-workbench-content > .conversation-page-shell,
 .ios-workbench-content > .terminal-layout,
-.ios-workbench-content > .settings-page,
-.ios-workbench-content > .mobile-feature-page,
+.ios-workbench-content > .settings-page.mobile-page-fixed-root,
+.ios-workbench-content > .mobile-feature-page.mobile-page-fixed-root,
 .ios-workbench-content .mobile-adaptive-pane-main > .workbench-page,
 .ios-workbench-content .mobile-adaptive-pane-main > .conversation-page-shell,
 .ios-workbench-content .mobile-adaptive-pane-main > .terminal-layout,
-.ios-workbench-content .mobile-adaptive-pane-main > .settings-page,
-.ios-workbench-content .mobile-adaptive-pane-main > .mobile-feature-page {
+.ios-workbench-content .mobile-adaptive-pane-main > .settings-page.mobile-page-fixed-root,
+.ios-workbench-content .mobile-adaptive-pane-main > .mobile-feature-page.mobile-page-fixed-root {
   flex: 1;
   min-width: 0;
   min-height: 0;
@@ -830,7 +830,7 @@ a {
   overflow: hidden;
   overflow-x: hidden;
   padding:
-    calc(env(safe-area-inset-top, 0px) + 4px)
+    env(safe-area-inset-top, 0px)
     0
     0;
   background: var(--bg-primary);
@@ -847,13 +847,13 @@ a {
 .android-workbench-content > .workbench-page,
 .android-workbench-content > .conversation-page-shell,
 .android-workbench-content > .terminal-layout,
-.android-workbench-content > .settings-page,
-.android-workbench-content > .mobile-feature-page,
+.android-workbench-content > .settings-page.mobile-page-fixed-root,
+.android-workbench-content > .mobile-feature-page.mobile-page-fixed-root,
 .android-workbench-content .mobile-adaptive-pane-main > .workbench-page,
 .android-workbench-content .mobile-adaptive-pane-main > .conversation-page-shell,
 .android-workbench-content .mobile-adaptive-pane-main > .terminal-layout,
-.android-workbench-content .mobile-adaptive-pane-main > .settings-page,
-.android-workbench-content .mobile-adaptive-pane-main > .mobile-feature-page {
+.android-workbench-content .mobile-adaptive-pane-main > .settings-page.mobile-page-fixed-root,
+.android-workbench-content .mobile-adaptive-pane-main > .mobile-feature-page.mobile-page-fixed-root {
   flex: 1;
   min-width: 0;
   min-height: 0;
@@ -12592,7 +12592,7 @@ textarea:focus-visible {
   width: 100%;
   min-width: 0;
   max-width: 100%;
-  padding: 0.65rem 1rem 0.5rem;
+  padding: 0.16rem 1rem 0.32rem;
   box-sizing: border-box;
 }
 
@@ -13732,8 +13732,92 @@ textarea:focus-visible {
   padding-bottom: calc(1.25rem + env(safe-area-inset-bottom, 0px));
 }
 
+.mobile-workspace-detail-page.mobile-page-with-top-header {
+  gap: 0;
+  padding: 0;
+}
+
+.mobile-workspace-detail-page > .mobile-top-header-frame {
+  padding: 0.4rem 0.9rem 0.2rem;
+}
+
+.mobile-workspace-detail-body {
+  gap: 0.72rem;
+  padding: 0 0.9rem 0.9rem;
+}
+
+.mobile-workspace-detail-header-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.45rem;
+  width: 100%;
+}
+
+.mobile-workspace-detail-header-actions > button {
+  min-width: 0;
+  min-height: 2.85rem;
+  justify-content: center;
+  padding: 0.55rem 0.65rem;
+  border-radius: 1rem;
+  font-size: 0.94rem;
+}
+
+.mobile-workspace-detail-page .mobile-workspace-home-header {
+  gap: 0.38rem;
+}
+
+.mobile-workspace-detail-page .mobile-workspace-home-toolbar-top {
+  gap: 0.55rem;
+}
+
+.mobile-workspace-detail-page .mobile-workspace-home-switcher {
+  font-size: 1.1rem;
+  gap: 0.25rem;
+}
+
+.mobile-workspace-detail-page .mobile-workspace-home-path {
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
 .mobile-workspace-detail-page .mobile-feature-section-header > div {
   min-width: 0;
+}
+
+.mobile-workspace-detail-page .mobile-feature-panel,
+.mobile-workspace-detail-page .mobile-feature-empty,
+.mobile-workspace-detail-page .mobile-session-row.surface-card {
+  border-radius: 1rem;
+}
+
+.mobile-workspace-detail-page .mobile-feature-panel,
+.mobile-workspace-detail-page .mobile-feature-empty {
+  padding: 0.82rem 0.88rem;
+}
+
+.mobile-workspace-detail-page .mobile-feature-section {
+  gap: 0.55rem;
+}
+
+.mobile-workspace-detail-page .mobile-feature-stack {
+  gap: 0.5rem;
+}
+
+.mobile-workspace-detail-page .mobile-feature-section-header {
+  gap: 0.5rem;
+}
+
+.mobile-workspace-detail-page .mobile-feature-section-header h2,
+.mobile-workspace-detail-page .mobile-feature-panel h2 {
+  font-size: 1.02rem;
+  line-height: 1.15;
+}
+
+.mobile-workspace-detail-page .mobile-feature-counter,
+.mobile-workspace-detail-page .mobile-feature-badge {
+  min-width: 1.75rem;
+  padding: 0.18rem 0.52rem;
+  font-size: 0.78rem;
 }
 
 .mobile-workspace-detail-hero {
@@ -13804,30 +13888,67 @@ textarea:focus-visible {
 
 .mobile-workspace-detail-summary-panel,
 .mobile-workspace-composition-panel {
-  gap: 1rem;
+  gap: 0.72rem;
 }
 
 .mobile-workspace-detail-switch-button {
-  min-height: 2.2rem;
-  padding: 0.45rem 0.8rem;
+  min-height: 2rem;
+  padding: 0.35rem 0.68rem;
   border-radius: 999px;
   white-space: nowrap;
   flex-shrink: 0;
+  font-size: 0.82rem;
 }
 
 .mobile-workspace-detail-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
 }
 
 .mobile-detail-metric-wide {
   grid-column: 1 / -1;
 }
 
+.mobile-workspace-detail-page .mobile-detail-metric {
+  gap: 0.22rem;
+  padding: 0.62rem 0.68rem;
+  border-radius: 0.78rem;
+}
+
+.mobile-workspace-detail-page .mobile-detail-metric span {
+  font-size: 0.75rem;
+}
+
+.mobile-workspace-detail-page .mobile-detail-metric strong {
+  line-height: 1.28;
+}
+
+.mobile-workspace-detail-page .mobile-feature-inline-actions {
+  gap: 0.45rem;
+}
+
+.mobile-workspace-detail-page .mobile-feature-inline-actions > button {
+  min-height: 2.2rem;
+  padding: 0.42rem 0.72rem;
+  border-radius: 0.9rem;
+  font-size: 0.9rem;
+}
+
+.mobile-workspace-detail-summary-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.45rem;
+}
+
+.mobile-workspace-detail-summary-actions > button {
+  width: 100%;
+}
+
 .mobile-session-row {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  padding: 0.78rem 0.9rem;
+  gap: 0.55rem;
+  padding: 0.62rem 0.72rem;
   border-radius: 1rem;
 }
 
@@ -13836,7 +13957,7 @@ textarea:focus-visible {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 0.65rem;
+  gap: 0.5rem;
   padding: 0;
   border: 0;
   background: transparent;
@@ -13852,7 +13973,7 @@ textarea:focus-visible {
   min-width: 0;
   overflow: hidden;
   color: var(--text-primary);
-  font-size: 0.98rem;
+  font-size: 0.9rem;
   font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -13862,11 +13983,11 @@ textarea:focus-visible {
   flex: 0 0 auto;
   max-width: 7rem;
   overflow: hidden;
-  padding: 0.26rem 0.58rem;
+  padding: 0.2rem 0.48rem;
   border-radius: 999px;
   background: color-mix(in srgb, var(--accent) 10%, var(--bg-tertiary));
   color: var(--text-secondary);
-  font-size: 0.74rem;
+  font-size: 0.68rem;
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -13875,21 +13996,21 @@ textarea:focus-visible {
 .mobile-session-row-actions {
   display: inline-flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: 0.28rem;
   flex-shrink: 0;
 }
 
 .mobile-session-row-count {
-  min-width: 1.85rem;
-  padding-inline: 0.5rem;
+  min-width: 1.55rem;
+  padding-inline: 0.38rem;
 }
 
 .mobile-session-row-action {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 2rem;
-  height: 2rem;
+  width: 1.78rem;
+  height: 1.78rem;
   padding: 0;
   border: 1px solid var(--border-primary);
   border-radius: 999px;
@@ -13911,42 +14032,90 @@ textarea:focus-visible {
 }
 
 .mobile-session-row-action svg {
-  width: 0.95rem;
-  height: 0.95rem;
+  width: 0.82rem;
+  height: 0.82rem;
 }
 
 .mobile-session-row-restore {
-  min-height: 2rem;
-  padding: 0.35rem 0.75rem;
+  min-height: 1.85rem;
+  padding: 0.28rem 0.62rem;
   border-radius: 999px;
   white-space: nowrap;
+  font-size: 0.82rem;
+}
+
+.mobile-workspace-detail-expand-button {
+  align-self: center;
+  min-height: 1.95rem;
+  padding-inline: 0.88rem;
+  border-radius: 999px;
+  font-size: 0.82rem;
 }
 
 .mobile-workspace-composition-panel .workbench-manage-type-chart {
   flex-direction: column;
   align-items: stretch;
-  gap: 1rem;
+  gap: 0.72rem;
+}
+
+.mobile-workspace-composition-panel .workbench-manage-type-list {
+  flex: 0 0 auto;
+  min-width: 0;
+  width: 100%;
+  gap: 0.42rem;
 }
 
 .mobile-workspace-composition-panel .workbench-manage-type-chart-ring {
-  width: 144px;
-  height: 144px;
-  flex: 0 0 144px;
+  width: 126px;
+  height: 126px;
+  flex: 0 0 126px;
   margin: 0 auto;
   background:
     radial-gradient(circle at center, var(--bg-primary) 56%, transparent 57%),
     var(--workbench-manage-chart-background);
   box-shadow:
     inset 0 0 0 1px color-mix(in srgb, var(--border-primary) 78%, transparent),
-    0 12px 28px rgba(15, 23, 42, 0.08);
+    0 8px 18px rgba(15, 23, 42, 0.06);
+}
+
+.mobile-workspace-composition-panel .workbench-manage-type-chart-total {
+  font-size: 1.95rem;
+}
+
+.mobile-workspace-composition-panel .workbench-manage-type-chart-caption {
+  font-size: 0.72rem;
+}
+
+.mobile-workspace-composition-panel .workbench-manage-type-item {
+  gap: 0.5rem;
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.mobile-workspace-composition-panel .workbench-manage-type-meta {
+  gap: 0.42rem;
+}
+
+.mobile-workspace-composition-panel .workbench-manage-type-swatch {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 9px;
 }
 
 .mobile-workspace-composition-note {
-  font-size: 0.83rem;
+  font-size: 0.76rem;
   color: var(--text-tertiary);
 }
 
 @media (max-width: 420px) {
+  .mobile-workspace-detail-header-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .mobile-workspace-detail-header-actions > button:first-child {
+    grid-column: 1 / -1;
+  }
+
   .mobile-workspace-detail-hero-actions {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -13963,12 +14132,16 @@ textarea:focus-visible {
     grid-column: auto;
   }
 
+  .mobile-workspace-detail-summary-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .mobile-session-row-provider {
     display: none;
   }
 
   .mobile-session-row {
-    padding: 0.72rem 0.8rem;
+    padding: 0.58rem 0.68rem;
   }
 }
 
@@ -14846,10 +15019,13 @@ textarea:focus-visible {
 .ios-workbench-shell[data-mobile-presentation="conversation-focus"],
 .android-workbench-shell[data-mobile-presentation="conversation-focus"] {
   --mobile-conversation-tabbar-progress: 0;
+  --mobile-conversation-tabbar-offset: calc(
+    var(--mobile-conversation-tabbar-progress) * var(--mobile-workbench-tabbar-height, 0px)
+  );
   position: relative;
   gap: 0;
   padding:
-    calc(6px + env(safe-area-inset-top, 0px))
+    env(safe-area-inset-top, 0px)
     0
     0;
   background:
@@ -14862,10 +15038,6 @@ textarea:focus-visible {
 .android-workbench-shell[data-mobile-presentation="conversation-focus"] .android-workbench-content {
   position: relative;
   padding: 0;
-  padding-bottom: calc(
-    var(--mobile-conversation-tabbar-progress) * var(--mobile-workbench-tabbar-height, 0px)
-  );
-  transition: padding-bottom 280ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .mobile-workbench-shell[data-mobile-presentation="conversation-focus"][data-conversation-tabbar-state="dragging"] .mobile-workbench-content,
@@ -15055,6 +15227,9 @@ textarea:focus-visible {
 .ios-workbench-shell[data-mobile-presentation="conversation-focus"] .composer-panel,
 .android-workbench-shell[data-mobile-presentation="conversation-focus"] .composer-panel {
   z-index: 16;
+  margin-bottom: var(--mobile-conversation-tabbar-offset);
+  transition: margin-bottom 280ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: margin-bottom;
 }
 
 .mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .composer-input-container,
@@ -15064,6 +15239,12 @@ textarea:focus-visible {
   width: auto;
   max-width: calc(100% - 10px);
   margin: 5px;
+}
+
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"][data-conversation-tabbar-state="dragging"] .composer-panel,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"][data-conversation-tabbar-state="dragging"] .composer-panel,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"][data-conversation-tabbar-state="dragging"] .composer-panel {
+  transition: none;
 }
 
 .mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .mobile-workbench-tabbar,
