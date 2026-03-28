@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 const DEFAULT_CACHE_TTL_MS = 5_000;
 const DEFAULT_PROBE_TIMEOUT_MS = 800;
 
@@ -37,6 +37,9 @@ export class OpenCodeBaseUrlResolver {
   private cachedBaseUrl: string | null = null;
   private cachedAt = 0;
   private inflight: Promise<string> | null = null;
+  private managedServerBaseUrl: string | null = null;
+  private managedServerProcess: ChildProcessWithoutNullStreams | null = null;
+  private managedServerInflight: Promise<string> | null = null;
 
   constructor(options: OpenCodeBaseUrlResolverOptions = {}) {
     this.configuredBaseUrl = normalizeBaseUrl(options.configuredBaseUrl ?? null);
@@ -76,6 +79,7 @@ export class OpenCodeBaseUrlResolver {
     const serveProcesses = parseServeProcesses(this.inspectProcessList(), this.commandPath);
     const candidates = dedupeBaseUrls([
       this.cachedBaseUrl,
+      this.managedServerBaseUrl,
       ...serveProcesses.flatMap((record) => {
         return this.inspectListeningSockets(record.pid).map((socket) => {
           return `http://${formatHostname(normalizeHostname(socket.hostname))}:${socket.port}`;
@@ -91,15 +95,161 @@ export class OpenCodeBaseUrlResolver {
       }
     }
 
+    if (process.platform === "win32") {
+      const managedCandidate = await this.ensureManagedServerBaseUrl();
+
+      if (await this.probeBaseUrl(managedCandidate)) {
+        this.managedServerBaseUrl = managedCandidate;
+        this.cachedBaseUrl = managedCandidate;
+        this.cachedAt = this.now();
+        return managedCandidate;
+      }
+    }
+
     this.cachedAt = this.now();
     throw new Error("SERVER_UNAVAILABLE");
+  }
+
+  private async ensureManagedServerBaseUrl(): Promise<string> {
+    if (this.managedServerProcess && !this.managedServerProcess.killed && this.managedServerBaseUrl) {
+      return this.managedServerBaseUrl;
+    }
+
+    if (this.managedServerInflight) {
+      return this.managedServerInflight;
+    }
+
+    const task = this.startManagedServer();
+    const wrappedTask = task.finally(() => {
+      if (this.managedServerInflight === wrappedTask) {
+        this.managedServerInflight = null;
+      }
+    });
+    this.managedServerInflight = wrappedTask;
+    return wrappedTask;
+  }
+
+  private async startManagedServer(): Promise<string> {
+    const commandPath = this.commandPath?.trim();
+
+    if (!commandPath) {
+      throw new Error("SERVER_UNAVAILABLE");
+    }
+
+    const env = {
+      ...process.env
+    };
+    delete env.OPENCODE_SERVER_PASSWORD;
+
+    const child = spawn(
+      commandPath,
+      ["serve", "--hostname", "127.0.0.1", "--port", "0", "--print-logs"],
+      {
+        env,
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true
+      }
+    );
+
+    this.managedServerProcess = child;
+
+    child.once("exit", () => {
+      if (this.managedServerProcess === child) {
+        this.managedServerProcess = null;
+        this.managedServerBaseUrl = null;
+      }
+    });
+
+    return new Promise<string>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        cleanup();
+        child.kill();
+        reject(new Error("SERVER_UNAVAILABLE"));
+      }, 5_000);
+      let output = "";
+
+      const handleChunk = (chunk: Buffer | string) => {
+        output += chunk.toString();
+
+        for (const line of output.split(/\r?\n/)) {
+          const matched = line.match(/opencode server listening on\s+(https?:\/\/\S+)/i);
+
+          if (!matched) {
+            continue;
+          }
+
+          const baseUrl = normalizeBaseUrl(matched[1]) ?? matched[1];
+          this.managedServerBaseUrl = baseUrl;
+          cleanup();
+          resolve(baseUrl);
+          return;
+        }
+      };
+
+      const handleExit = () => {
+        cleanup();
+        reject(new Error(output.trim() || "SERVER_UNAVAILABLE"));
+      };
+
+      const handleError = () => {
+        cleanup();
+        reject(new Error("SERVER_UNAVAILABLE"));
+      };
+
+      const cleanup = () => {
+        clearTimeout(timeout);
+        child.stdout.off("data", handleChunk);
+        child.stderr.off("data", handleChunk);
+        child.off("exit", handleExit);
+        child.off("error", handleError);
+      };
+
+      child.stdout.on("data", handleChunk);
+      child.stderr.on("data", handleChunk);
+      child.once("exit", handleExit);
+      child.once("error", handleError);
+    });
   }
 }
 
 function readProcessList(): string {
+  if (process.platform === "win32") {
+    return readWindowsProcessList();
+  }
+
+  return readUnixProcessList();
+}
+
+function readUnixProcessList(): string {
   const result = spawnSync("ps", ["-ax", "-o", "pid=,command="], {
     encoding: "utf8"
   });
+
+  if (result.status !== 0) {
+    return "";
+  }
+
+  return result.stdout ?? "";
+}
+
+function readWindowsProcessList(): string {
+  const result = spawnSync(
+    "powershell",
+    [
+      "-NoProfile",
+      "-Command",
+      [
+        "$ErrorActionPreference = 'SilentlyContinue'",
+        "Get-CimInstance Win32_Process",
+        "| Where-Object { $_.CommandLine }",
+        "| ForEach-Object { '{0} {1}' -f $_.ProcessId, $_.CommandLine }"
+      ].join(" ")
+    ],
+    {
+      encoding: "utf8",
+      windowsHide: true
+    }
+  );
 
   if (result.status !== 0) {
     return "";
@@ -167,6 +317,14 @@ function formatHostname(value: string): string {
 }
 
 function readListeningSockets(pid: number): OpenCodeListeningSocket[] {
+  if (process.platform === "win32") {
+    return readWindowsListeningSockets(pid);
+  }
+
+  return readUnixListeningSockets(pid);
+}
+
+function readUnixListeningSockets(pid: number): OpenCodeListeningSocket[] {
   const result = spawnSync(
     "lsof",
     ["-Pan", "-n", "-a", "-p", String(pid), "-iTCP", "-sTCP:LISTEN"],
@@ -190,6 +348,52 @@ function readListeningSockets(pid: number): OpenCodeListeningSocket[] {
 
     const endpoint = matched[1]?.trim() ?? "";
     const parsed = parseSocketEndpoint(endpoint);
+
+    if (!parsed) {
+      continue;
+    }
+
+    records.push(parsed);
+  }
+
+  return dedupeListeningSockets(records).sort(compareListeningSockets);
+}
+
+function readWindowsListeningSockets(pid: number): OpenCodeListeningSocket[] {
+  const result = spawnSync("netstat", ["-ano", "-p", "tcp"], {
+    encoding: "utf8",
+    windowsHide: true
+  });
+
+  if (result.status !== 0) {
+    return [];
+  }
+
+  const records: OpenCodeListeningSocket[] = [];
+
+  for (const line of (result.stdout ?? "").split(/\r?\n/)) {
+    const trimmed = line.trim();
+
+    if (!trimmed) {
+      continue;
+    }
+
+    const columns = trimmed.split(/\s+/);
+
+    if (columns.length < 5) {
+      continue;
+    }
+
+    const protocol = columns[0]?.toUpperCase();
+    const localAddress = columns[1] ?? "";
+    const state = columns[3]?.toUpperCase();
+    const owningPid = Number(columns[4]);
+
+    if (protocol !== "TCP" || state !== "LISTENING" || owningPid !== pid) {
+      continue;
+    }
+
+    const parsed = parseSocketEndpoint(localAddress);
 
     if (!parsed) {
       continue;

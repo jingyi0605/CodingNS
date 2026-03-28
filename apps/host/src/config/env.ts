@@ -153,14 +153,32 @@ function resolveOpenCodeCliPath(configuredPath: string | undefined, homeDir: str
     return normalizedConfiguredPath;
   }
 
-  const candidates = [
-    path.resolve(process.cwd(), "node_modules", ".bin", "opencode"),
-    path.join(homeDir, ".opencode", "bin", "opencode"),
-    path.join(homeDir, ".local", "bin", "opencode")
-  ];
+  const windowsGlobalNpmRoot = normalizeOptionalText(process.env.APPDATA)
+    ? path.join(process.env.APPDATA as string, "npm")
+    : null;
+  const windowsOpenCodeInstallRoot = normalizeOptionalText(process.env.LOCALAPPDATA)
+    ? path.join(process.env.LOCALAPPDATA as string, "OpenCode")
+    : null;
+  const candidates = process.platform === "win32"
+    ? [
+      windowsOpenCodeInstallRoot ? path.join(windowsOpenCodeInstallRoot, "opencode-cli.exe") : null,
+      path.resolve(process.cwd(), "node_modules", ".bin", "opencode.cmd"),
+      path.resolve(process.cwd(), "node_modules", ".bin", "opencode.exe"),
+      path.resolve(process.cwd(), "node_modules", ".bin", "opencode"),
+      path.join(homeDir, ".opencode", "bin", "opencode.exe"),
+      path.join(homeDir, ".opencode", "bin", "opencode.cmd"),
+      path.join(homeDir, ".opencode", "bin", "opencode"),
+      windowsGlobalNpmRoot ? path.join(windowsGlobalNpmRoot, "opencode.cmd") : null,
+      windowsGlobalNpmRoot ? path.join(windowsGlobalNpmRoot, "opencode.exe") : null
+    ]
+    : [
+      path.resolve(process.cwd(), "node_modules", ".bin", "opencode"),
+      path.join(homeDir, ".opencode", "bin", "opencode"),
+      path.join(homeDir, ".local", "bin", "opencode")
+    ];
 
   for (const candidate of candidates) {
-    if (existsSync(candidate)) {
+    if (candidate && existsSync(candidate)) {
       return candidate;
     }
   }

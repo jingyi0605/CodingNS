@@ -36,7 +36,7 @@ describe("OpenCodeBaseUrlResolver", () => {
     expect(inspectListeningSockets).toHaveBeenCalledTimes(2);
   });
 
-  it("refresh 会在旧地址失效后切到新的 serve 端口", async () => {
+  it("refresh 会在旧地址失效后切换到新的 serve 端口", async () => {
     let processList = "100 /opt/homebrew/bin/.opencode serve --print-logs";
     let healthyUrl = "http://127.0.0.1:4098";
     const resolver = new OpenCodeBaseUrlResolver({
@@ -71,7 +71,7 @@ describe("OpenCodeBaseUrlResolver", () => {
     await expect(resolver.resolve()).resolves.toBe("http://127.0.0.1:5001");
   });
 
-  it("找不到健康的 opencode serve 进程时不会回落默认端口", async () => {
+  it("找不到健康的 opencode serve 进程时不会回落到默认端口", async () => {
     const resolver = new OpenCodeBaseUrlResolver({
       inspectProcessList: () =>
         "79133 node /opt/homebrew/bin/opencode serve --print-logs",
@@ -80,5 +80,190 @@ describe("OpenCodeBaseUrlResolver", () => {
     });
 
     await expect(resolver.resolve()).rejects.toThrow("SERVER_UNAVAILABLE");
+  });
+
+  it("在 Windows 下会通过 powershell 和 netstat 自动发现 opencode serve 地址", async () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", {
+      configurable: true,
+      value: "win32"
+    });
+
+    const spawnSync = vi.fn((command: string) => {
+      if (command === "powershell") {
+        return {
+          status: 0,
+          stdout:
+            "8124 \"C:\\Program Files\\nodejs\\node.exe\" \"C:\\Users\\jackson\\AppData\\Roaming\\npm\\node_modules\\opencode-ai\\bin\\opencode.js\" serve --print-logs"
+        };
+      }
+
+      if (command === "netstat") {
+        return {
+          status: 0,
+          stdout: "  TCP    127.0.0.1:41827    0.0.0.0:0    LISTENING    8124"
+        };
+      }
+
+      return {
+        status: 1,
+        stdout: ""
+      };
+    });
+
+    vi.resetModules();
+    vi.doMock("node:child_process", () => ({
+      spawnSync
+    }));
+
+    try {
+      const { OpenCodeBaseUrlResolver: WindowsResolver } = await import(
+        "../../src/config/opencode-base-url-resolver.js"
+      );
+      const probeBaseUrl = vi.fn(async (baseUrl: string) => {
+        return baseUrl === "http://127.0.0.1:41827";
+      });
+      const resolver = new WindowsResolver({
+        probeBaseUrl
+      });
+
+      await expect(resolver.resolve()).resolves.toBe("http://127.0.0.1:41827");
+      expect(spawnSync).toHaveBeenCalledWith(
+        "powershell",
+        expect.any(Array),
+        expect.objectContaining({
+          encoding: "utf8",
+          windowsHide: true
+        })
+      );
+      expect(spawnSync).toHaveBeenCalledWith(
+        "netstat",
+        ["-ano", "-p", "tcp"],
+        expect.objectContaining({
+          encoding: "utf8",
+          windowsHide: true
+        })
+      );
+    } finally {
+      vi.doUnmock("node:child_process");
+      vi.resetModules();
+      Object.defineProperty(process, "platform", {
+        configurable: true,
+        value: originalPlatform
+      });
+    }
+  });
+
+  it("在 Windows 下现有 OpenCode server 不可访问时会拉起托管 serve 兜底", async () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", {
+      configurable: true,
+      value: "win32"
+    });
+
+    vi.resetModules();
+
+    const stdoutHandlers: Array<(chunk: string) => void> = [];
+    const stderrHandlers: Array<(chunk: string) => void> = [];
+    const exitHandlers: Array<() => void> = [];
+    const errorHandlers: Array<() => void> = [];
+    const spawnSync = vi.fn((command: string) => {
+      if (command === "powershell") {
+        return {
+          status: 0,
+          stdout:
+            "8124 \"C:\\Users\\jackson\\AppData\\Local\\OpenCode\\opencode-cli.exe\" --print-logs serve --hostname 127.0.0.1 --port 57546"
+        };
+      }
+
+      if (command === "netstat") {
+        return {
+          status: 0,
+          stdout: "  TCP    127.0.0.1:57546    0.0.0.0:0    LISTENING    8124"
+        };
+      }
+
+      return {
+        status: 1,
+        stdout: ""
+      };
+    });
+    const spawn = vi.fn(() => {
+      const child = {
+        killed: false,
+        stdout: {
+          on: (event: string, handler: (chunk: string) => void) => {
+            if (event === "data") {
+              stdoutHandlers.push(handler);
+            }
+          },
+          off: vi.fn()
+        },
+        stderr: {
+          on: (event: string, handler: (chunk: string) => void) => {
+            if (event === "data") {
+              stderrHandlers.push(handler);
+            }
+          },
+          off: vi.fn()
+        },
+        once: (event: string, handler: () => void) => {
+          if (event === "exit") {
+            exitHandlers.push(handler);
+          }
+
+          if (event === "error") {
+            errorHandlers.push(handler);
+          }
+        },
+        off: vi.fn(),
+        kill: vi.fn(() => {
+          child.killed = true;
+        })
+      };
+
+      queueMicrotask(() => {
+        for (const handler of stdoutHandlers) {
+          handler("opencode server listening on http://127.0.0.1:4096\n");
+        }
+      });
+
+      return child;
+    });
+
+    vi.doMock("node:child_process", () => ({
+      spawn,
+      spawnSync
+    }));
+
+    try {
+      const { OpenCodeBaseUrlResolver: WindowsResolver } = await import(
+        "../../src/config/opencode-base-url-resolver.js"
+      );
+      const probeBaseUrl = vi.fn(async (baseUrl: string) => {
+        return baseUrl === "http://127.0.0.1:4096";
+      });
+      const resolver = new WindowsResolver({
+        commandPath: "C:\\Users\\jackson\\AppData\\Local\\OpenCode\\opencode-cli.exe",
+        probeBaseUrl
+      });
+
+      await expect(resolver.resolve()).resolves.toBe("http://127.0.0.1:4096");
+      expect(spawn).toHaveBeenCalledWith(
+        "C:\\Users\\jackson\\AppData\\Local\\OpenCode\\opencode-cli.exe",
+        ["serve", "--hostname", "127.0.0.1", "--port", "0", "--print-logs"],
+        expect.objectContaining({
+          stdio: ["ignore", "pipe", "pipe"],
+          windowsHide: true
+        })
+      );
+    } finally {
+      vi.doUnmock("node:child_process");
+      vi.resetModules();
+      Object.defineProperty(process, "platform", {
+        configurable: true,
+        value: originalPlatform
+      });
+    }
   });
 });
