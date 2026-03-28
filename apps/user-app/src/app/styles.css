@@ -237,6 +237,26 @@ body {
   overflow-x: hidden;
 }
 
+/* iOS 原生壳自己接管视口，避免根节点参与网页式滚动和文字缩放补偿。 */
+html[data-runtime-platform="ios"],
+body[data-runtime-platform="ios"] {
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+  -webkit-text-size-adjust: 100%;
+}
+
+body[data-runtime-platform="ios"] #root {
+  height: 100%;
+}
+
+html[data-runtime-platform="ios"] input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]):not([type="submit"]):not([type="button"]):not([type="reset"]),
+html[data-runtime-platform="ios"] textarea,
+html[data-runtime-platform="ios"] select {
+  font-size: 16px;
+  line-height: 1.4;
+}
+
 button,
 input,
 textarea {
@@ -679,15 +699,17 @@ a {
 
 .ios-workbench-shell {
   --mobile-workbench-tabbar-height: calc(58px + env(safe-area-inset-bottom, 0px));
+  position: fixed;
+  inset: 0;
   display: flex;
   flex-direction: column;
   width: 100%;
   min-width: 0;
   max-width: 100%;
-  height: 100vh;
-  height: var(--mobile-shell-viewport-height, 100dvh);
-  min-height: 0;
+  height: auto;
+  min-height: var(--mobile-shell-viewport-height, 100dvh);
   gap: 0;
+  overscroll-behavior: none;
   overflow: hidden;
   overflow-x: hidden;
   padding:
@@ -695,6 +717,7 @@ a {
     0
     0;
   background: var(--bg-primary);
+  isolation: isolate;
 }
 
 .ios-workbench-content {
@@ -702,6 +725,10 @@ a {
   flex: 1;
   min-width: 0;
   min-height: 0;
+  position: relative;
+  box-sizing: border-box;
+  padding-bottom: var(--mobile-workbench-tabbar-height);
+  overscroll-behavior: contain;
   overflow: hidden;
 }
 
@@ -725,16 +752,24 @@ a {
 }
 
 .ios-workbench-tabbar {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 40;
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 2px;
-  padding: 8px 10px calc(10px + env(safe-area-inset-bottom, 0px));
-  min-height: var(--mobile-workbench-tabbar-height);
+  box-sizing: border-box;
+  height: var(--mobile-workbench-tabbar-height);
+  padding: 8px 10px env(safe-area-inset-bottom, 0px);
   border-top: 1px solid color-mix(in srgb, var(--border-primary) 82%, transparent);
   background: color-mix(in srgb, var(--bg-primary) 96%, transparent);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
+  box-shadow: 0 -10px 24px rgba(15, 23, 42, 0.08);
   flex-shrink: 0;
+  align-items: stretch;
 }
 
 .ios-workbench-tabbar-item {
@@ -11659,9 +11694,12 @@ textarea:focus-visible {
 }
 
 .mobile-workbench-shell[data-active-entry="settings"] .mobile-workbench-content,
-.ios-workbench-shell[data-active-entry="settings"] .ios-workbench-content,
 .android-workbench-shell[data-active-entry="settings"] .android-workbench-content {
   padding: 0;
+}
+
+.ios-workbench-shell[data-active-entry="settings"] .ios-workbench-content {
+  padding: 0 0 var(--mobile-workbench-tabbar-height);
 }
 
 .mobile-workbench-shell[data-active-entry="settings"] .mobile-workbench-content > .settings-page,
@@ -14615,30 +14653,30 @@ textarea:focus-visible {
 
 [data-theme="sky-blue"] .workbench-shell::before {
   background:
-    radial-gradient(circle at 16% 18%, rgba(0, 240, 255, 0.34) 0, transparent 16%),
-    radial-gradient(circle at 84% 16%, rgba(255, 60, 247, 0.26) 0, transparent 18%),
-    radial-gradient(circle at 50% 100%, rgba(255, 191, 60, 0.16) 0, transparent 22%);
-  opacity: 0.94;
-  filter: blur(56px);
-  animation: cyberOrbFloat 12s ease-in-out infinite alternate;
+    radial-gradient(circle at 16% 18%, rgba(0, 240, 255, 0.28) 0, transparent 18%),
+    radial-gradient(circle at 84% 16%, rgba(255, 60, 247, 0.18) 0, transparent 20%),
+    radial-gradient(circle at 50% 100%, rgba(255, 191, 60, 0.12) 0, transparent 24%);
+  opacity: 0.82;
+  filter: blur(32px);
+  transform: translate3d(0, 0, 0);
 }
 
 [data-theme="sky-blue"] .workbench-shell::after {
   background:
-    linear-gradient(115deg, transparent 18%, rgba(0, 240, 255, 0.08) 34%, transparent 46%),
-    linear-gradient(295deg, transparent 22%, rgba(255, 60, 247, 0.08) 44%, transparent 56%);
-  opacity: 1;
+    linear-gradient(115deg, transparent 20%, rgba(0, 240, 255, 0.05) 36%, transparent 48%),
+    linear-gradient(295deg, transparent 24%, rgba(255, 60, 247, 0.05) 46%, transparent 58%);
+  opacity: 0.62;
   filter: blur(0);
-  mix-blend-mode: screen;
-  animation: cyberSweepBeam 7.2s linear infinite;
+  mix-blend-mode: normal;
 }
 
 [data-theme="sky-blue"] .workbench-nav,
 [data-theme="sky-blue"] .workbench-auxiliary,
 [data-theme="sky-blue"] .workbench-main-shell {
   isolation: isolate;
-  backdrop-filter: blur(26px) saturate(188%);
-  -webkit-backdrop-filter: blur(26px) saturate(188%);
+  /* 保留玻璃质感，但把整块区域的重模糊降下来，避免赛博主题常驻高占用。 */
+  backdrop-filter: blur(10px) saturate(124%);
+  -webkit-backdrop-filter: blur(10px) saturate(124%);
 }
 
 [data-theme="sky-blue"] .workbench-nav::before,
@@ -14654,9 +14692,8 @@ textarea:focus-visible {
     linear-gradient(180deg, var(--cyber-panel-highlight), transparent 24%),
     repeating-linear-gradient(180deg, transparent 0 18px, var(--cyber-grid-line) 18px 19px),
     repeating-linear-gradient(90deg, transparent 0 28px, var(--cyber-grid-line-strong) 28px 29px);
-  opacity: 0.96;
-  mix-blend-mode: screen;
-  animation: cyberGridDrift 20s linear infinite;
+  opacity: 0.58;
+  mix-blend-mode: normal;
 }
 
 [data-theme="sky-blue"] .workbench-nav::after,
@@ -14669,13 +14706,12 @@ textarea:focus-visible {
   pointer-events: none;
   border-radius: inherit;
   background:
-    radial-gradient(circle at 18% 22%, rgba(0, 240, 255, 0.28) 0 1.4px, transparent 2.2px),
-    radial-gradient(circle at 74% 36%, rgba(255, 60, 247, 0.24) 0 1.2px, transparent 2px),
-    radial-gradient(circle at 56% 72%, rgba(255, 191, 60, 0.22) 0 1.1px, transparent 1.9px),
-    radial-gradient(circle at 84% 18%, rgba(0, 240, 255, 0.22) 0 1px, transparent 1.8px);
-  opacity: 1;
-  mix-blend-mode: screen;
-  animation: cyberParticleDrift 14s ease-in-out infinite alternate;
+    radial-gradient(circle at 18% 22%, rgba(0, 240, 255, 0.18) 0 1.2px, transparent 2px),
+    radial-gradient(circle at 74% 36%, rgba(255, 60, 247, 0.14) 0 1px, transparent 1.8px),
+    radial-gradient(circle at 56% 72%, rgba(255, 191, 60, 0.12) 0 0.9px, transparent 1.7px),
+    radial-gradient(circle at 84% 18%, rgba(0, 240, 255, 0.14) 0 0.8px, transparent 1.6px);
+  opacity: 0.52;
+  mix-blend-mode: normal;
 }
 
 [data-theme="sky-blue"] .workbench-nav > *,
@@ -14764,14 +14800,13 @@ textarea:focus-visible {
 
 [data-theme="sky-blue"] .settings-page::before {
   content: "";
-  position: fixed;
+  position: absolute;
   inset: 0;
   pointer-events: none;
   background:
-    linear-gradient(105deg, transparent 0 26%, rgba(0, 240, 255, 0.08) 36%, transparent 46%),
-    linear-gradient(285deg, transparent 0 38%, rgba(255, 60, 247, 0.08) 50%, transparent 62%);
-  mix-blend-mode: screen;
-  animation: cyberSweepBeam 9s linear infinite;
+    linear-gradient(105deg, transparent 0 30%, rgba(0, 240, 255, 0.05) 40%, transparent 52%),
+    linear-gradient(285deg, transparent 0 42%, rgba(255, 60, 247, 0.05) 54%, transparent 66%);
+  opacity: 0.7;
 }
 
 [data-theme="sky-blue"] .settings-title {
@@ -14817,6 +14852,124 @@ textarea:focus-visible {
     0 0 48px rgba(255, 60, 247, 0.08);
 }
 
+[data-theme="sky-blue"] .workbench-toolbar-button,
+[data-theme="sky-blue"] .workbench-nav-segment-button,
+[data-theme="sky-blue"] .workbench-session-card,
+[data-theme="sky-blue"] .settings-card,
+[data-theme="sky-blue"] .settings-release-notes,
+[data-theme="sky-blue"] .theme-card,
+[data-theme="sky-blue"] .conversation-header,
+[data-theme="sky-blue"] .composer-input-wrapper {
+  position: relative;
+  overflow: hidden;
+}
+
+[data-theme="sky-blue"] .workbench-toolbar-button > *,
+[data-theme="sky-blue"] .workbench-nav-segment-button > *,
+[data-theme="sky-blue"] .workbench-session-card > *,
+[data-theme="sky-blue"] .settings-card > *,
+[data-theme="sky-blue"] .settings-release-notes > *,
+[data-theme="sky-blue"] .theme-card > *,
+[data-theme="sky-blue"] .conversation-header > *,
+[data-theme="sky-blue"] .composer-input-wrapper > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* 用静态霓虹边替代整屏动画，让“亮点”集中在用户能感知的局部区域。 */
+[data-theme="sky-blue"] .workbench-nav-segment-button::before,
+[data-theme="sky-blue"] .workbench-session-card::before,
+[data-theme="sky-blue"] .settings-card::before,
+[data-theme="sky-blue"] .settings-release-notes::before,
+[data-theme="sky-blue"] .theme-card::before,
+[data-theme="sky-blue"] .conversation-header::before,
+[data-theme="sky-blue"] .composer-input-wrapper::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 14px;
+  right: 14px;
+  height: 1px;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, rgba(0, 240, 255, 0.78), rgba(255, 60, 247, 0.58), transparent);
+  opacity: 0.72;
+}
+
+[data-theme="sky-blue"] .workbench-toolbar-button::after,
+[data-theme="sky-blue"] .workbench-nav-segment-button::after,
+[data-theme="sky-blue"] .workbench-session-card::after,
+[data-theme="sky-blue"] .settings-card::after,
+[data-theme="sky-blue"] .settings-release-notes::after,
+[data-theme="sky-blue"] .theme-card::after,
+[data-theme="sky-blue"] .conversation-header::after,
+[data-theme="sky-blue"] .composer-input-wrapper::after {
+  content: "";
+  position: absolute;
+  top: -28px;
+  right: -24px;
+  width: 88px;
+  height: 88px;
+  pointer-events: none;
+  border-radius: 999px;
+  background:
+    radial-gradient(circle, rgba(0, 240, 255, 0.3) 0, rgba(0, 240, 255, 0.12) 28%, transparent 68%);
+  opacity: 0.18;
+  transform: scale(0.92);
+  transition:
+    opacity 180ms ease,
+    transform 220ms ease;
+}
+
+[data-theme="sky-blue"] .workbench-toolbar-button::after {
+  top: -14px;
+  right: -14px;
+  width: 42px;
+  height: 42px;
+  opacity: 0.24;
+}
+
+[data-theme="sky-blue"] .workbench-toolbar-button:hover::after,
+[data-theme="sky-blue"] .workbench-toolbar-button[aria-pressed="true"]::after,
+[data-theme="sky-blue"] .workbench-nav-segment-button:hover::after,
+[data-theme="sky-blue"] .workbench-nav-segment-button.active::after,
+[data-theme="sky-blue"] .workbench-nav-segment-button[data-open="true"]::after,
+[data-theme="sky-blue"] .workbench-session-card:hover::after,
+[data-theme="sky-blue"] .workbench-session-card[data-active="true"]::after,
+[data-theme="sky-blue"] .settings-card:hover::after,
+[data-theme="sky-blue"] .settings-release-notes:hover::after,
+[data-theme="sky-blue"] .theme-card:hover::after,
+[data-theme="sky-blue"] .theme-card.active::after,
+[data-theme="sky-blue"] .conversation-header:hover::after,
+[data-theme="sky-blue"] .composer-input-wrapper:hover::after,
+[data-theme="sky-blue"] .composer-input-wrapper:focus-within::after {
+  opacity: 0.44;
+  transform: scale(1);
+}
+
+[data-theme="sky-blue"] .workbench-nav-segment-button.active,
+[data-theme="sky-blue"] .workbench-nav-segment-button[data-open="true"],
+[data-theme="sky-blue"] .theme-card.active,
+[data-theme="sky-blue"] .workbench-session-card[data-active="true"] {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    inset 0 0 0 1px rgba(0, 240, 255, 0.12),
+    0 0 0 1px rgba(255, 60, 247, 0.08),
+    0 0 26px rgba(0, 240, 255, 0.14),
+    0 0 44px rgba(255, 60, 247, 0.08);
+}
+
+[data-theme="sky-blue"] .conversation-header,
+[data-theme="sky-blue"] .composer-input-wrapper,
+[data-theme="sky-blue"] .settings-card,
+[data-theme="sky-blue"] .settings-release-notes,
+[data-theme="sky-blue"] .theme-card {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    inset 0 0 0 1px rgba(0, 240, 255, 0.06),
+    0 16px 34px rgba(2, 6, 22, 0.42),
+    0 0 22px rgba(0, 240, 255, 0.05);
+}
+
 [data-theme="sky-blue"] .theme-label,
 [data-theme="sky-blue"] .settings-row-title,
 [data-theme="sky-blue"] .workbench-section-heading-main,
@@ -14824,40 +14977,4 @@ textarea:focus-visible {
   text-shadow:
     0 0 14px rgba(0, 240, 255, 0.12),
     0 0 28px rgba(255, 60, 247, 0.04);
-}
-
-@keyframes cyberGridDrift {
-  0% {
-    transform: translate3d(0, 0, 0);
-  }
-  100% {
-    transform: translate3d(0, 22px, 0);
-  }
-}
-
-@keyframes cyberParticleDrift {
-  0% {
-    transform: translate3d(0, 0, 0) scale(1);
-  }
-  100% {
-    transform: translate3d(-14px, 12px, 0) scale(1.04);
-  }
-}
-
-@keyframes cyberOrbFloat {
-  0% {
-    transform: translate3d(0, 0, 0) scale(1);
-  }
-  100% {
-    transform: translate3d(22px, -18px, 0) scale(1.08);
-  }
-}
-
-@keyframes cyberSweepBeam {
-  0% {
-    transform: translate3d(-12%, 0, 0);
-  }
-  100% {
-    transform: translate3d(12%, 0, 0);
-  }
 }
