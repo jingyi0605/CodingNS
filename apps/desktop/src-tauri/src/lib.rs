@@ -153,9 +153,28 @@ fn run_clipboard_command(command: &str, args: &[&str], text: &str) -> Result<(),
     })
 }
 
+#[cfg(target_os = "macos")]
+fn configure_macos_window_chrome(app: &tauri::App) -> tauri::Result<()> {
+    use tauri::TitleBarStyle;
+
+    let Some(window) = app.get_webview_window("main") else {
+        return Ok(());
+    };
+
+    // 统一顶栏要回到 Overlay 轨道，让应用工具栏真正进入标题栏区域。
+    window.set_title_bar_style(TitleBarStyle::Overlay)?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .setup(|app| {
+            #[cfg(target_os = "macos")]
+            configure_macos_window_chrome(app)?;
+
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             read_desktop_config,
             write_desktop_config,

@@ -12,6 +12,7 @@ import {
   type SetStateAction,
   useState,
   type CSSProperties,
+  type MouseEvent,
   type FormEvent,
   type ReactNode
 } from "react";
@@ -35,6 +36,10 @@ import {
   type WorkspaceManagementRealtimeSnapshotDto
 } from "../../../network/workbench-realtime-client";
 import { showDesktopContextMenu } from "../../../platform/desktop/desktop-context-menu";
+import {
+  canStartDesktopWindowDragFromTarget,
+  startDesktopWindowDrag
+} from "../../../platform/desktop/window-drag";
 import { usePlatform } from "../../../platform/platform-provider";
 import { readViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import { logPerfDebug } from "../../../shared/debug/perf-debug";
@@ -457,6 +462,15 @@ function formatProviderLabel(provider: ProviderId, mode: "compact" | "full" = "c
 
   return mode === "full" ? t("shell.providerClaudeCode") : t("conversation.providerClaude");
 }
+
+const sessionLinkLayerStyle: CSSProperties = {
+  position: "relative",
+  zIndex: 0
+};
+
+const subagentToggleLayerStyle: CSSProperties = {
+  zIndex: 1
+};
 
 function buildSessionMeta(
   session: SessionSummaryDto,
@@ -1075,18 +1089,6 @@ function SettingsIcon() {
   );
 }
 
-function MacTrafficLights({ draggable = false }: { draggable?: boolean }) {
-  const dragRegionProps = draggable ? { "data-tauri-drag-region": true } : {};
-
-  return (
-    <div className="macos-traffic-lights" aria-hidden="true" {...dragRegionProps}>
-      <span className="macos-traffic-light close" {...dragRegionProps} />
-      <span className="macos-traffic-light minimize" {...dragRegionProps} />
-      <span className="macos-traffic-light maximize" {...dragRegionProps} />
-    </div>
-  );
-}
-
 function MultiSelectIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
@@ -1179,22 +1181,6 @@ function CloseIcon() {
   );
 }
 
-function MinusIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <line x1="5" y1="12" x2="19" y2="12" />
-    </svg>
-  );
-}
-
-function MaximizeIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <rect x="5" y="5" width="14" height="14" rx="2" />
-    </svg>
-  );
-}
-
 function MoreIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
@@ -1202,183 +1188,6 @@ function MoreIcon() {
       <circle cx="12" cy="12" r="1.8" />
       <circle cx="19" cy="12" r="1.8" />
     </svg>
-  );
-}
-
-function WorkbenchDesktopTitlebar({
-  activeCenterTab,
-  currentWorkspaceName,
-  currentSessionTitle,
-  workspaceCount,
-  sessionCount,
-  leftCollapsed,
-  rightCollapsed,
-  isDesktop,
-  showTrafficLightsPadding,
-  showWindowsControls,
-  onNavigateConversation,
-  onNavigateTerminals,
-  onRefreshNavigation,
-  onToggleLeftPanel,
-  onToggleRightPanel,
-  onOpenSettings,
-  onMinimizeWindow,
-  onToggleMaximizeWindow,
-  onCloseWindow
-}: {
-  activeCenterTab: CenterTab;
-  currentWorkspaceName: string | null;
-  currentSessionTitle: string | null;
-  workspaceCount: number;
-  sessionCount: number;
-  leftCollapsed: boolean;
-  rightCollapsed: boolean;
-  isDesktop: boolean;
-  showTrafficLightsPadding: boolean;
-  showWindowsControls: boolean;
-  onNavigateConversation: () => void;
-  onNavigateTerminals: () => void;
-  onRefreshNavigation: () => void;
-  onToggleLeftPanel: () => void;
-  onToggleRightPanel: () => void;
-  onOpenSettings: () => void;
-  onMinimizeWindow: () => void;
-  onToggleMaximizeWindow: () => void;
-  onCloseWindow: () => void;
-}) {
-  const titlePresentation = buildSessionTitlePresentation(
-    currentSessionTitle,
-    t("workbench.emptyTitle")
-  );
-  // Tauri 的拖拽区域不会自动传给子节点，静态标题栏节点必须逐个显式标记。
-  const dragRegionProps = isDesktop ? { "data-tauri-drag-region": true } : {};
-
-  return (
-    <header className="workbench-desktop-titlebar surface-card" {...dragRegionProps}>
-      <div
-        className={`workbench-titlebar-leading ${showTrafficLightsPadding ? "traffic-lights-offset" : ""}`}
-        {...dragRegionProps}
-      >
-        <div className="workbench-titlebar-brand" {...dragRegionProps}>
-          <img src="/logo.svg" alt="CodingNS" className="workbench-titlebar-logo" {...dragRegionProps} />
-          {isDesktop ? (
-            <div className="workbench-titlebar-brand-text" {...dragRegionProps}>
-              <strong {...dragRegionProps}>CodingNS</strong>
-              <span {...dragRegionProps}>{t("shell.desktopChromeLabel")}</span>
-            </div>
-          ) : null}
-        </div>
-        <div className="workbench-titlebar-context" {...dragRegionProps}>
-          <span className="workbench-titlebar-pill" {...dragRegionProps}>
-            {currentWorkspaceName ?? t("conversation.headerWorkspaceUnknown")}
-          </span>
-          <h1
-            className="workbench-titlebar-title"
-            data-testid="workbench-current-session-title"
-            title={titlePresentation.fullTitle}
-            {...dragRegionProps}
-          >
-            {titlePresentation.displayTitle}
-          </h1>
-        </div>
-      </div>
-
-      <div className="workbench-titlebar-center" {...dragRegionProps}>
-        <div className="workbench-desktop-segment" role="tablist" aria-label={t("shell.centerTabsLabel")} {...dragRegionProps}>
-          <button
-            className={activeCenterTab === "conversation" ? "workbench-topbar-tab active" : "workbench-topbar-tab"}
-            type="button"
-            role="tab"
-            aria-selected={activeCenterTab === "conversation"}
-            onClick={onNavigateConversation}
-          >
-            {t("shell.conversationEntry")}
-          </button>
-          <button
-            className={activeCenterTab === "terminals" ? "workbench-topbar-tab active" : "workbench-topbar-tab"}
-            type="button"
-            role="tab"
-            aria-selected={activeCenterTab === "terminals"}
-            onClick={onNavigateTerminals}
-          >
-            {t("shell.terminalsEntry")}
-          </button>
-        </div>
-      </div>
-
-      <div className="workbench-titlebar-trailing">
-        <div className="workbench-titlebar-stats" {...dragRegionProps}>
-          <span {...dragRegionProps}>{t("shell.workspaceCount")} {workspaceCount}</span>
-          <span {...dragRegionProps}>{t("shell.sessionCount")} {sessionCount}</span>
-        </div>
-        <div className="workbench-titlebar-actions">
-          <button
-            type="button"
-            className="workbench-toolbar-button"
-            aria-pressed={!leftCollapsed}
-            aria-label={leftCollapsed ? t("shell.showSessionSidebar") : t("shell.hideSessionSidebar")}
-            onClick={onToggleLeftPanel}
-            title="Ctrl/Cmd+B"
-          >
-            <svg
-              className="workbench-toolbar-glyph"
-              width="18"
-              height="18"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-            >
-              <line x1="4" y1="7" x2="20" y2="7" />
-              <line x1="4" y1="12" x2="20" y2="12" />
-              <line x1="4" y1="17" x2="20" y2="17" />
-            </svg>
-          </button>
-          <button
-            type="button"
-            className="workbench-toolbar-button"
-            aria-pressed={!rightCollapsed}
-            aria-label={rightCollapsed ? t("shell.showInfoSidebar") : t("shell.hideInfoSidebar")}
-            onClick={onToggleRightPanel}
-            title="Ctrl/Cmd+Shift+I"
-          >
-            <span className="workbench-toolbar-label">{t("shell.auxiliaryTitle")}</span>
-          </button>
-          <button
-            type="button"
-            className="workbench-toolbar-button"
-            aria-label={t("shell.refreshNavigation")}
-            onClick={onRefreshNavigation}
-            title="Ctrl/Cmd+Shift+R"
-          >
-            <span className="workbench-toolbar-label">{t("shell.refreshNavigation")}</span>
-          </button>
-          <button
-            type="button"
-            className="workbench-toolbar-button"
-            aria-label={t("settings.title")}
-            onClick={onOpenSettings}
-            title="Ctrl/Cmd+,"
-          >
-            <span className="workbench-toolbar-label">{t("settings.title")}</span>
-          </button>
-        </div>
-
-        {showWindowsControls ? (
-          <div className="workbench-window-controls">
-            <button type="button" className="workbench-window-control" onClick={onMinimizeWindow} aria-label={t("shell.windowMinimize")}>
-              <MinusIcon />
-            </button>
-            <button type="button" className="workbench-window-control" onClick={onToggleMaximizeWindow} aria-label={t("shell.windowMaximize")}>
-              <MaximizeIcon />
-            </button>
-            <button type="button" className="workbench-window-control close" onClick={onCloseWindow} aria-label={t("shell.windowClose")}>
-              <CloseIcon />
-            </button>
-          </div>
-        ) : null}
-      </div>
-    </header>
   );
 }
 
@@ -1705,6 +1514,7 @@ function SessionCard({
           <button
             type="button"
             className="workbench-session-subagent-toggle"
+            style={subagentToggleLayerStyle}
             aria-label={subagentListExpanded ? t("shell.subagentCollapse") : t("shell.subagentExpand")}
             title={subagentListExpanded ? t("shell.subagentCollapse") : t("shell.subagentExpand")}
             aria-expanded={subagentListExpanded}
@@ -1736,6 +1546,7 @@ function SessionCard({
         <button
           type="button"
           className="workbench-session-link"
+          style={hasSubagents ? sessionLinkLayerStyle : undefined}
           data-active={isActive}
           aria-pressed={selectionMode ? selected : undefined}
           onClick={selectionMode ? onToggleSelect : onOpen}
@@ -1843,6 +1654,17 @@ function SidebarContent({
   const navigate = useNavigate();
   const platform = usePlatform();
   const { showToast } = useToast();
+  const handleHeaderMouseDownCapture = useCallback((event: MouseEvent<HTMLElement>) => {
+    if (!platform.isDesktop || platform.ui.osFamily !== "macos" || event.button !== 0) {
+      return;
+    }
+
+    if (!canStartDesktopWindowDragFromTarget(event.target)) {
+      return;
+    }
+
+    void startDesktopWindowDrag();
+  }, [platform.isDesktop, platform.ui.osFamily]);
   const [importBrowserOpen, setImportBrowserOpen] = useState(false);
   const [cloneBrowserOpen, setCloneBrowserOpen] = useState(false);
   const [workspaceManagerOpen, setWorkspaceManagerOpen] = useState(false);
@@ -2455,15 +2277,15 @@ function SidebarContent({
 
   const visibleFavoriteSessions = favoriteSessions.slice(0, visibleFavoriteCount);
   const hasMoreFavoriteSessions = visibleFavoriteSessions.length < favoriteSessions.length;
-  const dragRegionProps = platform.isDesktop ? { "data-tauri-drag-region": true } : {};
 
   return (
     <>
-      <div className="workbench-nav-header" {...dragRegionProps}>
-        <div className="workbench-nav-toolbar" {...dragRegionProps}>
-          {platform.isDesktop && platform.ui.windowControlsStyle === "traffic-lights" ? (
-            <MacTrafficLights draggable />
-          ) : null}
+      <div
+        className="workbench-nav-header"
+        data-window-drag-handle="workbench-nav-header"
+        onMouseDownCapture={handleHeaderMouseDownCapture}
+      >
+        <div className="workbench-nav-toolbar">
           {onToggleCollapse ? (
             <button
               type="button"
@@ -2496,8 +2318,8 @@ function SidebarContent({
         </div>
       </div>
 
-      <div className="workbench-nav-body" {...dragRegionProps}>
-        <div className="workbench-nav-segment" role="tablist" aria-label={t("shell.centerTabsLabel")} {...dragRegionProps}>
+      <div className="workbench-nav-body">
+        <div className="workbench-nav-segment" role="tablist" aria-label={t("shell.centerTabsLabel")}>
           <button
             type="button"
             className={
@@ -3343,11 +3165,25 @@ function WorkbenchInfoPanel({
 }) {
   const fallbackWorkspaceId = activeWorkspaceId ?? navigationGroups[0]?.workspace.id ?? null;
   const platform = usePlatform();
-  const dragRegionProps = platform.isDesktop ? { "data-tauri-drag-region": true } : {};
+  const handleHeaderMouseDownCapture = useCallback((event: MouseEvent<HTMLElement>) => {
+    if (!platform.isDesktop || platform.ui.osFamily !== "macos" || event.button !== 0) {
+      return;
+    }
+
+    if (!canStartDesktopWindowDragFromTarget(event.target)) {
+      return;
+    }
+
+    void startDesktopWindowDrag();
+  }, [platform.isDesktop, platform.ui.osFamily]);
 
   return (
     <>
-      <div className="workbench-auxiliary-header" {...dragRegionProps}>
+      <div
+        className="workbench-auxiliary-header"
+        data-window-drag-handle="workbench-auxiliary-header"
+        onMouseDownCapture={handleHeaderMouseDownCapture}
+      >
         {onToggleCollapse ? (
           <button
             type="button"
@@ -3359,7 +3195,11 @@ function WorkbenchInfoPanel({
             <SidebarCollapseIcon />
           </button>
         ) : null}
-        <div className="workbench-info-tabs" role="tablist" aria-label={t("shell.infoTabsLabel")} {...dragRegionProps}>
+        <div
+          className="workbench-info-tabs"
+          role="tablist"
+          aria-label={t("shell.infoTabsLabel")}
+        >
           <button
             className={activeTab === "files" ? "workbench-info-tab active" : "workbench-info-tab"}
             type="button"
@@ -4332,7 +4172,7 @@ export function WorkbenchLayout({
   function beginResize(side: "left" | "right", startClientX: number) {
     const startWidth = side === "left" ? leftPanelWidth : rightPanelWidth;
 
-    function handlePointerMove(event: MouseEvent) {
+    function handlePointerMove(event: globalThis.MouseEvent) {
       const delta = event.clientX - startClientX;
 
       if (side === "left") {
@@ -4755,6 +4595,7 @@ export function WorkbenchLayout({
           data-info-ready={infoPanelReady}
           data-runtime-platform={platform.platform}
           data-os-family={platform.ui.osFamily}
+          data-overlay-titlebar={platform.ui.prefersOverlayTitlebar}
         >
           <div className="workbench-body-shell">
             <aside className="workbench-nav surface-card" data-collapsed={leftCollapsed}>

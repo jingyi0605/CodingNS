@@ -15,12 +15,14 @@ function applyPlatformDatasets(adapter: PlatformAdapter) {
   documentElement.dataset.osFamily = adapter.ui.osFamily;
   documentElement.dataset.windowControls = adapter.ui.windowControlsStyle;
   documentElement.dataset.viewportClass = adapter.viewportClass;
+  documentElement.dataset.overlayTitlebar = String(adapter.ui.prefersOverlayTitlebar);
 
   if (body) {
     body.dataset.runtimePlatform = adapter.platform;
     body.dataset.osFamily = adapter.ui.osFamily;
     body.dataset.windowControls = adapter.ui.windowControlsStyle;
     body.dataset.viewportClass = adapter.viewportClass;
+    body.dataset.overlayTitlebar = String(adapter.ui.prefersOverlayTitlebar);
   }
 }
 

@@ -1,5 +1,11 @@
-import { t } from "../../../shared/i18n";
+import { useCallback, type MouseEvent } from "react";
+
+import {
+  canStartDesktopWindowDragFromTarget,
+  startDesktopWindowDrag
+} from "../../../platform/desktop/window-drag";
 import { usePlatform } from "../../../platform/platform-provider";
+import { t } from "../../../shared/i18n";
 import { buildSessionTitlePresentation } from "../session-title";
 
 import type { SessionSummaryDto } from "../api/conversation-api";
@@ -28,12 +34,27 @@ function resolveTitleScale(title: string) {
 
 export function SessionHeader({ session }: SessionHeaderProps) {
   const platform = usePlatform();
-  const dragRegionProps = platform.isDesktop ? { "data-tauri-drag-region": true } : {};
+  const handleHeaderMouseDownCapture = useCallback((event: MouseEvent<HTMLElement>) => {
+    if (!platform.isDesktop || platform.ui.osFamily !== "macos" || event.button !== 0) {
+      return;
+    }
+
+    if (!canStartDesktopWindowDragFromTarget(event.target)) {
+      return;
+    }
+
+    void startDesktopWindowDrag();
+  }, [platform.isDesktop, platform.ui.osFamily]);
 
   if (!session) {
     return (
-      <header className="conversation-header conversation-header-skeleton" aria-hidden="true" {...dragRegionProps}>
-        <div className="conversation-header-main" {...dragRegionProps}>
+      <header
+        className="conversation-header conversation-header-skeleton"
+        aria-hidden="true"
+        data-window-drag-handle="conversation-header"
+        onMouseDownCapture={handleHeaderMouseDownCapture}
+      >
+        <div className="conversation-header-main">
           <span className="skeleton-line short" />
           <span className="skeleton-line long" />
         </div>
@@ -45,9 +66,13 @@ export function SessionHeader({ session }: SessionHeaderProps) {
   const titleScale = resolveTitleScale(titlePresentation.displayTitle);
 
   return (
-    <header className="conversation-header" {...dragRegionProps}>
-      <div className="conversation-header-main" {...dragRegionProps}>
-        <h1 className={`conversation-title is-${titleScale}`} title={titlePresentation.fullTitle} {...dragRegionProps}>
+    <header
+      className="conversation-header"
+      data-window-drag-handle="conversation-header"
+      onMouseDownCapture={handleHeaderMouseDownCapture}
+    >
+      <div className="conversation-header-main">
+        <h1 className={`conversation-title is-${titleScale}`} title={titlePresentation.fullTitle}>
           {titlePresentation.displayTitle}
         </h1>
       </div>

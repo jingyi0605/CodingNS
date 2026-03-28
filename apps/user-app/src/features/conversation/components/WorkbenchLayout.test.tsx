@@ -609,7 +609,7 @@ describe("WorkbenchLayout", () => {
     });
   });
 
-  it("macOS 桌面端顶部静态区域会显式标记拖拽区域", async () => {
+  it("macOS 桌面端只保留原三栏顶部作为拖拽区，不再额外插入统一顶栏", async () => {
     mockNavigator({
       userAgent:
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
@@ -649,19 +649,20 @@ describe("WorkbenchLayout", () => {
 
     const navHeader = document.querySelector(".workbench-nav-header");
     const navToolbar = document.querySelector(".workbench-nav-toolbar");
-    const trafficLights = document.querySelector(".macos-traffic-lights");
     const navBody = document.querySelector(".workbench-nav-body");
     const navSegment = document.querySelector(".workbench-nav-segment");
     const auxiliaryHeader = document.querySelector(".workbench-auxiliary-header");
     const infoTabs = document.querySelector(".workbench-info-tabs");
 
-    expect(navHeader).toHaveAttribute("data-tauri-drag-region");
-    expect(navToolbar).toHaveAttribute("data-tauri-drag-region");
-    expect(trafficLights).toHaveAttribute("data-tauri-drag-region");
-    expect(navBody).toHaveAttribute("data-tauri-drag-region");
-    expect(navSegment).toHaveAttribute("data-tauri-drag-region");
-    expect(auxiliaryHeader).toHaveAttribute("data-tauri-drag-region");
-    expect(infoTabs).toHaveAttribute("data-tauri-drag-region");
+    expect(document.querySelector(".workbench-desktop-titlebar")).toBeNull();
+    expect(navHeader).toHaveAttribute("data-window-drag-handle", "workbench-nav-header");
+    expect(auxiliaryHeader).toHaveAttribute("data-window-drag-handle", "workbench-auxiliary-header");
+    expect(navHeader).not.toHaveAttribute("data-tauri-drag-region");
+    expect(navToolbar).not.toHaveAttribute("data-tauri-drag-region");
+    expect(navBody).not.toHaveAttribute("data-tauri-drag-region");
+    expect(navSegment).not.toHaveAttribute("data-tauri-drag-region");
+    expect(auxiliaryHeader).not.toHaveAttribute("data-tauri-drag-region");
+    expect(infoTabs).not.toHaveAttribute("data-tauri-drag-region");
     expect(
       screen.getByRole("button", { name: t("shell.hideSessionSidebar") })
     ).not.toHaveAttribute("data-tauri-drag-region");
@@ -1331,6 +1332,15 @@ describe("WorkbenchLayout", () => {
   });
 
   it("桌面端收起两侧边栏后保留顶部展开控件而不是退化成汉堡按钮", async () => {
+    mockNavigator({
+      userAgent:
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+      platform: "MacIntel"
+    });
+    window.__TAURI_INTERNALS__ = {
+      invoke: vi.fn()
+    };
+
     const currentSnapshot = createWorkbenchSnapshot([
       {
         workspace: createWorkspace("workspace-1", "项目一"),
@@ -1359,8 +1369,15 @@ describe("WorkbenchLayout", () => {
 
     await findSessionCardByTitle("会话 Alpha");
 
-    await userEvent.click(screen.getByRole("button", { name: t("shell.hideSessionSidebar") }));
-    await userEvent.click(screen.getByRole("button", { name: t("shell.hideInfoSidebar") }));
+    const hideSessionSidebarButtons = await screen.findAllByRole("button", {
+      name: t("shell.hideSessionSidebar")
+    });
+    const hideInfoSidebarButtons = await screen.findAllByRole("button", {
+      name: t("shell.hideInfoSidebar")
+    });
+
+    await userEvent.click(hideSessionSidebarButtons[0]);
+    await userEvent.click(hideInfoSidebarButtons[0]);
 
     const shell = view.container.querySelector(".workbench-shell");
     const leftRail = view.container.querySelector(
@@ -1386,6 +1403,9 @@ describe("WorkbenchLayout", () => {
     expect(
       within(leftRail as HTMLElement).getByRole("button", { name: t("shell.goForward") })
     ).toBeInTheDocument();
+    expect(
+      (leftRail as HTMLElement).querySelector(".workbench-window-drag-spacer.collapsed")
+    ).toBeNull();
     expect(
       within(rightRail as HTMLElement).getByRole("button", { name: t("shell.showInfoSidebar") })
     ).toBeInTheDocument();
@@ -2168,6 +2188,59 @@ describe("WorkbenchLayout", () => {
     await waitFor(() => {
       expect(screen.getByTestId("current-path").textContent).toBe("/workspaces");
     });
+  });
+
+  it("子代理展开按钮保持在会话主按钮上层，避免点击被整行会话按钮吞掉", async () => {
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "Project One"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "root-session",
+            title: "Root Session",
+            workspaceId: "workspace-1"
+          }),
+          createSessionSummary({
+            sessionId: "root-subagent-1",
+            title: "Subagent 1",
+            workspaceId: "workspace-1",
+            parentSessionId: "root-session",
+            isSubagent: true,
+            subagentLabel: "worker · one"
+          })
+        ]
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/workspaces/workspace-1/sessions/root-session");
+
+    const rootSession = await findSessionCardByTitle("Root Session");
+    const toggle = within(rootSession).getByRole("button", { name: t("shell.subagentExpand") });
+    const link = rootSession.querySelector(".workbench-session-link");
+
+    expect(link).not.toBeNull();
+    expect(toggle).toHaveStyle({
+      zIndex: "1"
+    });
+    expect(link as Element).toHaveStyle({
+      position: "relative",
+      zIndex: "0"
+    });
+
+    await userEvent.click(toggle);
+
+    expect(screen.getByText("Subagent 1")).toBeInTheDocument();
   });
 });
 

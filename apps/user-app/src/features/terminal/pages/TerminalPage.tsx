@@ -5,6 +5,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type MouseEvent as ReactMouseEvent,
   type TouchEvent as ReactTouchEvent
 } from "react";
 import { createPortal } from "react-dom";
@@ -14,6 +15,10 @@ import { SerializeAddon } from "@xterm/addon-serialize";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 
+import {
+  canStartDesktopWindowDragFromTarget,
+  startDesktopWindowDrag
+} from "../../../platform/desktop/window-drag";
 import { usePlatform } from "../../../platform/platform-provider";
 import {
   readViewSnapshot,
@@ -205,7 +210,21 @@ const INITIAL_CONNECTION_STATES: Record<PaneId, TerminalConnectionState> = {
 };
 export function TerminalPage() {
   const platform = usePlatform();
-  const dragRegionProps = platform.isDesktop ? { "data-tauri-drag-region": true } : {};
+  const handleTabbarMouseDownCapture = useCallback((event: ReactMouseEvent<HTMLElement>) => {
+    if (!platform.isDesktop || platform.ui.osFamily !== "macos") {
+      return;
+    }
+
+    if (event.button !== 0) {
+      return;
+    }
+
+    if (!canStartDesktopWindowDragFromTarget(event.target)) {
+      return;
+    }
+
+    void startDesktopWindowDrag();
+  }, [platform.isDesktop, platform.ui.osFamily]);
   const navigate = useNavigate();
   const { workspaceId: routeWorkspaceIdParam } = useParams();
   const {
@@ -1632,14 +1651,17 @@ export function TerminalPage() {
           </>
         ) : (
           <>
-            <header className="terminal-tabbar" {...dragRegionProps}>
-              <div ref={terminalTabbarMainRef} className="terminal-tabbar-main" {...dragRegionProps}>
+            <header
+              className="terminal-tabbar"
+              data-window-drag-handle="terminal-tabbar"
+              onMouseDownCapture={handleTabbarMouseDownCapture}
+            >
+              <div ref={terminalTabbarMainRef} className="terminal-tabbar-main">
                 <div
                   ref={terminalTabbarScrollRef}
                   className="terminal-tabbar-scroll"
                   role="tablist"
                   aria-label={t("terminal.title")}
-                  {...dragRegionProps}
                 >
                   {orderedTerminals.map((terminal) => {
                     const isActive = terminal.id === activeTerminalId;
