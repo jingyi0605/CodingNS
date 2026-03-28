@@ -66,6 +66,9 @@ const platformMock = vi.hoisted(() => ({
   platform: "web",
   isDesktop: false,
   isWeb: true,
+  isMobile: false,
+  isNativeMobile: false,
+  viewportClass: "expanded",
   ui: {
     osFamily: "unknown",
     windowControlsStyle: "none",
@@ -216,6 +219,9 @@ describe("FileContextPanel", () => {
     platformMock.platform = "web";
     platformMock.isDesktop = false;
     platformMock.isWeb = true;
+    platformMock.isMobile = false;
+    platformMock.isNativeMobile = false;
+    platformMock.viewportClass = "expanded";
     platformMock.ui.osFamily = "unknown";
     platformMock.bridge.supported = false;
     platformMock.bridge.writeClipboardText.mockResolvedValue({
@@ -477,10 +483,20 @@ describe("FileContextPanel", () => {
     clearViewSnapshot(SESSION_COUNT_SNAPSHOT_KEY);
   });
 
-  function renderPanel(sessionId: string | null = "session-1", workspaceId = "workspace-1") {
+  function renderPanel(
+    sessionId: string | null = "session-1",
+    workspaceId = "workspace-1",
+    options?: {
+      hideHeading?: boolean;
+    }
+  ) {
     render(
       <ToastProvider>
-        <FileContextPanel sessionId={sessionId} workspaceId={workspaceId} />
+        <FileContextPanel
+          sessionId={sessionId}
+          workspaceId={workspaceId}
+          hideHeading={options?.hideHeading}
+        />
       </ToastProvider>
     );
   }
@@ -746,6 +762,59 @@ describe("FileContextPanel", () => {
 
     expect(clipboardWriteTextMock).toHaveBeenCalledWith("config.json");
     expect(await screen.findByText(t("conversation.filePanelCopyRelativePathSuccess"))).toBeInTheDocument();
+  });
+
+  it("移动端文件工具栏会收起成操作菜单，并支持菜单操作", async () => {
+    platformMock.isMobile = true;
+    platformMock.viewportClass = "compact";
+    const promptMock = vi.spyOn(window, "prompt").mockReturnValue("notes/todo.md");
+
+    renderPanel("session-1", "workspace-1", {
+      hideHeading: true
+    });
+
+    await screen.findByText("config.json");
+
+    expect(screen.getByRole("button", { name: t("conversation.filePanelActionsMenu") })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("conversation.filePanelRefresh") })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByText("config.json"));
+    await userEvent.click(screen.getByRole("button", { name: t("conversation.filePanelActionsMenu") }));
+
+    const actionMenu = screen.getByRole("menu", { name: t("conversation.filePanelActionsMenu") });
+    expect(within(actionMenu).getByRole("menuitem", { name: t("conversation.filePanelShowSearch") })).toBeInTheDocument();
+    expect(within(actionMenu).getByRole("menuitem", { name: t("conversation.filePanelRefresh") })).toBeInTheDocument();
+    expect(within(actionMenu).getByRole("menuitem", { name: t("conversation.filePanelNewFile") })).toBeInTheDocument();
+    expect(within(actionMenu).getByRole("menuitem", { name: t("conversation.filePanelNewDirectory") })).toBeInTheDocument();
+
+    await userEvent.click(
+      within(actionMenu).getByRole("menuitem", { name: t("conversation.filePanelCopyRelativePath") })
+    );
+
+    expect(clipboardWriteTextMock).toHaveBeenCalledWith("config.json");
+    expect(await screen.findByText(t("conversation.filePanelCopyRelativePathSuccess"))).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: t("conversation.filePanelActionsMenu") }));
+    await userEvent.click(screen.getByRole("menuitem", { name: t("conversation.filePanelShowSearch") }));
+
+    expect(screen.getByPlaceholderText(t("conversation.filePanelSearchPlaceholder"))).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("conversation.filePanelSearchButton") })).toHaveTextContent(
+      t("conversation.filePanelSearchButton")
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: t("conversation.filePanelActionsMenu") }));
+    await userEvent.click(screen.getByRole("menuitem", { name: t("conversation.filePanelNewFile") }));
+
+    await waitFor(() => {
+      expect(fileApiMock.operateFile).toHaveBeenCalledWith({
+        workspaceId: "workspace-1",
+        opType: "create_file",
+        dstPath: "notes/todo.md",
+        content: ""
+      });
+    });
+
+    promptMock.mockRestore();
   });
 
   it("Windows 下复制相对路径会使用反斜杠", async () => {

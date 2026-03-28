@@ -84,12 +84,14 @@ export function FileContextPanel({ className, sessionId, workspaceId, hideHeadin
   const [sessionRefreshVersion, setSessionRefreshVersion] = useState(0);
   const [sessionChangeCount, setSessionChangeCount] = useState(0);
   const [copyPathMenuOpen, setCopyPathMenuOpen] = useState(false);
+  const [mobileActionMenuOpen, setMobileActionMenuOpen] = useState(false);
   const treeCacheRef = useRef<FileTreeCache>({});
   const expandedDirectoriesRef = useRef<string[]>([]);
   const activeDirectoryPathRef = useRef(ROOT_DIRECTORY);
   const restoringWorkspaceSnapshotRef = useRef(false);
   const recentFileActivationRef = useRef<RecentFileActivation | null>(null);
   const copyPathMenuRef = useRef<HTMLDivElement | null>(null);
+  const mobileActionMenuRef = useRef<HTMLDivElement | null>(null);
   const directoryWaitersRef = useRef(
     new Map<
       string,
@@ -103,6 +105,7 @@ export function FileContextPanel({ className, sessionId, workspaceId, hideHeadin
   const { showToast } = useToast();
   const platform = usePlatform();
   const hasSessionContext = Boolean(sessionId?.trim());
+  const shouldUseMobileActionMenu = hideHeading && platform.isMobile;
 
   useEffect(() => {
     logPerfDebug("file_panel.props", {
@@ -251,6 +254,7 @@ export function FileContextPanel({ className, sessionId, workspaceId, hideHeadin
     setViewerFilePath(null);
     setSessionRefreshVersion(0);
     setCopyPathMenuOpen(false);
+    setMobileActionMenuOpen(false);
     recentFileActivationRef.current = null;
   }, [sessionId]);
 
@@ -261,34 +265,39 @@ export function FileContextPanel({ className, sessionId, workspaceId, hideHeadin
   }, [activeTab, hasSessionContext]);
 
   useEffect(() => {
-    if (!copyPathMenuOpen) {
+    if (!copyPathMenuOpen && !mobileActionMenuOpen) {
       return;
     }
 
-    function handleDocumentPointerDown(event: MouseEvent) {
+    function handleDocumentPointerDown(event: PointerEvent) {
       if (!(event.target instanceof Node)) {
         return;
       }
 
-      if (!copyPathMenuRef.current?.contains(event.target)) {
+      const clickedCopyPathMenu = copyPathMenuRef.current?.contains(event.target) ?? false;
+      const clickedMobileActionMenu = mobileActionMenuRef.current?.contains(event.target) ?? false;
+
+      if (!clickedCopyPathMenu && !clickedMobileActionMenu) {
         setCopyPathMenuOpen(false);
+        setMobileActionMenuOpen(false);
       }
     }
 
     function handleDocumentKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
         setCopyPathMenuOpen(false);
+        setMobileActionMenuOpen(false);
       }
     }
 
-    document.addEventListener("mousedown", handleDocumentPointerDown);
+    document.addEventListener("pointerdown", handleDocumentPointerDown);
     document.addEventListener("keydown", handleDocumentKeyDown);
 
     return () => {
-      document.removeEventListener("mousedown", handleDocumentPointerDown);
+      document.removeEventListener("pointerdown", handleDocumentPointerDown);
       document.removeEventListener("keydown", handleDocumentKeyDown);
     };
-  }, [copyPathMenuOpen]);
+  }, [copyPathMenuOpen, mobileActionMenuOpen]);
 
   useEffect(() => {
     if (!workspaceId) {
@@ -438,6 +447,9 @@ export function FileContextPanel({ className, sessionId, workspaceId, hideHeadin
   // 文件和目录原本分散在两套选中状态里，这里收敛成一个“当前目标路径”，后续按钮逻辑就不用到处打补丁。
   const selectedTargetPath = resolveSelectedTargetPath(selectedPath, activeDirectoryPath);
   const canCopySelectedPath = Boolean(currentWorkspace?.path && selectedTargetPath !== null);
+  const canCollapseCurrent = Boolean(
+    (selectedPath ? getParentDirectory(selectedPath) : activeDirectoryPath) && expandedDirectories.length
+  );
 
   async function loadDirectory(directoryPath: string, force = false) {
     if (!workspaceId) {
@@ -794,6 +806,11 @@ export function FileContextPanel({ className, sessionId, workspaceId, hideHeadin
     setSearchVisible(true);
   }
 
+  function handleMobileToolbarAction(action: () => void | Promise<void>) {
+    setMobileActionMenuOpen(false);
+    void action();
+  }
+
   function handleCollapseCurrent() {
     const targetDirectory = selectedPath ? getParentDirectory(selectedPath) : activeDirectoryPath;
 
@@ -1056,99 +1073,199 @@ export function FileContextPanel({ className, sessionId, workspaceId, hideHeadin
 
           {activeTab === "workspace" ? (
             <>
-              <div className="file-panel-toolbar" aria-label={t("conversation.filePanelTitle")}>
-                <div className="file-toolbar-menu-shell" ref={copyPathMenuRef}>
+              {shouldUseMobileActionMenu ? (
+                <div className="file-panel-toolbar file-panel-toolbar-mobile" aria-label={t("conversation.filePanelTitle")}>
+                  <div className="file-mobile-action-shell" ref={mobileActionMenuRef}>
+                    <button
+                      className="secondary-button file-mobile-action-trigger"
+                      type="button"
+                      aria-label={t("conversation.filePanelActionsMenu")}
+                      aria-haspopup="menu"
+                      aria-expanded={mobileActionMenuOpen}
+                      data-active={mobileActionMenuOpen}
+                      onClick={() => {
+                        setCopyPathMenuOpen(false);
+                        setMobileActionMenuOpen((current) => !current);
+                      }}
+                    >
+                      <span>{t("conversation.filePanelActionsMenu")}</span>
+                      <MenuChevronIcon />
+                    </button>
+                    {mobileActionMenuOpen ? (
+                      <div
+                        className="file-mobile-action-menu"
+                        role="menu"
+                        aria-label={t("conversation.filePanelActionsMenu")}
+                      >
+                        <button
+                          className="file-mobile-action-menu-item"
+                          type="button"
+                          role="menuitem"
+                          onClick={() => {
+                            setMobileActionMenuOpen(false);
+                            handleToggleSearch();
+                          }}
+                        >
+                          {searchVisible
+                            ? t("conversation.filePanelHideSearch")
+                            : t("conversation.filePanelShowSearch")}
+                        </button>
+                        <button
+                          className="file-mobile-action-menu-item"
+                          type="button"
+                          role="menuitem"
+                          onClick={() => handleMobileToolbarAction(handleRefresh)}
+                          disabled={loadingTree || mutating || searching}
+                        >
+                          {t("conversation.filePanelRefresh")}
+                        </button>
+                        <button
+                          className="file-mobile-action-menu-item"
+                          type="button"
+                          role="menuitem"
+                          onClick={() => {
+                            setMobileActionMenuOpen(false);
+                            handleCollapseCurrent();
+                          }}
+                          disabled={!canCollapseCurrent}
+                        >
+                          {t("conversation.filePanelCollapseCurrent")}
+                        </button>
+                        <button
+                          className="file-mobile-action-menu-item"
+                          type="button"
+                          role="menuitem"
+                          onClick={() => handleMobileToolbarAction(() => handleCreate("create_file"))}
+                          disabled={mutating}
+                        >
+                          {t("conversation.filePanelNewFile")}
+                        </button>
+                        <button
+                          className="file-mobile-action-menu-item"
+                          type="button"
+                          role="menuitem"
+                          onClick={() =>
+                            handleMobileToolbarAction(() => handleCreate("create_directory"))
+                          }
+                          disabled={mutating}
+                        >
+                          {t("conversation.filePanelNewDirectory")}
+                        </button>
+                        <button
+                          className="file-mobile-action-menu-item"
+                          type="button"
+                          role="menuitem"
+                          onClick={() => handleMobileToolbarAction(() => handleCopyPath("absolute"))}
+                          disabled={!canCopySelectedPath}
+                        >
+                          {t("conversation.filePanelCopyAbsolutePath")}
+                        </button>
+                        <button
+                          className="file-mobile-action-menu-item"
+                          type="button"
+                          role="menuitem"
+                          onClick={() => handleMobileToolbarAction(() => handleCopyPath("relative"))}
+                          disabled={!canCopySelectedPath}
+                        >
+                          {t("conversation.filePanelCopyRelativePath")}
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              ) : (
+                <div className="file-panel-toolbar" aria-label={t("conversation.filePanelTitle")}>
+                  <div className="file-toolbar-menu-shell" ref={copyPathMenuRef}>
+                    <button
+                      className="file-toolbar-button"
+                      type="button"
+                      title={t("conversation.filePanelCopyPath")}
+                      aria-label={t("conversation.filePanelCopyPath")}
+                      aria-haspopup="menu"
+                      aria-expanded={copyPathMenuOpen}
+                      data-active={copyPathMenuOpen}
+                      onClick={() => {
+                        setMobileActionMenuOpen(false);
+                        setCopyPathMenuOpen((current) => !current);
+                      }}
+                      disabled={!canCopySelectedPath}
+                    >
+                      <PathCopyIcon />
+                    </button>
+                    {copyPathMenuOpen ? (
+                      <div className="file-toolbar-menu" role="menu">
+                        <button
+                          className="file-toolbar-menu-item"
+                          type="button"
+                          role="menuitem"
+                          onClick={() => void handleCopyPath("absolute")}
+                        >
+                          {t("conversation.filePanelCopyAbsolutePath")}
+                        </button>
+                        <button
+                          className="file-toolbar-menu-item"
+                          type="button"
+                          role="menuitem"
+                          onClick={() => void handleCopyPath("relative")}
+                        >
+                          {t("conversation.filePanelCopyRelativePath")}
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
                   <button
                     className="file-toolbar-button"
                     type="button"
-                    title={t("conversation.filePanelCopyPath")}
-                    aria-label={t("conversation.filePanelCopyPath")}
-                    aria-haspopup="menu"
-                    aria-expanded={copyPathMenuOpen}
-                    data-active={copyPathMenuOpen}
-                    onClick={() => {
-                      setCopyPathMenuOpen((current) => !current);
-                    }}
-                    disabled={!canCopySelectedPath}
+                    title={t("conversation.filePanelCollapseCurrent")}
+                    aria-label={t("conversation.filePanelCollapseCurrent")}
+                    onClick={handleCollapseCurrent}
+                    disabled={!canCollapseCurrent}
                   >
-                    <PathCopyIcon />
+                    <CollapseIcon />
                   </button>
-                  {copyPathMenuOpen ? (
-                    <div className="file-toolbar-menu" role="menu">
-                      <button
-                        className="file-toolbar-menu-item"
-                        type="button"
-                        role="menuitem"
-                        onClick={() => void handleCopyPath("absolute")}
-                      >
-                        {t("conversation.filePanelCopyAbsolutePath")}
-                      </button>
-                      <button
-                        className="file-toolbar-menu-item"
-                        type="button"
-                        role="menuitem"
-                        onClick={() => void handleCopyPath("relative")}
-                      >
-                        {t("conversation.filePanelCopyRelativePath")}
-                      </button>
-                    </div>
-                  ) : null}
+                  <button
+                    className="file-toolbar-button"
+                    type="button"
+                    title={t("conversation.filePanelRefresh")}
+                    aria-label={t("conversation.filePanelRefresh")}
+                    onClick={() => void handleRefresh()}
+                    disabled={loadingTree || mutating || searching}
+                  >
+                    <RefreshIcon />
+                  </button>
+                  <button
+                    className="file-toolbar-button"
+                    type="button"
+                    title={t("conversation.filePanelSearchButton")}
+                    aria-label={t("conversation.filePanelSearchButton")}
+                    data-active={searchVisible}
+                    onClick={handleToggleSearch}
+                    disabled={loadingTree}
+                  >
+                    <SearchIcon />
+                  </button>
+                  <button
+                    className="file-toolbar-button"
+                    type="button"
+                    title={t("conversation.filePanelNewFile")}
+                    aria-label={t("conversation.filePanelNewFile")}
+                    onClick={() => void handleCreate("create_file")}
+                    disabled={mutating}
+                  >
+                    <FilePlusIcon />
+                  </button>
+                  <button
+                    className="file-toolbar-button"
+                    type="button"
+                    title={t("conversation.filePanelNewDirectory")}
+                    aria-label={t("conversation.filePanelNewDirectory")}
+                    onClick={() => void handleCreate("create_directory")}
+                    disabled={mutating}
+                  >
+                    <FolderPlusIcon />
+                  </button>
                 </div>
-                <button
-                  className="file-toolbar-button"
-                  type="button"
-                  title={t("conversation.filePanelCollapseCurrent")}
-                  aria-label={t("conversation.filePanelCollapseCurrent")}
-                  onClick={handleCollapseCurrent}
-                  disabled={
-                    !(selectedPath ? getParentDirectory(selectedPath) : activeDirectoryPath) ||
-                    !expandedDirectories.length
-                  }
-                >
-                  <CollapseIcon />
-                </button>
-                <button
-                  className="file-toolbar-button"
-                  type="button"
-                  title={t("conversation.filePanelRefresh")}
-                  aria-label={t("conversation.filePanelRefresh")}
-                  onClick={() => void handleRefresh()}
-                  disabled={loadingTree || mutating || searching}
-                >
-                  <RefreshIcon />
-                </button>
-                <button
-                  className="file-toolbar-button"
-                  type="button"
-                  title={t("conversation.filePanelSearchButton")}
-                  aria-label={t("conversation.filePanelSearchButton")}
-                  data-active={searchVisible}
-                  onClick={handleToggleSearch}
-                  disabled={loadingTree}
-                >
-                  <SearchIcon />
-                </button>
-                <button
-                  className="file-toolbar-button"
-                  type="button"
-                  title={t("conversation.filePanelNewFile")}
-                  aria-label={t("conversation.filePanelNewFile")}
-                  onClick={() => void handleCreate("create_file")}
-                  disabled={mutating}
-                >
-                  <FilePlusIcon />
-                </button>
-                <button
-                  className="file-toolbar-button"
-                  type="button"
-                  title={t("conversation.filePanelNewDirectory")}
-                  aria-label={t("conversation.filePanelNewDirectory")}
-                  onClick={() => void handleCreate("create_directory")}
-                  disabled={mutating}
-                >
-                  <FolderPlusIcon />
-                </button>
-              </div>
+              )}
 
               {searchVisible ? (
                 <form className="file-toolbar-search" onSubmit={(event) => void handleSearchSubmit(event)}>
@@ -1157,15 +1274,26 @@ export function FileContextPanel({ className, sessionId, workspaceId, hideHeadin
                     onChange={(event) => setSearchKeyword(event.target.value)}
                     placeholder={t("conversation.filePanelSearchPlaceholder")}
                   />
-                  <button
-                    className="file-toolbar-button"
-                    type="submit"
-                    title={t("conversation.filePanelSearchButton")}
-                    aria-label={t("conversation.filePanelSearchButton")}
-                    disabled={searching}
-                  >
-                    <SearchIcon />
-                  </button>
+                  {shouldUseMobileActionMenu ? (
+                    <button
+                      className="secondary-button file-mobile-search-submit"
+                      type="submit"
+                      aria-label={t("conversation.filePanelSearchButton")}
+                      disabled={searching}
+                    >
+                      {t("conversation.filePanelSearchButton")}
+                    </button>
+                  ) : (
+                    <button
+                      className="file-toolbar-button"
+                      type="submit"
+                      title={t("conversation.filePanelSearchButton")}
+                      aria-label={t("conversation.filePanelSearchButton")}
+                      disabled={searching}
+                    >
+                      <SearchIcon />
+                    </button>
+                  )}
                 </form>
               ) : null}
 
@@ -1539,6 +1667,14 @@ function FolderPlusIcon() {
         strokeWidth="1.2"
       />
       <path d="M8.5 7.2v4M6.5 9.2h4" fill="none" stroke="currentColor" strokeWidth="1.2" />
+    </svg>
+  );
+}
+
+function MenuChevronIcon() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
     </svg>
   );
 }
