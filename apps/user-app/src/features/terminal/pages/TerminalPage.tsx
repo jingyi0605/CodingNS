@@ -1,4 +1,5 @@
-import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useMemo, useRef, useState, type TouchEvent } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate, useParams } from "react-router-dom";
 import { FitAddon } from "@xterm/addon-fit";
 import { SerializeAddon } from "@xterm/addon-serialize";
@@ -19,7 +20,9 @@ import {
   createTerminal,
   deleteTerminalRecord,
   listWorkspaceTerminals,
-  type TerminalDto
+  listTerminalShellOptions,
+  type TerminalDto,
+  type TerminalShellOptionDto
 } from "../api/terminal-api";
 import {
   persistActiveTerminalId,
@@ -60,6 +63,7 @@ interface TerminalViewportRuntime {
   reflow: () => void;
   readPlainText: () => string;
   setFontSize: (fontSize: number) => void;
+  applyTheme: () => void;
   persistNow: () => void;
   schedulePersist: () => void;
   dispose: () => void;
@@ -87,6 +91,15 @@ interface TerminalCreationRequest {
   runtimeType?: string;
 }
 
+interface MobileTerminalShellChoice {
+  id: string;
+  label: string;
+  value: string;
+  description: string;
+  available: boolean;
+  unavailableReason: string | null;
+}
+
 type TerminalIndicatorStatus = TerminalDto["status"] | "disconnected";
 
 interface TerminalPaneApi {
@@ -103,16 +116,18 @@ interface TerminalWorkspacePaneProps {
   pendingCreation: boolean;
   zoomScale: number;
   active: boolean;
-  allowSwipeSwitch?: boolean;
-  connectionState: TerminalConnectionState;
+  isMobileLayout?: boolean;
+  canCreateTerminal?: boolean;
   onActivate: (paneId: PaneId) => void;
-  onSwipeTerminal?: (direction: "previous" | "next") => void;
+  onSwipeGesture?: (direction: "left" | "right") => void;
   onConnectionChange: (paneId: PaneId, state: TerminalConnectionState) => void;
   onTerminalStatus: (terminal: Pick<TerminalDto, "id" | "status" | "statusDetail" | "processId">) => void;
   onRequireReload: () => Promise<void> | void;
   onUnauthorized: () => void;
   registerApi: (paneId: PaneId, api: TerminalPaneApi | null) => void;
   notifyTerminal: (title: string, tone?: TerminalNoticeTone) => void;
+  onRequestCreateTerminal?: () => void;
+  onRequestOpenTerminalDrawer?: () => void;
 }
 
 interface TerminalActionMenuProps {
@@ -167,10 +182,13 @@ const INITIAL_CONNECTION_STATES: Record<PaneId, TerminalConnectionState> = {
 
 export function TerminalPage() {
   const platform = usePlatform();
+  const dragRegionProps = platform.isDesktop ? { "data-tauri-drag-region": true } : {};
   const navigate = useNavigate();
   const { workspaceId: routeWorkspaceIdParam } = useParams();
   const {
     navigationGroups,
+    currentWorkspaceId: shellCurrentWorkspaceId,
+    selectWorkspace,
     subscribeTerminalManagerSnapshot,
     requestTerminalManagerRefresh,
     addTerminalManagerSnapshotListener
@@ -181,6 +199,7 @@ export function TerminalPage() {
   const terminalActionMenuTriggerRef = useRef<Record<string, HTMLButtonElement | null>>({});
   const toolbarRef = useRef<HTMLDivElement | null>(null);
   const toolbarToggleRef = useRef<HTMLButtonElement | null>(null);
+  const mobileStageTouchStartRef = useRef<{ x: number; y: number } | null>(null);
   const selectedWorkspaceIdRef = useRef("");
   const terminalsRef = useRef<TerminalDto[]>([]);
   const terminalReloadRequestIdRef = useRef(0);
@@ -200,6 +219,11 @@ export function TerminalPage() {
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState("");
   const [selectedRuntimeType, setSelectedRuntimeType] =
     useState<SelectableTerminalRuntimeType>("");
+  const [shellOptions, setShellOptions] = useState<TerminalShellOptionDto[]>([]);
+  const [mobileSelectedShell, setMobileSelectedShell] = useState("");
+  const [mobileQuickDrawerOpen, setMobileQuickDrawerOpen] = useState(false);
+  const [mobileCreateSheetOpen, setMobileCreateSheetOpen] = useState(false);
+  const [loadingShellOptions, setLoadingShellOptions] = useState(false);
   const [terminals, setTerminals] = useState<TerminalDto[]>([]);
   const [creatingTerminal, setCreatingTerminal] = useState(false);
   const [pendingTerminalCreationPaneId, setPendingTerminalCreationPaneId] = useState<PaneId | null>(
@@ -223,12 +247,35 @@ export function TerminalPage() {
     {}
   );
   const [zoomScale, setZoomScale] = useState(() => readPersistedTerminalZoomScale() ?? 1);
+  const shellCurrentWorkspace = useMemo(
+    () => workspaces.find((workspace) => workspace.id === shellCurrentWorkspaceId) ?? null,
+    [shellCurrentWorkspaceId, workspaces]
+  );
   const currentWorkspace = useMemo(
-    () => workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? null,
-    [selectedWorkspaceId, workspaces]
+    () => workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? shellCurrentWorkspace ?? null,
+    [selectedWorkspaceId, shellCurrentWorkspace, workspaces]
+  );
+  const resolvedWorkspaceId = useMemo(
+    () => {
+      return (
+        currentWorkspace?.id
+        ?? shellCurrentWorkspace?.id
+        ?? routeWorkspaceId
+        ?? selectedWorkspaceId
+        ?? workspaces[0]?.id
+        ?? ""
+      );
+    },
+    [currentWorkspace, routeWorkspaceId, selectedWorkspaceId, shellCurrentWorkspace, workspaces]
   );
   const mobileHeaderWorkspace = useMemo(
-    () => currentWorkspace ?? workspaces[0] ?? null,
+    () =>
+      currentWorkspace ??
+      workspaces[0] ?? {
+        id: "__terminal-mobile-workspace-placeholder__",
+        name: t("terminal.mobileWorkspaceSwitcherPlaceholder"),
+        path: t("home.emptyWorkspaces")
+      },
     [currentWorkspace, workspaces]
   );
   const { dismissToast, showToast } = useToast();
@@ -343,20 +390,32 @@ export function TerminalPage() {
     effectiveSplitDirection === "single"
       ? (["primary"] as PaneId[])
       : (["primary", "secondary"] as PaneId[]);
-  const activeTerminalIndex = useMemo(
-    () => orderedTerminals.findIndex((terminal) => terminal.id === activeTerminalId),
-    [activeTerminalId, orderedTerminals]
+  const mobileShellChoices = useMemo(
+    () => buildMobileTerminalShellChoices(shellOptions, platform.ui.osFamily),
+    [platform.ui.osFamily, shellOptions]
   );
-  const mobileHeaderConnectionState: TerminalConnectionState =
-    activeTerminal?.status === "running" ? effectivePaneConnectionStates[effectiveActivePaneId] : "closed";
-  const mobileHeaderRuntimeLabel = activeTerminal
-    ? getTerminalRuntimeLabel(activeTerminal.runtimeType)
-    : runtimeOptions.find((option) => option.value === selectedRuntimeType)?.label ??
-      t("terminal.runtimeAutoOption");
+  const selectedMobileShellChoice = useMemo(
+    () => mobileShellChoices.find((option) => option.value === mobileSelectedShell) ?? mobileShellChoices[0] ?? null,
+    [mobileSelectedShell, mobileShellChoices]
+  );
 
   useEffect(() => {
     terminalsRef.current = terminals;
   }, [terminals]);
+
+  useEffect(() => {
+    setMobileSelectedShell((current) => {
+      if (!mobileShellChoices.length) {
+        return "";
+      }
+
+      if (current && mobileShellChoices.some((option) => option.value === current && option.available)) {
+        return current;
+      }
+
+      return mobileShellChoices.find((option) => option.available)?.value ?? mobileShellChoices[0]?.value ?? "";
+    });
+  }, [mobileShellChoices]);
 
   function updatePaneBindings(updater: (current: TerminalPaneBindings) => TerminalPaneBindings): void {
     const nextBindings = updater(paneBindingsRef.current);
@@ -527,8 +586,13 @@ export function TerminalPage() {
       routeWorkspaceId && workspaces.some((workspace) => workspace.id === routeWorkspaceId)
         ? routeWorkspaceId
         : null;
+    const shellSelectedWorkspaceId =
+      shellCurrentWorkspaceId && workspaces.some((workspace) => workspace.id === shellCurrentWorkspaceId)
+        ? shellCurrentWorkspaceId
+        : null;
     const restoredWorkspaceId =
       routeSelectedWorkspaceId ??
+      shellSelectedWorkspaceId ??
       workspaces.find((workspace) => workspace.id === persistedWorkspaceId)?.id ??
       workspaces[0]?.id ??
       "";
@@ -544,7 +608,7 @@ export function TerminalPage() {
 
       return restoredWorkspaceId;
     });
-  }, [routeWorkspaceId, workspaces]);
+  }, [routeWorkspaceId, shellCurrentWorkspaceId, workspaces]);
 
   useEffect(() => {
     persistSelectedWorkspaceId(selectedWorkspaceId || null);
@@ -568,6 +632,14 @@ export function TerminalPage() {
   }, [activePaneId, paneBindings, selectedWorkspaceId]);
 
   useEffect(() => {
+    if (!isMobileTerminalPage) {
+      return;
+    }
+
+    setMobileQuickDrawerOpen(false);
+  }, [activeTerminalId, isMobileTerminalPage, selectedWorkspaceId]);
+
+  useEffect(() => {
     if (actionMenu && !terminals.some((terminal) => terminal.id === actionMenu.terminalId)) {
       setActionMenu(null);
     }
@@ -589,6 +661,7 @@ export function TerminalPage() {
         templateStatuses: snapshot.templateStatuses,
         shellOptions: snapshot.shellOptions
       });
+      setShellOptions(snapshot.shellOptions ?? []);
       applyWorkspaceTerminalCollection(snapshot.workspaceId, snapshot.terminals);
     });
   }, [addTerminalManagerSnapshotListener, applyWorkspaceTerminalCollection, selectedWorkspaceId]);
@@ -657,6 +730,9 @@ export function TerminalPage() {
 
   useEffect(() => {
     if (!selectedWorkspaceId) {
+      setShellOptions([]);
+      setMobileQuickDrawerOpen(false);
+      setMobileCreateSheetOpen(false);
       terminalsRef.current = [];
       setTerminals([]);
       updatePaneBindings(() => INITIAL_PANE_BINDINGS);
@@ -681,8 +757,10 @@ export function TerminalPage() {
     );
 
     if (cachedSnapshot) {
+      setShellOptions(parseTerminalShellOptions(cachedSnapshot.shellOptions));
       applyWorkspaceTerminalCollection(selectedWorkspaceId, cachedSnapshot.terminals);
     } else {
+      setShellOptions([]);
       terminalsRef.current = [];
       setTerminals([]);
       updatePaneBindings(() => INITIAL_PANE_BINDINGS);
@@ -883,6 +961,38 @@ export function TerminalPage() {
     }
   }
 
+  async function ensureShellOptionsLoaded(): Promise<TerminalShellOptionDto[]> {
+    if (shellOptions.length > 0) {
+      return shellOptions;
+    }
+
+    if (loadingShellOptions) {
+      return shellOptions;
+    }
+
+    setLoadingShellOptions(true);
+
+    try {
+      const response = await listTerminalShellOptions();
+      const nextOptions = response.items ?? [];
+      setShellOptions(nextOptions);
+      return nextOptions;
+    } catch {
+      return shellOptions;
+    } finally {
+      setLoadingShellOptions(false);
+    }
+  }
+
+  async function openMobileCreateSheet(): Promise<void> {
+    if (!isMobileTerminalPage || !resolvedWorkspaceId || creatingTerminal) {
+      return;
+    }
+
+    await ensureShellOptionsLoaded();
+    setMobileCreateSheetOpen(true);
+  }
+
   function clearPendingTerminalCreation(paneId: PaneId): void {
     setPendingTerminalCreationPaneId((current) => (current === paneId ? null : current));
   }
@@ -921,7 +1031,9 @@ export function TerminalPage() {
   }
 
   async function handleCreateTerminal(): Promise<void> {
-    if (!selectedWorkspaceId) {
+    const workspaceId = resolvedWorkspaceId;
+
+    if (!workspaceId) {
       return;
     }
 
@@ -931,7 +1043,7 @@ export function TerminalPage() {
 
     try {
       const terminal = await submitTerminalCreation({
-        workspaceId: selectedWorkspaceId,
+        workspaceId,
         runtimeType: selectedRuntimeType || undefined
       });
 
@@ -942,7 +1054,53 @@ export function TerminalPage() {
 
       applyCreatedTerminalLocally(terminal, targetPaneId);
       clearPendingTerminalCreation(targetPaneId);
-      await reloadWorkspaceResources(selectedWorkspaceId, {
+      await reloadWorkspaceResources(workspaceId, {
+        preferredTerminalId: terminal.id,
+        preferredPaneId: targetPaneId
+      });
+      notifyTerminal(t("terminal.created"), "success");
+    } catch (error) {
+      clearPendingTerminalCreation(targetPaneId);
+      notifyTerminal(error instanceof Error ? error.message : t("terminal.createFailed"), "error");
+    } finally {
+      setCreatingTerminal(false);
+    }
+  }
+
+  async function handleCreateTerminalFromMobileSheet(): Promise<void> {
+    const workspaceId = resolvedWorkspaceId;
+
+    if (!workspaceId || creatingTerminal) {
+      return;
+    }
+
+    const shellChoice = selectedMobileShellChoice;
+
+    if (!shellChoice || !shellChoice.available) {
+      return;
+    }
+
+    const targetPaneId: PaneId = "primary";
+    setCreatingTerminal(true);
+    setPendingTerminalCreationPaneId(targetPaneId);
+
+    try {
+      const terminal = await submitTerminalCreation({
+        workspaceId,
+        shell: shellChoice.value,
+        runtimeType: selectedRuntimeType || "tmux"
+      });
+
+      if (!terminal) {
+        clearPendingTerminalCreation(targetPaneId);
+        return;
+      }
+
+      applyCreatedTerminalLocally(terminal, targetPaneId);
+      clearPendingTerminalCreation(targetPaneId);
+      setMobileCreateSheetOpen(false);
+      setMobileQuickDrawerOpen(false);
+      await reloadWorkspaceResources(workspaceId, {
         preferredTerminalId: terminal.id,
         preferredPaneId: targetPaneId
       });
@@ -1121,6 +1279,7 @@ export function TerminalPage() {
       applyCreatedTerminalLocally(terminal, targetPaneId);
       setSelectedRuntimeType("embedded-pty");
       setRuntimeFallbackRequest(null);
+      setMobileCreateSheetOpen(false);
       clearPendingTerminalCreation(targetPaneId);
       await reloadWorkspaceResources(request.workspaceId, {
         preferredTerminalId: terminal.id,
@@ -1267,20 +1426,63 @@ export function TerminalPage() {
     }
   }
 
-  function handleSwipeTerminal(direction: "previous" | "next"): void {
-    if (!isMobileTerminalPage || orderedTerminals.length < 2) {
+  function handleMobileStageSwipe(direction: "left" | "right"): void {
+    if (!isMobileTerminalPage) {
       return;
     }
 
-    const currentIndex = activeTerminalIndex >= 0 ? activeTerminalIndex : 0;
-    const nextIndex = direction === "next" ? currentIndex + 1 : currentIndex - 1;
-    const nextTerminal = orderedTerminals[nextIndex] ?? null;
-
-    if (!nextTerminal) {
+    if (direction === "right") {
+      setMobileQuickDrawerOpen(true);
       return;
     }
 
-    bindTerminalToPane(nextTerminal.id, "primary");
+    setMobileQuickDrawerOpen(false);
+  }
+
+  function handleMobileStageTouchStart(event: TouchEvent<HTMLDivElement>): void {
+    if (!isMobileTerminalPage || mobileQuickDrawerOpen) {
+      return;
+    }
+
+    const touch = event.touches[0];
+
+    if (!touch) {
+      return;
+    }
+
+    mobileStageTouchStartRef.current = {
+      x: touch.clientX,
+      y: touch.clientY
+    };
+  }
+
+  function handleMobileStageTouchEnd(event: TouchEvent<HTMLDivElement>): void {
+    if (!isMobileTerminalPage || mobileQuickDrawerOpen) {
+      mobileStageTouchStartRef.current = null;
+      return;
+    }
+
+    const startPoint = mobileStageTouchStartRef.current;
+    const touch = event.changedTouches[0];
+    mobileStageTouchStartRef.current = null;
+
+    if (!startPoint || !touch) {
+      return;
+    }
+
+    const deltaX = touch.clientX - startPoint.x;
+    const deltaY = touch.clientY - startPoint.y;
+
+    if (
+      Math.abs(deltaX) < TERMINAL_MOBILE_SWIPE_THRESHOLD ||
+      Math.abs(deltaY) > TERMINAL_MOBILE_SWIPE_OFF_AXIS_THRESHOLD ||
+      Math.abs(deltaX) <= Math.abs(deltaY) ||
+      deltaX < 0
+    ) {
+      return;
+    }
+
+    handleMobileStageSwipe("right");
   }
 
   return (
@@ -1301,419 +1503,873 @@ export function TerminalPage() {
       />
       <section className="terminal-shell" data-mobile={isMobileTerminalPage}>
         {isMobileTerminalPage ? (
-          <MobileWorkspaceSwitcherHeader
-            className="terminal-mobile-page-header"
-            currentWorkspace={mobileHeaderWorkspace}
-            workspaces={workspaces}
-            onSelectWorkspace={(workspaceId) => {
-              setSelectedWorkspaceId(workspaceId);
-            }}
-            content={
-              <div className="terminal-mobile-header-pill-row" aria-label={t("terminal.workspaceSection")}>
-                <span className="terminal-mobile-header-pill terminal-mobile-header-pill-primary">
-                  {activeTerminal?.name ?? t("terminal.stageEmptyTitle")}
-                </span>
-                <span className="terminal-mobile-header-pill">{mobileHeaderRuntimeLabel}</span>
-                <span className="terminal-mobile-header-pill">
-                  {t(`terminal.connection.${mobileHeaderConnectionState}`)}
-                </span>
-                {orderedTerminals.length > 1 ? (
-                  <span className="terminal-mobile-header-pill">
-                    {t("terminal.mobileSwipePosition", {
-                      current: activeTerminalIndex >= 0 ? activeTerminalIndex + 1 : 1,
-                      total: orderedTerminals.length
-                    })}
-                  </span>
-                ) : null}
-              </div>
-            }
-          />
-        ) : null}
-
-        <header className="terminal-tabbar">
-          <div ref={terminalTabbarMainRef} className="terminal-tabbar-main">
-            <div
-              ref={terminalTabbarScrollRef}
-              className="terminal-tabbar-scroll"
-              role="tablist"
-              aria-label={t("terminal.title")}
-            >
-              {orderedTerminals.map((terminal) => {
-                const isActive = terminal.id === activeTerminalId;
-                const isPinned = pinnedTerminalIdSet.has(terminal.id);
-                const menuOpen = actionMenu?.terminalId === terminal.id;
-                const pendingMutation = terminalMutations[terminal.id] ?? null;
-                const indicatorStatus = pendingMutation
-                  ? "creating"
-                  : resolveTerminalIndicatorStatus({
-                      terminal,
-                      paneBindings: effectivePaneBindings,
-                      paneConnectionStates: effectivePaneConnectionStates,
-                      manuallyDisconnectedTerminalIdSet
-                    });
-
-                return (
-                  <div
-                    key={terminal.id}
-                    className="terminal-tab-shell"
-                    data-active={isActive}
-                    data-assigned={isTerminalAssigned(
-                      terminal.id,
-                      effectivePaneBindings,
-                      effectiveSplitDirection
-                    )}
+          <>
+            <MobileWorkspaceSwitcherHeader
+              className="terminal-mobile-page-header"
+              currentWorkspace={mobileHeaderWorkspace}
+              workspaces={workspaces}
+              onSelectWorkspace={(workspaceId) => {
+                selectWorkspace(workspaceId);
+                setSelectedWorkspaceId(workspaceId);
+              }}
+              trailing={
+                <div className="terminal-mobile-header-actions">
+                  <button
+                    type="button"
+                    className="terminal-mobile-header-action"
+                    aria-label={t("terminal.mobileCreateSheetTitle")}
+                    disabled={!resolvedWorkspaceId || creatingTerminal}
+                    onClick={() => {
+                      void openMobileCreateSheet();
+                    }}
                   >
-                    <button
-                      className="terminal-tab"
-                      data-active={isActive}
-                      type="button"
-                      role="tab"
-                      aria-selected={isActive}
-                      aria-busy={pendingMutation !== null}
-                      onClick={() => {
-                        bindTerminalToActivePane(terminal.id);
-                      }}
-                      onAuxClick={(event) => {
-                        if (event.button !== 1 || pendingMutation !== null) {
-                          return;
-                        }
-
-                        event.preventDefault();
-                        void handleCloseTerminal(terminal.id);
-                      }}
-                    >
-                      <span className="terminal-tab-name">
-                        <span
-                          className="terminal-tab-status-dot"
-                          data-status={indicatorStatus}
-                          aria-hidden="true"
-                        />
-                        {isPinned ? <span className="terminal-tab-pin-indicator">•</span> : null}
-                        <span className="terminal-tab-name-text">{terminal.name}</span>
-                        <span
-                          className="terminal-tab-runtime"
-                          title={getTerminalRuntimeLabel(terminal.runtimeType)}
-                        >
-                          {getTerminalRuntimeShortLabel(terminal.runtimeType)}
-                        </span>
-                        {pendingMutation ? (
-                          <span
-                            className="terminal-tab-operation"
-                            data-operation={pendingMutation}
-                          >
-                            <span
-                              className="terminal-tab-operation-spinner"
-                              aria-hidden="true"
-                            />
-                            {pendingMutation === "closing"
-                              ? t("terminal.closePendingBadge")
-                              : t("terminal.deletePendingBadge")}
-                          </span>
-                        ) : null}
-                      </span>
-                    </button>
-                    <button
-                      ref={(node) => {
-                        terminalActionMenuTriggerRef.current[terminal.id] = node;
-                      }}
-                      className="terminal-tab-inline-action"
-                      type="button"
-                      data-open={menuOpen}
-                      disabled={pendingMutation !== null}
-                      aria-haspopup="menu"
-                      aria-label={t("terminal.moreActions")}
-                      aria-expanded={menuOpen}
-                      onClick={(event) => {
-                        event.stopPropagation();
-
-                        if (menuOpen) {
-                          setActionMenu(null);
-                          return;
-                        }
-
-                        setActionMenu(
-                          buildActionMenuState(terminal.id, event.currentTarget) ?? {
-                            terminalId: terminal.id,
-                            top: 0,
-                            left: 0
-                          }
-                        );
-                      }}
-                    >
-                      ⋯
-                    </button>
-                  </div>
-                );
-              })}
-              {pendingTerminalCreationPaneId ? (
-                <div
-                  className="terminal-tab-shell"
-                  role="presentation"
-                  data-active={activeTerminalId === null && activePaneId === pendingTerminalCreationPaneId}
-                  data-assigned="false"
-                  data-pending="true"
-                >
-                  <div className="terminal-tab" aria-hidden="true">
-                    <span className="terminal-tab-name">
-                      <span
-                        className="terminal-tab-status-dot"
-                        data-status="creating"
-                        aria-hidden="true"
-                      />
-                      <span className="terminal-tab-name-text">{t("terminal.creating")}</span>
-                      <span
-                        className="terminal-tab-runtime"
-                        title={getTerminalRuntimeLabel(selectedRuntimeType || undefined)}
-                      >
-                        {getTerminalRuntimeShortLabel(selectedRuntimeType || undefined)}
-                      </span>
-                    </span>
-                  </div>
+                    <PlusIcon />
+                  </button>
+                  <button
+                    type="button"
+                    className="terminal-mobile-header-action"
+                    aria-label={t("terminal.mobileDrawerAction")}
+                    onClick={() => {
+                      setMobileQuickDrawerOpen(true);
+                    }}
+                  >
+                    <SessionDrawerIcon />
+                  </button>
                 </div>
-              ) : null}
-              <button
-                className="terminal-tab-control"
-                type="button"
-                aria-label={t("terminal.createButton")}
-                title={t("terminal.createButton")}
-                disabled={!selectedWorkspaceId || creatingTerminal}
-                onClick={() => {
-                  void handleCreateTerminal();
-                }}
-              >
-                <span className="terminal-toolbar-icon" aria-hidden="true">
-                  <svg viewBox="0 0 16 16" focusable="false">
-                    <path d="M8 3.25a.75.75 0 0 1 .75.75v3.25H12a.75.75 0 0 1 0 1.5H8.75V12a.75.75 0 0 1-1.5 0V8.75H4A.75.75 0 0 1 4 7.25h3.25V4A.75.75 0 0 1 8 3.25Z" />
-                  </svg>
-                </span>
-              </button>
-            </div>
+              }
+            />
 
-            <div className="terminal-tabbar-inline-actions">
-              <div className="terminal-toolbar-anchor">
-                <div
-                  ref={toolbarRef}
-                  className="terminal-toolbar-inline"
-                  data-open={toolbarOpen}
-                  aria-hidden={!toolbarOpen}
-                >
-                  <div className="terminal-toolbar-cluster">
-                    <div className="terminal-toolbar-section">
-                      <span className="terminal-toolbar-label">{t("terminal.runtimeField")}</span>
-                      <select
-                        className="terminal-runtime-select"
-                        value={selectedRuntimeType}
-                        aria-label={t("terminal.runtimeField")}
-                        title={
-                          runtimeOptions.find((option) => option.value === selectedRuntimeType)
-                            ?.description
-                        }
-                        onChange={(event) => {
-                          setSelectedRuntimeType(event.target.value as SelectableTerminalRuntimeType);
-                        }}
-                      >
-                        {runtimeOptions.map((option) => (
-                          <option key={option.value || "auto"} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div className="terminal-toolbar-section">
-                      <span className="terminal-toolbar-label">{t("terminal.zoomLabel")}</span>
-                      <div className="terminal-zoom-group" aria-label={t("terminal.zoomLabel")}>
-                        <button
-                          type="button"
-                          className="terminal-zoom-button"
-                          aria-label={t("terminal.zoomOutAction")}
-                          onClick={() => {
-                            updateZoomScale(zoomScale - TERMINAL_ZOOM_STEP);
-                          }}
-                        >
-                          -
-                        </button>
-                        <button
-                          type="button"
-                          className="terminal-zoom-value"
-                          aria-label={t("terminal.zoomResetAction")}
-                          onClick={() => {
-                            updateZoomScale(1);
-                          }}
-                        >
-                          {formatZoomPercent(zoomScale)}
-                        </button>
-                        <button
-                          type="button"
-                          className="terminal-zoom-button"
-                          aria-label={t("terminal.zoomInAction")}
-                          onClick={() => {
-                            updateZoomScale(zoomScale + TERMINAL_ZOOM_STEP);
-                          }}
-                        >
-                          +
-                        </button>
-                      </div>
-                    </div>
-
-                    {!isMobileTerminalPage ? (
-                      <div className="terminal-toolbar-section">
-                        <span className="terminal-toolbar-label">{t("terminal.layoutLabel")}</span>
-                        <div className="terminal-layout-switcher">
-                          <button
-                            type="button"
-                            className="terminal-layout-button"
-                            data-active={splitDirection === "single"}
-                            aria-label={t("terminal.layoutSingleAction")}
-                            onClick={() => {
-                              applySplitLayout("single");
-                            }}
-                          >
-                            1
-                          </button>
-                          <button
-                            type="button"
-                            className="terminal-layout-button"
-                            data-active={splitDirection === "vertical"}
-                            aria-label={t("terminal.layoutVerticalAction")}
-                            onClick={() => {
-                              applySplitLayout("vertical");
-                            }}
-                          >
-                            ||
-                          </button>
-                          <button
-                            type="button"
-                            className="terminal-layout-button"
-                            data-active={splitDirection === "horizontal"}
-                            aria-label={t("terminal.layoutHorizontalAction")}
-                            onClick={() => {
-                              applySplitLayout("horizontal");
-                            }}
-                          >
-                            =
-                          </button>
-                        </div>
-                      </div>
-                    ) : null}
-
-                    <button
-                      type="button"
-                      className="terminal-toolbar-save"
-                      disabled={!activeTerminal}
-                      onClick={() => {
-                        void handleSaveActivePaneLog();
-                      }}
-                    >
-                      {t("terminal.saveLogAction")}
-                    </button>
-                  </div>
-                </div>
-
-                <button
-                  ref={toolbarToggleRef}
-                  type="button"
-                  className="terminal-toolbar-toggle terminal-toolbar-toggle-tool"
-                  data-open={toolbarOpen}
-                  aria-label={t("terminal.toolbarToggleAction")}
-                  aria-expanded={toolbarOpen}
-                  onClick={() => {
-                    setActionMenu(null);
-                    setToolbarOpen((current) => !current);
-                  }}
-                >
-                  <span className="terminal-toolbar-icon terminal-toolbar-icon-tool" aria-hidden="true">
-                    <svg viewBox="0 0 20 20" fill="none" focusable="false">
-                      <path
-                        d="M13.1 3.3a3.1 3.1 0 0 0-2.4 3.77L4.95 12.82a1.5 1.5 0 1 0 2.12 2.12l5.74-5.74a3.1 3.1 0 0 0 3.77-2.4l-1.76.5a1.06 1.06 0 0 1-1.04-.28l-1.3-1.3a1.06 1.06 0 0 1-.28-1.04l.9-1.38Z"
-                        stroke="currentColor"
-                        strokeWidth="1.35"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                      <path
-                        d="m5.85 11.92 2.22 2.22"
-                        stroke="currentColor"
-                        strokeWidth="1.35"
-                        strokeLinecap="round"
-                      />
-                    </svg>
-                  </span>
-                </button>
-              </div>
-            </div>
-            {actionMenu && actionMenuTerminal ? (
-              <TerminalActionMenu
-                ref={terminalActionMenuRef}
-                actionMenu={actionMenu}
-                terminal={actionMenuTerminal}
-                paneBindings={effectivePaneBindings}
-                splitDirection={effectiveSplitDirection}
-                activePaneId={effectiveActivePaneId}
-                paneConnectionStates={effectivePaneConnectionStates}
-                pinnedTerminalIdSet={pinnedTerminalIdSet}
-                manuallyDisconnectedTerminalIdSet={manuallyDisconnectedTerminalIdSet}
-                pendingMutation={terminalMutations[actionMenuTerminal.id] ?? null}
-                onBindToActivePane={bindTerminalToActivePane}
-                onBindToPane={bindTerminalToPane}
-                onDuplicate={handleDuplicateTerminal}
-                onDisconnect={handleDisconnectTerminal}
-                onReconnect={handleReconnectTerminal}
-                onClose={handleCloseTerminal}
-                onDelete={handleDeleteTerminal}
-                onTogglePin={handleTogglePin}
-                onCloseMenu={() => {
-                  setActionMenu(null);
+            <div className="terminal-stage-surface terminal-stage-surface-mobile">
+              <div
+                className="terminal-mobile-edge-swipe-zone"
+                aria-hidden="true"
+                onTouchStart={handleMobileStageTouchStart}
+                onTouchEnd={handleMobileStageTouchEnd}
+                onTouchCancel={() => {
+                  mobileStageTouchStartRef.current = null;
                 }}
               />
-            ) : null}
-          </div>
-        </header>
-
-        {isMobileTerminalPage && orderedTerminals.length > 1 ? (
-          <div className="terminal-mobile-gesture-hint">
-            <span>{t("terminal.mobileSwipeHint")}</span>
-            <strong>
-              {t("terminal.mobileSwipePosition", {
-                current: activeTerminalIndex >= 0 ? activeTerminalIndex + 1 : 1,
-                total: orderedTerminals.length
-              })}
-            </strong>
-          </div>
-        ) : null}
-
-        <div className="terminal-stage-surface">
-          <div className="terminal-stage-grid" data-layout={effectiveSplitDirection} data-mobile={isMobileTerminalPage}>
-            {visiblePaneIds.map((paneId) => {
-              const terminalId = effectivePaneBindings[paneId];
-              const terminal = terminals.find((item) => item.id === terminalId) ?? null;
-
-              return (
+              <div className="terminal-stage-grid" data-layout="single" data-mobile="true">
                 <TerminalWorkspacePane
-                  key={`${paneId}-${terminal?.id ?? "empty"}`}
-                  paneId={paneId}
-                  paneLabel={paneId === "primary" ? t("terminal.panePrimary") : t("terminal.paneSecondary")}
-                  terminal={terminal}
-                  pendingCreation={!terminal && pendingTerminalCreationPaneId === paneId}
+                  key={`mobile-${activeTerminal?.id ?? "empty"}`}
+                  paneId="primary"
+                  paneLabel={t("terminal.panePrimary")}
+                  terminal={activeTerminal}
+                  pendingCreation={!activeTerminal && pendingTerminalCreationPaneId === "primary"}
                   zoomScale={zoomScale}
-                  active={effectiveActivePaneId === paneId}
-                  allowSwipeSwitch={isMobileTerminalPage && orderedTerminals.length > 1}
-                  connectionState={effectivePaneConnectionStates[paneId]}
+                  active
+                  isMobileLayout
                   onActivate={activatePane}
-                  onSwipeTerminal={handleSwipeTerminal}
+                  onSwipeGesture={handleMobileStageSwipe}
                   onConnectionChange={handlePaneConnectionChange}
                   onTerminalStatus={handleTerminalStatus}
                   onRequireReload={requestReload}
                   onUnauthorized={handleUnauthorized}
                   registerApi={registerPaneApi}
                   notifyTerminal={notifyTerminal}
+                  canCreateTerminal={Boolean(resolvedWorkspaceId)}
+                  onRequestCreateTerminal={() => {
+                    void openMobileCreateSheet();
+                  }}
+                  onRequestOpenTerminalDrawer={() => {
+                    setMobileQuickDrawerOpen(true);
+                  }}
                 />
-              );
-            })}
-          </div>
-        </div>
+              </div>
+            </div>
+
+            <MobileTerminalQuickDrawer
+              open={mobileQuickDrawerOpen}
+              terminals={orderedTerminals}
+              pinnedTerminalIds={pinnedTerminalIdSet}
+              activeTerminalId={activeTerminal?.id ?? null}
+              creatingTerminal={creatingTerminal}
+              onClose={() => {
+                setMobileQuickDrawerOpen(false);
+              }}
+              onCreateTerminal={() => {
+                setMobileQuickDrawerOpen(false);
+                void openMobileCreateSheet();
+              }}
+              onSelectTerminal={(terminalId) => {
+                bindTerminalToPane(terminalId, "primary");
+                setMobileQuickDrawerOpen(false);
+              }}
+            />
+
+            <MobileTerminalCreateSheet
+              open={mobileCreateSheetOpen}
+              loading={loadingShellOptions}
+              creating={creatingTerminal}
+              shellChoices={mobileShellChoices}
+              selectedShell={mobileSelectedShell}
+              runtimeType={selectedRuntimeType || "tmux"}
+              onClose={() => {
+                if (creatingTerminal) {
+                  return;
+                }
+
+                setMobileCreateSheetOpen(false);
+              }}
+              onSelectShell={setMobileSelectedShell}
+              onSelectRuntime={(runtimeType) => {
+                setSelectedRuntimeType(runtimeType);
+              }}
+              onConfirm={() => {
+                void handleCreateTerminalFromMobileSheet();
+              }}
+            />
+          </>
+        ) : (
+          <>
+            <header className="terminal-tabbar" {...dragRegionProps}>
+              <div ref={terminalTabbarMainRef} className="terminal-tabbar-main" {...dragRegionProps}>
+                <div
+                  ref={terminalTabbarScrollRef}
+                  className="terminal-tabbar-scroll"
+                  role="tablist"
+                  aria-label={t("terminal.title")}
+                  {...dragRegionProps}
+                >
+                  {orderedTerminals.map((terminal) => {
+                    const isActive = terminal.id === activeTerminalId;
+                    const isPinned = pinnedTerminalIdSet.has(terminal.id);
+                    const menuOpen = actionMenu?.terminalId === terminal.id;
+                    const pendingMutation = terminalMutations[terminal.id] ?? null;
+                    const indicatorStatus = pendingMutation
+                      ? "creating"
+                      : resolveTerminalIndicatorStatus({
+                          terminal,
+                          paneBindings: effectivePaneBindings,
+                          paneConnectionStates: effectivePaneConnectionStates,
+                          manuallyDisconnectedTerminalIdSet
+                        });
+
+                    return (
+                      <div
+                        key={terminal.id}
+                        className="terminal-tab-shell"
+                        data-active={isActive}
+                        data-assigned={isTerminalAssigned(
+                          terminal.id,
+                          effectivePaneBindings,
+                          effectiveSplitDirection
+                        )}
+                      >
+                        <button
+                          className="terminal-tab"
+                          data-active={isActive}
+                          type="button"
+                          role="tab"
+                          aria-selected={isActive}
+                          aria-busy={pendingMutation !== null}
+                          onClick={() => {
+                            bindTerminalToActivePane(terminal.id);
+                          }}
+                          onAuxClick={(event) => {
+                            if (event.button !== 1 || pendingMutation !== null) {
+                              return;
+                            }
+
+                            event.preventDefault();
+                            void handleCloseTerminal(terminal.id);
+                          }}
+                        >
+                          <span className="terminal-tab-name">
+                            <span
+                              className="terminal-tab-status-dot"
+                              data-status={indicatorStatus}
+                              aria-hidden="true"
+                            />
+                            {isPinned ? <span className="terminal-tab-pin-indicator">•</span> : null}
+                            <span className="terminal-tab-name-text">{terminal.name}</span>
+                            <span
+                              className="terminal-tab-runtime"
+                              title={getTerminalRuntimeLabel(terminal.runtimeType)}
+                            >
+                              {getTerminalRuntimeShortLabel(terminal.runtimeType)}
+                            </span>
+                            {pendingMutation ? (
+                              <span
+                                className="terminal-tab-operation"
+                                data-operation={pendingMutation}
+                              >
+                                <span
+                                  className="terminal-tab-operation-spinner"
+                                  aria-hidden="true"
+                                />
+                                {pendingMutation === "closing"
+                                  ? t("terminal.closePendingBadge")
+                                  : t("terminal.deletePendingBadge")}
+                              </span>
+                            ) : null}
+                          </span>
+                        </button>
+                        <button
+                          ref={(node) => {
+                            terminalActionMenuTriggerRef.current[terminal.id] = node;
+                          }}
+                          className="terminal-tab-inline-action"
+                          type="button"
+                          data-open={menuOpen}
+                          disabled={pendingMutation !== null}
+                          aria-haspopup="menu"
+                          aria-label={t("terminal.moreActions")}
+                          aria-expanded={menuOpen}
+                          onClick={(event) => {
+                            event.stopPropagation();
+
+                            if (menuOpen) {
+                              setActionMenu(null);
+                              return;
+                            }
+
+                            setActionMenu(
+                              buildActionMenuState(terminal.id, event.currentTarget) ?? {
+                                terminalId: terminal.id,
+                                top: 0,
+                                left: 0
+                              }
+                            );
+                          }}
+                        >
+                          ⋯
+                        </button>
+                      </div>
+                    );
+                  })}
+                  {pendingTerminalCreationPaneId ? (
+                    <div
+                      className="terminal-tab-shell"
+                      role="presentation"
+                      data-active={activeTerminalId === null && activePaneId === pendingTerminalCreationPaneId}
+                      data-assigned="false"
+                      data-pending="true"
+                    >
+                      <div className="terminal-tab" aria-hidden="true">
+                        <span className="terminal-tab-name">
+                          <span
+                            className="terminal-tab-status-dot"
+                            data-status="creating"
+                            aria-hidden="true"
+                          />
+                          <span className="terminal-tab-name-text">{t("terminal.creating")}</span>
+                          <span
+                            className="terminal-tab-runtime"
+                            title={getTerminalRuntimeLabel(selectedRuntimeType || undefined)}
+                          >
+                            {getTerminalRuntimeShortLabel(selectedRuntimeType || undefined)}
+                          </span>
+                        </span>
+                      </div>
+                    </div>
+                  ) : null}
+                  <button
+                    className="terminal-tab-control"
+                    type="button"
+                    aria-label={t("terminal.createButton")}
+                    title={t("terminal.createButton")}
+                    disabled={!selectedWorkspaceId || creatingTerminal}
+                    onClick={() => {
+                      void handleCreateTerminal();
+                    }}
+                  >
+                    <span className="terminal-toolbar-icon" aria-hidden="true">
+                      <svg viewBox="0 0 16 16" focusable="false">
+                        <path d="M8 3.25a.75.75 0 0 1 .75.75v3.25H12a.75.75 0 0 1 0 1.5H8.75V12a.75.75 0 0 1-1.5 0V8.75H4A.75.75 0 0 1 4 7.25h3.25V4A.75.75 0 0 1 8 3.25Z" />
+                      </svg>
+                    </span>
+                  </button>
+                </div>
+
+                <div className="terminal-tabbar-inline-actions">
+                  <div className="terminal-toolbar-anchor">
+                    <div
+                      ref={toolbarRef}
+                      className="terminal-toolbar-inline"
+                      data-open={toolbarOpen}
+                      aria-hidden={!toolbarOpen}
+                    >
+                      <div className="terminal-toolbar-cluster">
+                        <div className="terminal-toolbar-section">
+                          <span className="terminal-toolbar-label">{t("terminal.runtimeField")}</span>
+                          <select
+                            className="terminal-runtime-select"
+                            value={selectedRuntimeType}
+                            aria-label={t("terminal.runtimeField")}
+                            title={
+                              runtimeOptions.find((option) => option.value === selectedRuntimeType)
+                                ?.description
+                            }
+                            onChange={(event) => {
+                              setSelectedRuntimeType(event.target.value as SelectableTerminalRuntimeType);
+                            }}
+                          >
+                            {runtimeOptions.map((option) => (
+                              <option key={option.value || "auto"} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className="terminal-toolbar-section">
+                          <span className="terminal-toolbar-label">{t("terminal.zoomLabel")}</span>
+                          <div className="terminal-zoom-group" aria-label={t("terminal.zoomLabel")}>
+                            <button
+                              type="button"
+                              className="terminal-zoom-button"
+                              aria-label={t("terminal.zoomOutAction")}
+                              onClick={() => {
+                                updateZoomScale(zoomScale - TERMINAL_ZOOM_STEP);
+                              }}
+                            >
+                              -
+                            </button>
+                            <button
+                              type="button"
+                              className="terminal-zoom-value"
+                              aria-label={t("terminal.zoomResetAction")}
+                              onClick={() => {
+                                updateZoomScale(1);
+                              }}
+                            >
+                              {formatZoomPercent(zoomScale)}
+                            </button>
+                            <button
+                              type="button"
+                              className="terminal-zoom-button"
+                              aria-label={t("terminal.zoomInAction")}
+                              onClick={() => {
+                                updateZoomScale(zoomScale + TERMINAL_ZOOM_STEP);
+                              }}
+                            >
+                              +
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="terminal-toolbar-section">
+                          <span className="terminal-toolbar-label">{t("terminal.layoutLabel")}</span>
+                          <div className="terminal-layout-switcher">
+                            <button
+                              type="button"
+                              className="terminal-layout-button"
+                              data-active={splitDirection === "single"}
+                              aria-label={t("terminal.layoutSingleAction")}
+                              onClick={() => {
+                                applySplitLayout("single");
+                              }}
+                            >
+                              1
+                            </button>
+                            <button
+                              type="button"
+                              className="terminal-layout-button"
+                              data-active={splitDirection === "vertical"}
+                              aria-label={t("terminal.layoutVerticalAction")}
+                              onClick={() => {
+                                applySplitLayout("vertical");
+                              }}
+                            >
+                              ||
+                            </button>
+                            <button
+                              type="button"
+                              className="terminal-layout-button"
+                              data-active={splitDirection === "horizontal"}
+                              aria-label={t("terminal.layoutHorizontalAction")}
+                              onClick={() => {
+                                applySplitLayout("horizontal");
+                              }}
+                            >
+                              =
+                            </button>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          className="terminal-toolbar-save"
+                          disabled={!activeTerminal}
+                          onClick={() => {
+                            void handleSaveActivePaneLog();
+                          }}
+                        >
+                          {t("terminal.saveLogAction")}
+                        </button>
+                      </div>
+                    </div>
+
+                    <button
+                      ref={toolbarToggleRef}
+                      type="button"
+                      className="terminal-toolbar-toggle terminal-toolbar-toggle-tool"
+                      data-open={toolbarOpen}
+                      aria-label={t("terminal.toolbarToggleAction")}
+                      aria-expanded={toolbarOpen}
+                      onClick={() => {
+                        setActionMenu(null);
+                        setToolbarOpen((current) => !current);
+                      }}
+                    >
+                      <span className="terminal-toolbar-icon terminal-toolbar-icon-tool" aria-hidden="true">
+                        <svg viewBox="0 0 20 20" fill="none" focusable="false">
+                          <path
+                            d="M13.1 3.3a3.1 3.1 0 0 0-2.4 3.77L4.95 12.82a1.5 1.5 0 1 0 2.12 2.12l5.74-5.74a3.1 3.1 0 0 0 3.77-2.4l-1.76.5a1.06 1.06 0 0 1-1.04-.28l-1.3-1.3a1.06 1.06 0 0 1-.28-1.04l.9-1.38Z"
+                            stroke="currentColor"
+                            strokeWidth="1.35"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                          <path
+                            d="m5.85 11.92 2.22 2.22"
+                            stroke="currentColor"
+                            strokeWidth="1.35"
+                            strokeLinecap="round"
+                          />
+                        </svg>
+                      </span>
+                    </button>
+                  </div>
+                </div>
+                {actionMenu && actionMenuTerminal ? (
+                  <TerminalActionMenu
+                    ref={terminalActionMenuRef}
+                    actionMenu={actionMenu}
+                    terminal={actionMenuTerminal}
+                    paneBindings={effectivePaneBindings}
+                    splitDirection={effectiveSplitDirection}
+                    activePaneId={effectiveActivePaneId}
+                    paneConnectionStates={effectivePaneConnectionStates}
+                    pinnedTerminalIdSet={pinnedTerminalIdSet}
+                    manuallyDisconnectedTerminalIdSet={manuallyDisconnectedTerminalIdSet}
+                    pendingMutation={terminalMutations[actionMenuTerminal.id] ?? null}
+                    onBindToActivePane={bindTerminalToActivePane}
+                    onBindToPane={bindTerminalToPane}
+                    onDuplicate={handleDuplicateTerminal}
+                    onDisconnect={handleDisconnectTerminal}
+                    onReconnect={handleReconnectTerminal}
+                    onClose={handleCloseTerminal}
+                    onDelete={handleDeleteTerminal}
+                    onTogglePin={handleTogglePin}
+                    onCloseMenu={() => {
+                      setActionMenu(null);
+                    }}
+                  />
+                ) : null}
+              </div>
+            </header>
+
+            <div className="terminal-stage-surface">
+              <div className="terminal-stage-grid" data-layout={effectiveSplitDirection} data-mobile="false">
+                {visiblePaneIds.map((paneId) => {
+                  const terminalId = effectivePaneBindings[paneId];
+                  const terminal = terminals.find((item) => item.id === terminalId) ?? null;
+
+                  return (
+                    <TerminalWorkspacePane
+                      key={`${paneId}-${terminal?.id ?? "empty"}`}
+                      paneId={paneId}
+                      paneLabel={paneId === "primary" ? t("terminal.panePrimary") : t("terminal.paneSecondary")}
+                      terminal={terminal}
+                      pendingCreation={!terminal && pendingTerminalCreationPaneId === paneId}
+                      zoomScale={zoomScale}
+                      active={effectiveActivePaneId === paneId}
+                      onActivate={activatePane}
+                      onConnectionChange={handlePaneConnectionChange}
+                      onTerminalStatus={handleTerminalStatus}
+                      onRequireReload={requestReload}
+                      onUnauthorized={handleUnauthorized}
+                      registerApi={registerPaneApi}
+                      notifyTerminal={notifyTerminal}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+          </>
+        )}
       </section>
     </main>
+  );
+}
+
+function MobileTerminalQuickDrawer({
+  open,
+  terminals,
+  pinnedTerminalIds,
+  activeTerminalId,
+  creatingTerminal,
+  onClose,
+  onCreateTerminal,
+  onSelectTerminal
+}: {
+  open: boolean;
+  terminals: TerminalDto[];
+  pinnedTerminalIds: ReadonlySet<string>;
+  activeTerminalId: string | null;
+  creatingTerminal: boolean;
+  onClose: () => void;
+  onCreateTerminal: () => void;
+  onSelectTerminal: (terminalId: string) => void;
+}) {
+  const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+  const pinnedTerminals = terminals.filter((terminal) => pinnedTerminalIds.has(terminal.id));
+  const otherTerminals = terminals.filter((terminal) => !pinnedTerminalIds.has(terminal.id));
+
+  if (!open || typeof document === "undefined") {
+    return null;
+  }
+
+  return createPortal(
+    <>
+      <div
+        className="terminal-mobile-drawer-overlay"
+        role="button"
+        tabIndex={0}
+        aria-label={t("common.back")}
+        onClick={onClose}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            onClose();
+          }
+        }}
+      />
+      <section
+        className="terminal-mobile-drawer-panel terminal-mobile-session-drawer"
+        aria-label={t("terminal.mobileDrawerTitle")}
+        onTouchStart={(event) => {
+          const touch = event.touches[0];
+
+          if (!touch) {
+            return;
+          }
+
+          touchStartRef.current = {
+            x: touch.clientX,
+            y: touch.clientY
+          };
+        }}
+        onTouchEnd={(event) => {
+          const startPoint = touchStartRef.current;
+          const touch = event.changedTouches[0];
+          touchStartRef.current = null;
+
+          if (!startPoint || !touch) {
+            return;
+          }
+
+          const deltaX = touch.clientX - startPoint.x;
+          const deltaY = touch.clientY - startPoint.y;
+
+          if (
+            Math.abs(deltaX) < TERMINAL_MOBILE_SWIPE_THRESHOLD ||
+            Math.abs(deltaY) > TERMINAL_MOBILE_SWIPE_OFF_AXIS_THRESHOLD ||
+            Math.abs(deltaX) <= Math.abs(deltaY) ||
+            deltaX >= 0
+          ) {
+            return;
+          }
+
+          onClose();
+        }}
+        onTouchCancel={() => {
+          touchStartRef.current = null;
+        }}
+      >
+        <div className="workbench-nav-header terminal-mobile-session-drawer-header">
+          <div className="workbench-nav-header-main">
+            <h1>{t("terminal.mobileDrawerTitle")}</h1>
+            <p>{t("terminal.mobileDrawerDescription")}</p>
+          </div>
+        </div>
+
+        <div className="workbench-nav-body terminal-mobile-session-drawer-body">
+          {pinnedTerminals.length > 0 ? (
+            <section className="workbench-section-block">
+              <div className="workbench-section-heading">
+                <div className="workbench-section-heading-main">
+                  <span>{t("terminal.mobilePinnedSectionTitle")}</span>
+                </div>
+                <span className="workbench-section-counter">{pinnedTerminals.length}</span>
+              </div>
+              <div className="workbench-session-list">
+                {pinnedTerminals.map((terminal) => (
+                  <TerminalMobileSessionEntry
+                    key={terminal.id}
+                    terminal={terminal}
+                    active={terminal.id === activeTerminalId}
+                    onOpen={onSelectTerminal}
+                  />
+                ))}
+              </div>
+            </section>
+          ) : null}
+
+          <section className="workbench-section-block">
+            <div className="workbench-section-heading">
+              <div className="workbench-section-heading-main">
+                <span>{t("terminal.workspaceField")}</span>
+              </div>
+              <span className="workbench-section-counter">{otherTerminals.length}</span>
+            </div>
+            {otherTerminals.length > 0 ? (
+              <div className="workbench-session-list">
+                {otherTerminals.map((terminal) => (
+                  <TerminalMobileSessionEntry
+                    key={terminal.id}
+                    terminal={terminal}
+                    active={terminal.id === activeTerminalId}
+                    onOpen={onSelectTerminal}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="workbench-session-empty">{t("terminal.mobileDrawerEmptyDescription")}</div>
+            )}
+          </section>
+        </div>
+
+        <div className="workbench-nav-footer minimal terminal-mobile-session-drawer-footer">
+          <button
+            type="button"
+            className="workbench-import-toggle terminal-mobile-session-drawer-action"
+            disabled={creatingTerminal}
+            onClick={onCreateTerminal}
+          >
+            <span className="workbench-import-toggle-symbol">+</span>
+            <span className="workbench-import-toggle-label">{t("terminal.createButton")}</span>
+          </button>
+        </div>
+      </section>
+    </>,
+    document.body
+  );
+}
+
+function TerminalMobileSessionEntry({
+  terminal,
+  active,
+  onOpen
+}: {
+  terminal: TerminalDto;
+  active: boolean;
+  onOpen: (terminalId: string) => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="workbench-session-link terminal-mobile-session-link"
+      data-active={active ? "true" : "false"}
+      onClick={() => {
+        onOpen(terminal.id);
+      }}
+    >
+      <div className="session-title-row">
+        <span className={buildTerminalSessionIndicatorClassName(terminal.status)} />
+        <span className="session-title" title={terminal.name}>
+          {terminal.name}
+        </span>
+      </div>
+      <div className="session-meta-row">
+        <span className="session-meta">{terminal.cwd}</span>
+        <span className="terminal-mobile-session-runtime-badge">
+          {getTerminalRuntimeShortLabel(terminal.runtimeType)}
+        </span>
+      </div>
+    </button>
+  );
+}
+
+function MobileTerminalCreateSheet({
+  open,
+  loading,
+  creating,
+  shellChoices,
+  selectedShell,
+  runtimeType,
+  onClose,
+  onSelectShell,
+  onSelectRuntime,
+  onConfirm
+}: {
+  open: boolean;
+  loading: boolean;
+  creating: boolean;
+  shellChoices: MobileTerminalShellChoice[];
+  selectedShell: string;
+  runtimeType: SelectableTerminalRuntimeType;
+  onClose: () => void;
+  onSelectShell: (shell: string) => void;
+  onSelectRuntime: (runtimeType: SelectableTerminalRuntimeType) => void;
+  onConfirm: () => void;
+}) {
+  if (!open || typeof document === "undefined") {
+    return null;
+  }
+
+  const selectedShellChoice =
+    shellChoices.find((option) => option.value === selectedShell) ?? shellChoices[0] ?? null;
+  const runtimeCards: Array<{
+    value: SelectableTerminalRuntimeType;
+    title: string;
+    description: string;
+  }> = [
+    {
+      value: "tmux",
+      title: t("terminal.mobileRuntimePersistentTitle"),
+      description: t("terminal.mobileRuntimePersistentDescription")
+    },
+    {
+      value: "embedded-pty",
+      title: t("terminal.mobileRuntimeSessionTitle"),
+      description: t("terminal.mobileRuntimeSessionDescription")
+    }
+  ];
+  const confirmDisabled =
+    creating ||
+    loading ||
+    !selectedShellChoice ||
+    !selectedShellChoice.available;
+
+  return createPortal(
+    <div className="ios-action-sheet-overlay" role="presentation" onClick={onClose}>
+      <div
+        className="mobile-workspace-home-sheet terminal-mobile-create-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label={t("terminal.mobileCreateSheetTitle")}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="mobile-workspace-home-sheet-card terminal-mobile-create-sheet-card">
+          <div className="mobile-workspace-home-sheet-header">
+            <strong>{t("terminal.mobileCreateSheetTitle")}</strong>
+          </div>
+
+          <div className="terminal-mobile-create-sheet-body">
+            <section className="terminal-mobile-create-section">
+              <div className="terminal-mobile-create-section-copy">
+                <strong>{t("terminal.mobileCreateShellLabel")}</strong>
+                <p>{t("terminal.mobileCreateShellDescription")}</p>
+              </div>
+              {loading && shellChoices.length === 0 ? (
+                <div className="terminal-mobile-create-loading">
+                  <span className="terminal-pending-indicator" aria-hidden="true" />
+                  <span>{t("terminal.mobileCreateLoadingShells")}</span>
+                </div>
+              ) : (
+                <div className="terminal-mobile-choice-grid" role="list">
+                  {shellChoices.map((option) => {
+                    const selected = option.value === selectedShell;
+
+                    return (
+                      <button
+                        key={option.id}
+                        type="button"
+                        className="terminal-mobile-choice-card"
+                        data-selected={selected ? "true" : "false"}
+                        disabled={!option.available || creating}
+                        onClick={() => {
+                          onSelectShell(option.value);
+                        }}
+                      >
+                        <span className="terminal-mobile-choice-copy">
+                          <strong>{option.label}</strong>
+                          <span>{option.description}</span>
+                        </span>
+                        {!option.available && option.unavailableReason ? (
+                          <span className="terminal-mobile-choice-badge terminal-mobile-choice-badge-muted">
+                            {option.unavailableReason}
+                          </span>
+                        ) : selected ? (
+                          <span className="terminal-mobile-choice-badge">{t("settings.enabled")}</span>
+                        ) : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+
+            <section className="terminal-mobile-create-section">
+              <div className="terminal-mobile-create-section-copy">
+                <strong>{t("terminal.mobileCreateRuntimeLabel")}</strong>
+                <p>{t("terminal.mobileCreateRuntimeDescription")}</p>
+              </div>
+              <div className="terminal-mobile-choice-grid" role="list">
+                {runtimeCards.map((option) => {
+                  const selected = option.value === runtimeType;
+
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      className="terminal-mobile-choice-card"
+                      data-selected={selected ? "true" : "false"}
+                      disabled={creating}
+                      onClick={() => {
+                        onSelectRuntime(option.value);
+                      }}
+                    >
+                      <span className="terminal-mobile-choice-copy">
+                        <strong>{option.title}</strong>
+                        <span>{option.description}</span>
+                      </span>
+                      {selected ? (
+                        <span className="terminal-mobile-choice-badge">{t("settings.enabled")}</span>
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+
+            <button
+              type="button"
+              className="terminal-mobile-primary-action terminal-mobile-create-confirm"
+              disabled={confirmDisabled}
+              onClick={onConfirm}
+            >
+              {creating ? t("terminal.creating") : t("terminal.mobileCreateConfirm")}
+            </button>
+          </div>
+        </div>
+
+        <button type="button" className="ios-action-sheet-cancel" disabled={creating} onClick={onClose}>
+          {t("common.cancel")}
+        </button>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+function PlusIcon() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <path
+        d="M8 3.25v9.5M3.25 8h9.5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="1.75"
+      />
+    </svg>
+  );
+}
+
+function SessionDrawerIcon() {
+  return (
+    <svg viewBox="0 0 18 18" aria-hidden="true">
+      <path
+        d="M4 4.75h10M4 9h10M4 13.25h7"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="1.6"
+      />
+    </svg>
   );
 }
 
@@ -1902,16 +2558,18 @@ function TerminalWorkspacePane({
   pendingCreation,
   zoomScale,
   active,
-  allowSwipeSwitch = false,
-  connectionState,
+  isMobileLayout = false,
+  canCreateTerminal = true,
   onActivate,
-  onSwipeTerminal,
+  onSwipeGesture,
   onConnectionChange,
   onTerminalStatus,
   onRequireReload,
   onUnauthorized,
   registerApi,
-  notifyTerminal
+  notifyTerminal,
+  onRequestCreateTerminal,
+  onRequestOpenTerminalDrawer
 }: TerminalWorkspacePaneProps) {
   const terminalContainerRef = useRef<HTMLDivElement | null>(null);
   const touchStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -1940,6 +2598,33 @@ function TerminalWorkspacePane({
     viewportRuntimeRef.current?.setFontSize(buildTerminalFontSize(zoomScale));
     viewportRuntimeRef.current?.reflow();
   }, [zoomScale]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return;
+    }
+
+    const applyTheme = () => {
+      viewportRuntimeRef.current?.applyTheme();
+    };
+
+    applyTheme();
+
+    const observer = new MutationObserver((mutations) => {
+      if (mutations.some((mutation) => mutation.attributeName === "data-theme")) {
+        applyTheme();
+      }
+    });
+
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme"]
+    });
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [terminal?.id]);
 
   useEffect(() => {
     viewportRuntimeRef.current?.dispose();
@@ -2133,9 +2818,6 @@ function TerminalWorkspacePane({
     terminal?.id
   ]);
 
-  const displayedConnectionState: TerminalConnectionState =
-    terminal?.status === "running" ? connectionState : "closed";
-
   return (
     <article
       className="terminal-pane-card"
@@ -2148,7 +2830,7 @@ function TerminalWorkspacePane({
         viewportRuntimeRef.current?.focus();
       }}
       onTouchStart={(event) => {
-        if (!allowSwipeSwitch) {
+        if (!isMobileLayout) {
           return;
         }
 
@@ -2164,7 +2846,7 @@ function TerminalWorkspacePane({
         };
       }}
       onTouchEnd={(event) => {
-        if (!allowSwipeSwitch || !onSwipeTerminal) {
+        if (!isMobileLayout || !onSwipeGesture) {
           touchStartRef.current = null;
           return;
         }
@@ -2188,7 +2870,7 @@ function TerminalWorkspacePane({
           return;
         }
 
-        onSwipeTerminal(deltaX < 0 ? "next" : "previous");
+        onSwipeGesture(deltaX < 0 ? "left" : "right");
       }}
       onTouchCancel={() => {
         touchStartRef.current = null;
@@ -2206,10 +2888,39 @@ function TerminalWorkspacePane({
           <p>{t("terminal.creationPendingDescription")}</p>
         </div>
       ) : (
-        <div className="terminal-empty-state terminal-empty-state-inline">
+        <div
+          className={
+            isMobileLayout
+              ? "terminal-empty-state terminal-empty-state-inline terminal-mobile-empty-state"
+              : "terminal-empty-state terminal-empty-state-inline"
+          }
+        >
           <span className="terminal-pane-label">{paneLabel}</span>
-          <h1>{t("terminal.stageEmptyTitle")}</h1>
-          <p>{t("terminal.splitEmptySubtitle")}</p>
+          <h1>{isMobileLayout ? t("terminal.mobileEmptyTitle") : t("terminal.stageEmptyTitle")}</h1>
+          <p>{isMobileLayout ? t("terminal.mobileEmptyDescription") : t("terminal.splitEmptySubtitle")}</p>
+          {isMobileLayout ? (
+            <div className="terminal-mobile-empty-actions">
+              <button
+                type="button"
+                className="terminal-mobile-primary-action"
+                disabled={!canCreateTerminal}
+                onClick={() => {
+                  onRequestCreateTerminal?.();
+                }}
+              >
+                {t("terminal.createButton")}
+              </button>
+              <button
+                type="button"
+                className="terminal-mobile-secondary-action"
+                onClick={() => {
+                  onRequestOpenTerminalDrawer?.();
+                }}
+              >
+                {t("terminal.mobileDrawerAction")}
+              </button>
+            </div>
+          ) : null}
         </div>
       )}
     </article>
@@ -2226,20 +2937,16 @@ function createTerminalViewportRuntime(input: {
   onResize: (dimensions: { cols: number; rows: number }) => void;
   onViewStateChange: (viewState: PersistedTerminalViewState | null) => void;
 }): TerminalViewportRuntime {
+  const initialTheme = readTerminalVisualTheme();
   const terminal = new Terminal({
     cols: input.restoredViewState?.cols ?? DEFAULT_TERMINAL_COLS,
     rows: input.restoredViewState?.rows ?? DEFAULT_TERMINAL_ROWS,
     cursorBlink: true,
     scrollback: 2000,
-    allowTransparency: true,
+    allowTransparency: false,
     fontFamily: '"Cascadia Mono", "Cascadia Code", "Consolas", monospace',
     fontSize: input.fontSize,
-    theme: {
-      background: "#09121f",
-      foreground: "#d6e6ff",
-      cursor: "#f5f8ff",
-      selectionBackground: "rgba(121, 169, 255, 0.28)"
-    }
+    theme: initialTheme
   });
   const fitAddon = new FitAddon();
   const serializeAddon = new SerializeAddon();
@@ -2265,6 +2972,7 @@ function createTerminalViewportRuntime(input: {
 
   input.container.replaceChildren();
   terminal.open(input.container);
+  input.container.style.background = initialTheme.background ?? "";
 
   if (input.restoredViewState?.content) {
     terminal.write(input.restoredViewState.content, () => {
@@ -2366,6 +3074,12 @@ function createTerminalViewportRuntime(input: {
     lastFittedRows = terminal.rows;
   }
 
+  function applyTheme(): void {
+    const nextTheme = readTerminalVisualTheme();
+    terminal.options.theme = nextTheme;
+    input.container.style.background = nextTheme.background ?? "";
+  }
+
   return {
     terminal,
     restoredFromSnapshot: Boolean(input.restoredViewState),
@@ -2387,6 +3101,7 @@ function createTerminalViewportRuntime(input: {
       fitToContainer();
       schedulePersist();
     },
+    applyTheme,
     persistNow,
     schedulePersist,
     dispose: () => {
@@ -2448,6 +3163,42 @@ function hasUsableContainerSize(container: HTMLDivElement): boolean {
   );
 }
 
+function readTerminalVisualTheme(): NonNullable<Terminal["options"]["theme"]> {
+  if (typeof window === "undefined") {
+    return {
+      background: "#ffffff",
+      foreground: "#1a1a1a",
+      cursor: "#1a1a1a",
+      cursorAccent: "#ffffff",
+      selectionBackground: "rgba(0, 122, 255, 0.18)"
+    };
+  }
+
+  const style = window.getComputedStyle(document.documentElement);
+  const background = readCssVariable(style, "--terminal-theme-background", "#ffffff");
+  const foreground = readCssVariable(style, "--terminal-theme-foreground", "#1a1a1a");
+  const cursor = readCssVariable(style, "--terminal-theme-cursor", foreground);
+  const cursorAccent = readCssVariable(style, "--terminal-theme-cursor-accent", background);
+  const selectionBackground = readCssVariable(
+    style,
+    "--terminal-theme-selection",
+    "rgba(0, 122, 255, 0.18)"
+  );
+
+  return {
+    background,
+    foreground,
+    cursor,
+    cursorAccent,
+    selectionBackground
+  };
+}
+
+function readCssVariable(style: CSSStyleDeclaration, name: string, fallback: string): string {
+  const value = style.getPropertyValue(name).trim();
+  return value || fallback;
+}
+
 function sortTerminals(
   terminals: TerminalDto[],
   pinnedTerminalIdSet: ReadonlySet<string>
@@ -2462,6 +3213,120 @@ function sortTerminals(
 
     return right.lastActiveAt.localeCompare(left.lastActiveAt);
   });
+}
+
+function parseTerminalShellOptions(input: unknown): TerminalShellOptionDto[] {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+
+  return input.filter((item): item is TerminalShellOptionDto => {
+    if (!item || typeof item !== "object") {
+      return false;
+    }
+
+    const candidate = item as Partial<TerminalShellOptionDto>;
+    return (
+      typeof candidate.id === "string" &&
+      typeof candidate.label === "string" &&
+      typeof candidate.shell === "string" &&
+      typeof candidate.available === "boolean"
+    );
+  });
+}
+
+function buildMobileTerminalShellChoices(
+  shellOptions: TerminalShellOptionDto[],
+  osFamily: ReturnType<typeof usePlatform>["ui"]["osFamily"]
+): MobileTerminalShellChoice[] {
+  if (shellOptions.length > 0) {
+    return shellOptions.map((option) => ({
+      id: option.id,
+      label: formatMobileShellLabel(option),
+      value: option.shell,
+      description: option.shell,
+      available: option.available,
+      unavailableReason: option.unavailableReason
+    }));
+  }
+
+  if (osFamily === "windows") {
+    return [
+      {
+        id: "cmd",
+        label: "CMD",
+        value: "cmd",
+        description: "经典命令行",
+        available: true,
+        unavailableReason: null
+      },
+      {
+        id: "powershell",
+        label: "PowerShell",
+        value: "powershell",
+        description: "适合脚本与系统管理",
+        available: true,
+        unavailableReason: null
+      },
+      {
+        id: "git-bash",
+        label: "Git Bash",
+        value: "git-bash",
+        description: "更接近 Unix 命令体验",
+        available: true,
+        unavailableReason: null
+      }
+    ];
+  }
+
+  return [
+    {
+      id: osFamily === "linux" ? "bash" : "zsh",
+      label: osFamily === "linux" ? "bash" : "zsh",
+      value: osFamily === "linux" ? "bash" : "zsh",
+      description: osFamily === "linux" ? "常见 Linux Shell" : "macOS 常见默认 Shell",
+      available: true,
+      unavailableReason: null
+    }
+  ];
+}
+
+function formatMobileShellLabel(option: TerminalShellOptionDto): string {
+  if (option.id === "cmd") {
+    return "CMD";
+  }
+
+  if (option.id === "powershell") {
+    return "PowerShell";
+  }
+
+  if (option.id === "git-bash") {
+    return "Git Bash";
+  }
+
+  if (option.id === "default") {
+    const segments = option.shell.split(/[\\/]/);
+    const shellName = segments[segments.length - 1] ?? option.shell;
+    return shellName.replace(/\.exe$/i, "") || option.label;
+  }
+
+  return option.label;
+}
+
+function buildTerminalSessionIndicatorClassName(status: TerminalDto["status"]): string {
+  if (status === "running") {
+    return "session-state-indicator is-running";
+  }
+
+  if (status === "creating") {
+    return "session-state-indicator is-running-inferred";
+  }
+
+  if (status === "error") {
+    return "session-state-indicator is-subagent-running";
+  }
+
+  return "session-state-indicator is-idle";
 }
 
 function clampZoomScale(value: number): number {

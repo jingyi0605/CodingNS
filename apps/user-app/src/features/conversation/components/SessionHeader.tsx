@@ -1,4 +1,5 @@
 import { t } from "../../../shared/i18n";
+import { usePlatform } from "../../../platform/platform-provider";
 import { buildSessionTitlePresentation } from "../session-title";
 
 import type { SessionSummaryDto } from "../api/conversation-api";
@@ -26,10 +27,13 @@ function resolveTitleScale(title: string) {
 }
 
 export function SessionHeader({ session }: SessionHeaderProps) {
+  const platform = usePlatform();
+  const dragRegionProps = platform.isDesktop ? { "data-tauri-drag-region": true } : {};
+
   if (!session) {
     return (
-      <header className="conversation-header conversation-header-skeleton" aria-hidden="true">
-        <div className="conversation-header-main">
+      <header className="conversation-header conversation-header-skeleton" aria-hidden="true" {...dragRegionProps}>
+        <div className="conversation-header-main" {...dragRegionProps}>
           <span className="skeleton-line short" />
           <span className="skeleton-line long" />
         </div>
@@ -41,9 +45,9 @@ export function SessionHeader({ session }: SessionHeaderProps) {
   const titleScale = resolveTitleScale(titlePresentation.displayTitle);
 
   return (
-    <header className="conversation-header">
-      <div className="conversation-header-main">
-        <h1 className={`conversation-title is-${titleScale}`} title={titlePresentation.fullTitle}>
+    <header className="conversation-header" {...dragRegionProps}>
+      <div className="conversation-header-main" {...dragRegionProps}>
+        <h1 className={`conversation-title is-${titleScale}`} title={titlePresentation.fullTitle} {...dragRegionProps}>
           {titlePresentation.displayTitle}
         </h1>
       </div>

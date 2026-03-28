@@ -1075,12 +1075,14 @@ function SettingsIcon() {
   );
 }
 
-function MacTrafficLights() {
+function MacTrafficLights({ draggable = false }: { draggable?: boolean }) {
+  const dragRegionProps = draggable ? { "data-tauri-drag-region": true } : {};
+
   return (
-    <div className="macos-traffic-lights" aria-hidden="true">
-      <span className="macos-traffic-light close" />
-      <span className="macos-traffic-light minimize" />
-      <span className="macos-traffic-light maximize" />
+    <div className="macos-traffic-lights" aria-hidden="true" {...dragRegionProps}>
+      <span className="macos-traffic-light close" {...dragRegionProps} />
+      <span className="macos-traffic-light minimize" {...dragRegionProps} />
+      <span className="macos-traffic-light maximize" {...dragRegionProps} />
     </div>
   );
 }
@@ -1248,38 +1250,41 @@ function WorkbenchDesktopTitlebar({
     currentSessionTitle,
     t("workbench.emptyTitle")
   );
+  // Tauri 的拖拽区域不会自动传给子节点，静态标题栏节点必须逐个显式标记。
+  const dragRegionProps = isDesktop ? { "data-tauri-drag-region": true } : {};
 
   return (
-    <header className="workbench-desktop-titlebar surface-card">
+    <header className="workbench-desktop-titlebar surface-card" {...dragRegionProps}>
       <div
         className={`workbench-titlebar-leading ${showTrafficLightsPadding ? "traffic-lights-offset" : ""}`}
-        data-tauri-drag-region={isDesktop ? true : undefined}
+        {...dragRegionProps}
       >
-        <div className="workbench-titlebar-brand">
-          <img src="/logo.svg" alt="CodingNS" className="workbench-titlebar-logo" />
+        <div className="workbench-titlebar-brand" {...dragRegionProps}>
+          <img src="/logo.svg" alt="CodingNS" className="workbench-titlebar-logo" {...dragRegionProps} />
           {isDesktop ? (
-            <div className="workbench-titlebar-brand-text">
-              <strong>CodingNS</strong>
-              <span>{t("shell.desktopChromeLabel")}</span>
+            <div className="workbench-titlebar-brand-text" {...dragRegionProps}>
+              <strong {...dragRegionProps}>CodingNS</strong>
+              <span {...dragRegionProps}>{t("shell.desktopChromeLabel")}</span>
             </div>
           ) : null}
         </div>
-        <div className="workbench-titlebar-context">
-          <span className="workbench-titlebar-pill">
+        <div className="workbench-titlebar-context" {...dragRegionProps}>
+          <span className="workbench-titlebar-pill" {...dragRegionProps}>
             {currentWorkspaceName ?? t("conversation.headerWorkspaceUnknown")}
           </span>
           <h1
             className="workbench-titlebar-title"
             data-testid="workbench-current-session-title"
             title={titlePresentation.fullTitle}
+            {...dragRegionProps}
           >
             {titlePresentation.displayTitle}
           </h1>
         </div>
       </div>
 
-      <div className="workbench-titlebar-center" data-tauri-drag-region={isDesktop ? true : undefined}>
-        <div className="workbench-desktop-segment" role="tablist" aria-label={t("shell.centerTabsLabel")}>
+      <div className="workbench-titlebar-center" {...dragRegionProps}>
+        <div className="workbench-desktop-segment" role="tablist" aria-label={t("shell.centerTabsLabel")} {...dragRegionProps}>
           <button
             className={activeCenterTab === "conversation" ? "workbench-topbar-tab active" : "workbench-topbar-tab"}
             type="button"
@@ -1302,9 +1307,9 @@ function WorkbenchDesktopTitlebar({
       </div>
 
       <div className="workbench-titlebar-trailing">
-        <div className="workbench-titlebar-stats" data-tauri-drag-region={isDesktop ? true : undefined}>
-          <span>{t("shell.workspaceCount")} {workspaceCount}</span>
-          <span>{t("shell.sessionCount")} {sessionCount}</span>
+        <div className="workbench-titlebar-stats" {...dragRegionProps}>
+          <span {...dragRegionProps}>{t("shell.workspaceCount")} {workspaceCount}</span>
+          <span {...dragRegionProps}>{t("shell.sessionCount")} {sessionCount}</span>
         </div>
         <div className="workbench-titlebar-actions">
           <button
@@ -2450,13 +2455,14 @@ function SidebarContent({
 
   const visibleFavoriteSessions = favoriteSessions.slice(0, visibleFavoriteCount);
   const hasMoreFavoriteSessions = visibleFavoriteSessions.length < favoriteSessions.length;
+  const dragRegionProps = platform.isDesktop ? { "data-tauri-drag-region": true } : {};
 
   return (
     <>
-      <div className="workbench-nav-header">
-        <div className="workbench-nav-toolbar">
+      <div className="workbench-nav-header" {...dragRegionProps}>
+        <div className="workbench-nav-toolbar" {...dragRegionProps}>
           {platform.isDesktop && platform.ui.windowControlsStyle === "traffic-lights" ? (
-            <MacTrafficLights />
+            <MacTrafficLights draggable />
           ) : null}
           {onToggleCollapse ? (
             <button
@@ -2490,8 +2496,8 @@ function SidebarContent({
         </div>
       </div>
 
-      <div className="workbench-nav-body">
-        <div className="workbench-nav-segment" role="tablist" aria-label={t("shell.centerTabsLabel")}>
+      <div className="workbench-nav-body" {...dragRegionProps}>
+        <div className="workbench-nav-segment" role="tablist" aria-label={t("shell.centerTabsLabel")} {...dragRegionProps}>
           <button
             type="button"
             className={
@@ -3336,10 +3342,12 @@ function WorkbenchInfoPanel({
   navigationGroups: WorkspaceSessionGroup[];
 }) {
   const fallbackWorkspaceId = activeWorkspaceId ?? navigationGroups[0]?.workspace.id ?? null;
+  const platform = usePlatform();
+  const dragRegionProps = platform.isDesktop ? { "data-tauri-drag-region": true } : {};
 
   return (
     <>
-      <div className="workbench-auxiliary-header">
+      <div className="workbench-auxiliary-header" {...dragRegionProps}>
         {onToggleCollapse ? (
           <button
             type="button"
@@ -3351,7 +3359,7 @@ function WorkbenchInfoPanel({
             <SidebarCollapseIcon />
           </button>
         ) : null}
-        <div className="workbench-info-tabs" role="tablist" aria-label={t("shell.infoTabsLabel")}>
+        <div className="workbench-info-tabs" role="tablist" aria-label={t("shell.infoTabsLabel")} {...dragRegionProps}>
           <button
             className={activeTab === "files" ? "workbench-info-tab active" : "workbench-info-tab"}
             type="button"
@@ -4935,25 +4943,29 @@ export function WorkbenchLayout({
   );
 }
 
-function MobileNavDrawer({
+export function MobileNavDrawer({
   isOpen,
   side,
   onClose,
-  children
+  children,
+  className,
+  overlayClassName
 }: {
   isOpen: boolean;
   side: "left" | "right";
   onClose: () => void;
   children: ReactNode;
+  className?: string;
+  overlayClassName?: string;
 }) {
   if (!isOpen) {
     return null;
   }
 
-  return (
+  const content = (
     <>
       <div
-        className="mobile-nav-overlay open"
+        className={["mobile-nav-overlay", "open", overlayClassName].filter(Boolean).join(" ")}
         onClick={onClose}
         role="button"
         tabIndex={0}
@@ -4964,9 +4976,15 @@ function MobileNavDrawer({
           }
         }}
       />
-      <div className={`mobile-nav-drawer ${side} open`}>{children}</div>
+      <div className={["mobile-nav-drawer", side, "open", className].filter(Boolean).join(" ")}>{children}</div>
     </>
   );
+
+  if (typeof document === "undefined") {
+    return content;
+  }
+
+  return createPortal(content, document.body);
 }
 
 export function useWorkbenchShell(): WorkbenchShellContextValue {

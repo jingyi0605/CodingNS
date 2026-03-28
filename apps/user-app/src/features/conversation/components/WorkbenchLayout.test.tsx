@@ -97,6 +97,33 @@ class NoSnapshotWebSocket extends EventTarget {
 const originalFetch = global.fetch;
 const originalWebSocket = global.WebSocket;
 const originalInnerWidth = window.innerWidth;
+const originalTauriInternals = window.__TAURI_INTERNALS__;
+const userAgentDescriptor = Object.getOwnPropertyDescriptor(window.navigator, "userAgent");
+const platformDescriptor = Object.getOwnPropertyDescriptor(window.navigator, "platform");
+const maxTouchPointsDescriptor = Object.getOwnPropertyDescriptor(window.navigator, "maxTouchPoints");
+
+function mockNavigator({
+  userAgent,
+  platform,
+  maxTouchPoints = 0
+}: {
+  userAgent: string;
+  platform: string;
+  maxTouchPoints?: number;
+}) {
+  Object.defineProperty(window.navigator, "userAgent", {
+    configurable: true,
+    value: userAgent
+  });
+  Object.defineProperty(window.navigator, "platform", {
+    configurable: true,
+    value: platform
+  });
+  Object.defineProperty(window.navigator, "maxTouchPoints", {
+    configurable: true,
+    value: maxTouchPoints
+  });
+}
 
 describe("WorkbenchLayout", () => {
   beforeEach(() => {
@@ -132,6 +159,25 @@ describe("WorkbenchLayout", () => {
       writable: true,
       value: originalInnerWidth
     });
+
+    if (userAgentDescriptor) {
+      Object.defineProperty(window.navigator, "userAgent", userAgentDescriptor);
+    }
+
+    if (platformDescriptor) {
+      Object.defineProperty(window.navigator, "platform", platformDescriptor);
+    }
+
+    if (maxTouchPointsDescriptor) {
+      Object.defineProperty(window.navigator, "maxTouchPoints", maxTouchPointsDescriptor);
+    }
+
+    if (originalTauriInternals) {
+      window.__TAURI_INTERNALS__ = originalTauriInternals;
+      return;
+    }
+
+    delete window.__TAURI_INTERNALS__;
   });
 
   it("会把缺失 children 的侧栏树节点当作空数组处理", () => {
@@ -561,6 +607,64 @@ describe("WorkbenchLayout", () => {
       top: "150px",
       left: "248px"
     });
+  });
+
+  it("macOS 桌面端顶部静态区域会显式标记拖拽区域", async () => {
+    mockNavigator({
+      userAgent:
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+      platform: "MacIntel"
+    });
+    window.__TAURI_INTERNALS__ = {
+      invoke: vi.fn()
+    };
+
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "会话 Alpha",
+            workspaceId: "workspace-1"
+          })
+        ]
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-1");
+
+    await screen.findByRole("button", { name: t("shell.hideSessionSidebar") });
+
+    const navHeader = document.querySelector(".workbench-nav-header");
+    const navToolbar = document.querySelector(".workbench-nav-toolbar");
+    const trafficLights = document.querySelector(".macos-traffic-lights");
+    const navBody = document.querySelector(".workbench-nav-body");
+    const navSegment = document.querySelector(".workbench-nav-segment");
+    const auxiliaryHeader = document.querySelector(".workbench-auxiliary-header");
+    const infoTabs = document.querySelector(".workbench-info-tabs");
+
+    expect(navHeader).toHaveAttribute("data-tauri-drag-region");
+    expect(navToolbar).toHaveAttribute("data-tauri-drag-region");
+    expect(trafficLights).toHaveAttribute("data-tauri-drag-region");
+    expect(navBody).toHaveAttribute("data-tauri-drag-region");
+    expect(navSegment).toHaveAttribute("data-tauri-drag-region");
+    expect(auxiliaryHeader).toHaveAttribute("data-tauri-drag-region");
+    expect(infoTabs).toHaveAttribute("data-tauri-drag-region");
+    expect(
+      screen.getByRole("button", { name: t("shell.hideSessionSidebar") })
+    ).not.toHaveAttribute("data-tauri-drag-region");
   });
 
   it("支持会话重命名，并立即更新左侧列表标题", async () => {
