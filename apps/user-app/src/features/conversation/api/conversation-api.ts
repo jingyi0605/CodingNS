@@ -332,6 +332,11 @@ export interface SessionChangedFileDto {
   lastToolName: string | null;
 }
 
+export interface QuickPhraseDto {
+  id: string;
+  text: string;
+}
+
 export function listWorkspaces() {
   return httpClient.request<{ items: WorkspaceDto[] }>("/api/workspaces");
 }
@@ -457,6 +462,17 @@ export function getSessionCapabilities(sessionId: string) {
   return httpClient.request<ProviderCapabilitiesDto>(
     `/api/sessions/${encodeURIComponent(sessionId)}/capabilities`
   );
+}
+
+export function listQuickPhrases() {
+  return httpClient.request<{ items: QuickPhraseDto[] }>("/api/preferences/quick-phrases");
+}
+
+export function replaceQuickPhrases(items: Array<{ id?: string; text: string }>) {
+  return httpClient.request<{ items: QuickPhraseDto[] }>("/api/preferences/quick-phrases", {
+    method: "PUT",
+    body: JSON.stringify({ items })
+  });
 }
 
 export function getProviderCapabilities(provider: ProviderId, workspaceId?: string) {

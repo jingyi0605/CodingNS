@@ -207,6 +207,18 @@ export interface RecentFileRecord {
   pinned: boolean;
 }
 
+export interface UserQuickPhraseRecord {
+  id: string;
+  text: string;
+}
+
+export interface UserQuickPhrasePreferenceRecord {
+  userId: string;
+  phrases: UserQuickPhraseRecord[];
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface FileContextBinding {
   id: string;
   sessionId: string;

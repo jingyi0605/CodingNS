@@ -20,9 +20,21 @@ import type {
   ProviderCapabilitiesDto,
   ProviderId
 } from "../api/conversation-api";
+import { listQuickPhrases, replaceQuickPhrases } from "../api/conversation-api";
+import { WorkbenchModal } from "./WorkbenchModal";
+import {
+  clearComposerDraftRecord,
+  createQuickPhraseRecord,
+  DEFAULT_QUICK_PHRASES,
+  persistComposerDraftRecord,
+  readComposerDraftRecord,
+  type QuickPhraseRecord,
+  type StoredComposerDraftAttachment
+} from "./composer-local-storage";
 
 interface ComposerPanelProps {
   capabilities: ProviderCapabilitiesDto | null;
+  draftStorageId?: string;
   hasActiveRun?: boolean | null;
   canInterrupt?: boolean | null;
   contextUsage?: ContextUsageDto | null;
@@ -138,6 +150,38 @@ function createAttachmentId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+function base64ToFile(
+  fileName: string,
+  mimeType: string,
+  contentBase64: string,
+  lastModified: number
+): File {
+  const binary = globalThis.atob(contentBase64);
+  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+
+  return new File([bytes], fileName, {
+    type: mimeType,
+    lastModified
+  });
+}
+
+function restoreDraftAttachment(
+  attachment: StoredComposerDraftAttachment
+): ComposerImageAttachment {
+  const file = base64ToFile(
+    attachment.fileName,
+    attachment.mimeType,
+    attachment.contentBase64,
+    attachment.lastModified
+  );
+
+  return {
+    id: attachment.id,
+    file,
+    previewUrl: URL.createObjectURL(file)
+  };
+}
+
 function toAttachmentMeta(file: File, id: string): MessageAttachmentDto {
   return {
     id,
@@ -221,6 +265,7 @@ function mergeImageAttachments(
 
 export function ComposerPanel({
   capabilities,
+  draftStorageId,
   hasActiveRun = null,
   canInterrupt = null,
   contextUsage = null,
@@ -235,12 +280,19 @@ export function ComposerPanel({
   const [selectedModel, setSelectedModel] = useState<string>("");
   const [reasoningLevel, setReasoningLevel] = useState<ReasoningLevel>("medium");
   const [attachments, setAttachments] = useState<ComposerImageAttachment[]>([]);
+  const [quickPhrases, setQuickPhrases] = useState<QuickPhraseRecord[]>(DEFAULT_QUICK_PHRASES);
+  const [quickPhraseModalOpen, setQuickPhraseModalOpen] = useState(false);
+  const [quickPhraseCreateModalOpen, setQuickPhraseCreateModalOpen] = useState(false);
+  const [quickPhraseDraft, setQuickPhraseDraft] = useState("");
+  const [quickPhraseSaving, setQuickPhraseSaving] = useState(false);
   const [showSlashMenu, setShowSlashMenu] = useState(false);
   const [interrupting, setInterrupting] = useState(false);
   const [localSubmitting, setLocalSubmitting] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const submitLockRef = useRef(false);
   const attachmentRegistryRef = useRef(new Set<string>());
+  const attachmentDraftCacheRef = useRef(new Map<string, StoredComposerDraftAttachment>());
+  const quickPhraseMutationVersionRef = useRef(0);
   const { showToast } = useToast();
 
   const provider = getProviderFromCapabilities(capabilities);
@@ -378,6 +430,17 @@ export function ComposerPanel({
     localStorage.setItem(getReasoningStorageKey(provider), level);
   }, [provider]);
 
+  const replaceAttachments = useCallback((nextAttachments: ComposerImageAttachment[]) => {
+    attachmentRegistryRef.current.forEach((previewUrl) => {
+      URL.revokeObjectURL(previewUrl);
+    });
+    attachmentRegistryRef.current.clear();
+    nextAttachments.forEach((attachment) => {
+      attachmentRegistryRef.current.add(attachment.previewUrl);
+    });
+    setAttachments(nextAttachments);
+  }, []);
+
   const mergeAttachments = useCallback((incomingFiles: File[]) => {
     const { accepted, rejectedCount } = collectImageFiles(incomingFiles);
 
@@ -404,6 +467,7 @@ export function ComposerPanel({
   }, [showToast]);
 
   const removeAttachment = useCallback((attachmentId: string) => {
+    attachmentDraftCacheRef.current.delete(attachmentId);
     setAttachments((current) => {
       const target = current.find((item) => item.id === attachmentId);
 
@@ -433,6 +497,96 @@ export function ComposerPanel({
     setShowSlashMenu(false);
     textareaRef.current?.focus();
   }, []);
+
+  const persistQuickPhrases = useCallback(async (nextPhrases: QuickPhraseRecord[]) => {
+    const previousPhrases = quickPhrases;
+    quickPhraseMutationVersionRef.current += 1;
+    setQuickPhrases(nextPhrases);
+    setQuickPhraseSaving(true);
+
+    try {
+      const response = await replaceQuickPhrases(
+        nextPhrases.map((phrase) => ({
+          id: phrase.id,
+          text: phrase.text
+        }))
+      );
+      setQuickPhrases(
+        response.items.map((phrase) => ({
+          id: phrase.id,
+          text: phrase.text
+        }))
+      );
+      return true;
+    } catch (error) {
+      setQuickPhrases(previousPhrases);
+      showToast({
+        title: error instanceof Error ? error.message : t("conversation.quickPhraseSaveFailed"),
+        tone: "error"
+      });
+      return false;
+    } finally {
+      setQuickPhraseSaving(false);
+    }
+  }, [quickPhrases, showToast]);
+
+  const handleQuickPhraseCreate = useCallback(async () => {
+    const nextText = quickPhraseDraft.trim();
+
+    if (!nextText) {
+      return;
+    }
+
+    const saved = await persistQuickPhrases([...quickPhrases, createQuickPhraseRecord(nextText)]);
+
+    if (!saved) {
+      return;
+    }
+
+    setQuickPhraseDraft("");
+    setQuickPhraseCreateModalOpen(false);
+  }, [persistQuickPhrases, quickPhraseDraft, quickPhrases]);
+
+  const handleQuickPhraseDelete = useCallback((phraseId: string) => {
+    void persistQuickPhrases(quickPhrases.filter((item) => item.id !== phraseId));
+  }, [persistQuickPhrases, quickPhrases]);
+
+  const handleQuickPhraseMove = useCallback((phraseId: string, direction: -1 | 1) => {
+    const currentIndex = quickPhrases.findIndex((item) => item.id === phraseId);
+
+    if (currentIndex < 0) {
+      return;
+    }
+
+    const targetIndex = currentIndex + direction;
+
+    if (targetIndex < 0 || targetIndex >= quickPhrases.length) {
+      return;
+    }
+
+    const nextPhrases = [...quickPhrases];
+    const [targetPhrase] = nextPhrases.splice(currentIndex, 1);
+    nextPhrases.splice(targetIndex, 0, targetPhrase);
+    void persistQuickPhrases(nextPhrases);
+  }, [persistQuickPhrases, quickPhrases]);
+
+  const applyQuickPhrase = useCallback((text: string) => {
+    setContent(text);
+    setQuickPhraseModalOpen(false);
+    textareaRef.current?.focus();
+  }, []);
+
+  const restoreDraftState = useCallback((storageId?: string) => {
+    const storedDraft = storageId ? readComposerDraftRecord(storageId) : null;
+    const restoredAttachments = storedDraft?.attachments.map((attachment) => restoreDraftAttachment(attachment)) ?? [];
+
+    attachmentDraftCacheRef.current = new Map(
+      (storedDraft?.attachments ?? []).map((attachment) => [attachment.id, attachment])
+    );
+    replaceAttachments(restoredAttachments);
+    setContent(storedDraft?.content ?? "");
+    setShowSlashMenu(false);
+  }, [replaceAttachments]);
 
   useEffect(() => {
     if (!availableModels.length) {
@@ -494,6 +648,102 @@ export function ComposerPanel({
   }, [availableReasoningLevels, capabilities?.defaultReasoningLevel, provider, reasoningLevel]);
 
   useEffect(() => {
+    let disposed = false;
+    const loadVersion = quickPhraseMutationVersionRef.current;
+
+    void listQuickPhrases()
+      .then((response) => {
+        if (disposed || quickPhraseMutationVersionRef.current !== loadVersion) {
+          return;
+        }
+
+        setQuickPhrases(
+          response.items.map((phrase) => ({
+            id: phrase.id,
+            text: phrase.text
+          }))
+        );
+      })
+      .catch(() => {
+        return;
+      });
+
+    return () => {
+      disposed = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    restoreDraftState(draftStorageId);
+  }, [draftStorageId, restoreDraftState]);
+
+  useEffect(() => {
+    if (!draftStorageId) {
+      return;
+    }
+
+    const storageId = draftStorageId;
+    const normalizedAttachmentIds = new Set(attachments.map((attachment) => attachment.id));
+    attachmentDraftCacheRef.current.forEach((_value, key) => {
+      if (!normalizedAttachmentIds.has(key)) {
+        attachmentDraftCacheRef.current.delete(key);
+      }
+    });
+
+    let disposed = false;
+
+    async function persistDraft() {
+      if (content.length === 0 && attachments.length === 0) {
+        clearComposerDraftRecord(storageId);
+        return;
+      }
+
+      const storedAttachments = await Promise.all(
+        attachments.map(async (attachment) => {
+          const cached = attachmentDraftCacheRef.current.get(attachment.id);
+
+          if (
+            cached &&
+            cached.fileName === attachment.file.name &&
+            cached.fileSize === attachment.file.size &&
+            cached.lastModified === attachment.file.lastModified &&
+            cached.mimeType === (attachment.file.type || "image/png")
+          ) {
+            return cached;
+          }
+
+          return {
+            id: attachment.id,
+            fileName: attachment.file.name,
+            mimeType: attachment.file.type || "image/png",
+            fileSize: attachment.file.size,
+            lastModified: attachment.file.lastModified,
+            contentBase64: await readFileAsBase64(attachment.file)
+          } satisfies StoredComposerDraftAttachment;
+        })
+      );
+
+      if (disposed) {
+        return;
+      }
+
+      attachmentDraftCacheRef.current = new Map(
+        storedAttachments.map((attachment) => [attachment.id, attachment])
+      );
+      persistComposerDraftRecord(storageId, {
+        content,
+        attachments: storedAttachments
+      });
+    }
+
+    void persistDraft();
+
+    return () => {
+      disposed = true;
+    };
+  }, [attachments, content, draftStorageId]);
+
+  useEffect(() => {
     const textarea = textareaRef.current;
 
     if (!textarea) {
@@ -509,13 +759,8 @@ export function ComposerPanel({
       return;
     }
 
-    setAttachments((current) => {
-      revokeAttachmentPreviews(current);
-      current.forEach((attachment) => {
-        attachmentRegistryRef.current.delete(attachment.previewUrl);
-      });
-      return [];
-    });
+    attachmentDraftCacheRef.current.clear();
+    replaceAttachments([]);
   }, [attachmentDecision.allowed]);
 
   useEffect(() => () => {
@@ -560,6 +805,8 @@ export function ComposerPanel({
     setLocalSubmitting(true);
     setContent("");
     setAttachments([]);
+    setQuickPhraseModalOpen(false);
+    setQuickPhraseCreateModalOpen(false);
     setShowSlashMenu(false);
 
     try {
@@ -639,6 +886,7 @@ export function ComposerPanel({
     inRunSendBlocked ||
     !sendDecision.allowed ||
     !hasDraft;
+  const showQuickPhraseButton = content.length === 0 && !inRunSendBlocked;
 
   return (
     <section className="composer-panel">
@@ -723,6 +971,26 @@ export function ComposerPanel({
                 }
               }}
             />
+
+            {showQuickPhraseButton ? (
+              <button
+                type="button"
+                className="composer-quick-phrase-trigger"
+                aria-label={t("conversation.quickPhraseTrigger")}
+                title={t("conversation.quickPhraseTrigger")}
+                onClick={() => {
+                  setQuickPhraseModalOpen(true);
+                  setShowSlashMenu(false);
+                }}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M7 8h10" />
+                  <path d="M7 12h8" />
+                  <path d="M7 16h5" />
+                  <path d="M5 5h14v14H9l-4 4V5z" />
+                </svg>
+              </button>
+            ) : null}
           </div>
 
               {showSlashMenu ? (
@@ -841,6 +1109,127 @@ export function ComposerPanel({
           </div>
         </div>
       </form>
+      <WorkbenchModal
+        open={quickPhraseModalOpen}
+        title={t("conversation.quickPhraseModalTitle")}
+        description={t("conversation.quickPhraseModalDescription")}
+        className="composer-quick-phrase-modal"
+        onClose={() => {
+          setQuickPhraseModalOpen(false);
+          setQuickPhraseCreateModalOpen(false);
+        }}
+      >
+        <div className="composer-quick-phrase-modal-body">
+          <div className="composer-quick-phrase-toolbar">
+            <div className="composer-quick-phrase-toolbar-copy">
+              <span>{t("conversation.quickPhraseListLabel")}</span>
+            </div>
+            <button
+              type="button"
+              className="primary-button"
+              disabled={quickPhraseSaving}
+              onClick={() => setQuickPhraseCreateModalOpen(true)}
+            >
+              {t("conversation.quickPhraseOpenCreateAction")}
+            </button>
+          </div>
+
+          <div className="composer-quick-phrase-list" role="list" aria-label={t("conversation.quickPhraseListLabel")}>
+            {quickPhrases.length === 0 ? (
+              <div className="composer-quick-phrase-empty">{t("conversation.quickPhraseEmpty")}</div>
+            ) : (
+              quickPhrases.map((phrase, index) => (
+                <div key={phrase.id} className="composer-quick-phrase-item" role="listitem">
+                  <button
+                    type="button"
+                    className="composer-quick-phrase-select"
+                    onClick={() => applyQuickPhrase(phrase.text)}
+                  >
+                    <span className="composer-quick-phrase-order">
+                      {t("conversation.quickPhraseOrderLabel", {
+                        index: index + 1
+                      })}
+                    </span>
+                    <span className="composer-quick-phrase-text">{phrase.text}</span>
+                  </button>
+                  <div className="composer-quick-phrase-actions">
+                    <button
+                      type="button"
+                      className="composer-quick-phrase-action"
+                      disabled={quickPhraseSaving || index === 0}
+                      aria-label={t("conversation.quickPhraseMoveUp")}
+                      title={t("conversation.quickPhraseMoveUp")}
+                      onClick={() => handleQuickPhraseMove(phrase.id, -1)}
+                    >
+                      ↑
+                    </button>
+                    <button
+                      type="button"
+                      className="composer-quick-phrase-action"
+                      disabled={quickPhraseSaving || index === quickPhrases.length - 1}
+                      aria-label={t("conversation.quickPhraseMoveDown")}
+                      title={t("conversation.quickPhraseMoveDown")}
+                      onClick={() => handleQuickPhraseMove(phrase.id, 1)}
+                    >
+                      ↓
+                    </button>
+                    <button
+                      type="button"
+                      className="composer-quick-phrase-action is-danger"
+                      disabled={quickPhraseSaving}
+                      aria-label={t("conversation.quickPhraseDelete")}
+                      title={t("conversation.quickPhraseDelete")}
+                      onClick={() => handleQuickPhraseDelete(phrase.id)}
+                    >
+                      ×
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </WorkbenchModal>
+      <WorkbenchModal
+        open={quickPhraseCreateModalOpen}
+        title={t("conversation.quickPhraseCreateModalTitle")}
+        description={t("conversation.quickPhraseCreateModalDescription")}
+        className="composer-quick-phrase-create-modal"
+        onClose={() => setQuickPhraseCreateModalOpen(false)}
+      >
+        <div className="composer-quick-phrase-modal-body">
+          <label className="workbench-modal-field">
+            <span>{t("conversation.quickPhraseCreateLabel")}</span>
+            <textarea
+              className="composer-quick-phrase-textarea"
+              value={quickPhraseDraft}
+              placeholder={t("conversation.quickPhraseCreatePlaceholder")}
+              rows={4}
+              onChange={(event) => setQuickPhraseDraft(event.target.value)}
+            />
+          </label>
+
+          <div className="workbench-modal-actions">
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => setQuickPhraseCreateModalOpen(false)}
+            >
+              {t("common.cancel")}
+            </button>
+            <button
+              type="button"
+              className="primary-button"
+              disabled={quickPhraseSaving || quickPhraseDraft.trim().length === 0}
+              onClick={() => {
+                void handleQuickPhraseCreate();
+              }}
+            >
+              {t("conversation.quickPhraseCreateAction")}
+            </button>
+          </div>
+        </div>
+      </WorkbenchModal>
     </section>
   );
 }

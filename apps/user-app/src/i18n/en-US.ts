@@ -312,6 +312,10 @@ export const enUS = {
     quickPhraseModalDescription:
       "Keep the prompts you reuse often in one place and drop them straight into the current composer.",
     quickPhraseCreateLabel: "New Phrase",
+    quickPhraseOpenCreateAction: "Add Phrase",
+    quickPhraseCreateModalTitle: "Create Quick Phrase",
+    quickPhraseCreateModalDescription:
+      "Save a reusable prompt on its own so it is ready across devices whenever you need it.",
     quickPhraseCreatePlaceholder: "Write a phrase you want to reuse later.",
     quickPhraseCreateAction: "Add Phrase",
     quickPhraseListLabel: "Quick phrase list",
@@ -320,6 +324,7 @@ export const enUS = {
     quickPhraseMoveUp: "Move phrase up",
     quickPhraseMoveDown: "Move phrase down",
     quickPhraseDelete: "Delete phrase",
+    quickPhraseSaveFailed: "Failed to save quick phrases. Try again later.",
     sendingState: "Sending",
     sentState: "Synced",
     failedState: "Send failed",

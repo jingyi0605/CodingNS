@@ -1,9 +1,24 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { t } from "../../../shared/i18n";
 import type { ProviderCapabilitiesDto } from "../api/conversation-api";
 import { ComposerPanel } from "./ComposerPanel";
+
+const mockListQuickPhrases = vi.fn();
+const mockReplaceQuickPhrases = vi.fn();
+
+vi.mock("../api/conversation-api", async () => {
+  const actual = await vi.importActual<typeof import("../api/conversation-api")>(
+    "../api/conversation-api"
+  );
+
+  return {
+    ...actual,
+    listQuickPhrases: (...args: unknown[]) => mockListQuickPhrases(...args),
+    replaceQuickPhrases: (...args: unknown[]) => mockReplaceQuickPhrases(...args)
+  };
+});
 
 function createDeferred() {
   let resolve: (() => void) | null = null;
@@ -104,6 +119,30 @@ function chooseOption(triggerLabel: string, optionLabel: string) {
 describe("ComposerPanel", () => {
   beforeEach(() => {
     localStorage.clear();
+    mockListQuickPhrases.mockReset();
+    mockReplaceQuickPhrases.mockReset();
+    mockListQuickPhrases.mockResolvedValue({
+      items: [
+        {
+          id: "builtin-stage-and-summarize",
+          text: "请将本次会话变更的所有代码提交到git暂存区，然后总结一条中文的提交信息"
+        },
+        {
+          id: "builtin-review-module",
+          text: "分析本项目  模块的代码实现，并分析存在的问题"
+        },
+        {
+          id: "builtin-group-commits",
+          text: "分析当前项目中的未提交文件，按照功能模块进行分类提交，提交信息格式请参考我最近的提交记录"
+        }
+      ]
+    });
+    mockReplaceQuickPhrases.mockImplementation(async (items: Array<{ id?: string; text: string }>) => ({
+      items: items.map((item, index) => ({
+        id: item.id ?? `generated-${index}`,
+        text: item.text
+      }))
+    }));
     Object.defineProperty(URL, "createObjectURL", {
       writable: true,
       value: vi.fn(() => "blob:preview")
@@ -628,6 +667,156 @@ describe("ComposerPanel", () => {
       reasoningLevel: undefined,
       attachments: [],
       attachmentMeta: []
+    });
+  });
+
+  it("没有输入时显示快捷短语按钮，选择短语后会直接填充输入框", async () => {
+    render(
+      <ComposerPanel
+        capabilities={createCapabilities()}
+        isSubmitting={false}
+        onSend={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    expect(screen.getByLabelText(t("conversation.quickPhraseTrigger"))).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText(t("conversation.quickPhraseTrigger")));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /请将本次会话变更的所有代码提交到git暂存区/
+      })
+    );
+
+    expect(screen.getByRole("textbox")).toHaveValue(
+      "请将本次会话变更的所有代码提交到git暂存区，然后总结一条中文的提交信息"
+    );
+    expect(screen.queryByLabelText(t("conversation.quickPhraseTrigger"))).not.toBeInTheDocument();
+  });
+
+  it("快捷短语支持新增、调整顺序和删除", async () => {
+    render(
+      <ComposerPanel
+        capabilities={createCapabilities()}
+        isSubmitting={false}
+        onSend={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    fireEvent.click(screen.getByLabelText(t("conversation.quickPhraseTrigger")));
+    expect(screen.queryByPlaceholderText(t("conversation.quickPhraseCreatePlaceholder"))).not.toBeInTheDocument();
+
+    const quickPhraseDialog = screen.getByRole("dialog", {
+      name: t("conversation.quickPhraseModalTitle")
+    });
+
+    fireEvent.click(
+      within(quickPhraseDialog).getByRole("button", {
+        name: t("conversation.quickPhraseOpenCreateAction")
+      })
+    );
+
+    const createDialog = screen.getByRole("dialog", {
+      name: t("conversation.quickPhraseCreateModalTitle")
+    });
+
+    fireEvent.change(within(createDialog).getByPlaceholderText(t("conversation.quickPhraseCreatePlaceholder")), {
+      target: {
+        value: "新增的快捷短语"
+      }
+    });
+    fireEvent.click(within(createDialog).getByRole("button", { name: t("conversation.quickPhraseCreateAction") }));
+
+    await waitFor(() => {
+      expect(screen.getByText("新增的快捷短语")).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: t("conversation.quickPhraseCreateModalTitle") })).not.toBeInTheDocument();
+    });
+
+    const readPhraseOrder = () =>
+      Array.from(document.querySelectorAll(".composer-quick-phrase-item .composer-quick-phrase-text"))
+        .map((element) => element.textContent?.trim() ?? "");
+
+    expect(readPhraseOrder().at(-1)).toBe("新增的快捷短语");
+
+    const createdItem = screen.getByText("新增的快捷短语").closest(".composer-quick-phrase-item");
+    expect(createdItem).not.toBeNull();
+
+    fireEvent.click(within(createdItem as HTMLElement).getByLabelText(t("conversation.quickPhraseMoveUp")));
+
+    await waitFor(() => {
+      expect(readPhraseOrder().at(-2)).toBe("新增的快捷短语");
+    });
+
+    const movedItem = screen.getByText("新增的快捷短语").closest(".composer-quick-phrase-item");
+    expect(movedItem).not.toBeNull();
+    fireEvent.click(within(movedItem as HTMLElement).getByLabelText(t("conversation.quickPhraseDelete")));
+
+    await waitFor(() => {
+      expect(screen.queryByText("新增的快捷短语")).not.toBeInTheDocument();
+    });
+  });
+
+  it("会按会话维度恢复文本和图片草稿，并在发送后清空本地草稿", async () => {
+    const onSend = vi.fn().mockResolvedValue(undefined);
+    const draftStorageKey = "codingns.conversation.composer-draft:session-1";
+    const firstView = render(
+      <ComposerPanel
+        capabilities={createCapabilities({ supportsAttachments: true })}
+        draftStorageId="session-1"
+        isSubmitting={false}
+        onSend={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    const textarea = screen.getByRole("textbox");
+    const file = new File(["demo"], "draft.png", { type: "image/png", lastModified: 123 });
+
+    fireEvent.change(textarea, {
+      target: {
+        value: "这是跨会话草稿"
+      }
+    });
+    fireEvent.paste(textarea, {
+      clipboardData: {
+        items: [
+          {
+            kind: "file",
+            type: "image/png",
+            getAsFile: () => file
+          }
+        ]
+      }
+    });
+
+    await waitFor(() => {
+      expect(localStorage.getItem(draftStorageKey)).toContain("这是跨会话草稿");
+    });
+
+    firstView.unmount();
+
+    render(
+      <ComposerPanel
+        capabilities={createCapabilities({ supportsAttachments: true })}
+        draftStorageId="session-1"
+        isSubmitting={false}
+        onSend={onSend}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("textbox")).toHaveValue("这是跨会话草稿");
+    });
+    expect(screen.getByText("draft.png")).toBeInTheDocument();
+
+    fireEvent.submit(document.querySelector(".composer-form")!);
+
+    await waitFor(() => {
+      expect(onSend).toHaveBeenCalledTimes(1);
+    });
+    await waitFor(() => {
+      expect(localStorage.getItem(draftStorageKey)).toBeNull();
     });
   });
 });

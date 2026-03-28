@@ -202,6 +202,14 @@ CREATE TABLE IF NOT EXISTS recent_files (
 CREATE INDEX IF NOT EXISTS idx_recent_files_workspace_user
   ON recent_files(workspace_id, user_id, last_opened_at DESC);
 
+CREATE TABLE IF NOT EXISTS user_quick_phrase_preferences (
+  user_id TEXT PRIMARY KEY,
+  phrases_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES auth_users(id)
+);
+
 CREATE TABLE IF NOT EXISTS session_file_context_bindings (
   id TEXT PRIMARY KEY,
   session_id TEXT NOT NULL,

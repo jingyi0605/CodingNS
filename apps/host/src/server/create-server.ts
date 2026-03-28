@@ -29,6 +29,8 @@ import { GitReadService } from "../modules/git/git-read-service.js";
 import { GitRuleRepository } from "../modules/git/git-rule-repository.js";
 import { GitWriteService } from "../modules/git/git-write-service.js";
 import { WorkspaceRepoGuard } from "../modules/git/workspace-repo-guard.js";
+import { QuickPhraseController } from "../modules/preferences/quick-phrase-controller.js";
+import { QuickPhraseService } from "../modules/preferences/quick-phrase-service.js";
 import { ProviderController } from "../modules/provider/provider-controller.js";
 import { SessionController } from "../modules/sessions/session-controller.js";
 import { SessionChangedFileService } from "../modules/sessions/session-changed-file-service.js";
@@ -47,6 +49,7 @@ import { registerAuthRoutes } from "../routes/auth.js";
 import { registerClientRoutes } from "../routes/client.js";
 import { registerFileRoutes } from "../routes/files.js";
 import { registerGitRoutes } from "../routes/git.js";
+import { registerPreferenceRoutes } from "../routes/preferences.js";
 import { registerProviderRoutes } from "../routes/providers.js";
 import { registerPublicRoutes } from "../routes/public.js";
 import { registerSessionContextRoutes } from "../routes/session-contexts.js";
@@ -73,6 +76,7 @@ import { TerminalInstanceRepository } from "../storage/repositories/terminal-ins
 import { TerminalLogFileRepository } from "../storage/repositories/terminal-log-file-repository.js";
 import { TerminalLogSegmentRepository } from "../storage/repositories/terminal-log-segment-repository.js";
 import { TerminalRuntimeSessionRepository } from "../storage/repositories/terminal-runtime-session-repository.js";
+import { UserQuickPhrasePreferenceRepository } from "../storage/repositories/user-quick-phrase-preference-repository.js";
 import { WorkspaceRepository } from "../storage/repositories/workspace-repository.js";
 import { createDatabaseClient } from "../storage/sqlite/client.js";
 import { TerminalWsHub } from "../ws/terminal-ws-hub.js";
@@ -102,6 +106,7 @@ export function createServer(config: HostConfig) {
     sessionSendQueueRepository: new SessionSendQueueRepository(database.db),
     sessionStateRepository: new SessionStateRepository(database.db),
     sessionStatusSnapshotRepository: new SessionStatusSnapshotRepository(database.db),
+    userQuickPhrasePreferenceRepository: new UserQuickPhrasePreferenceRepository(database.db),
     terminalInstanceRepository: new TerminalInstanceRepository(database.db),
     terminalLogFileRepository: new TerminalLogFileRepository(database.db),
     terminalLogSegmentRepository: new TerminalLogSegmentRepository(database.db),
@@ -139,6 +144,9 @@ export function createServer(config: HostConfig) {
   const gitReadService = new GitReadService(gitCommandRunner, workspaceRepoGuard);
   const gitWriteService = new GitWriteService(gitCommandRunner, workspaceRepoGuard, gitReadService);
   const gitRuleRepository = new GitRuleRepository(repositories.commitRuleProfileRepository);
+  const quickPhraseService = new QuickPhraseService(
+    repositories.userQuickPhrasePreferenceRepository
+  );
   const commitRuleEngine = new CommitRuleEngine();
   const commitDraftService = new CommitDraftService(gitReadService);
   const commitOrchestrator = new CommitOrchestrator(
@@ -226,6 +234,7 @@ export function createServer(config: HostConfig) {
     sessionLiveRuntimeService,
     config
   );
+  const quickPhraseController = new QuickPhraseController(quickPhraseService);
   const fileController = new FileController(
     fileTreeService,
     fileContentService,
@@ -265,6 +274,7 @@ export function createServer(config: HostConfig) {
   void registerWorkspaceRoutes(app, workspaceController);
   void registerWorkbenchRoutes(app, workbenchController);
   void registerSessionRoutes(app, sessionController);
+  void registerPreferenceRoutes(app, quickPhraseController);
   void registerFileRoutes(app, fileController);
   void registerSessionContextRoutes(app, fileContextController);
   void registerTerminalRoutes(app, terminalController);
@@ -304,6 +314,7 @@ export function createServer(config: HostConfig) {
         gitReadService,
         gitWriteService,
         commitOrchestrator,
+        quickPhraseService,
         sessionHistoryService,
         sessionChangedFileService,
         sessionMessageAttachmentService,

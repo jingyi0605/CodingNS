@@ -387,6 +387,7 @@ function LiveConversationPage({
             />
             <ComposerPanel
               capabilities={capabilities}
+              draftStorageId={sessionId}
               hasActiveRun={runtimeHasActiveRun}
               contextUsage={contextUsage}
               hasPendingQueuedMessages={hasPendingQueuedMessages}
@@ -663,6 +664,7 @@ function DraftConversationPage({
           />
           <ComposerPanel
             capabilities={capabilities}
+            draftStorageId={draft.sessionId}
             contextUsage={null}
             isSubmitting={sending}
             isRunning={false}
