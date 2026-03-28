@@ -96,6 +96,9 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
       - name: Download bundle artifacts
         uses: actions/download-artifact@v4
         with:
@@ -104,14 +107,16 @@ jobs:
       - name: Create or update GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
         shell: bash
         run: |
           set -euo pipefail
 
           tag_name="${GITHUB_REF_NAME}"
 
-          if ! gh release view "${tag_name}" >/dev/null 2>&1; then
+          if ! gh release view "${tag_name}" --repo "${GH_REPO}" >/dev/null 2>&1; then
             gh release create "${tag_name}" \
+              --repo "${GH_REPO}" \
               --title "${tag_name}" \
               --notes "Automated desktop release assets."
           fi
@@ -127,4 +132,4 @@ jobs:
             exit 1
           fi
 
-          gh release upload "${tag_name}" "${files[@]}" --clobber
+          gh release upload "${tag_name}" "${files[@]}" --repo "${GH_REPO}" --clobber
