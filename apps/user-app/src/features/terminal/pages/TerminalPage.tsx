@@ -24,6 +24,7 @@ import {
   readViewSnapshot,
   writeViewSnapshot
 } from "../../../shared/cache/view-snapshot-cache";
+import { useHaptics } from "../../../shared/haptics";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout";
@@ -210,6 +211,7 @@ const INITIAL_CONNECTION_STATES: Record<PaneId, TerminalConnectionState> = {
 };
 export function TerminalPage() {
   const platform = usePlatform();
+  const haptics = useHaptics();
   const handleTabbarMouseDownCapture = useCallback((event: ReactMouseEvent<HTMLElement>) => {
     if (!platform.isDesktop || platform.ui.osFamily !== "macos") {
       return;
@@ -1474,10 +1476,12 @@ export function TerminalPage() {
     }
 
     if (direction === "right") {
+      void haptics.trigger("gesture");
       setMobileQuickDrawerOpen(true);
       return;
     }
 
+    void haptics.trigger("gesture");
     setMobileQuickDrawerOpen(false);
   }
 
@@ -1696,6 +1700,9 @@ export function TerminalPage() {
                           aria-selected={isActive}
                           aria-busy={pendingMutation !== null}
                           onClick={() => {
+                            if (!isActive) {
+                              void haptics.trigger("selection");
+                            }
                             bindTerminalToActivePane(terminal.id);
                           }}
                           onAuxClick={(event) => {

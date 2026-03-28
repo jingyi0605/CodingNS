@@ -1,6 +1,7 @@
 import { createPortal } from "react-dom";
 import { useEffect, useState } from "react";
 
+import { useHaptics } from "../../../shared/haptics";
 import { t } from "../../../shared/i18n";
 import type { ProviderId, WorkspaceDto } from "../../conversation/api/conversation-api";
 import { SessionProviderPicker } from "../../conversation/components/SessionProviderPicker";
@@ -22,6 +23,7 @@ export function MobileCreateSessionSheet({
 }: MobileCreateSessionSheetProps) {
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>("");
   const [workspacePickerOpen, setWorkspacePickerOpen] = useState(false);
+  const haptics = useHaptics();
 
   useEffect(() => {
     if (!open) {
@@ -64,7 +66,10 @@ export function MobileCreateSessionSheet({
                 aria-label={`${t("shell.createSessionWorkspaceLabel")} ${selectedWorkspace?.name ?? ""}`.trim()}
                 aria-expanded={workspacePickerOpen ? "true" : "false"}
                 disabled={workspaces.length === 0}
-                onClick={() => setWorkspacePickerOpen((current) => !current)}
+                onClick={() => {
+                  void haptics.trigger("selection");
+                  setWorkspacePickerOpen((current) => !current);
+                }}
               >
                 <span className="mobile-create-session-workspace-copy">
                   <strong>{selectedWorkspace?.name ?? t("common.unknown")}</strong>
@@ -80,6 +85,9 @@ export function MobileCreateSessionSheet({
                       type="button"
                       className="mobile-workspace-home-row mobile-create-session-workspace-row"
                       onClick={() => {
+                        if (workspace.id !== selectedWorkspaceId) {
+                          void haptics.trigger("selection");
+                        }
                         setSelectedWorkspaceId(workspace.id);
                         setWorkspacePickerOpen(false);
                       }}

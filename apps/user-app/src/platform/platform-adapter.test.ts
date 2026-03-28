@@ -6,6 +6,7 @@ const originalTauriInternals = window.__TAURI_INTERNALS__;
 const userAgentDescriptor = Object.getOwnPropertyDescriptor(window.navigator, "userAgent");
 const platformDescriptor = Object.getOwnPropertyDescriptor(window.navigator, "platform");
 const maxTouchPointsDescriptor = Object.getOwnPropertyDescriptor(window.navigator, "maxTouchPoints");
+const vibrateDescriptor = Object.getOwnPropertyDescriptor(window.navigator, "vibrate");
 
 function mockNavigator({
   userAgent,
@@ -45,12 +46,21 @@ afterEach(() => {
     Object.defineProperty(window.navigator, "maxTouchPoints", maxTouchPointsDescriptor);
   }
 
+  if (vibrateDescriptor) {
+    Object.defineProperty(window.navigator, "vibrate", vibrateDescriptor);
+  } else {
+    Object.defineProperty(window.navigator, "vibrate", {
+      configurable: true,
+      value: undefined
+    });
+  }
+
   if (originalTauriInternals) {
     window.__TAURI_INTERNALS__ = originalTauriInternals;
     return;
   }
 
-  delete window.__TAURI_INTERNALS__;
+  window.__TAURI_INTERNALS__ = undefined;
 });
 
 describe("platform-adapter", () => {
@@ -67,7 +77,7 @@ describe("platform-adapter", () => {
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
       platform: "MacIntel"
     });
-    delete window.__TAURI_INTERNALS__;
+    window.__TAURI_INTERNALS__ = undefined;
 
     expect(resolveRuntimePlatform()).toBe("web");
     expect(createPlatformAdapter({ viewportWidth: 1280 }).isMobile).toBe(false);
@@ -105,5 +115,46 @@ describe("platform-adapter", () => {
     };
 
     expect(resolveRuntimePlatform()).toBe("android");
+  });
+
+  it("原生移动端优先走 Tauri haptic 命令", async () => {
+    const invoke = vi.fn().mockResolvedValue(undefined);
+    mockNavigator({
+      userAgent:
+        "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/124.0.0.0 Mobile Safari/537.36",
+      platform: "Linux armv8l",
+      maxTouchPoints: 5
+    });
+    window.__TAURI_INTERNALS__ = {
+      invoke
+    };
+
+    const adapter = createPlatformAdapter({ viewportWidth: 390 });
+    await adapter.haptics.trigger("selection");
+
+    expect(adapter.haptics.supported).toBe(true);
+    expect(invoke).toHaveBeenCalledWith("perform_haptic_feedback", {
+      kind: "selection"
+    });
+  });
+
+  it("Web 端在支持时退化到 navigator.vibrate", async () => {
+    const vibrate = vi.fn();
+    mockNavigator({
+      userAgent:
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+      platform: "MacIntel"
+    });
+    delete window.__TAURI_INTERNALS__;
+    Object.defineProperty(window.navigator, "vibrate", {
+      configurable: true,
+      value: vibrate
+    });
+
+    const adapter = createPlatformAdapter({ viewportWidth: 390 });
+    await adapter.haptics.trigger("success");
+
+    expect(adapter.haptics.supported).toBe(true);
+    expect(vibrate).toHaveBeenCalledTimes(1);
   });
 });

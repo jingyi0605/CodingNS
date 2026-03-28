@@ -14,6 +14,7 @@
 		53CDD0ACFBE8BDF1550B2E53 /* main.mm in Sources */ = {isa = PBXBuildFile; fileRef = 682535EEFE1DA20BE07B123C /* main.mm */; };
 		5C516481BCA83A182C2BCC94 /* assets in Resources */ = {isa = PBXBuildFile; fileRef = 3842AE2A64FB9933D0400EA4 /* assets */; };
 		618672DC8A5E0605441C9935 /* UIKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0E2B15F176E4B041AE33EEEA /* UIKit.framework */; };
+		6BB7511FD4B04E1BF3E20413 /* haptics.mm in Sources */ = {isa = PBXBuildFile; fileRef = EE4F4D074A82908E2724DA69 /* haptics.mm */; };
 		836D84C5F07860664DAF79C8 /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D8F57162F5CC7AEDD55F173D /* WebKit.framework */; };
 		9D59FB167BB4E699DA17D1E9 /* MetalKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 04B56F58E2E44DDE1D67E7B7 /* MetalKit.framework */; };
 		C6BD59C055C986EA4A77FDA2 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AF1DE57E7D9CF13BB2E0E038 /* Assets.xcassets */; };
@@ -38,6 +39,7 @@
 		AF1DE57E7D9CF13BB2E0E038 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		CE1209BFDECB28E00189B168 /* Metal.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Metal.framework; path = System/Library/Frameworks/Metal.framework; sourceTree = SDKROOT; };
 		D8F57162F5CC7AEDD55F173D /* WebKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WebKit.framework; path = System/Library/Frameworks/WebKit.framework; sourceTree = SDKROOT; };
+		EE4F4D074A82908E2724DA69 /* haptics.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = haptics.mm; sourceTree = "<group>"; };
 		F3673D372C5ABDD1AD6E7067 /* QuartzCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = QuartzCore.framework; path = System/Library/Frameworks/QuartzCore.framework; sourceTree = SDKROOT; };
 		FBC720DFA1D01F55B0A32344 /* app_iOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = app_iOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -136,6 +138,7 @@
 		FB1C68C0357A1866B3D27465 /* app */ = {
 			isa = PBXGroup;
 			children = (
+				EE4F4D074A82908E2724DA69 /* haptics.mm */,
 				682535EEFE1DA20BE07B123C /* main.mm */,
 				329C38BE5E8B40354375D0D0 /* bindings */,
 			);
@@ -257,6 +260,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				6BB7511FD4B04E1BF3E20413 /* haptics.mm in Sources */,
 				53CDD0ACFBE8BDF1550B2E53 /* main.mm in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

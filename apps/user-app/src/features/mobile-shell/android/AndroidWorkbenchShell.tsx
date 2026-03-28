@@ -2,6 +2,7 @@ import { useRef, type CSSProperties, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import { usePlatform } from "../../../platform/platform-provider";
+import { useHaptics } from "../../../shared/haptics";
 import { t } from "../../../shared/i18n";
 import {
   resolveMobileToolHeaderState,
@@ -37,6 +38,7 @@ export function AndroidWorkbenchShell({
   onNavigateSettings
 }: MobileWorkbenchShellProps) {
   const platform = usePlatform();
+  const haptics = useHaptics();
   const location = useLocation();
   const navigate = useNavigate();
   const shellRef = useRef<HTMLDivElement | null>(null);
@@ -175,7 +177,13 @@ export function AndroidWorkbenchShell({
             className="android-workbench-bottom-nav-item"
             data-active={item.key === activeEntry}
             aria-current={item.key === activeEntry ? "page" : undefined}
-            onClick={item.onClick}
+            onClick={() => {
+              if (item.key !== activeEntry) {
+                void haptics.trigger("selection");
+              }
+
+              item.onClick();
+            }}
           >
             <span className="android-workbench-bottom-nav-icon" aria-hidden="true">
               {item.icon}

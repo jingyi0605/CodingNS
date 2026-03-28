@@ -42,6 +42,10 @@ function createPlatform(
       installUpdate: async () => ({ ok: false }),
       rollbackToPreviousVersion: async () => ({ ok: false }),
       pickDirectory: async () => ({ ok: false })
+    },
+    haptics: {
+      supported: false,
+      trigger: async () => undefined
     }
   };
 }

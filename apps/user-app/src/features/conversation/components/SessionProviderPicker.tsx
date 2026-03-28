@@ -1,4 +1,5 @@
 import type { ProviderId } from "../api/conversation-api";
+import { useHaptics } from "../../../shared/haptics";
 import { t } from "../../../shared/i18n";
 import codexIcon from "../../../assets/provider-icons/codex.png";
 import claudeCodeIcon from "../../../assets/provider-icons/claude-code.png";
@@ -31,6 +32,8 @@ export function SessionProviderPicker({
   pendingProvider = null,
   onSelect
 }: SessionProviderPickerProps) {
+  const haptics = useHaptics();
+
   return (
     <div className="session-provider-grid">
       {/* 统一三家 provider 的入口，避免桌面端和移动端继续各写各的。 */}
@@ -47,7 +50,10 @@ export function SessionProviderPicker({
             data-pending={isPending ? "true" : "false"}
             aria-label={label}
             disabled={disabled}
-            onClick={() => onSelect(item.provider)}
+            onClick={() => {
+              void haptics.trigger("action");
+              onSelect(item.provider);
+            }}
           >
             <span className="session-provider-card-icon" aria-hidden="true">
               <img src={getProviderIcon(item.provider)} alt="" loading="lazy" />

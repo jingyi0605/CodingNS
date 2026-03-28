@@ -10,6 +10,7 @@ import { createPortal } from "react-dom";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 
 import { clientConfigStore } from "../../../config/client-config-store";
+import { useHaptics } from "../../../shared/haptics";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 import {
@@ -133,9 +134,11 @@ function LiveConversationPage({
 
   const store = storeRef.current;
   const { showToast, dismissToast } = useToast();
+  const haptics = useHaptics();
   const lastRuntimeErrorSignatureRef = useRef<string | null>(null);
   const pendingRuntimeErrorSignatureRef = useRef<string | null>(null);
   const delayedRuntimeToastTimerRef = useRef<number | null>(null);
+  const previousRunningStateRef = useRef<string | null>(navigationSession?.runningState ?? null);
   const session = useSessionRuntimeStore(store, (state) => state.session);
   const capabilities = useSessionRuntimeStore(store, (state) => state.capabilities);
   const runtimeHasActiveRun = useSessionRuntimeStore(store, (state) => state.runtimeHasActiveRun);
@@ -287,6 +290,21 @@ function LiveConversationPage({
       durationMs: null
     });
   }, [dismissToast, runtimeErrorCode, runtimeErrorDetail, session?.provider, showToast]);
+
+  useEffect(() => {
+    const previousRunningState = previousRunningStateRef.current;
+    const nextRunningState = session?.runningState ?? null;
+    const wasActive =
+      previousRunningState === "starting"
+      || previousRunningState === "running"
+      || previousRunningState === "reconnecting";
+
+    if (wasActive && nextRunningState === "completed") {
+      void haptics.trigger("success");
+    }
+
+    previousRunningStateRef.current = nextRunningState;
+  }, [haptics, session?.runningState]);
 
   return (
     <>
@@ -846,6 +864,7 @@ interface MobileConversationPreviewGestureHandlers {
 }
 
 function useMobileConversationPreviewController(enabled: boolean) {
+  const haptics = useHaptics();
   const [previewMode, setPreviewMode] = useState<MobileConversationPreviewMode>(() =>
     enabled ? readMobileConversationPreviewMode() : "immersive"
   );
@@ -928,10 +947,12 @@ function useMobileConversationPreviewController(enabled: boolean) {
 
   function togglePreview() {
     if (previewWidthModeRef.current !== "closed") {
+      void haptics.trigger("gesture");
       closePreview();
       return;
     }
 
+    void haptics.trigger("gesture");
     openPreview();
   }
 
@@ -1028,12 +1049,14 @@ function useMobileConversationPreviewController(enabled: boolean) {
 
     if (gesture.source === "main") {
       if (deltaX >= MOBILE_PREVIEW_OPEN_THRESHOLD_PX) {
+        void haptics.trigger("gesture");
         openPreview("default");
       }
       return;
     }
 
     if (deltaX <= -MOBILE_PREVIEW_CLOSE_THRESHOLD_PX) {
+      void haptics.trigger("gesture");
       closePreview();
       return;
     }
@@ -1042,6 +1065,7 @@ function useMobileConversationPreviewController(enabled: boolean) {
       deltaX >= MOBILE_PREVIEW_EXPAND_THRESHOLD_PX
       && previewWidthModeRef.current === "default"
     ) {
+      void haptics.trigger("gesture");
       expandPreview();
     }
   }

@@ -4,6 +4,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { FileContextPanel } from "../conversation/components/FileContextPanel";
 import { GitSidebar } from "../conversation/components/GitSidebar";
 import { useWorkbenchShell } from "../conversation/components/WorkbenchLayout";
+import { useHaptics, type HapticPattern } from "../../shared/haptics";
 import { MobileWorkspaceSwitcherHeader } from "../mobile-shell/components/MobileWorkspaceSwitcherHeader";
 import { buildWorkspaceToolProcessesPath, buildWorkspaceToolsPath } from "../workbench/utils/workbench-navigation";
 import { t } from "../../shared/i18n";
@@ -75,6 +76,7 @@ function readStoredPrimaryTool(): PrimaryToolKey {
 export function ToolsHomePage() {
   const location = useLocation();
   const navigate = useNavigate();
+  const haptics = useHaptics();
   const { navigationGroups, currentWorkspaceId, currentSessionId, selectWorkspace } = useWorkbenchShell();
   const currentWorkspace =
     navigationGroups.find((group) => group.workspace.id === currentWorkspaceId)?.workspace
@@ -159,10 +161,12 @@ export function ToolsHomePage() {
     );
   }, [activeTool, location.pathname, location.search, navigate, searchTab]);
 
-  function selectPrimaryTool(nextTool: PrimaryToolKey) {
+  function selectPrimaryTool(nextTool: PrimaryToolKey, hapticPattern: HapticPattern = "selection") {
     if (nextTool === activeTool) {
       return;
     }
+
+    void haptics.trigger(hapticPattern);
 
     const nextSearchParams = new URLSearchParams(location.search);
     nextSearchParams.set("tab", nextTool);
@@ -180,7 +184,7 @@ export function ToolsHomePage() {
     const nextTool = PRIMARY_TOOL_ORDER[nextIndex];
 
     if (nextTool) {
-      selectPrimaryTool(nextTool);
+      selectPrimaryTool(nextTool, "gesture");
     }
   }
 
@@ -233,7 +237,10 @@ export function ToolsHomePage() {
                 className="secondary-button mobile-tools-more-button"
                 aria-label={t("shell.toolsMoreAction")}
                 title={t("shell.toolsMoreAction")}
-                onClick={() => navigate(buildWorkspaceToolProcessesPath(currentWorkspace.id))}
+                onClick={() => {
+                  void haptics.trigger("action");
+                  navigate(buildWorkspaceToolProcessesPath(currentWorkspace.id));
+                }}
               >
                 <MoreIcon />
               </button>
@@ -253,7 +260,7 @@ export function ToolsHomePage() {
                         data-active={selected}
                         aria-selected={selected}
                         aria-controls={`mobile-tool-panel-${tool.key}`}
-                        onClick={() => selectPrimaryTool(tool.key)}
+                        onClick={() => selectPrimaryTool(tool.key, "selection")}
                       >
                         {tool.title}
                       </button>

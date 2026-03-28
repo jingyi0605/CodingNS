@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type PointerEvent } from "react";
 
+import { useHaptics } from "../../../shared/haptics";
 import { t } from "../../../shared/i18n";
 
 const LONG_PRESS_DELAY_MS = 420;
@@ -55,6 +56,7 @@ export function SessionListItem({
   const [menuOpen, setMenuOpen] = useState(false);
   const longPressTimerRef = useRef<number | null>(null);
   const suppressNextClickRef = useRef(false);
+  const haptics = useHaptics();
   const { session, workspace } = entry;
   const title = session.title ?? session.sessionId;
   const providerLabel =
@@ -91,6 +93,7 @@ export function SessionListItem({
     clearLongPressTimer();
     longPressTimerRef.current = window.setTimeout(() => {
       suppressNextClickRef.current = true;
+      void haptics.trigger("gesture");
       onToggleSubsessions?.();
     }, LONG_PRESS_DELAY_MS);
   }
@@ -105,6 +108,7 @@ export function SessionListItem({
       return;
     }
 
+    void haptics.trigger("selection");
     onActivate(session.sessionId);
   }
 
@@ -180,7 +184,10 @@ export function SessionListItem({
             type="button"
             className="ghost-button"
             aria-expanded={menuOpen}
-            onClick={() => setMenuOpen((current) => !current)}
+            onClick={() => {
+              void haptics.trigger("selection");
+              setMenuOpen((current) => !current);
+            }}
           >
             {t("shell.sessionMoreAction")}
           </button>

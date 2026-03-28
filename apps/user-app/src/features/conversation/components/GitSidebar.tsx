@@ -9,6 +9,7 @@ import {
 
 import { readViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import { logPerfDebug } from "../../../shared/debug/perf-debug";
+import { useHaptics } from "../../../shared/haptics";
 import { t } from "../../../shared/i18n";
 import { ApiError } from "../../../shared/network/api-error";
 import { useToast } from "../../../shared/toast";
@@ -1664,6 +1665,7 @@ function MobileSwipeRow({
   trailingAction: { label: string; tone: "accent" | "danger"; onPress: () => void } | null;
   children: ReactNode;
 }) {
+  const haptics = useHaptics();
   const pointerStateRef = useRef<{ pointerId: number; startX: number } | null>(null);
   const [dragOffset, setDragOffset] = useState(0);
 
@@ -1718,12 +1720,14 @@ function MobileSwipeRow({
     pointerStateRef.current = null;
 
     if (dragOffset >= 44 && leadingAction) {
+      void haptics.trigger("gesture");
       onOpenStateChange("leading");
       setDragOffset(0);
       return;
     }
 
     if (dragOffset <= -44 && trailingAction) {
+      void haptics.trigger("gesture");
       onOpenStateChange("trailing");
       setDragOffset(0);
       return;
@@ -1757,6 +1761,7 @@ function MobileSwipeRow({
           className="git-mobile-swipe-action leading"
           data-tone={leadingAction.tone}
           onClick={() => {
+            void haptics.trigger("action");
             onOpenStateChange(null);
             leadingAction.onPress();
           }}
@@ -1771,6 +1776,7 @@ function MobileSwipeRow({
           className="git-mobile-swipe-action trailing"
           data-tone={trailingAction.tone}
           onClick={() => {
+            void haptics.trigger(trailingAction.tone === "danger" ? "warning" : "action");
             onOpenStateChange(null);
             trailingAction.onPress();
           }}

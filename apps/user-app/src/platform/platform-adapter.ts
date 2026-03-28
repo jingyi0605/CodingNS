@@ -21,6 +21,7 @@ declare global {
 export type PlatformOsFamily = "macos" | "windows" | "linux" | "ios" | "android" | "unknown";
 export type WindowControlsStyle = "traffic-lights" | "windows" | "none";
 export type ViewportClass = "compact" | "medium" | "expanded";
+export type HapticPattern = "selection" | "action" | "gesture" | "success" | "warning" | "error";
 
 export interface PlatformUiProfile {
   readonly osFamily: PlatformOsFamily;
@@ -45,6 +46,11 @@ export interface DesktopShellBridge {
   pickDirectory(): Promise<DesktopBridgeResult<string | null>>;
 }
 
+export interface PlatformHapticsBridge {
+  readonly supported: boolean;
+  trigger(pattern: HapticPattern): Promise<void>;
+}
+
 export interface PlatformAdapter {
   readonly platform: RuntimePlatform;
   readonly isDesktop: boolean;
@@ -54,6 +60,7 @@ export interface PlatformAdapter {
   readonly viewportClass: ViewportClass;
   readonly ui: PlatformUiProfile;
   readonly bridge: DesktopShellBridge;
+  readonly haptics: PlatformHapticsBridge;
 }
 
 interface PlatformAdapterOptions {
@@ -172,6 +179,13 @@ async function invokeDesktopCommand<T>(
   command: string,
   args?: Record<string, unknown>
 ): Promise<DesktopBridgeResult<T>> {
+  return invokeTauriCommand(command, args);
+}
+
+async function invokeTauriCommand<T>(
+  command: string,
+  args?: Record<string, unknown>
+): Promise<DesktopBridgeResult<T>> {
   if (!isTauriRuntime()) {
     return unsupportedResult<T>("当前运行环境不支持桌面壳能力。");
   }
@@ -188,6 +202,41 @@ async function invokeDesktopCommand<T>(
       errorCode: "SHELL_BRIDGE_ERROR",
       detail: error instanceof Error ? error.message : "桌面壳调用失败。"
     };
+  }
+}
+
+function resolveWebVibrationPattern(pattern: HapticPattern): number | number[] {
+  switch (pattern) {
+    case "selection":
+      return 10;
+    case "action":
+      return [12];
+    case "gesture":
+      return [10, 18, 10];
+    case "success":
+      return [16, 30, 20];
+    case "warning":
+      return [20, 36, 18];
+    case "error":
+      return [24, 40, 24, 40, 20];
+    default:
+      return 10;
+  }
+}
+
+function canUseNavigatorVibrate(): boolean {
+  return typeof navigator !== "undefined" && typeof navigator.vibrate === "function";
+}
+
+async function triggerWebVibration(pattern: HapticPattern): Promise<void> {
+  if (!canUseNavigatorVibrate()) {
+    return;
+  }
+
+  try {
+    navigator.vibrate(resolveWebVibrationPattern(pattern));
+  } catch {
+    return;
   }
 }
 
@@ -278,6 +327,14 @@ class WebDesktopShellBridge implements DesktopShellBridge {
   }
 }
 
+class WebHapticsBridge implements PlatformHapticsBridge {
+  readonly supported = canUseNavigatorVibrate();
+
+  trigger(pattern: HapticPattern): Promise<void> {
+    return triggerWebVibration(pattern);
+  }
+}
+
 class TauriDesktopShellBridge implements DesktopShellBridge {
   readonly supported = true;
 
@@ -344,6 +401,20 @@ class TauriDesktopShellBridge implements DesktopShellBridge {
   }
 }
 
+class TauriMobileHapticsBridge implements PlatformHapticsBridge {
+  readonly supported = true;
+
+  async trigger(pattern: HapticPattern): Promise<void> {
+    const result = await invokeTauriCommand("perform_haptic_feedback", {
+      kind: pattern
+    });
+
+    if (!result.ok) {
+      await triggerWebVibration(pattern);
+    }
+  }
+}
+
 export function resolveRuntimePlatform(): RuntimePlatform {
   if (!isTauriRuntime()) {
     return "web";
@@ -375,6 +446,7 @@ export function createPlatformAdapter(options: PlatformAdapterOptions = {}): Pla
     isNativeMobile,
     viewportClass,
     ui: createUiProfile(platform),
-    bridge: platform === "desktop" ? new TauriDesktopShellBridge() : new WebDesktopShellBridge()
+    bridge: platform === "desktop" ? new TauriDesktopShellBridge() : new WebDesktopShellBridge(),
+    haptics: isNativeMobile ? new TauriMobileHapticsBridge() : new WebHapticsBridge()
   };
 }

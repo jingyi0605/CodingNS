@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 
+import { useHaptics } from "../../../shared/haptics";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 import { decideCapability } from "../capability/capability-gate";
@@ -294,6 +295,7 @@ export function ComposerPanel({
   const attachmentDraftCacheRef = useRef(new Map<string, StoredComposerDraftAttachment>());
   const quickPhraseMutationVersionRef = useRef(0);
   const { showToast } = useToast();
+  const haptics = useHaptics();
 
   const provider = getProviderFromCapabilities(capabilities);
   const sendDecision = useMemo(
@@ -802,6 +804,7 @@ export function ComposerPanel({
     }
 
     submitLockRef.current = true;
+    void haptics.trigger(mode === "queue" ? "selection" : "action");
     setLocalSubmitting(true);
     setContent("");
     setAttachments([]);
@@ -869,6 +872,7 @@ export function ComposerPanel({
 
     try {
       setInterrupting(true);
+      void haptics.trigger("action");
       await onInterrupt();
     } catch (error) {
       showToast({

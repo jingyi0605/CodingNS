@@ -1,6 +1,7 @@
 import { createPortal } from "react-dom";
 import { useState, type ReactNode } from "react";
 
+import { useHaptics } from "../../../shared/haptics";
 import { t } from "../../../shared/i18n";
 import { MobileTopHeaderFrame } from "./MobileTopHeaderFrame";
 
@@ -38,6 +39,7 @@ export function MobileWorkspaceSwitcherHeader({
   trailing
 }: MobileWorkspaceSwitcherHeaderProps) {
   const [switcherOpen, setSwitcherOpen] = useState(false);
+  const haptics = useHaptics();
 
   if (!currentWorkspace) {
     return null;
@@ -60,6 +62,7 @@ export function MobileWorkspaceSwitcherHeader({
                   return;
                 }
 
+                void haptics.trigger("selection");
                 setSwitcherOpen(true);
               }}
             >
@@ -90,6 +93,9 @@ export function MobileWorkspaceSwitcherHeader({
                     type="button"
                     className="mobile-workspace-home-row mobile-workspace-home-sheet-row"
                     onClick={() => {
+                      if (workspace.id !== currentWorkspace.id) {
+                        void haptics.trigger("selection");
+                      }
                       onSelectWorkspace?.(workspace.id);
                       setSwitcherOpen(false);
                     }}
