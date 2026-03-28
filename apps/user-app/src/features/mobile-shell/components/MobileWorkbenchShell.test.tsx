@@ -264,6 +264,34 @@ describe("MobileWorkbenchShell", () => {
     expect(shell).toHaveAttribute("data-conversation-tabbar-state", "hidden");
   });
 
+  it("底部导航显示时，在聊天区下滑可以把它拽回隐藏", () => {
+    vi.useFakeTimers();
+    const view = renderMobileShell({
+      presentation: "conversation-focus",
+      childVariant: "conversation"
+    });
+    const shell = view.container.querySelector(".mobile-workbench-shell");
+    const composerPanel = view.container.querySelector(".composer-panel") as HTMLElement | null;
+
+    expect(composerPanel).not.toBeNull();
+    expect(shell).toHaveAttribute("data-conversation-tabbar-state", "visible");
+
+    fireEvent.touchStart(composerPanel!, {
+      touches: [{ clientY: 560 }]
+    });
+    fireEvent.touchMove(composerPanel!, {
+      touches: [{ clientY: 620 }]
+    });
+
+    expect(shell).toHaveAttribute("data-conversation-tabbar-state", "dragging");
+
+    fireEvent.touchEnd(composerPanel!, {
+      changedTouches: [{ clientY: 620 }]
+    });
+
+    expect(shell).toHaveAttribute("data-conversation-tabbar-state", "hidden");
+  });
+
   it("工具主页不再渲染外层标题栏，避免和页面内头部重复", () => {
     const view = renderMobileShell({
       activeEntry: "tools",

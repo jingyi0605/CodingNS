@@ -23,6 +23,10 @@ interface UseConversationFocusTabbarResult {
 interface DragGestureState {
   readonly startY: number;
   readonly pointerType: "touch" | "pointer";
+  readonly initialState: "visible" | "hidden";
+  readonly touchId?: number;
+  readonly pointerId?: number;
+  readonly captureTarget?: Element | null;
   dragging: boolean;
   latestProgress: number;
 }
@@ -120,68 +124,95 @@ export function useConversationFocusTabbar({
       dragGestureRef.current = {
         startY: touchPoint.clientY,
         pointerType: "touch",
+        initialState: stateRef.current === "visible" ? "visible" : "hidden",
+        touchId: touchPoint.identifier,
         dragging: false,
         latestProgress: progressRef.current
       };
+
+      if (stateRef.current === "visible") {
+        clearAutoHideTimer(autoHideTimerRef);
+      }
     }
 
     function handleTouchMove(event: TouchEvent) {
       const gesture = dragGestureRef.current;
 
-      if (!gesture || gesture.pointerType !== "touch" || stateRef.current === "visible") {
+      if (!gesture || gesture.pointerType !== "touch") {
         return;
       }
 
-      const touchPoint = event.touches[0];
+      const touchPoint = resolveTrackedTouch(event.touches, gesture.touchId);
 
       if (!touchPoint) {
         return;
       }
 
-      const upwardDistance = gesture.startY - touchPoint.clientY;
+      const verticalDistance = touchPoint.clientY - gesture.startY;
+      const dragDistance =
+        gesture.initialState === "hidden" ? -verticalDistance : verticalDistance;
 
-      if (upwardDistance <= DRAG_START_THRESHOLD_PX && !gesture.dragging) {
+      if (dragDistance <= DRAG_START_THRESHOLD_PX && !gesture.dragging) {
         return;
       }
 
       event.preventDefault();
 
-      if (upwardDistance <= 0) {
-        gesture.dragging = true;
-        gesture.latestProgress = 0;
-        setState("dragging");
-        setProgress(0);
-        return;
-      }
-
       gesture.dragging = true;
-      gesture.latestProgress = clamp(upwardDistance / REVEAL_DRAG_DISTANCE_PX, 0, 1);
+      gesture.latestProgress = resolveDragProgress(gesture.initialState, dragDistance);
       setState("dragging");
       setProgress(gesture.latestProgress);
     }
 
-    function handleTouchEnd() {
+    function handleTouchEnd(event: TouchEvent) {
       const gesture = dragGestureRef.current;
+
+      if (!gesture || gesture.pointerType !== "touch") {
+        return;
+      }
+
+      const touchPoint = resolveTrackedTouch(event.changedTouches, gesture.touchId);
+
+      if (!touchPoint) {
+        return;
+      }
+
       dragGestureRef.current = null;
 
-      if (!gesture?.dragging) {
+      if (!gesture.dragging) {
+        if (gesture.initialState === "visible") {
+          scheduleAutoHide();
+        }
         return;
       }
 
-      if (gesture.latestProgress >= REVEAL_THRESHOLD) {
-        revealTabbar();
-        return;
-      }
-
-      setState("hidden");
-      setProgress(0);
+      finalizeDragGesture(gesture.initialState, gesture.latestProgress, revealTabbar, setState, setProgress);
     }
 
-    function handleTouchCancel() {
+    function handleTouchCancel(event: TouchEvent) {
       const gesture = dragGestureRef.current;
+
+      if (!gesture || gesture.pointerType !== "touch") {
+        return;
+      }
+
+      const touchPoint = resolveTrackedTouch(event.changedTouches, gesture.touchId);
+
+      if (!touchPoint) {
+        return;
+      }
+
       dragGestureRef.current = null;
 
-      if (!gesture?.dragging) {
+      if (!gesture.dragging) {
+        if (gesture.initialState === "visible") {
+          scheduleAutoHide();
+        }
+        return;
+      }
+
+      if (gesture.initialState === "visible") {
+        revealTabbar();
         return;
       }
 
@@ -204,75 +235,91 @@ export function useConversationFocusTabbar({
       dragGestureRef.current = {
         startY: event.clientY,
         pointerType: "pointer",
+        initialState: stateRef.current === "visible" ? "visible" : "hidden",
+        pointerId: event.pointerId,
+        captureTarget: event.target instanceof Element ? event.target : null,
         dragging: false,
         latestProgress: progressRef.current
       };
+
+      if (event.target instanceof Element) {
+        try {
+          event.target.setPointerCapture(event.pointerId);
+        } catch {
+          // 某些浏览器或测试环境不支持 pointer capture，这里降级为普通事件流。
+        }
+      }
+
+      if (stateRef.current === "visible") {
+        clearAutoHideTimer(autoHideTimerRef);
+      }
     }
 
     function handlePointerMove(event: PointerEvent) {
       const gesture = dragGestureRef.current;
 
-      if (!gesture || gesture.pointerType !== "pointer" || stateRef.current === "visible") {
+      if (!gesture || gesture.pointerType !== "pointer") {
         return;
       }
 
-      const upwardDistance = gesture.startY - event.clientY;
+      const verticalDistance = event.clientY - gesture.startY;
+      const dragDistance =
+        gesture.initialState === "hidden" ? -verticalDistance : verticalDistance;
 
-      if (upwardDistance <= DRAG_START_THRESHOLD_PX && !gesture.dragging) {
+      if (dragDistance <= DRAG_START_THRESHOLD_PX && !gesture.dragging) {
         return;
       }
 
       event.preventDefault();
 
-      if (upwardDistance <= 0) {
-        gesture.dragging = true;
-        gesture.latestProgress = 0;
-        setState("dragging");
-        setProgress(0);
-        return;
-      }
-
       gesture.dragging = true;
-      gesture.latestProgress = clamp(upwardDistance / REVEAL_DRAG_DISTANCE_PX, 0, 1);
+      gesture.latestProgress = resolveDragProgress(gesture.initialState, dragDistance);
       setState("dragging");
       setProgress(gesture.latestProgress);
     }
 
-    function handlePointerEnd() {
+    function handlePointerEnd(event: PointerEvent) {
       const gesture = dragGestureRef.current;
+
+      if (
+        !gesture ||
+        gesture.pointerType !== "pointer" ||
+        gesture.pointerId !== event.pointerId
+      ) {
+        return;
+      }
+
       dragGestureRef.current = null;
+      releasePointerCaptureSafely(gesture);
 
-      if (!gesture?.dragging || gesture.pointerType !== "pointer") {
+      if (!gesture.dragging) {
+        if (gesture.initialState === "visible") {
+          scheduleAutoHide();
+        }
         return;
       }
 
-      if (gesture.latestProgress >= REVEAL_THRESHOLD) {
-        revealTabbar();
-        return;
-      }
-
-      setState("hidden");
-      setProgress(0);
+      finalizeDragGesture(gesture.initialState, gesture.latestProgress, revealTabbar, setState, setProgress);
     }
 
     rootElement.addEventListener("touchstart", handleTouchStart, { passive: true });
-    rootElement.addEventListener("touchmove", handleTouchMove, { passive: false });
-    rootElement.addEventListener("touchend", handleTouchEnd);
-    rootElement.addEventListener("touchcancel", handleTouchCancel);
     rootElement.addEventListener("pointerdown", handlePointerDown, { passive: true });
-    rootElement.addEventListener("pointermove", handlePointerMove, { passive: false });
-    rootElement.addEventListener("pointerup", handlePointerEnd);
-    rootElement.addEventListener("pointercancel", handlePointerEnd);
+    window.addEventListener("touchmove", handleTouchMove, { passive: false });
+    window.addEventListener("touchend", handleTouchEnd);
+    window.addEventListener("touchcancel", handleTouchCancel);
+    window.addEventListener("pointermove", handlePointerMove, { passive: false });
+    window.addEventListener("pointerup", handlePointerEnd);
+    window.addEventListener("pointercancel", handlePointerEnd);
 
     return () => {
       rootElement.removeEventListener("touchstart", handleTouchStart);
-      rootElement.removeEventListener("touchmove", handleTouchMove);
-      rootElement.removeEventListener("touchend", handleTouchEnd);
-      rootElement.removeEventListener("touchcancel", handleTouchCancel);
       rootElement.removeEventListener("pointerdown", handlePointerDown);
-      rootElement.removeEventListener("pointermove", handlePointerMove);
-      rootElement.removeEventListener("pointerup", handlePointerEnd);
-      rootElement.removeEventListener("pointercancel", handlePointerEnd);
+      window.removeEventListener("touchmove", handleTouchMove);
+      window.removeEventListener("touchend", handleTouchEnd);
+      window.removeEventListener("touchcancel", handleTouchCancel);
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerEnd);
+      window.removeEventListener("pointercancel", handlePointerEnd);
     };
   }, [enabled, rootRef, suspended]);
 
@@ -292,6 +339,78 @@ function clearAutoHideTimer(timerRef: { current: number | null }) {
 
   window.clearTimeout(timerRef.current);
   timerRef.current = null;
+}
+
+function resolveDragProgress(
+  initialState: "visible" | "hidden",
+  dragDistance: number
+) {
+  if (initialState === "hidden") {
+    return clamp(dragDistance / REVEAL_DRAG_DISTANCE_PX, 0, 1);
+  }
+
+  return clamp(1 - dragDistance / REVEAL_DRAG_DISTANCE_PX, 0, 1);
+}
+
+function finalizeDragGesture(
+  initialState: "visible" | "hidden",
+  latestProgress: number,
+  revealTabbar: () => void,
+  setState: (state: ConversationFocusTabbarState) => void,
+  setProgress: (progress: number) => void
+) {
+  if (initialState === "hidden") {
+    if (latestProgress >= REVEAL_THRESHOLD) {
+      revealTabbar();
+      return;
+    }
+
+    setState("hidden");
+    setProgress(0);
+    return;
+  }
+
+  if (latestProgress <= 1 - REVEAL_THRESHOLD) {
+    setState("hidden");
+    setProgress(0);
+    return;
+  }
+
+  revealTabbar();
+}
+
+function releasePointerCaptureSafely(gesture: DragGestureState) {
+  if (
+    gesture.pointerType !== "pointer" ||
+    typeof gesture.pointerId !== "number" ||
+    !(gesture.captureTarget instanceof Element)
+  ) {
+    return;
+  }
+
+  try {
+    if (gesture.captureTarget.hasPointerCapture(gesture.pointerId)) {
+      gesture.captureTarget.releasePointerCapture(gesture.pointerId);
+    }
+  } catch {
+    // 测试环境和部分浏览器可能没有完整实现，忽略即可。
+  }
+}
+
+function resolveTrackedTouch(touchList: TouchList, touchId?: number) {
+  if (typeof touchId !== "number") {
+    return touchList[0] ?? null;
+  }
+
+  for (let index = 0; index < touchList.length; index += 1) {
+    const touch = touchList[index];
+
+    if (touch?.identifier === touchId) {
+      return touch;
+    }
+  }
+
+  return null;
 }
 
 function resolveConversationGestureSurface(target: EventTarget | null) {
