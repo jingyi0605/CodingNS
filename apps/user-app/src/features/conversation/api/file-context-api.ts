@@ -31,6 +31,18 @@ export interface FileSaveResponseDto {
   updatedAt: string;
 }
 
+export interface FileTransferDto {
+  workspaceId: string;
+  path: string;
+  size: number;
+  updatedAt: string;
+}
+
+export interface FileDownloadDto extends FileTransferDto {
+  fileName: string;
+  contentBase64: string;
+}
+
 export interface FileSearchResultDto {
   items: FileNodeDto[];
   total: number;
@@ -90,6 +102,12 @@ export interface OperateFilePayload {
   content?: string;
 }
 
+export interface UploadFilePayload {
+  workspaceId: string;
+  path: string;
+  contentBase64: string;
+}
+
 export function getFileTree(workspaceId: string, filePath?: string) {
   const search = new URLSearchParams({ workspaceId });
 
@@ -131,6 +149,22 @@ export function operateFile(payload: OperateFilePayload) {
     method: "POST",
     body: JSON.stringify(payload)
   });
+}
+
+export function uploadFile(payload: UploadFilePayload) {
+  return httpClient.request<FileTransferDto>("/api/files/upload", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function downloadFile(workspaceId: string, filePath: string) {
+  const search = new URLSearchParams({
+    workspaceId,
+    path: filePath
+  });
+
+  return httpClient.request<FileDownloadDto>(`/api/files/download?${search.toString()}`);
 }
 
 export function searchFiles(

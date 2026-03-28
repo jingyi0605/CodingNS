@@ -146,6 +146,41 @@ describe("spec004 文件管理能力", () => {
     });
     expect(createFile.statusCode).toBe(200);
 
+    const uploadBinary = await hosted.app.inject({
+      method: "POST",
+      url: "/api/files/upload",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        workspaceId,
+        path: "docs/upload.bin",
+        contentBase64: Buffer.from([8, 6, 7, 5, 3, 0, 9]).toString("base64")
+      }
+    });
+    expect(uploadBinary.statusCode).toBe(201);
+    expect(readFileSync(path.join(fixture.workspaceDir, "docs", "upload.bin"))).toEqual(
+      Buffer.from([8, 6, 7, 5, 3, 0, 9])
+    );
+
+    const downloadBinary = await hosted.app.inject({
+      method: "GET",
+      url: `/api/files/download?workspaceId=${workspaceId}&path=${encodeURIComponent("docs/upload.bin")}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(downloadBinary.statusCode).toBe(200);
+    expect(downloadBinary.json()).toMatchObject({
+      workspaceId,
+      path: "docs/upload.bin",
+      fileName: "upload.bin",
+      size: 7
+    });
+    expect(Buffer.from(downloadBinary.json().contentBase64, "base64")).toEqual(
+      Buffer.from([8, 6, 7, 5, 3, 0, 9])
+    );
+
     const renameFile = await hosted.app.inject({
       method: "POST",
       url: "/api/files/ops",

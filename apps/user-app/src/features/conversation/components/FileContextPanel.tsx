@@ -6,8 +6,10 @@ import { t } from "../../../shared/i18n";
 import { ApiError } from "../../../shared/network/api-error";
 import { useToast } from "../../../shared/toast";
 import {
+  downloadFile,
   operateFile,
   searchFiles,
+  uploadFile,
   type FileNodeDto
 } from "../api/file-context-api";
 import { usePlatform } from "../../../platform/platform-provider";
@@ -75,6 +77,7 @@ export function FileContextPanel({ className, sessionId, workspaceId, hideHeadin
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [loadingTree, setLoadingTree] = useState(false);
   const [mutating, setMutating] = useState(false);
+  const [transferring, setTransferring] = useState(false);
   const [searchVisible, setSearchVisible] = useState(false);
   const [searchKeyword, setSearchKeyword] = useState("");
   const [searchResult, setSearchResult] = useState<FileNodeDto[] | null>(null);
@@ -92,6 +95,7 @@ export function FileContextPanel({ className, sessionId, workspaceId, hideHeadin
   const recentFileActivationRef = useRef<RecentFileActivation | null>(null);
   const copyPathMenuRef = useRef<HTMLDivElement | null>(null);
   const mobileActionMenuRef = useRef<HTMLDivElement | null>(null);
+  const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const directoryWaitersRef = useRef(
     new Map<
       string,
@@ -447,6 +451,7 @@ export function FileContextPanel({ className, sessionId, workspaceId, hideHeadin
   // 文件和目录原本分散在两套选中状态里，这里收敛成一个“当前目标路径”，后续按钮逻辑就不用到处打补丁。
   const selectedTargetPath = resolveSelectedTargetPath(selectedPath, activeDirectoryPath);
   const canCopySelectedPath = Boolean(currentWorkspace?.path && selectedTargetPath !== null);
+  const canDownloadSelectedFile = Boolean(selectedPath);
   const canCollapseCurrent = Boolean(
     (selectedPath ? getParentDirectory(selectedPath) : activeDirectoryPath) && expandedDirectories.length
   );
@@ -811,6 +816,90 @@ export function FileContextPanel({ className, sessionId, workspaceId, hideHeadin
     void action();
   }
 
+  function handleUploadTrigger() {
+    uploadInputRef.current?.click();
+  }
+
+  async function handleUploadInputChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0] ?? null;
+    event.target.value = "";
+
+    if (!file || !workspaceId) {
+      return;
+    }
+
+    const safeFileName = normalizeUploadFileName(file.name);
+
+    if (!safeFileName) {
+      showToast({
+        title: t("conversation.filePanelUploadFailed"),
+        tone: "error"
+      });
+      return;
+    }
+
+    const baseDirectory = getCreateBaseDirectory(activeDirectoryPath, selectedPath);
+    const targetPath = joinRelativePath(baseDirectory, safeFileName);
+
+    setTransferring(true);
+
+    try {
+      const contentBase64 = await readFileAsBase64(file);
+
+      await uploadFile({
+        workspaceId,
+        path: targetPath,
+        contentBase64
+      });
+
+      await refreshTreeCache();
+      await selectFile(targetPath);
+      showToast({
+        title: t("conversation.filePanelUploadSuccess", {
+          name: safeFileName
+        }),
+        tone: "success"
+      });
+    } catch (error) {
+      showToast({
+        title: readError(error, t("conversation.filePanelUploadFailed")),
+        tone: "error"
+      });
+    } finally {
+      setTransferring(false);
+    }
+  }
+
+  async function handleDownload() {
+    if (!workspaceId || !selectedPath) {
+      return;
+    }
+
+    setTransferring(true);
+
+    try {
+      const payload = await downloadFile(workspaceId, selectedPath);
+      const fileBuffer = decodeBase64ToArrayBuffer(payload.contentBase64);
+
+      downloadBlob(payload.fileName, new Blob([fileBuffer], {
+        type: "application/octet-stream"
+      }));
+      showToast({
+        title: t("conversation.filePanelDownloadSuccess", {
+          name: payload.fileName
+        }),
+        tone: "success"
+      });
+    } catch (error) {
+      showToast({
+        title: readError(error, t("conversation.filePanelDownloadFailed")),
+        tone: "error"
+      });
+    } finally {
+      setTransferring(false);
+    }
+  }
+
   function handleCollapseCurrent() {
     const targetDirectory = selectedPath ? getParentDirectory(selectedPath) : activeDirectoryPath;
 
@@ -1073,6 +1162,13 @@ export function FileContextPanel({ className, sessionId, workspaceId, hideHeadin
 
           {activeTab === "workspace" ? (
             <>
+              <input
+                ref={uploadInputRef}
+                data-testid="file-panel-upload-input"
+                type="file"
+                hidden
+                onChange={(event) => void handleUploadInputChange(event)}
+              />
               {shouldUseMobileActionMenu ? (
                 <div className="file-panel-toolbar file-panel-toolbar-mobile" aria-label={t("conversation.filePanelTitle")}>
                   <div className="file-mobile-action-shell" ref={mobileActionMenuRef}>
@@ -1135,8 +1231,29 @@ export function FileContextPanel({ className, sessionId, workspaceId, hideHeadin
                           className="file-mobile-action-menu-item"
                           type="button"
                           role="menuitem"
+                          onClick={() => {
+                            setMobileActionMenuOpen(false);
+                            handleUploadTrigger();
+                          }}
+                          disabled={mutating || transferring}
+                        >
+                          {t("conversation.filePanelUpload")}
+                        </button>
+                        <button
+                          className="file-mobile-action-menu-item"
+                          type="button"
+                          role="menuitem"
+                          onClick={() => handleMobileToolbarAction(handleDownload)}
+                          disabled={!canDownloadSelectedFile || transferring}
+                        >
+                          {t("conversation.filePanelDownload")}
+                        </button>
+                        <button
+                          className="file-mobile-action-menu-item"
+                          type="button"
+                          role="menuitem"
                           onClick={() => handleMobileToolbarAction(() => handleCreate("create_file"))}
-                          disabled={mutating}
+                          disabled={mutating || transferring}
                         >
                           {t("conversation.filePanelNewFile")}
                         </button>
@@ -1147,7 +1264,7 @@ export function FileContextPanel({ className, sessionId, workspaceId, hideHeadin
                           onClick={() =>
                             handleMobileToolbarAction(() => handleCreate("create_directory"))
                           }
-                          disabled={mutating}
+                          disabled={mutating || transferring}
                         >
                           {t("conversation.filePanelNewDirectory")}
                         </button>
@@ -1247,10 +1364,30 @@ export function FileContextPanel({ className, sessionId, workspaceId, hideHeadin
                   <button
                     className="file-toolbar-button"
                     type="button"
+                    title={t("conversation.filePanelUpload")}
+                    aria-label={t("conversation.filePanelUpload")}
+                    onClick={handleUploadTrigger}
+                    disabled={mutating || transferring}
+                  >
+                    <UploadIcon />
+                  </button>
+                  <button
+                    className="file-toolbar-button"
+                    type="button"
+                    title={t("conversation.filePanelDownload")}
+                    aria-label={t("conversation.filePanelDownload")}
+                    onClick={() => void handleDownload()}
+                    disabled={!canDownloadSelectedFile || transferring}
+                  >
+                    <DownloadIcon />
+                  </button>
+                  <button
+                    className="file-toolbar-button"
+                    type="button"
                     title={t("conversation.filePanelNewFile")}
                     aria-label={t("conversation.filePanelNewFile")}
                     onClick={() => void handleCreate("create_file")}
-                    disabled={mutating}
+                    disabled={mutating || transferring}
                   >
                     <FilePlusIcon />
                   </button>
@@ -1260,7 +1397,7 @@ export function FileContextPanel({ className, sessionId, workspaceId, hideHeadin
                     title={t("conversation.filePanelNewDirectory")}
                     aria-label={t("conversation.filePanelNewDirectory")}
                     onClick={() => void handleCreate("create_directory")}
-                    disabled={mutating}
+                    disabled={mutating || transferring}
                   >
                     <FolderPlusIcon />
                   </button>
@@ -1366,6 +1503,14 @@ function getCreateBaseDirectory(activeDirectoryPath: string, selectedPath: strin
   return ROOT_DIRECTORY;
 }
 
+function joinRelativePath(baseDirectory: string, fileName: string): string {
+  return baseDirectory ? `${baseDirectory}/${fileName}` : fileName;
+}
+
+function normalizeUploadFileName(fileName: string): string {
+  return fileName.split(/[/\\]/).pop()?.trim() ?? "";
+}
+
 function resolveSelectedTargetPath(selectedPath: string | null, activeDirectoryPath: string): string | null {
   if (selectedPath) {
     return selectedPath;
@@ -1436,6 +1581,46 @@ function normalizePathSeparators(path: string, pathStyle: BackendPathStyle): str
 
 function resolvePathSeparator(pathStyle: BackendPathStyle): "/" | "\\" {
   return pathStyle === "windows" ? "\\" : "/";
+}
+
+async function readFileAsBase64(file: File): Promise<string> {
+  const buffer = await file.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+  let binary = "";
+
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    const chunk = bytes.subarray(offset, offset + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+
+  return btoa(binary);
+}
+
+function decodeBase64ToArrayBuffer(value: string): ArrayBuffer {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+}
+
+function downloadBlob(fileName: string, blob: Blob): void {
+  if (typeof document === "undefined") {
+    throw new Error(t("conversation.filePanelDownloadFailed"));
+  }
+
+  const objectUrl = window.URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = objectUrl;
+  anchor.download = fileName;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  window.URL.revokeObjectURL(objectUrl);
 }
 
 async function writeTextToClipboard(
@@ -1653,6 +1838,40 @@ function FilePlusIcon() {
       <path d="M4 1.5h5l3 3v10H4z" fill="none" stroke="currentColor" strokeWidth="1.2" />
       <path d="M9 1.5v3h3" fill="none" stroke="currentColor" strokeWidth="1.2" />
       <path d="M8 6.5v5M5.5 9h5" fill="none" stroke="currentColor" strokeWidth="1.2" />
+    </svg>
+  );
+}
+
+function UploadIcon() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <path d="M3 11.5v2h10v-2" fill="none" stroke="currentColor" strokeWidth="1.2" />
+      <path d="M8 2.5v8" fill="none" stroke="currentColor" strokeWidth="1.2" />
+      <path
+        d="m5.5 5 2.5-2.5L10.5 5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function DownloadIcon() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <path d="M3 11.5v2h10v-2" fill="none" stroke="currentColor" strokeWidth="1.2" />
+      <path d="M8 2.5v8" fill="none" stroke="currentColor" strokeWidth="1.2" />
+      <path
+        d="m5.5 8.5 2.5 2.5 2.5-2.5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }

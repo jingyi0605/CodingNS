@@ -23,6 +23,12 @@ interface SaveFileBody {
   expectedVersion?: string;
 }
 
+interface UploadFileBody {
+  workspaceId?: string;
+  path?: string;
+  contentBase64?: string;
+}
+
 interface FileOperationBody {
   workspaceId?: string;
   opType?: FileOperationType;
@@ -109,6 +115,33 @@ export class FileController {
         dstPath: request.body.dstPath?.trim(),
         content: request.body.content
       })
+    );
+  };
+
+  readonly upload = async (
+    request: FastifyRequest<{ Body: UploadFileBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    const upload = this.fileContentService.uploadFile({
+      workspaceId: requireWorkspaceId(request.body.workspaceId),
+      path: request.body.path?.trim() ?? "",
+      contentBase64: typeof request.body.contentBase64 === "string" ? request.body.contentBase64 : "",
+      userId: requireUserId(request)
+    });
+
+    reply.code(201).send(upload);
+  };
+
+  readonly download = async (
+    request: FastifyRequest<{ Querystring: FileWorkspaceQuery }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(
+      this.fileContentService.downloadFile(
+        requireWorkspaceId(request.query.workspaceId),
+        request.query.path ?? "",
+        requireUserId(request)
+      )
     );
   };
 

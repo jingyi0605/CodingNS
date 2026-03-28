@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import path from "node:path";
 
 import { AppError } from "../../shared/errors/app-error.js";
 import type { FileSnapshot } from "../../types/domain.js";
@@ -20,6 +21,22 @@ interface SaveFileInput {
   content: string;
   expectedVersion?: string;
   userId: string;
+}
+
+interface UploadFileInput {
+  workspaceId: string;
+  path: string;
+  contentBase64: string;
+  userId: string;
+}
+
+interface DownloadFileResult {
+  workspaceId: string;
+  path: string;
+  fileName: string;
+  contentBase64: string;
+  size: number;
+  updatedAt: string;
 }
 
 interface FileOperationInput {
@@ -82,6 +99,59 @@ export class FileContentService {
     this.recentFileService.recordOpened(input.workspaceId, input.userId, snapshot.path);
 
     return snapshot;
+  }
+
+  uploadFile(input: UploadFileInput): {
+    workspaceId: string;
+    path: string;
+    size: number;
+    updatedAt: string;
+  } {
+    const resolved = this.fileAccessGuard.resolvePath(input.workspaceId, input.path, {
+      mustExist: false
+    });
+
+    if (resolved.exists) {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "FILE_ALREADY_EXISTS",
+        detail: "目标文件已存在",
+        field: "path"
+      });
+    }
+
+    const buffer = Buffer.from(input.contentBase64, "base64");
+    fs.writeFileSync(resolved.absolutePath, buffer);
+
+    const stats = fs.statSync(resolved.absolutePath);
+    this.recentFileService.recordOpened(input.workspaceId, input.userId, resolved.relativePath);
+
+    return {
+      workspaceId: resolved.workspace.id,
+      path: resolved.relativePath,
+      size: buffer.byteLength,
+      updatedAt: stats.mtime.toISOString()
+    };
+  }
+
+  downloadFile(workspaceId: string, requestedPath: string, userId: string): DownloadFileResult {
+    const resolved = this.fileAccessGuard.resolvePath(workspaceId, requestedPath, {
+      mustExist: true,
+      kind: "file"
+    });
+    const buffer = fs.readFileSync(resolved.absolutePath);
+    const stats = fs.statSync(resolved.absolutePath);
+
+    this.recentFileService.recordOpened(workspaceId, userId, resolved.relativePath);
+
+    return {
+      workspaceId: resolved.workspace.id,
+      path: resolved.relativePath,
+      fileName: path.basename(resolved.relativePath) || resolved.relativePath,
+      contentBase64: buffer.toString("base64"),
+      size: buffer.byteLength,
+      updatedAt: stats.mtime.toISOString()
+    };
   }
 
   operate(input: FileOperationInput): { success: true; opType: FileOperationType } {

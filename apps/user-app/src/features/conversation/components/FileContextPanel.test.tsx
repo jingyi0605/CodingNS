@@ -19,7 +19,9 @@ const fileApiMock = vi.hoisted(() => ({
   operateFile: vi.fn(),
   searchFiles: vi.fn(),
   getFilePreview: vi.fn(),
-  saveFileContent: vi.fn()
+  saveFileContent: vi.fn(),
+  uploadFile: vi.fn(),
+  downloadFile: vi.fn()
 }));
 
 const conversationApiMock = vi.hoisted(() => ({
@@ -32,6 +34,9 @@ const gitApiMock = vi.hoisted(() => ({
 }));
 
 const clipboardWriteTextMock = vi.hoisted(() => vi.fn());
+const createObjectUrlMock = vi.hoisted(() => vi.fn(() => "blob:mock-file"));
+const revokeObjectUrlMock = vi.hoisted(() => vi.fn());
+const anchorClickMock = vi.hoisted(() => vi.fn());
 const fileTreeSnapshotListeners = new Set<
   (snapshot: { workspaceId: string; path: string; items: unknown[] }) => void
 >();
@@ -183,7 +188,9 @@ vi.mock("../api/file-context-api", () => ({
   operateFile: fileApiMock.operateFile,
   searchFiles: fileApiMock.searchFiles,
   getFilePreview: fileApiMock.getFilePreview,
-  saveFileContent: fileApiMock.saveFileContent
+  saveFileContent: fileApiMock.saveFileContent,
+  uploadFile: fileApiMock.uploadFile,
+  downloadFile: fileApiMock.downloadFile
 }));
 
 vi.mock("../api/conversation-api", () => ({
@@ -215,6 +222,18 @@ describe("FileContextPanel", () => {
       value: {
         writeText: clipboardWriteTextMock
       }
+    });
+    Object.defineProperty(window.URL, "createObjectURL", {
+      configurable: true,
+      value: createObjectUrlMock
+    });
+    Object.defineProperty(window.URL, "revokeObjectURL", {
+      configurable: true,
+      value: revokeObjectUrlMock
+    });
+    Object.defineProperty(HTMLAnchorElement.prototype, "click", {
+      configurable: true,
+      value: anchorClickMock
     });
     platformMock.platform = "web";
     platformMock.isDesktop = false;
@@ -473,6 +492,20 @@ describe("FileContextPanel", () => {
 
     fileApiMock.saveFileContent.mockResolvedValue({
       version: "version-2",
+      updatedAt: "2026-03-24T12:02:00.000Z"
+    });
+    fileApiMock.uploadFile.mockResolvedValue({
+      workspaceId: "workspace-1",
+      path: "config.json",
+      size: 42,
+      updatedAt: "2026-03-24T12:02:00.000Z"
+    });
+    fileApiMock.downloadFile.mockResolvedValue({
+      workspaceId: "workspace-1",
+      path: "config.json",
+      fileName: "config.json",
+      contentBase64: "eyJuYW1lIjoiZGVtbyJ9",
+      size: 15,
       updatedAt: "2026-03-24T12:02:00.000Z"
     });
   });
@@ -764,6 +797,35 @@ describe("FileContextPanel", () => {
     expect(await screen.findByText(t("conversation.filePanelCopyRelativePathSuccess"))).toBeInTheDocument();
   });
 
+  it("桌面工具栏会触发上传文件选择器", async () => {
+    renderPanel();
+
+    await screen.findByText("config.json");
+
+    const uploadInput = screen.getByTestId("file-panel-upload-input") as HTMLInputElement;
+    const clickSpy = vi.spyOn(uploadInput, "click");
+
+    await userEvent.click(screen.getByRole("button", { name: t("conversation.filePanelUpload") }));
+
+    expect(clickSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("桌面工具栏支持下载当前选中的文件", async () => {
+    renderPanel();
+
+    await userEvent.click(await screen.findByText("config.json"));
+    await userEvent.click(screen.getByRole("button", { name: t("conversation.filePanelDownload") }));
+
+    await waitFor(() => {
+      expect(fileApiMock.downloadFile).toHaveBeenCalledWith("workspace-1", "config.json");
+    });
+
+    expect(createObjectUrlMock).toHaveBeenCalledTimes(1);
+    expect(anchorClickMock).toHaveBeenCalledTimes(1);
+    expect(revokeObjectUrlMock).toHaveBeenCalledWith("blob:mock-file");
+    expect(await screen.findByText(t("conversation.filePanelDownloadSuccess", { name: "config.json" }))).toBeInTheDocument();
+  });
+
   it("移动端文件工具栏会收起成操作菜单，并支持菜单操作", async () => {
     platformMock.isMobile = true;
     platformMock.viewportClass = "compact";
@@ -784,6 +846,8 @@ describe("FileContextPanel", () => {
     const actionMenu = screen.getByRole("menu", { name: t("conversation.filePanelActionsMenu") });
     expect(within(actionMenu).getByRole("menuitem", { name: t("conversation.filePanelShowSearch") })).toBeInTheDocument();
     expect(within(actionMenu).getByRole("menuitem", { name: t("conversation.filePanelRefresh") })).toBeInTheDocument();
+    expect(within(actionMenu).getByRole("menuitem", { name: t("conversation.filePanelUpload") })).toBeInTheDocument();
+    expect(within(actionMenu).getByRole("menuitem", { name: t("conversation.filePanelDownload") })).toBeInTheDocument();
     expect(within(actionMenu).getByRole("menuitem", { name: t("conversation.filePanelNewFile") })).toBeInTheDocument();
     expect(within(actionMenu).getByRole("menuitem", { name: t("conversation.filePanelNewDirectory") })).toBeInTheDocument();
 
