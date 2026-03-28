@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -80,6 +80,108 @@ describe("session runtime status", () => {
     expect(inspection.runningState).toBe("idle");
     expect(inspection.hasPendingTools).toBe(false);
     expect(inspection.completedAtCandidate).toBe("2026-03-26T10:00:05.000Z");
+  });
+
+  it("Codex 原始会话出现 task_failed 后，runtime 接口应该返回 failed 和稳定错误码", async () => {
+    const fixture = createProviderFixture();
+    activeFixtures.push(fixture);
+
+    appendFileSync(
+      fixture.codexSessionFile,
+      `\n${JSON.stringify({
+        timestamp: "2026-03-23T09:00:14.000Z",
+        type: "event_msg",
+        payload: {
+          type: "task_failed",
+          error: "command exited with code 1"
+        }
+      })}`,
+      "utf8"
+    );
+
+    const hosted = createTestApp(fixture);
+    activeClosers.push(() => hosted.app.close());
+    await hosted.app.ready();
+
+    const setup = await hosted.app.inject({
+      method: "POST",
+      url: "/api/public/setup",
+      payload: {
+        username: "admin",
+        password: "password123"
+      }
+    });
+    expect(setup.statusCode).toBe(201);
+
+    const login = await hosted.app.inject({
+      method: "POST",
+      url: "/api/auth/login",
+      payload: {
+        username: "admin",
+        password: "password123"
+      }
+    });
+    expect(login.statusCode).toBe(200);
+    const accessToken = login.json().accessToken as string;
+    const adminUser = hosted.services.repositories.authUserRepository.findByUsername("admin");
+    expect(adminUser).toBeTruthy();
+
+    const imported = await hosted.app.inject({
+      method: "POST",
+      url: "/api/workspaces/import",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        path: fixture.workspaceDir,
+        name: "Fixture Workspace"
+      }
+    });
+    expect(imported.statusCode).toBe(201);
+    const workspaceId = imported.json().id as string;
+
+    const sessions = await hosted.app.inject({
+      method: "GET",
+      url: `/api/sessions?workspaceId=${workspaceId}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(sessions.statusCode).toBe(200);
+
+    const codexSession = sessions
+      .json()
+      .items.find((item: { provider: string }) => item.provider === "codex");
+    expect(codexSession).toBeTruthy();
+
+    hosted.services.repositories.sessionStateRepository.upsert({
+      sessionId: codexSession.sessionId,
+      userId: adminUser!.id,
+      runningState: "running",
+      activitySource: "runtime",
+      lastEventAt: "2026-03-23T09:00:12.000Z",
+      completedAt: null,
+      lastSeenAt: null,
+      updatedAt: "2026-03-23T09:00:12.000Z"
+    });
+
+    const runtime = await hosted.app.inject({
+      method: "GET",
+      url: `/api/sessions/${codexSession.sessionId}/runtime`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+
+    expect(runtime.statusCode).toBe(200);
+    expect(runtime.json()).toMatchObject({
+      sessionId: codexSession.sessionId,
+      hasActiveRun: false,
+      runningState: "failed",
+      errorCode: "CODEX_CLI_TURN_FAILED",
+      errorDetail: "command exited with code 1",
+      detail: "command exited with code 1"
+    });
   });
 
   it("Claude 出现 end_turn 后，不会再把旧的 tool_use 残留判成运行中", () => {

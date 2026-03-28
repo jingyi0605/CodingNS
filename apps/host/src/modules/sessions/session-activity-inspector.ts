@@ -3,10 +3,12 @@ import { readFileSync, statSync } from "node:fs";
 import type { ProviderId } from "@codingns/session-sync-core";
 
 export interface SessionActivityInspection {
-  runningState: "idle" | "running";
+  runningState: "idle" | "running" | "failed";
   hasPendingTools: boolean;
   lastEventAt: string | null;
   completedAtCandidate: string | null;
+  errorCode: string | null;
+  errorDetail: string | null;
 }
 
 const ACTIVE_WINDOW_MS = 20_000;
@@ -23,7 +25,9 @@ export function inspectSessionActivity(
       runningState: "idle",
       hasPendingTools: false,
       lastEventAt: null,
-      completedAtCandidate: null
+      completedAtCandidate: null,
+      errorCode: null,
+      errorDetail: null
     };
   }
 
@@ -37,7 +41,9 @@ export function inspectSessionActivity(
       runningState: "idle",
       hasPendingTools: false,
       lastEventAt: null,
-      completedAtCandidate: null
+      completedAtCandidate: null,
+      errorCode: null,
+      errorDetail: null
     };
   }
 
@@ -136,7 +142,9 @@ function inspectClaudeActivity(
     runningState,
     hasPendingTools,
     lastEventAt,
-    completedAtCandidate: hasExplicitCompletion ? lastStopAt : hasPendingTools ? null : lastStopAt ?? lastEventAt
+    completedAtCandidate: hasExplicitCompletion ? lastStopAt : hasPendingTools ? null : lastStopAt ?? lastEventAt,
+    errorCode: null,
+    errorDetail: null
   };
 }
 
@@ -148,6 +156,8 @@ function inspectCodexActivity(
   const pendingToolCalls = new Set<string>();
   let lastEventAt: string | null = null;
   let lastTaskCompleteAt: string | null = null;
+  let lastTaskFailedAt: string | null = null;
+  let lastTaskFailedDetail: string | null = null;
   let lastToolCallAt: string | null = null;
 
   for (const record of records) {
@@ -164,6 +174,11 @@ function inspectCodexActivity(
 
       if (eventType === "task_complete") {
         lastTaskCompleteAt = maxTimestamp(lastTaskCompleteAt, recordTimestamp);
+      }
+
+      if (eventType === "task_failed") {
+        lastTaskFailedAt = maxTimestamp(lastTaskFailedAt, recordTimestamp);
+        lastTaskFailedDetail = readText(payload.error) || "codex turn failed";
       }
 
       continue;
@@ -201,10 +216,13 @@ function inspectCodexActivity(
     }
   }
 
-  const hasExplicitCompletion = isTimestampAtOrAfter(lastTaskCompleteAt, lastToolCallAt);
+  const hasExplicitFailure = isTimestampAtOrAfter(lastTaskFailedAt, lastToolCallAt);
+  const hasExplicitCompletion =
+    !hasExplicitFailure && isTimestampAtOrAfter(lastTaskCompleteAt, lastToolCallAt);
   const hasPendingTools = pendingToolCalls.size > 0 && !hasExplicitCompletion;
-  const runningState =
-    hasPendingTools && now - mtimeMs <= ACTIVE_WINDOW_MS
+  const runningState = hasExplicitFailure
+    ? "failed"
+    : hasPendingTools && now - mtimeMs <= ACTIVE_WINDOW_MS
       ? "running"
       : "idle";
 
@@ -213,7 +231,15 @@ function inspectCodexActivity(
     hasPendingTools,
     lastEventAt,
     completedAtCandidate:
-      hasExplicitCompletion ? lastTaskCompleteAt : hasPendingTools ? null : lastTaskCompleteAt ?? lastEventAt
+      hasExplicitFailure
+        ? lastTaskFailedAt
+        : hasExplicitCompletion
+          ? lastTaskCompleteAt
+          : hasPendingTools
+            ? null
+            : lastTaskCompleteAt ?? lastEventAt,
+    errorCode: hasExplicitFailure ? "CODEX_CLI_TURN_FAILED" : null,
+    errorDetail: hasExplicitFailure ? lastTaskFailedDetail ?? "codex turn failed" : null
   };
 }
 

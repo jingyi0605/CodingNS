@@ -1538,7 +1538,7 @@ export class SessionHistoryService {
     const nextRecord: SessionStateRecord = {
       sessionId,
       userId,
-      runningState: inspection.runningState === "running" ? "running" : "idle",
+      runningState: inspection.runningState,
       activitySource:
         inspection.lastEventAt || inspection.completedAtCandidate ? "inferred" : "none",
       favorite: current?.favorite ?? false,
@@ -1549,6 +1549,25 @@ export class SessionHistoryService {
     };
 
     this.sessionStateRepository.upsert(nextRecord);
+
+    const currentSnapshot = this.sessionStatusSnapshotRepository.findBySessionId(sessionId);
+    this.sessionStatusSnapshotRepository.upsert({
+      sessionId,
+      syncStatus: inspection.runningState === "failed" ? "error" : currentSnapshot?.syncStatus ?? "idle",
+      syncCursor: currentSnapshot?.syncCursor ?? null,
+      lastSyncAt: inspection.lastEventAt ?? inspection.completedAtCandidate ?? currentSnapshot?.lastSyncAt ?? null,
+      lastErrorCode:
+        inspection.runningState === "failed"
+          ? inspection.errorCode
+          : currentSnapshot?.lastErrorCode ?? null,
+      lastErrorDetail:
+        inspection.runningState === "failed"
+          ? inspection.errorDetail
+          : currentSnapshot?.lastErrorDetail ?? null,
+      resumedAt: currentSnapshot?.resumedAt ?? null,
+      updatedAt: timestamp
+    });
+
     return nextRecord;
   }
 
