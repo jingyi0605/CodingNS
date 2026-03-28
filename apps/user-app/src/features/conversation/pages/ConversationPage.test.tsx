@@ -185,6 +185,44 @@ describe("ConversationPage", () => {
     expect(parseFloat(page.style.getPropertyValue("--mobile-conversation-preview-width"))).toBeCloseTo(130, 0);
   });
 
+  it("移动端快速右滑时，会读取抬手位置来稳定触发打开", async () => {
+    mockGetProviderCapabilities.mockResolvedValue({
+      provider: "codex",
+      canStartSession: true,
+      canResumeSession: true,
+      canSendMessage: true,
+      inRunInputMode: "none",
+      supportsSubagents: false,
+      supportsInterrupt: true,
+      supportsStructuredToolCalls: true,
+      supportsTokenUsage: true,
+      supportsAttachments: true,
+      supportsPermissionPrompt: true,
+      supportsCheckpoint: false,
+      modelOptions: [{ id: "provider-default", name: "跟随 CLI 默认模型", usesProviderDefault: true }],
+      limitations: []
+    });
+    mockUseWorkbenchShell.mockReturnValue(createMobileWorkbenchShellValue());
+    window.localStorage.setItem("mobile.conversation.preview.mode", "immersive");
+
+    const view = renderDraftConversationPage();
+    const page = view.container.querySelector(".mobile-conversation-page") as HTMLElement;
+    const stage = view.container.querySelector(".mobile-conversation-stage") as HTMLElement;
+
+    fireEvent.touchStart(stage, {
+      touches: [{ clientX: 24, clientY: 120 }]
+    });
+    fireEvent.touchMove(stage, {
+      touches: [{ clientX: 52, clientY: 123 }]
+    });
+    fireEvent.touchEnd(stage, {
+      changedTouches: [{ clientX: 92, clientY: 124 }]
+    });
+
+    expect(screen.getByText("历史会话 Alpha")).toBeInTheDocument();
+    expect(parseFloat(page.style.getPropertyValue("--mobile-conversation-preview-width"))).toBeCloseTo(130, 0);
+  });
+
   it("移动端小幅右滑不会误触打开快捷会话菜单", async () => {
     mockGetProviderCapabilities.mockResolvedValue({
       provider: "codex",

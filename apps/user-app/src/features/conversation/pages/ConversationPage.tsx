@@ -58,10 +58,10 @@ const RUNTIME_TIMEOUT_TOAST_DELAY_MS = 15_000;
 const MOBILE_PREVIEW_DEFAULT_RATIO = 1 / 3;
 const MOBILE_PREVIEW_MAX_RATIO = 0.6;
 const MOBILE_PREVIEW_GESTURE_DIRECTION_LOCK_PX = 12;
-const MOBILE_PREVIEW_OPEN_THRESHOLD_PX = 72;
+const MOBILE_PREVIEW_OPEN_THRESHOLD_PX = 60;
 const MOBILE_PREVIEW_EXPAND_THRESHOLD_PX = 48;
 const MOBILE_PREVIEW_CLOSE_THRESHOLD_PX = 52;
-const MOBILE_PREVIEW_EDGE_ACTIVATION_PX = 28;
+const MOBILE_PREVIEW_EDGE_ACTIVATION_PX = 44;
 
 export function ConversationPage() {
   const { sessionId = "", workspaceId: routeWorkspaceIdParam } = useParams();
@@ -839,8 +839,8 @@ function buildMobileFavoritePreviewItems(
 interface MobileConversationPreviewGestureHandlers {
   onTouchStart: (event: ReactTouchEvent<HTMLElement>) => void;
   onTouchMove: (event: ReactTouchEvent<HTMLElement>) => void;
-  onTouchEnd: () => void;
-  onTouchCancel: () => void;
+  onTouchEnd: (event: ReactTouchEvent<HTMLElement>) => void;
+  onTouchCancel: (event: ReactTouchEvent<HTMLElement>) => void;
 }
 
 function useMobileConversationPreviewController(enabled: boolean) {
@@ -1008,12 +1008,19 @@ function useMobileConversationPreviewController(enabled: boolean) {
     event.preventDefault();
   }
 
-  function settlePreviewGesture() {
+  function settlePreviewGesture(event?: ReactTouchEvent<HTMLElement>) {
     const gesture = gestureRef.current;
     gestureRef.current = null;
 
     if (!gesture?.horizontalLocked) {
       return;
+    }
+
+    const endTouch = event?.changedTouches?.[0];
+
+    if (endTouch) {
+      gesture.lastX = endTouch.clientX;
+      gesture.lastY = endTouch.clientY;
     }
 
     const deltaX = gesture.lastX - gesture.startX;
