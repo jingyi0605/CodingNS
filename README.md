@@ -22,6 +22,7 @@
 ### 🎯 项目愿景
 
 CodingNS 致力于提供一整套闭环的 AI 编程工作流程，让你能够随时随地通过任何客户端进行 AI 编程。无论你使用桌面电脑、移动设备还是 Web 浏览器，都能无缝续接你的 AI 编程会话。
+![image-20260328T235904.webp](img/image-20260328T235904.webp)
 
 ### ✨ 核心特性
 
@@ -104,11 +105,70 @@ CodingNS/
 
 #### 环境要求
 
+- **npm** >= 10.0.0
 - **Node.js** >= 22.0.0
 - **pnpm** >= 9.0.0
 - **Rust** >= 1.70（桌面端开发需要）
 
-#### 安装依赖
+#### 通过 NPM 包快速安装
+
+```bash
+# 全局安装
+npm install -g @jingyi0605/codingns
+
+# 启动服务
+codingns start --port 3002
+```
+
+也可以不全局安装，直接临时启动：
+
+```bash
+npx @jingyi0605/codingns start --port 3002
+```
+
+常用参数：
+
+- `--host`：监听地址，默认 `0.0.0.0`
+- `--port`：监听端口，默认 `3002`
+- `--data-dir`：数据目录，默认 `~/.codingns`
+
+#### 通过 PM2 开机启动和自定义端口
+
+先安装 PM2：
+
+```bash
+npm install -g pm2
+```
+
+使用 PM2 托管，并自定义端口和数据目录：
+
+```bash
+pm2 start "$(which codingns)" --name codingns -- start --host 0.0.0.0 --port 3300 --data-dir ~/.codingns
+```
+
+保存当前进程列表并生成开机自启配置：
+
+```bash
+pm2 save
+pm2 startup
+```
+
+执行 `pm2 startup` 输出的那条系统命令后，再执行一次：
+
+```bash
+pm2 save
+```
+
+常用 PM2 命令：
+
+```bash
+pm2 status
+pm2 logs codingns
+pm2 restart codingns
+pm2 stop codingns
+```
+
+#### 从源码开发
 
 ```bash
 # 克隆仓库
@@ -120,11 +180,7 @@ pnpm install
 
 # 重新编译原生模块（如果需要）
 pnpm rebuild:native
-```
 
-#### 开发模式
-
-```bash
 # 查看开发帮助
 pnpm dev
 
@@ -299,10 +355,69 @@ CodingNS/
 #### Requirements
 
 - **Node.js** >= 22.0.0
+- **npm** >= 10.0.0
 - **pnpm** >= 9.0.0
 - **Rust** >= 1.70 (required for desktop development)
 
-#### Install Dependencies
+#### Install From npm
+
+```bash
+# Install globally
+npm install -g @jingyi0605/codingns
+
+# Start service
+codingns start --port 3002
+```
+
+You can also run it without global install:
+
+```bash
+npx @jingyi0605/codingns start --port 3002
+```
+
+Common options:
+
+- `--host`: listen host, default `0.0.0.0`
+- `--port`: listen port, default `3002`
+- `--data-dir`: data directory, default `~/.codingns`
+
+#### Start On Boot With PM2
+
+Install PM2:
+
+```bash
+npm install -g pm2
+```
+
+Run the service with a custom port and data directory:
+
+```bash
+pm2 start "$(which codingns)" --name codingns -- start --host 0.0.0.0 --port 3300 --data-dir ~/.codingns
+```
+
+Save the process list and generate startup configuration:
+
+```bash
+pm2 save
+pm2 startup
+```
+
+After executing the system command printed by `pm2 startup`, run:
+
+```bash
+pm2 save
+```
+
+Common PM2 commands:
+
+```bash
+pm2 status
+pm2 logs codingns
+pm2 restart codingns
+pm2 stop codingns
+```
+
+#### Develop From Source
 
 ```bash
 # Clone repository
@@ -314,11 +429,7 @@ pnpm install
 
 # Rebuild native modules (if needed)
 pnpm rebuild:native
-```
 
-#### Development Mode
-
-```bash
 # View development help
 pnpm dev
 
