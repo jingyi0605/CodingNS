@@ -7,7 +7,7 @@ use rfd::FileDialog;
 use std::io::Write;
 use std::process::{Command, Stdio};
 use tauri::{AppHandle, Manager, WebviewWindow};
-use updater::{DesktopRuntimeInfo, ReleaseManifest, UpdateInstallResult};
+use updater::{DesktopReleaseState, DesktopRuntimeInfo, ReleaseManifest, UpdateInstallResult};
 
 #[tauri::command]
 fn read_desktop_config(app: AppHandle) -> Result<DesktopRuntimeConfig, String> {
@@ -22,6 +22,11 @@ fn write_desktop_config(app: AppHandle, patch: DesktopRuntimeConfig) -> Result<(
 #[tauri::command]
 fn get_runtime_info(app: AppHandle) -> DesktopRuntimeInfo {
     updater::get_runtime_info(&app)
+}
+
+#[tauri::command]
+fn check_for_update(app: AppHandle, channel: String) -> Result<DesktopReleaseState, String> {
+    updater::check_for_update(&app, &channel)
 }
 
 #[tauri::command]
@@ -155,6 +160,7 @@ pub fn run() {
             read_desktop_config,
             write_desktop_config,
             get_runtime_info,
+            check_for_update,
             install_update,
             rollback_to_previous_version,
             open_external,

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
@@ -11,8 +11,12 @@ import {
 
 const activeServers: Array<ReturnType<typeof createTestApp>> = [];
 const activeFixtures: EmptyFixture[] = [];
+const originalFetch = globalThis.fetch;
 
 afterEach(async () => {
+  vi.restoreAllMocks();
+  globalThis.fetch = originalFetch;
+
   while (activeServers.length > 0) {
     const server = activeServers.pop();
 
@@ -98,6 +102,54 @@ describe("client routes", () => {
       channel: "stable",
       platform: "windows-x64",
       version: "1.2.3"
+    });
+  });
+
+  it("返回服务端更新信息", async () => {
+    const fixture = createEmptyFixture();
+    activeFixtures.push(fixture);
+
+    globalThis.fetch = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          "dist-tags": {
+            latest: "0.2.0",
+            beta: "0.3.0-beta.1"
+          }
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json"
+          }
+        }
+      )
+    ) as typeof fetch;
+
+    const hosted = createTestApp(fixture, {
+      serverUpdatePackageName: "placeholder-server-package",
+      npmRegistryBaseUrl: "https://registry.npmjs.org",
+      accessTokenTtlSeconds: 30
+    });
+    activeServers.push(hosted);
+    await hosted.app.ready();
+
+    const tokens = await bootstrapAndLogin(hosted);
+    const response = await hosted.app.inject({
+      method: "GET",
+      url: "/api/client/service-update?channel=stable",
+      headers: {
+        authorization: `Bearer ${tokens.accessToken}`
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      channel: "stable",
+      packageName: "placeholder-server-package",
+      latestVersion: "0.2.0",
+      currentVersion: "0.1.0",
+      hasUpdate: true
     });
   });
 

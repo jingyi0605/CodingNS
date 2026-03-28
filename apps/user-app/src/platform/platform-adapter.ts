@@ -2,8 +2,10 @@ import type {
   ClientRuntimeConfig,
   ClientRuntimeConfigPatch,
   DesktopBridgeResult,
+  DesktopReleaseState,
   DesktopRuntimeInfo,
   DesktopUpdateInstallResult,
+  ReleaseChannel,
   ReleaseManifest,
   RuntimePlatform
 } from "../config/client-config-types";
@@ -37,6 +39,7 @@ export interface DesktopShellBridge {
   readDesktopConfig(): Promise<DesktopBridgeResult<Partial<ClientRuntimeConfig>>>;
   writeDesktopConfig(config: ClientRuntimeConfigPatch): Promise<DesktopBridgeResult>;
   getRuntimeInfo(): Promise<DesktopBridgeResult<DesktopRuntimeInfo>>;
+  checkForUpdate(channel: ReleaseChannel): Promise<DesktopBridgeResult<DesktopReleaseState>>;
   installUpdate(manifest: ReleaseManifest): Promise<DesktopUpdateInstallResult>;
   rollbackToPreviousVersion(): Promise<DesktopBridgeResult>;
   pickDirectory(): Promise<DesktopBridgeResult<string | null>>;
@@ -221,8 +224,13 @@ async function showSystemNotification(title: string, body: string): Promise<Desk
 class WebDesktopShellBridge implements DesktopShellBridge {
   readonly supported = false;
 
-  openExternal(): Promise<DesktopBridgeResult> {
-    return Promise.resolve(unsupportedResult("当前不是桌面端运行环境。"));
+  openExternal(url: string): Promise<DesktopBridgeResult> {
+    if (typeof window === "undefined") {
+      return Promise.resolve(unsupportedResult("当前环境无法打开外部链接。"));
+    }
+
+    window.open(url, "_blank", "noopener,noreferrer");
+    return Promise.resolve({ ok: true });
   }
 
   showNotification(title: string, body: string): Promise<DesktopBridgeResult> {
@@ -246,6 +254,10 @@ class WebDesktopShellBridge implements DesktopShellBridge {
   }
 
   getRuntimeInfo(): Promise<DesktopBridgeResult<DesktopRuntimeInfo>> {
+    return Promise.resolve(unsupportedResult("当前不是桌面端运行环境。"));
+  }
+
+  checkForUpdate(): Promise<DesktopBridgeResult<DesktopReleaseState>> {
     return Promise.resolve(unsupportedResult("当前不是桌面端运行环境。"));
   }
 
@@ -303,6 +315,10 @@ class TauriDesktopShellBridge implements DesktopShellBridge {
 
   getRuntimeInfo(): Promise<DesktopBridgeResult<DesktopRuntimeInfo>> {
     return invokeDesktopCommand("get_runtime_info");
+  }
+
+  checkForUpdate(channel: ReleaseChannel): Promise<DesktopBridgeResult<DesktopReleaseState>> {
+    return invokeDesktopCommand("check_for_update", { channel });
   }
 
   async installUpdate(manifest: ReleaseManifest): Promise<DesktopUpdateInstallResult> {

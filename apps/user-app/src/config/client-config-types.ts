@@ -29,14 +29,36 @@ export interface DesktopRuntimeInfo {
   appDataDir: string | null;
 }
 
+export interface ServiceUpdateInfo {
+  channel: ReleaseChannel;
+  packageName: string;
+  registryUrl: string;
+  packagePageUrl: string;
+  currentVersion: string;
+  latestVersion: string | null;
+  hasUpdate: boolean;
+  updateCommand: string;
+}
+
 export interface ReleaseManifest {
   channel: ReleaseChannel;
   platform: string;
   version: string;
+  tagName: string;
+  title: string;
   notes: string;
-  packageUrl: string;
-  signature: string;
+  packageUrl: string | null;
+  signature: string | null;
+  htmlUrl: string;
   publishedAt: string;
+}
+
+export interface DesktopReleaseState {
+  checkedAt: string;
+  currentVersion: string;
+  hasUpdate: boolean;
+  manifest: ReleaseManifest | null;
+  runtimeInfo: DesktopRuntimeInfo;
 }
 
 export interface DesktopUpdateInstallResult {

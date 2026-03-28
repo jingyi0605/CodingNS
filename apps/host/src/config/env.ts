@@ -9,6 +9,7 @@ import { OpenCodeBaseUrlResolver } from "./opencode-base-url-resolver.js";
 export interface HostConfig {
   host: string;
   port: number;
+  webUiDir: string | null;
   databasePath: string;
   opencodeBaseUrl: string;
   opencodeCliPath: string;
@@ -24,6 +25,8 @@ export interface HostConfig {
   codexHomeDir: string;
   codexCliPath: string;
   claudeHookBridgeToken: string;
+  serverUpdatePackageName: string;
+  npmRegistryBaseUrl: string;
 }
 
 export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConfig {
@@ -56,6 +59,11 @@ export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConf
   return {
     host: overrides.host ?? process.env.CODINGNS_HOST ?? "0.0.0.0",
     port: overrides.port ?? Number(process.env.CODINGNS_PORT ?? "3002"),
+    webUiDir:
+      overrides.webUiDir ??
+      resolveExistingDir(
+        normalizeOptionalText(process.env.CODINGNS_WEB_UI_DIR) ?? path.join(appRootDir, "public")
+      ),
     databasePath,
     opencodeBaseUrl: configuredOpenCodeBaseUrl ?? "",
     opencodeCliPath,
@@ -95,7 +103,15 @@ export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConf
     claudeHookBridgeToken:
       overrides.claudeHookBridgeToken ??
       process.env.CODINGNS_CLAUDE_HOOK_TOKEN ??
-      resolvePersistentSecret(path.join(path.dirname(databasePath), "claude-hook-token"))
+      resolvePersistentSecret(path.join(path.dirname(databasePath), "claude-hook-token")),
+    serverUpdatePackageName:
+      overrides.serverUpdatePackageName ??
+      process.env.CODINGNS_SERVER_UPDATE_PACKAGE_NAME ??
+      "codingns",
+    npmRegistryBaseUrl:
+      overrides.npmRegistryBaseUrl ??
+      process.env.CODINGNS_NPM_REGISTRY_BASE_URL ??
+      "https://registry.npmjs.org"
   };
 }
 
@@ -174,4 +190,12 @@ function resolvePersistentSecret(secretPath: string): string {
 function normalizeOptionalText(value: string | null | undefined): string | null {
   const normalized = value?.trim();
   return normalized && normalized.length > 0 ? normalized : null;
+}
+
+function resolveExistingDir(candidate: string | null): string | null {
+  if (!candidate) {
+    return null;
+  }
+
+  return existsSync(candidate) ? candidate : null;
 }

@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { clientConfigStore } from "../../../config/client-config-store";
 import { authStore } from "../../auth/store/auth-store";
@@ -9,6 +9,8 @@ import { PlatformProvider } from "../../../platform/platform-provider";
 import { I18nProvider, t } from "../../../shared/i18n";
 import { ThemeProvider } from "../../../shared/theme";
 import { SettingsPage } from "./SettingsPage";
+
+const originalTauriInternals = window.__TAURI_INTERNALS__;
 
 describe("SettingsPage", () => {
   beforeEach(() => {
@@ -26,26 +28,69 @@ describe("SettingsPage", () => {
     setViewportWidth(1280);
   });
 
-  it("桌面布局保持原来的直出表单", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+
+    if (originalTauriInternals) {
+      window.__TAURI_INTERNALS__ = originalTauriInternals;
+      return;
+    }
+
+    delete window.__TAURI_INTERNALS__;
+  });
+
+  it("Web 桌面布局不显示服务器连接表单", () => {
     renderSettingsPage();
 
     expect(screen.getByRole("heading", { name: t("settings.title") })).toBeInTheDocument();
-    expect(screen.getByRole("textbox", { name: t("settings.serverAddress") })).toBeInTheDocument();
+    expect(screen.queryByText(t("settings.serverConnection"))).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: t("settings.serverAddress") })).not.toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: t("settings.defaultPermissionMode") })).toBeInTheDocument();
+    expect(screen.getByText(t("settings.serverUpdate"))).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("settings.serverCheckNow") })).toBeInTheDocument();
+    expect(screen.queryByText(t("settings.clientUpdate"))).not.toBeInTheDocument();
     expect(screen.queryByText("当前运行平台")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: t("common.logout") })).toBeInTheDocument();
   });
 
-  it("移动布局先显示目录页，再进入二级页修改服务器连接设置", async () => {
+  it("H5 移动布局不再允许修改服务器地址", async () => {
     setViewportWidth(390);
     renderSettingsPage();
 
     expect(screen.getByRole("heading", { name: t("settings.title") })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: new RegExp(t("settings.serverConnection")) })
+    ).not.toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: t("settings.serverAddress") })).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: new RegExp(t("settings.serverConnection")) }));
+    const serverView = renderSettingsPage("/settings/server-connection");
 
-    const addressInput = await screen.findByRole("textbox", { name: t("settings.serverAddress") });
+    expect(screen.queryByRole("textbox", { name: t("settings.serverAddress") })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: new RegExp(t("settings.serverConnection")) })
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(t("settings.autoReconnect"))).not.toBeInTheDocument();
+
+    serverView.unmount();
+  });
+
+  it("桌面端仍然允许修改服务器地址", async () => {
+    window.__TAURI_INTERNALS__ = {
+      invoke: vi.fn()
+    };
+    clientConfigStore.hydrate({
+      platform: "desktop",
+      hostBaseUrl: "http://127.0.0.1:3002",
+      releaseChannel: "stable",
+      autoReconnect: true,
+      autoCheckUpdate: true,
+      language: "zh-CN",
+      defaultPermissionMode: "default"
+    });
+
+    renderSettingsPage();
+
+    const addressInput = screen.getByRole("textbox", { name: t("settings.serverAddress") });
     const saveButton = screen.getByRole("button", { name: t("common.save") });
 
     await userEvent.clear(addressInput);
@@ -57,17 +102,30 @@ describe("SettingsPage", () => {
     });
   });
 
-  it("移动布局把自动检查更新单独放在软件更新分类", () => {
+  it("H5 移动布局的软件更新分类只显示服务端更新", () => {
     setViewportWidth(390);
-    const serverView = renderSettingsPage("/settings/server-connection");
-
-    expect(screen.queryByText(t("settings.autoCheckUpdate"))).not.toBeInTheDocument();
-    expect(screen.getByText(t("settings.autoReconnect"))).toBeInTheDocument();
-
-    serverView.unmount();
     renderSettingsPage("/settings/software-update");
 
+    expect(screen.getByText(t("settings.serverUpdate"))).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("settings.serverCheckNow") })).toBeInTheDocument();
+    expect(screen.queryByText(t("settings.autoCheckUpdate"))).not.toBeInTheDocument();
+    expect(screen.queryByText(t("settings.clientUpdate"))).not.toBeInTheDocument();
+  });
+
+  it("桌面运行时使用移动布局时，会同时显示服务端和客户端更新", () => {
+    window.__TAURI_INTERNALS__ = {
+      invoke: vi.fn()
+    };
+    setViewportWidth(390);
+
+    renderSettingsPage("/settings/software-update");
+
+    expect(screen.getByText(t("settings.serverUpdate"))).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("settings.serverCheckNow") })).toBeInTheDocument();
+    expect(screen.getByText(t("settings.clientUpdate"))).toBeInTheDocument();
     expect(screen.getByText(t("settings.autoCheckUpdate"))).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("settings.releaseCheckNow") })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("settings.releaseOpenPage") })).toBeInTheDocument();
   });
 
   it("移动布局把默认会话权限放在安全与隐私分类下", async () => {
@@ -95,10 +153,18 @@ describe("SettingsPage", () => {
 
     await userEvent.click(screen.getByRole("button", { name: new RegExp(t("settings.softwareUpdate")) }));
 
-    expect(screen.queryByText(t("settings.desktopRelease"))).not.toBeInTheDocument();
-    expect(screen.queryByText(t("settings.desktopReleaseDescription"))).not.toBeInTheDocument();
+    expect(screen.getByText(t("settings.serverUpdate"))).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("settings.releaseCheckNow") })).not.toBeInTheDocument();
     expect(screen.queryByText(/^Web$/)).not.toBeInTheDocument();
     expect(screen.queryByText("当前运行平台")).not.toBeInTheDocument();
+  });
+
+  it("桌面布局在 Web 运行时只显示服务端更新面板", () => {
+    renderSettingsPage();
+
+    expect(screen.getByText(t("settings.serverUpdate"))).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("settings.serverCheckNow") })).toBeInTheDocument();
+    expect(screen.queryByText(t("settings.clientUpdate"))).not.toBeInTheDocument();
   });
 
   it("移动布局在底部固定显示退出登录按钮", () => {

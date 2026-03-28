@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
 import { clientConfigStore, useClientConfigSelector } from "../../../config/client-config-store";
+import { canConfigureHostBaseUrl } from "../../../config/client-config-service";
 import type {
   AppLanguage,
   ClientRuntimeConfig,
@@ -13,6 +14,7 @@ import { usePlatform } from "../../../platform/platform-provider";
 import { LanguageSwitcher, t } from "../../../shared/i18n";
 import { THEMES, getThemeLabel, useTheme, type ThemeId } from "../../../shared/theme";
 import { ReleasePanel } from "../../../settings/ReleasePanel";
+import { ServiceUpdatePanel } from "../../../settings/ServiceUpdatePanel";
 import { authStore } from "../../auth/store/auth-store";
 import { MobilePageHeader } from "../../mobile-shell/components/MobilePageHeader";
 
@@ -27,6 +29,8 @@ interface SettingsPageModel {
   readonly theme: ThemeId;
   readonly setTheme: (id: ThemeId) => void;
   readonly runtimeConfig: ClientRuntimeConfig;
+  readonly showServerSettings: boolean;
+  readonly canConfigureServerAddress: boolean;
   readonly hostBaseUrlDraft: string;
   readonly setHostBaseUrlDraft: (value: string) => void;
   readonly canSaveHostBaseUrl: boolean;
@@ -83,6 +87,8 @@ function useSettingsPageModel(): SettingsPageModel {
   const { theme, setTheme } = useTheme();
   const runtimeConfig = useClientConfigSelector((state) => state);
   const platform = usePlatform();
+  const canConfigureServerAddress = canConfigureHostBaseUrl(runtimeConfig.platform);
+  const showServerSettings = canConfigureServerAddress;
   const [hostBaseUrlDraft, setHostBaseUrlDraft] = useState(runtimeConfig.hostBaseUrl);
 
   useEffect(() => {
@@ -166,6 +172,8 @@ function useSettingsPageModel(): SettingsPageModel {
     theme,
     setTheme,
     runtimeConfig,
+    showServerSettings,
+    canConfigureServerAddress,
     hostBaseUrlDraft,
     setHostBaseUrlDraft,
     canSaveHostBaseUrl,
@@ -194,6 +202,7 @@ function DesktopSettingsPage({ model }: { model: SettingsPageModel }) {
     theme,
     setTheme,
     runtimeConfig,
+    showServerSettings,
     hostBaseUrlDraft,
     setHostBaseUrlDraft,
     canSaveHostBaseUrl,
@@ -250,49 +259,51 @@ function DesktopSettingsPage({ model }: { model: SettingsPageModel }) {
           </div>
         </section>
 
-        <section className="settings-section">
-          <h2 className="settings-section-title">{t("settings.serverConnection")}</h2>
-          <div className="settings-card">
-            <div className="settings-row">
-              <div className="settings-row-label">
-                <span className="settings-row-title">{t("settings.serverAddress")}</span>
-                <span className="settings-row-description">{t("settings.serverDescription")}</span>
+        {showServerSettings ? (
+          <section className="settings-section">
+            <h2 className="settings-section-title">{t("settings.serverConnection")}</h2>
+            <div className="settings-card">
+              <div className="settings-row">
+                <div className="settings-row-label">
+                  <span className="settings-row-title">{t("settings.serverAddress")}</span>
+                  <span className="settings-row-description">{t("settings.serverDescription")}</span>
+                </div>
+                <div className="settings-row-control settings-row-control-stretch">
+                  <form className="settings-inline-form" onSubmit={handleHostBaseUrlSubmit}>
+                    <input
+                      aria-label={t("settings.serverAddress")}
+                      className="settings-text-input"
+                      value={hostBaseUrlDraft}
+                      onChange={(event) => setHostBaseUrlDraft(event.target.value)}
+                    />
+                    <button className="settings-button" disabled={!canSaveHostBaseUrl} type="submit">
+                      {t("common.save")}
+                    </button>
+                  </form>
+                </div>
               </div>
-              <div className="settings-row-control settings-row-control-stretch">
-                <form className="settings-inline-form" onSubmit={handleHostBaseUrlSubmit}>
-                  <input
-                    aria-label={t("settings.serverAddress")}
-                    className="settings-text-input"
-                    value={hostBaseUrlDraft}
-                    onChange={(event) => setHostBaseUrlDraft(event.target.value)}
-                  />
-                  <button className="settings-button" disabled={!canSaveHostBaseUrl} type="submit">
-                    {t("common.save")}
-                  </button>
-                </form>
-              </div>
-            </div>
 
-            <div className="settings-row">
-              <div className="settings-row-label">
-                <span className="settings-row-title">{t("settings.autoReconnect")}</span>
-                <span className="settings-row-description">
-                  {t("settings.autoReconnectDescription")}
-                </span>
-              </div>
-              <div className="settings-row-control">
-                <label className="settings-checkbox">
-                  <input
-                    type="checkbox"
-                    checked={runtimeConfig.autoReconnect}
-                    onChange={(event) => updateAutoReconnect(event.target.checked)}
-                  />
-                  <span>{runtimeConfig.autoReconnect ? t("settings.enabled") : t("settings.disabled")}</span>
-                </label>
+              <div className="settings-row">
+                <div className="settings-row-label">
+                  <span className="settings-row-title">{t("settings.autoReconnect")}</span>
+                  <span className="settings-row-description">
+                    {t("settings.autoReconnectDescription")}
+                  </span>
+                </div>
+                <div className="settings-row-control">
+                  <label className="settings-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={runtimeConfig.autoReconnect}
+                      onChange={(event) => updateAutoReconnect(event.target.checked)}
+                    />
+                    <span>{runtimeConfig.autoReconnect ? t("settings.enabled") : t("settings.disabled")}</span>
+                  </label>
+                </div>
               </div>
             </div>
-          </div>
-        </section>
+          </section>
+        ) : null}
 
         <section className="settings-section">
           <h2 className="settings-section-title">{t("settings.securityPrivacy")}</h2>
@@ -347,35 +358,40 @@ function DesktopSettingsPage({ model }: { model: SettingsPageModel }) {
 
             <div className="settings-row">
               <div className="settings-row-label">
-                <span className="settings-row-title">{t("settings.autoCheckUpdate")}</span>
-                <span className="settings-row-description">
-                  {t("settings.autoCheckUpdateDescription")}
-                </span>
+                <span className="settings-row-title">{t("settings.serverUpdate")}</span>
               </div>
-              <div className="settings-row-control">
-                <label className="settings-checkbox">
-                  <input
-                    type="checkbox"
-                    checked={runtimeConfig.autoCheckUpdate}
-                    onChange={(event) => updateAutoCheckUpdate(event.target.checked)}
-                  />
-                  <span>{runtimeConfig.autoCheckUpdate ? t("settings.enabled") : t("settings.disabled")}</span>
-                </label>
+              <div className="settings-row-control settings-row-control-stretch">
+                <ServiceUpdatePanel />
               </div>
             </div>
 
-            {platform.isDesktop ? (
-              <div className="settings-row">
-                <div className="settings-row-label">
-                  <span className="settings-row-title">{t("settings.desktopRelease")}</span>
-                  <span className="settings-row-description">
-                    {t("settings.desktopReleaseDescription")}
-                  </span>
+            {!platform.isWeb ? (
+              <>
+                <div className="settings-row">
+                  <div className="settings-row-label">
+                    <span className="settings-row-title">{t("settings.autoCheckUpdate")}</span>
+                  </div>
+                  <div className="settings-row-control">
+                    <label className="settings-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={runtimeConfig.autoCheckUpdate}
+                        onChange={(event) => updateAutoCheckUpdate(event.target.checked)}
+                      />
+                      <span>{runtimeConfig.autoCheckUpdate ? t("settings.enabled") : t("settings.disabled")}</span>
+                    </label>
+                  </div>
                 </div>
-                <div className="settings-row-control settings-row-control-stretch">
-                  <ReleasePanel />
+
+                <div className="settings-row">
+                  <div className="settings-row-label">
+                    <span className="settings-row-title">{t("settings.clientUpdate")}</span>
+                  </div>
+                  <div className="settings-row-control settings-row-control-stretch">
+                    <ReleasePanel />
+                  </div>
                 </div>
-              </div>
+              </>
             ) : null}
           </div>
         </section>
@@ -395,36 +411,60 @@ function MobileSettingsPage({ model }: { model: SettingsPageModel }) {
   const navigate = useNavigate();
   const { section } = useParams<{ section?: string }>();
   const activeSection = isSettingsSectionId(section) ? section : null;
-  const sectionEntries: SettingsSectionMeta[] = [
-    {
-      id: "appearance",
-      title: t("settings.appearance"),
-      description: t("settings.appearanceSectionSummary"),
-      value: getLanguageLabel(model.runtimeConfig.language),
-      icon: <AppearanceSectionIcon />
-    },
-    {
-      id: "server-connection",
-      title: t("settings.serverConnection"),
-      description: t("settings.serverConnectionSectionSummary"),
-      value: model.runtimeConfig.hostBaseUrl,
-      icon: <ConnectionSectionIcon />
-    },
-    {
-      id: "security-privacy",
-      title: t("settings.securityPrivacy"),
-      description: t("settings.securityPrivacySectionSummary"),
-      value: getPermissionModeLabel(model.runtimeConfig.defaultPermissionMode),
-      icon: <SecurityPrivacySectionIcon />
-    },
-    {
-      id: "software-update",
-      title: t("settings.softwareUpdate"),
-      description: t("settings.softwareUpdateSectionSummary"),
-      value: getReleaseChannelLabel(model.runtimeConfig.releaseChannel),
-      icon: <DesktopReleaseSectionIcon />
-    }
-  ];
+  const sectionEntries: SettingsSectionMeta[] = model.showServerSettings
+    ? [
+      {
+        id: "appearance",
+        title: t("settings.appearance"),
+        description: t("settings.appearanceSectionSummary"),
+        value: getLanguageLabel(model.runtimeConfig.language),
+        icon: <AppearanceSectionIcon />
+      },
+      {
+        id: "server-connection",
+        title: t("settings.serverConnection"),
+        description: t("settings.serverConnectionSectionSummary"),
+        value: model.runtimeConfig.hostBaseUrl,
+        icon: <ConnectionSectionIcon />
+      },
+      {
+        id: "security-privacy",
+        title: t("settings.securityPrivacy"),
+        description: t("settings.securityPrivacySectionSummary"),
+        value: getPermissionModeLabel(model.runtimeConfig.defaultPermissionMode),
+        icon: <SecurityPrivacySectionIcon />
+      },
+      {
+        id: "software-update",
+        title: t("settings.softwareUpdate"),
+        description: t("settings.softwareUpdateSectionSummary"),
+        value: getReleaseChannelLabel(model.runtimeConfig.releaseChannel),
+        icon: <DesktopReleaseSectionIcon />
+      }
+    ]
+    : [
+      {
+        id: "appearance",
+        title: t("settings.appearance"),
+        description: t("settings.appearanceSectionSummary"),
+        value: getLanguageLabel(model.runtimeConfig.language),
+        icon: <AppearanceSectionIcon />
+      },
+      {
+        id: "security-privacy",
+        title: t("settings.securityPrivacy"),
+        description: t("settings.securityPrivacySectionSummary"),
+        value: getPermissionModeLabel(model.runtimeConfig.defaultPermissionMode),
+        icon: <SecurityPrivacySectionIcon />
+      },
+      {
+        id: "software-update",
+        title: t("settings.softwareUpdate"),
+        description: t("settings.softwareUpdateSectionSummary"),
+        value: getReleaseChannelLabel(model.runtimeConfig.releaseChannel),
+        icon: <DesktopReleaseSectionIcon />
+      }
+    ];
   const currentSection = activeSection
     ? sectionEntries.find((entry) => entry.id === activeSection) ?? null
     : null;
@@ -477,7 +517,9 @@ function MobileSettingsPage({ model }: { model: SettingsPageModel }) {
         />
 
         {activeSection === "appearance" ? <MobileAppearanceSection model={model} /> : null}
-        {activeSection === "server-connection" ? <MobileServerConnectionSection model={model} /> : null}
+        {activeSection === "server-connection" && model.showServerSettings
+          ? <MobileServerConnectionSection model={model} />
+          : null}
         {activeSection === "security-privacy" ? <MobileSecurityPrivacySection model={model} /> : null}
         {activeSection === "software-update" ? <MobileSoftwareUpdateSection model={model} /> : null}
       </div>
@@ -540,27 +582,29 @@ function MobileAppearanceSection({ model }: { model: SettingsPageModel }) {
 function MobileServerConnectionSection({ model }: { model: SettingsPageModel }) {
   return (
     <>
-      <section className="settings-mobile-group-section">
-        <h2 className="settings-mobile-group-title">{t("settings.serverAddress")}</h2>
-        <p className="settings-mobile-group-note">{t("settings.serverDescription")}</p>
-        <div className="settings-mobile-card">
-          <form className="settings-mobile-form-stack" onSubmit={model.handleHostBaseUrlSubmit}>
-            <input
-              aria-label={t("settings.serverAddress")}
-              className="settings-text-input settings-mobile-input"
-              value={model.hostBaseUrlDraft}
-              onChange={(event) => model.setHostBaseUrlDraft(event.target.value)}
-            />
-            <button
-              className="settings-mobile-primary-button"
-              disabled={!model.canSaveHostBaseUrl}
-              type="submit"
-            >
-              {t("common.save")}
-            </button>
-          </form>
-        </div>
-      </section>
+      {model.canConfigureServerAddress ? (
+        <section className="settings-mobile-group-section">
+          <h2 className="settings-mobile-group-title">{t("settings.serverAddress")}</h2>
+          <p className="settings-mobile-group-note">{t("settings.serverDescription")}</p>
+          <div className="settings-mobile-card">
+            <form className="settings-mobile-form-stack" onSubmit={model.handleHostBaseUrlSubmit}>
+              <input
+                aria-label={t("settings.serverAddress")}
+                className="settings-text-input settings-mobile-input"
+                value={model.hostBaseUrlDraft}
+                onChange={(event) => model.setHostBaseUrlDraft(event.target.value)}
+              />
+              <button
+                className="settings-mobile-primary-button"
+                disabled={!model.canSaveHostBaseUrl}
+                type="submit"
+              >
+                {t("common.save")}
+              </button>
+            </form>
+          </div>
+        </section>
+      ) : null}
 
       <section className="settings-mobile-group-section">
         <h2 className="settings-mobile-group-title">{t("settings.serverConnection")}</h2>
@@ -640,22 +684,36 @@ function MobileSoftwareUpdateSection({ model }: { model: SettingsPageModel }) {
             </select>
           </div>
 
-          <div className="settings-mobile-form-row">
-            <div className="settings-mobile-row-copy">
-              <span className="settings-mobile-row-title">{t("settings.autoCheckUpdate")}</span>
-              <span className="settings-mobile-row-description">
-                {t("settings.autoCheckUpdateDescription")}
-              </span>
-            </div>
-            <MobileSwitch
-              checked={model.runtimeConfig.autoCheckUpdate}
-              label={t("settings.autoCheckUpdate")}
-              onChange={model.updateAutoCheckUpdate}
-            />
-          </div>
         </div>
       </section>
 
+      <section className="settings-mobile-group-section">
+        <h2 className="settings-mobile-group-title">{t("settings.serverUpdate")}</h2>
+        <div className="settings-mobile-card settings-mobile-release-card">
+          <ServiceUpdatePanel />
+        </div>
+      </section>
+
+      {!model.platform.isWeb ? (
+        <section className="settings-mobile-group-section">
+          <h2 className="settings-mobile-group-title">{t("settings.clientUpdate")}</h2>
+          <div className="settings-mobile-card">
+            <div className="settings-mobile-form-row">
+              <div className="settings-mobile-row-copy">
+                <span className="settings-mobile-row-title">{t("settings.autoCheckUpdate")}</span>
+              </div>
+              <MobileSwitch
+                checked={model.runtimeConfig.autoCheckUpdate}
+                label={t("settings.autoCheckUpdate")}
+                onChange={model.updateAutoCheckUpdate}
+              />
+            </div>
+          </div>
+          <div className="settings-mobile-card settings-mobile-release-card">
+            <ReleasePanel />
+          </div>
+        </section>
+      ) : null}
     </>
   );
 }

@@ -7,5 +7,6 @@ export async function registerClientRoutes(
   clientController: ClientController
 ): Promise<void> {
   app.get("/api/client/runtime-config", clientController.getRuntimeConfig);
+  app.get("/api/client/service-update", clientController.getServiceUpdate);
   app.get("/api/client/release-manifest", clientController.getReleaseManifest);
 }

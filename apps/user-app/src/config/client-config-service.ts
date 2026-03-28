@@ -10,6 +10,10 @@ import { normalizeServerBaseUrl } from "./server-config-shared";
 
 const STORAGE_KEY = "codingns.client.runtime-config";
 
+export function canConfigureHostBaseUrl(platform: RuntimePlatform): boolean {
+  return platform === "desktop";
+}
+
 function normalizeLanguage(value?: string | null): AppLanguage {
   if (value === "en" || value === "en-US") {
     return "en-US";
@@ -65,10 +69,42 @@ function persistLocalConfig(config: ClientRuntimeConfig): void {
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
 }
 
+function readWindowOrigin(): string | null {
+  if (typeof window === "undefined" || !window.location?.origin) {
+    return null;
+  }
+
+  return window.location.origin;
+}
+
+function safelyNormalizeServerBaseUrl(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    return normalizeServerBaseUrl(value);
+  } catch {
+    return null;
+  }
+}
+
+export function resolveDefaultHostBaseUrl(platform: RuntimePlatform): string {
+  if (platform === "web") {
+    const windowOrigin = safelyNormalizeServerBaseUrl(readWindowOrigin());
+
+    if (windowOrigin) {
+      return windowOrigin;
+    }
+  }
+
+  return normalizeServerBaseUrl("http://127.0.0.1:3002");
+}
+
 function createDefaultConfig(platform: RuntimePlatform): ClientRuntimeConfig {
   return {
     platform,
-    hostBaseUrl: normalizeServerBaseUrl("http://127.0.0.1:3002"),
+    hostBaseUrl: resolveDefaultHostBaseUrl(platform),
     releaseChannel: "stable",
     autoReconnect: true,
     autoCheckUpdate: platform === "desktop",
@@ -85,13 +121,17 @@ function mergeConfig(
     return baseConfig;
   }
 
+  const nextPlatform = patch.platform ?? baseConfig.platform;
+
   return {
     ...baseConfig,
     ...patch,
-    hostBaseUrl: patch.hostBaseUrl
-      ? normalizeServerBaseUrl(patch.hostBaseUrl)
-      : baseConfig.hostBaseUrl,
-    platform: patch.platform ?? baseConfig.platform,
+    hostBaseUrl: canConfigureHostBaseUrl(nextPlatform)
+      ? patch.hostBaseUrl
+        ? normalizeServerBaseUrl(patch.hostBaseUrl)
+        : baseConfig.hostBaseUrl
+      : resolveDefaultHostBaseUrl(nextPlatform),
+    platform: nextPlatform,
     releaseChannel: patch.releaseChannel ?? baseConfig.releaseChannel,
     autoReconnect: patch.autoReconnect ?? baseConfig.autoReconnect,
     autoCheckUpdate: patch.autoCheckUpdate ?? baseConfig.autoCheckUpdate,
