@@ -19,7 +19,7 @@ export const enUS = {
     serverAddress: "Server Address",
     serverPlaceholder: "For example: http://127.0.0.1:3002",
     serverHint:
-      "Login, realtime messages, and terminals all connect through this host. On desktop, prefer the Host API endpoint such as http://127.0.0.1:3002; frontend dev ports like 4174 only work when proxying and CORS are configured correctly.",
+      "Login, realtime messages, and terminals all connect through this host. Point the client at the Host API endpoint such as http://127.0.0.1:3002; frontend dev ports like 4174 or 5173 are not meant for packaged clients and only work for temporary debugging when proxying and CORS are configured correctly.",
     serverInvalid: "Invalid server address. Check it and try again.",
     serverCurrent: "Current Server",
     bootstrapTitle: "Complete the first-time bootstrap",
@@ -54,7 +54,7 @@ export const enUS = {
     softwareUpdate: "Software Update",
     softwareUpdateSectionSummary: "Server and client versions",
     serverAddress: "Server Address",
-    serverDescription: "Desktop and H5 both connect through this host entry.",
+    serverDescription: "Login, API requests, and realtime connections all use this Host entry, while the frontend UI is bundled inside the client itself.",
     releaseChannel: "Release Channel",
     releaseChannelDescription: "Stable or beta",
     releaseStable: "Stable",
@@ -307,6 +307,19 @@ export const enUS = {
     queueSteer: "Steer",
     queueSteering: "Steering",
     resendButton: "Resend",
+    quickPhraseTrigger: "Quick Phrases",
+    quickPhraseModalTitle: "Quick Phrases",
+    quickPhraseModalDescription:
+      "Keep the prompts you reuse often in one place and drop them straight into the current composer.",
+    quickPhraseCreateLabel: "New Phrase",
+    quickPhraseCreatePlaceholder: "Write a phrase you want to reuse later.",
+    quickPhraseCreateAction: "Add Phrase",
+    quickPhraseListLabel: "Quick phrase list",
+    quickPhraseEmpty: "There are no quick phrases yet. Add the first one you actually reuse.",
+    quickPhraseOrderLabel: "Item {index}",
+    quickPhraseMoveUp: "Move phrase up",
+    quickPhraseMoveDown: "Move phrase down",
+    quickPhraseDelete: "Delete phrase",
     sendingState: "Sending",
     sentState: "Synced",
     failedState: "Send failed",
@@ -513,10 +526,10 @@ export const enUS = {
     }
   },
   theme: {
-    light: "Light",
-    dark: "Dark",
-    skyBlue: "Cyber Neon",
-    eyeGreen: "Eye Green",
+    light: "浅色",
+    dark: "深色",
+    skyBlue: "赛博",
+    eyeGreen: "护眼",
     switchLabel: "Theme"
   },
   locale: {

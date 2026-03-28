@@ -3131,6 +3131,122 @@ body {
   color: #007aff;
 }
 
+.composer-input {
+  padding-right: 44px;
+}
+
+.composer-quick-phrase-trigger {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 10px;
+  border: 1px solid rgba(120, 120, 128, 0.14);
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--text-secondary);
+  transform: translateY(-50%);
+}
+
+.composer-quick-phrase-modal {
+  width: min(680px, 100%);
+}
+
+.composer-quick-phrase-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.composer-quick-phrase-textarea {
+  width: 100%;
+  min-height: 88px;
+  border: 1px solid rgba(120, 120, 128, 0.18);
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: rgba(120, 120, 128, 0.08);
+  color: var(--text-primary);
+  font: inherit;
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.composer-quick-phrase-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.composer-quick-phrase-empty {
+  padding: 16px;
+  border-radius: 16px;
+  border: 1px dashed rgba(120, 120, 128, 0.22);
+  color: var(--text-secondary);
+  background: rgba(120, 120, 128, 0.06);
+}
+
+.composer-quick-phrase-item {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 16px;
+  background: rgba(120, 120, 128, 0.08);
+}
+
+.composer-quick-phrase-select {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  text-align: left;
+}
+
+.composer-quick-phrase-order {
+  font-size: 11px;
+  font-weight: 700;
+  color: #007aff;
+}
+
+.composer-quick-phrase-text {
+  color: var(--text-secondary);
+  line-height: 1.55;
+  word-break: break-word;
+}
+
+.composer-quick-phrase-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.composer-quick-phrase-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.8);
+  color: var(--text-secondary);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.composer-quick-phrase-action.is-danger {
+  color: #dc2626;
+}
+
+.composer-quick-phrase-action:disabled {
+  opacity: 0.35;
+}
+
 .workbench-search-mode-switch {
   padding: 0;
   background: transparent;

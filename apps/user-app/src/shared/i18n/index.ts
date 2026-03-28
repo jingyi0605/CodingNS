@@ -595,8 +595,8 @@ const extensionZhCN = {
   theme: {
     light: "\u6d45\u8272",
     dark: "\u6df1\u8272",
-    skyBlue: "\u8d5b\u535a\u70ab",
-    eyeGreen: "\u62a4\u773c\u7eff",
+    skyBlue: "\u8d5b\u535a",
+    eyeGreen: "\u62a4\u773c",
     switchLabel: "\u4e3b\u9898"
   }
 } satisfies Record<string, unknown>;
@@ -1186,10 +1186,10 @@ const extensionEnUS = {
     runningValue: "Running"
   },
   theme: {
-    light: "Light",
-    dark: "Dark",
-    skyBlue: "Cyber Neon",
-    eyeGreen: "Eye Green",
+    light: "浅色",
+    dark: "深色",
+    skyBlue: "赛博",
+    eyeGreen: "护眼",
     switchLabel: "Theme"
   }
 } satisfies Record<string, unknown>;

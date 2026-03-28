@@ -2796,6 +2796,171 @@ a {
   cursor: not-allowed;
 }
 
+.composer-quick-phrase-trigger {
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 82%, transparent);
+  background: color-mix(in srgb, var(--bg-surface) 92%, transparent);
+  color: var(--text-secondary);
+  transform: translateY(-50%);
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast),
+    transform var(--transition-fast);
+}
+
+.composer-quick-phrase-trigger:hover {
+  background: color-mix(in srgb, var(--bg-hover) 88%, var(--bg-surface));
+  border-color: color-mix(in srgb, var(--accent) 22%, var(--border-primary));
+  color: var(--text-primary);
+  transform: translateY(calc(-50% - 1px));
+}
+
+.composer-quick-phrase-trigger:focus-visible {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--border-primary));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.composer-quick-phrase-modal {
+  width: min(720px, 100%);
+}
+
+.composer-quick-phrase-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.composer-quick-phrase-textarea {
+  width: 100%;
+  min-height: 88px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 84%, transparent);
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: color-mix(in srgb, var(--bg-surface) 96%, transparent);
+  color: var(--text-primary);
+  font: inherit;
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.composer-quick-phrase-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.composer-quick-phrase-empty {
+  padding: 16px;
+  border-radius: 16px;
+  border: 1px dashed color-mix(in srgb, var(--border-primary) 74%, transparent);
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--bg-hover) 54%, transparent);
+}
+
+.composer-quick-phrase-item {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 18px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 78%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 94%, transparent), transparent),
+    color-mix(in srgb, var(--bg-hover) 46%, transparent);
+}
+
+.composer-quick-phrase-select {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 2px 0;
+  text-align: left;
+}
+
+.composer-quick-phrase-select:hover .composer-quick-phrase-text {
+  color: var(--text-primary);
+}
+
+.composer-quick-phrase-order {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.composer-quick-phrase-text {
+  color: var(--text-secondary);
+  line-height: 1.6;
+  word-break: break-word;
+  transition: color var(--transition-fast);
+}
+
+.composer-quick-phrase-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.composer-quick-phrase-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 80%, transparent);
+  background: color-mix(in srgb, var(--bg-surface) 88%, transparent);
+  color: var(--text-secondary);
+  font-size: 15px;
+  font-weight: 700;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.composer-quick-phrase-action:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--bg-hover) 86%, transparent);
+  color: var(--text-primary);
+}
+
+.composer-quick-phrase-action.is-danger:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--error) 28%, var(--border-primary));
+  color: var(--error);
+}
+
+.composer-quick-phrase-action:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.composer-input {
+  padding-right: 44px;
+}
+
+@media (max-width: 720px) {
+  .composer-quick-phrase-item {
+    flex-direction: column;
+  }
+
+  .composer-quick-phrase-actions {
+    justify-content: flex-end;
+  }
+}
+
 .composer-send-busy {
   background: var(--text-primary);
   color: var(--bg-surface);
