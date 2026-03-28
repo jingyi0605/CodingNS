@@ -471,10 +471,9 @@ function MobileSettingsPage({ model }: { model: SettingsPageModel }) {
 
   if (!currentSection) {
     return (
-      <div className="settings-page settings-page-mobile mobile-page-scroll-root">
+      <div className="settings-page settings-page-mobile mobile-page-scroll-root mobile-page-with-top-header">
+        <MobilePageHeader title={t("settings.title")} />
         <div className="settings-mobile-container">
-          <MobilePageHeader title={t("settings.title")} />
-
           <section className="settings-mobile-group-section">
             <div className="settings-mobile-card">
               {sectionEntries.map((entry) => (
@@ -508,14 +507,9 @@ function MobileSettingsPage({ model }: { model: SettingsPageModel }) {
   }
 
   return (
-    <div className="settings-page settings-page-mobile mobile-page-scroll-root">
+    <div className="settings-page settings-page-mobile mobile-page-scroll-root mobile-page-with-top-header">
+      <MobilePageHeader title={t("settings.title")} />
       <div className="settings-mobile-container">
-        <MobilePageHeader
-          className="settings-mobile-detail-header"
-          title={currentSection.title}
-          description={currentSection.description}
-        />
-
         {activeSection === "appearance" ? <MobileAppearanceSection model={model} /> : null}
         {activeSection === "server-connection" && model.showServerSettings
           ? <MobileServerConnectionSection model={model} />

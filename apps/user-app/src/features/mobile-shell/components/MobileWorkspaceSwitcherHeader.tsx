@@ -2,6 +2,7 @@ import { createPortal } from "react-dom";
 import { useState, type ReactNode } from "react";
 
 import { t } from "../../../shared/i18n";
+import { MobileTopHeaderFrame } from "./MobileTopHeaderFrame";
 
 interface WorkspaceSummary {
   readonly id: string;
@@ -44,35 +45,37 @@ export function MobileWorkspaceSwitcherHeader({
 
   return (
     <>
-      <section className={["mobile-workspace-home-header", className].filter(Boolean).join(" ")}>
-        <h1 className="mobile-workspace-switcher-heading">{heading ?? currentWorkspace.name}</h1>
+      <MobileTopHeaderFrame className={className}>
+        <section className="mobile-workspace-home-header">
+          <h1 className="mobile-workspace-switcher-heading">{heading ?? currentWorkspace.name}</h1>
 
-        <div className="mobile-workspace-home-toolbar-top">
-          <button
-            type="button"
-            className="mobile-workspace-home-switcher"
-            aria-label={triggerAriaLabel ?? t("shell.workspaceHomeSwitcherLabel")}
-            onClick={() => {
-              if (onTriggerClick) {
-                onTriggerClick();
-                return;
-              }
+          <div className="mobile-workspace-home-toolbar-top">
+            <button
+              type="button"
+              className="mobile-workspace-home-switcher"
+              aria-label={triggerAriaLabel ?? t("shell.workspaceHomeSwitcherLabel")}
+              onClick={() => {
+                if (onTriggerClick) {
+                  onTriggerClick();
+                  return;
+                }
 
-              setSwitcherOpen(true);
-            }}
-          >
-            <span className="mobile-workspace-home-switcher-label">{triggerLabel ?? currentWorkspace.name}</span>
-            <ChevronDownIcon />
-          </button>
+                setSwitcherOpen(true);
+              }}
+            >
+              <span className="mobile-workspace-home-switcher-label">{triggerLabel ?? currentWorkspace.name}</span>
+              <ChevronDownIcon />
+            </button>
 
-          <div className="mobile-workspace-home-toolbar-actions">
-            {trailing}
+            <div className="mobile-workspace-home-toolbar-actions">
+              {trailing}
+            </div>
           </div>
-        </div>
 
-        <p className="mobile-workspace-home-path">{currentWorkspace.path}</p>
-        {content}
-      </section>
+          <p className="mobile-workspace-home-path">{currentWorkspace.path}</p>
+          {content}
+        </section>
+      </MobileTopHeaderFrame>
 
       {switcherOpen && !onTriggerClick
         ? renderSheet(

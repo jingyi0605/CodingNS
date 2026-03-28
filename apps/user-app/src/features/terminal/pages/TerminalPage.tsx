@@ -27,9 +27,11 @@ import {
   closeTerminal,
   createTerminal,
   deleteTerminalRecord,
+  readTerminalHistory,
   listWorkspaceTerminals,
   listTerminalShellOptions,
   type TerminalDto,
+  type TerminalHistoryPageDto,
   type TerminalShellOptionDto
 } from "../api/terminal-api";
 import {
@@ -69,12 +71,34 @@ interface TerminalViewportRuntime {
   restoredFromSnapshot: boolean;
   focus: () => void;
   reflow: () => void;
+  prependHistory: (content: string) => Promise<void>;
   readPlainText: () => string;
   setFontSize: (fontSize: number) => void;
   applyTheme: () => void;
   persistNow: () => void;
   schedulePersist: () => void;
   dispose: () => void;
+}
+
+interface TerminalViewportDebugSnapshot {
+  rows: number;
+  cols: number;
+  baseY: number;
+  viewportY: number;
+  bufferLength: number;
+  scrollTop: number;
+  viewportHeight: number;
+  wheelCount: number;
+  lastWheelDelta: number | null;
+  touchCount: number;
+  lastTouchLines: number | null;
+}
+
+interface TerminalPaneDebugState extends TerminalViewportDebugSnapshot {
+  beforeSeq: number | null;
+  oldestSeq: number | null;
+  hasOlder: boolean;
+  loadingOlder: boolean;
 }
 
 interface TerminalActionMenuState {
@@ -179,6 +203,7 @@ const TERMINAL_ACTION_MENU_EDGE_PADDING = 8;
 const TERMINAL_MOBILE_SWIPE_THRESHOLD = 72;
 const TERMINAL_MOBILE_SWIPE_OFF_AXIS_THRESHOLD = 48;
 const TERMINAL_MANAGER_SNAPSHOT_CACHE_MAX_AGE_MS = 60 * 1000;
+const TERMINAL_HISTORY_PAGE_LIMIT = 20;
 const INITIAL_PANE_BINDINGS: TerminalPaneBindings = {
   primary: null,
   secondary: null
@@ -187,6 +212,29 @@ const INITIAL_CONNECTION_STATES: Record<PaneId, TerminalConnectionState> = {
   primary: "closed",
   secondary: "closed"
 };
+const INITIAL_TERMINAL_VIEWPORT_DEBUG_STATE: TerminalPaneDebugState = {
+  rows: 0,
+  cols: 0,
+  baseY: 0,
+  viewportY: 0,
+  bufferLength: 0,
+  scrollTop: 0,
+  viewportHeight: 0,
+  wheelCount: 0,
+  lastWheelDelta: null,
+  touchCount: 0,
+  lastTouchLines: null,
+  beforeSeq: null,
+  oldestSeq: null,
+  hasOlder: true,
+  loadingOlder: false
+};
+
+function createInitialTerminalViewportDebugState(): TerminalPaneDebugState {
+  return {
+    ...INITIAL_TERMINAL_VIEWPORT_DEBUG_STATE
+  };
+}
 
 export function TerminalPage() {
   const platform = usePlatform();
@@ -1513,7 +1561,6 @@ export function TerminalPage() {
         {isMobileTerminalPage ? (
           <>
             <MobileWorkspaceSwitcherHeader
-              className="terminal-mobile-page-header"
               currentWorkspace={mobileHeaderWorkspace}
               workspaces={workspaces}
               onSelectWorkspace={(workspaceId) => {
@@ -1521,29 +1568,17 @@ export function TerminalPage() {
                 setSelectedWorkspaceId(workspaceId);
               }}
               trailing={
-                <div className="terminal-mobile-header-actions">
-                  <button
-                    type="button"
-                    className="terminal-mobile-header-action"
-                    aria-label={t("terminal.mobileCreateSheetTitle")}
-                    disabled={!resolvedWorkspaceId || creatingTerminal}
-                    onClick={() => {
-                      void openMobileCreateSheet();
-                    }}
-                  >
-                    <PlusIcon />
-                  </button>
-                  <button
-                    type="button"
-                    className="terminal-mobile-header-action"
-                    aria-label={t("terminal.mobileDrawerAction")}
-                    onClick={() => {
-                      setMobileQuickDrawerOpen(true);
-                    }}
-                  >
-                    <SessionDrawerIcon />
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  className="secondary-button mobile-tools-more-button"
+                  aria-label={t("terminal.mobileDrawerAction")}
+                  title={t("terminal.mobileDrawerAction")}
+                  onClick={() => {
+                    setMobileQuickDrawerOpen(true);
+                  }}
+                >
+                  <MoreIcon />
+                </button>
               }
             />
 
@@ -2353,30 +2388,12 @@ function MobileTerminalCreateSheet({
   );
 }
 
-function PlusIcon() {
+function MoreIcon() {
   return (
-    <svg viewBox="0 0 16 16" aria-hidden="true">
-      <path
-        d="M8 3.25v9.5M3.25 8h9.5"
-        fill="none"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeWidth="1.75"
-      />
-    </svg>
-  );
-}
-
-function SessionDrawerIcon() {
-  return (
-    <svg viewBox="0 0 18 18" aria-hidden="true">
-      <path
-        d="M4 4.75h10M4 9h10M4 13.25h7"
-        fill="none"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeWidth="1.6"
-      />
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <circle cx="12" cy="5" r="1.8" />
+      <circle cx="12" cy="12" r="1.8" />
+      <circle cx="12" cy="19" r="1.8" />
     </svg>
   );
 }
@@ -2584,9 +2601,112 @@ function TerminalWorkspacePane({
   const realtimeClientRef = useRef<TerminalRealtimeClient | null>(null);
   const viewportRuntimeRef = useRef<TerminalViewportRuntime | null>(null);
   const activeCursorRef = useRef<string | null>(null);
+  const oldestLoadedSeqRef = useRef<number | null>(null);
+  const nextHistoryBeforeSeqRef = useRef<number | null>(null);
+  const hasOlderHistoryRef = useRef(true);
+  const loadingOlderHistoryRef = useRef(false);
   const activeRecoveryStateRef = useRef<"idle_closed" | null>(null);
   const activeTerminalStatusRef = useRef<TerminalDto["status"] | null>(terminal?.status ?? null);
   const activePaneRef = useRef(active);
+  const [debugState, setDebugState] = useState<TerminalPaneDebugState>(
+    createInitialTerminalViewportDebugState
+  );
+
+  const syncHistoryDebugState = useCallback(
+    (patch: Partial<TerminalPaneDebugState> = {}) => {
+      setDebugState((current) => ({
+        ...current,
+        beforeSeq: nextHistoryBeforeSeqRef.current,
+        oldestSeq: oldestLoadedSeqRef.current,
+        hasOlder: hasOlderHistoryRef.current,
+        loadingOlder: loadingOlderHistoryRef.current,
+        ...patch
+      }));
+    },
+    []
+  );
+
+  const updateOldestLoadedSeq = useCallback((cursor: string | null | undefined) => {
+    const value = Number(cursor);
+
+    if (!Number.isInteger(value) || value <= 0) {
+      return;
+    }
+
+    oldestLoadedSeqRef.current =
+      oldestLoadedSeqRef.current === null
+        ? value
+        : Math.min(oldestLoadedSeqRef.current, value);
+    nextHistoryBeforeSeqRef.current = oldestLoadedSeqRef.current;
+    syncHistoryDebugState();
+  }, [syncHistoryDebugState]);
+
+  const handleOlderHistoryPage = useCallback(
+    async (payload: TerminalHistoryPageDto): Promise<void> => {
+      const runtime = viewportRuntimeRef.current;
+
+      if (!runtime) {
+        return;
+      }
+
+      if (payload.segments.length === 0) {
+        hasOlderHistoryRef.current = payload.hasMore;
+        nextHistoryBeforeSeqRef.current = payload.nextBeforeSeq;
+        syncHistoryDebugState();
+        return;
+      }
+
+      const orderedSegments = [...payload.segments].reverse();
+      const content = orderedSegments.map((segment) => segment.content).join("");
+
+      if (!content) {
+        hasOlderHistoryRef.current = payload.hasMore;
+        nextHistoryBeforeSeqRef.current = payload.nextBeforeSeq;
+        syncHistoryDebugState();
+        return;
+      }
+
+      await runtime.prependHistory(content);
+      oldestLoadedSeqRef.current = orderedSegments[0]?.startSeq ?? oldestLoadedSeqRef.current;
+      nextHistoryBeforeSeqRef.current = payload.nextBeforeSeq;
+      hasOlderHistoryRef.current = payload.hasMore;
+      runtime.schedulePersist();
+      syncHistoryDebugState();
+    },
+    [syncHistoryDebugState]
+  );
+
+  const loadOlderHistory = useCallback(async () => {
+    if (!terminal?.id || loadingOlderHistoryRef.current || !hasOlderHistoryRef.current) {
+      return;
+    }
+
+    const beforeSeq = nextHistoryBeforeSeqRef.current;
+
+    if (beforeSeq === null) {
+      return;
+    }
+
+    loadingOlderHistoryRef.current = true;
+    syncHistoryDebugState();
+
+    try {
+      const payload = await readTerminalHistory(terminal.id, {
+        beforeSeq,
+        limit: TERMINAL_HISTORY_PAGE_LIMIT
+      });
+
+      await handleOlderHistoryPage(payload);
+    } catch (error) {
+      notifyTerminal(
+        error instanceof Error ? error.message : t("conversation.historyLoadFailed"),
+        "error"
+      );
+    } finally {
+      loadingOlderHistoryRef.current = false;
+      syncHistoryDebugState();
+    }
+  }, [handleOlderHistoryPage, notifyTerminal, syncHistoryDebugState, terminal?.id]);
 
   useEffect(() => {
     activeTerminalStatusRef.current = terminal?.status ?? null;
@@ -2656,6 +2776,19 @@ function TerminalWorkspacePane({
       onResize: ({ cols, rows }) => {
         realtimeClientRef.current?.resize(cols, rows);
       },
+      onViewportTop: () => {
+        void loadOlderHistory();
+      },
+      onDebugStateChange: (snapshot) => {
+        setDebugState((current) => ({
+          ...current,
+          ...snapshot,
+          beforeSeq: nextHistoryBeforeSeqRef.current,
+          oldestSeq: oldestLoadedSeqRef.current,
+          hasOlder: hasOlderHistoryRef.current,
+          loadingOlder: loadingOlderHistoryRef.current
+        }));
+      },
       onViewStateChange: (viewState) => {
         persistTerminalViewState(terminal.id, viewState);
       }
@@ -2685,7 +2818,7 @@ function TerminalWorkspacePane({
       }
       registerApi(paneId, null);
     };
-  }, [paneId, registerApi, terminal?.id, zoomScale]);
+  }, [loadOlderHistory, paneId, registerApi, terminal?.id, zoomScale]);
 
   useEffect(() => {
     realtimeClientRef.current?.close();
@@ -2695,6 +2828,11 @@ function TerminalWorkspacePane({
 
     if (!terminal?.id) {
       activeCursorRef.current = null;
+      oldestLoadedSeqRef.current = null;
+      nextHistoryBeforeSeqRef.current = null;
+      hasOlderHistoryRef.current = true;
+      loadingOlderHistoryRef.current = false;
+      setDebugState(createInitialTerminalViewportDebugState());
       return;
     }
 
@@ -2702,6 +2840,11 @@ function TerminalWorkspacePane({
     const persistedViewState = recoveryState.viewState;
     const resumeCursor = recoveryState.resumeCursor;
     activeCursorRef.current = resumeCursor;
+    oldestLoadedSeqRef.current = null;
+    nextHistoryBeforeSeqRef.current = null;
+    hasOlderHistoryRef.current = true;
+    loadingOlderHistoryRef.current = false;
+    syncHistoryDebugState();
 
     const client = new TerminalRealtimeClient({
       terminalId: terminal.id,
@@ -2727,13 +2870,19 @@ function TerminalWorkspacePane({
         if (runtime) {
           if (event.cursorReset) {
             replaceTerminalChunks(runtime.terminal, event.chunks);
+            oldestLoadedSeqRef.current = null;
           } else if (runtime.restoredFromSnapshot) {
             appendTerminalChunks(runtime.terminal, event.chunks);
           } else {
             replaceTerminalChunks(runtime.terminal, event.chunks);
+            oldestLoadedSeqRef.current = null;
           }
 
           runtime.schedulePersist();
+        }
+
+        if (event.chunks.length > 0) {
+          updateOldestLoadedSeq(event.chunks[0]?.cursor);
         }
 
         const nextCursor = event.latestCursor ?? activeCursorRef.current;
@@ -2761,7 +2910,9 @@ function TerminalWorkspacePane({
         viewportRuntimeRef.current?.terminal.write(event.chunk.content);
         viewportRuntimeRef.current?.schedulePersist();
         activeCursorRef.current = event.chunk.cursor;
+        updateOldestLoadedSeq(event.chunk.cursor);
         persistTerminalCursor(terminal.id, event.chunk.cursor);
+        syncHistoryDebugState();
       },
       onStatus: (event) => {
         onTerminalStatus({
@@ -2817,13 +2968,16 @@ function TerminalWorkspacePane({
       onConnectionChange(paneId, "closed");
     };
   }, [
+    loadOlderHistory,
     notifyTerminal,
     onConnectionChange,
     onRequireReload,
     onTerminalStatus,
     onUnauthorized,
     paneId,
-    terminal?.id
+    syncHistoryDebugState,
+    terminal?.id,
+    updateOldestLoadedSeq
   ]);
 
   return (
@@ -2887,6 +3041,24 @@ function TerminalWorkspacePane({
       {terminal ? (
         <div className="terminal-canvas">
           <div ref={terminalContainerRef} className="terminal-xterm" />
+          <div className="terminal-debug-panel" aria-live="off">
+            <strong>{t("terminal.debugPanelTitle")}</strong>
+            <span>{t("terminal.debugRowsLabel")}: {debugState.rows}</span>
+            <span>{t("terminal.debugColsLabel")}: {debugState.cols}</span>
+            <span>{t("terminal.debugBaseYLabel")}: {debugState.baseY}</span>
+            <span>{t("terminal.debugViewportYLabel")}: {debugState.viewportY}</span>
+            <span>{t("terminal.debugBufferLengthLabel")}: {debugState.bufferLength}</span>
+            <span>{t("terminal.debugBeforeSeqLabel")}: {formatDebugValue(debugState.beforeSeq)}</span>
+            <span>{t("terminal.debugOldestSeqLabel")}: {formatDebugValue(debugState.oldestSeq)}</span>
+            <span>{t("terminal.debugHasOlderLabel")}: {debugState.hasOlder ? "1" : "0"}</span>
+            <span>{t("terminal.debugLoadingOlderLabel")}: {debugState.loadingOlder ? "1" : "0"}</span>
+            <span>{t("terminal.debugWheelCountLabel")}: {debugState.wheelCount}</span>
+            <span>{t("terminal.debugLastWheelLabel")}: {formatDebugValue(debugState.lastWheelDelta)}</span>
+            <span>{t("terminal.debugTouchCountLabel")}: {debugState.touchCount}</span>
+            <span>{t("terminal.debugLastTouchLabel")}: {formatDebugValue(debugState.lastTouchLines)}</span>
+            <span>{t("terminal.debugScrollTopLabel")}: {debugState.scrollTop}</span>
+            <span>{t("terminal.debugViewportHeightLabel")}: {debugState.viewportHeight}</span>
+          </div>
         </div>
       ) : pendingCreation ? (
         <div className="terminal-empty-state terminal-empty-state-inline terminal-pending-state">
@@ -2943,6 +3115,8 @@ function createTerminalViewportRuntime(input: {
   canResize: () => boolean;
   onInput: (content: string) => void;
   onResize: (dimensions: { cols: number; rows: number }) => void;
+  onViewportTop?: () => void;
+  onDebugStateChange?: (snapshot: TerminalViewportDebugSnapshot) => void;
   onViewStateChange: (viewState: PersistedTerminalViewState | null) => void;
 }): TerminalViewportRuntime {
   const initialTheme = readTerminalVisualTheme();
@@ -2965,12 +3139,26 @@ function createTerminalViewportRuntime(input: {
   let lastFittedRows = terminal.rows;
   let touchPoint: { x: number; y: number } | null = null;
   let pendingTouchLines = 0;
+  let wheelCount = 0;
+  let lastWheelDelta: number | null = null;
+  let touchCount = 0;
+  let lastTouchLines: number | null = null;
 
   terminal.loadAddon(fitAddon);
   terminal.loadAddon(serializeAddon);
   terminal.onData((content) => {
     input.onInput(content);
   });
+  const scrollSubscription =
+    typeof terminal.onScroll === "function"
+      ? terminal.onScroll((viewportY: number) => {
+          if (viewportY === 0) {
+            input.onViewportTop?.();
+          }
+          schedulePersist();
+          publishDebugState();
+        })
+      : null;
   terminal.onResize(({ cols, rows }) => {
     lastFittedCols = cols;
     lastFittedRows = rows;
@@ -2978,40 +3166,37 @@ function createTerminalViewportRuntime(input: {
       input.onResize({ cols, rows });
     }
     schedulePersist();
+    publishDebugState();
   });
 
   input.container.replaceChildren();
   terminal.open(input.container);
   input.container.style.background = initialTheme.background ?? "";
   const xtermRootElement = input.container.querySelector(".xterm");
+  const viewportElement = input.container.querySelector(".xterm-viewport");
   const scrollTarget =
-    xtermRootElement instanceof HTMLElement
-      ? xtermRootElement
-      : input.container;
+    viewportElement instanceof HTMLElement
+      ? viewportElement
+      : xtermRootElement instanceof HTMLElement
+        ? xtermRootElement
+        : input.container;
 
-  scrollTarget.style.touchAction = "none";
-
-  const handleWheelScroll = (event: WheelEvent) => {
-    if (disposed || event.deltaY === 0) {
-      return false;
-    }
-
-    event.preventDefault();
-    const lines = truncateTowardZero(normalizeTerminalWheelDelta(event));
-
-    if (lines !== 0) {
-      terminal.scrollLines(lines);
-      schedulePersist();
-    }
-
-    return false;
-  };
-
-  if (typeof terminal.attachCustomWheelEventHandler === "function") {
-    terminal.attachCustomWheelEventHandler(handleWheelScroll);
-  } else {
-    scrollTarget.addEventListener("wheel", handleWheelScroll, { passive: false });
+  // 默认交给 xterm 原生视口处理滚动，这里只做诊断采样，不再自己模拟滚动。
+  scrollTarget.style.touchAction = "pan-y";
+  scrollTarget.style.overscrollBehavior = "contain";
+  if ("webkitOverflowScrolling" in scrollTarget.style) {
+    scrollTarget.style.webkitOverflowScrolling = "touch";
   }
+
+  const handleDebugWheel = (event: WheelEvent) => {
+    if (disposed || event.deltaY === 0) {
+      return;
+    }
+
+    wheelCount += 1;
+    lastWheelDelta = truncateTowardZero(normalizeTerminalWheelDelta(event));
+    publishDebugState();
+  };
 
   const handleTouchStart = (event: globalThis.TouchEvent) => {
     const touch = event.touches[0];
@@ -3049,14 +3234,14 @@ function createTerminalViewportRuntime(input: {
       return;
     }
 
-    event.preventDefault();
     pendingTouchLines += -deltaY / 14;
     const lines = truncateTowardZero(pendingTouchLines);
 
     if (lines !== 0) {
       pendingTouchLines -= lines;
-      terminal.scrollLines(lines);
-      schedulePersist();
+      touchCount += 1;
+      lastTouchLines = lines;
+      publishDebugState();
     }
 
     touchPoint = {
@@ -3070,8 +3255,9 @@ function createTerminalViewportRuntime(input: {
     pendingTouchLines = 0;
   };
 
+  scrollTarget.addEventListener("wheel", handleDebugWheel, { passive: true });
   scrollTarget.addEventListener("touchstart", handleTouchStart, { passive: true });
-  scrollTarget.addEventListener("touchmove", handleTouchMove, { passive: false });
+  scrollTarget.addEventListener("touchmove", handleTouchMove, { passive: true });
   scrollTarget.addEventListener("touchend", clearTouchScrollState, { passive: true });
   scrollTarget.addEventListener("touchcancel", clearTouchScrollState, { passive: true });
 
@@ -3085,11 +3271,13 @@ function createTerminalViewportRuntime(input: {
 
       void waitForStableContainer().then(() => {
         fitToContainer();
+        publishDebugState();
       });
     });
   } else {
     void waitForStableContainer().then(() => {
       fitToContainer();
+      publishDebugState();
     });
   }
 
@@ -3108,6 +3296,7 @@ function createTerminalViewportRuntime(input: {
     void document.fonts.ready.then(() => {
       window.requestAnimationFrame(() => {
         fitToContainer();
+        publishDebugState();
       });
     });
   }
@@ -3151,6 +3340,22 @@ function createTerminalViewportRuntime(input: {
     }, 200);
   }
 
+  function publishDebugState(): void {
+    input.onDebugStateChange?.({
+      rows: terminal.rows,
+      cols: terminal.cols,
+      baseY: terminal.buffer.active.baseY,
+      viewportY: terminal.buffer.active.viewportY,
+      bufferLength: terminal.buffer.active.length,
+      scrollTop: scrollTarget instanceof HTMLElement ? scrollTarget.scrollTop : 0,
+      viewportHeight: scrollTarget instanceof HTMLElement ? scrollTarget.clientHeight : 0,
+      wheelCount,
+      lastWheelDelta,
+      touchCount,
+      lastTouchLines
+    });
+  }
+
   function fitToContainer(): void {
     if (disposed || !hasUsableContainerSize(input.container)) {
       return;
@@ -3173,6 +3378,7 @@ function createTerminalViewportRuntime(input: {
     hasCommittedFit = true;
     lastFittedCols = terminal.cols;
     lastFittedRows = terminal.rows;
+    publishDebugState();
   }
 
   function applyTheme(): void {
@@ -3190,6 +3396,38 @@ function createTerminalViewportRuntime(input: {
     reflow: () => {
       fitToContainer();
     },
+    prependHistory: async (content: string) => {
+      if (!content) {
+        return;
+      }
+
+      const previousViewportY = terminal.buffer.active.viewportY;
+      const snapshot = serializeAddon.serialize({
+        scrollback: PERSISTED_TERMINAL_SCROLLBACK
+      });
+
+      if (!snapshot) {
+        terminal.write(content);
+        schedulePersist();
+        return;
+      }
+
+      const estimatedAddedLines = estimateTerminalContentLines(content, Math.max(terminal.cols, 1));
+
+      await new Promise<void>((resolve) => {
+        terminal.reset();
+        terminal.write(`${content}${snapshot}`, () => {
+          const targetViewportY = Math.max(0, previousViewportY + estimatedAddedLines);
+
+          if (targetViewportY > 0) {
+            terminal.scrollToLine(targetViewportY);
+          }
+
+          resolve();
+        });
+      });
+      publishDebugState();
+    },
     readPlainText: () => {
       return readTerminalPlainText(terminal);
     },
@@ -3201,6 +3439,7 @@ function createTerminalViewportRuntime(input: {
       terminal.options.fontSize = fontSize;
       fitToContainer();
       schedulePersist();
+      publishDebugState();
     },
     applyTheme,
     persistNow,
@@ -3210,18 +3449,21 @@ function createTerminalViewportRuntime(input: {
       if (persistTimer !== null) {
         window.clearTimeout(persistTimer);
       }
-      if (typeof terminal.attachCustomWheelEventHandler !== "function") {
-        scrollTarget.removeEventListener("wheel", handleWheelScroll);
-      }
+      scrollTarget.removeEventListener("wheel", handleDebugWheel);
       scrollTarget.removeEventListener("touchstart", handleTouchStart);
       scrollTarget.removeEventListener("touchmove", handleTouchMove);
       scrollTarget.removeEventListener("touchend", clearTouchScrollState);
       scrollTarget.removeEventListener("touchcancel", clearTouchScrollState);
+      scrollSubscription?.dispose();
       resizeObserver?.disconnect();
       terminal.dispose();
       input.container.replaceChildren();
     }
   };
+}
+
+function formatDebugValue(value: number | null): string {
+  return value === null ? "-" : String(value);
 }
 
 function normalizeTerminalWheelDelta(event: WheelEvent): number {
@@ -3260,6 +3502,26 @@ function buildPersistedTerminalViewState(
     rows: terminal.rows,
     viewportY: terminal.buffer.active.viewportY
   };
+}
+
+function estimateTerminalContentLines(content: string, cols: number): number {
+  if (!content) {
+    return 0;
+  }
+
+  const normalized = stripAnsiSequences(content).replace(/\r/g, "");
+  const lines = normalized.split("\n");
+  let total = 0;
+
+  for (const line of lines) {
+    total += Math.max(1, Math.ceil(line.length / Math.max(cols, 1)));
+  }
+
+  return total;
+}
+
+function stripAnsiSequences(content: string): string {
+  return content.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
 }
 
 function appendTerminalChunks(terminal: Terminal, chunks: TerminalOutputChunkDto[]): void {

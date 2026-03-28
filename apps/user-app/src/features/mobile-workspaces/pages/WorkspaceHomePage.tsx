@@ -436,38 +436,13 @@ export function WorkspaceHomePage() {
   ] as const;
 
   return (
-    <main className="mobile-feature-page mobile-page-scroll-root mobile-workspace-home-page">
+    <main className="mobile-feature-page mobile-page-scroll-root mobile-page-with-top-header mobile-workspace-home-page">
       {currentWorkspace ? (
         <>
           <MobileWorkspaceSwitcherHeader
             currentWorkspace={currentWorkspace}
             workspaces={navigationGroups.map((group) => group.workspace)}
             onSelectWorkspace={handleSelectWorkspace}
-            content={
-              <div
-                className="mobile-workspace-home-toolbar-summary"
-                aria-label={t("shell.workspaceHomeStatusSectionTitle")}
-              >
-                {statusRows.map((row) =>
-                  row.onClick ? (
-                    <button
-                      key={row.label}
-                      type="button"
-                      className="mobile-workspace-home-toolbar-metric"
-                      onClick={row.onClick}
-                    >
-                      <strong className="mobile-workspace-home-toolbar-metric-value">{row.value}</strong>
-                      <span className="mobile-workspace-home-toolbar-metric-label">{row.label}</span>
-                    </button>
-                  ) : (
-                    <div key={row.label} className="mobile-workspace-home-toolbar-metric" role="listitem">
-                      <strong className="mobile-workspace-home-toolbar-metric-value">{row.value}</strong>
-                      <span className="mobile-workspace-home-toolbar-metric-label">{row.label}</span>
-                    </div>
-                  )
-                )}
-              </div>
-            }
             sheetContent={(closeSheet) => (
               <div className="mobile-workspace-home-group mobile-workspace-home-sheet-group">
                 <button
@@ -500,75 +475,137 @@ export function WorkspaceHomePage() {
             )}
           />
 
-          <section className="mobile-workspace-home-section">
-            <div className="mobile-workspace-home-primary-actions">
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={handleOpenWorkspaceDetail}
+          <div className="mobile-page-top-body mobile-workspace-home-body">
+            <section className="mobile-workspace-home-section">
+              <div
+                className="mobile-workspace-home-metrics-card"
+                aria-label={t("shell.workspaceHomeStatusSectionTitle")}
               >
-                {t("shell.workspaceDetailTitle")}
-              </button>
-              <button
-                type="button"
-                className="primary-button"
-                onClick={handleStartSession}
-              >
-                {t("shell.createSession")}
-              </button>
-            </div>
-          </section>
+                <div className="mobile-workspace-home-toolbar-summary">
+                  {statusRows.map((row) =>
+                    row.onClick ? (
+                      <button
+                        key={row.label}
+                        type="button"
+                        className="mobile-workspace-home-toolbar-metric"
+                        onClick={row.onClick}
+                      >
+                        <strong className="mobile-workspace-home-toolbar-metric-value">{row.value}</strong>
+                        <span className="mobile-workspace-home-toolbar-metric-label">{row.label}</span>
+                      </button>
+                    ) : (
+                      <div key={row.label} className="mobile-workspace-home-toolbar-metric" role="listitem">
+                        <strong className="mobile-workspace-home-toolbar-metric-value">{row.value}</strong>
+                        <span className="mobile-workspace-home-toolbar-metric-label">{row.label}</span>
+                      </div>
+                    )
+                  )}
+                </div>
+              </div>
+            </section>
 
-          <section className="mobile-workspace-home-section">
-            <div className="mobile-workspace-home-group">
-              {quickStatusRows.map((row) => (
+            <section className="mobile-workspace-home-section">
+              <div className="mobile-workspace-home-primary-actions">
                 <button
-                  key={row.label}
                   type="button"
-                  className="mobile-workspace-home-row"
-                  onClick={row.onClick}
+                  className="secondary-button"
+                  onClick={handleOpenWorkspaceDetail}
                 >
-                  <span className="mobile-workspace-home-row-label">{row.label}</span>
-                  <span className="mobile-workspace-home-row-trailing">
-                    <strong>{row.value}</strong>
-                    <ChevronRightIcon />
-                  </span>
+                  {t("shell.workspaceDetailTitle")}
                 </button>
-              ))}
-            </div>
-          </section>
-
-          <section className="mobile-workspace-home-section">
-            <div className="mobile-workspace-home-section-header">
-              <p className="mobile-workspace-home-section-title">{t("shell.workspaceHomeActiveSessionsSectionTitle")}</p>
-              {currentWorkspace ? (
                 <button
                   type="button"
-                  className="mobile-workspace-home-link-button"
-                  onClick={openSessionIndex}
-                >
-                  {t("shell.workspaceHomeViewAllAction")}
-                </button>
-              ) : null}
-            </div>
-            <div className="mobile-workspace-home-group">
-              {sessionList.length === 0 ? (
-                <button
-                  type="button"
-                  className="mobile-workspace-home-row mobile-workspace-home-empty-row"
+                  className="primary-button"
                   onClick={handleStartSession}
                 >
-                  <div className="mobile-workspace-home-session-main">
-                    <span className="mobile-workspace-home-session-title">{t("shell.createSession")}</span>
-                    <span className="mobile-workspace-home-session-meta">{currentWorkspace.name}</span>
-                  </div>
-                  <span className="mobile-workspace-home-row-trailing">
-                    <ChevronRightIcon />
-                  </span>
+                  {t("shell.createSession")}
                 </button>
-              ) : (
-                sessionList.map((session) => {
-                  return (
+              </div>
+            </section>
+
+            <section className="mobile-workspace-home-section">
+              <div className="mobile-workspace-home-group">
+                {quickStatusRows.map((row) => (
+                  <button
+                    key={row.label}
+                    type="button"
+                    className="mobile-workspace-home-row"
+                    onClick={row.onClick}
+                  >
+                    <span className="mobile-workspace-home-row-label">{row.label}</span>
+                    <span className="mobile-workspace-home-row-trailing">
+                      <strong>{row.value}</strong>
+                      <ChevronRightIcon />
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            <section className="mobile-workspace-home-section">
+              <div className="mobile-workspace-home-section-header">
+                <p className="mobile-workspace-home-section-title">{t("shell.workspaceHomeActiveSessionsSectionTitle")}</p>
+                {currentWorkspace ? (
+                  <button
+                    type="button"
+                    className="mobile-workspace-home-link-button"
+                    onClick={openSessionIndex}
+                  >
+                    {t("shell.workspaceHomeViewAllAction")}
+                  </button>
+                ) : null}
+              </div>
+              <div className="mobile-workspace-home-group">
+                {sessionList.length === 0 ? (
+                  <button
+                    type="button"
+                    className="mobile-workspace-home-row mobile-workspace-home-empty-row"
+                    onClick={handleStartSession}
+                  >
+                    <div className="mobile-workspace-home-session-main">
+                      <span className="mobile-workspace-home-session-title">{t("shell.createSession")}</span>
+                      <span className="mobile-workspace-home-session-meta">{currentWorkspace.name}</span>
+                    </div>
+                    <span className="mobile-workspace-home-row-trailing">
+                      <ChevronRightIcon />
+                    </span>
+                  </button>
+                ) : (
+                  sessionList.map((session) => {
+                    return (
+                      <button
+                        key={session.sessionId}
+                        type="button"
+                        className="mobile-workspace-home-row mobile-workspace-home-session-row"
+                        onClick={() =>
+                          navigate(buildWorkspaceSessionPath(currentWorkspace.id, session.sessionId))
+                        }
+                      >
+                        <div className="mobile-workspace-home-session-main">
+                          <span className="mobile-workspace-home-session-title">
+                            {session.title || t("common.unknown")}
+                          </span>
+                          <span className="mobile-workspace-home-session-meta">
+                            {getProviderLabel(session.provider)} · {formatActivityTime(getSessionActivityTime(session))}
+                          </span>
+                        </div>
+                        <span className="mobile-workspace-home-row-trailing">
+                          <ChevronRightIcon />
+                        </span>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            </section>
+
+            {favoriteSessionList.length > 0 ? (
+              <section className="mobile-workspace-home-section">
+                <div className="mobile-workspace-home-section-header">
+                  <p className="mobile-workspace-home-section-title">{t("shell.favoriteSectionTitle")}</p>
+                </div>
+                <div className="mobile-workspace-home-group">
+                  {favoriteSessionList.map((session) => (
                     <button
                       key={session.sessionId}
                       type="button"
@@ -589,70 +626,40 @@ export function WorkspaceHomePage() {
                         <ChevronRightIcon />
                       </span>
                     </button>
-                  );
-                })
-              )}
-            </div>
-          </section>
-
-          {favoriteSessionList.length > 0 ? (
-            <section className="mobile-workspace-home-section">
-              <div className="mobile-workspace-home-section-header">
-                <p className="mobile-workspace-home-section-title">{t("shell.favoriteSectionTitle")}</p>
-              </div>
-              <div className="mobile-workspace-home-group">
-                {favoriteSessionList.map((session) => (
-                  <button
-                    key={session.sessionId}
-                    type="button"
-                    className="mobile-workspace-home-row mobile-workspace-home-session-row"
-                    onClick={() =>
-                      navigate(buildWorkspaceSessionPath(currentWorkspace.id, session.sessionId))
-                    }
-                  >
-                    <div className="mobile-workspace-home-session-main">
-                      <span className="mobile-workspace-home-session-title">
-                        {session.title || t("common.unknown")}
-                      </span>
-                      <span className="mobile-workspace-home-session-meta">
-                        {getProviderLabel(session.provider)} · {formatActivityTime(getSessionActivityTime(session))}
-                      </span>
-                    </div>
-                    <span className="mobile-workspace-home-row-trailing">
-                      <ChevronRightIcon />
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </section>
-          ) : null}
+                  ))}
+                </div>
+              </section>
+            ) : null}
+          </div>
         </>
       ) : (
-        <section className="mobile-workspace-home-section mobile-workspace-home-empty">
-          <p className="mobile-workspace-home-section-title">{t("shell.workspaceHomeSwitcherTitle")}</p>
-          <div className="mobile-workspace-home-group">
-            <button
-              type="button"
-              className="mobile-workspace-home-row"
-              onClick={() => setActionMode("import")}
-            >
-              <span className="mobile-workspace-home-row-label">{t("shell.importWorkspaceTitle")}</span>
-              <span className="mobile-workspace-home-row-trailing">
-                <ChevronRightIcon />
-              </span>
-            </button>
-            <button
-              type="button"
-              className="mobile-workspace-home-row"
-              onClick={() => setActionMode("clone")}
-            >
-              <span className="mobile-workspace-home-row-label">{t("shell.cloneWorkspaceTitle")}</span>
-              <span className="mobile-workspace-home-row-trailing">
-                <ChevronRightIcon />
-              </span>
-            </button>
-          </div>
-        </section>
+        <div className="mobile-page-top-body mobile-workspace-home-body">
+          <section className="mobile-workspace-home-section mobile-workspace-home-empty">
+            <p className="mobile-workspace-home-section-title">{t("shell.workspaceHomeSwitcherTitle")}</p>
+            <div className="mobile-workspace-home-group">
+              <button
+                type="button"
+                className="mobile-workspace-home-row"
+                onClick={() => setActionMode("import")}
+              >
+                <span className="mobile-workspace-home-row-label">{t("shell.importWorkspaceTitle")}</span>
+                <span className="mobile-workspace-home-row-trailing">
+                  <ChevronRightIcon />
+                </span>
+              </button>
+              <button
+                type="button"
+                className="mobile-workspace-home-row"
+                onClick={() => setActionMode("clone")}
+              >
+                <span className="mobile-workspace-home-row-label">{t("shell.cloneWorkspaceTitle")}</span>
+                <span className="mobile-workspace-home-row-trailing">
+                  <ChevronRightIcon />
+                </span>
+              </button>
+            </div>
+          </section>
+        </div>
       )}
 
       <WorkspaceImportBrowserModal

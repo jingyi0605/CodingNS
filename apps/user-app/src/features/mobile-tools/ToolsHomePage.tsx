@@ -221,7 +221,6 @@ export function ToolsHomePage() {
       {currentWorkspace ? (
         <>
           <MobileWorkspaceSwitcherHeader
-            className="mobile-tools-page-header"
             currentWorkspace={currentWorkspace}
             workspaces={navigationGroups.map((group) => group.workspace)}
             onSelectWorkspace={(workspaceId) => {
