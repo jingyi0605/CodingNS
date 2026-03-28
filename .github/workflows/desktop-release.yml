@@ -79,7 +79,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: pnpm --dir apps/desktop build -- ${{ matrix.tauri_args }}
+        run: pnpm --dir apps/desktop exec tauri build ${{ matrix.tauri_args }}
 
       - name: Upload bundle artifacts
         uses: actions/upload-artifact@v4
