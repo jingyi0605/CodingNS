@@ -180,7 +180,7 @@ export function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [showServerModal, setShowServerModal] = useState(false);
   const [focusedField, setFocusedField] = useState<string | null>(null);
-  const authStatus = useAuthSelector((state) => state.status);
+  const authSession = useAuthSelector((state) => state.session);
   const returnTo = useMemo(() => searchParams.get("returnTo") ?? "/", [searchParams]);
   const { theme } = useTheme();
 
@@ -203,7 +203,7 @@ export function LoginPage() {
   }, [persistedServerBaseUrl, rememberPasswordSupported, rememberedServerBaseUrl]);
 
   useEffect(() => {
-    if (authStatus === "authenticated") {
+    if (authSession) {
       navigate(returnTo, { replace: true });
       return;
     }
@@ -229,7 +229,7 @@ export function LoginPage() {
     return () => {
       disposed = true;
     };
-  }, [authStatus, navigate, probeServerBaseUrl, returnTo, t]);
+  }, [authSession, navigate, probeServerBaseUrl, returnTo, t]);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -299,10 +299,10 @@ export function LoginPage() {
         {/* Logo / Brand */}
         <div className="cyber-brand">
           <div className="cyber-logo">
-            <img src="/logo.svg" alt="CodingNS" className="cyber-logo-svg" />
+            <img src="/logo.png" alt="CodingNS" className="cyber-logo-svg" />
           </div>
           <h1 className="cyber-brand-title">
-            <GlitchText text="CODING NS" />
+            <GlitchText text="CodingNS" />
           </h1>
           <p className="cyber-brand-subtitle">
             <TypewriterText text={t("auth.loginSubtitle")} />

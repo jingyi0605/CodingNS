@@ -1,4 +1,8 @@
-import { authStore, type AuthSession } from "../features/auth/store/auth-store";
+import {
+  authStore,
+  type AuthRefreshResult,
+  type AuthSession
+} from "../features/auth/store/auth-store";
 
 export const authGateway = {
   login(username: string, password: string, baseUrl?: string): Promise<AuthSession> {
@@ -7,7 +11,7 @@ export const authGateway = {
   bootstrap(username: string, password: string, baseUrl?: string): Promise<void> {
     return authStore.bootstrap(username, password, baseUrl);
   },
-  refresh(): Promise<AuthSession | null> {
+  refresh(): Promise<AuthRefreshResult> {
     return authStore.refresh();
   },
   logout(): void {

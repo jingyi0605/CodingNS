@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 
 import { getHostBaseUrl } from "../../../config/env";
+import { ApiError } from "../../../shared/network/api-error";
 import { loginRequest, refreshRequest, setupRequest } from "../api/auth-api";
 
 export interface AuthenticatedUser {
@@ -20,6 +21,21 @@ export interface AuthState {
   status: "anonymous" | "authenticated" | "refreshing";
   session: AuthSession | null;
 }
+
+export type AuthRefreshResult =
+  | {
+      status: "refreshed";
+      session: AuthSession;
+    }
+  | {
+      status: "invalid";
+      session: null;
+    }
+  | {
+      status: "deferred";
+      session: AuthSession | null;
+      error: unknown;
+    };
 
 type AuthListener = () => void;
 
@@ -75,12 +91,16 @@ class AuthStore {
     this.setSession(session);
   }
 
-  async refresh(): Promise<AuthSession | null> {
-    const refreshToken = this.state.session?.refreshToken;
+  async refresh(): Promise<AuthRefreshResult> {
+    const previousSession = this.state.session;
+    const refreshToken = previousSession?.refreshToken;
 
     if (!refreshToken) {
       this.clear();
-      return null;
+      return {
+        status: "invalid",
+        session: null
+      };
     }
 
     this.state = {
@@ -92,10 +112,30 @@ class AuthStore {
     try {
       const nextSession = await refreshRequest({ refreshToken });
       this.setSession(nextSession);
-      return nextSession;
-    } catch {
-      this.clear();
-      return null;
+      return {
+        status: "refreshed",
+        session: nextSession
+      };
+    } catch (error) {
+      if (shouldClearSessionAfterRefreshFailure(error)) {
+        this.clear();
+        return {
+          status: "invalid",
+          session: null
+        };
+      }
+
+      this.state = {
+        status: previousSession ? "authenticated" : "anonymous",
+        session: previousSession
+      };
+      this.emit();
+
+      return {
+        status: "deferred",
+        session: previousSession,
+        error
+      };
     }
   }
 
@@ -133,19 +173,10 @@ class AuthStore {
       const currentBaseUrl = getHostBaseUrl();
 
       if (isStoredAuthSession(parsed)) {
-        if (parsed.serverBaseUrl && !canReuseStoredSession(parsed.serverBaseUrl, currentBaseUrl)) {
-          window.localStorage.removeItem(STORAGE_KEY);
-          return null;
-        }
-
         if (parsed.serverBaseUrl && parsed.serverBaseUrl !== currentBaseUrl) {
-          window.localStorage.setItem(
-            STORAGE_KEY,
-            JSON.stringify({
-              serverBaseUrl: currentBaseUrl,
-              session: parsed.session
-            } satisfies StoredAuthSession)
-          );
+          // 应用启动早期客户端配置还没完成恢复，不能用 fallback host 去误删已保存登录态。
+          // 真正的跨服务端失效会在后续请求里由 401/refresh 结果来收口。
+          return parsed.session;
         }
 
         return parsed.session;
@@ -200,17 +231,14 @@ function isAuthSession(value: unknown): value is AuthSession {
   );
 }
 
-function canReuseStoredSession(storedBaseUrl: string, currentBaseUrl: string): boolean {
-  if (storedBaseUrl === currentBaseUrl) {
-    return true;
-  }
-
-  if (!import.meta.env.DEV || typeof window === "undefined") {
+function shouldClearSessionAfterRefreshFailure(error: unknown): boolean {
+  if (!(error instanceof ApiError)) {
     return false;
   }
 
-  const windowOrigin = window.location.origin;
+  if (error.status === 401) {
+    return true;
+  }
 
-  // 兼容开发环境从前端代理地址迁移到直连后端地址，避免一次配置修正把本地登录态全部清空。
-  return storedBaseUrl === windowOrigin;
+  return error.status === 403 && error.errorCode === "BOOTSTRAP_REQUIRED";
 }

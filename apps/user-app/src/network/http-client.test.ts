@@ -108,12 +108,16 @@ describe("httpClient", () => {
   it("401 TOKEN_EXPIRED 时会先刷新登录态再重试原请求", async () => {
     const fetchMock = vi.mocked(fetch);
     const refreshSpy = vi.spyOn(authStore, "refresh").mockImplementation(async () => {
-      authStore.hydrate({
+      const nextSession = {
         ...session,
         accessToken: "access-token-next"
-      });
+      };
+      authStore.hydrate(nextSession);
 
-      return authStore.getState().session;
+      return {
+        status: "refreshed",
+        session: nextSession
+      };
     });
 
     fetchMock
@@ -151,6 +155,41 @@ describe("httpClient", () => {
 
     expect(firstHeaders.get("Authorization")).toBe("Bearer access-token");
     expect(secondHeaders.get("Authorization")).toBe("Bearer access-token-next");
+  });
+
+  it("刷新登录态只是暂时不可用时，不会清空本地会话", async () => {
+    const fetchMock = vi.mocked(fetch);
+    const refreshSpy = vi.spyOn(authStore, "refresh").mockResolvedValue({
+      status: "deferred",
+      session,
+      error: new Error("network down")
+    });
+
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          detail: "access token 已过期",
+          error_code: "TOKEN_EXPIRED"
+        }),
+        {
+          status: 401,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      )
+    );
+
+    await expect(httpClient.request("/api/demo")).rejects.toMatchObject({
+      name: "ApiError",
+      status: 0,
+      errorCode: "AUTH_REFRESH_UNAVAILABLE",
+      message: "登录态暂时无法恢复，请稍后重试"
+    } satisfies Partial<ApiError>);
+
+    expect(refreshSpy).toHaveBeenCalledTimes(1);
+    expect(authStore.getState().status).toBe("authenticated");
+    expect(authStore.getState().session).toEqual(session);
   });
 
   it("403 BOOTSTRAP_REQUIRED 时会清理残留登录态", async () => {

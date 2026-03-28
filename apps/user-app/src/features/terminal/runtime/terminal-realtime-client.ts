@@ -67,6 +67,7 @@ export interface TerminalRealtimeClientOptions {
 export class TerminalRealtimeClient {
   private socket: WebSocket | null = null;
   private disposed = false;
+  private authRecoveryInFlight = false;
   private manuallyDisconnected = false;
   private lastCursor: string | null;
   private isSubscribed = false;
@@ -210,7 +211,7 @@ export class TerminalRealtimeClient {
 
       if (payload.type === "terminal.error") {
         if (payload.error_code === "UNAUTHORIZED") {
-          this.options.onUnauthorized();
+          this.handleUnauthorized();
           return;
         }
 
@@ -263,6 +264,38 @@ export class TerminalRealtimeClient {
       }
 
       this.connectionManager.markTransientFailure();
+    });
+  }
+
+  private handleUnauthorized(): void {
+    if (this.authRecoveryInFlight || this.disposed) {
+      return;
+    }
+
+    this.authRecoveryInFlight = true;
+    const socket = this.socket;
+    this.socket = null;
+    this.isSubscribed = false;
+    socket?.close();
+
+    void authStore.refresh().then((result) => {
+      this.authRecoveryInFlight = false;
+
+      if (this.disposed || this.manuallyDisconnected) {
+        return;
+      }
+
+      if (result.status === "refreshed") {
+        this.connectionManager.reconnectNow();
+        return;
+      }
+
+      if (result.status === "deferred") {
+        this.connectionManager.markDisconnected();
+        return;
+      }
+
+      this.options.onUnauthorized();
     });
   }
 

@@ -123,4 +123,39 @@ describe("WorkbenchRealtimeClient", () => {
 
     client.close();
   });
+
+  it("收到未授权事件时会先尝试恢复登录态，而不是立刻回登录页", async () => {
+    const onUnauthorized = vi.fn();
+    const refreshSpy = vi.spyOn(authStore, "refresh").mockResolvedValue({
+      status: "deferred",
+      session,
+      error: new Error("host booting")
+    });
+    const client = new WorkbenchRealtimeClient({
+      onConnectionChange: () => undefined,
+      onSnapshot: () => undefined,
+      onUnauthorized
+    });
+
+    client.start();
+
+    const socket = MockWebSocket.instances[0];
+
+    socket?.dispatchEvent(
+      new MessageEvent("message", {
+        data: JSON.stringify({
+          type: "session.error",
+          error_code: "UNAUTHORIZED",
+          detail: "access token 无效"
+        })
+      })
+    );
+
+    await vi.waitFor(() => {
+      expect(refreshSpy).toHaveBeenCalledTimes(1);
+    });
+    expect(onUnauthorized).not.toHaveBeenCalled();
+
+    client.close();
+  });
 });

@@ -23,10 +23,10 @@ import { WorkbenchLandingPage } from "../features/workbench/pages/WorkbenchLandi
 import { SettingsPage } from "../features/settings/pages/SettingsPage";
 
 function RequireAuth() {
-  const status = useAuthSelector((state) => state.status);
+  const session = useAuthSelector((state) => state.session);
   const location = useLocation();
 
-  if (status !== "authenticated") {
+  if (!session) {
     const returnTo = `${location.pathname}${location.search}`;
 
     if (import.meta.env.MODE === "test") {

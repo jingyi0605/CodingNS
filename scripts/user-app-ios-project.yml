@@ -1,0 +1,157 @@
+name: app
+options:
+  bundleIdPrefix: com.codingns.userapp
+  deploymentTarget:
+    iOS: 14.0
+fileGroups: [../../src]
+configs:
+  debug: debug
+  release: release
+settingGroups:
+  app:
+    base:
+      PRODUCT_NAME: CodingNS
+      PRODUCT_BUNDLE_IDENTIFIER: com.codingns.userapp
+targetTemplates:
+  app:
+    type: application
+    sources:
+      - path: Sources
+    settings:
+      groups: [app]
+targets:
+  app_iOS:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+      - path: Assets.xcassets
+      - path: app_iOS
+      - path: assets
+        buildPhase: resources
+        type: folder
+      - path: LaunchScreen.storyboard
+    info:
+      path: app_iOS/Info.plist
+      properties:
+        LSRequiresIPhoneOS: true
+        UILaunchStoryboardName: LaunchScreen
+        UIRequiredDeviceCapabilities: [arm64, metal]
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        CFBundleShortVersionString: 0.1.0
+        CFBundleVersion: "0.1.0"
+    entitlements:
+      path: app_iOS/app_iOS.entitlements
+    settings:
+      base:
+        ENABLE_BITCODE: false
+        ARCHS: [arm64]
+        VALID_ARCHS: arm64
+        LIBRARY_SEARCH_PATHS[arch=x86_64]: $(inherited) $(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(TOOLCHAIN_DIR)/usr/lib/swift/$(PLATFORM_NAME) $(TOOLCHAIN_DIR)/usr/lib/swift-5.0/$(PLATFORM_NAME)
+        LIBRARY_SEARCH_PATHS[arch=arm64]: $(inherited) $(PROJECT_DIR)/Externals/arm64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(TOOLCHAIN_DIR)/usr/lib/swift/$(PLATFORM_NAME) $(TOOLCHAIN_DIR)/usr/lib/swift-5.0/$(PLATFORM_NAME)
+        ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: true
+        EXCLUDED_ARCHS[sdk=iphoneos*]: x86_64
+      groups: [app]
+    dependencies:
+      - framework: libapp.a
+        embed: false
+      - sdk: CoreGraphics.framework
+      - sdk: Metal.framework
+      - sdk: MetalKit.framework
+      - sdk: QuartzCore.framework
+      - sdk: Security.framework
+      - sdk: UIKit.framework
+      - sdk: WebKit.framework
+    preBuildScripts:
+      - script: |-
+          set -e
+          DIST_DIR="$SRCROOT/../../../dist"
+          ASSETS_DIR="$SRCROOT/assets"
+          if [ ! -f "$DIST_DIR/index.html" ]; then
+            echo "未找到前端构建产物: $DIST_DIR/index.html" >&2
+            echo "请先在 apps/user-app 执行 pnpm build，或使用 scripts/build-ios.sh 自动构建。" >&2
+            exit 1
+          fi
+          mkdir -p "$ASSETS_DIR"
+          rsync -a --delete "$DIST_DIR/" "$ASSETS_DIR/"
+        name: Sync Frontend Assets
+        basedOnDependencyAnalysis: false
+      - script: |-
+          set -e
+          export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
+          export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
+          export PATH="$CARGO_HOME/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+          if ! command -v cargo >/dev/null 2>&1; then
+            echo "未找到 cargo，请确认 Rust 已安装到 $CARGO_HOME/bin" >&2
+            exit 1
+          fi
+          MANIFEST_PATH="$SRCROOT/../../Cargo.toml"
+          PROFILE="debug"
+          CARGO_ARGS=""
+          CARGO_FEATURE_ARGS=""
+          if [ "$CONFIGURATION" = "release" ]; then
+            PROFILE="release"
+            CARGO_ARGS="--release"
+            CARGO_FEATURE_ARGS="--features custom-protocol"
+          fi
+          for ARCH in ${ARCHS}; do
+            case "$PLATFORM_NAME:$ARCH" in
+              iphonesimulator:arm64)
+                CARGO_TARGET="aarch64-apple-ios-sim"
+                OUTPUT_ARCH_DIR="arm64"
+                ;;
+              iphonesimulator:x86_64)
+                CARGO_TARGET="x86_64-apple-ios"
+                OUTPUT_ARCH_DIR="x86_64"
+                ;;
+              iphoneos:arm64)
+                CARGO_TARGET="aarch64-apple-ios"
+                OUTPUT_ARCH_DIR="arm64"
+                ;;
+              *)
+                echo "不支持的 iOS 构建目标: $PLATFORM_NAME / $ARCH" >&2
+                exit 1
+                ;;
+            esac
+            cargo build --manifest-path "$MANIFEST_PATH" --target "$CARGO_TARGET" --lib $CARGO_ARGS $CARGO_FEATURE_ARGS
+            OUTPUT_DIR="$SRCROOT/Externals/$OUTPUT_ARCH_DIR/$CONFIGURATION"
+            mkdir -p "$OUTPUT_DIR"
+            cp "$SRCROOT/../../target/$CARGO_TARGET/$PROFILE/libapp_lib.a" "$OUTPUT_DIR/libapp.a"
+          done
+        name: Build Rust Code
+        basedOnDependencyAnalysis: false
+        outputFiles:
+          - $(SRCROOT)/Externals/x86_64/${CONFIGURATION}/libapp.a
+          - $(SRCROOT)/Externals/arm64/${CONFIGURATION}/libapp.a
+schemes:
+  app_iOS:
+    build:
+      targets:
+        app_iOS: all
+    run:
+      config: release
+      environmentVariables:
+        RUST_BACKTRACE: full
+        RUST_LOG: info
+    test:
+      config: debug
+      environmentVariables:
+        RUST_BACKTRACE: full
+        RUST_LOG: info
+    profile:
+      config: release
+      environmentVariables:
+        RUST_BACKTRACE: full
+        RUST_LOG: info
+    analyze:
+      config: debug
+    archive:
+      config: release
