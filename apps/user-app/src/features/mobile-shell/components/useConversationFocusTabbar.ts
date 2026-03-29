@@ -21,6 +21,8 @@ interface UseConversationFocusTabbarResult {
 }
 
 interface DragGestureState {
+  readonly surface: "composer" | "conversation";
+  readonly startX: number;
   readonly startY: number;
   readonly pointerType: "touch" | "pointer";
   readonly initialState: "visible" | "hidden";
@@ -55,9 +57,13 @@ export function useConversationFocusTabbar({
   function scheduleAutoHide() {
     clearAutoHideTimer(autoHideTimerRef);
     autoHideTimerRef.current = window.setTimeout(() => {
-      setState("hidden");
-      setProgress(0);
+      hideTabbar();
     }, AUTO_HIDE_DELAY_MS);
+  }
+
+  function hideTabbar() {
+    setState("hidden");
+    setProgress(0);
   }
 
   function revealTabbar() {
@@ -122,6 +128,8 @@ export function useConversationFocusTabbar({
       }
 
       dragGestureRef.current = {
+        surface: gestureSurface,
+        startX: touchPoint.clientX,
         startY: touchPoint.clientY,
         pointerType: "touch",
         initialState: stateRef.current === "visible" ? "visible" : "hidden",
@@ -148,7 +156,26 @@ export function useConversationFocusTabbar({
         return;
       }
 
+      const horizontalDistance = touchPoint.clientX - gesture.startX;
       const verticalDistance = touchPoint.clientY - gesture.startY;
+
+      if (gesture.surface === "conversation") {
+        if (
+          Math.abs(verticalDistance) <= DRAG_START_THRESHOLD_PX
+          || Math.abs(verticalDistance) <= Math.abs(horizontalDistance)
+        ) {
+          return;
+        }
+
+        dragGestureRef.current = null;
+
+        if (gesture.initialState === "visible") {
+          hideTabbar();
+        }
+
+        return;
+      }
+
       const dragDistance =
         gesture.initialState === "hidden" ? -verticalDistance : verticalDistance;
 
@@ -233,6 +260,8 @@ export function useConversationFocusTabbar({
       }
 
       dragGestureRef.current = {
+        surface: gestureSurface,
+        startX: event.clientX,
         startY: event.clientY,
         pointerType: "pointer",
         initialState: stateRef.current === "visible" ? "visible" : "hidden",
@@ -262,7 +291,26 @@ export function useConversationFocusTabbar({
         return;
       }
 
+      const horizontalDistance = event.clientX - gesture.startX;
       const verticalDistance = event.clientY - gesture.startY;
+
+      if (gesture.surface === "conversation") {
+        if (
+          Math.abs(verticalDistance) <= DRAG_START_THRESHOLD_PX
+          || Math.abs(verticalDistance) <= Math.abs(horizontalDistance)
+        ) {
+          return;
+        }
+
+        dragGestureRef.current = null;
+
+        if (gesture.initialState === "visible") {
+          hideTabbar();
+        }
+
+        return;
+      }
+
       const dragDistance =
         gesture.initialState === "hidden" ? -verticalDistance : verticalDistance;
 
@@ -418,7 +466,15 @@ function resolveConversationGestureSurface(target: EventTarget | null) {
     return null;
   }
 
-  return target.closest<HTMLElement>(".composer-panel");
+  if (target.closest(".composer-panel")) {
+    return "composer";
+  }
+
+  if (target.closest(".message-list, .message-timeline, .mobile-conversation-main, .conversation-page-shell")) {
+    return "conversation";
+  }
+
+  return null;
 }
 
 function clamp(value: number, min: number, max: number) {

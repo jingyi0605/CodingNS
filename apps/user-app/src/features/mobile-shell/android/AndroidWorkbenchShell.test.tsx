@@ -96,6 +96,31 @@ describe("AndroidWorkbenchShell", () => {
     expect(shell).toHaveAttribute("data-conversation-tabbar-state", "hidden");
   });
 
+  it("supports hiding the bottom nav by swiping inside the conversation list", () => {
+    vi.useFakeTimers();
+
+    renderAndroidShell({
+      initialEntries: ["/", "/workspaces/workspace-1/sessions/session-1"],
+      initialIndex: 1,
+      presentation: "conversation-focus",
+      childVariant: "conversation"
+    });
+    const shell = document.querySelector(".android-workbench-shell");
+    const messageList = document.querySelector(".message-list") as HTMLElement | null;
+
+    expect(shell).toHaveAttribute("data-conversation-tabbar-state", "visible");
+    expect(messageList).not.toBeNull();
+
+    fireEvent.touchStart(messageList!, {
+      touches: [{ clientX: 120, clientY: 620, identifier: 1 }]
+    });
+    fireEvent.touchMove(messageList!, {
+      touches: [{ clientX: 126, clientY: 560, identifier: 1 }]
+    });
+
+    expect(shell).toHaveAttribute("data-conversation-tabbar-state", "hidden");
+  });
+
   it("shows a back button on the processes tool page and returns to tools home", () => {
     window.localStorage.setItem("mobile.tools.last-primary-tool", "git");
 

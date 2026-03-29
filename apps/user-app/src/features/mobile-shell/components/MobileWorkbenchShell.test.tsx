@@ -264,7 +264,7 @@ describe("MobileWorkbenchShell", () => {
     expect(shell).toHaveAttribute("data-conversation-tabbar-state", "hidden");
   });
 
-  it("在消息列表上滑不会误触发底部导航拖拽", () => {
+  it("在消息列表里竖向滑动时，会直接收起底部导航", () => {
     vi.useFakeTimers();
     const view = renderMobileShell({
       presentation: "conversation-focus",
@@ -274,24 +274,13 @@ describe("MobileWorkbenchShell", () => {
     const messageList = view.container.querySelector(".message-list") as HTMLElement | null;
 
     expect(messageList).not.toBeNull();
-
-    act(() => {
-      vi.advanceTimersByTime(3000);
-    });
-
-    expect(shell).toHaveAttribute("data-conversation-tabbar-state", "hidden");
+    expect(shell).toHaveAttribute("data-conversation-tabbar-state", "visible");
 
     fireEvent.touchStart(messageList!, {
-      touches: [{ clientY: 620 }]
+      touches: [{ clientX: 120, clientY: 620, identifier: 1 }]
     });
     fireEvent.touchMove(messageList!, {
-      touches: [{ clientY: 560 }]
-    });
-
-    expect(shell).toHaveAttribute("data-conversation-tabbar-state", "hidden");
-
-    fireEvent.touchEnd(messageList!, {
-      changedTouches: [{ clientY: 560 }]
+      touches: [{ clientX: 126, clientY: 560, identifier: 1 }]
     });
 
     expect(shell).toHaveAttribute("data-conversation-tabbar-state", "hidden");
@@ -361,7 +350,7 @@ describe("MobileWorkbenchShell", () => {
     expect(shell).toHaveAttribute("data-conversation-tabbar-state", "dragging");
   });
 
-  it("滚动消息列表不会触发底部导航显隐，只有输入区手势才会触发", () => {
+  it("消息列表竖向滑动时不会阻塞原生滚动", () => {
     vi.useFakeTimers();
     const view = renderMobileShell({
       presentation: "conversation-focus",
@@ -371,32 +360,20 @@ describe("MobileWorkbenchShell", () => {
     const messageList = view.container.querySelector(".message-list") as HTMLDivElement | null;
 
     expect(messageList).not.toBeNull();
+    expect(shell).toHaveAttribute("data-conversation-tabbar-state", "visible");
 
-    Object.defineProperty(messageList, "scrollTop", {
-      configurable: true,
-      writable: true,
-      value: 120
+    fireEvent.touchStart(messageList!, {
+      touches: [{ clientX: 120, clientY: 620, identifier: 1 }]
     });
 
-    act(() => {
-      vi.advanceTimersByTime(3000);
+    const touchMoveEvent = createEvent.touchMove(messageList!, {
+      touches: [{ clientX: 124, clientY: 560, identifier: 1 }]
     });
+    const preventDefaultSpy = vi.spyOn(touchMoveEvent, "preventDefault");
 
-    expect(shell).toHaveAttribute("data-conversation-tabbar-state", "hidden");
+    fireEvent(messageList!, touchMoveEvent);
 
-    fireEvent.scroll(messageList!);
-    expect(shell).toHaveAttribute("data-conversation-tabbar-state", "hidden");
-
-    messageList!.scrollTop = 116;
-    fireEvent.scroll(messageList!);
-    expect(shell).toHaveAttribute("data-conversation-tabbar-state", "hidden");
-
-    messageList!.scrollTop = 110;
-    fireEvent.scroll(messageList!);
-    expect(shell).toHaveAttribute("data-conversation-tabbar-state", "hidden");
-
-    messageList!.scrollTop = 100;
-    fireEvent.scroll(messageList!);
+    expect(preventDefaultSpy).not.toHaveBeenCalled();
     expect(shell).toHaveAttribute("data-conversation-tabbar-state", "hidden");
   });
 
