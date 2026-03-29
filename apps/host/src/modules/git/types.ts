@@ -106,6 +106,12 @@ export interface GitRemoteSyncResult {
   stderr: string;
 }
 
+export interface GitRemoteItem {
+  name: string;
+  fetchUrl: string;
+  pushUrl: string;
+}
+
 export interface GitUndoCommitResult {
   summary: string;
   commitHash: string;

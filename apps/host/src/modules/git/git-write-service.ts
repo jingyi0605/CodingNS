@@ -208,13 +208,15 @@ export class GitWriteService {
 
   async syncRemote(
     workspaceId: string,
-    action: GitRemoteSyncResult["action"]
+    action: GitRemoteSyncResult["action"],
+    remoteName?: string
   ): Promise<GitRemoteSyncResult> {
     const repo = await this.workspaceRepoGuard.resolve(workspaceId);
     const currentBranch = (await this.gitReadService.getStatus(workspaceId)).snapshot.branch;
+    const remote = remoteName || "origin";
     const remoteUrl = await this.gitCommandRunner.run(
       repo.repoRoot,
-      ["remote", "get-url", "origin"],
+      ["remote", "get-url", remote],
       {
         allowNonZeroExit: true,
         workspaceId,
@@ -226,18 +228,18 @@ export class GitWriteService {
       throw new AppError({
         statusCode: 404,
         errorCode: "REMOTE_NOT_FOUND",
-        detail: "Origin remote is not configured"
+        detail: `Remote '${remote}' is not configured`
       });
     }
 
     const args =
       action === "fetch"
-        ? ["fetch", "origin"]
+        ? ["fetch", remote]
         : action === "pull"
-          ? ["pull", "--ff-only", "origin", currentBranch]
+          ? ["pull", "--ff-only", remote, currentBranch]
           : action === "push"
-            ? ["push", "origin", currentBranch]
-            : ["push", "--set-upstream", "origin", currentBranch];
+            ? ["push", remote, currentBranch]
+            : ["push", "--set-upstream", remote, currentBranch];
     const result = await this.gitCommandRunner.run(repo.repoRoot, args, {
       allowNonZeroExit: true,
       timeoutMs: 60_000,

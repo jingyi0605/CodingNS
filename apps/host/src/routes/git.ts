@@ -20,5 +20,6 @@ export async function registerGitRoutes(
   app.get("/api/git/history", gitController.getHistory);
   app.get("/api/git/branches", gitController.getBranches);
   app.post("/api/git/branches/switch", gitController.switchBranch);
+  app.get("/api/git/remotes", gitController.getRemotes);
   app.post("/api/git/remote/sync", gitController.syncRemote);
 }

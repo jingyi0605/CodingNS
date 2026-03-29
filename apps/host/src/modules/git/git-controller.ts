@@ -60,6 +60,7 @@ interface CommitPayloadBody {
 interface RemoteSyncBody {
   workspaceId?: string;
   action?: "fetch" | "pull" | "push" | "publish";
+  remote?: string;
 }
 
 export class GitController {
@@ -257,6 +258,13 @@ export class GitController {
     );
   };
 
+  readonly getRemotes = async (
+    request: FastifyRequest<{ Querystring: WorkspaceQuery }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(await this.gitReadService.getRemotes(requireWorkspaceId(request.query.workspaceId)));
+  };
+
   readonly syncRemote = async (
     request: FastifyRequest<{ Body: RemoteSyncBody }>,
     reply: FastifyReply
@@ -273,7 +281,11 @@ export class GitController {
     }
 
     reply.send(
-      await this.gitWriteService.syncRemote(requireWorkspaceId(request.body.workspaceId), action)
+      await this.gitWriteService.syncRemote(
+        requireWorkspaceId(request.body.workspaceId),
+        action,
+        request.body.remote
+      )
     );
   };
 

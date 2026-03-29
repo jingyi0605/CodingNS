@@ -8,6 +8,7 @@ import type {
   GitHistoryItem,
   GitHistoryRef,
   GitHistoryPage,
+  GitRemoteItem,
   GitRepoSnapshot
 } from "./types.js";
 import type { WorkspaceRepoGuard } from "./workspace-repo-guard.js";
@@ -254,6 +255,42 @@ export class GitReadService {
       local,
       remote
     };
+  }
+
+  async getRemotes(workspaceId: string): Promise<GitRemoteItem[]> {
+    const repo = await this.workspaceRepoGuard.resolve(workspaceId);
+    const result = await this.gitCommandRunner.run(
+      repo.repoRoot,
+      ["remote", "-v"],
+      {
+        workspaceId,
+        operation: "gitRead.getRemotes"
+      }
+    );
+
+    const remotes = new Map<string, GitRemoteItem>();
+
+    for (const line of result.stdout.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+
+      const match = trimmed.match(/^(\S+)\s+(\S+)\s+\((fetch|push)\)/);
+      if (!match) continue;
+
+      const [, name, url, kind] = match;
+      const existing = remotes.get(name);
+      if (existing) {
+        if (kind === "push") existing.pushUrl = url;
+      } else {
+        remotes.set(name, {
+          name,
+          fetchUrl: kind === "fetch" ? url : url,
+          pushUrl: kind === "push" ? url : url
+        });
+      }
+    }
+
+    return Array.from(remotes.values());
   }
 }
 

@@ -18,6 +18,7 @@ import {
   createCommitDraft,
   discardGitTargets,
   getGitBranches,
+  getGitRemotes,
   getGitStatus,
   getGitHistory,
   stageGitTargets,
@@ -29,6 +30,7 @@ import {
   type GitBranchSnapshotDto,
   type GitChangeItemDto,
   type GitHistoryItemDto,
+  type GitRemoteItemDto,
   type GitStatusDto
 } from "../api/git-api";
 import {
@@ -36,6 +38,7 @@ import {
   resolveFileTreeIconLabel
 } from "./file-tree-icon";
 import { useWorkbenchShell } from "./WorkbenchLayout";
+import { WorkbenchModal } from "./WorkbenchModal";
 
 interface GitSidebarProps {
   className?: string;
@@ -110,6 +113,11 @@ export function GitSidebar({ className, workspaceId }: GitSidebarProps) {
   const [mobileActionMenuVariant, setMobileActionMenuVariant] = useState<"staged" | "unstaged" | null>(null);
   const [mobileExpandedSection, setMobileExpandedSection] = useState<MobileGitSectionKey>("unstaged");
   const [mobileHistoryMenuCommitHash, setMobileHistoryMenuCommitHash] = useState<string | null>(null);
+  const [pushRemoteModalOpen, setPushRemoteModalOpen] = useState(false);
+  const [pushRemotes, setPushRemotes] = useState<GitRemoteItemDto[]>([]);
+  const [pushRemotesLoading, setPushRemotesLoading] = useState(false);
+  const [pushSelectedRemotes, setPushSelectedRemotes] = useState<Set<string>>(new Set());
+  const [pushResults, setPushResults] = useState<Map<string, { ok: boolean; summary: string }>>(new Map());
   const [mobileSwipeRowState, setMobileSwipeRowState] = useState<{
     path: string;
     direction: MobileSwipeDirection;
@@ -557,27 +565,82 @@ export function GitSidebar({ className, workspaceId }: GitSidebarProps) {
       return;
     }
 
-    setActioning(true);
-
+    setPushRemotesLoading(true);
     try {
-      const result = await syncGitRemote(workspaceId, "push");
+      const remotes = await getGitRemotes(workspaceId);
+      if (remotes.length === 0) {
+        showToast({ title: t("git.noRemotes"), tone: "error" });
+        return;
+      }
+      if (remotes.length === 1) {
+        void handlePushToRemotes([remotes[0].name]);
+        return;
+      }
+      setPushRemotes(remotes);
+      setPushSelectedRemotes(new Set());
+      setPushResults(new Map());
+      setPushRemoteModalOpen(true);
+    } catch (error) {
+      showToast({ title: readError(error, t("git.remoteFailed")), tone: "error" });
+    } finally {
+      setPushRemotesLoading(false);
+    }
+  }
+
+  async function handlePushToRemotes(remoteNames: string[]) {
+    if (!workspaceId || remoteNames.length === 0) {
+      return;
+    }
+
+    setActioning(true);
+    setPushResults(new Map());
+
+    // 并行推送到所有选中的远程仓库
+    const settled = await Promise.allSettled(
+      remoteNames.map(async (name) => {
+        const result = await syncGitRemote(workspaceId, "push", name);
+        return { name, summary: result.summary };
+      })
+    );
+
+    const results = new Map<string, { ok: boolean; summary: string }>();
+    let hasError = false;
+
+    for (const item of settled) {
+      if (item.status === "fulfilled") {
+        results.set(item.value.name, { ok: true, summary: item.value.summary });
+      } else {
+        hasError = true;
+        const remoteName = remoteNames[results.size];
+        results.set(remoteName, {
+          ok: false,
+          summary: readError(item.reason, t("git.remoteFailed"))
+        });
+      }
+    }
+
+    setPushResults(results);
+    requestGitSnapshotRefresh();
+
+    if (!hasError) {
       showToast({
-        title: result.summary,
+        title: t("git.pushAllSuccess", { count: String(remoteNames.length) }),
         tone: "success"
       });
-      requestGitSnapshotRefresh();
-    } catch (error) {
-      showToast({
-        title: readError(error, t("git.remoteFailed")),
-        tone: "error"
-      });
-    } finally {
-      setActioning(false);
     }
+
+    setActioning(false);
   }
 
   async function handleRemoteAction(action: "fetch" | "pull" | "push") {
     if (!workspaceId) {
+      return;
+    }
+
+    // Push 操作走仓库选择流程
+    if (action === "push") {
+      setMenuOpen(false);
+      void handlePush();
       return;
     }
 
@@ -1189,6 +1252,70 @@ export function GitSidebar({ className, workspaceId }: GitSidebarProps) {
           </section>
         </div>
       )}
+
+      <WorkbenchModal
+        open={pushRemoteModalOpen}
+        title={t("git.selectRemoteTitle")}
+        description={t("git.selectRemoteDesc")}
+        onClose={() => { if (!actioning) setPushRemoteModalOpen(false); }}
+      >
+        <div className="git-remote-select-list">
+          {pushRemotes.map((remote) => {
+            const checked = pushSelectedRemotes.has(remote.name);
+            const result = pushResults.get(remote.name);
+
+            return (
+              <label key={remote.name} className="git-remote-item">
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  disabled={actioning}
+                  onChange={() => {
+                    setPushSelectedRemotes((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(remote.name)) {
+                        next.delete(remote.name);
+                      } else {
+                        next.add(remote.name);
+                      }
+                      return next;
+                    });
+                  }}
+                />
+                <span className="git-remote-item-body">
+                  <span className="git-remote-name">{remote.name}</span>
+                  <span className="git-remote-url">{remote.pushUrl}</span>
+                  {result && (
+                    <span className={`git-remote-result ${result.ok ? "ok" : "err"}`}>
+                      {result.summary}
+                    </span>
+                  )}
+                </span>
+              </label>
+            );
+          })}
+        </div>
+        <div className="git-remote-actions">
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={actioning}
+            onClick={() => setPushRemoteModalOpen(false)}
+          >
+            {t("common.close")}
+          </button>
+          <button
+            className="primary-button"
+            type="button"
+            disabled={actioning || pushSelectedRemotes.size === 0}
+            onClick={() => void handlePushToRemotes(Array.from(pushSelectedRemotes))}
+          >
+            {actioning
+              ? t("git.pushing")
+              : t("git.pushSelected", { count: String(pushSelectedRemotes.size) })}
+          </button>
+        </div>
+      </WorkbenchModal>
     </section>
   );
 }

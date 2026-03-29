@@ -122,6 +122,12 @@ export interface GitRemoteSyncResultDto {
   stderr: string;
 }
 
+export interface GitRemoteItemDto {
+  name: string;
+  fetchUrl: string;
+  pushUrl: string;
+}
+
 export interface GitUndoCommitResultDto {
   summary: string;
   commitHash: string;
@@ -257,13 +263,21 @@ export function switchGitBranch(workspaceId: string, branchName: string, create:
 
 export function syncGitRemote(
   workspaceId: string,
-  action: GitRemoteSyncResultDto["action"]
+  action: GitRemoteSyncResultDto["action"],
+  remote?: string
 ) {
   return httpClient.request<GitRemoteSyncResultDto>("/api/git/remote/sync", {
     method: "POST",
     body: JSON.stringify({
       workspaceId,
-      action
+      action,
+      ...(remote ? { remote } : {})
     })
   });
+}
+
+export function getGitRemotes(workspaceId: string) {
+  return httpClient.request<GitRemoteItemDto[]>(
+    `/api/git/remotes?workspaceId=${encodeURIComponent(workspaceId)}`
+  );
 }

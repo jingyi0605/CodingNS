@@ -502,8 +502,15 @@ export const enUS = {
     fetch: "Fetch",
     pull: "Pull",
     push: "Push",
+    pushNow: "Push Now",
     publish: "Publish",
     remoteFailed: "Remote sync failed.",
+    selectRemoteTitle: "Select Remote to Push",
+    selectRemoteDesc: "Select remote repositories to push to. Multiple selection supported.",
+    noRemotes: "No remote repositories are configured.",
+    pushSelected: "Push ({count})",
+    pushing: "Pushing…",
+    pushAllSuccess: "Successfully pushed to {count} remote(s).",
     errors: {
       unauthorized: "The current login is no longer valid. Log in again and retry.",
       workspaceNotFound:

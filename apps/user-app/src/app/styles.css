@@ -7780,6 +7780,73 @@ textarea:focus-visible {
   cursor: not-allowed;
 }
 
+.git-remote-select-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.git-remote-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.git-remote-item:hover {
+  background: color-mix(in srgb, var(--bg-hover) 90%, transparent);
+}
+
+.git-remote-item > input[type="checkbox"] {
+  margin-top: 2px;
+  accent-color: var(--accent);
+  flex-shrink: 0;
+}
+
+.git-remote-item-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.git-remote-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.git-remote-url {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  word-break: break-all;
+}
+
+.git-remote-result {
+  font-size: 11px;
+  margin-top: 2px;
+}
+
+.git-remote-result.ok {
+  color: var(--text-success, #16a34a);
+}
+
+.git-remote-result.err {
+  color: var(--text-error, #dc2626);
+}
+
+.git-remote-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--border-primary) 72%, transparent);
+}
+
 .git-history-list {
   flex: 1;
   min-height: 0;
