@@ -9,6 +9,7 @@ const versionFilePath = path.join(rootDir, 'VERSION');
 const jsonTargets = [
   'packages/codingns/package.json',
   'apps/desktop/package.json',
+  'apps/host/package.json',
   'apps/desktop/src-tauri/tauri.conf.json',
   'apps/user-app/src-tauri/tauri.conf.json',
 ];

@@ -7,6 +7,7 @@ import { serverConfigStore } from "../../../config/server-config";
 import { PlatformProvider } from "../../../platform/platform-provider";
 import { I18nProvider, t } from "../../../shared/i18n";
 import { ThemeProvider } from "../../../shared/theme";
+import { AppVersionProvider } from "../../../shared/version/app-version";
 import { LoginPage } from "./LoginPage";
 
 const originalFetch = global.fetch;
@@ -103,6 +104,7 @@ describe("LoginPage", () => {
     expect(passwordInput.value).toBe("");
     expect(screen.queryByRole("checkbox", { name: t("auth.rememberPassword") })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: new RegExp(t("auth.serverSettings")) })).not.toBeInTheDocument();
+    expect(screen.getByText(`v${__APP_VERSION__}`)).toBeInTheDocument();
   });
 
   it("Windows 客户端会显示保存密码并回填已保存凭据", async () => {
@@ -172,15 +174,17 @@ describe("LoginPage", () => {
 function renderLoginPage() {
   return render(
     <PlatformProvider>
-      <I18nProvider language={clientConfigStore.getState().language}>
-        <ThemeProvider>
-          <MemoryRouter initialEntries={["/login"]}>
-            <Routes>
-              <Route path="/login" element={<LoginPage />} />
-            </Routes>
-          </MemoryRouter>
-        </ThemeProvider>
-      </I18nProvider>
+      <AppVersionProvider>
+        <I18nProvider language={clientConfigStore.getState().language}>
+          <ThemeProvider>
+            <MemoryRouter initialEntries={["/login"]}>
+              <Routes>
+                <Route path="/login" element={<LoginPage />} />
+              </Routes>
+            </MemoryRouter>
+          </ThemeProvider>
+        </I18nProvider>
+      </AppVersionProvider>
     </PlatformProvider>
   );
 }

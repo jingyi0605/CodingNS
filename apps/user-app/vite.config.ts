@@ -1,6 +1,8 @@
+import { readFileSync } from "node:fs";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
+const appVersion = readFileSync(new URL("../../VERSION", import.meta.url), "utf8").trim();
 const desktopAndLocalOrigins = [
   /^tauri:\/\/localhost$/,
   /^https?:\/\/tauri\.localhost$/,
@@ -9,6 +11,9 @@ const desktopAndLocalOrigins = [
 ];
 
 export default defineConfig({
+  define: {
+    __APP_VERSION__: JSON.stringify(appVersion)
+  },
   plugins: [react()],
   server: {
     host: "0.0.0.0",

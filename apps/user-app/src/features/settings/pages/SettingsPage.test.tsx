@@ -8,6 +8,7 @@ import { authStore } from "../../auth/store/auth-store";
 import { PlatformProvider } from "../../../platform/platform-provider";
 import { I18nProvider, t } from "../../../shared/i18n";
 import { ThemeProvider } from "../../../shared/theme";
+import { AppVersionProvider } from "../../../shared/version/app-version";
 import { SettingsPage } from "./SettingsPage";
 
 const originalTauriInternals = window.__TAURI_INTERNALS__;
@@ -51,6 +52,37 @@ describe("SettingsPage", () => {
     expect(screen.queryByText(t("settings.clientUpdate"))).not.toBeInTheDocument();
     expect(screen.queryByText("当前运行平台")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: t("common.logout") })).toBeInTheDocument();
+    expect(screen.getByText(`CodingNS v${__APP_VERSION__}`)).toBeInTheDocument();
+  });
+
+  it("桌面端优先显示运行时版本", async () => {
+    window.__TAURI_INTERNALS__ = {
+      invoke: async <T,>(command: string) => {
+        if (command === "get_runtime_info") {
+          return {
+            version: "9.9.9",
+            appDataDir: null
+          } as T;
+        }
+
+        return undefined as T;
+      }
+    };
+    clientConfigStore.hydrate({
+      platform: "desktop",
+      hostBaseUrl: "http://127.0.0.1:3002",
+      releaseChannel: "stable",
+      autoReconnect: true,
+      autoCheckUpdate: true,
+      language: "zh-CN",
+      defaultPermissionMode: "default"
+    });
+
+    renderSettingsPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("CodingNS v9.9.9")).toBeInTheDocument();
+    });
   });
 
   it("H5 移动布局不再允许修改服务器地址", async () => {
@@ -209,16 +241,18 @@ describe("SettingsPage", () => {
 function renderSettingsPage(initialEntry = "/settings") {
   return render(
     <PlatformProvider>
-      <I18nProvider language={clientConfigStore.getState().language}>
-        <ThemeProvider>
-          <MemoryRouter initialEntries={[initialEntry]}>
-            <Routes>
-              <Route path="/settings" element={<SettingsPage />} />
-              <Route path="/settings/:section" element={<SettingsPage />} />
-            </Routes>
-          </MemoryRouter>
-        </ThemeProvider>
-      </I18nProvider>
+      <AppVersionProvider>
+        <I18nProvider language={clientConfigStore.getState().language}>
+          <ThemeProvider>
+            <MemoryRouter initialEntries={[initialEntry]}>
+              <Routes>
+                <Route path="/settings" element={<SettingsPage />} />
+                <Route path="/settings/:section" element={<SettingsPage />} />
+              </Routes>
+            </MemoryRouter>
+          </ThemeProvider>
+        </I18nProvider>
+      </AppVersionProvider>
     </PlatformProvider>
   );
 }

@@ -9,6 +9,7 @@ import { usePlatform } from "../../../platform/platform-provider";
 import { LanguageSwitcher, t, useT } from "../../../shared/i18n";
 import { ApiError } from "../../../shared/network/api-error";
 import { useTheme } from "../../../shared/theme";
+import { useAppVersion } from "../../../shared/version/app-version";
 import { authStore, useAuthSelector } from "../store/auth-store";
 import {
   clearRememberedLoginCredentials,
@@ -164,6 +165,7 @@ export function LoginPage() {
   const t = useT();
   const [searchParams] = useSearchParams();
   const platform = usePlatform();
+  const appVersion = useAppVersion();
   const canConfigureServerAddress = canConfigureHostBaseUrl(platform.platform);
   const rememberPasswordSupported = useMemo(() => supportsRememberPassword(platform), [platform]);
   const rememberedLogin = useMemo(
@@ -437,7 +439,7 @@ export function LoginPage() {
 
         {/* Version / Credits */}
         <div className="cyber-version">
-          <span className="cyber-version-text">v1.0.0</span>
+          <span className="cyber-version-text">v{appVersion}</span>
           <span className="cyber-version-divider">|</span>
           <span className="cyber-version-text">SYSTEM READY</span>
         </div>

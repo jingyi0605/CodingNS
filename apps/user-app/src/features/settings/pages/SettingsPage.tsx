@@ -13,6 +13,7 @@ import { normalizeServerBaseUrl } from "../../../config/server-config";
 import { usePlatform } from "../../../platform/platform-provider";
 import { LanguageSwitcher, t } from "../../../shared/i18n";
 import { THEMES, getThemeLabel, useTheme, type ThemeId } from "../../../shared/theme";
+import { useAppVersion } from "../../../shared/version/app-version";
 import { ReleasePanel } from "../../../settings/ReleasePanel";
 import { ServiceUpdatePanel } from "../../../settings/ServiceUpdatePanel";
 import { authStore } from "../../auth/store/auth-store";
@@ -189,15 +190,16 @@ function useSettingsPageModel(): SettingsPageModel {
 
 export function SettingsPage() {
   const model = useSettingsPageModel();
+  const appVersion = useAppVersion();
 
   if (model.platform.isMobile) {
-    return <MobileSettingsPage model={model} />;
+    return <MobileSettingsPage model={model} appVersion={appVersion} />;
   }
 
-  return <DesktopSettingsPage model={model} />;
+  return <DesktopSettingsPage model={model} appVersion={appVersion} />;
 }
 
-function DesktopSettingsPage({ model }: { model: SettingsPageModel }) {
+function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; appVersion: string }) {
   const {
     theme,
     setTheme,
@@ -397,7 +399,7 @@ function DesktopSettingsPage({ model }: { model: SettingsPageModel }) {
         </section>
 
         <div className="settings-footer settings-footer-with-logout">
-          <span className="settings-version">CodingNS v1.0.0</span>
+          <span className="settings-version">CodingNS v{appVersion}</span>
           <button className="settings-button settings-button-danger settings-button-sticky" onClick={handleLogout} type="button">
             {t("common.logout")}
           </button>
@@ -407,7 +409,7 @@ function DesktopSettingsPage({ model }: { model: SettingsPageModel }) {
   );
 }
 
-function MobileSettingsPage({ model }: { model: SettingsPageModel }) {
+function MobileSettingsPage({ model, appVersion }: { model: SettingsPageModel; appVersion: string }) {
   const navigate = useNavigate();
   const { section } = useParams<{ section?: string }>();
   const activeSection = isSettingsSectionId(section) ? section : null;
@@ -498,7 +500,7 @@ function MobileSettingsPage({ model }: { model: SettingsPageModel }) {
           </section>
 
           <div className="settings-footer settings-footer-mobile">
-            <span className="settings-version">CodingNS v1.0.0</span>
+            <span className="settings-version">CodingNS v{appVersion}</span>
           </div>
         </div>
         <MobileSettingsLogoutBar onLogout={model.handleLogout} />
