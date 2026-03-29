@@ -1,4 +1,8 @@
 import {
+  buildApplyPatchFromClaudeEdit,
+  buildApplyPatchFromClaudeWrite
+} from "./patch-builder.js";
+import {
   ensureText,
   extractTextBlocks,
   messageIdFromRawRef,
@@ -306,6 +310,31 @@ export function normalizeClaudeMessagePart(input: {
     const callId = ensureText(part.id).trim() || rawRef;
     const name = ensureText(part.name).trim() || "tool";
     const toolInput = stringifyStructuredValue(part.input);
+
+    // 将 Edit / Write 工具转换为 apply_patch 格式，使前端统一渲染 diff 预览
+    const patchText = buildApplyPatchFromToolName(name, part.input);
+    if (patchText) {
+      toolNameById.set(callId, "apply_patch");
+
+      return createClaudeMessage({
+        providerSessionId,
+        rawRef,
+        sequence,
+        timestamp,
+        role: "tool",
+        kind: "tool_call",
+        content: patchText,
+        toolCall: {
+          callId,
+          name: "apply_patch",
+          input: patchText,
+          output: null,
+          error: null,
+          status: "running"
+        }
+      });
+    }
+
     toolNameById.set(callId, name);
 
     if (!name && !toolInput) {
@@ -413,4 +442,32 @@ function normalizeIdentitySeed(value: string): string {
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 64);
+}
+
+/**
+ * 检测 Claude Code 的 Edit / Write 工具并转换为 apply_patch 格式。
+ * 若非编辑类工具则返回 null。
+ */
+function buildApplyPatchFromToolName(
+  toolName: string,
+  rawInput: unknown
+): string | null {
+  if (toolName !== "Edit" && toolName !== "Write") {
+    return null;
+  }
+
+  const input =
+    rawInput && typeof rawInput === "object" && !Array.isArray(rawInput)
+      ? (rawInput as Record<string, unknown>)
+      : null;
+
+  if (!input) {
+    return null;
+  }
+
+  if (toolName === "Edit") {
+    return buildApplyPatchFromClaudeEdit(input);
+  }
+
+  return buildApplyPatchFromClaudeWrite(input);
 }

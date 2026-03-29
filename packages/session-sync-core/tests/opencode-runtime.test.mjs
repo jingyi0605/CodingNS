@@ -477,8 +477,9 @@ test("OpenCodeRuntimeAdapter 会把 patch part 收口成可读摘要，而不是
 
   const messageEvent = events.find((event) => event.type === "message");
   assert.ok(messageEvent);
-  assert.equal(messageEvent.message.kind, "text");
-  assert.equal(messageEvent.message.content, "[patch] 1 file changed: styles.css");
+  assert.equal(messageEvent.message.kind, "tool_call");
+  assert.equal(messageEvent.message.toolCall?.name, "apply_patch");
+  assert.ok(messageEvent.message.content.includes("*** Begin Patch"));
 });
 
 test("OpenCodeRuntimeAdapter 会把网络失败收口成 SERVER_UNAVAILABLE", async (context) => {

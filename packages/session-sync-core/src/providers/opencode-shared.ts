@@ -1,3 +1,4 @@
+import { buildApplyPatchFromOpenCodePatch } from "../patch-builder.js";
 import type {
   NormalizedMessage,
   ProviderId,
@@ -202,6 +203,30 @@ export function normalizeOpenCodePartMessage(
   }
 
   if (partType === "patch") {
+    const patchFiles = extractPatchFileList(input.partPayload);
+    const patchText = buildApplyPatchFromOpenCodePatch(patchFiles);
+
+    if (patchText) {
+      return {
+        messageId: messageIdFromRawRef(rawRef),
+        provider,
+        providerSessionId,
+        role: "tool",
+        kind: "tool_call",
+        content: patchText,
+        toolCall: {
+          callId: rawRef,
+          name: "apply_patch",
+          input: patchText,
+          output: null,
+          error: null,
+          status: "completed"
+        },
+        timestamp,
+        rawRef
+      };
+    }
+
     return {
       messageId: messageIdFromRawRef(rawRef),
       provider,
@@ -481,4 +506,14 @@ function resolvePartTimestamp(
       null
     ) ?? fallback
   );
+}
+
+function extractPatchFileList(partPayload: Record<string, unknown>): string[] {
+  if (!Array.isArray(partPayload.files)) {
+    return [];
+  }
+
+  return partPayload.files
+    .map((value) => ensureText(value).trim())
+    .filter((value) => value.length > 0);
 }

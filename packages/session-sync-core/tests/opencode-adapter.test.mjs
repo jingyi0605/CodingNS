@@ -242,8 +242,10 @@ test("OpenCodeAdapter 能把核心 part 类型映射到统一消息模型", asyn
     assert.equal(page.messages[3]?.toolCall?.status, "completed");
     assert.equal(page.messages[3]?.content.includes("README.md"), true);
 
-    assert.equal(page.messages[4]?.kind, "text");
-    assert.equal(page.messages[4]?.content, "[patch] 1 file changed: styles.css");
+    assert.equal(page.messages[4]?.kind, "tool_call");
+    assert.equal(page.messages[4]?.toolCall?.name, "apply_patch");
+    assert.ok(page.messages[4]?.content.includes("*** Begin Patch"));
+    assert.ok(page.messages[4]?.content.includes("styles.css"));
     assert.equal(
       page.messages[3]?.rawRef,
       "opencode://session/ses_demo/message/msg_demo_assistant/part/prt_demo_tool_done"
@@ -270,7 +272,8 @@ test("OpenCodeAdapter 的历史分页支持 backward 读取", async () => {
 
     assert.equal(page.messages.length, 2);
     assert.equal(page.messages[0]?.content.includes("README.md"), true);
-    assert.equal(page.messages[1]?.content, "[patch] 1 file changed: styles.css");
+    assert.equal(page.messages[1]?.toolCall?.name, "apply_patch");
+    assert.ok(page.messages[1]?.content.includes("*** Begin Patch"));
     assert.ok(page.nextCursor);
   } finally {
     fixture.dispose();
