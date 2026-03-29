@@ -1,4 +1,5 @@
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -116,6 +117,15 @@ describe("LoginPage", () => {
     window.__TAURI_INTERNALS__ = {
       invoke: vi.fn()
     };
+    clientConfigStore.hydrate({
+      platform: "desktop",
+      hostBaseUrl: "http://127.0.0.1:3002",
+      releaseChannel: "stable",
+      autoReconnect: true,
+      autoCheckUpdate: true,
+      language: "zh-CN",
+      defaultPermissionMode: "default"
+    });
     window.localStorage.setItem(
       "codingns.auth.remembered-login",
       JSON.stringify({
@@ -168,6 +178,61 @@ describe("LoginPage", () => {
     expect(
       await screen.findByRole("button", { name: new RegExp(t("auth.serverSettings")) })
     ).toBeInTheDocument();
+  });
+
+  it("登录页修改服务器后，不会再被记住密码里的旧服务器地址回滚", async () => {
+    mockNavigator({
+      userAgent:
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+      platform: "Win32"
+    });
+    window.__TAURI_INTERNALS__ = {
+      invoke: vi.fn()
+    };
+    clientConfigStore.hydrate({
+      platform: "desktop",
+      hostBaseUrl: "http://127.0.0.1:3002",
+      releaseChannel: "stable",
+      autoReconnect: true,
+      autoCheckUpdate: true,
+      language: "zh-CN",
+      defaultPermissionMode: "default"
+    });
+    window.localStorage.setItem(
+      "codingns.auth.remembered-login",
+      JSON.stringify({
+        username: "saved-admin",
+        password: "Saved123!",
+        serverBaseUrl: "http://10.10.1.8:4100"
+      })
+    );
+
+    renderLoginPage();
+
+    await waitFor(() => {
+      expect(clientConfigStore.getState().hostBaseUrl).toBe("http://10.10.1.8:4100");
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: new RegExp(t("auth.serverSettings")) }));
+
+    const addressInput = await screen.findByRole("textbox", { name: t("auth.serverAddress") });
+    const saveButton = screen.getByRole("button", { name: t("auth.saveServerSettings") });
+
+    await userEvent.clear(addressInput);
+    await userEvent.type(addressInput, "10.10.1.9:4200");
+    await userEvent.click(saveButton);
+
+    await waitFor(() => {
+      expect(clientConfigStore.getState().hostBaseUrl).toBe("http://10.10.1.9:4200");
+    });
+
+    await waitFor(() => {
+      expect(
+        JSON.parse(window.localStorage.getItem("codingns.auth.remembered-login") ?? "null")
+      ).toMatchObject({
+        serverBaseUrl: "http://10.10.1.9:4200"
+      });
+    });
   });
 });
 

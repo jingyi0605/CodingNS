@@ -4,6 +4,7 @@ import {
   clearRememberedLoginCredentials,
   persistRememberedLoginCredentials,
   readRememberedLoginCredentials,
+  syncRememberedLoginServerBaseUrl,
   supportsRememberPassword
 } from "./remembered-login";
 import type { PlatformAdapter } from "../../../platform/platform-adapter";
@@ -87,5 +88,21 @@ describe("remembered-login", () => {
     clearRememberedLoginCredentials();
 
     expect(readRememberedLoginCredentials()).toBeNull();
+  });
+
+  it("同步服务器地址时会保留原有账号密码，只更新服务器地址", () => {
+    persistRememberedLoginCredentials({
+      username: "admin",
+      password: "Secret123!",
+      serverBaseUrl: "10.10.1.8:4100"
+    });
+
+    syncRememberedLoginServerBaseUrl("http://10.10.1.9:4200");
+
+    expect(readRememberedLoginCredentials()).toEqual({
+      username: "admin",
+      password: "Secret123!",
+      serverBaseUrl: "http://10.10.1.9:4200"
+    });
   });
 });

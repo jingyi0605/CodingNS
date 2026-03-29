@@ -185,6 +185,7 @@ export function LoginPage() {
   const authSession = useAuthSelector((state) => state.session);
   const returnTo = useMemo(() => searchParams.get("returnTo") ?? "/", [searchParams]);
   const { theme } = useTheme();
+  const rememberedServerAppliedRef = useRef(false);
 
   // Map app theme to login page theme (light or dark)
   const loginTheme = useMemo(() => {
@@ -192,6 +193,12 @@ export function LoginPage() {
   }, [theme]);
 
   useEffect(() => {
+    if (rememberedServerAppliedRef.current) {
+      return;
+    }
+
+    rememberedServerAppliedRef.current = true;
+
     if (
       !rememberPasswordSupported ||
       !rememberedServerBaseUrl ||

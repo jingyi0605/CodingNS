@@ -5,6 +5,7 @@ import {
   type ClientRuntimeConfigPatch,
   type RuntimePlatform
 } from "./client-config-types";
+import { syncRememberedLoginServerBaseUrl } from "../features/auth/store/remembered-login";
 import { createPlatformAdapter } from "../platform/platform-adapter";
 import { normalizeServerBaseUrl } from "./server-config-shared";
 
@@ -167,6 +168,7 @@ export async function persistClientRuntimeConfig(
 ): Promise<ClientRuntimeConfig> {
   const normalizedConfig = mergeConfig(config, patch);
   persistLocalConfig(normalizedConfig);
+  syncRememberedLoginServerBaseUrl(normalizedConfig.hostBaseUrl);
 
   const adapter = createPlatformAdapter();
 

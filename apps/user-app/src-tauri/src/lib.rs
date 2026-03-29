@@ -1,3 +1,5 @@
+mod config;
+
 use std::io::Write;
 use std::process::{Command, Stdio};
 use tauri::{AppHandle, Manager, WebviewWindow};
@@ -14,6 +16,18 @@ use jni::{
 
 #[cfg(target_os = "ios")]
 use objc2::{class, msg_send, runtime::AnyObject};
+
+use config::DesktopRuntimeConfig;
+
+#[tauri::command]
+fn read_desktop_config(app: AppHandle) -> Result<DesktopRuntimeConfig, String> {
+  config::read_desktop_config(&app)
+}
+
+#[tauri::command]
+fn write_desktop_config(app: AppHandle, patch: DesktopRuntimeConfig) -> Result<(), String> {
+  config::write_desktop_config(&app, patch)
+}
 
 #[tauri::command]
 fn copy_text(text: String) -> Result<(), String> {
@@ -271,6 +285,8 @@ pub fn run() {
       Ok(())
     })
     .invoke_handler(tauri::generate_handler![
+      read_desktop_config,
+      write_desktop_config,
       copy_text,
       set_window_state,
       perform_haptic_feedback

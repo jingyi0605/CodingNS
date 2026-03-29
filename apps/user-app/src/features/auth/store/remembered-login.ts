@@ -86,6 +86,19 @@ export function persistRememberedLoginCredentials(
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
 }
 
+export function syncRememberedLoginServerBaseUrl(serverBaseUrl: string): void {
+  const current = readRememberedLoginCredentials();
+
+  if (!current) {
+    return;
+  }
+
+  persistRememberedLoginCredentials({
+    ...current,
+    serverBaseUrl
+  });
+}
+
 export function clearRememberedLoginCredentials(): void {
   if (!canUseLocalStorage()) {
     return;
