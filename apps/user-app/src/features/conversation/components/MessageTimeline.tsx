@@ -1136,7 +1136,35 @@ function MessageItem({
     );
   }
 
-  if (isAssistantText || isThinking) {
+  if (isThinking) {
+    return (
+      <article className="message-item assistant-message thinking-message-row">
+        <div className="message-avatar">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="12" cy="12" r="10" />
+            <path d="M12 16v-4M12 8h.01" />
+          </svg>
+        </div>
+        <div className="message-content-wrapper thinking-message-wrapper">
+          <div className="thinking-message-label">{t("conversation.thinkingLabel")}</div>
+          <MessageAttachments
+            sessionId={message.sessionId}
+            attachments={message.attachments}
+            attachmentPayloads={message.attachmentPayloads}
+            inlineImages={inlineImages}
+          />
+          {visibleContent && (
+            <MessageMarkdownBody
+              content={visibleContent}
+              className="message-text message-content markdown-content thinking-message-text"
+            />
+          )}
+        </div>
+      </article>
+    );
+  }
+
+  if (isAssistantText) {
     return (
       <article className="message-item assistant-message">
         <div className="message-avatar">
@@ -1146,9 +1174,6 @@ function MessageItem({
           </svg>
         </div>
         <div className="message-content-wrapper">
-          {isThinking && (
-            <div className="tool-call-name">{t("conversation.thinkingLabel")}</div>
-          )}
           <MessageAttachments
             sessionId={message.sessionId}
             attachments={message.attachments}

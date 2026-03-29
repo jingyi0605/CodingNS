@@ -80,6 +80,22 @@ function createAssistantTextMessage(content: string, id = "assistant-1"): Sessio
   };
 }
 
+function createAssistantThinkingMessage(content: string, id = "thinking-1"): SessionMessageViewModel {
+  return {
+    id,
+    sessionId: "session-1",
+    role: "assistant",
+    kind: "thinking",
+    content,
+    toolCall: null,
+    timestamp: "2026-03-23T10:00:00.000Z",
+    sequence: 1,
+    rawRef: `codex://raw#line=${id}`,
+    deliveryState: "sent",
+    clientRequestId: null
+  };
+}
+
 describe("MessageTimeline", () => {
   it("会把同一次工具调用和结果合并渲染", async () => {
     render(
@@ -226,6 +242,25 @@ describe("MessageTimeline", () => {
 
     expect(screen.getByRole("button", { name: /收起规则/ })).toBeInTheDocument();
     expect(screen.getByText((content) => content.includes("不要主动启动开发服务器"))).toBeInTheDocument();
+  });
+
+  it("会把 thinking 消息和正式回复分开渲染", () => {
+    render(
+      <MessageTimeline
+        messages={[
+          createAssistantThinkingMessage("先把现有消息流和渲染层级看清楚。"),
+          createAssistantTextMessage("我已经看完了，下面开始调整样式。", "assistant-2")
+        ]}
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText(t("conversation.thinkingLabel"))).toHaveClass("thinking-message-label");
+    expect(screen.getByText("先把现有消息流和渲染层级看清楚。").closest(".thinking-message-text")).not.toBeNull();
+    expect(screen.getByText("我已经看完了，下面开始调整样式。").closest(".thinking-message-text")).toBeNull();
+    expect(document.querySelectorAll(".thinking-message-row")).toHaveLength(1);
   });
 
   it("会给代码块和 text 文本块渲染复制按钮", async () => {

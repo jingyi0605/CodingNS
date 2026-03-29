@@ -6194,6 +6194,42 @@ textarea:focus-visible {
   background: linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 95%, transparent), color-mix(in srgb, var(--bg-primary) 98%, transparent));
 }
 
+.thinking-message-wrapper {
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--bg-surface) 92%, white 8%),
+      color-mix(in srgb, var(--bg-primary) 98%, transparent)
+    );
+  border-color: color-mix(in srgb, var(--border-primary) 82%, transparent);
+  box-shadow: none;
+}
+
+.thinking-message-label {
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: 0.04em;
+  color: color-mix(in srgb, var(--text-tertiary) 88%, var(--text-secondary));
+}
+
+.thinking-message-text {
+  font-size: 13px;
+  line-height: 1.68;
+  color: color-mix(in srgb, var(--text-tertiary) 84%, var(--text-secondary));
+  font-style: italic;
+}
+
+.thinking-message-text :where(p, li, blockquote, strong, em, a, span) {
+  color: inherit;
+}
+
+.thinking-message-text pre,
+.thinking-message-text code {
+  font-style: normal;
+}
+
 .user-message {
   width: 100%;
   margin-left: auto;
