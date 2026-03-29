@@ -3,10 +3,13 @@ import { existsSync, statSync } from "node:fs";
 import crypto from "node:crypto";
 
 import {
+  buildClaudeMessageSignature,
+  buildClaudeProgressiveTrackKey,
   buildClaudeStableRawRef,
   normalizeClaudeMessagePart,
   normalizeClaudeMessageParts,
   readClaudeMessageId,
+  shouldReuseClaudeProgressiveIdentity,
   toClaudeRecord,
   type ClaudeMessageEnvelope,
   type ClaudeStableMessageRef
@@ -106,6 +109,10 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
     const sessions: ProviderSessionSummary[] = [];
 
     for (const filePath of files) {
+      if (isPendingClaudeRuntimeFile(filePath)) {
+        continue;
+      }
+
       if (shouldHideClaudeDebugSession(filePath)) {
         continue;
       }
@@ -535,6 +542,7 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
     const messagesById = new Map<string, NormalizedMessage>();
     const toolNameById = new Map<string, string>();
     const stableMessageRefByIdentity = new Map<string, ClaudeStableMessageRef>();
+    const progressiveMessagesByTrackKey = new Map<string, NormalizedMessage>();
     let sequence = 0;
 
     records.forEach((record) => {
@@ -559,7 +567,7 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
               sequence += 1;
               const created: ClaudeStableMessageRef = {
                 sequence,
-                rawRef: buildClaudeStableRawRef(filePath, sequence, partIndex)
+                rawRef: buildClaudeStableRawRef(identity)
               };
               stableMessageRefByIdentity.set(identity, created);
               return created;
@@ -570,11 +578,40 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
             return;
           }
 
-          if (!messagesById.has(normalized.messageId)) {
-            messageIdsInOrder.push(normalized.messageId);
+          if (normalized.role === "user") {
+            progressiveMessagesByTrackKey.clear();
           }
 
-          messagesById.set(normalized.messageId, normalized);
+          const trackKey = buildClaudeProgressiveTrackKey(normalized, partIndex);
+          const previousProgressive = trackKey
+            ? progressiveMessagesByTrackKey.get(trackKey) ?? null
+            : null;
+          const nextMessage =
+            previousProgressive && shouldReuseClaudeProgressiveIdentity(previousProgressive, normalized)
+              ? {
+                  ...normalized,
+                  messageId: previousProgressive.messageId,
+                  rawRef: previousProgressive.rawRef,
+                  sequence: previousProgressive.sequence
+                }
+              : normalized;
+
+          if (trackKey) {
+            progressiveMessagesByTrackKey.set(trackKey, nextMessage);
+          }
+
+          const signature = buildClaudeMessageSignature(nextMessage);
+          const current = messagesById.get(nextMessage.messageId) ?? null;
+
+          if (current && buildClaudeMessageSignature(current) === signature) {
+            return;
+          }
+
+          if (!messagesById.has(nextMessage.messageId)) {
+            messageIdsInOrder.push(nextMessage.messageId);
+          }
+
+          messagesById.set(nextMessage.messageId, nextMessage);
         });
       });
     });
@@ -710,6 +747,11 @@ function shouldHideClaudeDebugSession(filePath: string): boolean {
   } catch {
     return false;
   }
+}
+
+function isPendingClaudeRuntimeFile(filePath: string): boolean {
+  const normalizedPath = filePath.replaceAll("\\", "/").toLowerCase();
+  return /\/\.pending-[^/]+\.jsonl$/i.test(normalizedPath);
 }
 
 function extractClaudeDebugMessageText(content: unknown): string {

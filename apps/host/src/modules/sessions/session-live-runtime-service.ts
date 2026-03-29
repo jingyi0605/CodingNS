@@ -252,6 +252,7 @@ export class SessionLiveRuntimeService {
         provider: input.provider as ProviderRuntimeRunRequest["provider"],
         providerSessionId: null,
         rawStoreRef: null,
+        sequenceBase: 1,
         options: {
           content: input.content,
           clientRequestId: input.clientRequestId,
@@ -1062,6 +1063,10 @@ export class SessionLiveRuntimeService {
       provider: session.provider,
       providerSessionId: runtimeMode === "start" ? null : session.providerSessionId,
       rawStoreRef: runtimeMode === "start" ? null : session.rawStoreRef,
+      sequenceBase:
+        runtimeMode === "start"
+          ? 1
+          : Math.max(session.messageCount + 1, 1),
       options: {
         content: input.content,
         clientRequestId: input.clientRequestId,

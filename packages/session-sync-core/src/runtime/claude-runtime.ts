@@ -161,7 +161,7 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
       args.push("--model", request.options.model);
     }
 
-    let sequence = 0;
+    let sequence = Math.max(0, request.sequenceBase ?? 0);
     const toolNameById = new Map<string, string>();
     const stableMessageRefByIdentity = new Map<string, ClaudeStableMessageRef>();
     const progressiveMessagesByTrackKey = new Map<string, NormalizedMessage>();
@@ -466,7 +466,7 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
             const sequence = input.allocateSequence();
             const created: ClaudeStableMessageRef = {
               sequence,
-              rawRef: buildClaudeStableRawRef(binding.rawStoreRef, sequence, partIndex)
+              rawRef: buildClaudeStableRawRef(identity)
             };
 
             input.stableMessageRefByIdentity.set(identity, created);

@@ -1,5 +1,4 @@
 import {
-  createRawRef,
   ensureText,
   extractTextBlocks,
   messageIdFromRawRef,
@@ -24,6 +23,76 @@ export interface ClaudeMessageEnvelope {
 export interface ClaudeStableMessageRef {
   rawRef: string;
   sequence: number;
+}
+
+export function buildClaudeProgressiveTrackKey(
+  message: Pick<NormalizedMessage, "providerSessionId" | "role" | "kind">,
+  partIndex: number
+): string | null {
+  if (
+    message.kind !== "text"
+    && message.kind !== "thinking"
+    && message.kind !== "tool_call"
+    && message.kind !== "tool_result"
+  ) {
+    return null;
+  }
+
+  if (message.role !== "assistant" && message.role !== "tool") {
+    return null;
+  }
+
+  if (message.role === "assistant" && (message.kind === "text" || message.kind === "thinking")) {
+    return `${message.providerSessionId}:${message.role}:${message.kind}`;
+  }
+
+  return `${message.providerSessionId}:${message.role}:${message.kind}:part:${partIndex}`;
+}
+
+export function shouldReuseClaudeProgressiveIdentity(
+  previous: Pick<NormalizedMessage, "providerSessionId" | "role" | "kind" | "content" | "toolCall">,
+  next: Pick<NormalizedMessage, "providerSessionId" | "role" | "kind" | "content" | "toolCall">
+): boolean {
+  if (
+    previous.providerSessionId !== next.providerSessionId
+    || previous.role !== next.role
+    || previous.kind !== next.kind
+  ) {
+    return false;
+  }
+
+  if (next.kind === "text" || next.kind === "thinking" || next.kind === "tool_result") {
+    return next.content === previous.content || next.content.startsWith(previous.content);
+  }
+
+  if (next.kind === "tool_call") {
+    return (
+      (next.content === previous.content || next.content.startsWith(previous.content))
+      && (previous.toolCall?.name ?? "") === (next.toolCall?.name ?? "")
+    );
+  }
+
+  return false;
+}
+
+export function buildClaudeMessageSignature(
+  message: Pick<NormalizedMessage, "role" | "kind" | "content" | "toolCall">
+): string {
+  return JSON.stringify({
+    role: message.role,
+    kind: message.kind ?? null,
+    content: message.content,
+    toolCall: message.toolCall
+      ? {
+          callId: message.toolCall.callId,
+          name: message.toolCall.name,
+          input: message.toolCall.input,
+          output: message.toolCall.output,
+          error: message.toolCall.error,
+          status: message.toolCall.status
+        }
+      : null
+  });
 }
 
 export function toClaudeRecord(value: unknown): Record<string, unknown> {
@@ -105,12 +174,8 @@ export function normalizeClaudeMessageParts(content: unknown): Array<Record<stri
     .filter((item): item is Record<string, unknown> => item !== null);
 }
 
-export function buildClaudeStableRawRef(
-  rawStoreRef: string,
-  sequence: number,
-  partIndex: number
-): string {
-  return createRawRef("claude-code", rawStoreRef, sequence, partIndex);
+export function buildClaudeStableRawRef(identity: string): string {
+  return `claude-code://message/${encodeURIComponent(identity)}`;
 }
 
 export function buildClaudePartIdentity(input: {
@@ -139,6 +204,13 @@ export function buildClaudePartIdentity(input: {
   }
 
   if (envelope.messageId) {
+    if (
+      envelope.type === "assistant" &&
+      (normalizedType === "text" || normalizedType === "thinking")
+    ) {
+      return `message:${envelope.type}:${envelope.messageId}:type:${normalizedType}`;
+    }
+
     return `message:${envelope.type}:${envelope.messageId}:part:${partIndex}:type:${normalizedType}`;
   }
 
@@ -147,6 +219,7 @@ export function buildClaudePartIdentity(input: {
     "fallback",
     envelope.source,
     envelope.type,
+    `timestamp:${ensureText(envelope.timestamp).trim() || "none"}`,
     `part:${partIndex}`,
     `type:${normalizedType}`,
     `seed:${contentSeed || "none"}`
@@ -258,10 +331,7 @@ export function normalizeClaudeMessagePart(input: {
     });
   }
 
-  const content =
-    partType === "thinking"
-      ? extractTextBlocks(part.thinking).trim()
-      : extractTextBlocks(part).trim();
+  const content = resolveClaudeAssistantContent(part, partType);
 
   if (!content) {
     return null;
@@ -312,6 +382,21 @@ function createClaudeMessage(input: {
     sequence,
     rawRef
   };
+}
+
+function resolveClaudeAssistantContent(
+  part: Record<string, unknown>,
+  partType: string
+): string {
+  if (partType === "thinking") {
+    return extractTextBlocks(part.thinking).trim();
+  }
+
+  if (partType === "text" && Object.prototype.hasOwnProperty.call(part, "text")) {
+    return ensureText(part.text).trim();
+  }
+
+  return extractTextBlocks(part).trim();
 }
 
 function resolveClaudePartContentSeed(part: Record<string, unknown>, partType: string): string {

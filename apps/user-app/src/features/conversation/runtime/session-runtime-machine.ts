@@ -123,7 +123,8 @@ export function createPendingMessage(
   content: string,
   clientRequestId: string,
   attachments: MessageAttachmentDto[] = [],
-  attachmentPayloads: ImageAttachmentPayload[] = []
+  attachmentPayloads: ImageAttachmentPayload[] = [],
+  sequence = Number.MAX_SAFE_INTEGER
 ): SessionMessageViewModel {
   return {
     id: `pending-${clientRequestId}`,
@@ -135,7 +136,7 @@ export function createPendingMessage(
     attachments,
     attachmentPayloads,
     timestamp: new Date().toISOString(),
-    sequence: Number.MAX_SAFE_INTEGER,
+    sequence,
     rawRef: `pending://${clientRequestId}`,
     deliveryState: "sending",
     clientRequestId
@@ -776,6 +777,16 @@ function isAuthoritativeUserTextMessage(message: SessionMessageViewModel): boole
 function toTimestampMs(timestamp: string): number {
   const value = Date.parse(timestamp);
   return Number.isFinite(value) ? value : 0;
+}
+
+export function getNextOptimisticUserSequence(messages: SessionMessageViewModel[]): number {
+  const maxSequence = messages.reduce((currentMax, message) => {
+    return Number.isFinite(message.sequence) && message.sequence > currentMax
+      ? message.sequence
+      : currentMax;
+  }, 0);
+
+  return maxSequence + 1;
 }
 
 function areTimestampsNear(left: string, right: string): boolean {

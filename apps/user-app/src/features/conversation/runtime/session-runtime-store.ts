@@ -13,7 +13,6 @@ import {
   enqueueSessionMessage,
   getSessionCapabilities,
   getSessionDetail,
-  getSessionMessages,
   getSessionQueue,
   getSessionRuntime,
   interruptSession,
@@ -26,6 +25,7 @@ import {
   type HistoryMessageDto,
   type ProviderCapabilitiesDto,
   type SessionQueueItemDto,
+  type SessionActivityState,
   type SessionSummaryDto,
   type SessionRunningState
 } from "../api/conversation-api";
@@ -38,6 +38,7 @@ import type {
 import {
   createInitialRuntimeState,
   createPendingMessage,
+  getNextOptimisticUserSequence,
   markPendingAsFailed,
   mergeAuthoritativeMessages,
   reconcileMessage,
@@ -81,6 +82,8 @@ export class SessionRuntimeStore {
   private seenWatermark: string | null = null;
   private runtimeRefreshTimer: number | null = null;
   private runtimeRefreshMode: RuntimeRefreshMode | null = null;
+  private replaceSnapshotSeedOnBackfill = false;
+  private readonly hasAuthoritativeBootstrapMessages: boolean;
 
   constructor(
     private readonly sessionId: string,
@@ -94,12 +97,15 @@ export class SessionRuntimeStore {
       buildSessionRuntimeSnapshotKey(sessionId),
       SESSION_RUNTIME_SNAPSHOT_CACHE_MAX_AGE_MS
     );
+    this.hasAuthoritativeBootstrapMessages = (options.bootstrapMessages?.length ?? 0) > 0;
     const seededSession = pickFreshestSessionSummary(options.initialSession ?? null, cachedSnapshot?.session ?? null);
     const seededMessages = mergeAuthoritativeMessages(
       cachedSnapshot?.messages ?? [],
       this.sessionId,
       options.bootstrapMessages ?? []
     );
+    this.replaceSnapshotSeedOnBackfill =
+      !this.hasAuthoritativeBootstrapMessages && (cachedSnapshot?.messages.length ?? 0) > 0;
 
     this.state = createInitialRuntimeState({
       session: seededSession,
@@ -125,11 +131,14 @@ export class SessionRuntimeStore {
   async initialize(): Promise<void> {
     const bootstrapMessages = this.options.bootstrapMessages ?? [];
     const mergedMessages = mergeAuthoritativeMessages(this.state.messages, this.sessionId, bootstrapMessages);
-    const hasBootstrappedMessages = mergedMessages.length > 0;
+    const hasBootstrappedMessages = this.hasAuthoritativeBootstrapMessages;
 
     this.patch({
       messages: mergedMessages,
-      historyState: resolveInitialHistoryState(this.state.session, mergedMessages.length),
+      historyState: resolveInitialHistoryState(
+        this.state.session,
+        hasBootstrappedMessages ? mergedMessages.length : 0
+      ),
       loadingOlderMessages: false,
       olderCursor: null,
       hasOlderMessages: inferHasOlderMessages(this.state.session, mergedMessages.length),
@@ -183,6 +192,8 @@ export class SessionRuntimeStore {
       queuedMessages: cachedSnapshot?.queuedMessages ?? []
     });
     this.seenWatermark = this.state.session?.lastSeenAt ?? null;
+    this.replaceSnapshotSeedOnBackfill =
+      !this.hasAuthoritativeBootstrapMessages && (cachedSnapshot?.messages.length ?? 0) > 0;
     this.emit();
     await this.initialize();
   }
@@ -219,7 +230,8 @@ export class SessionRuntimeStore {
       content,
       clientRequestId,
       options?.attachmentMeta ?? [],
-      options?.attachments ?? []
+      options?.attachments ?? [],
+      getNextOptimisticUserSequence(this.state.messages)
     );
 
     this.patch({
@@ -367,7 +379,7 @@ export class SessionRuntimeStore {
     if (
       this.state.historyState !== "ready" ||
       this.state.loadingOlderMessages ||
-      (!this.state.olderCursor && !this.state.hasOlderMessages)
+      !this.state.olderCursor
     ) {
       return;
     }
@@ -379,24 +391,14 @@ export class SessionRuntimeStore {
     });
 
     try {
-      const isBootstrapOlderLoad = !this.state.olderCursor;
-      const page = await getSessionMessages(
-        this.sessionId,
-        isBootstrapOlderLoad ? null : this.state.olderCursor,
-        isBootstrapOlderLoad
-          ? Math.min(100, Math.max(INITIAL_HISTORY_LIMIT, this.state.messages.length + INITIAL_HISTORY_LIMIT))
-          : INITIAL_HISTORY_LIMIT,
-        "backward"
+      const requested = this.realtimeClient?.requestOlderMessages(
+        this.state.olderCursor,
+        INITIAL_HISTORY_LIMIT
       );
-      const merged = mergeAuthoritativeMessages(this.state.messages, this.sessionId, page.messages);
 
-      this.patch({
-        messages: merged,
-        loadingOlderMessages: false,
-        olderCursor: page.nextCursor,
-        hasOlderMessages: Boolean(page.nextCursor),
-        pagesLoaded: this.state.pagesLoaded + 1
-      });
+      if (!requested) {
+        throw new Error("REALTIME_NOT_CONNECTED");
+      }
     } catch (error) {
       const detail = error instanceof Error ? error.message : "unknown";
       this.patch({
@@ -423,23 +425,6 @@ export class SessionRuntimeStore {
     }
 
     this.runtimeRefreshMode = null;
-  }
-
-  private async loadLatestHistory(): Promise<void> {
-    const page = await getSessionMessages(this.sessionId, null, INITIAL_HISTORY_LIMIT, "backward");
-    const merged = mergeAuthoritativeMessages(this.state.messages, this.sessionId, page.messages);
-
-    this.patch({
-      messages: merged,
-      historyState: "ready",
-      loadingOlderMessages: false,
-      olderCursor: page.nextCursor,
-      hasOlderMessages: Boolean(page.nextCursor),
-      lastCursor: page.cursor,
-      pagesLoaded: page.messages.length > 0 ? 1 : 0,
-      errorCode: null,
-      errorDetail: null
-    });
   }
 
   private startRealtime(): void {
@@ -497,12 +482,16 @@ export class SessionRuntimeStore {
       },
       onEnvelope: (event) => {
         this.clearHistoryBootstrapReadyTimer();
-        const merged = mergeAuthoritativeMessages(this.state.messages, this.sessionId, event.messages);
+        const merged = this.mergeHistoryMessages(event.messages, event.type === "session.backfill");
         this.patch({
           messages: merged,
           lastCursor: event.cursor,
           historyState: "ready",
-          hasOlderMessages: inferHasOlderMessages(this.state.session, merged.length),
+          olderCursor: event.olderCursor ?? this.state.olderCursor,
+          hasOlderMessages:
+            event.type === "session.backfill"
+              ? Boolean(event.olderCursor)
+              : inferHasOlderMessages(this.state.session, merged.length),
           pagesLoaded:
             event.type === "session.backfill"
               ? Math.max(this.state.pagesLoaded, merged.length > 0 ? 1 : 0)
@@ -519,6 +508,20 @@ export class SessionRuntimeStore {
           void this.refreshQueue();
         }
       },
+      onOlderHistory: (event) => {
+        const merged = this.mergeHistoryMessages(event.messages, false);
+
+        this.patch({
+          messages: merged,
+          historyState: "ready",
+          loadingOlderMessages: false,
+          olderCursor: event.olderCursor,
+          hasOlderMessages: Boolean(event.olderCursor),
+          pagesLoaded: this.state.pagesLoaded + 1,
+          errorCode: null,
+          errorDetail: null
+        });
+      },
       onRuntimeMessage: (event) => {
         this.handleRuntimeMessage(event);
       },
@@ -533,6 +536,7 @@ export class SessionRuntimeStore {
       },
       onError: (event) => {
         this.patch({
+          loadingOlderMessages: false,
           errorCode: event.error_code,
           errorDetail: event.detail
         });
@@ -571,6 +575,23 @@ export class SessionRuntimeStore {
     }
 
     this.emit();
+  }
+
+  private mergeHistoryMessages(
+    incoming: HistoryMessageDto[],
+    replaceSnapshotSeed: boolean
+  ): SessionMessageViewModel[] {
+    const baseMessages =
+      replaceSnapshotSeed && this.replaceSnapshotSeedOnBackfill
+        ? this.state.messages.filter((message) => message.deliveryState !== "sent")
+        : this.state.messages;
+    const merged = mergeAuthoritativeMessages(baseMessages, this.sessionId, incoming);
+
+    if (replaceSnapshotSeed) {
+      this.replaceSnapshotSeedOnBackfill = false;
+    }
+
+    return merged;
   }
 
   private handleError(error: unknown): void {
@@ -741,12 +762,6 @@ export class SessionRuntimeStore {
         errorDetail: runtimeError.errorDetail
       });
       await this.refreshQueue();
-
-      if (this.state.connectionState !== "connected") {
-        await this.loadLatestHistory().catch(() => {
-          return;
-        });
-      }
 
       const shouldContinuePolling =
         mode === "poll" &&
@@ -1133,7 +1148,12 @@ function inferHasOlderMessages(
   return loadedMessageCount >= REALTIME_LIMIT;
 }
 
-function withRunningState<T extends { runningState: SessionRunningState | null }>(
+function withRunningState<
+  T extends {
+    runningState: SessionRunningState | null;
+    activityState?: SessionActivityState;
+  }
+>(
   session: T | null,
   runningState: SessionRunningState
 ): T | null {
@@ -1143,11 +1163,17 @@ function withRunningState<T extends { runningState: SessionRunningState | null }
 
   return {
     ...session,
-    runningState
+    runningState,
+    activityState: resolveActivityState(session.activityState, runningState)
   };
 }
 
-function withLastSeenAt<T extends { lastSeenAt: string | null }>(
+function withLastSeenAt<
+  T extends {
+    lastSeenAt: string | null;
+    activityState?: SessionActivityState;
+  }
+>(
   session: T | null,
   lastSeenAt: string
 ): T | null {
@@ -1161,8 +1187,24 @@ function withLastSeenAt<T extends { lastSeenAt: string | null }>(
 
   return {
     ...session,
-    lastSeenAt
+    lastSeenAt,
+    activityState: session.activityState === "completed_unread" ? "idle" : session.activityState
   };
+}
+
+function resolveActivityState(
+  currentState: SessionActivityState | undefined,
+  runningState: SessionRunningState
+): SessionActivityState | undefined {
+  if (isRuntimeActiveState(runningState)) {
+    return "running";
+  }
+
+  if (currentState === "running") {
+    return "idle";
+  }
+
+  return currentState;
 }
 
 function isRuntimeActiveState(state: SessionRunningState | null | undefined): boolean {

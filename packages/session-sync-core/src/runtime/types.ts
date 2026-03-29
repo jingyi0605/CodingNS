@@ -135,6 +135,7 @@ export interface ProviderRuntimeRunRequest {
   provider: ProviderId;
   providerSessionId: string | null;
   rawStoreRef: string | null;
+  sequenceBase?: number | null;
   options: RuntimeSendOptions;
 }
 

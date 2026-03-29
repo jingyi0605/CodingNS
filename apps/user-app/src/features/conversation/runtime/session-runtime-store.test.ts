@@ -21,6 +21,7 @@ const mocked = vi.hoisted(() => {
   const sendSessionMessage = vi.fn();
   const realtimeInstances: Array<{
     options: Record<string, unknown>;
+    requestOlderMessages: ReturnType<typeof vi.fn>;
   }> = [];
 
   class MockRealtimeClient {
@@ -38,6 +39,8 @@ const mocked = vi.hoisted(() => {
     reconnectNow() {}
 
     updateCursor() {}
+
+    requestOlderMessages = vi.fn(() => true);
   }
 
   return {
@@ -60,7 +63,6 @@ const mocked = vi.hoisted(() => {
 vi.mock("../api/conversation-api", () => ({
   getSessionDetail: mocked.getSessionDetail,
   getSessionCapabilities: mocked.getSessionCapabilities,
-  getSessionMessages: mocked.getSessionMessages,
   getSessionQueue: mocked.getSessionQueue,
   getSessionRuntime: mocked.getSessionRuntime,
   sendLiveMessage: mocked.sendLiveMessage,
@@ -94,6 +96,12 @@ function emitRealtimeSubscribed() {
 function emitRealtimeEnvelope(event: Record<string, unknown>) {
   const client = getRealtimeClient();
   (client.options.onEnvelope as ((payload: Record<string, unknown>) => void))(event);
+  return client;
+}
+
+function emitRealtimeOlderHistory(event: Record<string, unknown>) {
+  const client = getRealtimeClient();
+  (client.options.onOlderHistory as ((payload: Record<string, unknown>) => void))(event);
   return client;
 }
 
@@ -261,6 +269,7 @@ describe("SessionRuntimeStore", () => {
       type: "session.backfill",
       sessionId: "session-1",
       cursor: "cursor-latest",
+      olderCursor: "cursor-older",
       messages: Array.from({ length: 30 }, (_, index) => ({
         messageId: `message-${index + 31}`,
         provider: "codex",
@@ -280,7 +289,7 @@ describe("SessionRuntimeStore", () => {
     expect(store.getState().messages[0]?.sequence).toBe(31);
     expect(store.getState().messages.at(-1)?.sequence).toBe(60);
     expect(store.getState().hasOlderMessages).toBe(true);
-    expect(store.getState().olderCursor).toBeNull();
+    expect(store.getState().olderCursor).toBe("cursor-older");
     expect(store.getState().lastCursor).toBe("cursor-latest");
     expect(mocked.realtimeInstances[0]?.options.cursor).toBeNull();
     expect(mocked.realtimeInstances[0]?.options.limit).toBe(40);
@@ -404,6 +413,84 @@ describe("SessionRuntimeStore", () => {
     expect(mocked.getSessionCapabilities).not.toHaveBeenCalled();
     expect(mocked.getSessionRuntime).not.toHaveBeenCalled();
     expect(mocked.getSessionMessages).not.toHaveBeenCalled();
+
+    store.destroy();
+  });
+
+  it("首屏 backfill 会替换掉旧快照里的过期消息，而不是和旧半截混在一起", async () => {
+    vi.useFakeTimers();
+    writeViewSnapshot(SESSION_RUNTIME_SNAPSHOT_KEY, {
+      session: {
+        sessionId: "session-1",
+        workspaceId: "workspace-1",
+        provider: "codex",
+        providerSessionId: "raw-1",
+        rawStoreRef: "codex://raw-1",
+        title: "会话 1",
+        messageCount: 60,
+        lastMessageAt: "2026-03-24T10:29:00.000Z",
+        createdAt: "2026-03-24T09:00:00.000Z",
+        updatedAt: "2026-03-24T10:29:00.000Z",
+        syncStatus: "idle",
+        syncCursor: "cursor-sync",
+        lastSyncAt: "2026-03-24T10:29:00.000Z",
+        lastErrorCode: null,
+        lastErrorDetail: null,
+        resumedAt: null,
+        runningState: "idle",
+        activitySource: "none",
+        lastEventAt: "2026-03-24T10:29:00.000Z",
+        completedAt: null,
+        lastSeenAt: null,
+        activityState: "idle"
+      },
+      capabilities: null,
+      contextUsage: null,
+      messages: Array.from({ length: 30 }, (_, index) => ({
+        id: `snapshot-message-${index + 1}`,
+        sessionId: "session-1",
+        role: "assistant" as const,
+        kind: "text" as const,
+        content: `snapshot-message-${index + 1}`,
+        toolCall: null,
+        attachments: [],
+        attachmentPayloads: null,
+        timestamp: `2026-03-24T09:${String(index).padStart(2, "0")}:00.000Z`,
+        sequence: index + 1,
+        rawRef: `codex://raw#line=${index + 1}`,
+        deliveryState: "sent" as const,
+        clientRequestId: null
+      })),
+      queuedMessages: []
+    });
+
+    const store = new SessionRuntimeStore("session-1");
+    await store.initialize();
+
+    expect(store.getState().historyState).toBe("loading");
+
+    emitRealtimeEnvelope({
+      type: "session.backfill",
+      sessionId: "session-1",
+      cursor: "cursor-latest",
+      olderCursor: "cursor-older",
+      messages: Array.from({ length: 30 }, (_, index) => ({
+        messageId: `message-${index + 31}`,
+        provider: "codex",
+        providerSessionId: "raw-1",
+        role: "assistant",
+        kind: "text",
+        content: `message-${index + 31}`,
+        timestamp: `2026-03-24T10:${String(index).padStart(2, "0")}:00.000Z`,
+        sequence: index + 31,
+        rawRef: `codex://raw#line=${index + 31}`,
+        toolCall: null
+      }))
+    });
+
+    expect(store.getState().messages).toHaveLength(30);
+    expect(store.getState().messages[0]?.sequence).toBe(31);
+    expect(store.getState().messages.at(-1)?.sequence).toBe(60);
 
     store.destroy();
   });
@@ -599,29 +686,9 @@ describe("SessionRuntimeStore", () => {
     store.destroy();
   });
 
-  it("loads older messages without rewinding the realtime cursor", async () => {
+  it("loads older messages through realtime without rewinding the realtime cursor", async () => {
     vi.useFakeTimers();
     const store = new SessionRuntimeStore("session-1");
-
-    mocked.getSessionMessages.mockResolvedValueOnce({
-        messages: Array.from({ length: 60 }, (_, index) => ({
-          messageId: `message-${index + 1}`,
-          provider: "codex",
-          providerSessionId: "raw-1",
-          role: "assistant",
-          kind: "text",
-          content: `message-${index + 1}`,
-          timestamp:
-            index < 30
-              ? `2026-03-24T09:${String(index).padStart(2, "0")}:00.000Z`
-              : `2026-03-24T10:${String(index - 30).padStart(2, "0")}:00.000Z`,
-          sequence: index + 1,
-          rawRef: `codex://raw#line=${index + 1}`
-        })),
-        cursor: "cursor-latest",
-        nextCursor: null,
-        total: 60
-      });
 
     await store.initialize();
     emitRealtimeSubscribed();
@@ -629,6 +696,7 @@ describe("SessionRuntimeStore", () => {
       type: "session.backfill",
       sessionId: "session-1",
       cursor: "cursor-latest",
+      olderCursor: "cursor-older-1",
       messages: Array.from({ length: 30 }, (_, index) => ({
         messageId: `message-${index + 31}`,
         provider: "codex",
@@ -644,13 +712,32 @@ describe("SessionRuntimeStore", () => {
     });
     await store.loadOlderMessages();
 
-    expect(mocked.getSessionMessages).toHaveBeenCalledWith(
-      "session-1",
-      null,
-      60,
-      "backward"
+    expect(mocked.realtimeInstances[0]?.requestOlderMessages).toHaveBeenCalledWith(
+      "cursor-older-1",
+      30
     );
+    emitRealtimeOlderHistory({
+      type: "session.history_older",
+      sessionId: "session-1",
+      cursor: null,
+      olderCursor: null,
+      messages: Array.from({ length: 30 }, (_, index) => ({
+        messageId: `message-${index + 1}`,
+        provider: "codex",
+        providerSessionId: "raw-1",
+        role: "assistant",
+        kind: "text",
+        content: `message-${index + 1}`,
+        timestamp: `2026-03-24T09:${String(index).padStart(2, "0")}:00.000Z`,
+        sequence: index + 1,
+        rawRef: `codex://raw#line=${index + 1}`,
+        toolCall: null
+      }))
+    });
+
     expect(store.getState().lastCursor).toBe("cursor-latest");
+    expect(store.getState().messages).toHaveLength(60);
+    expect(store.getState().olderCursor).toBeNull();
 
     store.destroy();
   });
@@ -769,6 +856,118 @@ describe("SessionRuntimeStore", () => {
     store.destroy();
   });
 
+  it("Claude synthetic user 在 runtime assistant 回流时仍保持正确时间线顺序", async () => {
+    mocked.getSessionDetail.mockResolvedValueOnce({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      providerSessionId: "claude-session-1",
+      rawStoreRef: "claude://raw-1",
+      title: "Claude 会话",
+      messageCount: 3,
+      lastMessageAt: "2026-03-24T10:00:00.000Z",
+      createdAt: "2026-03-24T09:00:00.000Z",
+      updatedAt: "2026-03-24T10:00:00.000Z",
+      syncStatus: "idle",
+      syncCursor: "cursor-sync",
+      lastSyncAt: "2026-03-24T10:00:00.000Z",
+      lastErrorCode: null,
+      lastErrorDetail: null,
+      resumedAt: null,
+      runningState: "idle",
+      activitySource: "none",
+      lastEventAt: "2026-03-24T10:00:00.000Z",
+      completedAt: null,
+      lastSeenAt: null,
+      activityState: "idle"
+    });
+    mocked.getSessionCapabilities.mockResolvedValueOnce({
+      provider: "claude-code",
+      canStartSession: true,
+      canResumeSession: true,
+      canSendMessage: true,
+      inRunInputMode: "streaming_guidance",
+      supportsSubagents: true,
+      supportsInterrupt: false,
+      supportsStructuredToolCalls: true,
+      supportsTokenUsage: true,
+      supportsAttachments: true,
+      supportsPermissionPrompt: true,
+      supportsCheckpoint: false,
+      limitations: []
+    });
+    mocked.getSessionRuntime.mockResolvedValueOnce({
+      sessionId: "session-1",
+      runningState: "idle",
+      hasActiveRun: false,
+      canAttach: true,
+      canInterrupt: false,
+      inRunInputMode: "streaming_guidance",
+      provider: "claude-code",
+      providerSessionId: "claude-session-1",
+      detail: null,
+      errorCode: null,
+      errorDetail: null,
+      updatedAt: "2026-03-24T10:00:00.000Z",
+      contextUsage: null
+    });
+    mocked.sendLiveMessage.mockResolvedValueOnce({
+      sessionId: "session-1",
+      acceptedAt: "2026-03-24T10:00:02.000Z",
+      clientRequestId: "client-1",
+      provider: "claude-code",
+      providerSessionId: "claude-session-1",
+      message: {
+        messageId: "synthetic-user-1",
+        provider: "claude-code",
+        providerSessionId: "claude-session-1",
+        role: "user",
+        kind: "text",
+        content: "仅回复：OK",
+        timestamp: "2026-03-24T10:00:02.000Z",
+        sequence: 4,
+        rawRef: "synthetic://claude-code/claude-session-1/synthetic-user-1",
+        toolCall: null,
+        attachments: []
+      }
+    });
+
+    const store = new SessionRuntimeStore("session-1");
+    await store.initialize();
+    emitRealtimeSubscribed();
+
+    await store.sendMessage("仅回复：OK");
+
+    emitRealtimeRuntimeMessage({
+      type: "session.runtime_message",
+      sessionId: "session-1",
+      source: "runtime",
+      message: {
+        messageId: "assistant-runtime-2",
+        provider: "claude-code",
+        providerSessionId: "claude-session-1",
+        role: "assistant",
+        kind: "text",
+        content: "OK",
+        timestamp: "2026-03-24T10:00:03.000Z",
+        sequence: 5,
+        rawRef: "claude-code://message/runtime-assistant-2",
+        toolCall: null
+      }
+    });
+
+    expect(store.getState().messages.map((message) => message.content)).toEqual([
+      "仅回复：OK",
+      "OK"
+    ]);
+    expect(store.getState().messages.map((message) => message.role)).toEqual([
+      "user",
+      "assistant"
+    ]);
+
+    store.destroy();
+  });
+
   it("does not overwrite a completed state when a late runtime error arrives", async () => {
     vi.useFakeTimers();
     const store = new SessionRuntimeStore("session-1");
@@ -817,6 +1016,73 @@ describe("SessionRuntimeStore", () => {
     expect(store.getState().session?.runningState).toBe("completed");
     expect(store.getState().errorCode).toBeNull();
     expect(store.getState().errorDetail).toBe("run completed");
+
+    store.destroy();
+  });
+
+  it("收到终态 runtime status 后会清掉残留的 running activityState", async () => {
+    vi.useFakeTimers();
+    const store = new SessionRuntimeStore("session-1");
+
+    mocked.getSessionRuntime.mockResolvedValueOnce({
+      sessionId: "session-1",
+      runningState: "running",
+      hasActiveRun: true,
+      canAttach: true,
+      canInterrupt: true,
+      inRunInputMode: "streaming_guidance",
+      provider: "claude-code",
+      providerSessionId: "claude-session-1",
+      detail: null,
+      updatedAt: "2026-03-24T10:00:00.000Z",
+      contextUsage: null
+    });
+    mocked.getSessionDetail.mockResolvedValueOnce({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      providerSessionId: "claude-session-1",
+      rawStoreRef: "claude://raw-1",
+      title: "Claude 会话",
+      messageCount: 3,
+      lastMessageAt: "2026-03-24T10:00:00.000Z",
+      createdAt: "2026-03-24T09:00:00.000Z",
+      updatedAt: "2026-03-24T10:00:00.000Z",
+      syncStatus: "idle",
+      syncCursor: "cursor-sync",
+      lastSyncAt: "2026-03-24T10:00:00.000Z",
+      lastErrorCode: null,
+      lastErrorDetail: null,
+      resumedAt: null,
+      runningState: "running",
+      activitySource: "runtime",
+      lastEventAt: "2026-03-24T10:00:00.000Z",
+      completedAt: null,
+      lastSeenAt: null,
+      activityState: "running"
+    });
+    mocked.getSessionMessages.mockResolvedValueOnce({
+      messages: [],
+      cursor: "cursor-latest",
+      nextCursor: null,
+      total: 0
+    });
+
+    await store.initialize();
+
+    const client = mocked.realtimeInstances[0];
+    expect(client).toBeDefined();
+
+    (client!.options.onRuntimeStatus as ((event: Record<string, unknown>) => void))({
+      type: "session.runtime_status",
+      sessionId: "session-1",
+      status: "completed",
+      detail: "run completed",
+      timestamp: "2026-03-24T10:00:10.000Z"
+    });
+
+    expect(store.getState().session?.runningState).toBe("completed");
+    expect(store.getState().session?.activityState).toBe("idle");
 
     store.destroy();
   });

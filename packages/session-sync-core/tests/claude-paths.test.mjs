@@ -92,6 +92,64 @@ test("ClaudeCodeAdapter 能在 macOS 工作区里重新发现刚创建的会话"
   }
 });
 
+test("ClaudeCodeAdapter 会忽略运行时生成的 .pending 临时 transcript", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-claude-pending-"));
+  const workspacePath = "/Users/jackson/Documents/Code/CodingNS";
+  const projectDir = join(tempDir, "projects", "-Users-jackson-Documents-Code-CodingNS");
+  const pendingSessionId = "pending-runtime-session";
+  const realSessionId = "55555555-5555-4555-8555-555555555555";
+
+  try {
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(
+      join(projectDir, `.pending-${pendingSessionId}.jsonl`),
+      [
+        JSON.stringify({
+          type: "user",
+          sessionId: `pending://claude-code/${pendingSessionId}`,
+          cwd: workspacePath,
+          timestamp: "2026-03-29T11:00:00.000Z",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "这是一条临时运行时记录" }]
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(
+      join(projectDir, `${realSessionId}.jsonl`),
+      [
+        JSON.stringify({
+          type: "user",
+          sessionId: realSessionId,
+          cwd: workspacePath,
+          timestamp: "2026-03-29T11:00:01.000Z",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "真实 Claude 会话" }]
+          }
+        }),
+        JSON.stringify({
+          type: "ai-title",
+          sessionId: realSessionId,
+          aiTitle: "真实 Claude 会话"
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const adapter = new ClaudeCodeAdapter({ homeDir: tempDir });
+    const sessions = await adapter.detectSessions(workspacePath);
+
+    assert.equal(sessions.length, 1);
+    assert.equal(sessions[0]?.providerSessionId, realSessionId);
+    assert.match(sessions[0]?.rawStoreRef ?? "", /55555555-5555-4555-8555-555555555555\.jsonl$/);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("ClaudeCodeAdapter 会忽略顶层 Warmup sidechain 调试会话", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "codingns-claude-sidechain-"));
   const workspacePath = "/Users/jackson/Documents/Code/CodingNS";
@@ -270,7 +328,94 @@ test("ClaudeCodeAdapter 会把同一条 Claude thinking 的 progress 与最终�
     assert.equal(page.messages.length, 1);
     assert.equal(page.messages[0]?.kind, "thinking");
     assert.equal(page.messages[0]?.content, "先想\n再回答");
-    assert.match(page.messages[0]?.rawRef ?? "", /#line=1&part=0$/);
+    assert.match(page.messages[0]?.rawRef ?? "", /^claude-code:\/\/message\//);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("ClaudeCodeAdapter 会把同一条 assistant 消息里的重复 text block 收敛成一条正式消息", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-claude-duplicate-text-blocks-"));
+  const workspacePath = "/Users/jackson/Documents/Code/CodingNS";
+  const projectDir = join(tempDir, "projects", "-Users-jackson-Documents-Code-CodingNS");
+  const sessionId = "35353535-3535-4535-8535-353535353535";
+  const rawStoreRef = join(projectDir, `${sessionId}.jsonl`);
+
+  try {
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(
+      rawStoreRef,
+      [
+        JSON.stringify({
+          type: "assistant",
+          sessionId,
+          cwd: workspacePath,
+          timestamp: "2026-03-29T01:00:00.000Z",
+          message: {
+            id: "msg-duplicate-text-1",
+            role: "assistant",
+            content: [
+              { type: "text", text: "正式回复" },
+              { type: "text", text: "正式回复" },
+              { type: "text", text: "正式回复" }
+            ]
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const adapter = new ClaudeCodeAdapter({ homeDir: tempDir });
+    const page = await adapter.readSessionHistory(sessionId, rawStoreRef, null, 20, "forward");
+
+    assert.equal(page.messages.length, 1);
+    assert.equal(page.messages[0]?.role, "assistant");
+    assert.equal(page.messages[0]?.kind, "text");
+    assert.equal(page.messages[0]?.content, "正式回复");
+    assert.match(page.messages[0]?.rawRef ?? "", /^claude-code:\/\/message\//);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("ClaudeCodeAdapter 会把同一条 assistant 消息里的重复 thinking block 收敛成一条正式消息", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-claude-duplicate-thinking-blocks-"));
+  const workspacePath = "/Users/jackson/Documents/Code/CodingNS";
+  const projectDir = join(tempDir, "projects", "-Users-jackson-Documents-Code-CodingNS");
+  const sessionId = "36363636-3636-4636-8636-363636363636";
+  const rawStoreRef = join(projectDir, `${sessionId}.jsonl`);
+
+  try {
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(
+      rawStoreRef,
+      [
+        JSON.stringify({
+          type: "assistant",
+          sessionId,
+          cwd: workspacePath,
+          timestamp: "2026-03-29T01:00:00.000Z",
+          message: {
+            id: "msg-duplicate-thinking-1",
+            role: "assistant",
+            content: [
+              { type: "thinking", thinking: "先想一下" },
+              { type: "thinking", thinking: "先想一下" }
+            ]
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const adapter = new ClaudeCodeAdapter({ homeDir: tempDir });
+    const page = await adapter.readSessionHistory(sessionId, rawStoreRef, null, 20, "forward");
+
+    assert.equal(page.messages.length, 1);
+    assert.equal(page.messages[0]?.role, "assistant");
+    assert.equal(page.messages[0]?.kind, "thinking");
+    assert.equal(page.messages[0]?.content, "先想一下");
+    assert.match(page.messages[0]?.rawRef ?? "", /^claude-code:\/\/message\//);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
