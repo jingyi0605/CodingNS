@@ -124,6 +124,9 @@ importers:
       '@codingns/session-sync-core':
         specifier: workspace:*
         version: link:../session-sync-core
+      '@openai/codex-sdk':
+        specifier: ^0.116.0
+        version: 0.116.0
       better-sqlite3:
         specifier: ^12.8.0
         version: 12.8.0
@@ -136,25 +139,6 @@ importers:
       ws:
         specifier: ^8.20.0
         version: 8.20.0
-    optionalDependencies:
-      '@openai/codex-darwin-arm64':
-        specifier: npm:@openai/codex@0.116.0-darwin-arm64
-        version: '@openai/codex@0.116.0-darwin-arm64'
-      '@openai/codex-darwin-x64':
-        specifier: npm:@openai/codex@0.116.0-darwin-x64
-        version: '@openai/codex@0.116.0-darwin-x64'
-      '@openai/codex-linux-arm64':
-        specifier: npm:@openai/codex@0.116.0-linux-arm64
-        version: '@openai/codex@0.116.0-linux-arm64'
-      '@openai/codex-linux-x64':
-        specifier: npm:@openai/codex@0.116.0-linux-x64
-        version: '@openai/codex@0.116.0-linux-x64'
-      '@openai/codex-win32-arm64':
-        specifier: npm:@openai/codex@0.116.0-win32-arm64
-        version: '@openai/codex@0.116.0-win32-arm64'
-      '@openai/codex-win32-x64':
-        specifier: npm:@openai/codex@0.116.0-win32-x64
-        version: '@openai/codex@0.116.0-win32-x64'
 
   packages/session-sync-core:
     dependencies:

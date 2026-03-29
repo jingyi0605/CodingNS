@@ -27,7 +27,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@codingns/session-sync-core": "0.1.0",
+    "@codingns/session-sync-core": "workspace:*",
     "@openai/codex-sdk": "^0.116.0",
     "better-sqlite3": "^12.8.0",
     "fastify": "^5.8.2",
