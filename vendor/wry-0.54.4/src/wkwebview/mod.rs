@@ -50,7 +50,9 @@ use objc2_foundation::{
   NSObjectNSKeyValueCoding, NSObjectProtocol, NSString, NSUTF8StringEncoding, NSURL, NSUUID,
 };
 #[cfg(target_os = "ios")]
-use objc2_ui_kit::{UIScrollView, UIViewAutoresizing};
+use objc2_ui_kit::{
+  UIScrollView, UIScrollViewContentInsetAdjustmentBehavior, UIViewAutoresizing,
+};
 
 #[cfg(target_os = "macos")]
 use objc2_app_kit::NSWindow;
@@ -520,14 +522,15 @@ impl InnerWebView {
       {
         // set all autoresizingmasks
         webview.setAutoresizingMask(UIViewAutoresizing::from_bits(31).unwrap());
-        // let () = msg_send![webview, setAutoresizingMask: 31];
 
-        // disable scroll bounce by default
-        // https://developer.apple.com/documentation/webkit/wkwebview/1614784-scrollview?language=objc
-        // But not exist in objc2-web-kit
+        // iOS 默认会按 safe area 自动给 WKWebView 的滚动容器加 inset。
+        // 这会让固定底栏永远浮在 home indicator 上方，看起来像底部被白带截断。
         let scroll_view: Retained<UIScrollView> = objc2::msg_send![&webview, scrollView];
-        // let scroll_view: Retained<UIScrollView> = webview.ivars().scrollView; // FIXME: not test yet
-        scroll_view.setBounces(false)
+        scroll_view.setBounces(false);
+        scroll_view.setContentInsetAdjustmentBehavior(
+          UIScrollViewContentInsetAdjustmentBehavior::Never,
+        );
+        scroll_view.setAutomaticallyAdjustsScrollIndicatorInsets(false);
       }
 
       if !attributes.visible {

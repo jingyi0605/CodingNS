@@ -1,4 +1,4 @@
-import { useRef, type CSSProperties, type ReactNode } from "react";
+import { useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import { usePlatform } from "../../../platform/platform-provider";
@@ -12,6 +12,8 @@ import type {
   MobileWorkbenchEntry,
   MobileWorkbenchShellProps
 } from "../components/mobile-workbench-shell-types";
+import { MobileConversationBottomLayerProvider } from "../components/MobileConversationBottomLayerContext";
+import { useMeasuredConversationTabbarHeight } from "../components/useMeasuredConversationTabbarHeight";
 import { useConversationFocusTabbar } from "../components/useConversationFocusTabbar";
 import { AdaptiveMobilePaneLayout, resolveAdaptiveMobilePaneLayout } from "../layouts/AdaptiveMobilePaneLayout";
 
@@ -42,10 +44,11 @@ export function IosWorkbenchShell({
   const location = useLocation();
   const navigate = useNavigate();
   const shellRef = useRef<HTMLDivElement | null>(null);
+  const tabbarRef = useRef<HTMLElement | null>(null);
+  const [composerPortalTarget, setComposerPortalTarget] = useState<HTMLElement | null>(null);
   const isConversationFocus = presentation === "conversation-focus";
   const conversationFocusTabbar = useConversationFocusTabbar({
-    // 原生 App 底栏应保持常驻，不使用 H5 那套自动隐藏手势。
-    enabled: false,
+    enabled: isConversationFocus,
     rootRef: shellRef,
     resetKey: `${location.pathname}${location.search}`
   });
@@ -101,6 +104,7 @@ export function IosWorkbenchShell({
         }
       : undefined
   ) as CSSProperties | undefined;
+  useMeasuredConversationTabbarHeight(shellRef, tabbarRef, isConversationFocus);
 
   function handleNavigateBackToToolsHome() {
     const preferredToolsHomeHref = resolvePreferredToolsHomeHref(location.pathname, location.search);
@@ -113,89 +117,109 @@ export function IosWorkbenchShell({
     navigate(preferredToolsHomeHref, { replace: true });
   }
 
-  return (
-    <div
-      ref={shellRef}
-      className="ios-workbench-shell"
-      data-active-entry={activeEntry}
-      data-mobile-presentation={presentation}
-      data-pane-layout={paneLayout}
-      data-tabbar-open={isConversationFocus ? conversationFocusTabbar.isOpen : true}
-      data-conversation-tabbar-state={isConversationFocus ? conversationFocusTabbar.state : "default"}
-      style={shellStyle}
-    >
-      {headerState ? (
-        <header className="ios-workbench-nav" data-header-kind="tools">
-          <div className="ios-workbench-nav-leading">
-            {headerState.showBackButton ? (
-              <button
-                type="button"
-                className="ios-workbench-back-button"
-                aria-label={t("common.back")}
-                onClick={handleNavigateBackToToolsHome}
-              >
-                <ChevronLeftIcon />
-                <span>{t("common.back")}</span>
-              </button>
-            ) : null}
-          </div>
+  const tabbarContent = (
+    <nav ref={tabbarRef} className="ios-workbench-tabbar" aria-label={t("shell.title")}>
+      {navItems.map((item) => (
+        <button
+          key={item.key}
+          type="button"
+          className="ios-workbench-tabbar-item"
+          data-active={item.key === activeEntry}
+          aria-current={item.key === activeEntry ? "page" : undefined}
+          onClick={() => {
+            if (item.key !== activeEntry) {
+              void haptics.trigger("selection");
+            }
 
-          <div className="ios-workbench-nav-copy">
-            <h1>{headerState.title}</h1>
-          </div>
-
-          <div className="ios-workbench-nav-actions">
-            {headerState.showMoreButton ? (
-              <button
-                type="button"
-                className="ios-workbench-icon-button"
-                aria-label={headerState.moreButtonLabel}
-                onClick={onNavigateToolProcesses}
-              >
-                <MoreIcon />
-              </button>
-            ) : null}
-          </div>
-        </header>
-      ) : null}
-
-      <div className="ios-workbench-content">
-        <AdaptiveMobilePaneLayout
-          viewportClass={platform.viewportClass}
-          activeEntry={activeEntry}
-          hasNavigationPanel={Boolean(navigationPanel)}
-          hasAuxiliaryPanel={Boolean(auxiliaryPanel)}
-          navigationPanel={navigationPanel}
-          auxiliaryPanel={auxiliaryPanel}
+            item.onClick();
+          }}
         >
-          {children}
-        </AdaptiveMobilePaneLayout>
-      </div>
+          <span className="ios-workbench-tabbar-icon" aria-hidden="true">
+            {item.icon}
+          </span>
+          <span className="ios-workbench-tabbar-label">{item.label}</span>
+        </button>
+      ))}
+    </nav>
+  );
 
-      <nav className="ios-workbench-tabbar" aria-label={t("shell.title")}>
-        {navItems.map((item) => (
-          <button
-            key={item.key}
-            type="button"
-            className="ios-workbench-tabbar-item"
-            data-active={item.key === activeEntry}
-            aria-current={item.key === activeEntry ? "page" : undefined}
-            onClick={() => {
-              if (item.key !== activeEntry) {
-                void haptics.trigger("selection");
-              }
+  return (
+    <MobileConversationBottomLayerProvider
+      composerPortalTarget={isConversationFocus ? composerPortalTarget : null}
+    >
+      <div
+        ref={shellRef}
+        className="ios-workbench-shell"
+        data-active-entry={activeEntry}
+        data-mobile-presentation={presentation}
+        data-pane-layout={paneLayout}
+        data-tabbar-open={isConversationFocus ? conversationFocusTabbar.isOpen : true}
+        data-conversation-tabbar-state={isConversationFocus ? conversationFocusTabbar.state : "default"}
+        style={shellStyle}
+      >
+        {headerState ? (
+          <header className="ios-workbench-nav" data-header-kind="tools">
+            <div className="ios-workbench-nav-leading">
+              {headerState.showBackButton ? (
+                <button
+                  type="button"
+                  className="ios-workbench-back-button"
+                  aria-label={t("common.back")}
+                  onClick={handleNavigateBackToToolsHome}
+                >
+                  <ChevronLeftIcon />
+                  <span>{t("common.back")}</span>
+                </button>
+              ) : null}
+            </div>
 
-              item.onClick();
-            }}
+            <div className="ios-workbench-nav-copy">
+              <h1>{headerState.title}</h1>
+            </div>
+
+            <div className="ios-workbench-nav-actions">
+              {headerState.showMoreButton ? (
+                <button
+                  type="button"
+                  className="ios-workbench-icon-button"
+                  aria-label={headerState.moreButtonLabel}
+                  onClick={onNavigateToolProcesses}
+                >
+                  <MoreIcon />
+                </button>
+              ) : null}
+            </div>
+          </header>
+        ) : null}
+
+        <div className="ios-workbench-content">
+          <AdaptiveMobilePaneLayout
+            viewportClass={platform.viewportClass}
+            activeEntry={activeEntry}
+            hasNavigationPanel={Boolean(navigationPanel)}
+            hasAuxiliaryPanel={Boolean(auxiliaryPanel)}
+            navigationPanel={navigationPanel}
+            auxiliaryPanel={auxiliaryPanel}
           >
-            <span className="ios-workbench-tabbar-icon" aria-hidden="true">
-              {item.icon}
-            </span>
-            <span className="ios-workbench-tabbar-label">{item.label}</span>
-          </button>
-        ))}
-      </nav>
-    </div>
+            {children}
+          </AdaptiveMobilePaneLayout>
+        </div>
+
+        {isConversationFocus ? (
+          <div className="mobile-conversation-bottom-layer">
+            <div
+              ref={setComposerPortalTarget}
+              className="mobile-conversation-bottom-layer-composer-slot"
+            />
+            <div className="mobile-conversation-bottom-layer-tabbar-shell">
+              {tabbarContent}
+            </div>
+          </div>
+        ) : (
+          tabbarContent
+        )}
+      </div>
+    </MobileConversationBottomLayerProvider>
   );
 }
 

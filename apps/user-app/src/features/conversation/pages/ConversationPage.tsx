@@ -4,6 +4,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type RefObject,
   type TouchEvent as ReactTouchEvent
 } from "react";
 import { createPortal } from "react-dom";
@@ -47,6 +48,7 @@ import {
   flattenNavigationSessions,
   type WorkbenchNavigationEntry
 } from "../../workbench/utils/workbench-navigation";
+import { useMobileConversationBottomLayer } from "../../mobile-shell/components/MobileConversationBottomLayerContext";
 import { MobileWorkspaceSwitcherHeader } from "../../mobile-shell/components/MobileWorkspaceSwitcherHeader";
 import {
   readMobileConversationPreviewMode,
@@ -207,6 +209,9 @@ function LiveConversationPage({
       ) ?? [],
     [mobileArchiveWorkspaceGroup]
   );
+  const mobileConversationMainRef = useRef<HTMLDivElement | null>(null);
+  const [mobileComposerPanelElement, setMobileComposerPanelElement] = useState<HTMLElement | null>(null);
+  const { composerPortalTarget } = useMobileConversationBottomLayer();
   useEffect(() => {
     store.applyNavigationSession(navigationSession);
   }, [navigationSession, store]);
@@ -306,6 +311,13 @@ function LiveConversationPage({
     previousRunningStateRef.current = nextRunningState;
   }, [haptics, session?.runningState]);
 
+  useMobileConversationComposerHeightVar(
+    mobileConversationMainRef,
+    mobileComposerPanelElement,
+    !showInlineHeader,
+    sessionId
+  );
+
   return (
     <>
       <main
@@ -362,7 +374,7 @@ function LiveConversationPage({
           />
         ) : null}
         <div className="mobile-conversation-stage" {...(!showInlineHeader ? mobilePreview.mainGestureHandlers : {})}>
-          <div className="mobile-conversation-main">
+          <div ref={mobileConversationMainRef} className="mobile-conversation-main">
             <ConnectionBanner connectionState={connectionState} onReconnect={() => store.reconnect()} />
             <MessageTimeline
               sessionId={sessionId}
@@ -406,6 +418,8 @@ function LiveConversationPage({
             <ComposerPanel
               capabilities={capabilities}
               draftStorageId={sessionId}
+              panelRef={!showInlineHeader ? setMobileComposerPanelElement : undefined}
+              portalContainer={!showInlineHeader ? composerPortalTarget : null}
               hasActiveRun={runtimeHasActiveRun}
               contextUsage={contextUsage}
               hasPendingQueuedMessages={hasPendingQueuedMessages}
@@ -591,6 +605,9 @@ function DraftConversationPage({
     () => buildMobileFavoritePreviewItems(favoriteSessions),
     [favoriteSessions]
   );
+  const mobileConversationMainRef = useRef<HTMLDivElement | null>(null);
+  const [mobileComposerPanelElement, setMobileComposerPanelElement] = useState<HTMLElement | null>(null);
+  const { composerPortalTarget } = useMobileConversationBottomLayer();
 
   useEffect(() => {
     setSessionWorkspace(draft.sessionId, draft.workspaceId);
@@ -620,6 +637,13 @@ function DraftConversationPage({
       disposed = true;
     };
   }, [draft.provider, draft.workspaceId, fallbackCapabilities]);
+
+  useMobileConversationComposerHeightVar(
+    mobileConversationMainRef,
+    mobileComposerPanelElement,
+    !showInlineHeader,
+    draft.sessionId
+  );
 
   return (
     <main
@@ -668,7 +692,7 @@ function DraftConversationPage({
         />
       ) : null}
       <div className="mobile-conversation-stage" {...(!showInlineHeader ? mobilePreview.mainGestureHandlers : {})}>
-        <div className="mobile-conversation-main">
+        <div ref={mobileConversationMainRef} className="mobile-conversation-main">
           <ConnectionBanner connectionState="closed" onReconnect={() => {}} />
           <MessageTimeline
             sessionId={draft.sessionId}
@@ -683,6 +707,8 @@ function DraftConversationPage({
           <ComposerPanel
             capabilities={capabilities}
             draftStorageId={draft.sessionId}
+            panelRef={!showInlineHeader ? setMobileComposerPanelElement : undefined}
+            portalContainer={!showInlineHeader ? composerPortalTarget : null}
             contextUsage={null}
             isSubmitting={sending}
             isRunning={false}
@@ -854,6 +880,57 @@ function buildMobileFavoritePreviewItems(
       entry,
       depth: 0 as const
     }));
+}
+
+function useMobileConversationComposerHeightVar(
+  rootRef: RefObject<HTMLElement>,
+  composerPanelElement: HTMLElement | null,
+  enabled: boolean,
+  resetKey: string
+) {
+  useEffect(() => {
+    const rootElement = rootRef.current;
+
+    if (!enabled || !rootElement) {
+      if (rootElement) {
+        rootElement.style.removeProperty("--mobile-conversation-composer-height");
+      }
+      return;
+    }
+
+    if (!composerPanelElement) {
+      rootElement.style.removeProperty("--mobile-conversation-composer-height");
+      return;
+    }
+
+    const stableRootElement = rootElement;
+    const stableComposerPanel = composerPanelElement;
+
+    function syncComposerHeight() {
+      if (!rootRef.current || !stableComposerPanel.isConnected) {
+        return;
+      }
+
+      stableRootElement.style.setProperty(
+        "--mobile-conversation-composer-height",
+        `${stableComposerPanel.offsetHeight}px`
+      );
+    }
+
+    syncComposerHeight();
+
+    const resizeObserver =
+      typeof ResizeObserver !== "undefined" ? new ResizeObserver(syncComposerHeight) : null;
+
+    resizeObserver?.observe(stableComposerPanel);
+    window.addEventListener("resize", syncComposerHeight);
+
+    return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", syncComposerHeight);
+      rootElement.style.removeProperty("--mobile-conversation-composer-height");
+    };
+  }, [composerPanelElement, enabled, resetKey, rootRef]);
 }
 
 interface MobileConversationPreviewGestureHandlers {

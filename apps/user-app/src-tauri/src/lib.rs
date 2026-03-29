@@ -229,30 +229,6 @@ fn perform_ios_haptic_feedback(app: Option<&AppHandle>, kind: &str) -> Result<()
 }
 
 #[cfg(target_os = "ios")]
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct NativeCGPoint {
-  x: f64,
-  y: f64,
-}
-
-#[cfg(target_os = "ios")]
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct NativeCGSize {
-  width: f64,
-  height: f64,
-}
-
-#[cfg(target_os = "ios")]
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct NativeCGRect {
-  origin: NativeCGPoint,
-  size: NativeCGSize,
-}
-
-#[cfg(target_os = "ios")]
 unsafe fn trigger_ios_haptic_feedback(kind: &str) {
   match kind {
     "selection" | "gesture" => {
@@ -281,64 +257,10 @@ unsafe fn trigger_ios_haptic_feedback(kind: &str) {
   }
 }
 
-#[cfg(target_os = "ios")]
-unsafe fn expand_ios_webview_to_window(
-  webview: *mut std::ffi::c_void,
-  view_controller: *mut std::ffi::c_void,
-) {
-  const FULL_RESIZE_MASK: usize = 31;
-  const CONTENT_INSET_ADJUSTMENT_NEVER: isize = 2;
-
-  let webview = webview.cast::<AnyObject>();
-  let view_controller = view_controller.cast::<AnyObject>();
-  if webview.is_null() || view_controller.is_null() {
-    return;
-  }
-
-  let controller_view: *mut AnyObject = msg_send![view_controller, view];
-  if controller_view.is_null() {
-    return;
-  }
-
-  let window: *mut AnyObject = msg_send![controller_view, window];
-  let bounds: NativeCGRect = if window.is_null() {
-    msg_send![controller_view, bounds]
-  } else {
-    msg_send![window, bounds]
-  };
-
-  let (): () = msg_send![controller_view, setFrame: bounds];
-  let (): () = msg_send![webview, setFrame: bounds];
-  let (): () = msg_send![webview, setAutoresizingMask: FULL_RESIZE_MASK];
-  let (): () = msg_send![controller_view, setNeedsLayout];
-  let (): () = msg_send![controller_view, layoutIfNeeded];
-
-  let scroll_view: *mut AnyObject = msg_send![webview, scrollView];
-  if !scroll_view.is_null() {
-    let (): () = msg_send![
-      scroll_view,
-      setContentInsetAdjustmentBehavior: CONTENT_INSET_ADJUSTMENT_NEVER
-    ];
-  }
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
     .setup(|app| {
-      #[cfg(target_os = "ios")]
-      {
-        // iOS 默认把 WebView 尺寸裁到 safe area，网页底栏永远贴不到屏幕最底部。
-        // 这里直接把 WKWebView 拉到窗口全尺寸，让底部导航真正进入 home indicator 安全区。
-        if let Some(webview) = app.get_webview("main") {
-          webview
-            .with_webview(|webview| unsafe {
-              expand_ios_webview_to_window(webview.inner(), webview.view_controller());
-            })
-            .map_err(|error| format!("扩展 iOS WebView 失败: {error}"))?;
-        }
-      }
-
       if cfg!(debug_assertions) {
         app.handle().plugin(
           tauri_plugin_log::Builder::default()

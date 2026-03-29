@@ -1962,6 +1962,10 @@ a {
   border-top: 1px solid color-mix(in srgb, var(--border-primary) 70%, transparent);
 }
 
+.terminal-manager-detail-actions {
+  margin-top: 8px;
+}
+
 .terminal-manager-detail-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -15019,8 +15023,14 @@ textarea:focus-visible {
 .ios-workbench-shell[data-mobile-presentation="conversation-focus"],
 .android-workbench-shell[data-mobile-presentation="conversation-focus"] {
   --mobile-conversation-tabbar-progress: 0;
+  --mobile-conversation-tabbar-height: var(--mobile-workbench-tabbar-height, 0px);
+  --mobile-conversation-tabbar-visible-height: max(
+    calc(var(--mobile-conversation-tabbar-height) - var(--mobile-shell-safe-bottom, 0px)),
+    0px
+  );
+  --mobile-conversation-tabbar-offset-open: var(--mobile-conversation-tabbar-visible-height);
   --mobile-conversation-tabbar-offset: calc(
-    var(--mobile-conversation-tabbar-progress) * var(--mobile-workbench-tabbar-height, 0px)
+    var(--mobile-conversation-tabbar-progress) * var(--mobile-conversation-tabbar-offset-open)
   );
   position: relative;
   gap: 0;
@@ -15079,6 +15089,10 @@ textarea:focus-visible {
 .mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .mobile-conversation-main,
 .ios-workbench-shell[data-mobile-presentation="conversation-focus"] .mobile-conversation-main,
 .android-workbench-shell[data-mobile-presentation="conversation-focus"] .mobile-conversation-main {
+  position: relative;
+  padding-bottom: calc(
+    var(--mobile-conversation-composer-height, 0px) + var(--mobile-conversation-tabbar-offset)
+  );
   transition: none;
 }
 
@@ -15092,6 +15106,12 @@ textarea:focus-visible {
 .ios-workbench-shell[data-mobile-presentation="conversation-focus"] .message-list,
 .android-workbench-shell[data-mobile-presentation="conversation-focus"] .message-list {
   padding-top: 8px;
+}
+
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .message-list > :first-child,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .message-list > :first-child,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .message-list > :first-child {
+  margin-top: auto;
 }
 
 /* message-list 本身已有基础 gap，这里只给“正文 <-> 工具”补足到和段落一致的节奏。 */
@@ -15226,10 +15246,11 @@ textarea:focus-visible {
 .mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .composer-panel,
 .ios-workbench-shell[data-mobile-presentation="conversation-focus"] .composer-panel,
 .android-workbench-shell[data-mobile-presentation="conversation-focus"] .composer-panel {
+  position: relative;
   z-index: 16;
-  margin-bottom: var(--mobile-conversation-tabbar-offset);
-  transition: margin-bottom 280ms cubic-bezier(0.22, 1, 0.36, 1);
-  will-change: margin-bottom;
+  padding-bottom: 0;
+  transition: none;
+  will-change: auto;
 }
 
 .mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .composer-input-container,
@@ -15238,7 +15259,28 @@ textarea:focus-visible {
   box-sizing: border-box;
   width: auto;
   max-width: calc(100% - 10px);
-  margin: 5px;
+  margin: 5px 5px 0;
+}
+
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .composer-input-wrapper,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .composer-input-wrapper,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .composer-input-wrapper {
+  padding: 12px;
+}
+
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .composer-quick-phrase-trigger,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .composer-quick-phrase-trigger,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .composer-quick-phrase-trigger {
+  right: 18px;
+  width: 34px;
+  height: 34px;
+  border-radius: 11px;
+}
+
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .composer-controls,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .composer-controls,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .composer-controls {
+  padding: 8px 18px 12px 12px;
 }
 
 .mobile-workbench-shell[data-mobile-presentation="conversation-focus"][data-conversation-tabbar-state="dragging"] .composer-panel,
@@ -15247,36 +15289,69 @@ textarea:focus-visible {
   transition: none;
 }
 
-.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .mobile-workbench-tabbar,
-.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .ios-workbench-tabbar,
-.android-workbench-shell[data-mobile-presentation="conversation-focus"] .android-workbench-bottom-nav {
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .mobile-conversation-bottom-layer,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .mobile-conversation-bottom-layer,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .mobile-conversation-bottom-layer {
   position: absolute;
   right: 0;
   bottom: 0;
   left: 0;
   z-index: 72;
-  box-shadow: 0 -18px 36px rgba(15, 23, 42, 0.12);
-  transform: translateY(
-    calc((1 - var(--mobile-conversation-tabbar-progress)) * (100% + env(safe-area-inset-bottom, 0px)))
-  );
-  opacity: calc(0.18 + var(--mobile-conversation-tabbar-progress) * 0.82);
   pointer-events: none;
-  will-change: transform, opacity;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .mobile-conversation-bottom-layer-composer-slot,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .mobile-conversation-bottom-layer-composer-slot,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .mobile-conversation-bottom-layer-composer-slot {
+  position: relative;
+  z-index: 1;
+  pointer-events: auto;
+}
+
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .mobile-conversation-bottom-layer-tabbar-shell,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .mobile-conversation-bottom-layer-tabbar-shell,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .mobile-conversation-bottom-layer-tabbar-shell {
+  display: block;
+  min-height: 0;
+  height: var(--mobile-conversation-tabbar-offset);
+  overflow: hidden;
+  opacity: calc(0.18 + var(--mobile-conversation-tabbar-progress) * 0.82);
+  will-change: height, opacity;
   transition:
-    transform 280ms cubic-bezier(0.22, 1, 0.36, 1),
+    height 280ms cubic-bezier(0.22, 1, 0.36, 1),
     opacity 220ms ease;
 }
 
-.mobile-workbench-shell[data-mobile-presentation="conversation-focus"][data-conversation-tabbar-state="dragging"] .mobile-workbench-tabbar,
-.ios-workbench-shell[data-mobile-presentation="conversation-focus"][data-conversation-tabbar-state="dragging"] .ios-workbench-tabbar,
-.android-workbench-shell[data-mobile-presentation="conversation-focus"][data-conversation-tabbar-state="dragging"] .android-workbench-bottom-nav {
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .mobile-workbench-tabbar,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .ios-workbench-tabbar,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .android-workbench-bottom-nav {
+  position: relative;
+  right: auto;
+  bottom: auto;
+  left: auto;
+  width: 100%;
+  margin: 0;
+  box-shadow: 0 -18px 36px rgba(15, 23, 42, 0.12);
+  pointer-events: auto;
+  will-change: auto;
+  transform: none;
+  opacity: 1;
   transition: none;
 }
 
-.mobile-workbench-shell[data-mobile-presentation="conversation-focus"][data-tabbar-open="true"] .mobile-workbench-tabbar,
-.ios-workbench-shell[data-mobile-presentation="conversation-focus"][data-tabbar-open="true"] .ios-workbench-tabbar,
-.android-workbench-shell[data-mobile-presentation="conversation-focus"][data-tabbar-open="true"] .android-workbench-bottom-nav {
-  pointer-events: auto;
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"][data-conversation-tabbar-state="dragging"] .mobile-conversation-bottom-layer-tabbar-shell,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"][data-conversation-tabbar-state="dragging"] .mobile-conversation-bottom-layer-tabbar-shell,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"][data-conversation-tabbar-state="dragging"] .mobile-conversation-bottom-layer-tabbar-shell {
+  transition: none;
+}
+
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"]:not([data-tabbar-open="true"]) .mobile-conversation-bottom-layer-tabbar-shell,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"]:not([data-tabbar-open="true"]) .mobile-conversation-bottom-layer-tabbar-shell,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"]:not([data-tabbar-open="true"]) .mobile-conversation-bottom-layer-tabbar-shell {
+  pointer-events: none;
 }
 
 /* ========================================

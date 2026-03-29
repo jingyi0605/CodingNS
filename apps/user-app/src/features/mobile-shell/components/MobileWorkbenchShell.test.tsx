@@ -361,6 +361,45 @@ describe("MobileWorkbenchShell", () => {
     expect(shell).toHaveAttribute("data-conversation-tabbar-state", "dragging");
   });
 
+  it("滚动消息列表不会触发底部导航显隐，只有输入区手势才会触发", () => {
+    vi.useFakeTimers();
+    const view = renderMobileShell({
+      presentation: "conversation-focus",
+      childVariant: "conversation"
+    });
+    const shell = view.container.querySelector(".mobile-workbench-shell");
+    const messageList = view.container.querySelector(".message-list") as HTMLDivElement | null;
+
+    expect(messageList).not.toBeNull();
+
+    Object.defineProperty(messageList, "scrollTop", {
+      configurable: true,
+      writable: true,
+      value: 120
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(3000);
+    });
+
+    expect(shell).toHaveAttribute("data-conversation-tabbar-state", "hidden");
+
+    fireEvent.scroll(messageList!);
+    expect(shell).toHaveAttribute("data-conversation-tabbar-state", "hidden");
+
+    messageList!.scrollTop = 116;
+    fireEvent.scroll(messageList!);
+    expect(shell).toHaveAttribute("data-conversation-tabbar-state", "hidden");
+
+    messageList!.scrollTop = 110;
+    fireEvent.scroll(messageList!);
+    expect(shell).toHaveAttribute("data-conversation-tabbar-state", "hidden");
+
+    messageList!.scrollTop = 100;
+    fireEvent.scroll(messageList!);
+    expect(shell).toHaveAttribute("data-conversation-tabbar-state", "hidden");
+  });
+
   it("工具主页不再渲染外层标题栏，避免和页面内头部重复", () => {
     const view = renderMobileShell({
       activeEntry: "tools",

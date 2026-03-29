@@ -1,4 +1,4 @@
-import { useRef, type CSSProperties, type ReactNode } from "react";
+import { useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import { usePlatform } from "../../../platform/platform-provider";
@@ -12,6 +12,8 @@ import type {
   MobileWorkbenchEntry,
   MobileWorkbenchShellProps
 } from "../components/mobile-workbench-shell-types";
+import { MobileConversationBottomLayerProvider } from "../components/MobileConversationBottomLayerContext";
+import { useMeasuredConversationTabbarHeight } from "../components/useMeasuredConversationTabbarHeight";
 import { useConversationFocusTabbar } from "../components/useConversationFocusTabbar";
 import { AdaptiveMobilePaneLayout, resolveAdaptiveMobilePaneLayout } from "../layouts/AdaptiveMobilePaneLayout";
 
@@ -42,10 +44,11 @@ export function AndroidWorkbenchShell({
   const location = useLocation();
   const navigate = useNavigate();
   const shellRef = useRef<HTMLDivElement | null>(null);
+  const tabbarRef = useRef<HTMLElement | null>(null);
+  const [composerPortalTarget, setComposerPortalTarget] = useState<HTMLElement | null>(null);
   const isConversationFocus = presentation === "conversation-focus";
   const conversationFocusTabbar = useConversationFocusTabbar({
-    // 原生 App 底栏应保持常驻，不使用 H5 那套自动隐藏手势。
-    enabled: false,
+    enabled: isConversationFocus,
     rootRef: shellRef,
     resetKey: `${location.pathname}${location.search}`
   });
@@ -101,6 +104,7 @@ export function AndroidWorkbenchShell({
         }
       : undefined
   ) as CSSProperties | undefined;
+  useMeasuredConversationTabbarHeight(shellRef, tabbarRef, isConversationFocus);
 
   function handleNavigateBackToToolsHome() {
     const preferredToolsHomeHref = resolvePreferredToolsHomeHref(location.pathname, location.search);
@@ -113,87 +117,107 @@ export function AndroidWorkbenchShell({
     navigate(preferredToolsHomeHref, { replace: true });
   }
 
+  const tabbarContent = (
+    <nav ref={tabbarRef} className="android-workbench-bottom-nav" aria-label={t("shell.title")}>
+      {navItems.map((item) => (
+        <button
+          key={item.key}
+          type="button"
+          className="android-workbench-bottom-nav-item"
+          data-active={item.key === activeEntry}
+          aria-current={item.key === activeEntry ? "page" : undefined}
+          onClick={() => {
+            if (item.key !== activeEntry) {
+              void haptics.trigger("selection");
+            }
+
+            item.onClick();
+          }}
+        >
+          <span className="android-workbench-bottom-nav-icon" aria-hidden="true">
+            {item.icon}
+          </span>
+          <span className="android-workbench-bottom-nav-label">{item.label}</span>
+        </button>
+      ))}
+    </nav>
+  );
+
   return (
-    <div
-      ref={shellRef}
-      className="android-workbench-shell"
-      data-active-entry={activeEntry}
-      data-mobile-presentation={presentation}
-      data-pane-layout={paneLayout}
-      data-tabbar-open={isConversationFocus ? conversationFocusTabbar.isOpen : true}
-      data-conversation-tabbar-state={isConversationFocus ? conversationFocusTabbar.state : "default"}
-      style={shellStyle}
+    <MobileConversationBottomLayerProvider
+      composerPortalTarget={isConversationFocus ? composerPortalTarget : null}
     >
-      {headerState ? (
-        <header className="android-workbench-topbar" data-header-kind="tools">
-          <div className="android-workbench-topbar-leading">
-            {headerState.showBackButton ? (
-              <button
-                type="button"
-                className="android-workbench-icon-button"
-                aria-label={t("common.back")}
-                onClick={handleNavigateBackToToolsHome}
-              >
-                <ArrowBackIcon />
-              </button>
-            ) : null}
-            <div className="android-workbench-topbar-copy">
-              <h1>{headerState.title}</h1>
+      <div
+        ref={shellRef}
+        className="android-workbench-shell"
+        data-active-entry={activeEntry}
+        data-mobile-presentation={presentation}
+        data-pane-layout={paneLayout}
+        data-tabbar-open={isConversationFocus ? conversationFocusTabbar.isOpen : true}
+        data-conversation-tabbar-state={isConversationFocus ? conversationFocusTabbar.state : "default"}
+        style={shellStyle}
+      >
+        {headerState ? (
+          <header className="android-workbench-topbar" data-header-kind="tools">
+            <div className="android-workbench-topbar-leading">
+              {headerState.showBackButton ? (
+                <button
+                  type="button"
+                  className="android-workbench-icon-button"
+                  aria-label={t("common.back")}
+                  onClick={handleNavigateBackToToolsHome}
+                >
+                  <ArrowBackIcon />
+                </button>
+              ) : null}
+              <div className="android-workbench-topbar-copy">
+                <h1>{headerState.title}</h1>
+              </div>
+            </div>
+
+            <div className="android-workbench-topbar-actions">
+              {headerState.showMoreButton ? (
+                <button
+                  type="button"
+                  className="android-workbench-icon-button"
+                  aria-label={headerState.moreButtonLabel}
+                  onClick={onNavigateToolProcesses}
+                >
+                  <MoreVerticalIcon />
+                </button>
+              ) : null}
+            </div>
+          </header>
+        ) : null}
+
+        <div className="android-workbench-content">
+          <AdaptiveMobilePaneLayout
+            viewportClass={platform.viewportClass}
+            activeEntry={activeEntry}
+            hasNavigationPanel={Boolean(navigationPanel)}
+            hasAuxiliaryPanel={Boolean(auxiliaryPanel)}
+            navigationPanel={navigationPanel}
+            auxiliaryPanel={auxiliaryPanel}
+          >
+            {children}
+          </AdaptiveMobilePaneLayout>
+        </div>
+
+        {isConversationFocus ? (
+          <div className="mobile-conversation-bottom-layer">
+            <div
+              ref={setComposerPortalTarget}
+              className="mobile-conversation-bottom-layer-composer-slot"
+            />
+            <div className="mobile-conversation-bottom-layer-tabbar-shell">
+              {tabbarContent}
             </div>
           </div>
-
-          <div className="android-workbench-topbar-actions">
-            {headerState.showMoreButton ? (
-              <button
-                type="button"
-                className="android-workbench-icon-button"
-                aria-label={headerState.moreButtonLabel}
-                onClick={onNavigateToolProcesses}
-              >
-                <MoreVerticalIcon />
-              </button>
-            ) : null}
-          </div>
-        </header>
-      ) : null}
-
-      <div className="android-workbench-content">
-        <AdaptiveMobilePaneLayout
-          viewportClass={platform.viewportClass}
-          activeEntry={activeEntry}
-          hasNavigationPanel={Boolean(navigationPanel)}
-          hasAuxiliaryPanel={Boolean(auxiliaryPanel)}
-          navigationPanel={navigationPanel}
-          auxiliaryPanel={auxiliaryPanel}
-        >
-          {children}
-        </AdaptiveMobilePaneLayout>
+        ) : (
+          tabbarContent
+        )}
       </div>
-
-      <nav className="android-workbench-bottom-nav" aria-label={t("shell.title")}>
-        {navItems.map((item) => (
-          <button
-            key={item.key}
-            type="button"
-            className="android-workbench-bottom-nav-item"
-            data-active={item.key === activeEntry}
-            aria-current={item.key === activeEntry ? "page" : undefined}
-            onClick={() => {
-              if (item.key !== activeEntry) {
-                void haptics.trigger("selection");
-              }
-
-              item.onClick();
-            }}
-          >
-            <span className="android-workbench-bottom-nav-icon" aria-hidden="true">
-              {item.icon}
-            </span>
-            <span className="android-workbench-bottom-nav-label">{item.label}</span>
-          </button>
-        ))}
-      </nav>
-    </div>
+    </MobileConversationBottomLayerProvider>
   );
 }
 

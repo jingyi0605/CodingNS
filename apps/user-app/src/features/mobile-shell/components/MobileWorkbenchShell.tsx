@@ -1,4 +1,4 @@
-import { useRef, type CSSProperties, type ReactNode } from "react";
+import { useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import { usePlatform } from "../../../platform/platform-provider";
@@ -12,11 +12,13 @@ import {
   resolveMobileToolHeaderState,
   resolvePreferredToolsHomeHref
 } from "./mobile-workbench-shell-route";
+import { MobileConversationBottomLayerProvider } from "./MobileConversationBottomLayerContext";
 import type {
   MobileWorkbenchEntry,
   MobileWorkbenchPresentation,
   MobileWorkbenchShellProps
 } from "./mobile-workbench-shell-types";
+import { useMeasuredConversationTabbarHeight } from "./useMeasuredConversationTabbarHeight";
 import { useConversationFocusTabbar } from "./useConversationFocusTabbar";
 
 export type { MobileWorkbenchEntry, MobileWorkbenchPresentation } from "./mobile-workbench-shell-types";
@@ -62,6 +64,8 @@ function BrowserMobileWorkbenchShell({
   const location = useLocation();
   const navigate = useNavigate();
   const shellRef = useRef<HTMLDivElement | null>(null);
+  const tabbarRef = useRef<HTMLElement | null>(null);
+  const [composerPortalTarget, setComposerPortalTarget] = useState<HTMLElement | null>(null);
   const h5ViewportState = useH5ViewportState(platform.platform === "web");
   const hideTabbarForKeyboard = platform.platform === "web" && h5ViewportState.keyboardOpen;
   const isConversationFocus = presentation === "conversation-focus";
@@ -123,6 +127,7 @@ function BrowserMobileWorkbenchShell({
         }
       : undefined
   ) as CSSProperties | undefined;
+  useMeasuredConversationTabbarHeight(shellRef, tabbarRef, isConversationFocus);
 
   function handleNavigateBackToToolsHome() {
     const preferredToolsHomeHref = resolvePreferredToolsHomeHref(location.pathname, location.search);
@@ -135,91 +140,116 @@ function BrowserMobileWorkbenchShell({
     navigate(preferredToolsHomeHref, { replace: true });
   }
 
-  return (
-    <div
-      ref={shellRef}
-      className="mobile-workbench-shell"
-      data-active-entry={activeEntry}
-      data-mobile-presentation={presentation}
-      data-mobile-runtime={platform.platform}
-      data-mobile-keyboard-open={hideTabbarForKeyboard}
-      data-pane-layout={paneLayout}
-      data-tabbar-open={
-        hideTabbarForKeyboard ? false : isConversationFocus ? conversationFocusTabbar.isOpen : true
-      }
-      data-conversation-tabbar-state={isConversationFocus ? conversationFocusTabbar.state : "default"}
-      style={shellStyle}
+  const tabbarContent = (
+    <nav
+      ref={tabbarRef}
+      className="mobile-workbench-tabbar"
+      aria-label={t("shell.title")}
+      hidden={hideTabbarForKeyboard}
     >
-      {headerState ? (
-        <header className="mobile-workbench-header" data-header-kind="tools">
-          <div className="mobile-workbench-header-leading">
-            {headerState.showBackButton ? (
-              <button
-                type="button"
-                className="mobile-workbench-header-button"
-                aria-label={t("common.back")}
-                onClick={handleNavigateBackToToolsHome}
-              >
-                <ArrowBackIcon />
-              </button>
-            ) : null}
-            <div className="mobile-workbench-header-copy">
-              <h1>{headerState.title}</h1>
+      {navItems.map((item) => (
+        <button
+          key={item.key}
+          type="button"
+          className="mobile-workbench-tabbar-item"
+          data-active={item.key === activeEntry}
+          aria-current={item.key === activeEntry ? "page" : undefined}
+          onClick={() => {
+            if (item.key !== activeEntry) {
+              void haptics.trigger("selection");
+            }
+
+            item.onClick();
+          }}
+        >
+          <span className="mobile-workbench-tabbar-icon" aria-hidden="true">
+            {item.icon}
+          </span>
+          <span className="mobile-workbench-tabbar-label">{item.label}</span>
+        </button>
+      ))}
+    </nav>
+  );
+
+  return (
+    <MobileConversationBottomLayerProvider
+      composerPortalTarget={isConversationFocus ? composerPortalTarget : null}
+    >
+      <div
+        ref={shellRef}
+        className="mobile-workbench-shell"
+        data-active-entry={activeEntry}
+        data-mobile-presentation={presentation}
+        data-mobile-runtime={platform.platform}
+        data-mobile-keyboard-open={hideTabbarForKeyboard}
+        data-pane-layout={paneLayout}
+        data-tabbar-open={
+          hideTabbarForKeyboard ? false : isConversationFocus ? conversationFocusTabbar.isOpen : true
+        }
+        data-conversation-tabbar-state={isConversationFocus ? conversationFocusTabbar.state : "default"}
+        style={shellStyle}
+      >
+        {headerState ? (
+          <header className="mobile-workbench-header" data-header-kind="tools">
+            <div className="mobile-workbench-header-leading">
+              {headerState.showBackButton ? (
+                <button
+                  type="button"
+                  className="mobile-workbench-header-button"
+                  aria-label={t("common.back")}
+                  onClick={handleNavigateBackToToolsHome}
+                >
+                  <ArrowBackIcon />
+                </button>
+              ) : null}
+              <div className="mobile-workbench-header-copy">
+                <h1>{headerState.title}</h1>
+              </div>
+            </div>
+
+            <div className="mobile-workbench-header-actions">
+              {headerState.showMoreButton ? (
+                <button
+                  type="button"
+                  className="mobile-workbench-header-button mobile-tools-more-button"
+                  aria-label={headerState.moreButtonLabel}
+                  onClick={onNavigateToolProcesses}
+                >
+                  <MoreIcon />
+                </button>
+              ) : null}
+            </div>
+          </header>
+        ) : null}
+
+        <div className="mobile-workbench-content">
+          <AdaptiveMobilePaneLayout
+            viewportClass={platform.viewportClass}
+            activeEntry={activeEntry}
+            hasNavigationPanel={Boolean(navigationPanel)}
+            hasAuxiliaryPanel={Boolean(auxiliaryPanel)}
+            navigationPanel={navigationPanel}
+            auxiliaryPanel={auxiliaryPanel}
+          >
+            {children}
+          </AdaptiveMobilePaneLayout>
+        </div>
+
+        {isConversationFocus ? (
+          <div className="mobile-conversation-bottom-layer">
+            <div
+              ref={setComposerPortalTarget}
+              className="mobile-conversation-bottom-layer-composer-slot"
+            />
+            <div className="mobile-conversation-bottom-layer-tabbar-shell">
+              {tabbarContent}
             </div>
           </div>
-
-          <div className="mobile-workbench-header-actions">
-            {headerState.showMoreButton ? (
-              <button
-                type="button"
-                className="mobile-workbench-header-button mobile-tools-more-button"
-                aria-label={headerState.moreButtonLabel}
-                onClick={onNavigateToolProcesses}
-              >
-                <MoreIcon />
-              </button>
-            ) : null}
-          </div>
-        </header>
-      ) : null}
-
-      <div className="mobile-workbench-content">
-        <AdaptiveMobilePaneLayout
-          viewportClass={platform.viewportClass}
-          activeEntry={activeEntry}
-          hasNavigationPanel={Boolean(navigationPanel)}
-          hasAuxiliaryPanel={Boolean(auxiliaryPanel)}
-          navigationPanel={navigationPanel}
-          auxiliaryPanel={auxiliaryPanel}
-        >
-          {children}
-        </AdaptiveMobilePaneLayout>
+        ) : (
+          tabbarContent
+        )}
       </div>
-
-      <nav className="mobile-workbench-tabbar" aria-label={t("shell.title")} hidden={hideTabbarForKeyboard}>
-        {navItems.map((item) => (
-          <button
-            key={item.key}
-            type="button"
-            className="mobile-workbench-tabbar-item"
-            data-active={item.key === activeEntry}
-            aria-current={item.key === activeEntry ? "page" : undefined}
-            onClick={() => {
-              if (item.key !== activeEntry) {
-                void haptics.trigger("selection");
-              }
-
-              item.onClick();
-            }}
-          >
-            <span className="mobile-workbench-tabbar-icon" aria-hidden="true">
-              {item.icon}
-            </span>
-            <span className="mobile-workbench-tabbar-label">{item.label}</span>
-          </button>
-        ))}
-      </nav>
-    </div>
+    </MobileConversationBottomLayerProvider>
   );
 }
 

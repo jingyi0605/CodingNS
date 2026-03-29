@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type Ref } from "react";
 import { createPortal } from "react-dom";
 
 import { useHaptics } from "../../../shared/haptics";
@@ -36,6 +36,8 @@ import {
 interface ComposerPanelProps {
   capabilities: ProviderCapabilitiesDto | null;
   draftStorageId?: string;
+  panelRef?: Ref<HTMLElement>;
+  portalContainer?: Element | null;
   hasActiveRun?: boolean | null;
   canInterrupt?: boolean | null;
   contextUsage?: ContextUsageDto | null;
@@ -267,6 +269,8 @@ function mergeImageAttachments(
 export function ComposerPanel({
   capabilities,
   draftStorageId,
+  panelRef,
+  portalContainer = null,
   hasActiveRun = null,
   canInterrupt = null,
   contextUsage = null,
@@ -892,8 +896,8 @@ export function ComposerPanel({
     !hasDraft;
   const showQuickPhraseButton = content.length === 0 && !inRunSendBlocked;
 
-  return (
-    <section className="composer-panel">
+  const contentNode = (
+    <section ref={panelRef} className="composer-panel">
       <form className="composer-form" onSubmit={handleSubmit}>
         <div className="composer-input-container">
           {attachments.length > 0 ? (
@@ -1236,6 +1240,8 @@ export function ComposerPanel({
       </WorkbenchModal>
     </section>
   );
+
+  return portalContainer ? createPortal(contentNode, portalContainer) : contentNode;
 }
 
 function renderProviderIcon(provider: ProviderId) {
