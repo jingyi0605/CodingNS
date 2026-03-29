@@ -3,6 +3,8 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
 const appVersion = readFileSync(new URL("../../VERSION", import.meta.url), "utf8").trim();
+const hostApiTarget = "http://127.0.0.1:3002";
+const hostWsTarget = "ws://127.0.0.1:3002";
 const desktopAndLocalOrigins = [
   /^tauri:\/\/localhost$/,
   /^https?:\/\/tauri\.localhost$/,
@@ -29,13 +31,16 @@ export default defineConfig({
     },
     proxy: {
       "/api": {
-        target: "http://127.0.0.1:3002",
+        target: hostApiTarget,
         changeOrigin: true
       },
       "/ws": {
-        target: "ws://127.0.0.1:3002",
+        target: hostWsTarget,
         ws: true,
-        changeOrigin: true
+        changeOrigin: true,
+        rewriteWsOrigin: true,
+        timeout: 60000,
+        proxyTimeout: 60000
       }
     }
   },
