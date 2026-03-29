@@ -690,7 +690,7 @@ describe("TerminalPage", () => {
     });
   });
 
-  it("移动端会改成右滑呼出快捷终端抽屉，并从抽屉里切换终端", async () => {
+  it("移动端会改成右滑呼出侧边终端列表，并从列表里切换终端", async () => {
     Object.defineProperty(window, "innerWidth", {
       configurable: true,
       writable: true,
@@ -735,15 +735,53 @@ describe("TerminalPage", () => {
       changedTouches: [{ clientX: 140, clientY: 128 }]
     });
 
-    expect(await screen.findByText("快捷终端")).toBeInTheDocument();
+    expect(await screen.findByLabelText("快捷终端")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /后端/ })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /后端/ }));
 
     await waitFor(() => {
-      expect(screen.queryByText("快捷终端")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("快捷终端")).not.toBeInTheDocument();
     });
 
+  });
+
+  it("移动端终端列表项会提供操作按钮，并弹出操作菜单", async () => {
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      writable: true,
+      value: 390
+    });
+
+    setTerminalManagerSnapshot("workspace-1", [
+      buildTerminal({
+        id: "terminal-1",
+        name: "前端",
+        lastActiveAt: "2026-03-26T08:10:00.000Z"
+      })
+    ]);
+
+    const user = userEvent.setup();
+    const view = renderPage();
+    const swipeZone = view.container.querySelector(".terminal-mobile-edge-swipe-zone");
+
+    if (!(swipeZone instanceof HTMLElement)) {
+      throw new Error("未找到移动端侧滑手势区");
+    }
+
+    fireEvent.touchStart(swipeZone, {
+      touches: [{ clientX: 10, clientY: 120 }]
+    });
+    fireEvent.touchEnd(swipeZone, {
+      changedTouches: [{ clientX: 140, clientY: 128 }]
+    });
+
+    const actionButtons = await screen.findAllByRole("button", { name: "终端操作" });
+    await user.click(actionButtons[0]!);
+
+    expect(await screen.findByRole("dialog", { name: "终端操作" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "复制标签" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "关闭终端" })).toBeInTheDocument();
   });
 
   it("移动端空状态会先选择终端类型和会话方式，再创建终端", async () => {

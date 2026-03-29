@@ -58,7 +58,7 @@ import {
 import "../../mobile-sessions/styles.css";
 
 const RUNTIME_TIMEOUT_TOAST_DELAY_MS = 15_000;
-const MOBILE_PREVIEW_DEFAULT_RATIO = 1 / 3;
+const MOBILE_PREVIEW_DEFAULT_RATIO = 0.6;
 const MOBILE_PREVIEW_MAX_RATIO = 0.6;
 const MOBILE_PREVIEW_GESTURE_DIRECTION_LOCK_PX = 12;
 const MOBILE_PREVIEW_OPEN_THRESHOLD_PX = 60;
@@ -210,6 +210,8 @@ function LiveConversationPage({
     [mobileArchiveWorkspaceGroup]
   );
   const mobileConversationMainRef = useRef<HTMLDivElement | null>(null);
+  const mobileConversationPageRef = useRef<HTMLElement | null>(null);
+  const mobileConversationHeaderRef = useRef<HTMLDivElement | null>(null);
   const [mobileComposerPanelElement, setMobileComposerPanelElement] = useState<HTMLElement | null>(null);
   const { composerPortalTarget } = useMobileConversationBottomLayer();
   useEffect(() => {
@@ -312,8 +314,14 @@ function LiveConversationPage({
   }, [haptics, session?.runningState]);
 
   useMobileConversationComposerHeightVar(
-    mobileConversationMainRef,
+    mobileConversationPageRef,
     mobileComposerPanelElement,
+    !showInlineHeader,
+    sessionId
+  );
+  useMobileConversationHeaderHeightVar(
+    mobileConversationPageRef,
+    mobileConversationHeaderRef,
     !showInlineHeader,
     sessionId
   );
@@ -321,6 +329,7 @@ function LiveConversationPage({
   return (
     <>
       <main
+        ref={mobileConversationPageRef}
         className="workbench-page conversation-page-shell mobile-page-fixed-root mobile-conversation-page"
         data-mobile-shell={!showInlineHeader}
         data-preview-mode={!showInlineHeader ? mobilePreview.displayMode : undefined}
@@ -330,6 +339,7 @@ function LiveConversationPage({
         {showInlineHeader ? <SessionHeader session={session ?? navigationSession} /> : null}
         {!showInlineHeader ? (
           <MobileWorkspaceSwitcherHeader
+            containerRef={mobileConversationHeaderRef}
             className="mobile-conversation-page-header"
             currentWorkspace={mobileArchiveWorkspaceGroup?.workspace ?? mobileWorkspaces[0] ?? null}
             workspaces={mobileWorkspaces}
@@ -606,6 +616,8 @@ function DraftConversationPage({
     [favoriteSessions]
   );
   const mobileConversationMainRef = useRef<HTMLDivElement | null>(null);
+  const mobileConversationPageRef = useRef<HTMLElement | null>(null);
+  const mobileConversationHeaderRef = useRef<HTMLDivElement | null>(null);
   const [mobileComposerPanelElement, setMobileComposerPanelElement] = useState<HTMLElement | null>(null);
   const { composerPortalTarget } = useMobileConversationBottomLayer();
 
@@ -639,14 +651,21 @@ function DraftConversationPage({
   }, [draft.provider, draft.workspaceId, fallbackCapabilities]);
 
   useMobileConversationComposerHeightVar(
-    mobileConversationMainRef,
+    mobileConversationPageRef,
     mobileComposerPanelElement,
+    !showInlineHeader,
+    draft.sessionId
+  );
+  useMobileConversationHeaderHeightVar(
+    mobileConversationPageRef,
+    mobileConversationHeaderRef,
     !showInlineHeader,
     draft.sessionId
   );
 
   return (
     <main
+      ref={mobileConversationPageRef}
       className="workbench-page conversation-page-shell mobile-page-fixed-root mobile-conversation-page"
       data-mobile-shell={!showInlineHeader}
       data-preview-mode={!showInlineHeader ? mobilePreview.displayMode : undefined}
@@ -656,6 +675,7 @@ function DraftConversationPage({
       {showInlineHeader ? <SessionHeader session={session} /> : null}
       {!showInlineHeader ? (
         <MobileWorkspaceSwitcherHeader
+          containerRef={mobileConversationHeaderRef}
           className="mobile-conversation-page-header"
           currentWorkspace={mobileWorkspaces.find((workspace) => workspace.id === draft.workspaceId) ?? mobileWorkspaces[0] ?? null}
           workspaces={mobileWorkspaces}
@@ -883,7 +903,7 @@ function buildMobileFavoritePreviewItems(
 }
 
 function useMobileConversationComposerHeightVar(
-  rootRef: RefObject<HTMLElement>,
+  rootRef: RefObject<HTMLElement | null>,
   composerPanelElement: HTMLElement | null,
   enabled: boolean,
   resetKey: string
@@ -931,6 +951,58 @@ function useMobileConversationComposerHeightVar(
       rootElement.style.removeProperty("--mobile-conversation-composer-height");
     };
   }, [composerPanelElement, enabled, resetKey, rootRef]);
+}
+
+function useMobileConversationHeaderHeightVar(
+  rootRef: RefObject<HTMLElement | null>,
+  headerRef: RefObject<HTMLElement | null>,
+  enabled: boolean,
+  resetKey: string
+) {
+  useEffect(() => {
+    const rootElement = rootRef.current;
+    const headerElement = headerRef.current;
+
+    if (!enabled || !rootElement) {
+      if (rootElement) {
+        rootElement.style.removeProperty("--mobile-conversation-page-header-height");
+      }
+      return;
+    }
+
+    if (!headerElement) {
+      rootElement.style.removeProperty("--mobile-conversation-page-header-height");
+      return;
+    }
+
+    const stableRootElement = rootElement;
+    const stableHeaderElement = headerElement;
+
+    function syncHeaderHeight() {
+      if (!rootRef.current || !stableHeaderElement.isConnected) {
+        return;
+      }
+
+      stableRootElement.style.setProperty(
+        "--mobile-conversation-page-header-height",
+        `${stableHeaderElement.offsetHeight}px`
+      );
+    }
+
+    syncHeaderHeight();
+
+    const resizeObserver =
+      typeof ResizeObserver !== "undefined" ? new ResizeObserver(syncHeaderHeight) : null;
+
+    resizeObserver?.observe(stableHeaderElement);
+    window.addEventListener("resize", syncHeaderHeight);
+
+    return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", syncHeaderHeight);
+      rootElement.style.removeProperty("--mobile-conversation-page-header-height");
+    };
+  }, [enabled, headerRef, resetKey, rootRef]);
 }
 
 interface MobileConversationPreviewGestureHandlers {

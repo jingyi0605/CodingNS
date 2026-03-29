@@ -248,7 +248,7 @@
 }
 
 .mobile-conversation-page[data-mobile-shell="true"] {
-  --mobile-conversation-preview-default-width: 33.333vw;
+  --mobile-conversation-preview-default-width: 60vw;
   --mobile-conversation-preview-max-width: 60vw;
   --mobile-conversation-preview-width: 0px;
   --mobile-conversation-preview-gap: 5px;
@@ -297,7 +297,6 @@
 }
 
 .mobile-conversation-header:not(.mobile-conversation-header-embedded),
-.mobile-conversation-page-header,
 .mobile-conversation-stage {
   width: 100%;
   max-width: 100%;
@@ -306,8 +305,14 @@
   will-change: transform, width;
 }
 
+.mobile-conversation-page-header {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  transform: none;
+}
+
 .mobile-conversation-page[data-mobile-shell="true"][data-preview-mode="preview"] .mobile-conversation-header:not(.mobile-conversation-header-embedded),
-.mobile-conversation-page[data-mobile-shell="true"][data-preview-mode="preview"] .mobile-conversation-page-header,
 .mobile-conversation-page[data-mobile-shell="true"][data-preview-mode="preview"] .mobile-conversation-stage {
   width: calc(100% - var(--mobile-conversation-preview-offset));
   max-width: calc(100% - var(--mobile-conversation-preview-offset));
@@ -481,14 +486,18 @@
 .mobile-conversation-page[data-mobile-shell="true"] .mobile-conversation-preview-rail.surface-card,
 .mobile-conversation-preview-rail {
   position: absolute;
-  top: var(--mobile-conversation-preview-gap);
+  top: calc(
+    var(--mobile-conversation-page-header-height, 0px) + var(--mobile-conversation-preview-gap)
+  );
   left: var(--mobile-conversation-preview-gap);
-  bottom: var(--mobile-conversation-preview-gap);
+  bottom: calc(
+    var(--mobile-conversation-composer-height, 0px) + var(--mobile-conversation-preview-gap)
+  );
   z-index: 11;
   display: flex;
   width: var(--mobile-conversation-preview-width);
   max-width: min(var(--mobile-conversation-preview-width), var(--mobile-conversation-preview-max-width));
-  min-height: calc(100% - var(--mobile-conversation-preview-gap) * 2);
+  min-height: 0;
   min-width: 0;
   flex-direction: column;
   gap: 0.55rem;
@@ -663,7 +672,7 @@
 
 @media (max-width: 420px) {
   .mobile-conversation-page[data-mobile-shell="true"] {
-    --mobile-conversation-preview-default-width: 33.333vw;
+    --mobile-conversation-preview-default-width: 60vw;
   }
 
   .mobile-conversation-preview-rail {

@@ -5,6 +5,8 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
+  type RefObject,
   type MouseEvent as ReactMouseEvent,
   type TouchEvent as ReactTouchEvent
 } from "react";
@@ -238,9 +240,11 @@ export function TerminalPage() {
     addTerminalManagerSnapshotListener
   } = useWorkbenchShell();
   const terminalActionMenuRef = useRef<HTMLDivElement | null>(null);
+  const terminalShellRef = useRef<HTMLElement | null>(null);
   const terminalTabbarMainRef = useRef<HTMLDivElement | null>(null);
   const terminalTabbarScrollRef = useRef<HTMLDivElement | null>(null);
   const terminalActionMenuTriggerRef = useRef<Record<string, HTMLButtonElement | null>>({});
+  const mobileHeaderRef = useRef<HTMLDivElement | null>(null);
   const toolbarRef = useRef<HTMLDivElement | null>(null);
   const toolbarToggleRef = useRef<HTMLButtonElement | null>(null);
   const mobileStageTouchStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -442,10 +446,20 @@ export function TerminalPage() {
     () => mobileShellChoices.find((option) => option.value === mobileSelectedShell) ?? mobileShellChoices[0] ?? null,
     [mobileSelectedShell, mobileShellChoices]
   );
+  const terminalShellStyle = {
+    "--terminal-mobile-list-width": isMobileTerminalPage && mobileQuickDrawerOpen ? "60vw" : "0px"
+  } as CSSProperties;
 
   useEffect(() => {
     terminalsRef.current = terminals;
   }, [terminals]);
+
+  useTerminalMobileHeaderHeightVar(
+    terminalShellRef,
+    mobileHeaderRef,
+    isMobileTerminalPage,
+    selectedWorkspaceId || resolvedWorkspaceId
+  );
 
   useEffect(() => {
     setMobileSelectedShell((current) => {
@@ -1547,10 +1561,17 @@ export function TerminalPage() {
           void handleConfirmRuntimeFallback();
         }}
       />
-      <section className="terminal-shell" data-mobile={isMobileTerminalPage}>
+      <section
+        ref={terminalShellRef}
+        className="terminal-shell"
+        data-mobile={isMobileTerminalPage}
+        data-mobile-list-open={isMobileTerminalPage ? mobileQuickDrawerOpen : undefined}
+        style={isMobileTerminalPage ? terminalShellStyle : undefined}
+      >
         {isMobileTerminalPage ? (
           <>
             <MobileWorkspaceSwitcherHeader
+              containerRef={mobileHeaderRef}
               currentWorkspace={mobileHeaderWorkspace}
               workspaces={workspaces}
               onSelectWorkspace={(workspaceId) => {
@@ -1563,13 +1584,50 @@ export function TerminalPage() {
                   className="secondary-button mobile-tools-more-button"
                   aria-label={t("terminal.mobileDrawerAction")}
                   title={t("terminal.mobileDrawerAction")}
+                  aria-expanded={mobileQuickDrawerOpen}
                   onClick={() => {
-                    setMobileQuickDrawerOpen(true);
+                    setMobileQuickDrawerOpen((current) => !current);
                   }}
                 >
                   <MoreIcon />
                 </button>
               }
+            />
+
+            <MobileTerminalQuickDrawer
+              open={mobileQuickDrawerOpen}
+              terminals={orderedTerminals}
+              pinnedTerminalIds={pinnedTerminalIdSet}
+              activeTerminalId={activeTerminal?.id ?? null}
+              creatingTerminal={creatingTerminal}
+              paneBindings={effectivePaneBindings}
+              splitDirection={effectiveSplitDirection}
+              activePaneId={effectiveActivePaneId}
+              paneConnectionStates={effectivePaneConnectionStates}
+              terminalMutations={terminalMutations}
+              manuallyDisconnectedTerminalIdSet={manuallyDisconnectedTerminalIdSet}
+              onClose={() => {
+                setMobileQuickDrawerOpen(false);
+              }}
+              onCreateTerminal={() => {
+                setMobileQuickDrawerOpen(false);
+                void openMobileCreateSheet();
+              }}
+              onSelectTerminal={(terminalId) => {
+                bindTerminalToPane(terminalId, "primary");
+                setMobileQuickDrawerOpen(false);
+              }}
+              onBindToActivePane={(terminalId) => {
+                bindTerminalToActivePane(terminalId);
+                setMobileQuickDrawerOpen(false);
+              }}
+              onBindToPane={bindTerminalToPane}
+              onDuplicate={handleDuplicateTerminal}
+              onDisconnect={handleDisconnectTerminal}
+              onReconnect={handleReconnectTerminal}
+              onCloseTerminal={handleCloseTerminal}
+              onDeleteTerminal={handleDeleteTerminal}
+              onTogglePin={handleTogglePin}
             />
 
             <div className="terminal-stage-surface terminal-stage-surface-mobile">
@@ -1610,25 +1668,6 @@ export function TerminalPage() {
                 />
               </div>
             </div>
-
-            <MobileTerminalQuickDrawer
-              open={mobileQuickDrawerOpen}
-              terminals={orderedTerminals}
-              pinnedTerminalIds={pinnedTerminalIdSet}
-              activeTerminalId={activeTerminal?.id ?? null}
-              creatingTerminal={creatingTerminal}
-              onClose={() => {
-                setMobileQuickDrawerOpen(false);
-              }}
-              onCreateTerminal={() => {
-                setMobileQuickDrawerOpen(false);
-                void openMobileCreateSheet();
-              }}
-              onSelectTerminal={(terminalId) => {
-                bindTerminalToPane(terminalId, "primary");
-                setMobileQuickDrawerOpen(false);
-              }}
-            />
 
             <MobileTerminalCreateSheet
               open={mobileCreateSheetOpen}
@@ -2040,43 +2079,67 @@ function MobileTerminalQuickDrawer({
   pinnedTerminalIds,
   activeTerminalId,
   creatingTerminal,
+  paneBindings,
+  splitDirection,
+  activePaneId,
+  paneConnectionStates,
+  terminalMutations,
+  manuallyDisconnectedTerminalIdSet,
   onClose,
   onCreateTerminal,
-  onSelectTerminal
+  onSelectTerminal,
+  onBindToActivePane,
+  onBindToPane,
+  onDuplicate,
+  onDisconnect,
+  onReconnect,
+  onCloseTerminal,
+  onDeleteTerminal,
+  onTogglePin
 }: {
   open: boolean;
   terminals: TerminalDto[];
   pinnedTerminalIds: ReadonlySet<string>;
   activeTerminalId: string | null;
   creatingTerminal: boolean;
+  paneBindings: TerminalPaneBindings;
+  splitDirection: SplitDirection;
+  activePaneId: PaneId;
+  paneConnectionStates: Record<PaneId, TerminalConnectionState>;
+  terminalMutations: Record<string, TerminalMutationType>;
+  manuallyDisconnectedTerminalIdSet: ReadonlySet<string>;
   onClose: () => void;
   onCreateTerminal: () => void;
   onSelectTerminal: (terminalId: string) => void;
+  onBindToActivePane: (terminalId: string) => void;
+  onBindToPane: (terminalId: string, paneId: PaneId) => void;
+  onDuplicate: (terminal: TerminalDto) => Promise<void>;
+  onDisconnect: (terminalId: string) => void;
+  onReconnect: (terminalId: string) => void;
+  onCloseTerminal: (terminalId: string) => Promise<void>;
+  onDeleteTerminal: (terminalId: string) => Promise<void>;
+  onTogglePin: (terminalId: string) => void;
 }) {
   const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+  const [actionTerminalId, setActionTerminalId] = useState<string | null>(null);
   const pinnedTerminals = terminals.filter((terminal) => pinnedTerminalIds.has(terminal.id));
   const otherTerminals = terminals.filter((terminal) => !pinnedTerminalIds.has(terminal.id));
+  const actionTerminal = terminals.find((terminal) => terminal.id === actionTerminalId) ?? null;
 
-  if (!open || typeof document === "undefined") {
+  useEffect(() => {
+    if (!open) {
+      setActionTerminalId(null);
+    }
+  }, [open]);
+
+  if (!open) {
     return null;
   }
 
-  return createPortal(
+  return (
     <>
-      <div
-        className="terminal-mobile-drawer-overlay"
-        role="button"
-        tabIndex={0}
-        aria-label={t("common.back")}
-        onClick={onClose}
-        onKeyDown={(event) => {
-          if (event.key === "Escape") {
-            onClose();
-          }
-        }}
-      />
       <section
-        className="terminal-mobile-drawer-panel terminal-mobile-session-drawer"
+        className="terminal-mobile-list-rail surface-card"
         aria-label={t("terminal.mobileDrawerTitle")}
         onTouchStart={(event) => {
           const touch = event.touches[0];
@@ -2117,50 +2180,52 @@ function MobileTerminalQuickDrawer({
           touchStartRef.current = null;
         }}
       >
-        <div className="workbench-nav-header terminal-mobile-session-drawer-header">
-          <div className="workbench-nav-header-main">
-            <h1>{t("terminal.mobileDrawerTitle")}</h1>
-            <p>{t("terminal.mobileDrawerDescription")}</p>
-          </div>
+        <div className="terminal-mobile-list-heading">
+          <strong>{t("terminal.mobileDrawerTitle")}</strong>
+          <p>{t("terminal.mobileDrawerDescription")}</p>
         </div>
 
-        <div className="workbench-nav-body terminal-mobile-session-drawer-body">
+        <div className="terminal-mobile-list-body">
           {pinnedTerminals.length > 0 ? (
-            <section className="workbench-section-block">
-              <div className="workbench-section-heading">
-                <div className="workbench-section-heading-main">
-                  <span>{t("terminal.mobilePinnedSectionTitle")}</span>
-                </div>
+            <section className="terminal-mobile-list-group terminal-mobile-list-group-pinned">
+              <div className="terminal-mobile-list-group-heading">
+                <span>{t("terminal.mobilePinnedSectionTitle")}</span>
                 <span className="workbench-section-counter">{pinnedTerminals.length}</span>
               </div>
-              <div className="workbench-session-list">
+              <div className="terminal-mobile-session-list">
                 {pinnedTerminals.map((terminal) => (
                   <TerminalMobileSessionEntry
                     key={terminal.id}
                     terminal={terminal}
                     active={terminal.id === activeTerminalId}
+                    pendingMutation={terminalMutations[terminal.id] ?? null}
                     onOpen={onSelectTerminal}
+                    onOpenMenu={(terminalId) => {
+                      setActionTerminalId((current) => (current === terminalId ? null : terminalId));
+                    }}
                   />
                 ))}
               </div>
             </section>
           ) : null}
 
-          <section className="workbench-section-block">
-            <div className="workbench-section-heading">
-              <div className="workbench-section-heading-main">
-                <span>{t("terminal.workspaceField")}</span>
-              </div>
+          <section className="terminal-mobile-list-group terminal-mobile-list-group-workspace">
+            <div className="terminal-mobile-list-group-heading">
+              <span>{t("terminal.workspaceField")}</span>
               <span className="workbench-section-counter">{otherTerminals.length}</span>
             </div>
             {otherTerminals.length > 0 ? (
-              <div className="workbench-session-list">
+              <div className="terminal-mobile-session-list">
                 {otherTerminals.map((terminal) => (
                   <TerminalMobileSessionEntry
                     key={terminal.id}
                     terminal={terminal}
                     active={terminal.id === activeTerminalId}
+                    pendingMutation={terminalMutations[terminal.id] ?? null}
                     onOpen={onSelectTerminal}
+                    onOpenMenu={(terminalId) => {
+                      setActionTerminalId((current) => (current === terminalId ? null : terminalId));
+                    }}
                   />
                 ))}
               </div>
@@ -2170,10 +2235,10 @@ function MobileTerminalQuickDrawer({
           </section>
         </div>
 
-        <div className="workbench-nav-footer minimal terminal-mobile-session-drawer-footer">
+        <div className="terminal-mobile-list-footer">
           <button
             type="button"
-            className="workbench-import-toggle terminal-mobile-session-drawer-action"
+            className="workbench-import-toggle terminal-mobile-list-create"
             disabled={creatingTerminal}
             onClick={onCreateTerminal}
           >
@@ -2182,43 +2247,354 @@ function MobileTerminalQuickDrawer({
           </button>
         </div>
       </section>
-    </>,
-    document.body
+
+      <MobileTerminalActionSheet
+        terminal={actionTerminal}
+        pendingMutation={actionTerminal ? terminalMutations[actionTerminal.id] ?? null : null}
+        paneBindings={paneBindings}
+        splitDirection={splitDirection}
+        activePaneId={activePaneId}
+        paneConnectionStates={paneConnectionStates}
+        pinnedTerminalIdSet={pinnedTerminalIds}
+        manuallyDisconnectedTerminalIdSet={manuallyDisconnectedTerminalIdSet}
+        onClose={() => {
+          setActionTerminalId(null);
+        }}
+        onBindToActivePane={(terminalId) => {
+          setActionTerminalId(null);
+          onBindToActivePane(terminalId);
+        }}
+        onBindToPane={(terminalId, paneId) => {
+          setActionTerminalId(null);
+          onBindToPane(terminalId, paneId);
+        }}
+        onDuplicate={async (terminal) => {
+          setActionTerminalId(null);
+          await onDuplicate(terminal);
+        }}
+        onDisconnect={(terminalId) => {
+          setActionTerminalId(null);
+          onDisconnect(terminalId);
+        }}
+        onReconnect={(terminalId) => {
+          setActionTerminalId(null);
+          onReconnect(terminalId);
+        }}
+        onCloseTerminal={async (terminalId) => {
+          setActionTerminalId(null);
+          await onCloseTerminal(terminalId);
+        }}
+        onDeleteTerminal={async (terminalId) => {
+          setActionTerminalId(null);
+          await onDeleteTerminal(terminalId);
+        }}
+        onTogglePin={(terminalId) => {
+          setActionTerminalId(null);
+          onTogglePin(terminalId);
+        }}
+      />
+    </>
   );
 }
 
 function TerminalMobileSessionEntry({
   terminal,
   active,
-  onOpen
+  pendingMutation,
+  onOpen,
+  onOpenMenu
 }: {
   terminal: TerminalDto;
   active: boolean;
+  pendingMutation: TerminalMutationType | null;
   onOpen: (terminalId: string) => void;
+  onOpenMenu: (terminalId: string) => void;
 }) {
   return (
-    <button
-      type="button"
-      className="workbench-session-link terminal-mobile-session-link"
-      data-active={active ? "true" : "false"}
-      onClick={() => {
-        onOpen(terminal.id);
-      }}
-    >
-      <div className="session-title-row">
-        <span className={buildTerminalSessionIndicatorClassName(terminal.status)} />
-        <span className="session-title" title={terminal.name}>
-          {terminal.name}
-        </span>
-      </div>
-      <div className="session-meta-row">
-        <span className="session-meta">{terminal.cwd}</span>
-        <span className="terminal-mobile-session-runtime-badge">
-          {getTerminalRuntimeShortLabel(terminal.runtimeType)}
-        </span>
-      </div>
-    </button>
+    <article className="terminal-mobile-session-card" data-active={active}>
+      <button
+        type="button"
+        className="terminal-mobile-session-primary"
+        data-active={active ? "true" : "false"}
+        onClick={() => {
+          onOpen(terminal.id);
+        }}
+      >
+        <div className="terminal-mobile-session-title-row">
+          <span className={buildTerminalSessionIndicatorClassName(terminal.status)} />
+          <span className="terminal-mobile-session-title" title={terminal.name}>
+            {terminal.name}
+          </span>
+          <span className="terminal-mobile-session-runtime-badge">
+            {getTerminalRuntimeShortLabel(terminal.runtimeType)}
+          </span>
+        </div>
+        <div className="terminal-mobile-session-path" title={terminal.cwd}>{terminal.cwd}</div>
+        {pendingMutation ? (
+          <div className="terminal-mobile-session-operation">
+            <span className="terminal-tab-operation-spinner" aria-hidden="true" />
+            <span>
+              {pendingMutation === "closing"
+                ? t("terminal.closePendingBadge")
+                : t("terminal.deletePendingBadge")}
+            </span>
+          </div>
+        ) : null}
+      </button>
+      <button
+        type="button"
+        className="terminal-mobile-session-action"
+        aria-label={t("terminal.moreActions")}
+        title={t("terminal.moreActions")}
+        onClick={(event) => {
+          event.stopPropagation();
+          onOpenMenu(terminal.id);
+        }}
+      >
+        <MoreIcon />
+      </button>
+    </article>
   );
+}
+
+function MobileTerminalActionSheet({
+  terminal,
+  pendingMutation,
+  paneBindings,
+  splitDirection,
+  activePaneId,
+  paneConnectionStates,
+  pinnedTerminalIdSet,
+  manuallyDisconnectedTerminalIdSet,
+  onClose,
+  onBindToActivePane,
+  onBindToPane,
+  onDuplicate,
+  onDisconnect,
+  onReconnect,
+  onCloseTerminal,
+  onDeleteTerminal,
+  onTogglePin
+}: {
+  terminal: TerminalDto | null;
+  pendingMutation: TerminalMutationType | null;
+  paneBindings: TerminalPaneBindings;
+  splitDirection: SplitDirection;
+  activePaneId: PaneId;
+  paneConnectionStates: Record<PaneId, TerminalConnectionState>;
+  pinnedTerminalIdSet: ReadonlySet<string>;
+  manuallyDisconnectedTerminalIdSet: ReadonlySet<string>;
+  onClose: () => void;
+  onBindToActivePane: (terminalId: string) => void;
+  onBindToPane: (terminalId: string, paneId: PaneId) => void;
+  onDuplicate: (terminal: TerminalDto) => Promise<void>;
+  onDisconnect: (terminalId: string) => void;
+  onReconnect: (terminalId: string) => void;
+  onCloseTerminal: (terminalId: string) => Promise<void>;
+  onDeleteTerminal: (terminalId: string) => Promise<void>;
+  onTogglePin: (terminalId: string) => void;
+}) {
+  if (!terminal || typeof document === "undefined") {
+    return null;
+  }
+
+  const isPinned = pinnedTerminalIdSet.has(terminal.id);
+  const assignedPaneId = findPaneIdByTerminalId(
+    terminal.id,
+    paneBindings,
+    splitDirection,
+    activePaneId
+  );
+  const activeConnectionState = assignedPaneId ? paneConnectionStates[assignedPaneId] : "closed";
+  const indicatorStatus = resolveTerminalIndicatorStatus({
+    terminal,
+    paneBindings,
+    paneConnectionStates,
+    manuallyDisconnectedTerminalIdSet
+  });
+  const showCloseAction =
+    pendingMutation === null && terminal.status === "running" && indicatorStatus !== "disconnected";
+  const showDeleteAction = pendingMutation === null && !showCloseAction;
+  const canControlConnection =
+    pendingMutation === null && assignedPaneId !== null && terminal.status === "running";
+
+  return createPortal(
+    <div className="ios-action-sheet-overlay" role="presentation" onClick={onClose}>
+      <div
+        className="mobile-workspace-home-sheet terminal-mobile-action-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label={t("terminal.moreActions")}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="mobile-workspace-home-sheet-card terminal-mobile-action-sheet-card">
+          <div className="mobile-workspace-home-sheet-header">
+            <strong>{terminal.name}</strong>
+          </div>
+          <div className="terminal-mobile-action-list">
+            {splitDirection !== "single" ? (
+              <>
+                <button
+                  type="button"
+                  className="terminal-mobile-action-item"
+                  disabled={pendingMutation !== null || paneBindings.primary === terminal.id}
+                  onClick={() => {
+                    onBindToPane(terminal.id, "primary");
+                  }}
+                >
+                  {t("terminal.bindToPrimaryPaneAction")}
+                </button>
+                <button
+                  type="button"
+                  className="terminal-mobile-action-item"
+                  disabled={pendingMutation !== null || paneBindings.secondary === terminal.id}
+                  onClick={() => {
+                    onBindToPane(terminal.id, "secondary");
+                  }}
+                >
+                  {t("terminal.bindToSecondaryPaneAction")}
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                className="terminal-mobile-action-item"
+                disabled={pendingMutation !== null || paneBindings.primary === terminal.id}
+                onClick={() => {
+                  onBindToActivePane(terminal.id);
+                }}
+              >
+                {t("terminal.bindToPaneAction")}
+              </button>
+            )}
+            <button
+              type="button"
+              className="terminal-mobile-action-item"
+              disabled={pendingMutation !== null}
+              onClick={() => {
+                void onDuplicate(terminal);
+              }}
+            >
+              {t("terminal.duplicateAction")}
+            </button>
+            {canControlConnection ? (
+              activeConnectionState === "connected" ? (
+                <button
+                  type="button"
+                  className="terminal-mobile-action-item"
+                  disabled={pendingMutation !== null}
+                  onClick={() => {
+                    onDisconnect(terminal.id);
+                  }}
+                >
+                  {t("terminal.disconnectAction")}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="terminal-mobile-action-item"
+                  disabled={pendingMutation !== null}
+                  onClick={() => {
+                    onReconnect(terminal.id);
+                  }}
+                >
+                  {t("terminal.reconnectAction")}
+                </button>
+              )
+            ) : null}
+            {showCloseAction ? (
+              <button
+                type="button"
+                className="terminal-mobile-action-item"
+                onClick={() => {
+                  void onCloseTerminal(terminal.id);
+                }}
+              >
+                {t("terminal.closeButton")}
+              </button>
+            ) : null}
+            {showDeleteAction ? (
+              <button
+                type="button"
+                className="terminal-mobile-action-item danger"
+                onClick={() => {
+                  void onDeleteTerminal(terminal.id);
+                }}
+              >
+                {t("terminal.deleteAction")}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="terminal-mobile-action-item"
+              disabled={pendingMutation !== null}
+              onClick={() => {
+                onTogglePin(terminal.id);
+              }}
+            >
+              {isPinned ? t("terminal.unpinAction") : t("terminal.pinAction")}
+            </button>
+          </div>
+        </div>
+        <button type="button" className="ios-action-sheet-cancel" onClick={onClose}>
+          {t("common.cancel")}
+        </button>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+function useTerminalMobileHeaderHeightVar(
+  rootRef: RefObject<HTMLElement | null>,
+  headerRef: RefObject<HTMLElement | null>,
+  enabled: boolean,
+  resetKey: string
+) {
+  useEffect(() => {
+    const rootElement = rootRef.current;
+    const headerElement = headerRef.current;
+
+    if (!enabled || !rootElement) {
+      if (rootElement) {
+        rootElement.style.removeProperty("--terminal-mobile-header-height");
+      }
+      return;
+    }
+
+    if (!headerElement) {
+      rootElement.style.removeProperty("--terminal-mobile-header-height");
+      return;
+    }
+
+    const stableRootElement = rootElement;
+    const stableHeaderElement = headerElement;
+
+    function syncHeaderHeight() {
+      if (!rootRef.current || !stableHeaderElement.isConnected) {
+        return;
+      }
+
+      stableRootElement.style.setProperty(
+        "--terminal-mobile-header-height",
+        `${stableHeaderElement.offsetHeight}px`
+      );
+    }
+
+    syncHeaderHeight();
+
+    const resizeObserver =
+      typeof ResizeObserver !== "undefined" ? new ResizeObserver(syncHeaderHeight) : null;
+
+    resizeObserver?.observe(stableHeaderElement);
+    window.addEventListener("resize", syncHeaderHeight);
+
+    return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", syncHeaderHeight);
+      rootElement.style.removeProperty("--terminal-mobile-header-height");
+    };
+  }, [enabled, headerRef, resetKey, rootRef]);
 }
 
 function MobileTerminalCreateSheet({

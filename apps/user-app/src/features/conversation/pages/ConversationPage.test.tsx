@@ -118,7 +118,7 @@ describe("ConversationPage", () => {
     });
   });
 
-  it("移动端点击项目名称仍然按三分之一屏宽打开快捷会话菜单", async () => {
+  it("移动端点击项目名称会直接按六成屏宽打开快捷会话菜单", async () => {
     mockGetProviderCapabilities.mockResolvedValue({
       provider: "codex",
       canStartSession: true,
@@ -146,10 +146,10 @@ describe("ConversationPage", () => {
     fireEvent.click(screen.getByRole("button", { name: t("shell.showSessionSidebar") }));
 
     expect(screen.getByText("历史会话 Alpha")).toBeInTheDocument();
-    expect(parseFloat(page.style.getPropertyValue("--mobile-conversation-preview-width"))).toBeCloseTo(130, 0);
+    expect(parseFloat(page.style.getPropertyValue("--mobile-conversation-preview-width"))).toBeCloseTo(234, 0);
   });
 
-  it("移动端右滑超过阈值后，会一次性打开到三分之一屏宽", async () => {
+  it("移动端右滑超过阈值后，会一次性打开到六成屏宽", async () => {
     mockGetProviderCapabilities.mockResolvedValue({
       provider: "codex",
       canStartSession: true,
@@ -182,7 +182,7 @@ describe("ConversationPage", () => {
     fireEvent.touchEnd(stage);
 
     expect(screen.getByText("历史会话 Alpha")).toBeInTheDocument();
-    expect(parseFloat(page.style.getPropertyValue("--mobile-conversation-preview-width"))).toBeCloseTo(130, 0);
+    expect(parseFloat(page.style.getPropertyValue("--mobile-conversation-preview-width"))).toBeCloseTo(234, 0);
   });
 
   it("移动端滑出侧边会话栏时，不会在 touchmove 里调用 preventDefault", async () => {
@@ -223,7 +223,7 @@ describe("ConversationPage", () => {
 
     expect(preventDefaultSpy).not.toHaveBeenCalled();
     expect(screen.getByText("历史会话 Alpha")).toBeInTheDocument();
-    expect(parseFloat(page.style.getPropertyValue("--mobile-conversation-preview-width"))).toBeCloseTo(130, 0);
+    expect(parseFloat(page.style.getPropertyValue("--mobile-conversation-preview-width"))).toBeCloseTo(234, 0);
   });
 
   it("移动端快速右滑时，会读取抬手位置来稳定触发打开", async () => {
@@ -261,7 +261,7 @@ describe("ConversationPage", () => {
     });
 
     expect(screen.getByText("历史会话 Alpha")).toBeInTheDocument();
-    expect(parseFloat(page.style.getPropertyValue("--mobile-conversation-preview-width"))).toBeCloseTo(130, 0);
+    expect(parseFloat(page.style.getPropertyValue("--mobile-conversation-preview-width"))).toBeCloseTo(234, 0);
   });
 
   it("移动端小幅右滑不会误触打开快捷会话菜单", async () => {
@@ -300,7 +300,7 @@ describe("ConversationPage", () => {
     expect(parseFloat(page.style.getPropertyValue("--mobile-conversation-preview-width"))).toBeCloseTo(0, 0);
   });
 
-  it("快捷会话菜单打开后，额外右滑可以直接扩展到六成屏宽", async () => {
+  it("快捷会话菜单打开后，额外右滑不会再保留额外宽度档位", async () => {
     mockGetProviderCapabilities.mockResolvedValue({
       provider: "codex",
       canStartSession: true,

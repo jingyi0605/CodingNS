@@ -1,13 +1,14 @@
-import type { ReactNode } from "react";
+import type { ReactNode, Ref } from "react";
 
 interface MobileTopHeaderFrameProps {
   readonly children: ReactNode;
   readonly className?: string;
+  readonly frameRef?: Ref<HTMLDivElement>;
 }
 
-export function MobileTopHeaderFrame({ children, className }: MobileTopHeaderFrameProps) {
+export function MobileTopHeaderFrame({ children, className, frameRef }: MobileTopHeaderFrameProps) {
   return (
-    <div className={["mobile-top-header-frame", className].filter(Boolean).join(" ")}>
+    <div ref={frameRef} className={["mobile-top-header-frame", className].filter(Boolean).join(" ")}>
       {children}
     </div>
   );

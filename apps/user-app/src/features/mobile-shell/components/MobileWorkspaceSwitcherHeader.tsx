@@ -1,5 +1,5 @@
 import { createPortal } from "react-dom";
-import { useState, type ReactNode } from "react";
+import { useState, type ReactNode, type Ref } from "react";
 
 import { useHaptics } from "../../../shared/haptics";
 import { t } from "../../../shared/i18n";
@@ -16,6 +16,7 @@ interface MobileWorkspaceSwitcherHeaderProps {
   readonly workspaces: readonly WorkspaceSummary[];
   readonly onSelectWorkspace?: (workspaceId: string) => void;
   readonly className?: string;
+  readonly containerRef?: Ref<HTMLDivElement>;
   readonly heading?: string;
   readonly content?: ReactNode;
   readonly sheetContent?: (closeSheet: () => void) => ReactNode;
@@ -30,6 +31,7 @@ export function MobileWorkspaceSwitcherHeader({
   workspaces,
   onSelectWorkspace,
   className,
+  containerRef,
   heading,
   content,
   sheetContent,
@@ -47,7 +49,7 @@ export function MobileWorkspaceSwitcherHeader({
 
   return (
     <>
-      <MobileTopHeaderFrame className={className}>
+      <MobileTopHeaderFrame className={className} frameRef={containerRef}>
         <section className="mobile-workspace-home-header">
           <h1 className="mobile-workspace-switcher-heading">{heading ?? currentWorkspace.name}</h1>
 
