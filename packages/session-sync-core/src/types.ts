@@ -196,7 +196,8 @@ export interface ProviderAdapter {
     providerSessionId: string,
     rawStoreRef: string,
     content: string,
-    clientRequestId: string | null
+    clientRequestId: string | null,
+    permissionMode?: string | null
   ): Promise<SendMessageResult>;
   readSessionTitle(
     providerSessionId: string,

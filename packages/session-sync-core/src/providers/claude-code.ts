@@ -307,7 +307,8 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
     providerSessionId: string,
     rawStoreRef: string,
     content: string,
-    clientRequestId: string | null
+    clientRequestId: string | null,
+    _permissionMode?: string | null
   ): Promise<SendMessageResult> {
     const records = readJsonLines(rawStoreRef).map((record) => record.data);
     const lineNumber = records.length + 1;

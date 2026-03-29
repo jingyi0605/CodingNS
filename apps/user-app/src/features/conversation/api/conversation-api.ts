@@ -266,6 +266,12 @@ export interface SendLiveMessagePayload {
   attachments?: ImageAttachmentPayload[];
 }
 
+export interface SendSessionMessagePayload {
+  content: string;
+  clientRequestId: string;
+  permissionMode?: string | null;
+}
+
 export interface StartLiveResponseDto extends SendMessageResponseDto {
   provider: ProviderId;
   providerSessionId: string;
@@ -517,7 +523,7 @@ export function getSessionAttachmentBlob(sessionId: string, attachmentId: string
 
 export function sendSessionMessage(
   sessionId: string,
-  payload: { content: string; clientRequestId: string }
+  payload: SendSessionMessagePayload
 ) {
   return httpClient.request<SendMessageResponseDto>(
     `/api/sessions/${encodeURIComponent(sessionId)}/messages`,

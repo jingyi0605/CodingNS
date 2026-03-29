@@ -42,6 +42,7 @@ import {
   type OpenCodeSessionMetadataRecord,
   workspaceMatches
 } from "./opencode-shared.js";
+import { createOpenCodeMessagePermissionOptions } from "./opencode-permissions.js";
 
 const DEFAULT_DATA_DIR = join(homedir(), ".local", "share", "opencode");
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
@@ -301,7 +302,8 @@ export class OpenCodeAdapter implements ProviderAdapter {
     providerSessionId: string,
     rawStoreRef: string,
     content: string,
-    clientRequestId: string | null
+    clientRequestId: string | null,
+    permissionMode?: string | null
   ): Promise<SendMessageResult> {
     const sessionId = this.resolveSessionId(providerSessionId, rawStoreRef);
     const trimmed = content.trim();
@@ -312,7 +314,7 @@ export class OpenCodeAdapter implements ProviderAdapter {
 
     const acceptedAt = nextTimestamp();
 
-    await this.postTextPrompt(sessionId, trimmed);
+    await this.postTextPrompt(sessionId, trimmed, permissionMode);
 
     const message = await this.findAcceptedUserMessage(sessionId, trimmed)
       ?? buildSyntheticAcceptedMessage(sessionId, trimmed, acceptedAt);
@@ -549,7 +551,11 @@ export class OpenCodeAdapter implements ProviderAdapter {
     };
   }
 
-  private async postTextPrompt(sessionId: string, text: string): Promise<void> {
+  private async postTextPrompt(
+    sessionId: string,
+    text: string,
+    permissionMode?: string | null
+  ): Promise<void> {
     await this.fetchJson(
       `/session/${encodeURIComponent(sessionId)}/message`,
       {
@@ -558,6 +564,7 @@ export class OpenCodeAdapter implements ProviderAdapter {
           "content-type": "application/json"
         },
         body: JSON.stringify({
+          ...createOpenCodeMessagePermissionOptions(permissionMode),
           parts: [
             {
               type: "text",

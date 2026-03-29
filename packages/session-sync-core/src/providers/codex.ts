@@ -558,7 +558,8 @@ export class CodexAdapter implements ProviderAdapter {
     providerSessionId: string,
     rawStoreRef: string,
     content: string,
-    clientRequestId: string | null
+    clientRequestId: string | null,
+    _permissionMode?: string | null
   ): Promise<SendMessageResult> {
     const resolvedStoreRef = this.resolveSessionFilePath(rawStoreRef, providerSessionId);
     const lineNumber = readJsonLines(resolvedStoreRef).length + 1;

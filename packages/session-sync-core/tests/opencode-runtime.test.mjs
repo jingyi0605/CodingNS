@@ -285,6 +285,92 @@ test("OpenCodeRuntimeAdapter 会把同一个 part 的 delta 更新映射为同�
   assert.equal(messageEvents[0].message.sequence, messageEvents[1].message.sequence);
 });
 
+test("OpenCodeRuntimeAdapter 在非 default permissionMode 下也只会沿用 OpenCode 当前配置", async (context) => {
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+
+  globalThis.fetch = async (input, init = {}) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const method = init.method ?? "GET";
+    requests.push({
+      url,
+      method,
+      body: typeof init.body === "string" ? init.body : null
+    });
+
+    if (url.startsWith("http://127.0.0.1:41827/session?") && method === "POST") {
+      return jsonResponse({ id: "ses_runtime_permission" });
+    }
+
+    if (url === "http://127.0.0.1:41827/event" && method === "GET") {
+      return sseResponse([
+        {
+          payload: {
+            type: "session.idle",
+            properties: {
+              sessionID: "ses_runtime_permission"
+            }
+          }
+        }
+      ]);
+    }
+
+    if (url === "http://127.0.0.1:41827/session/ses_runtime_permission/message" && method === "POST") {
+      return jsonResponse({});
+    }
+
+    throw new Error(`unexpected request: ${method} ${url}`);
+  };
+
+  context.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const adapter = new OpenCodeRuntimeAdapter({
+    baseUrl: "http://127.0.0.1:41827",
+    requestTimeoutMs: 1_000
+  });
+
+  const launch = await adapter.startSession(
+    {
+      sessionId: "local-session-permission",
+      workspaceId: "workspace-1",
+      workspacePath: "/Users/jackson/Code/CodingNS",
+      provider: "opencode",
+      providerSessionId: null,
+      rawStoreRef: null,
+      options: {
+        content: "直接继续",
+        clientRequestId: null,
+        model: null,
+        reasoningLevel: null,
+        permissionMode: "bypassPermissions",
+        providerPrompt: null,
+        attachments: []
+      }
+    },
+    {
+      updateSessionBinding() {},
+      async emit() {}
+    }
+  );
+
+  await launch.completed;
+
+  const messageRequest = requests.find(
+    (request) => request.method === "POST" && request.url.endsWith("/session/ses_runtime_permission/message")
+  );
+  assert.ok(messageRequest);
+  assert.deepEqual(JSON.parse(messageRequest.body), {
+    parts: [
+      {
+        type: "text",
+        text: "直接继续"
+      }
+    ]
+  });
+});
+
 test("OpenCodeRuntimeAdapter 会把 patch part 收口成可读摘要，而不是原始 JSON", async (context) => {
   const originalFetch = globalThis.fetch;
   const events = [];

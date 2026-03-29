@@ -128,11 +128,12 @@ export class SessionSyncService {
     providerSessionId: string,
     rawStoreRef: string,
     content: string,
-    clientRequestId: string | null
+    clientRequestId: string | null,
+    permissionMode?: string | null
   ): Promise<SendMessageResult> {
     return this.registry
       .get(providerId)
-      .sendMessage(providerSessionId, rawStoreRef, content, clientRequestId);
+      .sendMessage(providerSessionId, rawStoreRef, content, clientRequestId, permissionMode);
   }
 
   async readSessionTitle(

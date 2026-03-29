@@ -41,6 +41,63 @@ test("OpenCodeAdapter 能按 workspace 发现会话并返回稳定 rawStoreRef",
   }
 });
 
+test("OpenCodeAdapter 旧消息发送路径在非 default permissionMode 下也只会沿用 OpenCode 当前配置", async (context) => {
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+
+  globalThis.fetch = async (input, init = {}) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const method = init?.method ?? "GET";
+    requests.push({
+      url,
+      method,
+      body: typeof init?.body === "string" ? init.body : null
+    });
+
+    if (url === "http://127.0.0.1:41827/session/ses_send_permission/message" && method === "POST") {
+      return jsonResponse({});
+    }
+
+    if (url === "http://127.0.0.1:41827/session/ses_send_permission/message?limit=20" && method === "GET") {
+      return jsonResponse([]);
+    }
+
+    throw new Error(`unexpected request: ${method} ${url}`);
+  };
+
+  context.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const adapter = new OpenCodeAdapter({
+    baseUrl: "http://127.0.0.1:41827",
+    dbPath: "/tmp/codingns-opencode.db"
+  });
+
+  const result = await adapter.sendMessage(
+    "ses_send_permission",
+    "opencode://session/ses_send_permission",
+    "继续执行",
+    "client-1",
+    "bypassPermissions"
+  );
+
+  const messageRequest = requests.find(
+    (request) => request.method === "POST" && request.url.endsWith("/session/ses_send_permission/message")
+  );
+  assert.ok(messageRequest);
+  assert.deepEqual(JSON.parse(messageRequest.body), {
+    parts: [
+      {
+        type: "text",
+        text: "继续执行"
+      }
+    ]
+  });
+  assert.equal(result.clientRequestId, "client-1");
+  assert.equal(result.message.content, "继续执行");
+});
+
 test("OpenCodeAdapter 会用 knownSessions 补回 server 短暂漏掉的会话，并标记发现结果不完整", async (context) => {
   const fixture = createOpenCodeFixture();
   const originalFetch = globalThis.fetch;

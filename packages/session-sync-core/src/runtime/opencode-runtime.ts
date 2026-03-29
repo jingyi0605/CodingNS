@@ -5,6 +5,7 @@ import {
   parseSessionIdFromRawStoreRef,
   toJsonRecord
 } from "../providers/opencode-shared.js";
+import { createOpenCodeMessagePermissionOptions } from "../providers/opencode-permissions.js";
 import { ensureText, extractTextBlocks, nextTimestamp } from "../providers/utils.js";
 import type { ProviderId } from "../types.js";
 import type {
@@ -492,6 +493,7 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
     }
 
     const body: Record<string, unknown> = {
+      ...createOpenCodeMessagePermissionOptions(request.options.permissionMode),
       parts: [
         {
           type: "text",

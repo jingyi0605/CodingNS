@@ -594,7 +594,8 @@ export class SessionHistoryService {
   async sendMessage(
     sessionId: string,
     content: string,
-    clientRequestId: string | null
+    clientRequestId: string | null,
+    permissionMode: string | null = null
   ): Promise<SendMessageResult & { sessionId: string }> {
     const binding = this.getBindingOrThrow(sessionId);
     const result = await this.sessionSyncService
@@ -603,7 +604,8 @@ export class SessionHistoryService {
         binding.providerSessionId,
         binding.rawStoreRef,
         content,
-        clientRequestId
+        clientRequestId,
+        permissionMode
       )
       .catch((error) => {
         this.markSessionError(sessionId, "SEND_FAILED", error);
