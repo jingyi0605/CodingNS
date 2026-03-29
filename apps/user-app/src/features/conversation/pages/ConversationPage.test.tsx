@@ -1,11 +1,12 @@
 import { createEvent, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { t } from "../../../shared/i18n";
 import { ConversationPage } from "./ConversationPage";
 
 const mockGetProviderCapabilities = vi.fn();
+const mockStartLiveSession = vi.fn();
 const mockUseWorkbenchShell = vi.fn();
 
 vi.mock("../api/conversation-api", async () => {
@@ -15,7 +16,8 @@ vi.mock("../api/conversation-api", async () => {
 
   return {
     ...actual,
-    getProviderCapabilities: (...args: unknown[]) => mockGetProviderCapabilities(...args)
+    getProviderCapabilities: (...args: unknown[]) => mockGetProviderCapabilities(...args),
+    startLiveSession: (...args: unknown[]) => mockStartLiveSession(...args)
   };
 });
 
@@ -36,9 +38,26 @@ vi.mock("../components/SessionHeader", () => ({
 }));
 
 vi.mock("../components/ComposerPanel", () => ({
-  ComposerPanel: ({ capabilities }: { capabilities: { modelOptions?: Array<{ id: string }> } | null }) => (
-    <div data-testid="composer-model-options">
-      {capabilities?.modelOptions?.map((item) => item.id).join(",") ?? ""}
+  ComposerPanel: ({
+    capabilities,
+    onSend
+  }: {
+    capabilities: { modelOptions?: Array<{ id: string }> } | null;
+    onSend?: (content: string, options?: { attachments?: unknown[]; attachmentMeta?: unknown[] }) => Promise<void>;
+  }) => (
+    <div>
+      <div data-testid="composer-model-options">
+        {capabilities?.modelOptions?.map((item) => item.id).join(",") ?? ""}
+      </div>
+      <button
+        type="button"
+        data-testid="composer-send"
+        onClick={() => {
+          void onSend?.("测试消息");
+        }}
+      >
+        send
+      </button>
     </div>
   )
 }));
@@ -46,6 +65,7 @@ vi.mock("../components/ComposerPanel", () => ({
 describe("ConversationPage", () => {
   beforeEach(() => {
     mockGetProviderCapabilities.mockReset();
+    mockStartLiveSession.mockReset();
     mockUseWorkbenchShell.mockReset();
     Object.defineProperty(window, "innerWidth", {
       configurable: true,
@@ -114,6 +134,123 @@ describe("ConversationPage", () => {
     await waitFor(() => {
       expect(screen.getByTestId("composer-model-options")).toHaveTextContent(
         "provider-default,gpt-5.4"
+      );
+    });
+  });
+
+  it("草稿会话创建成功后会以后端返回的真实 workspaceId 作为跳转目标", async () => {
+    mockGetProviderCapabilities.mockResolvedValue({
+      provider: "opencode",
+      canStartSession: true,
+      canResumeSession: true,
+      canSendMessage: true,
+      inRunInputMode: "none",
+      supportsSubagents: false,
+      supportsInterrupt: true,
+      supportsStructuredToolCalls: true,
+      supportsTokenUsage: true,
+      supportsAttachments: true,
+      supportsPermissionPrompt: true,
+      supportsCheckpoint: false,
+      modelOptions: [{ id: "provider-default", name: "跟随 CLI 默认模型", usesProviderDefault: true }],
+      limitations: []
+    });
+    mockStartLiveSession.mockResolvedValue({
+      sessionId: "session-created-1",
+      acceptedAt: "2026-03-30T00:00:00.000Z",
+      clientRequestId: "client-request-1",
+      provider: "opencode",
+      providerSessionId: "provider-session-1",
+      message: {
+        messageId: "message-1",
+        provider: "opencode",
+        providerSessionId: "provider-session-1",
+        role: "user",
+        content: "测试消息",
+        timestamp: "2026-03-30T00:00:00.000Z",
+        sequence: 1,
+        rawRef: "opencode://session/provider-session-1/message/message-1"
+      },
+      session: {
+        sessionId: "session-created-1",
+        workspaceId: "workspace-2",
+        provider: "opencode",
+        providerSessionId: "provider-session-1",
+        rawStoreRef: "opencode://session/provider-session-1",
+        parentSessionId: null,
+        isSubagent: false,
+        subagentLabel: null,
+        title: "真实会话",
+        messageCount: 1,
+        lastMessageAt: "2026-03-30T00:00:00.000Z",
+        createdAt: "2026-03-30T00:00:00.000Z",
+        updatedAt: "2026-03-30T00:00:00.000Z",
+        syncStatus: "idle",
+        syncCursor: null,
+        lastSyncAt: null,
+        lastErrorCode: null,
+        lastErrorDetail: null,
+        resumedAt: null,
+        runningState: "running",
+        activitySource: "runtime",
+        lastEventAt: "2026-03-30T00:00:00.000Z",
+        completedAt: null,
+        lastSeenAt: null,
+        activityState: "running"
+      }
+    });
+    const setSessionWorkspace = vi.fn();
+    const upsertNavigationSession = vi.fn();
+    const requestNavigationRefresh = vi.fn();
+
+    mockUseWorkbenchShell.mockReturnValue({
+      shellMode: "desktop",
+      navigationGroups: [],
+      requestNavigationRefresh,
+      setSessionWorkspace,
+      upsertNavigationSession,
+      favoriteSessions: []
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/workspaces/workspace-1/sessions/draft-opencode-1?provider=opencode"]}>
+        <Routes>
+          <Route
+            path="/workspaces/:workspaceId/sessions/:sessionId"
+            element={
+              <>
+                <ConversationPage />
+                <RouteProbe />
+              </>
+            }
+          />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByTestId("composer-send"));
+
+    await waitFor(() => {
+      expect(mockStartLiveSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workspaceId: "workspace-1",
+          provider: "opencode",
+          content: "测试消息"
+        })
+      );
+    });
+
+    await waitFor(() => {
+      expect(setSessionWorkspace).toHaveBeenCalledWith("session-created-1", "workspace-2");
+      expect(upsertNavigationSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sessionId: "session-created-1",
+          workspaceId: "workspace-2"
+        })
+      );
+      expect(requestNavigationRefresh).toHaveBeenCalled();
+      expect(screen.getByTestId("route-probe")).toHaveTextContent(
+        "/workspaces/workspace-2/sessions/session-created-1"
       );
     });
   });
@@ -462,4 +599,10 @@ function createMobileWorkbenchShellValue() {
     favoriteSessions: [],
     selectWorkspace: vi.fn()
   };
+}
+
+function RouteProbe() {
+  const location = useLocation();
+
+  return <div data-testid="route-probe">{location.pathname + location.search}</div>;
 }

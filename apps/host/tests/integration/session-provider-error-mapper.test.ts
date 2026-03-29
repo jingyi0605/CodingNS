@@ -26,4 +26,20 @@ describe("mapSessionProviderError", () => {
     expect(mapped.errorCode).toBe("PROVIDER_RUNTIME_TIMEOUT");
     expect(mapped.message).toContain("请求超时");
   });
+
+  it("会把 OpenCode 目录跑偏映射成明确的工作区冲突错误", () => {
+    const mapped = mapSessionProviderError(new Error("OPENCODE_SESSION_DIRECTORY_MISMATCH"));
+
+    expect(mapped.statusCode).toBe(409);
+    expect(mapped.errorCode).toBe("OPENCODE_SESSION_DIRECTORY_MISMATCH");
+    expect(mapped.message).toContain("错误的工作区目录");
+  });
+
+  it("会把跨工作区绑定冲突映射成明确的会话保护错误", () => {
+    const mapped = mapSessionProviderError(new Error("SESSION_BINDING_WORKSPACE_CONFLICT"));
+
+    expect(mapped.statusCode).toBe(409);
+    expect(mapped.errorCode).toBe("SESSION_BINDING_WORKSPACE_CONFLICT");
+    expect(mapped.message).toContain("其他工作区");
+  });
 });

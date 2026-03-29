@@ -927,6 +927,7 @@ export class SessionHistoryService {
     const timestamp = nowIso();
     const duplicateBinding = this.findPendingBindingDuplicate(
       sessionId,
+      workspaceId,
       currentBinding,
       resolvedSnapshot
     );
@@ -1006,6 +1007,12 @@ export class SessionHistoryService {
               session.provider,
               session.providerSessionId
             ) ?? this.sessionBindingRepository.findByRawStoreRef(session.provider, session.rawStoreRef);
+
+          // discover 只能补全当前工作区，不能把别的工作区已有会话偷过来重绑。
+          if (exactExisting && exactExisting.workspaceId !== workspaceId) {
+            continue;
+          }
+
           const pendingDuplicate =
             exactExisting
             ?? findClaudePendingDiscoveryDuplicate(
@@ -1657,6 +1664,7 @@ export class SessionHistoryService {
 
   private findPendingBindingDuplicate(
     sessionId: string,
+    workspaceId: string,
     currentBinding: SessionBinding | null,
     snapshot: { provider: string; providerSessionId: string; rawStoreRef: string }
   ): SessionBinding | null {
@@ -1676,6 +1684,10 @@ export class SessionHistoryService {
 
     if (!existing || existing.sessionId === sessionId) {
       return null;
+    }
+
+    if (existing.workspaceId !== workspaceId) {
+      throw new Error("SESSION_BINDING_WORKSPACE_CONFLICT");
     }
 
     return existing;

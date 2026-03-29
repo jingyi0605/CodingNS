@@ -763,9 +763,11 @@ function DraftConversationPage({
                   upsertNavigationSession(created.session);
                 }
 
-                setSessionWorkspace(created.sessionId, draft.workspaceId);
+                const resolvedWorkspaceId = created.session?.workspaceId?.trim() || draft.workspaceId;
+
+                setSessionWorkspace(created.sessionId, resolvedWorkspaceId);
                 writeMobileConversationPreviewMode("preview");
-                navigate(buildWorkspaceSessionPath(draft.workspaceId, created.sessionId), {
+                navigate(buildWorkspaceSessionPath(resolvedWorkspaceId, created.sessionId), {
                   replace: true,
                   state: created.message
                     ? {

@@ -537,7 +537,9 @@ export class OpenCodeAdapter implements ProviderAdapter {
       query: {
         directory: workspacePath
       },
-      body: JSON.stringify({})
+      body: JSON.stringify({
+        directory: workspacePath
+      })
     });
     const sessionId = ensureText(response.data.id).trim();
 

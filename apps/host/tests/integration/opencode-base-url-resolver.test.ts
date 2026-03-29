@@ -63,6 +63,43 @@ describe("OpenCodeBaseUrlResolver", () => {
     await expect(resolver.resolve({ refresh: true })).resolves.toBe("http://127.0.0.1:41827");
   });
 
+  it("指定 workspacePath 时只会复用 cwd 匹配的 opencode serve 进程", async () => {
+    const resolver = new OpenCodeBaseUrlResolver({
+      inspectProcessList: () =>
+        [
+          "79133 node /opt/homebrew/bin/opencode serve --print-logs",
+          "79333 /opt/homebrew/lib/node_modules/opencode-ai/bin/.opencode serve --print-logs"
+        ].join("\n"),
+      inspectListeningSockets: (pid) => {
+        if (pid === 79133) {
+          return [{ hostname: "127.0.0.1", port: 41827 }];
+        }
+
+        if (pid === 79333) {
+          return [{ hostname: "127.0.0.1", port: 4098 }];
+        }
+
+        return [];
+      },
+      inspectProcessCwd: (pid) => {
+        if (pid === 79133) {
+          return "/Users/jackson/Code/CodingNS";
+        }
+
+        if (pid === 79333) {
+          return "/Users/jackson/Code/MDG-BussInfo";
+        }
+
+        return null;
+      },
+      probeBaseUrl: async () => true
+    });
+
+    await expect(
+      resolver.resolve({ workspacePath: "/Users/jackson/Code/MDG-BussInfo" })
+    ).resolves.toBe("http://127.0.0.1:4098");
+  });
+
   it("手工配置 baseUrl 时会直接使用配置值", async () => {
     const resolver = new OpenCodeBaseUrlResolver({
       configuredBaseUrl: "http://127.0.0.1:5001"
@@ -264,6 +301,95 @@ describe("OpenCodeBaseUrlResolver", () => {
         configurable: true,
         value: originalPlatform
       });
+    }
+  });
+
+  it("在非 Windows 下发现不到匹配工作区的 server 时，会按目标工作区 cwd 拉起托管 serve", async () => {
+    vi.resetModules();
+
+    const stdoutHandlers: Array<(chunk: string) => void> = [];
+    const stderrHandlers: Array<(chunk: string) => void> = [];
+    const exitHandlers: Array<() => void> = [];
+    const errorHandlers: Array<() => void> = [];
+    const spawnSync = vi.fn(() => ({
+      status: 0,
+      stdout: ""
+    }));
+    const spawn = vi.fn(() => {
+      const child = {
+        killed: false,
+        stdout: {
+          on: (event: string, handler: (chunk: string) => void) => {
+            if (event === "data") {
+              stdoutHandlers.push(handler);
+            }
+          },
+          off: vi.fn()
+        },
+        stderr: {
+          on: (event: string, handler: (chunk: string) => void) => {
+            if (event === "data") {
+              stderrHandlers.push(handler);
+            }
+          },
+          off: vi.fn()
+        },
+        once: (event: string, handler: () => void) => {
+          if (event === "exit") {
+            exitHandlers.push(handler);
+          }
+
+          if (event === "error") {
+            errorHandlers.push(handler);
+          }
+        },
+        off: vi.fn(),
+        kill: vi.fn(() => {
+          child.killed = true;
+        })
+      };
+
+      queueMicrotask(() => {
+        for (const handler of stdoutHandlers) {
+          handler("opencode server listening on http://127.0.0.1:4312\n");
+        }
+      });
+
+      return child;
+    });
+
+    vi.doMock("node:child_process", () => ({
+      spawn,
+      spawnSync
+    }));
+
+    try {
+      const { OpenCodeBaseUrlResolver: DarwinResolver } = await import(
+        "../../src/config/opencode-base-url-resolver.js"
+      );
+      const resolver = new DarwinResolver({
+        commandPath: "/opt/homebrew/bin/opencode",
+        inspectProcessList: () => "79133 node /opt/homebrew/bin/opencode serve --print-logs",
+        inspectListeningSockets: () => [{ hostname: "127.0.0.1", port: 41827 }],
+        inspectProcessCwd: () => "/Users/jackson/Code/CodingNS",
+        probeBaseUrl: async (baseUrl: string) => baseUrl === "http://127.0.0.1:4312"
+      });
+
+      await expect(
+        resolver.resolve({ workspacePath: "/Users/jackson/Code/MDG-BussInfo" })
+      ).resolves.toBe("http://127.0.0.1:4312");
+      expect(spawn).toHaveBeenCalledWith(
+        "/opt/homebrew/bin/opencode",
+        ["serve", "--hostname", "127.0.0.1", "--port", "0", "--print-logs"],
+        expect.objectContaining({
+          cwd: "/Users/jackson/Code/MDG-BussInfo",
+          stdio: ["ignore", "pipe", "pipe"],
+          windowsHide: true
+        })
+      );
+    } finally {
+      vi.doUnmock("node:child_process");
+      vi.resetModules();
     }
   });
 });

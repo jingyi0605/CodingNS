@@ -1,4 +1,5 @@
 import { spawn, spawnSync, type ChildProcessByStdio } from "node:child_process";
+import { readlinkSync } from "node:fs";
 import type { Readable } from "node:stream";
 const DEFAULT_CACHE_TTL_MS = 5_000;
 const DEFAULT_PROBE_TIMEOUT_MS = 800;
@@ -9,12 +10,14 @@ interface OpenCodeBaseUrlResolverOptions {
   cacheTtlMs?: number;
   inspectProcessList?: () => string;
   inspectListeningSockets?: (pid: number) => OpenCodeListeningSocket[];
+  inspectProcessCwd?: (pid: number) => string | null;
   probeBaseUrl?: (baseUrl: string) => Promise<boolean>;
   now?: () => number;
 }
 
 interface ResolveBaseUrlInput {
   refresh?: boolean;
+  workspacePath?: string | null;
 }
 
 interface OpenCodeServeProcessRecord {
@@ -35,14 +38,15 @@ export class OpenCodeBaseUrlResolver {
   private readonly cacheTtlMs: number;
   private readonly inspectProcessList: () => string;
   private readonly inspectListeningSockets: (pid: number) => OpenCodeListeningSocket[];
+  private readonly inspectProcessCwd: (pid: number) => string | null;
   private readonly probeBaseUrl: (baseUrl: string) => Promise<boolean>;
   private readonly now: () => number;
-  private cachedBaseUrl: string | null = null;
-  private cachedAt = 0;
-  private inflight: Promise<string> | null = null;
-  private managedServerBaseUrl: string | null = null;
-  private managedServerProcess: ManagedOpenCodeServerProcess | null = null;
-  private managedServerInflight: Promise<string> | null = null;
+  private readonly cachedBaseUrlByWorkspaceKey = new Map<string, string>();
+  private readonly cachedAtByWorkspaceKey = new Map<string, number>();
+  private readonly inflightByWorkspaceKey = new Map<string, Promise<string>>();
+  private readonly managedServerBaseUrlByWorkspaceKey = new Map<string, string>();
+  private readonly managedServerProcessByWorkspaceKey = new Map<string, ManagedOpenCodeServerProcess>();
+  private readonly managedServerInflightByWorkspaceKey = new Map<string, Promise<string>>();
 
   constructor(options: OpenCodeBaseUrlResolverOptions = {}) {
     this.configuredBaseUrl = normalizeBaseUrl(options.configuredBaseUrl ?? null);
@@ -50,6 +54,7 @@ export class OpenCodeBaseUrlResolver {
     this.cacheTtlMs = Math.max(500, Math.floor(options.cacheTtlMs ?? DEFAULT_CACHE_TTL_MS));
     this.inspectProcessList = options.inspectProcessList ?? readProcessList;
     this.inspectListeningSockets = options.inspectListeningSockets ?? readListeningSockets;
+    this.inspectProcessCwd = options.inspectProcessCwd ?? readProcessCwd;
     this.probeBaseUrl = options.probeBaseUrl ?? probeOpenCodeBaseUrl;
     this.now = options.now ?? Date.now;
   }
@@ -59,31 +64,47 @@ export class OpenCodeBaseUrlResolver {
       return this.configuredBaseUrl;
     }
 
-    if (!input.refresh && this.cachedBaseUrl && this.now() - this.cachedAt < this.cacheTtlMs) {
-      return this.cachedBaseUrl;
+    const workspaceKey = normalizeWorkspaceKey(input.workspacePath);
+    const cachedBaseUrl = this.cachedBaseUrlByWorkspaceKey.get(workspaceKey) ?? null;
+    const cachedAt = this.cachedAtByWorkspaceKey.get(workspaceKey) ?? 0;
+
+    if (!input.refresh && cachedBaseUrl && this.now() - cachedAt < this.cacheTtlMs) {
+      return cachedBaseUrl;
     }
 
-    if (this.inflight) {
-      return this.inflight;
+    const inflight = this.inflightByWorkspaceKey.get(workspaceKey) ?? null;
+
+    if (inflight) {
+      return inflight;
     }
 
-    const task = this.discoverAvailableBaseUrl();
+    const task = this.discoverAvailableBaseUrl(input.workspacePath ?? null);
     const wrappedTask = task.finally(() => {
-      if (this.inflight === wrappedTask) {
-        this.inflight = null;
+      if (this.inflightByWorkspaceKey.get(workspaceKey) === wrappedTask) {
+        this.inflightByWorkspaceKey.delete(workspaceKey);
       }
     });
-    this.inflight = wrappedTask;
+    this.inflightByWorkspaceKey.set(workspaceKey, wrappedTask);
 
-    return this.inflight;
+    return wrappedTask;
   }
 
-  private async discoverAvailableBaseUrl(): Promise<string> {
-    const serveProcesses = parseServeProcesses(this.inspectProcessList(), this.commandPath);
+  private async discoverAvailableBaseUrl(workspacePath: string | null): Promise<string> {
+    const workspaceKey = normalizeWorkspaceKey(workspacePath);
+    const targetWorkspacePath = normalizeWorkspaceCompareValue(workspacePath);
+    const serveProcesses = parseServeProcesses(this.inspectProcessList(), this.commandPath)
+      .map((record) => ({
+        ...record,
+        cwd: normalizeWorkspaceCompareValue(this.inspectProcessCwd(record.pid))
+      }));
+    const matchingServeProcesses =
+      targetWorkspacePath
+        ? serveProcesses.filter((record) => record.cwd === targetWorkspacePath)
+        : serveProcesses;
     const candidates = dedupeBaseUrls([
-      this.cachedBaseUrl,
-      this.managedServerBaseUrl,
-      ...serveProcesses.flatMap((record) => {
+      this.cachedBaseUrlByWorkspaceKey.get(workspaceKey) ?? null,
+      this.managedServerBaseUrlByWorkspaceKey.get(workspaceKey) ?? null,
+      ...matchingServeProcesses.flatMap((record) => {
         return this.inspectListeningSockets(record.pid).map((socket) => {
           return `http://${formatHostname(normalizeHostname(socket.hostname))}:${socket.port}`;
         });
@@ -92,48 +113,57 @@ export class OpenCodeBaseUrlResolver {
 
     for (const candidate of candidates) {
       if (await this.probeBaseUrl(candidate)) {
-        this.cachedBaseUrl = candidate;
-        this.cachedAt = this.now();
+        this.cachedBaseUrlByWorkspaceKey.set(workspaceKey, candidate);
+        this.cachedAtByWorkspaceKey.set(workspaceKey, this.now());
         return candidate;
       }
     }
 
-    if (process.platform === "win32") {
-      const managedCandidate = await this.ensureManagedServerBaseUrl();
+    if (workspacePath || process.platform === "win32") {
+      const managedCandidate = await this.ensureManagedServerBaseUrl(
+        workspacePath ?? process.cwd()
+      );
 
       if (await this.probeBaseUrl(managedCandidate)) {
-        this.managedServerBaseUrl = managedCandidate;
-        this.cachedBaseUrl = managedCandidate;
-        this.cachedAt = this.now();
+        this.managedServerBaseUrlByWorkspaceKey.set(workspaceKey, managedCandidate);
+        this.cachedBaseUrlByWorkspaceKey.set(workspaceKey, managedCandidate);
+        this.cachedAtByWorkspaceKey.set(workspaceKey, this.now());
         return managedCandidate;
       }
     }
 
-    this.cachedAt = this.now();
+    this.cachedAtByWorkspaceKey.set(workspaceKey, this.now());
     throw new Error("SERVER_UNAVAILABLE");
   }
 
-  private async ensureManagedServerBaseUrl(): Promise<string> {
-    if (this.managedServerProcess && !this.managedServerProcess.killed && this.managedServerBaseUrl) {
-      return this.managedServerBaseUrl;
+  private async ensureManagedServerBaseUrl(workspacePath: string): Promise<string> {
+    const workspaceKey = normalizeWorkspaceKey(workspacePath);
+    const managedServerProcess = this.managedServerProcessByWorkspaceKey.get(workspaceKey) ?? null;
+    const managedServerBaseUrl = this.managedServerBaseUrlByWorkspaceKey.get(workspaceKey) ?? null;
+
+    if (managedServerProcess && !managedServerProcess.killed && managedServerBaseUrl) {
+      return managedServerBaseUrl;
     }
 
-    if (this.managedServerInflight) {
-      return this.managedServerInflight;
+    const inflight = this.managedServerInflightByWorkspaceKey.get(workspaceKey) ?? null;
+
+    if (inflight) {
+      return inflight;
     }
 
-    const task = this.startManagedServer();
+    const task = this.startManagedServer(workspacePath);
     const wrappedTask = task.finally(() => {
-      if (this.managedServerInflight === wrappedTask) {
-        this.managedServerInflight = null;
+      if (this.managedServerInflightByWorkspaceKey.get(workspaceKey) === wrappedTask) {
+        this.managedServerInflightByWorkspaceKey.delete(workspaceKey);
       }
     });
-    this.managedServerInflight = wrappedTask;
+    this.managedServerInflightByWorkspaceKey.set(workspaceKey, wrappedTask);
     return wrappedTask;
   }
 
-  private async startManagedServer(): Promise<string> {
+  private async startManagedServer(workspacePath: string): Promise<string> {
     const commandPath = this.commandPath?.trim();
+    const workspaceKey = normalizeWorkspaceKey(workspacePath);
 
     if (!commandPath) {
       throw new Error("SERVER_UNAVAILABLE");
@@ -148,18 +178,19 @@ export class OpenCodeBaseUrlResolver {
       commandPath,
       ["serve", "--hostname", "127.0.0.1", "--port", "0", "--print-logs"],
       {
+        cwd: workspacePath,
         env,
         stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true
       }
     );
 
-    this.managedServerProcess = child;
+    this.managedServerProcessByWorkspaceKey.set(workspaceKey, child);
 
     child.once("exit", () => {
-      if (this.managedServerProcess === child) {
-        this.managedServerProcess = null;
-        this.managedServerBaseUrl = null;
+      if (this.managedServerProcessByWorkspaceKey.get(workspaceKey) === child) {
+        this.managedServerProcessByWorkspaceKey.delete(workspaceKey);
+        this.managedServerBaseUrlByWorkspaceKey.delete(workspaceKey);
       }
     });
 
@@ -182,7 +213,7 @@ export class OpenCodeBaseUrlResolver {
           }
 
           const baseUrl = normalizeBaseUrl(matched[1]) ?? matched[1];
-          this.managedServerBaseUrl = baseUrl;
+          this.managedServerBaseUrlByWorkspaceKey.set(workspaceKey, baseUrl);
           cleanup();
           resolve(baseUrl);
           return;
@@ -212,6 +243,46 @@ export class OpenCodeBaseUrlResolver {
       child.once("exit", handleExit);
       child.once("error", handleError);
     });
+  }
+}
+
+function readProcessCwd(pid: number): string | null {
+  if (!Number.isFinite(pid) || pid <= 0) {
+    return null;
+  }
+
+  if (process.platform === "win32") {
+    return null;
+  }
+
+  if (process.platform === "linux") {
+    return readLinuxProcessCwd(pid);
+  }
+
+  return readUnixProcessCwd(pid);
+}
+
+function readUnixProcessCwd(pid: number): string | null {
+  const result = spawnSync("lsof", ["-a", "-p", String(pid), "-d", "cwd", "-Fn"], {
+    encoding: "utf8"
+  });
+
+  if (result.status !== 0) {
+    return null;
+  }
+
+  const line = (result.stdout ?? "")
+    .split(/\r?\n/)
+    .find((entry) => entry.startsWith("n"));
+
+  return line?.slice(1).trim() || null;
+}
+
+function readLinuxProcessCwd(pid: number): string | null {
+  try {
+    return readlinkSync(`/proc/${pid}/cwd`);
+  } catch {
+    return null;
   }
 }
 
@@ -444,6 +515,20 @@ function normalizeCommandPath(value: string | null): string | null {
   }
 
   return normalized;
+}
+
+function normalizeWorkspaceKey(value: string | null | undefined): string {
+  return normalizeWorkspaceCompareValue(value) ?? "";
+}
+
+function normalizeWorkspaceCompareValue(value: string | null | undefined): string | null {
+  const normalized = value?.trim().replaceAll("\\", "/").replace(/\/+$/, "") ?? "";
+
+  if (!normalized) {
+    return null;
+  }
+
+  return /^[a-z]:(?:\/|$)/i.test(normalized) ? normalized.toLowerCase() : normalized;
 }
 
 function isOpenCodeServeCommand(command: string, commandPath: string | null): boolean {

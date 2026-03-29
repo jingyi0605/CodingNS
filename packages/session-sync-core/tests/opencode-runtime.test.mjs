@@ -20,6 +20,13 @@ test("OpenCodeRuntimeAdapter 会创建会话、发送消息并消费 SSE 事件"
       return jsonResponse({ id: "ses_test_runtime" });
     }
 
+    if (url === "http://127.0.0.1:41827/session/ses_test_runtime" && method === "GET") {
+      return jsonResponse({
+        id: "ses_test_runtime",
+        directory: "/Users/jackson/Code/CodingNS"
+      });
+    }
+
     if (url === "http://127.0.0.1:41827/event" && method === "GET") {
       return sseResponse([
         {
@@ -138,6 +145,7 @@ test("OpenCodeRuntimeAdapter 会创建会话、发送消息并消费 SSE 事件"
     (request) => request.method === "POST" && request.url.startsWith("http://127.0.0.1:41827/session?")
   );
   assert.ok(sessionCreateRequest);
+  assert.equal(JSON.parse(sessionCreateRequest.body).directory, "/Users/jackson/Code/CodingNS");
 
   const messageRequest = requests.find(
     (request) => request.method === "POST" && request.url.endsWith("/session/ses_test_runtime/message")
@@ -160,6 +168,66 @@ test("OpenCodeRuntimeAdapter 会创建会话、发送消息并消费 SSE 事件"
   assert.equal(completeEvent.status, "completed");
 });
 
+test("OpenCodeRuntimeAdapter 会在服务端目录跑偏时直接拒绝启动会话", async (context) => {
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async (input, init = {}) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const method = init.method ?? "GET";
+
+    if (url.startsWith("http://127.0.0.1:41827/session?") && method === "POST") {
+      return jsonResponse({ id: "ses_wrong_workspace" });
+    }
+
+    if (url === "http://127.0.0.1:41827/session/ses_wrong_workspace" && method === "GET") {
+      return jsonResponse({
+        id: "ses_wrong_workspace",
+        directory: "/Users/jackson/Code/AnotherWorkspace"
+      });
+    }
+
+    throw new Error(`unexpected request: ${method} ${url}`);
+  };
+
+  context.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const adapter = new OpenCodeRuntimeAdapter({
+    baseUrl: "http://127.0.0.1:41827",
+    requestTimeoutMs: 1_000
+  });
+
+  await assert.rejects(
+    adapter.startSession(
+      {
+        sessionId: "local-session-wrong-workspace",
+        workspaceId: "workspace-1",
+        workspacePath: "/Users/jackson/Code/CodingNS",
+        provider: "opencode",
+        providerSessionId: null,
+        rawStoreRef: null,
+        options: {
+          content: "测试目录校验",
+          clientRequestId: null,
+          model: null,
+          reasoningLevel: null,
+          permissionMode: null,
+          providerPrompt: null,
+          attachments: []
+        }
+      },
+      {
+        updateSessionBinding() {
+          throw new Error("不应该先写入错误绑定");
+        },
+        async emit() {}
+      }
+    ),
+    /OPENCODE_SESSION_DIRECTORY_MISMATCH/
+  );
+});
+
 test("OpenCodeRuntimeAdapter 会把同一个 part 的 delta 更新映射为同一逻辑消息", async (context) => {
   const originalFetch = globalThis.fetch;
   const events = [];
@@ -170,6 +238,13 @@ test("OpenCodeRuntimeAdapter 会把同一个 part 的 delta 更新映射为同�
 
     if (url.startsWith("http://127.0.0.1:41827/session?") && method === "POST") {
       return jsonResponse({ id: "ses_runtime_delta" });
+    }
+
+    if (url === "http://127.0.0.1:41827/session/ses_runtime_delta" && method === "GET") {
+      return jsonResponse({
+        id: "ses_runtime_delta",
+        directory: "/Users/jackson/Code/CodingNS"
+      });
     }
 
     if (url === "http://127.0.0.1:41827/event" && method === "GET") {
@@ -302,6 +377,13 @@ test("OpenCodeRuntimeAdapter 在非 default permissionMode 下也只会沿用 Op
       return jsonResponse({ id: "ses_runtime_permission" });
     }
 
+    if (url === "http://127.0.0.1:41827/session/ses_runtime_permission" && method === "GET") {
+      return jsonResponse({
+        id: "ses_runtime_permission",
+        directory: "/Users/jackson/Code/CodingNS"
+      });
+    }
+
     if (url === "http://127.0.0.1:41827/event" && method === "GET") {
       return sseResponse([
         {
@@ -381,6 +463,13 @@ test("OpenCodeRuntimeAdapter 会把 patch part 收口成可读摘要，而不是
 
     if (url.startsWith("http://127.0.0.1:41827/session?") && method === "POST") {
       return jsonResponse({ id: "ses_runtime_patch" });
+    }
+
+    if (url === "http://127.0.0.1:41827/session/ses_runtime_patch" && method === "GET") {
+      return jsonResponse({
+        id: "ses_runtime_patch",
+        directory: "/Users/jackson/Code/CodingNS"
+      });
     }
 
     if (url === "http://127.0.0.1:41827/event" && method === "GET") {
@@ -605,6 +694,13 @@ test("OpenCodeRuntimeAdapter 会在 resolver 刷新后切换到新的 server 地
       return jsonResponse({ id: "ses_refresh_runtime" });
     }
 
+    if (url === "http://127.0.0.1:41827/session/ses_refresh_runtime" && method === "GET") {
+      return jsonResponse({
+        id: "ses_refresh_runtime",
+        directory: "/Users/jackson/Code/CodingNS"
+      });
+    }
+
     if (url === "http://127.0.0.1:41827/event" && method === "GET") {
       return sseResponse([
         {
@@ -680,6 +776,13 @@ test("OpenCodeRuntimeAdapter 会忽略 step 事件和空 text part", async (cont
 
     if (url.startsWith("http://127.0.0.1:41827/session?") && method === "POST") {
       return jsonResponse({ id: "ses_runtime_filter" });
+    }
+
+    if (url === "http://127.0.0.1:41827/session/ses_runtime_filter" && method === "GET") {
+      return jsonResponse({
+        id: "ses_runtime_filter",
+        directory: "/Users/jackson/Code/CodingNS"
+      });
     }
 
     if (url === "http://127.0.0.1:41827/event" && method === "GET") {

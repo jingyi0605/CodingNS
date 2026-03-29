@@ -2,11 +2,17 @@ import {
   buildSessionRawStoreRef,
   normalizeOpenCodePartMessage,
   normalizeOpenCodeToolStatus,
+  type OpenCodeServerSession,
   parseSessionIdFromRawStoreRef,
   toJsonRecord
 } from "../providers/opencode-shared.js";
 import { createOpenCodeMessagePermissionOptions } from "../providers/opencode-permissions.js";
-import { ensureText, extractTextBlocks, nextTimestamp } from "../providers/utils.js";
+import {
+  ensureText,
+  extractTextBlocks,
+  nextTimestamp,
+  normalizeWorkspacePath
+} from "../providers/utils.js";
 import type { ProviderId } from "../types.js";
 import type {
   ProviderRuntimeAdapter,
@@ -22,7 +28,9 @@ const MAX_CONSECUTIVE_TIMEOUTS = 5;
 
 interface OpenCodeRuntimeOptions {
   baseUrl?: string;
-  baseUrlResolver?: (input?: { refresh?: boolean }) => Promise<string> | string;
+  baseUrlResolver?: (
+    input?: { refresh?: boolean; workspacePath?: string | null }
+  ) => Promise<string> | string;
   requestTimeoutMs?: number;
 }
 
@@ -34,6 +42,7 @@ interface TimeoutRetryState {
 interface OpenCodeRuntimeState {
   readonly providerSessionId: string;
   readonly rawStoreRef: string;
+  readonly workspacePath: string;
   sequence: number;
   readonly sink: ProviderRuntimeEventSink;
   readonly messageInfoById: Map<string, Record<string, unknown>>;
@@ -94,7 +103,7 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
       providerSessionId,
       rawStoreRef,
       interrupt: async () => {
-        await this.abortSession(providerSessionId);
+        await this.abortSession(providerSessionId, request.workspacePath);
         abortController.abort();
       },
       completed: this.runSession(
@@ -102,6 +111,7 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
         {
           providerSessionId,
           rawStoreRef,
+          workspacePath: request.workspacePath,
           sequence: 0,
           sink,
           messageInfoById: new Map(),
@@ -148,7 +158,8 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
     signal: AbortSignal
   ): Promise<void> {
     const response = await this.fetchResponse("/event", {
-      signal
+      signal,
+      workspacePath: state.workspacePath
     });
 
     if (!response.body) {
@@ -451,7 +462,10 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
       query: {
         directory: workspacePath
       },
-      body: JSON.stringify({})
+      body: JSON.stringify({
+        directory: workspacePath
+      }),
+      workspacePath
     });
     const sessionId = ensureText(response.id).trim();
 
@@ -459,7 +473,31 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
       throw new Error("PROVIDER_SESSION_ID_REQUIRED");
     }
 
+    await this.assertSessionDirectory(sessionId, workspacePath);
+
     return sessionId;
+  }
+
+  private async assertSessionDirectory(
+    providerSessionId: string,
+    expectedWorkspacePath: string
+  ): Promise<void> {
+    const response = await this.fetchJson<OpenCodeServerSession>(
+      `/session/${encodeURIComponent(providerSessionId)}`,
+      {
+        workspacePath: expectedWorkspacePath
+      }
+    );
+    const actualWorkspacePath = ensureText(response.directory).trim();
+
+    if (
+      normalizeWorkspacePath(actualWorkspacePath) ===
+      normalizeWorkspacePath(expectedWorkspacePath)
+    ) {
+      return;
+    }
+
+    throw new Error("OPENCODE_SESSION_DIRECTORY_MISMATCH");
   }
 
   private resolveProviderSessionId(
@@ -515,23 +553,25 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
           "content-type": "application/json"
         },
         body: JSON.stringify(body),
-        signal
+        signal,
+        workspacePath: request.workspacePath
       }
     );
   }
 
-  private async abortSession(providerSessionId: string): Promise<void> {
+  private async abortSession(providerSessionId: string, workspacePath?: string): Promise<void> {
     await this.fetchJson(
       `/session/${encodeURIComponent(providerSessionId)}/abort`,
       {
-        method: "POST"
+        method: "POST",
+        workspacePath
       }
     );
   }
 
-  private async resolveBaseUrl(refresh = false): Promise<string> {
+  private async resolveBaseUrl(refresh = false, workspacePath?: string | null): Promise<string> {
     const resolved = this.options.baseUrlResolver
-      ? await this.options.baseUrlResolver({ refresh })
+      ? await this.options.baseUrlResolver({ refresh, workspacePath })
       : this.options.baseUrl?.trim();
 
     if (!resolved) {
@@ -559,6 +599,7 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
       body?: string;
       query?: Record<string, string | undefined>;
       signal?: AbortSignal;
+      workspacePath?: string;
     } = {}
   ): Promise<Response> {
     return this.fetchResponseWithRetry(pathname, input, false);
@@ -572,11 +613,12 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
       body?: string;
       query?: Record<string, string | undefined>;
       signal?: AbortSignal;
+      workspacePath?: string;
     },
     refresh: boolean,
     timeoutState: TimeoutRetryState = createTimeoutRetryState()
   ): Promise<Response> {
-    const url = new URL(pathname, `${await this.resolveBaseUrl(refresh)}/`);
+    const url = new URL(pathname, `${await this.resolveBaseUrl(refresh, input.workspacePath)}/`);
 
     if (input.query) {
       for (const [key, value] of Object.entries(input.query)) {
@@ -654,6 +696,7 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
       body?: string;
       query?: Record<string, string | undefined>;
       signal?: AbortSignal;
+      workspacePath?: string;
     } = {}
   ): Promise<T> {
     const response = await this.fetchResponse(pathname, input);

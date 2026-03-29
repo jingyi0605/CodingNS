@@ -364,6 +364,299 @@ describe("spec002 会话同步核心", () => {
     });
   });
 
+  it("pending 绑定回填真 ID 时如果撞上其他工作区的会话，会直接拒绝跨工作区合并", async () => {
+    const fixture = createEmptyFixture();
+    const config = resolveHostConfig({
+      databasePath: ":memory:",
+      claudeCodeHomeDir: fixture.claudeHomeDir,
+      codexHomeDir: fixture.codexHomeDir
+    });
+    const database = createDatabaseClient(":memory:");
+    const workspaceRepository = new WorkspaceRepository(database.db);
+    const sessionBindingRepository = new SessionBindingRepository(database.db);
+    const sessionIndexRepository = new SessionIndexRepository(database.db);
+    const sessionStateRepository = new SessionStateRepository(database.db);
+    const sessionStatusSnapshotRepository = new SessionStatusSnapshotRepository(database.db);
+    const sessionChangedFileService = new SessionChangedFileService(
+      new SessionChangedFileRepository(database.db)
+    );
+    const sessionMessageAttachmentService = new SessionMessageAttachmentService(
+      new SessionMessageAttachmentRepository(database.db),
+      config
+    );
+    const sessionHistoryService = new SessionHistoryService(
+      database.db,
+      workspaceRepository,
+      sessionBindingRepository,
+      sessionChangedFileService,
+      sessionIndexRepository,
+      sessionMessageAttachmentService,
+      sessionStateRepository,
+      sessionStatusSnapshotRepository,
+      config
+    );
+    const runtimeSessionId = "runtime-session-cross-workspace";
+    const discoveredSessionId = "discovered-session-cross-workspace";
+    const providerSessionId = "claude-session-cross-workspace";
+    const rawStoreRef = path.join(
+      fixture.claudeHomeDir,
+      "projects",
+      "workspace-b",
+      `${providerSessionId}.jsonl`
+    );
+    const workspaceBPath = path.join(fixture.rootDir, "workspace-b");
+    const timestamp = "2026-03-28T11:00:00.000Z";
+
+    activeEmptyFixtures.push(fixture);
+    activeClosers.push(() => database.close());
+
+    mkdirSync(workspaceBPath, { recursive: true });
+
+    database.db
+      .prepare(
+        `INSERT INTO auth_users (id, username, password_hash, role, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      )
+      .run("user-1", "tester", "hash", "admin", timestamp, timestamp);
+
+    workspaceRepository.create({
+      id: "workspace-1",
+      name: "Workspace A",
+      path: fixture.workspaceDir,
+      repoRoot: fixture.workspaceDir,
+      favorite: false,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      removedAt: null
+    });
+    workspaceRepository.create({
+      id: "workspace-2",
+      name: "Workspace B",
+      path: workspaceBPath,
+      repoRoot: workspaceBPath,
+      favorite: false,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      removedAt: null
+    });
+
+    sessionBindingRepository.upsert({
+      sessionId: runtimeSessionId,
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      providerSessionId: "pending://claude-code/runtime-session-cross-workspace",
+      rawStoreRef: "pending://claude-code/runtime-session-cross-workspace",
+      createdAt: "2026-03-28T11:00:01.000Z",
+      updatedAt: "2026-03-28T11:00:01.000Z"
+    });
+    sessionIndexRepository.upsert({
+      sessionId: runtimeSessionId,
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      title: "工作区 A 的 pending 会话",
+      messageCount: 1,
+      isArchived: false,
+      lastMessageAt: "2026-03-28T11:00:02.000Z",
+      createdAt: "2026-03-28T11:00:01.000Z",
+      updatedAt: "2026-03-28T11:00:02.000Z"
+    });
+
+    sessionBindingRepository.upsert({
+      sessionId: discoveredSessionId,
+      workspaceId: "workspace-2",
+      provider: "claude-code",
+      providerSessionId,
+      rawStoreRef,
+      createdAt: "2026-03-28T11:00:03.000Z",
+      updatedAt: "2026-03-28T11:00:03.000Z"
+    });
+    sessionIndexRepository.upsert({
+      sessionId: discoveredSessionId,
+      workspaceId: "workspace-2",
+      provider: "claude-code",
+      title: "工作区 B 的真实会话",
+      messageCount: 4,
+      isArchived: false,
+      lastMessageAt: "2026-03-28T11:00:04.000Z",
+      createdAt: "2026-03-28T11:00:03.000Z",
+      updatedAt: "2026-03-28T11:00:04.000Z"
+    });
+
+    expect(() =>
+      sessionHistoryService.persistSessionBinding(runtimeSessionId, "workspace-1", {
+        provider: "claude-code",
+        providerSessionId,
+        rawStoreRef
+      })
+    ).toThrowError("SESSION_BINDING_WORKSPACE_CONFLICT");
+
+    expect(sessionBindingRepository.findBySessionId(runtimeSessionId)).toEqual(
+      expect.objectContaining({
+        workspaceId: "workspace-1",
+        providerSessionId: "pending://claude-code/runtime-session-cross-workspace"
+      })
+    );
+    expect(sessionBindingRepository.findBySessionId(discoveredSessionId)).toEqual(
+      expect.objectContaining({
+        workspaceId: "workspace-2",
+        providerSessionId
+      })
+    );
+    expect(sessionIndexRepository.findIndexRecordBySessionId(runtimeSessionId)).toEqual(
+      expect.objectContaining({
+        workspaceId: "workspace-1",
+        title: "工作区 A 的 pending 会话"
+      })
+    );
+    expect(sessionIndexRepository.findIndexRecordBySessionId(discoveredSessionId)).toEqual(
+      expect.objectContaining({
+        workspaceId: "workspace-2",
+        title: "工作区 B 的真实会话"
+      })
+    );
+  });
+
+  it("工作区扫描发现撞上其他工作区已有会话时，不会把旧会话重绑到当前工作区", async () => {
+    const fixture = createEmptyFixture();
+    const config = resolveHostConfig({
+      databasePath: ":memory:",
+      claudeCodeHomeDir: fixture.claudeHomeDir,
+      codexHomeDir: fixture.codexHomeDir
+    });
+    const database = createDatabaseClient(":memory:");
+    const workspaceRepository = new WorkspaceRepository(database.db);
+    const sessionBindingRepository = new SessionBindingRepository(database.db);
+    const sessionIndexRepository = new SessionIndexRepository(database.db);
+    const sessionStateRepository = new SessionStateRepository(database.db);
+    const sessionStatusSnapshotRepository = new SessionStatusSnapshotRepository(database.db);
+    const sessionChangedFileService = new SessionChangedFileService(
+      new SessionChangedFileRepository(database.db)
+    );
+    const sessionMessageAttachmentService = new SessionMessageAttachmentService(
+      new SessionMessageAttachmentRepository(database.db),
+      config
+    );
+    const sessionHistoryService = new SessionHistoryService(
+      database.db,
+      workspaceRepository,
+      sessionBindingRepository,
+      sessionChangedFileService,
+      sessionIndexRepository,
+      sessionMessageAttachmentService,
+      sessionStateRepository,
+      sessionStatusSnapshotRepository,
+      config
+    );
+    const workspaceBPath = path.join(fixture.rootDir, "workspace-b");
+    const timestamp = "2026-03-28T12:00:00.000Z";
+
+    activeEmptyFixtures.push(fixture);
+    activeClosers.push(() => database.close());
+
+    mkdirSync(workspaceBPath, { recursive: true });
+
+    database.db
+      .prepare(
+        `INSERT INTO auth_users (id, username, password_hash, role, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      )
+      .run("user-1", "tester", "hash", "admin", timestamp, timestamp);
+
+    workspaceRepository.create({
+      id: "workspace-1",
+      name: "Workspace A",
+      path: fixture.workspaceDir,
+      repoRoot: fixture.workspaceDir,
+      favorite: false,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      removedAt: null
+    });
+    workspaceRepository.create({
+      id: "workspace-2",
+      name: "Workspace B",
+      path: workspaceBPath,
+      repoRoot: workspaceBPath,
+      favorite: false,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      removedAt: null
+    });
+
+    sessionBindingRepository.upsert({
+      sessionId: "existing-workspace-b-session",
+      workspaceId: "workspace-2",
+      provider: "opencode",
+      providerSessionId: "opencode-cross-workspace-session",
+      rawStoreRef: "opencode://session/opencode-cross-workspace-session",
+      createdAt: "2026-03-28T12:00:01.000Z",
+      updatedAt: "2026-03-28T12:00:01.000Z"
+    });
+    sessionIndexRepository.upsert({
+      sessionId: "existing-workspace-b-session",
+      workspaceId: "workspace-2",
+      provider: "opencode",
+      title: "Workspace B 已有会话",
+      messageCount: 3,
+      isArchived: false,
+      lastMessageAt: "2026-03-28T12:00:02.000Z",
+      createdAt: "2026-03-28T12:00:01.000Z",
+      updatedAt: "2026-03-28T12:00:02.000Z"
+    });
+
+    const discoverMock = vi.fn().mockResolvedValue({
+      sessions: [
+        {
+          provider: "opencode",
+          providerSessionId: "opencode-cross-workspace-session",
+          rawStoreRef: "opencode://session/opencode-cross-workspace-session",
+          workspacePath: fixture.workspaceDir,
+          title: "Workspace A 扫描结果",
+          messageCount: 1,
+          lastMessageAt: "2026-03-28T12:00:03.000Z",
+          createdAt: "2026-03-28T12:00:03.000Z",
+          updatedAt: "2026-03-28T12:00:03.000Z",
+          isArchived: false,
+          metadata: {}
+        }
+      ],
+      isComplete: true
+    });
+
+    (
+      sessionHistoryService as unknown as {
+        sessionSyncService: {
+          discoverWorkspaceSessions: typeof discoverMock;
+        };
+      }
+    ).sessionSyncService = {
+      discoverWorkspaceSessions: discoverMock
+    };
+
+    const items = await sessionHistoryService.discoverWorkspaceSessions("workspace-1", "user-1", {
+      force: true,
+      refreshStateMode: "deferred"
+    });
+
+    expect(items).toEqual([]);
+    expect(sessionBindingRepository.findBySessionId("existing-workspace-b-session")).toEqual(
+      expect.objectContaining({
+        workspaceId: "workspace-2",
+        providerSessionId: "opencode-cross-workspace-session"
+      })
+    );
+    expect(sessionIndexRepository.listByWorkspace("workspace-1", "user-1")).toEqual([]);
+    expect(sessionIndexRepository.listByWorkspace("workspace-2", "user-1")).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sessionId: "existing-workspace-b-session",
+          workspaceId: "workspace-2",
+          title: "Workspace B 已有会话"
+        })
+      ])
+    );
+  });
+
   it("Claude 后台扫描发现真实 transcript 时，会直接复用同标题的 pending 运行时会话", async () => {
     const fixture = createEmptyFixture();
     const config = resolveHostConfig({

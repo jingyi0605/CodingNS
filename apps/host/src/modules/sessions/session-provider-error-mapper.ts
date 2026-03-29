@@ -98,6 +98,22 @@ export function mapSessionProviderError(error: unknown): AppError {
     });
   }
 
+  if (error instanceof Error && error.message === "OPENCODE_SESSION_DIRECTORY_MISMATCH") {
+    return new AppError({
+      statusCode: 409,
+      errorCode: "OPENCODE_SESSION_DIRECTORY_MISMATCH",
+      detail: "OpenCode 新建会话后返回了错误的工作区目录，已拒绝继续使用这个会话"
+    });
+  }
+
+  if (error instanceof Error && error.message === "SESSION_BINDING_WORKSPACE_CONFLICT") {
+    return new AppError({
+      statusCode: 409,
+      errorCode: "SESSION_BINDING_WORKSPACE_CONFLICT",
+      detail: "provider 会话已经绑定到其他工作区，系统已拒绝把两个工作区的会话混在一起"
+    });
+  }
+
   if (error instanceof Error && error.message.startsWith("OPENCODE_HTTP_")) {
     return new AppError({
       statusCode: 502,

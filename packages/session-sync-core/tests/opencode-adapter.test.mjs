@@ -214,6 +214,58 @@ test("OpenCodeAdapter 会用 knownSessions 补回 server 短暂漏掉的会话�
   }
 });
 
+test("OpenCodeAdapter 新建会话时会把 directory 同时写进 query 和 body", async (context) => {
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+
+  globalThis.fetch = async (input, init = {}) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const method = init.method ?? "GET";
+
+    requests.push({
+      url,
+      method,
+      body: typeof init.body === "string" ? init.body : null
+    });
+
+    if (url === "http://127.0.0.1:41827/session?directory=%2Fworkspace%2Fdemo" && method === "POST") {
+      return jsonResponse({
+        id: "ses_new",
+        title: "Demo Session"
+      });
+    }
+
+    if (url === "http://127.0.0.1:41827/session/ses_new/message" && method === "POST") {
+      return jsonResponse({});
+    }
+
+    if (url === "http://127.0.0.1:41827/session/ses_new/message?limit=20" && method === "GET") {
+      return jsonResponse([]);
+    }
+
+    throw new Error(`unexpected request: ${method} ${url}`);
+  };
+
+  context.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const adapter = new OpenCodeAdapter({
+    baseUrl: "http://127.0.0.1:41827"
+  });
+  const result = await adapter.startSession("/workspace/demo", {
+    initialPrompt: "请帮我记录测试"
+  });
+
+  assert.equal(result.session.providerSessionId, "ses_new");
+
+  const sessionCreateRequest = requests.find(
+    (request) => request.method === "POST" && request.url === "http://127.0.0.1:41827/session?directory=%2Fworkspace%2Fdemo"
+  );
+  assert.ok(sessionCreateRequest);
+  assert.equal(JSON.parse(sessionCreateRequest.body).directory, "/workspace/demo");
+});
+
 test("OpenCodeAdapter 能把核心 part 类型映射到统一消息模型", async () => {
   const fixture = createOpenCodeFixture();
 
