@@ -65,10 +65,14 @@ export function normalizeOpenCodeMessageEnvelopes(
   providerSessionId: string,
   envelopes: OpenCodeMessageEnvelope[]
 ): NormalizedMessage[] {
-  const messages: NormalizedMessage[] = [];
-  let sequence = 0;
+  const messages: Array<{
+    message: Omit<NormalizedMessage, "sequence">;
+    envelopeIndex: number;
+    partIndex: number;
+  }> = [];
 
-  for (const envelope of envelopes) {
+  for (let envelopeIndex = 0; envelopeIndex < envelopes.length; envelopeIndex += 1) {
+    const envelope = envelopes[envelopeIndex];
     const info = toJsonRecord(envelope.info);
     const parts = Array.isArray(envelope.parts) ? envelope.parts : [];
 
@@ -86,7 +90,8 @@ export function normalizeOpenCodeMessageEnvelopes(
       toIsoTimestamp(firstValidNumber(toJsonRecord(info.time)?.created), null)
       ?? nextTimestamp();
 
-    for (const part of parts) {
+    for (let partIndex = 0; partIndex < parts.length; partIndex += 1) {
+      const part = parts[partIndex];
       const partPayload = toJsonRecord(part);
       const partId = ensureText(partPayload?.id).trim();
 
@@ -108,15 +113,34 @@ export function normalizeOpenCodeMessageEnvelopes(
         continue;
       }
 
-      sequence += 1;
       messages.push({
-        ...normalized,
-        sequence
+        message: normalized,
+        envelopeIndex,
+        partIndex
       });
     }
   }
 
-  return messages;
+  messages.sort((left, right) => {
+    if (left.message.timestamp !== right.message.timestamp) {
+      return left.message.timestamp.localeCompare(right.message.timestamp);
+    }
+
+    if (left.envelopeIndex !== right.envelopeIndex) {
+      return left.envelopeIndex - right.envelopeIndex;
+    }
+
+    if (left.partIndex !== right.partIndex) {
+      return left.partIndex - right.partIndex;
+    }
+
+    return left.message.rawRef.localeCompare(right.message.rawRef);
+  });
+
+  return messages.map((entry, index) => ({
+    ...entry.message,
+    sequence: index + 1
+  }));
 }
 
 export function normalizeOpenCodePartMessage(
@@ -175,6 +199,20 @@ export function normalizeOpenCodePartMessage(
 
   if (partType === "tool") {
     return normalizeToolPart(input, rawRef, timestamp);
+  }
+
+  if (partType === "patch") {
+    return {
+      messageId: messageIdFromRawRef(rawRef),
+      provider,
+      providerSessionId,
+      role: "assistant",
+      kind: "text",
+      content: buildOpenCodePatchSummary(input.partPayload),
+      toolCall: null,
+      timestamp,
+      rawRef
+    };
   }
 
   if (partType === "step-start" || partType === "step-finish") {
@@ -396,6 +434,31 @@ function extractOpenCodeTextLikeContent(partPayload: Record<string, unknown>): s
   }
 
   return "";
+}
+
+function buildOpenCodePatchSummary(partPayload: Record<string, unknown>): string {
+  const files = Array.isArray(partPayload.files)
+    ? partPayload.files
+        .map((value) => ensureText(value).trim())
+        .filter((value) => value.length > 0)
+    : [];
+
+  if (files.length === 0) {
+    return "[patch] generated";
+  }
+
+  const fileNames = files.map((file) => getTrailingPathSegment(file));
+  const preview = fileNames.slice(0, 3).join(", ");
+  const suffix = fileNames.length > 3 ? ", ..." : "";
+  const noun = files.length === 1 ? "file" : "files";
+
+  return `[patch] ${files.length} ${noun} changed: ${preview}${suffix}`;
+}
+
+function getTrailingPathSegment(path: string): string {
+  const normalized = path.replace(/\\/g, "/");
+  const segments = normalized.split("/").filter(Boolean);
+  return segments.at(-1) || path;
 }
 
 function resolvePartTimestamp(

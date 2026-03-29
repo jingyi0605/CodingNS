@@ -263,6 +263,63 @@ function collapseEquivalentOpenCodeUserMessages(
   return collapsed;
 }
 
+function collapseEquivalentOpenCodeAssistantMessages(
+  messages: SessionMessageViewModel[]
+): SessionMessageViewModel[] {
+  const collapsed: SessionMessageViewModel[] = [];
+
+  for (const message of messages) {
+    const previous = collapsed.at(-1);
+
+    if (!previous || !isEquivalentOpenCodeAssistantTextMessage(previous, message)) {
+      collapsed.push(message);
+      continue;
+    }
+
+    collapsed[collapsed.length - 1] = pickPreferredOpenCodeAssistantMessage(previous, message);
+  }
+
+  return collapsed;
+}
+
+function collapseEquivalentOpenCodeTurnPairs(
+  messages: SessionMessageViewModel[]
+): SessionMessageViewModel[] {
+  const collapsed: SessionMessageViewModel[] = [];
+
+  for (const message of messages) {
+    collapsed.push(message);
+
+    if (collapsed.length < 4) {
+      continue;
+    }
+
+    const firstUser = collapsed[collapsed.length - 4];
+    const firstAssistant = collapsed[collapsed.length - 3];
+    const secondUser = collapsed[collapsed.length - 2];
+    const secondAssistant = collapsed[collapsed.length - 1];
+
+    if (
+      !isEquivalentOpenCodeTurnPair(
+        firstUser,
+        firstAssistant,
+        secondUser,
+        secondAssistant
+      )
+    ) {
+      continue;
+    }
+
+    collapsed.splice(
+      collapsed.length - 3,
+      3,
+      pickPreferredOpenCodeAssistantMessage(firstAssistant, secondAssistant)
+    );
+  }
+
+  return collapsed;
+}
+
 function sortMessages(messages: SessionMessageViewModel[]): SessionMessageViewModel[] {
   const sorted = [...messages].sort((left, right) => {
     if (left.sequence !== right.sequence) {
@@ -272,7 +329,13 @@ function sortMessages(messages: SessionMessageViewModel[]): SessionMessageViewMo
     return left.timestamp.localeCompare(right.timestamp);
   });
 
-  return collapseEquivalentOpenCodeUserMessages(collapseEquivalentCodexMessages(sorted));
+  return collapseEquivalentOpenCodeUserMessages(
+    collapseEquivalentOpenCodeTurnPairs(
+      collapseEquivalentOpenCodeAssistantMessages(
+        collapseEquivalentCodexMessages(sorted)
+      )
+    )
+  );
 }
 
 function mergeResolvedUserMessage(
@@ -399,10 +462,65 @@ function isOpenCodeUserTextMessage(message: SessionMessageViewModel): boolean {
 
 function isOpenCodeAssistantTextMessage(message: SessionMessageViewModel): boolean {
   return (
+    message.deliveryState === "sent" &&
     message.rawRef.startsWith("opencode://") &&
     message.role === "assistant" &&
     message.kind === "text"
   );
+}
+
+function isEquivalentOpenCodeAssistantTextMessage(
+  left: SessionMessageViewModel,
+  right: SessionMessageViewModel
+): boolean {
+  return (
+    isOpenCodeAssistantTextMessage(left) &&
+    isOpenCodeAssistantTextMessage(right) &&
+    areTimestampsNearWithinWindow(left.timestamp, right.timestamp, 2 * 60 * 1000) &&
+    normalizeComparableCodexText(left.content) === normalizeComparableCodexText(right.content)
+  );
+}
+
+function isEquivalentOpenCodeTurnPair(
+  firstUser: SessionMessageViewModel | undefined,
+  firstAssistant: SessionMessageViewModel | undefined,
+  secondUser: SessionMessageViewModel | undefined,
+  secondAssistant: SessionMessageViewModel | undefined
+): boolean {
+  if (!firstUser || !firstAssistant || !secondUser || !secondAssistant) {
+    return false;
+  }
+
+  if (!isOpenCodeUserTextMessage(firstUser) || !isOpenCodeUserTextMessage(secondUser)) {
+    return false;
+  }
+
+  return (
+    isEquivalentOpenCodeAssistantTextMessage(firstAssistant, secondAssistant) &&
+    areTimestampsNearWithinWindow(firstUser.timestamp, secondUser.timestamp, 2 * 60 * 1000) &&
+    normalizeComparableCodexText(firstUser.content) === normalizeComparableCodexText(secondUser.content)
+  );
+}
+
+function pickPreferredOpenCodeAssistantMessage(
+  left: SessionMessageViewModel,
+  right: SessionMessageViewModel
+): SessionMessageViewModel {
+  const leftAttachmentCount = left.attachments?.length ?? 0;
+  const rightAttachmentCount = right.attachments?.length ?? 0;
+
+  if (leftAttachmentCount !== rightAttachmentCount) {
+    return leftAttachmentCount > rightAttachmentCount ? left : right;
+  }
+
+  const leftContentLength = normalizeComparableCodexText(left.content).length;
+  const rightContentLength = normalizeComparableCodexText(right.content).length;
+
+  if (leftContentLength !== rightContentLength) {
+    return leftContentLength > rightContentLength ? left : right;
+  }
+
+  return pickNewerAuthoritativeMessage(left, right);
 }
 
 function pickPreferredCodexTextMessage(

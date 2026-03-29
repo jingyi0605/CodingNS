@@ -186,7 +186,7 @@ test("OpenCodeAdapter 能把核心 part 类型映射到统一消息模型", asyn
     assert.equal(page.messages[3]?.content.includes("README.md"), true);
 
     assert.equal(page.messages[4]?.kind, "text");
-    assert.equal(page.messages[4]?.content.includes("[patch]"), true);
+    assert.equal(page.messages[4]?.content, "[patch] 1 file changed: styles.css");
     assert.equal(
       page.messages[3]?.rawRef,
       "opencode://session/ses_demo/message/msg_demo_assistant/part/prt_demo_tool_done"
@@ -213,7 +213,7 @@ test("OpenCodeAdapter 的历史分页支持 backward 读取", async () => {
 
     assert.equal(page.messages.length, 2);
     assert.equal(page.messages[0]?.content.includes("README.md"), true);
-    assert.equal(page.messages[1]?.content.includes("[patch]"), true);
+    assert.equal(page.messages[1]?.content, "[patch] 1 file changed: styles.css");
     assert.ok(page.nextCursor);
   } finally {
     fixture.dispose();
@@ -527,6 +527,104 @@ test("OpenCodeAdapter 会保留服务端消息的正序，避免新增消息倒�
   assert.equal(deltaPage.messages.length, 0);
 });
 
+test("OpenCodeAdapter 遇到倒序返回的 OpenCode 用户消息时，会按时间线重排", async (context) => {
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async (input) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+
+    if (url === "http://127.0.0.1:41827/session/ses_reverse_user_order/message?limit=100") {
+      return jsonResponse([
+        {
+          info: {
+            id: "msg_user_3",
+            sessionID: "ses_reverse_user_order",
+            role: "user",
+            time: {
+              created: 3
+            }
+          },
+          parts: [
+            {
+              id: "prt_user_3",
+              messageID: "msg_user_3",
+              sessionID: "ses_reverse_user_order",
+              type: "text",
+              text: "第三句"
+            }
+          ]
+        },
+        {
+          info: {
+            id: "msg_user_2",
+            sessionID: "ses_reverse_user_order",
+            role: "user",
+            time: {
+              created: 2
+            }
+          },
+          parts: [
+            {
+              id: "prt_user_2",
+              messageID: "msg_user_2",
+              sessionID: "ses_reverse_user_order",
+              type: "text",
+              text: "第二句"
+            }
+          ]
+        },
+        {
+          info: {
+            id: "msg_user_1",
+            sessionID: "ses_reverse_user_order",
+            role: "user",
+            time: {
+              created: 1
+            }
+          },
+          parts: [
+            {
+              id: "prt_user_1",
+              messageID: "msg_user_1",
+              sessionID: "ses_reverse_user_order",
+              type: "text",
+              text: "第一句"
+            }
+          ]
+        }
+      ]);
+    }
+
+    throw new Error(`unexpected request: ${url}`);
+  };
+
+  context.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const adapter = new OpenCodeAdapter({
+    baseUrl: "http://127.0.0.1:41827",
+    dbPath: "/tmp/codingns-opencode.db"
+  });
+
+  const page = await adapter.readSessionHistory(
+    "ses_reverse_user_order",
+    "opencode://session/ses_reverse_user_order",
+    null,
+    10,
+    "forward"
+  );
+
+  assert.deepEqual(
+    page.messages.map((message) => message.content),
+    ["第一句", "第二句", "第三句"]
+  );
+  assert.deepEqual(
+    page.messages.map((message) => message.sequence),
+    [1, 2, 3]
+  );
+});
+
 function jsonResponse(payload, status = 200, headers = {}) {
   return new Response(JSON.stringify(payload), {
     status,
@@ -773,7 +871,11 @@ function createOpenCodeFixture() {
     1_700_000_002_500,
     1_700_000_002_500,
     JSON.stringify({
-      type: "patch"
+      type: "patch",
+      hash: "604cbacfa354f74120047742bfa43e935249c817",
+      files: [
+        "/Users/jackson/Code/CodingNS/apps/user-app/src/app/styles.css"
+      ]
     })
   );
   insertPart.run(

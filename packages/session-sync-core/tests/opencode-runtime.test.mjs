@@ -285,6 +285,116 @@ test("OpenCodeRuntimeAdapter 会把同一个 part 的 delta 更新映射为同�
   assert.equal(messageEvents[0].message.sequence, messageEvents[1].message.sequence);
 });
 
+test("OpenCodeRuntimeAdapter 会把 patch part 收口成可读摘要，而不是原始 JSON", async (context) => {
+  const originalFetch = globalThis.fetch;
+  const events = [];
+
+  globalThis.fetch = async (input, init = {}) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const method = init.method ?? "GET";
+
+    if (url.startsWith("http://127.0.0.1:41827/session?") && method === "POST") {
+      return jsonResponse({ id: "ses_runtime_patch" });
+    }
+
+    if (url === "http://127.0.0.1:41827/event" && method === "GET") {
+      return sseResponse([
+        {
+          payload: {
+            type: "message.updated",
+            properties: {
+              info: {
+                id: "msg_runtime_patch",
+                sessionID: "ses_runtime_patch",
+                role: "assistant",
+                time: {
+                  created: 1
+                }
+              }
+            }
+          }
+        },
+        {
+          payload: {
+            type: "message.part.updated",
+            properties: {
+              part: {
+                id: "prt_runtime_patch",
+                messageID: "msg_runtime_patch",
+                sessionID: "ses_runtime_patch",
+                type: "patch",
+                hash: "604cbacfa354f74120047742bfa43e935249c817",
+                files: [
+                  "/Users/jackson/Code/CodingNS/apps/user-app/src/app/styles.css"
+                ],
+                time: {
+                  end: 1
+                }
+              }
+            }
+          }
+        },
+        {
+          payload: {
+            type: "session.idle",
+            properties: {
+              sessionID: "ses_runtime_patch"
+            }
+          }
+        }
+      ]);
+    }
+
+    if (url === "http://127.0.0.1:41827/session/ses_runtime_patch/message" && method === "POST") {
+      return jsonResponse({});
+    }
+
+    throw new Error(`unexpected request: ${method} ${url}`);
+  };
+
+  context.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const adapter = new OpenCodeRuntimeAdapter({
+    baseUrl: "http://127.0.0.1:41827",
+    requestTimeoutMs: 1_000
+  });
+
+  const launch = await adapter.startSession(
+    {
+      sessionId: "local-session-patch",
+      workspaceId: "workspace-1",
+      workspacePath: "/Users/jackson/Code/CodingNS",
+      provider: "opencode",
+      providerSessionId: null,
+      rawStoreRef: null,
+      options: {
+        content: "测试 patch 摘要",
+        clientRequestId: null,
+        model: null,
+        reasoningLevel: null,
+        permissionMode: null,
+        providerPrompt: null,
+        attachments: []
+      }
+    },
+    {
+      updateSessionBinding() {},
+      async emit(event) {
+        events.push(event);
+      }
+    }
+  );
+
+  await launch.completed;
+
+  const messageEvent = events.find((event) => event.type === "message");
+  assert.ok(messageEvent);
+  assert.equal(messageEvent.message.kind, "text");
+  assert.equal(messageEvent.message.content, "[patch] 1 file changed: styles.css");
+});
+
 test("OpenCodeRuntimeAdapter 会把网络失败收口成 SERVER_UNAVAILABLE", async (context) => {
   const originalFetch = globalThis.fetch;
 

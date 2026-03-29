@@ -583,6 +583,109 @@ describe("session runtime machine", () => {
     ]);
   });
 
+  it("会折叠 OpenCode 新建会话首轮里重复回流的整组问答", () => {
+    const merged = mergeAuthoritativeMessages([], "session-1", [
+      createHistoryMessage({
+        messageId: "user-1",
+        provider: "opencode",
+        providerSessionId: "thread-1",
+        role: "user",
+        content: "请回复我1234",
+        timestamp: "2026-03-29T01:37:05.000Z",
+        sequence: 1,
+        rawRef: "opencode://thread-1/message/user-1/part/text-1"
+      }),
+      createHistoryMessage({
+        messageId: "assistant-1",
+        provider: "opencode",
+        providerSessionId: "thread-1",
+        role: "assistant",
+        content: "1234",
+        timestamp: "2026-03-29T01:37:15.000Z",
+        sequence: 2,
+        rawRef: "opencode://thread-1/message/assistant-1/part/text-1"
+      }),
+      createHistoryMessage({
+        messageId: "user-2",
+        provider: "opencode",
+        providerSessionId: "thread-1",
+        role: "user",
+        content: "请回复我1234",
+        timestamp: "2026-03-29T01:37:16.000Z",
+        sequence: 3,
+        rawRef: "opencode://thread-1/message/user-2/part/text-1"
+      }),
+      createHistoryMessage({
+        messageId: "assistant-2",
+        provider: "opencode",
+        providerSessionId: "thread-1",
+        role: "assistant",
+        content: "1234",
+        timestamp: "2026-03-29T01:37:18.000Z",
+        sequence: 4,
+        rawRef: "opencode://thread-1/message/assistant-2/part/text-1"
+      })
+    ]);
+
+    expect(merged.map((item) => item.id)).toEqual([
+      "user-1",
+      "assistant-2"
+    ]);
+    expect(merged[1]?.content).toBe("1234");
+  });
+
+  it("不会误折叠 OpenCode 连续两轮内容不同的 assistant 正文", () => {
+    const merged = mergeAuthoritativeMessages([], "session-1", [
+      createHistoryMessage({
+        messageId: "user-1",
+        provider: "opencode",
+        providerSessionId: "thread-1",
+        role: "user",
+        content: "请回复我1234",
+        timestamp: "2026-03-29T01:37:05.000Z",
+        sequence: 1,
+        rawRef: "opencode://thread-1/message/user-1/part/text-1"
+      }),
+      createHistoryMessage({
+        messageId: "assistant-1",
+        provider: "opencode",
+        providerSessionId: "thread-1",
+        role: "assistant",
+        content: "1234",
+        timestamp: "2026-03-29T01:37:15.000Z",
+        sequence: 2,
+        rawRef: "opencode://thread-1/message/assistant-1/part/text-1"
+      }),
+      createHistoryMessage({
+        messageId: "user-2",
+        provider: "opencode",
+        providerSessionId: "thread-1",
+        role: "user",
+        content: "请回复我1234",
+        timestamp: "2026-03-29T01:37:16.000Z",
+        sequence: 3,
+        rawRef: "opencode://thread-1/message/user-2/part/text-1"
+      }),
+      createHistoryMessage({
+        messageId: "assistant-2",
+        provider: "opencode",
+        providerSessionId: "thread-1",
+        role: "assistant",
+        content: "12345",
+        timestamp: "2026-03-29T01:37:18.000Z",
+        sequence: 4,
+        rawRef: "opencode://thread-1/message/assistant-2/part/text-1"
+      })
+    ]);
+
+    expect(merged.map((item) => item.id)).toEqual([
+      "user-1",
+      "assistant-1",
+      "user-2",
+      "assistant-2"
+    ]);
+  });
+
   it("发送失败后只标记失败，不制造第二份消息", () => {
     const pending = createPendingMessage("session-1", "失败消息", "client-2");
     const failed = markPendingAsFailed([pending], "client-2");
