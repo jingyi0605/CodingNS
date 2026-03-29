@@ -68,9 +68,10 @@ interface FavoriteSessionInput {
 }
 
 export interface SessionHistoryEnvelope {
-  type: "session.backfill" | "session.delta";
+  type: "session.backfill" | "session.delta" | "session.history_older";
   sessionId: string;
   cursor: string | null;
+  olderCursor?: string | null;
   messages: HistoryPage["messages"];
 }
 
@@ -664,10 +665,26 @@ export class SessionHistoryService {
     });
 
     try {
-      await this.pullSessionHistory(sessionId, currentCursor, safeLimit, sentMessageIds, onEnvelope, "session.backfill")
-        .then((nextCursor) => {
+      if (currentCursor === null) {
+        currentCursor = await this.pullRecentSessionHistory(
+          sessionId,
+          safeLimit,
+          sentMessageIds,
+          onEnvelope,
+          "session.backfill"
+        );
+      } else {
+        await this.pullSessionHistory(
+          sessionId,
+          currentCursor,
+          safeLimit,
+          sentMessageIds,
+          onEnvelope,
+          "session.backfill"
+        ).then((nextCursor) => {
           currentCursor = nextCursor;
         });
+      }
     } catch (error) {
       this.markSessionError(sessionId, "SUBSCRIBE_FAILED", error);
       throw mapSessionProviderError(error);
@@ -899,11 +916,11 @@ export class SessionHistoryService {
       return;
     }
 
-    const resolvedSnapshot = {
+    const resolvedSnapshot = normalizeSessionBindingSnapshot(sessionId, {
       provider: snapshot.provider,
       providerSessionId: snapshot.providerSessionId,
       rawStoreRef: snapshot.rawStoreRef
-    };
+    });
     const currentBinding = this.sessionBindingRepository.findBySessionId(sessionId);
     const timestamp = nowIso();
     const duplicateBinding = this.findPendingBindingDuplicate(
@@ -961,8 +978,9 @@ export class SessionHistoryService {
 
     try {
       const discoverStartedAt = Date.now();
+      const existingWorkspaceSessions = this.sessionIndexRepository.listByWorkspace(workspaceId, userId);
       const knownSessions = this.buildKnownSessionSummaries(
-        this.sessionIndexRepository.listByWorkspace(workspaceId, userId),
+        existingWorkspaceSessions,
         workspace.path
       );
       const discovery = await this.sessionSyncService
@@ -977,14 +995,32 @@ export class SessionHistoryService {
       const timestamp = nowIso();
       const discoveredSessionIds = new Map<string, string>();
       const persistedSessions: PersistedSessionDescriptor[] = [];
+      const claimedPendingSessionIds = new Set<string>();
 
       const persist = this.db.transaction(() => {
         for (const session of sessions) {
-          const existing =
+          const exactExisting =
             this.sessionBindingRepository.findByProviderSession(
               session.provider,
               session.providerSessionId
             ) ?? this.sessionBindingRepository.findByRawStoreRef(session.provider, session.rawStoreRef);
+          const pendingDuplicate =
+            exactExisting
+            ?? findClaudePendingDiscoveryDuplicate(
+              session,
+              existingWorkspaceSessions,
+              claimedPendingSessionIds
+            );
+          const existing = exactExisting ?? (
+            pendingDuplicate
+              ? this.sessionBindingRepository.findBySessionId(pendingDuplicate.sessionId)
+              : null
+          );
+
+          if (pendingDuplicate && !exactExisting) {
+            claimedPendingSessionIds.add(pendingDuplicate.sessionId);
+          }
+
           const currentSnapshot = existing
             ? this.sessionStatusSnapshotRepository.findBySessionId(existing.sessionId)
             : null;
@@ -1139,6 +1175,15 @@ export class SessionHistoryService {
     direction: HistoryDirection = "forward",
     knownTotalMessageCount: number | null = null
   ): Promise<HistoryPage> {
+    if (shouldShortCircuitClaudePendingHistory(provider, providerSessionId, rawStoreRef)) {
+      return {
+        messages: [],
+        cursor,
+        nextCursor: null,
+        total: 0
+      };
+    }
+
     if (shouldShortCircuitMissingSyntheticCodexHistory(provider, rawStoreRef)) {
       return {
         messages: [],
@@ -1296,34 +1341,7 @@ export class SessionHistoryService {
         currentCursor,
         limit
       );
-      const messages = page.messages.filter((message) => {
-        if (sentMessageIds.has(message.messageId)) {
-          return false;
-        }
-
-        sentMessageIds.add(message.messageId);
-        return true;
-      });
-
-      if (messages.length > 0) {
-        await this.syncSessionTitleFromProvider(sessionId, binding);
-        this.upsertSnapshot(sessionId, {
-          syncStatus: "idle",
-          syncCursor: page.cursor,
-          lastSyncAt: nowIso(),
-          lastErrorCode: null,
-          lastErrorDetail: null,
-          resumedAt:
-            this.sessionStatusSnapshotRepository.findBySessionId(sessionId)?.resumedAt ?? null
-        });
-
-        await onEnvelope({
-          type: envelopeType,
-          sessionId,
-          cursor: page.cursor,
-          messages
-        });
-      }
+      await this.publishHistoryEnvelope(sessionId, binding, page, sentMessageIds, onEnvelope, envelopeType);
 
       currentCursor = page.cursor;
 
@@ -1333,6 +1351,71 @@ export class SessionHistoryService {
     }
 
     return currentCursor;
+  }
+
+  private async pullRecentSessionHistory(
+    sessionId: string,
+    limit: number,
+    sentMessageIds: Set<string>,
+    onEnvelope: (envelope: SessionHistoryEnvelope) => Promise<void> | void,
+    envelopeType: SessionHistoryEnvelope["type"]
+  ): Promise<string | null> {
+    const binding = this.getBindingOrThrow(sessionId);
+    const knownTotalMessageCount =
+      this.sessionIndexRepository.findIndexRecordBySessionId(sessionId)?.messageCount ?? null;
+    const page = await this.readPage(
+      sessionId,
+      binding.provider,
+      binding.providerSessionId,
+      binding.rawStoreRef,
+      null,
+      limit,
+      "backward",
+      knownTotalMessageCount
+    );
+
+    await this.publishHistoryEnvelope(sessionId, binding, page, sentMessageIds, onEnvelope, envelopeType);
+    return page.cursor;
+  }
+
+  private async publishHistoryEnvelope(
+    sessionId: string,
+    binding: SessionBinding,
+    page: HistoryPage,
+    sentMessageIds: Set<string>,
+    onEnvelope: (envelope: SessionHistoryEnvelope) => Promise<void> | void,
+    envelopeType: SessionHistoryEnvelope["type"]
+  ): Promise<void> {
+    const messages = page.messages.filter((message) => {
+      if (sentMessageIds.has(message.messageId)) {
+        return false;
+      }
+
+      sentMessageIds.add(message.messageId);
+      return true;
+    });
+
+    if (messages.length === 0) {
+      return;
+    }
+
+    await this.syncSessionTitleFromProvider(sessionId, binding);
+    this.upsertSnapshot(sessionId, {
+      syncStatus: "idle",
+      syncCursor: page.cursor,
+      lastSyncAt: nowIso(),
+      lastErrorCode: null,
+      lastErrorDetail: null,
+      resumedAt:
+        this.sessionStatusSnapshotRepository.findBySessionId(sessionId)?.resumedAt ?? null
+    });
+
+    await onEnvelope({
+      type: envelopeType,
+      sessionId,
+      cursor: page.cursor,
+      messages
+    });
   }
 
   private async syncSessionTitleFromProvider(
@@ -1852,7 +1935,9 @@ export class SessionHistoryService {
     sessions: SessionListItem[],
     workspacePath: string
   ) {
-    return sessions.map((session) => {
+    return sessions
+      .filter((session) => !shouldSkipClaudePendingBinding(session))
+      .map((session) => {
       const stats = safeStat(session.rawStoreRef);
 
       return {
@@ -1866,7 +1951,7 @@ export class SessionHistoryService {
         sourceMtimeMs: stats?.mtimeMs,
         sourceSizeBytes: stats?.size
       };
-    });
+      });
   }
 
   private async refreshSessionState(
@@ -2157,6 +2242,27 @@ function buildProviderSessionKey(provider: string, providerSessionId: string): s
   return `${provider}::${providerSessionId}`;
 }
 
+function normalizeSessionBindingSnapshot(
+  sessionId: string,
+  snapshot: { provider: string; providerSessionId: string; rawStoreRef: string }
+): { provider: string; providerSessionId: string; rawStoreRef: string } {
+  if (
+    snapshot.provider !== "claude-code" ||
+    !(
+      isPendingBindingValue(snapshot.providerSessionId) ||
+      isClaudePendingRuntimeRawStoreRef(snapshot.rawStoreRef)
+    )
+  ) {
+    return snapshot;
+  }
+
+  return {
+    provider: snapshot.provider,
+    providerSessionId: buildPendingBindingValue("claude-code", sessionId),
+    rawStoreRef: buildPendingBindingValue("claude-code", sessionId)
+  };
+}
+
 function shouldSkipClaudePendingBinding(binding: Pick<SessionBinding, "provider" | "providerSessionId" | "rawStoreRef">): boolean {
   if (binding.provider !== "claude-code") {
     return false;
@@ -2166,12 +2272,133 @@ function shouldSkipClaudePendingBinding(binding: Pick<SessionBinding, "provider"
     return true;
   }
 
-  const normalizedRawStoreRef = binding.rawStoreRef.replaceAll("\\", "/").toLowerCase();
-  return normalizedRawStoreRef.includes("/.pending-");
+  return isClaudePendingRuntimeRawStoreRef(binding.rawStoreRef);
 }
 
 function isPendingBindingValue(value: string): boolean {
   return value.trim().toLowerCase().startsWith("pending://");
+}
+
+function buildPendingBindingValue(provider: string, sessionId: string): string {
+  return `pending://${provider}/${sessionId}`;
+}
+
+function isClaudePendingRuntimeRawStoreRef(rawStoreRef: string): boolean {
+  const normalizedRawStoreRef = rawStoreRef.replaceAll("\\", "/").toLowerCase();
+  return normalizedRawStoreRef.includes("/.pending-");
+}
+
+function shouldShortCircuitClaudePendingHistory(
+  provider: string,
+  providerSessionId: string,
+  rawStoreRef: string
+): boolean {
+  if (provider !== "claude-code") {
+    return false;
+  }
+
+  return isPendingBindingValue(providerSessionId) || isPendingBindingValue(rawStoreRef);
+}
+
+function findClaudePendingDiscoveryDuplicate(
+  session: {
+    provider: string;
+    providerSessionId: string;
+    rawStoreRef: string;
+    title: string;
+    messageCount: number;
+    lastMessageAt: string | null;
+  },
+  existingSessions: SessionListItem[],
+  claimedSessionIds: Set<string>
+): SessionListItem | null {
+  if (session.provider !== "claude-code") {
+    return null;
+  }
+
+  if (
+    isPendingBindingValue(session.providerSessionId)
+    || session.rawStoreRef.replaceAll("\\", "/").toLowerCase().includes("/.pending-")
+  ) {
+    return null;
+  }
+
+  const comparableTitle = normalizeClaudeComparableTitle(session.title);
+
+  if (!comparableTitle) {
+    return null;
+  }
+
+  const titleMatchedCandidates = existingSessions.filter((item) => {
+    if (claimedSessionIds.has(item.sessionId)) {
+      return false;
+    }
+
+    if (item.provider !== "claude-code" || !shouldSkipClaudePendingBinding(item)) {
+      return false;
+    }
+
+    if (normalizeClaudeComparableTitle(item.title) !== comparableTitle) {
+      return false;
+    }
+
+    return isCloseClaudeSessionTimestamp(
+      item.lastMessageAt ?? item.createdAt,
+      session.lastMessageAt
+    );
+  });
+
+  if (titleMatchedCandidates.length === 1) {
+    return titleMatchedCandidates[0];
+  }
+
+  const activePendingCandidates = existingSessions.filter((item) => {
+    if (claimedSessionIds.has(item.sessionId)) {
+      return false;
+    }
+
+    if (item.provider !== "claude-code" || !shouldSkipClaudePendingBinding(item)) {
+      return false;
+    }
+
+    if (item.activitySource !== "runtime") {
+      return false;
+    }
+
+    if (item.runningState !== "starting" && item.runningState !== "running") {
+      return false;
+    }
+
+    return isCloseClaudeSessionTimestamp(
+      item.lastMessageAt ?? item.lastEventAt ?? item.createdAt,
+      session.lastMessageAt
+    );
+  });
+
+  return activePendingCandidates.length === 1 ? activePendingCandidates[0] : null;
+}
+
+function normalizeClaudeComparableTitle(title: string | null | undefined): string {
+  return title?.trim().replace(/\s+/g, " ").toLowerCase() ?? "";
+}
+
+function isCloseClaudeSessionTimestamp(
+  left: string | null | undefined,
+  right: string | null | undefined,
+  maxGapMs = 2 * 60 * 1000
+): boolean {
+  if (!left || !right) {
+    return true;
+  }
+
+  const leftAt = Date.parse(left);
+  const rightAt = Date.parse(right);
+
+  if (!Number.isFinite(leftAt) || !Number.isFinite(rightAt)) {
+    return true;
+  }
+
+  return Math.abs(leftAt - rightAt) <= maxGapMs;
 }
 
 function resolveDiscoveredArchiveState(

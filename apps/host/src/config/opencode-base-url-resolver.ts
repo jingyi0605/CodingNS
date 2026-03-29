@@ -1,4 +1,5 @@
-import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn, spawnSync, type ChildProcessByStdio } from "node:child_process";
+import type { Readable } from "node:stream";
 const DEFAULT_CACHE_TTL_MS = 5_000;
 const DEFAULT_PROBE_TIMEOUT_MS = 800;
 
@@ -26,6 +27,8 @@ interface OpenCodeListeningSocket {
   port: number;
 }
 
+type ManagedOpenCodeServerProcess = ChildProcessByStdio<null, Readable, Readable>;
+
 export class OpenCodeBaseUrlResolver {
   private readonly configuredBaseUrl: string | null;
   private readonly commandPath: string | null;
@@ -38,7 +41,7 @@ export class OpenCodeBaseUrlResolver {
   private cachedAt = 0;
   private inflight: Promise<string> | null = null;
   private managedServerBaseUrl: string | null = null;
-  private managedServerProcess: ChildProcessWithoutNullStreams | null = null;
+  private managedServerProcess: ManagedOpenCodeServerProcess | null = null;
   private managedServerInflight: Promise<string> | null = null;
 
   constructor(options: OpenCodeBaseUrlResolverOptions = {}) {

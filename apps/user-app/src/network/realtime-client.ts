@@ -14,6 +14,7 @@ interface SessionEnvelopeEvent {
   type: "session.backfill" | "session.delta";
   sessionId: string;
   cursor: string | null;
+  olderCursor?: string | null;
   messages: Array<{
     messageId: string;
     provider: ProviderId;
@@ -33,6 +34,14 @@ interface SessionEnvelopeEvent {
     sequence: number;
     rawRef: string;
   }>;
+}
+
+interface SessionOlderHistoryEvent {
+  type: "session.history_older";
+  sessionId: string;
+  cursor: string | null;
+  olderCursor: string | null;
+  messages: SessionEnvelopeEvent["messages"];
 }
 
 export interface SessionRuntimeMessageEvent {
@@ -75,6 +84,7 @@ interface SessionErrorEvent {
 type IncomingEvent =
   | SessionSubscribedEvent
   | SessionEnvelopeEvent
+  | SessionOlderHistoryEvent
   | SessionRuntimeMessageEvent
   | SessionRuntimeStatusEvent
   | SessionRuntimeErrorEvent
@@ -88,6 +98,7 @@ export interface RealtimeClientOptions {
   onConnectionChange: (state: RuntimeConnectionState) => void;
   onSubscribed: () => void;
   onEnvelope: (event: SessionEnvelopeEvent) => void;
+  onOlderHistory: (event: SessionOlderHistoryEvent) => void;
   onRuntimeMessage: (event: SessionRuntimeMessageEvent) => void;
   onRuntimeStatus: (event: SessionRuntimeStatusEvent) => void;
   onRuntimeError: (event: SessionRuntimeErrorEvent) => void;
@@ -123,6 +134,22 @@ export class RealtimeClient {
 
   reconnectNow(): void {
     this.connectionManager.reconnectNow();
+  }
+
+  requestOlderMessages(cursor: string | null, limit: number): boolean {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      return false;
+    }
+
+    this.socket.send(
+      JSON.stringify({
+        type: "session.load_older",
+        sessionId: this.options.sessionId,
+        cursor,
+        limit
+      })
+    );
+    return true;
   }
 
   close(): void {
@@ -190,6 +217,11 @@ export class RealtimeClient {
 
       if (payload.type === "session.runtime_status") {
         this.options.onRuntimeStatus(payload);
+        return;
+      }
+
+      if (payload.type === "session.history_older") {
+        this.options.onOlderHistory(payload);
         return;
       }
 

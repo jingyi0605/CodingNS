@@ -28,6 +28,16 @@ import {
   type ProviderFixture
 } from "../helpers/test-app.js";
 
+function workspaceSlugForTest(workspacePath: string): string {
+  const trimmed = workspacePath.replace(/[\\/]+$/, "");
+  const normalizedDriveLetter = trimmed.replace(/^[A-Z](?=:)/, (value) => value.toLowerCase());
+
+  return normalizedDriveLetter
+    .replaceAll(":", "-")
+    .replaceAll("\\", "-")
+    .replaceAll("/", "-");
+}
+
 const activeClosers: Array<() => Promise<void> | void> = [];
 const activeFixtures: ProviderFixture[] = [];
 const activeEmptyFixtures: EmptyFixture[] = [];
@@ -354,6 +364,443 @@ describe("spec002 会话同步核心", () => {
     });
   });
 
+  it("Claude 后台扫描发现真实 transcript 时，会直接复用同标题的 pending 运行时会话", async () => {
+    const fixture = createEmptyFixture();
+    const config = resolveHostConfig({
+      databasePath: ":memory:",
+      claudeCodeHomeDir: fixture.claudeHomeDir,
+      codexHomeDir: fixture.codexHomeDir
+    });
+    const database = createDatabaseClient(":memory:");
+    const workspaceRepository = new WorkspaceRepository(database.db);
+    const sessionBindingRepository = new SessionBindingRepository(database.db);
+    const sessionIndexRepository = new SessionIndexRepository(database.db);
+    const sessionStateRepository = new SessionStateRepository(database.db);
+    const sessionStatusSnapshotRepository = new SessionStatusSnapshotRepository(database.db);
+    const sessionChangedFileService = new SessionChangedFileService(
+      new SessionChangedFileRepository(database.db)
+    );
+    const sessionMessageAttachmentService = new SessionMessageAttachmentService(
+      new SessionMessageAttachmentRepository(database.db),
+      config
+    );
+    const sessionHistoryService = new SessionHistoryService(
+      database.db,
+      workspaceRepository,
+      sessionBindingRepository,
+      sessionChangedFileService,
+      sessionIndexRepository,
+      sessionMessageAttachmentService,
+      sessionStateRepository,
+      sessionStatusSnapshotRepository,
+      config
+    );
+    const runtimeSessionId = "runtime-pending-session";
+    const providerSessionId = "claude-session-real-1";
+    const title = "再次对话测试";
+    const claudeProjectDir = path.join(
+      fixture.claudeHomeDir,
+      "projects",
+      workspaceSlugForTest(fixture.workspaceDir)
+    );
+    const rawStoreRef = path.join(claudeProjectDir, `${providerSessionId}.jsonl`);
+
+    activeEmptyFixtures.push(fixture);
+    activeClosers.push(() => database.close());
+
+    database.db
+      .prepare(
+        `INSERT INTO auth_users (id, username, password_hash, role, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        "user-1",
+        "tester",
+        "hash",
+        "admin",
+        "2026-03-29T09:00:00.000Z",
+        "2026-03-29T09:00:00.000Z"
+      );
+
+    workspaceRepository.create({
+      id: "workspace-1",
+      name: "Fixture Workspace",
+      path: fixture.workspaceDir,
+      repoRoot: fixture.workspaceDir,
+      favorite: false,
+      createdAt: "2026-03-29T09:00:00.000Z",
+      updatedAt: "2026-03-29T09:00:00.000Z",
+      removedAt: null
+    });
+
+    sessionBindingRepository.upsert({
+      sessionId: runtimeSessionId,
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      providerSessionId: "pending://claude-code/runtime-pending-session",
+      rawStoreRef: path.join(claudeProjectDir, `.pending-${runtimeSessionId}.jsonl`),
+      createdAt: "2026-03-29T09:00:01.000Z",
+      updatedAt: "2026-03-29T09:00:01.000Z"
+    });
+    sessionIndexRepository.upsert({
+      sessionId: runtimeSessionId,
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      title,
+      messageCount: 1,
+      isArchived: false,
+      lastMessageAt: "2026-03-29T09:00:02.000Z",
+      createdAt: "2026-03-29T09:00:01.000Z",
+      updatedAt: "2026-03-29T09:00:02.000Z"
+    });
+    sessionStateRepository.upsert({
+      sessionId: runtimeSessionId,
+      userId: "user-1",
+      runningState: "running",
+      activitySource: "runtime",
+      favorite: false,
+      lastEventAt: "2026-03-29T09:00:02.000Z",
+      completedAt: null,
+      lastSeenAt: null,
+      updatedAt: "2026-03-29T09:00:02.000Z"
+    });
+
+    mkdirSync(claudeProjectDir, { recursive: true });
+    writeFileSync(
+      rawStoreRef,
+      [
+        JSON.stringify({
+          type: "user",
+          sessionId: providerSessionId,
+          cwd: fixture.workspaceDir,
+          timestamp: "2026-03-29T09:00:02.000Z",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: title }]
+          }
+        }),
+        JSON.stringify({
+          type: "assistant",
+          sessionId: providerSessionId,
+          cwd: fixture.workspaceDir,
+          timestamp: "2026-03-29T09:00:04.000Z",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "好的，我在这里。有什么需要帮助的吗？" }]
+          }
+        }),
+        JSON.stringify({
+          type: "ai-title",
+          sessionId: providerSessionId,
+          aiTitle: title
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const items = await sessionHistoryService.discoverWorkspaceSessions(
+      "workspace-1",
+      "user-1",
+      {
+        force: true,
+        refreshStateMode: "deferred"
+      }
+    );
+
+    const claudeItems = items.filter((item) => item.provider === "claude-code");
+
+    expect(claudeItems).toHaveLength(1);
+    expect(claudeItems[0]).toMatchObject({
+      sessionId: runtimeSessionId,
+      providerSessionId,
+      title
+    });
+    expect(sessionBindingRepository.findByProviderSession("claude-code", providerSessionId)).toEqual(
+      expect.objectContaining({
+        sessionId: runtimeSessionId,
+        rawStoreRef
+      })
+    );
+  });
+
+  it("Claude 后台扫描发现真实 transcript 时，会复用唯一活跃的 pending 运行时会话，即使标题已经变化", async () => {
+    const fixture = createEmptyFixture();
+    const config = resolveHostConfig({
+      databasePath: ":memory:",
+      claudeCodeHomeDir: fixture.claudeHomeDir,
+      codexHomeDir: fixture.codexHomeDir
+    });
+    const database = createDatabaseClient(":memory:");
+    const workspaceRepository = new WorkspaceRepository(database.db);
+    const sessionBindingRepository = new SessionBindingRepository(database.db);
+    const sessionIndexRepository = new SessionIndexRepository(database.db);
+    const sessionStateRepository = new SessionStateRepository(database.db);
+    const sessionStatusSnapshotRepository = new SessionStatusSnapshotRepository(database.db);
+    const sessionChangedFileService = new SessionChangedFileService(
+      new SessionChangedFileRepository(database.db)
+    );
+    const sessionMessageAttachmentService = new SessionMessageAttachmentService(
+      new SessionMessageAttachmentRepository(database.db),
+      config
+    );
+    const sessionHistoryService = new SessionHistoryService(
+      database.db,
+      workspaceRepository,
+      sessionBindingRepository,
+      sessionChangedFileService,
+      sessionIndexRepository,
+      sessionMessageAttachmentService,
+      sessionStateRepository,
+      sessionStatusSnapshotRepository,
+      config
+    );
+    const runtimeSessionId = "runtime-pending-active-session";
+    const providerSessionId = "claude-session-real-2";
+    const claudeProjectDir = path.join(
+      fixture.claudeHomeDir,
+      "projects",
+      workspaceSlugForTest(fixture.workspaceDir)
+    );
+    const rawStoreRef = path.join(claudeProjectDir, `${providerSessionId}.jsonl`);
+
+    activeEmptyFixtures.push(fixture);
+    activeClosers.push(() => database.close());
+
+    database.db
+      .prepare(
+        `INSERT INTO auth_users (id, username, password_hash, role, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        "user-1",
+        "tester",
+        "hash",
+        "admin",
+        "2026-03-29T10:00:00.000Z",
+        "2026-03-29T10:00:00.000Z"
+      );
+
+    workspaceRepository.create({
+      id: "workspace-1",
+      name: "Fixture Workspace",
+      path: fixture.workspaceDir,
+      repoRoot: fixture.workspaceDir,
+      favorite: false,
+      createdAt: "2026-03-29T10:00:00.000Z",
+      updatedAt: "2026-03-29T10:00:00.000Z",
+      removedAt: null
+    });
+
+    sessionBindingRepository.upsert({
+      sessionId: runtimeSessionId,
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      providerSessionId: "pending://claude-code/runtime-pending-active-session",
+      rawStoreRef: "pending://claude-code/runtime-pending-active-session",
+      createdAt: "2026-03-29T10:00:01.000Z",
+      updatedAt: "2026-03-29T10:00:01.000Z"
+    });
+    sessionIndexRepository.upsert({
+      sessionId: runtimeSessionId,
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      title: "启动中的临时标题",
+      messageCount: 1,
+      isArchived: false,
+      lastMessageAt: "2026-03-29T10:00:02.000Z",
+      createdAt: "2026-03-29T10:00:01.000Z",
+      updatedAt: "2026-03-29T10:00:02.000Z"
+    });
+    sessionStateRepository.upsert({
+      sessionId: runtimeSessionId,
+      userId: "user-1",
+      runningState: "running",
+      activitySource: "runtime",
+      favorite: false,
+      lastEventAt: "2026-03-29T10:00:02.500Z",
+      completedAt: null,
+      lastSeenAt: null,
+      updatedAt: "2026-03-29T10:00:02.500Z"
+    });
+
+    mkdirSync(claudeProjectDir, { recursive: true });
+    writeFileSync(
+      rawStoreRef,
+      [
+        JSON.stringify({
+          type: "user",
+          sessionId: providerSessionId,
+          cwd: fixture.workspaceDir,
+          timestamp: "2026-03-29T10:00:02.000Z",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "帮我把这次会话接起来" }]
+          }
+        }),
+        JSON.stringify({
+          type: "assistant",
+          sessionId: providerSessionId,
+          cwd: fixture.workspaceDir,
+          timestamp: "2026-03-29T10:00:04.000Z",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "已经接上，会继续输出。" }]
+          }
+        }),
+        JSON.stringify({
+          type: "ai-title",
+          sessionId: providerSessionId,
+          aiTitle: "真正标题已经变了"
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const items = await sessionHistoryService.discoverWorkspaceSessions(
+      "workspace-1",
+      "user-1",
+      {
+        force: true,
+        refreshStateMode: "deferred"
+      }
+    );
+
+    const claudeItems = items.filter((item) => item.provider === "claude-code");
+
+    expect(claudeItems).toHaveLength(1);
+    expect(claudeItems[0]).toMatchObject({
+      sessionId: runtimeSessionId,
+      providerSessionId,
+      title: "真正标题已经变了"
+    });
+    expect(sessionBindingRepository.findByProviderSession("claude-code", providerSessionId)).toEqual(
+      expect.objectContaining({
+        sessionId: runtimeSessionId,
+        rawStoreRef
+      })
+    );
+  });
+
+  it("Claude pending 运行时会话在真 transcript 落盘前读取/订阅历史不会把 pending 标识当文件路径", async () => {
+    const fixture = createEmptyFixture();
+    const config = resolveHostConfig({
+      databasePath: ":memory:",
+      claudeCodeHomeDir: fixture.claudeHomeDir,
+      codexHomeDir: fixture.codexHomeDir
+    });
+    const database = createDatabaseClient(":memory:");
+    const workspaceRepository = new WorkspaceRepository(database.db);
+    const sessionBindingRepository = new SessionBindingRepository(database.db);
+    const sessionIndexRepository = new SessionIndexRepository(database.db);
+    const sessionStateRepository = new SessionStateRepository(database.db);
+    const sessionStatusSnapshotRepository = new SessionStatusSnapshotRepository(database.db);
+    const sessionChangedFileService = new SessionChangedFileService(
+      new SessionChangedFileRepository(database.db)
+    );
+    const sessionMessageAttachmentService = new SessionMessageAttachmentService(
+      new SessionMessageAttachmentRepository(database.db),
+      config
+    );
+    const sessionHistoryService = new SessionHistoryService(
+      database.db,
+      workspaceRepository,
+      sessionBindingRepository,
+      sessionChangedFileService,
+      sessionIndexRepository,
+      sessionMessageAttachmentService,
+      sessionStateRepository,
+      sessionStatusSnapshotRepository,
+      config
+    );
+    const sessionId = "runtime-pending-read-session";
+    const pendingRef = "pending://claude-code/runtime-pending-read-session";
+
+    activeEmptyFixtures.push(fixture);
+    activeClosers.push(() => database.close());
+
+    database.db
+      .prepare(
+        `INSERT INTO auth_users (id, username, password_hash, role, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        "user-1",
+        "tester",
+        "hash",
+        "admin",
+        "2026-03-29T11:00:00.000Z",
+        "2026-03-29T11:00:00.000Z"
+      );
+
+    workspaceRepository.create({
+      id: "workspace-1",
+      name: "Fixture Workspace",
+      path: fixture.workspaceDir,
+      repoRoot: fixture.workspaceDir,
+      favorite: false,
+      createdAt: "2026-03-29T11:00:00.000Z",
+      updatedAt: "2026-03-29T11:00:00.000Z",
+      removedAt: null
+    });
+
+    sessionBindingRepository.upsert({
+      sessionId,
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      providerSessionId: pendingRef,
+      rawStoreRef: pendingRef,
+      createdAt: "2026-03-29T11:00:01.000Z",
+      updatedAt: "2026-03-29T11:00:01.000Z"
+    });
+    sessionIndexRepository.upsert({
+      sessionId,
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      title: "临时会话",
+      messageCount: 0,
+      isArchived: false,
+      lastMessageAt: null,
+      createdAt: "2026-03-29T11:00:01.000Z",
+      updatedAt: "2026-03-29T11:00:01.000Z"
+    });
+    sessionStateRepository.upsert({
+      sessionId,
+      userId: "user-1",
+      runningState: "running",
+      activitySource: "runtime",
+      favorite: false,
+      lastEventAt: "2026-03-29T11:00:01.000Z",
+      completedAt: null,
+      lastSeenAt: null,
+      updatedAt: "2026-03-29T11:00:01.000Z"
+    });
+
+    const page = await sessionHistoryService.readSessionHistory(
+      sessionId,
+      null,
+      20,
+      "forward",
+      "user-1"
+    );
+    const delivered: Array<{ type: string; messages: number }> = [];
+    const subscription = await sessionHistoryService.subscribeSession(
+      sessionId,
+      null,
+      20,
+      (envelope) => {
+        delivered.push({
+          type: envelope.type,
+          messages: envelope.messages.length
+        });
+      }
+    );
+
+    subscription.close();
+
+    expect(page.messages).toEqual([]);
+    expect(delivered).toEqual([]);
+  });
+
   it("host 会把 opencode 已知会话传给发现链路，并把不完整发现视为未完成刷新", async () => {
     const fixture = createEmptyFixture();
     const config = resolveHostConfig({
@@ -470,6 +917,155 @@ describe("spec002 会话同步核心", () => {
     });
 
     expect(sessionHistoryService.needsWorkspaceDiscovery("workspace-1", 15_000)).toBe(false);
+  });
+
+  it("首次订阅会话时只回填最近一页，而不是从最旧消息开始扫全量", async () => {
+    const fixture = createEmptyFixture();
+    const config = resolveHostConfig({
+      databasePath: ":memory:",
+      claudeCodeHomeDir: fixture.claudeHomeDir,
+      codexHomeDir: fixture.codexHomeDir
+    });
+    const database = createDatabaseClient(":memory:");
+    const workspaceRepository = new WorkspaceRepository(database.db);
+    const sessionBindingRepository = new SessionBindingRepository(database.db);
+    const sessionIndexRepository = new SessionIndexRepository(database.db);
+    const sessionStateRepository = new SessionStateRepository(database.db);
+    const sessionStatusSnapshotRepository = new SessionStatusSnapshotRepository(database.db);
+    const sessionChangedFileService = new SessionChangedFileService(
+      new SessionChangedFileRepository(database.db)
+    );
+    const sessionMessageAttachmentService = new SessionMessageAttachmentService(
+      new SessionMessageAttachmentRepository(database.db),
+      config
+    );
+    const sessionHistoryService = new SessionHistoryService(
+      database.db,
+      workspaceRepository,
+      sessionBindingRepository,
+      sessionChangedFileService,
+      sessionIndexRepository,
+      sessionMessageAttachmentService,
+      sessionStateRepository,
+      sessionStatusSnapshotRepository,
+      config
+    );
+    const timestamp = "2026-03-29T12:00:00.000Z";
+    const sessionId = "session-recent-backfill";
+    const providerSessionId = "codex-session-recent";
+    const rawStoreRef = writeCodexSessionFile({
+      codexHomeDir: fixture.codexHomeDir,
+      workspaceDir: fixture.workspaceDir,
+      fileName: providerSessionId,
+      timestamps: [
+        "2026-03-23T09:00:00.000Z",
+        "2026-03-23T09:00:01.000Z",
+        "2026-03-23T09:00:02.000Z"
+      ]
+    });
+
+    appendFileSync(
+      rawStoreRef,
+      `\n${JSON.stringify({
+        timestamp: "2026-03-23T09:00:03.000Z",
+        type: "event_msg",
+        payload: {
+          type: "user_message",
+          message: "第三条消息"
+        }
+      })}\n${JSON.stringify({
+        timestamp: "2026-03-23T09:00:04.000Z",
+        type: "event_msg",
+        payload: {
+          type: "agent_message",
+          message: "第四条消息"
+        }
+      })}\n${JSON.stringify({
+        timestamp: "2026-03-23T09:00:05.000Z",
+        type: "event_msg",
+        payload: {
+          type: "agent_message",
+          message: "第五条消息"
+        }
+      })}`,
+      "utf8"
+    );
+
+    activeEmptyFixtures.push(fixture);
+    activeClosers.push(() => database.close());
+
+    database.db
+      .prepare(
+        `INSERT INTO auth_users (id, username, password_hash, role, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      )
+      .run("user-1", "tester", "hash", "admin", timestamp, timestamp);
+
+    workspaceRepository.create({
+      id: "workspace-1",
+      name: "Fixture Workspace",
+      path: fixture.workspaceDir,
+      repoRoot: fixture.workspaceDir,
+      favorite: false,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      removedAt: null
+    });
+    sessionBindingRepository.upsert({
+      sessionId,
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId,
+      rawStoreRef,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+    sessionIndexRepository.upsert({
+      sessionId,
+      workspaceId: "workspace-1",
+      provider: "codex",
+      title: "recent backfill test",
+      messageCount: 5,
+      isArchived: false,
+      lastMessageAt: "2026-03-23T09:00:05.000Z",
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+    sessionStateRepository.upsert({
+      sessionId,
+      userId: "user-1",
+      runningState: "idle",
+      activitySource: "none",
+      favorite: false,
+      lastEventAt: "2026-03-23T09:00:05.000Z",
+      completedAt: null,
+      lastSeenAt: null,
+      updatedAt: timestamp
+    });
+
+    const delivered: Array<{ type: string; messages: string[]; cursor: string | null }> = [];
+    const subscription = await sessionHistoryService.subscribeSession(
+      sessionId,
+      null,
+      2,
+      (envelope) => {
+        delivered.push({
+          type: envelope.type,
+          messages: envelope.messages.map((message) => message.content),
+          cursor: envelope.cursor
+        });
+      }
+    );
+
+    subscription.close();
+
+    expect(delivered).toEqual([
+      {
+        type: "session.backfill",
+        messages: ["第四条消息", "第五条消息"],
+        cursor: expect.any(String)
+      }
+    ]);
   });
 
   it("本地已归档的 opencode 会话不会被后续发现结果重新放回普通列表", async () => {
@@ -1606,6 +2202,137 @@ describe("spec002 会话同步核心", () => {
         badSocket.once("close", () => resolve(true));
       })
     ).resolves.toBe(true);
+  });
+
+  it("支持通过 WebSocket 继续加载更早的会话消息", async () => {
+    const fixture = createProviderFixture();
+    activeFixtures.push(fixture);
+
+    const hosted = createTestApp(fixture);
+    await hosted.app.ready();
+
+    await hosted.app.inject({
+      method: "POST",
+      url: "/api/public/setup",
+      payload: {
+        username: "admin",
+        password: "password123"
+      }
+    });
+
+    const login = await hosted.app.inject({
+      method: "POST",
+      url: "/api/auth/login",
+      payload: {
+        username: "admin",
+        password: "password123"
+      }
+    });
+    const accessToken = login.json().accessToken;
+
+    const workspaceId = await importWorkspace(hosted, accessToken, fixture.workspaceDir);
+
+    const sessions = await hosted.app.inject({
+      method: "GET",
+      url: `/api/sessions?workspaceId=${workspaceId}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    const codexSessionId = sessions
+      .json()
+      .items.find((item: { provider: string }) => item.provider === "codex")?.sessionId as string | undefined;
+
+    expect(codexSessionId).toBeTruthy();
+
+    await hosted.app.listen({
+      host: "127.0.0.1",
+      port: 0
+    });
+
+    const address = hosted.app.server.address();
+    if (!address || typeof address === "string") {
+      throw new Error("未获取到监听端口");
+    }
+
+    const socket = new WebSocket(`ws://127.0.0.1:${address.port}/ws?access_token=${accessToken}`);
+    activeClosers.push(() => socket.close());
+    const messages = createWsMessageQueue(socket);
+
+    expect(JSON.parse(await messages.next()).type).toBe("system.connected");
+
+    socket.send(
+      JSON.stringify({
+        type: "session.subscribe",
+        sessionId: codexSessionId,
+        limit: 2
+      })
+    );
+
+    let initialBackfill: null | {
+      cursor: string | null;
+      olderCursor: string | null;
+      messages: Array<{ sequence: number }>;
+    } = null;
+
+    for (let index = 0; index < 3; index += 1) {
+      const payload = JSON.parse(await messages.next()) as {
+        type: string;
+        cursor?: string | null;
+        olderCursor?: string | null;
+        messages?: Array<{ sequence: number }>;
+      };
+
+      if (payload.type === "session.backfill" && payload.messages) {
+        initialBackfill = {
+          cursor: payload.cursor ?? null,
+          olderCursor: payload.olderCursor ?? null,
+          messages: payload.messages
+        };
+        break;
+      }
+    }
+
+    expect(initialBackfill).not.toBeNull();
+    expect(initialBackfill?.messages).toHaveLength(2);
+    expect(initialBackfill?.olderCursor).toBeTruthy();
+
+    socket.send(
+      JSON.stringify({
+        type: "session.load_older",
+        sessionId: codexSessionId,
+        cursor: initialBackfill?.olderCursor,
+        limit: 2
+      })
+    );
+
+    let olderPage: null | {
+      olderCursor: string | null;
+      messages: Array<{ sequence: number }>;
+    } = null;
+
+    for (let index = 0; index < 2; index += 1) {
+      const payload = JSON.parse(await messages.next()) as {
+        type: string;
+        olderCursor?: string | null;
+        messages?: Array<{ sequence: number }>;
+      };
+
+      if (payload.type === "session.history_older" && payload.messages) {
+        olderPage = {
+          olderCursor: payload.olderCursor ?? null,
+          messages: payload.messages
+        };
+        break;
+      }
+    }
+
+    expect(olderPage).not.toBeNull();
+    expect(olderPage?.messages).toHaveLength(2);
+    expect(olderPage?.olderCursor).toBeNull();
+    expect(olderPage?.messages.at(-1)?.sequence).toBeLessThan(
+      initialBackfill?.messages[0]?.sequence ?? Number.POSITIVE_INFINITY
+    );
   });
 
   it("claude-code 会在消息推送时同步刷新会话列表标题", async () => {

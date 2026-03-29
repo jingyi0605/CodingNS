@@ -50,6 +50,8 @@ interface ToolMessageGroup {
   hasResult: boolean;
 }
 
+const OLDER_HISTORY_PREFETCH_THRESHOLD_PX = 480;
+
 type TimelineRenderItem =
   | {
       type: "message";
@@ -1229,8 +1231,26 @@ export function MessageTimeline({
   );
   const stickToBottomRef = useRef(true);
   const pendingOlderLoadOffsetRef = useRef<number | null>(null);
+  const olderLoadLockRef = useRef(false);
   const renderItems = buildTimelineRenderItems(messages);
   const showTimelineSkeleton = historyState === "loading" && messages.length === 0;
+
+  function triggerOlderMessagesPrefetch(list: HTMLDivElement): boolean {
+    if (
+      olderLoadLockRef.current ||
+      !hasOlderMessages ||
+      loadingOlderMessages ||
+      historyState !== "ready" ||
+      list.scrollTop > OLDER_HISTORY_PREFETCH_THRESHOLD_PX
+    ) {
+      return false;
+    }
+
+    olderLoadLockRef.current = true;
+    pendingOlderLoadOffsetRef.current = list.scrollHeight - list.scrollTop;
+    onLoadOlderMessages();
+    return true;
+  }
 
   useEffect(() => {
     if (historyState !== "error") {
@@ -1284,6 +1304,17 @@ export function MessageTimeline({
     previousLastMessageSignatureRef.current = currentLastSignature;
   }, [messages, sessionId]);
 
+  useEffect(() => {
+    if (!hasOlderMessages) {
+      olderLoadLockRef.current = false;
+      return;
+    }
+
+    if (!loadingOlderMessages && pendingOlderLoadOffsetRef.current === null) {
+      olderLoadLockRef.current = false;
+    }
+  }, [hasOlderMessages, loadingOlderMessages, messages.length]);
+
   function handleScroll() {
     const list = listRef.current;
 
@@ -1295,15 +1326,21 @@ export function MessageTimeline({
     stickToBottomRef.current = distanceToBottom <= 80;
 
     if (
-      list.scrollTop <= 120
-      && hasOlderMessages
-      && !loadingOlderMessages
-      && historyState === "ready"
+      triggerOlderMessagesPrefetch(list)
     ) {
-      pendingOlderLoadOffsetRef.current = list.scrollHeight - list.scrollTop;
-      onLoadOlderMessages();
+      return;
     }
   }
+
+  useEffect(() => {
+    const list = listRef.current;
+
+    if (!list) {
+      return;
+    }
+
+    triggerOlderMessagesPrefetch(list);
+  }, [hasOlderMessages, historyState, loadingOlderMessages, messages.length, onLoadOlderMessages]);
 
   return (
     <section className="message-timeline">

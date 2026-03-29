@@ -23,7 +23,16 @@ interface SessionSubscribeMessage {
   limit?: number;
 }
 
+interface SessionLoadOlderMessage {
+  type: "session.load_older";
+  sessionId: string;
+  cursor?: string | null;
+  limit?: number;
+}
+
 interface CombinedSubscription {
+  sessionId: string;
+  forwardEnvelope: (envelope: SessionHistoryEnvelope | SessionRuntimeEnvelope) => Promise<void>;
   close(): void;
 }
 
@@ -105,6 +114,45 @@ export function createWsServer(
         return;
       }
 
+      if (isSessionLoadOlderMessage(payload)) {
+        const subscription = subscriptions.get(payload.sessionId);
+
+        if (!subscription) {
+          sendWsError(client, payload.sessionId, "SESSION_NOT_SUBSCRIBED", "会话尚未订阅，不能加载更早消息");
+          return;
+        }
+
+        try {
+          const page = await sessionHistoryService.readSessionHistory(
+            payload.sessionId,
+            payload.cursor ?? null,
+            typeof payload.limit === "number" ? payload.limit : 50,
+            "backward",
+            authContext.user.userId
+          );
+
+          await subscription.forwardEnvelope({
+            type: "session.history_older",
+            sessionId: payload.sessionId,
+            cursor: null,
+            olderCursor: page.nextCursor,
+            messages: page.messages
+          });
+        } catch (error) {
+          const appError =
+            error instanceof AppError
+              ? error
+              : new AppError({
+                  statusCode: 500,
+                  errorCode: "INTERNAL_ERROR",
+                  detail: "加载更早消息失败"
+                });
+
+          sendWsError(client, payload.sessionId, appError.errorCode, appError.message);
+        }
+        return;
+      }
+
       if (!isSessionSubscribeMessage(payload)) {
         sendWsError(client, null, "INVALID_INPUT", "不支持的 WebSocket 消息类型");
         return;
@@ -147,14 +195,39 @@ export function createWsServer(
       );
 
       try {
+        let currentCursor = payload.cursor ?? null;
+        const safeLimit = typeof payload.limit === "number" ? payload.limit : 50;
+
+        if (currentCursor === null) {
+          const page = await sessionHistoryService.readSessionHistory(
+            payload.sessionId,
+            null,
+            safeLimit,
+            "backward",
+            authContext.user.userId
+          );
+
+          currentCursor = page.cursor;
+
+          await forwardEnvelope({
+            type: "session.backfill",
+            sessionId: payload.sessionId,
+            cursor: page.cursor,
+            olderCursor: page.nextCursor,
+            messages: page.messages
+          });
+        }
+
         const historySubscription = await sessionHistoryService.subscribeSession(
           payload.sessionId,
-          payload.cursor ?? null,
-          typeof payload.limit === "number" ? payload.limit : 50,
+          currentCursor,
+          safeLimit,
           forwardEnvelope
         );
 
         subscriptions.set(payload.sessionId, {
+          sessionId: payload.sessionId,
+          forwardEnvelope,
           close() {
             historySubscription.close();
             runtimeSubscription.close();
@@ -216,6 +289,17 @@ function isSessionSubscribeMessage(payload: unknown): payload is SessionSubscrib
   );
 }
 
+function isSessionLoadOlderMessage(payload: unknown): payload is SessionLoadOlderMessage {
+  const candidate = payload as Record<string, unknown> | null;
+
+  return (
+    typeof payload === "object" &&
+    payload !== null &&
+    candidate?.type === "session.load_older" &&
+    typeof candidate?.sessionId === "string"
+  );
+}
+
 function dedupeEnvelopeMessages(
   envelope: SessionHistoryEnvelope | SessionRuntimeEnvelope,
   seenMessages: Map<string, SeenMessageEntry>
@@ -224,7 +308,11 @@ function dedupeEnvelopeMessages(
     return shouldForwardMessage(envelope.message, "runtime", seenMessages) ? envelope : null;
   }
 
-  if (envelope.type !== "session.backfill" && envelope.type !== "session.delta") {
+  if (
+    envelope.type !== "session.backfill"
+    && envelope.type !== "session.delta"
+    && envelope.type !== "session.history_older"
+  ) {
     return envelope;
   }
 
@@ -232,7 +320,7 @@ function dedupeEnvelopeMessages(
     return shouldForwardMessage(message, "history", seenMessages);
   });
 
-  if (messages.length === 0) {
+  if (messages.length === 0 && envelope.type !== "session.history_older") {
     return null;
   }
 
