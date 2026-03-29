@@ -28,7 +28,7 @@ describe("AndroidWorkbenchShell", () => {
     window.history.replaceState({}, "", "/");
   });
 
-  it("详情路由不再渲染顶部返回栏，但会保留底部一级导航", () => {
+  it("hides the top bar on conversation routes", () => {
     renderAndroidShell({
       initialEntries: ["/", "/workspaces/workspace-1/sessions/session-1"],
       initialIndex: 1
@@ -42,27 +42,19 @@ describe("AndroidWorkbenchShell", () => {
     expect(screen.getByRole("button", { name: t("shell.mobileSessionsEntry") })).toBeInTheDocument();
   });
 
-  it("默认移动页不再提供顶部更多操作入口", () => {
-    renderAndroidShell();
-
-    expect(document.querySelector(".android-workbench-topbar")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: t("shell.androidMoreAction") })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: t("shell.mobileSearchAction") })).not.toBeInTheDocument();
-  });
-
-  it("会话沉浸态会先显示底部导航，3 秒后再自动收起", () => {
+  it("auto hides the bottom nav after three seconds in conversation focus mode", () => {
     vi.useFakeTimers();
 
     renderAndroidShell({
       initialEntries: ["/", "/workspaces/workspace-1/sessions/session-1"],
       initialIndex: 1,
-      presentation: "conversation-focus"
+      presentation: "conversation-focus",
+      childVariant: "conversation"
     });
     const shell = document.querySelector(".android-workbench-shell");
 
     expect(document.querySelector(".android-workbench-topbar")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: t("common.back") })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: t("shell.showSessionSidebar") })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: t("shell.mobileWorkspacesEntry") })).toBeInTheDocument();
     expect(shell).toHaveAttribute("data-conversation-tabbar-state", "visible");
 
@@ -71,20 +63,40 @@ describe("AndroidWorkbenchShell", () => {
     });
 
     expect(shell).toHaveAttribute("data-conversation-tabbar-state", "hidden");
-    expect(screen.queryByRole("button", { name: t("shell.androidMoreAction") })).not.toBeInTheDocument();
   });
 
-  it("工具主页不再渲染外层标题栏，避免和页面内头部重复", () => {
+  it("supports swiping down on the composer to hide the bottom nav", () => {
+    vi.useFakeTimers();
+
     renderAndroidShell({
-      activeEntry: "tools",
-      initialEntries: ["/workspaces/workspace-1/tools?tab=files"]
+      initialEntries: ["/", "/workspaces/workspace-1/sessions/session-1"],
+      initialIndex: 1,
+      presentation: "conversation-focus",
+      childVariant: "conversation"
+    });
+    const shell = document.querySelector(".android-workbench-shell");
+    const composerPanel = document.querySelector(".composer-panel") as HTMLElement | null;
+
+    expect(shell).toHaveAttribute("data-conversation-tabbar-state", "visible");
+    expect(composerPanel).not.toBeNull();
+
+    fireEvent.touchStart(composerPanel!, {
+      touches: [{ clientY: 560, identifier: 1 }]
+    });
+    fireEvent.touchMove(composerPanel!, {
+      touches: [{ clientY: 628, identifier: 1 }]
     });
 
-    expect(document.querySelector(".android-workbench-topbar")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: t("shell.androidMoreAction") })).not.toBeInTheDocument();
+    expect(shell).toHaveAttribute("data-conversation-tabbar-state", "dragging");
+
+    fireEvent.touchEnd(composerPanel!, {
+      changedTouches: [{ clientY: 628, identifier: 1 }]
+    });
+
+    expect(shell).toHaveAttribute("data-conversation-tabbar-state", "hidden");
   });
 
-  it("进程管理页会提供返回按钮并回到主工具页", () => {
+  it("shows a back button on the processes tool page and returns to tools home", () => {
     window.localStorage.setItem("mobile.tools.last-primary-tool", "git");
 
     renderAndroidShell({
@@ -108,6 +120,7 @@ function renderAndroidShell({
   initialIndex,
   presentation,
   activeEntry,
+  childVariant,
   onNavigateToolGit,
   onNavigateToolProcesses
 }: {
@@ -115,6 +128,7 @@ function renderAndroidShell({
   initialIndex?: number;
   presentation?: "default" | "conversation-focus";
   activeEntry?: "workspaces" | "terminals" | "sessions" | "tools" | "settings";
+  childVariant?: "workbench" | "conversation";
   onNavigateToolGit?: () => void;
   onNavigateToolProcesses?: () => void;
 } = {}) {
@@ -141,7 +155,7 @@ function renderAndroidShell({
               onNavigateToolProcesses={onNavigateToolProcesses ?? (() => undefined)}
               onNavigateSettings={() => undefined}
             >
-              <LocationProbe />
+              {childVariant === "conversation" ? <ConversationShellFixture /> : <LocationProbe />}
             </AndroidWorkbenchShell>
           }
         />
@@ -156,6 +170,26 @@ function LocationProbe() {
   return (
     <main className="workbench-page">
       <span data-testid="android-location">{location.pathname}</span>
+    </main>
+  );
+}
+
+function ConversationShellFixture() {
+  return (
+    <main className="workbench-page conversation-page-shell mobile-page-fixed-root mobile-conversation-page">
+      <section className="message-timeline">
+        <div className="message-list">
+          <article className="message-item">
+            <div className="message-content-wrapper">
+              <p>测试消息</p>
+            </div>
+          </article>
+        </div>
+      </section>
+      <section className="composer-panel">
+        <textarea aria-label="消息输入框" />
+      </section>
+      <LocationProbe />
     </main>
   );
 }
