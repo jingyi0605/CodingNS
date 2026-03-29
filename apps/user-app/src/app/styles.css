@@ -1966,6 +1966,11 @@ a {
   margin-top: 8px;
 }
 
+.terminal-manager-confirm-actions .secondary-button {
+  min-height: 40px;
+  padding-inline: 16px;
+}
+
 .terminal-manager-detail-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2002,6 +2007,10 @@ a {
 
 .terminal-manager-modal-card {
   width: min(680px, 100%);
+}
+
+.terminal-manager-confirm-modal {
+  width: min(520px, calc(100vw - 32px));
 }
 
 .terminal-manager-modal-form {
@@ -14513,6 +14522,22 @@ textarea:focus-visible {
   gap: 1rem;
 }
 
+.terminal-manager-mobile-modal .terminal-manager-confirm-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: 100%;
+  gap: 0.75rem;
+}
+
+.terminal-manager-mobile-modal .terminal-manager-confirm-actions .secondary-button {
+  width: 100%;
+  min-height: 3rem;
+  padding: 0.78rem 0.9rem;
+  border-radius: 1rem;
+  font-size: 0.96rem;
+  font-weight: 600;
+}
+
 .terminal-manager-mobile-modal .terminal-manager-mode-row {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -14718,6 +14743,10 @@ textarea:focus-visible {
   .terminal-manager-mobile-modal {
     padding: 1rem;
     border-radius: 1.6rem;
+  }
+
+  .terminal-manager-mobile-modal .terminal-manager-confirm-actions {
+    grid-template-columns: 1fr;
   }
 
   .terminal-manager-mobile-picker-trigger,

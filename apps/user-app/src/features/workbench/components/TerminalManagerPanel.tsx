@@ -7,12 +7,14 @@ import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 import {
   createTerminalTemplate,
+  deleteTerminalTemplate,
   runTerminalTemplate,
   stopTerminalTemplateProcess,
   type TerminalShellOptionDto,
   type TerminalDto,
   type TerminalTemplateDto,
-  type TerminalTemplateRuntimeStatusDto
+  type TerminalTemplateRuntimeStatusDto,
+  updateTerminalTemplate
 } from "../../terminal/api/terminal-api";
 import {
   getTerminalRuntimeLabel,
@@ -61,6 +63,12 @@ interface TerminalManagerSnapshot {
 interface TemplateRunFallbackDraft {
   templateId: string;
   shell?: string;
+}
+
+interface TemplateRemoveConfirmDraft {
+  templateId: string;
+  name: string;
+  occupied: boolean;
 }
 
 interface TemplateVisualStatus {
@@ -117,6 +125,17 @@ function buildLaunchName(draft: LaunchDraftState): string {
 function buildTemplatePreview(template: TerminalTemplateDto): string {
   const args = template.args.join(" ");
   return args ? `${template.command} ${args}` : template.command;
+}
+
+function buildLaunchDraftFromTemplate(template: TerminalTemplateDto): LaunchDraftState {
+  return {
+    mode: detectTemplateMode(template),
+    name: template.name,
+    cwd: template.cwd,
+    target: template.command,
+    args: template.args.join(" "),
+    port: template.port === null ? "" : String(template.port)
+  };
 }
 
 function detectTemplateMode(template: TerminalTemplateDto): "command" | "script" {
@@ -252,6 +271,95 @@ function TerminalManagerModal({
           </button>
         </div>
         <div className="workbench-modal-body">{children}</div>
+      </section>
+    </div>,
+    document.body
+  );
+}
+
+function TerminalManagerConfirmModal({
+  open,
+  busy,
+  title,
+  description,
+  confirmLabel,
+  onClose,
+  onConfirm,
+  className
+}: {
+  open: boolean;
+  busy: boolean;
+  title: string;
+  description: string;
+  confirmLabel: string;
+  onClose: () => void;
+  onConfirm: () => void | Promise<void>;
+  className?: string;
+}) {
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape" && !busy) {
+        onClose();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [busy, onClose, open]);
+
+  if (!open || typeof document === "undefined") {
+    return null;
+  }
+
+  return createPortal(
+    <div className="workbench-modal-layer">
+      <button
+        type="button"
+        className="workbench-modal-backdrop"
+        aria-label={t("common.close")}
+        disabled={busy}
+        onClick={onClose}
+      />
+      <section
+        className={["workbench-modal-card", "surface-card", className].filter(Boolean).join(" ")}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+      >
+        <div className="workbench-modal-header">
+          <div className="workbench-modal-title-wrap">
+            <h2>{title}</h2>
+            <p>{description}</p>
+          </div>
+        </div>
+        <div className="workbench-modal-body">
+          <div className="workbench-modal-actions terminal-manager-confirm-actions">
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={busy}
+              onClick={onClose}
+            >
+              {t("common.cancel")}
+            </button>
+            <button
+              type="button"
+              className="secondary-button workbench-danger-button"
+              disabled={busy}
+              onClick={() => {
+                void onConfirm();
+              }}
+            >
+              {busy ? t("terminalManager.templateRemoving") : confirmLabel}
+            </button>
+          </div>
+        </div>
       </section>
     </div>,
     document.body
@@ -400,12 +508,17 @@ export function TerminalManagerPanel({
   const [selectedRuntimeType, setSelectedRuntimeType] =
     useState<SelectableTerminalRuntimeType>("");
   const [launchDraft, setLaunchDraft] = useState<LaunchDraftState>(INITIAL_LAUNCH_DRAFT);
-  const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [templateEditorMode, setTemplateEditorMode] = useState<"create" | "edit" | null>(null);
+  const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
   const [expandedTemplateIds, setExpandedTemplateIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [savingTemplate, setSavingTemplate] = useState(false);
   const [runningTemplateId, setRunningTemplateId] = useState<string | null>(null);
   const [stoppingTemplateId, setStoppingTemplateId] = useState<string | null>(null);
+  const [removingTemplateId, setRemovingTemplateId] = useState<string | null>(null);
+  const [removeConfirmDraft, setRemoveConfirmDraft] = useState<TemplateRemoveConfirmDraft | null>(
+    null
+  );
   const [runtimeFallbackDraft, setRuntimeFallbackDraft] = useState<TemplateRunFallbackDraft | null>(
     null
   );
@@ -413,6 +526,12 @@ export function TerminalManagerPanel({
   const [openMobilePicker, setOpenMobilePicker] = useState<"shell" | "runtime" | null>(null);
   const { showToast } = useToast();
   const isMobileProcessPanel = className?.includes("mobile-tool-process-panel") ?? false;
+  const templateEditorOpen = templateEditorMode !== null;
+  const editingTemplate =
+    templateEditorMode === "edit"
+      ? templates.find((template) => template.id === editingTemplateId) ?? null
+      : null;
+  const editingTemplateMode = templateEditorMode === "edit";
 
   useEffect(() => {
     logPerfDebug("terminal_manager.props", {
@@ -455,18 +574,38 @@ export function TerminalManagerPanel({
   }, [shellOptions]);
 
   useEffect(() => {
-    if (!createModalOpen || !activeWorkspaceId || shellOptions.length > 0) {
+    if (!templateEditorOpen || !activeWorkspaceId || shellOptions.length > 0) {
       return;
     }
 
     requestTerminalManagerSnapshotRefresh(activeWorkspaceId);
-  }, [activeWorkspaceId, createModalOpen, shellOptions.length]);
+  }, [activeWorkspaceId, shellOptions.length, templateEditorOpen]);
 
   useEffect(() => {
-    if (!createModalOpen) {
+    if (!templateEditorOpen) {
       setOpenMobilePicker(null);
     }
-  }, [createModalOpen]);
+  }, [templateEditorOpen]);
+
+  useEffect(() => {
+    if (templateEditorMode === "edit" && editingTemplateId && !editingTemplate) {
+      setTemplateEditorMode(null);
+      setEditingTemplateId(null);
+      setLaunchDraft(INITIAL_LAUNCH_DRAFT);
+      setSelectedRuntimeType("");
+      setOpenMobilePicker(null);
+    }
+  }, [editingTemplate, editingTemplateId, templateEditorMode]);
+
+  useEffect(() => {
+    if (!removeConfirmDraft || removingTemplateId === removeConfirmDraft.templateId) {
+      return;
+    }
+
+    if (!templates.some((template) => template.id === removeConfirmDraft.templateId)) {
+      setRemoveConfirmDraft(null);
+    }
+  }, [removeConfirmDraft, removingTemplateId, templates]);
 
   useEffect(() => {
     if (!activeWorkspaceId) {
@@ -578,6 +717,28 @@ export function TerminalManagerPanel({
     requestTerminalManagerRefresh(workspaceId);
   }
 
+  function closeTemplateEditor() {
+    setTemplateEditorMode(null);
+    setEditingTemplateId(null);
+    setLaunchDraft(INITIAL_LAUNCH_DRAFT);
+    setSelectedRuntimeType("");
+    setOpenMobilePicker(null);
+  }
+
+  function openCreateTemplateEditor() {
+    setEditingTemplateId(null);
+    setLaunchDraft(INITIAL_LAUNCH_DRAFT);
+    setSelectedRuntimeType("");
+    setTemplateEditorMode("create");
+  }
+
+  function openEditTemplateEditor(template: TerminalTemplateDto) {
+    setEditingTemplateId(template.id);
+    setLaunchDraft(buildLaunchDraftFromTemplate(template));
+    setSelectedRuntimeType((template.runtimeType as SelectableTerminalRuntimeType) ?? "");
+    setTemplateEditorMode("edit");
+  }
+
   async function handleStopTemplateProcess(templateId: string) {
     if (!activeWorkspaceId) {
       return;
@@ -620,7 +781,7 @@ export function TerminalManagerPanel({
     setSavingTemplate(true);
 
     try {
-      await createTerminalTemplate({
+      const payload = {
         workspaceId: activeWorkspaceId,
         name: buildLaunchName(launchDraft),
         cwd: launchDraft.cwd.trim() || undefined,
@@ -628,22 +789,73 @@ export function TerminalManagerPanel({
         args: splitArgs(launchDraft.args),
         port: parsedPort,
         runtimeType: selectedRuntimeType || null
-      });
-      setLaunchDraft(INITIAL_LAUNCH_DRAFT);
-      setSelectedRuntimeType("");
-      setCreateModalOpen(false);
+      };
+
+      if (editingTemplateMode && editingTemplateId) {
+        const updatedTemplate = await updateTerminalTemplate(editingTemplateId, payload);
+        setTemplates((current) =>
+          current.map((template) => (template.id === updatedTemplate.id ? updatedTemplate : template))
+        );
+      } else {
+        await createTerminalTemplate(payload);
+      }
+
+      closeTemplateEditor();
       requestTerminalManagerSnapshotRefresh(activeWorkspaceId);
       showToast({
-        title: t("terminalManager.templateSaveSuccess"),
+        title: editingTemplateMode
+          ? t("terminalManager.templateUpdateSuccess")
+          : t("terminalManager.templateSaveSuccess"),
         tone: "success"
       });
     } catch (error) {
       showToast({
-        title: error instanceof Error ? error.message : t("terminalManager.templateSaveFailed"),
+        title:
+          error instanceof Error
+            ? error.message
+            : editingTemplateMode
+              ? t("terminalManager.templateUpdateFailed")
+              : t("terminalManager.templateSaveFailed"),
         tone: "error"
       });
     } finally {
       setSavingTemplate(false);
+    }
+  }
+
+  async function handleDeleteTemplate(
+    template: TerminalTemplateDto,
+    _runtimeStatus: TerminalTemplateRuntimeStatusDto | null
+  ) {
+    if (!activeWorkspaceId) {
+      return;
+    }
+
+    setRemovingTemplateId(template.id);
+
+    try {
+      await deleteTerminalTemplate(template.id);
+      setTemplates((current) => current.filter((item) => item.id !== template.id));
+      setTemplateStatuses((current) => current.filter((item) => item.templateId !== template.id));
+      setExpandedTemplateIds((current) => current.filter((item) => item !== template.id));
+      setRemoveConfirmDraft((current) => (current?.templateId === template.id ? null : current));
+
+      if (editingTemplateId === template.id) {
+        closeTemplateEditor();
+      }
+
+      requestTerminalManagerSnapshotRefresh(activeWorkspaceId);
+      showToast({
+        title: t("terminalManager.templateDeleteSuccess"),
+        tone: "success"
+      });
+    } catch (error) {
+      showToast({
+        title: error instanceof Error ? error.message : t("terminalManager.templateDeleteFailed"),
+        tone: "error"
+      });
+    } finally {
+      setRemovingTemplateId(null);
     }
   }
 
@@ -796,8 +1008,7 @@ export function TerminalManagerPanel({
             type="button"
             disabled={!activeWorkspaceId}
             onClick={() => {
-              setSelectedRuntimeType("");
-              setCreateModalOpen(true);
+              openCreateTemplateEditor();
             }}
           >
             {t("terminalManager.openCreateModalAction")}
@@ -948,6 +1159,34 @@ export function TerminalManagerPanel({
                           </div>
                         ) : null}
                       </div>
+                      <div className="terminal-manager-actions terminal-manager-detail-actions">
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          disabled={savingTemplate || removingTemplateId === template.id}
+                          onClick={() => {
+                            openEditTemplateEditor(template);
+                          }}
+                        >
+                          {t("terminalManager.editAction")}
+                        </button>
+                        <button
+                          className="secondary-button workbench-danger-button"
+                          type="button"
+                          disabled={removingTemplateId === template.id}
+                          onClick={() => {
+                            setRemoveConfirmDraft({
+                              templateId: template.id,
+                              name: template.name,
+                              occupied: Boolean(runtimeStatus?.occupied)
+                            });
+                          }}
+                        >
+                          {removingTemplateId === template.id
+                            ? t("terminalManager.templateRemoving")
+                            : t("terminalManager.removeAction")}
+                        </button>
+                      </div>
                     </section>
                   ) : null}
                 </article>
@@ -962,14 +1201,19 @@ export function TerminalManagerPanel({
       </section>
 
       <TerminalManagerModal
-        open={createModalOpen}
-        title={t("terminalManager.createModalTitle")}
-        description={t("terminalManager.createModalDescription")}
+        open={templateEditorOpen}
+        title={
+          editingTemplateMode
+            ? t("terminalManager.editModalTitle")
+            : t("terminalManager.createModalTitle")
+        }
+        description={
+          editingTemplateMode
+            ? t("terminalManager.editModalDescription")
+            : t("terminalManager.createModalDescription")
+        }
         className={isMobileProcessPanel ? "terminal-manager-mobile-modal" : undefined}
-        onClose={() => {
-          setSelectedRuntimeType("");
-          setCreateModalOpen(false);
-        }}
+        onClose={closeTemplateEditor}
       >
         <section className="terminal-manager-modal-form">
           {isMobileProcessPanel ? (
@@ -1190,10 +1434,7 @@ export function TerminalManagerPanel({
             <button
               className="secondary-button"
               type="button"
-              onClick={() => {
-                setSelectedRuntimeType("");
-                setCreateModalOpen(false);
-              }}
+              onClick={closeTemplateEditor}
             >
               {t("common.close")}
             </button>
@@ -1206,12 +1447,58 @@ export function TerminalManagerPanel({
               }}
             >
               {savingTemplate
-                ? t("terminalManager.templateSaving")
-                : t("terminalManager.saveLaunchAction")}
+                ? editingTemplateMode
+                  ? t("terminalManager.templateUpdating")
+                  : t("terminalManager.templateSaving")
+                : editingTemplateMode
+                  ? t("terminalManager.saveTemplateChangesAction")
+                  : t("terminalManager.saveLaunchAction")}
             </button>
           </div>
         </section>
       </TerminalManagerModal>
+
+      <TerminalManagerConfirmModal
+        open={removeConfirmDraft !== null}
+        busy={removeConfirmDraft !== null && removingTemplateId === removeConfirmDraft.templateId}
+        title={t("terminalManager.removeConfirmTitle")}
+        description={
+          removeConfirmDraft
+            ? t(
+                removeConfirmDraft.occupied
+                  ? "terminalManager.removeRunningConfirmTarget"
+                  : "terminalManager.removeConfirmTarget",
+                {
+                  name: removeConfirmDraft.name
+                }
+              )
+            : ""
+        }
+        confirmLabel={t("terminalManager.removeConfirmAction")}
+        className={isMobileProcessPanel ? "terminal-manager-mobile-modal" : "terminal-manager-confirm-modal"}
+        onClose={() => {
+          if (removingTemplateId) {
+            return;
+          }
+
+          setRemoveConfirmDraft(null);
+        }}
+        onConfirm={() => {
+          if (!removeConfirmDraft) {
+            return;
+          }
+
+          const template = templates.find((item) => item.id === removeConfirmDraft.templateId);
+
+          if (!template) {
+            setRemoveConfirmDraft(null);
+            return;
+          }
+
+          const runtimeStatus = getTemplateRuntimeStatus(runtimeStatusByTemplateId, template.id);
+          void handleDeleteTemplate(template, runtimeStatus);
+        }}
+      />
     </section>
   );
 }

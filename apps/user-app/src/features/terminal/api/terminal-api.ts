@@ -166,6 +166,36 @@ export function createTerminalTemplate(payload: {
   });
 }
 
+export function updateTerminalTemplate(
+  templateId: string,
+  payload: {
+    workspaceId?: string;
+    name?: string;
+    cwd?: string;
+    command?: string;
+    args?: string[];
+    port?: number | null;
+    runtimeType?: string | null;
+  }
+) {
+  return httpClient.request<TerminalTemplateDto>(
+    `/api/terminals/templates/${encodeURIComponent(templateId)}`,
+    {
+      method: "PUT",
+      body: JSON.stringify(payload)
+    }
+  );
+}
+
+export function deleteTerminalTemplate(templateId: string) {
+  return httpClient.request<{ success: true }>(
+    `/api/terminals/templates/${encodeURIComponent(templateId)}`,
+    {
+      method: "DELETE"
+    }
+  );
+}
+
 export function runTerminalTemplate(
   templateId: string,
   payload: { terminalId?: string; shell?: string; runtimeType?: string }

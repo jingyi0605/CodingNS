@@ -298,6 +298,140 @@ describe("TerminalManagerPanel", () => {
       await screen.findByText("先选中一条会话，进程管理才能绑定对应的工作区。")
     ).toBeInTheDocument();
   });
+
+  it("详情层支持编辑和移除快捷启动项", async () => {
+    let updatedTemplateBody: Record<string, unknown> | null = null;
+    let deleteRequested = false;
+    let currentTemplate: TerminalTemplateDto | null = {
+      id: "template-1",
+      workspaceId: "workspace-1",
+      name: "启动前端",
+      cwd: "C:/Code/demo",
+      command: "pnpm",
+      args: ["dev"],
+      env: {},
+      port: 5173,
+      runtimeType: null,
+      createdAt: "2026-03-24T00:00:00.000Z",
+      updatedAt: "2026-03-24T00:10:00.000Z"
+    };
+
+    buildMockSnapshot = () => ({
+      workspaceId: "workspace-1",
+      terminals: [],
+      shellOptions: [
+        {
+          id: "powershell",
+          label: "PowerShell",
+          shell: "powershell.exe",
+          available: true,
+          unavailableReason: null
+        }
+      ],
+      templates: currentTemplate ? [currentTemplate] : [],
+      templateStatuses:
+        currentTemplate && currentTemplate.port !== null
+          ? [
+              {
+                templateId: currentTemplate.id,
+                port: currentTemplate.port,
+                occupied: false,
+                processId: null,
+                processName: null,
+                processCommandLine: null
+              }
+            ]
+          : []
+    });
+
+    global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+
+      if (url.endsWith("/api/terminals/templates/template-1") && init?.method === "PUT") {
+        updatedTemplateBody = JSON.parse(String(init.body)) as Record<string, unknown>;
+        currentTemplate = {
+          id: "template-1",
+          workspaceId: "workspace-1",
+          name: String(updatedTemplateBody.name),
+          cwd: String(updatedTemplateBody.cwd),
+          command: String(updatedTemplateBody.command),
+          args: (updatedTemplateBody.args as string[]) ?? [],
+          env: {},
+          port: Number(updatedTemplateBody.port),
+          runtimeType: updatedTemplateBody.runtimeType as string | null,
+          createdAt: "2026-03-24T00:00:00.000Z",
+          updatedAt: "2026-03-24T01:00:00.000Z"
+        };
+        return createJsonResponse(currentTemplate);
+      }
+
+      if (url.endsWith("/api/terminals/templates/template-1") && init?.method === "DELETE") {
+        deleteRequested = true;
+        currentTemplate = null;
+        return createJsonResponse({
+          success: true
+        });
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderPanel();
+
+    await userEvent.click(await screen.findByRole("button", { name: "显示详细信息" }));
+    await userEvent.click(screen.getByRole("button", { name: "编辑启动项" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "编辑快捷启动项" });
+    expect(within(dialog).getByDisplayValue("启动前端")).toBeInTheDocument();
+    expect(within(dialog).getByDisplayValue("C:/Code/demo")).toBeInTheDocument();
+    expect(within(dialog).getByDisplayValue("pnpm")).toBeInTheDocument();
+    expect(within(dialog).getByDisplayValue("dev")).toBeInTheDocument();
+    expect(within(dialog).getByDisplayValue("5173")).toBeInTheDocument();
+
+    await userEvent.clear(within(dialog).getByDisplayValue("启动前端"));
+    await userEvent.type(within(dialog).getByPlaceholderText("留空时会自动生成"), "前端开发");
+    await userEvent.clear(within(dialog).getByDisplayValue("C:/Code/demo"));
+    await userEvent.type(within(dialog).getByPlaceholderText("留空时默认使用工作区根目录"), "apps/user-app");
+    await userEvent.clear(within(dialog).getByDisplayValue("pnpm"));
+    await userEvent.type(within(dialog).getByPlaceholderText("例如：npm"), "npm");
+    await userEvent.clear(within(dialog).getByDisplayValue("dev"));
+    await userEvent.type(within(dialog).getByPlaceholderText("例如：run dev 或 --watch"), "run dev:frontend");
+    await userEvent.clear(within(dialog).getByDisplayValue("5173"));
+    await userEvent.type(within(dialog).getByPlaceholderText("例如：3000"), "4174");
+
+    await userEvent.click(within(dialog).getByRole("button", { name: "保存修改" }));
+
+    await waitFor(() => {
+      expect(updatedTemplateBody).toEqual({
+        workspaceId: "workspace-1",
+        name: "前端开发",
+        cwd: "apps/user-app",
+        command: "npm",
+        args: ["run", "dev:frontend"],
+        port: 4174,
+        runtimeType: null
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "编辑快捷启动项" })).not.toBeInTheDocument();
+    });
+
+    expect(await screen.findByText("前端开发")).toBeInTheDocument();
+    expect(screen.getByText("端口 4174")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "移除启动项" }));
+    const confirmDialog = await screen.findByRole("dialog", { name: "确认移除启动项" });
+    expect(within(confirmDialog).getByText(/前端开发/)).toBeInTheDocument();
+    await userEvent.click(within(confirmDialog).getByRole("button", { name: "确认移除" }));
+
+    await waitFor(() => {
+      expect(deleteRequested).toBe(true);
+    });
+    expect(
+      await screen.findByText("还没有快捷启动项，可以先保存一条命令或脚本。")
+    ).toBeInTheDocument();
+  });
 });
 
 function createJsonResponse(payload: unknown, status = 200): Response {
