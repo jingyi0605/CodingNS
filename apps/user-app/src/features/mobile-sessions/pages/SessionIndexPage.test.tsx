@@ -17,7 +17,11 @@ const navigationGroups = [
         title: "会话 Alpha",
         provider: "codex",
         workspaceId: "workspace-1",
-        lastMessageAt: "2026-03-27T10:00:00Z"
+        lastMessageAt: "2026-03-27T10:00:00Z",
+        runningState: null,
+        syncStatus: null,
+        lastErrorCode: null,
+        lastErrorDetail: null
       },
       {
         sessionId: "session-2",
@@ -25,7 +29,11 @@ const navigationGroups = [
         provider: "claude-code",
         workspaceId: "workspace-1",
         isFavorite: true,
-        lastMessageAt: "2026-03-27T09:00:00Z"
+        lastMessageAt: "2026-03-27T09:00:00Z",
+        runningState: null,
+        syncStatus: null,
+        lastErrorCode: null,
+        lastErrorDetail: null
       },
       {
         sessionId: "session-2-sub",
@@ -35,7 +43,11 @@ const navigationGroups = [
         parentSessionId: "session-2",
         isSubagent: true,
         subagentLabel: "worker · Beta",
-        lastMessageAt: "2026-03-27T08:30:00Z"
+        lastMessageAt: "2026-03-27T08:30:00Z",
+        runningState: null,
+        syncStatus: null,
+        lastErrorCode: null,
+        lastErrorDetail: null
       }
     ]
   },
@@ -50,7 +62,11 @@ const navigationGroups = [
         title: "会话 Gamma",
         provider: "codex",
         workspaceId: "workspace-2",
-        lastMessageAt: "2026-03-26T12:00:00Z"
+        lastMessageAt: "2026-03-26T12:00:00Z",
+        runningState: null,
+        syncStatus: null,
+        lastErrorCode: null,
+        lastErrorDetail: null
       }
     ]
   }
@@ -200,5 +216,22 @@ describe("SessionIndexPage", () => {
     fireEvent.pointerUp(betaButton, { pointerType: "touch" });
 
     expect(within(workspaceSection).queryByText("子代理 Beta-1")).not.toBeInTheDocument();
+  });
+
+  it("移动端列表会显示会话失败错误摘要", () => {
+    contextValue.navigationGroups[0].sessions[0] = {
+      ...contextValue.navigationGroups[0].sessions[0],
+      runningState: "failed",
+      syncStatus: "error",
+      lastErrorCode: "CODEX_HTTP_429",
+      lastErrorDetail: "unexpected status 429 Too Many Requests"
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+
+    renderPage();
+
+    expect(
+      screen.getByText(/CODEX_HTTP_429 · unexpected status 429 Too Many Requests/)
+    ).toBeInTheDocument();
   });
 });

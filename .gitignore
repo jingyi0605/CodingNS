@@ -43,6 +43,9 @@ ios/build/
 .env
 .env.local
 .env.*.local
+*.jks
+*.keystore
+key.properties
 
 # IDE & editor
 .vscode/
