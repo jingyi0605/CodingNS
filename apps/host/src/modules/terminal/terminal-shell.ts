@@ -278,11 +278,193 @@ function buildPosixCommandLine(template: TerminalCommandTemplate): string {
   const envPrefix = Object.entries(template.env)
     .map(([key, value]) => `${key}='${value.replaceAll("'", `'\\''`)}'`)
     .join(" ");
-  const commandLine = [template.command, ...template.args]
-    .map((item) => `'${item.replaceAll("'", `'\\''`)}'`)
-    .join(" ");
+  const commandLine = resolvePosixTemplateCommandLine(template);
 
   return envPrefix ? `${envPrefix} ${commandLine}` : commandLine;
+}
+
+function resolvePosixTemplateCommandLine(template: TerminalCommandTemplate): string {
+  if (template.args.length > 0) {
+    return quotePosixCommandParts([template.command, ...template.args]);
+  }
+
+  const parsedCommand = parseLoosePosixCommand(template.command);
+
+  if (parsedCommand.mode === "raw") {
+    return template.command;
+  }
+
+  if (parsedCommand.parts.length <= 1) {
+    return quotePosixCommandParts(parsedCommand.parts);
+  }
+
+  // 兼容历史“快捷命令”数据：用户把整条命令塞进 command，但我们不能把它整体包成单引号。
+  // 如果整串内容本身就是一个真实可执行路径（例如带空格的脚本路径），仍然按单个命令处理。
+  if (canExecuteTemplateCommandAsWhole(template.command, template.cwd)) {
+    return quotePosixCommandParts([template.command]);
+  }
+
+  if (startsWithPosixEnvAssignment(parsedCommand.parts)) {
+    return template.command;
+  }
+
+  return quotePosixCommandParts(parsedCommand.parts);
+}
+
+function quotePosixCommandParts(parts: string[]): string {
+  return parts.map((item) => `'${item.replaceAll("'", `'\\''`)}'`).join(" ");
+}
+
+function canExecuteTemplateCommandAsWhole(command: string, cwd: string): boolean {
+  const candidate = command.trim();
+
+  if (!candidate || !/\s/.test(candidate)) {
+    return false;
+  }
+
+  const unwrappedCandidate = stripWrappingQuotes(candidate);
+
+  if (path.isAbsolute(unwrappedCandidate)) {
+    return canExecuteFile(unwrappedCandidate);
+  }
+
+  const resolvedFromCwd = path.resolve(cwd, unwrappedCandidate);
+
+  return canExecuteFile(resolvedFromCwd);
+}
+
+function startsWithPosixEnvAssignment(parts: string[]): boolean {
+  if (parts.length <= 1) {
+    return false;
+  }
+
+  let sawAssignment = false;
+
+  for (const part of parts) {
+    if (/^[A-Za-z_][A-Za-z0-9_]*=.*/.test(part)) {
+      sawAssignment = true;
+      continue;
+    }
+
+    return sawAssignment;
+  }
+
+  return false;
+}
+
+function parseLoosePosixCommand(
+  command: string
+): { mode: "raw" } | { mode: "parts"; parts: string[] } {
+  const parts: string[] = [];
+  let current = "";
+  let quote: "single" | "double" | null = null;
+  let escaping = false;
+
+  for (let index = 0; index < command.length; index += 1) {
+    const char = command[index] ?? "";
+
+    if (quote === "single") {
+      if (char === "'") {
+        quote = null;
+        continue;
+      }
+
+      current += char;
+      continue;
+    }
+
+    if (quote === "double") {
+      if (char === '"') {
+        quote = null;
+        continue;
+      }
+
+      if (escaping) {
+        current += char;
+        escaping = false;
+        continue;
+      }
+
+      if (char === "\\") {
+        const nextChar = command[index + 1] ?? "";
+
+        if (nextChar === '"' || nextChar === "$" || nextChar === "`" || nextChar === "\\") {
+          escaping = true;
+          continue;
+        }
+
+        current += char;
+        continue;
+      }
+
+      if (char === "$" || char === "`") {
+        return { mode: "raw" };
+      }
+
+      current += char;
+      continue;
+    }
+
+    if (escaping) {
+      current += char;
+      escaping = false;
+      continue;
+    }
+
+    if (char === "\\") {
+      escaping = true;
+      continue;
+    }
+
+    if (char === "'") {
+      quote = "single";
+      continue;
+    }
+
+    if (char === '"') {
+      quote = "double";
+      continue;
+    }
+
+    if (/\s/.test(char)) {
+      if (current) {
+        parts.push(current);
+        current = "";
+      }
+      continue;
+    }
+
+    if (isPosixShellOperator(char) || needsRawPosixExpansion(char, current)) {
+      return { mode: "raw" };
+    }
+
+    current += char;
+  }
+
+  if (escaping || quote !== null) {
+    return { mode: "raw" };
+  }
+
+  if (current) {
+    parts.push(current);
+  }
+
+  return {
+    mode: "parts",
+    parts: parts.length > 0 ? parts : [command]
+  };
+}
+
+function isPosixShellOperator(char: string): boolean {
+  return char === "|" || char === "&" || char === ";" || char === "<" || char === ">" || char === "(" || char === ")";
+}
+
+function needsRawPosixExpansion(char: string, currentToken: string): boolean {
+  if (char === "$" || char === "`" || char === "*" || char === "?" || char === "[" || char === "{") {
+    return true;
+  }
+
+  return char === "~" && currentToken.length === 0;
 }
 
 function resolveExistingCandidate(candidates: Array<string | null | undefined>): string | null {
