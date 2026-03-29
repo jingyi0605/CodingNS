@@ -33,7 +33,7 @@ interface RuntimeOptionsBody {
   permissionMode?: string;
 }
 
-interface SendMessageBody {
+interface SendMessageBody extends RuntimeOptionsBody {
   content?: string;
   clientRequestId?: string;
 }
@@ -435,12 +435,14 @@ export class SessionController {
       "content",
       "发送消息必须提供 content"
     );
+    const runtimeOptions = normalizeRuntimeOptions(request.body);
 
     reply.status(201).send(
       await this.sessionHistoryService.sendMessage(
         request.params.sessionId,
         content,
-        request.body.clientRequestId?.trim() ?? null
+        request.body.clientRequestId?.trim() ?? null,
+        runtimeOptions?.permissionMode ?? null
       )
     );
   };

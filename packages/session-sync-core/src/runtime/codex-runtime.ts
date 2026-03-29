@@ -201,7 +201,9 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
     const context: ActiveTurnContext = {
       providerSessionId,
       rawStoreRef,
-      sequence: 0,
+      // 运行时消息必须接在历史消息后面，不能每轮都从 1 重新编号，
+      // 否则前端会把新 assistant/tool 消息排到旧消息前面，表现成用户消息一直挂在底部。
+      sequence: Math.max(0, request.sequenceBase ?? 0),
       toolNameByCallId: new Map(),
       sink,
       workspacePath: request.workspacePath,

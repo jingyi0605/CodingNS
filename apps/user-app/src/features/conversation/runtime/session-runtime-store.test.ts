@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clientConfigStore } from "../../../config/client-config-store";
 import { authStore } from "../../auth/store/auth-store";
 import { clearViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
+import { ApiError } from "../../../shared/network/api-error";
 import { SessionRuntimeStore } from "./session-runtime-store";
 
 const SESSION_RUNTIME_SNAPSHOT_KEY = "session-runtime.snapshot.session-1";
@@ -1437,6 +1438,49 @@ describe("SessionRuntimeStore", () => {
       "session-1",
       expect.objectContaining({
         content: "直接执行 git add",
+        permissionMode: "bypassPermissions"
+      })
+    );
+  });
+
+  it("实时发送降级到旧 messages 路径时也会透传 permissionMode", async () => {
+    clientConfigStore.hydrate({
+      ...clientConfigStore.getState(),
+      defaultPermissionMode: "bypassPermissions"
+    });
+    const store = new SessionRuntimeStore("session-1");
+
+    mocked.sendLiveMessage.mockRejectedValueOnce(
+      new ApiError(404, {
+        detail: "live route not found",
+        error_code: "NOT_FOUND"
+      })
+    );
+    mocked.sendSessionMessage.mockResolvedValueOnce({
+      sessionId: "session-1",
+      acceptedAt: "2026-03-24T10:00:02.000Z",
+      clientRequestId: expect.any(String),
+      message: {
+        messageId: "user-message-fallback-1",
+        provider: "codex",
+        providerSessionId: "raw-1",
+        role: "user",
+        kind: "text",
+        content: "旧链路继续发",
+        timestamp: "2026-03-24T10:00:02.000Z",
+        sequence: 61,
+        rawRef: "codex://raw#line=61",
+        toolCall: null,
+        attachments: []
+      }
+    });
+
+    await store.sendMessage("旧链路继续发");
+
+    expect(mocked.sendSessionMessage).toHaveBeenCalledWith(
+      "session-1",
+      expect.objectContaining({
+        content: "旧链路继续发",
         permissionMode: "bypassPermissions"
       })
     );

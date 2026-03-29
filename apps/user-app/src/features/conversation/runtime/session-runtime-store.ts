@@ -925,7 +925,8 @@ export class SessionRuntimeStore {
 
       return sendSessionMessage(this.sessionId, {
         content,
-        clientRequestId
+        clientRequestId,
+        permissionMode: getDefaultPermissionMode()
       });
     }
   }
