@@ -547,7 +547,7 @@ describe("TerminalPage", () => {
     });
   });
 
-  it("桌面端会把工具栏里选中的 shell 带进新建终端请求", async () => {
+  it("Windows 下点击新建终端会先弹出 shell 选择，再按确认创建", async () => {
     const createdTerminal = buildTerminal({
       id: "terminal-windows-created",
       name: "Windows 终端",
@@ -582,15 +582,20 @@ describe("TerminalPage", () => {
     mockListWorkspaceTerminals.mockResolvedValueOnce({
       items: [createdTerminal]
     });
+    Object.defineProperty(window.navigator, "platform", {
+      configurable: true,
+      value: "Win32"
+    });
 
     renderPage();
 
-    await userEvent.click(screen.getByRole("button", { name: "展开终端工具栏" }));
-    await userEvent.selectOptions(
-      screen.getByRole("combobox", { name: "新终端使用的 Shell" }),
-      "C:\\Program Files\\Git\\bin\\bash.exe"
-    );
     await userEvent.click(screen.getByRole("button", { name: "新建终端" }));
+
+    expect(mockCreateTerminal).not.toHaveBeenCalled();
+    expect(await screen.findByRole("dialog", { name: "新建终端" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /Git Bash/ }));
+    await userEvent.click(screen.getByRole("button", { name: "创建终端" }));
 
     await waitFor(() => {
       expect(mockCreateTerminal).toHaveBeenCalledWith(

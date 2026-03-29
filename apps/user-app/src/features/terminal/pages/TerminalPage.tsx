@@ -274,6 +274,7 @@ export function TerminalPage() {
   const [mobileSelectedShell, setMobileSelectedShell] = useState("");
   const [mobileQuickDrawerOpen, setMobileQuickDrawerOpen] = useState(false);
   const [mobileCreateSheetOpen, setMobileCreateSheetOpen] = useState(false);
+  const [desktopCreateSheetOpen, setDesktopCreateSheetOpen] = useState(false);
   const [loadingShellOptions, setLoadingShellOptions] = useState(false);
   const [terminals, setTerminals] = useState<TerminalDto[]>([]);
   const [creatingTerminal, setCreatingTerminal] = useState(false);
@@ -1062,6 +1063,40 @@ export function TerminalPage() {
     setMobileCreateSheetOpen(true);
   }
 
+  async function executeTerminalCreation(
+    request: TerminalCreationRequest,
+    targetPaneId: PaneId,
+    options: {
+      onCreated?: () => void;
+    } = {}
+  ): Promise<void> {
+    setCreatingTerminal(true);
+    setPendingTerminalCreationPaneId(targetPaneId);
+
+    try {
+      const terminal = await submitTerminalCreation(request);
+
+      if (!terminal) {
+        clearPendingTerminalCreation(targetPaneId);
+        return;
+      }
+
+      applyCreatedTerminalLocally(terminal, targetPaneId);
+      clearPendingTerminalCreation(targetPaneId);
+      options.onCreated?.();
+      await reloadWorkspaceResources(request.workspaceId, {
+        preferredTerminalId: terminal.id,
+        preferredPaneId: targetPaneId
+      });
+      notifyTerminal(t("terminal.created"), "success");
+    } catch (error) {
+      clearPendingTerminalCreation(targetPaneId);
+      notifyTerminal(error instanceof Error ? error.message : t("terminal.createFailed"), "error");
+    } finally {
+      setCreatingTerminal(false);
+    }
+  }
+
   function clearPendingTerminalCreation(paneId: PaneId): void {
     setPendingTerminalCreationPaneId((current) => (current === paneId ? null : current));
   }
@@ -1102,7 +1137,7 @@ export function TerminalPage() {
   async function handleCreateTerminal(): Promise<void> {
     const workspaceId = resolvedWorkspaceId;
 
-    if (!workspaceId) {
+    if (!workspaceId || creatingTerminal) {
       return;
     }
 
@@ -1112,34 +1147,69 @@ export function TerminalPage() {
       availableShellOptions.length > 0 ? availableShellOptions : shellOptions,
       selectedShell
     );
-    setCreatingTerminal(true);
-    setPendingTerminalCreationPaneId(targetPaneId);
 
-    try {
-      const terminal = await submitTerminalCreation({
+    await executeTerminalCreation(
+      {
         workspaceId,
         shell: nextShell ?? undefined,
         runtimeType: selectedRuntimeType || undefined
-      });
+      },
+      targetPaneId
+    );
+  }
 
-      if (!terminal) {
-        clearPendingTerminalCreation(targetPaneId);
-        return;
-      }
+  async function handleCreateTerminalEntry(): Promise<void> {
+    const workspaceId = resolvedWorkspaceId;
 
-      applyCreatedTerminalLocally(terminal, targetPaneId);
-      clearPendingTerminalCreation(targetPaneId);
-      await reloadWorkspaceResources(workspaceId, {
-        preferredTerminalId: terminal.id,
-        preferredPaneId: targetPaneId
-      });
-      notifyTerminal(t("terminal.created"), "success");
-    } catch (error) {
-      clearPendingTerminalCreation(targetPaneId);
-      notifyTerminal(error instanceof Error ? error.message : t("terminal.createFailed"), "error");
-    } finally {
-      setCreatingTerminal(false);
+    if (!workspaceId || creatingTerminal) {
+      return;
     }
+
+    const availableShellOptions = await ensureShellOptionsLoaded();
+    const effectiveShellOptions = availableShellOptions.length > 0 ? availableShellOptions : shellOptions;
+    const nextShell = resolvePreferredTerminalShell(effectiveShellOptions, selectedShell);
+
+    if (
+      shouldPromptForTerminalShellSelection(
+        effectiveShellOptions,
+        isMobileTerminalPage,
+        platform.ui.osFamily
+      )
+    ) {
+      setSelectedShell(nextShell ?? "");
+      setDesktopCreateSheetOpen(true);
+      return;
+    }
+
+    await handleCreateTerminal();
+  }
+
+  async function handleCreateTerminalFromDesktopSheet(): Promise<void> {
+    const workspaceId = resolvedWorkspaceId;
+
+    if (!workspaceId || creatingTerminal) {
+      return;
+    }
+
+    const availableShellOptions = shellOptions.length > 0 ? shellOptions : await ensureShellOptionsLoaded();
+    const nextShell = resolvePreferredTerminalShell(
+      availableShellOptions.length > 0 ? availableShellOptions : shellOptions,
+      selectedShell
+    );
+
+    await executeTerminalCreation(
+      {
+        workspaceId,
+        shell: nextShell ?? undefined,
+        runtimeType: resolveDefaultTerminalCreationRuntime(selectedRuntimeType, platform.ui.osFamily)
+      },
+      activePaneIdRef.current,
+      {
+        onCreated: () => {
+          setDesktopCreateSheetOpen(false);
+        }
+      }
+    );
   }
 
   async function handleCreateTerminalFromMobileSheet(): Promise<void> {
@@ -1155,37 +1225,20 @@ export function TerminalPage() {
       return;
     }
 
-    const targetPaneId: PaneId = "primary";
-    setCreatingTerminal(true);
-    setPendingTerminalCreationPaneId(targetPaneId);
-
-    try {
-      const terminal = await submitTerminalCreation({
+    await executeTerminalCreation(
+      {
         workspaceId,
         shell: shellChoice.value,
-        runtimeType: selectedRuntimeType || "tmux"
-      });
-
-      if (!terminal) {
-        clearPendingTerminalCreation(targetPaneId);
-        return;
+        runtimeType: resolveDefaultTerminalCreationRuntime(selectedRuntimeType, platform.ui.osFamily)
+      },
+      "primary",
+      {
+        onCreated: () => {
+          setMobileCreateSheetOpen(false);
+          setMobileQuickDrawerOpen(false);
+        }
       }
-
-      applyCreatedTerminalLocally(terminal, targetPaneId);
-      clearPendingTerminalCreation(targetPaneId);
-      setMobileCreateSheetOpen(false);
-      setMobileQuickDrawerOpen(false);
-      await reloadWorkspaceResources(workspaceId, {
-        preferredTerminalId: terminal.id,
-        preferredPaneId: targetPaneId
-      });
-      notifyTerminal(t("terminal.created"), "success");
-    } catch (error) {
-      clearPendingTerminalCreation(targetPaneId);
-      notifyTerminal(error instanceof Error ? error.message : t("terminal.createFailed"), "error");
-    } finally {
-      setCreatingTerminal(false);
-    }
+    );
   }
 
   async function handleCloseTerminal(terminalId: string): Promise<void> {
@@ -1354,6 +1407,7 @@ export function TerminalPage() {
       applyCreatedTerminalLocally(terminal, targetPaneId);
       setSelectedRuntimeType("embedded-pty");
       setRuntimeFallbackRequest(null);
+      setDesktopCreateSheetOpen(false);
       setMobileCreateSheetOpen(false);
       clearPendingTerminalCreation(targetPaneId);
       await reloadWorkspaceResources(request.workspaceId, {
@@ -1686,13 +1740,19 @@ export function TerminalPage() {
               </div>
             </div>
 
-            <MobileTerminalCreateSheet
+            <TerminalCreateSheet
               open={mobileCreateSheetOpen}
               loading={loadingShellOptions}
               creating={creatingTerminal}
               shellChoices={mobileShellChoices}
               selectedShell={mobileSelectedShell}
-              runtimeType={selectedRuntimeType || "tmux"}
+              runtimeType={resolveDefaultTerminalCreationRuntime(selectedRuntimeType, platform.ui.osFamily)}
+              title={t("terminal.mobileCreateSheetTitle")}
+              shellLabel={t("terminal.mobileCreateShellLabel")}
+              shellDescription={t("terminal.mobileCreateShellDescription")}
+              runtimeLabel={t("terminal.mobileCreateRuntimeLabel")}
+              runtimeDescription={t("terminal.mobileCreateRuntimeDescription")}
+              confirmLabel={t("terminal.mobileCreateConfirm")}
               onClose={() => {
                 if (creatingTerminal) {
                   return;
@@ -1866,7 +1926,7 @@ export function TerminalPage() {
                     title={t("terminal.createButton")}
                     disabled={!selectedWorkspaceId || creatingTerminal}
                     onClick={() => {
-                      void handleCreateTerminal();
+                      void handleCreateTerminalEntry();
                     }}
                   >
                     <span className="terminal-toolbar-icon" aria-hidden="true">
@@ -2114,6 +2174,34 @@ export function TerminalPage() {
           </>
         )}
       </section>
+      <TerminalCreateSheet
+        open={desktopCreateSheetOpen}
+        loading={loadingShellOptions}
+        creating={creatingTerminal}
+        shellChoices={mobileShellChoices}
+        selectedShell={selectedShell}
+        runtimeType={resolveDefaultTerminalCreationRuntime(selectedRuntimeType, platform.ui.osFamily)}
+        title={t("terminal.createDialogTitle")}
+        shellLabel={t("terminal.mobileCreateShellLabel")}
+        shellDescription={t("terminal.createDialogShellDescription")}
+        runtimeLabel={t("terminal.mobileCreateRuntimeLabel")}
+        runtimeDescription={t("terminal.createDialogRuntimeDescription")}
+        confirmLabel={t("terminal.createDialogConfirm")}
+        onClose={() => {
+          if (creatingTerminal) {
+            return;
+          }
+
+          setDesktopCreateSheetOpen(false);
+        }}
+        onSelectShell={setSelectedShell}
+        onSelectRuntime={(runtimeType) => {
+          setSelectedRuntimeType(runtimeType);
+        }}
+        onConfirm={() => {
+          void handleCreateTerminalFromDesktopSheet();
+        }}
+      />
     </main>
   );
 }
@@ -2642,13 +2730,19 @@ function useTerminalMobileHeaderHeightVar(
   }, [enabled, headerRef, resetKey, rootRef]);
 }
 
-function MobileTerminalCreateSheet({
+function TerminalCreateSheet({
   open,
   loading,
   creating,
   shellChoices,
   selectedShell,
   runtimeType,
+  title,
+  shellLabel,
+  shellDescription,
+  runtimeLabel,
+  runtimeDescription,
+  confirmLabel,
   onClose,
   onSelectShell,
   onSelectRuntime,
@@ -2660,6 +2754,12 @@ function MobileTerminalCreateSheet({
   shellChoices: MobileTerminalShellChoice[];
   selectedShell: string;
   runtimeType: SelectableTerminalRuntimeType;
+  title: string;
+  shellLabel: string;
+  shellDescription: string;
+  runtimeLabel: string;
+  runtimeDescription: string;
+  confirmLabel: string;
   onClose: () => void;
   onSelectShell: (shell: string) => void;
   onSelectRuntime: (runtimeType: SelectableTerminalRuntimeType) => void;
@@ -2699,19 +2799,19 @@ function MobileTerminalCreateSheet({
         className="mobile-workspace-home-sheet terminal-mobile-create-sheet"
         role="dialog"
         aria-modal="true"
-        aria-label={t("terminal.mobileCreateSheetTitle")}
+        aria-label={title}
         onClick={(event) => event.stopPropagation()}
       >
         <div className="mobile-workspace-home-sheet-card terminal-mobile-create-sheet-card">
           <div className="mobile-workspace-home-sheet-header">
-            <strong>{t("terminal.mobileCreateSheetTitle")}</strong>
+            <strong>{title}</strong>
           </div>
 
           <div className="terminal-mobile-create-sheet-body">
             <section className="terminal-mobile-create-section">
               <div className="terminal-mobile-create-section-copy">
-                <strong>{t("terminal.mobileCreateShellLabel")}</strong>
-                <p>{t("terminal.mobileCreateShellDescription")}</p>
+                <strong>{shellLabel}</strong>
+                <p>{shellDescription}</p>
               </div>
               {loading && shellChoices.length === 0 ? (
                 <div className="terminal-mobile-create-loading">
@@ -2754,8 +2854,8 @@ function MobileTerminalCreateSheet({
 
             <section className="terminal-mobile-create-section">
               <div className="terminal-mobile-create-section-copy">
-                <strong>{t("terminal.mobileCreateRuntimeLabel")}</strong>
-                <p>{t("terminal.mobileCreateRuntimeDescription")}</p>
+                <strong>{runtimeLabel}</strong>
+                <p>{runtimeDescription}</p>
               </div>
               <div className="terminal-mobile-choice-grid" role="list">
                 {runtimeCards.map((option) => {
@@ -2791,7 +2891,7 @@ function MobileTerminalCreateSheet({
               disabled={confirmDisabled}
               onClick={onConfirm}
             >
-              {creating ? t("terminal.creating") : t("terminal.mobileCreateConfirm")}
+              {creating ? t("terminal.creating") : confirmLabel}
             </button>
           </div>
         </div>
@@ -4205,6 +4305,29 @@ function resolvePreferredTerminalShell(
   }
 
   return shellOptions.find((option) => option.available)?.shell ?? null;
+}
+
+function resolveDefaultTerminalCreationRuntime(
+  runtimeType: SelectableTerminalRuntimeType,
+  osFamily: ReturnType<typeof usePlatform>["ui"]["osFamily"]
+): SelectableTerminalRuntimeType {
+  if (runtimeType) {
+    return runtimeType;
+  }
+
+  return osFamily === "windows" ? "embedded-pty" : "tmux";
+}
+
+function shouldPromptForTerminalShellSelection(
+  shellOptions: TerminalShellOptionDto[],
+  isMobileLayout: boolean,
+  osFamily: ReturnType<typeof usePlatform>["ui"]["osFamily"]
+): boolean {
+  if (isMobileLayout || osFamily !== "windows") {
+    return false;
+  }
+
+  return shellOptions.filter((option) => option.available).length > 1;
 }
 
 function shouldBypassTerminalKeyboardFallback(

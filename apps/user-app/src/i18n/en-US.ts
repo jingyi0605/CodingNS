@@ -228,6 +228,12 @@ export const enUS = {
     mobileCreateRuntimeDescription: "Choose whether this terminal should stay persistent or only live in the current runtime.",
     mobileCreateLoadingShells: "Loading available terminal types for this system...",
     mobileCreateConfirm: "Create this terminal",
+    createDialogTitle: "Create Terminal",
+    createDialogShellDescription:
+      "Choose the shell for this terminal before creation. On Windows we should not silently fall back to CMD anymore.",
+    createDialogRuntimeDescription:
+      "Choose whether this terminal should stay persistent or only live in the current runtime.",
+    createDialogConfirm: "Create Terminal",
     mobileRuntimePersistentTitle: "tmux (persistent)",
     mobileRuntimePersistentDescription: "Best for development terminals that should stay alive longer.",
     mobileRuntimeSessionTitle: "runtime (current session)",
@@ -432,6 +438,10 @@ export const enUS = {
     filePanelMutateFailed: "File operation failed. Check the path and current state.",
     filePanelCreateFilePrompt: "Enter the relative path of the file to create",
     filePanelCreateDirectoryPrompt: "Enter the relative path of the directory to create",
+    filePanelFilterChanges: "Changes Only",
+    filePanelShowAll: "Show All",
+    filePanelNoChanges: "No changed files.",
+    filePanelBinaryPreview: "Binary files cannot be previewed.",
     filePanelDeleteConfirm: "Delete this file? {path}",
     filePanelRenameMovePrompt: "Enter the new relative path",
     unavailableAction: "Unavailable",
