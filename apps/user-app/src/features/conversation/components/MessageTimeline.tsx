@@ -774,22 +774,22 @@ function ApplyPatchToolItem({
   tool: ResolvedToolCall;
   preview: ApplyPatchPreview;
 }) {
-  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [selectedFileIndex, setSelectedFileIndex] = useState<number | null>(null);
 
   useEffect(() => {
-    if (!isModalOpen) {
+    if (selectedFileIndex === null) {
       return undefined;
     }
 
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
-        setIsModalOpen(false);
+        setSelectedFileIndex(null);
       }
     }
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isModalOpen]);
+  }, [selectedFileIndex]);
 
   return (
     <>
@@ -799,7 +799,7 @@ function ApplyPatchToolItem({
             key={buildApplyPatchFileRenderKey(file, index)}
             type="button"
             className="apply-patch-summary-row"
-            onClick={() => setIsModalOpen(true)}
+            onClick={() => setSelectedFileIndex(index)}
           >
             <span className="apply-patch-summary-label">{getApplyPatchActionLabel(file.action)}</span>
             <span className="apply-patch-summary-file" title={buildApplyPatchFullPathLabel(file)}>
@@ -813,14 +813,14 @@ function ApplyPatchToolItem({
         ))}
       </div>
 
-      {isModalOpen && typeof document !== "undefined"
+      {selectedFileIndex !== null && typeof document !== "undefined"
         ? createPortal(
             <div className="workbench-modal-layer apply-patch-modal" role="dialog" aria-modal="true">
               <button
                 type="button"
                 className="workbench-modal-backdrop"
                 aria-label={t("common.close")}
-                onClick={() => setIsModalOpen(false)}
+                onClick={() => setSelectedFileIndex(null)}
               />
               <div className="workbench-modal-card surface-card apply-patch-modal-card">
                 <div className="workbench-modal-header">
@@ -832,69 +832,71 @@ function ApplyPatchToolItem({
                     type="button"
                     className="workbench-modal-close"
                     aria-label={t("common.close")}
-                    onClick={() => setIsModalOpen(false)}
+                    onClick={() => setSelectedFileIndex(null)}
                   >
                     x
                   </button>
                 </div>
 
-                <div className="apply-patch-modal-totals">
-                  <span className="apply-patch-stat-pill positive">
-                    {t("conversation.applyPatchAddedStat")} +{preview.totalAdditions}
-                  </span>
-                  <span className="apply-patch-stat-pill negative">
-                    {t("conversation.applyPatchRemovedStat")} -{preview.totalDeletions}
-                  </span>
-                </div>
+                {(() => {
+                  const file = preview.files[selectedFileIndex];
+                  if (!file) return null;
+                  return (
+                    <>
+                      <div className="apply-patch-modal-totals">
+                        <span className="apply-patch-stat-pill positive">
+                          {t("conversation.applyPatchAddedStat")} +{file.additions}
+                        </span>
+                        <span className="apply-patch-stat-pill negative">
+                          {t("conversation.applyPatchRemovedStat")} -{file.deletions}
+                        </span>
+                      </div>
 
-                <div className="apply-patch-modal-body">
-                  {preview.files.length === 0 ? (
-                    <p className="status-text">{t("conversation.applyPatchEmpty")}</p>
-                  ) : (
-                    preview.files.map((file, index) => (
-                      <section
-                        key={buildApplyPatchFileRenderKey(file, index)}
-                        className="apply-patch-file-panel"
-                      >
-                        <div className="apply-patch-file-panel-header">
-                          <div className="apply-patch-file-panel-title">
-                            <span className="apply-patch-summary-label">{getApplyPatchActionLabel(file.action)}</span>
-                            <strong>{buildApplyPatchFullPathLabel(file)}</strong>
+                      <div className="apply-patch-modal-body">
+                        <section
+                          key={buildApplyPatchFileRenderKey(file, selectedFileIndex)}
+                          className="apply-patch-file-panel"
+                        >
+                          <div className="apply-patch-file-panel-header">
+                            <div className="apply-patch-file-panel-title">
+                              <span className="apply-patch-summary-label">{getApplyPatchActionLabel(file.action)}</span>
+                              <strong>{buildApplyPatchFullPathLabel(file)}</strong>
+                            </div>
+                            <div className="apply-patch-summary-stats">
+                              <span className="apply-patch-summary-added">+{file.additions}</span>
+                              <span className="apply-patch-summary-removed">-{file.deletions}</span>
+                            </div>
                           </div>
-                          <div className="apply-patch-summary-stats">
-                            <span className="apply-patch-summary-added">+{file.additions}</span>
-                            <span className="apply-patch-summary-removed">-{file.deletions}</span>
+                          <div className="apply-patch-diff-view">
+                            <div className="apply-patch-diff-scroll">
+                              {file.lines.map((line, index) => (
+                                <div
+                                  key={`${buildApplyPatchFullPathLabel(file)}:${index}`}
+                                  className={`apply-patch-diff-line ${resolveApplyPatchLineClassName(line.kind)}`}
+                                >
+                                  <span className="apply-patch-line-number">
+                                    {formatApplyPatchLineNumber(line.oldLineNumber)}
+                                  </span>
+                                  <span className="apply-patch-line-number">
+                                    {formatApplyPatchLineNumber(line.newLineNumber)}
+                                  </span>
+                                  <span className="apply-patch-line-content">{line.text || " "}</span>
+                                </div>
+                              ))}
+                            </div>
                           </div>
-                        </div>
-                        <div className="apply-patch-diff-view">
-                          <div className="apply-patch-diff-scroll">
-                            {file.lines.map((line, index) => (
-                              <div
-                                key={`${buildApplyPatchFullPathLabel(file)}:${index}`}
-                                className={`apply-patch-diff-line ${resolveApplyPatchLineClassName(line.kind)}`}
-                              >
-                                <span className="apply-patch-line-number">
-                                  {formatApplyPatchLineNumber(line.oldLineNumber)}
-                                </span>
-                                <span className="apply-patch-line-number">
-                                  {formatApplyPatchLineNumber(line.newLineNumber)}
-                                </span>
-                                <span className="apply-patch-line-content">{line.text || " "}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      </section>
-                    ))
-                  )}
+                        </section>
 
-                  {tool.error ? (
-                    <section className="apply-patch-error-panel">
-                      <div className="tool-call-section-label">{t("conversation.toolResultLabel")}</div>
-                      <pre className="tool-call-error">{tool.error}</pre>
-                    </section>
-                  ) : null}
-                </div>
+                        {tool.error ? (
+                          <section className="apply-patch-error-panel">
+                            <div className="tool-call-section-label">{t("conversation.toolResultLabel")}</div>
+                            <pre className="tool-call-error">{tool.error}</pre>
+                          </section>
+                        ) : null}
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
             </div>,
             document.body
