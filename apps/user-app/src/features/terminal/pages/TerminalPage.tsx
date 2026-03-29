@@ -1,5 +1,7 @@
 import {
+  type ClipboardEvent as ReactClipboardEvent,
   forwardRef,
+  type KeyboardEvent as ReactKeyboardEvent,
   useCallback,
   useEffect,
   useMemo,
@@ -268,6 +270,7 @@ export function TerminalPage() {
   const [selectedRuntimeType, setSelectedRuntimeType] =
     useState<SelectableTerminalRuntimeType>("");
   const [shellOptions, setShellOptions] = useState<TerminalShellOptionDto[]>([]);
+  const [selectedShell, setSelectedShell] = useState("");
   const [mobileSelectedShell, setMobileSelectedShell] = useState("");
   const [mobileQuickDrawerOpen, setMobileQuickDrawerOpen] = useState(false);
   const [mobileCreateSheetOpen, setMobileCreateSheetOpen] = useState(false);
@@ -460,6 +463,13 @@ export function TerminalPage() {
     isMobileTerminalPage,
     selectedWorkspaceId || resolvedWorkspaceId
   );
+
+  useEffect(() => {
+    setSelectedShell((current) => {
+      const nextShell = resolvePreferredTerminalShell(shellOptions, current);
+      return nextShell ?? "";
+    });
+  }, [shellOptions]);
 
   useEffect(() => {
     setMobileSelectedShell((current) => {
@@ -789,6 +799,7 @@ export function TerminalPage() {
   useEffect(() => {
     if (!selectedWorkspaceId) {
       setShellOptions([]);
+      setSelectedShell("");
       setMobileQuickDrawerOpen(false);
       setMobileCreateSheetOpen(false);
       terminalsRef.current = [];
@@ -1096,12 +1107,18 @@ export function TerminalPage() {
     }
 
     const targetPaneId: PaneId = isMobileTerminalPage ? "primary" : activePaneIdRef.current;
+    const availableShellOptions = await ensureShellOptionsLoaded();
+    const nextShell = resolvePreferredTerminalShell(
+      availableShellOptions.length > 0 ? availableShellOptions : shellOptions,
+      selectedShell
+    );
     setCreatingTerminal(true);
     setPendingTerminalCreationPaneId(targetPaneId);
 
     try {
       const terminal = await submitTerminalCreation({
         workspaceId,
+        shell: nextShell ?? undefined,
         runtimeType: selectedRuntimeType || undefined
       });
 
@@ -1869,6 +1886,34 @@ export function TerminalPage() {
                       aria-hidden={!toolbarOpen}
                     >
                       <div className="terminal-toolbar-cluster">
+                        <div className="terminal-toolbar-section">
+                          <span className="terminal-toolbar-label">{t("terminal.shellField")}</span>
+                          <select
+                            className="terminal-runtime-select"
+                            value={selectedShell}
+                            aria-label={t("terminal.shellField")}
+                            onChange={(event) => {
+                              setSelectedShell(event.target.value);
+                            }}
+                          >
+                            {shellOptions.length > 0 ? (
+                              shellOptions.map((option) => (
+                                <option
+                                  key={option.id}
+                                  value={option.shell}
+                                  disabled={!option.available}
+                                >
+                                  {option.available
+                                    ? option.label
+                                    : `${option.label} - ${t("terminal.shellUnavailable")}`}
+                                </option>
+                              ))
+                            ) : (
+                              <option value="">{t("common.loading")}</option>
+                            )}
+                          </select>
+                        </div>
+
                         <div className="terminal-toolbar-section">
                           <span className="terminal-toolbar-label">{t("terminal.runtimeField")}</span>
                           <select
@@ -2980,6 +3025,15 @@ function TerminalWorkspacePane({
   const activeRecoveryStateRef = useRef<"idle_closed" | null>(null);
   const activeTerminalStatusRef = useRef<TerminalDto["status"] | null>(terminal?.status ?? null);
   const activePaneRef = useRef(active);
+  const useKeyboardFallback = !isMobileLayout;
+
+  const forwardTerminalInput = useCallback((content: string) => {
+    if (!content) {
+      return;
+    }
+
+    realtimeClientRef.current?.sendInput(content);
+  }, []);
 
   const updateOldestLoadedSeq = useCallback((cursor: string | null | undefined) => {
     const value = Number(cursor);
@@ -3149,9 +3203,7 @@ function TerminalWorkspacePane({
         hasOlder: hasOlderHistoryRef.current
       }),
       canResize: () => activeTerminalStatusRef.current === "running",
-      onInput: (content) => {
-        realtimeClientRef.current?.sendInput(content);
-      },
+      onInput: forwardTerminalInput,
       onResize: ({ cols, rows }) => {
         realtimeClientRef.current?.resize(cols, rows);
       },
@@ -3187,7 +3239,7 @@ function TerminalWorkspacePane({
       }
       registerApi(paneId, null);
     };
-  }, [loadOlderHistory, paneId, registerApi, terminal?.id, zoomScale]);
+  }, [forwardTerminalInput, loadOlderHistory, paneId, registerApi, terminal?.id, zoomScale]);
 
   useEffect(() => {
     realtimeClientRef.current?.close();
@@ -3348,17 +3400,68 @@ function TerminalWorkspacePane({
     updateOldestLoadedSeq
   ]);
 
+  const handleKeyboardFallback = useCallback(
+    (event: ReactKeyboardEvent<HTMLElement>) => {
+      if (!useKeyboardFallback || !active || !terminal?.id) {
+        return;
+      }
+
+      if (shouldBypassTerminalKeyboardFallback(event)) {
+        return;
+      }
+
+      const sequence = translateKeyboardEventToTerminalInput(event.nativeEvent);
+
+      if (!sequence) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      forwardTerminalInput(sequence);
+      viewportRuntimeRef.current?.focus();
+    },
+    [active, forwardTerminalInput, terminal?.id, useKeyboardFallback]
+  );
+
+  const handlePasteFallback = useCallback(
+    (event: ReactClipboardEvent<HTMLElement>) => {
+      if (!useKeyboardFallback || !active || !terminal?.id) {
+        return;
+      }
+
+      if (isTerminalManagedInputTarget(event.target)) {
+        return;
+      }
+
+      const text = event.clipboardData.getData("text");
+
+      if (!text) {
+        return;
+      }
+
+      event.preventDefault();
+      forwardTerminalInput(text);
+      viewportRuntimeRef.current?.focus();
+    },
+    [active, forwardTerminalInput, terminal?.id, useKeyboardFallback]
+  );
+
   return (
     <article
       className="terminal-pane-card"
       data-active={active}
       data-empty={!terminal}
-      onMouseDown={() => {
+      tabIndex={terminal ? 0 : -1}
+      onMouseDown={(event) => {
         onActivate(paneId);
+        event.currentTarget.focus({ preventScroll: true });
       }}
       onClick={() => {
         viewportRuntimeRef.current?.focus();
       }}
+      onKeyDown={handleKeyboardFallback}
+      onPaste={handlePasteFallback}
       onTouchStart={(event) => {
         if (!isMobileLayout) {
           return;
@@ -3498,6 +3601,9 @@ function createTerminalViewportRuntime(input: {
   let touchMomentumFrameId: number | null = null;
   let touchMomentumRemainder = 0;
   let touchMomentumEligible = false;
+  const handleInteractionFocus = () => {
+    terminal.focus();
+  };
 
   terminal.loadAddon(fitAddon);
   terminal.loadAddon(serializeAddon);
@@ -3535,6 +3641,9 @@ function createTerminalViewportRuntime(input: {
         : input.container;
   const interactionTarget =
     xtermRootElement instanceof HTMLElement ? xtermRootElement : input.container;
+
+  interactionTarget.addEventListener("mousedown", handleInteractionFocus, { passive: true });
+  interactionTarget.addEventListener("pointerdown", handleInteractionFocus, { passive: true });
 
   // 默认交给 xterm 原生视口处理滚动，这里只做诊断采样，不再自己模拟滚动。
   scrollTarget.style.touchAction = "pan-y";
@@ -3935,6 +4044,8 @@ function createTerminalViewportRuntime(input: {
       if (persistTimer !== null) {
         window.clearTimeout(persistTimer);
       }
+      interactionTarget.removeEventListener("mousedown", handleInteractionFocus);
+      interactionTarget.removeEventListener("pointerdown", handleInteractionFocus);
       interactionTarget.removeEventListener("touchstart", handleTouchStart);
       interactionTarget.removeEventListener("touchmove", handleTouchMove);
       interactionTarget.removeEventListener("touchend", handleTouchEnd);
@@ -4075,6 +4186,147 @@ function parseTerminalShellOptions(input: unknown): TerminalShellOptionDto[] {
       typeof candidate.available === "boolean"
     );
   });
+}
+
+function resolvePreferredTerminalShell(
+  shellOptions: TerminalShellOptionDto[],
+  selectedShell: string
+): string | null {
+  const normalizedSelectedShell = selectedShell.trim();
+
+  if (normalizedSelectedShell) {
+    const matched = shellOptions.find(
+      (option) => option.available && option.shell === normalizedSelectedShell
+    );
+
+    if (matched) {
+      return matched.shell;
+    }
+  }
+
+  return shellOptions.find((option) => option.available)?.shell ?? null;
+}
+
+function shouldBypassTerminalKeyboardFallback(
+  event: ReactKeyboardEvent<HTMLElement>
+): boolean {
+  if (event.nativeEvent.isComposing || isTerminalManagedInputTarget(event.target)) {
+    return true;
+  }
+
+  if (event.metaKey || event.altKey) {
+    return true;
+  }
+
+  const currentTarget = event.currentTarget;
+
+  if (currentTarget instanceof HTMLElement && currentTarget.dataset.empty === "true") {
+    return true;
+  }
+
+  return false;
+}
+
+function isTerminalManagedInputTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  const tagName = target.tagName.toLowerCase();
+
+  if (tagName === "input" || tagName === "textarea" || tagName === "select") {
+    return true;
+  }
+
+  return target.isContentEditable;
+}
+
+export function translateKeyboardEventToTerminalInput(event: KeyboardEvent): string | null {
+  const key = event.key;
+
+  if (!key || key === "Process" || key === "Dead" || key === "Unidentified") {
+    return null;
+  }
+
+  if (event.ctrlKey) {
+    return translateCtrlKeyboardEvent(key);
+  }
+
+  if (key.length === 1) {
+    return key;
+  }
+
+  switch (key) {
+    case "Enter":
+      return "\r";
+    case "Backspace":
+      return "\u007f";
+    case "Tab":
+      return "\t";
+    case "Escape":
+      return "\u001b";
+    case "ArrowUp":
+      return "\u001b[A";
+    case "ArrowDown":
+      return "\u001b[B";
+    case "ArrowRight":
+      return "\u001b[C";
+    case "ArrowLeft":
+      return "\u001b[D";
+    case "Home":
+      return "\u001b[H";
+    case "End":
+      return "\u001b[F";
+    case "Delete":
+      return "\u001b[3~";
+    case "Insert":
+      return "\u001b[2~";
+    case "PageUp":
+      return "\u001b[5~";
+    case "PageDown":
+      return "\u001b[6~";
+    default:
+      return null;
+  }
+}
+
+function translateCtrlKeyboardEvent(key: string): string | null {
+  if (key.length === 1) {
+    const normalizedKey = key.toUpperCase();
+
+    if (normalizedKey >= "A" && normalizedKey <= "Z") {
+      return String.fromCharCode(normalizedKey.charCodeAt(0) - 64);
+    }
+
+    switch (normalizedKey) {
+      case "@":
+      case " ":
+        return "\u0000";
+      case "[":
+        return "\u001b";
+      case "\\":
+        return "\u001c";
+      case "]":
+        return "\u001d";
+      case "^":
+        return "\u001e";
+      case "_":
+        return "\u001f";
+      default:
+        return null;
+    }
+  }
+
+  switch (key) {
+    case "Enter":
+      return "\n";
+    case "Backspace":
+      return "\b";
+    case "Tab":
+      return "\t";
+    default:
+      return null;
+  }
 }
 
 function buildMobileTerminalShellChoices(

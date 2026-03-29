@@ -10,9 +10,10 @@ import { ToastProvider } from "../../../shared/toast";
 import type { WorkspaceSessionGroup } from "../../conversation/components/WorkbenchLayout";
 import type { TerminalDto, TerminalShellOptionDto } from "../api/terminal-api";
 import { persistSelectedWorkspaceId } from "../runtime/terminal-page-persistence";
-import { TerminalPage } from "./TerminalPage";
+import { TerminalPage, translateKeyboardEventToTerminalInput } from "./TerminalPage";
 
 const originalInnerWidth = window.innerWidth;
+const originalNavigatorPlatform = Object.getOwnPropertyDescriptor(window.navigator, "platform");
 
 const {
   navigationGroups,
@@ -486,11 +487,17 @@ describe("TerminalPage", () => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
     global.WebSocket = originalWebSocket;
+    delete window.__TAURI_INTERNALS__;
     Object.defineProperty(window, "innerWidth", {
       configurable: true,
       writable: true,
       value: originalInnerWidth
     });
+    if (originalNavigatorPlatform) {
+      Object.defineProperty(window.navigator, "platform", originalNavigatorPlatform);
+    } else {
+      Reflect.deleteProperty(window.navigator, "platform");
+    }
 
     if (originalFonts) {
       Object.defineProperty(document, "fonts", originalFonts);
@@ -537,6 +544,61 @@ describe("TerminalPage", () => {
 
     await waitFor(() => {
       expect(screen.getByText("工作终端")).toBeInTheDocument();
+    });
+  });
+
+  it("桌面端会把工具栏里选中的 shell 带进新建终端请求", async () => {
+    const createdTerminal = buildTerminal({
+      id: "terminal-windows-created",
+      name: "Windows 终端",
+      shell: "C:\\Program Files\\Git\\bin\\bash.exe"
+    });
+    const windowsShellOptions: TerminalShellOptionDto[] = [
+      {
+        id: "cmd",
+        label: "命令提示符 (CMD)",
+        shell: "C:\\Windows\\System32\\cmd.exe",
+        available: true,
+        unavailableReason: null
+      },
+      {
+        id: "powershell",
+        label: "PowerShell",
+        shell: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        available: true,
+        unavailableReason: null
+      },
+      {
+        id: "git-bash",
+        label: "Git Bash",
+        shell: "C:\\Program Files\\Git\\bin\\bash.exe",
+        available: true,
+        unavailableReason: null
+      }
+    ];
+
+    setTerminalManagerSnapshot("workspace-1", [], windowsShellOptions);
+    mockCreateTerminal.mockResolvedValueOnce(createdTerminal);
+    mockListWorkspaceTerminals.mockResolvedValueOnce({
+      items: [createdTerminal]
+    });
+
+    renderPage();
+
+    await userEvent.click(screen.getByRole("button", { name: "展开终端工具栏" }));
+    await userEvent.selectOptions(
+      screen.getByRole("combobox", { name: "新终端使用的 Shell" }),
+      "C:\\Program Files\\Git\\bin\\bash.exe"
+    );
+    await userEvent.click(screen.getByRole("button", { name: "新建终端" }));
+
+    await waitFor(() => {
+      expect(mockCreateTerminal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workspaceId: "workspace-1",
+          shell: "C:\\Program Files\\Git\\bin\\bash.exe"
+        })
+      );
     });
   });
 
@@ -1056,5 +1118,22 @@ describe("TerminalPage", () => {
 
     expect(viewportAfterTouchMove).toBeGreaterThan(10);
     expect(terminal.buffer.active.viewportY).toBeGreaterThan(viewportAfterTouchMove);
+  });
+
+  it("键盘输入兜底会把常见按键翻译成终端序列", () => {
+    expect(
+      translateKeyboardEventToTerminalInput(new KeyboardEvent("keydown", { key: "d" }))
+    ).toBe("d");
+    expect(
+      translateKeyboardEventToTerminalInput(new KeyboardEvent("keydown", { key: "Enter" }))
+    ).toBe("\r");
+    expect(
+      translateKeyboardEventToTerminalInput(
+        new KeyboardEvent("keydown", { key: "c", ctrlKey: true })
+      )
+    ).toBe("\u0003");
+    expect(
+      translateKeyboardEventToTerminalInput(new KeyboardEvent("keydown", { key: "ArrowUp" }))
+    ).toBe("\u001b[A");
   });
 });
