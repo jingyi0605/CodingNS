@@ -15,6 +15,7 @@ out/
 vendor/*
 !vendor/wry-0.54.4/
 !vendor/wry-0.54.4/**
+tmp
 
 # Electron / Tauri
 release/

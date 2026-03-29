@@ -3,6 +3,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   appendJsonLine,
@@ -842,13 +843,59 @@ async function loadCodexClient(): Promise<CodexSdkClient> {
     "name",
     "return import(name);"
   ) as (name: string) => Promise<unknown>;
-  const module = (await runtimeImport(moduleName)) as Partial<CodexSdkModule>;
+  const resolvedModuleName = resolveCodexSdkModuleSpecifier(moduleName);
+  const module = (await runtimeImport(resolvedModuleName)) as Partial<CodexSdkModule>;
 
   if (!module.Codex) {
     throw new Error("CODEX_SDK_UNAVAILABLE");
   }
 
   return new module.Codex();
+}
+
+function resolveCodexSdkModuleSpecifier(moduleName: string): string {
+  const localSdkEntry = findNodeModulesFile(
+    dirname(fileURLToPath(import.meta.url)),
+    ["@openai", "codex-sdk", "dist", "index.js"]
+  );
+
+  if (localSdkEntry) {
+    return pathToFileURL(localSdkEntry).href;
+  }
+
+  if (typeof import.meta.resolve === "function") {
+    return import.meta.resolve(moduleName);
+  }
+
+  return moduleName;
+}
+
+function findNodeModulesFile(startDirectory: string, relativeSegments: string[]): string | null {
+  let currentDirectory = startDirectory;
+
+  while (true) {
+    const candidate = resolveNodeModulesCandidate(currentDirectory, relativeSegments);
+
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+
+    const parentDirectory = dirname(currentDirectory);
+
+    if (parentDirectory === currentDirectory) {
+      return null;
+    }
+
+    currentDirectory = parentDirectory;
+  }
+}
+
+function resolveNodeModulesCandidate(currentDirectory: string, relativeSegments: string[]): string {
+  if (basename(currentDirectory) === "node_modules") {
+    return resolve(currentDirectory, ...relativeSegments);
+  }
+
+  return resolve(currentDirectory, "node_modules", ...relativeSegments);
 }
 
 function buildRuntimeRawStoreRef(providerSessionId: string): string {

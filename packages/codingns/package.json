@@ -1,6 +1,6 @@
 {
   "name": "@jingyi0605/codingns",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "bin": {
     "codingns": "./bin/codingns.mjs"
@@ -9,7 +9,7 @@
     "bin",
     "dist",
     "README.md",
-    "node_modules/@openai",
+    "scripts/postinstall.mjs",
     "node_modules/@codingns/session-sync-core"
   ],
   "bundleDependencies": [
@@ -20,24 +20,18 @@
   },
   "scripts": {
     "build": "node ./scripts/build.mjs",
-    "prepack": "node ./scripts/build.mjs"
+    "prepack": "node ./scripts/build.mjs",
+    "postinstall": "node ./scripts/postinstall.mjs"
   },
   "publishConfig": {
     "access": "public"
   },
   "dependencies": {
-    "@codingns/session-sync-core": "workspace:*",
+    "@codingns/session-sync-core": "0.1.0",
+    "@openai/codex-sdk": "^0.116.0",
     "better-sqlite3": "^12.8.0",
     "fastify": "^5.8.2",
     "node-pty": "^1.0.0",
     "ws": "^8.20.0"
-  },
-  "optionalDependencies": {
-    "@openai/codex-darwin-arm64": "npm:@openai/codex@0.116.0-darwin-arm64",
-    "@openai/codex-darwin-x64": "npm:@openai/codex@0.116.0-darwin-x64",
-    "@openai/codex-linux-arm64": "npm:@openai/codex@0.116.0-linux-arm64",
-    "@openai/codex-linux-x64": "npm:@openai/codex@0.116.0-linux-x64",
-    "@openai/codex-win32-arm64": "npm:@openai/codex@0.116.0-win32-arm64",
-    "@openai/codex-win32-x64": "npm:@openai/codex@0.116.0-win32-x64"
   }
 }

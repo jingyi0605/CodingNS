@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import crypto from "node:crypto";
 import os from "node:os";
 import path from "node:path";
@@ -130,15 +131,48 @@ function resolveCodexCliPath(configuredPath: string | undefined, homeDir: string
     return normalizedConfiguredPath;
   }
 
-  const candidates = [
-    path.resolve(process.cwd(), "node_modules", ".bin", "codex"),
-    path.resolve(process.cwd(), "packages", "session-sync-core", "node_modules", ".bin", "codex"),
-    path.join(homeDir, ".local", "bin", "codex"),
-    process.platform === "darwin" ? "/Applications/Codex.app/Contents/Resources/codex" : null
-  ].filter((value): value is string => Boolean(value));
+  const resolvedCodexScript = resolveModuleSpecifier("@openai/codex/bin/codex.js");
+
+  if (resolvedCodexScript) {
+    return resolvedCodexScript;
+  }
+
+  const configDir = path.dirname(fileURLToPath(import.meta.url));
+  const moduleSearchRoots = uniquePaths([
+    process.cwd(),
+    path.resolve(configDir, "..", "..", ".."),
+    resolveAppRootDir()
+  ]);
+  const nestedBinSegments = ["node_modules", "@openai", "codex-sdk", "node_modules", ".bin"];
+  const candidates = process.platform === "win32"
+    ? [
+      ...moduleSearchRoots.flatMap((root) => [
+        path.join(root, "node_modules", ".bin", "codex.cmd"),
+        path.join(root, "node_modules", ".bin", "codex.exe"),
+        path.join(root, "node_modules", ".bin", "codex"),
+        path.join(root, ...nestedBinSegments, "codex.cmd"),
+        path.join(root, ...nestedBinSegments, "codex.exe"),
+        path.join(root, ...nestedBinSegments, "codex")
+      ]),
+      normalizeOptionalText(process.env.APPDATA)
+        ? path.join(process.env.APPDATA as string, "npm", "codex.cmd")
+        : null,
+      normalizeOptionalText(process.env.APPDATA)
+        ? path.join(process.env.APPDATA as string, "npm", "codex.exe")
+        : null
+    ]
+    : [
+      ...moduleSearchRoots.flatMap((root) => [
+        path.join(root, "node_modules", ".bin", "codex"),
+        path.join(root, ...nestedBinSegments, "codex")
+      ]),
+      path.resolve(process.cwd(), "packages", "session-sync-core", "node_modules", ".bin", "codex"),
+      path.join(homeDir, ".local", "bin", "codex"),
+      process.platform === "darwin" ? "/Applications/Codex.app/Contents/Resources/codex" : null
+    ];
 
   for (const candidate of candidates) {
-    if (existsSync(candidate)) {
+    if (candidate && existsSync(candidate)) {
       return candidate;
     }
   }
@@ -216,4 +250,17 @@ function resolveExistingDir(candidate: string | null): string | null {
   }
 
   return existsSync(candidate) ? candidate : null;
+}
+
+function uniquePaths(values: string[]): string[] {
+  return [...new Set(values.map((value) => path.resolve(value)))];
+}
+
+function resolveModuleSpecifier(specifier: string): string | null {
+  try {
+    const require = createRequire(import.meta.url);
+    return require.resolve(specifier);
+  } catch {
+    return null;
+  }
 }
