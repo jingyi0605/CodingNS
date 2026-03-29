@@ -621,15 +621,15 @@ export function GitSidebar({ className, workspaceId }: GitSidebarProps) {
 
     setPushResults(results);
     requestGitSnapshotRefresh();
+    setActioning(false);
 
     if (!hasError) {
       showToast({
         title: t("git.pushAllSuccess", { count: String(remoteNames.length) }),
         tone: "success"
       });
+      setPushRemoteModalOpen(false);
     }
-
-    setActioning(false);
   }
 
   async function handleRemoteAction(action: "fetch" | "pull" | "push") {
