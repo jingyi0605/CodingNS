@@ -4,10 +4,13 @@ import { delimiter, dirname, isAbsolute, join, sep } from "node:path";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 
 import {
+  buildClaudeMessageSignature,
+  buildClaudeProgressiveTrackKey,
   buildClaudeStableRawRef,
   normalizeClaudeMessagePart,
   normalizeClaudeMessageParts,
   readClaudeMessageId,
+  shouldReuseClaudeProgressiveIdentity,
   toClaudeRecord,
   type ClaudeMessageEnvelope,
   type ClaudeStableMessageRef
@@ -20,6 +23,7 @@ import {
   stringifyStructuredValue,
   workspaceSlug
 } from "../providers/utils.js";
+import type { NormalizedMessage } from "../types.js";
 import type {
   ProviderRuntimeAdapter,
   ProviderRuntimeEventSink,
@@ -160,6 +164,8 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
     let sequence = 0;
     const toolNameById = new Map<string, string>();
     const stableMessageRefByIdentity = new Map<string, ClaudeStableMessageRef>();
+    const progressiveMessagesByTrackKey = new Map<string, NormalizedMessage>();
+    const emittedSignatureByMessageId = new Map<string, string>();
     const streamEventState: ClaudeStreamEventState = {
       currentMessageKey: null,
       messages: new Map()
@@ -333,6 +339,8 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
             },
             toolNameById,
             stableMessageRefByIdentity,
+            progressiveMessagesByTrackKey,
+            emittedSignatureByMessageId,
             streamEventState
           });
         }
@@ -417,6 +425,8 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
     allocateSequence: () => number;
     toolNameById: Map<string, string>;
     stableMessageRefByIdentity: Map<string, ClaudeStableMessageRef>;
+    progressiveMessagesByTrackKey: Map<string, NormalizedMessage>;
+    emittedSignatureByMessageId: Map<string, string>;
     streamEventState: ClaudeStreamEventState;
   }): Promise<void> {
     let parsed: Record<string, unknown>;
@@ -468,13 +478,43 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
           continue;
         }
 
+        if (normalized.role === "user") {
+          input.progressiveMessagesByTrackKey.clear();
+        }
+
+        const trackKey = buildClaudeProgressiveTrackKey(normalized, partIndex);
+        const previousProgressive = trackKey
+          ? input.progressiveMessagesByTrackKey.get(trackKey) ?? null
+          : null;
+        const nextMessage =
+          previousProgressive && shouldReuseClaudeProgressiveIdentity(previousProgressive, normalized)
+            ? {
+                ...normalized,
+                messageId: previousProgressive.messageId,
+                rawRef: previousProgressive.rawRef,
+                sequence: previousProgressive.sequence
+              }
+            : normalized;
+
+        if (trackKey) {
+          input.progressiveMessagesByTrackKey.set(trackKey, nextMessage);
+        }
+
+        const signature = buildClaudeMessageSignature(nextMessage);
+
+        if (input.emittedSignatureByMessageId.get(nextMessage.messageId) === signature) {
+          continue;
+        }
+
+        input.emittedSignatureByMessageId.set(nextMessage.messageId, signature);
+
         await input.sink.emit({
           type: "message",
           providerSessionId: binding.providerSessionId,
           rawStoreRef: binding.rawStoreRef,
-          message: normalized,
+          message: nextMessage,
           status: "running",
-          rawEventRef: normalized.rawRef
+          rawEventRef: nextMessage.rawRef
         });
       }
     }
