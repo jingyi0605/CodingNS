@@ -88,6 +88,7 @@ export class ConptyRuntimeAdapter implements TerminalRuntimeAdapter {
       return {
         alive: false,
         shellPid: null,
+        agentPid: null,
         detail:
           result.reason === "SESSION_UNAVAILABLE"
             ? null
@@ -98,6 +99,7 @@ export class ConptyRuntimeAdapter implements TerminalRuntimeAdapter {
     return {
       alive: result.alive === true,
       shellPid: result.shellPid ?? null,
+      agentPid: result.agentPid ?? null,
       detail: null
     };
   }

@@ -61,6 +61,7 @@ import { registerTerminalRoutes } from "../routes/terminals.js";
 import { registerWorkbenchRoutes } from "../routes/workbench.js";
 import { registerWorkspaceRoutes } from "../routes/workspaces.js";
 import { setErrorHandler } from "../shared/http/error-handler.js";
+import { startTerminalDebugEventLoopLagMonitor } from "../shared/utils/terminal-debug-log.js";
 import { AuthTokenRepository } from "../storage/repositories/auth-token-repository.js";
 import { AuthUserRepository } from "../storage/repositories/auth-user-repository.js";
 import { BootstrapStateRepository } from "../storage/repositories/bootstrap-state-repository.js";
@@ -93,6 +94,7 @@ export function createServer(config: HostConfig) {
   const app = Fastify({
     logger: false
   });
+  const stopTerminalDebugEventLoopLagMonitor = startTerminalDebugEventLoopLagMonitor();
 
   const database = createDatabaseClient(config.databasePath);
   const repositories = {
@@ -296,6 +298,7 @@ export function createServer(config: HostConfig) {
   }
 
   app.addHook("onClose", async () => {
+    stopTerminalDebugEventLoopLagMonitor();
     await terminalService.dispose();
     await sessionLiveRuntimeService.dispose();
     await wsHandle.close();

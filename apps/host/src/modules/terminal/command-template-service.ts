@@ -166,11 +166,11 @@ export class CommandTemplateService {
     return { success: true };
   }
 
-  runTemplate(input: RunCommandTemplateInput): {
+  async runTemplate(input: RunCommandTemplateInput): Promise<{
     terminalId: string;
     templateId: string;
     createdTerminal: boolean;
-  } {
+  }> {
     const template = this.getTemplateOrThrow(input.templateId);
     let targetTerminalId = input.terminalId ?? null;
     let createdTerminal = false;
@@ -187,7 +187,7 @@ export class CommandTemplateService {
         });
       }
     } else {
-      const terminal = this.terminalService.createTerminal({
+      const terminal = await this.terminalService.createTerminal({
         workspaceId: template.workspaceId,
         name: `${template.name} 运行`,
         cwd: template.cwd,

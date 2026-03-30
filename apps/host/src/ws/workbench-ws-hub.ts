@@ -1,6 +1,7 @@
 import type { WebSocket } from "ws";
 
 import { AppError } from "../shared/errors/app-error.js";
+import { logTerminalDebug, terminalDebugNowMs } from "../shared/utils/terminal-debug-log.js";
 import type { AuthContext } from "../modules/auth/auth-service.js";
 import type { WorkbenchService, WorkbenchSnapshot } from "../modules/workbench/workbench-service.js";
 import type {
@@ -151,7 +152,10 @@ export class WorkbenchWsHub {
         void this.sendWorkbenchSnapshotToClient(client, userId, channel);
         return true;
       case "workbench.refresh":
-        void this.refreshAndBroadcast(userId, true);
+        void Promise.all([
+          this.syncTitlesAndBroadcast(userId),
+          this.refreshAndBroadcast(userId, true)
+        ]);
         return true;
       case "fileTree.subscribe":
         this.clientFileTreeSubscriptions.set(client, {
@@ -346,10 +350,7 @@ export class WorkbenchWsHub {
       });
     }, WORKBENCH_REFRESH_INTERVAL_MS);
     channel.sidebarTimer = setInterval(() => {
-      void Promise.all([
-        this.syncTitlesAndBroadcast(userId),
-        this.refreshSidebarSubscriptions(userId)
-      ]).catch((error) => {
+      void this.refreshSidebarSubscriptions(userId).catch((error) => {
         this.reportAsyncError("sidebarTimer", error, { userId });
       });
     }, SIDEBAR_REFRESH_INTERVAL_MS);
@@ -365,6 +366,7 @@ export class WorkbenchWsHub {
     }
 
     channel.titleSyncTask = (async () => {
+      const startedAtMs = terminalDebugNowMs();
       try {
         const payload = buildWorkbenchPayload(await this.workbenchService.syncSessionTitles(userId));
 
@@ -377,6 +379,11 @@ export class WorkbenchWsHub {
         for (const client of channel.clients) {
           client.send(payload);
         }
+        logTerminalDebug("workbench.sync_titles.completed", {
+          userId,
+          clientCount: channel.clients.size,
+          durationMs: terminalDebugNowMs() - startedAtMs
+        });
       } catch (error) {
         this.reportAsyncError("syncTitlesAndBroadcast", error, { userId });
       }
@@ -413,6 +420,7 @@ export class WorkbenchWsHub {
     }
 
     channel.refreshTask = (async () => {
+      const startedAtMs = terminalDebugNowMs();
       try {
         const snapshot = await this.workbenchService.refreshSnapshot(userId);
         const payload = buildWorkbenchPayload(snapshot);
@@ -426,6 +434,13 @@ export class WorkbenchWsHub {
         for (const client of channel.clients) {
           client.send(payload);
         }
+        logTerminalDebug("workbench.refresh.completed", {
+          userId,
+          force,
+          clientCount: channel.clients.size,
+          workspaceCount: snapshot.items.length,
+          durationMs: terminalDebugNowMs() - startedAtMs
+        });
       } catch (error) {
         this.reportAsyncError("refreshAndBroadcast", error, { userId });
       }
@@ -443,6 +458,7 @@ export class WorkbenchWsHub {
       return;
     }
 
+    const startedAtMs = terminalDebugNowMs();
     await Promise.all(
       [...channel.clients].map(async (client) => {
         await Promise.allSettled([
@@ -453,6 +469,11 @@ export class WorkbenchWsHub {
         ]);
       })
     );
+    logTerminalDebug("workbench.sidebar_refresh.completed", {
+      userId,
+      clientCount: channel.clients.size,
+      durationMs: terminalDebugNowMs() - startedAtMs
+    });
   }
 
   private ensureFileTreeSubscription(
@@ -545,6 +566,7 @@ export class WorkbenchWsHub {
 
     subscription.lastRequestedAt = now;
     subscription.refreshTask = (async () => {
+      const startedAtMs = terminalDebugNowMs();
       try {
         const snapshot = await this.workspacePanelSnapshotService.getGitPanelSnapshot(
           subscription.workspaceId,
@@ -558,6 +580,13 @@ export class WorkbenchWsHub {
 
         subscription.lastPayload = payload;
         client.send(payload);
+        logTerminalDebug("workbench.git_refresh.completed", {
+          workspaceId: subscription.workspaceId,
+          force,
+          changeCount: snapshot.status.changes.length,
+          historyCount: snapshot.history.length,
+          durationMs: terminalDebugNowMs() - startedAtMs
+        });
       } catch (error) {
         this.reportAsyncError("refreshGitSubscription", error, {
           workspaceId: subscription.workspaceId
@@ -581,6 +610,7 @@ export class WorkbenchWsHub {
     }
 
     try {
+      const startedAtMs = terminalDebugNowMs();
       const snapshot = await this.workspacePanelSnapshotService.getTerminalManagerSnapshot(
         subscription.workspaceId,
         { force }
@@ -593,6 +623,13 @@ export class WorkbenchWsHub {
 
       subscription.lastPayload = payload;
       client.send(payload);
+      logTerminalDebug("workbench.terminal_manager_refresh.completed", {
+        workspaceId: subscription.workspaceId,
+        force,
+        terminalCount: snapshot.terminals.length,
+        templateCount: snapshot.templates.length,
+        durationMs: terminalDebugNowMs() - startedAtMs
+      });
     } catch (error) {
       this.reportAsyncError("refreshTerminalManagerSubscription", error, {
         workspaceId: subscription.workspaceId

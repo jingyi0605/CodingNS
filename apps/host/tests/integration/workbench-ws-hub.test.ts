@@ -171,6 +171,84 @@ describe("WorkbenchWsHub", () => {
 
     hub.cleanupClient(client);
   });
+
+  it("侧边栏定时刷新不会再顺带同步会话标题", async () => {
+    vi.useFakeTimers();
+
+    const client = {
+      send: vi.fn()
+    } as unknown as WebSocket;
+    const authContext: AuthContext = {
+      accessToken: "token",
+      user: {
+        userId: "user-1",
+        username: "admin",
+        role: "admin"
+      }
+    };
+    const workbenchService = {
+      getSnapshot: vi.fn(() => ({ items: [] })),
+      shouldRefreshSnapshot: vi.fn(() => false),
+      refreshSnapshot: vi.fn(async () => ({ items: [] })),
+      syncSessionTitles: vi.fn(async () => ({ items: [] }))
+    } satisfies Pick<
+      WorkbenchService,
+      "getSnapshot" | "shouldRefreshSnapshot" | "refreshSnapshot" | "syncSessionTitles"
+    >;
+    const workspacePanelSnapshotService = {
+      getGitPanelSnapshot: vi.fn(async () => ({
+        workspaceId: "workspace-1",
+        status: {
+          snapshot: {
+            workspaceId: "workspace-1",
+            repoRoot: "/repo",
+            branch: "main",
+            ahead: 0,
+            behind: 0,
+            hasRemote: true,
+            isDirty: false,
+            lastFetchedAt: null
+          },
+          changes: []
+        },
+        history: [],
+        historyTotalCount: 0,
+        historyNextCursor: null,
+        branches: {
+          currentBranch: "main",
+          local: [],
+          remote: []
+        }
+      }))
+    } satisfies Pick<WorkspacePanelSnapshotService, "getGitPanelSnapshot">;
+
+    const hub = new WorkbenchWsHub(
+      workbenchService as unknown as WorkbenchService,
+      workspacePanelSnapshotService as unknown as WorkspacePanelSnapshotService,
+      createMockFileWatcher() as unknown as WorkspaceFileWatcher
+    );
+
+    expect(
+      hub.handleMessage(
+        client,
+        {
+          type: "git.subscribe",
+          workspaceId: "workspace-1"
+        },
+        authContext
+      )
+    ).toBe(true);
+
+    await flushAsyncTasks();
+    expect(workbenchService.syncSessionTitles).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    await flushAsyncTasks();
+
+    expect(workbenchService.syncSessionTitles).not.toHaveBeenCalled();
+
+    hub.cleanupClient(client);
+  });
 });
 
 async function flushAsyncTasks(): Promise<void> {

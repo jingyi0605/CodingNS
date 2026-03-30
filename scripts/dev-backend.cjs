@@ -4,6 +4,7 @@ const readline = require("node:readline");
 const isWindows = process.platform === "win32";
 let shuttingDown = false;
 let hostStarted = false;
+const envOverrides = parseEnvOverrides(process.argv.slice(2));
 
 const children = {
   build: null,
@@ -60,6 +61,10 @@ function startCoreWatch() {
 }
 
 function startHostWatch() {
+  if (Object.keys(envOverrides).length > 0) {
+    console.log(`[backend] 额外挂载环境变量: ${Object.keys(envOverrides).join(", ")}`);
+  }
+
   children.host = spawnCommand("host", ["pnpm", "--filter", "host", "dev:watch"], {
     onLine: (line, source) => {
       printLine("host", line, source);
@@ -79,7 +84,10 @@ function spawnCommand(name, args, hooks) {
   const { command, commandArgs } = getSpawnTarget(args);
   const child = spawn(command, commandArgs, {
     cwd: process.cwd(),
-    env: process.env,
+    env: {
+      ...process.env,
+      ...envOverrides
+    },
     stdio: ["inherit", "pipe", "pipe"]
   });
 
@@ -126,6 +134,22 @@ function bindStream(name, stream, source, onLine) {
 function printLine(name, line, source) {
   const target = source === "stderr" ? console.error : console.log;
   target(`[${name}] ${line}`);
+}
+
+function parseEnvOverrides(argv) {
+  const overrides = {};
+
+  for (const arg of argv) {
+    const match = arg.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+
+    if (!match) {
+      continue;
+    }
+
+    overrides[match[1]] = match[2];
+  }
+
+  return overrides;
 }
 
 function shutdown(exitCode) {

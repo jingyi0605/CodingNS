@@ -20,8 +20,8 @@ interface PendingTerminalLogBatch {
   flushing: boolean;
 }
 
-const DEFAULT_FLUSH_INTERVAL_MS = 500;
-const DEFAULT_MAX_BATCH_BYTES = 32 * 1024;
+const DEFAULT_FLUSH_INTERVAL_MS = 2_000;
+const DEFAULT_MAX_BATCH_BYTES = 256 * 1024;
 
 export class TerminalLogSpooler {
   private readonly fileStore: TerminalLogFileStore;
@@ -196,6 +196,7 @@ export class TerminalLogSpooler {
       batch.timer = null;
       this.flushTerminal(terminalId);
     }, Math.max(0, delayMs));
+    batch.timer.unref?.();
   }
 
   private clearBatchTimer(batch: PendingTerminalLogBatch): void {

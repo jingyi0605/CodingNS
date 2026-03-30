@@ -3,7 +3,7 @@ import net from "node:net";
 import { spawn } from "node-pty";
 
 import {
-  assertConptySupported,
+  cleanupPtyBrokerEndpoint,
   createJsonLineParser,
   decodeTerminalData,
   encodeTerminalData,
@@ -11,9 +11,10 @@ import {
   normalizeShellExitCode,
   normalizeTerminalDimension,
   parseCliArgs,
+  preparePtyBrokerEndpoint,
   readRequiredCliArg,
   writeJsonLine
-} from "./conpty-runtime-shared.js";
+} from "./pty-broker-shared.js";
 
 const DEFAULT_COLS = 120;
 const DEFAULT_ROWS = 30;
@@ -24,12 +25,12 @@ const MAX_BUFFERED_BYTES = 1024 * 1024;
 await main();
 
 async function main(): Promise<void> {
-  assertConptySupported();
-
   const args = parseCliArgs(process.argv.slice(2));
   const pipeName = readRequiredCliArg(args, "pipe");
   const shell = readRequiredCliArg(args, "shell");
   const cwd = readRequiredCliArg(args, "cwd");
+
+  preparePtyBrokerEndpoint(pipeName);
 
   const ptyProcess = spawn(shell, [], {
     cols: DEFAULT_COLS,
@@ -49,7 +50,7 @@ async function main(): Promise<void> {
     socket.setEncoding("utf8");
     socket.setNoDelay(true);
 
-    let connectionMode: "initial" | "attach" = "initial";
+    let attached = false;
     const parser = createJsonLineParser((payload) => {
       if (!isRecord(payload)) {
         writeJsonLine(socket, {
@@ -60,12 +61,7 @@ async function main(): Promise<void> {
         return;
       }
 
-      if (connectionMode === "initial") {
-        handleInitialMessage(socket, payload);
-        return;
-      }
-
-      handleAttachMessage(socket, payload);
+      handleMessage(socket, payload);
     });
 
     socket.on("data", (chunk) => {
@@ -84,6 +80,10 @@ async function main(): Promise<void> {
       if (attachedSocket === socket) {
         attachedSocket = null;
       }
+
+      if (attached && shellExitCode === null && !terminating) {
+        terminateShell();
+      }
     });
 
     socket.on("error", () => {
@@ -92,28 +92,8 @@ async function main(): Promise<void> {
       }
     });
 
-    function handleInitialMessage(currentSocket: net.Socket, payload: Record<string, unknown>): void {
+    function handleMessage(currentSocket: net.Socket, payload: Record<string, unknown>): void {
       const type = typeof payload.type === "string" ? payload.type : "";
-
-      if (type === "inspect") {
-        writeJsonLine(currentSocket, {
-          type: "inspect-result",
-          alive: shellExitCode === null,
-          shellPid,
-          agentPid: process.pid
-        });
-        currentSocket.end();
-        return;
-      }
-
-      if (type === "terminate") {
-        writeJsonLine(currentSocket, {
-          type: "terminate-accepted"
-        });
-        terminateShell();
-        currentSocket.end();
-        return;
-      }
 
       if (type === "attach") {
         if (attachedSocket && attachedSocket !== currentSocket) {
@@ -129,7 +109,7 @@ async function main(): Promise<void> {
         const rows = normalizeTerminalDimension(payload.rows, DEFAULT_ROWS, MIN_ROWS);
 
         attachedSocket = currentSocket;
-        connectionMode = "attach";
+        attached = true;
         ptyProcess.resize(cols, rows);
         writeJsonLine(currentSocket, {
           type: "attached",
@@ -141,16 +121,6 @@ async function main(): Promise<void> {
         });
         return;
       }
-
-      writeJsonLine(currentSocket, {
-        type: "error",
-        detail: "UNKNOWN_REQUEST"
-      });
-      currentSocket.end();
-    }
-
-    function handleAttachMessage(currentSocket: net.Socket, payload: Record<string, unknown>): void {
-      const type = typeof payload.type === "string" ? payload.type : "";
 
       if (type === "input" && typeof payload.data === "string") {
         ptyProcess.write(decodeTerminalData(payload.data));
@@ -166,18 +136,16 @@ async function main(): Promise<void> {
       }
 
       if (type === "terminate") {
+        writeJsonLine(currentSocket, {
+          type: "terminate-accepted"
+        });
         terminateShell();
-        return;
-      }
-
-      if (type === "detach") {
-        currentSocket.end();
         return;
       }
 
       writeJsonLine(currentSocket, {
         type: "error",
-        detail: "UNKNOWN_ATTACH_MESSAGE"
+        detail: "UNKNOWN_REQUEST"
       });
     }
   });
@@ -209,10 +177,12 @@ async function main(): Promise<void> {
     }
 
     server.close(() => {
+      cleanupPtyBrokerEndpoint(pipeName);
       process.exit(shellExitCode ?? 0);
     });
 
     setTimeout(() => {
+      cleanupPtyBrokerEndpoint(pipeName);
       process.exit(shellExitCode ?? 0);
     }, 200).unref();
   });

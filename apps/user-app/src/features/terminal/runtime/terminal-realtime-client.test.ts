@@ -44,6 +44,7 @@ describe("terminal realtime client", () => {
 
   beforeEach(() => {
     MockWebSocket.instances = [];
+    vi.useFakeTimers();
     clientConfigStore.hydrate({
       platform: "web",
       hostBaseUrl: "http://192.168.2.59:3002",
@@ -68,6 +69,7 @@ describe("terminal realtime client", () => {
 
   afterEach(() => {
     authStore.clear();
+    vi.useRealTimers();
     vi.unstubAllGlobals();
     globalThis.WebSocket = originalWebSocket;
   });
@@ -208,5 +210,58 @@ describe("terminal realtime client", () => {
     ]);
     expect(onSubscribed).toHaveBeenCalledTimes(1);
     expect(onError).not.toHaveBeenCalled();
+  });
+
+  it("已订阅后会把短时间内的多个按键合并成一次输入消息", () => {
+    const client = new TerminalRealtimeClient({
+      terminalId: "terminal-1",
+      lastCursor: null,
+      onConnectionChange: vi.fn(),
+      onSubscribed: vi.fn(),
+      onBackfill: vi.fn(),
+      onOutput: vi.fn(),
+      onStatus: vi.fn(),
+      onError: vi.fn(),
+      onUnauthorized: vi.fn()
+    });
+
+    client.start();
+
+    const socket = MockWebSocket.instances[0];
+
+    if (!socket) {
+      throw new Error("WebSocket 未创建");
+    }
+
+    socket.emit("open");
+    socket.emit("message", {
+      data: JSON.stringify({ type: "terminal.subscribed", terminalId: "terminal-1" })
+    });
+
+    client.sendInput("l");
+    client.sendInput("s");
+
+    expect(socket.sentMessages).toEqual([
+      JSON.stringify({
+        type: "terminal.subscribe",
+        terminalId: "terminal-1",
+        lastCursor: null
+      })
+    ]);
+
+    vi.advanceTimersByTime(8);
+
+    expect(socket.sentMessages).toEqual([
+      JSON.stringify({
+        type: "terminal.subscribe",
+        terminalId: "terminal-1",
+        lastCursor: null
+      }),
+      JSON.stringify({
+        type: "terminal.input",
+        terminalId: "terminal-1",
+        content: "ls"
+      })
+    ]);
   });
 });

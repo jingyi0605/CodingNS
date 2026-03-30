@@ -8,12 +8,19 @@ export interface TerminalLogAppendResult {
 }
 
 export class TerminalLogFileStore {
+  private readonly ensuredDirectories = new Set<string>();
+
   constructor(private readonly rootDir: string) {}
 
   append(relativePath: string, content: string, currentSizeBytes: number): TerminalLogAppendResult {
     const filePath = this.resolvePath(relativePath);
+    const directoryPath = path.dirname(filePath);
 
-    mkdirSync(path.dirname(filePath), { recursive: true });
+    if (!this.ensuredDirectories.has(directoryPath)) {
+      mkdirSync(directoryPath, { recursive: true });
+      this.ensuredDirectories.add(directoryPath);
+    }
+
     appendFileSync(filePath, content, "utf8");
 
     const byteLength = Buffer.byteLength(content, "utf8");
@@ -27,6 +34,7 @@ export class TerminalLogFileStore {
 
   deleteTerminalLogs(terminalId: string): void {
     const terminalDir = this.resolvePath(terminalId);
+    this.ensuredDirectories.delete(terminalDir);
     rmSync(terminalDir, { recursive: true, force: true });
   }
 

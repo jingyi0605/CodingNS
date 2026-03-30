@@ -11,7 +11,8 @@ import { TerminalLogSegmentRepository } from "../../src/storage/repositories/ter
 import { createDatabaseClient } from "../../src/storage/sqlite/client.js";
 import type {
   TerminalInstance,
-  TerminalRuntimeSession
+  TerminalRuntimeSession,
+  TerminalRuntimeType
 } from "../../src/types/domain.js";
 
 const tempDirs: string[] = [];
@@ -191,11 +192,104 @@ describe("TerminalService.deleteTerminal", () => {
 
     database.close();
   });
+
+  it("已绑定 attachment 的运行中终端在输入时不会重复做持久会话检查", () => {
+    const terminal = createTerminalFixture("terminal-fast-input", "session-fast-input");
+    const terminalRepo = createMutableTerminalRepository(terminal);
+    const runtimeRepo = createMutableRuntimeRepository(
+      createSessionFixture("terminal-fast-input", "session-fast-input")
+    );
+    const service = new TerminalService(
+      {
+        transaction: (callback: () => void) => callback
+      } as never,
+      terminalRepo as never,
+      runtimeRepo as never,
+      {} as never,
+      900
+    );
+
+    const runtimeWrite = vi.fn();
+
+    (service as any).runtimeManager = {
+      isAttached: vi.fn(() => true),
+      write: runtimeWrite
+    };
+
+    expect(service.writeInput("terminal-fast-input", "pwd\r")).toEqual({ accepted: true });
+    expect(runtimeWrite).toHaveBeenCalledWith("terminal-fast-input", "pwd\r");
+    expect(runtimeRepo.findById).not.toHaveBeenCalled();
+  });
+
+  it("给工作台侧边栏提供终端快照时不会触发运行时探测", () => {
+    const terminal = createTerminalFixture("terminal-snapshot", "session-snapshot");
+    const terminalRepo = createMutableTerminalRepository(terminal);
+    const runtimeRepo = createMutableRuntimeRepository(
+      createSessionFixture("terminal-snapshot", "session-snapshot")
+    );
+    const workspaceService = {
+      getWorkspaceOrThrow: vi.fn(() => ({
+        id: "workspace-1",
+        path: "C:/Code/CodingNS"
+      }))
+    };
+    const service = new TerminalService(
+      {
+        transaction: (callback: () => void) => callback
+      } as never,
+      terminalRepo as never,
+      runtimeRepo as never,
+      workspaceService as never,
+      900
+    );
+
+    const items = service.listTerminalSnapshotItems("workspace-1");
+
+    expect(items).toEqual([terminal]);
+    expect(workspaceService.getWorkspaceOrThrow).toHaveBeenCalledWith("workspace-1");
+    expect(runtimeRepo.findById).not.toHaveBeenCalled();
+  });
+
+  it("读取历史前会先刷新待落盘输出，避免活跃终端只能等周期性 flush 才能看到最新历史", () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-terminal-history-flush-"));
+    tempDirs.push(tempDir);
+    const database = createDatabaseClient(":memory:");
+    const fileRepository = new TerminalLogFileRepository(database.db);
+    const segmentRepository = new TerminalLogSegmentRepository(database.db);
+
+    seedTerminalLogDependencies(database.db, "terminal-4");
+
+    const terminal = createTerminalFixture("terminal-4", "session-4", "embedded-pty");
+    const session = createSessionFixture("terminal-4", "session-4", "embedded-pty");
+    const service = new TerminalService(
+      database.db,
+      createMutableTerminalRepository(terminal) as never,
+      createMutableRuntimeRepository(session) as never,
+      {} as never,
+      900,
+      {
+        terminalLogRootDir: tempDir,
+        terminalLogFileRepository: fileRepository,
+        terminalLogSegmentRepository: segmentRepository
+      }
+    );
+
+    (service as any).handleRuntimeOutput("terminal-4", "live-");
+    (service as any).handleRuntimeOutput("terminal-4", "history\n");
+
+    const history = service.readTerminalHistory("terminal-4", null, 10);
+
+    expect(history.content).toContain("live-history");
+    expect(segmentRepository.listByTerminalId("terminal-4")).toHaveLength(1);
+
+    database.close();
+  });
 });
 
 function createTerminalFixture(
   terminalId: string,
-  sessionId = `session-for-${terminalId}`
+  sessionId = `session-for-${terminalId}`,
+  runtimeType: TerminalRuntimeType = "tmux"
 ): TerminalInstance {
   return {
     id: terminalId,
@@ -203,7 +297,7 @@ function createTerminalFixture(
     name: "测试终端",
     cwd: "/tmp",
     shell: "/bin/zsh",
-    runtimeType: "tmux",
+    runtimeType,
     runtimeSessionId: sessionId,
     attachTarget: sessionId,
     status: "running",
@@ -217,11 +311,15 @@ function createTerminalFixture(
   };
 }
 
-function createSessionFixture(terminalId: string, sessionId: string): TerminalRuntimeSession {
+function createSessionFixture(
+  terminalId: string,
+  sessionId: string,
+  runtimeType: TerminalRuntimeType = "tmux"
+): TerminalRuntimeSession {
   return {
     id: sessionId,
     terminalId,
-    runtimeType: "tmux",
+    runtimeType,
     sessionKey: sessionId,
     attachTarget: sessionId,
     hostInstanceId: null,
@@ -241,6 +339,13 @@ function createMutableTerminalRepository(terminal: TerminalInstance) {
 
   return {
     findById: vi.fn((id: string) => (current?.id === id ? current : null)),
+    listByWorkspace: vi.fn((workspaceId: string) => {
+      if (!current || current.workspaceId !== workspaceId) {
+        return [];
+      }
+
+      return [current];
+    }),
     delete: vi.fn((id: string) => {
       if (current?.id === id) {
         current = null;

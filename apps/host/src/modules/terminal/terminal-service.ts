@@ -1,10 +1,15 @@
-import { EventEmitter } from "node:events";
+﻿import { EventEmitter } from "node:events";
 import path from "node:path";
 
 import type Database from "better-sqlite3";
 
 import { AppError } from "../../shared/errors/app-error.js";
 import { createId } from "../../shared/utils/id.js";
+import {
+  isTerminalDebugEnabled,
+  logTerminalDebug,
+  terminalDebugNowMs
+} from "../../shared/utils/terminal-debug-log.js";
 import { nowIso } from "../../shared/utils/time.js";
 import type {
   TerminalInstance,
@@ -47,6 +52,12 @@ interface CreateTerminalInput {
   env?: Record<string, string>;
 }
 
+interface TerminalInputDebugContext {
+  clientTraceId?: string;
+  clientSentAtMs?: number | null;
+  wsReceivedAtMs?: number | null;
+}
+
 interface SubscribeTerminalCallbacks {
   onBackfill: (payload: TerminalBackfillResult) => Promise<void> | void;
   onOutput: (chunk: TerminalOutputChunk) => Promise<void> | void;
@@ -60,6 +71,23 @@ interface TerminalServiceOptions {
   terminalLogRootDir?: string;
   terminalLogFileRepository?: TerminalLogFileRepository;
   terminalLogSegmentRepository?: TerminalLogSegmentRepository;
+}
+
+const TERMINAL_ACTIVITY_FLUSH_INTERVAL_MS = 2_000;
+const TERMINAL_OUTPUT_FLUSH_INTERVAL_MS = 8;
+
+interface PendingTerminalOutputBatch {
+  contents: string[];
+  timer: ReturnType<typeof setTimeout> | null;
+}
+
+interface PendingTerminalInputTrace {
+  traceId: string;
+  clientSentAtMs: number | null;
+  wsReceivedAtMs: number | null;
+  serviceWriteStartedAtMs: number;
+  serviceWriteFinishedAtMs: number;
+  charCount: number;
 }
 
 export declare interface TerminalService {
@@ -80,14 +108,17 @@ export declare interface TerminalService {
 export class TerminalService extends EventEmitter {
   private readonly outputBuffer = new TerminalOutputBuffer();
   private readonly runtimeManager = new TerminalRuntimeManager();
-  private readonly lastPersistedActivity = new Map<string, number>();
   private readonly terminalSubscriptionCounts = new Map<string, number>();
   private readonly pendingCloseReasons = new Map<string, TerminalCloseReason>();
   private readonly pendingDeletedTerminalIds = new Set<string>();
+  private readonly pendingActivityByTerminalId = new Map<string, string>();
+  private readonly pendingInputTraceByTerminalId = new Map<string, PendingTerminalInputTrace[]>();
+  private readonly pendingOutputByTerminalId = new Map<string, PendingTerminalOutputBatch>();
   private readonly terminalLogSpooler: TerminalLogSpooler | null;
   private readonly terminalLogFileRepository: TerminalLogFileRepository | null;
   private readonly terminalLogSegmentRepository: TerminalLogSegmentRepository | null;
   private readonly terminalLogFileStore: TerminalLogFileStore | null;
+  private activityFlushTimer: ReturnType<typeof setTimeout> | null = null;
   private isDisposing = false;
 
   constructor(
@@ -127,7 +158,7 @@ export class TerminalService extends EventEmitter {
     this.recoverRuntimeStates();
   }
 
-  createTerminal(input: CreateTerminalInput): TerminalInstance {
+  async createTerminal(input: CreateTerminalInput): Promise<TerminalInstance> {
     const workspace = this.workspaceService.getWorkspaceOrThrow(input.workspaceId);
     const now = nowIso();
     const shell = resolveRequestedShell(sanitizeShell(input.shell) ?? getDefaultShell());
@@ -184,8 +215,11 @@ export class TerminalService extends EventEmitter {
         runtimeSession,
         env
       );
-      const attachmentProcessId = this.runtimeManager.ensureAttached(terminal, runtimeSession, env);
+      runtimeSession.agentPid = createdInspection.agentPid ?? runtimeSession.agentPid;
+      const attachmentProcessId = await this.runtimeManager.ensureAttached(terminal, runtimeSession, env);
       const processId = createdInspection.shellPid ?? attachmentProcessId;
+      terminal.processId = processId;
+      runtimeSession.shellPid = processId;
 
       const runningTerminal: TerminalInstance = {
         ...terminal,
@@ -203,6 +237,7 @@ export class TerminalService extends EventEmitter {
       });
       this.terminalRuntimeSessionRepository.updateState({
         id: runtimeSession.id,
+        agentPid: createdInspection.agentPid ?? runtimeSession.agentPid,
         shellPid: processId,
         state: "running",
         lastCheckedAt: nowIso(),
@@ -225,12 +260,20 @@ export class TerminalService extends EventEmitter {
       });
       this.terminalRuntimeSessionRepository.updateState({
         id: runtimeSession.id,
+        agentPid: runtimeSession.agentPid,
         shellPid: null,
         state: "error",
         lastCheckedAt: failedAt,
         lastErrorDetail: error instanceof Error ? error.message : "PTY 启动失败",
         updatedAt: failedAt
       });
+      if (runtimeSession.agentPid) {
+        try {
+          process.kill(runtimeSession.agentPid);
+        } catch {
+          // agent 已退出时忽略。
+        }
+      }
       const failedTerminal = this.getTerminalOrThrow(terminal.id);
       this.emit("status", failedTerminal);
       throw error;
@@ -251,6 +294,11 @@ export class TerminalService extends EventEmitter {
     return hasLifecycleChange
       ? this.terminalInstanceRepository.listByWorkspace(workspaceId)
       : terminals;
+  }
+
+  listTerminalSnapshotItems(workspaceId: string): TerminalInstance[] {
+    this.workspaceService.getWorkspaceOrThrow(workspaceId);
+    return this.terminalInstanceRepository.listByWorkspace(workspaceId);
   }
 
   getTerminalOrThrow(terminalId: string): TerminalInstance {
@@ -314,7 +362,8 @@ export class TerminalService extends EventEmitter {
     const terminal = this.getTerminalOrThrow(terminalId);
     const session = this.getRuntimeSessionOrThrow(terminal.runtimeSessionId);
     this.pendingCloseReasons.delete(terminalId);
-    this.lastPersistedActivity.delete(terminalId);
+    this.pendingActivityByTerminalId.delete(terminalId);
+    this.clearActivityFlushTimerIfIdle();
     this.flushTerminalLogs(terminalId);
     this.pendingDeletedTerminalIds.add(terminalId);
     const deleteRecords = this.db.transaction(() => {
@@ -352,7 +401,11 @@ export class TerminalService extends EventEmitter {
     return { success: true };
   }
 
-  writeInput(terminalId: string, content: string): { accepted: true } {
+  writeInput(
+    terminalId: string,
+    content: string,
+    debugContext: TerminalInputDebugContext = {}
+  ): { accepted: true } {
     if (!content) {
       throw new AppError({
         statusCode: 400,
@@ -362,8 +415,29 @@ export class TerminalService extends EventEmitter {
       });
     }
 
+    const serviceWriteStartedAtMs = terminalDebugNowMs();
     const terminal = this.ensureTerminalInteractive(terminalId);
     this.runtimeManager.write(terminal.id, content);
+    const serviceWriteFinishedAtMs = terminalDebugNowMs();
+    this.recordPendingInputTrace(terminalId, content, {
+      ...debugContext,
+      serviceWriteStartedAtMs,
+      serviceWriteFinishedAtMs
+    });
+    logTerminalDebug("terminal.input.write_completed", {
+      terminalId,
+      traceId: debugContext.clientTraceId ?? null,
+      charCount: content.length,
+      ensureAndWriteMs: serviceWriteFinishedAtMs - serviceWriteStartedAtMs,
+      wsToWriteMs:
+        debugContext.wsReceivedAtMs === null || debugContext.wsReceivedAtMs === undefined
+          ? null
+          : serviceWriteFinishedAtMs - debugContext.wsReceivedAtMs,
+      clientToWriteMs:
+        debugContext.clientSentAtMs === null || debugContext.clientSentAtMs === undefined
+          ? null
+          : serviceWriteFinishedAtMs - debugContext.clientSentAtMs
+    });
     this.touchLastActiveAt(terminalId);
 
     return { accepted: true };
@@ -454,6 +528,8 @@ export class TerminalService extends EventEmitter {
 
   async dispose(): Promise<void> {
     this.isDisposing = true;
+    this.flushPendingTerminalOutput();
+    this.flushPendingActivity();
     this.terminalLogSpooler?.flushAll();
     this.runtimeManager.closeAllAttachments();
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -465,6 +541,7 @@ export class TerminalService extends EventEmitter {
     limit: number
   ): TerminalHistoryPageDto {
     const terminal = this.getTerminalOrThrow(terminalId);
+    this.flushTerminalLogs(terminalId);
     const runtimeSession =
       terminal.runtimeSessionId
         ? this.terminalRuntimeSessionRepository.findById(terminal.runtimeSessionId)
@@ -592,18 +669,18 @@ export class TerminalService extends EventEmitter {
       return;
     }
 
-    const chunks = this.outputBuffer.append(terminalId, content);
+    const batch = this.getOrCreatePendingOutputBatch(terminalId);
+    batch.contents.push(content);
 
-    if (chunks.length === 0) {
+    if (batch.timer !== null) {
       return;
     }
 
-    this.terminalLogSpooler?.appendChunks(terminalId, chunks);
-    this.touchLastActiveAt(terminalId);
-    this.emit("output", {
-      terminalId,
-      chunks
-    });
+    batch.timer = setTimeout(() => {
+      batch.timer = null;
+      this.flushPendingTerminalOutput(terminalId);
+    }, TERMINAL_OUTPUT_FLUSH_INTERVAL_MS);
+    batch.timer.unref?.();
   }
 
   private handleRuntimeExit(event: RuntimeAttachmentExitEvent): void {
@@ -613,7 +690,9 @@ export class TerminalService extends EventEmitter {
 
     if (this.pendingDeletedTerminalIds.delete(event.terminalId)) {
       this.pendingCloseReasons.delete(event.terminalId);
-      this.lastPersistedActivity.delete(event.terminalId);
+      this.pendingActivityByTerminalId.delete(event.terminalId);
+      this.clearActivityFlushTimerIfIdle();
+      this.pendingInputTraceByTerminalId.delete(event.terminalId);
       this.clearTerminalLogs(event.terminalId);
       return;
     }
@@ -635,17 +714,17 @@ export class TerminalService extends EventEmitter {
       return;
     }
 
-    const now = Date.now();
-    const previous = this.lastPersistedActivity.get(terminalId) ?? 0;
-
-    if (now - previous >= 500) {
-      this.lastPersistedActivity.set(terminalId, now);
-      this.terminalInstanceRepository.touchLastActiveAt(terminalId, nowIso(new Date(now)));
-    }
+    this.pendingActivityByTerminalId.set(terminalId, nowIso());
+    this.scheduleActivityFlush();
   }
 
   private ensureTerminalInteractive(terminalId: string): TerminalInstance {
     const terminal = this.getTerminalOrThrow(terminalId);
+
+    if (terminal.status === "running" && this.runtimeManager.isAttached(terminal.id)) {
+      return terminal;
+    }
+
     const session = this.getRuntimeSessionOrThrow(terminal.runtimeSessionId);
     const nextTerminal = this.ensureTerminalRunning(terminal, session, true);
 
@@ -686,7 +765,28 @@ export class TerminalService extends EventEmitter {
     }
 
     if (ensureAttached) {
-      const attachmentProcessId = this.runtimeManager.ensureAttached(terminal, session, buildTerminalEnv());
+      if (session.runtimeType === "embedded-pty") {
+        if (!this.runtimeManager.isAttached(terminal.id)) {
+          return this.markTerminalError(
+            terminal,
+            session,
+            inspection.detail ?? "EMBEDDED_RUNTIME_NOT_ATTACHED"
+          );
+        }
+
+        return this.markTerminalRunning(
+          terminal,
+          session,
+          inspection.shellPid ?? this.runtimeManager.getProcessId(terminal.id),
+          inspection.detail
+        );
+      }
+
+      const attachmentProcessId = this.runtimeManager.ensureLegacyAttached(
+        terminal,
+        session,
+        buildTerminalEnv()
+      );
       return this.markTerminalRunning(
         terminal,
         session,
@@ -750,6 +850,7 @@ export class TerminalService extends EventEmitter {
     });
     this.terminalRuntimeSessionRepository.updateState({
       id: session.id,
+      agentPid: session.agentPid,
       shellPid: processId,
       state: "running",
       lastCheckedAt: updatedAt,
@@ -770,6 +871,7 @@ export class TerminalService extends EventEmitter {
     const updatedAt = nowIso();
     this.terminalRuntimeSessionRepository.updateState({
       id: session.id,
+      agentPid: session.agentPid,
       shellPid: terminal.processId,
       state: "lost",
       lastCheckedAt: updatedAt,
@@ -797,6 +899,9 @@ export class TerminalService extends EventEmitter {
     session: TerminalRuntimeSession,
     detail: string
   ): TerminalInstance {
+    this.pendingActivityByTerminalId.delete(terminal.id);
+    this.clearActivityFlushTimerIfIdle();
+    this.pendingInputTraceByTerminalId.delete(terminal.id);
     const closedAt = nowIso();
     this.terminalInstanceRepository.updateLifecycle({
       id: terminal.id,
@@ -809,6 +914,7 @@ export class TerminalService extends EventEmitter {
     });
     this.terminalRuntimeSessionRepository.updateState({
       id: session.id,
+      agentPid: session.agentPid,
       shellPid: terminal.processId,
       state: "error",
       lastCheckedAt: closedAt,
@@ -831,13 +937,15 @@ export class TerminalService extends EventEmitter {
   ): void {
     const closeReason = this.pendingCloseReasons.get(terminal.id) ?? "user_closed";
     this.pendingCloseReasons.delete(terminal.id);
+    this.pendingActivityByTerminalId.delete(terminal.id);
+    this.clearActivityFlushTimerIfIdle();
+    this.pendingInputTraceByTerminalId.delete(terminal.id);
     const finishedAt = nowIso();
     const status =
       event.requestedClose || event.exitCode === 0 ? ("closed" as const) : ("error" as const);
-    const statusDetail =
-      status === "error"
-        ? event.sessionDetail ?? `终端异常退出，exitCode=${event.exitCode ?? "unknown"}`
-        : resolveClosedStatusDetail(closeReason, terminal.statusDetail);
+    const statusDetail = status === "error"
+      ? normalizeTerminalErrorDetail(event.sessionDetail, event.exitCode)
+      : resolveClosedStatusDetail(closeReason, terminal.statusDetail);
 
     this.terminalInstanceRepository.updateLifecycle({
       id: terminal.id,
@@ -850,6 +958,7 @@ export class TerminalService extends EventEmitter {
     });
     this.terminalRuntimeSessionRepository.updateState({
       id: session.id,
+      agentPid: session.agentPid,
       shellPid: event.shellPid,
       state: status === "closed" ? "closed" : "error",
       lastCheckedAt: finishedAt,
@@ -937,14 +1046,171 @@ export class TerminalService extends EventEmitter {
   }
 
   private flushTerminalLogs(terminalId: string): void {
+    this.flushPendingTerminalOutput(terminalId);
     this.terminalLogSpooler?.flushTerminal(terminalId);
   }
 
   private clearTerminalLogs(terminalId: string): void {
+    const pendingOutput = this.pendingOutputByTerminalId.get(terminalId);
+
+    if (pendingOutput?.timer) {
+      clearTimeout(pendingOutput.timer);
+    }
+
+    this.pendingOutputByTerminalId.delete(terminalId);
+    this.pendingInputTraceByTerminalId.delete(terminalId);
     this.outputBuffer.clear(terminalId);
     this.terminalLogSegmentRepository?.deleteByTerminalId(terminalId);
     this.terminalLogFileRepository?.deleteByTerminalId(terminalId);
     this.terminalLogSpooler?.deleteTerminalLogs(terminalId);
+  }
+
+  private getOrCreatePendingOutputBatch(terminalId: string): PendingTerminalOutputBatch {
+    let batch = this.pendingOutputByTerminalId.get(terminalId);
+
+    if (!batch) {
+      batch = {
+        contents: [],
+        timer: null
+      };
+      this.pendingOutputByTerminalId.set(terminalId, batch);
+    }
+
+    return batch;
+  }
+
+  private flushPendingTerminalOutput(terminalId?: string): void {
+    if (terminalId) {
+      const batch = this.pendingOutputByTerminalId.get(terminalId);
+
+      if (!batch) {
+        return;
+      }
+
+      if (batch.timer) {
+        clearTimeout(batch.timer);
+        batch.timer = null;
+      }
+
+      const content = batch.contents.join("");
+      this.pendingOutputByTerminalId.delete(terminalId);
+      this.commitTerminalOutput(terminalId, content);
+      return;
+    }
+
+    for (const nextTerminalId of [...this.pendingOutputByTerminalId.keys()]) {
+      this.flushPendingTerminalOutput(nextTerminalId);
+    }
+  }
+
+  private commitTerminalOutput(terminalId: string, content: string): void {
+    const traceQueue = this.pendingInputTraceByTerminalId.get(terminalId) ?? [];
+    const outputReceivedAtMs = traceQueue.length > 0 ? terminalDebugNowMs() : null;
+    const chunks = this.outputBuffer.append(terminalId, content);
+
+    if (chunks.length === 0) {
+      return;
+    }
+
+    this.terminalLogSpooler?.appendChunks(terminalId, chunks);
+    this.touchLastActiveAt(terminalId);
+    this.emit("output", {
+      terminalId,
+      chunks
+    });
+
+    if (traceQueue.length > 0 && outputReceivedAtMs !== null) {
+      for (const trace of traceQueue) {
+        logTerminalDebug("terminal.output.after_input", {
+          terminalId,
+          traceId: trace.traceId,
+          charCount: trace.charCount,
+          outputBytes: Buffer.byteLength(content, "utf8"),
+          writeToOutputMs: outputReceivedAtMs - trace.serviceWriteFinishedAtMs,
+          wsToOutputMs:
+            trace.wsReceivedAtMs === null ? null : outputReceivedAtMs - trace.wsReceivedAtMs,
+          clientToOutputMs:
+            trace.clientSentAtMs === null ? null : outputReceivedAtMs - trace.clientSentAtMs,
+          pendingTraceCount: traceQueue.length
+        });
+      }
+
+      this.pendingInputTraceByTerminalId.delete(terminalId);
+    }
+  }
+
+  private recordPendingInputTrace(
+    terminalId: string,
+    content: string,
+    input: TerminalInputDebugContext & {
+      serviceWriteStartedAtMs: number;
+      serviceWriteFinishedAtMs: number;
+    }
+  ): void {
+    if (!isTerminalDebugEnabled() || !input.clientTraceId) {
+      return;
+    }
+
+    const queue = this.pendingInputTraceByTerminalId.get(terminalId) ?? [];
+    queue.push({
+      traceId: input.clientTraceId,
+      clientSentAtMs: input.clientSentAtMs ?? null,
+      wsReceivedAtMs: input.wsReceivedAtMs ?? null,
+      serviceWriteStartedAtMs: input.serviceWriteStartedAtMs,
+      serviceWriteFinishedAtMs: input.serviceWriteFinishedAtMs,
+      charCount: content.length
+    });
+    this.pendingInputTraceByTerminalId.set(terminalId, queue);
+  }
+
+  private scheduleActivityFlush(): void {
+    if (this.activityFlushTimer !== null) {
+      return;
+    }
+
+    this.activityFlushTimer = setTimeout(() => {
+      this.activityFlushTimer = null;
+      this.flushPendingActivity();
+    }, TERMINAL_ACTIVITY_FLUSH_INTERVAL_MS);
+    this.activityFlushTimer.unref?.();
+  }
+
+  private flushPendingActivity(terminalId?: string): void {
+    if (terminalId) {
+      const lastActiveAt = this.pendingActivityByTerminalId.get(terminalId);
+
+      if (!lastActiveAt) {
+        return;
+      }
+
+      this.pendingActivityByTerminalId.delete(terminalId);
+      this.terminalInstanceRepository.touchLastActiveAt(terminalId, lastActiveAt);
+      this.clearActivityFlushTimerIfIdle();
+      return;
+    }
+
+    if (this.pendingActivityByTerminalId.size === 0) {
+      this.clearActivityFlushTimerIfIdle();
+      return;
+    }
+
+    const entries = [...this.pendingActivityByTerminalId.entries()];
+    this.pendingActivityByTerminalId.clear();
+
+    for (const [nextTerminalId, lastActiveAt] of entries) {
+      this.terminalInstanceRepository.touchLastActiveAt(nextTerminalId, lastActiveAt);
+    }
+
+    this.clearActivityFlushTimerIfIdle();
+  }
+
+  private clearActivityFlushTimerIfIdle(): void {
+    if (this.pendingActivityByTerminalId.size > 0 || this.activityFlushTimer === null) {
+      return;
+    }
+
+    clearTimeout(this.activityFlushTimer);
+    this.activityFlushTimer = null;
   }
 }
 
@@ -1006,7 +1272,7 @@ function resolveRequestedRuntimeType(
     throw new AppError({
       statusCode: 400,
       errorCode: "UNSUPPORTED_TERMINAL_RUNTIME",
-      detail: `当前 Host 还未实现 runtime=${runtimeType}`
+      detail: `褰撳墠 Host 杩樻湭瀹炵幇 runtime=${runtimeType}`
     });
   }
 
@@ -1018,14 +1284,14 @@ function resolveRequestedRuntimeType(
     throw new AppError({
       statusCode: 400,
       errorCode: "RUNTIME_UNSUPPORTED_PLATFORM",
-      detail: "conpty runtime 仅支持 Windows"
+      detail: "conpty runtime 浠呮敮鎸?Windows"
     });
   }
 
   throw new AppError({
     statusCode: 400,
     errorCode: "UNSUPPORTED_TERMINAL_RUNTIME",
-    detail: `当前 Host 还未实现 runtime=${runtimeType}`
+    detail: `褰撳墠 Host 杩樻湭瀹炵幇 runtime=${runtimeType}`
   });
 }
 
@@ -1088,6 +1354,17 @@ function resolveClosedStatusDetail(
   }
 
   return currentStatusDetail;
+}
+
+function normalizeTerminalErrorDetail(
+  sessionDetail: string | null,
+  exitCode: number | null
+): string {
+  if (sessionDetail && sessionDetail !== "EMBEDDED_RUNTIME_NOT_RECOVERABLE") {
+    return sessionDetail;
+  }
+
+  return `终端异常退出，exitCode=${exitCode ?? "unknown"}`;
 }
 
 function shouldMarkRuntimeLost(

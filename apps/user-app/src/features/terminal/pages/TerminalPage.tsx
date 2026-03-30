@@ -64,6 +64,7 @@ import {
   type TerminalConnectionState,
   type TerminalOutputChunkDto
 } from "../runtime/terminal-realtime-client";
+import { isTerminalDebugEnabled, logTerminalDebug, terminalDebugNowMs } from "../runtime/terminal-debug-log";
 import {
   getTerminalRuntimeLabel,
   getTerminalRuntimeShortLabel,
@@ -90,7 +91,8 @@ interface TerminalViewportRuntime {
   setFontSize: (fontSize: number) => void;
   applyTheme: () => void;
   persistNow: () => void;
-  schedulePersist: () => void;
+  scheduleCursorPersist: (cursor: string | null) => void;
+  schedulePersist: (mode?: "interaction" | "output") => void;
   dispose: () => void;
 }
 
@@ -190,6 +192,8 @@ const MAX_TERMINAL_ZOOM_SCALE = 1.6;
 const TERMINAL_ZOOM_STEP = 0.1;
 const TERMINAL_MUTATION_POLL_INTERVAL_MS = 700;
 const TERMINAL_MUTATION_POLL_ATTEMPTS = 10;
+const TERMINAL_CURSOR_PERSIST_DELAY_MS = 300;
+const TERMINAL_INTERACTION_PERSIST_DELAY_MS = 250;
 const TERMINAL_ACTION_MENU_WIDTH = 196;
 const TERMINAL_ACTION_MENU_OFFSET = 6;
 const TERMINAL_ACTION_MENU_EDGE_PADDING = 8;
@@ -3357,6 +3361,9 @@ function TerminalWorkspacePane({
       onViewportTop: () => {
         void loadOlderHistory();
       },
+      onCursorChange: (cursor) => {
+        persistTerminalCursor(terminal.id, cursor);
+      },
       onViewStateChange: (viewState) => {
         persistTerminalViewState(terminal.id, viewState);
       }
@@ -3447,7 +3454,6 @@ function TerminalWorkspacePane({
             oldestLoadedSeqRef.current = null;
           }
 
-          runtime.schedulePersist();
         }
 
         if (event.chunks.length > 0) {
@@ -3456,7 +3462,7 @@ function TerminalWorkspacePane({
 
         const nextCursor = event.latestCursor ?? activeCursorRef.current;
         activeCursorRef.current = nextCursor;
-        persistTerminalCursor(terminal.id, nextCursor);
+        runtime?.scheduleCursorPersist(nextCursor);
 
         if (activeRecoveryStateRef.current === "idle_closed") {
           notifyTerminal(t("terminal.recoveryIdleClosed"), "warning");
@@ -3476,11 +3482,23 @@ function TerminalWorkspacePane({
         }
       },
       onOutput: (event) => {
-        viewportRuntimeRef.current?.terminal.write(event.chunk.content);
-        viewportRuntimeRef.current?.schedulePersist();
+        const runtime = viewportRuntimeRef.current;
+        if (runtime && isTerminalDebugEnabled()) {
+          const renderStartedAtMs = terminalDebugNowMs();
+          runtime.terminal.write(event.chunk.content, () => {
+            logTerminalDebug("terminal.output.rendered", {
+              terminalId: terminal.id,
+              cursor: event.chunk.cursor,
+              charCount: event.chunk.content.length,
+              renderMs: terminalDebugNowMs() - renderStartedAtMs
+            });
+          });
+        } else {
+          runtime?.terminal.write(event.chunk.content);
+        }
         activeCursorRef.current = event.chunk.cursor;
         updateOldestLoadedSeq(event.chunk.cursor);
-        persistTerminalCursor(terminal.id, event.chunk.cursor);
+        runtime?.scheduleCursorPersist(event.chunk.cursor);
       },
       onStatus: (event) => {
         onTerminalStatus({
@@ -3713,6 +3731,7 @@ function createTerminalViewportRuntime(input: {
   fontSize: number;
   enableTouchMomentum?: boolean;
   getCursor: () => string | null;
+  onCursorChange: (cursor: string | null) => void;
   getHistoryPaging: () => {
     beforeSeq: number | null;
     hasOlder: boolean;
@@ -3737,6 +3756,9 @@ function createTerminalViewportRuntime(input: {
   const fitAddon = new FitAddon();
   const serializeAddon = new SerializeAddon();
   let persistTimer: number | null = null;
+  let cursorPersistTimer: number | null = null;
+  let pendingCursor: string | null = null;
+  let hasPendingCursor = false;
   let disposed = false;
   let hasCommittedFit = false;
   let lastFittedCols = terminal.cols;
@@ -4057,6 +4079,29 @@ function createTerminalViewportRuntime(input: {
     });
   }
 
+  const handlePageHide = () => {
+    logTerminalDebug("terminal.persist.pagehide", {
+      cursor: input.getCursor()
+    });
+    persistNow();
+  };
+  const handleVisibilityChange = () => {
+    if (document.visibilityState === "hidden") {
+      logTerminalDebug("terminal.persist.visibility_hidden", {
+        cursor: input.getCursor()
+      });
+      persistNow();
+    }
+  };
+
+  if (typeof window !== "undefined") {
+    window.addEventListener("pagehide", handlePageHide);
+  }
+
+  if (typeof document !== "undefined") {
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+  }
+
   async function waitForStableContainer(): Promise<void> {
     for (let attempt = 0; attempt < 10; attempt += 1) {
       if (hasUsableContainerSize(input.container)) {
@@ -4074,19 +4119,81 @@ function createTerminalViewportRuntime(input: {
       return;
     }
 
+    const persistStartedAtMs = isTerminalDebugEnabled() ? terminalDebugNowMs() : 0;
+
     if (persistTimer !== null) {
       window.clearTimeout(persistTimer);
       persistTimer = null;
     }
 
-    input.onViewStateChange(
-      buildPersistedTerminalViewState(
-        terminal,
-        serializeAddon,
-        input.getCursor(),
-        input.getHistoryPaging()
-      )
+    const viewState = buildPersistedTerminalViewState(
+      terminal,
+      serializeAddon,
+      input.getCursor(),
+      input.getHistoryPaging()
     );
+
+    if (viewState) {
+      if (cursorPersistTimer !== null) {
+        window.clearTimeout(cursorPersistTimer);
+        cursorPersistTimer = null;
+      }
+      hasPendingCursor = false;
+    } else {
+      persistCursorNow(input.getCursor());
+    }
+
+    input.onViewStateChange(viewState);
+
+    if (isTerminalDebugEnabled()) {
+      logTerminalDebug("terminal.persist.completed", {
+        cursor: input.getCursor(),
+        hasViewState: Boolean(viewState),
+        contentLength: viewState?.content.length ?? 0,
+        historyBeforeSeq: viewState?.historyBeforeSeq ?? null,
+        durationMs: terminalDebugNowMs() - persistStartedAtMs
+      });
+    }
+  }
+
+  function persistCursorNow(cursor?: string | null): void {
+    if (disposed) {
+      return;
+    }
+
+    if (cursorPersistTimer !== null) {
+      window.clearTimeout(cursorPersistTimer);
+      cursorPersistTimer = null;
+    }
+
+    if (cursor !== undefined) {
+      pendingCursor = cursor;
+      hasPendingCursor = true;
+    }
+
+    if (!hasPendingCursor) {
+      return;
+    }
+
+    input.onCursorChange(pendingCursor);
+    hasPendingCursor = false;
+  }
+
+  function scheduleCursorPersist(cursor: string | null): void {
+    if (disposed) {
+      return;
+    }
+
+    pendingCursor = cursor;
+    hasPendingCursor = true;
+
+    if (cursorPersistTimer !== null) {
+      window.clearTimeout(cursorPersistTimer);
+    }
+
+    cursorPersistTimer = window.setTimeout(() => {
+      persistCursorNow();
+    }, TERMINAL_CURSOR_PERSIST_DELAY_MS);
   }
 
   function schedulePersist(): void {
@@ -4100,7 +4207,7 @@ function createTerminalViewportRuntime(input: {
 
     persistTimer = window.setTimeout(() => {
       persistNow();
-    }, 200);
+    }, TERMINAL_INTERACTION_PERSIST_DELAY_MS);
   }
 
   function fitToContainer(): void {
@@ -4185,11 +4292,15 @@ function createTerminalViewportRuntime(input: {
     },
     applyTheme,
     persistNow,
+    scheduleCursorPersist,
     schedulePersist,
     dispose: () => {
       disposed = true;
       if (persistTimer !== null) {
         window.clearTimeout(persistTimer);
+      }
+      if (cursorPersistTimer !== null) {
+        window.clearTimeout(cursorPersistTimer);
       }
       interactionTarget.removeEventListener("mousedown", handleInteractionFocus);
       interactionTarget.removeEventListener("pointerdown", handleInteractionFocus);
@@ -4200,6 +4311,12 @@ function createTerminalViewportRuntime(input: {
       stopTouchMomentum();
       scrollSubscription?.dispose();
       resizeObserver?.disconnect();
+      if (typeof window !== "undefined") {
+        window.removeEventListener("pagehide", handlePageHide);
+      }
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", handleVisibilityChange);
+      }
       terminal.dispose();
       input.container.replaceChildren();
     }

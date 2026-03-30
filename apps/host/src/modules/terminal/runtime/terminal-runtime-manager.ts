@@ -4,6 +4,9 @@ import type { TerminalInstance, TerminalRuntimeSession } from "../../../types/do
 import { ConptyRuntimeAdapter } from "./adapters/conpty-runtime-adapter.js";
 import { EmbeddedPtyRuntimeAdapter } from "./adapters/embedded-pty-runtime-adapter.js";
 import { TmuxRuntimeAdapter } from "./adapters/tmux-runtime-adapter.js";
+import { buildConptyPipeName, isConptyRuntimeType } from "./conpty-runtime-shared.js";
+import { PtyBrokerClient } from "./pty-broker-client.js";
+import { buildPtyBrokerEndpoint } from "./pty-broker-shared.js";
 import {
   PtyHostAttachmentManager,
   type HostAttachmentExitEvent
@@ -19,6 +22,12 @@ interface AttachmentRecord {
   terminal: TerminalInstance;
   session: TerminalRuntimeSession;
   adapter: TerminalRuntimeAdapter;
+}
+
+interface BrokerAttachmentRecord {
+  client: PtyBrokerClient;
+  processId: number | null;
+  agentPid: number | null;
 }
 
 export interface RuntimeAttachmentExitEvent {
@@ -47,6 +56,7 @@ export class TerminalRuntimeManager extends EventEmitter {
     ["conpty-git-bash", new ConptyRuntimeAdapter("conpty-git-bash")]
   ]);
   private readonly attachments = new Map<string, AttachmentRecord>();
+  private readonly brokerAttachments = new Map<string, BrokerAttachmentRecord>();
   private readonly closeIntents = new Map<string, CloseIntent>();
 
   constructor() {
@@ -79,32 +89,86 @@ export class TerminalRuntimeManager extends EventEmitter {
     terminal: TerminalInstance,
     session: TerminalRuntimeSession
   ): PersistentSessionInspection {
-    const adapter = this.getAdapter(session);
-
-    if (this.isAttached(terminal.id) && !adapter.survivesHostRestart) {
+    if (this.isAttached(terminal.id)) {
       return {
         alive: true,
-        shellPid: this.attachmentManager.getProcessId(terminal.id),
+        shellPid: this.getAttachedProcessId(terminal.id),
+        agentPid: this.getAttachedAgentPid(terminal.id),
         detail: null
       };
     }
 
+    const adapter = this.getAdapter(session);
     return adapter.inspectPersistentSession({
       terminal,
       session
     });
   }
 
-  ensureAttached(
+  async ensureAttached(
     terminal: TerminalInstance,
     session: TerminalRuntimeSession,
     env: Record<string, string>
-  ): number | null {
+  ): Promise<number | null> {
     if (this.isAttached(terminal.id)) {
-      return this.attachmentManager.getProcessId(terminal.id);
+      return this.getAttachedProcessId(terminal.id);
     }
 
     const adapter = this.getAdapter(session);
+
+    if (session.runtimeType === "embedded-pty" || isConptyRuntimeType(session.runtimeType)) {
+      const endpoint = session.runtimeType === "embedded-pty"
+        ? buildPtyBrokerEndpoint(session.sessionKey)
+        : buildConptyPipeName(session.sessionKey);
+      const brokerClient = await PtyBrokerClient.connect(
+        endpoint
+      );
+
+      brokerClient.on("output", (content) => {
+        this.emit("output", {
+          terminalId: terminal.id,
+          content
+        });
+      });
+      brokerClient.on("exit", (event) => {
+        this.brokerAttachments.delete(terminal.id);
+        this.handleAttachmentExit({
+          attachmentId: terminal.id,
+          exitCode: event.exitCode,
+          requestedClose: event.requestedClose
+        });
+      });
+
+      this.attachments.set(terminal.id, {
+        terminal,
+        session,
+        adapter
+      });
+      this.brokerAttachments.set(terminal.id, {
+        client: brokerClient,
+        processId: brokerClient.getProcessId(),
+        agentPid: brokerClient.getAgentPid()
+      });
+      return brokerClient.getProcessId();
+    }
+
+    return this.ensureLegacyAttached(terminal, session, env, adapter);
+  }
+
+  ensureLegacyAttached(
+    terminal: TerminalInstance,
+    session: TerminalRuntimeSession,
+    env: Record<string, string>,
+    adapter = this.getAdapter(session)
+  ): number | null {
+    if (this.isAttached(terminal.id)) {
+      return this.getAttachedProcessId(terminal.id);
+    }
+
+    if (session.runtimeType === "embedded-pty") {
+      throw new Error("embedded-pty 运行时必须通过 broker 异步附着");
+    }
+
     const launch = adapter.buildHostAttachmentLaunch({
       terminal,
       session,
@@ -122,10 +186,24 @@ export class TerminalRuntimeManager extends EventEmitter {
   }
 
   write(terminalId: string, content: string): void {
+    const brokerAttachment = this.brokerAttachments.get(terminalId);
+
+    if (brokerAttachment) {
+      brokerAttachment.client.write(content);
+      return;
+    }
+
     this.attachmentManager.write(terminalId, content);
   }
 
   resize(terminalId: string, cols: number, rows: number): void {
+    const brokerAttachment = this.brokerAttachments.get(terminalId);
+
+    if (brokerAttachment) {
+      brokerAttachment.client.resize(cols, rows);
+      return;
+    }
+
     this.attachmentManager.resize(terminalId, cols, rows);
   }
 
@@ -135,6 +213,14 @@ export class TerminalRuntimeManager extends EventEmitter {
     }
 
     this.closeIntents.set(terminalId, "detach");
+
+    const brokerAttachment = this.brokerAttachments.get(terminalId);
+
+    if (brokerAttachment) {
+      brokerAttachment.client.close();
+      return;
+    }
+
     this.attachmentManager.close(terminalId);
   }
 
@@ -152,6 +238,13 @@ export class TerminalRuntimeManager extends EventEmitter {
     });
 
     if (hadAttachment) {
+      const brokerAttachment = this.brokerAttachments.get(terminal.id);
+
+      if (brokerAttachment) {
+        brokerAttachment.client.terminate();
+        return hadAttachment;
+      }
+
       this.attachmentManager.close(terminal.id);
     }
 
@@ -159,12 +252,20 @@ export class TerminalRuntimeManager extends EventEmitter {
   }
 
   isAttached(terminalId: string): boolean {
-    return this.attachmentManager.isRunning(terminalId);
+    return this.attachmentManager.isRunning(terminalId) || this.brokerAttachments.has(terminalId);
+  }
+
+  getProcessId(terminalId: string): number | null {
+    return this.getAttachedProcessId(terminalId);
   }
 
   closeAllAttachments(): void {
     for (const terminalId of this.attachments.keys()) {
       this.closeIntents.set(terminalId, "detach");
+    }
+
+    for (const brokerAttachment of this.brokerAttachments.values()) {
+      brokerAttachment.client.close();
     }
 
     this.attachmentManager.closeAll();
@@ -175,6 +276,7 @@ export class TerminalRuntimeManager extends EventEmitter {
     const intent = this.closeIntents.get(event.attachmentId) ?? null;
 
     this.attachments.delete(event.attachmentId);
+    this.brokerAttachments.delete(event.attachmentId);
     this.closeIntents.delete(event.attachmentId);
 
     if (!attachment) {
@@ -202,6 +304,15 @@ export class TerminalRuntimeManager extends EventEmitter {
       sessionDetail: inspection.detail,
       shellPid: inspection.shellPid
     });
+  }
+
+  private getAttachedProcessId(terminalId: string): number | null {
+    return this.brokerAttachments.get(terminalId)?.processId
+      ?? this.attachmentManager.getProcessId(terminalId);
+  }
+
+  private getAttachedAgentPid(terminalId: string): number | null {
+    return this.brokerAttachments.get(terminalId)?.agentPid ?? null;
   }
 
   private getAdapter(session: TerminalRuntimeSession): TerminalRuntimeAdapter {

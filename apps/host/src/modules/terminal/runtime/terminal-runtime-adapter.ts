@@ -7,6 +7,7 @@ import type {
 export interface PersistentSessionInspection {
   alive: boolean;
   shellPid: number | null;
+  agentPid?: number | null;
   detail: string | null;
 }
 

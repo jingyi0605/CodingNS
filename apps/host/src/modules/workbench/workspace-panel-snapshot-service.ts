@@ -201,7 +201,7 @@ export class WorkspacePanelSnapshotService {
     }
 
     const task = Promise.all([
-      Promise.resolve(this.terminalService.listTerminals(workspaceId)),
+      Promise.resolve(this.terminalService.listTerminalSnapshotItems(workspaceId)),
       Promise.resolve(this.commandTemplateService.listTemplates(workspaceId)),
       this.commandTemplateService.listTemplateRuntimeStatuses(workspaceId)
     ]).then(([terminals, templates, templateStatuses]) => {

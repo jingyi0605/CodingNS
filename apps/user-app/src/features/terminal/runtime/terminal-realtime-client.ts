@@ -1,6 +1,15 @@
 import { getHostWebSocketUrl } from "../../../config/env";
 import { authStore } from "../../auth/store/auth-store";
 import { ConnectionManager } from "../../../network/connection-manager";
+import {
+  createTerminalDebugTraceId,
+  isTerminalDebugEnabled,
+  logTerminalDebug,
+  terminalDebugNowMs
+} from "./terminal-debug-log";
+
+const TERMINAL_INPUT_FLUSH_DELAY_MS = 8;
+const TERMINAL_INPUT_TRACE_MAX_AGE_MS = 10_000;
 
 export type TerminalConnectionState =
   | "connected"
@@ -19,7 +28,7 @@ export interface TerminalOutputChunkDto {
 type TerminalIncomingEvent =
   | { type: "system.connected" }
   | { type: "terminal.subscribed"; terminalId: string }
-  | { type: "terminal.input.accepted"; terminalId: string }
+  | { type: "terminal.input.accepted"; terminalId: string; clientTraceId?: string }
   | { type: "terminal.resize.accepted"; terminalId: string; cols: number; rows: number }
   | {
       type: "terminal.backfill";
@@ -72,8 +81,21 @@ export class TerminalRealtimeClient {
   private lastCursor: string | null;
   private isSubscribed = false;
   private pendingInput = "";
+  private inputFlushTimer: number | null = null;
+  private pendingInputQueuedAtMs: number | null = null;
   private pendingResize: { cols: number; rows: number } | null = null;
   private lastSentResizeKey: string | null = null;
+  private readonly inputDebugTraces = new Map<
+    string,
+    {
+      traceId: string;
+      queuedAtMs: number;
+      sentAtMs: number;
+      ackedAtMs: number | null;
+      charCount: number;
+      preview: string;
+    }
+  >();
   private readonly connectionManager: ConnectionManager;
 
   constructor(private readonly options: TerminalRealtimeClientOptions) {
@@ -99,12 +121,23 @@ export class TerminalRealtimeClient {
       return;
     }
 
+    if (this.pendingInputQueuedAtMs === null) {
+      this.pendingInputQueuedAtMs = terminalDebugNowMs();
+    }
+
+    this.pendingInput += content;
+    this.logDebug("input.queued", {
+      charCount: content.length,
+      pendingCharCount: this.pendingInput.length,
+      preview: summarizeTerminalDebugContent(content)
+    });
+
     if (!this.canSendRealtimePayload()) {
-      this.pendingInput += content;
       return;
     }
 
-    this.sendTerminalInput(content);
+    this.pruneStaleInputDebugTraces();
+    this.scheduleInputFlush();
   }
 
   sendCurrentDimensions(cols: number, rows: number): void {
@@ -116,11 +149,43 @@ export class TerminalRealtimeClient {
   }
 
   private sendTerminalInput(content: string): void {
+    const queuedAtMs = this.pendingInputQueuedAtMs ?? terminalDebugNowMs();
+    const sentAtMs = terminalDebugNowMs();
+    const debugEnabled = isTerminalDebugEnabled();
+    const clientTraceId = debugEnabled
+      ? createTerminalDebugTraceId(this.options.terminalId)
+      : undefined;
+
+    if (clientTraceId) {
+      this.inputDebugTraces.set(clientTraceId, {
+        traceId: clientTraceId,
+        queuedAtMs,
+        sentAtMs,
+        ackedAtMs: null,
+        charCount: content.length,
+        preview: summarizeTerminalDebugContent(content)
+      });
+    }
+
+    this.logDebug("input.sent", {
+      traceId: clientTraceId ?? null,
+      charCount: content.length,
+      queuedForMs: sentAtMs - queuedAtMs,
+      preview: summarizeTerminalDebugContent(content)
+    });
+
     this.sendMessage({
       type: "terminal.input",
       terminalId: this.options.terminalId,
-      content
+      content,
+      ...(clientTraceId
+        ? {
+            clientTraceId,
+            clientSentAtMs: sentAtMs
+          }
+        : {})
     });
+    this.pendingInputQueuedAtMs = null;
   }
 
   resize(cols: number, rows: number): void {
@@ -136,6 +201,7 @@ export class TerminalRealtimeClient {
   disconnect(): void {
     this.manuallyDisconnected = true;
     this.isSubscribed = false;
+    this.inputDebugTraces.clear();
     const socket = this.socket;
     this.socket = null;
     socket?.close();
@@ -151,6 +217,8 @@ export class TerminalRealtimeClient {
     this.disposed = true;
     this.manuallyDisconnected = true;
     this.connectionManager.close();
+    this.clearInputFlushTimer();
+    this.inputDebugTraces.clear();
     this.socket?.close();
     this.socket = null;
     this.isSubscribed = false;
@@ -205,7 +273,7 @@ export class TerminalRealtimeClient {
         this.isSubscribed = true;
         this.options.onSubscribed();
         this.flushPendingResize();
-        this.flushPendingInput();
+        this.flushPendingInput(true);
         return;
       }
 
@@ -224,6 +292,20 @@ export class TerminalRealtimeClient {
       }
 
       if (payload.type === "terminal.input.accepted") {
+        this.pruneStaleInputDebugTraces();
+        if (payload.clientTraceId) {
+          const trace = this.inputDebugTraces.get(payload.clientTraceId);
+
+          if (trace) {
+            trace.ackedAtMs = terminalDebugNowMs();
+            this.logDebug("input.acknowledged", {
+              traceId: trace.traceId,
+              charCount: trace.charCount,
+              sendToAckMs: trace.ackedAtMs - trace.sentAtMs,
+              preview: trace.preview
+            });
+          }
+        }
         return;
       }
 
@@ -235,6 +317,8 @@ export class TerminalRealtimeClient {
 
       if (payload.type === "terminal.output") {
         this.lastCursor = payload.chunk.cursor;
+        this.pruneStaleInputDebugTraces();
+        this.handleDebugOutput(payload.chunk.content, payload.chunk.cursor);
         this.options.onOutput(payload);
         return;
       }
@@ -311,14 +395,38 @@ export class TerminalRealtimeClient {
     return Boolean(this.socket && this.socket.readyState === WebSocket.OPEN && this.isSubscribed);
   }
 
-  private flushPendingInput(): void {
+  private flushPendingInput(forceImmediate = false): void {
     if (!this.pendingInput || !this.canSendRealtimePayload()) {
       return;
+    }
+
+    if (!forceImmediate) {
+      this.clearInputFlushTimer();
     }
 
     const bufferedInput = this.pendingInput;
     this.pendingInput = "";
     this.sendTerminalInput(bufferedInput);
+  }
+
+  private scheduleInputFlush(): void {
+    if (this.inputFlushTimer !== null) {
+      return;
+    }
+
+    this.inputFlushTimer = window.setTimeout(() => {
+      this.inputFlushTimer = null;
+      this.flushPendingInput(true);
+    }, TERMINAL_INPUT_FLUSH_DELAY_MS);
+  }
+
+  private clearInputFlushTimer(): void {
+    if (this.inputFlushTimer === null) {
+      return;
+    }
+
+    window.clearTimeout(this.inputFlushTimer);
+    this.inputFlushTimer = null;
   }
 
   private flushPendingResize(): void {
@@ -344,4 +452,75 @@ export class TerminalRealtimeClient {
     this.lastSentResizeKey = nextResizeKey;
     this.pendingResize = null;
   }
+
+  private handleDebugOutput(content: string, cursor: string): void {
+    if (!isTerminalDebugEnabled()) {
+      return;
+    }
+
+    const firstTrace = this.inputDebugTraces.values().next().value as
+      | {
+          traceId: string;
+          queuedAtMs: number;
+          sentAtMs: number;
+          ackedAtMs: number | null;
+          charCount: number;
+          preview: string;
+        }
+      | undefined;
+
+    if (!firstTrace) {
+      return;
+    }
+
+    const receivedAtMs = terminalDebugNowMs();
+    this.inputDebugTraces.delete(firstTrace.traceId);
+    this.logDebug("output.received_after_input", {
+      traceId: firstTrace.traceId,
+      cursor,
+      charCount: content.length,
+      sendToOutputMs: receivedAtMs - firstTrace.sentAtMs,
+      ackToOutputMs:
+        firstTrace.ackedAtMs === null ? null : receivedAtMs - firstTrace.ackedAtMs,
+      preview: summarizeTerminalDebugContent(content)
+    });
+  }
+
+  private logDebug(scope: string, detail: Record<string, unknown>): void {
+    logTerminalDebug(`terminal.${scope}`, {
+      terminalId: this.options.terminalId,
+      ...detail
+    });
+  }
+
+  private pruneStaleInputDebugTraces(): void {
+    if (!isTerminalDebugEnabled() || this.inputDebugTraces.size === 0) {
+      return;
+    }
+
+    const nowMs = terminalDebugNowMs();
+
+    for (const [traceId, trace] of this.inputDebugTraces.entries()) {
+      const ageMs = nowMs - trace.sentAtMs;
+
+      if (ageMs < TERMINAL_INPUT_TRACE_MAX_AGE_MS) {
+        continue;
+      }
+
+      this.inputDebugTraces.delete(traceId);
+      this.logDebug("input.trace_expired", {
+        traceId,
+        ageMs,
+        charCount: trace.charCount,
+        preview: trace.preview
+      });
+    }
+  }
+}
+
+function summarizeTerminalDebugContent(content: string): string {
+  return content
+    .replace(/\r/g, "\\r")
+    .replace(/\n/g, "\\n")
+    .slice(0, 60);
 }

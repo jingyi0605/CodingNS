@@ -97,7 +97,7 @@ export class TerminalController {
       });
     }
 
-    const terminal = this.terminalService.createTerminal({
+    const terminal = await this.terminalService.createTerminal({
       workspaceId,
       name: request.body.name?.trim(),
       cwd: request.body.cwd?.trim(),
@@ -256,7 +256,7 @@ export class TerminalController {
     reply: FastifyReply
   ): Promise<void> => {
     reply.send(
-      this.commandTemplateService.runTemplate({
+      await this.commandTemplateService.runTemplate({
         templateId: request.params.templateId,
         terminalId: request.body.terminalId?.trim(),
         shell: request.body.shell?.trim(),

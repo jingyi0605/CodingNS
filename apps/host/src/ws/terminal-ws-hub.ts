@@ -1,6 +1,7 @@
 import type { WebSocket } from "ws";
 
 import { AppError } from "../shared/errors/app-error.js";
+import { logTerminalDebug, terminalDebugNowMs } from "../shared/utils/terminal-debug-log.js";
 import type { AuthContext } from "../modules/auth/auth-service.js";
 import type { TerminalService } from "../modules/terminal/terminal-service.js";
 
@@ -14,6 +15,8 @@ interface TerminalInputMessage {
   type: "terminal.input";
   terminalId: string;
   content: string;
+  clientTraceId?: string;
+  clientSentAtMs?: number;
 }
 
 interface TerminalResizeMessage {
@@ -94,6 +97,11 @@ export class TerminalWsHub {
             );
           },
           onOutput: async (chunk) => {
+            logTerminalDebug("terminal.output.ws_sent", {
+              terminalId: payload.terminalId,
+              cursor: chunk.cursor,
+              charCount: chunk.content.length
+            });
             client.send(
               JSON.stringify({
                 type: "terminal.output",
@@ -160,11 +168,33 @@ export class TerminalWsHub {
     payload: TerminalInputMessage
   ): Promise<void> {
     try {
-      this.terminalService.writeInput(payload.terminalId, payload.content);
+      const wsReceivedAtMs = terminalDebugNowMs();
+      logTerminalDebug("terminal.input.ws_received", {
+        terminalId: payload.terminalId,
+        traceId: payload.clientTraceId ?? null,
+        charCount: payload.content.length,
+        clientToWsMs:
+          typeof payload.clientSentAtMs === "number"
+            ? wsReceivedAtMs - payload.clientSentAtMs
+            : null
+      });
+      this.terminalService.writeInput(payload.terminalId, payload.content, {
+        clientTraceId: payload.clientTraceId,
+        clientSentAtMs:
+          typeof payload.clientSentAtMs === "number" ? payload.clientSentAtMs : null,
+        wsReceivedAtMs
+      });
+      logTerminalDebug("terminal.input.ack_sent", {
+        terminalId: payload.terminalId,
+        traceId: payload.clientTraceId ?? null,
+        charCount: payload.content.length,
+        wsToAckMs: terminalDebugNowMs() - wsReceivedAtMs
+      });
       client.send(
         JSON.stringify({
           type: "terminal.input.accepted",
-          terminalId: payload.terminalId
+          terminalId: payload.terminalId,
+          ...(payload.clientTraceId ? { clientTraceId: payload.clientTraceId } : {})
         })
       );
     } catch (error) {
@@ -256,7 +286,9 @@ function isTerminalInputMessage(payload: unknown): payload is TerminalInputMessa
     payload !== null &&
     candidate?.type === "terminal.input" &&
     typeof candidate?.terminalId === "string" &&
-      typeof candidate?.content === "string"
+    typeof candidate?.content === "string" &&
+    (candidate?.clientTraceId === undefined || typeof candidate?.clientTraceId === "string") &&
+    (candidate?.clientSentAtMs === undefined || typeof candidate?.clientSentAtMs === "number")
   );
 }
 
