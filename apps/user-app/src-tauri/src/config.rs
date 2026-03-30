@@ -10,7 +10,6 @@ pub struct DesktopRuntimeConfig {
   pub release_channel: Option<String>,
   pub auto_reconnect: Option<bool>,
   pub auto_check_update: Option<bool>,
-  pub default_permission_mode: Option<String>,
 }
 
 fn config_file_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -55,10 +54,6 @@ fn write_desktop_config_to_path(path: &PathBuf, patch: DesktopRuntimeConfig) -> 
   if patch.auto_check_update.is_some() {
     current.auto_check_update = patch.auto_check_update;
   }
-  if patch.default_permission_mode.is_some() {
-    current.default_permission_mode = patch.default_permission_mode;
-  }
-
   let payload = serde_json::to_string_pretty(&current)
     .map_err(|error| format!("桌面配置序列化失败: {error}"))?;
 
@@ -102,7 +97,6 @@ mod tests {
         release_channel: Some("stable".to_string()),
         auto_reconnect: Some(true),
         auto_check_update: Some(true),
-        default_permission_mode: Some("default".to_string()),
       },
     )
     .expect("第一次写入失败");
@@ -115,7 +109,6 @@ mod tests {
         release_channel: None,
         auto_reconnect: None,
         auto_check_update: None,
-        default_permission_mode: None,
       },
     )
     .expect("第二次写入失败");

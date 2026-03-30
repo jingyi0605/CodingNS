@@ -10,7 +10,7 @@ import {
 import { createPortal } from "react-dom";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 
-import { clientConfigStore } from "../../../config/client-config-store";
+import { userPreferenceStore } from "../../../preferences/user-preference-store";
 import { useHaptics } from "../../../shared/haptics";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
@@ -747,7 +747,7 @@ function DraftConversationPage({
               setSending(true);
 
               try {
-                const permissionMode = clientConfigStore.getState().defaultPermissionMode;
+                const permissionMode = userPreferenceStore.getState().profile.defaultPermissionMode;
                 const created = await startLiveSession({
                   workspaceId: draft.workspaceId,
                   provider: draft.provider,
@@ -802,18 +802,19 @@ interface DraftConversationContext {
 function parseDraftContext(
   sessionId: string,
   routeWorkspaceId: string | null,
-  searchParams: URLSearchParams
+  searchParams: URLSearchParams,
+  fallbackProvider: ProviderId | null = null
 ): DraftConversationContext | null {
   if (!isDraftSessionId(sessionId)) {
     return null;
   }
 
   const workspaceId = routeWorkspaceId ?? searchParams.get("workspaceId")?.trim() ?? null;
-  const provider = searchParams.get("provider")?.trim() ?? null;
+  const provider = searchParams.get("provider")?.trim() ?? fallbackProvider ?? null;
 
   if (!workspaceId || !isDraftProviderSupported(provider)) {
-    return null;
-  }
+  return null;
+}
 
   return {
     sessionId,

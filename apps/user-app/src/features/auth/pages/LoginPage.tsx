@@ -6,6 +6,7 @@ import { serverConfigStore, useServerConfigSelector } from "../../../config/serv
 import { authGateway } from "../../../auth/auth-gateway";
 import { probeHost } from "../../../network/host-probe";
 import { usePlatform } from "../../../platform/platform-provider";
+import { userPreferenceStore } from "../../../preferences/user-preference-store";
 import { LanguageSwitcher, t, useT } from "../../../shared/i18n";
 import { ApiError } from "../../../shared/network/api-error";
 import { useTheme } from "../../../shared/theme";
@@ -253,6 +254,7 @@ export function LoginPage() {
 
     try {
       await authGateway.login(username, password, persistedServerBaseUrl);
+      await userPreferenceStore.refreshForAuthenticatedUser();
 
       if (rememberPasswordSupported && rememberPassword) {
         persistRememberedLoginCredentials({

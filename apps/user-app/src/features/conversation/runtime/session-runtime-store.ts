@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 
-import { clientConfigStore } from "../../../config/client-config-store";
 import { authStore } from "../../auth/store/auth-store";
 import { RealtimeClient } from "../../../network/realtime-client";
+import { userPreferenceStore } from "../../../preferences/user-preference-store";
 import { readViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import { logPerfDebug } from "../../../shared/debug/perf-debug";
 import { t } from "../../../shared/i18n";
@@ -57,7 +57,7 @@ const SESSION_MARK_SEEN_MIN_INTERVAL_MS = 5_000;
 const SESSION_RUNTIME_POLL_DELAY_MS = 10_000;
 
 function getDefaultPermissionMode(): string | null {
-  const permissionMode = clientConfigStore.getState().defaultPermissionMode;
+  const permissionMode = userPreferenceStore.getState().profile.defaultPermissionMode;
   return permissionMode === "default" ? null : permissionMode;
 }
 

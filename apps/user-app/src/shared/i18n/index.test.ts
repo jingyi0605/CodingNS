@@ -1,52 +1,66 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { clientConfigStore } from "../../config/client-config-store";
-import type { ClientRuntimeConfig } from "../../config/client-config-types";
+import { userPreferenceStore } from "../../preferences/user-preference-store";
 import { t } from "./index";
 
-function createConfig(language: ClientRuntimeConfig["language"]): ClientRuntimeConfig {
+function createPreferenceState(language: "zh-CN" | "en-US") {
   return {
-    platform: "web",
-    hostBaseUrl: "http://127.0.0.1:3002",
-    releaseChannel: "stable",
-    autoReconnect: true,
-    autoCheckUpdate: false,
-    language,
-    defaultPermissionMode: "default"
+    initialized: true,
+    profile: {
+      language,
+      theme: "light" as const,
+      defaultPermissionMode: "default" as const
+    },
+    providers: {
+      "claude-code": {
+        defaultModel: null,
+        defaultReasoningLevel: null
+      },
+      codex: {
+        defaultModel: null,
+        defaultReasoningLevel: null
+      },
+      opencode: {
+        defaultModel: null,
+        defaultReasoningLevel: null
+      }
+    },
+    updatedAt: null,
+    source: "default" as const
   };
 }
 
-const initialConfig = clientConfigStore.getState();
+const initialState = userPreferenceStore.getState();
 
 afterEach(() => {
-  clientConfigStore.hydrate(initialConfig);
+  userPreferenceStore.hydrate(initialState);
 });
 
 describe("i18n", () => {
   it("根据当前语言返回设置和登录页文案", () => {
-    clientConfigStore.hydrate(createConfig("zh-CN"));
+    userPreferenceStore.hydrate(createPreferenceState("zh-CN"));
     expect(t("common.language")).toBe("语言");
     expect(t("settings.language")).toBe("语言");
 
-    clientConfigStore.hydrate(createConfig("en-US"));
+    userPreferenceStore.hydrate(createPreferenceState("en-US"));
     expect(t("common.language")).toBe("Language");
     expect(t("settings.language")).toBe("Language");
     expect(t("auth.serverSettings")).toBe("Server Settings");
   });
 
   it("英文词典缺失时回退到中文，而不是返回 key", () => {
-    clientConfigStore.hydrate(createConfig("en-US"));
+    userPreferenceStore.hydrate(createPreferenceState("en-US"));
 
     expect(t("conversation.headerCapability")).toBe("Capability Summary");
     expect(t("conversation.fileViewerHint")).toBe("Opened in {language} mode. Preview and save after editing are supported.");
     expect(t("nonexistent.key")).toBe("nonexistent.key");
   });
 
-  it("空字符串翻译应该按原样返回，不应该回退成 key", () => {
-    clientConfigStore.hydrate(createConfig("zh-CN"));
-    expect(t("git.commitSubjectPlaceholder")).toBe("");
+  it("提交占位文案应该按当前语言返回", () => {
+    userPreferenceStore.hydrate(createPreferenceState("zh-CN"));
+    expect(t("git.commitSubjectPlaceholder")).toBe("在这里输入提交信息");
 
-    clientConfigStore.hydrate(createConfig("en-US"));
-    expect(t("git.commitSubjectPlaceholder")).toBe("");
+    userPreferenceStore.hydrate(createPreferenceState("en-US"));
+    expect(t("git.commitSubjectPlaceholder")).toBe("Enter the commit message here");
   });
 });

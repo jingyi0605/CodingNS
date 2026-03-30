@@ -11,6 +11,7 @@ import type {
 } from "../../../config/client-config-types";
 import { normalizeServerBaseUrl } from "../../../config/server-config";
 import { usePlatform } from "../../../platform/platform-provider";
+import { useUserPreferenceSelector, userPreferenceStore } from "../../../preferences/user-preference-store";
 import { LanguageSwitcher, t } from "../../../shared/i18n";
 import { THEMES, getThemeLabel, useTheme, type ThemeId } from "../../../shared/theme";
 import { useAppVersion } from "../../../shared/version/app-version";
@@ -28,8 +29,12 @@ type SettingsSectionId =
 interface SettingsPageModel {
   readonly platform: ReturnType<typeof usePlatform>;
   readonly theme: ThemeId;
-  readonly setTheme: (id: ThemeId) => void;
+  readonly applyTheme: (id: ThemeId) => void;
   readonly runtimeConfig: ClientRuntimeConfig;
+  readonly accountPreferences: {
+    language: AppLanguage;
+    defaultPermissionMode: ClientPermissionMode;
+  };
   readonly showServerSettings: boolean;
   readonly canConfigureServerAddress: boolean;
   readonly hostBaseUrlDraft: string;
@@ -87,6 +92,14 @@ function useSettingsPageModel(): SettingsPageModel {
   const navigate = useNavigate();
   const { theme, setTheme } = useTheme();
   const runtimeConfig = useClientConfigSelector((state) => state);
+  const preferenceLanguage = useUserPreferenceSelector((state) => state.profile.language);
+  const preferencePermissionMode = useUserPreferenceSelector(
+    (state) => state.profile.defaultPermissionMode
+  );
+  const accountPreferences = {
+    language: preferenceLanguage,
+    defaultPermissionMode: preferencePermissionMode
+  };
   const platform = usePlatform();
   const canConfigureServerAddress = canConfigureHostBaseUrl(runtimeConfig.platform);
   const showServerSettings = canConfigureServerAddress;
@@ -98,7 +111,12 @@ function useSettingsPageModel(): SettingsPageModel {
 
   function handleLogout(): void {
     authStore.clear();
+    userPreferenceStore.resetToLocalFallback();
     navigate("/login", { replace: true });
+  }
+
+  function applyTheme(id: ThemeId): void {
+    setTheme(id);
   }
 
   function getNormalizedHostBaseUrl(value: string): string | null {
@@ -162,17 +180,17 @@ function useSettingsPageModel(): SettingsPageModel {
   }
 
   function updateDefaultPermissionMode(value: string): void {
-    void clientConfigStore.update({
-      defaultPermissionMode:
-        value === "acceptEdits" || value === "bypassPermissions" ? value : "default"
-    });
+    const normalized =
+      value === "acceptEdits" || value === "bypassPermissions" ? value : "default";
+    void userPreferenceStore.updateProfile({ defaultPermissionMode: normalized }).catch(() => {});
   }
 
   return {
     platform,
     theme,
-    setTheme,
+    applyTheme,
     runtimeConfig,
+    accountPreferences,
     showServerSettings,
     canConfigureServerAddress,
     hostBaseUrlDraft,
@@ -202,8 +220,9 @@ export function SettingsPage() {
 function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; appVersion: string }) {
   const {
     theme,
-    setTheme,
+    applyTheme,
     runtimeConfig,
+    accountPreferences,
     showServerSettings,
     hostBaseUrlDraft,
     setHostBaseUrlDraft,
@@ -248,7 +267,7 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
                       type="button"
                       className={`theme-card ${theme === themeOption.id ? "active" : ""}`}
                       aria-pressed={theme === themeOption.id}
-                      onClick={() => setTheme(themeOption.id as ThemeId)}
+                      onClick={() => applyTheme(themeOption.id as ThemeId)}
                     >
                       <span className="theme-preview" style={{ background: themeOption.color }} />
                       <span className="theme-label">{getThemeLabel(themeOption)}</span>
@@ -321,7 +340,7 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
                 <select
                   aria-label={t("settings.defaultPermissionMode")}
                   className="settings-select"
-                  value={runtimeConfig.defaultPermissionMode}
+                  value={accountPreferences.defaultPermissionMode}
                   onChange={(event) => updateDefaultPermissionMode(event.target.value)}
                 >
                   {permissionModeOptions.map((option) => (
@@ -419,7 +438,7 @@ function MobileSettingsPage({ model, appVersion }: { model: SettingsPageModel; a
         id: "appearance",
         title: t("settings.appearance"),
         description: t("settings.appearanceSectionSummary"),
-        value: getLanguageLabel(model.runtimeConfig.language),
+        value: getLanguageLabel(model.accountPreferences.language),
         icon: <AppearanceSectionIcon />
       },
       {
@@ -433,7 +452,7 @@ function MobileSettingsPage({ model, appVersion }: { model: SettingsPageModel; a
         id: "security-privacy",
         title: t("settings.securityPrivacy"),
         description: t("settings.securityPrivacySectionSummary"),
-        value: getPermissionModeLabel(model.runtimeConfig.defaultPermissionMode),
+        value: getPermissionModeLabel(model.accountPreferences.defaultPermissionMode),
         icon: <SecurityPrivacySectionIcon />
       },
       {
@@ -449,14 +468,14 @@ function MobileSettingsPage({ model, appVersion }: { model: SettingsPageModel; a
         id: "appearance",
         title: t("settings.appearance"),
         description: t("settings.appearanceSectionSummary"),
-        value: getLanguageLabel(model.runtimeConfig.language),
+        value: getLanguageLabel(model.accountPreferences.language),
         icon: <AppearanceSectionIcon />
       },
       {
         id: "security-privacy",
         title: t("settings.securityPrivacy"),
         description: t("settings.securityPrivacySectionSummary"),
-        value: getPermissionModeLabel(model.runtimeConfig.defaultPermissionMode),
+        value: getPermissionModeLabel(model.accountPreferences.defaultPermissionMode),
         icon: <SecurityPrivacySectionIcon />
       },
       {
@@ -553,7 +572,7 @@ function MobileAppearanceSection({ model }: { model: SettingsPageModel }) {
                 type="button"
                 className={`settings-mobile-choice-row${isActive ? " active" : ""}`}
                 aria-pressed={isActive}
-                onClick={() => model.setTheme(themeOption.id as ThemeId)}
+                onClick={() => model.applyTheme(themeOption.id as ThemeId)}
               >
                 <span className="settings-mobile-choice-leading">
                   <span
@@ -640,7 +659,7 @@ function MobileSecurityPrivacySection({ model }: { model: SettingsPageModel }) {
           <select
             aria-label={t("settings.defaultPermissionMode")}
             className="settings-select settings-mobile-select"
-            value={model.runtimeConfig.defaultPermissionMode}
+            value={model.accountPreferences.defaultPermissionMode}
             onChange={(event) => model.updateDefaultPermissionMode(event.target.value)}
           >
             {model.permissionModeOptions.map((option) => (

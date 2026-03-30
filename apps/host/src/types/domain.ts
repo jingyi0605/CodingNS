@@ -219,6 +219,31 @@ export interface UserQuickPhrasePreferenceRecord {
   updatedAt: string;
 }
 
+export type PreferenceProviderId = "claude-code" | "codex" | "opencode";
+export type UserPreferenceLanguage = "zh-CN" | "en-US";
+export type UserPreferenceTheme = "light" | "dark" | "sky-blue" | "eye-green";
+export type UserPreferencePermissionMode = "default" | "acceptEdits" | "bypassPermissions";
+
+export interface UserPreferenceProviderProfile {
+  defaultModel: string | null;
+  defaultReasoningLevel: string | null;
+}
+
+export type UserPreferenceProviders = Record<PreferenceProviderId, UserPreferenceProviderProfile>;
+
+export interface UserPreferenceProfile {
+  language: UserPreferenceLanguage;
+  theme: UserPreferenceTheme;
+  defaultPermissionMode: UserPreferencePermissionMode;
+  providers: UserPreferenceProviders;
+}
+
+export interface UserPreferenceProfileRecord extends UserPreferenceProfile {
+  userId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface FileContextBinding {
   id: string;
   sessionId: string;

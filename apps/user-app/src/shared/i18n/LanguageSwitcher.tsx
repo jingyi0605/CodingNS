@@ -1,5 +1,5 @@
-import { clientConfigStore, useClientConfigSelector } from "../../config/client-config-store";
 import type { AppLanguage } from "../../config/client-config-types";
+import { usePreferencesSelector, updatePreferences } from "../../preferences/preferences-store";
 import { t } from "./index";
 
 const LANGUAGE_OPTIONS: Array<{ id: AppLanguage; labelKey: string }> = [
@@ -16,16 +16,14 @@ export function LanguageSwitcher({
   variant = "default",
   className
 }: LanguageSwitcherProps) {
-  const language = useClientConfigSelector((state) => state.language);
+  const language = usePreferencesSelector((state) => state.profile.language);
 
   function handleLanguageChange(nextLanguage: AppLanguage): void {
     if (nextLanguage === language) {
       return;
     }
 
-    void clientConfigStore.update({
-      language: nextLanguage
-    });
+    void updatePreferences({ language: nextLanguage }).catch(() => {});
   }
 
   return (

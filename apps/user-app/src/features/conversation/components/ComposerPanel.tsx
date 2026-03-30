@@ -4,6 +4,11 @@ import { createPortal } from "react-dom";
 import { useHaptics } from "../../../shared/haptics";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
+import {
+  updatePreferences,
+  usePreferencesSelector
+} from "../../../preferences/preferences-store";
+import { isPreferenceProviderId } from "../../../preferences/user-preference-store";
 import { decideCapability } from "../capability/capability-gate";
 import {
   allowsQueueDuringRun,
@@ -21,6 +26,7 @@ import type {
   ProviderCapabilitiesDto,
   ProviderId
 } from "../api/conversation-api";
+import type { PreferenceReasoningLevel as ReasoningLevel } from "../../../preferences/types";
 import { listQuickPhrases, replaceQuickPhrases } from "../api/conversation-api";
 import { WorkbenchModal } from "./WorkbenchModal";
 import {
@@ -72,8 +78,6 @@ type ModelOption = {
   usesProviderDefault?: boolean;
   supportedReasoningEfforts?: ReasoningLevel[];
 };
-
-type ReasoningLevel = "low" | "medium" | "high" | "xhigh";
 
 interface ComposerImageAttachment {
   id: string;
@@ -302,6 +306,12 @@ export function ComposerPanel({
   const haptics = useHaptics();
 
   const provider = getProviderFromCapabilities(capabilities);
+  const accountProviderPreferences = usePreferencesSelector((state) =>
+    isPreferenceProviderId(provider) ? state.profile.providers[provider] : null
+  );
+  const accountPreferredModel = accountProviderPreferences?.defaultModel ?? null;
+  const accountPreferredReasoningLevel =
+    accountProviderPreferences?.defaultReasoningLevel ?? null;
   const sendDecision = useMemo(
     () => decideCapability(capabilities, "send_message"),
     [capabilities]
@@ -428,12 +438,28 @@ export function ComposerPanel({
 
   const handleModelChange = useCallback((modelId: string) => {
     setSelectedModel(modelId);
-    localStorage.setItem(getModelStorageKey(provider), modelId);
+    if (isPreferenceProviderId(provider)) {
+      void updatePreferences({
+        providers: {
+          [provider]: {
+            defaultModel: modelId
+          }
+        }
+      }).catch(() => undefined);
+    }
   }, [provider]);
 
   const handleReasoningLevelChange = useCallback((level: ReasoningLevel) => {
     setReasoningLevel(level);
-    localStorage.setItem(getReasoningStorageKey(provider), level);
+    if (isPreferenceProviderId(provider)) {
+      void updatePreferences({
+        providers: {
+          [provider]: {
+            defaultReasoningLevel: level
+          }
+        }
+      }).catch(() => undefined);
+    }
   }, [provider]);
 
   const replaceAttachments = useCallback((nextAttachments: ComposerImageAttachment[]) => {
@@ -599,11 +625,12 @@ export function ComposerPanel({
       return;
     }
 
-    const saved = localStorage.getItem(getModelStorageKey(provider));
-
-    if (saved && availableModels.some((model) => model.id === saved)) {
-      if (selectedModel !== saved) {
-        setSelectedModel(saved);
+    if (
+      accountPreferredModel &&
+      availableModels.some((model) => model.id === accountPreferredModel)
+    ) {
+      if (selectedModel !== accountPreferredModel) {
+        setSelectedModel(accountPreferredModel);
       }
       return;
     }
@@ -614,19 +641,19 @@ export function ComposerPanel({
 
     const fallbackModel = availableModels[0]!.id;
     setSelectedModel(fallbackModel);
-    localStorage.setItem(getModelStorageKey(provider), fallbackModel);
-  }, [availableModels, provider, selectedModel]);
+  }, [availableModels, provider, selectedModel, accountPreferredModel]);
 
   useEffect(() => {
     if (!shouldPersistReasoningLevel(provider) || availableReasoningLevels.length === 0) {
       return;
     }
 
-    const saved = localStorage.getItem(getReasoningStorageKey(provider));
-
-    if (saved && availableReasoningLevels.some((level) => level.value === saved)) {
-      if (reasoningLevel !== saved) {
-        setReasoningLevel(saved as ReasoningLevel);
+    if (
+      accountPreferredReasoningLevel &&
+      availableReasoningLevels.some((level) => level.value === accountPreferredReasoningLevel)
+    ) {
+      if (reasoningLevel !== accountPreferredReasoningLevel) {
+        setReasoningLevel(accountPreferredReasoningLevel);
       }
       return;
     }
@@ -640,7 +667,6 @@ export function ComposerPanel({
       if (reasoningLevel !== providerDefault) {
         setReasoningLevel(providerDefault as ReasoningLevel);
       }
-      localStorage.setItem(getReasoningStorageKey(provider), providerDefault);
       return;
     }
 
@@ -650,8 +676,13 @@ export function ComposerPanel({
 
     const fallbackLevel = availableReasoningLevels[0]!.value;
     setReasoningLevel(fallbackLevel);
-    localStorage.setItem(getReasoningStorageKey(provider), fallbackLevel);
-  }, [availableReasoningLevels, capabilities?.defaultReasoningLevel, provider, reasoningLevel]);
+  }, [
+    availableReasoningLevels,
+    capabilities?.defaultReasoningLevel,
+    provider,
+    reasoningLevel,
+    accountPreferredReasoningLevel
+  ]);
 
   useEffect(() => {
     let disposed = false;

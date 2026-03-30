@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { clientConfigStore } from "../../../config/client-config-store";
+import { userPreferenceStore } from "../../../preferences/user-preference-store";
 import { authStore } from "../../auth/store/auth-store";
 import { PlatformProvider } from "../../../platform/platform-provider";
 import { I18nProvider, t } from "../../../shared/i18n";
@@ -26,6 +27,7 @@ describe("SettingsPage", () => {
       language: "zh-CN",
       defaultPermissionMode: "default"
     });
+    userPreferenceStore.hydrate(createPreferenceState());
     setViewportWidth(1280);
   });
 
@@ -204,7 +206,7 @@ describe("SettingsPage", () => {
     await userEvent.selectOptions(select, "bypassPermissions");
 
     await waitFor(() => {
-      expect(clientConfigStore.getState().defaultPermissionMode).toBe("bypassPermissions");
+      expect(userPreferenceStore.getState().profile.defaultPermissionMode).toBe("bypassPermissions");
     });
   });
 
@@ -264,4 +266,31 @@ function setViewportWidth(width: number) {
     value: width
   });
   window.dispatchEvent(new Event("resize"));
+}
+
+function createPreferenceState(overrides?: Partial<ReturnType<typeof userPreferenceStore.getState>["profile"]>) {
+  return {
+    initialized: true,
+    profile: {
+      language: overrides?.language ?? "zh-CN",
+      theme: overrides?.theme ?? "light",
+      defaultPermissionMode: overrides?.defaultPermissionMode ?? "default"
+    },
+    providers: {
+      "claude-code": {
+        defaultModel: null,
+        defaultReasoningLevel: null
+      },
+      codex: {
+        defaultModel: null,
+        defaultReasoningLevel: null
+      },
+      opencode: {
+        defaultModel: null,
+        defaultReasoningLevel: null
+      }
+    },
+    updatedAt: null,
+    source: "default" as const
+  };
 }

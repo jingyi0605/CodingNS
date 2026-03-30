@@ -1,10 +1,11 @@
 import type { ReactNode } from "react";
 import { useEffect } from "react";
 
-import { clientConfigStore, useClientConfigSelector } from "../../config/client-config-store";
 import type { AppLanguage } from "../../config/client-config-types";
 import { enUS } from "../../i18n/en-US";
 import { zhCN } from "../../i18n/zh-CN";
+import { usePreferencesSelector } from "../../preferences/preferences-store";
+import { userPreferenceStore } from "../../preferences/user-preference-store";
 
 type DictionaryValue = string | Record<string, unknown>;
 type TranslationParams = Record<string, string | number | boolean | null | undefined>;
@@ -1260,7 +1261,7 @@ function readValue(key: string, source: DictionaryValue): string {
 }
 
 function getCurrentLanguage(): AppLanguage {
-  return clientConfigStore.getState().language ?? "zh-CN";
+  return userPreferenceStore.getState().profile.language ?? "zh-CN";
 }
 
 export function t(key: string, params?: TranslationParams): string {
@@ -1317,7 +1318,7 @@ export function I18nProvider({ children, language }: I18nProviderProps) {
  * 响应式的翻译hook，语言切换时会自动触发组件重新渲染
  */
 export function useT(): (key: string) => string {
-  const language = useClientConfigSelector((state) => state.language);
+  const language = usePreferencesSelector((state) => state.profile.language);
 
   return (key: string) => {
     const localeCandidates: AppLanguage[] = language === "en-US" ? ["en-US", "zh-CN"] : ["zh-CN"];

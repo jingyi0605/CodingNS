@@ -210,6 +210,19 @@ CREATE TABLE IF NOT EXISTS user_quick_phrase_preferences (
   FOREIGN KEY (user_id) REFERENCES auth_users(id)
 );
 
+CREATE TABLE IF NOT EXISTS user_preference_profiles (
+  user_id TEXT PRIMARY KEY,
+  language TEXT NOT NULL CHECK (language IN ('zh-CN', 'en-US')),
+  theme TEXT NOT NULL CHECK (theme IN ('light', 'dark', 'sky-blue', 'eye-green')),
+  default_permission_mode TEXT NOT NULL CHECK (
+    default_permission_mode IN ('default', 'acceptEdits', 'bypassPermissions')
+  ),
+  providers_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES auth_users(id)
+);
+
 CREATE TABLE IF NOT EXISTS session_file_context_bindings (
   id TEXT PRIMARY KEY,
   session_id TEXT NOT NULL,

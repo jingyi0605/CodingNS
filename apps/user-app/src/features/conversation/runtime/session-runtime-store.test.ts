@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { clientConfigStore } from "../../../config/client-config-store";
+import { userPreferenceStore } from "../../../preferences/user-preference-store";
 import { authStore } from "../../auth/store/auth-store";
 import { clearViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import { ApiError } from "../../../shared/network/api-error";
@@ -136,6 +137,7 @@ describe("SessionRuntimeStore", () => {
       language: "zh-CN",
       defaultPermissionMode: "default"
     });
+    userPreferenceStore.hydrate(createPreferenceState());
 
     mocked.getSessionDetail.mockResolvedValue({
       sessionId: "session-1",
@@ -1430,6 +1432,11 @@ describe("SessionRuntimeStore", () => {
       ...clientConfigStore.getState(),
       defaultPermissionMode: "bypassPermissions"
     });
+    userPreferenceStore.hydrate(
+      createPreferenceState({
+        defaultPermissionMode: "bypassPermissions"
+      })
+    );
     const store = new SessionRuntimeStore("session-1");
 
     await store.sendMessage("直接执行 git add");
@@ -1448,6 +1455,11 @@ describe("SessionRuntimeStore", () => {
       ...clientConfigStore.getState(),
       defaultPermissionMode: "bypassPermissions"
     });
+    userPreferenceStore.hydrate(
+      createPreferenceState({
+        defaultPermissionMode: "bypassPermissions"
+      })
+    );
     const store = new SessionRuntimeStore("session-1");
 
     mocked.sendLiveMessage.mockRejectedValueOnce(
@@ -1678,6 +1690,11 @@ describe("SessionRuntimeStore", () => {
       ...clientConfigStore.getState(),
       defaultPermissionMode: "bypassPermissions"
     });
+    userPreferenceStore.hydrate(
+      createPreferenceState({
+        defaultPermissionMode: "bypassPermissions"
+      })
+    );
     const store = new SessionRuntimeStore("session-1");
 
     await store.enqueueMessage("排队执行 git add");
@@ -1947,3 +1964,32 @@ describe("SessionRuntimeStore", () => {
     store.destroy();
   });
 });
+
+function createPreferenceState(
+  overrides?: Partial<ReturnType<typeof userPreferenceStore.getState>["profile"]>
+) {
+  return {
+    initialized: true,
+    profile: {
+      language: overrides?.language ?? "zh-CN",
+      theme: overrides?.theme ?? "light",
+      defaultPermissionMode: overrides?.defaultPermissionMode ?? "default"
+    },
+    providers: {
+      "claude-code": {
+        defaultModel: null,
+        defaultReasoningLevel: null
+      },
+      codex: {
+        defaultModel: null,
+        defaultReasoningLevel: null
+      },
+      opencode: {
+        defaultModel: null,
+        defaultReasoningLevel: null
+      }
+    },
+    updatedAt: null,
+    source: "default" as const
+  };
+}

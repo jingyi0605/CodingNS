@@ -1,8 +1,8 @@
 import { useMemo } from "react";
 import { RouterProvider } from "react-router-dom";
 
-import { useClientConfigSelector } from "../config/client-config-store";
 import { PlatformProvider } from "../platform/platform-provider";
+import { usePreferencesSelector } from "../preferences/preferences-store";
 import { I18nProvider } from "../shared/i18n";
 import { ThemeProvider } from "../shared/theme";
 import { ToastProvider } from "../shared/toast";
@@ -10,7 +10,7 @@ import { AppVersionProvider } from "../shared/version/app-version";
 import { createAppRouter } from "./router";
 
 export function App() {
-  const language = useClientConfigSelector((state) => state.language);
+  const language = usePreferencesSelector((state) => state.profile.language);
   const router = useMemo(() => createAppRouter(), []);
 
   return (

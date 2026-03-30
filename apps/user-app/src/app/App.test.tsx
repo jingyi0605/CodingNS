@@ -6,16 +6,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { clientConfigStore } from "../config/client-config-store";
 import { serverConfigStore } from "../config/server-config";
+import { userPreferenceStore } from "../preferences/user-preference-store";
 import { LoginPage } from "../features/auth/pages/LoginPage";
 import { authStore } from "../features/auth/store/auth-store";
-import { WorkbenchLayout } from "../features/conversation/components/WorkbenchLayout";
 import { ConversationPage } from "../features/conversation/pages/ConversationPage";
 import { SettingsPage } from "../features/settings/pages/SettingsPage";
+import { WorkbenchShellRoute } from "../features/workbench/components/WorkbenchShellRoute";
 import { PlatformProvider } from "../platform/platform-provider";
 import { t } from "../shared/i18n";
 import { I18nProvider } from "../shared/i18n";
 import { ThemeProvider } from "../shared/theme";
 import { ToastProvider } from "../shared/toast";
+import { AppVersionProvider } from "../shared/version/app-version";
 
 interface MockSocketMessage {
   type: string;
@@ -103,6 +105,7 @@ describe("app routes", () => {
       language: "zh-CN",
       defaultPermissionMode: "default"
     });
+    userPreferenceStore.hydrate(createPreferenceState());
     serverConfigStore.reset();
     authStore.clear();
     MockWebSocket.reset();
@@ -298,7 +301,21 @@ describe("app routes", () => {
       }
     });
 
-    renderConversationRoute("session-1");
+    const bootstrapHistoryMessage = createHistoryMessage({
+      messageId: "history-bootstrap-1",
+      role: "assistant",
+      content: "历史消息已经到了。",
+      sequence: 1
+    });
+
+    renderConversationRoute("session-1", {
+      state: {
+        bootstrap: {
+          sessionId: "session-1",
+          messages: [bootstrapHistoryMessage]
+        }
+      }
+    });
 
     await waitFor(() => {
       expect(MockWebSocket.instances.some((socket) => socket.url.startsWith("ws://10.10.1.8:4100/ws?"))).toBe(true);
@@ -352,7 +369,7 @@ describe("app routes", () => {
     await userEvent.selectOptions(select, "bypassPermissions");
 
     await waitFor(() => {
-      expect(clientConfigStore.getState().defaultPermissionMode).toBe("bypassPermissions");
+      expect(userPreferenceStore.getState().profile.defaultPermissionMode).toBe("bypassPermissions");
     });
   });
 
@@ -673,7 +690,21 @@ describe("app routes", () => {
       }
     });
 
-    const view = renderConversationRoute("session-1");
+    const bootstrapHistoryMessage = createHistoryMessage({
+      messageId: "history-bootstrap-1",
+      role: "assistant",
+      content: "历史消息已经到了。",
+      sequence: 1
+    });
+
+    const view = renderConversationRoute("session-1", {
+      state: {
+        bootstrap: {
+          sessionId: "session-1",
+          messages: [bootstrapHistoryMessage]
+        }
+      }
+    });
 
     expect((await screen.findAllByRole("heading", { name: "Spec003 主链路" })).length).toBeGreaterThan(0);
     expect(await screen.findByText("历史消息已经到了。")).toBeInTheDocument();
@@ -910,8 +941,49 @@ describe("app routes", () => {
     renderConversationRoute("session-1");
 
     const filePanel = await screen.findByTestId("file-context-panel");
+    const workbenchSocket = getWorkbenchSockets()[0] ?? MockWebSocket.instances[0];
+
+    workbenchSocket?.dispatchMessage({
+      type: "fileTree.snapshot",
+      snapshot: {
+        workspaceId: "workspace-1",
+        path: "",
+        items: [
+          {
+            path: "src",
+            name: "src",
+            kind: "directory",
+            size: null,
+            updatedAt: "2026-03-23T10:00:00.000Z"
+          },
+          {
+            path: "README.md",
+            name: "README.md",
+            kind: "file",
+            size: 64,
+            updatedAt: "2026-03-23T10:00:00.000Z"
+          }
+        ]
+      }
+    });
 
     await userEvent.click(await within(filePanel).findByText("src"));
+    workbenchSocket?.dispatchMessage({
+      type: "fileTree.snapshot",
+      snapshot: {
+        workspaceId: "workspace-1",
+        path: "src",
+        items: [
+          {
+            path: "src/app.ts",
+            name: "app.ts",
+            kind: "file",
+            size: 128,
+            updatedAt: "2026-03-23T10:00:00.000Z"
+          }
+        ]
+      }
+    });
     expect(await within(filePanel).findByText("app.ts")).toBeInTheDocument();
 
     await userEvent.click(await within(filePanel).findByText("README.md"));
@@ -984,7 +1056,46 @@ it("统一消息抽象会渲染 codex 工具调用", async () => {
     }
   });
 
-  renderConversationRoute("session-tools");
+  renderConversationRoute("session-tools", {
+    state: {
+      bootstrap: {
+        sessionId: "session-tools",
+        messages: [
+          createHistoryMessage({
+            messageId: "tool-call-boot-1",
+            role: "tool",
+            kind: "tool_call",
+            content: "{\n  \"command\": \"git status --short\"\n}",
+            sequence: 1,
+            toolCall: {
+              callId: "call-shell-1",
+              name: "shell_command",
+              input: "{\n  \"command\": \"git status --short\"\n}",
+              output: null,
+              error: null,
+              status: "running"
+            }
+          }),
+          createHistoryMessage({
+            messageId: "tool-result-boot-1",
+            role: "tool",
+            kind: "tool_result",
+            content: "Exit code: 0\nOutput:\nerror_code: 0\n M src/main.ts",
+            sequence: 2,
+            timestamp: "2026-03-23T10:00:01.000Z",
+            toolCall: {
+              callId: "call-shell-1",
+              name: "shell_command",
+              input: "",
+              output: "Exit code: 0\nOutput:\nerror_code: 0\n M src/main.ts",
+              error: null,
+              status: "completed"
+            }
+          })
+        ]
+      }
+    }
+  });
 
   expect(await screen.findByRole("button", { name: new RegExp(`^${t("conversation.roleTool")}`) })).toBeInTheDocument();
 
@@ -1006,6 +1117,33 @@ function hydrateAuth() {
       role: "admin"
     }
   });
+}
+
+function createPreferenceState(overrides?: Partial<ReturnType<typeof userPreferenceStore.getState>["profile"]>) {
+  return {
+    initialized: true,
+    profile: {
+      language: overrides?.language ?? "zh-CN",
+      theme: overrides?.theme ?? "light",
+      defaultPermissionMode: overrides?.defaultPermissionMode ?? "default"
+    },
+    providers: {
+      "claude-code": {
+        defaultModel: null,
+        defaultReasoningLevel: null
+      },
+      codex: {
+        defaultModel: null,
+        defaultReasoningLevel: null
+      },
+      opencode: {
+        defaultModel: null,
+        defaultReasoningLevel: null
+      }
+    },
+    updatedAt: null,
+    source: "default" as const
+  };
 }
 
 function createWorkspace() {
@@ -1201,20 +1339,40 @@ function installFetchMock(input: {
   return fetchMock;
 }
 
-function renderConversationRoute(sessionId: string) {
+function renderConversationRoute(
+  sessionId: string,
+  options?: {
+    state?: unknown;
+  }
+) {
   return render(
-    <ToastProvider>
-      <MemoryRouter initialEntries={[`/workspaces/workspace-1/sessions/${sessionId}`]}>
-        <Routes>
-          <Route element={<WorkbenchLayout />}>
-            <Route
-              path="/workspaces/:workspaceId/sessions/:sessionId"
-              element={<ConversationPage />}
-            />
-          </Route>
-        </Routes>
-      </MemoryRouter>
-    </ToastProvider>
+    <PlatformProvider>
+      <AppVersionProvider>
+        <I18nProvider language={userPreferenceStore.getState().profile.language}>
+          <ThemeProvider>
+            <ToastProvider>
+              <MemoryRouter
+                initialEntries={[
+                  {
+                    pathname: `/workspaces/workspace-1/sessions/${sessionId}`,
+                    state: options?.state ?? null
+                  }
+                ]}
+              >
+                <Routes>
+                  <Route element={<WorkbenchShellRoute />}>
+                    <Route
+                      path="/workspaces/:workspaceId/sessions/:sessionId"
+                      element={<ConversationPage />}
+                    />
+                  </Route>
+                </Routes>
+              </MemoryRouter>
+            </ToastProvider>
+          </ThemeProvider>
+        </I18nProvider>
+      </AppVersionProvider>
+    </PlatformProvider>
   );
 }
 

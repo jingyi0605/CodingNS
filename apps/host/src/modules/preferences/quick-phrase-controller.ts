@@ -2,26 +2,13 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 
 import { AppError } from "../../shared/errors/app-error.js";
 import type { QuickPhraseService } from "./quick-phrase-service.js";
+import { requireUserId } from "./common.js";
 
 interface ReplaceQuickPhrasesBody {
   items?: Array<{
     id?: string;
     text?: string;
   }>;
-}
-
-function requireUserId(request: FastifyRequest): string {
-  const userId = request.auth?.user.userId;
-
-  if (!userId) {
-    throw new AppError({
-      statusCode: 401,
-      errorCode: "UNAUTHORIZED",
-      detail: "当前请求缺少有效登录态"
-    });
-  }
-
-  return userId;
 }
 
 export class QuickPhraseController {
@@ -41,7 +28,7 @@ export class QuickPhraseController {
       throw new AppError({
         statusCode: 400,
         errorCode: "INVALID_INPUT",
-        detail: "更新快捷短语必须提供 items 数组",
+        detail: "更新快捷短语请提供 items 数组",
         field: "items"
       });
     }
