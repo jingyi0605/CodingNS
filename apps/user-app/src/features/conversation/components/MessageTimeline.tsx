@@ -248,6 +248,152 @@ function parseToolInputRecord(input: string): Record<string, unknown> | null {
   }
 }
 
+function readToolInputText(record: Record<string, unknown>, field: string): string {
+  const value = record[field];
+  return typeof value === "string" ? value : "";
+}
+
+function buildEditableToolPreview(tool: ResolvedToolCall): ApplyPatchPreview | null {
+  if (tool.name === "apply_patch") {
+    return parseApplyPatchPreview(tool.input);
+  }
+
+  if (tool.name !== "Write" && tool.name !== "Edit" && tool.name !== "MultiEdit") {
+    return null;
+  }
+
+  const input = parseToolInputRecord(tool.input);
+
+  if (!input) {
+    return null;
+  }
+
+  const filePath = readToolInputText(input, "file_path") || readToolInputText(input, "path");
+
+  if (!filePath) {
+    return null;
+  }
+
+  if (tool.name === "Write") {
+    const content = readToolInputText(input, "content");
+    const contentLines = content.length > 0 ? content.split(/\r?\n/) : [];
+
+    return {
+      files: [
+        {
+          path: filePath,
+          nextPath: null,
+          action: "add",
+          additions: contentLines.length,
+          deletions: 0,
+          lines: contentLines.map((line, index) => ({
+            kind: "add" as const,
+            text: `+${line}`,
+            oldLineNumber: null,
+            newLineNumber: index + 1
+          }))
+        }
+      ],
+      totalAdditions: contentLines.length,
+      totalDeletions: 0
+    };
+  }
+
+  if (tool.name === "Edit") {
+    const oldLines = readToolInputText(input, "old_string").split(/\r?\n/);
+    const newLines = readToolInputText(input, "new_string").split(/\r?\n/);
+
+    return buildUpdatePreview(filePath, [{ oldLines, newLines }]);
+  }
+
+  const edits = Array.isArray(input.edits) ? input.edits : [];
+  const normalizedEdits = edits
+    .map((edit) => {
+      if (!edit || typeof edit !== "object" || Array.isArray(edit)) {
+        return null;
+      }
+
+      const record = edit as Record<string, unknown>;
+      return {
+        oldLines: readToolInputText(record, "old_string").split(/\r?\n/),
+        newLines: readToolInputText(record, "new_string").split(/\r?\n/)
+      };
+    })
+    .filter((edit): edit is { oldLines: string[]; newLines: string[] } => Boolean(edit));
+
+  return normalizedEdits.length > 0 ? buildUpdatePreview(filePath, normalizedEdits) : null;
+}
+
+function buildUpdatePreview(
+  filePath: string,
+  edits: Array<{ oldLines: string[]; newLines: string[] }>
+): ApplyPatchPreview {
+  const lines: ApplyPatchFileChange["lines"] = [];
+  let additions = 0;
+  let deletions = 0;
+
+  edits.forEach((edit, index) => {
+    lines.push({
+      kind: "hunk",
+      text: `@@ -1,${edit.oldLines.length} +1,${edit.newLines.length} @@`,
+      oldLineNumber: null,
+      newLineNumber: null
+    });
+
+    edit.oldLines.forEach((line, lineIndex) => {
+      if (line.length === 0 && edit.oldLines.length === 1 && edit.newLines.length > 0) {
+        return;
+      }
+
+      deletions += 1;
+      lines.push({
+        kind: "remove",
+        text: `-${line}`,
+        oldLineNumber: lineIndex + 1,
+        newLineNumber: null
+      });
+    });
+
+    edit.newLines.forEach((line, lineIndex) => {
+      if (line.length === 0 && edit.newLines.length === 1 && edit.oldLines.length > 0) {
+        return;
+      }
+
+      additions += 1;
+      lines.push({
+        kind: "add",
+        text: `+${line}`,
+        oldLineNumber: null,
+        newLineNumber: lineIndex + 1
+      });
+    });
+
+    if (index < edits.length - 1) {
+      lines.push({
+        kind: "meta",
+        text: "***",
+        oldLineNumber: null,
+        newLineNumber: null
+      });
+    }
+  });
+
+  return {
+    files: [
+      {
+        path: filePath,
+        nextPath: null,
+        action: "update",
+        additions,
+        deletions,
+        lines
+      }
+    ],
+    totalAdditions: additions,
+    totalDeletions: deletions
+  };
+}
+
 function getToolPreview(tool: ResolvedToolCall): string {
   const parsedInput = parseToolInputRecord(tool.input);
   const command =
@@ -1179,7 +1325,7 @@ function ToolCallItem({ group }: { group: ToolMessageGroup }) {
   const { tool, hasRequest, hasResult } = group;
   const toolDisplayName = getToolDisplayName(tool.name);
   const applyPatchPreview = useMemo(
-    () => (tool.name === "apply_patch" ? parseApplyPatchPreview(tool.input) : null),
+    () => buildEditableToolPreview(tool),
     [tool.input, tool.name]
   );
 

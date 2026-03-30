@@ -5,6 +5,7 @@ import type {
   ImageAttachmentPayload,
   MessageAttachmentDto,
   ProviderCapabilitiesDto,
+  SessionPermissionRequestDto,
   SessionQueueItemDto,
   SessionSummaryDto,
   ToolCallDto
@@ -37,6 +38,7 @@ export interface SessionRuntimeState {
   runtimeCanInterrupt: boolean | null;
   contextUsage: ContextUsageDto | null;
   messages: SessionMessageViewModel[];
+  permissionRequests: SessionPermissionRequestDto[];
   queuedMessages: SessionQueueItemDto[];
   historyState: RuntimeHistoryState;
   loadingOlderMessages: boolean;
@@ -53,7 +55,14 @@ export function createInitialRuntimeState(
   seed?: Partial<
     Pick<
       SessionRuntimeState,
-      "session" | "capabilities" | "runtimeHasActiveRun" | "runtimeCanInterrupt" | "contextUsage" | "messages" | "queuedMessages"
+      | "session"
+      | "capabilities"
+      | "runtimeHasActiveRun"
+      | "runtimeCanInterrupt"
+      | "contextUsage"
+      | "messages"
+      | "permissionRequests"
+      | "queuedMessages"
     >
   >
 ): SessionRuntimeState {
@@ -64,6 +73,7 @@ export function createInitialRuntimeState(
     runtimeCanInterrupt: seed?.runtimeCanInterrupt ?? null,
     contextUsage: seed?.contextUsage ?? null,
     messages: seed?.messages ?? [],
+    permissionRequests: seed?.permissionRequests ?? [],
     queuedMessages: seed?.queuedMessages ?? [],
     historyState: "idle",
     loadingOlderMessages: false,

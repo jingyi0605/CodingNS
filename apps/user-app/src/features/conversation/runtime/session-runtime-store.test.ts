@@ -13,12 +13,14 @@ const mocked = vi.hoisted(() => {
   const getSessionDetail = vi.fn();
   const getSessionCapabilities = vi.fn();
   const getSessionMessages = vi.fn();
+  const getSessionPermissionRequests = vi.fn();
   const getSessionQueue = vi.fn();
   const getSessionRuntime = vi.fn();
   const markSessionSeen = vi.fn();
   const enqueueSessionMessage = vi.fn();
   const deleteSessionQueueItem = vi.fn();
   const steerSessionQueueItem = vi.fn();
+  const replySessionPermissionRequest = vi.fn();
   const sendLiveMessage = vi.fn();
   const sendSessionMessage = vi.fn();
   const realtimeInstances: Array<{
@@ -49,12 +51,14 @@ const mocked = vi.hoisted(() => {
     getSessionDetail,
     getSessionCapabilities,
     getSessionMessages,
+    getSessionPermissionRequests,
     getSessionQueue,
     getSessionRuntime,
     markSessionSeen,
     enqueueSessionMessage,
     deleteSessionQueueItem,
     steerSessionQueueItem,
+    replySessionPermissionRequest,
     sendLiveMessage,
     sendSessionMessage,
     realtimeInstances,
@@ -65,6 +69,7 @@ const mocked = vi.hoisted(() => {
 vi.mock("../api/conversation-api", () => ({
   getSessionDetail: mocked.getSessionDetail,
   getSessionCapabilities: mocked.getSessionCapabilities,
+  getSessionPermissionRequests: mocked.getSessionPermissionRequests,
   getSessionQueue: mocked.getSessionQueue,
   getSessionRuntime: mocked.getSessionRuntime,
   sendLiveMessage: mocked.sendLiveMessage,
@@ -72,7 +77,8 @@ vi.mock("../api/conversation-api", () => ({
   sendSessionMessage: mocked.sendSessionMessage,
   enqueueSessionMessage: mocked.enqueueSessionMessage,
   deleteSessionQueueItem: mocked.deleteSessionQueueItem,
-  steerSessionQueueItem: mocked.steerSessionQueueItem
+  steerSessionQueueItem: mocked.steerSessionQueueItem,
+  replySessionPermissionRequest: mocked.replySessionPermissionRequest
 }));
 
 vi.mock("../../../network/realtime-client", () => ({
@@ -177,6 +183,9 @@ describe("SessionRuntimeStore", () => {
       supportsPermissionPrompt: true,
       supportsCheckpoint: false,
       limitations: []
+    });
+    mocked.getSessionPermissionRequests.mockResolvedValue({
+      items: []
     });
     mocked.getSessionRuntime.mockResolvedValue({
       sessionId: "session-1",
@@ -1960,6 +1969,109 @@ describe("SessionRuntimeStore", () => {
 
     await vi.advanceTimersByTimeAsync(4_400);
     expect(mocked.markSessionSeen).toHaveBeenCalledTimes(2);
+
+    store.destroy();
+  });
+
+  it("收到权限申请事件时会把请求写入前端状态", async () => {
+    const store = new SessionRuntimeStore("session-1");
+    await store.initialize();
+    emitRealtimeSubscribed();
+
+    const client = getRealtimeClient();
+    (client.options.onPermissionRequest as ((payload: Record<string, unknown>) => void))({
+      type: "session.permission_request",
+      sessionId: "session-1",
+      request: {
+        id: "permission-1",
+        sessionId: "session-1",
+        provider: "claude-code",
+        providerSessionId: "claude-session-1",
+        requestKey: "toolu-1",
+        kind: "command",
+        status: "pending",
+        title: "Claude 请求执行命令",
+        summary: "rm -rf /tmp/build",
+        detail: "{\"command\":\"rm -rf /tmp/build\"}",
+        reason: null,
+        toolName: "Bash",
+        command: "rm -rf /tmp/build",
+        cwd: "/tmp/workspace",
+        paths: [],
+        permissionProfile: null,
+        questions: [],
+        actions: [
+          { value: "allow", label: "允许", tone: "primary", description: null },
+          { value: "deny", label: "拒绝", tone: "danger", description: null }
+        ],
+        rawPayload: "{\"tool_name\":\"Bash\"}",
+        createdAt: "2026-03-30T10:00:00.000Z",
+        updatedAt: "2026-03-30T10:00:00.000Z",
+        resolvedAt: null
+      }
+    });
+
+    expect(store.getState().permissionRequests).toHaveLength(1);
+    expect(store.getState().permissionRequests[0]?.title).toBe("Claude 请求执行命令");
+
+    store.destroy();
+  });
+
+  it("replyPermissionRequest 会调用接口并回写最新审批状态", async () => {
+    const store = new SessionRuntimeStore("session-1");
+    await store.initialize();
+    emitRealtimeSubscribed();
+
+    const client = getRealtimeClient();
+    (client.options.onPermissionRequest as ((payload: Record<string, unknown>) => void))({
+      type: "session.permission_request",
+      sessionId: "session-1",
+      request: {
+        id: "permission-2",
+        sessionId: "session-1",
+        provider: "opencode",
+        providerSessionId: "ses-1",
+        requestKey: "perm-2",
+        kind: "permissions",
+        status: "pending",
+        title: "OpenCode 请求权限",
+        summary: "请求扩大文件或网络权限",
+        detail: null,
+        reason: null,
+        toolName: null,
+        command: null,
+        cwd: null,
+        paths: [],
+        permissionProfile: {
+          readPaths: [],
+          writePaths: ["C:/Code/CodingNS/apps/user-app"],
+          networkEnabled: true
+        },
+        questions: [],
+        actions: [
+          { value: "once", label: "允许一次", tone: "primary", description: null },
+          { value: "always", label: "总是允许", tone: "neutral", description: null },
+          { value: "reject", label: "拒绝", tone: "danger", description: null }
+        ],
+        rawPayload: null,
+        createdAt: "2026-03-30T10:00:00.000Z",
+        updatedAt: "2026-03-30T10:00:00.000Z",
+        resolvedAt: null
+      }
+    });
+    mocked.replySessionPermissionRequest.mockResolvedValueOnce({
+      ...store.getState().permissionRequests[0],
+      status: "approved",
+      resolvedAt: "2026-03-30T10:00:05.000Z",
+      updatedAt: "2026-03-30T10:00:05.000Z"
+    });
+
+    await store.replyPermissionRequest("permission-2", { action: "once" });
+
+    expect(mocked.replySessionPermissionRequest).toHaveBeenCalledWith("session-1", "permission-2", {
+      action: "once"
+    });
+    expect(store.getState().permissionRequests[0]?.status).toBe("approved");
 
     store.destroy();
   });

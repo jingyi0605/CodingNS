@@ -11,6 +11,7 @@ import { createPortal } from "react-dom";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 
 import { userPreferenceStore } from "../../../preferences/user-preference-store";
+import { usePlatform } from "../../../platform/platform-provider";
 import { useHaptics } from "../../../shared/haptics";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
@@ -25,6 +26,7 @@ import {
 import { ConnectionBanner } from "../components/ConnectionBanner";
 import { ComposerPanel } from "../components/ComposerPanel";
 import { MessageTimeline } from "../components/MessageTimeline";
+import { PermissionRequestList } from "../components/PermissionRequestList";
 import { QueuedMessageList } from "../components/QueuedMessageList";
 import { SessionHeader } from "../components/SessionHeader";
 import { useWorkbenchShell } from "../components/WorkbenchLayout";
@@ -110,6 +112,7 @@ function LiveConversationPage({
   const storeRef = useRef<SessionRuntimeStore | null>(null);
   const currentSessionIdRef = useRef<string | null>(null);
   const [sending, setSending] = useState(false);
+  const [replyingPermissionRequestId, setReplyingPermissionRequestId] = useState<string | null>(null);
   const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
   const [archiveFolderOpen, setArchiveFolderOpen] = useState(false);
   const [archiveRestoreSessionId, setArchiveRestoreSessionId] = useState<string | null>(null);
@@ -136,16 +139,19 @@ function LiveConversationPage({
 
   const store = storeRef.current;
   const { showToast, dismissToast } = useToast();
+  const platform = usePlatform();
   const haptics = useHaptics();
   const lastRuntimeErrorSignatureRef = useRef<string | null>(null);
   const pendingRuntimeErrorSignatureRef = useRef<string | null>(null);
   const delayedRuntimeToastTimerRef = useRef<number | null>(null);
   const previousRunningStateRef = useRef<string | null>(navigationSession?.runningState ?? null);
+  const notifiedPermissionRequestIdsRef = useRef<Set<string>>(new Set());
   const session = useSessionRuntimeStore(store, (state) => state.session);
   const capabilities = useSessionRuntimeStore(store, (state) => state.capabilities);
   const runtimeHasActiveRun = useSessionRuntimeStore(store, (state) => state.runtimeHasActiveRun);
   const runtimeCanInterrupt = useSessionRuntimeStore(store, (state) => state.runtimeCanInterrupt);
   const messages = useSessionRuntimeStore(store, (state) => state.messages);
+  const permissionRequests = useSessionRuntimeStore(store, (state) => state.permissionRequests);
   const queuedMessages = useSessionRuntimeStore(store, (state) => state.queuedMessages);
   const contextUsage = useSessionRuntimeStore(store, (state) => state.contextUsage);
   const historyState = useSessionRuntimeStore(store, (state) => state.historyState);
@@ -313,6 +319,29 @@ function LiveConversationPage({
     previousRunningStateRef.current = nextRunningState;
   }, [haptics, session?.runningState]);
 
+  useEffect(() => {
+    const pendingRequests = permissionRequests.filter((request) => request.status === "pending");
+
+    for (const request of pendingRequests) {
+      if (notifiedPermissionRequestIdsRef.current.has(request.id)) {
+        continue;
+      }
+
+      notifiedPermissionRequestIdsRef.current.add(request.id);
+      showToast({
+        id: `permission-request-${request.id}`,
+        title: t("conversation.permissionRequestToastTitle"),
+        description: request.title,
+        tone: "warning",
+        durationMs: 8_000
+      });
+      void platform.bridge.showNotification(
+        t("conversation.permissionRequestToastTitle"),
+        request.title
+      );
+    }
+  }, [permissionRequests, platform.bridge, showToast]);
+
   useMobileConversationComposerHeightVar(
     mobileConversationPageRef,
     mobileComposerPanelElement,
@@ -386,6 +415,25 @@ function LiveConversationPage({
         <div className="mobile-conversation-stage" {...(!showInlineHeader ? mobilePreview.mainGestureHandlers : {})}>
           <div ref={mobileConversationMainRef} className="mobile-conversation-main">
             <ConnectionBanner connectionState={connectionState} onReconnect={() => store.reconnect()} />
+            <PermissionRequestList
+              requests={permissionRequests}
+              replyingRequestId={replyingPermissionRequestId}
+              onReply={async (requestId, payload) => {
+                setReplyingPermissionRequestId(requestId);
+
+                try {
+                  await store.replyPermissionRequest(requestId, payload);
+                } catch (error) {
+                  showToast({
+                    title: t("conversation.permissionRequestReplyFailed"),
+                    description: error instanceof Error ? error.message : undefined,
+                    tone: "error"
+                  });
+                } finally {
+                  setReplyingPermissionRequestId(null);
+                }
+              }}
+            />
             <MessageTimeline
               sessionId={sessionId}
               messages={messages}

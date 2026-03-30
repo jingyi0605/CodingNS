@@ -13,17 +13,20 @@ import {
   enqueueSessionMessage,
   getSessionCapabilities,
   getSessionDetail,
+  getSessionPermissionRequests,
   getSessionQueue,
   getSessionRuntime,
   interruptSession,
   markSessionSeen,
   type MessageAttachmentDto,
+  replySessionPermissionRequest,
   sendSessionMessage,
   sendLiveMessage,
   steerSessionQueueItem,
   type ImageAttachmentPayload,
   type HistoryMessageDto,
   type ProviderCapabilitiesDto,
+  type SessionPermissionRequestDto,
   type SessionQueueItemDto,
   type SessionActivityState,
   type SessionSummaryDto,
@@ -31,6 +34,8 @@ import {
 } from "../api/conversation-api";
 import type {
   SessionInterruptedEvent,
+  SessionPermissionRequestEvent,
+  SessionPermissionRequestResolvedEvent,
   SessionRuntimeMessageEvent,
   SessionRuntimeErrorEvent,
   SessionRuntimeStatusEvent
@@ -68,6 +73,7 @@ interface SessionRuntimeSnapshot {
   runtimeCanInterrupt: boolean | null;
   contextUsage: ContextUsageDto | null;
   messages: SessionMessageViewModel[];
+  permissionRequests: SessionPermissionRequestDto[];
   queuedMessages: SessionQueueItemDto[];
 }
 
@@ -114,6 +120,7 @@ export class SessionRuntimeStore {
       runtimeCanInterrupt: cachedSnapshot?.runtimeCanInterrupt ?? null,
       contextUsage: cachedSnapshot?.contextUsage ?? null,
       messages: seededMessages,
+      permissionRequests: cachedSnapshot?.permissionRequests ?? [],
       queuedMessages: cachedSnapshot?.queuedMessages ?? []
     });
     this.seenWatermark = seededSession?.lastSeenAt ?? null;
@@ -155,6 +162,7 @@ export class SessionRuntimeStore {
       void this.refreshRuntimeSnapshot("bootstrap");
     }
 
+    void this.refreshPermissionRequests();
     void this.refreshQueue();
 
     try {
@@ -189,6 +197,7 @@ export class SessionRuntimeStore {
         this.sessionId,
         this.options.bootstrapMessages ?? []
       ),
+      permissionRequests: cachedSnapshot?.permissionRequests ?? [],
       queuedMessages: cachedSnapshot?.queuedMessages ?? []
     });
     this.seenWatermark = this.state.session?.lastSeenAt ?? null;
@@ -371,6 +380,23 @@ export class SessionRuntimeStore {
     });
   }
 
+  async replyPermissionRequest(
+    requestId: string,
+    payload: { action: string; answers?: Record<string, string[]> }
+  ): Promise<void> {
+    const request = this.state.permissionRequests.find((item) => item.id === requestId) ?? null;
+
+    if (!request) {
+      return;
+    }
+
+    const updated = await replySessionPermissionRequest(this.sessionId, requestId, payload);
+
+    this.patch({
+      permissionRequests: upsertPermissionRequest(this.state.permissionRequests, updated)
+    });
+  }
+
   reconnect(): void {
     this.realtimeClient?.reconnectNow();
   }
@@ -534,6 +560,12 @@ export class SessionRuntimeStore {
       onInterrupted: (event) => {
         this.handleInterrupted(event);
       },
+      onPermissionRequest: (event) => {
+        this.handlePermissionRequest(event);
+      },
+      onPermissionRequestResolved: (event) => {
+        this.handlePermissionRequestResolved(event);
+      },
       onError: (event) => {
         this.patch({
           loadingOlderMessages: false,
@@ -569,6 +601,7 @@ export class SessionRuntimeStore {
       || Object.prototype.hasOwnProperty.call(nextInput, "capabilities")
       || Object.prototype.hasOwnProperty.call(nextInput, "contextUsage")
       || Object.prototype.hasOwnProperty.call(nextInput, "messages")
+      || Object.prototype.hasOwnProperty.call(nextInput, "permissionRequests")
       || Object.prototype.hasOwnProperty.call(nextInput, "queuedMessages")
     ) {
       this.persistSnapshot();
@@ -838,6 +871,18 @@ export class SessionRuntimeStore {
     await Promise.allSettled(tasks);
   }
 
+  private async refreshPermissionRequests(): Promise<void> {
+    try {
+      const response = await getSessionPermissionRequests(this.sessionId);
+
+      this.patch({
+        permissionRequests: response.items
+      });
+    } catch {
+      return;
+    }
+  }
+
   private shouldRefreshSessionDetail(): boolean {
     return (
       this.state.session === null
@@ -1002,6 +1047,18 @@ export class SessionRuntimeStore {
     void this.refreshQueue();
   }
 
+  private handlePermissionRequest(event: SessionPermissionRequestEvent): void {
+    this.patch({
+      permissionRequests: upsertPermissionRequest(this.state.permissionRequests, event.request)
+    });
+  }
+
+  private handlePermissionRequestResolved(event: SessionPermissionRequestResolvedEvent): void {
+    this.patch({
+      permissionRequests: upsertPermissionRequest(this.state.permissionRequests, event.request)
+    });
+  }
+
   private shouldMarkSeen(): boolean {
     return this.getTargetSeenAt() !== null;
   }
@@ -1070,6 +1127,7 @@ export class SessionRuntimeStore {
       runtimeCanInterrupt: this.state.runtimeCanInterrupt,
       contextUsage: this.state.contextUsage,
       messages: buildSnapshotMessages(this.state.messages),
+      permissionRequests: this.state.permissionRequests,
       queuedMessages: this.state.queuedMessages
     });
   }
@@ -1376,6 +1434,22 @@ function upsertQueuedMessage(
   const next = current.filter((item) => item.id !== incoming.id);
   next.push(incoming);
   next.sort((left, right) => left.orderIndex - right.orderIndex);
+  return next;
+}
+
+function upsertPermissionRequest(
+  current: SessionPermissionRequestDto[],
+  incoming: SessionPermissionRequestDto
+): SessionPermissionRequestDto[] {
+  const next = current.filter((item) => item.id !== incoming.id);
+  next.push(incoming);
+  next.sort((left, right) => {
+    if (left.status !== right.status) {
+      return left.status === "pending" ? -1 : 1;
+    }
+
+    return right.createdAt.localeCompare(left.createdAt);
+  });
   return next;
 }
 

@@ -1,6 +1,9 @@
 import { getHostWebSocketUrl } from "../config/env";
 import { authStore } from "../features/auth/store/auth-store";
-import type { ProviderId } from "../features/conversation/api/conversation-api";
+import type {
+  ProviderId,
+  SessionPermissionRequestDto
+} from "../features/conversation/api/conversation-api";
 import { ConnectionManager } from "./connection-manager";
 
 type RuntimeConnectionState = "connected" | "reconnecting" | "reconnect_failed" | "closed";
@@ -74,6 +77,18 @@ export interface SessionInterruptedEvent {
   timestamp: string;
 }
 
+export interface SessionPermissionRequestEvent {
+  type: "session.permission_request";
+  sessionId: string;
+  request: SessionPermissionRequestDto;
+}
+
+export interface SessionPermissionRequestResolvedEvent {
+  type: "session.permission_request_resolved";
+  sessionId: string;
+  request: SessionPermissionRequestDto;
+}
+
 interface SessionErrorEvent {
   type: "session.error";
   sessionId: string | null;
@@ -89,6 +104,8 @@ type IncomingEvent =
   | SessionRuntimeStatusEvent
   | SessionRuntimeErrorEvent
   | SessionInterruptedEvent
+  | SessionPermissionRequestEvent
+  | SessionPermissionRequestResolvedEvent
   | SessionErrorEvent;
 
 export interface RealtimeClientOptions {
@@ -103,6 +120,8 @@ export interface RealtimeClientOptions {
   onRuntimeStatus: (event: SessionRuntimeStatusEvent) => void;
   onRuntimeError: (event: SessionRuntimeErrorEvent) => void;
   onInterrupted: (event: SessionInterruptedEvent) => void;
+  onPermissionRequest: (event: SessionPermissionRequestEvent) => void;
+  onPermissionRequestResolved: (event: SessionPermissionRequestResolvedEvent) => void;
   onError: (event: SessionErrorEvent) => void;
   onUnauthorized: () => void;
 }
@@ -237,6 +256,16 @@ export class RealtimeClient {
 
       if (payload.type === "session.interrupted") {
         this.options.onInterrupted(payload);
+        return;
+      }
+
+      if (payload.type === "session.permission_request") {
+        this.options.onPermissionRequest(payload);
+        return;
+      }
+
+      if (payload.type === "session.permission_request_resolved") {
+        this.options.onPermissionRequestResolved(payload);
         return;
       }
 

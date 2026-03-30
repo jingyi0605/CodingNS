@@ -172,6 +172,77 @@ export interface SessionSummaryDto {
   activityState: SessionActivityState;
 }
 
+export type SessionPermissionRequestKind =
+  | "tool_call"
+  | "command"
+  | "file_change"
+  | "permissions"
+  | "user_input";
+export type SessionPermissionRequestStatus =
+  | "pending"
+  | "approved"
+  | "declined"
+  | "cancelled"
+  | "expired";
+export type SessionPermissionRequestActionTone = "primary" | "neutral" | "danger";
+
+export interface SessionPermissionRequestActionDto {
+  value: string;
+  label: string;
+  tone: SessionPermissionRequestActionTone;
+  description: string | null;
+}
+
+export interface SessionPermissionRequestQuestionOptionDto {
+  label: string;
+  description: string | null;
+}
+
+export interface SessionPermissionRequestQuestionDto {
+  id: string;
+  header: string;
+  question: string;
+  allowOther: boolean;
+  secret: boolean;
+  options: SessionPermissionRequestQuestionOptionDto[];
+}
+
+export interface SessionPermissionProfileDto {
+  readPaths: string[];
+  writePaths: string[];
+  networkEnabled: boolean | null;
+}
+
+export interface SessionPermissionRequestDto {
+  id: string;
+  sessionId: string;
+  provider: ProviderId;
+  providerSessionId: string;
+  requestKey: string;
+  kind: SessionPermissionRequestKind;
+  status: SessionPermissionRequestStatus;
+  title: string;
+  summary: string;
+  detail: string | null;
+  reason: string | null;
+  toolName: string | null;
+  command: string | null;
+  cwd: string | null;
+  paths: string[];
+  permissionProfile: SessionPermissionProfileDto | null;
+  questions: SessionPermissionRequestQuestionDto[];
+  actions: SessionPermissionRequestActionDto[];
+  rawPayload: string | null;
+  createdAt: string;
+  updatedAt: string;
+  resolvedAt: string | null;
+}
+
+export interface ReplyPermissionRequestPayload {
+  action: string;
+  answers?: Record<string, string[]>;
+}
+
 export interface ProviderCapabilitiesDto {
   provider: ProviderId;
   canStartSession: boolean;
@@ -323,6 +394,10 @@ export interface ContextUsageDto {
   isEstimated: boolean;
 }
 
+export interface SessionPermissionRequestListDto {
+  items: SessionPermissionRequestDto[];
+}
+
 export interface InterruptSessionResponseDto {
   sessionId: string;
   interrupted: boolean;
@@ -470,6 +545,12 @@ export function getSessionCapabilities(sessionId: string) {
   );
 }
 
+export function getSessionPermissionRequests(sessionId: string) {
+  return httpClient.request<SessionPermissionRequestListDto>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/permission-requests`
+  );
+}
+
 export function listQuickPhrases() {
   return httpClient.request<{ items: QuickPhraseDto[] }>("/api/preferences/quick-phrases");
 }
@@ -602,6 +683,20 @@ export function interruptSession(sessionId: string) {
     `/api/sessions/${encodeURIComponent(sessionId)}/interrupt`,
     {
       method: "POST"
+    }
+  );
+}
+
+export function replySessionPermissionRequest(
+  sessionId: string,
+  requestId: string,
+  payload: ReplyPermissionRequestPayload
+) {
+  return httpClient.request<SessionPermissionRequestDto>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/permission-requests/${encodeURIComponent(requestId)}/reply`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload)
     }
   );
 }
