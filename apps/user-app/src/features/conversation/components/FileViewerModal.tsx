@@ -1,5 +1,5 @@
 import { createPortal } from "react-dom";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -18,6 +18,7 @@ interface FileViewerModalProps {
   open: boolean;
   onClose: () => void;
   onSaved: (filePath: string) => Promise<void> | void;
+  diffContent?: string | null;
 }
 
 type ViewerMode = "preview" | "edit";
@@ -226,7 +227,8 @@ export function FileViewerModal({
   filePath,
   open,
   onClose,
-  onSaved
+  onSaved,
+  diffContent
 }: FileViewerModalProps) {
   const [preview, setPreview] = useState<FilePreviewDto | null>(null);
   const [editorContent, setEditorContent] = useState("");
@@ -417,6 +419,8 @@ export function FileViewerModal({
             <p className="status-text">{t("common.loading")}</p>
           ) : preview?.supported === false ? (
             <p className="status-text">{preview.reason ?? t("conversation.filePanelUnsupported")}</p>
+          ) : diffContent ? (
+            <DiffPreview content={diffContent} />
           ) : mode === "edit" ? (
             <textarea
               className="file-viewer-editor"
@@ -1490,5 +1494,142 @@ function CloseIcon() {
         strokeLinecap="round"
       />
     </svg>
+  );
+}
+
+// ==================== Git Diff 解析与渲染 ====================
+
+interface GitDiffLine {
+  kind: "context" | "add" | "remove" | "hunk" | "meta";
+  text: string;
+  oldLineNo: number | null;
+  newLineNo: number | null;
+}
+
+function parseGitDiffContent(content: string): GitDiffLine[] {
+  const lines: GitDiffLine[] = [];
+  const rawLines = content.replace(/\r\n/g, "\n").split("\n");
+  let oldLine = 0;
+  let newLine = 0;
+
+  for (const rawLine of rawLines) {
+    // diff header lines
+    if (rawLine.startsWith("diff --git") || rawLine.startsWith("index ") || rawLine.startsWith("--- ") || rawLine.startsWith("+++ ")) {
+      lines.push({ kind: "meta", text: rawLine, oldLineNo: null, newLineNo: null });
+      continue;
+    }
+
+    // hunk header
+    const hunkMatch = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(rawLine);
+    if (hunkMatch) {
+      oldLine = parseInt(hunkMatch[1], 10);
+      newLine = parseInt(hunkMatch[2], 10);
+      lines.push({ kind: "hunk", text: rawLine, oldLineNo: null, newLineNo: null });
+      continue;
+    }
+
+    // context line
+    if (rawLine.startsWith(" ") || rawLine === "") {
+      lines.push({ kind: "context", text: rawLine.slice(1), oldLineNo: oldLine, newLineNo: newLine });
+      oldLine++;
+      newLine++;
+      continue;
+    }
+
+    // added line
+    if (rawLine.startsWith("+")) {
+      lines.push({ kind: "add", text: rawLine.slice(1), oldLineNo: null, newLineNo: newLine });
+      newLine++;
+      continue;
+    }
+
+    // removed line
+    if (rawLine.startsWith("-")) {
+      lines.push({ kind: "remove", text: rawLine.slice(1), oldLineNo: oldLine, newLineNo: null });
+      oldLine++;
+      continue;
+    }
+
+    // 其他行（如 No newline at end of file）
+    lines.push({ kind: "meta", text: rawLine, oldLineNo: null, newLineNo: null });
+  }
+
+  return lines;
+}
+
+function DiffPreview({ content }: { content: string }) {
+  const lines = useMemo(() => parseGitDiffContent(content), [content]);
+  const totalLines = lines.length;
+
+  // 收集变更行用于滚动条标识
+  const changeMarkers = useMemo(() => {
+    const markers: Array<{ index: number; kind: "add" | "remove" | "hunk" }> = [];
+    lines.forEach((line, index) => {
+      if (line.kind === "add" || line.kind === "remove" || line.kind === "hunk") {
+        markers.push({ index, kind: line.kind });
+      }
+    });
+    return markers;
+  }, [lines]);
+
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+
+  return (
+    <div className="file-viewer-diff-shell">
+      <div className="file-viewer-diff-body" ref={bodyRef}>
+        {lines.map((line, index) => (
+          <div key={`${index}-${line.kind}`} className={`file-viewer-diff-line is-${line.kind}`}>
+            <span className="file-viewer-diff-old-no">{line.oldLineNo ?? ""}</span>
+            <span className="file-viewer-diff-new-no">{line.newLineNo ?? ""}</span>
+            <code className="file-viewer-diff-text">{line.text || " "}</code>
+          </div>
+        ))}
+      </div>
+      {totalLines > 0 ? (
+        <DiffOverviewRuler markers={changeMarkers} totalLines={totalLines} scrollBodyRef={bodyRef} />
+      ) : null}
+    </div>
+  );
+}
+
+function DiffOverviewRuler({
+  markers,
+  totalLines,
+  scrollBodyRef
+}: {
+  markers: Array<{ index: number; kind: "add" | "remove" | "hunk" }>;
+  totalLines: number;
+  scrollBodyRef: React.RefObject<HTMLDivElement | null>;
+}) {
+  const rulerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const body = scrollBodyRef.current;
+    const ruler = rulerRef.current;
+    if (!body || !ruler) return;
+
+    function handleScroll() {
+      if (!body || !ruler) return;
+      ruler.style.top = `${-(body.scrollTop / body.scrollHeight) * ruler.parentElement!.offsetHeight}px`;
+    }
+
+    body.addEventListener("scroll", handleScroll, { passive: true });
+    return () => body.removeEventListener("scroll", handleScroll);
+  }, [scrollBodyRef]);
+
+  return (
+    <div className="diff-overview-ruler" ref={rulerRef}>
+      {markers.map((marker, i) => {
+        const top = (marker.index / totalLines) * 100;
+        const height = Math.max(1, (1 / totalLines) * 100);
+        return (
+          <div
+            key={i}
+            className={`diff-overview-marker is-${marker.kind}`}
+            style={{ top: `${top}%`, height: `${height}%` }}
+          />
+        );
+      })}
+    </div>
   );
 }

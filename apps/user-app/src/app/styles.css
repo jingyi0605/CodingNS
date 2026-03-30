@@ -3439,6 +3439,35 @@ a {
   padding: 4px 12px 6px 40px;
 }
 
+/* 文件树变更状态标记 */
+.file-tree-label[data-status="M"] { color: #c58b2c; }
+.file-tree-label[data-status="A"],
+.file-tree-label[data-status="U"] { color: var(--success); }
+.file-tree-label[data-status="D"] { color: var(--error); }
+.file-tree-label[data-status="R"] { color: var(--accent); }
+
+.file-tree-dir-badge {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  margin-inline-start: 4px;
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+
+/* 工作区文件树中的 git-status-badge（复用 Git 侧栏样式） */
+.file-tree-item .git-status-badge {
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 1px 3px;
+  border-radius: 3px;
+  margin-inline-start: 4px;
+  flex-shrink: 0;
+}
+
 .file-list-item {
   display: flex;
   align-items: center;
@@ -10082,6 +10111,104 @@ textarea:focus-visible {
   min-width: 0;
   padding: 0 12px;
   white-space: pre;
+}
+
+/* ===== File Viewer Diff Preview ===== */
+.file-viewer-diff-shell {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.file-viewer-diff-body {
+  flex: 1;
+  overflow: auto;
+  font-family: var(--font-mono, ui-monospace, "Cascadia Code", "Source Code Pro", monospace);
+  font-size: 13px;
+  line-height: 1.6;
+  tab-size: 2;
+}
+
+.file-viewer-diff-line {
+  display: flex;
+  min-height: 1.6em;
+  padding: 0 8px;
+  white-space: pre;
+}
+
+.file-viewer-diff-line.is-context {
+  /* 默认背景 */
+}
+
+.file-viewer-diff-line.is-add {
+  background: var(--patch-diff-added-bg, rgba(34, 197, 94, 0.14));
+}
+
+.file-viewer-diff-line.is-remove {
+  background: var(--patch-diff-removed-bg, rgba(239, 68, 68, 0.12));
+}
+
+.file-viewer-diff-line.is-hunk {
+  background: var(--patch-diff-hunk-bg, rgba(96, 165, 250, 0.1));
+  color: var(--patch-diff-hunk-text, rgba(96, 165, 250, 0.8));
+  font-weight: 500;
+}
+
+.file-viewer-diff-line.is-meta {
+  color: var(--patch-diff-meta-text, rgba(120, 120, 120, 0.7));
+  font-size: 12px;
+}
+
+.file-viewer-diff-old-no,
+.file-viewer-diff-new-no {
+  display: inline-block;
+  width: 40px;
+  min-width: 40px;
+  text-align: right;
+  padding-right: 8px;
+  color: var(--patch-diff-muted, rgba(120, 120, 120, 0.5));
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.file-viewer-diff-text {
+  flex: 1;
+  white-space: pre;
+  word-break: break-all;
+}
+
+/* ===== Diff Overview Ruler (滚动条标识) ===== */
+.diff-overview-ruler {
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 6px;
+  height: 100%;
+  background: transparent;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.diff-overview-marker {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  min-height: 2px;
+  border-radius: 1px;
+}
+
+.diff-overview-marker.is-add {
+  background: rgba(34, 197, 94, 0.5);
+}
+
+.diff-overview-marker.is-remove {
+  background: rgba(239, 68, 68, 0.5);
+}
+
+.diff-overview-marker.is-hunk {
+  background: rgba(96, 165, 250, 0.4);
 }
 
 .apply-patch-error-panel {

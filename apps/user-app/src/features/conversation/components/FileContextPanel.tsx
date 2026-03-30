@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { readViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import { logPerfDebug } from "../../../shared/debug/perf-debug";
@@ -12,6 +12,7 @@ import {
   uploadFile,
   type FileNodeDto
 } from "../api/file-context-api";
+import { getGitDiff, type GitChangeItemDto } from "../api/git-api";
 import { usePlatform } from "../../../platform/platform-provider";
 import { useWorkbenchShell } from "./WorkbenchLayout";
 import { FileViewerModal } from "./FileViewerModal";
@@ -68,7 +69,10 @@ export function FileContextPanel({ className, sessionId, workspaceId, hideHeadin
     navigationGroups,
     subscribeFileTree,
     requestFileTreeRefresh,
-    addFileTreeSnapshotListener
+    addFileTreeSnapshotListener,
+    subscribeGitSnapshot,
+    requestGitRefresh,
+    addGitSnapshotListener
   } = useWorkbenchShell();
   const [treeCache, setTreeCache] = useState<FileTreeCache>({});
   const [expandedDirectories, setExpandedDirectories] = useState<string[]>([]);
@@ -88,6 +92,9 @@ export function FileContextPanel({ className, sessionId, workspaceId, hideHeadin
   const [sessionChangeCount, setSessionChangeCount] = useState(0);
   const [copyPathMenuOpen, setCopyPathMenuOpen] = useState(false);
   const [mobileActionMenuOpen, setMobileActionMenuOpen] = useState(false);
+  const [gitChanges, setGitChanges] = useState<GitChangeItemDto[]>([]);
+  const [showChangesOnly, setShowChangesOnly] = useState(false);
+  const [viewerDiffContent, setViewerDiffContent] = useState<string | null>(null);
   const treeCacheRef = useRef<FileTreeCache>({});
   const expandedDirectoriesRef = useRef<string[]>([]);
   const activeDirectoryPathRef = useRef(ROOT_DIRECTORY);
@@ -162,6 +169,8 @@ export function FileContextPanel({ className, sessionId, workspaceId, hideHeadin
       setSearchResult(null);
       setSearching(false);
       setLoadingTree(false);
+      setShowChangesOnly(false);
+      setViewerDiffContent(null);
       return;
     }
 
@@ -382,7 +391,7 @@ export function FileContextPanel({ className, sessionId, workspaceId, hideHeadin
           }));
         }
       } catch (error) {
-        if (!cancelled) {
+        if (!cancelled && !isSnapshotTimeoutError(error)) {
           showToast({
             title: readError(error, t("conversation.filePanelLoadFailed")),
             tone: "error"
@@ -444,6 +453,54 @@ export function FileContextPanel({ className, sessionId, workspaceId, hideHeadin
     setSessionChangeCount(cachedCount ?? 0);
   }, [sessionId, sessionRefreshVersion, workspaceId]);
 
+  // 通过 WebSocket 订阅 git 状态（复用 GitSidebar 的快照通道，避免冗余 HTTP 调用）
+  useEffect(() => {
+    if (!workspaceId) {
+      setGitChanges([]);
+      return;
+    }
+
+    const wid = workspaceId.trim();
+    subscribeGitSnapshot(wid);
+    requestGitRefresh(wid);
+  }, [workspaceId, subscribeGitSnapshot, requestGitRefresh]);
+
+  // 监听 git 快照，提取文件变更列表
+  useEffect(() => {
+    if (!workspaceId) {
+      return;
+    }
+
+    const wid = workspaceId.trim();
+
+    return addGitSnapshotListener((snapshot) => {
+      if (snapshot.workspaceId !== wid) {
+        return;
+      }
+
+      setGitChanges(snapshot.status?.changes ?? []);
+    });
+  }, [addGitSnapshotListener, workspaceId]);
+
+  // 变更路径集合（用于筛选和状态标记）
+  const gitChangeInfo = useMemo(() => {
+    const statusByPath = new Map<string, string>();
+    const changedDirs = new Set<string>();
+
+    for (const change of gitChanges) {
+      const path = change.path.replace(/\\/g, "/");
+      const status = change.worktreeStatus ?? change.stagedStatus ?? change.status;
+      statusByPath.set(path, status);
+
+      const segments = path.split("/");
+      for (let i = 1; i < segments.length; i++) {
+        changedDirs.add(segments.slice(0, i).join("/"));
+      }
+    }
+
+    return { statusByPath, changedDirs };
+  }, [gitChanges]);
+
   const rootItems = treeCache[ROOT_DIRECTORY] ?? [];
   const searchMode = searchVisible && searchResult !== null;
   const currentWorkspace =
@@ -487,10 +544,12 @@ export function FileContextPanel({ className, sessionId, workspaceId, hideHeadin
 
       return items;
     } catch (error) {
-      showToast({
-        title: readError(error, t("conversation.filePanelLoadFailed")),
-        tone: "error"
-      });
+      if (!isSnapshotTimeoutError(error)) {
+        showToast({
+          title: readError(error, t("conversation.filePanelLoadFailed")),
+          tone: "error"
+        });
+      }
       throw error;
     } finally {
       if (directoryPath === ROOT_DIRECTORY) {
@@ -663,6 +722,21 @@ export function FileContextPanel({ className, sessionId, workspaceId, hideHeadin
 
   async function openFileViewer(filePath: string) {
     await selectFile(filePath);
+
+    // 如果文件有变更，尝试获取 diff 内容
+    const normalizedPath = filePath.replace(/\\/g, "/");
+    const status = gitChangeInfo.statusByPath.get(normalizedPath);
+    if (workspaceId && status && status !== "?") {
+      try {
+        const diffResult = await getGitDiff(workspaceId, filePath, false);
+        setViewerDiffContent(diffResult.content);
+      } catch {
+        setViewerDiffContent(null);
+      }
+    } else {
+      setViewerDiffContent(null);
+    }
+
     setViewerFilePath(filePath);
     recentFileActivationRef.current = null;
   }
@@ -758,7 +832,11 @@ export function FileContextPanel({ className, sessionId, workspaceId, hideHeadin
       return;
     }
 
+    const wid = workspaceId;
+
     try {
+      // 手动刷新时同步触发 git status 更新（通过 WebSocket）
+      requestGitRefresh(wid);
       await refreshTreeCache();
 
       if (selectedPath) {
@@ -766,7 +844,7 @@ export function FileContextPanel({ className, sessionId, workspaceId, hideHeadin
       }
 
       if (searchMode && searchKeyword.trim()) {
-        const response = await searchFiles(workspaceId, searchKeyword.trim());
+        const response = await searchFiles(wid, searchKeyword.trim());
         setSearchResult(response.items);
       }
     } catch (error) {
@@ -998,10 +1076,16 @@ export function FileContextPanel({ className, sessionId, workspaceId, hideHeadin
           const isDirectory = item.kind === "directory";
           const isExpanded = isDirectory && expandedDirectories.includes(item.path);
           const isLoading = isDirectory && loadingDirectories.includes(item.path);
-          const childItems = treeCache[item.path] ?? [];
+          const rawChildItems = treeCache[item.path] ?? [];
+          // 筛选模式下递归过滤子节点
+          const childItems = showChangesOnly
+            ? filterTreeByChanges(rawChildItems, treeCache, gitChangeInfo.statusByPath, gitChangeInfo.changedDirs)
+            : rawChildItems;
           const isActive =
             selectedPath === item.path ||
             (selectedPath === null && isDirectory && activeDirectoryPath === item.path);
+          const changeStatus = gitChangeInfo.statusByPath.get(item.path.replace(/\\/g, "/"));
+          const hasDirChanges = isDirectory && gitChangeInfo.changedDirs.has(item.path.replace(/\\/g, "/"));
 
           return (
             <div key={`${item.kind}-${item.path}`} className="file-tree-node">
@@ -1036,13 +1120,23 @@ export function FileContextPanel({ className, sessionId, workspaceId, hideHeadin
                     {resolveFileTreeIconLabel(item.name)}
                   </span>
                 ) : null}
-                <span className="file-tree-label">{item.name}</span>
+                <span className="file-tree-label" data-status={changeStatus ?? undefined} data-has-changes={hasDirChanges || undefined}>
+                  {item.name}
+                </span>
+                {!isDirectory && changeStatus ? (
+                  <span className="git-status-badge" data-status={changeStatus} aria-label={changeStatus}>
+                    {changeStatus}
+                  </span>
+                ) : null}
+                {isDirectory && hasDirChanges ? (
+                  <span className="file-tree-dir-badge" aria-hidden="true" />
+                ) : null}
                 {isLoading ? <span className="file-tree-meta">{t("common.loading")}</span> : null}
               </button>
 
               {isDirectory && isExpanded ? (
                 <div className="file-tree-children">
-                  {isLoading && !childItems.length ? (
+                  {isLoading && !rawChildItems.length ? (
                     <p className="file-tree-empty">{t("common.loading")}</p>
                   ) : childItems.length ? (
                     renderTree(childItems, depth + 1)
@@ -1117,12 +1211,13 @@ export function FileContextPanel({ className, sessionId, workspaceId, hideHeadin
             workspaceId={workspaceId}
             filePath={viewerFilePath}
             open={viewerFilePath !== null}
-            onClose={() => setViewerFilePath(null)}
+            onClose={() => { setViewerFilePath(null); setViewerDiffContent(null); }}
             onSaved={async (filePath) => {
               await refreshTreeCache();
               await selectFile(filePath);
               setSessionRefreshVersion((current) => current + 1);
             }}
+            diffContent={viewerDiffContent}
           />
           {hideHeading ? null : (
             <div className="file-panel-heading-row">
@@ -1205,6 +1300,18 @@ export function FileContextPanel({ className, sessionId, workspaceId, hideHeadin
                           {searchVisible
                             ? t("conversation.filePanelHideSearch")
                             : t("conversation.filePanelShowSearch")}
+                        </button>
+                        <button
+                          className="file-mobile-action-menu-item"
+                          type="button"
+                          role="menuitem"
+                          onClick={() => {
+                            setMobileActionMenuOpen(false);
+                            setShowChangesOnly((current) => !current);
+                          }}
+                          disabled={gitChanges.length === 0}
+                        >
+                          {showChangesOnly ? t("conversation.filePanelShowAll") : t("conversation.filePanelFilterChanges")}
                         </button>
                         <button
                           className="file-mobile-action-menu-item"
@@ -1361,6 +1468,18 @@ export function FileContextPanel({ className, sessionId, workspaceId, hideHeadin
                   >
                     <SearchIcon />
                   </button>
+                  {gitChanges.length > 0 ? (
+                    <button
+                      className="file-toolbar-button"
+                      type="button"
+                      title={showChangesOnly ? t("conversation.filePanelShowAll") : t("conversation.filePanelFilterChanges")}
+                      aria-label={showChangesOnly ? t("conversation.filePanelShowAll") : t("conversation.filePanelFilterChanges")}
+                      data-active={showChangesOnly}
+                      onClick={() => setShowChangesOnly((current) => !current)}
+                    >
+                      <FilterIcon />
+                    </button>
+                  ) : null}
                   <button
                     className="file-toolbar-button"
                     type="button"
@@ -1442,6 +1561,12 @@ export function FileContextPanel({ className, sessionId, workspaceId, hideHeadin
                     renderSearchResults(searchResult)
                   ) : (
                     <p className="file-tree-status status-text">{t("conversation.filePanelSearchEmpty")}</p>
+                  )
+                ) : showChangesOnly ? (
+                  filterTreeByChanges(rootItems, treeCache, gitChangeInfo.statusByPath, gitChangeInfo.changedDirs).length ? (
+                    renderTree(filterTreeByChanges(rootItems, treeCache, gitChangeInfo.statusByPath, gitChangeInfo.changedDirs), 0)
+                  ) : (
+                    <p className="file-tree-status status-text">{t("conversation.filePanelNoChanges")}</p>
                   )
                 ) : rootItems.length ? (
                   renderTree(rootItems, 0)
@@ -1788,6 +1913,14 @@ function readError(error: unknown, fallback: string): string {
   return fallback;
 }
 
+function isSnapshotTimeoutError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.message.startsWith("FILE_TREE_SNAPSHOT_TIMEOUT:") ||
+      error.message.startsWith("FILE_TREE_ABORTED:"))
+  );
+}
+
 function CollapseIcon() {
   return (
     <svg viewBox="0 0 16 16" aria-hidden="true">
@@ -1896,4 +2029,67 @@ function MenuChevronIcon() {
       <path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
     </svg>
   );
+}
+
+function FilterIcon() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <path d="M1.5 2h13l-5 6v5l-3 1.5V8z" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+// 筛选文件树：仅保留有变更的文件及其父目录
+function filterTreeByChanges(
+  items: FileNodeDto[],
+  treeCache: FileTreeCache,
+  statusByPath: Map<string, string>,
+  changedDirs: Set<string>
+): FileNodeDto[] {
+  const result: FileNodeDto[] = [];
+
+  for (const item of items) {
+    const normalPath = item.path.replace(/\\/g, "/");
+
+    if (item.kind === "file") {
+      if (statusByPath.has(normalPath)) {
+        result.push(item);
+      }
+    } else {
+      if (hasDescendantChanges(normalPath, treeCache, statusByPath, changedDirs)) {
+        result.push(item);
+      }
+    }
+  }
+
+  return result;
+}
+
+// 递归检查目录子树中是否有 git 变更文件
+// 已加载到 treeCache 的目录走递归检查，未加载的回退 changedDirs
+function hasDescendantChanges(
+  dirPath: string,
+  treeCache: FileTreeCache,
+  statusByPath: Map<string, string>,
+  changedDirs: Set<string>,
+  visited?: Set<string>
+): boolean {
+  const safeVisited = visited ?? new Set<string>();
+  if (safeVisited.has(dirPath)) return false;
+  safeVisited.add(dirPath);
+
+  const children = treeCache[dirPath];
+  if (!children) return changedDirs.has(dirPath);
+
+  for (const child of children) {
+    const normalPath = child.path.replace(/\\/g, "/");
+
+    if (child.kind === "file") {
+      if (statusByPath.has(normalPath)) return true;
+    } else {
+      if (hasDescendantChanges(normalPath, treeCache, statusByPath, changedDirs, safeVisited)) return true;
+    }
+  }
+
+  return false;
 }

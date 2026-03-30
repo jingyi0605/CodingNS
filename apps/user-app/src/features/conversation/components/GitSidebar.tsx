@@ -18,6 +18,7 @@ import {
   createCommitDraft,
   discardGitTargets,
   getGitBranches,
+  getGitDiff,
   getGitRemotes,
   getGitStatus,
   getGitHistory,
@@ -37,6 +38,7 @@ import {
   resolveFileTreeIconKind,
   resolveFileTreeIconLabel
 } from "./file-tree-icon";
+import { FileViewerModal } from "./FileViewerModal";
 import { useWorkbenchShell } from "./WorkbenchLayout";
 import { WorkbenchModal } from "./WorkbenchModal";
 
@@ -124,6 +126,9 @@ export function GitSidebar({ className, workspaceId }: GitSidebarProps) {
   } | null>(null);
   const [treePanelRatio, setTreePanelRatio] = useState(DEFAULT_TREE_PANEL_RATIO);
   const [panelResizeActive, setPanelResizeActive] = useState(false);
+  const [viewerFilePath, setViewerFilePath] = useState<string | null>(null);
+  const [viewerDiffContent, setViewerDiffContent] = useState<string | null>(null);
+  const recentFileActivationRef = useRef<{ filePath: string; timestamp: number } | null>(null);
   const splitLayoutRef = useRef<HTMLDivElement | null>(null);
   const treePanelBodyRef = useRef<HTMLDivElement | null>(null);
   const commitEditorRef = useRef<HTMLTextAreaElement | null>(null);
@@ -151,6 +156,8 @@ export function GitSidebar({ className, workspaceId }: GitSidebarProps) {
     setMobileSwipeRowState(null);
     setPanelResizeActive(false);
     setTreePanelRatio(DEFAULT_TREE_PANEL_RATIO);
+    setViewerFilePath(null);
+    setViewerDiffContent(null);
   }, [workspaceId]);
 
   useEffect(() => {
@@ -718,6 +725,38 @@ export function GitSidebar({ className, workspaceId }: GitSidebarProps) {
     );
   }
 
+  const FILE_REPEAT_ACTIVATION_MS = 450;
+
+  function shouldOpenViewerByRepeatClick(filePath: string): boolean {
+    const now = Date.now();
+    const recent = recentFileActivationRef.current;
+    recentFileActivationRef.current = { filePath, timestamp: now };
+    return recent?.filePath === filePath && now - recent.timestamp <= FILE_REPEAT_ACTIVATION_MS;
+  }
+
+  async function handleFilePreview(filePath: string, change: GitChangeItemDto) {
+    if (change.binary) {
+      showToast({ title: t("git.binaryDiff"), tone: "info" });
+      return;
+    }
+
+    // 新增文件（A/?）直接预览内容，其他获取 diff
+    if (change.status === "A" || change.status === "?") {
+      setViewerDiffContent(null);
+      setViewerFilePath(filePath);
+    } else if (workspaceId) {
+      try {
+        const diffResult = await getGitDiff(workspaceId, filePath, change.staged);
+        setViewerDiffContent(diffResult.content);
+        setViewerFilePath(filePath);
+      } catch {
+        // diff 获取失败时仍然打开文件预览
+        setViewerDiffContent(null);
+        setViewerFilePath(filePath);
+      }
+    }
+  }
+
   function toggleMobileSelection(filePath: string) {
     setSelectedPath(filePath);
     setMobileActionMenuVariant(null);
@@ -1101,6 +1140,11 @@ export function GitSidebar({ className, workspaceId }: GitSidebarProps) {
                   collapsedTreePathSet={collapsedTreePathSet}
                   onToggleTreePath={toggleTreePath}
                   onSelectFile={setSelectedPath}
+                  onPreviewFile={(filePath, change) => {
+                    if (shouldOpenViewerByRepeatClick(filePath)) {
+                      void handleFilePreview(filePath, change);
+                    }
+                  }}
                   onToggleMobileSelection={toggleMobileSelection}
                   onStageToggle={handleStageToggle}
                   onDiscard={handleDiscard}
@@ -1129,6 +1173,11 @@ export function GitSidebar({ className, workspaceId }: GitSidebarProps) {
                 collapsedTreePathSet={collapsedTreePathSet}
                 onToggleTreePath={toggleTreePath}
                 onSelectFile={setSelectedPath}
+                onPreviewFile={(filePath, change) => {
+                  if (shouldOpenViewerByRepeatClick(filePath)) {
+                    void handleFilePreview(filePath, change);
+                  }
+                }}
                 onToggleMobileSelection={toggleMobileSelection}
                 onStageToggle={handleStageToggle}
                 onDiscard={handleDiscard}
@@ -1316,6 +1365,20 @@ export function GitSidebar({ className, workspaceId }: GitSidebarProps) {
           </button>
         </div>
       </WorkbenchModal>
+
+      <FileViewerModal
+        workspaceId={workspaceId}
+        filePath={viewerFilePath}
+        open={viewerFilePath !== null}
+        onClose={() => {
+          setViewerFilePath(null);
+          setViewerDiffContent(null);
+        }}
+        onSaved={async () => {
+          await handleManualRefresh({ resetTreeScroll: true });
+        }}
+        diffContent={viewerDiffContent}
+      />
     </section>
   );
 }
@@ -1328,6 +1391,7 @@ function GitChangeGroup({
   collapsedTreePathSet,
   onToggleTreePath,
   onSelectFile,
+  onPreviewFile,
   onToggleMobileSelection,
   onStageToggle,
   onDiscard,
@@ -1347,6 +1411,7 @@ function GitChangeGroup({
   collapsedTreePathSet: ReadonlySet<string>;
   onToggleTreePath: (path: string) => void;
   onSelectFile: (filePath: string) => void;
+  onPreviewFile: (filePath: string, change: GitChangeItemDto) => void;
   onToggleMobileSelection: (filePath: string) => void;
   onStageToggle: (targets: string[], staged: boolean) => Promise<void>;
   onDiscard: (targets: string[]) => Promise<void>;
@@ -1459,6 +1524,7 @@ function GitChangeGroup({
             selectedPath,
             onToggleTreePath,
             onSelectFile,
+            onPreviewFile,
             onToggleMobileSelection,
             onStageToggle,
             onDiscard,
@@ -2045,6 +2111,7 @@ function renderTreeNodes({
   selectedPath,
   onToggleTreePath,
   onSelectFile,
+  onPreviewFile,
   onToggleMobileSelection,
   onStageToggle,
   onDiscard,
@@ -2059,6 +2126,7 @@ function renderTreeNodes({
   selectedPath: string | null;
   onToggleTreePath: (path: string) => void;
   onSelectFile: (filePath: string) => void;
+  onPreviewFile: (filePath: string, change: GitChangeItemDto) => void;
   onToggleMobileSelection: (filePath: string) => void;
   onStageToggle: (targets: string[], staged: boolean) => Promise<void>;
   onDiscard: (targets: string[]) => Promise<void>;
@@ -2126,6 +2194,7 @@ function renderTreeNodes({
                 selectedPath,
                 onToggleTreePath,
                 onSelectFile,
+                onPreviewFile,
                 onToggleMobileSelection,
                 onStageToggle,
                 onDiscard,
@@ -2200,7 +2269,12 @@ function renderTreeNodes({
           type="button"
           data-active={active}
           style={{ paddingInlineStart: `${18 + depth * 8}px` }}
-          onClick={() => onSelectFile(node.change.path)}
+          onClick={() => {
+            onSelectFile(node.change.path);
+            if (onPreviewFile) {
+              onPreviewFile(node.change.path, node.change);
+            }
+          }}
         >
           <span
             className="git-tree-file-icon"
