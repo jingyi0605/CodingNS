@@ -205,6 +205,14 @@ function isTerminalsRoute(pathname: string) {
   );
 }
 
+function normalizeWorkbenchFilePath(filePath: string): string {
+  return filePath
+    .trim()
+    .replace(/\\/g, "/")
+    .replace(/^(?:\.\/)+/, "")
+    .replace(/^\/+/, "");
+}
+
 const LazyFileContextPanel = lazy(async () => {
   const module = await import("./FileContextPanel");
 
@@ -315,6 +323,18 @@ interface WorkbenchShellContextValue {
   setSessionWorkspace: (sessionId: string, workspaceId: string | null) => void;
   upsertNavigationSession: (session: SessionSummaryDto) => void;
   markNavigationSessionSeen: (sessionId: string, seenAt?: string) => void;
+  revealWorkspaceFile: (input: {
+    workspaceId?: string | null;
+    filePath: string;
+    openViewer?: boolean;
+  }) => boolean;
+}
+
+export interface WorkbenchFileRevealRequest {
+  requestId: number;
+  workspaceId: string;
+  filePath: string;
+  openViewer: boolean;
 }
 
 interface WorkspaceManagementViewState {
@@ -3189,6 +3209,7 @@ function SidebarContent({
 function WorkbenchInfoPanel({
   panelReady,
   activeTab,
+  fileRevealRequest,
   onTabChange,
   onToggleCollapse,
   currentSessionId,
@@ -3197,6 +3218,7 @@ function WorkbenchInfoPanel({
 }: {
   panelReady: boolean;
   activeTab: InfoTab;
+  fileRevealRequest: WorkbenchFileRevealRequest | null;
   onTabChange: (tab: InfoTab) => void;
   onToggleCollapse?: () => void;
   currentSessionId: string | null;
@@ -3279,6 +3301,7 @@ function WorkbenchInfoPanel({
               <LazyFileContextPanel
                 sessionId={currentSessionId}
                 workspaceId={activeWorkspaceId}
+                externalRevealRequest={fileRevealRequest}
               />
             </Suspense>
           ) : (
@@ -3329,6 +3352,7 @@ export function WorkbenchLayout({
   );
   const hasReceivedWorkbenchSnapshotRef = useRef(false);
   const lastDraftSessionPathRef = useRef<string | null>(null);
+  const fileRevealRequestIdRef = useRef(0);
   const navigationBootstrapFallbackTimerRef = useRef<number | null>(null);
   const workbenchRealtimeClientRef = useRef<WorkbenchRealtimeClient | null>(null);
   const fileTreeSnapshotListenersRef = useRef(new Set<(snapshot: FileTreeRealtimeSnapshotDto) => void>());
@@ -3389,6 +3413,7 @@ export function WorkbenchLayout({
   const [codeSearchLoading, setCodeSearchLoading] = useState(false);
   const [codeSearchError, setCodeSearchError] = useState<string | null>(null);
   const [codeSearchResults, setCodeSearchResults] = useState<FileNodeDto[]>([]);
+  const [fileRevealRequest, setFileRevealRequest] = useState<WorkbenchFileRevealRequest | null>(null);
   const [workspaceManagementStateById, setWorkspaceManagementStateById] = useState<
     Record<string, WorkspaceManagementViewState>
   >({});
@@ -4160,6 +4185,39 @@ export function WorkbenchLayout({
     [navigate]
   );
 
+  const revealWorkspaceFile = useCallback(
+    (input: { workspaceId?: string | null; filePath: string; openViewer?: boolean }) => {
+      const targetWorkspaceId = input.workspaceId?.trim() || currentWorkspaceId;
+      const normalizedFilePath = normalizeWorkbenchFilePath(input.filePath);
+
+      if (!targetWorkspaceId || !normalizedFilePath) {
+        return false;
+      }
+
+      ensureInfoPanelReady();
+      setActiveInfoTab("files");
+
+      if (isMobileShell) {
+        setMobileNavOpen(false);
+        setMobileInfoOpen(true);
+      } else {
+        setRightCollapsed(false);
+      }
+
+      // 即使路径没变，也要允许用户再次点击后重新定位。
+      setFileRevealRequest({
+        requestId: fileRevealRequestIdRef.current + 1,
+        workspaceId: targetWorkspaceId,
+        filePath: normalizedFilePath,
+        openViewer: input.openViewer === true
+      });
+      fileRevealRequestIdRef.current += 1;
+
+      return true;
+    },
+    [currentWorkspaceId, isMobileShell]
+  );
+
   const renameNavigationSession = useCallback(
     async (sessionId: string, title: string) => {
       const renamedSession = await renameSessionTitle(sessionId, title.trim());
@@ -4434,7 +4492,8 @@ export function WorkbenchLayout({
       startDraftSession,
       markNavigationSessionSeen,
       upsertNavigationSession,
-      setSessionWorkspace
+      setSessionWorkspace,
+      revealWorkspaceFile
     }),
     [
       addFileTreeSnapshotListener,
@@ -4467,7 +4526,8 @@ export function WorkbenchLayout({
       subscribeWorkspaceManagementSnapshot,
       subscribeTerminalManagerSnapshot,
       toggleFavoriteSession,
-      upsertNavigationSession
+      upsertNavigationSession,
+      revealWorkspaceFile
     ]
   );
 
@@ -4528,6 +4588,7 @@ export function WorkbenchLayout({
     <WorkbenchInfoPanel
       panelReady={infoPanelReady}
       activeTab={activeInfoTab}
+      fileRevealRequest={fileRevealRequest}
       onTabChange={(tab) => {
         ensureInfoPanelReady();
         setActiveInfoTab(tab);
@@ -4757,6 +4818,7 @@ export function WorkbenchLayout({
               <WorkbenchInfoPanel
                 panelReady={infoPanelReady}
                 activeTab={activeInfoTab}
+                fileRevealRequest={fileRevealRequest}
                 onTabChange={(tab) => {
                   ensureInfoPanelReady();
                   setActiveInfoTab(tab);
@@ -4905,7 +4967,8 @@ export function useWorkbenchShell(): WorkbenchShellContextValue {
       startDraftSession: () => undefined,
       setSessionWorkspace: () => undefined,
       upsertNavigationSession: () => undefined,
-      markNavigationSessionSeen: () => undefined
+      markNavigationSessionSeen: () => undefined,
+      revealWorkspaceFile: () => false
     }
   );
 }

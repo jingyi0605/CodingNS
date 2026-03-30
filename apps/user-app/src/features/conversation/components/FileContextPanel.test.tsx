@@ -557,6 +557,12 @@ describe("FileContextPanel", () => {
     workspaceId = "workspace-1",
     options?: {
       hideHeading?: boolean;
+      externalRevealRequest?: {
+        requestId: number;
+        workspaceId: string;
+        filePath: string;
+        openViewer: boolean;
+      } | null;
     }
   ) {
     render(
@@ -565,6 +571,7 @@ describe("FileContextPanel", () => {
           sessionId={sessionId}
           workspaceId={workspaceId}
           hideHeading={options?.hideHeading}
+          externalRevealRequest={options?.externalRevealRequest}
         />
       </ToastProvider>
     );
@@ -929,6 +936,67 @@ describe("FileContextPanel", () => {
 
     expect(fileApiMock.getFileTree).toHaveBeenNthCalledWith(1, "workspace-1", undefined);
     expect(fileApiMock.getFileTree).toHaveBeenNthCalledWith(2, "workspace-1", "apps");
+  });
+
+  it("收到外部文件定位请求时会展开目录链并显示目标文件", async () => {
+    fileApiMock.getFileTree.mockImplementation(async (_workspaceId: string, filePath?: string) => ({
+      items:
+        filePath === "apps"
+          ? [
+              {
+                path: "apps/user-app",
+                name: "user-app",
+                kind: "directory",
+                size: null,
+                updatedAt: "2026-03-24T12:00:00.000Z"
+              }
+            ]
+          : filePath === "apps/user-app"
+            ? [
+                {
+                  path: "apps/user-app/src",
+                  name: "src",
+                  kind: "directory",
+                  size: null,
+                  updatedAt: "2026-03-24T12:00:00.000Z"
+                }
+              ]
+            : filePath === "apps/user-app/src"
+              ? [
+                  {
+                    path: "apps/user-app/src/App.tsx",
+                    name: "App.tsx",
+                    kind: "file",
+                    size: 42,
+                    updatedAt: "2026-03-24T12:00:00.000Z"
+                  }
+                ]
+              : [
+                  {
+                    path: "apps",
+                    name: "apps",
+                    kind: "directory",
+                    size: null,
+                    updatedAt: "2026-03-24T12:00:00.000Z"
+                  }
+                ]
+    }));
+
+    renderPanel("session-1", "workspace-1", {
+      externalRevealRequest: {
+        requestId: 1,
+        workspaceId: "workspace-1",
+        filePath: "apps/user-app/src/App.tsx",
+        openViewer: false
+      }
+    });
+
+    expect(await screen.findByText("App.tsx")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(fileApiMock.getFileTree).toHaveBeenCalledWith("workspace-1", "apps");
+      expect(fileApiMock.getFileTree).toHaveBeenCalledWith("workspace-1", "apps/user-app");
+      expect(fileApiMock.getFileTree).toHaveBeenCalledWith("workspace-1", "apps/user-app/src");
+    });
   });
 
   it("支持复制当前选中文件的相对路径", async () => {

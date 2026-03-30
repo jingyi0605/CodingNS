@@ -1,4 +1,15 @@
-import { isValidElement, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  createContext,
+  isValidElement,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode
+} from "react";
 import { createPortal } from "react-dom";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -14,6 +25,7 @@ import {
   type ApplyPatchFileChange
 } from "../apply-patch-preview";
 import { parseMessageRichContent } from "../message-rich-content";
+import { useWorkbenchShell } from "./WorkbenchLayout";
 
 import type {
   ImageAttachmentPayload,
@@ -51,6 +63,7 @@ interface ToolMessageGroup {
 }
 
 const OLDER_HISTORY_PREFETCH_THRESHOLD_PX = 480;
+const MarkdownLinkContext = createContext(false);
 
 type TimelineRenderItem =
   | {
@@ -63,6 +76,128 @@ type TimelineRenderItem =
       key: string;
       group: ToolMessageGroup;
     };
+
+function normalizeMessagePathSeparators(value: string): string {
+  return value.replace(/\\/g, "/");
+}
+
+function isWindowsAbsolutePath(value: string): boolean {
+  return /^[a-zA-Z]:\//.test(value);
+}
+
+function isAbsolutePath(value: string): boolean {
+  return value.startsWith("/") || value.startsWith("//") || isWindowsAbsolutePath(value);
+}
+
+function looksLikeExternalProtocol(value: string): boolean {
+  return /^[a-zA-Z][a-zA-Z\d+.-]*:/.test(value) && !isWindowsAbsolutePath(value);
+}
+
+function trimTrailingSlashes(value: string): string {
+  return value.replace(/\/+$/, "");
+}
+
+function stripFileReferenceDecorations(value: string): string {
+  const hashIndex = value.indexOf("#");
+  const withoutHash = hashIndex >= 0 ? value.slice(0, hashIndex) : value;
+  const queryIndex = withoutHash.indexOf("?");
+  const withoutQuery = queryIndex >= 0 ? withoutHash.slice(0, queryIndex) : withoutHash;
+
+  return withoutQuery.replace(/:(\d+)(?::(\d+))?$/, "");
+}
+
+function normalizeRelativePath(value: string): string | null {
+  const segments: string[] = [];
+
+  for (const segment of normalizeMessagePathSeparators(value).split("/")) {
+    if (!segment || segment === ".") {
+      continue;
+    }
+
+    if (segment === "..") {
+      if (segments.length === 0) {
+        return null;
+      }
+
+      segments.pop();
+      continue;
+    }
+
+    segments.push(segment);
+  }
+
+  return segments.join("/");
+}
+
+function decodeMarkdownHref(href: string): string {
+  try {
+    return decodeURIComponent(href);
+  } catch {
+    return href;
+  }
+}
+
+function resolveWorkspaceRelativePathFromHref(
+  href: string,
+  workspacePath: string
+): string | null {
+  const decodedHref = decodeMarkdownHref(href).trim();
+
+  if (!decodedHref || decodedHref.startsWith("#")) {
+    return null;
+  }
+
+  let candidatePath = decodedHref;
+
+  if (/^file:\/\//i.test(candidatePath)) {
+    try {
+      candidatePath = decodeURIComponent(new URL(candidatePath).pathname);
+      if (/^\/[a-zA-Z]:\//.test(candidatePath)) {
+        candidatePath = candidatePath.slice(1);
+      }
+    } catch {
+      return null;
+    }
+  } else if (looksLikeExternalProtocol(candidatePath)) {
+    return null;
+  }
+
+  candidatePath = normalizeMessagePathSeparators(stripFileReferenceDecorations(candidatePath.trim()));
+
+  if (!candidatePath) {
+    return null;
+  }
+
+  const normalizedWorkspacePath = trimTrailingSlashes(normalizeMessagePathSeparators(workspacePath.trim()));
+
+  if (!normalizedWorkspacePath) {
+    return null;
+  }
+
+  if (isAbsolutePath(candidatePath)) {
+    const normalizedCandidatePath = trimTrailingSlashes(candidatePath);
+    const compareWorkspacePath = isWindowsAbsolutePath(normalizedWorkspacePath)
+      ? normalizedWorkspacePath.toLowerCase()
+      : normalizedWorkspacePath;
+    const compareCandidatePath = isWindowsAbsolutePath(normalizedCandidatePath)
+      ? normalizedCandidatePath.toLowerCase()
+      : normalizedCandidatePath;
+
+    if (compareCandidatePath === compareWorkspacePath) {
+      return null;
+    }
+
+    const workspacePrefix = `${compareWorkspacePath}/`;
+
+    if (!compareCandidatePath.startsWith(workspacePrefix)) {
+      return null;
+    }
+
+    return normalizedCandidatePath.slice(normalizedWorkspacePath.length + 1);
+  }
+
+  return normalizeRelativePath(candidatePath);
+}
 
 function isToolMessage(message: SessionMessageViewModel) {
   return message.kind === "tool_call" || message.kind === "tool_result";
@@ -389,6 +524,74 @@ async function writeTextToClipboard(
   throw new Error(t("conversation.copyContentFailed"));
 }
 
+function MarkdownInlineCode({
+  className,
+  children,
+  onCopy
+}: {
+  className?: string;
+  children: ReactNode;
+  onCopy: (text: string) => void;
+}) {
+  const isInsideLink = useContext(MarkdownLinkContext);
+  const content = flattenReactNodeText(children).trim();
+
+  if (isInsideLink || !content) {
+    return <code className={className || undefined}>{children}</code>;
+  }
+
+  function handleKeyDown(event: ReactKeyboardEvent<HTMLElement>) {
+    if (event.key !== "Enter" && event.key !== " ") {
+      return;
+    }
+
+    event.preventDefault();
+    onCopy(content);
+  }
+
+  return (
+    <code
+      className={[className, "markdown-inline-copy"].filter(Boolean).join(" ")}
+      role="button"
+      tabIndex={0}
+      aria-label={t("conversation.copyAction")}
+      onClick={() => onCopy(content)}
+      onKeyDown={handleKeyDown}
+    >
+      {children}
+    </code>
+  );
+}
+
+function InteractiveMessageLink({
+  href,
+  children,
+  className,
+  onInteract
+}: {
+  href?: string;
+  children: ReactNode;
+  className?: string;
+  onInteract: (href: string | undefined, text: string) => void;
+}) {
+  const interactiveText = flattenReactNodeText(children).trim() || (href ? decodeMarkdownHref(href).trim() : "");
+
+  return (
+    <MarkdownLinkContext.Provider value={true}>
+      <a
+        href={href}
+        className={[className, "markdown-interactive-link"].filter(Boolean).join(" ")}
+        onClick={(event) => {
+          event.preventDefault();
+          onInteract(href, interactiveText);
+        }}
+      >
+        {children}
+      </a>
+    </MarkdownLinkContext.Provider>
+  );
+}
+
 function CopyableContentBlock({
   language,
   codeClassName,
@@ -441,6 +644,55 @@ function MessageMarkdownBody({
   content: string;
   className: string;
 }) {
+  const { showToast } = useToast();
+  const platform = usePlatform();
+  const { navigationGroups, currentWorkspaceId, revealWorkspaceFile } = useWorkbenchShell();
+  const currentWorkspace = useMemo(
+    () =>
+      navigationGroups.find((group) => group.workspace.id === currentWorkspaceId)?.workspace
+      ?? null,
+    [currentWorkspaceId, navigationGroups]
+  );
+
+  async function handleCopyText(text: string) {
+    if (!text.trim()) {
+      return;
+    }
+
+    try {
+      await writeTextToClipboard(text, platform);
+      showToast({
+        title: t("conversation.copyContentSuccess"),
+        tone: "success"
+      });
+    } catch (error) {
+      showToast({
+        title: error instanceof Error ? error.message : t("conversation.copyContentFailed"),
+        tone: "error"
+      });
+    }
+  }
+
+  function handleLinkInteract(href: string | undefined, text: string) {
+    const relativeFilePath =
+      href && currentWorkspace?.path
+        ? resolveWorkspaceRelativePathFromHref(href, currentWorkspace.path)
+        : null;
+
+    if (
+      relativeFilePath &&
+      revealWorkspaceFile({
+        workspaceId: currentWorkspace?.id ?? currentWorkspaceId,
+        filePath: relativeFilePath,
+        openViewer: false
+      })
+    ) {
+      return;
+    }
+
+    void handleCopyText(text || (href ? decodeMarkdownHref(href).trim() : ""));
+  }
+
   return (
     <div className={className}>
       <Markdown
@@ -448,6 +700,17 @@ function MessageMarkdownBody({
         components={{
           // eslint-disable-next-line @typescript-eslint/no-unused-vars
           p: ({ node, ...props }) => <p {...props} />,
+          a(props) {
+            return (
+              <InteractiveMessageLink
+                href={typeof props.href === "string" ? props.href : undefined}
+                className={typeof props.className === "string" ? props.className : undefined}
+                onInteract={handleLinkInteract}
+              >
+                {props.children}
+              </InteractiveMessageLink>
+            );
+          },
           pre(props) {
             const blockProps = extractCodeBlockProps(props.children);
 
@@ -466,9 +729,14 @@ function MessageMarkdownBody({
           code(props) {
             const codeClassName = typeof props.className === "string" ? props.className : "";
             return (
-              <code className={codeClassName || undefined}>
+              <MarkdownInlineCode
+                className={codeClassName || undefined}
+                onCopy={(text) => {
+                  void handleCopyText(text);
+                }}
+              >
                 {props.children}
-              </code>
+              </MarkdownInlineCode>
             );
           }
         }}

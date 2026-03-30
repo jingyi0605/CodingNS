@@ -15,7 +15,7 @@ import {
 } from "../api/file-context-api";
 import { getGitDiff, type GitChangeItemDto } from "../api/git-api";
 import { usePlatform } from "../../../platform/platform-provider";
-import { useWorkbenchShell } from "./WorkbenchLayout";
+import { useWorkbenchShell, type WorkbenchFileRevealRequest } from "./WorkbenchLayout";
 import { FileViewerModal } from "./FileViewerModal";
 import {
   resolveFileTreeIconKind,
@@ -34,6 +34,7 @@ interface FileContextPanelProps {
   sessionId: string | null | undefined;
   workspaceId: string | null | undefined;
   hideHeading?: boolean;
+  externalRevealRequest?: WorkbenchFileRevealRequest | null;
 }
 
 type FileTreeCache = Record<string, FileNodeDto[]>;
@@ -71,7 +72,13 @@ interface DirectorySnapshotRequestOptions {
   force?: boolean;
 }
 
-export function FileContextPanel({ className, sessionId, workspaceId, hideHeading = false }: FileContextPanelProps) {
+export function FileContextPanel({
+  className,
+  sessionId,
+  workspaceId,
+  hideHeading = false,
+  externalRevealRequest = null
+}: FileContextPanelProps) {
   const {
     navigationGroups,
     subscribeFileTree,
@@ -110,6 +117,7 @@ export function FileContextPanel({ className, sessionId, workspaceId, hideHeadin
   const copyPathMenuRef = useRef<HTMLDivElement | null>(null);
   const mobileActionMenuRef = useRef<HTMLDivElement | null>(null);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
+  const handledExternalRevealRequestIdRef = useRef<number | null>(null);
   const directoryWaitersRef = useRef(
     new Map<
       string,
@@ -228,6 +236,39 @@ export function FileContextPanel({ className, sessionId, workspaceId, hideHeadin
       restoringWorkspaceSnapshotRef.current = false;
     });
   }, [workspaceId]);
+
+  useEffect(() => {
+    if (!externalRevealRequest || externalRevealRequest.workspaceId !== workspaceId) {
+      return;
+    }
+
+    const runRevealRequest = () => {
+      if (handledExternalRevealRequestIdRef.current === externalRevealRequest.requestId) {
+        return;
+      }
+
+      handledExternalRevealRequestIdRef.current = externalRevealRequest.requestId;
+      setActiveTab("workspace");
+
+      const revealTask = externalRevealRequest.openViewer
+        ? openFileViewer(externalRevealRequest.filePath)
+        : selectFile(externalRevealRequest.filePath);
+
+      void revealTask.catch((error) => {
+        showToast({
+          title: readError(error, t("conversation.filePanelOpenFailed")),
+          tone: "error"
+        });
+      });
+    };
+
+    if (restoringWorkspaceSnapshotRef.current) {
+      queueMicrotask(runRevealRequest);
+      return;
+    }
+
+    runRevealRequest();
+  }, [externalRevealRequest, openFileViewer, selectFile, showToast, workspaceId]);
 
   useEffect(() => {
     if (!workspaceId) {

@@ -2394,6 +2394,24 @@ a {
   color: var(--accent);
 }
 
+.markdown-content .markdown-inline-copy,
+.markdown-content .markdown-interactive-link {
+  cursor: pointer;
+}
+
+.markdown-content .markdown-inline-copy:focus-visible,
+.markdown-content .markdown-interactive-link:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 58%, white);
+  outline-offset: 2px;
+}
+
+.markdown-content .markdown-interactive-link {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  text-underline-offset: 2px;
+}
+
 .markdown-content pre {
   margin: 12px 0;
   padding: 12px 16px;
@@ -5672,6 +5690,40 @@ textarea:focus-visible {
 .composer-attach-btn:hover {
   background: var(--bg-hover);
   color: var(--text-primary);
+}
+
+.composer-attach-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.composer-attachment-sheet-card {
+  gap: 1rem;
+}
+
+.composer-attachment-sheet-actions {
+  display: flex;
+  flex-direction: column;
+}
+
+.composer-attachment-sheet-option-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.composer-attachment-sheet-option-copy strong {
+  color: var(--text-primary);
+  font-size: 0.98rem;
+  font-weight: 600;
+}
+
+.composer-attachment-sheet-option-copy span {
+  color: var(--text-secondary);
+  font-size: 0.84rem;
+  line-height: 1.45;
 }
 
 .composer-send-group {
@@ -11623,6 +11675,7 @@ textarea:focus-visible {
   width: 100%;
   height: 100vh;
   height: 100dvh;
+  overflow-x: hidden;
   padding:
     var(--cyber-safe-top)
     var(--cyber-safe-right)
@@ -11636,19 +11689,36 @@ textarea:focus-visible {
   align-items: stretch;
   gap: 24px;
   flex: 1;
-  width: min(100%, 440px);
+  width: 100%;
+  max-width: 440px;
   min-height: 100%;
   padding: 20px 24px 24px;
 }
 
 .cyber-login-page[data-native-mobile="true"] .cyber-login-toolbar {
-  justify-content: flex-end;
+  justify-content: center;
   min-height: 36px;
+  min-width: 0;
   padding-top: 4px;
 }
 
 .cyber-login-page[data-native-mobile="true"] .cyber-login-toolbar .language-switcher {
+  display: flex;
+  justify-content: center;
   max-width: 100%;
+  min-width: 0;
+  margin: 0 auto;
+  overflow: hidden;
+}
+
+.cyber-login-page[data-native-mobile="true"] .cyber-login-toolbar .language-switcher-options {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.cyber-login-page[data-native-mobile="true"] .cyber-login-toolbar .language-switcher-option {
+  min-width: 0;
+  padding: 0 clamp(8px, 3vw, 12px);
 }
 
 .cyber-login-page[data-native-mobile="true"] .cyber-login-content {
@@ -11656,9 +11726,22 @@ textarea:focus-visible {
   min-height: 0;
 }
 
+.cyber-login-page[data-native-mobile="true"] .cyber-brand,
+.cyber-login-page[data-native-mobile="true"] .cyber-card,
+.cyber-login-page[data-native-mobile="true"] .cyber-version {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.cyber-login-page[data-native-mobile="true"] .cyber-brand-subtitle,
+.cyber-login-page[data-native-mobile="true"] .typewriter-text {
+  white-space: normal;
+  word-break: break-word;
+}
+
 .cyber-login-page[data-native-mobile="true"] .cyber-version {
   justify-content: center;
-  width: 100%;
 }
 
 .cyber-version-divider {
@@ -11962,6 +12045,13 @@ textarea:focus-visible {
 
   .cyber-card {
     padding: 24px 20px;
+  }
+
+  .cyber-login-page[data-native-mobile="true"] .cyber-brand-subtitle {
+    font-size: 11px;
+    line-height: 1.5;
+    letter-spacing: 1px;
+    text-align: center;
   }
 
   .cyber-login-page[data-native-mobile="true"] .cyber-login-toolbar .language-switcher-options {

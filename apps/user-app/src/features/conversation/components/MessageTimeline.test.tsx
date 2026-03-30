@@ -1,11 +1,31 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { t } from "../../../shared/i18n";
 import { MessageTimeline } from "./MessageTimeline";
 
 import type { SessionMessageViewModel } from "../runtime/session-runtime-machine";
+
+const revealWorkspaceFileMock = vi.hoisted(() => vi.fn(() => false));
+
+vi.mock("./WorkbenchLayout", () => ({
+  useWorkbenchShell: () => ({
+    navigationGroups: [
+      {
+        workspace: {
+          id: "workspace-1",
+          name: "CodingNS",
+          path: "/Users/jackson/Code/CodingNS",
+          repoRoot: "/Users/jackson/Code/CodingNS"
+        },
+        sessions: []
+      }
+    ],
+    currentWorkspaceId: "workspace-1",
+    revealWorkspaceFile: revealWorkspaceFileMock
+  })
+}));
 
 const SAMPLE_IMAGE_DATA_URL =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aF9sAAAAASUVORK5CYII=";
@@ -97,6 +117,68 @@ function createAssistantThinkingMessage(content: string, id = "thinking-1"): Ses
 }
 
 describe("MessageTimeline", () => {
+  beforeEach(() => {
+    revealWorkspaceFileMock.mockReset();
+    revealWorkspaceFileMock.mockReturnValue(false);
+  });
+
+  it("点击行内蓝色代码会直接复制内容", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: {
+        writeText
+      },
+      configurable: true
+    });
+
+    render(
+      <MessageTimeline
+        messages={[createAssistantTextMessage("把 `inline-flex` 改成可收缩布局。")]}
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+      />
+    );
+
+    await userEvent.click(screen.getByText("inline-flex"));
+
+    expect(writeText).toHaveBeenCalledWith("inline-flex");
+    expect(revealWorkspaceFileMock).not.toHaveBeenCalled();
+  });
+
+  it("点击文件路径链接会切到文件面板并定位文件", async () => {
+    revealWorkspaceFileMock.mockReturnValue(true);
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: {
+        writeText
+      },
+      configurable: true
+    });
+
+    render(
+      <MessageTimeline
+        messages={[
+          createAssistantTextMessage(
+            "[App.tsx](/Users/jackson/Code/CodingNS/apps/user-app/src/app/App.tsx#L12)"
+          )
+        ]}
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+      />
+    );
+
+    await userEvent.click(screen.getByText("App.tsx"));
+
+    expect(revealWorkspaceFileMock).toHaveBeenCalledWith({
+      workspaceId: "workspace-1",
+      filePath: "apps/user-app/src/app/App.tsx",
+      openViewer: false
+    });
+    expect(writeText).not.toHaveBeenCalled();
+  });
+
   it("会把同一次工具调用和结果合并渲染", async () => {
     render(
       <MessageTimeline
@@ -307,7 +389,7 @@ describe("MessageTimeline", () => {
 
     expect(screen.getByText("styles.css")).toBeInTheDocument();
     expect(screen.getByText("text")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: t("conversation.copyAction") })).not.toBeInTheDocument();
+    expect(document.querySelectorAll(".code-copy-button")).toHaveLength(0);
     expect(document.querySelector(".code-block")).toBeNull();
   });
 
