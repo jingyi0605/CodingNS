@@ -1571,9 +1571,12 @@ body {
 .workbench-auxiliary-header,
 .conversation-header {
   position: relative;
-  min-height: 52px;
+  min-height: var(--workbench-header-min-height);
   margin: 0;
-  padding: 10px 14px;
+  padding:
+    var(--workbench-header-padding-top)
+    var(--workbench-header-padding-inline)
+    var(--workbench-header-padding-bottom);
   border-bottom: 1px solid var(--panel-separator);
   border-radius: 0;
   background: color-mix(in srgb, var(--panel-bg-strong) 84%, transparent);
@@ -2208,11 +2211,11 @@ body {
 [data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav-toolbar {
   min-height: 28px;
   /* 展开态与收起态共用同一条左侧安全基线，避免侧边栏按钮压到原生三色球。 */
-  padding-left: calc(var(--workbench-macos-toolbar-leading-offset) - 4px);
+  padding-left: var(--workbench-titlebar-leading-inset);
 }
 
 [data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-macos-traffic-light-spacer {
-  flex: 0 0 calc(var(--workbench-macos-toolbar-leading-offset) - 4px);
+  flex: 0 0 var(--workbench-titlebar-leading-inset);
   height: 28px;
 }
 
@@ -2223,15 +2226,15 @@ body {
   /* 原生三色球和 WebView 内容不在同一层，只能做小幅基线修正来逼近系统标题栏。 */
   position: relative;
   z-index: 1;
-  transform: translateY(var(--workbench-macos-titlebar-content-shift-y, -4px));
+  transform: translateY(var(--workbench-titlebar-content-shift-y));
 }
 
 [data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-auxiliary-header > .workbench-nav-toolbar-button {
-  transform: translateY(var(--workbench-macos-titlebar-content-shift-y, -4px));
+  transform: translateY(var(--workbench-titlebar-content-shift-y));
 }
 
 [data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-nav-toolbar {
-  transform: translateY(var(--workbench-macos-nav-toolbar-shift-y, -6px));
+  transform: translateY(var(--workbench-nav-toolbar-shift-y));
 }
 
 [data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .terminal-tabbar {
@@ -3776,8 +3779,15 @@ body {
 .workbench-shell {
   --workbench-collapsed-left-inset: 0px;
   --workbench-collapsed-right-inset: 0px;
+  --workbench-header-min-height: 52px;
+  --workbench-header-padding-top: 10px;
+  --workbench-header-padding-bottom: 10px;
+  --workbench-header-padding-inline: 14px;
+  /* 默认按 Web/H5 基线布局，不额外吃 macOS 标题栏补偿。 */
+  --workbench-titlebar-leading-inset: 0px;
+  --workbench-titlebar-content-shift-y: 0px;
+  --workbench-nav-toolbar-shift-y: 0px;
   --workbench-macos-traffic-light-safe-zone: 0px;
-  --workbench-macos-toolbar-leading-offset: 0px;
   --workbench-collapsed-balanced-inset: max(
     var(--workbench-collapsed-left-inset),
     var(--workbench-collapsed-right-inset)
@@ -3793,10 +3803,13 @@ body {
 }
 
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] {
+  --workbench-header-min-height: 44px;
+  --workbench-header-padding-top: 5px;
+  --workbench-header-padding-bottom: 6px;
   --workbench-macos-traffic-light-safe-zone: 86px;
-  --workbench-macos-toolbar-leading-offset: 82px;
-  --workbench-macos-titlebar-content-shift-y: -4px;
-  --workbench-macos-nav-toolbar-shift-y: -6px;
+  --workbench-titlebar-leading-inset: 78px;
+  --workbench-titlebar-content-shift-y: -4px;
+  --workbench-nav-toolbar-shift-y: -6px;
   --workbench-macos-titlebar-control-size: 28px;
   --workbench-macos-titlebar-padding-top: 5px;
   --workbench-macos-titlebar-padding-bottom: 6px;
@@ -3869,8 +3882,11 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 44px;
-  padding: 5px 14px 6px;
+  min-height: var(--workbench-header-min-height);
+  padding:
+    var(--workbench-header-padding-top)
+    var(--workbench-header-padding-inline)
+    var(--workbench-header-padding-bottom);
   box-sizing: border-box;
   pointer-events: none;
 }
@@ -3889,23 +3905,23 @@ body {
 }
 
 .workbench-collapsed-controls.left {
-  margin-left: calc(var(--workbench-macos-toolbar-leading-offset) - 4px);
-  transform: translate3d(-8px, var(--workbench-macos-nav-toolbar-shift-y, -6px), 0);
+  margin-left: var(--workbench-titlebar-leading-inset);
+  transform: translate3d(-8px, var(--workbench-nav-toolbar-shift-y), 0);
 }
 
 .workbench-collapsed-controls.right {
-  transform: translate3d(10px, var(--workbench-macos-titlebar-content-shift-y, -4px), 0);
+  transform: translate3d(10px, var(--workbench-titlebar-content-shift-y), 0);
 }
 
 .workbench-collapsed-controls[data-visible="true"] {
   pointer-events: auto;
   opacity: 1;
   visibility: visible;
-  transform: translate3d(0, var(--workbench-macos-titlebar-content-shift-y, -4px), 0);
+  transform: translate3d(0, var(--workbench-titlebar-content-shift-y), 0);
 }
 
 .workbench-collapsed-controls.left[data-visible="true"] {
-  transform: translate3d(0, var(--workbench-macos-nav-toolbar-shift-y, -6px), 0);
+  transform: translate3d(0, var(--workbench-nav-toolbar-shift-y), 0);
 }
 
 .workbench-main-drag-strip {
