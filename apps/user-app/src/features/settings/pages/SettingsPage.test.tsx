@@ -4,6 +4,10 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { clientConfigStore } from "../../../config/client-config-store";
+import {
+  SHOW_SYSTEM_FILES_STORAGE_KEY,
+  localUiPreferenceStore
+} from "../../../preferences/local-ui-preference-store";
 import { userPreferenceStore } from "../../../preferences/user-preference-store";
 import { authStore } from "../../auth/store/auth-store";
 import { PlatformProvider } from "../../../platform/platform-provider";
@@ -17,6 +21,7 @@ const originalTauriInternals = window.__TAURI_INTERNALS__;
 describe("SettingsPage", () => {
   beforeEach(() => {
     window.localStorage.clear();
+    localUiPreferenceStore.setShowSystemFiles(false);
     authStore.clear();
     clientConfigStore.hydrate({
       platform: "web",
@@ -237,6 +242,26 @@ describe("SettingsPage", () => {
     renderSettingsPage();
 
     expect(screen.getByRole("button", { name: t("common.logout") })).toBeInTheDocument();
+  });
+  it("会把显示系统文件开关写入本地 localStorage", async () => {
+    renderSettingsPage();
+
+    const checkbox = screen.getByRole("checkbox");
+
+    expect(checkbox).not.toBeChecked();
+    expect(window.localStorage.getItem(SHOW_SYSTEM_FILES_STORAGE_KEY)).toBeNull();
+
+    await userEvent.click(checkbox);
+
+    expect(checkbox).toBeChecked();
+    expect(localUiPreferenceStore.getState().showSystemFiles).toBe(true);
+    expect(window.localStorage.getItem(SHOW_SYSTEM_FILES_STORAGE_KEY)).toBe("1");
+
+    await userEvent.click(checkbox);
+
+    expect(checkbox).not.toBeChecked();
+    expect(localUiPreferenceStore.getState().showSystemFiles).toBe(false);
+    expect(window.localStorage.getItem(SHOW_SYSTEM_FILES_STORAGE_KEY)).toBeNull();
   });
 });
 

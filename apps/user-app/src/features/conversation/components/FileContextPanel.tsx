@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { useLocalUiPreferenceSelector } from "../../../preferences/local-ui-preference-store";
 import { readViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import { logPerfDebug } from "../../../shared/debug/perf-debug";
 import { t } from "../../../shared/i18n";
@@ -20,6 +21,12 @@ import {
   resolveFileTreeIconKind,
   resolveFileTreeIconLabel
 } from "./file-tree-icon";
+import {
+  filterVisibleEntriesByName,
+  filterVisibleFileNodes,
+  filterVisibleFileTreeCache,
+  getPathLeafName
+} from "./file-entry-visibility";
 import { SessionChangedFilesPanel } from "./SessionChangedFilesPanel";
 
 interface FileContextPanelProps {
@@ -115,6 +122,7 @@ export function FileContextPanel({ className, sessionId, workspaceId, hideHeadin
   );
   const { showToast } = useToast();
   const platform = usePlatform();
+  const showSystemFiles = useLocalUiPreferenceSelector((state) => state.showSystemFiles);
   const hasSessionContext = Boolean(sessionId?.trim());
   const shouldUseMobileActionMenu = hideHeading && platform.isMobile;
 
@@ -357,7 +365,11 @@ export function FileContextPanel({ className, sessionId, workspaceId, hideHeadin
         return;
       }
 
-      const shouldShowLoading = options?.silent !== true && (treeCacheRef.current[ROOT_DIRECTORY]?.length ?? 0) === 0;
+      const cachedVisibleRootItems = filterVisibleFileNodes(
+        treeCacheRef.current[ROOT_DIRECTORY] ?? [],
+        showSystemFiles
+      );
+      const shouldShowLoading = options?.silent !== true && cachedVisibleRootItems.length === 0;
 
       if (shouldShowLoading) {
         setLoadingTree(true);
@@ -367,7 +379,7 @@ export function FileContextPanel({ className, sessionId, workspaceId, hideHeadin
         sessionId,
         workspaceId: currentWorkspaceId,
         silent: options?.silent === true,
-        cachedRootItems: treeCacheRef.current[ROOT_DIRECTORY]?.length ?? 0
+        cachedRootItems: cachedVisibleRootItems.length
       });
 
       try {
@@ -404,7 +416,8 @@ export function FileContextPanel({ className, sessionId, workspaceId, hideHeadin
       }
     }
 
-    const hasCachedRootItems = (treeCacheRef.current[ROOT_DIRECTORY]?.length ?? 0) > 0;
+    const hasCachedRootItems =
+      filterVisibleFileNodes(treeCacheRef.current[ROOT_DIRECTORY] ?? [], showSystemFiles).length > 0;
 
     if (hasCachedRootItems) {
       const timer = window.setTimeout(() => {
@@ -430,7 +443,7 @@ export function FileContextPanel({ className, sessionId, workspaceId, hideHeadin
     return () => {
       cancelled = true;
     };
-  }, [sessionId, showToast, workspaceId]);
+  }, [sessionId, showSystemFiles, showToast, workspaceId]);
 
   useEffect(() => {
     if (!workspaceId || !sessionId) {
@@ -483,11 +496,21 @@ export function FileContextPanel({ className, sessionId, workspaceId, hideHeadin
   }, [addGitSnapshotListener, workspaceId]);
 
   // 变更路径集合（用于筛选和状态标记）
+  const visibleGitChanges = useMemo(
+    () =>
+      filterVisibleEntriesByName(
+        gitChanges,
+        (item) => getPathLeafName(item.path),
+        showSystemFiles
+      ),
+    [gitChanges, showSystemFiles]
+  );
+
   const gitChangeInfo = useMemo(() => {
     const statusByPath = new Map<string, string>();
     const changedDirs = new Set<string>();
 
-    for (const change of gitChanges) {
+    for (const change of visibleGitChanges) {
       const path = change.path.replace(/\\/g, "/");
       const status = change.worktreeStatus ?? change.stagedStatus ?? change.status;
       statusByPath.set(path, status);
@@ -499,10 +522,18 @@ export function FileContextPanel({ className, sessionId, workspaceId, hideHeadin
     }
 
     return { statusByPath, changedDirs };
-  }, [gitChanges]);
+  }, [visibleGitChanges]);
 
-  const rootItems = treeCache[ROOT_DIRECTORY] ?? [];
-  const searchMode = searchVisible && searchResult !== null;
+  const visibleTreeCache = useMemo(
+    () => filterVisibleFileTreeCache(treeCache, showSystemFiles),
+    [showSystemFiles, treeCache]
+  );
+  const visibleSearchResult = useMemo(
+    () => (searchResult === null ? null : filterVisibleFileNodes(searchResult, showSystemFiles)),
+    [searchResult, showSystemFiles]
+  );
+  const rootItems = visibleTreeCache[ROOT_DIRECTORY] ?? [];
+  const searchMode = searchVisible && visibleSearchResult !== null;
   const currentWorkspace =
     navigationGroups.find((group) => group.workspace.id === workspaceId)?.workspace ?? null;
   // 文件和目录原本分散在两套选中状态里，这里收敛成一个“当前目标路径”，后续按钮逻辑就不用到处打补丁。
@@ -1076,10 +1107,15 @@ export function FileContextPanel({ className, sessionId, workspaceId, hideHeadin
           const isDirectory = item.kind === "directory";
           const isExpanded = isDirectory && expandedDirectories.includes(item.path);
           const isLoading = isDirectory && loadingDirectories.includes(item.path);
-          const rawChildItems = treeCache[item.path] ?? [];
+          const rawChildItems = visibleTreeCache[item.path] ?? [];
           // 筛选模式下递归过滤子节点
           const childItems = showChangesOnly
-            ? filterTreeByChanges(rawChildItems, treeCache, gitChangeInfo.statusByPath, gitChangeInfo.changedDirs)
+            ? filterTreeByChanges(
+                rawChildItems,
+                visibleTreeCache,
+                gitChangeInfo.statusByPath,
+                gitChangeInfo.changedDirs
+              )
             : rawChildItems;
           const isActive =
             selectedPath === item.path ||
@@ -1309,7 +1345,7 @@ export function FileContextPanel({ className, sessionId, workspaceId, hideHeadin
                             setMobileActionMenuOpen(false);
                             setShowChangesOnly((current) => !current);
                           }}
-                          disabled={gitChanges.length === 0}
+                          disabled={visibleGitChanges.length === 0}
                         >
                           {showChangesOnly ? t("conversation.filePanelShowAll") : t("conversation.filePanelFilterChanges")}
                         </button>
@@ -1468,7 +1504,7 @@ export function FileContextPanel({ className, sessionId, workspaceId, hideHeadin
                   >
                     <SearchIcon />
                   </button>
-                  {gitChanges.length > 0 ? (
+                  {visibleGitChanges.length > 0 ? (
                     <button
                       className="file-toolbar-button"
                       type="button"
@@ -1557,14 +1593,23 @@ export function FileContextPanel({ className, sessionId, workspaceId, hideHeadin
                 {loadingTree && rootItems.length === 0 ? (
                   <p className="file-tree-status status-text">{t("common.loading")}</p>
                 ) : searchMode ? (
-                  searchResult?.length ? (
-                    renderSearchResults(searchResult)
+                  visibleSearchResult?.length ? (
+                    renderSearchResults(visibleSearchResult)
                   ) : (
                     <p className="file-tree-status status-text">{t("conversation.filePanelSearchEmpty")}</p>
                   )
                 ) : showChangesOnly ? (
-                  filterTreeByChanges(rootItems, treeCache, gitChangeInfo.statusByPath, gitChangeInfo.changedDirs).length ? (
-                    renderTree(filterTreeByChanges(rootItems, treeCache, gitChangeInfo.statusByPath, gitChangeInfo.changedDirs), 0)
+                  filterTreeByChanges(rootItems, visibleTreeCache, gitChangeInfo.statusByPath, gitChangeInfo.changedDirs)
+                    .length ? (
+                    renderTree(
+                      filterTreeByChanges(
+                        rootItems,
+                        visibleTreeCache,
+                        gitChangeInfo.statusByPath,
+                        gitChangeInfo.changedDirs
+                      ),
+                      0
+                    )
                   ) : (
                     <p className="file-tree-status status-text">{t("conversation.filePanelNoChanges")}</p>
                   )
@@ -1579,6 +1624,7 @@ export function FileContextPanel({ className, sessionId, workspaceId, hideHeadin
             <SessionChangedFilesPanel
               sessionId={sessionId}
               workspaceId={workspaceId}
+              showSystemFiles={showSystemFiles}
               selectedPath={selectedPath}
               refreshVersion={sessionRefreshVersion}
               onCountChange={setSessionChangeCount}

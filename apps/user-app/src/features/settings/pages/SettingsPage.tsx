@@ -11,6 +11,10 @@ import type {
 } from "../../../config/client-config-types";
 import { normalizeServerBaseUrl } from "../../../config/server-config";
 import { usePlatform } from "../../../platform/platform-provider";
+import {
+  localUiPreferenceStore,
+  useLocalUiPreferenceSelector
+} from "../../../preferences/local-ui-preference-store";
 import { useUserPreferenceSelector, userPreferenceStore } from "../../../preferences/user-preference-store";
 import { LanguageSwitcher, t } from "../../../shared/i18n";
 import { THEMES, getThemeLabel, useTheme, type ThemeId } from "../../../shared/theme";
@@ -35,6 +39,7 @@ interface SettingsPageModel {
     language: AppLanguage;
     defaultPermissionMode: ClientPermissionMode;
   };
+  readonly showSystemFiles: boolean;
   readonly showServerSettings: boolean;
   readonly canConfigureServerAddress: boolean;
   readonly hostBaseUrlDraft: string;
@@ -50,6 +55,7 @@ interface SettingsPageModel {
   readonly updateAutoReconnect: (enabled: boolean) => void;
   readonly updateAutoCheckUpdate: (enabled: boolean) => void;
   readonly updateDefaultPermissionMode: (value: string) => void;
+  readonly updateShowSystemFiles: (enabled: boolean) => void;
 }
 
 interface SettingsSectionMeta {
@@ -96,6 +102,7 @@ function useSettingsPageModel(): SettingsPageModel {
   const preferencePermissionMode = useUserPreferenceSelector(
     (state) => state.profile.defaultPermissionMode
   );
+  const showSystemFiles = useLocalUiPreferenceSelector((state) => state.showSystemFiles);
   const accountPreferences = {
     language: preferenceLanguage,
     defaultPermissionMode: preferencePermissionMode
@@ -185,12 +192,17 @@ function useSettingsPageModel(): SettingsPageModel {
     void userPreferenceStore.updateProfile({ defaultPermissionMode: normalized }).catch(() => {});
   }
 
+  function updateShowSystemFiles(enabled: boolean): void {
+    localUiPreferenceStore.setShowSystemFiles(enabled);
+  }
+
   return {
     platform,
     theme,
     applyTheme,
     runtimeConfig,
     accountPreferences,
+    showSystemFiles,
     showServerSettings,
     canConfigureServerAddress,
     hostBaseUrlDraft,
@@ -202,7 +214,8 @@ function useSettingsPageModel(): SettingsPageModel {
     updateReleaseChannel,
     updateAutoReconnect,
     updateAutoCheckUpdate,
-    updateDefaultPermissionMode
+    updateDefaultPermissionMode,
+    updateShowSystemFiles
   };
 }
 
@@ -223,6 +236,7 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
     applyTheme,
     runtimeConfig,
     accountPreferences,
+    showSystemFiles,
     showServerSettings,
     hostBaseUrlDraft,
     setHostBaseUrlDraft,
@@ -234,7 +248,8 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
     updateReleaseChannel,
     updateAutoReconnect,
     updateAutoCheckUpdate,
-    updateDefaultPermissionMode
+    updateDefaultPermissionMode,
+    updateShowSystemFiles
   } = model;
 
   return (
@@ -275,6 +290,23 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
                     </button>
                   ))}
                 </div>
+              </div>
+            </div>
+
+            <div className="settings-row">
+              <div className="settings-row-label">
+                <span className="settings-row-title">{t("settings.showSystemFiles")}</span>
+                <span className="settings-row-description">{t("settings.showSystemFilesDescription")}</span>
+              </div>
+              <div className="settings-row-control">
+                <label className="settings-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={showSystemFiles}
+                    onChange={(event) => updateShowSystemFiles(event.target.checked)}
+                  />
+                  <span>{showSystemFiles ? t("settings.enabled") : t("settings.disabled")}</span>
+                </label>
               </div>
             </div>
           </div>
@@ -588,6 +620,26 @@ function MobileAppearanceSection({ model }: { model: SettingsPageModel }) {
               </button>
             );
           })}
+        </div>
+      </section>
+
+      <section className="settings-mobile-group-section">
+        <h2 className="settings-mobile-group-title">{t("settings.fileManager")}</h2>
+        <p className="settings-mobile-group-note">{t("settings.showSystemFilesDescription")}</p>
+        <div className="settings-mobile-card">
+          <div className="settings-mobile-form-row">
+            <div className="settings-mobile-row-copy">
+              <span className="settings-mobile-row-title">{t("settings.showSystemFiles")}</span>
+              <span className="settings-mobile-row-description">
+                {t("settings.showSystemFilesDescription")}
+              </span>
+            </div>
+            <MobileSwitch
+              checked={model.showSystemFiles}
+              label={t("settings.showSystemFiles")}
+              onChange={model.updateShowSystemFiles}
+            />
+          </div>
         </div>
       </section>
     </>

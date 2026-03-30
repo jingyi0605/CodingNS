@@ -7,6 +7,7 @@ import {
   readViewSnapshot,
   writeViewSnapshot
 } from "../../../shared/cache/view-snapshot-cache";
+import { localUiPreferenceStore } from "../../../preferences/local-ui-preference-store";
 import { t } from "../../../shared/i18n";
 import { ToastProvider } from "../../../shared/toast";
 import { FileContextPanel } from "./FileContextPanel";
@@ -30,6 +31,7 @@ const conversationApiMock = vi.hoisted(() => ({
 
 const gitApiMock = vi.hoisted(() => ({
   getGitStatus: vi.fn(),
+  getGitDiff: vi.fn(),
   stageGitTargets: vi.fn()
 }));
 
@@ -39,6 +41,9 @@ const revokeObjectUrlMock = vi.hoisted(() => vi.fn());
 const anchorClickMock = vi.hoisted(() => vi.fn());
 const fileTreeSnapshotListeners = new Set<
   (snapshot: { workspaceId: string; path: string; items: unknown[] }) => void
+>();
+const gitSnapshotListeners = new Set<
+  (snapshot: { workspaceId: string; status?: { changes: unknown[] } }) => void
 >();
 
 const workbenchShellMock = vi.hoisted(() => ({
@@ -53,6 +58,30 @@ const workbenchShellMock = vi.hoisted(() => ({
       sessions: []
     }
   ],
+  subscribeGitSnapshot: vi.fn(),
+  requestGitRefresh: vi.fn(async (workspaceId: string) => {
+    const response = await gitApiMock.getGitStatus(workspaceId);
+
+    queueMicrotask(() => {
+      gitSnapshotListeners.forEach((listener) => {
+        listener({
+          workspaceId,
+          status: {
+            changes: response.changes ?? []
+          }
+        });
+      });
+    });
+  }),
+  addGitSnapshotListener: vi.fn((listener: (snapshot: {
+    workspaceId: string;
+    status?: { changes: unknown[] };
+  }) => void) => {
+    gitSnapshotListeners.add(listener);
+    return () => {
+      gitSnapshotListeners.delete(listener);
+    };
+  }),
   subscribeFileTree: vi.fn(),
   requestFileTreeRefresh: vi.fn(),
   addFileTreeSnapshotListener: vi.fn((listener: (snapshot: {
@@ -199,6 +228,7 @@ vi.mock("../api/conversation-api", () => ({
 
 vi.mock("../api/git-api", () => ({
   getGitStatus: gitApiMock.getGitStatus,
+  getGitDiff: gitApiMock.getGitDiff,
   stageGitTargets: gitApiMock.stageGitTargets
 }));
 
@@ -214,6 +244,9 @@ describe("FileContextPanel", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     fileTreeSnapshotListeners.clear();
+    gitSnapshotListeners.clear();
+    window.localStorage.clear();
+    localUiPreferenceStore.setShowSystemFiles(false);
     window.sessionStorage.clear();
     clearViewSnapshot(WORKSPACE_TREE_SNAPSHOT_KEY);
     clearViewSnapshot(SESSION_COUNT_SNAPSHOT_KEY);
@@ -320,6 +353,9 @@ describe("FileContextPanel", () => {
         lastFetchedAt: null
       },
       changes: []
+    });
+    gitApiMock.getGitDiff.mockResolvedValue({
+      content: ""
     });
 
     fileApiMock.getFilePreview.mockImplementation(async (_workspaceId: string, filePath: string) => {
@@ -592,6 +628,67 @@ describe("FileContextPanel", () => {
     expect(screen.queryByText(t("conversation.filePanelSessionNoSession"))).not.toBeInTheDocument();
   });
 
+  it("默认隐藏 macOS 和 Windows 常见系统文件", async () => {
+    fileApiMock.getFileTree.mockResolvedValue({
+      items: [
+        {
+          path: ".DS_Store",
+          name: ".DS_Store",
+          kind: "file",
+          size: 12,
+          updatedAt: "2026-03-24T12:00:00.000Z"
+        },
+        {
+          path: "Thumbs.db",
+          name: "Thumbs.db",
+          kind: "file",
+          size: 18,
+          updatedAt: "2026-03-24T12:00:00.000Z"
+        },
+        {
+          path: ".gitignore",
+          name: ".gitignore",
+          kind: "file",
+          size: 48,
+          updatedAt: "2026-03-24T12:00:00.000Z"
+        }
+      ]
+    });
+
+    renderPanel();
+
+    expect(await screen.findByText(".gitignore")).toBeInTheDocument();
+    expect(screen.queryByText(".DS_Store")).not.toBeInTheDocument();
+    expect(screen.queryByText("Thumbs.db")).not.toBeInTheDocument();
+  });
+
+  it("开启后会显示被默认隐藏的系统文件", async () => {
+    localUiPreferenceStore.setShowSystemFiles(true);
+    fileApiMock.getFileTree.mockResolvedValue({
+      items: [
+        {
+          path: ".DS_Store",
+          name: ".DS_Store",
+          kind: "file",
+          size: 12,
+          updatedAt: "2026-03-24T12:00:00.000Z"
+        },
+        {
+          path: "Thumbs.db",
+          name: "Thumbs.db",
+          kind: "file",
+          size: 18,
+          updatedAt: "2026-03-24T12:00:00.000Z"
+        }
+      ]
+    });
+
+    renderPanel();
+
+    expect(await screen.findByText(".DS_Store")).toBeInTheDocument();
+    expect(screen.getByText("Thumbs.db")).toBeInTheDocument();
+  });
+
   it("切换到本次会话页签时由会话面板自己加载 changed-files", async () => {
     writeViewSnapshot(SESSION_COUNT_SNAPSHOT_KEY, 16);
     conversationApiMock.getSessionChangedFiles.mockResolvedValue({
@@ -631,6 +728,56 @@ describe("FileContextPanel", () => {
     );
 
     expect(await screen.findByText("App.tsx")).toBeInTheDocument();
+    expect(await screen.findByLabelText(`${t("conversation.filePanelSessionTab")} 1`)).toBeInTheDocument();
+  });
+
+  it("本次会话页签也会隐藏系统文件", async () => {
+    writeViewSnapshot(SESSION_COUNT_SNAPSHOT_KEY, 2);
+    conversationApiMock.getSessionChangedFiles.mockResolvedValue({
+      items: [
+        {
+          sessionId: "session-1",
+          workspaceId: "workspace-1",
+          path: ".DS_Store",
+          firstDetectedAt: "2026-03-24T12:00:00.000Z",
+          lastDetectedAt: "2026-03-24T12:00:00.000Z",
+          lastToolName: "apply_patch"
+        },
+        {
+          sessionId: "session-1",
+          workspaceId: "workspace-1",
+          path: "apps/user-app/src/app/App.tsx",
+          firstDetectedAt: "2026-03-24T12:00:00.000Z",
+          lastDetectedAt: "2026-03-24T12:00:00.000Z",
+          lastToolName: "apply_patch"
+        }
+      ]
+    });
+    gitApiMock.getGitStatus.mockResolvedValue({
+      snapshot: {
+        workspaceId: "workspace-1",
+        repoRoot: "C:/Code/CodingNS",
+        branch: "main",
+        ahead: 0,
+        behind: 0,
+        hasRemote: true,
+        isDirty: true,
+        lastFetchedAt: null
+      },
+      changes: [
+        createGitChange(".DS_Store", false),
+        createGitChange("apps/user-app/src/app/App.tsx", false)
+      ]
+    });
+
+    renderPanel();
+
+    await userEvent.click(
+      screen.getByRole("tab", { name: new RegExp(t("conversation.filePanelSessionTab")) })
+    );
+
+    expect(await screen.findByText("App.tsx")).toBeInTheDocument();
+    expect(screen.queryByText(".DS_Store")).not.toBeInTheDocument();
     expect(await screen.findByLabelText(`${t("conversation.filePanelSessionTab")} 1`)).toBeInTheDocument();
   });
 

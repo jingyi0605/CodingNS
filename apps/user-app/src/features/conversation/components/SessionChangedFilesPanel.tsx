@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { readViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import { t } from "../../../shared/i18n";
@@ -17,10 +17,12 @@ import {
   resolveFileTreeIconKind,
   resolveFileTreeIconLabel
 } from "./file-tree-icon";
+import { filterVisibleEntriesByName } from "./file-entry-visibility";
 
 interface SessionChangedFilesPanelProps {
   sessionId: string;
   workspaceId: string;
+  showSystemFiles: boolean;
   selectedPath: string | null;
   refreshVersion: number;
   onCountChange?: (count: number) => void;
@@ -42,6 +44,7 @@ const SIDEBAR_TREE_DEPTH_STEP_PX = 16;
 export function SessionChangedFilesPanel({
   sessionId,
   workspaceId,
+  showSystemFiles,
   selectedPath,
   refreshVersion,
   onCountChange,
@@ -68,7 +71,6 @@ export function SessionChangedFilesPanel({
     setStaging(false);
     setCollapsedPaths([]);
     recentFileActivationRef.current = null;
-    onCountChange?.(cachedChanges?.length ?? 0);
   }, [sessionId, workspaceId]);
 
   useEffect(() => {
@@ -82,12 +84,10 @@ export function SessionChangedFilesPanel({
 
         if (!cancelled) {
           setChanges(nextChanges);
-          onCountChange?.(nextChanges.length);
           writeViewSnapshot(buildSessionChangedFilesSnapshotKey(workspaceId, sessionId), nextChanges);
         }
       } catch (error) {
         if (!cancelled) {
-          onCountChange?.(0);
           showToast({
             title: readError(error, t("conversation.filePanelSessionLoadFailed")),
             tone: "error"
@@ -105,11 +105,7 @@ export function SessionChangedFilesPanel({
     return () => {
       cancelled = true;
     };
-  }, [onCountChange, refreshVersion, sessionId, showToast, workspaceId]);
-
-  const unstagedChanges = changes.filter((item) => !item.staged);
-  const tree = buildSessionChangeTree(changes);
-  const collapsedPathSet = new Set(collapsedPaths);
+  }, [refreshVersion, sessionId, showToast, workspaceId]);
 
   async function handleRefresh() {
     setLoading(true);
@@ -117,7 +113,6 @@ export function SessionChangedFilesPanel({
     try {
       const nextChanges = await loadSessionChangedGitFiles(sessionId, workspaceId);
       setChanges(nextChanges);
-      onCountChange?.(nextChanges.length);
       writeViewSnapshot(buildSessionChangedFilesSnapshotKey(workspaceId, sessionId), nextChanges);
     } catch (error) {
       showToast({
@@ -143,7 +138,6 @@ export function SessionChangedFilesPanel({
       );
       const nextChanges = await loadSessionChangedGitFiles(sessionId, workspaceId);
       setChanges(nextChanges);
-      onCountChange?.(nextChanges.length);
       writeViewSnapshot(buildSessionChangedFilesSnapshotKey(workspaceId, sessionId), nextChanges);
       showToast({
         title: t("conversation.filePanelSessionStageSuccess"),
@@ -192,6 +186,23 @@ export function SessionChangedFilesPanel({
 
     await onSelectFile(filePath);
   }
+
+  const visibleChanges = useMemo(
+    () =>
+      filterVisibleEntriesByName(
+        changes,
+        (item) => getFileName(item.path),
+        showSystemFiles
+      ),
+    [changes, showSystemFiles]
+  );
+  const unstagedChanges = visibleChanges.filter((item) => !item.staged);
+  const tree = buildSessionChangeTree(visibleChanges);
+  const collapsedPathSet = new Set(collapsedPaths);
+
+  useEffect(() => {
+    onCountChange?.(visibleChanges.length);
+  }, [onCountChange, visibleChanges.length]);
 
   return (
     <>
@@ -242,14 +253,14 @@ export function SessionChangedFilesPanel({
       </div>
 
       <div className="file-panel-session-summary">
-        <span>{`${t("conversation.filePanelSessionSummary")} ${changes.length}`}</span>
+        <span>{`${t("conversation.filePanelSessionSummary")} ${visibleChanges.length}`}</span>
         <span>{`${t("conversation.filePanelSessionUnstagedSummary")} ${unstagedChanges.length}`}</span>
       </div>
 
       <div className="file-tree">
         {loading ? (
           <p className="file-tree-status status-text">{t("conversation.filePanelSessionLoading")}</p>
-        ) : changes.length === 0 ? (
+        ) : visibleChanges.length === 0 ? (
           <p className="file-tree-status status-text">{t("conversation.filePanelSessionEmpty")}</p>
         ) : viewMode === "tree" ? (
           renderTree({
@@ -262,7 +273,7 @@ export function SessionChangedFilesPanel({
           })
         ) : (
           renderList({
-            items: changes,
+            items: visibleChanges,
             selectedPath,
             onFileClick: handleFileClick
           })

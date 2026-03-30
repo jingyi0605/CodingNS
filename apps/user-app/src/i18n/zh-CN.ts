@@ -45,6 +45,10 @@ export const zhCN = {
     languageDescription: "选择界面显示语言，切换后立即应用到当前页面。",
     theme: "主题",
     themeDescription: "选择适合你的界面配色方案",
+    fileManager: "文件管理",
+    showSystemFiles: "显示系统文件",
+    showSystemFilesDescription:
+      "在文件管理里显示 macOS 和 Windows 常见的系统文件，例如 .DS_Store、Thumbs.db。这个开关只影响当前设备。",
     serverConnection: "服务器连接",
     serverConnectionSectionSummary: "服务器地址与连接恢复策略",
     securityPrivacy: "安全与隐私",
