@@ -2242,6 +2242,48 @@ describe("WorkbenchLayout", () => {
 
     expect(screen.getByText("Subagent 1")).toBeInTheDocument();
   });
+
+  it("会在侧栏会话列表里直接显示失败错误摘要", async () => {
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-error",
+            title: "失败会话",
+            workspaceId: "workspace-1",
+            runningState: "failed",
+            syncStatus: "error",
+            lastErrorCode: "CODEX_HTTP_502",
+            lastErrorDetail:
+              "unexpected status 502 Bad Gateway: Upstream request failed, request id: demo-request-id"
+          })
+        ]
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-error");
+
+    const sessionCard = await findSessionCardByTitle("失败会话");
+
+    expect(
+      within(sessionCard).getByText(
+        /CODEX_HTTP_502 · unexpected status 502 Bad Gateway: Upstream request failed/
+      )
+    ).toBeInTheDocument();
+    expect(sessionCard.querySelector(".session-state-indicator.is-error")).not.toBeNull();
+  });
 });
 
 function renderWorkbenchRoute(
@@ -2355,6 +2397,9 @@ function createSessionSummary(input: {
   activitySource?: "none" | "runtime" | "inferred";
   activityState?: "idle" | "running" | "completed_unread";
   isFavorite?: boolean;
+  syncStatus?: "idle" | "syncing" | "error";
+  lastErrorCode?: string | null;
+  lastErrorDetail?: string | null;
 }) {
   const provider = input.provider ?? "codex";
 
@@ -2374,11 +2419,11 @@ function createSessionSummary(input: {
     lastMessageAt: "2026-03-24T10:00:00.000Z",
     createdAt: "2026-03-24T09:00:00.000Z",
     updatedAt: "2026-03-24T10:00:00.000Z",
-    syncStatus: "idle",
+    syncStatus: input.syncStatus ?? "idle",
     syncCursor: "cursor-1",
     lastSyncAt: "2026-03-24T10:00:00.000Z",
-    lastErrorCode: null,
-    lastErrorDetail: null,
+    lastErrorCode: input.lastErrorCode ?? null,
+    lastErrorDetail: input.lastErrorDetail ?? null,
     resumedAt: null,
     runningState: input.runningState ?? "idle",
     activitySource: input.activitySource ?? "none",

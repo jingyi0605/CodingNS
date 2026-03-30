@@ -437,6 +437,46 @@ function formatSessionMeta(session: SessionSummaryDto) {
   return date ? new Date(date).toLocaleDateString() : "";
 }
 
+function hasSessionError(session: SessionSummaryDto) {
+  return (
+    session.runningState === "failed"
+    || session.syncStatus === "error"
+    || Boolean(session.lastErrorCode?.trim())
+    || Boolean(session.lastErrorDetail?.trim())
+  );
+}
+
+function getSessionErrorSummary(session: SessionSummaryDto) {
+  if (!hasSessionError(session)) {
+    return null;
+  }
+
+  const errorCode = session.lastErrorCode?.trim() ?? "";
+  const errorDetail = session.lastErrorDetail?.replace(/\s+/g, " ").trim() ?? "";
+
+  if (errorCode && errorDetail && !errorDetail.includes(errorCode)) {
+    return `${errorCode} · ${errorDetail}`;
+  }
+
+  if (errorDetail) {
+    return errorDetail;
+  }
+
+  if (errorCode) {
+    return errorCode;
+  }
+
+  return t("conversation.runtimeErrorTitle");
+}
+
+function truncateSessionErrorSummary(summary: string, maxLength = 110) {
+  if (summary.length <= maxLength) {
+    return summary;
+  }
+
+  return `${summary.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+}
+
 function formatProviderLabel(provider: ProviderId, mode: "compact" | "full" = "compact") {
   if (provider === "codex") {
     return t("conversation.providerCodex");
@@ -489,6 +529,10 @@ function sessionStateClassName(
     isActive?: boolean;
   }
 ) {
+  if (hasSessionError(session)) {
+    return "session-state-indicator is-error";
+  }
+
   if (options?.hasSubagents) {
     if (session.activityState === "running" || options.isActive) {
       return "session-state-indicator is-subagent-running";
@@ -1397,6 +1441,10 @@ function SessionCard({
   const subagentBadgeLabel =
     session.subagentLabel?.trim() || (isSubagentSession(session) ? t("shell.subagentBadge") : null);
   const titlePresentation = buildSessionTitlePresentation(session.title, t("common.unknown"));
+  const sessionErrorSummary = getSessionErrorSummary(session);
+  const sessionErrorPreview = sessionErrorSummary
+    ? truncateSessionErrorSummary(sessionErrorSummary)
+    : null;
   const menuTriggerRef = useRef<HTMLButtonElement | null>(null);
   const [menuPositionStyle, setMenuPositionStyle] = useState<CSSProperties | null>(null);
 
@@ -1552,6 +1600,11 @@ function SessionCard({
               <span className="session-meta">{buildSessionMeta(session, workspace, showWorkspaceName)}</span>
               <span className={`session-provider-badge ${session.provider}`}>{formatProviderLabel(session.provider)}</span>
             </div>
+            {sessionErrorPreview ? (
+              <div className="session-error-row" title={sessionErrorSummary ?? undefined}>
+                <span className="session-error-text">{sessionErrorPreview}</span>
+              </div>
+            ) : null}
           </div>
         </button>
       </div>

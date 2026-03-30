@@ -14,6 +14,10 @@ interface WorkbenchNavigationEntry {
     readonly lastMessageAt?: string | null;
     readonly updatedAt?: string | null;
     readonly activityState?: string | null;
+    readonly syncStatus?: string | null;
+    readonly runningState?: string | null;
+    readonly lastErrorCode?: string | null;
+    readonly lastErrorDetail?: string | null;
     readonly isArchived?: boolean;
   };
   readonly workspace: {
@@ -71,6 +75,8 @@ export function SessionListItem({
   ]
     .filter(Boolean)
     .join(" · ");
+  const errorSummary = getSessionErrorSummary(session);
+  const errorPreview = errorSummary ? truncateSessionErrorSummary(errorSummary) : null;
 
   useEffect(() => {
     return () => {
@@ -157,6 +163,7 @@ export function SessionListItem({
       >
         <span
           className={resolveSessionListIndicatorClassName({
+            hasError: hasSessionError(session),
             activityState: session.activityState ?? null,
             isActive,
             hasSubsessions
@@ -176,6 +183,11 @@ export function SessionListItem({
               </>
             )}
           </div>
+          {errorPreview ? (
+            <div className="session-list-error" title={errorSummary ?? undefined}>
+              {errorPreview}
+            </div>
+          ) : null}
         </div>
       </button>
       {showActions ? (
@@ -211,10 +223,15 @@ export function SessionListItem({
 }
 
 function resolveSessionListIndicatorClassName(input: {
+  hasError: boolean;
   activityState: string | null;
   isActive: boolean;
   hasSubsessions: boolean;
 }) {
+  if (input.hasError) {
+    return "session-list-indicator is-error";
+  }
+
   if (input.hasSubsessions) {
     if (input.activityState === "running" || input.isActive) {
       return "session-list-indicator is-subagent-running";
@@ -241,4 +258,44 @@ function formatActivityTime(value: string | null) {
     hour: "2-digit",
     minute: "2-digit"
   });
+}
+
+function hasSessionError(session: WorkbenchNavigationEntry["session"]) {
+  return (
+    session.runningState === "failed"
+    || session.syncStatus === "error"
+    || Boolean(session.lastErrorCode?.trim())
+    || Boolean(session.lastErrorDetail?.trim())
+  );
+}
+
+function getSessionErrorSummary(session: WorkbenchNavigationEntry["session"]) {
+  if (!hasSessionError(session)) {
+    return null;
+  }
+
+  const errorCode = session.lastErrorCode?.trim() ?? "";
+  const errorDetail = session.lastErrorDetail?.replace(/\s+/g, " ").trim() ?? "";
+
+  if (errorCode && errorDetail && !errorDetail.includes(errorCode)) {
+    return `${errorCode} · ${errorDetail}`;
+  }
+
+  if (errorDetail) {
+    return errorDetail;
+  }
+
+  if (errorCode) {
+    return errorCode;
+  }
+
+  return t("conversation.runtimeErrorTitle");
+}
+
+function truncateSessionErrorSummary(summary: string, maxLength = 96) {
+  if (summary.length <= maxLength) {
+    return summary;
+  }
+
+  return `${summary.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
 }

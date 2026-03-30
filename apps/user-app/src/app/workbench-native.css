@@ -2610,7 +2610,8 @@ body {
 .session-state-indicator.is-idle,
 .session-state-indicator.is-unread,
 .session-state-indicator.is-running,
-.session-state-indicator.is-running-inferred {
+.session-state-indicator.is-running-inferred,
+.session-state-indicator.is-error {
   background: transparent;
   border: none;
   box-shadow: none;
@@ -2650,6 +2651,25 @@ body {
   border: 1.5px solid color-mix(in srgb, var(--warning) 28%, transparent);
   border-top-color: var(--warning);
   animation: session-running-spin 800ms linear infinite;
+}
+
+.session-state-indicator.is-error::before {
+  width: 7px;
+  height: 7px;
+  background: #ff3b30;
+  box-shadow: 0 0 0 2px rgba(255, 59, 48, 0.16);
+}
+
+.session-error-row {
+  margin-top: 2px;
+}
+
+.session-error-text {
+  display: block;
+  color: #c9342d;
+  font-size: 10px;
+  line-height: 1.3;
+  word-break: break-word;
 }
 
 .session-provider-badge {
