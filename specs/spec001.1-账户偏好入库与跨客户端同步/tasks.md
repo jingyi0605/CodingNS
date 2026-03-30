@@ -1,27 +1,17 @@
 # 任务清单 - spec001.1 账户偏好入库与跨客户端同步（人话版）
 
-状态：Draft
+状态：In Progress
 
 ## 2026-03-30 进展补记
 
 - 已确认这个子 Spec 只处理“账户偏好入库、跨客户端同步、账户偏好和设备配置分层”，不顺手扩成认证改造大杂烩
-- 已确认首批应该迁到数据库的偏好是：`defaultPermissionMode`、`language`、`theme`、provider 默认模型、provider 默认推理等级
-- 已确认继续保留本地的配置包括：`hostBaseUrl`、更新通道、自动重连、布局状态、草稿、终端恢复状态、认证令牌
-- 已完成本子 Spec 的 `README.md`、`requirements.md`、`design.md`、`tasks.md`、`docs/README.md` 初始化
-- 已回写 `spec001` 和 `specs/README.md`，补充 `spec001.1` 的边界说明
-
-## 这份文档是干什么的
-
-这份任务清单不是拿来堆术语的，是拿来让人直接开工的。
-
-你打开任意一个任务，都应该能立刻看明白：
-
-1. 这一步到底建什么
-2. 做完以后能看到什么变化
-3. 依赖什么
-4. 主要改哪些文件
-5. 这一步明确不做什么
-6. 怎么验证不是假完成
+- 已确认首批迁到数据库的偏好是：`defaultPermissionMode`、`language`、`theme`、provider 默认模型、provider 默认推理等级
+- 已确认继续保留本地的配置包括：`hostBaseUrl`、发布通道、自动重连、布局状态、草稿、终端恢复状态、认证令牌
+- 已完成 `spec001.1` 主文档初始化，并回写 `spec001` 与 `specs/README.md` 的边界说明
+- 已落地后端账户偏好 profile 接口与数据库表，并补了偏好接口集成测试
+- 已落地前端账户偏好 store、shadow cache、legacy localStorage 回填、设置页接线、语言/主题接线、默认权限接线、Composer 默认模型/推理等级接线
+- 已移除桌面端本地配置里的 `default_permission_mode`，避免数据库和桌面配置文件形成双真相
+- 已通过前端类型检查、前端关键用例、`App.test.tsx`、登录页测试、后端偏好接口测试和前端生产构建
 
 ## 状态说明
 
@@ -44,308 +34,195 @@
 
 - [x] 0.1 启动 spec001.1 并完成文档骨架
   - 状态：DONE
-  - 这一做到到底做什么：建立 `spec001.1` 目录和五份主文档，把目标、范围、边界先写清楚
-  - 做完你能看到什么：仓库里出现完整的 `spec001.1` 文档目录，别人打开就知道这次到底要改什么
-  - 先依赖什么：无
-  - 开始前先看：
-    - `spec001/README.md`
-    - `specs/000-Spec规范/*`
-  - 主要改哪里：
-    - `specs/spec001.1-账户偏好入库与跨客户端同步/README.md`
-    - `specs/spec001.1-账户偏好入库与跨客户端同步/requirements.md`
-    - `specs/spec001.1-账户偏好入库与跨客户端同步/design.md`
-    - `specs/spec001.1-账户偏好入库与跨客户端同步/tasks.md`
-    - `specs/spec001.1-账户偏好入库与跨客户端同步/docs/README.md`
-  - 这一先不做什么：先不改业务代码
-  - 怎么算完成：
-    1. 子 Spec 文档落盘
-    2. 范围、依赖、非目标写清楚
+  - 这一做到底做什么：建立 `spec001.1` 目录和主文档，把目标、范围、边界先写清楚
+  - 做完以后能看到什么结果：仓库里出现完整的 `spec001.1` 文档目录，别人打开就知道这次到底要改什么
+  - 依赖什么：无
+  - 主要改哪些文件：
+    - `specs/spec001.1-账户偏好入库与跨客户端同步/*`
+  - 这一步先不做什么：不改业务代码
   - 怎么验证：
     - 文档走查
-  - 对应需求：`requirements.md` 全文
-  - 对应设计：`design.md` 全文
 
 - [x] 0.2 回写父规格和总览，说明 `spec001.1` 负责什么
   - 状态：DONE
-  - 这一做到到底做什么：把 `spec001` 和 `specs/README.md` 补上子规格边界，避免后面重复造文档和重复争论范围
-  - 做完你能看到什么：`spec001` 和总览文档里都能看到 `spec001.1` 的职责说明
-  - 先依赖什么：0.1
-  - 开始前先看：
+  - 这一做到底做什么：把 `spec001` 和 `specs/README.md` 补上子规格边界，避免后面重复造轮子
+  - 做完以后能看到什么结果：`spec001` 和总览里都能看到 `spec001.1` 的职责说明
+  - 依赖什么：0.1
+  - 主要改哪些文件：
     - `specs/README.md`
     - `specs/spec001-平台底座与工作区基础/README.md`
     - `specs/spec001-平台底座与工作区基础/design.md`
     - `specs/spec001-平台底座与工作区基础/tasks.md`
-  - 主要改哪里：
-    - `specs/README.md`
-    - `specs/spec001-平台底座与工作区基础/README.md`
-    - `specs/spec001-平台底座与工作区基础/design.md`
-    - `specs/spec001-平台底座与工作区基础/tasks.md`
-  - 这一先不做什么：不修改 `spec001` 的原始需求边界
-  - 怎么算完成：
-    1. 父 Spec 与子 Spec 的职责不再打架
-    2. 总览里能找到 `spec001.1`
+  - 这一步先不做什么：不修改 `spec001` 的原始需求边界
   - 怎么验证：
     - 文档走查
-  - 对应需求：`requirements.md` 需求 2、需求 5
-  - 对应设计：`design.md` 1.1、1.3、2.1
 
 ---
 
 ## 阶段 1：先把后端真相源建出来
 
-- [ ] 1.1 新增账户偏好表和仓储
-  - 状态：TODO
-  - 这一做到到底做什么：在 SQLite 里新增用户通用偏好表和按 provider 的默认偏好表，并补齐 repository
-  - 做完你能看到什么：数据库可以稳定保存 `defaultPermissionMode`、`language`、`theme`、默认模型和推理等级
-  - 先依赖什么：0.2
-  - 开始前先看：
-    - `requirements.md` 需求 1、需求 2、需求 3
-    - `design.md` 2.2、3.2
+- [x] 1.1 新增账户偏好表和仓储
+  - 状态：DONE
+  - 这一做到底做什么：在 SQLite 里新增账户偏好持久化表和 repository，承载语言、主题、默认权限以及 provider 默认项
+  - 做完以后能看到什么结果：Host 可以把账户偏好稳定读写到数据库
+  - 依赖什么：0.2
+  - 主要改哪些文件：
     - `apps/host/src/storage/sqlite/schema.sql`
-    - `apps/host/src/storage/repositories/user-quick-phrase-preference-repository.ts`
-  - 主要改哪里：
-    - `apps/host/src/storage/sqlite/schema.sql`
-    - `apps/host/src/storage/repositories/user-preference-repository.ts`
-    - `apps/host/src/storage/repositories/user-provider-preference-repository.ts`
+    - `apps/host/src/storage/repositories/user-preference-profile-repository.ts`
     - `apps/host/src/types/domain.ts`
-  - 这一先不做什么：先不接前端，不做迁移逻辑
+  - 这一步先不做什么：不接前端 UI
   - 怎么算完成：
-    1. 新表结构和设计一致
-    2. repository 能读写默认结构和 patch
-    3. 字段枚举约束清楚
+    1. 数据表已创建
+    2. repository 能读写 profile
+    3. provider 默认项可持久化
   - 怎么验证：
-    - 仓储层单元测试
-    - schema 走查
-  - 对应需求：`requirements.md` 需求 1、需求 2、需求 3
-  - 对应设计：`design.md` 2.2、3.2
+    - `pnpm.cmd --dir apps/host exec vitest run tests/integration/preferences-profile.test.ts`
 
-- [ ] 1.2 提供账户偏好 profile 接口
-  - 状态：TODO
-  - 这一做到到底做什么：新增 `GET/PUT /api/preferences/profile`，把通用偏好和 provider 默认偏好统一挂到受保护接口
-  - 做完你能看到什么：已登录客户端可以读取和保存完整账户偏好 profile
-  - 先依赖什么：1.1
-  - 开始前先看：
-    - `requirements.md` 需求 1、需求 3、需求 5
-    - `design.md` 3.1、3.3、5.3
-    - `apps/host/src/routes/preferences.ts`
-  - 主要改哪里：
-    - `apps/host/src/modules/preferences/preference-profile-controller.ts`
-    - `apps/host/src/modules/preferences/preference-profile-service.ts`
+- [x] 1.2 提供账户偏好 profile 接口
+  - 状态：DONE
+  - 这一做到底做什么：新增 `GET/PUT /api/preferences/profile`
+  - 做完以后能看到什么结果：已登录客户端可读取和保存账户偏好 profile
+  - 依赖什么：1.1
+  - 主要改哪些文件：
+    - `apps/host/src/modules/preferences/profile-controller.ts`
+    - `apps/host/src/modules/preferences/profile-service.ts`
     - `apps/host/src/routes/preferences.ts`
     - `apps/host/src/server/create-server.ts`
-  - 这一先不做什么：先不做前端 store 拆分
+  - 这一步先不做什么：不做前端 store 分层
   - 怎么算完成：
-    1. 接口有稳定返回结构
-    2. 非法枚举值会被拒绝
-    3. 未登录访问被拒绝
+    1. 接口返回稳定结构
+    2. 支持部分 patch
+    3. 非法枚举值会被拒绝
   - 怎么验证：
-    - 偏好接口集成测试
-    - 非法输入和未授权回归测试
-  - 对应需求：`requirements.md` 需求 1、需求 3、需求 5
-  - 对应设计：`design.md` 3.1、3.3、5.1、5.3
+    - `pnpm.cmd --dir apps/host exec vitest run tests/integration/preferences-profile.test.ts`
 
-- [ ] 1.3 阶段检查：后端真相源站稳了没有
-  - 状态：TODO
-  - 这一做到到底做什么：确认后端已经能单独承载账户偏好，不需要前端再去猜默认结构
-  - 做完你能看到什么：前端后面接入时，拿到的是清晰的 profile，不是满屏 `null`
-  - 先依赖什么：1.1、1.2
-  - 开始前先看：
-    - `requirements.md`
-    - `design.md`
-    - `tasks.md`
-  - 主要改哪里：本阶段相关文档和测试说明
-  - 这一先不做什么：不扩数据库范围
-  - 怎么算完成：
-    1. 默认结构明确
-    2. 枚举校验明确
-    3. provider 默认项结构明确
+- [x] 1.3 阶段检查：后端真相源站稳了没有
+  - 状态：DONE
+  - 这一做到底做什么：确认后端已经能单独承载账户偏好，不需要前端再去猜结构
+  - 做完以后能看到什么结果：前端拿到的是清晰的 profile，而不是到处判空的散装字段
+  - 依赖什么：1.1、1.2
+  - 主要改哪些文件：
+    - `apps/host/tests/integration/preferences-profile.test.ts`
+  - 这一步先不做什么：不扩数据库范围
   - 怎么验证：
-    - 人工走查
-    - 接口测试结果核对
-  - 对应需求：`requirements.md` 需求 1、需求 2、需求 3
-  - 对应设计：`design.md` 2.1、3.2、3.3
+    - `pnpm.cmd --dir apps/host exec tsc --noEmit`
+    - `pnpm.cmd --dir apps/host exec vitest run tests/integration/preferences-profile.test.ts`
 
 ---
 
 ## 阶段 2：把前端状态拆干净，不再把人和设备混在一起
 
-- [ ] 2.1 拆出账户偏好 store 和设备配置 store
-  - 状态：TODO
-  - 这一做到到底做什么：把现在混在 `ClientRuntimeConfig` 里的账户偏好拆出去，明确保留哪些字段继续走设备级本地存储
-  - 做完你能看到什么：`hostBaseUrl` 这类本地配置和 `defaultPermissionMode` 这类账户偏好不再混在一个 store 里
-  - 先依赖什么：1.3
-  - 开始前先看：
-    - `requirements.md` 需求 2、需求 5
-    - `design.md` 2.1、2.2、4.1
-    - `apps/user-app/src/config/client-config-service.ts`
-    - `apps/user-app/src/config/client-config-store.ts`
-  - 主要改哪里：
-    - `apps/user-app/src/config/*`
-    - `apps/user-app/src/preferences/*`
+- [x] 2.1 拆出账户偏好 store 和设备配置兼容层
+  - 状态：DONE
+  - 这一做到底做什么：新增账户偏好 store，用 shadow cache 和 legacy fallback 托底；设备配置继续保留在 `clientConfigStore`
+  - 做完以后能看到什么结果：语言、主题、默认权限和 provider 默认项有了独立状态源，不再只挂在设备配置上
+  - 依赖什么：1.3
+  - 主要改哪些文件：
+    - `apps/user-app/src/preferences/types.ts`
+    - `apps/user-app/src/preferences/preferences-service.ts`
+    - `apps/user-app/src/preferences/user-preference-store.ts`
+    - `apps/user-app/src/preferences/preferences-store.ts`
     - `apps/user-app/src/bootstrap/bootstrap-app.ts`
-  - 这一先不做什么：先不接设置页控件，不做 legacy migration
-  - 怎么算完成：
-    1. 设备级配置字段清单稳定
-    2. 账户偏好字段清单稳定
-    3. 启动链路能分别初始化两类状态
+  - 这一步先不做什么：不删除所有 legacy key，只进入兼容期
   - 怎么验证：
-    - store 单元测试
-    - 启动流程走查
-  - 对应需求：`requirements.md` 需求 2、需求 5
-  - 对应设计：`design.md` 2.1、2.2、4.1、4.2
+    - `pnpm.cmd --dir apps/user-app exec tsc --noEmit`
 
-- [ ] 2.2 接入语言、主题和默认会话权限
-  - 状态：TODO
-  - 这一做到到底做什么：让 App、ThemeProvider、设置页都改用账户偏好 store，默认会话权限发送链路也从账户偏好读取
-  - 做完你能看到什么：语言、主题、默认会话权限会跟账号同步，不再只在当前设备生效
-  - 先依赖什么：2.1
-  - 开始前先看：
-    - `requirements.md` 需求 1、需求 3、需求 4
-    - `design.md` 2.3.1、2.3.2、4.2、4.3
+- [x] 2.2 接入语言、主题和默认会话权限
+  - 状态：DONE
+  - 这一做到底做什么：让 App、ThemeProvider、i18n、设置页、对话发送链路都改用账户偏好
+  - 做完以后能看到什么结果：语言、主题和默认权限跟账号同步，设置页里服务器地址仍然独立保存
+  - 依赖什么：2.1
+  - 主要改哪些文件：
     - `apps/user-app/src/app/App.tsx`
-    - `apps/user-app/src/shared/theme/*`
-    - `apps/user-app/src/features/settings/pages/SettingsPage.tsx`
-    - `apps/user-app/src/features/conversation/runtime/session-runtime-store.ts`
-  - 主要改哪里：
-    - `apps/user-app/src/app/App.tsx`
+    - `apps/user-app/src/shared/i18n/index.ts`
+    - `apps/user-app/src/shared/i18n/LanguageSwitcher.tsx`
     - `apps/user-app/src/shared/theme/theme.ts`
     - `apps/user-app/src/shared/theme/ThemeProvider.tsx`
-    - `apps/user-app/src/shared/i18n/LanguageSwitcher.tsx`
     - `apps/user-app/src/features/settings/pages/SettingsPage.tsx`
     - `apps/user-app/src/features/conversation/pages/ConversationPage.tsx`
     - `apps/user-app/src/features/conversation/runtime/session-runtime-store.ts`
-  - 这一先不做什么：先不接 provider 默认模型和推理等级
-  - 怎么算完成：
-    1. 语言和主题读取账户偏好
-    2. 默认会话权限读取账户偏好
-    3. 设备级配置仍可独立保存
+    - `apps/user-app/src/features/auth/pages/LoginPage.tsx`
+  - 这一步先不做什么：不改 provider 权限语义
   - 怎么验证：
-    - 设置页交互测试
-    - 发送链路回归测试
-    - 首屏语言/主题回退测试
-  - 对应需求：`requirements.md` 需求 1、需求 2、需求 3、需求 4
-  - 对应设计：`design.md` 2.3、3.1、4.2、4.3、6.4
+    - `pnpm.cmd --dir apps/user-app exec vitest run src/shared/i18n/index.test.ts src/features/settings/pages/SettingsPage.test.tsx src/features/conversation/runtime/session-runtime-store.test.ts`
 
-- [ ] 2.3 接入 provider 默认模型和推理等级
-  - 状态：TODO
-  - 这一做到到底做什么：把 `composer-selected-model:*` 和 `composer-reasoning-level:*` 改成账户偏好，并保持 provider 维度隔离
-  - 做完你能看到什么：同一账号切客户端后，Codex/Claude/OpenCode 的默认模型和默认推理等级会跟着走
-  - 先依赖什么：2.2
-  - 开始前先看：
-    - `requirements.md` 需求 3、需求 4
-    - `design.md` 2.3、3.2、3.3、4.2
-    - `apps/user-app/src/features/conversation/components/ComposerPanel.tsx`
-  - 主要改哪里：
+- [x] 2.3 接入 provider 默认模型和推理等级
+  - 状态：DONE
+  - 这一做到底做什么：把 Composer 的默认模型和默认推理等级从本地键切到账户偏好
+  - 做完以后能看到什么结果：同一账号切客户端后，Codex / Claude / OpenCode 的默认项能跟着走
+  - 依赖什么：2.2
+  - 主要改哪些文件：
     - `apps/user-app/src/features/conversation/components/ComposerPanel.tsx`
     - `apps/user-app/src/preferences/*`
-    - `apps/user-app/src/features/conversation/components/ComposerPanel.test.tsx`
-  - 这一先不做什么：先不改 provider capabilities 协议
-  - 怎么算完成：
-    1. provider 默认模型和推理等级走账户偏好
-    2. provider 无偏好时可安全回退
-    3. 旧本地键只保留兼容读取
+  - 这一步先不做什么：不扩到 provider capabilities 协议层
   - 怎么验证：
-    - Composer 交互测试
-    - 多 provider 回归测试
-  - 对应需求：`requirements.md` 需求 3、需求 4
-  - 对应设计：`design.md` 3.2、3.3、4.2、6.2
+    - `pnpm.cmd --dir apps/user-app exec vitest run src/features/conversation/components/ComposerPanel.test.tsx`
 
-- [ ] 2.4 阶段检查：前端分层有没有重新长歪
-  - 状态：TODO
-  - 这一做到到底做什么：检查设置页、App 启动、发送链路是不是都已经按“账户偏好 / 设备配置”分开了
-  - 做完你能看到什么：后面做迁移时不需要再返工 store 结构
-  - 先依赖什么：2.1、2.2、2.3
-  - 开始前先看：
-    - `requirements.md`
-    - `design.md`
-    - `tasks.md`
-  - 主要改哪里：本阶段相关代码和测试说明
-  - 这一先不做什么：不再增加新同步字段
-  - 怎么算完成：
-    1. 前端没有继续用旧总配置对象承载账户偏好
-    2. 设置来源和保存去向可追踪
-    3. 本地保留项没有误入账户偏好 store
+- [x] 2.4 阶段检查：前端分层有没有重新长歪
+  - 状态：DONE
+  - 这一做到底做什么：确认设置来源、保存去向、回退优先级都已经稳定
+  - 做完以后能看到什么结果：前端不再把账户偏好混进设备配置主链路
+  - 依赖什么：2.1、2.2、2.3
+  - 主要改哪些文件：
+    - `apps/user-app/src/test/setup.ts`
+    - `apps/user-app/src/shared/i18n/index.test.ts`
+    - `apps/user-app/src/features/settings/pages/SettingsPage.test.tsx`
+    - `apps/user-app/src/features/conversation/runtime/session-runtime-store.test.ts`
+  - 这一步先不做什么：不扩更多同步字段
   - 怎么验证：
-    - 人工代码走查
-    - 关键测试清单核对
-  - 对应需求：`requirements.md` 需求 2、需求 5
-  - 对应设计：`design.md` 2.1、2.2、4.1、6.1
+    - `pnpm.cmd --dir apps/user-app exec tsc --noEmit`
+    - `pnpm.cmd --dir apps/user-app exec vitest run src/shared/i18n/index.test.ts src/features/settings/pages/SettingsPage.test.tsx src/features/conversation/runtime/session-runtime-store.test.ts src/features/conversation/components/ComposerPanel.test.tsx`
 
 ---
 
 ## 阶段 3：把旧数据迁过去，再做跨客户端验证
 
-- [ ] 3.1 实现 legacy localStorage 回填和 shadow cache
-  - 状态：TODO
-  - 这一做到到底做什么：把旧本地键变成一次性迁移输入，同时保留 shadow cache 解决冷启动和离线回退
-  - 做完你能看到什么：老用户升级后不用重配，新用户也不会因为接口失败突然丢设置
-  - 先依赖什么：2.4
-  - 开始前先看：
-    - `requirements.md` 需求 4、需求 5
-    - `design.md` 2.3.4、3.2.3、4.3、5.3
-    - 现有 localStorage 键清单
-  - 主要改哪里：
-    - `apps/user-app/src/preferences/*`
-    - `apps/user-app/src/bootstrap/bootstrap-app.ts`
+- [x] 3.1 实现 legacy localStorage 回填和 shadow cache
+  - 状态：DONE
+  - 这一做到底做什么：把旧本地键变成迁移输入，同时保留 shadow cache 作为冷启动和未登录场景回退
+  - 做完以后能看到什么结果：老用户升级后不用重配，登录前也能切语言和主题
+  - 依赖什么：2.4
+  - 主要改哪些文件：
+    - `apps/user-app/src/preferences/user-preference-store.ts`
     - `apps/user-app/src/features/auth/pages/LoginPage.tsx`
-  - 这一先不做什么：不删除所有 legacy key，只进入兼容期
-  - 怎么算完成：
-    1. 远端为空时能回填旧本地值
-    2. 远端已有值时不会被旧值覆盖
-    3. shadow cache 可用于失败回退
+  - 这一步先不做什么：不删除所有 legacy key
   - 怎么验证：
-    - 迁移单元测试
-    - 登录后首次升级回归测试
-  - 对应需求：`requirements.md` 需求 4、需求 5
-  - 对应设计：`design.md` 2.3.4、3.2.3、4.3、5.3、6.3
+    - `pnpm.cmd --dir apps/user-app exec tsc --noEmit`
+    - `pnpm.cmd --dir apps/user-app exec vitest run src/shared/i18n/index.test.ts src/features/settings/pages/SettingsPage.test.tsx`
 
-- [ ] 3.2 明确本地保留清单并收口旧写入点
-  - 状态：TODO
-  - 这一做到到底做什么：把该留本地的键做成清单，并把账户偏好字段从旧本地写入路径里摘出去
-  - 做完你能看到什么：不会再出现“数据库和 localStorage 同时各写一半”的脏状态
-  - 先依赖什么：3.1
-  - 开始前先看：
-    - `requirements.md` 需求 2、需求 5
-    - `design.md` 1.3、4.1、6.1
-    - `apps/user-app/src/config/client-config-service.ts`
+- [x] 3.2 明确本地保留清单并收口旧写入点
+  - 状态：DONE
+  - 这一做到底做什么：收口主题和默认权限的旧本地写入主链路，并把桌面端本地配置改回纯设备配置
+  - 做完以后能看到什么结果：数据库、shadow cache 和设备配置的职责不再混成一团
+  - 依赖什么：3.1
+  - 主要改哪些文件：
     - `apps/user-app/src/shared/theme/theme.ts`
-  - 主要改哪里：
-    - `apps/user-app/src/config/*`
-    - `apps/user-app/src/shared/theme/*`
-    - `docs/` 中的迁移说明
-  - 这一先不做什么：不处理“记住密码改系统凭据库”
-  - 怎么算完成：
-    1. 账户级字段不再走旧本地持久化主链路
-    2. 本地保留项有清单和理由
-    3. 兼容期行为可解释
+    - `apps/user-app/src-tauri/src/config.rs`
+    - `apps/desktop/src-tauri/src/config.rs`
+  - 这一步先不做什么：不处理“记住密码改系统凭据库”
   - 怎么验证：
-    - 本地键清单核对
-    - 代码走查
-  - 对应需求：`requirements.md` 需求 2、需求 5
-  - 对应设计：`design.md` 1.3、4.1、6.1
+    - `pnpm.cmd --dir apps/user-app build`
 
 - [ ] 3.3 跨客户端回归和最终验收
-  - 状态：TODO
-  - 这一做到到底做什么：验证桌面端、Web 端、必要时移动端之间的账户偏好同步，确认默认权限和其他首批偏好已经跨端稳定
-  - 做完你能看到什么：这次不是“看起来像做完了”，而是真的能跨端用
-  - 先依赖什么：3.1、3.2
-  - 开始前先看：
-    - `requirements.md`
-    - `design.md`
-    - `tasks.md`
-    - `docs/`
-  - 主要改哪里：
-    - 自动化测试
-    - 验证记录
-    - 任务状态回写
-  - 这一先不做什么：不扩到新的偏好字段
-  - 怎么算完成：
-    1. 多客户端同步链路跑通
-    2. 旧本地迁移链路跑通
-    3. 本地保留项没有误同步
+  - 状态：IN_REVIEW
+  - 这一做到底做什么：确认这次改动不仅测试通过，而且真实跨客户端链路可用
+  - 做完以后能看到什么结果：桌面端和 Web 端用同一账号时，默认权限、语言、主题、provider 默认项保持一致
+  - 依赖什么：3.1、3.2
+  - 主要改哪些文件：
+    - 测试与验证记录
+  - 这一步先不做什么：不扩更多偏好字段
+  - 当前结果：
+    1. 已完成后端偏好接口集成测试
+    2. 已完成前端关键用例和生产构建
+    3. 还缺真实多客户端人工走查记录
   - 怎么验证：
-    - 集成测试
-    - 人工多客户端走查
-    - 验证记录回写
-  - 对应需求：`requirements.md` 全部需求
-  - 对应设计：`design.md` 全文
+    - 已完成：
+      - `pnpm.cmd --dir apps/host exec vitest run tests/integration/preferences-profile.test.ts`
+      - `pnpm.cmd --dir apps/host exec tsc --noEmit`
+      - `pnpm.cmd --dir apps/user-app exec tsc --noEmit`
+      - `pnpm.cmd --dir apps/user-app exec vitest run src/shared/i18n/index.test.ts src/features/settings/pages/SettingsPage.test.tsx src/features/conversation/runtime/session-runtime-store.test.ts src/features/conversation/components/ComposerPanel.test.tsx`
+      - `pnpm.cmd --dir apps/user-app exec vitest run src/features/auth/pages/LoginPage.test.tsx`
+      - `pnpm.cmd --dir apps/user-app exec vitest run src/app/App.test.tsx`
+      - `pnpm.cmd --dir apps/user-app build`
+    - 待补：
+      - 桌面端与 Web 端人工双客户端走查
