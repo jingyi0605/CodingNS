@@ -882,7 +882,11 @@ describe("TerminalPage", () => {
     await userEvent.click(createButtons[0]!);
 
     expect(await screen.findByRole("dialog", { name: "新建终端" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /tmux（持久会话）/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: /^持久会话 使用基于 ConPTY 的 Windows 持久化会话，让终端在 Host 重启后仍可继续保留。$/
+      })
+    ).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: /runtime（当前会话）/ }));
     await userEvent.click(screen.getByRole("button", { name: "创建这个终端" }));

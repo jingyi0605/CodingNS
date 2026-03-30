@@ -418,6 +418,22 @@ describe("spec006 终端核心能力", () => {
       "powershell-terminal",
       powerShell.shell
     );
+    const persistentTerminalResponse = await hosted.app.inject({
+      method: "POST",
+      url: "/api/terminals",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        workspaceId,
+        name: "powershell-persistent-terminal",
+        shell: powerShell.shell,
+        runtimeType: "tmux"
+      }
+    });
+    expect(persistentTerminalResponse.statusCode).toBe(201);
+    expect(persistentTerminalResponse.json().runtimeType).toBe("conpty-powershell");
+    const persistentTerminalId = persistentTerminalResponse.json().id as string;
 
     let gitBashTerminalId: string | null = null;
 
@@ -481,7 +497,12 @@ describe("spec006 终端核心能力", () => {
 
     expect((await queue.next()).type).toBe("system.connected");
 
-    const terminalIds = [cmdTerminalId, powerShellTerminalId, gitBashTerminalId].filter(Boolean) as string[];
+    const terminalIds = [
+      cmdTerminalId,
+      powerShellTerminalId,
+      persistentTerminalId,
+      gitBashTerminalId
+    ].filter(Boolean) as string[];
 
     for (const terminalId of terminalIds) {
       socket.send(JSON.stringify({ type: "terminal.subscribe", terminalId }));
@@ -501,6 +522,15 @@ describe("spec006 终端核心能力", () => {
       expect(runTemplateResponse.json().createdTerminal).toBe(false);
       await waitForTerminalTextAny(queue, terminalId, "spec006-shell-template");
     }
+
+    const deletePersistentTerminalResponse = await hosted.app.inject({
+      method: "DELETE",
+      url: `/api/terminals/${persistentTerminalId}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(deletePersistentTerminalResponse.statusCode).toBe(200);
 
     const createTemplateTerminalResponse = await hosted.app.inject({
       method: "POST",
@@ -632,7 +662,8 @@ async function createTerminalWithShell(
   accessToken: string,
   workspaceId: string,
   name: string,
-  shell: string
+  shell: string,
+  runtimeType?: string
 ): Promise<string> {
   const response = await app.inject({
     method: "POST",
@@ -643,7 +674,8 @@ async function createTerminalWithShell(
     payload: {
       workspaceId,
       name,
-      shell
+      shell,
+      ...(runtimeType ? { runtimeType } : {})
     }
   });
 

@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { readViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import { logPerfDebug } from "../../../shared/debug/perf-debug";
 import { t } from "../../../shared/i18n";
+import { usePlatform } from "../../../platform/platform-provider";
 import { useToast } from "../../../shared/toast";
 import {
   createTerminalTemplate,
@@ -494,6 +495,7 @@ export function TerminalManagerPanel({
   currentWorkspaceId,
   navigationGroups
 }: TerminalManagerPanelProps) {
+  const platform = usePlatform();
   const {
     subscribeTerminalManagerSnapshot,
     requestTerminalManagerRefresh,
@@ -544,7 +546,10 @@ export function TerminalManagerPanel({
     () => shellOptions.find((option) => option.id === selectedShellId) ?? null,
     [selectedShellId, shellOptions]
   );
-  const runtimeOptions = useMemo(() => listTerminalRuntimeOptions(), []);
+  const runtimeOptions = useMemo(
+    () => listTerminalRuntimeOptions(platform.ui.osFamily),
+    [platform.ui.osFamily]
+  );
   const runtimeStatusByTemplateId = useMemo(
     () => new Map(templateStatuses.map((status) => [status.templateId, status] as const)),
     [templateStatuses]
@@ -1051,7 +1056,7 @@ export function TerminalManagerPanel({
                     </div>
                     <div className="terminal-manager-card-tools">
                       <span className="badge terminal-runtime-badge">
-                        {getTerminalRuntimeLabel(template.runtimeType)}
+                          {getTerminalRuntimeLabel(template.runtimeType, platform.ui.osFamily)}
                       </span>
                       <span className="badge">
                         {detectTemplateMode(template) === "script"
@@ -1134,7 +1139,7 @@ export function TerminalManagerPanel({
                         </div>
                         <div className="terminal-manager-detail-item">
                           <span>{t("terminal.runtimeField")}</span>
-                          <strong>{getTerminalRuntimeLabel(template.runtimeType)}</strong>
+                      <strong>{getTerminalRuntimeLabel(template.runtimeType, platform.ui.osFamily)}</strong>
                         </div>
                         <div className="terminal-manager-detail-item">
                           <span>{t("terminalManager.updatedAt")}</span>

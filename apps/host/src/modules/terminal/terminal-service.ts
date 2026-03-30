@@ -18,9 +18,14 @@ import type { TerminalLogSegmentRepository } from "../../storage/repositories/te
 import type { TerminalRuntimeSessionRepository } from "../../storage/repositories/terminal-runtime-session-repository.js";
 import type { WorkspaceService } from "../workspace/workspace-service.js";
 import { resolveWorkspaceCwd } from "./terminal-paths.js";
-import { getDefaultShell, resolveRequestedShell } from "./terminal-shell.js";
+import {
+  getDefaultShell,
+  resolveRequestedShell,
+  resolveWindowsPersistentRuntimeType
+} from "./terminal-shell.js";
 import type { TerminalHistoryPageDto } from "./terminal-history.js";
 import { captureTmuxPaneContent } from "./runtime/adapters/tmux-runtime-adapter.js";
+import { isConptyRuntimeType } from "./runtime/conpty-runtime-shared.js";
 import { TerminalLogFileStore } from "./runtime/terminal-log-file-store.js";
 import { TerminalLogSpooler } from "./runtime/terminal-log-spooler.js";
 import {
@@ -127,7 +132,7 @@ export class TerminalService extends EventEmitter {
     const now = nowIso();
     const shell = resolveRequestedShell(sanitizeShell(input.shell) ?? getDefaultShell());
     const cwd = resolveWorkspaceCwd(workspace.path, input.cwd);
-    const runtimeType = resolveRequestedRuntimeType(input.runtimeType);
+    const runtimeType = resolveRequestedRuntimeType(input.runtimeType, shell);
     const runtimeSessionId = createId();
     const attachTarget = buildAttachTarget(runtimeType, runtimeSessionId);
     const terminal: TerminalInstance = {
@@ -984,13 +989,20 @@ function sanitizeShell(shell?: string | null): string | null {
   return value;
 }
 
-function resolveRequestedRuntimeType(input?: TerminalRuntimeType | null): TerminalRuntimeType {
+function resolveRequestedRuntimeType(
+  input: TerminalRuntimeType | null | undefined,
+  shell: string
+): TerminalRuntimeType {
   const runtimeType = input ?? (process.platform === "win32" ? "embedded-pty" : "tmux");
 
-  if (
-    runtimeType !== "embedded-pty" &&
-    runtimeType !== "tmux"
-  ) {
+  if (runtimeType === "embedded-pty") {
+    return runtimeType;
+  }
+
+  if (process.platform === "win32") {
+    if (runtimeType === "tmux" || isConptyRuntimeType(runtimeType)) {
+      return resolveWindowsPersistentRuntimeType(shell);
+    }
     throw new AppError({
       statusCode: 400,
       errorCode: "UNSUPPORTED_TERMINAL_RUNTIME",
@@ -998,7 +1010,23 @@ function resolveRequestedRuntimeType(input?: TerminalRuntimeType | null): Termin
     });
   }
 
-  return runtimeType;
+  if (runtimeType === "tmux") {
+    return runtimeType;
+  }
+
+  if (isConptyRuntimeType(runtimeType)) {
+    throw new AppError({
+      statusCode: 400,
+      errorCode: "RUNTIME_UNSUPPORTED_PLATFORM",
+      detail: "conpty runtime 仅支持 Windows"
+    });
+  }
+
+  throw new AppError({
+    statusCode: 400,
+    errorCode: "UNSUPPORTED_TERMINAL_RUNTIME",
+    detail: `当前 Host 还未实现 runtime=${runtimeType}`
+  });
 }
 
 function buildAttachTarget(runtimeType: TerminalRuntimeType, runtimeSessionId: string): string {

@@ -405,7 +405,10 @@ export function TerminalPage() {
     () => sortTerminals(terminals, pinnedTerminalIdSet),
     [pinnedTerminalIdSet, terminals]
   );
-  const runtimeOptions = useMemo(() => listTerminalRuntimeOptions(), []);
+  const runtimeOptions = useMemo(
+    () => listTerminalRuntimeOptions(platform.ui.osFamily),
+    [platform.ui.osFamily]
+  );
   const isMobileTerminalPage = !platform.isDesktop && !(platform.isWeb && platform.viewportClass === "expanded");
   const effectiveSplitDirection: SplitDirection = isMobileTerminalPage ? "single" : splitDirection;
   const effectiveActivePaneId: PaneId = isMobileTerminalPage ? "primary" : activePaneId;
@@ -1745,6 +1748,7 @@ export function TerminalPage() {
               loading={loadingShellOptions}
               creating={creatingTerminal}
               shellChoices={mobileShellChoices}
+              osFamily={platform.ui.osFamily}
               selectedShell={mobileSelectedShell}
               runtimeType={resolveDefaultTerminalCreationRuntime(selectedRuntimeType, platform.ui.osFamily)}
               title={t("terminal.mobileCreateSheetTitle")}
@@ -1840,9 +1844,9 @@ export function TerminalPage() {
                             <span className="terminal-tab-name-text">{terminal.name}</span>
                             <span
                               className="terminal-tab-runtime"
-                              title={getTerminalRuntimeLabel(terminal.runtimeType)}
+                          title={getTerminalRuntimeLabel(terminal.runtimeType, platform.ui.osFamily)}
                             >
-                              {getTerminalRuntimeShortLabel(terminal.runtimeType)}
+                          {getTerminalRuntimeShortLabel(terminal.runtimeType, platform.ui.osFamily)}
                             </span>
                             {pendingMutation ? (
                               <span
@@ -1911,9 +1915,15 @@ export function TerminalPage() {
                           <span className="terminal-tab-name-text">{t("terminal.creating")}</span>
                           <span
                             className="terminal-tab-runtime"
-                            title={getTerminalRuntimeLabel(selectedRuntimeType || undefined)}
+                      title={getTerminalRuntimeLabel(
+                        selectedRuntimeType || undefined,
+                        platform.ui.osFamily
+                      )}
                           >
-                            {getTerminalRuntimeShortLabel(selectedRuntimeType || undefined)}
+                      {getTerminalRuntimeShortLabel(
+                        selectedRuntimeType || undefined,
+                        platform.ui.osFamily
+                      )}
                           </span>
                         </span>
                       </div>
@@ -2179,6 +2189,7 @@ export function TerminalPage() {
         loading={loadingShellOptions}
         creating={creatingTerminal}
         shellChoices={mobileShellChoices}
+        osFamily={platform.ui.osFamily}
         selectedShell={selectedShell}
         runtimeType={resolveDefaultTerminalCreationRuntime(selectedRuntimeType, platform.ui.osFamily)}
         title={t("terminal.createDialogTitle")}
@@ -2735,6 +2746,7 @@ function TerminalCreateSheet({
   loading,
   creating,
   shellChoices,
+  osFamily,
   selectedShell,
   runtimeType,
   title,
@@ -2752,6 +2764,7 @@ function TerminalCreateSheet({
   loading: boolean;
   creating: boolean;
   shellChoices: MobileTerminalShellChoice[];
+  osFamily: ReturnType<typeof usePlatform>["ui"]["osFamily"];
   selectedShell: string;
   runtimeType: SelectableTerminalRuntimeType;
   title: string;
@@ -2771,6 +2784,8 @@ function TerminalCreateSheet({
 
   const selectedShellChoice =
     shellChoices.find((option) => option.value === selectedShell) ?? shellChoices[0] ?? null;
+  const persistentRuntimeOption =
+    listTerminalRuntimeOptions(osFamily).find((option) => option.value === "tmux") ?? null;
   const runtimeCards: Array<{
     value: SelectableTerminalRuntimeType;
     title: string;
@@ -2778,8 +2793,9 @@ function TerminalCreateSheet({
   }> = [
     {
       value: "tmux",
-      title: t("terminal.mobileRuntimePersistentTitle"),
-      description: t("terminal.mobileRuntimePersistentDescription")
+      title: persistentRuntimeOption?.label ?? t("terminal.mobileRuntimePersistentTitle"),
+      description:
+        persistentRuntimeOption?.description ?? t("terminal.mobileRuntimePersistentDescription")
     },
     {
       value: "embedded-pty",

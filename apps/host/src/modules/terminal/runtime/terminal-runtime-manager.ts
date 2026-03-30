@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 
 import type { TerminalInstance, TerminalRuntimeSession } from "../../../types/domain.js";
+import { ConptyRuntimeAdapter } from "./adapters/conpty-runtime-adapter.js";
 import { EmbeddedPtyRuntimeAdapter } from "./adapters/embedded-pty-runtime-adapter.js";
 import { TmuxRuntimeAdapter } from "./adapters/tmux-runtime-adapter.js";
 import {
@@ -40,7 +41,10 @@ export class TerminalRuntimeManager extends EventEmitter {
   private readonly attachmentManager = new PtyHostAttachmentManager();
   private readonly adapters = new Map<string, TerminalRuntimeAdapter>([
     ["embedded-pty", new EmbeddedPtyRuntimeAdapter()],
-    ["tmux", new TmuxRuntimeAdapter()]
+    ["tmux", new TmuxRuntimeAdapter()],
+    ["conpty-powershell", new ConptyRuntimeAdapter("conpty-powershell")],
+    ["conpty-cmd", new ConptyRuntimeAdapter("conpty-cmd")],
+    ["conpty-git-bash", new ConptyRuntimeAdapter("conpty-git-bash")]
   ]);
   private readonly attachments = new Map<string, AttachmentRecord>();
   private readonly closeIntents = new Map<string, CloseIntent>();

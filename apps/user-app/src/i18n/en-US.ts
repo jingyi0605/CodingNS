@@ -136,10 +136,17 @@ export const enUS = {
     runtimeAutoOption: "Auto",
     runtimeAutoShortLabel: "auto",
     runtimeAutoDescription: "Use the Host default policy for this terminal runtime.",
+    runtimePersistentLabel: "Persistent Session",
+    runtimePersistentShortLabel: "persist",
     runtimeTmuxDescription:
       "Use a persistent external session, ideal for development terminals that should stay alive.",
+    runtimeWindowsPersistentDescription:
+      "Use a Windows persistent session backed by ConPTY so the shell can survive Host restarts.",
     runtimeEmbeddedDescription:
       "Managed directly by the current Host and useful as the lightweight fallback.",
+    runtimeConptyPowerShellLabel: "PowerShell Persistent",
+    runtimeConptyCmdLabel: "CMD Persistent",
+    runtimeConptyGitBashLabel: "Git Bash Persistent",
     runtimeMissingDialogTitle: "tmux is not installed on this system",
     runtimeMissingDialogDescription:
       "The tmux runtime cannot create a persistent terminal right now. Install tmux first, or temporarily switch to embedded-pty to continue.",
@@ -234,8 +241,9 @@ export const enUS = {
     createDialogRuntimeDescription:
       "Choose whether this terminal should stay persistent or only live in the current runtime.",
     createDialogConfirm: "Create Terminal",
-    mobileRuntimePersistentTitle: "tmux (persistent)",
-    mobileRuntimePersistentDescription: "Best for development terminals that should stay alive longer.",
+    mobileRuntimePersistentTitle: "Persistent Session",
+    mobileRuntimePersistentDescription:
+      "Best for development terminals that should stay alive and reconnect as a recoverable session.",
     mobileRuntimeSessionTitle: "runtime (current session)",
     mobileRuntimeSessionDescription: "Managed directly by the current Host. Lighter, but not an external persistent session.",
     mobileWorkspaceSwitcherPlaceholder: "Choose Workspace",

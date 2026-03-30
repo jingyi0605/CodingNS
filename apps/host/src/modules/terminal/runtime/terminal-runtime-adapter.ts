@@ -15,6 +15,7 @@ export interface HostAttachmentLaunch {
   args: string[];
   cwd: string;
   env: Record<string, string>;
+  closeStrategy?: "pty-kill" | "process-kill";
 }
 
 export interface TerminalRuntimeAdapter {

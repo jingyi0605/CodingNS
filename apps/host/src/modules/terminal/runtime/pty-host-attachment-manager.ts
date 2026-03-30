@@ -19,6 +19,7 @@ export interface HostAttachmentExitEvent {
 interface HostAttachmentRecord {
   pty: IPty;
   processId: number | null;
+  closeStrategy: "pty-kill" | "process-kill";
 }
 
 export declare interface PtyHostAttachmentManager {
@@ -41,6 +42,7 @@ export class PtyHostAttachmentManager extends EventEmitter {
       env: Record<string, string>;
       cols?: number;
       rows?: number;
+      closeStrategy?: "pty-kill" | "process-kill";
     }
   ): number | null {
     try {
@@ -57,7 +59,8 @@ export class PtyHostAttachmentManager extends EventEmitter {
       const processId = normalizeProcessId(ptyProcess.pid);
       this.attachments.set(attachmentId, {
         pty: ptyProcess,
-        processId
+        processId,
+        closeStrategy: input.closeStrategy ?? "pty-kill"
       });
 
       ptyProcess.onData((content) => {
@@ -124,6 +127,16 @@ export class PtyHostAttachmentManager extends EventEmitter {
     }
 
     this.requestedClose.add(attachmentId);
+
+    if (runtime.closeStrategy === "process-kill" && runtime.processId) {
+      try {
+        process.kill(runtime.processId);
+        return;
+      } catch {
+        // 进程已经结束时退回到 node-pty 默认关闭逻辑。
+      }
+    }
+
     runtime.pty.kill();
   }
 

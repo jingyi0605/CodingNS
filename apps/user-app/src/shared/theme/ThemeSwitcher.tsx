@@ -1,11 +1,13 @@
 import { t } from "../i18n";
 import { THEMES, getThemeLabel, useTheme, type ThemeId } from "./theme";
+import { updatePreferences } from "../../preferences/preferences-store";
 
 export function ThemeSwitcher() {
   const { theme, setTheme } = useTheme();
 
   function handleChange(newTheme: ThemeId): void {
     setTheme(newTheme);
+    void updatePreferences({ theme: newTheme }).catch(() => {});
   }
 
   return (

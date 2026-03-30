@@ -3,6 +3,7 @@ import path from "node:path";
 
 import { AppError } from "../../shared/errors/app-error.js";
 import type { TerminalCommandTemplate } from "../../types/domain.js";
+import type { ConptyRuntimeType } from "./runtime/conpty-runtime-shared.js";
 
 export interface TerminalShellOption {
   id: string;
@@ -60,7 +61,7 @@ export function buildTemplateCommandLine(
   template: TerminalCommandTemplate,
   shell: string
 ): string {
-  const shellType = detectShellType(shell);
+  const shellType = detectTerminalShellType(shell);
 
   if (shellType === "cmd") {
     return buildCmdCommandLine(template);
@@ -74,10 +75,43 @@ export function buildTemplateCommandLine(
 }
 
 export function getShellEnterSequence(shell: string): string {
-  return detectShellType(shell) === "posix" ? "\n" : "\r";
+  return detectTerminalShellType(shell) === "posix" ? "\n" : "\r";
 }
 
-type ShellType = "cmd" | "powershell" | "posix";
+export type TerminalShellType = "cmd" | "powershell" | "posix";
+
+export function detectTerminalShellType(shell: string): TerminalShellType {
+  const shellName = path.basename(shell).toLowerCase();
+
+  if (shellName === "cmd.exe" || shellName === "cmd") {
+    return "cmd";
+  }
+
+  if (
+    shellName === "powershell.exe" ||
+    shellName === "powershell" ||
+    shellName === "pwsh.exe" ||
+    shellName === "pwsh"
+  ) {
+    return "powershell";
+  }
+
+  return "posix";
+}
+
+export function resolveWindowsPersistentRuntimeType(shell: string): ConptyRuntimeType {
+  const shellType = detectTerminalShellType(shell);
+
+  if (shellType === "cmd") {
+    return "conpty-cmd";
+  }
+
+  if (shellType === "powershell") {
+    return "conpty-powershell";
+  }
+
+  return "conpty-git-bash";
+}
 
 function getDefaultShellOption(): InternalTerminalShellOption {
   const options = getPlatformShellOptions();
@@ -206,25 +240,6 @@ function createWindowsShellOption(input: {
     unavailableReason: available ? null : `${input.label} 当前未安装或不可执行`,
     aliases: uniqNonEmptyStrings(input.aliases)
   };
-}
-
-function detectShellType(shell: string): ShellType {
-  const shellName = path.basename(shell).toLowerCase();
-
-  if (shellName === "cmd.exe" || shellName === "cmd") {
-    return "cmd";
-  }
-
-  if (
-    shellName === "powershell.exe" ||
-    shellName === "powershell" ||
-    shellName === "pwsh.exe" ||
-    shellName === "pwsh"
-  ) {
-    return "powershell";
-  }
-
-  return "posix";
 }
 
 function splitPosixShellCandidates(shell: string | null | undefined): string[] {

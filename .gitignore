@@ -58,6 +58,7 @@ key.properties
 .DS_Store
 Thumbs.db
 desktop.ini
+data
 
 # Logs
 logs/

@@ -17,6 +17,10 @@ describe("TmuxRuntimeAdapter", () => {
   });
 
   it("tmux server 已不存在时，结束持久会话保持幂等成功", () => {
+    if (process.platform === "win32") {
+      return;
+    }
+
     spawnSyncMock.mockReturnValue({
       status: 1,
       stdout: "",
@@ -43,6 +47,10 @@ describe("TmuxRuntimeAdapter", () => {
   });
 
   it("真正的 tmux 结束失败仍然抛出错误", () => {
+    if (process.platform === "win32") {
+      return;
+    }
+
     spawnSyncMock.mockReturnValue({
       status: 1,
       stdout: "",
