@@ -1,6 +1,8 @@
 import { performance } from "node:perf_hooks";
 
-const TERMINAL_DEBUG_ENABLED = process.env.CODINGNS_TERMINAL_DEBUG === "1";
+// 调试日志已停用，保留工具函数便于后续需要时快速恢复。
+// const TERMINAL_DEBUG_ENABLED = process.env.CODINGNS_TERMINAL_DEBUG === "1";
+const TERMINAL_DEBUG_ENABLED = false;
 const EVENT_LOOP_LAG_MONITOR_INTERVAL_MS = 100;
 const EVENT_LOOP_LAG_REPORT_THRESHOLD_MS = 50;
 

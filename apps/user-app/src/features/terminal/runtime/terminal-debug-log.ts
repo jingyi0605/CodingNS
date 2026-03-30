@@ -3,15 +3,8 @@ const TERMINAL_DEBUG_STORAGE_KEY = "codingns.terminal.debug";
 let traceSequence = 0;
 
 export function isTerminalDebugEnabled(): boolean {
-  if (typeof window === "undefined") {
-    return false;
-  }
-
-  try {
-    return window.localStorage.getItem(TERMINAL_DEBUG_STORAGE_KEY) === "1";
-  } catch {
-    return false;
-  }
+  // 调试日志已停用，保留开关键名便于后续恢复。
+  return false;
 }
 
 export function terminalDebugNowMs(): number {
