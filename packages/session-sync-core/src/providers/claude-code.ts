@@ -413,6 +413,7 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
       supportsTokenUsage: true,
       supportsAttachments: true,
       supportsPermissionPrompt: true,
+      supportsPermissionRequests: true,
       supportsCheckpoint: false,
       modelOptions: CLAUDE_MODEL_OPTIONS,
       limitations: ["当前实现只读取原生 jsonl，会话恢复不负责拉起外部 Claude 进程。"]

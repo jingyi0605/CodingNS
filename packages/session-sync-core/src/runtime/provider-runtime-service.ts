@@ -34,6 +34,10 @@ export class ProviderRuntimeService {
     return this.registry.getSnapshot(sessionId);
   }
 
+  listSnapshots(): ActiveRunSnapshot[] {
+    return this.registry.listSnapshots();
+  }
+
   subscribe(sessionId: string, listener: RuntimeEventListener): ProviderSubscription {
     return this.registry.attach(sessionId, listener);
   }

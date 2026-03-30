@@ -12,6 +12,7 @@ export async function registerSessionRoutes(
   app.get("/api/sessions/:sessionId/messages", sessionController.readMessages);
   app.get("/api/sessions/:sessionId/attachments/:attachmentId/content", sessionController.readAttachment);
   app.get("/api/sessions/:sessionId/capabilities", sessionController.getCapabilities);
+  app.get("/api/sessions/:sessionId/permission-requests", sessionController.listPermissionRequests);
   app.get("/api/sessions/:sessionId/queue", sessionController.listQueue);
   app.get("/api/sessions/:sessionId/runtime", sessionController.getRuntime);
   app.patch("/api/sessions/:sessionId/title", sessionController.renameTitle);
@@ -19,6 +20,10 @@ export async function registerSessionRoutes(
   app.patch("/api/sessions/:sessionId/favorite", sessionController.updateFavoriteState);
   app.post("/api/sessions/:sessionId/messages", sessionController.sendMessage);
   app.post("/api/sessions/:sessionId/messages/live", sessionController.sendLiveMessage);
+  app.post(
+    "/api/sessions/:sessionId/permission-requests/:requestId/reply",
+    sessionController.replyPermissionRequest
+  );
   app.post("/api/sessions/:sessionId/queue", sessionController.enqueueLiveMessage);
   app.post("/api/sessions/:sessionId/queue/:queueItemId/steer", sessionController.steerQueuedMessage);
   app.post("/api/sessions/:sessionId/interrupt", sessionController.interrupt);

@@ -89,27 +89,22 @@ export class OpenCodeBaseUrlResolver {
     return wrappedTask;
   }
 
+  async listReachableBaseUrls(input: ResolveBaseUrlInput = {}): Promise<string[]> {
+    const candidates = this.collectCandidateBaseUrls(input.workspacePath ?? null);
+    const available: string[] = [];
+
+    for (const candidate of candidates) {
+      if (await this.probeBaseUrl(candidate)) {
+        available.push(candidate);
+      }
+    }
+
+    return available;
+  }
+
   private async discoverAvailableBaseUrl(workspacePath: string | null): Promise<string> {
     const workspaceKey = normalizeWorkspaceKey(workspacePath);
-    const targetWorkspacePath = normalizeWorkspaceCompareValue(workspacePath);
-    const serveProcesses = parseServeProcesses(this.inspectProcessList(), this.commandPath)
-      .map((record) => ({
-        ...record,
-        cwd: normalizeWorkspaceCompareValue(this.inspectProcessCwd(record.pid))
-      }));
-    const matchingServeProcesses =
-      targetWorkspacePath
-        ? serveProcesses.filter((record) => record.cwd === targetWorkspacePath)
-        : serveProcesses;
-    const candidates = dedupeBaseUrls([
-      this.cachedBaseUrlByWorkspaceKey.get(workspaceKey) ?? null,
-      this.managedServerBaseUrlByWorkspaceKey.get(workspaceKey) ?? null,
-      ...matchingServeProcesses.flatMap((record) => {
-        return this.inspectListeningSockets(record.pid).map((socket) => {
-          return `http://${formatHostname(normalizeHostname(socket.hostname))}:${socket.port}`;
-        });
-      })
-    ]);
+    const candidates = this.collectCandidateBaseUrls(workspacePath);
 
     for (const candidate of candidates) {
       if (await this.probeBaseUrl(candidate)) {
@@ -134,6 +129,40 @@ export class OpenCodeBaseUrlResolver {
 
     this.cachedAtByWorkspaceKey.set(workspaceKey, this.now());
     throw new Error("SERVER_UNAVAILABLE");
+  }
+
+  private collectCandidateBaseUrls(workspacePath: string | null): string[] {
+    if (this.configuredBaseUrl) {
+      return [this.configuredBaseUrl];
+    }
+
+    const workspaceKey = normalizeWorkspaceKey(workspacePath);
+    const targetWorkspacePath = normalizeWorkspaceCompareValue(workspacePath);
+    const serveProcesses = parseServeProcesses(this.inspectProcessList(), this.commandPath)
+      .map((record) => ({
+        ...record,
+        cwd: normalizeWorkspaceCompareValue(this.inspectProcessCwd(record.pid))
+      }));
+    const matchingServeProcesses =
+      targetWorkspacePath
+        ? serveProcesses.filter((record) => record.cwd === targetWorkspacePath)
+        : serveProcesses;
+    const fallbackServeProcesses =
+      matchingServeProcesses.length > 0
+        ? matchingServeProcesses
+        : process.platform === "win32"
+          ? serveProcesses
+          : matchingServeProcesses;
+
+    return dedupeBaseUrls([
+      this.cachedBaseUrlByWorkspaceKey.get(workspaceKey) ?? null,
+      this.managedServerBaseUrlByWorkspaceKey.get(workspaceKey) ?? null,
+      ...fallbackServeProcesses.flatMap((record) => {
+        return this.inspectListeningSockets(record.pid).map((socket) => {
+          return `http://${formatHostname(normalizeHostname(socket.hostname))}:${socket.port}`;
+        });
+      })
+    ]);
   }
 
   private async ensureManagedServerBaseUrl(workspacePath: string): Promise<string> {
@@ -312,12 +341,7 @@ function readWindowsProcessList(): string {
     [
       "-NoProfile",
       "-Command",
-      [
-        "$ErrorActionPreference = 'SilentlyContinue'",
-        "Get-CimInstance Win32_Process",
-        "| Where-Object { $_.CommandLine }",
-        "| ForEach-Object { '{0} {1}' -f $_.ProcessId, $_.CommandLine }"
-      ].join(" ")
+      "$ErrorActionPreference = 'SilentlyContinue'; Get-CimInstance Win32_Process | Where-Object { $_.CommandLine } | ForEach-Object { '{0} {1}' -f $_.ProcessId, $_.CommandLine }"
     ],
     {
       encoding: "utf8",

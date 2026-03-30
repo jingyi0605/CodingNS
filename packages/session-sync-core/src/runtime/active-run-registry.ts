@@ -72,6 +72,12 @@ export class ActiveRunRegistry {
     return record ? this.toSnapshot(record) : null;
   }
 
+  listSnapshots(): ActiveRunSnapshot[] {
+    return [...this.records.values()]
+      .filter((record) => !record.disposed)
+      .map((record) => this.toSnapshot(record));
+  }
+
   attach(sessionId: string, listener: RuntimeEventListener): ProviderSubscription {
     const record = this.records.get(sessionId);
 

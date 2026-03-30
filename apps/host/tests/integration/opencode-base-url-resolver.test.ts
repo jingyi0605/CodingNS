@@ -100,6 +100,51 @@ describe("OpenCodeBaseUrlResolver", () => {
     ).resolves.toBe("http://127.0.0.1:4098");
   });
 
+  it("Windows 鎸囧畾 workspacePath 浣嗘棤娉曡幏鍙?cwd 鏃朵粛浼氬垪鍑哄仴搴风殑 serve 鍦板潃", async () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", {
+      configurable: true,
+      value: "win32"
+    });
+
+    const resolver = new OpenCodeBaseUrlResolver({
+      inspectProcessList: () =>
+        [
+          "8124 C:\\Users\\jackson\\AppData\\Local\\OpenCode\\opencode-cli.exe serve --hostname 127.0.0.1 --port 0 --print-logs",
+          "9216 C:\\Users\\jackson\\AppData\\Local\\OpenCode\\opencode-cli.exe serve --hostname 127.0.0.1 --port 0 --print-logs"
+        ].join("\n"),
+      inspectListeningSockets: (pid) => {
+        if (pid === 8124) {
+          return [{ hostname: "127.0.0.1", port: 4096 }];
+        }
+
+        if (pid === 9216) {
+          return [{ hostname: "127.0.0.1", port: 51575 }];
+        }
+
+        return [];
+      },
+      inspectProcessCwd: () => null,
+      probeBaseUrl: async (baseUrl) => {
+        return baseUrl === "http://127.0.0.1:4096" || baseUrl === "http://127.0.0.1:51575";
+      }
+    });
+
+    try {
+      await expect(
+        resolver.listReachableBaseUrls({ workspacePath: "C:\\Users\\jackson\\TEST02" })
+      ).resolves.toEqual([
+        "http://127.0.0.1:51575",
+        "http://127.0.0.1:4096"
+      ]);
+    } finally {
+      Object.defineProperty(process, "platform", {
+        configurable: true,
+        value: originalPlatform
+      });
+    }
+  });
+
   it("手工配置 baseUrl 时会直接使用配置值", async () => {
     const resolver = new OpenCodeBaseUrlResolver({
       configuredBaseUrl: "http://127.0.0.1:5001"
@@ -167,7 +212,11 @@ describe("OpenCodeBaseUrlResolver", () => {
       await expect(resolver.resolve()).resolves.toBe("http://127.0.0.1:41827");
       expect(spawnSync).toHaveBeenCalledWith(
         "powershell",
-        expect.any(Array),
+        [
+          "-NoProfile",
+          "-Command",
+          "$ErrorActionPreference = 'SilentlyContinue'; Get-CimInstance Win32_Process | Where-Object { $_.CommandLine } | ForEach-Object { '{0} {1}' -f $_.ProcessId, $_.CommandLine }"
+        ],
         expect.objectContaining({
           encoding: "utf8",
           windowsHide: true

@@ -5,6 +5,7 @@ import { SessionLiveRuntimeService } from "../../src/modules/sessions/session-li
 function createService() {
   const sessionHistoryService = {
     getSession: vi.fn(),
+    listWorkspaceSessions: vi.fn(() => []),
     getProviderCapabilitiesSnapshot: vi.fn(),
     refreshRuntimeFallbackSession: vi.fn(),
     getSessionCapabilities: vi.fn(),
@@ -1166,10 +1167,102 @@ describe("SessionLiveRuntimeService", () => {
     expect(result).toEqual({
       accepted: true,
       ignored: true,
-      sessionId: "session-1"
+      sessionId: "session-1",
+      bridgeResponse: null
     });
     expect(sessionStateRepository.upsert).not.toHaveBeenCalled();
     expect((service as any).externalRuntimeSnapshots.has("session-1")).toBe(false);
+  });
+
+  it("Claude PreToolUse 先于真实 binding 到达时，会回退认领当前 active run 会话", async () => {
+    const {
+      service,
+      workspaceService,
+      sessionBindingRepository,
+      sessionHistoryService
+    } = createService();
+
+    workspaceService.findWorkspaceByPath.mockReturnValue({
+      id: "workspace-1",
+      path: "/tmp/workspace"
+    });
+    sessionBindingRepository.findByProviderSession.mockReturnValue(null);
+    sessionBindingRepository.findByRawStoreRef.mockReturnValue(null);
+
+    const providerRuntimeService = {
+      getSnapshot: vi.fn(() => null),
+      listSnapshots: vi.fn(() => [
+        {
+          sessionId: "session-1",
+          workspaceId: "workspace-1",
+          provider: "claude-code",
+          providerSessionId: "pending://claude-code/session-1",
+          rawStoreRef: "pending://claude-code/session-1",
+          runningState: "running",
+          attachedClients: 0,
+          startedAt: "2026-03-30T15:00:00.000Z",
+          lastEventAt: "2026-03-30T15:00:00.000Z",
+          completedAt: null,
+          detail: null,
+          errorCode: null,
+          supportsInterrupt: false
+        }
+      ])
+    };
+    Object.defineProperty(service, "providerRuntimeService", {
+      value: providerRuntimeService,
+      configurable: true
+    });
+    sessionHistoryService.getSession.mockReturnValue({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      providerSessionId: "pending://claude-code/session-1",
+      rawStoreRef: "pending://claude-code/session-1",
+      runningState: "running",
+      updatedAt: "2026-03-30T15:00:00.000Z",
+      lastEventAt: "2026-03-30T15:00:00.000Z"
+    });
+    sessionHistoryService.listWorkspaceSessions.mockReturnValue([
+      {
+        sessionId: "session-1",
+        workspaceId: "workspace-1",
+        provider: "claude-code",
+        providerSessionId: "pending://claude-code/session-1",
+        rawStoreRef: "pending://claude-code/session-1",
+        runningState: "running",
+        updatedAt: "2026-03-30T15:00:00.000Z",
+        lastEventAt: "2026-03-30T15:00:00.000Z"
+      }
+    ]);
+
+    const resultPromise = service.ingestClaudeHookEvent({
+      hook_event_name: "PreToolUse",
+      session_id: "claude-session-real-1",
+      cwd: "/tmp/workspace",
+      transcript_path: "/tmp/.claude/projects/tmp-workspace/claude-session-real-1.jsonl",
+      tool_name: "Write",
+      tool_input: {
+        file_path: "/tmp/workspace/story.md",
+        content: "hello"
+      }
+    });
+    const requests = await service.listPermissionRequests("session-1", "user-1");
+    expect(requests).toHaveLength(1);
+    await service.replyPermissionRequest("session-1", "user-1", requests[0].id, {
+      action: "allow"
+    });
+    const result = await resultPromise;
+
+    expect(result.accepted).toBe(true);
+    expect(result.ignored).toBe(false);
+    expect(result.sessionId).toBe("session-1");
+    expect(result.bridgeResponse).not.toBeNull();
+    expect(sessionHistoryService.persistSessionBinding).toHaveBeenCalledWith("session-1", "workspace-1", {
+      provider: "claude-code",
+      providerSessionId: "claude-session-real-1",
+      rawStoreRef: "/tmp/.claude/projects/tmp-workspace/claude-session-real-1.jsonl"
+    });
   });
 
   it("Claude 外部 hook 事件会建立真状态 active run 视图", async () => {

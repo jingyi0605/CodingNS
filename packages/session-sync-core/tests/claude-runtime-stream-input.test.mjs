@@ -60,6 +60,20 @@ function workspaceSlug(workspacePath) {
     .replaceAll("/", "-");
 }
 
+function createCommandPath(rootDir, scriptPath) {
+  if (process.platform !== "win32") {
+    return scriptPath;
+  }
+
+  const launcherPath = join(rootDir, `${Date.now()}-claude-test.cmd`);
+  writeFileSync(
+    launcherPath,
+    `@echo off\r\n"${process.execPath}" "${scriptPath}" %*\r\n`,
+    "utf8"
+  );
+  return launcherPath;
+}
+
 test("ClaudeRuntimeAdapter 会把首条消息和运行中追加指导都写入 stream-json stdin", async () => {
   const rootDir = mkdtempSync(join(tmpdir(), "codingns-claude-runtime-"));
   const scriptPath = join(rootDir, "fake-claude.mjs");
@@ -101,10 +115,11 @@ rl.on("line", (line) => {
     "utf8"
   );
   chmodSync(scriptPath, 0o755);
+  const commandPath = createCommandPath(rootDir, scriptPath);
 
   const adapter = new ClaudeRuntimeAdapter({
     homeDir,
-    commandPath: scriptPath
+    commandPath
   });
 
   try {
@@ -231,7 +246,7 @@ rl.on("line", () => {
 
   const adapter = new ClaudeRuntimeAdapter({
     homeDir,
-    commandPath: scriptPath
+    commandPath: createCommandPath(rootDir, scriptPath)
   });
 
   try {
@@ -374,7 +389,7 @@ rl.on("line", () => {
 
   const adapter = new ClaudeRuntimeAdapter({
     homeDir,
-    commandPath: scriptPath
+    commandPath: createCommandPath(rootDir, scriptPath)
   });
 
   try {
@@ -499,7 +514,7 @@ rl.on("line", () => {
 
   const adapter = new ClaudeRuntimeAdapter({
     homeDir,
-    commandPath: scriptPath
+    commandPath: createCommandPath(rootDir, scriptPath)
   });
 
   try {
@@ -589,7 +604,7 @@ rl.on("line", () => {
 
   const adapter = new ClaudeRuntimeAdapter({
     homeDir,
-    commandPath: scriptPath
+    commandPath: createCommandPath(rootDir, scriptPath)
   });
 
   try {
@@ -670,7 +685,7 @@ rl.on("line", () => {
 
   const runtimeAdapter = new ClaudeRuntimeAdapter({
     homeDir,
-    commandPath: scriptPath
+    commandPath: createCommandPath(rootDir, scriptPath)
   });
 
   try {
@@ -771,7 +786,7 @@ rl.on("line", () => {
 
   const runtimeAdapter = new ClaudeRuntimeAdapter({
     homeDir,
-    commandPath: scriptPath
+    commandPath: createCommandPath(rootDir, scriptPath)
   });
 
   try {
@@ -958,7 +973,7 @@ rl.on("line", () => {
 
   const runtimeAdapter = new ClaudeRuntimeAdapter({
     homeDir,
-    commandPath: scriptPath
+    commandPath: createCommandPath(rootDir, scriptPath)
   });
 
   try {

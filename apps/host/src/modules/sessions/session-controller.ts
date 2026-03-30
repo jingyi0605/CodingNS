@@ -21,6 +21,10 @@ interface SessionQueueItemParams extends SessionParams {
   queueItemId: string;
 }
 
+interface SessionPermissionRequestParams extends SessionParams {
+  requestId: string;
+}
+
 interface SessionMessagesQuery {
   cursor?: string;
   limit?: string;
@@ -69,6 +73,11 @@ interface ArchiveSessionBody {
 
 interface FavoriteSessionBody {
   favorite?: boolean;
+}
+
+interface ReplyPermissionRequestBody {
+  action?: string;
+  answers?: Record<string, string[]>;
 }
 
 function requireUserId(request: FastifyRequest): string {
@@ -278,6 +287,18 @@ export class SessionController {
     reply: FastifyReply
   ): Promise<void> => {
     reply.send(await this.sessionHistoryService.getSessionCapabilities(request.params.sessionId));
+  };
+
+  readonly listPermissionRequests = async (
+    request: FastifyRequest<{ Params: SessionParams }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send({
+      items: await this.sessionLiveRuntimeService.listPermissionRequests(
+        request.params.sessionId,
+        requireUserId(request)
+      )
+    });
   };
 
   readonly listQueue = async (
@@ -537,6 +558,32 @@ export class SessionController {
       await this.sessionLiveRuntimeService.interruptSession(
         request.params.sessionId,
         requireUserId(request)
+      )
+    );
+  };
+
+  readonly replyPermissionRequest = async (
+    request: FastifyRequest<{
+      Params: SessionPermissionRequestParams;
+      Body: ReplyPermissionRequestBody;
+    }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    const action = requireNonEmptyText(
+      request.body.action,
+      "action",
+      "回复权限申请时必须提供 action"
+    );
+
+    reply.send(
+      await this.sessionLiveRuntimeService.replyPermissionRequest(
+        request.params.sessionId,
+        requireUserId(request),
+        request.params.requestId,
+        {
+          action,
+          answers: request.body.answers
+        }
       )
     );
   };

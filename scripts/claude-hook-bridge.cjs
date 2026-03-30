@@ -2,11 +2,13 @@
 
 const http = require("node:http");
 const https = require("node:https");
+const fs = require("node:fs");
 
 function parseArgs(argv) {
   const args = {
     url: "",
-    token: ""
+    token: "",
+    debugLog: ""
   };
 
   for (let index = 2; index < argv.length; index += 1) {
@@ -21,6 +23,12 @@ function parseArgs(argv) {
 
     if (current === "--token" && typeof next === "string") {
       args.token = next.trim();
+      index += 1;
+      continue;
+    }
+
+    if (current === "--debug-log" && typeof next === "string") {
+      args.debugLog = next.trim();
       index += 1;
     }
   }
@@ -42,17 +50,55 @@ function readStdin() {
   });
 }
 
+function appendDebugLog(debugLogPath, message) {
+  if (!debugLogPath) {
+    return;
+  }
+
+  try {
+    fs.appendFileSync(debugLogPath, `[bridge] ${new Date().toISOString()} ${message}\n`, "utf8");
+  } catch {
+    // ignore debug logging failure
+  }
+}
+
+function resolveRequestTimeoutMs(body) {
+  try {
+    const parsed = JSON.parse(body);
+    const hookEventName =
+      parsed && typeof parsed === "object" && typeof parsed.hook_event_name === "string"
+        ? parsed.hook_event_name.trim()
+        : "";
+
+    if (hookEventName === "PreToolUse") {
+      // 权限申请需要等用户操作，不能再用原来的 1.5 秒超时。
+      return 95_000;
+    }
+
+    return 5_000;
+  } catch {
+    return 5_000;
+  }
+}
+
 async function main() {
   const args = parseArgs(process.argv);
+  appendDebugLog(args.debugLog, `start pid=${process.pid} argv=${JSON.stringify(process.argv.slice(2))}`);
 
   if (!args.url || !args.token) {
+    appendDebugLog(args.debugLog, "missing url or token");
     process.exit(0);
     return;
   }
 
   const body = (await readStdin()).trim();
+  appendDebugLog(
+    args.debugLog,
+    `stdin.length=${body.length} stdin=${body.length > 2000 ? `${body.slice(0, 2000)}...` : body}`
+  );
 
   if (!body) {
+    appendDebugLog(args.debugLog, "empty stdin body");
     process.exit(0);
     return;
   }
@@ -62,11 +108,13 @@ async function main() {
   try {
     targetUrl = new URL(args.url);
   } catch {
+    appendDebugLog(args.debugLog, `invalid url=${args.url}`);
     process.exit(0);
     return;
   }
 
   const transport = targetUrl.protocol === "https:" ? https : http;
+  const timeoutMs = resolveRequestTimeoutMs(body);
   const request = transport.request(
     targetUrl,
     {
@@ -78,18 +126,36 @@ async function main() {
       }
     },
     (response) => {
-      response.resume();
+      const chunks = [];
+      response.on("data", (chunk) => {
+        chunks.push(Buffer.from(chunk));
+      });
       response.on("end", () => {
+        const responseBody = Buffer.concat(chunks).toString("utf8").trim();
+        appendDebugLog(
+          args.debugLog,
+          `response.status=${response.statusCode ?? 0} body=${responseBody.length > 2000 ? `${responseBody.slice(0, 2000)}...` : responseBody}`
+        );
+
+        if (responseBody) {
+          process.stdout.write(responseBody);
+        }
+
         process.exit(0);
       });
     }
   );
 
-  request.setTimeout(1500, () => {
+  request.setTimeout(timeoutMs, () => {
+    appendDebugLog(args.debugLog, `request.timeout timeoutMs=${timeoutMs}`);
     request.destroy();
     process.exit(0);
   });
-  request.on("error", () => {
+  request.on("error", (error) => {
+    appendDebugLog(
+      args.debugLog,
+      `request.error message=${error instanceof Error ? error.message : String(error)}`
+    );
     process.exit(0);
   });
   request.write(body);

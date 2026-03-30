@@ -21,6 +21,7 @@ import {
 import type { HostConfig } from "../../config/env.js";
 import { AppError } from "../../shared/errors/app-error.js";
 import { createId } from "../../shared/utils/id.js";
+import { logPermissionDebug } from "../../shared/utils/permission-debug-log.js";
 import { nowIso } from "../../shared/utils/time.js";
 import type { AuthUserRepository } from "../../storage/repositories/auth-user-repository.js";
 import type { SessionBindingRepository } from "../../storage/repositories/session-binding-repository.js";
@@ -41,6 +42,12 @@ import type {
   SessionImageAttachmentInput
 } from "./session-message-attachment-service.js";
 import { SessionMessageAttachmentService } from "./session-message-attachment-service.js";
+import {
+  SessionPermissionRequestService,
+  type SessionPermissionEnvelope,
+  type SessionPermissionReplyInput,
+  type SessionPermissionRequestView
+} from "./session-permission-request-service.js";
 import { mapSessionProviderError } from "./session-provider-error-mapper.js";
 import type { SessionHistoryEnvelope, SessionHistoryService } from "./session-history-service.js";
 
@@ -165,7 +172,8 @@ export type SessionRuntimeEnvelope =
   | SessionRuntimeMessageEnvelope
   | SessionRuntimeStatusEnvelope
   | SessionRuntimeErrorEnvelope
-  | SessionInterruptedEnvelope;
+  | SessionInterruptedEnvelope
+  | SessionPermissionEnvelope;
 
 type ExternalRuntimeStatus = Extract<SessionRuntimeStatusEnvelope["status"], "running" | "completed" | "failed">;
 
@@ -185,6 +193,12 @@ interface ClaudeHookEventPayload {
   cwd?: string;
   reason?: string;
   stop_hook_active?: boolean;
+  tool_name?: string;
+  tool_input?: unknown;
+  permission_suggestions?: unknown;
+  title?: string;
+  message?: string;
+  notification_type?: string;
 }
 
 interface ExternalRuntimeSnapshot {
@@ -199,6 +213,7 @@ interface ExternalRuntimeSnapshot {
 
 export class SessionLiveRuntimeService {
   private readonly providerRuntimeService: ProviderRuntimeService;
+  private readonly sessionPermissionRequestService: SessionPermissionRequestService;
   private readonly externalRuntimeSnapshots = new Map<string, ExternalRuntimeSnapshot>();
   private readonly runtimeListeners = new Map<
     string,
@@ -222,7 +237,29 @@ export class SessionLiveRuntimeService {
     private readonly sessionStatusSnapshotRepository: SessionStatusSnapshotRepository,
     private readonly config: HostConfig
   ) {
-    this.providerRuntimeService = new ProviderRuntimeService(createProviderRuntimeAdapters(config));
+    this.sessionPermissionRequestService = new SessionPermissionRequestService(
+      sessionHistoryService,
+      sessionBindingRepository,
+      authUserRepository,
+      workspaceService,
+      config,
+      async (envelope) => {
+        await this.emitExternalRuntimeEnvelope(envelope);
+      },
+      async (input) => {
+        return this.resolveActiveClaudePermissionSession(input);
+      }
+    );
+    this.providerRuntimeService = new ProviderRuntimeService(
+      createProviderRuntimeAdapters(config, {
+        handleCodexServerRequest: async (input) =>
+          this.sessionPermissionRequestService.handleCodexServerRequest(
+            input.sessionId,
+            input.providerSessionId,
+            input.request
+          )
+      })
+    );
   }
 
   async startLiveSession(input: StartLiveSessionInput): Promise<LiveMessageAcceptedResult> {
@@ -522,26 +559,22 @@ export class SessionLiveRuntimeService {
   }
 
   getClaudeHookBridgeConfig(): ClaudeHookBridgeConfig {
-    const bridgeUrl = `http://127.0.0.1:${this.config.port}/api/providers/claude-code/hook-bridge/events`;
-    const scriptPath = path.resolve(process.cwd(), "scripts", "claude-hook-bridge.cjs");
-    const command = `node "${scriptPath}" --url "${bridgeUrl}" --token "${this.config.claudeHookBridgeToken}"`;
-
-    return {
-      provider: "claude-code",
-      bridgeUrl,
-      token: this.config.claudeHookBridgeToken,
-      scriptPath,
-      command,
-      supportedEvents: ["UserPromptSubmit", "SessionStart", "Stop", "StopFailure", "SessionEnd"]
-    };
+    return buildClaudeHookBridgeConfig(this.config);
   }
 
   async ingestClaudeHookEvent(payload: ClaudeHookEventPayload): Promise<{
     accepted: boolean;
     ignored: boolean;
     sessionId: string | null;
+    bridgeResponse: Record<string, unknown> | null;
   }> {
     const hookEventName = normalizeClaudeHookEventName(payload.hook_event_name);
+    logPermissionDebug("claude_hook_event.ingest.begin", {
+      hookEventName,
+      sessionId: payload.session_id ?? null,
+      cwd: payload.cwd ?? null,
+      transcriptPath: payload.transcript_path ?? null
+    });
 
     if (!hookEventName) {
       throw new AppError({
@@ -553,11 +586,31 @@ export class SessionLiveRuntimeService {
     }
 
     if (!isSupportedClaudeHookEvent(hookEventName)) {
+      logPermissionDebug("claude_hook_event.ingest.unsupported", {
+        hookEventName
+      });
       return {
         accepted: true,
         ignored: true,
-        sessionId: null
+        sessionId: null,
+        bridgeResponse: null
       };
+    }
+
+    if (hookEventName === "PreToolUse") {
+      logPermissionDebug("claude_hook_event.route", {
+        hookEventName,
+        route: "handleClaudePreToolUse"
+      });
+      return this.sessionPermissionRequestService.handleClaudePreToolUse(payload);
+    }
+
+    if (hookEventName === "PermissionRequest") {
+      logPermissionDebug("claude_hook_event.route", {
+        hookEventName,
+        route: "handleClaudePermissionRequest"
+      });
+      return this.sessionPermissionRequestService.handleClaudePermissionRequest(payload);
     }
 
     const providerSessionId = normalizeRequiredText(payload.session_id, "session_id");
@@ -565,10 +618,16 @@ export class SessionLiveRuntimeService {
     const workspace = this.workspaceService.findWorkspaceByPath(workspacePath);
 
     if (!workspace) {
+      logPermissionDebug("claude_hook_event.workspace_not_found", {
+        hookEventName,
+        sessionId: payload.session_id ?? null,
+        cwd: payload.cwd ?? null
+      });
       return {
         accepted: true,
         ignored: true,
-        sessionId: null
+        sessionId: null,
+        bridgeResponse: null
       };
     }
 
@@ -581,12 +640,19 @@ export class SessionLiveRuntimeService {
 
     const timestamp = nowIso();
     const runtimeUpdate = mapClaudeHookToRuntimeUpdate(hookEventName, payload, timestamp);
+    logPermissionDebug("claude_hook_event.runtime_update", {
+      hookEventName,
+      sessionId: binding.sessionId,
+      providerSessionId,
+      hasRuntimeUpdate: runtimeUpdate !== null
+    });
 
     if (!runtimeUpdate) {
       return {
         accepted: true,
         ignored: true,
-        sessionId: binding.sessionId
+        sessionId: binding.sessionId,
+        bridgeResponse: null
       };
     }
 
@@ -596,7 +662,8 @@ export class SessionLiveRuntimeService {
       return {
         accepted: true,
         ignored: true,
-        sessionId: binding.sessionId
+        sessionId: binding.sessionId,
+        bridgeResponse: null
       };
     }
 
@@ -611,7 +678,8 @@ export class SessionLiveRuntimeService {
     return {
       accepted: true,
       ignored: false,
-      sessionId: binding.sessionId
+      sessionId: binding.sessionId,
+      bridgeResponse: null
     };
   }
 
@@ -720,6 +788,27 @@ export class SessionLiveRuntimeService {
     };
   }
 
+  async listPermissionRequests(
+    sessionId: string,
+    userId: string
+  ): Promise<SessionPermissionRequestView[]> {
+    return this.sessionPermissionRequestService.listSessionPermissionRequests(sessionId, userId);
+  }
+
+  async replyPermissionRequest(
+    sessionId: string,
+    userId: string,
+    requestId: string,
+    input: SessionPermissionReplyInput
+  ): Promise<SessionPermissionRequestView> {
+    return this.sessionPermissionRequestService.replyToSessionPermissionRequest(
+      sessionId,
+      userId,
+      requestId,
+      input
+    );
+  }
+
   subscribeRuntime(
     sessionId: string,
     onEnvelope: (envelope: SessionRuntimeEnvelope | SessionHistoryEnvelope) => Promise<void> | void
@@ -773,6 +862,7 @@ export class SessionLiveRuntimeService {
     this.queueRetryTimers.clear();
     this.runtimeMessageSeenSessions.clear();
     this.runtimeHistoryFallbackSentSessions.clear();
+    await this.sessionPermissionRequestService.dispose();
     await this.providerRuntimeService.dispose();
     this.externalRuntimeSnapshots.clear();
     this.runtimeListeners.clear();
@@ -1680,6 +1770,48 @@ export class SessionLiveRuntimeService {
   private clearExternalRuntimeSnapshot(sessionId: string): void {
     this.externalRuntimeSnapshots.delete(sessionId);
   }
+
+  private async resolveActiveClaudePermissionSession(input: {
+    providerSessionId: string;
+    workspaceId: string;
+    workspacePath: string;
+    transcriptPath: string | null;
+  }): Promise<{ sessionId: string; rawStoreRef: string } | null> {
+    const activeSnapshots = this.providerRuntimeService
+      .listSnapshots()
+      .filter(
+        (snapshot) =>
+          snapshot.provider === "claude-code" &&
+          snapshot.workspaceId === input.workspaceId &&
+          isActiveRuntimeState(snapshot.runningState)
+      );
+
+    if (activeSnapshots.length !== 1) {
+      return null;
+    }
+
+    const activeSnapshot = activeSnapshots[0];
+
+    if (!activeSnapshot) {
+      return null;
+    }
+
+    const rawStoreRef =
+      input.transcriptPath ??
+      activeSnapshot.rawStoreRef ??
+      buildClaudeRawStoreRef(this.config.claudeCodeHomeDir, input.workspacePath, input.providerSessionId);
+
+    this.sessionHistoryService.persistSessionBinding(activeSnapshot.sessionId, input.workspaceId, {
+      provider: "claude-code",
+      providerSessionId: input.providerSessionId,
+      rawStoreRef
+    });
+
+    return {
+      sessionId: activeSnapshot.sessionId,
+      rawStoreRef
+    };
+  }
 }
 
 function createSyntheticUserMessage(
@@ -1736,6 +1868,9 @@ function normalizeClaudeHookEventName(value: string | undefined): string | null 
 
 function isSupportedClaudeHookEvent(value: string): boolean {
   return (
+    value === "PreToolUse" ||
+    value === "PermissionRequest" ||
+    value === "Notification" ||
     value === "UserPromptSubmit" ||
     value === "SessionStart" ||
     value === "Stop" ||
@@ -1900,17 +2035,76 @@ function isTerminalSessionRunningState(
   return state === "completed" || state === "interrupted" || state === "failed";
 }
 
-function createProviderRuntimeAdapters(config: HostConfig): ProviderRuntimeAdapter[] {
+function createProviderRuntimeAdapters(
+  config: HostConfig,
+  options: {
+    handleCodexServerRequest?: (input: {
+      sessionId: string;
+      providerSessionId: string;
+      request: Record<string, unknown>;
+    }) => Promise<unknown>;
+  } = {}
+): ProviderRuntimeAdapter[] {
+  const claudeHookBridgeConfig = buildClaudeHookBridgeConfig(config);
   return [
     new ClaudeRuntimeAdapter({
-      homeDir: config.claudeCodeHomeDir
+      homeDir: config.claudeCodeHomeDir,
+      hookBridge: {
+        url: claudeHookBridgeConfig.bridgeUrl,
+        token: config.claudeHookBridgeToken,
+        scriptPath: claudeHookBridgeConfig.scriptPath
+      }
     }),
-    new CodexRuntimeAdapter(),
+    new CodexRuntimeAdapter({
+      homeDir: config.codexHomeDir,
+      commandPath: config.codexCliPath,
+      handleServerRequest: options.handleCodexServerRequest
+    }),
     new OpenCodeRuntimeAdapter({
       baseUrl: config.opencodeBaseUrl,
       baseUrlResolver: config.opencodeBaseUrlResolver?.resolve.bind(config.opencodeBaseUrlResolver)
     })
   ];
+}
+
+function buildClaudeHookBridgeConfig(config: HostConfig): ClaudeHookBridgeConfig {
+  const bridgeUrl = `http://127.0.0.1:${config.port}/api/providers/claude-code/hook-bridge/events`;
+  const scriptPath = resolveClaudeHookBridgeScriptPath();
+  const command = `node "${scriptPath}" --url "${bridgeUrl}" --token "${config.claudeHookBridgeToken}"`;
+
+  return {
+    provider: "claude-code",
+    bridgeUrl,
+    token: config.claudeHookBridgeToken,
+    scriptPath,
+    command,
+    supportedEvents: [
+      "PreToolUse",
+      "PermissionRequest",
+      "Notification",
+      "UserPromptSubmit",
+      "SessionStart",
+      "Stop",
+      "StopFailure",
+      "SessionEnd"
+    ]
+  };
+}
+
+function resolveClaudeHookBridgeScriptPath(): string {
+  const candidates = [
+    path.resolve(process.cwd(), "scripts", "claude-hook-bridge.cjs"),
+    path.resolve(process.cwd(), "..", "scripts", "claude-hook-bridge.cjs"),
+    path.resolve(process.cwd(), "..", "..", "scripts", "claude-hook-bridge.cjs")
+  ];
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return candidates[0]!;
 }
 
 function buildClaudeRawStoreRef(homeDir: string, workspacePath: string, sessionId: string): string {

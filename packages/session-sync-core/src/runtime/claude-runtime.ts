@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { accessSync, constants, existsSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { accessSync, constants, existsSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { delimiter, dirname, isAbsolute, join, sep } from "node:path";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { tmpdir } from "node:os";
 
 import {
   buildClaudeMessageSignature,
@@ -34,6 +35,11 @@ import type {
 interface ClaudeRuntimeOptions {
   homeDir: string;
   commandPath?: string;
+  hookBridge?: {
+    url: string;
+    token: string;
+    scriptPath: string;
+  } | null;
 }
 
 interface ClaudeStreamPartState {
@@ -135,6 +141,9 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
     rawStoreRef: string,
     sessionArgs: string[]
   ): ProviderRuntimeLaunchResult {
+    const hookSettings = this.options.hookBridge
+      ? createClaudeHookSettingsFile(this.options.hookBridge)
+      : null;
     const attachmentDirectories = Array.from(
       new Set(
         request.options.attachments.map((attachment) => dirname(attachment.filePath))
@@ -148,6 +157,7 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
       "--input-format",
       "stream-json",
       "--include-partial-messages",
+      ...(hookSettings ? ["--settings", hookSettings.filePath] : []),
       ...attachmentDirectories.flatMap((directory) => ["--add-dir", directory]),
       ...sessionArgs
     ];
@@ -160,6 +170,17 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
     if (request.options.model) {
       args.push("--model", request.options.model);
     }
+
+    logClaudeRuntimeDebug("launch.begin", {
+      sessionId: request.sessionId,
+      providerSessionId,
+      workspacePath: request.workspacePath,
+      commandPath: this.commandPath,
+      args,
+      hookSettingsPath: hookSettings?.filePath ?? null,
+      hookDebugLogPath: hookSettings?.debugLogPath ?? null,
+      hookSettingsJson: hookSettings?.json ?? null
+    });
 
     let sequence = Math.max(0, request.sequenceBase ?? 0);
     const toolNameById = new Map<string, string>();
@@ -354,12 +375,14 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
       proc.on("error", (error) => {
         clearInterval(bindingRefreshTimer);
         stdinClosed = true;
+        hookSettings?.cleanup();
         void emitRuntimeError(error.message, "CLAUDE_CLI_SPAWN_FAILED").finally(resolve);
       });
 
       proc.on("close", (code, signal) => {
         clearInterval(bindingRefreshTimer);
         stdinClosed = true;
+        hookSettings?.cleanup();
 
         if (fatalWriteError) {
           void emitRuntimeError(
@@ -573,6 +596,59 @@ export function buildClaudePermissionArgs(permissionMode: string | null): string
   return [];
 }
 
+function createClaudeHookSettingsFile(input: {
+  url: string;
+  token: string;
+  scriptPath: string;
+}): { filePath: string; cleanup: () => void; debugLogPath: string; json: string } {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-claude-hooks-"));
+  const filePath = join(tempDir, "settings.json");
+  const debugLogPath = join(tmpdir(), "codingns-claude-hook-bridge.log");
+  const command = buildClaudeHookBridgeCommand(input, tempDir, debugLogPath);
+  const settings = {
+    hooks: {
+      PreToolUse: ["Bash", "Edit", "Write", "MultiEdit", "NotebookEdit"].map((matcher) => ({
+        matcher,
+        hooks: [
+          {
+            type: "command",
+            command
+          }
+        ]
+      }))
+    }
+  };
+  const settingsJson = JSON.stringify(settings);
+
+  writeFileSync(filePath, settingsJson, "utf8");
+
+  return {
+    filePath,
+    debugLogPath,
+    json: settingsJson,
+    cleanup: () => {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  };
+}
+
+function buildClaudeHookBridgeCommand(input: {
+  url: string;
+  token: string;
+  scriptPath: string;
+}, tempDir: string, debugLogPath: string): string {
+  if (process.platform === "win32") {
+    void tempDir;
+    return `${quoteShellArgument(process.execPath)} ${quoteShellArgument(input.scriptPath)} --url ${quoteShellArgument(input.url)} --token ${quoteShellArgument(input.token)} --debug-log ${quoteShellArgument(debugLogPath)}`;
+  }
+
+  return `${quoteShellArgument(process.execPath)} ${quoteShellArgument(input.scriptPath)} --url ${quoteShellArgument(input.url)} --token ${quoteShellArgument(input.token)} --debug-log ${quoteShellArgument(debugLogPath)}`;
+}
+
+function quoteShellArgument(value: string): string {
+  return `"${value.replace(/"/g, '\\"')}"`;
+}
+
 function resolveClaudeCommand(explicitPath?: string): string {
   const explicitCandidate = pickFirstNonEmpty(
     explicitPath,
@@ -609,6 +685,36 @@ function resolveClaudeCommand(explicitPath?: string): string {
 
 function shouldSpawnClaudeViaShell(commandPath: string): boolean {
   return process.platform === "win32" && /\.(cmd|bat)$/i.test(commandPath);
+}
+
+const CLAUDE_RUNTIME_DEBUG_ENABLED = process.env.CODINGNS_PERMISSION_DEBUG !== "0";
+
+function logClaudeRuntimeDebug(scope: string, detail: Record<string, unknown>): void {
+  if (!CLAUDE_RUNTIME_DEBUG_ENABLED) {
+    return;
+  }
+
+  const suffix = Object.entries(detail)
+    .filter(([, value]) => value !== undefined)
+    .map(([key, value]) => {
+      if (value === null) {
+        return `${key}=null`;
+      }
+
+      if (typeof value === "string") {
+        return `${key}=${JSON.stringify(value.length > 400 ? `${value.slice(0, 400)}...` : value)}`;
+      }
+
+      try {
+        const json = JSON.stringify(value);
+        return `${key}=${json.length > 400 ? `${json.slice(0, 400)}...` : json}`;
+      } catch {
+        return `${key}=${String(value)}`;
+      }
+    })
+    .join(" ");
+
+  console.info(`[permission-debug][claude-runtime] ${scope}${suffix ? ` ${suffix}` : ""}`);
 }
 
 function resolveExecutableCandidate(candidate: string): string | null {
