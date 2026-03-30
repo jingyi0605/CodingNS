@@ -1244,6 +1244,16 @@ export function TerminalPage() {
     );
   }
 
+  async function executeTerminalDeleteMutation(
+    workspaceId: string,
+    terminalId: string
+  ): Promise<"settled" | "timeout" | "workspace_changed"> {
+    markTerminalMutation(terminalId, "deleting");
+    showTerminalMutationToast(terminalId, "deleting");
+    await deleteTerminalRecord(terminalId);
+    return waitForTerminalMutationSettlement(workspaceId, terminalId, "deleting");
+  }
+
   async function handleCloseTerminal(terminalId: string): Promise<void> {
     if (!selectedWorkspaceId || terminalMutations[terminalId]) {
       return;
@@ -1258,22 +1268,18 @@ export function TerminalPage() {
     void (async () => {
       try {
         await closeTerminal(terminalId);
-        showToast({
-          id: toastId,
-          title: t("terminal.closed"),
-          description: t("terminal.closePendingDescription"),
-          tone: "info",
-          durationMs: null
-        });
+        const closeSettlement = await waitForTerminalMutationSettlement(
+          workspaceId,
+          terminalId,
+          "closing"
+        );
 
-        const settlement = await waitForTerminalMutationSettlement(workspaceId, terminalId, "closing");
-
-        if (settlement === "workspace_changed") {
+        if (closeSettlement === "workspace_changed") {
           dismissToast(toastId);
           return;
         }
 
-        if (settlement === "timeout") {
+        if (closeSettlement === "timeout") {
           showToast({
             id: toastId,
             title: t("terminal.closed"),
@@ -1283,9 +1289,35 @@ export function TerminalPage() {
           return;
         }
 
+        if (!terminalsRef.current.some((terminal) => terminal.id === terminalId)) {
+          showToast({
+            id: toastId,
+            title: t("terminal.deleted"),
+            tone: "success"
+          });
+          return;
+        }
+
+        const deleteSettlement = await executeTerminalDeleteMutation(workspaceId, terminalId);
+
+        if (deleteSettlement === "workspace_changed") {
+          dismissToast(toastId);
+          return;
+        }
+
+        if (deleteSettlement === "timeout") {
+          showToast({
+            id: toastId,
+            title: t("terminal.deleted"),
+            description: t("terminal.deleteSyncDelayed"),
+            tone: "warning"
+          });
+          return;
+        }
+
         showToast({
           id: toastId,
-          title: t("terminal.closeCompleted"),
+          title: t("terminal.deleted"),
           tone: "success"
         });
       } catch (error) {
@@ -1313,8 +1345,7 @@ export function TerminalPage() {
 
     void (async () => {
       try {
-        await deleteTerminalRecord(terminalId);
-        const settlement = await waitForTerminalMutationSettlement(workspaceId, terminalId, "deleting");
+        const settlement = await executeTerminalDeleteMutation(workspaceId, terminalId);
 
         if (settlement === "workspace_changed") {
           dismissToast(toastId);

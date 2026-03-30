@@ -677,8 +677,9 @@ describe("TerminalPage", () => {
     expect(screen.queryByRole("menuitem", { name: "关闭终端" })).not.toBeInTheDocument();
   });
 
-  it("关闭终端时会先显示关闭中状态，再在后台同步关闭结果", async () => {
+  it("关闭终端时会在关闭成功后自动删除终端记录", async () => {
     const closeDeferred = createDeferred<{ success: true }>();
+    const deleteDeferred = createDeferred<{ success: true }>();
     const runningTerminal = buildTerminal({
       id: "terminal-running",
       name: "运行中终端"
@@ -698,6 +699,10 @@ describe("TerminalPage", () => {
       items: [closedTerminal]
     });
     mockCloseTerminal.mockImplementationOnce(() => closeDeferred.promise);
+    mockListWorkspaceTerminals.mockResolvedValueOnce({
+      items: []
+    });
+    mockDeleteTerminalRecord.mockImplementationOnce(() => deleteDeferred.promise);
 
     renderPage();
 
@@ -716,7 +721,22 @@ describe("TerminalPage", () => {
       expect(mockListWorkspaceTerminals).toHaveBeenCalledTimes(1);
     });
     await waitFor(() => {
-      expect(screen.queryByText("关闭中")).not.toBeInTheDocument();
+      expect(mockDeleteTerminalRecord).toHaveBeenCalledWith("terminal-running");
+    });
+    expect(await screen.findByText("删除中")).toBeInTheDocument();
+
+    deleteDeferred.resolve({
+      success: true
+    });
+
+    await waitFor(() => {
+      expect(mockListWorkspaceTerminals).toHaveBeenCalledTimes(2);
+    });
+    await waitFor(() => {
+      expect(screen.queryByText("删除中")).not.toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(screen.queryByText("运行中终端")).not.toBeInTheDocument();
     });
   });
 
