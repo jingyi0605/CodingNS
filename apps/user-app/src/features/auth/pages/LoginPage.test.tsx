@@ -43,6 +43,9 @@ function mockNavigator({
 describe("LoginPage", () => {
   beforeEach(() => {
     window.localStorage.clear();
+    document.head.innerHTML = `
+      <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    `;
     clientConfigStore.hydrate({
       platform: "web",
       hostBaseUrl: "http://127.0.0.1:3002",
@@ -67,6 +70,7 @@ describe("LoginPage", () => {
   afterEach(() => {
     global.fetch = originalFetch;
     vi.restoreAllMocks();
+    document.head.innerHTML = "";
 
     if (userAgentDescriptor) {
       Object.defineProperty(window.navigator, "userAgent", userAgentDescriptor);
@@ -101,11 +105,15 @@ describe("LoginPage", () => {
     await screen.findByText(t("auth.loginTitle"));
 
     const passwordInput = screen.getByLabelText(t("auth.password")) as HTMLInputElement;
+    const viewportMeta = document.querySelector('meta[name="viewport"]');
 
     expect(passwordInput.value).toBe("");
     expect(screen.queryByRole("checkbox", { name: t("auth.rememberPassword") })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: new RegExp(t("auth.serverSettings")) })).not.toBeInTheDocument();
     expect(screen.getByText(`v${__APP_VERSION__}`)).toBeInTheDocument();
+    expect(viewportMeta?.getAttribute("content")).toBe(
+      "width=device-width, initial-scale=1.0, viewport-fit=cover"
+    );
   });
 
   it("Windows 客户端会显示保存密码并回填已保存凭据", async () => {
@@ -178,6 +186,9 @@ describe("LoginPage", () => {
     expect(
       await screen.findByRole("button", { name: new RegExp(t("auth.serverSettings")) })
     ).toBeInTheDocument();
+    expect(document.querySelector('meta[name="viewport"]')?.getAttribute("content")).toBe(
+      "width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    );
   });
 
   it("登录页修改服务器后，不会再被记住密码里的旧服务器地址回滚", async () => {

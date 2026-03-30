@@ -20,6 +20,10 @@ import {
 } from "../store/remembered-login";
 import { ServerSettingsModal } from "../components/ServerSettingsModal";
 
+const DEFAULT_VIEWPORT_CONTENT = "width=device-width, initial-scale=1.0, viewport-fit=cover";
+const NATIVE_MOBILE_LOGIN_VIEWPORT_CONTENT =
+  "width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover";
+
 // Animated background particles
 function ParticleField() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -187,11 +191,36 @@ export function LoginPage() {
   const returnTo = useMemo(() => searchParams.get("returnTo") ?? "/", [searchParams]);
   const { theme } = useTheme();
   const rememberedServerAppliedRef = useRef(false);
+  const isNativeMobileLogin = platform.isNativeMobile;
 
   // Map app theme to login page theme (light or dark)
   const loginTheme = useMemo(() => {
     return theme === "light" ? "light" : "dark";
   }, [theme]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return;
+    }
+
+    const viewportMeta = document.querySelector('meta[name="viewport"]');
+
+    if (!(viewportMeta instanceof HTMLMetaElement)) {
+      return;
+    }
+
+    const previousContent = viewportMeta.getAttribute("content") ?? DEFAULT_VIEWPORT_CONTENT;
+
+    if (isNativeMobileLogin) {
+      viewportMeta.setAttribute("content", NATIVE_MOBILE_LOGIN_VIEWPORT_CONTENT);
+    } else {
+      viewportMeta.setAttribute("content", DEFAULT_VIEWPORT_CONTENT);
+    }
+
+    return () => {
+      viewportMeta.setAttribute("content", previousContent);
+    };
+  }, [isNativeMobileLogin]);
 
   useEffect(() => {
     if (rememberedServerAppliedRef.current) {
@@ -289,7 +318,11 @@ export function LoginPage() {
   const passwordInputId = "login-password";
 
   return (
-    <main className="cyber-login-page" data-theme={loginTheme}>
+    <main
+      className="cyber-login-page"
+      data-theme={loginTheme}
+      data-native-mobile={isNativeMobileLogin ? "true" : "false"}
+    >
       {/* Animated Background */}
       <div className="cyber-bg">
         <div className="cyber-grid" />
@@ -307,143 +340,145 @@ export function LoginPage() {
           <LanguageSwitcher variant="compact" />
         </div>
 
-        {/* Logo / Brand */}
-        <div className="cyber-brand">
-          <div className="cyber-logo">
-            <img src="/logo.png" alt="CodingNS" className="cyber-logo-svg" />
-          </div>
-          <h1 className="cyber-brand-title">
-            <GlitchText text="CodingNS" />
-          </h1>
-          <p className="cyber-brand-subtitle">
-            <TypewriterText text={t("auth.loginSubtitle")} />
-          </p>
-        </div>
-
-        {/* Login Card */}
-        <div className="cyber-card">
-          {/* Decorative corners */}
-          <div className="cyber-corner corner-tl" />
-          <div className="cyber-corner corner-tr" />
-          <div className="cyber-corner corner-bl" />
-          <div className="cyber-corner corner-br" />
-
-          {/* Header line */}
-          <div className="cyber-card-header">
-            <div className="cyber-line" />
-            <span className="cyber-card-label">
-              {t("auth.loginTitle").toUpperCase()}
-            </span>
-            <div className="cyber-line" />
+        <div className="cyber-login-content">
+          {/* Logo / Brand */}
+          <div className="cyber-brand">
+            <div className="cyber-logo">
+              <img src="/logo.png" alt="CodingNS" className="cyber-logo-svg" />
+            </div>
+            <h1 className="cyber-brand-title">
+              <GlitchText text="CodingNS" />
+            </h1>
+            <p className="cyber-brand-subtitle">
+              <TypewriterText text={t("auth.loginSubtitle")} />
+            </p>
           </div>
 
-          <form className="cyber-form" onSubmit={handleSubmit}>
-            {/* Username Field */}
-            <div className={`cyber-field ${focusedField === "username" ? "focused" : ""}`}>
-              <div className="cyber-field-border">
-                <div className="cyber-field-border-glow" />
-              </div>
-              <label className="cyber-field-label" htmlFor={usernameInputId}>
-                <span className="cyber-field-icon">❯</span>
-                {t("auth.username")}
-              </label>
-              <input
-                id={usernameInputId}
-                aria-label={t("auth.username")}
-                className="cyber-input"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                onFocus={() => setFocusedField("username")}
-                onBlur={() => setFocusedField(null)}
-                autoComplete="username"
-              />
-            </div>
+          {/* Login Card */}
+          <div className="cyber-card">
+            {/* Decorative corners */}
+            <div className="cyber-corner corner-tl" />
+            <div className="cyber-corner corner-tr" />
+            <div className="cyber-corner corner-bl" />
+            <div className="cyber-corner corner-br" />
 
-            {/* Password Field */}
-            <div className={`cyber-field ${focusedField === "password" ? "focused" : ""}`}>
-              <div className="cyber-field-border">
-                <div className="cyber-field-border-glow" />
-              </div>
-              <label className="cyber-field-label" htmlFor={passwordInputId}>
-                <span className="cyber-field-icon">⚷</span>
-                {t("auth.password")}
-              </label>
-              <input
-                id={passwordInputId}
-                aria-label={t("auth.password")}
-                className="cyber-input"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                onFocus={() => setFocusedField("password")}
-                onBlur={() => setFocusedField(null)}
-                autoComplete="current-password"
-              />
-            </div>
-
-            {rememberPasswordSupported ? (
-              <label className="cyber-remember-toggle">
-                <input
-                  aria-label={t("auth.rememberPassword")}
-                  type="checkbox"
-                  checked={rememberPassword}
-                  onChange={(event) => setRememberPassword(event.target.checked)}
-                />
-                <span>{t("auth.rememberPassword")}</span>
-              </label>
-            ) : null}
-
-            {/* Status Message */}
-            {statusText ? (
-              <div className="cyber-status" data-tone="error">
-                <span className="cyber-status-icon">⚠</span>
-                <span>{statusText}</span>
-              </div>
-            ) : null}
-
-            {/* Submit Button */}
-            <button
-              className={`cyber-submit ${loading ? "loading" : ""}`}
-              type="submit"
-              disabled={loading}
-            >
-              <span className="cyber-submit-glow" />
-              <span className="cyber-submit-border" />
-              <span className="cyber-submit-text">
-                {loading ? (
-                  <>
-                    <span className="cyber-spinner" />
-                    {t("common.loading")}
-                  </>
-                ) : (
-                  <>
-                    <span className="cyber-submit-icon">➤</span>
-                    {t("auth.submitLogin")}
-                  </>
-                )}
+            {/* Header line */}
+            <div className="cyber-card-header">
+              <div className="cyber-line" />
+              <span className="cyber-card-label">
+                {t("auth.loginTitle").toUpperCase()}
               </span>
-            </button>
-          </form>
-
-          {/* Server Settings Button */}
-          {canConfigureServerAddress ? (
-            <div className="cyber-footer">
-              <div className="cyber-divider">
-                <span className="cyber-divider-line" />
-                <span className="cyber-divider-text">//</span>
-                <span className="cyber-divider-line" />
-              </div>
-              <button
-                className="cyber-server-btn"
-                onClick={() => setShowServerModal(true)}
-                type="button"
-              >
-                <span className="cyber-server-icon">⚙</span>
-                <span className="cyber-server-text">{t("auth.serverSettings")}</span>
-                <span className="cyber-server-current">{persistedServerBaseUrl}</span>
-              </button>
+              <div className="cyber-line" />
             </div>
-          ) : null}
+
+            <form className="cyber-form" onSubmit={handleSubmit}>
+              {/* Username Field */}
+              <div className={`cyber-field ${focusedField === "username" ? "focused" : ""}`}>
+                <div className="cyber-field-border">
+                  <div className="cyber-field-border-glow" />
+                </div>
+                <label className="cyber-field-label" htmlFor={usernameInputId}>
+                  <span className="cyber-field-icon">❯</span>
+                  {t("auth.username")}
+                </label>
+                <input
+                  id={usernameInputId}
+                  aria-label={t("auth.username")}
+                  className="cyber-input"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  onFocus={() => setFocusedField("username")}
+                  onBlur={() => setFocusedField(null)}
+                  autoComplete="username"
+                />
+              </div>
+
+              {/* Password Field */}
+              <div className={`cyber-field ${focusedField === "password" ? "focused" : ""}`}>
+                <div className="cyber-field-border">
+                  <div className="cyber-field-border-glow" />
+                </div>
+                <label className="cyber-field-label" htmlFor={passwordInputId}>
+                  <span className="cyber-field-icon">⚷</span>
+                  {t("auth.password")}
+                </label>
+                <input
+                  id={passwordInputId}
+                  aria-label={t("auth.password")}
+                  className="cyber-input"
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  onFocus={() => setFocusedField("password")}
+                  onBlur={() => setFocusedField(null)}
+                  autoComplete="current-password"
+                />
+              </div>
+
+              {rememberPasswordSupported ? (
+                <label className="cyber-remember-toggle">
+                  <input
+                    aria-label={t("auth.rememberPassword")}
+                    type="checkbox"
+                    checked={rememberPassword}
+                    onChange={(event) => setRememberPassword(event.target.checked)}
+                  />
+                  <span>{t("auth.rememberPassword")}</span>
+                </label>
+              ) : null}
+
+              {/* Status Message */}
+              {statusText ? (
+                <div className="cyber-status" data-tone="error">
+                  <span className="cyber-status-icon">⚠</span>
+                  <span>{statusText}</span>
+                </div>
+              ) : null}
+
+              {/* Submit Button */}
+              <button
+                className={`cyber-submit ${loading ? "loading" : ""}`}
+                type="submit"
+                disabled={loading}
+              >
+                <span className="cyber-submit-glow" />
+                <span className="cyber-submit-border" />
+                <span className="cyber-submit-text">
+                  {loading ? (
+                    <>
+                      <span className="cyber-spinner" />
+                      {t("common.loading")}
+                    </>
+                  ) : (
+                    <>
+                      <span className="cyber-submit-icon">➤</span>
+                      {t("auth.submitLogin")}
+                    </>
+                  )}
+                </span>
+              </button>
+            </form>
+
+            {/* Server Settings Button */}
+            {canConfigureServerAddress ? (
+              <div className="cyber-footer">
+                <div className="cyber-divider">
+                  <span className="cyber-divider-line" />
+                  <span className="cyber-divider-text">//</span>
+                  <span className="cyber-divider-line" />
+                </div>
+                <button
+                  className="cyber-server-btn"
+                  onClick={() => setShowServerModal(true)}
+                  type="button"
+                >
+                  <span className="cyber-server-icon">⚙</span>
+                  <span className="cyber-server-text">{t("auth.serverSettings")}</span>
+                  <span className="cyber-server-current">{persistedServerBaseUrl}</span>
+                </button>
+              </div>
+            ) : null}
+          </div>
         </div>
 
         {/* Version / Credits */}

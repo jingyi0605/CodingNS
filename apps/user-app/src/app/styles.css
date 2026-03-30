@@ -11054,6 +11054,14 @@ textarea:focus-visible {
   color: var(--cyber-text);
 }
 
+.cyber-login-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 32px;
+  width: 100%;
+}
+
 /* Brand Section */
 .cyber-brand {
   text-align: center;
@@ -11606,6 +11614,53 @@ textarea:focus-visible {
   opacity: 0.6;
 }
 
+.cyber-login-page[data-native-mobile="true"] {
+  --cyber-safe-top: env(safe-area-inset-top, 0px);
+  --cyber-safe-right: env(safe-area-inset-right, 0px);
+  --cyber-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --cyber-safe-left: env(safe-area-inset-left, 0px);
+  align-items: stretch;
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
+  padding:
+    var(--cyber-safe-top)
+    var(--cyber-safe-right)
+    var(--cyber-safe-bottom)
+    var(--cyber-safe-left);
+}
+
+.cyber-login-page[data-native-mobile="true"] .cyber-login-container {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  align-items: stretch;
+  gap: 24px;
+  flex: 1;
+  width: min(100%, 440px);
+  min-height: 100%;
+  padding: 20px 24px 24px;
+}
+
+.cyber-login-page[data-native-mobile="true"] .cyber-login-toolbar {
+  justify-content: flex-end;
+  min-height: 36px;
+  padding-top: 4px;
+}
+
+.cyber-login-page[data-native-mobile="true"] .cyber-login-toolbar .language-switcher {
+  max-width: 100%;
+}
+
+.cyber-login-page[data-native-mobile="true"] .cyber-login-content {
+  justify-content: center;
+  min-height: 0;
+}
+
+.cyber-login-page[data-native-mobile="true"] .cyber-version {
+  justify-content: center;
+  width: 100%;
+}
+
 .cyber-version-divider {
   opacity: 0.4;
 }
@@ -11882,8 +11937,21 @@ textarea:focus-visible {
 
 /* Responsive */
 @media (max-width: 480px) {
-  .cyber-login-container {
-    padding: 16px;
+  .cyber-login-page[data-native-mobile="true"] {
+    overflow-y: auto;
+  }
+
+  .cyber-login-page[data-native-mobile="true"] .cyber-login-container {
+    gap: 20px;
+    padding: 12px 16px 16px;
+  }
+
+  .cyber-login-page[data-native-mobile="true"] .cyber-login-toolbar {
+    padding-top: 0;
+  }
+
+  .cyber-login-page[data-native-mobile="true"] .cyber-login-content {
+    justify-content: center;
     gap: 24px;
   }
 
@@ -11894,6 +11962,17 @@ textarea:focus-visible {
 
   .cyber-card {
     padding: 24px 20px;
+  }
+
+  .cyber-login-page[data-native-mobile="true"] .cyber-login-toolbar .language-switcher-options {
+    gap: 4px;
+    padding: 3px;
+  }
+
+  .cyber-login-page[data-native-mobile="true"] .cyber-login-toolbar .language-switcher-option {
+    min-height: 28px;
+    padding: 0 10px;
+    font-size: 11px;
   }
 
   .cyber-server-current {
