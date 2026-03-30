@@ -10,6 +10,7 @@ import type {
   WorkspaceManagementSnapshot,
   WorkspacePanelSnapshotService
 } from "../modules/workbench/workspace-panel-snapshot-service.js";
+import type { WorkspaceFileWatcher } from "../modules/workbench/workspace-file-watcher.js";
 
 const WORKBENCH_REFRESH_INTERVAL_MS = 60_000;
 const SIDEBAR_REFRESH_INTERVAL_MS = 5_000;
@@ -125,8 +126,13 @@ export class WorkbenchWsHub {
 
   constructor(
     private readonly workbenchService: WorkbenchService,
-    private readonly workspacePanelSnapshotService: WorkspacePanelSnapshotService
-  ) {}
+    private readonly workspacePanelSnapshotService: WorkspacePanelSnapshotService,
+    private readonly fileWatcher: WorkspaceFileWatcher
+  ) {
+    this.fileWatcher.setOnChange((workspaceId) => {
+      this.handleWorkspaceFileChange(workspaceId);
+    });
+  }
 
   handleMessage(client: WebSocket, payload: unknown, authContext: AuthContext): boolean {
     const message = parseWorkbenchMessage(payload);
@@ -153,6 +159,7 @@ export class WorkbenchWsHub {
           paths: normalizePanelPaths(message.paths),
           lastPayloadByPath: new Map<string, string>()
         });
+        this.fileWatcher.subscribe(message.workspaceId.trim());
         void this.refreshFileTreeSubscriptions(client);
         return true;
       case "fileTree.refresh":
@@ -169,6 +176,7 @@ export class WorkbenchWsHub {
           lastRequestedAt: 0,
           refreshTask: null
         });
+        this.fileWatcher.subscribe(message.workspaceId.trim());
         void this.refreshGitSubscription(client);
         return true;
       case "git.refresh":
@@ -232,6 +240,17 @@ export class WorkbenchWsHub {
 
     channel.clients.delete(client);
     this.clientUsers.delete(client);
+
+    // 文件监听器引用计数递减
+    const fileTreeSub = this.clientFileTreeSubscriptions.get(client);
+    if (fileTreeSub) {
+      this.fileWatcher.unsubscribe(fileTreeSub.workspaceId);
+    }
+    const gitSub = this.clientGitSubscriptions.get(client);
+    if (gitSub) {
+      this.fileWatcher.unsubscribe(gitSub.workspaceId);
+    }
+
     this.clientFileTreeSubscriptions.delete(client);
     this.clientGitSubscriptions.delete(client);
     this.clientTerminalManagerSubscriptions.delete(client);
@@ -279,6 +298,27 @@ export class WorkbenchWsHub {
   private attachClient(client: WebSocket, userId: string, channel: UserChannelState): void {
     channel.clients.add(client);
     this.clientUsers.set(client, userId);
+  }
+
+  /**
+   * 文件变化回调：chokidar 检测到工作区文件变化后，失效缓存并推送更新给订阅了该工作区的客户端。
+   */
+  private handleWorkspaceFileChange(workspaceId: string): void {
+    this.workspacePanelSnapshotService.invalidateFileTree(workspaceId);
+    this.workspacePanelSnapshotService.invalidateGit(workspaceId);
+
+    for (const [, channel] of this.userChannels) {
+      for (const client of channel.clients) {
+        const fileTreeSub = this.clientFileTreeSubscriptions.get(client);
+        if (fileTreeSub && fileTreeSub.workspaceId === workspaceId) {
+          void this.refreshFileTreeSubscriptions(client, true);
+        }
+        const gitSub = this.clientGitSubscriptions.get(client);
+        if (gitSub && gitSub.workspaceId === workspaceId) {
+          void this.refreshGitSubscription(client, true);
+        }
+      }
+    }
   }
 
   private getOrCreateChannel(userId: string): UserChannelState {

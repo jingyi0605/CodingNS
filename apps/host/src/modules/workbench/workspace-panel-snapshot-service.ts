@@ -137,11 +137,26 @@ export class WorkspacePanelSnapshotService {
       return inflight;
     }
 
-    const task = Promise.all([
-      this.gitReadService.getStatus(workspaceId),
-      this.gitReadService.getHistory(workspaceId, null, GIT_HISTORY_LIMIT),
-      this.gitReadService.getBranches(workspaceId)
-    ]).then(([status, historyPage, branches]) => {
+    const task = (async () => {
+      // 先执行轻量级 status 检测（仅 2 条 git 命令）
+      const status = await this.gitReadService.getStatus(workspaceId);
+
+      // 如果有缓存，比较 status 是否有变化
+      if (cached && !isGitStatusChanged(cached.snapshot.status, status)) {
+        // 状态未变，延长缓存 TTL，跳过昂贵的 history/branches 查询
+        this.gitSnapshotCache.set(workspaceId, {
+          snapshot: cached.snapshot,
+          cachedAt: Date.now()
+        });
+        return cached.snapshot;
+      }
+
+      // 状态有变化，执行完整刷新（复用已获取的 status）
+      const [historyPage, branches] = await Promise.all([
+        this.gitReadService.getHistory(workspaceId, null, GIT_HISTORY_LIMIT),
+        this.gitReadService.getBranches(workspaceId)
+      ]);
+
       const snapshot: GitPanelSnapshot = {
         workspaceId,
         status,
@@ -157,7 +172,7 @@ export class WorkspacePanelSnapshotService {
       });
 
       return snapshot;
-    }).finally(() => {
+    })().finally(() => {
       this.gitInflight.delete(workspaceId);
     });
 
@@ -284,4 +299,40 @@ function isExpired(cachedAt: number, maxAgeMs: number): boolean {
 
 function normalizePanelPath(path: string): string {
   return path.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+}
+
+/**
+ * 比较两次 git status 结果，判断工作区是否有文件变更。
+ * 比较维度：分支元信息 + 变更文件列表（路径 + 状态）。
+ */
+function isGitStatusChanged(
+  cached: { snapshot: GitRepoSnapshot; changes: GitChangeItem[] },
+  current: { snapshot: GitRepoSnapshot; changes: GitChangeItem[] }
+): boolean {
+  if (
+    cached.snapshot.branch !== current.snapshot.branch ||
+    cached.snapshot.ahead !== current.snapshot.ahead ||
+    cached.snapshot.behind !== current.snapshot.behind ||
+    cached.snapshot.isDirty !== current.snapshot.isDirty
+  ) {
+    return true;
+  }
+
+  const cachedChanges = cached.changes;
+  const currentChanges = current.changes;
+
+  if (cachedChanges.length !== currentChanges.length) {
+    return true;
+  }
+
+  for (let i = 0; i < cachedChanges.length; i++) {
+    if (
+      cachedChanges[i].path !== currentChanges[i].path ||
+      cachedChanges[i].status !== currentChanges[i].status
+    ) {
+      return true;
+    }
+  }
+
+  return false;
 }

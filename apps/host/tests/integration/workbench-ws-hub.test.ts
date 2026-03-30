@@ -7,6 +7,16 @@ import { WorkbenchWsHub } from "../../src/ws/workbench-ws-hub.js";
 import type { AuthContext } from "../../src/modules/auth/auth-service.js";
 import type { WorkbenchService } from "../../src/modules/workbench/workbench-service.js";
 import type { WorkspacePanelSnapshotService } from "../../src/modules/workbench/workspace-panel-snapshot-service.js";
+import type { WorkspaceFileWatcher } from "../../src/modules/workbench/workspace-file-watcher.js";
+
+function createMockFileWatcher() {
+  return {
+    setOnChange: vi.fn(),
+    subscribe: vi.fn(),
+    unsubscribe: vi.fn(),
+    dispose: vi.fn()
+  } satisfies Pick<WorkspaceFileWatcher, "setOnChange" | "subscribe" | "unsubscribe" | "dispose">;
+}
 
 describe("WorkbenchWsHub", () => {
   afterEach(() => {
@@ -48,7 +58,8 @@ describe("WorkbenchWsHub", () => {
 
     const hub = new WorkbenchWsHub(
       workbenchService as unknown as WorkbenchService,
-      workspacePanelSnapshotService as unknown as WorkspacePanelSnapshotService
+      workspacePanelSnapshotService as unknown as WorkspacePanelSnapshotService,
+      createMockFileWatcher() as unknown as WorkspaceFileWatcher
     );
 
     expect(
@@ -132,7 +143,8 @@ describe("WorkbenchWsHub", () => {
 
     const hub = new WorkbenchWsHub(
       workbenchService as unknown as WorkbenchService,
-      workspacePanelSnapshotService as unknown as WorkspacePanelSnapshotService
+      workspacePanelSnapshotService as unknown as WorkspacePanelSnapshotService,
+      createMockFileWatcher() as unknown as WorkspaceFileWatcher
     );
 
     expect(
