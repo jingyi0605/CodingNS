@@ -299,7 +299,7 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
         status: "failed",
         providerSessionId: context.providerSessionId,
         rawStoreRef: context.rawStoreRef,
-        errorCode: "CODEX_CLI_TURN_FAILED",
+        errorCode: classifyCodexDetailErrorCode(detail, "CODEX_CLI_TURN_FAILED"),
         detail,
         timestamp: pickTimestamp(event)
       });
@@ -1185,9 +1185,30 @@ function classifyCodexRuntimeFailure(error: unknown): { errorCode: string; detai
   }
 
   return {
-    errorCode: "CODEX_RUNTIME_ERROR",
+    errorCode: classifyCodexDetailErrorCode(detail, "CODEX_RUNTIME_ERROR"),
     detail
   };
+}
+
+function classifyCodexDetailErrorCode(detail: string, fallback: string): string {
+  const normalized = detail.trim();
+
+  if (!normalized) {
+    return fallback;
+  }
+
+  const statusMatch =
+    normalized.match(/\bstatus\s+(\d{3})\b/i)
+    ?? normalized.match(/\bHTTP\s+(\d{3})\b/i)
+    ?? normalized.match(
+      /\b(\d{3})\s+(?:Bad Gateway|Too Many Requests|Gateway Timeout|Service Unavailable)\b/i
+    );
+
+  if (!statusMatch) {
+    return fallback;
+  }
+
+  return `CODEX_HTTP_${statusMatch[1]}`;
 }
 
 function persistSyntheticUserMessageIfNeeded(

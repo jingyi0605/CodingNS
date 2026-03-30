@@ -238,9 +238,33 @@ function inspectCodexActivity(
           : hasPendingTools
             ? null
             : lastTaskCompleteAt ?? lastEventAt,
-    errorCode: hasExplicitFailure ? "CODEX_CLI_TURN_FAILED" : null,
+    errorCode:
+      hasExplicitFailure
+        ? classifyCodexDetailErrorCode(lastTaskFailedDetail, "CODEX_CLI_TURN_FAILED")
+        : null,
     errorDetail: hasExplicitFailure ? lastTaskFailedDetail ?? "codex turn failed" : null
   };
+}
+
+function classifyCodexDetailErrorCode(detail: string | null, fallback: string): string {
+  const normalized = detail?.trim() ?? "";
+
+  if (!normalized) {
+    return fallback;
+  }
+
+  const statusMatch =
+    normalized.match(/\bstatus\s+(\d{3})\b/i)
+    ?? normalized.match(/\bHTTP\s+(\d{3})\b/i)
+    ?? normalized.match(
+      /\b(\d{3})\s+(?:Bad Gateway|Too Many Requests|Gateway Timeout|Service Unavailable)\b/i
+    );
+
+  if (!statusMatch) {
+    return fallback;
+  }
+
+  return `CODEX_HTTP_${statusMatch[1]}`;
 }
 
 function collectClaudeEnvelopes(record: Record<string, unknown>): ClaudeEnvelope[] {
