@@ -1213,6 +1213,43 @@ describe("WorkbenchLayout", () => {
     expect(within(sessionCard).queryByText(t("shell.sessionStateInferred"))).not.toBeInTheDocument();
   });
 
+  it("对 stale 会话显示待确认状态徽标", async () => {
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "Project One"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-stale",
+            title: "Host Run",
+            workspaceId: "workspace-1",
+            runningState: "stale",
+            activitySource: "runtime",
+            activityResolutionSource: "authoritative_runtime",
+            activityState: "idle"
+          })
+        ]
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-stale");
+
+    const sessionCard = await findSessionCardByTitle("Host Run");
+    expect(sessionCard.querySelector(".session-state-indicator.is-stale")).not.toBeNull();
+    expect(within(sessionCard).getByText(t("conversation.runtimeStale"))).toBeInTheDocument();
+  });
+
   it("归档成功后即使收到旧快照，也会再拉最新导航避免会话重新冒出来", async () => {
     const initialSnapshot = createWorkbenchSnapshot([
       {
@@ -2393,8 +2430,9 @@ function createSessionSummary(input: {
   parentSessionId?: string | null;
   isSubagent?: boolean;
   subagentLabel?: string | null;
-  runningState?: "idle" | "starting" | "running" | "completed" | "interrupted" | "failed";
+  runningState?: "idle" | "starting" | "running" | "stale" | "unknown" | "completed" | "interrupted" | "failed";
   activitySource?: "none" | "runtime" | "inferred";
+  activityResolutionSource?: "authoritative_runtime" | "authoritative_provider_event" | "inferred_log" | "unknown";
   activityState?: "idle" | "running" | "completed_unread";
   isFavorite?: boolean;
   syncStatus?: "idle" | "syncing" | "error";
@@ -2427,6 +2465,7 @@ function createSessionSummary(input: {
     resumedAt: null,
     runningState: input.runningState ?? "idle",
     activitySource: input.activitySource ?? "none",
+    activityResolutionSource: input.activityResolutionSource,
     lastEventAt: "2026-03-24T10:00:00.000Z",
     completedAt: null,
     lastSeenAt: null,

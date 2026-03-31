@@ -11,12 +11,20 @@ export type SessionRunningState =
   | "starting"
   | "running"
   | "reconnecting"
+  | "stale"
+  | "unknown"
   | "completed"
   | "interrupted"
   | "failed";
 export type SessionActivityState = "idle" | "running" | "completed_unread";
 export type InRunInputMode = "none" | "streaming_guidance" | "queued_guidance";
 export type SessionActivitySource = "none" | "runtime" | "inferred";
+export type SessionActivityResolutionSource =
+  | "authoritative_runtime"
+  | "authoritative_provider_event"
+  | "inferred_log"
+  | "unknown";
+export type SessionActivityConfidence = "authoritative" | "strong" | "weak";
 export type HistoryDirection = "forward" | "backward";
 
 export interface ToolCallDto {
@@ -166,9 +174,13 @@ export interface SessionSummaryDto {
   resumedAt: string | null;
   runningState: SessionRunningState | null;
   activitySource: SessionActivitySource;
+  activityResolutionSource?: SessionActivityResolutionSource;
+  activityConfidence?: SessionActivityConfidence;
+  runId?: string | null;
   lastEventAt: string | null;
   completedAt: string | null;
   lastSeenAt: string | null;
+  watchdogTriggeredAt?: string | null;
   activityState: SessionActivityState;
 }
 
@@ -358,10 +370,14 @@ export interface SessionRuntimeDto {
   inRunInputMode: InRunInputMode;
   provider: ProviderId;
   providerSessionId: string;
+  activityResolutionSource: SessionActivityResolutionSource;
+  activityConfidence: SessionActivityConfidence;
+  runId: string | null;
   detail: string | null;
   errorCode: string | null;
   errorDetail: string | null;
   updatedAt: string;
+  watchdogTriggeredAt: string | null;
   contextUsage: ContextUsageDto | null;
 }
 

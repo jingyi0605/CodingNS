@@ -31,6 +31,10 @@ import { QueuedMessageList } from "../components/QueuedMessageList";
 import { SessionHeader } from "../components/SessionHeader";
 import { useWorkbenchShell } from "../components/WorkbenchLayout";
 import { SessionRuntimeStore, useSessionRuntimeStore } from "../runtime/session-runtime-store";
+import {
+  resolveSessionActivityBadgeLabel,
+  resolveSessionIndicatorClassName
+} from "../session-activity-display";
 import { buildSessionTitlePresentation } from "../session-title";
 import {
   createPendingMessage,
@@ -1373,7 +1377,7 @@ function MobileConversationPreviewRail({
               >
                 <span
                   className={resolvePreviewIndicatorClassName(
-                    item.entry.session.activityState ?? null,
+                    item.entry.session,
                     item.entry.session.sessionId === activeSessionId
                   )}
                   aria-hidden="true"
@@ -1384,8 +1388,7 @@ function MobileConversationPreviewRail({
                   </span>
                   <span className="mobile-conversation-preview-item-meta">
                     {formatMobilePreviewMeta(
-                      item.entry.session.provider,
-                      item.entry.session.lastMessageAt ?? item.entry.session.updatedAt,
+                      item.entry.session,
                       item.entry.workspace.name
                     )}
                   </span>
@@ -1415,7 +1418,7 @@ function MobileConversationPreviewRail({
               >
                 <span
                   className={resolvePreviewIndicatorClassName(
-                    item.entry.session.activityState ?? null,
+                    item.entry.session,
                     item.entry.session.sessionId === activeSessionId
                   )}
                   aria-hidden="true"
@@ -1426,8 +1429,7 @@ function MobileConversationPreviewRail({
                   </span>
                   <span className="mobile-conversation-preview-item-meta">
                     {formatMobilePreviewMeta(
-                      item.entry.session.provider,
-                      item.entry.session.lastMessageAt ?? item.entry.session.updatedAt
+                      item.entry.session
                     )}
                   </span>
                 </span>
@@ -1485,24 +1487,50 @@ function shouldIgnorePreviewGestureTarget(target: EventTarget | null) {
   );
 }
 
-function resolvePreviewIndicatorClassName(activityState: string | null, isActive: boolean) {
-  if (activityState === "running") {
-    return "mobile-conversation-preview-indicator is-running";
-  }
+function resolvePreviewIndicatorClassName(
+  session: Pick<
+    SessionSummaryDto,
+    | "runningState"
+    | "activityState"
+    | "activitySource"
+    | "activityResolutionSource"
+    | "lastErrorCode"
+    | "lastErrorDetail"
+  >,
+  isActive: boolean
+) {
+  const className = resolveSessionIndicatorClassName("mobile-conversation-preview-indicator", session);
 
-  if (isActive) {
+  if (className.endsWith(" is-idle") && isActive) {
     return "mobile-conversation-preview-indicator is-active";
   }
 
-  return "mobile-conversation-preview-indicator is-idle";
+  return className;
 }
 
 function formatMobilePreviewMeta(
-  provider: ProviderId,
-  value: string | null,
+  session: Pick<
+    SessionSummaryDto,
+    | "provider"
+    | "lastMessageAt"
+    | "updatedAt"
+    | "runningState"
+    | "activityState"
+    | "activitySource"
+    | "activityResolutionSource"
+    | "lastErrorCode"
+    | "lastErrorDetail"
+  >,
   workspaceName?: string | null
 ) {
-  return [workspaceName ?? null, formatMobileProviderLabel(provider), formatMobilePreviewTime(value)]
+  const activityBadgeLabel = resolveSessionActivityBadgeLabel(session);
+
+  return [
+    workspaceName ?? null,
+    formatMobileProviderLabel(session.provider),
+    formatMobilePreviewTime(session.lastMessageAt ?? session.updatedAt),
+    activityBadgeLabel
+  ]
     .filter(Boolean)
     .join(" · ");
 }
@@ -1686,7 +1714,7 @@ function ConversationArchiveFolderModal({
                   <article key={session.sessionId} className="workbench-archive-item">
                     <div className="workbench-archive-item-main">
                       <strong title={titlePresentation.fullTitle}>{titlePresentation.displayTitle}</strong>
-                      <p>{formatMobilePreviewMeta(session.provider, session.lastMessageAt ?? session.updatedAt)}</p>
+                      <p>{formatMobilePreviewMeta(session)}</p>
                     </div>
                     <button
                       type="button"

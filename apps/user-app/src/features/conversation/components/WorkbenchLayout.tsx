@@ -59,6 +59,12 @@ import {
   type WorkspaceDto
 } from "../api/conversation-api";
 import { searchFiles, type FileNodeDto } from "../api/file-context-api";
+import {
+  hasSessionDisplayError,
+  resolveSessionActivityBadgeClassName,
+  resolveSessionActivityBadgeLabel,
+  resolveSessionIndicatorClassName
+} from "../session-activity-display";
 import { buildSessionTitlePresentation } from "../session-title";
 import {
   buildDraftSessionPath,
@@ -459,10 +465,8 @@ function formatSessionMeta(session: SessionSummaryDto) {
 
 function hasSessionError(session: SessionSummaryDto) {
   return (
-    session.runningState === "failed"
+    hasSessionDisplayError(session)
     || session.syncStatus === "error"
-    || Boolean(session.lastErrorCode?.trim())
-    || Boolean(session.lastErrorDetail?.trim())
   );
 }
 
@@ -549,31 +553,7 @@ function sessionStateClassName(
     isActive?: boolean;
   }
 ) {
-  if (hasSessionError(session)) {
-    return "session-state-indicator is-error";
-  }
-
-  if (options?.hasSubagents) {
-    if (session.activityState === "running" || options.isActive) {
-      return "session-state-indicator is-subagent-running";
-    }
-
-    return "session-state-indicator is-subagent";
-  }
-
-  if (session.activityState === "running") {
-    if (session.activitySource === "inferred") {
-      return "session-state-indicator is-running-inferred";
-    }
-
-    return "session-state-indicator is-running";
-  }
-
-  if (session.activityState === "completed_unread") {
-    return "session-state-indicator is-unread";
-  }
-
-  return "session-state-indicator is-idle";
+  return resolveSessionIndicatorClassName("session-state-indicator", session, options);
 }
 
 function readStoredNumber(key: string, fallback: number) {
@@ -1465,6 +1445,11 @@ function SessionCard({
   const sessionErrorPreview = sessionErrorSummary
     ? truncateSessionErrorSummary(sessionErrorSummary)
     : null;
+  const sessionActivityBadgeLabel = resolveSessionActivityBadgeLabel(session);
+  const sessionActivityBadgeClassName =
+    sessionActivityBadgeLabel
+      ? resolveSessionActivityBadgeClassName("session-activity-badge", session)
+      : null;
   const menuTriggerRef = useRef<HTMLButtonElement | null>(null);
   const [menuPositionStyle, setMenuPositionStyle] = useState<CSSProperties | null>(null);
 
@@ -1618,6 +1603,9 @@ function SessionCard({
             </div>
             <div className="session-meta-row">
               <span className="session-meta">{buildSessionMeta(session, workspace, showWorkspaceName)}</span>
+              {sessionActivityBadgeLabel && sessionActivityBadgeClassName ? (
+                <span className={sessionActivityBadgeClassName}>{sessionActivityBadgeLabel}</span>
+              ) : null}
               <span className={`session-provider-badge ${session.provider}`}>{formatProviderLabel(session.provider)}</span>
             </div>
             {sessionErrorPreview ? (

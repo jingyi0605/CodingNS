@@ -7,8 +7,18 @@ export type SessionRunningState =
   | "completed"
   | "interrupted"
   | "failed";
+export type SessionResolvedRunningState =
+  | SessionRunningState
+  | "stale"
+  | "unknown";
 export type SessionActivityState = "idle" | "running" | "completed_unread";
 export type SessionActivitySource = "none" | "runtime" | "inferred";
+export type SessionActivityResolutionSource =
+  | "authoritative_runtime"
+  | "authoritative_provider_event"
+  | "inferred_log"
+  | "unknown";
+export type SessionActivityConfidence = "authoritative" | "strong" | "weak";
 
 export interface BootstrapState {
   id: "default";
@@ -164,11 +174,15 @@ export interface SessionListItem {
   lastErrorCode: string | null;
   lastErrorDetail: string | null;
   resumedAt: string | null;
-  runningState: SessionRunningState | null;
+  runningState: SessionResolvedRunningState | null;
   activitySource: SessionActivitySource;
+  activityResolutionSource?: SessionActivityResolutionSource;
+  activityConfidence?: SessionActivityConfidence;
+  runId?: string | null;
   lastEventAt: string | null;
   completedAt: string | null;
   lastSeenAt: string | null;
+  watchdogTriggeredAt?: string | null;
   activityState: SessionActivityState;
 }
 

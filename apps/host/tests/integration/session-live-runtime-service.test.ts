@@ -404,6 +404,10 @@ describe("SessionLiveRuntimeService", () => {
 
     expect(runtime.hasActiveRun).toBe(true);
     expect(runtime.inRunInputMode).toBe("queued_guidance");
+    expect(runtime.activityResolutionSource).toBe("authoritative_runtime");
+    expect(runtime.activityConfidence).toBe("authoritative");
+    expect(runtime.runId).toBe("runtime:session-1:2026-03-26T10:00:00.000Z");
+    expect(runtime.watchdogTriggeredAt).toBeNull();
   });
 
   it("getSessionRuntime 在 active run 结束后会回传持久化的错误详情", async () => {
@@ -452,6 +456,9 @@ describe("SessionLiveRuntimeService", () => {
     expect(runtime.errorCode).toBe("CLAUDE_CLI_EXIT_NON_ZERO");
     expect(runtime.errorDetail).toBe("npm ERR! missing script: dev");
     expect(runtime.detail).toBe("npm ERR! missing script: dev");
+    expect(runtime.activityResolutionSource).toBe("unknown");
+    expect(runtime.activityConfidence).toBe("weak");
+    expect(runtime.runId).toBeNull();
   });
 
   it("运行中会话可以把新消息加入项目队列", async () => {
@@ -1247,7 +1254,13 @@ describe("SessionLiveRuntimeService", () => {
         content: "hello"
       }
     });
-    const requests = await service.listPermissionRequests("session-1", "user-1");
+    let requests = await service.listPermissionRequests("session-1", "user-1");
+
+    if (requests.length === 0) {
+      await Promise.resolve();
+      requests = await service.listPermissionRequests("session-1", "user-1");
+    }
+
     expect(requests).toHaveLength(1);
     await service.replyPermissionRequest("session-1", "user-1", requests[0].id, {
       action: "allow"
@@ -1419,6 +1432,57 @@ describe("SessionLiveRuntimeService", () => {
         })
       }
     ]);
+
+    subscription.close();
+  });
+
+  it("subscribeRuntime 会先推送统一的 session.activity 裁决事件", () => {
+    const { service } = createService();
+    const providerRuntimeService = {
+      getSnapshot: vi.fn(() => ({
+        sessionId: "session-1",
+        workspaceId: "workspace-1",
+        provider: "codex",
+        providerSessionId: "codex-session-1",
+        rawStoreRef: "codex://session/codex-session-1",
+        runningState: "running",
+        attachedClients: 1,
+        startedAt: "2026-03-28T10:00:00.000Z",
+        lastEventAt: "2026-03-28T10:00:05.000Z",
+        completedAt: null,
+        detail: "still working",
+        errorCode: null,
+        supportsInterrupt: true
+      })),
+      subscribe: vi.fn(() => ({
+        close: vi.fn()
+      }))
+    };
+    Object.defineProperty(service, "providerRuntimeService", {
+      value: providerRuntimeService,
+      configurable: true
+    });
+
+    const envelopes: Array<Record<string, unknown>> = [];
+    const subscription = service.subscribeRuntime("session-1", (envelope) => {
+      envelopes.push(envelope as Record<string, unknown>);
+    });
+
+    expect(envelopes).toContainEqual({
+      type: "session.activity",
+      sessionId: "session-1",
+      runningState: "running",
+      activityResolutionSource: "authoritative_runtime",
+      activityConfidence: "authoritative",
+      runId: "runtime:session-1:2026-03-28T10:00:00.000Z",
+      detail: "still working",
+      errorCode: null,
+      errorDetail: "still working",
+      hasActiveRun: true,
+      canInterrupt: true,
+      updatedAt: "2026-03-28T10:00:05.000Z",
+      watchdogTriggeredAt: null
+    });
 
     subscription.close();
   });

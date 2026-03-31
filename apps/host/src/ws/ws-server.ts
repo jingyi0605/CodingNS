@@ -180,6 +180,7 @@ export function createWsServer(
         if (
           deduped.type === "session.backfill" ||
           deduped.type === "session.delta" ||
+          deduped.type === "session.activity" ||
           deduped.type === "session.runtime_message" ||
           deduped.type === "session.runtime_status" ||
           deduped.type === "session.runtime_error" ||

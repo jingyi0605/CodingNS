@@ -2,6 +2,8 @@ import { getHostWebSocketUrl } from "../config/env";
 import { authStore } from "../features/auth/store/auth-store";
 import type {
   ProviderId,
+  SessionActivityConfidence,
+  SessionActivityResolutionSource,
   SessionPermissionRequestDto
 } from "../features/conversation/api/conversation-api";
 import { ConnectionManager } from "./connection-manager";
@@ -62,6 +64,31 @@ export interface SessionRuntimeStatusEvent {
   timestamp: string;
 }
 
+export interface SessionActivityEvent {
+  type: "session.activity";
+  sessionId: string;
+  runningState:
+    | "idle"
+    | "starting"
+    | "running"
+    | "reconnecting"
+    | "stale"
+    | "unknown"
+    | "completed"
+    | "interrupted"
+    | "failed";
+  activityResolutionSource: SessionActivityResolutionSource;
+  activityConfidence: SessionActivityConfidence;
+  runId: string | null;
+  detail: string | null;
+  errorCode: string | null;
+  errorDetail: string | null;
+  hasActiveRun: boolean;
+  canInterrupt: boolean;
+  updatedAt: string;
+  watchdogTriggeredAt: string | null;
+}
+
 export interface SessionRuntimeErrorEvent {
   type: "session.runtime_error";
   sessionId: string;
@@ -101,6 +128,7 @@ type IncomingEvent =
   | SessionEnvelopeEvent
   | SessionOlderHistoryEvent
   | SessionRuntimeMessageEvent
+  | SessionActivityEvent
   | SessionRuntimeStatusEvent
   | SessionRuntimeErrorEvent
   | SessionInterruptedEvent
@@ -117,6 +145,7 @@ export interface RealtimeClientOptions {
   onEnvelope: (event: SessionEnvelopeEvent) => void;
   onOlderHistory: (event: SessionOlderHistoryEvent) => void;
   onRuntimeMessage: (event: SessionRuntimeMessageEvent) => void;
+  onActivity: (event: SessionActivityEvent) => void;
   onRuntimeStatus: (event: SessionRuntimeStatusEvent) => void;
   onRuntimeError: (event: SessionRuntimeErrorEvent) => void;
   onInterrupted: (event: SessionInterruptedEvent) => void;
@@ -236,6 +265,11 @@ export class RealtimeClient {
 
       if (payload.type === "session.runtime_status") {
         this.options.onRuntimeStatus(payload);
+        return;
+      }
+
+      if (payload.type === "session.activity") {
+        this.options.onActivity(payload);
         return;
       }
 

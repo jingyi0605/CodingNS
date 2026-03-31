@@ -184,6 +184,25 @@
   animation: session-running-spin 800ms linear infinite;
 }
 
+.session-list-indicator.is-running-inferred {
+  border: 2px solid color-mix(in srgb, var(--warning) 28%, transparent);
+  border-top-color: var(--warning);
+  background: transparent;
+  animation: session-running-spin 800ms linear infinite;
+}
+
+.session-list-indicator.is-stale {
+  border: 2px solid color-mix(in srgb, var(--warning) 34%, transparent);
+  border-top-color: color-mix(in srgb, var(--warning) 70%, #8a4b00);
+  background: transparent;
+  animation: session-running-spin 1400ms linear infinite;
+}
+
+.session-list-indicator.is-unknown {
+  border: 2px dashed color-mix(in srgb, var(--text-muted) 46%, transparent);
+  background: color-mix(in srgb, var(--surface-muted) 82%, transparent);
+}
+
 .session-list-indicator.is-subagent {
   background: var(--success);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 18%, transparent);
@@ -207,6 +226,25 @@
   font-size: 0.76rem;
   line-height: 1.35;
   word-break: break-word;
+}
+
+.session-list-activity-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.08rem 0.38rem;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  line-height: 1.35;
+}
+
+.session-list-activity-badge.is-stale {
+  background: color-mix(in srgb, var(--warning) 14%, transparent);
+  color: color-mix(in srgb, var(--warning) 74%, #704100);
+}
+
+.session-list-activity-badge.is-unknown {
+  background: color-mix(in srgb, var(--surface-muted) 76%, transparent);
+  color: var(--text-muted);
 }
 
 .session-list-actions {
@@ -642,6 +680,31 @@
 .mobile-conversation-preview-indicator.is-running {
   background: #34c759;
   box-shadow: 0 0 0 3px color-mix(in srgb, #34c759 18%, transparent);
+}
+
+.mobile-conversation-preview-indicator.is-running-inferred {
+  background: color-mix(in srgb, var(--warning) 78%, #9a5c00);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning) 18%, transparent);
+}
+
+.mobile-conversation-preview-indicator.is-stale {
+  background: color-mix(in srgb, var(--warning) 88%, #9a5c00);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning) 20%, transparent);
+}
+
+.mobile-conversation-preview-indicator.is-unknown {
+  background: color-mix(in srgb, var(--surface-muted) 56%, var(--text-muted));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--text-muted) 12%, transparent);
+}
+
+.mobile-conversation-preview-indicator.is-error {
+  background: #ff3b30;
+  box-shadow: 0 0 0 3px rgba(255, 59, 48, 0.16);
+}
+
+.mobile-conversation-preview-indicator.is-unread {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 .mobile-conversation-preview-item-copy {

@@ -22,10 +22,13 @@ import { createId } from "../../shared/utils/id.js";
 import { logPerformance } from "../../shared/utils/perf-log.js";
 import { nowIso } from "../../shared/utils/time.js";
 import type {
+  SessionActivityConfidence,
+  SessionActivityResolutionSource,
   SessionBinding,
   SessionChangedFileRecord,
   SessionIndexRecord,
   SessionListItem,
+  SessionResolvedRunningState,
   SessionStateRecord,
   SessionStatusSnapshot
 } from "../../types/domain.js";
@@ -35,6 +38,11 @@ import type { SessionStateRepository } from "../../storage/repositories/session-
 import type { SessionStatusSnapshotRepository } from "../../storage/repositories/session-status-snapshot-repository.js";
 import type { WorkspaceRepository } from "../../storage/repositories/workspace-repository.js";
 import { inspectSessionActivity } from "./session-activity-inspector.js";
+import {
+  SessionActivityAuthorityService,
+  type SessionActivityObservation,
+  type SessionActivityResolution
+} from "./session-activity-authority-service.js";
 import { SessionChangedFileService } from "./session-changed-file-service.js";
 import { SessionMessageAttachmentService } from "./session-message-attachment-service.js";
 import { mapSessionProviderError } from "./session-provider-error-mapper.js";
@@ -111,6 +119,7 @@ export class SessionHistoryService {
   private readonly providerRegistry: ProviderRegistry;
   private readonly sessionSyncService: SessionSyncService;
   private readonly capabilityService: CapabilityService;
+  private readonly sessionActivityAuthorityService: SessionActivityAuthorityService;
   private readonly claudeCodeHomeDir: string;
   private readonly codexModelOptionsService: CodexModelOptionsService;
   private readonly openCodeModelOptionsService: OpenCodeModelOptionsService;
@@ -131,8 +140,10 @@ export class SessionHistoryService {
     private readonly sessionMessageAttachmentService: SessionMessageAttachmentService,
     private readonly sessionStateRepository: SessionStateRepository,
     private readonly sessionStatusSnapshotRepository: SessionStatusSnapshotRepository,
-    config: HostConfig
+    config: HostConfig,
+    sessionActivityAuthorityService = new SessionActivityAuthorityService()
   ) {
+    this.sessionActivityAuthorityService = sessionActivityAuthorityService;
     this.claudeCodeHomeDir = config.claudeCodeHomeDir;
     this.providerRegistry = new ProviderRegistry([
       new ClaudeCodeAdapter({ homeDir: config.claudeCodeHomeDir }),
@@ -1300,33 +1311,33 @@ export class SessionHistoryService {
         return this.enrichSessionItem(item);
       }
 
-      return {
+      return this.enrichSessionItem({
         ...item,
         parentSessionId: relation.parentSessionId,
         isSubagent: relation.isSubagent,
         subagentLabel: relation.subagentLabel
-      };
+      });
     });
   }
 
   private enrichSessionItem(item: SessionListItem): SessionListItem {
     const relation = this.workspaceSessionRelations.get(item.workspaceId)?.get(item.sessionId);
+    const nextItem = relation
+      ? {
+          ...item,
+          parentSessionId: relation.parentSessionId,
+          isSubagent: relation.isSubagent,
+          subagentLabel: relation.subagentLabel
+        }
+      : {
+          ...item,
+          parentSessionId: item.parentSessionId ?? null,
+          isSubagent: item.isSubagent ?? false,
+          subagentLabel: item.subagentLabel ?? null
+        };
+    const resolution = this.sessionActivityAuthorityService.resolvePersistedSession(nextItem);
 
-    if (!relation) {
-      return {
-        ...item,
-        parentSessionId: item.parentSessionId ?? null,
-        isSubagent: item.isSubagent ?? false,
-        subagentLabel: item.subagentLabel ?? null
-      };
-    }
-
-    return {
-      ...item,
-      parentSessionId: relation.parentSessionId,
-      isSubagent: relation.isSubagent,
-      subagentLabel: relation.subagentLabel
-    };
+    return applySessionActivityResolution(nextItem, resolution);
   }
 
   private async pullSessionHistory(
@@ -1981,15 +1992,23 @@ export class SessionHistoryService {
       return current;
     }
 
+    const resolution = this.sessionActivityAuthorityService.observe(
+      buildInspectionActivityObservation(sessionId, inspection, timestamp)
+    );
     const nextRecord: SessionStateRecord = {
       sessionId,
       userId,
-      runningState: inspection.runningState,
-      activitySource:
-        inspection.lastEventAt || inspection.completedAtCandidate ? "inferred" : "none",
+      runningState: mapResolvedRunningStateToStored(resolution.runningState, current),
+      activitySource: mapResolutionSourceToLegacyActivitySource(
+        resolution.activityResolutionSource,
+        inspection
+      ),
       favorite: current?.favorite ?? false,
-      lastEventAt: inspection.lastEventAt,
-      completedAt: inspection.completedAtCandidate,
+      lastEventAt: resolution.lastObservedAt ?? inspection.lastEventAt ?? current?.lastEventAt ?? null,
+      completedAt:
+        isTerminalResolvedRunningState(resolution.runningState)
+          ? resolution.terminalAt ?? inspection.completedAtCandidate ?? current?.completedAt ?? null
+          : null,
       lastSeenAt: current?.lastSeenAt ?? null,
       updatedAt: timestamp
     };
@@ -1999,16 +2018,22 @@ export class SessionHistoryService {
     const currentSnapshot = this.sessionStatusSnapshotRepository.findBySessionId(sessionId);
     this.sessionStatusSnapshotRepository.upsert({
       sessionId,
-      syncStatus: inspection.runningState === "failed" ? "error" : currentSnapshot?.syncStatus ?? "idle",
+      syncStatus: resolution.runningState === "failed" ? "error" : currentSnapshot?.syncStatus ?? "idle",
       syncCursor: currentSnapshot?.syncCursor ?? null,
-      lastSyncAt: inspection.lastEventAt ?? inspection.completedAtCandidate ?? currentSnapshot?.lastSyncAt ?? null,
+      lastSyncAt:
+        resolution.lastObservedAt
+        ?? resolution.terminalAt
+        ?? inspection.lastEventAt
+        ?? inspection.completedAtCandidate
+        ?? currentSnapshot?.lastSyncAt
+        ?? null,
       lastErrorCode:
-        inspection.runningState === "failed"
-          ? inspection.errorCode
+        resolution.runningState === "failed"
+          ? resolution.errorCode
           : currentSnapshot?.lastErrorCode ?? null,
       lastErrorDetail:
-        inspection.runningState === "failed"
-          ? inspection.errorDetail
+        resolution.runningState === "failed"
+          ? resolution.detail
           : currentSnapshot?.lastErrorDetail ?? null,
       resumedAt: currentSnapshot?.resumedAt ?? null,
       updatedAt: timestamp
@@ -2042,6 +2067,64 @@ export class SessionHistoryService {
       updatedAt: nowIso()
     });
   }
+}
+
+function buildInspectionActivityObservation(
+  sessionId: string,
+  inspection: ReturnType<typeof inspectSessionActivity>,
+  observedAt: string
+): SessionActivityObservation {
+  return {
+    sessionId,
+    runId: null,
+    runningState: inspection.runningState,
+    source: hasInspectionEvidence(inspection) ? "inferred_log" : "unknown",
+    confidence: "weak",
+    detail: inspection.errorDetail,
+    errorCode: inspection.errorCode,
+    observedAt: inspection.completedAtCandidate ?? inspection.lastEventAt ?? observedAt
+  };
+}
+
+function hasInspectionEvidence(inspection: ReturnType<typeof inspectSessionActivity>): boolean {
+  return inspection.runningState !== "idle"
+    || !!inspection.lastEventAt
+    || !!inspection.completedAtCandidate;
+}
+
+function applySessionActivityResolution(
+  item: SessionListItem,
+  resolution: SessionActivityResolution
+): SessionListItem {
+  const runningState = resolution.runningState;
+  const lastEventAt = resolution.lastObservedAt ?? item.lastEventAt;
+  const completedAt =
+    isTerminalResolvedRunningState(runningState)
+      ? resolution.terminalAt ?? item.completedAt
+      : null;
+  const lastErrorCode =
+    runningState === "failed"
+      ? resolution.errorCode ?? item.lastErrorCode
+      : item.lastErrorCode;
+  const lastErrorDetail =
+    runningState === "failed"
+      ? resolution.detail ?? item.lastErrorDetail
+      : item.lastErrorDetail;
+
+  return {
+    ...item,
+    runningState,
+    activitySource: mapResolutionSourceToCompatibilitySource(resolution.activityResolutionSource),
+    activityResolutionSource: resolution.activityResolutionSource,
+    activityConfidence: resolution.activityConfidence,
+    runId: resolution.runId,
+    lastEventAt,
+    completedAt,
+    lastErrorCode,
+    lastErrorDetail,
+    watchdogTriggeredAt: resolution.watchdogTriggeredAt,
+    activityState: resolveActivityState(runningState, completedAt, item.lastSeenAt)
+  };
 }
 
 function clampLimit(limit: number): number {
@@ -2561,7 +2644,7 @@ function shouldPreserveRuntimeTerminalState(
   }
 
   if (current.runningState === "starting" || current.runningState === "running") {
-    return inspection.lastEventAt.localeCompare(current.lastEventAt) < 0;
+    return inspection.lastEventAt.localeCompare(current.lastEventAt) <= 0;
   }
 
   return false;
@@ -2569,4 +2652,70 @@ function shouldPreserveRuntimeTerminalState(
 
 function isTerminalRunningState(state: SessionStateRecord["runningState"]): boolean {
   return state === "completed" || state === "interrupted" || state === "failed";
+}
+
+function isTerminalResolvedRunningState(
+  state: SessionResolvedRunningState
+): state is Extract<SessionResolvedRunningState, "completed" | "interrupted" | "failed"> {
+  return state === "completed" || state === "interrupted" || state === "failed";
+}
+
+function mapResolvedRunningStateToStored(
+  runningState: SessionResolvedRunningState,
+  current: SessionStateRecord | null
+): SessionStateRecord["runningState"] {
+  if (runningState !== "stale" && runningState !== "unknown") {
+    return runningState;
+  }
+
+  if (current?.runningState === "starting" || current?.runningState === "running") {
+    return current.runningState;
+  }
+
+  return "running";
+}
+
+function mapResolutionSourceToLegacyActivitySource(
+  source: SessionActivityResolutionSource,
+  inspection: ReturnType<typeof inspectSessionActivity>
+): SessionStateRecord["activitySource"] {
+  if (source === "authoritative_runtime" || source === "authoritative_provider_event") {
+    return "runtime";
+  }
+
+  if (inspection.lastEventAt || inspection.completedAtCandidate) {
+    return "inferred";
+  }
+
+  return "none";
+}
+
+function mapResolutionSourceToCompatibilitySource(
+  source: SessionActivityResolutionSource
+): SessionListItem["activitySource"] {
+  if (source === "authoritative_runtime" || source === "authoritative_provider_event") {
+    return "runtime";
+  }
+
+  if (source === "inferred_log") {
+    return "inferred";
+  }
+
+  return "none";
+}
+
+function resolveActivityState(
+  runningState: SessionResolvedRunningState | null,
+  completedAt: string | null,
+  lastSeenAt: string | null
+): SessionListItem["activityState"] {
+  if (runningState === "starting" || runningState === "running") {
+    return "running";
+  }
+
+  if (completedAt && (!lastSeenAt || completedAt > lastSeenAt)) {
+    return "completed_unread";
+  }
+
+  return "idle";
 }

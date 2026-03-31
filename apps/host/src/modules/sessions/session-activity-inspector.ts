@@ -11,6 +11,15 @@ export interface SessionActivityInspection {
   errorDetail: string | null;
 }
 
+interface SessionActivityInspectionBase {
+  hasPendingTools: boolean;
+  lastEventAt: string | null;
+  completedAtCandidate: string | null;
+  errorCode: string | null;
+  errorDetail: string | null;
+  terminalState: "none" | "completed" | "failed";
+}
+
 const ACTIVE_WINDOW_MS = 20_000;
 const ACTIVITY_CACHE_LIMIT = 20;
 const activityCache = new Map<string, CachedActivityEntry>();
@@ -21,14 +30,17 @@ export function inspectSessionActivity(
   now = Date.now()
 ): SessionActivityInspection {
   if (isVirtualRawStoreRef(rawStoreRef)) {
-    return {
-      runningState: "idle",
-      hasPendingTools: false,
-      lastEventAt: null,
-      completedAtCandidate: null,
-      errorCode: null,
-      errorDetail: null
-    };
+    return finalizeInspection(
+      {
+        hasPendingTools: false,
+        lastEventAt: null,
+        completedAtCandidate: null,
+        errorCode: null,
+        errorDetail: null,
+        terminalState: "none"
+      },
+      now
+    );
   }
 
   let stats: ReturnType<typeof statSync>;
@@ -37,14 +49,17 @@ export function inspectSessionActivity(
   try {
     stats = statSync(rawStoreRef);
   } catch {
-    return {
-      runningState: "idle",
-      hasPendingTools: false,
-      lastEventAt: null,
-      completedAtCandidate: null,
-      errorCode: null,
-      errorDetail: null
-    };
+    return finalizeInspection(
+      {
+        hasPendingTools: false,
+        lastEventAt: null,
+        completedAtCandidate: null,
+        errorCode: null,
+        errorDetail: null,
+        terminalState: "none"
+      },
+      now
+    );
   }
 
   const cached = activityCache.get(rawStoreRef);
@@ -56,16 +71,11 @@ export function inspectSessionActivity(
     && cached.size === stats.size
   ) {
     touchActivityCache(rawStoreRef, cached);
-    return cached.inspection.hasPendingTools && !cached.inspection.completedAtCandidate
-      ? {
-          ...cached.inspection,
-          runningState: now - cached.mtimeMs <= ACTIVE_WINDOW_MS ? "running" : "idle"
-        }
-      : cached.inspection;
+    return finalizeInspection(cached.inspection, now, cached.mtimeMs);
   }
 
   records = readJsonlRecords(rawStoreRef);
-  const inspection =
+  const inspectionBase =
     provider === "claude-code"
       ? inspectClaudeActivity(records, stats.mtimeMs, now)
       : inspectCodexActivity(records, stats.mtimeMs, now);
@@ -74,21 +84,20 @@ export function inspectSessionActivity(
     provider,
     mtimeMs: stats.mtimeMs,
     size: stats.size,
-    inspection
+    inspection: inspectionBase
   });
 
-  return inspection;
+  return finalizeInspection(inspectionBase, now, stats.mtimeMs);
 }
 
 function inspectClaudeActivity(
   records: Array<Record<string, unknown>>,
   mtimeMs: number,
   now: number
-): SessionActivityInspection {
+): SessionActivityInspectionBase {
   const pendingToolCalls = new Set<string>();
   let lastEventAt: string | null = null;
   let lastStopAt: string | null = null;
-  let lastToolUseAt: string | null = null;
 
   for (const record of records) {
     const directType = readText(record.type);
@@ -116,7 +125,6 @@ function inspectClaudeActivity(
           if (callId) {
             pendingToolCalls.add(callId);
           }
-          lastToolUseAt = maxTimestamp(lastToolUseAt, envelope.timestamp);
           continue;
         }
 
@@ -131,20 +139,17 @@ function inspectClaudeActivity(
     }
   }
 
-  const hasExplicitCompletion = isTimestampAtOrAfter(lastStopAt, lastToolUseAt);
+  const hasExplicitCompletion = isTimestampAtOrAfter(lastStopAt, lastEventAt);
   const hasPendingTools = pendingToolCalls.size > 0 && !hasExplicitCompletion;
-  const runningState =
-    hasPendingTools && now - mtimeMs <= ACTIVE_WINDOW_MS
-      ? "running"
-      : "idle";
+  const isRunning = !hasExplicitCompletion && hasRecentActivity(lastEventAt, mtimeMs, now);
 
   return {
-    runningState,
     hasPendingTools,
     lastEventAt,
-    completedAtCandidate: hasExplicitCompletion ? lastStopAt : hasPendingTools ? null : lastStopAt ?? lastEventAt,
+    completedAtCandidate: hasExplicitCompletion ? lastStopAt : isRunning ? null : null,
     errorCode: null,
-    errorDetail: null
+    errorDetail: null,
+    terminalState: hasExplicitCompletion ? "completed" : "none"
   };
 }
 
@@ -152,13 +157,12 @@ function inspectCodexActivity(
   records: Array<Record<string, unknown>>,
   mtimeMs: number,
   now: number
-): SessionActivityInspection {
+): SessionActivityInspectionBase {
   const pendingToolCalls = new Set<string>();
   let lastEventAt: string | null = null;
   let lastTaskCompleteAt: string | null = null;
   let lastTaskFailedAt: string | null = null;
   let lastTaskFailedDetail: string | null = null;
-  let lastToolCallAt: string | null = null;
 
   for (const record of records) {
     const recordType = readText(record.type);
@@ -203,7 +207,6 @@ function inspectCodexActivity(
       if (callId) {
         pendingToolCalls.add(callId);
       }
-      lastToolCallAt = maxTimestamp(lastToolCallAt, recordTimestamp);
       continue;
     }
 
@@ -216,18 +219,16 @@ function inspectCodexActivity(
     }
   }
 
-  const hasExplicitFailure = isTimestampAtOrAfter(lastTaskFailedAt, lastToolCallAt);
+  const hasExplicitFailure = isTimestampAtOrAfter(lastTaskFailedAt, lastEventAt);
   const hasExplicitCompletion =
-    !hasExplicitFailure && isTimestampAtOrAfter(lastTaskCompleteAt, lastToolCallAt);
+    !hasExplicitFailure && isTimestampAtOrAfter(lastTaskCompleteAt, lastEventAt);
   const hasPendingTools = pendingToolCalls.size > 0 && !hasExplicitCompletion;
-  const runningState = hasExplicitFailure
-    ? "failed"
-    : hasPendingTools && now - mtimeMs <= ACTIVE_WINDOW_MS
-      ? "running"
-      : "idle";
+  const isRunning =
+    !hasExplicitFailure
+    && !hasExplicitCompletion
+    && hasRecentActivity(lastEventAt, mtimeMs, now);
 
   return {
-    runningState,
     hasPendingTools,
     lastEventAt,
     completedAtCandidate:
@@ -235,15 +236,68 @@ function inspectCodexActivity(
         ? lastTaskFailedAt
         : hasExplicitCompletion
           ? lastTaskCompleteAt
-          : hasPendingTools
+          : isRunning
             ? null
-            : lastTaskCompleteAt ?? lastEventAt,
+            : null,
     errorCode:
       hasExplicitFailure
         ? classifyCodexDetailErrorCode(lastTaskFailedDetail, "CODEX_CLI_TURN_FAILED")
         : null,
-    errorDetail: hasExplicitFailure ? lastTaskFailedDetail ?? "codex turn failed" : null
+    errorDetail: hasExplicitFailure ? lastTaskFailedDetail ?? "codex turn failed" : null,
+    terminalState: hasExplicitFailure ? "failed" : hasExplicitCompletion ? "completed" : "none"
   };
+}
+
+function finalizeInspection(
+  base: SessionActivityInspectionBase,
+  now: number,
+  mtimeMs?: number
+): SessionActivityInspection {
+  if (base.terminalState === "failed") {
+    return {
+      runningState: "failed",
+      hasPendingTools: false,
+      lastEventAt: base.lastEventAt,
+      completedAtCandidate: base.completedAtCandidate,
+      errorCode: base.errorCode,
+      errorDetail: base.errorDetail
+    };
+  }
+
+  if (base.terminalState === "completed") {
+    return {
+      runningState: "idle",
+      hasPendingTools: false,
+      lastEventAt: base.lastEventAt,
+      completedAtCandidate: base.completedAtCandidate,
+      errorCode: null,
+      errorDetail: null
+    };
+  }
+
+  return {
+    runningState: hasRecentActivity(base.lastEventAt, mtimeMs ?? 0, now) ? "running" : "idle",
+    hasPendingTools: base.hasPendingTools,
+    lastEventAt: base.lastEventAt,
+    completedAtCandidate: null,
+    errorCode: null,
+    errorDetail: null
+  };
+}
+
+function hasRecentActivity(
+  timestamp: string | null,
+  mtimeMs: number,
+  now: number
+): boolean {
+  const timestampMs = timestamp ? Date.parse(timestamp) : Number.NaN;
+  const activityAt = Number.isFinite(timestampMs) ? timestampMs : mtimeMs;
+
+  if (!Number.isFinite(activityAt) || activityAt <= 0) {
+    return false;
+  }
+
+  return now - activityAt <= ACTIVE_WINDOW_MS;
 }
 
 function classifyCodexDetailErrorCode(detail: string | null, fallback: string): string {
@@ -383,7 +437,7 @@ interface CachedActivityEntry {
   provider: ProviderId;
   mtimeMs: number;
   size: number;
-  inspection: SessionActivityInspection;
+  inspection: SessionActivityInspectionBase;
 }
 
 function touchActivityCache(filePath: string, entry: CachedActivityEntry): void {

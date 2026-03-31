@@ -1303,14 +1303,12 @@ body {
   min-width: 0;
 }
 
-.composer-provider-logo,
 .composer-slash-btn,
 .composer-attach-btn,
 .composer-select-wrapper {
   border-radius: 9px;
 }
 
-.composer-provider-logo,
 .composer-slash-btn,
 .composer-attach-btn {
   min-height: var(--control-height-md);
@@ -2656,11 +2654,48 @@ body {
   animation: session-running-spin 800ms linear infinite;
 }
 
+.session-state-indicator.is-stale::before {
+  width: 7px;
+  height: 7px;
+  border: 1.5px solid color-mix(in srgb, var(--warning) 34%, transparent);
+  border-top-color: color-mix(in srgb, var(--warning) 70%, #8a4b00);
+  animation: session-running-spin 1400ms linear infinite;
+}
+
+.session-state-indicator.is-unknown::before {
+  width: 7px;
+  height: 7px;
+  border: 1.5px dashed color-mix(in srgb, var(--text-muted) 44%, transparent);
+  background: color-mix(in srgb, var(--surface-muted) 82%, transparent);
+}
+
 .session-state-indicator.is-error::before {
   width: 7px;
   height: 7px;
   background: #ff3b30;
   box-shadow: 0 0 0 2px rgba(255, 59, 48, 0.16);
+}
+
+.session-activity-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 15px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1.35;
+}
+
+.session-activity-badge.is-stale {
+  background: rgba(255, 159, 10, 0.12);
+  color: #a66a00;
+}
+
+.session-activity-badge.is-unknown {
+  background: rgba(120, 120, 128, 0.12);
+  color: #6f7076;
 }
 
 .session-error-row {
@@ -3114,7 +3149,6 @@ body {
   margin-top: 4px;
 }
 
-.composer-provider-logo,
 .composer-slash-btn,
 .composer-attach-btn,
 .composer-select-wrapper,
@@ -3135,7 +3169,6 @@ body {
   color: #007aff;
 }
 
-.composer-provider-logo,
 .composer-slash-btn,
 .composer-attach-btn,
 .composer-select-wrapper {

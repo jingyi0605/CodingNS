@@ -1,25 +1,35 @@
 import { useEffect, useRef, useState, type PointerEvent } from "react";
 
+import {
+  hasSessionDisplayError,
+  resolveSessionActivityBadgeClassName,
+  resolveSessionActivityBadgeLabel,
+  resolveSessionIndicatorClassName
+} from "../../conversation/session-activity-display";
+import type { SessionSummaryDto } from "../../conversation/api/conversation-api";
 import { useHaptics } from "../../../shared/haptics";
 import { t } from "../../../shared/i18n";
 
 const LONG_PRESS_DELAY_MS = 420;
 
 interface WorkbenchNavigationEntry {
-  readonly session: {
-    readonly sessionId: string;
-    readonly title: string | null;
-    readonly workspaceId: string;
-    readonly provider: string;
-    readonly lastMessageAt?: string | null;
-    readonly updatedAt?: string | null;
-    readonly activityState?: string | null;
-    readonly syncStatus?: string | null;
-    readonly runningState?: string | null;
-    readonly lastErrorCode?: string | null;
-    readonly lastErrorDetail?: string | null;
-    readonly isArchived?: boolean;
-  };
+  readonly session: Pick<
+    SessionSummaryDto,
+    | "sessionId"
+    | "title"
+    | "workspaceId"
+    | "provider"
+    | "lastMessageAt"
+    | "updatedAt"
+    | "activityState"
+    | "activitySource"
+    | "activityResolutionSource"
+    | "syncStatus"
+    | "runningState"
+    | "lastErrorCode"
+    | "lastErrorDetail"
+    | "isArchived"
+  >;
   readonly workspace: {
     readonly id: string;
     readonly name: string;
@@ -71,12 +81,18 @@ export function SessionListItem({
         : t("conversation.providerClaude");
   const mobileMeta = [
     providerLabel,
-    formatActivityTime(session.lastMessageAt ?? session.updatedAt ?? null)
+    formatActivityTime(session.lastMessageAt ?? session.updatedAt ?? null),
+    resolveSessionActivityBadgeLabel(session)
   ]
     .filter(Boolean)
     .join(" · ");
   const errorSummary = getSessionErrorSummary(session);
   const errorPreview = errorSummary ? truncateSessionErrorSummary(errorSummary) : null;
+  const activityBadgeLabel = variant === "mobile" ? null : resolveSessionActivityBadgeLabel(session);
+  const activityBadgeClassName =
+    activityBadgeLabel
+      ? resolveSessionActivityBadgeClassName("session-list-activity-badge", session)
+      : null;
 
   useEffect(() => {
     return () => {
@@ -162,9 +178,7 @@ export function SessionListItem({
         onPointerLeave={handlePointerEnd}
       >
         <span
-          className={resolveSessionListIndicatorClassName({
-            hasError: hasSessionError(session),
-            activityState: session.activityState ?? null,
+          className={resolveSessionListIndicatorClassName(session, {
             isActive,
             hasSubsessions
           })}
@@ -178,6 +192,12 @@ export function SessionListItem({
             ) : (
               <>
                 <span>{workspace.name}</span>
+                {activityBadgeLabel && activityBadgeClassName ? (
+                  <>
+                    <span aria-hidden="true">·</span>
+                    <span className={activityBadgeClassName}>{activityBadgeLabel}</span>
+                  </>
+                ) : null}
                 <span aria-hidden="true">·</span>
                 <span>{providerLabel}</span>
               </>
@@ -222,29 +242,17 @@ export function SessionListItem({
   );
 }
 
-function resolveSessionListIndicatorClassName(input: {
-  hasError: boolean;
-  activityState: string | null;
-  isActive: boolean;
-  hasSubsessions: boolean;
-}) {
-  if (input.hasError) {
-    return "session-list-indicator is-error";
+function resolveSessionListIndicatorClassName(
+  session: WorkbenchNavigationEntry["session"],
+  options: {
+    isActive: boolean;
+    hasSubsessions: boolean;
   }
-
-  if (input.hasSubsessions) {
-    if (input.activityState === "running" || input.isActive) {
-      return "session-list-indicator is-subagent-running";
-    }
-
-    return "session-list-indicator is-subagent";
-  }
-
-  if (input.activityState === "running") {
-    return "session-list-indicator is-running";
-  }
-
-  return "session-list-indicator is-idle";
+) {
+  return resolveSessionIndicatorClassName("session-list-indicator", session, {
+    isActive: options.isActive,
+    hasSubagents: options.hasSubsessions
+  });
 }
 
 function formatActivityTime(value: string | null) {
@@ -262,10 +270,8 @@ function formatActivityTime(value: string | null) {
 
 function hasSessionError(session: WorkbenchNavigationEntry["session"]) {
   return (
-    session.runningState === "failed"
+    hasSessionDisplayError(session)
     || session.syncStatus === "error"
-    || Boolean(session.lastErrorCode?.trim())
-    || Boolean(session.lastErrorDetail?.trim())
   );
 }
 

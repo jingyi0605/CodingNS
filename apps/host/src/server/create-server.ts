@@ -36,6 +36,7 @@ import { QuickPhraseService } from "../modules/preferences/quick-phrase-service.
 import { ProviderController } from "../modules/provider/provider-controller.js";
 import { SessionController } from "../modules/sessions/session-controller.js";
 import { SessionChangedFileService } from "../modules/sessions/session-changed-file-service.js";
+import { SessionActivityAuthorityService } from "../modules/sessions/session-activity-authority-service.js";
 import { SessionHistoryService } from "../modules/sessions/session-history-service.js";
 import { SessionLiveRuntimeService } from "../modules/sessions/session-live-runtime-service.js";
 import { SessionMessageAttachmentService } from "../modules/sessions/session-message-attachment-service.js";
@@ -133,7 +134,9 @@ export function createServer(config: HostConfig) {
     repositories.authTokenRepository,
     config
   );
-  const gitCommandRunner = new GitCommandRunner();
+  const gitCommandRunner = new GitCommandRunner({
+    preferHelperProcess: !process.env.VITEST
+  });
   const workspaceService = new WorkspaceService(repositories.workspaceRepository, gitCommandRunner);
   const fileAccessGuard = new FileAccessGuard(workspaceService, app.log);
   const recentFileService = new RecentFileService(repositories.recentFileRepository);
@@ -172,6 +175,7 @@ export function createServer(config: HostConfig) {
   const sessionChangedFileService = new SessionChangedFileService(
     repositories.sessionChangedFileRepository
   );
+  const sessionActivityAuthorityService = new SessionActivityAuthorityService();
   const sessionHistoryService = new SessionHistoryService(
     database.db,
     repositories.workspaceRepository,
@@ -181,7 +185,8 @@ export function createServer(config: HostConfig) {
     sessionMessageAttachmentService,
     repositories.sessionStateRepository,
     repositories.sessionStatusSnapshotRepository,
-    config
+    config,
+    sessionActivityAuthorityService
   );
   const sessionLiveRuntimeService = new SessionLiveRuntimeService(
     sessionHistoryService,
@@ -194,7 +199,8 @@ export function createServer(config: HostConfig) {
     repositories.sessionIndexRepository,
     repositories.sessionStateRepository,
     repositories.sessionStatusSnapshotRepository,
-    config
+    config,
+    sessionActivityAuthorityService
   );
   const workbenchService = new WorkbenchService(
     repositories.workspaceRepository,
@@ -302,6 +308,7 @@ export function createServer(config: HostConfig) {
     await terminalService.dispose();
     await sessionLiveRuntimeService.dispose();
     await wsHandle.close();
+    gitCommandRunner.dispose();
     database.close();
   });
 

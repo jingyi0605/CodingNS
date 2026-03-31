@@ -30,11 +30,19 @@ import type { SessionSendQueueRepository } from "../../storage/repositories/sess
 import type { SessionStateRepository } from "../../storage/repositories/session-state-repository.js";
 import type { SessionStatusSnapshotRepository } from "../../storage/repositories/session-status-snapshot-repository.js";
 import type {
+  SessionActivityConfidence,
+  SessionActivityResolutionSource,
   SessionListItem,
+  SessionResolvedRunningState,
   SessionRunningState,
   SessionSendQueueItemRecord,
   SessionStatusSnapshot
 } from "../../types/domain.js";
+import {
+  SessionActivityAuthorityService,
+  type SessionActivityObservation,
+  type SessionActivityResolution
+} from "./session-activity-authority-service.js";
 import { SessionChangedFileService } from "./session-changed-file-service.js";
 import type { WorkspaceService } from "../workspace/workspace-service.js";
 import type {
@@ -50,6 +58,8 @@ import {
 } from "./session-permission-request-service.js";
 import { mapSessionProviderError } from "./session-provider-error-mapper.js";
 import type { SessionHistoryEnvelope, SessionHistoryService } from "./session-history-service.js";
+import { ClaudeRuntimeHelperAdapter } from "./claude-runtime-helper-client.js";
+import { CodexAppServerHelperClient } from "./codex-app-server-helper-client.js";
 
 interface RuntimeSendOptions {
   model?: string | null;
@@ -117,17 +127,21 @@ interface SteerQueuedMessageResult extends LiveMessageAcceptedResult {
 
 export interface SessionRuntimeStatusView {
   sessionId: string;
-  runningState: SessionRunningState | RuntimeRunState;
+  runningState: SessionResolvedRunningState | RuntimeRunState;
   hasActiveRun: boolean;
   canAttach: boolean;
   canInterrupt: boolean;
   inRunInputMode: InRunInputMode;
   provider: string;
   providerSessionId: string;
+  activityResolutionSource: SessionActivityResolutionSource;
+  activityConfidence: SessionActivityConfidence;
+  runId: string | null;
   detail: string | null;
   errorCode: string | null;
   errorDetail: string | null;
   updatedAt: string;
+  watchdogTriggeredAt: string | null;
   contextUsage: ContextUsageSnapshot | null;
 }
 
@@ -160,6 +174,22 @@ export interface SessionInterruptedEnvelope {
   timestamp: string;
 }
 
+export interface SessionActivityEnvelope {
+  type: "session.activity";
+  sessionId: string;
+  runningState: SessionResolvedRunningState;
+  activityResolutionSource: SessionActivityResolutionSource;
+  activityConfidence: SessionActivityConfidence;
+  runId: string | null;
+  detail: string | null;
+  errorCode: string | null;
+  errorDetail: string | null;
+  hasActiveRun: boolean;
+  canInterrupt: boolean;
+  updatedAt: string;
+  watchdogTriggeredAt: string | null;
+}
+
 export interface SessionRuntimeMessageEnvelope {
   type: "session.runtime_message";
   sessionId: string;
@@ -170,6 +200,7 @@ export interface SessionRuntimeMessageEnvelope {
 export type SessionRuntimeEnvelope =
   | SessionHistoryEnvelope
   | SessionRuntimeMessageEnvelope
+  | SessionActivityEnvelope
   | SessionRuntimeStatusEnvelope
   | SessionRuntimeErrorEnvelope
   | SessionInterruptedEnvelope
@@ -213,7 +244,9 @@ interface ExternalRuntimeSnapshot {
 
 export class SessionLiveRuntimeService {
   private readonly providerRuntimeService: ProviderRuntimeService;
+  private readonly sessionActivityAuthorityService: SessionActivityAuthorityService;
   private readonly sessionPermissionRequestService: SessionPermissionRequestService;
+  private readonly runtimeAdapterDisposables: Array<{ dispose(): void }>;
   private readonly externalRuntimeSnapshots = new Map<string, ExternalRuntimeSnapshot>();
   private readonly runtimeListeners = new Map<
     string,
@@ -235,8 +268,10 @@ export class SessionLiveRuntimeService {
     private readonly sessionIndexRepository: SessionIndexRepository,
     private readonly sessionStateRepository: SessionStateRepository,
     private readonly sessionStatusSnapshotRepository: SessionStatusSnapshotRepository,
-    private readonly config: HostConfig
+    private readonly config: HostConfig,
+    sessionActivityAuthorityService = new SessionActivityAuthorityService()
   ) {
+    this.sessionActivityAuthorityService = sessionActivityAuthorityService;
     this.sessionPermissionRequestService = new SessionPermissionRequestService(
       sessionHistoryService,
       sessionBindingRepository,
@@ -250,16 +285,16 @@ export class SessionLiveRuntimeService {
         return this.resolveActiveClaudePermissionSession(input);
       }
     );
-    this.providerRuntimeService = new ProviderRuntimeService(
-      createProviderRuntimeAdapters(config, {
-        handleCodexServerRequest: async (input) =>
-          this.sessionPermissionRequestService.handleCodexServerRequest(
-            input.sessionId,
-            input.providerSessionId,
-            input.request
-          )
-      })
-    );
+    const runtimeAdapters = createProviderRuntimeAdapters(config, {
+      handleCodexServerRequest: async (input) =>
+        this.sessionPermissionRequestService.handleCodexServerRequest(
+          input.sessionId,
+          input.providerSessionId,
+          input.request
+        )
+    });
+    this.runtimeAdapterDisposables = runtimeAdapters.disposables;
+    this.providerRuntimeService = new ProviderRuntimeService(runtimeAdapters.adapters);
   }
 
   async startLiveSession(input: StartLiveSessionInput): Promise<LiveMessageAcceptedResult> {
@@ -692,27 +727,40 @@ export class SessionLiveRuntimeService {
     this.maybeDispatchQueuedMessages(session);
     const capabilities = await this.sessionHistoryService.getSessionCapabilities(sessionId);
     const contextUsage = await this.sessionHistoryService.getSessionContextUsage(sessionId).catch(() => null);
+    const resolution = runtimeSnapshot
+      ? this.sessionActivityAuthorityService.observe(
+          createRuntimeActivityObservation(sessionId, runtimeSnapshot)
+        )
+      : externalRuntimeSnapshot
+        ? this.sessionActivityAuthorityService.observe(
+            createExternalRuntimeActivityObservation(sessionId, externalRuntimeSnapshot)
+          )
+        : this.sessionActivityAuthorityService.resolvePersistedSession(session);
 
     if (runtimeSnapshot) {
       return {
         sessionId,
         provider: session.provider,
         providerSessionId: runtimeSnapshot.providerSessionId ?? session.providerSessionId,
-        runningState: runtimeSnapshot.runningState,
+        runningState: resolution.runningState,
         hasActiveRun: true,
         canAttach: true,
         canInterrupt: runtimeSnapshot.supportsInterrupt,
         inRunInputMode: capabilities.inRunInputMode,
-        detail: runtimeSnapshot.detail,
+        activityResolutionSource: resolution.activityResolutionSource,
+        activityConfidence: resolution.activityConfidence,
+        runId: resolution.runId,
+        detail: resolution.detail,
         errorCode:
-          runtimeSnapshot.runningState === "failed"
-            ? runtimeSnapshot.errorCode ?? session.lastErrorCode
+          resolution.runningState === "failed"
+            ? resolution.errorCode ?? session.lastErrorCode
             : null,
         errorDetail:
-          runtimeSnapshot.runningState === "failed"
-            ? runtimeSnapshot.detail ?? session.lastErrorDetail
+          resolution.runningState === "failed"
+            ? resolution.detail ?? session.lastErrorDetail
             : null,
-        updatedAt: runtimeSnapshot.lastEventAt ?? runtimeSnapshot.startedAt,
+        updatedAt: resolution.updatedAt,
+        watchdogTriggeredAt: resolution.watchdogTriggeredAt,
         contextUsage
       };
     }
@@ -722,35 +770,43 @@ export class SessionLiveRuntimeService {
         sessionId,
         provider: "claude-code",
         providerSessionId: externalRuntimeSnapshot.providerSessionId,
-        runningState: externalRuntimeSnapshot.runningState,
+        runningState: resolution.runningState,
         hasActiveRun: true,
         canAttach: false,
         canInterrupt: false,
         inRunInputMode: capabilities.inRunInputMode,
-        detail: externalRuntimeSnapshot.detail,
-        errorCode: session.runningState === "failed" ? session.lastErrorCode : null,
-        errorDetail: session.runningState === "failed" ? session.lastErrorDetail : null,
-        updatedAt: externalRuntimeSnapshot.updatedAt,
+        activityResolutionSource: resolution.activityResolutionSource,
+        activityConfidence: resolution.activityConfidence,
+        runId: resolution.runId,
+        detail: resolution.detail,
+        errorCode: resolution.runningState === "failed" ? resolution.errorCode ?? session.lastErrorCode : null,
+        errorDetail: resolution.runningState === "failed" ? resolution.detail ?? session.lastErrorDetail : null,
+        updatedAt: resolution.updatedAt,
+        watchdogTriggeredAt: resolution.watchdogTriggeredAt,
         contextUsage
       };
     }
 
-    const persistedErrorCode = session.runningState === "failed" ? session.lastErrorCode : null;
-    const persistedErrorDetail = session.runningState === "failed" ? session.lastErrorDetail : null;
+    const persistedErrorCode = resolution.runningState === "failed" ? resolution.errorCode ?? session.lastErrorCode : null;
+    const persistedErrorDetail = resolution.runningState === "failed" ? resolution.detail ?? session.lastErrorDetail : null;
 
     return {
       sessionId,
       provider: session.provider,
       providerSessionId: session.providerSessionId,
-      runningState: session.runningState ?? "idle",
+      runningState: resolution.runningState,
       hasActiveRun: false,
       canAttach: false,
       canInterrupt: false,
       inRunInputMode: capabilities.inRunInputMode,
+      activityResolutionSource: resolution.activityResolutionSource,
+      activityConfidence: resolution.activityConfidence,
+      runId: resolution.runId,
       detail: persistedErrorDetail,
       errorCode: persistedErrorCode,
       errorDetail: persistedErrorDetail,
-      updatedAt: session.lastEventAt ?? session.updatedAt,
+      updatedAt: resolution.updatedAt,
+      watchdogTriggeredAt: resolution.watchdogTriggeredAt,
       contextUsage
     };
   }
@@ -815,6 +871,7 @@ export class SessionLiveRuntimeService {
   ): ProviderSubscription {
     const runtimeSnapshot = this.providerRuntimeService.getSnapshot(sessionId);
     const externalRuntimeSnapshot = this.externalRuntimeSnapshots.get(sessionId) ?? null;
+    const initialActivityEnvelope = this.buildSessionActivityEnvelope(sessionId);
 
     if (runtimeSnapshot) {
       void onEnvelope({
@@ -836,6 +893,10 @@ export class SessionLiveRuntimeService {
       });
     }
 
+    if (initialActivityEnvelope) {
+      void onEnvelope(initialActivityEnvelope);
+    }
+
     const runtimeSubscription = this.providerRuntimeService.subscribe(sessionId, async (event) => {
       const envelope = this.mapRuntimeEventToEnvelope(sessionId, event);
 
@@ -846,11 +907,24 @@ export class SessionLiveRuntimeService {
       await onEnvelope(envelope);
     });
     const externalSubscription = this.subscribeExternalRuntime(sessionId, onEnvelope);
+    const activitySubscription = this.sessionActivityAuthorityService.subscribe(
+      sessionId,
+      async () => {
+        const envelope = this.buildSessionActivityEnvelope(sessionId);
+
+        if (!envelope) {
+          return;
+        }
+
+        await onEnvelope(envelope);
+      }
+    );
 
     return {
       close: () => {
         runtimeSubscription.close();
         externalSubscription.close();
+        activitySubscription.close();
       }
     };
   }
@@ -862,8 +936,12 @@ export class SessionLiveRuntimeService {
     this.queueRetryTimers.clear();
     this.runtimeMessageSeenSessions.clear();
     this.runtimeHistoryFallbackSentSessions.clear();
+    this.sessionActivityAuthorityService.dispose();
     await this.sessionPermissionRequestService.dispose();
     await this.providerRuntimeService.dispose();
+    for (const disposable of this.runtimeAdapterDisposables) {
+      disposable.dispose();
+    }
     this.externalRuntimeSnapshots.clear();
     this.runtimeListeners.clear();
   }
@@ -913,6 +991,69 @@ export class SessionLiveRuntimeService {
         await listener(envelope);
       })
     );
+  }
+
+  private buildSessionActivityEnvelope(sessionId: string): SessionActivityEnvelope | null {
+    const runtimeSnapshot = this.providerRuntimeService.getSnapshot(sessionId);
+
+    if (runtimeSnapshot) {
+      const resolution = this.sessionActivityAuthorityService.observe(
+        createRuntimeActivityObservation(sessionId, runtimeSnapshot)
+      );
+
+      return this.mapResolutionToActivityEnvelope(resolution, {
+        hasActiveRun: true,
+        canInterrupt: runtimeSnapshot.supportsInterrupt
+      });
+    }
+
+    const externalRuntimeSnapshot = this.externalRuntimeSnapshots.get(sessionId) ?? null;
+
+    if (externalRuntimeSnapshot) {
+      const resolution = this.sessionActivityAuthorityService.observe(
+        createExternalRuntimeActivityObservation(sessionId, externalRuntimeSnapshot)
+      );
+
+      return this.mapResolutionToActivityEnvelope(resolution, {
+        hasActiveRun: true,
+        canInterrupt: false
+      });
+    }
+
+    const resolution = this.sessionActivityAuthorityService.getResolution(sessionId);
+
+    if (!resolution) {
+      return null;
+    }
+
+    return this.mapResolutionToActivityEnvelope(resolution, {
+      hasActiveRun: resolution.runningState === "stale" || resolution.runningState === "unknown",
+      canInterrupt: false
+    });
+  }
+
+  private mapResolutionToActivityEnvelope(
+    resolution: SessionActivityResolution,
+    options: {
+      hasActiveRun: boolean;
+      canInterrupt: boolean;
+    }
+  ): SessionActivityEnvelope {
+    return {
+      type: "session.activity",
+      sessionId: resolution.sessionId,
+      runningState: resolution.runningState,
+      activityResolutionSource: resolution.activityResolutionSource,
+      activityConfidence: resolution.activityConfidence,
+      runId: resolution.runId,
+      detail: resolution.detail,
+      errorCode: resolution.errorCode,
+      errorDetail: resolution.detail,
+      hasActiveRun: options.hasActiveRun,
+      canInterrupt: options.canInterrupt,
+      updatedAt: resolution.updatedAt,
+      watchdogTriggeredAt: resolution.watchdogTriggeredAt
+    };
   }
 
   private async resolveClaudeExternalBinding(input: {
@@ -1053,6 +1194,17 @@ export class SessionLiveRuntimeService {
       resumedAt: this.sessionStatusSnapshotRepository.findBySessionId(input.sessionId)?.resumedAt ?? null
     });
 
+    this.sessionActivityAuthorityService.observe({
+      sessionId: input.sessionId,
+      runId: null,
+      runningState: input.runningState,
+      source: "authoritative_provider_event",
+      confidence: input.runningState === "failed" ? "strong" : "authoritative",
+      detail: input.detail,
+      errorCode: input.runningState === "failed" ? "CLAUDE_HOOK_STOP_FAILURE" : null,
+      observedAt: input.timestamp
+    });
+
     if (input.runningState === "running") {
       this.externalRuntimeSnapshots.set(input.sessionId, {
         sessionId: input.sessionId,
@@ -1120,6 +1272,9 @@ export class SessionLiveRuntimeService {
       lastSeenAt: currentState?.lastSeenAt ?? null,
       updatedAt: nowIso()
     });
+    this.sessionActivityAuthorityService.observe(
+      createRuntimeActivityObservation(request.sessionId, snapshot)
+    );
   }
 
   private async sendLiveMessageDirect(
@@ -1492,6 +1647,9 @@ export class SessionLiveRuntimeService {
       lastSeenAt: null,
       updatedAt: timestamp
     });
+    this.sessionActivityAuthorityService.observe(
+      createRuntimeActivityObservation(input.sessionId, input.snapshot)
+    );
   }
 
   private async persistRuntimeEvent(
@@ -1606,6 +1764,14 @@ export class SessionLiveRuntimeService {
       lastSeenAt: currentState?.lastSeenAt ?? null,
       updatedAt: nowIso()
     });
+
+    this.sessionActivityAuthorityService.observe(
+      createRuntimeEventObservation(
+        sessionId,
+        event,
+        this.providerRuntimeService.getSnapshot(sessionId)?.startedAt ?? null
+      )
+    );
 
     this.upsertSnapshot(sessionId, {
       syncStatus: event.type === "error" ? "error" : "idle",
@@ -1839,6 +2005,78 @@ function createSyntheticUserMessage(
   };
 }
 
+function createRuntimeActivityObservation(
+  sessionId: string,
+  snapshot: {
+    startedAt: string;
+    lastEventAt: string | null;
+    runningState: RuntimeRunState;
+    detail: string | null;
+    errorCode?: string | null;
+  }
+): SessionActivityObservation {
+  return {
+    sessionId,
+    runId: buildRuntimeRunId(sessionId, snapshot.startedAt),
+    runningState: snapshot.runningState,
+    source: "authoritative_runtime",
+    confidence:
+      snapshot.runningState === "failed" || snapshot.runningState === "completed" || snapshot.runningState === "interrupted"
+        ? "strong"
+        : "authoritative",
+    detail: snapshot.detail,
+    errorCode: snapshot.runningState === "failed" ? snapshot.errorCode ?? null : null,
+    observedAt: snapshot.lastEventAt ?? snapshot.startedAt
+  };
+}
+
+function createExternalRuntimeActivityObservation(
+  sessionId: string,
+  snapshot: {
+    runningState: ExternalRuntimeStatus;
+    detail: string | null;
+    updatedAt: string;
+  }
+): SessionActivityObservation {
+  return {
+    sessionId,
+    runId: null,
+    runningState: snapshot.runningState,
+    source: "authoritative_provider_event",
+    confidence: snapshot.runningState === "failed" ? "strong" : "authoritative",
+    detail: snapshot.detail,
+    errorCode: snapshot.runningState === "failed" ? "CLAUDE_HOOK_STOP_FAILURE" : null,
+    observedAt: snapshot.updatedAt
+  };
+}
+
+function createRuntimeEventObservation(
+  sessionId: string,
+  event: RuntimeEvent,
+  startedAt: string | null
+): SessionActivityObservation {
+  return {
+    sessionId,
+    runId: buildRuntimeRunId(sessionId, startedAt ?? event.timestamp),
+    runningState: event.type === "message" ? "running" : event.status ?? "running",
+    source: "authoritative_runtime",
+    confidence:
+      event.type === "error" || event.status === "completed" || event.status === "interrupted"
+        ? "strong"
+        : "authoritative",
+    detail:
+      event.type === "message"
+        ? "Host 正在接收这一轮运行的实时事件"
+        : event.detail,
+    errorCode: event.type === "error" ? event.errorCode : null,
+    observedAt: event.type === "message" ? event.message.timestamp : event.timestamp
+  };
+}
+
+function buildRuntimeRunId(sessionId: string, startedAt: string): string {
+  return `runtime:${sessionId}:${startedAt}`;
+}
+
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -1995,7 +2233,7 @@ function isTerminalRuntimeEventStatus(
 }
 
 function isPendingSessionRunningState(
-  state: SessionRunningState | RuntimeRunState | null | undefined
+  state: SessionResolvedRunningState | SessionRunningState | RuntimeRunState | null | undefined
 ): boolean {
   return state === "starting" || state === "running";
 }
@@ -2044,27 +2282,60 @@ function createProviderRuntimeAdapters(
       request: Record<string, unknown>;
     }) => Promise<unknown>;
   } = {}
-): ProviderRuntimeAdapter[] {
+): {
+  adapters: ProviderRuntimeAdapter[];
+  disposables: Array<{ dispose(): void }>;
+} {
   const claudeHookBridgeConfig = buildClaudeHookBridgeConfig(config);
-  return [
-    new ClaudeRuntimeAdapter({
-      homeDir: config.claudeCodeHomeDir,
-      hookBridge: {
-        url: claudeHookBridgeConfig.bridgeUrl,
-        token: config.claudeHookBridgeToken,
-        scriptPath: claudeHookBridgeConfig.scriptPath
-      }
-    }),
-    new CodexRuntimeAdapter({
-      homeDir: config.codexHomeDir,
-      commandPath: config.codexCliPath,
-      handleServerRequest: options.handleCodexServerRequest
-    }),
-    new OpenCodeRuntimeAdapter({
-      baseUrl: config.opencodeBaseUrl,
-      baseUrlResolver: config.opencodeBaseUrlResolver?.resolve.bind(config.opencodeBaseUrlResolver)
-    })
-  ];
+  const claudeAdapter =
+    process.env.VITEST
+      ? new ClaudeRuntimeAdapter({
+        homeDir: config.claudeCodeHomeDir,
+        hookBridge: {
+          url: claudeHookBridgeConfig.bridgeUrl,
+          token: config.claudeHookBridgeToken,
+          scriptPath: claudeHookBridgeConfig.scriptPath
+        }
+      })
+      : new ClaudeRuntimeHelperAdapter({
+        homeDir: config.claudeCodeHomeDir,
+        hookBridge: {
+          url: claudeHookBridgeConfig.bridgeUrl,
+          token: config.claudeHookBridgeToken,
+          scriptPath: claudeHookBridgeConfig.scriptPath
+        }
+      });
+  const disposables: Array<{ dispose(): void }> = [];
+
+  if ("dispose" in claudeAdapter && typeof claudeAdapter.dispose === "function") {
+    disposables.push(claudeAdapter);
+  }
+
+  const codexTransportHelper =
+    process.env.VITEST
+      ? null
+      : new CodexAppServerHelperClient(config.codexCliPath);
+
+  if (codexTransportHelper) {
+    disposables.push(codexTransportHelper);
+  }
+
+  return {
+    adapters: [
+      claudeAdapter,
+      new CodexRuntimeAdapter({
+        homeDir: config.codexHomeDir,
+        commandPath: config.codexCliPath,
+        transportFactory: codexTransportHelper?.createTransport.bind(codexTransportHelper),
+        handleServerRequest: options.handleCodexServerRequest
+      }),
+      new OpenCodeRuntimeAdapter({
+        baseUrl: config.opencodeBaseUrl,
+        baseUrlResolver: config.opencodeBaseUrlResolver?.resolve.bind(config.opencodeBaseUrlResolver)
+      })
+    ],
+    disposables
+  };
 }
 
 function buildClaudeHookBridgeConfig(config: HostConfig): ClaudeHookBridgeConfig {

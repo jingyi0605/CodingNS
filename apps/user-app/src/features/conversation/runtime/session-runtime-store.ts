@@ -29,10 +29,14 @@ import {
   type SessionPermissionRequestDto,
   type SessionQueueItemDto,
   type SessionActivityState,
+  type SessionActivityConfidence,
+  type SessionActivityResolutionSource,
   type SessionSummaryDto,
+  type SessionRuntimeDto,
   type SessionRunningState
 } from "../api/conversation-api";
 import type {
+  SessionActivityEvent,
   SessionInterruptedEvent,
   SessionPermissionRequestEvent,
   SessionPermissionRequestResolvedEvent,
@@ -551,6 +555,9 @@ export class SessionRuntimeStore {
       onRuntimeMessage: (event) => {
         this.handleRuntimeMessage(event);
       },
+      onActivity: (event) => {
+        this.handleActivity(event);
+      },
       onRuntimeStatus: (event) => {
         this.handleRuntimeStatus(event);
       },
@@ -785,14 +792,12 @@ export class SessionRuntimeStore {
 
     try {
       const runtime = await getSessionRuntime(this.sessionId);
-      const runtimeError = resolveRuntimeErrorState(runtime);
       this.patch({
-        session: withRunningState(this.state.session, runtime.runningState),
+        session: applyRuntimeActivityToSession(this.state.session, runtime),
         runtimeHasActiveRun: runtime.hasActiveRun,
         runtimeCanInterrupt: runtime.canInterrupt,
         contextUsage: runtime.contextUsage,
-        errorCode: runtimeError.errorCode,
-        errorDetail: runtimeError.errorDetail
+        ...resolveRuntimeErrorState(runtime)
       });
       await this.refreshQueue();
 
@@ -903,15 +908,13 @@ export class SessionRuntimeStore {
 
     try {
       const runtime = await getSessionRuntime(this.sessionId);
-      const runtimeError = resolveRuntimeErrorState(runtime);
 
       this.patch({
-        session: withRunningState(this.state.session, runtime.runningState),
+        session: applyRuntimeActivityToSession(this.state.session, runtime),
         runtimeHasActiveRun: runtime.hasActiveRun,
         runtimeCanInterrupt: runtime.canInterrupt,
         contextUsage: runtime.contextUsage,
-        errorCode: runtimeError.errorCode,
-        errorDetail: runtimeError.errorDetail
+        ...resolveRuntimeErrorState(runtime)
       });
       await this.refreshQueue();
 
@@ -997,6 +1000,25 @@ export class SessionRuntimeStore {
       void this.refreshRuntimeSnapshot("runtime_terminal");
     }
 
+  }
+
+  private handleActivity(event: SessionActivityEvent): void {
+    this.patch({
+      session: applyRealtimeActivityToSession(this.state.session, event),
+      runtimeHasActiveRun: event.hasActiveRun,
+      runtimeCanInterrupt: event.canInterrupt,
+      ...resolveRuntimeErrorState(event)
+    });
+
+    if (isTerminalRuntimeState(event.runningState)) {
+      this.clearRuntimeRefreshTimer();
+      void this.refreshQueue();
+      return;
+    }
+
+    if (event.runningState === "stale" || event.runningState === "unknown") {
+      this.scheduleRuntimeRefresh("tail", "activity_watchdog");
+    }
   }
 
   private handleRuntimeMessage(event: SessionRuntimeMessageEvent): void {
@@ -1210,6 +1232,8 @@ function inferHasOlderMessages(
 function withRunningState<
   T extends {
     runningState: SessionRunningState | null;
+    completedAt?: string | null;
+    lastSeenAt?: string | null;
     activityState?: SessionActivityState;
   }
 >(
@@ -1223,7 +1247,12 @@ function withRunningState<
   return {
     ...session,
     runningState,
-    activityState: resolveActivityState(session.activityState, runningState)
+    activityState: resolveSessionActivityState(
+      session,
+      runningState,
+      session.completedAt ?? null,
+      isRuntimeActiveState(runningState)
+    )
   };
 }
 
@@ -1251,19 +1280,108 @@ function withLastSeenAt<
   };
 }
 
-function resolveActivityState(
-  currentState: SessionActivityState | undefined,
-  runningState: SessionRunningState
-): SessionActivityState | undefined {
-  if (isRuntimeActiveState(runningState)) {
+function applyRuntimeActivityToSession(
+  session: SessionSummaryDto | null,
+  runtime: SessionRuntimeDto
+): SessionSummaryDto | null {
+  return applySessionActivityPatch(session, {
+    runningState: runtime.runningState,
+    activityResolutionSource: runtime.activityResolutionSource,
+    activityConfidence: runtime.activityConfidence,
+    runId: runtime.runId,
+    detail: runtime.detail,
+    errorCode: runtime.errorCode,
+    errorDetail: runtime.errorDetail,
+    hasActiveRun: runtime.hasActiveRun,
+    updatedAt: runtime.updatedAt,
+    watchdogTriggeredAt: runtime.watchdogTriggeredAt
+  });
+}
+
+function applyRealtimeActivityToSession(
+  session: SessionSummaryDto | null,
+  event: SessionActivityEvent
+): SessionSummaryDto | null {
+  return applySessionActivityPatch(session, event);
+}
+
+function applySessionActivityPatch(
+  session: SessionSummaryDto | null,
+  activity: {
+    runningState: SessionRunningState;
+    activityResolutionSource: SessionActivityResolutionSource;
+    activityConfidence: SessionActivityConfidence;
+    runId: string | null;
+    detail: string | null;
+    errorCode: string | null;
+    errorDetail: string | null;
+    hasActiveRun: boolean;
+    updatedAt: string;
+    watchdogTriggeredAt: string | null;
+  }
+): SessionSummaryDto | null {
+  if (!session) {
+    return session;
+  }
+
+  const activitySource = mapResolutionSourceToActivitySource(activity.activityResolutionSource);
+  const completedAt =
+    isTerminalRuntimeState(activity.runningState)
+      ? maxIsoTimestamp(session.completedAt, activity.updatedAt)
+      : null;
+  const lastEventAt =
+    activity.runningState === "completed" || activity.runningState === "interrupted" || activity.runningState === "failed"
+      ? maxIsoTimestamp(session.lastEventAt, activity.updatedAt)
+      : activity.updatedAt;
+
+  return {
+    ...session,
+    runningState: activity.runningState,
+    activitySource,
+    activityResolutionSource: activity.activityResolutionSource,
+    activityConfidence: activity.activityConfidence,
+    runId: activity.runId,
+    lastEventAt,
+    completedAt,
+    lastErrorCode:
+      activity.runningState === "failed"
+        ? activity.errorCode ?? session.lastErrorCode
+        : null,
+    lastErrorDetail:
+      activity.runningState === "failed"
+        ? activity.errorDetail ?? activity.detail ?? session.lastErrorDetail
+        : null,
+    watchdogTriggeredAt: activity.watchdogTriggeredAt,
+    updatedAt: maxIsoTimestamp(session.updatedAt, activity.updatedAt) ?? activity.updatedAt,
+    activityState: resolveSessionActivityState(session, activity.runningState, completedAt, activity.hasActiveRun)
+  };
+}
+
+function resolveSessionActivityState(
+  session: {
+    activityState?: SessionActivityState;
+    lastSeenAt?: string | null;
+  },
+  runningState: SessionRunningState,
+  completedAt: string | null,
+  hasActiveRun: boolean
+): SessionActivityState {
+  if (hasActiveRun || isRuntimeActiveState(runningState)) {
     return "running";
   }
 
-  if (currentState === "running") {
+  if (
+    completedAt &&
+    (!session.lastSeenAt || completedAt > session.lastSeenAt)
+  ) {
+    return "completed_unread";
+  }
+
+  if (session.activityState === "running" || session.activityState === "completed_unread") {
     return "idle";
   }
 
-  return currentState;
+  return session.activityState ?? "idle";
 }
 
 function isRuntimeActiveState(state: SessionRunningState | null | undefined): boolean {
@@ -1350,6 +1468,32 @@ function resolveRuntimeErrorState(runtime: {
     errorCode: null,
     errorDetail: null
   };
+}
+
+function mapResolutionSourceToActivitySource(
+  source: SessionActivityResolutionSource
+): SessionSummaryDto["activitySource"] {
+  if (source === "authoritative_runtime" || source === "authoritative_provider_event") {
+    return "runtime";
+  }
+
+  if (source === "inferred_log") {
+    return "inferred";
+  }
+
+  return "none";
+}
+
+function maxIsoTimestamp(left: string | null | undefined, right: string | null | undefined): string | null {
+  if (!left) {
+    return right ?? null;
+  }
+
+  if (!right) {
+    return left;
+  }
+
+  return left >= right ? left : right;
 }
 
 function createClientRequestId(): string {
@@ -1465,6 +1609,16 @@ function pickFreshestSessionSummary(
     return left;
   }
 
+  // 导航列表里可能会收到一个只有 updatedAt 更新、但活动证据完全没变的快照。
+  // 这种快照不应该把当前本地已经确认的 running 态冲回 idle。
+  if (shouldPreferActiveSessionSummary(left, right)) {
+    return left;
+  }
+
+  if (shouldPreferActiveSessionSummary(right, left)) {
+    return right;
+  }
+
   const leftTimestamp = Date.parse(left.updatedAt || left.lastMessageAt || left.createdAt);
   const rightTimestamp = Date.parse(right.updatedAt || right.lastMessageAt || right.createdAt);
 
@@ -1473,4 +1627,21 @@ function pickFreshestSessionSummary(
   }
 
   return leftTimestamp >= rightTimestamp ? left : right;
+}
+
+function shouldPreferActiveSessionSummary(
+  candidate: SessionSummaryDto,
+  incoming: SessionSummaryDto
+): boolean {
+  return (
+    isSessionSummaryActive(candidate)
+    && !isSessionSummaryActive(incoming)
+    && candidate.lastEventAt === incoming.lastEventAt
+    && candidate.lastMessageAt === incoming.lastMessageAt
+    && candidate.completedAt === incoming.completedAt
+  );
+}
+
+function isSessionSummaryActive(session: SessionSummaryDto): boolean {
+  return session.activityState === "running" || isRuntimeActiveState(session.runningState);
 }

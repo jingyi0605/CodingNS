@@ -278,6 +278,14 @@ describe("ConversationPage", () => {
     const view = renderDraftConversationPage();
     const page = view.container.querySelector(".mobile-conversation-page") as HTMLElement;
 
+    const initialHideButton = screen.queryByRole("button", {
+      name: t("shell.hideSessionSidebar")
+    });
+
+    if (initialHideButton) {
+      fireEvent.click(initialHideButton);
+    }
+
     expect(screen.queryByText("历史会话 Alpha")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: t("shell.showSessionSidebar") }));
@@ -532,6 +540,42 @@ describe("ConversationPage", () => {
 
     expect(sessionList).toHaveAttribute("data-preview-gesture", "ignore");
   });
+
+  it("移动端快捷会话菜单会显示后端统一裁决后的 stale 状态", async () => {
+    mockGetProviderCapabilities.mockResolvedValue({
+      provider: "codex",
+      canStartSession: true,
+      canResumeSession: true,
+      canSendMessage: true,
+      inRunInputMode: "none",
+      supportsSubagents: false,
+      supportsInterrupt: true,
+      supportsStructuredToolCalls: true,
+      supportsTokenUsage: true,
+      supportsAttachments: true,
+      supportsPermissionPrompt: true,
+      supportsCheckpoint: false,
+      modelOptions: [{ id: "provider-default", name: "跟随 CLI 默认模型", usesProviderDefault: true }],
+      limitations: []
+    });
+    mockUseWorkbenchShell.mockReturnValue(
+      createMobileWorkbenchShellValue({
+        runningState: "stale",
+        activitySource: "runtime",
+        activityResolutionSource: "authoritative_runtime",
+        activityState: "idle"
+      })
+    );
+
+    renderDraftConversationPage();
+
+    expect(screen.getByRole("button", { name: t("shell.hideSessionSidebar") })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: new RegExp(t("conversation.runtimeStale"))
+      })
+    ).toBeInTheDocument();
+  });
 });
 
 function renderDraftConversationPage() {
@@ -549,8 +593,37 @@ function renderDraftConversationPage() {
   );
 }
 
-function createMobileWorkbenchShellValue() {
+function createMobileWorkbenchShellValue(sessionOverrides: Record<string, unknown> = {}) {
   const timestamp = "2026-03-28T08:00:00.000Z";
+  const session = {
+    sessionId: "session-1",
+    workspaceId: "workspace-1",
+    provider: "codex",
+    providerSessionId: "provider-session-1",
+    rawStoreRef: "codex://session-1",
+    parentSessionId: null,
+    isSubagent: false,
+    subagentLabel: null,
+    isArchived: false,
+    title: "历史会话 Alpha",
+    messageCount: 3,
+    lastMessageAt: timestamp,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    syncStatus: "idle",
+    syncCursor: null,
+    lastSyncAt: null,
+    lastErrorCode: null,
+    lastErrorDetail: null,
+    resumedAt: null,
+    runningState: "idle",
+    activitySource: "none",
+    lastEventAt: null,
+    completedAt: null,
+    lastSeenAt: null,
+    activityState: "idle",
+    ...sessionOverrides
+  };
 
   return {
     shellMode: "mobile",
@@ -561,36 +634,7 @@ function createMobileWorkbenchShellValue() {
           name: "工作区一",
           path: "/Users/jackson/workspace-1"
         },
-        sessions: [
-          {
-            sessionId: "session-1",
-            workspaceId: "workspace-1",
-            provider: "codex",
-            providerSessionId: "provider-session-1",
-            rawStoreRef: "codex://session-1",
-            parentSessionId: null,
-            isSubagent: false,
-            subagentLabel: null,
-            isArchived: false,
-            title: "历史会话 Alpha",
-            messageCount: 3,
-            lastMessageAt: timestamp,
-            createdAt: timestamp,
-            updatedAt: timestamp,
-            syncStatus: "idle",
-            syncCursor: null,
-            lastSyncAt: null,
-            lastErrorCode: null,
-            lastErrorDetail: null,
-            resumedAt: null,
-            runningState: "idle",
-            activitySource: "none",
-            lastEventAt: null,
-            completedAt: null,
-            lastSeenAt: null,
-            activityState: "idle"
-          }
-        ]
+        sessions: [session]
       }
     ],
     requestNavigationRefresh: vi.fn(),

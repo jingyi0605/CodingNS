@@ -82,6 +82,38 @@ describe("session runtime status", () => {
     expect(inspection.completedAtCandidate).toBe("2026-03-26T10:00:05.000Z");
   });
 
+  it("Codex 纯文本输出阶段，只要最近仍有事件，就应继续判定为运行中", () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-runtime-status-"));
+    tempDirs.push(tempDir);
+    const rawStoreRef = path.join(tempDir, "codex-running.jsonl");
+
+    writeFileSync(
+      rawStoreRef,
+      [
+        JSON.stringify({
+          timestamp: "2026-03-26T10:01:00.000Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: "still working" }]
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const inspection = inspectSessionActivity(
+      "codex",
+      rawStoreRef,
+      Date.parse("2026-03-26T10:01:10.000Z")
+    );
+
+    expect(inspection.runningState).toBe("running");
+    expect(inspection.hasPendingTools).toBe(false);
+    expect(inspection.completedAtCandidate).toBeNull();
+  });
+
   it("Codex 原始会话出现 task_failed 后，runtime 接口应该返回 failed 和稳定错误码", async () => {
     const fixture = createProviderFixture();
     activeFixtures.push(fixture);
@@ -184,6 +216,113 @@ describe("session runtime status", () => {
     });
   });
 
+  it("会话列表和 runtime 接口应该返回同一份 authority 裁决字段", async () => {
+    const fixture = createProviderFixture();
+    activeFixtures.push(fixture);
+
+    const hosted = createTestApp(fixture);
+    activeClosers.push(() => hosted.app.close());
+    await hosted.app.ready();
+
+    const setup = await hosted.app.inject({
+      method: "POST",
+      url: "/api/public/setup",
+      payload: {
+        username: "admin",
+        password: "password123"
+      }
+    });
+    expect(setup.statusCode).toBe(201);
+
+    const login = await hosted.app.inject({
+      method: "POST",
+      url: "/api/auth/login",
+      payload: {
+        username: "admin",
+        password: "password123"
+      }
+    });
+    expect(login.statusCode).toBe(200);
+    const accessToken = login.json().accessToken as string;
+
+    const imported = await hosted.app.inject({
+      method: "POST",
+      url: "/api/workspaces/import",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        path: fixture.workspaceDir,
+        name: "Fixture Workspace"
+      }
+    });
+    expect(imported.statusCode).toBe(201);
+    const workspaceId = imported.json().id as string;
+
+    const firstList = await hosted.app.inject({
+      method: "GET",
+      url: `/api/sessions?workspaceId=${workspaceId}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(firstList.statusCode).toBe(200);
+
+    const claudeSession = firstList
+      .json()
+      .items.find((item: { provider: string }) => item.provider === "claude-code");
+    expect(claudeSession).toBeTruthy();
+
+    const hookResult = await hosted.services.modules.sessionLiveRuntimeService.ingestClaudeHookEvent({
+      hook_event_name: "SessionStart",
+      session_id: "claude-session-1",
+      cwd: fixture.workspaceDir,
+      transcript_path: fixture.claudeSessionFile
+    });
+    expect(hookResult.accepted).toBe(true);
+    expect(hookResult.ignored).toBe(false);
+    expect(hookResult.sessionId).toBe(claudeSession.sessionId);
+
+    const list = await hosted.app.inject({
+      method: "GET",
+      url: `/api/sessions?workspaceId=${workspaceId}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(list.statusCode).toBe(200);
+
+    const listedClaudeSession = list
+      .json()
+      .items.find((item: { provider: string }) => item.provider === "claude-code");
+    expect(listedClaudeSession).toMatchObject({
+      sessionId: claudeSession.sessionId,
+      runningState: "running",
+      activitySource: "runtime",
+      activityResolutionSource: "authoritative_provider_event",
+      activityConfidence: "authoritative",
+      activityState: "running",
+      runId: null
+    });
+
+    const runtime = await hosted.app.inject({
+      method: "GET",
+      url: `/api/sessions/${claudeSession.sessionId}/runtime`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(runtime.statusCode).toBe(200);
+    expect(runtime.json()).toMatchObject({
+      sessionId: claudeSession.sessionId,
+      hasActiveRun: true,
+      runningState: "running",
+      activityResolutionSource: "authoritative_provider_event",
+      activityConfidence: "authoritative",
+      runId: null
+    });
+  });
+
   it("Claude 出现 end_turn 后，不会再把旧的 tool_use 残留判成运行中", () => {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-runtime-status-"));
     tempDirs.push(tempDir);
@@ -235,7 +374,38 @@ describe("session runtime status", () => {
     expect(inspection.completedAtCandidate).toBe("2026-03-26T11:00:02.000Z");
   });
 
-  it("runtime 接口在 active run 不存在时，会回退到原始记录刷新后的真实状态", async () => {
+  it("Claude 刚收到用户新消息时，即使还没进入 tool_use，也应保持运行中", () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-runtime-status-"));
+    tempDirs.push(tempDir);
+    const rawStoreRef = path.join(tempDir, "claude-running.jsonl");
+
+    writeFileSync(
+      rawStoreRef,
+      [
+        JSON.stringify({
+          type: "user",
+          timestamp: "2026-03-26T11:05:00.000Z",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "continue" }]
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const inspection = inspectSessionActivity(
+      "claude-code",
+      rawStoreRef,
+      Date.parse("2026-03-26T11:05:10.000Z")
+    );
+
+    expect(inspection.runningState).toBe("running");
+    expect(inspection.hasPendingTools).toBe(false);
+    expect(inspection.completedAtCandidate).toBeNull();
+  });
+
+  it("runtime 接口在 active run 不存在时，会回退到原始记录里的最近活动状态", async () => {
     const fixture = createProviderFixture();
     activeFixtures.push(fixture);
 
@@ -316,7 +486,7 @@ describe("session runtime status", () => {
     expect(runtime.json()).toMatchObject({
       sessionId: codexSession.sessionId,
       hasActiveRun: false,
-      runningState: "idle"
+      runningState: "running"
     });
   });
 });

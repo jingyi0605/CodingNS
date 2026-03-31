@@ -1196,11 +1196,44 @@ a {
   animation: session-running-spin 800ms linear infinite;
 }
 
+.session-state-indicator.is-stale {
+  border: 2px solid color-mix(in srgb, var(--warning) 34%, transparent);
+  border-top-color: color-mix(in srgb, var(--warning) 70%, #8a4b00);
+  background: transparent;
+  animation: session-running-spin 1400ms linear infinite;
+}
+
+.session-state-indicator.is-unknown {
+  border: 2px dashed color-mix(in srgb, var(--text-muted) 48%, transparent);
+  background: color-mix(in srgb, var(--surface-muted) 82%, transparent);
+}
+
 .session-meta-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+}
+
+.session-activity-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 5px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1.35;
+  flex-shrink: 0;
+}
+
+.session-activity-badge.is-stale {
+  background: color-mix(in srgb, var(--warning) 14%, transparent);
+  color: color-mix(in srgb, var(--warning) 74%, #704100);
+}
+
+.session-activity-badge.is-unknown {
+  background: color-mix(in srgb, var(--surface-muted) 76%, transparent);
+  color: var(--text-muted);
 }
 
 .session-meta {
@@ -5455,18 +5488,6 @@ textarea:focus-visible {
 }
 
 /* Provider Logo */
-.composer-provider-logo {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
-  background: var(--bg-hover);
-  color: var(--text-secondary);
-}
-
 /* macOS Select */
 .composer-mac-select {
   position: relative;
@@ -5684,6 +5705,7 @@ textarea:focus-visible {
   height: 28px;
   border-radius: 8px;
   color: var(--text-secondary);
+  cursor: pointer;
   transition: all 120ms;
 }
 
@@ -5699,6 +5721,14 @@ textarea:focus-visible {
 
 .composer-attachment-sheet-card {
   gap: 1rem;
+}
+
+.composer-attachment-sheet-overlay {
+  z-index: 2400;
+}
+
+.composer-attachment-sheet {
+  z-index: 2401;
 }
 
 .composer-attachment-sheet-actions {
@@ -5724,6 +5754,10 @@ textarea:focus-visible {
   color: var(--text-secondary);
   font-size: 0.84rem;
   line-height: 1.45;
+}
+
+.composer-attachment-sheet-option {
+  cursor: pointer;
 }
 
 .composer-send-group {
@@ -9543,12 +9577,6 @@ textarea:focus-visible {
 
 .composer-controls-left {
   gap: 6px;
-}
-
-.composer-provider-logo {
-  width: 28px;
-  height: 28px;
-  border-radius: 10px;
 }
 
 .composer-mac-select-trigger {

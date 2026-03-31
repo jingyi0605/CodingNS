@@ -119,6 +119,12 @@ function emitRealtimeRuntimeMessage(event: Record<string, unknown>) {
   return client;
 }
 
+function emitRealtimeActivity(event: Record<string, unknown>) {
+  const client = getRealtimeClient();
+  (client.options.onActivity as ((payload: Record<string, unknown>) => void))(event);
+  return client;
+}
+
 describe("SessionRuntimeStore", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -1912,6 +1918,65 @@ describe("SessionRuntimeStore", () => {
     store.destroy();
   });
 
+  it("applyNavigationSession 不会用只有 updatedAt 更新的 idle 摘要冲掉本地 running 态", () => {
+    const store = new SessionRuntimeStore("session-1", {
+      initialSession: {
+        sessionId: "session-1",
+        workspaceId: "workspace-1",
+        provider: "codex",
+        providerSessionId: "raw-1",
+        rawStoreRef: "codex://raw-1",
+        title: "session-1",
+        messageCount: 1,
+        lastMessageAt: "2026-03-24T10:00:00.000Z",
+        createdAt: "2026-03-24T09:00:00.000Z",
+        updatedAt: "2026-03-24T10:00:00.000Z",
+        syncStatus: "idle",
+        syncCursor: "cursor-sync",
+        lastSyncAt: "2026-03-24T10:00:00.000Z",
+        lastErrorCode: null,
+        lastErrorDetail: null,
+        resumedAt: null,
+        runningState: "running",
+        activitySource: "runtime",
+        lastEventAt: "2026-03-24T10:00:00.000Z",
+        completedAt: null,
+        lastSeenAt: null,
+        activityState: "running"
+      }
+    });
+
+    store.applyNavigationSession({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "raw-1",
+      rawStoreRef: "codex://raw-1",
+      title: "session-1",
+      messageCount: 1,
+      lastMessageAt: "2026-03-24T10:00:00.000Z",
+      createdAt: "2026-03-24T09:00:00.000Z",
+      updatedAt: "2026-03-24T10:05:00.000Z",
+      syncStatus: "idle",
+      syncCursor: "cursor-sync",
+      lastSyncAt: "2026-03-24T10:05:00.000Z",
+      lastErrorCode: null,
+      lastErrorDetail: null,
+      resumedAt: null,
+      runningState: "idle",
+      activitySource: "none",
+      lastEventAt: "2026-03-24T10:00:00.000Z",
+      completedAt: null,
+      lastSeenAt: null,
+      activityState: "idle"
+    });
+
+    expect(store.getState().session?.runningState).toBe("running");
+    expect(store.getState().session?.activityState).toBe("running");
+
+    store.destroy();
+  });
+
   it("throttles mark seen requests while new assistant messages keep streaming in", async () => {
     vi.useFakeTimers();
     const store = new SessionRuntimeStore("session-1");
@@ -2013,6 +2078,42 @@ describe("SessionRuntimeStore", () => {
 
     expect(store.getState().permissionRequests).toHaveLength(1);
     expect(store.getState().permissionRequests[0]?.title).toBe("Claude 请求执行命令");
+
+    store.destroy();
+  });
+
+  it("收到 session.activity 后会按统一裁决更新活动状态", async () => {
+    const store = new SessionRuntimeStore("session-1");
+    await store.initialize();
+    emitRealtimeSubscribed();
+
+    emitRealtimeActivity({
+      type: "session.activity",
+      sessionId: "session-1",
+      runningState: "stale",
+      activityResolutionSource: "authoritative_runtime",
+      activityConfidence: "strong",
+      runId: "runtime:session-1:2026-03-24T10:00:00.000Z",
+      detail: "Host 仍持有这轮运行，但长时间没有收到新事件，状态待确认",
+      errorCode: null,
+      errorDetail: null,
+      hasActiveRun: true,
+      canInterrupt: true,
+      updatedAt: "2026-03-24T10:00:30.000Z",
+      watchdogTriggeredAt: "2026-03-24T10:00:30.000Z"
+    });
+
+    expect(store.getState().session).toMatchObject({
+      runningState: "stale",
+      activitySource: "runtime",
+      activityResolutionSource: "authoritative_runtime",
+      activityConfidence: "strong",
+      runId: "runtime:session-1:2026-03-24T10:00:00.000Z",
+      watchdogTriggeredAt: "2026-03-24T10:00:30.000Z",
+      activityState: "running"
+    });
+    expect(store.getState().runtimeHasActiveRun).toBe(true);
+    expect(store.getState().runtimeCanInterrupt).toBe(true);
 
     store.destroy();
   });
