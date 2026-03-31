@@ -18,6 +18,12 @@
 	<string>0.1.1</string>
 	<key>CFBundleVersion</key>
 	<string>0.1.1</string>
+	<key>NSCameraUsageDescription</key>
+	<string>用于在聊天中拍照并作为图片附件发送。</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>用于从相册选择图片并作为聊天附件发送。</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>用于将聊天中的图片或文件保存到系统相册与本地资料。</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>
