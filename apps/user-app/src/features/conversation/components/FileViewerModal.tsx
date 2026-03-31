@@ -236,10 +236,20 @@ export function FileViewerModal({
   const [saving, setSaving] = useState(false);
   const [mode, setMode] = useState<ViewerMode>("preview");
   const { showToast } = useToast();
+  const onCloseRef = useRef(onClose);
+  const showToastRef = useRef(showToast);
 
   const detectedLanguage = useMemo(() => detectLanguage(filePath), [filePath]);
   const isMarkdown = detectedLanguage === "markdown";
   const canEdit = Boolean(preview?.supported && preview.kind === "text");
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  useEffect(() => {
+    showToastRef.current = showToast;
+  }, [showToast]);
 
   useEffect(() => {
     if (!open) {
@@ -272,11 +282,11 @@ export function FileViewerModal({
         }
       } catch (error) {
         if (!cancelled) {
-          showToast({
+          showToastRef.current({
             title: readError(error, t("conversation.filePanelOpenFailed")),
             tone: "error"
           });
-          onClose();
+          onCloseRef.current();
         }
       } finally {
         if (!cancelled) {
@@ -290,7 +300,7 @@ export function FileViewerModal({
     return () => {
       cancelled = true;
     };
-  }, [filePath, onClose, open, showToast, workspaceId]);
+  }, [filePath, open, workspaceId]);
 
   useEffect(() => {
     if (!open) {

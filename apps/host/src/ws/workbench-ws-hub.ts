@@ -462,7 +462,6 @@ export class WorkbenchWsHub {
     await Promise.all(
       [...channel.clients].map(async (client) => {
         await Promise.allSettled([
-          this.refreshFileTreeSubscriptions(client),
           this.refreshGitSubscription(client),
           this.refreshTerminalManagerSubscription(client),
           this.refreshWorkspaceManagementSubscription(client)
