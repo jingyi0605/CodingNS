@@ -8,8 +8,6 @@ import type {
 
 const REASONING_LEVEL_SET = new Set(["low", "medium", "high", "xhigh"]);
 
-type ProviderIconVariant = "codex" | "claude" | "generic";
-
 interface ProviderMetadata {
   displayNameKey: string;
   draftTitleKey: string;
@@ -17,7 +15,6 @@ interface ProviderMetadata {
   defaultRunInputMode: InRunInputMode;
   reasoningLevelPersists: boolean;
   defaultReasoningLevel?: string | null;
-  iconVariant: ProviderIconVariant;
   supportsSlashMenuByDefault?: boolean;
   foldRulesMessagesByDefault?: boolean;
 }
@@ -31,7 +28,6 @@ const PROVIDER_METADATA: Record<string, ProviderMetadata> = {
     defaultRunInputMode: "streaming_guidance",
     reasoningLevelPersists: false,
     defaultReasoningLevel: undefined,
-    iconVariant: "claude",
     supportsSlashMenuByDefault: true,
     foldRulesMessagesByDefault: false
   },
@@ -42,7 +38,6 @@ const PROVIDER_METADATA: Record<string, ProviderMetadata> = {
     defaultRunInputMode: "none",
     reasoningLevelPersists: true,
     defaultReasoningLevel: null,
-    iconVariant: "codex",
     supportsSlashMenuByDefault: false,
     foldRulesMessagesByDefault: true
   },
@@ -53,7 +48,6 @@ const PROVIDER_METADATA: Record<string, ProviderMetadata> = {
     defaultRunInputMode: "none",
     reasoningLevelPersists: false,
     defaultReasoningLevel: undefined,
-    iconVariant: "generic",
     supportsSlashMenuByDefault: false,
     foldRulesMessagesByDefault: false
   }
@@ -170,11 +164,6 @@ export function shouldSupportRunSteering(capabilities: ProviderCapabilitiesDto |
 export function shouldPersistReasoningLevel(provider: ProviderId): boolean {
   const metadata = getProviderMetadata(provider);
   return metadata?.reasoningLevelPersists ?? false;
-}
-
-// 不同 provider 可能需要不同图标外观，这里统一入口
-export function getProviderIconVariant(provider: ProviderId | null): ProviderIconVariant {
-  return getProviderMetadata(provider)?.iconVariant ?? "generic";
 }
 
 // 规则消息合并默认行为也由 metadata 决定，以防散落的 provider 判断

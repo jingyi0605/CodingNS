@@ -5,6 +5,95 @@ import { t } from "../../../shared/i18n";
 import type { ProviderCapabilitiesDto } from "../api/conversation-api";
 import { ComposerPanel } from "./ComposerPanel";
 
+const platformMock = vi.hoisted(() => ({
+  platform: "web",
+  isDesktop: false,
+  isWeb: true,
+  isMobile: false,
+  isNativeMobile: false,
+  viewportClass: "expanded",
+  ui: {
+    osFamily: "unknown",
+    windowControlsStyle: "none",
+    prefersDesktopChrome: false,
+    prefersOverlayTitlebar: false,
+    prefersSystemFontStack: true
+  },
+  bridge: {
+    supported: false,
+    openExternal: vi.fn(),
+    showNotification: vi.fn(),
+    writeClipboardText: vi.fn(),
+    setWindowState: vi.fn(),
+    readDesktopConfig: vi.fn(),
+    writeDesktopConfig: vi.fn(),
+    getRuntimeInfo: vi.fn(),
+    checkForUpdate: vi.fn(),
+    installUpdate: vi.fn(),
+    rollbackToPreviousVersion: vi.fn(),
+    pickDirectory: vi.fn()
+  },
+  haptics: {
+    supported: false,
+    trigger: vi.fn()
+  }
+}));
+const preferenceStoreMock = vi.hoisted(() => ({
+  updatePreferences: vi.fn().mockResolvedValue(undefined),
+  userPreferenceStore: {
+    getState: vi.fn(() => ({
+      profile: {
+        language: "zh-CN",
+        providers: {
+          codex: {
+            defaultModel: null,
+            defaultReasoningLevel: null
+          },
+          "claude-code": {
+            defaultModel: null,
+            defaultReasoningLevel: null
+          },
+          opencode: {
+            defaultModel: null,
+            defaultReasoningLevel: null
+          }
+        }
+      }
+    })),
+    resetToLocalFallback: vi.fn(),
+    subscribe: vi.fn(() => () => undefined)
+  },
+  usePreferencesSelector: vi.fn((selector: (state: {
+    profile: {
+      providers: Record<string, {
+        defaultModel: string | null;
+        defaultReasoningLevel: "low" | "medium" | "high" | "xhigh" | null;
+      }>;
+    };
+  }) => unknown) =>
+    selector({
+      profile: {
+        providers: {
+          codex: {
+            defaultModel: null,
+            defaultReasoningLevel: null
+          },
+          "claude-code": {
+            defaultModel: null,
+            defaultReasoningLevel: null
+          },
+          opencode: {
+            defaultModel: null,
+            defaultReasoningLevel: null
+          }
+        }
+      }
+    })
+  ),
+  isPreferenceProviderId: vi.fn((provider: string) =>
+    provider === "codex" || provider === "claude-code" || provider === "opencode"
+  )
+}));
 const mockListQuickPhrases = vi.fn();
 const mockReplaceQuickPhrases = vi.fn();
 
@@ -19,6 +108,20 @@ vi.mock("../api/conversation-api", async () => {
     replaceQuickPhrases: (...args: unknown[]) => mockReplaceQuickPhrases(...args)
   };
 });
+
+vi.mock("../../../platform/platform-provider", () => ({
+  usePlatform: () => platformMock
+}));
+
+vi.mock("../../../preferences/preferences-store", () => ({
+  updatePreferences: preferenceStoreMock.updatePreferences,
+  usePreferencesSelector: preferenceStoreMock.usePreferencesSelector
+}));
+
+vi.mock("../../../preferences/user-preference-store", () => ({
+  isPreferenceProviderId: (provider: string) => preferenceStoreMock.isPreferenceProviderId(provider),
+  userPreferenceStore: preferenceStoreMock.userPreferenceStore
+}));
 
 function createDeferred() {
   let resolve: (() => void) | null = null;
@@ -119,6 +222,20 @@ function chooseOption(triggerLabel: string, optionLabel: string) {
 describe("ComposerPanel", () => {
   beforeEach(() => {
     localStorage.clear();
+    platformMock.platform = "web";
+    platformMock.isDesktop = false;
+    platformMock.isWeb = true;
+    platformMock.isMobile = false;
+    platformMock.isNativeMobile = false;
+    platformMock.viewportClass = "expanded";
+    platformMock.ui.osFamily = "unknown";
+    platformMock.haptics.trigger.mockReset();
+    preferenceStoreMock.userPreferenceStore.getState.mockClear();
+    preferenceStoreMock.userPreferenceStore.resetToLocalFallback.mockClear();
+    preferenceStoreMock.updatePreferences.mockReset();
+    preferenceStoreMock.updatePreferences.mockResolvedValue(undefined);
+    preferenceStoreMock.usePreferencesSelector.mockClear();
+    preferenceStoreMock.isPreferenceProviderId.mockClear();
     mockListQuickPhrases.mockReset();
     mockReplaceQuickPhrases.mockReset();
     mockListQuickPhrases.mockResolvedValue({
@@ -476,6 +593,103 @@ describe("ComposerPanel", () => {
     expect(screen.getByAltText(t("conversation.attachmentPreviewAlt"))).toBeInTheDocument();
   });
 
+  it("支持附件时会显示附件按钮，并能通过按钮选图后显示预览", async () => {
+    const { container } = render(
+      <ComposerPanel
+        capabilities={createCapabilities({ supportsAttachments: true })}
+        isSubmitting={false}
+        onSend={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    const file = new File(["demo"], "demo.png", { type: "image/png" });
+    const attachButton = screen.getByLabelText(t("conversation.attachFiles"));
+    const libraryInput = container.querySelector('input[type="file"][accept="image/*"]:not([capture])');
+
+    expect(attachButton).toBeInTheDocument();
+    expect(libraryInput).not.toBeNull();
+
+    fireEvent.click(attachButton);
+    fireEvent.change(libraryInput!, {
+      target: {
+        files: [file]
+      }
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("demo.png")).toBeInTheDocument();
+    });
+  });
+
+  it("移动端点击附件按钮会弹出拍照面板，并触发相机输入", async () => {
+    platformMock.platform = "ios";
+    platformMock.isWeb = false;
+    platformMock.isMobile = true;
+    platformMock.isNativeMobile = true;
+    platformMock.viewportClass = "compact";
+    platformMock.ui.osFamily = "ios";
+
+    const { container } = render(
+      <ComposerPanel
+        capabilities={createCapabilities({ supportsAttachments: true })}
+        isSubmitting={false}
+        onSend={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    const cameraInput = container.querySelector('input[type="file"][capture="environment"]') as HTMLInputElement;
+    const cameraClickSpy = vi.fn();
+    cameraInput.addEventListener("click", cameraClickSpy);
+
+    fireEvent.click(screen.getByLabelText(t("conversation.attachFiles")));
+
+    expect(
+      screen.getByRole("dialog", { name: t("conversation.attachmentSourceSheetTitle") })
+    ).toBeInTheDocument();
+
+    const takePhotoOption = screen.getByText(t("conversation.attachmentTakePhoto")).closest("label");
+    expect(takePhotoOption).not.toBeNull();
+    fireEvent.click(takePhotoOption!);
+
+    await waitFor(() => {
+      expect(cameraClickSpy).toHaveBeenCalledTimes(1);
+    });
+    expect(
+      screen.queryByRole("dialog", { name: t("conversation.attachmentSourceSheetTitle") })
+    ).not.toBeInTheDocument();
+  });
+
+  it("H5 移动端附件按钮会直接关联到相册输入，而不是弹原生来源面板", () => {
+    platformMock.platform = "web";
+    platformMock.isWeb = true;
+    platformMock.isMobile = true;
+    platformMock.isNativeMobile = false;
+    platformMock.viewportClass = "compact";
+
+    const { container } = render(
+      <ComposerPanel
+        capabilities={createCapabilities({ supportsAttachments: true })}
+        isSubmitting={false}
+        onSend={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    const attachTrigger = screen.getByLabelText(t("conversation.attachFiles"));
+    const libraryInput = container.querySelector('input[type="file"][accept="image/*"]:not([capture])') as HTMLInputElement;
+    const libraryClickSpy = vi.fn();
+    libraryInput.addEventListener("click", libraryClickSpy);
+
+    expect(attachTrigger.tagName).toBe("LABEL");
+    expect(attachTrigger).toHaveAttribute("for", libraryInput.id);
+
+    fireEvent.click(attachTrigger);
+
+    expect(libraryClickSpy).toHaveBeenCalledTimes(1);
+    expect(
+      screen.queryByRole("dialog", { name: t("conversation.attachmentSourceSheetTitle") })
+    ).not.toBeInTheDocument();
+  });
+
   it("Codex 默认会跟随当前配置发送，并把附件一起传出去", async () => {
     const onSend = vi.fn().mockResolvedValue(undefined);
 
@@ -487,20 +701,15 @@ describe("ComposerPanel", () => {
       />
     );
 
-    const textarea = screen.getByRole("textbox");
     const file = new File(["demo"], "demo.png", { type: "image/png" });
+    const libraryInput = container.querySelector('input[type="file"][accept="image/*"]:not([capture])');
 
-    expect(container.querySelector(".composer-attach-btn")).toBeNull();
+    expect(container.querySelector(".composer-attach-btn")).not.toBeNull();
 
-    fireEvent.paste(textarea, {
-      clipboardData: {
-        items: [
-          {
-            kind: "file",
-            type: "image/png",
-            getAsFile: () => file
-          }
-        ]
+    fireEvent.click(screen.getByLabelText(t("conversation.attachFiles")));
+    fireEvent.change(libraryInput!, {
+      target: {
+        files: [file]
       }
     });
 

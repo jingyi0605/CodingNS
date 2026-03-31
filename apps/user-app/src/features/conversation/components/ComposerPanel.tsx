@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type Ref } from "react";
 import { createPortal } from "react-dom";
 
+import { usePlatform } from "../../../platform/platform-provider";
 import { useHaptics } from "../../../shared/haptics";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
@@ -13,7 +14,6 @@ import { decideCapability } from "../capability/capability-gate";
 import {
   allowsQueueDuringRun,
   getProviderFromCapabilities,
-  getProviderIconVariant,
   shouldPersistReasoningLevel,
   shouldShowSlashMenu,
   shouldSupportRunSteering,
@@ -95,6 +95,17 @@ const DEFAULT_CODEX_MODEL_ID = "provider-default";
 const DEFAULT_OPENCODE_MODEL_ID = "provider-default";
 const FOCUS_COMPOSER_EVENT = "workbench:focus-composer";
 const PROVIDER_DEFAULT_MODEL_ID = "provider-default";
+const HIDDEN_FILE_INPUT_STYLE: CSSProperties = {
+  position: "absolute",
+  width: "1px",
+  height: "1px",
+  padding: 0,
+  margin: "-1px",
+  overflow: "hidden",
+  clip: "rect(0, 0, 0, 0)",
+  whiteSpace: "nowrap",
+  border: 0
+};
 
 function createFallbackClaudeModelOptions(): ModelOption[] {
   return [
@@ -155,6 +166,27 @@ function isProviderDefaultModel(model: Pick<ModelOption, "id" | "usesProviderDef
 
 function createAttachmentId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function openFileInput(input: HTMLInputElement | null): void {
+  if (!input) {
+    return;
+  }
+
+  input.value = "";
+
+  try {
+    const showPicker = (input as HTMLInputElement & { showPicker?: () => void }).showPicker;
+
+    if (typeof showPicker === "function") {
+      showPicker.call(input);
+      return;
+    }
+  } catch {
+    // 某些移动端 WebView 会拒绝 showPicker，这里退回到 click。
+  }
+
+  input.click();
 }
 
 function base64ToFile(
@@ -285,10 +317,14 @@ export function ComposerPanel({
   onQueueSend,
   onSend
 }: ComposerPanelProps) {
+  const platform = usePlatform();
+  const libraryInputId = useId();
+  const cameraInputId = useId();
   const [content, setContent] = useState("");
   const [selectedModel, setSelectedModel] = useState<string>("");
   const [reasoningLevel, setReasoningLevel] = useState<ReasoningLevel>("medium");
   const [attachments, setAttachments] = useState<ComposerImageAttachment[]>([]);
+  const [attachmentSheetOpen, setAttachmentSheetOpen] = useState(false);
   const [quickPhrases, setQuickPhrases] = useState<QuickPhraseRecord[]>(DEFAULT_QUICK_PHRASES);
   const [quickPhraseModalOpen, setQuickPhraseModalOpen] = useState(false);
   const [quickPhraseCreateModalOpen, setQuickPhraseCreateModalOpen] = useState(false);
@@ -298,6 +334,8 @@ export function ComposerPanel({
   const [interrupting, setInterrupting] = useState(false);
   const [localSubmitting, setLocalSubmitting] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const libraryInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
   const submitLockRef = useRef(false);
   const attachmentRegistryRef = useRef(new Set<string>());
   const attachmentDraftCacheRef = useRef(new Map<string, StoredComposerDraftAttachment>());
@@ -511,6 +549,40 @@ export function ComposerPanel({
       return current.filter((item) => item.id !== attachmentId);
     });
   }, []);
+
+  const handleAttachmentInputChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const nextFiles = Array.from(event.target.files ?? []);
+
+    if (nextFiles.length > 0) {
+      mergeAttachments(nextFiles);
+    }
+
+    event.target.value = "";
+  }, [mergeAttachments]);
+
+  const handleAttachmentSheetOptionClick = useCallback(() => {
+    if (!attachmentDecision.allowed || inRunSendBlocked) {
+      return;
+    }
+
+    setAttachmentSheetOpen(false);
+  }, [attachmentDecision.allowed, inRunSendBlocked]);
+
+  const handleAttachmentButtonClick = useCallback(() => {
+    if (!attachmentDecision.allowed || inRunSendBlocked) {
+      return;
+    }
+
+    setShowSlashMenu(false);
+
+    if (platform.isNativeMobile) {
+      void haptics.trigger("selection");
+      setAttachmentSheetOpen(true);
+      return;
+    }
+
+    openFileInput(libraryInputRef.current);
+  }, [attachmentDecision.allowed, haptics, inRunSendBlocked, platform.isNativeMobile]);
 
   const handleSlashCommand = useCallback(() => {
     setShowSlashMenu((current) => !current);
@@ -797,8 +869,17 @@ export function ComposerPanel({
     }
 
     attachmentDraftCacheRef.current.clear();
+    setAttachmentSheetOpen(false);
     replaceAttachments([]);
-  }, [attachmentDecision.allowed]);
+  }, [attachmentDecision.allowed, replaceAttachments]);
+
+  useEffect(() => {
+    if (platform.isMobile) {
+      return;
+    }
+
+    setAttachmentSheetOpen(false);
+  }, [platform.isMobile]);
 
   useEffect(() => () => {
     attachmentRegistryRef.current.forEach((previewUrl) => {
@@ -843,6 +924,7 @@ export function ComposerPanel({
     setLocalSubmitting(true);
     setContent("");
     setAttachments([]);
+    setAttachmentSheetOpen(false);
     setQuickPhraseModalOpen(false);
     setQuickPhraseCreateModalOpen(false);
     setShowSlashMenu(false);
@@ -925,11 +1007,38 @@ export function ComposerPanel({
     inRunSendBlocked ||
     !sendDecision.allowed ||
     !hasDraft;
+  const attachButtonDisabled =
+    localSubmitting ||
+    isSubmitting ||
+    inRunSendBlocked ||
+    !attachmentDecision.allowed;
   const showQuickPhraseButton = content.length === 0 && !inRunSendBlocked;
 
   const contentNode = (
     <section ref={panelRef} className="composer-panel">
       <form className="composer-form" onSubmit={handleSubmit}>
+        <input
+          id={libraryInputId}
+          ref={libraryInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          tabIndex={-1}
+          aria-hidden="true"
+          style={HIDDEN_FILE_INPUT_STYLE}
+          onChange={handleAttachmentInputChange}
+        />
+        <input
+          id={cameraInputId}
+          ref={cameraInputRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          tabIndex={-1}
+          aria-hidden="true"
+          style={HIDDEN_FILE_INPUT_STYLE}
+          onChange={handleAttachmentInputChange}
+        />
         <div className="composer-input-container">
           {attachments.length > 0 ? (
             <div className="composer-attachments">
@@ -1050,9 +1159,42 @@ export function ComposerPanel({
 
           <div className="composer-controls">
             <div className="composer-controls-left">
-              <div className="composer-provider-logo">
-                {renderProviderIcon(provider)}
-              </div>
+              {attachmentDecision.allowed ? (
+                platform.isNativeMobile ? (
+                  <button
+                    type="button"
+                    className="composer-attach-btn"
+                    aria-label={t("conversation.attachFiles")}
+                    title={t("conversation.attachFiles")}
+                    disabled={attachButtonDisabled}
+                    onClick={handleAttachmentButtonClick}
+                  >
+                    <AttachmentTriggerIcon />
+                  </button>
+                ) : attachButtonDisabled ? (
+                  <button
+                    type="button"
+                    className="composer-attach-btn"
+                    aria-label={t("conversation.attachFiles")}
+                    title={t("conversation.attachFiles")}
+                    disabled
+                  >
+                    <AttachmentTriggerIcon />
+                  </button>
+                ) : (
+                  <label
+                    htmlFor={libraryInputId}
+                    className="composer-attach-btn"
+                    aria-label={t("conversation.attachFiles")}
+                    title={t("conversation.attachFiles")}
+                    onClick={() => {
+                      setShowSlashMenu(false);
+                    }}
+                  >
+                    <AttachmentTriggerIcon />
+                  </label>
+                )
+              ) : null}
 
               <MacSelect
                 ariaLabel={t("conversation.modelSelectorLabel")}
@@ -1269,28 +1411,114 @@ export function ComposerPanel({
           </div>
         </div>
       </WorkbenchModal>
+      <AttachmentSourceSheet
+        open={attachmentSheetOpen && platform.isNativeMobile}
+        cameraInputId={cameraInputId}
+        libraryInputId={libraryInputId}
+        onClose={() => setAttachmentSheetOpen(false)}
+        onSelectCamera={handleAttachmentSheetOptionClick}
+        onSelectLibrary={handleAttachmentSheetOptionClick}
+      />
     </section>
   );
 
   return portalContainer ? createPortal(contentNode, portalContainer) : contentNode;
 }
 
-function renderProviderIcon(provider: ProviderId) {
-  const variant = getProviderIconVariant(provider);
-
-  if (variant === "codex") {
-    return (
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <rect x="3" y="3" width="18" height="18" rx="4" />
-        <path d="M8 12h8M12 8v8" />
-      </svg>
-    );
+function AttachmentSourceSheet({
+  open,
+  cameraInputId,
+  libraryInputId,
+  onClose,
+  onSelectCamera,
+  onSelectLibrary
+}: {
+  open: boolean;
+  cameraInputId: string;
+  libraryInputId: string;
+  onClose: () => void;
+  onSelectCamera: () => void;
+  onSelectLibrary: () => void;
+}) {
+  if (!open || typeof document === "undefined") {
+    return null;
   }
 
+  return createPortal(
+    <div className="ios-action-sheet-overlay composer-attachment-sheet-overlay" role="presentation" onClick={onClose}>
+      <div
+        className="mobile-workspace-home-sheet composer-attachment-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label={t("conversation.attachmentSourceSheetTitle")}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="mobile-workspace-home-sheet-card composer-attachment-sheet-card">
+          <div className="mobile-workspace-home-sheet-header">
+            <strong>{t("conversation.attachmentSourceSheetTitle")}</strong>
+            <span>{t("conversation.attachmentSourceSheetDescription")}</span>
+          </div>
+
+          <div className="mobile-workspace-home-group composer-attachment-sheet-actions">
+            <label
+              htmlFor={cameraInputId}
+              className="mobile-workspace-home-row composer-attachment-sheet-option"
+              aria-label={t("conversation.attachmentTakePhoto")}
+              onClick={onSelectCamera}
+            >
+              <span className="composer-attachment-sheet-option-copy">
+                <strong>{t("conversation.attachmentTakePhoto")}</strong>
+                <span>{t("conversation.attachmentTakePhotoHint")}</span>
+              </span>
+              <CameraIcon />
+            </label>
+            <label
+              htmlFor={libraryInputId}
+              className="mobile-workspace-home-row composer-attachment-sheet-option"
+              aria-label={t("conversation.attachmentChooseFromLibrary")}
+              onClick={onSelectLibrary}
+            >
+              <span className="composer-attachment-sheet-option-copy">
+                <strong>{t("conversation.attachmentChooseFromLibrary")}</strong>
+                <span>{t("conversation.attachmentChooseFromLibraryHint")}</span>
+              </span>
+              <LibraryIcon />
+            </label>
+          </div>
+        </div>
+        <button type="button" className="ios-action-sheet-cancel" onClick={onClose}>
+          {t("common.cancel")}
+        </button>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+function CameraIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M4 8h3l1.5-2h7L17 8h3a1 1 0 0 1 1 1v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9a1 1 0 0 1 1-1Z" />
+      <circle cx="12" cy="13" r="4" />
+    </svg>
+  );
+}
+
+function AttachmentTriggerIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <circle cx="12" cy="12" r="9" />
-      <path d="M12 8v8M8 12h8" />
+      <rect x="3" y="3" width="18" height="18" rx="4" />
+      <path d="M8 12h8M12 8v8" />
+    </svg>
+  );
+}
+
+function LibraryIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <rect x="4" y="4" width="16" height="16" rx="2.5" />
+      <path d="m7.5 15 3-3 2.5 2.5 3-4L18 13.5" />
+      <circle cx="8.75" cy="8.75" r="1.25" fill="currentColor" stroke="none" />
     </svg>
   );
 }

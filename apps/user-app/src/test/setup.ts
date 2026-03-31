@@ -2,8 +2,6 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
 import { afterEach } from "vitest";
 
-import { userPreferenceStore } from "../preferences/user-preference-store";
-
 function createMemoryStorage(): Storage {
   const store = new Map<string, string>();
 
@@ -72,7 +70,8 @@ if (typeof window !== "undefined" && typeof window.matchMedia !== "function") {
   })) as typeof window.matchMedia;
 }
 
-afterEach(() => {
+afterEach(async () => {
   cleanup();
+  const { userPreferenceStore } = await import("../preferences/user-preference-store");
   userPreferenceStore.resetToLocalFallback();
 });
