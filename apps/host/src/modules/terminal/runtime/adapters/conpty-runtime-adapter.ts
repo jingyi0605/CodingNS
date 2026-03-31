@@ -1,4 +1,4 @@
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 
 import { AppError } from "../../../../shared/errors/app-error.js";
 import type { TerminalRuntimeAdapter } from "../terminal-runtime-adapter.js";
@@ -9,6 +9,7 @@ import {
   resolveRuntimeScriptLaunch,
   type ConptyRuntimeType
 } from "../conpty-runtime-shared.js";
+import { ConptyControlHelperClient } from "./conpty-control-helper-client.js";
 
 const STARTUP_RETRY_COUNT = 40;
 const STARTUP_RETRY_DELAY_MS = 50;
@@ -23,6 +24,8 @@ interface ControlClientResult {
   detail?: string;
 }
 
+let conptyControlHelperClient: ConptyControlHelperClient | null = null;
+
 export class ConptyRuntimeAdapter implements TerminalRuntimeAdapter {
   readonly survivesHostRestart = true;
 
@@ -32,7 +35,9 @@ export class ConptyRuntimeAdapter implements TerminalRuntimeAdapter {
     }
   }
 
-  createPersistentSession(input: Parameters<TerminalRuntimeAdapter["createPersistentSession"]>[0]) {
+  async createPersistentSession(
+    input: Parameters<TerminalRuntimeAdapter["createPersistentSession"]>[0]
+  ) {
     assertConptySupported();
 
     const pipeName = buildConptyPipeName(input.session.sessionKey);
@@ -62,14 +67,14 @@ export class ConptyRuntimeAdapter implements TerminalRuntimeAdapter {
     let lastDetail = "Windows 持久化终端启动超时";
 
     for (let index = 0; index < STARTUP_RETRY_COUNT; index += 1) {
-      const inspection = this.inspectPersistentSession(input);
+      const inspection = await this.inspectPersistentSession(input);
 
       if (inspection.alive) {
         return inspection;
       }
 
       lastDetail = inspection.detail ?? lastDetail;
-      sleepSync(STARTUP_RETRY_DELAY_MS);
+      await sleep(STARTUP_RETRY_DELAY_MS);
     }
 
     throw new AppError({
@@ -79,10 +84,12 @@ export class ConptyRuntimeAdapter implements TerminalRuntimeAdapter {
     });
   }
 
-  inspectPersistentSession(input: Parameters<TerminalRuntimeAdapter["inspectPersistentSession"]>[0]) {
+  async inspectPersistentSession(
+    input: Parameters<TerminalRuntimeAdapter["inspectPersistentSession"]>[0]
+  ) {
     assertConptySupported();
 
-    const result = runControlClient("inspect", buildConptyPipeName(input.session.sessionKey));
+    const result = await runControlClient("inspect", buildConptyPipeName(input.session.sessionKey));
 
     if (!result.ok) {
       return {
@@ -120,12 +127,12 @@ export class ConptyRuntimeAdapter implements TerminalRuntimeAdapter {
     };
   }
 
-  terminatePersistentSession(
+  async terminatePersistentSession(
     input: Parameters<TerminalRuntimeAdapter["terminatePersistentSession"]>[0]
-  ): void {
+  ): Promise<void> {
     assertConptySupported();
 
-    const result = runControlClient("terminate", buildConptyPipeName(input.session.sessionKey));
+    const result = await runControlClient("terminate", buildConptyPipeName(input.session.sessionKey));
 
     if (!result.ok && result.reason !== "SESSION_UNAVAILABLE") {
       throw new AppError({
@@ -137,56 +144,19 @@ export class ConptyRuntimeAdapter implements TerminalRuntimeAdapter {
   }
 }
 
-function runControlClient(action: "inspect" | "terminate", pipeName: string): ControlClientResult {
+async function runControlClient(
+  action: "inspect" | "terminate",
+  pipeName: string
+): Promise<ControlClientResult> {
   const launch = resolveRuntimeScriptLaunch("conpty-session-control-client");
-  const result = spawnSync(
-    launch.command,
-    [...launch.args, "--action", action, "--pipe", pipeName],
-    {
-      cwd: launch.cwd,
-      env: process.env,
-      encoding: "utf8",
-      windowsHide: true
-    }
-  );
-
-  if (result.error) {
-    return {
-      ok: false,
-      action,
-      reason: "CONTROL_CLIENT_FAILED",
-      detail: result.error.message
-    };
-  }
-
-  if (result.status !== 0) {
-    return {
-      ok: false,
-      action,
-      reason: "CONTROL_CLIENT_FAILED",
-      detail: result.stderr.trim() || result.stdout.trim() || "CONTROL_CLIENT_FAILED"
-    };
-  }
-
-  const rawOutput = result.stdout.trim();
-
-  if (!rawOutput) {
-    return {
-      ok: false,
-      action,
-      reason: "EMPTY_RESPONSE",
-      detail: "EMPTY_RESPONSE"
-    };
-  }
-
   try {
-    return JSON.parse(rawOutput) as ControlClientResult;
-  } catch {
+    return await getConptyControlHelperClient().run(action, launch, pipeName);
+  } catch (error) {
     return {
       ok: false,
       action,
-      reason: "INVALID_RESPONSE",
-      detail: rawOutput
+      reason: "CONTROL_CLIENT_FAILED",
+      detail: error instanceof Error ? error.message : String(error)
     };
   }
 }
@@ -195,6 +165,16 @@ function formatConptyErrorDetail(actionLabel: string, detail: string): string {
   return `Windows 持久化终端${actionLabel}失败：${detail}`;
 }
 
-function sleepSync(delayMs: number): void {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs);
+function sleep(delayMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, delayMs);
+  });
+}
+
+function getConptyControlHelperClient(): ConptyControlHelperClient {
+  if (!conptyControlHelperClient) {
+    conptyControlHelperClient = new ConptyControlHelperClient();
+  }
+
+  return conptyControlHelperClient;
 }

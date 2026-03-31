@@ -1,8 +1,11 @@
 import { spawn } from "node:child_process";
 
 import { AppError } from "../../shared/errors/app-error.js";
+import { GitCommandHelperClient } from "./git-command-helper-client.js";
 
 const GIT_COMMAND_SLOW_THRESHOLD_MS = 3_000;
+const GIT_COMMAND_SPAWN_RETRY_LIMIT = 1;
+const GIT_COMMAND_SPAWN_RETRY_DELAY_MS = 50;
 
 interface GitCommandOptions {
   allowNonZeroExit?: boolean;
@@ -18,23 +21,70 @@ export interface GitCommandResult {
   exitCode: number;
 }
 
+interface GitCommandRunnerOptions {
+  preferHelperProcess?: boolean;
+}
+
 export class GitCommandRunner {
+  private readonly helperClient: GitCommandHelperClient | null;
+
+  constructor(options: GitCommandRunnerOptions = {}) {
+    this.helperClient = options.preferHelperProcess ? new GitCommandHelperClient() : null;
+  }
+
   async run(
     repoRoot: string,
     args: string[],
     options: GitCommandOptions = {}
   ): Promise<GitCommandResult> {
+    if (this.helperClient) {
+      return this.helperClient.run(repoRoot, args, options);
+    }
+
+    return this.runDirect(repoRoot, args, options, 0);
+  }
+
+  dispose(): void {
+    this.helperClient?.dispose();
+  }
+
+  private async runDirect(
+    repoRoot: string,
+    args: string[],
+    options: GitCommandOptions,
+    retryAttempt: number
+  ): Promise<GitCommandResult> {
     const startedAt = Date.now();
     const timeoutMs = options.timeoutMs ?? 15_000;
     const effectiveArgs = ["-c", "core.quotepath=false", ...args];
-    const env = options.env ? { ...process.env, ...options.env } : process.env;
+    const env = {
+      ...process.env,
+      ...(options.env ?? {})
+    };
 
     return await new Promise<GitCommandResult>((resolve, reject) => {
-      const child = spawn("git", effectiveArgs, {
-        cwd: repoRoot,
-        env,
-        stdio: ["ignore", "pipe", "pipe"]
-      });
+      let child;
+
+      try {
+        child = spawn("git", effectiveArgs, {
+          cwd: repoRoot,
+          env,
+          stdio: ["ignore", "pipe", "pipe"]
+        });
+      } catch (error) {
+        if (this.retrySpawnIfNeeded(error, repoRoot, args, options, retryAttempt, resolve)) {
+          return;
+        }
+
+        reject(
+          new AppError({
+            statusCode: 500,
+            errorCode: "GIT_COMMAND_FAILED",
+            detail: `Git 命令启动失败：${getErrorMessage(error)}`
+          })
+        );
+        return;
+      }
 
       let stdout = "";
       let stderr = "";
@@ -83,8 +133,12 @@ export class GitCommandRunner {
         stderr += String(chunk);
       });
 
-      child.on("error", (error) => {
+      child.on("error", (error: NodeJS.ErrnoException) => {
         finish(() => {
+          if (this.retrySpawnIfNeeded(error, repoRoot, args, options, retryAttempt, resolve)) {
+            return;
+          }
+
           reject(
             new AppError({
               statusCode: 500,
@@ -137,4 +191,56 @@ export class GitCommandRunner {
       });
     });
   }
+
+  private retrySpawnIfNeeded(
+    error: unknown,
+    repoRoot: string,
+    args: string[],
+    options: GitCommandOptions,
+    retryAttempt: number,
+    resolve: (value: GitCommandResult | PromiseLike<GitCommandResult>) => void
+  ): boolean {
+    const normalizedError = toErrnoException(error);
+
+    if (!shouldRetryGitSpawn(normalizedError) || retryAttempt >= GIT_COMMAND_SPAWN_RETRY_LIMIT) {
+      return false;
+    }
+
+    const nextAttempt = retryAttempt + 1;
+
+    console.warn("[git-command-retry]", {
+      workspaceId: options.workspaceId ?? null,
+      operation: options.operation ?? null,
+      repoRoot,
+      args,
+      command: `git ${args.join(" ")}`,
+      retryAttempt: nextAttempt,
+      retryLimit: GIT_COMMAND_SPAWN_RETRY_LIMIT,
+      retryDelayMs: GIT_COMMAND_SPAWN_RETRY_DELAY_MS,
+      errorCode: normalizedError.code ?? null,
+      reason: normalizedError.message
+    });
+
+    setTimeout(() => {
+      resolve(this.runDirect(repoRoot, args, options, nextAttempt));
+    }, GIT_COMMAND_SPAWN_RETRY_DELAY_MS);
+
+    return true;
+  }
+}
+
+function shouldRetryGitSpawn(error: NodeJS.ErrnoException): boolean {
+  return error.code === "EBADF";
+}
+
+function toErrnoException(error: unknown): NodeJS.ErrnoException {
+  if (error instanceof Error) {
+    return error as NodeJS.ErrnoException;
+  }
+
+  return new Error(String(error)) as NodeJS.ErrnoException;
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

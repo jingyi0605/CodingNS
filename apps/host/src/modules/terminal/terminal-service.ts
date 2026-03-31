@@ -210,7 +210,7 @@ export class TerminalService extends EventEmitter {
 
     try {
       const env = buildTerminalEnv(input.env);
-      const createdInspection = this.runtimeManager.createPersistentSession(
+      const createdInspection = await this.runtimeManager.createPersistentSession(
         terminal,
         runtimeSession,
         env
@@ -280,13 +280,13 @@ export class TerminalService extends EventEmitter {
     }
   }
 
-  listTerminals(workspaceId: string): TerminalInstance[] {
+  async listTerminals(workspaceId: string): Promise<TerminalInstance[]> {
     this.workspaceService.getWorkspaceOrThrow(workspaceId);
     const terminals = this.terminalInstanceRepository.listByWorkspace(workspaceId);
     let hasLifecycleChange = false;
 
     for (const terminal of terminals) {
-      if (this.reconcileTerminalRuntime(terminal)) {
+      if (await this.reconcileTerminalRuntime(terminal)) {
         hasLifecycleChange = true;
       }
     }
@@ -329,10 +329,10 @@ export class TerminalService extends EventEmitter {
     return session;
   }
 
-  closeTerminal(
+  async closeTerminal(
     terminalId: string,
     reason: TerminalCloseReason = "user_closed"
-  ): { success: true } {
+  ): Promise<{ success: true }> {
     const terminal = this.getTerminalOrThrow(terminalId);
     const session = this.getRuntimeSessionOrThrow(terminal.runtimeSessionId);
     this.pendingCloseReasons.set(terminalId, reason);
@@ -343,7 +343,7 @@ export class TerminalService extends EventEmitter {
     }
 
     this.flushTerminalLogs(terminalId);
-    const willEmitExit = this.runtimeManager.terminateSession(terminal, session);
+    const willEmitExit = await this.runtimeManager.terminateSession(terminal, session);
 
     if (!willEmitExit) {
       this.finalizeTerminalClosure(terminal, session, {
@@ -358,7 +358,7 @@ export class TerminalService extends EventEmitter {
     return { success: true };
   }
 
-  deleteTerminal(terminalId: string): { success: true } {
+  async deleteTerminal(terminalId: string): Promise<{ success: true }> {
     const terminal = this.getTerminalOrThrow(terminalId);
     const session = this.getRuntimeSessionOrThrow(terminal.runtimeSessionId);
     this.pendingCloseReasons.delete(terminalId);
@@ -381,7 +381,7 @@ export class TerminalService extends EventEmitter {
     let willEmitExit = false;
 
     try {
-      willEmitExit = this.runtimeManager.terminateSession(terminal, session);
+      willEmitExit = await this.runtimeManager.terminateSession(terminal, session);
     } catch (error) {
       this.pendingDeletedTerminalIds.delete(terminalId);
       this.clearTerminalLogs(terminalId);
@@ -401,11 +401,11 @@ export class TerminalService extends EventEmitter {
     return { success: true };
   }
 
-  writeInput(
+  async writeInput(
     terminalId: string,
     content: string,
     debugContext: TerminalInputDebugContext = {}
-  ): { accepted: true } {
+  ): Promise<{ accepted: true }> {
     if (!content) {
       throw new AppError({
         statusCode: 400,
@@ -416,7 +416,7 @@ export class TerminalService extends EventEmitter {
     }
 
     const serviceWriteStartedAtMs = terminalDebugNowMs();
-    const terminal = this.ensureTerminalInteractive(terminalId);
+    const terminal = await this.ensureTerminalInteractive(terminalId);
     this.runtimeManager.write(terminal.id, content);
     const serviceWriteFinishedAtMs = terminalDebugNowMs();
     this.recordPendingInputTrace(terminalId, content, {
@@ -443,7 +443,7 @@ export class TerminalService extends EventEmitter {
     return { accepted: true };
   }
 
-  resizeTerminal(terminalId: string, cols: number, rows: number): { accepted: true } {
+  async resizeTerminal(terminalId: string, cols: number, rows: number): Promise<{ accepted: true }> {
     if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols < 20 || rows < 5) {
       throw new AppError({
         statusCode: 400,
@@ -453,18 +453,18 @@ export class TerminalService extends EventEmitter {
       });
     }
 
-    const terminal = this.ensureTerminalInteractive(terminalId);
+    const terminal = await this.ensureTerminalInteractive(terminalId);
     this.runtimeManager.resize(terminal.id, cols, rows);
     this.touchLastActiveAt(terminalId);
 
     return { accepted: true };
   }
 
-  subscribeTerminal(
+  async subscribeTerminal(
     terminalId: string,
     lastCursor: string | null,
     callbacks: SubscribeTerminalCallbacks
-  ): { close(): void } {
+  ): Promise<{ close(): void }> {
     const outputListener = (event: { terminalId: string; chunks: TerminalOutputChunk[] }) => {
       if (event.terminalId !== terminalId) {
         return;
@@ -496,7 +496,7 @@ export class TerminalService extends EventEmitter {
     this.retainTerminalSubscription(terminalId);
 
     try {
-      const current = this.ensureTerminalAttachedForSubscription(terminalId);
+      const current = await this.ensureTerminalAttachedForSubscription(terminalId);
       const backfill = this.outputBuffer.readSince(terminalId, lastCursor);
 
       void callbacks.onStatus(current);
@@ -535,11 +535,11 @@ export class TerminalService extends EventEmitter {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
 
-  readTerminalHistory(
+  async readTerminalHistory(
     terminalId: string,
     beforeSeq: number | null,
     limit: number
-  ): TerminalHistoryPageDto {
+  ): Promise<TerminalHistoryPageDto> {
     const terminal = this.getTerminalOrThrow(terminalId);
     this.flushTerminalLogs(terminalId);
     const runtimeSession =
@@ -549,7 +549,7 @@ export class TerminalService extends EventEmitter {
 
     if (beforeSeq === 1 && runtimeSession?.runtimeType === "tmux") {
       const capturedContent = normalizeTerminalHistoryContent(
-        captureTmuxPaneContent(runtimeSession.sessionKey)
+        await captureTmuxPaneContent(runtimeSession.sessionKey)
       );
       const capturedLineCount = countTerminalHistoryLines(capturedContent);
 
@@ -718,7 +718,7 @@ export class TerminalService extends EventEmitter {
     this.scheduleActivityFlush();
   }
 
-  private ensureTerminalInteractive(terminalId: string): TerminalInstance {
+  private async ensureTerminalInteractive(terminalId: string): Promise<TerminalInstance> {
     const terminal = this.getTerminalOrThrow(terminalId);
 
     if (terminal.status === "running" && this.runtimeManager.isAttached(terminal.id)) {
@@ -726,7 +726,7 @@ export class TerminalService extends EventEmitter {
     }
 
     const session = this.getRuntimeSessionOrThrow(terminal.runtimeSessionId);
-    const nextTerminal = this.ensureTerminalRunning(terminal, session, true);
+    const nextTerminal = await this.ensureTerminalRunning(terminal, session, true);
 
     if (nextTerminal.status !== "running") {
       throw new AppError({
@@ -739,22 +739,22 @@ export class TerminalService extends EventEmitter {
     return nextTerminal;
   }
 
-  private ensureTerminalAttachedForSubscription(terminalId: string): TerminalInstance {
+  private async ensureTerminalAttachedForSubscription(terminalId: string): Promise<TerminalInstance> {
     const terminal = this.getTerminalOrThrow(terminalId);
     const session = this.getRuntimeSessionOrThrow(terminal.runtimeSessionId);
     return this.ensureTerminalRunning(terminal, session, true);
   }
 
-  private ensureTerminalRunning(
+  private async ensureTerminalRunning(
     terminal: TerminalInstance,
     session: TerminalRuntimeSession,
     ensureAttached: boolean
-  ): TerminalInstance {
+  ): Promise<TerminalInstance> {
     if (terminal.status === "closed" || terminal.status === "error") {
       return terminal;
     }
 
-    const inspection = this.runtimeManager.inspectPersistentSession(terminal, session);
+    const inspection = await this.runtimeManager.inspectPersistentSession(terminal, session);
 
     if (!inspection.alive) {
       if (shouldMarkRuntimeLost(terminal, inspection.detail)) {
@@ -798,7 +798,7 @@ export class TerminalService extends EventEmitter {
     return this.markTerminalRunning(terminal, session, inspection.shellPid, inspection.detail);
   }
 
-  private reconcileTerminalRuntime(terminal: TerminalInstance): boolean {
+  private async reconcileTerminalRuntime(terminal: TerminalInstance): Promise<boolean> {
     if (terminal.status === "closed" || terminal.status === "error") {
       return false;
     }
@@ -809,7 +809,7 @@ export class TerminalService extends EventEmitter {
       statusDetail: terminal.statusDetail
     });
     const session = this.getRuntimeSessionOrThrow(terminal.runtimeSessionId);
-    const nextTerminal = this.ensureTerminalRunning(terminal, session, false);
+    const nextTerminal = await this.ensureTerminalRunning(terminal, session, false);
     const after = JSON.stringify({
       status: nextTerminal.status,
       processId: nextTerminal.processId,
@@ -1004,7 +1004,7 @@ export class TerminalService extends EventEmitter {
         continue;
       }
 
-      this.ensureTerminalRunning(terminal, session, false);
+      void this.ensureTerminalRunning(terminal, session, false);
     }
   }
 

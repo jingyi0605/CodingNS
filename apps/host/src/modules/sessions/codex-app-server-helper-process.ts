@@ -1,0 +1,660 @@
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import readline, { createInterface } from "node:readline";
+
+import type { ProviderRuntimeRunRequest } from "@codingns/session-sync-core";
+
+type ParentToHelperMessage =
+  | {
+      type: "transport_request";
+      transportId: string;
+      requestId: string;
+      method:
+        | "initialize"
+        | "startThread"
+        | "resumeThread"
+        | "startTurn"
+        | "interruptTurn"
+        | "close";
+      request?: ProviderRuntimeRunRequest;
+      providerSessionId?: string;
+    }
+  | {
+      type: "server_request_result";
+      transportId: string;
+      requestId: string;
+      ok: true;
+      result: unknown;
+    }
+  | {
+      type: "server_request_result";
+      transportId: string;
+      requestId: string;
+      ok: false;
+      error: string;
+    };
+
+interface PendingJsonRpcResponse {
+  resolve: (value: Record<string, unknown>) => void;
+  reject: (reason?: unknown) => void;
+}
+
+interface PendingServerRequest {
+  resolve: (value: unknown) => void;
+  reject: (reason?: unknown) => void;
+}
+
+interface TransportRecord {
+  child: ChildProcessWithoutNullStreams;
+  stdout: readline.Interface;
+  pendingResponses: Map<string, PendingJsonRpcResponse>;
+  pendingServerRequests: Map<string, PendingServerRequest>;
+  closed: boolean;
+  requestSequence: number;
+  activeThreadId: string | null;
+  activeTurnId: string | null;
+}
+
+const helperArgs = process.argv.slice(2);
+const rawCommandPath = readFlag(helperArgs, "--command-path");
+
+if (!rawCommandPath) {
+  throw new Error("CODEX_APP_SERVER_HELPER_COMMAND_PATH_REQUIRED");
+}
+
+const commandPath = rawCommandPath;
+
+const transports = new Map<string, TransportRecord>();
+const stdinReader = readline.createInterface({
+  input: process.stdin,
+  crlfDelay: Infinity
+});
+
+stdinReader.on("line", (line) => {
+  void handleLine(line);
+});
+
+async function handleLine(line: string): Promise<void> {
+  let message: ParentToHelperMessage;
+
+  try {
+    message = JSON.parse(line) as ParentToHelperMessage;
+  } catch (error) {
+    console.error("[codex-app-server-helper] 无法解析请求", error);
+    return;
+  }
+
+  switch (message.type) {
+    case "transport_request":
+      await handleTransportRequest(message);
+      return;
+    case "server_request_result": {
+      const transport = transports.get(message.transportId);
+
+      if (!transport) {
+        return;
+      }
+
+      const pending = transport.pendingServerRequests.get(message.requestId);
+
+      if (!pending) {
+        return;
+      }
+
+      transport.pendingServerRequests.delete(message.requestId);
+
+      if (message.ok) {
+        pending.resolve(message.result);
+        return;
+      }
+
+      pending.reject(new Error(message.error));
+    }
+  }
+}
+
+async function handleTransportRequest(message: Extract<ParentToHelperMessage, { type: "transport_request" }>): Promise<void> {
+  let transport = transports.get(message.transportId);
+
+  if (!transport && message.method !== "close") {
+    transport = createTransportRecord(commandPath);
+    transports.set(message.transportId, transport);
+  }
+
+  if (!transport) {
+    emitResponse(message.transportId, message.requestId, {});
+    return;
+  }
+
+  try {
+    switch (message.method) {
+      case "initialize": {
+        await sendJsonRpcRequest(transport, {
+          method: "initialize",
+          params: {
+            clientInfo: {
+              name: "codingns-runtime-helper",
+              version: "0.0.0"
+            },
+            capabilities: null
+          }
+        });
+        writeJsonRpcMessage(transport.child, {
+          jsonrpc: "2.0",
+          method: "initialized",
+          params: {}
+        });
+        emitResponse(message.transportId, message.requestId, {});
+        return;
+      }
+      case "startThread": {
+        const request = requireRequest(message.request);
+        const result = await sendJsonRpcRequest(transport, {
+          method: "thread/start",
+          params: createThreadStartParams(request)
+        });
+        const thread = toRecord(result.thread);
+        const providerSessionId = ensureText(thread?.id).trim();
+
+        if (!providerSessionId) {
+          throw new Error("CODEX_APP_SERVER_THREAD_ID_MISSING");
+        }
+
+        transport.activeThreadId = providerSessionId;
+        emitResponse(message.transportId, message.requestId, {
+          providerSessionId,
+          rawStoreRef: normalizeText(thread?.path) || null
+        });
+        return;
+      }
+      case "resumeThread": {
+        const request = requireRequest(message.request);
+        const providerSessionId = ensureText(message.providerSessionId).trim();
+        const result = await sendJsonRpcRequest(transport, {
+          method: "thread/resume",
+          params: createThreadResumeParams(request, providerSessionId)
+        });
+        const thread = toRecord(result.thread);
+        transport.activeThreadId = ensureText(thread?.id).trim() || providerSessionId;
+        emitResponse(message.transportId, message.requestId, {
+          providerSessionId: transport.activeThreadId,
+          rawStoreRef: normalizeText(thread?.path) || null
+        });
+        return;
+      }
+      case "startTurn": {
+        const request = requireRequest(message.request);
+        const providerSessionId = ensureText(message.providerSessionId).trim();
+        const result = await sendJsonRpcRequest(transport, {
+          method: "turn/start",
+          params: createTurnStartParams(request, providerSessionId)
+        });
+        transport.activeTurnId =
+          ensureText(readProp(readProp(result, "turn"), "id")).trim() || transport.activeTurnId;
+        emitResponse(message.transportId, message.requestId, {});
+        return;
+      }
+      case "interruptTurn": {
+        if (transport.activeThreadId && transport.activeTurnId) {
+          await sendJsonRpcRequest(transport, {
+            method: "turn/interrupt",
+            params: {
+              threadId: transport.activeThreadId,
+              turnId: transport.activeTurnId
+            }
+          });
+        }
+        emitResponse(message.transportId, message.requestId, {});
+        return;
+      }
+      case "close":
+        closeTransport(message.transportId, transport, null);
+        emitResponse(message.transportId, message.requestId, {});
+    }
+  } catch (error) {
+    emitError(message.transportId, message.requestId, error instanceof Error ? error.message : String(error));
+  }
+}
+
+function createTransportRecord(commandPath: string): TransportRecord {
+  const child = spawn(commandPath, ["app-server"], {
+    env: process.env,
+    stdio: ["pipe", "pipe", "pipe"],
+    shell: shouldSpawnViaShell(commandPath),
+    windowsHide: true
+  });
+  const stdout = createInterface({
+    input: child.stdout
+  });
+  const transport: TransportRecord = {
+    child,
+    stdout,
+    pendingResponses: new Map(),
+    pendingServerRequests: new Map(),
+    closed: false,
+    requestSequence: 0,
+    activeThreadId: null,
+    activeTurnId: null
+  };
+
+  child.on("error", (error) => {
+    closeTransportForRecord(transport, error);
+  });
+  child.on("exit", (code, signal) => {
+    if (transport.closed) {
+      return;
+    }
+
+    const detail = signal
+      ? `codex app-server exited with signal ${signal}`
+      : `codex app-server exited with code ${String(code ?? "unknown")}`;
+    closeTransportForRecord(transport, new Error(detail));
+  });
+
+  stdout.on("line", (line) => {
+    void handleTransportStdout(transport, line);
+  });
+
+  return transport;
+}
+
+async function handleTransportStdout(transport: TransportRecord, line: string): Promise<void> {
+  const trimmed = line.trim();
+
+  if (!trimmed) {
+    return;
+  }
+
+  let parsed: Record<string, unknown>;
+
+  try {
+    parsed = JSON.parse(trimmed) as Record<string, unknown>;
+  } catch {
+    return;
+  }
+
+  const transportId = findTransportId(transport);
+
+  if (!transportId) {
+    return;
+  }
+
+  if (typeof parsed.method === "string" && parsed.id !== undefined) {
+    const requestId = String(parsed.id);
+    const result = await new Promise<unknown>((resolve, reject) => {
+      transport.pendingServerRequests.set(requestId, {
+        resolve,
+        reject
+      });
+      emit({
+        type: "server_request",
+        transportId,
+        requestId,
+        request: parsed
+      });
+    }).catch((error) => {
+      writeJsonRpcMessage(transport.child, {
+        jsonrpc: "2.0",
+        id: parsed.id,
+        error: {
+          code: -32000,
+          message: error instanceof Error ? error.message : "CODEX_APP_SERVER_REQUEST_FAILED"
+        }
+      });
+      return undefined;
+    });
+
+    if (result !== undefined) {
+      writeJsonRpcMessage(transport.child, {
+        jsonrpc: "2.0",
+        id: parsed.id,
+        result
+      });
+    }
+    return;
+  }
+
+  if (typeof parsed.method === "string") {
+    const method = parsed.method.trim();
+    const params = readJsonRpcParams(parsed);
+
+    if (method === "turn/started") {
+      transport.activeTurnId =
+        ensureText(readProp(readProp(params, "turn"), "id")).trim() || transport.activeTurnId;
+    }
+
+    if (method === "thread/started") {
+      transport.activeThreadId =
+        ensureText(readProp(readProp(params, "thread"), "id")).trim() || transport.activeThreadId;
+    }
+
+    emit({
+      type: "notification",
+      transportId,
+      notification: {
+        method,
+        params
+      }
+    });
+    return;
+  }
+
+  const responseId = String(parsed.id ?? "");
+  const pending = transport.pendingResponses.get(responseId);
+
+  if (!pending) {
+    return;
+  }
+
+  transport.pendingResponses.delete(responseId);
+
+  if (parsed.error && typeof parsed.error === "object") {
+    const message =
+      ensureText(readProp(parsed.error, "message")).trim() || "CODEX_APP_SERVER_ERROR";
+    pending.reject(new Error(message));
+    return;
+  }
+
+  pending.resolve(readJsonRpcResult(parsed));
+}
+
+function sendJsonRpcRequest(
+  transport: TransportRecord,
+  message: {
+    method: string;
+    params: Record<string, unknown>;
+  }
+): Promise<Record<string, unknown>> {
+  const id = `${message.method}:${++transport.requestSequence}`;
+
+  return new Promise<Record<string, unknown>>((resolve, reject) => {
+    transport.pendingResponses.set(id, {
+      resolve,
+      reject
+    });
+    writeJsonRpcMessage(transport.child, {
+      jsonrpc: "2.0",
+      id,
+      method: message.method,
+      params: message.params
+    });
+  });
+}
+
+function writeJsonRpcMessage(
+  child: ChildProcessWithoutNullStreams,
+  payload: Record<string, unknown>
+): void {
+  child.stdin.write(`${JSON.stringify(payload)}\n`);
+}
+
+function closeTransport(transportId: string, transport: TransportRecord, error: Error | null): void {
+  closeTransportForRecord(transport, error);
+  transports.delete(transportId);
+  emit({
+    type: "transport_closed",
+    transportId,
+    detail: error?.message ?? null
+  });
+}
+
+function closeTransportForRecord(transport: TransportRecord, error: Error | null): void {
+  if (transport.closed) {
+    return;
+  }
+
+  transport.closed = true;
+  transport.stdout.close();
+  for (const pending of transport.pendingResponses.values()) {
+    pending.reject(error ?? new Error("CODEX_APP_SERVER_CLOSED"));
+  }
+  transport.pendingResponses.clear();
+  for (const pending of transport.pendingServerRequests.values()) {
+    pending.reject(error ?? new Error("CODEX_APP_SERVER_CLOSED"));
+  }
+  transport.pendingServerRequests.clear();
+
+  if (!transport.child.stdin.destroyed) {
+    transport.child.stdin.end();
+  }
+  if (!transport.child.killed) {
+    transport.child.kill("SIGTERM");
+  }
+}
+
+function emitResponse(transportId: string, requestId: string, result: Record<string, unknown>): void {
+  emit({
+    type: "response",
+    transportId,
+    requestId,
+    ok: true,
+    result
+  });
+}
+
+function emitError(transportId: string, requestId: string, error: string): void {
+  emit({
+    type: "response",
+    transportId,
+    requestId,
+    ok: false,
+    error
+  });
+}
+
+function emit(message: Record<string, unknown>): void {
+  process.stdout.write(`${JSON.stringify(message)}\n`);
+}
+
+function findTransportId(target: TransportRecord): string | null {
+  for (const [transportId, transport] of transports) {
+    if (transport === target) {
+      return transportId;
+    }
+  }
+
+  return null;
+}
+
+function readFlag(argv: string[], flag: string): string | null {
+  const index = argv.indexOf(flag);
+
+  if (index < 0) {
+    return null;
+  }
+
+  return argv[index + 1] ?? null;
+}
+
+function shouldSpawnViaShell(commandPath: string): boolean {
+  return process.platform === "win32" && /\.(cmd|bat)$/i.test(commandPath);
+}
+
+function requireRequest(request: ProviderRuntimeRunRequest | undefined): ProviderRuntimeRunRequest {
+  if (!request) {
+    throw new Error("CODEX_APP_SERVER_REQUEST_REQUIRED");
+  }
+
+  return request;
+}
+
+function createThreadStartParams(request: ProviderRuntimeRunRequest): Record<string, unknown> {
+  const permissionOptions = createCodexThreadPermissionOptions(
+    request.options.permissionMode ?? "default"
+  );
+  const params: Record<string, unknown> = {
+    cwd: request.workspacePath,
+    approvalsReviewer: "user"
+  };
+
+  if (permissionOptions.approvalPolicy) {
+    params.approvalPolicy = permissionOptions.approvalPolicy;
+  }
+
+  if (permissionOptions.sandboxMode) {
+    params.sandbox = permissionOptions.sandboxMode;
+  }
+
+  if (request.options.model) {
+    params.model = request.options.model;
+  }
+
+  return params;
+}
+
+function createThreadResumeParams(
+  request: ProviderRuntimeRunRequest,
+  providerSessionId: string
+): Record<string, unknown> {
+  const permissionOptions = createCodexThreadPermissionOptions(
+    request.options.permissionMode ?? "default"
+  );
+  const params: Record<string, unknown> = {
+    threadId: providerSessionId,
+    cwd: request.workspacePath,
+    approvalsReviewer: "user"
+  };
+
+  if (permissionOptions.approvalPolicy) {
+    params.approvalPolicy = permissionOptions.approvalPolicy;
+  }
+
+  if (permissionOptions.sandboxMode) {
+    params.sandbox = permissionOptions.sandboxMode;
+  }
+
+  if (request.options.model) {
+    params.model = request.options.model;
+  }
+
+  return params;
+}
+
+function createTurnStartParams(
+  request: ProviderRuntimeRunRequest,
+  providerSessionId: string
+): Record<string, unknown> {
+  const permissionOptions = createCodexThreadPermissionOptions(
+    request.options.permissionMode ?? "default"
+  );
+  const params: Record<string, unknown> = {
+    threadId: providerSessionId,
+    input: createCodexAppServerInput(request),
+    cwd: request.workspacePath,
+    approvalsReviewer: "user"
+  };
+
+  if (permissionOptions.approvalPolicy) {
+    params.approvalPolicy = permissionOptions.approvalPolicy;
+  }
+
+  if (request.options.model) {
+    params.model = request.options.model;
+  }
+
+  const reasoningEffort = normalizeCodexReasoningEffort(request.options.reasoningLevel);
+
+  if (reasoningEffort) {
+    params.effort = reasoningEffort;
+  }
+
+  return params;
+}
+
+function createCodexAppServerInput(
+  request: ProviderRuntimeRunRequest
+): Array<Record<string, unknown>> {
+  const input: Array<Record<string, unknown>> = [];
+  const promptText = (request.options.providerPrompt ?? request.options.content).trim();
+
+  if (promptText.length > 0) {
+    input.push({
+      type: "text",
+      text: promptText
+    });
+  }
+
+  for (const attachment of request.options.attachments) {
+    input.push({
+      type: "localImage",
+      path: attachment.filePath
+    });
+  }
+
+  return input;
+}
+
+function createCodexThreadPermissionOptions(
+  permissionMode: string | null
+): {
+  sandboxMode?: string;
+  approvalPolicy?: string;
+} {
+  if (permissionMode === "bypassPermissions") {
+    return {
+      sandboxMode: "danger-full-access",
+      approvalPolicy: "never"
+    };
+  }
+
+  if (permissionMode === "acceptEdits") {
+    return {
+      sandboxMode: "workspace-write",
+      approvalPolicy: "never"
+    };
+  }
+
+  return {};
+}
+
+function normalizeCodexReasoningEffort(value: string | null): string | null {
+  const normalized = value?.trim().toLowerCase() ?? null;
+
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized === "maximum") {
+    return "xhigh";
+  }
+
+  if (
+    normalized === "minimal" ||
+    normalized === "low" ||
+    normalized === "medium" ||
+    normalized === "high" ||
+    normalized === "xhigh"
+  ) {
+    return normalized;
+  }
+
+  return null;
+}
+
+function readJsonRpcParams(message: Record<string, unknown>): Record<string, unknown> {
+  return toRecord(message.params) ?? {};
+}
+
+function readJsonRpcResult(message: Record<string, unknown>): Record<string, unknown> {
+  return toRecord(message.result) ?? {};
+}
+
+function readProp(value: unknown, key: string): unknown {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  return (value as Record<string, unknown>)[key];
+}
+
+function toRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
+}
+
+function ensureText(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function normalizeText(value: unknown): string | null {
+  const text = ensureText(value).trim();
+  return text.length > 0 ? text : null;
+}

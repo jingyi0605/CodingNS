@@ -254,7 +254,16 @@ describe("terminal history routes", () => {
     );
     await delay(1200);
 
-    rmSync(path.join(fixture.rootDir, "terminal-logs", terminalId, "active.log"), { force: true });
+    const warmupHistoryResponse = await hosted.app.inject({
+      method: "GET",
+      url: `/api/terminals/${terminalId}/history?limit=5`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(warmupHistoryResponse.statusCode).toBe(200);
+
+    rmSync(path.join(fixture.rootDir, "terminal-logs", terminalId), { recursive: true, force: true });
 
     const historyResponse = await hosted.app.inject({
       method: "GET",

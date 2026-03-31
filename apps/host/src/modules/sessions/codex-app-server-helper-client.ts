@@ -1,0 +1,359 @@
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import path from "node:path";
+import readline from "node:readline";
+import { fileURLToPath } from "node:url";
+
+import type {
+  CodexAppServerTransport,
+  ProviderRuntimeRunRequest
+} from "@codingns/session-sync-core";
+
+type HelperToParentMessage =
+  | {
+      type: "response";
+      transportId: string;
+      requestId: string;
+      ok: true;
+      result: Record<string, unknown>;
+    }
+  | {
+      type: "response";
+      transportId: string;
+      requestId: string;
+      ok: false;
+      error: string;
+    }
+  | {
+      type: "notification";
+      transportId: string;
+      notification: Record<string, unknown>;
+    }
+  | {
+      type: "server_request";
+      transportId: string;
+      requestId: string;
+      request: Record<string, unknown>;
+    }
+  | {
+      type: "transport_closed";
+      transportId: string;
+      detail: string | null;
+    };
+
+type ParentToHelperMessage =
+  | {
+      type: "transport_request";
+      transportId: string;
+      requestId: string;
+      method:
+        | "initialize"
+        | "startThread"
+        | "resumeThread"
+        | "startTurn"
+        | "interruptTurn"
+        | "close";
+      request?: ProviderRuntimeRunRequest;
+      providerSessionId?: string;
+    }
+  | {
+      type: "server_request_result";
+      transportId: string;
+      requestId: string;
+      ok: true;
+      result: unknown;
+    }
+  | {
+      type: "server_request_result";
+      transportId: string;
+      requestId: string;
+      ok: false;
+      error: string;
+    };
+
+interface PendingResponse {
+  resolve: (value: Record<string, unknown>) => void;
+  reject: (reason?: unknown) => void;
+}
+
+interface LogicalTransportState {
+  pendingResponses: Map<string, PendingResponse>;
+  notificationHandler: (notification: Record<string, unknown>) => void | Promise<void>;
+  serverRequestHandler: (request: Record<string, unknown>) => Promise<unknown>;
+  closed: boolean;
+}
+
+export class CodexAppServerHelperClient {
+  private readonly child: ChildProcessWithoutNullStreams;
+  private readonly stdoutReader: readline.Interface;
+  private readonly transports = new Map<string, LogicalTransportState>();
+  private nextTransportId = 1;
+  private nextRequestId = 1;
+  private disposed = false;
+
+  constructor(commandPath: string) {
+    const launch = resolveHelperLaunch(commandPath);
+    this.child = spawn(launch.command, launch.args, {
+      cwd: process.cwd(),
+      env: process.env,
+      stdio: ["pipe", "pipe", "pipe"]
+    });
+    this.stdoutReader = readline.createInterface({
+      input: this.child.stdout
+    });
+
+    this.stdoutReader.on("line", (line) => {
+      void this.handleMessageLine(line);
+    });
+    this.child.stderr.on("data", (chunk) => {
+      const content = String(chunk).trim();
+
+      if (!content) {
+        return;
+      }
+
+      console.warn(`[codex-app-server-helper] ${content}`);
+    });
+    this.child.on("error", (error) => {
+      this.failAll(error);
+    });
+    this.child.on("exit", (code, signal) => {
+      if (this.disposed && (code === 0 || signal === "SIGTERM")) {
+        return;
+      }
+
+      this.failAll(new Error(`Codex app-server helper 已退出：code=${code ?? "null"} signal=${signal ?? "null"}`));
+    });
+  }
+
+  createTransport(): CodexAppServerTransport {
+    const transportId = String(this.nextTransportId++);
+    const state: LogicalTransportState = {
+      pendingResponses: new Map(),
+      notificationHandler: () => undefined,
+      serverRequestHandler: async () => {
+        throw new Error("CODEX_APP_SERVER_REQUEST_NOT_SUPPORTED");
+      },
+      closed: false
+    };
+
+    this.transports.set(transportId, state);
+
+    const request = async (
+      method: Extract<ParentToHelperMessage, { type: "transport_request" }>["method"],
+      input: {
+        request?: ProviderRuntimeRunRequest;
+        providerSessionId?: string;
+      } = {}
+    ): Promise<Record<string, unknown>> => {
+      if (state.closed) {
+        throw new Error("CODEX_APP_SERVER_CLOSED");
+      }
+
+      const requestId = String(this.nextRequestId++);
+
+      return await new Promise<Record<string, unknown>>((resolve, reject) => {
+        state.pendingResponses.set(requestId, {
+          resolve,
+          reject
+        });
+
+        this.sendMessage({
+          type: "transport_request",
+          transportId,
+          requestId,
+          method,
+          ...input
+        }).catch((error) => {
+          state.pendingResponses.delete(requestId);
+          reject(error);
+        });
+      });
+    };
+
+    return {
+      async initialize() {
+        await request("initialize");
+      },
+      async startThread(runtimeRequest) {
+        const result = await request("startThread", {
+          request: runtimeRequest
+        });
+        return {
+          providerSessionId: String(result.providerSessionId ?? ""),
+          rawStoreRef: normalizeNullableString(result.rawStoreRef)
+        };
+      },
+      async resumeThread(runtimeRequest, providerSessionId) {
+        const result = await request("resumeThread", {
+          request: runtimeRequest,
+          providerSessionId
+        });
+        return {
+          providerSessionId: String(result.providerSessionId ?? providerSessionId),
+          rawStoreRef: normalizeNullableString(result.rawStoreRef)
+        };
+      },
+      async startTurn(runtimeRequest, providerSessionId) {
+        await request("startTurn", {
+          request: runtimeRequest,
+          providerSessionId
+        });
+      },
+      async interruptTurn() {
+        await request("interruptTurn");
+      },
+      setNotificationHandler(handler) {
+        state.notificationHandler = handler;
+      },
+      setServerRequestHandler(handler) {
+        state.serverRequestHandler = handler;
+      },
+      close: () => {
+        if (state.closed) {
+          return;
+        }
+
+        state.closed = true;
+        void this.sendMessage({
+          type: "transport_request",
+          transportId,
+          requestId: String(this.nextRequestId++),
+          method: "close"
+        });
+        this.rejectTransportPending(state, new Error("CODEX_APP_SERVER_CLOSED"));
+        this.transports.delete(transportId);
+      }
+    };
+  }
+
+  dispose(): void {
+    if (this.disposed) {
+      return;
+    }
+
+    this.disposed = true;
+    this.stdoutReader.close();
+    this.child.kill("SIGTERM");
+    this.failAll(new Error("Codex app-server helper 已关闭"));
+  }
+
+  private async handleMessageLine(line: string): Promise<void> {
+    const trimmed = line.trim();
+
+    if (!trimmed.startsWith("{")) {
+      console.warn(`[codex-app-server-helper] 忽略非协议输出: ${trimmed}`);
+      return;
+    }
+
+    let message: HelperToParentMessage;
+
+    try {
+      message = JSON.parse(trimmed) as HelperToParentMessage;
+    } catch (error) {
+      console.warn("[codex-app-server-helper] 无法解析响应", error);
+      return;
+    }
+
+    const state = this.transports.get(message.transportId);
+
+    if (!state) {
+      return;
+    }
+
+    switch (message.type) {
+      case "response": {
+        const pending = state.pendingResponses.get(message.requestId);
+
+        if (!pending) {
+          return;
+        }
+
+        state.pendingResponses.delete(message.requestId);
+
+        if (message.ok) {
+          pending.resolve(message.result);
+          return;
+        }
+
+        pending.reject(new Error(message.error));
+        return;
+      }
+      case "notification":
+        await state.notificationHandler(message.notification);
+        return;
+      case "server_request":
+        try {
+          const result = await state.serverRequestHandler(message.request);
+          await this.sendMessage({
+            type: "server_request_result",
+            transportId: message.transportId,
+            requestId: message.requestId,
+            ok: true,
+            result
+          });
+        } catch (error) {
+          await this.sendMessage({
+            type: "server_request_result",
+            transportId: message.transportId,
+            requestId: message.requestId,
+            ok: false,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
+        return;
+      case "transport_closed":
+        state.closed = true;
+        this.rejectTransportPending(state, new Error(message.detail ?? "CODEX_APP_SERVER_CLOSED"));
+        this.transports.delete(message.transportId);
+    }
+  }
+
+  private async sendMessage(message: ParentToHelperMessage): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+      this.child.stdin.write(`${JSON.stringify(message)}\n`, (error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+
+        resolve();
+      });
+    });
+  }
+
+  private rejectTransportPending(state: LogicalTransportState, error: Error): void {
+    for (const pending of state.pendingResponses.values()) {
+      pending.reject(error);
+    }
+    state.pendingResponses.clear();
+  }
+
+  private failAll(error: unknown): void {
+    for (const state of this.transports.values()) {
+      this.rejectTransportPending(
+        state,
+        error instanceof Error ? error : new Error(String(error))
+      );
+    }
+    this.transports.clear();
+  }
+}
+
+function resolveHelperLaunch(commandPath: string): { command: string; args: string[] } {
+  const currentFilePath = fileURLToPath(import.meta.url);
+  const extension = path.extname(currentFilePath);
+  const helperPath = currentFilePath.replace(
+    /codex-app-server-helper-client\.(ts|js)$/,
+    `codex-app-server-helper-process${extension}`
+  );
+  const baseArgs = extension === ".ts" ? ["--import", "tsx", helperPath] : [helperPath];
+
+  return {
+    command: process.execPath,
+    args: [...baseArgs, "--command-path", commandPath]
+  };
+}
+
+function normalizeNullableString(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}

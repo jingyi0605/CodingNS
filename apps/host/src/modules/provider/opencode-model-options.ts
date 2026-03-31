@@ -1,7 +1,6 @@
-import { spawn } from "node:child_process";
-import { createInterface } from "node:readline";
-
 import type { ProviderCapabilities, ProviderModelOption } from "@codingns/session-sync-core";
+
+import { ProviderDiscoveryHelperClient } from "./provider-discovery-helper-client.js";
 
 const PROVIDER_DEFAULT_MODEL_ID = "provider-default";
 const DEFAULT_TIMEOUT_MS = 5_000;
@@ -18,6 +17,8 @@ interface OpenCodeModelOptionsServiceOptions {
 interface OpenCodeDiscoverySnapshot {
   modelOptions: ProviderModelOption[];
 }
+
+const providerDiscoveryHelperClient = new ProviderDiscoveryHelperClient();
 
 interface OpenCodeProviderConfigSnapshot {
   providers: OpenCodeProviderEntry[];
@@ -194,91 +195,10 @@ export class OpenCodeModelOptionsService {
   }
 
   private readModelListFromCli(workspacePath: string | null): Promise<string[]> {
-    return new Promise((resolve, reject) => {
-      const child = spawn(this.options.commandPath, ["models", "opencode"], {
-        cwd: workspacePath ?? undefined,
-        env: {
-          ...process.env,
-          NO_COLOR: "1"
-        },
-        stdio: ["ignore", "pipe", "pipe"]
-      });
-      const stdout = createInterface({ input: child.stdout });
-      const stderrChunks: string[] = [];
-      const models: string[] = [];
-      const seen = new Set<string>();
-      let settled = false;
-      const timeout = setTimeout(() => {
-        finishWithError(new Error("OPENCODE_MODELS_TIMEOUT"));
-      }, this.timeoutMs);
-
-      function cleanup(): void {
-        clearTimeout(timeout);
-        stdout.close();
-
-        if (!child.killed) {
-          child.kill("SIGTERM");
-        }
-      }
-
-      function finishWithError(error: Error): void {
-        if (settled) {
-          return;
-        }
-
-        settled = true;
-        cleanup();
-        reject(error);
-      }
-
-      function finishWithValue(value: string[]): void {
-        if (settled) {
-          return;
-        }
-
-        settled = true;
-        cleanup();
-        resolve(value);
-      }
-
-      child.on("error", (error) => {
-        finishWithError(error);
-      });
-
-      child.stderr.on("data", (chunk) => {
-        stderrChunks.push(chunk.toString("utf8"));
-      });
-
-      stdout.on("line", (line) => {
-        const modelId = normalizeCliModelId(line);
-
-        if (!modelId || seen.has(modelId)) {
-          return;
-        }
-
-        seen.add(modelId);
-        models.push(modelId);
-      });
-
-      child.on("close", (code) => {
-        if (settled) {
-          return;
-        }
-
-        const stderr = stderrChunks.join("").trim();
-
-        if (code !== 0) {
-          finishWithError(new Error(stderr || `opencode models exited with code ${code ?? "unknown"}`));
-          return;
-        }
-
-        if (models.length === 0) {
-          finishWithError(new Error(stderr || "OPENCODE_MODELS_EMPTY"));
-          return;
-        }
-
-        finishWithValue(models);
-      });
+    return providerDiscoveryHelperClient.readOpenCodeCliModels({
+      commandPath: this.options.commandPath,
+      workspacePath,
+      timeoutMs: this.timeoutMs
     });
   }
 }

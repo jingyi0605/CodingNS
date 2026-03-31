@@ -27,12 +27,12 @@ export interface TerminalRuntimeAdapter {
     terminal: TerminalInstance;
     session: TerminalRuntimeSession;
     env: Record<string, string>;
-  }): PersistentSessionInspection;
+  }): Promise<PersistentSessionInspection>;
 
   inspectPersistentSession(input: {
     terminal: TerminalInstance;
     session: TerminalRuntimeSession;
-  }): PersistentSessionInspection;
+  }): Promise<PersistentSessionInspection>;
 
   buildHostAttachmentLaunch(input: {
     terminal: TerminalInstance;
@@ -43,5 +43,5 @@ export interface TerminalRuntimeAdapter {
   terminatePersistentSession(input: {
     terminal: TerminalInstance;
     session: TerminalRuntimeSession;
-  }): void;
+  }): Promise<void>;
 }

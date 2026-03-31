@@ -27,7 +27,7 @@ describe("ConptyRuntimeAdapter", () => {
     );
 
     try {
-      const created = adapter.createPersistentSession({
+      const created = await adapter.createPersistentSession({
         terminal,
         session,
         env
@@ -35,21 +35,21 @@ describe("ConptyRuntimeAdapter", () => {
       expect(created.alive).toBe(true);
       expect(created.shellPid).toEqual(expect.any(Number));
 
-      const inspected = adapter.inspectPersistentSession({
+      const inspected = await adapter.inspectPersistentSession({
         terminal,
         session
       });
       expect(inspected.alive).toBe(true);
       expect(inspected.shellPid).toEqual(expect.any(Number));
     } finally {
-      adapter.terminatePersistentSession({
+      await adapter.terminatePersistentSession({
         terminal,
         session
       });
     }
 
     await waitFor(async () => {
-      const inspected = adapter.inspectPersistentSession({
+      const inspected = await adapter.inspectPersistentSession({
         terminal,
         session
       });

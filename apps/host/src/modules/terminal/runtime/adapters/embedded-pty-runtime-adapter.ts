@@ -11,7 +11,9 @@ export class EmbeddedPtyRuntimeAdapter implements TerminalRuntimeAdapter {
   readonly type = "embedded-pty" as const;
   readonly survivesHostRestart = false;
 
-  createPersistentSession(input: Parameters<TerminalRuntimeAdapter["createPersistentSession"]>[0]) {
+  async createPersistentSession(
+    input: Parameters<TerminalRuntimeAdapter["createPersistentSession"]>[0]
+  ) {
     const pipeName = buildPtyBrokerEndpoint(input.session.sessionKey);
     const launch = resolvePtyBrokerScriptLaunch("pty-broker-agent-process");
     const agentProcess = spawn(
@@ -44,7 +46,9 @@ export class EmbeddedPtyRuntimeAdapter implements TerminalRuntimeAdapter {
     };
   }
 
-  inspectPersistentSession(input: Parameters<TerminalRuntimeAdapter["inspectPersistentSession"]>[0]) {
+  async inspectPersistentSession(
+    input: Parameters<TerminalRuntimeAdapter["inspectPersistentSession"]>[0]
+  ) {
     const trackedProcessId = input.session.shellPid ?? input.session.agentPid;
 
     if (trackedProcessId && isProcessAlive(trackedProcessId)) {
@@ -73,7 +77,7 @@ export class EmbeddedPtyRuntimeAdapter implements TerminalRuntimeAdapter {
     };
   }
 
-  terminatePersistentSession(): void {
+  async terminatePersistentSession(): Promise<void> {
     // embedded-pty broker 由 Host 侧连接负责发起终止，这里保留空实现做兼容。
   }
 }

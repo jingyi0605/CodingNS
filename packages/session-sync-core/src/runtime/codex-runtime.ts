@@ -79,6 +79,7 @@ interface CodexThreadRow {
 interface CodexRuntimeOptions {
   homeDir?: string;
   commandPath?: string;
+  transportFactory?: () => CodexAppServerTransport;
   handleServerRequest?: (input: {
     sessionId: string;
     providerSessionId: string;
@@ -86,7 +87,7 @@ interface CodexRuntimeOptions {
   }) => Promise<unknown>;
 }
 
-interface CodexAppServerTransport {
+export interface CodexAppServerTransport {
   initialize(): Promise<void>;
   startThread(request: ProviderRuntimeRunRequest): Promise<{ providerSessionId: string; rawStoreRef: string | null }>;
   resumeThread(request: ProviderRuntimeRunRequest, providerSessionId: string): Promise<{
@@ -110,7 +111,9 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
     sink: ProviderRuntimeEventSink
   ): Promise<ProviderRuntimeLaunchResult> {
     const launchedAtMs = Date.now();
-    const transport = createCodexAppServerTransport(this.options);
+    const transport = this.options.transportFactory
+      ? this.options.transportFactory()
+      : createCodexAppServerTransport(this.options);
     await transport.initialize();
     const abortController = new AbortController();
     const eventQueue = createAsyncEventQueue();
@@ -199,7 +202,9 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
       throw new Error("PROVIDER_SESSION_ID_REQUIRED");
     }
 
-    const transport = createCodexAppServerTransport(this.options);
+    const transport = this.options.transportFactory
+      ? this.options.transportFactory()
+      : createCodexAppServerTransport(this.options);
     await transport.initialize();
     const fallbackRawStoreRef = request.rawStoreRef ?? buildRuntimeRawStoreRef(providerSessionId);
     const resolvedBinding = await this.resolveExistingSessionBinding(
@@ -1396,8 +1401,7 @@ function createThreadResumeParams(
   const params: Record<string, unknown> = {
     threadId: providerSessionId,
     cwd: request.workspacePath,
-    approvalsReviewer: "user",
-    persistExtendedHistory: true
+    approvalsReviewer: "user"
   };
 
   if (permissionOptions.approvalPolicy) {

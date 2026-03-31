@@ -73,11 +73,11 @@ export class TerminalRuntimeManager extends EventEmitter {
     });
   }
 
-  createPersistentSession(
+  async createPersistentSession(
     terminal: TerminalInstance,
     session: TerminalRuntimeSession,
     env: Record<string, string>
-  ): PersistentSessionInspection {
+  ): Promise<PersistentSessionInspection> {
     return this.getAdapter(session).createPersistentSession({
       terminal,
       session,
@@ -85,11 +85,11 @@ export class TerminalRuntimeManager extends EventEmitter {
     });
   }
 
-  inspectPersistentSession(
+  async inspectPersistentSession(
     terminal: TerminalInstance,
     session: TerminalRuntimeSession
-  ): PersistentSessionInspection {
-    if (this.isAttached(terminal.id)) {
+  ): Promise<PersistentSessionInspection> {
+    if (this.isAttached(terminal.id) && session.runtimeType !== "tmux") {
       return {
         alive: true,
         shellPid: this.getAttachedProcessId(terminal.id),
@@ -224,7 +224,10 @@ export class TerminalRuntimeManager extends EventEmitter {
     this.attachmentManager.close(terminalId);
   }
 
-  terminateSession(terminal: TerminalInstance, session: TerminalRuntimeSession): boolean {
+  async terminateSession(
+    terminal: TerminalInstance,
+    session: TerminalRuntimeSession
+  ): Promise<boolean> {
     const adapter = this.getAdapter(session);
     const hadAttachment = this.isAttached(terminal.id);
 
@@ -232,7 +235,7 @@ export class TerminalRuntimeManager extends EventEmitter {
       this.closeIntents.set(terminal.id, "terminate");
     }
 
-    adapter.terminatePersistentSession({
+    await adapter.terminatePersistentSession({
       terminal,
       session
     });
@@ -272,6 +275,10 @@ export class TerminalRuntimeManager extends EventEmitter {
   }
 
   private handleAttachmentExit(event: HostAttachmentExitEvent): void {
+    void this.handleAttachmentExitAsync(event);
+  }
+
+  private async handleAttachmentExitAsync(event: HostAttachmentExitEvent): Promise<void> {
     const attachment = this.attachments.get(event.attachmentId);
     const intent = this.closeIntents.get(event.attachmentId) ?? null;
 
@@ -291,14 +298,14 @@ export class TerminalRuntimeManager extends EventEmitter {
       return;
     }
 
-    const inspection = attachment.adapter.inspectPersistentSession({
+    const inspection = await attachment.adapter.inspectPersistentSession({
       terminal: attachment.terminal,
       session: attachment.session
     });
 
     this.emit("exit", {
       terminalId: event.attachmentId,
-      exitCode: event.exitCode,
+      exitCode: extractExitCode(inspection.detail) ?? event.exitCode,
       requestedClose: intent === "terminate" ? true : false,
       sessionAlive: inspection.alive,
       sessionDetail: inspection.detail,
@@ -324,4 +331,19 @@ export class TerminalRuntimeManager extends EventEmitter {
 
     return adapter;
   }
+}
+
+function extractExitCode(detail: string | null): number | null {
+  if (!detail) {
+    return null;
+  }
+
+  const matched = detail.match(/exitCode=(\d+)/);
+
+  if (!matched) {
+    return null;
+  }
+
+  const exitCode = Number.parseInt(matched[1] ?? "", 10);
+  return Number.isInteger(exitCode) ? exitCode : null;
 }

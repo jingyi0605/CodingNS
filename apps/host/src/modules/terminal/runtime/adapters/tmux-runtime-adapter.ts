@@ -1,33 +1,37 @@
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 
 import { AppError } from "../../../../shared/errors/app-error.js";
 import type { TerminalRuntimeAdapter } from "../terminal-runtime-adapter.js";
+import { TmuxHelperClient } from "./tmux-helper-client.js";
+
+let tmuxHelperClient: TmuxHelperClient | null = null;
 
 export class TmuxRuntimeAdapter implements TerminalRuntimeAdapter {
   readonly type = "tmux" as const;
   readonly survivesHostRestart = true;
 
-  createPersistentSession(input: Parameters<TerminalRuntimeAdapter["createPersistentSession"]>[0]) {
+  async createPersistentSession(
+    input: Parameters<TerminalRuntimeAdapter["createPersistentSession"]>[0]
+  ) {
     ensureTmuxSupported();
 
     const shellBootstrapScript = buildShellBootstrapScript(input.terminal.shell, input.env);
-    const result = runTmuxCommand(
-      [
-        "new-session",
-        "-d",
-        "-s",
-        input.session.sessionKey,
-        "-c",
-        input.terminal.cwd,
-        "/bin/sh",
-        "-lc",
-        shellBootstrapScript
-      ],
-      {
-        errorCode: "RUNTIME_CREATE_FAILED",
-        actionLabel: "创建"
-      }
-    );
+    const createArgs = [
+      "new-session",
+      "-d",
+      "-s",
+      input.session.sessionKey,
+      "-c",
+      input.terminal.cwd,
+      "/bin/sh",
+      "-lc",
+      shellBootstrapScript
+    ];
+
+    const result = await runTmuxCommand(createArgs, {
+      errorCode: "RUNTIME_CREATE_FAILED",
+      actionLabel: "创建"
+    });
 
     if (result.status !== 0) {
       throw new AppError({
@@ -37,19 +41,33 @@ export class TmuxRuntimeAdapter implements TerminalRuntimeAdapter {
       });
     }
 
-    return this.inspectPersistentSession(input);
+    return {
+      alive: true,
+      shellPid: null,
+      detail: null
+    };
   }
 
-  inspectPersistentSession(input: Parameters<TerminalRuntimeAdapter["inspectPersistentSession"]>[0]) {
+  async inspectPersistentSession(
+    input: Parameters<TerminalRuntimeAdapter["inspectPersistentSession"]>[0]
+  ) {
     ensureTmuxSupported();
 
-    const hasSession = runTmuxCommand(["has-session", "-t", input.session.sessionKey], {
+    const hasSession = await runTmuxCommand(["has-session", "-t", input.session.sessionKey], {
       errorCode: "RUNTIME_INSPECT_FAILED",
       actionLabel: "检查",
       tolerateMissingBinary: true
     });
 
     if (hasSession.error) {
+      if (isBadFileDescriptorError(hasSession.error)) {
+        return {
+          alive: true,
+          shellPid: input.terminal.processId ?? input.session.shellPid ?? null,
+          detail: null
+        };
+      }
+
       return {
         alive: false,
         shellPid: null,
@@ -66,8 +84,8 @@ export class TmuxRuntimeAdapter implements TerminalRuntimeAdapter {
       };
     }
 
-    const listPanes = runTmuxCommand(
-      ["list-panes", "-t", input.session.sessionKey, "-F", "#{pane_pid}"],
+    const listPanes = await runTmuxCommand(
+      ["list-panes", "-t", input.session.sessionKey, "-F", "#{pane_dead}\t#{pane_dead_status}\t#{pane_pid}"],
       {
         errorCode: "RUNTIME_INSPECT_FAILED",
         actionLabel: "检查",
@@ -76,6 +94,14 @@ export class TmuxRuntimeAdapter implements TerminalRuntimeAdapter {
     );
 
     if (listPanes.error || listPanes.status !== 0) {
+      if (listPanes.error && isBadFileDescriptorError(listPanes.error)) {
+        return {
+          alive: true,
+          shellPid: input.terminal.processId ?? input.session.shellPid ?? null,
+          detail: null
+        };
+      }
+
       return {
         alive: true,
         shellPid: null,
@@ -83,7 +109,22 @@ export class TmuxRuntimeAdapter implements TerminalRuntimeAdapter {
       };
     }
 
-    const firstPanePid = Number.parseInt(listPanes.stdout.trim().split(/\s+/)[0] ?? "", 10);
+    const [firstPaneLine = ""] = listPanes.stdout.trim().split(/\r?\n/);
+    const [paneDead = "0", paneDeadStatus = "", panePid = ""] = firstPaneLine.split("\t");
+
+    if (paneDead === "1") {
+      const parsedExitCode = Number.parseInt(paneDeadStatus, 10);
+
+      return {
+        alive: false,
+        shellPid: null,
+        detail: Number.isInteger(parsedExitCode)
+          ? `终端异常退出，exitCode=${parsedExitCode}`
+          : "终端异常退出"
+      };
+    }
+
+    const firstPanePid = Number.parseInt(panePid, 10);
 
     return {
       alive: true,
@@ -112,6 +153,12 @@ export class TmuxRuntimeAdapter implements TerminalRuntimeAdapter {
         "window-size",
         "latest",
         ";",
+        "set-window-option",
+        "-t",
+        input.session.sessionKey,
+        "remain-on-exit",
+        "on",
+        ";",
         "attach-session",
         "-t",
         input.session.sessionKey
@@ -121,12 +168,12 @@ export class TmuxRuntimeAdapter implements TerminalRuntimeAdapter {
     };
   }
 
-  terminatePersistentSession(
+  async terminatePersistentSession(
     input: Parameters<TerminalRuntimeAdapter["terminatePersistentSession"]>[0]
-  ): void {
+  ): Promise<void> {
     ensureTmuxSupported();
 
-    const result = runTmuxCommand(["kill-session", "-t", input.session.sessionKey], {
+    const result = await runTmuxCommand(["kill-session", "-t", input.session.sessionKey], {
       errorCode: "RUNTIME_TERMINATE_FAILED",
       actionLabel: "结束",
       tolerateMissingBinary: true
@@ -152,10 +199,10 @@ export class TmuxRuntimeAdapter implements TerminalRuntimeAdapter {
   }
 }
 
-export function captureTmuxPaneContent(sessionKey: string): string {
+export async function captureTmuxPaneContent(sessionKey: string): Promise<string> {
   ensureTmuxSupported();
 
-  const result = runTmuxCommand(
+  const result = await runTmuxCommand(
     ["capture-pane", "-p", "-S", "-20000", "-t", sessionKey],
     {
       errorCode: "RUNTIME_CAPTURE_FAILED",
@@ -193,7 +240,7 @@ function ensureTmuxSupported(): void {
   }
 }
 
-function runTmuxCommand(
+async function runTmuxCommand(
   args: string[],
   options: {
     errorCode: string;
@@ -201,14 +248,29 @@ function runTmuxCommand(
     tolerateMissingBinary?: boolean;
   }
 ) {
-  const result = spawnSync("tmux", args, { encoding: "utf8" });
-
-  if (result.error) {
-    if (options.tolerateMissingBinary && isMissingBinaryError(result.error)) {
-      return result;
+  try {
+    const result = process.env.VITEST
+      ? await runTmuxCommandDirect(args)
+      : await getTmuxHelperClient().run(args);
+    return {
+      ...result,
+      error: undefined
+    };
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      options.tolerateMissingBinary &&
+      (isMissingBinaryError(error) || isBadFileDescriptorError(error))
+    ) {
+      return {
+        status: null,
+        stdout: "",
+        stderr: "",
+        error
+      };
     }
 
-    if (isMissingBinaryError(result.error)) {
+    if (error instanceof Error && isMissingBinaryError(error)) {
       throw new AppError({
         statusCode: 409,
         errorCode: "RUNTIME_DEPENDENCY_MISSING",
@@ -220,20 +282,29 @@ function runTmuxCommand(
     throw new AppError({
       statusCode: 502,
       errorCode: options.errorCode,
-      detail: formatTmuxErrorDetail(options.actionLabel, result.error.message)
+      detail: formatTmuxErrorDetail(
+        options.actionLabel,
+        error instanceof Error ? error.message : String(error)
+      )
     });
   }
-
-  return result;
 }
 
 function isMissingBinaryError(error: Error): boolean {
   return "code" in error && error.code === "ENOENT";
 }
 
+function isBadFileDescriptorError(error: Error): boolean {
+  return "code" in error && error.code === "EBADF";
+}
+
 function formatTmuxErrorDetail(actionLabel: string, message: string): string {
   if (message.includes("ENOENT")) {
     return `tmux 会话${actionLabel}失败：当前系统未安装 tmux`;
+  }
+
+  if (message.includes("EBADF")) {
+    return `tmux 会话${actionLabel}失败：当前运行时无法创建 tmux 子进程`;
   }
 
   return `tmux 会话${actionLabel}失败：${message}`;
@@ -258,4 +329,44 @@ function buildShellBootstrapScript(shell: string, env: Record<string, string>): 
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\"'\"'`)}'`;
+}
+
+function getTmuxHelperClient(): TmuxHelperClient {
+  if (!tmuxHelperClient) {
+    tmuxHelperClient = new TmuxHelperClient();
+  }
+
+  return tmuxHelperClient;
+}
+
+async function runTmuxCommandDirect(args: string[]): Promise<{
+  status: number | null;
+  stdout: string;
+  stderr: string;
+}> {
+  return await new Promise((resolve, reject) => {
+    const child = spawn("tmux", args, {
+      env: process.env,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    let stdout = "";
+    let stderr = "";
+
+    child.stdout.on("data", (chunk) => {
+      stdout += String(chunk);
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
+    child.on("error", (error) => {
+      reject(error);
+    });
+    child.on("close", (status) => {
+      resolve({
+        status,
+        stdout,
+        stderr
+      });
+    });
+  });
 }

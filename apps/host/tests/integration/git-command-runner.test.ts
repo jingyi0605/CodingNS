@@ -124,4 +124,100 @@ describe("GitCommandRunner", () => {
       })
     );
   });
+
+  it("spawn 返回 EBADF 时会自动重试一次", async () => {
+    vi.useFakeTimers();
+    const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const failedChild = new MockChildProcess();
+    const successChild = new MockChildProcess();
+
+    spawnMock
+      .mockReturnValueOnce(failedChild)
+      .mockReturnValueOnce(successChild);
+
+    const runner = new GitCommandRunner();
+    const resultPromise = runner.run("/repo", ["status", "--porcelain=1"], {
+      workspaceId: "workspace-1",
+      operation: "gitRead.getStatus"
+    });
+
+    failedChild.emit(
+      "error",
+      Object.assign(new Error("spawn EBADF"), {
+        code: "EBADF"
+      })
+    );
+
+    await vi.advanceTimersByTimeAsync(50);
+    successChild.stdout.write("ok\n");
+    successChild.emit("close", 0);
+
+    await expect(resultPromise).resolves.toEqual({
+      stdout: "ok\n",
+      stderr: "",
+      exitCode: 0
+    });
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+    expect(consoleWarnSpy).toHaveBeenCalledWith(
+      "[git-command-retry]",
+      expect.objectContaining({
+        workspaceId: "workspace-1",
+        operation: "gitRead.getStatus",
+        repoRoot: "/repo",
+        args: ["status", "--porcelain=1"],
+        command: "git status --porcelain=1",
+        retryAttempt: 1,
+        retryLimit: 1,
+        retryDelayMs: 50,
+        errorCode: "EBADF",
+        reason: "spawn EBADF"
+      })
+    );
+  });
+
+  it("spawn 同步抛出 EBADF 时也会自动重试一次", async () => {
+    vi.useFakeTimers();
+    const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const successChild = new MockChildProcess();
+
+    spawnMock
+      .mockImplementationOnce(() => {
+        throw Object.assign(new Error("spawn EBADF"), {
+          code: "EBADF"
+        });
+      })
+      .mockReturnValueOnce(successChild);
+
+    const runner = new GitCommandRunner();
+    const resultPromise = runner.run("/repo", ["status", "--porcelain=1"], {
+      workspaceId: "workspace-1",
+      operation: "gitRead.getStatus"
+    });
+
+    await vi.advanceTimersByTimeAsync(50);
+    successChild.stdout.write("sync-ok\n");
+    successChild.emit("close", 0);
+
+    await expect(resultPromise).resolves.toEqual({
+      stdout: "sync-ok\n",
+      stderr: "",
+      exitCode: 0
+    });
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+    expect(consoleWarnSpy).toHaveBeenCalledWith(
+      "[git-command-retry]",
+      expect.objectContaining({
+        workspaceId: "workspace-1",
+        operation: "gitRead.getStatus",
+        repoRoot: "/repo",
+        args: ["status", "--porcelain=1"],
+        command: "git status --porcelain=1",
+        retryAttempt: 1,
+        retryLimit: 1,
+        retryDelayMs: 50,
+        errorCode: "EBADF",
+        reason: "spawn EBADF"
+      })
+    );
+  });
 });

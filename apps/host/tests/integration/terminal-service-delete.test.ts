@@ -30,7 +30,7 @@ describe("TerminalService.deleteTerminal", () => {
     }
   });
 
-  it("删库后 runtime 清理失败时仍然返回成功并清理挂起删除标记", () => {
+  it("删库后 runtime 清理失败时仍然返回成功并清理挂起删除标记", async () => {
     const terminal: TerminalInstance = {
       id: "terminal-1",
       workspaceId: "workspace-1",
@@ -98,7 +98,7 @@ describe("TerminalService.deleteTerminal", () => {
       })
     };
 
-    expect(service.deleteTerminal(terminal.id)).toEqual({ success: true });
+    await expect(service.deleteTerminal(terminal.id)).resolves.toEqual({ success: true });
     expect(deleteByTerminalId).toHaveBeenCalledWith(terminal.id);
     expect(deleteTerminalRecord).toHaveBeenCalledWith(terminal.id);
     expect(consoleWarnSpy).toHaveBeenCalledWith(
@@ -113,7 +113,7 @@ describe("TerminalService.deleteTerminal", () => {
     expect((service as any).pendingDeletedTerminalIds.size).toBe(0);
   });
 
-  it("关闭终端时会先 flush 再清理日志索引和文件", () => {
+  it("关闭终端时会先 flush 再清理日志索引和文件", async () => {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-terminal-close-log-cleanup-"));
     tempDirs.push(tempDir);
     const database = createDatabaseClient(":memory:");
@@ -145,7 +145,7 @@ describe("TerminalService.deleteTerminal", () => {
 
     (service as any).handleRuntimeOutput("terminal-2", "before-close\n");
 
-    expect(service.closeTerminal("terminal-2")).toEqual({ success: true });
+    await expect(service.closeTerminal("terminal-2")).resolves.toEqual({ success: true });
     expect(fileRepository.listByTerminalId("terminal-2")).toEqual([]);
     expect(segmentRepository.listByTerminalId("terminal-2")).toEqual([]);
     expect(existsSync(path.join(tempDir, "terminal-2"))).toBe(false);
@@ -153,7 +153,7 @@ describe("TerminalService.deleteTerminal", () => {
     database.close();
   });
 
-  it("删除终端且没有 exit 回调时也会清理日志索引和文件", () => {
+  it("删除终端且没有 exit 回调时也会清理日志索引和文件", async () => {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-terminal-delete-log-cleanup-"));
     tempDirs.push(tempDir);
     const database = createDatabaseClient(":memory:");
@@ -185,7 +185,7 @@ describe("TerminalService.deleteTerminal", () => {
 
     (service as any).handleRuntimeOutput("terminal-3", "before-delete\n");
 
-    expect(service.deleteTerminal("terminal-3")).toEqual({ success: true });
+    await expect(service.deleteTerminal("terminal-3")).resolves.toEqual({ success: true });
     expect(fileRepository.listByTerminalId("terminal-3")).toEqual([]);
     expect(segmentRepository.listByTerminalId("terminal-3")).toEqual([]);
     expect(existsSync(path.join(tempDir, "terminal-3"))).toBe(false);
@@ -193,7 +193,7 @@ describe("TerminalService.deleteTerminal", () => {
     database.close();
   });
 
-  it("已绑定 attachment 的运行中终端在输入时不会重复做持久会话检查", () => {
+  it("已绑定 attachment 的运行中终端在输入时不会重复做持久会话检查", async () => {
     const terminal = createTerminalFixture("terminal-fast-input", "session-fast-input");
     const terminalRepo = createMutableTerminalRepository(terminal);
     const runtimeRepo = createMutableRuntimeRepository(
@@ -216,7 +216,7 @@ describe("TerminalService.deleteTerminal", () => {
       write: runtimeWrite
     };
 
-    expect(service.writeInput("terminal-fast-input", "pwd\r")).toEqual({ accepted: true });
+    await expect(service.writeInput("terminal-fast-input", "pwd\r")).resolves.toEqual({ accepted: true });
     expect(runtimeWrite).toHaveBeenCalledWith("terminal-fast-input", "pwd\r");
     expect(runtimeRepo.findById).not.toHaveBeenCalled();
   });
@@ -250,7 +250,7 @@ describe("TerminalService.deleteTerminal", () => {
     expect(runtimeRepo.findById).not.toHaveBeenCalled();
   });
 
-  it("读取历史前会先刷新待落盘输出，避免活跃终端只能等周期性 flush 才能看到最新历史", () => {
+  it("读取历史前会先刷新待落盘输出，避免活跃终端只能等周期性 flush 才能看到最新历史", async () => {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-terminal-history-flush-"));
     tempDirs.push(tempDir);
     const database = createDatabaseClient(":memory:");
@@ -277,7 +277,7 @@ describe("TerminalService.deleteTerminal", () => {
     (service as any).handleRuntimeOutput("terminal-4", "live-");
     (service as any).handleRuntimeOutput("terminal-4", "history\n");
 
-    const history = service.readTerminalHistory("terminal-4", null, 10);
+    const history = await service.readTerminalHistory("terminal-4", null, 10);
 
     expect(history.content).toContain("live-history");
     expect(segmentRepository.listByTerminalId("terminal-4")).toHaveLength(1);

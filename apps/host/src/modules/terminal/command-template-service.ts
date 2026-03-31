@@ -204,7 +204,7 @@ export class CommandTemplateService {
     const terminal = this.terminalService.getTerminalOrThrow(targetTerminalId);
     const commandLine = buildTemplateCommandLine(template, terminal.shell);
 
-    this.terminalService.writeInput(
+    await this.terminalService.writeInput(
       targetTerminalId,
       `${commandLine}${getShellEnterSequence(terminal.shell)}`
     );

@@ -171,31 +171,24 @@ describe("OpenCodeBaseUrlResolver", () => {
       value: "win32"
     });
 
-    const spawnSync = vi.fn((command: string) => {
-      if (command === "powershell") {
-        return {
-          status: 0,
-          stdout:
-            "8124 \"C:\\Program Files\\nodejs\\node.exe\" \"C:\\Users\\jackson\\AppData\\Roaming\\npm\\node_modules\\opencode-ai\\bin\\opencode.js\" serve --print-logs"
-        };
-      }
-
-      if (command === "netstat") {
-        return {
-          status: 0,
-          stdout: "  TCP    127.0.0.1:41827    0.0.0.0:0    LISTENING    8124"
-        };
-      }
-
-      return {
-        status: 1,
-        stdout: ""
-      };
-    });
-
     vi.resetModules();
-    vi.doMock("node:child_process", () => ({
-      spawnSync
+    const readProcessList = vi.fn(async () => {
+      return "8124 \"C:\\Program Files\\nodejs\\node.exe\" \"C:\\Users\\jackson\\AppData\\Roaming\\npm\\node_modules\\opencode-ai\\bin\\opencode.js\" serve --print-logs";
+    });
+    const readListeningSockets = vi.fn(async (pid: number) => {
+      if (pid === 8124) {
+        return [{ hostname: "127.0.0.1", port: 41827 }];
+      }
+
+      return [];
+    });
+    const readProcessCwd = vi.fn(async () => null);
+    vi.doMock("../../src/config/opencode-system-probe-helper-client.js", () => ({
+      OpenCodeSystemProbeHelperClient: class {
+        readProcessList = readProcessList;
+        readListeningSockets = readListeningSockets;
+        readProcessCwd = readProcessCwd;
+      }
     }));
 
     try {
@@ -210,28 +203,11 @@ describe("OpenCodeBaseUrlResolver", () => {
       });
 
       await expect(resolver.resolve()).resolves.toBe("http://127.0.0.1:41827");
-      expect(spawnSync).toHaveBeenCalledWith(
-        "powershell",
-        [
-          "-NoProfile",
-          "-Command",
-          "$ErrorActionPreference = 'SilentlyContinue'; Get-CimInstance Win32_Process | Where-Object { $_.CommandLine } | ForEach-Object { '{0} {1}' -f $_.ProcessId, $_.CommandLine }"
-        ],
-        expect.objectContaining({
-          encoding: "utf8",
-          windowsHide: true
-        })
-      );
-      expect(spawnSync).toHaveBeenCalledWith(
-        "netstat",
-        ["-ano", "-p", "tcp"],
-        expect.objectContaining({
-          encoding: "utf8",
-          windowsHide: true
-        })
-      );
+      expect(readProcessList).toHaveBeenCalledTimes(1);
+      expect(readListeningSockets).toHaveBeenCalledWith(8124);
+      expect(readProcessCwd).toHaveBeenCalledWith(8124);
     } finally {
-      vi.doUnmock("node:child_process");
+      vi.doUnmock("../../src/config/opencode-system-probe-helper-client.js");
       vi.resetModules();
       Object.defineProperty(process, "platform", {
         configurable: true,
@@ -253,27 +229,6 @@ describe("OpenCodeBaseUrlResolver", () => {
     const stderrHandlers: Array<(chunk: string) => void> = [];
     const exitHandlers: Array<() => void> = [];
     const errorHandlers: Array<() => void> = [];
-    const spawnSync = vi.fn((command: string) => {
-      if (command === "powershell") {
-        return {
-          status: 0,
-          stdout:
-            "8124 \"C:\\Users\\jackson\\AppData\\Local\\OpenCode\\opencode-cli.exe\" --print-logs serve --hostname 127.0.0.1 --port 57546"
-        };
-      }
-
-      if (command === "netstat") {
-        return {
-          status: 0,
-          stdout: "  TCP    127.0.0.1:57546    0.0.0.0:0    LISTENING    8124"
-        };
-      }
-
-      return {
-        status: 1,
-        stdout: ""
-      };
-    });
     const spawn = vi.fn(() => {
       const child = {
         killed: false,
@@ -318,8 +273,7 @@ describe("OpenCodeBaseUrlResolver", () => {
     });
 
     vi.doMock("node:child_process", () => ({
-      spawn,
-      spawnSync
+      spawn
     }));
 
     try {
@@ -331,6 +285,11 @@ describe("OpenCodeBaseUrlResolver", () => {
       });
       const resolver = new WindowsResolver({
         commandPath: "C:\\Users\\jackson\\AppData\\Local\\OpenCode\\opencode-cli.exe",
+        inspectProcessList: async () => {
+          return "8124 \"C:\\Users\\jackson\\AppData\\Local\\OpenCode\\opencode-cli.exe\" --print-logs serve --hostname 127.0.0.1 --port 57546";
+        },
+        inspectListeningSockets: async () => [{ hostname: "127.0.0.1", port: 57546 }],
+        inspectProcessCwd: async () => null,
         probeBaseUrl
       });
 

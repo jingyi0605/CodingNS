@@ -1,6 +1,7 @@
-import { spawn, spawnSync, type ChildProcessByStdio } from "node:child_process";
-import { readlinkSync } from "node:fs";
+import { spawn, type ChildProcessByStdio } from "node:child_process";
 import type { Readable } from "node:stream";
+
+import { OpenCodeSystemProbeHelperClient } from "./opencode-system-probe-helper-client.js";
 const DEFAULT_CACHE_TTL_MS = 5_000;
 const DEFAULT_PROBE_TIMEOUT_MS = 800;
 
@@ -8,9 +9,9 @@ interface OpenCodeBaseUrlResolverOptions {
   configuredBaseUrl?: string | null;
   commandPath?: string | null;
   cacheTtlMs?: number;
-  inspectProcessList?: () => string;
-  inspectListeningSockets?: (pid: number) => OpenCodeListeningSocket[];
-  inspectProcessCwd?: (pid: number) => string | null;
+  inspectProcessList?: () => Promise<string> | string;
+  inspectListeningSockets?: (pid: number) => Promise<OpenCodeListeningSocket[]> | OpenCodeListeningSocket[];
+  inspectProcessCwd?: (pid: number) => Promise<string | null> | string | null;
   probeBaseUrl?: (baseUrl: string) => Promise<boolean>;
   now?: () => number;
 }
@@ -32,13 +33,16 @@ interface OpenCodeListeningSocket {
 
 type ManagedOpenCodeServerProcess = ChildProcessByStdio<null, Readable, Readable>;
 
+let systemProbeHelperClient: OpenCodeSystemProbeHelperClient | null = null;
+
 export class OpenCodeBaseUrlResolver {
   private readonly configuredBaseUrl: string | null;
   private readonly commandPath: string | null;
   private readonly cacheTtlMs: number;
-  private readonly inspectProcessList: () => string;
-  private readonly inspectListeningSockets: (pid: number) => OpenCodeListeningSocket[];
-  private readonly inspectProcessCwd: (pid: number) => string | null;
+  private readonly inspectProcessList: () => Promise<string> | string;
+  private readonly inspectListeningSockets:
+    (pid: number) => Promise<OpenCodeListeningSocket[]> | OpenCodeListeningSocket[];
+  private readonly inspectProcessCwd: (pid: number) => Promise<string | null> | string | null;
   private readonly probeBaseUrl: (baseUrl: string) => Promise<boolean>;
   private readonly now: () => number;
   private readonly cachedBaseUrlByWorkspaceKey = new Map<string, string>();
@@ -52,9 +56,13 @@ export class OpenCodeBaseUrlResolver {
     this.configuredBaseUrl = normalizeBaseUrl(options.configuredBaseUrl ?? null);
     this.commandPath = normalizeCommandPath(options.commandPath ?? null);
     this.cacheTtlMs = Math.max(500, Math.floor(options.cacheTtlMs ?? DEFAULT_CACHE_TTL_MS));
-    this.inspectProcessList = options.inspectProcessList ?? readProcessList;
-    this.inspectListeningSockets = options.inspectListeningSockets ?? readListeningSockets;
-    this.inspectProcessCwd = options.inspectProcessCwd ?? readProcessCwd;
+    this.inspectProcessList = options.inspectProcessList ?? (() => getSystemProbeHelperClient().readProcessList());
+    this.inspectListeningSockets =
+      options.inspectListeningSockets
+      ?? ((pid) => getSystemProbeHelperClient().readListeningSockets(pid));
+    this.inspectProcessCwd =
+      options.inspectProcessCwd
+      ?? ((pid) => getSystemProbeHelperClient().readProcessCwd(pid));
     this.probeBaseUrl = options.probeBaseUrl ?? probeOpenCodeBaseUrl;
     this.now = options.now ?? Date.now;
   }
@@ -90,7 +98,7 @@ export class OpenCodeBaseUrlResolver {
   }
 
   async listReachableBaseUrls(input: ResolveBaseUrlInput = {}): Promise<string[]> {
-    const candidates = this.collectCandidateBaseUrls(input.workspacePath ?? null);
+    const candidates = await this.collectCandidateBaseUrls(input.workspacePath ?? null);
     const available: string[] = [];
 
     for (const candidate of candidates) {
@@ -104,7 +112,7 @@ export class OpenCodeBaseUrlResolver {
 
   private async discoverAvailableBaseUrl(workspacePath: string | null): Promise<string> {
     const workspaceKey = normalizeWorkspaceKey(workspacePath);
-    const candidates = this.collectCandidateBaseUrls(workspacePath);
+    const candidates = await this.collectCandidateBaseUrls(workspacePath);
 
     for (const candidate of candidates) {
       if (await this.probeBaseUrl(candidate)) {
@@ -131,18 +139,20 @@ export class OpenCodeBaseUrlResolver {
     throw new Error("SERVER_UNAVAILABLE");
   }
 
-  private collectCandidateBaseUrls(workspacePath: string | null): string[] {
+  private async collectCandidateBaseUrls(workspacePath: string | null): Promise<string[]> {
     if (this.configuredBaseUrl) {
       return [this.configuredBaseUrl];
     }
 
     const workspaceKey = normalizeWorkspaceKey(workspacePath);
     const targetWorkspacePath = normalizeWorkspaceCompareValue(workspacePath);
-    const serveProcesses = parseServeProcesses(this.inspectProcessList(), this.commandPath)
-      .map((record) => ({
+    const serveProcesses = await Promise.all(
+      parseServeProcesses(await this.inspectProcessList(), this.commandPath)
+        .map(async (record) => ({
         ...record,
-        cwd: normalizeWorkspaceCompareValue(this.inspectProcessCwd(record.pid))
-      }));
+          cwd: normalizeWorkspaceCompareValue(await this.inspectProcessCwd(record.pid))
+        }))
+    );
     const matchingServeProcesses =
       targetWorkspacePath
         ? serveProcesses.filter((record) => record.cwd === targetWorkspacePath)
@@ -157,11 +167,11 @@ export class OpenCodeBaseUrlResolver {
     return dedupeBaseUrls([
       this.cachedBaseUrlByWorkspaceKey.get(workspaceKey) ?? null,
       this.managedServerBaseUrlByWorkspaceKey.get(workspaceKey) ?? null,
-      ...fallbackServeProcesses.flatMap((record) => {
-        return this.inspectListeningSockets(record.pid).map((socket) => {
+      ...(await Promise.all(fallbackServeProcesses.map(async (record) => {
+        return (await this.inspectListeningSockets(record.pid)).map((socket) => {
           return `http://${formatHostname(normalizeHostname(socket.hostname))}:${socket.port}`;
         });
-      })
+      }))).flat()
     ]);
   }
 
@@ -275,87 +285,6 @@ export class OpenCodeBaseUrlResolver {
   }
 }
 
-function readProcessCwd(pid: number): string | null {
-  if (!Number.isFinite(pid) || pid <= 0) {
-    return null;
-  }
-
-  if (process.platform === "win32") {
-    return null;
-  }
-
-  if (process.platform === "linux") {
-    return readLinuxProcessCwd(pid);
-  }
-
-  return readUnixProcessCwd(pid);
-}
-
-function readUnixProcessCwd(pid: number): string | null {
-  const result = spawnSync("lsof", ["-a", "-p", String(pid), "-d", "cwd", "-Fn"], {
-    encoding: "utf8"
-  });
-
-  if (result.status !== 0) {
-    return null;
-  }
-
-  const line = (result.stdout ?? "")
-    .split(/\r?\n/)
-    .find((entry) => entry.startsWith("n"));
-
-  return line?.slice(1).trim() || null;
-}
-
-function readLinuxProcessCwd(pid: number): string | null {
-  try {
-    return readlinkSync(`/proc/${pid}/cwd`);
-  } catch {
-    return null;
-  }
-}
-
-function readProcessList(): string {
-  if (process.platform === "win32") {
-    return readWindowsProcessList();
-  }
-
-  return readUnixProcessList();
-}
-
-function readUnixProcessList(): string {
-  const result = spawnSync("ps", ["-ax", "-o", "pid=,command="], {
-    encoding: "utf8"
-  });
-
-  if (result.status !== 0) {
-    return "";
-  }
-
-  return result.stdout ?? "";
-}
-
-function readWindowsProcessList(): string {
-  const result = spawnSync(
-    "powershell",
-    [
-      "-NoProfile",
-      "-Command",
-      "$ErrorActionPreference = 'SilentlyContinue'; Get-CimInstance Win32_Process | Where-Object { $_.CommandLine } | ForEach-Object { '{0} {1}' -f $_.ProcessId, $_.CommandLine }"
-    ],
-    {
-      encoding: "utf8",
-      windowsHide: true
-    }
-  );
-
-  if (result.status !== 0) {
-    return "";
-  }
-
-  return result.stdout ?? "";
-}
-
 function parseServeProcesses(output: string, commandPath: string | null): OpenCodeServeProcessRecord[] {
   const records: OpenCodeServeProcessRecord[] = [];
 
@@ -412,95 +341,6 @@ function formatHostname(value: string): string {
   }
 
   return value;
-}
-
-function readListeningSockets(pid: number): OpenCodeListeningSocket[] {
-  if (process.platform === "win32") {
-    return readWindowsListeningSockets(pid);
-  }
-
-  return readUnixListeningSockets(pid);
-}
-
-function readUnixListeningSockets(pid: number): OpenCodeListeningSocket[] {
-  const result = spawnSync(
-    "lsof",
-    ["-Pan", "-n", "-a", "-p", String(pid), "-iTCP", "-sTCP:LISTEN"],
-    {
-      encoding: "utf8"
-    }
-  );
-
-  if (result.status !== 0) {
-    return [];
-  }
-
-  const records: OpenCodeListeningSocket[] = [];
-
-  for (const line of (result.stdout ?? "").split(/\r?\n/)) {
-    const matched = line.match(/\sTCP\s+(.+?)\s+\(LISTEN\)$/);
-
-    if (!matched) {
-      continue;
-    }
-
-    const endpoint = matched[1]?.trim() ?? "";
-    const parsed = parseSocketEndpoint(endpoint);
-
-    if (!parsed) {
-      continue;
-    }
-
-    records.push(parsed);
-  }
-
-  return dedupeListeningSockets(records).sort(compareListeningSockets);
-}
-
-function readWindowsListeningSockets(pid: number): OpenCodeListeningSocket[] {
-  const result = spawnSync("netstat", ["-ano", "-p", "tcp"], {
-    encoding: "utf8",
-    windowsHide: true
-  });
-
-  if (result.status !== 0) {
-    return [];
-  }
-
-  const records: OpenCodeListeningSocket[] = [];
-
-  for (const line of (result.stdout ?? "").split(/\r?\n/)) {
-    const trimmed = line.trim();
-
-    if (!trimmed) {
-      continue;
-    }
-
-    const columns = trimmed.split(/\s+/);
-
-    if (columns.length < 5) {
-      continue;
-    }
-
-    const protocol = columns[0]?.toUpperCase();
-    const localAddress = columns[1] ?? "";
-    const state = columns[3]?.toUpperCase();
-    const owningPid = Number(columns[4]);
-
-    if (protocol !== "TCP" || state !== "LISTENING" || owningPid !== pid) {
-      continue;
-    }
-
-    const parsed = parseSocketEndpoint(localAddress);
-
-    if (!parsed) {
-      continue;
-    }
-
-    records.push(parsed);
-  }
-
-  return dedupeListeningSockets(records).sort(compareListeningSockets);
 }
 
 function normalizeBaseUrl(value: string | null): string | null {
@@ -682,6 +522,14 @@ async function probeOpenCodeBaseUrl(baseUrl: string): Promise<boolean> {
   } finally {
     clearTimeout(timer);
   }
+}
+
+function getSystemProbeHelperClient(): OpenCodeSystemProbeHelperClient {
+  if (!systemProbeHelperClient) {
+    systemProbeHelperClient = new OpenCodeSystemProbeHelperClient();
+  }
+
+  return systemProbeHelperClient;
 }
 
 function escapeRegExp(value: string): string {

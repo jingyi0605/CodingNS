@@ -80,11 +80,23 @@ export class TerminalWsHub {
     subscriptions.delete(payload.terminalId);
 
     try {
-      const subscription = this.terminalService.subscribeTerminal(
+      const subscription = await this.terminalService.subscribeTerminal(
         payload.terminalId,
         payload.lastCursor ?? null,
         {
           onBackfill: async (backfill) => {
+            if (backfill.cursorReset) {
+              client.send(
+                JSON.stringify({
+                  type: "terminal.error",
+                  terminalId: payload.terminalId,
+                  error_code: "RECONNECT_CURSOR_INVALID",
+                  detail: "重连游标已失效，已自动重置为最新输出",
+                  timestamp: new Date().toISOString()
+                })
+              );
+            }
+
             client.send(
               JSON.stringify({
                 type: "terminal.backfill",
@@ -178,7 +190,7 @@ export class TerminalWsHub {
             ? wsReceivedAtMs - payload.clientSentAtMs
             : null
       });
-      this.terminalService.writeInput(payload.terminalId, payload.content, {
+      await this.terminalService.writeInput(payload.terminalId, payload.content, {
         clientTraceId: payload.clientTraceId,
         clientSentAtMs:
           typeof payload.clientSentAtMs === "number" ? payload.clientSentAtMs : null,
@@ -224,7 +236,7 @@ export class TerminalWsHub {
     payload: TerminalResizeMessage
   ): Promise<void> {
     try {
-      this.terminalService.resizeTerminal(payload.terminalId, payload.cols, payload.rows);
+      await this.terminalService.resizeTerminal(payload.terminalId, payload.cols, payload.rows);
       client.send(
         JSON.stringify({
           type: "terminal.resize.accepted",

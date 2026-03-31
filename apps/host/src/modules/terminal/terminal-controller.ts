@@ -78,7 +78,7 @@ export class TerminalController {
     }
 
     reply.send({
-      items: this.terminalService.listTerminals(workspaceId)
+      items: await this.terminalService.listTerminals(workspaceId)
     });
   };
 
@@ -119,14 +119,14 @@ export class TerminalController {
     request: FastifyRequest<{ Params: TerminalParams }>,
     reply: FastifyReply
   ): Promise<void> => {
-    reply.send(this.terminalService.closeTerminal(request.params.terminalId));
+    reply.send(await this.terminalService.closeTerminal(request.params.terminalId));
   };
 
   readonly deleteTerminal = async (
     request: FastifyRequest<{ Params: TerminalParams }>,
     reply: FastifyReply
   ): Promise<void> => {
-    reply.send(this.terminalService.deleteTerminal(request.params.terminalId));
+    reply.send(await this.terminalService.deleteTerminal(request.params.terminalId));
   };
 
   readonly readHistory = async (
@@ -136,7 +136,7 @@ export class TerminalController {
     const beforeSeq = normalizeOptionalInteger(request.query.beforeSeq, "beforeSeq");
     const limit = normalizePositiveInteger(request.query.limit, 20, 100, "limit");
 
-    reply.send(this.terminalService.readTerminalHistory(request.params.terminalId, beforeSeq, limit));
+    reply.send(await this.terminalService.readTerminalHistory(request.params.terminalId, beforeSeq, limit));
   };
 
   readonly writeInput = async (
@@ -154,7 +154,7 @@ export class TerminalController {
       });
     }
 
-    reply.send(this.terminalService.writeInput(request.params.terminalId, content));
+    reply.send(await this.terminalService.writeInput(request.params.terminalId, content));
   };
 
   readonly listTemplates = async (
