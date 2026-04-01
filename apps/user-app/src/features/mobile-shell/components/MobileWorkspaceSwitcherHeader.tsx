@@ -1,5 +1,5 @@
 import { createPortal } from "react-dom";
-import { useState, type ReactNode, type Ref } from "react";
+import { useState, type ReactNode, type Ref, type TouchEventHandler } from "react";
 
 import { useHaptics } from "../../../shared/haptics";
 import { t } from "../../../shared/i18n";
@@ -24,6 +24,12 @@ interface MobileWorkspaceSwitcherHeaderProps {
   readonly triggerAriaLabel?: string;
   readonly onTriggerClick?: () => void;
   readonly trailing?: ReactNode;
+  readonly gestureHandlers?: {
+    readonly onTouchStart?: TouchEventHandler<HTMLDivElement>;
+    readonly onTouchMove?: TouchEventHandler<HTMLDivElement>;
+    readonly onTouchEnd?: TouchEventHandler<HTMLDivElement>;
+    readonly onTouchCancel?: TouchEventHandler<HTMLDivElement>;
+  };
 }
 
 export function MobileWorkspaceSwitcherHeader({
@@ -38,7 +44,8 @@ export function MobileWorkspaceSwitcherHeader({
   triggerLabel,
   triggerAriaLabel,
   onTriggerClick,
-  trailing
+  trailing,
+  gestureHandlers
 }: MobileWorkspaceSwitcherHeaderProps) {
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const haptics = useHaptics();
@@ -49,7 +56,11 @@ export function MobileWorkspaceSwitcherHeader({
 
   return (
     <>
-      <MobileTopHeaderFrame className={className} frameRef={containerRef}>
+      <MobileTopHeaderFrame
+        className={className}
+        frameRef={containerRef}
+        {...gestureHandlers}
+      >
         <section className="mobile-workspace-home-header">
           <h1 className="mobile-workspace-switcher-heading">{heading ?? currentWorkspace.name}</h1>
 

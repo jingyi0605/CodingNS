@@ -1459,10 +1459,10 @@ function MobileConversationPreviewRail({
             className="mobile-conversation-preview-create-button workbench-import-toggle terminal-mobile-list-create"
             onClick={onCreateSession}
           >
-            <span className="mobile-conversation-preview-create-icon" aria-hidden="true">
-              <CreateSessionIcon />
+            <span className="workbench-import-toggle-symbol" aria-hidden="true">
+              +
             </span>
-            <span>{createSessionActionLabel}</span>
+            <span className="workbench-import-toggle-label">{createSessionActionLabel}</span>
           </button>
         </div>
       ) : null}
@@ -1581,20 +1581,6 @@ function MobileConversationPreviewEntryButton({
         </span>
       </button>
     </article>
-  );
-}
-
-function CreateSessionIcon() {
-  return (
-    <svg viewBox="0 0 16 16" aria-hidden="true">
-      <path
-        d="M8 3.25v9.5M3.25 8h9.5"
-        fill="none"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeWidth="1.7"
-      />
-    </svg>
   );
 }
 

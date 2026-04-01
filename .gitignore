@@ -99,3 +99,5 @@ apps/user-app/src-tauri/gen/android/
 apps/user-app/src-tauri/gen/apple/assets/index.html
 apps/user-app/src-tauri/gen/apple/assets/assets/
 apps/host/claude-hook-token
+.playwright-cli/page-2026-04-01T12-30-43-783Z.yml
+.playwright-cli/page-2026-04-01T12-33-17-863Z.yml
