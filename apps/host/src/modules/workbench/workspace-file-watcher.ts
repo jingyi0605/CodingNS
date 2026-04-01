@@ -123,14 +123,30 @@ export class WorkspaceFileWatcher {
 }
 
 /**
+ * 始终排除的目录模式——这些目录包含大量生成文件或编译产物，
+ * 监视它们会导致文件描述符耗尽（EBADF）。
+ */
+const ALWAYS_IGNORE_PATTERNS = [
+  ".git",
+  "node_modules",
+  "target",
+  "build",
+  "dist",
+  ".next",
+  ".nuxt",
+  "out",
+  ".output"
+];
+
+/**
  * 读取工作区根目录的 .gitignore 文件，构建 ignore 实例。
- * 始终排除 .git 目录本身（不应监听 git 内部文件）。
+ * 始终排除 .git 目录本身（不应监听 git 内部文件），
+ * 并排除大型构建产物目录以避免文件描述符耗尽。
  */
 function loadGitignoreRules(workspacePath: string): ReturnType<typeof ignore> {
   const ig = ignore();
 
-  // 始终排除 .git 内部目录
-  ig.add(".git");
+  ig.add(ALWAYS_IGNORE_PATTERNS);
 
   const gitignorePath = path.join(workspacePath, ".gitignore");
   if (fs.existsSync(gitignorePath)) {
@@ -138,7 +154,7 @@ function loadGitignoreRules(workspacePath: string): ReturnType<typeof ignore> {
       const content = fs.readFileSync(gitignorePath, "utf-8");
       ig.add(content);
     } catch {
-      // 读取失败时静默降级，只排除 .git
+      // 读取失败时静默降级，只排除内置规则
     }
   }
 
