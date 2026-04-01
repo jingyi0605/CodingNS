@@ -40,30 +40,14 @@ export function resolveSessionIndicatorClassName(
     isActive?: boolean;
   }
 ): string {
+  void options;
   const variant = resolveSessionIndicatorVariant(session);
-
-  if (options?.hasSubagents) {
-    if (variant === "error") {
-      return `${baseClassName} is-error`;
-    }
-
-    if (
-      variant === "running"
-      || variant === "running_inferred"
-      || variant === "stale"
-      || variant === "unknown"
-      || options.isActive
-    ) {
-      return `${baseClassName} is-subagent-running`;
-    }
-
-    return `${baseClassName} is-subagent`;
-  }
 
   if (variant === "running_inferred") {
     return `${baseClassName} is-running-inferred`;
   }
 
+  // 多 agent 只影响树结构和交互，不该改写会话状态语义。
   return `${baseClassName} is-${variant.replace("_", "-")}`;
 }
 
