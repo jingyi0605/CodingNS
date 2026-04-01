@@ -1,14 +1,17 @@
 #!/bin/bash
 #
-# CodingNS 一键构建脚本
+# CodingNS 桌面端构建 / 发布脚本
 # 支持 macOS、Windows、Ubuntu 三平台安装包构建
+# macOS 额外支持 release-macos 阶段：签名、公证、校验
 #
 # 用法:
-#   ./build-desktop.sh              # 构建当前平台
-#   ./build-desktop.sh macos        # 仅构建 macOS
-#   ./build-desktop.sh windows      # 仅构建 Windows (需要交叉编译环境)
-#   ./build-desktop.sh linux        # 仅构建 Linux (需要 Docker 或交叉编译环境)
-#   ./build-desktop.sh all          # 尝试构建所有平台
+#   ./build-desktop.sh                     # 构建当前平台
+#   ./build-desktop.sh build              # 构建当前平台
+#   ./build-desktop.sh build macos        # 仅构建 macOS
+#   ./build-desktop.sh release-macos      # macOS 签名、公证、校验
+#   ./build-desktop.sh windows            # 兼容旧用法：仅构建 Windows
+#   ./build-desktop.sh linux              # 兼容旧用法：仅构建 Linux
+#   ./build-desktop.sh all                # 尝试构建所有平台
 #
 
 set -euo pipefail
@@ -21,6 +24,13 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 DESKTOP_DIR="$REPO_DIR/apps/desktop"
 TAURI_DIR="$DESKTOP_DIR/src-tauri"
 OUTPUT_DIR="$TAURI_DIR/target/release/bundle"
+MACOS_RELEASE_DIR="$TAURI_DIR/target/release/macos-release"
+MACOS_SIGNING_DIR_DEFAULT="$REPO_DIR/.local-secrets/macos-signing"
+MACOS_SIGNING_DIR="${MACOS_SIGNING_DIR:-$MACOS_SIGNING_DIR_DEFAULT}"
+MACOS_SIGNING_ENV_FILE="$MACOS_SIGNING_DIR/release-macos.env"
+MACOS_SIGNING_CSR_FILE="$MACOS_SIGNING_DIR/developer-id-signing.csr.pem"
+MACOS_CERT_IMPORT_SCRIPT="$REPO_DIR/scripts/import-macos-signing-certificate.sh"
+CARGO_HOME_DEFAULT="$REPO_DIR/.cargo-home"
 
 # 颜色输出
 RED='\033[0;31m'
@@ -65,11 +75,381 @@ get_current_platform() {
     esac
 }
 
+ensure_local_tool_paths() {
+    local candidates=(
+        "/usr/local/bin"
+        "/opt/homebrew/bin"
+        "$HOME/.cargo/bin"
+        "$HOME/bin"
+    )
+    local dir
+
+    for dir in "${candidates[@]}"; do
+        if [[ -d "$dir" && ":$PATH:" != *":$dir:"* ]]; then
+            PATH="$dir:$PATH"
+        fi
+    done
+
+    export PATH
+}
+
+ensure_project_cargo_home() {
+    if [[ -n "${CARGO_HOME:-}" ]]; then
+        return 0
+    fi
+
+    export CARGO_HOME="$CARGO_HOME_DEFAULT"
+    mkdir -p "$CARGO_HOME"
+
+    cat > "$CARGO_HOME/config.toml" <<'EOF'
+[registries.crates-io]
+protocol = "sparse"
+
+[source.crates-io]
+registry = "sparse+https://index.crates.io/"
+
+[net]
+git-fetch-with-cli = true
+EOF
+}
+
+require_env() {
+    local name="$1"
+    if [[ -z "${!name:-}" ]]; then
+        log_error "缺少环境变量: $name"
+        return 1
+    fi
+    return 0
+}
+
+ensure_macos_host() {
+    if [[ "$(get_current_platform)" != "macos" ]]; then
+        log_error "release-macos 只能在 macOS 上运行"
+        exit 1
+    fi
+}
+
+ensure_rust_target() {
+    local target="$1"
+    if ! rustup target list --installed | grep -q "^${target}$"; then
+        log_info "添加 ${target} target..."
+        rustup target add "$target"
+    fi
+}
+
+resolve_macos_build_target() {
+    echo "${MACOS_BUILD_TARGET:-universal-apple-darwin}"
+}
+
+resolve_bundle_output_dir() {
+    local target="${1:-}"
+
+    if [[ -n "$target" ]]; then
+        echo "$TAURI_DIR/target/$target/release/bundle"
+    else
+        echo "$OUTPUT_DIR"
+    fi
+}
+
+load_macos_release_env() {
+    if [[ -f "$MACOS_SIGNING_ENV_FILE" ]]; then
+        # shellcheck disable=SC1090
+        source "$MACOS_SIGNING_ENV_FILE"
+    fi
+}
+
+find_built_macos_app() {
+    local bundle_dir
+    shopt -s nullglob
+    bundle_dir="$(resolve_bundle_output_dir "$(resolve_macos_build_target)")"
+    local apps=("$bundle_dir/macos/"*.app)
+    shopt -u nullglob
+
+    if (( ${#apps[@]} == 0 )); then
+        log_error "未找到 macOS .app 产物，请先执行: $0 build macos"
+        return 1
+    fi
+
+    printf '%s\n' "${apps[0]}"
+}
+
+find_macos_app_binary() {
+    local app_path="$1"
+    find "$app_path/Contents/MacOS" -maxdepth 1 -type f | head -n 1
+}
+
+prepare_macos_release_dir() {
+    rm -rf "$MACOS_RELEASE_DIR"
+    mkdir -p "$MACOS_RELEASE_DIR"
+}
+
+print_macos_build_artifacts() {
+    local app_path="$1"
+    local bundle_dir
+
+    bundle_dir="$(resolve_bundle_output_dir "$(resolve_macos_build_target)")"
+
+    echo ""
+    log_info "产物位置:"
+
+    if [[ -d "$app_path" ]]; then
+        log_success "  .app: $app_path"
+    fi
+
+    if compgen -G "$bundle_dir/dmg/*.dmg" > /dev/null; then
+        for dmg in "$bundle_dir/dmg/"*.dmg; do
+            log_success "  .dmg: $dmg"
+        done
+    fi
+}
+
+print_macos_release_artifacts() {
+    local app_path="$1"
+    local dmg_path="$2"
+    local zip_path="$3"
+
+    echo ""
+    log_info "发布产物位置:"
+    log_success "  notarized app: $app_path"
+    log_success "  notarized dmg: $dmg_path"
+    log_success "  notarize zip: $zip_path"
+}
+
+resolve_notarytool_args() {
+    NOTARYTOOL_ARGS=()
+
+    if [[ -n "${APPLE_NOTARY_PROFILE:-}" ]]; then
+        NOTARYTOOL_ARGS+=(--keychain-profile "$APPLE_NOTARY_PROFILE")
+        return 0
+    fi
+
+    require_env APPLE_ID || return 1
+    require_env APPLE_APP_SPECIFIC_PASSWORD || return 1
+    require_env APPLE_TEAM_ID || return 1
+
+    NOTARYTOOL_ARGS+=(
+        --apple-id "$APPLE_ID"
+        --password "$APPLE_APP_SPECIFIC_PASSWORD"
+        --team-id "$APPLE_TEAM_ID"
+    )
+}
+
+print_waiting_for_apple_certificate() {
+    log_warn "release-macos 当前停在“等待 Apple 证书”阶段。"
+
+    if [[ -f "$MACOS_SIGNING_CSR_FILE" ]]; then
+        log_info "CSR 已生成，可提交到 Apple Developer：$MACOS_SIGNING_CSR_FILE"
+    else
+        log_warn "本地还没有发现 CSR 文件：$MACOS_SIGNING_CSR_FILE"
+    fi
+
+    log_info "拿到 Apple 返回的 Developer ID Application 证书后，运行："
+    log_info "  $MACOS_CERT_IMPORT_SCRIPT /path/to/DeveloperIDApplication.cer"
+
+    if [[ -f "$MACOS_SIGNING_ENV_FILE" ]]; then
+        log_info "本地签名配置文件位置：$MACOS_SIGNING_ENV_FILE"
+    else
+        log_info "建议把签名配置写到：$MACOS_SIGNING_ENV_FILE"
+    fi
+}
+
+check_macos_release_deps() {
+    log_info "检查 macOS 发布依赖..."
+
+    local missing=0
+    local commands=(codesign security xcrun hdiutil ditto spctl)
+
+    for cmd in "${commands[@]}"; do
+        if ! check_command "$cmd"; then
+            missing=1
+        fi
+    done
+
+    if ! xcode-select -p &> /dev/null; then
+        log_error "请运行: xcode-select --install"
+        missing=1
+    fi
+
+    return $missing
+}
+
+verify_sign_identity() {
+    if [[ -z "${APPLE_SIGN_IDENTITY:-}" ]]; then
+        print_waiting_for_apple_certificate
+        log_error "缺少 APPLE_SIGN_IDENTITY，当前无法继续签名"
+        return 1
+    fi
+
+    if ! security find-identity -v -p codesigning | grep -Fq "$APPLE_SIGN_IDENTITY"; then
+        log_error "当前钥匙串找不到签名证书: $APPLE_SIGN_IDENTITY"
+        log_error "请先把 Developer ID Application 证书导入钥匙串，或修正 APPLE_SIGN_IDENTITY"
+        log_info "可使用导入脚本：$MACOS_CERT_IMPORT_SCRIPT"
+        return 1
+    fi
+
+    return 0
+}
+
+sign_macos_app() {
+    local app_path="$1"
+
+    if [[ -n "${MACOS_ENTITLEMENTS_PATH:-}" ]]; then
+        if [[ ! -f "$MACOS_ENTITLEMENTS_PATH" ]]; then
+            log_error "MACOS_ENTITLEMENTS_PATH 指向的文件不存在: $MACOS_ENTITLEMENTS_PATH"
+            return 1
+        fi
+    fi
+
+    log_info "对 .app 执行 Developer ID 签名..."
+    if [[ -n "${MACOS_ENTITLEMENTS_PATH:-}" ]]; then
+        codesign \
+            --force \
+            --deep \
+            --timestamp \
+            --options runtime \
+            --sign "$APPLE_SIGN_IDENTITY" \
+            --entitlements "$MACOS_ENTITLEMENTS_PATH" \
+            "$app_path"
+    else
+        codesign \
+            --force \
+            --deep \
+            --timestamp \
+            --options runtime \
+            --sign "$APPLE_SIGN_IDENTITY" \
+            "$app_path"
+    fi
+}
+
+verify_macos_signature() {
+    local app_path="$1"
+
+    log_info "校验签名完整性..."
+    codesign --verify --deep --strict --verbose=2 "$app_path"
+}
+
+create_macos_release_dmg() {
+    local signed_app_path="$1"
+    local app_name
+    local staging_dir
+    local dmg_path
+
+    app_name="$(basename "$signed_app_path" .app)"
+    staging_dir="$MACOS_RELEASE_DIR/dmg-src"
+    dmg_path="$MACOS_RELEASE_DIR/${app_name}.dmg"
+
+    rm -rf "$staging_dir"
+    mkdir -p "$staging_dir"
+    ditto "$signed_app_path" "$staging_dir/${app_name}.app"
+
+    log_info "重新生成用于发布的 DMG..." >&2
+    rm -f "$dmg_path"
+    hdiutil create \
+        -volname "${MACOS_DMG_VOLUME_NAME:-$app_name}" \
+        -srcfolder "$staging_dir" \
+        -ov \
+        -format UDZO \
+        "$dmg_path" > /dev/null
+
+    echo "$dmg_path"
+}
+
+create_macos_release_zip() {
+    local signed_app_path="$1"
+    local app_name
+    local zip_path
+
+    app_name="$(basename "$signed_app_path" .app)"
+    zip_path="$MACOS_RELEASE_DIR/${app_name}.zip"
+
+    rm -f "$zip_path"
+    log_info "打包用于 app notarization 的 ZIP..." >&2
+    ditto -c -k --keepParent "$signed_app_path" "$zip_path"
+
+    echo "$zip_path"
+}
+
+sign_macos_dmg() {
+    local dmg_path="$1"
+
+    log_info "对 DMG 执行签名..."
+    codesign \
+        --force \
+        --timestamp \
+        --sign "$APPLE_SIGN_IDENTITY" \
+        "$dmg_path"
+}
+
+notarize_macos_file() {
+    local file_path="$1"
+    local submit_output
+    local submission_id
+    local status_output
+    local status
+
+    log_info "提交 Apple notarization..."
+    submit_output="$(xcrun notarytool submit "$file_path" "${NOTARYTOOL_ARGS[@]}" --no-wait --output-format json)"
+    submission_id="$(printf '%s\n' "$submit_output" | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+
+    if [[ -z "$submission_id" ]]; then
+        log_error "无法从 notarytool submit 输出中解析 submission id"
+        printf '%s\n' "$submit_output"
+        return 1
+    fi
+
+    log_info "notarization submission id: $submission_id"
+    log_info "等待 Apple 完成处理..."
+    xcrun notarytool wait "$submission_id" "${NOTARYTOOL_ARGS[@]}" --timeout 30m || true
+
+    status_output="$(xcrun notarytool info "$submission_id" "${NOTARYTOOL_ARGS[@]}" --output-format json)"
+    status="$(printf '%s\n' "$status_output" | sed -n 's/.*"status"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+
+    if [[ "$status" != "Accepted" ]]; then
+        log_error "notarization 未通过，当前状态: ${status:-unknown}"
+        printf '%s\n' "$status_output"
+        xcrun notarytool log "$submission_id" "${NOTARYTOOL_ARGS[@]}" || true
+        return 1
+    fi
+
+    log_success "notarization 已通过: $submission_id"
+}
+
+staple_macos_artifact() {
+    local path="$1"
+
+    log_info "回写 notarization 票据: $path"
+    xcrun stapler staple -v "$path"
+}
+
+validate_notarized_macos_release() {
+    local app_path="$1"
+    local dmg_path="$2"
+
+    log_info "执行最终 Gatekeeper 校验..."
+    xcrun stapler validate -v "$app_path"
+    xcrun stapler validate -v "$dmg_path"
+    spctl --assess --type execute -vv "$app_path"
+    spctl --assess --type open --context context:primary-signature -vv "$dmg_path"
+}
+
+show_macos_binary_architecture() {
+    local app_path="$1"
+    local binary_path
+
+    binary_path="$(find_macos_app_binary "$app_path")"
+    if [[ -n "$binary_path" ]] && command -v lipo &> /dev/null; then
+        log_info "主程序架构信息:"
+        lipo -info "$binary_path"
+    fi
+}
+
 # ============================================
 # 环境检查
 # ============================================
 check_common_deps() {
     log_info "检查通用依赖..."
+    ensure_local_tool_paths
+    ensure_project_cargo_home
 
     local missing=0
 
@@ -117,11 +497,21 @@ check_macos_deps() {
         log_success "Xcode Command Line Tools 已安装"
     fi
 
-    # aarch64 target
-    if ! rustup target list --installed | grep -q "aarch64-apple-darwin"; then
-        log_info "添加 aarch64-apple-darwin target..."
-        rustup target add aarch64-apple-darwin
-    fi
+    case "$(resolve_macos_build_target)" in
+        ""|"aarch64-apple-darwin")
+            ensure_rust_target "aarch64-apple-darwin"
+            ;;
+        "x86_64-apple-darwin")
+            ensure_rust_target "x86_64-apple-darwin"
+            ;;
+        "universal-apple-darwin")
+            ensure_rust_target "aarch64-apple-darwin"
+            ensure_rust_target "x86_64-apple-darwin"
+            ;;
+        *)
+            log_warn "MACOS_BUILD_TARGET=$(resolve_macos_build_target) 未被脚本识别，将直接交给 tauri build 处理"
+            ;;
+    esac
 
     return $missing
 }
@@ -213,6 +603,22 @@ install_deps() {
     return 1
 }
 
+run_desktop_tauri_build() {
+    local target="${1:-}"
+    local bundles="${2:-}"
+    local cmd=(pnpm --dir apps/desktop exec tauri build)
+
+    if [[ -n "$target" ]]; then
+        cmd+=(--target "$target")
+    fi
+
+    if [[ -n "$bundles" ]]; then
+        cmd+=(--bundles "$bundles")
+    fi
+
+    PATH=/usr/local/bin:/opt/homebrew/bin:$PATH "${cmd[@]}"
+}
+
 build_macos() {
     log_info "============================================"
     log_info "构建 macOS 安装包..."
@@ -223,7 +629,8 @@ build_macos() {
     cd "$REPO_DIR"
 
     # 设置 PATH 确保 corepack/pnpm 可用
-    export PATH="$HOME/bin:$HOME/.cargo/bin:$PATH"
+    ensure_local_tool_paths
+    ensure_project_cargo_home
 
     # 创建 corepack shim (如果不存在)
     if ! command -v corepack &> /dev/null; then
@@ -237,22 +644,64 @@ EOF
     fi
 
     # 构建
-    pnpm --dir apps/desktop build
+    local build_target
+    build_target="$(resolve_macos_build_target)"
+
+    if [[ -n "$build_target" ]]; then
+        log_info "使用 macOS 构建目标: $build_target"
+        run_desktop_tauri_build "$build_target" "app"
+    else
+        run_desktop_tauri_build "" "app"
+    fi
 
     # 显示产物
     log_success "macOS 构建完成！"
-    echo ""
-    log_info "产物位置:"
+    print_macos_build_artifacts "$(find_built_macos_app)"
+    show_macos_binary_architecture "$(find_built_macos_app)"
+}
 
-    if [[ -f "$OUTPUT_DIR/macos/CodingNS.app" ]]; then
-        log_success "  .app: $OUTPUT_DIR/macos/CodingNS.app"
-    fi
+release_macos() {
+    log_info "============================================"
+    log_info "执行 macOS 发布流程（签名 / 公证 / 校验）..."
+    log_info "============================================"
 
-    if compgen -G "$OUTPUT_DIR/dmg/*.dmg" > /dev/null; then
-        for dmg in "$OUTPUT_DIR/dmg/"*.dmg; do
-            log_success "  .dmg: $dmg"
-        done
-    fi
+    ensure_macos_host
+    load_macos_release_env
+    check_macos_release_deps || exit 1
+    verify_sign_identity || exit 1
+    resolve_notarytool_args || exit 1
+
+    local source_app_path
+    local release_app_path
+    local release_dmg_path
+    local release_zip_path
+    local app_name
+
+    source_app_path="$(find_built_macos_app)" || exit 1
+    app_name="$(basename "$source_app_path" .app)"
+
+    prepare_macos_release_dir
+    release_app_path="$MACOS_RELEASE_DIR/${app_name}.app"
+
+    log_info "复制 build 阶段产物到独立发布目录..."
+    ditto "$source_app_path" "$release_app_path"
+
+    sign_macos_app "$release_app_path"
+    verify_macos_signature "$release_app_path"
+
+    release_zip_path="$(create_macos_release_zip "$release_app_path")"
+    notarize_macos_file "$release_zip_path"
+    staple_macos_artifact "$release_app_path"
+
+    release_dmg_path="$(create_macos_release_dmg "$release_app_path")"
+    sign_macos_dmg "$release_dmg_path"
+    notarize_macos_file "$release_dmg_path"
+
+    staple_macos_artifact "$release_dmg_path"
+    validate_notarized_macos_release "$release_app_path" "$release_dmg_path"
+
+    log_success "macOS 发布流程完成！"
+    print_macos_release_artifacts "$release_app_path" "$release_dmg_path" "$release_zip_path"
 }
 
 build_windows() {
@@ -266,20 +715,22 @@ build_windows() {
 
     if [[ "$current_os" == "windows" ]]; then
         cd "$REPO_DIR"
-        pnpm --dir apps/desktop build -- --target x86_64-pc-windows-msvc
+        local bundle_dir
+        bundle_dir="$(resolve_bundle_output_dir "x86_64-pc-windows-msvc")"
+        run_desktop_tauri_build "x86_64-pc-windows-msvc"
 
         log_success "Windows 构建完成！"
         echo ""
         log_info "产物位置:"
 
-        if compgen -G "$OUTPUT_DIR/msi/*.msi" > /dev/null; then
-            for msi in "$OUTPUT_DIR/msi/"*.msi; do
+        if compgen -G "$bundle_dir/msi/*.msi" > /dev/null; then
+            for msi in "$bundle_dir/msi/"*.msi; do
                 log_success "  .msi: $msi"
             done
         fi
 
-        if compgen -G "$OUTPUT_DIR/nsis/*.exe" > /dev/null; then
-            for exe in "$OUTPUT_DIR/nsis/"*.exe; do
+        if compgen -G "$bundle_dir/nsis/*.exe" > /dev/null; then
+            for exe in "$bundle_dir/nsis/"*.exe; do
                 log_success "  .exe: $exe"
             done
         fi
@@ -312,20 +763,22 @@ build_linux() {
 
     if [[ "$current_os" == "linux" ]]; then
         cd "$REPO_DIR"
-        pnpm --dir apps/desktop build -- --target x86_64-unknown-linux-gnu
+        local bundle_dir
+        bundle_dir="$(resolve_bundle_output_dir "x86_64-unknown-linux-gnu")"
+        run_desktop_tauri_build "x86_64-unknown-linux-gnu"
 
         log_success "Linux 构建完成！"
         echo ""
         log_info "产物位置:"
 
-        if compgen -G "$OUTPUT_DIR/deb/*.deb" > /dev/null; then
-            for deb in "$OUTPUT_DIR/deb/"*.deb; do
+        if compgen -G "$bundle_dir/deb/*.deb" > /dev/null; then
+            for deb in "$bundle_dir/deb/"*.deb; do
                 log_success "  .deb: $deb"
             done
         fi
 
-        if compgen -G "$OUTPUT_DIR/appimage/*.AppImage" > /dev/null; then
-            for appimage in "$OUTPUT_DIR/appimage/"*.AppImage; do
+        if compgen -G "$bundle_dir/appimage/*.AppImage" > /dev/null; then
+            for appimage in "$bundle_dir/appimage/"*.AppImage; do
                 log_success "  .AppImage: $appimage"
             done
         fi
@@ -366,7 +819,7 @@ build_linux_with_docker() {
             apt-get update && apt-get install -y nodejs npm
             npm install -g pnpm@10.7.1
             pnpm install --frozen-lockfile
-            pnpm --dir apps/desktop build -- --target x86_64-unknown-linux-gnu
+            pnpm --dir apps/desktop exec tauri build --target x86_64-unknown-linux-gnu
         "
 
     log_success "Linux Docker 构建完成！"
@@ -385,25 +838,34 @@ print_banner() {
 
 print_usage() {
     echo "用法:"
-    echo "  $0              构建当前平台"
-    echo "  $0 macos        构建 macOS (.app, .dmg)"
-    echo "  $0 windows      构建 Windows (.exe, .msi)"
-    echo "  $0 linux        构建 Linux (.deb, .AppImage)"
-    echo "  $0 all          尝试构建所有平台"
-    echo "  $0 help         显示帮助信息"
+    echo "  $0                         构建当前平台"
+    echo "  $0 build                   构建当前平台"
+    echo "  $0 build macos             构建 macOS (.app, .dmg)"
+    echo "  $0 build windows           构建 Windows (.exe, .msi)"
+    echo "  $0 build linux             构建 Linux (.deb, .AppImage)"
+    echo "  $0 release-macos           macOS 签名、公证、校验"
+    echo "  $0 macos                   兼容旧用法：构建 macOS"
+    echo "  $0 windows                 兼容旧用法：构建 Windows"
+    echo "  $0 linux                   兼容旧用法：构建 Linux"
+    echo "  $0 all                     尝试构建所有平台"
+    echo "  $0 help                    显示帮助信息"
+    echo ""
+    echo "release-macos 需要的环境变量："
+    echo "  APPLE_SIGN_IDENTITY        例如: Developer ID Application: Your Name (TEAMID)"
+    echo "  APPLE_NOTARY_PROFILE       可选，notarytool 的 keychain profile"
+    echo "  APPLE_ID                   未使用 APPLE_NOTARY_PROFILE 时必填"
+    echo "  APPLE_APP_SPECIFIC_PASSWORD 未使用 APPLE_NOTARY_PROFILE 时必填"
+    echo "  APPLE_TEAM_ID              未使用 APPLE_NOTARY_PROFILE 时必填"
+    echo "  MACOS_ENTITLEMENTS_PATH    可选，自定义 entitlements 文件"
+    echo "  MACOS_BUILD_TARGET         可选，默认 universal-apple-darwin"
+    echo "  默认本地配置文件           $MACOS_SIGNING_ENV_FILE"
     echo ""
 }
 
-main() {
-    print_banner
-
+run_build_target() {
     local target="${1:-$(get_current_platform)}"
 
     case "$target" in
-        help|--help|-h)
-            print_usage
-            exit 0
-            ;;
         macos|darwin|osx)
             check_common_deps || exit 1
             install_deps
@@ -427,25 +889,50 @@ main() {
             build_linux
             ;;
         *)
+            log_error "未知构建目标: $target"
+            exit 1
+            ;;
+    esac
+}
+
+main() {
+    print_banner
+
+    local target="${1:-$(get_current_platform)}"
+    local build_target="${2:-$(get_current_platform)}"
+
+    case "$target" in
+        help|--help|-h)
+            print_usage
+            exit 0
+            ;;
+        build)
+            log_info "执行构建阶段"
+            log_info "目标平台: $build_target"
+            echo ""
+            run_build_target "$build_target"
+            ;;
+        release-macos)
+            release_macos
+            ;;
+        macos|darwin|osx|windows|win|msvc|linux|ubuntu|debian|all)
+            log_info "兼容旧用法，默认进入构建阶段"
+            log_info "目标平台: $target"
+            echo ""
+            run_build_target "$target"
+            ;;
+        *)
             # 当前平台
             log_info "检测到当前平台: $(get_current_platform)"
             log_info "目标平台: $target"
             echo ""
-            check_common_deps || exit 1
-            install_deps
-
-            case "$(get_current_platform)" in
-                macos)  build_macos ;;
-                linux)  build_linux ;;
-                windows) build_windows ;;
-                *)      log_error "未知平台"; exit 1 ;;
-            esac
+            run_build_target "$(get_current_platform)"
             ;;
     esac
 
     echo ""
     log_success "============================================"
-    log_success "构建流程完成"
+    log_success "脚本执行完成"
     log_success "============================================"
 }
 

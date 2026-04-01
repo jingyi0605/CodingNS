@@ -44,6 +44,7 @@ ios/build/
 .env
 .env.local
 .env.*.local
+.local-secrets/
 *.jks
 *.keystore
 key.properties
@@ -71,6 +72,7 @@ pnpm-debug.log*
 
 # Cache
 .cache/
+.cargo-home/
 .parcel-cache/
 .turbo/
 .eslintcache
