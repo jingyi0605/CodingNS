@@ -503,6 +503,7 @@ export const enUS = {
     rulesFirstHint: "Rules come first. Drafts must not bypass validation.",
     stage: "Stage",
     unstage: "Unstage",
+    preview: "Preview",
     stageFailed: "Stage operation failed.",
     diffTitle: "Diff Preview",
     diffLoadFailed: "Diff content is not available right now.",

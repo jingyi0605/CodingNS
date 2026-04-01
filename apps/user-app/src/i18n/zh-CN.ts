@@ -447,6 +447,7 @@ export const zhCN = {
     rulesFirstHint: "规则先于生成，草稿不能绕过校验。",
     stage: "暂存",
     unstage: "取消暂存",
+    preview: "预览",
     stageFailed: "暂存操作失败。",
     diffTitle: "差异预览",
     diffLoadFailed: "差异内容暂时没有拉回来。",

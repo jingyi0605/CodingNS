@@ -7600,13 +7600,12 @@ textarea:focus-visible {
   position: absolute;
   top: 0;
   bottom: 0;
-  width: 78px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border: none;
   color: white;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 700;
   opacity: 0;
   pointer-events: none;
@@ -7627,6 +7626,10 @@ textarea:focus-visible {
 
 .git-mobile-swipe-action[data-tone="danger"] {
   background: color-mix(in srgb, var(--error) 86%, #ffffff 14%);
+}
+
+.git-mobile-swipe-action[data-tone="neutral"] {
+  background: color-mix(in srgb, var(--text-secondary) 72%, #ffffff 28%);
 }
 
 .git-mobile-swipe-content {
@@ -10214,7 +10217,7 @@ textarea:focus-visible {
 .file-viewer-diff-line {
   display: flex;
   min-height: 1.6em;
-  padding: 0 8px;
+  padding: 0 2px;
   white-space: pre;
 }
 
@@ -10244,10 +10247,10 @@ textarea:focus-visible {
 .file-viewer-diff-old-no,
 .file-viewer-diff-new-no {
   display: inline-block;
-  width: 40px;
-  min-width: 40px;
+  width: 32px;
+  min-width: 32px;
   text-align: right;
-  padding-right: 8px;
+  padding-right: 6px;
   color: var(--patch-diff-muted, rgba(120, 120, 120, 0.5));
   user-select: none;
   flex-shrink: 0;
@@ -10527,6 +10530,8 @@ textarea:focus-visible {
   max-height: min(88vh, 920px);
   min-height: min(78vh, 760px);
   padding: 18px;
+  border: none;
+  box-shadow: none;
 }
 
 .file-viewer-toolbar {
@@ -10551,12 +10556,11 @@ textarea:focus-visible {
   min-height: 34px;
   padding: 0 14px;
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--border-primary) 80%, transparent);
+  border: none;
   background: color-mix(in srgb, var(--bg-surface) 86%, transparent);
   color: var(--text-secondary);
   transition:
     background var(--transition-fast),
-    border-color var(--transition-fast),
     color var(--transition-fast);
 }
 
@@ -10564,7 +10568,6 @@ textarea:focus-visible {
 .file-viewer-tab[data-active="true"] {
   color: var(--text-primary);
   background: color-mix(in srgb, var(--bg-active) 74%, transparent);
-  border-color: color-mix(in srgb, var(--accent) 28%, transparent);
 }
 
 .file-viewer-tab:disabled {
@@ -10597,8 +10600,7 @@ textarea:focus-visible {
   height: 100%;
   overflow: auto;
   padding: 16px 18px;
-  border-radius: 18px;
-  border: 1px solid color-mix(in srgb, var(--border-primary) 80%, transparent);
+  border-radius: 14px;
   background: color-mix(in srgb, var(--bg-primary) 90%, transparent);
   color: var(--text-primary);
   font-family: var(--font-mono);
@@ -10621,8 +10623,7 @@ textarea:focus-visible {
   min-height: 0;
   flex-direction: column;
   overflow: hidden;
-  border-radius: 18px;
-  border: 1px solid var(--code-block-border);
+  border-radius: 14px;
   background: var(--code-block-surface);
 }
 
@@ -10652,7 +10653,7 @@ textarea:focus-visible {
   flex-direction: column;
   overflow: auto;
   padding: 12px 0;
-  padding-right: 14px;
+  padding-right: 6px;
   scrollbar-gutter: stable;
 }
 
@@ -10666,11 +10667,11 @@ textarea:focus-visible {
 
 .file-viewer-code-line {
   display: grid;
-  grid-template-columns: 56px minmax(0, 1fr);
-  gap: 16px;
+  grid-template-columns: 40px minmax(0, 1fr);
+  gap: 8px;
   align-items: start;
   min-height: 24px;
-  padding: 0 18px;
+  padding: 0 2px 0 1px;
 }
 
 .file-viewer-code-gutter {

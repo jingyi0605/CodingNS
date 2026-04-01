@@ -84,6 +84,7 @@ const GIT_SNAPSHOT_CACHE_MAX_AGE_MS = 60 * 1000;
 const GIT_HISTORY_PAGE_SIZE = 20;
 const MOBILE_GIT_RECORD_BASE_INSET_PX = 9;
 const MOBILE_GIT_RECORD_DEPTH_STEP_PX = 9;
+const SWIPE_ACTION_WIDTH = 68;
 
 interface GitSidebarSnapshot {
   status: GitStatusDto | null;
@@ -1046,6 +1047,7 @@ export function GitSidebar({ className, workspaceId }: GitSidebarProps) {
                   current.filter((path) => !mobileSelectedStagedTargets.includes(path))
                 )
               }
+              onPreviewFile={handleFilePreview}
             />
           </MobileGitAccordionSection>
 
@@ -1074,6 +1076,7 @@ export function GitSidebar({ className, workspaceId }: GitSidebarProps) {
                   current.filter((path) => !mobileSelectedUnstagedTargets.includes(path))
                 )
               }
+              onPreviewFile={handleFilePreview}
             />
           </MobileGitAccordionSection>
 
@@ -1598,7 +1601,8 @@ function MobileGitChangeSection({
   onSwipeRowChange,
   onStageToggle,
   onDiscardWithConfirm,
-  onClearSelectedTargets
+  onClearSelectedTargets,
+  onPreviewFile
 }: {
   title: string;
   nodes: GitTreeNode[];
@@ -1614,6 +1618,7 @@ function MobileGitChangeSection({
   onStageToggle: (targets: string[], staged: boolean) => Promise<void>;
   onDiscardWithConfirm: (targets: string[], label: string) => Promise<void>;
   onClearSelectedTargets: () => void;
+  onPreviewFile: (filePath: string, change: GitChangeItemDto) => void;
 }) {
   return (
     <div className="git-mobile-record-shell">
@@ -1667,7 +1672,8 @@ function MobileGitChangeSection({
             swipeRowState,
             onSwipeRowChange,
             onStageToggle,
-            onDiscardWithConfirm
+            onDiscardWithConfirm,
+            onPreviewFile
           })
         ) : (
           <p className="git-tree-status">{t("git.noChanges")}</p>
@@ -1689,7 +1695,8 @@ function renderMobileTreeNodes({
   swipeRowState,
   onSwipeRowChange,
   onStageToggle,
-  onDiscardWithConfirm
+  onDiscardWithConfirm,
+  onPreviewFile
 }: {
   nodes: GitTreeNode[];
   depth: number;
@@ -1703,6 +1710,7 @@ function renderMobileTreeNodes({
   onSwipeRowChange: (state: { path: string; direction: MobileSwipeDirection } | null) => void;
   onStageToggle: (targets: string[], staged: boolean) => Promise<void>;
   onDiscardWithConfirm: (targets: string[], label: string) => Promise<void>;
+  onPreviewFile: (filePath: string, change: GitChangeItemDto) => void;
 }) {
   return nodes.map((node) => {
     if (node.kind === "directory") {
@@ -1718,22 +1726,22 @@ function renderMobileTreeNodes({
             onOpenStateChange={(direction) =>
               onSwipeRowChange(direction ? { path: rowKey, direction } : null)
             }
-            leadingAction={
+            leadingActions={
               directoryTargets.length > 0
-                ? {
+                ? [{
                     label: variant === "staged" ? t("git.unstage") : t("git.stage"),
                     tone: "accent",
                     onPress: () => void onStageToggle(directoryTargets, variant === "staged")
-                  }
+                  }]
                 : null
             }
-            trailingAction={
+            trailingActions={
               variant === "unstaged" && directoryTargets.length > 0
-                ? {
+                ? [{
                     label: t("git.discard"),
                     tone: "danger",
                     onPress: () => void onDiscardWithConfirm(directoryTargets, node.path)
-                  }
+                  }]
                 : null
             }
           >
@@ -1769,7 +1777,8 @@ function renderMobileTreeNodes({
                 swipeRowState,
                 onSwipeRowChange,
                 onStageToggle,
-                onDiscardWithConfirm
+                onDiscardWithConfirm,
+                onPreviewFile
               })}
             </div>
           ) : null}
@@ -1788,18 +1797,25 @@ function renderMobileTreeNodes({
         onOpenStateChange={(direction) =>
           onSwipeRowChange(direction ? { path: rowKey, direction } : null)
         }
-        leadingAction={{
-          label: variant === "staged" ? t("git.unstage") : t("git.stage"),
-          tone: "accent",
-          onPress: () => void onStageToggle([node.change.path], variant === "staged")
-        }}
-        trailingAction={
+        leadingActions={[
+          {
+            label: t("git.preview"),
+            tone: "neutral",
+            onPress: () => onPreviewFile(node.change.path, node.change)
+          },
+          {
+            label: variant === "staged" ? t("git.unstage") : t("git.stage"),
+            tone: "accent",
+            onPress: () => void onStageToggle([node.change.path], variant === "staged")
+          }
+        ]}
+        trailingActions={
           variant === "unstaged"
-            ? {
+            ? [{
                 label: t("git.discard"),
                 tone: "danger",
                 onPress: () => void onDiscardWithConfirm([node.change.path], node.path)
-              }
+              }]
             : null
         }
       >
@@ -1847,20 +1863,23 @@ function MobileSwipeRow({
   rowKey,
   openState,
   onOpenStateChange,
-  leadingAction,
-  trailingAction,
+  leadingActions,
+  trailingActions,
   children
 }: {
   rowKey: string;
   openState: MobileSwipeDirection | null;
   onOpenStateChange: (direction: MobileSwipeDirection | null) => void;
-  leadingAction: { label: string; tone: "accent" | "danger"; onPress: () => void } | null;
-  trailingAction: { label: string; tone: "accent" | "danger"; onPress: () => void } | null;
+  leadingActions: { label: string; tone: "accent" | "danger" | "neutral"; onPress: () => void }[] | null;
+  trailingActions: { label: string; tone: "accent" | "danger" | "neutral"; onPress: () => void }[] | null;
   children: ReactNode;
 }) {
   const haptics = useHaptics();
   const pointerStateRef = useRef<{ pointerId: number; startX: number } | null>(null);
   const [dragOffset, setDragOffset] = useState(0);
+
+  const leadingWidth = (leadingActions?.length ?? 0) * SWIPE_ACTION_WIDTH;
+  const trailingWidth = (trailingActions?.length ?? 0) * SWIPE_ACTION_WIDTH;
 
   useEffect(() => {
     if (!openState) {
@@ -1872,9 +1891,9 @@ function MobileSwipeRow({
     dragOffset !== 0
       ? dragOffset
       : openState === "leading"
-        ? 78
+        ? leadingWidth
         : openState === "trailing"
-          ? -78
+          ? -trailingWidth
           : 0;
 
   function handlePointerDown(event: ReactPointerEvent<HTMLDivElement>) {
@@ -1896,8 +1915,8 @@ function MobileSwipeRow({
       return;
     }
 
-    const maxLeading = leadingAction ? 88 : 0;
-    const maxTrailing = trailingAction ? 88 : 0;
+    const maxLeading = leadingWidth > 0 ? leadingWidth + 10 : 0;
+    const maxTrailing = trailingWidth > 0 ? trailingWidth + 10 : 0;
     const nextOffset = Math.max(-maxTrailing, Math.min(maxLeading, event.clientX - pointerState.startX));
     setDragOffset(nextOffset);
   }
@@ -1912,14 +1931,14 @@ function MobileSwipeRow({
     event.currentTarget.releasePointerCapture?.(event.pointerId);
     pointerStateRef.current = null;
 
-    if (dragOffset >= 44 && leadingAction) {
+    if (dragOffset >= 44 && leadingActions?.length) {
       void haptics.trigger("gesture");
       onOpenStateChange("leading");
       setDragOffset(0);
       return;
     }
 
-    if (dragOffset <= -44 && trailingAction) {
+    if (dragOffset <= -44 && trailingActions?.length) {
       void haptics.trigger("gesture");
       onOpenStateChange("trailing");
       setDragOffset(0);
@@ -1948,35 +1967,39 @@ function MobileSwipeRow({
       data-open-state={openState ?? "closed"}
       data-dragging={dragOffset !== 0}
     >
-      {leadingAction ? (
+      {leadingActions?.map((action, index) => (
         <button
+          key={`leading-${index}`}
           type="button"
           className="git-mobile-swipe-action leading"
-          data-tone={leadingAction.tone}
+          data-tone={action.tone}
+          style={{ left: index * SWIPE_ACTION_WIDTH, width: SWIPE_ACTION_WIDTH }}
           onClick={() => {
             void haptics.trigger("action");
             onOpenStateChange(null);
-            leadingAction.onPress();
+            action.onPress();
           }}
         >
-          {leadingAction.label}
+          {action.label}
         </button>
-      ) : null}
+      ))}
 
-      {trailingAction ? (
+      {trailingActions?.map((action, index) => (
         <button
+          key={`trailing-${index}`}
           type="button"
           className="git-mobile-swipe-action trailing"
-          data-tone={trailingAction.tone}
+          data-tone={action.tone}
+          style={{ right: index * SWIPE_ACTION_WIDTH, width: SWIPE_ACTION_WIDTH }}
           onClick={() => {
-            void haptics.trigger(trailingAction.tone === "danger" ? "warning" : "action");
+            void haptics.trigger(action.tone === "danger" ? "warning" : "action");
             onOpenStateChange(null);
-            trailingAction.onPress();
+            action.onPress();
           }}
         >
-          {trailingAction.label}
+          {action.label}
         </button>
-      ) : null}
+      ))}
 
       <div
         className="git-mobile-swipe-content"
