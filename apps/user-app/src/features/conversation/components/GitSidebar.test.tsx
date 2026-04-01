@@ -318,26 +318,9 @@ describe("GitSidebar", () => {
     const confirmMock = vi.spyOn(window, "confirm").mockReturnValue(true);
     renderSidebar();
 
-    const title = await screen.findByText("App.tsx");
-    const swipeRow = title.closest(".git-mobile-swipe-row") as HTMLElement | null;
-    const swipeContent = swipeRow?.querySelector(".git-mobile-swipe-content") as HTMLElement | null;
+    const { swipeRow, swipeContent } = findMobileSwipeRow(await findGroup("当前变更"), "App.tsx");
 
-    expect(swipeRow).not.toBeNull();
-    expect(swipeContent).not.toBeNull();
-
-    fireEvent.pointerDown(swipeContent as HTMLElement, {
-      button: 0,
-      pointerId: 1,
-      clientX: 120
-    });
-    fireEvent.pointerMove(swipeContent as HTMLElement, {
-      pointerId: 1,
-      clientX: 56
-    });
-    fireEvent.pointerUp(swipeContent as HTMLElement, {
-      pointerId: 1,
-      clientX: 56
-    });
+    swipeMobileRow(swipeContent, 120, 56);
 
     fireEvent.click(within(swipeRow as HTMLElement).getByRole("button", { name: "放弃改动" }));
 
@@ -349,6 +332,57 @@ describe("GitSidebar", () => {
     });
 
     confirmMock.mockRestore();
+  });
+
+  it("移动端文件项只保留左滑菜单，并把预览、暂存、放弃改动收进同一侧", async () => {
+    renderSidebar();
+
+    const { swipeRow, swipeContent } = findMobileSwipeRow(await findGroup("当前变更"), "App.tsx");
+
+    expect(swipeRow.querySelectorAll(".git-mobile-swipe-action.leading")).toHaveLength(0);
+    expect(readSwipeActionLabels(swipeRow)).toEqual(["预览", "暂存", "放弃改动"]);
+
+    swipeMobileRow(swipeContent, 120, 196);
+    expect(swipeRow).toHaveAttribute("data-open-state", "closed");
+  });
+
+  it("移动端文件夹项也只保留左滑菜单", async () => {
+    renderSidebar();
+
+    const { swipeRow, swipeContent } = findMobileSwipeRow(
+      await findGroup("当前变更"),
+      "apps/user-app/src/app",
+      ".git-mobile-record-directory"
+    );
+
+    expect(swipeRow.querySelectorAll(".git-mobile-swipe-action.leading")).toHaveLength(0);
+    expect(readSwipeActionLabels(swipeRow)).toEqual(["暂存", "放弃改动"]);
+
+    swipeMobileRow(swipeContent, 120, 196);
+    expect(swipeRow).toHaveAttribute("data-open-state", "closed");
+  });
+
+  it("移动端暂存区文件项也改成只保留左滑菜单", async () => {
+    const stagedPath = "apps/user-app/src/app/App.tsx";
+    gitApiMock.getGitStatus.mockResolvedValue(createStatus([], [stagedPath]));
+    workbenchShellMock.addGitSnapshotListener.mockImplementation((listener: (snapshot: ReturnType<typeof createGitSnapshot>) => void) => {
+      listener(createGitSnapshot(createStatus([], [stagedPath])));
+      return () => undefined;
+    });
+    renderSidebar();
+
+    const stagedToggle = await screen.findByRole("button", { name: /暂存的更改/ });
+    if (stagedToggle.getAttribute("aria-expanded") === "false") {
+      await userEvent.click(stagedToggle);
+    }
+
+    const { swipeRow, swipeContent } = findMobileSwipeRow(await findGroup("暂存的更改"), "App.tsx");
+
+    expect(swipeRow.querySelectorAll(".git-mobile-swipe-action.leading")).toHaveLength(0);
+    expect(readSwipeActionLabels(swipeRow)).toEqual(["预览", "取消暂存"]);
+
+    swipeMobileRow(swipeContent, 120, 196);
+    expect(swipeRow).toHaveAttribute("data-open-state", "closed");
   });
 
   it("移动端最近版本条目提供操作菜单，并支持复制 Commit Hash", async () => {
@@ -466,6 +500,50 @@ function renderSidebar() {
 async function findGroup(title: string) {
   const heading = await screen.findByRole("heading", { name: title });
   return heading.closest("section") as HTMLElement;
+}
+
+function findMobileSwipeRow(scope: HTMLElement, text: string, rowSelector?: string) {
+  const target = within(scope).getAllByText(text).find((node) =>
+    rowSelector ? Boolean(node.closest(rowSelector)) : Boolean(node.closest(".git-mobile-swipe-row"))
+  );
+
+  if (!target) {
+    throw new Error(`找不到移动端滑动行：${text}`);
+  }
+
+  const swipeRow = target.closest(".git-mobile-swipe-row") as HTMLElement | null;
+  const swipeContent = swipeRow?.querySelector(".git-mobile-swipe-content") as HTMLElement | null;
+
+  if (!swipeRow || !swipeContent) {
+    throw new Error(`滑动行结构不完整：${text}`);
+  }
+
+  return {
+    swipeRow,
+    swipeContent
+  };
+}
+
+function swipeMobileRow(swipeContent: HTMLElement, startX: number, endX: number) {
+  fireEvent.pointerDown(swipeContent, {
+    button: 0,
+    pointerId: 1,
+    clientX: startX
+  });
+  fireEvent.pointerMove(swipeContent, {
+    pointerId: 1,
+    clientX: endX
+  });
+  fireEvent.pointerUp(swipeContent, {
+    pointerId: 1,
+    clientX: endX
+  });
+}
+
+function readSwipeActionLabels(swipeRow: HTMLElement) {
+  return Array.from(swipeRow.querySelectorAll(".git-mobile-swipe-action.trailing")).map((node) =>
+    node.textContent?.trim() ?? ""
+  );
 }
 
 function setViewportWidth(width: number) {
