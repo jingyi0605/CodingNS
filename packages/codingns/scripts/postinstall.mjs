@@ -124,6 +124,9 @@ function runNpmInstall(args) {
     npm_config_location: "project"
   };
   delete env.npm_config_prefix;
+  delete env.npm_execpath;
+  delete env.npm_command;
+  delete env.npm_config_user_agent;
 
   const installArgs = [
     ...args,
@@ -132,14 +135,6 @@ function runNpmInstall(args) {
     packageRoot,
     "--install-strategy=nested"
   ];
-
-  if (process.env.npm_execpath) {
-    return spawnSync(process.execPath, [process.env.npm_execpath, ...installArgs], {
-      cwd: packageRoot,
-      env,
-      stdio: "inherit"
-    });
-  }
 
   const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
 
