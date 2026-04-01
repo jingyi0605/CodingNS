@@ -272,6 +272,10 @@ function mergeResolution(
     return next;
   }
 
+  if (shouldPreferExplicitTerminalObservation(current, next)) {
+    return next;
+  }
+
   if (current.runId && !next.runId && isHigherPriority(current, next)) {
     return current;
   }
@@ -279,6 +283,10 @@ function mergeResolution(
   if (sameRun(current.runId, next.runId)) {
     if (isTerminalResolvedState(current.runningState) && !isTerminalResolvedState(next.runningState)) {
       return current;
+    }
+
+    if (!isTerminalResolvedState(current.runningState) && isTerminalResolvedState(next.runningState)) {
+      return next;
     }
 
     if (shouldPreserveWatchdogDegradedRuntimeState(current, next)) {
@@ -464,6 +472,32 @@ function shouldPreserveWatchdogDegradedRuntimeState(
     && (current.runningState === "stale" || current.runningState === "unknown")
     && (next.runningState === "starting" || next.runningState === "running")
     && compareIsoTimestamps(next.lastObservedAt, current.lastObservedAt) <= 0;
+}
+
+function shouldPreferExplicitTerminalObservation(
+  current: SessionActivityResolution,
+  next: SessionActivityResolution
+): boolean {
+  if (isTerminalResolvedState(current.runningState) || !isTerminalResolvedState(next.runningState)) {
+    return false;
+  }
+
+  if (
+    current.activityResolutionSource !== "authoritative_runtime"
+    && current.activityResolutionSource !== "authoritative_provider_event"
+  ) {
+    return false;
+  }
+
+  const currentObservedAt = current.lastObservedAt ?? current.updatedAt;
+  const nextObservedAt = next.terminalAt ?? next.lastObservedAt ?? next.updatedAt;
+
+  if (compareIsoTimestamps(nextObservedAt, currentObservedAt) < 0) {
+    return false;
+  }
+
+  return next.activityResolutionSource === "authoritative_provider_event"
+    || next.activityResolutionSource === "inferred_log";
 }
 
 function isHigherPriority(
