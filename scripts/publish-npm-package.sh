@@ -4,6 +4,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PACKAGE_DIR="$ROOT_DIR/packages/codingns"
+STAGING_DIR=""
 
 package_name="$(cd "$ROOT_DIR" && node -p "require('./packages/codingns/package.json').name")"
 package_version="$(cd "$ROOT_DIR" && node -p "require('./packages/codingns/package.json').version")"
@@ -26,6 +27,14 @@ print_help() {
   --help        显示帮助
 EOF
 }
+
+cleanup() {
+  if [[ -n "$STAGING_DIR" && -d "$STAGING_DIR" ]]; then
+    rm -rf "$STAGING_DIR"
+  fi
+}
+
+trap cleanup EXIT
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -76,11 +85,16 @@ echo ""
 echo "==> 构建独立服务包"
 pnpm --dir "$ROOT_DIR" run build:standalone
 
+STAGING_DIR="$(mktemp -d)"
+echo "==> 生成发布暂存目录"
+node "$PACKAGE_DIR/scripts/create-publish-staging.mjs" "$STAGING_DIR"
+
 case "$choice" in
   1)
     echo ""
     echo "==> 执行 npm pack"
-    tgz="$(cd "$PACKAGE_DIR" && npm pack 2>&1 | tail -1)"
+    tgz="$(cd "$STAGING_DIR" && npm pack --ignore-scripts 2>&1 | tail -1)"
+    mv "$STAGING_DIR/$tgz" "$PACKAGE_DIR/$tgz"
     echo "已生成：$PACKAGE_DIR/$tgz"
     ;;
   2)
@@ -93,7 +107,7 @@ case "$choice" in
     fi
 
     echo "==> 校验 npm 打包清单"
-    (cd "$PACKAGE_DIR" && npm pack --dry-run >/dev/null)
+    (cd "$STAGING_DIR" && npm pack --dry-run --ignore-scripts >/dev/null)
 
     publish_cmd=(npm publish --access public --tag "$publish_tag")
 
@@ -115,6 +129,6 @@ case "$choice" in
     echo ""
 
     echo "==> 执行 npm publish"
-    (cd "$PACKAGE_DIR" && "${publish_cmd[@]}")
+    (cd "$STAGING_DIR" && "${publish_cmd[@]}" --ignore-scripts)
     ;;
 esac
