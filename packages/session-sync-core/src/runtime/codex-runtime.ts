@@ -864,10 +864,11 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
 
 function createCodexAppServerTransport(options: CodexRuntimeOptions): CodexAppServerTransport {
   const commandPath = resolveCodexCommand(options.commandPath);
-  const child: ChildProcessWithoutNullStreams = spawn(commandPath, ["app-server"], {
+  const launch = resolveCodexCommandLaunch(commandPath, ["app-server"]);
+  const child: ChildProcessWithoutNullStreams = spawn(launch.command, launch.args, {
     env: process.env,
     stdio: ["pipe", "pipe", "pipe"],
-    shell: shouldSpawnCodexViaShell(commandPath),
+    shell: launch.shell,
     windowsHide: true
   });
   const stdout = createInterface({ input: child.stdout });
@@ -1596,8 +1597,54 @@ function resolveCodexCommand(explicitPath?: string): string {
   return explicitCandidate;
 }
 
-function shouldSpawnCodexViaShell(commandPath: string): boolean {
-  return process.platform === "win32" && /\.(cmd|bat)$/i.test(commandPath);
+function resolveCodexCommandLaunch(
+  commandPath: string,
+  args: readonly string[]
+): {
+  command: string;
+  args: string[];
+  shell: boolean;
+} {
+  const normalizedCommandPath = commandPath.trim();
+
+  if (isNodeScriptPath(normalizedCommandPath)) {
+    return {
+      command: process.execPath,
+      args: [normalizedCommandPath, ...args],
+      shell: false
+    };
+  }
+
+  return {
+    command: normalizedCommandPath,
+    args: [...args],
+    shell: shouldSpawnViaShellOnWindows(normalizedCommandPath)
+  };
+}
+
+function isNodeScriptPath(commandPath: string): boolean {
+  return /\.(?:c|m)?js$/i.test(commandPath);
+}
+
+function shouldSpawnViaShellOnWindows(commandPath: string): boolean {
+  if (process.platform !== "win32") {
+    return false;
+  }
+
+  if (/\.(cmd|bat)$/i.test(commandPath)) {
+    return true;
+  }
+
+  // Windows 上裸名命令（无扩展名、无路径分隔符）需要 shell 才能从 PATH 解析 .cmd 文件
+  const extension = commandPath.split(".").pop()?.toLowerCase();
+  const hasPathSep = commandPath.includes("\\") || commandPath.includes("/");
+  if (!extension || extension === commandPath.toLowerCase()) {
+    if (!hasPathSep) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function nextJsonRpcId(prefix: string, allocate: () => number): string {

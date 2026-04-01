@@ -30,11 +30,13 @@ CodingNS 致力于提供一整套闭环的 AI 编程工作流程，让你能够�
 - **无缝续接原生 CLI 会话**：支持 Claude Code、Codex、OpenCode 等主流 AI 编程工具
 - **会话发现与历史读取**：自动发现并同步本地 CLI 会话历史
 - **实时消息订阅**：实时接收和展示 AI 编程会话的消息流
+- **会话状态感知**：统一展示运行中、未读、失败等状态，并保留错误码与错误摘要
 - **消息归一化**：统一不同 Provider 的消息格式，提供一致的使用体验
 
 #### 💬 对话式主界面
 - **会话即工作区**：每个对话都是一个独立的工作区，统一管理上下文
 - **实时消息渲染**：支持 Markdown、代码高亮、工具调用展示
+- **统一权限审批**：在会话内直接处理命令执行、文件变更、权限授权和用户输入请求
 - **复合输入面板**：集成文件上传、上下文管理、快捷命令等功能
 - **Capability 驱动**：根据 Provider 能力动态调整可用功能
 
@@ -42,17 +44,26 @@ CodingNS 致力于提供一整套闭环的 AI 编程工作流程，让你能够�
 - **文件树浏览**：可视化项目文件结构
 - **文件上下文挂载**：将文件内容快速添加到会话上下文
 - **文件搜索**：快速定位项目中的文件
+- **变更视图增强**：支持 Git 状态标记、变更筛选与 Diff 预览
+- **路径联动与清爽视图**：支持从聊天内容定位文件，并可默认隐藏系统文件
 
 #### 🔀 Git 集成
 - **Git 状态展示**：实时查看文件变更状态
 - **提交流程集成**：在会话中直接完成代码提交
+- **多远程推送**：支持一次推送多个远程仓库
 - **规则校验**：支持自定义提交规则
 
 #### 💻 终端能力
 - **真实 PTY 终端**：基于 node-pty 的完整终端体验
 - **多终端支持**：同时管理多个终端会话
 - **终端持久化**：终端输出缓存与历史回放
+- **Windows 终端恢复**：支持终端持久化恢复，并在创建前选择 Shell
 - **断线重连**：网络中断后自动恢复终端会话
+
+#### ☁️ 账户偏好同步
+- **账户级配置同步**：语言、主题、默认权限模式可在多客户端之间同步
+- **Provider 默认项同步**：支持同步默认模型与默认推理强度
+- **本地偏好分层**：界面类偏好保留本地，避免把设备相关设置硬同步到所有端
 
 #### 🎨 极简界面设计
 - **软件工程师审美**：专注于功能性与美感的平衡
@@ -247,15 +258,25 @@ pnpm test:user-app
 详细的功能规格和设计文档位于 [`specs/`](./specs/) 目录：
 
 - **spec001** - 平台底座与工作区基础
+- **spec001.1** - 账户偏好入库与跨客户端同步
 - **spec002** - ClaudeCode 与 Codex 会话同步核心
 - **spec003** - 对话式主界面与消息运行时
-- **spec004** - 文件上下文能力
+- **spec003.1** - 原生会话实时对话运行时
+- **spec003.2** - 运行中消息追加与原生引导
+- **spec003.3** - 运行时消息直推与稳定标识
+- **spec003.4** - 会话活动状态权威源与稳定显示
+- **spec004** - 文件管理能力
 - **spec005** - Git 上下文与提交规则引擎
 - **spec006** - 终端核心能力
+- **spec006.1** - 终端日志持久化与历史回放
 - **spec007** - 进程管理与启动器
+- **spec008** - 桌面端与 H5 交付增强
 - **spec009** - 移动端体验与通知
+- **spec009.1** - 移动端工作台导航与信息架构重构
 - **spec010** - Provider 扩展框架
 - **spec010.1** - OpenCode 兼容接入
+- **spec011** - 单包安装与统一服务发布
+- **spec012** - 并行项目编排与结果对比
 
 ### 🤝 贡献
 
@@ -279,11 +300,13 @@ CodingNS provides a complete closed-loop AI programming workflow, enabling you t
 - **Seamless CLI Session Continuation**: Support for Claude Code, Codex, OpenCode and other mainstream AI programming tools
 - **Session Discovery & History**: Automatically discover and sync local CLI session history
 - **Real-time Message Subscription**: Receive and display AI coding session message streams in real-time
+- **Session State Awareness**: Consistent running, unread, and failure states with error codes and summaries
 - **Message Normalization**: Unified message format across different providers for consistent experience
 
 #### 💬 Conversational Interface
 - **Session as Workspace**: Each conversation is an independent workspace with unified context management
 - **Real-time Message Rendering**: Support for Markdown, syntax highlighting, and tool call visualization
+- **Unified Permission Handling**: Review command execution, file changes, permission grants, and user-input requests inside the conversation
 - **Compound Input Panel**: Integrated file upload, context management, and quick commands
 - **Capability-Driven**: Dynamically adjust available features based on provider capabilities
 
@@ -291,17 +314,26 @@ CodingNS provides a complete closed-loop AI programming workflow, enabling you t
 - **File Tree Browser**: Visualize project file structure
 - **File Context Mounting**: Quickly add file contents to session context
 - **File Search**: Quickly locate files in your project
+- **Change-focused Views**: Git status badges, change filters, and diff preview
+- **Path Linking & Cleaner Trees**: Jump from chat paths to files and hide system files by default when needed
 
 #### 🔀 Git Integration
 - **Git Status Display**: Real-time view of file change status
 - **Commit Workflow Integration**: Complete code commits directly within sessions
+- **Multi-remote Push**: Push to multiple remotes in one action
 - **Rule Validation**: Support for custom commit rules
 
 #### 💻 Terminal Capabilities
 - **Real PTY Terminal**: Complete terminal experience based on node-pty
 - **Multi-Terminal Support**: Manage multiple terminal sessions simultaneously
 - **Terminal Persistence**: Terminal output caching and history playback
+- **Windows Terminal Recovery**: Restore persisted terminals and choose the shell before creation
 - **Reconnection**: Automatic terminal session recovery after network interruption
+
+#### ☁️ Account Preference Sync
+- **Account-level Settings Sync**: Language, theme, and default permission mode follow your account across clients
+- **Provider Defaults Sync**: Keep default model and reasoning level in sync
+- **Local Preference Layering**: Device-specific UI preferences stay local instead of being forced onto every client
 
 #### 🎨 Minimalist Interface Design
 - **Engineer-Centric Aesthetics**: Balance between functionality and beauty
@@ -496,15 +528,25 @@ pnpm test:user-app
 Detailed feature specifications and design documents are located in the [`specs/`](./specs/) directory:
 
 - **spec001** - Platform Foundation & Workspace Basics
+- **spec001.1** - Account Preference Persistence & Cross-client Sync
 - **spec002** - ClaudeCode & Codex Session Sync Core
 - **spec003** - Conversational Interface & Message Runtime
-- **spec004** - File Context Capabilities
+- **spec003.1** - Native Session Realtime Conversation Runtime
+- **spec003.2** - In-progress Message Appending & Native Onboarding
+- **spec003.3** - Runtime Message Push & Stable Identifiers
+- **spec003.4** - Session Activity Authority & Stable Display
+- **spec004** - File Management Capabilities
 - **spec005** - Git Context & Commit Rule Engine
 - **spec006** - Terminal Core Capabilities
+- **spec006.1** - Terminal Log Persistence & History Replay
 - **spec007** - Process Management & Launcher
+- **spec008** - Desktop & H5 Delivery Enhancements
 - **spec009** - Mobile Experience & Notifications
+- **spec009.1** - Mobile Workbench Navigation & Information Architecture
 - **spec010** - Provider Extension Framework
 - **spec010.1** - OpenCode Compatibility Integration
+- **spec011** - Single-package Install & Unified Service Delivery
+- **spec012** - Parallel Project Orchestration & Result Comparison
 
 ### 🤝 Contributing
 

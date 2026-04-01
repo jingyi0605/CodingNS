@@ -2,6 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import readline, { createInterface } from "node:readline";
 
 import type { ProviderRuntimeRunRequest } from "@codingns/session-sync-core";
+import { resolveCommandLaunch } from "../../shared/utils/command-launch.js";
 
 type ParentToHelperMessage =
   | {
@@ -216,10 +217,11 @@ async function handleTransportRequest(message: Extract<ParentToHelperMessage, { 
 }
 
 function createTransportRecord(commandPath: string): TransportRecord {
-  const child = spawn(commandPath, ["app-server"], {
+  const launch = resolveCommandLaunch(commandPath, ["app-server"]);
+  const child = spawn(launch.command, launch.args, {
     env: process.env,
     stdio: ["pipe", "pipe", "pipe"],
-    shell: shouldSpawnViaShell(commandPath),
+    shell: launch.shell,
     windowsHide: true
   });
   const stdout = createInterface({
@@ -463,10 +465,6 @@ function readFlag(argv: string[], flag: string): string | null {
   }
 
   return argv[index + 1] ?? null;
-}
-
-function shouldSpawnViaShell(commandPath: string): boolean {
-  return process.platform === "win32" && /\.(cmd|bat)$/i.test(commandPath);
 }
 
 function requireRequest(request: ProviderRuntimeRunRequest | undefined): ProviderRuntimeRunRequest {

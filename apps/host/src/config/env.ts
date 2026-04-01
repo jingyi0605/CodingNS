@@ -132,6 +132,13 @@ function resolveCodexCliPath(configuredPath: string | undefined, homeDir: string
   }
 
   const resolvedCodexScript = resolveModuleSpecifier("@openai/codex/bin/codex.js");
+  const resolvedCodexSdkEntry = resolveModuleSpecifier("@openai/codex-sdk");
+  const inferredPackageRoots = uniquePaths(
+    [
+      resolvedCodexScript ? path.dirname(path.dirname(resolvedCodexScript)) : null,
+      resolvedCodexSdkEntry ? path.dirname(path.dirname(resolvedCodexSdkEntry)) : null
+    ].filter((value): value is string => Boolean(value))
+  );
 
   if (resolvedCodexScript) {
     return resolvedCodexScript;
@@ -141,18 +148,32 @@ function resolveCodexCliPath(configuredPath: string | undefined, homeDir: string
   const moduleSearchRoots = uniquePaths([
     process.cwd(),
     path.resolve(configDir, "..", "..", ".."),
-    resolveAppRootDir()
+    path.resolve(configDir, "..", ".."),
+    resolveAppRootDir(),
+    ...inferredPackageRoots
   ]);
   const nestedBinSegments = ["node_modules", "@openai", "codex-sdk", "node_modules", ".bin"];
+  const nestedCodexScriptSegments = [
+    "node_modules",
+    "@openai",
+    "codex-sdk",
+    "node_modules",
+    "@openai",
+    "codex",
+    "bin",
+    "codex.js"
+  ];
   const candidates = process.platform === "win32"
     ? [
       ...moduleSearchRoots.flatMap((root) => [
         path.join(root, "node_modules", ".bin", "codex.cmd"),
         path.join(root, "node_modules", ".bin", "codex.exe"),
         path.join(root, "node_modules", ".bin", "codex"),
+        path.join(root, "node_modules", "@openai", "codex", "bin", "codex.js"),
         path.join(root, ...nestedBinSegments, "codex.cmd"),
         path.join(root, ...nestedBinSegments, "codex.exe"),
-        path.join(root, ...nestedBinSegments, "codex")
+        path.join(root, ...nestedBinSegments, "codex"),
+        path.join(root, ...nestedCodexScriptSegments)
       ]),
       normalizeOptionalText(process.env.APPDATA)
         ? path.join(process.env.APPDATA as string, "npm", "codex.cmd")
@@ -164,7 +185,9 @@ function resolveCodexCliPath(configuredPath: string | undefined, homeDir: string
     : [
       ...moduleSearchRoots.flatMap((root) => [
         path.join(root, "node_modules", ".bin", "codex"),
-        path.join(root, ...nestedBinSegments, "codex")
+        path.join(root, "node_modules", "@openai", "codex", "bin", "codex.js"),
+        path.join(root, ...nestedBinSegments, "codex"),
+        path.join(root, ...nestedCodexScriptSegments)
       ]),
       path.resolve(process.cwd(), "packages", "session-sync-core", "node_modules", ".bin", "codex"),
       path.join(homeDir, ".local", "bin", "codex"),

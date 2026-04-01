@@ -3,7 +3,13 @@ interface PerfLogOptions {
   force?: boolean;
 }
 
-const PERF_DEBUG_ENABLED = process.env.CODINGNS_PERF_DEBUG === "1";
+const PERF_DEBUG_ENABLED = /^(1|true|yes)$/i.test(
+  process.env.CODINGNS_PERF_DEBUG?.trim() ?? ""
+);
+
+export function isPerfDebugEnabled(): boolean {
+  return PERF_DEBUG_ENABLED;
+}
 
 export function logPerformance(
   scope: string,
@@ -11,9 +17,13 @@ export function logPerformance(
   detail: Record<string, unknown> = {},
   options: PerfLogOptions = {}
 ): void {
+  if (!PERF_DEBUG_ENABLED) {
+    return;
+  }
+
   const thresholdMs = options.thresholdMs ?? 500;
 
-  if (!PERF_DEBUG_ENABLED && !options.force && durationMs < thresholdMs) {
+  if (!options.force && durationMs < thresholdMs) {
     return;
   }
 

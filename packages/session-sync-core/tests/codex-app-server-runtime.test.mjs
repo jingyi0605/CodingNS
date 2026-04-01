@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -28,15 +28,22 @@ function createRunRequest(overrides = {}) {
   };
 }
 
+function writeFakeCodexAppServer(scriptPath, source) {
+  writeFileSync(scriptPath, source.trim(), "utf8");
+}
+
 test("CodexRuntimeAdapter 通过 app-server 处理审批请求并继续完成 turn", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-app-server-"));
   const scriptPath = join(tempDir, "fake-codex-app-server.cjs");
-  const launcherPath = join(tempDir, "fake-codex.cmd");
+  const launcherPath = join(
+    tempDir,
+    process.platform === "win32" ? "fake-codex.cmd" : "fake-codex.sh"
+  );
   const threadPath = join(tempDir, "thread-1.jsonl").replace(/\\/g, "/");
   const emitted = [];
   const approvalRequests = [];
 
-  writeFileSync(
+  writeFakeCodexAppServer(
     scriptPath,
     `
 const readline = require("node:readline");
@@ -170,14 +177,19 @@ rl.on("line", (line) => {
     setTimeout(() => process.exit(0), 10);
   }
 });
-`.trim(),
-    "utf8"
+`
   );
   writeFileSync(
     launcherPath,
-    `@echo off\r\n"${process.execPath}" "${scriptPath}" %*\r\n`,
+    process.platform === "win32"
+      ? `@echo off\r\n"${process.execPath}" "${scriptPath}" %*\r\n`
+      : `#!/usr/bin/env sh\n"${process.execPath}" "${scriptPath}" "$@"\n`,
     "utf8"
   );
+
+  if (process.platform !== "win32") {
+    chmodSync(launcherPath, 0o755);
+  }
 
   try {
     const adapter = new CodexRuntimeAdapter({
@@ -206,6 +218,136 @@ rl.on("line", (line) => {
     assert.equal(emitted.some((event) => event.type === "message" && event.message.kind === "tool_result"), true);
     assert.equal(
       emitted.some((event) => event.type === "message" && event.message.role === "assistant" && event.message.content === "检查完成"),
+      true
+    );
+    assert.equal(emitted.some((event) => event.type === "complete"), true);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("CodexRuntimeAdapter 支持直接使用 Node 脚本作为 codex 命令入口", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-app-server-script-"));
+  const scriptPath = join(tempDir, "fake-codex-app-server.cjs");
+  const threadPath = join(tempDir, "thread-2.jsonl").replace(/\\/g, "/");
+  const emitted = [];
+
+  writeFakeCodexAppServer(
+    scriptPath,
+    `
+const readline = require("node:readline");
+const rl = readline.createInterface({ input: process.stdin });
+function write(payload) {
+  process.stdout.write(JSON.stringify(payload) + "\\n");
+}
+rl.on("line", (line) => {
+  const msg = JSON.parse(line);
+  if (msg.method === "initialize") {
+    write({ jsonrpc: "2.0", id: msg.id, result: {} });
+    return;
+  }
+  if (msg.method === "thread/start") {
+    write({
+      jsonrpc: "2.0",
+      id: msg.id,
+      result: {
+        thread: {
+          id: "thread-2",
+          preview: "",
+          ephemeral: false,
+          modelProvider: "openai",
+          createdAt: 0,
+          updatedAt: 0,
+          status: { type: "idle" },
+          path: ${JSON.stringify(threadPath)},
+          cwd: "C:/workspace-1",
+          cliVersion: "0.0.0",
+          source: "appServer",
+          agentNickname: null,
+          agentRole: null,
+          gitInfo: null,
+          name: null,
+          turns: []
+        }
+      }
+    });
+    return;
+  }
+  if (msg.method === "turn/start") {
+    write({
+      method: "turn/started",
+      params: {
+        threadId: "thread-2",
+        turn: { id: "turn-2", items: [], status: "inProgress" }
+      }
+    });
+    write({
+      method: "item/completed",
+      params: {
+        threadId: "thread-2",
+        turnId: "turn-2",
+        item: {
+          type: "agentMessage",
+          id: "assistant-2",
+          text: "脚本入口可用",
+          phase: "final_answer",
+          memoryCitation: null
+        }
+      }
+    });
+    write({
+      method: "turn/completed",
+      params: {
+        threadId: "thread-2",
+        turn: { id: "turn-2", items: [], status: "completed" }
+      }
+    });
+    write({
+      jsonrpc: "2.0",
+      id: msg.id,
+      result: {
+        turn: { id: "turn-2", items: [], status: "completed" }
+      }
+    });
+    setTimeout(() => process.exit(0), 10);
+  }
+});
+`
+  );
+
+  try {
+    const adapter = new CodexRuntimeAdapter({
+      homeDir: tempDir,
+      commandPath: scriptPath
+    });
+
+    const launch = await adapter.startSession(
+      createRunRequest({
+        sessionId: "session-2",
+        options: {
+          content: "确认脚本入口能否启动",
+          clientRequestId: "client-2",
+          model: null,
+          reasoningLevel: null,
+          permissionMode: null,
+          providerPrompt: null,
+          attachments: []
+        }
+      }),
+      {
+        async emit(event) {
+          emitted.push(event);
+        },
+        updateSessionBinding() {}
+      }
+    );
+
+    await launch.completed;
+
+    assert.equal(launch.providerSessionId, "thread-2");
+    assert.equal(launch.rawStoreRef, threadPath);
+    assert.equal(
+      emitted.some((event) => event.type === "message" && event.message.role === "assistant" && event.message.content === "脚本入口可用"),
       true
     );
     assert.equal(emitted.some((event) => event.type === "complete"), true);

@@ -1,4 +1,6 @@
-const PERMISSION_DEBUG_ENABLED = process.env.CODINGNS_PERMISSION_DEBUG !== "0";
+const PERMISSION_DEBUG_ENABLED = /^(1|true|yes)$/i.test(
+  process.env.CODINGNS_PERMISSION_DEBUG?.trim() ?? ""
+);
 
 export function isPermissionDebugEnabled(): boolean {
   return PERMISSION_DEBUG_ENABLED;

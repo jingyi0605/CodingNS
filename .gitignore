@@ -3,6 +3,7 @@ node_modules/
 .pnp
 .pnp.js
 tmp-ios-debug
+*.tgz
 
 # Build outputs
 dist/

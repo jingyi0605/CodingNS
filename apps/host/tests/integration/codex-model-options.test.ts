@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -139,8 +139,6 @@ rl.on("line", (line) => {
 `,
       "utf8"
     );
-    chmodSync(commandPath, 0o755);
-
     try {
       const service = new CodexModelOptionsService({
         commandPath

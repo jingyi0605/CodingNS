@@ -687,7 +687,9 @@ function shouldSpawnClaudeViaShell(commandPath: string): boolean {
   return process.platform === "win32" && /\.(cmd|bat)$/i.test(commandPath);
 }
 
-const CLAUDE_RUNTIME_DEBUG_ENABLED = process.env.CODINGNS_PERMISSION_DEBUG !== "0";
+const CLAUDE_RUNTIME_DEBUG_ENABLED = /^(1|true|yes)$/i.test(
+  process.env.CODINGNS_PERMISSION_DEBUG?.trim() ?? ""
+);
 
 function logClaudeRuntimeDebug(scope: string, detail: Record<string, unknown>): void {
   if (!CLAUDE_RUNTIME_DEBUG_ENABLED) {

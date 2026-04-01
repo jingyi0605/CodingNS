@@ -1,6 +1,8 @@
 import { spawn } from "node:child_process";
 import readline, { createInterface } from "node:readline";
 
+import { resolveCommandLaunch } from "../../shared/utils/command-launch.js";
+
 type HelperRequest =
   | {
       id: string;
@@ -85,10 +87,11 @@ async function readCodexAppServerState(commandPath: string, timeoutMs: number): 
   models: Array<Record<string, unknown>>;
 }> {
   return await new Promise((resolve, reject) => {
-    const child = spawn(commandPath, ["app-server"], {
+    const launch = resolveCommandLaunch(commandPath, ["app-server"]);
+    const child = spawn(launch.command, launch.args, {
       env: process.env,
       stdio: ["pipe", "pipe", "pipe"],
-      shell: shouldSpawnViaShell(commandPath),
+      shell: launch.shell,
       windowsHide: true
     });
     const stdout = createInterface({
@@ -256,14 +259,15 @@ async function readOpenCodeCliModels(
   timeoutMs: number
 ): Promise<string[]> {
   return await new Promise((resolve, reject) => {
-    const child = spawn(commandPath, ["models", "opencode"], {
+    const launch = resolveCommandLaunch(commandPath, ["models", "opencode"]);
+    const child = spawn(launch.command, launch.args, {
       cwd: workspacePath ?? undefined,
       env: {
         ...process.env,
         NO_COLOR: "1"
       },
       stdio: ["ignore", "pipe", "pipe"],
-      shell: shouldSpawnViaShell(commandPath),
+      shell: launch.shell,
       windowsHide: true
     });
     const stdout = createInterface({
@@ -388,8 +392,4 @@ function normalizeCliModelId(value: string): string | null {
 
 function normalizeText(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
-}
-
-function shouldSpawnViaShell(commandPath: string): boolean {
-  return process.platform === "win32" && /\.(cmd|bat)$/i.test(commandPath);
 }
