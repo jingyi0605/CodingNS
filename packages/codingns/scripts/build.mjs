@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 const packageRoot = fileURLToPath(new URL("../", import.meta.url));
 const workspaceRoot = path.resolve(packageRoot, "..", "..");
 const outputRoot = path.join(packageRoot, "dist");
+const packageJsonPath = path.join(packageRoot, "package.json");
 const bundledSessionSyncRoot = path.join(
   packageRoot,
   "node_modules",
@@ -18,6 +19,7 @@ buildWorkspaceTargets();
 prepareOutputDirectory();
 bundleSessionSyncCore();
 removeLegacyBundledOpenAiPackages();
+assertPublishablePackageManifest();
 
 console.info("[codingns] 独立构建完成");
 
@@ -55,6 +57,32 @@ function bundleSessionSyncCore() {
 
 function removeLegacyBundledOpenAiPackages() {
   fs.rmSync(bundledOpenAiRoot, { recursive: true, force: true });
+}
+
+function assertPublishablePackageManifest() {
+  const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
+  const dependencyFields = ["dependencies", "optionalDependencies", "peerDependencies"];
+  const invalidEntries = [];
+
+  for (const fieldName of dependencyFields) {
+    const dependencies = packageJson[fieldName];
+
+    if (!dependencies || typeof dependencies !== "object") {
+      continue;
+    }
+
+    for (const [dependencyName, versionRange] of Object.entries(dependencies)) {
+      if (typeof versionRange === "string" && versionRange.startsWith("workspace:")) {
+        invalidEntries.push(`${fieldName}.${dependencyName}=${versionRange}`);
+      }
+    }
+  }
+
+  if (invalidEntries.length > 0) {
+    throw new Error(
+      `发布包 package.json 仍包含 workspace 依赖，请改成可发布版本号：${invalidEntries.join(", ")}`
+    );
+  }
 }
 
 function ensureDirectoryExists(targetPath, label) {
