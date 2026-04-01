@@ -240,6 +240,7 @@ export function FileViewerModal({
   const showToastRef = useRef(showToast);
 
   const detectedLanguage = useMemo(() => detectLanguage(filePath), [filePath]);
+  const overviewMarkers = useMemo(() => buildFileOverviewMarkers(diffContent), [diffContent]);
   const isMarkdown = detectedLanguage === "markdown";
   const canEdit = Boolean(preview?.supported && preview.kind === "text");
 
@@ -429,8 +430,6 @@ export function FileViewerModal({
             <p className="status-text">{t("common.loading")}</p>
           ) : preview?.supported === false ? (
             <p className="status-text">{preview.reason ?? t("conversation.filePanelUnsupported")}</p>
-          ) : diffContent ? (
-            <DiffPreview content={diffContent} />
           ) : mode === "edit" ? (
             <textarea
               className="file-viewer-editor"
@@ -442,7 +441,11 @@ export function FileViewerModal({
           ) : isMarkdown ? (
             <MarkdownPreview content={editorContent} />
           ) : (
-            <CodePreview content={editorContent} language={detectedLanguage} />
+            <CodePreview
+              content={editorContent}
+              language={detectedLanguage}
+              overviewMarkers={overviewMarkers}
+            />
           )}
         </div>
       </section>
@@ -482,40 +485,65 @@ function MarkdownPreview({ content }: { content: string }) {
 
 function CodePreview({
   content,
-  language
+  language,
+  overviewMarkers = []
 }: {
   content: string;
   language: string;
+  overviewMarkers?: FileOverviewMarker[];
 }) {
   const lines = content.split(/\r?\n/);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+
+  const lineChangeMap = useMemo(() => {
+    const map = new Map<number, "add" | "modify">();
+    for (const marker of overviewMarkers) {
+      for (let i = 0; i < marker.span; i++) {
+        map.set(marker.line + i, marker.kind);
+      }
+    }
+    return map;
+  }, [overviewMarkers]);
 
   return (
     <div className="file-viewer-code-block">
       <div className="file-viewer-code-header">{formatLanguageLabel(language)}</div>
-      <div className="file-viewer-code-body">
-        {lines.map((line, index) => {
-          const tokens = tokenizeLine(line, language);
+      <div className="file-viewer-scroll-shell">
+        <div className="file-viewer-code-body" ref={bodyRef}>
+          {lines.map((line, index) => {
+            const tokens = tokenizeLine(line, language);
+            const lineNo = index + 1;
+            const changeKind = lineChangeMap.get(lineNo);
 
-          return (
-            <div key={`${index}-${line}`} className="file-viewer-code-line">
-              <span className="file-viewer-code-gutter">{index + 1}</span>
-              <code className="file-viewer-code-content">
-                {tokens.length ? (
-                  tokens.map((token, tokenIndex) => (
-                    <span
-                      key={`${index}-${tokenIndex}-${token.text}`}
-                      className={`code-token ${token.kind}`}
-                    >
-                      {token.text}
-                    </span>
-                  ))
-                ) : (
-                  <span className="code-token plain"> </span>
-                )}
-              </code>
-            </div>
-          );
-        })}
+            return (
+              <div
+                key={`${index}-${line}`}
+                className={`file-viewer-code-line${changeKind ? ` diff-line-${changeKind}` : ""}`}
+              >
+                <span className="file-viewer-code-gutter">{lineNo}</span>
+                <code className="file-viewer-code-content">
+                  {tokens.length ? (
+                    tokens.map((token, tokenIndex) => (
+                      <span
+                        key={`${index}-${tokenIndex}-${token.text}`}
+                        className={`code-token ${token.kind}`}
+                      >
+                        {token.text}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="code-token plain"> </span>
+                  )}
+                </code>
+              </div>
+            );
+          })}
+        </div>
+        <OverviewRuler
+          markers={overviewMarkers}
+          totalLines={lines.length}
+          scrollContainerRef={bodyRef}
+        />
       </div>
     </div>
   );
@@ -1516,6 +1544,12 @@ interface GitDiffLine {
   newLineNo: number | null;
 }
 
+interface FileOverviewMarker {
+  line: number;
+  span: number;
+  kind: "add" | "modify";
+}
+
 function parseGitDiffContent(content: string): GitDiffLine[] {
   const lines: GitDiffLine[] = [];
   const rawLines = content.replace(/\r\n/g, "\n").split("\n");
@@ -1567,79 +1601,176 @@ function parseGitDiffContent(content: string): GitDiffLine[] {
   return lines;
 }
 
-function DiffPreview({ content }: { content: string }) {
-  const lines = useMemo(() => parseGitDiffContent(content), [content]);
-  const totalLines = lines.length;
+function buildFileOverviewMarkers(diffContent?: string | null): FileOverviewMarker[] {
+  if (!diffContent?.trim()) {
+    return [];
+  }
 
-  // 收集变更行用于滚动条标识
-  const changeMarkers = useMemo(() => {
-    const markers: Array<{ index: number; kind: "add" | "remove" | "hunk" }> = [];
-    lines.forEach((line, index) => {
-      if (line.kind === "add" || line.kind === "remove" || line.kind === "hunk") {
-        markers.push({ index, kind: line.kind });
-      }
-    });
-    return markers;
-  }, [lines]);
+  const diffLines = parseGitDiffContent(diffContent);
+  const markers: FileOverviewMarker[] = [];
+  let removedCount = 0;
+  let addedLineNumbers: number[] = [];
 
-  const bodyRef = useRef<HTMLDivElement | null>(null);
-
-  return (
-    <div className="file-viewer-diff-shell">
-      <div className="file-viewer-diff-body" ref={bodyRef}>
-        {lines.map((line, index) => (
-          <div key={`${index}-${line.kind}`} className={`file-viewer-diff-line is-${line.kind}`}>
-            <span className="file-viewer-diff-old-no">{line.oldLineNo ?? ""}</span>
-            <span className="file-viewer-diff-new-no">{line.newLineNo ?? ""}</span>
-            <code className="file-viewer-diff-text">{line.text || " "}</code>
-          </div>
-        ))}
-      </div>
-      {totalLines > 0 ? (
-        <DiffOverviewRuler markers={changeMarkers} totalLines={totalLines} scrollBodyRef={bodyRef} />
-      ) : null}
-    </div>
-  );
-}
-
-function DiffOverviewRuler({
-  markers,
-  totalLines,
-  scrollBodyRef
-}: {
-  markers: Array<{ index: number; kind: "add" | "remove" | "hunk" }>;
-  totalLines: number;
-  scrollBodyRef: React.RefObject<HTMLDivElement | null>;
-}) {
-  const rulerRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    const body = scrollBodyRef.current;
-    const ruler = rulerRef.current;
-    if (!body || !ruler) return;
-
-    function handleScroll() {
-      if (!body || !ruler) return;
-      ruler.style.top = `${-(body.scrollTop / body.scrollHeight) * ruler.parentElement!.offsetHeight}px`;
+  function flushGroup() {
+    if (addedLineNumbers.length === 0) {
+      removedCount = 0;
+      return;
     }
 
-    body.addEventListener("scroll", handleScroll, { passive: true });
-    return () => body.removeEventListener("scroll", handleScroll);
-  }, [scrollBodyRef]);
+    const kind: FileOverviewMarker["kind"] = removedCount > 0 ? "modify" : "add";
+    appendOverviewMarkerRanges(markers, addedLineNumbers, kind);
+    removedCount = 0;
+    addedLineNumbers = [];
+  }
+
+  for (const line of diffLines) {
+    if (line.kind === "remove") {
+      removedCount += 1;
+      continue;
+    }
+
+    if (line.kind === "add") {
+      if (line.newLineNo !== null) {
+        addedLineNumbers.push(line.newLineNo);
+      }
+      continue;
+    }
+
+    flushGroup();
+  }
+
+  flushGroup();
+  return markers;
+}
+
+function appendOverviewMarkerRanges(
+  target: FileOverviewMarker[],
+  lineNumbers: number[],
+  kind: FileOverviewMarker["kind"]
+) {
+  const sortedLineNumbers = lineNumbers.filter((lineNo) => lineNo > 0);
+
+  if (sortedLineNumbers.length === 0) {
+    return;
+  }
+
+  let rangeStart = sortedLineNumbers[0] ?? 1;
+  let rangeEnd = rangeStart;
+
+  for (let index = 1; index < sortedLineNumbers.length; index += 1) {
+    const lineNo = sortedLineNumbers[index] ?? rangeEnd;
+
+    if (lineNo === rangeEnd + 1) {
+      rangeEnd = lineNo;
+      continue;
+    }
+
+    target.push({
+      line: rangeStart,
+      span: rangeEnd - rangeStart + 1,
+      kind
+    });
+    rangeStart = lineNo;
+    rangeEnd = lineNo;
+  }
+
+  target.push({
+    line: rangeStart,
+    span: rangeEnd - rangeStart + 1,
+    kind
+  });
+}
+
+function OverviewRuler({
+  markers,
+  totalLines,
+  scrollContainerRef
+}: {
+  markers: FileOverviewMarker[];
+  totalLines: number;
+  scrollContainerRef: {
+    current: HTMLDivElement | HTMLTextAreaElement | null;
+  };
+}) {
+  const [viewport, setViewport] = useState({
+    top: 0,
+    height: 0
+  });
+
+  useEffect(() => {
+    const scrollContainer = scrollContainerRef.current;
+
+    if (!scrollContainer) {
+      setViewport({
+        top: 0,
+        height: 0
+      });
+      return;
+    }
+
+    function updateViewport() {
+      const { clientHeight, scrollHeight, scrollTop } = scrollContainer;
+
+      if (scrollHeight <= 0 || clientHeight <= 0 || scrollHeight <= clientHeight) {
+        setViewport({
+          top: 0,
+          height: 0
+        });
+        return;
+      }
+
+      const visibleRatio = clientHeight / scrollHeight;
+      const nextHeight = Math.min(100, Math.max(12, visibleRatio * 100));
+      const scrollableHeight = scrollHeight - clientHeight;
+      const maxTop = Math.max(0, 100 - nextHeight);
+      const nextTop = scrollableHeight <= 0 ? 0 : (scrollTop / scrollableHeight) * maxTop;
+
+      setViewport({
+        top: nextTop,
+        height: nextHeight
+      });
+    }
+
+    updateViewport();
+    scrollContainer.addEventListener("scroll", updateViewport, { passive: true });
+    window.addEventListener("resize", updateViewport);
+
+    return () => {
+      scrollContainer.removeEventListener("scroll", updateViewport);
+      window.removeEventListener("resize", updateViewport);
+    };
+  }, [scrollContainerRef]);
+
+  if (markers.length === 0 && viewport.height === 0) {
+    return null;
+  }
+
+  const safeTotalLines = Math.max(totalLines, 1);
 
   return (
-    <div className="diff-overview-ruler" ref={rulerRef}>
-      {markers.map((marker, i) => {
-        const top = (marker.index / totalLines) * 100;
-        const height = Math.max(1, (1 / totalLines) * 100);
+    <div className="file-overview-ruler" data-testid="file-overview-ruler" aria-hidden="true">
+      {markers.map((marker) => {
+        const top = ((marker.line - 1) / safeTotalLines) * 100;
+        const height = Math.max(2, (marker.span / safeTotalLines) * 100);
+
         return (
           <div
-            key={i}
-            className={`diff-overview-marker is-${marker.kind}`}
+            key={`${marker.kind}-${marker.line}-${marker.span}`}
+            className={`file-overview-marker is-${marker.kind}`}
+            data-kind={marker.kind}
             style={{ top: `${top}%`, height: `${height}%` }}
           />
         );
       })}
+      {viewport.height > 0 ? (
+        <div
+          className="file-overview-viewport"
+          style={{
+            top: `${viewport.top}%`,
+            height: `${viewport.height}%`
+          }}
+        />
+      ) : null}
     </div>
   );
 }

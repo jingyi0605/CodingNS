@@ -1490,6 +1490,56 @@ describe("FileContextPanel", () => {
     expect(await screen.findByRole("dialog", { name: "config.json" })).toBeInTheDocument();
   });
 
+  it("M 状态文件从文件管理打开时仍显示预览，并带变更标尺", async () => {
+    gitApiMock.getGitStatus.mockResolvedValue({
+      snapshot: {
+        workspaceId: "workspace-1",
+        repoRoot: "C:/Code/CodingNS",
+        branch: "main",
+        ahead: 0,
+        behind: 0,
+        hasRemote: true,
+        isDirty: true,
+        lastFetchedAt: null
+      },
+      changes: [createGitChange("config.json", false)]
+    });
+    gitApiMock.getGitDiff.mockResolvedValue({
+      workspaceId: "workspace-1",
+      path: "config.json",
+      staged: false,
+      binary: false,
+      truncated: false,
+      content: [
+        "diff --git a/config.json b/config.json",
+        "index 1111111..2222222 100644",
+        "--- a/config.json",
+        "+++ b/config.json",
+        "@@ -1,3 +1,4 @@",
+        "-  \"name\": \"old\",",
+        "+  \"name\": \"demo\",",
+        "   \"enabled\": true",
+        "+  \"extra\": false"
+      ].join("\n")
+    });
+
+    renderPanel();
+
+    const fileEntry = await screen.findByText("config.json");
+    await userEvent.click(fileEntry);
+    await userEvent.click(fileEntry);
+
+    const dialog = await screen.findByRole("dialog", { name: "config.json" });
+
+    await waitFor(() => {
+      expect(gitApiMock.getGitDiff).toHaveBeenCalledWith("workspace-1", "config.json", false);
+    });
+
+    expect(dialog).toHaveTextContent("demo");
+    expect(within(dialog).queryByText("diff --git a/config.json b/config.json")).not.toBeInTheDocument();
+    expect(dialog.querySelector('[data-testid="file-overview-ruler"]')).not.toBeNull();
+  });
+
   it("本次会话文件连续点击两次会打开查看器（旧块）", async () => {
     conversationApiMock.getSessionChangedFiles.mockResolvedValue({
       items: [

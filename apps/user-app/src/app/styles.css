@@ -10626,6 +10626,13 @@ textarea:focus-visible {
   background: var(--code-block-surface);
 }
 
+.file-viewer-scroll-shell {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
 .file-viewer-code-header {
   display: flex;
   align-items: center;
@@ -10645,6 +10652,16 @@ textarea:focus-visible {
   flex-direction: column;
   overflow: auto;
   padding: 12px 0;
+  padding-right: 14px;
+  scrollbar-gutter: stable;
+}
+
+.file-viewer-code-line.diff-line-add {
+  background: color-mix(in srgb, #22c55e 12%, transparent);
+}
+
+.file-viewer-code-line.diff-line-modify {
+  background: color-mix(in srgb, #60a5fa 12%, transparent);
 }
 
 .file-viewer-code-line {
@@ -10710,6 +10727,44 @@ textarea:focus-visible {
 .code-token.boolean,
 .code-token.null {
   color: var(--code-token-literal);
+}
+
+.file-overview-ruler {
+  position: absolute;
+  top: 10px;
+  right: 4px;
+  bottom: 10px;
+  width: 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-hover) 72%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-primary) 48%, transparent);
+  pointer-events: none;
+}
+
+.file-overview-marker {
+  position: absolute;
+  left: 2px;
+  width: 6px;
+  min-height: 2px;
+  border-radius: 999px;
+}
+
+.file-overview-marker.is-add {
+  background: color-mix(in srgb, #22c55e 72%, white 10%);
+}
+
+.file-overview-marker.is-modify {
+  background: color-mix(in srgb, #60a5fa 82%, white 8%);
+}
+
+.file-overview-viewport {
+  position: absolute;
+  left: 1px;
+  width: 8px;
+  min-height: 16px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-secondary) 26%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, white 45%, transparent);
 }
 
 .session-provider-grid {

@@ -118,6 +118,7 @@ export function FileContextPanel({
   const mobileActionMenuRef = useRef<HTMLDivElement | null>(null);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const handledExternalRevealRequestIdRef = useRef<number | null>(null);
+  const viewerDiffRequestIdRef = useRef(0);
   const directoryWaitersRef = useRef(
     new Map<
       string,
@@ -314,10 +315,12 @@ export function FileContextPanel({
   useEffect(() => {
     setSelectedPath(null);
     setViewerFilePath(null);
+    setViewerDiffContent(null);
     setSessionRefreshVersion(0);
     setCopyPathMenuOpen(false);
     setMobileActionMenuOpen(false);
     recentFileActivationRef.current = null;
+    viewerDiffRequestIdRef.current += 1;
   }, [sessionId]);
 
   useEffect(() => {
@@ -793,24 +796,30 @@ export function FileContextPanel({
   }
 
   async function openFileViewer(filePath: string) {
-    await selectFile(filePath);
+    setViewerFilePath(filePath);
+    setViewerDiffContent(null);
+    recentFileActivationRef.current = null;
+    viewerDiffRequestIdRef.current += 1;
 
-    // 如果文件有变更，尝试获取 diff 内容
+    void selectFile(filePath);
+
+    // 预览视图始终先打开，diff 只作为滚动标尺数据源，不能反过来接管整个查看器。
+    const requestId = viewerDiffRequestIdRef.current;
     const normalizedPath = filePath.replace(/\\/g, "/");
     const status = gitChangeInfo.statusByPath.get(normalizedPath);
-    if (workspaceId && status && status !== "?") {
+    if (workspaceId && status && status !== "?" && status !== "D") {
       try {
         const diffResult = await getGitDiff(workspaceId, filePath, false);
-        setViewerDiffContent(diffResult.content);
-      } catch {
-        setViewerDiffContent(null);
-      }
-    } else {
-      setViewerDiffContent(null);
-    }
 
-    setViewerFilePath(filePath);
-    recentFileActivationRef.current = null;
+        if (viewerDiffRequestIdRef.current === requestId) {
+          setViewerDiffContent(diffResult.content || null);
+        }
+      } catch {
+        if (viewerDiffRequestIdRef.current === requestId) {
+          setViewerDiffContent(null);
+        }
+      }
+    }
   }
 
   function shouldOpenViewerByRepeatClick(filePath: string): boolean {
@@ -1288,7 +1297,11 @@ export function FileContextPanel({
             workspaceId={workspaceId}
             filePath={viewerFilePath}
             open={viewerFilePath !== null}
-            onClose={() => { setViewerFilePath(null); setViewerDiffContent(null); }}
+            onClose={() => {
+              viewerDiffRequestIdRef.current += 1;
+              setViewerFilePath(null);
+              setViewerDiffContent(null);
+            }}
             onSaved={async (filePath) => {
               await refreshTreeCache();
               await selectFile(filePath);
