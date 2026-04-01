@@ -3,6 +3,7 @@ import type { IncomingMessage, Server } from "node:http";
 import { WebSocketServer, type WebSocket } from "ws";
 
 import { AppError } from "../shared/errors/app-error.js";
+import { hashContent } from "../shared/utils/hash.js";
 import type { AuthContext } from "../modules/auth/auth-service.js";
 import type {
   SessionHistoryEnvelope,
@@ -39,7 +40,14 @@ interface CombinedSubscription {
 interface SeenMessageEntry {
   signature: string;
   source: "history" | "runtime";
+  timestamp: string;
+  contentLength: number;
+  contentPreview: string;
+  toolCallStatus: "running" | "completed" | "failed" | null;
 }
+
+const MAX_TRACKED_MESSAGES_PER_SUBSCRIPTION = 2_048;
+const MAX_STORED_MESSAGE_PREVIEW_CHARS = 2_048;
 
 export function createWsServer(
   server: Server,
@@ -336,10 +344,10 @@ function shouldForwardMessage(
   source: "history" | "runtime",
   seenMessages: Map<string, SeenMessageEntry>
 ): boolean {
-  const signature = buildMessageSignature(message);
+  const nextEntry = buildSeenMessageEntry(message, source);
   const previous = seenMessages.get(message.messageId);
 
-  if (previous && previous.signature === signature) {
+  if (previous && previous.signature === nextEntry.signature) {
     return false;
   }
 
@@ -347,78 +355,114 @@ function shouldForwardMessage(
     previous &&
     previous.source === "runtime" &&
     source === "history" &&
-    isOlderMessageVersion(message, previous.signature)
+    isOlderMessageVersion(message, previous)
   ) {
     return false;
   }
 
-  seenMessages.set(message.messageId, {
-    signature,
-    source
-  });
+  rememberSeenMessage(seenMessages, message.messageId, nextEntry);
   return true;
 }
 
 function buildMessageSignature(
   message: SessionHistoryEnvelope["messages"][number]
 ): string {
-  return JSON.stringify({
-    provider: message.provider,
-    providerSessionId: message.providerSessionId,
-    role: message.role,
-    kind: message.kind ?? null,
-    content: message.content,
+  const attachments = message.attachments ?? [];
+  const toolCall = message.toolCall;
+
+  return hashContent(
+    [
+      message.provider,
+      message.providerSessionId,
+      message.role,
+      message.kind ?? "",
+      message.timestamp,
+      message.rawRef,
+      hashContent(message.content),
+      String(message.content.length),
+      hashContent(JSON.stringify(attachments)),
+      String(attachments.length),
+      toolCall?.callId ?? "",
+      toolCall?.name ?? "",
+      toolCall?.status ?? "",
+      toolCall ? hashContent(toolCall.input) : "",
+      toolCall ? String(toolCall.input.length) : "0",
+      toolCall?.output === null || toolCall?.output === undefined ? "" : hashContent(toolCall.output),
+      toolCall?.output === null || toolCall?.output === undefined ? "0" : String(toolCall.output.length),
+      toolCall?.error === null || toolCall?.error === undefined ? "" : hashContent(toolCall.error),
+      toolCall?.error === null || toolCall?.error === undefined ? "0" : String(toolCall.error.length)
+    ].join("\u001f")
+  );
+}
+
+function buildSeenMessageEntry(
+  message: SessionHistoryEnvelope["messages"][number],
+  source: "history" | "runtime"
+): SeenMessageEntry {
+  return {
+    signature: buildMessageSignature(message),
+    source,
     timestamp: message.timestamp,
-    rawRef: message.rawRef,
-    attachments: message.attachments ?? [],
-    toolCall: message.toolCall
-      ? {
-          callId: message.toolCall.callId,
-          status: message.toolCall.status,
-          input: message.toolCall.input,
-          output: message.toolCall.output,
-          error: message.toolCall.error
-        }
-      : null
-  });
+    contentLength: message.content.length,
+    contentPreview: createStoredPreview(message.content),
+    toolCallStatus: message.toolCall?.status ?? null
+  };
 }
 
 function isOlderMessageVersion(
   message: SessionHistoryEnvelope["messages"][number],
-  previousSignature: string
+  previous: SeenMessageEntry
 ): boolean {
-  try {
-    const previous = JSON.parse(previousSignature) as {
-      content?: string;
-      timestamp?: string;
-      toolCall?: {
-        status?: string;
-        output?: string | null;
-        error?: string | null;
-      } | null;
-    };
-    const previousContent = typeof previous.content === "string" ? previous.content : "";
-    const nextContent = typeof message.content === "string" ? message.content : "";
+  const nextContent = message.content;
 
-    if (previousContent.length > nextContent.length && previousContent.includes(nextContent)) {
-      return true;
+  if (
+    previous.contentLength > nextContent.length &&
+    nextContent.length > 0 &&
+    nextContent.length <= MAX_STORED_MESSAGE_PREVIEW_CHARS &&
+    previous.contentPreview.includes(nextContent)
+  ) {
+    return true;
+  }
+
+  if (previous.timestamp && message.timestamp < previous.timestamp) {
+    return true;
+  }
+
+  const nextStatus = message.toolCall?.status ?? null;
+
+  return (
+    (previous.toolCallStatus === "completed" || previous.toolCallStatus === "failed") &&
+    nextStatus === "running"
+  );
+}
+
+function createStoredPreview(value: string): string {
+  if (value.length <= MAX_STORED_MESSAGE_PREVIEW_CHARS) {
+    return value;
+  }
+
+  return value.slice(0, MAX_STORED_MESSAGE_PREVIEW_CHARS);
+}
+
+function rememberSeenMessage(
+  seenMessages: Map<string, SeenMessageEntry>,
+  messageId: string,
+  entry: SeenMessageEntry
+): void {
+  if (seenMessages.has(messageId)) {
+    seenMessages.delete(messageId);
+  }
+
+  seenMessages.set(messageId, entry);
+
+  while (seenMessages.size > MAX_TRACKED_MESSAGES_PER_SUBSCRIPTION) {
+    const oldestMessageId = seenMessages.keys().next().value;
+
+    if (typeof oldestMessageId !== "string") {
+      break;
     }
 
-    const previousTimestamp = typeof previous.timestamp === "string" ? previous.timestamp : "";
-
-    if (previousTimestamp && message.timestamp < previousTimestamp) {
-      return true;
-    }
-
-    const previousStatus = previous.toolCall?.status ?? null;
-    const nextStatus = message.toolCall?.status ?? null;
-
-    return (
-      (previousStatus === "completed" || previousStatus === "failed")
-      && nextStatus === "running"
-    );
-  } catch {
-    return false;
+    seenMessages.delete(oldestMessageId);
   }
 }
 
@@ -438,3 +482,12 @@ function sendWsError(
     })
   );
 }
+
+export const __internal__ = {
+  MAX_TRACKED_MESSAGES_PER_SUBSCRIPTION,
+  MAX_STORED_MESSAGE_PREVIEW_CHARS,
+  buildMessageSignature,
+  buildSeenMessageEntry,
+  isOlderMessageVersion,
+  shouldForwardMessage
+};

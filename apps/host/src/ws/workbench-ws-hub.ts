@@ -16,6 +16,7 @@ import type { WorkspaceFileWatcher } from "../modules/workbench/workspace-file-w
 const WORKBENCH_REFRESH_INTERVAL_MS = 60_000;
 const SIDEBAR_REFRESH_INTERVAL_MS = 5_000;
 const GIT_SUBSCRIPTION_MIN_REFRESH_INTERVAL_MS = 15_000;
+const WORKBENCH_REALTIME_BROADCAST_DEBOUNCE_MS = 120;
 
 interface WorkbenchSubscribeMessage {
   type: "workbench.subscribe";
@@ -84,6 +85,9 @@ interface UserChannelState {
   lastWorkbenchPayload: string | null;
   workbenchTimer: NodeJS.Timeout | null;
   sidebarTimer: NodeJS.Timeout | null;
+  realtimeBroadcastTimer: NodeJS.Timeout | null;
+  realtimeBroadcastQueued: boolean;
+  realtimeBroadcastTask: Promise<void> | null;
   refreshTask: Promise<void> | null;
   titleSyncTask: Promise<void> | null;
 }
@@ -272,31 +276,81 @@ export class WorkbenchWsHub {
       clearInterval(channel.sidebarTimer);
     }
 
+    if (channel.realtimeBroadcastTimer) {
+      clearTimeout(channel.realtimeBroadcastTimer);
+    }
+
     this.userChannels.delete(userId);
   }
 
   async broadcastSnapshot(userId: string): Promise<void> {
-    try {
-      const channel = this.userChannels.get(userId);
+    const channel = this.userChannels.get(userId);
 
-      if (!channel) {
-        return;
-      }
-
-      const payload = buildWorkbenchPayload(this.workbenchService.getSnapshot(userId));
-
-      if (payload === channel.lastWorkbenchPayload) {
-        return;
-      }
-
-      channel.lastWorkbenchPayload = payload;
-
-      for (const client of channel.clients) {
-        client.send(payload);
-      }
-    } catch (error) {
-      this.reportAsyncError("broadcastSnapshot", error, { userId });
+    if (!channel) {
+      return;
     }
+
+    channel.realtimeBroadcastQueued = true;
+    this.scheduleRealtimeBroadcast(userId, channel);
+  }
+
+  private scheduleRealtimeBroadcast(userId: string, channel: UserChannelState): void {
+    if (
+      channel.realtimeBroadcastTimer ||
+      channel.realtimeBroadcastTask ||
+      channel.clients.size === 0
+    ) {
+      return;
+    }
+
+    channel.realtimeBroadcastTimer = setTimeout(() => {
+      channel.realtimeBroadcastTimer = null;
+      void this.flushRealtimeBroadcast(userId, channel);
+    }, WORKBENCH_REALTIME_BROADCAST_DEBOUNCE_MS);
+  }
+
+  private async flushRealtimeBroadcast(
+    userId: string,
+    channel: UserChannelState
+  ): Promise<void> {
+    if (channel.realtimeBroadcastTask || !channel.realtimeBroadcastQueued || channel.clients.size === 0) {
+      return;
+    }
+
+    channel.realtimeBroadcastQueued = false;
+    channel.realtimeBroadcastTask = (async () => {
+      const startedAtMs = terminalDebugNowMs();
+
+      try {
+        const payload = buildWorkbenchPayload(this.workbenchService.getSnapshot(userId));
+
+        if (payload === channel.lastWorkbenchPayload) {
+          return;
+        }
+
+        channel.lastWorkbenchPayload = payload;
+
+        for (const client of channel.clients) {
+          client.send(payload);
+        }
+
+        logTerminalDebug("workbench.realtime_broadcast.completed", {
+          userId,
+          clientCount: channel.clients.size,
+          durationMs: terminalDebugNowMs() - startedAtMs
+        });
+      } catch (error) {
+        this.reportAsyncError("broadcastSnapshot", error, { userId });
+      }
+    })().finally(() => {
+      channel.realtimeBroadcastTask = null;
+
+      if (channel.realtimeBroadcastQueued && channel.clients.size > 0) {
+        this.scheduleRealtimeBroadcast(userId, channel);
+      }
+    });
+
+    return channel.realtimeBroadcastTask;
   }
 
   private attachClient(client: WebSocket, userId: string, channel: UserChannelState): void {
@@ -337,6 +391,9 @@ export class WorkbenchWsHub {
       lastWorkbenchPayload: null,
       workbenchTimer: null,
       sidebarTimer: null,
+      realtimeBroadcastTimer: null,
+      realtimeBroadcastQueued: false,
+      realtimeBroadcastTask: null,
       refreshTask: null,
       titleSyncTask: null
     };

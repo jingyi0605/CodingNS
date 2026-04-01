@@ -333,6 +333,128 @@ describe("WorkbenchWsHub", () => {
 
     hub.cleanupClient(client);
   });
+
+  it("实时会话广播会在短时间内合并，避免每条消息都全量刷新工作台", async () => {
+    vi.useFakeTimers();
+
+    const client = {
+      send: vi.fn()
+    } as unknown as WebSocket;
+    const authContext: AuthContext = {
+      accessToken: "token",
+      user: {
+        userId: "user-1",
+        username: "admin",
+        role: "admin"
+      }
+    };
+    const workbenchService = {
+      getSnapshot: vi
+        .fn()
+        .mockReturnValueOnce({
+          items: [
+            {
+              workspace: {
+                id: "workspace-1",
+                name: "Workspace",
+                path: "/workspace",
+                repoRoot: "/workspace",
+                favorite: false,
+                createdAt: "2026-04-01T00:00:00.000Z",
+                updatedAt: "2026-04-01T00:00:00.000Z"
+              },
+              sessions: []
+            }
+          ]
+        })
+        .mockReturnValue({
+          items: [
+            {
+              workspace: {
+                id: "workspace-1",
+                name: "Workspace",
+                path: "/workspace",
+                repoRoot: "/workspace",
+                favorite: false,
+                createdAt: "2026-04-01T00:00:00.000Z",
+                updatedAt: "2026-04-01T00:00:00.000Z"
+              },
+              sessions: [
+                {
+                  sessionId: "session-1",
+                  workspaceId: "workspace-1",
+                  provider: "codex",
+                  providerSessionId: "provider-session-1",
+                  rawStoreRef: "raw://session-1",
+                  isArchived: false,
+                  isFavorite: false,
+                  title: "新消息来了",
+                  messageCount: 1,
+                  lastMessageAt: "2026-04-01T10:00:00.000Z",
+                  createdAt: "2026-04-01T00:00:00.000Z",
+                  updatedAt: "2026-04-01T10:00:00.000Z",
+                  syncStatus: "idle",
+                  syncCursor: null,
+                  lastSyncAt: "2026-04-01T10:00:00.000Z",
+                  lastErrorCode: null,
+                  lastErrorDetail: null,
+                  resumedAt: null,
+                  runningState: "running",
+                  activitySource: "runtime",
+                  lastEventAt: "2026-04-01T10:00:00.000Z",
+                  completedAt: null,
+                  lastSeenAt: null,
+                  activityState: "running"
+                }
+              ]
+            }
+          ]
+        }),
+      shouldRefreshSnapshot: vi.fn(() => false),
+      refreshSnapshot: vi.fn(async () => ({ items: [] })),
+      syncSessionTitles: vi.fn(async () => ({ items: [] }))
+    } satisfies Pick<
+      WorkbenchService,
+      "getSnapshot" | "shouldRefreshSnapshot" | "refreshSnapshot" | "syncSessionTitles"
+    >;
+
+    const hub = new WorkbenchWsHub(
+      workbenchService as unknown as WorkbenchService,
+      {} as WorkspacePanelSnapshotService,
+      createMockFileWatcher() as unknown as WorkspaceFileWatcher
+    );
+
+    expect(
+      hub.handleMessage(
+        client,
+        {
+          type: "workbench.subscribe"
+        },
+        authContext
+      )
+    ).toBe(true);
+
+    await flushAsyncTasks();
+    expect(workbenchService.getSnapshot).toHaveBeenCalledTimes(1);
+    expect(client.send).toHaveBeenCalledTimes(1);
+    vi.mocked(client.send).mockClear();
+
+    void hub.broadcastSnapshot("user-1");
+    void hub.broadcastSnapshot("user-1");
+    void hub.broadcastSnapshot("user-1");
+
+    await flushAsyncTasks();
+    expect(workbenchService.getSnapshot).toHaveBeenCalledTimes(1);
+    expect(client.send).toHaveBeenCalledTimes(0);
+
+    await vi.advanceTimersByTimeAsync(120);
+    await flushAsyncTasks();
+
+    expect(workbenchService.getSnapshot).toHaveBeenCalledTimes(2);
+    expect(client.send).toHaveBeenCalledTimes(1);
+
+    hub.cleanupClient(client);
+  });
 });
 
 async function flushAsyncTasks(): Promise<void> {
