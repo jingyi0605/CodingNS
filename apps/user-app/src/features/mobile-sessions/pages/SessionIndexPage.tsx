@@ -41,7 +41,9 @@ export function SessionIndexPage() {
   const currentWorkspaceEntries = useMemo(
     () =>
       currentWorkspaceGroup
-        ? flattenNavigationSessions([currentWorkspaceGroup]).filter((entry) => !entry.session.isArchived)
+        ? flattenNavigationSessions([currentWorkspaceGroup]).filter(
+            (entry) => !entry.session.isArchived && !entry.session.isSubagent
+          )
         : ([] as WorkbenchNavigationEntry[]),
     [currentWorkspaceGroup]
   );
