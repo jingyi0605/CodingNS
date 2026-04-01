@@ -9,9 +9,15 @@ const moduleRequire = createRequire(import.meta.url);
 const packageJsonPath = path.join(packageRoot, "package.json");
 const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
 const sdkVersionRange = packageJson.dependencies?.["@openai/codex-sdk"];
+const sessionSyncCoreRange = packageJson.dependencies?.["@codingns/session-sync-core"];
 
 if (!sdkVersionRange) {
   logInfo("[codingns] 未声明 @openai/codex-sdk，跳过 Codex 安装校验");
+  process.exit(0);
+}
+
+if (isWorkspaceSourceInstall()) {
+  logInfo("[codingns] 检测到工作区源码安装，跳过发布包运行时修复");
   process.exit(0);
 }
 
@@ -147,6 +153,12 @@ function runNpmInstall(args) {
 
 function logInfo(message) {
   console.error(message);
+}
+
+function isWorkspaceSourceInstall() {
+  return (
+    typeof sessionSyncCoreRange === "string" && sessionSyncCoreRange.startsWith("workspace:")
+  );
 }
 
 function resolveCodexCliScriptPath(sdkPackageRoot) {
