@@ -578,9 +578,7 @@ a {
 
 .mobile-adaptive-pane-main {
   display: flex;
-  flex: 1;
-  width: 100%;
-  max-width: 100%;
+  flex: 1 1 0;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -596,6 +594,7 @@ a {
 }
 
 .mobile-adaptive-pane-panel {
+  flex-shrink: 0;
   min-width: 0;
   overflow: hidden;
 }

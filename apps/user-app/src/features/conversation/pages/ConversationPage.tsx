@@ -48,7 +48,7 @@ import {
   shouldSupportRunSteering
 } from "../capability/provider-ui";
 import {
-  buildNavigationSessionTree,
+  buildDraftSessionPath,
   buildWorkspaceSessionIndexPath,
   buildWorkspaceSessionPath,
   flattenNavigationSessions,
@@ -64,13 +64,13 @@ import {
 import "../../mobile-sessions/styles.css";
 
 const RUNTIME_TIMEOUT_TOAST_DELAY_MS = 15_000;
-const MOBILE_PREVIEW_DEFAULT_RATIO = 0.6;
-const MOBILE_PREVIEW_MAX_RATIO = 0.6;
-const MOBILE_PREVIEW_GESTURE_DIRECTION_LOCK_PX = 12;
-const MOBILE_PREVIEW_OPEN_THRESHOLD_PX = 60;
+const MOBILE_PREVIEW_DEFAULT_RATIO = 0.48;
+const MOBILE_PREVIEW_MAX_RATIO = 0.48;
+const MOBILE_PREVIEW_GESTURE_DIRECTION_LOCK_PX = 8;
+const MOBILE_PREVIEW_OPEN_THRESHOLD_PX = 36;
 const MOBILE_PREVIEW_EXPAND_THRESHOLD_PX = 48;
-const MOBILE_PREVIEW_CLOSE_THRESHOLD_PX = 52;
-const MOBILE_PREVIEW_EDGE_ACTIVATION_PX = 44;
+const MOBILE_PREVIEW_CLOSE_THRESHOLD_PX = 34;
+const MOBILE_PREVIEW_EDGE_ACTIVATION_PX = 96;
 
 export function ConversationPage() {
   const { sessionId = "", workspaceId: routeWorkspaceIdParam } = useParams();
@@ -188,6 +188,15 @@ function LiveConversationPage({
     () => navigationGroups.map((group) => group.workspace),
     [navigationGroups]
   );
+  const mobilePreviewActiveSessionId = useMemo(
+    () =>
+      resolveMobilePreviewActiveSessionId(
+        navigationGroups,
+        mobileWorkspaceId,
+        sessionId
+      ),
+    [mobileWorkspaceId, navigationGroups, sessionId]
+  );
   const mobilePreviewItems = useMemo(
     () =>
       buildMobilePreviewItems(
@@ -208,6 +217,7 @@ function LiveConversationPage({
         : null,
     [mobileWorkspaceId, navigationGroups]
   );
+  const mobileDraftProvider = session?.provider ?? navigationSession?.provider ?? null;
   const mobileSessionTitlePresentation = useMemo(
     () => buildSessionTitlePresentation((session ?? navigationSession)?.title ?? null, t("conversation.titleFallback")),
     [navigationSession, session]
@@ -215,7 +225,7 @@ function LiveConversationPage({
   const mobileArchivedSessions = useMemo(
     () =>
       mobileArchiveWorkspaceGroup?.sessions.filter(
-        (item) => item.isArchived === true && !(item.parentSessionId?.trim() || null)
+        (item) => item.isArchived === true && item.isSubagent !== true
       ) ?? [],
     [mobileArchiveWorkspaceGroup]
   );
@@ -374,6 +384,7 @@ function LiveConversationPage({
           <MobileWorkspaceSwitcherHeader
             containerRef={mobileConversationHeaderRef}
             className="mobile-conversation-page-header"
+            gestureHandlers={mobilePreview.mainGestureHandlers}
             currentWorkspace={mobileArchiveWorkspaceGroup?.workspace ?? mobileWorkspaces[0] ?? null}
             workspaces={mobileWorkspaces}
             heading={mobileSessionTitlePresentation.fullTitle}
@@ -398,10 +409,19 @@ function LiveConversationPage({
             widthPx={mobilePreview.previewWidthPx}
             isDragging={mobilePreview.isDragging}
             gestureHandlers={mobilePreview.railGestureHandlers}
-            activeSessionId={sessionId}
+            activeSessionId={mobilePreviewActiveSessionId}
+            createSessionActionLabel={t("shell.createSession")}
             favoriteItems={mobileFavoritePreviewItems}
             items={mobilePreviewItems}
             workspaceSectionLabel={t("shell.mobileConversationCurrentWorkspaceSection")}
+            onCreateSession={
+              mobileWorkspaceId && mobileDraftProvider
+                ? () => {
+                    writeMobileConversationPreviewMode("immersive");
+                    navigate(buildDraftSessionPath(mobileWorkspaceId, mobileDraftProvider));
+                  }
+                : null
+            }
             archiveCurrentActionLabel={t("shell.archiveCurrentSessionAction")}
             archiveFolderActionLabel={t("shell.archiveFolderAction")}
             onArchiveActiveSession={() => {
@@ -729,6 +749,7 @@ function DraftConversationPage({
         <MobileWorkspaceSwitcherHeader
           containerRef={mobileConversationHeaderRef}
           className="mobile-conversation-page-header"
+          gestureHandlers={mobilePreview.mainGestureHandlers}
           currentWorkspace={mobileWorkspaces.find((workspace) => workspace.id === draft.workspaceId) ?? mobileWorkspaces[0] ?? null}
           workspaces={mobileWorkspaces}
           heading={mobileSessionTitlePresentation.fullTitle}
@@ -754,9 +775,14 @@ function DraftConversationPage({
           isDragging={mobilePreview.isDragging}
           gestureHandlers={mobilePreview.railGestureHandlers}
           activeSessionId={draft.sessionId}
+          createSessionActionLabel={t("shell.createSession")}
           favoriteItems={mobileFavoritePreviewItems}
           items={mobilePreviewItems}
           workspaceSectionLabel={t("shell.mobileConversationCurrentWorkspaceSection")}
+          onCreateSession={() => {
+            writeMobileConversationPreviewMode("immersive");
+            navigate(buildDraftSessionPath(draft.workspaceId, draft.provider));
+          }}
           onActivate={(entry) => {
             writeMobileConversationPreviewMode("preview");
             navigate(buildWorkspaceSessionPath(entry.workspace.id, entry.session.sessionId));
@@ -929,32 +955,70 @@ function buildMobilePreviewItems(
     }>;
   }
 
-  const tree = buildNavigationSessionTree(
-    flattenNavigationSessions([workspaceGroup]).filter(
-      (entry) => !entry.session.isArchived && !excludedSessionIds.has(entry.session.sessionId)
+  return flattenNavigationSessions([workspaceGroup])
+    .filter(
+      (entry) =>
+        !entry.session.isArchived
+        && entry.session.isSubagent !== true
+        && !excludedSessionIds.has(entry.session.sessionId)
     )
-  );
-
-  return tree.flatMap((node) => [
-    {
-      entry: node.entry,
-      depth: 0 as const
-    },
-    ...node.children.map((entry) => ({
+    .map((entry) => ({
       entry,
-      depth: 1 as const
-    }))
-  ]);
+      depth: 0 as const
+    }));
 }
 
 function buildMobileFavoritePreviewItems(
   favoriteSessions: readonly WorkbenchNavigationEntry[]
 ) {
   return favoriteSessions
+    .filter((item) => item.session.isSubagent !== true)
     .map((entry) => ({
       entry,
       depth: 0 as const
     }));
+}
+
+function resolveMobilePreviewActiveSessionId(
+  navigationGroups: ReturnType<typeof useWorkbenchShell>["navigationGroups"],
+  workspaceId: string | null,
+  sessionId: string
+) {
+  if (!workspaceId) {
+    return sessionId;
+  }
+
+  const workspaceGroup = navigationGroups.find((group) => group.workspace.id === workspaceId);
+
+  if (!workspaceGroup) {
+    return sessionId;
+  }
+
+  const sessionById = new Map(workspaceGroup.sessions.map((item) => [item.sessionId, item] as const));
+  let currentSession = sessionById.get(sessionId);
+
+  if (!currentSession) {
+    return sessionId;
+  }
+
+  const visitedSessionIds = new Set<string>([currentSession.sessionId]);
+
+  while (true) {
+    const parentSessionId = currentSession.parentSessionId?.trim() || null;
+
+    if (!parentSessionId) {
+      return currentSession.sessionId;
+    }
+
+    const parentSession = sessionById.get(parentSessionId);
+
+    if (!parentSession || visitedSessionIds.has(parentSession.sessionId)) {
+      return currentSession.sessionId;
+    }
+
+    visitedSessionIds.add(parentSession.sessionId);
+    currentSession = parentSession;
+  }
 }
 
 function useMobileConversationComposerHeightVar(
@@ -1079,6 +1143,7 @@ function useMobileConversationPreviewController(enabled: boolean) {
   const previewWidthModeRef = useRef(previewWidthMode);
   const gestureRef = useRef<{
     source: "main" | "rail";
+    intent: "open" | "close" | "rail";
     startX: number;
     startY: number;
     lastX: number;
@@ -1179,7 +1244,10 @@ function useMobileConversationPreviewController(enabled: boolean) {
     }
 
     if (source === "main") {
-      if (previewWidthModeRef.current !== "closed" || touch.clientX > MOBILE_PREVIEW_EDGE_ACTIVATION_PX) {
+      if (
+        previewWidthModeRef.current === "closed"
+        && touch.clientX > MOBILE_PREVIEW_EDGE_ACTIVATION_PX
+      ) {
         gestureRef.current = null;
         return;
       }
@@ -1190,6 +1258,12 @@ function useMobileConversationPreviewController(enabled: boolean) {
 
     gestureRef.current = {
       source,
+      intent:
+        source === "rail"
+          ? "rail"
+          : previewWidthModeRef.current === "closed"
+            ? "open"
+            : "close",
       startX: touch.clientX,
       startY: touch.clientY,
       lastX: touch.clientX,
@@ -1224,7 +1298,12 @@ function useMobileConversationPreviewController(enabled: boolean) {
         return;
       }
 
-      if (gesture.source === "main" && deltaX <= 0) {
+      if (gesture.intent === "open" && deltaX <= 0) {
+        gestureRef.current = null;
+        return;
+      }
+
+      if (gesture.intent === "close" && deltaX >= 0) {
         gestureRef.current = null;
         return;
       }
@@ -1251,10 +1330,18 @@ function useMobileConversationPreviewController(enabled: boolean) {
 
     const deltaX = gesture.lastX - gesture.startX;
 
-    if (gesture.source === "main") {
+    if (gesture.intent === "open") {
       if (deltaX >= MOBILE_PREVIEW_OPEN_THRESHOLD_PX) {
         void haptics.trigger("gesture");
         openPreview("default");
+      }
+      return;
+    }
+
+    if (gesture.intent === "close") {
+      if (deltaX <= -MOBILE_PREVIEW_CLOSE_THRESHOLD_PX) {
+        void haptics.trigger("gesture");
+        closePreview();
       }
       return;
     }
@@ -1321,9 +1408,11 @@ function MobileConversationPreviewRail({
   isDragging,
   gestureHandlers,
   activeSessionId,
+  createSessionActionLabel,
   favoriteItems,
   items,
   workspaceSectionLabel,
+  onCreateSession,
   archiveCurrentActionLabel,
   archiveFolderActionLabel,
   onArchiveActiveSession,
@@ -1335,6 +1424,7 @@ function MobileConversationPreviewRail({
   isDragging: boolean;
   gestureHandlers: MobileConversationPreviewGestureHandlers;
   activeSessionId: string;
+  createSessionActionLabel?: string;
   favoriteItems: Array<{
     entry: WorkbenchNavigationEntry;
     depth: 0 | 1;
@@ -1344,6 +1434,7 @@ function MobileConversationPreviewRail({
     depth: 0 | 1;
   }>;
   workspaceSectionLabel: string;
+  onCreateSession?: (() => void) | null;
   archiveCurrentActionLabel?: string;
   archiveFolderActionLabel?: string;
   onArchiveActiveSession?: (() => void | Promise<void>) | null;
@@ -1356,95 +1447,80 @@ function MobileConversationPreviewRail({
 
   return (
     <aside
-      className="mobile-conversation-preview-rail surface-card"
+      className="mobile-conversation-preview-rail terminal-mobile-list-rail surface-card"
       data-dragging={isDragging}
       style={{ width: `${widthPx}px`, maxWidth: `${widthPx}px` }}
       {...gestureHandlers}
     >
-      <section className="mobile-conversation-preview-group mobile-conversation-preview-list-favorites">
-        <div className="mobile-conversation-preview-group-heading">
-          {t("shell.favoriteSectionTitle")}
+      {createSessionActionLabel && onCreateSession ? (
+        <div className="mobile-conversation-preview-topbar terminal-mobile-list-footer">
+          <button
+            type="button"
+            className="mobile-conversation-preview-create-button workbench-import-toggle terminal-mobile-list-create"
+            onClick={onCreateSession}
+          >
+            <span className="mobile-conversation-preview-create-icon" aria-hidden="true">
+              <CreateSessionIcon />
+            </span>
+            <span>{createSessionActionLabel}</span>
+          </button>
         </div>
-        {favoriteItems.length > 0 ? (
-          <div className="mobile-conversation-preview-list mobile-conversation-preview-list-static">
-            {favoriteItems.map((item) => (
-              <button
-                key={`favorite:${item.entry.workspace.id}:${item.entry.session.sessionId}`}
-                type="button"
-                className="mobile-conversation-preview-item"
-                data-active={item.entry.session.sessionId === activeSessionId}
-                onClick={() => onActivate(item.entry)}
-              >
-                <span
-                  className={resolvePreviewIndicatorClassName(
-                    item.entry.session,
-                    item.entry.session.sessionId === activeSessionId
-                  )}
-                  aria-hidden="true"
-                />
-                <span className="mobile-conversation-preview-item-copy">
-                  <span className="mobile-conversation-preview-item-title">
-                    {item.entry.session.title || t("common.unknown")}
-                  </span>
-                  <span className="mobile-conversation-preview-item-meta">
-                    {formatMobilePreviewMeta(
-                      item.entry.session,
-                      item.entry.workspace.name
-                    )}
-                  </span>
-                </span>
-              </button>
-            ))}
-          </div>
-        ) : null}
-      </section>
+      ) : null}
 
-      <section className="mobile-conversation-preview-group mobile-conversation-preview-group-workspace">
-        <div className="mobile-conversation-preview-group-heading">
-          {workspaceSectionLabel}
-        </div>
-        <div className="mobile-conversation-preview-list" data-preview-gesture="ignore">
-          {items.length === 0 ? (
-            <p className="mobile-conversation-preview-empty">{t("shell.emptyWorkspaceSessions")}</p>
-          ) : (
-            items.map((item) => (
-              <button
-                key={`${item.entry.workspace.id}:${item.entry.session.sessionId}`}
-                type="button"
-                className="mobile-conversation-preview-item"
-                data-active={item.entry.session.sessionId === activeSessionId}
-                data-depth={item.depth}
-                onClick={() => onActivate(item.entry)}
-              >
-                <span
-                  className={resolvePreviewIndicatorClassName(
-                    item.entry.session,
-                    item.entry.session.sessionId === activeSessionId
-                  )}
-                  aria-hidden="true"
+      <div className="mobile-conversation-preview-body terminal-mobile-list-body">
+        {favoriteItems.length > 0 ? (
+          <section className="mobile-conversation-preview-group mobile-conversation-preview-list-favorites terminal-mobile-list-group terminal-mobile-list-group-pinned">
+            <div className="mobile-conversation-preview-group-heading terminal-mobile-list-group-heading">
+              <span>{t("shell.favoriteSectionTitle")}</span>
+              <span className="workbench-section-counter">{favoriteItems.length}</span>
+            </div>
+            <div className="mobile-conversation-preview-list mobile-conversation-preview-list-static terminal-mobile-session-list">
+              {favoriteItems.map((item) => (
+                <MobileConversationPreviewEntryButton
+                  key={`favorite:${item.entry.workspace.id}:${item.entry.session.sessionId}`}
+                  entry={item.entry}
+                  depth={item.depth}
+                  activeSessionId={activeSessionId}
+                  onActivate={onActivate}
+                  workspaceName={item.entry.workspace.name}
                 />
-                <span className="mobile-conversation-preview-item-copy">
-                  <span className="mobile-conversation-preview-item-title">
-                    {item.entry.session.title || t("common.unknown")}
-                  </span>
-                  <span className="mobile-conversation-preview-item-meta">
-                    {formatMobilePreviewMeta(
-                      item.entry.session
-                    )}
-                  </span>
-                </span>
-              </button>
-            ))
+              ))}
+            </div>
+          </section>
+        ) : null}
+
+        <section className="mobile-conversation-preview-group mobile-conversation-preview-group-workspace terminal-mobile-list-group terminal-mobile-list-group-workspace">
+          <div className="mobile-conversation-preview-group-heading terminal-mobile-list-group-heading">
+            <span>{workspaceSectionLabel}</span>
+            <span className="workbench-section-counter">{items.length}</span>
+          </div>
+          {items.length === 0 ? (
+            <div className="workbench-session-empty">{t("shell.emptyWorkspaceSessions")}</div>
+          ) : (
+            <div
+              className="mobile-conversation-preview-list terminal-mobile-session-list"
+              data-preview-gesture="ignore"
+            >
+              {items.map((item) => (
+                <MobileConversationPreviewEntryButton
+                  key={`${item.entry.workspace.id}:${item.entry.session.sessionId}`}
+                  entry={item.entry}
+                  depth={item.depth}
+                  activeSessionId={activeSessionId}
+                  onActivate={onActivate}
+                />
+              ))}
+            </div>
           )}
-        </div>
-      </section>
+        </section>
+      </div>
 
       {(archiveCurrentActionLabel && onArchiveActiveSession) || (archiveFolderActionLabel && onOpenArchiveFolder) ? (
-        <section className="mobile-conversation-preview-group mobile-conversation-preview-group-archive">
+        <div className="mobile-conversation-preview-actions terminal-mobile-list-footer">
           {archiveCurrentActionLabel && onArchiveActiveSession ? (
             <button
               type="button"
-              className="mobile-conversation-preview-archive-button"
+              className="mobile-conversation-preview-archive-button workbench-import-toggle"
               onClick={() => {
                 void onArchiveActiveSession();
               }}
@@ -1455,15 +1531,70 @@ function MobileConversationPreviewRail({
           {archiveFolderActionLabel && onOpenArchiveFolder ? (
             <button
               type="button"
-              className="mobile-conversation-preview-archive-button"
+              className="mobile-conversation-preview-archive-button workbench-import-toggle"
               onClick={onOpenArchiveFolder}
             >
               {archiveFolderActionLabel}
             </button>
           ) : null}
-        </section>
+        </div>
       ) : null}
     </aside>
+  );
+}
+
+function MobileConversationPreviewEntryButton({
+  entry,
+  depth,
+  activeSessionId,
+  onActivate,
+  workspaceName
+}: {
+  entry: WorkbenchNavigationEntry;
+  depth: 0 | 1;
+  activeSessionId: string;
+  onActivate: (entry: WorkbenchNavigationEntry) => void;
+  workspaceName?: string;
+}) {
+  const isActive = entry.session.sessionId === activeSessionId;
+
+  return (
+    <article className="mobile-conversation-preview-entry terminal-mobile-session-card" data-active={isActive}>
+      <button
+        type="button"
+        className="mobile-conversation-preview-item terminal-mobile-session-primary"
+        data-active={isActive}
+        data-depth={depth}
+        onClick={() => onActivate(entry)}
+      >
+        <div className="mobile-conversation-preview-item-header terminal-mobile-session-title-row">
+          <span
+            className={resolvePreviewIndicatorClassName(entry.session, isActive)}
+            aria-hidden="true"
+          />
+          <span className="mobile-conversation-preview-item-title terminal-mobile-session-title">
+            {entry.session.title || t("common.unknown")}
+          </span>
+        </div>
+        <span className="mobile-conversation-preview-item-meta terminal-mobile-session-path">
+          {formatMobilePreviewMeta(entry.session, workspaceName)}
+        </span>
+      </button>
+    </article>
+  );
+}
+
+function CreateSessionIcon() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <path
+        d="M8 3.25v9.5M3.25 8h9.5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="1.7"
+      />
+    </svg>
   );
 }
 

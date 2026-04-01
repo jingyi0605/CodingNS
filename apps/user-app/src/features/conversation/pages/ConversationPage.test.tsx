@@ -255,7 +255,7 @@ describe("ConversationPage", () => {
     });
   });
 
-  it("移动端点击项目名称会直接按六成屏宽打开快捷会话菜单", async () => {
+  it("移动端点击项目名称会直接按较窄默认宽度打开快捷会话菜单", async () => {
     mockGetProviderCapabilities.mockResolvedValue({
       provider: "codex",
       canStartSession: true,
@@ -291,10 +291,10 @@ describe("ConversationPage", () => {
     fireEvent.click(screen.getByRole("button", { name: t("shell.showSessionSidebar") }));
 
     expect(screen.getByText("历史会话 Alpha")).toBeInTheDocument();
-    expect(parseFloat(page.style.getPropertyValue("--mobile-conversation-preview-width"))).toBeCloseTo(234, 0);
+    expect(parseFloat(page.style.getPropertyValue("--mobile-conversation-preview-width"))).toBeCloseTo(187.2, 0);
   });
 
-  it("移动端右滑超过阈值后，会一次性打开到六成屏宽", async () => {
+  it("移动端右滑超过阈值后，会一次性打开到默认宽度", async () => {
     mockGetProviderCapabilities.mockResolvedValue({
       provider: "codex",
       canStartSession: true,
@@ -327,7 +327,7 @@ describe("ConversationPage", () => {
     fireEvent.touchEnd(stage);
 
     expect(screen.getByText("历史会话 Alpha")).toBeInTheDocument();
-    expect(parseFloat(page.style.getPropertyValue("--mobile-conversation-preview-width"))).toBeCloseTo(234, 0);
+    expect(parseFloat(page.style.getPropertyValue("--mobile-conversation-preview-width"))).toBeCloseTo(187.2, 0);
   });
 
   it("移动端滑出侧边会话栏时，不会在 touchmove 里调用 preventDefault", async () => {
@@ -368,7 +368,7 @@ describe("ConversationPage", () => {
 
     expect(preventDefaultSpy).not.toHaveBeenCalled();
     expect(screen.getByText("历史会话 Alpha")).toBeInTheDocument();
-    expect(parseFloat(page.style.getPropertyValue("--mobile-conversation-preview-width"))).toBeCloseTo(234, 0);
+    expect(parseFloat(page.style.getPropertyValue("--mobile-conversation-preview-width"))).toBeCloseTo(187.2, 0);
   });
 
   it("移动端快速右滑时，会读取抬手位置来稳定触发打开", async () => {
@@ -406,7 +406,43 @@ describe("ConversationPage", () => {
     });
 
     expect(screen.getByText("历史会话 Alpha")).toBeInTheDocument();
-    expect(parseFloat(page.style.getPropertyValue("--mobile-conversation-preview-width"))).toBeCloseTo(234, 0);
+    expect(parseFloat(page.style.getPropertyValue("--mobile-conversation-preview-width"))).toBeCloseTo(187.2, 0);
+  });
+
+  it("移动端从更宽的左侧热区右滑，也能稳定打开快捷会话菜单", async () => {
+    mockGetProviderCapabilities.mockResolvedValue({
+      provider: "codex",
+      canStartSession: true,
+      canResumeSession: true,
+      canSendMessage: true,
+      inRunInputMode: "none",
+      supportsSubagents: false,
+      supportsInterrupt: true,
+      supportsStructuredToolCalls: true,
+      supportsTokenUsage: true,
+      supportsAttachments: true,
+      supportsPermissionPrompt: true,
+      supportsCheckpoint: false,
+      modelOptions: [{ id: "provider-default", name: "跟随 CLI 默认模型", usesProviderDefault: true }],
+      limitations: []
+    });
+    mockUseWorkbenchShell.mockReturnValue(createMobileWorkbenchShellValue());
+    window.localStorage.setItem("mobile.conversation.preview.mode", "immersive");
+
+    const view = renderDraftConversationPage();
+    const page = view.container.querySelector(".mobile-conversation-page") as HTMLElement;
+    const stage = view.container.querySelector(".mobile-conversation-stage") as HTMLElement;
+
+    fireEvent.touchStart(stage, {
+      touches: [{ clientX: 64, clientY: 120 }]
+    });
+    fireEvent.touchMove(stage, {
+      touches: [{ clientX: 118, clientY: 124 }]
+    });
+    fireEvent.touchEnd(stage);
+
+    expect(screen.getByText("历史会话 Alpha")).toBeInTheDocument();
+    expect(parseFloat(page.style.getPropertyValue("--mobile-conversation-preview-width"))).toBeCloseTo(187.2, 0);
   });
 
   it("移动端小幅右滑不会误触打开快捷会话菜单", async () => {
@@ -437,7 +473,7 @@ describe("ConversationPage", () => {
       touches: [{ clientX: 18, clientY: 120 }]
     });
     fireEvent.touchMove(stage, {
-      touches: [{ clientX: 60, clientY: 124 }]
+      touches: [{ clientX: 48, clientY: 124 }]
     });
     fireEvent.touchEnd(stage);
 
@@ -476,7 +512,7 @@ describe("ConversationPage", () => {
     });
     fireEvent.touchEnd(rail);
 
-    expect(parseFloat(page.style.getPropertyValue("--mobile-conversation-preview-width"))).toBeCloseTo(234, 0);
+    expect(parseFloat(page.style.getPropertyValue("--mobile-conversation-preview-width"))).toBeCloseTo(187.2, 0);
   });
 
   it("快捷会话菜单打开后，一次左滑会直接全部收起", async () => {
@@ -514,6 +550,78 @@ describe("ConversationPage", () => {
     expect(parseFloat(page.style.getPropertyValue("--mobile-conversation-preview-width"))).toBeCloseTo(0, 0);
   });
 
+  it("快捷会话菜单打开后，在对话消息区域左滑也能直接收起", async () => {
+    mockGetProviderCapabilities.mockResolvedValue({
+      provider: "codex",
+      canStartSession: true,
+      canResumeSession: true,
+      canSendMessage: true,
+      inRunInputMode: "none",
+      supportsSubagents: false,
+      supportsInterrupt: true,
+      supportsStructuredToolCalls: true,
+      supportsTokenUsage: true,
+      supportsAttachments: true,
+      supportsPermissionPrompt: true,
+      supportsCheckpoint: false,
+      modelOptions: [{ id: "provider-default", name: "跟随 CLI 默认模型", usesProviderDefault: true }],
+      limitations: []
+    });
+    mockUseWorkbenchShell.mockReturnValue(createMobileWorkbenchShellValue());
+
+    const view = renderDraftConversationPage();
+    const page = view.container.querySelector(".mobile-conversation-page") as HTMLElement;
+    const stage = view.container.querySelector(".mobile-conversation-stage") as HTMLElement;
+
+    fireEvent.touchStart(stage, {
+      touches: [{ clientX: 220, clientY: 180 }]
+    });
+    fireEvent.touchMove(stage, {
+      touches: [{ clientX: 150, clientY: 184 }]
+    });
+    fireEvent.touchEnd(stage, {
+      changedTouches: [{ clientX: 128, clientY: 184 }]
+    });
+
+    expect(screen.queryByText("历史会话 Alpha")).not.toBeInTheDocument();
+    expect(parseFloat(page.style.getPropertyValue("--mobile-conversation-preview-width"))).toBeCloseTo(0, 0);
+  });
+
+  it("快捷会话菜单打开后，在顶部容器左滑也能直接收起", async () => {
+    mockGetProviderCapabilities.mockResolvedValue({
+      provider: "codex",
+      canStartSession: true,
+      canResumeSession: true,
+      canSendMessage: true,
+      inRunInputMode: "none",
+      supportsSubagents: false,
+      supportsInterrupt: true,
+      supportsStructuredToolCalls: true,
+      supportsTokenUsage: true,
+      supportsAttachments: true,
+      supportsPermissionPrompt: true,
+      supportsCheckpoint: false,
+      modelOptions: [{ id: "provider-default", name: "跟随 CLI 默认模型", usesProviderDefault: true }],
+      limitations: []
+    });
+    mockUseWorkbenchShell.mockReturnValue(createMobileWorkbenchShellValue());
+
+    const view = renderDraftConversationPage();
+    const pageHeader = view.container.querySelector(".mobile-conversation-page-header") as HTMLElement;
+
+    fireEvent.touchStart(pageHeader, {
+      touches: [{ clientX: 180, clientY: 42 }]
+    });
+    fireEvent.touchMove(pageHeader, {
+      touches: [{ clientX: 128, clientY: 46 }]
+    });
+    fireEvent.touchEnd(pageHeader, {
+      changedTouches: [{ clientX: 112, clientY: 46 }]
+    });
+
+    expect(screen.queryByText("历史会话 Alpha")).not.toBeInTheDocument();
+  });
+
   it("快捷会话菜单打开后，会话列表区域会被标记为滚动优先", async () => {
     mockGetProviderCapabilities.mockResolvedValue({
       provider: "codex",
@@ -539,6 +647,146 @@ describe("ConversationPage", () => {
     ) as HTMLElement;
 
     expect(sessionList).toHaveAttribute("data-preview-gesture", "ignore");
+  });
+
+  it("快捷会话菜单顶部会显示新建对话按钮，并跳转到当前工作区的新草稿会话", async () => {
+    mockGetProviderCapabilities.mockResolvedValue({
+      provider: "codex",
+      canStartSession: true,
+      canResumeSession: true,
+      canSendMessage: true,
+      inRunInputMode: "none",
+      supportsSubagents: false,
+      supportsInterrupt: true,
+      supportsStructuredToolCalls: true,
+      supportsTokenUsage: true,
+      supportsAttachments: true,
+      supportsPermissionPrompt: true,
+      supportsCheckpoint: false,
+      modelOptions: [{ id: "provider-default", name: "跟随 CLI 默认模型", usesProviderDefault: true }],
+      limitations: []
+    });
+    mockUseWorkbenchShell.mockReturnValue(createMobileWorkbenchShellValue());
+
+    renderDraftConversationPage({ withRouteProbe: true });
+
+    fireEvent.click(screen.getByRole("button", { name: t("shell.createSession") }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("route-probe")).toHaveTextContent(
+        /^\/workspaces\/workspace-1\/sessions\/draft-.*\?provider=codex$/
+      );
+    });
+  });
+
+  it("没有收藏会话时，会直接隐藏收藏分组", async () => {
+    mockGetProviderCapabilities.mockResolvedValue({
+      provider: "codex",
+      canStartSession: true,
+      canResumeSession: true,
+      canSendMessage: true,
+      inRunInputMode: "none",
+      supportsSubagents: false,
+      supportsInterrupt: true,
+      supportsStructuredToolCalls: true,
+      supportsTokenUsage: true,
+      supportsAttachments: true,
+      supportsPermissionPrompt: true,
+      supportsCheckpoint: false,
+      modelOptions: [{ id: "provider-default", name: "跟随 CLI 默认模型", usesProviderDefault: true }],
+      limitations: []
+    });
+    mockUseWorkbenchShell.mockReturnValue(createMobileWorkbenchShellValue());
+
+    renderDraftConversationPage();
+
+    expect(screen.queryByText(t("shell.favoriteSectionTitle"))).not.toBeInTheDocument();
+  });
+
+  it("移动端快捷会话菜单只显示主会话，不显示子 agent 会话", async () => {
+    mockGetProviderCapabilities.mockResolvedValue({
+      provider: "codex",
+      canStartSession: true,
+      canResumeSession: true,
+      canSendMessage: true,
+      inRunInputMode: "none",
+      supportsSubagents: false,
+      supportsInterrupt: true,
+      supportsStructuredToolCalls: true,
+      supportsTokenUsage: true,
+      supportsAttachments: true,
+      supportsPermissionPrompt: true,
+      supportsCheckpoint: false,
+      modelOptions: [{ id: "provider-default", name: "跟随 CLI 默认模型", usesProviderDefault: true }],
+      limitations: []
+    });
+
+    const timestamp = "2026-03-28T08:00:00.000Z";
+    const rootSession = createMobileSession({
+      sessionId: "session-root",
+      title: "主会话 Alpha",
+      lastMessageAt: timestamp,
+      updatedAt: timestamp,
+      isFavorite: true
+    });
+    const subagentSession = createMobileSession({
+      sessionId: "session-root-sub",
+      title: "子代理 Alpha-1",
+      parentSessionId: "session-root",
+      isSubagent: true,
+      subagentLabel: "worker · Alpha",
+      lastMessageAt: "2026-03-28T08:30:00.000Z",
+      updatedAt: "2026-03-28T08:30:00.000Z",
+      isFavorite: true
+    });
+    const secondarySession = createMobileSession({
+      sessionId: "session-secondary",
+      title: "主会话 Beta",
+      lastMessageAt: "2026-03-28T07:00:00.000Z",
+      updatedAt: "2026-03-28T07:00:00.000Z"
+    });
+
+    mockUseWorkbenchShell.mockReturnValue({
+      shellMode: "mobile",
+      navigationGroups: [
+        {
+          workspace: {
+            id: "workspace-1",
+            name: "工作区一",
+            path: "/Users/jackson/workspace-1"
+          },
+          sessions: [rootSession, subagentSession, secondarySession]
+        }
+      ],
+      requestNavigationRefresh: vi.fn(),
+      setSessionWorkspace: vi.fn(),
+      upsertNavigationSession: vi.fn(),
+      favoriteSessions: [
+        {
+          session: rootSession,
+          workspace: {
+            id: "workspace-1",
+            name: "工作区一",
+            path: "/Users/jackson/workspace-1"
+          }
+        },
+        {
+          session: subagentSession,
+          workspace: {
+            id: "workspace-1",
+            name: "工作区一",
+            path: "/Users/jackson/workspace-1"
+          }
+        }
+      ],
+      selectWorkspace: vi.fn()
+    });
+
+    renderDraftConversationPage();
+
+    expect(screen.getByText("主会话 Alpha")).toBeInTheDocument();
+    expect(screen.getByText("主会话 Beta")).toBeInTheDocument();
+    expect(screen.queryByText("子代理 Alpha-1")).not.toBeInTheDocument();
   });
 
   it("移动端快捷会话菜单会显示后端统一裁决后的 stale 状态", async () => {
@@ -578,7 +826,9 @@ describe("ConversationPage", () => {
   });
 });
 
-function renderDraftConversationPage() {
+function renderDraftConversationPage(options?: { withRouteProbe?: boolean }) {
+  const withRouteProbe = options?.withRouteProbe ?? false;
+
   return render(
     <MemoryRouter
       initialEntries={["/workspaces/workspace-1/sessions/draft-codex-1?provider=codex&workspaceId=workspace-1"]}
@@ -586,7 +836,12 @@ function renderDraftConversationPage() {
       <Routes>
         <Route
           path="/workspaces/:workspaceId/sessions/:sessionId"
-          element={<ConversationPage />}
+          element={
+            <>
+              <ConversationPage />
+              {withRouteProbe ? <RouteProbe /> : null}
+            </>
+          }
         />
       </Routes>
     </MemoryRouter>
@@ -594,8 +849,32 @@ function renderDraftConversationPage() {
 }
 
 function createMobileWorkbenchShellValue(sessionOverrides: Record<string, unknown> = {}) {
+  const session = createMobileSession(sessionOverrides);
+
+  return {
+    shellMode: "mobile",
+    navigationGroups: [
+      {
+        workspace: {
+          id: "workspace-1",
+          name: "工作区一",
+          path: "/Users/jackson/workspace-1"
+        },
+        sessions: [session]
+      }
+    ],
+    requestNavigationRefresh: vi.fn(),
+    setSessionWorkspace: vi.fn(),
+    upsertNavigationSession: vi.fn(),
+    favoriteSessions: [],
+    selectWorkspace: vi.fn()
+  };
+}
+
+function createMobileSession(sessionOverrides: Record<string, unknown> = {}) {
   const timestamp = "2026-03-28T08:00:00.000Z";
-  const session = {
+
+  return {
     sessionId: "session-1",
     workspaceId: "workspace-1",
     provider: "codex",
@@ -623,25 +902,6 @@ function createMobileWorkbenchShellValue(sessionOverrides: Record<string, unknow
     lastSeenAt: null,
     activityState: "idle",
     ...sessionOverrides
-  };
-
-  return {
-    shellMode: "mobile",
-    navigationGroups: [
-      {
-        workspace: {
-          id: "workspace-1",
-          name: "工作区一",
-          path: "/Users/jackson/workspace-1"
-        },
-        sessions: [session]
-      }
-    ],
-    requestNavigationRefresh: vi.fn(),
-    setSessionWorkspace: vi.fn(),
-    upsertNavigationSession: vi.fn(),
-    favoriteSessions: [],
-    selectWorkspace: vi.fn()
   };
 }
 
