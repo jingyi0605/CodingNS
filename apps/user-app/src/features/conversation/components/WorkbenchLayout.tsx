@@ -490,6 +490,10 @@ function getSessionErrorSummary(session: SessionSummaryDto) {
     return errorCode;
   }
 
+  if (session.syncStatus === "error" && !hasSessionDisplayError(session)) {
+    return t("conversation.syncStatusError");
+  }
+
   return t("conversation.runtimeErrorTitle");
 }
 

@@ -168,6 +168,135 @@ test("OpenCodeRuntimeAdapter 会创建会话、发送消息并消费 SSE 事件"
   assert.equal(completeEvent.status, "completed");
 });
 
+test("OpenCodeRuntimeAdapter 在发送请求先报错、SSE 稍后继续时，不会提前把会话改成 failed", async (context) => {
+  const originalFetch = globalThis.fetch;
+  const events = [];
+
+  globalThis.fetch = async (input, init = {}) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const method = init.method ?? "GET";
+
+    if (url.startsWith("http://127.0.0.1:41827/session?") && method === "POST") {
+      return jsonResponse({ id: "ses_test_runtime_race" });
+    }
+
+    if (url === "http://127.0.0.1:41827/session/ses_test_runtime_race" && method === "GET") {
+      return jsonResponse({
+        id: "ses_test_runtime_race",
+        directory: "/Users/jackson/Code/CodingNS"
+      });
+    }
+
+    if (url === "http://127.0.0.1:41827/event" && method === "GET") {
+      return sseResponse([
+        {
+          delayMs: 40,
+          frame: {
+            payload: {
+              type: "message.part.updated",
+              properties: {
+                part: {
+                  id: "prt_runtime_race_1",
+                  messageID: "msg_runtime_race_1",
+                  sessionID: "ses_test_runtime_race",
+                  type: "text",
+                  text: "OpenCode 继续输出",
+                  time: {
+                    end: 1
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          delayMs: 80,
+          frame: {
+            payload: {
+              type: "message.updated",
+              properties: {
+                info: {
+                  id: "msg_runtime_race_1",
+                  sessionID: "ses_test_runtime_race",
+                  role: "assistant",
+                  time: {
+                    created: 1
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          delayMs: 120,
+          frame: {
+            payload: {
+              type: "session.idle",
+              properties: {
+                sessionID: "ses_test_runtime_race"
+              }
+            }
+          }
+        }
+      ]);
+    }
+
+    if (url === "http://127.0.0.1:41827/session/ses_test_runtime_race/message" && method === "POST") {
+      return new Promise((_, reject) => {
+        setTimeout(() => {
+          reject(new Error("SERVER_TIMEOUT"));
+        }, 20);
+      });
+    }
+
+    throw new Error(`unexpected request: ${method} ${url}`);
+  };
+
+  context.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const adapter = new OpenCodeRuntimeAdapter({
+    baseUrl: "http://127.0.0.1:41827",
+    requestTimeoutMs: 1_000
+  });
+  const launch = await adapter.startSession(
+    {
+      sessionId: "local-session-race",
+      workspaceId: "workspace-1",
+      workspacePath: "/Users/jackson/Code/CodingNS",
+      provider: "opencode",
+      providerSessionId: null,
+      rawStoreRef: null,
+      options: {
+        content: "请输出后结束",
+        clientRequestId: null,
+        model: null,
+        reasoningLevel: null,
+        permissionMode: null,
+        providerPrompt: null,
+        attachments: []
+      }
+    },
+    {
+      updateSessionBinding() {},
+      async emit(event) {
+        events.push(event);
+      }
+    }
+  );
+
+  await launch.completed;
+
+  assert.equal(events.some((event) => event.type === "error"), false);
+  const messageEvent = events.find((event) => event.type === "message");
+  assert.ok(messageEvent);
+  assert.equal(messageEvent.message.content, "OpenCode 继续输出");
+  const completeEvent = events.find((event) => event.type === "complete");
+  assert.ok(completeEvent);
+  assert.equal(completeEvent.status, "completed");
+});
+
 test("OpenCodeRuntimeAdapter 会在服务端目录跑偏时直接拒绝启动会话", async (context) => {
   const originalFetch = globalThis.fetch;
 
@@ -941,8 +1070,20 @@ function jsonResponse(payload, status = 200) {
 function sseResponse(frames) {
   const encoder = new TextEncoder();
   const body = new ReadableStream({
-    start(controller) {
-      for (const frame of frames) {
+    async start(controller) {
+      for (const item of frames) {
+        const frame = item && typeof item === "object" && "frame" in item ? item.frame : item;
+        const delayMs =
+          item && typeof item === "object" && "delayMs" in item && Number.isFinite(item.delayMs)
+            ? item.delayMs
+            : 0;
+
+        if (delayMs > 0) {
+          await new Promise((resolve) => {
+            setTimeout(resolve, delayMs);
+          });
+        }
+
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(frame)}\n\n`));
       }
 

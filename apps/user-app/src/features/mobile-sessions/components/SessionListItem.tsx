@@ -295,6 +295,10 @@ function getSessionErrorSummary(session: WorkbenchNavigationEntry["session"]) {
     return errorCode;
   }
 
+  if (session.syncStatus === "error" && !hasSessionDisplayError(session)) {
+    return t("conversation.syncStatusError");
+  }
+
   return t("conversation.runtimeErrorTitle");
 }
 

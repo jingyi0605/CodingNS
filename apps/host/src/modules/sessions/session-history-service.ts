@@ -2016,9 +2016,16 @@ export class SessionHistoryService {
     this.sessionStateRepository.upsert(nextRecord);
 
     const currentSnapshot = this.sessionStatusSnapshotRepository.findBySessionId(sessionId);
+    const shouldClearRuntimeFailure =
+      current?.runningState === "failed" && resolution.runningState !== "failed";
     this.sessionStatusSnapshotRepository.upsert({
       sessionId,
-      syncStatus: resolution.runningState === "failed" ? "error" : currentSnapshot?.syncStatus ?? "idle",
+      syncStatus:
+        resolution.runningState === "failed"
+          ? "error"
+          : shouldClearRuntimeFailure
+            ? "idle"
+            : currentSnapshot?.syncStatus ?? "idle",
       syncCursor: currentSnapshot?.syncCursor ?? null,
       lastSyncAt:
         resolution.lastObservedAt
@@ -2030,11 +2037,15 @@ export class SessionHistoryService {
       lastErrorCode:
         resolution.runningState === "failed"
           ? resolution.errorCode
-          : currentSnapshot?.lastErrorCode ?? null,
+          : shouldClearRuntimeFailure
+            ? null
+            : currentSnapshot?.lastErrorCode ?? null,
       lastErrorDetail:
         resolution.runningState === "failed"
           ? resolution.detail
-          : currentSnapshot?.lastErrorDetail ?? null,
+          : shouldClearRuntimeFailure
+            ? null
+            : currentSnapshot?.lastErrorDetail ?? null,
       resumedAt: currentSnapshot?.resumedAt ?? null,
       updatedAt: timestamp
     });
@@ -2097,6 +2108,7 @@ function applySessionActivityResolution(
   resolution: SessionActivityResolution
 ): SessionListItem {
   const runningState = resolution.runningState;
+  const shouldClearResolvedFailure = runningState !== "failed" && item.runningState === "failed";
   const lastEventAt = resolution.lastObservedAt ?? item.lastEventAt;
   const completedAt =
     isTerminalResolvedRunningState(runningState)
@@ -2105,14 +2117,25 @@ function applySessionActivityResolution(
   const lastErrorCode =
     runningState === "failed"
       ? resolution.errorCode ?? item.lastErrorCode
-      : item.lastErrorCode;
+      : shouldClearResolvedFailure
+        ? null
+        : item.lastErrorCode;
   const lastErrorDetail =
     runningState === "failed"
       ? resolution.detail ?? item.lastErrorDetail
-      : item.lastErrorDetail;
+      : shouldClearResolvedFailure
+        ? null
+        : item.lastErrorDetail;
+  const syncStatus =
+    runningState === "failed"
+      ? "error"
+      : shouldClearResolvedFailure && item.syncStatus === "error"
+        ? "idle"
+        : item.syncStatus;
 
   return {
     ...item,
+    syncStatus,
     runningState,
     activitySource: mapResolutionSourceToCompatibilitySource(resolution.activityResolutionSource),
     activityResolutionSource: resolution.activityResolutionSource,

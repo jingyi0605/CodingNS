@@ -44,6 +44,9 @@ interface OpenCodeRuntimeState {
   readonly rawStoreRef: string;
   readonly workspacePath: string;
   sequence: number;
+  terminalStatus: RuntimeRunState | null;
+  hasObservedActivity: boolean;
+  readonly abortController: AbortController;
   readonly sink: ProviderRuntimeEventSink;
   readonly messageInfoById: Map<string, Record<string, unknown>>;
   readonly partById: Map<string, Record<string, unknown>>;
@@ -113,6 +116,9 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
           rawStoreRef,
           workspacePath: request.workspacePath,
           sequence: 0,
+          terminalStatus: null,
+          hasObservedActivity: false,
+          abortController,
           sink,
           messageInfoById: new Map(),
           partById: new Map(),
@@ -131,25 +137,63 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
     state: OpenCodeRuntimeState,
     signal: AbortSignal
   ): Promise<void> {
+    const eventStreamPromise = this.consumeEventStream(state, signal);
+
     try {
-      await Promise.all([
-        this.consumeEventStream(state, signal),
-        this.sendPrompt(state.providerSessionId, request, signal)
-      ]);
+      await this.sendPrompt(state.providerSessionId, request, signal);
     } catch (error) {
       if (signal.aborted) {
         return;
       }
 
-      await state.sink.emit({
-        type: "error",
-        status: "failed",
-        providerSessionId: state.providerSessionId,
-        rawStoreRef: state.rawStoreRef,
-        errorCode: mapOpenCodeRuntimeErrorCode(error),
-        detail: error instanceof Error ? error.message : "opencode runtime failed",
-        timestamp: nextTimestamp()
-      });
+      if (!state.hasObservedActivity && state.terminalStatus === null) {
+        await waitForOpenCodeProgress(state, signal, 1_500);
+      }
+
+      if (
+        signal.aborted
+        || state.hasObservedActivity
+        || state.terminalStatus === "completed"
+        || state.terminalStatus === "failed"
+      ) {
+        try {
+          await eventStreamPromise;
+        } catch (streamError) {
+          if (
+            !signal.aborted
+            && state.terminalStatus !== "completed"
+            && state.terminalStatus !== "failed"
+          ) {
+            await this.emitRuntimeFailure(state, streamError);
+          }
+        }
+        return;
+      }
+
+      state.abortController.abort();
+
+      try {
+        await eventStreamPromise;
+      } catch {
+        // 主动中断流后这里抛出的通常是 abort，直接吞掉。
+      }
+
+      await this.emitRuntimeFailure(state, error);
+      return;
+    }
+
+    try {
+      await eventStreamPromise;
+    } catch (error) {
+      if (signal.aborted) {
+        return;
+      }
+
+      if (state.terminalStatus === "completed" || state.terminalStatus === "failed") {
+        return;
+      }
+
+      await this.emitRuntimeFailure(state, error);
     }
   }
 
@@ -240,6 +284,8 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
       }
 
       const errorPayload = toJsonRecord(properties.error) ?? {};
+      state.hasObservedActivity = true;
+      state.terminalStatus = "failed";
       await state.sink.emit({
         type: "error",
         status: "failed",
@@ -261,6 +307,7 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
 
       const status = toJsonRecord(properties.status) ?? {};
       const mapped = mapSessionStatus(status);
+      state.hasObservedActivity = true;
 
       await state.sink.emit({
         type: "status",
@@ -280,6 +327,8 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
         return false;
       }
 
+      state.hasObservedActivity = true;
+      state.terminalStatus = "completed";
       await state.sink.emit({
         type: "complete",
         status: "completed",
@@ -300,6 +349,7 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
         return false;
       }
 
+      state.hasObservedActivity = true;
       state.messageInfoById.set(messageId, info);
       const partIds = state.partIdsByMessageId.get(messageId);
 
@@ -328,6 +378,7 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
         return false;
       }
 
+      state.hasObservedActivity = true;
       const merged = mergeRecords(state.partById.get(partId), part);
       state.partById.set(partId, merged);
       state.messageIdByPartId.set(partId, messageId);
@@ -350,6 +401,7 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
         return false;
       }
 
+      state.hasObservedActivity = true;
       const existing = state.partById.get(partId) ?? {};
       const field = ensureText(properties.field).trim();
       const delta = ensureText(properties.delta);
@@ -559,6 +611,21 @@ export class OpenCodeRuntimeAdapter implements ProviderRuntimeAdapter {
     );
   }
 
+  private async emitRuntimeFailure(
+    state: OpenCodeRuntimeState,
+    error: unknown
+  ): Promise<void> {
+    await state.sink.emit({
+      type: "error",
+      status: "failed",
+      providerSessionId: state.providerSessionId,
+      rawStoreRef: state.rawStoreRef,
+      errorCode: mapOpenCodeRuntimeErrorCode(error),
+      detail: error instanceof Error ? error.message : "opencode runtime failed",
+      timestamp: nextTimestamp()
+    });
+  }
+
   private async abortSession(providerSessionId: string, workspacePath?: string): Promise<void> {
     await this.fetchJson(
       `/session/${encodeURIComponent(providerSessionId)}/abort`,
@@ -766,6 +833,25 @@ function mergeRecords(
   }
 
   return merged;
+}
+
+async function waitForOpenCodeProgress(
+  state: Pick<OpenCodeRuntimeState, "hasObservedActivity" | "terminalStatus">,
+  signal: AbortSignal,
+  timeoutMs: number
+): Promise<void> {
+  const startedAt = Date.now();
+
+  while (
+    !signal.aborted
+    && !state.hasObservedActivity
+    && state.terminalStatus === null
+    && Date.now() - startedAt < timeoutMs
+  ) {
+    await new Promise((resolve) => {
+      setTimeout(resolve, 50);
+    });
+  }
 }
 
 function extractSseData(frame: string): string | null {

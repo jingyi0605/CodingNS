@@ -6,6 +6,7 @@ import WebSocket from "ws";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { resolveHostConfig } from "../../src/config/env.js";
+import { SessionActivityAuthorityService } from "../../src/modules/sessions/session-activity-authority-service.js";
 import { SessionChangedFileService } from "../../src/modules/sessions/session-changed-file-service.js";
 import { SessionHistoryService } from "../../src/modules/sessions/session-history-service.js";
 import { SessionMessageAttachmentService } from "../../src/modules/sessions/session-message-attachment-service.js";
@@ -108,6 +109,118 @@ afterEach(async () => {
 });
 
 describe("spec002 会话同步核心", () => {
+  it("authority 已判定本轮完成时，会清掉上一轮失败残留，避免列表继续显示失败", () => {
+    const fixture = createEmptyFixture();
+    const config = resolveHostConfig({
+      databasePath: ":memory:",
+      claudeCodeHomeDir: fixture.claudeHomeDir,
+      codexHomeDir: fixture.codexHomeDir
+    });
+    const database = createDatabaseClient(":memory:");
+    const workspaceRepository = new WorkspaceRepository(database.db);
+    const sessionBindingRepository = new SessionBindingRepository(database.db);
+    const sessionIndexRepository = new SessionIndexRepository(database.db);
+    const sessionStateRepository = new SessionStateRepository(database.db);
+    const sessionStatusSnapshotRepository = new SessionStatusSnapshotRepository(database.db);
+    const sessionChangedFileRepository = new SessionChangedFileRepository(database.db);
+    const sessionChangedFileService = new SessionChangedFileService(sessionChangedFileRepository);
+    const sessionMessageAttachmentService = new SessionMessageAttachmentService(
+      new SessionMessageAttachmentRepository(database.db),
+      config
+    );
+    const sessionActivityAuthorityService = new SessionActivityAuthorityService();
+    const sessionHistoryService = new SessionHistoryService(
+      database.db,
+      workspaceRepository,
+      sessionBindingRepository,
+      sessionChangedFileService,
+      sessionIndexRepository,
+      sessionMessageAttachmentService,
+      sessionStateRepository,
+      sessionStatusSnapshotRepository,
+      config,
+      sessionActivityAuthorityService
+    );
+
+    activeEmptyFixtures.push(fixture);
+    activeClosers.push(() => database.close());
+
+    workspaceRepository.create({
+      id: "workspace-1",
+      name: "Fixture Workspace",
+      path: fixture.workspaceDir,
+      repoRoot: fixture.workspaceDir,
+      favorite: false,
+      createdAt: "2026-04-01T08:00:00.000Z",
+      updatedAt: "2026-04-01T08:00:00.000Z",
+      removedAt: null
+    });
+
+    sessionBindingRepository.upsert({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "opencode",
+      providerSessionId: "opencode-session-1",
+      rawStoreRef: "opencode://session/opencode-session-1",
+      createdAt: "2026-04-01T08:00:00.000Z",
+      updatedAt: "2026-04-01T08:00:00.000Z"
+    });
+    sessionIndexRepository.upsert({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "opencode",
+      title: "OpenCode 样本会话",
+      messageCount: 4,
+      isArchived: false,
+      lastMessageAt: "2026-04-01T08:12:00.000Z",
+      createdAt: "2026-04-01T08:00:00.000Z",
+      updatedAt: "2026-04-01T08:12:00.000Z"
+    });
+    sessionStateRepository.upsert({
+      sessionId: "session-1",
+      userId: "user-1",
+      runningState: "failed",
+      activitySource: "runtime",
+      favorite: false,
+      lastEventAt: "2026-04-01T08:05:00.000Z",
+      completedAt: "2026-04-01T08:05:00.000Z",
+      lastSeenAt: null,
+      updatedAt: "2026-04-01T08:05:00.000Z"
+    });
+    sessionStatusSnapshotRepository.upsert({
+      sessionId: "session-1",
+      syncStatus: "error",
+      syncCursor: null,
+      lastSyncAt: "2026-04-01T08:05:00.000Z",
+      lastErrorCode: "OPENCODE_SESSION_ERROR",
+      lastErrorDetail: "OpenCode session failed",
+      resumedAt: null,
+      updatedAt: "2026-04-01T08:05:00.000Z"
+    });
+
+    sessionActivityAuthorityService.observe({
+      sessionId: "session-1",
+      runId: "runtime:session-1:2026-04-01T08:10:00.000Z",
+      runningState: "completed",
+      source: "authoritative_runtime",
+      confidence: "strong",
+      detail: "OpenCode 本轮输出已结束",
+      errorCode: null,
+      observedAt: "2026-04-01T08:12:00.000Z"
+    });
+
+    const sessions = sessionHistoryService.listWorkspaceSessions("workspace-1", "user-1");
+
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toMatchObject({
+      sessionId: "session-1",
+      runningState: "completed",
+      syncStatus: "idle",
+      lastErrorCode: null,
+      lastErrorDetail: null
+    });
+  });
+
   it("Claude 新建会话的 pending 绑定回填真 ID 时会并回后台发现的重复记录", async () => {
     const fixture = createEmptyFixture();
     const config = resolveHostConfig({
