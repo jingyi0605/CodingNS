@@ -56,6 +56,7 @@ import {
 } from "../../workbench/utils/workbench-navigation";
 import { useMobileConversationBottomLayer } from "../../mobile-shell/components/MobileConversationBottomLayerContext";
 import { MobileWorkspaceSwitcherHeader } from "../../mobile-shell/components/MobileWorkspaceSwitcherHeader";
+import { MobileCreateSessionSheet } from "../../mobile-sessions/components/MobileCreateSessionSheet";
 import {
   readMobileConversationPreviewMode,
   writeMobileConversationPreviewMode,
@@ -64,8 +65,8 @@ import {
 import "../../mobile-sessions/styles.css";
 
 const RUNTIME_TIMEOUT_TOAST_DELAY_MS = 15_000;
-const MOBILE_PREVIEW_DEFAULT_RATIO = 0.48;
-const MOBILE_PREVIEW_MAX_RATIO = 0.48;
+const MOBILE_PREVIEW_DEFAULT_RATIO = 0.6;
+const MOBILE_PREVIEW_MAX_RATIO = 0.6;
 const MOBILE_PREVIEW_GESTURE_DIRECTION_LOCK_PX = 8;
 const MOBILE_PREVIEW_OPEN_THRESHOLD_PX = 36;
 const MOBILE_PREVIEW_EXPAND_THRESHOLD_PX = 48;
@@ -110,7 +111,8 @@ function LiveConversationPage({
     markNavigationSessionSeen,
     favoriteSessions,
     archiveSession,
-    unarchiveSession
+    unarchiveSession,
+    startDraftSession
   } = useWorkbenchShell();
   const navigate = useNavigate();
   const storeRef = useRef<SessionRuntimeStore | null>(null);
@@ -121,6 +123,7 @@ function LiveConversationPage({
   const [archiveFolderOpen, setArchiveFolderOpen] = useState(false);
   const [archiveRestoreSessionId, setArchiveRestoreSessionId] = useState<string | null>(null);
   const [archiveSubmitting, setArchiveSubmitting] = useState(false);
+  const [createSessionOpen, setCreateSessionOpen] = useState(false);
   const navigationSession = useMemo(
     () =>
       navigationGroups
@@ -414,14 +417,9 @@ function LiveConversationPage({
             favoriteItems={mobileFavoritePreviewItems}
             items={mobilePreviewItems}
             workspaceSectionLabel={t("shell.mobileConversationCurrentWorkspaceSection")}
-            onCreateSession={
-              mobileWorkspaceId && mobileDraftProvider
-                ? () => {
-                    writeMobileConversationPreviewMode("immersive");
-                    navigate(buildDraftSessionPath(mobileWorkspaceId, mobileDraftProvider));
-                  }
-                : null
-            }
+            onCreateSession={() => {
+              setCreateSessionOpen(true);
+            }}
             archiveCurrentActionLabel={t("shell.archiveCurrentSessionAction")}
             archiveFolderActionLabel={t("shell.archiveFolderAction")}
             onArchiveActiveSession={() => {
@@ -619,6 +617,17 @@ function LiveConversationPage({
           }
         }}
       />
+      <MobileCreateSessionSheet
+        open={createSessionOpen}
+        workspaces={mobileWorkspaces}
+        initialWorkspaceId={mobileWorkspaceId}
+        onClose={() => setCreateSessionOpen(false)}
+        onSelect={(workspaceId, provider) => {
+          setCreateSessionOpen(false);
+          writeMobileConversationPreviewMode("immersive");
+          startDraftSession(workspaceId, provider);
+        }}
+      />
     </>
   );
 }
@@ -655,10 +664,12 @@ function DraftConversationPage({
     selectWorkspace,
     setSessionWorkspace,
     upsertNavigationSession,
-    favoriteSessions
+    favoriteSessions,
+    startDraftSession
   } = useWorkbenchShell();
   const [sending, setSending] = useState(false);
   const [draftMessages, setDraftMessages] = useState<SessionMessageViewModel[]>([]);
+  const [createSessionOpen, setCreateSessionOpen] = useState(false);
   const fallbackCapabilities = useMemo(
     () => createProviderDraftCapabilities(draft.provider),
     [draft.provider]
@@ -736,6 +747,7 @@ function DraftConversationPage({
   );
 
   return (
+    <>
     <main
       ref={mobileConversationPageRef}
       className="workbench-page conversation-page-shell mobile-page-fixed-root mobile-conversation-page"
@@ -780,8 +792,7 @@ function DraftConversationPage({
           items={mobilePreviewItems}
           workspaceSectionLabel={t("shell.mobileConversationCurrentWorkspaceSection")}
           onCreateSession={() => {
-            writeMobileConversationPreviewMode("immersive");
-            navigate(buildDraftSessionPath(draft.workspaceId, draft.provider));
+            setCreateSessionOpen(true);
           }}
           onActivate={(entry) => {
             writeMobileConversationPreviewMode("preview");
@@ -868,6 +879,18 @@ function DraftConversationPage({
         </div>
       </div>
     </main>
+    <MobileCreateSessionSheet
+      open={createSessionOpen}
+      workspaces={mobileWorkspaces}
+      initialWorkspaceId={draft.workspaceId}
+      onClose={() => setCreateSessionOpen(false)}
+      onSelect={(workspaceId, provider) => {
+        setCreateSessionOpen(false);
+        writeMobileConversationPreviewMode("immersive");
+        startDraftSession(workspaceId, provider);
+      }}
+    />
+    </>
   );
 }
 
@@ -1567,18 +1590,18 @@ function MobileConversationPreviewEntryButton({
         data-depth={depth}
         onClick={() => onActivate(entry)}
       >
-        <div className="mobile-conversation-preview-item-header terminal-mobile-session-title-row">
-          <span
-            className={resolvePreviewIndicatorClassName(entry.session, isActive)}
-            aria-hidden="true"
-          />
-          <span className="mobile-conversation-preview-item-title terminal-mobile-session-title">
+        <span
+          className={resolvePreviewIndicatorClassName(entry.session, isActive)}
+          aria-hidden="true"
+        />
+        <div className="mobile-conversation-preview-item-body">
+          <span className="mobile-conversation-preview-item-title">
             {entry.session.title || t("common.unknown")}
           </span>
+          <span className="mobile-conversation-preview-item-meta">
+            {formatMobilePreviewMeta(entry.session, workspaceName)}
+          </span>
         </div>
-        <span className="mobile-conversation-preview-item-meta terminal-mobile-session-path">
-          {formatMobilePreviewMeta(entry.session, workspaceName)}
-        </span>
       </button>
     </article>
   );
