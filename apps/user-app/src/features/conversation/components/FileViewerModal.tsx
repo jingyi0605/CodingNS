@@ -1,5 +1,5 @@
 import { createPortal } from "react-dom";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -1688,9 +1688,7 @@ function OverviewRuler({
 }: {
   markers: FileOverviewMarker[];
   totalLines: number;
-  scrollContainerRef: {
-    current: HTMLDivElement | HTMLTextAreaElement | null;
-  };
+  scrollContainerRef: RefObject<HTMLDivElement | null>;
 }) {
   const [viewport, setViewport] = useState({
     top: 0,
@@ -1708,8 +1706,10 @@ function OverviewRuler({
       return;
     }
 
+    const activeScrollContainer = scrollContainer;
+
     function updateViewport() {
-      const { clientHeight, scrollHeight, scrollTop } = scrollContainer;
+      const { clientHeight, scrollHeight, scrollTop } = activeScrollContainer;
 
       if (scrollHeight <= 0 || clientHeight <= 0 || scrollHeight <= clientHeight) {
         setViewport({
@@ -1732,11 +1732,11 @@ function OverviewRuler({
     }
 
     updateViewport();
-    scrollContainer.addEventListener("scroll", updateViewport, { passive: true });
+    activeScrollContainer.addEventListener("scroll", updateViewport, { passive: true });
     window.addEventListener("resize", updateViewport);
 
     return () => {
-      scrollContainer.removeEventListener("scroll", updateViewport);
+      activeScrollContainer.removeEventListener("scroll", updateViewport);
       window.removeEventListener("resize", updateViewport);
     };
   }, [scrollContainerRef]);
