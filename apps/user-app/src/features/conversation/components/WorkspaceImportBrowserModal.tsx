@@ -150,18 +150,29 @@ export function WorkspaceImportBrowserModal({
     }
 
     setImporting(true);
+    setError(null);
 
     try {
       const workspace = await importWorkspace({
         path: targetPath
       });
-      await onImported?.(workspace);
       showToast({
         title: t("shell.importSuccess"),
         description: workspace.path,
         tone: "success"
       });
       onClose();
+      void Promise.resolve()
+        .then(() => onImported?.(workspace))
+        .catch((importedError) => {
+          showToast({
+            title:
+              importedError instanceof Error
+                ? importedError.message
+                : t("shell.navigationLoadFailed"),
+            tone: "error"
+          });
+        });
     } catch (importError) {
       showToast({
         title: importError instanceof Error ? importError.message : t("shell.importFailed"),
