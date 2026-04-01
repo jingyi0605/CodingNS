@@ -10532,6 +10532,8 @@ textarea:focus-visible {
   padding: 18px;
   border: none;
   box-shadow: none;
+  text-size-adjust: 100%;
+  -webkit-text-size-adjust: 100%;
 }
 
 .file-viewer-toolbar {
@@ -10648,9 +10650,8 @@ textarea:focus-visible {
 }
 
 .file-viewer-code-body {
-  display: flex;
+  display: block;
   flex: 1;
-  flex-direction: column;
   overflow: auto;
   padding: 12px 0;
   padding-right: 6px;
@@ -10672,6 +10673,7 @@ textarea:focus-visible {
   align-items: start;
   min-height: 24px;
   padding: 0 2px 0 1px;
+  width: 100%;
 }
 
 .file-viewer-code-gutter {
@@ -10681,6 +10683,8 @@ textarea:focus-visible {
   line-height: 1.8;
   text-align: right;
   user-select: none;
+  text-size-adjust: 100%;
+  -webkit-text-size-adjust: 100%;
 }
 
 .file-viewer-code-content {
@@ -10691,6 +10695,16 @@ textarea:focus-visible {
   line-height: 1.8;
   white-space: pre-wrap;
   word-break: break-word;
+  text-size-adjust: 100%;
+  -webkit-text-size-adjust: 100%;
+  font-variant-ligatures: none;
+}
+
+/* 移动端 WebKit 会把窄容器里的小字号代码自动放大，必须显式锁住 token 排版。 */
+.file-viewer-code-content .code-token {
+  display: inline;
+  text-size-adjust: 100%;
+  -webkit-text-size-adjust: 100%;
 }
 
 .code-token.plain {
