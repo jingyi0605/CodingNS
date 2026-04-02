@@ -283,8 +283,8 @@ pnpm test:user-app
 
 | 开发目标 | 当前进度 | 完成情况 |
 |----------|----------|----------|
-| 进程管理支持反向代理，单一端口代理开发中的应用 | 规划中 | ⬜ 计划中 |
-| iOS APP | 规划中 | ⬜ 计划中 |
+| 进程管理支持反向代理，单一端口代理开发中的应用 | 开发中 | 🟡 进行中 |
+| iOS APP | 开发中 | 🟡 进行中 |
 | 并行开发模式，同时启动多个 CLI 或模型配置，并行针对单一工作区进行快速开发验证 | 规划中 | ⬜ 计划中 |
 | 支持更多 CLI（Gemini CLI、KIMI CLI、KIRO CLI 等） | 规划中 | ⬜ 计划中 |
 | 支持同时连接多个 HOST | 规划中 | ⬜ 计划中 |
@@ -568,8 +568,8 @@ Detailed feature specifications and design documents are located in the [`specs/
 
 | Goal | Progress | Status |
 |------|----------|--------|
-| Reverse proxy for process management — proxy dev apps through a single port | Planning | ⬜ Planned |
-| iOS APP | Planning | ⬜ Planned |
+| Reverse proxy for process management — proxy dev apps through a single port | In development | 🟡 In Progress |
+| iOS APP | In development | 🟡 In Progress |
 | Parallel dev mode — launch multiple CLI or model configs simultaneously for rapid dev validation on a single workspace | Planning | ⬜ Planned |
 | Support more CLIs (Gemini CLI, KIMI CLI, KIRO CLI, etc.) | Planning | ⬜ Planned |
 | Support connecting to multiple hosts simultaneously | Planning | ⬜ Planned |
