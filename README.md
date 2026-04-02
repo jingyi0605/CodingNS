@@ -291,6 +291,9 @@ pnpm test:user-app
 | PC 端支持多窗口操作 | 规划中 | ⬜ 计划中 |
 | 更好的文件编辑器体验 | 规划中 | ⬜ 计划中 |
 | 内置 Tailscale 支持一键穿透内网 | 规划中 | ⬜ 计划中 |
+| 更美观的前端开发设计 | 规划中 | ⬜ 计划中 |
+| 代码管家功能，支持跨工作区管理多个项目及会话，并为用户提供项目开发的建议和代替用户进行项目开发的控制 | 规划中 | ⬜ 计划中 |
+| 代码管家支持实时语音对话 | 规划中 | ⬜ 计划中 |
 
 > 进度说明：🟢 已完成 | 🟡 开发中 | ⬜ 计划中
 
@@ -576,6 +579,9 @@ Detailed feature specifications and design documents are located in the [`specs/
 | Multi-window support on desktop | Planning | ⬜ Planned |
 | Better file editor experience | Planning | ⬜ Planned |
 | Built-in Tailscale for one-click NAT traversal | Planning | ⬜ Planned |
+| Code Butler — manage multiple projects and sessions across workspaces, provide dev suggestions and act on behalf of the user | Planning | ⬜ Planned |
+| More polished frontend design | Planning | ⬜ Planned |
+| Code Butler with real-time voice conversation | Planning | ⬜ Planned |
 
 > Status legend: 🟢 Completed | 🟡 In Progress | ⬜ Planned
 
