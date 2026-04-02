@@ -1486,8 +1486,9 @@ export function TerminalManagerPanel({
               />
             </div>
             <div className="field-group terminal-manager-proxy-field">
+              <span>{t("terminalManager.proxyField")}</span>
               <div className="terminal-manager-proxy-control">
-                <span>{t("terminalManager.proxyField")}</span>
+                <span>{t("terminalManager.proxyToggleLabel")}</span>
                 <label className="terminal-manager-proxy-switch">
                   <input
                     type="checkbox"
@@ -1506,11 +1507,6 @@ export function TerminalManagerPanel({
                   </span>
                 </label>
               </div>
-              <p className="status-text">
-                {launchDraft.proxyEnabled
-                  ? t("terminalManager.proxyEnabledDescription")
-                  : t("terminalManager.proxyDisabledDescription")}
-              </p>
             </div>
           </div>
 

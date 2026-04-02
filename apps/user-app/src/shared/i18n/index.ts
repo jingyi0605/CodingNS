@@ -620,6 +620,7 @@ const extensionZhCN = {
     portLabel: "\u7aef\u53e3",
     portPlaceholder: "\u4f8b\u5982\uff1a3000",
     proxyField: "\u53cd\u5411\u4ee3\u7406",
+    proxyToggleLabel: "\u5f00\u542f\u53cd\u5411\u4ee3\u7406",
     proxyEnabled: "\u4ee3\u7406\u5df2\u542f\u7528",
     proxyEnabledDescription: "\u5f00\u542f\u540e\u4f1a\u751f\u6210\u968f\u673a URL \u7801\uff0c\u53ef\u901a\u8fc7 /proxy/\u5730\u5740\u8bbf\u95ee\u5f53\u524d\u5f00\u53d1\u670d\u52a1\u3002",
     proxyDisabledDescription: "\u672a\u5f00\u542f\u53cd\u5411\u4ee3\u7406",
@@ -1283,6 +1284,7 @@ const extensionEnUS = {
     portLabel: "Port",
     portPlaceholder: "For example: 3000",
     proxyField: "Reverse Proxy",
+    proxyToggleLabel: "Enable Reverse Proxy",
     proxyEnabled: "Proxy Enabled",
     proxyEnabledDescription:
       "When enabled, the system generates a random URL code and exposes your dev service under /proxy/.",
