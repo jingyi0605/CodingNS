@@ -92,7 +92,7 @@ function ToastItem({
           </button>
         ) : null}
         <button className="toast-dismiss" type="button" aria-label="关闭通知" onClick={() => onDismiss(id)}>
-          x
+          ×
         </button>
       </div>
     </article>
