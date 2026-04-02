@@ -229,6 +229,127 @@ test("ClaudeCodeAdapter 会忽略顶层 Warmup sidechain 调试会话", async ()
   }
 });
 
+test("ClaudeCodeAdapter 会把顶层 Task 子代理 transcript 识别为子会话", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-claude-task-subagent-"));
+  const workspacePath = "/Users/jackson/Documents/Code/CodingNS";
+  const projectDir = join(tempDir, "projects", "-Users-jackson-Documents-Code-CodingNS");
+  const parentSessionId = "fa494234-ba36-438d-9b01-44ee0ab7684c";
+  const childAgentId = "ec4ca8be";
+  const childFileName = `agent-${childAgentId}`;
+
+  try {
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(
+      join(projectDir, `${parentSessionId}.jsonl`),
+      [
+        JSON.stringify({
+          type: "user",
+          sessionId: parentSessionId,
+          cwd: workspacePath,
+          timestamp: "2026-04-02T04:31:04.111Z",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "帮我修改 GLM MCP 配置" }]
+          }
+        }),
+        JSON.stringify({
+          type: "assistant",
+          sessionId: parentSessionId,
+          cwd: workspacePath,
+          timestamp: "2026-04-02T04:31:42.963Z",
+          message: {
+            role: "assistant",
+            content: [
+              { type: "text", text: "我先让子代理去搜索 MCP 配置。" },
+              {
+                type: "tool_use",
+                id: "call_task_1",
+                name: "Task",
+                input: {
+                  description: "查找GLM MCP配置文件",
+                  prompt: "搜索 MCP 相关配置",
+                  subagent_type: "Explore"
+                }
+              }
+            ]
+          }
+        }),
+        JSON.stringify({
+          type: "user",
+          sessionId: parentSessionId,
+          cwd: workspacePath,
+          timestamp: "2026-04-02T04:35:27.713Z",
+          message: {
+            role: "user",
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: "call_task_1",
+                content: [{ type: "text", text: "查找完成" }]
+              }
+            ]
+          },
+          toolUseResult: {
+            status: "completed",
+            agentId: childAgentId
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(
+      join(projectDir, `${childFileName}.jsonl`),
+      [
+        JSON.stringify({
+          parentUuid: null,
+          isSidechain: true,
+          userType: "external",
+          cwd: workspacePath,
+          sessionId: parentSessionId,
+          agentId: childAgentId,
+          type: "user",
+          message: {
+            role: "user",
+            content: "搜索 MCP 相关配置"
+          },
+          uuid: "child-user-1",
+          timestamp: "2026-04-02T04:31:43.451Z"
+        }),
+        JSON.stringify({
+          parentUuid: "child-user-1",
+          isSidechain: true,
+          userType: "external",
+          cwd: workspacePath,
+          sessionId: parentSessionId,
+          agentId: childAgentId,
+          type: "assistant",
+          message: {
+            id: "msg-child-1",
+            type: "message",
+            role: "assistant",
+            content: [{ type: "text", text: "我来查找 MCP 配置。" }]
+          },
+          uuid: "child-assistant-1",
+          timestamp: "2026-04-02T04:31:44.000Z"
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const adapter = new ClaudeCodeAdapter({ homeDir: tempDir });
+    const sessions = await adapter.detectSessions(workspacePath);
+    const childSession = sessions.find((session) => session.rawStoreRef === join(projectDir, `${childFileName}.jsonl`));
+
+    assert.equal(sessions.length, 2);
+    assert.equal(childSession?.providerSessionId, `${parentSessionId}::${childFileName}`);
+    assert.equal(childSession?.parentProviderSessionId, parentSessionId);
+    assert.equal(childSession?.isSubagent, true);
+    assert.equal(childSession?.subagentLabel, "explore · 查找GLM MCP配置文件");
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("ClaudeCodeAdapter 能解析 content 为字符串的用户消息", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "codingns-claude-string-content-"));
   const workspacePath = "/Users/jackson/Documents/Code/CodingNS";

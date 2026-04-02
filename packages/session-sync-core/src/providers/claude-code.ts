@@ -1,4 +1,4 @@
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { existsSync, statSync } from "node:fs";
 import crypto from "node:crypto";
 
@@ -64,6 +64,7 @@ interface ClaudeHistoryCacheEntry {
 interface ClaudeSubagentMetadata {
   providerSessionId: string;
   parentProviderSessionId: string;
+  subagentLabel: string | null;
 }
 
 const HISTORY_CACHE_LIMIT = 6;
@@ -135,7 +136,7 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
           rawStoreRef: filePath,
           parentProviderSessionId: subagentMetadata?.parentProviderSessionId ?? null,
           isSubagent: subagentMetadata !== undefined,
-          subagentLabel: known.subagentLabel ?? null,
+          subagentLabel: known.subagentLabel ?? subagentMetadata?.subagentLabel ?? null,
           sourceMtimeMs: stats.mtimeMs,
           sourceSizeBytes: stats.size
         });
@@ -171,7 +172,7 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
         messageCount: messages.length,
         parentProviderSessionId: subagentMetadata?.parentProviderSessionId ?? null,
         isSubagent: subagentMetadata !== undefined,
-        subagentLabel: null,
+        subagentLabel: subagentMetadata?.subagentLabel ?? null,
         sourceMtimeMs: stats.mtimeMs,
         sourceSizeBytes: stats.size
       });
@@ -683,9 +684,10 @@ function buildClaudeSubagentMetadataIndex(
   files: string[]
 ): Map<string, ClaudeSubagentMetadata> {
   const metadataByFilePath = new Map<string, ClaudeSubagentMetadata>();
+  const filePathSet = new Set(files);
 
   for (const filePath of files) {
-    const metadata = parseClaudeSubagentMetadata(filePath);
+    const metadata = parseClaudeSubagentPathMetadata(filePath);
 
     if (!metadata) {
       continue;
@@ -694,10 +696,29 @@ function buildClaudeSubagentMetadataIndex(
     metadataByFilePath.set(filePath, metadata);
   }
 
+  for (const filePath of files) {
+    const records = readJsonLines(filePath).map((record) => record.data);
+    const taskSpawnMetadata = parseClaudeTaskSpawnMetadata(filePath, records, filePathSet);
+
+    for (const [childFilePath, metadata] of taskSpawnMetadata) {
+      const existing = metadataByFilePath.get(childFilePath);
+
+      if (!existing) {
+        metadataByFilePath.set(childFilePath, metadata);
+        continue;
+      }
+
+      metadataByFilePath.set(childFilePath, {
+        ...existing,
+        subagentLabel: existing.subagentLabel ?? metadata.subagentLabel
+      });
+    }
+  }
+
   return metadataByFilePath;
 }
 
-function parseClaudeSubagentMetadata(filePath: string): ClaudeSubagentMetadata | null {
+function parseClaudeSubagentPathMetadata(filePath: string): ClaudeSubagentMetadata | null {
   const normalizedPath = filePath.replaceAll("\\", "/");
   const matched = normalizedPath.match(/\/([^/]+)\/subagents\/([^/]+)\.jsonl$/i);
 
@@ -710,8 +731,212 @@ function parseClaudeSubagentMetadata(filePath: string): ClaudeSubagentMetadata |
 
   return {
     providerSessionId: `${parentProviderSessionId}::${agentFileName}`,
-    parentProviderSessionId
+    parentProviderSessionId,
+    subagentLabel: readClaudeSubagentMetaLabel(filePath)
   };
+}
+
+function parseClaudeTaskSpawnMetadata(
+  filePath: string,
+  records: Array<Record<string, unknown>>,
+  filePathSet: ReadonlySet<string>
+): Map<string, ClaudeSubagentMetadata> {
+  const taskSpawnMetadata = new Map<string, ClaudeSubagentMetadata>();
+  const taskRequestByToolId = new Map<
+    string,
+    {
+      parentProviderSessionId: string;
+      subagentLabel: string | null;
+    }
+  >();
+  const parentDir = dirname(filePath);
+
+  for (const record of records) {
+    const sessionId = ensureText(record.sessionId).trim();
+
+    if (!sessionId) {
+      continue;
+    }
+
+    for (const message of collectClaudeRecordMessages(record)) {
+      if (message.role === "assistant") {
+        for (const taskRequest of extractClaudeTaskRequests(message.message)) {
+          taskRequestByToolId.set(taskRequest.toolUseId, {
+            parentProviderSessionId: sessionId,
+            subagentLabel: formatClaudeSubagentLabel(
+              taskRequest.subagentType,
+              taskRequest.description
+            )
+          });
+        }
+
+        continue;
+      }
+
+      if (message.role !== "user") {
+        continue;
+      }
+
+      for (const toolUseId of extractClaudeToolResultIds(message.message)) {
+        const taskRequest = taskRequestByToolId.get(toolUseId);
+        const agentFileName = normalizeClaudeAgentFileName(readClaudeTaskResultAgentId(record));
+
+        if (!taskRequest || !agentFileName) {
+          continue;
+        }
+
+        const childFilePath = join(parentDir, `${agentFileName}.jsonl`);
+
+        if (!filePathSet.has(childFilePath)) {
+          continue;
+        }
+
+        taskSpawnMetadata.set(childFilePath, {
+          providerSessionId: `${taskRequest.parentProviderSessionId}::${agentFileName}`,
+          parentProviderSessionId: taskRequest.parentProviderSessionId,
+          subagentLabel: taskRequest.subagentLabel
+        });
+      }
+    }
+  }
+
+  return taskSpawnMetadata;
+}
+
+function collectClaudeRecordMessages(
+  record: Record<string, unknown>
+): Array<{ role: string; message: Record<string, unknown> }> {
+  const messages: Array<{ role: string; message: Record<string, unknown> }> = [];
+  const directRole = ensureText(toClaudeRecord(record.message).role).trim();
+  const directMessage = toClaudeRecord(record.message);
+
+  if ((directRole === "assistant" || directRole === "user") && Object.keys(directMessage).length > 0) {
+    messages.push({
+      role: directRole,
+      message: directMessage
+    });
+  }
+
+  if (ensureText(record.type) !== "progress") {
+    return messages;
+  }
+
+  const nested = toClaudeRecord(toClaudeRecord(record.data).message);
+  const nestedRole = ensureText(toClaudeRecord(nested.message).role).trim();
+  const nestedMessage = toClaudeRecord(nested.message);
+
+  if ((nestedRole === "assistant" || nestedRole === "user") && Object.keys(nestedMessage).length > 0) {
+    messages.push({
+      role: nestedRole,
+      message: nestedMessage
+    });
+  }
+
+  return messages;
+}
+
+function extractClaudeTaskRequests(
+  message: Record<string, unknown>
+): Array<{ toolUseId: string; subagentType: string; description: string }> {
+  const content = Array.isArray(message.content) ? message.content : [];
+  const requests: Array<{ toolUseId: string; subagentType: string; description: string }> = [];
+
+  for (const item of content) {
+    const part = toClaudeRecord(item);
+    const partType = ensureText(part.type).trim();
+    const toolUseId = ensureText(part.id).trim();
+    const toolName = ensureText(part.name).trim();
+
+    if (partType !== "tool_use" || toolName !== "Task" || !toolUseId) {
+      continue;
+    }
+
+    const input = toClaudeRecord(part.input);
+    requests.push({
+      toolUseId,
+      subagentType: ensureText(input.subagent_type).trim(),
+      description: ensureText(input.description).trim()
+    });
+  }
+
+  return requests;
+}
+
+function extractClaudeToolResultIds(message: Record<string, unknown>): string[] {
+  const content = Array.isArray(message.content) ? message.content : [];
+  const toolResultIds: string[] = [];
+
+  for (const item of content) {
+    const part = toClaudeRecord(item);
+
+    if (ensureText(part.type).trim() !== "tool_result") {
+      continue;
+    }
+
+    const toolUseId = ensureText(part.tool_use_id).trim();
+
+    if (toolUseId) {
+      toolResultIds.push(toolUseId);
+    }
+  }
+
+  return toolResultIds;
+}
+
+function readClaudeTaskResultAgentId(record: Record<string, unknown>): string {
+  const toolUseResult = toClaudeRecord(record.toolUseResult);
+  return ensureText(toolUseResult.agentId).trim();
+}
+
+function normalizeClaudeAgentFileName(agentId: string): string | null {
+  const normalizedAgentId = agentId.trim();
+
+  if (!normalizedAgentId) {
+    return null;
+  }
+
+  if (/^agent-[^/]+$/i.test(normalizedAgentId)) {
+    return normalizedAgentId;
+  }
+
+  return /^[-a-z0-9_]+$/i.test(normalizedAgentId) ? `agent-${normalizedAgentId}` : null;
+}
+
+function readClaudeSubagentMetaLabel(filePath: string): string | null {
+  const metaFilePath = filePath.replace(/\.jsonl$/i, ".meta.json");
+
+  if (!existsSync(metaFilePath)) {
+    return null;
+  }
+
+  try {
+    const meta = JSON.parse(readFirstNonEmptyLine(metaFilePath, 64 * 1024) ?? "{}") as Record<string, unknown>;
+    return formatClaudeSubagentLabel(
+      ensureText(meta.agentType).trim(),
+      ensureText(meta.description).trim()
+    );
+  } catch {
+    return null;
+  }
+}
+
+function formatClaudeSubagentLabel(subagentType: string, description: string): string | null {
+  const normalizedType = subagentType.trim().toLowerCase();
+  const normalizedDescription = description.trim();
+
+  if (!normalizedType && !normalizedDescription) {
+    return null;
+  }
+
+  if (!normalizedType) {
+    return normalizedDescription;
+  }
+
+  if (!normalizedDescription) {
+    return normalizedType;
+  }
+
+  return `${normalizedType} · ${normalizedDescription}`;
 }
 
 function shouldHideClaudeDebugSession(filePath: string): boolean {

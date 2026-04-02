@@ -2022,6 +2022,163 @@ describe("spec002 会话同步核心", () => {
     ).toBe(false);
   });
 
+  it("发现工作区会话时会把 Claude 顶层 Task 子代理 transcript 识别为子会话", async () => {
+    const fixture = createProviderFixture();
+    activeFixtures.push(fixture);
+    const parentSessionId = "claude-task-parent";
+    const childAgentId = "ec4ca8be";
+    const childFileName = `agent-${childAgentId}`;
+
+    writeFileSync(
+      path.join(
+        fixture.claudeHomeDir,
+        "projects",
+        "c--Fixtures-Workspace",
+        `${parentSessionId}.jsonl`
+      ),
+      [
+        JSON.stringify({
+          type: "user",
+          sessionId: parentSessionId,
+          cwd: fixture.workspaceDir,
+          timestamp: "2026-04-02T04:31:04.111Z",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "帮我修改 GLM MCP 配置" }]
+          }
+        }),
+        JSON.stringify({
+          type: "assistant",
+          sessionId: parentSessionId,
+          cwd: fixture.workspaceDir,
+          timestamp: "2026-04-02T04:31:42.963Z",
+          message: {
+            role: "assistant",
+            content: [
+              { type: "text", text: "我先让子代理去搜索 MCP 配置。" },
+              {
+                type: "tool_use",
+                id: "call_task_1",
+                name: "Task",
+                input: {
+                  description: "查找GLM MCP配置文件",
+                  prompt: "搜索 MCP 相关配置",
+                  subagent_type: "Explore"
+                }
+              }
+            ]
+          }
+        }),
+        JSON.stringify({
+          type: "user",
+          sessionId: parentSessionId,
+          cwd: fixture.workspaceDir,
+          timestamp: "2026-04-02T04:35:27.713Z",
+          message: {
+            role: "user",
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: "call_task_1",
+                content: [{ type: "text", text: "查找完成" }]
+              }
+            ]
+          },
+          toolUseResult: {
+            status: "completed",
+            agentId: childAgentId
+          }
+        }),
+        JSON.stringify({
+          type: "ai-title",
+          sessionId: parentSessionId,
+          aiTitle: "Claude 主会话"
+        })
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(
+      path.join(
+        fixture.claudeHomeDir,
+        "projects",
+        "c--Fixtures-Workspace",
+        `${childFileName}.jsonl`
+      ),
+      [
+        JSON.stringify({
+          parentUuid: null,
+          isSidechain: true,
+          userType: "external",
+          cwd: fixture.workspaceDir,
+          sessionId: parentSessionId,
+          agentId: childAgentId,
+          type: "user",
+          message: {
+            role: "user",
+            content: "搜索 MCP 相关配置"
+          },
+          uuid: "child-user-1",
+          timestamp: "2026-04-02T04:31:43.451Z"
+        }),
+        JSON.stringify({
+          parentUuid: "child-user-1",
+          isSidechain: true,
+          userType: "external",
+          cwd: fixture.workspaceDir,
+          sessionId: parentSessionId,
+          agentId: childAgentId,
+          type: "assistant",
+          message: {
+            id: "msg-child-1",
+            type: "message",
+            role: "assistant",
+            content: [{ type: "text", text: "我来查找 MCP 配置。" }]
+          },
+          uuid: "child-assistant-1",
+          timestamp: "2026-04-02T04:31:44.000Z"
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const hosted = createTestApp(fixture);
+    activeClosers.push(() => hosted.app.close());
+    await hosted.app.ready();
+
+    const accessToken = await bootstrapAndLogin(hosted);
+    const workspaceId = await importWorkspace(hosted, accessToken, fixture.workspaceDir);
+    const sessions = await hosted.app.inject({
+      method: "GET",
+      url: `/api/sessions?workspaceId=${workspaceId}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+
+    expect(sessions.statusCode).toBe(200);
+
+    const items = sessions.json().items as Array<{
+      sessionId: string;
+      provider: string;
+      providerSessionId: string;
+      rawStoreRef: string;
+      parentSessionId?: string | null;
+      isSubagent?: boolean;
+      subagentLabel?: string | null;
+    }>;
+    const parentSession = items.find((item) => item.providerSessionId === parentSessionId);
+    const childSession = items.find(
+      (item) => item.providerSessionId === `${parentSessionId}::${childFileName}`
+    );
+
+    expect(parentSession).toBeTruthy();
+    expect(childSession).toMatchObject({
+      parentSessionId: parentSession?.sessionId,
+      isSubagent: true,
+      subagentLabel: "explore · 查找GLM MCP配置文件"
+    });
+  });
+
   it("继续 Claude 现有会话时会优先认领本次请求之后的新用户消息", async () => {
     const fixture = createProviderFixture();
     activeFixtures.push(fixture);
