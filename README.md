@@ -10,6 +10,7 @@
 [![pnpm](https://img.shields.io/badge/pnpm-%3E%3D9.0.0-blue.svg)](https://pnpm.io/)
 [![Tauri](https://img.shields.io/badge/Tauri-2.x-orange.svg)](https://tauri.app/)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](#)
+[![QQ](https://img.shields.io/badge/QQ%E4%BA%A4%E6%B5%81%E7%BE%A4-1092985965-blue.svg)](#)
 
 [English](#english) | [中文](#中文)
 
@@ -277,6 +278,21 @@ pnpm test:user-app
 - **spec010.1** - OpenCode 兼容接入
 - **spec011** - 单包安装与统一服务发布
 - **spec012** - 并行项目编排与结果对比
+
+### 🗺️ 路线图
+
+| 开发目标 | 当前进度 | 完成情况 |
+|----------|----------|----------|
+| 进程管理支持反向代理，单一端口代理开发中的应用 | 规划中 | ⬜ 计划中 |
+| iOS APP | 规划中 | ⬜ 计划中 |
+| 并行开发模式，同时启动多个 CLI 或模型配置，并行针对单一工作区进行快速开发验证 | 规划中 | ⬜ 计划中 |
+| 支持更多 CLI（Gemini CLI、KIMI CLI、KIRO CLI 等） | 规划中 | ⬜ 计划中 |
+| 支持同时连接多个 HOST | 规划中 | ⬜ 计划中 |
+| PC 端支持多窗口操作 | 规划中 | ⬜ 计划中 |
+| 更好的文件编辑器体验 | 规划中 | ⬜ 计划中 |
+| 内置 Tailscale 支持一键穿透内网 | 规划中 | ⬜ 计划中 |
+
+> 进度说明：🟢 已完成 | 🟡 开发中 | ⬜ 计划中
 
 ### 🤝 贡献
 
@@ -547,6 +563,21 @@ Detailed feature specifications and design documents are located in the [`specs/
 - **spec010.1** - OpenCode Compatibility Integration
 - **spec011** - Single-package Install & Unified Service Delivery
 - **spec012** - Parallel Project Orchestration & Result Comparison
+
+### 🗺️ Roadmap
+
+| Goal | Progress | Status |
+|------|----------|--------|
+| Reverse proxy for process management — proxy dev apps through a single port | Planning | ⬜ Planned |
+| iOS APP | Planning | ⬜ Planned |
+| Parallel dev mode — launch multiple CLI or model configs simultaneously for rapid dev validation on a single workspace | Planning | ⬜ Planned |
+| Support more CLIs (Gemini CLI, KIMI CLI, KIRO CLI, etc.) | Planning | ⬜ Planned |
+| Support connecting to multiple hosts simultaneously | Planning | ⬜ Planned |
+| Multi-window support on desktop | Planning | ⬜ Planned |
+| Better file editor experience | Planning | ⬜ Planned |
+| Built-in Tailscale for one-click NAT traversal | Planning | ⬜ Planned |
+
+> Status legend: 🟢 Completed | 🟡 In Progress | ⬜ Planned
 
 ### 🤝 Contributing
 
