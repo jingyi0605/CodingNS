@@ -98,6 +98,7 @@ export interface CodexAppServerTransport {
   interruptTurn(): Promise<void>;
   setNotificationHandler(handler: (notification: Record<string, unknown>) => void | Promise<void>): void;
   setServerRequestHandler(handler: (request: Record<string, unknown>) => Promise<unknown>): void;
+  setOnClose(handler: ((error: Error | null) => void) | null): void;
   close(): void;
 }
 
@@ -160,6 +161,16 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
         providerSessionId,
         request: serverRequest
       });
+    });
+    transport.setOnClose((error) => {
+      if (error) {
+        eventQueue.push({
+          type: "turn.failed",
+          timestamp: nextTimestamp(),
+          error: error.message
+        });
+      }
+      eventQueue.close();
     });
     await transport.startTurn(request, providerSessionId);
 
@@ -248,6 +259,16 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
         providerSessionId: resolvedSessionId,
         request: serverRequest
       });
+    });
+    transport.setOnClose((error) => {
+      if (error) {
+        eventQueue.push({
+          type: "turn.failed",
+          timestamp: nextTimestamp(),
+          error: error.message
+        });
+      }
+      eventQueue.close();
     });
     await transport.startTurn(request, resolvedSessionId);
 
@@ -880,6 +901,7 @@ function createCodexAppServerTransport(options: CodexRuntimeOptions): CodexAppSe
   let closed = false;
   let activeTurnId: string | null = null;
   let activeThreadId: string | null = null;
+  let closeHandler: ((error: Error | null) => void) | null = null;
   const pendingResponses = new Map<
     string,
     {
@@ -900,6 +922,8 @@ function createCodexAppServerTransport(options: CodexRuntimeOptions): CodexAppSe
       pending.reject(error ?? new Error("CODEX_APP_SERVER_CLOSED"));
     }
     pendingResponses.clear();
+
+    closeHandler?.(error);
   };
 
   child.on("error", (error: Error) => {
@@ -1085,6 +1109,9 @@ function createCodexAppServerTransport(options: CodexRuntimeOptions): CodexAppSe
     },
     setServerRequestHandler(handler) {
       serverRequestHandler = handler;
+    },
+    setOnClose(handler: ((error: Error | null) => void) | null) => void {
+      closeHandler = handler;
     },
     close() {
       if (closed) {

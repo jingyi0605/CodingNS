@@ -248,8 +248,8 @@ export class SessionHistoryService {
       syncStatus: "syncing",
       syncCursor: current?.syncCursor ?? cursor,
       lastSyncAt: current?.lastSyncAt ?? null,
-      lastErrorCode: null,
-      lastErrorDetail: null,
+      lastErrorCode: current?.lastErrorCode ?? null,
+      lastErrorDetail: current?.lastErrorDetail ?? null,
       resumedAt: current?.resumedAt ?? null
     });
 
@@ -274,8 +274,8 @@ export class SessionHistoryService {
             ? current?.syncCursor ?? page.cursor
             : page.cursor,
         lastSyncAt: nowIso(),
-        lastErrorCode: null,
-        lastErrorDetail: null,
+        lastErrorCode: current?.lastErrorCode ?? null,
+        lastErrorDetail: current?.lastErrorDetail ?? null,
         resumedAt: current?.resumedAt ?? null
       });
 
@@ -512,8 +512,8 @@ export class SessionHistoryService {
         syncCursor:
           this.sessionStatusSnapshotRepository.findBySessionId(sessionId)?.syncCursor ?? null,
         lastSyncAt: result.resumedAt,
-        lastErrorCode: null,
-        lastErrorDetail: null,
+        lastErrorCode: this.sessionStatusSnapshotRepository.findBySessionId(sessionId)?.lastErrorCode ?? null,
+        lastErrorDetail: this.sessionStatusSnapshotRepository.findBySessionId(sessionId)?.lastErrorDetail ?? null,
         resumedAt: result.resumedAt
       });
 
@@ -644,8 +644,8 @@ export class SessionHistoryService {
       syncCursor:
         this.sessionStatusSnapshotRepository.findBySessionId(sessionId)?.syncCursor ?? null,
       lastSyncAt: result.acceptedAt,
-      lastErrorCode: null,
-      lastErrorDetail: null,
+      lastErrorCode: this.sessionStatusSnapshotRepository.findBySessionId(sessionId)?.lastErrorCode ?? null,
+      lastErrorDetail: this.sessionStatusSnapshotRepository.findBySessionId(sessionId)?.lastErrorDetail ?? null,
       resumedAt: this.sessionStatusSnapshotRepository.findBySessionId(sessionId)?.resumedAt ?? null
     });
 
@@ -672,8 +672,8 @@ export class SessionHistoryService {
       syncStatus: "syncing",
       syncCursor: current?.syncCursor ?? cursor,
       lastSyncAt: current?.lastSyncAt ?? null,
-      lastErrorCode: null,
-      lastErrorDetail: null,
+      lastErrorCode: current?.lastErrorCode ?? null,
+      lastErrorDetail: current?.lastErrorDetail ?? null,
       resumedAt: current?.resumedAt ?? null
     });
 
@@ -768,8 +768,8 @@ export class SessionHistoryService {
       syncStatus: "idle",
       syncCursor: page.cursor,
       lastSyncAt: nowIso(),
-      lastErrorCode: null,
-      lastErrorDetail: null,
+      lastErrorCode: this.sessionStatusSnapshotRepository.findBySessionId(sessionId)?.lastErrorCode ?? null,
+      lastErrorDetail: this.sessionStatusSnapshotRepository.findBySessionId(sessionId)?.lastErrorDetail ?? null,
       resumedAt: this.sessionStatusSnapshotRepository.findBySessionId(sessionId)?.resumedAt ?? null
     });
 
@@ -1420,14 +1420,14 @@ export class SessionHistoryService {
     }
 
     await this.syncSessionTitleFromProvider(sessionId, binding);
+    const snapshot = this.sessionStatusSnapshotRepository.findBySessionId(sessionId);
     this.upsertSnapshot(sessionId, {
       syncStatus: "idle",
       syncCursor: page.cursor,
       lastSyncAt: nowIso(),
-      lastErrorCode: null,
-      lastErrorDetail: null,
-      resumedAt:
-        this.sessionStatusSnapshotRepository.findBySessionId(sessionId)?.resumedAt ?? null
+      lastErrorCode: snapshot?.lastErrorCode ?? null,
+      lastErrorDetail: snapshot?.lastErrorDetail ?? null,
+      resumedAt: snapshot?.resumedAt ?? null
     });
 
     await onEnvelope({
