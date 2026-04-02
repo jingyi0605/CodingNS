@@ -28,6 +28,8 @@ export interface TerminalTemplateDto {
   args: string[];
   env: Record<string, string>;
   port: number | null;
+  proxyEnabled: boolean;
+  proxySlug: string | null;
   runtimeType?: string | null;
   createdAt: string;
   updatedAt: string;
@@ -158,6 +160,7 @@ export function createTerminalTemplate(payload: {
   command: string;
   args: string[];
   port?: number | null;
+  proxyEnabled?: boolean;
   runtimeType?: string | null;
 }) {
   return httpClient.request<TerminalTemplateDto>("/api/terminals/templates", {
@@ -175,6 +178,7 @@ export function updateTerminalTemplate(
     command?: string;
     args?: string[];
     port?: number | null;
+    proxyEnabled?: boolean;
     runtimeType?: string | null;
   }
 ) {

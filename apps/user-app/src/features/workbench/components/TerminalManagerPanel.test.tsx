@@ -160,6 +160,8 @@ describe("TerminalManagerPanel", () => {
           args: ["dev"],
           env: {},
           port: 5173,
+          proxyEnabled: false,
+          proxySlug: null,
           createdAt: "2026-03-24T00:00:00.000Z",
           updatedAt: "2026-03-24T00:10:00.000Z"
         }
@@ -201,6 +203,8 @@ describe("TerminalManagerPanel", () => {
           args: savedTemplateBody.args ?? [],
           env: {},
           port: savedTemplateBody.port ?? null,
+          proxyEnabled: savedTemplateBody.proxyEnabled === true,
+          proxySlug: savedTemplateBody.proxyEnabled === true ? "abcdef" : null,
           createdAt: "2026-03-24T00:20:00.000Z",
           updatedAt: "2026-03-24T00:20:00.000Z"
         });
@@ -282,6 +286,7 @@ describe("TerminalManagerPanel", () => {
         command: "scripts/dev.ps1",
         args: ["-Port", "5173"],
         port: 5173,
+        proxyEnabled: false,
         runtimeType: null
       });
     });
@@ -311,6 +316,8 @@ describe("TerminalManagerPanel", () => {
       args: ["dev"],
       env: {},
       port: 5173,
+      proxyEnabled: false,
+      proxySlug: null,
       runtimeType: null,
       createdAt: "2026-03-24T00:00:00.000Z",
       updatedAt: "2026-03-24T00:10:00.000Z"
@@ -358,6 +365,8 @@ describe("TerminalManagerPanel", () => {
           args: (updatedTemplateBody.args as string[]) ?? [],
           env: {},
           port: Number(updatedTemplateBody.port),
+          proxyEnabled: updatedTemplateBody.proxyEnabled === true,
+          proxySlug: updatedTemplateBody.proxyEnabled === true ? "abcdef" : null,
           runtimeType: updatedTemplateBody.runtimeType as string | null,
           createdAt: "2026-03-24T00:00:00.000Z",
           updatedAt: "2026-03-24T01:00:00.000Z"
@@ -409,6 +418,7 @@ describe("TerminalManagerPanel", () => {
         command: "npm",
         args: ["run", "dev:frontend"],
         port: 4174,
+        proxyEnabled: false,
         runtimeType: null
       });
     });

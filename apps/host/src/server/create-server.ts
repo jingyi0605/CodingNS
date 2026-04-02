@@ -42,6 +42,7 @@ import { SessionLiveRuntimeService } from "../modules/sessions/session-live-runt
 import { SessionMessageAttachmentService } from "../modules/sessions/session-message-attachment-service.js";
 import { CommandTemplateService } from "../modules/terminal/command-template-service.js";
 import { TerminalController } from "../modules/terminal/terminal-controller.js";
+import { TemplateReverseProxyService } from "../modules/terminal/template-reverse-proxy-service.js";
 import { TerminalService } from "../modules/terminal/terminal-service.js";
 import { WorkbenchController } from "../modules/workbench/workbench-controller.js";
 import { WorkbenchService } from "../modules/workbench/workbench-service.js";
@@ -56,6 +57,7 @@ import { registerGitRoutes } from "../routes/git.js";
 import { registerPreferenceRoutes } from "../routes/preferences.js";
 import { registerProviderRoutes } from "../routes/providers.js";
 import { registerPublicRoutes } from "../routes/public.js";
+import { registerProxyRoutes } from "../routes/proxy.js";
 import { registerSessionContextRoutes } from "../routes/session-contexts.js";
 import { registerSessionRoutes } from "../routes/sessions.js";
 import { registerTerminalRoutes } from "../routes/terminals.js";
@@ -228,6 +230,7 @@ export function createServer(config: HostConfig) {
     workspaceService,
     terminalService
   );
+  const templateReverseProxyService = new TemplateReverseProxyService(commandTemplateService);
   const workspacePanelSnapshotService = new WorkspacePanelSnapshotService(
     fileTreeService,
     gitReadService,
@@ -275,6 +278,10 @@ export function createServer(config: HostConfig) {
     new WorkbenchWsHub(workbenchService, workspacePanelSnapshotService, fileWatcher)
   );
 
+  app.server.on("upgrade", (request, socket, head) => {
+    templateReverseProxyService.handleWebSocketUpgrade(request, socket, head);
+  });
+
   app.addHook("onRequest", async (request, reply) => {
     applyCorsHeaders(request.headers.origin, reply);
 
@@ -287,6 +294,7 @@ export function createServer(config: HostConfig) {
   app.setErrorHandler(setErrorHandler);
 
   void registerPublicRoutes(app, bootstrapController);
+  void registerProxyRoutes(app, templateReverseProxyService);
   void registerAuthRoutes(app, authController);
   void registerClientRoutes(app, clientController);
   void registerWorkspaceRoutes(app, workspaceController);

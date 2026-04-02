@@ -65,7 +65,9 @@ export function createWsServer(
     const pathname = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
 
     if (pathname !== "/ws") {
-      socket.destroy();
+      if (!pathname.startsWith("/proxy/")) {
+        socket.destroy();
+      }
       return;
     }
 

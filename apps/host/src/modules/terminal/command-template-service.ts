@@ -1,3 +1,5 @@
+import { randomBytes } from "node:crypto";
+
 import type Database from "better-sqlite3";
 
 import { AppError } from "../../shared/errors/app-error.js";
@@ -22,6 +24,7 @@ interface UpsertCommandTemplateInput {
   args?: string[];
   env?: Record<string, string>;
   port?: number | null;
+  proxyEnabled?: boolean;
   runtimeType?: TerminalRuntimeType | null;
 }
 
@@ -103,9 +106,33 @@ export class CommandTemplateService {
     };
   }
 
+  getTemplateByProxySlug(proxySlug: string): TerminalCommandTemplate | null {
+    const normalized = normalizeProxySlug(proxySlug);
+
+    if (!normalized) {
+      return null;
+    }
+
+    const template = this.templateRepository.findByProxySlug(normalized);
+
+    if (!template?.proxyEnabled || !template.proxySlug) {
+      return null;
+    }
+
+    return template;
+  }
+
   createTemplate(input: UpsertCommandTemplateInput): TerminalCommandTemplate {
     const workspace = this.workspaceService.getWorkspaceOrThrow(input.workspaceId ?? "");
     const timestamp = nowIso();
+    const port = normalizePort(input.port);
+    const proxyEnabled = normalizeProxyEnabled(input.proxyEnabled);
+    const proxySlug = this.resolveProxySlug({
+      previousProxyEnabled: false,
+      previousProxySlug: null,
+      nextProxyEnabled: proxyEnabled,
+      nextPort: port
+    });
     const template = buildValidatedTemplate({
       id: createId(),
       workspaceId: workspace.id,
@@ -114,7 +141,9 @@ export class CommandTemplateService {
       command: input.command,
       args: input.args ?? [],
       env: input.env ?? {},
-      port: normalizePort(input.port),
+      port,
+      proxyEnabled,
+      proxySlug,
       runtimeType: normalizeTemplateRuntimeType(input.runtimeType),
       createdAt: timestamp,
       updatedAt: timestamp
@@ -136,6 +165,15 @@ export class CommandTemplateService {
   updateTemplate(templateId: string, input: UpsertCommandTemplateInput): TerminalCommandTemplate {
     const current = this.getTemplateOrThrow(templateId);
     const workspace = this.workspaceService.getWorkspaceOrThrow(current.workspaceId);
+    const nextPort = input.port === undefined ? current.port : normalizePort(input.port);
+    const nextProxyEnabled =
+      input.proxyEnabled === undefined ? current.proxyEnabled : normalizeProxyEnabled(input.proxyEnabled);
+    const nextProxySlug = this.resolveProxySlug({
+      previousProxyEnabled: current.proxyEnabled,
+      previousProxySlug: current.proxySlug,
+      nextProxyEnabled,
+      nextPort
+    });
     const next = buildValidatedTemplate({
       ...current,
       name: input.name ?? current.name,
@@ -143,7 +181,9 @@ export class CommandTemplateService {
       command: input.command ?? current.command,
       args: input.args ?? current.args,
       env: input.env ?? current.env,
-      port: input.port === undefined ? current.port : normalizePort(input.port),
+      port: nextPort,
+      proxyEnabled: nextProxyEnabled,
+      proxySlug: nextProxySlug,
       runtimeType:
         input.runtimeType === undefined
           ? current.runtimeType
@@ -229,6 +269,49 @@ export class CommandTemplateService {
 
     return template;
   }
+
+  private resolveProxySlug(input: {
+    previousProxyEnabled: boolean;
+    previousProxySlug: string | null;
+    nextProxyEnabled: boolean;
+    nextPort: number | null;
+  }): string | null {
+    if (!input.nextProxyEnabled) {
+      return null;
+    }
+
+    if (input.nextPort === null) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "COMMAND_TEMPLATE_INVALID",
+        detail: "开启反向代理时必须配置监听端口",
+        field: "port"
+      });
+    }
+
+    if (input.previousProxyEnabled && input.previousProxySlug) {
+      return input.previousProxySlug;
+    }
+
+    return this.createUniqueProxySlug();
+  }
+
+  private createUniqueProxySlug(): string {
+    for (let i = 0; i < 10; i += 1) {
+      const slug = createProxySlug();
+      const existed = this.templateRepository.findByProxySlug(slug);
+
+      if (!existed) {
+        return slug;
+      }
+    }
+
+    throw new AppError({
+      statusCode: 500,
+      errorCode: "INTERNAL_ERROR",
+      detail: "生成反向代理地址失败，请稍后重试"
+    });
+  }
 }
 
 function buildValidatedTemplate(input: CommandTemplateDraft): TerminalCommandTemplate {
@@ -297,6 +380,10 @@ function normalizeTemplateRuntimeType(
   return input ?? null;
 }
 
+function normalizeProxyEnabled(input?: boolean): boolean {
+  return input === true;
+}
+
 function normalizePort(input?: number | null): number | null {
   if (input === undefined || input === null) {
     return null;
@@ -324,6 +411,15 @@ function mapTemplateStorageError(error: unknown): AppError {
   }
 
   if (error instanceof Error && error.message.includes("UNIQUE constraint failed")) {
+    if (error.message.includes("terminal_command_templates.proxy_slug")) {
+      return new AppError({
+        statusCode: 409,
+        errorCode: "COMMAND_TEMPLATE_CONFLICT",
+        detail: "代理地址码冲突，请重试",
+        field: "proxySlug"
+      });
+    }
+
     return new AppError({
       statusCode: 409,
       errorCode: "COMMAND_TEMPLATE_CONFLICT",
@@ -337,6 +433,22 @@ function mapTemplateStorageError(error: unknown): AppError {
     errorCode: "INTERNAL_ERROR",
     detail: error instanceof Error ? error.message : "命令模板写入失败"
   });
+}
+
+function createProxySlug(length = 6): string {
+  const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
+  const bytes = randomBytes(length);
+  let result = "";
+
+  for (const value of bytes) {
+    result += alphabet[value % alphabet.length];
+  }
+
+  return result;
+}
+
+function normalizeProxySlug(proxySlug: string): string {
+  return proxySlug.trim().toLowerCase();
 }
 
 function resolveTemplateCwd(workspacePath: string, cwd?: string | null): string {

@@ -17,6 +17,8 @@ function createTemplate(overrides: Partial<TerminalCommandTemplate> = {}): Termi
     args: [],
     env: {},
     port: null,
+    proxyEnabled: false,
+    proxySlug: null,
     runtimeType: "embedded-pty",
     createdAt: "2026-03-29T00:00:00.000Z",
     updatedAt: "2026-03-29T00:00:00.000Z",

@@ -43,6 +43,7 @@ interface CommandTemplateBody {
   args?: string[];
   env?: Record<string, string>;
   port?: number | null;
+  proxyEnabled?: boolean;
   runtimeType?: string | null;
 }
 
@@ -220,6 +221,7 @@ export class TerminalController {
       args: normalizeArgs(request.body.args),
       env: request.body.env,
       port: normalizePort(request.body.port),
+      proxyEnabled: normalizeProxyEnabled(request.body.proxyEnabled),
       runtimeType: normalizeRuntimeType(request.body.runtimeType)
     });
 
@@ -239,6 +241,7 @@ export class TerminalController {
         args: normalizeArgs(request.body.args),
         env: request.body.env,
         port: normalizePort(request.body.port),
+        proxyEnabled: normalizeProxyEnabled(request.body.proxyEnabled),
         runtimeType: normalizeRuntimeType(request.body.runtimeType)
       })
     );
@@ -341,6 +344,23 @@ function normalizePort(input?: number | null): number | null | undefined {
       errorCode: "INVALID_INPUT",
       detail: "port 必须是整数",
       field: "port"
+    });
+  }
+
+  return input;
+}
+
+function normalizeProxyEnabled(input?: boolean): boolean | undefined {
+  if (input === undefined) {
+    return undefined;
+  }
+
+  if (typeof input !== "boolean") {
+    throw new AppError({
+      statusCode: 400,
+      errorCode: "INVALID_INPUT",
+      detail: "proxyEnabled 必须是布尔值",
+      field: "proxyEnabled"
     });
   }
 

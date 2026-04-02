@@ -378,6 +378,8 @@ export interface TerminalCommandTemplate {
   args: string[];
   env: Record<string, string>;
   port: number | null;
+  proxyEnabled: boolean;
+  proxySlug: string | null;
   runtimeType: TerminalRuntimeType | null;
   createdAt: string;
   updatedAt: string;

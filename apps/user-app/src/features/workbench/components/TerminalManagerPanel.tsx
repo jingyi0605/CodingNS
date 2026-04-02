@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
+import { getHostRequestUrl } from "../../../config/env";
 import { readViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import { logPerfDebug } from "../../../shared/debug/perf-debug";
 import { t } from "../../../shared/i18n";
@@ -42,6 +43,7 @@ interface LaunchDraftState {
   target: string;
   args: string;
   port: string;
+  proxyEnabled: boolean;
 }
 
 const INITIAL_LAUNCH_DRAFT: LaunchDraftState = {
@@ -50,7 +52,8 @@ const INITIAL_LAUNCH_DRAFT: LaunchDraftState = {
   cwd: "",
   target: "",
   args: "",
-  port: ""
+  port: "",
+  proxyEnabled: false
 };
 const TERMINAL_MANAGER_SNAPSHOT_CACHE_MAX_AGE_MS = 60 * 1000;
 
@@ -135,8 +138,13 @@ function buildLaunchDraftFromTemplate(template: TerminalTemplateDto): LaunchDraf
     cwd: template.cwd,
     target: template.command,
     args: template.args.join(" "),
-    port: template.port === null ? "" : String(template.port)
+    port: template.port === null ? "" : String(template.port),
+    proxyEnabled: template.proxyEnabled
   };
+}
+
+function buildTemplateProxyUrl(proxySlug: string): string {
+  return getHostRequestUrl(`/proxy/${encodeURIComponent(proxySlug)}`);
 }
 
 function detectTemplateMode(template: TerminalTemplateDto): "command" | "script" {
@@ -783,6 +791,14 @@ export function TerminalManagerPanel({
       return;
     }
 
+    if (launchDraft.proxyEnabled && parsedPort === null) {
+      showToast({
+        title: t("terminalManager.proxyPortRequired"),
+        tone: "error"
+      });
+      return;
+    }
+
     setSavingTemplate(true);
 
     try {
@@ -793,6 +809,7 @@ export function TerminalManagerPanel({
         command: launchDraft.target.trim(),
         args: splitArgs(launchDraft.args),
         port: parsedPort,
+        proxyEnabled: launchDraft.proxyEnabled,
         runtimeType: selectedRuntimeType || null
       };
 
@@ -825,6 +842,17 @@ export function TerminalManagerPanel({
       });
     } finally {
       setSavingTemplate(false);
+    }
+  }
+
+  async function handleOpenProxyUrl(proxyUrl: string) {
+    const result = await platform.bridge.openExternal(proxyUrl);
+
+    if (!result.ok) {
+      showToast({
+        title: result.detail || t("terminalManager.openProxyUrlFailed"),
+        tone: "error"
+      });
     }
   }
 
@@ -1041,6 +1069,10 @@ export function TerminalManagerPanel({
               const detailButtonLabel = detailsOpen
                 ? t("terminalManager.hideDetailsAction")
                 : t("terminalManager.showDetailsAction");
+              const proxyUrl =
+                template.proxyEnabled && template.proxySlug
+                  ? buildTemplateProxyUrl(template.proxySlug)
+                  : null;
 
               return (
                 <article
@@ -1091,6 +1123,9 @@ export function TerminalManagerPanel({
                       <span className="badge" data-tone={visualStatus.badgeTone}>
                         {visualStatus.badgeLabel}
                       </span>
+                      {template.proxyEnabled ? (
+                        <span className="badge">{t("terminalManager.proxyEnabled")}</span>
+                      ) : null}
                     </div>
                   </div>
 
@@ -1151,6 +1186,12 @@ export function TerminalManagerPanel({
                             {template.port === null ? t("terminalManager.portUnset") : template.port}
                           </strong>
                         </div>
+                        <div className="terminal-manager-detail-item terminal-manager-detail-item-wide">
+                          <span>{t("terminalManager.proxyField")}</span>
+                          <strong>
+                            {proxyUrl ?? t("terminalManager.proxyDisabledDescription")}
+                          </strong>
+                        </div>
                         {runtimeStatus?.processId ? (
                           <div className="terminal-manager-detail-item">
                             <span>{t("terminalManager.processIdLabel")}</span>
@@ -1165,6 +1206,17 @@ export function TerminalManagerPanel({
                         ) : null}
                       </div>
                       <div className="terminal-manager-actions terminal-manager-detail-actions">
+                        {proxyUrl ? (
+                          <button
+                            className="secondary-button"
+                            type="button"
+                            onClick={() => {
+                              void handleOpenProxyUrl(proxyUrl);
+                            }}
+                          >
+                            {t("terminalManager.openProxyUrlAction")}
+                          </button>
+                        ) : null}
                         <button
                           className="secondary-button"
                           type="button"
@@ -1432,6 +1484,33 @@ export function TerminalManagerPanel({
                   }));
                 }}
               />
+            </div>
+            <div className="field-group terminal-manager-proxy-field">
+              <div className="terminal-manager-proxy-control">
+                <span>{t("terminalManager.proxyField")}</span>
+                <label className="terminal-manager-proxy-switch">
+                  <input
+                    type="checkbox"
+                    role="switch"
+                    aria-label={t("terminalManager.proxyField")}
+                    checked={launchDraft.proxyEnabled}
+                    onChange={(event) => {
+                      setLaunchDraft((current) => ({
+                        ...current,
+                        proxyEnabled: event.target.checked
+                      }));
+                    }}
+                  />
+                  <span className="terminal-manager-proxy-track" aria-hidden="true">
+                    <span className="terminal-manager-proxy-thumb" />
+                  </span>
+                </label>
+              </div>
+              <p className="status-text">
+                {launchDraft.proxyEnabled
+                  ? t("terminalManager.proxyEnabledDescription")
+                  : t("terminalManager.proxyDisabledDescription")}
+              </p>
             </div>
           </div>
 
