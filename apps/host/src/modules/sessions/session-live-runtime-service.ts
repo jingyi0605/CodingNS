@@ -302,6 +302,7 @@ export class SessionLiveRuntimeService {
     const capabilities = this.sessionHistoryService.getProviderCapabilitiesSnapshot(input.provider);
     const workspace = this.workspaceService.getWorkspaceOrThrow(input.workspaceId);
     const sessionId = createId();
+    this.ensurePendingSessionBinding(sessionId, workspace.id, input.provider);
     const persistedAttachments = this.persistMessageAttachments(
       sessionId,
       input.clientRequestId,
@@ -1605,15 +1606,16 @@ export class SessionLiveRuntimeService {
     snapshot: ReturnType<ActiveRunHandle["getSnapshot"]>;
   }): void {
     const timestamp = nowIso();
-    const providerSessionId =
-      input.snapshot.providerSessionId ?? `pending://${input.provider}/${input.sessionId}`;
-    const rawStoreRef = input.snapshot.rawStoreRef ?? `pending://${input.provider}/${input.sessionId}`;
-
-    this.sessionHistoryService.persistSessionBinding(input.sessionId, input.workspaceId, {
-      provider: input.snapshot.provider,
-      providerSessionId,
-      rawStoreRef
-    });
+    this.sessionHistoryService.persistSessionBinding(
+      input.sessionId,
+      input.workspaceId,
+      this.buildBindingSnapshot(
+        input.sessionId,
+        input.snapshot.provider,
+        input.snapshot.providerSessionId,
+        input.snapshot.rawStoreRef
+      )
+    );
     this.sessionIndexRepository.upsert({
       sessionId: input.sessionId,
       workspaceId: input.workspaceId,
@@ -1650,6 +1652,33 @@ export class SessionLiveRuntimeService {
     this.sessionActivityAuthorityService.observe(
       createRuntimeActivityObservation(input.sessionId, input.snapshot)
     );
+  }
+
+  private ensurePendingSessionBinding(
+    sessionId: string,
+    workspaceId: string,
+    provider: string
+  ): void {
+    this.sessionHistoryService.persistSessionBinding(
+      sessionId,
+      workspaceId,
+      this.buildBindingSnapshot(sessionId, provider, null, null)
+    );
+  }
+
+  private buildBindingSnapshot(
+    sessionId: string,
+    provider: string,
+    providerSessionId: string | null,
+    rawStoreRef: string | null
+  ): { provider: string; providerSessionId: string; rawStoreRef: string } {
+    const pendingValue = `pending://${provider}/${sessionId}`;
+
+    return {
+      provider,
+      providerSessionId: providerSessionId ?? pendingValue,
+      rawStoreRef: rawStoreRef ?? pendingValue
+    };
   }
 
   private async persistRuntimeEvent(

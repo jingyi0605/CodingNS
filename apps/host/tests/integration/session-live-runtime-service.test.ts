@@ -254,6 +254,86 @@ describe("SessionLiveRuntimeService", () => {
     });
   });
 
+  it("startLiveSession 在写入首条图片附件前会先创建 pending session binding", async () => {
+    const { service, sessionHistoryService, sessionMessageAttachmentService, workspaceService } =
+      createService();
+    const providerRuntimeService = {
+      startSession: vi.fn(async () => ({
+        getSnapshot: vi.fn(() => ({
+          sessionId: "session-1",
+          workspaceId: "workspace-1",
+          provider: "claude-code",
+          providerSessionId: "claude-session-1",
+          rawStoreRef: "/tmp/.claude/projects/workspace/claude-session-1.jsonl",
+          runningState: "running",
+          attachedClients: 1,
+          startedAt: "2026-03-26T10:00:00.000Z",
+          lastEventAt: "2026-03-26T10:00:01.000Z",
+          completedAt: null,
+          detail: null,
+          errorCode: null,
+          supportsInterrupt: true
+        })),
+        attach: vi.fn()
+      }))
+    };
+    Object.defineProperty(service, "providerRuntimeService", {
+      value: providerRuntimeService,
+      configurable: true
+    });
+
+    sessionHistoryService.getProviderCapabilitiesSnapshot = vi.fn(() => ({
+      provider: "claude-code",
+      canStartSession: true,
+      canResumeSession: true,
+      canSendMessage: true,
+      inRunInputMode: "streaming_guidance",
+      supportsSubagents: true,
+      supportsInterrupt: true,
+      supportsStructuredToolCalls: true,
+      supportsTokenUsage: true,
+      supportsAttachments: true,
+      supportsPermissionPrompt: true,
+      supportsCheckpoint: false,
+      limitations: []
+    }));
+    workspaceService.getWorkspaceOrThrow.mockReturnValue({
+      id: "workspace-1",
+      path: "/tmp/workspace"
+    });
+    sessionMessageAttachmentService.buildProviderPrompt.mockReturnValue(null);
+    sessionHistoryService.getBindingOrThrow.mockReturnValue({
+      providerSessionId: "claude-session-1"
+    });
+    sessionHistoryService.findLatestUserMessage.mockResolvedValue(null);
+
+    await service.startLiveSession({
+      workspaceId: "workspace-1",
+      userId: "user-1",
+      provider: "claude-code",
+      content: "请结合图片说明问题",
+      clientRequestId: "client-start-1",
+      runtimeOptions: {
+        attachments: [
+          {
+            fileName: "error.png",
+            mimeType: "image/png",
+            fileSize: 128,
+            contentBase64: "dGVzdA=="
+          }
+        ]
+      }
+    });
+
+    expect(sessionHistoryService.persistSessionBinding).toHaveBeenCalled();
+    expect(sessionMessageAttachmentService.persistImageAttachments).toHaveBeenCalledTimes(1);
+    expect(
+      sessionHistoryService.persistSessionBinding.mock.invocationCallOrder[0]
+    ).toBeLessThan(
+      sessionMessageAttachmentService.persistImageAttachments.mock.invocationCallOrder[0]
+    );
+  });
+
   it("Claude 托管 active run 续发消息时会清理外部运行态快照，避免退回灰色不可中止", async () => {
     const { service, sessionHistoryService, sessionMessageAttachmentService, workspaceService } =
       createService();
