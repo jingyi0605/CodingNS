@@ -347,6 +347,8 @@ CREATE TABLE IF NOT EXISTS terminal_command_templates (
   args_json TEXT NOT NULL,
   env_json TEXT NOT NULL,
   port INTEGER,
+  proxy_enabled INTEGER NOT NULL DEFAULT 0 CHECK (proxy_enabled IN (0, 1)),
+  proxy_slug TEXT,
   runtime_type TEXT CHECK (
     runtime_type IS NULL OR runtime_type IN (
       'embedded-pty',

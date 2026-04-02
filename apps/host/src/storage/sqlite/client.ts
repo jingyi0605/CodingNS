@@ -29,6 +29,7 @@ export function createDatabaseClient(databasePath: string): DatabaseClient {
   ensureTerminalLogSchema(db);
   ensureTerminalCommandTemplatePortColumn(db);
   ensureTerminalCommandTemplateRuntimeTypeColumn(db);
+  ensureTerminalCommandTemplateProxySchema(db);
 
   return {
     db,
@@ -311,6 +312,38 @@ function ensureTerminalCommandTemplateRuntimeTypeColumn(db: Database.Database): 
   }
 
   db.exec("ALTER TABLE terminal_command_templates ADD COLUMN runtime_type TEXT");
+}
+
+function ensureTerminalCommandTemplateProxySchema(db: Database.Database): void {
+  const columns = db
+    .prepare("PRAGMA table_info(terminal_command_templates)")
+    .all() as Array<{ name: string }>;
+  const columnNames = new Set(columns.map((column) => column.name));
+
+  if (!columnNames.has("proxy_enabled")) {
+    db.exec(
+      "ALTER TABLE terminal_command_templates ADD COLUMN proxy_enabled INTEGER NOT NULL DEFAULT 0 CHECK (proxy_enabled IN (0, 1))"
+    );
+  }
+
+  if (!columnNames.has("proxy_slug")) {
+    db.exec("ALTER TABLE terminal_command_templates ADD COLUMN proxy_slug TEXT");
+  }
+
+  // 索引放在迁移阶段创建，避免旧库缺少 proxy_slug 列时在 schema 初始化阶段直接失败。
+  db.exec(`
+    UPDATE terminal_command_templates
+    SET proxy_enabled = 0
+    WHERE proxy_enabled IS NULL OR proxy_enabled NOT IN (0, 1);
+
+    UPDATE terminal_command_templates
+    SET proxy_slug = NULL
+    WHERE proxy_enabled = 0;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_terminal_templates_proxy_slug
+      ON terminal_command_templates(proxy_slug)
+      WHERE proxy_slug IS NOT NULL;
+  `);
 }
 
 function ensureTerminalInstanceProcessIdColumn(db: Database.Database): void {
