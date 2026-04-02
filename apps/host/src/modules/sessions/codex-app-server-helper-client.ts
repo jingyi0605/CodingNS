@@ -79,6 +79,7 @@ interface LogicalTransportState {
   pendingResponses: Map<string, PendingResponse>;
   notificationHandler: (notification: Record<string, unknown>) => void | Promise<void>;
   serverRequestHandler: (request: Record<string, unknown>) => Promise<unknown>;
+  closeHandler: ((error: Error | null) => void) | null;
   closed: boolean;
 }
 
@@ -133,6 +134,7 @@ export class CodexAppServerHelperClient {
       serverRequestHandler: async () => {
         throw new Error("CODEX_APP_SERVER_REQUEST_NOT_SUPPORTED");
       },
+      closeHandler: null,
       closed: false
     };
 
@@ -208,6 +210,12 @@ export class CodexAppServerHelperClient {
       setServerRequestHandler(handler) {
         state.serverRequestHandler = handler;
       },
+      setOnClose(handler) {
+        state.closeHandler = handler;
+      },
+      isClosed() {
+        return state.closed;
+      },
       close: () => {
         if (state.closed) {
           return;
@@ -221,6 +229,7 @@ export class CodexAppServerHelperClient {
           method: "close"
         });
         this.rejectTransportPending(state, new Error("CODEX_APP_SERVER_CLOSED"));
+        this.notifyTransportClosed(state, null);
         this.transports.delete(transportId);
       }
     };
@@ -304,6 +313,10 @@ export class CodexAppServerHelperClient {
       case "transport_closed":
         state.closed = true;
         this.rejectTransportPending(state, new Error(message.detail ?? "CODEX_APP_SERVER_CLOSED"));
+        this.notifyTransportClosed(
+          state,
+          message.detail ? new Error(message.detail) : null
+        );
         this.transports.delete(message.transportId);
     }
   }
@@ -328,12 +341,25 @@ export class CodexAppServerHelperClient {
     state.pendingResponses.clear();
   }
 
+  private notifyTransportClosed(state: LogicalTransportState, error: Error | null): void {
+    if (!state.closeHandler) {
+      return;
+    }
+
+    try {
+      state.closeHandler(error);
+    } catch {
+      return;
+    }
+  }
+
   private failAll(error: unknown): void {
+    const normalizedError = error instanceof Error ? error : new Error(String(error));
+
     for (const state of this.transports.values()) {
-      this.rejectTransportPending(
-        state,
-        error instanceof Error ? error : new Error(String(error))
-      );
+      state.closed = true;
+      this.rejectTransportPending(state, normalizedError);
+      this.notifyTransportClosed(state, normalizedError);
     }
     this.transports.clear();
   }

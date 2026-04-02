@@ -34,6 +34,16 @@ export class ProviderRuntimeService {
     return this.registry.getSnapshot(sessionId);
   }
 
+  isRunHealthy(sessionId: string): boolean | null {
+    const handle = this.handles.get(sessionId);
+
+    if (!handle) {
+      return null;
+    }
+
+    return handle.isHealthy();
+  }
+
   listSnapshots(): ActiveRunSnapshot[] {
     return this.registry.listSnapshots();
   }
@@ -90,6 +100,17 @@ export class ProviderRuntimeService {
     await this.registry.disposeAll();
   }
 
+  async abandonRun(sessionId: string): Promise<void> {
+    const handle = this.handles.get(sessionId);
+
+    if (!handle) {
+      return;
+    }
+
+    await handle.dispose();
+    this.handles.delete(sessionId);
+  }
+
   private async beginRun(
     mode: "start" | "continue",
     request: ProviderRuntimeRunRequest
@@ -128,6 +149,7 @@ export class ProviderRuntimeService {
       });
       handle.setInterruptHandler(launch.interrupt ?? null);
       handle.setInRunInputHandler(launch.submitDuringRun ?? null);
+      handle.setLivenessProbe(launch.isAlive ?? null);
 
       await handle.emit({
         type: "session_created",

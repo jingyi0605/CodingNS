@@ -27,6 +27,7 @@ interface ActiveRunRecord {
   supportsInterrupt: boolean;
   interruptHandler: (() => Promise<void>) | null;
   inRunInputHandler: ((options: import("./types.js").RuntimeSendOptions) => Promise<void>) | null;
+  livenessProbe: (() => boolean) | null;
   listeners: Set<RuntimeEventListener>;
   disposed: boolean;
 }
@@ -55,6 +56,7 @@ export class ActiveRunRegistry {
       supportsInterrupt: input.supportsInterrupt ?? false,
       interruptHandler: null,
       inRunInputHandler: null,
+      livenessProbe: null,
       listeners: new Set(),
       disposed: false
     };
@@ -131,8 +133,18 @@ export class ActiveRunRegistry {
       setInRunInputHandler: (submitDuringRun) => {
         record.inRunInputHandler = submitDuringRun;
       },
+      setLivenessProbe: (probe) => {
+        record.livenessProbe = probe;
+      },
       emit: (event) => this.emit(record.sessionId, event),
       attach: (listener) => this.attach(record.sessionId, listener),
+      isHealthy: () => {
+        if (!record.livenessProbe) {
+          return null;
+        }
+
+        return record.livenessProbe();
+      },
       interrupt: async () => {
         if (!record.interruptHandler) {
           throw new Error("INTERRUPT_NOT_SUPPORTED");

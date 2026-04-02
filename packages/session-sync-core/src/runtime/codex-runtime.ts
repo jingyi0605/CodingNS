@@ -99,6 +99,7 @@ export interface CodexAppServerTransport {
   setNotificationHandler(handler: (notification: Record<string, unknown>) => void | Promise<void>): void;
   setServerRequestHandler(handler: (request: Record<string, unknown>) => Promise<unknown>): void;
   setOnClose(handler: ((error: Error | null) => void) | null): void;
+  isClosed(): boolean;
   close(): void;
 }
 
@@ -184,6 +185,7 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
         });
         transport.close();
       },
+      isAlive: () => transport.isClosed() === false,
       completed: this.runTurn(
         null,
         request,
@@ -282,6 +284,7 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
         });
         transport.close();
       },
+      isAlive: () => transport.isClosed() === false,
       completed: this.runTurn(
         null,
         request,
@@ -1112,6 +1115,9 @@ function createCodexAppServerTransport(options: CodexRuntimeOptions): CodexAppSe
     },
     setOnClose(handler: ((error: Error | null) => void) | null): void {
       closeHandler = handler;
+    },
+    isClosed() {
+      return closed;
     },
     close() {
       if (closed) {

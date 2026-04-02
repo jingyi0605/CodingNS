@@ -111,8 +111,10 @@ export interface ActiveRunHandle {
   updateSessionBinding(binding: RuntimeSessionBinding): void;
   setInterruptHandler(interrupt: (() => Promise<void>) | null): void;
   setInRunInputHandler(submitDuringRun: ((options: RuntimeSendOptions) => Promise<void>) | null): void;
+  setLivenessProbe(probe: (() => boolean) | null): void;
   emit(event: RuntimeEventInput): Promise<RuntimeEvent>;
   attach(listener: RuntimeEventListener): ProviderSubscription;
+  isHealthy(): boolean | null;
   interrupt(): Promise<void>;
   submitDuringRun(options: RuntimeSendOptions): Promise<void>;
   dispose(): Promise<void>;
@@ -145,6 +147,7 @@ export interface ProviderRuntimeLaunchResult {
   completed: Promise<void>;
   interrupt?: (() => Promise<void>) | null;
   submitDuringRun?: ((options: RuntimeSendOptions) => Promise<void>) | null;
+  isAlive?: (() => boolean) | null;
 }
 
 export interface ProviderRuntimeAdapter {
