@@ -3438,6 +3438,43 @@ body {
   background: rgba(118, 118, 128, 0.18);
 }
 
+/* 夜间模式终端标签：避免激活态出现浅色白块，统一暗色层级。 */
+[data-theme="dark"] .workbench-shell .terminal-tab-shell[data-active="true"] {
+  border-color: rgba(235, 235, 245, 0.22);
+  background: rgba(118, 118, 128, 0.34);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.32);
+}
+
+[data-theme="dark"] .workbench-shell .terminal-tab-shell[data-assigned="true"]:not([data-active="true"]) {
+  border-color: rgba(235, 235, 245, 0.1);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+[data-theme="dark"] .workbench-shell .terminal-tab {
+  color: rgba(235, 235, 245, 0.76);
+}
+
+[data-theme="dark"] .workbench-shell .terminal-tab[data-active="true"] {
+  color: rgba(245, 245, 247, 0.96);
+}
+
+[data-theme="dark"] .workbench-shell .terminal-tab:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+[data-theme="dark"] .workbench-shell .terminal-tab-runtime {
+  border-color: rgba(235, 235, 245, 0.14);
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(235, 235, 245, 0.74);
+}
+
+[data-theme="dark"] .workbench-shell .terminal-tab-shell:hover .terminal-tab-inline-action,
+[data-theme="dark"] .workbench-shell .terminal-tab-inline-action[data-open="true"] {
+  border-color: rgba(235, 235, 245, 0.16);
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(245, 245, 247, 0.94);
+}
+
 [data-theme="dark"] .session-provider-badge.codex {
   background: rgba(255, 105, 0, 0.16);
   color: #ffb184;
