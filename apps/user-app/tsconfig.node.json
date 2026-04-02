@@ -7,5 +7,5 @@
     "moduleResolution": "Bundler",
     "allowSyntheticDefaultImports": true
   },
-  "include": ["vite.config.ts", "vitest.config.ts"]
+  "include": ["vite.config.ts", "vitest.config.ts", "src/config/proxy-context-redirect.ts"]
 }

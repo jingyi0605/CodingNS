@@ -61,6 +61,40 @@ describe("template reverse proxy", () => {
         return;
       }
 
+      if (request.method === "GET" && request.url === "/") {
+        response.setHeader("content-type", "text/html; charset=utf-8");
+        response.end(`<!doctype html>
+<html>
+  <head>
+    <script type="module">import { injectIntoGlobalHook } from "/@react-refresh";
+injectIntoGlobalHook(window);</script>
+    <link rel="stylesheet" href="/themes.css" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/App.jsx"></script>
+  </body>
+</html>`);
+        return;
+      }
+
+      if (request.method === "GET" && request.url === "/src/main.jsx") {
+        response.setHeader("content-type", "text/javascript; charset=utf-8");
+        response.end(`import React from "/node_modules/.vite/deps/react.js?v=demo";
+import App from "/src/App.jsx";
+import "/src/themes.css";
+fetch("/api/ping");`);
+        return;
+      }
+
+      if (request.method === "GET" && request.url === "/@vite/client") {
+        response.setHeader("content-type", "text/javascript; charset=utf-8");
+        response.end(`const socketHost = \`\${location.hostname}:\${location.port}\${"/"}\`;
+const base = "/" || "/";
+const socket = new WebSocket(\`ws://\${socketHost}?token=demo\`, "vite-hmr");`);
+        return;
+      }
+
       response.setHeader("x-upstream-path", request.url ?? "/");
       response.setHeader("content-type", "text/plain; charset=utf-8");
       response.end(`upstream:${request.method}:${request.url ?? "/"}`);
@@ -146,6 +180,30 @@ describe("template reverse proxy", () => {
     expect(httpResponse.status).toBe(200);
     expect(httpResponse.headers.get("x-upstream-path")).toBe("/src/main.tsx?import=1");
     expect(httpBody).toContain("upstream:GET:/src/main.tsx?import=1");
+
+    const htmlResponse = await fetch(`${proxyBase}/`);
+    const htmlBody = await htmlResponse.text();
+
+    expect(htmlResponse.status).toBe(200);
+    expect(htmlBody).toContain(`from "/proxy/${proxySlug}/@react-refresh"`);
+    expect(htmlBody).toContain(`href="/proxy/${proxySlug}/themes.css"`);
+    expect(htmlBody).toContain(`src="/proxy/${proxySlug}/App.jsx"`);
+
+    const moduleResponse = await fetch(`${proxyBase}/src/main.jsx`);
+    const moduleBody = await moduleResponse.text();
+
+    expect(moduleResponse.status).toBe(200);
+    expect(moduleBody).toContain(`from "/proxy/${proxySlug}/node_modules/.vite/deps/react.js?v=demo"`);
+    expect(moduleBody).toContain(`from "/proxy/${proxySlug}/src/App.jsx"`);
+    expect(moduleBody).toContain(`import "/proxy/${proxySlug}/src/themes.css"`);
+    expect(moduleBody).toContain(`fetch("/proxy/${proxySlug}/api/ping")`);
+
+    const viteClientResponse = await fetch(`${proxyBase}/@vite/client`);
+    const viteClientBody = await viteClientResponse.text();
+
+    expect(viteClientResponse.status).toBe(200);
+    expect(viteClientBody).toContain(`\${"/proxy/${proxySlug}/"}`);
+    expect(viteClientBody).toContain(`const base = "/proxy/${proxySlug}/" || "/proxy/${proxySlug}/";`);
 
     const uploadForm = new FormData();
     uploadForm.append(

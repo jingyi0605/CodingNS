@@ -66,8 +66,36 @@ export class TemplateReverseProxyService {
       },
       (upstreamResponse) => {
         const statusCode = upstreamResponse.statusCode ?? 502;
-        reply.raw.writeHead(statusCode, stripHopByHopHeaders(upstreamResponse.headers));
-        upstreamResponse.pipe(reply.raw);
+        const rewriteMode = resolveResponseRewriteMode(upstreamResponse.headers);
+
+        if (rewriteMode === "none") {
+          reply.raw.writeHead(
+            statusCode,
+            buildDownstreamHeaders(upstreamResponse.headers, parsed.proxySlug)
+          );
+          upstreamResponse.pipe(reply.raw);
+          return;
+        }
+
+        const chunks: Buffer[] = [];
+
+        upstreamResponse.on("data", (chunk) => {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        });
+
+        upstreamResponse.on("end", () => {
+          const upstreamText = Buffer.concat(chunks).toString("utf8");
+          const rewrittenText = rewriteTextResponse(upstreamText, parsed.proxySlug, rewriteMode);
+          const bodyBuffer = Buffer.from(rewrittenText, "utf8");
+
+          reply.raw.writeHead(
+            statusCode,
+            buildDownstreamHeaders(upstreamResponse.headers, parsed.proxySlug, {
+              contentLength: bodyBuffer.byteLength
+            })
+          );
+          reply.raw.end(bodyBuffer);
+        });
       }
     );
 
@@ -186,7 +214,14 @@ function buildUpstreamHeaders(
   const headers: IncomingHttpHeaders = {};
 
   for (const [key, value] of Object.entries(requestHeaders)) {
-    if (!key || value === undefined || HOP_BY_HOP_HEADERS.has(key.toLowerCase())) {
+    const normalizedKey = key.toLowerCase();
+
+    if (!key || value === undefined || HOP_BY_HOP_HEADERS.has(normalizedKey)) {
+      continue;
+    }
+
+    // 禁止压缩响应，方便代理层按纯文本改写 HTML 里的根路径资源引用。
+    if (!includeUpgradeHeaders && normalizedKey === "accept-encoding") {
       continue;
     }
 
@@ -223,6 +258,112 @@ function stripHopByHopHeaders(headers: IncomingHttpHeaders): IncomingHttpHeaders
   }
 
   return nextHeaders;
+}
+
+function buildDownstreamHeaders(
+  headers: IncomingHttpHeaders,
+  proxySlug: string,
+  options?: {
+    contentLength?: number;
+  }
+): IncomingHttpHeaders {
+  const nextHeaders = stripHopByHopHeaders(headers);
+  const location = nextHeaders["location"] as string | undefined;
+
+  if (typeof location === "string") {
+    nextHeaders["location"] = rewriteRedirectLocation(location, proxySlug);
+  }
+
+  if (options?.contentLength !== undefined) {
+    delete nextHeaders["content-length"];
+    nextHeaders["content-length"] = String(options.contentLength);
+  }
+
+  return nextHeaders;
+}
+
+function resolveResponseRewriteMode(
+  headers: IncomingHttpHeaders
+): "none" | "html" | "javascript" | "css" {
+  const contentType = String(headers["content-type"] ?? "").toLowerCase();
+  const contentEncoding = String(headers["content-encoding"] ?? "").trim();
+
+  if (contentEncoding) {
+    return "none";
+  }
+
+  if (contentType.includes("text/html")) {
+    return "html";
+  }
+
+  if (
+    contentType.includes("text/javascript")
+    || contentType.includes("application/javascript")
+    || contentType.includes("application/x-javascript")
+    || contentType.includes("application/ecmascript")
+    || contentType.includes("text/ecmascript")
+  ) {
+    return "javascript";
+  }
+
+  if (contentType.includes("text/css")) {
+    return "css";
+  }
+
+  return "none";
+}
+
+function rewriteRedirectLocation(location: string, proxySlug: string): string {
+  if (!location.startsWith("/")) {
+    return location;
+  }
+
+  if (location.startsWith(`/proxy/${proxySlug}/`) || location === `/proxy/${proxySlug}`) {
+    return location;
+  }
+
+  return `/proxy/${proxySlug}${location}`;
+}
+
+function rewriteTextResponse(
+  source: string,
+  proxySlug: string,
+  rewriteMode: "html" | "javascript" | "css"
+): string {
+  const proxyBasePath = `/proxy/${proxySlug}`;
+  const rewriteMarkupAttributes = (input: string) =>
+    input
+      .replace(
+        /((?:src|href|action|poster)=["'])\/(?!\/|proxy\/)/gi,
+        `$1${proxyBasePath}/`
+      )
+      .replace(/(srcset=["'][^"']*?)\/(?!\/|proxy\/)/gi, `$1${proxyBasePath}/`);
+  const rewriteCssPaths = (input: string) =>
+    input
+      .replace(/(@import\s+["'])\/(?!\/|proxy\/)/gi, `$1${proxyBasePath}/`)
+      .replace(/(url\(["']?)\/(?!\/|proxy\/)/gi, `$1${proxyBasePath}/`);
+  const rewriteJavaScriptModulePaths = (input: string) =>
+    input
+      .replace(/(\bfrom\s*["'])\/(?!\/|proxy\/)/g, `$1${proxyBasePath}/`)
+      .replace(/(\bimport\s*["'])\/(?!\/|proxy\/)/g, `$1${proxyBasePath}/`)
+      .replace(/(\bimport\s*\(\s*["'])\/(?!\/|proxy\/)/g, `$1${proxyBasePath}/`)
+      .replace(/(\bexport\s+\*\s+from\s*["'])\/(?!\/|proxy\/)/g, `$1${proxyBasePath}/`)
+      .replace(/(\bfetch\s*\(\s*["'])\/(?!\/|proxy\/)/g, `$1${proxyBasePath}/`)
+      .replace(/(\bnew\s+URL\s*\(\s*["'])\/(?!\/|proxy\/)/g, `$1${proxyBasePath}/`);
+  const rewriteViteClientRuntime = (input: string) =>
+    input
+      .replace(/\$\{"\/"\}/g, `\${"${proxyBasePath}/"}`)
+      .replace(/const base = "\/" \|\| "\/";/g, `const base = "${proxyBasePath}/" || "${proxyBasePath}/";`);
+
+  if (rewriteMode === "html") {
+    return rewriteCssPaths(rewriteJavaScriptModulePaths(rewriteMarkupAttributes(source)));
+  }
+
+  if (rewriteMode === "css") {
+    return rewriteCssPaths(source);
+  }
+
+  return rewriteViteClientRuntime(rewriteJavaScriptModulePaths(source));
 }
 
 function writeRequestBody(request: FastifyRequest, upstreamRequest: http.ClientRequest): void {

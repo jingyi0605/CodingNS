@@ -1,81 +1,22 @@
 import { readFileSync } from "node:fs";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import {
+  extractProxySlugFromPath,
+  isLikelyDocumentNavigation,
+  PROXY_SLUG_COOKIE_NAME,
+  rewriteToProxyContext
+} from "./src/config/proxy-context-redirect";
 
 const appVersion = readFileSync(new URL("../../VERSION", import.meta.url), "utf8").trim();
 const hostApiTarget = "http://127.0.0.1:3002";
 const hostWsTarget = "ws://127.0.0.1:3002";
-const PROXY_SLUG_COOKIE_NAME = "cns_proxy_slug";
 const desktopAndLocalOrigins = [
   /^tauri:\/\/localhost$/,
   /^https?:\/\/tauri\.localhost$/,
   /^https?:\/\/127\.0\.0\.1(?::\d+)?$/,
   /^https?:\/\/localhost(?::\d+)?$/
 ];
-
-function extractProxySlugFromReferer(referer: string | undefined): string | null {
-  if (!referer) {
-    return null;
-  }
-
-  try {
-    const parsed = new URL(referer);
-    const match = parsed.pathname.match(/^\/proxy\/([a-z0-9]+)(?:\/|$)/i);
-
-    if (!match) {
-      return null;
-    }
-
-    return match[1].toLowerCase();
-  } catch {
-    return null;
-  }
-}
-
-function pickHeaderValue(header: string | string[] | undefined): string | undefined {
-  if (Array.isArray(header)) {
-    return header[0];
-  }
-
-  return header;
-}
-
-function extractProxySlugFromPath(pathname: string | undefined): string | null {
-  if (!pathname) {
-    return null;
-  }
-
-  const match = pathname.match(/^\/proxy\/([a-z0-9]+)(?:\/|$)/i);
-
-  if (!match) {
-    return null;
-  }
-
-  return match[1].toLowerCase();
-}
-
-function extractProxySlugFromCookie(cookieHeader: string | undefined): string | null {
-  if (!cookieHeader) {
-    return null;
-  }
-
-  const cookiePairs = cookieHeader.split(";").map((item) => item.trim());
-  const targetPrefix = `${PROXY_SLUG_COOKIE_NAME}=`;
-
-  for (const pair of cookiePairs) {
-    if (!pair.startsWith(targetPrefix)) {
-      continue;
-    }
-
-    const value = pair.slice(targetPrefix.length).trim().toLowerCase();
-
-    if (/^[a-z0-9]+$/.test(value)) {
-      return value;
-    }
-  }
-
-  return null;
-}
 
 function setProxySlugCookie(response: {
   getHeader: (name: string) => number | string | string[] | undefined;
@@ -97,6 +38,25 @@ function setProxySlugCookie(response: {
   response.setHeader("Set-Cookie", [String(existing), nextCookie]);
 }
 
+function clearProxySlugCookie(response: {
+  getHeader: (name: string) => number | string | string[] | undefined;
+  setHeader: (name: string, value: number | string | ReadonlyArray<string>) => void;
+}): void {
+  const expiredCookie = `${PROXY_SLUG_COOKIE_NAME}=; Path=/; Max-Age=0; SameSite=Lax`;
+  const existing = response.getHeader("Set-Cookie");
+
+  if (!existing) {
+    response.setHeader("Set-Cookie", expiredCookie);
+    return;
+  }
+
+  if (Array.isArray(existing)) {
+    response.setHeader("Set-Cookie", [...existing, expiredCookie]);
+    return;
+  }
+
+  response.setHeader("Set-Cookie", [String(existing), expiredCookie]);
+}
 export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(appVersion)
@@ -107,28 +67,6 @@ export default defineConfig({
       name: "codingns-proxy-context-redirect",
       apply: "serve",
       configureServer(server) {
-        const rewriteToProxyContext = (
-          rawPath: string | undefined,
-          refererHeader: string | string[] | undefined,
-          cookieHeader: string | string[] | undefined
-        ): string | null => {
-          const requestPath = rawPath ?? "/";
-
-          if (!requestPath.startsWith("/") || requestPath.startsWith("/proxy/")) {
-            return null;
-          }
-
-          const proxySlug =
-            extractProxySlugFromReferer(pickHeaderValue(refererHeader))
-            ?? extractProxySlugFromCookie(pickHeaderValue(cookieHeader));
-
-          if (!proxySlug) {
-            return null;
-          }
-
-          return `/proxy/${proxySlug}${requestPath}`;
-        };
-
         server.middlewares.use((request, response, next) => {
           const existingProxySlug = extractProxySlugFromPath(request.url);
 
@@ -136,24 +74,36 @@ export default defineConfig({
             setProxySlugCookie(response, existingProxySlug);
           }
 
-          const rewrittenPath = rewriteToProxyContext(
-            request.url,
-            request.headers.referer,
-            request.headers.cookie
-          );
+          const isDocumentNavigation = isLikelyDocumentNavigation({
+            method: request.method,
+            fetchDestinationHeader: request.headers["sec-fetch-dest"],
+            acceptHeader: request.headers.accept
+          });
 
-          if (!rewrittenPath) {
+          if (isDocumentNavigation && !existingProxySlug) {
+            // 用户主动回到主站页面时，清理历史代理上下文，避免 HMR/业务 WS 被错误改写。
+            clearProxySlugCookie(response);
+          }
+
+          const rewrittenPath = rewriteToProxyContext({
+            rawPath: request.url,
+            refererHeader: request.headers.referer,
+            cookieHeader: request.headers.cookie,
+            // 页面导航不允许仅靠 Cookie 回写，避免用户直接访问 / 被劫持到历史代理上下文。
+            allowCookieFallback: !isDocumentNavigation
+          });
+
+          if (!isDocumentNavigation) {
+            if (!rewrittenPath) {
+              next();
+              return;
+            }
+            request.url = rewrittenPath;
             next();
             return;
           }
 
-          const method = (request.method ?? "GET").toUpperCase();
-          const fetchDestination = pickHeaderValue(request.headers["sec-fetch-dest"]);
-          const isDocumentNavigation =
-            (method === "GET" || method === "HEAD") && fetchDestination === "document";
-
-          if (!isDocumentNavigation) {
-            request.url = rewrittenPath;
+          if (!rewrittenPath) {
             next();
             return;
           }
@@ -165,11 +115,12 @@ export default defineConfig({
         });
 
         const upgradeHandler = (request: { url?: string; headers: Record<string, string | string[] | undefined> }) => {
-          const rewrittenPath = rewriteToProxyContext(
-            request.url,
-            request.headers.referer,
-            request.headers.cookie
-          );
+          const rewrittenPath = rewriteToProxyContext({
+            rawPath: request.url,
+            refererHeader: request.headers.referer,
+            cookieHeader: request.headers.cookie,
+            allowCookieFallback: true
+          });
 
           if (!rewrittenPath) {
             return;
