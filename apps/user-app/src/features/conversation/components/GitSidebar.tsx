@@ -45,6 +45,7 @@ import { WorkbenchModal } from "./WorkbenchModal";
 interface GitSidebarProps {
   className?: string;
   workspaceId: string | null | undefined;
+  panelActive?: boolean;
 }
 
 interface GitTreeDirectoryNode {
@@ -94,7 +95,7 @@ interface GitSidebarSnapshot {
   branches: GitBranchSnapshotDto | null;
 }
 
-export function GitSidebar({ className, workspaceId }: GitSidebarProps) {
+export function GitSidebar({ className, workspaceId, panelActive = true }: GitSidebarProps) {
   const { subscribeGitSnapshot, requestGitRefresh, addGitSnapshotListener } = useWorkbenchShell();
   const [status, setStatus] = useState<GitStatusDto | null>(null);
   const [history, setHistory] = useState<GitHistoryItemDto[]>([]);
@@ -133,6 +134,7 @@ export function GitSidebar({ className, workspaceId }: GitSidebarProps) {
   const splitLayoutRef = useRef<HTMLDivElement | null>(null);
   const treePanelBodyRef = useRef<HTMLDivElement | null>(null);
   const commitEditorRef = useRef<HTMLTextAreaElement | null>(null);
+  const wasPanelActiveRef = useRef(panelActive);
   const { showToast } = useToast();
 
   useEffect(() => {
@@ -278,11 +280,27 @@ export function GitSidebar({ className, workspaceId }: GitSidebarProps) {
     subscribeGitSnapshot(currentWorkspaceId);
 
     if (hasCachedSnapshot) {
+      // 命中缓存时仍然主动请求一次后端刷新，避免切回面板后看到过期状态。
+      requestGitRefresh(currentWorkspaceId);
       return;
     }
 
     requestGitSnapshotRefresh();
   }, [requestGitRefresh, subscribeGitSnapshot, workspaceId]);
+
+  useEffect(() => {
+    const wasPanelActive = wasPanelActiveRef.current;
+    wasPanelActiveRef.current = panelActive;
+
+    if (!workspaceId?.trim()) {
+      return;
+    }
+
+    // 移动端 Git 面板可能常驻但处于隐藏状态；每次重新切回可见时主动刷新一次。
+    if (!wasPanelActive && panelActive) {
+      requestGitRefresh(workspaceId.trim());
+    }
+  }, [panelActive, requestGitRefresh, workspaceId]);
 
   useEffect(() => {
     if (!workspaceId) {

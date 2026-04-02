@@ -303,7 +303,7 @@ function normalizePanelPath(path: string): string {
 
 /**
  * 比较两次 git status 结果，判断工作区是否有文件变更。
- * 比较维度：分支元信息 + 变更文件列表（路径 + 状态）。
+ * 比较维度：分支元信息 + 变更文件列表（路径 + 暂存/工作区状态）。
  */
 function isGitStatusChanged(
   cached: { snapshot: GitRepoSnapshot; changes: GitChangeItem[] },
@@ -326,9 +326,14 @@ function isGitStatusChanged(
   }
 
   for (let i = 0; i < cachedChanges.length; i++) {
+    // 仅比较 `status` 会漏掉 “M(未暂存) -> M(已暂存)” 这类关键变化，
+    // 必须连同 staged/worktree 列一起比较，才能避免缓存误判为“无变化”。
     if (
       cachedChanges[i].path !== currentChanges[i].path ||
-      cachedChanges[i].status !== currentChanges[i].status
+      cachedChanges[i].status !== currentChanges[i].status ||
+      cachedChanges[i].staged !== currentChanges[i].staged ||
+      cachedChanges[i].stagedStatus !== currentChanges[i].stagedStatus ||
+      cachedChanges[i].worktreeStatus !== currentChanges[i].worktreeStatus
     ) {
       return true;
     }

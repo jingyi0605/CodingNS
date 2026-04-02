@@ -116,11 +116,12 @@ export function ToolsHomePage() {
           <GitSidebar
             className="mobile-tool-native-panel mobile-tool-git-panel"
             workspaceId={currentWorkspaceId}
+            panelActive={activeTool === "git"}
           />
         )
       }
     ],
-    [currentSessionId, currentWorkspaceId]
+    [activeTool, currentSessionId, currentWorkspaceId]
   );
   const activeToolIndex = PRIMARY_TOOL_ORDER.indexOf(activeTool);
 

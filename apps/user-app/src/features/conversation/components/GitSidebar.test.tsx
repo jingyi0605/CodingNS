@@ -178,14 +178,38 @@ describe("GitSidebar", () => {
     });
   });
 
-  it("命中新鲜缓存时不会在挂载后立刻主动刷新", async () => {
+  it("命中新鲜缓存时也会在挂载后主动触发一次刷新", async () => {
     seedGitSidebarSnapshot();
 
     renderSidebar();
 
     expect(await screen.findByText("App.tsx")).toBeInTheDocument();
     expect(workbenchShellMock.subscribeGitSnapshot).toHaveBeenCalledWith("workspace-1");
-    expect(workbenchShellMock.requestGitRefresh).not.toHaveBeenCalled();
+    expect(workbenchShellMock.requestGitRefresh).toHaveBeenCalledWith("workspace-1");
+  });
+
+  it("面板从隐藏切回可见时会再次主动刷新", async () => {
+    seedGitSidebarSnapshot();
+
+    const { rerender } = render(
+      <ToastProvider>
+        <GitSidebar workspaceId="workspace-1" panelActive={false} />
+      </ToastProvider>
+    );
+
+    expect(await screen.findByText("App.tsx")).toBeInTheDocument();
+    expect(workbenchShellMock.requestGitRefresh).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <ToastProvider>
+        <GitSidebar workspaceId="workspace-1" panelActive />
+      </ToastProvider>
+    );
+
+    await waitFor(() => {
+      expect(workbenchShellMock.requestGitRefresh).toHaveBeenCalledTimes(2);
+    });
+    expect(workbenchShellMock.requestGitRefresh).toHaveBeenNthCalledWith(2, "workspace-1");
   });
 
   it("撤销上次提交后会把提交标题回填到输入框", async () => {
