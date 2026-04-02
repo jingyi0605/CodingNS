@@ -24,9 +24,23 @@ export interface DesktopBridgeResult<T = void> {
   detail?: string;
 }
 
+export interface MacOsTitlebarMetrics {
+  overlay: boolean;
+  trafficLightCenterY: number;
+  trafficLightLeadingInset: number;
+  trafficLightSafeZoneWidth: number;
+  trafficLightButtonDiameter: number;
+  titlebarHeight: number;
+}
+
+export interface DesktopWindowChromeInfo {
+  macosTitlebar?: MacOsTitlebarMetrics | null;
+}
+
 export interface DesktopRuntimeInfo {
   version: string;
   appDataDir: string | null;
+  windowChrome?: DesktopWindowChromeInfo | null;
 }
 
 export interface ServiceUpdateInfo {

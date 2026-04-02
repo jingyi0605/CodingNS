@@ -1,8 +1,16 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 
+import type { MacOsTitlebarMetrics } from "../config/client-config-types";
 import { createPlatformAdapter, type PlatformAdapter } from "./platform-adapter";
 
 const PlatformContext = createContext<PlatformAdapter | null>(null);
+const MACOS_TITLEBAR_STYLE_KEYS = [
+  "--desktop-macos-traffic-light-center-y",
+  "--desktop-macos-traffic-light-leading-inset",
+  "--desktop-macos-traffic-light-safe-zone-width",
+  "--desktop-macos-titlebar-height",
+  "--desktop-macos-traffic-light-button-diameter"
+] as const;
 
 function applyPlatformDatasets(adapter: PlatformAdapter) {
   if (typeof document === "undefined") {
@@ -23,6 +31,45 @@ function applyPlatformDatasets(adapter: PlatformAdapter) {
     body.dataset.windowControls = adapter.ui.windowControlsStyle;
     body.dataset.viewportClass = adapter.viewportClass;
     body.dataset.overlayTitlebar = String(adapter.ui.prefersOverlayTitlebar);
+  }
+}
+
+function clearMacOsTitlebarVariables() {
+  if (typeof document === "undefined") {
+    return;
+  }
+
+  for (const key of MACOS_TITLEBAR_STYLE_KEYS) {
+    document.documentElement.style.removeProperty(key);
+    document.body?.style.removeProperty(key);
+  }
+}
+
+function applyMacOsTitlebarVariables(metrics: MacOsTitlebarMetrics | null | undefined) {
+  if (typeof document === "undefined") {
+    return;
+  }
+
+  if (!metrics) {
+    clearMacOsTitlebarVariables();
+    return;
+  }
+
+  const targets = [document.documentElement, document.body].filter(
+    (node): node is HTMLElement => Boolean(node)
+  );
+  const styleEntries: Array<[typeof MACOS_TITLEBAR_STYLE_KEYS[number], string]> = [
+    ["--desktop-macos-traffic-light-center-y", `${metrics.trafficLightCenterY}px`],
+    ["--desktop-macos-traffic-light-leading-inset", `${metrics.trafficLightLeadingInset}px`],
+    ["--desktop-macos-traffic-light-safe-zone-width", `${metrics.trafficLightSafeZoneWidth}px`],
+    ["--desktop-macos-titlebar-height", `${metrics.titlebarHeight}px`],
+    ["--desktop-macos-traffic-light-button-diameter", `${metrics.trafficLightButtonDiameter}px`]
+  ];
+
+  for (const target of targets) {
+    for (const [key, value] of styleEntries) {
+      target.style.setProperty(key, value);
+    }
   }
 }
 
@@ -60,6 +107,57 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     applyPlatformDatasets(adapter);
+  }, [adapter]);
+
+  useEffect(() => {
+    return () => {
+      clearMacOsTitlebarVariables();
+    };
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlistenScaleChanged: (() => void) | null = null;
+
+    async function refreshMacOsTitlebarMetrics() {
+      const runtimeResult = await adapter.bridge.getRuntimeInfo();
+
+      if (disposed) {
+        return;
+      }
+
+      applyMacOsTitlebarVariables(runtimeResult.ok ? runtimeResult.value?.windowChrome?.macosTitlebar : null);
+    }
+
+    if (!adapter.isDesktop || adapter.ui.osFamily !== "macos" || !adapter.ui.prefersOverlayTitlebar) {
+      clearMacOsTitlebarVariables();
+      return () => {
+        disposed = true;
+      };
+    }
+
+    void refreshMacOsTitlebarMetrics();
+
+    // macOS 从一块屏拖到另一块屏时，scale factor 可能变化；这时必须重新读原生坐标。
+    void import("@tauri-apps/api/window")
+      .then(async ({ getCurrentWindow }) => {
+        const unlisten = await getCurrentWindow().onScaleChanged(() => {
+          void refreshMacOsTitlebarMetrics();
+        });
+
+        if (disposed) {
+          unlisten();
+          return;
+        }
+
+        unlistenScaleChanged = unlisten;
+      })
+      .catch(() => undefined);
+
+    return () => {
+      disposed = true;
+      unlistenScaleChanged?.();
+    };
   }, [adapter]);
 
   return <PlatformContext.Provider value={adapter}>{children}</PlatformContext.Provider>;

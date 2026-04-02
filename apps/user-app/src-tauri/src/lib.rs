@@ -2,6 +2,14 @@ mod config;
 
 use std::io::Write;
 use std::process::{Command, Stdio};
+#[cfg(target_os = "macos")]
+use std::sync::mpsc;
+#[cfg(target_os = "macos")]
+use std::time::Duration;
+
+#[cfg(target_os = "macos")]
+use objc2_app_kit::{NSView, NSWindow, NSWindowButton};
+use serde::Serialize;
 use tauri::{AppHandle, Manager, WebviewWindow};
 
 #[cfg(target_os = "android")]
@@ -19,6 +27,31 @@ use objc2::{class, msg_send, runtime::AnyObject};
 
 use config::DesktopRuntimeConfig;
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopRuntimeInfo {
+  version: String,
+  app_data_dir: Option<String>,
+  window_chrome: Option<DesktopWindowChromeInfo>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopWindowChromeInfo {
+  macos_titlebar: Option<MacOsTitlebarMetrics>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MacOsTitlebarMetrics {
+  overlay: bool,
+  traffic_light_center_y: f64,
+  traffic_light_leading_inset: f64,
+  traffic_light_safe_zone_width: f64,
+  traffic_light_button_diameter: f64,
+  titlebar_height: f64,
+}
+
 #[tauri::command]
 fn read_desktop_config(app: AppHandle) -> Result<DesktopRuntimeConfig, String> {
   config::read_desktop_config(&app)
@@ -27,6 +60,11 @@ fn read_desktop_config(app: AppHandle) -> Result<DesktopRuntimeConfig, String> {
 #[tauri::command]
 fn write_desktop_config(app: AppHandle, patch: DesktopRuntimeConfig) -> Result<(), String> {
   config::write_desktop_config(&app, patch)
+}
+
+#[tauri::command]
+fn get_runtime_info(app: AppHandle) -> DesktopRuntimeInfo {
+  build_runtime_info(&app)
 }
 
 #[tauri::command]
@@ -109,6 +147,85 @@ fn copy_text_to_system_clipboard(text: &str) -> Result<(), String> {
 
   #[allow(unreachable_code)]
   Err("当前系统暂不支持复制到剪贴板".to_string())
+}
+
+fn build_runtime_info(app: &AppHandle) -> DesktopRuntimeInfo {
+  DesktopRuntimeInfo {
+    version: app.package_info().version.to_string(),
+    app_data_dir: app
+      .path()
+      .app_data_dir()
+      .ok()
+      .map(|path| path.to_string_lossy().to_string()),
+    window_chrome: collect_window_chrome_info(app)
+  }
+}
+
+#[cfg(target_os = "macos")]
+fn collect_window_chrome_info(app: &AppHandle) -> Option<DesktopWindowChromeInfo> {
+  let window = app.get_webview_window("main")?;
+  let main_thread_window = window.clone();
+  let (sender, receiver) = mpsc::sync_channel(1);
+
+  // AppKit 几何信息必须在主线程读取，否则得到的结果不稳定。
+  if window
+    .run_on_main_thread(move || {
+      let metrics = unsafe { read_macos_titlebar_metrics(&main_thread_window) };
+      let _ = sender.send(metrics);
+    })
+    .is_err()
+  {
+    return None;
+  }
+
+  receiver
+    .recv_timeout(Duration::from_millis(500))
+    .ok()
+    .flatten()
+    .map(|macos_titlebar| DesktopWindowChromeInfo {
+      macos_titlebar: Some(macos_titlebar)
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn collect_window_chrome_info(_app: &AppHandle) -> Option<DesktopWindowChromeInfo> {
+  None
+}
+
+#[cfg(target_os = "macos")]
+unsafe fn read_macos_titlebar_metrics(window: &WebviewWindow) -> Option<MacOsTitlebarMetrics> {
+  let ns_window_ptr = window.ns_window().ok()?;
+  let ns_window: &NSWindow = &*ns_window_ptr.cast();
+  let close = ns_window.standardWindowButton(NSWindowButton::CloseButton)?;
+  let miniaturize = ns_window.standardWindowButton(NSWindowButton::MiniaturizeButton)?;
+  let trailing_rect = ns_window
+    .standardWindowButton(NSWindowButton::ZoomButton)
+    .map(|button| NSView::frame(&button))
+    .unwrap_or_else(|| NSView::frame(&miniaturize));
+  let close_rect = NSView::frame(&close);
+  let title_bar_container_view = close.superview()?.superview()?;
+  let title_bar_rect = NSView::frame(&title_bar_container_view);
+
+  if close_rect.size.height <= 0.0 || title_bar_rect.size.height <= 0.0 {
+    return None;
+  }
+
+  let button_center_y = close_rect.origin.y + (close_rect.size.height / 2.0);
+  let trailing_edge = trailing_rect.origin.x + trailing_rect.size.width;
+
+  Some(MacOsTitlebarMetrics {
+    overlay: true,
+    // 这里统一返回逻辑点，前端直接把它当 CSS 像素使用，不再自己猜 Retina 缩放。
+    traffic_light_center_y: round_layout_value(button_center_y),
+    traffic_light_leading_inset: round_layout_value(trailing_edge + 8.0),
+    traffic_light_safe_zone_width: round_layout_value(trailing_edge + 16.0),
+    traffic_light_button_diameter: round_layout_value(close_rect.size.height),
+    titlebar_height: round_layout_value(title_bar_rect.size.height)
+  })
+}
+
+fn round_layout_value(value: f64) -> f64 {
+  (value * 100.0).round() / 100.0
 }
 
 fn run_clipboard_command(command: &str, args: &[&str], text: &str) -> Result<(), String> {
@@ -287,6 +404,7 @@ pub fn run() {
     .invoke_handler(tauri::generate_handler![
       read_desktop_config,
       write_desktop_config,
+      get_runtime_info,
       copy_text,
       set_window_state,
       perform_haptic_feedback

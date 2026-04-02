@@ -2193,7 +2193,7 @@ body {
 [data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .workbench-macos-drag-strip {
   position: absolute;
   inset: 0 0 auto 0;
-  height: 28px;
+  height: var(--desktop-macos-titlebar-height, 28px);
   z-index: 0;
   pointer-events: none;
 }
@@ -3821,6 +3821,9 @@ body {
   --workbench-titlebar-content-shift-y: 0px;
   --workbench-nav-toolbar-shift-y: 0px;
   --workbench-macos-traffic-light-safe-zone: 0px;
+  /* 这两个值描述的是“当前 Web 布局自己的默认中心线”，不是系统坐标。 */
+  --workbench-macos-content-layout-center-y: 18px;
+  --workbench-macos-nav-layout-center-y: 20px;
   --workbench-collapsed-balanced-inset: max(
     var(--workbench-collapsed-left-inset),
     var(--workbench-collapsed-right-inset)
@@ -3839,10 +3842,15 @@ body {
   --workbench-header-min-height: 44px;
   --workbench-header-padding-top: 5px;
   --workbench-header-padding-bottom: 6px;
-  --workbench-macos-traffic-light-safe-zone: 86px;
-  --workbench-titlebar-leading-inset: 78px;
-  --workbench-titlebar-content-shift-y: -4px;
-  --workbench-nav-toolbar-shift-y: -6px;
+  --workbench-macos-traffic-light-safe-zone: var(--desktop-macos-traffic-light-safe-zone-width, 86px);
+  --workbench-titlebar-leading-inset: var(--desktop-macos-traffic-light-leading-inset, 78px);
+  /* 系统三色球中心线由原生窗口提供，Web 侧只做统一换算。 */
+  --workbench-titlebar-content-shift-y: calc(
+    var(--desktop-macos-traffic-light-center-y, 14px) - var(--workbench-macos-content-layout-center-y)
+  );
+  --workbench-nav-toolbar-shift-y: calc(
+    var(--desktop-macos-traffic-light-center-y, 14px) - var(--workbench-macos-nav-layout-center-y)
+  );
   --workbench-macos-titlebar-control-size: 28px;
   --workbench-macos-titlebar-padding-top: 5px;
   --workbench-macos-titlebar-padding-bottom: 6px;
