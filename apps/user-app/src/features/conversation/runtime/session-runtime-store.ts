@@ -13,6 +13,7 @@ import {
   enqueueSessionMessage,
   getSessionCapabilities,
   getSessionDetail,
+  getSessionMessages,
   getSessionPermissionRequests,
   getSessionQueue,
   getSessionRuntime,
@@ -86,6 +87,8 @@ export class SessionRuntimeStore {
   private listeners = new Set<RuntimeListener>();
   private realtimeClient: RealtimeClient | null = null;
   private historyBootstrapReadyTimer: number | null = null;
+  private historyBootstrapFallbackTimer: number | null = null;
+  private historyBootstrapEnvelopeReceived = false;
   private markSeenTimer: number | null = null;
   private markSeenInFlight = false;
   private lastMarkSeenRequestAt = 0;
@@ -140,6 +143,8 @@ export class SessionRuntimeStore {
   getState = () => this.state;
 
   async initialize(): Promise<void> {
+    this.historyBootstrapEnvelopeReceived = false;
+    this.clearHistoryBootstrapFallbackTimer();
     const bootstrapMessages = this.options.bootstrapMessages ?? [];
     const mergedMessages = mergeAuthoritativeMessages(this.state.messages, this.sessionId, bootstrapMessages);
     const hasBootstrappedMessages = this.hasAuthoritativeBootstrapMessages;
@@ -184,6 +189,8 @@ export class SessionRuntimeStore {
 
   async reload(): Promise<void> {
     this.clearHistoryBootstrapReadyTimer();
+    this.clearHistoryBootstrapFallbackTimer();
+    this.historyBootstrapEnvelopeReceived = false;
     this.realtimeClient?.close();
     this.realtimeClient = null;
     const cachedSnapshot = readViewSnapshot<SessionRuntimeSnapshot>(
@@ -441,6 +448,7 @@ export class SessionRuntimeStore {
 
   destroy(): void {
     this.clearHistoryBootstrapReadyTimer();
+    this.clearHistoryBootstrapFallbackTimer();
     this.realtimeClient?.close();
     this.realtimeClient = null;
 
@@ -479,6 +487,7 @@ export class SessionRuntimeStore {
           hasOlderMessages: inferHasOlderMessages(this.state.session, this.state.messages.length)
         });
         this.scheduleHistoryBootstrapReady();
+        this.scheduleHistoryBootstrapFallback();
       },
       onConnectionChange: (connectionState) => {
         const previousConnectionState = this.state.connectionState;
@@ -511,6 +520,8 @@ export class SessionRuntimeStore {
         this.scheduleRuntimeRefresh("poll", "connection_state_change");
       },
       onEnvelope: (event) => {
+        this.historyBootstrapEnvelopeReceived = true;
+        this.clearHistoryBootstrapFallbackTimer();
         this.clearHistoryBootstrapReadyTimer();
         const merged = this.mergeHistoryMessages(event.messages, event.type === "session.backfill");
         this.patch({
@@ -636,6 +647,7 @@ export class SessionRuntimeStore {
 
   private handleError(error: unknown): void {
     this.clearHistoryBootstrapReadyTimer();
+    this.clearHistoryBootstrapFallbackTimer();
     const detail = error instanceof Error ? error.message : "unknown";
     this.patch({
       historyState: "error",
@@ -749,6 +761,70 @@ export class SessionRuntimeStore {
 
     window.clearTimeout(this.historyBootstrapReadyTimer);
     this.historyBootstrapReadyTimer = null;
+  }
+
+  private scheduleHistoryBootstrapFallback(): void {
+    if (this.historyBootstrapEnvelopeReceived || this.historyBootstrapFallbackTimer !== null) {
+      return;
+    }
+
+    this.historyBootstrapFallbackTimer = window.setTimeout(() => {
+      this.historyBootstrapFallbackTimer = null;
+
+      if (this.historyBootstrapEnvelopeReceived) {
+        return;
+      }
+
+      void this.resolveHistoryBootstrapFallback();
+    }, 350);
+  }
+
+  private clearHistoryBootstrapFallbackTimer(): void {
+    if (this.historyBootstrapFallbackTimer === null) {
+      return;
+    }
+
+    window.clearTimeout(this.historyBootstrapFallbackTimer);
+    this.historyBootstrapFallbackTimer = null;
+  }
+
+  private async resolveHistoryBootstrapFallback(): Promise<void> {
+    try {
+      // WebSocket 首包偶发丢失时，主动拉一页最新历史兜底，避免首次点开会话看到旧快照。
+      const page = await getSessionMessages(
+        this.sessionId,
+        null,
+        INITIAL_HISTORY_LIMIT,
+        "backward"
+      );
+
+      if (this.historyBootstrapEnvelopeReceived) {
+        return;
+      }
+
+      this.historyBootstrapEnvelopeReceived = true;
+      const merged = this.mergeHistoryMessages(page.messages, true);
+
+      this.patch({
+        messages: merged,
+        historyState: "ready",
+        olderCursor: page.nextCursor,
+        hasOlderMessages:
+          page.nextCursor !== null
+            ? true
+            : inferHasOlderMessages(this.state.session, merged.length),
+        lastCursor: page.cursor ?? this.state.lastCursor,
+        pagesLoaded:
+          merged.length > 0
+            ? Math.max(this.state.pagesLoaded, 1)
+            : this.state.pagesLoaded,
+        errorCode: null,
+        errorDetail: null
+      });
+      this.scheduleMarkSeen();
+    } catch {
+      // 兜底失败不打断主链路，继续沿用当前状态。
+    }
   }
 
   private scheduleRuntimeRefresh(mode: RuntimeRefreshMode, reason: string): void {
@@ -1162,6 +1238,7 @@ export function useSessionRuntimeStore<T>(
   const [value, setValue] = useState(() => selector(store.getState()));
 
   useEffect(() => {
+    setValue(selector(store.getState()));
     return store.subscribe(() => {
       setValue(selector(store.getState()));
     });

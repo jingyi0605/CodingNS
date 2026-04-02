@@ -69,6 +69,7 @@ const mocked = vi.hoisted(() => {
 vi.mock("../api/conversation-api", () => ({
   getSessionDetail: mocked.getSessionDetail,
   getSessionCapabilities: mocked.getSessionCapabilities,
+  getSessionMessages: mocked.getSessionMessages,
   getSessionPermissionRequests: mocked.getSessionPermissionRequests,
   getSessionQueue: mocked.getSessionQueue,
   getSessionRuntime: mocked.getSessionRuntime,
@@ -193,6 +194,12 @@ describe("SessionRuntimeStore", () => {
     mocked.getSessionPermissionRequests.mockResolvedValue({
       items: []
     });
+    mocked.getSessionMessages.mockResolvedValue({
+      messages: [],
+      cursor: "cursor-latest",
+      nextCursor: null,
+      total: 0
+    });
     mocked.getSessionRuntime.mockResolvedValue({
       sessionId: "session-1",
       runningState: "idle",
@@ -311,6 +318,47 @@ describe("SessionRuntimeStore", () => {
     expect(store.getState().lastCursor).toBe("cursor-latest");
     expect(mocked.realtimeInstances[0]?.options.cursor).toBeNull();
     expect(mocked.realtimeInstances[0]?.options.limit).toBe(40);
+
+    store.destroy();
+  });
+
+  it("订阅后未收到 backfill 时，会自动走 HTTP 历史兜底避免首屏停在旧快照", async () => {
+    vi.useFakeTimers();
+    mocked.getSessionMessages.mockResolvedValueOnce({
+      messages: [
+        {
+          messageId: "message-60",
+          provider: "codex",
+          providerSessionId: "raw-1",
+          role: "assistant",
+          kind: "text",
+          content: "latest-message",
+          timestamp: "2026-03-24T10:59:00.000Z",
+          sequence: 60,
+          rawRef: "codex://raw#line=60",
+          toolCall: null
+        }
+      ],
+      cursor: "cursor-latest",
+      nextCursor: "cursor-older",
+      total: 60
+    });
+    const store = new SessionRuntimeStore("session-1");
+
+    await store.initialize();
+    emitRealtimeSubscribed();
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(mocked.getSessionMessages).toHaveBeenCalledWith(
+      "session-1",
+      null,
+      30,
+      "backward"
+    );
+    expect(store.getState().historyState).toBe("ready");
+    expect(store.getState().messages.at(-1)?.id).toBe("message-60");
+    expect(store.getState().lastCursor).toBe("cursor-latest");
+    expect(store.getState().olderCursor).toBe("cursor-older");
 
     store.destroy();
   });
