@@ -11,6 +11,7 @@ import { createPortal } from "react-dom";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 
 import { userPreferenceStore } from "../../../preferences/user-preference-store";
+import { useLocalUiPreferenceSelector } from "../../../preferences/local-ui-preference-store";
 import { usePlatform } from "../../../platform/platform-provider";
 import { useHaptics } from "../../../shared/haptics";
 import { t } from "../../../shared/i18n";
@@ -146,6 +147,9 @@ function LiveConversationPage({
 
   const store = storeRef.current;
   const { showToast, dismissToast } = useToast();
+  const notifyOnPermissionRequest = useLocalUiPreferenceSelector(
+    (state) => state.notificationPreferences.notifyOnPermissionRequest
+  );
   const platform = usePlatform();
   const haptics = useHaptics();
   const lastRuntimeErrorSignatureRef = useRef<string | null>(null);
@@ -338,6 +342,7 @@ function LiveConversationPage({
 
   useEffect(() => {
     const pendingRequests = permissionRequests.filter((request) => request.status === "pending");
+    const sessionWorkspaceId = session?.workspaceId ?? navigationSession?.workspaceId ?? null;
 
     for (const request of pendingRequests) {
       if (notifiedPermissionRequestIdsRef.current.has(request.id)) {
@@ -345,19 +350,40 @@ function LiveConversationPage({
       }
 
       notifiedPermissionRequestIdsRef.current.add(request.id);
+      if (!notifyOnPermissionRequest) {
+        continue;
+      }
+
       showToast({
         id: `permission-request-${request.id}`,
         title: t("conversation.permissionRequestToastTitle"),
         description: request.title,
         tone: "warning",
-        durationMs: 8_000
+        durationMs: 8_000,
+        action: sessionWorkspaceId
+          ? {
+              label: t("shell.contextOpenSession"),
+              onClick: () => {
+                navigate(buildWorkspaceSessionPath(sessionWorkspaceId, sessionId));
+              }
+            }
+          : undefined
       });
       void platform.bridge.showNotification(
         t("conversation.permissionRequestToastTitle"),
         request.title
       );
     }
-  }, [permissionRequests, platform.bridge, showToast]);
+  }, [
+    navigationSession?.workspaceId,
+    navigate,
+    notifyOnPermissionRequest,
+    permissionRequests,
+    platform.bridge,
+    session?.workspaceId,
+    sessionId,
+    showToast
+  ]);
 
   useMobileConversationComposerHeightVar(
     mobileConversationPageRef,

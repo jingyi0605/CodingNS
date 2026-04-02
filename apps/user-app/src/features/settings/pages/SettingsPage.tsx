@@ -40,6 +40,9 @@ interface SettingsPageModel {
     defaultPermissionMode: ClientPermissionMode;
   };
   readonly showSystemFiles: boolean;
+  readonly notifyOnPermissionRequest: boolean;
+  readonly notifyOnSessionCompleted: boolean;
+  readonly notifyOnSessionFailed: boolean;
   readonly showServerSettings: boolean;
   readonly canConfigureServerAddress: boolean;
   readonly hostBaseUrlDraft: string;
@@ -56,6 +59,9 @@ interface SettingsPageModel {
   readonly updateAutoCheckUpdate: (enabled: boolean) => void;
   readonly updateDefaultPermissionMode: (value: string) => void;
   readonly updateShowSystemFiles: (enabled: boolean) => void;
+  readonly updateNotifyOnPermissionRequest: (enabled: boolean) => void;
+  readonly updateNotifyOnSessionCompleted: (enabled: boolean) => void;
+  readonly updateNotifyOnSessionFailed: (enabled: boolean) => void;
 }
 
 interface SettingsSectionMeta {
@@ -103,6 +109,15 @@ function useSettingsPageModel(): SettingsPageModel {
     (state) => state.profile.defaultPermissionMode
   );
   const showSystemFiles = useLocalUiPreferenceSelector((state) => state.showSystemFiles);
+  const notifyOnPermissionRequest = useLocalUiPreferenceSelector(
+    (state) => state.notificationPreferences.notifyOnPermissionRequest
+  );
+  const notifyOnSessionCompleted = useLocalUiPreferenceSelector(
+    (state) => state.notificationPreferences.notifyOnSessionCompleted
+  );
+  const notifyOnSessionFailed = useLocalUiPreferenceSelector(
+    (state) => state.notificationPreferences.notifyOnSessionFailed
+  );
   const accountPreferences = {
     language: preferenceLanguage,
     defaultPermissionMode: preferencePermissionMode
@@ -196,6 +211,24 @@ function useSettingsPageModel(): SettingsPageModel {
     localUiPreferenceStore.setShowSystemFiles(enabled);
   }
 
+  function updateNotifyOnPermissionRequest(enabled: boolean): void {
+    localUiPreferenceStore.setNotificationPreferences({
+      notifyOnPermissionRequest: enabled
+    });
+  }
+
+  function updateNotifyOnSessionCompleted(enabled: boolean): void {
+    localUiPreferenceStore.setNotificationPreferences({
+      notifyOnSessionCompleted: enabled
+    });
+  }
+
+  function updateNotifyOnSessionFailed(enabled: boolean): void {
+    localUiPreferenceStore.setNotificationPreferences({
+      notifyOnSessionFailed: enabled
+    });
+  }
+
   return {
     platform,
     theme,
@@ -203,6 +236,9 @@ function useSettingsPageModel(): SettingsPageModel {
     runtimeConfig,
     accountPreferences,
     showSystemFiles,
+    notifyOnPermissionRequest,
+    notifyOnSessionCompleted,
+    notifyOnSessionFailed,
     showServerSettings,
     canConfigureServerAddress,
     hostBaseUrlDraft,
@@ -215,7 +251,10 @@ function useSettingsPageModel(): SettingsPageModel {
     updateAutoReconnect,
     updateAutoCheckUpdate,
     updateDefaultPermissionMode,
-    updateShowSystemFiles
+    updateShowSystemFiles,
+    updateNotifyOnPermissionRequest,
+    updateNotifyOnSessionCompleted,
+    updateNotifyOnSessionFailed
   };
 }
 
@@ -237,6 +276,9 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
     runtimeConfig,
     accountPreferences,
     showSystemFiles,
+    notifyOnPermissionRequest,
+    notifyOnSessionCompleted,
+    notifyOnSessionFailed,
     showServerSettings,
     hostBaseUrlDraft,
     setHostBaseUrlDraft,
@@ -249,7 +291,10 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
     updateAutoReconnect,
     updateAutoCheckUpdate,
     updateDefaultPermissionMode,
-    updateShowSystemFiles
+    updateShowSystemFiles,
+    updateNotifyOnPermissionRequest,
+    updateNotifyOnSessionCompleted,
+    updateNotifyOnSessionFailed
   } = model;
 
   return (
@@ -302,6 +347,7 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
                 <label className="settings-checkbox">
                   <input
                     type="checkbox"
+                    aria-label={t("settings.showSystemFiles")}
                     checked={showSystemFiles}
                     onChange={(event) => updateShowSystemFiles(event.target.checked)}
                   />
@@ -381,6 +427,66 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
                     </option>
                   ))}
                 </select>
+              </div>
+            </div>
+
+            <div className="settings-row">
+              <div className="settings-row-label">
+                <span className="settings-row-title">{t("settings.notifyOnPermissionRequest")}</span>
+                <span className="settings-row-description">
+                  {t("settings.notifyOnPermissionRequestDescription")}
+                </span>
+              </div>
+              <div className="settings-row-control">
+                <label className="settings-checkbox">
+                  <input
+                    type="checkbox"
+                    aria-label={t("settings.notifyOnPermissionRequest")}
+                    checked={notifyOnPermissionRequest}
+                    onChange={(event) => updateNotifyOnPermissionRequest(event.target.checked)}
+                  />
+                  <span>{notifyOnPermissionRequest ? t("settings.enabled") : t("settings.disabled")}</span>
+                </label>
+              </div>
+            </div>
+
+            <div className="settings-row">
+              <div className="settings-row-label">
+                <span className="settings-row-title">{t("settings.notifyOnSessionCompleted")}</span>
+                <span className="settings-row-description">
+                  {t("settings.notifyOnSessionCompletedDescription")}
+                </span>
+              </div>
+              <div className="settings-row-control">
+                <label className="settings-checkbox">
+                  <input
+                    type="checkbox"
+                    aria-label={t("settings.notifyOnSessionCompleted")}
+                    checked={notifyOnSessionCompleted}
+                    onChange={(event) => updateNotifyOnSessionCompleted(event.target.checked)}
+                  />
+                  <span>{notifyOnSessionCompleted ? t("settings.enabled") : t("settings.disabled")}</span>
+                </label>
+              </div>
+            </div>
+
+            <div className="settings-row">
+              <div className="settings-row-label">
+                <span className="settings-row-title">{t("settings.notifyOnSessionFailed")}</span>
+                <span className="settings-row-description">
+                  {t("settings.notifyOnSessionFailedDescription")}
+                </span>
+              </div>
+              <div className="settings-row-control">
+                <label className="settings-checkbox">
+                  <input
+                    type="checkbox"
+                    aria-label={t("settings.notifyOnSessionFailed")}
+                    checked={notifyOnSessionFailed}
+                    onChange={(event) => updateNotifyOnSessionFailed(event.target.checked)}
+                  />
+                  <span>{notifyOnSessionFailed ? t("settings.enabled") : t("settings.disabled")}</span>
+                </label>
               </div>
             </div>
           </div>
@@ -697,32 +803,82 @@ function MobileServerConnectionSection({ model }: { model: SettingsPageModel }) 
 
 function MobileSecurityPrivacySection({ model }: { model: SettingsPageModel }) {
   return (
-    <section className="settings-mobile-group-section">
-      <h2 className="settings-mobile-group-title">{t("settings.securityPrivacy")}</h2>
-      <p className="settings-mobile-group-note">{t("settings.securityPrivacySectionSummary")}</p>
-      <div className="settings-mobile-card">
-        <div className="settings-mobile-form-row">
-          <div className="settings-mobile-row-copy">
-            <span className="settings-mobile-row-title">{t("settings.defaultPermissionMode")}</span>
-            <span className="settings-mobile-row-description">
-              {t("settings.defaultPermissionModeDescription")}
-            </span>
+    <>
+      <section className="settings-mobile-group-section">
+        <h2 className="settings-mobile-group-title">{t("settings.securityPrivacy")}</h2>
+        <p className="settings-mobile-group-note">{t("settings.securityPrivacySectionSummary")}</p>
+        <div className="settings-mobile-card">
+          <div className="settings-mobile-form-row">
+            <div className="settings-mobile-row-copy">
+              <span className="settings-mobile-row-title">{t("settings.defaultPermissionMode")}</span>
+              <span className="settings-mobile-row-description">
+                {t("settings.defaultPermissionModeDescription")}
+              </span>
+            </div>
+            <select
+              aria-label={t("settings.defaultPermissionMode")}
+              className="settings-select settings-mobile-select"
+              value={model.accountPreferences.defaultPermissionMode}
+              onChange={(event) => model.updateDefaultPermissionMode(event.target.value)}
+            >
+              {model.permissionModeOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
           </div>
-          <select
-            aria-label={t("settings.defaultPermissionMode")}
-            className="settings-select settings-mobile-select"
-            value={model.accountPreferences.defaultPermissionMode}
-            onChange={(event) => model.updateDefaultPermissionMode(event.target.value)}
-          >
-            {model.permissionModeOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
         </div>
-      </div>
-    </section>
+      </section>
+
+      <section className="settings-mobile-group-section">
+        <h2 className="settings-mobile-group-title">{t("settings.notificationSettings")}</h2>
+        <p className="settings-mobile-group-note">{t("settings.notificationSettingsDescription")}</p>
+        <div className="settings-mobile-card">
+          <div className="settings-mobile-form-row">
+            <div className="settings-mobile-row-copy">
+              <span className="settings-mobile-row-title">{t("settings.notifyOnPermissionRequest")}</span>
+              <span className="settings-mobile-row-description">
+                {t("settings.notifyOnPermissionRequestDescription")}
+              </span>
+            </div>
+            <MobileSwitch
+              checked={model.notifyOnPermissionRequest}
+              label={t("settings.notifyOnPermissionRequest")}
+              onChange={model.updateNotifyOnPermissionRequest}
+            />
+          </div>
+
+          <div className="settings-mobile-form-row">
+            <div className="settings-mobile-row-copy">
+              <span className="settings-mobile-row-title">{t("settings.notifyOnSessionCompleted")}</span>
+              <span className="settings-mobile-row-description">
+                {t("settings.notifyOnSessionCompletedDescription")}
+              </span>
+            </div>
+            <MobileSwitch
+              checked={model.notifyOnSessionCompleted}
+              label={t("settings.notifyOnSessionCompleted")}
+              onChange={model.updateNotifyOnSessionCompleted}
+            />
+          </div>
+
+          <div className="settings-mobile-form-row">
+            <div className="settings-mobile-row-copy">
+              <span className="settings-mobile-row-title">{t("settings.notifyOnSessionFailed")}</span>
+              <span className="settings-mobile-row-description">
+                {t("settings.notifyOnSessionFailedDescription")}
+              </span>
+            </div>
+            <MobileSwitch
+              checked={model.notifyOnSessionFailed}
+              label={t("settings.notifyOnSessionFailed")}
+              onChange={model.updateNotifyOnSessionFailed}
+            />
+          </div>
+        </div>
+      </section>
+    </>
   );
 }
 

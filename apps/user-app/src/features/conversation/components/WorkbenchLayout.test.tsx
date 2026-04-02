@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { authStore } from "../../auth/store/auth-store";
+import { localUiPreferenceStore } from "../../../preferences/local-ui-preference-store";
 import { clearViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import { t } from "../../../shared/i18n";
 import { ToastProvider } from "../../../shared/toast";
@@ -129,6 +130,11 @@ describe("WorkbenchLayout", () => {
   beforeEach(() => {
     window.localStorage.clear();
     window.sessionStorage.clear();
+    localUiPreferenceStore.setNotificationPreferences({
+      notifyOnPermissionRequest: true,
+      notifyOnSessionCompleted: true,
+      notifyOnSessionFailed: true
+    });
     clearViewSnapshot(WORKBENCH_NAVIGATION_SNAPSHOT_KEY);
     clearViewSnapshot("workspace-management.summary.workspace-1");
     clearViewSnapshot("git-sidebar.snapshot.workspace-1");
@@ -2280,6 +2286,349 @@ describe("WorkbenchLayout", () => {
     expect(screen.getByText("Subagent 1")).toBeInTheDocument();
   });
 
+  it("后台会话变为 completed_unread 时会立即推送系统通知", async () => {
+    const originalNotification = window.Notification;
+    const invokeSpy = vi.fn(async (_command?: string, _args?: Record<string, unknown>) => undefined);
+    const deniedNotification = class {
+      static permission: NotificationPermission = "denied";
+
+      static async requestPermission() {
+        return "denied" as const;
+      }
+    };
+    Object.defineProperty(window, "Notification", {
+      configurable: true,
+      value: deniedNotification
+    });
+    window.__TAURI_INTERNALS__ = {
+      invoke: ((command: string, args?: Record<string, unknown>) =>
+        invokeSpy(command, args)) as <T>(
+        command: string,
+        args?: Record<string, unknown>
+      ) => Promise<T>
+    };
+
+    let currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "当前会话",
+            workspaceId: "workspace-1",
+            runningState: "running",
+            activityState: "running"
+          }),
+          createSessionSummary({
+            sessionId: "session-2",
+            title: "后台会话",
+            workspaceId: "workspace-1",
+            runningState: "running",
+            activityState: "running"
+          })
+        ]
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      if (url.includes("/permission-requests")) {
+        return createJsonResponse({ items: [] });
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    try {
+      renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-1");
+      await findSessionCardByTitle("后台会话");
+
+      currentSnapshot = createWorkbenchSnapshot([
+        {
+          workspace: createWorkspace("workspace-1", "项目一"),
+          sessions: [
+            createSessionSummary({
+              sessionId: "session-1",
+              title: "当前会话",
+              workspaceId: "workspace-1",
+              runningState: "running",
+              activityState: "running"
+            }),
+            {
+              ...createSessionSummary({
+                sessionId: "session-2",
+                title: "后台会话",
+                workspaceId: "workspace-1",
+                runningState: "completed",
+                activityState: "completed_unread"
+              }),
+              completedAt: "2026-04-01T08:10:00.000Z"
+            }
+          ]
+        }
+      ]);
+
+      MockWebSocket.instances[0]?.dispatchMessage({
+        type: "workbench.snapshot",
+        snapshot: currentSnapshot
+      });
+
+      await waitFor(() => {
+        expect(invokeSpy).toHaveBeenCalledWith(
+          "show_notification",
+          expect.objectContaining({
+            title: t("conversation.backgroundCompletionToastTitle"),
+            body: t("conversation.backgroundCompletionToastDescription", {
+              title: "后台会话"
+            })
+          })
+        );
+      });
+
+      await clickOpenSessionToastActionByTitle(t("conversation.backgroundCompletionToastTitle"));
+      await waitFor(() => {
+        expect(screen.getByTestId("current-path").textContent).toBe("/workspaces/workspace-1/sessions/session-2");
+      });
+    } finally {
+      Object.defineProperty(window, "Notification", {
+        configurable: true,
+        value: originalNotification
+      });
+    }
+  });
+
+  it("后台运行会话收到新的权限申请时会推送系统通知", async () => {
+    const originalNotification = window.Notification;
+    const invokeSpy = vi.fn(async (_command?: string, _args?: Record<string, unknown>) => undefined);
+    const deniedNotification = class {
+      static permission: NotificationPermission = "denied";
+
+      static async requestPermission() {
+        return "denied" as const;
+      }
+    };
+    Object.defineProperty(window, "Notification", {
+      configurable: true,
+      value: deniedNotification
+    });
+    window.__TAURI_INTERNALS__ = {
+      invoke: ((command: string, args?: Record<string, unknown>) =>
+        invokeSpy(command, args)) as <T>(
+        command: string,
+        args?: Record<string, unknown>
+      ) => Promise<T>
+    };
+
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "当前会话",
+            workspaceId: "workspace-1",
+            runningState: "running",
+            activityState: "running"
+          }),
+          createSessionSummary({
+            sessionId: "session-2",
+            title: "后台会话",
+            workspaceId: "workspace-1",
+            runningState: "running",
+            activityState: "running"
+          })
+        ]
+      }
+    ]);
+
+    let permissionPollCount = 0;
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+    writeViewSnapshot(WORKBENCH_NAVIGATION_SNAPSHOT_KEY, currentSnapshot);
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      if (url.endsWith("/api/sessions/session-2/permission-requests")) {
+        permissionPollCount += 1;
+
+        if (permissionPollCount === 1) {
+          return createJsonResponse({ items: [] });
+        }
+
+        return createJsonResponse({
+          items: [
+            createPermissionRequest({
+              id: "permission-1",
+              sessionId: "session-2",
+              title: "Codex 请求执行命令"
+            })
+          ]
+        });
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    try {
+      renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-1");
+      await findSessionCardByTitle("后台会话");
+
+      await new Promise((resolve) => {
+        window.setTimeout(resolve, 9_000);
+      });
+
+      await waitFor(() => {
+        expect(invokeSpy).toHaveBeenCalledWith(
+          "show_notification",
+          expect.objectContaining({
+            title: t("conversation.permissionRequestToastTitle"),
+            body: t("conversation.backgroundPermissionToastDescription", {
+              title: "后台会话",
+              requestTitle: "Codex 请求执行命令"
+            })
+          })
+        );
+      });
+
+      await clickOpenSessionToastActionByTitle(t("conversation.permissionRequestToastTitle"));
+      await waitFor(() => {
+        expect(screen.getByTestId("current-path").textContent).toBe("/workspaces/workspace-1/sessions/session-2");
+      });
+    } finally {
+      Object.defineProperty(window, "Notification", {
+        configurable: true,
+        value: originalNotification
+      });
+    }
+  }, 20_000);
+
+  it("后台会话从运行中转为失败时会推送系统通知", async () => {
+    const originalNotification = window.Notification;
+    const invokeSpy = vi.fn(async (_command?: string, _args?: Record<string, unknown>) => undefined);
+    const deniedNotification = class {
+      static permission: NotificationPermission = "denied";
+
+      static async requestPermission() {
+        return "denied" as const;
+      }
+    };
+    Object.defineProperty(window, "Notification", {
+      configurable: true,
+      value: deniedNotification
+    });
+    window.__TAURI_INTERNALS__ = {
+      invoke: ((command: string, args?: Record<string, unknown>) =>
+        invokeSpy(command, args)) as <T>(
+        command: string,
+        args?: Record<string, unknown>
+      ) => Promise<T>
+    };
+
+    let currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "当前会话",
+            workspaceId: "workspace-1",
+            runningState: "running",
+            activityState: "running"
+          }),
+          createSessionSummary({
+            sessionId: "session-2",
+            title: "后台会话",
+            workspaceId: "workspace-1",
+            runningState: "running",
+            activityState: "running"
+          })
+        ]
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      if (url.includes("/permission-requests")) {
+        return createJsonResponse({ items: [] });
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    try {
+      renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-1");
+      await findSessionCardByTitle("后台会话");
+
+      currentSnapshot = createWorkbenchSnapshot([
+        {
+          workspace: createWorkspace("workspace-1", "项目一"),
+          sessions: [
+            createSessionSummary({
+              sessionId: "session-1",
+              title: "当前会话",
+              workspaceId: "workspace-1",
+              runningState: "running",
+              activityState: "running"
+            }),
+            createSessionSummary({
+              sessionId: "session-2",
+              title: "后台会话",
+              workspaceId: "workspace-1",
+              runningState: "failed",
+              activityState: "idle",
+              syncStatus: "error",
+              lastErrorCode: "CODEX_HTTP_502",
+              lastErrorDetail: "unexpected status 502 Bad Gateway"
+            })
+          ]
+        }
+      ]);
+
+      MockWebSocket.instances[0]?.dispatchMessage({
+        type: "workbench.snapshot",
+        snapshot: currentSnapshot
+      });
+
+      await waitFor(() => {
+        expect(invokeSpy).toHaveBeenCalledWith(
+          "show_notification",
+          expect.objectContaining({
+            title: t("conversation.backgroundFailureToastTitle"),
+            body: t("conversation.backgroundFailureToastDescription", {
+              title: "后台会话",
+              detail: "CODEX_HTTP_502 · unexpected status 502 Bad Gateway"
+            })
+          })
+        );
+      });
+
+      await clickOpenSessionToastActionByTitle(t("conversation.backgroundFailureToastTitle"));
+      await waitFor(() => {
+        expect(screen.getByTestId("current-path").textContent).toBe("/workspaces/workspace-1/sessions/session-2");
+      });
+    } finally {
+      Object.defineProperty(window, "Notification", {
+        configurable: true,
+        value: originalNotification
+      });
+    }
+  });
+
   it("会在侧栏会话列表里直接显示失败错误摘要", async () => {
     const currentSnapshot = createWorkbenchSnapshot([
       {
@@ -2475,6 +2824,51 @@ function createSessionSummary(input: {
 
 function createWorkbenchSnapshot(items: Array<Record<string, unknown>>) {
   return { items };
+}
+
+async function clickOpenSessionToastActionByTitle(title: string) {
+  const titleElement = await screen.findByText(title);
+  const toastCard = titleElement.closest(".toast-card");
+
+  if (!(toastCard instanceof HTMLElement)) {
+    throw new Error(`未找到 toast 卡片: ${title}`);
+  }
+
+  const openSessionAction = within(toastCard).getByRole("button", {
+    name: t("shell.contextOpenSession")
+  });
+  await userEvent.click(openSessionAction);
+}
+
+function createPermissionRequest(input: {
+  id: string;
+  sessionId: string;
+  title: string;
+}) {
+  return {
+    id: input.id,
+    sessionId: input.sessionId,
+    provider: "codex",
+    providerSessionId: `provider-${input.sessionId}`,
+    requestKey: `request-${input.id}`,
+    kind: "command",
+    status: "pending",
+    title: input.title,
+    summary: input.title,
+    detail: null,
+    reason: null,
+    toolName: null,
+    command: "echo test",
+    cwd: "/tmp",
+    paths: [],
+    permissionProfile: null,
+    questions: [],
+    actions: [],
+    rawPayload: null,
+    createdAt: "2026-04-01T08:00:00.000Z",
+    updatedAt: "2026-04-01T08:00:00.000Z",
+    resolvedAt: null
+  };
 }
 
 function createJsonResponse(payload: unknown, status = 200): Response {

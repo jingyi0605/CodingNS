@@ -41,12 +41,14 @@ import {
   startDesktopWindowDrag
 } from "../../../platform/desktop/window-drag";
 import { usePlatform } from "../../../platform/platform-provider";
+import { useLocalUiPreferenceSelector } from "../../../preferences/local-ui-preference-store";
 import { readViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import { logPerfDebug } from "../../../shared/debug/perf-debug";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 import { authStore } from "../../auth/store/auth-store";
 import {
+  getSessionPermissionRequests,
   getWorkbenchSnapshot,
   removeWorkspace,
   renameSessionTitle,
@@ -109,7 +111,39 @@ const ROOT_SESSION_PAGE_SIZE = 40;
 const SUBAGENT_PAGE_SIZE = 5;
 const WORKBENCH_NAVIGATION_CACHE_MAX_AGE_MS = 30 * 60 * 1000;
 const WORKSPACE_MANAGEMENT_SNAPSHOT_CACHE_MAX_AGE_MS = 60 * 1000;
+const WORKBENCH_PERMISSION_POLL_INTERVAL_MS = 4_000;
+const SESSION_FAILURE_NOTIFICATION_DETAIL_MAX_LENGTH = 220;
 const FOCUS_COMPOSER_EVENT = "workbench:focus-composer";
+const WORKBENCH_RUNTIME_ACTIVE_STATES: ReadonlySet<string> = new Set([
+  "starting",
+  "running",
+  "reconnecting",
+  "stale",
+  "unknown"
+]);
+
+function isPermissionWatchSession(session: SessionSummaryDto): boolean {
+  return (
+    WORKBENCH_RUNTIME_ACTIVE_STATES.has(session.runningState ?? "idle") ||
+    session.activityState === "running"
+  );
+}
+
+function normalizeSessionFailureDetail(session: SessionSummaryDto): string | null {
+  const lastErrorCode = session.lastErrorCode?.trim() ?? "";
+  const lastErrorDetail = session.lastErrorDetail?.trim() ?? "";
+  const composed = [lastErrorCode, lastErrorDetail].filter((value) => value.length > 0).join(" · ");
+
+  if (!composed) {
+    return null;
+  }
+
+  if (composed.length <= SESSION_FAILURE_NOTIFICATION_DETAIL_MAX_LENGTH) {
+    return composed;
+  }
+
+  return `${composed.slice(0, SESSION_FAILURE_NOTIFICATION_DETAIL_MAX_LENGTH - 3)}...`;
+}
 
 function resolveRouteWorkspaceId(pathname: string, search: string): string | null {
   const workspaceRoutePatterns = [
@@ -3337,6 +3371,15 @@ export function WorkbenchLayout({
   const navigate = useNavigate();
   const platform = usePlatform();
   const { showToast } = useToast();
+  const notifyOnPermissionRequest = useLocalUiPreferenceSelector(
+    (state) => state.notificationPreferences.notifyOnPermissionRequest
+  );
+  const notifyOnSessionCompleted = useLocalUiPreferenceSelector(
+    (state) => state.notificationPreferences.notifyOnSessionCompleted
+  );
+  const notifyOnSessionFailed = useLocalUiPreferenceSelector(
+    (state) => state.notificationPreferences.notifyOnSessionFailed
+  );
   const initialWorkbenchSnapshotRef = useRef<WorkbenchSnapshotDto | null>(readCachedWorkbenchSnapshot());
   const requestIdRef = useRef(0);
   const hasNavigationDataRef = useRef(
@@ -3364,6 +3407,23 @@ export function WorkbenchLayout({
   const terminalManagerWorkspaceSubscriptionRef = useRef<string | null>(null);
   const pendingTerminalManagerRefreshWorkspaceIdRef = useRef<string | null>(null);
   const showToastRef = useRef(showToast);
+  const platformBridgeRef = useRef(platform.bridge);
+  const completionBaselineReadyRef = useRef(false);
+  const previousSessionCompletionStateRef = useRef(
+    new Map<
+      string,
+      {
+        activityState: SessionSummaryDto["activityState"];
+        completedAt: string | null;
+        runningState: SessionSummaryDto["runningState"];
+      }
+    >()
+  );
+  const permissionPollBaselineReadyRef = useRef(false);
+  const pendingPermissionRequestIdsBySessionRef = useRef(new Map<string, Set<string>>());
+  const permissionWatchSessionsRef = useRef<
+    Array<{ sessionId: string; workspaceId: string; title: string }>
+  >([]);
   const [navigationGroups, setNavigationGroups] = useState<WorkspaceSessionGroup[]>(() =>
     mapWorkbenchSnapshotToGroups(initialWorkbenchSnapshotRef.current)
   );
@@ -3413,6 +3473,10 @@ export function WorkbenchLayout({
   useEffect(() => {
     showToastRef.current = showToast;
   }, [showToast]);
+
+  useEffect(() => {
+    platformBridgeRef.current = platform.bridge;
+  }, [platform.bridge]);
 
   useEffect(() => {
     logPerfDebug("workbench.layout_mounted", {
@@ -3495,6 +3559,13 @@ export function WorkbenchLayout({
   const requestNavigationRefresh = useCallback(() => {
     workbenchRealtimeClientRef.current?.requestRefresh();
   }, []);
+
+  const openSessionFromToast = useCallback(
+    (workspaceId: string, sessionId: string) => {
+      navigate(buildWorkspaceSessionPath(workspaceId, sessionId));
+    },
+    [navigate]
+  );
 
   const subscribeFileTree = useCallback((workspaceId: string, paths: string[]) => {
     fileTreeSubscriptionRef.current = {
@@ -3879,6 +3950,238 @@ export function WorkbenchLayout({
     [flattenedSessions]
   );
   const favoriteSessionIdSet = useMemo(() => new Set(favoriteSessionIds), [favoriteSessionIds]);
+
+  useEffect(() => {
+    const nextState = new Map<
+      string,
+      {
+        activityState: SessionSummaryDto["activityState"];
+        completedAt: string | null;
+        runningState: SessionSummaryDto["runningState"];
+      }
+    >();
+
+    flattenedSessions.forEach(({ session }) => {
+      nextState.set(session.sessionId, {
+        activityState: session.activityState,
+        completedAt: session.completedAt ?? null,
+        runningState: session.runningState ?? null
+      });
+    });
+
+    if (!completionBaselineReadyRef.current) {
+      completionBaselineReadyRef.current = true;
+      previousSessionCompletionStateRef.current = nextState;
+      return;
+    }
+
+    flattenedSessions.forEach(({ session }) => {
+      if (session.sessionId === currentSessionId) {
+        return;
+      }
+
+      const previousState = previousSessionCompletionStateRef.current.get(session.sessionId);
+
+      if (!previousState) {
+        return;
+      }
+
+      const becameUnreadCompleted =
+        previousState.activityState !== "completed_unread" && session.activityState === "completed_unread";
+
+      const sessionTitle = session.title?.trim() || t("common.unknown");
+      if (notifyOnSessionCompleted && becameUnreadCompleted) {
+        const description = t("conversation.backgroundCompletionToastDescription", {
+          title: sessionTitle
+        });
+
+        showToastRef.current({
+          id: `workbench-session-completed-${session.sessionId}-${session.completedAt ?? "unknown"}`,
+          title: t("conversation.backgroundCompletionToastTitle"),
+          description,
+          tone: "success",
+          durationMs: 8_000,
+          action: {
+            label: t("shell.contextOpenSession"),
+            onClick: () => openSessionFromToast(session.workspaceId, session.sessionId)
+          }
+        });
+        void platformBridgeRef.current.showNotification(
+          t("conversation.backgroundCompletionToastTitle"),
+          description
+        );
+      }
+
+      const becameFailed =
+        previousState.runningState !== "failed"
+        && (session.runningState ?? null) === "failed";
+
+      if (notifyOnSessionFailed && becameFailed) {
+        const detail = normalizeSessionFailureDetail(session) ?? t("conversation.runtimeFailed");
+        const description = t("conversation.backgroundFailureToastDescription", {
+          title: sessionTitle,
+          detail
+        });
+
+        showToastRef.current({
+          id: `workbench-session-failed-${session.sessionId}-${session.updatedAt}`,
+          title: t("conversation.backgroundFailureToastTitle"),
+          description,
+          tone: "error",
+          durationMs: 8_000,
+          action: {
+            label: t("shell.contextOpenSession"),
+            onClick: () => openSessionFromToast(session.workspaceId, session.sessionId)
+          }
+        });
+        void platformBridgeRef.current.showNotification(
+          t("conversation.backgroundFailureToastTitle"),
+          description
+        );
+      }
+    });
+
+    previousSessionCompletionStateRef.current = nextState;
+  }, [
+    currentSessionId,
+    flattenedSessions,
+    notifyOnSessionCompleted,
+    notifyOnSessionFailed,
+    openSessionFromToast
+  ]);
+
+  useEffect(() => {
+    permissionWatchSessionsRef.current = flattenedSessions
+      .map((item) => item.session)
+      .filter((session) => session.sessionId !== currentSessionId && isPermissionWatchSession(session))
+      .map((session) => ({
+        sessionId: session.sessionId,
+        workspaceId: session.workspaceId,
+        title: session.title?.trim() || t("common.unknown")
+      }));
+  }, [currentSessionId, flattenedSessions]);
+
+  useEffect(() => {
+    let disposed = false;
+    let pollTimer: number | null = null;
+
+    const scheduleNextPoll = () => {
+      pollTimer = window.setTimeout(() => {
+        void pollPermissionRequests().finally(() => {
+          if (!disposed) {
+            scheduleNextPoll();
+          }
+        });
+      }, WORKBENCH_PERMISSION_POLL_INTERVAL_MS);
+    };
+
+    const pollPermissionRequests = async () => {
+      const watchedSessions = permissionWatchSessionsRef.current;
+
+      if (watchedSessions.length === 0) {
+        if (!permissionPollBaselineReadyRef.current) {
+          permissionPollBaselineReadyRef.current = true;
+        }
+        return;
+      }
+
+      // 后台会话在运行时，主动拉一次工作台快照，避免完成态只在切回会话时才可见。
+      workbenchRealtimeClientRef.current?.requestRefresh();
+
+      const watchedSessionIdSet = new Set(watchedSessions.map((session) => session.sessionId));
+      const results = await Promise.all(
+        watchedSessions.map(async (session) => {
+          try {
+            const response = await getSessionPermissionRequests(session.sessionId);
+            return {
+              session,
+              items: response.items
+            };
+          } catch {
+            return {
+              session,
+              items: null
+            };
+          }
+        })
+      );
+
+      if (disposed) {
+        return;
+      }
+
+      for (const result of results) {
+        if (!result.items) {
+          continue;
+        }
+
+        const pendingRequests = result.items.filter((request) => request.status === "pending");
+        const nextPendingRequestIds = new Set(pendingRequests.map((request) => request.id));
+        const previousPendingRequestIds =
+          pendingPermissionRequestIdsBySessionRef.current.get(result.session.sessionId) ?? new Set<string>();
+
+        if (permissionPollBaselineReadyRef.current) {
+          pendingRequests.forEach((request) => {
+            if (previousPendingRequestIds.has(request.id)) {
+              return;
+            }
+
+            if (!notifyOnPermissionRequest) {
+              return;
+            }
+
+            const description = t("conversation.backgroundPermissionToastDescription", {
+              title: result.session.title,
+              requestTitle: request.title
+            });
+
+            showToastRef.current({
+              id: `workbench-permission-request-${request.id}`,
+              title: t("conversation.permissionRequestToastTitle"),
+              description,
+              tone: "warning",
+              durationMs: 8_000,
+              action: {
+                label: t("shell.contextOpenSession"),
+                onClick: () => openSessionFromToast(result.session.workspaceId, result.session.sessionId)
+              }
+            });
+            void platformBridgeRef.current.showNotification(
+              t("conversation.permissionRequestToastTitle"),
+              description
+            );
+          });
+        }
+
+        pendingPermissionRequestIdsBySessionRef.current.set(
+          result.session.sessionId,
+          nextPendingRequestIds
+        );
+      }
+
+      for (const [sessionId, requestIds] of pendingPermissionRequestIdsBySessionRef.current.entries()) {
+        if (!watchedSessionIdSet.has(sessionId) && requestIds.size === 0) {
+          pendingPermissionRequestIdsBySessionRef.current.delete(sessionId);
+        }
+      }
+
+      permissionPollBaselineReadyRef.current = true;
+    };
+
+    void pollPermissionRequests().finally(() => {
+      if (!disposed) {
+        scheduleNextPoll();
+      }
+    });
+
+    return () => {
+      disposed = true;
+
+      if (pollTimer !== null) {
+        window.clearTimeout(pollTimer);
+      }
+    };
+  }, [notifyOnPermissionRequest, openSessionFromToast]);
 
   useEffect(() => {
     if (navigationLoading && navigationGroups.length === 0) {
