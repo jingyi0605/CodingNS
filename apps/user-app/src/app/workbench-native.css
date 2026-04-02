@@ -3409,7 +3409,10 @@ body {
 [data-theme="dark"] .workbench-workspace-icon-button,
 [data-theme="dark"] .workbench-workspace-create,
 [data-theme="dark"] .workbench-nav-settings-button,
-[data-theme="dark"] .workbench-info-tab {
+[data-theme="dark"] .workbench-info-tab,
+[data-theme="dark"] .workbench-shell .terminal-tab-control,
+[data-theme="dark"] .workbench-shell .terminal-toolbar-toggle,
+[data-theme="dark"] .workbench-shell .terminal-toolbar-toggle-tool {
   color: rgba(235, 235, 245, 0.78);
 }
 
@@ -3471,7 +3474,10 @@ body {
 [data-theme="sky-blue"] .workbench-workspace-icon-button,
 [data-theme="sky-blue"] .workbench-workspace-create,
 [data-theme="sky-blue"] .workbench-nav-settings-button,
-[data-theme="sky-blue"] .workbench-info-tab {
+[data-theme="sky-blue"] .workbench-info-tab,
+[data-theme="sky-blue"] .workbench-shell .terminal-tab-control,
+[data-theme="sky-blue"] .workbench-shell .terminal-toolbar-toggle,
+[data-theme="sky-blue"] .workbench-shell .terminal-toolbar-toggle-tool {
   color: rgba(238, 245, 255, 0.8);
 }
 
@@ -3673,28 +3679,26 @@ body {
   min-width: 28px;
   height: 28px;
   padding: 0 6px;
-  border: 1px solid rgba(15, 23, 42, 0.08);
+  border: 1px solid transparent;
   border-radius: 9px;
-  background: rgba(255, 255, 255, 0.72);
+  background: transparent;
   color: var(--text-secondary);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.76);
+  box-shadow: none;
 }
 
 .workbench-shell .terminal-tab-control:hover,
 .workbench-shell .terminal-toolbar-toggle:hover,
 .workbench-shell .terminal-tab-inline-action:hover {
-  background: rgba(255, 255, 255, 0.92);
-  border-color: rgba(15, 23, 42, 0.12);
+  background: var(--panel-hover);
+  border-color: var(--panel-border);
   color: var(--text-primary);
 }
 
 .workbench-shell .terminal-toolbar-toggle[data-open="true"] {
-  background: rgba(255, 255, 255, 0.92);
-  border-color: rgba(15, 23, 42, 0.12);
+  background: var(--panel-hover);
+  border-color: var(--panel-border);
   color: var(--text-primary);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.84),
-    0 10px 24px rgba(15, 23, 42, 0.1);
+  box-shadow: none;
 }
 
 .workbench-shell .terminal-toolbar-toggle-tool {
@@ -3702,30 +3706,30 @@ body {
   min-width: 26px;
   height: 26px;
   padding: 0;
-  border-color: rgba(60, 60, 67, 0.14);
+  border-color: transparent;
   border-radius: 8px;
-  background: rgba(246, 246, 248, 0.88);
-  color: rgba(58, 58, 60, 0.82);
+  background: transparent;
+  color: var(--text-secondary);
   box-shadow: none;
-  backdrop-filter: blur(18px) saturate(180%);
+  backdrop-filter: none;
 }
 
 .workbench-shell .terminal-toolbar-toggle-tool:hover {
-  background: rgba(238, 238, 242, 0.96);
-  border-color: rgba(60, 60, 67, 0.18);
-  color: rgba(28, 28, 30, 0.9);
+  background: var(--panel-hover);
+  border-color: var(--panel-border);
+  color: var(--text-primary);
   box-shadow: none;
   transform: none;
 }
 
 .workbench-shell .terminal-toolbar-toggle-tool:active {
-  background: rgba(229, 229, 234, 0.98);
+  background: var(--panel-hover);
 }
 
 .workbench-shell .terminal-toolbar-toggle-tool[data-open="true"] {
-  background: rgba(229, 229, 234, 0.98);
-  border-color: rgba(60, 60, 67, 0.2);
-  color: rgba(28, 28, 30, 0.94);
+  background: var(--panel-hover);
+  border-color: var(--panel-border);
+  color: var(--text-primary);
   box-shadow: none;
 }
 
@@ -4200,7 +4204,12 @@ body {
 [data-theme="sky-blue"] .workbench-nav-settings-button:hover,
 [data-theme="sky-blue"] .workbench-workspace-icon-button:hover,
 [data-theme="sky-blue"] .workbench-workspace-create:hover,
-[data-theme="sky-blue"] .workbench-nav-toolbar-button:hover {
+[data-theme="sky-blue"] .workbench-nav-toolbar-button:hover,
+[data-theme="sky-blue"] .workbench-shell .terminal-tab-control:hover,
+[data-theme="sky-blue"] .workbench-shell .terminal-toolbar-toggle:hover,
+[data-theme="sky-blue"] .workbench-shell .terminal-toolbar-toggle-tool:hover,
+[data-theme="sky-blue"] .workbench-shell .terminal-toolbar-toggle[data-open="true"],
+[data-theme="sky-blue"] .workbench-shell .terminal-toolbar-toggle-tool[data-open="true"] {
   border-color: rgba(0, 240, 255, 0.18);
   box-shadow:
     0 0 18px rgba(0, 240, 255, 0.14),
