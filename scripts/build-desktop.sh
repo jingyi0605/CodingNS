@@ -826,6 +826,52 @@ build_linux_with_docker() {
 }
 
 # ============================================
+# 一站式发布：build macos + release-macos
+# ============================================
+release_all_macos() {
+    log_info "============================================"
+    log_info "一站式 macOS 发布（构建 + 签名 + 公证）..."
+    log_info "============================================"
+    echo ""
+
+    ensure_macos_host
+    load_macos_release_env
+
+    # 预检：签名身份是否可用
+    log_info "预检签名环境..."
+    check_macos_release_deps || exit 1
+
+    if ! verify_sign_identity; then
+        log_error "签名证书不可用，请先导入证书："
+        log_info "  $MACOS_CERT_IMPORT_SCRIPT /path/to/DeveloperIDApplication.cer"
+        log_info "或检查本地配置：$MACOS_SIGNING_ENV_FILE"
+        exit 1
+    fi
+
+    if ! resolve_notarytool_args; then
+        log_error "notarytool 认证参数不可用，请在 $MACOS_SIGNING_ENV_FILE 中配置："
+        log_info "  APPLE_NOTARY_PROFILE（推荐）"
+        log_info "  或 APPLE_ID + APPLE_APP_SPECIFIC_PASSWORD + APPLE_TEAM_ID"
+        exit 1
+    fi
+
+    log_success "签名和公证环境预检通过"
+    echo ""
+
+    # 构建
+    check_common_deps || exit 1
+    install_deps
+    build_macos
+
+    echo ""
+    log_info "构建完成，开始签名和公证流程..."
+    echo ""
+
+    # 签名 + 公证
+    release_macos
+}
+
+# ============================================
 # 主程序
 # ============================================
 print_banner() {
@@ -840,17 +886,18 @@ print_usage() {
     echo "用法:"
     echo "  $0                         构建当前平台"
     echo "  $0 build                   构建当前平台"
-    echo "  $0 build macos             构建 macOS (.app, .dmg)"
+    echo "  $0 build macos             构建 macOS 通用包 (.app)"
     echo "  $0 build windows           构建 Windows (.exe, .msi)"
     echo "  $0 build linux             构建 Linux (.deb, .AppImage)"
-    echo "  $0 release-macos           macOS 签名、公证、校验"
+    echo "  $0 release                 一站式构建 + 签名 + 公证 macOS 通用包"
+    echo "  $0 release-macos           macOS 签名、公证、校验（需先 build）"
     echo "  $0 macos                   兼容旧用法：构建 macOS"
     echo "  $0 windows                 兼容旧用法：构建 Windows"
     echo "  $0 linux                   兼容旧用法：构建 Linux"
     echo "  $0 all                     尝试构建所有平台"
     echo "  $0 help                    显示帮助信息"
     echo ""
-    echo "release-macos 需要的环境变量："
+    echo "release / release-macos 需要的环境变量："
     echo "  APPLE_SIGN_IDENTITY        例如: Developer ID Application: Your Name (TEAMID)"
     echo "  APPLE_NOTARY_PROFILE       可选，notarytool 的 keychain profile"
     echo "  APPLE_ID                   未使用 APPLE_NOTARY_PROFILE 时必填"
@@ -859,6 +906,9 @@ print_usage() {
     echo "  MACOS_ENTITLEMENTS_PATH    可选，自定义 entitlements 文件"
     echo "  MACOS_BUILD_TARGET         可选，默认 universal-apple-darwin"
     echo "  默认本地配置文件           $MACOS_SIGNING_ENV_FILE"
+    echo ""
+    echo "本地签名证书导入："
+    echo "  $MACOS_CERT_IMPORT_SCRIPT /path/to/DeveloperIDApplication.cer"
     echo ""
 }
 
@@ -911,6 +961,9 @@ main() {
             log_info "目标平台: $build_target"
             echo ""
             run_build_target "$build_target"
+            ;;
+        release)
+            release_all_macos
             ;;
         release-macos)
             release_macos
