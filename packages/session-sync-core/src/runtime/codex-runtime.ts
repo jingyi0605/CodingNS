@@ -1110,7 +1110,7 @@ function createCodexAppServerTransport(options: CodexRuntimeOptions): CodexAppSe
     setServerRequestHandler(handler) {
       serverRequestHandler = handler;
     },
-    setOnClose(handler: ((error: Error | null) => void) | null) => void {
+    setOnClose(handler: ((error: Error | null) => void) | null): void {
       closeHandler = handler;
     },
     close() {
