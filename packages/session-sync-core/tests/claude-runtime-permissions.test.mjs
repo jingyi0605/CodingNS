@@ -187,3 +187,71 @@ rl.once("line", () => {
     rmSync(rootDir, { recursive: true, force: true });
   }
 });
+
+test("ClaudeRuntimeAdapter 在 bypassPermissions 下不会注入二次审批 hook", async () => {
+  const rootDir = mkdtempSync(join(tmpdir(), "codingns-claude-hooks-bypass-"));
+  const scriptPath = join(rootDir, "fake-claude-hooks-bypass.mjs");
+  const argvPath = join(rootDir, "argv.json");
+  const homeDir = join(rootDir, ".claude");
+  const bridgeScriptPath = join(rootDir, "bridge.cjs");
+
+  writeFileSync(
+    scriptPath,
+    `#!/usr/bin/env node
+import fs from "node:fs";
+import readline from "node:readline";
+
+const argv = process.argv.slice(2);
+fs.writeFileSync(${JSON.stringify(argvPath)}, JSON.stringify(argv), "utf8");
+
+const rl = readline.createInterface({ input: process.stdin });
+rl.once("line", () => {
+  process.stdout.write(JSON.stringify({
+    type: "assistant",
+    session_id: "claude-session-hooks-bypass-1",
+    timestamp: new Date().toISOString(),
+    message: {
+      content: [
+        {
+          type: "text",
+          text: "ok"
+        }
+      ]
+    }
+  }) + "\\n");
+  process.exit(0);
+});
+`,
+    "utf8"
+  );
+  writeFileSync(bridgeScriptPath, "console.log('bridge');", "utf8");
+  chmodSync(scriptPath, 0o755);
+  const commandPath = createCommandPath(rootDir, scriptPath);
+
+  const adapter = new ClaudeRuntimeAdapter({
+    homeDir,
+    commandPath,
+    hookBridge: {
+      url: "http://127.0.0.1:3002/api/providers/claude-code/hook-bridge/events",
+      token: "token-1",
+      scriptPath: bridgeScriptPath
+    }
+  });
+
+  try {
+    const launch = await adapter.startSession(
+      createRuntimeRequest(rootDir, "bypassPermissions"),
+      {
+        emit: async () => undefined,
+        updateSessionBinding: () => undefined
+      }
+    );
+
+    await launch.completed;
+
+    const argv = JSON.parse(readFileSync(argvPath, "utf8"));
+    assert.equal(argv.includes("--settings"), false);
+  } finally {
+    rmSync(rootDir, { recursive: true, force: true });
+  }
+});

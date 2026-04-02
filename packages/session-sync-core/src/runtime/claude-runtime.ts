@@ -141,7 +141,7 @@ export class ClaudeRuntimeAdapter implements ProviderRuntimeAdapter {
     rawStoreRef: string,
     sessionArgs: string[]
   ): ProviderRuntimeLaunchResult {
-    const hookSettings = this.options.hookBridge
+    const hookSettings = shouldInjectClaudeHookBridge(request.options.permissionMode) && this.options.hookBridge
       ? createClaudeHookSettingsFile(this.options.hookBridge)
       : null;
     const attachmentDirectories = Array.from(
@@ -594,6 +594,10 @@ export function buildClaudePermissionArgs(permissionMode: string | null): string
   }
 
   return [];
+}
+
+function shouldInjectClaudeHookBridge(permissionMode: string | null): boolean {
+  return permissionMode !== "bypassPermissions";
 }
 
 function createClaudeHookSettingsFile(input: {
