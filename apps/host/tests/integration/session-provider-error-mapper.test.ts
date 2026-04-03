@@ -42,4 +42,41 @@ describe("mapSessionProviderError", () => {
     expect(mapped.errorCode).toBe("SESSION_BINDING_WORKSPACE_CONFLICT");
     expect(mapped.message).toContain("其他工作区");
   });
+
+  it("会把 Gemini 会话缺失映射成明确的发现错误", () => {
+    const mapped = mapSessionProviderError(new Error("GEMINI_CHAT_NOT_FOUND"));
+
+    expect(mapped.statusCode).toBe(404);
+    expect(mapped.errorCode).toBe("GEMINI_CHAT_NOT_FOUND");
+    expect(mapped.message).toContain("Gemini 本地 chats");
+  });
+
+  it("会把 Gemini schema 变化映射成结构化解析错误", () => {
+    const mapped = mapSessionProviderError(
+      new Error("GEMINI_CHAT_SCHEMA_INVALID: file=/tmp/.gemini/tmp/demo/chats/session.json detail=Unexpected token")
+    );
+
+    expect(mapped.statusCode).toBe(422);
+    expect(mapped.errorCode).toBe("GEMINI_CHAT_SCHEMA_INVALID");
+    expect(mapped.message).toContain("GEMINI_CHAT_SCHEMA_INVALID");
+    expect(mapped.message).toContain("session.json");
+  });
+
+  it("会把 Kimi 双链路失败映射成明确的 fallback 错误", () => {
+    const mapped = mapSessionProviderError(
+      new Error("KIMI_RUNTIME_FALLBACK_FAILED: wire=KIMI_WIRE_MODE_UNAVAILABLE: unknown; command=boom")
+    );
+
+    expect(mapped.statusCode).toBe(503);
+    expect(mapped.errorCode).toBe("KIMI_RUNTIME_FALLBACK_FAILED");
+    expect(mapped.message).toContain("fallback");
+  });
+
+  it("会把 Kimi wire 不可用映射成可观测降级提示", () => {
+    const mapped = mapSessionProviderError(new Error("KIMI_WIRE_MODE_UNAVAILABLE: unknown error"));
+
+    expect(mapped.statusCode).toBe(503);
+    expect(mapped.errorCode).toBe("KIMI_WIRE_MODE_UNAVAILABLE");
+    expect(mapped.message).toContain("wire");
+  });
 });

@@ -1,7 +1,12 @@
 import { httpClient } from "../../../network/http-client";
 import { ApiError } from "../../../shared/network/api-error";
 
-export type BuiltinProviderId = "claude-code" | "codex" | "opencode";
+export type BuiltinProviderId =
+  | "claude-code"
+  | "codex"
+  | "opencode"
+  | "gemini"
+  | "kimi";
 export type ProviderId = BuiltinProviderId | (string & {});
 export type SyncStatus = "idle" | "syncing" | "error";
 export type DeliveryState = "sending" | "sent" | "failed";

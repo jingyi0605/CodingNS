@@ -8,6 +8,7 @@ import {
   type SessionSummaryDto,
   type WorkspaceManagementSummaryDto
 } from "../../conversation/api/conversation-api";
+import { getProviderDisplayName } from "../../conversation/capability/provider-ui";
 import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout";
 import { MobileWorkspaceSwitcherHeader } from "../../mobile-shell/components/MobileWorkspaceSwitcherHeader";
 import { MobileCreateSessionSheet } from "../../mobile-sessions/components/MobileCreateSessionSheet";
@@ -27,18 +28,6 @@ import {
 } from "../../workbench/utils/workbench-navigation";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
-
-function getProviderLabel(provider: string) {
-  if (provider === "codex") {
-    return t("conversation.providerCodex");
-  }
-
-  if (provider === "opencode") {
-    return t("conversation.providerOpenCode");
-  }
-
-  return t("conversation.providerClaude");
-}
 
 function isVisibleSession(session: SessionSummaryDto) {
   return session.isArchived !== true && session.isSubagent !== true;
@@ -445,7 +434,7 @@ export function WorkspaceDetailPage() {
                       <span className="mobile-session-row-title" title={titlePresentation.fullTitle}>
                         {titlePresentation.displayTitle}
                       </span>
-                      <span className="mobile-session-row-provider">{getProviderLabel(session.provider)}</span>
+                      <span className="mobile-session-row-provider">{getProviderDisplayName(session.provider)}</span>
                     </button>
                     <div className="mobile-session-row-actions">
                       <span className="mobile-feature-badge mobile-session-row-count">{session.messageCount}</span>
@@ -492,7 +481,7 @@ export function WorkspaceDetailPage() {
                 <article key={session.sessionId} className="mobile-session-row surface-card">
                   <div className="mobile-session-row-primary mobile-session-row-primary-static">
                     <span className="mobile-session-row-title" title={session.title}>{session.title}</span>
-                    <span className="mobile-session-row-provider">{getProviderLabel(session.provider)}</span>
+                    <span className="mobile-session-row-provider">{getProviderDisplayName(session.provider)}</span>
                   </div>
                   <div className="mobile-session-row-actions">
                     <button

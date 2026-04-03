@@ -56,6 +56,14 @@ const preferenceStoreMock = vi.hoisted(() => ({
           opencode: {
             defaultModel: null,
             defaultReasoningLevel: null
+          },
+          gemini: {
+            defaultModel: null,
+            defaultReasoningLevel: null
+          },
+          kimi: {
+            defaultModel: null,
+            defaultReasoningLevel: null
           }
         }
       }
@@ -85,13 +93,25 @@ const preferenceStoreMock = vi.hoisted(() => ({
           opencode: {
             defaultModel: null,
             defaultReasoningLevel: null
+          },
+          gemini: {
+            defaultModel: null,
+            defaultReasoningLevel: null
+          },
+          kimi: {
+            defaultModel: null,
+            defaultReasoningLevel: null
           }
         }
       }
     })
   ),
   isPreferenceProviderId: vi.fn((provider: string) =>
-    provider === "codex" || provider === "claude-code" || provider === "opencode"
+    provider === "codex"
+    || provider === "claude-code"
+    || provider === "opencode"
+    || provider === "gemini"
+    || provider === "kimi"
   )
 }));
 const mockListQuickPhrases = vi.fn();

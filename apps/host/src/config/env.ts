@@ -12,6 +12,12 @@ export interface HostConfig {
   port: number;
   webUiDir: string | null;
   databasePath: string;
+  geminiHomeDir: string;
+  geminiCliPath: string;
+  kimiHomeDir: string;
+  kimiCliPath: string;
+  kimiConfigPath: string;
+  kimiDefaultModel: string | null;
   opencodeBaseUrl: string;
   opencodeCliPath: string;
   opencodeBaseUrlResolver?: OpenCodeBaseUrlResolver;
@@ -46,10 +52,30 @@ export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConf
     overrides.opencodeDbPath ??
     process.env.CODINGNS_OPENCODE_DB_PATH ??
     path.join(opencodeDataDir, "opencode.db");
+  const geminiHomeDir =
+    overrides.geminiHomeDir ??
+    process.env.CODINGNS_GEMINI_HOME ??
+    path.join(homeDir, ".gemini");
+  const kimiHomeDir =
+    overrides.kimiHomeDir ??
+    process.env.CODINGNS_KIMI_HOME ??
+    path.join(homeDir, ".kimi");
   const codexCliPath = resolveCodexCliPath(
     overrides.codexCliPath ?? process.env.CODINGNS_CODEX_COMMAND,
     homeDir
   );
+  const geminiCliPath = resolveGeminiCliPath(
+    overrides.geminiCliPath ?? process.env.CODINGNS_GEMINI_COMMAND,
+    homeDir
+  );
+  const kimiCliPath = resolveKimiCliPath(
+    overrides.kimiCliPath ?? process.env.CODINGNS_KIMI_COMMAND,
+    homeDir
+  );
+  const kimiConfigPath =
+    overrides.kimiConfigPath ??
+    process.env.CODINGNS_KIMI_CONFIG_PATH ??
+    path.join(kimiHomeDir, "config.toml");
   const opencodeCliPath = resolveOpenCodeCliPath(
     overrides.opencodeCliPath ?? process.env.CODINGNS_OPENCODE_COMMAND,
     homeDir
@@ -67,6 +93,13 @@ export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConf
         normalizeOptionalText(process.env.CODINGNS_WEB_UI_DIR) ?? path.join(appRootDir, "public")
       ),
     databasePath,
+    geminiHomeDir,
+    geminiCliPath,
+    kimiHomeDir,
+    kimiCliPath,
+    kimiConfigPath,
+    kimiDefaultModel:
+      overrides.kimiDefaultModel ?? resolveKimiDefaultModelFromConfig(kimiConfigPath),
     opencodeBaseUrl: configuredOpenCodeBaseUrl ?? "",
     opencodeCliPath,
     opencodeBaseUrlResolver:
@@ -206,6 +239,74 @@ function resolveCodexCliPath(configuredPath: string | undefined, homeDir: string
   return "codex";
 }
 
+function resolveGeminiCliPath(configuredPath: string | undefined, homeDir: string): string {
+  const normalizedConfiguredPath = configuredPath?.trim();
+
+  if (normalizedConfiguredPath) {
+    return normalizedConfiguredPath;
+  }
+
+  const windowsGlobalNpmRoot = normalizeOptionalText(process.env.APPDATA)
+    ? path.join(process.env.APPDATA as string, "npm")
+    : null;
+  const candidates = process.platform === "win32"
+    ? [
+      path.resolve(process.cwd(), "node_modules", ".bin", "gemini.cmd"),
+      path.resolve(process.cwd(), "node_modules", ".bin", "gemini.exe"),
+      path.resolve(process.cwd(), "node_modules", ".bin", "gemini"),
+      path.join(homeDir, ".local", "bin", "gemini.exe"),
+      path.join(homeDir, ".local", "bin", "gemini.cmd"),
+      windowsGlobalNpmRoot ? path.join(windowsGlobalNpmRoot, "gemini.cmd") : null,
+      windowsGlobalNpmRoot ? path.join(windowsGlobalNpmRoot, "gemini.exe") : null
+    ]
+    : [
+      path.resolve(process.cwd(), "node_modules", ".bin", "gemini"),
+      path.join(homeDir, ".local", "bin", "gemini")
+    ];
+
+  for (const candidate of candidates) {
+    if (candidate && existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return "gemini";
+}
+
+function resolveKimiCliPath(configuredPath: string | undefined, homeDir: string): string {
+  const normalizedConfiguredPath = configuredPath?.trim();
+
+  if (normalizedConfiguredPath) {
+    return normalizedConfiguredPath;
+  }
+
+  const windowsGlobalNpmRoot = normalizeOptionalText(process.env.APPDATA)
+    ? path.join(process.env.APPDATA as string, "npm")
+    : null;
+  const candidates = process.platform === "win32"
+    ? [
+      path.resolve(process.cwd(), "node_modules", ".bin", "kimi.cmd"),
+      path.resolve(process.cwd(), "node_modules", ".bin", "kimi.exe"),
+      path.resolve(process.cwd(), "node_modules", ".bin", "kimi"),
+      path.join(homeDir, ".local", "bin", "kimi.exe"),
+      path.join(homeDir, ".local", "bin", "kimi.cmd"),
+      windowsGlobalNpmRoot ? path.join(windowsGlobalNpmRoot, "kimi.cmd") : null,
+      windowsGlobalNpmRoot ? path.join(windowsGlobalNpmRoot, "kimi.exe") : null
+    ]
+    : [
+      path.resolve(process.cwd(), "node_modules", ".bin", "kimi"),
+      path.join(homeDir, ".local", "bin", "kimi")
+    ];
+
+  for (const candidate of candidates) {
+    if (candidate && existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return "kimi";
+}
+
 function resolveOpenCodeCliPath(configuredPath: string | undefined, homeDir: string): string {
   const normalizedConfiguredPath = configuredPath?.trim();
 
@@ -263,6 +364,99 @@ function resolvePersistentSecret(secretPath: string): string {
   } catch {
     return crypto.randomBytes(24).toString("hex");
   }
+}
+
+function resolveKimiDefaultModelFromConfig(configPath: string): string | null {
+  const parsed = readKimiSimpleConfig(configPath);
+
+  if (!parsed) {
+    return null;
+  }
+
+  const candidateKeys = [
+    "model",
+    "default_model",
+    "defaultModel",
+    "provider.model",
+    "provider.default_model",
+    "provider.defaultModel"
+  ];
+
+  for (const key of candidateKeys) {
+    const value = parsed[key];
+
+    if (typeof value === "string" && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+
+  return null;
+}
+
+function readKimiSimpleConfig(configPath: string): Record<string, string | number | boolean> | null {
+  try {
+    if (!existsSync(configPath)) {
+      return null;
+    }
+
+    const content = readFileSync(configPath, "utf8");
+    const parsed: Record<string, string | number | boolean> = {};
+
+    for (const rawLine of content.split(/\r?\n/)) {
+      const line = rawLine.trim();
+
+      if (!line || line.startsWith("#") || line.startsWith("[")) {
+        continue;
+      }
+
+      const match = line.match(/^([A-Za-z0-9_.-]+)\s*=\s*(.+)$/);
+
+      if (!match) {
+        continue;
+      }
+
+      const [, key, rawValue] = match;
+      const normalizedValue = rawValue.replace(/\s+#.*$/, "").trim();
+      const parsedValue = parseSimpleConfigValue(normalizedValue);
+
+      if (parsedValue !== null) {
+        parsed[key] = parsedValue;
+      }
+    }
+
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function parseSimpleConfigValue(value: string): string | number | boolean | null {
+  if (!value) {
+    return null;
+  }
+
+  if (
+    (value.startsWith("\"") && value.endsWith("\""))
+    || (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    return value.slice(1, -1);
+  }
+
+  if (value === "true") {
+    return true;
+  }
+
+  if (value === "false") {
+    return false;
+  }
+
+  const numericValue = Number(value);
+
+  if (!Number.isNaN(numericValue)) {
+    return numericValue;
+  }
+
+  return value;
 }
 
 function normalizeOptionalText(value: string | null | undefined): string | null {

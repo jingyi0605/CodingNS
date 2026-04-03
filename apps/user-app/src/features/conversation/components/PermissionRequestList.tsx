@@ -1,13 +1,8 @@
 import { useMemo, useState } from "react";
 
 import { t } from "../../../shared/i18n";
-import codexIcon from "../../../assets/provider-icons/codex.png";
-import claudeCodeIcon from "../../../assets/provider-icons/claude-code.png";
-import openCodeIcon from "../../../assets/provider-icons/opencode.png";
-import type {
-  ProviderId,
-  SessionPermissionRequestDto
-} from "../api/conversation-api";
+import type { SessionPermissionRequestDto } from "../api/conversation-api";
+import { getProviderDisplayName, getProviderIcon } from "../capability/provider-ui";
 
 interface PermissionRequestListProps {
   requests: SessionPermissionRequestDto[];
@@ -64,7 +59,7 @@ export function PermissionRequestList({
                   </span>
                   <div className="permission-request-provider-copy">
                     <strong>{request.title}</strong>
-                    <span>{getProviderLabel(request.provider)}</span>
+                    <span>{getProviderDisplayName(request.provider, "full")}</span>
                   </div>
                 </div>
                 <span className="permission-request-kind">{getRequestKindLabel(request.kind)}</span>
@@ -167,30 +162,6 @@ export function PermissionRequestList({
       </div>
     </section>
   );
-}
-
-function getProviderLabel(provider: ProviderId) {
-  if (provider === "codex") {
-    return t("conversation.providerCodex");
-  }
-
-  if (provider === "claude-code") {
-    return t("shell.providerClaudeCode");
-  }
-
-  return t("conversation.providerOpenCode");
-}
-
-function getProviderIcon(provider: ProviderId) {
-  if (provider === "codex") {
-    return codexIcon;
-  }
-
-  if (provider === "claude-code") {
-    return claudeCodeIcon;
-  }
-
-  return openCodeIcon;
 }
 
 function getRequestKindLabel(kind: SessionPermissionRequestDto["kind"]) {

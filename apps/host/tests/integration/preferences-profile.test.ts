@@ -47,6 +47,14 @@ const DEFAULT_PROFILE_RESPONSE = {
     opencode: {
       defaultModel: null,
       defaultReasoningLevel: null
+    },
+    gemini: {
+      defaultModel: null,
+      defaultReasoningLevel: null
+    },
+    kimi: {
+      defaultModel: null,
+      defaultReasoningLevel: null
     }
   },
   updatedAt: null

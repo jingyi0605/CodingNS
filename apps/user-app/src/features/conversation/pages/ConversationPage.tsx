@@ -46,6 +46,7 @@ import {
 import {
   createDraftCapabilities as createProviderDraftCapabilities,
   getDraftTitle as getProviderDraftTitle,
+  getProviderDisplayName,
   isDraftProviderSupported,
   shouldSupportRunSteering
 } from "../capability/provider-ui";
@@ -1703,24 +1704,12 @@ function formatMobilePreviewMeta(
 
   return [
     workspaceName ?? null,
-    formatMobileProviderLabel(session.provider),
+    getProviderDisplayName(session.provider),
     formatMobilePreviewTime(session.lastMessageAt ?? session.updatedAt),
     activityBadgeLabel
   ]
     .filter(Boolean)
     .join(" · ");
-}
-
-function formatMobileProviderLabel(provider: ProviderId) {
-  if (provider === "codex") {
-    return t("conversation.providerCodex");
-  }
-
-  if (provider === "opencode") {
-    return t("conversation.providerOpenCode");
-  }
-
-  return t("conversation.providerClaude");
 }
 
 function formatMobilePreviewTime(value: string | null) {

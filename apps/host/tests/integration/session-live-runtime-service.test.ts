@@ -85,6 +85,17 @@ function createService() {
       host: "127.0.0.1",
       port: 3002,
       databasePath: "/tmp/codingns-host.sqlite",
+      geminiHomeDir: "/tmp/.gemini",
+      geminiCliPath: "gemini",
+      kimiHomeDir: "/tmp/.kimi",
+      kimiCliPath: "kimi",
+      kimiConfigPath: "/tmp/.kimi/config.toml",
+      kimiDefaultModel: null,
+      webUiDir: null,
+      opencodeBaseUrl: "",
+      opencodeCliPath: "opencode",
+      opencodeDataDir: "/tmp/.opencode",
+      opencodeDbPath: "/tmp/.opencode/opencode.db",
       releaseChannel: "stable",
       releaseManifestRoot: "/tmp/releases",
       accessTokenTtlSeconds: 3600,
@@ -93,7 +104,9 @@ function createService() {
       claudeCodeHomeDir: "/tmp/.claude",
       codexHomeDir: "/tmp/.codex",
       codexCliPath: "codex",
-      claudeHookBridgeToken: "hook-token"
+      claudeHookBridgeToken: "hook-token",
+      serverUpdatePackageName: "@codingns/test",
+      npmRegistryBaseUrl: "https://registry.npmjs.org"
     }
   );
 

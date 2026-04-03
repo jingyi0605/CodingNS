@@ -1,6 +1,11 @@
 import type { AppLanguage, ClientPermissionMode } from "../config/client-config-types";
 
-export type PreferenceProviderId = "claude-code" | "codex" | "opencode";
+export type PreferenceProviderId =
+  | "claude-code"
+  | "codex"
+  | "opencode"
+  | "gemini"
+  | "kimi";
 export type PreferenceThemeId = "light" | "dark" | "sky-blue" | "eye-green";
 export type PreferenceReasoningLevel = "low" | "medium" | "high" | "xhigh";
 

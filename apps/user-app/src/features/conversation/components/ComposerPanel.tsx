@@ -91,9 +91,6 @@ interface ComposerSelectOption {
   label: string;
 }
 
-const DEFAULT_CLAUDE_MODEL_ID = "provider-default";
-const DEFAULT_CODEX_MODEL_ID = "provider-default";
-const DEFAULT_OPENCODE_MODEL_ID = "provider-default";
 const FOCUS_COMPOSER_EVENT = "workbench:focus-composer";
 const PROVIDER_DEFAULT_MODEL_ID = "provider-default";
 const HIDDEN_FILE_INPUT_STYLE: CSSProperties = {
@@ -108,49 +105,19 @@ const HIDDEN_FILE_INPUT_STYLE: CSSProperties = {
   border: 0
 };
 
-function createFallbackClaudeModelOptions(): ModelOption[] {
+function createFallbackModelOptions(provider: ProviderId): ModelOption[] {
   return [
     {
-      id: DEFAULT_CLAUDE_MODEL_ID,
+      id: PROVIDER_DEFAULT_MODEL_ID,
       name: t("conversation.modelUseCliDefault"),
-      provider: "claude-code",
-      usesProviderDefault: true
-    }
-  ];
-}
-
-function createFallbackCodexModelOptions(): ModelOption[] {
-  return [
-    {
-      id: DEFAULT_CODEX_MODEL_ID,
-      name: t("conversation.modelUseCliDefault"),
-      provider: "codex",
-      usesProviderDefault: true
-    }
-  ];
-}
-
-function createFallbackOpenCodeModelOptions(): ModelOption[] {
-  return [
-    {
-      id: DEFAULT_OPENCODE_MODEL_ID,
-      name: t("conversation.modelUseCliDefault"),
-      provider: "opencode",
+      provider,
       usesProviderDefault: true
     }
   ];
 }
 
 function getFallbackModelOptions(provider: ProviderId): ModelOption[] {
-  if (provider === "claude-code") {
-    return createFallbackClaudeModelOptions();
-  }
-
-  if (provider === "opencode") {
-    return createFallbackOpenCodeModelOptions();
-  }
-
-  return createFallbackCodexModelOptions();
+  return createFallbackModelOptions(provider);
 }
 
 function getModelStorageKey(provider: ProviderId): string {
