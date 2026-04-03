@@ -780,11 +780,21 @@ function normalizeMessageKind(payload: Record<string, unknown>): MessageKind {
     return "thinking";
   }
 
-  if (rawType.includes("tool_call") || rawType.includes("tool-use") || rawType.includes("function_call")) {
+  if (
+    rawType.includes("tool_call") ||
+    rawType.includes("tool.call") ||
+    rawType.includes("tool-use") ||
+    rawType.includes("function_call")
+  ) {
     return "tool_call";
   }
 
-  if (rawType.includes("tool_result") || rawType.includes("tool-output") || rawType.includes("function_result")) {
+  if (
+    rawType.includes("tool_result") ||
+    rawType.includes("tool.result") ||
+    rawType.includes("tool-output") ||
+    rawType.includes("function_result")
+  ) {
     return "tool_result";
   }
 

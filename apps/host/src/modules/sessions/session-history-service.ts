@@ -6,6 +6,7 @@ import {
   ClaudeCodeAdapter,
   type ContextUsageSnapshot,
   CodexAdapter,
+  GeminiAdapter,
   OpenCodeAdapter,
   ProviderRegistry,
   SessionSyncService,
@@ -121,6 +122,14 @@ interface SessionStateRecordRow {
   updated_at: string;
 }
 
+const SESSION_START_DEFERRED_PROVIDERS = new Set([
+  "codex",
+  "claude-code",
+  "opencode",
+  "gemini",
+  "kimi"
+]);
+
 export class SessionHistoryService {
   private readonly providerRegistry: ProviderRegistry;
   private readonly sessionSyncService: SessionSyncService;
@@ -158,6 +167,10 @@ export class SessionHistoryService {
     this.providerRegistry = new ProviderRegistry([
       new ClaudeCodeAdapter({ homeDir: config.claudeCodeHomeDir }),
       new CodexAdapter({ homeDir: config.codexHomeDir }),
+      new GeminiAdapter({
+        homeDir: config.geminiHomeDir,
+        commandPath: config.geminiCliPath
+      }),
       new OpenCodeAdapter({
         baseUrl: config.opencodeBaseUrl,
         baseUrlResolver: config.opencodeBaseUrlResolver?.resolve.bind(config.opencodeBaseUrlResolver),
@@ -553,7 +566,7 @@ export class SessionHistoryService {
   async startSession(input: StartSessionInput): Promise<SessionListItem> {
     const workspace = this.getWorkspaceOrThrow(input.workspaceId);
 
-    if (input.provider === "codex" || input.provider === "claude-code" || input.provider === "opencode") {
+    if (SESSION_START_DEFERRED_PROVIDERS.has(input.provider)) {
       throw new AppError({
         statusCode: 409,
         errorCode: "SESSION_START_DEFERRED",

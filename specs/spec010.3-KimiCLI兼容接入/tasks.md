@@ -301,8 +301,8 @@
 
 ## 阶段 4：样本、回归和验收
 
-- [ ] 4.1 沉淀 Kimi fixture 样本
-  - 状态：TODO
+- [x] 4.1 沉淀 Kimi fixture 样本
+  - 状态：DONE
   - 这一步到底做什么：沉淀 `context.jsonl / wire.jsonl / state.json` 样本和 wire mode 运行时样本。
   - 做完你能看到什么：Kimi 接入不再建立在猜测上。
   - 先依赖什么：3.4
@@ -321,7 +321,8 @@
   - 对应设计：`design.md` §5.1、§7
 
 - [ ] 4.2 完成 Kimi 集成验收
-  - 状态：TODO
+  - 状态：BLOCKED
+  - 阻塞原因：当前环境缺少 `better-sqlite3` 本机 binding，`apps/host` 的 Kimi e2e 无法启动；provider/runtime/fixture 回放与前后端类型检查已通过，详见 `docs/20260403-Kimi阶段4验收记录.md`。
   - 这一步到底做什么：验证 Kimi 的发现、历史、运行时、运行中引导和 fallback 都真的可用。
   - 做完你能看到什么：Kimi 可以正式标记为可交付 provider。
   - 先依赖什么：4.1
