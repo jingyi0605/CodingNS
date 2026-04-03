@@ -514,6 +514,34 @@ CREATE INDEX IF NOT EXISTS idx_patrol_runs_project_started_at
 CREATE INDEX IF NOT EXISTS idx_patrol_runs_project_status
   ON patrol_runs(project_id, status, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS verification_runs (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  butler_session_id TEXT,
+  source_patrol_run_id TEXT,
+  verification_type TEXT NOT NULL CHECK (
+    verification_type IN ('test', 'health', 'browser', 'visual', 'metric')
+  ),
+  status TEXT NOT NULL CHECK (
+    status IN ('queued', 'running', 'passed', 'failed', 'skipped')
+  ),
+  target_ref TEXT,
+  spec_json TEXT NOT NULL,
+  artifact_refs_json TEXT NOT NULL,
+  result_json TEXT NOT NULL,
+  summary TEXT,
+  started_at TEXT,
+  finished_at TEXT,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (project_id) REFERENCES butler_projects(id) ON DELETE CASCADE,
+  FOREIGN KEY (butler_session_id) REFERENCES butler_sessions(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_verification_runs_project_created_at
+  ON verification_runs(project_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_verification_runs_project_status
+  ON verification_runs(project_id, status, created_at DESC);
+
 INSERT INTO bootstrap_state (id, initialized)
 VALUES ('default', 0)
 ON CONFLICT(id) DO NOTHING;

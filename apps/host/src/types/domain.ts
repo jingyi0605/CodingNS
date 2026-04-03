@@ -277,6 +277,8 @@ export type PatrolTriggerType = "manual" | "interval" | "cron";
 export type PatrolExecutionMode = "readonly" | "controlled";
 export type PatrolRunTriggeredBy = "scheduler" | "user" | "system";
 export type PatrolRunStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+export type VerificationType = "test" | "health" | "browser" | "visual" | "metric";
+export type VerificationRunStatus = "queued" | "running" | "passed" | "failed" | "skipped";
 
 export interface ButlerProject {
   id: string;
@@ -365,6 +367,22 @@ export interface PatrolRun {
   summary: string | null;
   riskLevel: ButlerRiskLevel | null;
   suggestions: string[];
+  startedAt: string | null;
+  finishedAt: string | null;
+  createdAt: string;
+}
+
+export interface VerificationRun {
+  id: string;
+  projectId: string;
+  butlerSessionId: string | null;
+  sourcePatrolRunId: string | null;
+  verificationType: VerificationType;
+  status: VerificationRunStatus;
+  targetRef: string | null;
+  summary: string | null;
+  artifactRefs: Array<Record<string, unknown>>;
+  result: Record<string, unknown>;
   startedAt: string | null;
   finishedAt: string | null;
   createdAt: string;

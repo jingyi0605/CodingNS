@@ -7,6 +7,7 @@ import type { PatrolPlanService } from "./patrol-plan-service.js";
 import type { PatrolExecutionService } from "./patrol-execution-service.js";
 import type { PatrolRunService } from "./patrol-run-service.js";
 import type { ProjectMemoryService } from "./project-memory-service.js";
+import type { VerificationRunService } from "./verification-run-service.js";
 
 interface ButlerProjectListQuery {
   workspaceId?: string;
@@ -28,6 +29,10 @@ interface ButlerPlanParams extends ButlerProjectParams {
 
 interface ButlerRunParams extends ButlerProjectParams {
   runId: string;
+}
+
+interface ButlerVerificationParams extends ButlerProjectParams {
+  verificationId: string;
 }
 
 interface ButlerSessionParams extends ButlerProjectParams {
@@ -128,6 +133,19 @@ interface StartPatrolRunBody {
   suggestions?: string[];
 }
 
+interface ButlerVerificationListQuery {
+  status?: "queued" | "running" | "passed" | "failed" | "skipped";
+  verificationType?: "test" | "health" | "browser" | "visual" | "metric";
+}
+
+interface StartVerificationRunBody {
+  verificationType?: "test" | "health" | "browser" | "visual" | "metric";
+  targetRef?: string | null;
+  butlerSessionId?: string | null;
+  sourcePatrolRunId?: string | null;
+  spec?: Record<string, unknown>;
+}
+
 export class ButlerController {
   constructor(
     private readonly butlerProjectService: ButlerProjectService,
@@ -135,7 +153,8 @@ export class ButlerController {
     private readonly projectMemoryService: ProjectMemoryService,
     private readonly patrolPlanService: PatrolPlanService,
     private readonly patrolRunService: PatrolRunService,
-    private readonly patrolExecutionService: PatrolExecutionService
+    private readonly patrolExecutionService: PatrolExecutionService,
+    private readonly verificationRunService: VerificationRunService
   ) {}
 
   readonly listProjects = async (
@@ -418,6 +437,45 @@ export class ButlerController {
   ): Promise<void> => {
     reply.send({
       run: this.patrolRunService.getRun(request.params.projectId, request.params.runId)
+    });
+  };
+
+  readonly listVerificationRuns = async (
+    request: FastifyRequest<{
+      Params: ButlerProjectParams;
+      Querystring: ButlerVerificationListQuery;
+    }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send({
+      items: this.verificationRunService.listRuns(request.params.projectId, {
+        status: request.query.status,
+        verificationType: request.query.verificationType
+      })
+    });
+  };
+
+  readonly startVerificationRun = async (
+    request: FastifyRequest<{ Params: ButlerProjectParams; Body: StartVerificationRunBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    const run = await this.verificationRunService.startRun(request.params.projectId, {
+      verificationType: request.body.verificationType,
+      targetRef: request.body.targetRef?.trim() || null,
+      butlerSessionId: request.body.butlerSessionId?.trim() || null,
+      sourcePatrolRunId: request.body.sourcePatrolRunId?.trim() || null,
+      spec: request.body.spec
+    });
+
+    reply.status(201).send({ run });
+  };
+
+  readonly getVerificationRun = async (
+    request: FastifyRequest<{ Params: ButlerVerificationParams }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send({
+      run: this.verificationRunService.getRun(request.params.projectId, request.params.verificationId)
     });
   };
 }

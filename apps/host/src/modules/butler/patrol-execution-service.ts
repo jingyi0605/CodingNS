@@ -5,6 +5,7 @@ import type { ButlerProjectRepository } from "../../storage/repositories/butler-
 import type { ButlerSessionRepository } from "../../storage/repositories/butler-session-repository.js";
 import type { PatrolPlanRepository } from "../../storage/repositories/patrol-plan-repository.js";
 import type { ProjectMemoryRepository } from "../../storage/repositories/project-memory-repository.js";
+import type { SessionChangedFileRepository } from "../../storage/repositories/session-changed-file-repository.js";
 import type { SessionCheckpointRepository } from "../../storage/repositories/session-checkpoint-repository.js";
 import type { ButlerProject, ButlerSession } from "../../types/domain.js";
 import {
@@ -41,6 +42,7 @@ export class PatrolExecutionService {
     private readonly patrolPlanRepository: PatrolPlanRepository,
     private readonly patrolRunService: PatrolRunService,
     private readonly projectMemoryRepository: ProjectMemoryRepository,
+    private readonly sessionChangedFileRepository: SessionChangedFileRepository,
     private readonly authUserRepository: AuthUserRepository,
     private readonly providerAdapterRegistry: ProviderAdapterRegistry,
     private readonly instructionAdapter: InstructionAdapter,
@@ -160,39 +162,89 @@ export class PatrolExecutionService {
   ): void {
     const finishedAt = nowIso();
     const summary = result.structured.summary ?? result.latestAssistantMessage ?? "巡视完成，但未产出有效总结";
-    const riskLevel = result.structured.riskLevel ?? project.riskLevel;
     const suggestions = mergeSuggestions(result.structured.suggestions, result.structured.nextActions);
-    const progressState =
+    const inferredRiskLevel = result.structured.riskLevel ?? project.riskLevel;
+    const inferredProgressState =
       result.structured.progressState === "unknown"
-        ? riskLevel === "high"
+        ? inferredRiskLevel === "high"
           ? "blocked"
           : "done"
         : result.structured.progressState;
+    const readonlyAudit = this.inspectReadonlyViolations(instruction, butlerSession.sessionId);
+
+    if (readonlyAudit !== null) {
+      const violationSummary = buildReadonlyViolationSummary(summary, readonlyAudit.changedPaths);
+      const violationSuggestions = mergeSuggestions(suggestions, [
+        "检查并回滚本次只读巡视产生的文件改动",
+        "复核 provider 权限模式与巡视提示词约束"
+      ]);
+      const violationRiskFlags = mergeRiskFlags(result.structured.riskFlags, [
+        "readonly 模式检测到文件写入",
+        ...readonlyAudit.changedPaths
+      ]);
+      const completedRun = this.patrolRunService.completeRun(runId, {
+        status: "failed",
+        summary: violationSummary,
+        riskLevel: "high",
+        suggestions: violationSuggestions,
+        finishedAt
+      });
+
+      this.captureCheckpoint(butlerSession, {
+        sourceKind: "summary",
+        progressState: "blocked",
+        summary: violationSummary,
+        riskFlags: violationRiskFlags,
+        nextActions: violationSuggestions
+      });
+
+      this.updateButlerSession(butlerSession, {
+        status: "failed",
+        lastSummary: violationSummary,
+        lastCheckpointAt: finishedAt
+      });
+
+      this.butlerProjectRepository.update({
+        ...project,
+        riskLevel: "high",
+        lastPatrolAt: completedRun.finishedAt,
+        updatedAt: finishedAt,
+        config: {
+          ...project.config,
+          lastPatrolContractVersion: instruction.outputContractVersion,
+          lastPatrolProvider: instruction.providerId,
+          lastReadonlyViolationAt: finishedAt,
+          lastReadonlyViolationPaths: readonlyAudit.changedPaths
+        }
+      });
+      return;
+    }
+
     const completedRun = this.patrolRunService.completeRun(runId, {
       status: "succeeded",
       summary,
-      riskLevel,
+      riskLevel: inferredRiskLevel,
       suggestions,
       finishedAt
     });
 
     this.captureCheckpoint(butlerSession, {
       sourceKind: "summary",
-      progressState,
+      progressState: inferredProgressState,
       summary,
       riskFlags: result.structured.riskFlags,
       nextActions: suggestions
     });
 
     this.updateButlerSession(butlerSession, {
-      status: progressState === "blocked" ? "blocked" : "idle",
+      status: inferredProgressState === "blocked" ? "blocked" : "idle",
       lastSummary: summary,
       lastCheckpointAt: finishedAt
     });
 
     this.butlerProjectRepository.update({
       ...project,
-      riskLevel,
+      riskLevel: inferredRiskLevel,
       lastPatrolAt: completedRun.finishedAt,
       updatedAt: finishedAt,
       config: {
@@ -229,6 +281,27 @@ export class PatrolExecutionService {
     }
 
     return failedRun;
+  }
+
+  private inspectReadonlyViolations(
+    instruction: ButlerInstructionEnvelope,
+    sessionId: string
+  ): { changedPaths: string[] } | null {
+    if (instruction.metadata.executionMode !== "readonly") {
+      return null;
+    }
+
+    const changedPaths = this.sessionChangedFileRepository
+      .listBySessionId(sessionId)
+      .map((record) => record.path.trim())
+      .filter((path) => path.length > 0)
+      .slice(0, 12);
+
+    return changedPaths.length > 0
+      ? {
+          changedPaths
+        }
+      : null;
   }
 
   private ensureButlerSession(projectId: string, sessionId: string, timestamp: string): ButlerSession {
@@ -359,4 +432,14 @@ function readProviderStringOption(
 
 function mergeSuggestions(primary: string[], secondary: string[]): string[] {
   return Array.from(new Set([...primary, ...secondary].map((item) => item.trim()).filter((item) => item.length > 0))).slice(0, 8);
+}
+
+function mergeRiskFlags(primary: string[], secondary: string[]): string[] {
+  return Array.from(new Set([...primary, ...secondary].map((item) => item.trim()).filter((item) => item.length > 0))).slice(0, 8);
+}
+
+function buildReadonlyViolationSummary(summary: string, changedPaths: string[]): string {
+  const preview = changedPaths.slice(0, 3).join("、");
+  const suffix = changedPaths.length > 3 ? ` 等 ${changedPaths.length} 个文件` : "";
+  return `只读巡视违反约束：检测到文件写入 ${preview}${suffix}。原巡视结论：${summary}`;
 }

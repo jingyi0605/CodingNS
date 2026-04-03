@@ -309,8 +309,12 @@
   - 对应需求：`requirements.md` 需求 6、需求 7
   - 对应设计：`design.md` §2.4、§8.3
 
-- [ ] 3.3 阶段检查：只读代码管家是否成立
-  - 状态：TODO
+- [x] 3.3 阶段检查：只读代码管家是否成立
+  - 状态：DONE
+  - 最新进展（2026-04-03）：
+    1. `readonly` 巡视新增文件写入审计，会读取 `session_changed_files` 检测越权改动
+    2. 一旦检测到只读巡视发生写入，run 会自动回写为 `failed/high`，并把风险与修复动作写回项目和会话
+    3. 新增 `patrol-runs` 路由集成测试，覆盖 `start/list/get` 闭环与 `PATROL_PLAN_NOT_FOUND` 错误契约
   - 这一步到底做什么：确认系统已经具备“登记项目 -> 巡视项目 -> 输出总结与风险”的最小闭环。
   - 做完你能看到什么：MVP-1 的地基成立。
   - 先依赖什么：3.1、3.2
@@ -333,8 +337,13 @@
 
 ## 阶段 4：补上真实验证闭环
 
-- [ ] 4.1 实现 `VerificationRunner` 基础验证能力
-  - 状态：TODO
+- [x] 4.1 实现 `VerificationRunner` 基础验证能力
+  - 状态：DONE
+  - 最新进展（2026-04-03）：
+    1. 新增 `verification_runs` 持久化表、仓储与 `VerificationRunService`
+    2. 已支持 `test` / `health` 两类最小验证执行，并回写 `VerificationRun`、`ButlerProject.lastVerificationAt`
+    3. 验证结果可写回关联 `ButlerSession` 的 `verification` checkpoint，失败时会抬升会话阻塞状态
+    4. 新增 `/api/butler/projects/:projectId/verifications` 路由与集成测试，覆盖正常闭环和 `VERIFICATION_TYPE_UNSUPPORTED`
   - 这一步到底做什么：提供命令测试、健康检查和结果回写。
   - 做完你能看到什么：系统开始具备“不是只听 agent 自己说完成”的能力。
   - 先依赖什么：3.3

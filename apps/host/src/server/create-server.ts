@@ -21,6 +21,7 @@ import {
 import { PatrolRunService } from "../modules/butler/patrol-run-service.js";
 import { PatrolScheduler } from "../modules/butler/patrol-scheduler.js";
 import { ProjectMemoryService } from "../modules/butler/project-memory-service.js";
+import { VerificationRunService } from "../modules/butler/verification-run-service.js";
 import { ClientController } from "../modules/client/client-controller.js";
 import { ClientService } from "../modules/client/client-service.js";
 import { FileAccessGuard } from "../modules/file/file-access-guard.js";
@@ -87,6 +88,7 @@ import { ButlerSessionRepository } from "../storage/repositories/butler-session-
 import { PatrolPlanRepository } from "../storage/repositories/patrol-plan-repository.js";
 import { PatrolRunRepository } from "../storage/repositories/patrol-run-repository.js";
 import { ProjectMemoryRepository } from "../storage/repositories/project-memory-repository.js";
+import { VerificationRunRepository } from "../storage/repositories/verification-run-repository.js";
 import { CommitRuleProfileRepository } from "../storage/repositories/commit-rule-profile-repository.js";
 import { FileContextBindingRepository } from "../storage/repositories/file-context-binding-repository.js";
 import { RecentFileRepository } from "../storage/repositories/recent-file-repository.js";
@@ -130,6 +132,7 @@ export function createServer(config: HostConfig) {
     projectMemoryRepository: new ProjectMemoryRepository(database.db),
     patrolPlanRepository: new PatrolPlanRepository(database.db),
     patrolRunRepository: new PatrolRunRepository(database.db),
+    verificationRunRepository: new VerificationRunRepository(database.db),
     commitRuleProfileRepository: new CommitRuleProfileRepository(database.db),
     recentFileRepository: new RecentFileRepository(database.db),
     fileContextBindingRepository: new FileContextBindingRepository(database.db),
@@ -274,6 +277,7 @@ export function createServer(config: HostConfig) {
     repositories.patrolPlanRepository,
     patrolRunService,
     repositories.projectMemoryRepository,
+    repositories.sessionChangedFileRepository,
     repositories.authUserRepository,
     providerAdapterRegistry,
     instructionAdapter
@@ -282,6 +286,12 @@ export function createServer(config: HostConfig) {
     patrolPlanService,
     patrolRunService,
     patrolExecutionService
+  );
+  const verificationRunService = new VerificationRunService(
+    repositories.butlerProjectRepository,
+    repositories.butlerSessionRepository,
+    repositories.sessionCheckpointRepository,
+    repositories.verificationRunRepository
   );
   const fileContextService = new FileContextService(
     sessionHistoryService,
@@ -326,7 +336,8 @@ export function createServer(config: HostConfig) {
     projectMemoryService,
     patrolPlanService,
     patrolRunService,
-    patrolExecutionService
+    patrolExecutionService,
+    verificationRunService
   );
   const sessionController = new SessionController(
     sessionHistoryService,
@@ -423,6 +434,7 @@ export function createServer(config: HostConfig) {
         projectMemoryService,
         patrolPlanService,
         patrolRunService,
+        verificationRunService,
         patrolScheduler,
         workspacePanelSnapshotService,
         fileTreeService,

@@ -31,4 +31,10 @@ export async function registerButlerRoutes(
   app.get("/api/butler/projects/:projectId/patrol-runs", butlerController.listPatrolRuns);
   app.post("/api/butler/projects/:projectId/patrol-runs/start", butlerController.startPatrolRun);
   app.get("/api/butler/projects/:projectId/patrol-runs/:runId", butlerController.getPatrolRun);
+  app.get("/api/butler/projects/:projectId/verifications", butlerController.listVerificationRuns);
+  app.post("/api/butler/projects/:projectId/verifications", butlerController.startVerificationRun);
+  app.get(
+    "/api/butler/projects/:projectId/verifications/:verificationId",
+    butlerController.getVerificationRun
+  );
 }

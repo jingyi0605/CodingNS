@@ -8,6 +8,7 @@ import type { PatrolPlanService } from "../../src/modules/butler/patrol-plan-ser
 import type { PatrolRunService } from "../../src/modules/butler/patrol-run-service.js";
 import { ButlerController } from "../../src/modules/butler/butler-controller.js";
 import type { ProjectMemoryService } from "../../src/modules/butler/project-memory-service.js";
+import type { VerificationRunService } from "../../src/modules/butler/verification-run-service.js";
 import { registerButlerRoutes } from "../../src/routes/butler.js";
 import { AppError } from "../../src/shared/errors/app-error.js";
 import { setErrorHandler } from "../../src/shared/http/error-handler.js";
@@ -22,7 +23,8 @@ describe("butler routes session lifecycle", () => {
       {} as ProjectMemoryService,
       {} as PatrolPlanService,
       {} as PatrolRunService,
-      {} as PatrolExecutionService
+      {} as PatrolExecutionService,
+      {} as VerificationRunService
     );
     const app = Fastify({ logger: false });
     apps.push(app);
