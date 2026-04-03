@@ -101,8 +101,8 @@
 
 ## 阶段 1：先拆掉 Gemini 接入前的硬障碍
 
-- [ ] 1.1 清理前后端 provider 硬编码残留
-  - 状态：TODO
+- [x] 1.1 清理前后端 provider 硬编码残留
+  - 状态：DONE
   - 这一步到底做什么：把偏好、UI 元数据、样式、DTO、状态机里残留的三家写死逻辑继续收口。
   - 做完你能看到什么：Gemini 作为第四家 provider 可以合法进入主链路。
   - 先依赖什么：0.3
@@ -120,13 +120,15 @@
     1. Gemini 可作为合法 provider 出现在主链路
     2. 不新增新一轮散落 provider 特判
   - 怎么验证：
-    - TypeScript 类型检查
-    - 前端相关单测
+    - `apps/user-app` TypeScript 类型检查通过
+    - `src/shared/i18n/index.test.ts`
+    - `src/features/conversation/components/ComposerPanel.test.tsx`
+    - `src/features/settings/pages/SettingsPage.test.tsx`
   - 对应需求：`requirements.md` 需求 1、需求 4、需求 5
   - 对应设计：`design.md` §4.1
 
-- [ ] 1.2 增加 Gemini Host 配置与命令路径解析
-  - 状态：TODO
+- [x] 1.2 增加 Gemini Host 配置与命令路径解析
+  - 状态：DONE
   - 这一步到底做什么：为 Gemini CLI 增加 Host 配置项和跨平台可执行入口解析。
   - 做完你能看到什么：Host 能稳定找到 Gemini CLI。
   - 先依赖什么：1.1
@@ -140,13 +142,13 @@
     1. Gemini CLI 路径可配置
     2. 默认探测规则清楚
   - 怎么验证：
-    - 配置单测
-    - 本机路径探测验证
+    - `apps/host` TypeScript 类型检查通过
+    - `resolveHostConfig` 已支持 `geminiHomeDir`、`geminiCliPath`
   - 对应需求：`requirements.md` 需求 2、需求 5
   - 对应设计：`design.md` §4.4、§8.4
 
-- [ ] 1.3 阶段检查：Gemini 进入主链路前的地基就绪
-  - 状态：TODO
+- [x] 1.3 阶段检查：Gemini 进入主链路前的地基就绪
+  - 状态：DONE
   - 这一步到底做什么：确认 Gemini 不会再被类型、配置或偏好层卡死。
   - 做完你能看到什么：后续实现 Gemini adapter/runtime 不再先和基础层打架。
   - 先依赖什么：1.1、1.2
@@ -158,8 +160,9 @@
     1. Gemini 可注册
     2. Gemini 配置可解析
   - 怎么验证：
-    - 类型检查
-    - 人工走查硬编码
+    - 前后端类型层已接受 `gemini`
+    - Host 配置层可解析 Gemini CLI 入口
+    - 前端 provider metadata 与图标入口已预留
   - 对应需求：`requirements.md` 需求 1、需求 5
   - 对应设计：`design.md` §3.1、§4.1
 

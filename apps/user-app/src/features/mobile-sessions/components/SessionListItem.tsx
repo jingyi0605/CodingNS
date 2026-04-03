@@ -7,6 +7,7 @@ import {
   resolveSessionIndicatorClassName
 } from "../../conversation/session-activity-display";
 import type { SessionSummaryDto } from "../../conversation/api/conversation-api";
+import { getProviderDisplayName } from "../../conversation/capability/provider-ui";
 import { useHaptics } from "../../../shared/haptics";
 import { t } from "../../../shared/i18n";
 
@@ -73,12 +74,7 @@ export function SessionListItem({
   const haptics = useHaptics();
   const { session, workspace } = entry;
   const title = session.title ?? session.sessionId;
-  const providerLabel =
-    session.provider === "codex"
-      ? t("conversation.providerCodex")
-      : session.provider === "opencode"
-        ? t("conversation.providerOpenCode")
-        : t("conversation.providerClaude");
+  const providerLabel = getProviderDisplayName(session.provider);
   const mobileMeta = [
     providerLabel,
     formatActivityTime(session.lastMessageAt ?? session.updatedAt ?? null),

@@ -20,7 +20,13 @@ const SUPPORTED_PERMISSION_MODES: UserPreferencePermissionMode[] = [
   "bypassPermissions"
 ];
 const SUPPORTED_REASONING_LEVELS = new Set(["low", "medium", "high", "xhigh"]);
-const PROVIDER_IDS: PreferenceProviderId[] = ["claude-code", "codex", "opencode"];
+const PROVIDER_IDS: PreferenceProviderId[] = [
+  "claude-code",
+  "codex",
+  "opencode",
+  "gemini",
+  "kimi"
+];
 
 const DEFAULT_LANGUAGE: UserPreferenceLanguage = "zh-CN";
 const DEFAULT_THEME: UserPreferenceTheme = "light";
@@ -160,7 +166,7 @@ function normalizeProvidersPatch(input: unknown): PreferenceProvidersPatch | und
       throw new AppError({
         statusCode: 400,
         errorCode: "INVALID_INPUT",
-        detail: "providers 只允许 claude-code、codex、opencode",
+        detail: "providers 只允许 claude-code、codex、opencode、gemini、kimi",
         field: "providers"
       });
     }

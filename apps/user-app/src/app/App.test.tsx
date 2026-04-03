@@ -92,6 +92,15 @@ const originalFetch = global.fetch;
 const originalWebSocket = global.WebSocket;
 const originalInnerWidth = window.innerWidth;
 const originalTauriInternals = window.__TAURI_INTERNALS__;
+const MULTI_WINDOW_COMMANDS = [
+  "create_window",
+  "close_window",
+  "focus_window",
+  "list_windows",
+  "get_window_descriptor",
+  "sync_window_descriptor",
+  "update_window_bounds"
+] as const;
 
 describe("app routes", () => {
   beforeEach(() => {
@@ -263,6 +272,61 @@ describe("app routes", () => {
     render(<App />);
 
     expect(await screen.findByRole("heading", { name: "先选一个会话" })).toBeInTheDocument();
+  });
+
+  it("桌面端主窗口默认流程不会主动触发多窗口命令", async () => {
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      writable: true,
+      value: 1280
+    });
+
+    const invokeMock = vi.fn(async <T,>(command: string): Promise<T> => {
+      if (command === "get_runtime_info") {
+        return {
+          version: "0.1.2",
+          appDataDir: null,
+          windowChrome: {
+            macosTitlebar: null
+          }
+        } as T;
+      }
+
+      return undefined as T;
+    });
+    const invoke = invokeMock as NonNullable<Window["__TAURI_INTERNALS__"]>["invoke"];
+
+    window.__TAURI_INTERNALS__ = { invoke };
+    clientConfigStore.hydrate({
+      platform: "desktop",
+      hostBaseUrl: "http://127.0.0.1:3002",
+      releaseChannel: "stable",
+      autoReconnect: true,
+      autoCheckUpdate: true,
+      language: "zh-CN",
+      defaultPermissionMode: "default"
+    });
+
+    hydrateAuth();
+    installFetchMock({
+      workbenchSnapshot: createWorkbenchSnapshot([]),
+      sessions: {}
+    });
+
+    window.history.pushState({}, "", "/tools/processes");
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "先选一个会话" })).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalled();
+    });
+
+    const invokedCommands = invokeMock.mock.calls.map(([command]: [string, ...unknown[]]) => command);
+
+    expect(invokedCommands).toContain("get_runtime_info");
+    expect(invokedCommands).not.toEqual(expect.arrayContaining([...MULTI_WINDOW_COMMANDS]));
   });
 
   it("实时连接会跟着当前服务器地址切换", async () => {
@@ -1137,6 +1201,14 @@ function createPreferenceState(overrides?: Partial<ReturnType<typeof userPrefere
         defaultReasoningLevel: null
       },
       opencode: {
+        defaultModel: null,
+        defaultReasoningLevel: null
+      },
+      gemini: {
+        defaultModel: null,
+        defaultReasoningLevel: null
+      },
+      kimi: {
         defaultModel: null,
         defaultReasoningLevel: null
       }

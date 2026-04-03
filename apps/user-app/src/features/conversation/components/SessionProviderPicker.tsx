@@ -1,9 +1,11 @@
 import type { ProviderId } from "../api/conversation-api";
 import { useHaptics } from "../../../shared/haptics";
 import { t } from "../../../shared/i18n";
-import codexIcon from "../../../assets/provider-icons/codex.png";
-import claudeCodeIcon from "../../../assets/provider-icons/claude-code.png";
-import openCodeIcon from "../../../assets/provider-icons/opencode.png";
+import {
+  getProviderDisplayName,
+  getProviderIcon,
+  SESSION_PROVIDER_PICKER_IDS
+} from "../capability/provider-ui";
 
 interface SessionProviderDefinition {
   provider: ProviderId;
@@ -15,17 +17,8 @@ interface SessionProviderPickerProps {
   onSelect: (provider: ProviderId) => void;
 }
 
-const SESSION_PROVIDER_DEFINITIONS: SessionProviderDefinition[] = [
-  {
-    provider: "codex"
-  },
-  {
-    provider: "claude-code"
-  },
-  {
-    provider: "opencode"
-  }
-];
+const SESSION_PROVIDER_DEFINITIONS: SessionProviderDefinition[] =
+  SESSION_PROVIDER_PICKER_IDS.map((provider) => ({ provider }));
 
 export function SessionProviderPicker({
   disabled = false,
@@ -38,7 +31,7 @@ export function SessionProviderPicker({
     <div className="session-provider-grid">
       {/* 统一三家 provider 的入口，避免桌面端和移动端继续各写各的。 */}
       {SESSION_PROVIDER_DEFINITIONS.map((item) => {
-        const label = getProviderLabel(item.provider);
+        const label = getProviderDisplayName(item.provider, "full");
         const isPending = pendingProvider === item.provider;
 
         return (
@@ -69,28 +62,4 @@ export function SessionProviderPicker({
       })}
     </div>
   );
-}
-
-function getProviderLabel(provider: ProviderId) {
-  if (provider === "codex") {
-    return t("conversation.providerCodex");
-  }
-
-  if (provider === "claude-code") {
-    return t("shell.providerClaudeCode");
-  }
-
-  return t("conversation.providerOpenCode");
-}
-
-function getProviderIcon(provider: ProviderId) {
-  if (provider === "codex") {
-    return codexIcon;
-  }
-
-  if (provider === "claude-code") {
-    return claudeCodeIcon;
-  }
-
-  return openCodeIcon;
 }

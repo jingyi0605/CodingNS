@@ -12,6 +12,8 @@ export interface ProviderFixture {
   workspaceDir: string;
   claudeHomeDir: string;
   codexHomeDir: string;
+  geminiHomeDir: string;
+  kimiHomeDir: string;
   claudeSessionFile: string;
   codexSessionFile: string;
 }
@@ -21,6 +23,8 @@ export interface EmptyFixture {
   workspaceDir: string;
   claudeHomeDir: string;
   codexHomeDir: string;
+  geminiHomeDir: string;
+  kimiHomeDir: string;
 }
 
 export interface GitWorkspaceFixture extends EmptyFixture {
@@ -34,12 +38,16 @@ export function createProviderFixture(): ProviderFixture {
   const workspaceDir = path.join(rootDir, "workspace");
   const claudeHomeDir = path.join(rootDir, "claude-home");
   const codexHomeDir = path.join(rootDir, "codex-home");
+  const geminiHomeDir = path.join(rootDir, "gemini-home");
+  const kimiHomeDir = path.join(rootDir, "kimi-home");
   const claudeProjectDir = path.join(claudeHomeDir, "projects", "c--Fixtures-Workspace");
   const codexSessionDir = path.join(codexHomeDir, "sessions", "2026", "03", "23");
 
   mkdirSync(workspaceDir, { recursive: true });
   mkdirSync(claudeProjectDir, { recursive: true });
   mkdirSync(codexSessionDir, { recursive: true });
+  mkdirSync(geminiHomeDir, { recursive: true });
+  mkdirSync(kimiHomeDir, { recursive: true });
 
   const claudeSessionFile = path.join(claudeProjectDir, "claude-session-1.jsonl");
   const codexSessionFile = path.join(codexSessionDir, "codex-session-1.jsonl");
@@ -185,6 +193,8 @@ export function createProviderFixture(): ProviderFixture {
     workspaceDir,
     claudeHomeDir,
     codexHomeDir,
+    geminiHomeDir,
+    kimiHomeDir,
     claudeSessionFile,
     codexSessionFile
   };
@@ -195,16 +205,22 @@ export function createEmptyFixture(): EmptyFixture {
   const workspaceDir = path.join(rootDir, "workspace");
   const claudeHomeDir = path.join(rootDir, "claude-home");
   const codexHomeDir = path.join(rootDir, "codex-home");
+  const geminiHomeDir = path.join(rootDir, "gemini-home");
+  const kimiHomeDir = path.join(rootDir, "kimi-home");
 
   mkdirSync(workspaceDir, { recursive: true });
   mkdirSync(claudeHomeDir, { recursive: true });
   mkdirSync(codexHomeDir, { recursive: true });
+  mkdirSync(geminiHomeDir, { recursive: true });
+  mkdirSync(kimiHomeDir, { recursive: true });
 
   return {
     rootDir,
     workspaceDir,
     claudeHomeDir,
-    codexHomeDir
+    codexHomeDir,
+    geminiHomeDir,
+    kimiHomeDir
   };
 }
 
@@ -242,7 +258,7 @@ export function destroyFixture(context: { rootDir: string }): void {
 }
 
 export function createTestApp(
-  fixture: { claudeHomeDir: string; codexHomeDir: string },
+  fixture: { claudeHomeDir: string; codexHomeDir: string; geminiHomeDir: string; kimiHomeDir: string },
   overrides: Partial<HostConfig> = {}
 ) {
   return createServer(
@@ -253,6 +269,8 @@ export function createTestApp(
       terminalIdleTimeoutSeconds: 900,
       claudeCodeHomeDir: fixture.claudeHomeDir,
       codexHomeDir: fixture.codexHomeDir,
+      geminiHomeDir: fixture.geminiHomeDir,
+      kimiHomeDir: fixture.kimiHomeDir,
       ...overrides
     })
   );
