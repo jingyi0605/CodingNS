@@ -8,6 +8,19 @@ import { AuthController } from "../modules/auth/auth-controller.js";
 import { AuthService } from "../modules/auth/auth-service.js";
 import { BootstrapController } from "../modules/bootstrap/bootstrap-controller.js";
 import { BootstrapService } from "../modules/bootstrap/bootstrap-service.js";
+import { ButlerController } from "../modules/butler/butler-controller.js";
+import { ButlerProjectService } from "../modules/butler/butler-project-service.js";
+import { ButlerSessionService } from "../modules/butler/butler-session-service.js";
+import { InstructionAdapter } from "../modules/butler/instruction-adapter.js";
+import { PatrolPlanService } from "../modules/butler/patrol-plan-service.js";
+import { PatrolExecutionService } from "../modules/butler/patrol-execution-service.js";
+import {
+  ProviderAdapterRegistry,
+  RuntimePatrolProviderAdapter
+} from "../modules/butler/provider-adapter-registry.js";
+import { PatrolRunService } from "../modules/butler/patrol-run-service.js";
+import { PatrolScheduler } from "../modules/butler/patrol-scheduler.js";
+import { ProjectMemoryService } from "../modules/butler/project-memory-service.js";
 import { ClientController } from "../modules/client/client-controller.js";
 import { ClientService } from "../modules/client/client-service.js";
 import { FileAccessGuard } from "../modules/file/file-access-guard.js";
@@ -51,6 +64,7 @@ import { WorkspaceFileWatcher } from "../modules/workbench/workspace-file-watche
 import { WorkspaceController } from "../modules/workspace/workspace-controller.js";
 import { WorkspaceService } from "../modules/workspace/workspace-service.js";
 import { registerAuthRoutes } from "../routes/auth.js";
+import { registerButlerRoutes } from "../routes/butler.js";
 import { registerClientRoutes } from "../routes/client.js";
 import { registerFileRoutes } from "../routes/files.js";
 import { registerGitRoutes } from "../routes/git.js";
@@ -68,12 +82,18 @@ import { startTerminalDebugEventLoopLagMonitor } from "../shared/utils/terminal-
 import { AuthTokenRepository } from "../storage/repositories/auth-token-repository.js";
 import { AuthUserRepository } from "../storage/repositories/auth-user-repository.js";
 import { BootstrapStateRepository } from "../storage/repositories/bootstrap-state-repository.js";
+import { ButlerProjectRepository } from "../storage/repositories/butler-project-repository.js";
+import { ButlerSessionRepository } from "../storage/repositories/butler-session-repository.js";
+import { PatrolPlanRepository } from "../storage/repositories/patrol-plan-repository.js";
+import { PatrolRunRepository } from "../storage/repositories/patrol-run-repository.js";
+import { ProjectMemoryRepository } from "../storage/repositories/project-memory-repository.js";
 import { CommitRuleProfileRepository } from "../storage/repositories/commit-rule-profile-repository.js";
 import { FileContextBindingRepository } from "../storage/repositories/file-context-binding-repository.js";
 import { RecentFileRepository } from "../storage/repositories/recent-file-repository.js";
 import { SessionBindingRepository } from "../storage/repositories/session-binding-repository.js";
 import { SessionChangedFileRepository } from "../storage/repositories/session-changed-file-repository.js";
 import { SessionIndexRepository } from "../storage/repositories/session-index-repository.js";
+import { SessionCheckpointRepository } from "../storage/repositories/session-checkpoint-repository.js";
 import { SessionMessageAttachmentRepository } from "../storage/repositories/session-message-attachment-repository.js";
 import { SessionSendQueueRepository } from "../storage/repositories/session-send-queue-repository.js";
 import { SessionStateRepository } from "../storage/repositories/session-state-repository.js";
@@ -105,11 +125,17 @@ export function createServer(config: HostConfig) {
     authUserRepository: new AuthUserRepository(database.db),
     authTokenRepository: new AuthTokenRepository(database.db),
     workspaceRepository: new WorkspaceRepository(database.db),
+    butlerProjectRepository: new ButlerProjectRepository(database.db),
+    butlerSessionRepository: new ButlerSessionRepository(database.db),
+    projectMemoryRepository: new ProjectMemoryRepository(database.db),
+    patrolPlanRepository: new PatrolPlanRepository(database.db),
+    patrolRunRepository: new PatrolRunRepository(database.db),
     commitRuleProfileRepository: new CommitRuleProfileRepository(database.db),
     recentFileRepository: new RecentFileRepository(database.db),
     fileContextBindingRepository: new FileContextBindingRepository(database.db),
     sessionBindingRepository: new SessionBindingRepository(database.db),
     sessionChangedFileRepository: new SessionChangedFileRepository(database.db),
+    sessionCheckpointRepository: new SessionCheckpointRepository(database.db),
     sessionIndexRepository: new SessionIndexRepository(database.db),
     sessionMessageAttachmentRepository: new SessionMessageAttachmentRepository(database.db),
     sessionSendQueueRepository: new SessionSendQueueRepository(database.db),
@@ -208,6 +234,55 @@ export function createServer(config: HostConfig) {
     repositories.workspaceRepository,
     sessionHistoryService
   );
+  const butlerProjectService = new ButlerProjectService(
+    repositories.butlerProjectRepository,
+    repositories.butlerSessionRepository,
+    repositories.workspaceRepository
+  );
+  const butlerSessionService = new ButlerSessionService(
+    repositories.butlerProjectRepository,
+    repositories.butlerSessionRepository,
+    repositories.sessionCheckpointRepository,
+    repositories.sessionBindingRepository,
+    repositories.sessionIndexRepository,
+    repositories.sessionStateRepository,
+    sessionLiveRuntimeService,
+    sessionHistoryService
+  );
+  const projectMemoryService = new ProjectMemoryService(
+    repositories.butlerProjectRepository,
+    repositories.projectMemoryRepository
+  );
+  const patrolPlanService = new PatrolPlanService(
+    repositories.butlerProjectRepository,
+    repositories.patrolPlanRepository
+  );
+  const patrolRunService = new PatrolRunService(
+    repositories.butlerProjectRepository,
+    repositories.patrolPlanRepository,
+    repositories.patrolRunRepository
+  );
+  const instructionAdapter = new InstructionAdapter();
+  const providerAdapterRegistry = new ProviderAdapterRegistry([
+    new RuntimePatrolProviderAdapter("codex", sessionLiveRuntimeService, sessionHistoryService),
+    new RuntimePatrolProviderAdapter("claude-code", sessionLiveRuntimeService, sessionHistoryService)
+  ]);
+  const patrolExecutionService = new PatrolExecutionService(
+    repositories.butlerProjectRepository,
+    repositories.butlerSessionRepository,
+    repositories.sessionCheckpointRepository,
+    repositories.patrolPlanRepository,
+    patrolRunService,
+    repositories.projectMemoryRepository,
+    repositories.authUserRepository,
+    providerAdapterRegistry,
+    instructionAdapter
+  );
+  const patrolScheduler = new PatrolScheduler(
+    patrolPlanService,
+    patrolRunService,
+    patrolExecutionService
+  );
   const fileContextService = new FileContextService(
     sessionHistoryService,
     repositories.fileContextBindingRepository
@@ -245,6 +320,14 @@ export function createServer(config: HostConfig) {
   const authController = new AuthController(authService);
   const workspaceController = new WorkspaceController(workspaceService);
   const workbenchController = new WorkbenchController(workbenchService);
+  const butlerController = new ButlerController(
+    butlerProjectService,
+    butlerSessionService,
+    projectMemoryService,
+    patrolPlanService,
+    patrolRunService,
+    patrolExecutionService
+  );
   const sessionController = new SessionController(
     sessionHistoryService,
     sessionLiveRuntimeService
@@ -299,6 +382,7 @@ export function createServer(config: HostConfig) {
   void registerClientRoutes(app, clientController);
   void registerWorkspaceRoutes(app, workspaceController);
   void registerWorkbenchRoutes(app, workbenchController);
+  void registerButlerRoutes(app, butlerController);
   void registerSessionRoutes(app, sessionController);
   void registerPreferenceRoutes(app, quickPhraseController, profileController);
   void registerFileRoutes(app, fileController);
@@ -306,6 +390,7 @@ export function createServer(config: HostConfig) {
   void registerTerminalRoutes(app, terminalController);
   void registerProviderRoutes(app, providerController);
   void registerGitRoutes(app, gitController);
+  patrolScheduler.start();
 
   if (config.webUiDir) {
     registerStaticWebRoutes(app, config.webUiDir);
@@ -313,6 +398,7 @@ export function createServer(config: HostConfig) {
 
   app.addHook("onClose", async () => {
     stopTerminalDebugEventLoopLagMonitor();
+    await patrolScheduler.dispose();
     await terminalService.dispose();
     await sessionLiveRuntimeService.dispose();
     await wsHandle.close();
@@ -332,6 +418,12 @@ export function createServer(config: HostConfig) {
         authService,
         workspaceService,
         workbenchService,
+        butlerProjectService,
+        butlerSessionService,
+        projectMemoryService,
+        patrolPlanService,
+        patrolRunService,
+        patrolScheduler,
         workspacePanelSnapshotService,
         fileTreeService,
         fileSearchService,
