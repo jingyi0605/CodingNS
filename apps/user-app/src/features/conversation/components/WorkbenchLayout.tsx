@@ -60,6 +60,7 @@ import {
   type WorkspaceManagementSummaryDto,
   type WorkspaceDto
 } from "../api/conversation-api";
+import { getProviderDisplayName } from "../capability/provider-ui";
 import { searchFiles, type FileNodeDto } from "../api/file-context-api";
 import {
   hasSessionDisplayError,
@@ -540,19 +541,7 @@ function truncateSessionErrorSummary(summary: string, maxLength = 110) {
 }
 
 function formatProviderLabel(provider: ProviderId, mode: "compact" | "full" = "compact") {
-  if (provider === "codex") {
-    return t("conversation.providerCodex");
-  }
-
-  if (provider === "claude-code") {
-    return mode === "full" ? t("shell.providerClaudeCode") : t("conversation.providerClaude");
-  }
-
-  if (provider === "opencode") {
-    return t("conversation.providerOpenCode");
-  }
-
-  return mode === "full" ? t("shell.providerClaudeCode") : t("conversation.providerClaude");
+  return getProviderDisplayName(provider, mode);
 }
 
 const sessionLinkLayerStyle: CSSProperties = {

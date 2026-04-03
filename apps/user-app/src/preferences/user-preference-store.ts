@@ -37,7 +37,13 @@ interface StoredPreferenceShadow {
   updatedAt: string | null;
 }
 
-const PREFERENCE_PROVIDER_IDS: PreferenceProviderId[] = ["claude-code", "codex", "opencode"];
+const PREFERENCE_PROVIDER_IDS: PreferenceProviderId[] = [
+  "claude-code",
+  "codex",
+  "opencode",
+  "gemini",
+  "kimi"
+];
 const SHADOW_STORAGE_KEY = "codingns.account.preferences.shadow";
 const LEGACY_CLIENT_CONFIG_KEY = "codingns.client.runtime-config";
 const LEGACY_THEME_KEY = "codingns-theme";
@@ -115,6 +121,14 @@ function createDefaultProviders(): AccountPreferenceState["providers"] {
       defaultReasoningLevel: null
     },
     opencode: {
+      defaultModel: null,
+      defaultReasoningLevel: null
+    },
+    gemini: {
+      defaultModel: null,
+      defaultReasoningLevel: null
+    },
+    kimi: {
       defaultModel: null,
       defaultReasoningLevel: null
     }

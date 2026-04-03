@@ -10,6 +10,7 @@ import {
   type SessionSummaryDto,
   type WorkspaceDto
 } from "../../conversation/api/conversation-api";
+import { getProviderDisplayName } from "../../conversation/capability/provider-ui";
 import { WorkspaceCloneModal } from "../../conversation/components/WorkspaceCloneModal";
 import { WorkspaceImportBrowserModal } from "../../conversation/components/WorkspaceImportBrowserModal";
 import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout";
@@ -82,18 +83,6 @@ function getSessionActivityTime(session: SessionSummaryDto) {
 
 function sortSessionsByActivity(left: SessionSummaryDto, right: SessionSummaryDto) {
   return getSessionActivityTime(right).localeCompare(getSessionActivityTime(left));
-}
-
-function getProviderLabel(provider: string) {
-  if (provider === "codex") {
-    return t("conversation.providerCodex");
-  }
-
-  if (provider === "opencode") {
-    return t("conversation.providerOpenCode");
-  }
-
-  return t("shell.providerClaudeCode");
 }
 
 function formatActivityTime(value: string | null) {
@@ -586,7 +575,7 @@ export function WorkspaceHomePage() {
                             {session.title || t("common.unknown")}
                           </span>
                           <span className="mobile-workspace-home-session-meta">
-                            {getProviderLabel(session.provider)} · {formatActivityTime(getSessionActivityTime(session))}
+                            {getProviderDisplayName(session.provider, "full")} · {formatActivityTime(getSessionActivityTime(session))}
                           </span>
                         </div>
                         <span className="mobile-workspace-home-row-trailing">
@@ -619,7 +608,7 @@ export function WorkspaceHomePage() {
                           {session.title || t("common.unknown")}
                         </span>
                         <span className="mobile-workspace-home-session-meta">
-                          {getProviderLabel(session.provider)} · {formatActivityTime(getSessionActivityTime(session))}
+                          {getProviderDisplayName(session.provider, "full")} · {formatActivityTime(getSessionActivityTime(session))}
                         </span>
                       </div>
                       <span className="mobile-workspace-home-row-trailing">

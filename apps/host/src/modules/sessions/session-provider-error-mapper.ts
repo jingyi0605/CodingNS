@@ -114,6 +114,38 @@ export function mapSessionProviderError(error: unknown): AppError {
     });
   }
 
+  if (error instanceof Error && error.message === "GEMINI_CHAT_NOT_FOUND") {
+    return new AppError({
+      statusCode: 404,
+      errorCode: "GEMINI_CHAT_NOT_FOUND",
+      detail: "未找到 Gemini 本地 chats 对应会话，请先确认 session id 和本地目录是否一致"
+    });
+  }
+
+  if (error instanceof Error && error.message.startsWith("GEMINI_CHAT_SCHEMA_INVALID")) {
+    return new AppError({
+      statusCode: 422,
+      errorCode: "GEMINI_CHAT_SCHEMA_INVALID",
+      detail: error.message
+    });
+  }
+
+  if (error instanceof Error && error.message.startsWith("KIMI_RUNTIME_FALLBACK_FAILED")) {
+    return new AppError({
+      statusCode: 503,
+      errorCode: "KIMI_RUNTIME_FALLBACK_FAILED",
+      detail: "Kimi wire 与命令模式 fallback 均不可用，请检查 CLI 版本和本地配置"
+    });
+  }
+
+  if (error instanceof Error && error.message.startsWith("KIMI_WIRE_MODE_UNAVAILABLE")) {
+    return new AppError({
+      statusCode: 503,
+      errorCode: "KIMI_WIRE_MODE_UNAVAILABLE",
+      detail: "Kimi wire 模式暂不可用，系统已尝试 fallback"
+    });
+  }
+
   if (error instanceof Error && error.message.startsWith("OPENCODE_HTTP_")) {
     return new AppError({
       statusCode: 502,

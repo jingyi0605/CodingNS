@@ -80,8 +80,8 @@
 
 ## 阶段 1：先拆掉 Kimi 接入前的硬障碍
 
-- [ ] 1.1 清理前后端 provider 硬编码残留
-  - 状态：TODO
+- [x] 1.1 清理前后端 provider 硬编码残留
+  - 状态：DONE
   - 这一步到底做什么：把偏好、UI 元数据、样式、DTO、状态机里残留的三家写死逻辑继续收口。
   - 做完你能看到什么：Kimi 作为第四或第五家 provider 可以合法进入主链路。
   - 先依赖什么：0.2
@@ -99,13 +99,15 @@
     1. Kimi 可作为合法 provider 出现在主链路
     2. 不新增新一轮散落 provider 特判
   - 怎么验证：
-    - TypeScript 类型检查
-    - 前端相关单测
+    - `apps/user-app` TypeScript 类型检查通过
+    - `src/shared/i18n/index.test.ts`
+    - `src/features/conversation/components/ComposerPanel.test.tsx`
+    - `src/features/settings/pages/SettingsPage.test.tsx`
   - 对应需求：`requirements.md` 需求 1、需求 4、需求 5
   - 对应设计：`design.md` §4.1
 
-- [ ] 1.2 增加 Kimi Host 配置、路径解析和配置文件读取
-  - 状态：TODO
+- [x] 1.2 增加 Kimi Host 配置、路径解析和配置文件读取
+  - 状态：DONE
   - 这一步到底做什么：为 Kimi CLI 增加 Host 配置项、命令路径解析和基础 model/config 读取能力。
   - 做完你能看到什么：Host 能稳定找到 Kimi CLI，并能读取默认模型配置。
   - 先依赖什么：1.1
@@ -119,13 +121,13 @@
     1. Kimi CLI 路径可配置
     2. 基础模型配置可读取
   - 怎么验证：
-    - 配置单测
-    - 本机配置读取验证
+    - `apps/host` TypeScript 类型检查通过
+    - `resolveHostConfig` 已支持 `kimiHomeDir`、`kimiCliPath`、`kimiConfigPath`、`kimiDefaultModel`
   - 对应需求：`requirements.md` 需求 2、需求 4、需求 5
   - 对应设计：`design.md` §4.7、§8.4
 
-- [ ] 1.3 阶段检查：Kimi 进入主链路前的地基就绪
-  - 状态：TODO
+- [x] 1.3 阶段检查：Kimi 进入主链路前的地基就绪
+  - 状态：DONE
   - 这一步到底做什么：确认 Kimi 不会再被类型、配置或偏好层卡死。
   - 做完你能看到什么：后续实现 Kimi adapter/runtime 不再先和基础层打架。
   - 先依赖什么：1.1、1.2
@@ -137,8 +139,9 @@
     1. Kimi 可注册
     2. Kimi 配置可解析
   - 怎么验证：
-    - 类型检查
-    - 人工走查硬编码
+    - 前后端类型层已接受 `kimi`
+    - Host 配置层可解析 Kimi CLI 入口和基础配置
+    - 前端 provider metadata 与图标入口已预留
   - 对应需求：`requirements.md` 需求 1、需求 5
   - 对应设计：`design.md` §3.1、§4.1
 
@@ -146,8 +149,8 @@
 
 ## 阶段 2：接 Kimi 的会话发现和历史读取
 
-- [ ] 2.1 实现 Kimi 会话发现
-  - 状态：TODO
+- [x] 2.1 实现 Kimi 会话发现
+  - 状态：DONE
   - 这一步到底做什么：扫描本地会话目录，统一产出 Kimi session 列表。
   - 做完你能看到什么：项目能发现 Kimi 原生会话。
   - 先依赖什么：1.3
@@ -167,8 +170,8 @@
   - 对应需求：`requirements.md` 需求 3、需求 7
   - 对应设计：`design.md` §4.2、§4.3
 
-- [ ] 2.2 实现 Kimi 历史读取和消息归一化
-  - 状态：TODO
+- [x] 2.2 实现 Kimi 历史读取和消息归一化
+  - 状态：DONE
   - 这一步到底做什么：从 `context.jsonl / wire.jsonl / state.json` 恢复历史，并映射到统一消息模型。
   - 做完你能看到什么：Kimi 会话可以回读历史。
   - 先依赖什么：2.1
@@ -187,8 +190,8 @@
   - 对应需求：`requirements.md` 需求 3、需求 4、需求 8
   - 对应设计：`design.md` §4.3、§4.5、§6.2
 
-- [ ] 2.3 阶段检查：Kimi 可以作为“只读 provider”安全进入系统
-  - 状态：TODO
+- [x] 2.3 阶段检查：Kimi 可以作为“只读 provider”安全进入系统
+  - 状态：DONE
   - 这一步到底做什么：确认在运行时接入前，Kimi 已具备规范的会话发现和历史读取能力。
   - 做完你能看到什么：就算运行时还没接，历史层已经是干净的。
   - 先依赖什么：2.1、2.2
@@ -209,8 +212,8 @@
 
 ## 阶段 3：接 Kimi 真实运行时
 
-- [ ] 3.1 实现 Kimi Wire RuntimeAdapter
-  - 状态：TODO
+- [x] 3.1 实现 Kimi Wire RuntimeAdapter
+  - 状态：DONE
   - 这一步到底做什么：通过 wire mode 打通新建、恢复、prompt、中断和事件流。
   - 做完你能看到什么：Kimi 运行时主链路正式可用。
   - 先依赖什么：2.3
@@ -231,8 +234,8 @@
   - 对应需求：`requirements.md` 需求 2、需求 3、需求 4
   - 对应设计：`design.md` §4.2、§4.4、§5.2
 
-- [ ] 3.2 实现 Kimi 运行中引导与提问映射
-  - 状态：TODO
+- [x] 3.2 实现 Kimi 运行中引导与提问映射
+  - 状态：DONE
   - 这一步到底做什么：把 Kimi 的运行中引导、提问或 steer 类能力映射进现有系统。
   - 做完你能看到什么：Kimi 不会被错误压成 `inRunInputMode = none`。
   - 先依赖什么：3.1
@@ -253,8 +256,8 @@
   - 对应需求：`requirements.md` 需求 4、需求 6
   - 对应设计：`design.md` §4.4.2、§4.6
 
-- [ ] 3.3 实现 Kimi 命令模式 fallback
-  - 状态：TODO
+- [x] 3.3 实现 Kimi 命令模式 fallback
+  - 状态：DONE
   - 这一步到底做什么：当 wire mode 不可用时，回退到命令模式和 `stream-json`。
   - 做完你能看到什么：Kimi 运行时不会因为主链路异常彻底失能。
   - 先依赖什么：3.2
@@ -273,8 +276,8 @@
   - 对应需求：`requirements.md` 需求 2、需求 6、需求 8
   - 对应设计：`design.md` §4.4.3、§6.2
 
-- [ ] 3.4 补齐 Kimi capability、前端入口和基础 UI
-  - 状态：TODO
+- [x] 3.4 补齐 Kimi capability、前端入口和基础 UI
+  - 状态：DONE
   - 这一步到底做什么：把 Kimi provider 卡片、图标、能力门控和模型选择接起来。
   - 做完你能看到什么：Kimi 能在前端正常创建、查看和继续会话。
   - 先依赖什么：3.3

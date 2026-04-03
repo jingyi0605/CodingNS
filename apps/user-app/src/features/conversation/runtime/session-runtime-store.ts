@@ -36,6 +36,7 @@ import {
   type SessionRuntimeDto,
   type SessionRunningState
 } from "../api/conversation-api";
+import { isDraftProviderSupported as isRegisteredProvider } from "../capability/provider-ui";
 import type {
   SessionActivityEvent,
   SessionInterruptedEvent,
@@ -1603,11 +1604,7 @@ function shouldOptimisticallyAssumeActiveRun(
     return Boolean(capabilities.canSendMessage);
   }
 
-  return (
-    session.provider === "codex" ||
-    session.provider === "claude-code" ||
-    session.provider === "opencode"
-  );
+  return isRegisteredProvider(session.provider);
 }
 
 function shouldOptimisticallyEnableInterrupt(
