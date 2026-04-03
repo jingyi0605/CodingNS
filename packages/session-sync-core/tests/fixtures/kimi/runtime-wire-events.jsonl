@@ -1,0 +1,6 @@
+{"type":"session.created","session_id":"kimi-runtime-fixture-1"}
+{"type":"assistant.message","role":"assistant","timestamp":"2026-04-03T10:00:00.000Z","content":[{"type":"text","text":"fixture runtime text"}]}
+{"type":"assistant.thinking","role":"assistant","timestamp":"2026-04-03T10:00:01.000Z","content":[{"type":"thinking","text":"fixture thinking"}]}
+{"type":"assistant.tool_call","role":"assistant","timestamp":"2026-04-03T10:00:02.000Z","content":[{"type":"tool_call","id":"fixture-call-1","name":"read_file","input":{"path":"README.md"}}]}
+{"type":"tool.result","role":"tool","timestamp":"2026-04-03T10:00:03.000Z","content":[{"type":"tool_result","call_id":"fixture-call-1","output":"fixture tool output"}]}
+{"type":"session.completed","timestamp":"2026-04-03T10:00:04.000Z"}
