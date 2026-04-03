@@ -367,6 +367,153 @@ CREATE TABLE IF NOT EXISTS terminal_command_templates (
 CREATE INDEX IF NOT EXISTS idx_terminal_templates_workspace_id
   ON terminal_command_templates(workspace_id);
 
+CREATE TABLE IF NOT EXISTS butler_projects (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  repo_root TEXT NOT NULL,
+  default_provider TEXT,
+  instruction_profile_id TEXT,
+  approval_mode TEXT NOT NULL CHECK (approval_mode IN ('readonly', 'controlled', 'auto')),
+  lifecycle_status TEXT NOT NULL CHECK (lifecycle_status IN ('active', 'paused', 'archived')),
+  risk_level TEXT NOT NULL CHECK (risk_level IN ('low', 'medium', 'high')),
+  config_json TEXT NOT NULL,
+  last_patrol_at TEXT,
+  last_verification_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  archived_at TEXT,
+  FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+  UNIQUE (workspace_id, repo_root)
+);
+
+CREATE INDEX IF NOT EXISTS idx_butler_projects_workspace_id
+  ON butler_projects(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_butler_projects_status
+  ON butler_projects(lifecycle_status, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS butler_sessions (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  session_id TEXT NOT NULL UNIQUE,
+  role TEXT NOT NULL CHECK (role IN ('patrol', 'execution', 'verification', 'adhoc')),
+  ownership_mode TEXT NOT NULL CHECK (ownership_mode IN ('managed', 'observed')),
+  status TEXT NOT NULL CHECK (status IN ('idle', 'running', 'blocked', 'failed', 'closed')),
+  last_summary TEXT,
+  last_checkpoint_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (project_id) REFERENCES butler_projects(id) ON DELETE CASCADE,
+  FOREIGN KEY (session_id) REFERENCES session_bindings(session_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_butler_sessions_project_id
+  ON butler_sessions(project_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_butler_sessions_status
+  ON butler_sessions(status, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS session_checkpoints (
+  id TEXT PRIMARY KEY,
+  butler_session_id TEXT NOT NULL,
+  checkpoint_seq INTEGER NOT NULL,
+  source_kind TEXT NOT NULL CHECK (
+    source_kind IN ('snapshot', 'summary', 'verification', 'manual')
+  ),
+  progress_state TEXT NOT NULL CHECK (
+    progress_state IN ('unknown', 'working', 'blocked', 'done')
+  ),
+  summary TEXT NOT NULL,
+  risk_flags_json TEXT NOT NULL,
+  next_action_json TEXT NOT NULL,
+  captured_at TEXT NOT NULL,
+  FOREIGN KEY (butler_session_id) REFERENCES butler_sessions(id) ON DELETE CASCADE,
+  UNIQUE (butler_session_id, checkpoint_seq)
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_checkpoints_session_id
+  ON session_checkpoints(butler_session_id, checkpoint_seq DESC);
+CREATE INDEX IF NOT EXISTS idx_session_checkpoints_captured_at
+  ON session_checkpoints(captured_at DESC);
+
+CREATE TABLE IF NOT EXISTS project_memories (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  source_butler_session_id TEXT,
+  source_checkpoint_id TEXT,
+  memory_type TEXT NOT NULL CHECK (
+    memory_type IN ('arch', 'rule', 'decision', 'incident', 'verify', 'note')
+  ),
+  title TEXT NOT NULL,
+  scope_path TEXT,
+  content TEXT NOT NULL,
+  tags_json TEXT NOT NULL,
+  confidence REAL NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
+  status TEXT NOT NULL CHECK (
+    status IN ('candidate', 'active', 'superseded', 'archived')
+  ),
+  evidence_json TEXT NOT NULL,
+  superseded_by TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (project_id) REFERENCES butler_projects(id) ON DELETE CASCADE,
+  FOREIGN KEY (source_butler_session_id) REFERENCES butler_sessions(id),
+  FOREIGN KEY (source_checkpoint_id) REFERENCES session_checkpoints(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_memories_project_id
+  ON project_memories(project_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_project_memories_project_status
+  ON project_memories(project_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_project_memories_project_scope
+  ON project_memories(project_id, scope_path, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS patrol_plans (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  trigger_type TEXT NOT NULL CHECK (trigger_type IN ('manual', 'interval', 'cron')),
+  trigger_config_json TEXT NOT NULL,
+  execution_mode TEXT NOT NULL CHECK (execution_mode IN ('readonly', 'controlled')),
+  patrol_scope_json TEXT NOT NULL,
+  enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+  last_scheduled_at TEXT,
+  next_run_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (project_id) REFERENCES butler_projects(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_patrol_plans_project_id
+  ON patrol_plans(project_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_patrol_plans_enabled_next_run_at
+  ON patrol_plans(enabled, next_run_at);
+
+CREATE TABLE IF NOT EXISTS patrol_runs (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  plan_id TEXT,
+  triggered_by TEXT NOT NULL CHECK (triggered_by IN ('scheduler', 'user', 'system')),
+  trigger_ref TEXT,
+  butler_session_id TEXT,
+  status TEXT NOT NULL CHECK (
+    status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')
+  ),
+  summary TEXT,
+  risk_level TEXT CHECK (risk_level IS NULL OR risk_level IN ('low', 'medium', 'high')),
+  suggestions_json TEXT NOT NULL,
+  started_at TEXT,
+  finished_at TEXT,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (project_id) REFERENCES butler_projects(id) ON DELETE CASCADE,
+  FOREIGN KEY (plan_id) REFERENCES patrol_plans(id),
+  FOREIGN KEY (butler_session_id) REFERENCES butler_sessions(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_patrol_runs_project_started_at
+  ON patrol_runs(project_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_patrol_runs_project_status
+  ON patrol_runs(project_id, status, created_at DESC);
+
 INSERT INTO bootstrap_state (id, initialized)
 VALUES ('default', 0)
 ON CONFLICT(id) DO NOTHING;
