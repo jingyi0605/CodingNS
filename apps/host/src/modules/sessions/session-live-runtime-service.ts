@@ -7,6 +7,7 @@ import {
   type ContextUsageSnapshot,
   CodexRuntimeAdapter,
   type InRunInputMode,
+  KimiRuntimeAdapter,
   type NormalizedMessageAttachment,
   OpenCodeRuntimeAdapter,
   ProviderRuntimeService,
@@ -2357,6 +2358,10 @@ function createProviderRuntimeAdapters(
         commandPath: config.codexCliPath,
         transportFactory: codexTransportHelper?.createTransport.bind(codexTransportHelper),
         handleServerRequest: options.handleCodexServerRequest
+      }),
+      new KimiRuntimeAdapter({
+        homeDir: config.kimiHomeDir,
+        commandPath: config.kimiCliPath
       }),
       new OpenCodeRuntimeAdapter({
         baseUrl: config.opencodeBaseUrl,
