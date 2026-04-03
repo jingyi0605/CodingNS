@@ -32,12 +32,15 @@ CodingNS 致力于提供一整套闭环的 AI 编程工作流程，让你能够�
 - **会话发现与历史读取**：自动发现并同步本地 CLI 会话历史
 - **实时消息订阅**：实时接收和展示 AI 编程会话的消息流
 - **会话状态感知**：统一展示运行中、未读、失败等状态，并保留错误码与错误摘要
+- **会话事件通知**：权限申请、会话完成与失败等事件的 Toast 通知，支持一键跳转
+- **子会话识别**：正确识别并归类 CLI 的子 Agent 会话，避免与主会话混淆
 - **消息归一化**：统一不同 Provider 的消息格式，提供一致的使用体验
 
 #### 💬 对话式主界面
 - **会话即工作区**：每个对话都是一个独立的工作区，统一管理上下文
 - **实时消息渲染**：支持 Markdown、代码高亮、工具调用展示
 - **统一权限审批**：在会话内直接处理命令执行、文件变更、权限授权和用户输入请求
+- **权限模式隔离**：「完全权限」与「二次审批 Hook」明确隔离，避免权限误判
 - **复合输入面板**：集成文件上传、上下文管理、快捷命令等功能
 - **Capability 驱动**：根据 Provider 能力动态调整可用功能
 
@@ -77,6 +80,7 @@ CodingNS 致力于提供一整套闭环的 AI 编程工作流程，让你能够�
 - **开发服务器管理**：启动、监控、停止开发进程
 - **端口识别**：自动识别进程端口占用
 - **日志追踪**：实时查看进程输出日志
+- **反向代理**：通过单一端口代理开发中的应用，支持 HTTP/WebSocket 双协议透传与文件上传
 
 #### 📱 多平台支持
 - **桌面端**：基于 Tauri 的原生桌面应用（macOS、Windows、Linux）
@@ -276,22 +280,24 @@ pnpm test:user-app
 - **spec009.1** - 移动端工作台导航与信息架构重构
 - **spec010** - Provider 扩展框架
 - **spec010.1** - OpenCode 兼容接入
+- **spec010.2** - Gemini CLI 兼容接入
+- **spec010.3** - Kimi CLI 兼容接入
 - **spec011** - 单包安装与统一服务发布
 - **spec012** - 并行项目编排与结果对比
+- **spec013** - 代码管家平台与跨工作区巡检编排
 
 ### 🗺️ 路线图
 
 | 开发目标 | 当前进度 | 完成情况 |
 |----------|----------|----------|
-| 进程管理支持反向代理，单一端口代理开发中的应用 | 开发中 | 🟡 进行中 |
+| 进程管理支持反向代理，单一端口代理开发中的应用 | 已完成 | 🟢 已完成 |
 | iOS APP | 开发中 | 🟡 进行中 |
 | 并行开发模式，同时启动多个 CLI 或模型配置，并行针对单一工作区进行快速开发验证 | 规划中 | ⬜ 计划中 |
-| 支持更多 CLI（Gemini CLI、KIMI CLI、KIRO CLI 等） | 规划中 | ⬜ 计划中 |
+| 支持更多 CLI（Gemini CLI、Kimi CLI 等） | 规划中 | ⬜ 计划中 |
 | 支持同时连接多个 HOST | 规划中 | ⬜ 计划中 |
 | PC 端支持多窗口操作 | 规划中 | ⬜ 计划中 |
 | 更好的文件编辑器体验 | 规划中 | ⬜ 计划中 |
 | 内置 Tailscale 支持一键穿透内网 | 规划中 | ⬜ 计划中 |
-| 更美观的前端开发设计 | 规划中 | ⬜ 计划中 |
 | 代码管家功能，支持跨工作区管理多个项目及会话，并为用户提供项目开发的建议和代替用户进行项目开发的控制 | 规划中 | ⬜ 计划中 |
 | 代码管家支持实时语音对话 | 规划中 | ⬜ 计划中 |
 
@@ -320,12 +326,15 @@ CodingNS provides a complete closed-loop AI programming workflow, enabling you t
 - **Session Discovery & History**: Automatically discover and sync local CLI session history
 - **Real-time Message Subscription**: Receive and display AI coding session message streams in real-time
 - **Session State Awareness**: Consistent running, unread, and failure states with error codes and summaries
+- **Session Event Notifications**: Toast notifications for permission requests, session completion, and failures with one-click navigation
+- **Sub-Agent Recognition**: Correctly identify and classify CLI sub-Agent sessions separately from main sessions
 - **Message Normalization**: Unified message format across different providers for consistent experience
 
 #### 💬 Conversational Interface
 - **Session as Workspace**: Each conversation is an independent workspace with unified context management
 - **Real-time Message Rendering**: Support for Markdown, syntax highlighting, and tool call visualization
 - **Unified Permission Handling**: Review command execution, file changes, permission grants, and user-input requests inside the conversation
+- **Permission Mode Isolation**: Clear separation between "full permission" and "secondary approval hook" modes
 - **Compound Input Panel**: Integrated file upload, context management, and quick commands
 - **Capability-Driven**: Dynamically adjust available features based on provider capabilities
 
@@ -365,6 +374,7 @@ CodingNS provides a complete closed-loop AI programming workflow, enabling you t
 - **Dev Server Management**: Start, monitor, and stop development processes
 - **Port Detection**: Automatic identification of process port usage
 - **Log Tracking**: Real-time process output logging
+- **Reverse Proxy**: Proxy dev apps through a single port with HTTP/WebSocket passthrough and file upload support
 
 #### 📱 Multi-Platform Support
 - **Desktop**: Native desktop applications (macOS, Windows, Linux) based on Tauri
@@ -564,23 +574,25 @@ Detailed feature specifications and design documents are located in the [`specs/
 - **spec009.1** - Mobile Workbench Navigation & Information Architecture
 - **spec010** - Provider Extension Framework
 - **spec010.1** - OpenCode Compatibility Integration
+- **spec010.2** - Gemini CLI Compatibility Integration
+- **spec010.3** - Kimi CLI Compatibility Integration
 - **spec011** - Single-package Install & Unified Service Delivery
 - **spec012** - Parallel Project Orchestration & Result Comparison
+- **spec013** - Code Butler Platform & Cross-workspace Inspection Orchestration
 
 ### 🗺️ Roadmap
 
 | Goal | Progress | Status |
 |------|----------|--------|
-| Reverse proxy for process management — proxy dev apps through a single port | In development | 🟡 In Progress |
+| Reverse proxy for process management — proxy dev apps through a single port | Completed | 🟢 Completed |
 | iOS APP | In development | 🟡 In Progress |
 | Parallel dev mode — launch multiple CLI or model configs simultaneously for rapid dev validation on a single workspace | Planning | ⬜ Planned |
-| Support more CLIs (Gemini CLI, KIMI CLI, KIRO CLI, etc.) | Planning | ⬜ Planned |
+| Support more CLIs (Gemini CLI, Kimi CLI, etc.) | Planning | ⬜ Planned |
 | Support connecting to multiple hosts simultaneously | Planning | ⬜ Planned |
 | Multi-window support on desktop | Planning | ⬜ Planned |
 | Better file editor experience | Planning | ⬜ Planned |
 | Built-in Tailscale for one-click NAT traversal | Planning | ⬜ Planned |
 | Code Butler — manage multiple projects and sessions across workspaces, provide dev suggestions and act on behalf of the user | Planning | ⬜ Planned |
-| More polished frontend design | Planning | ⬜ Planned |
 | Code Butler with real-time voice conversation | Planning | ⬜ Planned |
 
 > Status legend: 🟢 Completed | 🟡 In Progress | ⬜ Planned
