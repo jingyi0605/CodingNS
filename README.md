@@ -42,6 +42,7 @@ CodingNS 致力于提供一整套闭环的 AI 编程工作流程，让你能够�
 - **统一权限审批**：在会话内直接处理命令执行、文件变更、权限授权和用户输入请求
 - **权限模式隔离**：「完全权限」与「二次审批 Hook」明确隔离，避免权限误判
 - **复合输入面板**：集成文件上传、上下文管理、快捷命令等功能
+- **演示模式**：支持通过 `codingns start --demo` 启动演示环境，自动创建 demo 账号并提供受控体验
 - **Capability 驱动**：根据 Provider 能力动态调整可用功能
 
 #### 📁 文件管理能力
@@ -61,6 +62,7 @@ CodingNS 致力于提供一整套闭环的 AI 编程工作流程，让你能够�
 - **真实 PTY 终端**：基于 node-pty 的完整终端体验
 - **多终端支持**：同时管理多个终端会话
 - **终端持久化**：终端输出缓存与历史回放
+- **回放体验优化**：修复历史回放与实时输出衔接时的滚动和时序问题
 - **Windows 终端恢复**：支持终端持久化恢复，并在创建前选择 Shell
 - **断线重连**：网络中断后自动恢复终端会话
 
@@ -82,11 +84,17 @@ CodingNS 致力于提供一整套闭环的 AI 编程工作流程，让你能够�
 - **日志追踪**：实时查看进程输出日志
 - **反向代理**：通过单一端口代理开发中的应用，支持 HTTP/WebSocket 双协议透传与文件上传
 
+#### 🪟 桌面工作台能力
+- **多窗口支持**：支持将文件、Git、终端管理等工具面板拆分为独立窗口
+- **拖拽拆分体验**：支持从工作台直接拖拽标签页到独立窗口，减少来回切换
+- **窗口状态管理**：统一维护独立窗口的打开状态、焦点和恢复逻辑
+
 #### 📱 多平台支持
 - **桌面端**：基于 Tauri 的原生桌面应用（macOS、Windows、Linux）
 - **移动端**：iOS 和 Android 原生应用（Tauri Mobile）
 - **Web 端**：现代浏览器访问
 - **平台适配**：针对不同平台优化的 UI 和交互
+- **移动端体验修复**：补齐启动图资源，优化 iPad 横竖屏、安全区以及聊天附件调用相机/相册的体验
 
 #### 🔌 Provider 扩展框架
 - **统一扩展协议**：标准化的 Provider 接入规范
@@ -147,6 +155,7 @@ npx @jingyi0605/codingns start --port 3002
 - `--host`：监听地址，默认 `0.0.0.0`
 - `--port`：监听端口，默认 `3002`
 - `--data-dir`：数据目录，默认 `~/.codingns`
+- `--demo`：以演示模式启动，自动创建 demo 账号，并启用受控演示会话
 
 #### 通过 PM2 开机启动和自定义端口
 
@@ -291,11 +300,12 @@ pnpm test:user-app
 | 开发目标 | 当前进度 | 完成情况 |
 |----------|----------|----------|
 | 进程管理支持反向代理，单一端口代理开发中的应用 | 已完成 | 🟢 已完成 |
-| iOS APP | 开发中 | 🟡 进行中 |
+| iOS APP | 开发中（提审准备已完成） | 🟡 进行中 |
+| 演示模式与受控演示环境 | 已完成 | 🟢 已完成 |
 | 并行开发模式，同时启动多个 CLI 或模型配置，并行针对单一工作区进行快速开发验证 | 规划中 | ⬜ 计划中 |
 | 支持更多 CLI（Gemini CLI、Kimi CLI 等） | 规划中 | ⬜ 计划中 |
 | 支持同时连接多个 HOST | 规划中 | ⬜ 计划中 |
-| PC 端支持多窗口操作 | 规划中 | ⬜ 计划中 |
+| PC 端支持多窗口操作 | 已完成 | 🟢 已完成 |
 | 更好的文件编辑器体验 | 规划中 | ⬜ 计划中 |
 | 内置 Tailscale 支持一键穿透内网 | 规划中 | ⬜ 计划中 |
 | 代码管家功能，支持跨工作区管理多个项目及会话，并为用户提供项目开发的建议和代替用户进行项目开发的控制 | 规划中 | ⬜ 计划中 |
@@ -336,6 +346,7 @@ CodingNS provides a complete closed-loop AI programming workflow, enabling you t
 - **Unified Permission Handling**: Review command execution, file changes, permission grants, and user-input requests inside the conversation
 - **Permission Mode Isolation**: Clear separation between "full permission" and "secondary approval hook" modes
 - **Compound Input Panel**: Integrated file upload, context management, and quick commands
+- **Demo Mode**: Start a controlled demo environment with `codingns start --demo`, including an auto-created demo account
 - **Capability-Driven**: Dynamically adjust available features based on provider capabilities
 
 #### 📁 File Management
@@ -355,6 +366,7 @@ CodingNS provides a complete closed-loop AI programming workflow, enabling you t
 - **Real PTY Terminal**: Complete terminal experience based on node-pty
 - **Multi-Terminal Support**: Manage multiple terminal sessions simultaneously
 - **Terminal Persistence**: Terminal output caching and history playback
+- **Replay Stability Improvements**: Fix timing and scrolling issues between history replay and live output
 - **Windows Terminal Recovery**: Restore persisted terminals and choose the shell before creation
 - **Reconnection**: Automatic terminal session recovery after network interruption
 
@@ -376,11 +388,17 @@ CodingNS provides a complete closed-loop AI programming workflow, enabling you t
 - **Log Tracking**: Real-time process output logging
 - **Reverse Proxy**: Proxy dev apps through a single port with HTTP/WebSocket passthrough and file upload support
 
+#### 🪟 Desktop Workbench
+- **Multi-window Support**: Detach file, Git, and terminal-management panels into independent windows
+- **Drag-to-detach Workflow**: Drag workbench tabs into their own windows for side-by-side work
+- **Window State Management**: Keep detached window state, focus, and reopen behavior consistent
+
 #### 📱 Multi-Platform Support
 - **Desktop**: Native desktop applications (macOS, Windows, Linux) based on Tauri
 - **Mobile**: iOS and Android native applications (Tauri Mobile)
 - **Web**: Modern browser access
 - **Platform Adaptation**: UI and interactions optimized for different platforms
+- **Mobile Experience Fixes**: Updated splash assets and improved iPad orientation, safe-area, and attachment picker behavior
 
 #### 🔌 Provider Extension Framework
 - **Unified Extension Protocol**: Standardized provider integration specification
@@ -441,6 +459,7 @@ Common options:
 - `--host`: listen host, default `0.0.0.0`
 - `--port`: listen port, default `3002`
 - `--data-dir`: data directory, default `~/.codingns`
+- `--demo`: start in demo mode with an auto-created demo account and controlled demo sessions
 
 #### Start On Boot With PM2
 
@@ -585,11 +604,12 @@ Detailed feature specifications and design documents are located in the [`specs/
 | Goal | Progress | Status |
 |------|----------|--------|
 | Reverse proxy for process management — proxy dev apps through a single port | Completed | 🟢 Completed |
-| iOS APP | In development | 🟡 In Progress |
+| iOS APP | In development (App Store submission prep completed) | 🟡 In Progress |
+| Demo mode and controlled demo environment | Completed | 🟢 Completed |
 | Parallel dev mode — launch multiple CLI or model configs simultaneously for rapid dev validation on a single workspace | Planning | ⬜ Planned |
 | Support more CLIs (Gemini CLI, Kimi CLI, etc.) | Planning | ⬜ Planned |
 | Support connecting to multiple hosts simultaneously | Planning | ⬜ Planned |
-| Multi-window support on desktop | Planning | ⬜ Planned |
+| Multi-window support on desktop | Completed | 🟢 Completed |
 | Better file editor experience | Planning | ⬜ Planned |
 | Built-in Tailscale for one-click NAT traversal | Planning | ⬜ Planned |
 | Code Butler — manage multiple projects and sessions across workspaces, provide dev suggestions and act on behalf of the user | Planning | ⬜ Planned |

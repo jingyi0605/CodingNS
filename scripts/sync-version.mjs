@@ -17,9 +17,19 @@ const cargoTargets = [
   'apps/desktop/src-tauri/Cargo.toml',
   'apps/user-app/src-tauri/Cargo.toml',
 ];
-const iosProjectTarget = 'scripts/user-app-ios-project.yml';
+const cargoLockTargets = [
+  { relativePath: 'apps/desktop/src-tauri/Cargo.lock', packageName: 'codingns-desktop' },
+  { relativePath: 'apps/user-app/src-tauri/Cargo.lock', packageName: 'app' },
+];
+const iosProjectTargets = [
+  'scripts/user-app-ios-project.yml',
+  'apps/user-app/src-tauri/gen/apple/project.yml',
+];
+const iosPlistTargets = ['apps/user-app/src-tauri/gen/apple/app_iOS/Info.plist'];
+const androidTargets = ['apps/user-app/src-tauri/gen/android/app/tauri.properties'];
 
 const version = await readVersion();
+const androidVersionCode = buildAndroidVersionCode(version);
 const changedFiles = [];
 
 for (const relativePath of jsonTargets) {
@@ -36,9 +46,32 @@ for (const relativePath of cargoTargets) {
   }
 }
 
-const iosChanged = await syncIosProjectVersion(iosProjectTarget, version);
-if (iosChanged) {
-  changedFiles.push(iosProjectTarget);
+for (const { relativePath, packageName } of cargoLockTargets) {
+  const changed = await syncCargoLockVersion(relativePath, packageName, version);
+  if (changed) {
+    changedFiles.push(relativePath);
+  }
+}
+
+for (const relativePath of iosProjectTargets) {
+  const changed = await syncIosProjectVersion(relativePath, version);
+  if (changed) {
+    changedFiles.push(relativePath);
+  }
+}
+
+for (const relativePath of iosPlistTargets) {
+  const changed = await syncIosPlistVersion(relativePath, version);
+  if (changed) {
+    changedFiles.push(relativePath);
+  }
+}
+
+for (const relativePath of androidTargets) {
+  const changed = await syncAndroidVersion(relativePath, version, androidVersionCode);
+  if (changed) {
+    changedFiles.push(relativePath);
+  }
 }
 
 if (changedFiles.length === 0) {
@@ -62,6 +95,13 @@ async function readVersion() {
 
 function isValidSemver(input) {
   return /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(input);
+}
+
+function buildAndroidVersionCode(input) {
+  const [coreVersion] = input.split(/[+-]/, 1);
+  const [major, minor, patch] = coreVersion.split('.').map(Number);
+
+  return major * 1_000_000 + minor * 1_000 + patch;
 }
 
 async function syncJsonVersion(relativePath, nextVersion) {
@@ -94,6 +134,22 @@ async function syncCargoVersion(relativePath, nextVersion) {
   return true;
 }
 
+async function syncCargoLockVersion(relativePath, packageName, nextVersion) {
+  const filePath = path.join(rootDir, relativePath);
+  const source = await readFile(filePath, 'utf8');
+  const nextSource = source.replace(
+    new RegExp(`(\\[\\[package\\]\\]\\nname = "${escapeRegExp(packageName)}"\\nversion = ")([^"]+)(")`),
+    `$1${nextVersion}$3`,
+  );
+
+  if (nextSource === source) {
+    return false;
+  }
+
+  await writeFile(filePath, nextSource, 'utf8');
+  return true;
+}
+
 async function syncIosProjectVersion(relativePath, nextVersion) {
   const filePath = path.join(rootDir, relativePath);
   const source = await readFile(filePath, 'utf8');
@@ -112,4 +168,48 @@ async function syncIosProjectVersion(relativePath, nextVersion) {
 
   await writeFile(filePath, nextSource, 'utf8');
   return true;
+}
+
+async function syncIosPlistVersion(relativePath, nextVersion) {
+  const filePath = path.join(rootDir, relativePath);
+  const source = await readFile(filePath, 'utf8');
+  let nextSource = source.replace(
+    /(<key>CFBundleShortVersionString<\/key>\s*<string>)([^<]+)(<\/string>)/,
+    `$1${nextVersion}$3`,
+  );
+  nextSource = nextSource.replace(
+    /(<key>CFBundleVersion<\/key>\s*<string>)([^<]+)(<\/string>)/,
+    `$1${nextVersion}$3`,
+  );
+
+  if (nextSource === source) {
+    return false;
+  }
+
+  await writeFile(filePath, nextSource, 'utf8');
+  return true;
+}
+
+async function syncAndroidVersion(relativePath, nextVersion, nextVersionCode) {
+  const filePath = path.join(rootDir, relativePath);
+  const source = await readFile(filePath, 'utf8');
+  let nextSource = source.replace(
+    /^(tauri\.android\.versionName=).+$/m,
+    `$1${nextVersion}`,
+  );
+  nextSource = nextSource.replace(
+    /^(tauri\.android\.versionCode=).+$/m,
+    `$1${nextVersionCode}`,
+  );
+
+  if (nextSource === source) {
+    return false;
+  }
+
+  await writeFile(filePath, nextSource, 'utf8');
+  return true;
+}
+
+function escapeRegExp(input) {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

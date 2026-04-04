@@ -96,7 +96,7 @@ describe("PlatformProvider", () => {
     ): Promise<T> => {
       if (command === "get_runtime_info") {
         return {
-          version: "0.1.3",
+          version: "0.1.4",
           appDataDir: null,
           windowChrome: {
             macosTitlebar: {
