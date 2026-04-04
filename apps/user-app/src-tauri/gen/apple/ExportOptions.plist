@@ -3,6 +3,13 @@
 <plist version="1.0">
 <dict>
     <key>method</key>
-    <string>debugging</string>
+    <string>app-store</string>
+    <key>uploadSymbols</key>
+    <true/>
+    <key>signingStyle</key>
+    <string>automatic</string>
+    <!-- teamID 需要替换为你的 Apple Developer Team ID -->
+    <key>teamID</key>
+    <string>YOUR_TEAM_ID</string>
 </dict>
 </plist>

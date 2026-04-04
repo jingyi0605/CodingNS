@@ -9,6 +9,8 @@
 #   ./scripts/build-ios.sh --release
 #   ./scripts/build-ios.sh --debug
 #   ./scripts/build-ios.sh --simulator "iPhone 17 Pro"
+#   ./scripts/build-ios.sh --archive
+#   ./scripts/build-ios.sh --archive --export
 #
 
 set -euo pipefail
@@ -24,10 +26,15 @@ DERIVED_DATA_DIR="$TAURI_DIR/target/ios-derived-data"
 APP_NAME="CodingNS"
 BUNDLE_ID="com.codingns.userapp"
 IOS_ASSETS_DIR="$IOS_PROJECT_DIR/assets"
-SIMULATOR_NAME="iPhone 17"
+SIMULATOR_NAME="iPhone 17 Pro Max"
 BUILD_CONFIGURATION="release"
 OPEN_XCODE=1
 RUN_AFTER_BUILD=0
+ARCHIVE_BUILD=0
+EXPORT_BUILD=0
+ARCHIVE_PATH="$TAURI_DIR/target/ios-archive"
+EXPORT_PATH="$TAURI_DIR/target/ios-export"
+EXPORT_OPTIONS="$IOS_PROJECT_DIR/ExportOptions.plist"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -84,6 +91,15 @@ while [[ $# -gt 0 ]]; do
         exit 1
       fi
       shift 2
+      ;;
+    --archive)
+      ARCHIVE_BUILD=1
+      shift
+      ;;
+    --export)
+      EXPORT_BUILD=1
+      ARCHIVE_BUILD=1
+      shift
       ;;
     -h|--help)
       usage
@@ -194,6 +210,61 @@ build_ios() {
     build
 }
 
+archive_ios() {
+  log_info "开始 Archive iOS 工程（真机）..."
+  log_info "Scheme: app_iOS"
+  log_info "Configuration: release"
+  log_info "Archive 输出: $ARCHIVE_PATH"
+
+  # 确保安装了真机 Rust target
+  if ! rustup target list --installed | grep -q '^aarch64-apple-ios$'; then
+    log_info "安装 Rust iOS 真机 target..."
+    rustup target add aarch64-apple-ios
+  fi
+
+  mkdir -p "$DERIVED_DATA_DIR"
+  mkdir -p "$(dirname "$ARCHIVE_PATH")"
+
+  xcodebuild \
+    -project "$IOS_PROJECT_PATH" \
+    -scheme app_iOS \
+    -configuration release \
+    -destination "generic/platform=iOS" \
+    -archivePath "$ARCHIVE_PATH.xcarchive" \
+    -derivedDataPath "$DERIVED_DATA_DIR" \
+    archive \
+    ENABLE_BITCODE=NO
+
+  log_success "Archive 完成: $ARCHIVE_PATH.xcarchive"
+}
+
+export_ios() {
+  if [[ ! -d "$ARCHIVE_PATH.xcarchive" ]]; then
+    log_error "未找到 Archive: $ARCHIVE_PATH.xcarchive，请先执行 --archive"
+    exit 1
+  fi
+
+  if [[ ! -f "$EXPORT_OPTIONS" ]]; then
+    log_error "未找到导出配置: $EXPORT_OPTIONS"
+    exit 1
+  fi
+
+  log_info "开始导出 IPA..."
+  log_info "Archive: $ARCHIVE_PATH.xcarchive"
+  log_info "ExportOptions: $EXPORT_OPTIONS"
+  log_info "导出目录: $EXPORT_PATH"
+
+  mkdir -p "$EXPORT_PATH"
+
+  xcodebuild \
+    -exportArchive \
+    -archivePath "$ARCHIVE_PATH.xcarchive" \
+    -exportPath "$EXPORT_PATH" \
+    -exportOptionsPlist "$EXPORT_OPTIONS"
+
+  log_success "IPA 导出完成: $EXPORT_PATH"
+}
+
 open_xcode() {
   log_info "打开 Xcode 工程..."
   open -a Xcode "$IOS_PROJECT_PATH"
@@ -219,20 +290,34 @@ run_in_simulator() {
 }
 
 print_summary() {
-  local app_path="$DERIVED_DATA_DIR/Build/Products/${BUILD_CONFIGURATION}-iphonesimulator/${APP_NAME}.app"
-
-  log_success "iOS 编译完成"
-  echo
-  echo "工程路径: $IOS_PROJECT_PATH"
-  echo "构建产物: $app_path"
-  echo "DerivedData: $DERIVED_DATA_DIR"
-  echo
-  echo "说明:"
-  echo "1. 这个脚本读取的是您当前磁盘上的本地代码。"
-  echo "2. 它会先重新构建前端，再由 Xcode 在编译时重新构建 Rust 部分。"
-  echo "3. 它不会自动帮您 git pull，远端最新代码需要您自己先同步。"
-  echo "4. 默认使用 release 编译，运行时直接加载应用内静态前端资源。"
-  echo "5. 编译成功后默认会自动打开 Xcode 工程，可用 --no-open-xcode 关闭。"
+  if [[ "$ARCHIVE_BUILD" -eq 1 ]]; then
+    log_success "iOS Archive 流程完成"
+    echo
+    echo "Archive: $ARCHIVE_PATH.xcarchive"
+    if [[ "$EXPORT_BUILD" -eq 1 ]]; then
+      echo "IPA: $EXPORT_PATH"
+    fi
+    echo
+    echo "后续步骤:"
+    echo "1. 使用 Transporter 上传 IPA 到 App Store Connect"
+    echo "   或运行: xcrun altool --upload-app -f $EXPORT_PATH/*.ipa -t ios"
+    echo "2. 登录 App Store Connect 选择构建版本并提交审核"
+  else
+    local app_path="$DERIVED_DATA_DIR/Build/Products/${BUILD_CONFIGURATION}-iphonesimulator/${APP_NAME}.app"
+    log_success "iOS 编译完成"
+    echo
+    echo "工程路径: $IOS_PROJECT_PATH"
+    echo "构建产物: $app_path"
+    echo "DerivedData: $DERIVED_DATA_DIR"
+    echo
+    echo "说明:"
+    echo "1. 这个脚本读取的是您当前磁盘上的本地代码。"
+    echo "2. 它会先重新构建前端，再由 Xcode 在编译时重新构建 Rust 部分。"
+    echo "3. 它不会自动帮您 git pull，远端最新代码需要您自己先同步。"
+    echo "4. 默认使用 release 编译，运行时直接加载应用内静态前端资源。"
+    echo "5. 编译成功后默认会自动打开 Xcode 工程，可用 --no-open-xcode 关闭。"
+    echo "6. 要构建 App Store 版本，使用 --archive --export 参数。"
+  fi
 }
 
 main() {
@@ -240,14 +325,22 @@ main() {
   sync_ios_project
   build_frontend
   sync_frontend_assets
-  build_ios
 
-  if [[ "$OPEN_XCODE" -eq 1 ]]; then
-    open_xcode
-  fi
+  if [[ "$ARCHIVE_BUILD" -eq 1 ]]; then
+    archive_ios
+    if [[ "$EXPORT_BUILD" -eq 1 ]]; then
+      export_ios
+    fi
+  else
+    build_ios
 
-  if [[ "$RUN_AFTER_BUILD" -eq 1 ]]; then
-    run_in_simulator
+    if [[ "$OPEN_XCODE" -eq 1 ]]; then
+      open_xcode
+    fi
+
+    if [[ "$RUN_AFTER_BUILD" -eq 1 ]]; then
+      run_in_simulator
+    fi
   fi
 
   print_summary
