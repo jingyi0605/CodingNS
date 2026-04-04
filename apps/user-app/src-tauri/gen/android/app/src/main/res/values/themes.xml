@@ -1,0 +1,12 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Base application theme. -->
+    <style name="Theme.app" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="android:windowBackground">@drawable/splash_screen_background</item>
+        <item name="android:windowIsTranslucent">false</item>
+    </style>
+
+    <!-- 启动阶段先交给系统 splash，再回落到应用自己的深色启动背景。 -->
+    <style name="Theme.app.Starting" parent="Theme.app">
+        <item name="android:windowBackground">@drawable/splash_screen_background</item>
+    </style>
+</resources>

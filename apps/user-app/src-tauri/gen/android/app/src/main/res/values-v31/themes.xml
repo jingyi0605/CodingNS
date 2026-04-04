@@ -1,0 +1,8 @@
+<resources>
+    <!-- Android 12+ 先显示系统 splash，再切回应用主题承接自定义启动图。 -->
+    <style name="Theme.app.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/splash_screen_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher_foreground</item>
+        <item name="postSplashScreenTheme">@style/Theme.app</item>
+    </style>
+</resources>
