@@ -413,7 +413,8 @@ export function TerminalPage() {
     () => listTerminalRuntimeOptions(platform.ui.osFamily),
     [platform.ui.osFamily]
   );
-  const isMobileTerminalPage = !platform.isDesktop && !(platform.isWeb && platform.viewportClass === "expanded");
+  // 终端页要和工作台壳保持同一套判定，避免 iPad 横屏还挂着手机单栏逻辑。
+  const isMobileTerminalPage = !platform.isDesktop && platform.isMobile;
   const effectiveSplitDirection: SplitDirection = isMobileTerminalPage ? "single" : splitDirection;
   const effectiveActivePaneId: PaneId = isMobileTerminalPage ? "primary" : activePaneId;
   const effectivePaneBindings = useMemo<TerminalPaneBindings>(() => {

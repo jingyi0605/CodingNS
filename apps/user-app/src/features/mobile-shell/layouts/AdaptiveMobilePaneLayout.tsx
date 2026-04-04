@@ -14,6 +14,7 @@ interface AdaptiveMobilePaneLayoutInput {
   readonly activeEntry: MobileWorkbenchEntry;
   readonly hasNavigationPanel: boolean;
   readonly hasAuxiliaryPanel: boolean;
+  readonly preferCompactLayout?: boolean;
 }
 
 interface AdaptiveMobilePaneLayoutProps extends AdaptiveMobilePaneLayoutInput {
@@ -26,9 +27,10 @@ export function resolveAdaptiveMobilePaneLayout({
   viewportClass,
   activeEntry,
   hasNavigationPanel,
-  hasAuxiliaryPanel
+  hasAuxiliaryPanel,
+  preferCompactLayout = false
 }: AdaptiveMobilePaneLayoutInput): AdaptiveMobilePaneLayoutMode {
-  if (viewportClass === "compact") {
+  if (preferCompactLayout || viewportClass === "compact") {
     return "compact";
   }
 
@@ -51,6 +53,17 @@ export function resolveAdaptiveMobilePaneLayout({
   return "compact";
 }
 
+export function shouldPreferCompactNativeMobileLayout(input: {
+  readonly isNativeMobile: boolean;
+  readonly viewportClass: ViewportClass;
+}) {
+  if (!input.isNativeMobile || input.viewportClass === "expanded" || typeof window === "undefined") {
+    return false;
+  }
+
+  return window.innerHeight > window.innerWidth;
+}
+
 export function shouldDockNavigationPanel(mode: AdaptiveMobilePaneLayoutMode) {
   return mode === "medium-navigation" || mode === "expanded";
 }
@@ -64,6 +77,7 @@ export function AdaptiveMobilePaneLayout({
   activeEntry,
   hasNavigationPanel,
   hasAuxiliaryPanel,
+  preferCompactLayout = false,
   children,
   navigationPanel,
   auxiliaryPanel
@@ -72,7 +86,8 @@ export function AdaptiveMobilePaneLayout({
     viewportClass,
     activeEntry,
     hasNavigationPanel,
-    hasAuxiliaryPanel
+    hasAuxiliaryPanel,
+    preferCompactLayout
   });
   const showNavigationPanel = shouldDockNavigationPanel(mode) && navigationPanel;
   const showAuxiliaryPanel = shouldDockAuxiliaryPanel(mode) && auxiliaryPanel;

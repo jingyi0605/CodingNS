@@ -13,7 +13,7 @@ describe("WorkbenchShellRoute", () => {
     ).toBe("desktop");
   });
 
-  it("web expanded 走桌面壳，web medium 改走移动壳", () => {
+  it("只要进入 expanded 宽屏就走桌面壳，medium 继续走移动壳", () => {
     expect(
       resolveWorkbenchShellMode({
         isDesktop: false,
@@ -29,15 +29,13 @@ describe("WorkbenchShellRoute", () => {
         viewportClass: "medium"
       })
     ).toBe("mobile");
-  });
 
-  it("原生移动 runtime 即使更宽也保留移动壳", () => {
     expect(
       resolveWorkbenchShellMode({
         isDesktop: false,
         isWeb: false,
         viewportClass: "expanded"
       })
-    ).toBe("mobile");
+    ).toBe("desktop");
   });
 });

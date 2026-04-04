@@ -103,6 +103,25 @@ describe("platform-adapter", () => {
     expect(adapter.viewportClass).toBe("compact");
   });
 
+  it("Tauri iPad runtime 在横屏宽度下改走非移动布局", () => {
+    mockNavigator({
+      userAgent:
+        "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Version/17.0 Mobile/15E148 Safari/604.1",
+      platform: "iPad",
+      maxTouchPoints: 5
+    });
+    window.__TAURI_INTERNALS__ = {
+      invoke: vi.fn()
+    };
+
+    const adapter = createPlatformAdapter({ viewportWidth: 1194 });
+
+    expect(adapter.platform).toBe("ios");
+    expect(adapter.isNativeMobile).toBe(true);
+    expect(adapter.viewportClass).toBe("expanded");
+    expect(adapter.isMobile).toBe(false);
+  });
+
   it("Tauri Android runtime 会识别成 android", () => {
     mockNavigator({
       userAgent:

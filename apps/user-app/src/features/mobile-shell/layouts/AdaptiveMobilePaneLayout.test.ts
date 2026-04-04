@@ -43,6 +43,20 @@ describe("AdaptiveMobilePaneLayout", () => {
     expect(shouldDockAuxiliaryPanel(toolsMode)).toBe(true);
   });
 
+  it("原生移动端竖屏即使是 medium，也强制保持单栏", () => {
+    const mode = resolveAdaptiveMobilePaneLayout({
+      viewportClass: "medium",
+      activeEntry: "sessions",
+      hasNavigationPanel: true,
+      hasAuxiliaryPanel: true,
+      preferCompactLayout: true
+    });
+
+    expect(mode).toBe("compact");
+    expect(shouldDockNavigationPanel(mode)).toBe(false);
+    expect(shouldDockAuxiliaryPanel(mode)).toBe(false);
+  });
+
   it("expanded 允许前后双停靠，但不改移动端入口语义", () => {
     const mode = resolveAdaptiveMobilePaneLayout({
       viewportClass: "expanded",

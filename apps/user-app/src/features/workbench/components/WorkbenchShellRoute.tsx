@@ -10,10 +10,11 @@ interface WorkbenchShellRouteInput {
 
 export function resolveWorkbenchShellMode({
   isDesktop,
-  isWeb,
   viewportClass
 }: WorkbenchShellRouteInput): WorkbenchShellMode {
-  if (isDesktop || (isWeb && viewportClass === "expanded")) {
+  // 桌面 runtime 永远保留桌面壳；其余 runtime 只要进入宽屏，就统一走桌面壳。
+  // 这能把 iPad 横屏从“移动壳里塞桌面面板”的混合状态里彻底拉出来。
+  if (isDesktop || viewportClass === "expanded") {
     return "desktop";
   }
 

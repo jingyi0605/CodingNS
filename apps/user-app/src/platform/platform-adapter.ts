@@ -437,12 +437,15 @@ export function createPlatformAdapter(options: PlatformAdapterOptions = {}): Pla
   const platform = resolveRuntimePlatform();
   const viewportClass = resolveViewportClass(options.viewportWidth);
   const isNativeMobile = platform === "ios" || platform === "android";
+  const isMobileViewport = viewportClass !== "expanded";
 
   return {
     platform,
     isDesktop: platform === "desktop",
     isWeb: platform === "web",
-    isMobile: isNativeMobile || viewportClass !== "expanded",
+    // 移动布局只看当前视口，不看设备出身。
+    // 这样 iPad 横屏这类宽屏场景才不会继续混进手机布局分支。
+    isMobile: isMobileViewport,
     isNativeMobile,
     viewportClass,
     ui: createUiProfile(platform),

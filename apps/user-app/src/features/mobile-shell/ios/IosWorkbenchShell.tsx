@@ -15,7 +15,11 @@ import type {
 import { MobileConversationBottomLayerProvider } from "../components/MobileConversationBottomLayerContext";
 import { useMeasuredConversationTabbarHeight } from "../components/useMeasuredConversationTabbarHeight";
 import { useConversationFocusTabbar } from "../components/useConversationFocusTabbar";
-import { AdaptiveMobilePaneLayout, resolveAdaptiveMobilePaneLayout } from "../layouts/AdaptiveMobilePaneLayout";
+import {
+  AdaptiveMobilePaneLayout,
+  resolveAdaptiveMobilePaneLayout,
+  shouldPreferCompactNativeMobileLayout
+} from "../layouts/AdaptiveMobilePaneLayout";
 
 interface IosTabItem {
   readonly key: MobileWorkbenchEntry;
@@ -47,6 +51,10 @@ export function IosWorkbenchShell({
   const tabbarRef = useRef<HTMLElement | null>(null);
   const [composerPortalTarget, setComposerPortalTarget] = useState<HTMLElement | null>(null);
   const isConversationFocus = presentation === "conversation-focus";
+  const preferCompactLayout = shouldPreferCompactNativeMobileLayout({
+    isNativeMobile: platform.isNativeMobile,
+    viewportClass: platform.viewportClass
+  });
   const conversationFocusTabbar = useConversationFocusTabbar({
     enabled: isConversationFocus,
     rootRef: shellRef,
@@ -56,7 +64,8 @@ export function IosWorkbenchShell({
     viewportClass: platform.viewportClass,
     activeEntry,
     hasNavigationPanel: Boolean(navigationPanel),
-    hasAuxiliaryPanel: Boolean(auxiliaryPanel)
+    hasAuxiliaryPanel: Boolean(auxiliaryPanel),
+    preferCompactLayout
   });
   const headerState = resolveMobileToolHeaderState({
     activeEntry,
@@ -198,6 +207,7 @@ export function IosWorkbenchShell({
             activeEntry={activeEntry}
             hasNavigationPanel={Boolean(navigationPanel)}
             hasAuxiliaryPanel={Boolean(auxiliaryPanel)}
+            preferCompactLayout={preferCompactLayout}
             navigationPanel={navigationPanel}
             auxiliaryPanel={auxiliaryPanel}
           >

@@ -1519,9 +1519,15 @@ body {
 .workbench-shell {
   height: 100vh;
   padding: 10px;
+  box-sizing: border-box;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.44), rgba(255, 255, 255, 0.08)),
     var(--app-bg);
+}
+
+.workbench-shell[data-runtime-platform="ios"] {
+  height: 100dvh;
+  padding-top: calc(10px + env(safe-area-inset-top, 0px));
 }
 
 .workbench-body-shell {

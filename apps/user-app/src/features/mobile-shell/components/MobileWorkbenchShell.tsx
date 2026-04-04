@@ -7,7 +7,11 @@ import { t } from "../../../shared/i18n";
 import { AndroidWorkbenchShell } from "../android/AndroidWorkbenchShell";
 import { useH5ViewportState } from "../h5/useH5ViewportState";
 import { IosWorkbenchShell } from "../ios/IosWorkbenchShell";
-import { AdaptiveMobilePaneLayout, resolveAdaptiveMobilePaneLayout } from "../layouts/AdaptiveMobilePaneLayout";
+import {
+  AdaptiveMobilePaneLayout,
+  resolveAdaptiveMobilePaneLayout,
+  shouldPreferCompactNativeMobileLayout
+} from "../layouts/AdaptiveMobilePaneLayout";
 import {
   resolveMobileToolHeaderState,
   resolvePreferredToolsHomeHref
@@ -69,6 +73,10 @@ function BrowserMobileWorkbenchShell({
   const h5ViewportState = useH5ViewportState(platform.platform === "web");
   const hideTabbarForKeyboard = platform.platform === "web" && h5ViewportState.keyboardOpen;
   const isConversationFocus = presentation === "conversation-focus";
+  const preferCompactLayout = shouldPreferCompactNativeMobileLayout({
+    isNativeMobile: platform.isNativeMobile,
+    viewportClass: platform.viewportClass
+  });
   const conversationFocusTabbar = useConversationFocusTabbar({
     enabled: isConversationFocus,
     rootRef: shellRef,
@@ -79,7 +87,8 @@ function BrowserMobileWorkbenchShell({
     viewportClass: platform.viewportClass,
     activeEntry,
     hasNavigationPanel: Boolean(navigationPanel),
-    hasAuxiliaryPanel: Boolean(auxiliaryPanel)
+    hasAuxiliaryPanel: Boolean(auxiliaryPanel),
+    preferCompactLayout
   });
   const headerState = resolveMobileToolHeaderState({
     activeEntry,
@@ -228,6 +237,7 @@ function BrowserMobileWorkbenchShell({
             activeEntry={activeEntry}
             hasNavigationPanel={Boolean(navigationPanel)}
             hasAuxiliaryPanel={Boolean(auxiliaryPanel)}
+            preferCompactLayout={preferCompactLayout}
             navigationPanel={navigationPanel}
             auxiliaryPanel={auxiliaryPanel}
           >

@@ -25,6 +25,7 @@ import {
 } from "../../mobile-shell/components/MobileWorkbenchShell";
 import {
   resolveAdaptiveMobilePaneLayout,
+  shouldPreferCompactNativeMobileLayout,
   shouldDockAuxiliaryPanel,
   shouldDockNavigationPanel
 } from "../../mobile-shell/layouts/AdaptiveMobilePaneLayout";
@@ -4307,11 +4308,16 @@ export function WorkbenchLayout({
         : "workspaces";
   const isMobileConversationFocus =
     isMobileShell && mobileActiveEntry === "sessions" && isSessionDetailRoute(location.pathname);
+  const preferCompactMobilePaneLayout = shouldPreferCompactNativeMobileLayout({
+    isNativeMobile: platform.isNativeMobile,
+    viewportClass: platform.viewportClass
+  });
   const mobilePaneLayout = resolveAdaptiveMobilePaneLayout({
     viewportClass: platform.viewportClass,
     activeEntry: mobileActiveEntry,
     hasNavigationPanel: isMobileShell,
-    hasAuxiliaryPanel: isMobileShell
+    hasAuxiliaryPanel: isMobileShell,
+    preferCompactLayout: preferCompactMobilePaneLayout
   });
   const mobileNavigationDocked = isMobileShell && shouldDockNavigationPanel(mobilePaneLayout);
   const mobileAuxiliaryDocked = isMobileShell && shouldDockAuxiliaryPanel(mobilePaneLayout);
