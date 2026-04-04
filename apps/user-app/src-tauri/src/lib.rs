@@ -1,7 +1,5 @@
 mod config;
 
-use std::io::Write;
-use std::process::{Command, Stdio};
 #[cfg(target_os = "macos")]
 use std::sync::mpsc;
 #[cfg(target_os = "macos")]
@@ -11,6 +9,7 @@ use std::time::Duration;
 use objc2_app_kit::{NSView, NSWindow, NSWindowButton};
 use serde::Serialize;
 use tauri::{AppHandle, Manager, WebviewWindow};
+use tauri_plugin_clipboard_manager::ClipboardExt;
 
 #[cfg(target_os = "android")]
 use std::mem::ManuallyDrop;
@@ -68,8 +67,9 @@ fn get_runtime_info(app: AppHandle) -> DesktopRuntimeInfo {
 }
 
 #[tauri::command]
-fn copy_text(text: String) -> Result<(), String> {
-  copy_text_to_system_clipboard(&text)
+fn copy_text(app: AppHandle, text: String) -> Result<(), String> {
+  // 统一走 Tauri 官方剪贴板能力，避免外部命令返回成功但系统剪贴板没真正更新。
+  app.clipboard().write_text(text).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -112,41 +112,6 @@ fn apply_window_state(window: &WebviewWindow, state: &str) -> Result<(), String>
     _ => Err(format!("不支持的窗口状态: {state}"))
   }
   }
-}
-
-fn copy_text_to_system_clipboard(text: &str) -> Result<(), String> {
-  #[cfg(target_os = "macos")]
-  {
-    return run_clipboard_command("pbcopy", &[], text);
-  }
-
-  #[cfg(target_os = "windows")]
-  {
-    return run_clipboard_command("cmd", &["/C", "clip"], text);
-  }
-
-  #[cfg(all(unix, not(target_os = "macos")))]
-  {
-    let clipboard_commands = [
-      ("wl-copy", Vec::<&str>::new()),
-      ("xclip", vec!["-selection", "clipboard"]),
-      ("xsel", vec!["--clipboard", "--input"])
-    ];
-
-    let mut last_error = None;
-
-    for (command, args) in clipboard_commands {
-      match run_clipboard_command(command, &args, text) {
-        Ok(()) => return Ok(()),
-        Err(error) => last_error = Some(error)
-      }
-    }
-
-    return Err(last_error.unwrap_or_else(|| "当前系统没有可用的剪贴板命令".to_string()));
-  }
-
-  #[allow(unreachable_code)]
-  Err("当前系统暂不支持复制到剪贴板".to_string())
 }
 
 fn build_runtime_info(app: &AppHandle) -> DesktopRuntimeInfo {
@@ -228,37 +193,6 @@ fn round_layout_value(value: f64) -> f64 {
   (value * 100.0).round() / 100.0
 }
 
-fn run_clipboard_command(command: &str, args: &[&str], text: &str) -> Result<(), String> {
-  let mut child = Command::new(command)
-    .args(args)
-    .stdin(Stdio::piped())
-    .stdout(Stdio::null())
-    .stderr(Stdio::piped())
-    .spawn()
-    .map_err(|error| format!("启动剪贴板命令失败: {command}: {error}"))?;
-
-  if let Some(mut stdin) = child.stdin.take() {
-    stdin
-      .write_all(text.as_bytes())
-      .map_err(|error| format!("写入剪贴板命令失败: {command}: {error}"))?;
-  }
-
-  let output = child
-    .wait_with_output()
-    .map_err(|error| format!("等待剪贴板命令失败: {command}: {error}"))?;
-
-  if output.status.success() {
-    return Ok(());
-  }
-
-  let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-  Err(if stderr.is_empty() {
-    format!("剪贴板命令执行失败: {command}")
-  } else {
-    format!("剪贴板命令执行失败: {command}: {stderr}")
-  })
-}
-
 fn perform_platform_haptic_feedback(app: Option<&AppHandle>, kind: &str) -> Result<(), String> {
   #[cfg(target_os = "android")]
   {
@@ -270,6 +204,9 @@ fn perform_platform_haptic_feedback(app: Option<&AppHandle>, kind: &str) -> Resu
   {
     return perform_ios_haptic_feedback(app, kind);
   }
+
+  let _ = app;
+  let _ = kind;
 
   #[allow(unreachable_code)]
   Ok(())
@@ -391,6 +328,7 @@ unsafe fn trigger_ios_haptic_feedback(kind: &str) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
+    .plugin(tauri_plugin_clipboard_manager::init())
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(

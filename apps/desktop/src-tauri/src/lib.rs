@@ -4,9 +4,8 @@ mod updater;
 
 use config::DesktopRuntimeConfig;
 use rfd::FileDialog;
-use std::io::Write;
-use std::process::{Command, Stdio};
 use tauri::{AppHandle, Manager, WebviewWindow};
+use tauri_plugin_clipboard_manager::ClipboardExt;
 use updater::{DesktopReleaseState, DesktopRuntimeInfo, ReleaseManifest, UpdateInstallResult};
 
 #[tauri::command]
@@ -51,8 +50,11 @@ fn show_notification(title: String, body: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn copy_text(text: String) -> Result<(), String> {
-    copy_text_to_system_clipboard(&text)
+fn copy_text(app: AppHandle, text: String) -> Result<(), String> {
+    // 统一走 Tauri 官方剪贴板能力，避免外部命令返回成功但系统剪贴板没真正更新。
+    app.clipboard()
+        .write_text(text)
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -87,72 +89,6 @@ fn apply_window_state(window: &WebviewWindow, state: &str) -> Result<(), String>
     }
 }
 
-fn copy_text_to_system_clipboard(text: &str) -> Result<(), String> {
-    #[cfg(target_os = "macos")]
-    {
-        return run_clipboard_command("pbcopy", &[], text);
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        return run_clipboard_command("cmd", &["/C", "clip"], text);
-    }
-
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        let clipboard_commands = [
-            ("wl-copy", Vec::<&str>::new()),
-            ("xclip", vec!["-selection", "clipboard"]),
-            ("xsel", vec!["--clipboard", "--input"]),
-        ];
-
-        let mut last_error = None;
-
-        for (command, args) in clipboard_commands {
-            match run_clipboard_command(command, &args, text) {
-                Ok(()) => return Ok(()),
-                Err(error) => last_error = Some(error),
-            }
-        }
-
-        return Err(last_error.unwrap_or_else(|| "当前系统没有可用的剪贴板命令".to_string()));
-    }
-
-    #[allow(unreachable_code)]
-    Err("当前系统暂不支持复制到剪贴板".to_string())
-}
-
-fn run_clipboard_command(command: &str, args: &[&str], text: &str) -> Result<(), String> {
-    let mut child = Command::new(command)
-        .args(args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| format!("启动剪贴板命令失败: {command}: {error}"))?;
-
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(text.as_bytes())
-            .map_err(|error| format!("写入剪贴板命令失败: {command}: {error}"))?;
-    }
-
-    let output = child
-        .wait_with_output()
-        .map_err(|error| format!("等待剪贴板命令失败: {command}: {error}"))?;
-
-    if output.status.success() {
-        return Ok(());
-    }
-
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    Err(if stderr.is_empty() {
-        format!("剪贴板命令执行失败: {command}")
-    } else {
-        format!("剪贴板命令执行失败: {command}: {stderr}")
-    })
-}
-
 #[cfg(target_os = "macos")]
 fn configure_macos_window_chrome(app: &tauri::App) -> tauri::Result<()> {
     use tauri::TitleBarStyle;
@@ -169,6 +105,7 @@ fn configure_macos_window_chrome(app: &tauri::App) -> tauri::Result<()> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
             #[cfg(target_os = "macos")]
             configure_macos_window_chrome(app)?;
