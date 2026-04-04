@@ -8,6 +8,7 @@ import {
   supportsRememberPassword
 } from "./remembered-login";
 import type { PlatformAdapter } from "../../../platform/platform-adapter";
+import { createWindowRegistryStore } from "../../../platform/desktop/window-registry";
 
 function createPlatform(
   overrides: Partial<PlatformAdapter> & {
@@ -42,8 +43,17 @@ function createPlatform(
       checkForUpdate: async () => ({ ok: false }),
       installUpdate: async () => ({ ok: false }),
       rollbackToPreviousVersion: async () => ({ ok: false }),
-      pickDirectory: async () => ({ ok: false })
+      pickDirectory: async () => ({ ok: false }),
+      createWindow: async () => ({ ok: false }),
+      closeWindow: async () => ({ ok: false }),
+      focusWindow: async () => ({ ok: false }),
+      listWindows: async () => ({ ok: false }),
+      isWindowOpen: async () => ({ ok: false }),
+      getWindowDescriptor: async () => ({ ok: false }),
+      syncWindowDescriptor: async () => ({ ok: false }),
+      updateWindowBounds: async () => ({ ok: false })
     },
+    windows: createWindowRegistryStore(),
     haptics: {
       supported: false,
       trigger: async () => undefined

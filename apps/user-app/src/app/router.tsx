@@ -11,6 +11,8 @@ import { LoginPage } from "../features/auth/pages/LoginPage";
 import { useAuthSelector } from "../features/auth/store/auth-store";
 import { ConversationPage } from "../features/conversation/pages/ConversationPage";
 import { useWorkbenchShell } from "../features/conversation/components/WorkbenchLayout";
+import { DesktopDetachPreviewPage } from "../features/desktop-window/DesktopDetachPreviewPage";
+import { DesktopWindowPage } from "../features/desktop-window/DesktopWindowPage";
 import { SessionIndexPage } from "../features/mobile-sessions/pages/SessionIndexPage";
 import { ToolFilesPage } from "../features/mobile-tools/ToolFilesPage";
 import { ToolGitPage } from "../features/mobile-tools/ToolGitPage";
@@ -59,9 +61,17 @@ const appRoutes = [
     element: <LoginPage />
   },
   {
+    path: "/desktop-window-preview",
+    element: <DesktopDetachPreviewPage />
+  },
+  {
     path: "/",
     element: <RequireAuth />,
     children: [
+      {
+        path: "desktop-window/:windowId",
+        element: <DesktopWindowPage />
+      },
       {
         element: <WorkbenchShellRoute />,
         children: [

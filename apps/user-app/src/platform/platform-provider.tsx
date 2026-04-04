@@ -1,6 +1,10 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import type { MacOsTitlebarMetrics } from "../config/client-config-types";
+import {
+  DESKTOP_WINDOW_LIFECYCLE_EVENT,
+  type DesktopWindowLifecycleEventPayload
+} from "./desktop/window-events";
 import { createPlatformAdapter, type PlatformAdapter } from "./platform-adapter";
 
 const PlatformContext = createContext<PlatformAdapter | null>(null);
@@ -114,6 +118,53 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
       clearMacOsTitlebarVariables();
     };
   }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlistenWindowLifecycle: (() => void) | null = null;
+
+    if (!adapter.isDesktop || !adapter.bridge.supported) {
+      return () => {
+        disposed = true;
+      };
+    }
+
+    void import("@tauri-apps/api/event")
+      .then(async ({ listen }) => {
+        const unlisten = await listen<DesktopWindowLifecycleEventPayload>(
+          DESKTOP_WINDOW_LIFECYCLE_EVENT,
+          (event) => {
+            const payload = event.payload;
+            const descriptor = payload?.descriptor;
+
+            if (!descriptor?.windowId) {
+              return;
+            }
+
+            adapter.windows.registerDescriptor(descriptor);
+
+            if (payload.isOpen) {
+              adapter.windows.markWindowOpen(descriptor.windowId);
+            } else {
+              adapter.windows.markWindowClosed(descriptor.windowId);
+            }
+          }
+        );
+
+        if (disposed) {
+          unlisten();
+          return;
+        }
+
+        unlistenWindowLifecycle = unlisten;
+      })
+      .catch(() => undefined);
+
+    return () => {
+      disposed = true;
+      unlistenWindowLifecycle?.();
+    };
+  }, [adapter]);
 
   useEffect(() => {
     let disposed = false;

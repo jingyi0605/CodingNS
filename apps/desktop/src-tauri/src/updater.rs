@@ -86,8 +86,7 @@ fn updates_dir(app: &AppHandle) -> Result<PathBuf, String> {
         .app_data_dir()
         .map_err(|error| format!("无法解析桌面数据目录: {error}"))?;
     let updates_dir = data_dir.join("updates");
-    fs::create_dir_all(&updates_dir)
-        .map_err(|error| format!("无法创建更新目录: {error}"))?;
+    fs::create_dir_all(&updates_dir).map_err(|error| format!("无法创建更新目录: {error}"))?;
     Ok(updates_dir)
 }
 
@@ -117,8 +116,7 @@ fn normalize_signature(signature: &str) -> String {
 }
 
 fn sha256_file(path: &Path) -> Result<String, String> {
-    let mut file = fs::File::open(path)
-        .map_err(|error| format!("无法读取更新包: {error}"))?;
+    let mut file = fs::File::open(path).map_err(|error| format!("无法读取更新包: {error}"))?;
     let mut hasher = Sha256::new();
     let mut buffer = [0_u8; 16 * 1024];
 
@@ -158,8 +156,7 @@ fn download_package(app: &AppHandle, manifest: &ReleaseManifest) -> Result<PathB
         .copy_to(&mut bytes)
         .map_err(|error| format!("读取更新包响应失败: {error}"))?;
 
-    fs::write(&target_path, bytes)
-        .map_err(|error| format!("写入更新包失败: {error}"))?;
+    fs::write(&target_path, bytes).map_err(|error| format!("写入更新包失败: {error}"))?;
 
     Ok(target_path)
 }
@@ -215,13 +212,12 @@ pub fn check_for_update(app: &AppHandle, channel: &str) -> Result<DesktopRelease
 pub fn install_update(app: &AppHandle, manifest: ReleaseManifest) -> UpdateInstallResult {
     let current_version = app.package_info().version.to_string();
 
-    match download_package(app, &manifest)
-        .and_then(|package_path| {
-            verify_signature(&manifest, &package_path)?;
-            rollback::save_rollback_state(app, &current_version, &package_path)?;
-            open_release_package(&package_path)?;
-            Ok(package_path)
-        }) {
+    match download_package(app, &manifest).and_then(|package_path| {
+        verify_signature(&manifest, &package_path)?;
+        rollback::save_rollback_state(app, &current_version, &package_path)?;
+        open_release_package(&package_path)?;
+        Ok(package_path)
+    }) {
         Ok(package_path) => UpdateInstallResult {
             ok: true,
             error_code: None,
@@ -285,7 +281,10 @@ fn create_github_client() -> Result<Client, String> {
         .map_err(|error| format!("创建 GitHub 更新检查客户端失败: {error}"))
 }
 
-fn fetch_release_manifest(channel: &str, platform: &str) -> Result<Option<ReleaseManifest>, String> {
+fn fetch_release_manifest(
+    channel: &str,
+    platform: &str,
+) -> Result<Option<ReleaseManifest>, String> {
     let client = create_github_client()?;
     let response = client
         .get(github_releases_api_url())
@@ -311,7 +310,9 @@ fn fetch_release_manifest(channel: &str, platform: &str) -> Result<Option<Releas
         return Ok(None);
     };
 
-    Ok(Some(build_release_manifest(&client, channel, platform, release)))
+    Ok(Some(build_release_manifest(
+        &client, channel, platform, release,
+    )))
 }
 
 fn select_release<'a>(releases: &'a [GitHubRelease], channel: &str) -> Option<&'a GitHubRelease> {
@@ -344,9 +345,15 @@ fn matches_client_release_tag(tag_name: &str) -> bool {
     Version::parse(trimmed.trim_start_matches(['v', 'V'])).is_ok()
 }
 
-fn build_release_manifest(client: &Client, channel: &str, platform: &str, release: &GitHubRelease) -> ReleaseManifest {
+fn build_release_manifest(
+    client: &Client,
+    channel: &str,
+    platform: &str,
+    release: &GitHubRelease,
+) -> ReleaseManifest {
     let package_asset = select_package_asset(platform, &release.assets);
-    let signature = package_asset.and_then(|asset| resolve_release_signature(client, &release.assets, asset));
+    let signature =
+        package_asset.and_then(|asset| resolve_release_signature(client, &release.assets, asset));
 
     ReleaseManifest {
         channel: channel.to_string(),
@@ -376,11 +383,13 @@ fn select_package_asset<'a>(
     platform: &str,
     assets: &'a [GitHubReleaseAsset],
 ) -> Option<&'a GitHubReleaseAsset> {
-    preferred_asset_extensions(platform).iter().find_map(|extension| {
-        assets
-            .iter()
-            .find(|asset| asset.name.to_ascii_lowercase().ends_with(extension))
-    })
+    preferred_asset_extensions(platform)
+        .iter()
+        .find_map(|extension| {
+            assets
+                .iter()
+                .find(|asset| asset.name.to_ascii_lowercase().ends_with(extension))
+        })
 }
 
 fn preferred_asset_extensions(platform: &str) -> &'static [&'static str] {

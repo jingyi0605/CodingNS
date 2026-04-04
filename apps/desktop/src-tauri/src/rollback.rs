@@ -1,6 +1,10 @@
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use std::{fs, path::{Path, PathBuf}, process::Command};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
 use tauri::{AppHandle, Manager};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -17,8 +21,7 @@ fn rollback_state_path(app: &AppHandle) -> Result<PathBuf, String> {
         .app_data_dir()
         .map_err(|error| format!("无法解析桌面数据目录: {error}"))?;
 
-    fs::create_dir_all(&data_dir)
-        .map_err(|error| format!("无法创建桌面数据目录: {error}"))?;
+    fs::create_dir_all(&data_dir).map_err(|error| format!("无法创建桌面数据目录: {error}"))?;
 
     Ok(data_dir.join("desktop-update-rollback.json"))
 }
@@ -38,8 +41,7 @@ pub fn save_rollback_state(
     let payload = serde_json::to_string_pretty(&state)
         .map_err(|error| format!("回退状态序列化失败: {error}"))?;
 
-    fs::write(path, payload)
-        .map_err(|error| format!("写入回退状态失败: {error}"))?;
+    fs::write(path, payload).map_err(|error| format!("写入回退状态失败: {error}"))?;
 
     Ok(())
 }
@@ -51,8 +53,7 @@ fn load_rollback_state(app: &AppHandle) -> Result<RollbackState, String> {
         return Err("当前没有可回退的桌面版本".to_string());
     }
 
-    let raw = fs::read_to_string(path)
-        .map_err(|error| format!("读取回退状态失败: {error}"))?;
+    let raw = fs::read_to_string(path).map_err(|error| format!("读取回退状态失败: {error}"))?;
 
     serde_json::from_str::<RollbackState>(&raw)
         .map_err(|error| format!("回退状态格式无效: {error}"))

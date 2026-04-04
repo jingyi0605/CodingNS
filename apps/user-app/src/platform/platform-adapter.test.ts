@@ -176,4 +176,103 @@ describe("platform-adapter", () => {
     expect(adapter.haptics.supported).toBe(true);
     expect(vibrate).toHaveBeenCalledTimes(1);
   });
+
+  it("多个 adapter 实例共享同一份窗口注册表", () => {
+    const firstAdapter = createPlatformAdapter({ viewportWidth: 1280 });
+    const secondAdapter = createPlatformAdapter({ viewportWidth: 390 });
+    firstAdapter.windows.clear();
+
+    firstAdapter.windows.registerDescriptor({
+      windowId: "window-shared-1",
+      kind: "files",
+      workspaceId: "workspace-1",
+      sessionId: null,
+      mode: "external",
+      bounds: {
+        x: null,
+        y: null,
+        width: 1200,
+        height: 780,
+        minWidth: 720,
+        minHeight: 480
+      },
+      focusOwner: null
+    });
+
+    expect(secondAdapter.windows.getDescriptor("window-shared-1")).not.toBeNull();
+    firstAdapter.windows.clear();
+  });
+
+  it("桌面端 bridge 会把多窗口命令转给 Tauri", async () => {
+    const invoke = vi.fn().mockResolvedValue(undefined);
+    mockNavigator({
+      userAgent:
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+      platform: "MacIntel"
+    });
+    window.__TAURI_INTERNALS__ = { invoke };
+
+    const adapter = createPlatformAdapter({ viewportWidth: 1280 });
+    const descriptor = {
+      windowId: "window-files-1",
+      kind: "files" as const,
+      workspaceId: "workspace-1",
+      sessionId: null,
+      mode: "external" as const,
+      bounds: {
+        x: 100,
+        y: 120,
+        width: 1440,
+        height: 900,
+        minWidth: 720,
+        minHeight: 480
+      },
+      focusOwner: null
+    };
+
+    await adapter.bridge.createWindow(descriptor);
+    await adapter.bridge.focusWindow("window-files-1");
+    await adapter.bridge.closeWindow("window-files-1");
+    await adapter.bridge.syncWindowDescriptor(descriptor);
+    await adapter.bridge.updateWindowBounds("window-files-1", descriptor.bounds);
+    await adapter.bridge.listWindows();
+    await adapter.bridge.isWindowOpen("window-files-1");
+
+    expect(invoke).toHaveBeenNthCalledWith(1, "create_window", { descriptor });
+    expect(invoke).toHaveBeenNthCalledWith(2, "focus_window", {
+      windowId: "window-files-1"
+    });
+    expect(invoke).toHaveBeenNthCalledWith(3, "close_window", {
+      windowId: "window-files-1"
+    });
+    expect(invoke).toHaveBeenNthCalledWith(4, "sync_window_descriptor", { descriptor });
+    expect(invoke).toHaveBeenNthCalledWith(5, "update_window_bounds", {
+      windowId: "window-files-1",
+      bounds: descriptor.bounds
+    });
+    expect(invoke).toHaveBeenNthCalledWith(6, "list_windows", undefined);
+    expect(invoke).toHaveBeenNthCalledWith(7, "is_window_open", {
+      windowId: "window-files-1"
+    });
+  });
+
+  it("getWindowDescriptor 未传 windowId 时会读取当前窗口 descriptor", async () => {
+    const invoke = vi.fn().mockResolvedValue(undefined);
+    mockNavigator({
+      userAgent:
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+      platform: "MacIntel"
+    });
+    window.__TAURI_INTERNALS__ = { invoke };
+
+    const adapter = createPlatformAdapter({ viewportWidth: 1280 });
+
+    await adapter.bridge.getWindowDescriptor();
+    await adapter.bridge.getWindowDescriptor("window-files-1");
+
+    expect(invoke).toHaveBeenNthCalledWith(1, "get_window_descriptor", undefined);
+    expect(invoke).toHaveBeenNthCalledWith(2, "get_window_descriptor", {
+      windowId: "window-files-1"
+    });
+  });
 });

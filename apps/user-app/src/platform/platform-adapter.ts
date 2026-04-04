@@ -9,6 +9,11 @@ import type {
   ReleaseManifest,
   RuntimePlatform
 } from "../config/client-config-types";
+import type { WindowBounds, WindowDescriptor } from "./desktop/window-descriptor";
+import {
+  getSharedWindowRegistryStore,
+  type WindowRegistryApi
+} from "./desktop/window-registry";
 
 declare global {
   interface Window {
@@ -44,6 +49,14 @@ export interface DesktopShellBridge {
   installUpdate(manifest: ReleaseManifest): Promise<DesktopUpdateInstallResult>;
   rollbackToPreviousVersion(): Promise<DesktopBridgeResult>;
   pickDirectory(): Promise<DesktopBridgeResult<string | null>>;
+  createWindow(descriptor: WindowDescriptor): Promise<DesktopBridgeResult>;
+  closeWindow(windowId: string): Promise<DesktopBridgeResult>;
+  focusWindow(windowId: string): Promise<DesktopBridgeResult>;
+  listWindows(): Promise<DesktopBridgeResult<WindowDescriptor[]>>;
+  isWindowOpen(windowId: string): Promise<DesktopBridgeResult<boolean>>;
+  getWindowDescriptor(windowId?: string): Promise<DesktopBridgeResult<WindowDescriptor>>;
+  syncWindowDescriptor(descriptor: WindowDescriptor): Promise<DesktopBridgeResult>;
+  updateWindowBounds(windowId: string, bounds: WindowBounds): Promise<DesktopBridgeResult>;
 }
 
 export interface PlatformHapticsBridge {
@@ -60,12 +73,15 @@ export interface PlatformAdapter {
   readonly viewportClass: ViewportClass;
   readonly ui: PlatformUiProfile;
   readonly bridge: DesktopShellBridge;
+  readonly windows: WindowRegistryApi;
   readonly haptics: PlatformHapticsBridge;
 }
 
 interface PlatformAdapterOptions {
   readonly viewportWidth?: number;
 }
+
+const sharedWindowRegistryStore = getSharedWindowRegistryStore();
 
 function isTauriRuntime(): boolean {
   return typeof window !== "undefined" && typeof window.__TAURI_INTERNALS__ !== "undefined";
@@ -325,6 +341,38 @@ class WebDesktopShellBridge implements DesktopShellBridge {
   pickDirectory(): Promise<DesktopBridgeResult<string | null>> {
     return Promise.resolve(unsupportedResult("当前不是桌面端运行环境。"));
   }
+
+  createWindow(): Promise<DesktopBridgeResult> {
+    return Promise.resolve(unsupportedResult("当前不是桌面端运行环境。"));
+  }
+
+  closeWindow(): Promise<DesktopBridgeResult> {
+    return Promise.resolve(unsupportedResult("当前不是桌面端运行环境。"));
+  }
+
+  focusWindow(): Promise<DesktopBridgeResult> {
+    return Promise.resolve(unsupportedResult("当前不是桌面端运行环境。"));
+  }
+
+  listWindows(): Promise<DesktopBridgeResult<WindowDescriptor[]>> {
+    return Promise.resolve(unsupportedResult("当前不是桌面端运行环境。"));
+  }
+
+  isWindowOpen(): Promise<DesktopBridgeResult<boolean>> {
+    return Promise.resolve(unsupportedResult("当前不是桌面端运行环境。"));
+  }
+
+  getWindowDescriptor(): Promise<DesktopBridgeResult<WindowDescriptor>> {
+    return Promise.resolve(unsupportedResult("当前不是桌面端运行环境。"));
+  }
+
+  syncWindowDescriptor(): Promise<DesktopBridgeResult> {
+    return Promise.resolve(unsupportedResult("当前不是桌面端运行环境。"));
+  }
+
+  updateWindowBounds(): Promise<DesktopBridgeResult> {
+    return Promise.resolve(unsupportedResult("当前不是桌面端运行环境。"));
+  }
 }
 
 class WebHapticsBridge implements PlatformHapticsBridge {
@@ -399,6 +447,40 @@ class TauriDesktopShellBridge implements DesktopShellBridge {
   pickDirectory(): Promise<DesktopBridgeResult<string | null>> {
     return invokeDesktopCommand("pick_directory");
   }
+
+  createWindow(descriptor: WindowDescriptor): Promise<DesktopBridgeResult> {
+    return invokeDesktopCommand("create_window", { descriptor });
+  }
+
+  closeWindow(windowId: string): Promise<DesktopBridgeResult> {
+    return invokeDesktopCommand("close_window", { windowId });
+  }
+
+  focusWindow(windowId: string): Promise<DesktopBridgeResult> {
+    return invokeDesktopCommand("focus_window", { windowId });
+  }
+
+  listWindows(): Promise<DesktopBridgeResult<WindowDescriptor[]>> {
+    return invokeDesktopCommand("list_windows");
+  }
+
+  isWindowOpen(windowId: string): Promise<DesktopBridgeResult<boolean>> {
+    return invokeDesktopCommand("is_window_open", { windowId });
+  }
+
+  getWindowDescriptor(windowId?: string): Promise<DesktopBridgeResult<WindowDescriptor>> {
+    return typeof windowId === "string"
+      ? invokeDesktopCommand("get_window_descriptor", { windowId })
+      : invokeDesktopCommand("get_window_descriptor");
+  }
+
+  syncWindowDescriptor(descriptor: WindowDescriptor): Promise<DesktopBridgeResult> {
+    return invokeDesktopCommand("sync_window_descriptor", { descriptor });
+  }
+
+  updateWindowBounds(windowId: string, bounds: WindowBounds): Promise<DesktopBridgeResult> {
+    return invokeDesktopCommand("update_window_bounds", { windowId, bounds });
+  }
 }
 
 class TauriMobileHapticsBridge implements PlatformHapticsBridge {
@@ -450,6 +532,7 @@ export function createPlatformAdapter(options: PlatformAdapterOptions = {}): Pla
     viewportClass,
     ui: createUiProfile(platform),
     bridge: platform === "desktop" ? new TauriDesktopShellBridge() : new WebDesktopShellBridge(),
+    windows: sharedWindowRegistryStore,
     haptics: isNativeMobile ? new TauriMobileHapticsBridge() : new WebHapticsBridge()
   };
 }
