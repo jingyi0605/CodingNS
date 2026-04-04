@@ -2,4 +2,5 @@
 val implementation by configurations
 dependencies {
   implementation(project(":tauri-android"))
+  implementation(project(":tauri-plugin-clipboard-manager"))
 }

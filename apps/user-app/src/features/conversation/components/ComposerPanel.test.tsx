@@ -647,9 +647,10 @@ describe("ComposerPanel", () => {
       screen.getByRole("dialog", { name: t("conversation.attachmentSourceSheetTitle") })
     ).toBeInTheDocument();
 
-    const takePhotoOption = screen.getByText(t("conversation.attachmentTakePhoto")).closest("label");
-    expect(takePhotoOption).not.toBeNull();
-    fireEvent.click(takePhotoOption!);
+    const takePhotoOption = screen.getByRole("button", {
+      name: t("conversation.attachmentTakePhoto")
+    });
+    fireEvent.click(takePhotoOption);
 
     await waitFor(() => {
       expect(cameraClickSpy).toHaveBeenCalledTimes(1);
@@ -685,6 +686,48 @@ describe("ComposerPanel", () => {
     fireEvent.click(attachTrigger);
 
     expect(libraryClickSpy).toHaveBeenCalledTimes(1);
+    expect(
+      screen.queryByRole("dialog", { name: t("conversation.attachmentSourceSheetTitle") })
+    ).not.toBeInTheDocument();
+  });
+
+  it("原生移动端点击从相册选择会直接触发相册输入", async () => {
+    platformMock.platform = "android";
+    platformMock.isWeb = false;
+    platformMock.isMobile = true;
+    platformMock.isNativeMobile = true;
+    platformMock.viewportClass = "compact";
+    platformMock.ui.osFamily = "android";
+
+    const { container } = render(
+      <ComposerPanel
+        capabilities={createCapabilities({ supportsAttachments: true })}
+        isSubmitting={false}
+        onSend={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    const libraryInput = container.querySelector(
+      'input[type="file"][accept="image/*"]:not([capture])'
+    ) as HTMLInputElement;
+    const libraryClickSpy = vi.fn();
+    libraryInput.addEventListener("click", libraryClickSpy);
+
+    fireEvent.click(screen.getByLabelText(t("conversation.attachFiles")));
+
+    expect(
+      screen.getByRole("dialog", { name: t("conversation.attachmentSourceSheetTitle") })
+    ).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: t("conversation.attachmentChooseFromLibrary")
+      })
+    );
+
+    await waitFor(() => {
+      expect(libraryClickSpy).toHaveBeenCalledTimes(1);
+    });
     expect(
       screen.queryByRole("dialog", { name: t("conversation.attachmentSourceSheetTitle") })
     ).not.toBeInTheDocument();

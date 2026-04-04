@@ -560,11 +560,16 @@ export function ComposerPanel({
     event.target.value = "";
   }, [mergeAttachments]);
 
-  const handleAttachmentSheetOptionClick = useCallback(() => {
+  const triggerNativeAttachmentInput = useCallback((target: "camera" | "library") => {
     if (!attachmentDecision.allowed || inRunSendBlocked) {
       return;
     }
 
+    const input = target === "camera" ? cameraInputRef.current : libraryInputRef.current;
+
+    // 原生移动端不要再依赖 label -> input 的默认行为。
+    // 那套写法在 WebView 里很容易被弹层关闭时机吞掉，导致系统选择器和权限申请都不触发。
+    openFileInput(input);
     setAttachmentSheetOpen(false);
   }, [attachmentDecision.allowed, inRunSendBlocked]);
 
@@ -1413,11 +1418,9 @@ export function ComposerPanel({
       </WorkbenchModal>
       <AttachmentSourceSheet
         open={attachmentSheetOpen && platform.isNativeMobile}
-        cameraInputId={cameraInputId}
-        libraryInputId={libraryInputId}
         onClose={() => setAttachmentSheetOpen(false)}
-        onSelectCamera={handleAttachmentSheetOptionClick}
-        onSelectLibrary={handleAttachmentSheetOptionClick}
+        onSelectCamera={() => triggerNativeAttachmentInput("camera")}
+        onSelectLibrary={() => triggerNativeAttachmentInput("library")}
       />
     </section>
   );
@@ -1427,15 +1430,11 @@ export function ComposerPanel({
 
 function AttachmentSourceSheet({
   open,
-  cameraInputId,
-  libraryInputId,
   onClose,
   onSelectCamera,
   onSelectLibrary
 }: {
   open: boolean;
-  cameraInputId: string;
-  libraryInputId: string;
   onClose: () => void;
   onSelectCamera: () => void;
   onSelectLibrary: () => void;
@@ -1460,8 +1459,8 @@ function AttachmentSourceSheet({
           </div>
 
           <div className="mobile-workspace-home-group composer-attachment-sheet-actions">
-            <label
-              htmlFor={cameraInputId}
+            <button
+              type="button"
               className="mobile-workspace-home-row composer-attachment-sheet-option"
               aria-label={t("conversation.attachmentTakePhoto")}
               onClick={onSelectCamera}
@@ -1471,9 +1470,9 @@ function AttachmentSourceSheet({
                 <span>{t("conversation.attachmentTakePhotoHint")}</span>
               </span>
               <CameraIcon />
-            </label>
-            <label
-              htmlFor={libraryInputId}
+            </button>
+            <button
+              type="button"
               className="mobile-workspace-home-row composer-attachment-sheet-option"
               aria-label={t("conversation.attachmentChooseFromLibrary")}
               onClick={onSelectLibrary}
@@ -1483,7 +1482,7 @@ function AttachmentSourceSheet({
                 <span>{t("conversation.attachmentChooseFromLibraryHint")}</span>
               </span>
               <LibraryIcon />
-            </label>
+            </button>
           </div>
         </div>
         <button type="button" className="ios-action-sheet-cancel" onClick={onClose}>
