@@ -64,6 +64,7 @@ const {
         getLine: () => null;
       };
     };
+    renderedContent: string;
     triggerScroll: (viewportY: number) => void;
     triggerWheel: (deltaY: number, deltaMode?: number) => boolean;
   }>,
@@ -198,6 +199,7 @@ vi.mock("@xterm/xterm", () => ({
   Terminal: class MockTerminal {
     cols = 120;
     rows = 30;
+    renderedContent = "";
     options = {
       fontSize: 14
     };
@@ -260,6 +262,8 @@ vi.mock("@xterm/xterm", () => ({
     }
 
     write(_content: string, callback?: () => void) {
+      this.renderedContent += _content;
+      this.buffer.active.baseY = Math.max(0, this.renderedContent.split("\r\n").length - 2);
       callback?.();
     }
 
@@ -268,10 +272,16 @@ vi.mock("@xterm/xterm", () => ({
     }
 
     reset() {
+      this.renderedContent = "";
       return undefined;
     }
 
     scrollToLine() {
+      return undefined;
+    }
+
+    scrollToBottom() {
+      this.buffer.active.viewportY = this.buffer.active.baseY;
       return undefined;
     }
 

@@ -29,7 +29,9 @@ import {
   resolveWindowsPersistentRuntimeType
 } from "./terminal-shell.js";
 import type { TerminalHistoryPageDto } from "./terminal-history.js";
-import { captureTmuxPaneContent } from "./runtime/adapters/tmux-runtime-adapter.js";
+import {
+  captureTmuxPaneContent
+} from "./runtime/adapters/tmux-runtime-adapter.js";
 import { isConptyRuntimeType } from "./runtime/conpty-runtime-shared.js";
 import { TerminalLogFileStore } from "./runtime/terminal-log-file-store.js";
 import { TerminalLogSpooler } from "./runtime/terminal-log-spooler.js";
@@ -499,8 +501,8 @@ export class TerminalService extends EventEmitter {
       const current = await this.ensureTerminalAttachedForSubscription(terminalId);
       const backfill = this.outputBuffer.readSince(terminalId, lastCursor);
 
-      void callbacks.onStatus(current);
-      void callbacks.onBackfill(backfill);
+      await callbacks.onStatus(current);
+      await callbacks.onBackfill(backfill);
     } catch (error) {
       this.off("output", outputListener);
       this.off("status", statusListener);

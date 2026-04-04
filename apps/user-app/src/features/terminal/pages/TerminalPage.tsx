@@ -82,6 +82,8 @@ interface TerminalViewportRuntime {
   restoredFromSnapshot: boolean;
   focus: () => void;
   reflow: () => void;
+  revealLatest: () => void;
+  shouldAutoRevealLatest: () => boolean;
   prependHistory: (
     content: string,
     anchorLine?: number,
@@ -322,7 +324,13 @@ export function TerminalPage() {
         ?? ""
       );
     },
-    [currentWorkspace, routeWorkspaceId, selectedWorkspaceId, shellCurrentWorkspace, workspaces]
+    [
+      currentWorkspace,
+      routeWorkspaceId,
+      selectedWorkspaceId,
+      shellCurrentWorkspace,
+      workspaces
+    ]
   );
   const mobileHeaderWorkspace = useMemo(
     () =>
@@ -699,6 +707,20 @@ export function TerminalPage() {
 
     setPinnedTerminalIds(readPinnedTerminalIds(selectedWorkspaceId));
   }, [selectedWorkspaceId]);
+
+  useEffect(() => {
+    if (activeTerminalId || terminals.length === 0) {
+      return;
+    }
+
+    const fallbackTerminalId = pickBestTerminalId(terminals);
+
+    if (!fallbackTerminalId) {
+      return;
+    }
+
+    bindTerminalToPane(fallbackTerminalId, "primary");
+  }, [activeTerminalId, terminals]);
 
   useEffect(() => {
     persistTerminalZoomScale(zoomScale);
@@ -1871,33 +1893,35 @@ export function TerminalPage() {
                           }}
                         >
                           <span className="terminal-tab-name">
-                            <span
-                              className="terminal-tab-status-dot"
-                              data-status={indicatorStatus}
-                              aria-hidden="true"
-                            />
-                            {isPinned ? <span className="terminal-tab-pin-indicator">•</span> : null}
-                            <span className="terminal-tab-name-text">{terminal.name}</span>
-                            <span
-                              className="terminal-tab-runtime"
-                          title={getTerminalRuntimeLabel(terminal.runtimeType, platform.ui.osFamily)}
-                            >
-                          {getTerminalRuntimeShortLabel(terminal.runtimeType, platform.ui.osFamily)}
-                            </span>
-                            {pendingMutation ? (
+                            <>
                               <span
-                                className="terminal-tab-operation"
-                                data-operation={pendingMutation}
+                                className="terminal-tab-status-dot"
+                                data-status={indicatorStatus}
+                                aria-hidden="true"
+                              />
+                              {isPinned ? <span className="terminal-tab-pin-indicator">•</span> : null}
+                              <span className="terminal-tab-name-text">{terminal.name}</span>
+                              <span
+                                className="terminal-tab-runtime"
+                                title={getTerminalRuntimeLabel(terminal.runtimeType, platform.ui.osFamily)}
                               >
-                                <span
-                                  className="terminal-tab-operation-spinner"
-                                  aria-hidden="true"
-                                />
-                                {pendingMutation === "closing"
-                                  ? t("terminal.closePendingBadge")
-                                  : t("terminal.deletePendingBadge")}
+                                {getTerminalRuntimeShortLabel(terminal.runtimeType, platform.ui.osFamily)}
                               </span>
-                            ) : null}
+                              {pendingMutation ? (
+                                <span
+                                  className="terminal-tab-operation"
+                                  data-operation={pendingMutation}
+                                >
+                                  <span
+                                    className="terminal-tab-operation-spinner"
+                                    aria-hidden="true"
+                                  />
+                                  {pendingMutation === "closing"
+                                    ? t("terminal.closePendingBadge")
+                                    : t("terminal.deletePendingBadge")}
+                                </span>
+                              ) : null}
+                            </>
                           </span>
                         </button>
                         <button
@@ -3176,6 +3200,8 @@ function TerminalWorkspacePane({
   const loadingOlderHistoryRef = useRef(false);
   const activeRecoveryStateRef = useRef<"idle_closed" | null>(null);
   const activeTerminalStatusRef = useRef<TerminalDto["status"] | null>(terminal?.status ?? null);
+  const initialBackfillAppliedRef = useRef(false);
+  const pendingLiveOutputRef = useRef<TerminalOutputChunkDto[]>([]);
   const activePaneRef = useRef(active);
   const useKeyboardFallback = !isMobileLayout;
 
@@ -3408,6 +3434,8 @@ function TerminalWorkspacePane({
       nextHistoryBeforeSeqRef.current = null;
       hasOlderHistoryRef.current = true;
       loadingOlderHistoryRef.current = false;
+      initialBackfillAppliedRef.current = false;
+      pendingLiveOutputRef.current = [];
       return;
     }
 
@@ -3422,6 +3450,8 @@ function TerminalWorkspacePane({
         ? true
         : (persistedViewState?.historyHasOlder ?? true);
     loadingOlderHistoryRef.current = false;
+    initialBackfillAppliedRef.current = false;
+    pendingLiveOutputRef.current = [];
 
     const client = new TerminalRealtimeClient({
       terminalId: terminal.id,
@@ -3443,27 +3473,50 @@ function TerminalWorkspacePane({
       },
       onBackfill: (event) => {
         const runtime = viewportRuntimeRef.current;
+        const orderedChunks = sortTerminalChunksByCursor(event.chunks);
+        const shouldRevealLatest = runtime?.shouldAutoRevealLatest();
 
         if (runtime) {
           if (event.cursorReset) {
-            replaceTerminalChunks(runtime.terminal, event.chunks);
+            replaceTerminalChunks(runtime.terminal, orderedChunks);
             oldestLoadedSeqRef.current = null;
           } else if (runtime.restoredFromSnapshot) {
-            appendTerminalChunks(runtime.terminal, event.chunks);
+            appendTerminalChunks(runtime.terminal, orderedChunks);
           } else {
-            replaceTerminalChunks(runtime.terminal, event.chunks);
+            replaceTerminalChunks(runtime.terminal, orderedChunks);
             oldestLoadedSeqRef.current = null;
+          }
+
+          if (shouldRevealLatest) {
+            runtime.revealLatest();
           }
 
         }
 
-        if (event.chunks.length > 0) {
-          updateOldestLoadedSeq(event.chunks[0]?.cursor);
+        initialBackfillAppliedRef.current = true;
+
+        if (orderedChunks.length > 0) {
+          updateOldestLoadedSeq(orderedChunks[0]?.cursor);
         }
 
         const nextCursor = event.latestCursor ?? activeCursorRef.current;
         activeCursorRef.current = nextCursor;
         runtime?.scheduleCursorPersist(nextCursor);
+
+        if (runtime && pendingLiveOutputRef.current.length > 0) {
+          const bufferedChunks = filterTerminalChunksAfterCursor(
+            pendingLiveOutputRef.current,
+            event.latestCursor
+          );
+          pendingLiveOutputRef.current = [];
+
+          if (bufferedChunks.length > 0) {
+            appendTerminalChunks(runtime.terminal, bufferedChunks);
+            const latestBufferedCursor = bufferedChunks.at(-1)?.cursor ?? nextCursor;
+            activeCursorRef.current = latestBufferedCursor;
+            runtime.scheduleCursorPersist(latestBufferedCursor);
+          }
+        }
 
         if (activeRecoveryStateRef.current === "idle_closed") {
           notifyTerminal(t("terminal.recoveryIdleClosed"), "warning");
@@ -3484,6 +3537,16 @@ function TerminalWorkspacePane({
       },
       onOutput: (event) => {
         const runtime = viewportRuntimeRef.current;
+        const shouldBufferOutputBeforeInitialBackfill = !initialBackfillAppliedRef.current;
+        const shouldRevealLatest = runtime?.shouldAutoRevealLatest();
+
+        if (shouldBufferOutputBeforeInitialBackfill) {
+          pendingLiveOutputRef.current = [...pendingLiveOutputRef.current, event.chunk];
+          activeCursorRef.current = event.chunk.cursor;
+          runtime?.scheduleCursorPersist(event.chunk.cursor);
+          return;
+        }
+
         if (runtime && isTerminalDebugEnabled()) {
           const renderStartedAtMs = terminalDebugNowMs();
           runtime.terminal.write(event.chunk.content, () => {
@@ -3496,6 +3559,10 @@ function TerminalWorkspacePane({
           });
         } else {
           runtime?.terminal.write(event.chunk.content);
+        }
+
+        if (shouldRevealLatest) {
+          runtime?.revealLatest();
         }
         activeCursorRef.current = event.chunk.cursor;
         updateOldestLoadedSeq(event.chunk.cursor);
@@ -3548,10 +3615,13 @@ function TerminalWorkspacePane({
     });
 
     realtimeClientRef.current = client;
+
     client.start();
 
     return () => {
       client.close();
+      initialBackfillAppliedRef.current = false;
+      pendingLiveOutputRef.current = [];
       onConnectionChange(paneId, "closed");
     };
   }, [
@@ -3563,6 +3633,7 @@ function TerminalWorkspacePane({
     onUnauthorized,
     paneId,
     terminal?.id,
+    terminal?.runtimeType,
     updateOldestLoadedSeq
   ]);
 
@@ -4235,6 +4306,14 @@ function createTerminalViewportRuntime(input: {
     lastFittedRows = terminal.rows;
   }
 
+  function revealLatest(): void {
+    scrollTerminalToBottom(terminal);
+  }
+
+  function shouldAutoRevealLatest(): boolean {
+    return isTerminalViewportNearBottom(terminal);
+  }
+
   function applyTheme(): void {
     const nextTheme = readTerminalVisualTheme();
     terminal.options.theme = nextTheme;
@@ -4250,6 +4329,8 @@ function createTerminalViewportRuntime(input: {
     reflow: () => {
       fitToContainer();
     },
+    revealLatest,
+    shouldAutoRevealLatest,
     prependHistory: async (
       content: string,
       anchorLine = countTerminalPlainTextLines(content),
@@ -4357,21 +4438,90 @@ function buildPersistedTerminalViewState(
 }
 
 function appendTerminalChunks(terminal: Terminal, chunks: TerminalOutputChunkDto[]): void {
-  if (chunks.length === 0) {
+  const orderedChunks = sortTerminalChunksByCursor(chunks);
+
+  if (orderedChunks.length === 0) {
     return;
   }
 
-  terminal.write(chunks.map((chunk) => chunk.content).join(""));
+  terminal.write(orderedChunks.map((chunk) => chunk.content).join(""));
 }
 
 function replaceTerminalChunks(terminal: Terminal, chunks: TerminalOutputChunkDto[]): void {
   terminal.reset();
 
-  if (chunks.length === 0) {
+  const orderedChunks = sortTerminalChunksByCursor(chunks);
+
+  if (orderedChunks.length === 0) {
     return;
   }
 
-  terminal.write(chunks.map((chunk) => chunk.content).join(""));
+  terminal.write(orderedChunks.map((chunk) => chunk.content).join(""));
+}
+
+function sortTerminalChunksByCursor(chunks: TerminalOutputChunkDto[]): TerminalOutputChunkDto[] {
+  if (chunks.length < 2) {
+    return chunks;
+  }
+
+  const indexedChunks = chunks.map((chunk, index) => ({
+    chunk,
+    index,
+    cursor: Number(chunk.cursor)
+  }));
+
+  if (indexedChunks.some((item) => !Number.isFinite(item.cursor))) {
+    return chunks;
+  }
+
+  return [...indexedChunks]
+    .sort((left, right) => {
+      if (left.cursor === right.cursor) {
+        return left.index - right.index;
+      }
+
+      return left.cursor - right.cursor;
+    })
+    .map((item) => item.chunk);
+}
+
+function filterTerminalChunksAfterCursor(
+  chunks: TerminalOutputChunkDto[],
+  cursor: string | null
+): TerminalOutputChunkDto[] {
+  const orderedChunks = sortTerminalChunksByCursor(chunks);
+
+  if (!cursor) {
+    return orderedChunks;
+  }
+
+  const numericCursor = Number(cursor);
+
+  if (!Number.isFinite(numericCursor)) {
+    return orderedChunks;
+  }
+
+  return orderedChunks.filter((chunk) => {
+    const chunkCursor = Number(chunk.cursor);
+    return !Number.isFinite(chunkCursor) || chunkCursor > numericCursor;
+  });
+}
+
+function scrollTerminalToBottom(terminal: Terminal): void {
+  const terminalWithOptionalScrollToBottom = terminal as Terminal & {
+    scrollToBottom?: () => void;
+  };
+
+  if (typeof terminalWithOptionalScrollToBottom.scrollToBottom === "function") {
+    terminalWithOptionalScrollToBottom.scrollToBottom();
+    return;
+  }
+
+  terminal.scrollToLine(terminal.buffer.active.baseY);
+}
+
+function isTerminalViewportNearBottom(terminal: Terminal, slackLines = 1): boolean {
+  return terminal.buffer.active.baseY - terminal.buffer.active.viewportY <= slackLines;
 }
 
 function hasUsableContainerSize(container: HTMLDivElement): boolean {
