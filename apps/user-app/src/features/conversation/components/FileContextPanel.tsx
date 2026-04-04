@@ -6,6 +6,10 @@ import { logPerfDebug } from "../../../shared/debug/perf-debug";
 import { t } from "../../../shared/i18n";
 import { ApiError } from "../../../shared/network/api-error";
 import { useToast } from "../../../shared/toast";
+import type {
+  FileTreeRealtimeSnapshotDto,
+  GitRealtimeSnapshotDto
+} from "../../../network/workbench-realtime-client";
 import {
   downloadFile,
   operateFile,
@@ -15,7 +19,11 @@ import {
 } from "../api/file-context-api";
 import { getGitDiff, type GitChangeItemDto } from "../api/git-api";
 import { usePlatform } from "../../../platform/platform-provider";
-import { useWorkbenchShell, type WorkbenchFileRevealRequest } from "./WorkbenchLayout";
+import {
+  useWorkbenchShell,
+  type WorkbenchFileRevealRequest,
+  type WorkspaceSessionGroup
+} from "./WorkbenchLayout";
 import { FileViewerModal } from "./FileViewerModal";
 import {
   resolveFileTreeIconKind,
@@ -35,6 +43,20 @@ interface FileContextPanelProps {
   workspaceId: string | null | undefined;
   hideHeading?: boolean;
   externalRevealRequest?: WorkbenchFileRevealRequest | null;
+  externalWindowMode?: boolean;
+  workbenchShellOverrides?: FileContextPanelWorkbenchShellOverrides;
+}
+
+export interface FileContextPanelWorkbenchShellOverrides {
+  navigationGroups?: WorkspaceSessionGroup[];
+  subscribeFileTree?: (workspaceId: string, paths: string[]) => void;
+  requestFileTreeRefresh?: (workspaceId: string, paths?: string[]) => void;
+  addFileTreeSnapshotListener?: (
+    listener: (snapshot: FileTreeRealtimeSnapshotDto) => void
+  ) => () => void;
+  subscribeGitSnapshot?: (workspaceId: string) => void;
+  requestGitRefresh?: (workspaceId: string) => void;
+  addGitSnapshotListener?: (listener: (snapshot: GitRealtimeSnapshotDto) => void) => () => void;
 }
 
 type FileTreeCache = Record<string, FileNodeDto[]>;
@@ -77,8 +99,11 @@ export function FileContextPanel({
   sessionId,
   workspaceId,
   hideHeading = false,
-  externalRevealRequest = null
+  externalRevealRequest = null,
+  externalWindowMode = false,
+  workbenchShellOverrides
 }: FileContextPanelProps) {
+  const workbenchShell = useWorkbenchShell();
   const {
     navigationGroups,
     subscribeFileTree,
@@ -87,7 +112,10 @@ export function FileContextPanel({
     subscribeGitSnapshot,
     requestGitRefresh,
     addGitSnapshotListener
-  } = useWorkbenchShell();
+  } = {
+    ...workbenchShell,
+    ...workbenchShellOverrides
+  };
   const [treeCache, setTreeCache] = useState<FileTreeCache>({});
   const [expandedDirectories, setExpandedDirectories] = useState<string[]>([]);
   const [loadingDirectories, setLoadingDirectories] = useState<string[]>([]);
@@ -138,9 +166,10 @@ export function FileContextPanel({
   useEffect(() => {
     logPerfDebug("file_panel.props", {
       sessionId,
-      workspaceId
+      workspaceId,
+      externalWindowMode
     });
-  }, [sessionId, workspaceId]);
+  }, [externalWindowMode, sessionId, workspaceId]);
 
   useEffect(() => {
     activeDirectoryPathRef.current = activeDirectoryPath;

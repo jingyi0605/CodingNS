@@ -557,6 +557,7 @@ describe("FileContextPanel", () => {
     workspaceId = "workspace-1",
     options?: {
       hideHeading?: boolean;
+      externalWindowMode?: boolean;
       externalRevealRequest?: {
         requestId: number;
         workspaceId: string;
@@ -571,6 +572,7 @@ describe("FileContextPanel", () => {
           sessionId={sessionId}
           workspaceId={workspaceId}
           hideHeading={options?.hideHeading}
+          externalWindowMode={options?.externalWindowMode}
           externalRevealRequest={options?.externalRevealRequest}
         />
       </ToastProvider>
@@ -1688,6 +1690,17 @@ describe("FileContextPanel", () => {
     expect(
       await screen.findByRole("dialog", { name: "apps/user-app/src/app/App.tsx" })
     ).toBeInTheDocument();
+  });
+
+  it("不再显示按钮式开新窗口入口", async () => {
+    platformMock.platform = "desktop";
+    platformMock.isDesktop = true;
+    platformMock.isWeb = false;
+    platformMock.bridge.supported = true;
+
+    renderPanel();
+    await screen.findByTestId("file-context-panel");
+    expect(screen.queryByRole("button", { name: "在新窗口打开" })).not.toBeInTheDocument();
   });
 });
 

@@ -13,6 +13,7 @@ import {
   useState,
   type CSSProperties,
   type MouseEvent,
+  type PointerEvent as ReactPointerEvent,
   type FormEvent,
   type ReactNode
 } from "react";
@@ -41,6 +42,15 @@ import {
   canStartDesktopWindowDragFromTarget,
   startDesktopWindowDrag
 } from "../../../platform/desktop/window-drag";
+import {
+  createDesktopWindowDetachPreview,
+  type DesktopWindowDetachPreviewController
+} from "../../../platform/desktop/window-detach-animation";
+import {
+  openFilesExternalWindow,
+  openGitExternalWindow,
+  openProcessesExternalWindow
+} from "../../../platform/desktop/window-openers";
 import { usePlatform } from "../../../platform/platform-provider";
 import { useLocalUiPreferenceSelector } from "../../../preferences/local-ui-preference-store";
 import { readViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
@@ -114,6 +124,7 @@ const WORKBENCH_NAVIGATION_CACHE_MAX_AGE_MS = 30 * 60 * 1000;
 const WORKSPACE_MANAGEMENT_SNAPSHOT_CACHE_MAX_AGE_MS = 60 * 1000;
 const WORKBENCH_PERMISSION_POLL_INTERVAL_MS = 4_000;
 const SESSION_FAILURE_NOTIFICATION_DETAIL_MAX_LENGTH = 220;
+const WINDOW_DETACH_DRAG_THRESHOLD_PX = 18;
 const FOCUS_COMPOSER_EVENT = "workbench:focus-composer";
 const WORKBENCH_RUNTIME_ACTIVE_STATES: ReadonlySet<string> = new Set([
   "starting",
@@ -3254,6 +3265,311 @@ function WorkbenchInfoPanel({
 }) {
   const fallbackWorkspaceId = activeWorkspaceId ?? navigationGroups[0]?.workspace.id ?? null;
   const platform = usePlatform();
+  const { showToast } = useToast();
+  const detachGestureRef = useRef<{
+    tab: InfoTab;
+    startX: number;
+    startY: number;
+    workspaceId: string;
+    sessionId: string | null;
+    detached: boolean;
+    preview: DesktopWindowDetachPreviewController | null;
+  } | null>(null);
+  const suppressClickTabRef = useRef<InfoTab | null>(null);
+  const canDetachTabs = platform.isDesktop && platform.bridge.supported;
+  const canDetachFilesTab = canDetachTabs && Boolean(activeWorkspaceId);
+  const canDetachGitTab = canDetachTabs && Boolean(fallbackWorkspaceId);
+  const canDetachTerminalsTab = canDetachTabs && Boolean(fallbackWorkspaceId);
+  const supportsPointerDetachGesture =
+    typeof globalThis !== "undefined" && "PointerEvent" in globalThis;
+
+  const openDetachedWindowByTab = useCallback(async (
+    tab: InfoTab,
+    workspaceId: string,
+    sessionId: string | null
+  ) => {
+    if (tab === "files") {
+      const result = await openFilesExternalWindow(platform, {
+        workspaceId,
+        sessionId,
+        focusOwner: "file-context-panel"
+      });
+
+      if (!result.ok) {
+        showToast({
+          title: result.detail ?? t("conversation.filePanelOpenExternalFailed"),
+          tone: "error"
+        });
+      }
+      return;
+    }
+
+    if (tab === "git") {
+      const result = await openGitExternalWindow(platform, {
+        workspaceId,
+        focusOwner: "git-sidebar"
+      });
+
+      if (!result.ok) {
+        showToast({
+          title: result.detail ?? t("git.openExternalFailed"),
+          tone: "error"
+        });
+      }
+      return;
+    }
+
+    const result = await openProcessesExternalWindow(platform, {
+      workspaceId,
+      focusOwner: "terminal-manager-panel"
+    });
+
+    if (!result.ok) {
+      showToast({
+        title: result.detail ?? t("terminalManager.openExternalFailed"),
+        tone: "error"
+      });
+    }
+  }, [platform, showToast]);
+
+  const handleInfoTabMouseDown = useCallback(
+    (event: MouseEvent<HTMLButtonElement>, tab: InfoTab) => {
+      if (event.button !== 0 || !canDetachTabs) {
+        return;
+      }
+
+      const workspaceId =
+        tab === "files"
+          ? activeWorkspaceId
+          : tab === "git" || tab === "terminals"
+            ? fallbackWorkspaceId
+            : null;
+
+      if (!workspaceId) {
+        return;
+      }
+
+      const sessionId = tab === "files" ? currentSessionId : null;
+      detachGestureRef.current = {
+        tab,
+        startX: event.clientX,
+        startY: event.clientY,
+        workspaceId,
+        sessionId,
+        detached: false,
+        preview: null
+      };
+
+      const handleMouseMove = (moveEvent: globalThis.MouseEvent) => {
+        const gesture = detachGestureRef.current;
+
+        if (!gesture) {
+          return;
+        }
+
+        const movedX = Math.abs(moveEvent.clientX - gesture.startX);
+        const movedY = Math.abs(moveEvent.clientY - gesture.startY);
+
+        if (!gesture.detached && Math.max(movedX, movedY) < WINDOW_DETACH_DRAG_THRESHOLD_PX) {
+          return;
+        }
+
+        if (!gesture.detached) {
+          gesture.detached = true;
+          suppressClickTabRef.current = gesture.tab;
+          gesture.preview = createDesktopWindowDetachPreview({
+            title:
+              gesture.tab === "files"
+                ? t("shell.filesEntry")
+                : gesture.tab === "git"
+                  ? t("shell.gitEntry")
+                  : t("shell.terminalManagerEntry"),
+            x: moveEvent.clientX,
+            y: moveEvent.clientY
+          });
+        }
+
+        gesture.preview?.updatePosition(moveEvent.clientX, moveEvent.clientY);
+      };
+
+      const clearGesture = (cancelPreview: boolean) => {
+        const preview = detachGestureRef.current?.preview;
+        if (cancelPreview) {
+          void preview?.cancel();
+        }
+
+        window.removeEventListener("mousemove", handleMouseMove);
+        window.removeEventListener("mouseup", handleMouseUp);
+        window.removeEventListener("blur", handleWindowBlur);
+        detachGestureRef.current = null;
+      };
+
+      const handleMouseUp = async () => {
+        const gesture = detachGestureRef.current;
+        clearGesture(false);
+
+        if (!gesture?.detached) {
+          return;
+        }
+
+        await gesture.preview?.complete();
+        await openDetachedWindowByTab(gesture.tab, gesture.workspaceId, gesture.sessionId);
+      };
+
+      const handleWindowBlur = () => {
+        clearGesture(true);
+      };
+
+      window.addEventListener("mousemove", handleMouseMove);
+      window.addEventListener("mouseup", handleMouseUp);
+      window.addEventListener("blur", handleWindowBlur);
+    },
+    [
+      activeWorkspaceId,
+      canDetachTabs,
+      currentSessionId,
+      fallbackWorkspaceId,
+      openDetachedWindowByTab
+    ]
+  );
+
+  const handleInfoTabPointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLButtonElement>, tab: InfoTab) => {
+      if (event.button !== 0 || !canDetachTabs) {
+        return;
+      }
+
+      const workspaceId =
+        tab === "files"
+          ? activeWorkspaceId
+          : tab === "git" || tab === "terminals"
+            ? fallbackWorkspaceId
+            : null;
+
+      if (!workspaceId) {
+        return;
+      }
+
+      const pointerTarget = event.currentTarget;
+      const pointerId = event.pointerId;
+      pointerTarget.setPointerCapture(pointerId);
+      const sessionId = tab === "files" ? currentSessionId : null;
+      detachGestureRef.current = {
+        tab,
+        startX: event.clientX,
+        startY: event.clientY,
+        workspaceId,
+        sessionId,
+        detached: false,
+        preview: null
+      };
+
+      const handlePointerMove = (moveEvent: PointerEvent) => {
+        if (moveEvent.pointerId !== pointerId) {
+          return;
+        }
+
+        const gesture = detachGestureRef.current;
+
+        if (!gesture) {
+          return;
+        }
+
+        const movedX = Math.abs(moveEvent.clientX - gesture.startX);
+        const movedY = Math.abs(moveEvent.clientY - gesture.startY);
+
+        if (!gesture.detached && Math.max(movedX, movedY) < WINDOW_DETACH_DRAG_THRESHOLD_PX) {
+          return;
+        }
+
+        if (!gesture.detached) {
+          gesture.detached = true;
+          suppressClickTabRef.current = gesture.tab;
+          gesture.preview = createDesktopWindowDetachPreview({
+            title:
+              gesture.tab === "files"
+                ? t("shell.filesEntry")
+                : gesture.tab === "git"
+                  ? t("shell.gitEntry")
+                  : t("shell.terminalManagerEntry"),
+            x: moveEvent.clientX,
+            y: moveEvent.clientY
+          });
+        }
+
+        gesture.preview?.updatePosition(moveEvent.clientX, moveEvent.clientY);
+      };
+
+      const clearGesture = (cancelPreview: boolean) => {
+        const preview = detachGestureRef.current?.preview;
+        if (cancelPreview) {
+          void preview?.cancel();
+        }
+
+        pointerTarget.removeEventListener("pointermove", handlePointerMove);
+        pointerTarget.removeEventListener("pointerup", handlePointerUp);
+        pointerTarget.removeEventListener("pointercancel", handlePointerCancel);
+        pointerTarget.removeEventListener("lostpointercapture", handlePointerCancel);
+        window.removeEventListener("blur", handleWindowBlur);
+        detachGestureRef.current = null;
+
+        if (pointerTarget.hasPointerCapture(pointerId)) {
+          pointerTarget.releasePointerCapture(pointerId);
+        }
+      };
+
+      const handlePointerUp = async (upEvent: PointerEvent) => {
+        if (upEvent.pointerId !== pointerId) {
+          return;
+        }
+
+        const gesture = detachGestureRef.current;
+        clearGesture(false);
+
+        if (!gesture?.detached) {
+          return;
+        }
+
+        await gesture.preview?.complete();
+        await openDetachedWindowByTab(gesture.tab, gesture.workspaceId, gesture.sessionId);
+      };
+
+      const handlePointerCancel = (cancelEvent: PointerEvent) => {
+        if (cancelEvent.pointerId !== pointerId) {
+          return;
+        }
+
+        clearGesture(true);
+      };
+
+      const handleWindowBlur = () => {
+        clearGesture(true);
+      };
+
+      pointerTarget.addEventListener("pointermove", handlePointerMove);
+      pointerTarget.addEventListener("pointerup", handlePointerUp);
+      pointerTarget.addEventListener("pointercancel", handlePointerCancel);
+      pointerTarget.addEventListener("lostpointercapture", handlePointerCancel);
+      window.addEventListener("blur", handleWindowBlur);
+    },
+    [
+      activeWorkspaceId,
+      canDetachTabs,
+      currentSessionId,
+      fallbackWorkspaceId,
+      openDetachedWindowByTab
+    ]
+  );
+
+  const handleInfoTabClick = useCallback((tab: InfoTab) => {
+    if (suppressClickTabRef.current === tab) {
+      suppressClickTabRef.current = null;
+      return;
+    }
+
+    onTabChange(tab);
+  }, [onTabChange]);
+
   const handleHeaderMouseDownCapture = useCallback((event: MouseEvent<HTMLElement>) => {
     if (!platform.isDesktop || platform.ui.osFamily !== "macos" || event.button !== 0) {
       return;
@@ -3294,7 +3610,14 @@ function WorkbenchInfoPanel({
             type="button"
             role="tab"
             aria-selected={activeTab === "files"}
-            onClick={() => onTabChange("files")}
+            title={canDetachFilesTab ? "拖拽标签到独立窗口" : undefined}
+            onPointerDown={(event) => handleInfoTabPointerDown(event, "files")}
+            onMouseDown={
+              supportsPointerDetachGesture
+                ? undefined
+                : (event) => handleInfoTabMouseDown(event, "files")
+            }
+            onClick={() => handleInfoTabClick("files")}
           >
             {t("shell.filesEntry")}
           </button>
@@ -3303,7 +3626,14 @@ function WorkbenchInfoPanel({
             type="button"
             role="tab"
             aria-selected={activeTab === "git"}
-            onClick={() => onTabChange("git")}
+            title={canDetachGitTab ? "拖拽标签到独立窗口" : undefined}
+            onPointerDown={(event) => handleInfoTabPointerDown(event, "git")}
+            onMouseDown={
+              supportsPointerDetachGesture
+                ? undefined
+                : (event) => handleInfoTabMouseDown(event, "git")
+            }
+            onClick={() => handleInfoTabClick("git")}
           >
             {t("shell.gitEntry")}
           </button>
@@ -3312,7 +3642,14 @@ function WorkbenchInfoPanel({
             type="button"
             role="tab"
             aria-selected={activeTab === "terminals"}
-            onClick={() => onTabChange("terminals")}
+            title={canDetachTerminalsTab ? "拖拽标签到独立窗口" : undefined}
+            onPointerDown={(event) => handleInfoTabPointerDown(event, "terminals")}
+            onMouseDown={
+              supportsPointerDetachGesture
+                ? undefined
+                : (event) => handleInfoTabMouseDown(event, "terminals")
+            }
+            onClick={() => handleInfoTabClick("terminals")}
           >
             {t("shell.terminalManagerEntry")}
           </button>

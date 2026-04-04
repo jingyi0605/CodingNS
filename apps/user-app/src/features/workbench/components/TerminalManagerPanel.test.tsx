@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -38,6 +38,23 @@ let buildMockSnapshot = (): MockTerminalManagerSnapshot => ({
   ]
 });
 
+vi.mock("../../../platform/platform-provider", () => ({
+  usePlatform: () => ({
+    platform: "desktop",
+    isDesktop: true,
+    isWeb: false,
+    isMobile: false,
+    isNativeMobile: false,
+    viewportClass: "expanded",
+    ui: {
+      osFamily: "windows",
+      windowControlsStyle: "windows",
+      prefersDesktopChrome: true,
+      prefersOverlayTitlebar: false,
+      prefersSystemFontStack: true
+    }
+  })
+}));
 vi.mock("../../conversation/components/WorkbenchLayout", async () => {
   const actual = await vi.importActual("../../conversation/components/WorkbenchLayout");
 
@@ -88,10 +105,19 @@ const navigationGroups: WorkspaceSessionGroup[] = [
   }
 ];
 
-function renderPanel(currentWorkspaceId: string | null = "workspace-1") {
+function renderPanel(
+  currentWorkspaceId: string | null = "workspace-1",
+  options?: {
+    externalWindowMode?: boolean;
+  }
+) {
   return render(
     <ToastProvider>
-      <TerminalManagerPanel currentWorkspaceId={currentWorkspaceId} navigationGroups={navigationGroups} />
+      <TerminalManagerPanel
+        currentWorkspaceId={currentWorkspaceId}
+        navigationGroups={navigationGroups}
+        externalWindowMode={options?.externalWindowMode}
+      />
     </ToastProvider>
   );
 }
@@ -115,8 +141,8 @@ describe("TerminalManagerPanel", () => {
           available: true,
           unavailableReason: null
         }
-      ]
-    });
+    ]
+  });
     authStore.hydrate({
       accessToken: "access-token",
       refreshToken: "refresh-token",
@@ -262,19 +288,10 @@ describe("TerminalManagerPanel", () => {
     expect(within(dialog).getAllByRole("combobox")).toHaveLength(2);
 
     await userEvent.click(screen.getByRole("button", { name: "脚本" }));
-    await userEvent.type(
-      screen.getByPlaceholderText("例如：scripts/dev.ps1 或 scripts/dev.sh"),
-      "scripts/dev.ps1"
-    );
-    await userEvent.type(
-      screen.getByPlaceholderText("留空时默认使用工作区根目录"),
-      "apps/user-app"
-    );
-    await userEvent.type(
-      screen.getByPlaceholderText("例如：run dev 或 --watch"),
-      "-Port 5173"
-    );
-    await userEvent.type(screen.getByPlaceholderText("例如：3000"), "5173");
+    setInputValue(screen.getByPlaceholderText("例如：scripts/dev.ps1 或 scripts/dev.sh"), "scripts/dev.ps1");
+    setInputValue(screen.getByPlaceholderText("留空时默认使用工作区根目录"), "apps/user-app");
+    setInputValue(screen.getByPlaceholderText("例如：run dev 或 --watch"), "-Port 5173");
+    setInputValue(screen.getByPlaceholderText("例如：3000"), "5173");
 
     await userEvent.click(screen.getByRole("button", { name: "保存为快速启动" }));
 
@@ -397,16 +414,11 @@ describe("TerminalManagerPanel", () => {
     expect(within(dialog).getByDisplayValue("dev")).toBeInTheDocument();
     expect(within(dialog).getByDisplayValue("5173")).toBeInTheDocument();
 
-    await userEvent.clear(within(dialog).getByDisplayValue("启动前端"));
-    await userEvent.type(within(dialog).getByPlaceholderText("留空时会自动生成"), "前端开发");
-    await userEvent.clear(within(dialog).getByDisplayValue("C:/Code/demo"));
-    await userEvent.type(within(dialog).getByPlaceholderText("留空时默认使用工作区根目录"), "apps/user-app");
-    await userEvent.clear(within(dialog).getByDisplayValue("pnpm"));
-    await userEvent.type(within(dialog).getByPlaceholderText("例如：npm"), "npm");
-    await userEvent.clear(within(dialog).getByDisplayValue("dev"));
-    await userEvent.type(within(dialog).getByPlaceholderText("例如：run dev 或 --watch"), "run dev:frontend");
-    await userEvent.clear(within(dialog).getByDisplayValue("5173"));
-    await userEvent.type(within(dialog).getByPlaceholderText("例如：3000"), "4174");
+    setInputValue(within(dialog).getByPlaceholderText("留空时会自动生成"), "前端开发");
+    setInputValue(within(dialog).getByPlaceholderText("留空时默认使用工作区根目录"), "apps/user-app");
+    setInputValue(within(dialog).getByPlaceholderText("例如：npm"), "npm");
+    setInputValue(within(dialog).getByPlaceholderText("例如：run dev 或 --watch"), "run dev:frontend");
+    setInputValue(within(dialog).getByPlaceholderText("例如：3000"), "4174");
 
     await userEvent.click(within(dialog).getByRole("button", { name: "保存修改" }));
 
@@ -442,7 +454,21 @@ describe("TerminalManagerPanel", () => {
       await screen.findByText("还没有快捷启动项，可以先保存一条命令或脚本。")
     ).toBeInTheDocument();
   });
+
+  it("不再显示按钮式开新窗口入口", async () => {
+    renderPanel("workspace-1", { externalWindowMode: true });
+
+    expect(screen.queryByRole("button", { name: "在新窗口打开" })).not.toBeInTheDocument();
+  });
 });
+
+function setInputValue(element: HTMLElement, value: string) {
+  fireEvent.change(element, {
+    target: {
+      value
+    }
+  });
+}
 
 function createJsonResponse(payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {

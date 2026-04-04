@@ -25,8 +25,18 @@ const workbenchShellMock = vi.hoisted(() => ({
   requestGitRefresh: vi.fn(),
   addGitSnapshotListener: vi.fn()
 }));
+const hapticsMock = vi.hoisted(() => ({
+  trigger: vi.fn()
+}));
+const platformMock = vi.hoisted(() => ({
+  isDesktop: true,
+  bridge: {
+    supported: true
+  }
+}));
 const clipboardWriteTextMock = vi.hoisted(() => vi.fn());
 const GIT_SIDEBAR_SNAPSHOT_KEY = "git-sidebar.snapshot.workspace-1";
+let gitSnapshotListener: ((snapshot: ReturnType<typeof createGitSnapshot>) => void) | null = null;
 
 vi.mock("../api/git-api", () => ({
   getGitStatus: gitApiMock.getGitStatus,
@@ -46,10 +56,26 @@ vi.mock("./WorkbenchLayout", () => ({
   useWorkbenchShell: () => workbenchShellMock
 }));
 
+vi.mock("../../../platform/platform-provider", () => ({
+  usePlatform: () => platformMock
+}));
+
+vi.mock("../../../shared/haptics", () => ({
+  useHaptics: () => hapticsMock
+}));
+
+vi.mock("../../../shared/haptics", () => ({
+  useHaptics: () => ({
+    trigger: vi.fn()
+  })
+}));
+
 describe("GitSidebar", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     setViewportWidth(430);
+    hapticsMock.trigger.mockReset();
+    gitSnapshotListener = null;
     window.sessionStorage.clear();
     clearViewSnapshot(GIT_SIDEBAR_SNAPSHOT_KEY);
     Object.defineProperty(window.navigator, "clipboard", {
@@ -138,8 +164,13 @@ describe("GitSidebar", () => {
     workbenchShellMock.subscribeGitSnapshot.mockImplementation(() => undefined);
     workbenchShellMock.requestGitRefresh.mockImplementation(() => undefined);
     workbenchShellMock.addGitSnapshotListener.mockImplementation((listener: (snapshot: ReturnType<typeof createGitSnapshot>) => void) => {
+      gitSnapshotListener = listener;
       listener(createGitSnapshot());
-      return () => undefined;
+      return () => {
+        if (gitSnapshotListener === listener) {
+          gitSnapshotListener = null;
+        }
+      };
     });
   });
 
@@ -332,7 +363,7 @@ describe("GitSidebar", () => {
       expect(refreshButton).not.toBeDisabled();
     });
 
-    expect(screen.getByText("refresh-target.md")).toBeInTheDocument();
+    expect(await screen.findByText("refresh-target.md")).toBeInTheDocument();
     await userEvent.click(await screen.findByRole("button", { name: /最近版本/ }));
     expect(await screen.findByText("feat: refreshed snapshot")).toBeInTheDocument();
     expect(workbenchShellMock.requestGitRefresh).toHaveBeenCalledWith("workspace-1");
@@ -511,12 +542,21 @@ describe("GitSidebar", () => {
       expect(gitApiMock.discardGitTargets).toHaveBeenCalledWith("workspace-1", appPaths);
     });
   });
+  it("不再显示按钮式开新窗口入口", () => {
+    renderSidebar({ externalWindowMode: true });
+
+    expect(screen.queryByRole("button", { name: "在新窗口打开 Git" })).toBeNull();
+  });
 });
 
-function renderSidebar() {
+function renderSidebar(options?: { workspaceId?: string; panelActive?: boolean; externalWindowMode?: boolean }) {
   render(
     <ToastProvider>
-      <GitSidebar workspaceId="workspace-1" />
+      <GitSidebar
+        workspaceId={options?.workspaceId ?? "workspace-1"}
+        panelActive={options?.panelActive ?? true}
+        externalWindowMode={options?.externalWindowMode}
+      />
     </ToastProvider>
   );
 }
@@ -587,6 +627,12 @@ function seedGitSidebarSnapshot() {
     historyTotalCount: snapshot.historyTotalCount,
     historyNextCursor: snapshot.historyNextCursor,
     branches: snapshot.branches
+  });
+}
+
+function enableRealtimeRefresh(snapshot = createGitSnapshot()) {
+  workbenchShellMock.requestGitRefresh.mockImplementation(() => {
+    gitSnapshotListener?.(snapshot);
   });
 }
 

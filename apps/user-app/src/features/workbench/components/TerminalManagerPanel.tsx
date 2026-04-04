@@ -5,8 +5,10 @@ import { getHostRequestUrl } from "../../../config/env";
 import { readViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import { logPerfDebug } from "../../../shared/debug/perf-debug";
 import { t } from "../../../shared/i18n";
+import type { TerminalManagerRealtimeSnapshotDto } from "../../../network/workbench-realtime-client";
 import { usePlatform } from "../../../platform/platform-provider";
 import { useToast } from "../../../shared/toast";
+import { ApiError } from "../../../shared/network/api-error";
 import {
   createTerminalTemplate,
   deleteTerminalTemplate,
@@ -34,6 +36,16 @@ interface TerminalManagerPanelProps {
   className?: string;
   currentWorkspaceId: string | null;
   navigationGroups: WorkspaceSessionGroup[];
+  externalWindowMode?: boolean;
+  workbenchShellOverrides?: TerminalManagerPanelWorkbenchShellOverrides;
+}
+
+export interface TerminalManagerPanelWorkbenchShellOverrides {
+  subscribeTerminalManagerSnapshot?: (workspaceId: string) => void;
+  requestTerminalManagerRefresh?: (workspaceId: string) => void;
+  addTerminalManagerSnapshotListener?: (
+    listener: (snapshot: TerminalManagerRealtimeSnapshotDto) => void
+  ) => () => void;
 }
 
 interface LaunchDraftState {
@@ -501,14 +513,20 @@ function CheckIcon() {
 export function TerminalManagerPanel({
   className,
   currentWorkspaceId,
-  navigationGroups
+  navigationGroups,
+  externalWindowMode = false,
+  workbenchShellOverrides
 }: TerminalManagerPanelProps) {
   const platform = usePlatform();
+  const workbenchShell = useWorkbenchShell();
   const {
     subscribeTerminalManagerSnapshot,
     requestTerminalManagerRefresh,
     addTerminalManagerSnapshotListener
-  } = useWorkbenchShell();
+  } = {
+    ...workbenchShell,
+    ...workbenchShellOverrides
+  };
   const activeWorkspaceId = currentWorkspaceId?.trim() || null;
   const [terminals, setTerminals] = useState<TerminalDto[]>([]);
   const [templates, setTemplates] = useState<TerminalTemplateDto[]>([]);
@@ -546,9 +564,10 @@ export function TerminalManagerPanel({
   useEffect(() => {
     logPerfDebug("terminal_manager.props", {
       currentWorkspaceId,
-      workspaceCount: navigationGroups.length
+      workspaceCount: navigationGroups.length,
+      externalWindowMode
     });
-  }, [currentWorkspaceId, navigationGroups.length]);
+  }, [currentWorkspaceId, externalWindowMode, navigationGroups.length]);
 
   const selectedShellOption = useMemo(
     () => shellOptions.find((option) => option.id === selectedShellId) ?? null,
@@ -1585,4 +1604,12 @@ export function TerminalManagerPanel({
 
 function buildTerminalManagerSnapshotKey(workspaceId: string) {
   return `terminal-manager.snapshot.${workspaceId}`;
+}
+
+function readError(error: unknown, fallback: string): string {
+  if (error instanceof ApiError) {
+    return error.message;
+  }
+
+  return fallback;
 }

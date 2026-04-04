@@ -15,6 +15,16 @@ import {
   getVisibleSessionTreeNodes
 } from "./WorkbenchLayout";
 
+const openFilesExternalWindowMock = vi.hoisted(() => vi.fn());
+const openGitExternalWindowMock = vi.hoisted(() => vi.fn());
+const openProcessesExternalWindowMock = vi.hoisted(() => vi.fn());
+
+vi.mock("../../../platform/desktop/window-openers", () => ({
+  openFilesExternalWindow: openFilesExternalWindowMock,
+  openGitExternalWindow: openGitExternalWindowMock,
+  openProcessesExternalWindow: openProcessesExternalWindowMock
+}));
+
 const WORKBENCH_NAVIGATION_SNAPSHOT_KEY = "workbench.navigation.snapshot";
 
 class MockWebSocket extends EventTarget {
@@ -128,6 +138,27 @@ function mockNavigator({
 
 describe("WorkbenchLayout", () => {
   beforeEach(() => {
+    openFilesExternalWindowMock.mockReset();
+    openGitExternalWindowMock.mockReset();
+    openProcessesExternalWindowMock.mockReset();
+    openFilesExternalWindowMock.mockResolvedValue({
+      ok: true,
+      value: {
+        windowId: "files-workspace-1"
+      }
+    });
+    openGitExternalWindowMock.mockResolvedValue({
+      ok: true,
+      value: {
+        windowId: "git-workspace-1"
+      }
+    });
+    openProcessesExternalWindowMock.mockResolvedValue({
+      ok: true,
+      value: {
+        windowId: "processes-workspace-1"
+      }
+    });
     window.localStorage.clear();
     window.sessionStorage.clear();
     localUiPreferenceStore.setNotificationPreferences({
@@ -672,6 +703,74 @@ describe("WorkbenchLayout", () => {
     expect(
       screen.getByRole("button", { name: t("shell.hideSessionSidebar") })
     ).not.toHaveAttribute("data-tauri-drag-region");
+  });
+
+  it("拖拽文件管理标签会触发独立窗口开窗命令", async () => {
+    mockNavigator({
+      userAgent:
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+      platform: "MacIntel"
+    });
+    window.__TAURI_INTERNALS__ = {
+      invoke: vi.fn()
+    };
+
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "会话 Alpha",
+            workspaceId: "workspace-1"
+          })
+        ]
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-1");
+
+    await screen.findByRole("button", { name: t("shell.hideInfoSidebar") });
+    const infoTabs = document.querySelector(".workbench-info-tabs");
+
+    expect(infoTabs).not.toBeNull();
+    const filesTab = within(infoTabs as HTMLElement).getByRole("tab", { name: t("shell.filesEntry") });
+    fireEvent.mouseDown(filesTab, {
+      button: 0,
+      clientX: 24,
+      clientY: 24
+    });
+    fireEvent.mouseMove(window, {
+      clientX: 56,
+      clientY: 25
+    });
+    expect(openFilesExternalWindowMock).not.toHaveBeenCalled();
+    fireEvent.mouseUp(window, {
+      clientX: 56,
+      clientY: 25
+    });
+
+    await waitFor(() => {
+      expect(openFilesExternalWindowMock).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          workspaceId: "workspace-1",
+          sessionId: "session-1",
+          focusOwner: "file-context-panel"
+        })
+      );
+    });
   });
 
   it("支持会话重命名，并立即更新左侧列表标题", async () => {

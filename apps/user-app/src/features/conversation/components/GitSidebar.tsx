@@ -11,6 +11,7 @@ import { readViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-
 import { logPerfDebug } from "../../../shared/debug/perf-debug";
 import { useHaptics } from "../../../shared/haptics";
 import { t } from "../../../shared/i18n";
+import type { GitRealtimeSnapshotDto } from "../../../network/workbench-realtime-client";
 import { ApiError } from "../../../shared/network/api-error";
 import { useToast } from "../../../shared/toast";
 import {
@@ -46,6 +47,16 @@ interface GitSidebarProps {
   className?: string;
   workspaceId: string | null | undefined;
   panelActive?: boolean;
+  externalWindowMode?: boolean;
+  workbenchShellOverrides?: GitSidebarWorkbenchShellOverrides;
+}
+
+export interface GitSidebarWorkbenchShellOverrides {
+  subscribeGitSnapshot?: (workspaceId: string) => void;
+  requestGitRefresh?: (workspaceId: string) => void;
+  addGitSnapshotListener?: (
+    listener: (snapshot: GitRealtimeSnapshotDto) => void
+  ) => () => void;
 }
 
 interface GitTreeDirectoryNode {
@@ -95,8 +106,22 @@ interface GitSidebarSnapshot {
   branches: GitBranchSnapshotDto | null;
 }
 
-export function GitSidebar({ className, workspaceId, panelActive = true }: GitSidebarProps) {
-  const { subscribeGitSnapshot, requestGitRefresh, addGitSnapshotListener } = useWorkbenchShell();
+export function GitSidebar({
+  className,
+  workspaceId,
+  panelActive = true,
+  externalWindowMode = false,
+  workbenchShellOverrides
+}: GitSidebarProps) {
+  const workbenchShell = useWorkbenchShell();
+  const {
+    subscribeGitSnapshot,
+    requestGitRefresh,
+    addGitSnapshotListener
+  } = {
+    ...workbenchShell,
+    ...workbenchShellOverrides
+  };
   const [status, setStatus] = useState<GitStatusDto | null>(null);
   const [history, setHistory] = useState<GitHistoryItemDto[]>([]);
   const [historyTotalCount, setHistoryTotalCount] = useState(0);
@@ -139,9 +164,10 @@ export function GitSidebar({ className, workspaceId, panelActive = true }: GitSi
 
   useEffect(() => {
     logPerfDebug("git_sidebar.props", {
-      workspaceId
+      workspaceId,
+      externalWindowMode
     });
-  }, [workspaceId]);
+  }, [externalWindowMode, workspaceId]);
 
   useEffect(() => {
     setCollapsedTreePaths([]);
@@ -986,7 +1012,7 @@ export function GitSidebar({ className, workspaceId, panelActive = true }: GitSi
       data-testid="git-sidebar"
     >
       <section className="git-card git-scaffold-section">
-        <div className="git-editor-row">
+    <div className="git-editor-row">
           <textarea
             ref={commitEditorRef}
             rows={1}
@@ -1002,14 +1028,14 @@ export function GitSidebar({ className, workspaceId, panelActive = true }: GitSi
           <button
             className="git-icon-button"
             type="button"
-            aria-label={t("git.generateDraft")}
+        aria-label={t("git.generateDraft")}
             title={t("git.generateDraft")}
             onClick={() => void handleDraft()}
             disabled={actioning || loading}
           >
             <DraftIcon />
-          </button>
-        </div>
+        </button>
+      </div>
 
         <div className="git-primary-actions">
           <button
