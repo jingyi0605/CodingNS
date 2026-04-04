@@ -33,6 +33,8 @@ export const zhCN = {
     bootstrapMismatch: "两次输入的密码不一致。",
     authUnavailable: "暂时连不上 Host，请确认服务可访问。",
     logoutSuccess: "当前登录态已经清空。",
+    demoBanner: "演示环境 — 所有账号数据公开可见，注销后自动清除",
+    demoSessionExpired: "演示会话已过期，请重新登录",
     serverSettings: "服务器设置",
     serverSettingsTitle: "服务器配置",
     saveServerSettings: "保存设置"

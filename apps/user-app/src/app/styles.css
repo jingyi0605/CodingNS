@@ -11729,6 +11729,25 @@ textarea:focus-visible {
   accent-color: var(--cyber-primary);
 }
 
+/* Demo Mode Banner */
+.cyber-demo-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  background: rgba(255, 170, 0, 0.1);
+  border: 1px solid rgba(255, 170, 0, 0.3);
+  color: #ffaa00;
+  margin-bottom: 4px;
+}
+
+.cyber-demo-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
 /* Status Message */
 .cyber-status {
   display: flex;

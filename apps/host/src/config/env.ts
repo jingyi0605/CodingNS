@@ -28,6 +28,7 @@ export interface HostConfig {
   claudeHookBridgeToken: string;
   serverUpdatePackageName: string;
   npmRegistryBaseUrl: string;
+  demoMode: boolean;
 }
 
 export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConfig {
@@ -112,7 +113,9 @@ export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConf
     npmRegistryBaseUrl:
       overrides.npmRegistryBaseUrl ??
       process.env.CODINGNS_NPM_REGISTRY_BASE_URL ??
-      "https://registry.npmjs.org"
+      "https://registry.npmjs.org",
+    demoMode:
+      overrides.demoMode ?? process.env.DEMO_MODE === "true"
   };
 }
 

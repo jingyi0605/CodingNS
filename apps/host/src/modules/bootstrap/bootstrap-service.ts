@@ -16,11 +16,15 @@ export class BootstrapService {
   constructor(
     private readonly db: Database.Database,
     private readonly bootstrapStateRepository: BootstrapStateRepository,
-    private readonly authUserRepository: AuthUserRepository
+    private readonly authUserRepository: AuthUserRepository,
+    private readonly demoMode: boolean = false
   ) {}
 
-  getStatus(): { initialized: boolean } {
-    return { initialized: this.bootstrapStateRepository.getState().initialized };
+  getStatus(): { initialized: boolean; demoMode?: boolean } {
+    return {
+      initialized: this.bootstrapStateRepository.getState().initialized,
+      ...(this.demoMode ? { demoMode: true } : {})
+    };
   }
 
   setup(input: SetupInput): { initialized: true; userId: string } {

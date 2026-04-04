@@ -25,6 +25,13 @@ if (options.help) {
   printHelp(0);
 }
 
+if (options.errors.length > 0) {
+  for (const error of options.errors) {
+    console.error(`[codingns] ${error}`);
+  }
+  printHelp(1);
+}
+
 const host = readStringOption(
   options.values.host,
   process.env.HOST,
@@ -41,6 +48,7 @@ const dataDir = resolveDataDir(
     path.join(os.homedir(), ".codingns")
   )
 );
+const demoMode = options.flags.demo || process.env.DEMO_MODE === "true";
 
 fs.mkdirSync(dataDir, { recursive: true });
 fs.mkdirSync(path.join(dataDir, "releases"), { recursive: true });
@@ -53,11 +61,14 @@ await startHost({
   webUiDir: path.join(distRoot, "public"),
   databasePath: path.join(dataDir, "host.sqlite"),
   releaseManifestRoot: path.join(dataDir, "releases"),
-  serverUpdatePackageName: "@jingyi0605/codingns"
+  serverUpdatePackageName: "@jingyi0605/codingns",
+  demoMode
 });
 
 function parseArgs(argv) {
   const values = {};
+  const flags = {};
+  const errors = [];
   let index = 0;
 
   while (index < argv.length) {
@@ -66,18 +77,37 @@ function parseArgs(argv) {
     if (token === "--help" || token === "-h") {
       return {
         help: true,
-        values
+        values,
+        flags,
+        errors
       };
     }
 
     if (!token.startsWith("--")) {
-      fail(`无效参数：${token}`);
+      errors.push(`无效参数：${token}`);
+      index += 1;
+      continue;
     }
 
     const [rawName, inlineValue] = token.slice(2).split("=", 2);
 
-    if (!rawName || !isSupportedOption(rawName)) {
-      fail(`不支持的参数：${token}`);
+    if (!rawName) {
+      errors.push(`无效参数：${token}`);
+      index += 1;
+      continue;
+    }
+
+    // 布尔标志（不需要值）
+    if (isSupportedFlag(rawName)) {
+      flags[rawName] = true;
+      index += 1;
+      continue;
+    }
+
+    if (!isSupportedOption(rawName)) {
+      errors.push(`不支持的参数：${token}`);
+      index += 1;
+      continue;
     }
 
     if (inlineValue !== undefined) {
@@ -89,7 +119,9 @@ function parseArgs(argv) {
     const nextValue = argv[index + 1];
 
     if (!nextValue || nextValue.startsWith("--")) {
-      fail(`参数 ${token} 缺少取值`);
+      errors.push(`参数 ${token} 缺少取值`);
+      index += 1;
+      continue;
     }
 
     values[rawName] = nextValue;
@@ -98,12 +130,18 @@ function parseArgs(argv) {
 
   return {
     help: false,
-    values
+    values,
+    flags,
+    errors
   };
 }
 
 function isSupportedOption(name) {
   return name === "host" || name === "port" || name === "data-dir";
+}
+
+function isSupportedFlag(name) {
+  return name === "demo";
 }
 
 function readStringOption(...values) {
@@ -148,13 +186,14 @@ function printHelp(exitCode) {
   const output = `
 codingns 用法：
 
-  codingns start [--host 0.0.0.0] [--port 3002] [--data-dir ~/.codingns]
+  codingns start [--host 0.0.0.0] [--port 3002] [--data-dir ~/.codingns] [--demo]
 
 说明：
 
   --host      服务监听地址，默认 0.0.0.0
   --port      服务监听端口，默认 3002
   --data-dir  数据目录，默认 ~/.codingns
+  --demo      以演示模式启动（自动创建 demo 账户、15 分钟会话超时、开放 CORS）
   --help      显示帮助
 `.trim();
 

@@ -35,6 +35,8 @@ export const enUS = {
     bootstrapMismatch: "The two passwords do not match.",
     authUnavailable: "Host is unreachable right now. Check the server and try again.",
     logoutSuccess: "The current login state has been cleared.",
+    demoBanner: "Demo environment — all account data is public and cleared on logout",
+    demoSessionExpired: "Demo session expired. Please log in again.",
     serverSettings: "Server Settings",
     serverSettingsTitle: "Server Configuration",
     saveServerSettings: "Save Settings"

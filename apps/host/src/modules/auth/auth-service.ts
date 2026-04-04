@@ -1,4 +1,5 @@
 import type { HostConfig } from "../../config/env.js";
+import type { DemoCleanupService, DemoOnlineTracker } from "../demo/demo-cleanup-service.js";
 import { AppError } from "../../shared/errors/app-error.js";
 import { hashToken, verifyPassword } from "../../shared/utils/hash.js";
 import { createId } from "../../shared/utils/id.js";
@@ -40,12 +41,19 @@ export interface AuthResponse {
 }
 
 export class AuthService {
+  private readonly demoCleanupService?: DemoCleanupService;
+  private readonly demoOnlineTracker?: DemoOnlineTracker;
+
   constructor(
     private readonly bootstrapStateRepository: BootstrapStateRepository,
     private readonly authUserRepository: AuthUserRepository,
     private readonly authTokenRepository: AuthTokenRepository,
-    private readonly config: HostConfig
-  ) {}
+    private readonly config: HostConfig,
+    demoServices?: { cleanupService: DemoCleanupService; onlineTracker: DemoOnlineTracker }
+  ) {
+    this.demoCleanupService = demoServices?.cleanupService;
+    this.demoOnlineTracker = demoServices?.onlineTracker;
+  }
 
   login(input: LoginInput): AuthResponse {
     this.ensureInitialized();
@@ -60,7 +68,7 @@ export class AuthService {
       });
     }
 
-    return {
+    const result = {
       ...this.issueTokenPair(user.id),
       user: {
         userId: user.id,
@@ -68,6 +76,13 @@ export class AuthService {
         role: user.role
       }
     };
+
+    // Demo 模式：追踪在线会话
+    if (this.demoOnlineTracker) {
+      this.demoOnlineTracker.trackLogin(user.id, hashToken(result.accessToken));
+    }
+
+    return result;
   }
 
   refresh(input: RefreshInput): AuthResponse {
@@ -118,11 +133,24 @@ export class AuthService {
 
   logout(accessToken: string, input?: LogoutInput): { success: true } {
     const revokedAt = nowIso();
+    const accessHash = hashToken(accessToken);
 
-    this.authTokenRepository.revokeByHash(hashToken(accessToken), revokedAt);
+    // 先查出用户 ID（用于 demo 在线追踪）
+    const accessRecord = this.authTokenRepository.findByHash(accessHash, "access");
+    const userId = accessRecord?.userId;
+
+    this.authTokenRepository.revokeByHash(accessHash, revokedAt);
 
     if (input?.refreshToken) {
       this.authTokenRepository.revokeByHash(hashToken(input.refreshToken), revokedAt);
+    }
+
+    // Demo 模式：最后一个在线会话注销时清理所有业务数据
+    if (userId && this.demoOnlineTracker && this.demoCleanupService) {
+      const isLastSession = this.demoOnlineTracker.trackLogout(userId, accessHash);
+      if (isLastSession) {
+        this.demoCleanupService.cleanupAllUserData();
+      }
     }
 
     return { success: true };

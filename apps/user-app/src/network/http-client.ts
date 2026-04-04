@@ -102,6 +102,7 @@ class HttpClient {
       // Host 被重置、数据库被替换，或者 bootstrap 状态回退时，
       // 本地残留的旧登录态已经不可信，继续待在工作台里只会无限打 401/403。
       if (!options.skipAuth && shouldClearAuthState(response.status, payload.error_code)) {
+        sessionStorage.setItem(AUTH_EXPIRED_KEY, String(Date.now()));
         authStore.clear();
       }
 
@@ -166,4 +167,17 @@ function shouldClearAuthState(status: number, errorCode: string): boolean {
   }
 
   return shouldAttemptRefresh(status, errorCode);
+}
+
+const AUTH_EXPIRED_KEY = "codingns.auth_expired_at";
+
+export function consumeAuthExpiredFlag(): boolean {
+  const raw = sessionStorage.getItem(AUTH_EXPIRED_KEY);
+
+  if (!raw) return false;
+
+  sessionStorage.removeItem(AUTH_EXPIRED_KEY);
+
+  // 只认可 5 秒内的标记，避免过期误判
+  return Date.now() - Number(raw) < 5000;
 }

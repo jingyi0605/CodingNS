@@ -63,6 +63,7 @@ import { registerSessionRoutes } from "../routes/sessions.js";
 import { registerTerminalRoutes } from "../routes/terminals.js";
 import { registerWorkbenchRoutes } from "../routes/workbench.js";
 import { registerWorkspaceRoutes } from "../routes/workspaces.js";
+import { DemoCleanupService, DemoOnlineTracker } from "../modules/demo/demo-cleanup-service.js";
 import { setErrorHandler } from "../shared/http/error-handler.js";
 import { startTerminalDebugEventLoopLagMonitor } from "../shared/utils/terminal-debug-log.js";
 import { AuthTokenRepository } from "../storage/repositories/auth-token-repository.js";
@@ -94,6 +95,11 @@ import { WsAuthGuard } from "../ws/ws-auth-guard.js";
 import { registerStaticWebRoutes } from "./static-web.js";
 
 export function createServer(config: HostConfig) {
+  // Demo 模式下覆盖 token TTL 为 15 分钟
+  const effectiveConfig: HostConfig = config.demoMode
+    ? { ...config, accessTokenTtlSeconds: 900, refreshTokenTtlSeconds: 900 }
+    : config;
+
   const app = Fastify({
     logger: false
   });
@@ -127,14 +133,28 @@ export function createServer(config: HostConfig) {
   const bootstrapService = new BootstrapService(
     database.db,
     repositories.bootstrapStateRepository,
-    repositories.authUserRepository
+    repositories.authUserRepository,
+    config.demoMode
   );
   const clientService = new ClientService(config);
+
+  // Demo 模式服务
+  const demoCleanupService = config.demoMode
+    ? new DemoCleanupService(database.db, config.databasePath)
+    : undefined;
+  const demoOnlineTracker = config.demoMode
+    ? new DemoOnlineTracker()
+    : undefined;
+  const demoServices = (demoCleanupService && demoOnlineTracker)
+    ? { cleanupService: demoCleanupService, onlineTracker: demoOnlineTracker }
+    : undefined;
+
   const authService = new AuthService(
     repositories.bootstrapStateRepository,
     repositories.authUserRepository,
     repositories.authTokenRepository,
-    config
+    effectiveConfig,
+    demoServices
   );
   const gitCommandRunner = new GitCommandRunner({
     preferHelperProcess: !process.env.VITEST
@@ -283,7 +303,7 @@ export function createServer(config: HostConfig) {
   });
 
   app.addHook("onRequest", async (request, reply) => {
-    applyCorsHeaders(request.headers.origin, reply);
+    applyCorsHeaders(request.headers.origin, reply, config.demoMode);
 
     if (request.method === "OPTIONS") {
       reply.code(204).send();
@@ -292,6 +312,14 @@ export function createServer(config: HostConfig) {
   });
   app.addHook("onRequest", createAuthGuard(authService));
   app.setErrorHandler(setErrorHandler);
+
+  // Demo 模式：自动创建演示用户
+  if (config.demoMode) {
+    const status = bootstrapService.getStatus();
+    if (!status.initialized) {
+      bootstrapService.setup({ username: "demo", password: "codingns" });
+    }
+  }
 
   void registerPublicRoutes(app, bootstrapController);
   void registerProxyRoutes(app, templateReverseProxyService);
@@ -358,8 +386,8 @@ export function createServer(config: HostConfig) {
 
 function applyCorsHeaders(origin: string | undefined, reply: {
   header: (name: string, value: string) => unknown;
-}): void {
-  const allowedOrigin = resolveAllowedCorsOrigin(origin);
+}, demoMode: boolean): void {
+  const allowedOrigin = resolveAllowedCorsOrigin(origin, demoMode);
 
   if (!allowedOrigin) {
     return;
@@ -372,9 +400,14 @@ function applyCorsHeaders(origin: string | undefined, reply: {
   reply.header("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
 }
 
-function resolveAllowedCorsOrigin(origin: string | undefined): string | null {
+function resolveAllowedCorsOrigin(origin: string | undefined, demoMode: boolean): string | null {
   if (!origin) {
     return null;
+  }
+
+  // Demo 模式：放行所有来源
+  if (demoMode) {
+    return origin;
   }
 
   try {

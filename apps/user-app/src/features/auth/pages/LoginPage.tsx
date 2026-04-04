@@ -5,6 +5,7 @@ import { canConfigureHostBaseUrl } from "../../../config/client-config-service";
 import { serverConfigStore, useServerConfigSelector } from "../../../config/server-config";
 import { authGateway } from "../../../auth/auth-gateway";
 import { probeHost } from "../../../network/host-probe";
+import { consumeAuthExpiredFlag } from "../../../network/http-client";
 import { usePlatform } from "../../../platform/platform-provider";
 import { userPreferenceStore } from "../../../preferences/user-preference-store";
 import { LanguageSwitcher, t, useT } from "../../../shared/i18n";
@@ -187,6 +188,7 @@ export function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [showServerModal, setShowServerModal] = useState(false);
   const [focusedField, setFocusedField] = useState<string | null>(null);
+  const [demoMode, setDemoMode] = useState(false);
   const authSession = useAuthSelector((state) => state.session);
   const returnTo = useMemo(() => searchParams.get("returnTo") ?? "/", [searchParams]);
   const { theme } = useTheme();
@@ -255,7 +257,15 @@ export function LoginPage() {
 
     void probeHost(probeServerBaseUrl)
       .then((status) => {
-        if (!disposed && status.reachable && !status.initialized) {
+        if (disposed) return;
+        if (status.demoMode) {
+          setDemoMode(true);
+          // 检测是否因 token 过期被踢回登录页
+          if (consumeAuthExpiredFlag()) {
+            setStatusText(t("auth.demoSessionExpired"));
+          }
+        }
+        if (status.reachable && !status.initialized) {
           navigate("/bootstrap", { replace: true });
         }
       })
@@ -370,6 +380,14 @@ export function LoginPage() {
               </span>
               <div className="cyber-line" />
             </div>
+
+            {/* Demo Mode Banner */}
+            {demoMode ? (
+              <div className="cyber-demo-banner">
+                <span className="cyber-demo-icon">&#9888;</span>
+                <span>{t("auth.demoBanner")}</span>
+              </div>
+            ) : null}
 
             <form className="cyber-form" onSubmit={handleSubmit}>
               {/* Username Field */}

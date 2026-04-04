@@ -13,6 +13,7 @@ export interface RefreshPayload {
 
 export interface BootstrapStatus {
   initialized: boolean;
+  demoMode?: boolean;
 }
 
 export function getBootstrapStatus(baseUrl?: string) {
