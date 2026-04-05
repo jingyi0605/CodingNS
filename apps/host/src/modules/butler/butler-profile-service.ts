@@ -391,7 +391,7 @@ export function ensureButlerWorkspaceIsolation(workspacePath: string): void {
 
   fs.mkdirSync(resolvedWorkspacePath, { recursive: true });
 
-  if (readGitTopLevel(resolvedWorkspacePath) === resolvedWorkspacePath) {
+  if (isSamePath(readGitTopLevel(resolvedWorkspacePath), resolvedWorkspacePath)) {
     return;
   }
 
@@ -411,7 +411,7 @@ export function ensureButlerWorkspaceIsolation(workspacePath: string): void {
     });
   }
 
-  if (readGitTopLevel(resolvedWorkspacePath) !== resolvedWorkspacePath) {
+  if (!isSamePath(readGitTopLevel(resolvedWorkspacePath), resolvedWorkspacePath)) {
     throw new AppError({
       statusCode: 500,
       errorCode: "BUTLER_WORKSPACE_ISOLATION_FAILED",
@@ -431,6 +431,18 @@ function readGitTopLevel(workspacePath: string): string | null {
     return normalized ? path.resolve(normalized) : null;
   } catch {
     return null;
+  }
+}
+
+function isSamePath(left: string | null, right: string): boolean {
+  if (!left) {
+    return false;
+  }
+
+  try {
+    return fs.realpathSync.native(left) === fs.realpathSync.native(right);
+  } catch {
+    return path.resolve(left) === path.resolve(right);
   }
 }
 

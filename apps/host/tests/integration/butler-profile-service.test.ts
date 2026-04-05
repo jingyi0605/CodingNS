@@ -130,7 +130,7 @@ describe("ButlerProfileService", () => {
     expect(repository.create).toHaveBeenCalledOnce();
     expect(execFileSync("git", ["-C", workspacePath, "rev-parse", "--show-toplevel"], {
       encoding: "utf8"
-    }).trim()).toBe(workspacePath);
+    }).trim()).toBe(fs.realpathSync.native(workspacePath));
   });
 
   it("文件模式会生成独立管家规则，不继承普通项目会话规则", () => {

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -172,7 +172,7 @@ describe("ButlerControlSessionService", () => {
     );
     expect(execFileSync("git", ["-C", workspacePath, "rev-parse", "--show-toplevel"], {
       encoding: "utf8"
-    }).trim()).toBe(workspacePath);
+    }).trim()).toBe(realpathSync.native(workspacePath));
     expect(readFileSync(path.join(codexHomeDir, "config.toml"), "utf8")).toContain(
       `model_instructions_file = "${path.join(workspacePath, "AGENTS.md")}"`
     );
