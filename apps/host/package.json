@@ -13,7 +13,7 @@
     "dev": "npm run dev:watch",
     "dev:watch": "tsx watch --clear-screen=false --include \"../../packages/session-sync-core/dist/**/*.js\" src/main.ts",
     "build": "node scripts/build.mjs",
-    "test": "vitest run"
+    "test": "node scripts/run-vitest.mjs"
   },
   "dependencies": {
     "@codingns/session-sync-core": "workspace:*",

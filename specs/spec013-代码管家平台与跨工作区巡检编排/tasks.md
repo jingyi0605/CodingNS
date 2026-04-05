@@ -108,8 +108,8 @@
 
 ## 阶段 1：先把项目、会话、记忆数据结构立住
 
-- [ ] 1.1 落地 `ButlerProject`、`ButlerSession`、`SessionCheckpoint` 持久化模型
-  - 状态：TODO
+- [x] 1.1 落地 `ButlerProject`、`ButlerSession`、`SessionCheckpoint` 持久化模型
+  - 状态：DONE
   - 这一步到底做什么：把托管项目、托管会话和会话快照做成正式表结构与仓储接口。
   - 做完你能看到什么：平台能稳定知道“有哪些项目”“有哪些会话”“它们现在什么状态”。
   - 先依赖什么：0.2
@@ -124,13 +124,13 @@
     1. 三类核心对象可持久化
     2. 会话状态和快照字段完整
   - 怎么验证：
-    - 仓储单元测试
-    - 字段映射检查
+    - `pnpm --dir apps/host exec tsc -p tsconfig.json --noEmit`
+    - `pnpm --dir apps/host test -- tests/integration/butler-project-service.test.ts tests/integration/butler-session-service.test.ts`
   - 对应需求：`requirements.md` 需求 1、需求 10、需求 11
   - 对应设计：`design.md` §5
 
-- [ ] 1.2 落地 `ProjectMemory` 存储、检索与状态管理
-  - 状态：TODO
+- [x] 1.2 落地 `ProjectMemory` 存储、检索与状态管理
+  - 状态：DONE
   - 这一步到底做什么：把项目长期记忆做成独立表和检索服务，而不是挂在 provider 私有记忆里。
   - 做完你能看到什么：平台可以按项目和路径回灌记忆，并支持修正和归档。
   - 先依赖什么：1.1
@@ -146,8 +146,8 @@
     2. 记忆带来源、置信度和状态
     3. 支持修正和归档
   - 怎么验证：
-    - 记忆服务测试
-    - 错误记忆降权测试
+    - `pnpm --dir apps/host exec tsc -p tsconfig.json --noEmit`
+    - `pnpm --dir apps/host test -- tests/integration/project-memory-service.test.ts`
   - 对应需求：`requirements.md` 需求 4、需求 9
   - 对应设计：`design.md` §4.3、§5.4、§8.6
 
@@ -174,8 +174,8 @@
 
 ## 阶段 2：接通 provider 适配与统一指令注入
 
-- [ ] 2.1 实现 `ProviderAdapter` 注册与能力位声明
-  - 状态：TODO
+- [x] 2.1 实现 `ProviderAdapter` 注册与能力位声明
+  - 状态：DONE
   - 这一步到底做什么：建立统一 provider 入口，先接 `Codex` 和 `Claude Code` 两个适配器。
   - 做完你能看到什么：上层逻辑不再直接写 provider 分支。
   - 先依赖什么：1.3
@@ -196,8 +196,8 @@
   - 对应需求：`requirements.md` 需求 2、需求 11
   - 对应设计：`design.md` §3.1、§6
 
-- [ ] 2.2 实现 `InstructionAdapter`
-  - 状态：TODO
+- [x] 2.2 实现 `InstructionAdapter`
+  - 状态：DONE
   - 这一步到底做什么：把统一规则、记忆、任务目标映射到 `Codex` 和 `Claude Code` 的启动上下文。
   - 做完你能看到什么：不同 provider 启动出来的会话都具备统一代码管家认知。
   - 先依赖什么：2.1
@@ -218,8 +218,18 @@
   - 对应需求：`requirements.md` 需求 3
   - 对应设计：`design.md` §2.2、§7
 
-- [ ] 2.3 实现会话创建、登记、续接和快照采集闭环
-  - 状态：TODO
+- [x] 2.3 实现会话创建、登记、续接和快照采集闭环
+  - 状态：DONE
+  - 最新进展（2026-04-03）：
+    1. `importSession` 登记时已立即采集首个 `SessionCheckpoint`
+    2. `ButlerSession.lastSummary/lastCheckpointAt` 已在登记时同步回写
+    3. 巡视 run 启动后会持续回写会话快照，失败路径也会写阻塞快照
+    4. 新增后续快照采样入口（按 `butlerSessionId` 手动采样并回写会话状态）
+    5. 新增会话创建入口（按项目直接启动 live session 并登记为 `ButlerSession`）
+    6. 新增会话续接入口（按 `butlerSessionId` 续接 provider 会话并同步快照）
+    7. 新增 butler 路由集成测试覆盖 `sessions/start|resume|snapshot`
+    8. 补齐 `sessions/start|resume|snapshot` 路由异常分支测试（`INVALID_INPUT`、`BUTLER_SESSION_NOT_FOUND`）并验证错误契约稳定
+    9. 补齐 `sessions/start|resume` 能力缺失错误契约测试（`BUTLER_SESSION_START_UNAVAILABLE`、`BUTLER_SESSION_RESUME_UNAVAILABLE`）
   - 这一步到底做什么：把 provider 会话接入到平台 `ButlerSession` 生命周期里。
   - 做完你能看到什么：平台可以统一登记、续接和总结会话。
   - 先依赖什么：2.2
@@ -236,8 +246,8 @@
     2. 可续接会话
     3. 可采集第一份和后续快照
   - 怎么验证：
-    - 多 provider 会话回放
-    - 快照采样测试
+    - `pnpm --dir apps/host exec tsc -p tsconfig.json --noEmit`
+    - `pnpm --dir apps/host exec vitest run tests/integration/butler-session-service.test.ts tests/integration/butler-routes-session-lifecycle.test.ts`
   - 对应需求：`requirements.md` 需求 1、需求 2、需求 3
   - 对应设计：`design.md` §8.2
 
@@ -245,8 +255,11 @@
 
 ## 阶段 3：先做只读巡视闭环
 
-- [ ] 3.1 落地 `PatrolPlan` 与调度执行
-  - 状态：TODO
+- [x] 3.1 落地 `PatrolPlan` 与调度执行
+  - 状态：DONE
+  - 稳定性补充（2026-04-03）：
+    1. 增加运行超时回收，避免 `running` 长时间悬挂阻塞后续调度
+    2. 增加巡视 run 终态守卫，防止晚到回调覆盖已完成状态
   - 这一步到底做什么：为托管项目提供周期巡视计划和任务触发。
   - 做完你能看到什么：系统会按计划主动巡视项目，而不是被动等用户提问。
   - 先依赖什么：2.3
@@ -262,13 +275,20 @@
     2. 到点可触发巡视执行
     3. 可记录巡视执行结果
   - 怎么验证：
-    - 调度测试
-    - 巡视执行回放
+    - `pnpm --dir apps/host exec tsc -p tsconfig.json --noEmit`
+    - `pnpm --dir apps/host test -- tests/integration/patrol-plan-service.test.ts tests/integration/patrol-run-service.test.ts tests/integration/patrol-scheduler.test.ts`
   - 对应需求：`requirements.md` 需求 5
   - 对应设计：`design.md` §8.3
 
-- [ ] 3.2 实现项目进展总结、风险提示和下一步建议
-  - 状态：TODO
+- [x] 3.2 实现项目进展总结、风险提示和下一步建议
+  - 状态：DONE
+  - 最新进展（2026-04-03）：
+    1. 巡视结构化输出新增 JSON 契约兜底解析（代码块/宽松对象/降级文本提取）
+    2. 风险等级、进度状态支持从自然语言推断并保守降级
+    3. 建议项与下一步动作已支持去重聚合，避免空结果
+    4. 新增类 JSON 解析能力（中文字段、单引号、未加引号 key、布尔/空值与尾逗号容错）
+    5. 增加纯文本降级抽取，覆盖风险分级、建议项与下一步动作去重
+    6. 新增 provider 适配集成测试样本，覆盖非标准 JSON 与无 JSON 输出场景
   - 这一步到底做什么：让巡视输出可读、可决策的项目结论，而不是一堆原始日志。
   - 做完你能看到什么：每次巡视后，用户能看到项目到底推进到哪、卡在哪里、该干什么。
   - 先依赖什么：3.1
@@ -284,13 +304,17 @@
     2. 风险等级明确
     3. 下一步建议可用
   - 怎么验证：
-    - 总结样本测试
-    - 风险场景回放
+    - `pnpm --dir apps/host exec tsc -p tsconfig.json --noEmit`
+    - `pnpm --dir apps/host exec vitest run tests/integration/provider-adapter-registry.test.ts`
   - 对应需求：`requirements.md` 需求 6、需求 7
   - 对应设计：`design.md` §2.4、§8.3
 
-- [ ] 3.3 阶段检查：只读代码管家是否成立
-  - 状态：TODO
+- [x] 3.3 阶段检查：只读代码管家是否成立
+  - 状态：DONE
+  - 最新进展（2026-04-03）：
+    1. `readonly` 巡视新增文件写入审计，会读取 `session_changed_files` 检测越权改动
+    2. 一旦检测到只读巡视发生写入，run 会自动回写为 `failed/high`，并把风险与修复动作写回项目和会话
+    3. 新增 `patrol-runs` 路由集成测试，覆盖 `start/list/get` 闭环与 `PATROL_PLAN_NOT_FOUND` 错误契约
   - 这一步到底做什么：确认系统已经具备“登记项目 -> 巡视项目 -> 输出总结与风险”的最小闭环。
   - 做完你能看到什么：MVP-1 的地基成立。
   - 先依赖什么：3.1、3.2
@@ -313,8 +337,13 @@
 
 ## 阶段 4：补上真实验证闭环
 
-- [ ] 4.1 实现 `VerificationRunner` 基础验证能力
-  - 状态：TODO
+- [x] 4.1 实现 `VerificationRunner` 基础验证能力
+  - 状态：DONE
+  - 最新进展（2026-04-03）：
+    1. 新增 `verification_runs` 持久化表、仓储与 `VerificationRunService`
+    2. 已支持 `test` / `health` 两类最小验证执行，并回写 `VerificationRun`、`ButlerProject.lastVerificationAt`
+    3. 验证结果可写回关联 `ButlerSession` 的 `verification` checkpoint，失败时会抬升会话阻塞状态
+    4. 新增 `/api/butler/projects/:projectId/verifications` 路由与集成测试，覆盖正常闭环和 `VERIFICATION_TYPE_UNSUPPORTED`
   - 这一步到底做什么：提供命令测试、健康检查和结果回写。
   - 做完你能看到什么：系统开始具备“不是只听 agent 自己说完成”的能力。
   - 先依赖什么：3.3

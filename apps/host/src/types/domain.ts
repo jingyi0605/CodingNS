@@ -233,7 +233,12 @@ export interface UserQuickPhrasePreferenceRecord {
   updatedAt: string;
 }
 
-export type PreferenceProviderId = "claude-code" | "codex" | "opencode";
+export type PreferenceProviderId =
+  | "claude-code"
+  | "codex"
+  | "opencode"
+  | "gemini"
+  | "kimi";
 export type UserPreferenceLanguage = "zh-CN" | "en-US";
 export type UserPreferenceTheme = "light" | "dark" | "sky-blue" | "eye-green";
 export type UserPreferencePermissionMode = "default" | "acceptEdits" | "bypassPermissions";
@@ -256,6 +261,131 @@ export interface UserPreferenceProfileRecord extends UserPreferenceProfile {
   userId: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export type ButlerApprovalMode = "readonly" | "controlled" | "auto";
+export type ButlerLifecycleStatus = "active" | "paused" | "archived";
+export type ButlerRiskLevel = "low" | "medium" | "high";
+export type ButlerSessionRole = "patrol" | "execution" | "verification" | "adhoc";
+export type ButlerSessionOwnershipMode = "managed" | "observed";
+export type ButlerSessionStatus = "idle" | "running" | "blocked" | "failed" | "closed";
+export type ButlerCheckpointSourceKind = "snapshot" | "summary" | "verification" | "manual";
+export type ButlerCheckpointProgressState = "unknown" | "working" | "blocked" | "done";
+export type ProjectMemoryType = "arch" | "rule" | "decision" | "incident" | "verify" | "note";
+export type ProjectMemoryStatus = "candidate" | "active" | "superseded" | "archived";
+export type PatrolTriggerType = "manual" | "interval" | "cron";
+export type PatrolExecutionMode = "readonly" | "controlled";
+export type PatrolRunTriggeredBy = "scheduler" | "user" | "system";
+export type PatrolRunStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+export type VerificationType = "test" | "health" | "browser" | "visual" | "metric";
+export type VerificationRunStatus = "queued" | "running" | "passed" | "failed" | "skipped";
+
+export interface ButlerProject {
+  id: string;
+  workspaceId: string;
+  name: string;
+  repoRoot: string;
+  defaultProvider: ProviderId | null;
+  instructionProfileId: string | null;
+  approvalMode: ButlerApprovalMode;
+  lifecycleStatus: ButlerLifecycleStatus;
+  riskLevel: ButlerRiskLevel;
+  config: Record<string, unknown>;
+  lastPatrolAt: string | null;
+  lastVerificationAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  archivedAt: string | null;
+}
+
+export interface ButlerSession {
+  id: string;
+  projectId: string;
+  sessionId: string;
+  role: ButlerSessionRole;
+  ownershipMode: ButlerSessionOwnershipMode;
+  status: ButlerSessionStatus;
+  lastSummary: string | null;
+  lastCheckpointAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SessionCheckpoint {
+  id: string;
+  butlerSessionId: string;
+  checkpointSeq: number;
+  sourceKind: ButlerCheckpointSourceKind;
+  progressState: ButlerCheckpointProgressState;
+  summary: string;
+  riskFlags: string[];
+  nextActions: string[];
+  capturedAt: string;
+}
+
+export interface ProjectMemory {
+  id: string;
+  projectId: string;
+  sourceButlerSessionId: string | null;
+  sourceCheckpointId: string | null;
+  memoryType: ProjectMemoryType;
+  title: string;
+  scopePath: string | null;
+  content: string;
+  tags: string[];
+  confidence: number;
+  status: ProjectMemoryStatus;
+  evidence: Record<string, unknown>;
+  supersededBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PatrolPlan {
+  id: string;
+  projectId: string;
+  name: string;
+  triggerType: PatrolTriggerType;
+  triggerConfig: Record<string, unknown>;
+  executionMode: PatrolExecutionMode;
+  patrolScope: Record<string, unknown>;
+  enabled: boolean;
+  lastScheduledAt: string | null;
+  nextRunAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PatrolRun {
+  id: string;
+  projectId: string;
+  planId: string | null;
+  triggeredBy: PatrolRunTriggeredBy;
+  triggerRef: string | null;
+  butlerSessionId: string | null;
+  status: PatrolRunStatus;
+  summary: string | null;
+  riskLevel: ButlerRiskLevel | null;
+  suggestions: string[];
+  startedAt: string | null;
+  finishedAt: string | null;
+  createdAt: string;
+}
+
+export interface VerificationRun {
+  id: string;
+  projectId: string;
+  butlerSessionId: string | null;
+  sourcePatrolRunId: string | null;
+  verificationType: VerificationType;
+  status: VerificationRunStatus;
+  targetRef: string | null;
+  summary: string | null;
+  artifactRefs: Array<Record<string, unknown>>;
+  result: Record<string, unknown>;
+  startedAt: string | null;
+  finishedAt: string | null;
+  createdAt: string;
 }
 
 export interface FileContextBinding {
