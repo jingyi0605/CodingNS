@@ -114,9 +114,9 @@ async function readProcessCwd(pid: number): Promise<string | null> {
     }
   }
 
-  const result = await runCommand("lsof", ["-a", "-p", String(pid), "-d", "cwd", "-Fn"]);
+  const result = await tryRunCommand("lsof", ["-a", "-p", String(pid), "-d", "cwd", "-Fn"]);
 
-  if (result.status !== 0) {
+  if (!result || result.status !== 0) {
     return null;
   }
 
@@ -175,18 +175,73 @@ async function readListeningSockets(pid: number): Promise<OpenCodeListeningSocke
     return dedupeListeningSockets(records).sort(compareListeningSockets);
   }
 
-  const result = await runCommand(
+  if (process.platform === "linux") {
+    const ssRecords = await readListeningSocketsViaSs(pid);
+
+    if (ssRecords.length > 0) {
+      return ssRecords;
+    }
+  }
+
+  return await readListeningSocketsViaLsof(pid);
+}
+
+async function readListeningSocketsViaSs(pid: number): Promise<OpenCodeListeningSocket[]> {
+  const result = await tryRunCommand("ss", ["-ltnpH"]);
+
+  if (!result || result.status !== 0) {
+    return [];
+  }
+
+  return parseListeningSocketsFromSsOutput(result.stdout, pid);
+}
+
+async function readListeningSocketsViaLsof(pid: number): Promise<OpenCodeListeningSocket[]> {
+  const result = await tryRunCommand(
     "lsof",
     ["-Pan", "-n", "-a", "-p", String(pid), "-iTCP", "-sTCP:LISTEN"]
   );
 
-  if (result.status !== 0) {
+  if (!result || result.status !== 0) {
     return [];
   }
 
+  return parseListeningSocketsFromLsofOutput(result.stdout);
+}
+
+function parseListeningSocketsFromSsOutput(
+  stdout: string,
+  pid: number
+): OpenCodeListeningSocket[] {
   const records: OpenCodeListeningSocket[] = [];
 
-  for (const line of result.stdout.split(/\r?\n/)) {
+  for (const line of stdout.split(/\r?\n/)) {
+    const trimmed = line.trim();
+
+    if (!trimmed || !trimmed.includes(`pid=${pid}`)) {
+      continue;
+    }
+
+    const columns = trimmed.split(/\s+/);
+
+    if (columns.length < 4) {
+      continue;
+    }
+
+    const parsed = parseSocketEndpoint(columns[3] ?? "");
+
+    if (parsed) {
+      records.push(parsed);
+    }
+  }
+
+  return dedupeListeningSockets(records).sort(compareListeningSockets);
+}
+
+function parseListeningSocketsFromLsofOutput(stdout: string): OpenCodeListeningSocket[] {
+  const records: OpenCodeListeningSocket[] = [];
+
+  for (const line of stdout.split(/\r?\n/)) {
     const matched = line.match(/\sTCP\s+(.+?)\s+\(LISTEN\)$/);
 
     if (!matched) {
@@ -202,6 +257,28 @@ async function readListeningSockets(pid: number): Promise<OpenCodeListeningSocke
   }
 
   return dedupeListeningSockets(records).sort(compareListeningSockets);
+}
+
+async function tryRunCommand(
+  command: string,
+  args: string[],
+  options: {
+    windowsHide?: boolean;
+  } = {}
+): Promise<{
+  status: number | null;
+  stdout: string;
+  stderr: string;
+} | null> {
+  try {
+    return await runCommand(command, args, options);
+  } catch (error) {
+    if (isMissingBinaryError(error)) {
+      return null;
+    }
+
+    throw error;
+  }
 }
 
 async function runCommand(
@@ -241,6 +318,18 @@ async function runCommand(
       });
     });
   });
+}
+
+function isMissingBinaryError(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  if ("code" in error && error.code === "ENOENT") {
+    return true;
+  }
+
+  return "message" in error && typeof error.message === "string" && error.message.includes("ENOENT");
 }
 
 function parseSocketEndpoint(endpoint: string): OpenCodeListeningSocket | null {
@@ -298,3 +387,12 @@ function compareListeningSockets(left: OpenCodeListeningSocket, right: OpenCodeL
 
   return left.hostname.localeCompare(right.hostname);
 }
+
+export const __internal__ = {
+  parseListeningSocketsFromLsofOutput,
+  parseListeningSocketsFromSsOutput,
+  isMissingBinaryError,
+  readListeningSocketsViaLsof,
+  readListeningSocketsViaSs,
+  tryRunCommand
+};
