@@ -26,6 +26,11 @@ DERIVED_DATA_DIR="$TAURI_DIR/target/ios-derived-data"
 APP_NAME="CodingNS"
 BUNDLE_ID="com.codingns.userapp"
 IOS_ASSETS_DIR="$IOS_PROJECT_DIR/assets"
+IOS_APPICON_DIR="$IOS_PROJECT_DIR/Assets.xcassets/AppIcon.appiconset"
+IOS_ICON_SOURCE_PATH="$TAURI_DIR/icons/icon.png"
+IOS_ICON_BACKGROUND_TOP="#07111f"
+IOS_ICON_BACKGROUND_BOTTOM="#173e9a"
+IOS_ICON_FOREGROUND_SIZE=860
 SIMULATOR_NAME="iPhone 17 Pro Max"
 BUILD_CONFIGURATION="release"
 OPEN_XCODE=1
@@ -133,6 +138,7 @@ check_environment() {
   check_command xcrun
   check_command pod
   check_command xcodegen
+  check_command magick
 
   if [[ ! -d /Applications/Xcode.app ]]; then
     log_error "未找到 /Applications/Xcode.app"
@@ -166,6 +172,69 @@ sync_ios_project() {
   log_info "同步 iOS 工程模板，避免生成目录变更丢失..."
   cp "$IOS_PROJECT_SPEC_PATH" "$IOS_PROJECT_DIR/project.yml"
   xcodegen generate --spec "$IOS_PROJECT_DIR/project.yml" --project "$IOS_PROJECT_DIR" >/dev/null
+}
+
+prepare_ios_app_icons() {
+  local temp_dir
+  local source_icon_path
+  local generated_dir
+  local stripped_dir
+
+  if [[ ! -f "$IOS_ICON_SOURCE_PATH" ]]; then
+    log_error "未找到 iOS 图标源文件: $IOS_ICON_SOURCE_PATH"
+    exit 1
+  fi
+
+  if [[ ! -d "$IOS_APPICON_DIR" ]]; then
+    log_error "未找到 iOS AppIcon 目录: $IOS_APPICON_DIR"
+    exit 1
+  fi
+
+  temp_dir="$(mktemp -d)"
+  source_icon_path="$temp_dir/ios-app-icon-source.png"
+  generated_dir="$temp_dir/generated-icons"
+  stripped_dir="$temp_dir/stripped-icons"
+
+  log_info "重新生成 iOS AppIcon，移除透明背景和 alpha 通道..."
+
+  # iOS AppIcon 不能带透明通道，这里先把现有透明图标铺到稳定的渐变底色上。
+  magick \
+    -size 1024x1024 "gradient:${IOS_ICON_BACKGROUND_TOP}-${IOS_ICON_BACKGROUND_BOTTOM}" \
+    \( "$IOS_ICON_SOURCE_PATH" -resize "${IOS_ICON_FOREGROUND_SIZE}x${IOS_ICON_FOREGROUND_SIZE}" \) \
+    -gravity center \
+    -compose over \
+    -composite \
+    -alpha remove \
+    -alpha off \
+    "PNG24:$source_icon_path"
+
+  pnpm --dir "$USER_APP_DIR" exec tauri icon "$source_icon_path" -o "$generated_dir" >/dev/null
+
+  if [[ ! -d "$generated_dir/ios" ]]; then
+    log_error "Tauri 未生成 iOS 图标目录: $generated_dir/ios"
+    exit 1
+  fi
+
+  mkdir -p "$stripped_dir"
+
+  for icon_path in "$generated_dir"/ios/*.png; do
+    local icon_name
+    icon_name="$(basename "$icon_path")"
+
+    # Tauri 生成的 PNG 即使已经完全不透明，仍然会保留 alpha 通道元数据。
+    # Xcode 发布时会直接拒绝，所以这里再明确转成无 alpha 的 PNG24。
+    magick "$icon_path" -alpha off "PNG24:$stripped_dir/$icon_name"
+  done
+
+  cp "$stripped_dir"/*.png "$IOS_APPICON_DIR/"
+
+  if sips -g hasAlpha "$IOS_APPICON_DIR/AppIcon-512@2x.png" | grep -q "yes"; then
+    log_error "iOS AppIcon 仍然包含 alpha 通道，请检查图标生成流程"
+    exit 1
+  fi
+
+  rm -rf "$temp_dir"
+  log_success "iOS AppIcon 已更新为无透明通道版本"
 }
 
 build_frontend() {
@@ -323,6 +392,7 @@ print_summary() {
 main() {
   check_environment
   sync_ios_project
+  prepare_ios_app_icons
   build_frontend
   sync_frontend_assets
 
