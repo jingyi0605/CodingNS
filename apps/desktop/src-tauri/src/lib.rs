@@ -368,7 +368,6 @@ fn build_external_window<'a>(
     )
     .resizable(true)
     .decorations(true)
-    .hidden_title(false)
     .title_bar_style(TitleBarStyle::Visible)
     .accept_first_mouse(true)
     .focused(true)
@@ -566,9 +565,9 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
         .manage(WindowManagerState::default())
-        .setup(|app| {
+        .setup(|_app| {
             #[cfg(target_os = "macos")]
-            configure_macos_window_chrome(app)?;
+            configure_macos_window_chrome(_app)?;
 
             Ok(())
         })
