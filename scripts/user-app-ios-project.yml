@@ -50,8 +50,8 @@ targets:
         NSCameraUsageDescription: 用于在聊天中拍照并作为图片附件发送。
         NSPhotoLibraryUsageDescription: 用于从相册选择图片并作为聊天附件发送。
         NSPhotoLibraryAddUsageDescription: 用于将聊天中的图片或文件保存到系统相册与本地资料。
-        CFBundleShortVersionString: 0.1.4
-        CFBundleVersion: "0.1.4"
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         ITSAppUsesNonExemptEncryption: false
     entitlements:
       path: app_iOS/app_iOS.entitlements
@@ -60,6 +60,10 @@ targets:
         ENABLE_BITCODE: false
         ARCHS: [arm64]
         VALID_ARCHS: arm64
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: 828JR8JA8V
+        MARKETING_VERSION: 0.1.4
+        CURRENT_PROJECT_VERSION: "104"
         LIBRARY_SEARCH_PATHS[arch=x86_64]: $(inherited) $(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(TOOLCHAIN_DIR)/usr/lib/swift/$(PLATFORM_NAME) $(TOOLCHAIN_DIR)/usr/lib/swift-5.0/$(PLATFORM_NAME)
         LIBRARY_SEARCH_PATHS[arch=arm64]: $(inherited) $(PROJECT_DIR)/Externals/arm64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(TOOLCHAIN_DIR)/usr/lib/swift/$(PLATFORM_NAME) $(TOOLCHAIN_DIR)/usr/lib/swift-5.0/$(PLATFORM_NAME)
         ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: true
@@ -88,6 +92,15 @@ targets:
           mkdir -p "$ASSETS_DIR"
           rsync -a --delete "$DIST_DIR/" "$ASSETS_DIR/"
         name: Sync Frontend Assets
+        basedOnDependencyAnalysis: false
+      - script: |-
+          set -e
+          # Apple 的隐私清单、Info.plist、entitlements 只要有一个写坏，
+          # App Store Connect 就可能直接判成二进制文件无效。
+          plutil -lint "$SRCROOT/app_iOS/PrivacyInfo.xcprivacy"
+          plutil -lint "$SRCROOT/app_iOS/Info.plist"
+          plutil -lint "$SRCROOT/app_iOS/app_iOS.entitlements"
+        name: Validate Apple Metadata
         basedOnDependencyAnalysis: false
       - script: |-
           set -e

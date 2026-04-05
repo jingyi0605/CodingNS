@@ -22,6 +22,7 @@ TAURI_DIR="$USER_APP_DIR/src-tauri"
 IOS_PROJECT_DIR="$TAURI_DIR/gen/apple"
 IOS_PROJECT_PATH="$IOS_PROJECT_DIR/app.xcodeproj"
 IOS_PROJECT_SPEC_PATH="$SCRIPT_DIR/user-app-ios-project.yml"
+TAURI_CONFIG_PATH="$TAURI_DIR/tauri.conf.json"
 DERIVED_DATA_DIR="$TAURI_DIR/target/ios-derived-data"
 APP_NAME="CodingNS"
 BUNDLE_ID="com.codingns.userapp"
@@ -40,6 +41,9 @@ EXPORT_BUILD=0
 ARCHIVE_PATH="$TAURI_DIR/target/ios-archive"
 EXPORT_PATH="$TAURI_DIR/target/ios-export"
 EXPORT_OPTIONS="$IOS_PROJECT_DIR/ExportOptions.plist"
+MARKETING_VERSION=""
+IOS_BUILD_NUMBER="${IOS_BUILD_NUMBER:-}"
+IOS_DEVELOPMENT_TEAM=""
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -163,6 +167,65 @@ check_environment() {
   fi
 }
 
+read_tauri_string() {
+  local js_expr="$1"
+
+  node -e '
+    const fs = require("fs");
+    const config = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+    const expr = process.argv[2];
+    const value = Function("config", `return (${expr});`)(config);
+    process.stdout.write(value == null ? "" : String(value));
+  ' "$TAURI_CONFIG_PATH" "$js_expr"
+}
+
+load_ios_build_metadata() {
+  if [[ ! -f "$TAURI_CONFIG_PATH" ]]; then
+    log_error "未找到 Tauri 配置文件: $TAURI_CONFIG_PATH"
+    exit 1
+  fi
+
+  MARKETING_VERSION="$(read_tauri_string 'config.version')"
+  IOS_DEVELOPMENT_TEAM="$(read_tauri_string 'config.bundle?.iOS?.developmentTeam')"
+
+  if [[ -z "$IOS_BUILD_NUMBER" ]]; then
+    IOS_BUILD_NUMBER="$(read_tauri_string 'config.bundle?.iOS?.bundleVersion')"
+  fi
+
+  if [[ -z "$MARKETING_VERSION" ]]; then
+    log_error "tauri.conf.json 缺少 version"
+    exit 1
+  fi
+
+  if [[ -z "$IOS_DEVELOPMENT_TEAM" ]]; then
+    log_error "tauri.conf.json 缺少 bundle.iOS.developmentTeam"
+    exit 1
+  fi
+
+  if [[ -z "$IOS_BUILD_NUMBER" ]]; then
+    log_error "缺少 iOS 构建号。请在 tauri.conf.json 的 bundle.iOS.bundleVersion 中配置，或通过 IOS_BUILD_NUMBER 传入。"
+    exit 1
+  fi
+}
+
+validate_ios_build_metadata() {
+  if [[ ! "$MARKETING_VERSION" =~ ^[0-9]+(\.[0-9]+){2}$ ]]; then
+    log_error "version 必须是三段式 semver，例如 0.1.4。当前值: $MARKETING_VERSION"
+    exit 1
+  fi
+
+  if [[ ! "$IOS_BUILD_NUMBER" =~ ^[1-9][0-9]{0,3}(\.[0-9]{1,2}){0,2}$ ]]; then
+    log_error "iOS 构建号不合法: $IOS_BUILD_NUMBER"
+    log_error "CFBundleVersion 必须以非零数字开头，且每段只能包含数字。建议使用 104、105 或 1.4.0 这类值。"
+    exit 1
+  fi
+
+  if [[ ! "$IOS_DEVELOPMENT_TEAM" =~ ^[A-Z0-9]{10}$ ]]; then
+    log_error "Apple Development Team ID 不合法: $IOS_DEVELOPMENT_TEAM"
+    exit 1
+  fi
+}
+
 sync_ios_project() {
   if [[ ! -f "$IOS_PROJECT_SPEC_PATH" ]]; then
     log_warn "未找到外部 iOS 工程模板，将继续使用生成目录内的 project.yml"
@@ -172,6 +235,15 @@ sync_ios_project() {
   log_info "同步 iOS 工程模板，避免生成目录变更丢失..."
   cp "$IOS_PROJECT_SPEC_PATH" "$IOS_PROJECT_DIR/project.yml"
   xcodegen generate --spec "$IOS_PROJECT_DIR/project.yml" --project "$IOS_PROJECT_DIR" >/dev/null
+}
+
+sync_export_options() {
+  if [[ ! -f "$EXPORT_OPTIONS" ]]; then
+    log_error "未找到导出配置: $EXPORT_OPTIONS"
+    exit 1
+  fi
+
+  /usr/libexec/PlistBuddy -c "Set :teamID $IOS_DEVELOPMENT_TEAM" "$EXPORT_OPTIONS" >/dev/null
 }
 
 prepare_ios_app_icons() {
@@ -237,6 +309,32 @@ prepare_ios_app_icons() {
   log_success "iOS AppIcon 已更新为无透明通道版本"
 }
 
+validate_ios_app_icons() {
+  log_info "校验 iOS AppIcon..."
+
+  if [[ ! -f "$IOS_APPICON_DIR/Contents.json" ]]; then
+    log_error "缺少 AppIcon 配置文件: $IOS_APPICON_DIR/Contents.json"
+    exit 1
+  fi
+
+  if ! grep -q '"idiom" : "ios-marketing"' "$IOS_APPICON_DIR/Contents.json"; then
+    log_error "AppIcon 缺少 ios-marketing 1024x1024 图标声明"
+    exit 1
+  fi
+
+  if [[ ! -f "$IOS_APPICON_DIR/AppIcon-512@2x.png" ]]; then
+    log_error "缺少 1024x1024 的营销图标: $IOS_APPICON_DIR/AppIcon-512@2x.png"
+    exit 1
+  fi
+
+  while IFS= read -r -d '' icon_path; do
+    if sips -g hasAlpha "$icon_path" | grep -q "yes"; then
+      log_error "检测到带 alpha 通道的 iOS 图标: $icon_path"
+      exit 1
+    fi
+  done < <(find "$IOS_APPICON_DIR" -maxdepth 1 -name '*.png' -print0)
+}
+
 build_frontend() {
   log_info "构建前端资源，确保使用当前最新本地代码..."
   pnpm --dir "$USER_APP_DIR" build
@@ -253,6 +351,27 @@ sync_frontend_assets() {
   log_info "同步前端静态资源到 iOS bundle..."
   mkdir -p "$IOS_ASSETS_DIR"
   rsync -a --delete "$dist_dir/" "$IOS_ASSETS_DIR/"
+}
+
+validate_apple_metadata() {
+  log_info "校验 Apple 提审元数据..."
+
+  # 这几个 plist 文件只要结构损坏，最糟糕的结果不是本地编不过，
+  # 而是上传后被 App Store Connect 直接判成二进制无效。
+  plutil -lint "$IOS_PROJECT_DIR/app_iOS/PrivacyInfo.xcprivacy"
+  plutil -lint "$IOS_PROJECT_DIR/app_iOS/Info.plist"
+  plutil -lint "$IOS_PROJECT_DIR/app_iOS/app_iOS.entitlements"
+  plutil -lint "$EXPORT_OPTIONS"
+
+  if grep -q '<key>NSPrivacyTrackingDomains</key>' "$IOS_PROJECT_DIR/app_iOS/PrivacyInfo.xcprivacy"; then
+    log_error "当前应用未声明跟踪，但 PrivacyInfo.xcprivacy 里仍然存在 NSPrivacyTrackingDomains"
+    exit 1
+  fi
+
+  if grep -q 'YOUR_TEAM_ID' "$EXPORT_OPTIONS"; then
+    log_error "ExportOptions.plist 里仍然保留了 teamID 占位符"
+    exit 1
+  fi
 }
 
 build_ios() {
@@ -276,6 +395,8 @@ build_ios() {
     -configuration "$BUILD_CONFIGURATION" \
     -destination "$destination" \
     -derivedDataPath "$DERIVED_DATA_DIR" \
+    MARKETING_VERSION="$MARKETING_VERSION" \
+    CURRENT_PROJECT_VERSION="$IOS_BUILD_NUMBER" \
     build
 }
 
@@ -301,6 +422,8 @@ archive_ios() {
     -destination "generic/platform=iOS" \
     -archivePath "$ARCHIVE_PATH.xcarchive" \
     -derivedDataPath "$DERIVED_DATA_DIR" \
+    MARKETING_VERSION="$MARKETING_VERSION" \
+    CURRENT_PROJECT_VERSION="$IOS_BUILD_NUMBER" \
     archive \
     ENABLE_BITCODE=NO
 
@@ -366,10 +489,10 @@ print_summary() {
     if [[ "$EXPORT_BUILD" -eq 1 ]]; then
       echo "IPA: $EXPORT_PATH"
     fi
+    echo "Version: $MARKETING_VERSION ($IOS_BUILD_NUMBER)"
     echo
     echo "后续步骤:"
     echo "1. 使用 Transporter 上传 IPA 到 App Store Connect"
-    echo "   或运行: xcrun altool --upload-app -f $EXPORT_PATH/*.ipa -t ios"
     echo "2. 登录 App Store Connect 选择构建版本并提交审核"
   else
     local app_path="$DERIVED_DATA_DIR/Build/Products/${BUILD_CONFIGURATION}-iphonesimulator/${APP_NAME}.app"
@@ -378,6 +501,7 @@ print_summary() {
     echo "工程路径: $IOS_PROJECT_PATH"
     echo "构建产物: $app_path"
     echo "DerivedData: $DERIVED_DATA_DIR"
+    echo "Version: $MARKETING_VERSION ($IOS_BUILD_NUMBER)"
     echo
     echo "说明:"
     echo "1. 这个脚本读取的是您当前磁盘上的本地代码。"
@@ -391,10 +515,15 @@ print_summary() {
 
 main() {
   check_environment
+  load_ios_build_metadata
+  validate_ios_build_metadata
   sync_ios_project
+  sync_export_options
   prepare_ios_app_icons
+  validate_ios_app_icons
   build_frontend
   sync_frontend_assets
+  validate_apple_metadata
 
   if [[ "$ARCHIVE_BUILD" -eq 1 ]]; then
     archive_ios
