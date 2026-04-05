@@ -8,8 +8,8 @@ use rfd::FileDialog;
 use serde::Serialize;
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri::{
-    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, State, TitleBarStyle, WebviewUrl,
-    WebviewWindow, WindowEvent,
+    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, State, WebviewUrl, WebviewWindow,
+    WindowEvent,
 };
 use updater::{DesktopReleaseState, DesktopRuntimeInfo, ReleaseManifest, UpdateInstallResult};
 use window_manager::{
@@ -368,10 +368,16 @@ fn build_external_window<'a>(
     )
     .resizable(true)
     .decorations(true)
-    .title_bar_style(TitleBarStyle::Visible)
     .accept_first_mouse(true)
     .focused(true)
     .visible(true);
+
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder
+            .hidden_title(false)
+            .title_bar_style(tauri::TitleBarStyle::Visible);
+    }
 
     if let (Some(x), Some(y)) = (descriptor.bounds.x, descriptor.bounds.y) {
         builder = builder.position(x as f64, y as f64);
