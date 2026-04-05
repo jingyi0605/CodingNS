@@ -8,6 +8,7 @@ import {
 
 import { BootstrapPage } from "../features/auth/pages/BootstrapPage";
 import { LoginPage } from "../features/auth/pages/LoginPage";
+import { ButlerPage } from "../features/butler/pages/ButlerPage";
 import { useAuthSelector } from "../features/auth/store/auth-store";
 import { ConversationPage } from "../features/conversation/pages/ConversationPage";
 import { useWorkbenchShell } from "../features/conversation/components/WorkbenchLayout";
@@ -124,6 +125,10 @@ const appRoutes = [
                 Component: module.TerminalPage
               };
             }
+          },
+          {
+            path: "workspaces/:workspaceId/butler",
+            element: <ButlerPage />
           },
           {
             path: "settings",

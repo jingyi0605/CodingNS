@@ -8,7 +8,11 @@ import { AuthController } from "../modules/auth/auth-controller.js";
 import { AuthService } from "../modules/auth/auth-service.js";
 import { BootstrapController } from "../modules/bootstrap/bootstrap-controller.js";
 import { BootstrapService } from "../modules/bootstrap/bootstrap-service.js";
+import { ButlerControlSessionService } from "../modules/butler/butler-control-session-service.js";
+import { ButlerControlActionService } from "../modules/butler/butler-control-action-service.js";
 import { ButlerController } from "../modules/butler/butler-controller.js";
+import { ButlerContextAggregator } from "../modules/butler/context-aggregator.js";
+import { ButlerProfileService } from "../modules/butler/butler-profile-service.js";
 import { ButlerProjectService } from "../modules/butler/butler-project-service.js";
 import { ButlerSessionService } from "../modules/butler/butler-session-service.js";
 import { InstructionAdapter } from "../modules/butler/instruction-adapter.js";
@@ -84,6 +88,9 @@ import { startTerminalDebugEventLoopLagMonitor } from "../shared/utils/terminal-
 import { AuthTokenRepository } from "../storage/repositories/auth-token-repository.js";
 import { AuthUserRepository } from "../storage/repositories/auth-user-repository.js";
 import { BootstrapStateRepository } from "../storage/repositories/bootstrap-state-repository.js";
+import { ButlerControlSessionRepository } from "../storage/repositories/butler-control-session-repository.js";
+import { ButlerControlEventRepository } from "../storage/repositories/butler-control-event-repository.js";
+import { ButlerProfileRepository } from "../storage/repositories/butler-profile-repository.js";
 import { ButlerProjectRepository } from "../storage/repositories/butler-project-repository.js";
 import { ButlerSessionRepository } from "../storage/repositories/butler-session-repository.js";
 import { PatrolPlanRepository } from "../storage/repositories/patrol-plan-repository.js";
@@ -133,6 +140,9 @@ export function createServer(config: HostConfig) {
     authUserRepository: new AuthUserRepository(database.db),
     authTokenRepository: new AuthTokenRepository(database.db),
     workspaceRepository: new WorkspaceRepository(database.db),
+    butlerControlSessionRepository: new ButlerControlSessionRepository(database.db),
+    butlerControlEventRepository: new ButlerControlEventRepository(database.db),
+    butlerProfileRepository: new ButlerProfileRepository(database.db),
     butlerProjectRepository: new ButlerProjectRepository(database.db),
     butlerSessionRepository: new ButlerSessionRepository(database.db),
     projectMemoryRepository: new ProjectMemoryRepository(database.db),
@@ -253,9 +263,36 @@ export function createServer(config: HostConfig) {
     config,
     sessionActivityAuthorityService
   );
+  const butlerProfileService = new ButlerProfileService(
+    repositories.butlerProfileRepository,
+    repositories.butlerProjectRepository,
+    path.dirname(config.databasePath)
+  );
+  const butlerRuntimeRootDir = path.join(path.dirname(config.databasePath), "butler-runtime");
+  const butlerRuntimeConfig: HostConfig = {
+    ...config,
+    codexHomeDir: path.join(butlerRuntimeRootDir, "codex-home"),
+    claudeCodeHomeDir: path.join(butlerRuntimeRootDir, "claude-home")
+  };
+  const butlerSessionLiveRuntimeService = new SessionLiveRuntimeService(
+    sessionHistoryService,
+    sessionMessageAttachmentService,
+    workspaceService,
+    sessionChangedFileService,
+    repositories.sessionBindingRepository,
+    repositories.authUserRepository,
+    repositories.sessionSendQueueRepository,
+    repositories.sessionIndexRepository,
+    repositories.sessionStateRepository,
+    repositories.sessionStatusSnapshotRepository,
+    butlerRuntimeConfig,
+    sessionActivityAuthorityService
+  );
   const workbenchService = new WorkbenchService(
     repositories.workspaceRepository,
-    sessionHistoryService
+    sessionHistoryService,
+    butlerProfileService,
+    repositories.butlerControlSessionRepository
   );
   const butlerProjectService = new ButlerProjectService(
     repositories.butlerProjectRepository,
@@ -313,6 +350,35 @@ export function createServer(config: HostConfig) {
     repositories.sessionCheckpointRepository,
     repositories.verificationRunRepository
   );
+  const butlerContextAggregator = new ButlerContextAggregator(
+    butlerProfileService,
+    repositories.butlerProjectRepository,
+    butlerSessionService,
+    projectMemoryService,
+    patrolRunService,
+    verificationRunService,
+    repositories.sessionCheckpointRepository
+  );
+  const butlerControlSessionService = new ButlerControlSessionService(
+    butlerProfileService,
+    repositories.butlerControlSessionRepository,
+    workspaceService,
+    sessionHistoryService,
+    butlerSessionLiveRuntimeService,
+    butlerContextAggregator,
+    butlerRuntimeConfig.codexHomeDir
+  );
+  const butlerControlActionService = new ButlerControlActionService(
+    butlerProfileService,
+    repositories.butlerControlSessionRepository,
+    repositories.butlerControlEventRepository,
+    butlerProjectService,
+    butlerSessionService,
+    patrolRunService,
+    patrolExecutionService,
+    verificationRunService,
+    butlerContextAggregator
+  );
   const fileContextService = new FileContextService(
     sessionHistoryService,
     repositories.fileContextBindingRepository
@@ -351,6 +417,10 @@ export function createServer(config: HostConfig) {
   const workspaceController = new WorkspaceController(workspaceService);
   const workbenchController = new WorkbenchController(workbenchService);
   const butlerController = new ButlerController(
+    butlerProfileService,
+    butlerControlSessionService,
+    butlerControlActionService,
+    butlerContextAggregator,
     butlerProjectService,
     butlerSessionService,
     projectMemoryService,
@@ -361,7 +431,8 @@ export function createServer(config: HostConfig) {
   );
   const sessionController = new SessionController(
     sessionHistoryService,
-    sessionLiveRuntimeService
+    sessionLiveRuntimeService,
+    repositories.butlerControlSessionRepository
   );
   const providerController = new ProviderController(
     sessionHistoryService,
@@ -439,6 +510,7 @@ export function createServer(config: HostConfig) {
     stopTerminalDebugEventLoopLagMonitor();
     await patrolScheduler.dispose();
     await terminalService.dispose();
+    await butlerSessionLiveRuntimeService.dispose();
     await sessionLiveRuntimeService.dispose();
     await wsHandle.close();
     gitCommandRunner.dispose();
@@ -457,6 +529,10 @@ export function createServer(config: HostConfig) {
         authService,
         workspaceService,
         workbenchService,
+        butlerProfileService,
+        butlerSessionLiveRuntimeService,
+        butlerControlSessionService,
+        butlerControlActionService,
         butlerProjectService,
         butlerSessionService,
         projectMemoryService,

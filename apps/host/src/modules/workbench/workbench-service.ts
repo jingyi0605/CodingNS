@@ -2,6 +2,8 @@ import type { SessionListItem, Workspace } from "../../types/domain.js";
 import { logPerformance } from "../../shared/utils/perf-log.js";
 import type { SessionHistoryService } from "../sessions/session-history-service.js";
 import type { WorkspaceRepository } from "../../storage/repositories/workspace-repository.js";
+import type { ButlerProfileService } from "../butler/butler-profile-service.js";
+import type { ButlerControlSessionRepository } from "../../storage/repositories/butler-control-session-repository.js";
 
 const WORKBENCH_REFRESH_MAX_AGE_MS = 15_000;
 
@@ -17,23 +19,26 @@ export interface WorkbenchSnapshot {
 export class WorkbenchService {
   constructor(
     private readonly workspaceRepository: WorkspaceRepository,
-    private readonly sessionHistoryService: SessionHistoryService
+    private readonly sessionHistoryService: SessionHistoryService,
+    private readonly butlerProfileService: Pick<ButlerProfileService, "getProfile">,
+    private readonly butlerControlSessionRepository: Pick<ButlerControlSessionRepository, "listSessionIds">
   ) {}
 
   getSnapshot(userId: string): WorkbenchSnapshot {
-    const workspaces = this.workspaceRepository.list();
+    const workspaces = this.listVisibleWorkspaces();
 
     return {
       items: workspaces.map((workspace) => ({
         workspace,
-        sessions: this.sessionHistoryService.listWorkspaceSessions(workspace.id, userId)
+        sessions: this.filterButlerControlSessions(
+          this.sessionHistoryService.listWorkspaceSessions(workspace.id, userId)
+        )
       }))
     };
   }
 
   shouldRefreshSnapshot(): boolean {
-    return this.workspaceRepository
-      .list()
+    return this.listVisibleWorkspaces()
       .some((workspace) =>
         this.sessionHistoryService.needsWorkspaceDiscovery(
           workspace.id,
@@ -44,7 +49,7 @@ export class WorkbenchService {
 
   async refreshSnapshot(userId: string): Promise<WorkbenchSnapshot> {
     const startedAt = Date.now();
-    const workspaces = this.workspaceRepository.list();
+    const workspaces = this.listVisibleWorkspaces();
 
     await Promise.all(
       workspaces.map((workspace) =>
@@ -73,7 +78,7 @@ export class WorkbenchService {
   }
 
   async syncSessionTitles(userId: string): Promise<WorkbenchSnapshot> {
-    const workspaces = this.workspaceRepository.list();
+    const workspaces = this.listVisibleWorkspaces();
 
     await Promise.all(
       workspaces.map((workspace) =>
@@ -82,5 +87,27 @@ export class WorkbenchService {
     );
 
     return this.getSnapshot(userId);
+  }
+
+  private listVisibleWorkspaces(): Workspace[] {
+    const butlerWorkspacePath = this.butlerProfileService.getProfile()?.workspacePath ?? null;
+
+    if (!butlerWorkspacePath) {
+      return this.workspaceRepository.list();
+    }
+
+    return this.workspaceRepository
+      .list()
+      .filter((workspace) => workspace.path !== butlerWorkspacePath);
+  }
+
+  private filterButlerControlSessions(sessions: SessionListItem[]): SessionListItem[] {
+    const hiddenSessionIds = new Set(this.butlerControlSessionRepository.listSessionIds());
+
+    if (hiddenSessionIds.size === 0) {
+      return sessions;
+    }
+
+    return sessions.filter((session) => !hiddenSessionIds.has(session.sessionId));
   }
 }

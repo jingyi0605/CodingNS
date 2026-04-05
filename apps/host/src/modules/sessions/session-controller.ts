@@ -1,6 +1,7 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 
 import { AppError } from "../../shared/errors/app-error.js";
+import type { ButlerControlSessionRepository } from "../../storage/repositories/butler-control-session-repository.js";
 import type { SessionHistoryService } from "./session-history-service.js";
 import type { SessionLiveRuntimeService } from "./session-live-runtime-service.js";
 import type { SessionImageAttachmentInput } from "./session-message-attachment-service.js";
@@ -195,7 +196,8 @@ function normalizeRuntimeOptions(input: RuntimeOptionsBody) {
 export class SessionController {
   constructor(
     private readonly sessionHistoryService: SessionHistoryService,
-    private readonly sessionLiveRuntimeService: SessionLiveRuntimeService
+    private readonly sessionLiveRuntimeService: SessionLiveRuntimeService,
+    private readonly butlerControlSessionRepository: Pick<ButlerControlSessionRepository, "listSessionIds">
   ) {}
 
   readonly list = async (
@@ -209,9 +211,12 @@ export class SessionController {
     );
 
     reply.send({
-      items: await this.sessionHistoryService.discoverWorkspaceSessions(
-        workspaceId,
-        requireUserId(request)
+      items: filterButlerControlSessions(
+        await this.sessionHistoryService.discoverWorkspaceSessions(
+          workspaceId,
+          requireUserId(request)
+        ),
+        this.butlerControlSessionRepository
       )
     });
   };
@@ -612,4 +617,17 @@ export class SessionController {
       )
     );
   };
+}
+
+function filterButlerControlSessions(
+  sessions: Awaited<ReturnType<SessionHistoryService["discoverWorkspaceSessions"]>>,
+  butlerControlSessionRepository: Pick<ButlerControlSessionRepository, "listSessionIds">
+) {
+  const hiddenSessionIds = new Set(butlerControlSessionRepository.listSessionIds());
+
+  if (hiddenSessionIds.size === 0) {
+    return sessions;
+  }
+
+  return sessions.filter((session) => !hiddenSessionIds.has(session.sessionId));
 }

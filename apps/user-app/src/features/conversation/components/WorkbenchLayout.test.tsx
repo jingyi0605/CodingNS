@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
@@ -12,7 +13,8 @@ import {
   WorkbenchLayout,
   flattenVisibleSessionTree,
   getTreeNodeChildren,
-  getVisibleSessionTreeNodes
+  getVisibleSessionTreeNodes,
+  useWorkbenchShell
 } from "./WorkbenchLayout";
 
 const openFilesExternalWindowMock = vi.hoisted(() => vi.fn());
@@ -1280,6 +1282,125 @@ describe("WorkbenchLayout", () => {
 
     expect(await screen.findByText("SearchPanel.tsx")).toBeInTheDocument();
     expect(screen.getByText("src/components/SearchPanel.tsx")).toBeInTheDocument();
+  });
+
+  it("桌面侧栏会在终端和搜索之间显示管家入口，并支持跳转", async () => {
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "会话 Alpha",
+            workspaceId: "workspace-1"
+          })
+        ]
+      }
+    ]);
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    const user = userEvent.setup();
+    renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-1");
+
+    await screen.findByText("会话 Alpha");
+
+    const navSegment = document.querySelector(".workbench-nav-segment");
+    expect(navSegment).not.toBeNull();
+
+    const navLabels = Array.from(navSegment?.querySelectorAll("button") ?? []).map((button) =>
+      button.textContent?.trim()
+    );
+    expect(navLabels).toEqual([
+      t("shell.conversationEntry"),
+      t("shell.terminalsEntry"),
+      t("shell.butlerEntry"),
+      t("shell.searchEntry")
+    ]);
+
+    await user.click(screen.getByRole("tab", { name: t("shell.butlerEntry") }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("current-path").textContent).toBe("/workspaces/workspace-1/butler");
+    });
+  });
+
+  it("管家路由下不会再显示默认信息侧栏", async () => {
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "会话 Alpha",
+            workspaceId: "workspace-1"
+          })
+        ]
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    const view = renderWorkbenchRoute("/workspaces/workspace-1/butler");
+
+    await screen.findByText("项目一");
+
+    expect(view.container.querySelector(".workbench-auxiliary")).toBeNull();
+    expect(screen.queryByRole("button", { name: t("shell.showInfoSidebar") })).not.toBeInTheDocument();
+  });
+
+  it("管家路由注册自定义侧栏后，会在右侧信息栏展示 Butler 内容", async () => {
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: []
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    render(
+      <ToastProvider>
+        <MemoryRouter initialEntries={["/workspaces/workspace-1/butler"]}>
+          <Routes>
+            <Route element={<WorkbenchLayout />}>
+              <Route path="/workspaces/:workspaceId/butler" element={<ButlerAuxiliaryProbe />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </ToastProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Butler Right Panel")).toBeInTheDocument();
+    });
   });
 
   it("对推断中的外部会话显示黄色活动图标", async () => {
@@ -2794,6 +2915,7 @@ function renderWorkbenchRoute(
               element={<CurrentLocationProbe />}
             />
             <Route path="/workspaces/:workspaceId/terminals" element={<CurrentLocationProbe />} />
+            <Route path="/workspaces/:workspaceId/butler" element={<CurrentLocationProbe />} />
             <Route path="/sessions/:sessionId" element={<CurrentLocationProbe />} />
             <Route path="/terminals" element={<CurrentLocationProbe />} />
           </Route>
@@ -2801,6 +2923,24 @@ function renderWorkbenchRoute(
       </MemoryRouter>
     </ToastProvider>
   );
+}
+
+function ButlerAuxiliaryProbe() {
+  const { setAuxiliaryPanel } = useWorkbenchShell();
+
+  useEffect(() => {
+    setAuxiliaryPanel(
+      <div data-testid="butler-right-panel">
+        Butler Right Panel
+      </div>
+    );
+
+    return () => {
+      setAuxiliaryPanel(null);
+    };
+  }, [setAuxiliaryPanel]);
+
+  return <CurrentLocationProbe />;
 }
 
 async function findSessionCardByTitle(title: string) {

@@ -11,6 +11,50 @@
 - 已补独立 Butler Chat API、控制动作 API 和前端工作台入口设计。
 - 已更新 `specs/README.md`，把 `spec013.1` 加入总览索引。
 
+## 2026-04-06 初始化收口补记
+
+- 已把 Butler 初始化入口收紧为“先明确管家是谁，再开始聊天”，不再用默认名字蒙混过关。
+- 已把管家工作目录改成后端默认生成，落在宿主数据目录内的独立子目录，前端不再暴露这个路径。
+- 已把首版 `AGENTS.md` 改成由后端根据初始化选项自动生成，并写入管家自称、语气、语言、总结风格、风险倾向和汇报优先级。
+- 已保留 `inline` / `file` 两种 `AGENTS` 模式，但初始化页只解释模式差异，不再让用户一开始直接填写规则正文。
+- 已把初始化页的人格和汇报偏好改成下拉枚举，并走 i18n 词典显示。
+
+## 2026-04-06 Butler 工作台收口补记
+
+- 已把 Butler 视图和普通工作区工具侧栏彻底拆开：进入 Butler 路由后，不再显示默认的“文件管理 / GIT 管理 / 进程管理”右侧面板，也不再显示对应折叠按钮。
+- 已把 Butler 主区域改成真正的独立对话窗口风格，顶部显示管家称呼、provider、刷新和“新建会话”，并按管家名称稳定生成 emoji 头像，同时复用到消息时间线头像。
+- 已补“新建会话”入口，并把 provider 切换后的行为固定为自动重置上下文并创建新控制会话；Butler 控制会话不会出现在普通工作区会话列表和 workbench 快照里。
+- 已强化 Butler 独立规则说明：生成的 `AGENTS.md` 和控制会话附加说明都明确声明这是管家专用规则体系，不继承普通项目会话规则；同时继续保留独立工作目录内的最小 git 根隔离。
+- 已补本轮最小必要验证：
+  - `pnpm --dir apps/user-app exec tsc --noEmit -p tsconfig.json`
+  - `pnpm --dir apps/user-app exec vitest run src/features/butler/pages/ButlerPage.test.tsx src/features/butler/runtime/butler-runtime-store.test.ts src/features/conversation/components/WorkbenchLayout.test.tsx src/shared/i18n/index.test.ts`
+  - `pnpm --dir apps/host exec tsc -p tsconfig.json --noEmit`
+  - `pnpm --dir apps/host exec vitest run tests/integration/butler-profile-service.test.ts tests/integration/butler-profile-routes.test.ts tests/integration/butler-control-session-routes.test.ts tests/integration/butler-context-routes.test.ts tests/integration/butler-control-action-routes.test.ts tests/integration/workbench-service.test.ts`
+
+## 2026-04-06 Butler 工作台纠偏补记
+
+- 已把 Butler 聚合信息重新接回工作台正式右侧信息栏，不再把聚合信息堆在聊天主区域下方；普通项目的“文件管理 / GIT 管理 / 进程管理”不会再出现在 Butler 视图里。
+- 已移除 Butler 聊天主区域中的工程师视角解释文案，只保留用户真正需要的称呼、provider 和会话输入区。
+- 已补 `WorkbenchLayout` 右栏插槽，让 Butler 页面可以注册自己的右侧内容，同时保留工作台原有右栏收起、展开和尺寸逻辑。
+- 已按官方 Codex 规则进一步收紧独立指令链路：
+  - Butler 专用 runtime 会把 `CODEX_HOME` / `CODINGNS_CODEX_HOME` 指向独立 home
+  - 会自动写入 Butler 专用 `config.toml`，把 `model_instructions_file` 指向 Butler 自己的规则文件
+  - 会清理该专用 home 下的 `AGENTS.md` / `AGENTS.override.md`，避免把默认全局规则继续带进 Butler 对话
+- 已补本轮纠偏验证：
+  - `pnpm --dir apps/user-app exec tsc --noEmit -p tsconfig.json`
+  - `pnpm --dir apps/user-app exec vitest run src/features/butler/pages/ButlerPage.test.tsx src/features/conversation/components/WorkbenchLayout.test.tsx src/shared/i18n/index.test.ts`
+  - `pnpm --dir apps/host exec tsc -p tsconfig.json --noEmit`
+  - `pnpm --dir apps/host exec vitest run tests/integration/butler-control-session-service.test.ts tests/integration/butler-control-session-routes.test.ts tests/integration/butler-profile-service.test.ts tests/integration/workbench-service.test.ts`
+
+## 2026-04-06 Butler 规则隔离修复补记
+
+- 已定位并修复 Butler 仍继承上层仓库 `AGENTS.md` 的根因：此前只伪造了一个最小 `.git` 目录，Git 仍把外层仓库识别成真正根目录。
+- 已改成在 Butler 工作目录里建立真实 git 边界，不再依赖伪造 `.git` 目录；这样 Codex 按 `cwd` 向上查找规则时，会在 Butler 自己目录停住。
+- 已在控制会话启动前补自动修复逻辑：旧的 Butler 工作目录即使已经落了假 `.git`，也会在下一次启动控制会话时被修正，不需要用户手工重建档案。
+- 已补本轮最小必要验证：
+  - `pnpm --dir apps/host exec tsc -p tsconfig.json --noEmit`
+  - `pnpm --dir apps/host exec vitest run tests/integration/butler-profile-service.test.ts tests/integration/butler-control-session-service.test.ts`
+
 ## 这份文档是干什么的
 
 这份任务清单用来把“代码管家控制面对话”拆成真正能落地的步骤。
@@ -113,10 +157,15 @@
     - 已新增 `butler_profiles` 正式表和 `ButlerProfile` domain/repository
     - 已提供 `GET /api/butler/profile`、`POST /api/butler/profile/init`、`PATCH /api/butler/profile`
     - 已限制 provider 只允许 `codex` / `claude-code`
+    - 已新增 `displayName`，作为管家自称，并写入首版 `AGENTS.md`
+    - 已把管家工作目录改成后端默认生成，落在宿主数据目录下的独立 `butler-workspace` 目录；前端不再直接提交工作目录
     - 已校验管家工作目录不能直接复用项目仓库目录，`AGENTS.md` 文件模式必须位于管家工作目录内
+    - 已改为由后端按初始化选项生成首版 `AGENTS.md`，初始化时不再要求前端直接提交规则正文
+    - 已保留 `inline` / `file` 两种 `AGENTS` 模式；`file` 模式默认落地到管家工作目录内的 `AGENTS.md`
     - 已提供 `ensureInitialized()`，为后续控制会话启动前的拒绝逻辑做准备
     - `pnpm --dir apps/host exec tsc -p tsconfig.json --noEmit` 已通过
     - `pnpm --dir apps/host exec vitest run tests/integration/butler-profile-service.test.ts tests/integration/butler-profile-routes.test.ts tests/integration/butler-project-service.test.ts tests/integration/butler-session-service.test.ts tests/integration/butler-routes-session-lifecycle.test.ts tests/integration/butler-routes-patrol-runtime.test.ts tests/integration/butler-routes-verification-runtime.test.ts tests/integration/project-memory-service.test.ts tests/integration/patrol-plan-service.test.ts tests/integration/patrol-run-service.test.ts tests/integration/patrol-execution-service.test.ts tests/integration/verification-run-service.test.ts` 已通过
+    - `pnpm --dir apps/host exec vitest run tests/integration/butler-profile-service.test.ts tests/integration/butler-profile-routes.test.ts tests/integration/butler-control-session-routes.test.ts tests/integration/butler-context-routes.test.ts tests/integration/butler-control-action-routes.test.ts` 已通过
 
 - [x] 1.2 落地 `ButlerControlSession` 模型与基础聊天 API
   - 状态：DONE
@@ -282,8 +331,13 @@
     - 构建验证
   - 验证结果：
     - 已新增 Butler 初始化页（未初始化态表单）和 Butler 工作台页（控制会话消息区 + 聚合信息区 + 项目下钻区 + 动作事件区）
+    - 初始化页已新增“管家称呼”输入，并要求用户显式填写；不再默认塞入一个名字糊弄过去
+    - 初始化页已去掉工作目录、`AGENTS.md` 路径、`AGENTS` 规则正文、默认关注项目输入
+    - `语气 / 使用语言 / 总结风格 / 风险倾向 / 汇报优先级` 已改成下拉枚举，并通过 i18n 词典显示
+    - 初始化页已补充 `AGENTS` 模式说明：`inline` 表示系统托管规则，`file` 表示把规则写入工作目录里的 `AGENTS.md` 供后续直接编辑
     - 消息区复用 `MessageTimeline` 与 `ComposerPanel`，发送链路改走 `features/butler/api/butler-api.ts`
     - `pnpm --dir apps/user-app exec vitest run src/features/butler/pages/ButlerPage.test.tsx` 已通过
+    - `pnpm --dir apps/user-app exec vitest run src/features/butler/pages/ButlerPage.test.tsx src/features/butler/runtime/butler-runtime-store.test.ts src/features/conversation/components/WorkbenchLayout.test.tsx src/shared/i18n/index.test.ts` 已通过
     - `pnpm --dir apps/user-app exec tsc --noEmit -p tsconfig.json` 已通过
 
 - [x] 3.3 实现 provider 切换清空对话上下文

@@ -1,6 +1,19 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 
 import { requireUserId } from "../preferences/common.js";
+import type {
+  ButlerControlSessionService,
+  SendButlerControlMessageInput,
+  StartButlerControlSessionInput
+} from "./butler-control-session-service.js";
+import type {
+  ButlerControlActionService,
+  ResumeButlerProjectSessionActionInput,
+  StartButlerPatrolActionInput,
+  StartButlerVerificationActionInput
+} from "./butler-control-action-service.js";
+import type { ButlerProfilePatchInput, ButlerProfileService } from "./butler-profile-service.js";
+import type { ButlerContextAggregator } from "./context-aggregator.js";
 import type { ButlerProjectService } from "./butler-project-service.js";
 import type { ButlerSessionService } from "./butler-session-service.js";
 import type { PatrolPlanService } from "./patrol-plan-service.js";
@@ -146,8 +159,31 @@ interface StartVerificationRunBody {
   spec?: Record<string, unknown>;
 }
 
+interface StartButlerControlSessionBody extends StartButlerControlSessionInput {}
+interface SendButlerControlMessageBody extends SendButlerControlMessageInput {}
+interface OpenButlerProjectActionBody {
+  projectId?: string;
+}
+interface ResumeButlerProjectSessionActionBody extends ResumeButlerProjectSessionActionInput {}
+interface StartButlerPatrolActionBody extends StartButlerPatrolActionInput {}
+interface StartButlerVerificationActionBody extends StartButlerVerificationActionInput {}
+
 export class ButlerController {
   constructor(
+    private readonly butlerProfileService: ButlerProfileService,
+    private readonly butlerControlSessionService: ButlerControlSessionService,
+    private readonly butlerControlActionService: Pick<
+      ButlerControlActionService,
+      | "listCurrentEvents"
+      | "openProject"
+      | "resumeProjectSession"
+      | "startPatrol"
+      | "startVerification"
+    >,
+    private readonly butlerContextAggregator: Pick<
+      ButlerContextAggregator,
+      "getOverview" | "getSnapshot" | "getProjectContext"
+    >,
     private readonly butlerProjectService: ButlerProjectService,
     private readonly butlerSessionService: ButlerSessionService,
     private readonly projectMemoryService: ProjectMemoryService,
@@ -156,6 +192,173 @@ export class ButlerController {
     private readonly patrolExecutionService: PatrolExecutionService,
     private readonly verificationRunService: VerificationRunService
   ) {}
+
+  readonly getProfile = async (_request: FastifyRequest, reply: FastifyReply): Promise<void> => {
+    const profile = this.butlerProfileService.getProfile();
+
+    reply.send({
+      initialized: profile !== null,
+      profile
+    });
+  };
+
+  readonly initProfile = async (
+    request: FastifyRequest<{ Body: ButlerProfilePatchInput }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    const profile = this.butlerProfileService.initProfile(request.body ?? {});
+
+    reply.status(201).send({
+      initialized: true,
+      profile
+    });
+  };
+
+  readonly updateProfile = async (
+    request: FastifyRequest<{ Body: ButlerProfilePatchInput }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    const profile = this.butlerProfileService.updateProfile(request.body ?? {});
+
+    reply.send({
+      initialized: true,
+      profile
+    });
+  };
+
+  readonly getCurrentControlSession = async (
+    request: FastifyRequest,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send({
+      controlSession: this.butlerControlSessionService.getCurrentSession(requireUserId(request))
+    });
+  };
+
+  readonly listControlSessionEvents = async (
+    _request: FastifyRequest,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send({
+      items: this.butlerControlActionService.listCurrentEvents()
+    });
+  };
+
+  readonly startControlSession = async (
+    request: FastifyRequest<{ Body: StartButlerControlSessionBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    const controlSession = await this.butlerControlSessionService.startSession(
+      requireUserId(request),
+      request.body ?? {}
+    );
+
+    reply.status(201).send({ controlSession });
+  };
+
+  readonly resumeControlSession = async (
+    request: FastifyRequest,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(
+      await this.butlerControlSessionService.resumeCurrentSession(requireUserId(request))
+    );
+  };
+
+  readonly sendControlMessage = async (
+    request: FastifyRequest<{ Body: SendButlerControlMessageBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.status(202).send(
+      await this.butlerControlSessionService.sendMessage(requireUserId(request), request.body ?? {})
+    );
+  };
+
+  readonly getOverview = async (
+    request: FastifyRequest,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send({
+      overview: this.butlerContextAggregator.getOverview(requireUserId(request))
+    });
+  };
+
+  readonly getContextSnapshot = async (
+    request: FastifyRequest,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send({
+      snapshot: this.butlerContextAggregator.getSnapshot(requireUserId(request))
+    });
+  };
+
+  readonly getProjectContext = async (
+    request: FastifyRequest<{ Params: ButlerProjectParams }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send({
+      context: this.butlerContextAggregator.getProjectContext(
+        request.params.projectId,
+        requireUserId(request)
+      )
+    });
+  };
+
+  readonly openProjectAction = async (
+    request: FastifyRequest<{ Body: OpenButlerProjectActionBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    const projectId = request.body.projectId?.trim() ?? "";
+    reply.send({
+      result: this.butlerControlActionService.openProject(projectId, requireUserId(request))
+    });
+  };
+
+  readonly resumeProjectSessionAction = async (
+    request: FastifyRequest<{ Body: ResumeButlerProjectSessionActionBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send({
+      result: await this.butlerControlActionService.resumeProjectSession(
+        {
+          projectId: request.body.projectId?.trim() ?? "",
+          butlerSessionId: request.body.butlerSessionId?.trim() ?? ""
+        },
+        requireUserId(request)
+      )
+    });
+  };
+
+  readonly startPatrolAction = async (
+    request: FastifyRequest<{ Body: StartButlerPatrolActionBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.status(201).send({
+      result: await this.butlerControlActionService.startPatrol({
+        projectId: request.body.projectId?.trim() ?? "",
+        planId: request.body.planId?.trim() || null,
+        triggerRef: request.body.triggerRef?.trim() || null,
+        butlerSessionId: request.body.butlerSessionId?.trim() || null,
+        suggestions: request.body.suggestions
+      })
+    });
+  };
+
+  readonly startVerificationAction = async (
+    request: FastifyRequest<{ Body: StartButlerVerificationActionBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.status(201).send({
+      result: await this.butlerControlActionService.startVerification({
+        projectId: request.body.projectId?.trim() ?? "",
+        verificationType: request.body.verificationType,
+        targetRef: request.body.targetRef?.trim() || null,
+        butlerSessionId: request.body.butlerSessionId?.trim() || null,
+        sourcePatrolRunId: request.body.sourcePatrolRunId?.trim() || null,
+        spec: request.body.spec
+      })
+    });
+  };
 
   readonly listProjects = async (
     request: FastifyRequest<{ Querystring: ButlerProjectListQuery }>,

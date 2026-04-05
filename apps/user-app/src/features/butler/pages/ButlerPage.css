@@ -1,0 +1,486 @@
+.butler-page-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 16px;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.butler-chat-workspace {
+  align-items: stretch;
+}
+
+.butler-main-column {
+  min-height: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  overflow: hidden;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background:
+    radial-gradient(circle at top left, rgba(14, 165, 233, 0.1), transparent 28%),
+    radial-gradient(circle at top right, rgba(16, 185, 129, 0.1), transparent 24%),
+    linear-gradient(180deg, rgba(248, 250, 252, 0.98), rgba(255, 255, 255, 0.96));
+}
+
+.butler-main-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  align-items: flex-start;
+}
+
+.butler-chat-hero {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.butler-chat-avatar,
+.butler-message-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 18px;
+  background: linear-gradient(135deg, rgba(14, 165, 233, 0.14), rgba(16, 185, 129, 0.18));
+  color: #0f172a;
+  box-shadow: inset 0 0 0 1px rgba(14, 165, 233, 0.08);
+}
+
+.butler-chat-avatar {
+  width: 56px;
+  height: 56px;
+  flex: 0 0 auto;
+}
+
+.butler-chat-avatar span {
+  font-size: 30px;
+}
+
+.butler-message-avatar {
+  width: 32px;
+  height: 32px;
+  font-size: 18px;
+}
+
+.butler-main-heading {
+  min-width: 0;
+}
+
+.butler-main-heading h1 {
+  margin: 0;
+  font-size: 22px;
+  line-height: 1.2;
+}
+
+.butler-secondary-text {
+  color: var(--text-secondary, #6b7280);
+  font-size: 13px;
+}
+
+.butler-toolbar-cluster {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+  align-items: flex-end;
+}
+
+.butler-toolbar-button,
+.butler-provider-switcher button,
+.butler-project-card-actions button,
+.butler-inline-actions button,
+.butler-project-context-actions button,
+.butler-related-ref-list button,
+.butler-init-form button {
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 10px;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--text-primary, #0f172a);
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    transform 120ms ease,
+    background 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.butler-toolbar-button:hover,
+.butler-provider-switcher button:hover,
+.butler-project-card-actions button:hover,
+.butler-inline-actions button:hover,
+.butler-project-context-actions button:hover,
+.butler-related-ref-list button:hover,
+.butler-init-form button:hover {
+  border-color: rgba(14, 165, 233, 0.36);
+  background: #fff;
+  transform: translateY(-1px);
+  box-shadow: 0 10px 18px rgba(15, 23, 42, 0.06);
+}
+
+.butler-toolbar-button:disabled,
+.butler-provider-switcher button:disabled,
+.butler-project-card-actions button:disabled,
+.butler-inline-actions button:disabled,
+.butler-project-context-actions button:disabled,
+.butler-related-ref-list button:disabled,
+.butler-init-form button:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+  transform: none;
+  box-shadow: none;
+}
+
+.butler-provider-switcher {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.butler-provider-switcher label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 170px;
+}
+
+.butler-provider-switcher select,
+.butler-init-form input,
+.butler-init-form select,
+.butler-init-form textarea {
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 10px;
+  padding: 9px 12px;
+  font-size: 14px;
+  background: rgba(255, 255, 255, 0.95);
+  color: var(--text-primary, #0f172a);
+}
+
+.butler-conversation-panel {
+  min-height: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(248, 250, 252, 0.98));
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  overflow: hidden;
+}
+
+.butler-provider-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.06);
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.butler-conversation-shell {
+  min-height: 0;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+}
+
+.butler-conversation-shell .message-timeline {
+  min-height: 0;
+  flex: 1 1 auto;
+  border-radius: 14px;
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  background: rgba(255, 255, 255, 0.88);
+}
+
+.butler-composer-shell {
+  border-radius: 14px;
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  background: rgba(255, 255, 255, 0.92);
+  overflow: hidden;
+}
+
+.butler-composer-shell .composer-panel {
+  background: transparent;
+}
+
+.butler-side-column {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.workbench-auxiliary[data-custom-panel="true"] {
+  padding: 10px;
+  overflow: hidden;
+}
+
+.workbench-auxiliary-custom-panel {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.butler-side-card {
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+}
+
+.butler-side-card h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.butler-side-card header p {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--text-secondary, #6b7280);
+}
+
+.butler-overview-content,
+.butler-project-context {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.butler-overview-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.butler-overview-metrics article,
+.butler-project-card,
+.butler-context-item,
+.butler-event-card {
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.butler-overview-metrics article {
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.butler-overview-metrics article span {
+  font-size: 12px;
+  color: var(--text-secondary, #6b7280);
+}
+
+.butler-overview-metrics article strong {
+  font-size: 20px;
+}
+
+.butler-overview-list h3,
+.butler-context-section h3 {
+  margin: 0 0 6px;
+  font-size: 14px;
+}
+
+.butler-overview-list ul {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.butler-overview-list p {
+  margin: 0;
+}
+
+.butler-event-list,
+.butler-project-list,
+.butler-context-list,
+.butler-context-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.butler-project-card,
+.butler-context-item,
+.butler-event-card {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.butler-project-card[data-active="true"],
+.butler-context-item[data-focused="true"] {
+  border-color: rgba(14, 165, 233, 0.42);
+  box-shadow: 0 14px 24px rgba(14, 165, 233, 0.08);
+}
+
+.butler-project-card-header,
+.butler-context-item-header,
+.butler-project-context-header,
+.butler-event-title-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.butler-project-card-header p,
+.butler-context-item p,
+.butler-project-context-header p,
+.butler-event-title-row span,
+.butler-event-card p {
+  margin: 0;
+  color: var(--text-secondary, #6b7280);
+  font-size: 13px;
+}
+
+.butler-project-card-summary {
+  margin: 0;
+  font-size: 13px;
+  white-space: pre-wrap;
+}
+
+.butler-project-card-actions,
+.butler-inline-actions,
+.butler-project-context-actions,
+.butler-related-ref-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.butler-project-risk-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 12px;
+  text-transform: uppercase;
+  background: rgba(15, 23, 42, 0.06);
+}
+
+.butler-project-risk-chip[data-risk="high"] {
+  background: rgba(220, 38, 38, 0.12);
+  color: #b91c1c;
+}
+
+.butler-project-risk-chip[data-risk="medium"] {
+  background: rgba(245, 158, 11, 0.14);
+  color: #b45309;
+}
+
+.butler-project-risk-chip[data-risk="low"] {
+  background: rgba(22, 163, 74, 0.14);
+  color: #15803d;
+}
+
+.butler-context-item-header span {
+  font-size: 12px;
+  color: #0369a1;
+}
+
+.butler-event-card[data-status="failed"] {
+  border-color: rgba(220, 38, 38, 0.45);
+}
+
+.butler-event-card p {
+  white-space: pre-wrap;
+}
+
+.butler-init-panel {
+  max-width: 860px;
+  margin: 0 auto;
+  width: 100%;
+  background: rgba(255, 255, 255, 0.98);
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 18px;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow: auto;
+}
+
+.butler-panel-header h1 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.butler-panel-header p {
+  margin: 6px 0 0;
+}
+
+.butler-init-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.butler-form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.butler-form-field small {
+  color: var(--text-secondary, #6b7280);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.butler-form-field textarea {
+  resize: vertical;
+}
+
+.butler-init-form button {
+  grid-column: 1 / -1;
+  justify-self: flex-start;
+}
+
+@media (max-width: 900px) {
+  .butler-main-header,
+  .butler-project-context-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .butler-toolbar-cluster,
+  .butler-provider-switcher {
+    justify-content: stretch;
+  }
+
+  .butler-provider-switcher {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .butler-provider-switcher label {
+    min-width: 0;
+  }
+
+  .butler-overview-metrics,
+  .butler-init-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

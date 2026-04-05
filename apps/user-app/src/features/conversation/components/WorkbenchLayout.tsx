@@ -84,6 +84,7 @@ import {
   buildWorkspaceHomePath,
   buildWorkspaceSessionIndexPath,
   buildWorkspaceSessionPath,
+  buildWorkspaceButlerPath,
   buildWorkspaceTerminalsPath,
   buildWorkspaceToolFilesPath,
   buildWorkspaceToolGitPath,
@@ -166,7 +167,8 @@ function resolveRouteWorkspaceId(pathname: string, search: string): string | nul
     "/workspaces/:workspaceId/tools/files",
     "/workspaces/:workspaceId/tools/git",
     "/workspaces/:workspaceId/tools/processes",
-    "/workspaces/:workspaceId/terminals"
+    "/workspaces/:workspaceId/terminals",
+    "/workspaces/:workspaceId/butler"
   ] as const;
 
   for (const pattern of workspaceRoutePatterns) {
@@ -255,6 +257,10 @@ function isTerminalsRoute(pathname: string) {
   return Boolean(
     matchPath("/terminals", pathname) || matchPath("/workspaces/:workspaceId/terminals", pathname)
   );
+}
+
+function isButlerRoute(pathname: string) {
+  return Boolean(matchPath("/workspaces/:workspaceId/butler", pathname));
 }
 
 function normalizeWorkbenchFilePath(filePath: string): string {
@@ -347,6 +353,7 @@ interface WorkbenchShellContextValue {
   favoriteSessions: WorkbenchNavigationEntry[];
   refreshNavigation: () => Promise<void>;
   requestNavigationRefresh: () => void;
+  setAuxiliaryPanel: (panel: ReactNode | null) => void;
   subscribeFileTree: (workspaceId: string, paths: string[]) => void;
   requestFileTreeRefresh: (workspaceId: string, paths?: string[]) => void;
   addFileTreeSnapshotListener: (
@@ -395,7 +402,7 @@ interface WorkspaceManagementViewState {
   error: string | null;
 }
 
-type CenterTab = "conversation" | "terminals";
+type CenterTab = "conversation" | "terminals" | "butler";
 type InfoTab = "files" | "git" | "terminals";
 type SearchMode = "sessions" | "code";
 
@@ -1126,6 +1133,18 @@ function TerminalIcon() {
   );
 }
 
+function ButlerIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9">
+      <rect x="4" y="5" width="16" height="14" rx="3" />
+      <circle cx="9" cy="11" r="1" />
+      <circle cx="15" cy="11" r="1" />
+      <path d="M8 15h8" />
+      <path d="M12 5V3" />
+    </svg>
+  );
+}
+
 function ArrowLeftIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -1698,6 +1717,7 @@ function SidebarContent({
   activeWorkspaceId,
   isConversationActive,
   isTerminalActive,
+  isButlerActive,
   isSearchOpen,
   navigationLoading,
   navigationError,
@@ -1706,6 +1726,7 @@ function SidebarContent({
   onSessionUpdated,
   onNavigateConversation,
   onNavigateTerminals,
+  onNavigateButler,
   onOpenSearch,
   onOpenSettings,
   onSelectWorkspace,
@@ -1728,6 +1749,7 @@ function SidebarContent({
   activeWorkspaceId: string | null;
   isConversationActive: boolean;
   isTerminalActive: boolean;
+  isButlerActive: boolean;
   isSearchOpen: boolean;
   navigationLoading: boolean;
   navigationError: string | null;
@@ -1736,6 +1758,7 @@ function SidebarContent({
   onSessionUpdated: (session: SessionSummaryDto) => void;
   onNavigateConversation: () => void;
   onNavigateTerminals: () => void;
+  onNavigateButler: () => void;
   onOpenSearch: () => void;
   onOpenSettings: () => void;
   onSelectWorkspace: (workspaceId: string) => void;
@@ -2448,6 +2471,20 @@ function SidebarContent({
           >
             <TerminalIcon />
             {t("shell.terminalsEntry")}
+          </button>
+          <button
+            type="button"
+            className={
+              isButlerActive
+                ? "workbench-nav-segment-button active"
+                : "workbench-nav-segment-button"
+            }
+            role="tab"
+            aria-selected={isButlerActive}
+            onClick={onNavigateButler}
+          >
+            <ButlerIcon />
+            {t("shell.butlerEntry")}
           </button>
           <button
             type="button"
@@ -3795,6 +3832,7 @@ export function WorkbenchLayout({
   const [activeInfoTab, setActiveInfoTab] = useState<InfoTab>("files");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [mobileInfoOpen, setMobileInfoOpen] = useState(false);
+  const [customAuxiliaryPanel, setCustomAuxiliaryPanel] = useState<ReactNode | null>(null);
   const [sessionWorkspaceMap, setSessionWorkspaceMap] = useState<Record<string, string>>({});
   const [searchModalOpen, setSearchModalOpen] = useState(false);
   const [searchMode, setSearchMode] = useState<SearchMode>("sessions");
@@ -4587,7 +4625,9 @@ export function WorkbenchLayout({
   }, [currentSessionId, currentWorkspaceId, infoPanelReady, rightCollapsed, sessionWorkspaceId]);
   const activeCenterTab: CenterTab = isTerminalsRoute(location.pathname)
     ? "terminals"
-    : "conversation";
+    : isButlerRoute(location.pathname)
+      ? "butler"
+      : "conversation";
   const isMobileShell = shellMode === "mobile";
   const workbenchHomePath = resolveWorkbenchHomePath(shellMode);
 
@@ -5109,6 +5149,7 @@ export function WorkbenchLayout({
       favoriteSessions,
       refreshNavigation,
       requestNavigationRefresh,
+      setAuxiliaryPanel: setCustomAuxiliaryPanel,
       subscribeFileTree,
       requestFileTreeRefresh,
       addFileTreeSnapshotListener,
@@ -5153,6 +5194,7 @@ export function WorkbenchLayout({
       requestWorkspaceManagementRefresh,
       refreshNavigation,
       requestNavigationRefresh,
+      setCustomAuxiliaryPanel,
       requestTerminalManagerRefresh,
       renameNavigationSession,
       workspaceManagementStateById,
@@ -5175,6 +5217,23 @@ export function WorkbenchLayout({
     "--workbench-right-width": `${rightPanelWidth}px`,
     "--workbench-right-current-width": rightCollapsed ? "0px" : `${rightPanelWidth}px`
   } as CSSProperties;
+  const auxiliaryPanelContent = activeCenterTab === "butler"
+    ? customAuxiliaryPanel
+    : (
+      <WorkbenchInfoPanel
+        panelReady={infoPanelReady}
+        activeTab={activeInfoTab}
+        fileRevealRequest={fileRevealRequest}
+        onTabChange={(tab) => {
+          ensureInfoPanelReady();
+          setActiveInfoTab(tab);
+        }}
+        currentSessionId={isDraftSession ? null : currentSessionId}
+        activeWorkspaceId={currentWorkspaceId}
+        navigationGroups={navigationGroups}
+      />
+    );
+  const shouldShowAuxiliaryPanel = auxiliaryPanelContent !== null;
   const mobileNavigationPanel = isMobileShell ? (
     <SidebarContent
       workspaceGroups={workspaceSidebarGroups}
@@ -5183,6 +5242,7 @@ export function WorkbenchLayout({
       activeWorkspaceId={currentWorkspaceId}
       isConversationActive={activeCenterTab === "conversation"}
       isTerminalActive={activeCenterTab === "terminals"}
+      isButlerActive={activeCenterTab === "butler"}
       isSearchOpen={searchModalOpen}
       navigationLoading={navigationLoading}
       navigationError={navigationError}
@@ -5195,6 +5255,14 @@ export function WorkbenchLayout({
         navigate(
           currentWorkspaceId
             ? buildWorkspaceTerminalsPath(currentWorkspaceId)
+            : buildWorkspaceHomePath()
+        );
+      }}
+      onNavigateButler={() => {
+        setMobileNavOpen(false);
+        navigate(
+          currentWorkspaceId
+            ? buildWorkspaceButlerPath(currentWorkspaceId)
             : buildWorkspaceHomePath()
         );
       }}
@@ -5222,20 +5290,7 @@ export function WorkbenchLayout({
       onClose={() => setMobileNavOpen(false)}
     />
   ) : null;
-  const mobileAuxiliaryPanel = isMobileShell ? (
-    <WorkbenchInfoPanel
-      panelReady={infoPanelReady}
-      activeTab={activeInfoTab}
-      fileRevealRequest={fileRevealRequest}
-      onTabChange={(tab) => {
-        ensureInfoPanelReady();
-        setActiveInfoTab(tab);
-      }}
-      currentSessionId={isDraftSession ? null : currentSessionId}
-      activeWorkspaceId={currentWorkspaceId}
-      navigationGroups={navigationGroups}
-    />
-  ) : null;
+  const mobileAuxiliaryPanel = isMobileShell && shouldShowAuxiliaryPanel ? auxiliaryPanelContent : null;
 
   return (
     <WorkbenchShellContext.Provider value={contextValue}>
@@ -5256,6 +5311,9 @@ export function WorkbenchLayout({
               openSearchModal();
             }}
             onOpenAuxiliary={() => {
+              if (!shouldShowAuxiliaryPanel) {
+                return;
+              }
               ensureInfoPanelReady();
               setMobileNavOpen(false);
               setMobileInfoOpen(true);
@@ -5345,6 +5403,7 @@ export function WorkbenchLayout({
                 activeWorkspaceId={currentWorkspaceId}
                 isConversationActive={activeCenterTab === "conversation"}
                 isTerminalActive={activeCenterTab === "terminals"}
+                isButlerActive={activeCenterTab === "butler"}
                 isSearchOpen={searchModalOpen}
                 navigationLoading={navigationLoading}
                 navigationError={navigationError}
@@ -5356,6 +5415,13 @@ export function WorkbenchLayout({
                   navigate(
                     currentWorkspaceId
                       ? buildWorkspaceTerminalsPath(currentWorkspaceId)
+                      : buildWorkspaceHomePath()
+                  )
+                }
+                onNavigateButler={() =>
+                  navigate(
+                    currentWorkspaceId
+                      ? buildWorkspaceButlerPath(currentWorkspaceId)
                       : buildWorkspaceHomePath()
                   )
                 }
@@ -5423,50 +5489,66 @@ export function WorkbenchLayout({
                   </button>
                 </div>
 
-                <div
-                  className="workbench-collapsed-controls right"
-                  data-visible={rightCollapsed}
-                >
-                  <SidebarDockButton
-                    className="workbench-nav-toolbar-button workbench-collapsed-button"
-                    ariaLabel={t("shell.showInfoSidebar")}
-                    side="right"
-                    collapsed={true}
-                    onClick={openRightPanel}
-                  />
-                </div>
+                {shouldShowAuxiliaryPanel ? (
+                  <div
+                    className="workbench-collapsed-controls right"
+                    data-visible={rightCollapsed}
+                  >
+                    <SidebarDockButton
+                      className="workbench-nav-toolbar-button workbench-collapsed-button"
+                      ariaLabel={t("shell.showInfoSidebar")}
+                      side="right"
+                      collapsed={true}
+                      onClick={openRightPanel}
+                    />
+                  </div>
+                ) : null}
               </div>
 
               <Outlet />
             </div>
 
-            <div
-              className="workbench-side-resizer"
-              data-side="right"
-              data-collapsed={rightCollapsed}
-              role="separator"
-              aria-label={t("shell.rightResizerLabel")}
-              onMouseDown={
-                rightCollapsed
-                  ? undefined
-                  : (event) => beginResize("right", event.clientX)
-              }
-            />
-            <aside className="workbench-auxiliary surface-card" data-collapsed={rightCollapsed}>
-              <WorkbenchInfoPanel
-                panelReady={infoPanelReady}
-                activeTab={activeInfoTab}
-                fileRevealRequest={fileRevealRequest}
-                onTabChange={(tab) => {
-                  ensureInfoPanelReady();
-                  setActiveInfoTab(tab);
-                }}
-                onToggleCollapse={() => setRightCollapsed(true)}
-                currentSessionId={isDraftSession ? null : currentSessionId}
-                activeWorkspaceId={currentWorkspaceId}
-                navigationGroups={navigationGroups}
-              />
-            </aside>
+            {shouldShowAuxiliaryPanel ? (
+              <>
+                <div
+                  className="workbench-side-resizer"
+                  data-side="right"
+                  data-collapsed={rightCollapsed}
+                  role="separator"
+                  aria-label={t("shell.rightResizerLabel")}
+                  onMouseDown={
+                    rightCollapsed
+                      ? undefined
+                      : (event) => beginResize("right", event.clientX)
+                  }
+                />
+                <aside
+                  className="workbench-auxiliary surface-card"
+                  data-collapsed={rightCollapsed}
+                  data-custom-panel={activeCenterTab === "butler"}
+                >
+                  {activeCenterTab === "butler" ? (
+                    <div className="workbench-auxiliary-custom-panel">
+                      {customAuxiliaryPanel}
+                    </div>
+                  ) : (
+                    <WorkbenchInfoPanel
+                      panelReady={infoPanelReady}
+                      activeTab={activeInfoTab}
+                      fileRevealRequest={fileRevealRequest}
+                      onTabChange={(tab) => {
+                        ensureInfoPanelReady();
+                        setActiveInfoTab(tab);
+                      }}
+                      onToggleCollapse={() => setRightCollapsed(true)}
+                      currentSessionId={isDraftSession ? null : currentSessionId}
+                      activeWorkspaceId={currentWorkspaceId}
+                      navigationGroups={navigationGroups}
+                    />
+                  )}
+                </aside>
+              </>
+            ) : null}
           </div>
         </div>
       )}
@@ -5582,6 +5664,7 @@ export function useWorkbenchShell(): WorkbenchShellContextValue {
       favoriteSessions: [],
       refreshNavigation: async () => undefined,
       requestNavigationRefresh: () => undefined,
+      setAuxiliaryPanel: () => undefined,
       subscribeFileTree: () => undefined,
       requestFileTreeRefresh: () => undefined,
       addFileTreeSnapshotListener: () => () => undefined,

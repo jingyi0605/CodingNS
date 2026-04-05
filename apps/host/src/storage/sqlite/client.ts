@@ -30,6 +30,7 @@ export function createDatabaseClient(databasePath: string): DatabaseClient {
   ensureTerminalCommandTemplatePortColumn(db);
   ensureTerminalCommandTemplateRuntimeTypeColumn(db);
   ensureTerminalCommandTemplateProxySchema(db);
+  ensureButlerProfileSchema(db);
 
   return {
     db,
@@ -47,6 +48,18 @@ function ensureWorkspaceRemovalColumn(db: Database.Database): void {
   }
 
   db.exec("ALTER TABLE workspaces ADD COLUMN removed_at TEXT");
+}
+
+function ensureButlerProfileSchema(db: Database.Database): void {
+  const columns = db
+    .prepare("PRAGMA table_info(butler_profiles)")
+    .all() as Array<{ name: string }>;
+
+  if (columns.some((column) => column.name === "display_name")) {
+    return;
+  }
+
+  db.exec("ALTER TABLE butler_profiles ADD COLUMN display_name TEXT NOT NULL DEFAULT '代码管家'");
 }
 
 function ensureSessionProviderSchema(db: Database.Database): void {

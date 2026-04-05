@@ -41,6 +41,7 @@ import {
 
 interface ComposerPanelProps {
   capabilities: ProviderCapabilitiesDto | null;
+  placeholder?: string;
   draftStorageId?: string;
   panelRef?: Ref<HTMLElement>;
   portalContainer?: Element | null;
@@ -304,6 +305,7 @@ function mergeImageAttachments(
 
 export function ComposerPanel({
   capabilities,
+  placeholder,
   draftStorageId,
   panelRef,
   portalContainer = null,
@@ -1083,7 +1085,7 @@ export function ComposerPanel({
               ref={textareaRef}
               className="composer-input"
               value={content}
-              placeholder={t("conversation.composerPlaceholder")}
+              placeholder={placeholder ?? t("conversation.composerPlaceholder")}
               readOnly={inRunSendBlocked}
               aria-readonly={inRunSendBlocked}
               onChange={(event) => setContent(event.target.value)}

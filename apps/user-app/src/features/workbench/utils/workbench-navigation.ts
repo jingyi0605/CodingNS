@@ -64,6 +64,10 @@ export function buildWorkspaceTerminalsPath(workspaceId: string): string {
   return `${buildWorkspaceDetailPath(workspaceId)}/terminals`;
 }
 
+export function buildWorkspaceButlerPath(workspaceId: string): string {
+  return `${buildWorkspaceDetailPath(workspaceId)}/butler`;
+}
+
 export function flattenNavigationSessions(
   groups: readonly WorkbenchNavigationGroup[]
 ): WorkbenchNavigationEntry[] {

@@ -1,0 +1,657 @@
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+
+import { AppError } from "../../shared/errors/app-error.js";
+import { nowIso } from "../../shared/utils/time.js";
+import type {
+  ButlerAgentsMode,
+  ButlerFocusProfile,
+  ButlerPersonaProfile,
+  ButlerProfile,
+  ButlerProfileProviderId
+} from "../../types/domain.js";
+import type { ButlerProfileRepository } from "../../storage/repositories/butler-profile-repository.js";
+import type { ButlerProjectRepository } from "../../storage/repositories/butler-project-repository.js";
+
+const BUTLER_PROFILE_ID: ButlerProfile["id"] = "default";
+const DEFAULT_BUTLER_DISPLAY_NAME = "代码管家";
+const DEFAULT_BUTLER_WORKSPACE_DIRNAME = "butler-workspace";
+const SUPPORTED_PROVIDERS: ButlerProfileProviderId[] = ["codex", "claude-code"];
+const SUPPORTED_AGENTS_MODES: ButlerAgentsMode[] = ["inline", "file"];
+const SUPPORTED_PERSONA_TONES = ["direct", "steady", "friendly"] as const;
+const SUPPORTED_PERSONA_LANGUAGES = ["zh-CN", "en-US", "bilingual"] as const;
+const SUPPORTED_SUMMARY_STYLES = ["brief", "structured", "thorough"] as const;
+const SUPPORTED_RISK_PREFERENCES = ["conservative", "balanced", "proactive"] as const;
+const SUPPORTED_REPORT_PRIORITIES = ["risk", "blocker", "verification", "progress"] as const;
+
+export interface ButlerProfileInitInput {
+  displayName?: unknown;
+  providerId?: unknown;
+  workspacePath?: unknown;
+  agentsMode?: unknown;
+  agentsFilePath?: unknown;
+  agentsContent?: unknown;
+  persona?: unknown;
+  focus?: unknown;
+}
+
+export interface ButlerProfilePatchInput extends ButlerProfileInitInput {}
+
+export class ButlerProfileService {
+  constructor(
+    private readonly butlerProfileRepository: ButlerProfileRepository,
+    private readonly butlerProjectRepository: Pick<ButlerProjectRepository, "list">,
+    private readonly dataRootDir: string = path.resolve("data", "host")
+  ) {}
+
+  getProfile(): ButlerProfile | null {
+    return this.butlerProfileRepository.find();
+  }
+
+  initProfile(input: ButlerProfileInitInput): ButlerProfile {
+    if (this.butlerProfileRepository.find()) {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "BUTLER_PROFILE_ALREADY_INITIALIZED",
+        detail: "代码管家已经初始化，不能重复初始化"
+      });
+    }
+
+    const timestamp = nowIso();
+    const profile = buildButlerProfileRecord(
+      input,
+      timestamp,
+      null,
+      this.butlerProjectRepository,
+      this.dataRootDir
+    );
+
+    return this.butlerProfileRepository.create(profile);
+  }
+
+  updateProfile(input: ButlerProfilePatchInput): ButlerProfile {
+    const current = this.butlerProfileRepository.find();
+
+    if (!current) {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "BUTLER_PROFILE_NOT_INITIALIZED",
+        detail: "代码管家尚未完成初始化"
+      });
+    }
+
+    const updated = buildButlerProfileRecord(
+      input,
+      current.initializedAt,
+      current,
+      this.butlerProjectRepository,
+      this.dataRootDir
+    );
+
+    return this.butlerProfileRepository.update(updated);
+  }
+
+  ensureInitialized(): ButlerProfile {
+    const profile = this.butlerProfileRepository.find();
+
+    if (!profile) {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "BUTLER_PROFILE_NOT_INITIALIZED",
+        detail: "代码管家尚未完成初始化，不能启动控制会话"
+      });
+    }
+
+    return profile;
+  }
+}
+
+function buildButlerProfileRecord(
+  input: ButlerProfileInitInput | ButlerProfilePatchInput,
+  initializedAt: string,
+  current: ButlerProfile | null,
+  butlerProjectRepository: Pick<ButlerProjectRepository, "list">,
+  dataRootDir: string
+): ButlerProfile {
+  const displayName =
+    input.displayName !== undefined
+      ? normalizeDisplayName(input.displayName)
+      : current?.displayName ?? DEFAULT_BUTLER_DISPLAY_NAME;
+  const workspacePath =
+    input.workspacePath !== undefined
+      ? normalizeWorkspacePath(input.workspacePath, butlerProjectRepository)
+      : current?.workspacePath ?? resolveDefaultWorkspacePath(dataRootDir, butlerProjectRepository);
+  const providerId =
+    input.providerId !== undefined
+      ? normalizeProviderId(input.providerId)
+      : current?.providerId ?? invalidField("providerId", "providerId 只允许为 codex 或 claude-code");
+  const agentsMode =
+    input.agentsMode !== undefined
+      ? normalizeAgentsMode(input.agentsMode)
+      : current?.agentsMode ?? "inline";
+  const persona =
+    input.persona !== undefined
+      ? normalizePersona(input.persona)
+      : current?.persona ?? createDefaultPersona();
+  const focus =
+    input.focus !== undefined
+      ? normalizeFocus(input.focus)
+      : current?.focus ?? createDefaultFocus();
+  const generatedAgentsContent = buildGeneratedAgentsContent({
+    displayName,
+    providerId,
+    persona,
+    focus
+  });
+  const agentsConfig = resolveAgentsConfig(
+    input,
+    current,
+    workspacePath,
+    agentsMode,
+    generatedAgentsContent
+  );
+
+  return {
+    id: BUTLER_PROFILE_ID,
+    displayName,
+    providerId,
+    workspacePath,
+    agentsMode,
+    agentsFilePath: agentsConfig.agentsFilePath,
+    agentsContent: agentsConfig.agentsContent,
+    persona,
+    focus,
+    initializedAt,
+    updatedAt: nowIso()
+  };
+}
+
+function normalizeDisplayName(value: unknown): string {
+  if (typeof value !== "string") {
+    throw invalidField("displayName", "displayName 必须是非空字符串");
+  }
+
+  const normalized = value.trim();
+
+  if (!normalized) {
+    throw invalidField("displayName", "displayName 必须是非空字符串");
+  }
+
+  return normalized;
+}
+
+function normalizeProviderId(value: unknown): ButlerProfileProviderId {
+  if (typeof value !== "string") {
+    throw invalidField("providerId", "providerId 只允许为 codex 或 claude-code");
+  }
+
+  const normalized = value.trim() as ButlerProfileProviderId;
+
+  if (!SUPPORTED_PROVIDERS.includes(normalized)) {
+    throw invalidField("providerId", "providerId 只允许为 codex 或 claude-code");
+  }
+
+  return normalized;
+}
+
+function normalizeWorkspacePath(
+  value: unknown,
+  butlerProjectRepository: Pick<ButlerProjectRepository, "list">
+): string {
+  if (typeof value !== "string") {
+    throw invalidField("workspacePath", "workspacePath 必须是绝对目录路径");
+  }
+
+  const normalized = value.trim();
+
+  if (!normalized) {
+    throw invalidField("workspacePath", "workspacePath 不能为空");
+  }
+
+  return finalizeWorkspacePath(normalized, butlerProjectRepository);
+}
+
+function resolveDefaultWorkspacePath(
+  dataRootDir: string,
+  butlerProjectRepository: Pick<ButlerProjectRepository, "list">
+): string {
+  return finalizeWorkspacePath(path.join(dataRootDir, DEFAULT_BUTLER_WORKSPACE_DIRNAME), butlerProjectRepository);
+}
+
+function finalizeWorkspacePath(
+  targetPath: string,
+  butlerProjectRepository: Pick<ButlerProjectRepository, "list">
+): string {
+  const resolved = path.resolve(targetPath);
+
+  if (!path.isAbsolute(resolved)) {
+    throw invalidField("workspacePath", "workspacePath 必须是绝对目录路径");
+  }
+
+  if (fs.existsSync(resolved) && !fs.statSync(resolved).isDirectory()) {
+    throw invalidField("workspacePath", "workspacePath 必须指向目录");
+  }
+
+  const duplicatedProject = butlerProjectRepository
+    .list()
+    .find((project) => path.resolve(project.repoRoot) === resolved);
+
+  if (duplicatedProject) {
+    throw invalidField("workspacePath", "workspacePath 不能直接复用某个项目仓库目录");
+  }
+
+  fs.mkdirSync(resolved, { recursive: true });
+  ensureButlerWorkspaceIsolation(resolved);
+  return resolved;
+}
+
+function normalizeAgentsMode(value: unknown): ButlerAgentsMode {
+  if (typeof value !== "string") {
+    throw invalidField("agentsMode", "agentsMode 只允许为 inline 或 file");
+  }
+
+  const normalized = value.trim() as ButlerAgentsMode;
+
+  if (!SUPPORTED_AGENTS_MODES.includes(normalized)) {
+    throw invalidField("agentsMode", "agentsMode 只允许为 inline 或 file");
+  }
+
+  return normalized;
+}
+
+function resolveAgentsConfig(
+  input: ButlerProfileInitInput | ButlerProfilePatchInput,
+  current: ButlerProfile | null,
+  workspacePath: string,
+  agentsMode: ButlerAgentsMode,
+  generatedAgentsContent: string
+): {
+  agentsFilePath: string | null;
+  agentsContent: string;
+} {
+  const hasAgentsFilePath = Object.prototype.hasOwnProperty.call(input, "agentsFilePath");
+  const hasAgentsContent = Object.prototype.hasOwnProperty.call(input, "agentsContent");
+  const hasGeneratedSeedChange =
+    current === null
+    || input.displayName !== undefined
+    || input.persona !== undefined
+    || input.focus !== undefined
+    || input.agentsMode !== undefined;
+  const nextAgentsFilePath = hasAgentsFilePath
+    ? normalizeOptionalFilePath(input.agentsFilePath, workspacePath)
+    : current?.agentsFilePath ?? path.join(workspacePath, "AGENTS.md");
+  const explicitAgentsContent = hasAgentsContent
+    ? normalizeOptionalContent(input.agentsContent)
+    : null;
+
+  if (agentsMode === "inline") {
+    const agentsContent =
+      explicitAgentsContent
+      ?? (hasGeneratedSeedChange ? generatedAgentsContent : current?.agentsContent)
+      ?? generatedAgentsContent;
+
+    return {
+      agentsFilePath: null,
+      agentsContent
+    };
+  }
+
+  const agentsFilePath = nextAgentsFilePath ?? path.join(workspacePath, "AGENTS.md");
+
+  if (!isPathWithinWorkspace(workspacePath, agentsFilePath)) {
+    throw invalidField("agentsFilePath", "AGENTS.md 必须位于管家工作目录内");
+  }
+
+  if (explicitAgentsContent) {
+    writeAgentsFile(agentsFilePath, explicitAgentsContent);
+    return {
+      agentsFilePath,
+      agentsContent: explicitAgentsContent
+    };
+  }
+
+  if (fs.existsSync(agentsFilePath) && !hasGeneratedSeedChange) {
+    return {
+      agentsFilePath,
+      agentsContent: readAgentsFile(agentsFilePath)
+    };
+  }
+
+  writeAgentsFile(agentsFilePath, generatedAgentsContent);
+
+  return {
+    agentsFilePath,
+    agentsContent: generatedAgentsContent
+  };
+}
+
+function normalizeOptionalFilePath(value: unknown, workspacePath: string): string | null {
+  if (value === null) {
+    return null;
+  }
+
+  if (value === undefined) {
+    return path.join(workspacePath, "AGENTS.md");
+  }
+
+  if (typeof value !== "string") {
+    throw invalidField("agentsFilePath", "agentsFilePath 必须是绝对文件路径");
+  }
+
+  const normalized = value.trim();
+
+  if (!normalized) {
+    return path.join(workspacePath, "AGENTS.md");
+  }
+
+  const resolved = path.resolve(normalized);
+
+  if (!path.isAbsolute(resolved)) {
+    throw invalidField("agentsFilePath", "agentsFilePath 必须是绝对文件路径");
+  }
+
+  return resolved;
+}
+
+function normalizeOptionalContent(value: unknown): string | null {
+  if (value === null) {
+    return null;
+  }
+
+  if (typeof value !== "string") {
+    throw invalidField("agentsContent", "agentsContent 必须是字符串");
+  }
+
+  const normalized = value.trim();
+  return normalized || null;
+}
+
+function readAgentsFile(filePath: string): string {
+  if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+    throw invalidField("agentsFilePath", "agentsFilePath 必须指向已存在的 AGENTS.md 文件");
+  }
+
+  const content = fs.readFileSync(filePath, "utf8").trim();
+
+  if (!content) {
+    throw invalidField("agentsFilePath", "AGENTS.md 文件内容不能为空");
+  }
+
+  return content;
+}
+
+function writeAgentsFile(filePath: string, content: string): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, `${content.trim()}\n`, "utf8");
+}
+
+export function ensureButlerWorkspaceIsolation(workspacePath: string): void {
+  const resolvedWorkspacePath = path.resolve(workspacePath);
+
+  fs.mkdirSync(resolvedWorkspacePath, { recursive: true });
+
+  if (readGitTopLevel(resolvedWorkspacePath) === resolvedWorkspacePath) {
+    return;
+  }
+
+  try {
+    // 必须建立真实 git 边界，假 .git 目录挡不住上层仓库规则继承。
+    execFileSync("git", ["-C", resolvedWorkspacePath, "init", "-q"], {
+      stdio: "ignore"
+    });
+  } catch (error) {
+    throw new AppError({
+      statusCode: 500,
+      errorCode: "BUTLER_WORKSPACE_ISOLATION_FAILED",
+      detail:
+        error instanceof Error
+          ? `代码管家工作目录初始化独立 git 边界失败：${error.message}`
+          : "代码管家工作目录初始化独立 git 边界失败"
+    });
+  }
+
+  if (readGitTopLevel(resolvedWorkspacePath) !== resolvedWorkspacePath) {
+    throw new AppError({
+      statusCode: 500,
+      errorCode: "BUTLER_WORKSPACE_ISOLATION_FAILED",
+      detail: "代码管家工作目录未能建立独立 git 边界"
+    });
+  }
+}
+
+function readGitTopLevel(workspacePath: string): string | null {
+  try {
+    const output = execFileSync("git", ["-C", workspacePath, "rev-parse", "--show-toplevel"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"]
+    });
+
+    const normalized = output.trim();
+    return normalized ? path.resolve(normalized) : null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizePersona(value: unknown): ButlerPersonaProfile {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw invalidField("persona", "persona 必须是对象");
+  }
+
+  const record = value as Record<string, unknown>;
+  const tone = normalizeEnumText(record.tone, "persona.tone", SUPPORTED_PERSONA_TONES);
+  const language = normalizeEnumText(record.language, "persona.language", SUPPORTED_PERSONA_LANGUAGES);
+  const summaryStyle = normalizeEnumText(
+    record.summaryStyle,
+    "persona.summaryStyle",
+    SUPPORTED_SUMMARY_STYLES
+  );
+
+  return {
+    ...record,
+    tone,
+    language,
+    summaryStyle
+  };
+}
+
+function normalizeFocus(value: unknown): ButlerFocusProfile {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw invalidField("focus", "focus 必须是对象");
+  }
+
+  const record = value as Record<string, unknown>;
+  const projectIds = record.projectIds === undefined
+    ? []
+    : normalizeStringArray(record.projectIds, "focus.projectIds");
+  const riskPreference = normalizeEnumText(
+    record.riskPreference,
+    "focus.riskPreference",
+    SUPPORTED_RISK_PREFERENCES
+  );
+  const reportPriority = normalizePriorityArray(record.reportPriority);
+
+  return {
+    ...record,
+    projectIds,
+    riskPreference,
+    reportPriority
+  };
+}
+
+function createDefaultPersona(): ButlerPersonaProfile {
+  return {
+    tone: "direct",
+    language: "zh-CN",
+    summaryStyle: "brief"
+  };
+}
+
+function createDefaultFocus(): ButlerFocusProfile {
+  return {
+    projectIds: [],
+    riskPreference: "conservative",
+    reportPriority: ["risk", "blocker", "verification"]
+  };
+}
+
+function normalizeEnumText<T extends readonly string[]>(
+  value: unknown,
+  field: string,
+  supportedValues: T
+): T[number] {
+  if (typeof value !== "string") {
+    throw invalidField(field, `${field} 必须是受支持的字符串`);
+  }
+
+  const normalized = value.trim() as T[number];
+
+  if (!supportedValues.includes(normalized)) {
+    throw invalidField(field, `${field} 必须是受支持的字符串`);
+  }
+
+  return normalized;
+}
+
+function normalizeStringArray(value: unknown, field: string): string[] {
+  if (!Array.isArray(value)) {
+    throw invalidField(field, `${field} 必须是字符串数组`);
+  }
+
+  return value.map((item, index) => {
+    if (typeof item !== "string" || !item.trim()) {
+      throw invalidField(field, `${field}[${index}] 必须是非空字符串`);
+    }
+
+    return item.trim();
+  });
+}
+
+function normalizePriorityArray(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw invalidField("focus.reportPriority", "focus.reportPriority 至少要有一个优先级");
+  }
+
+  const normalized = value.map((item, index) => {
+    if (typeof item !== "string" || !item.trim()) {
+      throw invalidField("focus.reportPriority", `focus.reportPriority[${index}] 必须是非空字符串`);
+    }
+
+    const priority = item.trim();
+
+    if (!SUPPORTED_REPORT_PRIORITIES.includes(priority as (typeof SUPPORTED_REPORT_PRIORITIES)[number])) {
+      throw invalidField("focus.reportPriority", `不支持的汇报优先级：${priority}`);
+    }
+
+    return priority;
+  });
+
+  return Array.from(new Set(normalized));
+}
+
+function buildGeneratedAgentsContent(input: {
+  displayName: string;
+  providerId: ButlerProfileProviderId;
+  persona: ButlerPersonaProfile;
+  focus: ButlerFocusProfile;
+}): string {
+  return [
+    "# AGENTS.md",
+    `你是代码管家「${input.displayName}」。`,
+    `在对话中，你必须以“${input.displayName}”作为自称，让用户知道这是独立的管家身份，不是普通项目会话。`,
+    "这套规则只服务于代码管家工作目录，不继承普通项目工作区的会话规则。",
+    "如果上层仓库、默认配置或普通项目会话规则和这里冲突，以这里的管家规则为准。",
+    "",
+    "## 回答要求",
+    "- 先给结论，再给证据，最后给下一步建议。",
+    "- 只基于当前对话需要的摘要信息回答；不够时明确说明缺口，并继续补查真实项目、会话、巡视、验证信息。",
+    "- 不要把无关项目的原始记录整批塞进回答，更不要编造状态。",
+    "",
+    "## 初始化偏好（系统自动生成）",
+    `- 当前 provider：${input.providerId}`,
+    `- 语气：${describeTone(input.persona.tone)}`,
+    `- 使用语言：${describeLanguage(input.persona.language)}`,
+    `- 总结风格：${describeSummaryStyle(input.persona.summaryStyle)}`,
+    `- 风险倾向：${describeRiskPreference(input.focus.riskPreference)}`,
+    `- 汇报优先级：${describeReportPriority(input.focus.reportPriority)}`
+  ].join("\n");
+}
+
+function describeTone(value: string): string {
+  switch (value) {
+    case "friendly":
+      return "友好耐心，但不绕弯";
+    case "steady":
+      return "稳健克制，重点清楚";
+    case "direct":
+    default:
+      return "直接明确，不说空话";
+  }
+}
+
+function describeLanguage(value: string): string {
+  switch (value) {
+    case "en-US":
+      return "优先英文";
+    case "bilingual":
+      return "中英双语，必要时先中文后英文";
+    case "zh-CN":
+    default:
+      return "优先简体中文";
+  }
+}
+
+function describeSummaryStyle(value: string): string {
+  switch (value) {
+    case "thorough":
+      return "完整展开，适合复杂问题";
+    case "structured":
+      return "分段清晰，便于快速扫描";
+    case "brief":
+    default:
+      return "简明扼要，先说重点";
+  }
+}
+
+function describeRiskPreference(value: string): string {
+  switch (value) {
+    case "proactive":
+      return "主动暴露潜在风险，宁可早提醒";
+    case "balanced":
+      return "平衡推进和风险控制";
+    case "conservative":
+    default:
+      return "保守稳妥，先避免误判和误操作";
+  }
+}
+
+function describeReportPriority(values: string[]): string {
+  return values.map((value) => {
+    switch (value) {
+      case "blocker":
+        return "阻塞";
+      case "verification":
+        return "验证";
+      case "progress":
+        return "进展";
+      case "risk":
+      default:
+        return "风险";
+    }
+  }).join("、");
+}
+
+function isPathWithinWorkspace(workspacePath: string, targetPath: string): boolean {
+  const relative = path.relative(path.resolve(workspacePath), path.resolve(targetPath));
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function invalidField(field: string, detail: string): never {
+  throw new AppError({
+    statusCode: 400,
+    errorCode: "INVALID_INPUT",
+    detail,
+    field
+  });
+}

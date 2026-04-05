@@ -6,10 +6,25 @@ export async function registerButlerRoutes(
   app: FastifyInstance,
   butlerController: ButlerController
 ): Promise<void> {
+  app.get("/api/butler/profile", butlerController.getProfile);
+  app.post("/api/butler/profile/init", butlerController.initProfile);
+  app.patch("/api/butler/profile", butlerController.updateProfile);
+  app.get("/api/butler/control-session", butlerController.getCurrentControlSession);
+  app.get("/api/butler/control-session/events", butlerController.listControlSessionEvents);
+  app.post("/api/butler/control-session/start", butlerController.startControlSession);
+  app.post("/api/butler/control-session/resume", butlerController.resumeControlSession);
+  app.post("/api/butler/control-session/messages", butlerController.sendControlMessage);
+  app.get("/api/butler/overview", butlerController.getOverview);
+  app.get("/api/butler/context-snapshot", butlerController.getContextSnapshot);
+  app.post("/api/butler/actions/open-project", butlerController.openProjectAction);
+  app.post("/api/butler/actions/resume-session", butlerController.resumeProjectSessionAction);
+  app.post("/api/butler/actions/start-patrol", butlerController.startPatrolAction);
+  app.post("/api/butler/actions/start-verification", butlerController.startVerificationAction);
   app.get("/api/butler/projects", butlerController.listProjects);
   app.post("/api/butler/projects", butlerController.createProject);
   app.get("/api/butler/projects/:projectId", butlerController.getProject);
   app.patch("/api/butler/projects/:projectId", butlerController.updateProject);
+  app.get("/api/butler/projects/:projectId/context", butlerController.getProjectContext);
   app.get("/api/butler/projects/:projectId/overview", butlerController.getProjectOverview);
   app.get("/api/butler/projects/:projectId/sessions", butlerController.listProjectSessions);
   app.post("/api/butler/projects/:projectId/sessions/start", butlerController.startProjectSession);

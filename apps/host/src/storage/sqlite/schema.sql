@@ -367,6 +367,53 @@ CREATE TABLE IF NOT EXISTS terminal_command_templates (
 CREATE INDEX IF NOT EXISTS idx_terminal_templates_workspace_id
   ON terminal_command_templates(workspace_id);
 
+CREATE TABLE IF NOT EXISTS butler_profiles (
+  id TEXT PRIMARY KEY CHECK (id = 'default'),
+  display_name TEXT NOT NULL,
+  provider_id TEXT NOT NULL CHECK (provider_id IN ('codex', 'claude-code')),
+  workspace_path TEXT NOT NULL,
+  agents_mode TEXT NOT NULL CHECK (agents_mode IN ('inline', 'file')),
+  agents_file_path TEXT,
+  agents_content TEXT NOT NULL,
+  persona_json TEXT NOT NULL,
+  focus_json TEXT NOT NULL,
+  initialized_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS butler_control_sessions (
+  id TEXT PRIMARY KEY,
+  provider_id TEXT NOT NULL CHECK (provider_id IN ('codex', 'claude-code')),
+  session_id TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL CHECK (status IN ('idle', 'running', 'failed', 'closed')),
+  last_context_version TEXT,
+  last_summary TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (session_id) REFERENCES session_bindings(session_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_butler_control_sessions_provider
+  ON butler_control_sessions(provider_id, updated_at DESC, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS butler_control_events (
+  id TEXT PRIMARY KEY,
+  control_session_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('action')),
+  action_type TEXT NOT NULL CHECK (
+    action_type IN ('open-project', 'resume-session', 'start-patrol', 'start-verification')
+  ),
+  status TEXT NOT NULL CHECK (status IN ('succeeded', 'failed')),
+  title TEXT NOT NULL,
+  content TEXT NOT NULL,
+  related_refs_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (control_session_id) REFERENCES butler_control_sessions(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_butler_control_events_session_created_at
+  ON butler_control_events(control_session_id, created_at ASC);
+
 CREATE TABLE IF NOT EXISTS butler_projects (
   id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL,

@@ -83,6 +83,10 @@ interface LogicalTransportState {
   closed: boolean;
 }
 
+interface CodexAppServerHelperClientOptions {
+  homeDir?: string;
+}
+
 export class CodexAppServerHelperClient {
   private readonly child: ChildProcessWithoutNullStreams;
   private readonly stdoutReader: readline.Interface;
@@ -91,11 +95,21 @@ export class CodexAppServerHelperClient {
   private nextRequestId = 1;
   private disposed = false;
 
-  constructor(commandPath: string) {
+  constructor(commandPath: string, options: CodexAppServerHelperClientOptions = {}) {
     const launch = resolveHelperLaunch(commandPath);
+    const helperEnv = {
+      ...process.env
+    };
+    const configuredHomeDir = options.homeDir?.trim();
+
+    if (configuredHomeDir) {
+      helperEnv.CODINGNS_CODEX_HOME = configuredHomeDir;
+      helperEnv.CODEX_HOME = configuredHomeDir;
+    }
+
     this.child = spawn(launch.command, launch.args, {
       cwd: process.cwd(),
-      env: process.env,
+      env: helperEnv,
       stdio: ["pipe", "pipe", "pipe"]
     });
     this.stdoutReader = readline.createInterface({

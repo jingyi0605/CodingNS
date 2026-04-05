@@ -44,6 +44,7 @@ interface MessageTimelineProps {
   onLoadOlderMessages?: () => void;
   onRetryMessage: (clientRequestId: string) => void;
   provider: ProviderId | null;
+  assistantAvatar?: ReactNode;
 }
 
 interface ResolvedToolCall {
@@ -1496,11 +1497,13 @@ function RulesMessageCard({
 function MessageItem({
   message,
   provider,
-  onRetry
+  onRetry,
+  assistantAvatar
 }: {
   message: SessionMessageViewModel;
   provider: ProviderId | null;
   onRetry: (clientRequestId: string) => void;
+  assistantAvatar?: ReactNode;
 }) {
   const isUser = message.role === "user";
   const isThinking = message.kind === "thinking";
@@ -1557,12 +1560,7 @@ function MessageItem({
   if (isThinking) {
     return (
       <article className="message-item assistant-message thinking-message-row">
-        <div className="message-avatar">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <circle cx="12" cy="12" r="10" />
-            <path d="M12 16v-4M12 8h.01" />
-          </svg>
-        </div>
+        <div className="message-avatar">{assistantAvatar ?? <DefaultAssistantAvatar />}</div>
         <div className="message-content-wrapper thinking-message-wrapper">
           <div className="thinking-message-label">{t("conversation.thinkingLabel")}</div>
           <MessageAttachments
@@ -1585,12 +1583,7 @@ function MessageItem({
   if (isAssistantText) {
     return (
       <article className="message-item assistant-message">
-        <div className="message-avatar">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <circle cx="12" cy="12" r="10" />
-            <path d="M12 16v-4M12 8h.01" />
-          </svg>
-        </div>
+        <div className="message-avatar">{assistantAvatar ?? <DefaultAssistantAvatar />}</div>
         <div className="message-content-wrapper">
           <MessageAttachments
             sessionId={message.sessionId}
@@ -1628,6 +1621,15 @@ function MessageItem({
   );
 }
 
+function DefaultAssistantAvatar() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 16v-4M12 8h.01" />
+    </svg>
+  );
+}
+
 export function MessageTimeline({
   sessionId = "session",
   messages,
@@ -1636,7 +1638,8 @@ export function MessageTimeline({
   hasOlderMessages = false,
   onLoadOlderMessages = () => {},
   onRetryMessage,
-  provider
+  provider,
+  assistantAvatar
 }: MessageTimelineProps) {
   const { showToast } = useToast();
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -1795,6 +1798,7 @@ export function MessageTimeline({
               message={item.message}
               provider={provider}
               onRetry={onRetryMessage}
+              assistantAvatar={assistantAvatar}
             />
           )
         )}

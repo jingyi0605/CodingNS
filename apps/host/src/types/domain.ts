@@ -263,6 +263,28 @@ export interface UserPreferenceProfileRecord extends UserPreferenceProfile {
   updatedAt: string;
 }
 
+export type ButlerProfileProviderId = "codex" | "claude-code";
+export type ButlerAgentsMode = "inline" | "file";
+export type ButlerControlSessionStatus = "idle" | "running" | "failed" | "closed";
+export type ButlerControlEventKind = "action";
+export type ButlerControlActionType =
+  | "open-project"
+  | "resume-session"
+  | "start-patrol"
+  | "start-verification";
+export type ButlerControlEventStatus = "succeeded" | "failed";
+export interface ButlerPersonaProfile {
+  tone: string;
+  language: string;
+  summaryStyle: string;
+  [key: string]: unknown;
+}
+export interface ButlerFocusProfile {
+  projectIds: string[];
+  riskPreference: string;
+  reportPriority: string[];
+  [key: string]: unknown;
+}
 export type ButlerApprovalMode = "readonly" | "controlled" | "auto";
 export type ButlerLifecycleStatus = "active" | "paused" | "archived";
 export type ButlerRiskLevel = "low" | "medium" | "high";
@@ -279,6 +301,52 @@ export type PatrolRunTriggeredBy = "scheduler" | "user" | "system";
 export type PatrolRunStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
 export type VerificationType = "test" | "health" | "browser" | "visual" | "metric";
 export type VerificationRunStatus = "queued" | "running" | "passed" | "failed" | "skipped";
+
+export interface ButlerProfile {
+  id: "default";
+  displayName: string;
+  providerId: ButlerProfileProviderId;
+  workspacePath: string;
+  agentsMode: ButlerAgentsMode;
+  agentsFilePath: string | null;
+  agentsContent: string;
+  persona: ButlerPersonaProfile;
+  focus: ButlerFocusProfile;
+  initializedAt: string;
+  updatedAt: string;
+}
+
+export interface ButlerControlSession {
+  id: string;
+  providerId: ButlerProfileProviderId;
+  sessionId: string;
+  status: ButlerControlSessionStatus;
+  lastContextVersion: string | null;
+  lastSummary: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ButlerControlRelatedRef {
+  kind: "project" | "butler-session" | "session" | "patrol-run" | "verification-run" | "workspace";
+  id: string;
+  label: string;
+  routePath: string | null;
+  workspaceId: string | null;
+  projectId: string | null;
+}
+
+export interface ButlerControlEvent {
+  id: string;
+  controlSessionId: string;
+  kind: ButlerControlEventKind;
+  actionType: ButlerControlActionType;
+  status: ButlerControlEventStatus;
+  title: string;
+  content: string;
+  relatedRefs: ButlerControlRelatedRef[];
+  createdAt: string;
+}
 
 export interface ButlerProject {
   id: string;

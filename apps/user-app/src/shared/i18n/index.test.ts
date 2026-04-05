@@ -41,11 +41,19 @@ describe("i18n", () => {
     userPreferenceStore.hydrate(createPreferenceState("zh-CN"));
     expect(t("common.language")).toBe("语言");
     expect(t("settings.language")).toBe("语言");
+    expect(t("shell.butlerEntry")).toBe("管家");
+    expect(t("shell.butlerProjectsTitle")).toBe("项目");
+    expect(t("shell.butlerNewSessionAction")).toBe("新建会话");
+    expect(t("shell.butlerConversationTitle")).toBe("与管家对话");
 
     userPreferenceStore.hydrate(createPreferenceState("en-US"));
     expect(t("common.language")).toBe("Language");
     expect(t("settings.language")).toBe("Language");
     expect(t("auth.serverSettings")).toBe("Server Settings");
+    expect(t("shell.butlerEntry")).toBe("Butler");
+    expect(t("shell.butlerProjectsTitle")).toBe("Projects");
+    expect(t("shell.butlerNewSessionAction")).toBe("New Session");
+    expect(t("shell.butlerConversationTitle")).toBe("Talk to Butler");
   });
 
   it("英文词典缺失时回退到中文，而不是返回 key", () => {

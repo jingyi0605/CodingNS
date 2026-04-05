@@ -2343,7 +2343,9 @@ function createProviderRuntimeAdapters(
   const codexTransportHelper =
     process.env.VITEST
       ? null
-      : new CodexAppServerHelperClient(config.codexCliPath);
+      : new CodexAppServerHelperClient(config.codexCliPath, {
+        homeDir: config.codexHomeDir
+      });
 
   if (codexTransportHelper) {
     disposables.push(codexTransportHelper);
