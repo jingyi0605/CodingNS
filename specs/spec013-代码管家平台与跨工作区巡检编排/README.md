@@ -4,7 +4,7 @@
 
 这个 Spec 解决的不是“再接一个 provider”这么小的事。
 
-真正的问题是：当用户同时维护多个工作区、多个项目、多个 AI 会话时，系统能不能有一个统一的“代码管家”控制面，持续知道：
+真正的问题是：当用户同时维护多个工作区、多个项目、多个 AI 会话时，系统能不能有一个统一的“代码管家”平台视角，持续知道：
 
 - 哪些项目在推进
 - 哪些会话卡住了
@@ -26,6 +26,34 @@
 - 统一项目级长期记忆、周期巡视、验证与授权控制
 - 支持只读巡检、建议输出、受控执行、验证回写这一整条闭环
 
+## 和 spec013.1 的边界
+
+`spec013` 只负责事实层和执行编排层，不负责“管家自己怎么聊天”这件事。
+
+这里的正式职责只有这些：
+
+- `ButlerProject`
+- `ButlerSession`
+- `ProjectMemory`
+- `PatrolPlan`
+- `PatrolRun`
+- `VerificationRun`
+- provider 适配
+- 指令注入适配
+- 巡视、验证、授权和审计
+
+这些事情不再由 `spec013` 承接，已经明确拆到 `spec013.1`：
+
+- `ButlerProfile`
+- `ButlerControlSession`
+- `ButlerContextSnapshot`
+- Butler Chat API
+- 控制动作 API
+- 前端“管家”入口和工作台 UI
+
+一句人话：
+`spec013` 负责把事实准备好，`spec013.1` 负责让管家拿着这些事实和用户对话。
+
 ## 计划覆盖
 
 - `ButlerProject`、`ButlerSession`、`ProjectMemory`、`PatrolPlan`、`VerificationRun` 数据模型
@@ -40,7 +68,7 @@
 ## 依赖关系
 
 - 前置依赖：`spec001`、`spec002`、`spec006`、`spec007`、`spec010`、`spec012`
-- 后续依赖：代码管家工作台 UI、跨设备通知、更细粒度自治策略
+- 后续依赖：`spec013.1` 控制面对话与工作台、跨设备通知、更细粒度自治策略
 
 ## 本阶段明确不做
 
