@@ -55,6 +55,101 @@
   - `pnpm --dir apps/host exec tsc -p tsconfig.json --noEmit`
   - `pnpm --dir apps/host exec vitest run tests/integration/butler-profile-service.test.ts tests/integration/butler-control-session-service.test.ts`
 
+## 2026-04-06 Butler 首条消息收口补记
+
+- 已取消新建 Butler 会话时自动发送固定首条消息的逻辑，页面现在会直接回到空白会话状态，等待用户自己发出第一条消息。
+- 已把 Butler 控制会话启动接口收紧为“必须带首条用户消息”，避免以后又把系统默认文案伪装成用户消息写进时间线。
+- 已把 Butler 主聊天区补接到现成 `SessionRuntimeStore`，复用普通会话页的实时消息、运行态和轮询链路，避免首条消息发出后 Butler 页面停在一次性快照上。
+- 已补本轮最小必要验证：
+  - `pnpm --dir apps/user-app exec tsc --noEmit -p tsconfig.json`
+  - `pnpm --dir apps/user-app exec vitest run src/features/butler/runtime/butler-runtime-store.test.ts src/features/butler/pages/ButlerPage.test.tsx`
+  - `pnpm --dir apps/host exec tsc -p tsconfig.json --noEmit`
+  - `pnpm --dir apps/host exec vitest run tests/integration/butler-control-session-service.test.ts tests/integration/butler-control-session-routes.test.ts`
+
+## 2026-04-06 Butler Codex 会话可用性修复补记
+
+- 已定位“发出首条消息后会话立刻停住”的真实根因，不是 Butler 页面没订阅，而是 Butler 专用 `codex-home` 把默认 Codex 配置整个抹掉了，只剩 `model_instructions_file`，导致 provider 配置和登录方式一起丢失。
+- 已把 Butler 的 Codex 配置改成“继承默认 `~/.codex/config.toml` 的运行配置，只覆盖 `model_instructions_file` 指向 Butler 自己的 `AGENTS.md`”，这样既保留独立规则体系，也不再把默认 provider / 审批 / 沙箱配置弄丢。
+- 已同步默认 Codex home 里的 `auth.json` 到 Butler 专用 `codex-home`，避免独立 home 因为缺认证文件而直接无法向模型发请求。
+- 已补 Codex app-server 致命错误翻译：当 app-server 发出 `method = "error"` 且 `willRetry = false` 时，现在会明确落成 runtime failed，而不是继续卡在 `starting`。
+- 已补相关自动化验证：
+  - `pnpm --dir packages/session-sync-core build`
+  - `pnpm --dir apps/host exec tsc -p tsconfig.json --noEmit`
+  - `pnpm --dir apps/host exec vitest run tests/integration/butler-control-session-service.test.ts tests/integration/butler-control-session-routes.test.ts tests/integration/codex-runtime-adapter.test.ts tests/integration/session-runtime-status.test.ts`
+- 已补运行态直连验证：
+- 直接用 Butler 当前独立 `codex-home` 调 `codex app-server`
+- 已确认会返回 `agentMessage` 和 `turn/completed`
+- 说明 Butler 独立 Codex 会话已经能真正启动，不再是只有用户消息、没有 assistant 输出的空转
+
+## 2026-04-06 Butler 自动纳管与对话体验修复补记
+
+- 已补工作区自动纳管：Butler 不再只看手工创建的 `butler_projects`，现在会把当前可见工作区自动补成 `workspace-auto` 项目，同时排除 Butler 自己的专用工作目录，避免自引用。
+- 已补自动归档：当工作区从当前列表消失后，对应的 `workspace-auto` 项目会自动转成归档状态，不会一直留在活跃视图里。
+- 已补普通会话自动纳入：对于自动纳管项目，Butler 现在会把该工作区里已知的普通会话自动登记成 `observed` 会话，聚合总览和项目上下文不再只看手工导入的 `butler_sessions`。
+- 已收紧 Butler 指令：如果 `BUTLER_CONTEXT.md` 里项目数或会话数是 0，管家不能直接下结论，必须先按 `BUTLER_API.md` 实查 `GET /api/butler/overview` 和 `GET /api/butler/projects`；如果用户追问会话内容，还要继续查 `GET /api/sessions/:sessionId/messages?direction=backward&limit=40`。
+- 已修 Butler 页历史上翻：Butler 主聊天页现在把实时会话的 older history 能力正式接到 `MessageTimeline`，不再只能看最近一页。
+- 已修 Butler 页底部输入区布局：聊天输入区不再被消息列表挤压，会稳定留在底部区域。
+- 已补本轮最小必要验证：
+  - `pnpm --dir apps/host exec tsc -p tsconfig.json --noEmit`
+  - `pnpm --dir apps/user-app exec tsc --noEmit -p tsconfig.json`
+  - `pnpm --dir apps/host exec vitest run tests/integration/butler-project-service.test.ts tests/integration/butler-session-service.test.ts tests/integration/butler-context-aggregator.test.ts tests/integration/butler-control-session-service.test.ts`
+  - `pnpm --dir apps/host exec vitest run tests/integration/butler-context-routes.test.ts tests/integration/butler-control-session-routes.test.ts`
+  - `pnpm --dir apps/user-app exec vitest run src/features/butler/pages/ButlerPage.test.tsx src/features/butler/runtime/butler-runtime-store.test.ts`
+
+## 2026-04-06 Butler 首次命中同步与内部凭证补记
+
+- 已把 Butler 的上下文聚合改成首次命中前先同步当前工作区的非归档会话，不再等后台补扫后第二轮才看见活动会话。
+- 已明确收口扫描范围：默认只自动同步非归档会话；归档会话不进默认 Butler 聚合视图，后续只有在用户明确要求查某个特定会话时，才继续扩展到更大范围。
+- 已新增 `ButlerAuthService`，会在管家工作目录下写入稳定的 `BUTLER_AUTH.json`，里面包含 Butler 专用内部 API 访问 token、API 基地址、签发时间和过期时间。
+- 已把 `BUTLER_API.md` 改成显式引用 `BUTLER_AUTH.json`，要求管家固定从该文件读取认证信息，不再每轮临时摸索 Bearer token。
+- 已补本轮最小必要验证：
+  - `pnpm --dir apps/host exec tsc -p tsconfig.json --noEmit`
+  - `pnpm --dir apps/user-app exec tsc --noEmit -p tsconfig.json`
+  - `pnpm --dir apps/host exec vitest run tests/integration/butler-control-session-service.test.ts tests/integration/butler-session-service.test.ts tests/integration/butler-context-aggregator.test.ts tests/integration/butler-context-routes.test.ts tests/integration/butler-control-action-service.test.ts tests/integration/butler-control-action-routes.test.ts tests/integration/butler-control-session-routes.test.ts`
+
+## 2026-04-06 Butler 会话摘要后台扫描补记
+
+- 已新增 Butler 后台会话摘要扫描服务，会周期检查活跃项目下发生变动的 Butler 会话，并只处理非归档会话。
+- 已把摘要触发改成正式防抖：第一次发现消息数或最后消息时间变化时，只登记待摘要状态；到时后才真正调用轻量模型生成摘要。
+- 已新增正式表 `butler_session_summary_states`，专门保存摘要防抖、运行态、错误信息和上次已摘要的源消息指纹，不再把这类调度状态塞进 `config_json`。
+- 已把轻量摘要结果正式回写到 `butler_sessions.lastSummary` 和 `session_checkpoints(sourceKind=summary)`，这样 Butler 聚合、项目上下文和后续检索都能直接复用。
+- 已把摘要运行放到代码管家自己的后台 runtime 中，避免把内部摘要会话混进普通项目工作区会话里。
+- 已明确继续保留归档边界：默认扫描和默认摘要都不碰归档会话；只有未来用户明确要求查某个特定归档会话时，才扩展搜索范围。
+- 已补本轮最小必要验证：
+  - `pnpm --dir apps/host exec tsc -p tsconfig.json --noEmit`
+  - `pnpm --dir apps/host exec vitest run tests/integration/butler-session-summary-service.test.ts tests/integration/session-summary-scheduler.test.ts tests/integration/butler-control-session-service.test.ts tests/integration/butler-session-service.test.ts tests/integration/butler-context-aggregator.test.ts tests/integration/butler-context-routes.test.ts tests/integration/butler-control-action-service.test.ts tests/integration/butler-control-action-routes.test.ts tests/integration/butler-control-session-routes.test.ts`
+
+## 2026-04-06 Butler 摘要防抖配置补记
+
+- 已把 Butler 后台会话摘要的默认防抖从 60 秒改成 5 分钟，减少会话持续活跃时的重复摘要和 token 消耗。
+- 已把防抖时长纳入 `ButlerProfile.focus.summaryDebounceSeconds`，旧档案缺字段时会自动补默认值，保持兼容。
+- 已在 Butler 右侧信息栏新增“管家设置”卡片，支持直接选择 1 / 3 / 5 / 10 / 15 / 30 分钟并保存。
+- 已补本轮最小必要验证：
+  - `pnpm --dir apps/host exec tsc -p tsconfig.json --noEmit`
+  - `pnpm --dir apps/user-app exec tsc --noEmit -p tsconfig.json`
+  - `pnpm --dir apps/host exec vitest run tests/integration/butler-profile-service.test.ts tests/integration/butler-profile-routes.test.ts tests/integration/butler-session-summary-service.test.ts tests/integration/session-summary-scheduler.test.ts`
+  - `pnpm --dir apps/user-app exec vitest run src/features/butler/runtime/butler-runtime-store.test.ts src/features/butler/pages/ButlerPage.test.tsx`
+
+## 2026-04-06 Butler 增量摘要状态机补记
+
+- 已把摘要状态表补成正式增量锚点：`butler_session_summary_states` 现在会保存 `last_summarized_sequence`，表示上一次已经摘要到哪条消息。
+- 已把 Butler 后台摘要改成真正的增量模式：每次只读取 `sequence > last_summarized_sequence` 的新增消息，不再重复把最近 40 条旧消息整段塞给模型。
+- 已把摘要提示词改成“旧摘要 + 本轮新增消息 -> 新的合并摘要”，输出的 `summary` 现在要求直接给出合并后的最新结论，而不是写成增量说明。
+- 已保持兼容：旧数据库没有 `last_summarized_sequence` 列时，Host 启动会自动补列，不要求手工迁移。
+- 已补本轮最小必要验证：
+  - `pnpm --dir apps/host exec tsc -p tsconfig.json --noEmit`
+  - `pnpm --dir apps/host exec vitest run tests/integration/butler-session-summary-service.test.ts tests/integration/session-summary-scheduler.test.ts`
+
+## 2026-04-06 Butler 摘要优先检索补记
+
+- 已新增 `GET /api/butler/search`，把项目、会话、记忆、巡视、验证的摘要层统一接成 Butler 检索入口。
+- 已把 `ContextAggregator.resolvePromptContext()` 接到摘要检索结果，控制会话 prompt 里会额外写入“摘要命中”，要求管家优先基于这些命中回答。
+- 已把 `BUTLER_API.md` 的默认查询顺序改成“先看 `BUTLER_CONTEXT.md`，再查 `/api/butler/search`，确认不够后才继续查 overview / project context / 原始消息”。
+- 已明确当前边界：这里只检索摘要层，不直接展开原始消息；只有用户追问具体细节时，才继续按内部 API 下钻。
+- 已补本轮最小必要验证：
+  - `pnpm --dir apps/host exec tsc -p tsconfig.json --noEmit`
+  - `pnpm --dir apps/host exec vitest run tests/integration/butler-context-aggregator.test.ts tests/integration/butler-context-routes.test.ts tests/integration/butler-control-session-service.test.ts tests/integration/butler-session-summary-service.test.ts tests/integration/session-summary-scheduler.test.ts`
+
 ## 这份文档是干什么的
 
 这份任务清单用来把“代码管家控制面对话”拆成真正能落地的步骤。
@@ -287,6 +382,47 @@
     - 已按 `relatedRefs.routePath` 渲染 Butler 事件跳转按钮，并支持定位到 `workspace/session/butler` 相关路由，不改普通 `ConversationPage` 主链路
     - 已为项目会话提供“打开真实会话 / 续接会话”入口，并为项目提供“发起巡视 / 发起验证”按钮
     - `pnpm --dir apps/user-app exec vitest run src/features/butler/pages/ButlerPage.test.tsx src/features/conversation/components/WorkbenchLayout.test.tsx` 已通过
+
+- [x] 2.3 实现会话摘要后台扫描与可配置防抖
+  - 状态：DONE
+  - 这一步到底做什么：在 Host 后台持续观察 Butler 已纳入的项目会话，一旦会话发生变化，就在可配置防抖后用轻量模型生成短摘要。
+  - 做完你能看到什么：Butler 不再只靠首次导入时的静态快照，会持续积累最新会话摘要，后续问答和检索都能直接命中这些摘要。
+  - 先依赖什么：1.3、2.2
+  - 主要改哪些文件：
+    - `apps/host/src/storage/sqlite/schema.sql`
+    - `apps/host/src/storage/repositories/butler-session-summary-state-repository.ts`
+    - `apps/host/src/modules/butler/butler-session-summary-service.ts`
+    - `apps/host/src/modules/butler/session-summary-instruction-adapter.ts`
+    - `apps/host/src/modules/butler/session-summary-scheduler.ts`
+    - `apps/host/src/server/create-server.ts`
+    - `apps/user-app/src/features/butler/pages/ButlerPage.tsx`
+    - `apps/host/tests/integration/butler-session-summary-service.test.ts`
+    - `apps/host/tests/integration/session-summary-scheduler.test.ts`
+    - `apps/user-app/src/features/butler/pages/ButlerPage.test.tsx`
+  - 这一步明确不做什么：
+    - 先不默认扫描归档会话
+    - 先不做“按摘要搜索所有归档会话”的查询接口
+    - 先不引入向量库
+  - 怎么算完成：
+    1. 活跃项目下的非归档会话会被后台观察
+    2. 会话变化后先进入可配置防抖，再生成摘要
+    3. 摘要结果会正式回写 Butler 会话和 checkpoint
+  - 怎么验证：
+    - Host 类型检查
+    - 摘要服务测试
+    - 调度器测试
+    - 相关 Butler 控制面回归测试
+    - Butler 设置页测试
+  - 验证结果：
+    - 已新增 `butler_session_summary_states` 正式表，用于保存消息指纹、防抖截止时间、运行状态和错误信息
+    - 已新增 `ButlerSessionSummaryService`，会先同步活跃项目下的非归档会话，再按配置防抖触发摘要
+    - 已新增 `SessionSummaryScheduler` 并接入 `create-server.ts` 生命周期，Host 启动后会在后台自动跑摘要扫描
+    - 已把轻量摘要默认模型固定为 `gpt-5.1-codex-mini` / `haiku`，同时把推理强度降到 `low`
+    - 已把摘要写回 `butler_sessions.lastSummary` 和 `session_checkpoints(sourceKind=summary)`，现有聚合逻辑无需重写即可消费
+    - 已把默认防抖改成 5 分钟，并允许通过 Butler 右侧“管家设置”卡片修改
+    - 已补 `last_summarized_sequence`，并改成只摘要新增消息，再和旧摘要合并成新的完整摘要
+    - `pnpm --dir apps/host exec tsc -p tsconfig.json --noEmit` 已通过
+    - `pnpm --dir apps/host exec vitest run tests/integration/butler-session-summary-service.test.ts tests/integration/session-summary-scheduler.test.ts tests/integration/butler-control-session-service.test.ts tests/integration/butler-session-service.test.ts tests/integration/butler-context-aggregator.test.ts tests/integration/butler-context-routes.test.ts tests/integration/butler-control-action-service.test.ts tests/integration/butler-control-action-routes.test.ts tests/integration/butler-control-session-routes.test.ts` 已通过
 
 ---
 
