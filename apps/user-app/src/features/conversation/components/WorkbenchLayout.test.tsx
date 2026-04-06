@@ -1284,7 +1284,7 @@ describe("WorkbenchLayout", () => {
     expect(screen.getByText("src/components/SearchPanel.tsx")).toBeInTheDocument();
   });
 
-  it("桌面侧栏会在终端和搜索之间显示管家入口，并支持跳转", async () => {
+  it("桌面侧栏会在终端和搜索之间显示助手入口，并支持跳转", async () => {
     const currentSnapshot = createWorkbenchSnapshot([
       {
         workspace: createWorkspace("workspace-1", "项目一"),
@@ -1334,7 +1334,7 @@ describe("WorkbenchLayout", () => {
     });
   });
 
-  it("管家路由下不会再显示默认信息侧栏", async () => {
+  it("助手路由下不会再显示默认信息侧栏", async () => {
     const currentSnapshot = createWorkbenchSnapshot([
       {
         workspace: createWorkspace("workspace-1", "项目一"),
@@ -1367,7 +1367,7 @@ describe("WorkbenchLayout", () => {
     expect(screen.queryByRole("button", { name: t("shell.showInfoSidebar") })).not.toBeInTheDocument();
   });
 
-  it("管家路由注册自定义侧栏后，会在右侧信息栏展示 Butler 内容", async () => {
+  it("助手路由注册自定义侧栏后，会在右侧信息栏展示 Butler 内容", async () => {
     const currentSnapshot = createWorkbenchSnapshot([
       {
         workspace: createWorkspace("workspace-1", "项目一"),

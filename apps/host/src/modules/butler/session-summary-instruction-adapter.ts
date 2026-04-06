@@ -42,7 +42,7 @@ export class SessionSummaryInstructionAdapter {
           : `本轮只提供 sequence > ${input.lastSummarizedSequence} 的新增消息。`
         : "本轮没有拿到新增消息。";
     const prompt = [
-      "你现在是代码管家的后台会话摘要器，不负责和用户聊天，只负责维护单个项目会话的最新检索摘要。",
+      "你现在是代码助手的后台会话摘要器，不负责和用户聊天，只负责维护单个项目会话的最新检索摘要。",
       "你会收到上一版摘要和本轮新增消息。你的任务不是重写整个历史，而是在不编造信息的前提下，把新增变化合并进旧摘要，输出一版新的完整摘要。",
       "请严格只基于下面提供的会话元信息、上一版摘要和新增消息，不要编造仓库状态，不要补写没有出现过的任务。",
       "输出必须简短，避免把原始消息大段重复粘贴出来。",
@@ -62,7 +62,7 @@ export class SessionSummaryInstructionAdapter {
       "",
       `项目名称：${input.project.name}`,
       `项目路径：${input.project.repoRoot}`,
-      `代码管家会话 ID：${input.butlerSessionId}`,
+      `代码助手会话 ID：${input.butlerSessionId}`,
       `真实会话 ID：${input.sessionId}`,
       `会话标题：${input.sessionTitle ?? "未命名会话"}`,
       `最近消息时间：${input.lastMessageAt ?? "未知"}`,

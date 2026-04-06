@@ -84,6 +84,7 @@ vi.mock("../api/butler-api", () => ({
   startButlerControlSession: vi.fn(),
   sendButlerControlMessage: vi.fn(),
   getButlerProjectContext: vi.fn(),
+  searchButlerSummaries: vi.fn(),
   openButlerProjectAction: vi.fn(),
   resumeButlerProjectSessionAction: vi.fn(),
   startButlerPatrolAction: vi.fn(),
@@ -102,6 +103,7 @@ import {
   getCurrentButlerControlSession,
   resetButlerControlSession,
   getButlerProjectContext,
+  searchButlerSummaries,
   startButlerControlSession
 } from "../api/butler-api";
 import {
@@ -120,6 +122,7 @@ const mockedListButlerControlEvents = vi.mocked(listButlerControlEvents);
 const mockedGetCurrentButlerControlSession = vi.mocked(getCurrentButlerControlSession);
 const mockedResetButlerControlSession = vi.mocked(resetButlerControlSession);
 const mockedGetButlerProjectContext = vi.mocked(getButlerProjectContext);
+const mockedSearchButlerSummaries = vi.mocked(searchButlerSummaries);
 const mockedStartButlerControlSession = vi.mocked(startButlerControlSession);
 const mockedGetProviderCapabilities = vi.mocked(getProviderCapabilities);
 const mockedGetSessionCapabilities = vi.mocked(getSessionCapabilities);
@@ -271,6 +274,25 @@ describe("ButlerPage", () => {
         verifications: [],
         topRisks: ["接口波动"],
         nextActions: ["补跑验证"]
+      }
+    });
+    mockedSearchButlerSummaries.mockResolvedValue({
+      result: {
+        version: "search-1",
+        generatedAt: "2026-04-05T00:00:00.000Z",
+        query: "类型错误",
+        items: [
+          {
+            kind: "session",
+            id: "butler-session-1",
+            projectId: "project-1",
+            workspaceId: "workspace-1",
+            title: "项目甲执行会话",
+            summary: "构建被类型错误卡住",
+            score: 12,
+            updatedAt: "2026-04-05T00:00:00.000Z"
+          }
+        ]
       }
     });
     mockedGetProviderCapabilities.mockResolvedValue({
@@ -467,13 +489,13 @@ describe("ButlerPage", () => {
       ).toBeInTheDocument();
     });
 
-    expect(screen.queryByText("在这里与管家对话，并查看聚合上下文和动作事件。")).not.toBeInTheDocument();
-    expect(screen.queryByText("当前管家称呼：阿尔文")).not.toBeInTheDocument();
+    expect(screen.queryByText("在这里与助手对话，并查看聚合上下文和动作事件。")).not.toBeInTheDocument();
+    expect(screen.queryByText("当前助手称呼：阿尔文")).not.toBeInTheDocument();
     expect(screen.queryByText("按需上下文")).not.toBeInTheDocument();
     expect(screen.queryByText(t("shell.butlerOverviewTitle"))).not.toBeInTheDocument();
   });
 
-  it("工作台会显示管家头像并支持新建控制会话", async () => {
+  it("工作台会显示助手头像并支持新建控制会话", async () => {
     mockedGetButlerProfile.mockResolvedValueOnce({
       initialized: true,
       profile: {
@@ -513,7 +535,7 @@ describe("ButlerPage", () => {
     });
   });
 
-  it("右侧管家设置支持调整摘要防抖并保存", async () => {
+  it("右侧助手设置支持调整摘要防抖并保存", async () => {
     mockedGetButlerProfile.mockResolvedValueOnce({
       initialized: true,
       profile: {
@@ -565,13 +587,25 @@ describe("ButlerPage", () => {
 
     const latestSidePanel = setAuxiliaryPanelMock.mock.calls.at(-1)?.[0] as {
       props: {
+        onSidebarTabChange: (tabId: "info" | "automation" | "skills" | "settings") => void;
         onSummaryDebounceChange: (value: number) => void;
         onSaveSettings: () => void;
       };
     };
 
     await act(async () => {
-      latestSidePanel.props.onSummaryDebounceChange(600);
+      latestSidePanel.props.onSidebarTabChange("settings");
+    });
+
+    const settingsSidePanel = setAuxiliaryPanelMock.mock.calls.at(-1)?.[0] as {
+      props: {
+        onSummaryDebounceChange: (value: number) => void;
+        onSaveSettings: () => void;
+      };
+    };
+
+    await act(async () => {
+      settingsSidePanel.props.onSummaryDebounceChange(600);
     });
 
     const updatedSidePanel = setAuxiliaryPanelMock.mock.calls.at(-1)?.[0] as {
@@ -667,7 +701,99 @@ describe("ButlerPage", () => {
     });
   });
 
-  it("管家实时会话会把更早消息加载能力接到时间线", async () => {
+  it("右侧信息栏支持摘要检索，并会带当前项目范围调用搜索接口", async () => {
+    mockedGetButlerProfile.mockResolvedValueOnce({
+      initialized: true,
+      profile: {
+        id: "default",
+        displayName: "阿尔文",
+        providerId: "codex",
+        workspacePath: "/tmp/butler",
+        agentsMode: "inline",
+        agentsFilePath: null,
+        agentsContent: "测试",
+        persona: { tone: "direct", language: "zh-CN", summaryStyle: "brief" },
+        focus: { projectIds: [], riskPreference: "conservative", reportPriority: [], summaryDebounceSeconds: 300 },
+        initializedAt: "2026-04-05T00:00:00.000Z",
+        updatedAt: "2026-04-05T00:00:00.000Z"
+      }
+    });
+    mockedGetButlerOverview.mockResolvedValueOnce({
+      overview: {
+        version: "v3",
+        generatedAt: "2026-04-05T00:00:00.000Z",
+        global: {
+          projectCount: 1,
+          activeProjectCount: 1,
+          blockedProjectCount: 0,
+          highRiskProjectCount: 0,
+          topRisks: [],
+          nextActions: []
+        },
+        projects: [
+          {
+            id: "project-1",
+            workspaceId: "workspace-1",
+            name: "项目甲",
+            repoRoot: "/repo/project-1",
+            lifecycleStatus: "active",
+            riskLevel: "medium",
+            activeSessionCount: 1,
+            sessionCount: 1,
+            memoryCount: 1,
+            failedPatrolCount: 0,
+            failedVerificationCount: 0,
+            latestSessionSummary: "最近进展",
+            latestPatrolSummary: null,
+            latestVerificationSummary: null,
+            topRisks: ["接口波动"],
+            nextActions: ["补跑验证"],
+            lastActivityAt: "2026-04-05T00:00:00.000Z",
+            updatedAt: "2026-04-05T00:00:00.000Z"
+          }
+        ],
+        sessions: [],
+        patrols: [],
+        verifications: []
+      }
+    });
+
+    renderPageWithEntry("/workspaces/workspace-1/butler?projectId=project-1");
+
+    await waitFor(() => {
+      expect(setAuxiliaryPanelMock).toHaveBeenCalled();
+    });
+
+    const latestSidePanel = setAuxiliaryPanelMock.mock.calls.at(-1)?.[0] as {
+      props: {
+        onSearchQueryChange: (value: string) => void;
+        onSearch: () => void;
+      };
+    };
+
+    await act(async () => {
+      latestSidePanel.props.onSearchQueryChange("类型错误");
+    });
+
+    const searchSidePanel = setAuxiliaryPanelMock.mock.calls.at(-1)?.[0] as {
+      props: {
+        onSearch: () => void;
+      };
+    };
+
+    await act(async () => {
+      searchSidePanel.props.onSearch();
+    });
+
+    await waitFor(() => {
+      expect(mockedSearchButlerSummaries).toHaveBeenCalledWith({
+        q: "类型错误",
+        projectId: "project-1"
+      });
+    });
+  });
+
+  it("助手实时会话会把更早消息加载能力接到时间线", async () => {
     const loadOlderMessagesSpy = vi
       .spyOn(SessionRuntimeStore.prototype, "loadOlderMessages")
       .mockResolvedValue(undefined);

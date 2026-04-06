@@ -21,6 +21,8 @@ import type {
   ButlerProjectDigestDto,
   ButlerProviderId,
   ButlerRiskPreferenceId,
+  ButlerSearchHitDto,
+  ButlerSearchResultDto,
   ButlerSessionDigestDto,
   ButlerSummaryStyleId,
   ButlerToneId
@@ -29,6 +31,7 @@ import {
   getButlerProjectContext,
   openButlerProjectAction,
   resumeButlerProjectSessionAction,
+  searchButlerSummaries,
   startButlerPatrolAction,
   startButlerVerificationAction
 } from "../api/butler-api";
@@ -50,6 +53,8 @@ interface ButlerInitFormState {
 interface ButlerSettingsFormState {
   summaryDebounceSeconds: number;
 }
+
+type ButlerSidebarTabId = "info" | "automation" | "skills" | "settings";
 
 type ButlerReportPriorityPresetId =
   | "risk-first"
@@ -111,6 +116,11 @@ export function ButlerPage() {
   const [projectContextLoading, setProjectContextLoading] = useState(false);
   const [projectContextError, setProjectContextError] = useState<string | null>(null);
   const [projectActionKey, setProjectActionKey] = useState<string | null>(null);
+  const [activeSidebarTab, setActiveSidebarTab] = useState<ButlerSidebarTabId>("info");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [searchResult, setSearchResult] = useState<ButlerSearchResultDto | null>(null);
 
   if (!storeRef.current || currentWorkspaceIdRef.current !== workspaceId) {
     storeRef.current = new ButlerRuntimeStore(workspaceId);
@@ -335,13 +345,24 @@ export function ButlerPage() {
         projectContextError={projectContextError}
         projectActionsDisabled={projectActionsDisabled}
         projectActionKey={projectActionKey}
+        activeSidebarTab={activeSidebarTab}
+        searchQuery={searchQuery}
+        searchLoading={searchLoading}
+        searchError={searchError}
+        searchResult={searchResult}
         summaryDebounceSeconds={settingsForm.summaryDebounceSeconds}
         savingSettings={savingSettings}
         controlSessionId={controlSession?.id ?? null}
         focusedButlerSessionId={focusedButlerSessionId}
         focusedPatrolRunId={focusedPatrolRunId}
         focusedVerificationRunId={focusedVerificationRunId}
+        onSidebarTabChange={setActiveSidebarTab}
+        onSearchQueryChange={setSearchQuery}
+        onSearch={() => {
+          void handleSearchSubmit();
+        }}
         onNavigateToProject={navigateToProject}
+        onNavigateToSearchHit={handleNavigateToSearchHit}
         onProjectAction={handleProjectAction}
         onOpenConversation={(workspaceId, sessionId) => {
           navigate(buildWorkspaceSessionPath(workspaceId, sessionId));
@@ -366,6 +387,7 @@ export function ButlerPage() {
       focusedPatrolRunId,
       focusedVerificationRunId,
       handleProjectAction,
+      activeSidebarTab,
       navigateToProject,
       navigate,
       overview,
@@ -374,6 +396,10 @@ export function ButlerPage() {
       projectContext,
       projectContextError,
       projectContextLoading,
+      searchError,
+      searchLoading,
+      searchQuery,
+      searchResult,
       savingSettings,
       selectedProject,
       selectedProjectId,
@@ -517,6 +543,10 @@ export function ButlerPage() {
     setProjectContext(null);
     setProjectContextError(null);
     setProjectActionKey(null);
+    setActiveSidebarTab("info");
+    setSearchQuery("");
+    setSearchError(null);
+    setSearchResult(null);
     navigate(buildWorkspaceButlerPath(workspaceId), {
       replace: true
     });
@@ -532,6 +562,19 @@ export function ButlerPage() {
       butlerSessionId: focus?.butlerSessionId ?? null,
       patrolRunId: focus?.patrolRunId ?? null,
       verificationRunId: focus?.verificationRunId ?? null
+    }));
+  }
+
+  function handleNavigateToSearchHit(hit: ButlerSearchHitDto) {
+    if (!hit.projectId || !hit.workspaceId) {
+      return;
+    }
+
+    navigate(buildButlerQueryPath(hit.workspaceId, {
+      projectId: hit.projectId,
+      butlerSessionId: hit.kind === "session" ? hit.id : null,
+      patrolRunId: hit.kind === "patrol" ? hit.id : null,
+      verificationRunId: hit.kind === "verification" ? hit.id : null
     }));
   }
 
@@ -573,6 +616,32 @@ export function ButlerPage() {
       setProjectContextError(null);
     } catch (projectError) {
       setProjectContextError(projectError instanceof Error ? projectError.message : String(projectError));
+    }
+  }
+
+  async function handleSearchSubmit() {
+    const normalizedQuery = searchQuery.trim();
+
+    if (!normalizedQuery) {
+      setSearchResult(null);
+      setSearchError(null);
+      return;
+    }
+
+    setSearchLoading(true);
+    setSearchError(null);
+
+    try {
+      const response = await searchButlerSummaries({
+        q: normalizedQuery,
+        projectId: selectedProjectId
+      });
+      setSearchResult(response.result);
+    } catch (searchRequestError) {
+      setSearchResult(null);
+      setSearchError(searchRequestError instanceof Error ? searchRequestError.message : String(searchRequestError));
+    } finally {
+      setSearchLoading(false);
     }
   }
 
@@ -884,8 +953,222 @@ function ButlerAuxiliaryPanel(props: {
   projectContextError: string | null;
   projectActionsDisabled: boolean;
   projectActionKey: string | null;
+  activeSidebarTab: ButlerSidebarTabId;
+  searchQuery: string;
+  searchLoading: boolean;
+  searchError: string | null;
+  searchResult: ButlerSearchResultDto | null;
   summaryDebounceSeconds: number;
   savingSettings: boolean;
+  controlSessionId: string | null;
+  focusedButlerSessionId: string | null;
+  focusedPatrolRunId: string | null;
+  focusedVerificationRunId: string | null;
+  onSidebarTabChange: (tabId: ButlerSidebarTabId) => void;
+  onSearchQueryChange: (value: string) => void;
+  onSearch: () => void;
+  onNavigateToProject: (project: ButlerProjectDigestDto, focus?: Partial<ButlerFocusQuery>) => void;
+  onNavigateToSearchHit: (hit: ButlerSearchHitDto) => void;
+  onProjectAction: (actionKey: string, action: () => Promise<void>, successDescription: string) => Promise<void>;
+  onOpenConversation: (workspaceId: string, sessionId: string) => void;
+  onNavigateRoute: (routePath: string) => void;
+  onSummaryDebounceChange: (value: number) => void;
+  onSaveSettings: () => void;
+}) {
+  const selectedProject = props.selectedProject;
+  const sidebarTabs: Array<{ id: ButlerSidebarTabId; label: string }> = [
+    { id: "info", label: t("shell.butlerSidebarInfoTab") },
+    { id: "automation", label: t("shell.butlerSidebarAutomationTab") },
+    { id: "skills", label: t("shell.butlerSidebarSkillsTab") },
+    { id: "settings", label: t("shell.butlerSidebarSettingsTab") }
+  ];
+
+  return (
+    <div className="butler-side-column">
+      <div className="workbench-info-tabs butler-side-tabs" role="tablist" aria-label={t("shell.butlerEntry")}>
+        {sidebarTabs.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            role="tab"
+            aria-selected={props.activeSidebarTab === tab.id}
+            className={props.activeSidebarTab === tab.id ? "workbench-info-tab active" : "workbench-info-tab"}
+            onClick={() => {
+              props.onSidebarTabChange(tab.id);
+            }}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {props.activeSidebarTab === "info" ? (
+        <>
+          <section className="butler-side-card surface-card">
+            <header>
+              <h2>{t("shell.butlerSearchTitle")}</h2>
+              <p>{t("shell.butlerSearchDescription")}</p>
+            </header>
+            <form
+              className="butler-search-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                props.onSearch();
+              }}
+            >
+              <label className="butler-form-field">
+                <span>{t("shell.butlerSearchQueryLabel")}</span>
+                <input
+                  value={props.searchQuery}
+                  placeholder={t("shell.butlerSearchPlaceholder")}
+                  disabled={props.searchLoading}
+                  onChange={(event) => {
+                    props.onSearchQueryChange(event.target.value);
+                  }}
+                />
+              </label>
+              <p className="butler-secondary-text">
+                {props.selectedProject
+                  ? t("shell.butlerSearchScopeProject", {
+                      projectName: props.selectedProject.name
+                    })
+                  : t("shell.butlerSearchScopeGlobal")}
+              </p>
+              <div className="butler-inline-actions">
+                <button type="submit" disabled={props.searchLoading}>
+                  {props.searchLoading ? t("shell.butlerSearchSearching") : t("shell.butlerSearchAction")}
+                </button>
+              </div>
+            </form>
+            {props.searchError ? (
+              <p className="butler-secondary-text" data-tone="error">
+                {props.searchError}
+              </p>
+            ) : props.searchResult ? (
+              props.searchResult.items.length > 0 ? (
+                <div className="butler-context-list">
+                  {props.searchResult.items.map((item) => (
+                    <article key={`${item.kind}:${item.id}`} className="butler-context-item">
+                      <div className="butler-context-item-header">
+                        <strong>{item.title}</strong>
+                        <span>{renderSearchKind(item.kind)}</span>
+                      </div>
+                      <p>{item.summary}</p>
+                      <p className="butler-secondary-text">
+                        {t("shell.butlerSearchUpdatedAt", {
+                          updatedAt: formatIsoDateTime(item.updatedAt)
+                        })}
+                      </p>
+                      {item.projectId && item.workspaceId ? (
+                        <div className="butler-inline-actions">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              props.onNavigateToSearchHit(item);
+                            }}
+                          >
+                            {t("shell.butlerSearchOpenAction")}
+                          </button>
+                        </div>
+                      ) : null}
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <p className="butler-secondary-text">{t("shell.butlerSearchEmptyResult")}</p>
+              )
+            ) : (
+              <p className="butler-secondary-text">{t("shell.butlerSearchEmptyPrompt")}</p>
+            )}
+          </section>
+
+          <InfoSidebarContent
+            overview={props.overview}
+            events={props.events}
+            selectedProject={selectedProject}
+            selectedProjectId={props.selectedProjectId}
+            projectContext={props.projectContext}
+            projectContextLoading={props.projectContextLoading}
+            projectContextError={props.projectContextError}
+            projectActionsDisabled={props.projectActionsDisabled}
+            projectActionKey={props.projectActionKey}
+            controlSessionId={props.controlSessionId}
+            focusedButlerSessionId={props.focusedButlerSessionId}
+            focusedPatrolRunId={props.focusedPatrolRunId}
+            focusedVerificationRunId={props.focusedVerificationRunId}
+            onNavigateToProject={props.onNavigateToProject}
+            onProjectAction={props.onProjectAction}
+            onOpenConversation={props.onOpenConversation}
+            onNavigateRoute={props.onNavigateRoute}
+          />
+        </>
+      ) : null}
+
+      {props.activeSidebarTab === "automation" ? (
+        <SidebarPlaceholderCard
+          title={t("shell.butlerSidebarAutomationTab")}
+          description={t("shell.butlerSidebarAutomationEmpty")}
+        />
+      ) : null}
+
+      {props.activeSidebarTab === "skills" ? (
+        <SidebarPlaceholderCard
+          title={t("shell.butlerSidebarSkillsTab")}
+          description={t("shell.butlerSidebarSkillsEmpty")}
+        />
+      ) : null}
+
+      {props.activeSidebarTab === "settings" ? (
+        <section className="butler-side-card surface-card">
+          <header>
+            <h2>{t("shell.butlerSettingsTitle")}</h2>
+            <p>{t("shell.butlerSettingsDescription")}</p>
+          </header>
+          <label className="butler-form-field">
+            <span>{t("shell.butlerSummaryDebounceLabel")}</span>
+            <select
+              aria-label={t("shell.butlerSummaryDebounceLabel")}
+              value={String(props.summaryDebounceSeconds)}
+              disabled={props.savingSettings}
+              onChange={(event) => {
+                props.onSummaryDebounceChange(Number(event.target.value));
+              }}
+            >
+              {SUMMARY_DEBOUNCE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {t(option.labelKey)}
+                </option>
+              ))}
+            </select>
+            <small>{t("shell.butlerSummaryDebounceHint")}</small>
+          </label>
+          <div className="butler-inline-actions">
+            <button
+              type="button"
+              disabled={props.savingSettings}
+              onClick={props.onSaveSettings}
+            >
+              {props.savingSettings
+                ? t("shell.butlerSettingsSaving")
+                : t("shell.butlerSettingsSaveAction")}
+            </button>
+          </div>
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
+function InfoSidebarContent(props: {
+  overview: ButlerOverviewDto | null;
+  events: ButlerControlEventDto[];
+  selectedProject: ButlerProjectContextDto["project"] | ButlerProjectDigestDto | null;
+  selectedProjectId: string | null;
+  projectContext: ButlerProjectContextDto | null;
+  projectContextLoading: boolean;
+  projectContextError: string | null;
+  projectActionsDisabled: boolean;
+  projectActionKey: string | null;
   controlSessionId: string | null;
   focusedButlerSessionId: string | null;
   focusedPatrolRunId: string | null;
@@ -894,49 +1177,11 @@ function ButlerAuxiliaryPanel(props: {
   onProjectAction: (actionKey: string, action: () => Promise<void>, successDescription: string) => Promise<void>;
   onOpenConversation: (workspaceId: string, sessionId: string) => void;
   onNavigateRoute: (routePath: string) => void;
-  onSummaryDebounceChange: (value: number) => void;
-  onSaveSettings: () => void;
 }) {
   const selectedProject = props.selectedProject;
 
   return (
-    <div className="butler-side-column">
-      <section className="butler-side-card surface-card">
-        <header>
-          <h2>{t("shell.butlerSettingsTitle")}</h2>
-          <p>{t("shell.butlerSettingsDescription")}</p>
-        </header>
-        <label className="butler-form-field">
-          <span>{t("shell.butlerSummaryDebounceLabel")}</span>
-          <select
-            aria-label={t("shell.butlerSummaryDebounceLabel")}
-            value={String(props.summaryDebounceSeconds)}
-            disabled={props.savingSettings}
-            onChange={(event) => {
-              props.onSummaryDebounceChange(Number(event.target.value));
-            }}
-          >
-            {SUMMARY_DEBOUNCE_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {t(option.labelKey)}
-              </option>
-            ))}
-          </select>
-          <small>{t("shell.butlerSummaryDebounceHint")}</small>
-        </label>
-        <div className="butler-inline-actions">
-          <button
-            type="button"
-            disabled={props.savingSettings}
-            onClick={props.onSaveSettings}
-          >
-            {props.savingSettings
-              ? t("shell.butlerSettingsSaving")
-              : t("shell.butlerSettingsSaveAction")}
-          </button>
-        </div>
-      </section>
-
+    <>
       <section className="butler-side-card surface-card">
         <header>
           <h2>{t("shell.butlerOverviewTitle")}</h2>
@@ -1299,7 +1544,21 @@ function ButlerAuxiliaryPanel(props: {
           </div>
         )}
       </section>
-    </div>
+    </>
+  );
+}
+
+function SidebarPlaceholderCard(props: {
+  title: string;
+  description: string;
+}) {
+  return (
+    <section className="butler-side-card surface-card">
+      <header>
+        <h2>{props.title}</h2>
+      </header>
+      <p className="butler-secondary-text">{props.description}</p>
+    </section>
   );
 }
 
@@ -1480,6 +1739,23 @@ function resolveButlerAvatar(displayName: string): string {
   }, 0);
 
   return BUTLER_AVATARS[codePointTotal % BUTLER_AVATARS.length]!;
+}
+
+function renderSearchKind(kind: ButlerSearchHitDto["kind"]): string {
+  switch (kind) {
+    case "project":
+      return t("shell.butlerSearchKindProject");
+    case "session":
+      return t("shell.butlerSearchKindSession");
+    case "memory":
+      return t("shell.butlerSearchKindMemory");
+    case "patrol":
+      return t("shell.butlerSearchKindPatrol");
+    case "verification":
+      return t("shell.butlerSearchKindVerification");
+    default:
+      return kind;
+  }
 }
 
 function useButlerLiveRuntime(runtimeStore: SessionRuntimeStore | null): {

@@ -223,7 +223,7 @@ export class ButlerControlSessionService {
       throw new AppError({
         statusCode: 404,
         errorCode: "BUTLER_CONTROL_SESSION_NOT_FOUND",
-        detail: "当前 provider 下还没有可用的管家控制会话"
+        detail: "当前 provider 下还没有可用的助手控制会话"
       });
     }
 
@@ -239,7 +239,7 @@ export class ButlerControlSessionService {
 
   private prepareWorkspace(profile: ButlerProfile, promptContext: ButlerPromptContext, userId: string) {
     this.syncWorkspaceContext(profile, promptContext, userId);
-    return this.workspaceService.importWorkspace(profile.workspacePath, "代码管家");
+    return this.workspaceService.importWorkspace(profile.workspacePath, "代码助手");
   }
 
   private syncWorkspaceContext(profile: ButlerProfile, promptContext: ButlerPromptContext, userId: string): void {
@@ -313,7 +313,7 @@ function syncCodexInstructionConfig(
   fs.mkdirSync(targetHomeDir, { recursive: true });
   removeFileIfExists(path.join(targetHomeDir, "AGENTS.md"));
   removeFileIfExists(path.join(targetHomeDir, "AGENTS.override.md"));
-  // 管家需要独立规则，但不能因为独立 home 丢掉 Codex 登录态。
+  // 助手需要独立规则，但不能因为独立 home 丢掉 Codex 登录态。
   syncOptionalFile(
     path.join(sourceHomeDir, "auth.json"),
     path.join(targetHomeDir, "auth.json")
@@ -352,7 +352,7 @@ function composeCodexConfigContent(sourceConfigContent: string, instructionFileP
     .trim();
 
   return [
-    "# 代码管家专用 Codex 配置（系统自动生成）",
+    "# 代码助手专用 Codex 配置（系统自动生成）",
     normalizedSource,
     `model_instructions_file = ${toTomlString(instructionFilePath)}`
   ]
@@ -376,9 +376,9 @@ function composeInstructionContent(
 ): string {
   return `${profile.agentsContent.trim()}
 
-## 代码管家运行附加说明（系统自动生成）
+## 代码助手运行附加说明（系统自动生成）
 
-- 当前工作目录是代码管家专用目录，只使用这里的管家规则，不回退到普通项目会话规则。
+- 当前工作目录是代码助手专用目录，只使用这里的助手规则，不回退到普通项目会话规则。
 - 当前聚合后的平台摘要写在 \`BUTLER_CONTEXT.md\`，先看这里，不要把所有项目原始记录一股脑塞进回答。
 - 当前摘要作用域是：${promptContext.scope === "project" ? `项目 ${promptContext.projectId}` : "全局总览"}。
 - 如果用户的问题里已经带了项目名、会话名、错误词或任务关键词，优先按 \`BUTLER_API.md\` 调 \`GET /api/butler/search?q=...\` 命中摘要，再决定要不要继续翻原始消息。
@@ -390,7 +390,7 @@ function composeInstructionContent(
 }
 
 function buildApiGuideContent(auth: ButlerWorkspaceCredential, authFilePath: string): string {
-  return `# 代码管家内部补查接口
+  return `# 代码助手内部补查接口
 
 这些接口由宿主系统提供，用于按需补查信息，不应该在每轮对话默认全量注入。
 

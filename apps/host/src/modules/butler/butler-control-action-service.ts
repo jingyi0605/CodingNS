@@ -268,7 +268,7 @@ export class ButlerControlActionService {
       throw new AppError({
         statusCode: 404,
         errorCode: "BUTLER_CONTROL_SESSION_NOT_FOUND",
-        detail: "当前 provider 下还没有可用的管家控制会话"
+        detail: "当前 provider 下还没有可用的助手控制会话"
       });
     }
 

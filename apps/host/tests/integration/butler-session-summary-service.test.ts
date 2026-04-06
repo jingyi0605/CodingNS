@@ -74,7 +74,7 @@ describe("ButlerSessionSummaryService", () => {
       workspacePath,
       agentsMode: "inline",
       agentsFilePath: null,
-      agentsContent: "# AGENTS.md\n你是代码管家",
+      agentsContent: "# AGENTS.md\n你是代码助手",
       persona: {
         tone: "direct",
         language: "zh-CN",
@@ -433,7 +433,7 @@ describe("ButlerSessionSummaryService", () => {
           workspacePath,
           agentsMode: "inline",
           agentsFilePath: null,
-          agentsContent: "# AGENTS.md\n你是代码管家",
+          agentsContent: "# AGENTS.md\n你是代码助手",
           persona: {
             tone: "direct",
             language: "zh-CN",
@@ -634,7 +634,7 @@ describe("ButlerSessionSummaryService", () => {
       {
         importWorkspace: vi.fn(() => ({
           id: "workspace-1",
-          name: "代码管家",
+          name: "代码助手",
           path: "/tmp/butler",
           repoRoot: "/tmp/butler",
           favorite: false,

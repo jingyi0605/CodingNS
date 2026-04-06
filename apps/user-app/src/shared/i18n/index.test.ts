@@ -41,10 +41,10 @@ describe("i18n", () => {
     userPreferenceStore.hydrate(createPreferenceState("zh-CN"));
     expect(t("common.language")).toBe("语言");
     expect(t("settings.language")).toBe("语言");
-    expect(t("shell.butlerEntry")).toBe("管家");
+    expect(t("shell.butlerEntry")).toBe("助手");
     expect(t("shell.butlerProjectsTitle")).toBe("项目");
     expect(t("shell.butlerNewSessionAction")).toBe("新建会话");
-    expect(t("shell.butlerConversationTitle")).toBe("与管家对话");
+    expect(t("shell.butlerConversationTitle")).toBe("与助手对话");
 
     userPreferenceStore.hydrate(createPreferenceState("en-US"));
     expect(t("common.language")).toBe("Language");

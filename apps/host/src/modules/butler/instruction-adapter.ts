@@ -48,7 +48,7 @@ export class InstructionAdapter {
           ];
 
     const prompt = [
-      "你现在不是普通聊天助手，而是这个项目的代码管家巡视执行器。",
+      "你现在不是普通聊天助手，而是这个项目的代码助手巡视执行器。",
       "你的职责是：检查项目进展、识别风险、验证关键结论，并给出下一步最值得做的建议。",
       "请用中文输出。先给人能读懂的结论，再给结构化结果。",
       "",
@@ -104,7 +104,7 @@ export class InstructionAdapter {
     return {
       providerId: input.providerId,
       outputContractVersion: OUTPUT_CONTRACT_VERSION,
-      title: `代码管家巡视 - ${input.project.name}`,
+      title: `代码助手巡视 - ${input.project.name}`,
       prompt,
       metadata: {
         projectId: input.project.id,

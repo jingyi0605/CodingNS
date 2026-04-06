@@ -40,7 +40,7 @@ describe("butler profile routes", () => {
     const agentsFilePath = path.join(butlerWorkspace, "AGENTS.md");
     activeFixtures.push(fixture);
     fs.mkdirSync(butlerWorkspace, { recursive: true });
-    fs.writeFileSync(agentsFilePath, "# AGENTS.md\n你是代码管家。\n", "utf8");
+    fs.writeFileSync(agentsFilePath, "# AGENTS.md\n你是代码助手。\n", "utf8");
 
     const firstHosted = createTestApp(fixture, {
       databasePath
@@ -110,7 +110,7 @@ describe("butler profile routes", () => {
         }
       }
     });
-    expect(initResponse.json().profile.agentsContent).toContain("你是代码管家「阿尔文」。");
+    expect(initResponse.json().profile.agentsContent).toContain("你是代码助手「阿尔文」。");
 
     await firstHosted.app.close();
     activeServers.pop();
@@ -150,7 +150,7 @@ describe("butler profile routes", () => {
     const agentsFilePath = path.join(butlerWorkspace, "AGENTS.md");
     activeFixtures.push(fixture);
     fs.mkdirSync(butlerWorkspace, { recursive: true });
-    fs.writeFileSync(agentsFilePath, "# AGENTS.md\n你是代码管家。\n", "utf8");
+    fs.writeFileSync(agentsFilePath, "# AGENTS.md\n你是代码助手。\n", "utf8");
 
     const hosted = createTestApp(fixture, {
       databasePath
@@ -223,7 +223,7 @@ describe("butler profile routes", () => {
     const agentsFilePath = path.join(butlerWorkspace, "AGENTS.md");
     activeFixtures.push(fixture);
     fs.mkdirSync(butlerWorkspace, { recursive: true });
-    fs.writeFileSync(agentsFilePath, "# AGENTS.md\n你是代码管家。\n", "utf8");
+    fs.writeFileSync(agentsFilePath, "# AGENTS.md\n你是代码助手。\n", "utf8");
 
     const hosted = createTestApp(fixture, {
       databasePath
@@ -335,7 +335,7 @@ describe("butler profile routes", () => {
         providerId: "opencode",
         workspacePath: butlerWorkspace,
         agentsMode: "inline",
-        agentsContent: "# AGENTS.md\n你是代码管家。",
+        agentsContent: "# AGENTS.md\n你是代码助手。",
         persona: {
           tone: "direct",
           language: "zh-CN",

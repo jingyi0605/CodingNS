@@ -104,7 +104,7 @@ export class ButlerSessionSummaryService {
     }
 
     ensureButlerWorkspaceIsolation(profile.workspacePath);
-    this.workspaceService.importWorkspace(profile.workspacePath, "代码管家");
+    this.workspaceService.importWorkspace(profile.workspacePath, "代码助手");
     this.syncSummaryInstructionFiles(profile.workspacePath, profile.providerId);
     const debounceMs = this.resolveDebounceMs(profile.focus.summaryDebounceSeconds);
 
@@ -263,7 +263,7 @@ export class ButlerSessionSummaryService {
       const adapter = this.providerAdapterRegistry.get(providerId);
       const summaryWorkspace = this.workspaceService.importWorkspace(
         summaryWorkspacePath,
-        "代码管家"
+        "代码助手"
       );
       const launch = await adapter.startPatrolSession({
         workspaceId: summaryWorkspace.id,
@@ -430,7 +430,7 @@ export class ButlerSessionSummaryService {
     writeFileIfChanged(
       summaryAgentsPath,
       [
-        "# 代码管家后台摘要规则",
+        "# 代码助手后台摘要规则",
         "",
         "你现在不是面向用户的聊天助手，而是后台摘要器。",
         "你的唯一职责是把单个项目会话最近消息压缩成短摘要，供后续检索和聚合使用。",
@@ -551,7 +551,7 @@ function composeCodexConfigContent(sourceConfigContent: string, instructionFileP
     .trim();
 
   return [
-    "# 代码管家后台摘要专用 Codex 配置（系统自动生成）",
+    "# 代码助手后台摘要专用 Codex 配置（系统自动生成）",
     normalizedSource,
     `model_instructions_file = ${toTomlString(instructionFilePath)}`
   ]

@@ -60,7 +60,7 @@ function ensureButlerProfileSchema(db: Database.Database): void {
     return;
   }
 
-  db.exec("ALTER TABLE butler_profiles ADD COLUMN display_name TEXT NOT NULL DEFAULT '代码管家'");
+  db.exec("ALTER TABLE butler_profiles ADD COLUMN display_name TEXT NOT NULL DEFAULT '代码助手'");
 }
 
 function ensureButlerSessionSummarySchema(db: Database.Database): void {

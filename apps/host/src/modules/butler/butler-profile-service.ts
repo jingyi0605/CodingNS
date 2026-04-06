@@ -15,7 +15,7 @@ import type { ButlerProfileRepository } from "../../storage/repositories/butler-
 import type { ButlerProjectRepository } from "../../storage/repositories/butler-project-repository.js";
 
 const BUTLER_PROFILE_ID: ButlerProfile["id"] = "default";
-const DEFAULT_BUTLER_DISPLAY_NAME = "代码管家";
+const DEFAULT_BUTLER_DISPLAY_NAME = "代码助手";
 const DEFAULT_BUTLER_WORKSPACE_DIRNAME = "butler-workspace";
 const SUPPORTED_PROVIDERS: ButlerProfileProviderId[] = ["codex", "claude-code"];
 const SUPPORTED_AGENTS_MODES: ButlerAgentsMode[] = ["inline", "file"];
@@ -58,7 +58,7 @@ export class ButlerProfileService {
       throw new AppError({
         statusCode: 409,
         errorCode: "BUTLER_PROFILE_ALREADY_INITIALIZED",
-        detail: "代码管家已经初始化，不能重复初始化"
+        detail: "代码助手已经初始化，不能重复初始化"
       });
     }
 
@@ -81,7 +81,7 @@ export class ButlerProfileService {
       throw new AppError({
         statusCode: 409,
         errorCode: "BUTLER_PROFILE_NOT_INITIALIZED",
-        detail: "代码管家尚未完成初始化"
+        detail: "代码助手尚未完成初始化"
       });
     }
 
@@ -103,7 +103,7 @@ export class ButlerProfileService {
       throw new AppError({
         statusCode: 409,
         errorCode: "BUTLER_PROFILE_NOT_INITIALIZED",
-        detail: "代码管家尚未完成初始化，不能启动控制会话"
+        detail: "代码助手尚未完成初始化，不能启动控制会话"
       });
     }
 
@@ -304,7 +304,7 @@ function resolveAgentsConfig(
   const agentsFilePath = nextAgentsFilePath ?? path.join(workspacePath, "AGENTS.md");
 
   if (!isPathWithinWorkspace(workspacePath, agentsFilePath)) {
-    throw invalidField("agentsFilePath", "AGENTS.md 必须位于管家工作目录内");
+    throw invalidField("agentsFilePath", "AGENTS.md 必须位于助手工作目录内");
   }
 
   if (explicitAgentsContent) {
@@ -410,8 +410,8 @@ export function ensureButlerWorkspaceIsolation(workspacePath: string): void {
       errorCode: "BUTLER_WORKSPACE_ISOLATION_FAILED",
       detail:
         error instanceof Error
-          ? `代码管家工作目录初始化独立 git 边界失败：${error.message}`
-          : "代码管家工作目录初始化独立 git 边界失败"
+          ? `代码助手工作目录初始化独立 git 边界失败：${error.message}`
+          : "代码助手工作目录初始化独立 git 边界失败"
     });
   }
 
@@ -419,7 +419,7 @@ export function ensureButlerWorkspaceIsolation(workspacePath: string): void {
     throw new AppError({
       statusCode: 500,
       errorCode: "BUTLER_WORKSPACE_ISOLATION_FAILED",
-      detail: "代码管家工作目录未能建立独立 git 边界"
+      detail: "代码助手工作目录未能建立独立 git 边界"
     });
   }
 }
@@ -601,10 +601,10 @@ function buildGeneratedAgentsContent(input: {
 }): string {
   return [
     "# AGENTS.md",
-    `你是代码管家「${input.displayName}」。`,
-    `在对话中，你必须以“${input.displayName}”作为自称，让用户知道这是独立的管家身份，不是普通项目会话。`,
-    "这套规则只服务于代码管家工作目录，不继承普通项目工作区的会话规则。",
-    "如果上层仓库、默认配置或普通项目会话规则和这里冲突，以这里的管家规则为准。",
+    `你是代码助手「${input.displayName}」。`,
+    `在对话中，你必须以“${input.displayName}”作为自称，让用户知道这是独立的助手身份，不是普通项目会话。`,
+    "这套规则只服务于代码助手工作目录，不继承普通项目工作区的会话规则。",
+    "如果上层仓库、默认配置或普通项目会话规则和这里冲突，以这里的助手规则为准。",
     "",
     "## 回答要求",
     "- 先给结论，再给证据，最后给下一步建议。",

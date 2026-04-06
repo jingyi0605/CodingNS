@@ -187,6 +187,34 @@ const extensionZhCN = {
     butlerSummaryDebounceOption10Minutes: "10 \u5206\u949f",
     butlerSummaryDebounceOption15Minutes: "15 \u5206\u949f",
     butlerSummaryDebounceOption30Minutes: "30 \u5206\u949f",
+    butlerSidebarInfoTab: "\u4fe1\u606f",
+    butlerSidebarAutomationTab: "\u81ea\u52a8\u5316",
+    butlerSidebarSkillsTab: "\u6280\u80fd",
+    butlerSidebarSettingsTab: "\u914d\u7f6e",
+    butlerSidebarAutomationEmpty:
+      "\u81ea\u52a8\u5316\u5165\u53e3\u5148\u7559\u7a7a\uff0c\u540e\u9762\u518d\u63a5\u4efb\u52a1\u8ba1\u5212\u3001\u81ea\u52a8\u6267\u884c\u548c\u56de\u653e\u80fd\u529b\u3002",
+    butlerSidebarSkillsEmpty:
+      "\u6280\u80fd\u5165\u53e3\u5148\u7559\u7a7a\uff0c\u540e\u9762\u518d\u63a5\u7ba1\u5bb6\u53ef\u7528\u6280\u80fd\u548c\u5de5\u5177\u8bf4\u660e\u3002",
+    butlerSearchTitle: "\u6458\u8981\u68c0\u7d22",
+    butlerSearchDescription:
+      "\u5148\u67e5 Butler \u5df2\u6574\u7406\u597d\u7684\u6458\u8981\u547d\u4e2d\uff0c\u518d\u51b3\u5b9a\u8981\u4e0d\u8981\u7ee7\u7eed\u7ffb\u539f\u59cb\u8bb0\u5f55\u3002",
+    butlerSearchQueryLabel: "\u68c0\u7d22\u5173\u952e\u8bcd",
+    butlerSearchPlaceholder: "\u4f8b\u5982\uff1a\u7c7b\u578b\u9519\u8bef\u3001\u767b\u5f55\u4f1a\u8bdd\u3001\u9a8c\u8bc1\u5931\u8d25",
+    butlerSearchScopeGlobal: "\u5f53\u524d\u8303\u56f4\uff1a\u5168\u5c40",
+    butlerSearchScopeProject: "\u5f53\u524d\u8303\u56f4\uff1a\u9879\u76ee {projectName}",
+    butlerSearchAction: "\u68c0\u7d22",
+    butlerSearchSearching: "\u68c0\u7d22\u4e2d...",
+    butlerSearchEmptyPrompt:
+      "\u8f93\u5165\u9879\u76ee\u540d\u3001\u4f1a\u8bdd\u540d\u3001\u9519\u8bef\u8bcd\u6216\u4efb\u52a1\u8bcd\uff0c\u67e5\u770b\u5f53\u524d\u6458\u8981\u547d\u4e2d\u3002",
+    butlerSearchEmptyResult:
+      "\u6ca1\u6709\u547d\u4e2d\u76f8\u5173\u6458\u8981\uff0c\u53ef\u4ee5\u6362\u4e2a\u5173\u952e\u8bcd\uff0c\u6216\u8005\u76f4\u63a5\u8ffd\u95ee\u5177\u4f53\u5bf9\u8c61\u3002",
+    butlerSearchOpenAction: "\u6253\u5f00\u5bf9\u5e94\u9879\u76ee",
+    butlerSearchUpdatedAt: "\u66f4\u65b0\u65f6\u95f4\uff1a{updatedAt}",
+    butlerSearchKindProject: "\u9879\u76ee",
+    butlerSearchKindSession: "\u4f1a\u8bdd",
+    butlerSearchKindMemory: "\u8bb0\u5fc6",
+    butlerSearchKindPatrol: "\u5de1\u89c6",
+    butlerSearchKindVerification: "\u9a8c\u8bc1",
     butlerProviderSwitched: "Provider \u5df2\u5207\u6362",
     butlerProviderSwitchedDescription:
       "\u5df2\u5207\u6362\u5230 {provider}\uff0c\u5f53\u524d\u89c6\u56fe\u5df2\u91cd\u7f6e\u5e76\u91cd\u65b0\u52a0\u8f7d\u3002",
@@ -988,6 +1016,34 @@ const extensionEnUS = {
     butlerSummaryDebounceOption10Minutes: "10 minutes",
     butlerSummaryDebounceOption15Minutes: "15 minutes",
     butlerSummaryDebounceOption30Minutes: "30 minutes",
+    butlerSidebarInfoTab: "Info",
+    butlerSidebarAutomationTab: "Automation",
+    butlerSidebarSkillsTab: "Skills",
+    butlerSidebarSettingsTab: "Settings",
+    butlerSidebarAutomationEmpty:
+      "Automation stays empty for now. Later we can add plans, automatic execution, and replay controls here.",
+    butlerSidebarSkillsEmpty:
+      "Skills stays empty for now. Later we can add Butler skills and tool guidance here.",
+    butlerSearchTitle: "Summary Search",
+    butlerSearchDescription:
+      "Check Butler's summary hits first, then decide whether to keep digging into raw records.",
+    butlerSearchQueryLabel: "Search Keywords",
+    butlerSearchPlaceholder: "For example: type error, login session, verification failed",
+    butlerSearchScopeGlobal: "Current scope: global",
+    butlerSearchScopeProject: "Current scope: project {projectName}",
+    butlerSearchAction: "Search",
+    butlerSearchSearching: "Searching...",
+    butlerSearchEmptyPrompt:
+      "Enter a project name, session name, error term, or task keyword to inspect current summary hits.",
+    butlerSearchEmptyResult:
+      "No summaries matched. Try another keyword or ask directly for a specific object.",
+    butlerSearchOpenAction: "Open Related Project",
+    butlerSearchUpdatedAt: "Updated: {updatedAt}",
+    butlerSearchKindProject: "Project",
+    butlerSearchKindSession: "Session",
+    butlerSearchKindMemory: "Memory",
+    butlerSearchKindPatrol: "Patrol",
+    butlerSearchKindVerification: "Verification",
     butlerProviderSwitched: "Provider switched",
     butlerProviderSwitchedDescription:
       "Switched to {provider}. The current view was reset and reloaded.",

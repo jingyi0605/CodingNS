@@ -228,6 +228,24 @@ export interface ButlerProjectContextDto {
   nextActions: string[];
 }
 
+export interface ButlerSearchHitDto {
+  kind: "project" | "session" | "memory" | "patrol" | "verification";
+  id: string;
+  projectId: string | null;
+  workspaceId: string | null;
+  title: string;
+  summary: string;
+  score: number;
+  updatedAt: string;
+}
+
+export interface ButlerSearchResultDto {
+  version: string;
+  generatedAt: string;
+  query: string;
+  items: ButlerSearchHitDto[];
+}
+
 export interface ButlerControlRelatedRefDto {
   kind: "project" | "butler-session" | "session" | "patrol-run" | "verification-run" | "workspace";
   id: string;
@@ -315,6 +333,22 @@ export function getButlerContextSnapshot() {
 export function getButlerProjectContext(projectId: string) {
   return httpClient.request<{ context: ButlerProjectContextDto }>(
     `/api/butler/projects/${encodeURIComponent(projectId)}/context`
+  );
+}
+
+export function searchButlerSummaries(payload: {
+  q: string;
+  projectId?: string | null;
+}) {
+  const searchParams = new URLSearchParams();
+  searchParams.set("q", payload.q);
+
+  if (payload.projectId?.trim()) {
+    searchParams.set("projectId", payload.projectId.trim());
+  }
+
+  return httpClient.request<{ result: ButlerSearchResultDto }>(
+    `/api/butler/search?${searchParams.toString()}`
   );
 }
 

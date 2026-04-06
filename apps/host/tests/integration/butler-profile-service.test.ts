@@ -44,7 +44,7 @@ describe("ButlerProfileService", () => {
     }
   });
 
-  it("初始化时会拒绝直接复用项目仓库目录作为管家工作目录", () => {
+  it("初始化时会拒绝直接复用项目仓库目录作为助手工作目录", () => {
     const repoRoot = mkdtempSync(path.join(os.tmpdir(), "codingns-butler-profile-"));
     tempDirs.push(repoRoot);
 
@@ -66,7 +66,7 @@ describe("ButlerProfileService", () => {
         providerId: "codex",
         workspacePath: repoRoot,
         agentsMode: "inline",
-        agentsContent: "# AGENTS.md\n你是代码管家",
+        agentsContent: "# AGENTS.md\n你是代码助手",
         persona: {
           tone: "direct",
           language: "zh-CN",
@@ -111,7 +111,7 @@ describe("ButlerProfileService", () => {
       providerId: "codex",
       workspacePath,
       agentsMode: "inline",
-      agentsContent: "# AGENTS.md\n你是代码管家",
+      agentsContent: "# AGENTS.md\n你是代码助手",
       persona: {
         tone: "direct",
         language: "zh-CN",
@@ -134,7 +134,7 @@ describe("ButlerProfileService", () => {
     }).trim()).toBe(fs.realpathSync.native(workspacePath));
   });
 
-  it("文件模式会生成独立管家规则，不继承普通项目会话规则", () => {
+  it("文件模式会生成独立助手规则，不继承普通项目会话规则", () => {
     const dataRootDir = mkdtempSync(path.join(os.tmpdir(), "codingns-butler-data-"));
     tempDirs.push(dataRootDir);
     let savedProfile: ButlerProfile | null = null;
@@ -172,7 +172,7 @@ describe("ButlerProfileService", () => {
     expect(profile.workspacePath).toBe(path.join(dataRootDir, "butler-workspace"));
     expect(profile.agentsFilePath).toBe(path.join(profile.workspacePath, "AGENTS.md"));
     expect(fs.existsSync(path.join(profile.workspacePath, ".git", "HEAD"))).toBe(true);
-    expect(profile.agentsContent).toContain("这套规则只服务于代码管家工作目录");
+    expect(profile.agentsContent).toContain("这套规则只服务于代码助手工作目录");
     expect(profile.agentsContent).toContain("如果上层仓库、默认配置或普通项目会话规则和这里冲突");
   });
 });

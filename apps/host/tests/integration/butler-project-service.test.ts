@@ -24,7 +24,7 @@ afterEach(() => {
 });
 
 describe("ButlerProjectService", () => {
-  it("可以在工作区内创建代码管家项目", () => {
+  it("可以在工作区内创建代码助手项目", () => {
     const workspacePath = mkdtempSync(path.join(os.tmpdir(), "codingns-butler-project-"));
     tempDirs.push(workspacePath);
     const repoRoot = path.join(workspacePath, "repo-a");
@@ -78,7 +78,7 @@ describe("ButlerProjectService", () => {
     expect(createdProjects).toHaveLength(1);
   });
 
-  it("会把普通工作区自动补成代码管家项目，并排除管家自己的工作目录", () => {
+  it("会把普通工作区自动补成代码助手项目，并排除助手自己的工作目录", () => {
     const workspaceAPath = mkdtempSync(path.join(os.tmpdir(), "codingns-butler-project-auto-a-"));
     const workspaceBPath = mkdtempSync(path.join(os.tmpdir(), "codingns-butler-project-auto-b-"));
     tempDirs.push(workspaceAPath, workspaceBPath);
@@ -96,7 +96,7 @@ describe("ButlerProjectService", () => {
       },
       {
         id: "workspace-butler",
-        name: "管家目录",
+        name: "助手目录",
         path: workspaceBPath,
         repoRoot: workspaceBPath,
         favorite: false,

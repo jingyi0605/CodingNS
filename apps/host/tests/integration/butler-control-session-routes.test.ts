@@ -87,7 +87,7 @@ describe("butler control-session routes", () => {
           subagentLabel: null,
           isArchived: false,
           isFavorite: false,
-          title: "代码管家",
+          title: "代码助手",
           messageCount: 1,
           lastMessageAt: "2026-04-05T00:00:05.000Z",
           createdAt: "2026-04-05T00:00:00.000Z",
@@ -133,7 +133,7 @@ describe("butler control-session routes", () => {
           subagentLabel: null,
           isArchived: false,
           isFavorite: false,
-          title: "代码管家",
+          title: "代码助手",
           messageCount: 1,
           lastMessageAt: "2026-04-05T00:01:00.000Z",
           createdAt: "2026-04-05T00:00:00.000Z",
@@ -177,7 +177,7 @@ describe("butler control-session routes", () => {
             subagentLabel: null,
             isArchived: false,
             isFavorite: false,
-            title: "代码管家",
+            title: "代码助手",
             messageCount: 2,
             lastMessageAt: "2026-04-05T00:01:05.000Z",
             createdAt: "2026-04-05T00:00:00.000Z",
@@ -271,7 +271,7 @@ describe("butler control-session routes", () => {
         throw new AppError({
           statusCode: 409,
           errorCode: "BUTLER_PROFILE_NOT_INITIALIZED",
-          detail: "代码管家尚未完成初始化，不能启动控制会话"
+          detail: "代码助手尚未完成初始化，不能启动控制会话"
         });
       })
     } as unknown as ButlerControlSessionService;

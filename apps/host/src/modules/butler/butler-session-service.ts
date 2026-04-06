@@ -203,7 +203,7 @@ export class ButlerSessionService {
       throw new AppError({
         statusCode: 409,
         errorCode: "BUTLER_SESSION_EXISTS",
-        detail: "该 session 已经被代码管家纳管",
+        detail: "该 session 已经被代码助手纳管",
         field: "sessionId"
       });
     }
@@ -399,7 +399,7 @@ export class ButlerSessionService {
       throw new AppError({
         statusCode: 404,
         errorCode: "BUTLER_PROJECT_NOT_FOUND",
-        detail: "代码管家项目不存在"
+        detail: "代码助手项目不存在"
       });
     }
 

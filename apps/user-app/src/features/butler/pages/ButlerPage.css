@@ -152,7 +152,8 @@
 .butler-provider-switcher select,
 .butler-init-form input,
 .butler-init-form select,
-.butler-init-form textarea {
+.butler-init-form textarea,
+.butler-search-form input {
   border: 1px solid rgba(15, 23, 42, 0.12);
   border-radius: 10px;
   padding: 9px 12px;
@@ -240,6 +241,15 @@
   overflow: hidden;
 }
 
+.butler-side-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: rgba(248, 250, 252, 0.92);
+  backdrop-filter: blur(10px);
+  padding-bottom: 2px;
+}
+
 .butler-side-card {
   padding: 14px;
   display: flex;
@@ -257,6 +267,12 @@
   margin: 4px 0 0;
   font-size: 13px;
   color: var(--text-secondary, #6b7280);
+}
+
+.butler-search-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .butler-overview-content,

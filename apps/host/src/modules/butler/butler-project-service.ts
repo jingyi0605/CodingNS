@@ -54,7 +54,7 @@ export class ButlerProjectService {
       throw new AppError({
         statusCode: 409,
         errorCode: "BUTLER_PROJECT_EXISTS",
-        detail: "当前工作区下已存在相同仓库路径的代码管家项目",
+        detail: "当前工作区下已存在相同仓库路径的代码助手项目",
         field: "repoRoot"
       });
     }
@@ -88,7 +88,7 @@ export class ButlerProjectService {
       throw new AppError({
         statusCode: 404,
         errorCode: "BUTLER_PROJECT_NOT_FOUND",
-        detail: "代码管家项目不存在"
+        detail: "代码助手项目不存在"
       });
     }
 
@@ -120,7 +120,7 @@ export class ButlerProjectService {
       throw new AppError({
         statusCode: 500,
         errorCode: "BUTLER_PROJECT_UPDATE_FAILED",
-        detail: "代码管家项目更新失败"
+        detail: "代码助手项目更新失败"
       });
     }
 

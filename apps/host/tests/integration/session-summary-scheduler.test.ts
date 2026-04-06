@@ -4,7 +4,7 @@ import { SessionSummaryScheduler } from "../../src/modules/butler/session-summar
 import type { ButlerSessionSummaryService } from "../../src/modules/butler/butler-session-summary-service.js";
 
 describe("SessionSummaryScheduler", () => {
-  it("会定时触发代码管家会话摘要扫描", async () => {
+  it("会定时触发代码助手会话摘要扫描", async () => {
     const summaryService = {
       runOnce: vi.fn(async () => {})
     } satisfies Pick<ButlerSessionSummaryService, "runOnce">;

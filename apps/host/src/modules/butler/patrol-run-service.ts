@@ -189,7 +189,7 @@ export class PatrolRunService {
       throw new AppError({
         statusCode: 404,
         errorCode: "BUTLER_PROJECT_NOT_FOUND",
-        detail: "代码管家项目不存在"
+        detail: "代码助手项目不存在"
       });
     }
 

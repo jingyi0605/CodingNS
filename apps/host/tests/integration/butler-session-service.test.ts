@@ -17,7 +17,7 @@ import type { SessionStateRepository } from "../../src/storage/repositories/sess
 import { ButlerSessionService } from "../../src/modules/butler/butler-session-service.js";
 
 describe("ButlerSessionService", () => {
-  it("可以把已有 session 纳入代码管家项目", () => {
+  it("可以把已有 session 纳入代码助手项目", () => {
     const project: ButlerProject = {
       id: "project-1",
       workspaceId: "workspace-1",

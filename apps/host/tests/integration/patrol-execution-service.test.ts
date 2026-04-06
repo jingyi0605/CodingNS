@@ -162,7 +162,7 @@ describe("PatrolExecutionService", () => {
         buildPatrolInstruction: vi.fn(() => ({
           providerId: "codex",
           outputContractVersion: "butler-patrol-v1",
-          title: "代码管家巡视",
+          title: "代码助手巡视",
           prompt: "请执行巡视",
           metadata: {
             projectId: project.id,
@@ -319,7 +319,7 @@ describe("PatrolExecutionService", () => {
         buildPatrolInstruction: vi.fn(() => ({
           providerId: "codex",
           outputContractVersion: "butler-patrol-v1",
-          title: "代码管家巡视",
+          title: "代码助手巡视",
           prompt: "请执行巡视",
           metadata: {
             projectId: project.id,
@@ -489,7 +489,7 @@ describe("PatrolExecutionService", () => {
         buildPatrolInstruction: vi.fn(() => ({
           providerId: "codex",
           outputContractVersion: "butler-patrol-v1",
-          title: "代码管家巡视",
+          title: "代码助手巡视",
           prompt: "请执行巡视",
           metadata: {
             projectId: project.id,

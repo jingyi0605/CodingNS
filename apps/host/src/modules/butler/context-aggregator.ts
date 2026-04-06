@@ -667,7 +667,7 @@ function renderOverviewPrompt(
   searchResult?: ButlerSearchResult | null
 ): string {
   const lines = [
-    "# 代码管家当前上下文",
+    "# 代码助手当前上下文",
     "",
     `- 作用域：全局总览`,
     `- 上下文版本：${overview.version}`,
@@ -732,7 +732,7 @@ function renderProjectPrompt(
   searchResult?: ButlerSearchResult | null
 ): string {
   const lines = [
-    "# 代码管家当前上下文",
+    "# 代码助手当前上下文",
     "",
     `- 作用域：项目 ${context.project.name}（${context.project.id}）`,
     `- 上下文版本：${context.version}`,

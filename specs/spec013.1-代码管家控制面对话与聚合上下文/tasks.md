@@ -1,11 +1,11 @@
-# 任务清单 - spec013.1-代码管家控制面对话与聚合上下文（人话版）
+# 任务清单 - spec013.1-代码助手控制面对话与聚合上下文（人话版）
 
 状态：Draft
 
 ## 2026-04-05 进展补记
 
-- 已确认 `spec013.1` 只处理“代码管家控制面对话、初始化配置和聚合上下文”，不去重写 `spec013` 的事实层模型。
-- 已确认“直接复用项目会话当管家聊天”不是正路，已将其明确排除。
+- 已确认 `spec013.1` 只处理“代码助手控制面对话、初始化配置和聚合上下文”，不去重写 `spec013` 的事实层模型。
+- 已确认“直接复用项目会话当助手聊天”不是正路，已将其明确排除。
 - 已完成本子 Spec 的 `README.md`、`requirements.md`、`design.md`、`tasks.md` 初始化。
 - 已补 `ButlerProfile`、`ButlerControlSession`、`ButlerContextSnapshot` 的核心设计草案。
 - 已补独立 Butler Chat API、控制动作 API 和前端工作台入口设计。
@@ -13,18 +13,18 @@
 
 ## 2026-04-06 初始化收口补记
 
-- 已把 Butler 初始化入口收紧为“先明确管家是谁，再开始聊天”，不再用默认名字蒙混过关。
-- 已把管家工作目录改成后端默认生成，落在宿主数据目录内的独立子目录，前端不再暴露这个路径。
-- 已把首版 `AGENTS.md` 改成由后端根据初始化选项自动生成，并写入管家自称、语气、语言、总结风格、风险倾向和汇报优先级。
+- 已把 Butler 初始化入口收紧为“先明确助手是谁，再开始聊天”，不再用默认名字蒙混过关。
+- 已把助手工作目录改成后端默认生成，落在宿主数据目录内的独立子目录，前端不再暴露这个路径。
+- 已把首版 `AGENTS.md` 改成由后端根据初始化选项自动生成，并写入助手自称、语气、语言、总结风格、风险倾向和汇报优先级。
 - 已保留 `inline` / `file` 两种 `AGENTS` 模式，但初始化页只解释模式差异，不再让用户一开始直接填写规则正文。
 - 已把初始化页的人格和汇报偏好改成下拉枚举，并走 i18n 词典显示。
 
 ## 2026-04-06 Butler 工作台收口补记
 
 - 已把 Butler 视图和普通工作区工具侧栏彻底拆开：进入 Butler 路由后，不再显示默认的“文件管理 / GIT 管理 / 进程管理”右侧面板，也不再显示对应折叠按钮。
-- 已把 Butler 主区域改成真正的独立对话窗口风格，顶部显示管家称呼、provider、刷新和“新建会话”，并按管家名称稳定生成 emoji 头像，同时复用到消息时间线头像。
+- 已把 Butler 主区域改成真正的独立对话窗口风格，顶部显示助手称呼、provider、刷新和“新建会话”，并按助手名称稳定生成 emoji 头像，同时复用到消息时间线头像。
 - 已补“新建会话”入口，并把 provider 切换后的行为固定为自动重置上下文并创建新控制会话；Butler 控制会话不会出现在普通工作区会话列表和 workbench 快照里。
-- 已强化 Butler 独立规则说明：生成的 `AGENTS.md` 和控制会话附加说明都明确声明这是管家专用规则体系，不继承普通项目会话规则；同时继续保留独立工作目录内的最小 git 根隔离。
+- 已强化 Butler 独立规则说明：生成的 `AGENTS.md` 和控制会话附加说明都明确声明这是助手专用规则体系，不继承普通项目会话规则；同时继续保留独立工作目录内的最小 git 根隔离。
 - 已补本轮最小必要验证：
   - `pnpm --dir apps/user-app exec tsc --noEmit -p tsconfig.json`
   - `pnpm --dir apps/user-app exec vitest run src/features/butler/pages/ButlerPage.test.tsx src/features/butler/runtime/butler-runtime-store.test.ts src/features/conversation/components/WorkbenchLayout.test.tsx src/shared/i18n/index.test.ts`
@@ -86,7 +86,7 @@
 - 已补工作区自动纳管：Butler 不再只看手工创建的 `butler_projects`，现在会把当前可见工作区自动补成 `workspace-auto` 项目，同时排除 Butler 自己的专用工作目录，避免自引用。
 - 已补自动归档：当工作区从当前列表消失后，对应的 `workspace-auto` 项目会自动转成归档状态，不会一直留在活跃视图里。
 - 已补普通会话自动纳入：对于自动纳管项目，Butler 现在会把该工作区里已知的普通会话自动登记成 `observed` 会话，聚合总览和项目上下文不再只看手工导入的 `butler_sessions`。
-- 已收紧 Butler 指令：如果 `BUTLER_CONTEXT.md` 里项目数或会话数是 0，管家不能直接下结论，必须先按 `BUTLER_API.md` 实查 `GET /api/butler/overview` 和 `GET /api/butler/projects`；如果用户追问会话内容，还要继续查 `GET /api/sessions/:sessionId/messages?direction=backward&limit=40`。
+- 已收紧 Butler 指令：如果 `BUTLER_CONTEXT.md` 里项目数或会话数是 0，助手不能直接下结论，必须先按 `BUTLER_API.md` 实查 `GET /api/butler/overview` 和 `GET /api/butler/projects`；如果用户追问会话内容，还要继续查 `GET /api/sessions/:sessionId/messages?direction=backward&limit=40`。
 - 已修 Butler 页历史上翻：Butler 主聊天页现在把实时会话的 older history 能力正式接到 `MessageTimeline`，不再只能看最近一页。
 - 已修 Butler 页底部输入区布局：聊天输入区不再被消息列表挤压，会稳定留在底部区域。
 - 已补本轮最小必要验证：
@@ -100,8 +100,8 @@
 
 - 已把 Butler 的上下文聚合改成首次命中前先同步当前工作区的非归档会话，不再等后台补扫后第二轮才看见活动会话。
 - 已明确收口扫描范围：默认只自动同步非归档会话；归档会话不进默认 Butler 聚合视图，后续只有在用户明确要求查某个特定会话时，才继续扩展到更大范围。
-- 已新增 `ButlerAuthService`，会在管家工作目录下写入稳定的 `BUTLER_AUTH.json`，里面包含 Butler 专用内部 API 访问 token、API 基地址、签发时间和过期时间。
-- 已把 `BUTLER_API.md` 改成显式引用 `BUTLER_AUTH.json`，要求管家固定从该文件读取认证信息，不再每轮临时摸索 Bearer token。
+- 已新增 `ButlerAuthService`，会在助手工作目录下写入稳定的 `BUTLER_AUTH.json`，里面包含 Butler 专用内部 API 访问 token、API 基地址、签发时间和过期时间。
+- 已把 `BUTLER_API.md` 改成显式引用 `BUTLER_AUTH.json`，要求助手固定从该文件读取认证信息，不再每轮临时摸索 Bearer token。
 - 已补本轮最小必要验证：
   - `pnpm --dir apps/host exec tsc -p tsconfig.json --noEmit`
   - `pnpm --dir apps/user-app exec tsc --noEmit -p tsconfig.json`
@@ -113,7 +113,7 @@
 - 已把摘要触发改成正式防抖：第一次发现消息数或最后消息时间变化时，只登记待摘要状态；到时后才真正调用轻量模型生成摘要。
 - 已新增正式表 `butler_session_summary_states`，专门保存摘要防抖、运行态、错误信息和上次已摘要的源消息指纹，不再把这类调度状态塞进 `config_json`。
 - 已把轻量摘要结果正式回写到 `butler_sessions.lastSummary` 和 `session_checkpoints(sourceKind=summary)`，这样 Butler 聚合、项目上下文和后续检索都能直接复用。
-- 已把摘要运行放到代码管家自己的后台 runtime 中，避免把内部摘要会话混进普通项目工作区会话里。
+- 已把摘要运行放到代码助手自己的后台 runtime 中，避免把内部摘要会话混进普通项目工作区会话里。
 - 已明确继续保留归档边界：默认扫描和默认摘要都不碰归档会话；只有未来用户明确要求查某个特定归档会话时，才扩展搜索范围。
 - 已补本轮最小必要验证：
   - `pnpm --dir apps/host exec tsc -p tsconfig.json --noEmit`
@@ -123,7 +123,7 @@
 
 - 已把 Butler 后台会话摘要的默认防抖从 60 秒改成 5 分钟，减少会话持续活跃时的重复摘要和 token 消耗。
 - 已把防抖时长纳入 `ButlerProfile.focus.summaryDebounceSeconds`，旧档案缺字段时会自动补默认值，保持兼容。
-- 已在 Butler 右侧信息栏新增“管家设置”卡片，支持直接选择 1 / 3 / 5 / 10 / 15 / 30 分钟并保存。
+- 已在 Butler 右侧信息栏新增“助手设置”卡片，支持直接选择 1 / 3 / 5 / 10 / 15 / 30 分钟并保存。
 - 已补本轮最小必要验证：
   - `pnpm --dir apps/host exec tsc -p tsconfig.json --noEmit`
   - `pnpm --dir apps/user-app exec tsc --noEmit -p tsconfig.json`
@@ -143,23 +143,33 @@
 ## 2026-04-06 Butler 摘要优先检索补记
 
 - 已新增 `GET /api/butler/search`，把项目、会话、记忆、巡视、验证的摘要层统一接成 Butler 检索入口。
-- 已把 `ContextAggregator.resolvePromptContext()` 接到摘要检索结果，控制会话 prompt 里会额外写入“摘要命中”，要求管家优先基于这些命中回答。
+- 已把 `ContextAggregator.resolvePromptContext()` 接到摘要检索结果，控制会话 prompt 里会额外写入“摘要命中”，要求助手优先基于这些命中回答。
 - 已把 `BUTLER_API.md` 的默认查询顺序改成“先看 `BUTLER_CONTEXT.md`，再查 `/api/butler/search`，确认不够后才继续查 overview / project context / 原始消息”。
 - 已明确当前边界：这里只检索摘要层，不直接展开原始消息；只有用户追问具体细节时，才继续按内部 API 下钻。
 - 已补本轮最小必要验证：
   - `pnpm --dir apps/host exec tsc -p tsconfig.json --noEmit`
   - `pnpm --dir apps/host exec vitest run tests/integration/butler-context-aggregator.test.ts tests/integration/butler-context-routes.test.ts tests/integration/butler-control-session-service.test.ts tests/integration/butler-session-summary-service.test.ts tests/integration/session-summary-scheduler.test.ts`
 
+## 2026-04-06 Butler 右侧信息栏标签化补记
+
+- 已把 Butler 右侧信息栏改成四个正式标签：`信息`、`自动化`、`技能`、`配置`，标签样式对齐现有工作台会话栏风格。
+- 已把原来的设置卡片从信息区移到 `配置` 标签，避免信息区和设置区继续混在一起。
+- 已把 `GET /api/butler/search` 正式接到 `信息` 标签，新增“摘要检索”卡片，用户可以直接看当前命中的摘要，而不是只让助手内部使用。
+- 已把 `自动化` 和 `技能` 标签先留成空白占位，不提前塞临时内容，给后续真实能力落地留位置。
+- 已补本轮最小必要验证：
+  - `pnpm --dir apps/user-app exec tsc --noEmit -p tsconfig.json`
+  - `pnpm --dir apps/user-app exec vitest run src/features/butler/pages/ButlerPage.test.tsx src/features/butler/runtime/butler-runtime-store.test.ts`
+
 ## 这份文档是干什么的
 
-这份任务清单用来把“代码管家控制面对话”拆成真正能落地的步骤。
+这份任务清单用来把“代码助手控制面对话”拆成真正能落地的步骤。
 
 它优先回答这些问题：
 
 1. 先补哪层，不补就只能做出空壳
 2. 哪些事情属于控制面，哪些事情仍然属于 `spec013`
 3. 前后端应该按什么顺序接，不会越做越脏
-4. 怎么验证它真的是“代码管家”，而不是项目会话换皮
+4. 怎么验证它真的是“代码助手”，而不是项目会话换皮
 
 ---
 
@@ -188,11 +198,11 @@
   - 做完你能看到什么：`spec013.1` 已经不是口头想法，而是正式 Spec。
   - 先依赖什么：`spec013`
   - 主要改哪些文件：
-    - `specs/spec013.1-代码管家控制面对话与聚合上下文/README.md`
-    - `specs/spec013.1-代码管家控制面对话与聚合上下文/requirements.md`
-    - `specs/spec013.1-代码管家控制面对话与聚合上下文/design.md`
-    - `specs/spec013.1-代码管家控制面对话与聚合上下文/tasks.md`
-    - `specs/spec013.1-代码管家控制面对话与聚合上下文/docs/README.md`
+    - `specs/spec013.1-代码助手控制面对话与聚合上下文/README.md`
+    - `specs/spec013.1-代码助手控制面对话与聚合上下文/requirements.md`
+    - `specs/spec013.1-代码助手控制面对话与聚合上下文/design.md`
+    - `specs/spec013.1-代码助手控制面对话与聚合上下文/tasks.md`
+    - `specs/spec013.1-代码助手控制面对话与聚合上下文/docs/README.md`
   - 这一步明确不做什么：不直接改业务代码。
   - 怎么算完成：
     1. 子 Spec 文档已落盘
@@ -210,9 +220,9 @@
   - 先依赖什么：0.1
   - 主要改哪些文件：
     - `specs/README.md`
-    - `specs/spec013-代码管家平台与跨工作区巡检编排/README.md`
-    - `specs/spec013-代码管家平台与跨工作区巡检编排/design.md`
-    - `specs/spec013-代码管家平台与跨工作区巡检编排/tasks.md`
+    - `specs/spec013-代码助手平台与跨工作区巡检编排/README.md`
+    - `specs/spec013-代码助手平台与跨工作区巡检编排/design.md`
+    - `specs/spec013-代码助手平台与跨工作区巡检编排/tasks.md`
   - 这一步明确不做什么：不修改业务代码。
   - 怎么算完成：
     1. 总览列表包含 `spec013.1`
@@ -231,8 +241,8 @@
 
 - [x] 1.1 落地 `ButlerProfile` 持久化模型与初始化服务
   - 状态：DONE
-  - 这一步到底做什么：把管家 provider、工作目录、`AGENTS.md`、人格和工作重点做成正式模型。
-  - 做完你能看到什么：系统有“管家自己是谁”的权威配置，不再靠前端临时状态拼。
+  - 这一步到底做什么：把助手 provider、工作目录、`AGENTS.md`、人格和工作重点做成正式模型。
+  - 做完你能看到什么：系统有“助手自己是谁”的权威配置，不再靠前端临时状态拼。
   - 先依赖什么：0.2
   - 主要改哪些文件：
     - `apps/host/src/storage/sqlite/schema.sql`
@@ -252,11 +262,11 @@
     - 已新增 `butler_profiles` 正式表和 `ButlerProfile` domain/repository
     - 已提供 `GET /api/butler/profile`、`POST /api/butler/profile/init`、`PATCH /api/butler/profile`
     - 已限制 provider 只允许 `codex` / `claude-code`
-    - 已新增 `displayName`，作为管家自称，并写入首版 `AGENTS.md`
-    - 已把管家工作目录改成后端默认生成，落在宿主数据目录下的独立 `butler-workspace` 目录；前端不再直接提交工作目录
-    - 已校验管家工作目录不能直接复用项目仓库目录，`AGENTS.md` 文件模式必须位于管家工作目录内
+    - 已新增 `displayName`，作为助手自称，并写入首版 `AGENTS.md`
+    - 已把助手工作目录改成后端默认生成，落在宿主数据目录下的独立 `butler-workspace` 目录；前端不再直接提交工作目录
+    - 已校验助手工作目录不能直接复用项目仓库目录，`AGENTS.md` 文件模式必须位于助手工作目录内
     - 已改为由后端按初始化选项生成首版 `AGENTS.md`，初始化时不再要求前端直接提交规则正文
-    - 已保留 `inline` / `file` 两种 `AGENTS` 模式；`file` 模式默认落地到管家工作目录内的 `AGENTS.md`
+    - 已保留 `inline` / `file` 两种 `AGENTS` 模式；`file` 模式默认落地到助手工作目录内的 `AGENTS.md`
     - 已提供 `ensureInitialized()`，为后续控制会话启动前的拒绝逻辑做准备
     - `pnpm --dir apps/host exec tsc -p tsconfig.json --noEmit` 已通过
     - `pnpm --dir apps/host exec vitest run tests/integration/butler-profile-service.test.ts tests/integration/butler-profile-routes.test.ts tests/integration/butler-project-service.test.ts tests/integration/butler-session-service.test.ts tests/integration/butler-routes-session-lifecycle.test.ts tests/integration/butler-routes-patrol-runtime.test.ts tests/integration/butler-routes-verification-runtime.test.ts tests/integration/project-memory-service.test.ts tests/integration/patrol-plan-service.test.ts tests/integration/patrol-run-service.test.ts tests/integration/patrol-execution-service.test.ts tests/integration/verification-run-service.test.ts` 已通过
@@ -265,7 +275,7 @@
 - [x] 1.2 落地 `ButlerControlSession` 模型与基础聊天 API
   - 状态：DONE
   - 这一步到底做什么：建立独立控制会话对象，并接到现有 Host session runtime。
-  - 做完你能看到什么：代码管家终于有自己独立的聊天主链路。
+  - 做完你能看到什么：代码助手终于有自己独立的聊天主链路。
   - 先依赖什么：1.1
   - 主要改哪些文件：
     - `apps/host/src/modules/butler/*`
@@ -282,7 +292,7 @@
   - 验证结果：
     - 已新增 `butler_control_sessions` 正式表和 `ButlerControlSession` domain/repository
     - 已新增 `ButlerControlSessionService`，独立管理控制会话创建、续接、发送消息
-    - 已通过管家工作目录导入正式 workspace 记录，复用现有 `SessionLiveRuntimeService.startLiveSession/sendLiveMessage`
+    - 已通过助手工作目录导入正式 workspace 记录，复用现有 `SessionLiveRuntimeService.startLiveSession/sendLiveMessage`
     - 已提供 `GET /api/butler/control-session`、`POST /api/butler/control-session/start`、`POST /api/butler/control-session/resume`、`POST /api/butler/control-session/messages`
     - 已在启动控制会话时写入独立工作目录下的 `AGENTS.md`，`claude-code` 额外同步 `CLAUDE.md`
     - 未初始化时会明确返回 `BUTLER_PROFILE_NOT_INITIALIZED`
@@ -310,7 +320,7 @@
     - 已新增 `ContextAggregator`，可输出 `GET /api/butler/overview`、`GET /api/butler/context-snapshot`、`GET /api/butler/projects/:projectId/context`
     - 已新增 `ButlerContextSnapshot`、项目级上下文和 prompt 作用域选择逻辑，默认只返回摘要层和行动层，不默认下发记忆正文
     - 已在 `ButlerControlSessionService` 中接入上下文版本号，启动、续接、发送消息前都会刷新 `BUTLER_CONTEXT.md` 与 `BUTLER_API.md`
-    - 已把聚合上下文入口写入管家工作目录下的 `AGENTS.md` / `CLAUDE.md` 附加说明，避免直接把用户消息改造成大 prompt
+    - 已把聚合上下文入口写入助手工作目录下的 `AGENTS.md` / `CLAUDE.md` 附加说明，避免直接把用户消息改造成大 prompt
     - `pnpm --dir apps/host exec tsc -p tsconfig.json --noEmit` 已通过
     - `pnpm --dir apps/host exec vitest run tests/integration/butler-context-aggregator.test.ts tests/integration/butler-context-routes.test.ts tests/integration/butler-control-session-service.test.ts tests/integration/butler-control-session-routes.test.ts tests/integration/butler-profile-service.test.ts tests/integration/butler-profile-routes.test.ts tests/integration/butler-project-service.test.ts tests/integration/butler-session-service.test.ts tests/integration/butler-routes-session-lifecycle.test.ts tests/integration/butler-routes-patrol-runtime.test.ts tests/integration/butler-routes-verification-runtime.test.ts tests/integration/project-memory-service.test.ts tests/integration/patrol-plan-service.test.ts tests/integration/patrol-run-service.test.ts tests/integration/patrol-execution-service.test.ts tests/integration/verification-run-service.test.ts` 已通过
 
@@ -342,7 +352,7 @@
 - [x] 2.1 实现安全控制动作协议
   - 状态：DONE
   - 这一步到底做什么：定义并实现“续接项目会话 / 发起巡视 / 发起验证”等控制动作。
-  - 做完你能看到什么：管家不只是会说，还会调系统做事。
+  - 做完你能看到什么：助手不只是会说，还会调系统做事。
   - 先依赖什么：1.4
   - 主要改哪些文件：
     - `apps/host/src/modules/butler/*`
@@ -366,7 +376,7 @@
 - [x] 2.2 实现控制会话和项目会话的关联视图
   - 状态：DONE
   - 这一步到底做什么：让控制会话能指向具体项目、会话、巡视、验证，并能在前端跳转或查看详情。
-  - 做完你能看到什么：管家说的每条关键结论都能落到真实对象，不是空话。
+  - 做完你能看到什么：助手说的每条关键结论都能落到真实对象，不是空话。
   - 先依赖什么：2.1
   - 主要改哪些文件：
     - `apps/host/src/modules/butler/*`
@@ -419,7 +429,7 @@
     - 已新增 `SessionSummaryScheduler` 并接入 `create-server.ts` 生命周期，Host 启动后会在后台自动跑摘要扫描
     - 已把轻量摘要默认模型固定为 `gpt-5.1-codex-mini` / `haiku`，同时把推理强度降到 `low`
     - 已把摘要写回 `butler_sessions.lastSummary` 和 `session_checkpoints(sourceKind=summary)`，现有聚合逻辑无需重写即可消费
-    - 已把默认防抖改成 5 分钟，并允许通过 Butler 右侧“管家设置”卡片修改
+    - 已把默认防抖改成 5 分钟，并允许通过 Butler 右侧“助手设置”卡片修改
     - 已补 `last_summarized_sequence`，并改成只摘要新增消息，再和旧摘要合并成新的完整摘要
     - `pnpm --dir apps/host exec tsc -p tsconfig.json --noEmit` 已通过
     - `pnpm --dir apps/host exec vitest run tests/integration/butler-session-summary-service.test.ts tests/integration/session-summary-scheduler.test.ts tests/integration/butler-control-session-service.test.ts tests/integration/butler-session-service.test.ts tests/integration/butler-context-aggregator.test.ts tests/integration/butler-context-routes.test.ts tests/integration/butler-control-action-service.test.ts tests/integration/butler-control-action-routes.test.ts tests/integration/butler-control-session-routes.test.ts` 已通过
@@ -428,10 +438,10 @@
 
 ## 阶段 3：最后接前端工作台
 
-- [x] 3.1 在左侧导航增加“管家”入口
+- [x] 3.1 在左侧导航增加“助手”入口
   - 状态：DONE
-  - 这一步到底做什么：在桌面工作台左侧菜单中，把“管家”插到“终端”和“搜索”之间。
-  - 做完你能看到什么：用户终于能从主工作台进入管家。
+  - 这一步到底做什么：在桌面工作台左侧菜单中，把“助手”插到“终端”和“搜索”之间。
+  - 做完你能看到什么：用户终于能从主工作台进入助手。
   - 先依赖什么：1.4
   - 主要改哪些文件：
     - `apps/user-app/src/features/conversation/components/WorkbenchLayout.tsx`
@@ -440,19 +450,19 @@
   - 这一步明确不做什么：先不补详情交互。
   - 怎么算完成：
     1. 桌面端入口可见
-    2. 路由可进入管家页
+    2. 路由可进入助手页
   - 怎么验证：
     - 前端路由测试
     - 工作台组件测试
   - 验证结果：
-    - 已在 `WorkbenchLayout` 桌面侧栏中将“管家”入口插入“终端”和“搜索”之间
+    - 已在 `WorkbenchLayout` 桌面侧栏中将“助手”入口插入“终端”和“搜索”之间
     - 已新增并验证 `/workspaces/:workspaceId/butler` 路由挂载在 `WorkbenchShellRoute` 下
     - `pnpm --dir apps/user-app exec vitest run src/features/conversation/components/WorkbenchLayout.test.tsx` 已通过（含入口顺序与跳转断言）
 
-- [x] 3.2 落地管家初始化页和工作台页
+- [x] 3.2 落地助手初始化页和工作台页
   - 状态：DONE
-  - 这一步到底做什么：首次进入显示初始化表单，初始化完成后进入正式的管家工作台。
-  - 做完你能看到什么：用户能真正设置和使用管家。
+  - 这一步到底做什么：首次进入显示初始化表单，初始化完成后进入正式的助手工作台。
+  - 做完你能看到什么：用户能真正设置和使用助手。
   - 先依赖什么：1.1、1.2、1.3
   - 主要改哪些文件：
     - `apps/user-app/src/features/butler/*`
@@ -467,7 +477,7 @@
     - 构建验证
   - 验证结果：
     - 已新增 Butler 初始化页（未初始化态表单）和 Butler 工作台页（控制会话消息区 + 聚合信息区 + 项目下钻区 + 动作事件区）
-    - 初始化页已新增“管家称呼”输入，并要求用户显式填写；不再默认塞入一个名字糊弄过去
+    - 初始化页已新增“助手称呼”输入，并要求用户显式填写；不再默认塞入一个名字糊弄过去
     - 初始化页已去掉工作目录、`AGENTS.md` 路径、`AGENTS` 规则正文、默认关注项目输入
     - `语气 / 使用语言 / 总结风格 / 风险倾向 / 汇报优先级` 已改成下拉枚举，并通过 i18n 词典显示
     - 初始化页已补充 `AGENTS` 模式说明：`inline` 表示系统托管规则，`file` 表示把规则写入工作目录里的 `AGENTS.md` 供后续直接编辑
@@ -495,7 +505,7 @@
     - 未删除历史控制会话，仅切换当前视图上下文和当前 provider
     - `pnpm --dir apps/user-app exec vitest run src/features/butler/pages/ButlerPage.test.tsx src/features/butler/runtime/butler-runtime-store.test.ts` 已通过（含“先清空再重载”与“失败回滚旧状态”断言）
 
-- [x] 3.4 阶段检查：管家工作台能否成立
+- [x] 3.4 阶段检查：助手工作台能否成立
   - 状态：DONE
   - 这一步到底做什么：确认“独立初始化 + 独立控制会话 + 聚合上下文 + 工作台入口”已经闭环。
   - 做完你能看到什么：`spec013.1` 的最小版本成立。
@@ -503,9 +513,9 @@
   - 主要改哪些文件：本阶段相关实现和测试文件
   - 这一步明确不做什么：先不继续往高风险执行扩张。
   - 怎么算完成：
-    1. 用户能初始化管家
-    2. 用户能在工作台和管家对话
-    3. 管家能解释和触发安全动作
+    1. 用户能初始化助手
+    2. 用户能在工作台和助手对话
+    3. 助手能解释和触发安全动作
   - 怎么验证：
     - 前后端联调
     - 构建和测试通过

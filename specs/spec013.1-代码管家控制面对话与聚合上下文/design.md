@@ -1,4 +1,4 @@
-# 设计文档 - spec013.1-代码管家控制面对话与聚合上下文
+# 设计文档 - spec013.1-代码助手控制面对话与聚合上下文
 
 状态：Draft
 
@@ -6,17 +6,17 @@
 
 ### 1.1 目标
 
-- 为代码管家补一个独立的控制面会话，而不是借项目会话冒充
+- 为代码助手补一个独立的控制面会话，而不是借项目会话冒充
 - 为控制面会话补一套可初始化、可配置、可审计的 `ButlerProfile`
 - 把项目、会话、记忆、巡视、验证事实聚合成可对话的分层上下文
-- 为前端提供正式的“管家”入口和工作台
+- 为前端提供正式的“助手”入口和工作台
 
 ### 1.2 覆盖需求
 
-- `requirements.md` 需求 1：代码管家初始化
+- `requirements.md` 需求 1：代码助手初始化
 - `requirements.md` 需求 2：独立控制会话
 - `requirements.md` 需求 3：分层上下文聚合
-- `requirements.md` 需求 4：管家身份解释能力
+- `requirements.md` 需求 4：助手身份解释能力
 - `requirements.md` 需求 5：控制动作
 - `requirements.md` 需求 6：provider 限制
 - `requirements.md` 需求 7：provider 切换清空上下文
@@ -35,13 +35,13 @@
 
 `spec013.1` 解决的是控制面：
 
-- 管家自身如何初始化
-- 管家如何把事实层对象串起来
-- 管家如何和用户沟通
-- 管家如何触发后续动作
+- 助手自身如何初始化
+- 助手如何把事实层对象串起来
+- 助手如何和用户沟通
+- 助手如何触发后续动作
 
 一句话：
-`spec013` 负责“系统知道什么”，`spec013.1` 负责“系统怎么以管家的身份把这些东西说清楚并继续推动”。
+`spec013` 负责“系统知道什么”，`spec013.1` 负责“系统怎么以助手的身份把这些东西说清楚并继续推动”。
 
 ## 2. 核心思路
 
@@ -64,7 +64,7 @@
 
 如果硬复用：
 
-- 管家会失去全局视角
+- 助手会失去全局视角
 - 项目执行上下文会污染控制面
 - provider 切换和历史管理会变得一塌糊涂
 
@@ -72,7 +72,7 @@
 
 ### 2.2 为什么必须有 `ButlerProfile`
 
-“代码管家”的人格不是某个 provider 默认助手自带的，它必须显式配置。
+“代码助手”的人格不是某个 provider 默认助手自带的，它必须显式配置。
 
 用户需要手动定义：
 
@@ -117,8 +117,8 @@
 
 | 模块 | 职责 | 输入 | 输出 |
 | --- | --- | --- | --- |
-| `butler-profile-service` | 管理管家初始化配置 | 初始化请求、配置更新 | `ButlerProfile` |
-| `butler-workspace-service` | 管理管家工作目录与指令文件 | `ButlerProfile` | 目录状态、`AGENTS.md` 状态 |
+| `butler-profile-service` | 管理助手初始化配置 | 初始化请求、配置更新 | `ButlerProfile` |
+| `butler-workspace-service` | 管理助手工作目录与指令文件 | `ButlerProfile` | 目录状态、`AGENTS.md` 状态 |
 | `context-aggregator` | 聚合事实层上下文 | 项目/会话/记忆/巡视/验证数据 | `ButlerContextSnapshot` |
 | `control-session-service` | 管理控制会话创建、续接、消息发送 | `ButlerProfile`、聚合上下文 | `ButlerControlSession` |
 | `control-action-service` | 执行控制动作 | 控制动作请求 | 动作结果、审计事件 |
@@ -144,7 +144,7 @@
 | --- | --- | --- | --- |
 | `id` | string | 是 | 档案 ID，固定单例也可 |
 | `providerId` | `codex \| claude-code` | 是 | 当前控制会话使用的 provider |
-| `workspacePath` | string | 是 | 管家独立工作目录 |
+| `workspacePath` | string | 是 | 助手独立工作目录 |
 | `agentsMode` | `inline \| file` | 是 | 指令来源方式 |
 | `agentsFilePath` | string | 否 | `AGENTS.md` 文件路径 |
 | `agentsContent` | string | 否 | 初始化时保存的指令正文快照 |
@@ -230,8 +230,8 @@ interface ButlerContextSnapshot {
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
-| `GET` | `/api/butler/profile` | 读取当前管家档案 |
-| `POST` | `/api/butler/profile/init` | 首次初始化管家档案 |
+| `GET` | `/api/butler/profile` | 读取当前助手档案 |
+| `POST` | `/api/butler/profile/init` | 首次初始化助手档案 |
 | `PATCH` | `/api/butler/profile` | 更新 provider、人格、工作重点等 |
 
 初始化请求示意：
@@ -241,7 +241,7 @@ interface ButlerContextSnapshot {
   "providerId": "codex",
   "workspacePath": "/Users/jackson/WorkFile/butler",
   "agentsMode": "file",
-  "agentsContent": "# AGENTS.md\n你是代码管家……",
+  "agentsContent": "# AGENTS.md\n你是代码助手……",
   "persona": {
     "tone": "direct",
     "language": "zh-CN",
@@ -296,11 +296,11 @@ interface ButlerContextSnapshot {
 
 ### 6.1 首次启动
 
-1. 前端进入“管家”页
+1. 前端进入“助手”页
 2. 若 `ButlerProfile` 不存在，则展示初始化表单
 3. 用户提交初始化配置
 4. 后端创建 `ButlerProfile`
-5. 后端准备管家工作目录与 `AGENTS.md`
+5. 后端准备助手工作目录与 `AGENTS.md`
 6. 后端聚合当前上下文
 7. 后端启动 `ButlerControlSession`
 8. 前端进入正式对话界面
@@ -330,15 +330,15 @@ interface ButlerContextSnapshot {
 
 - `会话`
 - `终端`
-- `管家`
+- `助手`
 - `搜索`
 
 约束：
 
-- `管家` 必须位于“终端”和“搜索”之间
-- 进入“管家”后，中间主区域不再显示普通会话页
+- `助手` 必须位于“终端”和“搜索”之间
+- 进入“助手”后，中间主区域不再显示普通会话页
 
-### 7.2 管家页面结构
+### 7.2 助手页面结构
 
 主区域分成两块：
 
@@ -359,7 +359,7 @@ interface ButlerContextSnapshot {
 首次进入时先展示初始化表单：
 
 - provider 选择，只允许 `codex` / `claude-code`
-- 管家工作目录
+- 助手工作目录
 - `AGENTS.md` 内容
 - 人格配置
 - 汇报偏好
@@ -381,8 +381,8 @@ interface ButlerContextSnapshot {
 
 至少记录：
 
-- 管家初始化
-- 管家配置变更
+- 助手初始化
+- 助手配置变更
 - 控制会话创建
 - 控制会话续接
 - 控制动作触发
@@ -390,20 +390,20 @@ interface ButlerContextSnapshot {
 
 ### 8.2 兼容策略
 
-- 不进入“管家”页时，现有工作台行为不变
+- 不进入“助手”页时，现有工作台行为不变
 - 不初始化 `ButlerProfile` 时，现有 butler 项目接口仍可独立使用
 - 控制会话失败时，不影响项目执行会话、巡视和验证主链路
 
 ## 9. MVP 拆分
 
-### MVP-1：先让管家能被初始化并开口说话
+### MVP-1：先让助手能被初始化并开口说话
 
 - `ButlerProfile`
 - `ButlerControlSession`
 - 基础上下文聚合
-- 前端“管家”页入口
+- 前端“助手”页入口
 
-### MVP-2：再让管家能解释全局状态并触发安全动作
+### MVP-2：再让助手能解释全局状态并触发安全动作
 
 - 全局与项目级聚合摘要
 - 续接项目会话

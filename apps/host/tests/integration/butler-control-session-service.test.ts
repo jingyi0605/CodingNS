@@ -42,7 +42,7 @@ describe("ButlerControlSessionService", () => {
       workspacePath,
       agentsMode: "inline",
       agentsFilePath: null,
-      agentsContent: "# AGENTS.md\n你是代码管家",
+      agentsContent: "# AGENTS.md\n你是代码助手",
       persona: {
         tone: "direct",
         language: "zh-CN",
@@ -83,7 +83,7 @@ describe("ButlerControlSessionService", () => {
           generatedAt: "2026-04-05T00:00:05.000Z",
           scope: "global",
           projectId: null,
-          prompt: "# 代码管家当前上下文\n\n- 作用域：全局总览"
+          prompt: "# 代码助手当前上下文\n\n- 作用域：全局总览"
         }))
       } as unknown as Pick<ButlerContextAggregator, "resolvePromptContext">,
       {
@@ -139,7 +139,7 @@ describe("ButlerControlSessionService", () => {
       workspacePath,
       agentsMode: "inline",
       agentsFilePath: null,
-      agentsContent: "# AGENTS.md\n你是代码管家",
+      agentsContent: "# AGENTS.md\n你是代码助手",
       persona: {
         tone: "direct",
         language: "zh-CN",
@@ -155,7 +155,7 @@ describe("ButlerControlSessionService", () => {
     };
     const workspace: Workspace = {
       id: "workspace-butler",
-      name: "代码管家",
+      name: "代码助手",
       path: workspacePath,
       repoRoot: workspacePath,
       favorite: false,
@@ -174,7 +174,7 @@ describe("ButlerControlSessionService", () => {
       subagentLabel: null,
       isArchived: false,
       isFavorite: false,
-      title: "代码管家",
+      title: "代码助手",
       messageCount: 1,
       lastMessageAt: "2026-04-05T00:00:10.000Z",
       createdAt: "2026-04-05T00:00:00.000Z",
@@ -241,7 +241,7 @@ describe("ButlerControlSessionService", () => {
           generatedAt: "2026-04-05T00:00:05.000Z",
           scope: "global",
           projectId: null,
-          prompt: "# 代码管家当前上下文\n\n- 作用域：全局总览"
+          prompt: "# 代码助手当前上下文\n\n- 作用域：全局总览"
         }))
       } as unknown as Pick<ButlerContextAggregator, "resolvePromptContext">,
       {
@@ -308,7 +308,7 @@ describe("ButlerControlSessionService", () => {
       workspacePath,
       agentsMode: "inline",
       agentsFilePath: null,
-      agentsContent: "# AGENTS.md\n你是代码管家",
+      agentsContent: "# AGENTS.md\n你是代码助手",
       persona: {
         tone: "direct",
         language: "zh-CN",
@@ -343,7 +343,7 @@ describe("ButlerControlSessionService", () => {
       subagentLabel: null,
       isArchived: false,
       isFavorite: false,
-      title: "代码管家",
+      title: "代码助手",
       messageCount: 2,
       lastMessageAt: "2026-04-05T00:00:20.000Z",
       createdAt: "2026-04-05T00:00:00.000Z",
@@ -410,7 +410,7 @@ describe("ButlerControlSessionService", () => {
           generatedAt: "2026-04-05T00:00:55.000Z",
           scope: "project",
           projectId: "project-1",
-          prompt: "# 代码管家当前上下文\n\n- 作用域：项目 project-1"
+          prompt: "# 代码助手当前上下文\n\n- 作用域：项目 project-1"
         }))
       } as unknown as Pick<ButlerContextAggregator, "resolvePromptContext">,
       {
