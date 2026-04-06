@@ -5,6 +5,8 @@ import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 import { ComposerPanel } from "../../conversation/components/ComposerPanel";
 import { MessageTimeline } from "../../conversation/components/MessageTimeline";
+import { SessionRuntimeStore } from "../../conversation/runtime/session-runtime-store";
+import type { SessionMessageViewModel } from "../../conversation/runtime/session-runtime-machine";
 import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout";
 import {
   buildWorkspaceButlerPath,
@@ -45,6 +47,10 @@ interface ButlerInitFormState {
   reportPriorityPreset: ButlerReportPriorityPresetId;
 }
 
+interface ButlerSettingsFormState {
+  summaryDebounceSeconds: number;
+}
+
 type ButlerReportPriorityPresetId =
   | "risk-first"
   | "blocker-first"
@@ -74,6 +80,17 @@ const DEFAULT_INIT_FORM_STATE: ButlerInitFormState = {
   focusRiskPreference: "conservative",
   reportPriorityPreset: "risk-first"
 };
+const DEFAULT_SETTINGS_FORM_STATE: ButlerSettingsFormState = {
+  summaryDebounceSeconds: 300
+};
+const SUMMARY_DEBOUNCE_OPTIONS = [
+  { value: 60, labelKey: "shell.butlerSummaryDebounceOption1Minute" },
+  { value: 180, labelKey: "shell.butlerSummaryDebounceOption3Minutes" },
+  { value: 300, labelKey: "shell.butlerSummaryDebounceOption5Minutes" },
+  { value: 600, labelKey: "shell.butlerSummaryDebounceOption10Minutes" },
+  { value: 900, labelKey: "shell.butlerSummaryDebounceOption15Minutes" },
+  { value: 1800, labelKey: "shell.butlerSummaryDebounceOption30Minutes" }
+] as const;
 
 const BUTLER_AVATARS = ["🦉", "🦊", "🧭", "🛠", "🧠", "🔎", "📚", "🦁", "🤖", "🐳"];
 
@@ -88,6 +105,8 @@ export function ButlerPage() {
   const [initForm, setInitForm] = useState<ButlerInitFormState>(DEFAULT_INIT_FORM_STATE);
   const [initializingProfile, setInitializingProfile] = useState(false);
   const [viewKey, setViewKey] = useState(0);
+  const [settingsForm, setSettingsForm] = useState<ButlerSettingsFormState>(DEFAULT_SETTINGS_FORM_STATE);
+  const [savingSettings, setSavingSettings] = useState(false);
   const [projectContext, setProjectContext] = useState<ButlerProjectContextDto | null>(null);
   const [projectContextLoading, setProjectContextLoading] = useState(false);
   const [projectContextError, setProjectContextError] = useState<string | null>(null);
@@ -123,10 +142,50 @@ export function ButlerPage() {
 
   const butlerDisplayName = profile?.displayName?.trim() || initForm.displayName.trim() || t("shell.butlerEntry");
   const butlerAvatar = useMemo(() => resolveButlerAvatar(butlerDisplayName), [butlerDisplayName]);
+  const liveRuntimeSessionId = controlSession?.session?.sessionId?.trim() || null;
+  const liveRuntimeStore = useMemo(() => {
+    if (!liveRuntimeSessionId || !controlSession?.session) {
+      return null;
+    }
+
+    return new SessionRuntimeStore(liveRuntimeSessionId, {
+      initialSession: controlSession.session
+    });
+  }, [liveRuntimeSessionId]);
+  const liveRuntime = useButlerLiveRuntime(liveRuntimeStore);
+  const effectiveMessages = liveRuntimeStore ? liveRuntime.messages : messages;
+  const effectiveHistoryState = liveRuntimeStore ? liveRuntime.historyState : historyState;
+  const effectiveRuntimeHasActiveRun =
+    liveRuntimeStore ? liveRuntime.runtimeHasActiveRun : runtimeHasActiveRun;
+  const effectiveRuntimeCanInterrupt =
+    liveRuntimeStore ? liveRuntime.runtimeCanInterrupt : runtimeCanInterrupt;
+  const effectiveContextUsage = liveRuntimeStore ? liveRuntime.contextUsage : contextUsage;
+  const effectiveLoadingOlderMessages = liveRuntimeStore ? liveRuntime.loadingOlderMessages : false;
+  const effectiveHasOlderMessages = liveRuntimeStore ? liveRuntime.hasOlderMessages : false;
 
   useEffect(() => {
     void store.initialize();
   }, [store]);
+
+  useEffect(() => {
+    if (!liveRuntimeStore) {
+      return;
+    }
+
+    void liveRuntimeStore.initialize();
+
+    return () => {
+      liveRuntimeStore.destroy();
+    };
+  }, [liveRuntimeStore]);
+
+  useEffect(() => {
+    if (!liveRuntimeStore || !controlSession?.session) {
+      return;
+    }
+
+    liveRuntimeStore.applyNavigationSession(controlSession.session);
+  }, [controlSession?.session, liveRuntimeStore]);
 
   useEffect(() => {
     if (error) {
@@ -137,6 +196,12 @@ export function ButlerPage() {
       });
     }
   }, [error, showToast]);
+
+  useEffect(() => {
+    setSettingsForm({
+      summaryDebounceSeconds: profile?.focus.summaryDebounceSeconds ?? DEFAULT_SETTINGS_FORM_STATE.summaryDebounceSeconds
+    });
+  }, [profile?.focus.summaryDebounceSeconds]);
 
   useEffect(() => {
     let cancelled = false;
@@ -270,6 +335,8 @@ export function ButlerPage() {
         projectContextError={projectContextError}
         projectActionsDisabled={projectActionsDisabled}
         projectActionKey={projectActionKey}
+        summaryDebounceSeconds={settingsForm.summaryDebounceSeconds}
+        savingSettings={savingSettings}
         controlSessionId={controlSession?.id ?? null}
         focusedButlerSessionId={focusedButlerSessionId}
         focusedPatrolRunId={focusedPatrolRunId}
@@ -281,6 +348,14 @@ export function ButlerPage() {
         }}
         onNavigateRoute={(routePath) => {
           navigate(routePath);
+        }}
+        onSummaryDebounceChange={(value) => {
+          setSettingsForm({
+            summaryDebounceSeconds: value
+          });
+        }}
+        onSaveSettings={() => {
+          void handleSaveSettings();
         }}
       />
     ),
@@ -299,8 +374,10 @@ export function ButlerPage() {
       projectContext,
       projectContextError,
       projectContextLoading,
+      savingSettings,
       selectedProject,
-      selectedProjectId
+      selectedProjectId,
+      settingsForm.summaryDebounceSeconds
     ]
   );
 
@@ -341,7 +418,8 @@ export function ButlerPage() {
       focus: {
         projectIds: [],
         riskPreference: initForm.focusRiskPreference,
-        reportPriority: REPORT_PRIORITY_PRESET_VALUES[initForm.reportPriorityPreset]
+        reportPriority: REPORT_PRIORITY_PRESET_VALUES[initForm.reportPriorityPreset],
+        summaryDebounceSeconds: DEFAULT_SETTINGS_FORM_STATE.summaryDebounceSeconds
       }
     };
 
@@ -402,6 +480,35 @@ export function ButlerPage() {
         description: sessionError instanceof Error ? sessionError.message : undefined,
         tone: "error"
       });
+    }
+  }
+
+  async function handleSaveSettings() {
+    if (!profile) {
+      return;
+    }
+
+    setSavingSettings(true);
+
+    try {
+      await store.updateProfile({
+        focus: {
+          ...profile.focus,
+          summaryDebounceSeconds: settingsForm.summaryDebounceSeconds
+        }
+      });
+      showToast({
+        title: t("shell.butlerSettingsSaved"),
+        tone: "success"
+      });
+    } catch (saveError) {
+      showToast({
+        title: t("shell.butlerSettingsSaveFailed"),
+        description: saveError instanceof Error ? saveError.message : undefined,
+        tone: "error"
+      });
+    } finally {
+      setSavingSettings(false);
     }
   }
 
@@ -700,15 +807,33 @@ export function ButlerPage() {
           <div key={`timeline:${activeProvider}:${viewKey}`} className="butler-conversation-shell">
             <MessageTimeline
               sessionId={controlSession?.session?.sessionId}
-              messages={messages}
-              historyState={historyState}
+              messages={effectiveMessages}
+              historyState={effectiveHistoryState}
+              loadingOlderMessages={effectiveLoadingOlderMessages}
+              hasOlderMessages={effectiveHasOlderMessages}
               provider={activeProvider}
               assistantAvatar={
                 <span className="butler-message-avatar" aria-hidden="true">
                   {butlerAvatar}
                 </span>
               }
+              onLoadOlderMessages={() => {
+                if (!liveRuntimeStore) {
+                  return;
+                }
+
+                void liveRuntimeStore.loadOlderMessages();
+              }}
               onRetryMessage={(clientRequestId) => {
+                const targetMessage = effectiveMessages.find(
+                  (message) => message.clientRequestId === clientRequestId
+                );
+
+                if (targetMessage?.content.trim()) {
+                  void store.sendMessage(targetMessage.content);
+                  return;
+                }
+
                 void store.retryMessage(clientRequestId);
               }}
             />
@@ -720,11 +845,11 @@ export function ButlerPage() {
                 placeholder={t("shell.butlerComposerPlaceholder", {
                   displayName: butlerDisplayName
                 })}
-                hasActiveRun={runtimeHasActiveRun}
-                canInterrupt={runtimeCanInterrupt}
-                contextUsage={contextUsage}
+                hasActiveRun={effectiveRuntimeHasActiveRun}
+                canInterrupt={effectiveRuntimeCanInterrupt}
+                contextUsage={effectiveContextUsage}
                 isSubmitting={sending || switchingProvider}
-                isRunning={runtimeHasActiveRun ?? false}
+                isRunning={effectiveRuntimeHasActiveRun ?? false}
                 onSend={async (content, options) => {
                   if ((options?.attachments?.length ?? 0) > 0) {
                     showToast({
@@ -759,6 +884,8 @@ function ButlerAuxiliaryPanel(props: {
   projectContextError: string | null;
   projectActionsDisabled: boolean;
   projectActionKey: string | null;
+  summaryDebounceSeconds: number;
+  savingSettings: boolean;
   controlSessionId: string | null;
   focusedButlerSessionId: string | null;
   focusedPatrolRunId: string | null;
@@ -767,11 +894,49 @@ function ButlerAuxiliaryPanel(props: {
   onProjectAction: (actionKey: string, action: () => Promise<void>, successDescription: string) => Promise<void>;
   onOpenConversation: (workspaceId: string, sessionId: string) => void;
   onNavigateRoute: (routePath: string) => void;
+  onSummaryDebounceChange: (value: number) => void;
+  onSaveSettings: () => void;
 }) {
   const selectedProject = props.selectedProject;
 
   return (
     <div className="butler-side-column">
+      <section className="butler-side-card surface-card">
+        <header>
+          <h2>{t("shell.butlerSettingsTitle")}</h2>
+          <p>{t("shell.butlerSettingsDescription")}</p>
+        </header>
+        <label className="butler-form-field">
+          <span>{t("shell.butlerSummaryDebounceLabel")}</span>
+          <select
+            aria-label={t("shell.butlerSummaryDebounceLabel")}
+            value={String(props.summaryDebounceSeconds)}
+            disabled={props.savingSettings}
+            onChange={(event) => {
+              props.onSummaryDebounceChange(Number(event.target.value));
+            }}
+          >
+            {SUMMARY_DEBOUNCE_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {t(option.labelKey)}
+              </option>
+            ))}
+          </select>
+          <small>{t("shell.butlerSummaryDebounceHint")}</small>
+        </label>
+        <div className="butler-inline-actions">
+          <button
+            type="button"
+            disabled={props.savingSettings}
+            onClick={props.onSaveSettings}
+          >
+            {props.savingSettings
+              ? t("shell.butlerSettingsSaving")
+              : t("shell.butlerSettingsSaveAction")}
+          </button>
+        </div>
+      </section>
+
       <section className="butler-side-card surface-card">
         <header>
           <h2>{t("shell.butlerOverviewTitle")}</h2>
@@ -1315,4 +1480,54 @@ function resolveButlerAvatar(displayName: string): string {
   }, 0);
 
   return BUTLER_AVATARS[codePointTotal % BUTLER_AVATARS.length]!;
+}
+
+function useButlerLiveRuntime(runtimeStore: SessionRuntimeStore | null): {
+  messages: SessionMessageViewModel[];
+  historyState: "idle" | "loading" | "ready" | "error";
+  loadingOlderMessages: boolean;
+  hasOlderMessages: boolean;
+  runtimeHasActiveRun: boolean | null;
+  runtimeCanInterrupt: boolean | null;
+  contextUsage: ReturnType<SessionRuntimeStore["getState"]>["contextUsage"];
+} {
+  const [snapshot, setSnapshot] = useState(() => createEmptyButlerLiveRuntimeSnapshot());
+
+  useEffect(() => {
+    if (!runtimeStore) {
+      setSnapshot(createEmptyButlerLiveRuntimeSnapshot());
+      return;
+    }
+
+    const syncSnapshot = () => {
+      const state = runtimeStore.getState();
+
+      setSnapshot({
+        messages: state.messages,
+        historyState: state.historyState,
+        loadingOlderMessages: state.loadingOlderMessages,
+        hasOlderMessages: state.hasOlderMessages,
+        runtimeHasActiveRun: state.runtimeHasActiveRun,
+        runtimeCanInterrupt: state.runtimeCanInterrupt,
+        contextUsage: state.contextUsage
+      });
+    };
+
+    syncSnapshot();
+    return runtimeStore.subscribe(syncSnapshot);
+  }, [runtimeStore]);
+
+  return snapshot;
+}
+
+function createEmptyButlerLiveRuntimeSnapshot() {
+  return {
+    messages: [] as SessionMessageViewModel[],
+    historyState: "ready" as "idle" | "loading" | "ready" | "error",
+    loadingOlderMessages: false,
+    hasOlderMessages: false,
+    runtimeHasActiveRun: null as boolean | null,
+    runtimeCanInterrupt: null as boolean | null,
+    contextUsage: null as ReturnType<SessionRuntimeStore["getState"]>["contextUsage"]
+  };
 }

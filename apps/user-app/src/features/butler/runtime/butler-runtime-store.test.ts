@@ -7,6 +7,7 @@ vi.mock("../api/butler-api", () => ({
   getButlerOverview: vi.fn(),
   listButlerControlEvents: vi.fn(),
   getCurrentButlerControlSession: vi.fn(),
+  resetButlerControlSession: vi.fn(),
   startButlerControlSession: vi.fn(),
   sendButlerControlMessage: vi.fn()
 }));
@@ -25,6 +26,7 @@ import {
   getButlerOverview,
   listButlerControlEvents,
   getCurrentButlerControlSession,
+  resetButlerControlSession,
   startButlerControlSession,
   sendButlerControlMessage
 } from "../api/butler-api";
@@ -36,6 +38,7 @@ const mockedUpdateButlerProfile = vi.mocked(updateButlerProfile);
 const mockedGetButlerOverview = vi.mocked(getButlerOverview);
 const mockedListButlerControlEvents = vi.mocked(listButlerControlEvents);
 const mockedGetCurrentButlerControlSession = vi.mocked(getCurrentButlerControlSession);
+const mockedResetButlerControlSession = vi.mocked(resetButlerControlSession);
 const mockedStartButlerControlSession = vi.mocked(startButlerControlSession);
 const mockedSendButlerControlMessage = vi.mocked(sendButlerControlMessage);
 const mockedGetProviderCapabilities = vi.mocked(getProviderCapabilities);
@@ -57,7 +60,7 @@ describe("ButlerRuntimeStore", () => {
         agentsFilePath: null,
         agentsContent: "测试",
         persona: { tone: "direct", language: "zh-CN", summaryStyle: "brief" },
-        focus: { projectIds: [], riskPreference: "conservative", reportPriority: [] },
+        focus: { projectIds: [], riskPreference: "conservative", reportPriority: [], summaryDebounceSeconds: 300 },
         initializedAt: "2026-04-05T00:00:00.000Z",
         updatedAt: "2026-04-05T00:00:00.000Z"
       }
@@ -73,7 +76,7 @@ describe("ButlerRuntimeStore", () => {
         agentsFilePath: null,
         agentsContent: "测试",
         persona: { tone: "direct", language: "zh-CN", summaryStyle: "brief" },
-        focus: { projectIds: [], riskPreference: "conservative", reportPriority: [] },
+        focus: { projectIds: [], riskPreference: "conservative", reportPriority: [], summaryDebounceSeconds: 300 },
         initializedAt: "2026-04-05T00:00:00.000Z",
         updatedAt: "2026-04-05T00:00:00.000Z"
       }
@@ -89,7 +92,7 @@ describe("ButlerRuntimeStore", () => {
         agentsFilePath: null,
         agentsContent: "测试",
         persona: { tone: "direct", language: "zh-CN", summaryStyle: "brief" },
-        focus: { projectIds: [], riskPreference: "conservative", reportPriority: [] },
+        focus: { projectIds: [], riskPreference: "conservative", reportPriority: [], summaryDebounceSeconds: 300 },
         initializedAt: "2026-04-05T00:00:00.000Z",
         updatedAt: "2026-04-05T00:00:00.000Z"
       }
@@ -114,6 +117,7 @@ describe("ButlerRuntimeStore", () => {
     });
     mockedListButlerControlEvents.mockResolvedValue({ items: [] });
     mockedGetCurrentButlerControlSession.mockResolvedValue({ controlSession: null });
+    mockedResetButlerControlSession.mockResolvedValue({ controlSession: null });
     mockedGetProviderCapabilities.mockResolvedValue({
       provider: "codex",
       canStartSession: true,
@@ -180,9 +184,11 @@ describe("ButlerRuntimeStore", () => {
     await store.switchProvider("claude-code");
 
     expect(mockedUpdateButlerProfile).toHaveBeenCalledWith({ providerId: "claude-code" });
-    expect(mockedStartButlerControlSession).toHaveBeenCalledWith({});
+    expect(mockedResetButlerControlSession).toHaveBeenCalledTimes(1);
+    expect(mockedStartButlerControlSession).not.toHaveBeenCalled();
     expect(store.getState().messages).toEqual([]);
     expect(store.getState().controlSession).toBeNull();
+    expect(store.getState().historyState).toBe("ready");
   });
 
   it("provider 切换失败时会回滚到旧状态", async () => {
@@ -232,5 +238,30 @@ describe("ButlerRuntimeStore", () => {
         content: "继续消息"
       })
     );
+  });
+
+  it("新建会话时只清空当前状态，不自动发送首条消息", async () => {
+    const store = new ButlerRuntimeStore("workspace-1");
+    await store.initialize();
+
+    (store as unknown as { patch: (state: Record<string, unknown>) => void }).patch({
+      messages: [{ clientRequestId: "old-message" }],
+      controlSession: { id: "ctrl-old" },
+      historyState: "error",
+      runtimeHasActiveRun: true,
+      runtimeCanInterrupt: true,
+      contextUsage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 }
+    });
+
+    await store.startFreshSession();
+
+    expect(mockedResetButlerControlSession).toHaveBeenCalledTimes(1);
+    expect(mockedStartButlerControlSession).not.toHaveBeenCalled();
+    expect(store.getState().messages).toEqual([]);
+    expect(store.getState().controlSession).toBeNull();
+    expect(store.getState().historyState).toBe("ready");
+    expect(store.getState().runtimeHasActiveRun).toBeNull();
+    expect(store.getState().runtimeCanInterrupt).toBeNull();
+    expect(store.getState().contextUsage).toBeNull();
   });
 });

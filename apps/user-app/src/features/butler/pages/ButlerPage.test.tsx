@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -33,8 +33,25 @@ vi.mock("../../conversation/components/ComposerPanel", () => ({
 }));
 
 vi.mock("../../conversation/components/MessageTimeline", () => ({
-  MessageTimeline: ({ assistantAvatar }: { assistantAvatar?: unknown }) => (
-    <div data-testid="butler-message-timeline">{assistantAvatar as never}</div>
+  MessageTimeline: ({
+    assistantAvatar,
+    hasOlderMessages,
+    loadingOlderMessages,
+    onLoadOlderMessages
+  }: {
+    assistantAvatar?: unknown;
+    hasOlderMessages?: boolean;
+    loadingOlderMessages?: boolean;
+    onLoadOlderMessages?: () => void;
+  }) => (
+    <div>
+      <div data-testid="butler-message-timeline">{assistantAvatar as never}</div>
+      <div data-testid="butler-message-has-older">{String(Boolean(hasOlderMessages))}</div>
+      <div data-testid="butler-message-loading-older">{String(Boolean(loadingOlderMessages))}</div>
+      <button type="button" data-testid="butler-load-older" onClick={() => onLoadOlderMessages?.()}>
+        加载更早消息
+      </button>
+    </div>
   )
 }));
 
@@ -51,6 +68,7 @@ vi.mock("../../../shared/toast", () => ({
 
 vi.mock("../../conversation/api/conversation-api", () => ({
   getProviderCapabilities: vi.fn(),
+  getSessionCapabilities: vi.fn(),
   getSessionMessages: vi.fn(),
   getSessionRuntime: vi.fn()
 }));
@@ -62,6 +80,7 @@ vi.mock("../api/butler-api", () => ({
   getButlerOverview: vi.fn(),
   listButlerControlEvents: vi.fn(),
   getCurrentButlerControlSession: vi.fn(),
+  resetButlerControlSession: vi.fn(),
   startButlerControlSession: vi.fn(),
   sendButlerControlMessage: vi.fn(),
   getButlerProjectContext: vi.fn(),
@@ -73,6 +92,7 @@ vi.mock("../api/butler-api", () => ({
 
 import { useToast } from "../../../shared/toast";
 import { ButlerPage } from "./ButlerPage";
+import { SessionRuntimeStore } from "../../conversation/runtime/session-runtime-store";
 import {
   getButlerProfile,
   initButlerProfile,
@@ -80,10 +100,16 @@ import {
   getButlerOverview,
   listButlerControlEvents,
   getCurrentButlerControlSession,
+  resetButlerControlSession,
   getButlerProjectContext,
   startButlerControlSession
 } from "../api/butler-api";
-import { getProviderCapabilities, getSessionMessages, getSessionRuntime } from "../../conversation/api/conversation-api";
+import {
+  getProviderCapabilities,
+  getSessionCapabilities,
+  getSessionMessages,
+  getSessionRuntime
+} from "../../conversation/api/conversation-api";
 
 const mockedUseToast = vi.mocked(useToast);
 const mockedGetButlerProfile = vi.mocked(getButlerProfile);
@@ -92,9 +118,11 @@ const mockedUpdateButlerProfile = vi.mocked(updateButlerProfile);
 const mockedGetButlerOverview = vi.mocked(getButlerOverview);
 const mockedListButlerControlEvents = vi.mocked(listButlerControlEvents);
 const mockedGetCurrentButlerControlSession = vi.mocked(getCurrentButlerControlSession);
+const mockedResetButlerControlSession = vi.mocked(resetButlerControlSession);
 const mockedGetButlerProjectContext = vi.mocked(getButlerProjectContext);
 const mockedStartButlerControlSession = vi.mocked(startButlerControlSession);
 const mockedGetProviderCapabilities = vi.mocked(getProviderCapabilities);
+const mockedGetSessionCapabilities = vi.mocked(getSessionCapabilities);
 const mockedGetSessionMessages = vi.mocked(getSessionMessages);
 const mockedGetSessionRuntime = vi.mocked(getSessionRuntime);
 
@@ -124,7 +152,7 @@ describe("ButlerPage", () => {
         agentsFilePath: null,
         agentsContent: "测试",
         persona: { tone: "direct", language: "zh-CN", summaryStyle: "brief" },
-        focus: { projectIds: [], riskPreference: "conservative", reportPriority: [] },
+        focus: { projectIds: [], riskPreference: "conservative", reportPriority: [], summaryDebounceSeconds: 300 },
         initializedAt: "2026-04-05T00:00:00.000Z",
         updatedAt: "2026-04-05T00:00:00.000Z"
       }
@@ -140,7 +168,7 @@ describe("ButlerPage", () => {
         agentsFilePath: null,
         agentsContent: "测试",
         persona: { tone: "direct", language: "zh-CN", summaryStyle: "brief" },
-        focus: { projectIds: [], riskPreference: "conservative", reportPriority: [] },
+        focus: { projectIds: [], riskPreference: "conservative", reportPriority: [], summaryDebounceSeconds: 300 },
         initializedAt: "2026-04-05T00:00:00.000Z",
         updatedAt: "2026-04-05T00:00:00.000Z"
       }
@@ -165,6 +193,7 @@ describe("ButlerPage", () => {
     });
     mockedListButlerControlEvents.mockResolvedValue({ items: [] });
     mockedGetCurrentButlerControlSession.mockResolvedValue({ controlSession: null });
+    mockedResetButlerControlSession.mockResolvedValue({ controlSession: null } as never);
     mockedStartButlerControlSession.mockResolvedValue({
       controlSession: {
         id: "ctrl-start",
@@ -245,6 +274,27 @@ describe("ButlerPage", () => {
       }
     });
     mockedGetProviderCapabilities.mockResolvedValue({
+      provider: "codex",
+      canStartSession: true,
+      canResumeSession: true,
+      canSendMessage: true,
+      inRunInputMode: "none",
+      supportsSubagents: false,
+      supportsInterrupt: true,
+      supportsStructuredToolCalls: true,
+      supportsTokenUsage: true,
+      supportsAttachments: false,
+      supportsPermissionPrompt: true,
+      supportsCheckpoint: false,
+      supportsQueueWhileRunning: false,
+      supportsRunSteering: false,
+      supportsSlashMenu: false,
+      supportsReasoningSelector: true,
+      modelOptions: [{ id: "provider-default", name: "provider-default", usesProviderDefault: true }],
+      defaultReasoningLevel: null,
+      limitations: []
+    });
+    mockedGetSessionCapabilities.mockResolvedValue({
       provider: "codex",
       canStartSession: true,
       canResumeSession: true,
@@ -367,7 +417,7 @@ describe("ButlerPage", () => {
         agentsFilePath: null,
         agentsContent: "测试",
         persona: { tone: "direct", language: "zh-CN", summaryStyle: "brief" },
-        focus: { projectIds: [], riskPreference: "conservative", reportPriority: [] },
+        focus: { projectIds: [], riskPreference: "conservative", reportPriority: [], summaryDebounceSeconds: 300 },
         initializedAt: "2026-04-05T00:00:00.000Z",
         updatedAt: "2026-04-05T00:00:00.000Z"
       }
@@ -435,7 +485,7 @@ describe("ButlerPage", () => {
         agentsFilePath: null,
         agentsContent: "测试",
         persona: { tone: "direct", language: "zh-CN", summaryStyle: "brief" },
-        focus: { projectIds: [], riskPreference: "conservative", reportPriority: [] },
+        focus: { projectIds: [], riskPreference: "conservative", reportPriority: [], summaryDebounceSeconds: 300 },
         initializedAt: "2026-04-05T00:00:00.000Z",
         updatedAt: "2026-04-05T00:00:00.000Z"
       }
@@ -452,10 +502,100 @@ describe("ButlerPage", () => {
     fireEvent.click(screen.getByRole("button", { name: t("shell.butlerNewSessionAction") }));
 
     await waitFor(() => {
-      expect(mockedStartButlerControlSession).toHaveBeenCalledWith({});
+      expect(mockedResetButlerControlSession).toHaveBeenCalledTimes(1);
+      expect(mockedStartButlerControlSession).not.toHaveBeenCalled();
       expect(showToastMock).toHaveBeenCalledWith(
         expect.objectContaining({
           title: t("shell.butlerNewSessionStarted"),
+          tone: "success"
+        })
+      );
+    });
+  });
+
+  it("右侧管家设置支持调整摘要防抖并保存", async () => {
+    mockedGetButlerProfile.mockResolvedValueOnce({
+      initialized: true,
+      profile: {
+        id: "default",
+        displayName: "阿尔文",
+        providerId: "codex",
+        workspacePath: "/tmp/butler",
+        agentsMode: "inline",
+        agentsFilePath: null,
+        agentsContent: "测试",
+        persona: { tone: "direct", language: "zh-CN", summaryStyle: "brief" },
+        focus: {
+          projectIds: [],
+          riskPreference: "conservative",
+          reportPriority: [],
+          summaryDebounceSeconds: 300
+        },
+        initializedAt: "2026-04-05T00:00:00.000Z",
+        updatedAt: "2026-04-05T00:00:00.000Z"
+      }
+    });
+    mockedUpdateButlerProfile.mockResolvedValueOnce({
+      initialized: true,
+      profile: {
+        id: "default",
+        displayName: "阿尔文",
+        providerId: "codex",
+        workspacePath: "/tmp/butler",
+        agentsMode: "inline",
+        agentsFilePath: null,
+        agentsContent: "测试",
+        persona: { tone: "direct", language: "zh-CN", summaryStyle: "brief" },
+        focus: {
+          projectIds: [],
+          riskPreference: "conservative",
+          reportPriority: [],
+          summaryDebounceSeconds: 600
+        },
+        initializedAt: "2026-04-05T00:00:00.000Z",
+        updatedAt: "2026-04-05T00:00:00.000Z"
+      }
+    });
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(setAuxiliaryPanelMock).toHaveBeenCalled();
+    });
+
+    const latestSidePanel = setAuxiliaryPanelMock.mock.calls.at(-1)?.[0] as {
+      props: {
+        onSummaryDebounceChange: (value: number) => void;
+        onSaveSettings: () => void;
+      };
+    };
+
+    await act(async () => {
+      latestSidePanel.props.onSummaryDebounceChange(600);
+    });
+
+    const updatedSidePanel = setAuxiliaryPanelMock.mock.calls.at(-1)?.[0] as {
+      props: {
+        onSaveSettings: () => void;
+      };
+    };
+
+    await act(async () => {
+      updatedSidePanel.props.onSaveSettings();
+    });
+
+    await waitFor(() => {
+      expect(mockedUpdateButlerProfile).toHaveBeenCalledWith({
+        focus: {
+          projectIds: [],
+          riskPreference: "conservative",
+          reportPriority: [],
+          summaryDebounceSeconds: 600
+        }
+      });
+      expect(showToastMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: t("shell.butlerSettingsSaved"),
           tone: "success"
         })
       );
@@ -474,7 +614,7 @@ describe("ButlerPage", () => {
         agentsFilePath: null,
         agentsContent: "测试",
         persona: { tone: "direct", language: "zh-CN", summaryStyle: "brief" },
-        focus: { projectIds: [], riskPreference: "conservative", reportPriority: [] },
+        focus: { projectIds: [], riskPreference: "conservative", reportPriority: [], summaryDebounceSeconds: 300 },
         initializedAt: "2026-04-05T00:00:00.000Z",
         updatedAt: "2026-04-05T00:00:00.000Z"
       }
@@ -525,5 +665,57 @@ describe("ButlerPage", () => {
       expect(mockedGetButlerProjectContext).toHaveBeenCalledWith("project-1");
       expect(setAuxiliaryPanelMock).toHaveBeenCalled();
     });
+  });
+
+  it("管家实时会话会把更早消息加载能力接到时间线", async () => {
+    const loadOlderMessagesSpy = vi
+      .spyOn(SessionRuntimeStore.prototype, "loadOlderMessages")
+      .mockResolvedValue(undefined);
+
+    mockedGetButlerProfile.mockResolvedValueOnce({
+      initialized: true,
+      profile: {
+        id: "default",
+        displayName: "阿尔文",
+        providerId: "codex",
+        workspacePath: "/tmp/butler",
+        agentsMode: "inline",
+        agentsFilePath: null,
+        agentsContent: "测试",
+        persona: { tone: "direct", language: "zh-CN", summaryStyle: "brief" },
+        focus: { projectIds: [], riskPreference: "conservative", reportPriority: [], summaryDebounceSeconds: 300 },
+        initializedAt: "2026-04-05T00:00:00.000Z",
+        updatedAt: "2026-04-05T00:00:00.000Z"
+      }
+    });
+    mockedGetCurrentButlerControlSession.mockResolvedValueOnce({
+      controlSession: {
+        id: "ctrl-1",
+        providerId: "codex",
+        sessionId: "session-control-1",
+        status: "running",
+        lastContextVersion: "v1",
+        lastSummary: "最近在跟进",
+        createdAt: "2026-04-05T00:00:00.000Z",
+        updatedAt: "2026-04-05T00:00:00.000Z",
+        session: {
+          sessionId: "session-control-1"
+        }
+      }
+    } as never);
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("butler-load-older")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("butler-load-older"));
+
+    await waitFor(() => {
+      expect(loadOlderMessagesSpy).toHaveBeenCalledTimes(1);
+    });
+
+    loadOlderMessagesSpy.mockRestore();
   });
 });

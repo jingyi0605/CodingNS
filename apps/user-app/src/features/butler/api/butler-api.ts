@@ -29,6 +29,7 @@ export interface ButlerProfileDto {
     projectIds: string[];
     riskPreference: ButlerRiskPreferenceId;
     reportPriority: string[];
+    summaryDebounceSeconds: number;
     [key: string]: unknown;
   };
   initializedAt: string;
@@ -52,6 +53,7 @@ export interface ButlerProfilePayload {
     projectIds: string[];
     riskPreference: ButlerRiskPreferenceId;
     reportPriority: string[];
+    summaryDebounceSeconds: number;
     [key: string]: unknown;
   };
 }
@@ -267,6 +269,12 @@ export function updateButlerProfile(payload: ButlerProfilePayload) {
 
 export function getCurrentButlerControlSession() {
   return httpClient.request<ButlerControlSessionResponseDto>("/api/butler/control-session");
+}
+
+export function resetButlerControlSession() {
+  return httpClient.request<ButlerControlSessionResponseDto>("/api/butler/control-session/reset", {
+    method: "POST"
+  });
 }
 
 export function startButlerControlSession(payload: ButlerStartControlSessionPayload = {}) {

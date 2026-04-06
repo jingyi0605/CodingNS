@@ -27,6 +27,7 @@ import {
   getCurrentButlerControlSession,
   initButlerProfile,
   listButlerControlEvents,
+  resetButlerControlSession,
   sendButlerControlMessage,
   startButlerControlSession,
   updateButlerProfile
@@ -252,6 +253,40 @@ export class ButlerRuntimeStore {
     }
   }
 
+  async updateProfile(payload: ButlerProfilePayload): Promise<void> {
+    if (!this.state.initialized || !this.state.profile) {
+      return;
+    }
+
+    this.patch({
+      loading: true,
+      error: null
+    });
+
+    try {
+      const response = await updateButlerProfile(payload);
+
+      if (!response.initialized || !response.profile) {
+        throw new Error("BUTLER_PROFILE_UPDATE_FAILED");
+      }
+
+      this.patch({
+        initialized: true,
+        profile: response.profile,
+        activeProvider: response.profile.providerId
+      });
+    } catch (error) {
+      this.patch({
+        error: toErrorMessage(error)
+      });
+      throw error;
+    } finally {
+      this.patch({
+        loading: false
+      });
+    }
+  }
+
   async sendMessage(
     content: string,
     options?: {
@@ -328,35 +363,29 @@ export class ButlerRuntimeStore {
     }
 
     this.patch({
-      sending: true,
+      sending: false,
       error: null,
       controlSession: null,
       messages: [],
-      historyState: "loading",
+      historyState: "ready",
       runtimeHasActiveRun: null,
       runtimeCanInterrupt: null,
       contextUsage: null
     });
 
     try {
-      const started = await startButlerControlSession({});
-      this.patch({
-        controlSession: started.controlSession
-      });
-      await this.reloadControlSession();
-      await Promise.all([this.refreshOverview(), this.refreshEvents()]);
+      await resetButlerControlSession();
     } catch (error) {
       this.patch({
         historyState: "error",
         error: toErrorMessage(error)
       });
       throw error;
-    } finally {
-      this.patch({
-        sending: false,
-        switchingProvider: options?.preserveSwitchingState ? this.state.switchingProvider : false
-      });
     }
+
+    this.patch({
+      switchingProvider: options?.preserveSwitchingState ? this.state.switchingProvider : false
+    });
   }
 
   async refreshAll(): Promise<void> {
