@@ -8,6 +8,7 @@ import type { ButlerProject } from "../../types/domain.js";
 import type { ButlerProjectRepository } from "../../storage/repositories/butler-project-repository.js";
 import type { ButlerSessionRepository } from "../../storage/repositories/butler-session-repository.js";
 import type { WorkspaceRepository } from "../../storage/repositories/workspace-repository.js";
+import type { ButlerProfileService } from "./butler-profile-service.js";
 
 export interface CreateButlerProjectInput {
   workspaceId: string;
@@ -31,7 +32,8 @@ export class ButlerProjectService {
   constructor(
     private readonly butlerProjectRepository: ButlerProjectRepository,
     private readonly butlerSessionRepository: ButlerSessionRepository,
-    private readonly workspaceRepository: WorkspaceRepository
+    private readonly workspaceRepository: WorkspaceRepository,
+    private readonly butlerProfileService?: Pick<ButlerProfileService, "getProfile">
   ) {}
 
   list(input?: {
@@ -39,6 +41,7 @@ export class ButlerProjectService {
     lifecycleStatus?: ButlerProject["lifecycleStatus"];
     riskLevel?: ButlerProject["riskLevel"];
   }): ButlerProject[] {
+    this.syncManagedProjects();
     return this.butlerProjectRepository.list(input);
   }
 
@@ -78,6 +81,7 @@ export class ButlerProjectService {
   }
 
   getById(projectId: string): ButlerProject {
+    this.syncManagedProjects();
     const project = this.butlerProjectRepository.findById(projectId);
 
     if (!project) {
@@ -131,6 +135,7 @@ export class ButlerProjectService {
     topRisks: string[];
     nextSuggestions: string[];
   } {
+    this.syncManagedProjects();
     const project = this.getById(projectId);
     const sessions = this.butlerSessionRepository.listByProject(project.id);
 
@@ -156,6 +161,92 @@ export class ButlerProjectService {
     }
 
     return workspace;
+  }
+
+  private syncManagedProjects(): void {
+    const activeWorkspaces = this.workspaceRepository.list();
+    const activeWorkspaceIds = new Set(activeWorkspaces.map((workspace) => workspace.id));
+    const profile = this.butlerProfileService?.getProfile() ?? null;
+    const butlerWorkspacePath = profile?.workspacePath ? path.resolve(profile.workspacePath) : null;
+    const projects = this.butlerProjectRepository.list();
+
+    for (const workspace of activeWorkspaces) {
+      const normalizedWorkspacePath = path.resolve(workspace.path);
+
+      if (butlerWorkspacePath && normalizedWorkspacePath === butlerWorkspacePath) {
+        continue;
+      }
+
+      const sameWorkspaceProjects = projects.filter((project) => project.workspaceId === workspace.id);
+      const autoProject = sameWorkspaceProjects.find(isWorkspaceAutoManagedProject) ?? null;
+
+      if (sameWorkspaceProjects.length === 0) {
+        const timestamp = nowIso();
+
+        this.butlerProjectRepository.create({
+          id: createId(),
+          workspaceId: workspace.id,
+          name: workspace.name,
+          repoRoot: workspace.repoRoot ?? workspace.path,
+          defaultProvider: null,
+          instructionProfileId: null,
+          approvalMode: "controlled",
+          lifecycleStatus: "active",
+          riskLevel: "low",
+          config: {
+            managedBy: "workspace-auto"
+          },
+          lastPatrolAt: null,
+          lastVerificationAt: null,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          archivedAt: null
+        });
+        continue;
+      }
+
+      if (!autoProject) {
+        continue;
+      }
+
+      const nextRepoRoot = workspace.repoRoot ?? workspace.path;
+      const shouldRestore = autoProject.lifecycleStatus !== "active" || autoProject.archivedAt !== null;
+      const shouldRefreshMeta = autoProject.name !== workspace.name || autoProject.repoRoot !== nextRepoRoot;
+
+      if (!shouldRestore && !shouldRefreshMeta) {
+        continue;
+      }
+
+      this.butlerProjectRepository.update({
+        ...autoProject,
+        name: workspace.name,
+        repoRoot: nextRepoRoot,
+        lifecycleStatus: "active",
+        archivedAt: null,
+        updatedAt: nowIso()
+      });
+    }
+
+    for (const project of projects) {
+      if (!isWorkspaceAutoManagedProject(project)) {
+        continue;
+      }
+
+      if (activeWorkspaceIds.has(project.workspaceId)) {
+        continue;
+      }
+
+      if (project.lifecycleStatus === "archived") {
+        continue;
+      }
+
+      this.butlerProjectRepository.update({
+        ...project,
+        lifecycleStatus: "archived",
+        archivedAt: project.archivedAt ?? nowIso(),
+        updatedAt: nowIso()
+      });
+    }
   }
 
   private resolveRepoRootWithinWorkspace(workspacePath: string, repoRoot: string): string {
@@ -187,6 +278,10 @@ export class ButlerProjectService {
 
     return resolvedRepoRoot;
   }
+}
+
+function isWorkspaceAutoManagedProject(project: ButlerProject): boolean {
+  return project.config.managedBy === "workspace-auto";
 }
 
 function requireNonEmptyText(value: string | undefined, field: string, detail: string): string {

@@ -28,6 +28,11 @@ interface ButlerProjectListQuery {
   riskLevel?: "low" | "medium" | "high";
 }
 
+interface ButlerSearchQuery {
+  q?: string;
+  projectId?: string;
+}
+
 interface ButlerProjectParams {
   projectId: string;
 }
@@ -182,7 +187,7 @@ export class ButlerController {
     >,
     private readonly butlerContextAggregator: Pick<
       ButlerContextAggregator,
-      "getOverview" | "getSnapshot" | "getProjectContext"
+      "getOverview" | "getSnapshot" | "getProjectContext" | "searchSummaries"
     >,
     private readonly butlerProjectService: ButlerProjectService,
     private readonly butlerSessionService: ButlerSessionService,
@@ -244,6 +249,16 @@ export class ButlerController {
     });
   };
 
+  readonly resetControlSession = async (
+    _request: FastifyRequest,
+    reply: FastifyReply
+  ): Promise<void> => {
+    this.butlerControlSessionService.resetCurrentSession();
+    reply.send({
+      controlSession: null
+    });
+  };
+
   readonly startControlSession = async (
     request: FastifyRequest<{ Body: StartButlerControlSessionBody }>,
     reply: FastifyReply
@@ -279,7 +294,7 @@ export class ButlerController {
     reply: FastifyReply
   ): Promise<void> => {
     reply.send({
-      overview: this.butlerContextAggregator.getOverview(requireUserId(request))
+      overview: await this.butlerContextAggregator.getOverview(requireUserId(request))
     });
   };
 
@@ -288,7 +303,7 @@ export class ButlerController {
     reply: FastifyReply
   ): Promise<void> => {
     reply.send({
-      snapshot: this.butlerContextAggregator.getSnapshot(requireUserId(request))
+      snapshot: await this.butlerContextAggregator.getSnapshot(requireUserId(request))
     });
   };
 
@@ -297,9 +312,24 @@ export class ButlerController {
     reply: FastifyReply
   ): Promise<void> => {
     reply.send({
-      context: this.butlerContextAggregator.getProjectContext(
+      context: await this.butlerContextAggregator.getProjectContext(
         request.params.projectId,
         requireUserId(request)
+      )
+    });
+  };
+
+  readonly searchSummaries = async (
+    request: FastifyRequest<{ Querystring: ButlerSearchQuery }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send({
+      result: await this.butlerContextAggregator.searchSummaries(
+        requireUserId(request),
+        request.query.q ?? "",
+        {
+          projectId: request.query.projectId?.trim() || null
+        }
       )
     });
   };
@@ -310,7 +340,7 @@ export class ButlerController {
   ): Promise<void> => {
     const projectId = request.body.projectId?.trim() ?? "";
     reply.send({
-      result: this.butlerControlActionService.openProject(projectId, requireUserId(request))
+      result: await this.butlerControlActionService.openProject(projectId, requireUserId(request))
     });
   };
 
@@ -422,6 +452,7 @@ export class ButlerController {
     reply: FastifyReply
   ): Promise<void> => {
     const userId = requireUserId(request);
+    await this.butlerSessionService.ensureProjectSessionsSynced(request.params.projectId, userId);
     const overview = this.butlerProjectService.getOverview(request.params.projectId);
 
     reply.send({
@@ -434,6 +465,10 @@ export class ButlerController {
     request: FastifyRequest<{ Params: ButlerProjectParams }>,
     reply: FastifyReply
   ): Promise<void> => {
+    await this.butlerSessionService.ensureProjectSessionsSynced(
+      request.params.projectId,
+      requireUserId(request)
+    );
     reply.send({
       items: this.butlerSessionService.listByProject(request.params.projectId, requireUserId(request))
     });

@@ -1264,6 +1264,29 @@ function translateCodexAppServerNotification(notification: Record<string, unknow
     };
   }
 
+  if (method === "error") {
+    const error = toRecord(params.error);
+    const detail = buildCodexAppServerErrorDetail(error);
+
+    if (params.willRetry === true) {
+      return {
+        event: null,
+        terminal: false,
+        turnId: ensureText(params.turnId).trim() || null
+      };
+    }
+
+    return {
+      event: {
+        type: "turn.failed",
+        timestamp: nextTimestamp(),
+        error: detail
+      },
+      terminal: true,
+      turnId: ensureText(params.turnId).trim() || null
+    };
+  }
+
   if (method === "item/started" || method === "item/completed") {
     const item = translateCodexAppServerItem(toRecord(params.item));
 
@@ -1291,6 +1314,17 @@ function translateCodexAppServerNotification(notification: Record<string, unknow
     terminal: false,
     turnId: null
   };
+}
+
+function buildCodexAppServerErrorDetail(error: Record<string, unknown> | null): string {
+  const message = ensureText(error?.message).trim();
+  const additionalDetails = ensureText(error?.additionalDetails).trim();
+
+  if (message && additionalDetails && !message.includes(additionalDetails)) {
+    return `${message}\n${additionalDetails}`;
+  }
+
+  return message || additionalDetails || "codex app-server error";
 }
 
 function translateCodexAppServerItem(item: Record<string, unknown> | null): Record<string, unknown> | null {

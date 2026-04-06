@@ -1,17 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { ButlerContextAggregator } from "../../src/modules/butler/context-aggregator.js";
-import type { ButlerProject } from "../../src/types/domain.js";
 import type { ButlerProfileService } from "../../src/modules/butler/butler-profile-service.js";
-import type { ButlerProjectRepository } from "../../src/storage/repositories/butler-project-repository.js";
+import type { ButlerProjectService } from "../../src/modules/butler/butler-project-service.js";
 import type { ButlerSessionService } from "../../src/modules/butler/butler-session-service.js";
+import { ButlerContextAggregator } from "../../src/modules/butler/context-aggregator.js";
 import type { ProjectMemoryService } from "../../src/modules/butler/project-memory-service.js";
 import type { PatrolRunService } from "../../src/modules/butler/patrol-run-service.js";
 import type { VerificationRunService } from "../../src/modules/butler/verification-run-service.js";
 import type { SessionCheckpointRepository } from "../../src/storage/repositories/session-checkpoint-repository.js";
+import type { ButlerProject } from "../../src/types/domain.js";
 
 describe("ButlerContextAggregator", () => {
-  it("会按摘要层聚合项目上下文，并优先命中用户当前提到的项目范围", () => {
+  it("会按摘要层聚合项目上下文，并优先命中用户当前提到的项目范围", async () => {
     const projectOne: ButlerProject = {
       id: "project-1",
       workspaceId: "workspace-1",
@@ -47,11 +47,12 @@ describe("ButlerContextAggregator", () => {
       } as unknown as Pick<ButlerProfileService, "getProfile">,
       {
         list: vi.fn(() => [projectOne, projectTwo]),
-        findById: vi.fn((projectId: string) =>
+        getById: vi.fn((projectId: string) =>
           projectId === "project-1" ? projectOne : projectId === "project-2" ? projectTwo : null
         )
-      } as unknown as Pick<ButlerProjectRepository, "findById" | "list">,
+      } as unknown as Pick<ButlerProjectService, "getById" | "list">,
       {
+        ensureProjectSessionsSynced: vi.fn(async () => {}),
         listByProject: vi.fn((projectId: string) =>
           projectId === "project-1"
             ? [
@@ -73,7 +74,7 @@ describe("ButlerContextAggregator", () => {
               ]
             : []
         )
-      } as unknown as Pick<ButlerSessionService, "listByProject">,
+      } as unknown as Pick<ButlerSessionService, "ensureProjectSessionsSynced" | "listByProject">,
       {
         listMemories: vi.fn((projectId: string) =>
           projectId === "project-1"
@@ -163,8 +164,9 @@ describe("ButlerContextAggregator", () => {
       } as unknown as Pick<SessionCheckpointRepository, "listByButlerSessionId">
     );
 
-    const snapshot = aggregator.getSnapshot("user-1");
-    const promptContext = aggregator.resolvePromptContext("user-1", "这个项目现在卡在哪");
+    const snapshot = await aggregator.getSnapshot("user-1");
+    const promptContext = await aggregator.resolvePromptContext("user-1", "这个项目现在卡在哪");
+    const searchResult = await aggregator.searchSummaries("user-1", "类型错误");
 
     expect(snapshot.global.blockedProjectCount).toBe(1);
     expect(snapshot.global.highRiskProjectCount).toBe(1);
@@ -174,5 +176,9 @@ describe("ButlerContextAggregator", () => {
     expect(promptContext.scope).toBe("project");
     expect(promptContext.projectId).toBe("project-1");
     expect(promptContext.prompt).toContain("项目 控制台");
+    expect(promptContext.prompt).toContain("摘要命中");
+    expect(searchResult.items.length).toBeGreaterThan(0);
+    expect(searchResult.items.some((item) => item.kind === "session")).toBe(true);
+    expect(searchResult.items.some((item) => item.summary.includes("类型错误"))).toBe(true);
   });
 });

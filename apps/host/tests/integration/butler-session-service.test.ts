@@ -5,6 +5,7 @@ import type {
   ButlerSession,
   SessionBinding,
   SessionIndexRecord,
+  SessionListItem,
   SessionStateRecord
 } from "../../src/types/domain.js";
 import type { ButlerProjectRepository } from "../../src/storage/repositories/butler-project-repository.js";
@@ -456,5 +457,144 @@ describe("ButlerSessionService", () => {
       progressState: "working",
       sourceKind: "manual"
     });
+  });
+
+  it("会把自动纳管工作区里的普通会话自动补进 Butler 视图", async () => {
+    const project: ButlerProject = {
+      id: "project-auto-1",
+      workspaceId: "workspace-auto-1",
+      name: "repo-auto",
+      repoRoot: "/tmp/repo-auto",
+      defaultProvider: "codex",
+      instructionProfileId: null,
+      approvalMode: "controlled",
+      lifecycleStatus: "active",
+      riskLevel: "low",
+      config: {
+        managedBy: "workspace-auto"
+      },
+      lastPatrolAt: null,
+      lastVerificationAt: null,
+      createdAt: "2026-04-02T00:00:00.000Z",
+      updatedAt: "2026-04-02T00:00:00.000Z",
+      archivedAt: null
+    };
+    const workspaceSession: SessionListItem = {
+      sessionId: "session-auto-1",
+      workspaceId: project.workspaceId,
+      provider: "codex",
+      providerSessionId: "provider-session-auto-1",
+      rawStoreRef: "raw-auto-1",
+      parentSessionId: null,
+      isSubagent: false,
+      subagentLabel: null,
+      isArchived: false,
+      isFavorite: false,
+      title: "自动发现的会话",
+      messageCount: 12,
+      lastMessageAt: "2026-04-02T00:10:00.000Z",
+      createdAt: "2026-04-02T00:00:00.000Z",
+      updatedAt: "2026-04-02T00:10:00.000Z",
+      syncStatus: "idle",
+      syncCursor: null,
+      lastSyncAt: "2026-04-02T00:10:00.000Z",
+      lastErrorCode: null,
+      lastErrorDetail: null,
+      resumedAt: null,
+      runningState: "running",
+      activitySource: "runtime",
+      activityResolutionSource: "authoritative_runtime",
+      activityConfidence: "authoritative",
+      runId: null,
+      lastEventAt: "2026-04-02T00:10:00.000Z",
+      completedAt: null,
+      lastSeenAt: null,
+      watchdogTriggeredAt: null,
+      activityState: "running"
+    };
+    const binding: SessionBinding = {
+      sessionId: workspaceSession.sessionId,
+      workspaceId: project.workspaceId,
+      provider: "codex",
+      providerSessionId: workspaceSession.providerSessionId,
+      rawStoreRef: workspaceSession.rawStoreRef,
+      createdAt: "2026-04-02T00:00:00.000Z",
+      updatedAt: "2026-04-02T00:00:00.000Z"
+    };
+    const index: SessionIndexRecord = {
+      sessionId: workspaceSession.sessionId,
+      workspaceId: project.workspaceId,
+      provider: "codex",
+      parentSessionId: null,
+      isSubagent: false,
+      subagentLabel: null,
+      title: workspaceSession.title,
+      messageCount: workspaceSession.messageCount,
+      isArchived: false,
+      lastMessageAt: workspaceSession.lastMessageAt,
+      createdAt: workspaceSession.createdAt,
+      updatedAt: workspaceSession.updatedAt
+    };
+    const state: SessionStateRecord = {
+      sessionId: workspaceSession.sessionId,
+      userId: "user-1",
+      runningState: "running",
+      activitySource: "runtime",
+      favorite: false,
+      lastEventAt: workspaceSession.lastEventAt,
+      completedAt: null,
+      lastSeenAt: null,
+      updatedAt: workspaceSession.updatedAt
+    };
+    const createdSessions: ButlerSession[] = [];
+    const createdCheckpoints: Array<{ summary: string; sourceKind: string }> = [];
+    const butlerSessionRepository = {
+      listByProject: vi.fn(() => createdSessions),
+      create: vi.fn((record: ButlerSession) => {
+        createdSessions.push(record);
+        return record;
+      })
+    } satisfies Pick<ButlerSessionRepository, "listByProject" | "create">;
+
+    const service = new ButlerSessionService(
+      {
+        findById: vi.fn(() => project)
+      } satisfies Pick<ButlerProjectRepository, "findById"> as ButlerProjectRepository,
+      butlerSessionRepository as ButlerSessionRepository,
+      {
+        getLatestSeq: vi.fn(() => createdCheckpoints.length),
+        create: vi.fn((record) => {
+          createdCheckpoints.push({
+            summary: record.summary,
+            sourceKind: record.sourceKind
+          });
+          return record;
+        })
+      } satisfies Pick<SessionCheckpointRepository, "getLatestSeq" | "create"> as SessionCheckpointRepository,
+      {
+        findBySessionId: vi.fn(() => binding)
+      } satisfies Pick<SessionBindingRepository, "findBySessionId"> as SessionBindingRepository,
+      {
+        findIndexRecordBySessionId: vi.fn(() => index)
+      } satisfies Pick<SessionIndexRepository, "findIndexRecordBySessionId"> as SessionIndexRepository,
+      {
+        findBySessionAndUser: vi.fn(() => state)
+      } satisfies Pick<SessionStateRepository, "findBySessionAndUser"> as SessionStateRepository,
+      undefined,
+      {
+        discoverWorkspaceSessions: vi.fn(async () => [workspaceSession]),
+        listWorkspaceSessions: vi.fn(() => [workspaceSession]),
+        resumeSession: vi.fn()
+      }
+    );
+
+    await service.ensureProjectSessionsSynced(project.id, "user-1");
+    const result = service.listByProject(project.id, "user-1");
+
+    expect(result).toHaveLength(1);
+    expect(result[0]?.title).toBe("自动发现的会话");
+    expect(result[0]?.status).toBe("running");
+    expect(createdSessions).toHaveLength(1);
+    expect(createdCheckpoints[0]?.sourceKind).toBe("snapshot");
   });
 });

@@ -64,7 +64,7 @@ describe("butler context routes", () => {
 
   it("overview/context-snapshot/project-context 路由会返回聚合摘要", async () => {
     const butlerContextAggregator = {
-      getOverview: vi.fn(() => ({
+      getOverview: vi.fn(async () => ({
         version: "ctx-1",
         generatedAt: "2026-04-05T02:00:00.000Z",
         global: {
@@ -101,7 +101,7 @@ describe("butler context routes", () => {
         patrols: [],
         verifications: []
       })),
-      getSnapshot: vi.fn(() => ({
+      getSnapshot: vi.fn(async () => ({
         version: "ctx-2",
         generatedAt: "2026-04-05T02:01:00.000Z",
         global: {
@@ -118,7 +118,7 @@ describe("butler context routes", () => {
         patrols: [],
         verifications: []
       })),
-      getProjectContext: vi.fn(() => ({
+      getProjectContext: vi.fn(async () => ({
         version: "ctx-3",
         generatedAt: "2026-04-05T02:02:00.000Z",
         project: {
@@ -148,6 +148,23 @@ describe("butler context routes", () => {
         topRisks: ["控制台项目阻塞"],
         nextActions: ["先修复类型错误"]
       }))
+      ,
+      searchSummaries: vi.fn(async () => ({
+        version: "ctx-search-1",
+        generatedAt: "2026-04-05T02:01:30.000Z",
+        query: "类型错误",
+        items: [
+          {
+            kind: "session",
+            id: "butler-session-1",
+            projectId: "project-1",
+            title: "修复控制台",
+            summary: "构建被类型错误卡住",
+            score: 12,
+            updatedAt: "2026-04-05T02:01:00.000Z"
+          }
+        ]
+      }))
     } as unknown as ButlerContextAggregator;
 
     const app = await createButlerApp(butlerContextAggregator);
@@ -175,5 +192,13 @@ describe("butler context routes", () => {
     expect(
       (butlerContextAggregator as unknown as { getProjectContext: ReturnType<typeof vi.fn> }).getProjectContext
     ).toHaveBeenCalledWith("project-1", "user-1");
+
+    const search = await app.inject({
+      method: "GET",
+      url: "/api/butler/search?q=%E7%B1%BB%E5%9E%8B%E9%94%99%E8%AF%AF"
+    });
+    expect(search.statusCode).toBe(200);
+    expect(search.json().result.version).toBe("ctx-search-1");
+    expect(search.json().result.items[0].kind).toBe("session");
   });
 });

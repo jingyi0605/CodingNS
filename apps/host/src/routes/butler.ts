@@ -11,11 +11,13 @@ export async function registerButlerRoutes(
   app.patch("/api/butler/profile", butlerController.updateProfile);
   app.get("/api/butler/control-session", butlerController.getCurrentControlSession);
   app.get("/api/butler/control-session/events", butlerController.listControlSessionEvents);
+  app.post("/api/butler/control-session/reset", butlerController.resetControlSession);
   app.post("/api/butler/control-session/start", butlerController.startControlSession);
   app.post("/api/butler/control-session/resume", butlerController.resumeControlSession);
   app.post("/api/butler/control-session/messages", butlerController.sendControlMessage);
   app.get("/api/butler/overview", butlerController.getOverview);
   app.get("/api/butler/context-snapshot", butlerController.getContextSnapshot);
+  app.get("/api/butler/search", butlerController.searchSummaries);
   app.post("/api/butler/actions/open-project", butlerController.openProjectAction);
   app.post("/api/butler/actions/resume-session", butlerController.resumeProjectSessionAction);
   app.post("/api/butler/actions/start-patrol", butlerController.startPatrolAction);

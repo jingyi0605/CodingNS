@@ -24,6 +24,9 @@ const SUPPORTED_PERSONA_LANGUAGES = ["zh-CN", "en-US", "bilingual"] as const;
 const SUPPORTED_SUMMARY_STYLES = ["brief", "structured", "thorough"] as const;
 const SUPPORTED_RISK_PREFERENCES = ["conservative", "balanced", "proactive"] as const;
 const SUPPORTED_REPORT_PRIORITIES = ["risk", "blocker", "verification", "progress"] as const;
+const DEFAULT_SUMMARY_DEBOUNCE_SECONDS = 300;
+const MIN_SUMMARY_DEBOUNCE_SECONDS = 60;
+const MAX_SUMMARY_DEBOUNCE_SECONDS = 3_600;
 
 export interface ButlerProfileInitInput {
   displayName?: unknown;
@@ -46,7 +49,8 @@ export class ButlerProfileService {
   ) {}
 
   getProfile(): ButlerProfile | null {
-    return this.butlerProfileRepository.find();
+    const profile = this.butlerProfileRepository.find();
+    return profile ? hydrateStoredProfile(profile) : null;
   }
 
   initProfile(input: ButlerProfileInitInput): ButlerProfile {
@@ -71,7 +75,7 @@ export class ButlerProfileService {
   }
 
   updateProfile(input: ButlerProfilePatchInput): ButlerProfile {
-    const current = this.butlerProfileRepository.find();
+    const current = this.getProfile();
 
     if (!current) {
       throw new AppError({
@@ -93,7 +97,7 @@ export class ButlerProfileService {
   }
 
   ensureInitialized(): ButlerProfile {
-    const profile = this.butlerProfileRepository.find();
+    const profile = this.getProfile();
 
     if (!profile) {
       throw new AppError({
@@ -483,12 +487,14 @@ function normalizeFocus(value: unknown): ButlerFocusProfile {
     SUPPORTED_RISK_PREFERENCES
   );
   const reportPriority = normalizePriorityArray(record.reportPriority);
+  const summaryDebounceSeconds = normalizeSummaryDebounceSeconds(record.summaryDebounceSeconds);
 
   return {
     ...record,
     projectIds,
     riskPreference,
-    reportPriority
+    reportPriority,
+    summaryDebounceSeconds
   };
 }
 
@@ -504,8 +510,33 @@ function createDefaultFocus(): ButlerFocusProfile {
   return {
     projectIds: [],
     riskPreference: "conservative",
-    reportPriority: ["risk", "blocker", "verification"]
+    reportPriority: ["risk", "blocker", "verification"],
+    summaryDebounceSeconds: DEFAULT_SUMMARY_DEBOUNCE_SECONDS
   };
+}
+
+function normalizeSummaryDebounceSeconds(value: unknown): number {
+  if (value === undefined || value === null || value === "") {
+    return DEFAULT_SUMMARY_DEBOUNCE_SECONDS;
+  }
+
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw invalidField("focus.summaryDebounceSeconds", "focus.summaryDebounceSeconds 必须是整数秒数");
+  }
+
+  const normalized = Math.trunc(value);
+
+  if (
+    normalized < MIN_SUMMARY_DEBOUNCE_SECONDS
+    || normalized > MAX_SUMMARY_DEBOUNCE_SECONDS
+  ) {
+    throw invalidField(
+      "focus.summaryDebounceSeconds",
+      `focus.summaryDebounceSeconds 必须在 ${MIN_SUMMARY_DEBOUNCE_SECONDS} 到 ${MAX_SUMMARY_DEBOUNCE_SECONDS} 秒之间`
+    );
+  }
+
+  return normalized;
 }
 
 function normalizeEnumText<T extends readonly string[]>(
@@ -586,8 +617,17 @@ function buildGeneratedAgentsContent(input: {
     `- 使用语言：${describeLanguage(input.persona.language)}`,
     `- 总结风格：${describeSummaryStyle(input.persona.summaryStyle)}`,
     `- 风险倾向：${describeRiskPreference(input.focus.riskPreference)}`,
-    `- 汇报优先级：${describeReportPriority(input.focus.reportPriority)}`
+    `- 汇报优先级：${describeReportPriority(input.focus.reportPriority)}`,
+    `- 会话摘要防抖：${describeSummaryDebounceSeconds(input.focus.summaryDebounceSeconds)}`
   ].join("\n");
+}
+
+function hydrateStoredProfile(profile: ButlerProfile): ButlerProfile {
+  return {
+    ...profile,
+    persona: normalizePersona(profile.persona),
+    focus: normalizeFocus(profile.focus)
+  };
 }
 
 function describeTone(value: string): string {
@@ -652,6 +692,14 @@ function describeReportPriority(values: string[]): string {
         return "风险";
     }
   }).join("、");
+}
+
+function describeSummaryDebounceSeconds(value: number): string {
+  if (value % 60 === 0) {
+    return `${value / 60} 分钟`;
+  }
+
+  return `${value} 秒`;
 }
 
 function isPathWithinWorkspace(workspacePath: string, targetPath: string): boolean {

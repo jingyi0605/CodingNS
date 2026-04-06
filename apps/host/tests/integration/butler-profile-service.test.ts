@@ -127,6 +127,7 @@ describe("ButlerProfileService", () => {
     expect(profile.providerId).toBe("codex");
     expect(profile.workspacePath).toBe(workspacePath);
     expect(profile.agentsMode).toBe("inline");
+    expect(profile.focus.summaryDebounceSeconds).toBe(300);
     expect(repository.create).toHaveBeenCalledOnce();
     expect(execFileSync("git", ["-C", workspacePath, "rev-parse", "--show-toplevel"], {
       encoding: "utf8"

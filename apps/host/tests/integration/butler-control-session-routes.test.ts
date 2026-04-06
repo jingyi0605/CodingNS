@@ -63,9 +63,10 @@ describe("butler control-session routes", () => {
     }
   });
 
-  it("control-session start|resume|messages 路由会返回独立控制会话结果", async () => {
+  it("control-session start|reset|resume|messages 路由会返回独立控制会话结果", async () => {
     const butlerControlSessionService = {
       getCurrentSession: vi.fn(() => null),
+      resetCurrentSession: vi.fn(() => undefined),
       startSession: vi.fn(async () => ({
         id: "control-1",
         providerId: "codex",
@@ -226,6 +227,15 @@ describe("butler control-session routes", () => {
       controlSession: null
     });
 
+    const reset = await app.inject({
+      method: "POST",
+      url: "/api/butler/control-session/reset"
+    });
+    expect(reset.statusCode).toBe(200);
+    expect(reset.json()).toEqual({
+      controlSession: null
+    });
+
     const started = await app.inject({
       method: "POST",
       url: "/api/butler/control-session/start",
@@ -278,6 +288,32 @@ describe("butler control-session routes", () => {
     expect(response.statusCode).toBe(409);
     expect(response.json()).toMatchObject({
       error_code: "BUTLER_PROFILE_NOT_INITIALIZED"
+    });
+  });
+
+  it("start 路由缺少首条消息时会返回 INVALID_INPUT", async () => {
+    const butlerControlSessionService = {
+      startSession: vi.fn(async () => {
+        throw new AppError({
+          statusCode: 400,
+          errorCode: "INVALID_INPUT",
+          detail: "发送控制会话消息必须提供 content",
+          field: "content"
+        });
+      })
+    } as unknown as ButlerControlSessionService;
+
+    const app = await createButlerApp(butlerControlSessionService);
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/butler/control-session/start",
+      payload: {}
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      error_code: "INVALID_INPUT",
+      field: "content"
     });
   });
 });

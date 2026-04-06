@@ -96,12 +96,12 @@ export class ButlerControlActionService {
       : [];
   }
 
-  openProject(projectId: string, userId: string): OpenButlerProjectActionResult {
+  async openProject(projectId: string, userId: string): Promise<OpenButlerProjectActionResult> {
     const current = this.requireCurrentControlSession();
     const project = this.butlerProjectService.getById(projectId);
 
     try {
-      const context = this.butlerContextAggregator.getProjectContext(project.id, userId);
+      const context = await this.butlerContextAggregator.getProjectContext(project.id, userId);
       const event = this.recordActionEvent(current, "open-project", {
         status: "succeeded",
         title: `已打开项目：${project.name}`,

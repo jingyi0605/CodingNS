@@ -4,9 +4,9 @@ import { AppError } from "../../shared/errors/app-error.js";
 import { hashContent } from "../../shared/utils/hash.js";
 import { nowIso } from "../../shared/utils/time.js";
 import type { ButlerProject, ButlerRiskLevel, ButlerCheckpointProgressState } from "../../types/domain.js";
-import type { ButlerProjectRepository } from "../../storage/repositories/butler-project-repository.js";
 import type { SessionCheckpointRepository } from "../../storage/repositories/session-checkpoint-repository.js";
 import type { ButlerProfileService } from "./butler-profile-service.js";
+import type { ButlerProjectService } from "./butler-project-service.js";
 import type {
   ButlerProjectSessionView,
   ButlerSessionService
@@ -153,6 +153,24 @@ export interface ButlerPromptContext {
   prompt: string;
 }
 
+export interface ButlerSearchHit {
+  kind: "project" | "session" | "memory" | "patrol" | "verification";
+  id: string;
+  projectId: string | null;
+  workspaceId: string | null;
+  title: string;
+  summary: string;
+  score: number;
+  updatedAt: string;
+}
+
+export interface ButlerSearchResult {
+  version: string;
+  generatedAt: string;
+  query: string;
+  items: ButlerSearchHit[];
+}
+
 interface ProjectAggregateResult {
   project: ButlerProject;
   digest: ButlerProjectDigest;
@@ -165,16 +183,19 @@ interface ProjectAggregateResult {
 export class ButlerContextAggregator {
   constructor(
     private readonly butlerProfileService: Pick<ButlerProfileService, "getProfile">,
-    private readonly butlerProjectRepository: Pick<ButlerProjectRepository, "findById" | "list">,
-    private readonly butlerSessionService: Pick<ButlerSessionService, "listByProject">,
+    private readonly butlerProjectService: Pick<ButlerProjectService, "getById" | "list">,
+    private readonly butlerSessionService: Pick<
+      ButlerSessionService,
+      "ensureProjectSessionsSynced" | "listByProject"
+    >,
     private readonly projectMemoryService: Pick<ProjectMemoryService, "listMemories">,
     private readonly patrolRunService: Pick<PatrolRunService, "listRuns">,
     private readonly verificationRunService: Pick<VerificationRunService, "listRuns">,
     private readonly sessionCheckpointRepository: Pick<SessionCheckpointRepository, "listByButlerSessionId">
   ) {}
 
-  getOverview(userId: string): ButlerOverview {
-    const snapshot = this.getSnapshot(userId);
+  async getOverview(userId: string): Promise<ButlerOverview> {
+    const snapshot = await this.getSnapshot(userId);
 
     return {
       version: snapshot.version,
@@ -187,9 +208,9 @@ export class ButlerContextAggregator {
     };
   }
 
-  getSnapshot(userId: string): ButlerContextSnapshot {
+  async getSnapshot(userId: string): Promise<ButlerContextSnapshot> {
     const generatedAt = nowIso();
-    const projectContexts = this.collectProjectContexts(userId);
+    const projectContexts = await this.collectProjectContexts(userId);
     const projects = projectContexts.map((item) => item.digest);
     const sessions = projectContexts.flatMap((item) => item.sessions);
     const memories = projectContexts.flatMap((item) => item.memories);
@@ -217,9 +238,10 @@ export class ButlerContextAggregator {
     };
   }
 
-  getProjectContext(projectId: string, userId: string): ButlerProjectContext {
+  async getProjectContext(projectId: string, userId: string): Promise<ButlerProjectContext> {
     const project = this.getProjectOrThrow(projectId);
     const generatedAt = nowIso();
+    await this.butlerSessionService.ensureProjectSessionsSynced(project.id, userId);
     const context = this.buildProjectContext(project, userId);
     const version = buildSnapshotVersion({
       project: context.digest,
@@ -242,33 +264,81 @@ export class ButlerContextAggregator {
     };
   }
 
-  resolvePromptContext(userId: string, userMessage?: string | null): ButlerPromptContext {
+  async resolvePromptContext(userId: string, userMessage?: string | null): Promise<ButlerPromptContext> {
     const projectId = this.resolveProjectIdFromMessage(userMessage);
 
     if (projectId) {
-      const context = this.getProjectContext(projectId, userId);
+      const context = await this.getProjectContext(projectId, userId);
+      const searchResult = await this.searchSummaries(userId, userMessage ?? "", {
+        projectId
+      });
       return {
         version: context.version,
         generatedAt: context.generatedAt,
         scope: "project",
         projectId,
-        prompt: renderProjectPrompt(context)
+        prompt: renderProjectPrompt(context, searchResult)
       };
     }
 
-    const overview = this.getOverview(userId);
+    const overview = await this.getOverview(userId);
+    const searchResult = await this.searchSummaries(userId, userMessage ?? "");
     return {
       version: overview.version,
       generatedAt: overview.generatedAt,
       scope: "global",
       projectId: null,
-      prompt: renderOverviewPrompt(overview)
+      prompt: renderOverviewPrompt(overview, searchResult)
     };
   }
 
-  private collectProjectContexts(userId: string): ProjectAggregateResult[] {
+  async searchSummaries(
+    userId: string,
+    query: string,
+    options: { projectId?: string | null } = {}
+  ): Promise<ButlerSearchResult> {
+    const normalizedQuery = query.trim();
+    const generatedAt = nowIso();
+
+    if (!normalizedQuery) {
+      return {
+        version: buildSnapshotVersion({
+          query: "",
+          items: []
+        }),
+        generatedAt,
+        query: "",
+        items: []
+      };
+    }
+
+    const projectContexts = await this.collectProjectContexts(userId);
+    const filteredContexts =
+      options.projectId
+        ? projectContexts.filter((context) => context.project.id === options.projectId)
+        : projectContexts;
+    const items = filteredContexts
+      .flatMap((context) => buildSearchHits(context, normalizedQuery))
+      .sort(compareSearchHits)
+      .slice(0, MAX_OVERVIEW_SESSIONS);
+
+    return {
+      version: buildSnapshotVersion({
+        query: normalizedQuery,
+        items
+      }),
+      generatedAt,
+      query: normalizedQuery,
+      items
+    };
+  }
+
+  private async collectProjectContexts(userId: string): Promise<ProjectAggregateResult[]> {
     const focusProjectIds = new Set(this.butlerProfileService.getProfile()?.focus.projectIds ?? []);
-    const projects = this.butlerProjectRepository.list();
+    const projects = this.butlerProjectService.list();
+    await Promise.all(
+      projects.map((project) => this.butlerSessionService.ensureProjectSessionsSynced(project.id, userId))
+    );
     const contexts = projects.map((project) => this.buildProjectContext(project, userId));
 
     return contexts.sort((left, right) => compareProjectContexts(left, right, focusProjectIds));
@@ -368,15 +438,15 @@ export class ButlerContextAggregator {
       return null;
     }
 
-    const projects = this.butlerProjectRepository.list();
+    const projects = this.butlerProjectService.list();
     const focusedProjectIds = this.butlerProfileService.getProfile()?.focus.projectIds ?? [];
 
-    if (
-      focusedProjectIds.length === 1
-      && /(这个项目|当前项目|该项目)/u.test(normalized)
-      && this.butlerProjectRepository.findById(focusedProjectIds[0])
-    ) {
-      return focusedProjectIds[0];
+    if (focusedProjectIds.length === 1 && /(这个项目|当前项目|该项目)/u.test(normalized)) {
+      const focusedProjectId = focusedProjectIds[0]!;
+
+      if (projects.some((project) => project.id === focusedProjectId)) {
+        return focusedProjectId;
+      }
     }
 
     for (const project of projects) {
@@ -397,17 +467,7 @@ export class ButlerContextAggregator {
   }
 
   private getProjectOrThrow(projectId: string): ButlerProject {
-    const project = this.butlerProjectRepository.findById(projectId);
-
-    if (!project) {
-      throw new AppError({
-        statusCode: 404,
-        errorCode: "BUTLER_PROJECT_NOT_FOUND",
-        detail: "代码管家项目不存在"
-      });
-    }
-
-    return project;
+    return this.butlerProjectService.getById(projectId);
   }
 }
 
@@ -602,7 +662,10 @@ function hasProjectBlocker(projectContext: ProjectAggregateResult): boolean {
   );
 }
 
-function renderOverviewPrompt(overview: ButlerOverview): string {
+function renderOverviewPrompt(
+  overview: ButlerOverview,
+  searchResult?: ButlerSearchResult | null
+): string {
   const lines = [
     "# 代码管家当前上下文",
     "",
@@ -659,10 +722,15 @@ function renderOverviewPrompt(overview: ButlerOverview): string {
     }
   }
 
+  appendSearchResultLines(lines, searchResult);
+
   return lines.join("\n");
 }
 
-function renderProjectPrompt(context: ButlerProjectContext): string {
+function renderProjectPrompt(
+  context: ButlerProjectContext,
+  searchResult?: ButlerSearchResult | null
+): string {
   const lines = [
     "# 代码管家当前上下文",
     "",
@@ -715,7 +783,248 @@ function renderProjectPrompt(context: ButlerProjectContext): string {
     }
   }
 
+  appendSearchResultLines(lines, searchResult);
+
   return lines.join("\n");
+}
+
+function appendSearchResultLines(
+  lines: string[],
+  searchResult?: ButlerSearchResult | null
+): void {
+  if (!searchResult || !searchResult.query || searchResult.items.length === 0) {
+    return;
+  }
+
+  lines.push("", `## 摘要命中（优先回答这些命中的摘要）`, `- 当前查询：${searchResult.query}`);
+
+  for (const item of searchResult.items.slice(0, MAX_PROMPT_ITEMS)) {
+    lines.push(
+      `- ${describeSearchHit(item)}：${truncateText(item.summary, 120, "暂无摘要")}`
+    );
+  }
+}
+
+function describeSearchHit(item: ButlerSearchHit): string {
+  switch (item.kind) {
+    case "project":
+      return `项目 ${item.title}`;
+    case "session":
+      return `会话 ${item.title}`;
+    case "memory":
+      return `记忆 ${item.title}`;
+    case "patrol":
+      return `巡视 ${item.title}`;
+    case "verification":
+      return `验证 ${item.title}`;
+    default:
+      return item.title;
+  }
+}
+
+function buildSearchHits(context: ProjectAggregateResult, query: string): ButlerSearchHit[] {
+  const hits: ButlerSearchHit[] = [];
+  const projectBaseTime = context.digest.lastActivityAt;
+
+  pushSearchHit(
+    hits,
+      {
+        kind: "project",
+        id: context.project.id,
+        projectId: context.project.id,
+        workspaceId: context.project.workspaceId,
+        title: context.project.name,
+      summary: [
+        `风险=${context.digest.riskLevel}`,
+        `主要风险=${joinItems(context.digest.topRisks, "暂无")}`,
+        `下一步=${joinItems(context.digest.nextActions, "暂无")}`,
+        `最近会话摘要=${context.digest.latestSessionSummary ?? "暂无"}`
+      ].join("；"),
+      updatedAt: projectBaseTime
+    },
+    query,
+    [
+      context.project.id,
+      context.project.name,
+      path.basename(context.project.repoRoot),
+      context.digest.latestSessionSummary ?? "",
+      context.digest.topRisks.join(" "),
+      context.digest.nextActions.join(" ")
+    ]
+  );
+
+  for (const session of context.sessions) {
+    pushSearchHit(
+      hits,
+      {
+        kind: "session",
+        id: session.id,
+        projectId: session.projectId,
+        workspaceId: context.project.workspaceId,
+        title: session.title ?? session.sessionId,
+        summary: [
+          `状态=${session.status}/${session.progressState}`,
+          `风险=${joinItems(session.riskFlags, "暂无")}`,
+          `下一步=${joinItems(session.nextActions, "暂无")}`,
+          `摘要=${session.lastSummary ?? "暂无"}`
+        ].join("；"),
+        updatedAt: session.updatedAt
+      },
+      query,
+      [
+        session.id,
+        session.sessionId,
+        session.title ?? "",
+        session.lastSummary ?? "",
+        session.riskFlags.join(" "),
+        session.nextActions.join(" ")
+      ]
+    );
+  }
+
+  for (const memory of context.memories) {
+    pushSearchHit(
+      hits,
+      {
+        kind: "memory",
+        id: memory.id,
+        projectId: memory.projectId,
+        workspaceId: context.project.workspaceId,
+        title: memory.title,
+        summary: `类型=${memory.memoryType}；状态=${memory.status}；标签=${joinItems(memory.tags, "无")}`,
+        updatedAt: memory.updatedAt
+      },
+      query,
+      [memory.title, memory.memoryType, memory.status, memory.tags.join(" ")]
+    );
+  }
+
+  for (const patrol of context.patrols) {
+    pushSearchHit(
+      hits,
+      {
+        kind: "patrol",
+        id: patrol.id,
+        projectId: patrol.projectId,
+        workspaceId: context.project.workspaceId,
+        title: patrol.id,
+        summary: `状态=${patrol.status}；风险=${patrol.riskLevel ?? "unknown"}；摘要=${patrol.summary ?? "暂无"}；建议=${joinItems(patrol.suggestions, "暂无")}`,
+        updatedAt: patrol.finishedAt ?? patrol.startedAt ?? patrol.createdAt
+      },
+      query,
+      [patrol.id, patrol.summary ?? "", patrol.suggestions.join(" "), patrol.status, patrol.riskLevel ?? ""]
+    );
+  }
+
+  for (const verification of context.verifications) {
+    pushSearchHit(
+      hits,
+      {
+        kind: "verification",
+        id: verification.id,
+        projectId: verification.projectId,
+        workspaceId: context.project.workspaceId,
+        title: verification.verificationType,
+        summary: `状态=${verification.status}；目标=${verification.targetRef ?? "未指定"}；摘要=${verification.summary ?? "暂无"}`,
+        updatedAt: verification.finishedAt ?? verification.startedAt ?? verification.createdAt
+      },
+      query,
+      [
+        verification.id,
+        verification.verificationType,
+        verification.status,
+        verification.targetRef ?? "",
+        verification.summary ?? ""
+      ]
+    );
+  }
+
+  return hits;
+}
+
+function pushSearchHit(
+  hits: ButlerSearchHit[],
+  base: Omit<ButlerSearchHit, "score">,
+  query: string,
+  fields: string[]
+): void {
+  const score = scoreSearch(fields, query);
+
+  if (score <= 0) {
+    return;
+  }
+
+  hits.push({
+    ...base,
+    score
+  });
+}
+
+function scoreSearch(fields: string[], query: string): number {
+  const normalizedFields = fields
+    .map((field) => normalizeSearchText(field))
+    .filter((field) => field.length > 0);
+
+  if (normalizedFields.length === 0) {
+    return 0;
+  }
+
+  const normalizedQuery = normalizeSearchText(query);
+  const terms = extractSearchTerms(normalizedQuery);
+  let score = 0;
+
+  for (const field of normalizedFields) {
+    if (field.includes(normalizedQuery)) {
+      score += 10;
+    }
+
+    for (const term of terms) {
+      if (field.includes(term)) {
+        score += term.length >= 4 ? 4 : 2;
+      }
+    }
+  }
+
+  return score;
+}
+
+function extractSearchTerms(query: string): string[] {
+  const terms = new Set<string>();
+  const asciiTerms = query.match(/[a-z0-9_-]{2,}/g) ?? [];
+
+  for (const term of asciiTerms) {
+    terms.add(term);
+  }
+
+  const hanTerms = query.match(/\p{Script=Han}+/gu) ?? [];
+
+  for (const term of hanTerms) {
+    terms.add(term);
+
+    if (term.length <= 4) {
+      continue;
+    }
+
+    for (let size = 2; size <= 4; size += 1) {
+      for (let index = 0; index <= term.length - size; index += 1) {
+        terms.add(term.slice(index, index + size));
+      }
+    }
+  }
+
+  return Array.from(terms).filter((term) => term.trim().length >= 2).slice(0, 16);
+}
+
+function normalizeSearchText(value: string): string {
+  return value.trim().toLocaleLowerCase();
+}
+
+function compareSearchHits(left: ButlerSearchHit, right: ButlerSearchHit): number {
+  if (left.score !== right.score) {
+    return right.score - left.score;
+  }
+
+  return compareIso(right.updatedAt, left.updatedAt);
 }
 
 function buildSnapshotVersion(payload: unknown): string {

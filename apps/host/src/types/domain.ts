@@ -283,6 +283,7 @@ export interface ButlerFocusProfile {
   projectIds: string[];
   riskPreference: string;
   reportPriority: string[];
+  summaryDebounceSeconds: number;
   [key: string]: unknown;
 }
 export type ButlerApprovalMode = "readonly" | "controlled" | "auto";
@@ -291,6 +292,7 @@ export type ButlerRiskLevel = "low" | "medium" | "high";
 export type ButlerSessionRole = "patrol" | "execution" | "verification" | "adhoc";
 export type ButlerSessionOwnershipMode = "managed" | "observed";
 export type ButlerSessionStatus = "idle" | "running" | "blocked" | "failed" | "closed";
+export type ButlerSessionSummaryStatus = "idle" | "scheduled" | "running" | "failed";
 export type ButlerCheckpointSourceKind = "snapshot" | "summary" | "verification" | "manual";
 export type ButlerCheckpointProgressState = "unknown" | "working" | "blocked" | "done";
 export type ProjectMemoryType = "arch" | "rule" | "decision" | "incident" | "verify" | "note";
@@ -376,6 +378,18 @@ export interface ButlerSession {
   lastSummary: string | null;
   lastCheckpointAt: string | null;
   createdAt: string;
+  updatedAt: string;
+}
+
+export interface ButlerSessionSummaryState {
+  butlerSessionId: string;
+  sourceMessageCount: number;
+  sourceLastMessageAt: string | null;
+  lastSummarizedAt: string | null;
+  lastSummarizedSequence: number | null;
+  debounceUntil: string | null;
+  status: ButlerSessionSummaryStatus;
+  errorDetail: string | null;
   updatedAt: string;
 }
 

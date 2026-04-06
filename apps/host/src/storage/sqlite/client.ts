@@ -31,6 +31,7 @@ export function createDatabaseClient(databasePath: string): DatabaseClient {
   ensureTerminalCommandTemplateRuntimeTypeColumn(db);
   ensureTerminalCommandTemplateProxySchema(db);
   ensureButlerProfileSchema(db);
+  ensureButlerSessionSummarySchema(db);
 
   return {
     db,
@@ -60,6 +61,18 @@ function ensureButlerProfileSchema(db: Database.Database): void {
   }
 
   db.exec("ALTER TABLE butler_profiles ADD COLUMN display_name TEXT NOT NULL DEFAULT '代码管家'");
+}
+
+function ensureButlerSessionSummarySchema(db: Database.Database): void {
+  const columns = db
+    .prepare("PRAGMA table_info(butler_session_summary_states)")
+    .all() as Array<{ name: string }>;
+
+  if (columns.length === 0 || columns.some((column) => column.name === "last_summarized_sequence")) {
+    return;
+  }
+
+  db.exec("ALTER TABLE butler_session_summary_states ADD COLUMN last_summarized_sequence INTEGER");
 }
 
 function ensureSessionProviderSchema(db: Database.Database): void {

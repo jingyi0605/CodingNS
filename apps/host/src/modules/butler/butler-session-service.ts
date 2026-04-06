@@ -2,6 +2,7 @@ import { AppError } from "../../shared/errors/app-error.js";
 import { createId } from "../../shared/utils/id.js";
 import { nowIso } from "../../shared/utils/time.js";
 import type {
+  ButlerProject,
   ButlerSession,
   ButlerSessionOwnershipMode,
   ButlerSessionRole,
@@ -69,7 +70,10 @@ export class ButlerSessionService {
     private readonly sessionIndexRepository: SessionIndexRepository,
     private readonly sessionStateRepository: SessionStateRepository,
     private readonly sessionLiveRuntimeService?: Pick<SessionLiveRuntimeService, "startLiveSession">,
-    private readonly sessionHistoryService?: Pick<SessionHistoryService, "resumeSession">
+    private readonly sessionHistoryService?: Pick<
+      SessionHistoryService,
+      "discoverWorkspaceSessions" | "listWorkspaceSessions" | "resumeSession"
+    >
   ) {}
 
   async startSession(
@@ -254,6 +258,31 @@ export class ButlerSessionService {
     };
   }
 
+  async ensureProjectSessionsSynced(
+    projectId: string,
+    userId: string,
+    options?: {
+      includeArchived?: boolean;
+      force?: boolean;
+    }
+  ): Promise<void> {
+    const project = this.getProjectOrThrow(projectId);
+
+    if (!isWorkspaceAutoManagedProject(project) || !this.sessionHistoryService?.listWorkspaceSessions) {
+      return;
+    }
+
+    if (this.sessionHistoryService.discoverWorkspaceSessions) {
+      await this.sessionHistoryService.discoverWorkspaceSessions(project.workspaceId, userId, {
+        maxAgeMs: options?.force ? 0 : 15_000,
+        force: options?.force ?? false,
+        refreshStateMode: "inline"
+      });
+    }
+
+    this.importWorkspaceSessions(project, userId, options?.includeArchived ?? false);
+  }
+
   captureSessionSnapshot(
     projectId: string,
     butlerSessionId: string,
@@ -376,6 +405,72 @@ export class ButlerSessionService {
 
     return project;
   }
+
+  private importWorkspaceSessions(
+    project: ButlerProject,
+    userId: string,
+    includeArchived: boolean
+  ): void {
+    if (!this.sessionHistoryService?.listWorkspaceSessions) {
+      return;
+    }
+
+    const existingSessionIds = new Set(
+      this.butlerSessionRepository.listByProject(project.id).map((record) => record.sessionId)
+    );
+    const workspaceSessions = this.sessionHistoryService.listWorkspaceSessions(project.workspaceId, userId);
+
+    for (const session of workspaceSessions) {
+      if (
+        session.isSubagent
+        || (!includeArchived && session.isArchived)
+        || existingSessionIds.has(session.sessionId)
+      ) {
+        continue;
+      }
+
+      this.createObservedSession(project, session, userId);
+      existingSessionIds.add(session.sessionId);
+    }
+  }
+
+  private createObservedSession(
+    project: ButlerProject,
+    session: ReturnType<SessionHistoryService["listWorkspaceSessions"]>[number],
+    userId: string
+  ): void {
+    const state = this.sessionStateRepository.findBySessionAndUser(session.sessionId, userId);
+    const normalizedRunningState = normalizeRunningState(session.runningState ?? state?.runningState ?? null);
+    const timestamp = nowIso();
+    const checkpointSummary = buildInitialCheckpointSummary(session.title, normalizedRunningState);
+    const checkpointProgressState = mapCheckpointProgressState(normalizedRunningState);
+    const checkpointRiskFlags = buildCheckpointRiskFlags(normalizedRunningState);
+    const checkpointActions = buildCheckpointNextActions(checkpointProgressState);
+    const created = this.butlerSessionRepository.create({
+      id: createId(),
+      projectId: project.id,
+      sessionId: session.sessionId,
+      role: "adhoc",
+      ownershipMode: "observed",
+      status: mapButlerStatusFromRunningState(normalizedRunningState),
+      lastSummary: checkpointSummary,
+      lastCheckpointAt: timestamp,
+      createdAt: session.createdAt,
+      updatedAt: session.updatedAt
+    });
+
+    this.sessionCheckpointRepository.create({
+      id: createId(),
+      butlerSessionId: created.id,
+      checkpointSeq: this.sessionCheckpointRepository.getLatestSeq(created.id) + 1,
+      sourceKind: "snapshot",
+      progressState: checkpointProgressState,
+      summary: checkpointSummary,
+      riskFlags: checkpointRiskFlags,
+      nextActions: checkpointActions,
+      capturedAt: timestamp
+    });
+  }
 }
 
 function requireNonEmptyText(value: string | undefined, field: string, detail: string): string {
@@ -478,6 +573,26 @@ function resolveProviderId(defaultProvider: string | null): "codex" | "claude-co
   }
 
   return "codex";
+}
+
+function isWorkspaceAutoManagedProject(project: ButlerProject): boolean {
+  return project.config.managedBy === "workspace-auto";
+}
+
+function normalizeRunningState(
+  runningState: string | null
+): SessionRunningState | null {
+  switch (runningState) {
+    case "idle":
+    case "starting":
+    case "running":
+    case "completed":
+    case "interrupted":
+    case "failed":
+      return runningState;
+    default:
+      return null;
+  }
 }
 
 function normalizeNullableText(value: string | null | undefined): string | null {

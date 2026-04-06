@@ -130,6 +130,7 @@ export class ButlerProjectRepository {
       .prepare(
         `UPDATE butler_projects
          SET name = ?,
+             repo_root = ?,
              default_provider = ?,
              instruction_profile_id = ?,
              approval_mode = ?,
@@ -144,6 +145,7 @@ export class ButlerProjectRepository {
       )
       .run(
         record.name,
+        record.repoRoot,
         record.defaultProvider,
         record.instructionProfileId,
         record.approvalMode,

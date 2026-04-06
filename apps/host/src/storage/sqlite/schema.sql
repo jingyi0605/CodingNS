@@ -459,6 +459,22 @@ CREATE INDEX IF NOT EXISTS idx_butler_sessions_project_id
 CREATE INDEX IF NOT EXISTS idx_butler_sessions_status
   ON butler_sessions(status, updated_at DESC);
 
+CREATE TABLE IF NOT EXISTS butler_session_summary_states (
+  butler_session_id TEXT PRIMARY KEY,
+  source_message_count INTEGER NOT NULL DEFAULT 0,
+  source_last_message_at TEXT,
+  last_summarized_at TEXT,
+  last_summarized_sequence INTEGER,
+  debounce_until TEXT,
+  status TEXT NOT NULL CHECK (status IN ('idle', 'scheduled', 'running', 'failed')),
+  error_detail TEXT,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (butler_session_id) REFERENCES butler_sessions(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_butler_session_summary_states_status
+  ON butler_session_summary_states(status, debounce_until ASC, updated_at ASC);
+
 CREATE TABLE IF NOT EXISTS session_checkpoints (
   id TEXT PRIMARY KEY,
   butler_session_id TEXT NOT NULL,
