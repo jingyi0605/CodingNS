@@ -381,7 +381,7 @@ function composeInstructionContent(
 - 当前工作目录是代码助手专用目录，只使用这里的助手规则，不回退到普通项目会话规则。
 - 当前聚合后的平台摘要写在 \`BUTLER_CONTEXT.md\`，先看这里，不要把所有项目原始记录一股脑塞进回答。
 - 当前摘要作用域是：${promptContext.scope === "project" ? `项目 ${promptContext.projectId}` : "全局总览"}。
-- 如果用户的问题里已经带了项目名、会话名、错误词或任务关键词，优先按 \`BUTLER_API.md\` 调 \`GET /api/butler/search?q=...\` 命中摘要，再决定要不要继续翻原始消息。
+- 如果用户的问题里已经带了项目名、会话名、错误词或任务关键词，优先按 \`BUTLER_API.md\` 调 \`GET /api/butler/search?q=...\` 命中摘要，再决定要不要继续翻原始消息；如果用户明确点名历史会话或归档会话，记得加 \`includeArchived=true\`。
 - 如果 \`BUTLER_CONTEXT.md\` 里的项目数或会话数是 0，不能直接下结论，必须先按 \`BUTLER_API.md\` 实查一次 \`GET /api/butler/overview\` 和 \`GET /api/butler/projects\`。
 - 如果用户追问的细节超出当前摘要，先明确缺口，再要求宿主系统按 \`BUTLER_API.md\` 的说明补查具体项目、会话、巡视或验证信息。
 - 如果用户追问会话内容，先定位 \`sessionId\`，再调用 \`GET /api/sessions/:sessionId/messages?direction=backward&limit=40\` 查看最近消息，不要只复述摘要。
@@ -405,7 +405,7 @@ function buildApiGuideContent(auth: ButlerWorkspaceCredential, authFilePath: str
 ## 默认读取顺序
 
 1. 先读 \`BUTLER_CONTEXT.md\` 的当前摘要。
-2. 用户的问题里带了项目名、会话名、报错词、任务词时，先补查 \`GET /api/butler/search?q=...\`，优先命中摘要层。
+2. 用户的问题里带了项目名、会话名、报错词、任务词时，先补查 \`GET /api/butler/search?q=...\`，优先命中摘要层；如果用户明确点名历史会话或归档会话，改用 \`GET /api/butler/search?q=...&includeArchived=true\`。
 3. 如果摘要里项目数或会话数是 0，先补查 \`GET /api/butler/overview\` 和 \`GET /api/butler/projects\`，确认不是旧摘要。
 4. 用户问全局情况时，补查 \`GET /api/butler/overview\`。
 5. 用户明确追问某个项目时，补查 \`GET /api/butler/projects/:projectId/context\`。
@@ -426,6 +426,7 @@ curl -H "Authorization: Bearer ${"$"}TOKEN" "${"$"}BASE_URL/api/butler/overview"
 - \`GET /api/butler/projects\`：当前 Butler 视图中的项目列表。
 - \`GET /api/butler/context-snapshot\`：完整聚合快照，仍然只返回摘要字段，不返回全量原始正文。
 - \`GET /api/butler/search?q=...\`：Butler 摘要优先检索入口，先按项目、会话、记忆、巡视、验证摘要做命中。
+- \`GET /api/butler/search?q=...&includeArchived=true\`：当用户明确要查历史会话或归档会话时，扩展到归档摘要。
 - \`GET /api/butler/projects/:projectId/context\`：单项目聚合上下文，用于回答项目级追问。
 - \`GET /api/butler/projects/:projectId/sessions\`：项目会话列表。
 - \`GET /api/butler/projects/:projectId/memories\`：项目记忆摘要列表。

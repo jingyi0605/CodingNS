@@ -3,6 +3,10 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
+import {
+  getSessionMessages,
+  type HistoryMessageDto
+} from "../../conversation/api/conversation-api";
 import { ComposerPanel } from "../../conversation/components/ComposerPanel";
 import { MessageTimeline } from "../../conversation/components/MessageTimeline";
 import { SessionRuntimeStore } from "../../conversation/runtime/session-runtime-store";
@@ -51,7 +55,23 @@ interface ButlerInitFormState {
 }
 
 interface ButlerSettingsFormState {
+  displayName: string;
+  agentsMode: "inline" | "file";
+  personaTone: ButlerToneId;
+  personaLanguage: ButlerLanguageId;
+  personaSummaryStyle: ButlerSummaryStyleId;
+  focusRiskPreference: ButlerRiskPreferenceId;
+  reportPriorityPreset: ButlerReportPriorityPresetId;
+  agentsContent: string;
   summaryDebounceSeconds: number;
+}
+
+interface ButlerSearchPreviewState {
+  hitKey: string | null;
+  sessionId: string | null;
+  loading: boolean;
+  error: string | null;
+  messages: HistoryMessageDto[];
 }
 
 type ButlerSidebarTabId = "info" | "automation" | "skills" | "settings";
@@ -86,7 +106,22 @@ const DEFAULT_INIT_FORM_STATE: ButlerInitFormState = {
   reportPriorityPreset: "risk-first"
 };
 const DEFAULT_SETTINGS_FORM_STATE: ButlerSettingsFormState = {
+  displayName: "",
+  agentsMode: "inline",
+  personaTone: "direct",
+  personaLanguage: "zh-CN",
+  personaSummaryStyle: "brief",
+  focusRiskPreference: "conservative",
+  reportPriorityPreset: "risk-first",
+  agentsContent: "",
   summaryDebounceSeconds: 300
+};
+const DEFAULT_SEARCH_PREVIEW_STATE: ButlerSearchPreviewState = {
+  hitKey: null,
+  sessionId: null,
+  loading: false,
+  error: null,
+  messages: []
 };
 const SUMMARY_DEBOUNCE_OPTIONS = [
   { value: 60, labelKey: "shell.butlerSummaryDebounceOption1Minute" },
@@ -118,9 +153,11 @@ export function ButlerPage() {
   const [projectActionKey, setProjectActionKey] = useState<string | null>(null);
   const [activeSidebarTab, setActiveSidebarTab] = useState<ButlerSidebarTabId>("info");
   const [searchQuery, setSearchQuery] = useState("");
+  const [searchIncludeArchived, setSearchIncludeArchived] = useState(false);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [searchResult, setSearchResult] = useState<ButlerSearchResultDto | null>(null);
+  const [searchPreview, setSearchPreview] = useState<ButlerSearchPreviewState>(DEFAULT_SEARCH_PREVIEW_STATE);
 
   if (!storeRef.current || currentWorkspaceIdRef.current !== workspaceId) {
     storeRef.current = new ButlerRuntimeStore(workspaceId);
@@ -208,10 +245,24 @@ export function ButlerPage() {
   }, [error, showToast]);
 
   useEffect(() => {
+    if (!profile) {
+      setSettingsForm(DEFAULT_SETTINGS_FORM_STATE);
+      return;
+    }
+
     setSettingsForm({
-      summaryDebounceSeconds: profile?.focus.summaryDebounceSeconds ?? DEFAULT_SETTINGS_FORM_STATE.summaryDebounceSeconds
+      displayName: profile.displayName,
+      agentsMode: profile.agentsMode,
+      personaTone: profile.persona.tone,
+      personaLanguage: profile.persona.language,
+      personaSummaryStyle: profile.persona.summaryStyle,
+      focusRiskPreference: profile.focus.riskPreference,
+      reportPriorityPreset: resolveReportPriorityPreset(profile.focus.reportPriority),
+      agentsContent: profile.agentsContent,
+      summaryDebounceSeconds:
+        profile.focus.summaryDebounceSeconds ?? DEFAULT_SETTINGS_FORM_STATE.summaryDebounceSeconds
     });
-  }, [profile?.focus.summaryDebounceSeconds]);
+  }, [profile]);
 
   useEffect(() => {
     let cancelled = false;
@@ -347,9 +398,12 @@ export function ButlerPage() {
         projectActionKey={projectActionKey}
         activeSidebarTab={activeSidebarTab}
         searchQuery={searchQuery}
+        searchIncludeArchived={searchIncludeArchived}
         searchLoading={searchLoading}
         searchError={searchError}
         searchResult={searchResult}
+        searchPreview={searchPreview}
+        settingsForm={settingsForm}
         summaryDebounceSeconds={settingsForm.summaryDebounceSeconds}
         savingSettings={savingSettings}
         controlSessionId={controlSession?.id ?? null}
@@ -358,8 +412,12 @@ export function ButlerPage() {
         focusedVerificationRunId={focusedVerificationRunId}
         onSidebarTabChange={setActiveSidebarTab}
         onSearchQueryChange={setSearchQuery}
+        onSearchIncludeArchivedChange={setSearchIncludeArchived}
         onSearch={() => {
           void handleSearchSubmit();
+        }}
+        onLoadSearchHitMessages={(hit) => {
+          void handleLoadSearchHitMessages(hit);
         }}
         onNavigateToProject={navigateToProject}
         onNavigateToSearchHit={handleNavigateToSearchHit}
@@ -370,10 +428,11 @@ export function ButlerPage() {
         onNavigateRoute={(routePath) => {
           navigate(routePath);
         }}
-        onSummaryDebounceChange={(value) => {
-          setSettingsForm({
-            summaryDebounceSeconds: value
-          });
+        onSettingsFormChange={(patch) => {
+          setSettingsForm((current) => ({
+            ...current,
+            ...patch
+          }));
         }}
         onSaveSettings={() => {
           void handleSaveSettings();
@@ -397,10 +456,13 @@ export function ButlerPage() {
       projectContextError,
       projectContextLoading,
       searchError,
+      searchIncludeArchived,
       searchLoading,
+      searchPreview,
       searchQuery,
       searchResult,
       savingSettings,
+      settingsForm,
       selectedProject,
       selectedProjectId,
       settingsForm.summaryDebounceSeconds
@@ -514,12 +576,30 @@ export function ButlerPage() {
       return;
     }
 
+    if (!settingsForm.displayName.trim()) {
+      showToast({
+        title: t("shell.butlerInitNameRequired"),
+        tone: "warning"
+      });
+      return;
+    }
+
     setSavingSettings(true);
 
     try {
       await store.updateProfile({
+        displayName: settingsForm.displayName.trim(),
+        agentsMode: settingsForm.agentsMode,
+        agentsContent: settingsForm.agentsContent,
+        persona: {
+          tone: settingsForm.personaTone,
+          language: settingsForm.personaLanguage,
+          summaryStyle: settingsForm.personaSummaryStyle
+        },
         focus: {
           ...profile.focus,
+          riskPreference: settingsForm.focusRiskPreference,
+          reportPriority: REPORT_PRIORITY_PRESET_VALUES[settingsForm.reportPriorityPreset],
           summaryDebounceSeconds: settingsForm.summaryDebounceSeconds
         }
       });
@@ -545,8 +625,10 @@ export function ButlerPage() {
     setProjectActionKey(null);
     setActiveSidebarTab("info");
     setSearchQuery("");
+    setSearchIncludeArchived(false);
     setSearchError(null);
     setSearchResult(null);
+    setSearchPreview(DEFAULT_SEARCH_PREVIEW_STATE);
     navigate(buildWorkspaceButlerPath(workspaceId), {
       replace: true
     });
@@ -634,14 +716,51 @@ export function ButlerPage() {
     try {
       const response = await searchButlerSummaries({
         q: normalizedQuery,
-        projectId: selectedProjectId
+        projectId: selectedProjectId,
+        includeArchived: searchIncludeArchived
       });
       setSearchResult(response.result);
+      setSearchPreview(DEFAULT_SEARCH_PREVIEW_STATE);
     } catch (searchRequestError) {
       setSearchResult(null);
       setSearchError(searchRequestError instanceof Error ? searchRequestError.message : String(searchRequestError));
+      setSearchPreview(DEFAULT_SEARCH_PREVIEW_STATE);
     } finally {
       setSearchLoading(false);
+    }
+  }
+
+  async function handleLoadSearchHitMessages(hit: ButlerSearchHitDto) {
+    if (!hit.sessionId) {
+      return;
+    }
+
+    const hitKey = buildSearchHitKey(hit);
+    setSearchPreview({
+      hitKey,
+      sessionId: hit.sessionId,
+      loading: true,
+      error: null,
+      messages: []
+    });
+
+    try {
+      const response = await getSessionMessages(hit.sessionId, null, 40, "backward");
+      setSearchPreview({
+        hitKey,
+        sessionId: hit.sessionId,
+        loading: false,
+        error: null,
+        messages: response.messages
+      });
+    } catch (previewError) {
+      setSearchPreview({
+        hitKey,
+        sessionId: hit.sessionId,
+        loading: false,
+        error: previewError instanceof Error ? previewError.message : String(previewError),
+        messages: []
+      });
     }
   }
 
@@ -820,124 +939,129 @@ export function ButlerPage() {
   }
 
   return (
-    <main className="workbench-page butler-page-shell butler-chat-workspace">
-      <section className="butler-main-column surface-card">
-        <header className="butler-main-header">
-          <div className="butler-chat-hero">
-            <div className="butler-chat-avatar" aria-hidden="true">
-              <span>{butlerAvatar}</span>
-            </div>
-            <div className="butler-main-heading">
-              <h1>{butlerDisplayName}</h1>
-            </div>
+    <main className="workbench-page conversation-page-shell butler-page-shell butler-chat-workspace">
+      <header className="workbench-auxiliary-header butler-main-header" data-window-drag-handle="conversation-header">
+        <div className="butler-header-main">
+          <div className="butler-chat-avatar" aria-hidden="true">
+            <span>{butlerAvatar}</span>
           </div>
-          <div className="butler-toolbar-cluster">
-            <button
-              type="button"
-              className="butler-toolbar-button"
-              disabled={loading || sending || switchingProvider}
-              onClick={() => {
-                void handleStartFreshSession();
+          <div className="butler-main-heading">
+            <h1>{butlerDisplayName}</h1>
+          </div>
+        </div>
+        <div className="butler-toolbar-cluster">
+          <div className="butler-provider-switcher">
+            <select
+              aria-label={t("shell.butlerProviderLabel")}
+              value={activeProvider}
+              disabled={switchingProvider || sending}
+              onChange={(event) => {
+                void handleProviderSwitch(event.target.value as ButlerProviderId);
               }}
             >
-              {t("shell.butlerNewSessionAction")}
-            </button>
-            <div className="butler-provider-switcher">
-              <label>
-                <span>{t("shell.butlerProviderLabel")}</span>
-                <select
-                  value={activeProvider}
-                  disabled={switchingProvider || sending}
-                  onChange={(event) => {
-                    void handleProviderSwitch(event.target.value as ButlerProviderId);
-                  }}
-                >
-                  {providerOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <button
-                type="button"
-                disabled={loading || sending || switchingProvider}
-                onClick={() => {
-                  void store.refreshAll();
-                }}
-              >
-                {t("shell.butlerRefreshAction")}
-              </button>
-            </div>
+              {providerOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
           </div>
-        </header>
+          <button
+            type="button"
+            className="terminal-tab-control butler-header-icon-button"
+            aria-label={t("shell.butlerNewSessionAction")}
+            title={t("shell.butlerNewSessionAction")}
+            disabled={loading || sending || switchingProvider}
+            onClick={() => {
+              void handleStartFreshSession();
+            }}
+          >
+            <span className="terminal-toolbar-icon" aria-hidden="true">
+              <ButlerPlusIcon />
+            </span>
+          </button>
+          <button
+            type="button"
+            className="terminal-tab-control butler-header-icon-button"
+            aria-label={t("shell.butlerRefreshAction")}
+            title={t("shell.butlerRefreshAction")}
+            disabled={loading || sending || switchingProvider}
+            onClick={() => {
+              void store.refreshAll();
+            }}
+          >
+            <span className="terminal-toolbar-icon" aria-hidden="true">
+              <ButlerRefreshIcon />
+            </span>
+          </button>
+        </div>
+      </header>
 
-        <section className="butler-conversation-panel">
-          <div key={`timeline:${activeProvider}:${viewKey}`} className="butler-conversation-shell">
-            <MessageTimeline
-              sessionId={controlSession?.session?.sessionId}
-              messages={effectiveMessages}
-              historyState={effectiveHistoryState}
-              loadingOlderMessages={effectiveLoadingOlderMessages}
-              hasOlderMessages={effectiveHasOlderMessages}
-              provider={activeProvider}
-              assistantAvatar={
-                <span className="butler-message-avatar" aria-hidden="true">
-                  {butlerAvatar}
-                </span>
+      <section className="butler-main-column">
+        <div key={`timeline:${activeProvider}:${viewKey}`} className="butler-conversation-shell">
+          <MessageTimeline
+            sessionId={controlSession?.session?.sessionId}
+            messages={effectiveMessages}
+            historyState={effectiveHistoryState}
+            loadingOlderMessages={effectiveLoadingOlderMessages}
+            hasOlderMessages={effectiveHasOlderMessages}
+            provider={activeProvider}
+            assistantAvatar={
+              <span className="butler-message-avatar" aria-hidden="true">
+                {butlerAvatar}
+              </span>
+            }
+            onLoadOlderMessages={() => {
+              if (!liveRuntimeStore) {
+                return;
               }
-              onLoadOlderMessages={() => {
-                if (!liveRuntimeStore) {
-                  return;
+
+              void liveRuntimeStore.loadOlderMessages();
+            }}
+            onRetryMessage={(clientRequestId) => {
+              const targetMessage = effectiveMessages.find(
+                (message) => message.clientRequestId === clientRequestId
+              );
+
+              if (targetMessage?.content.trim()) {
+                void store.sendMessage(targetMessage.content);
+                return;
+              }
+
+              void store.retryMessage(clientRequestId);
+            }}
+          />
+
+          <div className="butler-composer-shell">
+            <ComposerPanel
+              capabilities={capabilities}
+              draftStorageId={`butler:${activeProvider}:${viewKey}`}
+              placeholder={t("shell.butlerComposerPlaceholder", {
+                displayName: butlerDisplayName
+              })}
+              hasActiveRun={effectiveRuntimeHasActiveRun}
+              canInterrupt={effectiveRuntimeCanInterrupt}
+              contextUsage={effectiveContextUsage}
+              isSubmitting={sending || switchingProvider}
+              isRunning={effectiveRuntimeHasActiveRun ?? false}
+              onSend={async (content, options) => {
+                if ((options?.attachments?.length ?? 0) > 0) {
+                  showToast({
+                    title: t("shell.butlerAttachmentUnsupported"),
+                    tone: "warning"
+                  });
                 }
 
-                void liveRuntimeStore.loadOlderMessages();
-              }}
-              onRetryMessage={(clientRequestId) => {
-                const targetMessage = effectiveMessages.find(
-                  (message) => message.clientRequestId === clientRequestId
-                );
-
-                if (targetMessage?.content.trim()) {
-                  void store.sendMessage(targetMessage.content);
-                  return;
-                }
-
-                void store.retryMessage(clientRequestId);
+                await store.sendMessage(content, {
+                  model: options?.model ?? null,
+                  reasoningLevel: options?.reasoningLevel ?? null,
+                  permissionMode: null
+                });
+                requestNavigationRefresh();
               }}
             />
-
-            <div className="butler-composer-shell">
-              <ComposerPanel
-                capabilities={capabilities}
-                draftStorageId={`butler:${activeProvider}:${viewKey}`}
-                placeholder={t("shell.butlerComposerPlaceholder", {
-                  displayName: butlerDisplayName
-                })}
-                hasActiveRun={effectiveRuntimeHasActiveRun}
-                canInterrupt={effectiveRuntimeCanInterrupt}
-                contextUsage={effectiveContextUsage}
-                isSubmitting={sending || switchingProvider}
-                isRunning={effectiveRuntimeHasActiveRun ?? false}
-                onSend={async (content, options) => {
-                  if ((options?.attachments?.length ?? 0) > 0) {
-                    showToast({
-                      title: t("shell.butlerAttachmentUnsupported"),
-                      tone: "warning"
-                    });
-                  }
-
-                  await store.sendMessage(content, {
-                    model: options?.model ?? null,
-                    reasoningLevel: options?.reasoningLevel ?? null,
-                    permissionMode: null
-                  });
-                  requestNavigationRefresh();
-                }}
-              />
-            </div>
           </div>
-        </section>
+        </div>
       </section>
     </main>
   );
@@ -955,9 +1079,12 @@ function ButlerAuxiliaryPanel(props: {
   projectActionKey: string | null;
   activeSidebarTab: ButlerSidebarTabId;
   searchQuery: string;
+  searchIncludeArchived: boolean;
   searchLoading: boolean;
   searchError: string | null;
   searchResult: ButlerSearchResultDto | null;
+  searchPreview: ButlerSearchPreviewState;
+  settingsForm: ButlerSettingsFormState;
   summaryDebounceSeconds: number;
   savingSettings: boolean;
   controlSessionId: string | null;
@@ -966,13 +1093,15 @@ function ButlerAuxiliaryPanel(props: {
   focusedVerificationRunId: string | null;
   onSidebarTabChange: (tabId: ButlerSidebarTabId) => void;
   onSearchQueryChange: (value: string) => void;
+  onSearchIncludeArchivedChange: (value: boolean) => void;
   onSearch: () => void;
+  onLoadSearchHitMessages: (hit: ButlerSearchHitDto) => void;
   onNavigateToProject: (project: ButlerProjectDigestDto, focus?: Partial<ButlerFocusQuery>) => void;
   onNavigateToSearchHit: (hit: ButlerSearchHitDto) => void;
   onProjectAction: (actionKey: string, action: () => Promise<void>, successDescription: string) => Promise<void>;
   onOpenConversation: (workspaceId: string, sessionId: string) => void;
   onNavigateRoute: (routePath: string) => void;
-  onSummaryDebounceChange: (value: number) => void;
+  onSettingsFormChange: (patch: Partial<ButlerSettingsFormState>) => void;
   onSaveSettings: () => void;
 }) {
   const selectedProject = props.selectedProject;
@@ -985,21 +1114,23 @@ function ButlerAuxiliaryPanel(props: {
 
   return (
     <div className="butler-side-column">
-      <div className="workbench-info-tabs butler-side-tabs" role="tablist" aria-label={t("shell.butlerEntry")}>
-        {sidebarTabs.map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            role="tab"
-            aria-selected={props.activeSidebarTab === tab.id}
-            className={props.activeSidebarTab === tab.id ? "workbench-info-tab active" : "workbench-info-tab"}
-            onClick={() => {
-              props.onSidebarTabChange(tab.id);
-            }}
-          >
-            {tab.label}
-          </button>
-        ))}
+      <div className="workbench-auxiliary-header butler-side-tabs-shell">
+        <div className="workbench-info-tabs butler-side-tabs" role="tablist" aria-label={t("shell.butlerEntry")}>
+          {sidebarTabs.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              aria-selected={props.activeSidebarTab === tab.id}
+              className={props.activeSidebarTab === tab.id ? "workbench-info-tab active" : "workbench-info-tab"}
+              onClick={() => {
+                props.onSidebarTabChange(tab.id);
+              }}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {props.activeSidebarTab === "info" ? (
@@ -1034,6 +1165,18 @@ function ButlerAuxiliaryPanel(props: {
                     })
                   : t("shell.butlerSearchScopeGlobal")}
               </p>
+              <label className="butler-search-toggle">
+                <input
+                  type="checkbox"
+                  checked={props.searchIncludeArchived}
+                  disabled={props.searchLoading}
+                  onChange={(event) => {
+                    props.onSearchIncludeArchivedChange(event.target.checked);
+                  }}
+                />
+                <span>{t("shell.butlerSearchIncludeArchived")}</span>
+              </label>
+              <p className="butler-secondary-text">{t("shell.butlerSearchIncludeArchivedHint")}</p>
               <div className="butler-inline-actions">
                 <button type="submit" disabled={props.searchLoading}>
                   {props.searchLoading ? t("shell.butlerSearchSearching") : t("shell.butlerSearchAction")}
@@ -1051,7 +1194,7 @@ function ButlerAuxiliaryPanel(props: {
                     <article key={`${item.kind}:${item.id}`} className="butler-context-item">
                       <div className="butler-context-item-header">
                         <strong>{item.title}</strong>
-                        <span>{renderSearchKind(item.kind)}</span>
+                        <span>{renderSearchKind(item.kind, item.isArchived)}</span>
                       </div>
                       <p>{item.summary}</p>
                       <p className="butler-secondary-text">
@@ -1069,7 +1212,23 @@ function ButlerAuxiliaryPanel(props: {
                           >
                             {t("shell.butlerSearchOpenAction")}
                           </button>
+                          {item.sessionId ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                props.onLoadSearchHitMessages(item);
+                              }}
+                            >
+                              {props.searchPreview.loading
+                                && props.searchPreview.hitKey === buildSearchHitKey(item)
+                                ? t("shell.butlerSearchPreviewLoading")
+                                : t("shell.butlerSearchPreviewAction")}
+                            </button>
+                          ) : null}
                         </div>
+                      ) : null}
+                      {item.sessionId && props.searchPreview.hitKey === buildSearchHitKey(item) ? (
+                        <SearchPreviewPanel preview={props.searchPreview} />
                       ) : null}
                     </article>
                   ))}
@@ -1125,13 +1284,130 @@ function ButlerAuxiliaryPanel(props: {
             <p>{t("shell.butlerSettingsDescription")}</p>
           </header>
           <label className="butler-form-field">
+            <span>{t("shell.butlerDisplayNameLabel")}</span>
+            <input
+              aria-label={t("shell.butlerDisplayNameLabel")}
+              value={props.settingsForm.displayName}
+              disabled={props.savingSettings}
+              onChange={(event) => {
+                props.onSettingsFormChange({
+                  displayName: event.target.value
+                });
+              }}
+            />
+          </label>
+          <label className="butler-form-field">
+            <span>{t("shell.butlerAgentsModeLabel")}</span>
+            <select
+              aria-label={t("shell.butlerAgentsModeLabel")}
+              value={props.settingsForm.agentsMode}
+              disabled={props.savingSettings}
+              onChange={(event) => {
+                props.onSettingsFormChange({
+                  agentsMode: event.target.value as ButlerSettingsFormState["agentsMode"]
+                });
+              }}
+            >
+              <option value="inline">{t("shell.butlerAgentsModeInline")}</option>
+              <option value="file">{t("shell.butlerAgentsModeFile")}</option>
+            </select>
+          </label>
+          <label className="butler-form-field">
+            <span>{t("shell.butlerPersonaToneLabel")}</span>
+            <select
+              aria-label={t("shell.butlerPersonaToneLabel")}
+              value={props.settingsForm.personaTone}
+              disabled={props.savingSettings}
+              onChange={(event) => {
+                props.onSettingsFormChange({
+                  personaTone: event.target.value as ButlerToneId
+                });
+              }}
+            >
+              <option value="direct">{t("shell.butlerToneDirect")}</option>
+              <option value="steady">{t("shell.butlerToneSteady")}</option>
+              <option value="friendly">{t("shell.butlerToneFriendly")}</option>
+            </select>
+          </label>
+          <label className="butler-form-field">
+            <span>{t("shell.butlerPersonaLanguageLabel")}</span>
+            <select
+              aria-label={t("shell.butlerPersonaLanguageLabel")}
+              value={props.settingsForm.personaLanguage}
+              disabled={props.savingSettings}
+              onChange={(event) => {
+                props.onSettingsFormChange({
+                  personaLanguage: event.target.value as ButlerLanguageId
+                });
+              }}
+            >
+              <option value="zh-CN">{t("shell.butlerLanguageZhCn")}</option>
+              <option value="en-US">{t("shell.butlerLanguageEnUs")}</option>
+              <option value="bilingual">{t("shell.butlerLanguageBilingual")}</option>
+            </select>
+          </label>
+          <label className="butler-form-field">
+            <span>{t("shell.butlerPersonaSummaryStyleLabel")}</span>
+            <select
+              aria-label={t("shell.butlerPersonaSummaryStyleLabel")}
+              value={props.settingsForm.personaSummaryStyle}
+              disabled={props.savingSettings}
+              onChange={(event) => {
+                props.onSettingsFormChange({
+                  personaSummaryStyle: event.target.value as ButlerSummaryStyleId
+                });
+              }}
+            >
+              <option value="brief">{t("shell.butlerSummaryBrief")}</option>
+              <option value="structured">{t("shell.butlerSummaryStructured")}</option>
+              <option value="thorough">{t("shell.butlerSummaryThorough")}</option>
+            </select>
+          </label>
+          <label className="butler-form-field">
+            <span>{t("shell.butlerFocusRiskPreferenceLabel")}</span>
+            <select
+              aria-label={t("shell.butlerFocusRiskPreferenceLabel")}
+              value={props.settingsForm.focusRiskPreference}
+              disabled={props.savingSettings}
+              onChange={(event) => {
+                props.onSettingsFormChange({
+                  focusRiskPreference: event.target.value as ButlerRiskPreferenceId
+                });
+              }}
+            >
+              <option value="conservative">{t("shell.butlerRiskConservative")}</option>
+              <option value="balanced">{t("shell.butlerRiskBalanced")}</option>
+              <option value="proactive">{t("shell.butlerRiskProactive")}</option>
+            </select>
+          </label>
+          <label className="butler-form-field">
+            <span>{t("shell.butlerReportPriorityPresetLabel")}</span>
+            <select
+              aria-label={t("shell.butlerReportPriorityPresetLabel")}
+              value={props.settingsForm.reportPriorityPreset}
+              disabled={props.savingSettings}
+              onChange={(event) => {
+                props.onSettingsFormChange({
+                  reportPriorityPreset: event.target.value as ButlerReportPriorityPresetId
+                });
+              }}
+            >
+              <option value="risk-first">{t("shell.butlerReportRiskFirst")}</option>
+              <option value="blocker-first">{t("shell.butlerReportBlockerFirst")}</option>
+              <option value="verification-first">{t("shell.butlerReportVerificationFirst")}</option>
+              <option value="progress-first">{t("shell.butlerReportProgressFirst")}</option>
+            </select>
+          </label>
+          <label className="butler-form-field">
             <span>{t("shell.butlerSummaryDebounceLabel")}</span>
             <select
               aria-label={t("shell.butlerSummaryDebounceLabel")}
-              value={String(props.summaryDebounceSeconds)}
+              value={String(props.settingsForm.summaryDebounceSeconds)}
               disabled={props.savingSettings}
               onChange={(event) => {
-                props.onSummaryDebounceChange(Number(event.target.value));
+                props.onSettingsFormChange({
+                  summaryDebounceSeconds: Number(event.target.value)
+                });
               }}
             >
               {SUMMARY_DEBOUNCE_OPTIONS.map((option) => (
@@ -1141,6 +1417,21 @@ function ButlerAuxiliaryPanel(props: {
               ))}
             </select>
             <small>{t("shell.butlerSummaryDebounceHint")}</small>
+          </label>
+          <label className="butler-form-field">
+            <span>{t("shell.butlerAgentsContentLabel")}</span>
+            <textarea
+              aria-label={t("shell.butlerAgentsContentLabel")}
+              rows={14}
+              value={props.settingsForm.agentsContent}
+              disabled={props.savingSettings}
+              onChange={(event) => {
+                props.onSettingsFormChange({
+                  agentsContent: event.target.value
+                });
+              }}
+            />
+            <small>{t("shell.butlerAgentsContentHint")}</small>
           </label>
           <div className="butler-inline-actions">
             <button
@@ -1562,6 +1853,49 @@ function SidebarPlaceholderCard(props: {
   );
 }
 
+function SearchPreviewPanel(props: {
+  preview: ButlerSearchPreviewState;
+}) {
+  if (props.preview.loading) {
+    return <p className="butler-secondary-text">{t("shell.butlerSearchPreviewLoading")}</p>;
+  }
+
+  if (props.preview.error) {
+    return (
+      <p className="butler-secondary-text" data-tone="error">
+        {props.preview.error}
+      </p>
+    );
+  }
+
+  if (props.preview.messages.length === 0) {
+    return <p className="butler-secondary-text">{t("shell.butlerSearchPreviewEmpty")}</p>;
+  }
+
+  return (
+    <section className="butler-search-preview">
+      <h3>{t("shell.butlerSearchPreviewTitle")}</h3>
+      <div className="butler-search-preview-list">
+        {props.preview.messages.map((message) => (
+          <article
+            key={`${message.messageId}:${message.sequence}`}
+            className="butler-search-preview-item"
+          >
+            <div className="butler-context-item-header">
+              <strong>{renderPreviewRole(message.role)}</strong>
+              <span>#{message.sequence}</span>
+            </div>
+            <p>{truncatePreviewContent(message.content)}</p>
+            <p className="butler-secondary-text">
+              {formatIsoDateTime(message.timestamp)}
+            </p>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function ContextSection(props: { title: string; children: ReactNode }) {
   return (
     <section className="butler-context-section">
@@ -1726,6 +2060,39 @@ function formatIsoDateTime(value: string | null | undefined): string {
   }).format(date);
 }
 
+function buildSearchHitKey(hit: ButlerSearchHitDto): string {
+  return `${hit.kind}:${hit.id}`;
+}
+
+function renderPreviewRole(role: HistoryMessageDto["role"]): string {
+  switch (role) {
+    case "assistant":
+      return t("shell.butlerSearchPreviewRoleAssistant");
+    case "user":
+      return t("shell.butlerSearchPreviewRoleUser");
+    case "tool":
+      return t("shell.butlerSearchPreviewRoleTool");
+    case "system":
+      return t("shell.butlerSearchPreviewRoleSystem");
+    default:
+      return role;
+  }
+}
+
+function truncatePreviewContent(content: string): string {
+  const normalized = content.trim();
+
+  if (!normalized) {
+    return t("shell.butlerSearchPreviewEmptyContent");
+  }
+
+  if (normalized.length <= 220) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, 220)}...`;
+}
+
 function resolveButlerAvatar(displayName: string): string {
   const normalized = displayName.trim();
 
@@ -1741,21 +2108,62 @@ function resolveButlerAvatar(displayName: string): string {
   return BUTLER_AVATARS[codePointTotal % BUTLER_AVATARS.length]!;
 }
 
-function renderSearchKind(kind: ButlerSearchHitDto["kind"]): string {
-  switch (kind) {
-    case "project":
-      return t("shell.butlerSearchKindProject");
-    case "session":
-      return t("shell.butlerSearchKindSession");
-    case "memory":
-      return t("shell.butlerSearchKindMemory");
-    case "patrol":
-      return t("shell.butlerSearchKindPatrol");
-    case "verification":
-      return t("shell.butlerSearchKindVerification");
-    default:
-      return kind;
+function ButlerPlusIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <line x1="12" y1="5" x2="12" y2="19" />
+      <line x1="5" y1="12" x2="19" y2="12" />
+    </svg>
+  );
+}
+
+function ButlerRefreshIcon() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <path
+        d="M12.8 5.2A5.5 5.5 0 1 0 13.5 8h-1.8A3.7 3.7 0 1 1 10.6 5l-1.4 1.4h4V2l-1.4 1.4z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
+function renderSearchKind(kind: ButlerSearchHitDto["kind"], isArchived: boolean): string {
+  const label = (() => {
+    switch (kind) {
+      case "project":
+        return t("shell.butlerSearchKindProject");
+      case "session":
+        return t("shell.butlerSearchKindSession");
+      case "memory":
+        return t("shell.butlerSearchKindMemory");
+      case "patrol":
+        return t("shell.butlerSearchKindPatrol");
+      case "verification":
+        return t("shell.butlerSearchKindVerification");
+      default:
+        return kind;
+    }
+  })();
+
+  if (!isArchived) {
+    return label;
   }
+
+  return `${label} · ${t("shell.butlerSearchArchivedBadge")}`;
+}
+
+function resolveReportPriorityPreset(reportPriority: string[]): ButlerReportPriorityPresetId {
+  for (const [preset, priorities] of Object.entries(REPORT_PRIORITY_PRESET_VALUES)) {
+    if (
+      priorities.length === reportPriority.length
+      && priorities.every((value, index) => value === reportPriority[index])
+    ) {
+      return preset as ButlerReportPriorityPresetId;
+    }
+  }
+
+  return "risk-first";
 }
 
 function useButlerLiveRuntime(runtimeStore: SessionRuntimeStore | null): {

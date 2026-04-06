@@ -157,11 +157,14 @@ describe("butler context routes", () => {
           {
             kind: "session",
             id: "butler-session-1",
+            sessionId: "session-1",
             projectId: "project-1",
+            workspaceId: "workspace-1",
             title: "修复控制台",
             summary: "构建被类型错误卡住",
             score: 12,
-            updatedAt: "2026-04-05T02:01:00.000Z"
+            updatedAt: "2026-04-05T02:01:00.000Z",
+            isArchived: true
           }
         ]
       }))
@@ -195,10 +198,16 @@ describe("butler context routes", () => {
 
     const search = await app.inject({
       method: "GET",
-      url: "/api/butler/search?q=%E7%B1%BB%E5%9E%8B%E9%94%99%E8%AF%AF"
+      url: "/api/butler/search?q=%E7%B1%BB%E5%9E%8B%E9%94%99%E8%AF%AF&projectId=project-1&includeArchived=true"
     });
     expect(search.statusCode).toBe(200);
     expect(search.json().result.version).toBe("ctx-search-1");
     expect(search.json().result.items[0].kind).toBe("session");
+    expect(
+      (butlerContextAggregator as unknown as { searchSummaries: ReturnType<typeof vi.fn> }).searchSummaries
+    ).toHaveBeenCalledWith("user-1", "类型错误", {
+      projectId: "project-1",
+      includeArchived: true
+    });
   });
 });

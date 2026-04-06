@@ -285,12 +285,14 @@ describe("ButlerPage", () => {
           {
             kind: "session",
             id: "butler-session-1",
+            sessionId: "session-1",
             projectId: "project-1",
             workspaceId: "workspace-1",
             title: "项目甲执行会话",
             summary: "构建被类型错误卡住",
             score: 12,
-            updatedAt: "2026-04-05T00:00:00.000Z"
+            updatedAt: "2026-04-05T00:00:00.000Z",
+            isArchived: false
           }
         ]
       }
@@ -517,6 +519,7 @@ describe("ButlerPage", () => {
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: t("shell.butlerNewSessionAction") })).toBeInTheDocument();
+      expect(screen.getByRole("combobox", { name: t("shell.butlerProviderLabel") })).toBeInTheDocument();
     });
 
     expect(screen.getAllByText("📚").length).toBeGreaterThan(0);
@@ -599,13 +602,15 @@ describe("ButlerPage", () => {
 
     const settingsSidePanel = setAuxiliaryPanelMock.mock.calls.at(-1)?.[0] as {
       props: {
-        onSummaryDebounceChange: (value: number) => void;
+        onSettingsFormChange: (patch: { summaryDebounceSeconds: number }) => void;
         onSaveSettings: () => void;
       };
     };
 
     await act(async () => {
-      settingsSidePanel.props.onSummaryDebounceChange(600);
+      settingsSidePanel.props.onSettingsFormChange({
+        summaryDebounceSeconds: 600
+      });
     });
 
     const updatedSidePanel = setAuxiliaryPanelMock.mock.calls.at(-1)?.[0] as {
@@ -620,10 +625,18 @@ describe("ButlerPage", () => {
 
     await waitFor(() => {
       expect(mockedUpdateButlerProfile).toHaveBeenCalledWith({
+        displayName: "阿尔文",
+        agentsMode: "inline",
+        agentsContent: "测试",
+        persona: {
+          tone: "direct",
+          language: "zh-CN",
+          summaryStyle: "brief"
+        },
         focus: {
           projectIds: [],
           riskPreference: "conservative",
-          reportPriority: [],
+          reportPriority: ["risk", "blocker", "verification"],
           summaryDebounceSeconds: 600
         }
       });
@@ -788,8 +801,64 @@ describe("ButlerPage", () => {
     await waitFor(() => {
       expect(mockedSearchButlerSummaries).toHaveBeenCalledWith({
         q: "类型错误",
-        projectId: "project-1"
+        projectId: "project-1",
+        includeArchived: false
       });
+    });
+  });
+
+  it("摘要命中支持补查最近几十条原始消息", async () => {
+    mockedGetButlerProfile.mockResolvedValueOnce({
+      initialized: true,
+      profile: {
+        id: "default",
+        displayName: "阿尔文",
+        providerId: "codex",
+        workspacePath: "/tmp/butler",
+        agentsMode: "inline",
+        agentsFilePath: null,
+        agentsContent: "测试",
+        persona: { tone: "direct", language: "zh-CN", summaryStyle: "brief" },
+        focus: { projectIds: [], riskPreference: "conservative", reportPriority: [], summaryDebounceSeconds: 300 },
+        initializedAt: "2026-04-05T00:00:00.000Z",
+        updatedAt: "2026-04-05T00:00:00.000Z"
+      }
+    });
+
+    renderPageWithEntry("/workspaces/workspace-1/butler?projectId=project-1");
+
+    await waitFor(() => {
+      expect(setAuxiliaryPanelMock).toHaveBeenCalled();
+    });
+
+    const latestSidePanel = setAuxiliaryPanelMock.mock.calls.at(-1)?.[0] as {
+      props: {
+        onSearchQueryChange: (value: string) => void;
+        onSearch: () => void;
+      };
+    };
+
+    await act(async () => {
+      latestSidePanel.props.onSearchQueryChange("类型错误");
+    });
+
+    const searchSidePanel = setAuxiliaryPanelMock.mock.calls.at(-1)?.[0] as {
+      props: {
+        onSearch: () => void;
+      };
+    };
+
+    await act(async () => {
+      searchSidePanel.props.onSearch();
+    });
+
+    const previewSidePanel = setAuxiliaryPanelMock.mock.calls.at(-1)?.[0];
+    render(previewSidePanel);
+
+    fireEvent.click(screen.getByRole("button", { name: t("shell.butlerSearchPreviewAction") }));
+
+    await waitFor(() => {
+      expect(mockedGetSessionMessages).toHaveBeenCalledWith("session-1", null, 40, "backward");
     });
   });
 

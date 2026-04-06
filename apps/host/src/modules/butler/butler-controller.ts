@@ -31,6 +31,7 @@ interface ButlerProjectListQuery {
 interface ButlerSearchQuery {
   q?: string;
   projectId?: string;
+  includeArchived?: string;
 }
 
 interface ButlerProjectParams {
@@ -328,7 +329,8 @@ export class ButlerController {
         requireUserId(request),
         request.query.q ?? "",
         {
-          projectId: request.query.projectId?.trim() || null
+          projectId: request.query.projectId?.trim() || null,
+          includeArchived: request.query.includeArchived === "true"
         }
       )
     });

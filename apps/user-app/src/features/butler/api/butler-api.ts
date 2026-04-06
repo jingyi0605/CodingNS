@@ -231,12 +231,14 @@ export interface ButlerProjectContextDto {
 export interface ButlerSearchHitDto {
   kind: "project" | "session" | "memory" | "patrol" | "verification";
   id: string;
+  sessionId: string | null;
   projectId: string | null;
   workspaceId: string | null;
   title: string;
   summary: string;
   score: number;
   updatedAt: string;
+  isArchived: boolean;
 }
 
 export interface ButlerSearchResultDto {
@@ -339,12 +341,17 @@ export function getButlerProjectContext(projectId: string) {
 export function searchButlerSummaries(payload: {
   q: string;
   projectId?: string | null;
+  includeArchived?: boolean;
 }) {
   const searchParams = new URLSearchParams();
   searchParams.set("q", payload.q);
 
   if (payload.projectId?.trim()) {
     searchParams.set("projectId", payload.projectId.trim());
+  }
+
+  if (payload.includeArchived) {
+    searchParams.set("includeArchived", "true");
   }
 
   return httpClient.request<{ result: ButlerSearchResultDto }>(

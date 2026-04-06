@@ -60,6 +60,7 @@ export interface ButlerSessionDigest {
   sessionId: string;
   provider: string | null;
   title: string | null;
+  isArchived: boolean;
   role: ButlerProjectSessionView["role"];
   ownershipMode: ButlerProjectSessionView["ownershipMode"];
   status: ButlerProjectSessionView["status"];
@@ -156,12 +157,14 @@ export interface ButlerPromptContext {
 export interface ButlerSearchHit {
   kind: "project" | "session" | "memory" | "patrol" | "verification";
   id: string;
+  sessionId: string | null;
   projectId: string | null;
   workspaceId: string | null;
   title: string;
   summary: string;
   score: number;
   updatedAt: string;
+  isArchived: boolean;
 }
 
 export interface ButlerSearchResult {
@@ -295,7 +298,10 @@ export class ButlerContextAggregator {
   async searchSummaries(
     userId: string,
     query: string,
-    options: { projectId?: string | null } = {}
+    options: {
+      projectId?: string | null;
+      includeArchived?: boolean;
+    } = {}
   ): Promise<ButlerSearchResult> {
     const normalizedQuery = query.trim();
     const generatedAt = nowIso();
@@ -312,7 +318,9 @@ export class ButlerContextAggregator {
       };
     }
 
-    const projectContexts = await this.collectProjectContexts(userId);
+    const projectContexts = await this.collectProjectContexts(userId, {
+      includeArchived: options.includeArchived ?? false
+    });
     const filteredContexts =
       options.projectId
         ? projectContexts.filter((context) => context.project.id === options.projectId)
@@ -333,20 +341,41 @@ export class ButlerContextAggregator {
     };
   }
 
-  private async collectProjectContexts(userId: string): Promise<ProjectAggregateResult[]> {
+  private async collectProjectContexts(
+    userId: string,
+    options?: {
+      includeArchived?: boolean;
+    }
+  ): Promise<ProjectAggregateResult[]> {
     const focusProjectIds = new Set(this.butlerProfileService.getProfile()?.focus.projectIds ?? []);
     const projects = this.butlerProjectService.list();
     await Promise.all(
-      projects.map((project) => this.butlerSessionService.ensureProjectSessionsSynced(project.id, userId))
+      projects.map((project) =>
+        this.butlerSessionService.ensureProjectSessionsSynced(project.id, userId, {
+          includeArchived: options?.includeArchived ?? false
+        })
+      )
     );
-    const contexts = projects.map((project) => this.buildProjectContext(project, userId));
+    const contexts = projects.map((project) =>
+      this.buildProjectContext(project, userId, {
+        includeArchived: options?.includeArchived ?? false
+      })
+    );
 
     return contexts.sort((left, right) => compareProjectContexts(left, right, focusProjectIds));
   }
 
-  private buildProjectContext(project: ButlerProject, userId: string): ProjectAggregateResult {
+  private buildProjectContext(
+    project: ButlerProject,
+    userId: string,
+    options?: {
+      includeArchived?: boolean;
+    }
+  ): ProjectAggregateResult {
     const sessions = this.butlerSessionService
-      .listByProject(project.id, userId)
+      .listByProject(project.id, userId, {
+        includeArchived: options?.includeArchived ?? false
+      })
       .map((session) => {
         const checkpoint = this.sessionCheckpointRepository.listByButlerSessionId(session.id, 1)[0] ?? null;
         return {
@@ -355,6 +384,7 @@ export class ButlerContextAggregator {
           sessionId: session.sessionId,
           provider: session.provider,
           title: session.title,
+          isArchived: session.isArchived,
           role: session.role,
           ownershipMode: session.ownershipMode,
           status: session.status,
@@ -831,9 +861,11 @@ function buildSearchHits(context: ProjectAggregateResult, query: string): Butler
       {
         kind: "project",
         id: context.project.id,
+        sessionId: null,
         projectId: context.project.id,
         workspaceId: context.project.workspaceId,
         title: context.project.name,
+        isArchived: context.project.lifecycleStatus === "archived",
       summary: [
         `风险=${context.digest.riskLevel}`,
         `主要风险=${joinItems(context.digest.topRisks, "暂无")}`,
@@ -859,9 +891,11 @@ function buildSearchHits(context: ProjectAggregateResult, query: string): Butler
       {
         kind: "session",
         id: session.id,
+        sessionId: session.sessionId,
         projectId: session.projectId,
         workspaceId: context.project.workspaceId,
         title: session.title ?? session.sessionId,
+        isArchived: session.isArchived,
         summary: [
           `状态=${session.status}/${session.progressState}`,
           `风险=${joinItems(session.riskFlags, "暂无")}`,
@@ -888,9 +922,11 @@ function buildSearchHits(context: ProjectAggregateResult, query: string): Butler
       {
         kind: "memory",
         id: memory.id,
+        sessionId: null,
         projectId: memory.projectId,
         workspaceId: context.project.workspaceId,
         title: memory.title,
+        isArchived: false,
         summary: `类型=${memory.memoryType}；状态=${memory.status}；标签=${joinItems(memory.tags, "无")}`,
         updatedAt: memory.updatedAt
       },
@@ -905,9 +941,11 @@ function buildSearchHits(context: ProjectAggregateResult, query: string): Butler
       {
         kind: "patrol",
         id: patrol.id,
+        sessionId: null,
         projectId: patrol.projectId,
         workspaceId: context.project.workspaceId,
         title: patrol.id,
+        isArchived: false,
         summary: `状态=${patrol.status}；风险=${patrol.riskLevel ?? "unknown"}；摘要=${patrol.summary ?? "暂无"}；建议=${joinItems(patrol.suggestions, "暂无")}`,
         updatedAt: patrol.finishedAt ?? patrol.startedAt ?? patrol.createdAt
       },
@@ -922,9 +960,11 @@ function buildSearchHits(context: ProjectAggregateResult, query: string): Butler
       {
         kind: "verification",
         id: verification.id,
+        sessionId: null,
         projectId: verification.projectId,
         workspaceId: context.project.workspaceId,
         title: verification.verificationType,
+        isArchived: false,
         summary: `状态=${verification.status}；目标=${verification.targetRef ?? "未指定"}；摘要=${verification.summary ?? "暂无"}`,
         updatedAt: verification.finishedAt ?? verification.startedAt ?? verification.createdAt
       },

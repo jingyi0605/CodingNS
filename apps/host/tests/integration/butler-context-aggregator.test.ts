@@ -62,6 +62,7 @@ describe("ButlerContextAggregator", () => {
                   sessionId: "session-1",
                   provider: "codex",
                   title: "修复控制台",
+                  isArchived: false,
                   role: "execution",
                   ownershipMode: "managed",
                   status: "blocked",
@@ -180,5 +181,7 @@ describe("ButlerContextAggregator", () => {
     expect(searchResult.items.length).toBeGreaterThan(0);
     expect(searchResult.items.some((item) => item.kind === "session")).toBe(true);
     expect(searchResult.items.some((item) => item.summary.includes("类型错误"))).toBe(true);
+    expect(searchResult.items.find((item) => item.kind === "session")?.sessionId).toBe("session-1");
+    expect(searchResult.items.find((item) => item.kind === "session")?.isArchived).toBe(false);
   });
 });

@@ -24,6 +24,7 @@ export interface ButlerProjectSessionView {
   sessionId: string;
   provider: string | null;
   title: string | null;
+  isArchived: boolean;
   role: ButlerSessionRole;
   ownershipMode: ButlerSessionOwnershipMode;
   status: ButlerSessionStatus;
@@ -138,6 +139,7 @@ export class ButlerSessionService {
       sessionId: created.sessionId,
       provider: providerId,
       title: null,
+      isArchived: false,
       role: created.role,
       ownershipMode: created.ownershipMode,
       status: created.status,
@@ -149,20 +151,33 @@ export class ButlerSessionService {
     };
   }
 
-  listByProject(projectId: string, userId: string): ButlerProjectSessionView[] {
+  listByProject(
+    projectId: string,
+    userId: string,
+    options?: {
+      includeArchived?: boolean;
+    }
+  ): ButlerProjectSessionView[] {
     const project = this.getProjectOrThrow(projectId);
+    const includeArchived = options?.includeArchived ?? false;
 
-    return this.butlerSessionRepository.listByProject(project.id).map((record) => {
+    return this.butlerSessionRepository.listByProject(project.id).flatMap((record) => {
       const binding = this.sessionBindingRepository.findBySessionId(record.sessionId);
       const index = this.sessionIndexRepository.findIndexRecordBySessionId(record.sessionId);
       const state = this.sessionStateRepository.findBySessionAndUser(record.sessionId, userId);
+      const isArchived = index?.isArchived ?? false;
 
-      return {
+      if (!includeArchived && isArchived) {
+        return [];
+      }
+
+      return [{
         id: record.id,
         projectId: record.projectId,
         sessionId: record.sessionId,
         provider: binding?.provider ?? null,
         title: index?.title ?? null,
+        isArchived,
         role: record.role,
         ownershipMode: record.ownershipMode,
         status: record.status,
@@ -171,7 +186,7 @@ export class ButlerSessionService {
         lastCheckpointAt: record.lastCheckpointAt,
         createdAt: record.createdAt,
         updatedAt: record.updatedAt
-      };
+      }];
     });
   }
 
@@ -247,6 +262,7 @@ export class ButlerSessionService {
       sessionId: created.sessionId,
       provider: binding.provider,
       title: index?.title ?? null,
+      isArchived: index?.isArchived ?? false,
       role: created.role,
       ownershipMode: created.ownershipMode,
       status: created.status,
@@ -343,6 +359,7 @@ export class ButlerSessionService {
       sessionId: updatedRecord.sessionId,
       provider: binding?.provider ?? null,
       title: index?.title ?? null,
+      isArchived: index?.isArchived ?? false,
       role: updatedRecord.role,
       ownershipMode: updatedRecord.ownershipMode,
       status: updatedRecord.status,

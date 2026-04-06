@@ -597,4 +597,96 @@ describe("ButlerSessionService", () => {
     expect(createdSessions).toHaveLength(1);
     expect(createdCheckpoints[0]?.sourceKind).toBe("snapshot");
   });
+
+  it("默认不会返回归档会话，显式开启后才会包含", () => {
+    const project: ButlerProject = {
+      id: "project-archived",
+      workspaceId: "workspace-archived",
+      name: "repo-archived",
+      repoRoot: "/tmp/repo-archived",
+      defaultProvider: "codex",
+      instructionProfileId: null,
+      approvalMode: "controlled",
+      lifecycleStatus: "active",
+      riskLevel: "low",
+      config: {},
+      lastPatrolAt: null,
+      lastVerificationAt: null,
+      createdAt: "2026-04-02T00:00:00.000Z",
+      updatedAt: "2026-04-02T00:00:00.000Z",
+      archivedAt: null
+    };
+    const activeRecord: ButlerSession = {
+      id: "butler-session-active",
+      projectId: project.id,
+      sessionId: "session-active",
+      role: "adhoc",
+      ownershipMode: "observed",
+      status: "running",
+      lastSummary: "活跃摘要",
+      lastCheckpointAt: "2026-04-02T00:10:00.000Z",
+      createdAt: "2026-04-02T00:00:00.000Z",
+      updatedAt: "2026-04-02T00:10:00.000Z"
+    };
+    const archivedRecord: ButlerSession = {
+      ...activeRecord,
+      id: "butler-session-archived",
+      sessionId: "session-archived",
+      lastSummary: "归档摘要"
+    };
+
+    const service = new ButlerSessionService(
+      {
+        findById: vi.fn(() => project)
+      } satisfies Pick<ButlerProjectRepository, "findById"> as ButlerProjectRepository,
+      {
+        listByProject: vi.fn(() => [activeRecord, archivedRecord])
+      } satisfies Pick<ButlerSessionRepository, "listByProject"> as ButlerSessionRepository,
+      {} as SessionCheckpointRepository,
+      {
+        findBySessionId: vi.fn((sessionId: string) => ({
+          sessionId,
+          workspaceId: project.workspaceId,
+          provider: "codex",
+          providerSessionId: `provider-${sessionId}`,
+          rawStoreRef: `raw-${sessionId}`,
+          createdAt: "2026-04-02T00:00:00.000Z",
+          updatedAt: "2026-04-02T00:10:00.000Z"
+        }))
+      } satisfies Pick<SessionBindingRepository, "findBySessionId"> as SessionBindingRepository,
+      {
+        findIndexRecordBySessionId: vi.fn((sessionId: string) => ({
+          sessionId,
+          workspaceId: project.workspaceId,
+          provider: "codex",
+          parentSessionId: null,
+          isSubagent: false,
+          subagentLabel: null,
+          title: sessionId,
+          messageCount: 3,
+          isArchived: sessionId === "session-archived",
+          lastMessageAt: "2026-04-02T00:10:00.000Z",
+          createdAt: "2026-04-02T00:00:00.000Z",
+          updatedAt: "2026-04-02T00:10:00.000Z"
+        }))
+      } satisfies Pick<SessionIndexRepository, "findIndexRecordBySessionId"> as SessionIndexRepository,
+      {
+        findBySessionAndUser: vi.fn((sessionId: string) => ({
+          sessionId,
+          userId: "user-1",
+          runningState: "idle",
+          activitySource: "runtime",
+          favorite: false,
+          lastEventAt: "2026-04-02T00:10:00.000Z",
+          completedAt: null,
+          lastSeenAt: null,
+          updatedAt: "2026-04-02T00:10:00.000Z"
+        }))
+      } satisfies Pick<SessionStateRepository, "findBySessionAndUser"> as SessionStateRepository
+    );
+
+    expect(service.listByProject(project.id, "user-1")).toHaveLength(1);
+    expect(service.listByProject(project.id, "user-1")[0]?.sessionId).toBe("session-active");
+    expect(service.listByProject(project.id, "user-1", { includeArchived: true })).toHaveLength(2);
+  });
 });

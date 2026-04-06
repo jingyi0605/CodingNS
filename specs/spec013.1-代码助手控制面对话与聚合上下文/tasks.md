@@ -527,3 +527,44 @@
       - `pnpm --dir apps/user-app exec vitest run src/features/butler/pages/ButlerPage.test.tsx src/features/butler/runtime/butler-runtime-store.test.ts src/features/conversation/components/WorkbenchLayout.test.tsx src/shared/i18n/index.test.ts`
       - `pnpm --dir apps/host exec tsc -p tsconfig.json --noEmit`
       - `pnpm --dir apps/host exec vitest run tests/integration/butler-profile-routes.test.ts tests/integration/butler-control-session-routes.test.ts tests/integration/butler-context-routes.test.ts tests/integration/butler-control-action-routes.test.ts`
+
+## 2026-04-06 补记：历史会话检索与正式配置编辑
+
+- 已把 `/api/butler/search` 扩成支持 `includeArchived=true`，默认仍只查非归档摘要；只有明确查历史会话时，才扩到归档摘要。
+- 已把摘要命中结果补上真实 `sessionId`，右侧“信息”标签现在可以直接按需补查最近 40 条原始消息，不再只能停在摘要层。
+- 已把“配置”标签补成正式编辑入口，支持修改助手称呼、AGENTS 模式、语气、使用语言、总结风格、风险倾向、汇报优先级、摘要防抖和 AGENTS 规则正文。
+- 已把右侧四个标签收紧成单行显示，窄宽度下允许横向滚动，但不会换行。
+- 已同步更新 Butler 内部补查说明：用户明确点名历史会话或归档会话时，先带 `includeArchived=true` 查摘要，再决定是否继续补查原始消息。
+- 已补本轮最小必要验证：
+  - `pnpm --dir apps/host exec tsc -p tsconfig.json --noEmit`
+  - `pnpm --dir apps/user-app exec tsc --noEmit -p tsconfig.json`
+  - `pnpm --dir apps/host exec vitest run tests/integration/butler-context-aggregator.test.ts tests/integration/butler-context-routes.test.ts tests/integration/butler-session-service.test.ts`
+  - `pnpm --dir apps/user-app exec vitest run src/features/butler/pages/ButlerPage.test.tsx src/features/butler/runtime/butler-runtime-store.test.ts`
+
+## 2026-04-06 补记：助手页版式对齐会话页
+
+- 已把助手主对话页改成和普通会话页一致的零外边距布局，不再额外套一层大卡片和内边距容器。
+- 已把助手顶部栏压成单行标题栏样式，头像、名称、provider 选择、新建会话、刷新都收进同一行，不再出现 `Provider` 上下两行的堆叠布局。
+- 已把右侧信息栏的顶部分页改成 Butler 专用四列布局，修正了公共三列样式把四个标签挤坏的问题。
+- 已补本轮最小必要验证：
+  - `pnpm --dir apps/user-app exec tsc --noEmit -p tsconfig.json`
+  - `pnpm --dir apps/user-app exec vitest run src/features/butler/pages/ButlerPage.test.tsx`
+
+## 2026-04-06 补记：助手标题栏工具化收口
+
+- 已把头像和助手名称彻底锁定为左右排列，不再继承普通会话页默认的纵向居中布局。
+- 已移除标题栏里的 `Provider` 文案，只保留单行 provider 下拉框。
+- 已把“新建会话”和“刷新”改成终端标题栏同风格的工具按钮，并把“新建会话”移动到“刷新”左侧。
+- 已把助手标题栏高度继续压低，直接复用工作台 header 的高度和 padding 变量，和左右信息栏标题高度保持一致。
+- 已补本轮最小必要验证：
+  - `pnpm --dir apps/user-app exec tsc --noEmit -p tsconfig.json`
+  - `pnpm --dir apps/user-app exec vitest run src/features/butler/pages/ButlerPage.test.tsx`
+
+## 2026-04-06 补记：三栏标题基线继续对齐
+
+- 已把助手中间标题栏从普通会话 header 样式彻底切到工作台 header 基线，避免被 `conversation-header` 默认内容布局继续撑高。
+- 已把助手头像继续缩小，确保标题栏高度不会被头像尺寸反向撑开。
+- 已把右侧标签栏外面补一层正式 header 壳，并用更高优先级强制 Butler 标签栏走四列单行样式，修正第四个标签掉到第二行的问题。
+- 已补本轮最小必要验证：
+  - `pnpm --dir apps/user-app exec tsc --noEmit -p tsconfig.json`
+  - `pnpm --dir apps/user-app exec vitest run src/features/butler/pages/ButlerPage.test.tsx`

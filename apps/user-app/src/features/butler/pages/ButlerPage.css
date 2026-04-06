@@ -2,13 +2,15 @@
   display: flex;
   flex-direction: column;
   height: 100%;
-  padding: 16px;
+  min-height: 0;
+  padding: 0;
   box-sizing: border-box;
   overflow: hidden;
 }
 
 .butler-chat-workspace {
   align-items: stretch;
+  background: var(--bg-surface);
 }
 
 .butler-main-column {
@@ -16,28 +18,32 @@
   flex: 1 1 auto;
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 16px;
+  gap: 0;
+  padding: 0;
   overflow: hidden;
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  background:
-    radial-gradient(circle at top left, rgba(14, 165, 233, 0.1), transparent 28%),
-    radial-gradient(circle at top right, rgba(16, 185, 129, 0.1), transparent 24%),
-    linear-gradient(180deg, rgba(248, 250, 252, 0.98), rgba(255, 255, 255, 0.96));
+  border: none;
+  background: transparent;
 }
 
 .butler-main-header {
-  display: flex;
-  justify-content: space-between;
-  gap: 20px;
-  align-items: flex-start;
+  min-height: var(--workbench-header-min-height);
+  height: var(--workbench-header-min-height);
+  box-sizing: border-box;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-primary) 78%, transparent);
+  background: var(--bg-surface);
 }
 
-.butler-chat-hero {
+.butler-header-main {
   display: flex;
+  flex: 1 1 auto;
+  flex-direction: row;
   align-items: center;
-  gap: 14px;
+  justify-content: flex-start;
+  gap: 10px;
   min-width: 0;
+  text-align: left;
 }
 
 .butler-chat-avatar,
@@ -52,29 +58,35 @@
 }
 
 .butler-chat-avatar {
-  width: 56px;
-  height: 56px;
+  width: 24px;
+  height: 24px;
   flex: 0 0 auto;
+  border-radius: 8px;
 }
 
 .butler-chat-avatar span {
-  font-size: 30px;
+  font-size: 14px;
 }
 
 .butler-message-avatar {
-  width: 32px;
-  height: 32px;
+  width: 24px;
+  height: 24px;
   font-size: 18px;
 }
 
 .butler-main-heading {
   min-width: 0;
+  display: flex;
+  align-items: center;
+  flex: 0 1 auto;
 }
 
 .butler-main-heading h1 {
   margin: 0;
-  font-size: 22px;
+  font-size: 14px;
   line-height: 1.2;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .butler-secondary-text {
@@ -84,10 +96,12 @@
 
 .butler-toolbar-cluster {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   justify-content: flex-end;
-  gap: 10px;
-  align-items: flex-end;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  flex: 0 0 auto;
 }
 
 .butler-toolbar-button,
@@ -139,14 +153,9 @@
 .butler-provider-switcher {
   display: flex;
   gap: 8px;
-  align-items: flex-end;
-}
-
-.butler-provider-switcher label {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 170px;
+  align-items: center;
+  min-width: 0;
+  flex: 0 1 auto;
 }
 
 .butler-provider-switcher select,
@@ -162,17 +171,16 @@
   color: var(--text-primary, #0f172a);
 }
 
-.butler-conversation-panel {
-  min-height: 0;
-  flex: 1 1 auto;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 10px;
-  border-radius: 18px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(248, 250, 252, 0.98));
-  border: 1px solid rgba(15, 23, 42, 0.06);
-  overflow: hidden;
+.butler-provider-switcher select {
+  min-width: 120px;
+  height: 26px;
+  padding: 0 28px 0 10px;
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.butler-header-icon-button {
+  flex: 0 0 auto;
 }
 
 .butler-provider-badge {
@@ -193,26 +201,27 @@
   display: grid;
   flex: 1 1 auto;
   grid-template-rows: minmax(0, 1fr) auto;
-  gap: 12px;
+  gap: 0;
   overflow: hidden;
 }
 
 .butler-conversation-shell .message-timeline {
   min-height: 0;
   height: 100%;
-  border-radius: 14px;
-  border: 1px solid rgba(15, 23, 42, 0.06);
-  background: rgba(255, 255, 255, 0.88);
+  border-radius: 0;
+  border: none;
+  background: transparent;
 }
 
 .butler-composer-shell {
   position: relative;
   z-index: 1;
   flex: 0 0 auto;
-  border-radius: 14px;
-  border: 1px solid rgba(15, 23, 42, 0.06);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(248, 250, 252, 0.98));
-  box-shadow: 0 -12px 24px rgba(15, 23, 42, 0.04);
+  border-radius: 0;
+  border: none;
+  border-top: 1px solid var(--panel-separator, rgba(15, 23, 42, 0.08));
+  background: color-mix(in srgb, var(--panel-bg-strong, #fff) 88%, transparent);
+  box-shadow: none;
   overflow: hidden;
 }
 
@@ -227,11 +236,11 @@
   flex-direction: column;
   gap: 12px;
   overflow: auto;
-  padding-right: 2px;
+  padding: 0 10px 10px;
 }
 
 .workbench-auxiliary[data-custom-panel="true"] {
-  padding: 10px;
+  padding: 0;
   overflow: hidden;
 }
 
@@ -241,13 +250,40 @@
   overflow: hidden;
 }
 
+.butler-side-tabs-shell {
+  min-height: var(--workbench-header-min-height);
+  height: var(--workbench-header-min-height);
+  box-sizing: border-box;
+  padding:
+    var(--workbench-header-padding-top)
+    var(--workbench-header-padding-inline)
+    var(--workbench-header-padding-bottom);
+  border-bottom: 1px solid var(--panel-separator, rgba(15, 23, 42, 0.08));
+  background: var(--bg-surface, rgba(248, 250, 252, 0.98));
+}
+
 .butler-side-tabs {
-  position: sticky;
-  top: 0;
+  position: relative;
+  top: auto;
   z-index: 1;
-  background: rgba(248, 250, 252, 0.92);
-  backdrop-filter: blur(10px);
-  padding-bottom: 2px;
+  display: grid !important;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  grid-auto-flow: column;
+  gap: 2px;
+  padding: 0;
+  border-bottom: none;
+  background: transparent;
+  backdrop-filter: none;
+  overflow: hidden;
+}
+
+.butler-side-tabs .workbench-info-tab {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .butler-side-card {
@@ -273,6 +309,18 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.butler-search-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-primary, #0f172a);
+}
+
+.butler-search-toggle input {
+  margin: 0;
 }
 
 .butler-overview-content,
@@ -342,7 +390,8 @@
 
 .butler-project-card,
 .butler-context-item,
-.butler-event-card {
+.butler-event-card,
+.butler-search-preview-item {
   padding: 12px;
   display: flex;
   flex-direction: column;
@@ -471,6 +520,23 @@
 
 .butler-form-field textarea {
   resize: vertical;
+  min-height: 180px;
+}
+
+.butler-search-preview,
+.butler-search-preview-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.butler-search-preview {
+  padding-top: 4px;
+}
+
+.butler-search-preview h3 {
+  margin: 0;
+  font-size: 13px;
 }
 
 .butler-init-form button {
@@ -488,19 +554,19 @@
   .butler-toolbar-cluster,
   .butler-provider-switcher {
     justify-content: stretch;
+    flex-wrap: wrap;
   }
 
   .butler-provider-switcher {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .butler-provider-switcher label {
-    min-width: 0;
+    align-items: center;
   }
 
   .butler-overview-metrics,
   .butler-init-form {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .butler-side-tabs {
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
   }
 }
