@@ -355,3 +355,176 @@ rl.on("line", (line) => {
     rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+test("CodexRuntimeAdapter 会把 app-server 的 item/updated 转成同一条流式消息", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-app-server-stream-"));
+  const scriptPath = join(tempDir, "fake-codex-app-server.cjs");
+  const launcherPath = join(
+    tempDir,
+    process.platform === "win32" ? "fake-codex.cmd" : "fake-codex.sh"
+  );
+  const threadPath = join(tempDir, "thread-3.jsonl").replace(/\\/g, "/");
+  const emitted = [];
+
+  writeFakeCodexAppServer(
+    scriptPath,
+    `
+const readline = require("node:readline");
+const rl = readline.createInterface({ input: process.stdin });
+function write(payload) {
+  process.stdout.write(JSON.stringify(payload) + "\\n");
+}
+rl.on("line", (line) => {
+  const msg = JSON.parse(line);
+  if (msg.method === "initialize") {
+    write({ jsonrpc: "2.0", id: msg.id, result: {} });
+    return;
+  }
+  if (msg.method === "thread/start") {
+    write({
+      jsonrpc: "2.0",
+      id: msg.id,
+      result: {
+        thread: {
+          id: "thread-3",
+          preview: "",
+          ephemeral: false,
+          modelProvider: "openai",
+          createdAt: 0,
+          updatedAt: 0,
+          status: { type: "idle" },
+          path: ${JSON.stringify(threadPath)},
+          cwd: "C:/workspace-1",
+          cliVersion: "0.0.0",
+          source: "appServer",
+          agentNickname: null,
+          agentRole: null,
+          gitInfo: null,
+          name: null,
+          turns: []
+        }
+      }
+    });
+    return;
+  }
+  if (msg.method === "turn/start") {
+    write({
+      method: "turn/started",
+      params: {
+        threadId: "thread-3",
+        turn: { id: "turn-3", items: [], status: "inProgress" }
+      }
+    });
+    write({
+      method: "item/updated",
+      params: {
+        threadId: "thread-3",
+        turnId: "turn-3",
+        item: {
+          type: "agentMessage",
+          id: "assistant-3",
+          text: "正在",
+          phase: "final_answer"
+        }
+      }
+    });
+    write({
+      method: "item/updated",
+      params: {
+        threadId: "thread-3",
+        turnId: "turn-3",
+        item: {
+          type: "agentMessage",
+          id: "assistant-3",
+          text: "正在检查",
+          phase: "final_answer"
+        }
+      }
+    });
+    write({
+      method: "item/completed",
+      params: {
+        threadId: "thread-3",
+        turnId: "turn-3",
+        item: {
+          type: "agentMessage",
+          id: "assistant-3",
+          text: "正在检查",
+          phase: "final_answer"
+        }
+      }
+    });
+    write({
+      method: "turn/completed",
+      params: {
+        threadId: "thread-3",
+        turn: { id: "turn-3", items: [], status: "completed" }
+      }
+    });
+    write({
+      jsonrpc: "2.0",
+      id: msg.id,
+      result: {
+        turn: { id: "turn-3", items: [], status: "completed" }
+      }
+    });
+    setTimeout(() => process.exit(0), 10);
+  }
+});
+`
+  );
+  writeFileSync(
+    launcherPath,
+    process.platform === "win32"
+      ? `@echo off\r\n"${process.execPath}" "${scriptPath}" %*\r\n`
+      : `#!/usr/bin/env sh\n"${process.execPath}" "${scriptPath}" "$@"\n`,
+    "utf8"
+  );
+
+  if (process.platform !== "win32") {
+    chmodSync(launcherPath, 0o755);
+  }
+
+  try {
+    const adapter = new CodexRuntimeAdapter({
+      homeDir: tempDir,
+      commandPath: launcherPath
+    });
+
+    const launch = await adapter.startSession(
+      createRunRequest({
+        sessionId: "session-3",
+        options: {
+          content: "请流式输出进度",
+          clientRequestId: "client-3",
+          model: null,
+          reasoningLevel: null,
+          permissionMode: null,
+          providerPrompt: null,
+          attachments: []
+        }
+      }),
+      {
+        async emit(event) {
+          emitted.push(event);
+        },
+        updateSessionBinding() {}
+      }
+    );
+
+    await launch.completed;
+
+    const assistantMessages = emitted.filter((event) =>
+      event.type === "message" && event.message.role === "assistant" && event.message.kind === "text"
+    );
+
+    assert.deepEqual(
+      assistantMessages.map((event) => event.message.content),
+      ["正在", "正在检查"]
+    );
+    assert.equal(assistantMessages[0]?.message.messageId, assistantMessages[1]?.message.messageId);
+    assert.equal(assistantMessages[0]?.message.rawRef, assistantMessages[1]?.message.rawRef);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});

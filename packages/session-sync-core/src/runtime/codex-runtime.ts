@@ -62,10 +62,18 @@ interface ActiveTurnContext {
   rawStoreRef: string;
   sequence: number;
   toolNameByCallId: Map<string, string>;
+  stableMessageRefByIdentity: Map<string, CodexStableMessageRef>;
+  lastSignatureByIdentity: Map<string, string>;
   sink: ProviderRuntimeEventSink;
   workspacePath: string;
   firstUserMessage: string;
   launchedAtMs: number;
+}
+
+interface CodexStableMessageRef {
+  sequence: number;
+  rawRef: string;
+  messageId: string;
 }
 
 interface CodexThreadRow {
@@ -319,6 +327,8 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
       // 否则前端会把新 assistant/tool 消息排到旧消息前面，表现成用户消息一直挂在底部。
       sequence: Math.max(0, request.sequenceBase ?? 0),
       toolNameByCallId: new Map(),
+      stableMessageRefByIdentity: new Map(),
+      lastSignatureByIdentity: new Map(),
       sink,
       workspacePath: request.workspacePath,
       firstUserMessage: request.options.content,
@@ -447,30 +457,32 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
       return;
     }
 
-    if (itemType === "agent_message" && eventType === "item.completed") {
+    if (
+      itemType === "agent_message" &&
+      (eventType === "item.updated" || eventType === "item.completed")
+    ) {
       const content = pickFirstNonEmpty(
         ensureText(readProp(item, "text")).trim(),
         extractTextBlocks(readProp(item, "content")).trim()
       );
 
       if (content.length > 0) {
-        await context.sink.emit({
-          type: "message",
-          message: this.buildMessage(request, context, {
-            role: "assistant",
-            kind: "text",
-            content
-          }),
-          providerSessionId: context.providerSessionId,
-          rawStoreRef: context.rawStoreRef,
-          timestamp: pickTimestamp(item, event)
+        await this.emitStableMessage(context, {
+          identity: `assistant:text:${ensureText(readProp(item, "id")).trim() || "default"}`,
+          timestamp: pickTimestamp(item, event),
+          role: "assistant",
+          kind: "text",
+          content
         });
       }
 
       return;
     }
 
-    if (itemType === "reasoning" && eventType === "item.completed") {
+    if (
+      itemType === "reasoning" &&
+      (eventType === "item.updated" || eventType === "item.completed")
+    ) {
       const content = pickFirstNonEmpty(
         ensureText(readProp(item, "text")).trim(),
         extractTextBlocks(readProp(item, "summary")).trim(),
@@ -478,16 +490,12 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
       );
 
       if (content.length > 0) {
-        await context.sink.emit({
-          type: "message",
-          message: this.buildMessage(request, context, {
-            role: "assistant",
-            kind: "thinking",
-            content
-          }),
-          providerSessionId: context.providerSessionId,
-          rawStoreRef: context.rawStoreRef,
-          timestamp: pickTimestamp(item, event)
+        await this.emitStableMessage(context, {
+          identity: `assistant:thinking:${ensureText(readProp(item, "id")).trim() || "default"}`,
+          timestamp: pickTimestamp(item, event),
+          role: "assistant",
+          kind: "thinking",
+          content
         });
       }
 
@@ -525,17 +533,46 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
       };
       context.toolNameByCallId.set(callId, name);
 
-      await context.sink.emit({
-        type: "message",
-        message: this.buildMessage(request, context, {
-          role: "tool",
-          kind: "tool_call",
-          content: input,
-          toolCall
-        }),
-        providerSessionId: context.providerSessionId,
-        rawStoreRef: context.rawStoreRef,
-        timestamp: pickTimestamp(item, event)
+      await this.emitStableMessage(context, {
+        identity: `tool:call:${callId}`,
+        timestamp: pickTimestamp(item, event),
+        role: "tool",
+        kind: "tool_call",
+        content: input,
+        toolCall
+      });
+      return;
+    }
+
+    if (eventType === "item.updated") {
+      const output = pickFirstNonEmpty(
+        extractTextBlocks(readProp(item, "result")).trim(),
+        extractTextBlocks(readProp(item, "output")).trim(),
+        extractTextBlocks(readProp(item, "aggregated_output")).trim(),
+        extractTextBlocks(readProp(item, "error")).trim()
+      );
+
+      if (output.length === 0) {
+        return;
+      }
+
+      const knownName = context.toolNameByCallId.get(callId) ?? name;
+      context.toolNameByCallId.set(callId, knownName);
+
+      await this.emitStableMessage(context, {
+        identity: `tool:result:${callId}`,
+        timestamp: pickTimestamp(item, event),
+        role: "tool",
+        kind: "tool_result",
+        content: output,
+        toolCall: {
+          callId,
+          name: knownName,
+          input: "",
+          output,
+          error: null,
+          status: "running"
+        }
       });
       return;
     }
@@ -558,19 +595,51 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
         status: success ? "completed" : "failed"
       };
 
-      await context.sink.emit({
-        type: "message",
-        message: this.buildMessage(request, context, {
-          role: "tool",
-          kind: "tool_result",
-          content: output,
-          toolCall
-        }),
-        providerSessionId: context.providerSessionId,
-        rawStoreRef: context.rawStoreRef,
-        timestamp: pickTimestamp(item, event)
+      await this.emitStableMessage(context, {
+        identity: `tool:result:${callId}`,
+        timestamp: pickTimestamp(item, event),
+        role: "tool",
+        kind: "tool_result",
+        content: output,
+        toolCall
       });
     }
+  }
+
+  private async emitStableMessage(
+    context: ActiveTurnContext,
+    input: {
+      identity: string;
+      timestamp: string;
+      role: NormalizedMessage["role"];
+      kind: NormalizedMessage["kind"];
+      content: string;
+      toolCall?: NormalizedToolCall | null;
+    }
+  ): Promise<void> {
+    const message = this.buildMessage(context, {
+      role: input.role,
+      kind: input.kind,
+      content: input.content,
+      toolCall: input.toolCall ?? null,
+      stableIdentity: input.identity
+    });
+    const signature = buildCodexMessageSignature(message);
+
+    if (context.lastSignatureByIdentity.get(input.identity) === signature) {
+      return;
+    }
+
+    context.lastSignatureByIdentity.set(input.identity, signature);
+
+    await context.sink.emit({
+      type: "message",
+      message,
+      providerSessionId: context.providerSessionId,
+      rawStoreRef: context.rawStoreRef,
+      timestamp: input.timestamp,
+      rawEventRef: message.rawRef
+    });
   }
 
   private async refreshSessionBindingIfNeeded(context: ActiveTurnContext): Promise<void> {
@@ -791,24 +860,28 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
   }
 
   private buildMessage(
-    request: ProviderRuntimeRunRequest,
     context: ActiveTurnContext,
     input: {
       role: NormalizedMessage["role"];
       kind: NormalizedMessage["kind"];
       content: string;
       toolCall?: NormalizedToolCall | null;
+      stableIdentity?: string | null;
     }
   ): NormalizedMessage {
-    context.sequence += 1;
-    const rawRef = createRawRef(
-      this.providerId,
-      context.rawStoreRef,
-      context.sequence
-    );
+    const stableRef = this.resolveStableMessageRef(context, input.stableIdentity ?? null);
+    const rawRef =
+      stableRef?.rawRef ??
+      createRawRef(
+        this.providerId,
+        context.rawStoreRef,
+        ++context.sequence
+      );
+    const sequence = stableRef?.sequence ?? context.sequence;
+    const messageId = stableRef?.messageId ?? messageIdFromRawRef(rawRef);
 
     return {
-      messageId: messageIdFromRawRef(rawRef),
+      messageId,
       provider: this.providerId,
       providerSessionId: context.providerSessionId,
       role: input.role,
@@ -816,9 +889,34 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
       content: input.content,
       toolCall: input.toolCall ?? null,
       timestamp: nextTimestamp(),
-      sequence: context.sequence,
+      sequence,
       rawRef
     };
+  }
+
+  private resolveStableMessageRef(
+    context: ActiveTurnContext,
+    stableIdentity: string | null
+  ): CodexStableMessageRef | null {
+    if (!stableIdentity) {
+      return null;
+    }
+
+    const existing = context.stableMessageRefByIdentity.get(stableIdentity);
+
+    if (existing) {
+      return existing;
+    }
+
+    context.sequence += 1;
+    const rawRef = createRawRef(this.providerId, context.rawStoreRef, context.sequence);
+    const created: CodexStableMessageRef = {
+      sequence: context.sequence,
+      rawRef,
+      messageId: messageIdFromRawRef(rawRef)
+    };
+    context.stableMessageRefByIdentity.set(stableIdentity, created);
+    return created;
   }
 
   private async awaitThreadStarted(
@@ -1287,7 +1385,7 @@ function translateCodexAppServerNotification(notification: Record<string, unknow
     };
   }
 
-  if (method === "item/started" || method === "item/completed") {
+  if (method === "item/started" || method === "item/updated" || method === "item/completed") {
     const item = translateCodexAppServerItem(toRecord(params.item));
 
     if (!item) {
@@ -1300,7 +1398,12 @@ function translateCodexAppServerNotification(notification: Record<string, unknow
 
     return {
       event: {
-        type: method === "item/started" ? "item.started" : "item.completed",
+        type:
+          method === "item/started"
+            ? "item.started"
+            : method === "item/updated"
+              ? "item.updated"
+              : "item.completed",
         item,
         timestamp: nextTimestamp()
       },
@@ -1327,6 +1430,24 @@ function buildCodexAppServerErrorDetail(error: Record<string, unknown> | null): 
   return message || additionalDetails || "codex app-server error";
 }
 
+function buildCodexMessageSignature(message: NormalizedMessage): string {
+  return JSON.stringify({
+    role: message.role,
+    kind: message.kind,
+    content: message.content,
+    toolCall: message.toolCall
+      ? {
+          callId: message.toolCall.callId,
+          name: message.toolCall.name,
+          input: message.toolCall.input,
+          output: message.toolCall.output,
+          error: message.toolCall.error,
+          status: message.toolCall.status
+        }
+      : null
+  });
+}
+
 function translateCodexAppServerItem(item: Record<string, unknown> | null): Record<string, unknown> | null {
   if (!item) {
     return null;
@@ -1342,7 +1463,7 @@ function translateCodexAppServerItem(item: Record<string, unknown> | null): Reco
     return {
       type: "agent_message",
       id: item.id,
-      text: item.text
+      text: ensureText(item.text).trim()
     };
   }
 
@@ -1350,8 +1471,8 @@ function translateCodexAppServerItem(item: Record<string, unknown> | null): Reco
     return {
       type: "reasoning",
       id: item.id,
-      text: Array.isArray(item.content) ? item.content.join("\n") : "",
-      summary: Array.isArray(item.summary) ? item.summary.join("\n") : ""
+      text: Array.isArray(item.content) ? item.content.join("\n") : ensureText(item.text).trim(),
+      summary: Array.isArray(item.summary) ? item.summary.join("\n") : ensureText(item.summary).trim()
     };
   }
 
