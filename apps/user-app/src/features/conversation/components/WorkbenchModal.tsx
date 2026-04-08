@@ -22,6 +22,8 @@ interface WorkbenchModalProps {
   readonly title: string;
   readonly description: string;
   readonly className?: string;
+  readonly headerActions?: ReactNode;
+  readonly showCloseButton?: boolean;
   readonly onClose: () => void;
   readonly children: ReactNode;
 }
@@ -31,6 +33,8 @@ export function WorkbenchModal({
   title,
   description,
   className,
+  headerActions,
+  showCloseButton = true,
   onClose,
   children
 }: WorkbenchModalProps) {
@@ -75,14 +79,21 @@ export function WorkbenchModal({
             <h2>{title}</h2>
             <p>{description}</p>
           </div>
-          <button
-            type="button"
-            className="workbench-modal-close"
-            aria-label={t("common.close")}
-            onClick={onClose}
-          >
-            <CloseIcon />
-          </button>
+          {headerActions || showCloseButton ? (
+            <div className="workbench-modal-header-actions">
+              {headerActions}
+              {showCloseButton ? (
+                <button
+                  type="button"
+                  className="workbench-modal-close"
+                  aria-label={t("common.close")}
+                  onClick={onClose}
+                >
+                  <CloseIcon />
+                </button>
+              ) : null}
+            </div>
+          ) : null}
         </div>
         <div className="workbench-modal-body">{children}</div>
       </section>

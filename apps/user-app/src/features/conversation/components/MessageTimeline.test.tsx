@@ -8,6 +8,7 @@ import { MessageTimeline } from "./MessageTimeline";
 import type { SessionMessageViewModel } from "../runtime/session-runtime-machine";
 
 const revealWorkspaceFileMock = vi.hoisted(() => vi.fn(() => false));
+const getButlerFollowUpTaskMock = vi.hoisted(() => vi.fn());
 
 vi.mock("./WorkbenchLayout", () => ({
   useWorkbenchShell: () => ({
@@ -25,6 +26,10 @@ vi.mock("./WorkbenchLayout", () => ({
     currentWorkspaceId: "workspace-1",
     revealWorkspaceFile: revealWorkspaceFileMock
   })
+}));
+
+vi.mock("../../butler/api/butler-api", () => ({
+  getButlerFollowUpTask: getButlerFollowUpTaskMock
 }));
 
 const SAMPLE_IMAGE_DATA_URL =
@@ -84,6 +89,16 @@ function createTextMessage(content: string): SessionMessageViewModel {
   };
 }
 
+function createButlerProxyTextMessage(content: string): SessionMessageViewModel {
+  return {
+    ...createTextMessage(content),
+    id: "message-butler-1",
+    clientRequestId: null,
+    origin: "butler_proxy",
+    originRef: "follow-up-1"
+  };
+}
+
 function createAssistantTextMessage(content: string, id = "assistant-1"): SessionMessageViewModel {
   return {
     id,
@@ -120,6 +135,33 @@ describe("MessageTimeline", () => {
   beforeEach(() => {
     revealWorkspaceFileMock.mockReset();
     revealWorkspaceFileMock.mockReturnValue(false);
+    getButlerFollowUpTaskMock.mockReset();
+    getButlerFollowUpTaskMock.mockResolvedValue({
+      task: {
+        id: "follow-up-1",
+        projectId: "project-1",
+        projectName: "项目甲",
+        workspaceId: "workspace-1",
+        butlerSessionId: "butler-session-1",
+        sessionId: "session-1",
+        sessionTitle: "登录页开发",
+        objective: "完成当前 spec 的必做项",
+        status: "waiting_user",
+        checkIntervalSeconds: 300,
+        lastCheckedAt: null,
+        nextCheckAt: null,
+        lastObservedRunningState: "completed",
+        lastObservedMessageAt: null,
+        lastObservedMessageCount: 12,
+        lastAutomationSummary: "当前需要你确认验证码失败策略。",
+        lastAutomationAt: null,
+        autoContinueCount: 1,
+        waitingReason: "需要你确认失败策略。",
+        createdAt: "2026-04-07T00:00:00.000Z",
+        updatedAt: "2026-04-07T00:05:00.000Z",
+        completedAt: null
+      }
+    });
   });
 
   it("点击行内蓝色代码会直接复制内容", async () => {
@@ -144,6 +186,53 @@ describe("MessageTimeline", () => {
 
     expect(writeText).toHaveBeenCalledWith("inline-flex");
     expect(revealWorkspaceFileMock).not.toHaveBeenCalled();
+  });
+
+  it("会给 Butler 代理发送的用户消息显示来源标签", () => {
+    render(
+      <MessageTimeline
+        messages={[createButlerProxyTextMessage("继续完成当前 spec 的剩余工作。")]}
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText(t("conversation.butlerProxyMessageBadge"))).toBeInTheDocument();
+  });
+
+  it("点击代理发送标签时会显示对应的 Butler 跟进详情", async () => {
+    render(
+      <MessageTimeline
+        messages={[createButlerProxyTextMessage("继续完成当前 spec 的剩余工作。")]}
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+      />
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: t("conversation.butlerProxyMessageBadge") }));
+
+    expect(getButlerFollowUpTaskMock).toHaveBeenCalledWith("follow-up-1");
+    expect(await screen.findByText(t("conversation.butlerOriginDetailTitle"))).toBeInTheDocument();
+    expect(screen.getByText(/完成当前 spec 的必做项/)).toBeInTheDocument();
+  });
+
+  it("旧消息仍兼容 clientRequestId 前缀识别代理发送", () => {
+    render(
+      <MessageTimeline
+        messages={[{
+          ...createTextMessage("继续完成当前 spec 的剩余工作。"),
+          id: "message-butler-legacy-1",
+          clientRequestId: "butler-follow-up:task-1:123"
+        }]}
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText(t("conversation.butlerProxyMessageBadge"))).toBeInTheDocument();
   });
 
   it("点击文件路径链接会切到文件面板并定位文件", async () => {

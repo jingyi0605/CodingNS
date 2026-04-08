@@ -12,7 +12,7 @@ import {
   type SetStateAction,
   useState,
   type CSSProperties,
-  type MouseEvent,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type FormEvent,
   type ReactNode
@@ -98,9 +98,19 @@ import {
   createWorkspaceCompositionChartStyle,
   formatWorkspaceCompositionRatio
 } from "../../workbench/utils/workspace-composition-chart";
+import {
+  getButlerOverview,
+  getButlerProfile,
+  listButlerFollowUpTasks,
+  listButlerNotificationArchives,
+  updateButlerNotificationArchive,
+  type ButlerFollowUpTaskDto,
+  type ButlerOverviewDto
+} from "../../butler/api/butler-api";
 import { SessionProviderPicker } from "./SessionProviderPicker";
 import { WorkbenchModal as SidebarModal } from "./WorkbenchModal";
 import { WorkspaceCloneModal } from "./WorkspaceCloneModal";
+import { WorkspaceInboxPanel } from "./WorkspaceInboxModal";
 import { WorkspaceImportBrowserModal } from "./WorkspaceImportBrowserModal";
 
 const LEFT_PANEL_WIDTH_KEY = "workbench.left.width";
@@ -111,7 +121,7 @@ const LAST_SESSION_PATH_KEY = "workbench.last.session.path";
 const WORKSPACE_COLLAPSED_IDS_KEY = "workbench.workspace.collapsed.ids";
 const SELECTED_WORKSPACE_ID_KEY = "workbench.workspace.selected.id";
 const WORKBENCH_NAVIGATION_SNAPSHOT_KEY = "workbench.navigation.snapshot";
-
+const WORKBENCH_NOTIFICATION_SEEN_AT_KEY = "workbench.notifications.seen_at";
 const DEFAULT_LEFT_PANEL_WIDTH = 280;
 const DEFAULT_RIGHT_PANEL_WIDTH = 320;
 const MIN_PANEL_WIDTH = 208;
@@ -121,6 +131,8 @@ const INFO_PANEL_BOOT_DELAY_MS = 200;
 const FAVORITE_SESSION_PAGE_SIZE = 20;
 const ROOT_SESSION_PAGE_SIZE = 40;
 const SUBAGENT_PAGE_SIZE = 5;
+const WORKBENCH_NOTIFICATION_POLL_INTERVAL_MS = 30_000;
+const WORKBENCH_NOTIFICATION_MAX_ITEMS = 12;
 const WORKBENCH_NAVIGATION_CACHE_MAX_AGE_MS = 30 * 60 * 1000;
 const WORKSPACE_MANAGEMENT_SNAPSHOT_CACHE_MAX_AGE_MS = 60 * 1000;
 const WORKBENCH_PERMISSION_POLL_INTERVAL_MS = 4_000;
@@ -134,6 +146,21 @@ const WORKBENCH_RUNTIME_ACTIVE_STATES: ReadonlySet<string> = new Set([
   "stale",
   "unknown"
 ]);
+
+type WorkbenchGlobalNotificationKind =
+  | "follow_up_waiting_user"
+  | "follow_up_failed"
+  | "verification_failed";
+
+interface WorkbenchGlobalNotification {
+  id: string;
+  kind: WorkbenchGlobalNotificationKind;
+  title: string;
+  body: string;
+  routePath: string | null;
+  workspaceId: string | null;
+  createdAt: string;
+}
 
 function isPermissionWatchSession(session: SessionSummaryDto): boolean {
   return (
@@ -156,6 +183,146 @@ function normalizeSessionFailureDetail(session: SessionSummaryDto): string | nul
   }
 
   return `${composed.slice(0, SESSION_FAILURE_NOTIFICATION_DETAIL_MAX_LENGTH - 3)}...`;
+}
+
+function buildWorkbenchGlobalNotifications(
+  overview: ButlerOverviewDto,
+  followUpTasks: ButlerFollowUpTaskDto[]
+): WorkbenchGlobalNotification[] {
+  const projectWorkspaceIdByProjectId = new Map(
+    overview.projects.map((project) => [project.id, project.workspaceId] as const)
+  );
+  const notifications: WorkbenchGlobalNotification[] = [];
+
+  for (const task of followUpTasks) {
+    const title = task.sessionTitle?.trim() || task.projectName;
+    const timestamp = task.updatedAt || task.lastAutomationAt || task.createdAt;
+
+    if (task.status === "waiting_user") {
+      notifications.push({
+        id: `follow-up-waiting:${task.id}`,
+        kind: "follow_up_waiting_user",
+        title: t("shell.globalNotificationFollowUpWaitingTitle", {
+          title
+        }),
+        body: task.waitingReason?.trim() || task.lastAutomationSummary?.trim() || task.objective,
+        routePath: buildWorkspaceSessionPath(task.workspaceId, task.sessionId),
+        workspaceId: task.workspaceId,
+        createdAt: timestamp
+      });
+      continue;
+    }
+
+    if (task.status === "failed") {
+      notifications.push({
+        id: `follow-up-failed:${task.id}`,
+        kind: "follow_up_failed",
+        title: t("shell.globalNotificationFollowUpFailedTitle", {
+          title
+        }),
+        body: task.lastAutomationSummary?.trim() || task.waitingReason?.trim() || task.objective,
+        routePath: buildWorkspaceSessionPath(task.workspaceId, task.sessionId),
+        workspaceId: task.workspaceId,
+        createdAt: timestamp
+      });
+    }
+  }
+
+  for (const verification of overview.verifications) {
+    if (verification.status !== "failed") {
+      continue;
+    }
+
+    const workspaceId = verification.projectId
+      ? projectWorkspaceIdByProjectId.get(verification.projectId) ?? null
+      : null;
+    const title = verification.targetRef?.trim() || verification.verificationType;
+
+    notifications.push({
+      id: `verification-failed:${verification.id}`,
+      kind: "verification_failed",
+      title: t("shell.globalNotificationVerificationFailedTitle", {
+        title
+      }),
+      body: verification.summary?.trim() || t("shell.globalNotificationVerificationFailedFallback"),
+      routePath: workspaceId ? buildWorkspaceButlerPath(workspaceId) : null,
+      workspaceId,
+      createdAt: verification.finishedAt || verification.startedAt || verification.createdAt
+    });
+  }
+
+  return notifications
+    .sort((left, right) => {
+      const priorityDelta = resolveWorkbenchNotificationPriority(left.kind) - resolveWorkbenchNotificationPriority(right.kind);
+
+      if (priorityDelta !== 0) {
+        return priorityDelta;
+      }
+
+      return parseWorkbenchNotificationTime(right.createdAt) - parseWorkbenchNotificationTime(left.createdAt);
+    })
+    .slice(0, WORKBENCH_NOTIFICATION_MAX_ITEMS);
+}
+
+function resolveWorkbenchNotificationPriority(kind: WorkbenchGlobalNotificationKind): number {
+  switch (kind) {
+    case "follow_up_waiting_user":
+      return 0;
+    case "follow_up_failed":
+      return 1;
+    case "verification_failed":
+      return 2;
+    default:
+      return 9;
+  }
+}
+
+function resolveWorkbenchNotificationKindLabel(kind: WorkbenchGlobalNotificationKind): string {
+  switch (kind) {
+    case "follow_up_waiting_user":
+      return t("shell.globalNotificationKindWaitingUser");
+    case "follow_up_failed":
+      return t("shell.globalNotificationKindFollowUpFailed");
+    case "verification_failed":
+      return t("shell.globalNotificationKindVerificationFailed");
+    default:
+      return t("shell.globalNotificationsPanelTitle");
+  }
+}
+
+function parseWorkbenchNotificationTime(value: string | null | undefined): number {
+  if (!value) {
+    return 0;
+  }
+
+  const parsed = new Date(value).getTime();
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function isWorkbenchNotificationUnread(
+  notification: WorkbenchGlobalNotification,
+  seenAt: string | null
+): boolean {
+  if (!seenAt) {
+    return true;
+  }
+
+  return parseWorkbenchNotificationTime(notification.createdAt) > parseWorkbenchNotificationTime(seenAt);
+}
+
+function formatWorkbenchNotificationTime(value: string): string {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(date);
 }
 
 function resolveRouteWorkspaceId(pathname: string, search: string): string | null {
@@ -1097,6 +1264,195 @@ function WorkspaceManageIcon() {
   );
 }
 
+function NotificationBellIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path
+        d="M7.5 10.2a4.5 4.5 0 1 1 9 0v3.1c0 .8.3 1.6.9 2.2l.8.8H5.8l.8-.8c.6-.6.9-1.4.9-2.2z"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path d="M10 18.5a2 2 0 0 0 4 0" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function WorkbenchNotificationButton(props: {
+  unreadCount: number;
+  open: boolean;
+  onToggle: () => void;
+  collapsed?: boolean;
+}) {
+  return (
+    <div className="workbench-notification-anchor">
+      <button
+        type="button"
+        className={
+          props.collapsed
+            ? "workbench-nav-toolbar-button workbench-collapsed-button"
+            : "workbench-nav-toolbar-button"
+        }
+        aria-label={t("shell.globalNotificationsAction")}
+        title={t("shell.globalNotificationsAction")}
+        aria-expanded={props.open}
+        onClick={props.onToggle}
+      >
+        <NotificationBellIcon />
+        {props.unreadCount > 0 ? (
+          <span className="workbench-notification-badge" aria-label={t("shell.globalNotificationsUnreadAria", {
+            count: String(props.unreadCount)
+          })}>
+            {props.unreadCount > 99 ? "99+" : props.unreadCount}
+          </span>
+        ) : null}
+      </button>
+    </div>
+  );
+}
+
+function WorkbenchNotificationModal(props: {
+  open: boolean;
+  notifications: WorkbenchGlobalNotification[];
+  archivedNotificationIds: ReadonlySet<string>;
+  showArchivedNotifications: boolean;
+  onClose: () => void;
+  onToggleShowArchivedNotifications: (checked: boolean) => void;
+  onArchiveNotification: (notificationId: string) => void;
+  onUnarchiveNotification: (notificationId: string) => void;
+  onSelectNotification: (notification: WorkbenchGlobalNotification) => void;
+  preferredWorkspaceId?: string | null;
+}) {
+  const [activeTab, setActiveTab] = useState<"notifications" | "inbox">("notifications");
+
+  useEffect(() => {
+    if (props.open) {
+      setActiveTab("notifications");
+    }
+  }, [props.open]);
+
+  const visibleNotifications = useMemo(
+    () =>
+      props.notifications.filter(
+        (notification) =>
+          props.showArchivedNotifications || !props.archivedNotificationIds.has(notification.id)
+      ),
+    [props.archivedNotificationIds, props.notifications, props.showArchivedNotifications]
+  );
+
+  return (
+    <SidebarModal
+      open={props.open}
+      title={t("shell.globalNotificationsPanelTitle")}
+      description={t("shell.globalNotificationsPanelDescription")}
+      className="workbench-notification-modal-card workspace-inbox-modal-card"
+      showCloseButton={false}
+      onClose={props.onClose}
+    >
+      <div className="workbench-notification-tabs" role="tablist" aria-label={t("shell.globalNotificationsPanelTitle")}>
+        <button
+          type="button"
+          className={activeTab === "notifications" ? "workbench-notification-tab active" : "workbench-notification-tab"}
+          role="tab"
+          aria-selected={activeTab === "notifications"}
+          onClick={() => setActiveTab("notifications")}
+        >
+          {t("shell.globalNotificationsAction")}
+        </button>
+        <button
+          type="button"
+          className={activeTab === "inbox" ? "workbench-notification-tab active" : "workbench-notification-tab"}
+          role="tab"
+          aria-selected={activeTab === "inbox"}
+          onClick={() => setActiveTab("inbox")}
+        >
+          {t("shell.butlerInboxAction")}
+        </button>
+      </div>
+
+      <div className="workbench-notification-content" data-tab={activeTab}>
+        {activeTab === "notifications" ? (
+          <div className="workbench-notification-pane" role="tabpanel" aria-label={t("shell.globalNotificationsAction")}>
+            <div className="workbench-notification-toolbar">
+              <label className="workbench-notification-filter">
+                <input
+                  type="checkbox"
+                  checked={props.showArchivedNotifications}
+                  onChange={(event) => props.onToggleShowArchivedNotifications(event.target.checked)}
+                />
+                <span>{t("shell.globalNotificationsShowArchived")}</span>
+              </label>
+            </div>
+            {visibleNotifications.length > 0 ? (
+              <div className="workbench-notification-list">
+                {visibleNotifications.map((notification) => {
+                  const archived = props.archivedNotificationIds.has(notification.id);
+
+                  return (
+                    <article
+                      key={notification.id}
+                      className="workbench-notification-item"
+                      data-archived={archived}
+                    >
+                      <button
+                        type="button"
+                        className="workbench-notification-item-content"
+                        onClick={() => {
+                          props.onSelectNotification(notification);
+                        }}
+                      >
+                        <div className="workbench-notification-item-header">
+                          <span className="workbench-notification-item-kind">
+                            {resolveWorkbenchNotificationKindLabel(notification.kind)}
+                          </span>
+                          <time>{formatWorkbenchNotificationTime(notification.createdAt)}</time>
+                        </div>
+                        <strong>{notification.title}</strong>
+                        <p>{notification.body}</p>
+                      </button>
+                      <div className="workbench-notification-item-actions">
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+
+                            if (archived) {
+                              props.onUnarchiveNotification(notification.id);
+                              return;
+                            }
+
+                            props.onArchiveNotification(notification.id);
+                          }}
+                        >
+                          {archived
+                            ? t("shell.globalNotificationsRemoveArchiveAction")
+                            : t("shell.globalNotificationsArchiveAction")}
+                        </button>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="workbench-notification-empty">{t("shell.globalNotificationsEmpty")}</p>
+            )}
+          </div>
+        ) : (
+          <div className="workbench-notification-pane" role="tabpanel" aria-label={t("shell.butlerInboxAction")}>
+            <WorkspaceInboxPanel active={props.open && activeTab === "inbox"} preferredWorkspaceId={props.preferredWorkspaceId} />
+          </div>
+        )}
+      </div>
+
+      <div className="workbench-modal-actions workbench-notification-footer-actions">
+        <button type="button" className="secondary-button" onClick={props.onClose}>
+          {t("common.close")}
+        </button>
+      </div>
+    </SidebarModal>
+  );
+}
+
 function PlusIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -1740,6 +2096,9 @@ function SidebarContent({
   onUnarchiveSession,
   workspaceManagementStateById,
   setWorkspaceManagementStateById,
+  unreadNotificationCount,
+  notificationPanelOpen,
+  onToggleNotificationPanel,
   onClose,
   onToggleCollapse
 }: {
@@ -1772,13 +2131,16 @@ function SidebarContent({
   onUnarchiveSession: (sessionId: string) => Promise<void>;
   workspaceManagementStateById: Record<string, WorkspaceManagementViewState>;
   setWorkspaceManagementStateById: Dispatch<SetStateAction<Record<string, WorkspaceManagementViewState>>>;
+  unreadNotificationCount: number;
+  notificationPanelOpen: boolean;
+  onToggleNotificationPanel: () => void;
   onClose?: () => void;
   onToggleCollapse?: () => void;
 }) {
   const navigate = useNavigate();
   const platform = usePlatform();
   const { showToast } = useToast();
-  const handleHeaderMouseDownCapture = useCallback((event: MouseEvent<HTMLElement>) => {
+  const handleHeaderMouseDownCapture = useCallback((event: ReactMouseEvent<HTMLElement>) => {
     if (!platform.isDesktop || platform.ui.osFamily !== "macos" || event.button !== 0) {
       return;
     }
@@ -2421,6 +2783,11 @@ function SidebarContent({
               <SidebarCollapseIcon />
             </button>
           ) : null}
+          <WorkbenchNotificationButton
+            unreadCount={unreadNotificationCount}
+            open={notificationPanelOpen}
+            onToggle={onToggleNotificationPanel}
+          />
           <button
             type="button"
             className="workbench-nav-toolbar-button"
@@ -3370,7 +3737,7 @@ function WorkbenchInfoPanel({
   }, [platform, showToast]);
 
   const handleInfoTabMouseDown = useCallback(
-    (event: MouseEvent<HTMLButtonElement>, tab: InfoTab) => {
+    (event: ReactMouseEvent<HTMLButtonElement>, tab: InfoTab) => {
       if (event.button !== 0 || !canDetachTabs) {
         return;
       }
@@ -3607,7 +3974,7 @@ function WorkbenchInfoPanel({
     onTabChange(tab);
   }, [onTabChange]);
 
-  const handleHeaderMouseDownCapture = useCallback((event: MouseEvent<HTMLElement>) => {
+  const handleHeaderMouseDownCapture = useCallback((event: ReactMouseEvent<HTMLElement>) => {
     if (!platform.isDesktop || platform.ui.osFamily !== "macos" || event.button !== 0) {
       return;
     }
@@ -3781,6 +4148,8 @@ export function WorkbenchLayout({
   const pendingWorkspaceManagementRefreshWorkspaceIdRef = useRef<string | null>(null);
   const terminalManagerWorkspaceSubscriptionRef = useRef<string | null>(null);
   const pendingTerminalManagerRefreshWorkspaceIdRef = useRef<string | null>(null);
+  const notificationRefreshRequestIdRef = useRef(0);
+  const notificationArchiveMutationRequestIdRef = useRef(0);
   const showToastRef = useRef(showToast);
   const platformBridgeRef = useRef(platform.bridge);
   const completionBaselineReadyRef = useRef(false);
@@ -3845,6 +4214,13 @@ export function WorkbenchLayout({
   const [workspaceManagementStateById, setWorkspaceManagementStateById] = useState<
     Record<string, WorkspaceManagementViewState>
   >({});
+  const [globalNotifications, setGlobalNotifications] = useState<WorkbenchGlobalNotification[]>([]);
+  const [archivedNotificationIds, setArchivedNotificationIds] = useState<Set<string>>(() => new Set());
+  const [notificationPanelOpen, setNotificationPanelOpen] = useState(false);
+  const [showArchivedNotifications, setShowArchivedNotifications] = useState(false);
+  const [notificationSeenAt, setNotificationSeenAt] = useState<string | null>(() =>
+    readStoredString(WORKBENCH_NOTIFICATION_SEEN_AT_KEY)
+  );
 
   useEffect(() => {
     showToastRef.current = showToast;
@@ -3853,6 +4229,87 @@ export function WorkbenchLayout({
   useEffect(() => {
     platformBridgeRef.current = platform.bridge;
   }, [platform.bridge]);
+
+  const refreshGlobalNotifications = useCallback(async () => {
+    const requestId = notificationRefreshRequestIdRef.current + 1;
+    notificationRefreshRequestIdRef.current = requestId;
+
+    try {
+      const profileResponse = await getButlerProfile();
+
+      if (requestId !== notificationRefreshRequestIdRef.current) {
+        return;
+      }
+
+      if (!profileResponse.initialized) {
+        setGlobalNotifications([]);
+        setArchivedNotificationIds(new Set());
+        return;
+      }
+
+      const [overviewResponse, followUpResponse, notificationArchiveResponse] = await Promise.all([
+        getButlerOverview(),
+        listButlerFollowUpTasks(),
+        listButlerNotificationArchives()
+      ]);
+
+      if (requestId !== notificationRefreshRequestIdRef.current) {
+        return;
+      }
+
+      setGlobalNotifications(
+        buildWorkbenchGlobalNotifications(overviewResponse.overview, followUpResponse.items)
+      );
+      setArchivedNotificationIds(
+        new Set(notificationArchiveResponse.items.map((item) => item.notificationId))
+      );
+    } catch {
+      if (requestId !== notificationRefreshRequestIdRef.current) {
+        return;
+      }
+
+      setGlobalNotifications([]);
+      setArchivedNotificationIds(new Set());
+    }
+  }, []);
+
+  const markGlobalNotificationsSeen = useCallback((notifications: WorkbenchGlobalNotification[]) => {
+    const latestTimestamp = notifications
+      .map((item) => item.createdAt)
+      .sort((left, right) => parseWorkbenchNotificationTime(right) - parseWorkbenchNotificationTime(left))[0] ?? null;
+
+    if (!latestTimestamp) {
+      return;
+    }
+
+    setNotificationSeenAt((current) => {
+      if (current && parseWorkbenchNotificationTime(current) >= parseWorkbenchNotificationTime(latestTimestamp)) {
+        return current;
+      }
+
+      return latestTimestamp;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!notificationSeenAt) {
+      return;
+    }
+
+    writeStoredValue(WORKBENCH_NOTIFICATION_SEEN_AT_KEY, notificationSeenAt);
+  }, [notificationSeenAt]);
+
+  useEffect(() => {
+    void refreshGlobalNotifications();
+
+    const timer = window.setInterval(() => {
+      void refreshGlobalNotifications();
+    }, WORKBENCH_NOTIFICATION_POLL_INTERVAL_MS);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [refreshGlobalNotifications]);
 
   useEffect(() => {
     logPerfDebug("workbench.layout_mounted", {
@@ -4580,6 +5037,65 @@ export function WorkbenchLayout({
   const explicitWorkspaceId = sessionWorkspaceId ?? routeWorkspaceId ?? selectedWorkspaceId ?? null;
   const currentWorkspaceId =
     explicitWorkspaceId ?? navigationGroups[0]?.workspace.id ?? null;
+  const activeNotifications = useMemo(
+    () => globalNotifications.filter((item) => !archivedNotificationIds.has(item.id)),
+    [archivedNotificationIds, globalNotifications]
+  );
+  const unreadNotificationCount = useMemo(
+    () => activeNotifications.filter((item) => isWorkbenchNotificationUnread(item, notificationSeenAt)).length,
+    [activeNotifications, notificationSeenAt]
+  );
+
+  useEffect(() => {
+    if (!notificationPanelOpen) {
+      return;
+    }
+
+    markGlobalNotificationsSeen(activeNotifications);
+  }, [activeNotifications, markGlobalNotificationsSeen, notificationPanelOpen]);
+
+  const handleSelectNotification = useCallback((notification: WorkbenchGlobalNotification) => {
+    setNotificationPanelOpen(false);
+
+    if (notification.routePath) {
+      navigate(notification.routePath);
+    }
+  }, [navigate]);
+
+  const toggleNotificationArchive = useCallback(async (notificationId: string, archived: boolean) => {
+    const requestId = notificationArchiveMutationRequestIdRef.current + 1;
+    notificationArchiveMutationRequestIdRef.current = requestId;
+
+    try {
+      const response = await updateButlerNotificationArchive(notificationId, archived);
+
+      if (requestId !== notificationArchiveMutationRequestIdRef.current) {
+        return;
+      }
+
+      setArchivedNotificationIds((current) => {
+        const next = new Set(current);
+
+        if (response.item) {
+          next.add(response.item.notificationId);
+        } else {
+          next.delete(notificationId);
+        }
+
+        return next;
+      });
+    } catch (error) {
+      if (requestId !== notificationArchiveMutationRequestIdRef.current) {
+        return;
+      }
+
+      showToastRef.current({
+        title: t("shell.globalNotificationsArchiveFailed"),
+        description: error instanceof Error ? error.message : undefined,
+        tone: "error"
+      });
+    }
+  }, []);
 
   useEffect(() => {
     if (!sessionWorkspaceId) {
@@ -5287,6 +5803,11 @@ export function WorkbenchLayout({
       onUnarchiveSession={(sessionId) => commitNavigationArchiveState(sessionId, false)}
       workspaceManagementStateById={workspaceManagementStateById}
       setWorkspaceManagementStateById={setWorkspaceManagementStateById}
+      unreadNotificationCount={unreadNotificationCount}
+      notificationPanelOpen={notificationPanelOpen}
+      onToggleNotificationPanel={() => {
+        setNotificationPanelOpen((current) => !current);
+      }}
       onClose={() => setMobileNavOpen(false)}
     />
   ) : null;
@@ -5440,6 +5961,11 @@ export function WorkbenchLayout({
                 onUnarchiveSession={(sessionId) => commitNavigationArchiveState(sessionId, false)}
                 workspaceManagementStateById={workspaceManagementStateById}
                 setWorkspaceManagementStateById={setWorkspaceManagementStateById}
+                unreadNotificationCount={unreadNotificationCount}
+                notificationPanelOpen={notificationPanelOpen}
+                onToggleNotificationPanel={() => {
+                  setNotificationPanelOpen((current) => !current);
+                }}
                 onToggleCollapse={() => setLeftCollapsed(true)}
               />
             </aside>
@@ -5468,6 +5994,14 @@ export function WorkbenchLayout({
                     side="left"
                     collapsed={true}
                     onClick={openLeftPanel}
+                  />
+                  <WorkbenchNotificationButton
+                    unreadCount={unreadNotificationCount}
+                    open={notificationPanelOpen}
+                    onToggle={() => {
+                      setNotificationPanelOpen((current) => !current);
+                    }}
+                    collapsed
                   />
                   <button
                     type="button"
@@ -5552,6 +6086,23 @@ export function WorkbenchLayout({
           </div>
         </div>
       )}
+
+      <WorkbenchNotificationModal
+        open={notificationPanelOpen}
+        notifications={globalNotifications}
+        archivedNotificationIds={archivedNotificationIds}
+        showArchivedNotifications={showArchivedNotifications}
+        onClose={() => setNotificationPanelOpen(false)}
+        onToggleShowArchivedNotifications={setShowArchivedNotifications}
+        onArchiveNotification={(notificationId) => {
+          void toggleNotificationArchive(notificationId, true);
+        }}
+        onUnarchiveNotification={(notificationId) => {
+          void toggleNotificationArchive(notificationId, false);
+        }}
+        onSelectNotification={handleSelectNotification}
+        preferredWorkspaceId={currentWorkspaceId}
+      />
 
       <WorkspaceSearchModal
         open={searchModalOpen}

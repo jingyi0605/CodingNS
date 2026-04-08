@@ -291,6 +291,8 @@ export interface HistoryMessageDto {
   provider: ProviderId;
   providerSessionId: string;
   role: "user" | "assistant" | "tool" | "system";
+  origin?: "butler_proxy" | "system" | null;
+  originRef?: string | null;
   kind?: MessageKind;
   content: string;
   toolCall?: ToolCallDto | null;

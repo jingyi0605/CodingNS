@@ -24,6 +24,8 @@ export interface SessionMessageViewModel {
   toolCall: ToolCallDto | null;
   attachments?: MessageAttachmentDto[];
   attachmentPayloads?: ImageAttachmentPayload[] | null;
+  origin?: HistoryMessageDto["origin"];
+  originRef?: HistoryMessageDto["originRef"];
   timestamp: string;
   sequence: number;
   rawRef: string;
@@ -120,6 +122,8 @@ export function toViewMessage(
     toolCall,
     attachments: message.attachments ?? [],
     attachmentPayloads: null,
+    origin: message.origin ?? null,
+    originRef: message.originRef ?? null,
     timestamp: message.timestamp,
     sequence: message.sequence,
     rawRef: message.rawRef,
@@ -145,6 +149,8 @@ export function createPendingMessage(
     toolCall: null,
     attachments,
     attachmentPayloads,
+    origin: null,
+    originRef: null,
     timestamp: new Date().toISOString(),
     sequence,
     rawRef: `pending://${clientRequestId}`,

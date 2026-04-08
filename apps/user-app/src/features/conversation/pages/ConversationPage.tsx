@@ -30,6 +30,7 @@ import { MessageTimeline } from "../components/MessageTimeline";
 import { PermissionRequestList } from "../components/PermissionRequestList";
 import { QueuedMessageList } from "../components/QueuedMessageList";
 import { SessionHeader } from "../components/SessionHeader";
+import { SessionButlerActionButton } from "../components/SessionButlerActionButton";
 import { useWorkbenchShell } from "../components/WorkbenchLayout";
 import { SessionRuntimeStore, useSessionRuntimeStore } from "../runtime/session-runtime-store";
 import {
@@ -408,7 +409,12 @@ function LiveConversationPage({
         data-preview-dragging={!showInlineHeader ? mobilePreview.isDragging : undefined}
         style={!showInlineHeader ? mobilePreview.pageStyle : undefined}
       >
-        {showInlineHeader ? <SessionHeader session={session ?? navigationSession} /> : null}
+        {showInlineHeader ? (
+          <SessionHeader
+            session={session ?? navigationSession}
+            actions={<SessionButlerActionButton session={session ?? navigationSession} />}
+          />
+        ) : null}
         {!showInlineHeader ? (
           <MobileWorkspaceSwitcherHeader
             containerRef={mobileConversationHeaderRef}
@@ -782,7 +788,11 @@ function DraftConversationPage({
       data-preview-dragging={!showInlineHeader ? mobilePreview.isDragging : undefined}
       style={!showInlineHeader ? mobilePreview.pageStyle : undefined}
     >
-      {showInlineHeader ? <SessionHeader session={session} /> : null}
+      {showInlineHeader ? (
+        <SessionHeader
+          session={session}
+        />
+      ) : null}
       {!showInlineHeader ? (
         <MobileWorkspaceSwitcherHeader
           containerRef={mobileConversationHeaderRef}

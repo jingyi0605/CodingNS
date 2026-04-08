@@ -1,4 +1,4 @@
-import { useCallback, type MouseEvent } from "react";
+import { useCallback, type MouseEvent, type ReactNode } from "react";
 
 import {
   canStartDesktopWindowDragFromTarget,
@@ -12,6 +12,7 @@ import type { SessionSummaryDto } from "../api/conversation-api";
 
 interface SessionHeaderProps {
   session: SessionSummaryDto | null;
+  actions?: ReactNode;
 }
 
 function resolveTitleScale(title: string) {
@@ -32,7 +33,7 @@ function resolveTitleScale(title: string) {
   return "sm";
 }
 
-export function SessionHeader({ session }: SessionHeaderProps) {
+export function SessionHeader({ session, actions }: SessionHeaderProps) {
   const platform = usePlatform();
   const handleHeaderMouseDownCapture = useCallback((event: MouseEvent<HTMLElement>) => {
     if (!platform.isDesktop || platform.ui.osFamily !== "macos" || event.button !== 0) {
@@ -58,6 +59,7 @@ export function SessionHeader({ session }: SessionHeaderProps) {
           <span className="skeleton-line short" />
           <span className="skeleton-line long" />
         </div>
+        {actions ? <div className="conversation-header-actions">{actions}</div> : null}
       </header>
     );
   }
@@ -76,6 +78,7 @@ export function SessionHeader({ session }: SessionHeaderProps) {
           {titlePresentation.displayTitle}
         </h1>
       </div>
+      {actions ? <div className="conversation-header-actions">{actions}</div> : null}
     </header>
   );
 }

@@ -10,6 +10,18 @@ import { clearViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view
 import { t } from "../../../shared/i18n";
 import { ToastProvider } from "../../../shared/toast";
 import {
+  createButlerInboxItem,
+  deleteButlerInboxItem,
+  getButlerOverview,
+  getButlerProfile,
+  listButlerFollowUpTasks,
+  listButlerInboxItems,
+  listButlerNotificationArchives,
+  listButlerProjects,
+  updateButlerNotificationArchive,
+  updateButlerInboxItem
+} from "../../butler/api/butler-api";
+import {
   WorkbenchLayout,
   flattenVisibleSessionTree,
   getTreeNodeChildren,
@@ -26,6 +38,30 @@ vi.mock("../../../platform/desktop/window-openers", () => ({
   openGitExternalWindow: openGitExternalWindowMock,
   openProcessesExternalWindow: openProcessesExternalWindowMock
 }));
+
+vi.mock("../../butler/api/butler-api", () => ({
+  createButlerInboxItem: vi.fn(),
+  deleteButlerInboxItem: vi.fn(),
+  getButlerProfile: vi.fn(),
+  getButlerOverview: vi.fn(),
+  listButlerFollowUpTasks: vi.fn(),
+  listButlerInboxItems: vi.fn(),
+  listButlerNotificationArchives: vi.fn(),
+  listButlerProjects: vi.fn(),
+  updateButlerNotificationArchive: vi.fn(),
+  updateButlerInboxItem: vi.fn()
+}));
+
+const mockedCreateButlerInboxItem = vi.mocked(createButlerInboxItem);
+const mockedDeleteButlerInboxItem = vi.mocked(deleteButlerInboxItem);
+const mockedGetButlerProfile = vi.mocked(getButlerProfile);
+const mockedGetButlerOverview = vi.mocked(getButlerOverview);
+const mockedListButlerFollowUpTasks = vi.mocked(listButlerFollowUpTasks);
+const mockedListButlerInboxItems = vi.mocked(listButlerInboxItems);
+const mockedListButlerNotificationArchives = vi.mocked(listButlerNotificationArchives);
+const mockedListButlerProjects = vi.mocked(listButlerProjects);
+const mockedUpdateButlerNotificationArchive = vi.mocked(updateButlerNotificationArchive);
+const mockedUpdateButlerInboxItem = vi.mocked(updateButlerInboxItem);
 
 const WORKBENCH_NAVIGATION_SNAPSHOT_KEY = "workbench.navigation.snapshot";
 
@@ -143,6 +179,16 @@ describe("WorkbenchLayout", () => {
     openFilesExternalWindowMock.mockReset();
     openGitExternalWindowMock.mockReset();
     openProcessesExternalWindowMock.mockReset();
+    mockedCreateButlerInboxItem.mockReset();
+    mockedDeleteButlerInboxItem.mockReset();
+    mockedGetButlerProfile.mockReset();
+    mockedGetButlerOverview.mockReset();
+    mockedListButlerFollowUpTasks.mockReset();
+    mockedListButlerInboxItems.mockReset();
+    mockedListButlerNotificationArchives.mockReset();
+    mockedListButlerProjects.mockReset();
+    mockedUpdateButlerNotificationArchive.mockReset();
+    mockedUpdateButlerInboxItem.mockReset();
     openFilesExternalWindowMock.mockResolvedValue({
       ok: true,
       value: {
@@ -168,6 +214,31 @@ describe("WorkbenchLayout", () => {
       notifyOnSessionCompleted: true,
       notifyOnSessionFailed: true
     });
+    mockedGetButlerProfile.mockResolvedValue({
+      initialized: false,
+      profile: null
+    } as never);
+    mockedGetButlerOverview.mockResolvedValue({
+      overview: {
+        version: "v1",
+        generatedAt: "2026-04-07T00:00:00.000Z",
+        global: {
+          projectCount: 0,
+          activeProjectCount: 0,
+          blockedProjectCount: 0,
+          highRiskProjectCount: 0,
+          topRisks: [],
+          nextActions: []
+        },
+        projects: [],
+        sessions: [],
+        patrols: [],
+        verifications: []
+      }
+    } as never);
+    mockedListButlerFollowUpTasks.mockResolvedValue({ items: [] } as never);
+    mockedListButlerNotificationArchives.mockResolvedValue({ items: [] } as never);
+    mockedUpdateButlerNotificationArchive.mockResolvedValue({ item: null } as never);
     clearViewSnapshot(WORKBENCH_NAVIGATION_SNAPSHOT_KEY);
     clearViewSnapshot("workspace-management.summary.workspace-1");
     clearViewSnapshot("git-sidebar.snapshot.workspace-1");
@@ -1667,11 +1738,366 @@ describe("WorkbenchLayout", () => {
       within(leftRail as HTMLElement).getByRole("button", { name: t("shell.goForward") })
     ).toBeInTheDocument();
     expect(
+      within(leftRail as HTMLElement).getByRole("button", { name: t("shell.globalNotificationsAction") })
+    ).toBeInTheDocument();
+    expect(
       (leftRail as HTMLElement).querySelector(".workbench-window-drag-spacer.collapsed")
     ).toBeNull();
     expect(
       within(rightRail as HTMLElement).getByRole("button", { name: t("shell.showInfoSidebar") })
     ).toBeInTheDocument();
+  });
+
+  it("会在左侧头部显示全局通知按钮，并用气泡展示未读数量", async () => {
+    mockedGetButlerProfile.mockResolvedValueOnce({
+      initialized: true,
+      profile: {
+        id: "default",
+        displayName: "哆哆"
+      }
+    } as never);
+    mockedGetButlerOverview.mockResolvedValueOnce({
+      overview: {
+        version: "v1",
+        generatedAt: "2026-04-07T00:00:00.000Z",
+        global: {
+          projectCount: 1,
+          activeProjectCount: 1,
+          blockedProjectCount: 0,
+          highRiskProjectCount: 0,
+          topRisks: [],
+          nextActions: []
+        },
+        projects: [
+          {
+            id: "project-1",
+            workspaceId: "workspace-1",
+            name: "项目一",
+            repoRoot: "/repo/project-1",
+            lifecycleStatus: "active",
+            riskLevel: "medium",
+            activeSessionCount: 1,
+            sessionCount: 1,
+            memoryCount: 0,
+            failedPatrolCount: 0,
+            failedVerificationCount: 1,
+            latestSessionSummary: null,
+            latestPatrolSummary: null,
+            latestVerificationSummary: "登录验证失败",
+            topRisks: [],
+            nextActions: [],
+            lastActivityAt: "2026-04-07T00:00:00.000Z",
+            updatedAt: "2026-04-07T00:00:00.000Z"
+          }
+        ],
+        sessions: [],
+        patrols: [],
+        verifications: [
+          {
+            id: "verification-1",
+            projectId: "project-1",
+            verificationType: "browser",
+            status: "failed",
+            targetRef: "登录流程",
+            summary: "验证码输入后仍然无法登录。",
+            startedAt: "2026-04-07T00:01:00.000Z",
+            finishedAt: "2026-04-07T00:02:00.000Z",
+            createdAt: "2026-04-07T00:00:30.000Z"
+          }
+        ]
+      }
+    } as never);
+    mockedListButlerFollowUpTasks.mockResolvedValueOnce({
+      items: [
+        {
+          id: "follow-up-1",
+          projectId: "project-1",
+          projectName: "项目一",
+          workspaceId: "workspace-1",
+          butlerSessionId: "butler-session-1",
+          sessionId: "session-2",
+          sessionTitle: "登录页开发",
+          objective: "补完验证码流程",
+          status: "waiting_user",
+          checkIntervalSeconds: 300,
+          lastCheckedAt: "2026-04-07T00:03:00.000Z",
+          nextCheckAt: null,
+          lastObservedRunningState: "completed",
+          lastObservedMessageAt: "2026-04-07T00:03:00.000Z",
+          lastObservedMessageCount: 12,
+          lastAutomationSummary: "需要你确认验证码失败后的处理策略。",
+          lastAutomationAt: "2026-04-07T00:03:00.000Z",
+          autoContinueCount: 1,
+          waitingReason: "要不要在失败三次后锁定账号？",
+          createdAt: "2026-04-07T00:00:00.000Z",
+          updatedAt: "2026-04-07T00:03:00.000Z",
+          completedAt: null
+        }
+      ]
+    } as never);
+    mockedListButlerProjects.mockResolvedValueOnce({
+      items: [
+        {
+          id: "project-1",
+          workspaceId: "workspace-1",
+          name: "项目一",
+          repoRoot: "/repo/project-1",
+          lifecycleStatus: "active"
+        }
+      ]
+    } as never);
+    mockedListButlerInboxItems.mockResolvedValueOnce({
+      items: []
+    } as never);
+
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "会话 Alpha",
+            workspaceId: "workspace-1"
+          })
+        ]
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-1");
+    await findSessionCardByTitle("会话 Alpha");
+    expect(screen.queryByRole("button", { name: t("shell.butlerInboxAction") })).toBeNull();
+
+    const notificationButton = await screen.findByRole("button", {
+      name: t("shell.globalNotificationsAction")
+    });
+    expect(notificationButton).toBeInTheDocument();
+    expect(
+      within(notificationButton).getByLabelText(
+        t("shell.globalNotificationsUnreadAria", { count: "2" })
+      )
+    ).toBeInTheDocument();
+
+    await userEvent.click(notificationButton);
+
+    const notificationDialog = await screen.findByRole("dialog", {
+      name: t("shell.globalNotificationsPanelTitle")
+    });
+    expect(within(notificationDialog).getByText("需要你决定：登录页开发")).toBeInTheDocument();
+    expect(within(notificationDialog).getByText("要不要在失败三次后锁定账号？")).toBeInTheDocument();
+    expect(within(notificationDialog).getByText("验证失败：登录流程")).toBeInTheDocument();
+    expect(within(notificationDialog).getByText("验证码输入后仍然无法登录。")).toBeInTheDocument();
+
+    await userEvent.click(
+      within(notificationDialog).getByRole("tab", { name: t("shell.butlerInboxAction") })
+    );
+
+    expect(
+      within(notificationDialog).getByRole("heading", { name: t("shell.butlerInboxCreateTitle") })
+    ).toBeInTheDocument();
+    expect(
+      within(notificationDialog).getByRole("heading", { name: t("shell.butlerInboxListTitle") })
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: t("shell.butlerInboxModalTitle") })).toBeNull();
+  });
+
+  it("通知归档会走服务端持久化并支持显示已归档通知", async () => {
+    mockedGetButlerProfile.mockResolvedValueOnce({
+      initialized: true,
+      profile: {
+        id: "default",
+        displayName: "哆哆"
+      }
+    } as never);
+    mockedGetButlerOverview.mockResolvedValueOnce({
+      overview: {
+        version: "v1",
+        generatedAt: "2026-04-07T00:00:00.000Z",
+        global: {
+          projectCount: 1,
+          activeProjectCount: 1,
+          blockedProjectCount: 0,
+          highRiskProjectCount: 0,
+          topRisks: [],
+          nextActions: []
+        },
+        projects: [
+          {
+            id: "project-1",
+            workspaceId: "workspace-1",
+            name: "项目一",
+            repoRoot: "/repo/project-1",
+            lifecycleStatus: "active",
+            riskLevel: "medium",
+            activeSessionCount: 1,
+            sessionCount: 1,
+            memoryCount: 0,
+            failedPatrolCount: 0,
+            failedVerificationCount: 1,
+            latestSessionSummary: null,
+            latestPatrolSummary: null,
+            latestVerificationSummary: "登录验证失败",
+            topRisks: [],
+            nextActions: [],
+            lastActivityAt: "2026-04-07T00:00:00.000Z",
+            updatedAt: "2026-04-07T00:00:00.000Z"
+          }
+        ],
+        sessions: [],
+        patrols: [],
+        verifications: [
+          {
+            id: "verification-1",
+            projectId: "project-1",
+            verificationType: "browser",
+            status: "failed",
+            targetRef: "登录流程",
+            summary: "验证码输入后仍然无法登录。",
+            startedAt: "2026-04-07T00:01:00.000Z",
+            finishedAt: "2026-04-07T00:02:00.000Z",
+            createdAt: "2026-04-07T00:00:30.000Z"
+          }
+        ]
+      }
+    } as never);
+    mockedListButlerFollowUpTasks.mockResolvedValueOnce({
+      items: [
+        {
+          id: "follow-up-1",
+          projectId: "project-1",
+          projectName: "项目一",
+          workspaceId: "workspace-1",
+          butlerSessionId: "butler-session-1",
+          sessionId: "session-2",
+          sessionTitle: "登录页开发",
+          objective: "补完验证码流程",
+          status: "waiting_user",
+          checkIntervalSeconds: 300,
+          lastCheckedAt: "2026-04-07T00:03:00.000Z",
+          nextCheckAt: null,
+          lastObservedRunningState: "completed",
+          lastObservedMessageAt: "2026-04-07T00:03:00.000Z",
+          lastObservedMessageCount: 12,
+          lastAutomationSummary: "需要你确认验证码失败后的处理策略。",
+          lastAutomationAt: "2026-04-07T00:03:00.000Z",
+          autoContinueCount: 1,
+          waitingReason: "要不要在失败三次后锁定账号？",
+          createdAt: "2026-04-07T00:00:00.000Z",
+          updatedAt: "2026-04-07T00:03:00.000Z",
+          completedAt: null
+        }
+      ]
+    } as never);
+    mockedListButlerNotificationArchives.mockResolvedValueOnce({
+      items: []
+    } as never);
+    mockedUpdateButlerNotificationArchive
+      .mockResolvedValueOnce({
+        item: {
+          notificationId: "follow-up-waiting:follow-up-1",
+          archivedAt: "2026-04-08T00:00:00.000Z",
+          updatedAt: "2026-04-08T00:00:00.000Z"
+        }
+      } as never)
+      .mockResolvedValueOnce({
+        item: null
+      } as never);
+
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "会话 Alpha",
+            workspaceId: "workspace-1"
+          })
+        ]
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-1");
+    await findSessionCardByTitle("会话 Alpha");
+
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: t("shell.globalNotificationsAction")
+      })
+    );
+
+    const notificationDialog = await screen.findByRole("dialog", {
+      name: t("shell.globalNotificationsPanelTitle")
+    });
+    const notificationTitle = "需要你决定：登录页开发";
+
+    expect(within(notificationDialog).getByText(notificationTitle)).toBeInTheDocument();
+
+    const notificationItem = within(notificationDialog)
+      .getByText(notificationTitle)
+      .closest(".workbench-notification-item");
+
+    expect(notificationItem).not.toBeNull();
+
+    await userEvent.click(
+      within(notificationItem as HTMLElement).getByRole("button", {
+        name: t("shell.globalNotificationsArchiveAction")
+      })
+    );
+
+    await waitFor(() => {
+      expect(mockedUpdateButlerNotificationArchive).toHaveBeenCalledWith("follow-up-waiting:follow-up-1", true);
+      expect(within(notificationDialog).queryByText(notificationTitle)).toBeNull();
+    });
+
+    await userEvent.click(
+      within(notificationDialog).getByRole("checkbox", {
+        name: t("shell.globalNotificationsShowArchived")
+      })
+    );
+
+    expect(within(notificationDialog).getByText(notificationTitle)).toBeInTheDocument();
+
+    const archivedNotificationItem = within(notificationDialog)
+      .getByText(notificationTitle)
+      .closest(".workbench-notification-item");
+
+    expect(archivedNotificationItem).not.toBeNull();
+
+    await userEvent.click(
+      within(archivedNotificationItem as HTMLElement).getByRole("button", {
+        name: t("shell.globalNotificationsRemoveArchiveAction")
+      })
+    );
+
+    await waitFor(() => {
+      expect(mockedUpdateButlerNotificationArchive).toHaveBeenCalledWith("follow-up-waiting:follow-up-1", false);
+      expect(
+        within(archivedNotificationItem as HTMLElement).getByRole("button", {
+          name: t("shell.globalNotificationsArchiveAction")
+        })
+      ).toBeInTheDocument();
+    });
   });
 
   it("导航栏会优先显示缓存快照", async () => {

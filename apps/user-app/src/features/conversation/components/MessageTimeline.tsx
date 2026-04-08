@@ -17,6 +17,7 @@ import remarkGfm from "remark-gfm";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 import { usePlatform } from "../../../platform/platform-provider";
+import { getButlerFollowUpTask, type ButlerFollowUpTaskDto } from "../../butler/api/butler-api";
 import { getSessionAttachmentBlob } from "../api/conversation-api";
 import {
   getApplyPatchDisplayName,
@@ -1512,6 +1513,10 @@ function MessageItem({
   const richContent = useMemo(() => parseMessageRichContent(message.content), [message.content]);
   const visibleContent = richContent.text;
   const inlineImages = richContent.inlineImages;
+  const [originDetailOpen, setOriginDetailOpen] = useState(false);
+  const [originDetailLoading, setOriginDetailLoading] = useState(false);
+  const [originDetailError, setOriginDetailError] = useState<string | null>(null);
+  const [originDetail, setOriginDetail] = useState<ButlerFollowUpTaskDto | null>(null);
 
   if (isRulesMessage) {
     const tone =
@@ -1525,6 +1530,35 @@ function MessageItem({
   }
 
   if (isUser) {
+    const isButlerProxyMessage =
+      message.origin === "butler_proxy" || isButlerProxyClientRequestId(message.clientRequestId);
+    const hasOriginDetail = message.origin === "butler_proxy" && typeof message.originRef === "string" && message.originRef.trim().length > 0;
+
+    async function handleToggleOriginDetail() {
+      if (!hasOriginDetail) {
+        return;
+      }
+
+      const nextOpen = !originDetailOpen;
+      setOriginDetailOpen(nextOpen);
+
+      if (!nextOpen || originDetail || originDetailLoading) {
+        return;
+      }
+
+      setOriginDetailLoading(true);
+      setOriginDetailError(null);
+
+      try {
+        const response = await getButlerFollowUpTask(message.originRef!);
+        setOriginDetail(response.task);
+      } catch (error) {
+        setOriginDetailError(error instanceof Error ? error.message : t("conversation.butlerOriginDetailLoadFailed"));
+      } finally {
+        setOriginDetailLoading(false);
+      }
+    }
+
     return (
       <article className="message-item user-message">
         <div className="message-content-wrapper">
@@ -1550,9 +1584,50 @@ function MessageItem({
             </button>
           )}
         </div>
-        <time className="message-time" dateTime={message.timestamp}>
-          {new Date(message.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-        </time>
+        <div className="message-meta">
+          {isButlerProxyMessage ? (
+            hasOriginDetail ? (
+              <div className="message-origin-detail-anchor">
+                <button
+                  type="button"
+                  className="message-origin-badge message-origin-badge-button"
+                  aria-expanded={originDetailOpen}
+                  onClick={() => {
+                    void handleToggleOriginDetail();
+                  }}
+                >
+                  {t("conversation.butlerProxyMessageBadge")}
+                </button>
+                {originDetailOpen ? (
+                  <div className="message-origin-detail-popover" role="dialog" aria-live="polite">
+                    <strong>{t("conversation.butlerOriginDetailTitle")}</strong>
+                    {originDetailLoading ? (
+                      <p>{t("conversation.butlerOriginDetailLoading")}</p>
+                    ) : originDetailError ? (
+                      <p>{originDetailError}</p>
+                    ) : originDetail ? (
+                      <>
+                        <p>{t("conversation.butlerOriginDetailObjectiveLabel")}：{originDetail.objective}</p>
+                        <p>{t("conversation.butlerOriginDetailStatusLabel")}：{resolveFollowUpTaskStatusLabel(originDetail.status)}</p>
+                        <p>{t("conversation.butlerOriginDetailSummaryLabel")}：{originDetail.lastAutomationSummary || t("conversation.butlerAnalysisEmpty")}</p>
+                        {originDetail.waitingReason ? (
+                          <p>{t("conversation.butlerOriginDetailWaitingReasonLabel")}：{originDetail.waitingReason}</p>
+                        ) : null}
+                      </>
+                    ) : (
+                      <p>{t("conversation.butlerAnalysisEmpty")}</p>
+                    )}
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+              <span className="message-origin-badge">{t("conversation.butlerProxyMessageBadge")}</span>
+            )
+          ) : null}
+          <time className="message-time" dateTime={message.timestamp}>
+            {new Date(message.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+          </time>
+        </div>
       </article>
     );
   }
@@ -1628,6 +1703,26 @@ function DefaultAssistantAvatar() {
       <path d="M12 16v-4M12 8h.01" />
     </svg>
   );
+}
+
+function isButlerProxyClientRequestId(clientRequestId: string | null): boolean {
+  return typeof clientRequestId === "string" && clientRequestId.startsWith("butler-follow-up:");
+}
+
+function resolveFollowUpTaskStatusLabel(status: ButlerFollowUpTaskDto["status"]): string {
+  switch (status) {
+    case "waiting_user":
+      return t("shell.butlerAutomationStatusWaitingUser");
+    case "completed":
+      return t("shell.butlerAutomationStatusCompleted");
+    case "failed":
+      return t("shell.butlerAutomationStatusFailed");
+    case "cancelled":
+      return t("shell.butlerAutomationStatusCancelled");
+    case "active":
+    default:
+      return t("shell.butlerAutomationStatusActive");
+  }
 }
 
 export function MessageTimeline({
