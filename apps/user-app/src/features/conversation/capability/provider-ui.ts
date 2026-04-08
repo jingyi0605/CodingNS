@@ -8,8 +8,8 @@ import type {
   ProviderModelOptionDto
 } from "../api/conversation-api";
 import codexIcon from "../../../assets/provider-icons/codex.png";
-import geminiIcon from "../../../assets/provider-icons/gemini.svg";
-import kimiIcon from "../../../assets/provider-icons/kimi.svg";
+import geminiIcon from "../../../assets/provider-icons/gemini.png";
+import kimiIcon from "../../../assets/provider-icons/kimi.png";
 import openCodeIcon from "../../../assets/provider-icons/opencode.png";
 
 const REASONING_LEVEL_SET = new Set(["low", "medium", "high", "xhigh"]);
