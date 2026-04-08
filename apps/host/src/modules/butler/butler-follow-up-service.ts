@@ -6,6 +6,7 @@ import { AppError } from "../../shared/errors/app-error.js";
 import { createId } from "../../shared/utils/id.js";
 import { nowIso } from "../../shared/utils/time.js";
 import type {
+  ButlerFollowUpRound,
   ButlerFollowUpTask,
   ButlerFollowUpTaskStatus,
   ButlerProject,
@@ -17,6 +18,7 @@ import { ensureButlerWorkspaceIsolation } from "./butler-profile-service.js";
 import type { ButlerProjectService } from "./butler-project-service.js";
 import type { ButlerSessionService } from "./butler-session-service.js";
 import type { ButlerFollowUpTaskRepository } from "../../storage/repositories/butler-follow-up-task-repository.js";
+import type { SessionQueueItemView } from "../sessions/session-live-runtime-service.js";
 import type { SessionHistoryEnvelope, SessionHistoryService } from "../sessions/session-history-service.js";
 import type { SessionIndexRepository } from "../../storage/repositories/session-index-repository.js";
 import type { SessionMessageOriginRepository } from "../../storage/repositories/session-message-origin-repository.js";
@@ -31,6 +33,9 @@ import type { WorkspaceService } from "../workspace/workspace-service.js";
 const DEFAULT_CHECK_INTERVAL_SECONDS = 300;
 const MIN_CHECK_INTERVAL_SECONDS = 60;
 const MAX_CHECK_INTERVAL_SECONDS = 3600;
+const DEFAULT_MAX_AUTO_CONTINUE_COUNT = 5;
+const MIN_MAX_AUTO_CONTINUE_COUNT = 1;
+const MAX_MAX_AUTO_CONTINUE_COUNT = 20;
 const FOLLOW_UP_EVALUATOR_DIRNAME = ".butler-follow-up-evaluator";
 const RECENT_HISTORY_LIMIT = 40;
 
@@ -43,6 +48,8 @@ export interface ButlerFollowUpTaskView {
   sessionId: string;
   sessionTitle: string | null;
   objective: string;
+  completionCriteria: string;
+  maxAutoContinueCount: number;
   status: ButlerFollowUpTaskStatus;
   checkIntervalSeconds: number;
   lastCheckedAt: string | null;
@@ -54,6 +61,7 @@ export interface ButlerFollowUpTaskView {
   lastAutomationAt: string | null;
   autoContinueCount: number;
   waitingReason: string | null;
+  rounds: ButlerFollowUpRound[];
   createdAt: string;
   updatedAt: string;
   completedAt: string | null;
@@ -63,6 +71,8 @@ export interface CreateButlerFollowUpTaskInput {
   projectId: string;
   butlerSessionId: string;
   objective: string;
+  completionCriteria?: string;
+  maxAutoContinueCount?: number;
   checkIntervalSeconds?: number;
 }
 
@@ -96,7 +106,7 @@ export class ButlerFollowUpService {
     private readonly sessionIndexRepository: Pick<SessionIndexRepository, "findIndexRecordBySessionId">,
     private readonly sessionLiveRuntimeService: Pick<
       SessionLiveRuntimeService,
-      "getSessionRuntime" | "sendLiveMessage"
+      "getSessionRuntime" | "sendLiveMessage" | "enqueueLiveMessage"
     >,
     private readonly workspaceService: Pick<WorkspaceService, "importWorkspace">,
     private readonly providerAdapterRegistry: ProviderAdapterRegistry,
@@ -151,6 +161,8 @@ export class ButlerFollowUpService {
     this.butlerProfileService.ensureInitialized();
     const project = this.butlerProjectService.getById(input.projectId);
     const objective = normalizeObjective(input.objective);
+    const completionCriteria = normalizeCompletionCriteria(input.completionCriteria, objective);
+    const maxAutoContinueCount = normalizeMaxAutoContinueCount(input.maxAutoContinueCount);
     const checkIntervalSeconds = normalizeCheckInterval(input.checkIntervalSeconds);
     const snapshot = this.butlerSessionService.captureSessionSnapshot(
       project.id,
@@ -170,6 +182,10 @@ export class ButlerFollowUpService {
 
     const session = this.sessionHistoryService.getSession(snapshot.sessionId, userId);
     const timestamp = nowIso();
+    const initialSummary =
+      snapshot.runningState === "starting" || snapshot.runningState === "running"
+        ? `已开始跟进，先等待当前运行结束，再由后台评估助手决定下一步。默认最多自动推进 ${maxAutoContinueCount} 轮。`
+        : `已开始跟进，准备由后台评估助手检查当前进展。默认最多自动推进 ${maxAutoContinueCount} 轮。`;
     const task = this.butlerFollowUpTaskRepository.create({
       id: createId(),
       projectId: project.id,
@@ -177,6 +193,8 @@ export class ButlerFollowUpService {
       sessionId: snapshot.sessionId,
       createdByUserId: userId,
       objective,
+      completionCriteria,
+      maxAutoContinueCount,
       status: "active",
       checkIntervalSeconds,
       lastCheckedAt: null,
@@ -187,13 +205,22 @@ export class ButlerFollowUpService {
       lastObservedRunningState: snapshot.runningState,
       lastObservedMessageAt: session.lastMessageAt,
       lastObservedMessageCount: session.messageCount,
-      lastAutomationSummary:
-        snapshot.runningState === "starting" || snapshot.runningState === "running"
-          ? "已开始跟进，先等待当前运行结束，再由后台评估助手决定下一步。"
-          : "已开始跟进，准备由后台评估助手检查当前进展。",
+      lastAutomationSummary: initialSummary,
       lastAutomationAt: null,
       autoContinueCount: 0,
       waitingReason: null,
+      rounds: [
+        createFollowUpRound([], {
+          kind: "started",
+          status: "active",
+          summary: initialSummary,
+          waitingReason: null,
+          continuePrompt: null,
+          observedRunningState: snapshot.runningState,
+          autoContinueCount: 0,
+          createdAt: timestamp
+        })
+      ],
       createdAt: timestamp,
       updatedAt: timestamp,
       completedAt: null
@@ -208,6 +235,61 @@ export class ButlerFollowUpService {
     );
   }
 
+  cancelTask(taskId: string, userId: string): ButlerFollowUpTaskView {
+    this.butlerProfileService.ensureInitialized();
+    const task = this.butlerFollowUpTaskRepository.findById(taskId);
+
+    if (!task) {
+      throw new AppError({
+        statusCode: 404,
+        errorCode: "BUTLER_FOLLOW_UP_TASK_NOT_FOUND",
+        detail: "未找到对应的跟进任务"
+      });
+    }
+
+    if (task.createdByUserId !== userId) {
+      throw new AppError({
+        statusCode: 403,
+        errorCode: "BUTLER_FOLLOW_UP_TASK_FORBIDDEN",
+        detail: "你没有权限停止这个跟进任务"
+      });
+    }
+
+    if (task.status !== "active" && task.status !== "waiting_user") {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "BUTLER_FOLLOW_UP_TASK_NOT_STOPPABLE",
+        detail: "当前跟进任务已经结束，不能再次停止"
+      });
+    }
+
+    const timestamp = nowIso();
+    const updated = this.persistWithRound({
+      ...task,
+      status: "cancelled",
+      nextCheckAt: null,
+      waitingReason: null,
+      completedAt: timestamp,
+      updatedAt: timestamp,
+      lastAutomationAt: timestamp,
+      lastAutomationSummary: "已手动终止当前会话跟进任务，不再继续自动续接。"
+    }, {
+      kind: "cancelled",
+      status: "cancelled",
+      summary: "已手动终止当前会话跟进任务，不再继续自动续接。",
+      waitingReason: null,
+      continuePrompt: null,
+      observedRunningState: task.lastObservedRunningState,
+      autoContinueCount: task.autoContinueCount,
+      createdAt: timestamp
+    });
+
+    const project = this.butlerProjectService.getById(updated.projectId);
+    const index = this.sessionIndexRepository.findIndexRecordBySessionId(updated.sessionId);
+
+    return mapTaskView(updated, project.workspaceId, project.name, index?.title ?? null);
+  }
+
   async runDueTasks(referenceAt = nowIso()): Promise<void> {
     const tasks = this.butlerFollowUpTaskRepository.list({
       statuses: ["active"],
@@ -216,6 +298,22 @@ export class ButlerFollowUpService {
 
     for (const task of tasks) {
       if (task.nextCheckAt && task.nextCheckAt > referenceAt) {
+        continue;
+      }
+
+      await this.processTask(task.id, referenceAt);
+    }
+  }
+
+  async handleSessionTerminal(sessionId: string, referenceAt = nowIso()): Promise<void> {
+    const tasks = this.butlerFollowUpTaskRepository.list({
+      statuses: ["active"],
+      sessionId,
+      limit: 20
+    });
+
+    for (const task of tasks) {
+      if (this.shouldSkipImmediateTerminalRecheck(task)) {
         continue;
       }
 
@@ -257,7 +355,34 @@ export class ButlerFollowUpService {
         status: "active",
         waitingReason: null,
         nextCheckAt: shiftSeconds(referenceAt, task.checkIntervalSeconds),
-        lastAutomationSummary: "会话仍在运行，助手继续观察当前进度。"
+        lastAutomationSummary:
+          hasReachedAutoContinueLimit(task)
+            ? `会话仍在运行，但已达到预设的自动跟进轮数上限（${task.autoContinueCount}/${task.maxAutoContinueCount}），本轮结束后将停止自动续接。`
+            : "会话仍在运行，助手继续观察当前进度。"
+      });
+    }
+
+    if (hasReachedAutoContinueLimit(task)) {
+      const waitingReason = `已达到预设的自动跟进轮数上限（${task.autoContinueCount}/${task.maxAutoContinueCount}），如需继续，请手动重新发起跟进。`;
+      const summary = `自动跟进已按预设上限停止。结束条件：${task.completionCriteria}`;
+
+      return this.persistWithRound({
+        ...baseUpdate,
+        status: "waiting_user",
+        waitingReason,
+        nextCheckAt: null,
+        completedAt: null,
+        lastAutomationAt: referenceAt,
+        lastAutomationSummary: summary
+      }, {
+        kind: "limit_reached",
+        status: "waiting_user",
+        summary,
+        waitingReason,
+        continuePrompt: null,
+        observedRunningState: runningState,
+        autoContinueCount: task.autoContinueCount,
+        createdAt: referenceAt
       });
     }
 
@@ -266,7 +391,7 @@ export class ButlerFollowUpService {
 
       switch (evaluation.decision) {
         case "completed":
-          return this.persist({
+          return this.persistWithRound({
             ...baseUpdate,
             status: "completed",
             waitingReason: null,
@@ -274,9 +399,18 @@ export class ButlerFollowUpService {
             completedAt: referenceAt,
             lastAutomationAt: referenceAt,
             lastAutomationSummary: evaluation.summary
+          }, {
+            kind: "completed",
+            status: "completed",
+            summary: evaluation.summary,
+            waitingReason: null,
+            continuePrompt: null,
+            observedRunningState: runningState,
+            autoContinueCount: task.autoContinueCount,
+            createdAt: referenceAt
           });
         case "waiting_user":
-          return this.persist({
+          return this.persistWithRound({
             ...baseUpdate,
             status: "waiting_user",
             waitingReason: evaluation.waitingReason ?? evaluation.summary,
@@ -284,9 +418,18 @@ export class ButlerFollowUpService {
             completedAt: null,
             lastAutomationAt: referenceAt,
             lastAutomationSummary: evaluation.summary
+          }, {
+            kind: "waiting_user",
+            status: "waiting_user",
+            summary: evaluation.summary,
+            waitingReason: evaluation.waitingReason ?? evaluation.summary,
+            continuePrompt: null,
+            observedRunningState: runningState,
+            autoContinueCount: task.autoContinueCount,
+            createdAt: referenceAt
           });
         case "failed":
-          return this.persist({
+          return this.persistWithRound({
             ...baseUpdate,
             status: "failed",
             waitingReason: evaluation.waitingReason ?? evaluation.summary,
@@ -294,10 +437,19 @@ export class ButlerFollowUpService {
             completedAt: null,
             lastAutomationAt: referenceAt,
             lastAutomationSummary: evaluation.summary
+          }, {
+            kind: "failed",
+            status: "failed",
+            summary: evaluation.summary,
+            waitingReason: evaluation.waitingReason ?? evaluation.summary,
+            continuePrompt: null,
+            observedRunningState: runningState,
+            autoContinueCount: task.autoContinueCount,
+            createdAt: referenceAt
           });
         case "continue":
           if (!evaluation.continuePrompt) {
-            return this.persist({
+            return this.persistWithRound({
               ...baseUpdate,
               status: "failed",
               waitingReason: "后台评估助手没有返回可继续推进的指令。",
@@ -305,32 +457,23 @@ export class ButlerFollowUpService {
               completedAt: null,
               lastAutomationAt: referenceAt,
               lastAutomationSummary: evaluation.summary
+            }, {
+              kind: "failed",
+              status: "failed",
+              summary: evaluation.summary,
+              waitingReason: "后台评估助手没有返回可继续推进的指令。",
+              continuePrompt: null,
+              observedRunningState: runningState,
+              autoContinueCount: task.autoContinueCount,
+              createdAt: referenceAt
             });
           }
 
-          const clientRequestId = buildFollowUpClientRequestId(task.id, referenceAt);
-          const result = await this.sessionLiveRuntimeService.sendLiveMessage({
-            sessionId: task.sessionId,
-            userId: task.createdByUserId,
-            content: evaluation.continuePrompt,
-            clientRequestId,
-            runtimeOptions: {
-              model: null,
-              reasoningLevel: null,
-              permissionMode: null,
-              attachments: []
-            }
-          });
-          this.sessionMessageOriginRepository?.upsert({
-            sessionId: task.sessionId,
-            clientRequestId,
-            messageId: isSyntheticMessageId(result.message.messageId) ? null : result.message.messageId,
-            origin: "butler_proxy",
-            originRef: task.id,
-            content: evaluation.continuePrompt,
-            createdAt: result.acceptedAt,
-            updatedAt: result.acceptedAt
-          });
+          const sendResult = await this.sendContinuePrompt(
+            task,
+            evaluation.continuePrompt,
+            referenceAt
+          );
 
           this.butlerSessionService.captureSessionSnapshot(
             task.projectId,
@@ -339,17 +482,32 @@ export class ButlerFollowUpService {
             { sourceKind: "manual" }
           );
 
-          return this.persist({
+          const nextAutoContinueCount = task.autoContinueCount + 1;
+          const nextSummary =
+            sendResult.delivery === "queued"
+              ? buildQueuedFollowUpSummary(evaluation.summary, sendResult.queueItem)
+              : evaluation.summary;
+
+          return this.persistWithRound({
             ...baseUpdate,
             status: "active",
             waitingReason: null,
             nextCheckAt: shiftSeconds(referenceAt, task.checkIntervalSeconds),
             lastAutomationAt: referenceAt,
-            autoContinueCount: task.autoContinueCount + 1,
-            lastAutomationSummary: evaluation.summary
+            autoContinueCount: nextAutoContinueCount,
+            lastAutomationSummary: nextSummary
+          }, {
+            kind: sendResult.delivery === "queued" ? "queued" : "continue",
+            status: "active",
+            summary: nextSummary,
+            waitingReason: null,
+            continuePrompt: evaluation.continuePrompt,
+            observedRunningState: runningState,
+            autoContinueCount: nextAutoContinueCount,
+            createdAt: referenceAt
           });
         default:
-          return this.persist({
+          return this.persistWithRound({
             ...baseUpdate,
             status: "failed",
             waitingReason: "后台评估助手返回了不支持的决策。",
@@ -357,6 +515,15 @@ export class ButlerFollowUpService {
             completedAt: null,
             lastAutomationAt: referenceAt,
             lastAutomationSummary: "后台评估助手返回了不支持的决策。"
+          }, {
+            kind: "failed",
+            status: "failed",
+            summary: "后台评估助手返回了不支持的决策。",
+            waitingReason: "后台评估助手返回了不支持的决策。",
+            continuePrompt: null,
+            observedRunningState: runningState,
+            autoContinueCount: task.autoContinueCount,
+            createdAt: referenceAt
           });
       }
     } catch (error) {
@@ -373,20 +540,132 @@ export class ButlerFollowUpService {
       }
 
       const detail = error instanceof Error ? error.message : String(error);
-      return this.persist({
+      const summary = `后台评估助手执行失败：${detail}`;
+
+      return this.persistWithRound({
         ...baseUpdate,
         status: "failed",
         waitingReason: detail,
         nextCheckAt: null,
         completedAt: null,
         lastAutomationAt: referenceAt,
-        lastAutomationSummary: `后台评估助手执行失败：${detail}`
+        lastAutomationSummary: summary
+      }, {
+        kind: "failed",
+        status: "failed",
+        summary,
+        waitingReason: detail,
+        continuePrompt: null,
+        observedRunningState: runningState,
+        autoContinueCount: task.autoContinueCount,
+        createdAt: referenceAt
       });
     }
   }
 
   private persist(task: ButlerFollowUpTask): ButlerFollowUpTask {
     return this.butlerFollowUpTaskRepository.update(task) ?? task;
+  }
+
+  private persistWithRound(
+    task: ButlerFollowUpTask,
+    round: Omit<ButlerFollowUpRound, "roundNumber">
+  ): ButlerFollowUpTask {
+    return this.persist({
+      ...task,
+      rounds: [...task.rounds, createFollowUpRound(task.rounds, round)]
+    });
+  }
+
+  private shouldSkipImmediateTerminalRecheck(task: ButlerFollowUpTask): boolean {
+    const session = this.sessionHistoryService.getSession(task.sessionId, task.createdByUserId);
+
+    return (
+      isTerminalFollowUpRunningState(task.lastObservedRunningState)
+      && normalizeRunningState(session.runningState) === task.lastObservedRunningState
+      && normalizeNullableIso(session.lastMessageAt) === normalizeNullableIso(task.lastObservedMessageAt)
+      && session.messageCount === task.lastObservedMessageCount
+    );
+  }
+
+  private async sendContinuePrompt(
+    task: ButlerFollowUpTask,
+    continuePrompt: string,
+    referenceAt: string
+  ): Promise<
+    | {
+        delivery: "sent";
+      }
+    | {
+        delivery: "queued";
+        queueItem: SessionQueueItemView;
+      }
+  > {
+    const clientRequestId = buildFollowUpClientRequestId(task.id, referenceAt);
+
+    try {
+      const result = await this.sessionLiveRuntimeService.sendLiveMessage({
+        sessionId: task.sessionId,
+        userId: task.createdByUserId,
+        content: continuePrompt,
+        clientRequestId,
+        runtimeOptions: {
+          model: null,
+          reasoningLevel: null,
+          permissionMode: null,
+          attachments: []
+        }
+      });
+
+      this.recordMessageOrigin(task, clientRequestId, continuePrompt, result.acceptedAt, result.message.messageId);
+
+      return {
+        delivery: "sent"
+      };
+    } catch (error) {
+      if (!isDeferredFollowUpSendError(error)) {
+        throw error;
+      }
+
+      const queueItem = await this.sessionLiveRuntimeService.enqueueLiveMessage({
+        sessionId: task.sessionId,
+        userId: task.createdByUserId,
+        content: continuePrompt,
+        clientRequestId,
+        runtimeOptions: {
+          model: null,
+          reasoningLevel: null,
+          permissionMode: null,
+          attachments: []
+        }
+      });
+
+      this.recordMessageOrigin(task, clientRequestId, continuePrompt, queueItem.createdAt, null);
+
+      return {
+        delivery: "queued",
+        queueItem
+      };
+    }
+  }
+
+  private recordMessageOrigin(
+    task: ButlerFollowUpTask,
+    clientRequestId: string,
+    content: string,
+    timestamp: string,
+    messageId: string | null | undefined
+  ): void {
+    this.sessionMessageOriginRepository?.upsert({
+      sessionId: task.sessionId,
+      clientRequestId,
+      messageId: isSyntheticMessageId(messageId) ? null : messageId ?? null,
+      origin: "butler_proxy",
+      originRef: task.id,
+      content,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
   }
 
   private async inspectTask(task: ButlerFollowUpTask): Promise<FollowUpTaskInspection> {
@@ -438,10 +717,12 @@ export class ButlerFollowUpService {
       butlerSessionId: task.butlerSessionId,
       sessionTitle: inspection.sessionTitle,
       objective: task.objective,
+      completionCriteria: task.completionCriteria,
       runningState,
       messageCount: inspection.messageCount,
       lastMessageAt: inspection.messageAt,
       autoContinueCount: task.autoContinueCount,
+      maxAutoContinueCount: task.maxAutoContinueCount,
       lastAutomationSummary: task.lastAutomationSummary,
       latestAssistantText: inspection.latestAssistantText,
       transcriptLines: inspection.transcriptLines
@@ -531,6 +812,8 @@ function mapTaskView(
     sessionId: task.sessionId,
     sessionTitle,
     objective: task.objective,
+    completionCriteria: task.completionCriteria,
+    maxAutoContinueCount: task.maxAutoContinueCount,
     status: task.status,
     checkIntervalSeconds: task.checkIntervalSeconds,
     lastCheckedAt: task.lastCheckedAt,
@@ -542,9 +825,27 @@ function mapTaskView(
     lastAutomationAt: task.lastAutomationAt,
     autoContinueCount: task.autoContinueCount,
     waitingReason: task.waitingReason,
+    rounds: task.rounds,
     createdAt: task.createdAt,
     updatedAt: task.updatedAt,
     completedAt: task.completedAt
+  };
+}
+
+function createFollowUpRound(
+  existingRounds: ButlerFollowUpRound[],
+  input: Omit<ButlerFollowUpRound, "roundNumber">
+): ButlerFollowUpRound {
+  return {
+    roundNumber: existingRounds.length + 1,
+    kind: input.kind,
+    status: input.status,
+    summary: input.summary,
+    waitingReason: input.waitingReason,
+    continuePrompt: input.continuePrompt,
+    observedRunningState: input.observedRunningState,
+    autoContinueCount: input.autoContinueCount,
+    createdAt: input.createdAt
   };
 }
 
@@ -563,6 +864,23 @@ function normalizeObjective(value: string | undefined): string {
   return normalized;
 }
 
+function normalizeCompletionCriteria(value: string | undefined, objective: string): string {
+  const normalized = value?.trim();
+  return normalized && normalized.length > 0
+    ? normalized
+    : `仅当以下目标已经明确完成时，才允许结束本次自动跟进：${objective}`;
+}
+
+function normalizeMaxAutoContinueCount(value: number | undefined): number {
+  const fallback = value ?? DEFAULT_MAX_AUTO_CONTINUE_COUNT;
+  const rounded = Math.round(fallback);
+
+  return Math.min(
+    MAX_MAX_AUTO_CONTINUE_COUNT,
+    Math.max(MIN_MAX_AUTO_CONTINUE_COUNT, rounded)
+  );
+}
+
 function normalizeCheckInterval(value: number | undefined): number {
   const fallback = value ?? DEFAULT_CHECK_INTERVAL_SECONDS;
   const rounded = Math.round(fallback);
@@ -570,13 +888,29 @@ function normalizeCheckInterval(value: number | undefined): number {
   return Math.min(MAX_CHECK_INTERVAL_SECONDS, Math.max(MIN_CHECK_INTERVAL_SECONDS, rounded));
 }
 
+function hasReachedAutoContinueLimit(task: Pick<ButlerFollowUpTask, "autoContinueCount" | "maxAutoContinueCount">): boolean {
+  return task.autoContinueCount >= task.maxAutoContinueCount;
+}
+
 function buildFollowUpClientRequestId(taskId: string, referenceAt: string): string {
   return `butler-follow-up:${taskId}:${Date.parse(referenceAt) || Date.now()}`;
 }
 
+function buildQueuedFollowUpSummary(summary: string, queueItem: SessionQueueItemView): string {
+  return `${summary} 已转入消息队列，等待当前会话空闲后自动补发（队列项 ${queueItem.orderIndex}）。`;
+}
+
 function isDeferredFollowUpSendError(error: unknown): boolean {
   if (error instanceof AppError) {
-    return error.errorCode === "ACTIVE_RUN_EXISTS" || error.errorCode === "SESSION_NOT_RUNNING";
+    return (
+      error.errorCode === "ACTIVE_RUN_EXISTS"
+      || error.errorCode === "SESSION_NOT_RUNNING"
+      || error.errorCode === "IN_RUN_INPUT_NOT_SUPPORTED"
+      || error.errorCode === "SESSION_EXTERNAL_RUN_ACTIVE"
+      || error.errorCode === "PROVIDER_RUNTIME_UNAVAILABLE"
+      || error.errorCode === "PROVIDER_RUNTIME_TIMEOUT"
+      || error.statusCode >= 500
+    );
   }
 
   if (!(error instanceof Error)) {
@@ -586,6 +920,10 @@ function isDeferredFollowUpSendError(error: unknown): boolean {
   return (
     error.message === "ACTIVE_RUN_EXISTS"
     || error.message === "SESSION_NOT_RUNNING"
+    || error.message === "IN_RUN_INPUT_NOT_SUPPORTED"
+    || error.message === "SESSION_EXTERNAL_RUN_ACTIVE"
+    || error.message === "SERVER_UNAVAILABLE"
+    || error.message === "SERVER_TIMEOUT"
     || error.message.includes("当前会话正在运行")
   );
 }
@@ -611,6 +949,17 @@ function normalizeRunningState(value: string | null | undefined): SessionRunning
     default:
       return null;
   }
+}
+
+function isTerminalFollowUpRunningState(
+  value: SessionRunningState | null | undefined
+): value is "completed" | "interrupted" | "failed" {
+  return value === "completed" || value === "interrupted" || value === "failed";
+}
+
+function normalizeNullableIso(value: string | null | undefined): string | null {
+  const normalized = value?.trim();
+  return normalized && normalized.length > 0 ? normalized : null;
 }
 
 function resolveLatestAssistantText(envelope: SessionHistoryEnvelope | null): string | null {

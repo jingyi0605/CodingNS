@@ -479,6 +479,11 @@ export function createServer(config: HostConfig) {
   const butlerFollowUpScheduler = new ButlerFollowUpScheduler(
     butlerFollowUpService
   );
+  const butlerFollowUpTerminalSubscription = sessionLiveRuntimeService.registerTerminalStateListener(
+    async (event) => {
+      await butlerFollowUpService.handleSessionTerminal(event.sessionId, event.timestamp);
+    }
+  );
   const butlerControlSessionService = new ButlerControlSessionService(
     butlerProfileService,
     repositories.butlerControlSessionRepository,
@@ -635,6 +640,7 @@ export function createServer(config: HostConfig) {
 
   app.addHook("onClose", async () => {
     stopTerminalDebugEventLoopLagMonitor();
+    butlerFollowUpTerminalSubscription.close();
     await patrolScheduler.dispose();
     await sessionSummaryScheduler.dispose();
     await butlerFollowUpScheduler.dispose();

@@ -430,6 +430,8 @@ export interface ButlerFollowUpTask {
   sessionId: string;
   createdByUserId: string;
   objective: string;
+  completionCriteria: string;
+  maxAutoContinueCount: number;
   status: ButlerFollowUpTaskStatus;
   checkIntervalSeconds: number;
   lastCheckedAt: string | null;
@@ -441,9 +443,32 @@ export interface ButlerFollowUpTask {
   lastAutomationAt: string | null;
   autoContinueCount: number;
   waitingReason: string | null;
+  rounds: ButlerFollowUpRound[];
   createdAt: string;
   updatedAt: string;
   completedAt: string | null;
+}
+
+export type ButlerFollowUpRoundKind =
+  | "started"
+  | "continue"
+  | "queued"
+  | "waiting_user"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "limit_reached";
+
+export interface ButlerFollowUpRound {
+  roundNumber: number;
+  kind: ButlerFollowUpRoundKind;
+  status: ButlerFollowUpTaskStatus;
+  summary: string;
+  waitingReason: string | null;
+  continuePrompt: string | null;
+  observedRunningState: SessionRunningState | null;
+  autoContinueCount: number;
+  createdAt: string;
 }
 
 export interface ButlerSessionSummaryState {

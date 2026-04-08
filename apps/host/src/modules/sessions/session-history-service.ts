@@ -84,6 +84,11 @@ export interface SessionHistoryEnvelope {
   messages: HistoryPage["messages"];
 }
 
+export type SessionHistoryMessageWithOrigin = HistoryPage["messages"][number] & {
+  origin: string | null;
+  originRef: string | null;
+};
+
 interface SessionRelationDescriptor {
   parentSessionId: string | null;
   isSubagent: boolean;
@@ -326,6 +331,17 @@ export class SessionHistoryService {
       this.markSessionError(sessionId, "PROVIDER_READ_FAILED", error);
       throw mapSessionProviderError(error);
     }
+  }
+
+  resolveMessageOrigin(
+    sessionId: string,
+    message: HistoryPage["messages"][number]
+  ): SessionHistoryMessageWithOrigin {
+    return this.resolveMessageOrigins(sessionId, [message])[0] ?? {
+      ...message,
+      origin: null,
+      originRef: null
+    };
   }
 
   async findLatestUserMessage(
@@ -1264,7 +1280,14 @@ export class SessionHistoryService {
   private enrichMessagesWithOrigin(
     sessionId: string,
     messages: HistoryPage["messages"]
-  ): Array<HistoryPage["messages"][number] & { origin: string | null; originRef: string | null }> {
+  ): SessionHistoryMessageWithOrigin[] {
+    return this.resolveMessageOrigins(sessionId, messages);
+  }
+
+  private resolveMessageOrigins(
+    sessionId: string,
+    messages: HistoryPage["messages"]
+  ): SessionHistoryMessageWithOrigin[] {
     const originRepository = this.sessionMessageOriginRepository;
 
     if (!originRepository || messages.length === 0) {

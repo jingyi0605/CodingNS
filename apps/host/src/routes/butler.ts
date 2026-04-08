@@ -19,6 +19,7 @@ export async function registerButlerRoutes(
   app.get("/api/butler/follow-up-tasks", butlerController.listFollowUpTasks);
   app.get("/api/butler/follow-up-tasks/:taskId", butlerController.getFollowUpTask);
   app.post("/api/butler/follow-up-tasks", butlerController.createFollowUpTask);
+  app.post("/api/butler/follow-up-tasks/:taskId/cancel", butlerController.cancelFollowUpTask);
   app.get("/api/butler/inbox", butlerController.listInboxItems);
   app.post("/api/butler/inbox", butlerController.createInboxItem);
   app.patch("/api/butler/inbox/:itemId", butlerController.updateInboxItem);

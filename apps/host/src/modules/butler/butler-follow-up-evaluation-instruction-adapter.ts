@@ -28,10 +28,12 @@ export interface BuildButlerFollowUpEvaluationInstructionInput {
   butlerSessionId: string;
   sessionTitle: string | null;
   objective: string;
+  completionCriteria: string;
   runningState: SessionRunningState | null;
   messageCount: number;
   lastMessageAt: string | null;
   autoContinueCount: number;
+  maxAutoContinueCount: number;
   lastAutomationSummary: string | null;
   latestAssistantText: string | null;
   transcriptLines: string[];
@@ -54,10 +56,11 @@ export class ButlerFollowUpEvaluationInstructionAdapter {
       "如果没有 spec，就先从目标和最近消息里归纳一句当前核心任务，后续只围绕这个核心任务判断是否完成。",
       "除非目标本身明确要求，否则重构、补测试、补体验优化、顺手整理代码都不是必须完成条件。",
       "如果信息不足，可以明确说信息不足；但只有在真的缺关键决策信息时，才返回 waiting_user。",
+      "如果已经达到预设的自动推进轮数上限，你不能再通过新增目标来继续扩会话范围。",
       "",
       "判断标准：",
-      "1. 只有目标已经实质完成，才返回 completed；不能把建议项没做当成未完成。",
-      "2. 只有确实需要用户做选择、补业务信息、确认高风险操作时，才返回 waiting_user。",
+      "1. 只有目标已经实质完成，而且满足预设结束条件，才返回 completed；不能把建议项没做当成未完成。",
+      "2. 只有确实需要用户做选择、补业务信息、确认高风险操作，或者已经达到自动推进轮数上限时，才返回 waiting_user。",
       "3. 只要目标还没完成、而且继续推进不会越权，就返回 continue，并给出下一条要发给开发会话的明确中文指令。",
       "4. 只有当前上下文已经无法可靠判断，或者会话明显坏掉到无法继续时，才返回 failed。",
       "",
@@ -75,10 +78,13 @@ export class ButlerFollowUpEvaluationInstructionAdapter {
       `真实会话 ID：${input.sessionId}`,
       `会话标题：${input.sessionTitle ?? "未命名会话"}`,
       `用户目标：${input.objective}`,
+      `预设结束条件：${input.completionCriteria}`,
       `当前运行态：${input.runningState ?? "未知"}`,
       `当前消息数：${input.messageCount}`,
       `最近消息时间：${input.lastMessageAt ?? "未知"}`,
       `历史自动推进次数：${input.autoContinueCount}`,
+      `预设最多自动推进轮数：${input.maxAutoContinueCount}`,
+      `剩余自动推进轮数：${Math.max(input.maxAutoContinueCount - input.autoContinueCount, 0)}`,
       `上一轮自动化摘要：${input.lastAutomationSummary?.trim() || "无"}`,
       `最近一条助手结论：${input.latestAssistantText?.trim() || "无"}`,
       "",

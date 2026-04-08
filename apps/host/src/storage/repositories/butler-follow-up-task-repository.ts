@@ -1,6 +1,11 @@
 import type Database from "better-sqlite3";
 
-import type { ButlerFollowUpTask, ButlerFollowUpTaskStatus, SessionRunningState } from "../../types/domain.js";
+import type {
+  ButlerFollowUpRound,
+  ButlerFollowUpTask,
+  ButlerFollowUpTaskStatus,
+  SessionRunningState
+} from "../../types/domain.js";
 
 export class ButlerFollowUpTaskRepository {
   constructor(private readonly db: Database.Database) {}
@@ -15,6 +20,8 @@ export class ButlerFollowUpTaskRepository {
            session_id,
            created_by_user_id,
            objective,
+           completion_criteria,
+           max_auto_continue_count,
            status,
            check_interval_seconds,
            last_checked_at,
@@ -26,10 +33,11 @@ export class ButlerFollowUpTaskRepository {
            last_automation_at,
            auto_continue_count,
            waiting_reason,
+           rounds_json,
            created_at,
            updated_at,
            completed_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         record.id,
@@ -38,6 +46,8 @@ export class ButlerFollowUpTaskRepository {
         record.sessionId,
         record.createdByUserId,
         record.objective,
+        record.completionCriteria,
+        record.maxAutoContinueCount,
         record.status,
         record.checkIntervalSeconds,
         record.lastCheckedAt,
@@ -49,6 +59,7 @@ export class ButlerFollowUpTaskRepository {
         record.lastAutomationAt,
         record.autoContinueCount,
         record.waitingReason,
+        JSON.stringify(record.rounds),
         record.createdAt,
         record.updatedAt,
         record.completedAt
@@ -67,6 +78,8 @@ export class ButlerFollowUpTaskRepository {
            session_id,
            created_by_user_id,
            objective,
+           completion_criteria,
+           max_auto_continue_count,
            status,
            check_interval_seconds,
            last_checked_at,
@@ -78,6 +91,7 @@ export class ButlerFollowUpTaskRepository {
            last_automation_at,
            auto_continue_count,
            waiting_reason,
+           rounds_json,
            created_at,
            updated_at,
            completed_at
@@ -99,6 +113,8 @@ export class ButlerFollowUpTaskRepository {
            session_id,
            created_by_user_id,
            objective,
+           completion_criteria,
+           max_auto_continue_count,
            status,
            check_interval_seconds,
            last_checked_at,
@@ -110,6 +126,7 @@ export class ButlerFollowUpTaskRepository {
            last_automation_at,
            auto_continue_count,
            waiting_reason,
+           rounds_json,
            created_at,
            updated_at,
            completed_at
@@ -164,6 +181,8 @@ export class ButlerFollowUpTaskRepository {
            session_id,
            created_by_user_id,
            objective,
+           completion_criteria,
+           max_auto_continue_count,
            status,
            check_interval_seconds,
            last_checked_at,
@@ -175,6 +194,7 @@ export class ButlerFollowUpTaskRepository {
            last_automation_at,
            auto_continue_count,
            waiting_reason,
+           rounds_json,
            created_at,
            updated_at,
            completed_at
@@ -206,6 +226,8 @@ export class ButlerFollowUpTaskRepository {
              session_id = ?,
              created_by_user_id = ?,
              objective = ?,
+             completion_criteria = ?,
+             max_auto_continue_count = ?,
              status = ?,
              check_interval_seconds = ?,
              last_checked_at = ?,
@@ -217,6 +239,7 @@ export class ButlerFollowUpTaskRepository {
              last_automation_at = ?,
              auto_continue_count = ?,
              waiting_reason = ?,
+             rounds_json = ?,
              created_at = ?,
              updated_at = ?,
              completed_at = ?
@@ -228,6 +251,8 @@ export class ButlerFollowUpTaskRepository {
         record.sessionId,
         record.createdByUserId,
         record.objective,
+        record.completionCriteria,
+        record.maxAutoContinueCount,
         record.status,
         record.checkIntervalSeconds,
         record.lastCheckedAt,
@@ -239,6 +264,7 @@ export class ButlerFollowUpTaskRepository {
         record.lastAutomationAt,
         record.autoContinueCount,
         record.waitingReason,
+        JSON.stringify(record.rounds),
         record.createdAt,
         record.updatedAt,
         record.completedAt,
@@ -256,6 +282,8 @@ interface ButlerFollowUpTaskRow {
   session_id: string;
   created_by_user_id: string;
   objective: string;
+  completion_criteria: string;
+  max_auto_continue_count: number;
   status: ButlerFollowUpTaskStatus;
   check_interval_seconds: number;
   last_checked_at: string | null;
@@ -267,6 +295,7 @@ interface ButlerFollowUpTaskRow {
   last_automation_at: string | null;
   auto_continue_count: number;
   waiting_reason: string | null;
+  rounds_json: string;
   created_at: string;
   updated_at: string;
   completed_at: string | null;
@@ -280,6 +309,8 @@ function mapRow(row: ButlerFollowUpTaskRow): ButlerFollowUpTask {
     sessionId: row.session_id,
     createdByUserId: row.created_by_user_id,
     objective: row.objective,
+    completionCriteria: row.completion_criteria,
+    maxAutoContinueCount: row.max_auto_continue_count,
     status: row.status,
     checkIntervalSeconds: row.check_interval_seconds,
     lastCheckedAt: row.last_checked_at,
@@ -291,8 +322,48 @@ function mapRow(row: ButlerFollowUpTaskRow): ButlerFollowUpTask {
     lastAutomationAt: row.last_automation_at,
     autoContinueCount: row.auto_continue_count,
     waitingReason: row.waiting_reason,
+    rounds: parseRounds(row.rounds_json),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     completedAt: row.completed_at
   };
+}
+
+function parseRounds(value: string | null | undefined): ButlerFollowUpRound[] {
+  if (!value?.trim()) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(value);
+
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return parsed
+      .filter((item): item is ButlerFollowUpRound => Boolean(item && typeof item === "object"))
+      .map((item, index) => ({
+        roundNumber:
+          typeof item.roundNumber === "number" && Number.isFinite(item.roundNumber)
+            ? item.roundNumber
+            : index + 1,
+        kind: typeof item.kind === "string" ? item.kind as ButlerFollowUpRound["kind"] : "started",
+        status: typeof item.status === "string" ? item.status as ButlerFollowUpTaskStatus : "active",
+        summary: typeof item.summary === "string" ? item.summary : "",
+        waitingReason: typeof item.waitingReason === "string" ? item.waitingReason : null,
+        continuePrompt: typeof item.continuePrompt === "string" ? item.continuePrompt : null,
+        observedRunningState:
+          typeof item.observedRunningState === "string"
+            ? item.observedRunningState as SessionRunningState
+            : null,
+        autoContinueCount:
+          typeof item.autoContinueCount === "number" && Number.isFinite(item.autoContinueCount)
+            ? item.autoContinueCount
+            : 0,
+        createdAt: typeof item.createdAt === "string" ? item.createdAt : ""
+      }));
+  } catch {
+    return [];
+  }
 }

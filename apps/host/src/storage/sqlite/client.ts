@@ -31,6 +31,7 @@ export function createDatabaseClient(databasePath: string): DatabaseClient {
   ensureTerminalCommandTemplateRuntimeTypeColumn(db);
   ensureTerminalCommandTemplateProxySchema(db);
   ensureButlerProfileSchema(db);
+  ensureButlerFollowUpTaskSchema(db);
   ensureButlerSessionSummarySchema(db);
 
   return {
@@ -61,6 +62,29 @@ function ensureButlerProfileSchema(db: Database.Database): void {
   }
 
   db.exec("ALTER TABLE butler_profiles ADD COLUMN display_name TEXT NOT NULL DEFAULT '代码助手'");
+}
+
+function ensureButlerFollowUpTaskSchema(db: Database.Database): void {
+  const columns = db
+    .prepare("PRAGMA table_info(butler_follow_up_tasks)")
+    .all() as Array<{ name: string }>;
+  const columnNames = new Set(columns.map((column) => column.name));
+
+  if (columns.length === 0) {
+    return;
+  }
+
+  if (!columnNames.has("completion_criteria")) {
+    db.exec("ALTER TABLE butler_follow_up_tasks ADD COLUMN completion_criteria TEXT NOT NULL DEFAULT ''");
+  }
+
+  if (!columnNames.has("max_auto_continue_count")) {
+    db.exec("ALTER TABLE butler_follow_up_tasks ADD COLUMN max_auto_continue_count INTEGER NOT NULL DEFAULT 5");
+  }
+
+  if (!columnNames.has("rounds_json")) {
+    db.exec("ALTER TABLE butler_follow_up_tasks ADD COLUMN rounds_json TEXT NOT NULL DEFAULT '[]'");
+  }
 }
 
 function ensureButlerSessionSummarySchema(db: Database.Database): void {

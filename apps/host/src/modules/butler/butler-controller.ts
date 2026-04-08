@@ -73,6 +73,10 @@ interface ButlerFollowUpTaskParams {
   taskId: string;
 }
 
+interface CancelButlerFollowUpTaskBody {
+  reason?: string;
+}
+
 interface ButlerMemoryParams extends ButlerProjectParams {
   memoryId: string;
 }
@@ -397,6 +401,18 @@ export class ButlerController {
   ): Promise<void> => {
     reply.send({
       task: this.butlerFollowUpService.getTask(request.params.taskId)
+    });
+  };
+
+  readonly cancelFollowUpTask = async (
+    request: FastifyRequest<{ Params: ButlerFollowUpTaskParams; Body: CancelButlerFollowUpTaskBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send({
+      task: this.butlerFollowUpService.cancelTask(
+        request.params.taskId,
+        requireUserId(request)
+      )
     });
   };
 

@@ -515,6 +515,8 @@ CREATE TABLE IF NOT EXISTS butler_follow_up_tasks (
   session_id TEXT NOT NULL,
   created_by_user_id TEXT NOT NULL,
   objective TEXT NOT NULL,
+  completion_criteria TEXT NOT NULL DEFAULT '',
+  max_auto_continue_count INTEGER NOT NULL DEFAULT 5,
   status TEXT NOT NULL CHECK (
     status IN ('active', 'waiting_user', 'completed', 'failed', 'cancelled')
   ),
@@ -528,6 +530,7 @@ CREATE TABLE IF NOT EXISTS butler_follow_up_tasks (
   last_automation_at TEXT,
   auto_continue_count INTEGER NOT NULL DEFAULT 0,
   waiting_reason TEXT,
+  rounds_json TEXT NOT NULL DEFAULT '[]',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   completed_at TEXT,

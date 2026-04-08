@@ -57,7 +57,11 @@ import {
   type SessionPermissionRequestView
 } from "./session-permission-request-service.js";
 import { mapSessionProviderError } from "./session-provider-error-mapper.js";
-import type { SessionHistoryEnvelope, SessionHistoryService } from "./session-history-service.js";
+import type {
+  SessionHistoryEnvelope,
+  SessionHistoryMessageWithOrigin,
+  SessionHistoryService
+} from "./session-history-service.js";
 import { ClaudeRuntimeHelperAdapter } from "./claude-runtime-helper-client.js";
 import { CodexAppServerHelperClient } from "./codex-app-server-helper-client.js";
 
@@ -193,7 +197,7 @@ export interface SessionActivityEnvelope {
 export interface SessionRuntimeMessageEnvelope {
   type: "session.runtime_message";
   sessionId: string;
-  message: SendMessageResult["message"];
+  message: SessionHistoryMessageWithOrigin;
   source: "runtime";
 }
 
@@ -205,6 +209,14 @@ export type SessionRuntimeEnvelope =
   | SessionRuntimeErrorEnvelope
   | SessionInterruptedEnvelope
   | SessionPermissionEnvelope;
+
+interface SessionTerminalStateEvent {
+  sessionId: string;
+  status: "completed" | "failed" | "interrupted";
+  timestamp: string;
+  detail: string | null;
+  source: "runtime" | "external_runtime";
+}
 
 type ExternalRuntimeStatus = Extract<SessionRuntimeStatusEnvelope["status"], "running" | "completed" | "failed">;
 
@@ -251,6 +263,9 @@ export class SessionLiveRuntimeService {
   private readonly runtimeListeners = new Map<
     string,
     Set<(envelope: SessionRuntimeEnvelope | SessionHistoryEnvelope) => Promise<void> | void>
+  >();
+  private readonly terminalStateListeners = new Set<
+    (event: SessionTerminalStateEvent) => Promise<void> | void
   >();
   private readonly runtimeMessageSeenSessions = new Set<string>();
   private readonly runtimeHistoryFallbackSentSessions = new Set<string>();
@@ -535,17 +550,17 @@ export class SessionLiveRuntimeService {
         queueItemId: queueItem.id,
         session
       };
-    } catch (error) {
-      if (isQueueDispatchDeferredError(error)) {
-        this.sessionSendQueueRepository.markQueued(queueItem.id, nowIso());
-        this.scheduleQueueRetry(sessionId);
-      } else {
-        this.sessionSendQueueRepository.markFailed(
-          queueItem.id,
-          error instanceof Error ? error.message : "QUEUE_STEER_FAILED",
-          nowIso()
-        );
-      }
+      } catch (error) {
+        if (isQueueDispatchRetryableError(error)) {
+          this.sessionSendQueueRepository.markQueued(queueItem.id, nowIso());
+          this.scheduleQueueRetry(sessionId);
+        } else {
+          this.sessionSendQueueRepository.markFailed(
+            queueItem.id,
+            error instanceof Error ? error.message : "QUEUE_STEER_FAILED",
+            nowIso()
+          );
+        }
 
       throw error;
     }
@@ -842,6 +857,18 @@ export class SessionLiveRuntimeService {
       sessionId,
       interrupted: true,
       detail: interrupted.detail ?? "interrupt requested"
+    };
+  }
+
+  registerTerminalStateListener(
+    listener: (event: SessionTerminalStateEvent) => Promise<void> | void
+  ): ProviderSubscription {
+    this.terminalStateListeners.add(listener);
+
+    return {
+      close: () => {
+        this.terminalStateListeners.delete(listener);
+      }
     };
   }
 
@@ -1240,6 +1267,13 @@ export class SessionLiveRuntimeService {
     await this.emitExternalRuntimeEnvelope(envelope);
 
     if (isTerminalSessionRunningState(input.runningState)) {
+      await this.emitTerminalStateEvent({
+        sessionId: input.sessionId,
+        status: input.runningState,
+        timestamp: input.timestamp,
+        detail: input.detail,
+        source: "external_runtime"
+      });
       void this.dispatchNextQueuedMessage(input.sessionId);
     }
   }
@@ -1287,6 +1321,10 @@ export class SessionLiveRuntimeService {
     const capabilities = await this.sessionHistoryService.getSessionCapabilities(input.sessionId);
     const workspace = this.workspaceService.getWorkspaceOrThrow(session.workspaceId);
     const runtimeMode = shouldStartNativeSessionOnFirstMessage(session);
+    const nextUserSequence =
+      runtimeMode === "start"
+        ? 1
+        : await this.resolveNextUserSequence(input.sessionId, session.messageCount);
     const resolvedAttachments =
       persistedAttachments
       ?? this.persistMessageAttachments(
@@ -1309,10 +1347,7 @@ export class SessionLiveRuntimeService {
       provider: session.provider,
       providerSessionId: runtimeMode === "start" ? null : session.providerSessionId,
       rawStoreRef: runtimeMode === "start" ? null : session.rawStoreRef,
-      sequenceBase:
-        runtimeMode === "start"
-          ? 1
-          : Math.max(session.messageCount + 1, 1),
+      sequenceBase: nextUserSequence,
       options: {
         content: input.content,
         clientRequestId: input.clientRequestId,
@@ -1392,7 +1427,7 @@ export class SessionLiveRuntimeService {
           binding.providerSessionId,
           input.content,
           acceptedAt,
-          Math.max(session.messageCount + 1, 1),
+          nextUserSequence,
           boundAttachments.length > 0
             ? boundAttachments
             : resolvedAttachments.messageAttachments
@@ -1471,7 +1506,7 @@ export class SessionLiveRuntimeService {
         );
         this.sessionSendQueueRepository.delete(nextQueueItem.id);
       } catch (error) {
-        if (isQueueDispatchDeferredError(error)) {
+        if (isQueueDispatchRetryableError(error)) {
           this.sessionSendQueueRepository.markQueued(nextQueueItem.id, nowIso());
           this.scheduleQueueRetry(sessionId);
           return;
@@ -1815,7 +1850,23 @@ export class SessionLiveRuntimeService {
     await this.maybeEmitRuntimeHistoryFallback(sessionId, event);
 
     if (isTerminalRuntimeEventStatus(event.status)) {
+      if (!isTerminalSessionRunningState(currentRunningState)) {
+        await this.emitTerminalStateEvent({
+          sessionId,
+          status: event.status,
+          timestamp: event.timestamp,
+          detail: event.detail ?? null,
+          source: "runtime"
+        });
+      }
+
       void this.dispatchNextQueuedMessage(sessionId);
+    }
+  }
+
+  private async emitTerminalStateEvent(event: SessionTerminalStateEvent): Promise<void> {
+    for (const listener of this.terminalStateListeners) {
+      await listener(event);
     }
   }
 
@@ -1832,6 +1883,26 @@ export class SessionLiveRuntimeService {
     } catch {
       return null;
     }
+  }
+
+  private async resolveNextUserSequence(
+    sessionId: string,
+    messageCount: number
+  ): Promise<number> {
+    let maxSequence = Math.max(messageCount, 0);
+    const envelope = await Promise.resolve(
+      this.sessionHistoryService.readRecentHistoryEnvelope(sessionId, 10)
+    ).catch(() => {
+      return null;
+    });
+
+    for (const message of envelope?.messages ?? []) {
+      if (Number.isFinite(message.sequence) && message.sequence > maxSequence) {
+        maxSequence = message.sequence;
+      }
+    }
+
+    return Math.max(maxSequence + 1, 1);
   }
 
   private persistMessageAttachments(
@@ -1861,7 +1932,7 @@ export class SessionLiveRuntimeService {
       return {
         type: "session.runtime_message",
         sessionId,
-        message: event.message,
+        message: this.sessionHistoryService.resolveMessageOrigin(sessionId, event.message),
         source: "runtime"
       };
     }
@@ -2267,13 +2338,31 @@ function isPendingSessionRunningState(
   return state === "starting" || state === "running";
 }
 
-function isQueueDispatchDeferredError(error: unknown): boolean {
+function isQueueDispatchRetryableError(error: unknown): boolean {
   if (error instanceof AppError) {
-    return error.errorCode === "ACTIVE_RUN_EXISTS" || error.errorCode === "SESSION_NOT_RUNNING";
+    if (
+      error.errorCode === "ACTIVE_RUN_EXISTS"
+      || error.errorCode === "SESSION_NOT_RUNNING"
+      || error.errorCode === "IN_RUN_INPUT_NOT_SUPPORTED"
+      || error.errorCode === "SESSION_EXTERNAL_RUN_ACTIVE"
+      || error.errorCode === "PROVIDER_RUNTIME_UNAVAILABLE"
+      || error.errorCode === "PROVIDER_RUNTIME_TIMEOUT"
+    ) {
+      return true;
+    }
+
+    return error.statusCode >= 500;
   }
 
   if (error instanceof Error) {
-    return error.message === "ACTIVE_RUN_EXISTS";
+    return (
+      error.message === "ACTIVE_RUN_EXISTS"
+      || error.message === "SESSION_NOT_RUNNING"
+      || error.message === "IN_RUN_INPUT_NOT_SUPPORTED"
+      || error.message === "SESSION_EXTERNAL_RUN_ACTIVE"
+      || error.message === "SERVER_UNAVAILABLE"
+      || error.message === "SERVER_TIMEOUT"
+    );
   }
 
   return false;
