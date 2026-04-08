@@ -163,6 +163,24 @@ CREATE INDEX IF NOT EXISTS idx_session_message_attachments_message
 CREATE INDEX IF NOT EXISTS idx_session_message_attachments_client_request
   ON session_message_attachments(session_id, client_request_id);
 
+CREATE TABLE IF NOT EXISTS session_message_origins (
+  session_id TEXT NOT NULL,
+  client_request_id TEXT NOT NULL,
+  message_id TEXT,
+  origin TEXT NOT NULL CHECK (origin IN ('butler_proxy', 'system')),
+  origin_ref TEXT,
+  content TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (session_id, client_request_id),
+  FOREIGN KEY (session_id) REFERENCES session_bindings(session_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_message_origins_message
+  ON session_message_origins(session_id, message_id);
+CREATE INDEX IF NOT EXISTS idx_session_message_origins_origin
+  ON session_message_origins(session_id, origin, updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS session_send_queue (
   id TEXT PRIMARY KEY,
   session_id TEXT NOT NULL,
@@ -414,6 +432,37 @@ CREATE TABLE IF NOT EXISTS butler_control_events (
 CREATE INDEX IF NOT EXISTS idx_butler_control_events_session_created_at
   ON butler_control_events(control_session_id, created_at ASC);
 
+CREATE TABLE IF NOT EXISTS butler_inbox_items (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  item_type TEXT NOT NULL CHECK (item_type IN ('bug', 'feature', 'change', 'task')),
+  title TEXT NOT NULL,
+  content TEXT NOT NULL,
+  priority TEXT NOT NULL CHECK (priority IN ('low', 'medium', 'high')),
+  status TEXT NOT NULL CHECK (status IN ('pending', 'in_progress', 'closed')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  closed_at TEXT,
+  FOREIGN KEY (project_id) REFERENCES butler_projects(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_butler_inbox_items_project_updated_at
+  ON butler_inbox_items(project_id, updated_at DESC, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_butler_inbox_items_status_updated_at
+  ON butler_inbox_items(status, updated_at DESC, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS butler_notification_archives (
+  user_id TEXT NOT NULL,
+  notification_id TEXT NOT NULL,
+  archived_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (user_id, notification_id),
+  FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_butler_notification_archives_user_updated_at
+  ON butler_notification_archives(user_id, updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS butler_projects (
   id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL,
@@ -458,6 +507,40 @@ CREATE INDEX IF NOT EXISTS idx_butler_sessions_project_id
   ON butler_sessions(project_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_butler_sessions_status
   ON butler_sessions(status, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS butler_follow_up_tasks (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  butler_session_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  created_by_user_id TEXT NOT NULL,
+  objective TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (
+    status IN ('active', 'waiting_user', 'completed', 'failed', 'cancelled')
+  ),
+  check_interval_seconds INTEGER NOT NULL,
+  last_checked_at TEXT,
+  next_check_at TEXT,
+  last_observed_running_state TEXT,
+  last_observed_message_at TEXT,
+  last_observed_message_count INTEGER NOT NULL DEFAULT 0,
+  last_automation_summary TEXT,
+  last_automation_at TEXT,
+  auto_continue_count INTEGER NOT NULL DEFAULT 0,
+  waiting_reason TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  completed_at TEXT,
+  FOREIGN KEY (project_id) REFERENCES butler_projects(id) ON DELETE CASCADE,
+  FOREIGN KEY (butler_session_id) REFERENCES butler_sessions(id) ON DELETE CASCADE,
+  FOREIGN KEY (session_id) REFERENCES session_bindings(session_id) ON DELETE CASCADE,
+  FOREIGN KEY (created_by_user_id) REFERENCES auth_users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_butler_follow_up_tasks_status
+  ON butler_follow_up_tasks(status, next_check_at ASC, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_butler_follow_up_tasks_session
+  ON butler_follow_up_tasks(butler_session_id, status, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS butler_session_summary_states (
   butler_session_id TEXT PRIMARY KEY,

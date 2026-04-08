@@ -133,6 +133,19 @@ export interface SessionMessageAttachmentRecord {
   createdAt: string;
 }
 
+export type SessionMessageOrigin = "butler_proxy" | "system";
+
+export interface SessionMessageOriginRecord {
+  sessionId: string;
+  clientRequestId: string;
+  messageId: string | null;
+  origin: SessionMessageOrigin;
+  originRef: string | null;
+  content: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export type SessionSendQueueStatus = "queued" | "dispatching" | "failed";
 
 export interface SessionSendQueueItemRecord {
@@ -295,6 +308,15 @@ export type ButlerSessionStatus = "idle" | "running" | "blocked" | "failed" | "c
 export type ButlerSessionSummaryStatus = "idle" | "scheduled" | "running" | "failed";
 export type ButlerCheckpointSourceKind = "snapshot" | "summary" | "verification" | "manual";
 export type ButlerCheckpointProgressState = "unknown" | "working" | "blocked" | "done";
+export type ButlerInboxItemType = "bug" | "feature" | "change" | "task";
+export type ButlerInboxItemStatus = "pending" | "in_progress" | "closed";
+export type ButlerInboxItemPriority = "low" | "medium" | "high";
+export type ButlerFollowUpTaskStatus =
+  | "active"
+  | "waiting_user"
+  | "completed"
+  | "failed"
+  | "cancelled";
 export type ProjectMemoryType = "arch" | "rule" | "decision" | "incident" | "verify" | "note";
 export type ProjectMemoryStatus = "candidate" | "active" | "superseded" | "archived";
 export type PatrolTriggerType = "manual" | "interval" | "cron";
@@ -379,6 +401,49 @@ export interface ButlerSession {
   lastCheckpointAt: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface ButlerInboxItem {
+  id: string;
+  projectId: string;
+  itemType: ButlerInboxItemType;
+  title: string;
+  content: string;
+  priority: ButlerInboxItemPriority;
+  status: ButlerInboxItemStatus;
+  createdAt: string;
+  updatedAt: string;
+  closedAt: string | null;
+}
+
+export interface ButlerNotificationArchiveRecord {
+  userId: string;
+  notificationId: string;
+  archivedAt: string;
+  updatedAt: string;
+}
+
+export interface ButlerFollowUpTask {
+  id: string;
+  projectId: string;
+  butlerSessionId: string;
+  sessionId: string;
+  createdByUserId: string;
+  objective: string;
+  status: ButlerFollowUpTaskStatus;
+  checkIntervalSeconds: number;
+  lastCheckedAt: string | null;
+  nextCheckAt: string | null;
+  lastObservedRunningState: SessionRunningState | null;
+  lastObservedMessageAt: string | null;
+  lastObservedMessageCount: number;
+  lastAutomationSummary: string | null;
+  lastAutomationAt: string | null;
+  autoContinueCount: number;
+  waitingReason: string | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
 }
 
 export interface ButlerSessionSummaryState {

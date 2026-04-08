@@ -13,6 +13,11 @@ import { ButlerControlActionService } from "../modules/butler/butler-control-act
 import { ButlerController } from "../modules/butler/butler-controller.js";
 import { ButlerContextAggregator } from "../modules/butler/context-aggregator.js";
 import { ButlerAuthService } from "../modules/butler/butler-auth-service.js";
+import { ButlerFollowUpEvaluationInstructionAdapter } from "../modules/butler/butler-follow-up-evaluation-instruction-adapter.js";
+import { ButlerFollowUpScheduler } from "../modules/butler/butler-follow-up-scheduler.js";
+import { ButlerFollowUpService } from "../modules/butler/butler-follow-up-service.js";
+import { ButlerInboxService } from "../modules/butler/butler-inbox-service.js";
+import { ButlerNotificationService } from "../modules/butler/butler-notification-service.js";
 import { ButlerProfileService } from "../modules/butler/butler-profile-service.js";
 import { ButlerProjectService } from "../modules/butler/butler-project-service.js";
 import { ButlerSessionService } from "../modules/butler/butler-session-service.js";
@@ -94,6 +99,9 @@ import { AuthUserRepository } from "../storage/repositories/auth-user-repository
 import { BootstrapStateRepository } from "../storage/repositories/bootstrap-state-repository.js";
 import { ButlerControlSessionRepository } from "../storage/repositories/butler-control-session-repository.js";
 import { ButlerControlEventRepository } from "../storage/repositories/butler-control-event-repository.js";
+import { ButlerFollowUpTaskRepository } from "../storage/repositories/butler-follow-up-task-repository.js";
+import { ButlerInboxItemRepository } from "../storage/repositories/butler-inbox-item-repository.js";
+import { ButlerNotificationArchiveRepository } from "../storage/repositories/butler-notification-archive-repository.js";
 import { ButlerProfileRepository } from "../storage/repositories/butler-profile-repository.js";
 import { ButlerProjectRepository } from "../storage/repositories/butler-project-repository.js";
 import { ButlerSessionRepository } from "../storage/repositories/butler-session-repository.js";
@@ -110,6 +118,7 @@ import { SessionChangedFileRepository } from "../storage/repositories/session-ch
 import { SessionIndexRepository } from "../storage/repositories/session-index-repository.js";
 import { SessionCheckpointRepository } from "../storage/repositories/session-checkpoint-repository.js";
 import { SessionMessageAttachmentRepository } from "../storage/repositories/session-message-attachment-repository.js";
+import { SessionMessageOriginRepository } from "../storage/repositories/session-message-origin-repository.js";
 import { SessionSendQueueRepository } from "../storage/repositories/session-send-queue-repository.js";
 import { SessionStateRepository } from "../storage/repositories/session-state-repository.js";
 import { SessionStatusSnapshotRepository } from "../storage/repositories/session-status-snapshot-repository.js";
@@ -147,6 +156,9 @@ export function createServer(config: HostConfig) {
     workspaceRepository: new WorkspaceRepository(database.db),
     butlerControlSessionRepository: new ButlerControlSessionRepository(database.db),
     butlerControlEventRepository: new ButlerControlEventRepository(database.db),
+    butlerFollowUpTaskRepository: new ButlerFollowUpTaskRepository(database.db),
+    butlerInboxItemRepository: new ButlerInboxItemRepository(database.db),
+    butlerNotificationArchiveRepository: new ButlerNotificationArchiveRepository(database.db),
     butlerProfileRepository: new ButlerProfileRepository(database.db),
     butlerProjectRepository: new ButlerProjectRepository(database.db),
     butlerSessionRepository: new ButlerSessionRepository(database.db),
@@ -163,6 +175,7 @@ export function createServer(config: HostConfig) {
     sessionCheckpointRepository: new SessionCheckpointRepository(database.db),
     sessionIndexRepository: new SessionIndexRepository(database.db),
     sessionMessageAttachmentRepository: new SessionMessageAttachmentRepository(database.db),
+    sessionMessageOriginRepository: new SessionMessageOriginRepository(database.db),
     sessionSendQueueRepository: new SessionSendQueueRepository(database.db),
     sessionStateRepository: new SessionStateRepository(database.db),
     sessionStatusSnapshotRepository: new SessionStatusSnapshotRepository(database.db),
@@ -253,7 +266,8 @@ export function createServer(config: HostConfig) {
     repositories.sessionStateRepository,
     repositories.sessionStatusSnapshotRepository,
     config,
-    sessionActivityAuthorityService
+    sessionActivityAuthorityService,
+    repositories.sessionMessageOriginRepository
   );
   const sessionLiveRuntimeService = new SessionLiveRuntimeService(
     sessionHistoryService,
@@ -285,6 +299,11 @@ export function createServer(config: HostConfig) {
     codexHomeDir: path.join(butlerRuntimeRootDir, "summary-codex-home"),
     claudeCodeHomeDir: path.join(butlerRuntimeRootDir, "summary-claude-home")
   };
+  const butlerFollowUpRuntimeConfig: HostConfig = {
+    ...config,
+    codexHomeDir: path.join(butlerRuntimeRootDir, "follow-up-codex-home"),
+    claudeCodeHomeDir: path.join(butlerRuntimeRootDir, "follow-up-claude-home")
+  };
   const butlerSessionLiveRuntimeService = new SessionLiveRuntimeService(
     sessionHistoryService,
     sessionMessageAttachmentService,
@@ -313,6 +332,20 @@ export function createServer(config: HostConfig) {
     butlerSummaryRuntimeConfig,
     sessionActivityAuthorityService
   );
+  const butlerFollowUpSessionLiveRuntimeService = new SessionLiveRuntimeService(
+    sessionHistoryService,
+    sessionMessageAttachmentService,
+    workspaceService,
+    sessionChangedFileService,
+    repositories.sessionBindingRepository,
+    repositories.authUserRepository,
+    repositories.sessionSendQueueRepository,
+    repositories.sessionIndexRepository,
+    repositories.sessionStateRepository,
+    repositories.sessionStatusSnapshotRepository,
+    butlerFollowUpRuntimeConfig,
+    sessionActivityAuthorityService
+  );
   const workbenchService = new WorkbenchService(
     repositories.workspaceRepository,
     sessionHistoryService,
@@ -324,6 +357,13 @@ export function createServer(config: HostConfig) {
     repositories.butlerSessionRepository,
     repositories.workspaceRepository,
     butlerProfileService
+  );
+  const butlerInboxService = new ButlerInboxService(
+    repositories.butlerProjectRepository,
+    repositories.butlerInboxItemRepository
+  );
+  const butlerNotificationService = new ButlerNotificationService(
+    repositories.butlerNotificationArchiveRepository
   );
   const butlerSessionService = new ButlerSessionService(
     repositories.butlerProjectRepository,
@@ -357,6 +397,10 @@ export function createServer(config: HostConfig) {
     new RuntimePatrolProviderAdapter("codex", butlerSummarySessionLiveRuntimeService, sessionHistoryService),
     new RuntimePatrolProviderAdapter("claude-code", butlerSummarySessionLiveRuntimeService, sessionHistoryService)
   ]);
+  const followUpProviderAdapterRegistry = new ProviderAdapterRegistry([
+    new RuntimePatrolProviderAdapter("codex", butlerFollowUpSessionLiveRuntimeService, sessionHistoryService),
+    new RuntimePatrolProviderAdapter("claude-code", butlerFollowUpSessionLiveRuntimeService, sessionHistoryService)
+  ]);
   const patrolExecutionService = new PatrolExecutionService(
     repositories.butlerProjectRepository,
     repositories.butlerSessionRepository,
@@ -375,6 +419,7 @@ export function createServer(config: HostConfig) {
     patrolExecutionService
   );
   const sessionSummaryInstructionAdapter = new SessionSummaryInstructionAdapter();
+  const butlerFollowUpEvaluationInstructionAdapter = new ButlerFollowUpEvaluationInstructionAdapter();
   const verificationRunService = new VerificationRunService(
     repositories.butlerProjectRepository,
     repositories.butlerSessionRepository,
@@ -385,6 +430,7 @@ export function createServer(config: HostConfig) {
     butlerProfileService,
     butlerProjectService,
     butlerSessionService,
+    butlerInboxService,
     projectMemoryService,
     patrolRunService,
     verificationRunService,
@@ -412,8 +458,26 @@ export function createServer(config: HostConfig) {
       sourceCodexHomeDir: config.codexHomeDir
     }
   );
+  const butlerFollowUpService = new ButlerFollowUpService(
+    butlerProfileService,
+    butlerProjectService,
+    butlerSessionService,
+    repositories.butlerFollowUpTaskRepository,
+    sessionHistoryService,
+    repositories.sessionIndexRepository,
+    sessionLiveRuntimeService,
+    workspaceService,
+    followUpProviderAdapterRegistry,
+    butlerFollowUpEvaluationInstructionAdapter,
+    butlerFollowUpRuntimeConfig.codexHomeDir,
+    config.codexHomeDir,
+    repositories.sessionMessageOriginRepository
+  );
   const sessionSummaryScheduler = new SessionSummaryScheduler(
     butlerSessionSummaryService
+  );
+  const butlerFollowUpScheduler = new ButlerFollowUpScheduler(
+    butlerFollowUpService
   );
   const butlerControlSessionService = new ButlerControlSessionService(
     butlerProfileService,
@@ -479,6 +543,9 @@ export function createServer(config: HostConfig) {
     butlerControlSessionService,
     butlerControlActionService,
     butlerContextAggregator,
+    butlerFollowUpService,
+    butlerInboxService,
+    butlerNotificationService,
     butlerProjectService,
     butlerSessionService,
     projectMemoryService,
@@ -560,6 +627,7 @@ export function createServer(config: HostConfig) {
   void registerGitRoutes(app, gitController);
   patrolScheduler.start();
   sessionSummaryScheduler.start();
+  butlerFollowUpScheduler.start();
 
   if (config.webUiDir) {
     registerStaticWebRoutes(app, config.webUiDir);
@@ -569,7 +637,9 @@ export function createServer(config: HostConfig) {
     stopTerminalDebugEventLoopLagMonitor();
     await patrolScheduler.dispose();
     await sessionSummaryScheduler.dispose();
+    await butlerFollowUpScheduler.dispose();
     await terminalService.dispose();
+    await butlerFollowUpSessionLiveRuntimeService.dispose();
     await butlerSummarySessionLiveRuntimeService.dispose();
     await butlerSessionLiveRuntimeService.dispose();
     await sessionLiveRuntimeService.dispose();
@@ -594,6 +664,7 @@ export function createServer(config: HostConfig) {
         butlerSessionLiveRuntimeService,
         butlerControlSessionService,
         butlerControlActionService,
+        butlerFollowUpService,
         butlerProjectService,
         butlerSessionService,
         projectMemoryService,
@@ -603,6 +674,7 @@ export function createServer(config: HostConfig) {
         patrolScheduler,
         butlerSessionSummaryService,
         sessionSummaryScheduler,
+        butlerFollowUpScheduler,
         workspacePanelSnapshotService,
         fileTreeService,
         fileSearchService,

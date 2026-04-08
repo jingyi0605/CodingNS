@@ -16,8 +16,18 @@ export async function registerButlerRoutes(
   app.post("/api/butler/control-session/resume", butlerController.resumeControlSession);
   app.post("/api/butler/control-session/messages", butlerController.sendControlMessage);
   app.get("/api/butler/overview", butlerController.getOverview);
+  app.get("/api/butler/follow-up-tasks", butlerController.listFollowUpTasks);
+  app.get("/api/butler/follow-up-tasks/:taskId", butlerController.getFollowUpTask);
+  app.post("/api/butler/follow-up-tasks", butlerController.createFollowUpTask);
+  app.get("/api/butler/inbox", butlerController.listInboxItems);
+  app.post("/api/butler/inbox", butlerController.createInboxItem);
+  app.patch("/api/butler/inbox/:itemId", butlerController.updateInboxItem);
+  app.delete("/api/butler/inbox/:itemId", butlerController.deleteInboxItem);
+  app.get("/api/butler/notifications/archives", butlerController.listNotificationArchives);
+  app.patch("/api/butler/notifications/archives/:notificationId", butlerController.updateNotificationArchive);
   app.get("/api/butler/context-snapshot", butlerController.getContextSnapshot);
   app.get("/api/butler/search", butlerController.searchSummaries);
+  app.get("/api/butler/session-target", butlerController.getSessionTarget);
   app.post("/api/butler/actions/open-project", butlerController.openProjectAction);
   app.post("/api/butler/actions/resume-session", butlerController.resumeProjectSessionAction);
   app.post("/api/butler/actions/start-patrol", butlerController.startPatrolAction);
