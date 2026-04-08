@@ -13,8 +13,13 @@ function createService() {
     getBindingOrThrow: vi.fn(),
     findLatestUserMessage: vi.fn(),
     persistSessionBinding: vi.fn(),
-    syncSessionTitle: vi.fn(),
-    readRecentHistoryEnvelope: vi.fn()
+    syncSessionTitle: vi.fn(async () => undefined),
+    readRecentHistoryEnvelope: vi.fn(),
+    resolveMessageOrigin: vi.fn((_: string, message: Record<string, unknown>) => ({
+      ...message,
+      origin: null,
+      originRef: null
+    }))
   };
   const sessionMessageAttachmentService = {
     persistImageAttachments: vi.fn(() => ({
@@ -203,6 +208,104 @@ describe("SessionLiveRuntimeService", () => {
     );
     expect(result.providerSessionId).toBe("claude-session-1");
     expect(result.message?.content).toBe("继续补充这轮任务的要求");
+  });
+
+  it("sendLiveMessage 在终态后立即续跑时会用最近历史修正下一条用户 sequence，避免插到上一条 AI 回复前面", async () => {
+    const { service, sessionHistoryService, sessionMessageAttachmentService, workspaceService } =
+      createService();
+    const continueSession = vi.fn(async () => ({
+      getSnapshot: vi.fn(() => ({
+        sessionId: "session-1",
+        workspaceId: "workspace-1",
+        provider: "codex",
+        providerSessionId: "thread-1",
+        rawStoreRef: "/tmp/.codex/thread-1.jsonl",
+        runningState: "running",
+        attachedClients: 1,
+        startedAt: "2026-03-26T10:00:10.000Z",
+        lastEventAt: "2026-03-26T10:00:10.000Z",
+        completedAt: null,
+        detail: null,
+        errorCode: null,
+        supportsInterrupt: true
+      })),
+      attach: vi.fn()
+    }));
+    const providerRuntimeService = {
+      getSnapshot: vi.fn(() => null),
+      continueSession
+    };
+    Object.defineProperty(service, "providerRuntimeService", {
+      value: providerRuntimeService,
+      configurable: true
+    });
+
+    sessionHistoryService.getSession.mockReturnValue({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "thread-1",
+      rawStoreRef: "/tmp/.codex/thread-1.jsonl",
+      messageCount: 10
+    });
+    sessionHistoryService.getSessionCapabilities.mockResolvedValue({
+      provider: "codex",
+      canStartSession: true,
+      canResumeSession: true,
+      canSendMessage: true,
+      inRunInputMode: "none",
+      supportsSubagents: true,
+      supportsInterrupt: true,
+      supportsStructuredToolCalls: true,
+      supportsTokenUsage: true,
+      supportsAttachments: true,
+      supportsPermissionPrompt: true,
+      supportsCheckpoint: true,
+      limitations: []
+    });
+    sessionHistoryService.readRecentHistoryEnvelope.mockResolvedValue({
+      type: "session.delta",
+      sessionId: "session-1",
+      cursor: "cursor-1",
+      messages: [
+        {
+          messageId: "assistant-11",
+          provider: "codex",
+          providerSessionId: "thread-1",
+          role: "assistant",
+          kind: "text",
+          content: "<turn_aborted>previous turn aborted</turn_aborted>",
+          toolCall: null,
+          timestamp: "2026-03-26T10:00:09.000Z",
+          sequence: 11,
+          rawRef: "codex://thread-1/msg-11"
+        }
+      ]
+    });
+    sessionHistoryService.getBindingOrThrow.mockReturnValue({
+      providerSessionId: "thread-1"
+    });
+    sessionHistoryService.findLatestUserMessage.mockResolvedValue(null);
+    workspaceService.getWorkspaceOrThrow.mockReturnValue({
+      id: "workspace-1",
+      path: "/tmp/workspace"
+    });
+    sessionMessageAttachmentService.buildProviderPrompt.mockReturnValue(null);
+    sessionMessageAttachmentService.bindClientRequestToMessage.mockReturnValue([]);
+
+    const result = await service.sendLiveMessage({
+      sessionId: "session-1",
+      userId: "user-1",
+      content: "继续这一轮 follow-up",
+      clientRequestId: "butler-follow-up:task-1:123"
+    });
+
+    expect(continueSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sequenceBase: 12
+      })
+    );
+    expect(result.message?.sequence).toBe(12);
   });
 
   it("startLiveSession 会把 provider 启动失败映射成稳定的 AppError", async () => {
@@ -970,6 +1073,129 @@ describe("SessionLiveRuntimeService", () => {
     expect((service as any).sendLiveMessageDirect).toHaveBeenCalledTimes(2);
   });
 
+  it("dispatchNextQueuedMessage 遇到运行时追加受限时会回到等待并自动重试", async () => {
+    vi.useFakeTimers();
+    const { service, sessionHistoryService, sessionSendQueueRepository } = createService();
+    const providerRuntimeService = {
+      getSnapshot: vi.fn(() => null)
+    };
+    Object.defineProperty(service, "providerRuntimeService", {
+      value: providerRuntimeService,
+      configurable: true
+    });
+    Object.defineProperty(service, "sendLiveMessageDirect", {
+      value: vi
+        .fn()
+        .mockRejectedValueOnce(new Error("IN_RUN_INPUT_NOT_SUPPORTED"))
+        .mockResolvedValueOnce({
+          sessionId: "session-1",
+          provider: "codex",
+          providerSessionId: "thread-1",
+          acceptedAt: "2026-03-26T10:00:02.000Z",
+          clientRequestId: null,
+          message: null
+        }),
+      configurable: true
+    });
+
+    sessionHistoryService.getSession.mockReturnValue({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "thread-1",
+      rawStoreRef: "/tmp/.codex/thread-1.jsonl",
+      messageCount: 3,
+      runningState: "completed"
+    });
+    sessionSendQueueRepository.findNextQueued.mockReturnValue({
+      id: "queue-1",
+      sessionId: "session-1",
+      userId: "user-1",
+      content: "继续续跑",
+      clientRequestId: null,
+      model: null,
+      reasoningLevel: null,
+      permissionMode: null,
+      status: "queued",
+      orderIndex: 1,
+      errorDetail: null,
+      createdAt: "2026-03-26T10:00:00.000Z",
+      updatedAt: "2026-03-26T10:00:00.000Z",
+      dispatchedAt: null
+    });
+
+    await (service as any).dispatchNextQueuedMessage("session-1");
+
+    expect(sessionSendQueueRepository.markQueued).toHaveBeenCalledWith(
+      "queue-1",
+      expect.any(String)
+    );
+    expect(sessionSendQueueRepository.markFailed).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1200);
+
+    expect((service as any).sendLiveMessageDirect).toHaveBeenCalledTimes(2);
+    expect(sessionSendQueueRepository.delete).toHaveBeenCalledWith("queue-1");
+  });
+
+  it("运行态进入终态时会发出 terminal 事件回调", async () => {
+    const { service, sessionHistoryService, sessionStateRepository, sessionStatusSnapshotRepository } = createService();
+    const providerRuntimeService = {
+      getSnapshot: vi.fn(() => null)
+    };
+    const terminalListener = vi.fn(async () => {});
+    Object.defineProperty(service, "providerRuntimeService", {
+      value: providerRuntimeService,
+      configurable: true
+    });
+
+    sessionStateRepository.findBySessionAndUser.mockReturnValue({
+      sessionId: "session-1",
+      userId: "user-1",
+      runningState: "running",
+      activitySource: "runtime",
+      favorite: false,
+      lastEventAt: "2026-03-26T10:00:01.000Z",
+      completedAt: null,
+      lastSeenAt: null,
+      updatedAt: "2026-03-26T10:00:01.000Z"
+    });
+    sessionStatusSnapshotRepository.findBySessionId.mockReturnValue({
+      sessionId: "session-1",
+      syncStatus: "idle",
+      syncCursor: null,
+      lastSyncAt: "2026-03-26T10:00:01.000Z",
+      lastErrorCode: null,
+      lastErrorDetail: null,
+      resumedAt: null,
+      updatedAt: "2026-03-26T10:00:01.000Z"
+    });
+
+    const subscription = service.registerTerminalStateListener(terminalListener);
+
+    await (service as any).persistRuntimeEvent("session-1", "workspace-1", "user-1", {
+      type: "status",
+      sessionId: "session-1",
+      provider: "codex",
+      providerSessionId: "thread-1",
+      rawStoreRef: "/tmp/.codex/thread-1.jsonl",
+      status: "completed",
+      detail: "本轮已完成",
+      timestamp: "2026-03-26T10:00:02.000Z"
+    });
+
+    expect(terminalListener).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      status: "completed",
+      timestamp: "2026-03-26T10:00:02.000Z",
+      detail: "本轮已完成",
+      source: "runtime"
+    });
+
+    subscription.close();
+    expect(sessionHistoryService.persistSessionBinding).toHaveBeenCalled();
+  });
+
   it("终态 runtime 快照不会阻塞 Codex 队列续跑", async () => {
     const { service, sessionSendQueueRepository } = createService();
     const providerRuntimeService = {
@@ -1454,8 +1680,8 @@ describe("SessionLiveRuntimeService", () => {
     );
   });
 
-  it("subscribeRuntime 会把 runtime message 映射成 session.runtime_message", async () => {
-    const { service } = createService();
+  it("subscribeRuntime 会把 runtime message 映射成带来源信息的 session.runtime_message", async () => {
+    const { service, sessionHistoryService } = createService();
     const runtimeListeners: Array<(event: Record<string, unknown>) => Promise<void>> = [];
     const providerRuntimeService = {
       getSnapshot: vi.fn(() => null),
@@ -1470,6 +1696,13 @@ describe("SessionLiveRuntimeService", () => {
       value: providerRuntimeService,
       configurable: true
     });
+    sessionHistoryService.resolveMessageOrigin.mockImplementation(
+      (_sessionId: string, message: Record<string, unknown>) => ({
+        ...message,
+        origin: "butler_proxy",
+        originRef: "follow-up-1"
+      })
+    );
 
     const envelopes: Array<Record<string, unknown>> = [];
     const subscription = service.subscribeRuntime("session-1", (envelope) => {
@@ -1508,7 +1741,9 @@ describe("SessionLiveRuntimeService", () => {
         source: "runtime",
         message: expect.objectContaining({
           messageId: "msg-1",
-          content: "第一段"
+          content: "第一段",
+          origin: "butler_proxy",
+          originRef: "follow-up-1"
         })
       }
     ]);

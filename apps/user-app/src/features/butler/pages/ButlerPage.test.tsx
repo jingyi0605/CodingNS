@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -76,6 +76,9 @@ vi.mock("../api/butler-api", () => ({
   getButlerProfile: vi.fn(),
   initButlerProfile: vi.fn(),
   getButlerOverview: vi.fn(),
+  cancelButlerFollowUpTask: vi.fn(),
+  getButlerFollowUpTask: vi.fn(),
+  listButlerPatrolPlans: vi.fn(),
   listButlerFollowUpTasks: vi.fn(),
   listButlerInboxItems: vi.fn(),
   listButlerControlEvents: vi.fn(),
@@ -91,6 +94,9 @@ import {
   getButlerProfile,
   initButlerProfile,
   getButlerOverview,
+  cancelButlerFollowUpTask,
+  getButlerFollowUpTask,
+  listButlerPatrolPlans,
   listButlerFollowUpTasks,
   listButlerInboxItems,
   listButlerControlEvents,
@@ -108,6 +114,9 @@ const mockedUseToast = vi.mocked(useToast);
 const mockedGetButlerProfile = vi.mocked(getButlerProfile);
 const mockedInitButlerProfile = vi.mocked(initButlerProfile);
 const mockedGetButlerOverview = vi.mocked(getButlerOverview);
+const mockedCancelButlerFollowUpTask = vi.mocked(cancelButlerFollowUpTask);
+const mockedGetButlerFollowUpTask = vi.mocked(getButlerFollowUpTask);
+const mockedListButlerPatrolPlans = vi.mocked(listButlerPatrolPlans);
 const mockedListButlerFollowUpTasks = vi.mocked(listButlerFollowUpTasks);
 const mockedListButlerInboxItems = vi.mocked(listButlerInboxItems);
 const mockedListButlerControlEvents = vi.mocked(listButlerControlEvents);
@@ -177,6 +186,64 @@ describe("ButlerPage", () => {
         patrols: [],
         verifications: []
       }
+    });
+    mockedCancelButlerFollowUpTask.mockResolvedValue({
+      task: {} as never
+    });
+    mockedGetButlerFollowUpTask.mockResolvedValue({
+      task: {
+        id: "follow-up-1",
+        projectId: "project-1",
+        projectName: "项目甲",
+        workspaceId: "workspace-1",
+        butlerSessionId: "butler-session-1",
+        sessionId: "session-1",
+        sessionTitle: "登录页开发",
+        objective: "把验证码功能真正做完",
+        completionCriteria: "当验证码流程和回归验证都完成后停止。",
+        maxAutoContinueCount: 5,
+        status: "waiting_user",
+        checkIntervalSeconds: 300,
+        lastCheckedAt: "2026-04-07T01:00:00.000Z",
+        nextCheckAt: null,
+        lastObservedRunningState: "completed",
+        lastObservedMessageAt: "2026-04-07T01:00:00.000Z",
+        lastObservedMessageCount: 12,
+        lastAutomationSummary: "当前需要你确认验证码失败策略。",
+        lastAutomationAt: "2026-04-07T01:02:00.000Z",
+        autoContinueCount: 1,
+        waitingReason: "需要你确认失败策略。",
+        rounds: [
+          {
+            roundNumber: 1,
+            kind: "started",
+            status: "active",
+            summary: "已开始跟进，准备由后台评估助手检查当前进展。默认最多自动推进 5 轮。",
+            waitingReason: null,
+            continuePrompt: null,
+            observedRunningState: "completed",
+            autoContinueCount: 0,
+            createdAt: "2026-04-07T00:50:00.000Z"
+          },
+          {
+            roundNumber: 2,
+            kind: "waiting_user",
+            status: "waiting_user",
+            summary: "当前需要你确认验证码失败策略。",
+            waitingReason: "需要你确认失败策略。",
+            continuePrompt: null,
+            observedRunningState: "completed",
+            autoContinueCount: 1,
+            createdAt: "2026-04-07T01:02:00.000Z"
+          }
+        ],
+        createdAt: "2026-04-07T00:50:00.000Z",
+        updatedAt: "2026-04-07T01:02:00.000Z",
+        completedAt: null
+      }
+    });
+    mockedListButlerPatrolPlans.mockResolvedValue({
+      items: []
     });
     mockedListButlerFollowUpTasks.mockResolvedValue({
       items: []
@@ -273,6 +340,12 @@ describe("ButlerPage", () => {
         </Routes>
       </MemoryRouter>
     );
+  }
+
+  function getLatestSidePanel() {
+    const latestSidePanel = setAuxiliaryPanelMock.mock.calls.at(-1)?.[0];
+    expect(latestSidePanel).toBeTruthy();
+    return latestSidePanel;
   }
 
   it("首次加载时先显示动态加载态，不提前闪初始化表单", async () => {
@@ -467,7 +540,7 @@ describe("ButlerPage", () => {
         updatedAt: "2026-04-05T00:00:00.000Z"
       }
     });
-    mockedListButlerFollowUpTasks.mockResolvedValueOnce({
+    mockedListButlerFollowUpTasks.mockResolvedValue({
       items: [
         {
           id: "follow-up-1",
@@ -500,6 +573,12 @@ describe("ButlerPage", () => {
 
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "阿尔文" })).toBeInTheDocument();
+      const latestSidePanel = getLatestSidePanel() as {
+        props: {
+          followUpTasks?: unknown[];
+        };
+      };
+      expect(latestSidePanel.props.followUpTasks).toHaveLength(1);
     });
 
     fireEvent.mouseEnter(screen.getByRole("heading", { name: "阿尔文" }));
@@ -637,7 +716,7 @@ describe("ButlerPage", () => {
         ]
       }
     });
-    mockedListButlerInboxItems.mockResolvedValueOnce({
+    mockedListButlerInboxItems.mockResolvedValue({
       items: [
         {
           id: "todo-1",
@@ -653,6 +732,166 @@ describe("ButlerPage", () => {
           createdAt: "2026-04-05T08:40:00.000Z",
           updatedAt: "2026-04-05T09:20:00.000Z",
           closedAt: null
+        }
+      ]
+    });
+    mockedListButlerFollowUpTasks.mockResolvedValue({
+      items: [
+        {
+          id: "follow-up-info-1",
+          projectId: "project-normal",
+          projectName: "普通项目",
+          workspaceId: "workspace-1",
+          butlerSessionId: "butler-session-info-1",
+          sessionId: "session-1",
+          sessionTitle: "登录页改造",
+          objective: "继续把登录页收尾",
+          completionCriteria: "登录页功能完成且验证通过。",
+          maxAutoContinueCount: 5,
+          status: "waiting_user",
+          checkIntervalSeconds: 300,
+          lastCheckedAt: "2026-04-05T09:05:00.000Z",
+          nextCheckAt: null,
+          lastObservedRunningState: "completed",
+          lastObservedMessageAt: "2026-04-05T09:05:00.000Z",
+          lastObservedMessageCount: 16,
+          lastAutomationSummary: "验证码流程还在收尾。",
+          lastAutomationAt: "2026-04-05T09:05:00.000Z",
+          autoContinueCount: 1,
+          waitingReason: "需要确认验证码失败策略。",
+          createdAt: "2026-04-05T08:30:00.000Z",
+          updatedAt: "2026-04-05T09:05:00.000Z",
+          completedAt: null
+        },
+        {
+          id: "follow-up-info-2",
+          projectId: "project-normal",
+          projectName: "普通项目",
+          workspaceId: "workspace-1",
+          butlerSessionId: "butler-session-info-2",
+          sessionId: "session-2",
+          sessionTitle: "注册页改造",
+          objective: "继续把注册页收尾",
+          completionCriteria: "注册页功能完成且验证通过。",
+          maxAutoContinueCount: 5,
+          status: "active",
+          checkIntervalSeconds: 300,
+          lastCheckedAt: "2026-04-05T08:55:00.000Z",
+          nextCheckAt: "2026-04-05T09:10:00.000Z",
+          lastObservedRunningState: "running",
+          lastObservedMessageAt: "2026-04-05T08:55:00.000Z",
+          lastObservedMessageCount: 9,
+          lastAutomationSummary: "正在继续观察注册页收尾进度。",
+          lastAutomationAt: "2026-04-05T08:55:00.000Z",
+          autoContinueCount: 1,
+          waitingReason: null,
+          createdAt: "2026-04-05T08:20:00.000Z",
+          updatedAt: "2026-04-05T08:55:00.000Z",
+          completedAt: null
+        },
+        {
+          id: "follow-up-info-3",
+          projectId: "project-blocked",
+          projectName: "阻塞项目",
+          workspaceId: "workspace-1",
+          butlerSessionId: "butler-session-info-3",
+          sessionId: "session-3",
+          sessionTitle: "支付流程修复",
+          objective: "排查支付流程阻塞",
+          completionCriteria: "支付流程恢复可用。",
+          maxAutoContinueCount: 5,
+          status: "failed",
+          checkIntervalSeconds: 300,
+          lastCheckedAt: "2026-04-05T08:45:00.000Z",
+          nextCheckAt: null,
+          lastObservedRunningState: "failed",
+          lastObservedMessageAt: "2026-04-05T08:45:00.000Z",
+          lastObservedMessageCount: 11,
+          lastAutomationSummary: "支付流程仍然卡在第三方回调。",
+          lastAutomationAt: "2026-04-05T08:45:00.000Z",
+          autoContinueCount: 2,
+          waitingReason: null,
+          createdAt: "2026-04-05T08:00:00.000Z",
+          updatedAt: "2026-04-05T08:45:00.000Z",
+          completedAt: null
+        },
+        {
+          id: "follow-up-info-4",
+          projectId: "project-normal",
+          projectName: "普通项目",
+          workspaceId: "workspace-1",
+          butlerSessionId: "butler-session-info-4",
+          sessionId: "session-4",
+          sessionTitle: "设置页收尾",
+          objective: "补齐设置页边角问题",
+          completionCriteria: "设置页问题全部关闭。",
+          maxAutoContinueCount: 5,
+          status: "completed",
+          checkIntervalSeconds: 300,
+          lastCheckedAt: "2026-04-05T08:35:00.000Z",
+          nextCheckAt: null,
+          lastObservedRunningState: "completed",
+          lastObservedMessageAt: "2026-04-05T08:35:00.000Z",
+          lastObservedMessageCount: 8,
+          lastAutomationSummary: "设置页收尾已完成。",
+          lastAutomationAt: "2026-04-05T08:35:00.000Z",
+          autoContinueCount: 2,
+          waitingReason: null,
+          createdAt: "2026-04-05T07:50:00.000Z",
+          updatedAt: "2026-04-05T08:35:00.000Z",
+          completedAt: "2026-04-05T08:35:00.000Z"
+        },
+        {
+          id: "follow-up-info-5",
+          projectId: "project-risk",
+          projectName: "高风险项目",
+          workspaceId: "workspace-1",
+          butlerSessionId: "butler-session-info-5",
+          sessionId: "session-5",
+          sessionTitle: "监控告警治理",
+          objective: "梳理告警噪音",
+          completionCriteria: "告警规则恢复稳定。",
+          maxAutoContinueCount: 5,
+          status: "cancelled",
+          checkIntervalSeconds: 300,
+          lastCheckedAt: "2026-04-05T08:20:00.000Z",
+          nextCheckAt: null,
+          lastObservedRunningState: "completed",
+          lastObservedMessageAt: "2026-04-05T08:20:00.000Z",
+          lastObservedMessageCount: 6,
+          lastAutomationSummary: "该跟进已被手动停止。",
+          lastAutomationAt: "2026-04-05T08:20:00.000Z",
+          autoContinueCount: 1,
+          waitingReason: null,
+          createdAt: "2026-04-05T07:40:00.000Z",
+          updatedAt: "2026-04-05T08:20:00.000Z",
+          completedAt: "2026-04-05T08:20:00.000Z"
+        },
+        {
+          id: "follow-up-info-6",
+          projectId: "project-risk",
+          projectName: "高风险项目",
+          workspaceId: "workspace-1",
+          butlerSessionId: "butler-session-info-6",
+          sessionId: "session-6",
+          sessionTitle: "旧历史任务",
+          objective: "这个任务只该出现在历史里",
+          completionCriteria: "旧历史任务完成。",
+          maxAutoContinueCount: 5,
+          status: "completed",
+          checkIntervalSeconds: 300,
+          lastCheckedAt: "2026-04-05T08:10:00.000Z",
+          nextCheckAt: null,
+          lastObservedRunningState: "completed",
+          lastObservedMessageAt: "2026-04-05T08:10:00.000Z",
+          lastObservedMessageCount: 5,
+          lastAutomationSummary: "旧历史任务已完成。",
+          lastAutomationAt: "2026-04-05T08:10:00.000Z",
+          autoContinueCount: 1,
+          waitingReason: null,
+          createdAt: "2026-04-05T07:20:00.000Z",
+          updatedAt: "2026-04-05T08:10:00.000Z",
+          completedAt: "2026-04-05T08:10:00.000Z"
         }
       ]
     });
@@ -675,24 +914,42 @@ describe("ButlerPage", () => {
     renderPage();
 
     await waitFor(() => {
-      expect(setAuxiliaryPanelMock).toHaveBeenCalled();
+      const latestSidePanel = getLatestSidePanel() as {
+        props: {
+          followUpTasks?: unknown[];
+          inboxItems?: unknown[];
+        };
+      };
+      expect(latestSidePanel.props.followUpTasks).toHaveLength(6);
+      expect(latestSidePanel.props.inboxItems).toHaveLength(1);
     });
 
-    const latestSidePanel = setAuxiliaryPanelMock.mock.calls.at(-1)?.[0];
+    const latestSidePanel = getLatestSidePanel();
     const renderedPanel = render(latestSidePanel);
 
     expect(renderedPanel.getByText(t("shell.butlerInfoFollowUpRecordsTitle"))).toBeInTheDocument();
+    expect(renderedPanel.getByRole("button", { name: t("shell.butlerFollowUpHistoryAction") })).toBeInTheDocument();
     expect(renderedPanel.getByText("登录页改造")).toBeInTheDocument();
-    expect(renderedPanel.getByText("验证码流程还在收尾。")).toBeInTheDocument();
+    expect(renderedPanel.getByText("需要确认验证码失败策略。")).toBeInTheDocument();
+    expect(renderedPanel.queryByText("旧历史任务")).not.toBeInTheDocument();
     expect(renderedPanel.getByText(t("shell.butlerInfoVerificationRecordsTitle"))).toBeInTheDocument();
     expect(renderedPanel.getByText("登录验证码")).toBeInTheDocument();
     expect(renderedPanel.getByText("正在从用户视角复测登录流程。")).toBeInTheDocument();
     expect(renderedPanel.getByText(t("shell.butlerInfoTodoRecordsTitle"))).toBeInTheDocument();
     expect(renderedPanel.getByText("补齐验证码流程")).toBeInTheDocument();
     expect(renderedPanel.getByText("普通项目 · 进行中")).toBeInTheDocument();
+
+    fireEvent.click(renderedPanel.getByRole("button", { name: t("shell.butlerFollowUpHistoryAction") }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("dialog", { name: t("shell.butlerFollowUpHistoryTitle") })).toBeInTheDocument();
+    });
+
+    const historyDialog = screen.getByRole("dialog", { name: t("shell.butlerFollowUpHistoryTitle") });
+    expect(within(historyDialog).getByText("旧历史任务")).toBeInTheDocument();
   });
 
-  it("自动化页会展示进行中和已完成的跟进任务", async () => {
+  it("自动化页只展示自动化任务和最近运行记录", async () => {
     mockedGetButlerProfile.mockResolvedValueOnce({
       initialized: true,
       profile: {
@@ -709,7 +966,97 @@ describe("ButlerPage", () => {
         updatedAt: "2026-04-05T00:00:00.000Z"
       }
     });
-    mockedListButlerFollowUpTasks.mockResolvedValueOnce({
+    mockedGetButlerOverview.mockResolvedValueOnce({
+      overview: {
+        version: "v5",
+        generatedAt: "2026-04-07T01:12:00.000Z",
+        global: {
+          projectCount: 2,
+          activeProjectCount: 2,
+          blockedProjectCount: 0,
+          highRiskProjectCount: 0,
+          topRisks: [],
+          nextActions: []
+        },
+        projects: [
+          {
+            id: "project-1",
+            workspaceId: "workspace-1",
+            name: "项目甲",
+            repoRoot: "/repo/project-1",
+            lifecycleStatus: "active",
+            riskLevel: "medium",
+            activeSessionCount: 1,
+            sessionCount: 1,
+            memoryCount: 0,
+            failedPatrolCount: 0,
+            failedVerificationCount: 0,
+            latestSessionSummary: null,
+            latestPatrolSummary: null,
+            latestVerificationSummary: null,
+            topRisks: [],
+            nextActions: [],
+            lastActivityAt: "2026-04-07T01:00:00.000Z",
+            updatedAt: "2026-04-07T01:00:00.000Z"
+          },
+          {
+            id: "project-2",
+            workspaceId: "workspace-1",
+            name: "项目乙",
+            repoRoot: "/repo/project-2",
+            lifecycleStatus: "active",
+            riskLevel: "low",
+            activeSessionCount: 1,
+            sessionCount: 1,
+            memoryCount: 0,
+            failedPatrolCount: 0,
+            failedVerificationCount: 0,
+            latestSessionSummary: null,
+            latestPatrolSummary: null,
+            latestVerificationSummary: null,
+            topRisks: [],
+            nextActions: [],
+            lastActivityAt: "2026-04-07T01:00:00.000Z",
+            updatedAt: "2026-04-07T01:00:00.000Z"
+          }
+        ],
+        sessions: [],
+        patrols: [
+          {
+            id: "patrol-run-1",
+            projectId: "project-1",
+            status: "completed",
+            summary: "本轮巡检未发现新的高风险问题。",
+            startedAt: "2026-04-07T00:40:00.000Z",
+            finishedAt: "2026-04-07T00:45:00.000Z",
+            createdAt: "2026-04-07T00:40:00.000Z"
+          }
+        ],
+        verifications: []
+      }
+    });
+    mockedListButlerPatrolPlans.mockImplementation(async (projectId: string) => ({
+      items:
+        projectId === "project-1"
+          ? [
+              {
+                id: "plan-1",
+                projectId: "project-1",
+                name: "每日项目巡检",
+                triggerType: "interval",
+                triggerConfig: {},
+                executionMode: "readonly",
+                patrolScope: {},
+                enabled: true,
+                lastScheduledAt: "2026-04-07T00:30:00.000Z",
+                nextRunAt: "2026-04-07T02:00:00.000Z",
+                createdAt: "2026-04-01T00:00:00.000Z",
+                updatedAt: "2026-04-07T00:30:00.000Z"
+              }
+            ]
+          : []
+    }));
+    mockedListButlerFollowUpTasks.mockResolvedValue({
       items: [
         {
           id: "follow-up-1",
@@ -757,7 +1104,20 @@ describe("ButlerPage", () => {
           waitingReason: null,
           createdAt: "2026-04-07T00:30:00.000Z",
           updatedAt: "2026-04-07T01:10:00.000Z",
-          completedAt: "2026-04-07T01:10:00.000Z"
+          completedAt: "2026-04-07T01:10:00.000Z",
+          rounds: [
+            {
+              roundNumber: 1,
+              kind: "completed",
+              status: "completed",
+              summary: "当前目标已经完成，跟进任务已收尾。",
+              waitingReason: null,
+              continuePrompt: null,
+              observedRunningState: "completed",
+              autoContinueCount: 2,
+              createdAt: "2026-04-07T01:08:00.000Z"
+            }
+          ]
         }
       ]
     });
@@ -765,29 +1125,128 @@ describe("ButlerPage", () => {
     renderPage();
 
     await waitFor(() => {
-      expect(setAuxiliaryPanelMock).toHaveBeenCalled();
+      const latestSidePanel = getLatestSidePanel() as {
+        props: {
+          followUpTasks?: unknown[];
+          patrolPlans?: unknown[];
+        };
+      };
+      expect(latestSidePanel.props.followUpTasks).toHaveLength(2);
+      expect(latestSidePanel.props.patrolPlans).toHaveLength(1);
     });
 
-    const latestSidePanel = setAuxiliaryPanelMock.mock.calls.at(-1)?.[0];
+    const latestSidePanel = getLatestSidePanel();
     const renderedPanel = render(latestSidePanel);
 
     fireEvent.click(renderedPanel.getByRole("tab", { name: t("shell.butlerSidebarAutomationTab") }));
 
-    expect(renderedPanel.getByText(t("shell.butlerAutomationActiveTitle"))).toBeInTheDocument();
+    expect(renderedPanel.getByText(t("shell.butlerAutomationTasksTitle"))).toBeInTheDocument();
     expect(renderedPanel.getByText("登录页开发")).toBeInTheDocument();
-    expect(renderedPanel.getByText("项目甲")).toBeInTheDocument();
     expect(renderedPanel.getByText(t("shell.butlerAutomationStatusActive"))).toBeInTheDocument();
-    expect(renderedPanel.getAllByText(t("shell.butlerAutomationObjectiveLabel"))).toHaveLength(2);
-    expect(renderedPanel.getByText("把验证码功能真正做完")).toBeInTheDocument();
-    expect(renderedPanel.getAllByText(t("shell.butlerAutomationLatestAssessmentLabel"))).toHaveLength(2);
-    expect(renderedPanel.getByText("会话仍在运行，助手继续观察当前进度。")).toBeInTheDocument();
-    expect(renderedPanel.getByText(t("shell.butlerAutomationNextCheckLabel"))).toBeInTheDocument();
-    expect(renderedPanel.getByText(t("shell.butlerAutomationCompletedTitle"))).toBeInTheDocument();
+    expect(renderedPanel.getByText("每日项目巡检")).toBeInTheDocument();
+    expect(renderedPanel.getByText(t("shell.butlerAutomationTaskTypeFollowUp"))).toBeInTheDocument();
+    expect(renderedPanel.getByText(t("shell.butlerAutomationTaskTypeInterval"))).toBeInTheDocument();
+    expect(renderedPanel.getByText(t("shell.butlerAutomationTaskNextRunLabel"))).toBeInTheDocument();
+    expect(renderedPanel.getByText(t("shell.butlerAutomationRunsTitle"))).toBeInTheDocument();
     expect(renderedPanel.getByText("注册流程收尾")).toBeInTheDocument();
-    expect(renderedPanel.getByText("项目乙")).toBeInTheDocument();
     expect(renderedPanel.getByText(t("shell.butlerAutomationStatusCompleted"))).toBeInTheDocument();
+    expect(renderedPanel.getByText(t("shell.butlerAutomationRunSourceFollowUp"))).toBeInTheDocument();
+    expect(renderedPanel.getByText(t("shell.butlerAutomationRunSourcePatrol"))).toBeInTheDocument();
     expect(renderedPanel.getByText("当前目标已经完成，跟进任务已收尾。")).toBeInTheDocument();
-    expect(renderedPanel.getByText(t("shell.butlerAutomationFinishedAtLabel"))).toBeInTheDocument();
+    expect(renderedPanel.getByText("本轮巡检未发现新的高风险问题。")).toBeInTheDocument();
+    expect(renderedPanel.queryByRole("button", { name: t("shell.butlerAutomationViewRoundsAction") })).not.toBeInTheDocument();
+  });
+
+  it("会话跟进历史和状态卡都可以查看轮次详情", async () => {
+    mockedGetButlerProfile.mockResolvedValueOnce({
+      initialized: true,
+      profile: {
+        id: "default",
+        displayName: "阿尔文",
+        providerId: "codex",
+        workspacePath: "/tmp/butler",
+        agentsMode: "inline",
+        agentsFilePath: null,
+        agentsContent: "测试",
+        persona: { tone: "direct", language: "zh-CN", summaryStyle: "brief" },
+        focus: { projectIds: [], riskPreference: "conservative", reportPriority: [], summaryDebounceSeconds: 300 },
+        initializedAt: "2026-04-05T00:00:00.000Z",
+        updatedAt: "2026-04-05T00:00:00.000Z"
+      }
+    });
+    mockedListButlerFollowUpTasks.mockResolvedValue({
+      items: [
+        {
+          id: "follow-up-1",
+          projectId: "project-1",
+          projectName: "项目甲",
+          workspaceId: "workspace-1",
+          butlerSessionId: "butler-session-1",
+          sessionId: "session-1",
+          sessionTitle: "登录页开发",
+          objective: "把验证码功能真正做完",
+          completionCriteria: "完成验证码开发并确认失败策略。",
+          maxAutoContinueCount: 5,
+          status: "waiting_user",
+          checkIntervalSeconds: 300,
+          lastCheckedAt: "2026-04-07T01:00:00.000Z",
+          nextCheckAt: null,
+          lastObservedRunningState: "completed",
+          lastObservedMessageAt: "2026-04-07T01:00:00.000Z",
+          lastObservedMessageCount: 12,
+          lastAutomationSummary: "当前需要你确认验证码失败策略。",
+          lastAutomationAt: "2026-04-07T01:02:00.000Z",
+          autoContinueCount: 1,
+          waitingReason: "需要你确认失败策略。",
+          createdAt: "2026-04-07T00:50:00.000Z",
+          updatedAt: "2026-04-07T01:02:00.000Z",
+          completedAt: null
+        }
+      ]
+    });
+
+    renderPage();
+
+    await waitFor(() => {
+      const latestSidePanel = getLatestSidePanel() as {
+        props: {
+          followUpTasks?: unknown[];
+        };
+      };
+      expect(latestSidePanel.props.followUpTasks).toHaveLength(1);
+    });
+
+    const latestSidePanel = getLatestSidePanel();
+    const renderedPanel = render(latestSidePanel);
+
+    fireEvent.click(renderedPanel.getByRole("button", { name: t("shell.butlerAutomationViewRoundsAction") }));
+
+    await waitFor(() => {
+      expect(mockedGetButlerFollowUpTask).toHaveBeenCalledWith("follow-up-1");
+      expect(screen.getByText(t("shell.butlerAutomationRoundDetailsTitle"))).toBeInTheDocument();
+      expect(screen.getByText(t("shell.butlerAutomationRoundLabel", { round: 2 }))).toBeInTheDocument();
+      expect(screen.getByText(/当前需要你确认验证码失败策略/)).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getAllByRole("button", { name: t("common.close") }).at(-1) as HTMLElement);
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: t("shell.butlerAutomationRoundDetailsTitle") })).toBeNull();
+    });
+
+    fireEvent.click(renderedPanel.getByRole("button", { name: t("shell.butlerFollowUpHistoryAction") }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("dialog", { name: t("shell.butlerFollowUpHistoryTitle") })).toBeInTheDocument();
+    });
+
+    const historyDialog = screen.getByRole("dialog", { name: t("shell.butlerFollowUpHistoryTitle") });
+    fireEvent.click(within(historyDialog).getByRole("button", { name: t("shell.butlerAutomationViewRoundsAction") }));
+
+    await waitFor(() => {
+      expect(mockedGetButlerFollowUpTask).toHaveBeenCalledTimes(2);
+      expect(screen.getByRole("dialog", { name: t("shell.butlerAutomationRoundDetailsTitle") })).toBeInTheDocument();
+    });
   });
 
   it("右侧信息栏只保留信息和自动化，不再展示旧的 Butler 页面残留入口", async () => {

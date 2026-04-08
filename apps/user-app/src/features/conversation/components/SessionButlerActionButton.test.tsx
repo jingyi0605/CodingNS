@@ -14,6 +14,7 @@ vi.mock("./WorkbenchLayout", () => ({
 }));
 
 vi.mock("../../butler/api/butler-api", () => ({
+  cancelButlerFollowUpTask: vi.fn(),
   getButlerSessionTarget: vi.fn(),
   createButlerFollowUpTask: vi.fn(),
   listButlerFollowUpTasks: vi.fn(),
@@ -23,6 +24,7 @@ vi.mock("../../butler/api/butler-api", () => ({
 import { useToast } from "../../../shared/toast";
 import { SessionButlerActionButton } from "./SessionButlerActionButton";
 import {
+  cancelButlerFollowUpTask,
   getButlerSessionTarget,
   createButlerFollowUpTask,
   listButlerFollowUpTasks,
@@ -32,6 +34,7 @@ import type { SessionSummaryDto } from "../api/conversation-api";
 
 const mockedUseToast = vi.mocked(useToast);
 const mockedGetButlerSessionTarget = vi.mocked(getButlerSessionTarget);
+const mockedCancelButlerFollowUpTask = vi.mocked(cancelButlerFollowUpTask);
 const mockedCreateButlerFollowUpTask = vi.mocked(createButlerFollowUpTask);
 const mockedListButlerFollowUpTasks = vi.mocked(listButlerFollowUpTasks);
 const mockedStartButlerVerificationAction = vi.mocked(startButlerVerificationAction);
@@ -105,6 +108,9 @@ describe("SessionButlerActionButton", () => {
     mockedCreateButlerFollowUpTask.mockResolvedValue({
       task: {} as never
     });
+    mockedCancelButlerFollowUpTask.mockResolvedValue({
+      task: {} as never
+    });
     mockedListButlerFollowUpTasks.mockResolvedValue({
       items: [
         {
@@ -116,6 +122,8 @@ describe("SessionButlerActionButton", () => {
           sessionId: "session-1",
           sessionTitle: "登录页开发",
           objective: "帮我把这个会话的功能真正做完",
+          completionCriteria: "只有当当前功能按既定需求完成后，才停止自动跟进。",
+          maxAutoContinueCount: 5,
           status: "waiting_user",
           checkIntervalSeconds: 300,
           lastCheckedAt: null,
@@ -159,6 +167,24 @@ describe("SessionButlerActionButton", () => {
         }
       }
     );
+    fireEvent.change(
+      screen.getByRole("textbox", { name: t("conversation.butlerFollowUpCompletionCriteriaLabel") }),
+      {
+        target: {
+          value: "只有当当前功能按既定需求完成后，才停止自动跟进。"
+        }
+      }
+    );
+    fireEvent.change(
+      screen.getByRole("spinbutton", {
+        name: new RegExp(t("conversation.butlerFollowUpRoundLimitLabel"))
+      }),
+      {
+        target: {
+          value: "4"
+        }
+      }
+    );
 
     fireEvent.click(
       screen.getByRole("button", {
@@ -170,7 +196,9 @@ describe("SessionButlerActionButton", () => {
       expect(mockedCreateButlerFollowUpTask).toHaveBeenCalledWith({
         projectId: "project-1",
         butlerSessionId: "butler-session-1",
-        objective: "帮我把这个会话的功能真正做完"
+        objective: "帮我把这个会话的功能真正做完",
+        completionCriteria: "只有当当前功能按既定需求完成后，才停止自动跟进。",
+        maxAutoContinueCount: 4
       });
     });
   });
@@ -204,6 +232,49 @@ describe("SessionButlerActionButton", () => {
     });
   });
 
+  it("新建跟进时默认最多自动跟进 5 轮", async () => {
+    render(
+      <SessionButlerActionButton
+        session={createSessionSummary()}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: t("conversation.butlerActionButton") }));
+
+    await waitFor(() => {
+      expect(screen.getByText("项目甲")).toBeInTheDocument();
+    });
+
+    fireEvent.change(
+      screen.getByRole("textbox", { name: t("conversation.butlerFollowUpObjectiveLabel") }),
+      {
+        target: {
+          value: "帮我把这个会话的功能真正做完"
+        }
+      }
+    );
+
+    expect(
+      screen.getByRole("spinbutton", {
+        name: new RegExp(t("conversation.butlerFollowUpRoundLimitLabel"))
+      })
+    ).toHaveValue(5);
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: `${t("conversation.butlerFollowUpAction")} ${t("conversation.butlerFollowUpActionDescription")}`
+      })
+    );
+
+    await waitFor(() => {
+      expect(mockedCreateButlerFollowUpTask).toHaveBeenCalledWith(
+        expect.objectContaining({
+          maxAutoContinueCount: 5
+        })
+      );
+    });
+  });
+
   it("悬浮 AI 按钮时会显示当前会话的助手分析", async () => {
     render(
       <SessionButlerActionButton
@@ -220,6 +291,26 @@ describe("SessionButlerActionButton", () => {
       expect(screen.getByText(t("conversation.butlerAnalysisTitle"))).toBeInTheDocument();
       expect(screen.getByText(/需要你确认验证码失败策略/)).toBeInTheDocument();
       expect(screen.getByText(new RegExp(t("shell.butlerAutomationStatusWaitingUser")))).toBeInTheDocument();
+    });
+  });
+
+  it("可以手动停止当前会话的助手跟进", async () => {
+    render(
+      <SessionButlerActionButton
+        session={createSessionSummary()}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: t("conversation.butlerActionButton") }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: t("conversation.butlerStopFollowUpAction") })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: t("conversation.butlerStopFollowUpAction") }));
+
+    await waitFor(() => {
+      expect(mockedCancelButlerFollowUpTask).toHaveBeenCalledWith("follow-up-1");
     });
   });
 });

@@ -1911,6 +1911,142 @@ describe("WorkbenchLayout", () => {
     expect(screen.queryByRole("dialog", { name: t("shell.butlerInboxModalTitle") })).toBeNull();
   });
 
+  it("会为已完成的会话跟进生成完成通知", async () => {
+    mockedGetButlerProfile.mockResolvedValueOnce({
+      initialized: true,
+      profile: {
+        id: "default",
+        displayName: "哆哆"
+      }
+    } as never);
+    mockedGetButlerOverview.mockResolvedValueOnce({
+      overview: {
+        version: "v1",
+        generatedAt: "2026-04-07T00:00:00.000Z",
+        global: {
+          projectCount: 1,
+          activeProjectCount: 1,
+          blockedProjectCount: 0,
+          highRiskProjectCount: 0,
+          topRisks: [],
+          nextActions: []
+        },
+        projects: [
+          {
+            id: "project-1",
+            workspaceId: "workspace-1",
+            name: "项目一",
+            repoRoot: "/repo/project-1",
+            lifecycleStatus: "active",
+            riskLevel: "medium",
+            activeSessionCount: 1,
+            sessionCount: 1,
+            memoryCount: 0,
+            failedPatrolCount: 0,
+            failedVerificationCount: 0,
+            latestSessionSummary: null,
+            latestPatrolSummary: null,
+            latestVerificationSummary: null,
+            topRisks: [],
+            nextActions: [],
+            lastActivityAt: "2026-04-07T00:00:00.000Z",
+            updatedAt: "2026-04-07T00:00:00.000Z"
+          }
+        ],
+        sessions: [],
+        patrols: [],
+        verifications: []
+      }
+    } as never);
+    mockedListButlerFollowUpTasks.mockResolvedValueOnce({
+      items: [
+        {
+          id: "follow-up-completed-1",
+          projectId: "project-1",
+          projectName: "项目一",
+          workspaceId: "workspace-1",
+          butlerSessionId: "butler-session-1",
+          sessionId: "session-2",
+          sessionTitle: "登录页开发",
+          objective: "补完验证码流程",
+          status: "completed",
+          checkIntervalSeconds: 300,
+          lastCheckedAt: "2026-04-07T00:03:00.000Z",
+          nextCheckAt: null,
+          lastObservedRunningState: "completed",
+          lastObservedMessageAt: "2026-04-07T00:03:00.000Z",
+          lastObservedMessageCount: 12,
+          lastAutomationSummary: "登录页目标已完成，跟进自动结束。",
+          lastAutomationAt: "2026-04-07T00:03:00.000Z",
+          autoContinueCount: 2,
+          waitingReason: null,
+          createdAt: "2026-04-07T00:00:00.000Z",
+          updatedAt: "2026-04-07T00:03:00.000Z",
+          completedAt: "2026-04-07T00:03:00.000Z"
+        }
+      ]
+    } as never);
+    mockedListButlerProjects.mockResolvedValueOnce({
+      items: [
+        {
+          id: "project-1",
+          workspaceId: "workspace-1",
+          name: "项目一",
+          repoRoot: "/repo/project-1",
+          lifecycleStatus: "active"
+        }
+      ]
+    } as never);
+    mockedListButlerInboxItems.mockResolvedValueOnce({
+      items: []
+    } as never);
+
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "会话 Alpha",
+            workspaceId: "workspace-1"
+          })
+        ]
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-1");
+    await findSessionCardByTitle("会话 Alpha");
+
+    const notificationButton = await screen.findByRole("button", {
+      name: t("shell.globalNotificationsAction")
+    });
+    expect(
+      within(notificationButton).getByLabelText(
+        t("shell.globalNotificationsUnreadAria", { count: "1" })
+      )
+    ).toBeInTheDocument();
+
+    await userEvent.click(notificationButton);
+
+    const notificationDialog = await screen.findByRole("dialog", {
+      name: t("shell.globalNotificationsPanelTitle")
+    });
+    expect(within(notificationDialog).getByText("跟进完成：登录页开发")).toBeInTheDocument();
+    expect(within(notificationDialog).getByText("登录页目标已完成，跟进自动结束。")).toBeInTheDocument();
+    expect(within(notificationDialog).getByText(t("shell.globalNotificationKindFollowUpCompleted"))).toBeInTheDocument();
+  });
+
   it("通知归档会走服务端持久化并支持显示已归档通知", async () => {
     mockedGetButlerProfile.mockResolvedValueOnce({
       initialized: true,
