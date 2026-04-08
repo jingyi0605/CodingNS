@@ -149,6 +149,7 @@ const WORKBENCH_RUNTIME_ACTIVE_STATES: ReadonlySet<string> = new Set([
 
 type WorkbenchGlobalNotificationKind =
   | "follow_up_waiting_user"
+  | "follow_up_completed"
   | "follow_up_failed"
   | "verification_failed";
 
@@ -213,6 +214,21 @@ function buildWorkbenchGlobalNotifications(
       continue;
     }
 
+    if (task.status === "completed") {
+      notifications.push({
+        id: `follow-up-completed:${task.id}`,
+        kind: "follow_up_completed",
+        title: t("shell.globalNotificationFollowUpCompletedTitle", {
+          title
+        }),
+        body: task.lastAutomationSummary?.trim() || task.objective,
+        routePath: buildWorkspaceSessionPath(task.workspaceId, task.sessionId),
+        workspaceId: task.workspaceId,
+        createdAt: timestamp
+      });
+      continue;
+    }
+
     if (task.status === "failed") {
       notifications.push({
         id: `follow-up-failed:${task.id}`,
@@ -268,10 +284,12 @@ function resolveWorkbenchNotificationPriority(kind: WorkbenchGlobalNotificationK
   switch (kind) {
     case "follow_up_waiting_user":
       return 0;
-    case "follow_up_failed":
+    case "follow_up_completed":
       return 1;
-    case "verification_failed":
+    case "follow_up_failed":
       return 2;
+    case "verification_failed":
+      return 3;
     default:
       return 9;
   }
@@ -281,6 +299,8 @@ function resolveWorkbenchNotificationKindLabel(kind: WorkbenchGlobalNotification
   switch (kind) {
     case "follow_up_waiting_user":
       return t("shell.globalNotificationKindWaitingUser");
+    case "follow_up_completed":
+      return t("shell.globalNotificationKindFollowUpCompleted");
     case "follow_up_failed":
       return t("shell.globalNotificationKindFollowUpFailed");
     case "verification_failed":

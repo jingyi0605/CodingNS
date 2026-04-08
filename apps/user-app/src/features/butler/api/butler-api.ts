@@ -14,6 +14,15 @@ export type ButlerInboxItemType = "bug" | "feature" | "change" | "task";
 export type ButlerInboxItemPriority = "low" | "medium" | "high";
 export type ButlerInboxItemStatus = "pending" | "in_progress" | "closed";
 export type ButlerFollowUpTaskStatus = "active" | "waiting_user" | "completed" | "failed" | "cancelled";
+export type ButlerFollowUpRoundKind =
+  | "started"
+  | "continue"
+  | "queued"
+  | "waiting_user"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "limit_reached";
 
 export interface ButlerProfileDto {
   id: "default";
@@ -244,6 +253,8 @@ export interface ButlerFollowUpTaskDto {
   sessionId: string;
   sessionTitle: string | null;
   objective: string;
+  completionCriteria?: string;
+  maxAutoContinueCount?: number;
   status: ButlerFollowUpTaskStatus;
   checkIntervalSeconds: number;
   lastCheckedAt: string | null;
@@ -255,9 +266,37 @@ export interface ButlerFollowUpTaskDto {
   lastAutomationAt: string | null;
   autoContinueCount: number;
   waitingReason: string | null;
+  rounds?: ButlerFollowUpTaskRoundDto[];
   createdAt: string;
   updatedAt: string;
   completedAt: string | null;
+}
+
+export interface ButlerFollowUpTaskRoundDto {
+  roundNumber: number;
+  kind: ButlerFollowUpRoundKind;
+  status: ButlerFollowUpTaskStatus;
+  summary: string;
+  waitingReason: string | null;
+  continuePrompt: string | null;
+  observedRunningState: string | null;
+  autoContinueCount: number;
+  createdAt: string;
+}
+
+export interface ButlerPatrolPlanDto {
+  id: string;
+  projectId: string;
+  name: string;
+  triggerType: "manual" | "interval" | "cron";
+  triggerConfig: Record<string, unknown>;
+  executionMode: "readonly" | "controlled";
+  patrolScope: Record<string, unknown>;
+  enabled: boolean;
+  lastScheduledAt: string | null;
+  nextRunAt: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface ButlerOverviewDto {
@@ -464,6 +503,28 @@ export function listButlerProjects(payload: {
   return httpClient.request<{ items: ButlerProjectDto[] }>(path);
 }
 
+export function listButlerPatrolPlans(projectId: string, payload: {
+  enabled?: boolean | null;
+  executionMode?: "readonly" | "controlled" | null;
+} = {}) {
+  const searchParams = new URLSearchParams();
+
+  if (payload.enabled !== null && payload.enabled !== undefined) {
+    searchParams.set("enabled", String(payload.enabled));
+  }
+
+  if (payload.executionMode) {
+    searchParams.set("executionMode", payload.executionMode);
+  }
+
+  const query = searchParams.toString();
+  const path = query
+    ? `/api/butler/projects/${encodeURIComponent(projectId)}/patrol-plans?${query}`
+    : `/api/butler/projects/${encodeURIComponent(projectId)}/patrol-plans`;
+
+  return httpClient.request<{ items: ButlerPatrolPlanDto[] }>(path);
+}
+
 export function listButlerInboxItems(payload: {
   workspaceId?: string | null;
   projectId?: string | null;
@@ -537,6 +598,8 @@ export function createButlerFollowUpTask(payload: {
   projectId: string;
   butlerSessionId: string;
   objective: string;
+  completionCriteria?: string;
+  maxAutoContinueCount?: number;
   checkIntervalSeconds?: number;
 }) {
   return httpClient.request<{ task: ButlerFollowUpTaskDto }>("/api/butler/follow-up-tasks", {
@@ -548,6 +611,15 @@ export function createButlerFollowUpTask(payload: {
 export function getButlerFollowUpTask(taskId: string) {
   return httpClient.request<{ task: ButlerFollowUpTaskDto }>(
     `/api/butler/follow-up-tasks/${encodeURIComponent(taskId)}`
+  );
+}
+
+export function cancelButlerFollowUpTask(taskId: string) {
+  return httpClient.request<{ task: ButlerFollowUpTaskDto }>(
+    `/api/butler/follow-up-tasks/${encodeURIComponent(taskId)}/cancel`,
+    {
+      method: "POST"
+    }
   );
 }
 

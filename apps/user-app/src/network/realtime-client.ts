@@ -25,6 +25,8 @@ interface SessionEnvelopeEvent {
     provider: ProviderId;
     providerSessionId: string;
     role: "user" | "assistant" | "tool" | "system";
+    origin?: "butler_proxy" | "system" | null;
+    originRef?: string | null;
     kind: "text" | "thinking" | "tool_call" | "tool_result";
     content: string;
     toolCall: {

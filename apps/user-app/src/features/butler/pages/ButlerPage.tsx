@@ -8,15 +8,18 @@ import { MessageTimeline } from "../../conversation/components/MessageTimeline";
 import { SessionRuntimeStore } from "../../conversation/runtime/session-runtime-store";
 import type { SessionMessageViewModel } from "../../conversation/runtime/session-runtime-machine";
 import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout";
+import { WorkbenchModal } from "../../conversation/components/WorkbenchModal";
 import {
   buildWorkspaceButlerPath
 } from "../../workbench/utils/workbench-navigation";
 import type {
   ButlerControlEventDto,
+  ButlerFollowUpTaskRoundDto,
   ButlerFollowUpTaskDto,
   ButlerInboxItemDto,
   ButlerLanguageId,
   ButlerOverviewDto,
+  ButlerPatrolPlanDto,
   ButlerProfilePayload,
   ButlerProviderId,
   ButlerRiskPreferenceId,
@@ -24,7 +27,12 @@ import type {
   ButlerSummaryStyleId,
   ButlerToneId
 } from "../api/butler-api";
-import { listButlerFollowUpTasks, listButlerInboxItems } from "../api/butler-api";
+import {
+  getButlerFollowUpTask,
+  listButlerFollowUpTasks,
+  listButlerInboxItems,
+  listButlerPatrolPlans
+} from "../api/butler-api";
 import { BUTLER_INBOX_UPDATED_EVENT } from "../runtime/butler-inbox-events";
 import { subscribeButlerRecordsUpdated } from "../runtime/butler-records-events";
 import { ButlerRuntimeStore, useButlerRuntimeStore } from "../runtime/butler-runtime-store";
@@ -80,7 +88,13 @@ export function ButlerPage() {
   const [viewKey, setViewKey] = useState(0);
   const [inboxItems, setInboxItems] = useState<ButlerInboxItemDto[]>([]);
   const [followUpTasks, setFollowUpTasks] = useState<ButlerFollowUpTaskDto[]>([]);
+  const [patrolPlans, setPatrolPlans] = useState<ButlerPatrolPlanDto[]>([]);
   const [analysisOpen, setAnalysisOpen] = useState(false);
+  const [followUpHistoryOpen, setFollowUpHistoryOpen] = useState(false);
+  const [detailTaskId, setDetailTaskId] = useState<string | null>(null);
+  const [detailTask, setDetailTask] = useState<ButlerFollowUpTaskDto | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
 
   if (!storeRef.current || currentWorkspaceIdRef.current !== workspaceId) {
     storeRef.current = new ButlerRuntimeStore(workspaceId);
@@ -131,6 +145,10 @@ export function ButlerPage() {
     () => followUpTasks.slice(0, 3),
     [followUpTasks]
   );
+  const overviewProjectIds = useMemo(
+    () => (overview?.projects ?? []).map((project) => project.id).sort(),
+    [overview?.projects]
+  );
 
   useEffect(() => {
     void store.initialize();
@@ -170,6 +188,7 @@ export function ButlerPage() {
     if (!initialized) {
       setInboxItems([]);
       setFollowUpTasks([]);
+      setPatrolPlans([]);
       return;
     }
 
@@ -177,14 +196,16 @@ export function ButlerPage() {
 
     async function loadSidebarData() {
       try {
-        const [inboxResponse, followUpResponse] = await Promise.all([
+        const [inboxResponse, followUpResponse, patrolPlanResponses] = await Promise.all([
           listButlerInboxItems(),
-          listButlerFollowUpTasks()
+          listButlerFollowUpTasks(),
+          Promise.all(overviewProjectIds.map((projectId) => listButlerPatrolPlans(projectId)))
         ]);
 
         if (!disposed) {
           setInboxItems(inboxResponse.items);
           setFollowUpTasks(followUpResponse.items);
+          setPatrolPlans(patrolPlanResponses.flatMap((response) => response.items));
         }
       } catch (loadError) {
         if (disposed) {
@@ -193,6 +214,7 @@ export function ButlerPage() {
 
         setInboxItems([]);
         setFollowUpTasks([]);
+        setPatrolPlans([]);
         showToast({
           title: t("shell.butlerSidebarLoadFailed"),
           description: loadError instanceof Error ? loadError.message : undefined,
@@ -218,7 +240,7 @@ export function ButlerPage() {
       window.clearInterval(timer);
       window.removeEventListener(BUTLER_INBOX_UPDATED_EVENT, handleInboxUpdated);
     };
-  }, [initialized, showToast]);
+  }, [initialized, overviewProjectIds, showToast]);
 
   useEffect(() => {
     return subscribeButlerRecordsUpdated(() => {
@@ -301,9 +323,21 @@ export function ButlerPage() {
         events={events}
         inboxItems={inboxItems}
         followUpTasks={followUpTasks}
+        patrolPlans={patrolPlans}
+        onOpenFollowUpHistory={() => {
+          setFollowUpHistoryOpen(true);
+        }}
+        onOpenFollowUpDetail={handleOpenFollowUpDetail}
       />
     ),
-    [events, followUpTasks, inboxItems, overview]
+    [
+      events,
+      followUpTasks,
+      handleOpenFollowUpDetail,
+      inboxItems,
+      overview,
+      patrolPlans
+    ]
   );
 
   useEffect(() => {
@@ -405,6 +439,23 @@ export function ButlerPage() {
         description: sessionError instanceof Error ? sessionError.message : undefined,
         tone: "error"
       });
+    }
+  }
+
+  async function handleOpenFollowUpDetail(taskId: string) {
+    setFollowUpHistoryOpen(false);
+    setDetailTaskId(taskId);
+    setDetailTask(null);
+    setDetailError(null);
+    setDetailLoading(true);
+
+    try {
+      const response = await getButlerFollowUpTask(taskId);
+      setDetailTask(response.task);
+    } catch (detailLoadError) {
+      setDetailError(detailLoadError instanceof Error ? detailLoadError.message : t("shell.butlerAutomationRoundLoadFailed"));
+    } finally {
+      setDetailLoading(false);
     }
   }
 
@@ -602,8 +653,9 @@ export function ButlerPage() {
   }
 
   return (
-    <main className="workbench-page conversation-page-shell butler-page-shell butler-chat-workspace">
-      <header className="workbench-auxiliary-header butler-main-header" data-window-drag-handle="conversation-header">
+    <>
+      <main className="workbench-page conversation-page-shell butler-page-shell butler-chat-workspace">
+        <header className="workbench-auxiliary-header butler-main-header" data-window-drag-handle="conversation-header">
         <div className="butler-header-main">
           <div
             className="butler-header-analysis-anchor"
@@ -710,9 +762,9 @@ export function ButlerPage() {
         </div>
       </header>
 
-      <section className="butler-main-column">
-        <div key={`timeline:${activeProvider}:${viewKey}`} className="butler-conversation-shell">
-          <MessageTimeline
+        <section className="butler-main-column">
+          <div key={`timeline:${activeProvider}:${viewKey}`} className="butler-conversation-shell">
+            <MessageTimeline
             sessionId={controlSession?.session?.sessionId}
             messages={effectiveMessages}
             historyState={effectiveHistoryState}
@@ -745,8 +797,8 @@ export function ButlerPage() {
             }}
           />
 
-          <div className="butler-composer-shell">
-            <ComposerPanel
+            <div className="butler-composer-shell">
+              <ComposerPanel
               capabilities={capabilities}
               draftStorageId={`butler:${activeProvider}:${viewKey}`}
               placeholder={t("shell.butlerComposerPlaceholder", {
@@ -772,11 +824,45 @@ export function ButlerPage() {
                 });
                 requestNavigationRefresh();
               }}
-            />
+              />
+            </div>
           </div>
-        </div>
-      </section>
-    </main>
+        </section>
+      </main>
+      <WorkbenchModal
+        open={followUpHistoryOpen}
+        title={t("shell.butlerFollowUpHistoryTitle")}
+        description={t("shell.butlerFollowUpHistoryDescription")}
+        onClose={() => {
+          setFollowUpHistoryOpen(false);
+        }}
+      >
+        <FollowUpHistoryPanel
+          tasks={followUpTasks}
+          onOpenFollowUpDetail={handleOpenFollowUpDetail}
+          onClose={() => {
+            setFollowUpHistoryOpen(false);
+          }}
+        />
+      </WorkbenchModal>
+      <WorkbenchModal
+        open={detailTaskId !== null}
+        title={t("shell.butlerAutomationRoundDetailsTitle")}
+        description={detailTask?.sessionTitle?.trim() || detailTask?.projectName || t("shell.butlerAutomationRoundDetailsDescription")}
+        onClose={() => {
+          setDetailTaskId(null);
+          setDetailTask(null);
+          setDetailError(null);
+          setDetailLoading(false);
+        }}
+      >
+        <FollowUpRoundDetailsPanel
+          task={detailTask}
+          loading={detailLoading}
+          error={detailError}
+        />
+      </WorkbenchModal>
+    </>
   );
 }
 
@@ -785,6 +871,9 @@ function ButlerAuxiliaryPanel(props: {
   events: ButlerControlEventDto[];
   inboxItems: ButlerInboxItemDto[];
   followUpTasks: ButlerFollowUpTaskDto[];
+  patrolPlans: ButlerPatrolPlanDto[];
+  onOpenFollowUpHistory: () => void;
+  onOpenFollowUpDetail: (taskId: string) => Promise<void>;
 }) {
   const [activeTab, setActiveTab] = useState<"info" | "automation">("info");
 
@@ -821,11 +910,17 @@ function ButlerAuxiliaryPanel(props: {
       {activeTab === "info" ? (
         <GlobalRecordsSidebarContent
           overview={props.overview}
-          events={props.events}
           inboxItems={props.inboxItems}
+          followUpTasks={props.followUpTasks}
+          onOpenFollowUpHistory={props.onOpenFollowUpHistory}
+          onOpenFollowUpDetail={props.onOpenFollowUpDetail}
         />
       ) : (
-        <AutomationSidebarContent followUpTasks={props.followUpTasks} />
+        <AutomationSidebarContent
+          overview={props.overview}
+          followUpTasks={props.followUpTasks}
+          patrolPlans={props.patrolPlans}
+        />
       )}
     </div>
   );
@@ -833,13 +928,11 @@ function ButlerAuxiliaryPanel(props: {
 
 function GlobalRecordsSidebarContent(props: {
   overview: ButlerOverviewDto | null;
-  events: ButlerControlEventDto[];
   inboxItems: ButlerInboxItemDto[];
+  followUpTasks: ButlerFollowUpTaskDto[];
+  onOpenFollowUpHistory: () => void;
+  onOpenFollowUpDetail: (taskId: string) => Promise<void>;
 }) {
-  const followUpRecords = useMemo(
-    () => buildFollowUpRecords(props.events),
-    [props.events]
-  );
   const verificationRecords = useMemo(
     () => buildVerificationRecords(props.overview?.verifications ?? []),
     [props.overview?.verifications]
@@ -851,11 +944,10 @@ function GlobalRecordsSidebarContent(props: {
 
   return (
     <>
-      <GlobalRecordCard
-        title={t("shell.butlerInfoFollowUpRecordsTitle")}
-        description={t("shell.butlerInfoFollowUpRecordsDescription")}
-        items={followUpRecords}
-        emptyText={t("shell.butlerInfoFollowUpRecordsEmpty")}
+      <FollowUpStatusCard
+        tasks={props.followUpTasks}
+        onOpenFollowUpHistory={props.onOpenFollowUpHistory}
+        onOpenFollowUpDetail={props.onOpenFollowUpDetail}
       />
       <GlobalRecordCard
         title={t("shell.butlerInfoVerificationRecordsTitle")}
@@ -874,43 +966,28 @@ function GlobalRecordsSidebarContent(props: {
 }
 
 function AutomationSidebarContent(props: {
+  overview: ButlerOverviewDto | null;
   followUpTasks: ButlerFollowUpTaskDto[];
+  patrolPlans: ButlerPatrolPlanDto[];
 }) {
-  const activeTasks = useMemo(
-    () => [...props.followUpTasks]
-      .filter((task) => task.status === "active" || task.status === "waiting_user")
-      .sort((left, right) => {
-        const leftPriority = left.status === "waiting_user" ? 0 : 1;
-        const rightPriority = right.status === "waiting_user" ? 0 : 1;
-
-        if (leftPriority !== rightPriority) {
-          return leftPriority - rightPriority;
-        }
-
-        return parseIsoTime(left.nextCheckAt) - parseIsoTime(right.nextCheckAt);
-      }),
-    [props.followUpTasks]
+  const automationTasks = useMemo(
+    () => buildAutomationTaskItems(props.patrolPlans, props.followUpTasks, props.overview),
+    [props.followUpTasks, props.overview, props.patrolPlans]
   );
-  const completedTasks = useMemo(
-    () => [...props.followUpTasks]
-      .filter((task) => task.status !== "active" && task.status !== "waiting_user")
-      .sort((left, right) => parseIsoTime(right.updatedAt) - parseIsoTime(left.updatedAt)),
-    [props.followUpTasks]
+  const automationRuns = useMemo(
+    () => buildAutomationRunItems(props.followUpTasks, props.overview),
+    [props.followUpTasks, props.overview]
   );
 
   return (
     <>
-      <AutomationRecordCard
-        title={t("shell.butlerAutomationActiveTitle")}
-        description={t("shell.butlerAutomationActiveDescription")}
-        tasks={activeTasks}
-        emptyText={t("shell.butlerAutomationActiveEmpty")}
+      <AutomationTaskOverviewCard
+        items={automationTasks}
+        emptyText={t("shell.butlerAutomationTasksEmpty")}
       />
-      <AutomationRecordCard
-        title={t("shell.butlerAutomationCompletedTitle")}
-        description={t("shell.butlerAutomationCompletedDescription")}
-        tasks={completedTasks}
-        emptyText={t("shell.butlerAutomationCompletedEmpty")}
+      <AutomationRunOverviewCard
+        items={automationRuns}
+        emptyText={t("shell.butlerAutomationRunsEmpty")}
       />
     </>
   );
@@ -956,22 +1033,179 @@ function SimpleInfoBlock(props: {
   );
 }
 
-function AutomationRecordCard(props: {
-  title: string;
-  description: string;
+function FollowUpStatusCard(props: {
   tasks: ButlerFollowUpTaskDto[];
+  onOpenFollowUpHistory: () => void;
+  onOpenFollowUpDetail: (taskId: string) => Promise<void>;
+}) {
+  const recentTasks = useMemo(
+    () => [...props.tasks]
+      .sort((left, right) => parseIsoTime(resolveFollowUpTaskUpdatedAt(right)) - parseIsoTime(resolveFollowUpTaskUpdatedAt(left)))
+      .slice(0, 5),
+    [props.tasks]
+  );
+
+  return (
+    <section className="butler-side-card surface-card">
+      <header>
+        <div className="butler-card-header-copy">
+          <h2>{t("shell.butlerInfoFollowUpRecordsTitle")}</h2>
+          <p>{t("shell.butlerInfoFollowUpRecordsDescription")}</p>
+        </div>
+        <button
+          type="button"
+          className="secondary-button butler-side-header-action"
+          onClick={props.onOpenFollowUpHistory}
+        >
+          {t("shell.butlerFollowUpHistoryAction")}
+        </button>
+      </header>
+      {recentTasks.length > 0 ? (
+        <div className="butler-record-list">
+          {recentTasks.map((task) => (
+            <FollowUpStatusItem
+              key={task.id}
+              task={task}
+              onOpenFollowUpDetail={props.onOpenFollowUpDetail}
+            />
+          ))}
+        </div>
+      ) : (
+        <p className="butler-secondary-text">{t("shell.butlerInfoFollowUpRecordsEmpty")}</p>
+      )}
+    </section>
+  );
+}
+
+function FollowUpHistoryPanel(props: {
+  tasks: ButlerFollowUpTaskDto[];
+  onOpenFollowUpDetail: (taskId: string) => Promise<void>;
+  onClose: () => void;
+}) {
+  const sortedTasks = useMemo(
+    () => [...props.tasks]
+      .sort((left, right) => parseIsoTime(resolveFollowUpTaskUpdatedAt(right)) - parseIsoTime(resolveFollowUpTaskUpdatedAt(left))),
+    [props.tasks]
+  );
+
+  return (
+    <div className="butler-follow-up-history-panel">
+      {sortedTasks.length > 0 ? (
+        <div className="butler-record-list">
+          {sortedTasks.map((task) => (
+            <FollowUpStatusItem
+              key={task.id}
+              task={task}
+              onOpenFollowUpDetail={async (taskId) => {
+                props.onClose();
+                await props.onOpenFollowUpDetail(taskId);
+              }}
+            />
+          ))}
+        </div>
+      ) : (
+        <p className="butler-secondary-text">{t("shell.butlerInfoFollowUpRecordsEmpty")}</p>
+      )}
+    </div>
+  );
+}
+
+function FollowUpStatusItem(props: {
+  task: ButlerFollowUpTaskDto;
+  onOpenFollowUpDetail: (taskId: string) => Promise<void>;
+}) {
+  const { task } = props;
+  const title = task.sessionTitle?.trim() || task.projectName;
+  const summary = task.waitingReason?.trim() || task.lastAutomationSummary?.trim() || task.objective;
+
+  return (
+    <article className="butler-follow-up-status-card">
+      <header className="butler-follow-up-status-header">
+        <div className="butler-follow-up-status-title-group">
+          <strong>{title}</strong>
+          <span>{task.projectName}</span>
+        </div>
+        <span className="butler-automation-status-badge" data-status={task.status}>
+          {resolveFollowUpTaskStatusLabel(task.status)}
+        </span>
+      </header>
+      <div className="butler-follow-up-status-body">
+        <p>{summary}</p>
+      </div>
+      <footer className="butler-follow-up-status-footer">
+        <span>{formatIsoDateTime(resolveFollowUpTaskUpdatedAt(task))}</span>
+        <button
+          type="button"
+          className="secondary-button butler-follow-up-status-action"
+          onClick={() => {
+            void props.onOpenFollowUpDetail(task.id);
+          }}
+        >
+          {t("shell.butlerAutomationViewRoundsAction")}
+        </button>
+      </footer>
+    </article>
+  );
+}
+
+interface AutomationTaskItem {
+  id: string;
+  title: string;
+  projectName: string;
+  taskTypeLabel: string;
+  statusLabel: string;
+  nextRunAt: string | null;
+  lastRunAt: string | null;
+}
+
+interface AutomationRunItem {
+  id: string;
+  title: string;
+  projectName: string;
+  sourceLabel: string;
+  statusLabel: string;
+  summary: string;
+  createdAt: string;
+}
+
+function AutomationTaskOverviewCard(props: {
+  items: AutomationTaskItem[];
   emptyText: string;
 }) {
   return (
     <section className="butler-side-card surface-card">
       <header>
-        <h2>{props.title}</h2>
-        <p>{props.description}</p>
+        <h2>{t("shell.butlerAutomationTasksTitle")}</h2>
+        <p>{t("shell.butlerAutomationTasksDescription")}</p>
       </header>
-      {props.tasks.length > 0 ? (
+      {props.items.length > 0 ? (
         <div className="butler-record-list">
-          {props.tasks.map((task) => (
-            <AutomationTaskCard key={task.id} task={task} />
+          {props.items.map((item) => (
+            <article key={item.id} className="butler-automation-card">
+              <header className="butler-automation-card-header">
+                <div className="butler-automation-card-title-group">
+                  <strong>{item.title}</strong>
+                  <span>{item.projectName}</span>
+                </div>
+                <span className="butler-automation-status-badge" data-status="active">
+                  {item.statusLabel}
+                </span>
+              </header>
+              <div className="butler-automation-card-body">
+                <div className="butler-automation-row">
+                  <span>{t("shell.butlerAutomationTaskTypeLabel")}</span>
+                  <strong>{item.taskTypeLabel}</strong>
+                </div>
+                <div className="butler-automation-row">
+                  <span>{t("shell.butlerAutomationTaskLastRunLabel")}</span>
+                  <strong>{formatIsoDateTime(item.lastRunAt)}</strong>
+                </div>
+              </div>
+              <footer className="butler-automation-card-footer">
+                <span>{t("shell.butlerAutomationTaskNextRunLabel")}</span>
+                <strong>{formatIsoDateTime(item.nextRunAt)}</strong>
+              </footer>
+            </article>
           ))}
         </div>
       ) : (
@@ -981,52 +1215,50 @@ function AutomationRecordCard(props: {
   );
 }
 
-function AutomationTaskCard(props: {
-  task: ButlerFollowUpTaskDto;
+function AutomationRunOverviewCard(props: {
+  items: AutomationRunItem[];
+  emptyText: string;
 }) {
-  const { task } = props;
-  const title = task.sessionTitle?.trim() || task.projectName;
-  const latestSummary = task.lastAutomationSummary?.trim() || task.objective;
-  const statusLabel = resolveFollowUpTaskStatusLabel(task.status);
-  const primaryMeta = task.status === "waiting_user"
-    ? t("shell.butlerAutomationWaitingReasonLabel")
-    : t("shell.butlerAutomationLatestAssessmentLabel");
-  const primaryContent = task.status === "waiting_user"
-    ? task.waitingReason?.trim() || latestSummary
-    : latestSummary;
-  const footerLabel = task.status === "active" || task.status === "waiting_user"
-    ? t("shell.butlerAutomationNextCheckLabel")
-    : t("shell.butlerAutomationFinishedAtLabel");
-  const footerValue = task.status === "active" || task.status === "waiting_user"
-    ? formatIsoDateTime(task.nextCheckAt || task.lastCheckedAt)
-    : formatIsoDateTime(task.completedAt || task.updatedAt);
-
   return (
-    <article className="butler-automation-card">
-      <header className="butler-automation-card-header">
-        <div className="butler-automation-card-title-group">
-          <strong>{title}</strong>
-          <span>{task.projectName}</span>
-        </div>
-        <span className="butler-automation-status-badge" data-status={task.status}>
-          {statusLabel}
-        </span>
+    <section className="butler-side-card surface-card">
+      <header>
+        <h2>{t("shell.butlerAutomationRunsTitle")}</h2>
+        <p>{t("shell.butlerAutomationRunsDescription")}</p>
       </header>
-      <div className="butler-automation-card-body">
-        <div className="butler-automation-row">
-          <span>{t("shell.butlerAutomationObjectiveLabel")}</span>
-          <strong>{task.objective}</strong>
+      {props.items.length > 0 ? (
+        <div className="butler-record-list">
+          {props.items.map((item) => (
+            <article key={item.id} className="butler-automation-card">
+              <header className="butler-automation-card-header">
+                <div className="butler-automation-card-title-group">
+                  <strong>{item.title}</strong>
+                  <span>{item.projectName}</span>
+                </div>
+                <span className="butler-automation-status-badge" data-status="active">
+                  {item.statusLabel}
+                </span>
+              </header>
+              <div className="butler-automation-card-body">
+                <div className="butler-automation-row">
+                  <span>{t("shell.butlerAutomationRunSourceLabel")}</span>
+                  <strong>{item.sourceLabel}</strong>
+                </div>
+                <div className="butler-automation-row">
+                  <span>{t("shell.butlerAutomationRunSummaryLabel")}</span>
+                  <strong>{item.summary}</strong>
+                </div>
+              </div>
+              <footer className="butler-automation-card-footer">
+                <span>{t("shell.butlerAutomationRunProcessedAtLabel")}</span>
+                <strong>{formatIsoDateTime(item.createdAt)}</strong>
+              </footer>
+            </article>
+          ))}
         </div>
-        <div className="butler-automation-row">
-          <span>{primaryMeta}</span>
-          <strong>{primaryContent}</strong>
-        </div>
-      </div>
-      <footer className="butler-automation-card-footer">
-        <span>{footerLabel}</span>
-        <strong>{footerValue}</strong>
-      </footer>
-    </article>
+      ) : (
+        <p className="butler-secondary-text">{props.emptyText}</p>
+      )}
+    </section>
   );
 }
 
@@ -1066,19 +1298,174 @@ function formatIsoDateTime(value: string | null | undefined): string {
   }).format(date);
 }
 
-function buildFollowUpRecords(events: ButlerControlEventDto[]): Array<{ title: string; content: string }> {
-  return [...events]
-    .filter((event) => event.actionType === "resume-session")
+function resolveFollowUpTaskUpdatedAt(task: ButlerFollowUpTaskDto): string {
+  return task.updatedAt || task.lastAutomationAt || task.lastCheckedAt || task.createdAt;
+}
+
+function buildAutomationTaskItems(
+  patrolPlans: ButlerPatrolPlanDto[],
+  followUpTasks: ButlerFollowUpTaskDto[],
+  overview: ButlerOverviewDto | null
+): AutomationTaskItem[] {
+  const projectNameById = new Map(
+    (overview?.projects ?? []).map((project) => [project.id, project.name] as const)
+  );
+  const planItems = patrolPlans.map<AutomationTaskItem>((plan) => ({
+    id: `patrol-plan:${plan.id}`,
+    title: plan.name,
+    projectName: projectNameById.get(plan.projectId) ?? plan.projectId,
+    taskTypeLabel: resolveAutomationTaskTypeLabel("patrol_plan", plan.triggerType),
+    statusLabel: plan.enabled ? t("shell.butlerAutomationTaskEnabled") : t("shell.butlerAutomationTaskDisabled"),
+    nextRunAt: plan.nextRunAt,
+    lastRunAt: plan.lastScheduledAt
+  }));
+  const followUpItems = followUpTasks.map<AutomationTaskItem>((task) => ({
+    id: `follow-up:${task.id}`,
+    title: task.sessionTitle?.trim() || task.projectName,
+    projectName: task.projectName,
+    taskTypeLabel: resolveAutomationTaskTypeLabel("follow_up"),
+    statusLabel: resolveFollowUpTaskStatusLabel(task.status),
+    nextRunAt: task.nextCheckAt,
+    lastRunAt: task.lastAutomationAt || task.lastCheckedAt || task.updatedAt
+  }));
+
+  return [...planItems, ...followUpItems]
+    .sort((left, right) => {
+      const leftNext = parseIsoTime(left.nextRunAt);
+      const rightNext = parseIsoTime(right.nextRunAt);
+
+      if (leftNext !== rightNext) {
+        if (leftNext === 0) {
+          return 1;
+        }
+
+        if (rightNext === 0) {
+          return -1;
+        }
+
+        return leftNext - rightNext;
+      }
+
+      return parseIsoTime(right.lastRunAt) - parseIsoTime(left.lastRunAt);
+    })
+    .slice(0, 10);
+}
+
+function buildAutomationRunItems(
+  followUpTasks: ButlerFollowUpTaskDto[],
+  overview: ButlerOverviewDto | null
+): AutomationRunItem[] {
+  const projectNameById = new Map(
+    (overview?.projects ?? []).map((project) => [project.id, project.name] as const)
+  );
+  const patrolRunItems = (overview?.patrols ?? []).map<AutomationRunItem>((run) => ({
+    id: `patrol-run:${run.id}`,
+    title: t("shell.butlerAutomationPatrolRunTitle"),
+    projectName: projectNameById.get(run.projectId) ?? run.projectId,
+    sourceLabel: resolveAutomationRunSourceLabel("patrol_run"),
+    statusLabel: run.status,
+    summary: run.summary?.trim() || t("shell.butlerAutomationRunEmptySummary"),
+    createdAt: run.finishedAt || run.startedAt || run.createdAt
+  }));
+  const followUpRunItems = followUpTasks.flatMap<AutomationRunItem>((task) =>
+    (task.rounds ?? []).map((round) => ({
+      id: `follow-up-round:${task.id}:${round.roundNumber}`,
+      title: `${task.sessionTitle?.trim() || task.projectName} · ${t("shell.butlerAutomationRoundLabel", { round: round.roundNumber })}`,
+      projectName: task.projectName,
+      sourceLabel: resolveAutomationRunSourceLabel("follow_up_round"),
+      statusLabel: resolveFollowUpTaskStatusLabel(round.status),
+      summary: round.summary?.trim() || t("shell.butlerAutomationRunEmptySummary"),
+      createdAt: round.createdAt
+    }))
+  );
+
+  return [...patrolRunItems, ...followUpRunItems]
     .sort((left, right) => parseIsoTime(right.createdAt) - parseIsoTime(left.createdAt))
-    .slice(0, 5)
-    .map((event) => ({
-      title: event.title?.trim() || t("shell.butlerInfoFollowUpUntitled"),
-      content:
-        event.content?.trim()
-        || t("shell.butlerInfoFollowUpFallback", {
-          updatedAt: formatIsoDateTime(event.createdAt)
-        })
-    }));
+    .slice(0, 12);
+}
+
+function FollowUpRoundDetailsPanel(props: {
+  task: ButlerFollowUpTaskDto | null;
+  loading: boolean;
+  error: string | null;
+}) {
+  if (props.loading) {
+    return <p className="butler-secondary-text">{t("shell.butlerAutomationRoundLoading")}</p>;
+  }
+
+  if (props.error) {
+    return <p className="butler-secondary-text">{props.error}</p>;
+  }
+
+  if (!props.task) {
+    return <p className="butler-secondary-text">{t("shell.butlerAutomationRoundEmpty")}</p>;
+  }
+
+  const rounds = [...(props.task.rounds ?? [])]
+    .sort((left, right) => parseIsoTime(right.createdAt) - parseIsoTime(left.createdAt));
+
+  return (
+    <div className="butler-follow-up-rounds">
+      <div className="butler-follow-up-round-summary">
+        <strong>{props.task.objective}</strong>
+        <span>
+          {t("conversation.butlerCurrentFollowUpProgress", {
+            current: props.task.autoContinueCount,
+            max: props.task.maxAutoContinueCount ?? 5
+          })}
+        </span>
+      </div>
+      {rounds.length > 0 ? (
+        <div className="butler-follow-up-round-list">
+          {rounds.map((round) => (
+            <article key={`${round.roundNumber}:${round.createdAt}`} className="butler-follow-up-round-card">
+              <header className="butler-follow-up-round-header">
+                <div>
+                  <strong>{t("shell.butlerAutomationRoundLabel", { round: round.roundNumber })}</strong>
+                  <span>{resolveFollowUpRoundKindLabel(round.kind)}</span>
+                </div>
+                <span>{formatIsoDateTime(round.createdAt)}</span>
+              </header>
+              <div className="butler-follow-up-round-body">
+                <p>
+                  {t("shell.butlerAutomationRoundProcessedAtLabel")}：
+                  {formatIsoDateTime(round.createdAt)}
+                </p>
+                <p>
+                  {t("shell.butlerAutomationRoundStatusLabel")}：
+                  {resolveFollowUpTaskStatusLabel(round.status)}
+                </p>
+                {round.observedRunningState ? (
+                  <p>
+                    {t("shell.butlerAutomationRoundObservedStateLabel")}：
+                    {round.observedRunningState}
+                  </p>
+                ) : null}
+                <p>
+                  {t("shell.butlerAutomationRoundSummaryLabel")}：
+                  {round.summary || t("conversation.butlerAnalysisEmpty")}
+                </p>
+                {round.waitingReason ? (
+                  <p>
+                    {t("shell.butlerAutomationRoundWaitingReasonLabel")}：
+                    {round.waitingReason}
+                  </p>
+                ) : null}
+                {round.continuePrompt ? (
+                  <p>
+                    {t("shell.butlerAutomationRoundPromptLabel")}：
+                    {round.continuePrompt}
+                  </p>
+                ) : null}
+              </div>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <p className="butler-secondary-text">{t("shell.butlerAutomationRoundEmpty")}</p>
+      )}
+    </div>
+  );
 }
 
 function buildVerificationRecords(
@@ -1145,6 +1532,54 @@ function resolveFollowUpTaskStatusLabel(status: ButlerFollowUpTaskDto["status"])
     default:
       return t("shell.butlerAutomationStatusActive");
   }
+}
+
+function resolveFollowUpRoundKindLabel(kind: ButlerFollowUpTaskRoundDto["kind"]): string {
+  switch (kind) {
+    case "started":
+      return t("shell.butlerAutomationRoundKindStarted");
+    case "continue":
+      return t("shell.butlerAutomationRoundKindContinue");
+    case "queued":
+      return t("shell.butlerAutomationRoundKindQueued");
+    case "waiting_user":
+      return t("shell.butlerAutomationRoundKindWaitingUser");
+    case "completed":
+      return t("shell.butlerAutomationRoundKindCompleted");
+    case "failed":
+      return t("shell.butlerAutomationRoundKindFailed");
+    case "cancelled":
+      return t("shell.butlerAutomationRoundKindCancelled");
+    case "limit_reached":
+      return t("shell.butlerAutomationRoundKindLimitReached");
+    default:
+      return kind;
+  }
+}
+
+function resolveAutomationTaskTypeLabel(
+  kind: "patrol_plan" | "follow_up",
+  triggerType?: ButlerPatrolPlanDto["triggerType"]
+): string {
+  if (kind === "follow_up") {
+    return t("shell.butlerAutomationTaskTypeFollowUp");
+  }
+
+  switch (triggerType) {
+    case "interval":
+      return t("shell.butlerAutomationTaskTypeInterval");
+    case "cron":
+      return t("shell.butlerAutomationTaskTypeCron");
+    case "manual":
+    default:
+      return t("shell.butlerAutomationTaskTypeManual");
+  }
+}
+
+function resolveAutomationRunSourceLabel(kind: "patrol_run" | "follow_up_round"): string {
+  return kind === "patrol_run"
+    ? t("shell.butlerAutomationRunSourcePatrol")
+    : t("shell.butlerAutomationRunSourceFollowUp");
 }
 
 function resolveButlerAvatar(displayName: string): string {
