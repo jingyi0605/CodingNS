@@ -7,8 +7,8 @@ import type {
   RuntimeEventInput,
   RuntimeSendOptions,
   RuntimeSessionBinding
-} from "@codingns/session-sync-core";
-import { ClaudeRuntimeAdapter } from "@codingns/session-sync-core";
+} from "@codingns/session-sync-core/runtime/types";
+import { ClaudeRuntimeAdapter } from "@codingns/session-sync-core/runtime/claude-runtime";
 
 type ParentToHelperMessage =
   | {

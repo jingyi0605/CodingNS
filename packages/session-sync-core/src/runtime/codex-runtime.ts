@@ -4,7 +4,6 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
-import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
@@ -16,6 +15,7 @@ import {
   nextTimestamp,
   normalizeWorkspacePath
 } from "../providers/utils.js";
+import { loadDatabaseSync, type DatabaseSyncType } from "../sqlite/node-sqlite.js";
 import { createCodexThreadPermissionOptions } from "./codex-permissions.js";
 import type { NormalizedMessage, NormalizedToolCall, ProviderId } from "../types.js";
 import type {
@@ -817,7 +817,8 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
       return null;
     }
 
-    let db: DatabaseSync | null = null;
+    const DatabaseSync = loadDatabaseSync();
+    let db: DatabaseSyncType | null = null;
 
     try {
       db = new DatabaseSync(dbPath, { open: true, readOnly: true });

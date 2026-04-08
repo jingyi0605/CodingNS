@@ -1,4 +1,3 @@
-import { DatabaseSync } from "node:sqlite";
 import { basename, dirname, join } from "node:path";
 import { existsSync, readFileSync, readdirSync, renameSync, statSync } from "node:fs";
 import crypto from "node:crypto";
@@ -39,6 +38,7 @@ import {
   stringifyStructuredValue,
   walkJsonlFiles
 } from "./utils.js";
+import { loadDatabaseSync, type DatabaseSyncType } from "../sqlite/node-sqlite.js";
 
 interface CodexAdapterOptions {
   homeDir: string;
@@ -642,7 +642,8 @@ export class CodexAdapter implements ProviderAdapter {
     });
 
     if (stateDbPath) {
-      let db: DatabaseSync | null = null;
+      const DatabaseSync = loadDatabaseSync();
+      let db: DatabaseSyncType | null = null;
 
       try {
         db = new DatabaseSync(stateDbPath, { open: true });
@@ -677,7 +678,8 @@ export class CodexAdapter implements ProviderAdapter {
     }
 
     if (stateDbPath) {
-      let db: DatabaseSync | null = null;
+      const DatabaseSync = loadDatabaseSync();
+      let db: DatabaseSyncType | null = null;
 
       try {
         db = new DatabaseSync(stateDbPath, { open: true });
@@ -853,7 +855,8 @@ export class CodexAdapter implements ProviderAdapter {
       return index;
     }
 
-    let db: DatabaseSync | null = null;
+    const DatabaseSync = loadDatabaseSync();
+    let db: DatabaseSyncType | null = null;
 
     try {
       db = new DatabaseSync(stateDbPath, { open: true, readOnly: true });

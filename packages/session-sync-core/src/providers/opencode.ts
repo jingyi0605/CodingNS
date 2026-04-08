@@ -1,7 +1,6 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
 
 import type {
   DetectSessionsOptions,
@@ -43,6 +42,7 @@ import {
   workspaceMatches
 } from "./opencode-shared.js";
 import { createOpenCodeMessagePermissionOptions } from "./opencode-permissions.js";
+import { loadDatabaseSync, type DatabaseSyncType } from "../sqlite/node-sqlite.js";
 
 const DEFAULT_DATA_DIR = join(homedir(), ".local", "share", "opencode");
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
@@ -794,14 +794,15 @@ export class OpenCodeAdapter implements ProviderAdapter {
     };
   }
 
-  private withReadonlyDb<T>(run: (db: DatabaseSync) => T): T {
+  private withReadonlyDb<T>(run: (db: DatabaseSyncType) => T): T {
     const dbPath = this.resolveDbPath();
 
     if (!existsSync(dbPath)) {
       throw new Error("OPENCODE_DB_NOT_FOUND");
     }
 
-    let db: DatabaseSync | null = null;
+    const DatabaseSync = loadDatabaseSync();
+    let db: DatabaseSyncType | null = null;
 
     try {
       db = new DatabaseSync(dbPath, { open: true, readOnly: true });

@@ -9,6 +9,14 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./runtime/claude-runtime": {
+      "types": "./dist/runtime/claude-runtime.d.ts",
+      "import": "./dist/runtime/claude-runtime.js"
+    },
+    "./runtime/types": {
+      "types": "./dist/runtime/types.d.ts",
+      "import": "./dist/runtime/types.js"
     }
   },
   "scripts": {
