@@ -689,4 +689,132 @@ describe("ButlerSessionService", () => {
     expect(service.listByProject(project.id, "user-1")[0]?.sessionId).toBe("session-active");
     expect(service.listByProject(project.id, "user-1", { includeArchived: true })).toHaveLength(2);
   });
+
+  it("可以为当前普通会话解析出 Butler 动作目标", async () => {
+    const project: ButlerProject = {
+      id: "project-target",
+      workspaceId: "workspace-target",
+      name: "repo-target",
+      repoRoot: "/tmp/repo-target",
+      defaultProvider: "codex",
+      instructionProfileId: null,
+      approvalMode: "controlled",
+      lifecycleStatus: "active",
+      riskLevel: "low",
+      config: {
+        managedBy: "workspace-auto"
+      },
+      lastPatrolAt: null,
+      lastVerificationAt: null,
+      createdAt: "2026-04-02T00:00:00.000Z",
+      updatedAt: "2026-04-02T00:00:00.000Z",
+      archivedAt: null
+    };
+    const binding: SessionBinding = {
+      sessionId: "session-target",
+      workspaceId: "workspace-target",
+      provider: "codex",
+      providerSessionId: "provider-session-target",
+      rawStoreRef: "raw-session-target",
+      createdAt: "2026-04-02T00:00:00.000Z",
+      updatedAt: "2026-04-02T00:00:00.000Z"
+    };
+    const index: SessionIndexRecord = {
+      sessionId: "session-target",
+      workspaceId: "workspace-target",
+      provider: "codex",
+      parentSessionId: null,
+      isSubagent: false,
+      subagentLabel: null,
+      title: "登录页开发",
+      messageCount: 6,
+      isArchived: false,
+      lastMessageAt: "2026-04-02T00:10:00.000Z",
+      createdAt: "2026-04-02T00:00:00.000Z",
+      updatedAt: "2026-04-02T00:10:00.000Z"
+    };
+    const state: SessionStateRecord = {
+      sessionId: "session-target",
+      userId: "user-1",
+      runningState: "running",
+      activitySource: "runtime",
+      favorite: false,
+      lastEventAt: "2026-04-02T00:10:00.000Z",
+      completedAt: null,
+      lastSeenAt: null,
+      updatedAt: "2026-04-02T00:10:00.000Z"
+    };
+    const createdSessions: ButlerSession[] = [];
+
+    const service = new ButlerSessionService(
+      {
+        findById: vi.fn(() => project)
+      } satisfies Pick<ButlerProjectRepository, "findById"> as ButlerProjectRepository,
+      {
+        listByProject: vi.fn(() => createdSessions),
+        findBySessionId: vi.fn((sessionId: string) =>
+          createdSessions.find((item) => item.sessionId === sessionId) ?? null
+        ),
+        create: vi.fn((record: ButlerSession) => {
+          createdSessions.push(record);
+          return record;
+        })
+      } satisfies Pick<ButlerSessionRepository, "listByProject" | "findBySessionId" | "create"> as ButlerSessionRepository,
+      {
+        getLatestSeq: vi.fn(() => 0),
+        create: vi.fn((record) => record)
+      } satisfies Pick<SessionCheckpointRepository, "getLatestSeq" | "create"> as SessionCheckpointRepository,
+      {
+        findBySessionId: vi.fn(() => binding)
+      } satisfies Pick<SessionBindingRepository, "findBySessionId"> as SessionBindingRepository,
+      {
+        findIndexRecordBySessionId: vi.fn(() => index)
+      } satisfies Pick<SessionIndexRepository, "findIndexRecordBySessionId"> as SessionIndexRepository,
+      {
+        findBySessionAndUser: vi.fn(() => state)
+      } satisfies Pick<SessionStateRepository, "findBySessionAndUser"> as SessionStateRepository,
+      undefined,
+      {
+        discoverWorkspaceSessions: vi.fn(async () => undefined),
+        listWorkspaceSessions: vi.fn(() => [
+          {
+            sessionId: "session-target",
+            workspaceId: "workspace-target",
+            provider: "codex",
+            providerSessionId: "provider-session-target",
+            rawStoreRef: "raw-session-target",
+            parentSessionId: null,
+            isSubagent: false,
+            subagentLabel: null,
+            isArchived: false,
+            isFavorite: false,
+            title: "登录页开发",
+            messageCount: 6,
+            lastMessageAt: "2026-04-02T00:10:00.000Z",
+            createdAt: "2026-04-02T00:00:00.000Z",
+            updatedAt: "2026-04-02T00:10:00.000Z",
+            syncStatus: null,
+            syncCursor: null,
+            lastSyncAt: null,
+            lastErrorCode: null,
+            lastErrorDetail: null,
+            resumedAt: null,
+            runningState: "running",
+            activitySource: "runtime",
+            lastEventAt: "2026-04-02T00:10:00.000Z",
+            completedAt: null,
+            lastSeenAt: null,
+            activityState: "running"
+          } satisfies SessionListItem
+        ]),
+        resumeSession: vi.fn()
+      } as never
+    );
+
+    const target = await service.resolveActionTarget(project.id, "session-target", "user-1");
+
+    expect(target.workspaceId).toBe("workspace-target");
+    expect(target.session.sessionId).toBe("session-target");
+    expect(target.session.ownershipMode).toBe("observed");
+  });
 });

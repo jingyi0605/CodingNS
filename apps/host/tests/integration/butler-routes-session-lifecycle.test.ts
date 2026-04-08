@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ButlerControlSessionService } from "../../src/modules/butler/butler-control-session-service.js";
 import type { ButlerControlActionService } from "../../src/modules/butler/butler-control-action-service.js";
+import type { ButlerFollowUpService } from "../../src/modules/butler/butler-follow-up-service.js";
+import type { ButlerInboxService } from "../../src/modules/butler/butler-inbox-service.js";
 import type { ButlerContextAggregator } from "../../src/modules/butler/context-aggregator.js";
 import type { ButlerProfileService } from "../../src/modules/butler/butler-profile-service.js";
 import type { ButlerProjectService } from "../../src/modules/butler/butler-project-service.js";
@@ -26,6 +28,8 @@ describe("butler routes session lifecycle", () => {
       {} as ButlerControlSessionService,
       {} as ButlerControlActionService,
       {} as ButlerContextAggregator,
+      {} as ButlerFollowUpService,
+      {} as ButlerInboxService,
       {} as ButlerProjectService,
       butlerSessionService,
       {} as ProjectMemoryService,

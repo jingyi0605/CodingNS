@@ -77,6 +77,29 @@ describe("ButlerContextAggregator", () => {
         )
       } as unknown as Pick<ButlerSessionService, "ensureProjectSessionsSynced" | "listByProject">,
       {
+        listItems: vi.fn((filters?: { projectId?: string }) =>
+          filters?.projectId === "project-1"
+            ? [
+                {
+                  id: "inbox-1",
+                  projectId: "project-1",
+                  workspaceId: "workspace-1",
+                  projectName: "控制台",
+                  projectLifecycleStatus: "active",
+                  itemType: "bug",
+                  title: "修复控制台类型错误",
+                  content: "先把 host 里的 TypeScript 报错清掉。",
+                  priority: "high",
+                  status: "in_progress",
+                  createdAt: "2026-04-05T00:20:00.000Z",
+                  updatedAt: "2026-04-05T01:09:00.000Z",
+                  closedAt: null
+                }
+              ]
+            : []
+        )
+      } as never,
+      {
         listMemories: vi.fn((projectId: string) =>
           projectId === "project-1"
             ? [
