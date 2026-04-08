@@ -85,6 +85,64 @@ export function buildApplyPatchFromOpenCodePatch(
   );
 }
 
+/**
+ * 将通用文件编辑类工具参数转换为 apply_patch。
+ * 兼容 Gemini 等 provider 常见的字段风格：
+ * - 新建/覆盖写入：{ file_path|filePath|path, content|new_content|newContent }
+ * - 单次编辑：{ file_path|filePath|path, old_string|oldText|search, new_string|newText|replacement }
+ * - 多次编辑：{ file_path|filePath|path, edits: [{ old_string, new_string }, ...] }
+ */
+export function buildApplyPatchFromStructuredFileTool(
+  input: Record<string, unknown>
+): string | null {
+  const filePath = extractFirstStringField(input, ["file_path", "filePath", "path"]);
+
+  if (!filePath) {
+    return null;
+  }
+
+  const directContent = extractFirstStringField(input, ["content", "new_content", "newContent"]);
+
+  if (directContent) {
+    return buildApplyPatchText([
+      {
+        action: "add",
+        filePath,
+        contentLines: directContent.split("\n")
+      }
+    ]);
+  }
+
+  const directEdit = extractStructuredEdit(input);
+
+  if (directEdit) {
+    return buildApplyPatchText([
+      {
+        action: "update",
+        filePath,
+        hunks: [directEdit]
+      }
+    ]);
+  }
+
+  const edits = Array.isArray(input.edits) ? input.edits : [];
+  const normalizedEdits = edits
+    .map((edit) => normalizeEditRecord(edit))
+    .filter((edit): edit is { oldLines: string[]; newLines: string[] } => Boolean(edit));
+
+  if (normalizedEdits.length === 0) {
+    return null;
+  }
+
+  return buildApplyPatchText([
+    {
+      action: "update",
+      filePath,
+      hunks: normalizedEdits
+    }
+  ]);
+}
+
 // ---- 内部类型与工具函数 ----
 
 interface PatchFileUpdate {
@@ -140,4 +198,61 @@ function extractStringField(
 ): string {
   const value = record[field];
   return typeof value === "string" ? value : "";
+}
+
+function extractFirstStringField(
+  record: Record<string, unknown>,
+  fields: string[]
+): string {
+  for (const field of fields) {
+    const value = extractStringField(record, field);
+
+    if (value) {
+      return value;
+    }
+  }
+
+  return "";
+}
+
+function extractStructuredEdit(
+  input: Record<string, unknown>
+): { oldLines: string[]; newLines: string[] } | null {
+  return normalizeEditRecord(input);
+}
+
+function normalizeEditRecord(
+  value: unknown
+): { oldLines: string[]; newLines: string[] } | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  const oldValue = extractFirstStringField(record, [
+    "old_string",
+    "oldString",
+    "old_text",
+    "oldText",
+    "search",
+    "searchText"
+  ]);
+  const newValue = extractFirstStringField(record, [
+    "new_string",
+    "newString",
+    "new_text",
+    "newText",
+    "replacement",
+    "replacementText",
+    "replace"
+  ]);
+
+  if (!oldValue && !newValue) {
+    return null;
+  }
+
+  return {
+    oldLines: oldValue.length > 0 ? oldValue.split("\n") : [],
+    newLines: newValue.length > 0 ? newValue.split("\n") : []
+  };
 }

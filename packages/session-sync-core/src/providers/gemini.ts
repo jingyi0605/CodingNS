@@ -1,6 +1,6 @@
 import { execFile as nodeExecFile } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, dirname, extname, join } from "node:path";
 import { promisify } from "node:util";
 
 import type {
@@ -21,6 +21,7 @@ import type {
   StartSessionOptions,
   StartSessionResult
 } from "../types.js";
+import { buildApplyPatchFromStructuredFileTool } from "../patch-builder.js";
 import {
   ensureText,
   extractTextBlocks,
@@ -77,7 +78,7 @@ interface GeminiMessageDescriptor {
   kind: NormalizedMessage["kind"];
   content: string;
   toolCall: NormalizedMessage["toolCall"];
-  partIndex: number;
+  timestamp: string | null;
 }
 
 interface ParsedSessionRef {
@@ -110,7 +111,7 @@ export class GeminiAdapter implements ProviderAdapter {
       knownSessions.map((session) => [session.providerSessionId, session] as const)
     );
     const localSessions = this.readLocalSessions();
-    const cliResult = await this.readCliSessions();
+    const cliResult = await this.readCliSessions(workspacePath);
     const mergedByProviderSessionId = new Map<string, ProviderSessionSummary>();
 
     for (const localSession of localSessions) {
@@ -396,14 +397,14 @@ export class GeminiAdapter implements ProviderAdapter {
     };
   }
 
-  private async readCliSessions(): Promise<{
+  private async readCliSessions(workspacePath: string): Promise<{
     sessions: GeminiCliSessionRecord[];
     isComplete: boolean;
   }> {
     try {
       const sessions = this.options.listSessions
         ? await this.options.listSessions()
-        : await this.readCliSessionsFromCommand();
+        : await this.readCliSessionsFromCommand(workspacePath);
 
       return {
         sessions,
@@ -417,7 +418,9 @@ export class GeminiAdapter implements ProviderAdapter {
     }
   }
 
-  private async readCliSessionsFromCommand(): Promise<GeminiCliSessionRecord[]> {
+  private async readCliSessionsFromCommand(
+    workspacePath: string
+  ): Promise<GeminiCliSessionRecord[]> {
     const commandPath = this.options.commandPath?.trim() || "gemini";
     const env = {
       ...process.env,
@@ -433,9 +436,12 @@ export class GeminiAdapter implements ProviderAdapter {
       try {
         const result = await execFile(commandPath, args, {
           env,
-          timeout: 8_000
+          cwd: workspacePath,
+          timeout: 8_000,
+          windowsHide: true,
+          shell: shouldUseShellForCommand(commandPath)
         });
-        return parseGeminiCliSessionOutput(result.stdout);
+        return parseGeminiCliSessionOutput(result.stdout, workspacePath);
       } catch (error) {
         lastError = error;
       }
@@ -559,14 +565,18 @@ export class GeminiAdapter implements ProviderAdapter {
         DEFAULT_GEMINI_TITLE_LENGTH
       ) ||
       providerSessionId;
-    const workspacePath = resolveWorkspacePath(parsedRecord, messageNodes);
+    const workspacePath = resolveWorkspacePath(parsedRecord, messageNodes, filePath);
     const lastMessageAt =
       messages.at(-1)?.timestamp ||
       resolveStringField(parsedRecord, [
         "updatedAt",
         "updated_at",
+        "lastUpdated",
+        "last_updated",
         "lastMessageAt",
         "last_message_at",
+        "startTime",
+        "start_time",
         "createdAt",
         "created_at"
       ]) ||
@@ -673,7 +683,10 @@ function isGeminiChatFile(filePath: string): boolean {
   return filePath.replaceAll("\\", "/").includes("/chats/");
 }
 
-function parseGeminiCliSessionOutput(stdout: string): GeminiCliSessionRecord[] {
+function parseGeminiCliSessionOutput(
+  stdout: string,
+  workspacePathFallback: string | null = null
+): GeminiCliSessionRecord[] {
   const trimmed = stdout.trim();
 
   if (!trimmed) {
@@ -681,10 +694,16 @@ function parseGeminiCliSessionOutput(stdout: string): GeminiCliSessionRecord[] {
   }
 
   const parsedAsWhole = parseJsonSafe(trimmed);
-  const normalizedWhole = normalizeCliSessionsPayload(parsedAsWhole);
+  const normalizedWhole = normalizeCliSessionsPayload(parsedAsWhole, workspacePathFallback);
 
   if (normalizedWhole.length > 0) {
     return normalizedWhole;
+  }
+
+  const normalizedText = parseGeminiPlainTextSessions(trimmed, workspacePathFallback);
+
+  if (normalizedText.length > 0) {
+    return normalizedText;
   }
 
   const sessions: GeminiCliSessionRecord[] = [];
@@ -696,13 +715,16 @@ function parseGeminiCliSessionOutput(stdout: string): GeminiCliSessionRecord[] {
       continue;
     }
 
-    sessions.push(...normalizeCliSessionsPayload(parsedLine));
+    sessions.push(...normalizeCliSessionsPayload(parsedLine, workspacePathFallback));
   }
 
   return dedupeCliSessions(sessions);
 }
 
-function normalizeCliSessionsPayload(payload: unknown): GeminiCliSessionRecord[] {
+function normalizeCliSessionsPayload(
+  payload: unknown,
+  workspacePathFallback: string | null
+): GeminiCliSessionRecord[] {
   if (!payload) {
     return [];
   }
@@ -710,7 +732,7 @@ function normalizeCliSessionsPayload(payload: unknown): GeminiCliSessionRecord[]
   if (Array.isArray(payload)) {
     return dedupeCliSessions(
       payload
-        .map((item) => normalizeCliSessionRecord(item))
+        .map((item) => normalizeCliSessionRecord(item, workspacePathFallback))
         .filter((item): item is GeminiCliSessionRecord => item !== null)
     );
   }
@@ -724,16 +746,19 @@ function normalizeCliSessionsPayload(payload: unknown): GeminiCliSessionRecord[]
   if (wrappedArray) {
     return dedupeCliSessions(
       wrappedArray
-        .map((item) => normalizeCliSessionRecord(item))
+        .map((item) => normalizeCliSessionRecord(item, workspacePathFallback))
         .filter((item): item is GeminiCliSessionRecord => item !== null)
     );
   }
 
-  const single = normalizeCliSessionRecord(record);
+  const single = normalizeCliSessionRecord(record, workspacePathFallback);
   return single ? [single] : [];
 }
 
-function normalizeCliSessionRecord(payload: unknown): GeminiCliSessionRecord | null {
+function normalizeCliSessionRecord(
+  payload: unknown,
+  workspacePathFallback: string | null
+): GeminiCliSessionRecord | null {
   const record = toRecord(payload);
   const providerSessionId = resolveStringField(record, [
     "sessionId",
@@ -759,14 +784,18 @@ function normalizeCliSessionRecord(payload: unknown): GeminiCliSessionRecord | n
         "directory",
         "projectPath",
         "project_path"
-      ]) || null,
+      ]) || workspacePathFallback,
     title: resolveStringField(record, ["title", "name", "summary"]) || null,
     lastMessageAt:
       resolveStringField(record, [
         "updatedAt",
         "updated_at",
+        "lastUpdated",
+        "last_updated",
         "lastMessageAt",
         "last_message_at",
+        "startTime",
+        "start_time",
         "createdAt",
         "created_at"
       ]) || null,
@@ -793,7 +822,8 @@ function dedupeCliSessions(sessions: GeminiCliSessionRecord[]): GeminiCliSession
 
 function resolveWorkspacePath(
   record: Record<string, unknown>,
-  messageNodes: unknown[]
+  messageNodes: unknown[],
+  filePath: string
 ): string | null {
   const directWorkspace = resolveStringField(record, [
     "workspacePath",
@@ -822,7 +852,7 @@ function resolveWorkspacePath(
     }
   }
 
-  return null;
+  return resolveWorkspacePathFromChatFile(filePath);
 }
 
 function readMessageNodes(record: Record<string, unknown>): unknown[] {
@@ -867,13 +897,14 @@ function normalizeMessageNodes(input: {
       continue;
     }
 
-    for (const descriptor of descriptors) {
+    for (let descriptorIndex = 0; descriptorIndex < descriptors.length; descriptorIndex += 1) {
+      const descriptor = descriptors[descriptorIndex];
       sequence += 1;
       const rawRef = buildGeminiMessageRawRef(
         input.sessionId,
         input.filePath,
         index,
-        descriptor.partIndex
+        descriptorIndex
       );
 
       messages.push({
@@ -884,7 +915,7 @@ function normalizeMessageNodes(input: {
         kind: descriptor.kind,
         content: descriptor.content,
         toolCall: descriptor.toolCall,
-        timestamp,
+        timestamp: descriptor.timestamp ?? timestamp,
         sequence,
         rawRef
       });
@@ -898,35 +929,44 @@ function readMessageDescriptors(
   nodeRecord: Record<string, unknown>,
   fallbackRole: GeminiRole
 ): GeminiMessageDescriptor[] {
+  const descriptors: GeminiMessageDescriptor[] = [];
+  descriptors.push(...readGeminiThoughtDescriptors(nodeRecord));
+  descriptors.push(...readGeminiToolCallDescriptors(nodeRecord));
+
   const parts =
     arrayFromUnknown(nodeRecord.parts) ||
     arrayFromUnknown(nodeRecord.content) ||
     arrayFromUnknown(toRecord(nodeRecord.message).parts) ||
     null;
-  const descriptors: GeminiMessageDescriptor[] = [];
+  const partDescriptors: GeminiMessageDescriptor[] = [];
 
   if (parts && parts.length > 0) {
-    for (let partIndex = 0; partIndex < parts.length; partIndex += 1) {
-      const descriptor = normalizeMessagePart(parts[partIndex], fallbackRole, partIndex);
+    for (const part of parts) {
+      const descriptor = normalizeMessagePart(part, fallbackRole);
 
       if (descriptor) {
-        descriptors.push(descriptor);
+        partDescriptors.push(descriptor);
       }
     }
   }
 
-  if (descriptors.length > 0) {
+  if (partDescriptors.length > 0) {
+    descriptors.push(...partDescriptors);
     return descriptors;
   }
 
-  const fallbackDescriptor = normalizeMessagePart(nodeRecord, fallbackRole, 0);
-  return fallbackDescriptor ? [fallbackDescriptor] : [];
+  const fallbackDescriptor = normalizeMessagePart(nodeRecord, fallbackRole);
+
+  if (fallbackDescriptor) {
+    descriptors.push(fallbackDescriptor);
+  }
+
+  return descriptors;
 }
 
 function normalizeMessagePart(
   value: unknown,
-  fallbackRole: GeminiRole,
-  partIndex: number
+  fallbackRole: GeminiRole
 ): GeminiMessageDescriptor | null {
   const record = toRecord(value);
   const toolCallPayload =
@@ -936,30 +976,33 @@ function normalizeMessagePart(
     (record.type === "tool_use" || record.type === "function_call" ? record : null);
 
   if (toolCallPayload) {
+    const timestamp = resolveOptionalMessageTimestamp(record);
+    const patchText = buildGeminiApplyPatchFromInput(toolCallPayload);
     const callId =
-      resolveStringField(toolCallPayload, ["id", "toolCallId", "call_id"]) ||
-      `gemini-call-${partIndex + 1}`;
-    const name =
-      resolveStringField(toolCallPayload, ["name", "toolName", "tool_name"]) || "unknown_tool";
+      resolveStringField(toolCallPayload, ["id", "toolCallId", "call_id"]) || "gemini-call";
+    const name = patchText
+      ? "apply_patch"
+      : resolveStringField(toolCallPayload, ["name", "toolName", "tool_name"]) || "unknown_tool";
     const inputPayload =
       toolCallPayload.input ??
       toolCallPayload.arguments ??
       toolCallPayload.args ??
       null;
+    const inputText = patchText || stringifyStructuredValue(inputPayload);
 
     return {
-      role: "assistant",
+      role: patchText ? "tool" : "assistant",
       kind: "tool_call",
-      content: stringifyStructuredValue(inputPayload),
+      content: inputText,
       toolCall: {
         callId,
         name,
-        input: stringifyStructuredValue(inputPayload),
+        input: inputText,
         output: null,
         error: null,
         status: "running"
       },
-      partIndex
+      timestamp
     };
   }
 
@@ -970,12 +1013,20 @@ function normalizeMessagePart(
     (record.type === "tool_result" || record.type === "function_response" ? record : null);
 
   if (toolResultPayload) {
+    const timestamp = resolveOptionalMessageTimestamp(record);
     const errorDetail = resolveStringField(toolResultPayload, ["error", "error_message"]);
     const outputPayload =
       toolResultPayload.output ??
       toolResultPayload.result ??
       toolResultPayload.content ??
       null;
+    const normalizedName =
+      resolveStringField(toolResultPayload, [
+        "name",
+        "tool_name",
+        "toolName"
+      ]) || "unknown_tool";
+    const name = isGeminiEditableToolName(normalizedName) ? "apply_patch" : normalizedName;
 
     return {
       role: "tool",
@@ -988,19 +1039,14 @@ function normalizeMessagePart(
             "toolUseId",
             "call_id",
             "callId"
-          ]) || `gemini-tool-result-${partIndex + 1}`,
-        name:
-          resolveStringField(toolResultPayload, [
-            "name",
-            "tool_name",
-            "toolName"
-          ]) || "unknown_tool",
+          ]) || "gemini-tool-result",
+        name,
         input: "",
         output: stringifyStructuredValue(outputPayload),
         error: errorDetail,
         status: errorDetail ? "failed" : "completed"
       },
-      partIndex
+      timestamp
     };
   }
 
@@ -1024,8 +1070,270 @@ function normalizeMessagePart(
     kind,
     content: text,
     toolCall: null,
-    partIndex
+    timestamp: resolveOptionalMessageTimestamp(record)
   };
+}
+
+function readGeminiThoughtDescriptors(
+  nodeRecord: Record<string, unknown>
+): GeminiMessageDescriptor[] {
+  const thoughts =
+    arrayFromUnknown(nodeRecord.thoughts) ??
+    arrayFromUnknown(nodeRecord.reasoning) ??
+    null;
+
+  if (!thoughts || thoughts.length === 0) {
+    return [];
+  }
+
+  return thoughts
+    .map((thought) => normalizeGeminiThoughtDescriptor(thought))
+    .filter((descriptor): descriptor is GeminiMessageDescriptor => descriptor !== null);
+}
+
+function normalizeGeminiThoughtDescriptor(value: unknown): GeminiMessageDescriptor | null {
+  const record = toRecord(value);
+  const subject = resolveStringField(record, ["subject", "title", "name"]);
+  const description = resolveStringField(record, [
+    "description",
+    "content",
+    "text",
+    "message"
+  ]);
+  const content = [subject, description].filter((item): item is string => Boolean(item)).join("\n\n").trim();
+
+  if (!content) {
+    return null;
+  }
+
+  return {
+    role: "assistant",
+    kind: "thinking",
+    content,
+    toolCall: null,
+    timestamp: resolveOptionalMessageTimestamp(record)
+  };
+}
+
+function readGeminiToolCallDescriptors(
+  nodeRecord: Record<string, unknown>
+): GeminiMessageDescriptor[] {
+  const toolCalls =
+    arrayFromUnknown(nodeRecord.toolCalls) ??
+    arrayFromUnknown(nodeRecord.tool_calls) ??
+    null;
+
+  if (!toolCalls || toolCalls.length === 0) {
+    return [];
+  }
+
+  const descriptors: GeminiMessageDescriptor[] = [];
+
+  for (let index = 0; index < toolCalls.length; index += 1) {
+    const descriptorSet = normalizeGeminiToolCall(toolCalls[index], index);
+
+    if (descriptorSet.call) {
+      descriptors.push(descriptorSet.call);
+    }
+
+    if (descriptorSet.result) {
+      descriptors.push(descriptorSet.result);
+    }
+  }
+
+  return descriptors;
+}
+
+function normalizeGeminiToolCall(
+  value: unknown,
+  index: number
+): {
+  call: GeminiMessageDescriptor | null;
+  result: GeminiMessageDescriptor | null;
+} {
+  const record = toRecord(value);
+  const timestamp = resolveOptionalMessageTimestamp(record);
+  const patchText = buildGeminiApplyPatchFromInput(record);
+  const callId =
+    resolveStringField(record, ["id", "toolCallId", "call_id"]) ||
+    `gemini-tool-call-${index + 1}`;
+  const rawName =
+    resolveStringField(record, ["name", "toolName", "tool_name", "displayName"]) || "tool";
+  const name = patchText ? "apply_patch" : rawName;
+  const inputPayload = record.args ?? record.input ?? record.arguments ?? null;
+  const inputText = patchText || stringifyStructuredValue(inputPayload);
+  const callDescriptor: GeminiMessageDescriptor = {
+    role: patchText ? "tool" : "assistant",
+    kind: "tool_call",
+    content: inputText || name,
+    toolCall: {
+      callId,
+      name,
+      input: inputText,
+      output: null,
+      error: null,
+      status: "running"
+    },
+    timestamp
+  };
+
+  return {
+    call: callDescriptor,
+    result: normalizeGeminiToolCallResult(record, callId, name, timestamp)
+  };
+}
+
+function normalizeGeminiToolCallResult(
+  record: Record<string, unknown>,
+  callId: string,
+  name: string,
+  fallbackTimestamp: string | null
+): GeminiMessageDescriptor | null {
+  const output = extractGeminiToolCallOutput(record);
+  const error = extractGeminiToolCallError(record);
+  const hasResultPayload =
+    Array.isArray(record.result) ||
+    record.result !== undefined ||
+    record.output !== undefined ||
+    record.resultDisplay !== undefined ||
+    error !== null;
+
+  if (!hasResultPayload) {
+    return null;
+  }
+
+  const status = normalizeGeminiToolCallStatus(record, error);
+  const content = output || error || name;
+
+  if (!content.trim()) {
+    return null;
+  }
+
+  return {
+    role: "tool",
+    kind: "tool_result",
+    content,
+    toolCall: {
+      callId,
+      name,
+      input: "",
+      output: output || null,
+      error,
+      status
+    },
+    timestamp:
+      resolveStringField(record, [
+        "timestamp",
+        "updatedAt",
+        "updated_at",
+        "lastUpdated",
+        "last_updated"
+      ]) || fallbackTimestamp
+  };
+}
+
+function extractGeminiToolCallOutput(record: Record<string, unknown>): string {
+  const resultItems = arrayFromUnknown(record.result) ?? [];
+
+  for (const item of resultItems) {
+    const itemRecord = toRecord(item);
+    const functionResponse = toRecord(itemRecord.functionResponse);
+    const response = toRecord(functionResponse.response);
+    const outputText = extractTextBlocks(
+      response.output ??
+      itemRecord.output ??
+      itemRecord.result ??
+      itemRecord.content
+    ).trim();
+
+    if (outputText) {
+      return outputText;
+    }
+  }
+
+  const directOutput = extractTextBlocks(
+    record.output ??
+    record.result ??
+    toRecord(record.resultDisplay).fileDiff ??
+    toRecord(record.resultDisplay).newContent
+  ).trim();
+
+  return directOutput;
+}
+
+function extractGeminiToolCallError(record: Record<string, unknown>): string | null {
+  const directError = resolveStringField(record, [
+    "error",
+    "error_message",
+    "failure",
+    "description"
+  ]);
+
+  if (directError && normalizeGeminiToolCallStatus(record, null) === "failed") {
+    return directError;
+  }
+
+  return null;
+}
+
+function normalizeGeminiToolCallStatus(
+  record: Record<string, unknown>,
+  error: string | null
+): "running" | "completed" | "failed" {
+  if (error) {
+    return "failed";
+  }
+
+  const normalizedStatus = ensureText(record.status).trim().toLowerCase();
+
+  if (!normalizedStatus || normalizedStatus === "success" || normalizedStatus === "completed") {
+    return "completed";
+  }
+
+  if (["error", "failed", "failure", "cancelled", "canceled"].includes(normalizedStatus)) {
+    return "failed";
+  }
+
+  return "completed";
+}
+
+function buildGeminiApplyPatchFromInput(value: unknown): string | null {
+  const input =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : null;
+
+  if (!input) {
+    return null;
+  }
+
+  const candidates = [toRecord(input.input), toRecord(input.arguments), toRecord(input.args), input];
+
+  for (const candidate of candidates) {
+    const patchText = buildApplyPatchFromStructuredFileTool(candidate);
+
+    if (patchText) {
+      return patchText;
+    }
+  }
+
+  return null;
+}
+
+function isGeminiEditableToolName(toolName: string): boolean {
+  const normalized = toolName.trim().toLowerCase();
+
+  return [
+    "write_file",
+    "writefile",
+    "create_file",
+    "edit_file",
+    "replace",
+    "replace_file",
+    "update_file",
+    "multi_edit",
+    "multiedit"
+  ].includes(normalized);
 }
 
 function resolveGeminiRole(record: Record<string, unknown>): GeminiRole {
@@ -1034,7 +1342,8 @@ function resolveGeminiRole(record: Record<string, unknown>): GeminiRole {
     "author",
     "sender",
     "source",
-    "participant"
+    "participant",
+    "type"
   ])?.toLowerCase();
 
   if (!candidate) {
@@ -1051,6 +1360,14 @@ function resolveGeminiRole(record: Record<string, unknown>): GeminiRole {
 
   if (candidate.includes("system")) {
     return "system";
+  }
+
+  if (
+    candidate.includes("assistant")
+    || candidate.includes("model")
+    || candidate.includes("gemini")
+  ) {
+    return "assistant";
   }
 
   return "assistant";
@@ -1071,6 +1388,19 @@ function resolveMessageTimestamp(record: Record<string, unknown>): string {
   }
 
   return nextTimestamp();
+}
+
+function resolveOptionalMessageTimestamp(record: Record<string, unknown>): string | null {
+  return resolveStringField(record, [
+    "timestamp",
+    "time",
+    "createdAt",
+    "created_at",
+    "updatedAt",
+    "updated_at",
+    "lastUpdated",
+    "last_updated"
+  ]);
 }
 
 function buildGeminiMessageRawRef(
@@ -1132,6 +1462,59 @@ function resolveNumberField(
   return null;
 }
 
+function parseGeminiPlainTextSessions(
+  stdout: string,
+  workspacePathFallback: string | null
+): GeminiCliSessionRecord[] {
+  const sessions = stdout
+    .split(/\r?\n/)
+    .map((line) => normalizePlainTextCliSessionLine(line, workspacePathFallback))
+    .filter((item): item is GeminiCliSessionRecord => item !== null);
+
+  return dedupeCliSessions(sessions);
+}
+
+function normalizePlainTextCliSessionLine(
+  line: string,
+  workspacePathFallback: string | null
+): GeminiCliSessionRecord | null {
+  const trimmed = line.trim();
+
+  if (!trimmed) {
+    return null;
+  }
+
+  const sessionIdMatch = trimmed.match(/\[([^\]]+)\]\s*$/);
+
+  if (!sessionIdMatch?.[1]) {
+    return null;
+  }
+
+  const providerSessionId = sessionIdMatch[1].trim();
+
+  if (!providerSessionId) {
+    return null;
+  }
+
+  let prefix = trimmed.slice(0, sessionIdMatch.index).trim();
+  prefix = prefix.replace(/^\d+\.\s*/, "").trim();
+
+  const timeSuffixMatch = prefix.match(/\(([^()]*)\)\s*$/);
+  const title = (
+    timeSuffixMatch && typeof timeSuffixMatch.index === "number"
+      ? prefix.slice(0, timeSuffixMatch.index)
+      : prefix
+  ).trim() || providerSessionId;
+
+  return {
+    providerSessionId,
+    workspacePath: workspacePathFallback,
+    title,
+    lastMessageAt: null,
+    messageCount: null
+  };
+}
+
 function ensureNonEmptyText(value: unknown): string | null {
   const text = ensureText(value).trim();
   return text.length > 0 ? text : null;
@@ -1167,6 +1550,24 @@ function maybeRecord(value: unknown): Record<string, unknown> | null {
   }
 
   return null;
+}
+
+function resolveWorkspacePathFromChatFile(filePath: string): string | null {
+  const projectRootFile = join(dirname(dirname(filePath)), ".project_root");
+
+  if (!existsSync(projectRootFile)) {
+    return null;
+  }
+
+  try {
+    return ensureNonEmptyText(readFileSync(projectRootFile, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function shouldUseShellForCommand(commandPath: string): boolean {
+  return process.platform === "win32" && [".cmd", ".bat"].includes(extname(commandPath).toLowerCase());
 }
 
 function wrapGeminiSchemaError(filePath: string, error: unknown): Error {

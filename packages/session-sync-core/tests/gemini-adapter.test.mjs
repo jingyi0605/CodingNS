@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -227,6 +227,225 @@ test("GeminiAdapter 遇到损坏 chats 文件时会返回结构化 schema 错误
       () => adapter.readSessionHistory("broken-session", "gemini://session/broken-session", null, 10),
       /GEMINI_CHAT_SCHEMA_INVALID/
     );
+  } finally {
+    rmSync(rootDir, { recursive: true, force: true });
+  }
+});
+
+test("GeminiAdapter 会从 .project_root 回填工作区，并兼容当前 Gemini chats 结构", async () => {
+  const rootDir = mkdtempSync(join(tmpdir(), "codingns-gemini-project-root-"));
+  const homeDir = join(rootDir, "gemini-home");
+  const workspaceDir = join(rootDir, "workspace-alpha");
+  const projectDir = join(homeDir, "tmp", "codingns");
+  const chatFile = join(projectDir, "chats", "session-project-root.json");
+
+  try {
+    mkdirSync(workspaceDir, { recursive: true });
+    mkdirSync(join(projectDir, "chats"), { recursive: true });
+    writeFileSync(join(projectDir, ".project_root"), workspaceDir, "utf8");
+    writeFileSync(
+      chatFile,
+      JSON.stringify({
+        sessionId: "session-project-root",
+        lastUpdated: "2026-04-08T12:10:00.000Z",
+        messages: [
+          {
+            id: "msg-user",
+            timestamp: "2026-04-08T12:00:00.000Z",
+            type: "user",
+            content: [{ text: "继续修 Gemini 会话发现" }]
+          },
+          {
+            id: "msg-assistant",
+            timestamp: "2026-04-08T12:10:00.000Z",
+            type: "gemini",
+            content: "已经补上工作区回填。"
+          }
+        ],
+        kind: "main"
+      }),
+      "utf8"
+    );
+
+    const adapter = new GeminiAdapter({
+      homeDir,
+      listSessions: async () => []
+    });
+
+    const discovery = await adapter.detectSessionsDetailed(workspaceDir);
+
+    assert.equal(discovery.isComplete, true);
+    assert.equal(discovery.sessions.length, 1);
+    assert.equal(discovery.sessions[0]?.providerSessionId, "session-project-root");
+    assert.equal(discovery.sessions[0]?.workspacePath, workspaceDir);
+    assert.equal(discovery.sessions[0]?.title, "继续修 Gemini 会话发现");
+    assert.equal(discovery.sessions[0]?.lastMessageAt, "2026-04-08T12:10:00.000Z");
+
+    const page = await adapter.readSessionHistory(
+      "session-project-root",
+      "gemini://session/session-project-root",
+      null,
+      10
+    );
+
+    assert.equal(page.messages[0]?.role, "user");
+    assert.equal(page.messages[0]?.content, "继续修 Gemini 会话发现");
+    assert.equal(page.messages[1]?.role, "assistant");
+  } finally {
+    rmSync(rootDir, { recursive: true, force: true });
+  }
+});
+
+test("GeminiAdapter 能解析纯文本 --list-sessions 输出，并把命令工作目录视为当前工作区", async () => {
+  const rootDir = mkdtempSync(join(tmpdir(), "codingns-gemini-cli-text-"));
+  const homeDir = join(rootDir, "gemini-home");
+  const workspaceDir = join(rootDir, "workspace-alpha");
+  const scriptPath = join(
+    rootDir,
+    process.platform === "win32" ? "fake-gemini.cmd" : "fake-gemini.sh"
+  );
+
+  try {
+    mkdirSync(workspaceDir, { recursive: true });
+
+    if (process.platform === "win32") {
+      writeFileSync(
+        scriptPath,
+        "@echo off\r\necho Available sessions for this project (1):\r\necho   1. tmpmd (12 minutes ago) [cli-session-1]\r\n",
+        "utf8"
+      );
+    } else {
+      writeFileSync(
+        scriptPath,
+        "#!/bin/sh\necho \"Available sessions for this project (1):\"\necho \"  1. tmpmd (12 minutes ago) [cli-session-1]\"\n",
+        "utf8"
+      );
+      chmodSync(scriptPath, 0o755);
+    }
+
+    const adapter = new GeminiAdapter({
+      homeDir,
+      commandPath: scriptPath
+    });
+    const discovery = await adapter.detectSessionsDetailed(workspaceDir);
+
+    assert.equal(discovery.isComplete, true);
+    assert.equal(discovery.sessions.length, 1);
+    assert.equal(discovery.sessions[0]?.providerSessionId, "cli-session-1");
+    assert.equal(discovery.sessions[0]?.workspacePath, workspaceDir);
+    assert.equal(discovery.sessions[0]?.title, "tmpmd");
+  } finally {
+    rmSync(rootDir, { recursive: true, force: true });
+  }
+});
+
+test("GeminiAdapter 会把当前 Gemini schema 的 thoughts 和 toolCalls 归一化进历史消息", async () => {
+  const rootDir = mkdtempSync(join(tmpdir(), "codingns-gemini-current-schema-"));
+  const homeDir = join(rootDir, "gemini-home");
+  const workspaceDir = join(rootDir, "workspace-alpha");
+  const projectDir = join(homeDir, "tmp", "codingns");
+  const chatFile = join(projectDir, "chats", "session-current-schema.json");
+
+  try {
+    mkdirSync(workspaceDir, { recursive: true });
+    mkdirSync(join(projectDir, "chats"), { recursive: true });
+    writeFileSync(join(projectDir, ".project_root"), workspaceDir, "utf8");
+    writeFileSync(
+      chatFile,
+      JSON.stringify({
+        sessionId: "session-current-schema",
+        lastUpdated: "2026-04-08T12:52:46.292Z",
+        messages: [
+          {
+            id: "msg-user",
+            timestamp: "2026-04-08T12:52:08.955Z",
+            type: "user",
+            content: [
+              {
+                text: "请在 tmp 目录下写一个文件"
+              }
+            ]
+          },
+          {
+            id: "msg-assistant",
+            timestamp: "2026-04-08T12:52:46.292Z",
+            type: "gemini",
+            content: "文件已经写好了。",
+            thoughts: [
+              {
+                subject: "Planning",
+                description: "先确认目标目录，再准备写入内容。",
+                timestamp: "2026-04-08T12:52:17.179Z"
+              }
+            ],
+            toolCalls: [
+              {
+                id: "write-file-1",
+                name: "write_file",
+                args: {
+                  file_path: "tmp/demo.md",
+                  content: "# demo"
+                },
+                result: [
+                  {
+                    functionResponse: {
+                      id: "write-file-1",
+                      name: "write_file",
+                      response: {
+                        output: "Successfully created tmp/demo.md"
+                      }
+                    }
+                  }
+                ],
+                status: "success",
+                timestamp: "2026-04-08T12:52:36.316Z"
+              }
+            ]
+          }
+        ],
+        kind: "main"
+      }),
+      "utf8"
+    );
+
+    const adapter = new GeminiAdapter({
+      homeDir,
+      listSessions: async () => []
+    });
+    const discovery = await adapter.detectSessionsDetailed(workspaceDir);
+
+    assert.equal(discovery.sessions.length, 1);
+    assert.equal(discovery.sessions[0]?.messageCount, 5);
+
+    const page = await adapter.readSessionHistory(
+      "session-current-schema",
+      "gemini://session/session-current-schema",
+      null,
+      20
+    );
+
+    assert.equal(page.messages.length, 5);
+    assert.deepEqual(
+      page.messages.map((message) => [message.role, message.kind]),
+      [
+        ["user", "text"],
+        ["assistant", "thinking"],
+        ["tool", "tool_call"],
+        ["tool", "tool_result"],
+        ["assistant", "text"]
+      ]
+    );
+    assert.equal(page.messages[1]?.content, "Planning\n\n先确认目标目录，再准备写入内容。");
+    assert.equal(page.messages[1]?.timestamp, "2026-04-08T12:52:17.179Z");
+    assert.equal(page.messages[2]?.toolCall?.callId, "write-file-1");
+    assert.equal(page.messages[2]?.toolCall?.name, "apply_patch");
+    assert.equal(page.messages[2]?.toolCall?.input.includes("*** Add File: tmp/demo.md"), true);
+    assert.equal(page.messages[2]?.content.includes("*** Begin Patch"), true);
+    assert.equal(page.messages[3]?.toolCall?.status, "completed");
+    assert.equal(page.messages[3]?.toolCall?.name, "apply_patch");
+    assert.equal(page.messages[3]?.toolCall?.output, "Successfully created tmp/demo.md");
+    assert.equal(page.messages[3]?.timestamp, "2026-04-08T12:52:36.316Z");
+    assert.equal(page.messages[4]?.content, "文件已经写好了。");
   } finally {
     rmSync(rootDir, { recursive: true, force: true });
   }

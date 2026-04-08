@@ -9,6 +9,7 @@ import {
   safeDate,
   stringifyStructuredValue
 } from "../providers/utils.js";
+import { buildApplyPatchFromStructuredFileTool } from "../patch-builder.js";
 import type {
   MessageKind,
   NormalizedMessage,
@@ -273,24 +274,26 @@ export class GeminiRuntimeAdapter implements ProviderRuntimeAdapter {
         ["args"],
         ["input"]
       ]);
+      const patchText = buildGeminiRuntimeApplyPatch(parameters);
+      const normalizedToolName = patchText ? "apply_patch" : toolName;
 
-      toolNameById.set(toolId, toolName);
+      toolNameById.set(toolId, normalizedToolName);
       sequence += 1;
 
       await emitStructuredEvent({
         type: "message",
         message: createGeminiRuntimeMessage({
           providerSessionId: activeProviderSessionId,
-          role: "assistant",
+          role: patchText ? "tool" : "assistant",
           kind: "tool_call",
-          content: stringifyStructuredValue(parameters),
+          content: patchText || stringifyStructuredValue(parameters),
           timestamp: safeDate(payload.timestamp, nextTimestamp()),
           sequence,
           rawRef: buildGeminiToolRawRef(activeProviderSessionId, toolId, "call"),
           toolCall: {
             callId: toolId,
-            name: toolName,
-            input: stringifyStructuredValue(parameters),
+            name: normalizedToolName,
+            input: patchText || stringifyStructuredValue(parameters),
             output: null,
             error: null,
             status: "running"
@@ -628,6 +631,14 @@ function buildGeminiResultDetail(payload: Record<string, unknown>): string | nul
   }
 
   return null;
+}
+
+function buildGeminiRuntimeApplyPatch(value: unknown): string | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  return buildApplyPatchFromStructuredFileTool(value as Record<string, unknown>);
 }
 
 function createGeminiRuntimeMessage(input: {
