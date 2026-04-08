@@ -7,6 +7,7 @@ import {
   type ContextUsageSnapshot,
   CodexAdapter,
   GeminiAdapter,
+  KimiAdapter,
   OpenCodeAdapter,
   ProviderRegistry,
   SessionSyncService,
@@ -170,6 +171,10 @@ export class SessionHistoryService {
       new GeminiAdapter({
         homeDir: config.geminiHomeDir,
         commandPath: config.geminiCliPath
+      }),
+      new KimiAdapter({
+        homeDir: config.kimiHomeDir,
+        defaultModel: config.kimiDefaultModel
       }),
       new OpenCodeAdapter({
         baseUrl: config.opencodeBaseUrl,

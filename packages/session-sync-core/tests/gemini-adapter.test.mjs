@@ -103,6 +103,21 @@ test("GeminiAdapter 会合并 CLI 与本地 chats 发现结果，并按工作区
   }
 });
 
+test("GeminiAdapter capability 浼氬０鏄庡彲鍚姩 runtime 涓斾笉鏀寔闄勪欢", () => {
+  const adapter = new GeminiAdapter({
+    homeDir: "/tmp/gemini-home"
+  });
+  const capabilities = adapter.getProviderCapabilities();
+
+  assert.equal(capabilities.provider, "gemini");
+  assert.equal(capabilities.canStartSession, true);
+  assert.equal(capabilities.canResumeSession, true);
+  assert.equal(capabilities.canSendMessage, true);
+  assert.equal(capabilities.supportsInterrupt, true);
+  assert.equal(capabilities.supportsAttachments, false);
+  assert.equal(capabilities.supportsPermissionPrompt, false);
+});
+
 test("GeminiAdapter 能把文本、工具调用和工具结果归一化到统一消息模型", async () => {
   const rootDir = mkdtempSync(join(tmpdir(), "codingns-gemini-history-"));
   const homeDir = join(rootDir, "gemini-home");

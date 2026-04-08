@@ -23,6 +23,9 @@ interface ProviderMetadata {
   defaultRunInputMode: InRunInputMode;
   reasoningLevelPersists: boolean;
   defaultReasoningLevel?: string | null;
+  supportsInterrupt?: boolean;
+  supportsAttachments?: boolean;
+  supportsPermissionPrompt?: boolean;
   supportsSlashMenuByDefault?: boolean;
   foldRulesMessagesByDefault?: boolean;
 }
@@ -40,6 +43,7 @@ export const SESSION_PROVIDER_PICKER_IDS: BuiltinProviderId[] = [
   "codex",
   "claude-code",
   "opencode",
+  "gemini",
   "kimi"
 ];
 
@@ -87,6 +91,9 @@ const PROVIDER_METADATA: Record<BuiltinProviderId, ProviderMetadata> = {
     defaultRunInputMode: "none",
     reasoningLevelPersists: false,
     defaultReasoningLevel: null,
+    supportsInterrupt: true,
+    supportsAttachments: false,
+    supportsPermissionPrompt: false,
     supportsSlashMenuByDefault: false,
     foldRulesMessagesByDefault: false
   },
@@ -98,6 +105,9 @@ const PROVIDER_METADATA: Record<BuiltinProviderId, ProviderMetadata> = {
     defaultRunInputMode: "none",
     reasoningLevelPersists: false,
     defaultReasoningLevel: null,
+    supportsInterrupt: true,
+    supportsAttachments: false,
+    supportsPermissionPrompt: false,
     supportsSlashMenuByDefault: false,
     foldRulesMessagesByDefault: false
   }
@@ -178,11 +188,11 @@ export function createDraftCapabilities(provider: ProviderId): ProviderCapabilit
     canSendMessage: true,
     inRunInputMode: metadata?.defaultRunInputMode ?? "none",
     supportsSubagents: false,
-    supportsInterrupt: false,
+    supportsInterrupt: metadata?.supportsInterrupt ?? false,
     supportsStructuredToolCalls: true,
     supportsTokenUsage: true,
-    supportsAttachments: true,
-    supportsPermissionPrompt: true,
+    supportsAttachments: metadata?.supportsAttachments ?? true,
+    supportsPermissionPrompt: metadata?.supportsPermissionPrompt ?? true,
     supportsCheckpoint: false,
     modelOptions: getMetadataModelOptions(provider),
     defaultReasoningLevel: metadata?.defaultReasoningLevel,

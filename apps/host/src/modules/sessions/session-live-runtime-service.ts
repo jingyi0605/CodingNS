@@ -6,6 +6,7 @@ import {
   ClaudeRuntimeAdapter,
   type ContextUsageSnapshot,
   CodexRuntimeAdapter,
+  GeminiRuntimeAdapter,
   type InRunInputMode,
   KimiRuntimeAdapter,
   type NormalizedMessageAttachment,
@@ -2449,6 +2450,10 @@ function createProviderRuntimeAdapters(
         commandPath: config.codexCliPath,
         transportFactory: codexTransportHelper?.createTransport.bind(codexTransportHelper),
         handleServerRequest: options.handleCodexServerRequest
+      }),
+      new GeminiRuntimeAdapter({
+        homeDir: config.geminiHomeDir,
+        commandPath: config.geminiCliPath
       }),
       new KimiRuntimeAdapter({
         homeDir: config.kimiHomeDir,

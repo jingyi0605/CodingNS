@@ -333,12 +333,12 @@ export class GeminiAdapter implements ProviderAdapter {
   getProviderCapabilities(): ProviderCapabilities {
     return {
       provider: this.providerId,
-      canStartSession: false,
+      canStartSession: true,
       canResumeSession: true,
-      canSendMessage: false,
+      canSendMessage: true,
       inRunInputMode: "none",
       supportsSubagents: false,
-      supportsInterrupt: false,
+      supportsInterrupt: true,
       supportsStructuredToolCalls: true,
       supportsTokenUsage: false,
       supportsAttachments: false,
