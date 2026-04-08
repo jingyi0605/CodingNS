@@ -1637,6 +1637,106 @@ body {
   color: var(--text-primary);
 }
 
+.workbench-notification-anchor {
+  position: relative;
+  display: inline-flex;
+}
+
+.workbench-notification-badge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: #ef4444;
+  color: #fff;
+  font-size: 10px;
+  line-height: 16px;
+  font-weight: 700;
+  text-align: center;
+  box-shadow: 0 0 0 2px var(--bg-surface, #fff);
+}
+
+.workbench-notification-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 40;
+  width: min(340px, calc(100vw - 32px));
+  max-height: min(70vh, 520px);
+  overflow: auto;
+  padding: 14px;
+  border: 1px solid var(--panel-border);
+  border-radius: 14px;
+  background: var(--bg-surface);
+  box-shadow: 0 18px 36px rgba(15, 23, 42, 0.14);
+}
+
+.workbench-notification-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.workbench-notification-panel-header strong {
+  display: block;
+  font-size: 14px;
+}
+
+.workbench-notification-panel-header p,
+.workbench-notification-empty,
+.workbench-notification-item p,
+.workbench-notification-item time,
+.workbench-notification-item-kind {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.workbench-notification-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.workbench-notification-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  text-align: left;
+}
+
+.workbench-notification-item:hover {
+  background: var(--panel-hover);
+}
+
+.workbench-notification-item-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.workbench-notification-item-kind {
+  font-weight: 600;
+}
+
+.workbench-notification-item strong {
+  font-size: 13px;
+  line-height: 1.4;
+}
+
 .workbench-nav-body {
   padding: 12px 10px 10px;
   gap: 12px;
@@ -1726,12 +1826,12 @@ body {
 
 .workbench-section-actions {
   display: grid;
-  grid-template-columns: repeat(3, 28px);
+  grid-template-columns: repeat(4, 28px);
   align-items: center;
   justify-content: end;
   justify-items: end;
   gap: 4px;
-  width: 92px;
+  width: 124px;
   margin-left: auto;
   flex-shrink: 0;
 }
