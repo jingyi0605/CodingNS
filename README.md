@@ -24,6 +24,9 @@
 
 CodingNS 致力于提供一整套闭环的 AI 编程工作流程，让你能够随时随地通过任何客户端进行 AI 编程。无论你使用桌面电脑、移动设备还是 Web 浏览器，都能无缝续接你的 AI 编程会话。
 ![image-20260328T235904.webp](img/image-20260328T235904.webp)
+支持H5、Windows、macOS，均保持一致体验；
+![alt text](img/image.png)
+全面支持Android、IOS移动端，全功能使用。
 
 ### ✨ 核心特性
 
