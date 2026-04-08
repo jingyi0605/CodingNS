@@ -1,3 +1,5 @@
+import path from "node:path";
+
 import type { SessionListItem, Workspace } from "../../types/domain.js";
 import { logPerformance } from "../../shared/utils/perf-log.js";
 import type { SessionHistoryService } from "../sessions/session-history-service.js";
@@ -98,7 +100,7 @@ export class WorkbenchService {
 
     return this.workspaceRepository
       .list()
-      .filter((workspace) => workspace.path !== butlerWorkspacePath);
+      .filter((workspace) => !isPathInsideButlerWorkspace(workspace.path, butlerWorkspacePath));
   }
 
   private filterButlerControlSessions(sessions: SessionListItem[]): SessionListItem[] {
@@ -110,4 +112,9 @@ export class WorkbenchService {
 
     return sessions.filter((session) => !hiddenSessionIds.has(session.sessionId));
   }
+}
+
+function isPathInsideButlerWorkspace(candidatePath: string, butlerWorkspacePath: string): boolean {
+  const relative = path.relative(path.resolve(butlerWorkspacePath), path.resolve(candidatePath));
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }

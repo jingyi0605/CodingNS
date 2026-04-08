@@ -46,6 +46,7 @@ import {
 import { SessionChangedFileService } from "./session-changed-file-service.js";
 import { SessionMessageAttachmentService } from "./session-message-attachment-service.js";
 import { mapSessionProviderError } from "./session-provider-error-mapper.js";
+import type { SessionMessageOriginRepository } from "../../storage/repositories/session-message-origin-repository.js";
 import { enrichClaudeCapabilities } from "../provider/claude-model-options.js";
 import {
   CodexModelOptionsService,
@@ -141,7 +142,11 @@ export class SessionHistoryService {
     private readonly sessionStateRepository: SessionStateRepository,
     private readonly sessionStatusSnapshotRepository: SessionStatusSnapshotRepository,
     config: HostConfig,
-    sessionActivityAuthorityService = new SessionActivityAuthorityService()
+    sessionActivityAuthorityService = new SessionActivityAuthorityService(),
+    private readonly sessionMessageOriginRepository: Pick<
+      SessionMessageOriginRepository,
+      "listBySessionAndMessageIds" | "listUnresolvedBySessionAndContents" | "resolveMessageId"
+    > | null = null
   ) {
     this.sessionActivityAuthorityService = sessionActivityAuthorityService;
     this.claudeCodeHomeDir = config.claudeCodeHomeDir;
@@ -1233,7 +1238,8 @@ export class SessionHistoryService {
 
     return historyTask
       .then((page) => {
-        const messages = this.sessionMessageAttachmentService.enrichMessages(sessionId, page.messages);
+        const messagesWithAttachments = this.sessionMessageAttachmentService.enrichMessages(sessionId, page.messages);
+        const messages = this.enrichMessagesWithOrigin(sessionId, messagesWithAttachments);
         this.persistSessionChangedFiles(sessionId, messages);
 
         return {
@@ -1253,6 +1259,88 @@ export class SessionHistoryService {
 
         throw mapSessionProviderError(error);
       });
+  }
+
+  private enrichMessagesWithOrigin(
+    sessionId: string,
+    messages: HistoryPage["messages"]
+  ): Array<HistoryPage["messages"][number] & { origin: string | null; originRef: string | null }> {
+    const originRepository = this.sessionMessageOriginRepository;
+
+    if (!originRepository || messages.length === 0) {
+      return messages.map((message) => ({
+        ...message,
+        origin: null,
+        originRef: null
+      }));
+    }
+
+    const messageIds = [...new Set(messages.map((message) => message.messageId).filter(Boolean))];
+    const originRows = originRepository.listBySessionAndMessageIds(sessionId, messageIds);
+    const originByMessageId = new Map(
+      originRows
+        .filter((row) => row.messageId)
+        .map((row) => [row.messageId!, row] as const)
+    );
+    const unresolvedRows = originRepository.listUnresolvedBySessionAndContents(
+      sessionId,
+      [...new Set(messages.map((message) => message.content).filter((content) => content.trim().length > 0))]
+    );
+    const unresolvedByContent = new Map<string, typeof unresolvedRows>();
+
+    for (const row of unresolvedRows) {
+      const current = unresolvedByContent.get(row.content) ?? [];
+      current.push(row);
+      unresolvedByContent.set(row.content, current);
+    }
+
+    return messages.map((message) => {
+      const resolved = originByMessageId.get(message.messageId) ?? null;
+
+      if (resolved) {
+        return {
+          ...message,
+          origin: resolved.origin,
+          originRef: resolved.originRef
+        };
+      }
+
+      if (message.role !== "user") {
+        return {
+          ...message,
+          origin: null,
+          originRef: null
+        };
+      }
+
+      const candidates = unresolvedByContent.get(message.content) ?? [];
+      const matched = candidates.find((row) => isMessageAtOrAfter(message.timestamp, row.createdAt)) ?? null;
+
+      if (!matched) {
+        return {
+          ...message,
+          origin: null,
+          originRef: null
+        };
+      }
+
+      originRepository.resolveMessageId(
+        sessionId,
+        matched.clientRequestId,
+        message.messageId,
+        message.timestamp
+      );
+      unresolvedByContent.set(
+        message.content,
+        candidates.filter((candidate) => candidate.clientRequestId !== matched.clientRequestId)
+      );
+
+      return {
+        ...message,
+        origin: matched.origin,
+        originRef: matched.originRef
+      };
+    });
   }
 
   private buildWorkspaceSessionRelationMap(
