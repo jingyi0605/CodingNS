@@ -111,6 +111,14 @@ interface WorkspaceDiscoveryStatus {
   isComplete: boolean;
 }
 
+interface PendingSessionAliasDescriptor {
+  sessionId: string;
+  workspaceId: string;
+  provider: string;
+  providerSessionId: string;
+  rawStoreRef: string;
+}
+
 interface SessionStateRecordRow {
   session_id: string;
   user_id: string;
@@ -262,17 +270,18 @@ export class SessionHistoryService {
     userId?: string
   ): Promise<HistoryPage> {
     const startedAt = Date.now();
-    const binding = this.getBindingOrThrow(sessionId);
-    const current = this.sessionStatusSnapshotRepository.findBySessionId(sessionId);
+    const resolvedSessionId = this.resolveCanonicalSessionId(sessionId, userId);
+    const binding = this.getBindingOrThrow(resolvedSessionId);
+    const current = this.sessionStatusSnapshotRepository.findBySessionId(resolvedSessionId);
     const safeLimit = clampLimit(limit);
     const knownTotalMessageCount =
       direction === "backward" && cursor === null
-        ? this.sessionIndexRepository.findIndexRecordBySessionId(sessionId)?.messageCount ?? null
+        ? this.sessionIndexRepository.findIndexRecordBySessionId(resolvedSessionId)?.messageCount ?? null
         : null;
     let readDurationMs = 0;
     let refreshStateDurationMs = 0;
 
-    this.upsertSnapshot(sessionId, {
+    this.upsertSnapshot(resolvedSessionId, {
       syncStatus: "syncing",
       syncCursor: current?.syncCursor ?? cursor,
       lastSyncAt: current?.lastSyncAt ?? null,
@@ -284,7 +293,7 @@ export class SessionHistoryService {
     try {
       const readStartedAt = Date.now();
       const page = await this.readPage(
-        sessionId,
+        resolvedSessionId,
         binding.provider,
         binding.providerSessionId,
         binding.rawStoreRef,
@@ -295,7 +304,7 @@ export class SessionHistoryService {
       );
       readDurationMs = Date.now() - readStartedAt;
 
-      this.upsertSnapshot(sessionId, {
+      this.upsertSnapshot(resolvedSessionId, {
         syncStatus: "idle",
         syncCursor:
           direction === "backward" && cursor !== null
@@ -311,7 +320,8 @@ export class SessionHistoryService {
         "session.read_history",
         Date.now() - startedAt,
         {
-          sessionId,
+          sessionId: resolvedSessionId,
+          requestedSessionId: sessionId,
           provider: binding.provider,
           direction,
           limit: safeLimit,
@@ -332,7 +342,8 @@ export class SessionHistoryService {
         "session.read_history.failed",
         Date.now() - startedAt,
         {
-          sessionId,
+          sessionId: resolvedSessionId,
+          requestedSessionId: sessionId,
           provider: binding.provider,
           direction,
           limit: safeLimit,
@@ -346,7 +357,7 @@ export class SessionHistoryService {
           force: true
         }
       );
-      this.markSessionError(sessionId, "PROVIDER_READ_FAILED", error);
+      this.markSessionError(resolvedSessionId, "PROVIDER_READ_FAILED", error);
       throw mapSessionProviderError(error);
     }
   }
@@ -457,7 +468,9 @@ export class SessionHistoryService {
   listWorkspaceSessions(workspaceId: string, userId: string): SessionListItem[] {
     return this.enrichSessionItems(
       workspaceId,
-      this.sessionIndexRepository.listByWorkspace(workspaceId, userId)
+      this.sessionIndexRepository
+        .listByWorkspace(workspaceId, userId)
+        .filter((item) => !this.isPendingSessionAlias(item))
     );
   }
 
@@ -956,7 +969,7 @@ export class SessionHistoryService {
       });
     }
 
-    return binding;
+    return this.resolvePendingSessionAliasBinding(binding) ?? binding;
   }
 
   persistSessionBinding(
@@ -1682,7 +1695,79 @@ export class SessionHistoryService {
       });
     }
 
-    return item;
+    const aliasTargetSessionId = this.findPendingSessionAliasTargetSessionId(item);
+
+    if (!aliasTargetSessionId) {
+      return item;
+    }
+
+    return this.sessionIndexRepository.findBySessionId(aliasTargetSessionId, userId) ?? item;
+  }
+
+  private resolveCanonicalSessionId(sessionId: string, userId?: string): string {
+    if (userId) {
+      const item = this.sessionIndexRepository.findBySessionId(sessionId, userId);
+      const aliasTargetSessionId = this.findPendingSessionAliasTargetSessionId(item);
+
+      if (aliasTargetSessionId) {
+        return aliasTargetSessionId;
+      }
+    }
+
+    const binding = this.sessionBindingRepository.findBySessionId(sessionId);
+    return this.findPendingSessionAliasTargetSessionId(binding) ?? sessionId;
+  }
+
+  private isPendingSessionAlias(
+    item: Pick<
+      SessionListItem,
+      "sessionId" | "workspaceId" | "provider" | "providerSessionId" | "rawStoreRef"
+    >
+  ): boolean {
+    return Boolean(this.findPendingSessionAliasTargetSessionId(item));
+  }
+
+  private resolvePendingSessionAliasBinding(binding: SessionBinding): SessionBinding | null {
+    const aliasTargetSessionId = this.findPendingSessionAliasTargetSessionId(binding);
+
+    if (!aliasTargetSessionId) {
+      return null;
+    }
+
+    return this.sessionBindingRepository.findBySessionId(aliasTargetSessionId);
+  }
+
+  private findPendingSessionAliasTargetSessionId(
+    descriptor: PendingSessionAliasDescriptor | null | undefined
+  ): string | null {
+    if (!descriptor || descriptor.provider !== "gemini") {
+      return null;
+    }
+
+    const aliasTargetSessionId =
+      extractPendingBindingTargetSessionId(descriptor.providerSessionId)
+      ?? extractPendingBindingTargetSessionId(descriptor.rawStoreRef);
+
+    if (!aliasTargetSessionId || aliasTargetSessionId === descriptor.sessionId) {
+      return null;
+    }
+
+    const targetBinding = this.sessionBindingRepository.findBySessionId(aliasTargetSessionId);
+
+    if (!targetBinding) {
+      return null;
+    }
+
+    if (
+      targetBinding.workspaceId !== descriptor.workspaceId
+      || targetBinding.provider !== descriptor.provider
+      || isPendingBindingValue(targetBinding.providerSessionId)
+      || isPendingBindingValue(targetBinding.rawStoreRef)
+    ) {
+      return null;
+    }
+
+    return aliasTargetSessionId;
   }
 
   private async refreshRecentSessionStates(
@@ -2532,6 +2617,16 @@ function buildPendingBindingValue(provider: string, sessionId: string): string {
   return `pending://${provider}/${sessionId}`;
 }
 
+function extractPendingBindingTargetSessionId(value: string): string | null {
+  if (!isPendingBindingValue(value)) {
+    return null;
+  }
+
+  const normalizedValue = value.trim();
+  const targetSessionId = normalizedValue.slice(normalizedValue.indexOf("/", "pending://".length) + 1).trim();
+  return targetSessionId || null;
+}
+
 function isClaudePendingRuntimeRawStoreRef(rawStoreRef: string): boolean {
   const normalizedRawStoreRef = rawStoreRef.replaceAll("\\", "/").toLowerCase();
   return normalizedRawStoreRef.includes("/.pending-");
@@ -2542,7 +2637,7 @@ function shouldShortCircuitClaudePendingHistory(
   providerSessionId: string,
   rawStoreRef: string
 ): boolean {
-  if (provider !== "claude-code") {
+  if (provider !== "claude-code" && provider !== "gemini") {
     return false;
   }
 

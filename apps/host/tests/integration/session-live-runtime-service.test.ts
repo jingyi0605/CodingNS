@@ -37,6 +37,7 @@ function createService() {
     findWorkspaceByPath: vi.fn()
   };
   const sessionBindingRepository = {
+    findBySessionId: vi.fn(),
     findByProviderSession: vi.fn(),
     findByRawStoreRef: vi.fn()
   };
@@ -420,6 +421,14 @@ describe("SessionLiveRuntimeService", () => {
     sessionMessageAttachmentService.buildProviderPrompt.mockReturnValue(null);
     sessionHistoryService.getBindingOrThrow.mockReturnValue({
       providerSessionId: "claude-session-1"
+    });
+    sessionHistoryService.getSession.mockReturnValue({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      providerSessionId: "claude-session-1",
+      rawStoreRef: "/tmp/.claude/projects/workspace/claude-session-1.jsonl",
+      messageCount: 0
     });
     sessionHistoryService.findLatestUserMessage.mockResolvedValue(null);
 
@@ -1812,6 +1821,282 @@ describe("SessionLiveRuntimeService", () => {
       watchdogTriggeredAt: null
     });
 
+    subscription.close();
+  });
+
+  it("startLiveSession 会在 Gemini 真实 session id 回填后再返回，避免保留 pending 绑定", async () => {
+    vi.useFakeTimers();
+    const { service, sessionHistoryService, sessionMessageAttachmentService, workspaceService } =
+      createService();
+    const runtimeSnapshot = {
+      sessionId: "runtime-session-1",
+      workspaceId: "workspace-1",
+      provider: "gemini",
+      providerSessionId: "pending://gemini/runtime-session-1",
+      rawStoreRef: "pending://gemini/runtime-session-1",
+      runningState: "starting",
+      attachedClients: 1,
+      startedAt: "2026-03-26T10:00:00.000Z",
+      lastEventAt: null,
+      completedAt: null,
+      detail: null,
+      errorCode: null,
+      supportsInterrupt: true
+    };
+    const providerRuntimeService = {
+      startSession: vi.fn(async () => ({
+        getSnapshot: vi.fn(() => ({ ...runtimeSnapshot })),
+        attach: vi.fn()
+      }))
+    };
+    Object.defineProperty(service, "providerRuntimeService", {
+      value: providerRuntimeService,
+      configurable: true
+    });
+
+    sessionHistoryService.getProviderCapabilitiesSnapshot = vi.fn(() => ({
+      provider: "gemini",
+      canStartSession: true,
+      canResumeSession: true,
+      canSendMessage: true,
+      inRunInputMode: "none",
+      supportsSubagents: false,
+      supportsInterrupt: true,
+      supportsStructuredToolCalls: true,
+      supportsTokenUsage: true,
+      supportsAttachments: true,
+      supportsPermissionPrompt: false,
+      supportsCheckpoint: false,
+      limitations: []
+    }));
+    workspaceService.getWorkspaceOrThrow.mockReturnValue({
+      id: "workspace-1",
+      path: "/tmp/workspace"
+    });
+    sessionMessageAttachmentService.buildProviderPrompt.mockReturnValue(null);
+    sessionHistoryService.getBindingOrThrow.mockReturnValue({
+      provider: "gemini",
+      providerSessionId: "gemini-session-real-1",
+      rawStoreRef: "gemini://session/gemini-session-real-1"
+    });
+    sessionHistoryService.findLatestUserMessage.mockResolvedValue(null);
+    sessionHistoryService.getSession.mockImplementation((sessionId: string) => ({
+      sessionId,
+      workspaceId: "workspace-1",
+      provider: "gemini",
+      providerSessionId: "gemini-session-real-1",
+      rawStoreRef: "gemini://session/gemini-session-real-1",
+      messageCount: 0
+    }));
+
+    setTimeout(() => {
+      runtimeSnapshot.providerSessionId = "gemini-session-real-1";
+      runtimeSnapshot.rawStoreRef = "gemini://session/gemini-session-real-1";
+      runtimeSnapshot.runningState = "running";
+      runtimeSnapshot.lastEventAt = "2026-03-26T10:00:00.200Z";
+    }, 100);
+
+    const resultPromise = service.startLiveSession({
+      workspaceId: "workspace-1",
+      userId: "user-1",
+      provider: "gemini",
+      content: "Gemini 启动后先回填真实 session id",
+      clientRequestId: null
+    });
+
+    await vi.advanceTimersByTimeAsync(200);
+
+    const result = await resultPromise;
+    const createdSessionId = sessionHistoryService.persistSessionBinding.mock.calls[0]?.[0];
+
+    expect(createdSessionId).toEqual(expect.any(String));
+    expect(sessionHistoryService.persistSessionBinding).toHaveBeenLastCalledWith(
+      createdSessionId,
+      "workspace-1",
+      {
+        provider: "gemini",
+        providerSessionId: "gemini-session-real-1",
+        rawStoreRef: "gemini://session/gemini-session-real-1"
+      }
+    );
+    expect(result.providerSessionId).toBe("gemini-session-real-1");
+  });
+
+  it("getSessionRuntime 会把 Gemini 真实会话映射到正在运行的 pending runtime", async () => {
+    const { service, sessionHistoryService, sessionBindingRepository } = createService();
+    const aliasRuntimeSnapshot = {
+      sessionId: "session-alias-1",
+      workspaceId: "workspace-1",
+      provider: "gemini",
+      providerSessionId: "gemini-session-real-1",
+      rawStoreRef: "gemini://session/gemini-session-real-1",
+      runningState: "running",
+      attachedClients: 1,
+      startedAt: "2026-03-26T10:00:00.000Z",
+      lastEventAt: "2026-03-26T10:00:02.000Z",
+      completedAt: null,
+      detail: "running",
+      errorCode: null,
+      supportsInterrupt: true
+    };
+    const providerRuntimeService = {
+      getSnapshot: vi.fn((sessionId: string) => (sessionId === "session-alias-1" ? aliasRuntimeSnapshot : null)),
+      listSnapshots: vi.fn(() => [aliasRuntimeSnapshot])
+    };
+    Object.defineProperty(service, "providerRuntimeService", {
+      value: providerRuntimeService,
+      configurable: true
+    });
+
+    sessionBindingRepository.findBySessionId.mockImplementation((sessionId: string) => {
+      if (sessionId === "session-alias-1") {
+        return {
+          sessionId,
+          workspaceId: "workspace-1",
+          provider: "gemini",
+          providerSessionId: "pending://gemini/session-real-1",
+          rawStoreRef: "pending://gemini/session-real-1"
+        };
+      }
+
+      return null;
+    });
+    sessionHistoryService.getSession.mockReturnValue({
+      sessionId: "session-real-1",
+      workspaceId: "workspace-1",
+      provider: "gemini",
+      providerSessionId: "gemini-session-real-1",
+      rawStoreRef: "gemini://session/gemini-session-real-1",
+      runningState: "idle",
+      lastErrorCode: null,
+      lastErrorDetail: null
+    });
+    sessionHistoryService.getSessionCapabilities.mockResolvedValue({
+      provider: "gemini",
+      canStartSession: true,
+      canResumeSession: true,
+      canSendMessage: true,
+      inRunInputMode: "none",
+      supportsSubagents: false,
+      supportsInterrupt: true,
+      supportsStructuredToolCalls: true,
+      supportsTokenUsage: true,
+      supportsAttachments: true,
+      supportsPermissionPrompt: false,
+      supportsCheckpoint: false,
+      limitations: []
+    });
+    sessionHistoryService.getSessionContextUsage.mockResolvedValue(null);
+
+    const runtime = await service.getSessionRuntime("session-real-1", "user-1");
+
+    expect(runtime.sessionId).toBe("session-real-1");
+    expect(runtime.hasActiveRun).toBe(true);
+    expect(runtime.canInterrupt).toBe(true);
+    expect(runtime.providerSessionId).toBe("gemini-session-real-1");
+  });
+
+  it("subscribeRuntime 会把 Gemini alias runtime 事件转发给真实会话", async () => {
+    const { service, sessionBindingRepository } = createService();
+    const listeners = new Map<string, (event: Record<string, unknown>) => Promise<void>>();
+    const providerRuntimeService = {
+      getSnapshot: vi.fn((sessionId: string) =>
+        sessionId === "session-alias-1"
+          ? {
+              sessionId,
+              workspaceId: "workspace-1",
+              provider: "gemini",
+              providerSessionId: "gemini-session-real-1",
+              rawStoreRef: "gemini://session/gemini-session-real-1",
+              runningState: "running",
+              attachedClients: 1,
+              startedAt: "2026-03-26T10:00:00.000Z",
+              lastEventAt: "2026-03-26T10:00:02.000Z",
+              completedAt: null,
+              detail: "running",
+              errorCode: null,
+              supportsInterrupt: true
+            }
+          : null
+      ),
+      listSnapshots: vi.fn(() => [
+        {
+          sessionId: "session-alias-1",
+          workspaceId: "workspace-1",
+          provider: "gemini",
+          providerSessionId: "gemini-session-real-1",
+          rawStoreRef: "gemini://session/gemini-session-real-1",
+          runningState: "running",
+          attachedClients: 1,
+          startedAt: "2026-03-26T10:00:00.000Z",
+          lastEventAt: "2026-03-26T10:00:02.000Z",
+          completedAt: null,
+          detail: "running",
+          errorCode: null,
+          supportsInterrupt: true
+        }
+      ]),
+      subscribe: vi.fn((sessionId: string, listener: (event: Record<string, unknown>) => Promise<void>) => {
+        listeners.set(sessionId, listener);
+        return {
+          close() {
+            listeners.delete(sessionId);
+          }
+        };
+      })
+    };
+    Object.defineProperty(service, "providerRuntimeService", {
+      value: providerRuntimeService,
+      configurable: true
+    });
+
+    sessionBindingRepository.findBySessionId.mockImplementation((sessionId: string) => {
+      if (sessionId === "session-alias-1") {
+        return {
+          sessionId,
+          workspaceId: "workspace-1",
+          provider: "gemini",
+          providerSessionId: "pending://gemini/session-real-1",
+          rawStoreRef: "pending://gemini/session-real-1"
+        };
+      }
+
+      return null;
+    });
+
+    const received: Array<Record<string, unknown>> = [];
+    const subscription = service.subscribeRuntime("session-real-1", async (envelope) => {
+      received.push(envelope as Record<string, unknown>);
+    });
+    const runtimeListener = listeners.get("session-alias-1");
+
+    expect(runtimeListener).toBeTruthy();
+
+    await runtimeListener?.({
+      type: "message",
+      provider: "gemini",
+      providerSessionId: "gemini-session-real-1",
+      rawStoreRef: "gemini://session/gemini-session-real-1",
+      message: {
+        messageId: "msg-1",
+        provider: "gemini",
+        providerSessionId: "gemini-session-real-1",
+        role: "assistant",
+        kind: "text",
+        content: "hello",
+        toolCall: null,
+        timestamp: "2026-03-26T10:00:03.000Z",
+        sequence: 2,
+        rawRef: "gemini://message/1"
+      },
+      status: null,
+      detail: null,
+      errorCode: null,
+      rawEventRef: null,
+      timestamp: "2026-03-26T10:00:03.000Z"
+    });
+
+    expect(received.some((item) => item.type === "session.runtime_message" && item.sessionId === "session-real-1")).toBe(true);
     subscription.close();
   });
 });

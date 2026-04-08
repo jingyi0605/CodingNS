@@ -222,6 +222,9 @@ interface SessionTerminalStateEvent {
 
 type ExternalRuntimeStatus = Extract<SessionRuntimeStatusEnvelope["status"], "running" | "completed" | "failed">;
 
+const GEMINI_START_BINDING_WAIT_TIMEOUT_MS = 1_200;
+const START_BINDING_POLL_INTERVAL_MS = 50;
+
 interface ClaudeHookBridgeConfig {
   provider: "claude-code";
   bridgeUrl: string;
@@ -366,6 +369,7 @@ export class SessionLiveRuntimeService {
       initialContent: input.content,
       snapshot
     });
+    await this.waitForResolvedStartBinding(sessionId, workspace.id, input.provider, handle);
 
     const binding = this.sessionHistoryService.getBindingOrThrow(sessionId);
     const acceptedMessage = await this.findAcceptedUserMessage(
@@ -383,8 +387,10 @@ export class SessionLiveRuntimeService {
       acceptedMessage?.messageId ?? null
     );
 
+    const session = this.sessionHistoryService.getSession(sessionId, input.userId);
+
     return {
-      sessionId,
+      sessionId: session.sessionId,
       provider: input.provider,
       providerSessionId: binding.providerSessionId,
       acceptedAt,
@@ -406,7 +412,7 @@ export class SessionLiveRuntimeService {
             ? boundAttachments
             : persistedAttachments.messageAttachments
         ),
-      session: this.sessionHistoryService.getSession(sessionId, input.userId)
+      session
     };
   }
 
@@ -484,7 +490,8 @@ export class SessionLiveRuntimeService {
       });
     }
 
-    const runtimeSnapshot = this.providerRuntimeService.getSnapshot(sessionId);
+    const runtimeSessionId = this.resolveRuntimeSessionId(sessionId);
+    const runtimeSnapshot = this.providerRuntimeService.getSnapshot(runtimeSessionId);
 
     if (!runtimeSnapshot || !isActiveRuntimeState(runtimeSnapshot.runningState)) {
       throw new AppError({
@@ -737,8 +744,9 @@ export class SessionLiveRuntimeService {
   }
 
   async getSessionRuntime(sessionId: string, userId: string): Promise<SessionRuntimeStatusView> {
-    const runtimeSnapshot = this.providerRuntimeService.getSnapshot(sessionId);
-    const externalRuntimeSnapshot = this.externalRuntimeSnapshots.get(sessionId) ?? null;
+    const runtimeSessionId = this.resolveRuntimeSessionId(sessionId);
+    const runtimeSnapshot = this.providerRuntimeService.getSnapshot(runtimeSessionId);
+    const externalRuntimeSnapshot = this.externalRuntimeSnapshots.get(runtimeSessionId) ?? null;
     const session = runtimeSnapshot || externalRuntimeSnapshot
       ? this.sessionHistoryService.getSession(sessionId, userId)
       : await this.sessionHistoryService.refreshRuntimeFallbackSession(sessionId, userId);
@@ -747,11 +755,11 @@ export class SessionLiveRuntimeService {
     const contextUsage = await this.sessionHistoryService.getSessionContextUsage(sessionId).catch(() => null);
     const resolution = runtimeSnapshot
       ? this.sessionActivityAuthorityService.observe(
-          createRuntimeActivityObservation(sessionId, runtimeSnapshot)
+          createRuntimeActivityObservation(runtimeSessionId, runtimeSnapshot)
         )
       : externalRuntimeSnapshot
         ? this.sessionActivityAuthorityService.observe(
-            createExternalRuntimeActivityObservation(sessionId, externalRuntimeSnapshot)
+            createExternalRuntimeActivityObservation(runtimeSessionId, externalRuntimeSnapshot)
           )
         : this.sessionActivityAuthorityService.resolvePersistedSession(session);
 
@@ -831,7 +839,8 @@ export class SessionLiveRuntimeService {
 
   async interruptSession(sessionId: string, userId: string): Promise<InterruptSessionResult> {
     this.sessionHistoryService.getSession(sessionId, userId);
-    const runtime = this.providerRuntimeService.getSnapshot(sessionId);
+    const runtimeSessionId = this.resolveRuntimeSessionId(sessionId);
+    const runtime = this.providerRuntimeService.getSnapshot(runtimeSessionId);
 
     if (!runtime || (runtime.runningState !== "running" && runtime.runningState !== "starting")) {
       throw new AppError({
@@ -842,7 +851,7 @@ export class SessionLiveRuntimeService {
       });
     }
 
-    const interrupted = await this.providerRuntimeService.interrupt(sessionId).catch((error) => {
+    const interrupted = await this.providerRuntimeService.interrupt(runtimeSessionId).catch((error) => {
       if (error instanceof Error && error.message === "INTERRUPT_NOT_SUPPORTED") {
         throw new AppError({
           statusCode: 400,
@@ -899,9 +908,10 @@ export class SessionLiveRuntimeService {
     sessionId: string,
     onEnvelope: (envelope: SessionRuntimeEnvelope | SessionHistoryEnvelope) => Promise<void> | void
   ): ProviderSubscription {
-    const runtimeSnapshot = this.providerRuntimeService.getSnapshot(sessionId);
-    const externalRuntimeSnapshot = this.externalRuntimeSnapshots.get(sessionId) ?? null;
-    const initialActivityEnvelope = this.buildSessionActivityEnvelope(sessionId);
+    const runtimeSessionId = this.resolveRuntimeSessionId(sessionId);
+    const runtimeSnapshot = this.providerRuntimeService.getSnapshot(runtimeSessionId);
+    const externalRuntimeSnapshot = this.externalRuntimeSnapshots.get(runtimeSessionId) ?? null;
+    const initialActivityEnvelope = this.buildSessionActivityEnvelope(sessionId, runtimeSessionId);
 
     if (runtimeSnapshot) {
       void onEnvelope({
@@ -927,8 +937,8 @@ export class SessionLiveRuntimeService {
       void onEnvelope(initialActivityEnvelope);
     }
 
-    const runtimeSubscription = this.providerRuntimeService.subscribe(sessionId, async (event) => {
-      const envelope = this.mapRuntimeEventToEnvelope(sessionId, event);
+    const runtimeSubscription = this.providerRuntimeService.subscribe(runtimeSessionId, async (event) => {
+      const envelope = this.mapRuntimeEventToEnvelope(sessionId, event, runtimeSessionId);
 
       if (!envelope) {
         return;
@@ -936,11 +946,16 @@ export class SessionLiveRuntimeService {
 
       await onEnvelope(envelope);
     });
-    const externalSubscription = this.subscribeExternalRuntime(sessionId, onEnvelope);
+    const externalSubscription = this.subscribeExternalRuntime(runtimeSessionId, async (envelope) => {
+      await onEnvelope({
+        ...envelope,
+        sessionId
+      });
+    });
     const activitySubscription = this.sessionActivityAuthorityService.subscribe(
-      sessionId,
+      runtimeSessionId,
       async () => {
-        const envelope = this.buildSessionActivityEnvelope(sessionId);
+        const envelope = this.buildSessionActivityEnvelope(sessionId, runtimeSessionId);
 
         if (!envelope) {
           return;
@@ -1023,43 +1038,94 @@ export class SessionLiveRuntimeService {
     );
   }
 
-  private buildSessionActivityEnvelope(sessionId: string): SessionActivityEnvelope | null {
-    const runtimeSnapshot = this.providerRuntimeService.getSnapshot(sessionId);
+  private buildSessionActivityEnvelope(
+    sessionId: string,
+    runtimeSessionId = sessionId
+  ): SessionActivityEnvelope | null {
+    const runtimeSnapshot = this.providerRuntimeService.getSnapshot(runtimeSessionId);
 
     if (runtimeSnapshot) {
       const resolution = this.sessionActivityAuthorityService.observe(
-        createRuntimeActivityObservation(sessionId, runtimeSnapshot)
+        createRuntimeActivityObservation(runtimeSessionId, runtimeSnapshot)
       );
 
-      return this.mapResolutionToActivityEnvelope(resolution, {
-        hasActiveRun: true,
-        canInterrupt: runtimeSnapshot.supportsInterrupt
-      });
+      return {
+        ...this.mapResolutionToActivityEnvelope(resolution, {
+          hasActiveRun: true,
+          canInterrupt: runtimeSnapshot.supportsInterrupt
+        }),
+        sessionId
+      };
     }
 
-    const externalRuntimeSnapshot = this.externalRuntimeSnapshots.get(sessionId) ?? null;
+    const externalRuntimeSnapshot = this.externalRuntimeSnapshots.get(runtimeSessionId) ?? null;
 
     if (externalRuntimeSnapshot) {
       const resolution = this.sessionActivityAuthorityService.observe(
-        createExternalRuntimeActivityObservation(sessionId, externalRuntimeSnapshot)
+        createExternalRuntimeActivityObservation(runtimeSessionId, externalRuntimeSnapshot)
       );
 
-      return this.mapResolutionToActivityEnvelope(resolution, {
-        hasActiveRun: true,
-        canInterrupt: false
-      });
+      return {
+        ...this.mapResolutionToActivityEnvelope(resolution, {
+          hasActiveRun: true,
+          canInterrupt: false
+        }),
+        sessionId
+      };
     }
 
-    const resolution = this.sessionActivityAuthorityService.getResolution(sessionId);
+    const resolution = this.sessionActivityAuthorityService.getResolution(runtimeSessionId);
 
     if (!resolution) {
       return null;
     }
 
-    return this.mapResolutionToActivityEnvelope(resolution, {
-      hasActiveRun: resolution.runningState === "stale" || resolution.runningState === "unknown",
-      canInterrupt: false
-    });
+    return {
+      ...this.mapResolutionToActivityEnvelope(resolution, {
+        hasActiveRun: resolution.runningState === "stale" || resolution.runningState === "unknown",
+        canInterrupt: false
+      }),
+      sessionId
+    };
+  }
+
+  private resolveRuntimeSessionId(sessionId: string): string {
+    if (
+      this.providerRuntimeService.getSnapshot(sessionId)
+      || this.externalRuntimeSnapshots.has(sessionId)
+    ) {
+      return sessionId;
+    }
+
+    const listSnapshots =
+      "listSnapshots" in this.providerRuntimeService
+      && typeof this.providerRuntimeService.listSnapshots === "function"
+        ? this.providerRuntimeService.listSnapshots.bind(this.providerRuntimeService)
+        : null;
+
+    if (!listSnapshots) {
+      return sessionId;
+    }
+
+    const linkedSnapshot = listSnapshots()
+      .find((snapshot) => this.isLinkedGeminiRuntimeSession(snapshot.sessionId, sessionId));
+
+    return linkedSnapshot?.sessionId ?? sessionId;
+  }
+
+  private isLinkedGeminiRuntimeSession(candidateSessionId: string, targetSessionId: string): boolean {
+    if (candidateSessionId === targetSessionId) {
+      return true;
+    }
+
+    const binding = this.sessionBindingRepository.findBySessionId(candidateSessionId);
+
+    if (!binding || binding.provider !== "gemini") {
+      return false;
+    }
+
+    return isGeminiPendingRuntimeAliasBinding(binding.providerSessionId, targetSessionId)
+      || isGeminiPendingRuntimeAliasBinding(binding.rawStoreRef, targetSessionId);
   }
 
   private mapResolutionToActivityEnvelope(
@@ -1361,15 +1427,16 @@ export class SessionLiveRuntimeService {
       }
     } as const;
 
-    const activeRun = this.providerRuntimeService.getSnapshot(input.sessionId);
-    const externalRuntimeSnapshot = this.externalRuntimeSnapshots.get(input.sessionId);
+    const runtimeSessionId = this.resolveRuntimeSessionId(input.sessionId);
+    const activeRun = this.providerRuntimeService.getSnapshot(runtimeSessionId);
+    const externalRuntimeSnapshot = this.externalRuntimeSnapshots.get(runtimeSessionId);
 
     if (
       activeRun &&
       activeRun.provider === "claude-code" &&
       isActiveRuntimeState(activeRun.runningState)
     ) {
-      this.clearExternalRuntimeSnapshot(input.sessionId);
+      this.clearExternalRuntimeSnapshot(runtimeSessionId);
     }
 
     if (
@@ -1387,7 +1454,7 @@ export class SessionLiveRuntimeService {
     }
 
     if (activeRun && isActiveRuntimeState(activeRun.runningState)) {
-      await this.providerRuntimeService.submitToActiveRun(input.sessionId, runtimeRequest.options)
+      await this.providerRuntimeService.submitToActiveRun(runtimeSessionId, runtimeRequest.options)
         .catch((error) => {
           throw mapSessionProviderError(error);
         });
@@ -1907,6 +1974,34 @@ export class SessionLiveRuntimeService {
     return Math.max(maxSequence + 1, 1);
   }
 
+  private async waitForResolvedStartBinding(
+    sessionId: string,
+    workspaceId: string,
+    provider: string,
+    handle: ActiveRunHandle
+  ): Promise<void> {
+    if (provider !== "gemini") {
+      return;
+    }
+
+    const startedAt = Date.now();
+
+    while (Date.now() - startedAt < GEMINI_START_BINDING_WAIT_TIMEOUT_MS) {
+      const snapshot = handle.getSnapshot();
+
+      if (hasResolvedRuntimeBinding(snapshot.providerSessionId, snapshot.rawStoreRef)) {
+        this.sessionHistoryService.persistSessionBinding(sessionId, workspaceId, {
+          provider: snapshot.provider,
+          providerSessionId: snapshot.providerSessionId,
+          rawStoreRef: snapshot.rawStoreRef
+        });
+        return;
+      }
+
+      await waitForRuntimeBindingPoll();
+    }
+  }
+
   private persistMessageAttachments(
     sessionId: string,
     clientRequestId: string | null,
@@ -1928,13 +2023,14 @@ export class SessionLiveRuntimeService {
 
   private mapRuntimeEventToEnvelope(
     sessionId: string,
-    event: RuntimeEvent
+    event: RuntimeEvent,
+    originSessionId = sessionId
   ): SessionRuntimeEnvelope | null {
     if (event.type === "message") {
       return {
         type: "session.runtime_message",
         sessionId,
-        message: this.sessionHistoryService.resolveMessageOrigin(sessionId, event.message),
+        message: this.sessionHistoryService.resolveMessageOrigin(originSessionId, event.message),
         source: "runtime"
       };
     }
@@ -2391,6 +2487,28 @@ function isTerminalSessionRunningState(
   state: SessionRunningState | null | undefined
 ): state is "completed" | "interrupted" | "failed" {
   return state === "completed" || state === "interrupted" || state === "failed";
+}
+
+function hasResolvedRuntimeBinding(
+  providerSessionId: string | null,
+  rawStoreRef: string | null
+): providerSessionId is string {
+  if (!providerSessionId?.trim() || !rawStoreRef?.trim()) {
+    return false;
+  }
+
+  return !providerSessionId.trim().toLowerCase().startsWith("pending://")
+    && !rawStoreRef.trim().toLowerCase().startsWith("pending://");
+}
+
+function waitForRuntimeBindingPoll(): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, START_BINDING_POLL_INTERVAL_MS);
+  });
+}
+
+function isGeminiPendingRuntimeAliasBinding(value: string, targetSessionId: string): boolean {
+  return value.trim().toLowerCase() === `pending://gemini/${targetSessionId.trim().toLowerCase()}`;
 }
 
 function createProviderRuntimeAdapters(
