@@ -95,6 +95,28 @@ export class ButlerProjectService {
     return project;
   }
 
+  resolveWorkspaceActionProject(workspaceId: string): ButlerProject {
+    this.syncManagedProjects();
+    const projects = this.butlerProjectRepository.list({ workspaceId });
+    const activeProjects = projects.filter((project) => project.lifecycleStatus === "active");
+    const preferredProject =
+      activeProjects.find(isWorkspaceAutoManagedProject)
+      ?? activeProjects[0]
+      ?? projects.find(isWorkspaceAutoManagedProject)
+      ?? projects[0]
+      ?? null;
+
+    if (!preferredProject) {
+      throw new AppError({
+        statusCode: 404,
+        errorCode: "BUTLER_PROJECT_NOT_FOUND",
+        detail: "当前工作区还没有可用的代码助手项目"
+      });
+    }
+
+    return preferredProject;
+  }
+
   update(projectId: string, input: UpdateButlerProjectInput): ButlerProject {
     const current = this.getById(projectId);
 
@@ -164,16 +186,22 @@ export class ButlerProjectService {
   }
 
   private syncManagedProjects(): void {
-    const activeWorkspaces = this.workspaceRepository.list();
-    const activeWorkspaceIds = new Set(activeWorkspaces.map((workspace) => workspace.id));
     const profile = this.butlerProfileService?.getProfile() ?? null;
     const butlerWorkspacePath = profile?.workspacePath ? path.resolve(profile.workspacePath) : null;
+    const activeWorkspaces = this.workspaceRepository.list().filter((workspace) => {
+      if (!butlerWorkspacePath) {
+        return true;
+      }
+
+      return !isPathInsideButlerWorkspace(workspace.path, butlerWorkspacePath);
+    });
+    const activeWorkspaceIds = new Set(activeWorkspaces.map((workspace) => workspace.id));
     const projects = this.butlerProjectRepository.list();
 
     for (const workspace of activeWorkspaces) {
       const normalizedWorkspacePath = path.resolve(workspace.path);
 
-      if (butlerWorkspacePath && normalizedWorkspacePath === butlerWorkspacePath) {
+      if (butlerWorkspacePath && isPathInsideButlerWorkspace(normalizedWorkspacePath, butlerWorkspacePath)) {
         continue;
       }
 
@@ -282,6 +310,11 @@ export class ButlerProjectService {
 
 function isWorkspaceAutoManagedProject(project: ButlerProject): boolean {
   return project.config.managedBy === "workspace-auto";
+}
+
+function isPathInsideButlerWorkspace(candidatePath: string, butlerWorkspacePath: string): boolean {
+  const relative = path.relative(path.resolve(butlerWorkspacePath), path.resolve(candidatePath));
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
 function requireNonEmptyText(value: string | undefined, field: string, detail: string): string {

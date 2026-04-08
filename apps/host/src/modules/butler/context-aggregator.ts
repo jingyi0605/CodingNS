@@ -5,6 +5,7 @@ import { hashContent } from "../../shared/utils/hash.js";
 import { nowIso } from "../../shared/utils/time.js";
 import type { ButlerProject, ButlerRiskLevel, ButlerCheckpointProgressState } from "../../types/domain.js";
 import type { SessionCheckpointRepository } from "../../storage/repositories/session-checkpoint-repository.js";
+import type { ButlerInboxItemView, ButlerInboxService } from "./butler-inbox-service.js";
 import type { ButlerProfileService } from "./butler-profile-service.js";
 import type { ButlerProjectService } from "./butler-project-service.js";
 import type {
@@ -87,6 +88,21 @@ export interface ButlerMemoryDigest {
   createdAt: string;
 }
 
+export interface ButlerInboxDigest {
+  id: string;
+  projectId: string;
+  workspaceId: string;
+  projectName: string;
+  itemType: string;
+  title: string;
+  content: string;
+  priority: string;
+  status: string;
+  updatedAt: string;
+  createdAt: string;
+  closedAt: string | null;
+}
+
 export interface ButlerPatrolDigest {
   id: string;
   projectId: string;
@@ -120,6 +136,7 @@ export interface ButlerContextSnapshot {
   projects: ButlerProjectDigest[];
   sessions: ButlerSessionDigest[];
   memories: ButlerMemoryDigest[];
+  inboxItems: ButlerInboxDigest[];
   patrols: ButlerPatrolDigest[];
   verifications: ButlerVerificationDigest[];
 }
@@ -130,6 +147,7 @@ export interface ButlerOverview {
   global: ButlerGlobalDigest;
   projects: ButlerProjectDigest[];
   sessions: ButlerSessionDigest[];
+  inboxItems: ButlerInboxDigest[];
   patrols: ButlerPatrolDigest[];
   verifications: ButlerVerificationDigest[];
 }
@@ -140,6 +158,7 @@ export interface ButlerProjectContext {
   project: ButlerProjectDigest;
   sessions: ButlerSessionDigest[];
   memories: ButlerMemoryDigest[];
+  inboxItems: ButlerInboxDigest[];
   patrols: ButlerPatrolDigest[];
   verifications: ButlerVerificationDigest[];
   topRisks: string[];
@@ -179,6 +198,7 @@ interface ProjectAggregateResult {
   digest: ButlerProjectDigest;
   sessions: ButlerSessionDigest[];
   memories: ButlerMemoryDigest[];
+  inboxItems: ButlerInboxDigest[];
   patrols: ButlerPatrolDigest[];
   verifications: ButlerVerificationDigest[];
 }
@@ -191,6 +211,7 @@ export class ButlerContextAggregator {
       ButlerSessionService,
       "ensureProjectSessionsSynced" | "listByProject"
     >,
+    private readonly butlerInboxService: Pick<ButlerInboxService, "listItems">,
     private readonly projectMemoryService: Pick<ProjectMemoryService, "listMemories">,
     private readonly patrolRunService: Pick<PatrolRunService, "listRuns">,
     private readonly verificationRunService: Pick<VerificationRunService, "listRuns">,
@@ -206,6 +227,7 @@ export class ButlerContextAggregator {
       global: snapshot.global,
       projects: snapshot.projects.slice(0, MAX_OVERVIEW_PROJECTS),
       sessions: snapshot.sessions.slice(0, MAX_OVERVIEW_SESSIONS),
+      inboxItems: snapshot.inboxItems.slice(0, MAX_OVERVIEW_SESSIONS),
       patrols: snapshot.patrols.slice(0, MAX_OVERVIEW_RUNS),
       verifications: snapshot.verifications.slice(0, MAX_OVERVIEW_RUNS)
     };
@@ -217,6 +239,7 @@ export class ButlerContextAggregator {
     const projects = projectContexts.map((item) => item.digest);
     const sessions = projectContexts.flatMap((item) => item.sessions);
     const memories = projectContexts.flatMap((item) => item.memories);
+    const inboxItems = projectContexts.flatMap((item) => item.inboxItems);
     const patrols = projectContexts.flatMap((item) => item.patrols);
     const verifications = projectContexts.flatMap((item) => item.verifications);
     const global = buildGlobalDigest(projectContexts);
@@ -225,6 +248,7 @@ export class ButlerContextAggregator {
       projects,
       sessions,
       memories,
+      inboxItems,
       patrols,
       verifications
     });
@@ -236,6 +260,7 @@ export class ButlerContextAggregator {
       projects,
       sessions,
       memories,
+      inboxItems,
       patrols,
       verifications
     };
@@ -250,6 +275,7 @@ export class ButlerContextAggregator {
       project: context.digest,
       sessions: context.sessions,
       memories: context.memories,
+      inboxItems: context.inboxItems,
       patrols: context.patrols,
       verifications: context.verifications
     });
@@ -260,6 +286,7 @@ export class ButlerContextAggregator {
       project: context.digest,
       sessions: context.sessions,
       memories: context.memories,
+      inboxItems: context.inboxItems,
       patrols: context.patrols,
       verifications: context.verifications,
       topRisks: context.digest.topRisks,
@@ -414,6 +441,12 @@ export class ButlerContextAggregator {
         createdAt: memory.createdAt
       }))
       .sort((left, right) => compareIso(right.updatedAt, left.updatedAt));
+    const inboxItems = this.butlerInboxService
+      .listItems({
+        projectId: project.id
+      })
+      .map((item) => mapInboxItem(item))
+      .sort((left, right) => compareInboxItems(left, right));
     const patrols = this.patrolRunService
       .listRuns(project.id)
       .map((run) => mapPatrolRun(run))
@@ -428,6 +461,7 @@ export class ButlerContextAggregator {
       project.updatedAt,
       sessions[0]?.updatedAt,
       memories[0]?.updatedAt,
+      inboxItems[0]?.updatedAt,
       patrols[0]?.finishedAt ?? patrols[0]?.startedAt ?? patrols[0]?.createdAt,
       verifications[0]?.finishedAt ?? verifications[0]?.startedAt ?? verifications[0]?.createdAt
     ].filter((value): value is string => Boolean(value)).sort(compareIsoDesc)[0] ?? project.updatedAt;
@@ -436,6 +470,7 @@ export class ButlerContextAggregator {
       project,
       sessions,
       memories,
+      inboxItems,
       patrols,
       verifications,
       digest: {
@@ -517,6 +552,23 @@ function mapPatrolRun(run: PatrolRunView): ButlerPatrolDigest {
   };
 }
 
+function mapInboxItem(item: ButlerInboxItemView): ButlerInboxDigest {
+  return {
+    id: item.id,
+    projectId: item.projectId,
+    workspaceId: item.workspaceId,
+    projectName: item.projectName,
+    itemType: item.itemType,
+    title: item.title,
+    content: item.content,
+    priority: item.priority,
+    status: item.status,
+    updatedAt: item.updatedAt,
+    createdAt: item.createdAt,
+    closedAt: item.closedAt
+  };
+}
+
 function mapVerificationRun(run: VerificationRunView): ButlerVerificationDigest {
   return {
     id: run.id,
@@ -529,6 +581,48 @@ function mapVerificationRun(run: VerificationRunView): ButlerVerificationDigest 
     finishedAt: run.finishedAt,
     createdAt: run.createdAt
   };
+}
+
+function compareInboxItems(left: ButlerInboxDigest, right: ButlerInboxDigest): number {
+  const statusPriority = getInboxStatusPriority(left.status) - getInboxStatusPriority(right.status);
+
+  if (statusPriority !== 0) {
+    return statusPriority;
+  }
+
+  const priorityOrder = getInboxPriorityOrder(left.priority) - getInboxPriorityOrder(right.priority);
+
+  if (priorityOrder !== 0) {
+    return priorityOrder;
+  }
+
+  return compareIso(right.updatedAt, left.updatedAt);
+}
+
+function getInboxStatusPriority(status: string): number {
+  switch (status) {
+    case "in_progress":
+      return 0;
+    case "pending":
+      return 1;
+    case "closed":
+      return 2;
+    default:
+      return 3;
+  }
+}
+
+function getInboxPriorityOrder(priority: string): number {
+  switch (priority) {
+    case "high":
+      return 0;
+    case "medium":
+      return 1;
+    case "low":
+      return 2;
+    default:
+      return 3;
+  }
 }
 
 function compareProjectContexts(
@@ -734,6 +828,13 @@ function renderOverviewPrompt(
     }
   }
 
+  if (overview.inboxItems.length > 0) {
+    lines.push("", "## 收件箱");
+    for (const item of overview.inboxItems.slice(0, MAX_PROMPT_ITEMS)) {
+      lines.push(`- ${describeInboxItem(item)}`);
+    }
+  }
+
   if (overview.verifications.length > 0) {
     lines.push("", "## 最近验证");
     for (const verification of overview.verifications.slice(0, MAX_PROMPT_ITEMS)) {
@@ -776,6 +877,13 @@ function renderProjectPrompt(
     `- 主要风险：${joinItems(context.topRisks, "暂无明显风险")}`,
     `- 建议下一步：${joinItems(context.nextActions, "暂无待办动作")}`
   ];
+
+  if (context.inboxItems.length > 0) {
+    lines.push("", "## 当前代办");
+    for (const item of context.inboxItems.slice(0, MAX_PROMPT_ITEMS)) {
+      lines.push(`- ${describeInboxItem(item)}`);
+    }
+  }
 
   if (context.sessions.length > 0) {
     lines.push("", "## 项目会话");
@@ -850,6 +958,10 @@ function describeSearchHit(item: ButlerSearchHit): string {
     default:
       return item.title;
   }
+}
+
+function describeInboxItem(item: ButlerInboxDigest): string {
+  return `${item.projectName} · ${item.title}：状态=${item.status}，优先级=${item.priority}，类型=${item.itemType}，内容=${truncateText(item.content, 80, "暂无内容")}`;
 }
 
 function buildSearchHits(context: ProjectAggregateResult, query: string): ButlerSearchHit[] {

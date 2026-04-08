@@ -13,6 +13,12 @@ import type {
   StartButlerVerificationActionInput
 } from "./butler-control-action-service.js";
 import type { ButlerProfilePatchInput, ButlerProfileService } from "./butler-profile-service.js";
+import type {
+  ButlerFollowUpService,
+  CreateButlerFollowUpTaskInput
+} from "./butler-follow-up-service.js";
+import type { ButlerInboxService } from "./butler-inbox-service.js";
+import type { ButlerNotificationService } from "./butler-notification-service.js";
 import type { ButlerContextAggregator } from "./context-aggregator.js";
 import type { ButlerProjectService } from "./butler-project-service.js";
 import type { ButlerSessionService } from "./butler-session-service.js";
@@ -34,8 +40,37 @@ interface ButlerSearchQuery {
   includeArchived?: string;
 }
 
+interface ButlerSessionTargetQuery {
+  sessionId?: string;
+}
+
+interface ButlerInboxListQuery {
+  workspaceId?: string;
+  projectId?: string;
+  status?: "pending" | "in_progress" | "closed";
+  itemType?: "bug" | "feature" | "change" | "task";
+}
+
+interface ButlerFollowUpTaskListQuery {
+  status?: "active" | "waiting_user" | "completed" | "failed" | "cancelled";
+  projectId?: string;
+  sessionId?: string;
+}
+
 interface ButlerProjectParams {
   projectId: string;
+}
+
+interface ButlerInboxItemParams {
+  itemId: string;
+}
+
+interface ButlerNotificationParams {
+  notificationId: string;
+}
+
+interface ButlerFollowUpTaskParams {
+  taskId: string;
 }
 
 interface ButlerMemoryParams extends ButlerProjectParams {
@@ -116,6 +151,21 @@ interface CreateButlerMemoryBody {
 
 interface UpdateButlerMemoryBody extends CreateButlerMemoryBody {}
 
+interface CreateButlerInboxItemBody {
+  projectId?: string;
+  itemType?: "bug" | "feature" | "change" | "task";
+  title?: string;
+  content?: string;
+  priority?: "low" | "medium" | "high";
+  status?: "pending" | "in_progress" | "closed";
+}
+
+interface UpdateButlerInboxItemBody extends CreateButlerInboxItemBody {}
+interface UpdateButlerNotificationArchiveBody {
+  archived?: boolean;
+}
+interface CreateButlerFollowUpTaskBody extends CreateButlerFollowUpTaskInput {}
+
 interface ButlerPatrolPlanListQuery {
   enabled?: "true" | "false";
   executionMode?: "readonly" | "controlled";
@@ -190,6 +240,9 @@ export class ButlerController {
       ButlerContextAggregator,
       "getOverview" | "getSnapshot" | "getProjectContext" | "searchSummaries"
     >,
+    private readonly butlerFollowUpService: ButlerFollowUpService,
+    private readonly butlerInboxService: ButlerInboxService,
+    private readonly butlerNotificationService: ButlerNotificationService,
     private readonly butlerProjectService: ButlerProjectService,
     private readonly butlerSessionService: ButlerSessionService,
     private readonly projectMemoryService: ProjectMemoryService,
@@ -299,6 +352,119 @@ export class ButlerController {
     });
   };
 
+  readonly listInboxItems = async (
+    request: FastifyRequest<{ Querystring: ButlerInboxListQuery }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send({
+      items: this.butlerInboxService.listItems({
+        workspaceId: request.query.workspaceId,
+        projectId: request.query.projectId,
+        status: request.query.status,
+        itemType: request.query.itemType
+      })
+    });
+  };
+
+  readonly listFollowUpTasks = async (
+    request: FastifyRequest<{ Querystring: ButlerFollowUpTaskListQuery }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send({
+      items: this.butlerFollowUpService.listTasks({
+        statuses: request.query.status ? [request.query.status] : undefined,
+        projectId: request.query.projectId,
+        sessionId: request.query.sessionId
+      })
+    });
+  };
+
+  readonly createFollowUpTask = async (
+    request: FastifyRequest<{ Body: CreateButlerFollowUpTaskBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.status(201).send({
+      task: await this.butlerFollowUpService.createTask(
+        request.body ?? ({} as CreateButlerFollowUpTaskBody),
+        requireUserId(request)
+      )
+    });
+  };
+
+  readonly getFollowUpTask = async (
+    request: FastifyRequest<{ Params: ButlerFollowUpTaskParams }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send({
+      task: this.butlerFollowUpService.getTask(request.params.taskId)
+    });
+  };
+
+  readonly createInboxItem = async (
+    request: FastifyRequest<{ Body: CreateButlerInboxItemBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    const item = this.butlerInboxService.createItem({
+      projectId: request.body.projectId,
+      itemType: request.body.itemType,
+      title: request.body.title,
+      content: request.body.content,
+      priority: request.body.priority,
+      status: request.body.status
+    });
+
+    reply.status(201).send({ item });
+  };
+
+  readonly updateInboxItem = async (
+    request: FastifyRequest<{ Params: ButlerInboxItemParams; Body: UpdateButlerInboxItemBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send({
+      item: this.butlerInboxService.updateItem(request.params.itemId, {
+        projectId: request.body.projectId,
+        itemType: request.body.itemType,
+        title: request.body.title,
+        content: request.body.content,
+        priority: request.body.priority,
+        status: request.body.status
+      })
+    });
+  };
+
+  readonly deleteInboxItem = async (
+    request: FastifyRequest<{ Params: ButlerInboxItemParams }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    this.butlerInboxService.deleteItem(request.params.itemId);
+    reply.status(204).send();
+  };
+
+  readonly listNotificationArchives = async (
+    request: FastifyRequest,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send({
+      items: this.butlerNotificationService.listArchivedNotifications(requireUserId(request))
+    });
+  };
+
+  readonly updateNotificationArchive = async (
+    request: FastifyRequest<{
+      Params: ButlerNotificationParams;
+      Body: UpdateButlerNotificationArchiveBody;
+    }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    const item = this.butlerNotificationService.setArchived(
+      requireUserId(request),
+      request.params.notificationId,
+      request.body.archived === true
+    );
+
+    reply.send({ item });
+  };
+
   readonly getContextSnapshot = async (
     request: FastifyRequest,
     reply: FastifyReply
@@ -333,6 +499,25 @@ export class ButlerController {
           includeArchived: request.query.includeArchived === "true"
         }
       )
+    });
+  };
+
+  readonly getSessionTarget = async (
+    request: FastifyRequest<{ Querystring: ButlerSessionTargetQuery }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    const sessionId = request.query.sessionId?.trim() ?? "";
+    const userId = requireUserId(request);
+    const workspaceId = this.butlerSessionService.getSessionWorkspaceId(sessionId);
+    const project = this.butlerProjectService.resolveWorkspaceActionProject(workspaceId);
+    const target = await this.butlerSessionService.resolveActionTarget(project.id, sessionId, userId);
+
+    reply.send({
+      target: {
+        workspaceId: target.workspaceId,
+        project,
+        session: target.session
+      }
     });
   };
 

@@ -381,6 +381,8 @@ function composeInstructionContent(
 - 当前工作目录是代码助手专用目录，只使用这里的助手规则，不回退到普通项目会话规则。
 - 当前聚合后的平台摘要写在 \`BUTLER_CONTEXT.md\`，先看这里，不要把所有项目原始记录一股脑塞进回答。
 - 当前摘要作用域是：${promptContext.scope === "project" ? `项目 ${promptContext.projectId}` : "全局总览"}。
+- 如果你在跟进开发会话，且目标或上下文里提到了 spec，只能围绕 spec 明确写出的必做项推进，不能顺着建议项无限扩展开发范围。
+- 如果当前没有 spec，就先从用户要求和会话现状里归纳一句核心任务，后续只围绕这个核心任务推进；不要把建议项、最佳实践、顺手优化当成必做项。
 - 如果用户的问题里已经带了项目名、会话名、错误词或任务关键词，优先按 \`BUTLER_API.md\` 调 \`GET /api/butler/search?q=...\` 命中摘要，再决定要不要继续翻原始消息；如果用户明确点名历史会话或归档会话，记得加 \`includeArchived=true\`。
 - 如果 \`BUTLER_CONTEXT.md\` 里的项目数或会话数是 0，不能直接下结论，必须先按 \`BUTLER_API.md\` 实查一次 \`GET /api/butler/overview\` 和 \`GET /api/butler/projects\`。
 - 如果用户追问的细节超出当前摘要，先明确缺口，再要求宿主系统按 \`BUTLER_API.md\` 的说明补查具体项目、会话、巡视或验证信息。

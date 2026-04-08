@@ -62,6 +62,11 @@ export interface ResumeButlerSessionResult {
   providerSessionId: string;
 }
 
+export interface ButlerSessionActionTarget {
+  workspaceId: string;
+  session: ButlerProjectSessionView;
+}
+
 export class ButlerSessionService {
   constructor(
     private readonly butlerProjectRepository: ButlerProjectRepository,
@@ -406,6 +411,69 @@ export class ButlerSessionService {
       resumedAt: resumed.resumedAt,
       provider: resumed.provider,
       providerSessionId: resumed.providerSessionId
+    };
+  }
+
+  getSessionWorkspaceId(sessionId: string): string {
+    const binding = this.sessionBindingRepository.findBySessionId(sessionId);
+
+    if (!binding) {
+      throw new AppError({
+        statusCode: 404,
+        errorCode: "SESSION_NOT_FOUND",
+        detail: "目标 session 不存在",
+        field: "sessionId"
+      });
+    }
+
+    return binding.workspaceId;
+  }
+
+  async resolveActionTarget(
+    projectId: string,
+    sessionId: string,
+    userId: string
+  ): Promise<ButlerSessionActionTarget> {
+    const project = this.getProjectOrThrow(projectId);
+    const normalizedSessionId = requireNonEmptyText(sessionId, "sessionId", "sessionId 不能为空");
+    const workspaceId = this.getSessionWorkspaceId(normalizedSessionId);
+
+    if (workspaceId !== project.workspaceId) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "INVALID_INPUT",
+        detail: "目标 session 不属于当前项目所在工作区",
+        field: "sessionId"
+      });
+    }
+
+    await this.ensureProjectSessionsSynced(project.id, userId, {
+      includeArchived: true,
+      force: true
+    });
+
+    const existing = this.listByProject(project.id, userId, {
+      includeArchived: true
+    }).find((item) => item.sessionId === normalizedSessionId);
+
+    if (existing) {
+      return {
+        workspaceId,
+        session: existing
+      };
+    }
+
+    return {
+      workspaceId,
+      session: this.importSession(
+        project.id,
+        {
+          sessionId: normalizedSessionId,
+          role: "adhoc",
+          ownershipMode: "observed"
+        },
+        userId
+      )
     };
   }
 
