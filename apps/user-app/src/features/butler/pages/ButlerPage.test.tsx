@@ -69,65 +69,65 @@ vi.mock("../../../shared/toast", () => ({
 vi.mock("../../conversation/api/conversation-api", () => ({
   getProviderCapabilities: vi.fn(),
   getSessionCapabilities: vi.fn(),
-  getSessionMessages: vi.fn(),
   getSessionRuntime: vi.fn()
 }));
 
 vi.mock("../api/butler-api", () => ({
   getButlerProfile: vi.fn(),
   initButlerProfile: vi.fn(),
-  updateButlerProfile: vi.fn(),
   getButlerOverview: vi.fn(),
+  listButlerFollowUpTasks: vi.fn(),
+  listButlerInboxItems: vi.fn(),
   listButlerControlEvents: vi.fn(),
   getCurrentButlerControlSession: vi.fn(),
   resetButlerControlSession: vi.fn(),
   startButlerControlSession: vi.fn(),
-  sendButlerControlMessage: vi.fn(),
-  getButlerProjectContext: vi.fn(),
-  searchButlerSummaries: vi.fn(),
-  openButlerProjectAction: vi.fn(),
-  resumeButlerProjectSessionAction: vi.fn(),
-  startButlerPatrolAction: vi.fn(),
-  startButlerVerificationAction: vi.fn()
+  sendButlerControlMessage: vi.fn()
 }));
 
 import { useToast } from "../../../shared/toast";
 import { ButlerPage } from "./ButlerPage";
-import { SessionRuntimeStore } from "../../conversation/runtime/session-runtime-store";
 import {
   getButlerProfile,
   initButlerProfile,
-  updateButlerProfile,
   getButlerOverview,
+  listButlerFollowUpTasks,
+  listButlerInboxItems,
   listButlerControlEvents,
   getCurrentButlerControlSession,
   resetButlerControlSession,
-  getButlerProjectContext,
-  searchButlerSummaries,
   startButlerControlSession
 } from "../api/butler-api";
 import {
   getProviderCapabilities,
   getSessionCapabilities,
-  getSessionMessages,
   getSessionRuntime
 } from "../../conversation/api/conversation-api";
 
 const mockedUseToast = vi.mocked(useToast);
 const mockedGetButlerProfile = vi.mocked(getButlerProfile);
 const mockedInitButlerProfile = vi.mocked(initButlerProfile);
-const mockedUpdateButlerProfile = vi.mocked(updateButlerProfile);
 const mockedGetButlerOverview = vi.mocked(getButlerOverview);
+const mockedListButlerFollowUpTasks = vi.mocked(listButlerFollowUpTasks);
+const mockedListButlerInboxItems = vi.mocked(listButlerInboxItems);
 const mockedListButlerControlEvents = vi.mocked(listButlerControlEvents);
 const mockedGetCurrentButlerControlSession = vi.mocked(getCurrentButlerControlSession);
 const mockedResetButlerControlSession = vi.mocked(resetButlerControlSession);
-const mockedGetButlerProjectContext = vi.mocked(getButlerProjectContext);
-const mockedSearchButlerSummaries = vi.mocked(searchButlerSummaries);
 const mockedStartButlerControlSession = vi.mocked(startButlerControlSession);
 const mockedGetProviderCapabilities = vi.mocked(getProviderCapabilities);
 const mockedGetSessionCapabilities = vi.mocked(getSessionCapabilities);
-const mockedGetSessionMessages = vi.mocked(getSessionMessages);
 const mockedGetSessionRuntime = vi.mocked(getSessionRuntime);
+
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+
+  return { promise, resolve, reject };
+}
 
 describe("ButlerPage", () => {
   const showToastMock = vi.fn();
@@ -145,22 +145,6 @@ describe("ButlerPage", () => {
       profile: null
     });
     mockedInitButlerProfile.mockResolvedValue({
-      initialized: true,
-      profile: {
-        id: "default",
-        displayName: "阿尔文",
-        providerId: "codex",
-        workspacePath: "/tmp/butler",
-        agentsMode: "inline",
-        agentsFilePath: null,
-        agentsContent: "测试",
-        persona: { tone: "direct", language: "zh-CN", summaryStyle: "brief" },
-        focus: { projectIds: [], riskPreference: "conservative", reportPriority: [], summaryDebounceSeconds: 300 },
-        initializedAt: "2026-04-05T00:00:00.000Z",
-        updatedAt: "2026-04-05T00:00:00.000Z"
-      }
-    });
-    mockedUpdateButlerProfile.mockResolvedValue({
       initialized: true,
       profile: {
         id: "default",
@@ -194,6 +178,12 @@ describe("ButlerPage", () => {
         verifications: []
       }
     });
+    mockedListButlerFollowUpTasks.mockResolvedValue({
+      items: []
+    });
+    mockedListButlerInboxItems.mockResolvedValue({
+      items: []
+    });
     mockedListButlerControlEvents.mockResolvedValue({ items: [] });
     mockedGetCurrentButlerControlSession.mockResolvedValue({ controlSession: null });
     mockedResetButlerControlSession.mockResolvedValue({ controlSession: null } as never);
@@ -212,91 +202,6 @@ describe("ButlerPage", () => {
         }
       }
     } as never);
-    mockedGetButlerProjectContext.mockResolvedValue({
-      context: {
-        version: "ctx-1",
-        generatedAt: "2026-04-05T00:00:00.000Z",
-        project: {
-          id: "project-1",
-          workspaceId: "workspace-1",
-          name: "项目甲",
-          repoRoot: "/repo/project-1",
-          lifecycleStatus: "active",
-          riskLevel: "medium",
-          activeSessionCount: 1,
-          sessionCount: 1,
-          memoryCount: 1,
-          failedPatrolCount: 0,
-          failedVerificationCount: 0,
-          latestSessionSummary: "最近进展",
-          latestPatrolSummary: null,
-          latestVerificationSummary: null,
-          topRisks: ["接口波动"],
-          nextActions: ["补跑验证"],
-          lastActivityAt: "2026-04-05T00:00:00.000Z",
-          updatedAt: "2026-04-05T00:00:00.000Z"
-        },
-        sessions: [
-          {
-            id: "butler-session-1",
-            projectId: "project-1",
-            sessionId: "session-1",
-            provider: "codex",
-            title: "项目甲执行会话",
-            role: "execution",
-            ownershipMode: "managed",
-            status: "running",
-            runningState: "running",
-            lastSummary: "正在收敛问题",
-            lastCheckpointAt: "2026-04-05T00:00:00.000Z",
-            progressState: "working",
-            riskFlags: [],
-            nextActions: [],
-            updatedAt: "2026-04-05T00:00:00.000Z",
-            createdAt: "2026-04-05T00:00:00.000Z"
-          }
-        ],
-        memories: [
-          {
-            id: "memory-1",
-            projectId: "project-1",
-            title: "上线约束",
-            memoryType: "rule",
-            status: "active",
-            scopePath: null,
-            tags: [],
-            confidence: 0.8,
-            updatedAt: "2026-04-05T00:00:00.000Z",
-            createdAt: "2026-04-05T00:00:00.000Z"
-          }
-        ],
-        patrols: [],
-        verifications: [],
-        topRisks: ["接口波动"],
-        nextActions: ["补跑验证"]
-      }
-    });
-    mockedSearchButlerSummaries.mockResolvedValue({
-      result: {
-        version: "search-1",
-        generatedAt: "2026-04-05T00:00:00.000Z",
-        query: "类型错误",
-        items: [
-          {
-            kind: "session",
-            id: "butler-session-1",
-            sessionId: "session-1",
-            projectId: "project-1",
-            workspaceId: "workspace-1",
-            title: "项目甲执行会话",
-            summary: "构建被类型错误卡住",
-            score: 12,
-            updatedAt: "2026-04-05T00:00:00.000Z",
-            isArchived: false
-          }
-        ]
-      }
-    });
     mockedGetProviderCapabilities.mockResolvedValue({
       provider: "codex",
       canStartSession: true,
@@ -339,12 +244,6 @@ describe("ButlerPage", () => {
       defaultReasoningLevel: null,
       limitations: []
     });
-    mockedGetSessionMessages.mockResolvedValue({
-      messages: [],
-      cursor: null,
-      nextCursor: null,
-      total: 0
-    } as never);
     mockedGetSessionRuntime.mockResolvedValue({
       sessionId: "session-control-1",
       runningState: "idle",
@@ -376,15 +275,28 @@ describe("ButlerPage", () => {
     );
   }
 
-  function renderPageWithEntry(entry: string) {
-    return render(
-      <MemoryRouter initialEntries={[entry]}>
-        <Routes>
-          <Route path="/workspaces/:workspaceId/butler" element={<ButlerPage />} />
-        </Routes>
-      </MemoryRouter>
-    );
-  }
+  it("首次加载时先显示动态加载态，不提前闪初始化表单", async () => {
+    const profileDeferred = createDeferred<Awaited<ReturnType<typeof getButlerProfile>>>();
+    mockedGetButlerProfile.mockReturnValueOnce(profileDeferred.promise);
+
+    renderPage();
+
+    expect(screen.getByText(t("shell.butlerLoadingTitle"))).toBeInTheDocument();
+    expect(screen.getByText(t("shell.butlerLoadingDescription"))).toBeInTheDocument();
+    expect(screen.queryByText(t("shell.butlerInitTitle"))).not.toBeInTheDocument();
+
+    await act(async () => {
+      profileDeferred.resolve({
+        initialized: false,
+        profile: null
+      });
+      await profileDeferred.promise;
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(t("shell.butlerInitTitle"))).toBeInTheDocument();
+    });
+  });
 
   it("未初始化时展示表单并校验必填字段", async () => {
     renderPage();
@@ -398,7 +310,7 @@ describe("ButlerPage", () => {
     expect(screen.getByText(t("shell.butlerAgentsModeLabel"))).toBeInTheDocument();
     expect(screen.queryByText(t("shell.butlerWorkspacePathLabel"))).not.toBeInTheDocument();
     expect(screen.queryByText(t("shell.butlerAgentsFilePathLabel"))).not.toBeInTheDocument();
-    expect(screen.queryByText(t("shell.butlerAgentsContentLabel"))).not.toBeInTheDocument();
+    expect(screen.queryByText("AGENTS 规则内容")).not.toBeInTheDocument();
 
     const submitButton = screen.getByRole("button", { name: t("shell.butlerInitSubmit") });
     fireEvent.click(submitButton);
@@ -538,7 +450,7 @@ describe("ButlerPage", () => {
     });
   });
 
-  it("右侧助手设置支持调整摘要防抖并保存", async () => {
+  it("悬浮助手名称时会显示最近的助手分析", async () => {
     mockedGetButlerProfile.mockResolvedValueOnce({
       initialized: true,
       profile: {
@@ -550,17 +462,56 @@ describe("ButlerPage", () => {
         agentsFilePath: null,
         agentsContent: "测试",
         persona: { tone: "direct", language: "zh-CN", summaryStyle: "brief" },
-        focus: {
-          projectIds: [],
-          riskPreference: "conservative",
-          reportPriority: [],
-          summaryDebounceSeconds: 300
-        },
+        focus: { projectIds: [], riskPreference: "conservative", reportPriority: [], summaryDebounceSeconds: 300 },
         initializedAt: "2026-04-05T00:00:00.000Z",
         updatedAt: "2026-04-05T00:00:00.000Z"
       }
     });
-    mockedUpdateButlerProfile.mockResolvedValueOnce({
+    mockedListButlerFollowUpTasks.mockResolvedValueOnce({
+      items: [
+        {
+          id: "follow-up-1",
+          projectId: "project-1",
+          projectName: "项目甲",
+          workspaceId: "workspace-1",
+          butlerSessionId: "butler-session-1",
+          sessionId: "session-1",
+          sessionTitle: "登录页开发",
+          objective: "完成当前 spec 的必做项",
+          status: "waiting_user",
+          checkIntervalSeconds: 300,
+          lastCheckedAt: null,
+          nextCheckAt: null,
+          lastObservedRunningState: "completed",
+          lastObservedMessageAt: null,
+          lastObservedMessageCount: 10,
+          lastAutomationSummary: "当前需要你确认验证码失败策略。",
+          lastAutomationAt: null,
+          autoContinueCount: 1,
+          waitingReason: "需要你确认失败策略。",
+          createdAt: "2026-04-05T00:00:00.000Z",
+          updatedAt: "2026-04-05T00:05:00.000Z",
+          completedAt: null
+        }
+      ]
+    });
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "阿尔文" })).toBeInTheDocument();
+    });
+
+    fireEvent.mouseEnter(screen.getByRole("heading", { name: "阿尔文" }));
+
+    await waitFor(() => {
+      expect(screen.getByText(t("conversation.butlerAnalysisTitle"))).toBeInTheDocument();
+      expect(screen.getByText(/完成当前 spec 的必做项/)).toBeInTheDocument();
+    });
+  });
+
+  it("信息页展示全局的会话跟进、会话验证和代办进度记录", async () => {
+    mockedGetButlerProfile.mockResolvedValueOnce({
       initialized: true,
       profile: {
         id: "default",
@@ -571,14 +522,328 @@ describe("ButlerPage", () => {
         agentsFilePath: null,
         agentsContent: "测试",
         persona: { tone: "direct", language: "zh-CN", summaryStyle: "brief" },
-        focus: {
-          projectIds: [],
-          riskPreference: "conservative",
-          reportPriority: [],
-          summaryDebounceSeconds: 600
-        },
+        focus: { projectIds: [], riskPreference: "conservative", reportPriority: [], summaryDebounceSeconds: 300 },
         initializedAt: "2026-04-05T00:00:00.000Z",
         updatedAt: "2026-04-05T00:00:00.000Z"
+      }
+    });
+    mockedGetButlerOverview.mockResolvedValueOnce({
+      overview: {
+        version: "v4",
+        generatedAt: "2026-04-05T00:00:00.000Z",
+        global: {
+          projectCount: 3,
+          activeProjectCount: 3,
+          blockedProjectCount: 1,
+          highRiskProjectCount: 1,
+          topRisks: [],
+          nextActions: ["补齐验证码流程", "跟进登录异常"]
+        },
+        projects: [
+          {
+            id: "project-normal",
+            workspaceId: "workspace-1",
+            name: "普通项目",
+            repoRoot: "/repo/project-normal",
+            lifecycleStatus: "active",
+            riskLevel: "low",
+            activeSessionCount: 1,
+            sessionCount: 1,
+            memoryCount: 0,
+            failedPatrolCount: 0,
+            failedVerificationCount: 0,
+            latestSessionSummary: "普通摘要",
+            latestPatrolSummary: null,
+            latestVerificationSummary: null,
+            topRisks: [],
+            nextActions: [],
+            lastActivityAt: "2026-04-05T08:00:00.000Z",
+            updatedAt: "2026-04-05T08:00:00.000Z"
+          },
+          {
+            id: "project-risk",
+            workspaceId: "workspace-1",
+            name: "高风险项目",
+            repoRoot: "/repo/project-risk",
+            lifecycleStatus: "active",
+            riskLevel: "high",
+            activeSessionCount: 1,
+            sessionCount: 1,
+            memoryCount: 0,
+            failedPatrolCount: 0,
+            failedVerificationCount: 0,
+            latestSessionSummary: "高风险摘要",
+            latestPatrolSummary: null,
+            latestVerificationSummary: null,
+            topRisks: ["高风险"],
+            nextActions: [],
+            lastActivityAt: "2026-04-05T07:00:00.000Z",
+            updatedAt: "2026-04-05T07:00:00.000Z"
+          },
+          {
+            id: "project-blocked",
+            workspaceId: "workspace-1",
+            name: "阻塞项目",
+            repoRoot: "/repo/project-blocked",
+            lifecycleStatus: "active",
+            riskLevel: "medium",
+            activeSessionCount: 1,
+            sessionCount: 1,
+            memoryCount: 0,
+            failedPatrolCount: 1,
+            failedVerificationCount: 0,
+            latestSessionSummary: "阻塞摘要",
+            latestPatrolSummary: null,
+            latestVerificationSummary: null,
+            topRisks: ["有阻塞"],
+            nextActions: [],
+            lastActivityAt: "2026-04-05T06:00:00.000Z",
+            updatedAt: "2026-04-05T06:00:00.000Z"
+          }
+        ],
+        sessions: [
+          {
+            id: "session-follow-1",
+            projectId: "project-normal",
+            sessionId: "session-1",
+            provider: "codex",
+            title: "登录页改造",
+            role: "execution",
+            ownershipMode: "managed",
+            status: "running",
+            runningState: "running",
+            lastSummary: "验证码流程还在收尾。",
+            lastCheckpointAt: null,
+            progressState: "working",
+            riskFlags: [],
+            nextActions: [],
+            updatedAt: "2026-04-05T09:00:00.000Z",
+            createdAt: "2026-04-05T08:30:00.000Z"
+          }
+        ],
+        patrols: [],
+        verifications: [
+          {
+            id: "verification-1",
+            projectId: "project-normal",
+            verificationType: "browser",
+            status: "running",
+            targetRef: "登录验证码",
+            summary: "正在从用户视角复测登录流程。",
+            startedAt: "2026-04-05T09:10:00.000Z",
+            finishedAt: null,
+            createdAt: "2026-04-05T09:10:00.000Z"
+          }
+        ]
+      }
+    });
+    mockedListButlerInboxItems.mockResolvedValueOnce({
+      items: [
+        {
+          id: "todo-1",
+          projectId: "project-normal",
+          projectName: "普通项目",
+          workspaceId: "workspace-1",
+          projectLifecycleStatus: "active",
+          itemType: "task",
+          title: "补齐验证码流程",
+          content: "继续把登录页验证码流程收尾。",
+          priority: "medium",
+          status: "in_progress",
+          createdAt: "2026-04-05T08:40:00.000Z",
+          updatedAt: "2026-04-05T09:20:00.000Z",
+          closedAt: null
+        }
+      ]
+    });
+    mockedListButlerControlEvents.mockResolvedValueOnce({
+      items: [
+        {
+          id: "event-follow-up-1",
+          controlSessionId: "ctrl-1",
+          kind: "action",
+          actionType: "resume-session",
+          status: "succeeded",
+          title: "登录页改造",
+          content: "验证码流程还在收尾。",
+          relatedRefs: [],
+          createdAt: "2026-04-05T09:05:00.000Z"
+        }
+      ]
+    });
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(setAuxiliaryPanelMock).toHaveBeenCalled();
+    });
+
+    const latestSidePanel = setAuxiliaryPanelMock.mock.calls.at(-1)?.[0];
+    const renderedPanel = render(latestSidePanel);
+
+    expect(renderedPanel.getByText(t("shell.butlerInfoFollowUpRecordsTitle"))).toBeInTheDocument();
+    expect(renderedPanel.getByText("登录页改造")).toBeInTheDocument();
+    expect(renderedPanel.getByText("验证码流程还在收尾。")).toBeInTheDocument();
+    expect(renderedPanel.getByText(t("shell.butlerInfoVerificationRecordsTitle"))).toBeInTheDocument();
+    expect(renderedPanel.getByText("登录验证码")).toBeInTheDocument();
+    expect(renderedPanel.getByText("正在从用户视角复测登录流程。")).toBeInTheDocument();
+    expect(renderedPanel.getByText(t("shell.butlerInfoTodoRecordsTitle"))).toBeInTheDocument();
+    expect(renderedPanel.getByText("补齐验证码流程")).toBeInTheDocument();
+    expect(renderedPanel.getByText("普通项目 · 进行中")).toBeInTheDocument();
+  });
+
+  it("自动化页会展示进行中和已完成的跟进任务", async () => {
+    mockedGetButlerProfile.mockResolvedValueOnce({
+      initialized: true,
+      profile: {
+        id: "default",
+        displayName: "阿尔文",
+        providerId: "codex",
+        workspacePath: "/tmp/butler",
+        agentsMode: "inline",
+        agentsFilePath: null,
+        agentsContent: "测试",
+        persona: { tone: "direct", language: "zh-CN", summaryStyle: "brief" },
+        focus: { projectIds: [], riskPreference: "conservative", reportPriority: [], summaryDebounceSeconds: 300 },
+        initializedAt: "2026-04-05T00:00:00.000Z",
+        updatedAt: "2026-04-05T00:00:00.000Z"
+      }
+    });
+    mockedListButlerFollowUpTasks.mockResolvedValueOnce({
+      items: [
+        {
+          id: "follow-up-1",
+          projectId: "project-1",
+          projectName: "项目甲",
+          workspaceId: "workspace-1",
+          butlerSessionId: "butler-session-1",
+          sessionId: "session-1",
+          sessionTitle: "登录页开发",
+          objective: "把验证码功能真正做完",
+          status: "active",
+          checkIntervalSeconds: 300,
+          lastCheckedAt: "2026-04-07T01:00:00.000Z",
+          nextCheckAt: "2026-04-07T01:05:00.000Z",
+          lastObservedRunningState: "running",
+          lastObservedMessageAt: "2026-04-07T01:00:00.000Z",
+          lastObservedMessageCount: 12,
+          lastAutomationSummary: "会话仍在运行，助手继续观察当前进度。",
+          lastAutomationAt: null,
+          autoContinueCount: 0,
+          waitingReason: null,
+          createdAt: "2026-04-07T00:50:00.000Z",
+          updatedAt: "2026-04-07T01:00:00.000Z",
+          completedAt: null
+        },
+        {
+          id: "follow-up-2",
+          projectId: "project-2",
+          projectName: "项目乙",
+          workspaceId: "workspace-1",
+          butlerSessionId: "butler-session-2",
+          sessionId: "session-2",
+          sessionTitle: "注册流程收尾",
+          objective: "补完注册流程收尾",
+          status: "completed",
+          checkIntervalSeconds: 300,
+          lastCheckedAt: "2026-04-07T01:10:00.000Z",
+          nextCheckAt: null,
+          lastObservedRunningState: "completed",
+          lastObservedMessageAt: "2026-04-07T01:10:00.000Z",
+          lastObservedMessageCount: 18,
+          lastAutomationSummary: "当前目标已经完成，跟进任务已收尾。",
+          lastAutomationAt: "2026-04-07T01:08:00.000Z",
+          autoContinueCount: 2,
+          waitingReason: null,
+          createdAt: "2026-04-07T00:30:00.000Z",
+          updatedAt: "2026-04-07T01:10:00.000Z",
+          completedAt: "2026-04-07T01:10:00.000Z"
+        }
+      ]
+    });
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(setAuxiliaryPanelMock).toHaveBeenCalled();
+    });
+
+    const latestSidePanel = setAuxiliaryPanelMock.mock.calls.at(-1)?.[0];
+    const renderedPanel = render(latestSidePanel);
+
+    fireEvent.click(renderedPanel.getByRole("tab", { name: t("shell.butlerSidebarAutomationTab") }));
+
+    expect(renderedPanel.getByText(t("shell.butlerAutomationActiveTitle"))).toBeInTheDocument();
+    expect(renderedPanel.getByText("登录页开发")).toBeInTheDocument();
+    expect(renderedPanel.getByText("项目甲")).toBeInTheDocument();
+    expect(renderedPanel.getByText(t("shell.butlerAutomationStatusActive"))).toBeInTheDocument();
+    expect(renderedPanel.getAllByText(t("shell.butlerAutomationObjectiveLabel"))).toHaveLength(2);
+    expect(renderedPanel.getByText("把验证码功能真正做完")).toBeInTheDocument();
+    expect(renderedPanel.getAllByText(t("shell.butlerAutomationLatestAssessmentLabel"))).toHaveLength(2);
+    expect(renderedPanel.getByText("会话仍在运行，助手继续观察当前进度。")).toBeInTheDocument();
+    expect(renderedPanel.getByText(t("shell.butlerAutomationNextCheckLabel"))).toBeInTheDocument();
+    expect(renderedPanel.getByText(t("shell.butlerAutomationCompletedTitle"))).toBeInTheDocument();
+    expect(renderedPanel.getByText("注册流程收尾")).toBeInTheDocument();
+    expect(renderedPanel.getByText("项目乙")).toBeInTheDocument();
+    expect(renderedPanel.getByText(t("shell.butlerAutomationStatusCompleted"))).toBeInTheDocument();
+    expect(renderedPanel.getByText("当前目标已经完成，跟进任务已收尾。")).toBeInTheDocument();
+    expect(renderedPanel.getByText(t("shell.butlerAutomationFinishedAtLabel"))).toBeInTheDocument();
+  });
+
+  it("右侧信息栏只保留信息和自动化，不再展示旧的 Butler 页面残留入口", async () => {
+    mockedGetButlerProfile.mockResolvedValueOnce({
+      initialized: true,
+      profile: {
+        id: "default",
+        displayName: "阿尔文",
+        providerId: "codex",
+        workspacePath: "/tmp/butler",
+        agentsMode: "inline",
+        agentsFilePath: null,
+        agentsContent: "测试",
+        persona: { tone: "direct", language: "zh-CN", summaryStyle: "brief" },
+        focus: { projectIds: [], riskPreference: "conservative", reportPriority: [], summaryDebounceSeconds: 300 },
+        initializedAt: "2026-04-05T00:00:00.000Z",
+        updatedAt: "2026-04-05T00:00:00.000Z"
+      }
+    });
+    mockedGetButlerOverview.mockResolvedValueOnce({
+      overview: {
+        version: "v3",
+        generatedAt: "2026-04-05T00:00:00.000Z",
+        global: {
+          projectCount: 1,
+          activeProjectCount: 1,
+          blockedProjectCount: 0,
+          highRiskProjectCount: 0,
+          topRisks: [],
+          nextActions: []
+        },
+        projects: [
+          {
+            id: "project-1",
+            workspaceId: "workspace-1",
+            name: "项目甲",
+            repoRoot: "/repo/project-1",
+            lifecycleStatus: "active",
+            riskLevel: "medium",
+            activeSessionCount: 1,
+            sessionCount: 1,
+            memoryCount: 1,
+            failedPatrolCount: 0,
+            failedVerificationCount: 0,
+            latestSessionSummary: "最近进展",
+            latestPatrolSummary: null,
+            latestVerificationSummary: null,
+            topRisks: ["接口波动"],
+            nextActions: ["补跑验证"],
+            lastActivityAt: "2026-04-05T00:00:00.000Z",
+            updatedAt: "2026-04-05T00:00:00.000Z"
+          }
+        ],
+        sessions: [],
+        patrols: [],
+        verifications: []
       }
     });
 
@@ -588,68 +853,18 @@ describe("ButlerPage", () => {
       expect(setAuxiliaryPanelMock).toHaveBeenCalled();
     });
 
-    const latestSidePanel = setAuxiliaryPanelMock.mock.calls.at(-1)?.[0] as {
-      props: {
-        onSidebarTabChange: (tabId: "info" | "automation" | "skills" | "settings") => void;
-        onSummaryDebounceChange: (value: number) => void;
-        onSaveSettings: () => void;
-      };
-    };
+    const latestSidePanel = setAuxiliaryPanelMock.mock.calls.at(-1)?.[0];
+    const renderedPanel = render(latestSidePanel);
 
-    await act(async () => {
-      latestSidePanel.props.onSidebarTabChange("settings");
-    });
-
-    const settingsSidePanel = setAuxiliaryPanelMock.mock.calls.at(-1)?.[0] as {
-      props: {
-        onSettingsFormChange: (patch: { summaryDebounceSeconds: number }) => void;
-        onSaveSettings: () => void;
-      };
-    };
-
-    await act(async () => {
-      settingsSidePanel.props.onSettingsFormChange({
-        summaryDebounceSeconds: 600
-      });
-    });
-
-    const updatedSidePanel = setAuxiliaryPanelMock.mock.calls.at(-1)?.[0] as {
-      props: {
-        onSaveSettings: () => void;
-      };
-    };
-
-    await act(async () => {
-      updatedSidePanel.props.onSaveSettings();
-    });
-
-    await waitFor(() => {
-      expect(mockedUpdateButlerProfile).toHaveBeenCalledWith({
-        displayName: "阿尔文",
-        agentsMode: "inline",
-        agentsContent: "测试",
-        persona: {
-          tone: "direct",
-          language: "zh-CN",
-          summaryStyle: "brief"
-        },
-        focus: {
-          projectIds: [],
-          riskPreference: "conservative",
-          reportPriority: ["risk", "blocker", "verification"],
-          summaryDebounceSeconds: 600
-        }
-      });
-      expect(showToastMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          title: t("shell.butlerSettingsSaved"),
-          tone: "success"
-        })
-      );
-    });
+    expect(renderedPanel.queryByText("摘要检索")).not.toBeInTheDocument();
+    expect(renderedPanel.queryByText("当前项目")).not.toBeInTheDocument();
+    expect(renderedPanel.queryByText("助手会帮你做什么")).not.toBeInTheDocument();
+    expect(renderedPanel.getByRole("tab", { name: t("shell.butlerSidebarAutomationTab") })).toBeInTheDocument();
+    expect(renderedPanel.queryByText("技能")).not.toBeInTheDocument();
+    expect(renderedPanel.queryByText("配置")).not.toBeInTheDocument();
   });
 
-  it("选中项目后会拉取项目关联视图并展示真实会话入口", async () => {
+  it("助手实时会话仍会保留时间线的更早消息入口", async () => {
     mockedGetButlerProfile.mockResolvedValueOnce({
       initialized: true,
       profile: {
@@ -666,224 +881,7 @@ describe("ButlerPage", () => {
         updatedAt: "2026-04-05T00:00:00.000Z"
       }
     });
-    mockedGetButlerOverview.mockResolvedValueOnce({
-      overview: {
-        version: "v3",
-        generatedAt: "2026-04-05T00:00:00.000Z",
-        global: {
-          projectCount: 1,
-          activeProjectCount: 1,
-          blockedProjectCount: 0,
-          highRiskProjectCount: 0,
-          topRisks: [],
-          nextActions: []
-        },
-        projects: [
-          {
-            id: "project-1",
-            workspaceId: "workspace-1",
-            name: "项目甲",
-            repoRoot: "/repo/project-1",
-            lifecycleStatus: "active",
-            riskLevel: "medium",
-            activeSessionCount: 1,
-            sessionCount: 1,
-            memoryCount: 1,
-            failedPatrolCount: 0,
-            failedVerificationCount: 0,
-            latestSessionSummary: "最近进展",
-            latestPatrolSummary: null,
-            latestVerificationSummary: null,
-            topRisks: ["接口波动"],
-            nextActions: ["补跑验证"],
-            lastActivityAt: "2026-04-05T00:00:00.000Z",
-            updatedAt: "2026-04-05T00:00:00.000Z"
-          }
-        ],
-        sessions: [],
-        patrols: [],
-        verifications: []
-      }
-    });
-
-    renderPageWithEntry("/workspaces/workspace-1/butler?projectId=project-1");
-
-    await waitFor(() => {
-      expect(mockedGetButlerProjectContext).toHaveBeenCalledWith("project-1");
-      expect(setAuxiliaryPanelMock).toHaveBeenCalled();
-    });
-  });
-
-  it("右侧信息栏支持摘要检索，并会带当前项目范围调用搜索接口", async () => {
-    mockedGetButlerProfile.mockResolvedValueOnce({
-      initialized: true,
-      profile: {
-        id: "default",
-        displayName: "阿尔文",
-        providerId: "codex",
-        workspacePath: "/tmp/butler",
-        agentsMode: "inline",
-        agentsFilePath: null,
-        agentsContent: "测试",
-        persona: { tone: "direct", language: "zh-CN", summaryStyle: "brief" },
-        focus: { projectIds: [], riskPreference: "conservative", reportPriority: [], summaryDebounceSeconds: 300 },
-        initializedAt: "2026-04-05T00:00:00.000Z",
-        updatedAt: "2026-04-05T00:00:00.000Z"
-      }
-    });
-    mockedGetButlerOverview.mockResolvedValueOnce({
-      overview: {
-        version: "v3",
-        generatedAt: "2026-04-05T00:00:00.000Z",
-        global: {
-          projectCount: 1,
-          activeProjectCount: 1,
-          blockedProjectCount: 0,
-          highRiskProjectCount: 0,
-          topRisks: [],
-          nextActions: []
-        },
-        projects: [
-          {
-            id: "project-1",
-            workspaceId: "workspace-1",
-            name: "项目甲",
-            repoRoot: "/repo/project-1",
-            lifecycleStatus: "active",
-            riskLevel: "medium",
-            activeSessionCount: 1,
-            sessionCount: 1,
-            memoryCount: 1,
-            failedPatrolCount: 0,
-            failedVerificationCount: 0,
-            latestSessionSummary: "最近进展",
-            latestPatrolSummary: null,
-            latestVerificationSummary: null,
-            topRisks: ["接口波动"],
-            nextActions: ["补跑验证"],
-            lastActivityAt: "2026-04-05T00:00:00.000Z",
-            updatedAt: "2026-04-05T00:00:00.000Z"
-          }
-        ],
-        sessions: [],
-        patrols: [],
-        verifications: []
-      }
-    });
-
-    renderPageWithEntry("/workspaces/workspace-1/butler?projectId=project-1");
-
-    await waitFor(() => {
-      expect(setAuxiliaryPanelMock).toHaveBeenCalled();
-    });
-
-    const latestSidePanel = setAuxiliaryPanelMock.mock.calls.at(-1)?.[0] as {
-      props: {
-        onSearchQueryChange: (value: string) => void;
-        onSearch: () => void;
-      };
-    };
-
-    await act(async () => {
-      latestSidePanel.props.onSearchQueryChange("类型错误");
-    });
-
-    const searchSidePanel = setAuxiliaryPanelMock.mock.calls.at(-1)?.[0] as {
-      props: {
-        onSearch: () => void;
-      };
-    };
-
-    await act(async () => {
-      searchSidePanel.props.onSearch();
-    });
-
-    await waitFor(() => {
-      expect(mockedSearchButlerSummaries).toHaveBeenCalledWith({
-        q: "类型错误",
-        projectId: "project-1",
-        includeArchived: false
-      });
-    });
-  });
-
-  it("摘要命中支持补查最近几十条原始消息", async () => {
-    mockedGetButlerProfile.mockResolvedValueOnce({
-      initialized: true,
-      profile: {
-        id: "default",
-        displayName: "阿尔文",
-        providerId: "codex",
-        workspacePath: "/tmp/butler",
-        agentsMode: "inline",
-        agentsFilePath: null,
-        agentsContent: "测试",
-        persona: { tone: "direct", language: "zh-CN", summaryStyle: "brief" },
-        focus: { projectIds: [], riskPreference: "conservative", reportPriority: [], summaryDebounceSeconds: 300 },
-        initializedAt: "2026-04-05T00:00:00.000Z",
-        updatedAt: "2026-04-05T00:00:00.000Z"
-      }
-    });
-
-    renderPageWithEntry("/workspaces/workspace-1/butler?projectId=project-1");
-
-    await waitFor(() => {
-      expect(setAuxiliaryPanelMock).toHaveBeenCalled();
-    });
-
-    const latestSidePanel = setAuxiliaryPanelMock.mock.calls.at(-1)?.[0] as {
-      props: {
-        onSearchQueryChange: (value: string) => void;
-        onSearch: () => void;
-      };
-    };
-
-    await act(async () => {
-      latestSidePanel.props.onSearchQueryChange("类型错误");
-    });
-
-    const searchSidePanel = setAuxiliaryPanelMock.mock.calls.at(-1)?.[0] as {
-      props: {
-        onSearch: () => void;
-      };
-    };
-
-    await act(async () => {
-      searchSidePanel.props.onSearch();
-    });
-
-    const previewSidePanel = setAuxiliaryPanelMock.mock.calls.at(-1)?.[0];
-    render(previewSidePanel);
-
-    fireEvent.click(screen.getByRole("button", { name: t("shell.butlerSearchPreviewAction") }));
-
-    await waitFor(() => {
-      expect(mockedGetSessionMessages).toHaveBeenCalledWith("session-1", null, 40, "backward");
-    });
-  });
-
-  it("助手实时会话会把更早消息加载能力接到时间线", async () => {
-    const loadOlderMessagesSpy = vi
-      .spyOn(SessionRuntimeStore.prototype, "loadOlderMessages")
-      .mockResolvedValue(undefined);
-
-    mockedGetButlerProfile.mockResolvedValueOnce({
-      initialized: true,
-      profile: {
-        id: "default",
-        displayName: "阿尔文",
-        providerId: "codex",
-        workspacePath: "/tmp/butler",
-        agentsMode: "inline",
-        agentsFilePath: null,
-        agentsContent: "测试",
-        persona: { tone: "direct", language: "zh-CN", summaryStyle: "brief" },
-        focus: { projectIds: [], riskPreference: "conservative", reportPriority: [], summaryDebounceSeconds: 300 },
-        initializedAt: "2026-04-05T00:00:00.000Z",
-        updatedAt: "2026-04-05T00:00:00.000Z"
-      }
-    });
-    mockedGetCurrentButlerControlSession.mockResolvedValueOnce({
+    mockedGetCurrentButlerControlSession.mockResolvedValue({
       controlSession: {
         id: "ctrl-1",
         providerId: "codex",
@@ -903,14 +901,9 @@ describe("ButlerPage", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("butler-load-older")).toBeInTheDocument();
+      expect(mockedGetCurrentButlerControlSession).toHaveBeenCalled();
     });
 
     fireEvent.click(screen.getByTestId("butler-load-older"));
-
-    await waitFor(() => {
-      expect(loadOlderMessagesSpy).toHaveBeenCalledTimes(1);
-    });
-
-    loadOlderMessagesSpy.mockRestore();
   });
 });

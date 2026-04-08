@@ -10,6 +10,10 @@ export type ButlerToneId = "direct" | "steady" | "friendly";
 export type ButlerLanguageId = "zh-CN" | "en-US" | "bilingual";
 export type ButlerSummaryStyleId = "brief" | "structured" | "thorough";
 export type ButlerRiskPreferenceId = "conservative" | "balanced" | "proactive";
+export type ButlerInboxItemType = "bug" | "feature" | "change" | "task";
+export type ButlerInboxItemPriority = "low" | "medium" | "high";
+export type ButlerInboxItemStatus = "pending" | "in_progress" | "closed";
+export type ButlerFollowUpTaskStatus = "active" | "waiting_user" | "completed" | "failed" | "cancelled";
 
 export interface ButlerProfileDto {
   id: "default";
@@ -146,6 +150,24 @@ export interface ButlerProjectDigestDto {
   updatedAt: string;
 }
 
+export interface ButlerProjectDto {
+  id: string;
+  workspaceId: string;
+  name: string;
+  repoRoot: string;
+  defaultProvider: string | null;
+  instructionProfileId: string | null;
+  approvalMode: "readonly" | "controlled" | "auto";
+  lifecycleStatus: "active" | "paused" | "archived";
+  riskLevel: "low" | "medium" | "high";
+  config: Record<string, unknown>;
+  lastPatrolAt: string | null;
+  lastVerificationAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  archivedAt: string | null;
+}
+
 export interface ButlerSessionDigestDto {
   id: string;
   projectId: string;
@@ -191,14 +213,93 @@ export interface ButlerVerificationDigestDto {
   createdAt: string;
 }
 
+export interface ButlerInboxItemDto {
+  id: string;
+  projectId: string;
+  workspaceId: string;
+  projectName: string;
+  projectLifecycleStatus: "active" | "paused" | "archived";
+  itemType: ButlerInboxItemType;
+  title: string;
+  content: string;
+  priority: ButlerInboxItemPriority;
+  status: ButlerInboxItemStatus;
+  createdAt: string;
+  updatedAt: string;
+  closedAt: string | null;
+}
+
+export interface ButlerNotificationArchiveDto {
+  notificationId: string;
+  archivedAt: string;
+  updatedAt: string;
+}
+
+export interface ButlerFollowUpTaskDto {
+  id: string;
+  projectId: string;
+  projectName: string;
+  workspaceId: string;
+  butlerSessionId: string;
+  sessionId: string;
+  sessionTitle: string | null;
+  objective: string;
+  status: ButlerFollowUpTaskStatus;
+  checkIntervalSeconds: number;
+  lastCheckedAt: string | null;
+  nextCheckAt: string | null;
+  lastObservedRunningState: string | null;
+  lastObservedMessageAt: string | null;
+  lastObservedMessageCount: number;
+  lastAutomationSummary: string | null;
+  lastAutomationAt: string | null;
+  autoContinueCount: number;
+  waitingReason: string | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+}
+
 export interface ButlerOverviewDto {
   version: string;
   generatedAt: string;
   global: ButlerGlobalDigestDto;
   projects: ButlerProjectDigestDto[];
   sessions: ButlerSessionDigestDto[];
+  inboxItems?: ButlerInboxItemDto[];
   patrols: ButlerPatrolDigestDto[];
   verifications: ButlerVerificationDigestDto[];
+}
+
+export interface ButlerSessionTargetProjectDto {
+  id: string;
+  workspaceId: string;
+  name: string;
+  repoRoot: string;
+  lifecycleStatus: "active" | "paused" | "archived";
+  riskLevel: "low" | "medium" | "high";
+}
+
+export interface ButlerSessionTargetSessionDto {
+  id: string;
+  projectId: string;
+  sessionId: string;
+  provider: string | null;
+  title: string | null;
+  role: "patrol" | "execution" | "verification" | "adhoc";
+  ownershipMode: "managed" | "observed";
+  status: "idle" | "running" | "blocked" | "failed" | "closed";
+  runningState: string | null;
+  lastSummary: string | null;
+  lastCheckpointAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ButlerSessionTargetDto {
+  workspaceId: string;
+  project: ButlerSessionTargetProjectDto;
+  session: ButlerSessionTargetSessionDto;
 }
 
 export interface ButlerContextSnapshotDto extends ButlerOverviewDto {
@@ -222,6 +323,7 @@ export interface ButlerProjectContextDto {
   project: ButlerProjectDigestDto;
   sessions: ButlerSessionDigestDto[];
   memories: ButlerContextSnapshotDto["memories"];
+  inboxItems?: ButlerInboxItemDto[];
   patrols: ButlerPatrolDigestDto[];
   verifications: ButlerVerificationDigestDto[];
   topRisks: string[];
@@ -267,6 +369,15 @@ export interface ButlerControlEventDto {
   content: string;
   relatedRefs: ButlerControlRelatedRefDto[];
   createdAt: string;
+}
+
+export interface ButlerInboxItemPayload {
+  projectId?: string;
+  itemType?: ButlerInboxItemType;
+  title?: string;
+  content?: string;
+  priority?: ButlerInboxItemPriority;
+  status?: ButlerInboxItemStatus;
 }
 
 export function getButlerProfile() {
@@ -328,6 +439,162 @@ export function getButlerOverview() {
   return httpClient.request<{ overview: ButlerOverviewDto }>("/api/butler/overview");
 }
 
+export function listButlerProjects(payload: {
+  workspaceId?: string | null;
+  status?: "active" | "paused" | "archived" | null;
+  riskLevel?: "low" | "medium" | "high" | null;
+} = {}) {
+  const searchParams = new URLSearchParams();
+
+  if (payload.workspaceId?.trim()) {
+    searchParams.set("workspaceId", payload.workspaceId.trim());
+  }
+
+  if (payload.status) {
+    searchParams.set("status", payload.status);
+  }
+
+  if (payload.riskLevel) {
+    searchParams.set("riskLevel", payload.riskLevel);
+  }
+
+  const query = searchParams.toString();
+  const path = query ? `/api/butler/projects?${query}` : "/api/butler/projects";
+
+  return httpClient.request<{ items: ButlerProjectDto[] }>(path);
+}
+
+export function listButlerInboxItems(payload: {
+  workspaceId?: string | null;
+  projectId?: string | null;
+  status?: ButlerInboxItemStatus | null;
+  itemType?: ButlerInboxItemType | null;
+} = {}) {
+  const searchParams = new URLSearchParams();
+
+  if (payload.workspaceId?.trim()) {
+    searchParams.set("workspaceId", payload.workspaceId.trim());
+  }
+
+  if (payload.projectId?.trim()) {
+    searchParams.set("projectId", payload.projectId.trim());
+  }
+
+  if (payload.status) {
+    searchParams.set("status", payload.status);
+  }
+
+  if (payload.itemType) {
+    searchParams.set("itemType", payload.itemType);
+  }
+
+  const query = searchParams.toString();
+  const path = query ? `/api/butler/inbox?${query}` : "/api/butler/inbox";
+
+  return httpClient.request<{ items: ButlerInboxItemDto[] }>(path);
+}
+
+export function createButlerInboxItem(payload: {
+  projectId: string;
+  itemType?: ButlerInboxItemType;
+  title: string;
+  content: string;
+  priority?: ButlerInboxItemPriority;
+  status?: ButlerInboxItemStatus;
+}) {
+  return httpClient.request<{ item: ButlerInboxItemDto }>("/api/butler/inbox", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function listButlerFollowUpTasks(payload: {
+  status?: ButlerFollowUpTaskStatus;
+  projectId?: string | null;
+  sessionId?: string | null;
+} = {}) {
+  const searchParams = new URLSearchParams();
+
+  if (payload.status) {
+    searchParams.set("status", payload.status);
+  }
+
+  if (payload.projectId?.trim()) {
+    searchParams.set("projectId", payload.projectId.trim());
+  }
+
+  if (payload.sessionId?.trim()) {
+    searchParams.set("sessionId", payload.sessionId.trim());
+  }
+
+  const query = searchParams.toString();
+  const path = query ? `/api/butler/follow-up-tasks?${query}` : "/api/butler/follow-up-tasks";
+
+  return httpClient.request<{ items: ButlerFollowUpTaskDto[] }>(path);
+}
+
+export function createButlerFollowUpTask(payload: {
+  projectId: string;
+  butlerSessionId: string;
+  objective: string;
+  checkIntervalSeconds?: number;
+}) {
+  return httpClient.request<{ task: ButlerFollowUpTaskDto }>("/api/butler/follow-up-tasks", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function getButlerFollowUpTask(taskId: string) {
+  return httpClient.request<{ task: ButlerFollowUpTaskDto }>(
+    `/api/butler/follow-up-tasks/${encodeURIComponent(taskId)}`
+  );
+}
+
+export function updateButlerInboxItem(itemId: string, payload: {
+  projectId?: string;
+  itemType?: ButlerInboxItemType;
+  title?: string;
+  content?: string;
+  priority?: ButlerInboxItemPriority;
+  status?: ButlerInboxItemStatus;
+}) {
+  return httpClient.request<{ item: ButlerInboxItemDto }>(
+    `/api/butler/inbox/${encodeURIComponent(itemId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        projectId: payload.projectId,
+        itemType: payload.itemType,
+        title: payload.title,
+        content: payload.content,
+        priority: payload.priority,
+        status: payload.status
+      })
+    }
+  );
+}
+
+export function deleteButlerInboxItem(itemId: string) {
+  return httpClient.request<void>(`/api/butler/inbox/${encodeURIComponent(itemId)}`, {
+    method: "DELETE"
+  });
+}
+
+export function listButlerNotificationArchives() {
+  return httpClient.request<{ items: ButlerNotificationArchiveDto[] }>("/api/butler/notifications/archives");
+}
+
+export function updateButlerNotificationArchive(notificationId: string, archived: boolean) {
+  return httpClient.request<{ item: ButlerNotificationArchiveDto | null }>(
+    `/api/butler/notifications/archives/${encodeURIComponent(notificationId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ archived })
+    }
+  );
+}
+
 export function getButlerContextSnapshot() {
   return httpClient.request<{ snapshot: ButlerContextSnapshotDto }>("/api/butler/context-snapshot");
 }
@@ -356,6 +623,15 @@ export function searchButlerSummaries(payload: {
 
   return httpClient.request<{ result: ButlerSearchResultDto }>(
     `/api/butler/search?${searchParams.toString()}`
+  );
+}
+
+export function getButlerSessionTarget(sessionId: string) {
+  const searchParams = new URLSearchParams();
+  searchParams.set("sessionId", sessionId);
+
+  return httpClient.request<{ target: ButlerSessionTargetDto }>(
+    `/api/butler/session-target?${searchParams.toString()}`
   );
 }
 

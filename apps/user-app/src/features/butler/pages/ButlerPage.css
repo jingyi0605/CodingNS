@@ -13,6 +13,16 @@
   background: var(--bg-surface);
 }
 
+.butler-loading-shell {
+  align-items: stretch;
+  justify-content: center;
+  padding: 24px;
+  background:
+    radial-gradient(circle at top left, rgba(14, 165, 233, 0.12), transparent 36%),
+    radial-gradient(circle at bottom right, rgba(16, 185, 129, 0.12), transparent 32%),
+    var(--bg-surface);
+}
+
 .butler-main-column {
   min-height: 0;
   flex: 1 1 auto;
@@ -44,6 +54,50 @@
   gap: 10px;
   min-width: 0;
   text-align: left;
+}
+
+.butler-header-analysis-anchor {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.butler-header-analysis-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 20;
+  width: min(340px, 72vw);
+  padding: 12px;
+  border: 1px solid var(--border-primary);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-surface) 97%, white 3%);
+  box-shadow: 0 14px 28px rgba(15, 23, 42, 0.16);
+}
+
+.butler-header-analysis-popover strong {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.butler-header-analysis-item + .butler-header-analysis-item {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--border-primary) 78%, transparent);
+}
+
+.butler-header-analysis-popover p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.butler-header-analysis-popover p + p {
+  margin-top: 6px;
 }
 
 .butler-chat-avatar,
@@ -106,10 +160,6 @@
 
 .butler-toolbar-button,
 .butler-provider-switcher button,
-.butler-project-card-actions button,
-.butler-inline-actions button,
-.butler-project-context-actions button,
-.butler-related-ref-list button,
 .butler-init-form button {
   border: 1px solid rgba(15, 23, 42, 0.12);
   border-radius: 10px;
@@ -126,10 +176,6 @@
 
 .butler-toolbar-button:hover,
 .butler-provider-switcher button:hover,
-.butler-project-card-actions button:hover,
-.butler-inline-actions button:hover,
-.butler-project-context-actions button:hover,
-.butler-related-ref-list button:hover,
 .butler-init-form button:hover {
   border-color: rgba(14, 165, 233, 0.36);
   background: #fff;
@@ -139,10 +185,6 @@
 
 .butler-toolbar-button:disabled,
 .butler-provider-switcher button:disabled,
-.butler-project-card-actions button:disabled,
-.butler-inline-actions button:disabled,
-.butler-project-context-actions button:disabled,
-.butler-related-ref-list button:disabled,
 .butler-init-form button:disabled {
   cursor: not-allowed;
   opacity: 0.62;
@@ -161,8 +203,7 @@
 .butler-provider-switcher select,
 .butler-init-form input,
 .butler-init-form select,
-.butler-init-form textarea,
-.butler-search-form input {
+.butler-init-form textarea {
   border: 1px solid rgba(15, 23, 42, 0.12);
   border-radius: 10px;
   padding: 9px 12px;
@@ -250,7 +291,7 @@
   overflow: hidden;
 }
 
-.butler-side-tabs-shell {
+.butler-side-header {
   min-height: var(--workbench-header-min-height);
   height: var(--workbench-header-min-height);
   box-sizing: border-box;
@@ -260,30 +301,32 @@
     var(--workbench-header-padding-bottom);
   border-bottom: 1px solid var(--panel-separator, rgba(15, 23, 42, 0.08));
   background: var(--bg-surface, rgba(248, 250, 252, 0.98));
+  display: flex;
+  align-items: center;
 }
 
 .butler-side-tabs {
-  position: relative;
-  top: auto;
-  z-index: 1;
-  display: grid !important;
-  grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
-  grid-auto-flow: column;
-  gap: 2px;
-  padding: 0;
-  border-bottom: none;
-  background: transparent;
-  backdrop-filter: none;
-  overflow: hidden;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  width: 100%;
 }
 
-.butler-side-tabs .workbench-info-tab {
-  width: 100%;
+.butler-side-tab {
   min-width: 0;
-  max-width: 100%;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  height: 32px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--text-secondary, #6b7280);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.butler-side-tab[data-active="true"] {
+  background: rgba(15, 23, 42, 0.08);
+  color: var(--text-primary, #111827);
 }
 
 .butler-side-card {
@@ -305,176 +348,205 @@
   color: var(--text-secondary, #6b7280);
 }
 
-.butler-search-form {
+.butler-record-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-}
-
-.butler-search-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  color: var(--text-primary, #0f172a);
-}
-
-.butler-search-toggle input {
-  margin: 0;
-}
-
-.butler-overview-content,
-.butler-project-context {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.butler-overview-metrics {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
 
-.butler-overview-metrics article,
-.butler-project-card,
-.butler-context-item,
-.butler-event-card {
+.butler-simple-info-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
   border: 1px solid rgba(15, 23, 42, 0.08);
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.92);
 }
 
-.butler-overview-metrics article {
-  padding: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.butler-overview-metrics article span {
+.butler-simple-info-block span {
   font-size: 12px;
   color: var(--text-secondary, #6b7280);
 }
 
-.butler-overview-metrics article strong {
-  font-size: 20px;
+.butler-simple-info-block strong {
+  font-size: 13px;
+  line-height: 1.5;
+  font-weight: 600;
 }
 
-.butler-overview-list h3,
-.butler-context-section h3 {
-  margin: 0 0 6px;
-  font-size: 14px;
+.butler-automation-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.94);
 }
 
-.butler-overview-list ul {
-  margin: 0;
-  padding-left: 18px;
+.butler-automation-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.butler-automation-card-title-group {
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
 
-.butler-overview-list p {
-  margin: 0;
+.butler-automation-card-title-group strong {
+  font-size: 14px;
+  line-height: 1.3;
 }
 
-.butler-event-list,
-.butler-project-list,
-.butler-context-list,
-.butler-context-section {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.butler-project-card,
-.butler-context-item,
-.butler-event-card,
-.butler-search-preview-item {
-  padding: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.butler-project-card[data-active="true"],
-.butler-context-item[data-focused="true"] {
-  border-color: rgba(14, 165, 233, 0.42);
-  box-shadow: 0 14px 24px rgba(14, 165, 233, 0.08);
-}
-
-.butler-project-card-header,
-.butler-context-item-header,
-.butler-project-context-header,
-.butler-event-title-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  align-items: flex-start;
-}
-
-.butler-project-card-header p,
-.butler-context-item p,
-.butler-project-context-header p,
-.butler-event-title-row span,
-.butler-event-card p {
-  margin: 0;
+.butler-automation-card-title-group span,
+.butler-automation-row span,
+.butler-automation-card-footer span {
+  font-size: 12px;
   color: var(--text-secondary, #6b7280);
-  font-size: 13px;
 }
 
-.butler-project-card-summary {
-  margin: 0;
-  font-size: 13px;
-  white-space: pre-wrap;
-}
-
-.butler-project-card-actions,
-.butler-inline-actions,
-.butler-project-context-actions,
-.butler-related-ref-list {
+.butler-automation-card-body {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: 8px;
 }
 
-.butler-project-risk-chip {
+.butler-automation-row,
+.butler-automation-card-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.butler-automation-row strong,
+.butler-automation-card-footer strong {
+  font-size: 13px;
+  line-height: 1.5;
+  font-weight: 600;
+}
+
+.butler-automation-status-badge {
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  min-height: 24px;
+  padding: 0 10px;
   border-radius: 999px;
-  padding: 4px 8px;
+  background: rgba(15, 23, 42, 0.08);
+  color: #111827;
   font-size: 12px;
-  text-transform: uppercase;
-  background: rgba(15, 23, 42, 0.06);
+  font-weight: 700;
+  white-space: nowrap;
 }
 
-.butler-project-risk-chip[data-risk="high"] {
-  background: rgba(220, 38, 38, 0.12);
-  color: #b91c1c;
+.butler-automation-status-badge[data-status="waiting_user"] {
+  background: rgba(245, 158, 11, 0.16);
+  color: #92400e;
 }
 
-.butler-project-risk-chip[data-risk="medium"] {
-  background: rgba(245, 158, 11, 0.14);
-  color: #b45309;
+.butler-automation-status-badge[data-status="active"] {
+  background: rgba(14, 165, 233, 0.14);
+  color: #075985;
 }
 
-.butler-project-risk-chip[data-risk="low"] {
-  background: rgba(22, 163, 74, 0.14);
-  color: #15803d;
+.butler-automation-status-badge[data-status="completed"] {
+  background: rgba(16, 185, 129, 0.16);
+  color: #065f46;
 }
 
-.butler-context-item-header span {
-  font-size: 12px;
-  color: #0369a1;
+.butler-automation-status-badge[data-status="failed"],
+.butler-automation-status-badge[data-status="cancelled"] {
+  background: rgba(239, 68, 68, 0.14);
+  color: #991b1b;
 }
 
-.butler-event-card[data-status="failed"] {
-  border-color: rgba(220, 38, 38, 0.45);
+.butler-loading-panel {
+  width: min(520px, 100%);
+  min-height: 280px;
+  margin: auto;
+  padding: 32px 28px;
+  border-radius: 24px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.92));
+  box-shadow:
+    0 24px 56px rgba(15, 23, 42, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  text-align: center;
 }
 
-.butler-event-card p {
-  white-space: pre-wrap;
+.butler-loading-orb {
+  position: relative;
+  width: 88px;
+  height: 88px;
+  display: grid;
+  place-items: center;
+}
+
+.butler-loading-ring,
+.butler-loading-core {
+  position: absolute;
+  border-radius: 999px;
+}
+
+.butler-loading-ring {
+  inset: 0;
+  border: 3px solid transparent;
+}
+
+.butler-loading-ring-primary {
+  border-top-color: rgba(14, 165, 233, 0.92);
+  border-right-color: rgba(14, 165, 233, 0.34);
+  animation: butler-loading-spin 1s linear infinite;
+}
+
+.butler-loading-ring-secondary {
+  inset: 10px;
+  border-bottom-color: rgba(16, 185, 129, 0.9);
+  border-left-color: rgba(16, 185, 129, 0.32);
+  animation: butler-loading-spin-reverse 1.4s linear infinite;
+}
+
+.butler-loading-core {
+  inset: 24px;
+  background:
+    radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.16)),
+    linear-gradient(135deg, rgba(14, 165, 233, 0.28), rgba(16, 185, 129, 0.22));
+  box-shadow:
+    0 0 0 1px rgba(14, 165, 233, 0.12),
+    0 10px 24px rgba(14, 165, 233, 0.16);
+}
+
+.butler-loading-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.butler-loading-copy h1 {
+  margin: 0;
+  font-size: 24px;
+  line-height: 1.2;
+}
+
+.butler-loading-copy p {
+  margin: 0;
+  max-width: 360px;
+  color: var(--text-secondary, #6b7280);
+  font-size: 14px;
+  line-height: 1.6;
 }
 
 .butler-init-panel {
@@ -523,30 +595,33 @@
   min-height: 180px;
 }
 
-.butler-search-preview,
-.butler-search-preview-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.butler-search-preview {
-  padding-top: 4px;
-}
-
-.butler-search-preview h3 {
-  margin: 0;
-  font-size: 13px;
-}
-
 .butler-init-form button {
   grid-column: 1 / -1;
   justify-self: flex-start;
 }
 
+@keyframes butler-loading-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes butler-loading-spin-reverse {
+  from {
+    transform: rotate(360deg);
+  }
+
+  to {
+    transform: rotate(0deg);
+  }
+}
+
 @media (max-width: 900px) {
-  .butler-main-header,
-  .butler-project-context-header {
+  .butler-main-header {
     flex-direction: column;
     align-items: stretch;
   }
@@ -561,12 +636,16 @@
     align-items: center;
   }
 
-  .butler-overview-metrics,
   .butler-init-form {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .butler-side-tabs {
-    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  .butler-loading-panel {
+    min-height: 240px;
+    padding: 28px 22px;
+  }
+
+  .butler-loading-copy h1 {
+    font-size: 22px;
   }
 }
