@@ -50,6 +50,19 @@ interface ButlerInitFormState {
   reportPriorityPreset: ButlerReportPriorityPresetId;
 }
 
+interface ButlerSettingsFormState {
+  displayName: string;
+  agentsMode: "inline" | "file";
+  agentsFilePath: string;
+  agentsContent: string;
+  personaTone: ButlerToneId;
+  personaLanguage: ButlerLanguageId;
+  personaSummaryStyle: ButlerSummaryStyleId;
+  focusRiskPreference: ButlerRiskPreferenceId;
+  reportPriorityPreset: ButlerReportPriorityPresetId;
+  summaryDebounceSeconds: number;
+}
+
 type ButlerReportPriorityPresetId =
   | "risk-first"
   | "blocker-first"
@@ -74,7 +87,34 @@ const DEFAULT_INIT_FORM_STATE: ButlerInitFormState = {
   focusRiskPreference: "conservative",
   reportPriorityPreset: "risk-first"
 };
-const BUTLER_AVATARS = ["🦉", "🦊", "🧭", "🛠", "🧠", "🔎", "📚", "🦁", "🤖", "🐳"];
+const DEFAULT_SETTINGS_FORM_STATE: ButlerSettingsFormState = {
+  displayName: "",
+  agentsMode: "inline",
+  agentsFilePath: "",
+  agentsContent: "",
+  personaTone: "direct",
+  personaLanguage: "zh-CN",
+  personaSummaryStyle: "brief",
+  focusRiskPreference: "conservative",
+  reportPriorityPreset: "risk-first",
+  summaryDebounceSeconds: DEFAULT_BUTLER_SUMMARY_DEBOUNCE_SECONDS
+};
+const SUMMARY_DEBOUNCE_OPTIONS = [
+  { value: 60, labelKey: "shell.butlerSummaryDebounceOption1Minute" },
+  { value: 180, labelKey: "shell.butlerSummaryDebounceOption3Minutes" },
+  { value: 300, labelKey: "shell.butlerSummaryDebounceOption5Minutes" },
+  { value: 600, labelKey: "shell.butlerSummaryDebounceOption10Minutes" },
+  { value: 900, labelKey: "shell.butlerSummaryDebounceOption15Minutes" },
+  { value: 1800, labelKey: "shell.butlerSummaryDebounceOption30Minutes" }
+] as const;
+const BUTLER_AVATAR_POOLS = {
+  builder: ["🧠", "🤖", "🦾", "🛠️", "⚙️", "🧩", "🚀", "🛰️", "🔧", "💡"],
+  analyst: ["🦉", "🧭", "🔍", "📚", "🧪", "📐", "🗂️", "📝", "🧮", "📊"],
+  direct: ["🦅", "🛡️", "⚡", "🎯", "🪓", "🧱", "🔨", "📌", "🧰", "🏹"],
+  steady: ["🐢", "🐘", "🦬", "🦫", "🌲", "⛰️", "🪨", "🧺", "🧷", "🕰️"],
+  friendly: ["🐼", "🦊", "🐻", "🐶", "🐱", "🐹", "🐰", "🦄", "🌼", "🍀"],
+  default: ["🧠", "🤖", "🦉", "🧩", "📚", "💡", "🛠️", "🚀", "🌟", "🪄", "🧭", "🔮"]
+} as const;
 
 export function ButlerPage() {
   const { workspaceId = "" } = useParams();
@@ -85,6 +125,10 @@ export function ButlerPage() {
   const currentWorkspaceIdRef = useRef<string | null>(null);
   const [initForm, setInitForm] = useState<ButlerInitFormState>(DEFAULT_INIT_FORM_STATE);
   const [initializingProfile, setInitializingProfile] = useState(false);
+  const [settingsForm, setSettingsForm] = useState<ButlerSettingsFormState>(
+    DEFAULT_SETTINGS_FORM_STATE
+  );
+  const [savingSettings, setSavingSettings] = useState(false);
   const [viewKey, setViewKey] = useState(0);
   const [inboxItems, setInboxItems] = useState<ButlerInboxItemDto[]>([]);
   const [followUpTasks, setFollowUpTasks] = useState<ButlerFollowUpTaskDto[]>([]);
@@ -120,7 +164,21 @@ export function ButlerPage() {
   const error = useButlerRuntimeStore(store, (state) => state.error);
 
   const butlerDisplayName = profile?.displayName?.trim() || initForm.displayName.trim() || t("shell.butlerEntry");
-  const butlerAvatar = useMemo(() => resolveButlerAvatar(butlerDisplayName), [butlerDisplayName]);
+  const butlerAvatar = useMemo(
+    () =>
+      resolveButlerAvatar({
+        displayName: butlerDisplayName,
+        providerId: profile?.providerId ?? initForm.providerId,
+        tone: profile?.persona.tone ?? initForm.personaTone
+      }),
+    [
+      butlerDisplayName,
+      initForm.personaTone,
+      initForm.providerId,
+      profile?.persona.tone,
+      profile?.providerId
+    ]
+  );
   const liveRuntimeSessionId = controlSession?.session?.sessionId?.trim() || null;
   const liveRuntimeStore = useMemo(() => {
     if (!liveRuntimeSessionId || !controlSession?.session) {
@@ -183,6 +241,27 @@ export function ButlerPage() {
       });
     }
   }, [error, showToast]);
+
+  useEffect(() => {
+    if (!profile) {
+      setSettingsForm(DEFAULT_SETTINGS_FORM_STATE);
+      return;
+    }
+
+    setSettingsForm({
+      displayName: profile.displayName,
+      agentsMode: profile.agentsMode,
+      agentsFilePath: resolveAgentsFilePath(profile),
+      agentsContent: profile.agentsContent,
+      personaTone: profile.persona.tone,
+      personaLanguage: profile.persona.language,
+      personaSummaryStyle: profile.persona.summaryStyle,
+      focusRiskPreference: profile.focus.riskPreference,
+      reportPriorityPreset: resolveReportPriorityPreset(profile.focus.reportPriority),
+      summaryDebounceSeconds:
+        profile.focus.summaryDebounceSeconds ?? DEFAULT_SETTINGS_FORM_STATE.summaryDebounceSeconds
+    });
+  }, [profile]);
 
   useEffect(() => {
     if (!initialized) {
@@ -315,6 +394,32 @@ export function ButlerPage() {
     ] satisfies Array<{ value: ButlerReportPriorityPresetId; label: string }>,
     []
   );
+  // 初始化阶段把当前选择整理成可读标签，左侧预览直接复用，别再维护第二份状态。
+  const initSelectedProviderLabel = resolveOptionLabel(providerOptions, initForm.providerId);
+  const initSelectedAgentsModeLabel = resolveOptionLabel(agentsModeOptions, initForm.agentsMode);
+  const initSelectedToneLabel = resolveOptionLabel(toneOptions, initForm.personaTone);
+  const initSelectedLanguageLabel = resolveOptionLabel(languageOptions, initForm.personaLanguage);
+  const initSelectedSummaryStyleLabel = resolveOptionLabel(
+    summaryStyleOptions,
+    initForm.personaSummaryStyle
+  );
+  const initSelectedRiskPreferenceLabel = resolveOptionLabel(
+    riskPreferenceOptions,
+    initForm.focusRiskPreference
+  );
+  const initSelectedReportPriorityLabel = resolveOptionLabel(
+    reportPriorityPresetOptions,
+    initForm.reportPriorityPreset
+  );
+  const initSelectedAgentsModeDescription =
+    initForm.agentsMode === "inline"
+      ? t("shell.butlerAgentsModeInlineDescription")
+      : t("shell.butlerAgentsModeFileDescription");
+  const initPreviewTags = [
+    initSelectedAgentsModeLabel,
+    initSelectedLanguageLabel,
+    initSelectedRiskPreferenceLabel
+  ];
 
   const sidePanel = useMemo(
     () => (
@@ -324,10 +429,21 @@ export function ButlerPage() {
         inboxItems={inboxItems}
         followUpTasks={followUpTasks}
         patrolPlans={patrolPlans}
+        settingsForm={settingsForm}
+        savingSettings={savingSettings}
         onOpenFollowUpHistory={() => {
           setFollowUpHistoryOpen(true);
         }}
         onOpenFollowUpDetail={handleOpenFollowUpDetail}
+        onSettingsFormChange={(patch) => {
+          setSettingsForm((current) => ({
+            ...current,
+            ...patch
+          }));
+        }}
+        onSaveSettings={() => {
+          void handleSaveSettings();
+        }}
       />
     ),
     [
@@ -336,7 +452,9 @@ export function ButlerPage() {
       handleOpenFollowUpDetail,
       inboxItems,
       overview,
-      patrolPlans
+      patrolPlans,
+      savingSettings,
+      settingsForm
     ]
   );
 
@@ -459,6 +577,54 @@ export function ButlerPage() {
     }
   }
 
+  async function handleSaveSettings() {
+    if (!profile) {
+      return;
+    }
+
+    if (!settingsForm.displayName.trim()) {
+      showToast({
+        title: t("shell.butlerInitNameRequired"),
+        tone: "warning"
+      });
+      return;
+    }
+
+    setSavingSettings(true);
+
+    try {
+      await store.updateProfile({
+        displayName: settingsForm.displayName.trim(),
+        agentsMode: settingsForm.agentsMode,
+        agentsFilePath: settingsForm.agentsMode === "file" ? settingsForm.agentsFilePath : null,
+        agentsContent: settingsForm.agentsContent,
+        persona: {
+          tone: settingsForm.personaTone,
+          language: settingsForm.personaLanguage,
+          summaryStyle: settingsForm.personaSummaryStyle
+        },
+        focus: {
+          ...profile.focus,
+          riskPreference: settingsForm.focusRiskPreference,
+          reportPriority: REPORT_PRIORITY_PRESET_VALUES[settingsForm.reportPriorityPreset],
+          summaryDebounceSeconds: settingsForm.summaryDebounceSeconds
+        }
+      });
+      showToast({
+        title: t("shell.butlerSettingsSaved"),
+        tone: "success"
+      });
+    } catch (saveError) {
+      showToast({
+        title: t("shell.butlerSettingsSaveFailed"),
+        description: saveError instanceof Error ? saveError.message : undefined,
+        tone: "error"
+      });
+    } finally {
+      setSavingSettings(false);
+    }
+  }
+
   function resetProjectView(providerId: ButlerProviderId) {
     setViewKey((current) => current + 1);
     navigate(buildWorkspaceButlerPath(workspaceId), {
@@ -480,174 +646,269 @@ export function ButlerPage() {
 
   if (!initialized) {
     return (
-      <main className="workbench-page butler-page-shell">
-        <section className="butler-init-panel">
-          <header className="butler-panel-header">
-            <h1>{t("shell.butlerInitTitle")}</h1>
-            <p>{t("shell.butlerInitDescription")}</p>
-          </header>
+      <main className="workbench-page butler-page-shell butler-init-shell">
+        <div className="butler-init-backdrop" aria-hidden="true">
+          <span className="butler-init-glow butler-init-glow-primary" />
+          <span className="butler-init-glow butler-init-glow-secondary" />
+        </div>
 
-          <form className="butler-init-form" onSubmit={handleProfileInitSubmit}>
-            <label className="butler-form-field">
-              <span>{t("shell.butlerDisplayNameLabel")}</span>
-              <input
-                value={initForm.displayName}
-                onChange={(event) =>
-                  setInitForm((current) => ({
-                    ...current,
-                    displayName: event.target.value
-                  }))
-                }
-                placeholder={t("shell.butlerDisplayNamePlaceholder")}
-              />
-              <small>{t("shell.butlerDisplayNameHint")}</small>
-            </label>
+        <div className="butler-init-layout">
+            <aside className="butler-init-sidebar">
+              <section className="butler-init-hero-card">
+                <div className="butler-init-hero-copy">
+                  <h1>{t("shell.butlerInitTitle")}</h1>
+                  <p>{t("shell.butlerInitDescription")}</p>
+                </div>
+              </section>
 
-            <label className="butler-form-field">
-              <span>{t("shell.butlerProviderLabel")}</span>
-              <select
-                value={initForm.providerId}
-                onChange={(event) =>
-                  setInitForm((current) => ({
-                    ...current,
-                    providerId: event.target.value as ButlerProviderId
-                  }))
-                }
-              >
-                {providerOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+              <section className="butler-init-preview-card">
+                <header className="butler-init-section-header">
+                  <div>
+                    <h2>{t("shell.butlerInitPreviewTitle")}</h2>
+                  </div>
+                </header>
 
-            <label className="butler-form-field">
-              <span>{t("shell.butlerAgentsModeLabel")}</span>
-              <select
-                value={initForm.agentsMode}
-                onChange={(event) =>
-                  setInitForm((current) => ({
-                    ...current,
-                    agentsMode: event.target.value as "inline" | "file"
-                  }))
-                }
-              >
-                {agentsModeOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-              <small>
-                {initForm.agentsMode === "inline"
-                  ? t("shell.butlerAgentsModeInlineDescription")
-                  : t("shell.butlerAgentsModeFileDescription")}
-              </small>
-            </label>
+                <div className="butler-init-preview-identity">
+                  <div className="butler-init-preview-nameplate">
+                    <div className="butler-chat-avatar butler-init-preview-avatar">
+                      <span>{butlerAvatar}</span>
+                    </div>
+                    <strong>{butlerDisplayName}</strong>
+                  </div>
+                  <span className="butler-init-preview-provider">{initSelectedProviderLabel}</span>
+                </div>
 
-            <label className="butler-form-field">
-              <span>{t("shell.butlerPersonaToneLabel")}</span>
-              <select
-                value={initForm.personaTone}
-                onChange={(event) =>
-                  setInitForm((current) => ({
-                    ...current,
-                    personaTone: event.target.value as ButlerToneId
-                  }))
-                }
-              >
-                {toneOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+                <div className="butler-init-chip-list">
+                  {initPreviewTags.map((tag) => (
+                    <span key={tag} className="butler-init-chip">
+                      {tag}
+                    </span>
+                  ))}
+                </div>
 
-            <label className="butler-form-field">
-              <span>{t("shell.butlerPersonaLanguageLabel")}</span>
-              <select
-                value={initForm.personaLanguage}
-                onChange={(event) =>
-                  setInitForm((current) => ({
-                    ...current,
-                    personaLanguage: event.target.value as ButlerLanguageId
-                  }))
-                }
-              >
-                {languageOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+                <div className="butler-init-preview-rows">
+                  <div className="butler-init-preview-row">
+                    <span>{t("shell.butlerPersonaToneLabel")}</span>
+                    <strong>{initSelectedToneLabel}</strong>
+                  </div>
+                  <div className="butler-init-preview-row">
+                    <span>{t("shell.butlerInitPreviewRuleLabel")}</span>
+                    <strong>{initSelectedAgentsModeLabel}</strong>
+                  </div>
+                  <div className="butler-init-preview-row">
+                    <span>{t("shell.butlerPersonaSummaryStyleLabel")}</span>
+                    <strong>{initSelectedSummaryStyleLabel}</strong>
+                  </div>
+                  <div className="butler-init-preview-row">
+                    <span>{t("shell.butlerReportPriorityPresetLabel")}</span>
+                    <strong>{initSelectedReportPriorityLabel}</strong>
+                  </div>
+                </div>
 
-            <label className="butler-form-field">
-              <span>{t("shell.butlerPersonaSummaryStyleLabel")}</span>
-              <select
-                value={initForm.personaSummaryStyle}
-                onChange={(event) =>
-                  setInitForm((current) => ({
-                    ...current,
-                    personaSummaryStyle: event.target.value as ButlerSummaryStyleId
-                  }))
-                }
-              >
-                {summaryStyleOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+              </section>
+            </aside>
 
-            <label className="butler-form-field">
-              <span>{t("shell.butlerFocusRiskPreferenceLabel")}</span>
-              <select
-                value={initForm.focusRiskPreference}
-                onChange={(event) =>
-                  setInitForm((current) => ({
-                    ...current,
-                    focusRiskPreference: event.target.value as ButlerRiskPreferenceId
-                  }))
-                }
-              >
-                {riskPreferenceOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <form className="butler-init-form" onSubmit={handleProfileInitSubmit}>
+              <section className="butler-init-form-section">
+                <header className="butler-init-section-header">
+                  <div>
+                    <h2>{t("shell.butlerInitBasicsTitle")}</h2>
+                  </div>
+                </header>
 
-            <label className="butler-form-field">
-              <span>{t("shell.butlerReportPriorityPresetLabel")}</span>
-              <select
-                value={initForm.reportPriorityPreset}
-                onChange={(event) =>
-                  setInitForm((current) => ({
-                    ...current,
-                    reportPriorityPreset: event.target.value as ButlerReportPriorityPresetId
-                  }))
-                }
-              >
-                {reportPriorityPresetOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+                <div className="butler-init-basic-grid">
+                  <label className="butler-form-field">
+                    <span>{t("shell.butlerDisplayNameLabel")}</span>
+                    <input
+                      className="butler-form-control"
+                      value={initForm.displayName}
+                      onChange={(event) =>
+                        setInitForm((current) => ({
+                          ...current,
+                          displayName: event.target.value
+                        }))
+                      }
+                      placeholder={t("shell.butlerDisplayNamePlaceholder")}
+                    />
+                    <small>{t("shell.butlerDisplayNameHint")}</small>
+                  </label>
 
-            <button type="submit" disabled={loading || initializingProfile}>
-              {loading || initializingProfile
-                ? t("shell.butlerInitSubmitting")
-                : t("shell.butlerInitSubmit")}
-            </button>
-          </form>
-        </section>
+                  <label className="butler-form-field">
+                    <span>{t("shell.butlerProviderLabel")}</span>
+                    <select
+                      className="butler-form-control"
+                      value={initForm.providerId}
+                      onChange={(event) =>
+                        setInitForm((current) => ({
+                          ...current,
+                          providerId: event.target.value as ButlerProviderId
+                        }))
+                      }
+                    >
+                      {providerOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="butler-form-field butler-form-field-wide">
+                    <span>{t("shell.butlerAgentsModeLabel")}</span>
+                    <select
+                      className="butler-form-control"
+                      value={initForm.agentsMode}
+                      onChange={(event) =>
+                        setInitForm((current) => ({
+                          ...current,
+                          agentsMode: event.target.value as "inline" | "file"
+                        }))
+                      }
+                    >
+                      {agentsModeOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                    <small>{initSelectedAgentsModeDescription}</small>
+                  </label>
+                </div>
+              </section>
+
+              <section className="butler-init-form-section">
+                <header className="butler-init-section-header">
+                  <div>
+                    <h2>{t("shell.butlerInitPersonaTitle")}</h2>
+                  </div>
+                </header>
+
+                <div className="butler-init-persona-grid">
+                  <label className="butler-form-field">
+                    <span>{t("shell.butlerPersonaToneLabel")}</span>
+                    <select
+                      className="butler-form-control"
+                      value={initForm.personaTone}
+                      onChange={(event) =>
+                        setInitForm((current) => ({
+                          ...current,
+                          personaTone: event.target.value as ButlerToneId
+                        }))
+                      }
+                    >
+                      {toneOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="butler-form-field">
+                    <span>{t("shell.butlerPersonaLanguageLabel")}</span>
+                    <select
+                      className="butler-form-control"
+                      value={initForm.personaLanguage}
+                      onChange={(event) =>
+                        setInitForm((current) => ({
+                          ...current,
+                          personaLanguage: event.target.value as ButlerLanguageId
+                        }))
+                      }
+                    >
+                      {languageOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="butler-form-field">
+                    <span>{t("shell.butlerPersonaSummaryStyleLabel")}</span>
+                    <select
+                      className="butler-form-control"
+                      value={initForm.personaSummaryStyle}
+                      onChange={(event) =>
+                        setInitForm((current) => ({
+                          ...current,
+                          personaSummaryStyle: event.target.value as ButlerSummaryStyleId
+                        }))
+                      }
+                    >
+                      {summaryStyleOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              </section>
+
+              <section className="butler-init-form-section">
+                <header className="butler-init-section-header">
+                  <div>
+                    <h2>{t("shell.butlerInitPreferenceTitle")}</h2>
+                  </div>
+                </header>
+
+                <div className="butler-init-preferences-grid">
+                  <label className="butler-form-field">
+                    <span>{t("shell.butlerFocusRiskPreferenceLabel")}</span>
+                    <select
+                      className="butler-form-control"
+                      value={initForm.focusRiskPreference}
+                      onChange={(event) =>
+                        setInitForm((current) => ({
+                          ...current,
+                          focusRiskPreference: event.target.value as ButlerRiskPreferenceId
+                        }))
+                      }
+                    >
+                      {riskPreferenceOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="butler-form-field">
+                    <span>{t("shell.butlerReportPriorityPresetLabel")}</span>
+                    <select
+                      className="butler-form-control"
+                      value={initForm.reportPriorityPreset}
+                      onChange={(event) =>
+                        setInitForm((current) => ({
+                          ...current,
+                          reportPriorityPreset: event.target.value as ButlerReportPriorityPresetId
+                        }))
+                      }
+                    >
+                      {reportPriorityPresetOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              </section>
+
+              <div className="butler-init-actions">
+                <button
+                  className="butler-init-submit"
+                  type="submit"
+                  disabled={loading || initializingProfile}
+                >
+                  {loading || initializingProfile
+                    ? t("shell.butlerInitSubmitting")
+                    : t("shell.butlerInitSubmit")}
+                </button>
+              </div>
+            </form>
+        </div>
       </main>
     );
   }
@@ -872,39 +1133,42 @@ function ButlerAuxiliaryPanel(props: {
   inboxItems: ButlerInboxItemDto[];
   followUpTasks: ButlerFollowUpTaskDto[];
   patrolPlans: ButlerPatrolPlanDto[];
+  settingsForm: ButlerSettingsFormState;
+  savingSettings: boolean;
   onOpenFollowUpHistory: () => void;
   onOpenFollowUpDetail: (taskId: string) => Promise<void>;
+  onSettingsFormChange: (patch: Partial<ButlerSettingsFormState>) => void;
+  onSaveSettings: () => void;
 }) {
-  const [activeTab, setActiveTab] = useState<"info" | "automation">("info");
+  const [activeTab, setActiveTab] = useState<"info" | "automation" | "settings">("info");
+  const tabs = [
+    { id: "info", label: t("shell.butlerSidebarInfoTab") },
+    { id: "automation", label: t("shell.butlerSidebarAutomationTab") },
+    { id: "settings", label: t("shell.butlerSidebarSettingsTab") }
+  ] as const;
 
   return (
     <div className="butler-side-column">
       <div className="workbench-auxiliary-header butler-side-header">
-        <div className="butler-side-tabs" role="tablist" aria-label={t("shell.butlerSidebarTabsLabel")}>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === "info"}
-            className="butler-side-tab"
-            data-active={activeTab === "info"}
-            onClick={() => {
-              setActiveTab("info");
-            }}
-          >
-            {t("shell.butlerSidebarInfoTab")}
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === "automation"}
-            className="butler-side-tab"
-            data-active={activeTab === "automation"}
-            onClick={() => {
-              setActiveTab("automation");
-            }}
-          >
-            {t("shell.butlerSidebarAutomationTab")}
-          </button>
+        <div
+          className="workbench-info-tabs butler-side-tabs"
+          role="tablist"
+          aria-label={t("shell.butlerSidebarTabsLabel")}
+        >
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              aria-selected={activeTab === tab.id}
+              className={activeTab === tab.id ? "workbench-info-tab active" : "workbench-info-tab"}
+              onClick={() => {
+                setActiveTab(tab.id);
+              }}
+            >
+              {tab.label}
+            </button>
+          ))}
         </div>
       </div>
       {activeTab === "info" ? (
@@ -915,11 +1179,18 @@ function ButlerAuxiliaryPanel(props: {
           onOpenFollowUpHistory={props.onOpenFollowUpHistory}
           onOpenFollowUpDetail={props.onOpenFollowUpDetail}
         />
-      ) : (
+      ) : activeTab === "automation" ? (
         <AutomationSidebarContent
           overview={props.overview}
           followUpTasks={props.followUpTasks}
           patrolPlans={props.patrolPlans}
+        />
+      ) : (
+        <SettingsSidebarContent
+          settingsForm={props.settingsForm}
+          savingSettings={props.savingSettings}
+          onSettingsFormChange={props.onSettingsFormChange}
+          onSaveSettings={props.onSaveSettings}
         />
       )}
     </div>
@@ -951,13 +1222,11 @@ function GlobalRecordsSidebarContent(props: {
       />
       <GlobalRecordCard
         title={t("shell.butlerInfoVerificationRecordsTitle")}
-        description={t("shell.butlerInfoVerificationRecordsDescription")}
         items={verificationRecords}
         emptyText={t("shell.butlerInfoVerificationRecordsEmpty")}
       />
       <GlobalRecordCard
         title={t("shell.butlerInfoTodoRecordsTitle")}
-        description={t("shell.butlerInfoTodoRecordsDescription")}
         items={todoRecords}
         emptyText={t("shell.butlerInfoTodoRecordsEmpty")}
       />
@@ -995,7 +1264,6 @@ function AutomationSidebarContent(props: {
 
 function GlobalRecordCard(props: {
   title: string;
-  description: string;
   items: Array<{
     title: string;
     content: string;
@@ -1003,10 +1271,9 @@ function GlobalRecordCard(props: {
   emptyText: string;
 }) {
   return (
-    <section className="butler-side-card surface-card">
+    <section className="butler-side-card">
       <header>
         <h2>{props.title}</h2>
-        <p>{props.description}</p>
       </header>
       {props.items.length > 0 ? (
         <div className="butler-record-list">
@@ -1046,11 +1313,10 @@ function FollowUpStatusCard(props: {
   );
 
   return (
-    <section className="butler-side-card surface-card">
+    <section className="butler-side-card">
       <header>
         <div className="butler-card-header-copy">
           <h2>{t("shell.butlerInfoFollowUpRecordsTitle")}</h2>
-          <p>{t("shell.butlerInfoFollowUpRecordsDescription")}</p>
         </div>
         <button
           type="button"
@@ -1173,10 +1439,9 @@ function AutomationTaskOverviewCard(props: {
   emptyText: string;
 }) {
   return (
-    <section className="butler-side-card surface-card">
+    <section className="butler-side-card">
       <header>
         <h2>{t("shell.butlerAutomationTasksTitle")}</h2>
-        <p>{t("shell.butlerAutomationTasksDescription")}</p>
       </header>
       {props.items.length > 0 ? (
         <div className="butler-record-list">
@@ -1220,10 +1485,9 @@ function AutomationRunOverviewCard(props: {
   emptyText: string;
 }) {
   return (
-    <section className="butler-side-card surface-card">
+    <section className="butler-side-card">
       <header>
         <h2>{t("shell.butlerAutomationRunsTitle")}</h2>
-        <p>{t("shell.butlerAutomationRunsDescription")}</p>
       </header>
       {props.items.length > 0 ? (
         <div className="butler-record-list">
@@ -1258,6 +1522,207 @@ function AutomationRunOverviewCard(props: {
       ) : (
         <p className="butler-secondary-text">{props.emptyText}</p>
       )}
+    </section>
+  );
+}
+
+function SettingsSidebarContent(props: {
+  settingsForm: ButlerSettingsFormState;
+  savingSettings: boolean;
+  onSettingsFormChange: (patch: Partial<ButlerSettingsFormState>) => void;
+  onSaveSettings: () => void;
+}) {
+  return (
+    <section className="butler-side-card butler-settings-panel">
+      <header>
+        <h2>{t("shell.butlerSettingsTitle")}</h2>
+      </header>
+      <label className="butler-form-field">
+        <span>{t("shell.butlerDisplayNameLabel")}</span>
+        <input
+          aria-label={t("shell.butlerDisplayNameLabel")}
+          className="butler-form-control"
+          value={props.settingsForm.displayName}
+          disabled={props.savingSettings}
+          onChange={(event) => {
+            props.onSettingsFormChange({
+              displayName: event.target.value
+            });
+          }}
+        />
+      </label>
+      <label className="butler-form-field">
+        <span>{t("shell.butlerAgentsModeLabel")}</span>
+        <select
+          aria-label={t("shell.butlerAgentsModeLabel")}
+          className="butler-form-control"
+          value={props.settingsForm.agentsMode}
+          disabled={props.savingSettings}
+          onChange={(event) => {
+            props.onSettingsFormChange({
+              agentsMode: event.target.value as ButlerSettingsFormState["agentsMode"]
+            });
+          }}
+        >
+          <option value="inline">{t("shell.butlerAgentsModeInline")}</option>
+          <option value="file">{t("shell.butlerAgentsModeFile")}</option>
+        </select>
+        <small>
+          {props.settingsForm.agentsMode === "file"
+            ? t("shell.butlerAgentsModeFileDescription")
+            : t("shell.butlerAgentsModeInlineDescription")}
+        </small>
+      </label>
+      {props.settingsForm.agentsMode === "file" ? (
+        <label className="butler-form-field">
+          <span>{t("shell.butlerAgentsFilePathLabel")}</span>
+          <input
+            aria-label={t("shell.butlerAgentsFilePathLabel")}
+            className="butler-form-control butler-settings-file-path"
+            value={props.settingsForm.agentsFilePath}
+            readOnly
+            disabled={props.savingSettings}
+          />
+        </label>
+      ) : null}
+      <label className="butler-form-field">
+        <span>{t("shell.butlerAgentsContentLabel")}</span>
+        <textarea
+          aria-label={t("shell.butlerAgentsContentLabel")}
+          className="butler-form-control butler-settings-agents-editor"
+          rows={10}
+          value={props.settingsForm.agentsContent}
+          disabled={props.savingSettings}
+          placeholder={t("shell.butlerAgentsContentPlaceholder")}
+          onChange={(event) => {
+            props.onSettingsFormChange({
+              agentsContent: event.target.value
+            });
+          }}
+        />
+        <small>{t("shell.butlerAgentsContentHint")}</small>
+      </label>
+      <label className="butler-form-field">
+        <span>{t("shell.butlerPersonaToneLabel")}</span>
+        <select
+          aria-label={t("shell.butlerPersonaToneLabel")}
+          className="butler-form-control"
+          value={props.settingsForm.personaTone}
+          disabled={props.savingSettings}
+          onChange={(event) => {
+            props.onSettingsFormChange({
+              personaTone: event.target.value as ButlerToneId
+            });
+          }}
+        >
+          <option value="direct">{t("shell.butlerToneDirect")}</option>
+          <option value="steady">{t("shell.butlerToneSteady")}</option>
+          <option value="friendly">{t("shell.butlerToneFriendly")}</option>
+        </select>
+      </label>
+      <label className="butler-form-field">
+        <span>{t("shell.butlerPersonaLanguageLabel")}</span>
+        <select
+          aria-label={t("shell.butlerPersonaLanguageLabel")}
+          className="butler-form-control"
+          value={props.settingsForm.personaLanguage}
+          disabled={props.savingSettings}
+          onChange={(event) => {
+            props.onSettingsFormChange({
+              personaLanguage: event.target.value as ButlerLanguageId
+            });
+          }}
+        >
+          <option value="zh-CN">{t("shell.butlerLanguageZhCn")}</option>
+          <option value="en-US">{t("shell.butlerLanguageEnUs")}</option>
+          <option value="bilingual">{t("shell.butlerLanguageBilingual")}</option>
+        </select>
+      </label>
+      <label className="butler-form-field">
+        <span>{t("shell.butlerPersonaSummaryStyleLabel")}</span>
+        <select
+          aria-label={t("shell.butlerPersonaSummaryStyleLabel")}
+          className="butler-form-control"
+          value={props.settingsForm.personaSummaryStyle}
+          disabled={props.savingSettings}
+          onChange={(event) => {
+            props.onSettingsFormChange({
+              personaSummaryStyle: event.target.value as ButlerSummaryStyleId
+            });
+          }}
+        >
+          <option value="brief">{t("shell.butlerSummaryBrief")}</option>
+          <option value="structured">{t("shell.butlerSummaryStructured")}</option>
+          <option value="thorough">{t("shell.butlerSummaryThorough")}</option>
+        </select>
+      </label>
+      <label className="butler-form-field">
+        <span>{t("shell.butlerFocusRiskPreferenceLabel")}</span>
+        <select
+          aria-label={t("shell.butlerFocusRiskPreferenceLabel")}
+          className="butler-form-control"
+          value={props.settingsForm.focusRiskPreference}
+          disabled={props.savingSettings}
+          onChange={(event) => {
+            props.onSettingsFormChange({
+              focusRiskPreference: event.target.value as ButlerRiskPreferenceId
+            });
+          }}
+        >
+          <option value="conservative">{t("shell.butlerRiskConservative")}</option>
+          <option value="balanced">{t("shell.butlerRiskBalanced")}</option>
+          <option value="proactive">{t("shell.butlerRiskProactive")}</option>
+        </select>
+      </label>
+      <label className="butler-form-field">
+        <span>{t("shell.butlerReportPriorityPresetLabel")}</span>
+        <select
+          aria-label={t("shell.butlerReportPriorityPresetLabel")}
+          className="butler-form-control"
+          value={props.settingsForm.reportPriorityPreset}
+          disabled={props.savingSettings}
+          onChange={(event) => {
+            props.onSettingsFormChange({
+              reportPriorityPreset: event.target.value as ButlerReportPriorityPresetId
+            });
+          }}
+        >
+          <option value="risk-first">{t("shell.butlerReportRiskFirst")}</option>
+          <option value="blocker-first">{t("shell.butlerReportBlockerFirst")}</option>
+          <option value="verification-first">{t("shell.butlerReportVerificationFirst")}</option>
+          <option value="progress-first">{t("shell.butlerReportProgressFirst")}</option>
+        </select>
+      </label>
+      <label className="butler-form-field">
+        <span>{t("shell.butlerSummaryDebounceLabel")}</span>
+        <select
+          aria-label={t("shell.butlerSummaryDebounceLabel")}
+          className="butler-form-control"
+          value={String(props.settingsForm.summaryDebounceSeconds)}
+          disabled={props.savingSettings}
+          onChange={(event) => {
+            props.onSettingsFormChange({
+              summaryDebounceSeconds: Number(event.target.value)
+            });
+          }}
+        >
+          {SUMMARY_DEBOUNCE_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {t(option.labelKey)}
+            </option>
+          ))}
+        </select>
+      </label>
+      <div className="butler-inline-actions">
+        <button
+          type="button"
+          className="primary-button"
+          disabled={props.savingSettings}
+          onClick={props.onSaveSettings}
+        >
+          {props.savingSettings ? t("shell.butlerSettingsSaving") : t("shell.butlerSettingsSaveAction")}
+        </button>
+      </div>
     </section>
   );
 }
@@ -1504,6 +1969,32 @@ function parseIsoTime(value: string | null | undefined): number {
   return Number.isNaN(time) ? 0 : time;
 }
 
+function resolveReportPriorityPreset(reportPriority: string[]): ButlerReportPriorityPresetId {
+  for (const [preset, priorities] of Object.entries(REPORT_PRIORITY_PRESET_VALUES)) {
+    if (
+      priorities.length === reportPriority.length
+      && priorities.every((value, index) => value === reportPriority[index])
+    ) {
+      return preset as ButlerReportPriorityPresetId;
+    }
+  }
+
+  return "risk-first";
+}
+
+function resolveAgentsFilePath(profile: {
+  workspacePath: string;
+  agentsFilePath: string | null;
+}): string {
+  if (profile.agentsFilePath?.trim()) {
+    return profile.agentsFilePath.trim();
+  }
+
+  const separator = profile.workspacePath.includes("\\") ? "\\" : "/";
+  const normalizedWorkspacePath = profile.workspacePath.replace(/[\\/]+$/, "");
+  return `${normalizedWorkspacePath}${separator}AGENTS.md`;
+}
+
 function resolveTodoStatusLabel(status: ButlerInboxItemDto["status"]): string {
   switch (status) {
     case "pending":
@@ -1582,19 +2073,69 @@ function resolveAutomationRunSourceLabel(kind: "patrol_run" | "follow_up_round")
     : t("shell.butlerAutomationRunSourceFollowUp");
 }
 
-function resolveButlerAvatar(displayName: string): string {
-  const normalized = displayName.trim();
+function resolveButlerAvatar(input: {
+  displayName: string;
+  providerId: ButlerProviderId;
+  tone: ButlerToneId;
+}): string {
+  const normalized = input.displayName.trim();
+  const hashSeed = `${normalized}:${input.providerId}:${input.tone}`;
+  const emojiPool = resolveButlerAvatarPool(input);
 
-  if (!normalized) {
-    return BUTLER_AVATARS[0]!;
+  if (!hashSeed) {
+    return BUTLER_AVATAR_POOLS.default[0]!;
   }
 
-  const codePointTotal = Array.from(normalized).reduce((total, character) => {
+  const codePointTotal = Array.from(hashSeed).reduce((total, character) => {
     const codePoint = character.codePointAt(0) ?? 0;
     return total + codePoint;
   }, 0);
 
-  return BUTLER_AVATARS[codePointTotal % BUTLER_AVATARS.length]!;
+  return emojiPool[codePointTotal % emojiPool.length]!;
+}
+
+function resolveButlerAvatarPool(input: {
+  displayName: string;
+  providerId: ButlerProviderId;
+  tone: ButlerToneId;
+}): readonly string[] {
+  const normalized = input.displayName.trim().toLowerCase();
+
+  // 先看名字有没有明显语义，再回退到供应商和语气，保证同一助手稳定落在同一组头像里。
+  if (/(bot|ai|智能|助手|助理|管家|buddy|helper)/.test(normalized)) {
+    return BUTLER_AVATAR_POOLS.builder;
+  }
+
+  if (/(书|学|知|研|析|查|review|audit|scan)/.test(normalized)) {
+    return BUTLER_AVATAR_POOLS.analyst;
+  }
+
+  if (input.tone === "friendly") {
+    return BUTLER_AVATAR_POOLS.friendly;
+  }
+
+  if (input.tone === "steady") {
+    return BUTLER_AVATAR_POOLS.steady;
+  }
+
+  if (input.tone === "direct") {
+    return input.providerId === "claude-code"
+      ? BUTLER_AVATAR_POOLS.analyst
+      : BUTLER_AVATAR_POOLS.direct;
+  }
+
+  if (input.providerId === "claude-code") {
+    return BUTLER_AVATAR_POOLS.analyst;
+  }
+
+  return BUTLER_AVATAR_POOLS.default;
+}
+
+function resolveOptionLabel<T extends string>(
+  options: ReadonlyArray<{ value: T; label: string }>,
+  value: T
+): string {
+  return options.find((option) => option.value === value)?.label ?? value;
 }
 
 function ButlerPlusIcon() {

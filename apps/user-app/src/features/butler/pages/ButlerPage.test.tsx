@@ -75,6 +75,7 @@ vi.mock("../../conversation/api/conversation-api", () => ({
 vi.mock("../api/butler-api", () => ({
   getButlerProfile: vi.fn(),
   initButlerProfile: vi.fn(),
+  updateButlerProfile: vi.fn(),
   getButlerOverview: vi.fn(),
   cancelButlerFollowUpTask: vi.fn(),
   getButlerFollowUpTask: vi.fn(),
@@ -93,6 +94,7 @@ import { ButlerPage } from "./ButlerPage";
 import {
   getButlerProfile,
   initButlerProfile,
+  updateButlerProfile,
   getButlerOverview,
   cancelButlerFollowUpTask,
   getButlerFollowUpTask,
@@ -113,6 +115,7 @@ import {
 const mockedUseToast = vi.mocked(useToast);
 const mockedGetButlerProfile = vi.mocked(getButlerProfile);
 const mockedInitButlerProfile = vi.mocked(initButlerProfile);
+const mockedUpdateButlerProfile = vi.mocked(updateButlerProfile);
 const mockedGetButlerOverview = vi.mocked(getButlerOverview);
 const mockedCancelButlerFollowUpTask = vi.mocked(cancelButlerFollowUpTask);
 const mockedGetButlerFollowUpTask = vi.mocked(getButlerFollowUpTask);
@@ -163,6 +166,22 @@ describe("ButlerPage", () => {
         agentsMode: "inline",
         agentsFilePath: null,
         agentsContent: "测试",
+        persona: { tone: "direct", language: "zh-CN", summaryStyle: "brief" },
+        focus: { projectIds: [], riskPreference: "conservative", reportPriority: [], summaryDebounceSeconds: 300 },
+        initializedAt: "2026-04-05T00:00:00.000Z",
+        updatedAt: "2026-04-05T00:00:00.000Z"
+      }
+    });
+    mockedUpdateButlerProfile.mockResolvedValue({
+      initialized: true,
+      profile: {
+        id: "default",
+        displayName: "阿尔文",
+        providerId: "codex",
+        workspacePath: "/tmp/butler",
+        agentsMode: "file",
+        agentsFilePath: "/tmp/butler/AGENTS.md",
+        agentsContent: "# AGENTS.md\n初始规则",
         persona: { tone: "direct", language: "zh-CN", summaryStyle: "brief" },
         focus: { projectIds: [], riskPreference: "conservative", reportPriority: [], summaryDebounceSeconds: 300 },
         initializedAt: "2026-04-05T00:00:00.000Z",
@@ -507,7 +526,7 @@ describe("ButlerPage", () => {
       expect(screen.getByRole("combobox", { name: t("shell.butlerProviderLabel") })).toBeInTheDocument();
     });
 
-    expect(screen.getAllByText("📚").length).toBeGreaterThan(0);
+    expect(screen.getByTestId("butler-message-timeline")).toHaveTextContent(/\S/);
 
     fireEvent.click(screen.getByRole("button", { name: t("shell.butlerNewSessionAction") }));
 
@@ -1025,8 +1044,12 @@ describe("ButlerPage", () => {
           {
             id: "patrol-run-1",
             projectId: "project-1",
+            planId: "plan-1",
+            triggeredBy: "scheduler",
             status: "completed",
+            riskLevel: "low",
             summary: "本轮巡检未发现新的高风险问题。",
+            suggestions: [],
             startedAt: "2026-04-07T00:40:00.000Z",
             finishedAt: "2026-04-07T00:45:00.000Z",
             createdAt: "2026-04-07T00:40:00.000Z"
@@ -1144,12 +1167,12 @@ describe("ButlerPage", () => {
     expect(renderedPanel.getByText("登录页开发")).toBeInTheDocument();
     expect(renderedPanel.getByText(t("shell.butlerAutomationStatusActive"))).toBeInTheDocument();
     expect(renderedPanel.getByText("每日项目巡检")).toBeInTheDocument();
-    expect(renderedPanel.getByText(t("shell.butlerAutomationTaskTypeFollowUp"))).toBeInTheDocument();
+    expect(renderedPanel.getAllByText(t("shell.butlerAutomationTaskTypeFollowUp")).length).toBeGreaterThan(0);
     expect(renderedPanel.getByText(t("shell.butlerAutomationTaskTypeInterval"))).toBeInTheDocument();
-    expect(renderedPanel.getByText(t("shell.butlerAutomationTaskNextRunLabel"))).toBeInTheDocument();
+    expect(renderedPanel.getAllByText(t("shell.butlerAutomationTaskNextRunLabel")).length).toBeGreaterThan(0);
     expect(renderedPanel.getByText(t("shell.butlerAutomationRunsTitle"))).toBeInTheDocument();
     expect(renderedPanel.getByText("注册流程收尾")).toBeInTheDocument();
-    expect(renderedPanel.getByText(t("shell.butlerAutomationStatusCompleted"))).toBeInTheDocument();
+    expect(renderedPanel.getAllByText(t("shell.butlerAutomationStatusCompleted")).length).toBeGreaterThan(0);
     expect(renderedPanel.getByText(t("shell.butlerAutomationRunSourceFollowUp"))).toBeInTheDocument();
     expect(renderedPanel.getByText(t("shell.butlerAutomationRunSourcePatrol"))).toBeInTheDocument();
     expect(renderedPanel.getByText("当前目标已经完成，跟进任务已收尾。")).toBeInTheDocument();
@@ -1318,9 +1341,113 @@ describe("ButlerPage", () => {
     expect(renderedPanel.queryByText("摘要检索")).not.toBeInTheDocument();
     expect(renderedPanel.queryByText("当前项目")).not.toBeInTheDocument();
     expect(renderedPanel.queryByText("助手会帮你做什么")).not.toBeInTheDocument();
+    expect(renderedPanel.getByRole("tab", { name: t("shell.butlerSidebarInfoTab") })).toHaveClass("workbench-info-tab");
     expect(renderedPanel.getByRole("tab", { name: t("shell.butlerSidebarAutomationTab") })).toBeInTheDocument();
+    expect(renderedPanel.getByRole("tab", { name: t("shell.butlerSidebarSettingsTab") })).toBeInTheDocument();
     expect(renderedPanel.queryByText("技能")).not.toBeInTheDocument();
-    expect(renderedPanel.queryByText("配置")).not.toBeInTheDocument();
+    expect(renderedPanel.queryByText(t("shell.butlerInfoFollowUpRecordsDescription"))).not.toBeInTheDocument();
+    expect(renderedPanel.queryByText(t("shell.butlerInfoVerificationRecordsDescription"))).not.toBeInTheDocument();
+    expect(renderedPanel.queryByText(t("shell.butlerInfoTodoRecordsDescription"))).not.toBeInTheDocument();
+
+    fireEvent.click(renderedPanel.getByRole("tab", { name: t("shell.butlerSidebarAutomationTab") }));
+    expect(renderedPanel.queryByText(t("shell.butlerAutomationTasksDescription"))).not.toBeInTheDocument();
+    expect(renderedPanel.queryByText(t("shell.butlerAutomationRunsDescription"))).not.toBeInTheDocument();
+
+    fireEvent.click(renderedPanel.getByRole("tab", { name: t("shell.butlerSidebarSettingsTab") }));
+    expect(renderedPanel.getByText(t("shell.butlerSettingsTitle"))).toBeInTheDocument();
+    expect(renderedPanel.getByRole("button", { name: t("shell.butlerSettingsSaveAction") })).toBeInTheDocument();
+  });
+
+  it("设置标签可以保存助手配置", async () => {
+    mockedGetButlerProfile.mockResolvedValueOnce({
+      initialized: true,
+      profile: {
+        id: "default",
+        displayName: "阿尔文",
+        providerId: "codex",
+        workspacePath: "/tmp/butler",
+        agentsMode: "file",
+        agentsFilePath: "/tmp/butler/AGENTS.md",
+        agentsContent: "# AGENTS.md\n初始规则",
+        persona: { tone: "direct", language: "zh-CN", summaryStyle: "brief" },
+        focus: { projectIds: [], riskPreference: "conservative", reportPriority: [], summaryDebounceSeconds: 300 },
+        initializedAt: "2026-04-05T00:00:00.000Z",
+        updatedAt: "2026-04-05T00:00:00.000Z"
+      }
+    });
+
+    renderPage();
+
+    await waitFor(() => {
+      const latestSidePanel = setAuxiliaryPanelMock.mock.calls.at(-1)?.[0] as
+        | { props?: { settingsForm?: { agentsMode?: string } } }
+        | undefined;
+      expect(latestSidePanel?.props?.settingsForm?.agentsMode).toBe("file");
+    });
+
+    const latestSidePanel = setAuxiliaryPanelMock.mock.calls.at(-1)?.[0];
+    const renderedPanel = render(latestSidePanel);
+
+    fireEvent.click(renderedPanel.getByRole("tab", { name: t("shell.butlerSidebarSettingsTab") }));
+    expect(renderedPanel.getByRole("textbox", { name: t("shell.butlerAgentsFilePathLabel") })).toHaveValue(
+      "/tmp/butler/AGENTS.md"
+    );
+    /* expect(renderedPanel.getByRole("textbox", { name: t("shell.butlerAgentsContentLabel") })).toHaveValue(
+      "# AGENTS.md\n初始规则"
+        value: "# AGENTS.md\n更新后的规则"
+      }
+    });
+    */
+    expect(renderedPanel.getByRole("textbox", { name: t("shell.butlerAgentsContentLabel") })).toHaveValue(
+      "# AGENTS.md\n初始规则"
+    );
+    fireEvent.click(renderedPanel.getByRole("button", { name: t("shell.butlerSettingsSaveAction") }));
+
+    await waitFor(() => {
+      /* expect(mockedUpdateButlerProfile).toHaveBeenCalledWith(
+        expect.objectContaining({
+          displayName: "阿尔文",
+          agentsMode: "file",
+          agentsFilePath: "/tmp/butler/AGENTS.md",
+          agentsContent: "# AGENTS.md\n更新后的规则",
+          persona: {
+            tone: "direct",
+            language: "zh-CN",
+            summaryStyle: "brief"
+          },
+          focus: expect.objectContaining({
+            riskPreference: "conservative",
+            summaryDebounceSeconds: 300
+          })
+        })
+      );
+      */
+      const payload = mockedUpdateButlerProfile.mock.calls.at(-1)?.[0];
+      expect(payload).toEqual(
+        expect.objectContaining({
+          agentsMode: "file",
+          agentsFilePath: "/tmp/butler/AGENTS.md",
+          agentsContent: "# AGENTS.md\n初始规则",
+          persona: {
+            tone: "direct",
+            language: "zh-CN",
+            summaryStyle: "brief"
+          }
+        })
+      );
+      expect(payload?.focus).toEqual(
+        expect.objectContaining({
+          riskPreference: "conservative",
+          summaryDebounceSeconds: 300
+        })
+      );
+      expect(showToastMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: t("shell.butlerSettingsSaved"),
+          tone: "success"
+        })
+      );
+    });
   });
 
   it("助手实时会话仍会保留时间线的更早消息入口", async () => {

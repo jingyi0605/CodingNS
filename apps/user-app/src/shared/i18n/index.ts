@@ -135,6 +135,18 @@ const extensionZhCN = {
     butlerInitTitle: "初始化代码助手",
     butlerInitDescription:
       "先设置助手的称呼、provider 和工作方式。助手工作目录和第一版 AGENTS.md 会由系统自动创建。",
+    butlerInitPreviewTitle: "当前预览",
+    butlerInitPreviewDescription: "这不是花架子，下面这些选择会直接决定首版规则的语气和汇报方式。",
+    butlerInitBasicsTitle: "基础设置",
+    butlerInitBasicsDescription: "先把名字、provider 和规则载体定下来，别让初始化阶段长成配置地狱。",
+    butlerInitPersonaTitle: "表达方式",
+    butlerInitPersonaDescription: "语气、语言和总结风格决定它怎么说，不决定它会不会胡来。",
+    butlerInitPreferenceTitle: "默认偏好",
+    butlerInitPreferenceDescription: "这里控制它默认先盯什么风险、先汇报什么结果。",
+    butlerInitRuleLabel: "规则载体",
+    butlerInitTipAutoWorkspace: "系统会自动创建助手目录和首版 AGENTS.md，你现在只需要定默认偏好。",
+    butlerInitTipProviderSwitch: "Provider 后续还能切，不用在第一次初始化时把自己困死。",
+    butlerInitTipReportPriority: "汇报优先级会影响它先告诉你风险、阻塞，还是验证结果。",
     butlerDisplayNameLabel: "助手称呼",
     butlerDisplayNamePlaceholder: "例如：阿尔文、小助手",
     butlerDisplayNameHint: "这是助手的自称，系统会写入 AGENTS.md 首版规则。",
@@ -150,6 +162,10 @@ const extensionZhCN = {
       "文件：系统会在助手独立工作目录下写入 AGENTS.md，后续可以直接改这个文件。",
     butlerAgentsFilePathLabel: "AGENTS.md \u6587\u4ef6\u8def\u5f84",
     butlerAgentsFilePathPlaceholder: "\u4f8b\u5982\uff1a/Users/you/WorkFile/butler-home/AGENTS.md",
+    butlerAgentsContentLabel: "AGENTS \u89c4\u5219\u5185\u5bb9",
+    butlerAgentsContentPlaceholder: "输入助手的工作规则和解答风格",
+    butlerAgentsContentHint:
+      "这里维护助手的正式规则正文，保存后会直接回写 Butler 专用 AGENTS.md 或内联规则。",
     butlerPersonaToneLabel: "\u8bed\u6c14",
     butlerPersonaLanguageLabel: "\u4f7f\u7528\u8bed\u8a00",
     butlerPersonaSummaryStyleLabel: "\u603b\u7ed3\u98ce\u683c",
@@ -173,6 +189,18 @@ const extensionZhCN = {
     butlerReportBlockerFirst: "\u963b\u585e\u4f18\u5148",
     butlerReportVerificationFirst: "\u9a8c\u8bc1\u4f18\u5148",
     butlerReportProgressFirst: "\u8fdb\u5c55\u4f18\u5148",
+    butlerSummaryDebounceLabel: "\u4f1a\u8bdd\u6458\u8981\u9632\u6296",
+    butlerSummaryDebounceOption1Minute: "1 \u5206\u949f",
+    butlerSummaryDebounceOption3Minutes: "3 \u5206\u949f",
+    butlerSummaryDebounceOption5Minutes: "5 \u5206\u949f\uff08\u9ed8\u8ba4\uff09",
+    butlerSummaryDebounceOption10Minutes: "10 \u5206\u949f",
+    butlerSummaryDebounceOption15Minutes: "15 \u5206\u949f",
+    butlerSummaryDebounceOption30Minutes: "30 \u5206\u949f",
+    butlerSettingsTitle: "\u52a9\u624b\u8bbe\u7f6e",
+    butlerSettingsSaveAction: "\u4fdd\u5b58\u8bbe\u7f6e",
+    butlerSettingsSaving: "\u4fdd\u5b58\u4e2d...",
+    butlerSettingsSaved: "\u52a9\u624b\u8bbe\u7f6e\u5df2\u4fdd\u5b58",
+    butlerSettingsSaveFailed: "\u4fdd\u5b58\u52a9\u624b\u8bbe\u7f6e\u5931\u8d25",
     butlerInitSubmitting: "\u521d\u59cb\u5316\u4e2d...",
     butlerInitSubmit: "\u5b8c\u6210\u521d\u59cb\u5316",
     butlerInitSuccess: "代码助手初始化成功",
@@ -192,6 +220,7 @@ const extensionZhCN = {
     butlerLoadingDescription: "正在整理当前助手的会话、摘要和控制状态，请稍候。",
     butlerSidebarInfoTab: "\u4fe1\u606f",
     butlerSidebarAutomationTab: "自动化",
+    butlerSidebarSettingsTab: "\u8bbe\u7f6e",
     butlerSidebarTabsLabel: "助手信息栏标签",
     butlerSidebarLoadFailed: "助手信息栏读取失败",
     butlerInfoContextTitle: "当前上下文",
@@ -1135,6 +1164,25 @@ const extensionEnUS = {
     butlerInitTitle: "Initialize Butler",
     butlerInitDescription:
       "Set the Butler name, provider, and work style first. The dedicated workspace and first AGENTS.md will be created automatically.",
+    butlerInitPreviewTitle: "Live Preview",
+    butlerInitPreviewDescription:
+      "These choices directly shape the first rule set, so show the result instead of dumping a plain form.",
+    butlerInitBasicsTitle: "Basics",
+    butlerInitBasicsDescription:
+      "Lock in the name, provider, and rule storage first so initialization does not become config soup.",
+    butlerInitPersonaTitle: "Expression Style",
+    butlerInitPersonaDescription:
+      "Tone, language, and summary style decide how Butler speaks, not whether it gets to be sloppy.",
+    butlerInitPreferenceTitle: "Default Priorities",
+    butlerInitPreferenceDescription:
+      "This decides which risks Butler watches first and what it surfaces first in reports.",
+    butlerInitRuleLabel: "Rule Format",
+    butlerInitTipAutoWorkspace:
+      "The system creates the Butler workspace and first AGENTS.md automatically, so you only set the defaults here.",
+    butlerInitTipProviderSwitch:
+      "You can switch provider later, so do not overthink the first initialization pass.",
+    butlerInitTipReportPriority:
+      "Report priority changes whether Butler leads with risk, blockers, or verification results.",
     butlerDisplayNameLabel: "Butler Name",
     butlerDisplayNamePlaceholder: "Example: Arvin, Butler",
     butlerDisplayNameHint:
@@ -1151,6 +1199,10 @@ const extensionEnUS = {
       "File: the system writes AGENTS.md into the Butler workspace so you can edit the file directly later.",
     butlerAgentsFilePathLabel: "AGENTS.md File Path",
     butlerAgentsFilePathPlaceholder: "Example: /Users/you/WorkFile/butler-home/AGENTS.md",
+    butlerAgentsContentLabel: "AGENTS Instructions",
+    butlerAgentsContentPlaceholder: "Describe the Butler's work rules and response style",
+    butlerAgentsContentHint:
+      "Maintain Butler's formal rules here. Saving will write back to the dedicated AGENTS.md or inline instructions.",
     butlerPersonaToneLabel: "Tone",
     butlerPersonaLanguageLabel: "Language",
     butlerPersonaSummaryStyleLabel: "Summary Style",
@@ -1174,6 +1226,18 @@ const extensionEnUS = {
     butlerReportBlockerFirst: "Blockers First",
     butlerReportVerificationFirst: "Verification First",
     butlerReportProgressFirst: "Progress First",
+    butlerSummaryDebounceLabel: "Session Summary Debounce",
+    butlerSummaryDebounceOption1Minute: "1 minute",
+    butlerSummaryDebounceOption3Minutes: "3 minutes",
+    butlerSummaryDebounceOption5Minutes: "5 minutes (default)",
+    butlerSummaryDebounceOption10Minutes: "10 minutes",
+    butlerSummaryDebounceOption15Minutes: "15 minutes",
+    butlerSummaryDebounceOption30Minutes: "30 minutes",
+    butlerSettingsTitle: "Butler Settings",
+    butlerSettingsSaveAction: "Save Settings",
+    butlerSettingsSaving: "Saving...",
+    butlerSettingsSaved: "Butler settings saved",
+    butlerSettingsSaveFailed: "Failed to save Butler settings",
     butlerInitSubmitting: "Initializing...",
     butlerInitSubmit: "Initialize Butler",
     butlerInitSuccess: "Butler initialized",
@@ -1195,6 +1259,7 @@ const extensionEnUS = {
       "Pulling the current assistant session, summaries, and control state. Please wait a moment.",
     butlerSidebarInfoTab: "Info",
     butlerSidebarAutomationTab: "Automation",
+    butlerSidebarSettingsTab: "Settings",
     butlerSidebarTabsLabel: "Butler sidebar tabs",
     butlerSidebarLoadFailed: "Failed to load Butler sidebar",
     butlerInfoContextTitle: "Current Context",
@@ -2032,9 +2097,138 @@ const dictionaries: Record<AppLanguage, Record<string, unknown>> = {
   "en-US": enUS
 };
 
+const butlerInitCopyOverridesZhCN = {
+  butlerInitTitle: "设置助手",
+  butlerInitDescription: "先完成几个基本设置。",
+  butlerInitPreviewTitle: "当前效果",
+  butlerInitPreviewDescription: "",
+  butlerInitBasicsTitle: "基本信息",
+  butlerInitBasicsDescription: "",
+  butlerInitPersonaTitle: "说话方式",
+  butlerInitPersonaDescription: "",
+  butlerInitPreferenceTitle: "默认偏好",
+  butlerInitPreferenceDescription: "",
+  butlerInitRuleLabel: "规则方式",
+  butlerInitPreviewRuleLabel: "管理方式",
+  butlerInitTipAutoWorkspace: "",
+  butlerInitTipProviderSwitch: "",
+  butlerInitTipReportPriority: "",
+  butlerDisplayNameLabel: "助手称呼",
+  butlerDisplayNamePlaceholder: "例如：小助手",
+  butlerDisplayNameHint: "这个名字会显示在助手页面里。",
+  butlerProviderLabel: "助手引擎",
+  butlerAgentsModeLabel: "规则方式",
+  butlerAgentsModeInline: "自动管理",
+  butlerAgentsModeFile: "手动编辑",
+  butlerAgentsModeInlineDescription: "规则由系统自动管理。",
+  butlerAgentsModeFileDescription: "会生成一份可编辑的规则文件。",
+  butlerPersonaToneLabel: "语气",
+  butlerPersonaLanguageLabel: "使用语言",
+  butlerPersonaSummaryStyleLabel: "回答风格",
+  butlerFocusRiskPreferenceLabel: "处理方式",
+  butlerFocusReportPriorityLabel: "优先提醒",
+  butlerToneDirect: "直接",
+  butlerToneSteady: "稳重",
+  butlerToneFriendly: "亲切",
+  butlerLanguageZhCn: "中文",
+  butlerLanguageEnUs: "英文",
+  butlerLanguageBilingual: "中英双语",
+  butlerSummaryBrief: "简洁",
+  butlerSummaryStructured: "清晰",
+  butlerSummaryThorough: "详细",
+  butlerRiskConservative: "保守稳妥",
+  butlerRiskBalanced: "平衡",
+  butlerRiskProactive: "主动提醒",
+  butlerReportPriorityPresetLabel: "优先提醒",
+  butlerSummaryDebounceLabel: "摘要节奏",
+  butlerSettingsTitle: "助手设置",
+  butlerSettingsSaveAction: "保存设置",
+  butlerSettingsSaving: "保存中...",
+  butlerSettingsSaved: "助手设置已保存",
+  butlerSettingsSaveFailed: "保存助手设置失败",
+  butlerInitSubmitting: "保存中...",
+  butlerInitSubmit: "完成设置",
+  butlerInitSuccess: "助手已设置完成",
+  butlerInitFailed: "助手设置失败",
+  butlerInitNameRequired: "请先填写助手名称"
+} as const;
+
+const butlerInitCopyOverridesEnUS = {
+  butlerInitTitle: "Set Up Butler",
+  butlerInitDescription: "Finish a few basic settings first.",
+  butlerInitPreviewTitle: "Preview",
+  butlerInitPreviewDescription: "",
+  butlerInitBasicsTitle: "Basic Info",
+  butlerInitBasicsDescription: "",
+  butlerInitPersonaTitle: "Voice",
+  butlerInitPersonaDescription: "",
+  butlerInitPreferenceTitle: "Default Preferences",
+  butlerInitPreferenceDescription: "",
+  butlerInitRuleLabel: "Rule Style",
+  butlerInitPreviewRuleLabel: "Mode",
+  butlerInitTipAutoWorkspace: "",
+  butlerInitTipProviderSwitch: "",
+  butlerInitTipReportPriority: "",
+  butlerDisplayNameLabel: "Butler Name",
+  butlerDisplayNamePlaceholder: "Example: Butler",
+  butlerDisplayNameHint: "This name appears on the Butler page.",
+  butlerProviderLabel: "Engine",
+  butlerAgentsModeLabel: "Rule Style",
+  butlerAgentsModeInline: "Auto",
+  butlerAgentsModeFile: "Editable File",
+  butlerAgentsModeInlineDescription: "Rules are managed automatically.",
+  butlerAgentsModeFileDescription: "An editable rule file will be created.",
+  butlerPersonaToneLabel: "Tone",
+  butlerPersonaLanguageLabel: "Language",
+  butlerPersonaSummaryStyleLabel: "Reply Style",
+  butlerFocusRiskPreferenceLabel: "Work Style",
+  butlerFocusReportPriorityLabel: "Priority",
+  butlerToneDirect: "Direct",
+  butlerToneSteady: "Steady",
+  butlerToneFriendly: "Friendly",
+  butlerLanguageZhCn: "Chinese",
+  butlerLanguageEnUs: "English",
+  butlerLanguageBilingual: "Bilingual",
+  butlerSummaryBrief: "Brief",
+  butlerSummaryStructured: "Clear",
+  butlerSummaryThorough: "Detailed",
+  butlerRiskConservative: "Conservative",
+  butlerRiskBalanced: "Balanced",
+  butlerRiskProactive: "Proactive",
+  butlerReportPriorityPresetLabel: "Priority",
+  butlerSummaryDebounceLabel: "Summary Cadence",
+  butlerSettingsTitle: "Butler Settings",
+  butlerSettingsSaveAction: "Save Settings",
+  butlerSettingsSaving: "Saving...",
+  butlerSettingsSaved: "Butler settings saved",
+  butlerSettingsSaveFailed: "Failed to save Butler settings",
+  butlerInitSubmitting: "Saving...",
+  butlerInitSubmit: "Finish Setup",
+  butlerInitSuccess: "Butler is ready",
+  butlerInitFailed: "Failed to save Butler settings",
+  butlerInitNameRequired: "Please enter a Butler name"
+} as const;
+
+function withShellOverrides(
+  source: Record<string, unknown>,
+  shellOverrides: Record<string, unknown>
+): Record<string, unknown> {
+  const sourceShell = source["shell"];
+
+  return {
+    ...source,
+    shell: {
+      ...(sourceShell && typeof sourceShell === "object"
+        ? (sourceShell as Record<string, unknown>)
+        : {}),
+      ...shellOverrides
+    }
+  };
+}
+
 const extensionDictionaries: Record<AppLanguage, Record<string, unknown>> = {
-  "zh-CN": extensionZhCN,
-  "en-US": extensionEnUS
+  "zh-CN": withShellOverrides(extensionZhCN, butlerInitCopyOverridesZhCN),
+  "en-US": withShellOverrides(extensionEnUS, butlerInitCopyOverridesEnUS)
 };
 
 function readValue(key: string, source: DictionaryValue): string {
