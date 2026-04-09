@@ -363,11 +363,44 @@ export function extractTextBlocks(value: unknown): string {
 }
 
 export function safeDate(value: unknown, fallback: string): string {
-  if (typeof value === "string" && value.length > 0) {
-    return value;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+
+    if (!trimmed) {
+      return fallback;
+    }
+
+    const numericValue = Number(trimmed);
+
+    if (Number.isFinite(numericValue) && /^[0-9]+(?:\.[0-9]+)?$/.test(trimmed)) {
+      return normalizeEpochTimestamp(numericValue) ?? fallback;
+    }
+
+    const parsedAt = Date.parse(trimmed);
+    return Number.isFinite(parsedAt) ? new Date(parsedAt).toISOString() : trimmed;
+  }
+
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return normalizeEpochTimestamp(value) ?? fallback;
   }
 
   return fallback;
+}
+
+function normalizeEpochTimestamp(value: number): string | null {
+  const absoluteValue = Math.abs(value);
+  const timestampMs = absoluteValue >= 1e12
+    ? value
+    : absoluteValue >= 1e9
+      ? value * 1_000
+      : null;
+
+  if (timestampMs === null) {
+    return null;
+  }
+
+  const date = new Date(timestampMs);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
 }
 
 export function workspaceSlug(workspacePath: string): string {

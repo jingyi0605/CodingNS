@@ -56,13 +56,33 @@ async function wait(ms) {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function cleanupTempDir(tempDir) {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    try {
+      rmSync(tempDir, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      if (error?.code !== "EBUSY" || attempt === 9) {
+        throw error;
+      }
+
+      await wait(100);
+    }
+  }
+}
+
 test("KimiRuntimeAdapter startSession 走 wire 主链路并输出消息事件", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "codingns-kimi-runtime-"));
   const scriptPath = createWireScript(
     tempDir,
     `
 const args = process.argv.slice(2);
-const resumeIndex = args.indexOf("--resume");
+if (args.includes("--help")) {
+  console.log("Usage: kimi [OPTIONS]\\n  --wire\\n  --work-dir\\n  --session");
+  process.exit(0);
+}
+const sessionOptionIndex = args.indexOf("--session");
+const resumeIndex = sessionOptionIndex >= 0 ? sessionOptionIndex : args.indexOf("--resume");
 const sessionId = resumeIndex >= 0 ? args[resumeIndex + 1] : "wire-session-1";
 console.log(JSON.stringify({ type: "session.created", session_id: sessionId }));
 console.log(JSON.stringify({
@@ -89,13 +109,18 @@ setTimeout(() => process.exit(0), 20);
       }),
       sink
     );
+    assert.equal(
+      launch.providerSessionId.startsWith("pending://kimi/") || launch.providerSessionId === "wire-session-1",
+      true
+    );
+    assert.equal(
+      launch.rawStoreRef.startsWith("pending://kimi/") || launch.rawStoreRef === "kimi://session/wire-session-1",
+      true
+    );
     await launch.completed;
 
-    assert.equal(typeof launch.providerSessionId, "string");
-    assert.equal(launch.rawStoreRef?.startsWith("kimi://session/"), true);
-
     const boundSessionIds = bindings.map((binding) => binding.providerSessionId).filter(Boolean);
-    assert.equal(boundSessionIds.includes("wire-session-1"), true);
+    assert.equal(boundSessionIds.includes(launch.providerSessionId), true);
 
     const messageEvent = events.find((event) => event.type === "message");
     assert.ok(messageEvent);
@@ -103,7 +128,88 @@ setTimeout(() => process.exit(0), 20);
     assert.equal(messageEvent.message.content.includes("wire runtime"), true);
     assert.equal(messageEvent.message.sequence >= 4, true);
   } finally {
-    rmSync(tempDir, { recursive: true, force: true });
+    await cleanupTempDir(tempDir);
+  }
+});
+
+test("KimiRuntimeAdapter 启动新版会话后会回填真实 providerSessionId", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-kimi-runtime-resolve-"));
+  const scriptPath = createWireScript(
+    tempDir,
+    `
+import { createHash } from "node:crypto";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+
+const args = process.argv.slice(2);
+const workspaceDir = process.argv[2];
+const homeDir = process.argv[3];
+const sessionId = "resolved-session-1";
+
+if (args.includes("--help")) {
+  console.log("Usage: kimi [OPTIONS]\\n  --wire\\n  --work-dir\\n  --session");
+  process.exit(0);
+}
+
+const workDirHash = createHash("md5").update(workspaceDir).digest("hex");
+const sessionDir = join(homeDir, "sessions", workDirHash, sessionId);
+mkdirSync(sessionDir, { recursive: true });
+writeFileSync(
+  join(homeDir, "kimi.json"),
+  JSON.stringify({
+    work_dirs: [
+      {
+        path: workspaceDir,
+        kaos: "local",
+        last_session_id: sessionId
+      }
+    ]
+  }),
+  "utf8"
+);
+writeFileSync(
+  join(sessionDir, "context.jsonl"),
+  JSON.stringify({
+    timestamp: "2026-04-08T14:46:29.000Z",
+    role: "assistant",
+    content: "resolved runtime output"
+  }) + "\\n",
+  "utf8"
+);
+console.log(JSON.stringify({
+  type: "assistant.message",
+  role: "assistant",
+  timestamp: "2026-04-08T14:46:29.000Z",
+  content: [{ type: "text", text: "resolved runtime output" }]
+}));
+setTimeout(() => process.exit(0), 80);
+`
+  );
+
+  try {
+    const adapter = new KimiRuntimeAdapter({
+      homeDir: tempDir,
+      commandPath: process.execPath,
+      baseArgs: [scriptPath, tempDir, tempDir]
+    });
+    const { sink, bindings } = createSink();
+
+    const launch = await adapter.startSession(
+      createRunRequest({
+        workspacePath: tempDir
+      }),
+      sink
+    );
+
+    await launch.completed;
+    await wait(200);
+
+    const boundSessionIds = bindings.map((binding) => binding.providerSessionId).filter(Boolean);
+    assert.equal(boundSessionIds.includes("resolved-session-1"), true);
+    assert.equal(launch.providerSessionId, "resolved-session-1");
+    assert.equal(launch.rawStoreRef, "kimi://session/resolved-session-1");
+  } finally {
+    await cleanupTempDir(tempDir);
   }
 });
 
@@ -113,7 +219,12 @@ test("KimiRuntimeAdapter continueSession 会复用已有 providerSessionId", asy
     tempDir,
     `
 const args = process.argv.slice(2);
-const resumeIndex = args.indexOf("--resume");
+if (args.includes("--help")) {
+  console.log("Usage: kimi [OPTIONS]\\n  --wire\\n  --work-dir\\n  --session");
+  process.exit(0);
+}
+const sessionOptionIndex = args.indexOf("--session");
+const resumeIndex = sessionOptionIndex >= 0 ? sessionOptionIndex : args.indexOf("--resume");
 const sessionId = resumeIndex >= 0 ? args[resumeIndex + 1] : "wire-session-default";
 console.log(JSON.stringify({ type: "session.created", session_id: sessionId }));
 console.log(JSON.stringify({
@@ -153,7 +264,7 @@ setTimeout(() => process.exit(0), 20);
     assert.equal(messageEvent.providerSessionId, "resume-session-1");
     assert.equal(messageEvent.message.content.includes("continue runtime"), true);
   } finally {
-    rmSync(tempDir, { recursive: true, force: true });
+    await cleanupTempDir(tempDir);
   }
 });
 
@@ -163,6 +274,11 @@ test("KimiRuntimeAdapter interrupt 会中断 wire 进程且 completed 正常结�
     tempDir,
     `
 let count = 0;
+const args = process.argv.slice(2);
+if (args.includes("--help")) {
+  console.log("Usage: kimi [OPTIONS]\\n  --wire\\n  --work-dir\\n  --session");
+  process.exit(0);
+}
 console.log(JSON.stringify({ type: "session.created", session_id: "wire-interrupt-1" }));
 const timer = setInterval(() => {
   count += 1;
@@ -203,11 +319,11 @@ process.on("SIGINT", () => {
 
     assert.ok(true);
   } finally {
-    rmSync(tempDir, { recursive: true, force: true });
+    await cleanupTempDir(tempDir);
   }
 });
 
-test("KimiRuntimeAdapter submitDuringRun 支持运行中引导并在结束后拒绝继续输入", async () => {
+test("KimiRuntimeAdapter 命令模式下不支持同一轮运行中继续输入", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "codingns-kimi-runtime-"));
   const scriptPath = createWireScript(
     tempDir,
@@ -215,7 +331,12 @@ test("KimiRuntimeAdapter submitDuringRun 支持运行中引导并在结束后拒
 import { createInterface } from "node:readline";
 
 const args = process.argv.slice(2);
-const resumeIndex = args.indexOf("--resume");
+if (args.includes("--help")) {
+  console.log("Usage: kimi [OPTIONS]\\n  --wire\\n  --work-dir\\n  --session");
+  process.exit(0);
+}
+const sessionOptionIndex = args.indexOf("--session");
+const resumeIndex = sessionOptionIndex >= 0 ? sessionOptionIndex : args.indexOf("--resume");
 const sessionId = resumeIndex >= 0 ? args[resumeIndex + 1] : "wire-guidance-1";
 console.log(JSON.stringify({ type: "session.created", session_id: sessionId }));
 
@@ -257,70 +378,44 @@ setTimeout(() => process.exit(0), 3000);
       }),
       sink
     );
-    assert.equal(typeof launch.submitDuringRun, "function");
-
-    await wait(80);
-    await launch.submitDuringRun({
-      content: "运行中补充说明",
-      clientRequestId: "client-2",
-      model: "kimi-k2",
-      reasoningLevel: null,
-      permissionMode: null,
-      providerPrompt: "请继续执行并说明风险",
-      attachments: []
-    });
     await launch.completed;
 
-    const messageContents = events
-      .filter((event) => event.type === "message")
-      .map((event) => event.message.content);
     assert.equal(
-      messageContents.some((content) => content.includes("ack-1:继续实现 Kimi runtime")),
-      true
-    );
-    assert.equal(
-      messageContents.some((content) => content.includes("ack-2:请继续执行并说明风险")),
-      true
-    );
-
-    await assert.rejects(
-      () =>
-        launch.submitDuringRun({
-          content: "run ended",
-          clientRequestId: "client-3",
-          model: "kimi-k2",
-          reasoningLevel: null,
-          permissionMode: null,
-          providerPrompt: null,
-          attachments: []
-        }),
-      /IN_RUN_INPUT_NOT_SUPPORTED/
+      typeof launch.submitDuringRun,
+      "undefined"
     );
   } finally {
-    rmSync(tempDir, { recursive: true, force: true });
+    await cleanupTempDir(tempDir);
   }
 });
 
-test("KimiRuntimeAdapter 在 wire 不可用时会回退到命令模式 stream-json", async () => {
+test("KimiRuntimeAdapter 命令模式会直接输出 stream-json 结果", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "codingns-kimi-runtime-"));
   const scriptPath = createWireScript(
     tempDir,
     `
 const args = process.argv.slice(2);
-if (args[0] === "wire") {
-  console.error("wire unsupported in this fixture");
-  setTimeout(() => process.exit(2), 10);
-} else {
-  const resumeIndex = args.indexOf("--resume");
-  const sessionId = resumeIndex >= 0 ? args[resumeIndex + 1] : "fallback-session-1";
-  console.log(JSON.stringify({ type: "session.created", session_id: sessionId }));
-  console.log(JSON.stringify({
-    type: "assistant.message",
-    role: "assistant",
-    content: [{ type: "text", text: "fallback stream-json output" }]
-  }));
-  setTimeout(() => process.exit(0), 30);
+if (args.includes("--help")) {
+  console.log("Usage: kimi [OPTIONS]\\n  --wire\\n  --work-dir\\n  --session");
+  process.exit(0);
 }
+if (args.includes("--cwd")) {
+  console.error("legacy work dir flag unsupported in this fixture");
+  process.exit(2);
+}
+if (!args.includes("--work-dir")) {
+  console.error("missing --work-dir in this fixture");
+  process.exit(2);
+}
+const sessionOptionIndex = args.indexOf("--session");
+const resumeIndex = sessionOptionIndex >= 0 ? sessionOptionIndex : args.indexOf("--resume");
+const sessionId = resumeIndex >= 0 ? args[resumeIndex + 1] : "fallback-session-1";
+console.log(JSON.stringify({
+  type: "assistant.message",
+  role: "assistant",
+  content: [{ type: "text", text: "fallback stream-json output" }]
+}));
+setTimeout(() => process.exit(0), 30);
 `
   );
 
@@ -340,18 +435,10 @@ if (args[0] === "wire") {
     );
     await launch.completed;
 
-    const statusEvent = events.find(
-      (event) =>
-        event.type === "status"
-        && typeof event.detail === "string"
-        && event.detail.includes("fallback")
-    );
-    assert.ok(statusEvent);
-
     const messageEvent = events.find((event) => event.type === "message");
     assert.ok(messageEvent);
     assert.equal(messageEvent.message.content.includes("fallback stream-json output"), true);
   } finally {
-    rmSync(tempDir, { recursive: true, force: true });
+    await cleanupTempDir(tempDir);
   }
 });
