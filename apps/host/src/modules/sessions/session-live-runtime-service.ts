@@ -369,7 +369,21 @@ export class SessionLiveRuntimeService {
       initialContent: input.content,
       snapshot
     });
-    void this.waitForResolvedStartBinding(sessionId, workspace.id, input.provider, handle);
+    const startBindingTask = this.waitForResolvedStartBinding(
+      sessionId,
+      workspace.id,
+      input.provider,
+      handle
+    ).catch(() => {
+      return;
+    });
+
+    if (shouldAwaitStartBindingBeforeAcceptedUserLookup(input.provider)) {
+      await Promise.race([
+        startBindingTask,
+        waitForAcceptedUserLookupWindow()
+      ]);
+    }
 
     const binding = this.sessionHistoryService.getBindingOrThrow(sessionId);
     const acceptedMessage = shouldAwaitAcceptedUserMessage(input.provider)
@@ -382,6 +396,9 @@ export class SessionLiveRuntimeService {
           requestStartedAt
         )
       : null;
+    if (!shouldAwaitStartBindingBeforeAcceptedUserLookup(input.provider)) {
+      void startBindingTask;
+    }
     const acceptedAt = acceptedMessage?.timestamp ?? nowIso();
     const boundAttachments = this.sessionMessageAttachmentService.bindClientRequestToMessage(
       sessionId,
@@ -2515,6 +2532,16 @@ function isGeminiPendingRuntimeAliasBinding(value: string, targetSessionId: stri
 
 function shouldAwaitAcceptedUserMessage(provider: string): boolean {
   return provider !== "gemini";
+}
+
+function shouldAwaitStartBindingBeforeAcceptedUserLookup(provider: string): boolean {
+  return provider === "kimi";
+}
+
+function waitForAcceptedUserLookupWindow(): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, 1200);
+  });
 }
 
 function createProviderRuntimeAdapters(

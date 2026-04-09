@@ -17,6 +17,7 @@ import {
 } from "../providers/utils.js";
 import {
   buildKimiMessageRawRef,
+  extractKimiDisplayTextSegments,
   looksLikeKimiMessagePayload,
   normalizeKimiMessageRecord,
   readKimiFirstNonEmptyString,
@@ -64,6 +65,12 @@ interface KimiEventMappingContext {
 interface KimiStartBindingProbe {
   workDirHash: string | null;
   lastSessionId: string | null;
+}
+
+interface KimiRecentRuntimeMessageSignature {
+  role: NormalizedMessage["role"];
+  kind: MessageKind;
+  comparableContent: string;
 }
 
 type KimiRuntimeTransport = "wire" | "command";
@@ -196,6 +203,9 @@ export class KimiRuntimeAdapter implements ProviderRuntimeAdapter {
     let writeChain = Promise.resolve();
     let sawStdoutEvent = false;
     let readySettled = false;
+    let plainTextBuffer: string[] = [];
+    let plainTextStartLineNumber = 0;
+    const recentMessageSignatures: KimiRecentRuntimeMessageSignature[] = [];
     let readyTimer: ReturnType<typeof setTimeout> | null = null;
     let resolveReady: (() => void) | null = null;
     let rejectReady: ((error: Error) => void) | null = null;
@@ -279,6 +289,17 @@ export class KimiRuntimeAdapter implements ProviderRuntimeAdapter {
           rawStoreRef: activeRawStoreRef
         });
       };
+      const emitRuntimeEvent = async (event: RuntimeEventInput): Promise<void> => {
+        if (event.type === "message" && event.message) {
+          if (shouldSkipEquivalentRecentKimiRuntimeMessage(recentMessageSignatures, event.message)) {
+            return;
+          }
+
+          rememberKimiRuntimeMessage(recentMessageSignatures, event.message);
+        }
+
+        await onStructuredEvent(event);
+      };
 
       const handleJsonPayload = async (payload: Record<string, unknown>): Promise<void> => {
         const mapped = mapKimiWirePayload(payload, {
@@ -300,7 +321,48 @@ export class KimiRuntimeAdapter implements ProviderRuntimeAdapter {
             sequence = event.message.sequence;
           }
 
-          await onStructuredEvent(event);
+          await emitRuntimeEvent(event);
+        }
+      };
+
+      const flushBufferedPlainText = async (): Promise<void> => {
+        if (plainTextBuffer.length === 0) {
+          return;
+        }
+
+        const startLineNumber = plainTextStartLineNumber || lineNumber;
+        const contentBlocks = extractKimiDisplayTextSegments(plainTextBuffer.join("\n"));
+        plainTextBuffer = [];
+        plainTextStartLineNumber = 0;
+
+        for (const [contentIndex, content] of contentBlocks.entries()) {
+          const nextSequence = sequence + 1;
+          sequence = nextSequence;
+
+          const message = createTextMessage({
+            sessionId: activeSessionId,
+            rawStoreRef: activeRawStoreRef,
+            sequence: nextSequence,
+            lineNumber: startLineNumber,
+            role: "assistant",
+            kind: "text",
+            content,
+            timestamp: nextTimestamp(),
+            rawEventRef: buildKimiMessageRawRef(
+              activeSessionId,
+              "wire",
+              startLineNumber,
+              contentBlocks.length > 1 ? contentIndex : undefined
+            )
+          });
+
+          await emitRuntimeEvent({
+            type: "message",
+            message,
+            status: "running",
+            detail: "wire line",
+            rawEventRef: message.rawRef
+          });
         }
       };
 
@@ -308,40 +370,35 @@ export class KimiRuntimeAdapter implements ProviderRuntimeAdapter {
         lineNumber += 1;
         const trimmed = line.trim();
 
+        const payload = trimmed ? parseJsonObject(trimmed) : null;
+
+        if (payload) {
+          sawStdoutEvent = true;
+          settleReady();
+          return flushBufferedPlainText().then(() => handleJsonPayload(payload));
+        }
+
         if (!trimmed) {
+          if (plainTextBuffer.length > 0) {
+            plainTextBuffer.push("");
+          }
           return Promise.resolve();
         }
+
         sawStdoutEvent = true;
         settleReady();
 
-        const payload = parseJsonObject(trimmed);
-
-        if (payload) {
-          return handleJsonPayload(payload);
+        if (plainTextBuffer.length === 0) {
+          plainTextStartLineNumber = lineNumber;
         }
 
-        const nextSequence = sequence + 1;
-        sequence = nextSequence;
+        plainTextBuffer.push(line);
 
-        const message = createTextMessage({
-          sessionId: activeSessionId,
-          rawStoreRef: activeRawStoreRef,
-          sequence: nextSequence,
-          lineNumber,
-          role: "assistant",
-          kind: "text",
-          content: trimmed,
-          timestamp: nextTimestamp(),
-          rawEventRef: buildKimiMessageRawRef(activeSessionId, "wire", lineNumber)
-        });
+        if (trimmed.toLowerCase() === "turnend") {
+          return flushBufferedPlainText();
+        }
 
-        return onStructuredEvent({
-          type: "message",
-          message,
-          status: "running",
-          detail: "wire line",
-          rawEventRef: message.rawRef
-        });
+        return Promise.resolve();
       };
 
       const stdoutReader = createInterface({ input: proc.stdout });
@@ -391,6 +448,8 @@ export class KimiRuntimeAdapter implements ProviderRuntimeAdapter {
         }
         void lineChain
           .then(async () => {
+            await flushBufferedPlainText();
+
             if (interrupted) {
               settle(() => {
                 resolve();
@@ -830,7 +889,16 @@ function mapKimiWirePayload(
   events: RuntimeEventInput[];
 } {
   const events: RuntimeEventInput[] = [];
-  const wireType = ensureText(payload.type ?? payload.event ?? payload.kind).trim().toLowerCase();
+  const wireType = (
+    readKimiFirstNonEmptyString(payload, [
+      ["type"],
+      ["event"],
+      ["kind"],
+      ["message", "type"],
+      ["message", "payload", "type"],
+      ["payload", "type"]
+    ]) ?? ""
+  ).trim().toLowerCase();
   const providerSessionId =
     readKimiFirstNonEmptyString(payload, [
       ["sessionId"],
@@ -1058,6 +1126,57 @@ function isClosedStdinError(error: unknown): boolean {
     code === "ERR_STREAM_DESTROYED" ||
     code === "ERR_STREAM_WRITE_AFTER_END"
   );
+}
+
+function shouldSkipEquivalentRecentKimiRuntimeMessage(
+  recentMessages: KimiRecentRuntimeMessageSignature[],
+  message: NormalizedMessage
+): boolean {
+  if (message.kind !== "text" && message.kind !== "thinking") {
+    return false;
+  }
+
+  const comparableContent = normalizeComparableKimiRuntimeMessageContent(message.content);
+
+  if (!comparableContent) {
+    return false;
+  }
+
+  return recentMessages.some((item) =>
+    item.role === message.role
+    && item.kind === message.kind
+    && item.comparableContent === comparableContent
+  );
+}
+
+function rememberKimiRuntimeMessage(
+  recentMessages: KimiRecentRuntimeMessageSignature[],
+  message: NormalizedMessage
+): void {
+  const comparableContent = normalizeComparableKimiRuntimeMessageContent(message.content);
+
+  if (!comparableContent) {
+    return;
+  }
+
+  recentMessages.push({
+    role: message.role,
+    kind: message.kind,
+    comparableContent
+  });
+
+  if (recentMessages.length > 8) {
+    recentMessages.splice(0, recentMessages.length - 8);
+  }
+}
+
+function normalizeComparableKimiRuntimeMessageContent(content: string): string {
+  const cleaned = extractKimiDisplayTextSegments(content).join("\n\n") || content;
+
+  return cleaned
+    .replace(/\r\n/g, "\n")
+    .trim()
+    .replace(/\s+/g, " ");
 }
 
 function shouldSpawnViaShell(commandPath: string): boolean {

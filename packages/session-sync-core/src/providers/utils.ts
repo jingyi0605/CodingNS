@@ -333,6 +333,10 @@ export function extractTextBlocks(value: unknown): string {
   }
 
   if (Array.isArray(value)) {
+    if (value.length === 0) {
+      return "";
+    }
+
     const combined = value
       .map((item) => extractTextBlocks(item).trim())
       .filter((item) => item.length > 0)

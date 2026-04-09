@@ -403,7 +403,7 @@ export class SessionHistoryService {
           (message) =>
             message.role === "user" &&
             acceptedContents.has(message.content) &&
-            isMessageAtOrAfter(message.timestamp, minTimestamp)
+            isAcceptedUserMessageTimestamp(binding.provider, message.timestamp, minTimestamp)
         );
 
       if (matched) {
@@ -2868,6 +2868,25 @@ function isMessageAtOrAfter(timestamp: string, minTimestamp: string | null): boo
   }
 
   return messageAt >= minAt;
+}
+
+function isAcceptedUserMessageTimestamp(
+  provider: string,
+  timestamp: string,
+  minTimestamp: string | null
+): boolean {
+  if (
+    provider === "kimi"
+    && isSyntheticKimiHistoryTimestamp(timestamp)
+  ) {
+    return true;
+  }
+
+  return isMessageAtOrAfter(timestamp, minTimestamp);
+}
+
+function isSyntheticKimiHistoryTimestamp(timestamp: string): boolean {
+  return timestamp.startsWith("2020-01-01T00:");
 }
 
 function delay(ms: number): Promise<void> {

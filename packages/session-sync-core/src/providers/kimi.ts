@@ -28,6 +28,7 @@ import {
 } from "./utils.js";
 import {
   buildKimiMessageRawRef,
+  extractKimiDisplayTextSegments,
   normalizeKimiMessageRecord,
   readKimiFirstNonEmptyString,
   readKimiFirstPresentValue,
@@ -62,6 +63,7 @@ interface KimiRawLineRecord {
 }
 
 interface KimiMessageDraft {
+  source: "context" | "wire";
   role: NormalizedMessage["role"];
   kind: NormalizedMessage["kind"];
   content: string;
@@ -488,7 +490,11 @@ export class KimiAdapter implements ProviderAdapter {
       return left.sourceOrder - right.sourceOrder;
     });
 
-    return drafts.map((draft, index) => ({
+    const collapsedDrafts = collapseEquivalentKimiDrafts(
+      dropWireDraftsCoveredByContext(drafts)
+    );
+
+    return collapsedDrafts.map((draft, index) => ({
       messageId: messageIdFromRawRef(draft.rawRef),
       provider: "kimi",
       providerSessionId: files.sessionId,
@@ -517,6 +523,7 @@ function appendMessageDrafts(
   for (const normalized of normalizedMessages) {
     sourceOrder += 1;
     drafts.push({
+      source,
       role: normalized.role,
       kind: normalized.kind,
       content: normalized.content,
@@ -534,6 +541,182 @@ function appendMessageDrafts(
   }
 
   return sourceOrder;
+}
+
+function collapseEquivalentKimiDrafts(drafts: KimiMessageDraft[]): KimiMessageDraft[] {
+  const collapsed: KimiMessageDraft[] = [];
+
+  for (const draft of drafts) {
+    let equivalentIndex = -1;
+
+    for (let index = collapsed.length - 1; index >= 0; index -= 1) {
+      if (isEquivalentKimiDraft(collapsed[index], draft)) {
+        equivalentIndex = index;
+        break;
+      }
+    }
+
+    if (equivalentIndex === -1) {
+      collapsed.push(draft);
+      continue;
+    }
+
+    collapsed[equivalentIndex] = pickPreferredKimiDraft(collapsed[equivalentIndex], draft);
+  }
+
+  return collapsed;
+}
+
+function isEquivalentKimiDraft(left: KimiMessageDraft, right: KimiMessageDraft): boolean {
+  if (left.role !== right.role || left.kind !== right.kind) {
+    return false;
+  }
+
+  if (
+    (left.kind === "tool_call" || left.kind === "tool_result")
+    && left.toolCall?.callId
+    && right.toolCall?.callId
+  ) {
+    return left.toolCall.callId === right.toolCall.callId;
+  }
+
+  if (
+    left.kind !== "text"
+    && left.kind !== "thinking"
+  ) {
+    return false;
+  }
+
+  const leftComparable = normalizeComparableKimiDraftContent(left.content);
+  const rightComparable = normalizeComparableKimiDraftContent(right.content);
+
+  if (!leftComparable || leftComparable !== rightComparable) {
+    return false;
+  }
+
+  return Math.abs(left.sortAtMs - right.sortAtMs) <= 2 * 60 * 1_000;
+}
+
+function dropWireDraftsCoveredByContext(drafts: KimiMessageDraft[]): KimiMessageDraft[] {
+  const contextCounts = new Map<string, number>();
+
+  for (const draft of drafts) {
+    const comparableKey = buildComparableKimiDraftKey(draft);
+
+    if (!comparableKey || draft.source !== "context") {
+      continue;
+    }
+
+    contextCounts.set(comparableKey, (contextCounts.get(comparableKey) ?? 0) + 1);
+  }
+
+  const result: KimiMessageDraft[] = [];
+
+  for (const draft of drafts) {
+    const comparableKey = buildComparableKimiDraftKey(draft);
+
+    if (
+      comparableKey
+      && draft.source === "wire"
+      && (contextCounts.get(comparableKey) ?? 0) > 0
+    ) {
+      contextCounts.set(comparableKey, (contextCounts.get(comparableKey) ?? 1) - 1);
+      continue;
+    }
+
+    result.push(draft);
+  }
+
+  return result;
+}
+
+function pickPreferredKimiDraft(left: KimiMessageDraft, right: KimiMessageDraft): KimiMessageDraft {
+  const leftQuality = scoreKimiDraftQuality(left);
+  const rightQuality = scoreKimiDraftQuality(right);
+
+  if (leftQuality !== rightQuality) {
+    return rightQuality > leftQuality ? right : left;
+  }
+
+  const leftSourcePriority = kimiDraftSourcePriority(left.source);
+  const rightSourcePriority = kimiDraftSourcePriority(right.source);
+
+  if (leftSourcePriority !== rightSourcePriority) {
+    return rightSourcePriority > leftSourcePriority ? right : left;
+  }
+
+  if (left.content.length !== right.content.length) {
+    return right.content.length > left.content.length ? right : left;
+  }
+
+  if (left.sortAtMs !== right.sortAtMs) {
+    return right.sortAtMs >= left.sortAtMs ? right : left;
+  }
+
+  return right.sourceOrder >= left.sourceOrder ? right : left;
+}
+
+function scoreKimiDraftQuality(draft: KimiMessageDraft): number {
+  let score = 0;
+  const lowerContent = draft.content.toLowerCase();
+
+  score += normalizeComparableKimiDraftContent(draft.content).length;
+
+  if (draft.toolCall?.callId) {
+    score += 100;
+  }
+
+  if (draft.content.includes("<system-reminder")) {
+    score -= 200;
+  }
+
+  if (draft.content.includes("<system>")) {
+    score -= 80;
+  }
+
+  if (lowerContent.includes("turnbegin") || lowerContent.includes("contentpart")) {
+    score -= 100;
+  }
+
+  if (lowerContent.includes("statusupdate") || /chatcmpl[-_a-z0-9]+/i.test(draft.content)) {
+    score -= 100;
+  }
+
+  return score;
+}
+
+function kimiDraftSourcePriority(source: KimiMessageDraft["source"]): number {
+  return source === "context" ? 2 : 1;
+}
+
+function normalizeComparableKimiDraftContent(content: string): string {
+  const cleaned = extractKimiDisplayTextSegments(content).join("\n\n") || content;
+
+  return cleaned
+    .replace(/\r\n/g, "\n")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+function buildComparableKimiDraftKey(draft: KimiMessageDraft): string | null {
+  if (
+    (draft.kind === "tool_call" || draft.kind === "tool_result")
+    && draft.toolCall?.callId
+  ) {
+    return `${draft.role}:${draft.kind}:${draft.toolCall.callId}`;
+  }
+
+  if (draft.kind !== "text" && draft.kind !== "thinking") {
+    return null;
+  }
+
+  const comparableContent = normalizeComparableKimiDraftContent(draft.content);
+
+  if (!comparableContent) {
+    return null;
+  }
+
+  return `${draft.role}:${draft.kind}:${comparableContent}`;
 }
 
 function resolveMessageTimestamp(

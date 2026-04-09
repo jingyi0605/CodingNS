@@ -2101,4 +2101,119 @@ describe("SessionLiveRuntimeService", () => {
     expect(received.some((item) => item.type === "session.runtime_message" && item.sessionId === "session-real-1")).toBe(true);
     subscription.close();
   });
+
+  it("startLiveSession 会在 Kimi 首轮等待真实 binding 并优先返回权威 user 消息", async () => {
+    vi.useFakeTimers();
+    const { service, sessionHistoryService, sessionMessageAttachmentService, workspaceService } =
+      createService();
+    const runtimeSnapshot = {
+      sessionId: "runtime-session-1",
+      workspaceId: "workspace-1",
+      provider: "kimi",
+      providerSessionId: "pending://kimi/runtime-session-1",
+      rawStoreRef: "pending://kimi/runtime-session-1",
+      runningState: "starting",
+      attachedClients: 1,
+      startedAt: "2026-04-09T10:00:00.000Z",
+      lastEventAt: null,
+      completedAt: null,
+      detail: null,
+      errorCode: null,
+      supportsInterrupt: true
+    };
+    const providerRuntimeService = {
+      startSession: vi.fn(async () => ({
+        getSnapshot: vi.fn(() => ({ ...runtimeSnapshot })),
+        attach: vi.fn()
+      }))
+    };
+    Object.defineProperty(service, "providerRuntimeService", {
+      value: providerRuntimeService,
+      configurable: true
+    });
+
+    let currentBinding = {
+      provider: "kimi",
+      providerSessionId: "pending://kimi/runtime-session-1",
+      rawStoreRef: "pending://kimi/runtime-session-1"
+    };
+
+    sessionHistoryService.persistSessionBinding.mockImplementation(
+      (_sessionId: string, _workspaceId: string, binding: typeof currentBinding) => {
+        currentBinding = binding;
+      }
+    );
+    sessionHistoryService.getProviderCapabilitiesSnapshot = vi.fn(() => ({
+      provider: "kimi",
+      canStartSession: true,
+      canResumeSession: true,
+      canSendMessage: true,
+      inRunInputMode: "none",
+      supportsSubagents: false,
+      supportsInterrupt: true,
+      supportsStructuredToolCalls: true,
+      supportsTokenUsage: false,
+      supportsAttachments: false,
+      supportsPermissionPrompt: false,
+      supportsCheckpoint: false,
+      limitations: []
+    }));
+    workspaceService.getWorkspaceOrThrow.mockReturnValue({
+      id: "workspace-1",
+      path: "/tmp/workspace"
+    });
+    sessionMessageAttachmentService.buildProviderPrompt.mockReturnValue(null);
+    sessionMessageAttachmentService.buildAcceptedContentCandidates.mockReturnValue(["首条 Kimi 用户消息"]);
+    sessionMessageAttachmentService.bindClientRequestToMessage.mockReturnValue([]);
+    sessionHistoryService.getBindingOrThrow.mockImplementation(() => currentBinding);
+    sessionHistoryService.findLatestUserMessage.mockImplementation(async () => {
+      if (currentBinding.providerSessionId !== "kimi-session-real-1") {
+        return null;
+      }
+
+      return {
+        messageId: "kimi-user-1",
+        provider: "kimi",
+        providerSessionId: "kimi-session-real-1",
+        role: "user",
+        kind: "text",
+        content: "首条 Kimi 用户消息",
+        toolCall: null,
+        timestamp: "2020-01-01T00:00:03.000Z",
+        sequence: 1,
+        rawRef: "kimi://session/kimi-session-real-1/context#line=3"
+      };
+    });
+    sessionHistoryService.getSession.mockImplementation((sessionId: string) => ({
+      sessionId,
+      workspaceId: "workspace-1",
+      provider: "kimi",
+      providerSessionId: currentBinding.providerSessionId,
+      rawStoreRef: currentBinding.rawStoreRef,
+      messageCount: 0
+    }));
+
+    setTimeout(() => {
+      runtimeSnapshot.providerSessionId = "kimi-session-real-1";
+      runtimeSnapshot.rawStoreRef = "kimi://session/kimi-session-real-1";
+      runtimeSnapshot.runningState = "running";
+      runtimeSnapshot.lastEventAt = "2026-04-09T10:00:00.200Z";
+    }, 100);
+
+    const resultPromise = service.startLiveSession({
+      workspaceId: "workspace-1",
+      userId: "user-1",
+      provider: "kimi",
+      content: "首条 Kimi 用户消息",
+      clientRequestId: "client-kimi-1"
+    });
+
+    await vi.advanceTimersByTimeAsync(200);
+    const result = await resultPromise;
+
+    expect(result.providerSessionId).toBe("kimi-session-real-1");
+    expect(result.message.messageId).toBe("kimi-user-1");
+    expect(result.message.rawRef).toBe("kimi://session/kimi-session-real-1/context#line=3");
+    expect(result.message.content).toBe("首条 Kimi 用户消息");
+  });
 });

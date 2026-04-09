@@ -1,5 +1,6 @@
 import type { MessageKind, NormalizedMessage, NormalizedToolCall } from "./types.js";
 import { ensureText, extractTextBlocks } from "./providers/utils.js";
+import { buildApplyPatchFromStructuredFileTool } from "./patch-builder.js";
 
 export interface KimiNormalizedMessagePart {
   role: NormalizedMessage["role"];
@@ -99,6 +100,7 @@ export function resolveKimiMessageRole(
     readKimiFirstNonEmptyString(record, [
       ["role"],
       ["message", "role"],
+      ["message", "payload", "role"],
       ["payload", "role"],
       ["event", "role"],
       ["author", "role"],
@@ -122,7 +124,7 @@ export function resolveKimiMessageRole(
     return "system";
   }
 
-  const rawType = ensureText(record.type).trim().toLowerCase();
+  const rawType = readKimiMessageType(record);
 
   if (rawType === "user" || rawType === "assistant" || rawType === "tool" || rawType === "system") {
     return rawType;
@@ -134,8 +136,15 @@ export function resolveKimiMessageRole(
 export function extractKimiMessageBlocks(record: Record<string, unknown>): unknown[] {
   const directCandidates = [
     record.content,
+    record.tool_calls,
     readKimiPath(record, ["message", "content"]),
+    readKimiPath(record, ["message", "payload"]),
+    readKimiPath(record, ["message", "payload", "content"]),
+    readKimiPath(record, ["message", "payload", "text"]),
+    readKimiPath(record, ["message", "payload", "tool_calls"]),
     readKimiPath(record, ["payload", "content"]),
+    readKimiPath(record, ["payload"]),
+    readKimiPath(record, ["payload", "text"]),
     readKimiPath(record, ["event", "content"]),
     readKimiPath(record, ["data", "content"]),
     record.parts,
@@ -188,6 +197,20 @@ export function normalizeKimiMessageRecord(
   }
 
   const fallbackRole = resolveKimiMessageRole(record);
+
+  if (looksLikeSelfContainedKimiBlock(record)) {
+    const normalized = normalizeKimiMessageBlock(record, fallbackRole);
+
+    if (normalized) {
+      return [
+        {
+          ...normalized,
+          partIndex: 0
+        }
+      ];
+    }
+  }
+
   const blocks = extractKimiMessageBlocks(record);
 
   if (blocks.length > 0) {
@@ -214,19 +237,6 @@ export function normalizeKimiMessageRecord(
     }
   }
 
-  if (looksLikeSelfContainedKimiBlock(record)) {
-    const normalized = normalizeKimiMessageBlock(record, fallbackRole);
-
-    if (normalized) {
-      return [
-        {
-          ...normalized,
-          partIndex: 0
-        }
-      ];
-    }
-  }
-
   const fallbackText = extractKimiFallbackMessageText(record).trim();
 
   if (!fallbackText) {
@@ -249,6 +259,7 @@ function isKimiInternalRecord(record: Record<string, unknown>): boolean {
     readKimiFirstNonEmptyString(record, [
       ["role"],
       ["message", "role"],
+      ["message", "payload", "role"],
       ["payload", "role"]
     ]) ?? ""
   ).trim().toLowerCase();
@@ -261,12 +272,12 @@ function isKimiInternalRecord(record: Record<string, unknown>): boolean {
   return (
     rawType === "metadata"
     || rawType === "statusupdate"
-    || rawType === "contentpart"
     || rawType === "turnbegin"
     || rawType === "stepend"
     || rawType === "stepbegin"
     || rawType === "stepinterrupted"
     || rawType === "turnend"
+    || (rawType === "contentpart" && !hasKimiDisplayPayload(record))
   );
 }
 
@@ -297,7 +308,7 @@ function normalizeKimiMessageBlock(
   const rawType = readKimiMessageType(record);
 
   if (rawType.includes("think") || rawType.includes("reason")) {
-    const content = sanitizeKimiDisplayText(extractTextBlocks(record));
+    const content = sanitizeKimiDisplayText(extractKimiTextContent(record));
 
     if (!content) {
       return null;
@@ -313,6 +324,7 @@ function normalizeKimiMessageBlock(
 
   if (
     rawType.includes("tool_call") ||
+    rawType.includes("toolcall") ||
     rawType.includes("tool-use") ||
     rawType.includes("tool_use") ||
     rawType.includes("function_call") ||
@@ -324,8 +336,11 @@ function normalizeKimiMessageBlock(
         ["callId"],
         ["call_id"],
         ["tool_use_id"],
+        ["payload", "id"],
+        ["message", "payload", "id"],
         ["tool_call", "id"],
-        ["function_call", "id"]
+        ["function_call", "id"],
+        ["tool_calls", "0", "id"]
       ]) ??
       "kimi-tool-call";
     const name =
@@ -333,34 +348,43 @@ function normalizeKimiMessageBlock(
         ["name"],
         ["tool", "name"],
         ["function", "name"],
+        ["payload", "function", "name"],
+        ["message", "payload", "function", "name"],
         ["tool_call", "name"],
-        ["function_call", "name"]
+        ["function_call", "name"],
+        ["tool_calls", "0", "function", "name"]
       ]) ??
       "unknown_tool";
+    const patchText = buildKimiApplyPatchFromToolRecord(record);
     const input = extractKimiFallbackMessageText(
       readKimiPath(record, ["arguments"]) ??
         readKimiPath(record, ["input"]) ??
         readKimiPath(record, ["params"]) ??
+        readKimiPath(record, ["payload", "function", "arguments"]) ??
+        readKimiPath(record, ["message", "payload", "function", "arguments"]) ??
         readKimiPath(record, ["tool_call", "arguments"]) ??
         readKimiPath(record, ["tool_call", "input"]) ??
         readKimiPath(record, ["function_call", "arguments"]) ??
-        readKimiPath(record, ["function_call", "input"])
+        readKimiPath(record, ["function_call", "input"]) ??
+        readKimiPath(record, ["tool_calls", "0", "function", "arguments"])
     );
     const output = extractKimiFallbackMessageText(
       readKimiPath(record, ["output"]) ??
         readKimiPath(record, ["result"]) ??
+        readKimiPath(record, ["payload", "output"]) ??
+        readKimiPath(record, ["message", "payload", "output"]) ??
         readKimiPath(record, ["tool_call", "output"]) ??
         readKimiPath(record, ["function_call", "output"])
     );
 
     return {
-      role: "assistant",
+      role: patchText ? "tool" : "assistant",
       kind: "tool_call",
-      content: output || input || name,
+      content: patchText || output || input || name,
       toolCall: {
         callId,
-        name,
-        input,
+        name: patchText ? "apply_patch" : name,
+        input: patchText || input,
         output: output || null,
         error: null,
         status: output ? "completed" : "running"
@@ -370,6 +394,7 @@ function normalizeKimiMessageBlock(
 
   if (
     rawType.includes("tool_result") ||
+    rawType.includes("toolresult") ||
     rawType.includes("tool-output") ||
     rawType.includes("tool_output") ||
     rawType.includes("function_result") ||
@@ -381,47 +406,66 @@ function normalizeKimiMessageBlock(
         ["callId"],
         ["call_id"],
         ["id"],
+        ["tool_call_id"],
+        ["payload", "tool_call_id"],
+        ["message", "payload", "tool_call_id"],
         ["tool_result", "call_id"],
         ["function_result", "call_id"]
       ]) ??
       "kimi-tool-call";
-    const output = extractKimiFallbackMessageText(
+    const output = sanitizeKimiToolResultText(extractKimiFallbackMessageText(
       readKimiPath(record, ["output"]) ??
         readKimiPath(record, ["result"]) ??
         readKimiPath(record, ["content"]) ??
+        readKimiPath(record, ["payload", "return_value", "output"]) ??
+        readKimiPath(record, ["message", "payload", "return_value", "output"]) ??
+        readKimiPath(record, ["payload", "display"]) ??
+        readKimiPath(record, ["message", "payload", "display"]) ??
         readKimiPath(record, ["tool_result", "output"]) ??
         readKimiPath(record, ["function_result", "output"])
-    );
-    const error =
+    ));
+    const isError = readKimiFirstPresentValue(record, [
+      ["payload", "return_value", "is_error"],
+      ["message", "payload", "return_value", "is_error"]
+    ]) === true;
+    const messageText =
       readKimiFirstNonEmptyString(record, [
+        ["payload", "return_value", "message"],
+        ["message", "payload", "return_value", "message"],
         ["error"],
         ["failure"],
         ["tool_result", "error"],
         ["function_result", "error"]
       ]) ?? null;
+    const error =
+      isError
+        ? messageText ?? "KIMI_TOOL_RESULT_FAILED"
+        : null;
 
     return {
       role: "tool",
       kind: "tool_result",
-      content: output || error || "",
+      content: output || messageText || error || "",
       toolCall: {
         callId,
         name:
           readKimiFirstNonEmptyString(record, [
             ["name"],
             ["tool", "name"],
+            ["payload", "function", "name"],
+            ["message", "payload", "function", "name"],
             ["tool_result", "name"],
             ["function_result", "name"]
           ]) ?? "tool_result",
         input: "",
         output: output || null,
         error,
-        status: error ? "failed" : "completed"
+        status: isError || error ? "failed" : "completed"
       }
     };
   }
 
-  const content = sanitizeKimiDisplayText(extractTextBlocks(record));
+  const content = sanitizeKimiDisplayText(extractKimiTextContent(record));
 
   if (!content) {
     return null;
@@ -442,6 +486,9 @@ function readKimiMessageType(record: Record<string, unknown>): string {
       ["kind"],
       ["eventType"],
       ["name"],
+      ["message", "type"],
+      ["message", "payload", "type"],
+      ["payload", "type"],
       ["tool_call", "type"],
       ["tool_result", "type"],
       ["function_call", "type"],
@@ -458,6 +505,8 @@ function looksLikeSelfContainedKimiBlock(record: Record<string, unknown>): boole
   if (
     rawType.includes("think") ||
     rawType.includes("reason") ||
+    rawType.includes("toolcall") ||
+    rawType.includes("toolresult") ||
     rawType.includes("tool") ||
     rawType.includes("function")
   ) {
@@ -476,7 +525,97 @@ function extractKimiFallbackMessageText(value: unknown): string {
     return "";
   }
 
-  return sanitizeKimiDisplayText(extractTextBlocks(value) || ensureText(value));
+  return sanitizeKimiDisplayText(extractKimiTextContent(value) || ensureText(value));
+}
+
+function hasKimiDisplayPayload(record: Record<string, unknown>): boolean {
+  return extractKimiTextContent(record).trim().length > 0;
+}
+
+function extractKimiTextContent(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (!value || typeof value !== "object") {
+    return extractTextBlocks(value);
+  }
+
+  const record = value as Record<string, unknown>;
+  const directValue = readKimiFirstPresentValue(record, [
+    ["text"],
+    ["content"],
+    ["message", "payload"],
+    ["message", "payload", "text"],
+    ["message", "payload", "content"],
+    ["payload"],
+    ["payload", "text"],
+    ["payload", "content"],
+    ["delta"],
+    ["delta", "text"],
+    ["delta", "content"]
+  ]);
+
+  if (directValue !== null) {
+    const extracted = extractTextBlocks(directValue);
+
+    if (extracted.trim().length > 0) {
+      return extracted;
+    }
+  }
+
+  return extractTextBlocks(value);
+}
+
+function sanitizeKimiToolResultText(value: string): string {
+  const stripped = value.replace(/<system>[\s\S]*?<\/system>\s*/gi, "").trim();
+  return stripped || value.trim();
+}
+
+function buildKimiApplyPatchFromToolRecord(record: Record<string, unknown>): string | null {
+  const candidates = [
+    toKimiRecord(readKimiPath(record, ["payload", "function", "arguments"])),
+    toKimiRecord(readKimiPath(record, ["message", "payload", "function", "arguments"])),
+    toKimiRecord(readKimiPath(record, ["tool_calls", "0", "function", "arguments"])),
+    toKimiRecord(readKimiPath(record, ["arguments"])),
+    toKimiRecord(readKimiPath(record, ["input"])),
+    toKimiRecord(readKimiPath(record, ["params"]))
+  ];
+
+  for (const candidate of candidates) {
+    if (!candidate) {
+      continue;
+    }
+
+    const patchText = buildApplyPatchFromStructuredFileTool(candidate);
+
+    if (patchText) {
+      return patchText;
+    }
+  }
+
+  return null;
+}
+
+function toKimiRecord(value: unknown): Record<string, unknown> | null {
+  if (!value) {
+    return null;
+  }
+
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : null;
+    } catch {
+      return null;
+    }
+  }
+
+  return typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
 }
 
 function inferKimiFallbackMessageKind(record: Record<string, unknown>): MessageKind {
@@ -491,8 +630,11 @@ function inferKimiFallbackMessageKind(record: Record<string, unknown>): MessageK
 
 function hasKimiToolCallShape(record: Record<string, unknown>): boolean {
   return (
+    typeof readKimiPath(record, ["tool_calls"]) !== "undefined" ||
     typeof readKimiPath(record, ["arguments"]) !== "undefined" ||
     typeof readKimiPath(record, ["input"]) !== "undefined" ||
+    typeof readKimiPath(record, ["payload", "function"]) !== "undefined" ||
+    typeof readKimiPath(record, ["message", "payload", "function"]) !== "undefined" ||
     typeof readKimiPath(record, ["tool_call"]) !== "undefined" ||
     typeof readKimiPath(record, ["function_call"]) !== "undefined"
   );
@@ -500,15 +642,183 @@ function hasKimiToolCallShape(record: Record<string, unknown>): boolean {
 
 function hasKimiToolResultShape(record: Record<string, unknown>): boolean {
   return (
+    typeof readKimiPath(record, ["tool_call_id"]) !== "undefined" ||
     typeof readKimiPath(record, ["output"]) !== "undefined" ||
     typeof readKimiPath(record, ["result"]) !== "undefined" ||
+    typeof readKimiPath(record, ["payload", "return_value"]) !== "undefined" ||
+    typeof readKimiPath(record, ["message", "payload", "return_value"]) !== "undefined" ||
     typeof readKimiPath(record, ["tool_result"]) !== "undefined" ||
     typeof readKimiPath(record, ["function_result"]) !== "undefined"
   );
 }
 
+export function sanitizeKimiPlainTextLine(line: string): string {
+  const normalized = line.trim().toLowerCase();
+
+  if (KIMI_CONTROL_TEXT_LINES.has(normalized) || KIMI_STATUS_TOKEN_PATTERN.test(line.trim())) {
+    return "";
+  }
+
+  return line.trim();
+}
+
+export function extractKimiDisplayTextSegments(value: string): string[] {
+  const stripped = stripKimiSystemReminderBlocks(value);
+  const lines = stripped.replace(/\r\n/g, "\n").split("\n");
+  const transcriptSegments = extractKimiTranscriptSegments(lines);
+
+  if (transcriptSegments !== null) {
+    return transcriptSegments;
+  }
+
+  const fallback = sanitizeKimiDisplayTextLines(lines);
+  return fallback ? [fallback] : [];
+}
+
 function sanitizeKimiDisplayText(value: string): string {
-  const lines = value.replace(/\r\n/g, "\n").split("\n");
+  return extractKimiDisplayTextSegments(value)
+    .join("\n\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function stripKimiSystemReminderBlocks(value: string): string {
+  return value.replace(/<system-reminder\b[^>]*>[\s\S]*?<\/system-reminder>/gi, "");
+}
+
+function extractKimiTranscriptSegments(lines: string[]): string[] | null {
+  const hasContentPart = lines.some((line) => line.trim().toLowerCase() === "contentpart");
+
+  if (!hasContentPart) {
+    return null;
+  }
+
+  const segments: string[] = [];
+  const currentLines: string[] = [];
+  let capturing = false;
+  let skipNextStatusToken = false;
+
+  const flushCurrentSegment = (): void => {
+    const content = normalizeKimiTranscriptSegment(currentLines.join("\n"));
+    currentLines.length = 0;
+
+    if (!content) {
+      return;
+    }
+
+    segments.push(content);
+  };
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    const normalized = trimmed.toLowerCase();
+
+    if (skipNextStatusToken) {
+      if (!trimmed) {
+        continue;
+      }
+
+      if (KIMI_STATUS_TOKEN_PATTERN.test(trimmed)) {
+        skipNextStatusToken = false;
+        continue;
+      }
+
+      skipNextStatusToken = false;
+    }
+
+    if (normalized === "contentpart") {
+      flushCurrentSegment();
+      capturing = true;
+      continue;
+    }
+
+    if (KIMI_CONTROL_TEXT_LINES.has(normalized)) {
+      if (normalized === "statusupdate") {
+        skipNextStatusToken = true;
+      }
+
+      flushCurrentSegment();
+      capturing = false;
+      continue;
+    }
+
+    if (KIMI_STATUS_TOKEN_PATTERN.test(trimmed)) {
+      flushCurrentSegment();
+      capturing = false;
+      continue;
+    }
+
+    if (!capturing) {
+      continue;
+    }
+
+    if (!trimmed) {
+      if (currentLines.length > 0 && currentLines.at(-1) !== "") {
+        currentLines.push("");
+      }
+      continue;
+    }
+
+    currentLines.push(line.trimEnd());
+  }
+
+  flushCurrentSegment();
+  return collapseKimiTranscriptSegments(segments);
+}
+
+function collapseKimiTranscriptSegments(segments: string[]): string[] {
+  const collapsed: string[] = [];
+
+  for (const segment of segments) {
+    const normalizedSegment = normalizeKimiTranscriptSegment(segment);
+
+    if (!normalizedSegment) {
+      continue;
+    }
+
+    const previous = collapsed.at(-1);
+
+    if (!previous) {
+      collapsed.push(normalizedSegment);
+      continue;
+    }
+
+    const comparablePrevious = normalizeComparableKimiTranscriptText(previous);
+    const comparableCurrent = normalizeComparableKimiTranscriptText(normalizedSegment);
+
+    if (!comparableCurrent || comparableCurrent === comparablePrevious) {
+      continue;
+    }
+
+    if (comparableCurrent.includes(comparablePrevious)) {
+      collapsed[collapsed.length - 1] = normalizedSegment;
+      continue;
+    }
+
+    if (comparablePrevious.includes(comparableCurrent)) {
+      continue;
+    }
+
+    collapsed.push(normalizedSegment);
+  }
+
+  return collapsed;
+}
+
+function normalizeComparableKimiTranscriptText(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+function normalizeKimiTranscriptSegment(value: string): string {
+  return value
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function sanitizeKimiDisplayTextLines(lines: string[]): string {
   const keptLines: string[] = [];
   let skipNextStatusToken = false;
 
