@@ -193,7 +193,7 @@ describe("butler profile routes", () => {
       },
       payload: {
         displayName: "贝拉",
-        providerId: "claude-code",
+        providerId: "codex",
         workspacePath: butlerWorkspace,
         agentsMode: "file",
         agentsFilePath,
@@ -216,7 +216,7 @@ describe("butler profile routes", () => {
     });
   });
 
-  it("初始化后可以更新 provider、指令模式和关注重点", async () => {
+  it("初始化后可以更新指令模式和关注重点，provider 固定为 codex", async () => {
     const fixture = createEmptyFixture();
     const databasePath = path.join(fixture.rootDir, "host.sqlite");
     const butlerWorkspace = path.join(fixture.rootDir, "butler-workspace");
@@ -265,7 +265,7 @@ describe("butler profile routes", () => {
         authorization: `Bearer ${accessToken}`
       },
       payload: {
-        providerId: "claude-code",
+        providerId: "codex",
         agentsMode: "inline",
         agentsContent: "# AGENTS.md\n你现在按风险优先汇报。",
         focus: {
@@ -281,7 +281,7 @@ describe("butler profile routes", () => {
       initialized: true,
       profile: {
         displayName: "阿尔文",
-        providerId: "claude-code",
+        providerId: "codex",
         workspacePath: butlerWorkspace,
         agentsMode: "inline",
         agentsFilePath: null,

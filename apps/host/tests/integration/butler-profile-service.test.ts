@@ -175,4 +175,40 @@ describe("ButlerProfileService", () => {
     expect(profile.agentsContent).toContain("这套规则只服务于代码助手工作目录");
     expect(profile.agentsContent).toContain("如果上层仓库、默认配置或普通项目会话规则和这里冲突");
   });
+
+  it("读取历史档案时会把 claude-code 自动收敛回 codex", () => {
+    const service = new ButlerProfileService(
+      {
+        find: vi.fn(() => ({
+          id: "default",
+          displayName: "阿尔文",
+          providerId: "claude-code",
+          workspacePath: "/tmp/butler",
+          agentsMode: "inline",
+          agentsFilePath: null,
+          agentsContent: "# AGENTS.md\n你是代码助手",
+          persona: {
+            tone: "direct",
+            language: "zh-CN",
+            summaryStyle: "brief"
+          },
+          focus: {
+            projectIds: [],
+            riskPreference: "conservative",
+            reportPriority: ["risk"],
+            summaryDebounceSeconds: 300
+          },
+          initializedAt: "2026-04-09T00:00:00.000Z",
+          updatedAt: "2026-04-09T00:00:00.000Z"
+        }))
+      } as unknown as ButlerProfileRepository,
+      {
+        list: vi.fn(() => [])
+      } as unknown as Pick<ButlerProjectRepository, "list">
+    );
+
+    expect(service.getProfile()).toMatchObject({
+      providerId: "codex"
+    });
+  });
 });

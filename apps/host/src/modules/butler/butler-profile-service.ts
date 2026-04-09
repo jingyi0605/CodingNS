@@ -17,7 +17,8 @@ import type { ButlerProjectRepository } from "../../storage/repositories/butler-
 const BUTLER_PROFILE_ID: ButlerProfile["id"] = "default";
 const DEFAULT_BUTLER_DISPLAY_NAME = "代码助手";
 const DEFAULT_BUTLER_WORKSPACE_DIRNAME = "butler-workspace";
-const SUPPORTED_PROVIDERS: ButlerProfileProviderId[] = ["codex", "claude-code"];
+const SUPPORTED_PROVIDERS: ButlerProfileProviderId[] = ["codex"];
+const PROVIDER_ERROR_DETAIL = "providerId 只允许为 codex";
 const SUPPORTED_AGENTS_MODES: ButlerAgentsMode[] = ["inline", "file"];
 const SUPPORTED_PERSONA_TONES = ["direct", "steady", "friendly"] as const;
 const SUPPORTED_PERSONA_LANGUAGES = ["zh-CN", "en-US", "bilingual"] as const;
@@ -129,7 +130,7 @@ function buildButlerProfileRecord(
   const providerId =
     input.providerId !== undefined
       ? normalizeProviderId(input.providerId)
-      : current?.providerId ?? invalidField("providerId", "providerId 只允许为 codex 或 claude-code");
+      : current?.providerId ?? invalidField("providerId", PROVIDER_ERROR_DETAIL);
   const agentsMode =
     input.agentsMode !== undefined
       ? normalizeAgentsMode(input.agentsMode)
@@ -187,16 +188,24 @@ function normalizeDisplayName(value: unknown): string {
 
 function normalizeProviderId(value: unknown): ButlerProfileProviderId {
   if (typeof value !== "string") {
-    throw invalidField("providerId", "providerId 只允许为 codex 或 claude-code");
+    throw invalidField("providerId", PROVIDER_ERROR_DETAIL);
   }
 
   const normalized = value.trim() as ButlerProfileProviderId;
 
   if (!SUPPORTED_PROVIDERS.includes(normalized)) {
-    throw invalidField("providerId", "providerId 只允许为 codex 或 claude-code");
+    throw invalidField("providerId", PROVIDER_ERROR_DETAIL);
   }
 
   return normalized;
+}
+
+function hydrateStoredProviderId(value: unknown): ButlerProfileProviderId {
+  if (value === "claude-code") {
+    return "codex";
+  }
+
+  return normalizeProviderId(value);
 }
 
 function normalizeWorkspacePath(
@@ -627,6 +636,7 @@ function buildGeneratedAgentsContent(input: {
 function hydrateStoredProfile(profile: ButlerProfile): ButlerProfile {
   return {
     ...profile,
+    providerId: hydrateStoredProviderId(profile.providerId),
     persona: normalizePersona(profile.persona),
     focus: normalizeFocus(profile.focus)
   };
