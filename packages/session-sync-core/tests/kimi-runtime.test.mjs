@@ -442,3 +442,57 @@ setTimeout(() => process.exit(0), 30);
     await cleanupTempDir(tempDir);
   }
 });
+
+test("KimiRuntimeAdapter 不会把 wire completed 过早上报成终态", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-kimi-runtime-wire-complete-"));
+  const scriptPath = createWireScript(
+    tempDir,
+    `
+const args = process.argv.slice(2);
+if (args.includes("--help")) {
+  console.log("Usage: kimi [OPTIONS]\\n  --wire\\n  --work-dir\\n  --session");
+  process.exit(0);
+}
+const sessionOptionIndex = args.indexOf("--session");
+const resumeIndex = sessionOptionIndex >= 0 ? sessionOptionIndex : args.indexOf("--resume");
+const sessionId = resumeIndex >= 0 ? args[resumeIndex + 1] : "wire-complete-session-1";
+console.log(JSON.stringify({ type: "session.created", session_id: sessionId }));
+console.log(JSON.stringify({
+  type: "assistant.message",
+  role: "assistant",
+  timestamp: "2026-04-09T10:00:00.000Z",
+  content: [{ type: "text", text: "terminal state should wait for process exit" }]
+}));
+console.log(JSON.stringify({
+  type: "session.completed",
+  session_id: sessionId,
+  timestamp: "2026-04-09T10:00:00.100Z"
+}));
+setTimeout(() => process.exit(0), 200);
+`
+  );
+
+  try {
+    const adapter = new KimiRuntimeAdapter({
+      homeDir: tempDir,
+      commandPath: process.execPath,
+      baseArgs: [scriptPath]
+    });
+    const { sink, events } = createSink();
+
+    const launch = await adapter.startSession(
+      createRunRequest({
+        workspacePath: tempDir
+      }),
+      sink
+    );
+
+    await wait(80);
+    assert.equal(events.some((event) => event.type === "complete"), false);
+
+    await launch.completed;
+    assert.equal(events.some((event) => event.type === "complete"), false);
+  } finally {
+    await cleanupTempDir(tempDir);
+  }
+});

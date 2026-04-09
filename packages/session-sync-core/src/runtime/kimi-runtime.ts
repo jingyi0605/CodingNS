@@ -964,17 +964,8 @@ function mapKimiWirePayload(
     };
   }
 
-  if (wireType.includes("complete") || wireType.includes("finished") || wireType.includes("done")) {
-    events.push({
-      type: "complete",
-      status: "completed",
-      timestamp,
-      detail: maybeError || "Kimi wire completed",
-      rawEventRef,
-      providerSessionId: providerSessionId ?? undefined
-    });
-  }
-
+  // Kimi 的 wire 完成标记经常早于本地历史真正落盘，这里不直接发 completed，
+  // 改由进程 completed Promise 作为终态来源，避免前端过早显示“已结束”。
   const normalizedMessages = normalizeKimiWireMessages(payload, wireType, {
     sessionId: resolvedSessionId,
     rawStoreRef: resolvedRawStoreRef,

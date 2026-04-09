@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
+import WebSocket from "ws";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
@@ -12,6 +13,50 @@ import {
 
 const activeServers: Array<ReturnType<typeof createTestApp>> = [];
 const activeFixtures: EmptyFixture[] = [];
+
+function createWsMessageQueue(socket: WebSocket) {
+  const pending: string[] = [];
+  const waiters: Array<(value: string) => void> = [];
+
+  socket.on("message", (raw) => {
+    const text = raw.toString();
+    const waiter = waiters.shift();
+
+    if (waiter) {
+      waiter(text);
+      return;
+    }
+
+    pending.push(text);
+  });
+
+  return {
+    async next(timeoutMs = 2_500): Promise<string> {
+      if (pending.length > 0) {
+        return pending.shift()!;
+      }
+
+      return await new Promise<string>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          const index = waiters.indexOf(waiter);
+
+          if (index >= 0) {
+            waiters.splice(index, 1);
+          }
+
+          reject(new Error("等待 WebSocket 消息超时"));
+        }, timeoutMs);
+
+        const waiter = (value: string) => {
+          clearTimeout(timer);
+          resolve(value);
+        };
+
+        waiters.push(waiter);
+      });
+    }
+  };
+}
 
 afterEach(async () => {
   while (activeServers.length > 0) {
@@ -151,6 +196,114 @@ describe("Kimi 会话发现与历史读取", () => {
     expect(matched).toBeTruthy();
     expect(matched?.content).toBe("对话测试实时用户消息");
     expect(matched?.rawRef).toContain("/context#");
+  });
+
+  it("Kimi 尾部消息内容被覆盖但条数不变时，WebSocket 仍会实时推送最新正文", async () => {
+    const fixture = createEmptyFixture();
+    activeFixtures.push(fixture);
+
+    const mutableSessionDir = prepareMutableKimiSessionFixture(fixture);
+
+    const hosted = createTestApp(fixture, {
+      databasePath: path.join(fixture.rootDir, "host.sqlite")
+    });
+    activeServers.push(hosted);
+    await hosted.app.ready();
+
+    const accessToken = await bootstrapAndLogin(hosted);
+    const workspaceId = await importWorkspace(hosted, accessToken, fixture.workspaceDir);
+    const listed = await hosted.app.inject({
+      method: "GET",
+      url: `/api/sessions?workspaceId=${workspaceId}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    const kimiSession = listed
+      .json()
+      .items.find((item: { provider: string }) => item.provider === "kimi");
+
+    expect(kimiSession).toBeDefined();
+
+    await hosted.app.listen({
+      host: "127.0.0.1",
+      port: 0
+    });
+
+    const address = hosted.app.server.address();
+
+    if (!address || typeof address === "string") {
+      throw new Error("测试服务地址异常");
+    }
+
+    const socket = new WebSocket(
+      `ws://127.0.0.1:${address.port}/ws?access_token=${encodeURIComponent(accessToken)}`
+    );
+    const queue = createWsMessageQueue(socket);
+
+    expect(JSON.parse(await queue.next()).type).toBe("system.connected");
+
+    socket.send(
+      JSON.stringify({
+        type: "session.subscribe",
+        sessionId: kimiSession.sessionId,
+        limit: 20
+      })
+    );
+
+    let backfillMessages: Array<{ content: string }> = [];
+
+    for (let index = 0; index < 3; index += 1) {
+      const payload = JSON.parse(await queue.next()) as {
+        type: string;
+        messages?: Array<{ content: string }>;
+      };
+
+      if (payload.type === "session.backfill" && payload.messages) {
+        backfillMessages = payload.messages;
+        break;
+      }
+    }
+
+    expect(backfillMessages.map((message) => message.content)).toContain("第一段");
+
+    writeFileSync(
+      path.join(mutableSessionDir, "context.jsonl"),
+      [
+        JSON.stringify({
+          timestamp: "2026-04-09T10:00:00.000Z",
+          role: "user",
+          content: [{ type: "text", text: "请继续展开说明。" }],
+          cwd: fixture.workspaceDir
+        }),
+        JSON.stringify({
+          timestamp: "2026-04-09T10:00:02.000Z",
+          role: "assistant",
+          content: [{ type: "text", text: "第一段\n第二段" }],
+          cwd: fixture.workspaceDir
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    let deltaMessages: Array<{ content: string }> = [];
+
+    for (let index = 0; index < 6; index += 1) {
+      const payload = JSON.parse(await queue.next(4_000)) as {
+        type: string;
+        messages?: Array<{ content: string }>;
+      };
+
+      if (payload.type === "session.delta" && payload.messages) {
+        deltaMessages = payload.messages;
+        break;
+      }
+    }
+
+    expect(deltaMessages).toHaveLength(1);
+    expect(deltaMessages[0]?.content).toBe("第一段\n第二段");
+
+    socket.close();
   });
 });
 
@@ -316,6 +469,50 @@ function prepareRealtimeKimiSessionFixture(fixture: EmptyFixture): void {
     ].join("\n"),
     "utf8"
   );
+}
+
+function prepareMutableKimiSessionFixture(fixture: EmptyFixture): string {
+  const kimiSessionDir = path.join(
+    fixture.kimiHomeDir,
+    "sessions",
+    "workspace-hash-1",
+    "kimi-session-1"
+  );
+
+  mkdirSync(kimiSessionDir, { recursive: true });
+
+  writeFileSync(
+    path.join(kimiSessionDir, "state.json"),
+    JSON.stringify({
+      sessionId: "kimi-session-1",
+      title: "Kimi 可变尾部会话",
+      cwd: fixture.workspaceDir,
+      archived: false
+    }),
+    "utf8"
+  );
+
+  writeFileSync(
+    path.join(kimiSessionDir, "context.jsonl"),
+    [
+      JSON.stringify({
+        timestamp: "2026-04-09T10:00:00.000Z",
+        role: "user",
+        content: [{ type: "text", text: "请继续展开说明。" }],
+        cwd: fixture.workspaceDir
+      }),
+      JSON.stringify({
+        timestamp: "2026-04-09T10:00:02.000Z",
+        role: "assistant",
+        content: [{ type: "text", text: "第一段" }],
+        cwd: fixture.workspaceDir
+      })
+    ].join("\n"),
+    "utf8"
+  );
+
+  writeFileSync(path.join(kimiSessionDir, "wire.jsonl"), "", "utf8");
+  return kimiSessionDir;
 }
 
 async function bootstrapAndLogin(hosted: ReturnType<typeof createTestApp>): Promise<string> {

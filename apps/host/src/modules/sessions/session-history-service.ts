@@ -20,6 +20,7 @@ import {
 
 import type { HostConfig } from "../../config/env.js";
 import { AppError } from "../../shared/errors/app-error.js";
+import { hashContent } from "../../shared/utils/hash.js";
 import { createId } from "../../shared/utils/id.js";
 import { logPerformance } from "../../shared/utils/perf-log.js";
 import { nowIso } from "../../shared/utils/time.js";
@@ -111,6 +112,11 @@ interface WorkspaceDiscoveryStatus {
   isComplete: boolean;
 }
 
+interface DeliveredHistoryMessageState {
+  readonly signaturesByMessageId: Map<string, string>;
+  lastMutableTailRefreshAtMs: number;
+}
+
 interface PendingSessionAliasDescriptor {
   sessionId: string;
   workspaceId: string;
@@ -138,6 +144,7 @@ const SESSION_START_DEFERRED_PROVIDERS = new Set([
   "gemini",
   "kimi"
 ]);
+const MUTABLE_HISTORY_TAIL_REFRESH_INTERVAL_MS = 1_200;
 
 export class SessionHistoryService {
   private readonly providerRegistry: ProviderRegistry;
@@ -713,7 +720,7 @@ export class SessionHistoryService {
     limit: number,
     onEnvelope: (envelope: SessionHistoryEnvelope) => Promise<void> | void
   ): Promise<ProviderSubscription> {
-    const sentMessageIds = new Set<string>();
+    const deliveredMessages = createDeliveredHistoryMessageState();
     const safeLimit = clampLimit(limit);
     let currentCursor = cursor;
     const current = this.sessionStatusSnapshotRepository.findBySessionId(sessionId);
@@ -734,7 +741,7 @@ export class SessionHistoryService {
         currentCursor = await this.pullRecentSessionHistory(
           sessionId,
           safeLimit,
-          sentMessageIds,
+          deliveredMessages,
           onEnvelope,
           "session.backfill"
         );
@@ -743,7 +750,7 @@ export class SessionHistoryService {
           sessionId,
           currentCursor,
           safeLimit,
-          sentMessageIds,
+          deliveredMessages,
           onEnvelope,
           "session.backfill"
         ).then((nextCursor) => {
@@ -765,7 +772,7 @@ export class SessionHistoryService {
         sessionId,
         currentCursor,
         safeLimit,
-        sentMessageIds,
+        deliveredMessages,
         onEnvelope,
         "session.delta",
         () => closed
@@ -1491,7 +1498,7 @@ export class SessionHistoryService {
     sessionId: string,
     cursor: string | null,
     limit: number,
-    sentMessageIds: Set<string>,
+    deliveredMessages: DeliveredHistoryMessageState,
     onEnvelope: (envelope: SessionHistoryEnvelope) => Promise<void> | void,
     envelopeType: SessionHistoryEnvelope["type"],
     isClosed: () => boolean = () => false
@@ -1508,7 +1515,32 @@ export class SessionHistoryService {
         currentCursor,
         limit
       );
-      await this.publishHistoryEnvelope(sessionId, binding, page, sentMessageIds, onEnvelope, envelopeType);
+      await this.publishHistoryEnvelope(sessionId, binding, page, deliveredMessages, onEnvelope, envelopeType);
+
+      if (
+        envelopeType === "session.delta" &&
+        shouldRefreshMutableHistoryTail(binding.provider, page, currentCursor, deliveredMessages)
+      ) {
+        const tailPage = await this.readPage(
+          sessionId,
+          binding.provider,
+          binding.providerSessionId,
+          binding.rawStoreRef,
+          null,
+          Math.max(limit, 20),
+          "backward"
+        );
+
+        deliveredMessages.lastMutableTailRefreshAtMs = Date.now();
+        await this.publishHistoryEnvelope(
+          sessionId,
+          binding,
+          tailPage,
+          deliveredMessages,
+          onEnvelope,
+          envelopeType
+        );
+      }
 
       currentCursor = page.cursor;
 
@@ -1523,7 +1555,7 @@ export class SessionHistoryService {
   private async pullRecentSessionHistory(
     sessionId: string,
     limit: number,
-    sentMessageIds: Set<string>,
+    deliveredMessages: DeliveredHistoryMessageState,
     onEnvelope: (envelope: SessionHistoryEnvelope) => Promise<void> | void,
     envelopeType: SessionHistoryEnvelope["type"]
   ): Promise<string | null> {
@@ -1541,7 +1573,7 @@ export class SessionHistoryService {
       knownTotalMessageCount
     );
 
-    await this.publishHistoryEnvelope(sessionId, binding, page, sentMessageIds, onEnvelope, envelopeType);
+    await this.publishHistoryEnvelope(sessionId, binding, page, deliveredMessages, onEnvelope, envelopeType);
     return page.cursor;
   }
 
@@ -1549,16 +1581,19 @@ export class SessionHistoryService {
     sessionId: string,
     binding: SessionBinding,
     page: HistoryPage,
-    sentMessageIds: Set<string>,
+    deliveredMessages: DeliveredHistoryMessageState,
     onEnvelope: (envelope: SessionHistoryEnvelope) => Promise<void> | void,
     envelopeType: SessionHistoryEnvelope["type"]
   ): Promise<void> {
     const messages = page.messages.filter((message) => {
-      if (sentMessageIds.has(message.messageId)) {
+      const nextSignature = buildDeliveredHistoryMessageSignature(message);
+      const previousSignature = deliveredMessages.signaturesByMessageId.get(message.messageId);
+
+      if (previousSignature === nextSignature) {
         return false;
       }
 
-      sentMessageIds.add(message.messageId);
+      rememberDeliveredHistoryMessage(deliveredMessages, message.messageId, nextSignature);
       return true;
     });
 
@@ -2887,6 +2922,66 @@ function isAcceptedUserMessageTimestamp(
 
 function isSyntheticKimiHistoryTimestamp(timestamp: string): boolean {
   return timestamp.startsWith("2020-01-01T00:");
+}
+
+function createDeliveredHistoryMessageState(): DeliveredHistoryMessageState {
+  return {
+    signaturesByMessageId: new Map(),
+    lastMutableTailRefreshAtMs: 0
+  };
+}
+
+function shouldRefreshMutableHistoryTail(
+  provider: string,
+  page: HistoryPage,
+  cursor: string | null,
+  deliveredMessages: DeliveredHistoryMessageState
+): boolean {
+  if (provider !== "kimi" || cursor === null || page.messages.length > 0) {
+    return false;
+  }
+
+  return Date.now() - deliveredMessages.lastMutableTailRefreshAtMs >= MUTABLE_HISTORY_TAIL_REFRESH_INTERVAL_MS;
+}
+
+function buildDeliveredHistoryMessageSignature(
+  message: SessionHistoryEnvelope["messages"][number]
+): string {
+  return hashContent(
+    JSON.stringify({
+      provider: message.provider,
+      providerSessionId: message.providerSessionId,
+      role: message.role,
+      kind: message.kind,
+      content: message.content,
+      toolCall: message.toolCall,
+      attachments: message.attachments ?? [],
+      timestamp: message.timestamp,
+      rawRef: message.rawRef
+    })
+  );
+}
+
+function rememberDeliveredHistoryMessage(
+  state: DeliveredHistoryMessageState,
+  messageId: string,
+  signature: string
+): void {
+  if (state.signaturesByMessageId.has(messageId)) {
+    state.signaturesByMessageId.delete(messageId);
+  }
+
+  state.signaturesByMessageId.set(messageId, signature);
+
+  while (state.signaturesByMessageId.size > 2_048) {
+    const oldestMessageId = state.signaturesByMessageId.keys().next().value;
+
+    if (typeof oldestMessageId !== "string") {
+      break;
+    }
+
+    state.signaturesByMessageId.delete(oldestMessageId);
+  }
 }
 
 function delay(ms: number): Promise<void> {
