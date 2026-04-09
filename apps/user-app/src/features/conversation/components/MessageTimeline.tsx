@@ -45,6 +45,7 @@ interface MessageTimelineProps {
   onLoadOlderMessages?: () => void;
   onRetryMessage: (clientRequestId: string) => void;
   provider: ProviderId | null;
+  runtimeThinkingPlaceholder?: string | null;
   assistantAvatar?: ReactNode;
 }
 
@@ -1455,6 +1456,27 @@ function formatApplyPatchLineNumber(value: number | null) {
   return value === null || value <= 0 ? "" : String(value);
 }
 
+function formatMessageTimestamp(timestamp: string) {
+  return new Date(timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function UserMessageMeta({
+  timestamp,
+  children
+}: {
+  timestamp: string;
+  children?: ReactNode;
+}) {
+  return (
+    <div className="message-meta">
+      {children}
+      <time className="message-time" dateTime={timestamp}>
+        {formatMessageTimestamp(timestamp)}
+      </time>
+    </div>
+  );
+}
+
 function RulesMessageCard({
   message,
   kind,
@@ -1526,11 +1548,7 @@ function RulesMessageCard({
         )}
       </div>
 
-      {isUser && (
-        <time className="message-time" dateTime={message.timestamp}>
-          {new Date(message.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-        </time>
-      )}
+      {isUser ? <UserMessageMeta timestamp={message.timestamp} /> : null}
     </article>
   );
 }
@@ -1630,7 +1648,7 @@ function MessageItem({
             </button>
           )}
         </div>
-        <div className="message-meta">
+        <UserMessageMeta timestamp={message.timestamp}>
           {isButlerProxyMessage ? (
             hasOriginDetail ? (
               <div className="message-origin-detail-anchor">
@@ -1670,10 +1688,7 @@ function MessageItem({
               <span className="message-origin-badge">{t("conversation.butlerProxyMessageBadge")}</span>
             )
           ) : null}
-          <time className="message-time" dateTime={message.timestamp}>
-            {new Date(message.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-          </time>
-        </div>
+        </UserMessageMeta>
       </article>
     );
   }
@@ -1780,6 +1795,7 @@ export function MessageTimeline({
   onLoadOlderMessages = () => {},
   onRetryMessage,
   provider,
+  runtimeThinkingPlaceholder = null,
   assistantAvatar
 }: MessageTimelineProps) {
   const { showToast } = useToast();
@@ -1952,6 +1968,12 @@ export function MessageTimeline({
             />
           )
         )}
+
+        {runtimeThinkingPlaceholder ? (
+          <div className="timeline-status timeline-status-inline">
+            <span className="status-text">{runtimeThinkingPlaceholder}</span>
+          </div>
+        ) : null}
       </div>
     </section>
   );

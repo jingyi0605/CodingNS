@@ -1136,4 +1136,23 @@ describe("MessageTimeline", () => {
     expect(screen.getByRole("button", { name: /收起提示词/ })).toBeInTheDocument();
     expect(screen.getByText((content) => content.includes("请先阅读工作区规则，再继续执行。"))).toBeInTheDocument();
   });
+  it("代理发送标签和时间会放进同一个气泡侧边元信息区", () => {
+    const view = render(
+      <MessageTimeline
+        messages={[createButlerProxyTextMessage("continue follow-up")]}
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+      />
+    );
+
+    const meta = view.container.querySelector(".message-meta");
+    const badge = screen.getByText(t("conversation.butlerProxyMessageBadge"));
+    const time = view.container.querySelector(".message-time");
+
+    expect(meta).not.toBeNull();
+    expect(time).not.toBeNull();
+    expect(meta?.contains(badge)).toBe(true);
+    expect(meta?.contains(time!)).toBe(true);
+  });
 });

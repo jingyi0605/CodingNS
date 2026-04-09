@@ -6880,18 +6880,20 @@ textarea:focus-visible {
   border-color: color-mix(in srgb, var(--accent) 16%, var(--border-primary));
 }
 
-.user-message .message-time {
-  order: -1;
-  padding-left: 0;
-  padding-top: 4px;
-  text-align: right;
+.message-meta {
+  display: inline-flex;
+  flex: 0 0 auto;
+  min-width: max-content;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: flex-end;
+  align-self: stretch;
+  gap: 4px;
 }
 
-.message-meta {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 4px;
+.user-message .message-meta {
+  order: -1;
+  padding-bottom: 2px;
 }
 
 .message-origin-badge {
@@ -6904,6 +6906,7 @@ textarea:focus-visible {
   font-size: 11px;
   font-weight: 600;
   line-height: 1.4;
+  white-space: nowrap;
 }
 
 .message-origin-badge-button {
@@ -6973,8 +6976,11 @@ textarea:focus-visible {
 
 .message-time {
   align-self: flex-end;
-  padding: 6px 10px 0;
+  padding: 0;
+  font-size: 11px;
+  line-height: 1.4;
   color: var(--text-tertiary);
+  white-space: nowrap;
 }
 
 .message-attachments {
@@ -16680,6 +16686,12 @@ textarea:focus-visible {
 }
 
 /* message-list 本身已有基础 gap，这里只给“正文 <-> 工具”补足到和段落一致的节奏。 */
+.mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .message-item.user-message,
+.ios-workbench-shell[data-mobile-presentation="conversation-focus"] .message-item.user-message,
+.android-workbench-shell[data-mobile-presentation="conversation-focus"] .message-item.user-message {
+  margin-block: 8px;
+}
+
 .mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .message-item:not(.tool-message-row) + .message-item.tool-message-row,
 .mobile-workbench-shell[data-mobile-presentation="conversation-focus"] .message-item.tool-message-row + .message-item:not(.tool-message-row),
 .ios-workbench-shell[data-mobile-presentation="conversation-focus"] .message-item:not(.tool-message-row) + .message-item.tool-message-row,
