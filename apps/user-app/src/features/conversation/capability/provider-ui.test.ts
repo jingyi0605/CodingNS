@@ -4,7 +4,9 @@ import {
   SESSION_PROVIDER_PICKER_IDS,
   createDraftCapabilities,
   getDraftTitle,
-  shouldFoldRulesMessages
+  getProviderIcon,
+  shouldFoldRulesMessages,
+  warmProviderIconCache
 } from "./provider-ui";
 
 describe("provider-ui", () => {
@@ -39,7 +41,22 @@ describe("provider-ui", () => {
     expect(capabilities.modelOptions?.[0]?.id).toBe("provider-default");
     expect(getDraftTitle("kimi").length > 0).toBe(true);
   });
+
   it("会默认折叠 Kimi 会话的启动提示词", () => {
     expect(shouldFoldRulesMessages(null, "kimi")).toBe(true);
+  });
+
+  it("供应商图标保持本地资源，不依赖远程地址", () => {
+    SESSION_PROVIDER_PICKER_IDS.forEach((provider) => {
+      const icon = getProviderIcon(provider);
+      expect(icon.length).toBeGreaterThan(0);
+      expect(icon.startsWith("http://")).toBe(false);
+      expect(icon.startsWith("https://")).toBe(false);
+    });
+  });
+
+  it("图标预热缓存可以重复调用而不报错", () => {
+    expect(() => warmProviderIconCache()).not.toThrow();
+    expect(() => warmProviderIconCache()).not.toThrow();
   });
 });

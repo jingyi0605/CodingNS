@@ -1,10 +1,13 @@
+import { useEffect } from "react";
+
 import type { ProviderId } from "../api/conversation-api";
 import { useHaptics } from "../../../shared/haptics";
 import { t } from "../../../shared/i18n";
 import {
   getProviderDisplayName,
   getProviderIcon,
-  SESSION_PROVIDER_PICKER_IDS
+  SESSION_PROVIDER_PICKER_IDS,
+  warmProviderIconCache
 } from "../capability/provider-ui";
 
 interface SessionProviderDefinition {
@@ -27,9 +30,12 @@ export function SessionProviderPicker({
 }: SessionProviderPickerProps) {
   const haptics = useHaptics();
 
+  useEffect(() => {
+    warmProviderIconCache();
+  }, []);
+
   return (
     <div className="session-provider-grid">
-      {/* 统一三家 provider 的入口，避免桌面端和移动端继续各写各的。 */}
       {SESSION_PROVIDER_DEFINITIONS.map((item) => {
         const label = getProviderDisplayName(item.provider, "full");
         const isPending = pendingProvider === item.provider;
@@ -49,7 +55,7 @@ export function SessionProviderPicker({
             }}
           >
             <span className="session-provider-card-icon" aria-hidden="true">
-              <img src={getProviderIcon(item.provider)} alt="" loading="lazy" />
+              <img src={getProviderIcon(item.provider)} alt="" loading="eager" decoding="async" />
             </span>
             <span className="session-provider-card-copy">
               <strong>{label}</strong>

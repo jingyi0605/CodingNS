@@ -38,7 +38,6 @@ export const REGISTERED_PROVIDER_IDS: BuiltinProviderId[] = [
   "kimi"
 ];
 
-// 会话创建入口：保持与当前已接入的稳定 provider 对齐。
 export const SESSION_PROVIDER_PICKER_IDS: BuiltinProviderId[] = [
   "codex",
   "claude-code",
@@ -47,7 +46,6 @@ export const SESSION_PROVIDER_PICKER_IDS: BuiltinProviderId[] = [
   "kimi"
 ];
 
-// Provider 体系元数据：集中维护不同 provider 的前端行为差异
 const PROVIDER_METADATA: Record<BuiltinProviderId, ProviderMetadata> = {
   "claude-code": {
     displayNameKey: "conversation.providerClaude",
@@ -113,6 +111,12 @@ const PROVIDER_METADATA: Record<BuiltinProviderId, ProviderMetadata> = {
   }
 };
 
+const BUNDLED_PROVIDER_ICONS = Array.from(
+  new Set(Object.values(PROVIDER_METADATA).map((metadata) => metadata.icon))
+);
+
+let providerIconsWarmed = false;
+
 function isBuiltinProviderId(value: string): value is BuiltinProviderId {
   return REGISTERED_PROVIDER_IDS.includes(value as BuiltinProviderId);
 }
@@ -144,12 +148,10 @@ function getMetadataModelOptions(provider: ProviderId | null): ProviderModelOpti
   return createDefaultModelOptions(metadata?.defaultModelLabelKey ?? "conversation.modelUseCliDefault");
 }
 
-// 草稿会话只要有 provider 值就默认可用，避免再按名字死写
 export function isDraftProviderSupported(value: string | null): value is ProviderId {
   return Boolean(value && getProviderMetadata(value));
 }
 
-// 统一从 metadata 读取草稿标题，保持文案可控
 export function getDraftTitle(provider: ProviderId | null): string {
   const metadata = getProviderMetadata(provider);
   return t(metadata?.draftTitleKey ?? "conversation.draftTitleCodex");
@@ -177,7 +179,24 @@ export function getProviderIcon(provider: ProviderId | null): string {
   return metadata?.icon ?? codexIcon;
 }
 
-// 构建草稿页面的能力快照，保持和 metadata 同步
+export function warmProviderIconCache() {
+  if (providerIconsWarmed || typeof window === "undefined") {
+    return;
+  }
+
+  providerIconsWarmed = true;
+
+  BUNDLED_PROVIDER_ICONS.forEach((icon) => {
+    const image = new window.Image();
+    image.decoding = "async";
+    image.src = icon;
+
+    if (typeof image.decode === "function") {
+      void image.decode().catch(() => undefined);
+    }
+  });
+}
+
 export function createDraftCapabilities(provider: ProviderId): ProviderCapabilitiesDto {
   const metadata = getProviderMetadata(provider);
 
@@ -250,13 +269,11 @@ export function shouldSupportRunSteering(capabilities: ProviderCapabilitiesDto |
   return capabilities?.inRunInputMode === "streaming_guidance";
 }
 
-// 某些 provider 需要记住推理档位，统一由 metadata 控制
 export function shouldPersistReasoningLevel(provider: ProviderId): boolean {
   const metadata = getProviderMetadata(provider);
   return metadata?.reasoningLevelPersists ?? false;
 }
 
-// 规则消息合并默认行为也由 metadata 决定，以防散落的 provider 判断
 export function shouldFoldRulesMessages(
   capabilities: ProviderCapabilitiesDto | null,
   fallbackProvider?: ProviderId | null
@@ -267,4 +284,8 @@ export function shouldFoldRulesMessages(
 
   const provider = capabilities?.provider ?? fallbackProvider ?? null;
   return getProviderMetadata(provider)?.foldRulesMessagesByDefault ?? false;
+}
+
+if (typeof window !== "undefined") {
+  warmProviderIconCache();
 }
