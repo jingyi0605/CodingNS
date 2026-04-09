@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -114,6 +115,69 @@ function createKimiFixture() {
   };
 }
 
+function createModernKimiFixture() {
+  const rootDir = mkdtempSync(join(tmpdir(), "codingns-kimi-provider-modern-"));
+  const workspaceDir = join(rootDir, "workspace-modern");
+  const homeDir = join(rootDir, "kimi-home");
+  const sessionId = "modern-session-1";
+  const workDirHash = createHash("md5").update(workspaceDir).digest("hex");
+  const sessionDir = join(homeDir, "sessions", workDirHash, sessionId);
+
+  mkdirSync(workspaceDir, { recursive: true });
+  mkdirSync(sessionDir, { recursive: true });
+
+  writeFileSync(
+    join(homeDir, "kimi.json"),
+    JSON.stringify({
+      work_dirs: [
+        {
+          path: workspaceDir,
+          kaos: "local",
+          last_session_id: sessionId
+        }
+      ]
+    }),
+    "utf8"
+  );
+
+  writeFileSync(
+    join(sessionDir, "state.json"),
+    JSON.stringify({
+      custom_title: "新版 Kimi 会话",
+      archived: false
+    }),
+    "utf8"
+  );
+
+  writeFileSync(
+    join(sessionDir, "context.jsonl"),
+    [
+      JSON.stringify({
+        role: "_system_prompt",
+        content: "system prompt"
+      }),
+      JSON.stringify({
+        timestamp: 1775659487.0,
+        role: "user",
+        content: "对话测试"
+      }),
+      JSON.stringify({
+        timestamp: 1775659488.0,
+        role: "assistant",
+        content: "你好，Kimi 会话已经建立。"
+      })
+    ].join("\n"),
+    "utf8"
+  );
+
+  return {
+    rootDir,
+    workspaceDir,
+    homeDir,
+    sessionId
+  };
+}
+
 test("KimiAdapter 按工作区发现会话并保留原生 session id", async () => {
   const fixture = createKimiFixture();
 
@@ -130,6 +194,35 @@ test("KimiAdapter 按工作区发现会话并保留原生 session id", async () 
     assert.equal(sessions[0].rawStoreRef, "kimi://session/kimi-session-1");
     assert.equal(sessions[0].title, "Kimi 主会话");
     assert.equal(sessions[0].messageCount, 5);
+  } finally {
+    rmSync(fixture.rootDir, { recursive: true, force: true });
+  }
+});
+
+test("KimiAdapter 支持通过 kimi.json work_dirs 识别新版会话工作区", async () => {
+  const fixture = createModernKimiFixture();
+
+  try {
+    const adapter = new KimiAdapter({
+      homeDir: fixture.homeDir
+    });
+    const sessions = await adapter.detectSessions(fixture.workspaceDir);
+    const history = await adapter.readSessionHistory(
+      fixture.sessionId,
+      `kimi://session/${fixture.sessionId}`,
+      null,
+      20
+    );
+
+    assert.equal(sessions.length, 1);
+    assert.equal(sessions[0].providerSessionId, fixture.sessionId);
+    assert.equal(sessions[0].workspacePath, fixture.workspaceDir);
+    assert.equal(sessions[0].title, "新版 Kimi 会话");
+    assert.equal(sessions[0].rawStoreRef, `kimi://session/${fixture.sessionId}`);
+    assert.equal(sessions[0].lastMessageAt.startsWith("2026-04-08T"), true);
+    assert.equal(sessions[0].messageCount, 3);
+    assert.equal(history.messages[0]?.role, "system");
+    assert.equal(history.messages[0]?.content, "system prompt");
   } finally {
     rmSync(fixture.rootDir, { recursive: true, force: true });
   }
@@ -155,6 +248,13 @@ test("KimiAdapter 读取历史时会归一化 text/thinking/tool", async () => {
     assert.equal(kinds.has("thinking"), true);
     assert.equal(kinds.has("tool_call"), true);
     assert.equal(kinds.has("tool_result"), true);
+    const toolCallMessage = page.messages.find((message) => message.kind === "tool_call");
+    const toolResultMessage = page.messages.find((message) => message.kind === "tool_result");
+    assert.equal(toolCallMessage?.toolCall?.callId, "call-1");
+    assert.equal(toolCallMessage?.toolCall?.name, "read_file");
+    assert.equal(toolCallMessage?.toolCall?.input.includes("README.md"), true);
+    assert.equal(toolResultMessage?.toolCall?.callId, "call-1");
+    assert.equal(toolResultMessage?.toolCall?.output, "README 内容");
     assert.equal(
       page.messages.every((message) => message.rawRef.startsWith("kimi://session/kimi-session-1/")),
       true
@@ -199,18 +299,18 @@ test("KimiAdapter 在历史 JSONL 损坏时返回结构化解析错误", async (
   }
 });
 
-test("KimiAdapter capability 会声明 queued guidance 与阶段限制", () => {
+test("KimiAdapter capability 会声明单轮命令模式与阶段限制", () => {
   const adapter = new KimiAdapter({
     homeDir: "/tmp/.kimi",
     defaultModel: "kimi-k2"
   });
   const capabilities = adapter.getProviderCapabilities();
 
-  assert.equal(capabilities.inRunInputMode, "queued_guidance");
+  assert.equal(capabilities.inRunInputMode, "none");
   assert.equal(capabilities.canSendMessage, true);
   assert.equal(capabilities.supportsInterrupt, true);
   assert.equal(
-    capabilities.limitations.some((item) => item.includes("queued guidance")),
+    capabilities.limitations.some((item) => item.includes("单轮命令模式")),
     true
   );
 });

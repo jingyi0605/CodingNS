@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   SESSION_PROVIDER_PICKER_IDS,
   createDraftCapabilities,
-  getDraftTitle
+  getDraftTitle,
+  shouldFoldRulesMessages
 } from "./provider-ui";
 
 describe("provider-ui", () => {
@@ -37,5 +38,8 @@ describe("provider-ui", () => {
     expect(capabilities.supportsPermissionPrompt).toBe(false);
     expect(capabilities.modelOptions?.[0]?.id).toBe("provider-default");
     expect(getDraftTitle("kimi").length > 0).toBe(true);
+  });
+  it("会默认折叠 Kimi 会话的启动提示词", () => {
+    expect(shouldFoldRulesMessages(null, "kimi")).toBe(true);
   });
 });

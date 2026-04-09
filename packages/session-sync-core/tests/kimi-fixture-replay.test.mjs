@@ -33,13 +33,17 @@ function materializeKimiSessionFixture(baseDir) {
   const workspaceDir = join(baseDir, "workspace-fixture");
   const homeDir = join(baseDir, "kimi-home");
   const sessionDir = join(homeDir, "sessions", "fixture-hash-1", "kimi-session-fixture-1");
+  const normalizedWorkspaceDir = workspaceDir.replaceAll("\\", "/");
 
   mkdirSync(workspaceDir, { recursive: true });
   mkdirSync(sessionDir, { recursive: true });
 
   for (const fileName of ["state.json", "context.jsonl", "wire.jsonl"]) {
     const sourcePath = join(FIXTURE_ROOT, "session-basic", fileName);
-    const content = readFileSync(sourcePath, "utf8").replaceAll(WORKSPACE_PLACEHOLDER, workspaceDir);
+    const content = readFileSync(sourcePath, "utf8").replaceAll(
+      WORKSPACE_PLACEHOLDER,
+      normalizedWorkspaceDir
+    );
     writeFileSync(join(sessionDir, fileName), content, "utf8");
   }
 
@@ -149,11 +153,22 @@ test("Kimi fixture 回放：wire 事件样本可映射为统一 runtime 事件",
         .filter((event) => event.type === "message")
         .map((event) => event.message.kind)
     );
+    const toolCallEvent = events.find(
+      (event) => event.type === "message" && event.message.kind === "tool_call"
+    );
+    const toolResultEvent = events.find(
+      (event) => event.type === "message" && event.message.kind === "tool_result"
+    );
 
     assert.equal(messageKinds.has("text"), true);
     assert.equal(messageKinds.has("thinking"), true);
     assert.equal(messageKinds.has("tool_call"), true);
     assert.equal(messageKinds.has("tool_result"), true);
+    assert.equal(toolCallEvent?.message.toolCall?.callId, "fixture-call-1");
+    assert.equal(toolCallEvent?.message.toolCall?.name, "read_file");
+    assert.equal(toolCallEvent?.message.toolCall?.input.includes("README.md"), true);
+    assert.equal(toolResultEvent?.message.toolCall?.callId, "fixture-call-1");
+    assert.equal(toolResultEvent?.message.toolCall?.output, "fixture tool output");
     assert.equal(events.some((event) => event.type === "complete"), true);
   } finally {
     rmSync(rootDir, { recursive: true, force: true });

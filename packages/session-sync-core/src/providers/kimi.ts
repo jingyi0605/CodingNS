@@ -6,9 +6,7 @@ import type {
   HistoryDirection,
   HistoryPage,
   InRunInputMode,
-  MessageKind,
   NormalizedMessage,
-  NormalizedToolCall,
   ProviderAdapter,
   ProviderArchiveUpdateResult,
   ProviderCapabilities,
@@ -22,14 +20,25 @@ import type {
   StartSessionResult
 } from "../types.js";
 import {
-  ensureText,
-  extractTextBlocks,
   messageIdFromRawRef,
   nextTimestamp,
   normalizeWorkspacePath,
   safeDate,
   sliceHistory
 } from "./utils.js";
+import {
+  buildKimiMessageRawRef,
+  normalizeKimiMessageRecord,
+  readKimiFirstNonEmptyString,
+  readKimiFirstPresentValue,
+  readKimiPath
+} from "../kimi-message-normalizer.js";
+import {
+  buildKimiSessionRawStoreRef,
+  buildKimiWorkspacePathByHash,
+  parseKimiSessionIdFromRawStoreRef,
+  readKimiWorkDirRecords
+} from "../kimi-shared.js";
 
 interface KimiAdapterOptions {
   homeDir: string;
@@ -37,6 +46,7 @@ interface KimiAdapterOptions {
 }
 
 interface KimiSessionFiles {
+  workDirHash: string;
   sessionId: string;
   sessionDir: string;
   statePath: string | null;
@@ -53,9 +63,9 @@ interface KimiRawLineRecord {
 
 interface KimiMessageDraft {
   role: NormalizedMessage["role"];
-  kind: MessageKind;
+  kind: NormalizedMessage["kind"];
   content: string;
-  toolCall: NormalizedToolCall | null;
+  toolCall: NormalizedMessage["toolCall"];
   timestamp: string;
   sortAtMs: number;
   rawRef: string;
@@ -74,6 +84,7 @@ export class KimiAdapter implements ProviderAdapter {
     options?: DetectSessionsOptions
   ): Promise<ProviderSessionSummary[]> {
     const targetWorkspacePath = normalizeWorkspacePath(workspacePath);
+    const workspacePathByHash = buildKimiWorkspacePathByHash(readKimiWorkDirRecords(this.options.homeDir));
     const knownByRawStoreRef = new Map(
       (options?.knownSessions ?? [])
         .filter((session) => session.provider === this.providerId)
@@ -102,7 +113,7 @@ export class KimiAdapter implements ProviderAdapter {
         continue;
       }
 
-      const summary = this.buildSessionSummary(files, workspacePath, false);
+      const summary = this.buildSessionSummary(files, workspacePath, false, workspacePathByHash);
 
       if (!summary) {
         continue;
@@ -223,7 +234,12 @@ export class KimiAdapter implements ProviderAdapter {
     rawStoreRef: string
   ): Promise<string> {
     const files = this.resolveSessionFiles(providerSessionId, rawStoreRef);
-    const summary = this.buildSessionSummary(files, "", true);
+    const summary = this.buildSessionSummary(
+      files,
+      "",
+      true,
+      buildKimiWorkspacePathByHash(readKimiWorkDirRecords(this.options.homeDir))
+    );
 
     return summary?.title ?? files.sessionId;
   }
@@ -255,7 +271,7 @@ export class KimiAdapter implements ProviderAdapter {
       canStartSession: true,
       canResumeSession: true,
       canSendMessage: true,
-      inRunInputMode: "queued_guidance" satisfies InRunInputMode,
+      inRunInputMode: "none" satisfies InRunInputMode,
       supportsSubagents: false,
       supportsInterrupt: true,
       supportsStructuredToolCalls: true,
@@ -273,7 +289,7 @@ export class KimiAdapter implements ProviderAdapter {
         }
       ],
       limitations: [
-        "当前阶段已支持运行中 queued guidance，复杂提问表单与命令模式 fallback 将在后续阶段补齐。"
+        "当前按单轮命令模式运行，每次消息会单独启动一轮 Kimi CLI 进程，暂不支持在同一轮运行中继续追加指导。"
       ]
     };
   }
@@ -350,7 +366,7 @@ export class KimiAdapter implements ProviderAdapter {
 
         const state = readJsonFileSafely(statePath);
         const sessionId =
-          readFirstNonEmptyString(state, [
+          readKimiFirstNonEmptyString(state, [
             ["sessionId"],
             ["session_id"],
             ["id"],
@@ -358,6 +374,7 @@ export class KimiAdapter implements ProviderAdapter {
           ]) ?? sessionDirEntry.name;
 
         results.push({
+          workDirHash: hashDir.name,
           sessionId,
           sessionDir,
           statePath,
@@ -375,12 +392,13 @@ export class KimiAdapter implements ProviderAdapter {
   private buildSessionSummary(
     files: KimiSessionFiles,
     fallbackWorkspacePath: string,
-    strict: boolean
+    strict: boolean,
+    workspacePathByHash: Map<string, string>
   ): ProviderSessionSummary | null {
     const state = readJsonFileSafely(files.statePath, strict, files.sessionId, "state.json");
     const messages = this.parseSessionMessages(files, strict);
     const workspacePath =
-      readFirstNonEmptyString(state, [
+      readKimiFirstNonEmptyString(state, [
         ["cwd"],
         ["workspacePath"],
         ["workspace_path"],
@@ -390,6 +408,7 @@ export class KimiAdapter implements ProviderAdapter {
         ["workspace", "cwd"],
         ["project", "path"]
       ]) ??
+      workspacePathByHash.get(files.workDirHash) ??
       readWorkspacePathFromSessionLogs(files, strict) ??
       fallbackWorkspacePath;
 
@@ -398,8 +417,9 @@ export class KimiAdapter implements ProviderAdapter {
     }
 
     const sessionTitle =
-      readFirstNonEmptyString(state, [
+      readKimiFirstNonEmptyString(state, [
         ["title"],
+        ["custom_title"],
         ["sessionTitle"],
         ["session", "title"],
         ["summary", "title"]
@@ -414,7 +434,7 @@ export class KimiAdapter implements ProviderAdapter {
       workspacePath,
       rawStoreRef: buildKimiSessionRawStoreRef(files.sessionId),
       isArchived: readFirstBoolean(state, [["archived"], ["isArchived"], ["session", "archived"]]) ?? false,
-      lastMessageAt: messages.at(-1)?.timestamp ?? null,
+      lastMessageAt: resolveKimiSummaryLastMessageAt(messages, files.sourceMtimeMs),
       messageCount: messages.length,
       sourceMtimeMs: files.sourceMtimeMs,
       sourceSizeBytes: files.sourceSizeBytes
@@ -490,95 +510,30 @@ function appendMessageDrafts(
   line: KimiRawLineRecord,
   sourceOrder: number
 ): number {
-  const role = inferMessageRole(line.data);
   const timestamp = resolveMessageTimestamp(line.data, line.lineNumber, source);
   const sortAtMs = Date.parse(timestamp);
-  const blocks = extractMessageBlocks(line.data);
+  const normalizedMessages = normalizeKimiMessageRecord(line.data);
 
-  if (blocks.length > 0) {
-    let pushed = false;
-    blocks.forEach((block, blockIndex) => {
-      const normalized = normalizeMessageBlock(block, role);
-
-      if (!normalized) {
-        return;
-      }
-
-      sourceOrder += 1;
-      drafts.push({
-        role: normalized.role,
-        kind: normalized.kind,
-        content: normalized.content,
-        toolCall: normalized.toolCall,
-        timestamp,
-        sortAtMs,
-        rawRef: buildKimiMessageRawRef(sessionId, source, line.lineNumber, blockIndex),
-        sourceOrder
-      });
-      pushed = true;
+  for (const normalized of normalizedMessages) {
+    sourceOrder += 1;
+    drafts.push({
+      role: normalized.role,
+      kind: normalized.kind,
+      content: normalized.content,
+      toolCall: normalized.toolCall,
+      timestamp,
+      sortAtMs,
+      rawRef: buildKimiMessageRawRef(
+        sessionId,
+        source,
+        line.lineNumber,
+        normalized.partIndex ?? undefined
+      ),
+      sourceOrder
     });
-
-    if (pushed) {
-      return sourceOrder;
-    }
   }
-
-  const fallbackText = extractFallbackMessageText(line.data).trim();
-
-  if (!fallbackText) {
-    return sourceOrder;
-  }
-
-  sourceOrder += 1;
-  drafts.push({
-    role,
-    kind: inferFallbackMessageKind(line.data),
-    content: fallbackText,
-    toolCall: null,
-    timestamp,
-    sortAtMs,
-    rawRef: buildKimiMessageRawRef(sessionId, source, line.lineNumber),
-    sourceOrder
-  });
 
   return sourceOrder;
-}
-
-function inferMessageRole(record: Record<string, unknown>): NormalizedMessage["role"] {
-  const rawRole =
-    readFirstNonEmptyString(record, [
-      ["role"],
-      ["message", "role"],
-      ["payload", "role"],
-      ["event", "role"],
-      ["author", "role"],
-      ["speaker"]
-    ]) ?? "";
-  const normalized = rawRole.trim().toLowerCase();
-
-  if (normalized === "user" || normalized === "human") {
-    return "user";
-  }
-
-  if (normalized === "assistant" || normalized === "ai" || normalized === "model") {
-    return "assistant";
-  }
-
-  if (normalized === "tool") {
-    return "tool";
-  }
-
-  if (normalized === "system") {
-    return "system";
-  }
-
-  const rawType = ensureText(record.type).trim().toLowerCase();
-
-  if (rawType === "user" || rawType === "assistant" || rawType === "tool" || rawType === "system") {
-    return rawType;
-  }
-
-  return "assistant";
 }
 
 function resolveMessageTimestamp(
@@ -586,7 +541,7 @@ function resolveMessageTimestamp(
   lineNumber: number,
   source: "context" | "wire"
 ): string {
-  const candidate = readFirstNonEmptyString(record, [
+  const candidate = readKimiFirstPresentValue(record, [
     ["timestamp"],
     ["createdAt"],
     ["created_at"],
@@ -605,195 +560,6 @@ function resolveMessageTimestamp(
   return new Date(Date.UTC(2020, 0, 1) + lineNumber * 1_000 + offset).toISOString();
 }
 
-function extractMessageBlocks(record: Record<string, unknown>): unknown[] {
-  const directCandidates = [
-    record.content,
-    readPath(record, ["message", "content"]),
-    readPath(record, ["payload", "content"]),
-    readPath(record, ["event", "content"]),
-    readPath(record, ["data", "content"]),
-    record.parts,
-    readPath(record, ["delta", "content"]),
-    record.tool,
-    record.toolCall,
-    record.toolResult
-  ];
-
-  for (const candidate of directCandidates) {
-    if (Array.isArray(candidate) && candidate.length > 0) {
-      return candidate;
-    }
-
-    if (candidate && typeof candidate === "object") {
-      return [candidate];
-    }
-  }
-
-  return [];
-}
-
-function normalizeMessageBlock(
-  block: unknown,
-  fallbackRole: NormalizedMessage["role"]
-): {
-  role: NormalizedMessage["role"];
-  kind: MessageKind;
-  content: string;
-  toolCall: NormalizedToolCall | null;
-} | null {
-  if (typeof block === "string") {
-    const content = block.trim();
-
-    if (!content) {
-      return null;
-    }
-
-    return {
-      role: fallbackRole,
-      kind: "text",
-      content,
-      toolCall: null
-    };
-  }
-
-  if (!block || typeof block !== "object") {
-    return null;
-  }
-
-  const record = block as Record<string, unknown>;
-  const rawType = (
-    readFirstNonEmptyString(record, [["type"], ["kind"], ["eventType"], ["name"]]) ?? ""
-  )
-    .trim()
-    .toLowerCase();
-
-  if (rawType.includes("think") || rawType.includes("reason")) {
-    const content = extractTextBlocks(record).trim();
-
-    if (!content) {
-      return null;
-    }
-
-    return {
-      role: "assistant",
-      kind: "thinking",
-      content,
-      toolCall: null
-    };
-  }
-
-  if (
-    rawType.includes("tool_call")
-    || rawType.includes("tool-use")
-    || rawType.includes("tool_use")
-    || rawType.includes("function_call")
-    || hasToolCallShape(record)
-  ) {
-    const callId =
-      readFirstNonEmptyString(record, [["id"], ["callId"], ["call_id"], ["tool_use_id"]]) ??
-      "tool-call";
-    const name =
-      readFirstNonEmptyString(record, [["name"], ["tool", "name"], ["function", "name"]]) ??
-      "unknown_tool";
-    const input = extractFallbackMessageText(
-      (readPath(record, ["arguments"]) ?? readPath(record, ["input"]) ?? readPath(record, ["params"])) as
-      | Record<string, unknown>
-      | string
-      | unknown[]
-      | null
-    );
-    const output = extractFallbackMessageText(
-      (readPath(record, ["output"]) ?? readPath(record, ["result"])) as
-      | Record<string, unknown>
-      | string
-      | unknown[]
-      | null
-    );
-
-    return {
-      role: "assistant",
-      kind: "tool_call",
-      content: output || input || name,
-      toolCall: {
-        callId,
-        name,
-        input,
-        output: output || null,
-        error: null,
-        status: output ? "completed" : "running"
-      }
-    };
-  }
-
-  if (
-    rawType.includes("tool_result")
-    || rawType.includes("tool-output")
-    || rawType.includes("tool_output")
-    || rawType.includes("function_result")
-    || hasToolResultShape(record)
-  ) {
-    const callId =
-      readFirstNonEmptyString(record, [["tool_use_id"], ["callId"], ["call_id"], ["id"]]) ??
-      "tool-call";
-    const output = extractFallbackMessageText(
-      (readPath(record, ["output"]) ?? readPath(record, ["result"]) ?? readPath(record, ["content"])) as
-      | Record<string, unknown>
-      | string
-      | unknown[]
-      | null
-    );
-    const error = readFirstNonEmptyString(record, [["error"], ["failure"]]);
-
-    return {
-      role: "tool",
-      kind: "tool_result",
-      content: output || error || "",
-      toolCall: {
-        callId,
-        name: readFirstNonEmptyString(record, [["name"], ["tool", "name"]]) ?? "tool_result",
-        input: "",
-        output: output || null,
-        error: error ?? null,
-        status: error ? "failed" : "completed"
-      }
-    };
-  }
-
-  const content = extractTextBlocks(record).trim();
-
-  if (!content) {
-    return null;
-  }
-
-  return {
-    role: fallbackRole,
-    kind: "text",
-    content,
-    toolCall: null
-  };
-}
-
-function extractFallbackMessageText(value: unknown): string {
-  if (typeof value === "string") {
-    return value.trim();
-  }
-
-  if (value === undefined || value === null) {
-    return "";
-  }
-
-  return extractTextBlocks(value).trim() || ensureText(value).trim();
-}
-
-function inferFallbackMessageKind(record: Record<string, unknown>): MessageKind {
-  const rawType = ensureText(record.type).toLowerCase();
-
-  if (rawType.includes("think") || rawType.includes("reason")) {
-    return "thinking";
-  }
-
-  return "text";
-}
 
 function readWorkspacePathFromSessionLogs(
   files: Pick<KimiSessionFiles, "sessionId" | "contextPath" | "wirePath">,
@@ -805,7 +571,7 @@ function readWorkspacePathFromSessionLogs(
   ];
 
   for (const line of lines) {
-    const workspacePath = readFirstNonEmptyString(line.data, [
+    const workspacePath = readKimiFirstNonEmptyString(line.data, [
       ["cwd"],
       ["workspacePath"],
       ["workspace_path"],
@@ -937,46 +703,13 @@ function createKimiHistoryParseError(input: {
   );
 }
 
-function readPath(value: unknown, path: string[]): unknown {
-  let current: unknown = value;
-
-  for (const key of path) {
-    if (!current || typeof current !== "object") {
-      return undefined;
-    }
-
-    current = (current as Record<string, unknown>)[key];
-  }
-
-  return current;
-}
-
-function readFirstNonEmptyString(
-  record: Record<string, unknown> | null,
-  paths: string[][]
-): string | null {
-  if (!record) {
-    return null;
-  }
-
-  for (const path of paths) {
-    const value = readPath(record, path);
-
-    if (typeof value === "string" && value.trim()) {
-      return value.trim();
-    }
-  }
-
-  return null;
-}
-
 function readFirstBoolean(record: Record<string, unknown> | null, paths: string[][]): boolean | null {
   if (!record) {
     return null;
   }
 
   for (const path of paths) {
-    const value = readPath(record, path);
+    const value = readKimiPath(record, path);
 
     if (typeof value === "boolean") {
       return value;
@@ -991,50 +724,21 @@ function normalizeOptionalText(value: string | null | undefined): string | null 
   return trimmed ? trimmed : null;
 }
 
-function parseKimiSessionIdFromRawStoreRef(rawStoreRef: string): string | null {
-  const matched = rawStoreRef.match(/^kimi:\/\/session\/([^/?#]+)$/i);
+function resolveKimiSummaryLastMessageAt(
+  messages: NormalizedMessage[],
+  sourceMtimeMs: number
+): string | null {
+  const lastMessageTimestamp = messages.at(-1)?.timestamp ?? null;
 
-  if (!matched) {
-    return null;
+  if (!lastMessageTimestamp) {
+    return Number.isFinite(sourceMtimeMs) ? new Date(sourceMtimeMs).toISOString() : null;
   }
 
-  return decodeURIComponent(matched[1]);
+  return isSyntheticKimiTimestamp(lastMessageTimestamp)
+    ? new Date(sourceMtimeMs).toISOString()
+    : lastMessageTimestamp;
 }
 
-function buildKimiSessionRawStoreRef(sessionId: string): string {
-  return `kimi://session/${encodeURIComponent(sessionId)}`;
-}
-
-function buildKimiMessageRawRef(
-  sessionId: string,
-  source: "context" | "wire",
-  lineNumber: number,
-  partIndex?: number
-): string {
-  const suffix = partIndex === undefined ? "" : `&part=${partIndex}`;
-  return `kimi://session/${encodeURIComponent(sessionId)}/${source}#line=${lineNumber}${suffix}`;
-}
-
-function hasToolCallShape(record: Record<string, unknown>): boolean {
-  if (typeof readPath(record, ["arguments"]) !== "undefined") {
-    return true;
-  }
-
-  if (typeof readPath(record, ["input"]) !== "undefined") {
-    return true;
-  }
-
-  return false;
-}
-
-function hasToolResultShape(record: Record<string, unknown>): boolean {
-  if (typeof readPath(record, ["output"]) !== "undefined") {
-    return true;
-  }
-
-  if (typeof readPath(record, ["result"]) !== "undefined") {
-    return true;
-  }
-
-  return false;
+function isSyntheticKimiTimestamp(timestamp: string): boolean {
+  return timestamp.startsWith("2020-01-01T00:");
 }

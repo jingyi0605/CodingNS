@@ -131,6 +131,22 @@ function createAssistantThinkingMessage(content: string, id = "thinking-1"): Ses
   };
 }
 
+function createSystemMessage(content: string, id = "system-1"): SessionMessageViewModel {
+  return {
+    id,
+    sessionId: "session-1",
+    role: "system",
+    kind: "text",
+    content,
+    toolCall: null,
+    timestamp: "2026-04-08T10:00:00.000Z",
+    sequence: 1,
+    rawRef: `kimi://session/session-1/context#line=${id}`,
+    deliveryState: "sent",
+    clientRequestId: null
+  };
+}
+
 describe("MessageTimeline", () => {
   beforeEach(() => {
     revealWorkspaceFileMock.mockReset();
@@ -1091,5 +1107,33 @@ describe("MessageTimeline", () => {
     expect(screen.queryByText(/<image name=\[Image #1\]>/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/"type": "input_image"/i)).not.toBeInTheDocument();
     expect(screen.queryByText("图片附件 1")).not.toBeInTheDocument();
+  });
+  it("会默认折叠 Kimi 会话开头的系统提示词", async () => {
+    render(
+      <MessageTimeline
+        messages={[
+          createSystemMessage(`你是 Kimi Code CLI。
+
+请先阅读工作区规则，再继续执行。`),
+          {
+            ...createTextMessage("继续分析当前任务"),
+            id: "message-2",
+            sequence: 2
+          }
+        ]}
+        historyState="ready"
+        provider="kimi"
+        onRetryMessage={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText("你是 Kimi Code CLI。")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /展开提示词/ })).toBeInTheDocument();
+    expect(screen.queryByText("请先阅读工作区规则，再继续执行。")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /展开提示词/ }));
+
+    expect(screen.getByRole("button", { name: /收起提示词/ })).toBeInTheDocument();
+    expect(screen.getByText((content) => content.includes("请先阅读工作区规则，再继续执行。"))).toBeInTheDocument();
   });
 });

@@ -1,7 +1,13 @@
-import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { existsSync, readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { createInterface } from "node:readline";
 
+import {
+  buildKimiSessionRawStoreRef,
+  findKimiWorkDirRecordByPath,
+  readKimiWorkDirRecords
+} from "../kimi-shared.js";
 import {
   ensureText,
   extractTextBlocks,
@@ -9,6 +15,13 @@ import {
   nextTimestamp,
   safeDate
 } from "../providers/utils.js";
+import {
+  buildKimiMessageRawRef,
+  looksLikeKimiMessagePayload,
+  normalizeKimiMessageRecord,
+  readKimiFirstNonEmptyString,
+  readKimiFirstPresentValue
+} from "../kimi-message-normalizer.js";
 import type {
   MessageKind,
   NormalizedMessage,
@@ -28,6 +41,8 @@ interface KimiRuntimeOptions {
   commandPath?: string;
   baseArgs?: string[];
   spawnFactory?: typeof spawn;
+  cliSyntax?: KimiCliSyntax | "auto";
+  cliProbeTimeoutMs?: number;
 }
 
 interface KimiRuntimeContext {
@@ -36,6 +51,7 @@ interface KimiRuntimeContext {
   mode: "start" | "continue";
   sessionId: string;
   rawStoreRef: string;
+  startBindingProbe: KimiStartBindingProbe | null;
 }
 
 interface KimiEventMappingContext {
@@ -45,47 +61,59 @@ interface KimiEventMappingContext {
   lineNumber: number;
 }
 
+interface KimiStartBindingProbe {
+  workDirHash: string | null;
+  lastSessionId: string | null;
+}
+
 type KimiRuntimeTransport = "wire" | "command";
+type KimiCliSyntax = "modern" | "legacy";
 
 interface KimiLaunchAttempt {
   transport: KimiRuntimeTransport;
   launch: ProviderRuntimeLaunchResult;
   ready: Promise<void>;
+  updateBinding(binding: { providerSessionId: string; rawStoreRef: string }): void;
 }
 
 const INTERRUPT_KILL_TIMEOUT_MS = 1_500;
 const READY_SIGNAL_TIMEOUT_MS = 700;
+const KIMI_START_BINDING_RESOLVE_TIMEOUT_MS = 10_000;
+const KIMI_START_BINDING_RESOLVE_POLL_MS = 100;
 
 export class KimiRuntimeAdapter implements ProviderRuntimeAdapter {
   readonly providerId: ProviderId = "kimi";
   private readonly commandPath: string;
   private readonly baseArgs: string[];
   private readonly spawnFactory: typeof spawn;
+  private readonly cliSyntax: KimiCliSyntax | "auto";
+  private readonly cliProbeTimeoutMs: number;
+  private cliSyntaxPromise: Promise<KimiCliSyntax> | null = null;
 
   constructor(private readonly options: KimiRuntimeOptions) {
     this.commandPath = options.commandPath?.trim() || "kimi";
     this.baseArgs = options.baseArgs ?? [];
     this.spawnFactory = options.spawnFactory ?? spawn;
+    this.cliSyntax = options.cliSyntax ?? "auto";
+    this.cliProbeTimeoutMs = options.cliProbeTimeoutMs ?? 1_500;
   }
 
   async startSession(
     request: ProviderRuntimeRunRequest,
     sink: ProviderRuntimeEventSink
   ): Promise<ProviderRuntimeLaunchResult> {
-    const sessionId = request.providerSessionId?.trim() || randomUUID();
-    const rawStoreRef = buildKimiRawStoreRef(sessionId);
+    const pendingBinding = buildPendingKimiBinding(request.sessionId);
+    const startBindingProbe = this.captureStartBindingProbe(request.workspacePath);
 
-    sink.updateSessionBinding({
-      providerSessionId: sessionId,
-      rawStoreRef
-    });
+    sink.updateSessionBinding(pendingBinding);
 
     return this.launchWithFallback({
       request,
       sink,
       mode: "start",
-      sessionId,
-      rawStoreRef
+      sessionId: pendingBinding.providerSessionId,
+      rawStoreRef: pendingBinding.rawStoreRef,
+      startBindingProbe
     });
   }
 
@@ -99,7 +127,7 @@ export class KimiRuntimeAdapter implements ProviderRuntimeAdapter {
       throw new Error("PROVIDER_SESSION_ID_REQUIRED");
     }
 
-    const rawStoreRef = request.rawStoreRef ?? buildKimiRawStoreRef(sessionId);
+    const rawStoreRef = request.rawStoreRef ?? buildKimiSessionRawStoreRef(sessionId);
 
     sink.updateSessionBinding({
       providerSessionId: sessionId,
@@ -111,65 +139,46 @@ export class KimiRuntimeAdapter implements ProviderRuntimeAdapter {
       sink,
       mode: "continue",
       sessionId,
-      rawStoreRef
+      rawStoreRef,
+      startBindingProbe: null
     });
   }
 
   private async launchWithFallback(
     context: KimiRuntimeContext
   ): Promise<ProviderRuntimeLaunchResult> {
-    const wireAttempt = this.launchTransport(context, "wire");
-
-    try {
-      await wireAttempt.ready;
-      return wireAttempt.launch;
-    } catch (error) {
-      wireAttempt.launch.completed.catch(() => {
-        return;
-      });
-
-      if (!isWireUnavailableError(error)) {
-        throw error;
-      }
-    }
-
-    const wireDetail = extractErrorDetail(await wireAttempt.launch.completed.then(() => null).catch((error) => error));
-
-    await context.sink.emit({
-      type: "status",
-      status: "running",
-      detail: `Kimi wire 不可用，已切换命令模式 fallback（stream-json）：${wireDetail}`
-    });
-
-    const commandAttempt = this.launchTransport(context, "command");
+    const cliSyntax = await this.resolveCliSyntax();
+    const commandAttempt = this.launchTransport(context, "command", cliSyntax);
 
     try {
       await commandAttempt.ready;
+      this.scheduleBindingResolution(context, commandAttempt);
       return commandAttempt.launch;
     } catch (commandError) {
       commandAttempt.launch.completed.catch(() => {
         return;
       });
-
       const commandDetail = extractErrorDetail(
         await commandAttempt.launch.completed.then(() => null).catch((error) => error)
       );
       throw new Error(
-        `KIMI_RUNTIME_FALLBACK_FAILED: wire=${wireDetail}; command=${commandDetail}; cause=${extractErrorDetail(commandError)}`
+        `KIMI_RUNTIME_FALLBACK_FAILED: wire=disabled; command=${commandDetail}; cause=${extractErrorDetail(commandError)}`
       );
     }
   }
 
   private launchTransport(
     context: KimiRuntimeContext,
-    transport: KimiRuntimeTransport
+    transport: KimiRuntimeTransport,
+    cliSyntax: KimiCliSyntax
   ): KimiLaunchAttempt {
     const args = [
       ...this.baseArgs,
-      ...buildKimiRuntimeArgs(transport, context.mode, context.sessionId, context.request)
+      ...buildKimiRuntimeArgs(transport, context.mode, context.sessionId, context.request, cliSyntax)
     ];
     const proc = this.spawnFactory(this.commandPath, args, {
       cwd: context.request.workspacePath,
+      env: buildKimiSpawnEnv(),
       shell: shouldSpawnViaShell(this.commandPath),
       windowsHide: true,
       stdio: ["pipe", "pipe", "pipe"]
@@ -190,10 +199,28 @@ export class KimiRuntimeAdapter implements ProviderRuntimeAdapter {
     let readyTimer: ReturnType<typeof setTimeout> | null = null;
     let resolveReady: (() => void) | null = null;
     let rejectReady: ((error: Error) => void) | null = null;
+    const updateActiveBinding = (binding: { providerSessionId: string; rawStoreRef: string }): void => {
+      if (
+        !binding.providerSessionId.trim()
+        || (
+          binding.providerSessionId === activeSessionId
+          && binding.rawStoreRef === activeRawStoreRef
+        )
+      ) {
+        return;
+      }
+
+      activeSessionId = binding.providerSessionId;
+      activeRawStoreRef = binding.rawStoreRef;
+      context.sink.updateSessionBinding(binding);
+      launch.providerSessionId = binding.providerSessionId;
+      launch.rawStoreRef = binding.rawStoreRef;
+    };
     const enqueuePromptWrite = (
-      options: ProviderRuntimeRunRequest["options"]
+      options: ProviderRuntimeRunRequest["options"],
+      closeAfterWrite = false
     ): Promise<void> => {
-      writeChain = writeChain.then(() => this.writePromptPayload(proc, options));
+      writeChain = writeChain.then(() => this.writePromptPayload(proc, options, transport, closeAfterWrite));
       return writeChain;
     };
     const canSubmitInRunInput = (): boolean =>
@@ -240,11 +267,9 @@ export class KimiRuntimeAdapter implements ProviderRuntimeAdapter {
 
       const onStructuredEvent = async (event: RuntimeEventInput): Promise<void> => {
         if (event.providerSessionId?.trim() && event.providerSessionId !== activeSessionId) {
-          activeSessionId = event.providerSessionId;
-          activeRawStoreRef = buildKimiRawStoreRef(activeSessionId);
-          context.sink.updateSessionBinding({
-            providerSessionId: activeSessionId,
-            rawStoreRef: activeRawStoreRef
+          updateActiveBinding({
+            providerSessionId: event.providerSessionId,
+            rawStoreRef: event.rawStoreRef ?? buildKimiSessionRawStoreRef(event.providerSessionId)
           });
         }
 
@@ -264,11 +289,9 @@ export class KimiRuntimeAdapter implements ProviderRuntimeAdapter {
         });
 
         if (mapped.providerSessionId && mapped.providerSessionId !== activeSessionId) {
-          activeSessionId = mapped.providerSessionId;
-          activeRawStoreRef = buildKimiRawStoreRef(activeSessionId);
-          context.sink.updateSessionBinding({
-            providerSessionId: activeSessionId,
-            rawStoreRef: activeRawStoreRef
+          updateActiveBinding({
+            providerSessionId: mapped.providerSessionId,
+            rawStoreRef: buildKimiSessionRawStoreRef(mapped.providerSessionId)
           });
         }
 
@@ -309,7 +332,7 @@ export class KimiRuntimeAdapter implements ProviderRuntimeAdapter {
           kind: "text",
           content: trimmed,
           timestamp: nextTimestamp(),
-          rawEventRef: buildKimiRawEventRef(activeSessionId, lineNumber)
+          rawEventRef: buildKimiMessageRawRef(activeSessionId, "wire", lineNumber)
         });
 
         return onStructuredEvent({
@@ -397,10 +420,7 @@ export class KimiRuntimeAdapter implements ProviderRuntimeAdapter {
           });
       });
 
-      enqueuePromptWrite(context.request.options).catch((error) => {
-        if (!sawStdoutEvent && transport === "wire") {
-          settleReady(toWireUnavailableError(error));
-        }
+      enqueuePromptWrite(context.request.options, transport === "command").catch((error) => {
         settle(() => {
           reject(error);
         });
@@ -410,7 +430,7 @@ export class KimiRuntimeAdapter implements ProviderRuntimeAdapter {
     const submitDuringRun = async (
       options: ProviderRuntimeRunRequest["options"]
     ): Promise<void> => {
-      if (!canSubmitInRunInput()) {
+      if (transport === "command" || !canSubmitInRunInput()) {
         throw new Error("IN_RUN_INPUT_NOT_SUPPORTED");
       }
 
@@ -447,37 +467,203 @@ export class KimiRuntimeAdapter implements ProviderRuntimeAdapter {
         });
       },
       isAlive: () => !proc.killed,
-      submitDuringRun,
+      submitDuringRun: transport === "command" ? undefined : submitDuringRun,
       completed
     };
 
     return {
       transport,
       launch,
-      ready
+      ready,
+      updateBinding: updateActiveBinding
     };
+  }
+
+  private scheduleBindingResolution(
+    context: KimiRuntimeContext,
+    attempt: KimiLaunchAttempt
+  ): void {
+    if (context.mode !== "start" || !isPendingKimiBinding(context.sessionId)) {
+      return;
+    }
+
+    void Promise.race([
+      this.resolveStartedSessionBinding(context.request.workspacePath, context.startBindingProbe),
+      attempt.launch.completed.then(() => null)
+    ])
+      .then(async (binding) => {
+        if (!binding) {
+          return;
+        }
+
+        attempt.updateBinding(binding);
+        await context.sink.emit({
+          type: "session_created",
+          status: "starting",
+          providerSessionId: binding.providerSessionId,
+          rawStoreRef: binding.rawStoreRef,
+          detail: "Kimi session binding resolved"
+        });
+      })
+      .catch(() => {
+        return;
+      });
+  }
+
+  private async resolveCliSyntax(): Promise<KimiCliSyntax> {
+    if (this.cliSyntax !== "auto") {
+      return this.cliSyntax;
+    }
+
+    if (!this.cliSyntaxPromise) {
+      // 先探测本地 CLI 的参数风格，避免新版/旧版参数互相打架。
+      this.cliSyntaxPromise = detectKimiCliSyntax({
+        commandPath: this.commandPath,
+        baseArgs: this.baseArgs,
+        spawnFactory: this.spawnFactory,
+        timeoutMs: this.cliProbeTimeoutMs
+      }).catch(() => "modern");
+    }
+
+    return this.cliSyntaxPromise;
+  }
+
+  private async resolveStartedSessionBinding(
+    workspacePath: string,
+    startBindingProbe: KimiStartBindingProbe | null
+  ): Promise<{ providerSessionId: string; rawStoreRef: string } | null> {
+    const startedAtMs = Date.now();
+    const initialLastSessionId = startBindingProbe?.lastSessionId ?? null;
+    const workDirHash = startBindingProbe?.workDirHash ?? null;
+
+    while (Date.now() - startedAtMs < KIMI_START_BINDING_RESOLVE_TIMEOUT_MS) {
+      const workDirs = readKimiWorkDirRecords(this.options.homeDir);
+      const activeWorkDir = findKimiWorkDirRecordByPath(workDirs, workspacePath);
+      const candidateSessionId =
+        this.findResolvedSessionIdFromWorkDir(activeWorkDir?.lastSessionId ?? null, initialLastSessionId)
+        ?? this.findLatestSessionIdForWorkspace(
+          activeWorkDir?.hash ?? workDirHash,
+          startedAtMs,
+          initialLastSessionId
+        );
+
+      if (candidateSessionId) {
+        return {
+          providerSessionId: candidateSessionId,
+          rawStoreRef: buildKimiSessionRawStoreRef(candidateSessionId)
+        };
+      }
+
+      await waitForKimiBindingResolvePoll();
+    }
+
+    return null;
+  }
+
+  private captureStartBindingProbe(workspacePath: string): KimiStartBindingProbe {
+    const workDirs = readKimiWorkDirRecords(this.options.homeDir);
+    const workDir = findKimiWorkDirRecordByPath(workDirs, workspacePath);
+
+    return {
+      workDirHash: workDir?.hash ?? null,
+      lastSessionId: workDir?.lastSessionId ?? null
+    };
+  }
+
+  private findResolvedSessionIdFromWorkDir(
+    candidateSessionId: string | null,
+    initialLastSessionId: string | null
+  ): string | null {
+    const normalizedCandidate = candidateSessionId?.trim();
+
+    if (!normalizedCandidate) {
+      return null;
+    }
+
+    if (initialLastSessionId && normalizedCandidate === initialLastSessionId) {
+      return null;
+    }
+
+    return normalizedCandidate;
+  }
+
+  private findLatestSessionIdForWorkspace(
+    workDirHash: string | null,
+    startedAtMs: number,
+    initialLastSessionId: string | null
+  ): string | null {
+    if (!workDirHash?.trim()) {
+      return null;
+    }
+
+    const workspaceSessionsDir = join(this.options.homeDir, "sessions", workDirHash);
+
+    if (!existsSync(workspaceSessionsDir)) {
+      return null;
+    }
+
+    let bestCandidate: { sessionId: string; mtimeMs: number } | null = null;
+    const entries = readdirSync(workspaceSessionsDir, { withFileTypes: true });
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) {
+        continue;
+      }
+
+      if (initialLastSessionId && entry.name === initialLastSessionId) {
+        continue;
+      }
+
+      const sessionDir = join(workspaceSessionsDir, entry.name);
+      const mtimeMs = readKimiSessionDirectoryMtime(sessionDir);
+
+      if (mtimeMs < startedAtMs - 1_000) {
+        continue;
+      }
+
+      if (!bestCandidate || mtimeMs > bestCandidate.mtimeMs) {
+        bestCandidate = {
+          sessionId: entry.name,
+          mtimeMs
+        };
+      }
+    }
+
+    return bestCandidate?.sessionId ?? null;
   }
 
   private async writePrompt(
     proc: ChildProcessWithoutNullStreams,
     request: ProviderRuntimeRunRequest
   ): Promise<void> {
-    return this.writePromptPayload(proc, request.options);
+    return this.writePromptPayload(proc, request.options, "command");
   }
 
   private async writePromptPayload(
     proc: ChildProcessWithoutNullStreams,
-    options: ProviderRuntimeRunRequest["options"]
+    options: ProviderRuntimeRunRequest["options"],
+    transport: KimiRuntimeTransport,
+    closeAfterWrite = false
   ): Promise<void> {
     const prompt = options.providerPrompt?.trim() || options.content.trim();
 
     if (!prompt) {
+      if (transport === "command" && closeAfterWrite) {
+        await this.closeCommandInput(proc);
+      }
       return;
     }
 
-    const payload = buildPromptPayloadFromOptions(options, prompt);
+    const payload =
+      transport === "command"
+        ? buildCommandInputPayloadFromOptions(prompt)
+        : buildPromptPayloadFromOptions(options, prompt);
 
     await this.writeWirePayload(proc, payload);
+
+    if (transport === "command" && closeAfterWrite) {
+      await this.closeCommandInput(proc);
+    }
   }
 
   private async writeWirePayload(
@@ -493,6 +679,21 @@ export class KimiRuntimeAdapter implements ProviderRuntimeAdapter {
 
         resolve();
       });
+    });
+  }
+
+  private async closeCommandInput(proc: ChildProcessWithoutNullStreams): Promise<void> {
+    if (proc.stdin.destroyed || proc.stdin.writableEnded) {
+      return;
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      try {
+        proc.stdin.end();
+        resolve();
+      } catch (error: unknown) {
+        reject(error);
+      }
     });
   }
 }
@@ -518,6 +719,57 @@ function buildPromptPayloadFromOptions(
 }
 
 function buildKimiRuntimeArgs(
+  transport: KimiRuntimeTransport,
+  mode: "start" | "continue",
+  sessionId: string,
+  request: ProviderRuntimeRunRequest,
+  cliSyntax: KimiCliSyntax
+): string[] {
+  if (cliSyntax === "modern") {
+    return buildModernKimiRuntimeArgs(transport, mode, sessionId, request);
+  }
+
+  return buildLegacyKimiRuntimeArgs(transport, mode, sessionId, request);
+}
+
+function buildModernKimiRuntimeArgs(
+  transport: KimiRuntimeTransport,
+  mode: "start" | "continue",
+  sessionId: string,
+  request: ProviderRuntimeRunRequest
+): string[] {
+  if (transport === "wire") {
+    const args = ["--wire"];
+
+    if (mode === "continue") {
+      args.push("--session", sessionId);
+    }
+
+    args.push("--work-dir", request.workspacePath);
+
+    if (request.options.model) {
+      args.push("--model", request.options.model);
+    }
+
+    return args;
+  }
+
+  const args = ["--print", "--output-format", "stream-json", "--input-format", "stream-json"];
+
+  if (mode === "continue") {
+    args.push("--session", sessionId);
+  }
+
+  args.push("--work-dir", request.workspacePath);
+
+  if (request.options.model) {
+    args.push("--model", request.options.model);
+  }
+
+  return args;
+}
+
+function buildLegacyKimiRuntimeArgs(
   transport: KimiRuntimeTransport,
   mode: "start" | "continue",
   sessionId: string,
@@ -580,13 +832,17 @@ function mapKimiWirePayload(
   const events: RuntimeEventInput[] = [];
   const wireType = ensureText(payload.type ?? payload.event ?? payload.kind).trim().toLowerCase();
   const providerSessionId =
-    readFirstNonEmptyString(payload, [
+    readKimiFirstNonEmptyString(payload, [
       ["sessionId"],
       ["session_id"],
       ["session", "id"]
     ]) ?? null;
   const timestamp = resolveEventTimestamp(payload);
-  const rawEventRef = buildKimiRawEventRef(context.sessionId, context.lineNumber);
+  const resolvedSessionId = providerSessionId ?? context.sessionId;
+  const resolvedRawStoreRef = providerSessionId
+    ? buildKimiSessionRawStoreRef(providerSessionId)
+    : context.rawStoreRef;
+  const rawEventRef = buildKimiMessageRawRef(resolvedSessionId, "wire", context.lineNumber);
 
   if (wireType.includes("session") && wireType.includes("created")) {
     events.push({
@@ -621,7 +877,7 @@ function mapKimiWirePayload(
     });
   }
 
-  const maybeError = readFirstNonEmptyString(payload, [["error"], ["detail"], ["message"]]);
+  const maybeError = readKimiFirstNonEmptyString(payload, [["error"], ["detail"], ["message"]]);
 
   if (wireType.includes("error") || wireType.includes("failed")) {
     events.push({
@@ -651,21 +907,22 @@ function mapKimiWirePayload(
     });
   }
 
-  const normalizedMessage = normalizeKimiWireMessage(payload, wireType, {
-    ...context,
-    sequence: context.sequence + 1,
-    rawEventRef,
+  const normalizedMessages = normalizeKimiWireMessages(payload, wireType, {
+    sessionId: resolvedSessionId,
+    rawStoreRef: resolvedRawStoreRef,
+    sequence: context.sequence,
+    lineNumber: context.lineNumber,
     timestamp
   });
 
-  if (normalizedMessage) {
+  for (const normalizedMessage of normalizedMessages) {
     events.push({
       type: "message",
       message: normalizedMessage,
       status: "running",
       timestamp,
       detail: null,
-      rawEventRef,
+      rawEventRef: normalizedMessage.rawRef,
       providerSessionId: providerSessionId ?? undefined
     });
   }
@@ -676,7 +933,7 @@ function mapKimiWirePayload(
   };
 }
 
-function normalizeKimiWireMessage(
+function normalizeKimiWireMessages(
   payload: Record<string, unknown>,
   wireType: string,
   input: {
@@ -684,49 +941,34 @@ function normalizeKimiWireMessage(
     rawStoreRef: string;
     sequence: number;
     lineNumber: number;
-    rawEventRef: string;
     timestamp: string;
   }
-): NormalizedMessage | null {
-  const hasMessageShape =
-    wireType.includes("message") ||
-    wireType.includes("text") ||
-    wireType.includes("delta") ||
-    wireType.includes("think") ||
-    wireType.includes("tool") ||
-    wireType.includes("function") ||
-    readPath(payload, ["content"]) !== undefined ||
-    readPath(payload, ["text"]) !== undefined ||
-    readPath(payload, ["message"]) !== undefined;
-
-  if (!hasMessageShape) {
-    return null;
+): NormalizedMessage[] {
+  if (!looksLikeKimiMessagePayload(payload, wireType)) {
+    return [];
   }
 
-  const role = normalizeRole(
-    readFirstNonEmptyString(payload, [["role"], ["message", "role"], ["event", "role"]])
+  const normalizedParts = normalizeKimiMessageRecord(payload);
+
+  return normalizedParts.map((part, index) =>
+    createTextMessage({
+      sessionId: input.sessionId,
+      rawStoreRef: input.rawStoreRef,
+      sequence: input.sequence + index + 1,
+      lineNumber: input.lineNumber,
+      role: part.role,
+      kind: part.kind,
+      content: part.content,
+      timestamp: input.timestamp,
+      rawEventRef: buildKimiMessageRawRef(
+        input.sessionId,
+        "wire",
+        input.lineNumber,
+        part.partIndex ?? undefined
+      ),
+      toolCall: part.toolCall
+    })
   );
-  const kind = normalizeMessageKind(payload);
-  const content = resolveMessageContent(payload, kind);
-
-  if (!content.trim() && kind !== "tool_call" && kind !== "tool_result") {
-    return null;
-  }
-
-  const toolCall = normalizeToolCall(payload, kind);
-
-  return createTextMessage({
-    sessionId: input.sessionId,
-    rawStoreRef: input.rawStoreRef,
-    sequence: input.sequence,
-    lineNumber: input.lineNumber,
-    role,
-    kind,
-    content,
-    timestamp: input.timestamp,
-    rawEventRef: input.rawEventRef,
-    toolCall
-  });
 }
 
 function createTextMessage(input: {
@@ -755,147 +997,8 @@ function createTextMessage(input: {
   };
 }
 
-function normalizeRole(value: string | null): NormalizedMessage["role"] {
-  const role = value?.trim().toLowerCase();
-
-  if (role === "user" || role === "assistant" || role === "tool" || role === "system") {
-    return role;
-  }
-
-  if (role === "human") {
-    return "user";
-  }
-
-  if (role === "ai" || role === "model") {
-    return "assistant";
-  }
-
-  return "assistant";
-}
-
-function normalizeMessageKind(payload: Record<string, unknown>): MessageKind {
-  const rawType = ensureText(payload.type ?? payload.kind ?? payload.event).trim().toLowerCase();
-
-  if (rawType.includes("think") || rawType.includes("reason")) {
-    return "thinking";
-  }
-
-  if (
-    rawType.includes("tool_call") ||
-    rawType.includes("tool.call") ||
-    rawType.includes("tool-use") ||
-    rawType.includes("function_call")
-  ) {
-    return "tool_call";
-  }
-
-  if (
-    rawType.includes("tool_result") ||
-    rawType.includes("tool.result") ||
-    rawType.includes("tool-output") ||
-    rawType.includes("function_result")
-  ) {
-    return "tool_result";
-  }
-
-  if (readPath(payload, ["tool_call"]) || readPath(payload, ["function_call"])) {
-    return "tool_call";
-  }
-
-  if (readPath(payload, ["tool_result"]) || readPath(payload, ["function_result"])) {
-    return "tool_result";
-  }
-
-  return "text";
-}
-
-function resolveMessageContent(payload: Record<string, unknown>, kind: MessageKind): string {
-  if (kind === "tool_call") {
-    return (
-      extractTextBlocks(
-        readPath(payload, ["input"]) ??
-        readPath(payload, ["arguments"]) ??
-        readPath(payload, ["tool_call", "input"]) ??
-        readPath(payload, ["function_call", "arguments"])
-      ).trim() ||
-      extractTextBlocks(payload).trim()
-    );
-  }
-
-  if (kind === "tool_result") {
-    return (
-      extractTextBlocks(
-        readPath(payload, ["output"]) ??
-        readPath(payload, ["result"]) ??
-        readPath(payload, ["tool_result", "output"]) ??
-        readPath(payload, ["function_result", "output"])
-      ).trim() ||
-      extractTextBlocks(payload).trim()
-    );
-  }
-
-  return (
-    extractTextBlocks(
-      readPath(payload, ["content"]) ??
-      readPath(payload, ["message"]) ??
-      readPath(payload, ["text"]) ??
-      readPath(payload, ["delta"]) ??
-      payload
-    ).trim() || ensureText(payload).trim()
-  );
-}
-
-function normalizeToolCall(
-  payload: Record<string, unknown>,
-  kind: MessageKind
-): NormalizedToolCall | null {
-  if (kind !== "tool_call" && kind !== "tool_result") {
-    return null;
-  }
-
-  const callId =
-    readFirstNonEmptyString(payload, [["call_id"], ["callId"], ["id"], ["tool_use_id"]]) ??
-    "kimi-tool-call";
-  const name =
-    readFirstNonEmptyString(payload, [["name"], ["tool", "name"], ["function", "name"]]) ??
-    "unknown_tool";
-  const input = extractTextBlocks(
-    readPath(payload, ["input"]) ??
-    readPath(payload, ["arguments"]) ??
-    readPath(payload, ["tool_call", "input"]) ??
-    readPath(payload, ["function_call", "arguments"]) ??
-    ""
-  ).trim();
-  const output = extractTextBlocks(
-    readPath(payload, ["output"]) ??
-    readPath(payload, ["result"]) ??
-    readPath(payload, ["tool_result", "output"]) ??
-    readPath(payload, ["function_result", "output"]) ??
-    ""
-  ).trim();
-  const error =
-    readFirstNonEmptyString(payload, [["error"], ["failure"]]) ??
-    null;
-
-  return {
-    callId,
-    name,
-    input,
-    output: output || null,
-    error,
-    status:
-      kind === "tool_call"
-        ? output
-          ? "completed"
-          : "running"
-        : error
-          ? "failed"
-          : "completed"
-  };
-}
-
 function resolveEventTimestamp(payload: Record<string, unknown>): string {
-  const raw = readFirstNonEmptyString(payload, [
+  const raw = readKimiFirstPresentValue(payload, [
     ["timestamp"],
     ["created_at"],
     ["createdAt"],
@@ -907,7 +1010,7 @@ function resolveEventTimestamp(payload: Record<string, unknown>): string {
 }
 
 function normalizeErrorCode(payload: Record<string, unknown>): string {
-  const code = readFirstNonEmptyString(payload, [["error_code"], ["code"], ["error", "code"]]);
+  const code = readKimiFirstNonEmptyString(payload, [["error_code"], ["code"], ["error", "code"]]);
   return code?.trim().toUpperCase().replace(/[^A-Z0-9_]+/g, "_") || "KIMI_WIRE_ERROR";
 }
 
@@ -957,43 +1060,145 @@ function isClosedStdinError(error: unknown): boolean {
   );
 }
 
-function buildKimiRawStoreRef(sessionId: string): string {
-  return `kimi://session/${encodeURIComponent(sessionId)}`;
-}
-
-function buildKimiRawEventRef(sessionId: string, lineNumber: number): string {
-  return `kimi://session/${encodeURIComponent(sessionId)}/wire#line=${lineNumber}`;
-}
-
 function shouldSpawnViaShell(commandPath: string): boolean {
   return /\.(cmd|bat|ps1)$/i.test(commandPath);
 }
 
-function readPath(value: unknown, path: string[]): unknown {
-  let current: unknown = value;
-
-  for (const key of path) {
-    if (!current || typeof current !== "object") {
-      return undefined;
-    }
-
-    current = (current as Record<string, unknown>)[key];
-  }
-
-  return current;
+function buildKimiSpawnEnv(): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    PYTHONIOENCODING: "utf-8",
+    PYTHONUTF8: "1"
+  };
 }
 
-function readFirstNonEmptyString(
-  record: Record<string, unknown>,
-  paths: string[][]
-): string | null {
-  for (const path of paths) {
-    const value = readPath(record, path);
+function buildPendingKimiBinding(sessionId: string): { providerSessionId: string; rawStoreRef: string } {
+  const pendingValue = `pending://kimi/${sessionId}`;
+  return {
+    providerSessionId: pendingValue,
+    rawStoreRef: pendingValue
+  };
+}
 
-    if (typeof value === "string" && value.trim()) {
-      return value.trim();
+function buildCommandInputPayloadFromOptions(prompt: string): Record<string, unknown> {
+  return {
+    role: "user",
+    content: [
+      {
+        type: "text",
+        text: prompt
+      }
+    ]
+  };
+}
+
+function isPendingKimiBinding(value: string): boolean {
+  return value.trim().toLowerCase().startsWith("pending://kimi/");
+}
+
+function readKimiSessionDirectoryMtime(sessionDir: string): number {
+  let mtimeMs = 0;
+
+  for (const fileName of ["state.json", "context.jsonl", "wire.jsonl"]) {
+    const filePath = join(sessionDir, fileName);
+
+    if (!existsSync(filePath)) {
+      continue;
     }
+
+    mtimeMs = Math.max(mtimeMs, statSync(filePath).mtimeMs);
   }
 
-  return null;
+  return mtimeMs;
 }
+
+function waitForKimiBindingResolvePoll(): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, KIMI_START_BINDING_RESOLVE_POLL_MS);
+  });
+}
+
+async function detectKimiCliSyntax(input: {
+  commandPath: string;
+  baseArgs: string[];
+  spawnFactory: typeof spawn;
+  timeoutMs: number;
+}): Promise<KimiCliSyntax> {
+  const helpOutput = await captureKimiCliOutput(input, ["--help"]);
+
+  if (looksLikeModernKimiHelp(helpOutput)) {
+    return "modern";
+  }
+
+  if (looksLikeLegacyKimiHelp(helpOutput)) {
+    return "legacy";
+  }
+
+  return "modern";
+}
+
+async function captureKimiCliOutput(
+  input: {
+    commandPath: string;
+    baseArgs: string[];
+    spawnFactory: typeof spawn;
+    timeoutMs: number;
+  },
+  probeArgs: string[]
+): Promise<string> {
+  return new Promise<string>((resolve) => {
+    const proc = input.spawnFactory(input.commandPath, [...input.baseArgs, ...probeArgs], {
+      shell: shouldSpawnViaShell(input.commandPath),
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    let settled = false;
+    let stdoutBuffer = "";
+    let stderrBuffer = "";
+    const finalize = (value: string) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      clearTimeout(timeout);
+      resolve(value);
+    };
+    const timeout = setTimeout(() => {
+      if (!proc.killed) {
+        proc.kill("SIGTERM");
+      }
+
+      finalize(`${stdoutBuffer}\n${stderrBuffer}`.trim());
+    }, Math.max(200, input.timeoutMs));
+
+    proc.stdout.setEncoding("utf8");
+    proc.stdout.on("data", (chunk: string) => {
+      stdoutBuffer += chunk;
+    });
+
+    proc.stderr.setEncoding("utf8");
+    proc.stderr.on("data", (chunk: string) => {
+      stderrBuffer += chunk;
+    });
+
+    proc.once("error", () => {
+      finalize(`${stdoutBuffer}\n${stderrBuffer}`.trim());
+    });
+
+    proc.once("close", () => {
+      finalize(`${stdoutBuffer}\n${stderrBuffer}`.trim());
+    });
+  });
+}
+
+function looksLikeModernKimiHelp(output: string): boolean {
+  const normalized = output.toLowerCase();
+  return normalized.includes("--wire") || normalized.includes("--work-dir");
+}
+
+function looksLikeLegacyKimiHelp(output: string): boolean {
+  const normalized = output.toLowerCase();
+  return normalized.includes("--cwd") || normalized.includes("no such command 'wire'");
+}
+

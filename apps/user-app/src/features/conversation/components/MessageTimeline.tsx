@@ -64,6 +64,8 @@ interface ToolMessageGroup {
   hasResult: boolean;
 }
 
+type FoldedPromptKind = "rules" | "system_prompt";
+
 const OLDER_HISTORY_PREFETCH_THRESHOLD_PX = 480;
 const MarkdownLinkContext = createContext(false);
 
@@ -575,6 +577,28 @@ function getRulesMessageSummary(content: string) {
   }
 
   return firstLine.replace(/^#+\s*/, "");
+}
+
+function collectLeadingSystemPromptMessageIds(
+  messages: SessionMessageViewModel[],
+  provider: ProviderId | null
+): Set<string> {
+  const messageIds = new Set<string>();
+
+  if (provider !== "kimi") {
+    return messageIds;
+  }
+
+  for (const message of messages) {
+    if (message.role === "system" && message.kind === "text") {
+      messageIds.add(message.id);
+      continue;
+    }
+
+    break;
+  }
+
+  return messageIds;
 }
 
 function flattenReactNodeText(node: ReactNode): string {
@@ -1433,16 +1457,34 @@ function formatApplyPatchLineNumber(value: number | null) {
 
 function RulesMessageCard({
   message,
+  kind,
   tone,
   onRetry
 }: {
   message: SessionMessageViewModel;
+  kind: FoldedPromptKind;
   tone: "user-message" | "assistant-message" | "system-message";
   onRetry: (clientRequestId: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const summary = getRulesMessageSummary(message.content);
   const isUser = tone === "user-message";
+  const title =
+    kind === "system_prompt"
+      ? t("conversation.systemPromptTitle")
+      : t("conversation.rulesMessageTitle");
+  const hint =
+    kind === "system_prompt"
+      ? t("conversation.systemPromptHint")
+      : t("conversation.rulesMessageHint");
+  const actionLabel =
+    expanded
+      ? kind === "system_prompt"
+        ? t("conversation.systemPromptCollapse")
+        : t("conversation.rulesMessageCollapse")
+      : kind === "system_prompt"
+        ? t("conversation.systemPromptExpand")
+        : t("conversation.rulesMessageExpand");
 
   return (
     <article className={`message-item ${tone} rules-message-row`}>
@@ -1455,15 +1497,13 @@ function RulesMessageCard({
             onClick={() => setExpanded((current) => !current)}
           >
             <div className="rules-message-heading">
-              <span className="rules-message-badge">{t("conversation.rulesMessageTitle")}</span>
+              <span className="rules-message-badge">{title}</span>
               <span className="rules-message-summary">{summary}</span>
             </div>
-            <span className="rules-message-action">
-              {expanded ? t("conversation.rulesMessageCollapse") : t("conversation.rulesMessageExpand")}
-            </span>
+            <span className="rules-message-action">{actionLabel}</span>
           </button>
 
-          <p className="rules-message-hint">{t("conversation.rulesMessageHint")}</p>
+          <p className="rules-message-hint">{hint}</p>
 
           {expanded && (
             <div className="rules-message-body">
@@ -1498,18 +1538,24 @@ function RulesMessageCard({
 function MessageItem({
   message,
   provider,
+  foldedPromptKind = null,
   onRetry,
   assistantAvatar
 }: {
   message: SessionMessageViewModel;
   provider: ProviderId | null;
+  foldedPromptKind?: FoldedPromptKind | null;
   onRetry: (clientRequestId: string) => void;
   assistantAvatar?: ReactNode;
 }) {
   const isUser = message.role === "user";
   const isThinking = message.kind === "thinking";
   const isAssistantText = message.role === "assistant" && message.kind === "text";
-  const isRulesMessage = looksLikeRulesMessage(provider, message.content);
+  const promptKind: FoldedPromptKind | null =
+    foldedPromptKind ??
+    (looksLikeRulesMessage(provider, message.content)
+      ? "rules"
+      : null);
   const richContent = useMemo(() => parseMessageRichContent(message.content), [message.content]);
   const visibleContent = richContent.text;
   const inlineImages = richContent.inlineImages;
@@ -1518,7 +1564,7 @@ function MessageItem({
   const [originDetailError, setOriginDetailError] = useState<string | null>(null);
   const [originDetail, setOriginDetail] = useState<ButlerFollowUpTaskDto | null>(null);
 
-  if (isRulesMessage) {
+  if (promptKind) {
     const tone =
       message.role === "user"
         ? "user-message"
@@ -1526,7 +1572,7 @@ function MessageItem({
           ? "assistant-message"
           : "system-message";
 
-    return <RulesMessageCard message={message} tone={tone} onRetry={onRetry} />;
+    return <RulesMessageCard message={message} kind={promptKind} tone={tone} onRetry={onRetry} />;
   }
 
   if (isUser) {
@@ -1747,6 +1793,10 @@ export function MessageTimeline({
   const pendingOlderLoadOffsetRef = useRef<number | null>(null);
   const olderLoadLockRef = useRef(false);
   const renderItems = buildTimelineRenderItems(messages);
+  const leadingSystemPromptMessageIds = useMemo(
+    () => collectLeadingSystemPromptMessageIds(messages, provider),
+    [messages, provider]
+  );
   const showTimelineSkeleton = historyState === "loading" && messages.length === 0;
 
   function triggerOlderMessagesPrefetch(list: HTMLDivElement): boolean {
@@ -1892,6 +1942,11 @@ export function MessageTimeline({
               key={item.key}
               message={item.message}
               provider={provider}
+              foldedPromptKind={
+                leadingSystemPromptMessageIds.has(item.message.id)
+                  ? "system_prompt"
+                  : null
+              }
               onRetry={onRetryMessage}
               assistantAvatar={assistantAvatar}
             />

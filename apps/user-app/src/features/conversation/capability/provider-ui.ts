@@ -109,7 +109,7 @@ const PROVIDER_METADATA: Record<BuiltinProviderId, ProviderMetadata> = {
     supportsAttachments: false,
     supportsPermissionPrompt: false,
     supportsSlashMenuByDefault: false,
-    foldRulesMessagesByDefault: false
+    foldRulesMessagesByDefault: true
   }
 };
 
