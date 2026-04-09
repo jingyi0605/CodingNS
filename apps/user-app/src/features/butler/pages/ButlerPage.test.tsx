@@ -1492,4 +1492,48 @@ describe("ButlerPage", () => {
 
     fireEvent.click(screen.getByTestId("butler-load-older"));
   });
+
+  it("does not re-register the auxiliary panel when rerendering with the same inputs", async () => {
+    mockedGetButlerProfile.mockResolvedValueOnce({
+      initialized: true,
+      profile: {
+        id: "default",
+        displayName: "Butler",
+        providerId: "codex",
+        workspacePath: "/tmp/butler",
+        agentsMode: "inline",
+        agentsFilePath: null,
+        agentsContent: "test",
+        persona: { tone: "direct", language: "zh-CN", summaryStyle: "brief" },
+        focus: { projectIds: [], riskPreference: "conservative", reportPriority: [], summaryDebounceSeconds: 300 },
+        initializedAt: "2026-04-05T00:00:00.000Z",
+        updatedAt: "2026-04-05T00:00:00.000Z"
+      }
+    });
+    const page = (
+      <MemoryRouter initialEntries={["/workspaces/workspace-1/butler"]}>
+        <Routes>
+          <Route path="/workspaces/:workspaceId/butler" element={<ButlerPage />} />
+        </Routes>
+      </MemoryRouter>
+    );
+    const view = render(page);
+
+    await waitFor(() => {
+      expect(setAuxiliaryPanelMock).toHaveBeenCalled();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const initialSetAuxiliaryPanelCallCount = setAuxiliaryPanelMock.mock.calls.length;
+
+    view.rerender(page);
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(setAuxiliaryPanelMock).toHaveBeenCalledTimes(initialSetAuxiliaryPanelCallCount);
+  });
 });

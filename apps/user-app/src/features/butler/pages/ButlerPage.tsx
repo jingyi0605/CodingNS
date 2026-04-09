@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
 import { t } from "../../../shared/i18n";
@@ -207,6 +207,82 @@ export function ButlerPage() {
     () => (overview?.projects ?? []).map((project) => project.id).sort(),
     [overview?.projects]
   );
+  const handleOpenFollowUpHistory = useCallback(() => {
+    setFollowUpHistoryOpen(true);
+  }, []);
+  const handleSettingsFormChange = useCallback((patch: Partial<ButlerSettingsFormState>) => {
+    setSettingsForm((current) => ({
+      ...current,
+      ...patch
+    }));
+  }, []);
+  const handleOpenFollowUpDetail = useCallback(async (taskId: string) => {
+    setFollowUpHistoryOpen(false);
+    setDetailTaskId(taskId);
+    setDetailTask(null);
+    setDetailError(null);
+    setDetailLoading(true);
+
+    try {
+      const response = await getButlerFollowUpTask(taskId);
+      setDetailTask(response.task);
+    } catch (detailLoadError) {
+      setDetailError(
+        detailLoadError instanceof Error
+          ? detailLoadError.message
+          : t("shell.butlerAutomationRoundLoadFailed")
+      );
+    } finally {
+      setDetailLoading(false);
+    }
+  }, []);
+  const handleSaveSettings = useCallback(async () => {
+    if (!profile) {
+      return;
+    }
+
+    if (!settingsForm.displayName.trim()) {
+      showToast({
+        title: t("shell.butlerInitNameRequired"),
+        tone: "warning"
+      });
+      return;
+    }
+
+    setSavingSettings(true);
+
+    try {
+      await store.updateProfile({
+        displayName: settingsForm.displayName.trim(),
+        agentsMode: settingsForm.agentsMode,
+        agentsFilePath: settingsForm.agentsMode === "file" ? settingsForm.agentsFilePath : null,
+        agentsContent: settingsForm.agentsContent,
+        persona: {
+          tone: settingsForm.personaTone,
+          language: settingsForm.personaLanguage,
+          summaryStyle: settingsForm.personaSummaryStyle
+        },
+        focus: {
+          ...profile.focus,
+          riskPreference: settingsForm.focusRiskPreference,
+          reportPriority: REPORT_PRIORITY_PRESET_VALUES[settingsForm.reportPriorityPreset],
+          summaryDebounceSeconds: settingsForm.summaryDebounceSeconds
+        }
+      });
+      showToast({
+        title: t("shell.butlerSettingsSaved"),
+        tone: "success"
+      });
+    } catch (saveError) {
+      showToast({
+        title: t("shell.butlerSettingsSaveFailed"),
+        description: saveError instanceof Error ? saveError.message : undefined,
+        tone: "error"
+      });
+    } finally {
+      setSavingSettings(false);
+    }
+  }, [profile, settingsForm, showToast, store]);
 
   useEffect(() => {
     void store.initialize();
@@ -431,16 +507,9 @@ export function ButlerPage() {
         patrolPlans={patrolPlans}
         settingsForm={settingsForm}
         savingSettings={savingSettings}
-        onOpenFollowUpHistory={() => {
-          setFollowUpHistoryOpen(true);
-        }}
+        onOpenFollowUpHistory={handleOpenFollowUpHistory}
         onOpenFollowUpDetail={handleOpenFollowUpDetail}
-        onSettingsFormChange={(patch) => {
-          setSettingsForm((current) => ({
-            ...current,
-            ...patch
-          }));
-        }}
+        onSettingsFormChange={handleSettingsFormChange}
         onSaveSettings={() => {
           void handleSaveSettings();
         }}
@@ -448,8 +517,11 @@ export function ButlerPage() {
     ),
     [
       events,
+      handleOpenFollowUpHistory,
       followUpTasks,
       handleOpenFollowUpDetail,
+      handleSaveSettings,
+      handleSettingsFormChange,
       inboxItems,
       overview,
       patrolPlans,
@@ -557,71 +629,6 @@ export function ButlerPage() {
         description: sessionError instanceof Error ? sessionError.message : undefined,
         tone: "error"
       });
-    }
-  }
-
-  async function handleOpenFollowUpDetail(taskId: string) {
-    setFollowUpHistoryOpen(false);
-    setDetailTaskId(taskId);
-    setDetailTask(null);
-    setDetailError(null);
-    setDetailLoading(true);
-
-    try {
-      const response = await getButlerFollowUpTask(taskId);
-      setDetailTask(response.task);
-    } catch (detailLoadError) {
-      setDetailError(detailLoadError instanceof Error ? detailLoadError.message : t("shell.butlerAutomationRoundLoadFailed"));
-    } finally {
-      setDetailLoading(false);
-    }
-  }
-
-  async function handleSaveSettings() {
-    if (!profile) {
-      return;
-    }
-
-    if (!settingsForm.displayName.trim()) {
-      showToast({
-        title: t("shell.butlerInitNameRequired"),
-        tone: "warning"
-      });
-      return;
-    }
-
-    setSavingSettings(true);
-
-    try {
-      await store.updateProfile({
-        displayName: settingsForm.displayName.trim(),
-        agentsMode: settingsForm.agentsMode,
-        agentsFilePath: settingsForm.agentsMode === "file" ? settingsForm.agentsFilePath : null,
-        agentsContent: settingsForm.agentsContent,
-        persona: {
-          tone: settingsForm.personaTone,
-          language: settingsForm.personaLanguage,
-          summaryStyle: settingsForm.personaSummaryStyle
-        },
-        focus: {
-          ...profile.focus,
-          riskPreference: settingsForm.focusRiskPreference,
-          reportPriority: REPORT_PRIORITY_PRESET_VALUES[settingsForm.reportPriorityPreset],
-          summaryDebounceSeconds: settingsForm.summaryDebounceSeconds
-        }
-      });
-      showToast({
-        title: t("shell.butlerSettingsSaved"),
-        tone: "success"
-      });
-    } catch (saveError) {
-      showToast({
-        title: t("shell.butlerSettingsSaveFailed"),
-        description: saveError instanceof Error ? saveError.message : undefined,
-        tone: "error"
-      });
-    } finally {
-      setSavingSettings(false);
     }
   }
 
