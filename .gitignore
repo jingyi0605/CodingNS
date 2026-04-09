@@ -99,4 +99,5 @@ apps/user-app/src-tauri/gen/apple/assets/index.html
 apps/user-app/src-tauri/gen/apple/assets/assets/
 apps/host/claude-hook-token
 apps/user-app/src-tauri/mobile-splash/
+apps/user-app/src-tauri/gen/apple/Assets.xcassets/AppIcon.appiconset/*.png
 .playwright-cli/*
