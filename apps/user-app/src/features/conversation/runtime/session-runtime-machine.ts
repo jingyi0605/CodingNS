@@ -362,14 +362,16 @@ function collapseEquivalentKimiTextMessages(
   const collapsed: SessionMessageViewModel[] = [];
 
   for (const message of messages) {
-    const previous = collapsed.at(-1);
+    const equivalentIndex = collapsed.findIndex((existing) =>
+      isEquivalentKimiTextMessage(existing, message)
+    );
 
-    if (!previous || !isEquivalentKimiTextMessage(previous, message)) {
+    if (equivalentIndex === -1) {
       collapsed.push(message);
       continue;
     }
 
-    collapsed[collapsed.length - 1] = pickPreferredKimiMessage(previous, message);
+    collapsed[equivalentIndex] = pickPreferredKimiMessage(collapsed[equivalentIndex], message);
   }
 
   return collapsed;

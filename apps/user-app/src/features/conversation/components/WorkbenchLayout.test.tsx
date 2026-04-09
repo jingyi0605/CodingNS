@@ -1547,6 +1547,111 @@ describe("WorkbenchLayout", () => {
     expect(within(sessionCard).getByText(t("conversation.runtimeStale"))).toBeInTheDocument();
   });
 
+  it("归档请求未完成时收到旧快照，也不会把会话重新抬出来", async () => {
+    const initialSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "会话 Alpha",
+            workspaceId: "workspace-1"
+          }),
+          createSessionSummary({
+            sessionId: "session-2",
+            title: "会话 Beta",
+            workspaceId: "workspace-1"
+          })
+        ]
+      }
+    ]);
+    const archivedSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "会话 Alpha",
+            workspaceId: "workspace-1"
+          }),
+          createSessionSummary({
+            sessionId: "session-2",
+            title: "会话 Beta",
+            workspaceId: "workspace-1",
+            isArchived: true
+          })
+        ]
+      }
+    ]);
+    let currentSnapshot = initialSnapshot;
+    let archiveRequestStarted = false;
+    let releaseArchiveRequest!: (response: Response) => void;
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      if (url.includes("/api/sessions/session-2/archive")) {
+        archiveRequestStarted = true;
+
+        return await new Promise<Response>((resolve) => {
+          releaseArchiveRequest = resolve;
+        });
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute();
+
+    const betaCard = await findSessionCardByTitle("会话 Beta");
+
+    await userEvent.click(within(betaCard).getByRole("button", { name: t("shell.sessionMoreAction") }));
+    const archiveActionPromise = userEvent.click(screen.getByRole("button", { name: t("shell.archiveAction") }));
+
+    await waitFor(() => {
+      expect(archiveRequestStarted).toBe(true);
+    });
+
+    await waitFor(() => {
+      expect(screen.queryAllByText("会话 Beta")).toHaveLength(0);
+    });
+
+    MockWebSocket.instances[0]?.dispatchMessage({
+      type: "workbench.snapshot",
+      snapshot: initialSnapshot
+    });
+
+    await waitFor(() => {
+      expect(screen.queryAllByText("会话 Beta")).toHaveLength(0);
+    });
+
+    currentSnapshot = archivedSnapshot;
+    MockWebSocket.workbenchSnapshot = archivedSnapshot;
+    expect(archiveRequestStarted).toBe(true);
+    releaseArchiveRequest(
+      createJsonResponse(
+        createSessionSummary({
+          sessionId: "session-2",
+          title: "会话 Beta",
+          workspaceId: "workspace-1",
+          isArchived: true
+        })
+      )
+    );
+
+    await archiveActionPromise;
+
+    await waitFor(() => {
+      expect(screen.queryAllByText("会话 Beta")).toHaveLength(0);
+    });
+  });
+
   it("归档成功后即使收到旧快照，也会再拉最新导航避免会话重新冒出来", async () => {
     const initialSnapshot = createWorkbenchSnapshot([
       {

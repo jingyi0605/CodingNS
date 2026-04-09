@@ -902,6 +902,72 @@ function mapWorkbenchSnapshotToGroups(snapshot: WorkbenchSnapshotDto | null | un
   }));
 }
 
+function applyPendingArchiveStateToSnapshot(
+  snapshot: WorkbenchSnapshotDto,
+  pendingArchiveStateBySessionId: ReadonlyMap<string, boolean>
+): WorkbenchSnapshotDto {
+  if (!Array.isArray(snapshot.items) || pendingArchiveStateBySessionId.size === 0) {
+    return snapshot;
+  }
+
+  let changed = false;
+
+  const nextItems = snapshot.items.map((item) => {
+    let itemChanged = false;
+    const nextSessions = item.sessions.map((session) => {
+      const pendingArchivedState = pendingArchiveStateBySessionId.get(session.sessionId);
+
+      if (pendingArchivedState === undefined || isArchivedSession(session) === pendingArchivedState) {
+        return session;
+      }
+
+      changed = true;
+      itemChanged = true;
+      return {
+        ...session,
+        isArchived: pendingArchivedState
+      };
+    });
+
+    return itemChanged
+      ? {
+          ...item,
+          sessions: nextSessions
+        }
+      : item;
+  });
+
+  return changed
+    ? {
+        ...snapshot,
+        items: nextItems
+      }
+    : snapshot;
+}
+
+function settlePendingArchiveStateFromSnapshot(
+  pendingArchiveStateBySessionId: Map<string, boolean>,
+  snapshot: WorkbenchSnapshotDto
+) {
+  if (!Array.isArray(snapshot.items) || pendingArchiveStateBySessionId.size === 0) {
+    return;
+  }
+
+  for (const item of snapshot.items) {
+    for (const session of item.sessions) {
+      const pendingArchivedState = pendingArchiveStateBySessionId.get(session.sessionId);
+
+      if (pendingArchivedState === undefined) {
+        continue;
+      }
+
+      if (isArchivedSession(session) === pendingArchivedState) {
+        pendingArchiveStateBySessionId.delete(session.sessionId);
+      }
+    }
+  }
+}
+
 function readCachedWorkbenchSnapshot() {
   return readViewSnapshot<WorkbenchSnapshotDto>(
     WORKBENCH_NAVIGATION_SNAPSHOT_KEY,
@@ -4136,6 +4202,7 @@ export function WorkbenchLayout({
   const hasNavigationDataRef = useRef(
     (initialWorkbenchSnapshotRef.current?.items?.length ?? 0) > 0
   );
+  const pendingArchiveStateBySessionIdRef = useRef(new Map<string, boolean>());
   const hasReceivedWorkbenchSnapshotRef = useRef(false);
   const lastDraftSessionPathRef = useRef<string | null>(null);
   const fileRevealRequestIdRef = useRef(0);
@@ -4344,14 +4411,23 @@ export function WorkbenchLayout({
       return;
     }
 
+    settlePendingArchiveStateFromSnapshot(pendingArchiveStateBySessionIdRef.current, snapshot);
+    const snapshotWithPendingArchiveState = applyPendingArchiveStateToSnapshot(
+      snapshot,
+      pendingArchiveStateBySessionIdRef.current
+    );
+
     logPerfDebug("workbench.apply_snapshot", {
-      workspaceCount: snapshot.items.length,
-      sessionCount: snapshot.items.reduce((total, item) => total + item.sessions.length, 0),
+      workspaceCount: snapshotWithPendingArchiveState.items.length,
+      sessionCount: snapshotWithPendingArchiveState.items.reduce(
+        (total, item) => total + item.sessions.length,
+        0
+      ),
       currentSessionId: resolveRouteSessionMatch(location.pathname)?.sessionId ?? null
     });
 
-    writeViewSnapshot(WORKBENCH_NAVIGATION_SNAPSHOT_KEY, snapshot);
-    setNavigationGroups(mapWorkbenchSnapshotToGroups(snapshot));
+    writeViewSnapshot(WORKBENCH_NAVIGATION_SNAPSHOT_KEY, snapshotWithPendingArchiveState);
+    setNavigationGroups(mapWorkbenchSnapshotToGroups(snapshotWithPendingArchiveState));
     setNavigationError(null);
   }
 
@@ -4511,22 +4587,33 @@ export function WorkbenchLayout({
 
   const commitNavigationArchiveState = useCallback(
     async (sessionId: string, isArchived: boolean) => {
+      pendingArchiveStateBySessionIdRef.current.set(sessionId, isArchived);
       setNavigationGroups((current) =>
         updateSessionArchivedStateInGroups(current, sessionId, isArchived)
       );
 
       try {
         const session = await updateSessionArchiveState(sessionId, isArchived);
+        const nextArchivedState = isArchivedSession(session);
+
+        if (nextArchivedState === isArchived) {
+          pendingArchiveStateBySessionIdRef.current.set(sessionId, nextArchivedState);
+        } else {
+          pendingArchiveStateBySessionIdRef.current.delete(sessionId);
+        }
+
         upsertNavigationSession(session);
         requestNavigationRefresh();
+        void refreshNavigation();
       } catch (error) {
+        pendingArchiveStateBySessionIdRef.current.delete(sessionId);
         setNavigationGroups((current) =>
           updateSessionArchivedStateInGroups(current, sessionId, !isArchived)
         );
         throw error;
       }
     },
-    [requestNavigationRefresh, upsertNavigationSession]
+    [refreshNavigation, requestNavigationRefresh, upsertNavigationSession]
   );
 
   const setSessionWorkspace = useCallback((sessionId: string, workspaceId: string | null) => {
