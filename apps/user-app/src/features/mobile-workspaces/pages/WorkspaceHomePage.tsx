@@ -10,11 +10,22 @@ import {
   type SessionSummaryDto,
   type WorkspaceDto
 } from "../../conversation/api/conversation-api";
+import {
+  getButlerOverview,
+  getButlerProfile,
+  listButlerFollowUpTasks,
+  listButlerInboxItems
+} from "../../butler/api/butler-api";
+import { countInProgressButlerTasks } from "../../butler/butler-task-count";
+import { BUTLER_INBOX_UPDATED_EVENT } from "../../butler/runtime/butler-inbox-events";
+import { subscribeButlerRecordsUpdated } from "../../butler/runtime/butler-records-events";
 import { getProviderDisplayName } from "../../conversation/capability/provider-ui";
 import { WorkspaceCloneModal } from "../../conversation/components/WorkspaceCloneModal";
+import { WorkspaceInboxModal } from "../../conversation/components/WorkspaceInboxModal";
 import { WorkspaceImportBrowserModal } from "../../conversation/components/WorkspaceImportBrowserModal";
 import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout";
 import {
+  buildWorkspaceButlerPath,
   buildWorkspaceDetailPath,
   buildWorkspaceSessionIndexPath,
   buildWorkspaceSessionPath,
@@ -23,8 +34,10 @@ import {
   buildWorkspaceToolsPath
 } from "../../workbench/utils/workbench-navigation";
 import { t } from "../../../shared/i18n";
+import { useToast } from "../../../shared/toast";
 import { MobileCreateSessionSheet } from "../../mobile-sessions/components/MobileCreateSessionSheet";
 import { MobileWorkspaceSwitcherHeader } from "../../mobile-shell/components/MobileWorkspaceSwitcherHeader";
+import { MobileNotificationsModal } from "../components/MobileNotificationsModal";
 
 type WorkspaceActionMode = "import" | "clone" | null;
 
@@ -35,6 +48,12 @@ interface WorkspaceDashboardState {
   readonly activeTerminalCount: number | null;
   readonly changedFileCount: number | null;
   readonly quickLaunchRunning: boolean | null;
+}
+
+interface WorkspaceButlerState {
+  readonly loading: boolean;
+  readonly activeTaskCount: number;
+  readonly pendingInboxCount: number;
 }
 
 interface WorkspaceHomeGitSnapshotCache {
@@ -99,9 +118,12 @@ function formatActivityTime(value: string | null) {
 }
 
 const WORKSPACE_HOME_SNAPSHOT_CACHE_MAX_AGE_MS = 60 * 1000;
+const WORKSPACE_HOME_BUTLER_POLL_INTERVAL_MS = 15_000;
 
 export function WorkspaceHomePage() {
   const navigate = useNavigate();
+  const { showToast } = useToast();
+  const workbenchShell = useWorkbenchShell();
   const {
     navigationGroups,
     currentWorkspaceId,
@@ -114,9 +136,18 @@ export function WorkspaceHomePage() {
     subscribeTerminalManagerSnapshot,
     requestTerminalManagerRefresh,
     addTerminalManagerSnapshotListener
-  } = useWorkbenchShell();
+  } = workbenchShell;
+  const globalNotifications = workbenchShell.globalNotifications ?? [];
+  const archivedNotificationIds = new Set(workbenchShell.archivedNotificationIds ?? []);
+  const showArchivedNotifications = workbenchShell.showArchivedNotifications ?? false;
+  const unreadNotificationCount = workbenchShell.unreadNotificationCount ?? 0;
+  const setShowArchivedNotifications = workbenchShell.setShowArchivedNotifications ?? (() => undefined);
+  const archiveNotification = workbenchShell.archiveNotification ?? (() => undefined);
+  const unarchiveNotification = workbenchShell.unarchiveNotification ?? (() => undefined);
   const [actionMode, setActionMode] = useState<WorkspaceActionMode>(null);
   const [createSessionOpen, setCreateSessionOpen] = useState(false);
+  const [inboxOpen, setInboxOpen] = useState(false);
+  const [notificationOpen, setNotificationOpen] = useState(false);
   const [dashboardState, setDashboardState] = useState<WorkspaceDashboardState>({
     gitLoading: false,
     terminalLoading: false,
@@ -124,6 +155,11 @@ export function WorkspaceHomePage() {
     activeTerminalCount: null,
     changedFileCount: null,
     quickLaunchRunning: null
+  });
+  const [butlerState, setButlerState] = useState<WorkspaceButlerState>({
+    loading: true,
+    activeTaskCount: 0,
+    pendingInboxCount: 0
   });
 
   const currentWorkspaceGroup =
@@ -136,7 +172,6 @@ export function WorkspaceHomePage() {
     .sort(sortSessionsByActivity);
   const activeSessions = visibleSessions.filter(isSessionRunning);
   const waitingInputSessions = visibleSessions.filter(isSessionWaitingForInput);
-  const unreadSessions = visibleSessions.filter((session) => session.activityState === "completed_unread");
   const favoriteSessions = visibleSessions.filter((session) => session.isFavorite === true);
   const sessionList = activeSessions.slice(0, 6);
   const favoriteSessionList = favoriteSessions.slice(0, 6);
@@ -308,6 +343,111 @@ export function WorkspaceHomePage() {
     subscribeTerminalManagerSnapshot
   ]);
 
+  useEffect(() => {
+    const workspaceId = currentWorkspace?.id ?? null;
+
+    if (!workspaceId) {
+      setButlerState({
+        loading: false,
+        activeTaskCount: 0,
+        pendingInboxCount: 0
+      });
+      return;
+    }
+
+    let disposed = false;
+
+    async function loadButlerState(showErrorToast: boolean) {
+      setButlerState((current) => ({
+        ...current,
+        loading: true
+      }));
+
+      try {
+        const profileResponse = await getButlerProfile();
+
+        if (!profileResponse.initialized || !profileResponse.profile) {
+          if (!disposed) {
+            setButlerState({
+              loading: false,
+              activeTaskCount: 0,
+              pendingInboxCount: 0
+            });
+          }
+          return;
+        }
+
+        const [overviewResponse, followUpResponse, inboxResponse] = await Promise.all([
+          getButlerOverview(),
+          listButlerFollowUpTasks(),
+          listButlerInboxItems({
+            workspaceId
+          })
+        ]);
+
+        if (disposed) {
+          return;
+        }
+
+        const workspaceProjectIds = new Set(
+          overviewResponse.overview.projects
+            .filter((project) => project.workspaceId === workspaceId)
+            .map((project) => project.id)
+        );
+        const workspaceVerifications = overviewResponse.overview.verifications.filter((verification) => (
+          verification.projectId ? workspaceProjectIds.has(verification.projectId) : false
+        ));
+
+        setButlerState({
+          loading: false,
+          activeTaskCount: countInProgressButlerTasks(
+            followUpResponse.items.filter((item) => item.workspaceId === workspaceId),
+            workspaceVerifications
+          ),
+          pendingInboxCount: inboxResponse.items.filter((item) => item.status !== "closed").length
+        });
+      } catch (error) {
+        if (disposed) {
+          return;
+        }
+
+        setButlerState((current) => ({
+          ...current,
+          loading: false
+        }));
+
+        if (showErrorToast) {
+          showToast({
+            title: t("shell.butlerLoadFailed"),
+            description: error instanceof Error ? error.message : undefined,
+            tone: "error"
+          });
+        }
+      }
+    }
+
+    void loadButlerState(true);
+
+    const timer = window.setInterval(() => {
+      void loadButlerState(false);
+    }, WORKSPACE_HOME_BUTLER_POLL_INTERVAL_MS);
+    const unsubscribeRecords = subscribeButlerRecordsUpdated(() => {
+      void loadButlerState(false);
+    });
+    const handleInboxUpdated = () => {
+      void loadButlerState(false);
+    };
+
+    window.addEventListener(BUTLER_INBOX_UPDATED_EVENT, handleInboxUpdated);
+
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+      unsubscribeRecords();
+      window.removeEventListener(BUTLER_INBOX_UPDATED_EVENT, handleInboxUpdated);
+    };
+  }, [currentWorkspace?.id, showToast]);
+
   async function handleWorkspaceImported(workspace: WorkspaceDto) {
     await refreshNavigation();
     selectWorkspace(workspace.id);
@@ -347,6 +487,15 @@ export function WorkspaceHomePage() {
 
     selectWorkspace(currentWorkspace.id);
     navigate(buildWorkspaceToolProcessesPath(currentWorkspace.id));
+  }
+
+  function openCurrentWorkspaceButler() {
+    if (!currentWorkspace) {
+      return;
+    }
+
+    selectWorkspace(currentWorkspace.id);
+    navigate(buildWorkspaceButlerPath(currentWorkspace.id));
   }
 
   function openSessionIndex() {
@@ -391,8 +540,8 @@ export function WorkspaceHomePage() {
     },
     {
       label: t("shell.workspaceHomeMetricUnread"),
-      value: unreadSessions.length,
-      onClick: visibleSessions.length > 0 ? openSessionIndex : undefined
+      value: unreadNotificationCount,
+      onClick: () => setNotificationOpen(true)
     },
     {
       label: t("shell.workspaceHomeMetricTerminal"),
@@ -408,6 +557,18 @@ export function WorkspaceHomePage() {
 
   const quickStatusRows = [
     {
+      label: t("shell.workspaceHomeWaitingInputLabel"),
+      value: waitingInputSessions.length,
+      accent: false,
+      onClick: visibleSessions.length > 0 ? openSessionIndex : undefined
+    },
+    {
+      label: t("shell.workspaceHomeButlerLabel"),
+      value: butlerState.loading ? "…" : butlerState.activeTaskCount,
+      accent: true,
+      onClick: currentWorkspace ? openCurrentWorkspaceButler : undefined
+    },
+    {
       label: t("shell.workspaceHomeQuickLaunchStatusLabel"),
       value:
         dashboardState.quickLaunchRunning === null
@@ -415,12 +576,14 @@ export function WorkspaceHomePage() {
           : dashboardState.quickLaunchRunning
             ? t("shell.workspaceHomeQuickLaunchRunning")
             : t("shell.workspaceHomeQuickLaunchStopped"),
+      accent: false,
       onClick: currentWorkspace ? openCurrentWorkspaceProcesses : undefined
     },
     {
-      label: t("shell.workspaceHomeWaitingInputLabel"),
-      value: waitingInputSessions.length,
-      onClick: visibleSessions.length > 0 ? openSessionIndex : undefined
+      label: t("shell.butlerInboxAction"),
+      value: butlerState.loading ? "…" : butlerState.pendingInboxCount,
+      accent: false,
+      onClick: currentWorkspace ? () => setInboxOpen(true) : undefined
     }
   ] as const;
 
@@ -519,6 +682,7 @@ export function WorkspaceHomePage() {
                     key={row.label}
                     type="button"
                     className="mobile-workspace-home-row"
+                    data-accent={row.accent ? "true" : undefined}
                     onClick={row.onClick}
                   >
                     <span className="mobile-workspace-home-row-label">{row.label}</span>
@@ -669,6 +833,29 @@ export function WorkspaceHomePage() {
         initialWorkspaceId={currentWorkspace?.id ?? currentWorkspaceId ?? null}
         onClose={() => setCreateSessionOpen(false)}
         onSelect={handleSelectSessionProvider}
+      />
+      <WorkspaceInboxModal
+        open={inboxOpen}
+        preferredWorkspaceId={currentWorkspace?.id ?? null}
+        compactComposer
+        onClose={() => setInboxOpen(false)}
+      />
+      <MobileNotificationsModal
+        open={notificationOpen}
+        notifications={globalNotifications}
+        archivedNotificationIds={archivedNotificationIds}
+        showArchivedNotifications={showArchivedNotifications}
+        onClose={() => setNotificationOpen(false)}
+        onToggleShowArchivedNotifications={setShowArchivedNotifications}
+        onArchiveNotification={archiveNotification}
+        onUnarchiveNotification={unarchiveNotification}
+        onSelectNotification={(notification) => {
+          setNotificationOpen(false);
+
+          if (notification.routePath) {
+            navigate(notification.routePath);
+          }
+        }}
       />
     </main>
   );

@@ -8,6 +8,10 @@ import { WorkspaceHomePage } from "./WorkspaceHomePage";
 
 const mockUseWorkbenchShell = vi.fn();
 const mockShowToast = vi.fn();
+const mockGetButlerOverview = vi.fn();
+const mockGetButlerProfile = vi.fn();
+const mockListButlerFollowUpTasks = vi.fn();
+const mockListButlerInboxItems = vi.fn();
 const gitSnapshotListeners = new Set<
   (snapshot: {
     workspaceId: string;
@@ -36,6 +40,13 @@ vi.mock("../../../shared/toast", () => ({
   useToast: () => ({
     showToast: mockShowToast
   })
+}));
+
+vi.mock("../../butler/api/butler-api", () => ({
+  getButlerOverview: (...args: unknown[]) => mockGetButlerOverview(...args),
+  getButlerProfile: (...args: unknown[]) => mockGetButlerProfile(...args),
+  listButlerFollowUpTasks: (...args: unknown[]) => mockListButlerFollowUpTasks(...args),
+  listButlerInboxItems: (...args: unknown[]) => mockListButlerInboxItems(...args)
 }));
 
 function createSession(overrides: Record<string, unknown>) {
@@ -156,6 +167,8 @@ function createWorkbenchShell(overrides?: Record<string, unknown>) {
       }
     ],
     currentWorkspaceId: "workspace-1",
+    unreadNotificationCount: 3,
+    openNotificationPanel: vi.fn(),
     refreshNavigation: vi.fn(),
     selectWorkspace: vi.fn(),
     startDraftSession: vi.fn(),
@@ -202,9 +215,161 @@ describe("WorkspaceHomePage", () => {
   beforeEach(() => {
     mockShowToast.mockReset();
     mockUseWorkbenchShell.mockReset();
+    mockGetButlerOverview.mockReset();
+    mockGetButlerProfile.mockReset();
+    mockListButlerFollowUpTasks.mockReset();
+    mockListButlerInboxItems.mockReset();
     window.sessionStorage.clear();
     gitSnapshotListeners.clear();
     terminalManagerSnapshotListeners.clear();
+    mockGetButlerProfile.mockResolvedValue({
+      initialized: true,
+      profile: {
+        id: "default",
+        displayName: "代码助手",
+        providerId: "codex"
+      }
+    });
+    mockGetButlerOverview.mockResolvedValue({
+      overview: {
+        version: "overview-1",
+        generatedAt: "2026-03-27T10:00:00.000Z",
+        global: {
+          projectCount: 2,
+          activeProjectCount: 1,
+          blockedProjectCount: 0,
+          highRiskProjectCount: 0,
+          topRisks: [],
+          nextActions: []
+        },
+        projects: [
+          {
+            id: "project-1",
+            workspaceId: "workspace-1",
+            name: "项目一",
+            repoRoot: "/repo/project-one",
+            lifecycleStatus: "active",
+            riskLevel: "low",
+            activeSessionCount: 1,
+            sessionCount: 1,
+            memoryCount: 0,
+            failedPatrolCount: 0,
+            failedVerificationCount: 0,
+            latestSessionSummary: null,
+            latestPatrolSummary: null,
+            latestVerificationSummary: null,
+            topRisks: [],
+            nextActions: [],
+            lastActivityAt: "2026-03-27T10:00:00.000Z",
+            updatedAt: "2026-03-27T10:00:00.000Z"
+          },
+          {
+            id: "project-2",
+            workspaceId: "workspace-2",
+            name: "项目二",
+            repoRoot: "/repo/project-two",
+            lifecycleStatus: "active",
+            riskLevel: "low",
+            activeSessionCount: 0,
+            sessionCount: 0,
+            memoryCount: 0,
+            failedPatrolCount: 0,
+            failedVerificationCount: 0,
+            latestSessionSummary: null,
+            latestPatrolSummary: null,
+            latestVerificationSummary: null,
+            topRisks: [],
+            nextActions: [],
+            lastActivityAt: "2026-03-27T10:00:00.000Z",
+            updatedAt: "2026-03-27T10:00:00.000Z"
+          }
+        ],
+        sessions: [],
+        patrols: [],
+        verifications: [
+          {
+            id: "verification-1",
+            projectId: "project-1",
+            verificationType: "test",
+            status: "queued",
+            targetRef: null,
+            summary: null,
+            startedAt: null,
+            finishedAt: null,
+            createdAt: "2026-03-27T10:00:00.000Z"
+          },
+          {
+            id: "verification-2",
+            projectId: "project-1",
+            verificationType: "health",
+            status: "running",
+            targetRef: null,
+            summary: null,
+            startedAt: "2026-03-27T10:01:00.000Z",
+            finishedAt: null,
+            createdAt: "2026-03-27T10:01:00.000Z"
+          },
+          {
+            id: "verification-3",
+            projectId: "project-1",
+            verificationType: "browser",
+            status: "passed",
+            targetRef: null,
+            summary: null,
+            startedAt: "2026-03-27T09:30:00.000Z",
+            finishedAt: "2026-03-27T09:35:00.000Z",
+            createdAt: "2026-03-27T09:30:00.000Z"
+          },
+          {
+            id: "verification-4",
+            projectId: "project-2",
+            verificationType: "test",
+            status: "running",
+            targetRef: null,
+            summary: null,
+            startedAt: "2026-03-27T10:02:00.000Z",
+            finishedAt: null,
+            createdAt: "2026-03-27T10:02:00.000Z"
+          }
+        ]
+      }
+    });
+    mockListButlerFollowUpTasks.mockResolvedValue({
+      items: [
+        {
+          id: "follow-up-1",
+          workspaceId: "workspace-1",
+          status: "active"
+        },
+        {
+          id: "follow-up-2",
+          workspaceId: "workspace-1",
+          status: "waiting_user"
+        },
+        {
+          id: "follow-up-3",
+          workspaceId: "workspace-1",
+          status: "completed"
+        },
+        {
+          id: "follow-up-4",
+          workspaceId: "workspace-2",
+          status: "active"
+        }
+      ]
+    });
+    mockListButlerInboxItems.mockResolvedValue({
+      items: [
+        {
+          id: "inbox-1",
+          status: "pending"
+        },
+        {
+          id: "inbox-2",
+          status: "closed"
+        }
+      ]
+    });
     mockUseWorkbenchShell.mockReturnValue(createWorkbenchShell());
   });
 
@@ -221,26 +386,34 @@ describe("WorkspaceHomePage", () => {
     expect(screen.getByLabelText("当前工作区")).toBeInTheDocument();
     expect(screen.getByText("快捷启动进程")).toBeInTheDocument();
     expect(screen.getByText("等待输入")).toBeInTheDocument();
+    expect(screen.getByText("代码助手")).toBeInTheDocument();
+    expect(screen.getByText("收件箱")).toBeInTheDocument();
 
     const activeTerminalRow = screen.getByText("终端").closest("button");
     const changedFilesRow = screen.getByText("变更").closest("button");
     const processRow = screen.getByText("快捷启动进程").closest("button");
     const waitingInputRow = screen.getByText("等待输入").closest("button");
+    const butlerRow = screen.getByText("代码助手").closest("button");
+    const inboxRow = screen.getByText("收件箱").closest("button");
 
     expect(activeTerminalRow).not.toBeNull();
     expect(changedFilesRow).not.toBeNull();
     expect(processRow).not.toBeNull();
     expect(waitingInputRow).not.toBeNull();
+    expect(butlerRow).not.toBeNull();
+    expect(inboxRow).not.toBeNull();
 
     await waitFor(() => {
       expect(within(activeTerminalRow as HTMLElement).getByText("2")).toBeInTheDocument();
       expect(within(changedFilesRow as HTMLElement).getByText("2")).toBeInTheDocument();
       expect(within(processRow as HTMLElement).getByText("运行中")).toBeInTheDocument();
       expect(within(waitingInputRow as HTMLElement).getByText("1")).toBeInTheDocument();
+      expect(within(butlerRow as HTMLElement).getByText("3")).toBeInTheDocument();
+      expect(within(inboxRow as HTMLElement).getByText("1")).toBeInTheDocument();
     });
 
     expect(screen.getByText((_, element) => element?.textContent === "活动")).toBeInTheDocument();
-    expect(screen.getByText((_, element) => element?.textContent === "待看")).toBeInTheDocument();
+    expect(screen.getByText((_, element) => element?.textContent === "通知")).toBeInTheDocument();
     expect(screen.getByText((_, element) => element?.textContent === "终端")).toBeInTheDocument();
     expect(screen.getByText((_, element) => element?.textContent === "变更")).toBeInTheDocument();
 
