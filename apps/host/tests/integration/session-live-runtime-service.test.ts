@@ -1824,7 +1824,7 @@ describe("SessionLiveRuntimeService", () => {
     subscription.close();
   });
 
-  it("startLiveSession 会在 Gemini 真实 session id 回填后再返回，避免保留 pending 绑定", async () => {
+  it("startLiveSession 不会等待 Gemini 真实 session id 回填才返回，而是后台持久化 binding", async () => {
     vi.useFakeTimers();
     const { service, sessionHistoryService, sessionMessageAttachmentService, workspaceService } =
       createService();
@@ -1876,16 +1876,16 @@ describe("SessionLiveRuntimeService", () => {
     sessionMessageAttachmentService.buildProviderPrompt.mockReturnValue(null);
     sessionHistoryService.getBindingOrThrow.mockReturnValue({
       provider: "gemini",
-      providerSessionId: "gemini-session-real-1",
-      rawStoreRef: "gemini://session/gemini-session-real-1"
+      providerSessionId: "pending://gemini/runtime-session-1",
+      rawStoreRef: "pending://gemini/runtime-session-1"
     });
     sessionHistoryService.findLatestUserMessage.mockResolvedValue(null);
     sessionHistoryService.getSession.mockImplementation((sessionId: string) => ({
       sessionId,
       workspaceId: "workspace-1",
       provider: "gemini",
-      providerSessionId: "gemini-session-real-1",
-      rawStoreRef: "gemini://session/gemini-session-real-1",
+      providerSessionId: "pending://gemini/runtime-session-1",
+      rawStoreRef: "pending://gemini/runtime-session-1",
       messageCount: 0
     }));
 
@@ -1904,9 +1904,12 @@ describe("SessionLiveRuntimeService", () => {
       clientRequestId: null
     });
 
+    const result = await resultPromise;
+
+    expect(result.providerSessionId).toBe("pending://gemini/runtime-session-1");
+
     await vi.advanceTimersByTimeAsync(200);
 
-    const result = await resultPromise;
     const createdSessionId = sessionHistoryService.persistSessionBinding.mock.calls[0]?.[0];
 
     expect(createdSessionId).toEqual(expect.any(String));
@@ -1919,7 +1922,6 @@ describe("SessionLiveRuntimeService", () => {
         rawStoreRef: "gemini://session/gemini-session-real-1"
       }
     );
-    expect(result.providerSessionId).toBe("gemini-session-real-1");
   });
 
   it("getSessionRuntime 会把 Gemini 真实会话映射到正在运行的 pending runtime", async () => {

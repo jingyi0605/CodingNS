@@ -222,7 +222,7 @@ interface SessionTerminalStateEvent {
 
 type ExternalRuntimeStatus = Extract<SessionRuntimeStatusEnvelope["status"], "running" | "completed" | "failed">;
 
-const GEMINI_START_BINDING_WAIT_TIMEOUT_MS = 1_200;
+const RUNTIME_START_BINDING_WAIT_TIMEOUT_MS = 10_000;
 const START_BINDING_POLL_INTERVAL_MS = 50;
 
 interface ClaudeHookBridgeConfig {
@@ -369,17 +369,19 @@ export class SessionLiveRuntimeService {
       initialContent: input.content,
       snapshot
     });
-    await this.waitForResolvedStartBinding(sessionId, workspace.id, input.provider, handle);
+    void this.waitForResolvedStartBinding(sessionId, workspace.id, input.provider, handle);
 
     const binding = this.sessionHistoryService.getBindingOrThrow(sessionId);
-    const acceptedMessage = await this.findAcceptedUserMessage(
-      sessionId,
-      this.sessionMessageAttachmentService.buildAcceptedContentCandidates(
-        input.content,
-        providerPrompt
-      ),
-      requestStartedAt
-    );
+    const acceptedMessage = shouldAwaitAcceptedUserMessage(input.provider)
+      ? await this.findAcceptedUserMessage(
+          sessionId,
+          this.sessionMessageAttachmentService.buildAcceptedContentCandidates(
+            input.content,
+            providerPrompt
+          ),
+          requestStartedAt
+        )
+      : null;
     const acceptedAt = acceptedMessage?.timestamp ?? nowIso();
     const boundAttachments = this.sessionMessageAttachmentService.bindClientRequestToMessage(
       sessionId,
@@ -1980,13 +1982,13 @@ export class SessionLiveRuntimeService {
     provider: string,
     handle: ActiveRunHandle
   ): Promise<void> {
-    if (provider !== "gemini") {
+    if (provider !== "gemini" && provider !== "kimi") {
       return;
     }
 
     const startedAt = Date.now();
 
-    while (Date.now() - startedAt < GEMINI_START_BINDING_WAIT_TIMEOUT_MS) {
+    while (Date.now() - startedAt < RUNTIME_START_BINDING_WAIT_TIMEOUT_MS) {
       const snapshot = handle.getSnapshot();
 
       if (hasResolvedRuntimeBinding(snapshot.providerSessionId, snapshot.rawStoreRef)) {
@@ -2509,6 +2511,10 @@ function waitForRuntimeBindingPoll(): Promise<void> {
 
 function isGeminiPendingRuntimeAliasBinding(value: string, targetSessionId: string): boolean {
   return value.trim().toLowerCase() === `pending://gemini/${targetSessionId.trim().toLowerCase()}`;
+}
+
+function shouldAwaitAcceptedUserMessage(provider: string): boolean {
+  return provider !== "gemini";
 }
 
 function createProviderRuntimeAdapters(

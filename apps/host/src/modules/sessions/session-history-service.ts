@@ -1082,6 +1082,11 @@ export class SessionHistoryService {
               session,
               existingWorkspaceSessions,
               claimedPendingSessionIds
+            )
+            ?? findKimiRuntimeDiscoveryDuplicate(
+              session,
+              existingWorkspaceSessions,
+              claimedPendingSessionIds
             );
           const existing = exactExisting ?? (
             pendingDuplicate
@@ -2720,6 +2725,100 @@ function findClaudePendingDiscoveryDuplicate(
   });
 
   return activePendingCandidates.length === 1 ? activePendingCandidates[0] : null;
+}
+
+function findKimiRuntimeDiscoveryDuplicate(
+  session: {
+    provider: string;
+    providerSessionId: string;
+    rawStoreRef: string;
+    title: string;
+    messageCount: number;
+    lastMessageAt: string | null;
+  },
+  existingSessions: SessionListItem[],
+  claimedSessionIds: Set<string>
+): SessionListItem | null {
+  if (session.provider !== "kimi" || isPendingBindingValue(session.providerSessionId)) {
+    return null;
+  }
+
+  const candidates = existingSessions.filter((item) => {
+    if (claimedSessionIds.has(item.sessionId)) {
+      return false;
+    }
+
+    if (item.provider !== "kimi" || !shouldRecoverKimiRuntimeBinding(item)) {
+      return false;
+    }
+
+    return isCloseKimiSessionTimestamp(item.lastMessageAt ?? item.createdAt, session.lastMessageAt);
+  });
+
+  if (candidates.length === 1) {
+    return candidates[0];
+  }
+
+  const comparableTitle = normalizeKimiComparableTitle(session.title);
+
+  if (!comparableTitle) {
+    return null;
+  }
+
+  const titleMatchedCandidates = candidates.filter(
+    (item) => normalizeKimiComparableTitle(item.title) === comparableTitle
+  );
+
+  return titleMatchedCandidates.length === 1
+    ? titleMatchedCandidates[0]
+    : null;
+}
+
+function shouldRecoverKimiRuntimeBinding(item: SessionListItem): boolean {
+  if (isPendingBindingValue(item.providerSessionId)) {
+    return true;
+  }
+
+  if (item.messageCount !== 0 || item.activitySource !== "runtime") {
+    return false;
+  }
+
+  if (item.runningState === "starting") {
+    return true;
+  }
+
+  if (item.lastErrorCode === "PROVIDER_READ_FAILED") {
+    return true;
+  }
+
+  return (item.lastErrorDetail ?? "").includes("provider 会话不存在");
+}
+
+function normalizeKimiComparableTitle(title: string): string | null {
+  const normalized = title.trim().replace(/\s+/g, " ");
+
+  if (!normalized) {
+    return null;
+  }
+
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(normalized)
+    ? null
+    : normalized;
+}
+
+function isCloseKimiSessionTimestamp(left: string | null, right: string | null): boolean {
+  if (!left || !right) {
+    return false;
+  }
+
+  const leftAt = Date.parse(left);
+  const rightAt = Date.parse(right);
+
+  if (!Number.isFinite(leftAt) || !Number.isFinite(rightAt)) {
+    return false;
+  }
+
+  return Math.abs(leftAt - rightAt) <= 2 * 60 * 1_000;
 }
 
 function normalizeClaudeComparableTitle(title: string | null | undefined): string {

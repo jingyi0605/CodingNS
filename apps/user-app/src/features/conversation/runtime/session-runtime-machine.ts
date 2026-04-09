@@ -337,6 +337,44 @@ function collapseEquivalentOpenCodeTurnPairs(
   return collapsed;
 }
 
+function collapseEquivalentGeminiTextMessages(
+  messages: SessionMessageViewModel[]
+): SessionMessageViewModel[] {
+  const collapsed: SessionMessageViewModel[] = [];
+
+  for (const message of messages) {
+    const previous = collapsed.at(-1);
+
+    if (!previous || !isEquivalentGeminiTextMessage(previous, message)) {
+      collapsed.push(message);
+      continue;
+    }
+
+    collapsed[collapsed.length - 1] = pickPreferredGeminiMessage(previous, message);
+  }
+
+  return collapsed;
+}
+
+function collapseEquivalentKimiTextMessages(
+  messages: SessionMessageViewModel[]
+): SessionMessageViewModel[] {
+  const collapsed: SessionMessageViewModel[] = [];
+
+  for (const message of messages) {
+    const previous = collapsed.at(-1);
+
+    if (!previous || !isEquivalentKimiTextMessage(previous, message)) {
+      collapsed.push(message);
+      continue;
+    }
+
+    collapsed[collapsed.length - 1] = pickPreferredKimiMessage(previous, message);
+  }
+
+  return collapsed;
+}
+
 function sortMessages(messages: SessionMessageViewModel[]): SessionMessageViewModel[] {
   const sorted = [...messages].sort((left, right) => {
     if (left.sequence !== right.sequence) {
@@ -346,10 +384,14 @@ function sortMessages(messages: SessionMessageViewModel[]): SessionMessageViewMo
     return left.timestamp.localeCompare(right.timestamp);
   });
 
-  return collapseEquivalentOpenCodeUserMessages(
-    collapseEquivalentOpenCodeTurnPairs(
-      collapseEquivalentOpenCodeAssistantMessages(
-        collapseEquivalentCodexMessages(sorted)
+  return collapseEquivalentKimiTextMessages(
+    collapseEquivalentGeminiTextMessages(
+      collapseEquivalentOpenCodeUserMessages(
+        collapseEquivalentOpenCodeTurnPairs(
+          collapseEquivalentOpenCodeAssistantMessages(
+            collapseEquivalentCodexMessages(sorted)
+          )
+        )
       )
     )
   );
@@ -568,6 +610,112 @@ function pickPreferredCodexTextMessage(
   }
 
   return right;
+}
+
+function isEquivalentGeminiTextMessage(
+  left: SessionMessageViewModel,
+  right: SessionMessageViewModel
+): boolean {
+  if (!isGeminiTextMessage(left) || !isGeminiTextMessage(right)) {
+    return false;
+  }
+
+  return (
+    left.role === right.role &&
+    areTimestampsNearWithinWindow(left.timestamp, right.timestamp, 2 * 60 * 1000) &&
+    normalizeComparableCodexText(left.content) === normalizeComparableCodexText(right.content)
+  );
+}
+
+function isEquivalentKimiTextMessage(
+  left: SessionMessageViewModel,
+  right: SessionMessageViewModel
+): boolean {
+  if (!isKimiTextMessage(left) || !isKimiTextMessage(right)) {
+    return false;
+  }
+
+  return (
+    left.role === right.role &&
+    areTimestampsNearWithinWindow(left.timestamp, right.timestamp, 2 * 60 * 1000) &&
+    normalizeComparableCodexText(left.content) === normalizeComparableCodexText(right.content)
+  );
+}
+
+function isGeminiTextMessage(message: SessionMessageViewModel): boolean {
+  return (
+    message.deliveryState === "sent" &&
+    message.rawRef.startsWith("gemini://session/") &&
+    message.kind === "text" &&
+    message.toolCall === null &&
+    (message.role === "user" || message.role === "assistant")
+  );
+}
+
+function isKimiTextMessage(message: SessionMessageViewModel): boolean {
+  return (
+    message.deliveryState === "sent" &&
+    message.rawRef.startsWith("kimi://session/") &&
+    message.kind === "text" &&
+    message.toolCall === null &&
+    (message.role === "user" || message.role === "assistant")
+  );
+}
+
+function pickPreferredGeminiMessage(
+  left: SessionMessageViewModel,
+  right: SessionMessageViewModel
+): SessionMessageViewModel {
+  const leftAttachmentCount = left.attachments?.length ?? 0;
+  const rightAttachmentCount = right.attachments?.length ?? 0;
+
+  if (leftAttachmentCount !== rightAttachmentCount) {
+    return leftAttachmentCount > rightAttachmentCount ? left : right;
+  }
+
+  const leftContentLength = normalizeComparableCodexText(left.content).length;
+  const rightContentLength = normalizeComparableCodexText(right.content).length;
+
+  if (leftContentLength !== rightContentLength) {
+    return leftContentLength > rightContentLength ? left : right;
+  }
+
+  const leftIsHistoryMessage = left.rawRef.includes("#file=");
+  const rightIsHistoryMessage = right.rawRef.includes("#file=");
+
+  if (leftIsHistoryMessage !== rightIsHistoryMessage) {
+    return leftIsHistoryMessage ? left : right;
+  }
+
+  return pickNewerAuthoritativeMessage(left, right);
+}
+
+function pickPreferredKimiMessage(
+  left: SessionMessageViewModel,
+  right: SessionMessageViewModel
+): SessionMessageViewModel {
+  const leftAttachmentCount = left.attachments?.length ?? 0;
+  const rightAttachmentCount = right.attachments?.length ?? 0;
+
+  if (leftAttachmentCount !== rightAttachmentCount) {
+    return leftAttachmentCount > rightAttachmentCount ? left : right;
+  }
+
+  const leftContentLength = normalizeComparableCodexText(left.content).length;
+  const rightContentLength = normalizeComparableCodexText(right.content).length;
+
+  if (leftContentLength !== rightContentLength) {
+    return leftContentLength > rightContentLength ? left : right;
+  }
+
+  const leftIsHistoryMessage = left.rawRef.includes("/context#");
+  const rightIsHistoryMessage = right.rawRef.includes("/context#");
+
+  if (leftIsHistoryMessage !== rightIsHistoryMessage) {
+    return leftIsHistoryMessage ? left : right;
+  }
+
+  return pickNewerAuthoritativeMessage(left, right);
 }
 
 function mergeToolCall(

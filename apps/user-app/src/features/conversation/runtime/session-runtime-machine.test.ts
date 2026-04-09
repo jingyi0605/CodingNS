@@ -718,4 +718,165 @@ describe("session runtime machine", () => {
       status: "completed"
     });
   });
+  it("Gemini runtime 和历史回流的重复 user/assistant 正文会被折叠", () => {
+    const merged = mergeAuthoritativeMessages(
+      [
+        toViewMessage(
+          "session-1",
+          createHistoryMessage({
+            messageId: "runtime-user-1",
+            provider: "gemini",
+            providerSessionId: "gemini-session-1",
+            role: "user",
+            content: "对话测试",
+            timestamp: "2026-04-08T12:46:13.036Z",
+            sequence: 2,
+            rawRef: "gemini://session/gemini-session-1/message/user-1"
+          })
+        ),
+        toViewMessage(
+          "session-1",
+          createHistoryMessage({
+            messageId: "runtime-assistant-1",
+            provider: "gemini",
+            providerSessionId: "gemini-session-1",
+            role: "assistant",
+            content: "对话测试收到。系统运行正常，随时可以开始。",
+            timestamp: "2026-04-08T12:46:27.603Z",
+            sequence: 3,
+            rawRef: "gemini://session/gemini-session-1/message/assistant-1"
+          })
+        )
+      ],
+      "session-1",
+      [
+        createHistoryMessage({
+          messageId: "history-user-1",
+          provider: "gemini",
+          providerSessionId: "gemini-session-1",
+          role: "user",
+          content: "对话测试",
+          timestamp: "2026-04-08T12:46:13.036Z",
+          sequence: 1,
+          rawRef: "gemini://session/gemini-session-1#file=chat.json&index=0&part=0"
+        }),
+        createHistoryMessage({
+          messageId: "history-thinking-1",
+          provider: "gemini",
+          providerSessionId: "gemini-session-1",
+          role: "assistant",
+          kind: "thinking",
+          content: "Assessing Responsiveness",
+          timestamp: "2026-04-08T12:46:24.088Z",
+          sequence: 2,
+          rawRef: "gemini://session/gemini-session-1#file=chat.json&index=1&part=0"
+        }),
+        createHistoryMessage({
+          messageId: "history-assistant-1",
+          provider: "gemini",
+          providerSessionId: "gemini-session-1",
+          role: "assistant",
+          content: "对话测试收到。系统运行正常，随时可以开始。",
+          timestamp: "2026-04-08T12:46:27.603Z",
+          sequence: 3,
+          rawRef: "gemini://session/gemini-session-1#file=chat.json&index=1&part=1"
+        })
+      ]
+    );
+
+    expect(merged.map((item) => item.id)).toEqual([
+      "history-user-1",
+      "history-thinking-1",
+      "history-assistant-1"
+    ]);
+  });
+
+  it("Gemini 连续但内容不同的消息不会被误折叠", () => {
+    const merged = mergeAuthoritativeMessages([], "session-1", [
+      createHistoryMessage({
+        messageId: "gemini-assistant-1",
+        provider: "gemini",
+        providerSessionId: "gemini-session-1",
+        role: "assistant",
+        content: "第一段回复",
+        timestamp: "2026-04-08T13:09:56.000Z",
+        sequence: 1,
+        rawRef: "gemini://session/gemini-session-1/message/assistant-1"
+      }),
+      createHistoryMessage({
+        messageId: "gemini-assistant-2",
+        provider: "gemini",
+        providerSessionId: "gemini-session-1",
+        role: "assistant",
+        content: "第二段回复",
+        timestamp: "2026-04-08T13:09:57.000Z",
+        sequence: 2,
+        rawRef: "gemini://session/gemini-session-1#file=chat.json&index=2&part=0"
+      })
+    ]);
+
+    expect(merged.map((item) => item.id)).toEqual([
+      "gemini-assistant-1",
+      "gemini-assistant-2"
+    ]);
+  });
+
+  it("Kimi runtime 与历史回流的重复 assistant 正文会被折叠", () => {
+    const merged = mergeAuthoritativeMessages([], "session-1", [
+      createHistoryMessage({
+        messageId: "kimi-runtime-assistant-1",
+        provider: "kimi",
+        providerSessionId: "kimi-session-1",
+        role: "assistant",
+        content: "好的，给你讲个程序员笑话。",
+        timestamp: "2026-04-09T00:10:00.000Z",
+        sequence: 3,
+        rawRef: "kimi://session/kimi-session-1/wire#line=3"
+      }),
+      createHistoryMessage({
+        messageId: "kimi-history-assistant-1",
+        provider: "kimi",
+        providerSessionId: "kimi-session-1",
+        role: "assistant",
+        content: "好的，给你讲个程序员笑话。",
+        timestamp: "2026-04-09T00:10:01.000Z",
+        sequence: 4,
+        rawRef: "kimi://session/kimi-session-1/context#line=6"
+      })
+    ]);
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0].id).toBe("kimi-history-assistant-1");
+    expect(merged[0].rawRef).toContain("/context#");
+  });
+
+  it("Kimi 连续但内容不同的正文不会被误折叠", () => {
+    const merged = mergeAuthoritativeMessages([], "session-1", [
+      createHistoryMessage({
+        messageId: "kimi-assistant-1",
+        provider: "kimi",
+        providerSessionId: "kimi-session-1",
+        role: "assistant",
+        content: "第一条回复",
+        timestamp: "2026-04-09T00:10:00.000Z",
+        sequence: 3,
+        rawRef: "kimi://session/kimi-session-1/wire#line=3"
+      }),
+      createHistoryMessage({
+        messageId: "kimi-assistant-2",
+        provider: "kimi",
+        providerSessionId: "kimi-session-1",
+        role: "assistant",
+        content: "第二条回复",
+        timestamp: "2026-04-09T00:10:01.000Z",
+        sequence: 4,
+        rawRef: "kimi://session/kimi-session-1/context#line=6"
+      })
+    ]);
+
+    expect(merged.map((item) => item.id)).toEqual([
+      "kimi-assistant-1",
+      "kimi-assistant-2"
+    ]);
+  });
 });
