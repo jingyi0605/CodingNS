@@ -6821,40 +6821,148 @@ textarea:focus-visible {
   background: linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 95%, transparent), color-mix(in srgb, var(--bg-primary) 98%, transparent));
 }
 
-.thinking-message-wrapper {
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--bg-surface) 92%, white 8%),
-      color-mix(in srgb, var(--bg-primary) 98%, transparent)
-    );
-  border-color: color-mix(in srgb, var(--border-primary) 82%, transparent);
-  box-shadow: none;
+@keyframes thinking-text-flow {
+  0% {
+    background-position: 0 50%;
+  }
+
+  100% {
+    background-position: 200% 50%;
+  }
+}
+
+@keyframes thinking-text-breathe {
+  0%,
+  100% {
+    opacity: 0.7;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes thinking-dots-step {
+  0% {
+    width: 0;
+  }
+
+  25% {
+    width: 1ch;
+  }
+
+  50% {
+    width: 2ch;
+  }
+
+  75%,
+  100% {
+    width: 3ch;
+  }
+}
+
+.thinking-message-row {
+  align-items: flex-start;
+}
+
+.thinking-message-content {
+  flex: 1;
+  min-width: 0;
+  max-width: min(760px, 100%);
+  padding: 2px 0 0;
 }
 
 .thinking-message-label {
+  display: inline-block;
+  min-width: 0;
+  max-width: 100%;
   margin-bottom: 8px;
   font-size: 12px;
   font-weight: 600;
-  line-height: 1.2;
-  letter-spacing: 0.04em;
+  line-height: 1.35;
+  letter-spacing: 0.08em;
   color: color-mix(in srgb, var(--text-tertiary) 88%, var(--text-secondary));
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .thinking-message-text {
+  min-width: 0;
+  max-width: 100%;
   font-size: 13px;
   line-height: 1.68;
   color: color-mix(in srgb, var(--text-tertiary) 84%, var(--text-secondary));
   font-style: italic;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  animation: thinking-text-breathe 1.8s ease-in-out infinite;
 }
 
 .thinking-message-text :where(p, li, blockquote, strong, em, a, span) {
   color: inherit;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .thinking-message-text pre,
 .thinking-message-text code {
   font-style: normal;
+}
+
+.thinking-message-text pre {
+  max-width: 100%;
+}
+
+.timeline-status-inline.thinking-status-inline {
+  top: 10px;
+  margin: 0 auto 8px;
+  padding: 0;
+  width: fit-content;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  text-align: left;
+}
+
+.thinking-status-text {
+  display: inline-flex;
+  align-items: baseline;
+  min-width: 0;
+  max-width: min(100%, 720px);
+  gap: 0;
+  line-height: 1.6;
+  color: color-mix(in srgb, var(--text-tertiary) 82%, var(--text-secondary));
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  animation: thinking-text-breathe 1.35s ease-in-out infinite;
+}
+
+.thinking-status-dots {
+  display: inline-block;
+  width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  animation: thinking-dots-step 1.25s steps(3, end) infinite;
+}
+
+@supports ((-webkit-background-clip: text) or (background-clip: text)) {
+  .thinking-message-label,
+  .thinking-status-text {
+    background-image: linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--text-tertiary) 92%, var(--text-secondary)) 0%,
+      color-mix(in srgb, var(--accent) 18%, var(--text-secondary)) 50%,
+      color-mix(in srgb, var(--text-tertiary) 92%, var(--text-secondary)) 100%
+    );
+    background-size: 220% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: thinking-text-flow 2.8s linear infinite;
+  }
 }
 
 .user-message {
@@ -16437,8 +16545,13 @@ textarea:focus-visible {
 @media (prefers-reduced-motion: reduce) {
   .mobile-tool-git-panel .git-mobile-section-action,
   .mobile-tool-git-panel .git-mobile-section-action::before,
-  .mobile-tool-git-panel .git-mobile-section-action::after {
+  .mobile-tool-git-panel .git-mobile-section-action::after,
+  .thinking-message-label,
+  .thinking-message-text,
+  .thinking-status-text,
+  .thinking-status-dots {
     transition: none;
+    animation: none;
   }
 }
 

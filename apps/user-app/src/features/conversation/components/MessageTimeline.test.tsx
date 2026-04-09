@@ -447,7 +447,25 @@ describe("MessageTimeline", () => {
     expect(screen.getByText(t("conversation.thinkingLabel"))).toHaveClass("thinking-message-label");
     expect(screen.getByText("先把现有消息流和渲染层级看清楚。").closest(".thinking-message-text")).not.toBeNull();
     expect(screen.getByText("我已经看完了，下面开始调整样式。").closest(".thinking-message-text")).toBeNull();
+    expect(document.querySelector(".thinking-message-wrapper")).toBeNull();
+    expect(document.querySelector(".thinking-message-content")).not.toBeNull();
     expect(document.querySelectorAll(".thinking-message-row")).toHaveLength(1);
+  });
+
+  it("运行中的 thinking 占位只保留动态文字类名", () => {
+    render(
+      <MessageTimeline
+        messages={[]}
+        historyState="ready"
+        provider="codex"
+        runtimeThinkingPlaceholder="Codex 正在思考..."
+        onRetryMessage={vi.fn()}
+      />
+    );
+
+    expect(screen.getByLabelText("Codex 正在思考...")).toHaveClass("thinking-status-text");
+    expect(document.querySelector(".thinking-status-inline")).not.toBeNull();
+    expect(document.querySelector(".thinking-status-dots")).not.toBeNull();
   });
 
   it("会给代码块和 text 文本块渲染复制按钮", async () => {

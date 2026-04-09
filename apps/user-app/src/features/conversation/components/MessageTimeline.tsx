@@ -49,6 +49,10 @@ interface MessageTimelineProps {
   assistantAvatar?: ReactNode;
 }
 
+function stripThinkingTrailingDots(value: string): string {
+  return value.replace(/(\.{3,}|…+)$/, "").trimEnd();
+}
+
 interface ResolvedToolCall {
   callId: string;
   name: string;
@@ -1697,7 +1701,7 @@ function MessageItem({
     return (
       <article className="message-item assistant-message thinking-message-row">
         <div className="message-avatar">{assistantAvatar ?? <DefaultAssistantAvatar />}</div>
-        <div className="message-content-wrapper thinking-message-wrapper">
+        <div className="thinking-message-content">
           <div className="thinking-message-label">{t("conversation.thinkingLabel")}</div>
           <MessageAttachments
             sessionId={message.sessionId}
@@ -1970,8 +1974,14 @@ export function MessageTimeline({
         )}
 
         {runtimeThinkingPlaceholder ? (
-          <div className="timeline-status timeline-status-inline">
-            <span className="status-text">{runtimeThinkingPlaceholder}</span>
+          <div className="timeline-status timeline-status-inline thinking-status-inline">
+            <span
+              className="status-text thinking-status-text"
+              aria-label={runtimeThinkingPlaceholder}
+            >
+              <span>{stripThinkingTrailingDots(runtimeThinkingPlaceholder) || runtimeThinkingPlaceholder}</span>
+              <span className="thinking-status-dots" aria-hidden="true">...</span>
+            </span>
           </div>
         ) : null}
       </div>
