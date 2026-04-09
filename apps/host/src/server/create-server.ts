@@ -11,6 +11,7 @@ import { BootstrapService } from "../modules/bootstrap/bootstrap-service.js";
 import { ButlerControlSessionService } from "../modules/butler/butler-control-session-service.js";
 import { ButlerControlActionService } from "../modules/butler/butler-control-action-service.js";
 import { ButlerController } from "../modules/butler/butler-controller.js";
+import { ButlerActionContextService } from "../modules/butler/butler-action-context-service.js";
 import { ButlerContextAggregator } from "../modules/butler/context-aggregator.js";
 import { ButlerAuthService } from "../modules/butler/butler-auth-service.js";
 import { ButlerFollowUpEvaluationInstructionAdapter } from "../modules/butler/butler-follow-up-evaluation-instruction-adapter.js";
@@ -473,6 +474,11 @@ export function createServer(config: HostConfig) {
     config.codexHomeDir,
     repositories.sessionMessageOriginRepository
   );
+  const butlerActionContextService = new ButlerActionContextService(
+    butlerProjectService,
+    butlerSessionService,
+    butlerFollowUpService
+  );
   const sessionSummaryScheduler = new SessionSummaryScheduler(
     butlerSessionSummaryService
   );
@@ -557,7 +563,8 @@ export function createServer(config: HostConfig) {
     patrolPlanService,
     patrolRunService,
     patrolExecutionService,
-    verificationRunService
+    verificationRunService,
+    butlerActionContextService
   );
   const sessionController = new SessionController(
     sessionHistoryService,
@@ -590,7 +597,8 @@ export function createServer(config: HostConfig) {
     sessionHistoryService,
     sessionLiveRuntimeService,
     new TerminalWsHub(terminalService),
-    new WorkbenchWsHub(workbenchService, workspacePanelSnapshotService, fileWatcher)
+    new WorkbenchWsHub(workbenchService, workspacePanelSnapshotService, fileWatcher),
+    butlerActionContextService
   );
 
   app.server.on("upgrade", (request, socket, head) => {
@@ -671,6 +679,7 @@ export function createServer(config: HostConfig) {
         butlerControlSessionService,
         butlerControlActionService,
         butlerFollowUpService,
+        butlerActionContextService,
         butlerProjectService,
         butlerSessionService,
         projectMemoryService,

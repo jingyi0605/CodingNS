@@ -3,13 +3,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ButlerControlActionService } from "../../src/modules/butler/butler-control-action-service.js";
 import type { ButlerControlSessionService } from "../../src/modules/butler/butler-control-session-service.js";
+import { ButlerController } from "../../src/modules/butler/butler-controller.js";
+import type { ButlerContextAggregator } from "../../src/modules/butler/context-aggregator.js";
 import type { ButlerFollowUpService } from "../../src/modules/butler/butler-follow-up-service.js";
 import type { ButlerInboxService } from "../../src/modules/butler/butler-inbox-service.js";
-import type { ButlerContextAggregator } from "../../src/modules/butler/context-aggregator.js";
+import type { ButlerNotificationService } from "../../src/modules/butler/butler-notification-service.js";
 import type { ButlerProfileService } from "../../src/modules/butler/butler-profile-service.js";
 import type { ButlerProjectService } from "../../src/modules/butler/butler-project-service.js";
 import type { ButlerSessionService } from "../../src/modules/butler/butler-session-service.js";
-import { ButlerController } from "../../src/modules/butler/butler-controller.js";
 import type { PatrolExecutionService } from "../../src/modules/butler/patrol-execution-service.js";
 import type { PatrolPlanService } from "../../src/modules/butler/patrol-plan-service.js";
 import type { PatrolRunService } from "../../src/modules/butler/patrol-run-service.js";
@@ -21,19 +22,21 @@ import { setErrorHandler } from "../../src/shared/http/error-handler.js";
 describe("butler session target routes", () => {
   const apps: FastifyInstance[] = [];
 
-  async function createButlerApp(
-    butlerProjectService: ButlerProjectService,
-    butlerSessionService: ButlerSessionService
-  ): Promise<FastifyInstance> {
+  async function createButlerApp(options: {
+    butlerProjectService: ButlerProjectService;
+    butlerSessionService: ButlerSessionService;
+    butlerFollowUpService?: ButlerFollowUpService;
+  }): Promise<FastifyInstance> {
     const controller = new ButlerController(
       {} as ButlerProfileService,
       {} as ButlerControlSessionService,
       {} as ButlerControlActionService,
       {} as ButlerContextAggregator,
-      {} as ButlerFollowUpService,
+      (options.butlerFollowUpService ?? {}) as ButlerFollowUpService,
       {} as ButlerInboxService,
-      butlerProjectService,
-      butlerSessionService,
+      {} as ButlerNotificationService,
+      options.butlerProjectService,
+      options.butlerSessionService,
       {} as ProjectMemoryService,
       {} as PatrolPlanService,
       {} as PatrolRunService,
@@ -111,7 +114,10 @@ describe("butler session target routes", () => {
       }))
     } as unknown as ButlerSessionService;
 
-    const app = await createButlerApp(butlerProjectService, butlerSessionService);
+    const app = await createButlerApp({
+      butlerProjectService,
+      butlerSessionService
+    });
     const response = await app.inject({
       method: "GET",
       url: "/api/butler/session-target?sessionId=session-1"
@@ -121,5 +127,93 @@ describe("butler session target routes", () => {
     expect(response.json().target.project.id).toBe("project-1");
     expect(response.json().target.session.id).toBe("butler-session-1");
     expect((butlerSessionService.getSessionWorkspaceId as any).mock.calls[0][0]).toBe("session-1");
+  });
+
+  it("会返回聚合后的 Butler 动作上下文", async () => {
+    const butlerProjectService = {
+      resolveWorkspaceActionProject: vi.fn(() => ({
+        id: "project-1",
+        workspaceId: "workspace-1",
+        name: "项目甲",
+        repoRoot: "/tmp/project-a",
+        defaultProvider: "codex",
+        instructionProfileId: null,
+        approvalMode: "controlled",
+        lifecycleStatus: "active",
+        riskLevel: "low",
+        config: {
+          managedBy: "workspace-auto"
+        },
+        lastPatrolAt: null,
+        lastVerificationAt: null,
+        createdAt: "2026-04-07T00:00:00.000Z",
+        updatedAt: "2026-04-07T00:00:00.000Z",
+        archivedAt: null
+      }))
+    } as unknown as ButlerProjectService;
+    const butlerSessionService = {
+      getSessionWorkspaceId: vi.fn(() => "workspace-1"),
+      resolveActionTarget: vi.fn(async () => ({
+        workspaceId: "workspace-1",
+        session: {
+          id: "butler-session-1",
+          projectId: "project-1",
+          sessionId: "session-1",
+          provider: "codex",
+          title: "登录页开发",
+          role: "adhoc",
+          ownershipMode: "observed",
+          status: "running",
+          runningState: "running",
+          lastSummary: "正在推进登录页开发",
+          lastCheckpointAt: "2026-04-07T00:05:00.000Z",
+          createdAt: "2026-04-07T00:00:00.000Z",
+          updatedAt: "2026-04-07T00:05:00.000Z"
+        }
+      }))
+    } as unknown as ButlerSessionService;
+    const butlerFollowUpService = {
+      listTasks: vi.fn(() => [{
+        id: "follow-up-1",
+        projectId: "project-1",
+        projectName: "项目甲",
+        workspaceId: "workspace-1",
+        butlerSessionId: "butler-session-1",
+        sessionId: "session-1",
+        sessionTitle: "登录页开发",
+        objective: "帮我把这个会话的功能真正做完",
+        completionCriteria: "完成当前功能",
+        maxAutoContinueCount: 5,
+        status: "waiting_user",
+        checkIntervalSeconds: 300,
+        lastCheckedAt: null,
+        nextCheckAt: null,
+        lastObservedRunningState: "completed",
+        lastObservedMessageAt: null,
+        lastObservedMessageCount: 12,
+        lastAutomationSummary: "需要你确认失败策略。",
+        lastAutomationAt: null,
+        autoContinueCount: 1,
+        waitingReason: "需要你确认失败策略。",
+        rounds: [],
+        createdAt: "2026-04-07T00:00:00.000Z",
+        updatedAt: "2026-04-07T00:05:00.000Z",
+        completedAt: null
+      }])
+    } as unknown as ButlerFollowUpService;
+
+    const app = await createButlerApp({
+      butlerProjectService,
+      butlerSessionService,
+      butlerFollowUpService
+    });
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/butler/session-action-context?sessionId=session-1"
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().context.project.id).toBe("project-1");
+    expect(response.json().context.latestFollowUpTask.id).toBe("follow-up-1");
   });
 });

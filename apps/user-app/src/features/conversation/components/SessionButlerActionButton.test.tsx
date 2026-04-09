@@ -15,9 +15,8 @@ vi.mock("./WorkbenchLayout", () => ({
 
 vi.mock("../../butler/api/butler-api", () => ({
   cancelButlerFollowUpTask: vi.fn(),
-  getButlerSessionTarget: vi.fn(),
   createButlerFollowUpTask: vi.fn(),
-  listButlerFollowUpTasks: vi.fn(),
+  getButlerSessionActionContext: vi.fn(),
   startButlerVerificationAction: vi.fn()
 }));
 
@@ -25,18 +24,16 @@ import { useToast } from "../../../shared/toast";
 import { SessionButlerActionButton } from "./SessionButlerActionButton";
 import {
   cancelButlerFollowUpTask,
-  getButlerSessionTarget,
   createButlerFollowUpTask,
-  listButlerFollowUpTasks,
+  getButlerSessionActionContext,
   startButlerVerificationAction
 } from "../../butler/api/butler-api";
 import type { SessionSummaryDto } from "../api/conversation-api";
 
 const mockedUseToast = vi.mocked(useToast);
-const mockedGetButlerSessionTarget = vi.mocked(getButlerSessionTarget);
+const mockedGetButlerSessionActionContext = vi.mocked(getButlerSessionActionContext);
 const mockedCancelButlerFollowUpTask = vi.mocked(cancelButlerFollowUpTask);
 const mockedCreateButlerFollowUpTask = vi.mocked(createButlerFollowUpTask);
-const mockedListButlerFollowUpTasks = vi.mocked(listButlerFollowUpTasks);
 const mockedStartButlerVerificationAction = vi.mocked(startButlerVerificationAction);
 
 function createSessionSummary(): SessionSummaryDto {
@@ -77,8 +74,8 @@ describe("SessionButlerActionButton", () => {
       showToast,
       dismissToast: vi.fn()
     } as never);
-    mockedGetButlerSessionTarget.mockResolvedValue({
-      target: {
+    mockedGetButlerSessionActionContext.mockResolvedValue({
+      context: {
         workspaceId: "workspace-1",
         project: {
           id: "project-1",
@@ -102,18 +99,8 @@ describe("SessionButlerActionButton", () => {
           lastCheckpointAt: "2026-04-07T00:05:00.000Z",
           createdAt: "2026-04-07T00:00:00.000Z",
           updatedAt: "2026-04-07T00:05:00.000Z"
-        }
-      }
-    });
-    mockedCreateButlerFollowUpTask.mockResolvedValue({
-      task: {} as never
-    });
-    mockedCancelButlerFollowUpTask.mockResolvedValue({
-      task: {} as never
-    });
-    mockedListButlerFollowUpTasks.mockResolvedValue({
-      items: [
-        {
+        },
+        latestFollowUpTask: {
           id: "follow-up-1",
           projectId: "project-1",
           projectName: "项目甲",
@@ -139,10 +126,33 @@ describe("SessionButlerActionButton", () => {
           updatedAt: "2026-04-07T00:05:00.000Z",
           completedAt: null
         }
-      ]
+      }
+    });
+    mockedCreateButlerFollowUpTask.mockResolvedValue({
+      task: {
+        id: "follow-up-2"
+      } as never
+    });
+    mockedCancelButlerFollowUpTask.mockResolvedValue({
+      task: {
+        id: "follow-up-1",
+        status: "cancelled"
+      } as never
     });
     mockedStartButlerVerificationAction.mockResolvedValue({
       result: {}
+    });
+  });
+
+  it("进入会话后会预加载助手动作上下文", async () => {
+    render(
+      <SessionButlerActionButton
+        session={createSessionSummary()}
+      />
+    );
+
+    await waitFor(() => {
+      expect(mockedGetButlerSessionActionContext).toHaveBeenCalledWith("session-1");
     });
   });
 
@@ -152,6 +162,10 @@ describe("SessionButlerActionButton", () => {
         session={createSessionSummary()}
       />
     );
+
+    await waitFor(() => {
+      expect(mockedGetButlerSessionActionContext).toHaveBeenCalledWith("session-1");
+    });
 
     fireEvent.click(screen.getByRole("button", { name: t("conversation.butlerActionButton") }));
 
@@ -210,6 +224,10 @@ describe("SessionButlerActionButton", () => {
       />
     );
 
+    await waitFor(() => {
+      expect(mockedGetButlerSessionActionContext).toHaveBeenCalledWith("session-1");
+    });
+
     fireEvent.click(screen.getByRole("button", { name: t("conversation.butlerActionButton") }));
 
     await waitFor(() => {
@@ -238,6 +256,10 @@ describe("SessionButlerActionButton", () => {
         session={createSessionSummary()}
       />
     );
+
+    await waitFor(() => {
+      expect(mockedGetButlerSessionActionContext).toHaveBeenCalledWith("session-1");
+    });
 
     fireEvent.click(screen.getByRole("button", { name: t("conversation.butlerActionButton") }));
 
@@ -282,16 +304,19 @@ describe("SessionButlerActionButton", () => {
       />
     );
 
+    await waitFor(() => {
+      expect(mockedGetButlerSessionActionContext).toHaveBeenCalledTimes(1);
+    });
+
     fireEvent.mouseEnter(screen.getByRole("button", { name: t("conversation.butlerActionButton") }));
 
     await waitFor(() => {
-      expect(mockedListButlerFollowUpTasks).toHaveBeenCalledWith({
-        sessionId: "session-1"
-      });
       expect(screen.getByText(t("conversation.butlerAnalysisTitle"))).toBeInTheDocument();
       expect(screen.getByText(/需要你确认验证码失败策略/)).toBeInTheDocument();
       expect(screen.getByText(new RegExp(t("shell.butlerAutomationStatusWaitingUser")))).toBeInTheDocument();
     });
+
+    expect(mockedGetButlerSessionActionContext).toHaveBeenCalledTimes(1);
   });
 
   it("可以手动停止当前会话的助手跟进", async () => {
@@ -300,6 +325,10 @@ describe("SessionButlerActionButton", () => {
         session={createSessionSummary()}
       />
     );
+
+    await waitFor(() => {
+      expect(mockedGetButlerSessionActionContext).toHaveBeenCalledWith("session-1");
+    });
 
     fireEvent.click(screen.getByRole("button", { name: t("conversation.butlerActionButton") }));
 

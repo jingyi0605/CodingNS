@@ -29,6 +29,7 @@ export async function registerButlerRoutes(
   app.get("/api/butler/context-snapshot", butlerController.getContextSnapshot);
   app.get("/api/butler/search", butlerController.searchSummaries);
   app.get("/api/butler/session-target", butlerController.getSessionTarget);
+  app.get("/api/butler/session-action-context", butlerController.getSessionActionContext);
   app.post("/api/butler/actions/open-project", butlerController.openProjectAction);
   app.post("/api/butler/actions/resume-session", butlerController.resumeProjectSessionAction);
   app.post("/api/butler/actions/start-patrol", butlerController.startPatrolAction);

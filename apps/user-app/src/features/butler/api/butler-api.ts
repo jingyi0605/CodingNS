@@ -341,6 +341,13 @@ export interface ButlerSessionTargetDto {
   session: ButlerSessionTargetSessionDto;
 }
 
+export interface ButlerSessionActionContextDto {
+  workspaceId: string;
+  project: ButlerSessionTargetProjectDto;
+  session: ButlerSessionTargetSessionDto;
+  latestFollowUpTask: ButlerFollowUpTaskDto | null;
+}
+
 export interface ButlerContextSnapshotDto extends ButlerOverviewDto {
   memories: Array<{
     id: string;
@@ -704,6 +711,15 @@ export function getButlerSessionTarget(sessionId: string) {
 
   return httpClient.request<{ target: ButlerSessionTargetDto }>(
     `/api/butler/session-target?${searchParams.toString()}`
+  );
+}
+
+export function getButlerSessionActionContext(sessionId: string) {
+  const searchParams = new URLSearchParams();
+  searchParams.set("sessionId", sessionId);
+
+  return httpClient.request<{ context: ButlerSessionActionContextDto }>(
+    `/api/butler/session-action-context?${searchParams.toString()}`
   );
 }
 

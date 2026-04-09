@@ -17,6 +17,7 @@ import type {
   ButlerFollowUpService,
   CreateButlerFollowUpTaskInput
 } from "./butler-follow-up-service.js";
+import type { ButlerActionContextService } from "./butler-action-context-service.js";
 import type { ButlerInboxService } from "./butler-inbox-service.js";
 import type { ButlerNotificationService } from "./butler-notification-service.js";
 import type { ButlerContextAggregator } from "./context-aggregator.js";
@@ -41,6 +42,10 @@ interface ButlerSearchQuery {
 }
 
 interface ButlerSessionTargetQuery {
+  sessionId?: string;
+}
+
+interface ButlerSessionActionContextQuery {
   sessionId?: string;
 }
 
@@ -253,7 +258,11 @@ export class ButlerController {
     private readonly patrolPlanService: PatrolPlanService,
     private readonly patrolRunService: PatrolRunService,
     private readonly patrolExecutionService: PatrolExecutionService,
-    private readonly verificationRunService: VerificationRunService
+    private readonly verificationRunService: VerificationRunService,
+    private readonly butlerActionContextService?: Pick<
+      ButlerActionContextService,
+      "getSessionActionContext" | "invalidateSessionActionContext"
+    >
   ) {}
 
   readonly getProfile = async (_request: FastifyRequest, reply: FastifyReply): Promise<void> => {
@@ -387,11 +396,14 @@ export class ButlerController {
     request: FastifyRequest<{ Body: CreateButlerFollowUpTaskBody }>,
     reply: FastifyReply
   ): Promise<void> => {
+    const task = await this.butlerFollowUpService.createTask(
+      request.body ?? ({} as CreateButlerFollowUpTaskBody),
+      requireUserId(request)
+    );
+    this.butlerActionContextService?.invalidateSessionActionContext(task.sessionId);
+
     reply.status(201).send({
-      task: await this.butlerFollowUpService.createTask(
-        request.body ?? ({} as CreateButlerFollowUpTaskBody),
-        requireUserId(request)
-      )
+      task
     });
   };
 
@@ -408,11 +420,14 @@ export class ButlerController {
     request: FastifyRequest<{ Params: ButlerFollowUpTaskParams; Body: CancelButlerFollowUpTaskBody }>,
     reply: FastifyReply
   ): Promise<void> => {
+    const task = this.butlerFollowUpService.cancelTask(
+      request.params.taskId,
+      requireUserId(request)
+    );
+    this.butlerActionContextService?.invalidateSessionActionContext(task.sessionId);
+
     reply.send({
-      task: this.butlerFollowUpService.cancelTask(
-        request.params.taskId,
-        requireUserId(request)
-      )
+      task
     });
   };
 
@@ -524,6 +539,20 @@ export class ButlerController {
   ): Promise<void> => {
     const sessionId = request.query.sessionId?.trim() ?? "";
     const userId = requireUserId(request);
+
+    if (this.butlerActionContextService) {
+      const context = await this.butlerActionContextService.getSessionActionContext(sessionId, userId);
+
+      reply.send({
+        target: {
+          workspaceId: context.workspaceId,
+          project: context.project,
+          session: context.session
+        }
+      });
+      return;
+    }
+
     const workspaceId = this.butlerSessionService.getSessionWorkspaceId(sessionId);
     const project = this.butlerProjectService.resolveWorkspaceActionProject(workspaceId);
     const target = await this.butlerSessionService.resolveActionTarget(project.id, sessionId, userId);
@@ -533,6 +562,45 @@ export class ButlerController {
         workspaceId: target.workspaceId,
         project,
         session: target.session
+      }
+    });
+  };
+
+  readonly getSessionActionContext = async (
+    request: FastifyRequest<{ Querystring: ButlerSessionActionContextQuery }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    const sessionId = request.query.sessionId?.trim() ?? "";
+    const userId = requireUserId(request);
+
+    if (this.butlerActionContextService) {
+      reply.send({
+        context: await this.butlerActionContextService.getSessionActionContext(sessionId, userId)
+      });
+      return;
+    }
+
+    const workspaceId = this.butlerSessionService.getSessionWorkspaceId(sessionId);
+    const project = this.butlerProjectService.resolveWorkspaceActionProject(workspaceId);
+    const target = await this.butlerSessionService.resolveActionTarget(project.id, sessionId, userId);
+    const latestFollowUpTask = this.butlerFollowUpService.listTasks({
+      sessionId,
+      limit: 1
+    })[0] ?? null;
+
+    reply.send({
+      context: {
+        workspaceId: target.workspaceId,
+        project: {
+          id: project.id,
+          workspaceId: project.workspaceId,
+          name: project.name,
+          repoRoot: project.repoRoot,
+          lifecycleStatus: project.lifecycleStatus,
+          riskLevel: project.riskLevel
+        },
+        session: target.session,
+        latestFollowUpTask
       }
     });
   };

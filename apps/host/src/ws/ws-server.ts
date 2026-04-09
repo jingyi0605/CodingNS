@@ -13,6 +13,7 @@ import type {
   SessionLiveRuntimeService,
   SessionRuntimeEnvelope
 } from "../modules/sessions/session-live-runtime-service.js";
+import type { ButlerActionContextService } from "../modules/butler/butler-action-context-service.js";
 import type { TerminalWsHub } from "./terminal-ws-hub.js";
 import type { WorkbenchWsHub } from "./workbench-ws-hub.js";
 import type { WsAuthGuard } from "./ws-auth-guard.js";
@@ -55,7 +56,8 @@ export function createWsServer(
   sessionHistoryService: SessionHistoryService,
   sessionLiveRuntimeService: SessionLiveRuntimeService,
   terminalWsHub: TerminalWsHub,
-  workbenchWsHub: WorkbenchWsHub
+  workbenchWsHub: WorkbenchWsHub,
+  butlerActionContextService?: Pick<ButlerActionContextService, "preloadSessionActionContext">
 ) {
   const wss = new WebSocketServer({
     noServer: true
@@ -175,6 +177,10 @@ export function createWsServer(
           type: "session.subscribed",
           sessionId: payload.sessionId
         })
+      );
+      butlerActionContextService?.preloadSessionActionContext(
+        payload.sessionId,
+        authContext.user.userId
       );
 
       const seenMessages = new Map<string, SeenMessageEntry>();

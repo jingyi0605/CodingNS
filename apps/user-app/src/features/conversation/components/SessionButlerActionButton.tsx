@@ -4,11 +4,11 @@ import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 import {
   cancelButlerFollowUpTask,
-  getButlerSessionTarget,
   createButlerFollowUpTask,
-  listButlerFollowUpTasks,
+  getButlerSessionActionContext,
   startButlerVerificationAction,
   type ButlerFollowUpTaskDto,
+  type ButlerSessionActionContextDto,
   type ButlerSessionTargetDto
 } from "../../butler/api/butler-api";
 import { useWorkbenchShell } from "./WorkbenchLayout";
@@ -27,98 +27,98 @@ export function SessionButlerActionButton({ session }: SessionButlerActionButton
   const { showToast } = useToast();
   const { requestNavigationRefresh } = useWorkbenchShell();
   const [modalOpen, setModalOpen] = useState(false);
-  const [loadingTarget, setLoadingTarget] = useState(false);
-  const [target, setTarget] = useState<ButlerSessionTargetDto | null>(null);
-  const [targetError, setTargetError] = useState<string | null>(null);
+  const [contextLoading, setContextLoading] = useState(false);
+  const [actionContext, setActionContext] = useState<ButlerSessionActionContextDto | null>(null);
+  const [contextError, setContextError] = useState<string | null>(null);
   const [runningAction, setRunningAction] = useState<ButlerActionKind>(null);
   const [followUpObjective, setFollowUpObjective] = useState("");
   const [followUpCompletionCriteria, setFollowUpCompletionCriteria] = useState("");
   const [followUpRoundLimit, setFollowUpRoundLimit] = useState(DEFAULT_FOLLOW_UP_ROUND_LIMIT);
   const [analysisOpen, setAnalysisOpen] = useState(false);
-  const [analysisLoading, setAnalysisLoading] = useState(false);
-  const [analysisError, setAnalysisError] = useState<string | null>(null);
-  const [latestFollowUpTask, setLatestFollowUpTask] = useState<ButlerFollowUpTaskDto | null>(null);
+  const [contextRequestSeq, setContextRequestSeq] = useState(0);
 
   const currentTitle = useMemo(() => session?.title?.trim() || null, [session?.title]);
+  const target = useMemo<ButlerSessionTargetDto | null>(() => {
+    if (!actionContext) {
+      return null;
+    }
+
+    return {
+      workspaceId: actionContext.workspaceId,
+      project: actionContext.project,
+      session: actionContext.session
+    };
+  }, [actionContext]);
+  const latestFollowUpTask = actionContext?.latestFollowUpTask ?? null;
 
   useEffect(() => {
-    if (!modalOpen || !session?.sessionId) {
+    setModalOpen(false);
+    setAnalysisOpen(false);
+    setContextError(null);
+    setActionContext(null);
+    setFollowUpObjective("");
+    setFollowUpCompletionCriteria("");
+    setFollowUpRoundLimit(DEFAULT_FOLLOW_UP_ROUND_LIMIT);
+  }, [session?.sessionId]);
+
+  useEffect(() => {
+    if (!session?.sessionId) {
+      setContextLoading(false);
       return;
     }
 
     let disposed = false;
-    setLoadingTarget(true);
-    setTargetError(null);
+    setContextLoading(true);
+    setContextError(null);
 
-    void getButlerSessionTarget(session.sessionId)
+    void getButlerSessionActionContext(session.sessionId)
       .then((response) => {
         if (disposed) {
           return;
         }
 
-        setTarget(response.target);
+        setActionContext(response.context);
       })
       .catch((error) => {
         if (disposed) {
           return;
         }
 
-        setTarget(null);
-        setTargetError(error instanceof Error ? error.message : t("conversation.butlerActionLoadFailed"));
+        setActionContext(null);
+        setContextError(error instanceof Error ? error.message : t("conversation.butlerActionLoadFailed"));
       })
       .finally(() => {
         if (!disposed) {
-          setLoadingTarget(false);
+          setContextLoading(false);
         }
       });
 
     return () => {
       disposed = true;
     };
-  }, [modalOpen, session?.sessionId]);
-
-  useEffect(() => {
-    if ((!analysisOpen && !modalOpen) || !session?.sessionId) {
-      return;
-    }
-
-    let disposed = false;
-    setAnalysisLoading(true);
-    setAnalysisError(null);
-
-    void listButlerFollowUpTasks({ sessionId: session.sessionId })
-      .then((response) => {
-        if (disposed) {
-          return;
-        }
-
-        setLatestFollowUpTask(response.items[0] ?? null);
-      })
-      .catch((error) => {
-        if (disposed) {
-          return;
-        }
-
-        setLatestFollowUpTask(null);
-        setAnalysisError(error instanceof Error ? error.message : t("conversation.butlerAnalysisLoadFailed"));
-      })
-      .finally(() => {
-        if (!disposed) {
-          setAnalysisLoading(false);
-        }
-      });
-
-    return () => {
-      disposed = true;
-    };
-  }, [analysisOpen, modalOpen, session?.sessionId]);
+  }, [contextRequestSeq, session?.sessionId]);
 
   if (!session?.sessionId) {
     return null;
   }
 
+  function requestContextReload() {
+    if (contextLoading) {
+      return;
+    }
+
+    setContextRequestSeq((current) => current + 1);
+  }
+
+  function ensureActionContext() {
+    if (!actionContext && !contextLoading) {
+      requestContextReload();
+    }
+  }
+
   async function handleFollowUp() {
     if (!target) {
+      ensureActionContext();
       return;
     }
 
@@ -135,13 +135,21 @@ export function SessionButlerActionButton({ session }: SessionButlerActionButton
     setRunningAction("follow-up");
 
     try {
-      await createButlerFollowUpTask({
+      const response = await createButlerFollowUpTask({
         projectId: target.project.id,
         butlerSessionId: target.session.id,
         objective,
         completionCriteria: followUpCompletionCriteria.trim() || undefined,
         maxAutoContinueCount: followUpRoundLimit
       });
+      setActionContext((current) => (
+        current
+          ? {
+              ...current,
+              latestFollowUpTask: response.task
+            }
+          : current
+      ));
       requestNavigationRefresh();
       showToast({
         title: t("conversation.butlerFollowUpStarted"),
@@ -150,6 +158,9 @@ export function SessionButlerActionButton({ session }: SessionButlerActionButton
         }),
         tone: "success"
       });
+      setFollowUpObjective("");
+      setFollowUpCompletionCriteria("");
+      setFollowUpRoundLimit(DEFAULT_FOLLOW_UP_ROUND_LIMIT);
       setModalOpen(false);
     } catch (error) {
       showToast({
@@ -170,7 +181,15 @@ export function SessionButlerActionButton({ session }: SessionButlerActionButton
     setRunningAction("follow-up");
 
     try {
-      await cancelButlerFollowUpTask(latestFollowUpTask.id);
+      const response = await cancelButlerFollowUpTask(latestFollowUpTask.id);
+      setActionContext((current) => (
+        current
+          ? {
+              ...current,
+              latestFollowUpTask: response.task
+            }
+          : current
+      ));
       requestNavigationRefresh();
       showToast({
         title: t("conversation.butlerFollowUpStopped"),
@@ -191,6 +210,7 @@ export function SessionButlerActionButton({ session }: SessionButlerActionButton
 
   async function handleVerification() {
     if (!target) {
+      ensureActionContext();
       return;
     }
 
@@ -229,6 +249,7 @@ export function SessionButlerActionButton({ session }: SessionButlerActionButton
         className="conversation-butler-entry"
         onMouseEnter={() => {
           setAnalysisOpen(true);
+          ensureActionContext();
         }}
         onMouseLeave={() => {
           setAnalysisOpen(false);
@@ -241,12 +262,14 @@ export function SessionButlerActionButton({ session }: SessionButlerActionButton
           title={t("conversation.butlerActionButton")}
           onFocus={() => {
             setAnalysisOpen(true);
+            ensureActionContext();
           }}
           onBlur={() => {
             setAnalysisOpen(false);
           }}
           onClick={() => {
             setModalOpen(true);
+            ensureActionContext();
           }}
         >
           <span className="conversation-header-ai-button-label">AI</span>
@@ -255,10 +278,10 @@ export function SessionButlerActionButton({ session }: SessionButlerActionButton
         {analysisOpen ? (
           <div className="conversation-butler-analysis-popover" role="status" aria-live="polite">
             <strong>{t("conversation.butlerAnalysisTitle")}</strong>
-            {analysisLoading ? (
+            {contextLoading ? (
               <p>{t("conversation.butlerActionLoading")}</p>
-            ) : analysisError ? (
-              <p>{analysisError}</p>
+            ) : contextError ? (
+              <p>{contextError}</p>
             ) : latestFollowUpTask ? (
               <>
                 <p>
@@ -301,15 +324,15 @@ export function SessionButlerActionButton({ session }: SessionButlerActionButton
         }}
       >
         <div className="conversation-butler-modal">
-          {loadingTarget ? (
+          {contextLoading ? (
             <p className="conversation-butler-modal-hint">{t("conversation.butlerActionLoading")}</p>
           ) : null}
 
-          {!loadingTarget && targetError ? (
-            <p className="conversation-butler-modal-error">{targetError}</p>
+          {!contextLoading && contextError ? (
+            <p className="conversation-butler-modal-error">{contextError}</p>
           ) : null}
 
-          {!loadingTarget && !targetError && target ? (
+          {!contextLoading && !contextError && target ? (
             <>
               <div className="conversation-butler-target-card">
                 <span>{t("conversation.butlerActionProjectLabel")}</span>
