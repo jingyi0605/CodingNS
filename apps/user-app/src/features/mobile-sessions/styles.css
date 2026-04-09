@@ -423,8 +423,30 @@
   margin-left: 0;
 }
 
+.mobile-conversation-toolbar-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  width: 100%;
+  min-width: 0;
+}
+
+.mobile-conversation-toolbar-main .conversation-butler-entry {
+  flex: 0 0 auto;
+}
+
+.mobile-conversation-toolbar-main .conversation-header-ai-button {
+  min-width: 2.45rem;
+  height: 2rem;
+  padding: 0 0.8rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-surface) 94%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.62);
+}
+
 .mobile-conversation-toolbar-title {
   display: -webkit-box;
+  flex: 1 1 auto;
   width: 100%;
   min-width: 0;
   max-width: 100%;

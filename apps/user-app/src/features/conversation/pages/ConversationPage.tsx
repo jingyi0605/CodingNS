@@ -443,9 +443,12 @@ function LiveConversationPage({
               mobilePreview.togglePreview();
             }}
             trailing={
-              <span className="mobile-conversation-toolbar-title" title={mobileSessionTitlePresentation.fullTitle}>
-                {mobileSessionTitlePresentation.displayTitle}
-              </span>
+              <div className="mobile-conversation-toolbar-main">
+                <span className="mobile-conversation-toolbar-title" title={mobileSessionTitlePresentation.fullTitle}>
+                  {mobileSessionTitlePresentation.displayTitle}
+                </span>
+                <SessionButlerActionButton session={session ?? navigationSession} />
+              </div>
             }
           />
         ) : null}

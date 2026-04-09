@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { createPortal } from "react-dom";
 
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
@@ -19,6 +20,10 @@ import { WorkbenchModal } from "./WorkbenchModal";
 interface WorkspaceInboxPanelProps {
   active: boolean;
   preferredWorkspaceId?: string | null;
+  creationRequestId?: number;
+  compactComposer?: boolean;
+  composerOpen?: boolean;
+  onComposerOpenChange?: (open: boolean) => void;
 }
 
 interface InboxFormState {
@@ -27,6 +32,12 @@ interface InboxFormState {
   title: string;
   content: string;
   status: ButlerInboxItemStatus;
+}
+
+interface PickerOption<T extends string> {
+  value: T;
+  label: string;
+  description?: string;
 }
 
 const DEFAULT_FORM_STATE: InboxFormState = {
@@ -39,7 +50,11 @@ const DEFAULT_FORM_STATE: InboxFormState = {
 
 export function WorkspaceInboxPanel({
   active,
-  preferredWorkspaceId
+  preferredWorkspaceId,
+  creationRequestId = 0,
+  compactComposer = false,
+  composerOpen = true,
+  onComposerOpenChange
 }: WorkspaceInboxPanelProps) {
   const { showToast } = useToast();
   const [loading, setLoading] = useState(false);
@@ -77,6 +92,15 @@ export function WorkspaceInboxPanel({
       projectId: current.projectId || visibleProjects[0]?.id || ""
     }));
   }, [active, editingItemId, visibleProjects]);
+
+  useEffect(() => {
+    if (!active || creationRequestId <= 0) {
+      return;
+    }
+
+    resetEditor();
+    onComposerOpenChange?.(true);
+  }, [active, creationRequestId, onComposerOpenChange]);
 
   async function loadData() {
     setLoading(true);
@@ -133,6 +157,9 @@ export function WorkspaceInboxPanel({
       content: item.content,
       status: item.status
     });
+    if (compactComposer) {
+      onComposerOpenChange?.(true);
+    }
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -171,6 +198,9 @@ export function WorkspaceInboxPanel({
       dispatchButlerInboxUpdatedEvent();
       await loadData();
       resetEditor();
+      if (compactComposer) {
+        onComposerOpenChange?.(false);
+      }
     } catch (error) {
       showToast({
         title: t("shell.butlerInboxSaveFailed"),
@@ -211,130 +241,49 @@ export function WorkspaceInboxPanel({
 
   return (
     <div className="workspace-inbox-modal">
-      <section className="workspace-inbox-panel">
-        <header className="workspace-inbox-panel-header">
-          <h3>
-            {editingItemId
-              ? t("shell.butlerInboxEditingTitle")
-              : t("shell.butlerInboxCreateTitle")}
-          </h3>
-          <p>{t("shell.butlerInboxFormDescription")}</p>
-        </header>
-
-        {visibleProjects.length === 0 ? (
-          <p className="workspace-inbox-status">{t("shell.butlerInboxProjectsEmpty")}</p>
-        ) : (
-          <form className="workspace-inbox-form" onSubmit={handleSubmit}>
-            <div className="workspace-inbox-form-grid">
-              <label className="workbench-modal-field">
-                <span>{t("shell.butlerInboxProjectLabel")}</span>
-                <select
-                  value={formState.projectId}
-                  disabled={saving}
-                  onChange={(event) => {
-                    setFormState((current) => ({
-                      ...current,
-                      projectId: event.target.value
-                    }));
-                  }}
-                >
-                  {visibleProjects.map((project) => (
-                    <option key={project.id} value={project.id}>
-                      {project.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="workbench-modal-field">
-                <span>{t("shell.butlerInboxTypeLabel")}</span>
-                <select
-                  value={formState.itemType}
-                  disabled={saving}
-                  onChange={(event) => {
-                    setFormState((current) => ({
-                      ...current,
-                      itemType: event.target.value as ButlerInboxItemType
-                    }));
-                  }}
-                >
-                  <option value="task">{t("shell.butlerInboxTypeTask")}</option>
-                  <option value="bug">{t("shell.butlerInboxTypeBug")}</option>
-                  <option value="feature">{t("shell.butlerInboxTypeFeature")}</option>
-                  <option value="change">{t("shell.butlerInboxTypeChange")}</option>
-                </select>
-              </label>
-
-              <label className="workbench-modal-field">
-                <span>{t("shell.butlerInboxStatusLabel")}</span>
-                <select
-                  value={formState.status}
-                  disabled={saving}
-                  onChange={(event) => {
-                    setFormState((current) => ({
-                      ...current,
-                      status: event.target.value as ButlerInboxItemStatus
-                    }));
-                  }}
-                >
-                  <option value="pending">{t("shell.butlerInboxStatusPending")}</option>
-                  <option value="in_progress">{t("shell.butlerInboxStatusInProgress")}</option>
-                  <option value="closed">{t("shell.butlerInboxStatusClosed")}</option>
-                </select>
-              </label>
-            </div>
-
-            <label className="workbench-modal-field">
-              <span>{t("shell.butlerInboxTitleLabel")}</span>
-              <input
-                value={formState.title}
-                placeholder={t("shell.butlerInboxTitlePlaceholder")}
-                disabled={saving}
-                onChange={(event) => {
-                  setFormState((current) => ({
-                    ...current,
-                    title: event.target.value
-                  }));
-                }}
-              />
-            </label>
-
-            <label className="workbench-modal-field">
-              <span>{t("shell.butlerInboxContentLabel")}</span>
-              <textarea
-                rows={4}
-                value={formState.content}
-                placeholder={t("shell.butlerInboxContentPlaceholder")}
-                disabled={saving}
-                onChange={(event) => {
-                  setFormState((current) => ({
-                    ...current,
-                    content: event.target.value
-                  }));
-                }}
-              />
-            </label>
-
-            <div className="workbench-modal-actions">
-              {editingItemId ? (
-                <button
-                  type="button"
-                  className="secondary-button"
-                  disabled={saving}
-                  onClick={() => resetEditor()}
-                >
-                  {t("shell.butlerInboxCancelEditAction")}
-                </button>
-              ) : null}
-              <button type="submit" className="primary-button" disabled={saving || !formState.projectId}>
-                {editingItemId
-                  ? t("shell.butlerInboxUpdateAction")
-                  : t("shell.butlerInboxCreateAction")}
-              </button>
-            </div>
-          </form>
-        )}
-      </section>
+      {!compactComposer ? (
+        <section className="workspace-inbox-panel">
+          <WorkspaceInboxComposerSection
+            visibleProjects={visibleProjects}
+            formState={formState}
+            saving={saving}
+            editingItemId={editingItemId}
+            useMobilePicker={false}
+            onProjectChange={(projectId) => {
+              setFormState((current) => ({
+                ...current,
+                projectId
+              }));
+            }}
+            onItemTypeChange={(itemType) => {
+              setFormState((current) => ({
+                ...current,
+                itemType
+              }));
+            }}
+            onStatusChange={(status) => {
+              setFormState((current) => ({
+                ...current,
+                status
+              }));
+            }}
+            onTitleChange={(title) => {
+              setFormState((current) => ({
+                ...current,
+                title
+              }));
+            }}
+            onContentChange={(content) => {
+              setFormState((current) => ({
+                ...current,
+                content
+              }));
+            }}
+            onCancel={() => resetEditor()}
+            onSubmit={handleSubmit}
+          />
+        </section>
+      ) : null}
 
       <section className="workspace-inbox-panel">
         <header className="workspace-inbox-panel-header">
@@ -391,7 +340,367 @@ export function WorkspaceInboxPanel({
           </div>
         ) : null}
       </section>
+
+      {compactComposer ? (
+        <WorkbenchModal
+          open={active && composerOpen}
+          title={editingItemId ? t("shell.butlerInboxEditingTitle") : t("shell.butlerInboxCreateTitle")}
+          description={t("shell.butlerInboxFormDescription")}
+          className="workspace-inbox-modal-card workspace-inbox-composer-modal-card"
+          onClose={() => {
+            onComposerOpenChange?.(false);
+            resetEditor();
+          }}
+        >
+          <div className="workspace-inbox-composer-modal-body">
+            <WorkspaceInboxComposerSection
+              visibleProjects={visibleProjects}
+              formState={formState}
+              saving={saving}
+              editingItemId={editingItemId}
+              useMobilePicker
+              onProjectChange={(projectId) => {
+                setFormState((current) => ({
+                  ...current,
+                  projectId
+                }));
+              }}
+              onItemTypeChange={(itemType) => {
+                setFormState((current) => ({
+                  ...current,
+                  itemType
+                }));
+              }}
+              onStatusChange={(status) => {
+                setFormState((current) => ({
+                  ...current,
+                  status
+                }));
+              }}
+              onTitleChange={(title) => {
+                setFormState((current) => ({
+                  ...current,
+                  title
+                }));
+              }}
+              onContentChange={(content) => {
+                setFormState((current) => ({
+                  ...current,
+                  content
+                }));
+              }}
+              onCancel={() => {
+                onComposerOpenChange?.(false);
+                resetEditor();
+              }}
+              onSubmit={handleSubmit}
+            />
+          </div>
+        </WorkbenchModal>
+      ) : null}
     </div>
+  );
+}
+
+function WorkspaceInboxComposerSection(props: {
+  visibleProjects: ButlerProjectDto[];
+  formState: InboxFormState;
+  saving: boolean;
+  editingItemId: string | null;
+  useMobilePicker?: boolean;
+  onProjectChange: (projectId: string) => void;
+  onItemTypeChange: (itemType: ButlerInboxItemType) => void;
+  onStatusChange: (status: ButlerInboxItemStatus) => void;
+  onTitleChange: (title: string) => void;
+  onContentChange: (content: string) => void;
+  onCancel: () => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  const projectOptions = props.visibleProjects.map((project) => ({
+    value: project.id,
+    label: project.name
+  }));
+  const typeOptions: PickerOption<ButlerInboxItemType>[] = [
+    { value: "task", label: t("shell.butlerInboxTypeTask") },
+    { value: "bug", label: t("shell.butlerInboxTypeBug") },
+    { value: "feature", label: t("shell.butlerInboxTypeFeature") },
+    { value: "change", label: t("shell.butlerInboxTypeChange") }
+  ];
+  const statusOptions: PickerOption<ButlerInboxItemStatus>[] = [
+    { value: "pending", label: t("shell.butlerInboxStatusPending") },
+    { value: "in_progress", label: t("shell.butlerInboxStatusInProgress") },
+    { value: "closed", label: t("shell.butlerInboxStatusClosed") }
+  ];
+
+  return (
+    <>
+      <header className="workspace-inbox-panel-header">
+        <h3>
+          {props.editingItemId
+            ? t("shell.butlerInboxEditingTitle")
+            : t("shell.butlerInboxCreateTitle")}
+        </h3>
+        <p>{t("shell.butlerInboxFormDescription")}</p>
+      </header>
+
+      {props.visibleProjects.length === 0 ? (
+        <p className="workspace-inbox-status">{t("shell.butlerInboxProjectsEmpty")}</p>
+      ) : (
+        <form className="workspace-inbox-form" onSubmit={props.onSubmit}>
+          <div className="workspace-inbox-form-grid">
+            {props.useMobilePicker ? (
+              <>
+                <MobilePickerField
+                  label={t("shell.butlerInboxProjectLabel")}
+                  value={props.formState.projectId}
+                  options={projectOptions}
+                  disabled={props.saving}
+                  onChange={props.onProjectChange}
+                />
+                <MobilePickerField
+                  label={t("shell.butlerInboxTypeLabel")}
+                  value={props.formState.itemType}
+                  options={typeOptions}
+                  disabled={props.saving}
+                  onChange={props.onItemTypeChange}
+                />
+                <MobilePickerField
+                  label={t("shell.butlerInboxStatusLabel")}
+                  value={props.formState.status}
+                  options={statusOptions}
+                  disabled={props.saving}
+                  onChange={props.onStatusChange}
+                />
+              </>
+            ) : (
+              <>
+                <label className="workbench-modal-field">
+                  <span>{t("shell.butlerInboxProjectLabel")}</span>
+                  <select
+                    value={props.formState.projectId}
+                    disabled={props.saving}
+                    onChange={(event) => props.onProjectChange(event.target.value)}
+                  >
+                    {props.visibleProjects.map((project) => (
+                      <option key={project.id} value={project.id}>
+                        {project.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="workbench-modal-field">
+                  <span>{t("shell.butlerInboxTypeLabel")}</span>
+                  <select
+                    value={props.formState.itemType}
+                    disabled={props.saving}
+                    onChange={(event) => props.onItemTypeChange(event.target.value as ButlerInboxItemType)}
+                  >
+                    <option value="task">{t("shell.butlerInboxTypeTask")}</option>
+                    <option value="bug">{t("shell.butlerInboxTypeBug")}</option>
+                    <option value="feature">{t("shell.butlerInboxTypeFeature")}</option>
+                    <option value="change">{t("shell.butlerInboxTypeChange")}</option>
+                  </select>
+                </label>
+
+                <label className="workbench-modal-field">
+                  <span>{t("shell.butlerInboxStatusLabel")}</span>
+                  <select
+                    value={props.formState.status}
+                    disabled={props.saving}
+                    onChange={(event) => props.onStatusChange(event.target.value as ButlerInboxItemStatus)}
+                  >
+                    <option value="pending">{t("shell.butlerInboxStatusPending")}</option>
+                    <option value="in_progress">{t("shell.butlerInboxStatusInProgress")}</option>
+                    <option value="closed">{t("shell.butlerInboxStatusClosed")}</option>
+                  </select>
+                </label>
+              </>
+            )}
+          </div>
+
+          <label className="workbench-modal-field">
+            <span>{t("shell.butlerInboxTitleLabel")}</span>
+            <input
+              value={props.formState.title}
+              placeholder={t("shell.butlerInboxTitlePlaceholder")}
+              disabled={props.saving}
+              onChange={(event) => props.onTitleChange(event.target.value)}
+            />
+          </label>
+
+          <label className="workbench-modal-field">
+            <span>{t("shell.butlerInboxContentLabel")}</span>
+            <textarea
+              rows={4}
+              value={props.formState.content}
+              placeholder={t("shell.butlerInboxContentPlaceholder")}
+              disabled={props.saving}
+              onChange={(event) => props.onContentChange(event.target.value)}
+            />
+          </label>
+
+          <div className="workbench-modal-actions">
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={props.saving}
+              onClick={props.onCancel}
+            >
+              {props.editingItemId ? t("shell.butlerInboxCancelEditAction") : t("common.cancel")}
+            </button>
+            <button type="submit" className="primary-button" disabled={props.saving || !props.formState.projectId}>
+              {props.editingItemId
+                ? t("shell.butlerInboxUpdateAction")
+                : t("shell.butlerInboxCreateAction")}
+            </button>
+          </div>
+        </form>
+      )}
+    </>
+  );
+}
+
+function MobilePickerField<T extends string>({
+  label,
+  value,
+  options,
+  disabled,
+  onChange
+}: {
+  label: string;
+  value: T;
+  options: PickerOption<T>[];
+  disabled?: boolean;
+  onChange: (value: T) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const selectedOption = options.find((option) => option.value === value) ?? options[0] ?? null;
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <>
+      <div className="workbench-modal-field workspace-inbox-mobile-picker">
+        <span>{label}</span>
+        <button
+          type="button"
+          className="workspace-inbox-mobile-picker-trigger"
+          aria-label={label}
+          aria-haspopup="dialog"
+          aria-expanded={open}
+          disabled={disabled || options.length === 0}
+          onClick={() => setOpen(true)}
+        >
+          <span className="workspace-inbox-mobile-picker-trigger-value">
+            {selectedOption?.label ?? ""}
+          </span>
+          <span className="workspace-inbox-mobile-picker-trigger-icon">
+            <ChevronDownIcon expanded={open} />
+          </span>
+        </button>
+      </div>
+
+      <MobilePickerSheet
+        open={open}
+        title={label}
+        options={options}
+        selectedValue={value}
+        onClose={() => setOpen(false)}
+        onSelect={(nextValue) => {
+          onChange(nextValue);
+          setOpen(false);
+        }}
+      />
+    </>
+  );
+}
+
+function MobilePickerSheet<T extends string>({
+  open,
+  title,
+  options,
+  selectedValue,
+  onClose,
+  onSelect
+}: {
+  open: boolean;
+  title: string;
+  options: PickerOption<T>[];
+  selectedValue: T;
+  onClose: () => void;
+  onSelect: (value: T) => void;
+}) {
+  if (!open || typeof document === "undefined") {
+    return null;
+  }
+
+  return createPortal(
+    <div
+      className="ios-action-sheet-overlay workspace-inbox-picker-sheet-overlay"
+      role="presentation"
+      onClick={onClose}
+    >
+      <div
+        className="mobile-workspace-home-sheet workspace-inbox-picker-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="mobile-workspace-home-sheet-card workspace-inbox-picker-sheet-card">
+          <div className="mobile-workspace-home-sheet-header workspace-inbox-picker-sheet-header">
+            <strong>{title}</strong>
+          </div>
+
+          <div className="mobile-workspace-home-group workspace-inbox-picker-sheet-options" role="listbox" aria-label={title}>
+            {options.map((option) => {
+              const selected = option.value === selectedValue;
+
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  className="mobile-workspace-home-row workspace-inbox-picker-option"
+                  role="option"
+                  aria-selected={selected}
+                  onClick={() => onSelect(option.value)}
+                >
+                  <span className="workspace-inbox-picker-option-copy">
+                    <strong>{option.label}</strong>
+                    {option.description ? <span>{option.description}</span> : null}
+                  </span>
+                  <span className="workspace-inbox-picker-option-indicator" aria-hidden="true">
+                    {selected ? <CheckIcon /> : null}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <button type="button" className="ios-action-sheet-cancel" onClick={onClose}>
+          {t("common.cancel")}
+        </button>
+      </div>
+    </div>,
+    document.body
   );
 }
 
@@ -399,23 +708,95 @@ interface WorkspaceInboxModalProps {
   open: boolean;
   preferredWorkspaceId?: string | null;
   onClose: () => void;
+  compactComposer?: boolean;
 }
 
 export function WorkspaceInboxModal({
   open,
   preferredWorkspaceId,
-  onClose
+  onClose,
+  compactComposer = false
 }: WorkspaceInboxModalProps) {
+  const [creationRequestId, setCreationRequestId] = useState(0);
+  const [composerOpen, setComposerOpen] = useState(!compactComposer);
+
+  useEffect(() => {
+    if (!open) {
+      setComposerOpen(!compactComposer);
+    }
+  }, [compactComposer, open]);
+
   return (
     <WorkbenchModal
       open={open}
       title={t("shell.butlerInboxModalTitle")}
       description={t("shell.butlerInboxModalDescription")}
       className="workspace-inbox-modal-card"
+      showCloseButton={!compactComposer}
+      headerActions={compactComposer ? (
+        <button
+          type="button"
+          className="workspace-inbox-modal-create-button"
+          aria-label={t("shell.butlerInboxCreateAction")}
+          title={t("shell.butlerInboxCreateAction")}
+          onClick={() => {
+            setCreationRequestId((current) => current + 1);
+            setComposerOpen(true);
+          }}
+        >
+          <PlusIcon />
+        </button>
+      ) : undefined}
       onClose={onClose}
     >
-      <WorkspaceInboxPanel active={open} preferredWorkspaceId={preferredWorkspaceId} />
+      <WorkspaceInboxPanel
+        active={open}
+        preferredWorkspaceId={preferredWorkspaceId}
+        creationRequestId={creationRequestId}
+        compactComposer={compactComposer}
+        composerOpen={composerOpen}
+        onComposerOpenChange={setComposerOpen}
+      />
     </WorkbenchModal>
+  );
+}
+
+function PlusIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+      <path d="M12 5v14" />
+      <path d="M5 12h14" />
+    </svg>
+  );
+}
+
+function ChevronDownIcon({ expanded }: { expanded: boolean }) {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true" data-expanded={expanded ? "true" : undefined}>
+      <path
+        d="M3.5 6 8 10l4.5-4"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.6"
+      />
+    </svg>
+  );
+}
+
+function CheckIcon() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <path
+        d="M3.5 8.4 6.6 11.5 12.5 5.5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.8"
+      />
+    </svg>
   );
 }
 

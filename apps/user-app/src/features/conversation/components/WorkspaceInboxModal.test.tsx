@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { t } from "../../../shared/i18n";
@@ -212,6 +212,50 @@ describe("WorkspaceInboxModal", () => {
 
     await waitFor(() => {
       expect(mockedDeleteButlerInboxItem).toHaveBeenCalledWith("todo-1");
+    });
+  });
+
+  it("移动端新增代办使用独立选择面板选择字段", async () => {
+    render(
+      <WorkspaceInboxModal
+        open
+        preferredWorkspaceId="workspace-1"
+        compactComposer
+        onClose={vi.fn()}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("dialog", { name: t("shell.butlerInboxModalTitle") })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: t("shell.butlerInboxCreateAction") }));
+
+    const composerDialog = await screen.findByRole("dialog", { name: t("shell.butlerInboxCreateTitle") });
+    const composerScope = within(composerDialog);
+
+    fireEvent.click(composerScope.getByRole("button", { name: t("shell.butlerInboxStatusLabel") }));
+
+    const pickerDialog = await screen.findByRole("dialog", { name: t("shell.butlerInboxStatusLabel") });
+    fireEvent.click(within(pickerDialog).getByRole("option", { name: t("shell.butlerInboxStatusClosed") }));
+
+    fireEvent.change(composerScope.getByRole("textbox", { name: t("shell.butlerInboxTitleLabel") }), {
+      target: { value: "移动端新增代办" }
+    });
+    fireEvent.change(composerScope.getByRole("textbox", { name: t("shell.butlerInboxContentLabel") }), {
+      target: { value: "使用新的移动端选择面板。" }
+    });
+    fireEvent.click(composerScope.getByRole("button", { name: t("shell.butlerInboxCreateAction") }));
+
+    await waitFor(() => {
+      expect(mockedCreateButlerInboxItem).toHaveBeenCalledWith({
+        projectId: "project-1",
+        itemType: "task",
+        title: "移动端新增代办",
+        content: "使用新的移动端选择面板。",
+        status: "closed",
+        priority: "medium"
+      });
     });
   });
 });

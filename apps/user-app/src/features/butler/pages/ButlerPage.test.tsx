@@ -403,6 +403,9 @@ describe("ButlerPage", () => {
     expect(screen.queryByText(t("shell.butlerWorkspacePathLabel"))).not.toBeInTheDocument();
     expect(screen.queryByText(t("shell.butlerAgentsFilePathLabel"))).not.toBeInTheDocument();
     expect(screen.queryByText("AGENTS 规则内容")).not.toBeInTheDocument();
+    const initProviderSelect = screen.getByRole("combobox", { name: t("shell.butlerProviderLabel") });
+    expect(within(initProviderSelect).getByRole("option", { name: "Codex" })).toBeInTheDocument();
+    expect(within(initProviderSelect).queryByRole("option", { name: "Claude Code" })).not.toBeInTheDocument();
 
     const submitButton = screen.getByRole("button", { name: t("shell.butlerInitSubmit") });
     fireEvent.click(submitButton);
@@ -525,6 +528,10 @@ describe("ButlerPage", () => {
       expect(screen.getByRole("button", { name: t("shell.butlerNewSessionAction") })).toBeInTheDocument();
       expect(screen.getByRole("combobox", { name: t("shell.butlerProviderLabel") })).toBeInTheDocument();
     });
+
+    const providerSelect = screen.getByRole("combobox", { name: t("shell.butlerProviderLabel") });
+    expect(within(providerSelect).getByRole("option", { name: "Codex" })).toBeInTheDocument();
+    expect(within(providerSelect).queryByRole("option", { name: "Claude Code" })).not.toBeInTheDocument();
 
     expect(screen.getByTestId("butler-message-timeline")).toHaveTextContent(/\S/);
 

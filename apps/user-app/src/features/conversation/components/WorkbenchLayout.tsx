@@ -148,13 +148,13 @@ const WORKBENCH_RUNTIME_ACTIVE_STATES: ReadonlySet<string> = new Set([
   "unknown"
 ]);
 
-type WorkbenchGlobalNotificationKind =
+export type WorkbenchGlobalNotificationKind =
   | "follow_up_waiting_user"
   | "follow_up_completed"
   | "follow_up_failed"
   | "verification_failed";
 
-interface WorkbenchGlobalNotification {
+export interface WorkbenchGlobalNotification {
   id: string;
   kind: WorkbenchGlobalNotificationKind;
   title: string;
@@ -539,8 +539,17 @@ interface WorkbenchShellContextValue {
   currentSessionId: string | null;
   favoriteSessionIds: string[];
   favoriteSessions: WorkbenchNavigationEntry[];
+  globalNotifications: WorkbenchGlobalNotification[];
+  archivedNotificationIds: string[];
+  showArchivedNotifications: boolean;
+  unreadNotificationCount: number;
   refreshNavigation: () => Promise<void>;
   requestNavigationRefresh: () => void;
+  openNotificationPanel: () => void;
+  closeNotificationPanel: () => void;
+  setShowArchivedNotifications: (checked: boolean) => void;
+  archiveNotification: (notificationId: string) => void;
+  unarchiveNotification: (notificationId: string) => void;
   setAuxiliaryPanel: (panel: ReactNode | null) => void;
   subscribeFileTree: (workspaceId: string, paths: string[]) => void;
   requestFileTreeRefresh: (workspaceId: string, paths?: string[]) => void;
@@ -5759,8 +5768,25 @@ export function WorkbenchLayout({
       currentSessionId,
       favoriteSessionIds,
       favoriteSessions,
+      globalNotifications,
+      archivedNotificationIds: Array.from(archivedNotificationIds),
+      showArchivedNotifications,
+      unreadNotificationCount,
       refreshNavigation,
       requestNavigationRefresh,
+      openNotificationPanel: () => {
+        setNotificationPanelOpen(true);
+      },
+      closeNotificationPanel: () => {
+        setNotificationPanelOpen(false);
+      },
+      setShowArchivedNotifications,
+      archiveNotification: (notificationId: string) => {
+        void toggleNotificationArchive(notificationId, true);
+      },
+      unarchiveNotification: (notificationId: string) => {
+        void toggleNotificationArchive(notificationId, false);
+      },
       setAuxiliaryPanel: setCustomAuxiliaryPanel,
       subscribeFileTree,
       requestFileTreeRefresh,
@@ -5794,21 +5820,26 @@ export function WorkbenchLayout({
       commitNavigationArchiveState,
       currentSessionId,
       currentWorkspaceId,
+      globalNotifications,
       favoriteSessionIds,
       favoriteSessions,
       handleSelectWorkspace,
+      archivedNotificationIds,
       markNavigationSessionSeen,
       navigationError,
       navigationGroups,
       navigationLoading,
+      unreadNotificationCount,
       requestFileTreeRefresh,
       requestGitRefresh,
       requestWorkspaceManagementRefresh,
       refreshNavigation,
       requestNavigationRefresh,
+      setShowArchivedNotifications,
       setCustomAuxiliaryPanel,
       requestTerminalManagerRefresh,
       renameNavigationSession,
+      showArchivedNotifications,
       workspaceManagementStateById,
       shellMode,
       startDraftSession,
@@ -5817,6 +5848,7 @@ export function WorkbenchLayout({
       subscribeGitSnapshot,
       subscribeWorkspaceManagementSnapshot,
       subscribeTerminalManagerSnapshot,
+      toggleNotificationArchive,
       toggleFavoriteSession,
       upsertNavigationSession,
       revealWorkspaceFile
@@ -6309,8 +6341,17 @@ export function useWorkbenchShell(): WorkbenchShellContextValue {
       currentSessionId: null,
       favoriteSessionIds: [],
       favoriteSessions: [],
+      globalNotifications: [],
+      archivedNotificationIds: [],
+      showArchivedNotifications: false,
+      unreadNotificationCount: 0,
       refreshNavigation: async () => undefined,
       requestNavigationRefresh: () => undefined,
+      openNotificationPanel: () => undefined,
+      closeNotificationPanel: () => undefined,
+      setShowArchivedNotifications: () => undefined,
+      archiveNotification: () => undefined,
+      unarchiveNotification: () => undefined,
       setAuxiliaryPanel: () => undefined,
       subscribeFileTree: () => undefined,
       requestFileTreeRefresh: () => undefined,

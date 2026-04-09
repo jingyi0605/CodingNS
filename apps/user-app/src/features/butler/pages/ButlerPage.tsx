@@ -408,10 +408,6 @@ export function ButlerPage() {
       {
         value: "codex",
         label: "Codex"
-      },
-      {
-        value: "claude-code",
-        label: "Claude Code"
       }
     ] satisfies Array<{ value: ButlerProviderId; label: string }>,
     []
@@ -602,7 +598,7 @@ export function ButlerPage() {
       showToast({
         title: t("shell.butlerProviderSwitched"),
         description: t("shell.butlerProviderSwitchedDescription", {
-          provider: providerId === "codex" ? "Codex" : "Claude Code"
+          provider: resolveOptionLabel(providerOptions, providerId)
         }),
         tone: "success"
       });
@@ -745,6 +741,7 @@ export function ButlerPage() {
                     <select
                       className="butler-form-control"
                       value={initForm.providerId}
+                      disabled={providerOptions.length <= 1}
                       onChange={(event) =>
                         setInitForm((current) => ({
                           ...current,
@@ -983,7 +980,7 @@ export function ButlerPage() {
             <select
               aria-label={t("shell.butlerProviderLabel")}
               value={activeProvider}
-              disabled={switchingProvider || sending}
+              disabled={providerOptions.length <= 1 || switchingProvider || sending}
               onChange={(event) => {
                 void handleProviderSwitch(event.target.value as ButlerProviderId);
               }}

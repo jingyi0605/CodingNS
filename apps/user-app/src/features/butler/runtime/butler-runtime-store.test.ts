@@ -172,43 +172,6 @@ describe("ButlerRuntimeStore", () => {
     } as never);
   });
 
-  it("provider 切换后会清空消息并重新加载", async () => {
-    const store = new ButlerRuntimeStore("workspace-1");
-    await store.initialize();
-
-    (store as unknown as { patch: (state: Record<string, unknown>) => void }).patch({
-      messages: [{ clientRequestId: "old" }],
-      controlSession: { id: "ctrl-old" }
-    });
-
-    await store.switchProvider("claude-code");
-
-    expect(mockedUpdateButlerProfile).toHaveBeenCalledWith({ providerId: "claude-code" });
-    expect(mockedResetButlerControlSession).toHaveBeenCalledTimes(1);
-    expect(mockedStartButlerControlSession).not.toHaveBeenCalled();
-    expect(store.getState().messages).toEqual([]);
-    expect(store.getState().controlSession).toBeNull();
-    expect(store.getState().historyState).toBe("ready");
-  });
-
-  it("provider 切换失败时会回滚到旧状态", async () => {
-    const store = new ButlerRuntimeStore("workspace-1");
-    await store.initialize();
-
-    (store as unknown as { patch: (state: Record<string, unknown>) => void }).patch({
-      messages: [{ clientRequestId: "old-message" }],
-      controlSession: { id: "ctrl-old" },
-      activeProvider: "codex"
-    });
-    mockedUpdateButlerProfile.mockRejectedValueOnce(new Error("switch failed"));
-
-    await expect(store.switchProvider("claude-code")).rejects.toThrow("switch failed");
-
-    expect(store.getState().activeProvider).toBe("codex");
-    expect(store.getState().messages).toEqual([{ clientRequestId: "old-message" }]);
-    expect(store.getState().controlSession).toEqual({ id: "ctrl-old" });
-  });
-
   it("发送消息没有控制会话时调用 start 接口", async () => {
     const store = new ButlerRuntimeStore("workspace-1");
     await store.initialize();

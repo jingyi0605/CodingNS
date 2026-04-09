@@ -64,8 +64,18 @@ export function buildWorkspaceTerminalsPath(workspaceId: string): string {
   return `${buildWorkspaceDetailPath(workspaceId)}/terminals`;
 }
 
-export function buildWorkspaceButlerPath(workspaceId: string): string {
-  return `${buildWorkspaceDetailPath(workspaceId)}/butler`;
+export function buildWorkspaceButlerPath(workspaceId: string, tab?: "info" | "automation"): string {
+  const basePath = `${buildWorkspaceDetailPath(workspaceId)}/butler`;
+
+  if (!tab) {
+    return basePath;
+  }
+
+  const search = new URLSearchParams({
+    tab
+  });
+
+  return `${basePath}?${search.toString()}`;
 }
 
 export function flattenNavigationSessions(
