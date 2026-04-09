@@ -28,9 +28,18 @@ interface ActiveRunRecord {
   interruptHandler: (() => Promise<void>) | null;
   inRunInputHandler: ((options: import("./types.js").RuntimeSendOptions) => Promise<void>) | null;
   livenessProbe: (() => boolean) | null;
-  listeners: Set<RuntimeEventListener>;
+  listeners: Set<AttachedRuntimeListener>;
+  recentEvents: RuntimeEvent[];
   disposed: boolean;
 }
+
+interface AttachedRuntimeListener {
+  listener: RuntimeEventListener;
+  queue: Promise<void>;
+  closed: boolean;
+}
+
+const ACTIVE_RUN_RECENT_EVENT_LIMIT = 200;
 
 export class ActiveRunRegistry {
   private readonly records = new Map<string, ActiveRunRecord>();
@@ -58,6 +67,7 @@ export class ActiveRunRegistry {
       inRunInputHandler: null,
       livenessProbe: null,
       listeners: new Set(),
+      recentEvents: [],
       disposed: false
     };
 
@@ -91,8 +101,19 @@ export class ActiveRunRegistry {
       };
     }
 
-    record.listeners.add(listener);
+    const attachedListener: AttachedRuntimeListener = {
+      listener,
+      queue: Promise.resolve(),
+      closed: false
+    };
+
+    record.listeners.add(attachedListener);
     record.attachedClients += 1;
+
+    for (const event of record.recentEvents) {
+      this.enqueueListenerEvent(record, attachedListener, event);
+    }
+
     let closed = false;
 
     return {
@@ -102,7 +123,9 @@ export class ActiveRunRegistry {
         }
 
         closed = true;
-        if (record.listeners.delete(listener)) {
+        attachedListener.closed = true;
+
+        if (record.listeners.delete(attachedListener)) {
           record.attachedClients = Math.max(0, record.attachedClients - 1);
         }
       }
@@ -185,12 +208,11 @@ export class ActiveRunRegistry {
 
     const event = this.toRuntimeEvent(record, input, timestamp, detail);
     this.applyEventState(record, event);
+    this.rememberRecentEvent(record, event);
 
-    await Promise.all(
-      [...record.listeners].map(async (listener) => {
-        await listener(event);
-      })
-    );
+    for (const listener of record.listeners) {
+      this.enqueueListenerEvent(record, listener, event);
+    }
 
     return event;
   }
@@ -283,9 +305,43 @@ export class ActiveRunRegistry {
     }
 
     record.disposed = true;
+    for (const listener of record.listeners) {
+      listener.closed = true;
+    }
     record.listeners.clear();
+    record.recentEvents = [];
     record.attachedClients = 0;
     this.records.delete(sessionId);
+  }
+
+  private rememberRecentEvent(record: ActiveRunRecord, event: RuntimeEvent): void {
+    record.recentEvents.push(event);
+
+    if (record.recentEvents.length > ACTIVE_RUN_RECENT_EVENT_LIMIT) {
+      record.recentEvents.splice(0, record.recentEvents.length - ACTIVE_RUN_RECENT_EVENT_LIMIT);
+    }
+  }
+
+  private enqueueListenerEvent(
+    record: ActiveRunRecord,
+    attachedListener: AttachedRuntimeListener,
+    event: RuntimeEvent
+  ): void {
+    attachedListener.queue = attachedListener.queue
+      .catch(() => {
+        return;
+      })
+      .then(async () => {
+        if (record.disposed || attachedListener.closed || !record.listeners.has(attachedListener)) {
+          return;
+        }
+
+        await attachedListener.listener(event);
+      })
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn(`[active-run-registry] listener failed for ${record.sessionId}: ${message}`);
+      });
   }
 
   private getRecordOrThrow(sessionId: string): ActiveRunRecord {

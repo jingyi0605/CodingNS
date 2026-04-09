@@ -53,6 +53,8 @@ export interface SessionRuntimeState {
   errorDetail: string | null;
 }
 
+const RUNTIME_THINKING_PLACEHOLDER_RAW_REF_PREFIX = "runtime-placeholder://thinking/";
+
 export function createInitialRuntimeState(
   seed?: Partial<
     Pick<
@@ -157,6 +159,32 @@ export function createPendingMessage(
     deliveryState: "sending",
     clientRequestId
   };
+}
+
+export function upsertRuntimeThinkingPlaceholder(
+  current: SessionMessageViewModel[],
+  sessionId: string,
+  content: string
+): SessionMessageViewModel[] {
+  const withoutPlaceholder = removeRuntimeThinkingPlaceholder(current, sessionId);
+
+  if (!shouldShowRuntimeThinkingPlaceholder(withoutPlaceholder)) {
+    return withoutPlaceholder;
+  }
+
+  return sortMessages([
+    ...withoutPlaceholder,
+    createRuntimeThinkingPlaceholder(sessionId, content, getNextRuntimePlaceholderSequence(withoutPlaceholder))
+  ]);
+}
+
+export function removeRuntimeThinkingPlaceholder(
+  current: SessionMessageViewModel[],
+  sessionId: string
+): SessionMessageViewModel[] {
+  const placeholderRawRef = buildRuntimeThinkingPlaceholderRawRef(sessionId);
+  const next = current.filter((message) => message.rawRef !== placeholderRawRef);
+  return next.length === current.length ? current : next;
 }
 
 export function mergeAuthoritativeMessages(
@@ -399,6 +427,72 @@ function sortMessages(messages: SessionMessageViewModel[]): SessionMessageViewMo
   );
 }
 
+function createRuntimeThinkingPlaceholder(
+  sessionId: string,
+  content: string,
+  sequence: number
+): SessionMessageViewModel {
+  return {
+    id: `runtime-thinking-placeholder-${sessionId}`,
+    sessionId,
+    role: "system",
+    kind: "text",
+    content,
+    toolCall: null,
+    attachments: [],
+    attachmentPayloads: null,
+    origin: "system",
+    originRef: null,
+    timestamp: new Date().toISOString(),
+    sequence,
+    rawRef: buildRuntimeThinkingPlaceholderRawRef(sessionId),
+    deliveryState: "sent",
+    clientRequestId: null
+  };
+}
+
+function buildRuntimeThinkingPlaceholderRawRef(sessionId: string): string {
+  return `${RUNTIME_THINKING_PLACEHOLDER_RAW_REF_PREFIX}${sessionId}`;
+}
+
+function getNextRuntimePlaceholderSequence(messages: SessionMessageViewModel[]): number {
+  const maxSequence = messages.reduce((currentMax, message) => {
+    return Number.isFinite(message.sequence) && message.sequence > currentMax
+      ? message.sequence
+      : currentMax;
+  }, 0);
+
+  return maxSequence + 1;
+}
+
+function shouldShowRuntimeThinkingPlaceholder(messages: SessionMessageViewModel[]): boolean {
+  const latestUserIndex = findLatestUserMessageIndex(messages);
+
+  if (latestUserIndex < 0) {
+    return false;
+  }
+
+  const trailingMessages = messages.slice(latestUserIndex + 1);
+
+  return !trailingMessages.some(
+    (message) =>
+      message.role === "assistant" &&
+      (message.kind === "text" || message.kind === "thinking")
+  );
+}
+
+function findLatestUserMessageIndex(messages: SessionMessageViewModel[]): number {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+
+    if (message.role === "user" && message.kind === "text") {
+      return index;
+    }
+  }
+
+  return -1;
+}
+
 function mergeResolvedUserMessage(
   authoritative: SessionMessageViewModel,
   optimistic: SessionMessageViewModel | null
@@ -487,7 +581,7 @@ function isEquivalentCodexTextMessage(
   const rightContent = parseMessageRichContent(right.content);
 
   return (
-    areTimestampsNear(left.timestamp, right.timestamp) &&
+    areTimestampsNearWithinWindow(left.timestamp, right.timestamp, 30 * 1000) &&
     normalizeComparableCodexText(leftContent.text) === normalizeComparableCodexText(rightContent.text) &&
     areEquivalentInlineImages(leftContent.inlineImages, rightContent.inlineImages)
   );
@@ -953,10 +1047,6 @@ export function getNextOptimisticUserSequence(messages: SessionMessageViewModel[
   }, 0);
 
   return maxSequence + 1;
-}
-
-function areTimestampsNear(left: string, right: string): boolean {
-  return Math.abs(toTimestampMs(left) - toTimestampMs(right)) <= 1000;
 }
 
 function areTimestampsNearWithinWindow(left: string, right: string, windowMs: number): boolean {

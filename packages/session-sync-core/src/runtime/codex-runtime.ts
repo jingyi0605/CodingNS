@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
+import { performance } from "node:perf_hooks";
 import { basename, dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -68,6 +69,7 @@ interface ActiveTurnContext {
   workspacePath: string;
   firstUserMessage: string;
   launchedAtMs: number;
+  launchPerfStartedAtMs: number;
 }
 
 interface CodexStableMessageRef {
@@ -93,6 +95,60 @@ interface CodexRuntimeOptions {
     providerSessionId: string;
     request: Record<string, unknown>;
   }) => Promise<unknown>;
+}
+
+const CODEX_RUNTIME_DEBUG_ENABLED = /^(1|true|yes)$/i.test(
+  process.env.CODINGNS_PERF_DEBUG?.trim() ?? ""
+);
+
+function logCodexRuntimeStep(
+  scope: string,
+  startedAtMs: number,
+  detail: Record<string, unknown> = {}
+): void {
+  if (!CODEX_RUNTIME_DEBUG_ENABLED) {
+    return;
+  }
+
+  const durationMs = Math.round(performance.now() - startedAtMs);
+  const suffix = formatCodexRuntimeDebugDetail(detail);
+  console.info(`[perf][codex-runtime] ${scope} ${durationMs}ms${suffix ? ` ${suffix}` : ""}`);
+}
+
+function formatCodexRuntimeDebugDetail(detail: Record<string, unknown>): string {
+  const entries = Object.entries(detail).filter(([, value]) => value !== undefined);
+
+  if (entries.length === 0) {
+    return "";
+  }
+
+  return entries
+    .map(([key, value]) => `${key}=${formatCodexRuntimeDebugValue(value)}`)
+    .join(" ");
+}
+
+function formatCodexRuntimeDebugValue(value: unknown): string {
+  if (value === null) {
+    return "null";
+  }
+
+  if (typeof value === "string") {
+    return JSON.stringify(value);
+  }
+
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? String(Math.round(value)) : String(value);
+  }
+
+  if (typeof value === "boolean") {
+    return value ? "true" : "false";
+  }
+
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
 }
 
 export interface CodexAppServerTransport {
@@ -121,31 +177,55 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
     sink: ProviderRuntimeEventSink
   ): Promise<ProviderRuntimeLaunchResult> {
     const launchedAtMs = Date.now();
+    const launchPerfStartedAtMs = performance.now();
     const transport = this.options.transportFactory
       ? this.options.transportFactory()
       : createCodexAppServerTransport(this.options);
+    const initializeStartedAtMs = performance.now();
     await transport.initialize();
+    logCodexRuntimeStep("start_session.initialize", initializeStartedAtMs, {
+      sessionId: request.sessionId,
+      workspacePath: request.workspacePath
+    });
     const abortController = new AbortController();
     const eventQueue = createAsyncEventQueue();
+    const startThreadStartedAtMs = performance.now();
     const startedSession = await transport.startThread(request);
+    logCodexRuntimeStep("start_session.thread_start", startThreadStartedAtMs, {
+      sessionId: request.sessionId,
+      providerSessionId: startedSession.providerSessionId
+    });
     const providerSessionId = startedSession.providerSessionId;
-    const fallbackRawStoreRef =
-      startedSession.rawStoreRef ??
-      request.rawStoreRef ??
-      buildRuntimeRawStoreRef(resolveRuntimeStoreKey(providerSessionId, request.sessionId));
-    const resolvedBinding = await this.resolveExistingSessionBinding(
-      providerSessionId,
-      fallbackRawStoreRef,
-      request.workspacePath
+    const syntheticRawStoreRef = buildRuntimeRawStoreRef(
+      resolveRuntimeStoreKey(providerSessionId, request.sessionId)
     );
-    const rawStoreRef = resolvedBinding?.rawStoreRef ?? fallbackRawStoreRef;
+    const rawStoreRef = pickAvailableCodexRawStoreRef(
+      [startedSession.rawStoreRef, request.rawStoreRef],
+      syntheticRawStoreRef
+    );
+    logCodexRuntimeStep("start_session.raw_store_ref_ready", launchPerfStartedAtMs, {
+      sessionId: request.sessionId,
+      providerSessionId,
+      synthetic: isSyntheticRawStoreRef(rawStoreRef),
+      hasProviderRawStoreRef: Boolean(startedSession.rawStoreRef),
+      providerRawStoreRefExists: Boolean(startedSession.rawStoreRef && existsSync(startedSession.rawStoreRef))
+    });
 
     sink.updateSessionBinding({
       providerSessionId,
       rawStoreRef
     });
 
+    let firstNotificationLogged = false;
     transport.setNotificationHandler(async (notification) => {
+      if (!firstNotificationLogged) {
+        firstNotificationLogged = true;
+        logCodexRuntimeStep("start_session.first_notification", launchPerfStartedAtMs, {
+          sessionId: request.sessionId,
+          providerSessionId,
+          method: ensureText(notification.method).trim() || null
+        });
+      }
       const translated = translateCodexAppServerNotification(notification);
 
       if (translated.turnId) {
@@ -181,7 +261,16 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
       }
       eventQueue.close();
     });
+    const startTurnStartedAtMs = performance.now();
     await transport.startTurn(request, providerSessionId);
+    logCodexRuntimeStep("start_session.turn_start", startTurnStartedAtMs, {
+      sessionId: request.sessionId,
+      providerSessionId
+    });
+    logCodexRuntimeStep("start_session.ready", launchPerfStartedAtMs, {
+      sessionId: request.sessionId,
+      providerSessionId
+    });
 
     return {
       providerSessionId,
@@ -203,7 +292,8 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
         abortController,
         eventQueue.iterator,
         [],
-        launchedAtMs
+        launchedAtMs,
+        launchPerfStartedAtMs
       ).finally(() => {
         transport.close();
       })
@@ -226,25 +316,51 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
     const transport = this.options.transportFactory
       ? this.options.transportFactory()
       : createCodexAppServerTransport(this.options);
+    const runtimeStartedAtMs = performance.now();
+    const initializeStartedAtMs = performance.now();
     await transport.initialize();
-    const fallbackRawStoreRef = request.rawStoreRef ?? buildRuntimeRawStoreRef(providerSessionId);
-    const resolvedBinding = await this.resolveExistingSessionBinding(
-      providerSessionId,
-      fallbackRawStoreRef,
-      request.workspacePath
-    );
-    const resolvedSessionId = resolvedBinding?.providerSessionId ?? providerSessionId;
+    logCodexRuntimeStep("continue_session.initialize", initializeStartedAtMs, {
+      sessionId: request.sessionId,
+      providerSessionId
+    });
+    const syntheticRawStoreRef = buildRuntimeRawStoreRef(providerSessionId);
+    const resolvedSessionId = providerSessionId;
+    const resumeThreadStartedAtMs = performance.now();
     const resumed = await transport.resumeThread(request, resolvedSessionId);
-    const rawStoreRef = resolvedBinding?.rawStoreRef ?? resumed.rawStoreRef ?? fallbackRawStoreRef;
+    logCodexRuntimeStep("continue_session.thread_resume", resumeThreadStartedAtMs, {
+      sessionId: request.sessionId,
+      providerSessionId: resolvedSessionId
+    });
+    const rawStoreRef = pickAvailableCodexRawStoreRef(
+      [request.rawStoreRef, resumed.rawStoreRef],
+      syntheticRawStoreRef
+    );
     const abortController = new AbortController();
     const eventQueue = createAsyncEventQueue();
+    logCodexRuntimeStep("continue_session.raw_store_ref_ready", runtimeStartedAtMs, {
+      sessionId: request.sessionId,
+      providerSessionId: resolvedSessionId,
+      synthetic: isSyntheticRawStoreRef(rawStoreRef),
+      hasResumedRawStoreRef: Boolean(resumed.rawStoreRef),
+      hasRequestRawStoreRef: Boolean(request.rawStoreRef),
+      resumedRawStoreRefExists: Boolean(resumed.rawStoreRef && existsSync(resumed.rawStoreRef))
+    });
 
     sink.updateSessionBinding({
       providerSessionId: resolvedSessionId,
       rawStoreRef
     });
 
+    let firstNotificationLogged = false;
     transport.setNotificationHandler(async (notification) => {
+      if (!firstNotificationLogged) {
+        firstNotificationLogged = true;
+        logCodexRuntimeStep("continue_session.first_notification", runtimeStartedAtMs, {
+          sessionId: request.sessionId,
+          providerSessionId: resolvedSessionId,
+          method: ensureText(notification.method).trim() || null
+        });
+      }
       const translated = translateCodexAppServerNotification(notification);
 
       if (translated.turnId) {
@@ -280,7 +396,16 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
       }
       eventQueue.close();
     });
+    const startTurnStartedAtMs = performance.now();
     await transport.startTurn(request, resolvedSessionId);
+    logCodexRuntimeStep("continue_session.turn_start", startTurnStartedAtMs, {
+      sessionId: request.sessionId,
+      providerSessionId: resolvedSessionId
+    });
+    logCodexRuntimeStep("continue_session.ready", runtimeStartedAtMs, {
+      sessionId: request.sessionId,
+      providerSessionId: resolvedSessionId
+    });
 
     return {
       providerSessionId: resolvedSessionId,
@@ -318,7 +443,8 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
     abortController: AbortController,
     preparedEvents?: AsyncIterator<unknown>,
     bufferedEvents: unknown[] = [],
-    launchedAtMs = Date.now()
+    launchedAtMs = Date.now(),
+    launchPerfStartedAtMs = performance.now()
   ): Promise<void> {
     const context: ActiveTurnContext = {
       providerSessionId,
@@ -332,7 +458,8 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
       sink,
       workspacePath: request.workspacePath,
       firstUserMessage: request.options.content,
-      launchedAtMs
+      launchedAtMs,
+      launchPerfStartedAtMs
     };
 
     try {
@@ -402,6 +529,14 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
 
     if (eventType.length === 0) {
       return;
+    }
+
+    if (context.lastSignatureByIdentity.size === 0 && eventType.startsWith("item.")) {
+      logCodexRuntimeStep("turn.first_item_event", context.launchPerfStartedAtMs, {
+        sessionId: request.sessionId,
+        providerSessionId: context.providerSessionId,
+        eventType
+      });
     }
 
     if (eventType === "turn.completed") {
@@ -648,15 +783,15 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
     }
 
     const resolved =
-      await this.resolveExistingSessionBinding(
-        context.providerSessionId,
-        context.rawStoreRef,
-        context.workspacePath
-      ) ??
       await this.resolveLaunchedSessionBinding(
         context.workspacePath,
         context.firstUserMessage,
         context.launchedAtMs
+      ) ??
+      await this.resolveExistingSessionBinding(
+        context.providerSessionId,
+        context.rawStoreRef,
+        context.workspacePath
       );
 
     if (
@@ -1118,6 +1253,7 @@ function createCodexAppServerTransport(options: CodexRuntimeOptions): CodexAppSe
 
   return {
     async initialize() {
+      const startedAtMs = performance.now();
       await sendJsonRpcRequest(child, pendingResponses, () => nextJsonRpcId("initialize", () => ++requestSequence), {
         method: "initialize",
         params: {
@@ -1133,8 +1269,10 @@ function createCodexAppServerTransport(options: CodexRuntimeOptions): CodexAppSe
         method: "initialized",
         params: {}
       });
+      logCodexRuntimeStep("transport.initialize", startedAtMs);
     },
     async startThread(request) {
+      const startedAtMs = performance.now();
       const result = await sendJsonRpcRequest(
         child,
         pendingResponses,
@@ -1152,6 +1290,10 @@ function createCodexAppServerTransport(options: CodexRuntimeOptions): CodexAppSe
       }
 
       activeThreadId = providerSessionId;
+      logCodexRuntimeStep("transport.thread_start", startedAtMs, {
+        sessionId: request.sessionId,
+        providerSessionId
+      });
 
       return {
         providerSessionId,
@@ -1159,6 +1301,7 @@ function createCodexAppServerTransport(options: CodexRuntimeOptions): CodexAppSe
       };
     },
     async resumeThread(request, providerSessionId) {
+      const startedAtMs = performance.now();
       const result = await sendJsonRpcRequest(
         child,
         pendingResponses,
@@ -1170,6 +1313,10 @@ function createCodexAppServerTransport(options: CodexRuntimeOptions): CodexAppSe
       );
       const thread = toRecord(result.thread);
       activeThreadId = ensureText(thread?.id).trim() || providerSessionId;
+      logCodexRuntimeStep("transport.thread_resume", startedAtMs, {
+        sessionId: request.sessionId,
+        providerSessionId: activeThreadId
+      });
 
       return {
         providerSessionId: activeThreadId,
@@ -1177,6 +1324,7 @@ function createCodexAppServerTransport(options: CodexRuntimeOptions): CodexAppSe
       };
     },
     async startTurn(request, providerSessionId) {
+      const startedAtMs = performance.now();
       const result = await sendJsonRpcRequest(
         child,
         pendingResponses,
@@ -1187,6 +1335,11 @@ function createCodexAppServerTransport(options: CodexRuntimeOptions): CodexAppSe
         }
       );
       activeTurnId = ensureText(readProp(readProp(result, "turn"), "id")).trim() || activeTurnId;
+      logCodexRuntimeStep("transport.turn_start", startedAtMs, {
+        sessionId: request.sessionId,
+        providerSessionId,
+        turnId: activeTurnId
+      });
     },
     async interruptTurn() {
       if (!activeThreadId || !activeTurnId) {
@@ -1771,6 +1924,25 @@ function resolveNodeModulesCandidate(currentDirectory: string, relativeSegments:
 
 function buildRuntimeRawStoreRef(providerSessionId: string): string {
   return resolve(process.cwd(), "runtime", "codex", `${providerSessionId}.stream`);
+}
+
+function pickAvailableCodexRawStoreRef(
+  candidates: Array<string | null | undefined>,
+  fallbackRawStoreRef: string
+): string {
+  for (const candidate of candidates) {
+    const normalized = candidate?.trim();
+
+    if (!normalized) {
+      continue;
+    }
+
+    if (existsSync(normalized)) {
+      return normalized;
+    }
+  }
+
+  return fallbackRawStoreRef;
 }
 
 function resolveRuntimeStoreKey(providerSessionId: string, sessionId: string): string {

@@ -6,7 +6,9 @@ import {
   markPendingAsFailed,
   mergeAuthoritativeMessages,
   reconcileMessage,
+  removeRuntimeThinkingPlaceholder,
   toViewMessage,
+  upsertRuntimeThinkingPlaceholder,
   type SessionMessageViewModel
 } from "./session-runtime-machine";
 import type { ToolCallDto } from "../api/conversation-api";
@@ -296,6 +298,67 @@ describe("session runtime machine", () => {
     expect(merged).toHaveLength(1);
     expect(merged[0].id).toBe("codex-attachment-message");
     expect(merged[0].attachments).toHaveLength(1);
+  });
+
+  it("会在最新 user 消息之后插入运行中占位，并在 assistant 到达后移除", () => {
+    const withPlaceholder = upsertRuntimeThinkingPlaceholder(
+      [
+        toViewMessage(
+          "session-1",
+          createHistoryMessage({
+            messageId: "user-1",
+            provider: "codex",
+            providerSessionId: "raw-1",
+            role: "user",
+            content: "继续",
+            timestamp: "2026-03-24T01:05:29.100Z",
+            sequence: 1,
+            rawRef: "codex://demo#line=1"
+          })
+        )
+      ],
+      "session-1",
+      "Codex 正在思考..."
+    );
+
+    expect(withPlaceholder).toHaveLength(2);
+    expect(withPlaceholder.at(-1)).toMatchObject({
+      role: "system",
+      kind: "text",
+      content: "Codex 正在思考..."
+    });
+
+    const withoutPlaceholder = removeRuntimeThinkingPlaceholder(withPlaceholder, "session-1");
+
+    expect(withoutPlaceholder).toHaveLength(1);
+    expect(withoutPlaceholder[0]?.role).toBe("user");
+  });
+
+  it("会折叠 codex runtime 与历史回流之间相隔数秒的重复 assistant 正文", () => {
+    const merged = mergeAuthoritativeMessages([], "session-1", [
+      createHistoryMessage({
+        messageId: "codex-runtime-message",
+        provider: "codex",
+        providerSessionId: "raw-1",
+        role: "assistant",
+        content: "同一条回复",
+        timestamp: "2026-03-24T01:05:29.100Z",
+        sequence: 2,
+        rawRef: "codex://demo#line=6"
+      }),
+      createHistoryMessage({
+        messageId: "codex-history-message",
+        provider: "codex",
+        providerSessionId: "raw-1",
+        role: "assistant",
+        content: "同一条回复",
+        timestamp: "2026-03-24T01:05:49.100Z",
+        sequence: 3,
+        rawRef: "codex://demo#line=7"
+      })
+    ]);
+
+    expect(merged).toHaveLength(1);
   });
 
   it("会折叠 codex 过时 event_msg 和后续 response_item 的重复用户消息", () => {

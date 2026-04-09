@@ -1,5 +1,6 @@
 import { existsSync, readdirSync } from "node:fs";
 import path from "node:path";
+import { performance } from "node:perf_hooks";
 
 import {
   type ActiveRunHandle,
@@ -23,6 +24,7 @@ import {
 import type { HostConfig } from "../../config/env.js";
 import { AppError } from "../../shared/errors/app-error.js";
 import { createId } from "../../shared/utils/id.js";
+import { isPerfDebugEnabled, logPerformance } from "../../shared/utils/perf-log.js";
 import { logPermissionDebug } from "../../shared/utils/permission-debug-log.js";
 import { nowIso } from "../../shared/utils/time.js";
 import type { AuthUserRepository } from "../../storage/repositories/auth-user-repository.js";
@@ -104,6 +106,17 @@ interface LiveMessageAcceptedResult {
 interface PersistedAttachmentBundle {
   messageAttachments: NormalizedMessageAttachment[];
   runtimeAttachments: RuntimeImageAttachmentDescriptor[];
+}
+
+interface PendingSessionSendDebugTrace {
+  mode: "start_live" | "send_live";
+  sessionId: string;
+  workspaceId: string;
+  provider: string;
+  clientRequestId: string | null;
+  startedAtMs: number;
+  responseReadyAtMs: number | null;
+  firstRuntimeEventAtMs: number | null;
 }
 
 export interface SessionQueueItemView {
@@ -276,6 +289,7 @@ export class SessionLiveRuntimeService {
   private readonly runtimeHistoryFallbackSentSessions = new Set<string>();
   private readonly queueDispatchSessions = new Set<string>();
   private readonly queueRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly pendingSendDebugTracesBySessionId = new Map<string, PendingSessionSendDebugTrace[]>();
 
   constructor(
     private readonly sessionHistoryService: SessionHistoryService,
@@ -319,120 +333,151 @@ export class SessionLiveRuntimeService {
 
   async startLiveSession(input: StartLiveSessionInput): Promise<LiveMessageAcceptedResult> {
     const requestStartedAt = nowIso();
-    const capabilities = this.sessionHistoryService.getProviderCapabilitiesSnapshot(input.provider);
-    const workspace = this.workspaceService.getWorkspaceOrThrow(input.workspaceId);
     const sessionId = createId();
-    this.ensurePendingSessionBinding(sessionId, workspace.id, input.provider);
-    const persistedAttachments = this.persistMessageAttachments(
-      sessionId,
-      input.clientRequestId,
-      input.runtimeOptions?.attachments ?? []
-    );
-    const providerPrompt = this.sessionMessageAttachmentService.buildProviderPrompt(
-      input.provider,
-      input.content,
-      persistedAttachments.runtimeAttachments
-    );
-
-    this.ensureCapability(capabilities.canStartSession, "provider", "provider 不支持 start-live");
-    this.ensureCapability(capabilities.canSendMessage, "provider", "provider 不支持实时对话");
-
-    const handle = await this.launchRuntimeRun(
-      {
-        sessionId,
-        workspaceId: workspace.id,
-        workspacePath: workspace.path,
-        provider: input.provider as ProviderRuntimeRunRequest["provider"],
-        providerSessionId: null,
-        rawStoreRef: null,
-        sequenceBase: 1,
-        options: {
-          content: input.content,
-          clientRequestId: input.clientRequestId,
-          model: input.runtimeOptions?.model ?? null,
-          reasoningLevel: input.runtimeOptions?.reasoningLevel ?? null,
-          permissionMode: input.runtimeOptions?.permissionMode ?? null,
-          providerPrompt,
-          attachments: persistedAttachments.runtimeAttachments
-        }
-      },
-      "start"
-    );
-    const snapshot = handle.getSnapshot();
-
-    this.attachRuntimePersistence(handle, sessionId, workspace.id, input.userId);
-    this.createRuntimeBackedSession({
+    const workspace = this.workspaceService.getWorkspaceOrThrow(input.workspaceId);
+    const debugTrace = this.beginPendingSendDebugTrace({
+      mode: "start_live",
       sessionId,
       workspaceId: workspace.id,
-      userId: input.userId,
       provider: input.provider,
-      initialContent: input.content,
-      snapshot
-    });
-    const startBindingTask = this.waitForResolvedStartBinding(
-      sessionId,
-      workspace.id,
-      input.provider,
-      handle
-    ).catch(() => {
-      return;
+      clientRequestId: input.clientRequestId
     });
 
-    if (shouldAwaitStartBindingBeforeAcceptedUserLookup(input.provider)) {
-      await Promise.race([
-        startBindingTask,
-        waitForAcceptedUserLookupWindow()
-      ]);
-    }
+    try {
+      const capabilities = this.sessionHistoryService.getProviderCapabilitiesSnapshot(input.provider);
+      this.ensurePendingSessionBinding(sessionId, workspace.id, input.provider);
+      const persistedAttachments = this.persistMessageAttachments(
+        sessionId,
+        input.clientRequestId,
+        input.runtimeOptions?.attachments ?? []
+      );
+      const providerPrompt = this.sessionMessageAttachmentService.buildProviderPrompt(
+        input.provider,
+        input.content,
+        persistedAttachments.runtimeAttachments
+      );
 
-    const binding = this.sessionHistoryService.getBindingOrThrow(sessionId);
-    const acceptedMessage = shouldAwaitAcceptedUserMessage(input.provider)
-      ? await this.findAcceptedUserMessage(
+      this.ensureCapability(capabilities.canStartSession, "provider", "provider 不支持 start-live");
+      this.ensureCapability(capabilities.canSendMessage, "provider", "provider 不支持实时对话");
+
+      const launchRuntimeStartedAtMs = performance.now();
+      const handle = await this.launchRuntimeRun(
+        {
           sessionId,
-          this.sessionMessageAttachmentService.buildAcceptedContentCandidates(
+          workspaceId: workspace.id,
+          workspacePath: workspace.path,
+          provider: input.provider as ProviderRuntimeRunRequest["provider"],
+          providerSessionId: null,
+          rawStoreRef: null,
+          sequenceBase: 1,
+          options: {
+            content: input.content,
+            clientRequestId: input.clientRequestId,
+            model: input.runtimeOptions?.model ?? null,
+            reasoningLevel: input.runtimeOptions?.reasoningLevel ?? null,
+            permissionMode: input.runtimeOptions?.permissionMode ?? null,
+            providerPrompt,
+            attachments: persistedAttachments.runtimeAttachments
+          }
+        },
+        "start"
+      );
+      this.logSendDebugStep(debugTrace, "launch_runtime", launchRuntimeStartedAtMs, {
+        userId: input.userId
+      });
+      const snapshot = handle.getSnapshot();
+
+      this.attachRuntimePersistence(handle, sessionId, workspace.id, input.userId);
+      this.createRuntimeBackedSession({
+        sessionId,
+        workspaceId: workspace.id,
+        userId: input.userId,
+        provider: input.provider,
+        initialContent: input.content,
+        snapshot
+      });
+      const startBindingTask = this.waitForResolvedStartBinding(
+        sessionId,
+        workspace.id,
+        input.provider,
+        handle
+      ).catch(() => {
+        return;
+      });
+
+      if (shouldAwaitStartBindingBeforeAcceptedUserLookup(input.provider)) {
+        const bindingWaitStartedAtMs = performance.now();
+        await Promise.race([
+          startBindingTask,
+          waitForAcceptedUserLookupWindow()
+        ]);
+        this.logSendDebugStep(debugTrace, "binding_wait", bindingWaitStartedAtMs, {
+          provider: input.provider
+        });
+      }
+
+      const binding = this.sessionHistoryService.getBindingOrThrow(sessionId);
+      const acceptedLookupStartedAtMs = performance.now();
+      const acceptedMessage = shouldAwaitAcceptedUserMessage(input.provider)
+        ? await this.findAcceptedUserMessage(
+            sessionId,
+            this.sessionMessageAttachmentService.buildAcceptedContentCandidates(
+              input.content,
+              providerPrompt
+            ),
+            requestStartedAt
+          )
+        : null;
+      this.logSendDebugStep(debugTrace, "accepted_user_lookup", acceptedLookupStartedAtMs, {
+        awaited: shouldAwaitAcceptedUserMessage(input.provider),
+        matched: Boolean(acceptedMessage)
+      });
+      if (!shouldAwaitStartBindingBeforeAcceptedUserLookup(input.provider)) {
+        void startBindingTask;
+      }
+      const acceptedAt = acceptedMessage?.timestamp ?? nowIso();
+      const boundAttachments = this.sessionMessageAttachmentService.bindClientRequestToMessage(
+        sessionId,
+        input.clientRequestId,
+        acceptedMessage?.messageId ?? null
+      );
+
+      const session = this.sessionHistoryService.getSession(sessionId, input.userId);
+      this.markSendDebugResponseReady(debugTrace, {
+        returnedAcceptedMessage: Boolean(acceptedMessage),
+        returnedSyntheticUser: !acceptedMessage,
+        providerSessionId: binding.providerSessionId
+      });
+
+      return {
+        sessionId: session.sessionId,
+        provider: input.provider,
+        providerSessionId: binding.providerSessionId,
+        acceptedAt,
+        clientRequestId: input.clientRequestId,
+        message:
+          (acceptedMessage
+            ? {
+                ...acceptedMessage,
+                attachments: boundAttachments
+              }
+            : null) ??
+          createSyntheticUserMessage(
+            input.provider,
+            binding.providerSessionId,
             input.content,
-            providerPrompt
+            acceptedAt,
+            1,
+            boundAttachments.length > 0
+              ? boundAttachments
+              : persistedAttachments.messageAttachments
           ),
-          requestStartedAt
-        )
-      : null;
-    if (!shouldAwaitStartBindingBeforeAcceptedUserLookup(input.provider)) {
-      void startBindingTask;
+        session
+      };
+    } catch (error) {
+      this.failPendingSendDebugTrace(debugTrace, error);
+      throw error;
     }
-    const acceptedAt = acceptedMessage?.timestamp ?? nowIso();
-    const boundAttachments = this.sessionMessageAttachmentService.bindClientRequestToMessage(
-      sessionId,
-      input.clientRequestId,
-      acceptedMessage?.messageId ?? null
-    );
-
-    const session = this.sessionHistoryService.getSession(sessionId, input.userId);
-
-    return {
-      sessionId: session.sessionId,
-      provider: input.provider,
-      providerSessionId: binding.providerSessionId,
-      acceptedAt,
-      clientRequestId: input.clientRequestId,
-      message:
-        (acceptedMessage
-          ? {
-              ...acceptedMessage,
-              attachments: boundAttachments
-            }
-          : null) ??
-        createSyntheticUserMessage(
-          input.provider,
-          binding.providerSessionId,
-          input.content,
-          acceptedAt,
-          1,
-          boundAttachments.length > 0
-            ? boundAttachments
-            : persistedAttachments.messageAttachments
-        ),
-      session
-    };
   }
 
   async sendLiveMessage(input: SendLiveMessageInput): Promise<LiveMessageAcceptedResult> {
@@ -1405,122 +1450,154 @@ export class SessionLiveRuntimeService {
   ): Promise<LiveMessageAcceptedResult> {
     const requestStartedAt = nowIso();
     const session = this.sessionHistoryService.getSession(input.sessionId, input.userId);
-    const capabilities = await this.sessionHistoryService.getSessionCapabilities(input.sessionId);
-    const workspace = this.workspaceService.getWorkspaceOrThrow(session.workspaceId);
-    const runtimeMode = shouldStartNativeSessionOnFirstMessage(session);
-    const nextUserSequence =
-      runtimeMode === "start"
-        ? 1
-        : await this.resolveNextUserSequence(input.sessionId, session.messageCount);
-    const resolvedAttachments =
-      persistedAttachments
-      ?? this.persistMessageAttachments(
-        input.sessionId,
-        input.clientRequestId,
-        input.runtimeOptions?.attachments ?? []
-      );
-    const providerPrompt = this.sessionMessageAttachmentService.buildProviderPrompt(
-      session.provider,
-      input.content,
-      resolvedAttachments.runtimeAttachments
-    );
-
-    this.ensureCapability(capabilities.canSendMessage, "sessionId", "provider 不支持实时对话");
-
-    const runtimeRequest = {
+    const debugTrace = this.beginPendingSendDebugTrace({
+      mode: "send_live",
       sessionId: input.sessionId,
       workspaceId: session.workspaceId,
-      workspacePath: workspace.path,
       provider: session.provider,
-      providerSessionId: runtimeMode === "start" ? null : session.providerSessionId,
-      rawStoreRef: runtimeMode === "start" ? null : session.rawStoreRef,
-      sequenceBase: nextUserSequence,
-      options: {
-        content: input.content,
-        clientRequestId: input.clientRequestId,
-        model: input.runtimeOptions?.model ?? null,
-        reasoningLevel: input.runtimeOptions?.reasoningLevel ?? null,
-        permissionMode: input.runtimeOptions?.permissionMode ?? null,
-        providerPrompt,
-        attachments: resolvedAttachments.runtimeAttachments
-      }
-    } as const;
+      clientRequestId: input.clientRequestId
+    });
 
-    const runtimeSessionId = this.resolveRuntimeSessionId(input.sessionId);
-    const activeRun = this.providerRuntimeService.getSnapshot(runtimeSessionId);
-    const externalRuntimeSnapshot = this.externalRuntimeSnapshots.get(runtimeSessionId);
-
-    if (
-      activeRun &&
-      activeRun.provider === "claude-code" &&
-      isActiveRuntimeState(activeRun.runningState)
-    ) {
-      this.clearExternalRuntimeSnapshot(runtimeSessionId);
-    }
-
-    if (
-      !activeRun &&
-      session.provider === "claude-code" &&
-      externalRuntimeSnapshot &&
-      isActiveRuntimeState(externalRuntimeSnapshot.runningState)
-    ) {
-      throw new AppError({
-        statusCode: 409,
-        errorCode: "SESSION_EXTERNAL_RUN_ACTIVE",
-        detail: "当前 Claude 外部会话仍在运行，不能直接追加；请加入队列或等待当前轮结束",
-        field: "sessionId"
-      });
-    }
-
-    if (activeRun && isActiveRuntimeState(activeRun.runningState)) {
-      await this.providerRuntimeService.submitToActiveRun(runtimeSessionId, runtimeRequest.options)
-        .catch((error) => {
-          throw mapSessionProviderError(error);
-        });
-    } else {
-      await this.startRuntimeRun(runtimeRequest, input.userId, runtimeMode);
-    }
-
-    const binding = this.sessionHistoryService.getBindingOrThrow(input.sessionId);
-    const acceptedMessage = await this.findAcceptedUserMessage(
-      input.sessionId,
-      this.sessionMessageAttachmentService.buildAcceptedContentCandidates(
+    try {
+      const capabilities = await this.sessionHistoryService.getSessionCapabilities(input.sessionId);
+      const workspace = this.workspaceService.getWorkspaceOrThrow(session.workspaceId);
+      const runtimeMode = shouldStartNativeSessionOnFirstMessage(session);
+      const nextUserSequence =
+        runtimeMode === "start"
+          ? 1
+          : await this.resolveNextUserSequence(input.sessionId, session.messageCount);
+      const resolvedAttachments =
+        persistedAttachments
+        ?? this.persistMessageAttachments(
+          input.sessionId,
+          input.clientRequestId,
+          input.runtimeOptions?.attachments ?? []
+        );
+      const providerPrompt = this.sessionMessageAttachmentService.buildProviderPrompt(
+        session.provider,
         input.content,
-        providerPrompt
-      ),
-      requestStartedAt
-    );
-    const acceptedAt = acceptedMessage?.timestamp ?? nowIso();
-    const boundAttachments = this.sessionMessageAttachmentService.bindClientRequestToMessage(
-      input.sessionId,
-      input.clientRequestId,
-      acceptedMessage?.messageId ?? null
-    );
+        resolvedAttachments.runtimeAttachments
+      );
 
-    return {
-      sessionId: input.sessionId,
-      provider: session.provider,
-      providerSessionId: binding.providerSessionId,
-      acceptedAt,
-      clientRequestId: input.clientRequestId,
-      message:
-        (acceptedMessage
-          ? {
-              ...acceptedMessage,
-              attachments: boundAttachments
-            }
-          : null) ??
-        createSyntheticUserMessage(
-          session.provider,
-          binding.providerSessionId,
+      this.ensureCapability(capabilities.canSendMessage, "sessionId", "provider 不支持实时对话");
+
+      const runtimeRequest = {
+        sessionId: input.sessionId,
+        workspaceId: session.workspaceId,
+        workspacePath: workspace.path,
+        provider: session.provider,
+        providerSessionId: runtimeMode === "start" ? null : session.providerSessionId,
+        rawStoreRef: runtimeMode === "start" ? null : session.rawStoreRef,
+        sequenceBase: nextUserSequence,
+        options: {
+          content: input.content,
+          clientRequestId: input.clientRequestId,
+          model: input.runtimeOptions?.model ?? null,
+          reasoningLevel: input.runtimeOptions?.reasoningLevel ?? null,
+          permissionMode: input.runtimeOptions?.permissionMode ?? null,
+          providerPrompt,
+          attachments: resolvedAttachments.runtimeAttachments
+        }
+      } as const;
+
+      const runtimeSessionId = this.resolveRuntimeSessionId(input.sessionId);
+      const activeRun = this.providerRuntimeService.getSnapshot(runtimeSessionId);
+      const externalRuntimeSnapshot = this.externalRuntimeSnapshots.get(runtimeSessionId);
+
+      if (
+        activeRun &&
+        activeRun.provider === "claude-code" &&
+        isActiveRuntimeState(activeRun.runningState)
+      ) {
+        this.clearExternalRuntimeSnapshot(runtimeSessionId);
+      }
+
+      if (
+        !activeRun &&
+        session.provider === "claude-code" &&
+        externalRuntimeSnapshot &&
+        isActiveRuntimeState(externalRuntimeSnapshot.runningState)
+      ) {
+        throw new AppError({
+          statusCode: 409,
+          errorCode: "SESSION_EXTERNAL_RUN_ACTIVE",
+          detail: "当前 Claude 外部会话仍在运行，不能直接追加；请加入队列或等待当前轮结束",
+          field: "sessionId"
+        });
+      }
+
+      if (activeRun && isActiveRuntimeState(activeRun.runningState)) {
+        const submitStartedAtMs = performance.now();
+        await this.providerRuntimeService.submitToActiveRun(runtimeSessionId, runtimeRequest.options)
+          .catch((error) => {
+            throw mapSessionProviderError(error);
+          });
+        this.logSendDebugStep(debugTrace, "submit_to_active_run", submitStartedAtMs, {
+          runtimeMode,
+          activeRunState: activeRun.runningState
+        });
+      } else {
+        const startRuntimeStartedAtMs = performance.now();
+        await this.startRuntimeRun(runtimeRequest, input.userId, runtimeMode);
+        this.logSendDebugStep(debugTrace, "start_runtime_run", startRuntimeStartedAtMs, {
+          runtimeMode
+        });
+      }
+
+      const binding = this.sessionHistoryService.getBindingOrThrow(input.sessionId);
+      const acceptedLookupStartedAtMs = performance.now();
+      const acceptedMessage = await this.findAcceptedUserMessage(
+        input.sessionId,
+        this.sessionMessageAttachmentService.buildAcceptedContentCandidates(
           input.content,
-          acceptedAt,
-          nextUserSequence,
-          boundAttachments.length > 0
-            ? boundAttachments
-            : resolvedAttachments.messageAttachments
-        )
-    };
+          providerPrompt
+        ),
+        requestStartedAt
+      );
+      this.logSendDebugStep(debugTrace, "accepted_user_lookup", acceptedLookupStartedAtMs, {
+        matched: Boolean(acceptedMessage)
+      });
+      const acceptedAt = acceptedMessage?.timestamp ?? nowIso();
+      const boundAttachments = this.sessionMessageAttachmentService.bindClientRequestToMessage(
+        input.sessionId,
+        input.clientRequestId,
+        acceptedMessage?.messageId ?? null
+      );
+      this.markSendDebugResponseReady(debugTrace, {
+        runtimeMode,
+        returnedAcceptedMessage: Boolean(acceptedMessage),
+        returnedSyntheticUser: !acceptedMessage,
+        providerSessionId: binding.providerSessionId
+      });
+
+      return {
+        sessionId: input.sessionId,
+        provider: session.provider,
+        providerSessionId: binding.providerSessionId,
+        acceptedAt,
+        clientRequestId: input.clientRequestId,
+        message:
+          (acceptedMessage
+            ? {
+                ...acceptedMessage,
+                attachments: boundAttachments
+              }
+            : null) ??
+          createSyntheticUserMessage(
+            session.provider,
+            binding.providerSessionId,
+            input.content,
+            acceptedAt,
+            nextUserSequence,
+            boundAttachments.length > 0
+              ? boundAttachments
+              : resolvedAttachments.messageAttachments
+          )
+      };
+    } catch (error) {
+      this.failPendingSendDebugTrace(debugTrace, error);
+      throw error;
+    }
   }
 
   private async dispatchNextQueuedMessage(sessionId: string): Promise<void> {
@@ -1810,6 +1887,7 @@ export class SessionLiveRuntimeService {
     userId: string,
     event: RuntimeEvent
   ): Promise<void> {
+    this.observePendingSendDebugTraceEvent(sessionId, event);
     this.sessionHistoryService.persistSessionBinding(sessionId, workspaceId, {
       provider: event.provider,
       providerSessionId: event.providerSessionId,
@@ -1956,6 +2034,212 @@ export class SessionLiveRuntimeService {
     for (const listener of this.terminalStateListeners) {
       await listener(event);
     }
+  }
+
+  private beginPendingSendDebugTrace(input: {
+    mode: PendingSessionSendDebugTrace["mode"];
+    sessionId: string;
+    workspaceId: string;
+    provider: string;
+    clientRequestId: string | null;
+  }): PendingSessionSendDebugTrace | null {
+    if (!isPerfDebugEnabled()) {
+      return null;
+    }
+
+    const trace: PendingSessionSendDebugTrace = {
+      ...input,
+      startedAtMs: performance.now(),
+      responseReadyAtMs: null,
+      firstRuntimeEventAtMs: null
+    };
+    const queue = this.pendingSendDebugTracesBySessionId.get(input.sessionId) ?? [];
+    queue.push(trace);
+    this.pendingSendDebugTracesBySessionId.set(input.sessionId, queue);
+    logPerformance(
+      `session_send.${trace.mode}.begin`,
+      0,
+      this.buildSendDebugDetail(trace),
+      {
+        force: true,
+        thresholdMs: 0
+      }
+    );
+    return trace;
+  }
+
+  private logSendDebugStep(
+    trace: PendingSessionSendDebugTrace | null,
+    step: string,
+    startedAtMs: number,
+    detail: Record<string, unknown> = {}
+  ): void {
+    if (!trace) {
+      return;
+    }
+
+    logPerformance(
+      `session_send.${trace.mode}.${step}`,
+      performance.now() - startedAtMs,
+      {
+        ...this.buildSendDebugDetail(trace),
+        ...detail
+      },
+      {
+        force: true,
+        thresholdMs: 0
+      }
+    );
+  }
+
+  private markSendDebugResponseReady(
+    trace: PendingSessionSendDebugTrace | null,
+    detail: Record<string, unknown> = {}
+  ): void {
+    if (!trace || trace.responseReadyAtMs !== null) {
+      return;
+    }
+
+    trace.responseReadyAtMs = performance.now();
+    logPerformance(
+      `session_send.${trace.mode}.response_ready`,
+      trace.responseReadyAtMs - trace.startedAtMs,
+      {
+        ...this.buildSendDebugDetail(trace),
+        ...detail
+      },
+      {
+        force: true,
+        thresholdMs: 0
+      }
+    );
+  }
+
+  private failPendingSendDebugTrace(
+    trace: PendingSessionSendDebugTrace | null,
+    error: unknown
+  ): void {
+    if (!trace) {
+      return;
+    }
+
+    logPerformance(
+      `session_send.${trace.mode}.error`,
+      performance.now() - trace.startedAtMs,
+      {
+        ...this.buildSendDebugDetail(trace),
+        error: error instanceof Error ? error.message : String(error)
+      },
+      {
+        force: true,
+        thresholdMs: 0
+      }
+    );
+    this.removePendingSendDebugTrace(trace);
+  }
+
+  private observePendingSendDebugTraceEvent(sessionId: string, event: RuntimeEvent): void {
+    const trace = this.peekPendingSendDebugTrace(sessionId);
+
+    if (!trace) {
+      return;
+    }
+
+    const nowMs = performance.now();
+
+    if (trace.firstRuntimeEventAtMs === null) {
+      trace.firstRuntimeEventAtMs = nowMs;
+      logPerformance(
+        `session_send.${trace.mode}.first_runtime_event`,
+        trace.firstRuntimeEventAtMs - trace.startedAtMs,
+        {
+          ...this.buildSendDebugDetail(trace),
+          eventType: event.type,
+          status: event.status,
+          role: event.type === "message" ? event.message.role : null,
+          kind: event.type === "message" ? event.message.kind : null,
+          responseReady: trace.responseReadyAtMs !== null
+        },
+        {
+          force: true,
+          thresholdMs: 0
+        }
+      );
+    }
+
+    if (event.type === "message" && event.message.role === "assistant") {
+      logPerformance(
+        `session_send.${trace.mode}.first_assistant_message`,
+        nowMs - trace.startedAtMs,
+        {
+          ...this.buildSendDebugDetail(trace),
+          kind: event.message.kind,
+          contentLength: event.message.content.length,
+          responseToAssistantMs:
+            trace.responseReadyAtMs === null ? null : nowMs - trace.responseReadyAtMs
+        },
+        {
+          force: true,
+          thresholdMs: 0
+        }
+      );
+      this.removePendingSendDebugTrace(trace);
+      return;
+    }
+
+    if (
+      event.type === "error" ||
+      (event.type !== "message" && isTerminalRuntimeEventStatus(event.status))
+    ) {
+      logPerformance(
+        `session_send.${trace.mode}.completed_without_assistant`,
+        nowMs - trace.startedAtMs,
+        {
+          ...this.buildSendDebugDetail(trace),
+          eventType: event.type,
+          status: event.status,
+          detail: event.detail
+        },
+        {
+          force: true,
+          thresholdMs: 0
+        }
+      );
+      this.removePendingSendDebugTrace(trace);
+    }
+  }
+
+  private peekPendingSendDebugTrace(sessionId: string): PendingSessionSendDebugTrace | null {
+    const queue = this.pendingSendDebugTracesBySessionId.get(sessionId);
+    return queue && queue.length > 0 ? queue[0] : null;
+  }
+
+  private removePendingSendDebugTrace(trace: PendingSessionSendDebugTrace): void {
+    const queue = this.pendingSendDebugTracesBySessionId.get(trace.sessionId);
+
+    if (!queue || queue.length === 0) {
+      return;
+    }
+
+    const nextQueue = queue.filter((item) => item !== trace);
+
+    if (nextQueue.length === 0) {
+      this.pendingSendDebugTracesBySessionId.delete(trace.sessionId);
+      return;
+    }
+
+    this.pendingSendDebugTracesBySessionId.set(trace.sessionId, nextQueue);
+  }
+
+  private buildSendDebugDetail(
+    trace: PendingSessionSendDebugTrace
+  ): Record<string, unknown> {
+    return {
+      sessionId: trace.sessionId,
+      workspaceId: trace.workspaceId,
+      provider: trace.provider,
+      clientRequestId: trace.clientRequestId
+    };
   }
 
   private async findAcceptedUserMessage(

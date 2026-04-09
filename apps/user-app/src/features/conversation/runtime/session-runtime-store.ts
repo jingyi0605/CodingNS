@@ -83,6 +83,14 @@ interface SessionRuntimeSnapshot {
   queuedMessages: SessionQueueItemDto[];
 }
 
+interface PendingReplyDebugTrace {
+  mode: "send_live" | "retry_live";
+  clientRequestId: string;
+  startedAtMs: number;
+  responseReadyAtMs: number | null;
+  contentLength: number;
+}
+
 export class SessionRuntimeStore {
   private state: SessionRuntimeState;
   private listeners = new Set<RuntimeListener>();
@@ -97,6 +105,7 @@ export class SessionRuntimeStore {
   private runtimeRefreshTimer: number | null = null;
   private runtimeRefreshMode: RuntimeRefreshMode | null = null;
   private replaceSnapshotSeedOnBackfill = false;
+  private readonly pendingReplyDebugTraces: PendingReplyDebugTrace[] = [];
   private readonly hasAuthoritativeBootstrapMessages: boolean;
 
   constructor(
@@ -246,6 +255,7 @@ export class SessionRuntimeStore {
     }
   ): Promise<void> {
     const clientRequestId = createClientRequestId();
+    this.beginPendingReplyDebugTrace("send_live", clientRequestId, content.length);
     const pending = createPendingMessage(
       this.sessionId,
       content,
@@ -272,6 +282,10 @@ export class SessionRuntimeStore {
 
     try {
       const response = await this.sendMessageWithFallback(content, clientRequestId, options);
+      this.markPendingReplyDebugTraceResponseReady(clientRequestId, {
+        returnedMessageId: response.message.messageId,
+        returnedProviderSessionId: response.message.providerSessionId
+      });
 
       this.patch({
         messages: reconcileMessage(
@@ -282,6 +296,7 @@ export class SessionRuntimeStore {
         )
       });
     } catch (error) {
+      this.failPendingReplyDebugTrace(clientRequestId, error);
       this.patch({
         messages: markPendingAsFailed(this.state.messages, clientRequestId),
         session: withRunningState(this.state.session, "failed"),
@@ -317,11 +332,16 @@ export class SessionRuntimeStore {
           ? true
           : this.state.runtimeCanInterrupt
     });
+    this.beginPendingReplyDebugTrace("retry_live", clientRequestId, target.content.length);
 
     try {
       const response = await this.sendMessageWithFallback(target.content, clientRequestId, {
         attachments: target.attachmentPayloads ?? [],
         attachmentMeta: target.attachments
+      });
+      this.markPendingReplyDebugTraceResponseReady(clientRequestId, {
+        returnedMessageId: response.message.messageId,
+        returnedProviderSessionId: response.message.providerSessionId
       });
 
       this.patch({
@@ -333,6 +353,7 @@ export class SessionRuntimeStore {
         )
       });
     } catch (error) {
+      this.failPendingReplyDebugTrace(clientRequestId, error);
       this.patch({
         messages: markPendingAsFailed(this.state.messages, clientRequestId),
         session: withRunningState(this.state.session, "failed")
@@ -452,6 +473,7 @@ export class SessionRuntimeStore {
     this.clearHistoryBootstrapFallbackTimer();
     this.realtimeClient?.close();
     this.realtimeClient = null;
+    this.pendingReplyDebugTraces.length = 0;
 
     if (this.markSeenTimer !== null) {
       window.clearTimeout(this.markSeenTimer);
@@ -479,6 +501,10 @@ export class SessionRuntimeStore {
       cursor: this.state.lastCursor,
       limit: REALTIME_LIMIT,
       onSubscribed: () => {
+        logPerfDebug("session_send.realtime_subscribed", {
+          sessionId: this.sessionId,
+          lastCursor: this.state.lastCursor
+        });
         this.patch({
           connectionState: "connected",
           historyState:
@@ -1048,6 +1074,12 @@ export class SessionRuntimeStore {
         throw error;
       }
 
+      logPerfDebug("session_send.live_fallback", {
+        sessionId: this.sessionId,
+        clientRequestId,
+        reason: error.message
+      });
+
       return sendSessionMessage(this.sessionId, {
         content,
         clientRequestId,
@@ -1072,6 +1104,10 @@ export class SessionRuntimeStore {
     });
 
     if (isTerminalRuntimeState(nextRunningState)) {
+      this.completePendingReplyDebugTraceWithoutAssistant("session_send.client_terminal_before_message", {
+        status: event.status,
+        detail: event.detail
+      });
       this.clearRuntimeRefreshTimer();
       void this.refreshQueue();
       void this.refreshRuntimeSnapshot("runtime_terminal");
@@ -1099,6 +1135,9 @@ export class SessionRuntimeStore {
   }
 
   private handleRuntimeMessage(event: SessionRuntimeMessageEvent): void {
+    if (event.message.role === "assistant") {
+      this.completePendingReplyDebugTrace(event);
+    }
     this.clearHistoryBootstrapReadyTimer();
     const merged = mergeAuthoritativeMessages(this.state.messages, this.sessionId, [event.message]);
 
@@ -1121,6 +1160,10 @@ export class SessionRuntimeStore {
   private handleRuntimeError(event: SessionRuntimeErrorEvent): void {
     const nextRunningState = resolveRuntimeTransitionState(this.state.session?.runningState, "failed");
 
+    this.completePendingReplyDebugTraceWithoutAssistant("session_send.client_runtime_error", {
+      errorCode: event.error_code,
+      detail: event.detail
+    });
     this.clearRuntimeRefreshTimer();
     this.patch({
       session: withRunningState(this.state.session, nextRunningState),
@@ -1135,6 +1178,9 @@ export class SessionRuntimeStore {
   private handleInterrupted(event: SessionInterruptedEvent): void {
     const nextRunningState = resolveRuntimeTransitionState(this.state.session?.runningState, "interrupted");
 
+    this.completePendingReplyDebugTraceWithoutAssistant("session_send.client_interrupted", {
+      detail: event.detail
+    });
     this.clearRuntimeRefreshTimer();
     this.patch({
       session: withRunningState(this.state.session, nextRunningState),
@@ -1229,6 +1275,113 @@ export class SessionRuntimeStore {
       permissionRequests: this.state.permissionRequests,
       queuedMessages: this.state.queuedMessages
     });
+  }
+
+  private beginPendingReplyDebugTrace(
+    mode: PendingReplyDebugTrace["mode"],
+    clientRequestId: string,
+    contentLength: number
+  ): void {
+    const trace: PendingReplyDebugTrace = {
+      mode,
+      clientRequestId,
+      startedAtMs: performance.now(),
+      responseReadyAtMs: null,
+      contentLength
+    };
+
+    this.pendingReplyDebugTraces.push(trace);
+    logPerfDebug(`session_send.${mode}.client_start`, {
+      sessionId: this.sessionId,
+      clientRequestId,
+      contentLength
+    });
+  }
+
+  private markPendingReplyDebugTraceResponseReady(
+    clientRequestId: string,
+    detail: Record<string, unknown> = {}
+  ): void {
+    const trace = this.pendingReplyDebugTraces.find((item) => item.clientRequestId === clientRequestId);
+
+    if (!trace || trace.responseReadyAtMs !== null) {
+      return;
+    }
+
+    trace.responseReadyAtMs = performance.now();
+    logPerfDebug(`session_send.${trace.mode}.client_response`, {
+      sessionId: this.sessionId,
+      clientRequestId,
+      durationMs: Math.round(trace.responseReadyAtMs - trace.startedAtMs),
+      ...detail
+    });
+  }
+
+  private failPendingReplyDebugTrace(clientRequestId: string, error: unknown): void {
+    const trace = this.pendingReplyDebugTraces.find((item) => item.clientRequestId === clientRequestId);
+
+    if (!trace) {
+      return;
+    }
+
+    logPerfDebug(`session_send.${trace.mode}.client_error`, {
+      sessionId: this.sessionId,
+      clientRequestId,
+      durationMs: Math.round(performance.now() - trace.startedAtMs),
+      error: error instanceof Error ? error.message : String(error)
+    });
+    this.removePendingReplyDebugTrace(trace.clientRequestId);
+  }
+
+  private completePendingReplyDebugTrace(event: SessionRuntimeMessageEvent): void {
+    const trace = this.pendingReplyDebugTraces[0];
+
+    if (!trace) {
+      return;
+    }
+
+    const nowMs = performance.now();
+    logPerfDebug(`session_send.${trace.mode}.first_assistant_message`, {
+      sessionId: this.sessionId,
+      clientRequestId: trace.clientRequestId,
+      durationMs: Math.round(nowMs - trace.startedAtMs),
+      responseToAssistantMs:
+        trace.responseReadyAtMs === null ? null : Math.round(nowMs - trace.responseReadyAtMs),
+      messageId: event.message.messageId,
+      kind: event.message.kind,
+      contentLength: event.message.content.length
+    });
+    this.removePendingReplyDebugTrace(trace.clientRequestId);
+  }
+
+  private completePendingReplyDebugTraceWithoutAssistant(
+    scope: string,
+    detail: Record<string, unknown> = {}
+  ): void {
+    const trace = this.pendingReplyDebugTraces[0];
+
+    if (!trace) {
+      return;
+    }
+
+    logPerfDebug(scope, {
+      sessionId: this.sessionId,
+      clientRequestId: trace.clientRequestId,
+      durationMs: Math.round(performance.now() - trace.startedAtMs),
+      responseReady: trace.responseReadyAtMs !== null,
+      ...detail
+    });
+    this.removePendingReplyDebugTrace(trace.clientRequestId);
+  }
+
+  private removePendingReplyDebugTrace(clientRequestId: string): void {
+    const index = this.pendingReplyDebugTraces.findIndex((item) => item.clientRequestId === clientRequestId);
+
+    if (index < 0) {
+      return;
+    }
+
+    this.pendingReplyDebugTraces.splice(index, 1);
   }
 }
 

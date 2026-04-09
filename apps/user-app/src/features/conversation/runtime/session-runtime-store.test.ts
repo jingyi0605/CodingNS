@@ -4,6 +4,7 @@ import { clientConfigStore } from "../../../config/client-config-store";
 import { userPreferenceStore } from "../../../preferences/user-preference-store";
 import { authStore } from "../../auth/store/auth-store";
 import { clearViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
+import { t } from "../../../shared/i18n";
 import { ApiError } from "../../../shared/network/api-error";
 import { SessionRuntimeStore } from "./session-runtime-store";
 
@@ -1030,6 +1031,76 @@ describe("SessionRuntimeStore", () => {
       "user",
       "assistant"
     ]);
+
+    store.destroy();
+  });
+
+  it("Codex 进入 running 后会显示正在思考占位，并在 assistant 正文到达后移除", async () => {
+    const store = new SessionRuntimeStore("session-1");
+    await store.initialize();
+    emitRealtimeSubscribed();
+    emitRealtimeEnvelope({
+      type: "session.backfill",
+      sessionId: "session-1",
+      cursor: "cursor-before",
+      olderCursor: null,
+      messages: [
+        {
+          messageId: "user-1",
+          provider: "codex",
+          providerSessionId: "raw-1",
+          role: "user",
+          kind: "text",
+          content: "继续",
+          timestamp: "2026-03-24T10:00:00.000Z",
+          sequence: 1,
+          rawRef: "codex://raw#line=0",
+          toolCall: null
+        }
+      ]
+    });
+
+    const client = getRealtimeClient();
+    (client.options.onRuntimeStatus as ((event: Record<string, unknown>) => void))({
+      type: "session.runtime_status",
+      sessionId: "session-1",
+      status: "running",
+      detail: "run started",
+      timestamp: "2026-03-24T10:00:00.000Z"
+    });
+
+    expect(store.getState().messages.at(-1)).toMatchObject({
+      role: "user",
+      kind: "text",
+      content: "继续"
+    });
+
+    emitRealtimeRuntimeMessage({
+      type: "session.runtime_message",
+      sessionId: "session-1",
+      source: "runtime",
+      message: {
+        messageId: "assistant-runtime-codex-1",
+        provider: "codex",
+        providerSessionId: "raw-1",
+        role: "assistant",
+        kind: "text",
+        content: "已经开始回答",
+        timestamp: "2026-03-24T10:00:02.000Z",
+        sequence: 1,
+        rawRef: "codex://raw#line=1",
+        toolCall: null
+      }
+    });
+
+    expect(
+      store.getState().messages.some((message) =>
+        message.content === t("conversation.runtimeThinkingPlaceholder", {
+          provider: t("conversation.providerCodex")
+        })
+      )
+    ).toBe(false);
+    expect(store.getState().messages.at(-1)?.content).toBe("已经开始回答");
 
     store.destroy();
   });

@@ -13,6 +13,7 @@ import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { userPreferenceStore } from "../../../preferences/user-preference-store";
 import { useLocalUiPreferenceSelector } from "../../../preferences/local-ui-preference-store";
 import { usePlatform } from "../../../platform/platform-provider";
+import { logPerfDebug } from "../../../shared/debug/perf-debug";
 import { useHaptics } from "../../../shared/haptics";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
@@ -186,6 +187,15 @@ function LiveConversationPage({
   const hasPendingQueuedMessages = queuedMessages.some(
     (item) => item.status === "queued" || item.status === "dispatching"
   );
+  const runtimeThinkingPlaceholder = shouldShowRuntimeThinkingPlaceholder(
+    session?.provider ?? null,
+    session?.runningState ?? null,
+    messages
+  )
+    ? t("conversation.runtimeThinkingPlaceholder", {
+        provider: t("conversation.providerCodex")
+      })
+    : null;
   const showInlineHeader = shellMode !== "mobile";
   const mobilePreview = useMobileConversationPreviewController(!showInlineHeader);
   const mobileWorkspaceId = session?.workspaceId ?? navigationSession?.workspaceId ?? null;
@@ -496,6 +506,7 @@ function LiveConversationPage({
               loadingOlderMessages={loadingOlderMessages}
               hasOlderMessages={hasOlderMessages}
               provider={session?.provider ?? null}
+              runtimeThinkingPlaceholder={runtimeThinkingPlaceholder}
               onLoadOlderMessages={() => {
                 void store.loadOlderMessages();
               }}
@@ -840,16 +851,17 @@ function DraftConversationPage({
       <div className="mobile-conversation-stage" {...(!showInlineHeader ? mobilePreview.mainGestureHandlers : {})}>
         <div ref={mobileConversationMainRef} className="mobile-conversation-main">
           <ConnectionBanner connectionState="closed" onReconnect={() => {}} />
-          <MessageTimeline
-            sessionId={draft.sessionId}
-            messages={draftMessages}
-            historyState="ready"
-            loadingOlderMessages={false}
-            hasOlderMessages={false}
-            provider={draft.provider}
-            onLoadOlderMessages={() => {}}
-            onRetryMessage={() => {}}
-          />
+            <MessageTimeline
+              sessionId={draft.sessionId}
+              messages={draftMessages}
+              historyState="ready"
+              loadingOlderMessages={false}
+              hasOlderMessages={false}
+              provider={draft.provider}
+              runtimeThinkingPlaceholder={null}
+              onLoadOlderMessages={() => {}}
+              onRetryMessage={() => {}}
+            />
           <ComposerPanel
             capabilities={capabilities}
             draftStorageId={draft.sessionId}
@@ -871,6 +883,14 @@ function DraftConversationPage({
                 )
               ]);
               setSending(true);
+              const startLiveStartedAtMs = performance.now();
+              logPerfDebug("session_send.start_live.client_start", {
+                draftSessionId: draft.sessionId,
+                workspaceId: draft.workspaceId,
+                provider: draft.provider,
+                clientRequestId,
+                contentLength: content.length
+              });
 
               try {
                 const permissionMode = userPreferenceStore.getState().profile.defaultPermissionMode;
@@ -883,6 +903,15 @@ function DraftConversationPage({
                   reasoningLevel: options?.reasoningLevel ?? null,
                   permissionMode: permissionMode === "default" ? null : permissionMode,
                   attachments: options?.attachments ?? []
+                });
+                logPerfDebug("session_send.start_live.client_response", {
+                  draftSessionId: draft.sessionId,
+                  sessionId: created.sessionId,
+                  workspaceId: created.session?.workspaceId ?? draft.workspaceId,
+                  provider: created.provider,
+                  clientRequestId,
+                  durationMs: Math.round(performance.now() - startLiveStartedAtMs),
+                  returnedMessageId: created.message?.messageId ?? null
                 });
 
                 if (created.session) {
@@ -906,6 +935,14 @@ function DraftConversationPage({
                 });
                 requestNavigationRefresh();
               } catch (error) {
+                logPerfDebug("session_send.start_live.client_error", {
+                  draftSessionId: draft.sessionId,
+                  workspaceId: draft.workspaceId,
+                  provider: draft.provider,
+                  clientRequestId,
+                  durationMs: Math.round(performance.now() - startLiveStartedAtMs),
+                  error: error instanceof Error ? error.message : String(error)
+                });
                 setDraftMessages((current) => markPendingAsFailed(current, clientRequestId));
                 throw error;
               } finally {
@@ -1919,6 +1956,35 @@ function isSessionRunning(session: SessionSummaryDto | null): boolean {
     || session.runningState === "running"
     || session.runningState === "reconnecting"
   );
+}
+
+function shouldShowRuntimeThinkingPlaceholder(
+  provider: ProviderId | null,
+  runningState: string | null,
+  messages: SessionMessageViewModel[]
+): boolean {
+  if (provider !== "codex" || (runningState !== "starting" && runningState !== "running")) {
+    return false;
+  }
+
+  let latestUserIndex = -1;
+
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+
+    if (message.role === "user" && message.kind === "text") {
+      latestUserIndex = index;
+      break;
+    }
+  }
+
+  if (latestUserIndex < 0) {
+    return false;
+  }
+
+  return !messages.slice(latestUserIndex + 1).some((message) => {
+    return message.role === "assistant" && (message.kind === "text" || message.kind === "thinking");
+  });
 }
 
 function isDraftSessionId(sessionId: string): boolean {
