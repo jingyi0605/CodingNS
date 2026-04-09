@@ -23,6 +23,10 @@ import type { SessionHistoryEnvelope, SessionHistoryService } from "../sessions/
 import type { SessionIndexRepository } from "../../storage/repositories/session-index-repository.js";
 import type { SessionMessageOriginRepository } from "../../storage/repositories/session-message-origin-repository.js";
 import type { SessionLiveRuntimeService } from "../sessions/session-live-runtime-service.js";
+import type {
+  SessionPermissionReplyInput,
+  SessionPermissionRequestView
+} from "../sessions/session-permission-request-service.js";
 import { ProviderAdapterRegistry, type PatrolSessionResult } from "./provider-adapter-registry.js";
 import {
   ButlerFollowUpEvaluationInstructionAdapter,
@@ -38,6 +42,15 @@ const MIN_MAX_AUTO_CONTINUE_COUNT = 1;
 const MAX_MAX_AUTO_CONTINUE_COUNT = 20;
 const FOLLOW_UP_EVALUATOR_DIRNAME = ".butler-follow-up-evaluator";
 const RECENT_HISTORY_LIMIT = 40;
+const FOLLOW_UP_PERMISSION_CHECK_INTERVAL_MS = 10_000;
+const FOLLOW_UP_AUTO_APPROVE_ACTION_PREFERENCE = [
+  "acceptForSession",
+  "allow_session",
+  "accept",
+  "allow_turn",
+  "once",
+  "allow"
+] as const;
 
 export interface ButlerFollowUpTaskView {
   id: string;
@@ -94,6 +107,8 @@ interface ButlerFollowUpEvaluationResult {
 }
 
 export class ButlerFollowUpService {
+  private readonly permissionRequestSweepAtByTaskId = new Map<string, number>();
+
   constructor(
     private readonly butlerProfileService: Pick<ButlerProfileService, "ensureInitialized">,
     private readonly butlerProjectService: Pick<ButlerProjectService, "getById">,
@@ -106,7 +121,11 @@ export class ButlerFollowUpService {
     private readonly sessionIndexRepository: Pick<SessionIndexRepository, "findIndexRecordBySessionId">,
     private readonly sessionLiveRuntimeService: Pick<
       SessionLiveRuntimeService,
-      "getSessionRuntime" | "sendLiveMessage" | "enqueueLiveMessage"
+      | "getSessionRuntime"
+      | "sendLiveMessage"
+      | "enqueueLiveMessage"
+      | "listPermissionRequests"
+      | "replyPermissionRequest"
     >,
     private readonly workspaceService: Pick<WorkspaceService, "importWorkspace">,
     private readonly providerAdapterRegistry: ProviderAdapterRegistry,
@@ -209,18 +228,7 @@ export class ButlerFollowUpService {
       lastAutomationAt: null,
       autoContinueCount: 0,
       waitingReason: null,
-      rounds: [
-        createFollowUpRound([], {
-          kind: "started",
-          status: "active",
-          summary: initialSummary,
-          waitingReason: null,
-          continuePrompt: null,
-          observedRunningState: snapshot.runningState,
-          autoContinueCount: 0,
-          createdAt: timestamp
-        })
-      ],
+      rounds: [],
       createdAt: timestamp,
       updatedAt: timestamp,
       completedAt: null
@@ -297,6 +305,8 @@ export class ButlerFollowUpService {
     });
 
     for (const task of tasks) {
+      await this.autoApprovePendingPermissionRequestsIfDue(task, referenceAt);
+
       if (task.nextCheckAt && task.nextCheckAt > referenceAt) {
         continue;
       }
@@ -564,17 +574,91 @@ export class ButlerFollowUpService {
   }
 
   private persist(task: ButlerFollowUpTask): ButlerFollowUpTask {
-    return this.butlerFollowUpTaskRepository.update(task) ?? task;
+    const normalizedTask = {
+      ...task,
+      rounds: normalizeFollowUpRounds(task.rounds)
+    };
+
+    if (normalizedTask.status !== "active") {
+      this.permissionRequestSweepAtByTaskId.delete(normalizedTask.id);
+    }
+
+    return this.butlerFollowUpTaskRepository.update(normalizedTask) ?? normalizedTask;
   }
 
   private persistWithRound(
     task: ButlerFollowUpTask,
     round: Omit<ButlerFollowUpRound, "roundNumber">
   ): ButlerFollowUpTask {
+    const normalizedRounds = normalizeFollowUpRounds(task.rounds);
+
     return this.persist({
       ...task,
-      rounds: [...task.rounds, createFollowUpRound(task.rounds, round)]
+      rounds: [...normalizedRounds, createFollowUpRound(normalizedRounds, round)]
     });
+  }
+
+  private async autoApprovePendingPermissionRequestsIfDue(
+    task: ButlerFollowUpTask,
+    referenceAt: string
+  ): Promise<void> {
+    const parsedReferenceAt = Date.parse(referenceAt);
+    const referenceAtMs = Number.isFinite(parsedReferenceAt) ? parsedReferenceAt : Date.now();
+    const lastSweepAtMs = this.permissionRequestSweepAtByTaskId.get(task.id) ?? 0;
+
+    if (
+      lastSweepAtMs > 0
+      && referenceAtMs - lastSweepAtMs < FOLLOW_UP_PERMISSION_CHECK_INTERVAL_MS
+    ) {
+      return;
+    }
+
+    this.permissionRequestSweepAtByTaskId.set(task.id, referenceAtMs);
+
+    let requests: SessionPermissionRequestView[];
+
+    try {
+      requests = await this.sessionLiveRuntimeService.listPermissionRequests(
+        task.sessionId,
+        task.createdByUserId
+      );
+    } catch (error) {
+      console.warn("[butler-follow-up] list permission requests failed", {
+        taskId: task.id,
+        sessionId: task.sessionId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      return;
+    }
+
+    for (const request of requests) {
+      const reply = buildAutoApprovePermissionReply(request);
+
+      if (!reply) {
+        continue;
+      }
+
+      try {
+        await this.sessionLiveRuntimeService.replyPermissionRequest(
+          task.sessionId,
+          task.createdByUserId,
+          request.id,
+          reply
+        );
+      } catch (error) {
+        if (isIgnorablePermissionReplyError(error)) {
+          continue;
+        }
+
+        console.warn("[butler-follow-up] auto approve permission request failed", {
+          taskId: task.id,
+          sessionId: task.sessionId,
+          requestId: request.id,
+          action: reply.action,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
   }
 
   private shouldSkipImmediateTerminalRecheck(task: ButlerFollowUpTask): boolean {
@@ -803,6 +887,8 @@ function mapTaskView(
   projectName: string,
   sessionTitle: string | null
 ): ButlerFollowUpTaskView {
+  const rounds = normalizeFollowUpRounds(task.rounds);
+
   return {
     id: task.id,
     projectId: task.projectId,
@@ -825,7 +911,7 @@ function mapTaskView(
     lastAutomationAt: task.lastAutomationAt,
     autoContinueCount: task.autoContinueCount,
     waitingReason: task.waitingReason,
-    rounds: task.rounds,
+    rounds,
     createdAt: task.createdAt,
     updatedAt: task.updatedAt,
     completedAt: task.completedAt
@@ -847,6 +933,54 @@ function createFollowUpRound(
     autoContinueCount: input.autoContinueCount,
     createdAt: input.createdAt
   };
+}
+
+function normalizeFollowUpRounds(rounds: ButlerFollowUpRound[]): ButlerFollowUpRound[] {
+  return rounds
+    .filter((round) => round.kind !== "started")
+    .map((round, index) => ({
+      ...round,
+      roundNumber: index + 1
+    }));
+}
+
+function buildAutoApprovePermissionReply(
+  request: SessionPermissionRequestView
+): SessionPermissionReplyInput | null {
+  if (request.status !== "pending" || request.kind === "user_input") {
+    return null;
+  }
+
+  const availableActions = new Set(
+    request.actions
+      .map((action) => action.value.trim())
+      .filter((action) => action.length > 0)
+  );
+
+  for (const action of FOLLOW_UP_AUTO_APPROVE_ACTION_PREFERENCE) {
+    if (availableActions.has(action)) {
+      return { action };
+    }
+  }
+
+  return null;
+}
+
+function isIgnorablePermissionReplyError(error: unknown): boolean {
+  if (error instanceof AppError) {
+    return (
+      error.errorCode === "PERMISSION_REQUEST_ALREADY_RESOLVED"
+      || error.errorCode === "PERMISSION_REQUEST_NOT_FOUND"
+    );
+  }
+
+  return (
+    error instanceof Error
+    && (
+      error.message === "PERMISSION_REQUEST_ALREADY_RESOLVED"
+      || error.message === "PERMISSION_REQUEST_NOT_FOUND"
+    )
+  );
 }
 
 function normalizeObjective(value: string | undefined): string {

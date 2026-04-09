@@ -343,11 +343,9 @@ function parseRounds(value: string | null | undefined): ButlerFollowUpRound[] {
 
     return parsed
       .filter((item): item is ButlerFollowUpRound => Boolean(item && typeof item === "object"))
+      .filter((item) => item.kind !== "started")
       .map((item, index) => ({
-        roundNumber:
-          typeof item.roundNumber === "number" && Number.isFinite(item.roundNumber)
-            ? item.roundNumber
-            : index + 1,
+        roundNumber: index + 1,
         kind: typeof item.kind === "string" ? item.kind as ButlerFollowUpRound["kind"] : "started",
         status: typeof item.status === "string" ? item.status as ButlerFollowUpTaskStatus : "active",
         summary: typeof item.summary === "string" ? item.summary : "",

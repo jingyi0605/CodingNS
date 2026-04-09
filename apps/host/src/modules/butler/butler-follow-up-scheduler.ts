@@ -1,7 +1,7 @@
 import { nowIso } from "../../shared/utils/time.js";
 import type { ButlerFollowUpService } from "./butler-follow-up-service.js";
 
-const DEFAULT_INTERVAL_MS = 15_000;
+const DEFAULT_INTERVAL_MS = 10_000;
 
 interface ButlerFollowUpSchedulerLogger {
   error(message: string, detail?: unknown): void;
