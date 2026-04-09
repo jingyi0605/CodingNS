@@ -117,6 +117,10 @@ function formatActivityTime(value: string | null) {
   });
 }
 
+function shouldAccentMetricCount(value: number | null) {
+  return value !== null && value > 0;
+}
+
 const WORKSPACE_HOME_SNAPSHOT_CACHE_MAX_AGE_MS = 60 * 1000;
 const WORKSPACE_HOME_BUTLER_POLL_INTERVAL_MS = 15_000;
 
@@ -175,6 +179,12 @@ export function WorkspaceHomePage() {
   const favoriteSessions = visibleSessions.filter((session) => session.isFavorite === true);
   const sessionList = activeSessions.slice(0, 6);
   const favoriteSessionList = favoriteSessions.slice(0, 6);
+  const quickLaunchStatusValue =
+    dashboardState.quickLaunchRunning === null
+      ? "…"
+      : dashboardState.quickLaunchRunning
+        ? t("shell.workspaceHomeQuickLaunchRunning")
+        : t("shell.workspaceHomeQuickLaunchStopped");
 
   useEffect(() => {
     const workspaceId = currentWorkspace?.id ?? null;
@@ -536,21 +546,27 @@ export function WorkspaceHomePage() {
     {
       label: t("shell.workspaceHomeMetricActive"),
       value: activeSessions.length,
+      accent: shouldAccentMetricCount(activeSessions.length),
       onClick: visibleSessions.length > 0 ? openSessionIndex : undefined
     },
     {
       label: t("shell.workspaceHomeMetricUnread"),
       value: unreadNotificationCount,
+      accent: shouldAccentMetricCount(unreadNotificationCount),
       onClick: () => setNotificationOpen(true)
     },
     {
       label: t("shell.workspaceHomeMetricTerminal"),
       value: dashboardState.terminalLoading ? "…" : dashboardState.activeTerminalCount ?? "—",
+      accent: dashboardState.terminalLoading === false
+        && shouldAccentMetricCount(dashboardState.activeTerminalCount),
       onClick: currentWorkspace ? openCurrentWorkspaceTerminals : undefined
     },
     {
       label: t("shell.workspaceHomeMetricChanges"),
       value: dashboardState.gitLoading ? "…" : dashboardState.changedFileCount ?? "—",
+      accent: dashboardState.gitLoading === false
+        && shouldAccentMetricCount(dashboardState.changedFileCount),
       onClick: currentWorkspace ? openCurrentWorkspaceGit : undefined
     }
   ] as const;
@@ -559,30 +575,25 @@ export function WorkspaceHomePage() {
     {
       label: t("shell.workspaceHomeWaitingInputLabel"),
       value: waitingInputSessions.length,
-      accent: false,
+      accent: shouldAccentMetricCount(waitingInputSessions.length),
       onClick: visibleSessions.length > 0 ? openSessionIndex : undefined
     },
     {
       label: t("shell.workspaceHomeButlerLabel"),
       value: butlerState.loading ? "…" : butlerState.activeTaskCount,
-      accent: true,
+      accent: butlerState.loading === false && shouldAccentMetricCount(butlerState.activeTaskCount),
       onClick: currentWorkspace ? openCurrentWorkspaceButler : undefined
     },
     {
       label: t("shell.workspaceHomeQuickLaunchStatusLabel"),
-      value:
-        dashboardState.quickLaunchRunning === null
-          ? "…"
-          : dashboardState.quickLaunchRunning
-            ? t("shell.workspaceHomeQuickLaunchRunning")
-            : t("shell.workspaceHomeQuickLaunchStopped"),
-      accent: false,
+      value: quickLaunchStatusValue,
+      accent: dashboardState.quickLaunchRunning === true,
       onClick: currentWorkspace ? openCurrentWorkspaceProcesses : undefined
     },
     {
       label: t("shell.butlerInboxAction"),
       value: butlerState.loading ? "…" : butlerState.pendingInboxCount,
-      accent: false,
+      accent: butlerState.loading === false && shouldAccentMetricCount(butlerState.pendingInboxCount),
       onClick: currentWorkspace ? () => setInboxOpen(true) : undefined
     }
   ] as const;
@@ -640,13 +651,19 @@ export function WorkspaceHomePage() {
                         key={row.label}
                         type="button"
                         className="mobile-workspace-home-toolbar-metric"
+                        data-accent={row.accent ? "true" : undefined}
                         onClick={row.onClick}
                       >
                         <strong className="mobile-workspace-home-toolbar-metric-value">{row.value}</strong>
                         <span className="mobile-workspace-home-toolbar-metric-label">{row.label}</span>
                       </button>
                     ) : (
-                      <div key={row.label} className="mobile-workspace-home-toolbar-metric" role="listitem">
+                      <div
+                        key={row.label}
+                        className="mobile-workspace-home-toolbar-metric"
+                        data-accent={row.accent ? "true" : undefined}
+                        role="listitem"
+                      >
                         <strong className="mobile-workspace-home-toolbar-metric-value">{row.value}</strong>
                         <span className="mobile-workspace-home-toolbar-metric-label">{row.label}</span>
                       </div>

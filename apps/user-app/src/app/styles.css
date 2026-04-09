@@ -14622,6 +14622,10 @@ textarea:focus-visible {
   white-space: nowrap;
 }
 
+.mobile-workspace-home-toolbar-metric[data-accent="true"] .mobile-workspace-home-toolbar-metric-value {
+  color: var(--accent);
+}
+
 .mobile-workspace-home-section-title {
   margin: 0;
   color: var(--text-secondary);
@@ -14736,6 +14740,10 @@ textarea:focus-visible {
   color: var(--text-primary);
   font-size: 1rem;
   font-weight: 600;
+}
+
+.mobile-workspace-home-row[data-accent="true"] .mobile-workspace-home-row-trailing strong {
+  color: var(--accent);
 }
 
 .mobile-workspace-home-link-button {

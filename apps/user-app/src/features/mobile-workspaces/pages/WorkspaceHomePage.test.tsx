@@ -412,6 +412,13 @@ describe("WorkspaceHomePage", () => {
       expect(within(inboxRow as HTMLElement).getByText("1")).toBeInTheDocument();
     });
 
+    expect(activeTerminalRow).toHaveAttribute("data-accent", "true");
+    expect(changedFilesRow).toHaveAttribute("data-accent", "true");
+    expect(processRow).toHaveAttribute("data-accent", "true");
+    expect(waitingInputRow).toHaveAttribute("data-accent", "true");
+    expect(butlerRow).toHaveAttribute("data-accent", "true");
+    expect(inboxRow).toHaveAttribute("data-accent", "true");
+
     expect(screen.getByText((_, element) => element?.textContent === "活动")).toBeInTheDocument();
     expect(screen.getByText((_, element) => element?.textContent === "通知")).toBeInTheDocument();
     expect(screen.getByText((_, element) => element?.textContent === "终端")).toBeInTheDocument();
@@ -422,6 +429,117 @@ describe("WorkspaceHomePage", () => {
     expect(screen.queryByText("整理提交说明")).not.toBeInTheDocument();
     expect(screen.queryByText("待查看结果")).not.toBeInTheDocument();
     expect(screen.queryByText("待查看")).not.toBeInTheDocument();
+  });
+
+  it("0 指标不高亮，正数和运行中指标会高亮", async () => {
+    const shell = createWorkbenchShell({
+      navigationGroups: [
+        {
+          workspace: {
+            id: "workspace-1",
+            name: "项目一",
+            path: "/repo/project-one"
+          },
+          sessions: []
+        }
+      ],
+      unreadNotificationCount: 0
+    });
+
+    mockGetButlerOverview.mockResolvedValue({
+      overview: {
+        version: "overview-empty",
+        generatedAt: "2026-03-27T10:00:00.000Z",
+        global: {
+          projectCount: 1,
+          activeProjectCount: 0,
+          blockedProjectCount: 0,
+          highRiskProjectCount: 0,
+          topRisks: [],
+          nextActions: []
+        },
+        projects: [
+          {
+            id: "project-1",
+            workspaceId: "workspace-1",
+            name: "项目一",
+            repoRoot: "/repo/project-one",
+            lifecycleStatus: "active",
+            riskLevel: "low",
+            activeSessionCount: 0,
+            sessionCount: 0,
+            memoryCount: 0,
+            failedPatrolCount: 0,
+            failedVerificationCount: 0,
+            latestSessionSummary: null,
+            latestPatrolSummary: null,
+            latestVerificationSummary: null,
+            topRisks: [],
+            nextActions: [],
+            lastActivityAt: "2026-03-27T10:00:00.000Z",
+            updatedAt: "2026-03-27T10:00:00.000Z"
+          }
+        ],
+        sessions: [],
+        patrols: [],
+        verifications: []
+      }
+    });
+    mockListButlerFollowUpTasks.mockResolvedValue({
+      items: []
+    });
+    mockListButlerInboxItems.mockResolvedValue({
+      items: []
+    });
+    mockUseWorkbenchShell.mockReturnValue(shell);
+
+    renderPage();
+
+    const activeMetric = screen
+      .getByText((_, element) => element?.textContent === "活动")
+      .closest(".mobile-workspace-home-toolbar-metric");
+    const notificationMetric = screen
+      .getByText((_, element) => element?.textContent === "通知")
+      .closest(".mobile-workspace-home-toolbar-metric");
+    const terminalMetric = screen
+      .getByText((_, element) => element?.textContent === "终端")
+      .closest(".mobile-workspace-home-toolbar-metric");
+    const changesMetric = screen
+      .getByText((_, element) => element?.textContent === "变更")
+      .closest(".mobile-workspace-home-toolbar-metric");
+    const waitingInputRow = screen.getByText("等待输入").closest(".mobile-workspace-home-row");
+    const butlerRow = screen.getByText("代码助手").closest(".mobile-workspace-home-row");
+    const processRow = screen.getByText("快捷启动进程").closest(".mobile-workspace-home-row");
+    const inboxRow = screen.getByText("收件箱").closest(".mobile-workspace-home-row");
+
+    expect(activeMetric).not.toBeNull();
+    expect(notificationMetric).not.toBeNull();
+    expect(terminalMetric).not.toBeNull();
+    expect(changesMetric).not.toBeNull();
+    expect(waitingInputRow).not.toBeNull();
+    expect(butlerRow).not.toBeNull();
+    expect(processRow).not.toBeNull();
+    expect(inboxRow).not.toBeNull();
+
+    await waitFor(() => {
+      expect(within(activeMetric as HTMLElement).getByText("0")).toBeInTheDocument();
+      expect(within(notificationMetric as HTMLElement).getByText("0")).toBeInTheDocument();
+      expect(within(terminalMetric as HTMLElement).getByText("2")).toBeInTheDocument();
+      expect(within(changesMetric as HTMLElement).getByText("2")).toBeInTheDocument();
+      expect(within(waitingInputRow as HTMLElement).getByText("0")).toBeInTheDocument();
+      expect(within(butlerRow as HTMLElement).getByText("0")).toBeInTheDocument();
+      expect(within(processRow as HTMLElement).getByText("运行中")).toBeInTheDocument();
+      expect(within(inboxRow as HTMLElement).getByText("0")).toBeInTheDocument();
+    });
+
+    expect(activeMetric).not.toHaveAttribute("data-accent");
+    expect(notificationMetric).not.toHaveAttribute("data-accent");
+    expect(terminalMetric).toHaveAttribute("data-accent", "true");
+    expect(changesMetric).toHaveAttribute("data-accent", "true");
+    expect(waitingInputRow).not.toHaveAttribute("data-accent");
+    expect(butlerRow).not.toHaveAttribute("data-accent");
+    expect(processRow).toHaveAttribute("data-accent", "true");
+    expect(inboxRow).not.toHaveAttribute("data-accent");
   });
 
   it("命中新鲜缓存时不会主动刷新 Git 和终端面板", async () => {
