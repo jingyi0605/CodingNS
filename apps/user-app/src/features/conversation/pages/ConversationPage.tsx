@@ -76,6 +76,7 @@ const MOBILE_PREVIEW_OPEN_THRESHOLD_PX = 36;
 const MOBILE_PREVIEW_EXPAND_THRESHOLD_PX = 48;
 const MOBILE_PREVIEW_CLOSE_THRESHOLD_PX = 34;
 const MOBILE_PREVIEW_EDGE_ACTIVATION_PX = 96;
+const RUNTIME_THINKING_PLACEHOLDER_HIDE_DELAY_MS = 320;
 
 export function ConversationPage() {
   const { sessionId = "", workspaceId: routeWorkspaceIdParam } = useParams();
@@ -187,11 +188,14 @@ function LiveConversationPage({
   const hasPendingQueuedMessages = queuedMessages.some(
     (item) => item.status === "queued" || item.status === "dispatching"
   );
-  const runtimeThinkingPlaceholder = shouldShowRuntimeThinkingPlaceholder(
-    session?.provider ?? null,
-    session?.runningState ?? null,
+  const runtimeThinkingPlaceholder = useStableRuntimeThinkingPlaceholder({
+    sessionId,
+    provider: session?.provider ?? null,
+    runningState: session?.runningState ?? null,
+    activityState: session?.activityState ?? null,
+    runtimeHasActiveRun,
     messages
-  )
+  })
     ? t("conversation.runtimeThinkingPlaceholder", {
         provider: t("conversation.providerCodex")
       })
@@ -1961,15 +1965,128 @@ function isSessionRunning(session: SessionSummaryDto | null): boolean {
   );
 }
 
-function shouldShowRuntimeThinkingPlaceholder(
-  provider: ProviderId | null,
-  runningState: string | null,
-  messages: SessionMessageViewModel[]
-): boolean {
-  if (provider !== "codex" || (runningState !== "starting" && runningState !== "running")) {
-    return false;
+function useStableRuntimeThinkingPlaceholder(input: {
+  sessionId: string;
+  provider: ProviderId | null;
+  runningState: string | null;
+  activityState: string | null | undefined;
+  runtimeHasActiveRun: boolean | null;
+  messages: SessionMessageViewModel[];
+}): boolean {
+  const visibility = resolveRuntimeThinkingPlaceholderVisibility(input);
+  const [visible, setVisible] = useState(visibility === "show");
+  const hideTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (hideTimerRef.current !== null) {
+      window.clearTimeout(hideTimerRef.current);
+      hideTimerRef.current = null;
+    }
+
+    setVisible(visibility === "show");
+  }, [input.sessionId]);
+
+  useEffect(() => {
+    if (visibility === "show") {
+      if (hideTimerRef.current !== null) {
+        window.clearTimeout(hideTimerRef.current);
+        hideTimerRef.current = null;
+      }
+
+      setVisible(true);
+      return;
+    }
+
+    if (visibility === "hide_immediately") {
+      if (hideTimerRef.current !== null) {
+        window.clearTimeout(hideTimerRef.current);
+        hideTimerRef.current = null;
+      }
+
+      setVisible(false);
+      return;
+    }
+
+    if (!visible || hideTimerRef.current !== null) {
+      return;
+    }
+
+    // 这里专门吃掉 runtime 边界抖动，避免底部占位在一两帧内反复闪现。
+    hideTimerRef.current = window.setTimeout(() => {
+      hideTimerRef.current = null;
+      setVisible(false);
+    }, RUNTIME_THINKING_PLACEHOLDER_HIDE_DELAY_MS);
+  }, [visibility, visible]);
+
+  useEffect(() => {
+    return () => {
+      if (hideTimerRef.current !== null) {
+        window.clearTimeout(hideTimerRef.current);
+      }
+    };
+  }, []);
+
+  return visible;
+}
+
+function resolveRuntimeThinkingPlaceholderVisibility(
+  input: {
+    provider: ProviderId | null;
+    runningState: string | null;
+    activityState: string | null | undefined;
+    runtimeHasActiveRun: boolean | null;
+    messages: SessionMessageViewModel[];
+  }
+): "show" | "hide_immediately" | "hide_deferred" {
+  const { provider, runningState, activityState, runtimeHasActiveRun, messages } = input;
+
+  if (provider !== "codex") {
+    return "hide_immediately";
   }
 
+  const latestUserIndex = findLatestRuntimePlaceholderUserIndex(messages);
+
+  if (latestUserIndex < 0) {
+    return "hide_immediately";
+  }
+
+  if (hasAssistantReplyAfterUser(messages, latestUserIndex)) {
+    return "hide_immediately";
+  }
+
+  if (hasActiveRuntimeIndicator(runningState, activityState, runtimeHasActiveRun)) {
+    return "show";
+  }
+
+  return "hide_deferred";
+}
+
+function hasActiveRuntimeIndicator(
+  runningState: string | null,
+  activityState: string | null | undefined,
+  runtimeHasActiveRun: boolean | null
+): boolean {
+  return (
+    runtimeHasActiveRun === true
+    || activityState === "running"
+    || runningState === "starting"
+    || runningState === "running"
+    || runningState === "reconnecting"
+  );
+}
+
+function hasAssistantReplyAfterUser(
+  messages: SessionMessageViewModel[],
+  latestUserIndex: number
+): boolean {
+  return messages.slice(latestUserIndex + 1).some((message) => {
+    return message.role === "assistant" && (message.kind === "text" || message.kind === "thinking");
+  });
+}
+
+function findLatestRuntimePlaceholderUserIndex(
+  messages: SessionMessageViewModel[]
+): number {
   let latestUserIndex = -1;
 
   for (let index = messages.length - 1; index >= 0; index -= 1) {
@@ -1981,13 +2098,7 @@ function shouldShowRuntimeThinkingPlaceholder(
     }
   }
 
-  if (latestUserIndex < 0) {
-    return false;
-  }
-
-  return !messages.slice(latestUserIndex + 1).some((message) => {
-    return message.role === "assistant" && (message.kind === "text" || message.kind === "thinking");
-  });
+  return latestUserIndex;
 }
 
 function isDraftSessionId(sessionId: string): boolean {
