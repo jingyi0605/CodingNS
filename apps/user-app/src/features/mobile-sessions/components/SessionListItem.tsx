@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type PointerEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
+import { createPortal } from "react-dom";
 
 import {
   hasSessionDisplayError,
@@ -12,6 +13,10 @@ import { useHaptics } from "../../../shared/haptics";
 import { t } from "../../../shared/i18n";
 
 const LONG_PRESS_DELAY_MS = 420;
+const MENU_EDGE_PADDING_PX = 12;
+const MENU_GAP_PX = 8;
+const MENU_MIN_WIDTH_PX = 160;
+const MENU_ESTIMATED_HEIGHT_PX = 156;
 
 interface WorkbenchNavigationEntry {
   readonly session: Pick<
@@ -44,6 +49,7 @@ interface SessionListItemProps {
   readonly depth?: number;
   readonly variant?: "default" | "mobile";
   readonly hasSubsessions?: boolean;
+  readonly subsessionsExpanded?: boolean;
   readonly showActions?: boolean;
   readonly onActivate: (sessionId: string) => void;
   readonly onToggleSubsessions?: () => void;
@@ -60,6 +66,7 @@ export function SessionListItem({
   depth = 0,
   variant = "default",
   hasSubsessions = false,
+  subsessionsExpanded = false,
   showActions = true,
   onActivate,
   onToggleSubsessions,
@@ -69,8 +76,11 @@ export function SessionListItem({
   onRename
 }: SessionListItemProps) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [menuPositionStyle, setMenuPositionStyle] = useState<CSSProperties | null>(null);
   const longPressTimerRef = useRef<number | null>(null);
   const suppressNextClickRef = useRef(false);
+  const menuTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
   const haptics = useHaptics();
   const { session, workspace } = entry;
   const title = session.title ?? session.sessionId;
@@ -96,6 +106,94 @@ export function SessionListItem({
     };
   }, []);
 
+  useLayoutEffect(() => {
+    if (!menuOpen || typeof window === "undefined") {
+      setMenuPositionStyle(null);
+      return;
+    }
+
+    let animationFrameId = 0;
+
+    const updateMenuPosition = () => {
+      const triggerElement = menuTriggerRef.current;
+
+      if (!triggerElement) {
+        return;
+      }
+
+      const triggerRect = triggerElement.getBoundingClientRect();
+      const viewportWidth = window.innerWidth;
+      const viewportHeight = window.innerHeight;
+      const maxMenuWidth = Math.max(0, viewportWidth - MENU_EDGE_PADDING_PX * 2);
+      const menuWidth = maxMenuWidth > 0
+        ? Math.min(
+            Math.max(menuRef.current?.offsetWidth ?? MENU_MIN_WIDTH_PX, MENU_MIN_WIDTH_PX),
+            maxMenuWidth
+          )
+        : MENU_MIN_WIDTH_PX;
+      const menuHeight = Math.max(menuRef.current?.offsetHeight ?? 0, MENU_ESTIMATED_HEIGHT_PX);
+      const preferredLeft = triggerRect.right - menuWidth;
+      const maxLeft = Math.max(MENU_EDGE_PADDING_PX, viewportWidth - menuWidth - MENU_EDGE_PADDING_PX);
+      const left = Math.min(Math.max(MENU_EDGE_PADDING_PX, preferredLeft), maxLeft);
+      const spaceAbove = triggerRect.top - MENU_EDGE_PADDING_PX;
+      const spaceBelow = viewportHeight - triggerRect.bottom - MENU_EDGE_PADDING_PX;
+      const shouldPlaceAbove = spaceBelow < menuHeight + MENU_GAP_PX && spaceAbove > spaceBelow;
+      const preferredTop = shouldPlaceAbove
+        ? triggerRect.top - menuHeight - MENU_GAP_PX
+        : triggerRect.bottom + MENU_GAP_PX;
+      const maxTop = Math.max(MENU_EDGE_PADDING_PX, viewportHeight - menuHeight - MENU_EDGE_PADDING_PX);
+      const top = Math.min(Math.max(MENU_EDGE_PADDING_PX, preferredTop), maxTop);
+
+      // 菜单挂到 body 后，必须按视口坐标夹紧，避免横向或纵向跑出屏幕。
+      setMenuPositionStyle({
+        position: "fixed",
+        left: `${Math.round(left)}px`,
+        top: `${Math.round(top)}px`,
+        width: `${Math.round(menuWidth)}px`,
+        maxWidth: `calc(100vw - ${MENU_EDGE_PADDING_PX * 2}px)`,
+        maxHeight: `${Math.max(96, viewportHeight - MENU_EDGE_PADDING_PX * 2)}px`,
+        transformOrigin: shouldPlaceAbove ? "bottom right" : "top right"
+      });
+    };
+
+    const requestPositionUpdate = () => {
+      window.cancelAnimationFrame(animationFrameId);
+      animationFrameId = window.requestAnimationFrame(updateMenuPosition);
+    };
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+
+      if (
+        target
+        && !menuRef.current?.contains(target)
+        && !menuTriggerRef.current?.contains(target)
+      ) {
+        setMenuOpen(false);
+      }
+    };
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setMenuOpen(false);
+      }
+    };
+
+    requestPositionUpdate();
+    window.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("keydown", handleEscape);
+    window.addEventListener("resize", requestPositionUpdate);
+    window.addEventListener("scroll", requestPositionUpdate, true);
+
+    return () => {
+      window.cancelAnimationFrame(animationFrameId);
+      window.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("keydown", handleEscape);
+      window.removeEventListener("resize", requestPositionUpdate);
+      window.removeEventListener("scroll", requestPositionUpdate, true);
+    };
+  }, [menuOpen]);
+
   function clearLongPressTimer() {
     if (longPressTimerRef.current !== null) {
       window.clearTimeout(longPressTimerRef.current);
@@ -103,7 +201,7 @@ export function SessionListItem({
     }
   }
 
-  function handlePointerDown(event: PointerEvent<HTMLButtonElement>) {
+  function handlePointerDown(event: ReactPointerEvent<HTMLButtonElement>) {
     if (!hasSubsessions || event.pointerType === "mouse") {
       return;
     }
@@ -156,6 +254,38 @@ export function SessionListItem({
     setMenuOpen(false);
   };
 
+  const sessionActionMenu =
+    menuOpen && typeof document !== "undefined"
+      ? createPortal(
+          <div
+            ref={menuRef}
+            className="session-action-menu surface-card"
+            role="menu"
+            aria-label={t("shell.sessionMoreAction")}
+            style={
+              menuPositionStyle ?? {
+                position: "fixed",
+                top: 0,
+                left: 0,
+                visibility: "hidden"
+              }
+            }
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button type="button" className="session-action-menu-item" role="menuitem" onClick={handleToggleFavoriteEntry}>
+              {isFavorite ? t("shell.unfavoriteAction") : t("shell.favoriteAction")}
+            </button>
+            <button type="button" className="session-action-menu-item" role="menuitem" onClick={() => void handleArchiveEntry()}>
+              {session.isArchived ? t("shell.unarchiveAction") : t("shell.archiveAction")}
+            </button>
+            <button type="button" className="session-action-menu-item" role="menuitem" onClick={() => void handleRename()}>
+              {t("shell.renameAction")}
+            </button>
+          </div>,
+          document.body
+        )
+      : null;
+
   return (
     <article
       className="session-list-item"
@@ -164,6 +294,39 @@ export function SessionListItem({
       data-has-subsessions={hasSubsessions}
       data-variant={variant}
     >
+      {hasSubsessions ? (
+        <button
+          type="button"
+          className="session-list-subsession-toggle"
+          aria-label={subsessionsExpanded ? t("shell.subagentCollapse") : t("shell.subagentExpand")}
+          title={subsessionsExpanded ? t("shell.subagentCollapse") : t("shell.subagentExpand")}
+          aria-expanded={subsessionsExpanded}
+          onClick={(event) => {
+            event.stopPropagation();
+            void haptics.trigger("selection");
+            onToggleSubsessions?.();
+          }}
+        >
+          <span
+            className={resolveSessionListIndicatorClassName(session, {
+              isActive,
+              hasSubsessions
+            })}
+            aria-hidden="true"
+          />
+          <span className="session-list-subsession-toggle-icon" aria-hidden="true">
+            <ChevronIcon expanded={subsessionsExpanded} />
+          </span>
+        </button>
+      ) : (
+        <span
+          className={resolveSessionListIndicatorClassName(session, {
+            isActive,
+            hasSubsessions
+          })}
+          aria-hidden="true"
+        />
+      )}
       <button
         type="button"
         className="session-list-link"
@@ -173,13 +336,6 @@ export function SessionListItem({
         onPointerCancel={handlePointerEnd}
         onPointerLeave={handlePointerEnd}
       >
-        <span
-          className={resolveSessionListIndicatorClassName(session, {
-            isActive,
-            hasSubsessions
-          })}
-          aria-hidden="true"
-        />
         <div className="session-list-copy">
           <div className="session-list-title">{title || t("shell.searchEntry")}</div>
           <div className="session-list-meta">
@@ -209,9 +365,11 @@ export function SessionListItem({
       {showActions ? (
         <div className="session-list-actions">
           <button
+            ref={menuTriggerRef}
             type="button"
             className="ghost-button"
             aria-expanded={menuOpen}
+            aria-haspopup="menu"
             onClick={() => {
               void haptics.trigger("selection");
               setMenuOpen((current) => !current);
@@ -219,21 +377,9 @@ export function SessionListItem({
           >
             {t("shell.sessionMoreAction")}
           </button>
-          {menuOpen ? (
-            <div className="session-action-menu surface-card" role="menu" aria-label={t("shell.sessionMoreAction")}>
-              <button type="button" className="session-action-menu-item" role="menuitem" onClick={handleToggleFavoriteEntry}>
-                {isFavorite ? t("shell.unfavoriteAction") : t("shell.favoriteAction")}
-              </button>
-              <button type="button" className="session-action-menu-item" role="menuitem" onClick={() => void handleArchiveEntry()}>
-                {session.isArchived ? t("shell.unarchiveAction") : t("shell.archiveAction")}
-              </button>
-              <button type="button" className="session-action-menu-item" role="menuitem" onClick={() => void handleRename()}>
-                {t("shell.renameAction")}
-              </button>
-            </div>
-          ) : null}
         </div>
       ) : null}
+      {sessionActionMenu}
     </article>
   );
 }
@@ -304,4 +450,23 @@ function truncateSessionErrorSummary(summary: string, maxLength = 96) {
   }
 
   return `${summary.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+}
+
+function ChevronIcon({ expanded }: { expanded: boolean }) {
+  return (
+    <svg viewBox="0 0 12 12" fill="none" aria-hidden="true">
+      <path
+        d="M3 4.25L6 7.25L9 4.25"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        style={{
+          transformOrigin: "50% 50%",
+          transform: expanded ? "rotate(180deg)" : "rotate(0deg)",
+          transition: "transform 180ms ease"
+        }}
+      />
+    </svg>
+  );
 }

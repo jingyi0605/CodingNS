@@ -110,6 +110,7 @@ describe("SessionIndexPage", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
   });
 
   it("渲染当前工作区的对话列表", () => {
@@ -164,22 +165,96 @@ describe("SessionIndexPage", () => {
     }
 
     await user.click(within(alphaEntry).getByRole("button", { name: "更多操作" }));
-    const archiveButton = screen.getByRole("menuitem", { name: "归档会话" });
+    const archiveButton = await screen.findByRole("menuitem", { name: "归档会话" });
     await user.click(archiveButton);
     expect(contextValue.archiveSession).toHaveBeenCalledWith("session-1");
 
     await user.click(within(betaEntry).getByRole("button", { name: "更多操作" }));
-    const unfavoriteButton = screen.getByRole("menuitem", { name: "取消收藏" });
+    const unfavoriteButton = await screen.findByRole("menuitem", { name: "取消收藏" });
     await user.click(unfavoriteButton);
     expect(contextValue.toggleFavoriteSession).toHaveBeenCalledWith("session-2");
 
     const promptSpy = vi.spyOn(window, "prompt").mockReturnValue("New Title");
     await user.click(within(alphaEntry).getByRole("button", { name: "更多操作" }));
-    const renameButton = screen.getByRole("menuitem", { name: "重命名" });
+    const renameButton = await screen.findByRole("menuitem", { name: "重命名" });
     await user.click(renameButton);
     expect(contextValue.renameSession).toHaveBeenCalledWith("session-1", "New Title");
     promptSpy.mockRestore();
   }, 10000);
+
+  it("更多操作菜单会挂到视口层并保持在屏幕范围内", async () => {
+    const user = userEvent.setup();
+    const requestAnimationFrameSpy = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((callback: FrameRequestCallback) => {
+        callback(0);
+        return 1;
+      });
+    const cancelAnimationFrameSpy = vi
+      .spyOn(window, "cancelAnimationFrame")
+      .mockImplementation(() => undefined);
+
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      value: 390
+    });
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: 720
+    });
+
+    renderPage();
+
+    const workspaceSection = screen.getByRole("heading", { level: 2, name: "当前工作区" }).closest("section");
+
+    if (!workspaceSection) {
+      throw new Error("未找到会话区块");
+    }
+
+    const alphaEntry = within(workspaceSection).getByText("会话 Alpha").closest("article");
+
+    if (!alphaEntry) {
+      throw new Error("未找到 Alpha 会话");
+    }
+
+    const trigger = within(alphaEntry).getByRole("button", { name: "更多操作" });
+    vi.spyOn(trigger, "getBoundingClientRect").mockReturnValue({
+      x: 350,
+      y: 620,
+      width: 48,
+      height: 32,
+      top: 620,
+      right: 398,
+      bottom: 652,
+      left: 350,
+      toJSON: () => undefined
+    });
+
+    await user.click(trigger);
+
+    const menu = screen.getByRole("menu", { name: "更多操作" });
+    Object.defineProperty(menu, "offsetWidth", {
+      configurable: true,
+      get: () => 180
+    });
+    Object.defineProperty(menu, "offsetHeight", {
+      configurable: true,
+      get: () => 160
+    });
+
+    fireEvent(window, new Event("resize"));
+
+    expect(document.body.contains(menu)).toBe(true);
+    expect(menu).toHaveStyle({
+      position: "fixed",
+      left: "198px",
+      top: "452px",
+      width: "180px"
+    });
+
+    requestAnimationFrameSpy.mockRestore();
+    cancelAnimationFrameSpy.mockRestore();
+  });
 
   it("主会话长按后会展开和收起子会话列表", () => {
     vi.useFakeTimers();
@@ -199,7 +274,7 @@ describe("SessionIndexPage", () => {
       throw new Error("未找到 Beta 会话");
     }
 
-    const betaButton = within(betaEntry).getAllByRole("button")[0];
+    const betaButton = within(betaEntry).getByRole("button", { name: /会话 Beta/ });
 
     fireEvent.pointerDown(betaButton, { pointerType: "touch" });
     act(() => {

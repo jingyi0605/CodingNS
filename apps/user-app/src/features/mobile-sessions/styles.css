@@ -381,17 +381,18 @@
 }
 
 .session-action-menu {
-  position: absolute;
-  top: calc(100% + 0.4rem);
-  right: 0;
-  z-index: 2;
+  position: fixed;
+  z-index: 2400;
   min-width: 9rem;
   display: flex;
   flex-direction: column;
   padding: 0.35rem;
   border: 1px solid var(--border-primary);
   border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-surface) 96%, transparent);
   box-shadow: var(--shadow-lg);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .session-action-menu-item {
