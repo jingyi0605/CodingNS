@@ -163,10 +163,7 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
       }
 
       const messages = this.parseMessages(filePath, typedRecords);
-      const title =
-        this.resolveClaudeTitle(typedRecords) ||
-        messages.find((message) => message.role === "user")?.content.slice(0, 48) ||
-        basename(filePath, ".jsonl");
+      const title = this.resolveDetectedClaudeTitle(typedRecords, messages, filePath);
       const lastMessageAt =
         messages.at(-1)?.timestamp ??
         (ensureText(typedRecords.at(-1)?.timestamp) || null);
@@ -455,11 +452,7 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
     const records = readJsonLines(rawStoreRef).map((record) => record.data);
     const messages = this.parseMessages(rawStoreRef, records, providerSessionId);
 
-    return (
-      this.resolveClaudeTitle(records) ||
-      messages.find((message) => message.role === "user")?.content.slice(0, 48) ||
-      basename(rawStoreRef, ".jsonl")
-    );
+    return this.resolveDetectedClaudeTitle(records, messages, rawStoreRef);
   }
 
   async renameSessionTitle(
@@ -563,6 +556,31 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
 
       if (title.length > 0) {
         return title;
+      }
+    }
+
+    return "";
+  }
+
+  private resolveDetectedClaudeTitle(
+    records: Array<Record<string, unknown>>,
+    messages: NormalizedMessage[],
+    rawStoreRef: string
+  ): string {
+    return (
+      this.resolveClaudeTitle(records) ||
+      resolveClaudeFallbackTitle(messages) ||
+      this.resolveClaudeSlug(records) ||
+      basename(rawStoreRef, ".jsonl")
+    );
+  }
+
+  private resolveClaudeSlug(records: Array<Record<string, unknown>>): string {
+    for (let index = records.length - 1; index >= 0; index -= 1) {
+      const slug = ensureText(records[index]?.slug).trim();
+
+      if (slug.length > 0) {
+        return slug;
       }
     }
 
@@ -857,6 +875,54 @@ function isPendingClaudeRuntimeRef(providerSessionId: string, rawStoreRef: strin
 
   const normalizedRawStoreRef = rawStoreRef.replaceAll("\\", "/").toLowerCase();
   return normalizedRawStoreRef.includes("/.pending-");
+}
+
+function resolveClaudeFallbackTitle(messages: NormalizedMessage[]): string | null {
+  const preferredMessage = messages.find(
+    (message) => message.role === "user" && !looksLikeClaudeSyntheticTitleMessage(message.content)
+  );
+
+  if (preferredMessage) {
+    return normalizeClaudeMessageTitle(preferredMessage.content);
+  }
+
+  const firstUserMessage = messages.find((message) => message.role === "user");
+  return normalizeClaudeMessageTitle(firstUserMessage?.content);
+}
+
+function normalizeClaudeMessageTitle(content: string | null | undefined): string | null {
+  const normalized = ensureText(content).trim().replace(/\s+/g, " ");
+
+  if (normalized.length === 0) {
+    return null;
+  }
+
+  return normalized.slice(0, 48);
+}
+
+function looksLikeClaudeSyntheticTitleMessage(content: string): boolean {
+  const normalized = content.trim();
+
+  if (normalized.length === 0) {
+    return true;
+  }
+
+  if (looksLikeClaudeRulesMessage(normalized)) {
+    return true;
+  }
+
+  return /^<(?:ide_[a-z0-9_:-]+|local-command-[a-z0-9_:-]+|command-name)>[\s\S]*$/i.test(normalized);
+}
+
+function looksLikeClaudeRulesMessage(content: string): boolean {
+  const beginsWithRulesHeader = /^#?\s*AGENTS\.md instructions for\b/i.test(content);
+
+  if (beginsWithRulesHeader) {
+    return true;
+  }
+
+  return /AGENTS\.md instructions for/i.test(content)
+    && /<INSTRUCTIONS>/i.test(content);
 }
 
 function cloneJsonRecord<T>(value: T): T {

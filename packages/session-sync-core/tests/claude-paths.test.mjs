@@ -399,6 +399,151 @@ test("ClaudeCodeAdapter 能解析 content 为字符串的用户消息", async ()
   }
 });
 
+test("ClaudeCodeAdapter 在没有 ai-title 时会优先用真实用户提示词，而不是 slug", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-claude-slug-title-"));
+  const workspacePath = "/Users/jackson/Documents/Code/CodingNS";
+  const projectDir = join(tempDir, "projects", "-Users-jackson-Documents-Code-CodingNS");
+  const sessionId = "3a3a3a3a-3333-4333-8333-3a3a3a3a3a3a";
+  const rawStoreRef = join(projectDir, `${sessionId}.jsonl`);
+
+  try {
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(
+      rawStoreRef,
+      [
+        JSON.stringify({
+          type: "user",
+          sessionId,
+          cwd: workspacePath,
+          timestamp: "2026-04-12T10:00:00.000Z",
+          message: {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: "<ide_opened_file>The user opened the file /Users/jackson/Documents/Code/CodingNS/README.md in the IDE. This may or may not be related to the current task.</ide_opened_file>"
+              },
+              {
+                type: "text",
+                text: "请帮我修复 Claude 会话标题读取异常"
+              }
+            ]
+          }
+        }),
+        JSON.stringify({
+          type: "assistant",
+          sessionId,
+          cwd: workspacePath,
+          timestamp: "2026-04-12T10:00:02.000Z",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "我先检查标题解析链路。" }]
+          },
+          slug: "keen-riding-unicorn"
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const adapter = new ClaudeCodeAdapter({ homeDir: tempDir });
+    const sessions = await adapter.detectSessions(workspacePath);
+    const title = await adapter.readSessionTitle(sessionId, rawStoreRef);
+
+    assert.equal(sessions[0]?.title, "请帮我修复 Claude 会话标题读取异常");
+    assert.equal(title, "请帮我修复 Claude 会话标题读取异常");
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("ClaudeCodeAdapter 在没有 slug 时会跳过 IDE 注入和规则块，改用真实用户提示词做标题", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-claude-fallback-title-"));
+  const workspacePath = "/Users/jackson/Documents/Code/CodingNS";
+  const projectDir = join(tempDir, "projects", "-Users-jackson-Documents-Code-CodingNS");
+  const sessionId = "4b4b4b4b-4444-4444-8444-4b4b4b4b4b4b";
+  const rawStoreRef = join(projectDir, `${sessionId}.jsonl`);
+
+  try {
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(
+      rawStoreRef,
+      [
+        JSON.stringify({
+          type: "user",
+          sessionId,
+          cwd: workspacePath,
+          timestamp: "2026-04-12T10:05:00.000Z",
+          message: {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: "# AGENTS.md instructions for /Users/jackson/Documents/Code/CodingNS\n<INSTRUCTIONS>\n请始终使用中文\n</INSTRUCTIONS>"
+              },
+              {
+                type: "text",
+                text: "<ide_opened_file>The user opened the file /Users/jackson/Documents/Code/CodingNS/apps/user-app/src/main.tsx in the IDE. This may or may not be related to the current task.</ide_opened_file>"
+              },
+              {
+                type: "text",
+                text: "请把 Claude 外部会话标题读取修好，不要再显示 IDE 注入内容"
+              }
+            ]
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const adapter = new ClaudeCodeAdapter({ homeDir: tempDir });
+    const sessions = await adapter.detectSessions(workspacePath);
+    const title = await adapter.readSessionTitle(sessionId, rawStoreRef);
+
+    assert.equal(sessions[0]?.title, "请把 Claude 外部会话标题读取修好，不要再显示 IDE 注入内容");
+    assert.equal(title, "请把 Claude 外部会话标题读取修好，不要再显示 IDE 注入内容");
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("ClaudeCodeAdapter 只有 slug 可用时才回退到 slug", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-claude-slug-fallback-"));
+  const workspacePath = "/Users/jackson/Documents/Code/CodingNS";
+  const projectDir = join(tempDir, "projects", "-Users-jackson-Documents-Code-CodingNS");
+  const sessionId = "5c5c5c5c-5555-4555-8555-5c5c5c5c5c5c";
+  const rawStoreRef = join(projectDir, `${sessionId}.jsonl`);
+
+  try {
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(
+      rawStoreRef,
+      [
+        JSON.stringify({
+          type: "assistant",
+          sessionId,
+          cwd: workspacePath,
+          timestamp: "2026-04-12T10:08:00.000Z",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "这是只有 assistant 的异常 transcript。" }]
+          },
+          slug: "quiet-floating-feather"
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const adapter = new ClaudeCodeAdapter({ homeDir: tempDir });
+    const sessions = await adapter.detectSessions(workspacePath);
+    const title = await adapter.readSessionTitle(sessionId, rawStoreRef);
+
+    assert.equal(sessions[0]?.title, "quiet-floating-feather");
+    assert.equal(title, "quiet-floating-feather");
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("ClaudeCodeAdapter 会把同一条 Claude thinking 的 progress 与最终消息并成一条历史记录", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "codingns-claude-thinking-merge-"));
   const workspacePath = "/Users/jackson/Documents/Code/CodingNS";
