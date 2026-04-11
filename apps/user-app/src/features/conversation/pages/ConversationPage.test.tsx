@@ -1268,6 +1268,72 @@ describe("ConversationPage", () => {
     expect(screen.queryByText(t("shell.favoriteSectionTitle"))).not.toBeInTheDocument();
   });
 
+  it("移动端对话页侧边会话列表不会显示父会话已归档的孤儿子会话", async () => {
+    mockGetProviderCapabilities.mockResolvedValue({
+      provider: "codex",
+      canStartSession: true,
+      canResumeSession: true,
+      canSendMessage: true,
+      inRunInputMode: "none",
+      supportsSubagents: false,
+      supportsInterrupt: true,
+      supportsStructuredToolCalls: true,
+      supportsTokenUsage: true,
+      supportsAttachments: true,
+      supportsPermissionPrompt: true,
+      supportsCheckpoint: false,
+      modelOptions: [{ id: "provider-default", name: "跟随 CLI 默认模型", usesProviderDefault: true }],
+      limitations: []
+    });
+
+    mockUseWorkbenchShell.mockReturnValue({
+      shellMode: "mobile",
+      navigationGroups: [
+        {
+          workspace: {
+            id: "workspace-1",
+            name: "工作区一",
+            path: "/Users/jackson/workspace-1"
+          },
+          sessions: [
+            createMobileSession({
+              sessionId: "session-archived-root",
+              title: "已归档父会话",
+              isArchived: true
+            }),
+            createMobileSession({
+              sessionId: "session-orphan-child",
+              title: "孤儿子会话",
+              parentSessionId: "session-archived-root",
+              isSubagent: true,
+              subagentLabel: "worker · orphan"
+            }),
+            createMobileSession({
+              sessionId: "session-visible-root",
+              title: "可见主会话"
+            })
+          ]
+        }
+      ],
+      requestNavigationRefresh: vi.fn(),
+      setSessionWorkspace: vi.fn(),
+      upsertNavigationSession: vi.fn(),
+      favoriteSessions: [],
+      selectWorkspace: vi.fn()
+    });
+
+    const view = renderDraftConversationPage();
+    const workspaceGroup = view.container.querySelector(
+      ".mobile-conversation-preview-group-workspace"
+    ) as HTMLElement;
+    const workspaceCounter = workspaceGroup.querySelector(".workbench-section-counter");
+
+    expect(screen.getByText("可见主会话")).toBeInTheDocument();
+    expect(screen.queryByText("孤儿子会话")).not.toBeInTheDocument();
+    expect(screen.queryByText("已归档父会话")).not.toBeInTheDocument();
+    expect(workspaceCounter).toHaveTextContent("1");
+  });
+
   it("移动端快捷会话菜单会按需展开主会话下的子 agent 会话", async () => {
     mockGetProviderCapabilities.mockResolvedValue({
       provider: "codex",

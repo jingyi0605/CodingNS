@@ -1355,6 +1355,47 @@ function createDraftSessionSummary(draft: DraftConversationContext): SessionSumm
   };
 }
 
+function resolveNavigationParentSessionId(session: SessionSummaryDto) {
+  return session.parentSessionId?.trim() || null;
+}
+
+function filterVisibleNavigationSessions(sessions: readonly SessionSummaryDto[]) {
+  const sessionById = new Map(sessions.map((session) => [session.sessionId, session] as const));
+  const visibilityCache = new Map<string, boolean>();
+
+  const isVisible = (session: SessionSummaryDto): boolean => {
+    const cached = visibilityCache.get(session.sessionId);
+    if (typeof cached === "boolean") {
+      return cached;
+    }
+
+    if (session.isArchived) {
+      visibilityCache.set(session.sessionId, false);
+      return false;
+    }
+
+    const parentSessionId = resolveNavigationParentSessionId(session);
+
+    if (!parentSessionId) {
+      visibilityCache.set(session.sessionId, true);
+      return true;
+    }
+
+    const parentSession = sessionById.get(parentSessionId);
+
+    if (!parentSession) {
+      visibilityCache.set(session.sessionId, true);
+      return true;
+    }
+
+    const visible = isVisible(parentSession);
+    visibilityCache.set(session.sessionId, visible);
+    return visible;
+  };
+
+  return sessions.filter((session) => isVisible(session));
+}
+
 function buildMobilePreviewItems(
   navigationGroups: ReturnType<typeof useWorkbenchShell>["navigationGroups"],
   workspaceId: string | null,
@@ -1370,8 +1411,7 @@ function buildMobilePreviewItems(
     return [];
   }
 
-  const visibleEntries = workspaceGroup.sessions
-    .filter((session) => !session.isArchived)
+  const visibleEntries = filterVisibleNavigationSessions(workspaceGroup.sessions)
     .map((session) => ({
       session,
       workspace: workspaceGroup.workspace
@@ -1389,29 +1429,24 @@ function buildMobileFavoritePreviewItems(
   favoriteSessions: readonly WorkbenchNavigationEntry[],
   navigationGroups: ReturnType<typeof useWorkbenchShell>["navigationGroups"]
 ): WorkbenchNavigationTreeNode[] {
-  const treeByWorkspaceId = new Map(
-    navigationGroups.map((group) => [
-      group.workspace.id,
-      buildNavigationSessionTree(
-        group.sessions
-          .filter((session) => !session.isArchived)
-          .map((session) => ({
-            session,
-            workspace: group.workspace
-          }))
-      )
-    ] as const)
+  const visibleTreeByWorkspaceId = new Map(
+    navigationGroups.map((group) => {
+      const visibleEntries = filterVisibleNavigationSessions(group.sessions).map((session) => ({
+        session,
+        workspace: group.workspace
+      }));
+
+      return [group.workspace.id, buildNavigationSessionTree(visibleEntries)] as const;
+    })
   );
 
   return favoriteSessions
     .filter((item) => !isRealSubagentSession(item.session))
-    .map((entry) => {
-      const workspaceTree = treeByWorkspaceId.get(entry.workspace.id) ?? [];
-      return findNavigationTreeNodeBySessionId(workspaceTree, entry.session.sessionId) ?? {
-        item: entry,
-        depth: 0,
-        children: []
-      };
+    .flatMap((entry) => {
+      const workspaceTree = visibleTreeByWorkspaceId.get(entry.workspace.id) ?? [];
+      const node = findNavigationTreeNodeBySessionId(workspaceTree, entry.session.sessionId);
+
+      return node ? [node] : [];
     });
 }
 
