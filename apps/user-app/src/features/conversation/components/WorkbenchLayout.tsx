@@ -77,6 +77,7 @@ import {
   hasSessionDisplayError,
   resolveSessionActivityBadgeClassName,
   resolveSessionActivityBadgeLabel,
+  resolveSessionIndicatorClassVariant,
   resolveSessionIndicatorClassName
 } from "../session-activity-display";
 import {
@@ -805,6 +806,16 @@ function sessionStateClassName(
   }
 ) {
   return resolveSessionIndicatorClassName("session-state-indicator", session, options);
+}
+
+function sessionStateVariantName(
+  session: SessionSummaryDto,
+  options?: {
+    hasSubagents?: boolean;
+    isActive?: boolean;
+  }
+) {
+  return resolveSessionIndicatorClassVariant(session, options);
 }
 
 function readStoredNumber(key: string, fallback: number) {
@@ -2079,6 +2090,10 @@ function SessionCard({
             type="button"
             className="workbench-session-subagent-toggle"
             style={subagentToggleLayerStyle}
+            data-indicator-variant={sessionStateVariantName(session, {
+              hasSubagents: true,
+              isActive
+            })}
             aria-label={subagentListExpanded ? t("shell.subagentCollapse") : t("shell.subagentExpand")}
             title={subagentListExpanded ? t("shell.subagentCollapse") : t("shell.subagentExpand")}
             aria-expanded={subagentListExpanded}
@@ -2096,7 +2111,7 @@ function SessionCard({
               aria-hidden="true"
             />
             <span className="workbench-session-subagent-toggle-icon" aria-hidden="true">
-              {subagentListExpanded ? <CloseIcon /> : <ArrowRightIcon />}
+              <ChevronIcon expanded={subagentListExpanded} />
             </span>
           </button>
         ) : (
@@ -3235,7 +3250,9 @@ function SidebarContent({
                   aria-label={group.isCollapsed ? t("shell.workspaceExpand") : t("shell.workspaceCollapse")}
                   onClick={() => onToggleWorkspaceCollapse(group.workspace.id)}
                 >
-                  <ChevronIcon expanded={!group.isCollapsed} />
+                  <span className="workbench-workspace-toggle-icon" aria-hidden="true">
+                    <ChevronIcon expanded={!group.isCollapsed} />
+                  </span>
                   <strong>{group.workspace.name}</strong>
                 </button>
 

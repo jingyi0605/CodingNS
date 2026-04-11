@@ -585,7 +585,7 @@ body {
 .workbench-workspace-toggle {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-3);
+  gap: 4px;
   flex: 1 1 auto;
   padding: var(--list-item-padding-y) var(--list-item-padding-x);
   min-width: 0;
@@ -1875,6 +1875,7 @@ body {
 .workbench-workspace-toggle {
   min-height: 30px;
   padding: 0 6px 0 2px;
+  gap: 4px;
   border-radius: 8px;
 }
 
@@ -2512,6 +2513,14 @@ body {
 }
 
 .workbench-workspace-section {
+  --workbench-nav-base-inset: var(--workbench-sidebar-icon-inset);
+  --workbench-nav-leading-slot: 16px;
+  --workbench-nav-leading-gap: 4px;
+  --workbench-nav-label-start: calc(
+    var(--workbench-nav-base-inset)
+    + var(--workbench-nav-leading-slot)
+    + var(--workbench-nav-leading-gap)
+  );
   gap: 8px;
 }
 
@@ -2531,12 +2540,24 @@ body {
 }
 
 .workbench-workspace-toggle {
+  display: grid;
+  grid-template-columns: var(--workbench-nav-leading-slot) minmax(0, 1fr);
+  column-gap: var(--workbench-nav-leading-gap);
   min-height: 22px;
-  padding: 0 var(--workbench-sidebar-item-padding-end) 0 var(--workbench-sidebar-icon-inset);
+  padding: 0 var(--workbench-sidebar-item-padding-end) 0 var(--workbench-nav-base-inset);
   border-radius: 8px;
 }
 
+.workbench-workspace-toggle-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--workbench-nav-leading-slot);
+  height: 16px;
+}
+
 .workbench-workspace-toggle strong {
+  grid-column: 2;
   font-size: 13px;
   font-weight: 600;
   color: rgba(60, 60, 67, 0.96);
@@ -2590,6 +2611,12 @@ body {
   gap: 1px;
 }
 
+.workbench-session-tree-row {
+  --workbench-session-indicator-center-x: calc(
+    var(--workbench-nav-base-inset) + (var(--workbench-nav-leading-slot) / 2)
+  );
+}
+
 .workbench-session-card,
 .workbench-session-card[data-depth="1"] {
   border-radius: 10px;
@@ -2634,7 +2661,7 @@ body {
     4px
     var(--workbench-sidebar-item-padding-end)
     4px
-    calc(var(--workbench-sidebar-icon-inset) + var(--workbench-sidebar-icon-slot-size) + 8px);
+    var(--workbench-nav-label-start);
   border-radius: 9px;
 }
 
@@ -2644,7 +2671,7 @@ body {
     4px
     var(--workbench-sidebar-item-padding-end)
     4px
-    calc(var(--workbench-sidebar-icon-inset) + var(--workbench-sidebar-icon-slot-size) + 8px);
+    var(--workbench-nav-label-start);
   border-radius: 8px;
 }
 
@@ -2716,6 +2743,7 @@ body {
   color: #34c759;
   border-radius: 999px;
   cursor: pointer;
+  box-shadow: none;
 }
 
 .workbench-session-subagent-toggle .session-state-indicator,
@@ -2727,32 +2755,50 @@ body {
 
 .workbench-session-subagent-toggle-icon {
   position: absolute;
-  inset: 3px;
+  inset: 2px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  opacity: 0;
-  transform: scale(0.72);
+  opacity: 1;
+  transform: none;
 }
 
+.workbench-session-subagent-toggle-icon svg {
+  width: 8px;
+  height: 8px;
+}
+
+.workbench-session-subagent-toggle .session-state-indicator,
 .workbench-session-subagent-toggle:hover .session-state-indicator,
 .workbench-session-subagent-toggle:focus-visible .session-state-indicator,
 .workbench-session-card[data-has-subagents="true"]:focus-within .workbench-session-subagent-toggle .session-state-indicator {
-  opacity: 0;
-  transform: scale(0.7);
+  opacity: 1;
+  transform: none;
 }
 
 .workbench-session-subagent-toggle:hover .workbench-session-subagent-toggle-icon,
 .workbench-session-subagent-toggle:focus-visible .workbench-session-subagent-toggle-icon,
 .workbench-session-card[data-has-subagents="true"]:focus-within .workbench-session-subagent-toggle-icon {
   opacity: 1;
-  transform: scale(1);
+  transform: none;
+}
+
+.workbench-session-subagent-toggle[data-indicator-variant="subagent-unread"] {
+  background: transparent;
+  box-shadow: none;
+}
+
+.workbench-session-subagent-toggle[data-indicator-variant="subagent-running"] {
+  background: transparent;
 }
 
 /* 清掉 styles.css 里按状态直接画在外层元素上的旧点，否则会把缩小后的 before 盖住。 */
 .session-state-indicator.is-idle,
 .session-state-indicator.is-unread,
+.session-state-indicator.is-subagent,
+.session-state-indicator.is-subagent-unread,
 .session-state-indicator.is-running,
+.session-state-indicator.is-subagent-running,
 .session-state-indicator.is-running-inferred,
 .session-state-indicator.is-error {
   background: transparent;
@@ -2782,11 +2828,33 @@ body {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
+.session-state-indicator.is-subagent::before {
+  width: 7px;
+  height: 7px;
+  background: #34c759;
+  box-shadow: 0 0 0 2px color-mix(in srgb, #34c759 18%, transparent);
+}
+
+.session-state-indicator.is-subagent-unread::before {
+  width: 7px;
+  height: 7px;
+  background: #34c759;
+  box-shadow: 0 0 0 3px color-mix(in srgb, #34c759 20%, transparent);
+}
+
 .session-state-indicator.is-running::before {
   width: 7px;
   height: 7px;
   border: 1.5px solid color-mix(in srgb, var(--accent) 22%, transparent);
   border-top-color: var(--accent);
+  animation: session-running-spin 800ms linear infinite;
+}
+
+.session-state-indicator.is-subagent-running::before {
+  width: 7px;
+  height: 7px;
+  border: 1.5px solid color-mix(in srgb, #34c759 26%, transparent);
+  border-top-color: #34c759;
   animation: session-running-spin 800ms linear infinite;
 }
 

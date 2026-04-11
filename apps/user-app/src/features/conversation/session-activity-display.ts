@@ -24,6 +24,18 @@ type SessionIndicatorVariant =
   | "stale"
   | "unknown";
 
+type SessionIndicatorClassVariant =
+  | "error"
+  | "idle"
+  | "unread"
+  | "running"
+  | "running-inferred"
+  | "stale"
+  | "unknown"
+  | "subagent"
+  | "subagent-unread"
+  | "subagent-running";
+
 export function hasSessionDisplayError(session: SessionActivityDisplayInput): boolean {
   return (
     session.runningState === "failed"
@@ -40,15 +52,40 @@ export function resolveSessionIndicatorClassName(
     isActive?: boolean;
   }
 ): string {
-  void options;
+  return `${baseClassName} is-${resolveSessionIndicatorClassVariant(session, options)}`;
+}
+
+export function resolveSessionIndicatorClassVariant(
+  session: SessionActivityDisplayInput,
+  options?: {
+    hasSubagents?: boolean;
+    isActive?: boolean;
+  }
+): SessionIndicatorClassVariant {
+  void options?.isActive;
   const variant = resolveSessionIndicatorVariant(session);
 
-  if (variant === "running_inferred") {
-    return `${baseClassName} is-running-inferred`;
+  if (options?.hasSubagents) {
+    if (variant === "error") {
+      return "error";
+    }
+
+    if (variant === "unread") {
+      return "subagent-unread";
+    }
+
+    if (variant === "running" || variant === "running_inferred") {
+      return "subagent-running";
+    }
+
+    return "subagent";
   }
 
-  // 多 agent 只影响树结构和交互，不该改写会话状态语义。
-  return `${baseClassName} is-${variant.replace("_", "-")}`;
+  if (variant === "running_inferred") {
+    return "running-inferred";
+  }
+
+  return variant.replace("_", "-") as SessionIndicatorClassVariant;
 }
 
 export function resolveSessionActivityBadgeLabel(

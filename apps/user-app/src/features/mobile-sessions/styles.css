@@ -63,7 +63,13 @@
   min-width: 0;
   position: relative;
   --session-tree-line-color: color-mix(in srgb, var(--text-secondary) 54%, var(--bg-primary));
-  --session-tree-indicator-center-x: calc(1rem + 5px);
+  --session-tree-indicator-size: 10px;
+  --session-tree-link-gap: 0.25rem;
+  --session-tree-link-padding-left: 0;
+  --session-tree-indicator-center-x: calc(
+    var(--session-tree-link-padding-left)
+    + (var(--session-tree-indicator-size) / 2)
+  );
   --session-tree-indicator-center-y: calc(0.95rem + 0.35rem + 5px);
   --session-tree-indent-step: 1.35rem;
   padding-left: calc(var(--session-tree-depth, 0) * var(--session-tree-indent-step));
@@ -234,8 +240,8 @@
 }
 
 .session-list-item[data-variant="mobile"] .session-list-link {
-  gap: 0.78rem;
-  padding: 0.95rem 0.95rem 0.95rem 1rem;
+  gap: var(--session-tree-link-gap);
+  padding: 0.95rem 0.95rem 0.95rem var(--session-tree-link-padding-left);
 }
 
 .session-list-item[data-variant="mobile"] .session-list-link:hover {
@@ -268,8 +274,8 @@
 }
 
 .session-list-indicator {
-  width: 10px;
-  height: 10px;
+  width: var(--session-tree-indicator-size, 10px);
+  height: var(--session-tree-indicator-size, 10px);
   margin-top: 0.35rem;
   border-radius: 999px;
   flex-shrink: 0;
