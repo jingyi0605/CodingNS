@@ -2548,13 +2548,19 @@ function SidebarContent({
               continue;
             }
 
-            const activeChildIndex = childNodes.findIndex((childNode) => childNode.item.sessionId === activeSessionId);
+            // 这里必须按整棵后代树来维护可见数量，不能只看直属孩子。
+            // 否则用户手动“展开更多”以后，只要导航树刷新一次，
+            // effect 就会把可见数量缩回直属孩子数，看起来像系统自动收起了会话。
+            const descendantNodes = flattenSessionTreeNodes(childNodes);
+            const activeDescendantIndex = descendantNodes.findIndex(
+              (childNode) => childNode.item.sessionId === activeSessionId
+            );
 
             next[node.item.sessionId] = resolveVisibleItemCount(
-              childNodes.length,
+              descendantNodes.length,
               SUBAGENT_PAGE_SIZE,
               current[node.item.sessionId],
-              activeChildIndex
+              activeDescendantIndex
             );
           }
         }
@@ -2683,13 +2689,16 @@ function SidebarContent({
     const session = node.item;
     const childNodes = getTreeNodeChildren(node);
     const subagentListExpanded = ancestorExpanded || isSubagentListExpanded(session.sessionId);
-    const visibleNode = subagentListExpanded
+    // 只让真正的展开根节点负责子会话分页，递归子节点只消费父节点已经裁好的树，
+    // 否则同一棵树会被重复裁剪，冒出多个“展开更多子会话”按钮。
+    const shouldPaginateSubagentTree = subagentListExpanded && allowToggle;
+    const visibleNode = shouldPaginateSubagentTree
       ? limitVisibleDescendantTree(node, getVisibleSubagentCount(session.sessionId))
       : node;
     const visibleChildren = subagentListExpanded ? getTreeNodeChildren(visibleNode) : [];
     const totalDescendantCount = flattenSessionTreeNodes(childNodes).length;
     const visibleDescendantCount = flattenSessionTreeNodes(visibleChildren).length;
-    const hasMoreSubagents = subagentListExpanded && visibleDescendantCount < totalDescendantCount;
+    const hasMoreSubagents = shouldPaginateSubagentTree && visibleDescendantCount < totalDescendantCount;
     const nextAncestorHasNextSiblings =
       node.depth > 0 ? [...ancestorHasNextSiblings, hasNextSibling] : [...ancestorHasNextSiblings];
 

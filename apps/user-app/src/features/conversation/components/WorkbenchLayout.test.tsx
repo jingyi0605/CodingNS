@@ -1064,6 +1064,103 @@ describe("WorkbenchLayout", () => {
     expect(rootTreeScope.queryByText("Subagent 6")).not.toBeInTheDocument();
   });
 
+  it("嵌套子代理分页时只保留一个展开更多按钮", async () => {
+    const nestedSubagentSessions = [
+      {
+        ...createSessionSummary({
+          sessionId: "branch-root",
+          title: "Branch Root",
+          workspaceId: "workspace-1",
+          parentSessionId: "root-session",
+          isSubagent: true,
+          subagentLabel: "worker · branch-root"
+        }),
+        lastMessageAt: "2026-03-24T10:09:00.000Z",
+        updatedAt: "2026-03-24T10:09:00.000Z"
+      },
+      ...Array.from({ length: 6 }, (_, index) => ({
+        ...createSessionSummary({
+          sessionId: `branch-nested-${index + 1}`,
+          title: `Branch Nested ${index + 1}`,
+          workspaceId: "workspace-1",
+          parentSessionId: "branch-root",
+          isSubagent: true,
+          subagentLabel: `worker · nested-${index + 1}`
+        }),
+        lastMessageAt: `2026-03-24T10:0${8 - index}:00.000Z`,
+        updatedAt: `2026-03-24T10:0${8 - index}:00.000Z`
+      })),
+      ...Array.from({ length: 4 }, (_, index) => ({
+        ...createSessionSummary({
+          sessionId: `root-sibling-${index + 1}`,
+          title: `Root Sibling ${index + 1}`,
+          workspaceId: "workspace-1",
+          parentSessionId: "root-session",
+          isSubagent: true,
+          subagentLabel: `worker · sibling-${index + 1}`
+        }),
+        lastMessageAt: `2026-03-24T09:5${9 - index}:00.000Z`,
+        updatedAt: `2026-03-24T09:5${9 - index}:00.000Z`
+      }))
+    ];
+
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "Project One"),
+        sessions: [
+          {
+            ...createSessionSummary({
+              sessionId: "root-session",
+              title: "Root Session",
+              workspaceId: "workspace-1"
+            }),
+            lastMessageAt: "2026-03-24T10:10:00.000Z",
+            updatedAt: "2026-03-24T10:10:00.000Z"
+          },
+          ...nestedSubagentSessions
+        ]
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/workspaces/workspace-1/sessions/root-session");
+
+    const rootSession = await findSessionCardByTitle("Root Session");
+    const rootTreeNode = rootSession.closest(".workbench-session-tree-node") as HTMLElement | null;
+    expect(rootTreeNode).not.toBeNull();
+
+    const rootTreeScope = within(rootTreeNode!);
+
+    await userEvent.click(rootTreeScope.getByRole("button", { name: t("shell.subagentExpand") }));
+    await userEvent.click(rootTreeScope.getByRole("button", { name: t("shell.subagentExpandMore") }));
+
+    expect(rootTreeScope.getByText("Branch Nested 6")).toBeInTheDocument();
+    expect(rootTreeScope.getByText("Root Sibling 3")).toBeInTheDocument();
+    expect(rootTreeScope.getAllByRole("button", { name: t("shell.subagentExpandMore") })).toHaveLength(1);
+
+    MockWebSocket.instances[0]?.dispatchMessage({
+      type: "workbench.snapshot",
+      snapshot: currentSnapshot
+    });
+
+    await waitFor(() => {
+      expect(rootTreeScope.getByText("Branch Nested 6")).toBeInTheDocument();
+      expect(rootTreeScope.getByText("Root Sibling 3")).toBeInTheDocument();
+    });
+    expect(rootTreeScope.getAllByRole("button", { name: t("shell.subagentExpandMore") })).toHaveLength(1);
+  });
+
   it("工作区根会话默认分段渲染，并保证当前激活会话不会被折叠掉", async () => {
     const currentSnapshot = createWorkbenchSnapshot([
       {
