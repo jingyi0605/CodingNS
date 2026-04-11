@@ -305,6 +305,49 @@ describe("SessionIndexPage", () => {
     expect(within(workspaceSection).queryByText("子代理 Beta-1")).not.toBeInTheDocument();
   });
 
+  it("不会显示父会话已归档的子会话孤儿节点", () => {
+    contextValue.navigationGroups[0].sessions = [
+      {
+        sessionId: "archived-root",
+        title: "已归档父会话",
+        provider: "codex",
+        workspaceId: "workspace-1",
+        isArchived: true,
+        lastMessageAt: "2026-03-27T09:30:00Z",
+        runningState: null,
+        syncStatus: null,
+        lastErrorCode: null,
+        lastErrorDetail: null
+      },
+      {
+        sessionId: "orphan-subagent",
+        title: "孤儿子会话",
+        provider: "codex",
+        workspaceId: "workspace-1",
+        parentSessionId: "archived-root",
+        isSubagent: true,
+        subagentLabel: "worker · orphan",
+        lastMessageAt: "2026-03-27T09:20:00Z",
+        runningState: null,
+        syncStatus: null,
+        lastErrorCode: null,
+        lastErrorDetail: null
+      },
+      ...createNavigationGroups()[0].sessions
+    ];
+
+    renderPage();
+
+    const workspaceSection = screen.getByRole("heading", { level: 2, name: "当前工作区" }).closest("section");
+
+    if (!workspaceSection) {
+      throw new Error("未找到当前工作区会话区块");
+    }
+
+    expect(within(workspaceSection).queryByText("孤儿子会话")).not.toBeInTheDocument();
+    expect(screen.getByText("2")).toBeInTheDocument();
+  });
+
   it("子会话过多时会按页展开，避免一次性摊出整棵树", async () => {
     const user = userEvent.setup();
     contextValue.navigationGroups[0].sessions = [

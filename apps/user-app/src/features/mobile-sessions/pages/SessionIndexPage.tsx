@@ -49,7 +49,23 @@ export function SessionIndexPage() {
     () =>
       currentWorkspaceGroup
         ? currentWorkspaceGroup.sessions
-            .filter((session) => !session.isArchived)
+            .filter((session) => {
+              if (session.isArchived) {
+                return false;
+              }
+
+              const parentSessionId = session.parentSessionId?.trim() || null;
+
+              if (!parentSessionId) {
+                return true;
+              }
+
+              const parentSession = currentWorkspaceGroup.sessions.find(
+                (item) => item.sessionId === parentSessionId
+              );
+
+              return !parentSession || !parentSession.isArchived;
+            })
             .map((session) => ({
               session,
               workspace: currentWorkspaceGroup.workspace
