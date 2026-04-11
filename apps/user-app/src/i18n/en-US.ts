@@ -310,6 +310,13 @@ export const enUS = {
     copyAction: "Copy",
     copyContentSuccess: "Content copied.",
     copyContentFailed: "Failed to copy the content.",
+    forkFromHereAction: "Fork from here",
+    forkingAction: "Forking...",
+    forkMessageSucceeded: "Created a new branch from this message.",
+    forkMessageFailed: "Failed to fork from this message.",
+    forkDraftLabel: "Fork Quote",
+    forkDraftEmpty: "This message does not contain text to quote.",
+    forkDraftClear: "Cancel this fork quote",
     loadMore: "Load More",
     composerPlaceholder:
       "State the next step clearly. Let the rest continue inside this session.",

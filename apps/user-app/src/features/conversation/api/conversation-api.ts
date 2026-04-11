@@ -31,6 +31,12 @@ export type SessionActivityResolutionSource =
   | "unknown";
 export type SessionActivityConfidence = "authoritative" | "strong" | "weak";
 export type HistoryDirection = "forward" | "backward";
+export type ForkSourceType = "session" | "message";
+export type ForkMethod =
+  | "native_session_fork"
+  | "native_message_fork"
+  | "reconstructed_message_fork";
+export type ForkStrategy = "auto" | "native-only" | "reconstruct-only";
 
 export interface ToolCallDto {
   callId: string;
@@ -162,6 +168,11 @@ export interface SessionSummaryDto {
   providerSessionId: string;
   rawStoreRef: string;
   parentSessionId?: string | null;
+  forkMethod?: ForkMethod | null;
+  forkSourceType?: ForkSourceType | null;
+  forkSourceSessionId?: string | null;
+  forkSourceMessageId?: string | null;
+  inheritedPrefixMessageCount?: number | null;
   isSubagent?: boolean;
   subagentLabel?: string | null;
   isArchived?: boolean;
@@ -360,6 +371,12 @@ export interface SendSessionMessagePayload {
   content: string;
   clientRequestId: string;
   permissionMode?: string | null;
+}
+
+export interface ForkSessionPayload {
+  sourceType: ForkSourceType;
+  sourceMessageId?: string | null;
+  strategy?: ForkStrategy;
 }
 
 export interface StartLiveResponseDto extends SendMessageResponseDto {
@@ -631,6 +648,16 @@ export function sendSessionMessage(
 ) {
   return httpClient.request<SendMessageResponseDto>(
     `/api/sessions/${encodeURIComponent(sessionId)}/messages`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }
+  );
+}
+
+export function forkSession(sessionId: string, payload: ForkSessionPayload) {
+  return httpClient.request<SessionSummaryDto>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/forks`,
     {
       method: "POST",
       body: JSON.stringify(payload)
