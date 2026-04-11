@@ -9996,7 +9996,7 @@ textarea:focus-visible {
   align-items: stretch;
   min-width: 0;
   position: relative;
-  --workbench-session-tree-line-color: color-mix(in srgb, var(--text-secondary) 42%, var(--border-primary));
+  --workbench-session-tree-line-color: color-mix(in srgb, var(--text-secondary) 56%, var(--bg-primary));
   --workbench-session-indicator-center-x: 5px;
   --workbench-session-indicator-center-y: 17px;
   --workbench-session-tree-indent-step: 18px;

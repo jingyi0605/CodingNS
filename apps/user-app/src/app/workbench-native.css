@@ -712,11 +712,11 @@ body {
 
 .workbench-subsession-list {
   --workbench-session-tree-guide-width: 16px;
-  --workbench-session-tree-line-color: color-mix(in srgb, var(--text-secondary) 38%, var(--panel-border));
+  --workbench-session-tree-line-color: color-mix(in srgb, var(--text-secondary) 54%, var(--app-bg));
 }
 
 .workbench-session-tree-row {
-  --workbench-session-tree-line-color: color-mix(in srgb, var(--text-secondary) 38%, var(--panel-border));
+  --workbench-session-tree-line-color: color-mix(in srgb, var(--text-secondary) 54%, var(--app-bg));
   --workbench-session-indicator-center-x: calc(var(--workbench-sidebar-icon-inset) + (var(--workbench-sidebar-icon-slot-size) / 2));
   --workbench-session-indicator-center-y: 50%;
   --workbench-session-tree-guide-width: var(--workbench-session-indicator-center-x);
