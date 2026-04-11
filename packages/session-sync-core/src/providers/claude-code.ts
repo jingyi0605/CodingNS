@@ -1,5 +1,5 @@
 import { basename, dirname, join } from "node:path";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, statSync, writeFileSync } from "node:fs";
 import crypto from "node:crypto";
 
 import {
@@ -17,6 +17,8 @@ import {
 import type {
   ContextUsageSnapshot,
   DetectSessionsOptions,
+  ForkSessionOptions,
+  ForkSessionResult,
   HistoryDirection,
   HistoryPage,
   NormalizedMessage,
@@ -65,6 +67,13 @@ interface ClaudeSubagentMetadata {
   providerSessionId: string;
   parentProviderSessionId: string;
   subagentLabel: string | null;
+}
+
+interface ClaudeForkTargetLocation {
+  recordIndex: number;
+  partIndex: number;
+  recordSource: ClaudeMessageEnvelope["source"];
+  providerSourceMessageId: string | null;
 }
 
 const HISTORY_CACHE_LIMIT = 6;
@@ -304,6 +313,78 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
     };
   }
 
+  async forkSession(
+    providerSessionId: string,
+    workspacePath: string,
+    options: ForkSessionOptions
+  ): Promise<ForkSessionResult> {
+    const sourceFilePath = this.resolveForkSourceFilePath(options.rawStoreRef, providerSessionId);
+    const sourceRecords = readJsonLines(sourceFilePath).map((record) => record.data);
+    const forkedSessionId = crypto.randomUUID();
+    const projectDir = join(this.options.homeDir, "projects", workspaceSlug(workspacePath));
+
+    ensureDirectory(projectDir);
+
+    let forkedRecords = sourceRecords.map((record) => cloneJsonRecord(record));
+    let providerSourceMessageId: string | null = null;
+    let forkMethod: ForkSessionResult["forkMethod"] = "native_session_fork";
+
+    if (options.sourceType === "message") {
+      const targetMessageId = options.sourceMessageId?.trim();
+
+      if (!targetMessageId) {
+        throw new Error("FORK_SOURCE_MESSAGE_ID_REQUIRED");
+      }
+
+      const target = this.locateForkTarget(sourceRecords, providerSessionId, targetMessageId);
+
+      if (!target) {
+        throw new Error("FORK_SOURCE_MESSAGE_NOT_FOUND");
+      }
+
+      forkedRecords = forkedRecords.slice(0, target.recordIndex + 1);
+      forkedRecords[target.recordIndex] = truncateClaudeForkRecord(
+        forkedRecords[target.recordIndex],
+        target
+      );
+      providerSourceMessageId = target.providerSourceMessageId;
+      forkMethod = "native_message_fork";
+    }
+
+    const targetFilePath = join(projectDir, `${forkedSessionId}.jsonl`);
+    const serializedRecords = forkedRecords
+      .map((record) => replaceClaudeRecordSessionId(record, forkedSessionId))
+      .map((record) => JSON.stringify(record))
+      .join("\n");
+
+    writeFileSync(targetFilePath, `${serializedRecords}\n`, "utf8");
+    this.historyCache.delete(targetFilePath);
+
+    const messages = this.getParsedMessages(targetFilePath, forkedSessionId);
+    const title =
+      await this.readSessionTitle(providerSessionId, sourceFilePath).catch(() => basename(sourceFilePath, ".jsonl"));
+
+    return {
+      session: {
+        provider: this.providerId,
+        providerSessionId: forkedSessionId,
+        title,
+        workspacePath,
+        rawStoreRef: targetFilePath,
+        isArchived: false,
+        lastMessageAt: messages.at(-1)?.timestamp ?? nextTimestamp(),
+        messageCount: messages.length,
+        parentProviderSessionId: null,
+        isSubagent: false,
+        subagentLabel: null
+      },
+      forkMethod,
+      forkSourceType: options.sourceType,
+      inheritedPrefixMessageCount: messages.length,
+      providerSourceMessageId
+    };
+  }
+
   async sendMessage(
     providerSessionId: string,
     rawStoreRef: string,
@@ -415,6 +496,7 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
       supportsAttachments: true,
       supportsPermissionPrompt: true,
       supportsPermissionRequests: true,
+      supportsSessionFork: true,
       supportsCheckpoint: false,
       modelOptions: CLAUDE_MODEL_OPTIONS,
       limitations: ["当前实现只读取原生 jsonl，会话恢复不负责拉起外部 Claude 进程。"]
@@ -493,6 +575,101 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
     }
 
     return walkJsonlFiles(join(this.options.homeDir, "projects"));
+  }
+
+  private resolveForkSourceFilePath(rawStoreRef: string, providerSessionId: string): string {
+    if (existsSync(rawStoreRef)) {
+      return rawStoreRef;
+    }
+
+    for (const filePath of walkJsonlFiles(join(this.options.homeDir, "projects"))) {
+      if (basename(filePath, ".jsonl") === providerSessionId) {
+        return filePath;
+      }
+    }
+
+    throw new Error("PROVIDER_SESSION_NOT_FOUND");
+  }
+
+  private locateForkTarget(
+    records: Array<Record<string, unknown>>,
+    providerSessionId: string,
+    sourceMessageId: string
+  ): ClaudeForkTargetLocation | null {
+    const toolNameById = new Map<string, string>();
+    const stableMessageRefByIdentity = new Map<string, ClaudeStableMessageRef>();
+    const progressiveMessagesByTrackKey = new Map<string, NormalizedMessage>();
+    let sequence = 0;
+    let matched: ClaudeForkTargetLocation | null = null;
+
+    records.forEach((record, recordIndex) => {
+      this.collectMessageEnvelopes(record).forEach((envelope) => {
+        const parts = normalizeClaudeMessageParts(envelope.message.content);
+
+        parts.forEach((part, partIndex) => {
+          const normalized = normalizeClaudeMessagePart({
+            part,
+            envelope,
+            providerSessionId,
+            partIndex,
+            timestamp: safeDate(envelope.timestamp, nextTimestamp()),
+            toolNameById,
+            resolveStableMessageRef: (identity) => {
+              const existing = stableMessageRefByIdentity.get(identity);
+
+              if (existing) {
+                return existing;
+              }
+
+              sequence += 1;
+              const created: ClaudeStableMessageRef = {
+                sequence,
+                rawRef: buildClaudeStableRawRef(identity)
+              };
+              stableMessageRefByIdentity.set(identity, created);
+              return created;
+            }
+          });
+
+          if (!normalized) {
+            return;
+          }
+
+          if (normalized.role === "user") {
+            progressiveMessagesByTrackKey.clear();
+          }
+
+          const trackKey = buildClaudeProgressiveTrackKey(normalized, partIndex);
+          const previousProgressive = trackKey
+            ? progressiveMessagesByTrackKey.get(trackKey) ?? null
+            : null;
+          const nextMessage =
+            previousProgressive && shouldReuseClaudeProgressiveIdentity(previousProgressive, normalized)
+              ? {
+                  ...normalized,
+                  messageId: previousProgressive.messageId,
+                  rawRef: previousProgressive.rawRef,
+                  sequence: previousProgressive.sequence
+                }
+              : normalized;
+
+          if (trackKey) {
+            progressiveMessagesByTrackKey.set(trackKey, nextMessage);
+          }
+
+          if (nextMessage.messageId === sourceMessageId) {
+            matched = {
+              recordIndex,
+              partIndex,
+              recordSource: envelope.source,
+              providerSourceMessageId: envelope.messageId
+            };
+          }
+        });
+      });
+    });
+
+    return matched;
   }
 
   private getParsedMessages(filePath: string, providerSessionId: string): NormalizedMessage[] {
@@ -678,6 +855,78 @@ function isPendingClaudeRuntimeRef(providerSessionId: string, rawStoreRef: strin
 
   const normalizedRawStoreRef = rawStoreRef.replaceAll("\\", "/").toLowerCase();
   return normalizedRawStoreRef.includes("/.pending-");
+}
+
+function cloneJsonRecord<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function replaceClaudeRecordSessionId(
+  record: Record<string, unknown>,
+  sessionId: string
+): Record<string, unknown> {
+  const nextRecord = cloneJsonRecord(record);
+
+  replaceClaudeSessionIdRecursive(nextRecord, sessionId);
+  return nextRecord;
+}
+
+function replaceClaudeSessionIdRecursive(value: unknown, sessionId: string): void {
+  if (!value || typeof value !== "object") {
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    value.forEach((item) => replaceClaudeSessionIdRecursive(item, sessionId));
+    return;
+  }
+
+  const record = value as Record<string, unknown>;
+
+  if (typeof record.sessionId === "string" && record.sessionId.trim().length > 0) {
+    record.sessionId = sessionId;
+  }
+
+  Object.values(record).forEach((nested) => replaceClaudeSessionIdRecursive(nested, sessionId));
+}
+
+function truncateClaudeForkRecord(
+  record: Record<string, unknown>,
+  target: ClaudeForkTargetLocation
+): Record<string, unknown> {
+  const nextRecord = cloneJsonRecord(record);
+
+  if (target.recordSource === "progress") {
+    const progressData = toClaudeRecord(nextRecord.data);
+    const nestedEnvelope = toClaudeRecord(progressData.message);
+
+    nestedEnvelope.message = truncateClaudeMessageContent(
+      toClaudeRecord(nestedEnvelope.message),
+      target.partIndex
+    );
+    progressData.message = nestedEnvelope;
+    nextRecord.data = progressData;
+    return nextRecord;
+  }
+
+  nextRecord.message = truncateClaudeMessageContent(
+    toClaudeRecord(nextRecord.message),
+    target.partIndex
+  );
+  return nextRecord;
+}
+
+function truncateClaudeMessageContent(
+  message: Record<string, unknown>,
+  partIndex: number
+): Record<string, unknown> {
+  const content = message.content;
+
+  if (Array.isArray(content)) {
+    message.content = content.slice(0, partIndex + 1);
+  }
+
+  return message;
 }
 
 function buildClaudeSubagentMetadataIndex(

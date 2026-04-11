@@ -750,7 +750,7 @@ export class SessionHistoryService {
           forkSourceType: result.forkSourceType,
           forkSourceSessionId: input.sessionId,
           forkSourceMessageId: sourceMessageId,
-          inheritedPrefixMessageCount: result.session.messageCount,
+          inheritedPrefixMessageCount: result.inheritedPrefixMessageCount,
           providerParentSessionId: binding.providerSessionId,
           providerSourceMessageId: result.providerSourceMessageId ?? null,
           forkMethod: result.forkMethod,

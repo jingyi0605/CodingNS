@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -591,6 +591,159 @@ test("ClaudeCodeAdapter 会读取 assistant usage 作为压缩后的真实上下
       capturedAt: "2026-03-26T02:00:00.000Z",
       isEstimated: true
     });
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("ClaudeCodeAdapter 会话级 fork 会复制 transcript 并重写新的 sessionId", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-claude-fork-session-"));
+  const workspacePath = "/Users/jackson/Documents/Code/CodingNS";
+  const projectDir = join(tempDir, "projects", "-Users-jackson-Documents-Code-CodingNS");
+  const sessionId = "56565656-5656-4565-8565-565656565656";
+  const rawStoreRef = join(projectDir, `${sessionId}.jsonl`);
+
+  try {
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(
+      rawStoreRef,
+      [
+        JSON.stringify({
+          type: "user",
+          sessionId,
+          cwd: workspacePath,
+          timestamp: "2026-04-11T01:00:00.000Z",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "请继续整理会话分叉。" }]
+          }
+        }),
+        JSON.stringify({
+          type: "assistant",
+          sessionId,
+          cwd: workspacePath,
+          timestamp: "2026-04-11T01:00:05.000Z",
+          message: {
+            id: "msg-fork-session-1",
+            role: "assistant",
+            content: [{ type: "text", text: "先把能力抽象出来。" }]
+          }
+        }),
+        JSON.stringify({
+          type: "ai-title",
+          sessionId,
+          aiTitle: "会话分叉源会话"
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const adapter = new ClaudeCodeAdapter({ homeDir: tempDir });
+    const result = await adapter.forkSession(sessionId, workspacePath, {
+      rawStoreRef,
+      sourceType: "session"
+    });
+    const forkedPage = await adapter.readSessionHistory(
+      result.session.providerSessionId,
+      result.session.rawStoreRef,
+      null,
+      20,
+      "forward"
+    );
+    const forkedTranscript = readFileSync(result.session.rawStoreRef, "utf8");
+
+    assert.equal(result.forkMethod, "native_session_fork");
+    assert.equal(result.forkSourceType, "session");
+    assert.equal(result.inheritedPrefixMessageCount, 2);
+    assert.equal(result.session.title, "会话分叉源会话");
+    assert.equal(result.session.messageCount, 2);
+    assert.equal(forkedPage.messages.length, 2);
+    assert.equal(forkedPage.messages[1]?.content, "先把能力抽象出来。");
+    assert.equal(forkedTranscript.includes(sessionId), false);
+    assert.equal(forkedTranscript.includes(result.session.providerSessionId), true);
+    assert.equal(forkedTranscript.endsWith("\n"), true);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("ClaudeCodeAdapter 消息级 fork 会截断到指定消息锚点", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-claude-fork-message-"));
+  const workspacePath = "/Users/jackson/Documents/Code/CodingNS";
+  const projectDir = join(tempDir, "projects", "-Users-jackson-Documents-Code-CodingNS");
+  const sessionId = "57575757-5757-4575-8575-575757575757";
+  const rawStoreRef = join(projectDir, `${sessionId}.jsonl`);
+
+  try {
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(
+      rawStoreRef,
+      [
+        JSON.stringify({
+          type: "user",
+          sessionId,
+          cwd: workspacePath,
+          timestamp: "2026-04-11T02:00:00.000Z",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "从这里开始分析。" }]
+          }
+        }),
+        JSON.stringify({
+          type: "assistant",
+          sessionId,
+          cwd: workspacePath,
+          timestamp: "2026-04-11T02:00:05.000Z",
+          message: {
+            id: "msg-fork-message-1",
+            role: "assistant",
+            content: [
+              { type: "thinking", thinking: "先拆数据结构" },
+              { type: "text", text: "然后把分叉能力抽出来。" }
+            ]
+          }
+        }),
+        JSON.stringify({
+          type: "user",
+          sessionId,
+          cwd: workspacePath,
+          timestamp: "2026-04-11T02:00:10.000Z",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "这条消息不该被带进子分支。" }]
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const adapter = new ClaudeCodeAdapter({ homeDir: tempDir });
+    const sourcePage = await adapter.readSessionHistory(sessionId, rawStoreRef, null, 20, "forward");
+    const anchorMessage = sourcePage.messages[1];
+
+    assert.ok(anchorMessage);
+    assert.equal(anchorMessage?.kind, "thinking");
+
+    const result = await adapter.forkSession(sessionId, workspacePath, {
+      rawStoreRef,
+      sourceType: "message",
+      sourceMessageId: anchorMessage.messageId
+    });
+    const forkedPage = await adapter.readSessionHistory(
+      result.session.providerSessionId,
+      result.session.rawStoreRef,
+      null,
+      20,
+      "forward"
+    );
+
+    assert.equal(result.forkMethod, "native_message_fork");
+    assert.equal(result.forkSourceType, "message");
+    assert.equal(result.inheritedPrefixMessageCount, 2);
+    assert.equal(result.session.messageCount, 2);
+    assert.equal(forkedPage.messages.length, 2);
+    assert.equal(forkedPage.messages[1]?.kind, "thinking");
+    assert.equal(forkedPage.messages[1]?.content, "先拆数据结构");
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }

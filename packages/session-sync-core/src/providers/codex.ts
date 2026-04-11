@@ -1228,6 +1228,7 @@ export class CodexAdapter implements ProviderAdapter {
       },
       forkMethod: input.forkMethod,
       forkSourceType: input.forkSourceType,
+      inheritedPrefixMessageCount: messages.length,
       providerSourceMessageId: input.providerSourceMessageId
     };
   }

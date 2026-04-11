@@ -737,6 +737,83 @@ test("OpenCodeAdapter 遇到倒序返回的 OpenCode 用户消息时，会按时
   );
 });
 
+test("OpenCodeAdapter 会话级 fork 会复制 sqlite 会话并返回统一 fork 元数据", async () => {
+  const fixture = createOpenCodeFixture();
+
+  try {
+    const adapter = new OpenCodeAdapter({ dbPath: fixture.dbPath });
+    const result = await adapter.forkSession("ses_demo", "/workspace/demo", {
+      rawStoreRef: "opencode://session/ses_demo",
+      sourceType: "session"
+    });
+    const page = await adapter.readSessionHistory(
+      result.session.providerSessionId,
+      result.session.rawStoreRef,
+      null,
+      20,
+      "forward"
+    );
+
+    assert.equal(result.forkMethod, "native_session_fork");
+    assert.equal(result.forkSourceType, "session");
+    assert.equal(result.inheritedPrefixMessageCount, 5);
+    assert.equal(result.session.messageCount, 5);
+    assert.equal(result.session.title, "Demo Session");
+    assert.equal(page.messages[0]?.content, "你好，OpenCode");
+    assert.equal(page.messages[1]?.content, "先分析一下问题");
+    assert.match(page.messages[2]?.content ?? "", /command/);
+    assert.equal(page.messages[3]?.content, "README.md\nsrc");
+    assert.match(page.messages[4]?.content ?? "", /\*\*\* Begin Patch/);
+    assert.match(page.messages[4]?.content ?? "", /styles\.css/);
+  } finally {
+    fixture.dispose();
+  }
+});
+
+test("OpenCodeAdapter 消息级 fork 会精确截断到指定 part 锚点", async () => {
+  const fixture = createOpenCodeFixture();
+
+  try {
+    const adapter = new OpenCodeAdapter({ dbPath: fixture.dbPath });
+    const sourcePage = await adapter.readSessionHistory(
+      "ses_demo",
+      "opencode://session/ses_demo",
+      null,
+      20,
+      "forward"
+    );
+    const anchorMessage = sourcePage.messages[1];
+
+    assert.ok(anchorMessage);
+    assert.equal(anchorMessage?.content, "先分析一下问题");
+
+    const result = await adapter.forkSession("ses_demo", "/workspace/demo", {
+      rawStoreRef: "opencode://session/ses_demo",
+      sourceType: "message",
+      sourceMessageId: anchorMessage.messageId
+    });
+    const page = await adapter.readSessionHistory(
+      result.session.providerSessionId,
+      result.session.rawStoreRef,
+      null,
+      20,
+      "forward"
+    );
+
+    assert.equal(result.forkMethod, "native_message_fork");
+    assert.equal(result.forkSourceType, "message");
+    assert.equal(result.inheritedPrefixMessageCount, 2);
+    assert.equal(result.session.messageCount, 2);
+    assert.equal(result.providerSourceMessageId, "prt_demo_reasoning");
+    assert.deepEqual(
+      page.messages.map((message) => message.content),
+      ["你好，OpenCode", "先分析一下问题"]
+    );
+  } finally {
+    fixture.dispose();
+  }
+});
+
 function jsonResponse(payload, status = 200, headers = {}) {
   return new Response(JSON.stringify(payload), {
     status,

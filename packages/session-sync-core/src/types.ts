@@ -173,6 +173,7 @@ export interface ForkSessionResult {
   session: ProviderSessionSummary;
   forkMethod: ForkMethod;
   forkSourceType: ForkSourceType;
+  inheritedPrefixMessageCount: number;
   providerSourceMessageId?: string | null;
 }
 

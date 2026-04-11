@@ -1,9 +1,12 @@
 import { existsSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 import type {
   DetectSessionsOptions,
+  ForkSessionOptions,
+  ForkSessionResult,
   HistoryDirection,
   HistoryPage,
   InRunInputMode,
@@ -29,6 +32,7 @@ import {
 } from "./utils.js";
 import {
   buildMessageRawRef,
+  normalizeOpenCodePartMessage,
   buildSessionRawStoreRef,
   firstValidNumber,
   normalizeOpenCodeMessageEnvelopes,
@@ -100,6 +104,43 @@ interface PartHistoryRow {
   part_data?: unknown;
   message_time_created?: unknown;
   message_data?: unknown;
+}
+
+interface ForkSourceSessionRow {
+  id?: unknown;
+  project_id?: unknown;
+  parent_id?: unknown;
+  slug?: unknown;
+  directory?: unknown;
+  title?: unknown;
+  version?: unknown;
+  share_url?: unknown;
+  summary_additions?: unknown;
+  summary_deletions?: unknown;
+  summary_files?: unknown;
+  summary_diffs?: unknown;
+  revert?: unknown;
+  permission?: unknown;
+  time_created?: unknown;
+  time_updated?: unknown;
+  time_compacting?: unknown;
+  time_archived?: unknown;
+  workspace_id?: unknown;
+}
+
+interface ForkMessageRow {
+  id?: unknown;
+  time_created?: unknown;
+  time_updated?: unknown;
+  data?: unknown;
+}
+
+interface ForkPartRow {
+  id?: unknown;
+  message_id?: unknown;
+  time_created?: unknown;
+  time_updated?: unknown;
+  data?: unknown;
 }
 
 interface SessionPageResponse<T> {
@@ -295,6 +336,46 @@ export class OpenCodeAdapter implements ProviderAdapter {
     return {
       session: sessionSummary,
       initialCursor: null
+    };
+  }
+
+  async forkSession(
+    providerSessionId: string,
+    rawWorkspacePath: string,
+    options: ForkSessionOptions
+  ): Promise<ForkSessionResult> {
+    const sourceSessionId = this.resolveSessionId(providerSessionId, options.rawStoreRef);
+    const workspacePath = rawWorkspacePath.trim() || rawWorkspacePath;
+
+    if (options.sourceType === "message" && !(options.sourceMessageId?.trim())) {
+      throw new Error("FORK_SOURCE_MESSAGE_ID_REQUIRED");
+    }
+
+    const forked = this.cloneSessionFromSqlite({
+      sourceSessionId,
+      workspacePath,
+      sourceType: options.sourceType,
+      sourceMessageId: options.sourceMessageId?.trim() || null
+    });
+
+    return {
+      session: {
+        provider: this.providerId,
+        providerSessionId: forked.providerSessionId,
+        title: forked.title,
+        workspacePath,
+        rawStoreRef: buildSessionRawStoreRef(forked.providerSessionId),
+        isArchived: false,
+        lastMessageAt: forked.lastMessageAt,
+        messageCount: forked.inheritedPrefixMessageCount,
+        parentProviderSessionId: null,
+        isSubagent: false,
+        subagentLabel: null
+      },
+      forkMethod: options.sourceType === "session" ? "native_session_fork" : "native_message_fork",
+      forkSourceType: options.sourceType,
+      inheritedPrefixMessageCount: forked.inheritedPrefixMessageCount,
+      providerSourceMessageId: forked.providerSourceMessageId
     };
   }
 
@@ -702,6 +783,222 @@ export class OpenCodeAdapter implements ProviderAdapter {
     return Math.max(1_000, Math.floor(configured as number));
   }
 
+  private cloneSessionFromSqlite(input: {
+    sourceSessionId: string;
+    workspacePath: string;
+    sourceType: "session" | "message";
+    sourceMessageId: string | null;
+  }): {
+    providerSessionId: string;
+    title: string;
+    lastMessageAt: string | null;
+    inheritedPrefixMessageCount: number;
+    providerSourceMessageId: string | null;
+  } {
+    const forkedSessionId = `ses_${randomUUID().replaceAll("-", "")}`;
+    const nowMs = Date.now();
+
+    return this.withWritableDb((db) => {
+      const sourceSession = db.prepare(
+        `SELECT
+           id,
+           project_id,
+           parent_id,
+           slug,
+           directory,
+           title,
+           version,
+           share_url,
+           summary_additions,
+           summary_deletions,
+           summary_files,
+           summary_diffs,
+           revert,
+           permission,
+           time_created,
+           time_updated,
+           time_compacting,
+           time_archived,
+           workspace_id
+         FROM session
+         WHERE id = ?
+         LIMIT 1`
+      ).get(input.sourceSessionId) as ForkSourceSessionRow | undefined;
+
+      if (!sourceSession) {
+        throw new Error("PROVIDER_SESSION_NOT_FOUND");
+      }
+
+      const sourceMessageRows = db.prepare(
+        `SELECT id, time_created, time_updated, data
+         FROM message
+         WHERE session_id = ?
+         ORDER BY COALESCE(time_updated, time_created), time_created, id`
+      ).all(input.sourceSessionId) as ForkMessageRow[];
+      const readPartRows = db.prepare(
+        `SELECT id, message_id, time_created, time_updated, data
+         FROM part
+         WHERE session_id = ? AND message_id = ?
+         ORDER BY COALESCE(time_updated, time_created), time_created, id`
+      );
+      const insertSession = db.prepare(
+        `INSERT INTO session (
+           id,
+           project_id,
+           parent_id,
+           slug,
+           directory,
+           title,
+           version,
+           share_url,
+           summary_additions,
+           summary_deletions,
+           summary_files,
+           summary_diffs,
+           revert,
+           permission,
+           time_created,
+           time_updated,
+           time_compacting,
+           time_archived,
+           workspace_id
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      );
+      const insertMessage = db.prepare(
+        `INSERT INTO message (
+           id,
+           session_id,
+           time_created,
+           time_updated,
+           data
+         ) VALUES (?, ?, ?, ?, ?)`
+      );
+      const insertPart = db.prepare(
+        `INSERT INTO part (
+           id,
+           message_id,
+           session_id,
+           time_created,
+           time_updated,
+           data
+         ) VALUES (?, ?, ?, ?, ?, ?)`
+      );
+
+      insertSession.run(
+        forkedSessionId,
+        ensureText(sourceSession.project_id).trim() || "global",
+        null,
+        buildForkSlug(ensureText(sourceSession.slug).trim(), forkedSessionId),
+        input.workspacePath,
+        ensureText(sourceSession.title).trim() || forkedSessionId,
+        ensureText(sourceSession.version).trim() || "v1",
+        ensureNullableText(sourceSession.share_url),
+        readInteger(sourceSession.summary_additions),
+        readInteger(sourceSession.summary_deletions),
+        readInteger(sourceSession.summary_files),
+        ensureNullableText(sourceSession.summary_diffs),
+        ensureNullableText(sourceSession.revert),
+        ensureNullableText(sourceSession.permission),
+        readInteger(sourceSession.time_created) ?? nowMs,
+        nowMs,
+        readInteger(sourceSession.time_compacting),
+        null,
+        ensureNullableText(sourceSession.workspace_id)
+      );
+
+      let inheritedPrefixMessageCount = 0;
+      let providerSourceMessageId: string | null = null;
+      let lastMessageAtMs = firstValidNumber(sourceSession.time_updated, sourceSession.time_created);
+      let reachedAnchor = false;
+
+      for (const messageRow of sourceMessageRows) {
+        const sourceMessageRowId = ensureText(messageRow.id).trim();
+
+        if (!sourceMessageRowId) {
+          continue;
+        }
+
+        const partRows = readPartRows.all(input.sourceSessionId, sourceMessageRowId) as ForkPartRow[];
+        const includedPartRows: ForkPartRow[] = [];
+
+        for (const partRow of partRows) {
+          const sourcePartId = ensureText(partRow.id).trim();
+
+          if (!sourcePartId) {
+            continue;
+          }
+
+          includedPartRows.push(partRow);
+
+          const normalized = normalizeOpenCodePartMessage({
+            sessionId: input.sourceSessionId,
+            providerSessionId: input.sourceSessionId,
+            partId: sourcePartId,
+            messageId: sourceMessageRowId,
+            partPayload: toJsonRecord(partRow.data) ?? {},
+            messagePayload: toJsonRecord(messageRow.data) ?? {},
+            defaultTimestamp:
+              toIsoTimestamp(
+                firstValidNumber(partRow.time_created, messageRow.time_created, messageRow.time_updated),
+                null
+              ) ?? nextTimestamp()
+          });
+
+          if (normalized) {
+            inheritedPrefixMessageCount += 1;
+            lastMessageAtMs = Date.parse(normalized.timestamp);
+          }
+
+          if (input.sourceType === "message" && normalized?.messageId === input.sourceMessageId) {
+            providerSourceMessageId = sourcePartId;
+            reachedAnchor = true;
+            break;
+          }
+        }
+
+        if (includedPartRows.length === 0) {
+          continue;
+        }
+
+        const forkedMessageId = randomUUID();
+        insertMessage.run(
+          forkedMessageId,
+          forkedSessionId,
+          readInteger(messageRow.time_created) ?? nowMs,
+          readInteger(messageRow.time_updated) ?? readInteger(messageRow.time_created) ?? nowMs,
+          JSON.stringify(toJsonRecord(messageRow.data) ?? {})
+        );
+
+        for (const partRow of includedPartRows) {
+          insertPart.run(
+            randomUUID(),
+            forkedMessageId,
+            forkedSessionId,
+            readInteger(partRow.time_created) ?? nowMs,
+            readInteger(partRow.time_updated) ?? readInteger(partRow.time_created) ?? nowMs,
+            JSON.stringify(toJsonRecord(partRow.data) ?? {})
+          );
+        }
+
+        if (reachedAnchor) {
+          break;
+        }
+      }
+
+      if (input.sourceType === "message" && !reachedAnchor) {
+        throw new Error("FORK_SOURCE_MESSAGE_NOT_FOUND");
+      }
+
+      return {
+        providerSessionId: forkedSessionId,
+        title: ensureText(sourceSession.title).trim() || forkedSessionId,
+        lastMessageAt: toIsoTimestamp(lastMessageAtMs, nextTimestamp()),
+        inheritedPrefixMessageCount,
+        providerSourceMessageId
+      };
+    });
+  }
+
   private async fetchJson<T = unknown>(
     pathname: string,
     input: {
@@ -807,6 +1104,35 @@ export class OpenCodeAdapter implements ProviderAdapter {
     try {
       db = new DatabaseSync(dbPath, { open: true, readOnly: true });
       return run(db);
+    } finally {
+      db?.close();
+    }
+  }
+
+  private withWritableDb<T>(run: (db: DatabaseSyncType) => T): T {
+    const dbPath = this.resolveDbPath();
+
+    if (!existsSync(dbPath)) {
+      throw new Error("OPENCODE_DB_NOT_FOUND");
+    }
+
+    const DatabaseSync = loadDatabaseSync();
+    let db: DatabaseSyncType | null = null;
+
+    try {
+      db = new DatabaseSync(dbPath, { open: true });
+      db.exec("BEGIN IMMEDIATE");
+      const result = run(db);
+      db.exec("COMMIT");
+      return result;
+    } catch (error) {
+      try {
+        db?.exec("ROLLBACK");
+      } catch {
+        // 这里优先保留原始异常，回滚失败只做吞吐。
+      }
+
+      throw error;
     } finally {
       db?.close();
     }
@@ -1063,6 +1389,17 @@ export class OpenCodeAdapter implements ProviderAdapter {
       [...envelopes.values()]
     );
   }
+}
+
+function ensureNullableText(value: unknown): string | null {
+  const normalized = ensureText(value).trim();
+  return normalized || null;
+}
+
+function buildForkSlug(sourceSlug: string, forkedSessionId: string): string {
+  const base = sourceSlug.trim() || "session";
+  const suffix = forkedSessionId.slice(0, 8);
+  return `${base}-fork-${suffix}`;
 }
 
 function buildSyntheticAcceptedMessage(
