@@ -417,6 +417,14 @@ function ensureSessionRelationColumns(db: Database.Database): void {
     );
   }
 
+  if (!columnNames.has("annotation_source_message_id")) {
+    db.exec("ALTER TABLE session_indices ADD COLUMN annotation_source_message_id TEXT");
+  }
+
+  if (!columnNames.has("annotation_source_text")) {
+    db.exec("ALTER TABLE session_indices ADD COLUMN annotation_source_text TEXT");
+  }
+
   if (!columnNames.has("is_subagent")) {
     db.exec(
       "ALTER TABLE session_indices ADD COLUMN is_subagent INTEGER NOT NULL DEFAULT 0 CHECK (is_subagent IN (0, 1))"

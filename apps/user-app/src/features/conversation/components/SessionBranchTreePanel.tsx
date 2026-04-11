@@ -20,7 +20,9 @@ import { resolveSessionActivityBadgeLabel } from "../session-activity-display";
 import { buildSessionTitlePresentation } from "../session-title";
 import {
   resolveSessionForkBadgeLabel,
-  resolveSessionForkBadgeTone
+  resolveSessionForkBadgeTone,
+  resolveSessionKindBadgeLabel,
+  resolveSessionKindBadgeTone
 } from "../session-fork-display";
 
 import type { WorkspaceSessionGroup } from "./WorkbenchLayout";
@@ -679,6 +681,8 @@ function BranchTreePreviewPopover({
   const isArchived = isArchivedBranchSession(selectedSession);
   const forkBadgeTone = resolveSessionForkBadgeTone(selectedTreeNode.session);
   const forkBadgeLabel = resolveSessionForkBadgeLabel(selectedTreeNode.session);
+  const kindBadgeTone = resolveSessionKindBadgeTone(selectedTreeNode.session);
+  const kindBadgeLabel = resolveSessionKindBadgeLabel(selectedTreeNode.session);
 
   return (
     <div
@@ -712,9 +716,14 @@ function BranchTreePreviewPopover({
 
         <p className="conversation-branch-preview-popover-meta">{formatBranchNodeMeta(selectedSession)}</p>
 
-        {forkBadgeLabel && forkBadgeTone ? (
+        {(forkBadgeLabel && forkBadgeTone) || (kindBadgeLabel && kindBadgeTone) ? (
           <div className="conversation-branch-badge-row">
-            <span className={`session-fork-badge ${forkBadgeTone}`}>{forkBadgeLabel}</span>
+            {kindBadgeLabel && kindBadgeTone ? (
+              <span className={`session-fork-badge ${kindBadgeTone}`}>{kindBadgeLabel}</span>
+            ) : null}
+            {forkBadgeLabel && forkBadgeTone ? (
+              <span className={`session-fork-badge ${forkBadgeTone}`}>{forkBadgeLabel}</span>
+            ) : null}
           </div>
         ) : null}
 
@@ -866,6 +875,8 @@ function BranchCanvasTree({
             const titlePresentation = buildSessionTitlePresentation(layoutNode.node.session.title, t("common.unknown"));
             const forkBadgeTone = resolveSessionForkBadgeTone(layoutNode.node.session);
             const forkBadgeLabel = resolveSessionForkBadgeLabel(layoutNode.node.session);
+            const kindBadgeTone = resolveSessionKindBadgeTone(layoutNode.node.session);
+            const kindBadgeLabel = resolveSessionKindBadgeLabel(layoutNode.node.session);
             const isCurrent = layoutNode.node.session.sessionId === model.current.sessionId;
             const isSelected = layoutNode.node.session.sessionId === selectedSessionId;
             const isCurrentPath = model.currentPathIds.has(layoutNode.node.session.sessionId);
@@ -908,9 +919,14 @@ function BranchCanvasTree({
                     ) : null}
                   </div>
                   <p>{formatBranchNodeMeta(layoutNode.node.session)}</p>
-                  {forkBadgeLabel && forkBadgeTone ? (
+                  {(forkBadgeLabel && forkBadgeTone) || (kindBadgeLabel && kindBadgeTone) ? (
                     <div className="conversation-branch-badge-row">
-                      <span className={`session-fork-badge ${forkBadgeTone}`}>{forkBadgeLabel}</span>
+                      {kindBadgeLabel && kindBadgeTone ? (
+                        <span className={`session-fork-badge ${kindBadgeTone}`}>{kindBadgeLabel}</span>
+                      ) : null}
+                      {forkBadgeLabel && forkBadgeTone ? (
+                        <span className={`session-fork-badge ${forkBadgeTone}`}>{forkBadgeLabel}</span>
+                      ) : null}
                     </div>
                   ) : null}
                 </div>

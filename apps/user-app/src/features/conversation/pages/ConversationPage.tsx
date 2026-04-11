@@ -30,6 +30,7 @@ import {
 } from "../api/conversation-api";
 import { ConnectionBanner } from "../components/ConnectionBanner";
 import { ComposerPanel } from "../components/ComposerPanel";
+import { ConversationSelectionActions } from "../components/ConversationSelectionActions";
 import { MessageTimeline } from "../components/MessageTimeline";
 import { MobileConversationSessionActions } from "../components/MobileConversationSessionActions";
 import { PermissionRequestList } from "../components/PermissionRequestList";
@@ -290,19 +291,43 @@ function LiveConversationPage({
       ? sessionById.get(inheritedContextSource.parentSessionId)?.title?.trim()
         || t("conversation.inheritedContextParentFallback")
       : t("conversation.inheritedContextParentFallback");
-  const timelineMessages = useMemo(() => {
-    if (
-      inheritedContextExpanded
-      || !inheritedContextSource
-      || inheritedContextSource.hiddenMessageCount <= 0
-    ) {
+  const timelineMessages = useMemo<SessionMessageViewModel[]>(() => {
+    if (!inheritedContextSource || inheritedContextSource.hiddenMessageCount <= 0) {
       return messages;
     }
 
-    return messages.filter(
+    if (inheritedContextExpanded) {
+      if (inheritedContextSource.sourceType !== "selection") {
+        return messages;
+      }
+
+      return [
+        {
+          id: `annotation-selection-${sessionId}`,
+          sessionId,
+          role: "system",
+          kind: "text",
+          content: inheritedContextSource.hiddenSelectionText,
+          toolCall: null,
+          attachments: [],
+          attachmentPayloads: null,
+          origin: "system",
+          originRef: inheritedContextSource.sourceMessageId ?? null,
+          timestamp: currentSessionSummary?.createdAt ?? new Date(0).toISOString(),
+          sequence: inheritedContextSource.hiddenSequenceBoundary,
+          rawRef: `annotation-selection://${sessionId}`,
+          deliveryState: "sent",
+          clientRequestId: null
+        },
+        ...messages
+      ];
+    }
+
+    const visibleMessages = messages.filter(
       (message) => message.sequence > inheritedContextSource.hiddenSequenceBoundary
     );
-  }, [inheritedContextExpanded, inheritedContextSource, messages]);
+    return visibleMessages;
+  }, [currentSessionSummary?.createdAt, inheritedContextExpanded, inheritedContextSource, messages, sessionId]);
   const branchTreeWorkspaceId =
     currentSessionSummary?.workspaceId ?? navigationSession?.workspaceId ?? null;
   const branchTreeModel = useMemo(
@@ -319,6 +344,7 @@ function LiveConversationPage({
     [mobileArchiveWorkspaceGroup]
   );
   const mobileConversationMainRef = useRef<HTMLDivElement | null>(null);
+  const timelineSelectionContainerRef = useRef<HTMLDivElement | null>(null);
   const mobileConversationPageRef = useRef<HTMLElement | null>(null);
   const mobileConversationHeaderRef = useRef<HTMLDivElement | null>(null);
   const [mobileComposerPanelElement, setMobileComposerPanelElement] = useState<HTMLElement | null>(null);
@@ -653,7 +679,7 @@ function LiveConversationPage({
                 onOpenBranchTree={canOpenBranchTree ? () => setBranchTreeOpen(true) : undefined}
               />
             ) : null}
-            <div className="conversation-timeline-shell">
+            <div ref={timelineSelectionContainerRef} className="conversation-timeline-shell">
               <MessageTimeline
                 sessionId={sessionId}
                 messages={timelineMessages}
@@ -685,6 +711,11 @@ function LiveConversationPage({
                 }}
               />
             </div>
+            <ConversationSelectionActions
+              containerRef={timelineSelectionContainerRef}
+              session={session ?? navigationSession ?? null}
+              currentCapabilities={capabilities}
+            />
             <QueuedMessageList
               items={queuedMessages}
               deletingQueueItemId={deletingQueueItemId}
@@ -2151,14 +2182,19 @@ function InheritedContextBanner(input: {
   expanded: boolean;
   hiddenMessageCount: number;
   parentTitle: string;
-  sourceType: "session" | "message";
+  sourceType: "session" | "message" | "selection";
   onToggle: () => void;
   onOpenBranchTree?: (() => void) | undefined;
 }) {
-  const summaryText = t("conversation.inheritedContextSummary", {
-    count: input.hiddenMessageCount,
-    parentTitle: input.parentTitle
-  });
+  const summaryText =
+    input.sourceType === "selection"
+      ? t("conversation.actionInheritedSelectionSummary", {
+          parentTitle: input.parentTitle
+        })
+      : t("conversation.inheritedContextSummary", {
+          count: input.hiddenMessageCount,
+          parentTitle: input.parentTitle
+        });
 
   return (
     <section className="conversation-inherited-context-banner">
@@ -2418,9 +2454,11 @@ function resolveInheritedContextSource(
 ):
   | {
       parentSessionId: string;
-      sourceType: "session" | "message";
+      sourceType: "session" | "message" | "selection";
       hiddenMessageCount: number;
       hiddenSequenceBoundary: number;
+      hiddenSelectionText: string;
+      sourceMessageId: string | null;
     }
   | null {
   if (!session) {
@@ -2431,6 +2469,21 @@ function resolveInheritedContextSource(
 
   if (!parentSessionId || isRealSubagentSession(session)) {
     return null;
+  }
+
+  if (
+    session.sessionKind === "annotation"
+    && typeof session.annotationSourceText === "string"
+    && session.annotationSourceText.trim().length > 0
+  ) {
+    return {
+      parentSessionId,
+      sourceType: "selection",
+      hiddenMessageCount: 1,
+      hiddenSequenceBoundary: 0,
+      hiddenSelectionText: session.annotationSourceText,
+      sourceMessageId: session.annotationSourceMessageId?.trim() || null
+    };
   }
 
   const sourceType =
@@ -2452,6 +2505,8 @@ function resolveInheritedContextSource(
     parentSessionId,
     sourceType,
     hiddenMessageCount,
-    hiddenSequenceBoundary
+    hiddenSequenceBoundary,
+    hiddenSelectionText: "",
+    sourceMessageId: session.forkSourceMessageId?.trim() || null
   };
 }

@@ -21,6 +21,7 @@ interface WorkspaceInboxPanelProps {
   active: boolean;
   preferredWorkspaceId?: string | null;
   creationRequestId?: number;
+  initialDraft?: Partial<Pick<InboxFormState, "title" | "content">> | null;
   compactComposer?: boolean;
   composerOpen?: boolean;
   onComposerOpenChange?: (open: boolean) => void;
@@ -52,6 +53,7 @@ export function WorkspaceInboxPanel({
   active,
   preferredWorkspaceId,
   creationRequestId = 0,
+  initialDraft = null,
   compactComposer = false,
   composerOpen = true,
   onComposerOpenChange
@@ -98,9 +100,9 @@ export function WorkspaceInboxPanel({
       return;
     }
 
-    resetEditor();
+    resetEditor(undefined, preferredWorkspaceId, initialDraft);
     onComposerOpenChange?.(true);
-  }, [active, creationRequestId, onComposerOpenChange]);
+  }, [active, creationRequestId, initialDraft, onComposerOpenChange, preferredWorkspaceId]);
 
   async function loadData() {
     setLoading(true);
@@ -134,7 +136,8 @@ export function WorkspaceInboxPanel({
 
   function resetEditor(
     nextProjects: ButlerProjectDto[] = projects,
-    workspaceId: string | null | undefined = preferredWorkspaceId
+    workspaceId: string | null | undefined = preferredWorkspaceId,
+    nextDraft: Partial<Pick<InboxFormState, "title" | "content">> | null = initialDraft
   ) {
     const firstProject = nextProjects.find(
       (project) =>
@@ -144,7 +147,9 @@ export function WorkspaceInboxPanel({
     setEditingItemId(null);
     setFormState({
       ...DEFAULT_FORM_STATE,
-      projectId: firstProject?.id || ""
+      projectId: firstProject?.id || "",
+      title: nextDraft?.title?.trim() ?? "",
+      content: nextDraft?.content?.trim() ?? ""
     });
   }
 
@@ -707,6 +712,8 @@ function MobilePickerSheet<T extends string>({
 interface WorkspaceInboxModalProps {
   open: boolean;
   preferredWorkspaceId?: string | null;
+  creationRequestId?: number;
+  initialDraft?: Partial<Pick<InboxFormState, "title" | "content">> | null;
   onClose: () => void;
   compactComposer?: boolean;
 }
@@ -714,10 +721,12 @@ interface WorkspaceInboxModalProps {
 export function WorkspaceInboxModal({
   open,
   preferredWorkspaceId,
+  creationRequestId: externalCreationRequestId = 0,
+  initialDraft = null,
   onClose,
   compactComposer = false
 }: WorkspaceInboxModalProps) {
-  const [creationRequestId, setCreationRequestId] = useState(0);
+  const [internalCreationRequestId, setInternalCreationRequestId] = useState(0);
   const [composerOpen, setComposerOpen] = useState(!compactComposer);
 
   useEffect(() => {
@@ -740,7 +749,7 @@ export function WorkspaceInboxModal({
           aria-label={t("shell.butlerInboxCreateAction")}
           title={t("shell.butlerInboxCreateAction")}
           onClick={() => {
-            setCreationRequestId((current) => current + 1);
+            setInternalCreationRequestId((current) => current + 1);
             setComposerOpen(true);
           }}
         >
@@ -752,7 +761,8 @@ export function WorkspaceInboxModal({
       <WorkspaceInboxPanel
         active={open}
         preferredWorkspaceId={preferredWorkspaceId}
-        creationRequestId={creationRequestId}
+        creationRequestId={Math.max(externalCreationRequestId, internalCreationRequestId)}
+        initialDraft={initialDraft}
         compactComposer={compactComposer}
         composerOpen={composerOpen}
         onComposerOpenChange={setComposerOpen}

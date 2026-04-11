@@ -385,6 +385,83 @@ describe("ConversationPage", () => {
     expect(screen.getByTestId("timeline-messages")).not.toHaveTextContent("父会话第一句回复");
   });
 
+  it("解释型子会话会默认折叠选中文本，并保留提问作为第一条真实用户消息", async () => {
+    mockLiveRuntimeState.session = {
+      ...mockLiveRuntimeState.session,
+      sessionId: "session-annotation-1",
+      parentSessionId: "session-parent-1",
+      sessionKind: "annotation",
+      annotationSourceMessageId: "parent-message-1",
+      annotationSourceText: "这段原文需要解释。",
+      title: "解释子会话"
+    };
+    mockLiveRuntimeState.messages = [
+      createHistoryViewMessage("annotation-user-1", "user", "这段话到底是什么意思？", 1),
+      createHistoryViewMessage("annotation-assistant-1", "assistant", "它的意思是要先看上下文。", 2)
+    ];
+    mockUseWorkbenchShell.mockReturnValue({
+      shellMode: "desktop",
+      navigationGroups: [
+        {
+          workspace: {
+            id: "workspace-1",
+            name: "CodingNS",
+            path: "/Users/jackson/Code/CodingNS",
+            repoRoot: "/Users/jackson/Code/CodingNS"
+          },
+          sessions: [
+            {
+              ...mockLiveRuntimeState.session,
+              sessionId: "session-parent-1",
+              parentSessionId: null,
+              sessionKind: "default",
+              annotationSourceMessageId: null,
+              annotationSourceText: null,
+              title: "父会话"
+            },
+            mockLiveRuntimeState.session
+          ]
+        }
+      ],
+      requestNavigationRefresh: vi.fn(),
+      selectWorkspace: vi.fn(),
+      setSessionWorkspace: vi.fn(),
+      upsertNavigationSession: vi.fn(),
+      markNavigationSessionSeen: vi.fn(),
+      favoriteSessions: [],
+      archiveSession: vi.fn(),
+      unarchiveSession: vi.fn(),
+      startDraftSession: vi.fn()
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/workspaces/workspace-1/sessions/session-annotation-1"]}>
+        <Routes>
+          <Route
+            path="/workspaces/:workspaceId/sessions/:sessionId"
+            element={<ConversationPage />}
+          />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("已默认折叠来自“父会话”的一段选中文本。")).toBeInTheDocument();
+      expect(screen.getByTestId("timeline-messages")).toHaveTextContent(
+        "这段话到底是什么意思？|它的意思是要先看上下文。"
+      );
+    });
+
+    expect(screen.getByRole("button", { name: "分支树" })).toBeInTheDocument();
+    expect(screen.getByTestId("timeline-messages")).not.toHaveTextContent("这段原文需要解释。");
+
+    fireEvent.click(screen.getByRole("button", { name: "展开完整上文" }));
+
+    expect(screen.getByTestId("timeline-messages")).toHaveTextContent(
+      "这段原文需要解释。|这段话到底是什么意思？|它的意思是要先看上下文。"
+    );
+  });
+
   it("草稿会话会按 provider 和 workspace 拉取真实能力，并替换默认模型列表", async () => {
     mockGetProviderCapabilities.mockResolvedValue({
       provider: "codex",

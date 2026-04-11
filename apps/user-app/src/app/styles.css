@@ -7792,9 +7792,9 @@ textarea:focus-visible {
   color: color-mix(in srgb, var(--accent) 84%, var(--text-primary));
 }
 
-.conversation-selection-explain-popover {
+.conversation-selection-action-dialog {
   position: fixed;
-  z-index: 2601;
+  z-index: 2602;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -7804,16 +7804,33 @@ textarea:focus-visible {
   background:
     linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 98%, transparent), color-mix(in srgb, var(--bg-primary) 98%, transparent));
   box-shadow: 0 22px 50px rgba(15, 23, 42, 0.18);
+  overflow: auto;
 }
 
-.conversation-selection-explain-header {
+.conversation-selection-action-dialog.is-centered {
+  width: min(420px, calc(100vw - 24px));
+}
+
+.conversation-selection-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 2601;
+  background: transparent;
+}
+
+.conversation-selection-dialog-backdrop.is-mobile {
+  background: rgba(15, 23, 42, 0.28);
+  backdrop-filter: blur(6px);
+}
+
+.conversation-selection-action-dialog-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
 }
 
-.conversation-selection-explain-close {
+.conversation-selection-action-dialog-close {
   border: none;
   background: transparent;
   color: var(--text-tertiary);
@@ -7821,7 +7838,7 @@ textarea:focus-visible {
   cursor: pointer;
 }
 
-.conversation-selection-explain-quote {
+.conversation-selection-action-dialog-quote {
   margin: 0;
   padding: 10px 12px;
   border-radius: 14px;
@@ -7889,6 +7906,25 @@ textarea:focus-visible {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+@media (max-width: 720px) {
+  .conversation-selection-action-dialog {
+    padding: 16px;
+    border-radius: 18px;
+  }
+
+  .conversation-selection-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .conversation-selection-actions {
+    justify-content: stretch;
+  }
+
+  .conversation-selection-actions > button {
+    flex: 1 1 0;
+  }
 }
 
 .message-metadata-bar.compact {

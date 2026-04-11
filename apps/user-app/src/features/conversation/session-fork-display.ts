@@ -1,8 +1,9 @@
 import { t } from "../../shared/i18n";
 
-import type { ForkMethod, ForkSourceType } from "./api/conversation-api";
+import type { ForkMethod, ForkSourceType, SessionKind } from "./api/conversation-api";
 
 export type SessionForkBadgeTone = "session" | "message" | "reconstructed";
+export type SessionKindBadgeTone = "annotation";
 
 export function hasSessionForkMetadata(session: {
   forkMethod?: ForkMethod | null;
@@ -60,4 +61,18 @@ export function resolveSessionForkBadgeLabel(session: {
   }
 
   return null;
+}
+
+export function resolveSessionKindBadgeTone(session: {
+  sessionKind?: SessionKind;
+}): SessionKindBadgeTone | null {
+  return session.sessionKind === "annotation" ? "annotation" : null;
+}
+
+export function resolveSessionKindBadgeLabel(session: {
+  sessionKind?: SessionKind;
+}): string | null {
+  return resolveSessionKindBadgeTone(session) === "annotation"
+    ? t("conversation.actionSessionBadge")
+    : null;
 }

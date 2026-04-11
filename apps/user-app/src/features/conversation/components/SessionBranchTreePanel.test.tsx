@@ -194,6 +194,40 @@ describe("SessionBranchTreePanel", () => {
     });
   });
 
+  it("会在分支树节点和预览里标出注释子会话", async () => {
+    mockedGetSessionMessages.mockResolvedValue({
+      messages: [createHistoryMessage("child-1", "assistant", "这是注释子会话的预览。", 1)],
+      cursor: null,
+      nextCursor: null,
+      total: 1
+    });
+
+    render(
+      <SessionBranchTreePanel
+        open
+        navigationGroups={[createWorkspaceGroup({ annotationSessionIds: ["child-session"] })]}
+        workspaceId="workspace-1"
+        sessionId="child-session"
+        onClose={vi.fn()}
+        onOpenSession={vi.fn()}
+      />
+    );
+
+    const annotationNode = screen.getByRole("button", { name: /Child Session/i });
+    expect(
+      within(annotationNode).getByText(t("conversation.actionSessionBadge"))
+    ).toBeInTheDocument();
+
+    await userEvent.click(annotationNode);
+
+    await waitFor(() => {
+      const previewPopover = screen.getByRole("dialog", { name: /Child Session/i });
+      expect(
+        within(previewPopover).getByText(t("conversation.actionSessionBadge"))
+      ).toBeInTheDocument();
+    });
+  });
+
   it("移动端会使用全屏裸画布视图并支持点击空白关闭", () => {
     const originalInnerWidth = window.innerWidth;
     Object.defineProperty(window, "innerWidth", {
@@ -241,9 +275,11 @@ describe("SessionBranchTreePanel", () => {
 
 function createWorkspaceGroup(options?: {
   archivedSessionIds?: string[];
+  annotationSessionIds?: string[];
 }): WorkspaceSessionGroup {
   const workspace = createWorkspace("workspace-1", "Project One");
   const archivedSessionIds = new Set(options?.archivedSessionIds ?? []);
+  const annotationSessionIds = new Set(options?.annotationSessionIds ?? []);
 
   return {
     workspace,
@@ -279,6 +315,7 @@ function createWorkspaceGroup(options?: {
         parentSessionId: "mid-session",
         forkMethod: "native_message_fork",
         forkSourceType: "message",
+        sessionKind: annotationSessionIds.has("child-session") ? "annotation" : undefined,
         isArchived: archivedSessionIds.has("child-session")
       }),
       createSessionSummary({
@@ -310,6 +347,7 @@ function createSessionSummary(input: {
   parentSessionId?: string | null;
   forkMethod?: SessionSummaryDto["forkMethod"];
   forkSourceType?: SessionSummaryDto["forkSourceType"];
+  sessionKind?: SessionSummaryDto["sessionKind"];
   isArchived?: boolean;
 }): SessionSummaryDto {
   return {
@@ -319,6 +357,7 @@ function createSessionSummary(input: {
     providerSessionId: `raw-${input.sessionId}`,
     rawStoreRef: `codex://${input.sessionId}`,
     parentSessionId: input.parentSessionId ?? null,
+    sessionKind: input.sessionKind ?? "default",
     forkMethod: input.forkMethod ?? null,
     forkSourceType: input.forkSourceType ?? null,
     forkSourceSessionId: null,

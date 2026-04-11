@@ -1627,7 +1627,7 @@ function RulesMessageCard({
         : t("conversation.rulesMessageExpand");
 
   return (
-    <article className={`message-item ${tone} rules-message-row`}>
+    <article className={`message-item ${tone} rules-message-row`} data-message-id={message.id}>
       <div className="message-content-wrapper">
         <div className="rules-message-card">
           <button
@@ -1812,7 +1812,7 @@ function MessageItem({
     ) : null;
 
     return (
-      <article className="message-item user-message">
+      <article className="message-item user-message" data-message-id={message.id}>
         <div className="message-content-wrapper">
           <MessageAttachments
             sessionId={message.sessionId}
@@ -1851,7 +1851,7 @@ function MessageItem({
 
   if (isThinking) {
     return (
-      <article className="message-item assistant-message thinking-message-row">
+      <article className="message-item assistant-message thinking-message-row" data-message-id={message.id}>
         <div className="message-avatar">{assistantAvatar ?? <DefaultAssistantAvatar />}</div>
         <div className="thinking-message-content">
           <div className="thinking-message-label">{t("conversation.thinkingLabel")}</div>
@@ -1880,7 +1880,7 @@ function MessageItem({
 
   if (isAssistantText) {
     return (
-      <article className="message-item assistant-message">
+      <article className="message-item assistant-message" data-message-id={message.id}>
         <div className="message-avatar">{assistantAvatar ?? <DefaultAssistantAvatar />}</div>
         <div className="message-content-wrapper">
           <MessageAttachments
@@ -1907,7 +1907,7 @@ function MessageItem({
   }
 
   return (
-    <article className="message-item system-message">
+    <article className="message-item system-message" data-message-id={message.id}>
       <div className="message-content-wrapper">
         <MessageAttachments
           sessionId={message.sessionId}
@@ -2090,7 +2090,6 @@ export function MessageTimeline({
       return;
     }
   }
-
 
   return (
     <section className="message-timeline">

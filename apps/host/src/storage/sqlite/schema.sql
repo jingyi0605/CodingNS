@@ -77,6 +77,8 @@ CREATE TABLE IF NOT EXISTS session_indices (
   provider TEXT NOT NULL,
   parent_session_id TEXT,
   session_kind TEXT NOT NULL DEFAULT 'default' CHECK (session_kind IN ('default', 'annotation')),
+  annotation_source_message_id TEXT,
+  annotation_source_text TEXT,
   is_subagent INTEGER NOT NULL DEFAULT 0 CHECK (is_subagent IN (0, 1)),
   subagent_label TEXT,
   title TEXT NOT NULL,

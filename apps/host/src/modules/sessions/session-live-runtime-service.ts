@@ -84,6 +84,8 @@ interface StartLiveSessionInput {
   clientRequestId: string | null;
   parentSessionId?: string | null;
   sessionKind?: "default" | "annotation";
+  annotationSourceMessageId?: string | null;
+  annotationSourceText?: string | null;
   runtimeOptions?: RuntimeSendOptions;
 }
 
@@ -397,6 +399,8 @@ export class SessionLiveRuntimeService {
         provider: input.provider,
         parentSessionId: input.parentSessionId ?? null,
         sessionKind: input.sessionKind ?? "default",
+        annotationSourceMessageId: input.annotationSourceMessageId ?? null,
+        annotationSourceText: input.annotationSourceText ?? null,
         initialContent: input.content,
         snapshot
       });
@@ -1814,6 +1818,8 @@ export class SessionLiveRuntimeService {
     provider: string;
     parentSessionId: string | null;
     sessionKind: "default" | "annotation";
+    annotationSourceMessageId: string | null;
+    annotationSourceText: string | null;
     initialContent: string;
     snapshot: ReturnType<ActiveRunHandle["getSnapshot"]>;
   }): void {
@@ -1834,6 +1840,8 @@ export class SessionLiveRuntimeService {
       provider: input.provider,
       parentSessionId: input.parentSessionId,
       sessionKind: input.sessionKind,
+      annotationSourceMessageId: input.annotationSourceMessageId,
+      annotationSourceText: input.annotationSourceText,
       isSubagent: false,
       subagentLabel: null,
       title: buildSessionTitle(input.initialContent),

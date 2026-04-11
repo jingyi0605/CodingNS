@@ -148,7 +148,7 @@ describe("WorkspaceInboxModal", () => {
       expect(screen.getByRole("dialog", { name: t("shell.butlerInboxModalTitle") })).toBeInTheDocument();
     });
 
-    const projectSelect = screen.getByRole("combobox", { name: t("shell.butlerInboxProjectLabel") });
+    const projectSelect = await screen.findByRole("combobox", { name: t("shell.butlerInboxProjectLabel") });
     expect(screen.getByRole("option", { name: "项目甲" })).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: "项目乙" })).not.toBeInTheDocument();
     expect((projectSelect as HTMLSelectElement).value).toBe("project-1");
@@ -257,5 +257,29 @@ describe("WorkspaceInboxModal", () => {
         priority: "medium"
       });
     });
+  });
+
+  it("支持带初始内容打开新增代办编辑器", async () => {
+    render(
+      <WorkspaceInboxModal
+        open
+        preferredWorkspaceId="workspace-1"
+        creationRequestId={1}
+        initialDraft={{
+          title: "",
+          content: "把这段选中文本塞进代办内容里。"
+        }}
+        onClose={vi.fn()}
+      />
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("textbox", { name: t("shell.butlerInboxContentLabel") })
+      ).toHaveValue("把这段选中文本塞进代办内容里。");
+    });
+    expect(
+      screen.getByRole("textbox", { name: t("shell.butlerInboxTitleLabel") })
+    ).toHaveValue("");
   });
 });

@@ -171,6 +171,8 @@ export interface SessionSummaryDto {
   rawStoreRef: string;
   parentSessionId?: string | null;
   sessionKind?: SessionKind;
+  annotationSourceMessageId?: string | null;
+  annotationSourceText?: string | null;
   forkMethod?: ForkMethod | null;
   forkSourceType?: ForkSourceType | null;
   forkSourceSessionId?: string | null;
@@ -350,6 +352,8 @@ export interface StartSessionPayload {
   initialPrompt?: string;
   parentSessionId?: string | null;
   sessionKind?: SessionKind;
+  annotationSourceMessageId?: string | null;
+  annotationSourceText?: string | null;
 }
 
 export interface StartLivePayload {
@@ -363,6 +367,8 @@ export interface StartLivePayload {
   attachments?: ImageAttachmentPayload[];
   parentSessionId?: string | null;
   sessionKind?: SessionKind;
+  annotationSourceMessageId?: string | null;
+  annotationSourceText?: string | null;
 }
 
 export interface SendLiveMessagePayload {
@@ -386,6 +392,8 @@ export interface ForkSessionPayload {
   strategy?: ForkStrategy;
   targetProvider?: ProviderId | null;
   sessionKind?: SessionKind;
+  annotationSourceMessageId?: string | null;
+  annotationSourceText?: string | null;
 }
 
 export interface StartLiveResponseDto extends SendMessageResponseDto {

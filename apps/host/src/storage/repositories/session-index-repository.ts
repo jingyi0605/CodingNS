@@ -14,6 +14,8 @@ export class SessionIndexRepository {
            provider,
            parent_session_id,
            session_kind,
+           annotation_source_message_id,
+           annotation_source_text,
            is_subagent,
            subagent_label,
            title,
@@ -22,12 +24,14 @@ export class SessionIndexRepository {
            last_message_at,
            created_at,
            updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(session_id) DO UPDATE SET
            workspace_id = excluded.workspace_id,
            provider = excluded.provider,
            parent_session_id = excluded.parent_session_id,
            session_kind = excluded.session_kind,
+           annotation_source_message_id = excluded.annotation_source_message_id,
+           annotation_source_text = excluded.annotation_source_text,
            is_subagent = excluded.is_subagent,
            subagent_label = excluded.subagent_label,
            title = excluded.title,
@@ -42,6 +46,8 @@ export class SessionIndexRepository {
         record.provider,
         record.parentSessionId ?? null,
         record.sessionKind ?? "default",
+        record.annotationSourceMessageId ?? null,
+        record.annotationSourceText ?? null,
         record.isSubagent ? 1 : 0,
         record.subagentLabel ?? null,
         record.title,
@@ -64,6 +70,8 @@ export class SessionIndexRepository {
            bindings.raw_store_ref AS raw_store_ref,
            indices.parent_session_id AS parent_session_id,
            indices.session_kind AS session_kind,
+           indices.annotation_source_message_id AS annotation_source_message_id,
+           indices.annotation_source_text AS annotation_source_text,
            forks.fork_method AS fork_method,
            forks.fork_source_type AS fork_source_type,
            forks.fork_source_session_id AS fork_source_session_id,
@@ -114,6 +122,8 @@ export class SessionIndexRepository {
            bindings.raw_store_ref AS raw_store_ref,
            indices.parent_session_id AS parent_session_id,
            indices.session_kind AS session_kind,
+           indices.annotation_source_message_id AS annotation_source_message_id,
+           indices.annotation_source_text AS annotation_source_text,
            forks.fork_method AS fork_method,
            forks.fork_source_type AS fork_source_type,
            forks.fork_source_session_id AS fork_source_session_id,
@@ -162,6 +172,8 @@ export class SessionIndexRepository {
            provider AS provider,
            parent_session_id AS parent_session_id,
            session_kind AS session_kind,
+           annotation_source_message_id AS annotation_source_message_id,
+           annotation_source_text AS annotation_source_text,
            is_subagent AS is_subagent,
            subagent_label AS subagent_label,
            title AS title,
@@ -197,6 +209,8 @@ interface SessionListItemRow {
   raw_store_ref: string;
   parent_session_id: string | null;
   session_kind: SessionListItem["sessionKind"];
+  annotation_source_message_id: string | null;
+  annotation_source_text: string | null;
   fork_method: SessionListItem["forkMethod"];
   fork_source_type: SessionListItem["forkSourceType"];
   fork_source_session_id: string | null;
@@ -230,6 +244,8 @@ interface SessionIndexRecordRow {
   provider: SessionIndexRecord["provider"];
   parent_session_id: string | null;
   session_kind: SessionIndexRecord["sessionKind"];
+  annotation_source_message_id: string | null;
+  annotation_source_text: string | null;
   is_subagent: number;
   subagent_label: string | null;
   title: string;
@@ -264,6 +280,8 @@ function mapSessionListItemRow(row: SessionListItemRow): SessionListItem {
     rawStoreRef: row.raw_store_ref,
     parentSessionId: row.parent_session_id,
     sessionKind: row.session_kind ?? "default",
+    annotationSourceMessageId: row.annotation_source_message_id,
+    annotationSourceText: row.annotation_source_text,
     forkMethod: row.fork_method ?? null,
     forkSourceType: row.fork_source_type ?? null,
     forkSourceSessionId: row.fork_source_session_id,
@@ -300,6 +318,8 @@ function mapSessionIndexRecordRow(row: SessionIndexRecordRow): SessionIndexRecor
     provider: row.provider,
     parentSessionId: row.parent_session_id,
     sessionKind: row.session_kind ?? "default",
+    annotationSourceMessageId: row.annotation_source_message_id,
+    annotationSourceText: row.annotation_source_text,
     isSubagent: row.is_subagent === 1,
     subagentLabel: row.subagent_label,
     title: row.title,

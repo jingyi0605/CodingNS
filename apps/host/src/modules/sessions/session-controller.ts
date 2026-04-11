@@ -56,6 +56,8 @@ interface StartSessionBody {
   initialPrompt?: string;
   parentSessionId?: string | null;
   sessionKind?: "default" | "annotation";
+  annotationSourceMessageId?: string | null;
+  annotationSourceText?: string | null;
 }
 
 interface StartLiveSessionBody extends RuntimeOptionsBody {
@@ -66,6 +68,8 @@ interface StartLiveSessionBody extends RuntimeOptionsBody {
   attachments?: SessionImageAttachmentInput[];
   parentSessionId?: string | null;
   sessionKind?: "default" | "annotation";
+  annotationSourceMessageId?: string | null;
+  annotationSourceText?: string | null;
 }
 
 interface RenameSessionBody {
@@ -86,6 +90,8 @@ interface ForkSessionBody {
   strategy?: "auto" | "native-only" | "reconstruct-only";
   targetProvider?: string | null;
   sessionKind?: "default" | "annotation";
+  annotationSourceMessageId?: string | null;
+  annotationSourceText?: string | null;
 }
 
 interface ReplyPermissionRequestBody {
@@ -407,7 +413,9 @@ export class SessionController {
         sourceMessageId: request.body.sourceMessageId?.trim() ?? null,
         strategy: request.body.strategy ?? "auto",
         targetProvider: request.body.targetProvider?.trim() || null,
-        sessionKind: request.body.sessionKind === "annotation" ? "annotation" : "default"
+        sessionKind: request.body.sessionKind === "annotation" ? "annotation" : "default",
+        annotationSourceMessageId: request.body.annotationSourceMessageId?.trim() || null,
+        annotationSourceText: request.body.annotationSourceText?.trim() || null
       })
     );
   };
@@ -434,7 +442,9 @@ export class SessionController {
         provider,
         initialPrompt: request.body.initialPrompt?.trim(),
         parentSessionId: request.body.parentSessionId?.trim() || null,
-        sessionKind: request.body.sessionKind === "annotation" ? "annotation" : "default"
+        sessionKind: request.body.sessionKind === "annotation" ? "annotation" : "default",
+        annotationSourceMessageId: request.body.annotationSourceMessageId?.trim() || null,
+        annotationSourceText: request.body.annotationSourceText?.trim() || null
       })
     );
   };
@@ -475,6 +485,8 @@ export class SessionController {
         clientRequestId,
         parentSessionId: request.body.parentSessionId?.trim() || null,
         sessionKind: request.body.sessionKind === "annotation" ? "annotation" : "default",
+        annotationSourceMessageId: request.body.annotationSourceMessageId?.trim() || null,
+        annotationSourceText: request.body.annotationSourceText?.trim() || null,
         runtimeOptions: runtimeOptions
           ? {
               ...runtimeOptions,

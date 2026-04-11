@@ -78,6 +78,8 @@ export interface SessionIndexRecord {
   provider: ProviderId;
   parentSessionId?: string | null;
   sessionKind?: "default" | "annotation";
+  annotationSourceMessageId?: string | null;
+  annotationSourceText?: string | null;
   isSubagent?: boolean;
   subagentLabel?: string | null;
   title: string;
@@ -193,6 +195,8 @@ export interface SessionListItem {
   rawStoreRef: string;
   parentSessionId?: string | null;
   sessionKind?: "default" | "annotation";
+  annotationSourceMessageId?: string | null;
+  annotationSourceText?: string | null;
   forkMethod?: ForkMethod | null;
   forkSourceType?: ForkSourceType | null;
   forkSourceSessionId?: string | null;
