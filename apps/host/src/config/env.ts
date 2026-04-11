@@ -12,6 +12,7 @@ export interface HostConfig {
   port: number;
   webUiDir: string | null;
   databasePath: string;
+  filePreviewTokenSecret: string;
   geminiHomeDir: string;
   geminiCliPath: string;
   kimiHomeDir: string;
@@ -48,6 +49,7 @@ export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConf
     overrides.databasePath ??
     process.env.CODINGNS_DB_PATH ??
     path.join(appRootDir, "data", "host", "host.sqlite");
+  const hostDataDir = path.dirname(databasePath);
   const opencodeDbPath =
     overrides.opencodeDbPath ??
     process.env.CODINGNS_OPENCODE_DB_PATH ??
@@ -93,6 +95,10 @@ export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConf
         normalizeOptionalText(process.env.CODINGNS_WEB_UI_DIR) ?? path.join(appRootDir, "public")
       ),
     databasePath,
+    filePreviewTokenSecret:
+      overrides.filePreviewTokenSecret ??
+      process.env.CODINGNS_FILE_PREVIEW_TOKEN_SECRET ??
+      resolvePersistentSecret(path.join(hostDataDir, "file-preview-token")),
     geminiHomeDir,
     geminiCliPath,
     kimiHomeDir,
@@ -138,7 +144,7 @@ export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConf
     claudeHookBridgeToken:
       overrides.claudeHookBridgeToken ??
       process.env.CODINGNS_CLAUDE_HOOK_TOKEN ??
-      resolvePersistentSecret(path.join(path.dirname(databasePath), "claude-hook-token")),
+      resolvePersistentSecret(path.join(hostDataDir, "claude-hook-token")),
     serverUpdatePackageName:
       overrides.serverUpdatePackageName ??
       process.env.CODINGNS_SERVER_UPDATE_PACKAGE_NAME ??

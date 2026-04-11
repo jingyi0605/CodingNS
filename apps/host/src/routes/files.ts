@@ -23,4 +23,6 @@ export async function registerFileRoutes(
   app.get("/api/files/search", fileController.search);
   app.get("/api/files/recent", fileController.getRecent);
   app.get("/api/files/preview", fileController.preview);
+  app.get("/api/files/preview-link", fileController.createPreviewLink);
+  app.get("/preview/files/*", fileController.publicPreview);
 }

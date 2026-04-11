@@ -71,6 +71,12 @@ export interface FilePreviewDto {
   updatedAt: string | null;
 }
 
+export interface FilePreviewLinkDto {
+  previewPath: string;
+  previewUrl: string;
+  expiresAt: string;
+}
+
 export interface FileContextBindingDto {
   id: string;
   sessionId: string;
@@ -199,6 +205,15 @@ export function getFilePreview(workspaceId: string, filePath: string) {
   });
 
   return httpClient.request<FilePreviewDto>(`/api/files/preview?${search.toString()}`);
+}
+
+export function getFilePreviewLink(workspaceId: string, filePath: string) {
+  const search = new URLSearchParams({
+    workspaceId,
+    path: filePath
+  });
+
+  return httpClient.request<FilePreviewLinkDto>(`/api/files/preview-link?${search.toString()}`);
 }
 
 export function listFileContextBindings(sessionId: string) {

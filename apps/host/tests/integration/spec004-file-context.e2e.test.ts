@@ -236,6 +236,75 @@ describe("spec004 文件管理能力", () => {
     expect(previewBinary.json().supported).toBe(false);
     expect(previewBinary.json().kind).toBe("binary");
 
+    const previewLink = await hosted.app.inject({
+      method: "GET",
+      url: `/api/files/preview-link?workspaceId=${workspaceId}&path=${encodeURIComponent("site/index.html")}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(previewLink.statusCode).toBe(200);
+    expect(previewLink.json().previewPath).toContain("/preview/files/");
+    expect(previewLink.json().previewUrl).toContain("/preview/files/");
+
+    const previewHtml = await hosted.app.inject({
+      method: "GET",
+      url: previewLink.json().previewPath
+    });
+    expect(previewHtml.statusCode).toBe(200);
+    expect(previewHtml.headers["content-type"]).toContain("text/html");
+    expect(previewHtml.body).toContain("<title>Spec004 Preview</title>");
+
+    const previewCssPath = new URL(
+      "./site.css",
+      `http://preview.local${previewLink.json().previewPath}`
+    ).pathname;
+    const previewCss = await hosted.app.inject({
+      method: "GET",
+      url: previewCssPath
+    });
+    expect(previewCss.statusCode).toBe(200);
+    expect(previewCss.headers["content-type"]).toContain("text/css");
+    expect(previewCss.body).toContain("background");
+
+    const previewScriptPath = new URL(
+      "./app.js",
+      `http://preview.local${previewLink.json().previewPath}`
+    ).pathname;
+    const previewScript = await hosted.app.inject({
+      method: "GET",
+      url: previewScriptPath
+    });
+    expect(previewScript.statusCode).toBe(200);
+    expect(previewScript.headers["content-type"]).toContain("text/javascript");
+    expect(previewScript.body).toContain("preview-ready");
+
+    const previewLinkRejected = await hosted.app.inject({
+      method: "GET",
+      url: `/api/files/preview-link?workspaceId=${workspaceId}&path=${encodeURIComponent("src/app.ts")}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(previewLinkRejected.statusCode).toBe(400);
+    expect(previewLinkRejected.json().error_code).toBe("FILE_PREVIEW_NOT_SUPPORTED");
+
+    const previewLinkChinese = await hosted.app.inject({
+      method: "GET",
+      url: `/api/files/preview-link?workspaceId=${workspaceId}&path=${encodeURIComponent("化工行业AI培训/index.html")}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(previewLinkChinese.statusCode).toBe(200);
+
+    const previewChinese = await hosted.app.inject({
+      method: "GET",
+      url: previewLinkChinese.json().previewPath
+    });
+    expect(previewChinese.statusCode).toBe(200);
+    expect(previewChinese.body).toContain("中文路径预览");
+
     const recent = await hosted.app.inject({
       method: "GET",
       url: `/api/files/recent?workspaceId=${workspaceId}&limit=10`,
@@ -351,6 +420,7 @@ describe("spec004 文件管理能力", () => {
 
 function seedWorkspaceFiles(workspaceDir: string): void {
   mkdirSync(path.join(workspaceDir, "docs"), { recursive: true });
+  mkdirSync(path.join(workspaceDir, "site"), { recursive: true });
   mkdirSync(path.join(workspaceDir, "src"), { recursive: true });
 
   writeFileSync(
@@ -361,6 +431,40 @@ function seedWorkspaceFiles(workspaceDir: string): void {
   writeFileSync(
     path.join(workspaceDir, "src", "app.ts"),
     "export const value = 'spec004';\n",
+    "utf8"
+  );
+  writeFileSync(
+    path.join(workspaceDir, "site", "index.html"),
+    [
+      "<!doctype html>",
+      "<html lang=\"zh-CN\">",
+      "  <head>",
+      "    <meta charset=\"utf-8\" />",
+      "    <title>Spec004 Preview</title>",
+      "    <link rel=\"stylesheet\" href=\"./site.css\" />",
+      "  </head>",
+      "  <body>",
+      "    <main id=\"app\">HTML 预览页面</main>",
+      "    <script src=\"./app.js\"></script>",
+      "  </body>",
+      "</html>"
+    ].join("\n"),
+    "utf8"
+  );
+  writeFileSync(
+    path.join(workspaceDir, "site", "site.css"),
+    "body { background: #f8fafc; color: #0f172a; }\n",
+    "utf8"
+  );
+  writeFileSync(
+    path.join(workspaceDir, "site", "app.js"),
+    "document.body.dataset.previewState = 'preview-ready';\n",
+    "utf8"
+  );
+  mkdirSync(path.join(workspaceDir, "化工行业AI培训"), { recursive: true });
+  writeFileSync(
+    path.join(workspaceDir, "化工行业AI培训", "index.html"),
+    "<!doctype html><html><body>中文路径预览</body></html>",
     "utf8"
   );
   writeFileSync(path.join(workspaceDir, "binary.bin"), Buffer.from([0, 1, 2, 3]));

@@ -3,12 +3,15 @@ import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
+import { usePlatform } from "../../../platform/platform-provider";
 import { t } from "../../../shared/i18n";
 import { ApiError } from "../../../shared/network/api-error";
 import { useToast } from "../../../shared/toast";
 import {
   getFilePreview,
+  getFilePreviewLink,
   saveFileContent,
+  type FilePreviewLinkDto,
   type FilePreviewDto
 } from "../api/file-context-api";
 
@@ -21,7 +24,7 @@ interface FileViewerModalProps {
   diffContent?: string | null;
 }
 
-type ViewerMode = "preview" | "edit";
+type ViewerMode = "preview" | "code" | "edit";
 type TokenKind =
   | "plain"
   | "comment"
@@ -232,17 +235,30 @@ export function FileViewerModal({
 }: FileViewerModalProps) {
   const [preview, setPreview] = useState<FilePreviewDto | null>(null);
   const [editorContent, setEditorContent] = useState("");
+  const [htmlPreviewLink, setHtmlPreviewLink] = useState<FilePreviewLinkDto | null>(null);
   const [loading, setLoading] = useState(false);
+  const [htmlPreviewLoading, setHtmlPreviewLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [mode, setMode] = useState<ViewerMode>("preview");
+  const [htmlPreviewRefreshVersion, setHtmlPreviewRefreshVersion] = useState(0);
+  const [htmlPreviewFullscreen, setHtmlPreviewFullscreen] = useState(false);
   const { showToast } = useToast();
+  const platform = usePlatform();
   const onCloseRef = useRef(onClose);
   const showToastRef = useRef(showToast);
 
   const detectedLanguage = useMemo(() => detectLanguage(filePath), [filePath]);
   const overviewMarkers = useMemo(() => buildFileOverviewMarkers(diffContent), [diffContent]);
   const isMarkdown = detectedLanguage === "markdown";
+  const isHtmlDocument = detectedLanguage === "html";
   const canEdit = Boolean(preview?.supported && preview.kind === "text");
+  const htmlPreviewUrl = useMemo(() => {
+    if (!htmlPreviewLink?.previewUrl) {
+      return null;
+    }
+
+    return htmlPreviewLink.previewUrl;
+  }, [htmlPreviewLink]);
 
   useEffect(() => {
     onCloseRef.current = onClose;
@@ -256,9 +272,13 @@ export function FileViewerModal({
     if (!open) {
       setPreview(null);
       setEditorContent("");
+      setHtmlPreviewLink(null);
       setLoading(false);
+      setHtmlPreviewLoading(false);
       setSaving(false);
-      setMode("preview");
+      setMode(resolveInitialViewerMode(filePath));
+      setHtmlPreviewRefreshVersion(0);
+      setHtmlPreviewFullscreen(false);
       return;
     }
 
@@ -272,14 +292,32 @@ export function FileViewerModal({
 
     async function loadPreview() {
       setLoading(true);
+      setHtmlPreviewLoading(isHtmlFile(safeFilePath));
 
       try {
         const nextPreview = await getFilePreview(safeWorkspaceId, safeFilePath);
+        let nextPreviewLink: FilePreviewLinkDto | null = null;
+
+        if (isHtmlFile(safeFilePath)) {
+          try {
+            nextPreviewLink = await getFilePreviewLink(safeWorkspaceId, safeFilePath);
+          } catch (error) {
+            if (!cancelled) {
+              showToastRef.current({
+                title: readError(error, t("conversation.fileViewerHtmlPreviewFailed")),
+                tone: "error"
+              });
+            }
+          }
+        }
 
         if (!cancelled) {
           setPreview(nextPreview);
           setEditorContent(nextPreview.content ?? "");
-          setMode(isMarkdownFile(safeFilePath) ? "preview" : "preview");
+          setHtmlPreviewLink(nextPreviewLink);
+          setMode(resolveInitialViewerMode(safeFilePath));
+          setHtmlPreviewRefreshVersion(0);
+          setHtmlPreviewFullscreen(false);
         }
       } catch (error) {
         if (!cancelled) {
@@ -292,6 +330,7 @@ export function FileViewerModal({
       } finally {
         if (!cancelled) {
           setLoading(false);
+          setHtmlPreviewLoading(false);
         }
       }
     }
@@ -310,6 +349,11 @@ export function FileViewerModal({
 
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
+        if (htmlPreviewFullscreen) {
+          setHtmlPreviewFullscreen(false);
+          return;
+        }
+
         onClose();
       }
     }
@@ -319,7 +363,7 @@ export function FileViewerModal({
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [onClose, open]);
+  }, [htmlPreviewFullscreen, onClose, open]);
 
   if (!open || !filePath || typeof document === "undefined") {
     return null;
@@ -327,6 +371,35 @@ export function FileViewerModal({
 
   const safeFilePath = filePath;
   const safeWorkspaceId = workspaceId;
+
+  async function ensureHtmlPreviewUrl(forceRefresh = false): Promise<string | null> {
+    if (!safeWorkspaceId || !isHtmlDocument) {
+      return null;
+    }
+
+    const cachedPreviewLink =
+      !forceRefresh && isPreviewLinkAvailable(htmlPreviewLink) ? htmlPreviewLink : null;
+
+    if (cachedPreviewLink?.previewPath) {
+      return cachedPreviewLink.previewUrl;
+    }
+
+    setHtmlPreviewLoading(true);
+
+    try {
+      const nextPreviewLink = await getFilePreviewLink(safeWorkspaceId, safeFilePath);
+      setHtmlPreviewLink(nextPreviewLink);
+      return nextPreviewLink.previewUrl;
+    } catch (error) {
+      showToast({
+        title: readError(error, t("conversation.fileViewerHtmlPreviewFailed")),
+        tone: "error"
+      });
+      return null;
+    } finally {
+      setHtmlPreviewLoading(false);
+    }
+  }
 
   async function handleSave() {
     if (!safeWorkspaceId || !preview?.version || !canEdit) {
@@ -345,7 +418,10 @@ export function FileViewerModal({
         title: t("conversation.filePanelSaveSuccess"),
         tone: "success"
       });
-      setMode(isMarkdown ? "preview" : "preview");
+      setMode(resolveInitialViewerMode(safeFilePath));
+      if (isHtmlDocument) {
+        setHtmlPreviewRefreshVersion((previous) => previous + 1);
+      }
     } catch (error) {
       showToast({
         title: readError(error, t("conversation.filePanelSaveFailed")),
@@ -356,11 +432,46 @@ export function FileViewerModal({
     }
   }
 
+  async function handleOpenInBrowser() {
+    const previewUrl = await ensureHtmlPreviewUrl();
+
+    if (!previewUrl) {
+      return;
+    }
+
+    const result = await platform.bridge.openExternal(previewUrl);
+
+    if (!result.ok) {
+      showToast({
+        title: result.detail ?? t("conversation.fileViewerOpenInBrowserFailed"),
+        tone: "error"
+      });
+    }
+  }
+
+  async function handleRefreshHtmlPreview() {
+    const previewUrl = await ensureHtmlPreviewUrl(true);
+
+    if (!previewUrl) {
+      return;
+    }
+
+    setHtmlPreviewRefreshVersion((previous) => previous + 1);
+  }
+
   const currentContent = preview?.content ?? "";
   const isDirty = canEdit && editorContent !== currentContent;
+  const canShowHtmlPreview = isHtmlDocument && preview?.supported !== false;
+  const htmlPreviewFrameUrl =
+    htmlPreviewUrl === null
+      ? null
+      : `${htmlPreviewUrl}${htmlPreviewUrl.includes("?") ? "&" : "?"}refresh=${htmlPreviewRefreshVersion}`;
 
   return createPortal(
-    <div className="workbench-modal-layer">
+    <div
+      className="workbench-modal-layer"
+      data-fullscreen={htmlPreviewFullscreen ? "true" : undefined}
+    >
       <button
         type="button"
         className="workbench-modal-backdrop"
@@ -369,6 +480,7 @@ export function FileViewerModal({
       />
       <section
         className="workbench-modal-card surface-card file-viewer-modal"
+        data-fullscreen={htmlPreviewFullscreen ? "true" : undefined}
         role="dialog"
         aria-modal="true"
         aria-label={filePath}
@@ -390,16 +502,52 @@ export function FileViewerModal({
 
         <div className="file-viewer-toolbar">
           <div className="file-viewer-tabs" role="tablist" aria-label={t("conversation.fileViewerModeLabel")}>
-            <button
-              type="button"
-              className="file-viewer-tab"
-              data-active={mode === "preview"}
-              role="tab"
-              aria-selected={mode === "preview"}
-              onClick={() => setMode("preview")}
-            >
-              {isMarkdown ? t("conversation.fileViewerPreview") : t("conversation.fileViewerCode")}
-            </button>
+            {canShowHtmlPreview ? (
+              <button
+                type="button"
+                className="file-viewer-tab"
+                data-active={mode === "preview"}
+                role="tab"
+                aria-selected={mode === "preview"}
+                onClick={() => setMode("preview")}
+              >
+                {t("conversation.fileViewerPreview")}
+              </button>
+            ) : isMarkdown ? (
+              <button
+                type="button"
+                className="file-viewer-tab"
+                data-active={mode === "preview"}
+                role="tab"
+                aria-selected={mode === "preview"}
+                onClick={() => setMode("preview")}
+              >
+                {t("conversation.fileViewerPreview")}
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="file-viewer-tab"
+                data-active={mode === "code"}
+                role="tab"
+                aria-selected={mode === "code"}
+                onClick={() => setMode("code")}
+              >
+                {t("conversation.fileViewerCode")}
+              </button>
+            )}
+            {canShowHtmlPreview ? (
+              <button
+                type="button"
+                className="file-viewer-tab"
+                data-active={mode === "code"}
+                role="tab"
+                aria-selected={mode === "code"}
+                onClick={() => setMode("code")}
+              >
+                {t("conversation.fileViewerCode")}
+              </button>
+            ) : null}
             <button
               type="button"
               className="file-viewer-tab"
@@ -413,7 +561,37 @@ export function FileViewerModal({
             </button>
           </div>
           <div className="file-viewer-actions">
-            <span className="file-viewer-language">{formatLanguageLabel(detectedLanguage)}</span>
+            {canShowHtmlPreview ? (
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => void handleRefreshHtmlPreview()}
+                disabled={htmlPreviewLoading}
+              >
+                {t("conversation.fileViewerRefreshPreview")}
+              </button>
+            ) : null}
+            {canShowHtmlPreview ? (
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => setHtmlPreviewFullscreen((previous) => !previous)}
+              >
+                {htmlPreviewFullscreen
+                  ? t("conversation.fileViewerExitFullscreen")
+                  : t("conversation.fileViewerEnterFullscreen")}
+              </button>
+            ) : null}
+            {canShowHtmlPreview ? (
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => void handleOpenInBrowser()}
+                disabled={htmlPreviewLoading}
+              >
+                {t("conversation.fileViewerOpenInBrowser")}
+              </button>
+            ) : null}
             <button
               type="button"
               className="primary-button"
@@ -438,7 +616,24 @@ export function FileViewerModal({
               onChange={(event) => setEditorContent(event.target.value)}
               spellCheck={false}
             />
-          ) : isMarkdown ? (
+          ) : mode === "preview" && canShowHtmlPreview ? (
+            htmlPreviewFrameUrl ? (
+              <div className="file-viewer-html-frame-shell">
+                <iframe
+                  key={`${htmlPreviewFrameUrl}-${htmlPreviewRefreshVersion}`}
+                  className="file-viewer-html-frame"
+                  data-testid="file-viewer-html-preview"
+                  title={filePath}
+                  src={htmlPreviewFrameUrl}
+                  sandbox="allow-forms allow-modals allow-scripts"
+                />
+              </div>
+            ) : htmlPreviewLoading ? (
+              <p className="status-text">{t("conversation.fileViewerHtmlPreviewLoading")}</p>
+            ) : (
+              <p className="status-text">{t("conversation.fileViewerHtmlPreviewUnavailable")}</p>
+            )
+          ) : mode === "preview" && isMarkdown ? (
             <MarkdownPreview content={editorContent} />
           ) : (
             <CodePreview
@@ -452,6 +647,18 @@ export function FileViewerModal({
     </div>,
     document.body
   );
+}
+
+function resolveInitialViewerMode(filePath: string | null): ViewerMode {
+  return isMarkdownFile(filePath ?? "") || isHtmlFile(filePath ?? "") ? "preview" : "code";
+}
+
+function isPreviewLinkAvailable(previewLink: FilePreviewLinkDto | null): previewLink is FilePreviewLinkDto {
+  if (!previewLink) {
+    return false;
+  }
+
+  return Date.parse(previewLink.expiresAt) - Date.now() > 30_000;
 }
 
 function MarkdownPreview({ content }: { content: string }) {
@@ -1511,6 +1718,10 @@ function formatLanguageLabel(language: string): string {
 
 function isMarkdownFile(filePath: string) {
   return detectLanguage(filePath) === "markdown";
+}
+
+function isHtmlFile(filePath: string) {
+  return detectLanguage(filePath) === "html";
 }
 
 function readError(error: unknown, fallback: string): string {

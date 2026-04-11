@@ -47,6 +47,17 @@ describe("codingns proxy context redirect", () => {
     expect(rewritten).toBe("/proxy/ilbq8e/@vite/client");
   });
 
+  it("HTML 预览路由不应被改写进代理上下文", () => {
+    const rewritten = rewriteToProxyContext({
+      rawPath: "/preview/files/token/index.html",
+      refererHeader: "http://localhost:4174/proxy/ilbq8e/",
+      cookieHeader: "cns_proxy_slug=ilbq8e",
+      allowCookieFallback: true
+    });
+
+    expect(rewritten).toBeNull();
+  });
+
   it("能识别无 sec-fetch-dest 但 Accept 为 html 的页面导航", () => {
     const isDocument = isLikelyDocumentNavigation({
       method: "GET",

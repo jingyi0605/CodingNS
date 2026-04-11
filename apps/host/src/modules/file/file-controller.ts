@@ -1,7 +1,10 @@
+import { readFileSync } from "node:fs";
+
 import type { FastifyReply, FastifyRequest } from "fastify";
 
 import { AppError } from "../../shared/errors/app-error.js";
 import type { FileContentService, FileOperationType } from "./file-content-service.js";
+import type { FilePreviewLinkService } from "./file-preview-link-service.js";
 import type { FilePreviewService } from "./file-preview-service.js";
 import type { FileSearchService } from "./file-search-service.js";
 import type { FileTreeService } from "./file-tree-service.js";
@@ -37,13 +40,18 @@ interface FileOperationBody {
   content?: string;
 }
 
+interface PublicFilePreviewParams {
+  "*": string;
+}
+
 export class FileController {
   constructor(
     private readonly fileTreeService: FileTreeService,
     private readonly fileContentService: FileContentService,
     private readonly fileSearchService: FileSearchService,
     private readonly recentFileService: RecentFileService,
-    private readonly filePreviewService: FilePreviewService
+    private readonly filePreviewService: FilePreviewService,
+    private readonly filePreviewLinkService: FilePreviewLinkService
   ) {}
 
   readonly getTree = async (
@@ -195,6 +203,107 @@ export class FileController {
       )
     );
   };
+
+  readonly createPreviewLink = async (
+    request: FastifyRequest<{ Querystring: FileWorkspaceQuery }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    const previewLink = this.filePreviewLinkService.createLink(
+      requireWorkspaceId(request.query.workspaceId),
+      request.query.path ?? "",
+      requireUserId(request)
+    );
+
+    reply.send({
+      ...previewLink,
+      previewUrl: buildAbsolutePreviewUrl(request, previewLink.previewPath)
+    });
+  };
+
+  readonly publicPreview = async (
+    request: FastifyRequest<{ Params: PublicFilePreviewParams }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    const { token, filePath } = parsePublicPreviewPath(request.params["*"] ?? "");
+    const previewFile = this.filePreviewLinkService.resolvePublicFile(
+      token,
+      filePath
+    );
+
+    reply.header("Cache-Control", "no-store");
+    reply.header("X-Content-Type-Options", "nosniff");
+    reply.type(previewFile.contentType);
+    reply.send(readFileSync(previewFile.absolutePath));
+  };
+}
+
+function parsePublicPreviewPath(rawPath: string): {
+  token: string;
+  filePath: string;
+} {
+  const [tokenSegment, ...fileSegments] = rawPath.split("/");
+  const token = tokenSegment?.trim() ?? "";
+  const filePath = decodePreviewPath(fileSegments);
+
+  if (!token || !filePath) {
+    throw new AppError({
+      statusCode: 401,
+      errorCode: "FILE_PREVIEW_TOKEN_INVALID",
+      detail: "预览链接无效，请重新打开 HTML 预览"
+    });
+  }
+
+  return {
+    token,
+    filePath
+  };
+}
+
+function decodePreviewPath(fileSegments: string[]): string {
+  return fileSegments
+    .map((segment) => {
+      try {
+        return decodeURIComponent(segment);
+      } catch {
+        throw new AppError({
+          statusCode: 401,
+          errorCode: "FILE_PREVIEW_TOKEN_INVALID",
+          detail: "预览链接无效，请重新打开 HTML 预览"
+        });
+      }
+    })
+    .join("/");
+}
+
+function buildAbsolutePreviewUrl(request: FastifyRequest, previewPath: string): string {
+  const protocol = resolveRequestProtocol(request);
+  const host = resolveRequestHost(request);
+
+  return buildPreviewUrl(`${protocol}://${host}`, previewPath);
+}
+
+function buildPreviewUrl(baseUrl: string, previewPath: string): string {
+  return new URL(previewPath, ensureTrailingSlash(baseUrl)).toString();
+}
+
+function ensureTrailingSlash(baseUrl: string): string {
+  return baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
+}
+
+function resolveRequestProtocol(request: FastifyRequest): string {
+  return (
+    (request.headers["x-forwarded-proto"] as string | undefined)?.split(",")[0]?.trim()
+    || request.protocol
+    || "http"
+  );
+}
+
+function resolveRequestHost(request: FastifyRequest): string {
+  return (
+    (request.headers["x-forwarded-host"] as string | undefined)?.split(",")[0]?.trim()
+    || request.headers.host
+    || "127.0.0.1"
+  );
 }
 
 function requireWorkspaceId(workspaceId: string | undefined): string {

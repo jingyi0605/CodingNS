@@ -1,4 +1,5 @@
 export const PROXY_SLUG_COOKIE_NAME = "cns_proxy_slug";
+const PROXY_CONTEXT_BYPASS_PREFIXES = ["/api", "/ws", "/preview"];
 
 export function pickHeaderValue(header: string | string[] | undefined): string | undefined {
   if (Array.isArray(header)) {
@@ -72,7 +73,11 @@ export function rewriteToProxyContext(input: {
 }): string | null {
   const requestPath = input.rawPath ?? "/";
 
-  if (!requestPath.startsWith("/") || requestPath.startsWith("/proxy/")) {
+  if (
+    !requestPath.startsWith("/")
+    || requestPath.startsWith("/proxy/")
+    || shouldBypassProxyContextRewrite(requestPath)
+  ) {
     return null;
   }
 
@@ -99,6 +104,12 @@ export function rewriteToProxyContext(input: {
   }
 
   return `/proxy/${proxySlugFromCookie}${requestPath}`;
+}
+
+function shouldBypassProxyContextRewrite(requestPath: string): boolean {
+  return PROXY_CONTEXT_BYPASS_PREFIXES.some((prefix) =>
+    requestPath === prefix || requestPath.startsWith(`${prefix}/`) || requestPath.startsWith(`${prefix}?`)
+  );
 }
 
 export function isLikelyDocumentNavigation(input: {

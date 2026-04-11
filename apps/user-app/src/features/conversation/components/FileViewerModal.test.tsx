@@ -8,12 +8,26 @@ import { FileViewerModal } from "./FileViewerModal";
 
 const fileApiMock = vi.hoisted(() => ({
   getFilePreview: vi.fn(),
+  getFilePreviewLink: vi.fn(),
   saveFileContent: vi.fn()
+}));
+const platformMock = vi.hoisted(() => ({
+  openExternal: vi.fn()
 }));
 
 vi.mock("../api/file-context-api", () => ({
   getFilePreview: fileApiMock.getFilePreview,
+  getFilePreviewLink: fileApiMock.getFilePreviewLink,
   saveFileContent: fileApiMock.saveFileContent
+}));
+
+vi.mock("../../../platform/platform-provider", () => ({
+  usePlatform: () => ({
+    isDesktop: true,
+    bridge: {
+      openExternal: platformMock.openExternal
+    }
+  })
 }));
 
 describe("FileViewerModal", () => {
@@ -29,7 +43,14 @@ describe("FileViewerModal", () => {
       size: 5,
       updatedAt: "2026-03-31T00:00:00.000Z"
     });
+    fileApiMock.getFilePreviewLink.mockResolvedValue({
+      previewPath: "/preview/files/preview-token/site/index.html",
+      previewUrl: "http://127.0.0.1:3002/preview/files/preview-token/site/index.html",
+      expiresAt: "2099-03-31T00:00:00.000Z"
+    });
     fileApiMock.saveFileContent.mockReset();
+    platformMock.openExternal.mockReset();
+    platformMock.openExternal.mockResolvedValue({ ok: true });
   });
 
   afterEach(() => {
@@ -142,5 +163,65 @@ describe("FileViewerModal", () => {
     expect(codeLines[2]).not.toHaveClass("diff-line-modify");
     expect(codeLines[3]).toHaveClass("diff-line-add");
     expect(codeLines[3]).not.toHaveClass("diff-line-modify");
+  });
+
+  it("HTML 文件支持刷新预览、全屏预览，并支持在浏览器中打开", async () => {
+    const user = userEvent.setup();
+
+    fileApiMock.getFilePreview.mockResolvedValue({
+      workspaceId: "workspace-1",
+      path: "site/index.html",
+      supported: true,
+      kind: "text",
+      reason: null,
+      content: "<!doctype html><html><body>preview</body></html>",
+      version: "html-v1",
+      size: 48,
+      updatedAt: "2026-03-31T00:00:00.000Z"
+    });
+
+    render(
+      <ToastProvider>
+        <FileViewerModal
+          workspaceId="workspace-1"
+          filePath="site/index.html"
+          open
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </ToastProvider>
+    );
+
+    const dialog = await screen.findByRole("dialog", { name: "site/index.html" });
+    const previewFrame = await screen.findByTestId("file-viewer-html-preview");
+    expect(previewFrame).toHaveAttribute(
+      "src",
+      expect.stringContaining("/preview/files/preview-token/site/index.html")
+    );
+    expect(dialog).not.toHaveAttribute("data-fullscreen", "true");
+
+    await user.click(screen.getByRole("button", { name: t("conversation.fileViewerRefreshPreview") }));
+
+    await waitFor(() => {
+      expect(fileApiMock.getFilePreviewLink).toHaveBeenCalledTimes(2);
+    });
+    expect(screen.getByTestId("file-viewer-html-preview")).toHaveAttribute(
+      "src",
+      expect.stringContaining("refresh=1")
+    );
+
+    expect(screen.queryByText("HTML")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: t("conversation.fileViewerEnterFullscreen") }));
+    expect(screen.getByRole("dialog", { name: "site/index.html" })).toHaveAttribute("data-fullscreen", "true");
+
+    await user.click(screen.getByRole("button", { name: t("conversation.fileViewerExitFullscreen") }));
+    expect(screen.getByRole("dialog", { name: "site/index.html" })).not.toHaveAttribute("data-fullscreen", "true");
+
+    await user.click(screen.getByRole("button", { name: t("conversation.fileViewerOpenInBrowser") }));
+
+    expect(platformMock.openExternal).toHaveBeenCalledWith(
+      "http://127.0.0.1:3002/preview/files/preview-token/site/index.html"
+    );
   });
 });

@@ -150,6 +150,10 @@ export default defineConfig({
         target: hostApiTarget,
         changeOrigin: true
       },
+      "/preview": {
+        target: hostApiTarget,
+        changeOrigin: true
+      },
       // /proxy/* 必须直通 Host 的反向代理服务，不能落到前端路由守卫。
       "/proxy": {
         target: hostApiTarget,

@@ -43,6 +43,7 @@ import { FileContentService } from "../modules/file/file-content-service.js";
 import { FileContextController } from "../modules/file/file-context-controller.js";
 import { FileContextService } from "../modules/file/file-context-service.js";
 import { FileController } from "../modules/file/file-controller.js";
+import { FilePreviewLinkService } from "../modules/file/file-preview-link-service.js";
 import { FilePreviewService } from "../modules/file/file-preview-service.js";
 import { FileSearchService } from "../modules/file/file-search-service.js";
 import { FileTreeService } from "../modules/file/file-tree-service.js";
@@ -233,6 +234,10 @@ export function createServer(config: HostConfig) {
     fileVersionChecker
   );
   const filePreviewService = new FilePreviewService(fileAccessGuard, fileContentService);
+  const filePreviewLinkService = new FilePreviewLinkService(
+    fileAccessGuard,
+    config.filePreviewTokenSecret
+  );
   const workspaceRepoGuard = new WorkspaceRepoGuard(workspaceService, gitCommandRunner);
   const gitReadService = new GitReadService(gitCommandRunner, workspaceRepoGuard);
   const gitWriteService = new GitWriteService(gitCommandRunner, workspaceRepoGuard, gitReadService);
@@ -586,7 +591,8 @@ export function createServer(config: HostConfig) {
     fileContentService,
     fileSearchService,
     recentFileService,
-    filePreviewService
+    filePreviewService,
+    filePreviewLinkService
   );
   const fileContextController = new FileContextController(
     fileContentService,
@@ -698,6 +704,7 @@ export function createServer(config: HostConfig) {
         fileSearchService,
         fileContentService,
         filePreviewService,
+        filePreviewLinkService,
         fileContextService,
         recentFileService,
         gitReadService,
