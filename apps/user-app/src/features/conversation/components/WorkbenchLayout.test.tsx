@@ -1108,6 +1108,88 @@ describe("WorkbenchLayout", () => {
     expect(workspaceScope.queryByRole("button", { name: t("shell.sessionExpandMore") })).not.toBeInTheDocument();
   });
 
+  it("会在会话树节点上显示 fork 来源标签", async () => {
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "Project One"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "root-session",
+            title: "Root Session",
+            workspaceId: "workspace-1"
+          }),
+          createSessionSummary({
+            sessionId: "fork-session-1",
+            title: "Session Fork Child",
+            workspaceId: "workspace-1",
+            parentSessionId: "root-session",
+            forkMethod: "native_session_fork",
+            forkSourceType: "session"
+          }),
+          createSessionSummary({
+            sessionId: "fork-message-1",
+            title: "Message Fork Child",
+            workspaceId: "workspace-1",
+            parentSessionId: "root-session",
+            forkMethod: "native_message_fork",
+            forkSourceType: "message",
+            isSubagent: true,
+            subagentLabel: "dirty-subagent-label"
+          }),
+          createSessionSummary({
+            sessionId: "fork-reconstructed-1",
+            title: "Reconstructed Fork Child",
+            workspaceId: "workspace-1",
+            parentSessionId: "root-session",
+            forkMethod: "reconstructed_message_fork",
+            forkSourceType: "message"
+          })
+        ]
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/workspaces/workspace-1/sessions/root-session");
+
+    const rootSession = await findSessionCardByTitle("Root Session");
+    const rootTreeNode = rootSession.closest(".workbench-session-tree-node") as HTMLElement | null;
+    expect(rootTreeNode).not.toBeNull();
+
+    const rootTreeScope = within(rootTreeNode!);
+
+    await userEvent.click(rootTreeScope.getByRole("button", { name: t("shell.subagentExpand") }));
+
+    expect(
+      within(getSessionCardByTitle("Session Fork Child")).getByText(t("shell.sessionForkSession"))
+    ).toBeInTheDocument();
+    expect(
+      within(getSessionCardByTitle("Message Fork Child")).getByText(t("shell.sessionForkMessage"))
+    ).toBeInTheDocument();
+    expect(
+      within(getSessionCardByTitle("Message Fork Child")).queryByText(t("shell.subagentBadge"))
+    ).not.toBeInTheDocument();
+    expect(
+      within(getSessionCardByTitle("Message Fork Child")).queryByText("dirty-subagent-label")
+    ).not.toBeInTheDocument();
+    expect(
+      within(getSessionCardByTitle("Reconstructed Fork Child")).getByText(t("shell.sessionForkReconstructed"))
+    ).toBeInTheDocument();
+    expect(
+      within(getSessionCardByTitle("Root Session")).queryByText(t("shell.sessionForkSession"))
+    ).not.toBeInTheDocument();
+  });
+
   it("收藏会话默认分段渲染，并支持按批展开", async () => {
     const sessions = Array.from({ length: 25 }, (_, index) => ({
       ...createSessionSummary({
@@ -3683,6 +3765,8 @@ function createSessionSummary(input: {
   provider?: "codex" | "claude-code" | "opencode";
   isArchived?: boolean;
   parentSessionId?: string | null;
+  forkMethod?: "native_session_fork" | "native_message_fork" | "reconstructed_message_fork" | null;
+  forkSourceType?: "session" | "message" | null;
   isSubagent?: boolean;
   subagentLabel?: string | null;
   runningState?: "idle" | "starting" | "running" | "stale" | "unknown" | "completed" | "interrupted" | "failed";
@@ -3705,6 +3789,10 @@ function createSessionSummary(input: {
     isArchived: input.isArchived ?? false,
     isFavorite: input.isFavorite ?? false,
     parentSessionId: input.parentSessionId ?? null,
+    forkMethod: input.forkMethod ?? null,
+    forkSourceType: input.forkSourceType ?? null,
+    forkSourceSessionId: null,
+    forkSourceMessageId: null,
     isSubagent: input.isSubagent ?? false,
     subagentLabel: input.subagentLabel ?? null,
     title: input.title,

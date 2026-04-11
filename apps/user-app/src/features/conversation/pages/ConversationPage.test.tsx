@@ -6,8 +6,62 @@ import { t } from "../../../shared/i18n";
 import { ConversationPage } from "./ConversationPage";
 
 const mockGetProviderCapabilities = vi.fn();
+const mockGetSessionMessages = vi.fn();
 const mockStartLiveSession = vi.fn();
+const mockForkSession = vi.fn();
+const mockSendLiveMessage = vi.fn();
 const mockUseWorkbenchShell = vi.fn();
+const mockRuntimeStoreInitialize = vi.fn();
+const mockRuntimeStoreDestroy = vi.fn();
+const mockRuntimeStoreApplyNavigationSession = vi.fn();
+const mockLiveRuntimeState: any = {
+  session: {
+    sessionId: "session-live-1",
+    workspaceId: "workspace-1",
+    provider: "codex",
+    providerSessionId: "provider-session-live-1",
+    rawStoreRef: "/tmp/session-live-1.jsonl",
+    parentSessionId: null,
+    forkMethod: null,
+    forkSourceType: null,
+    forkSourceSessionId: null,
+    forkSourceMessageId: null,
+    isSubagent: false,
+    subagentLabel: null,
+    isArchived: false,
+    isFavorite: false,
+    title: "父会话",
+    messageCount: 3,
+    lastMessageAt: "2026-04-11T11:00:00.000Z",
+    createdAt: "2026-04-11T10:00:00.000Z",
+    updatedAt: "2026-04-11T11:00:00.000Z",
+    syncStatus: "idle",
+    syncCursor: null,
+    lastSyncAt: null,
+    lastErrorCode: null,
+    lastErrorDetail: null,
+    resumedAt: null,
+    runningState: "idle",
+    activitySource: "none",
+    lastEventAt: "2026-04-11T11:00:00.000Z",
+    completedAt: null,
+    lastSeenAt: null,
+    activityState: "idle"
+  },
+  capabilities: null,
+  runtimeHasActiveRun: false,
+  runtimeCanInterrupt: false,
+  messages: [],
+  permissionRequests: [],
+  queuedMessages: [],
+  contextUsage: null,
+  historyState: "ready",
+  errorCode: null,
+  errorDetail: null,
+  loadingOlderMessages: false,
+  hasOlderMessages: false,
+  connectionState: "connected"
+};
 
 vi.mock("../api/conversation-api", async () => {
   const actual = await vi.importActual<typeof import("../api/conversation-api")>(
@@ -17,7 +71,10 @@ vi.mock("../api/conversation-api", async () => {
   return {
     ...actual,
     getProviderCapabilities: (...args: unknown[]) => mockGetProviderCapabilities(...args),
-    startLiveSession: (...args: unknown[]) => mockStartLiveSession(...args)
+    getSessionMessages: (...args: unknown[]) => mockGetSessionMessages(...args),
+    startLiveSession: (...args: unknown[]) => mockStartLiveSession(...args),
+    forkSession: (...args: unknown[]) => mockForkSession(...args),
+    sendLiveMessage: (...args: unknown[]) => mockSendLiveMessage(...args)
   };
 });
 
@@ -30,7 +87,32 @@ vi.mock("../components/ConnectionBanner", () => ({
 }));
 
 vi.mock("../components/MessageTimeline", () => ({
-  MessageTimeline: () => null
+  MessageTimeline: ({
+    messages,
+    onForkMessage
+  }: {
+    messages?: Array<{ content: string }>;
+    onForkMessage?: (message: {
+      id: string;
+      content: string;
+    }) => void;
+  }) => (
+    <div>
+      <div data-testid="timeline-messages">{messages?.map((item) => item.content).join("|") ?? ""}</div>
+      <button
+        type="button"
+        data-testid="timeline-fork"
+        onClick={() => {
+          onForkMessage?.({
+            id: "assistant-message-1",
+            content: "从这个历史点继续分叉"
+          });
+        }}
+      >
+        fork
+      </button>
+    </div>
+  )
 }));
 
 vi.mock("../components/SessionHeader", () => ({
@@ -40,15 +122,18 @@ vi.mock("../components/SessionHeader", () => ({
 vi.mock("../components/ComposerPanel", () => ({
   ComposerPanel: ({
     capabilities,
+    forkDraft,
     onSend
   }: {
     capabilities: { modelOptions?: Array<{ id: string }> } | null;
+    forkDraft?: { content: string } | null;
     onSend?: (content: string, options?: { attachments?: unknown[]; attachmentMeta?: unknown[] }) => Promise<void>;
   }) => (
     <div>
       <div data-testid="composer-model-options">
         {capabilities?.modelOptions?.map((item) => item.id).join(",") ?? ""}
       </div>
+      <div data-testid="composer-fork-draft">{forkDraft?.content ?? ""}</div>
       <button
         type="button"
         data-testid="composer-send"
@@ -62,11 +147,70 @@ vi.mock("../components/ComposerPanel", () => ({
   )
 }));
 
+vi.mock("../runtime/session-runtime-store", () => ({
+  SessionRuntimeStore: class {
+    initialize = mockRuntimeStoreInitialize;
+    destroy = mockRuntimeStoreDestroy;
+    applyNavigationSession = mockRuntimeStoreApplyNavigationSession;
+    reconnect = vi.fn();
+    loadOlderMessages = vi.fn();
+    retryMessage = vi.fn();
+    replyPermissionRequest = vi.fn();
+    enqueueMessage = vi.fn();
+    interrupt = vi.fn();
+    deleteQueuedMessage = vi.fn();
+    steerQueuedMessage = vi.fn();
+    sendMessage = vi.fn();
+  },
+  useSessionRuntimeStore: (_store: unknown, selector: (state: typeof mockLiveRuntimeState) => unknown) =>
+    selector(mockLiveRuntimeState)
+}));
+
 describe("ConversationPage", () => {
   beforeEach(() => {
     mockGetProviderCapabilities.mockReset();
+    mockGetSessionMessages.mockReset();
     mockStartLiveSession.mockReset();
+    mockForkSession.mockReset();
+    mockSendLiveMessage.mockReset();
     mockUseWorkbenchShell.mockReset();
+    mockRuntimeStoreInitialize.mockReset();
+    mockRuntimeStoreDestroy.mockReset();
+    mockRuntimeStoreApplyNavigationSession.mockReset();
+    mockLiveRuntimeState.session = {
+      sessionId: "session-live-1",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "provider-session-live-1",
+      rawStoreRef: "/tmp/session-live-1.jsonl",
+      parentSessionId: null,
+      forkMethod: null,
+      forkSourceType: null,
+      forkSourceSessionId: null,
+      forkSourceMessageId: null,
+      isSubagent: false,
+      subagentLabel: null,
+      isArchived: false,
+      isFavorite: false,
+      title: "父会话",
+      messageCount: 3,
+      lastMessageAt: "2026-04-11T11:00:00.000Z",
+      createdAt: "2026-04-11T10:00:00.000Z",
+      updatedAt: "2026-04-11T11:00:00.000Z",
+      syncStatus: "idle",
+      syncCursor: null,
+      lastSyncAt: null,
+      lastErrorCode: null,
+      lastErrorDetail: null,
+      resumedAt: null,
+      runningState: "idle",
+      activitySource: "none",
+      lastEventAt: "2026-04-11T11:00:00.000Z",
+      completedAt: null,
+      lastSeenAt: null,
+      activityState: "idle"
+    };
+    mockLiveRuntimeState.messages = [];
     Object.defineProperty(window, "innerWidth", {
       configurable: true,
       writable: true,
@@ -81,6 +225,156 @@ describe("ConversationPage", () => {
       upsertNavigationSession: vi.fn(),
       favoriteSessions: []
     });
+  });
+
+  it("分支会话默认折叠继承前缀，展开后再显示完整父会话上下文", async () => {
+    mockLiveRuntimeState.session = {
+      ...mockLiveRuntimeState.session,
+      sessionId: "session-child-1",
+      parentSessionId: "session-parent-1",
+      forkMethod: "native_message_fork",
+      forkSourceType: "message",
+      forkSourceSessionId: "session-parent-1",
+      forkSourceMessageId: "parent-assistant-1",
+      inheritedPrefixMessageCount: 2,
+      title: "子会话"
+    };
+    mockLiveRuntimeState.messages = [
+      createHistoryViewMessage("child-user-1", "user", "口令是1314", 1),
+      createHistoryViewMessage("child-assistant-1", "assistant", "收到，口令是 1314。", 2),
+      createHistoryViewMessage("child-user-2", "user", "现在还记得吗", 3),
+      createHistoryViewMessage("child-assistant-2", "assistant", "还记得，口令是 1314。", 4)
+    ];
+    mockUseWorkbenchShell.mockReturnValue({
+      shellMode: "desktop",
+      navigationGroups: [
+        {
+          workspace: {
+            id: "workspace-1",
+            name: "CodingNS",
+            path: "/Users/jackson/Code/CodingNS",
+            repoRoot: "/Users/jackson/Code/CodingNS"
+          },
+          sessions: [
+            {
+              ...mockLiveRuntimeState.session,
+              sessionId: "session-parent-1",
+              parentSessionId: null,
+              forkMethod: null,
+              forkSourceType: null,
+              forkSourceSessionId: null,
+              forkSourceMessageId: null,
+              title: "主会话"
+            },
+            mockLiveRuntimeState.session
+          ]
+        }
+      ],
+      requestNavigationRefresh: vi.fn(),
+      selectWorkspace: vi.fn(),
+      setSessionWorkspace: vi.fn(),
+      upsertNavigationSession: vi.fn(),
+      markNavigationSessionSeen: vi.fn(),
+      favoriteSessions: [],
+      archiveSession: vi.fn(),
+      unarchiveSession: vi.fn(),
+      startDraftSession: vi.fn()
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/workspaces/workspace-1/sessions/session-child-1"]}>
+        <Routes>
+          <Route
+            path="/workspaces/:workspaceId/sessions/:sessionId"
+            element={<ConversationPage />}
+          />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("继承自某条消息之前的上下文")).toBeInTheDocument();
+      expect(screen.getByTestId("timeline-messages")).toHaveTextContent("现在还记得吗|还记得，口令是 1314。");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "展开完整上文" }));
+
+    expect(screen.getByTestId("timeline-messages")).toHaveTextContent(
+      "口令是1314|收到，口令是 1314。|现在还记得吗|还记得，口令是 1314。"
+    );
+  });
+
+  it("折叠继承前缀时不会误收起子会话自己的首条消息", async () => {
+    mockLiveRuntimeState.session = {
+      ...mockLiveRuntimeState.session,
+      sessionId: "session-child-2",
+      parentSessionId: "session-parent-1",
+      forkMethod: "native_message_fork",
+      forkSourceType: "message",
+      forkSourceSessionId: "session-parent-1",
+      forkSourceMessageId: "parent-user-1",
+      inheritedPrefixMessageCount: 4,
+      title: "子会话"
+    };
+    mockLiveRuntimeState.messages = [
+      createHistoryViewMessage("parent-user-1", "user", "父会话第一句", 1),
+      createHistoryViewMessage("parent-assistant-1", "assistant", "父会话第一句回复", 2),
+      createHistoryViewMessage("child-user-1", "user", "这是子会话自己的第一句", 5)
+    ];
+    mockUseWorkbenchShell.mockReturnValue({
+      shellMode: "desktop",
+      navigationGroups: [
+        {
+          workspace: {
+            id: "workspace-1",
+            name: "CodingNS",
+            path: "/Users/jackson/Code/CodingNS",
+            repoRoot: "/Users/jackson/Code/CodingNS"
+          },
+          sessions: [
+            {
+              ...mockLiveRuntimeState.session,
+              sessionId: "session-parent-1",
+              parentSessionId: null,
+              forkMethod: null,
+              forkSourceType: null,
+              forkSourceSessionId: null,
+              forkSourceMessageId: null,
+              title: "主会话"
+            },
+            mockLiveRuntimeState.session
+          ]
+        }
+      ],
+      requestNavigationRefresh: vi.fn(),
+      selectWorkspace: vi.fn(),
+      setSessionWorkspace: vi.fn(),
+      upsertNavigationSession: vi.fn(),
+      markNavigationSessionSeen: vi.fn(),
+      favoriteSessions: [],
+      archiveSession: vi.fn(),
+      unarchiveSession: vi.fn(),
+      startDraftSession: vi.fn()
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/workspaces/workspace-1/sessions/session-child-2"]}>
+        <Routes>
+          <Route
+            path="/workspaces/:workspaceId/sessions/:sessionId"
+            element={<ConversationPage />}
+          />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("继承自某条消息之前的上下文")).toBeInTheDocument();
+      expect(screen.getByTestId("timeline-messages")).toHaveTextContent("这是子会话自己的第一句");
+    });
+
+    expect(screen.getByTestId("timeline-messages")).not.toHaveTextContent("父会话第一句");
+    expect(screen.getByTestId("timeline-messages")).not.toHaveTextContent("父会话第一句回复");
   });
 
   it("草稿会话会按 provider 和 workspace 拉取真实能力，并替换默认模型列表", async () => {
@@ -251,6 +545,137 @@ describe("ConversationPage", () => {
       expect(requestNavigationRefresh).toHaveBeenCalled();
       expect(screen.getByTestId("route-probe")).toHaveTextContent(
         "/workspaces/workspace-2/sessions/session-created-1"
+      );
+    });
+  });
+
+  it("历史消息 fork 会先进入引用态，发送时才真正创建子会话并把首条消息发到子会话", async () => {
+    mockForkSession.mockResolvedValue({
+      sessionId: "session-child-1",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "provider-child-1",
+      rawStoreRef: "/tmp/session-child-1.jsonl",
+      parentSessionId: "session-live-1",
+      forkMethod: "native_message_fork",
+      forkSourceType: "message",
+      forkSourceSessionId: "session-live-1",
+      forkSourceMessageId: "assistant-message-1",
+      isSubagent: true,
+      subagentLabel: null,
+      isArchived: false,
+      isFavorite: false,
+      title: "父会话",
+      messageCount: 0,
+      lastMessageAt: "2026-04-11T11:05:00.000Z",
+      createdAt: "2026-04-11T11:05:00.000Z",
+      updatedAt: "2026-04-11T11:05:00.000Z",
+      syncStatus: "idle",
+      syncCursor: null,
+      lastSyncAt: null,
+      lastErrorCode: null,
+      lastErrorDetail: null,
+      resumedAt: null,
+      runningState: "idle",
+      activitySource: "none",
+      lastEventAt: "2026-04-11T11:05:00.000Z",
+      completedAt: null,
+      lastSeenAt: null,
+      activityState: "idle"
+    });
+    mockSendLiveMessage.mockResolvedValue({
+      sessionId: "session-child-1",
+      acceptedAt: "2026-04-11T11:05:05.000Z",
+      clientRequestId: "client-request-1",
+      message: {
+        messageId: "message-child-1",
+        provider: "codex",
+        providerSessionId: "provider-child-1",
+        role: "user",
+        content: "测试消息",
+        timestamp: "2026-04-11T11:05:05.000Z",
+        sequence: 1,
+        rawRef: "codex://session/provider-child-1/message/message-child-1"
+      }
+    });
+    const setSessionWorkspace = vi.fn();
+    const upsertNavigationSession = vi.fn();
+    const requestNavigationRefresh = vi.fn();
+    const selectWorkspace = vi.fn();
+
+    mockUseWorkbenchShell.mockReturnValue({
+      shellMode: "desktop",
+      navigationGroups: [
+        {
+          workspace: {
+            id: "workspace-1",
+            name: "CodingNS",
+            path: "/Users/jackson/Code/CodingNS",
+            repoRoot: "/Users/jackson/Code/CodingNS"
+          },
+          sessions: [mockLiveRuntimeState.session]
+        }
+      ],
+      requestNavigationRefresh,
+      selectWorkspace,
+      setSessionWorkspace,
+      upsertNavigationSession,
+      markNavigationSessionSeen: vi.fn(),
+      favoriteSessions: [],
+      archiveSession: vi.fn(),
+      unarchiveSession: vi.fn(),
+      startDraftSession: vi.fn()
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/workspaces/workspace-1/sessions/session-live-1"]}>
+        <Routes>
+          <Route
+            path="/workspaces/:workspaceId/sessions/:sessionId"
+            element={
+              <>
+                <ConversationPage />
+                <RouteProbe />
+              </>
+            }
+          />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByTestId("timeline-fork"));
+
+    expect(mockForkSession).not.toHaveBeenCalled();
+    expect(screen.getByTestId("composer-fork-draft")).toHaveTextContent("从这个历史点继续分叉");
+
+    fireEvent.click(screen.getByTestId("composer-send"));
+
+    await waitFor(() => {
+      expect(mockForkSession).toHaveBeenCalledWith("session-live-1", {
+        sourceType: "message",
+        sourceMessageId: "assistant-message-1",
+        strategy: "auto"
+      });
+    });
+
+    await waitFor(() => {
+      expect(mockSendLiveMessage).toHaveBeenCalledWith(
+        "session-child-1",
+        expect.objectContaining({
+          content: "测试消息",
+          attachments: []
+        })
+      );
+      expect(upsertNavigationSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sessionId: "session-child-1",
+          parentSessionId: "session-live-1"
+        })
+      );
+      expect(requestNavigationRefresh).toHaveBeenCalled();
+      expect(selectWorkspace).toHaveBeenCalledWith("workspace-1");
+      expect(screen.getByTestId("route-probe")).toHaveTextContent(
+        "/workspaces/workspace-1/sessions/session-child-1"
       );
     });
   });
@@ -846,6 +1271,31 @@ function renderDraftConversationPage(options?: { withRouteProbe?: boolean }) {
       </Routes>
     </MemoryRouter>
   );
+}
+
+function createHistoryViewMessage(
+  messageId: string,
+  role: "user" | "assistant",
+  content: string,
+  sequence: number
+) {
+  return {
+    id: messageId,
+    sessionId: "session-child-1",
+    role,
+    kind: "text" as const,
+    content,
+    toolCall: null,
+    attachments: [],
+    attachmentPayloads: null,
+    origin: null,
+    originRef: null,
+    timestamp: `2026-04-11T11:00:1${sequence}.000Z`,
+    sequence,
+    rawRef: `codex://child#line=${sequence}`,
+    deliveryState: "sent" as const,
+    clientRequestId: null
+  };
 }
 
 function createMobileWorkbenchShellValue(sessionOverrides: Record<string, unknown> = {}) {

@@ -43,6 +43,10 @@ interface ComposerPanelProps {
   capabilities: ProviderCapabilitiesDto | null;
   placeholder?: string;
   draftStorageId?: string;
+  forkDraft?: {
+    content: string;
+  } | null;
+  onClearForkDraft?: () => void;
   panelRef?: Ref<HTMLElement>;
   portalContainer?: Element | null;
   hasActiveRun?: boolean | null;
@@ -189,6 +193,16 @@ function restoreDraftAttachment(
   };
 }
 
+function buildForkDraftPreview(content: string): string {
+  const normalized = content.trim().replace(/\s+/g, " ");
+
+  if (normalized.length === 0) {
+    return t("conversation.forkDraftEmpty");
+  }
+
+  return normalized.length > 140 ? `${normalized.slice(0, 140)}…` : normalized;
+}
+
 function toAttachmentMeta(file: File, id: string): MessageAttachmentDto {
   return {
     id,
@@ -274,6 +288,8 @@ export function ComposerPanel({
   capabilities,
   placeholder,
   draftStorageId,
+  forkDraft = null,
+  onClearForkDraft,
   panelRef,
   portalContainer = null,
   hasActiveRun = null,
@@ -400,6 +416,7 @@ export function ComposerPanel({
     []
   );
   const inRunInputMode = capabilities?.inRunInputMode ?? "none";
+  const hasForkDraft = Boolean(forkDraft);
   const runHasActiveFlag = hasActiveRun ?? null;
   const isUnmanagedStreamingRun =
     isRunning &&
@@ -407,14 +424,16 @@ export function ComposerPanel({
     runHasActiveFlag === false &&
     !shouldSupportRunSteering(capabilities);
   const canStreamDuringRun =
+    !hasForkDraft &&
     isRunning &&
     inRunInputMode === "streaming_guidance" &&
     !isUnmanagedStreamingRun;
   const canQueueDuringRun =
+    !hasForkDraft &&
     isRunning &&
     typeof onQueueSend === "function" &&
     allowsQueueDuringRun(capabilities, runHasActiveFlag);
-  const inRunSendBlocked = isRunning && !canStreamDuringRun && !canQueueDuringRun;
+  const inRunSendBlocked = !hasForkDraft && isRunning && !canStreamDuringRun && !canQueueDuringRun;
   const hasDraft = content.trim().length > 0 || attachments.length > 0;
   const interruptAvailable = canInterrupt ?? interruptDecision.allowed;
   const canInterruptNow =
@@ -1014,6 +1033,33 @@ export function ComposerPanel({
           onChange={handleAttachmentInputChange}
         />
         <div className="composer-input-container">
+          {forkDraft ? (
+            <div className="composer-fork-draft">
+              <div className="composer-fork-draft-copy">
+                <span className="composer-fork-draft-label">
+                  {t("conversation.forkDraftLabel")}
+                </span>
+                <span className="composer-fork-draft-text">
+                  {buildForkDraftPreview(forkDraft.content)}
+                </span>
+              </div>
+              {onClearForkDraft ? (
+                <button
+                  type="button"
+                  className="composer-fork-draft-clear"
+                  aria-label={t("conversation.forkDraftClear")}
+                  title={t("conversation.forkDraftClear")}
+                  onClick={onClearForkDraft}
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+
           {attachments.length > 0 ? (
             <div className="composer-attachments">
               {attachments.map((attachment) => (

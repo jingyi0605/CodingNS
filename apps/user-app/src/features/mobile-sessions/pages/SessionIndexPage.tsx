@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 
 import { t } from "../../../shared/i18n";
 import type { ProviderId } from "../../conversation/api/conversation-api";
+import { isRealSubagentSession } from "../../conversation/session-fork-display";
 import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout";
 import { MobileWorkspaceSwitcherHeader } from "../../mobile-shell/components/MobileWorkspaceSwitcherHeader";
 import { MobileCreateSessionSheet } from "../components/MobileCreateSessionSheet";
@@ -42,7 +43,7 @@ export function SessionIndexPage() {
     () =>
       currentWorkspaceGroup
         ? flattenNavigationSessions([currentWorkspaceGroup]).filter(
-            (entry) => !entry.session.isArchived && !entry.session.isSubagent
+            (entry) => !entry.session.isArchived && !isRealSubagentSession(entry.session)
           )
         : ([] as WorkbenchNavigationEntry[]),
     [currentWorkspaceGroup]

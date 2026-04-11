@@ -20,6 +20,7 @@ import { countInProgressButlerTasks } from "../../butler/butler-task-count";
 import { BUTLER_INBOX_UPDATED_EVENT } from "../../butler/runtime/butler-inbox-events";
 import { subscribeButlerRecordsUpdated } from "../../butler/runtime/butler-records-events";
 import { getProviderDisplayName } from "../../conversation/capability/provider-ui";
+import { isRealSubagentSession } from "../../conversation/session-fork-display";
 import { WorkspaceCloneModal } from "../../conversation/components/WorkspaceCloneModal";
 import { WorkspaceInboxModal } from "../../conversation/components/WorkspaceInboxModal";
 import { WorkspaceImportBrowserModal } from "../../conversation/components/WorkspaceImportBrowserModal";
@@ -76,7 +77,7 @@ interface WorkspaceHomeTerminalManagerSnapshotCache {
 }
 
 function isVisibleSession(session: SessionSummaryDto) {
-  return session.isArchived !== true && session.isSubagent !== true;
+  return session.isArchived !== true && !isRealSubagentSession(session);
 }
 
 function isSessionRunning(session: SessionSummaryDto) {

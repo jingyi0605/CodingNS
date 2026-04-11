@@ -79,6 +79,11 @@ import {
   resolveSessionActivityBadgeLabel,
   resolveSessionIndicatorClassName
 } from "../session-activity-display";
+import {
+  isRealSubagentSession,
+  resolveSessionForkBadgeLabel,
+  resolveSessionForkBadgeTone
+} from "../session-fork-display";
 import { buildSessionTitlePresentation } from "../session-title";
 import {
   buildDraftSessionPath,
@@ -610,7 +615,7 @@ function sortSessions(left: SessionSummaryDto, right: SessionSummaryDto) {
 }
 
 function isSubagentSession(session: SessionSummaryDto) {
-  return session.isSubagent === true;
+  return isRealSubagentSession(session);
 }
 
 function isArchivedSession(session: SessionSummaryDto) {
@@ -1947,8 +1952,9 @@ function SessionCard({
   onCloseMenu: () => void;
   onContextMenu?: () => void;
 }) {
-  const subagentBadgeLabel =
-    session.subagentLabel?.trim() || (isSubagentSession(session) ? t("shell.subagentBadge") : null);
+  const subagentBadgeLabel = isSubagentSession(session)
+    ? session.subagentLabel?.trim() || t("shell.subagentBadge")
+    : null;
   const titlePresentation = buildSessionTitlePresentation(session.title, t("common.unknown"));
   const sessionErrorSummary = getSessionErrorSummary(session);
   const sessionErrorPreview = sessionErrorSummary
@@ -1959,6 +1965,8 @@ function SessionCard({
     sessionActivityBadgeLabel
       ? resolveSessionActivityBadgeClassName("session-activity-badge", session)
       : null;
+  const sessionForkBadgeTone = resolveSessionForkBadgeTone(session);
+  const sessionForkBadgeLabel = resolveSessionForkBadgeLabel(session);
   const menuTriggerRef = useRef<HTMLButtonElement | null>(null);
   const [menuPositionStyle, setMenuPositionStyle] = useState<CSSProperties | null>(null);
 
@@ -2109,6 +2117,11 @@ function SessionCard({
                 {titlePresentation.displayTitle}
               </span>
               {subagentBadgeLabel ? <span className="session-subagent-badge">{subagentBadgeLabel}</span> : null}
+              {sessionForkBadgeLabel && sessionForkBadgeTone ? (
+                <span className={`session-fork-badge ${sessionForkBadgeTone}`}>
+                  {sessionForkBadgeLabel}
+                </span>
+              ) : null}
             </div>
             <div className="session-meta-row">
               <span className="session-meta">{buildSessionMeta(session, workspace, showWorkspaceName)}</span>

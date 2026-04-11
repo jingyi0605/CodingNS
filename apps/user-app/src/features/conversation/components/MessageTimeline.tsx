@@ -27,6 +27,10 @@ import {
 } from "../apply-patch-preview";
 import { parseMessageRichContent } from "../message-rich-content";
 import { useWorkbenchShell } from "./WorkbenchLayout";
+import {
+  CopyActionIcon,
+  ForkActionIcon
+} from "./ConversationActionIcons";
 
 import type {
   ImageAttachmentPayload,
@@ -44,9 +48,15 @@ interface MessageTimelineProps {
   hasOlderMessages?: boolean;
   onLoadOlderMessages?: () => void;
   onRetryMessage: (clientRequestId: string) => void;
+  onForkMessage?: (message: SessionMessageViewModel) => Promise<void> | void;
   provider: ProviderId | null;
   runtimeThinkingPlaceholder?: string | null;
   assistantAvatar?: ReactNode;
+}
+
+interface MessageActionState {
+  canCopy: boolean;
+  canFork: boolean;
 }
 
 function stripThinkingTrailingDots(value: string): string {
@@ -1464,19 +1474,119 @@ function formatMessageTimestamp(timestamp: string) {
   return new Date(timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-function UserMessageMeta({
+function UserMessageFooter({
   timestamp,
+  leading,
   children
 }: {
   timestamp: string;
+  leading?: ReactNode;
   children?: ReactNode;
 }) {
   return (
-    <div className="message-meta">
-      {children}
-      <time className="message-time" dateTime={timestamp}>
-        {formatMessageTimestamp(timestamp)}
-      </time>
+    <div className="user-message-footer">
+      <div className="user-message-footer-leading">{leading}</div>
+      <div className="user-message-footer-trailing">
+        <time className="message-time" dateTime={timestamp}>
+          {formatMessageTimestamp(timestamp)}
+        </time>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function MessageMetadataBar({
+  text,
+  canCopy = true,
+  canFork = false,
+  compact = false,
+  onFork
+}: {
+  text: string;
+  canCopy?: boolean;
+  canFork?: boolean;
+  compact?: boolean;
+  onFork?: (() => Promise<void> | void) | null;
+}) {
+  const { showToast } = useToast();
+  const platform = usePlatform();
+  const [copying, setCopying] = useState(false);
+  const [forking, setForking] = useState(false);
+  const hasText = text.trim().length > 0;
+  const shouldShowCopy = canCopy && hasText;
+
+  async function handleCopy() {
+    if (!shouldShowCopy || copying) {
+      return;
+    }
+
+    setCopying(true);
+
+    try {
+      await writeTextToClipboard(text, platform);
+      showToast({
+        title: t("conversation.copyContentSuccess"),
+        tone: "success"
+      });
+    } catch (error) {
+      showToast({
+        title: error instanceof Error ? error.message : t("conversation.copyContentFailed"),
+        tone: "error"
+      });
+    } finally {
+      setCopying(false);
+    }
+  }
+
+  async function handleFork() {
+    if (!onFork || forking) {
+      return;
+    }
+
+    setForking(true);
+
+    try {
+      await onFork();
+    } finally {
+      setForking(false);
+    }
+  }
+
+  if (!shouldShowCopy && !canFork) {
+    return null;
+  }
+
+  return (
+    <div className={compact ? "message-metadata-bar compact" : "message-metadata-bar"}>
+      {shouldShowCopy ? (
+        <button
+          type="button"
+          className="message-metadata-action"
+          aria-label={t("conversation.copyAction")}
+          title={t("conversation.copyAction")}
+          onClick={() => {
+            void handleCopy();
+          }}
+          disabled={copying}
+        >
+          <CopyActionIcon />
+        </button>
+      ) : null}
+      {canFork ? (
+        <button
+          type="button"
+          className="message-metadata-action"
+          aria-label={forking ? t("conversation.forkingAction") : t("conversation.forkFromHereAction")}
+          title={forking ? t("conversation.forkingAction") : t("conversation.forkFromHereAction")}
+          onClick={() => {
+            void handleFork();
+          }}
+          disabled={forking}
+        >
+          <ForkActionIcon />
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -1485,12 +1595,16 @@ function RulesMessageCard({
   message,
   kind,
   tone,
-  onRetry
+  actionState,
+  onRetry,
+  onForkMessage
 }: {
   message: SessionMessageViewModel;
   kind: FoldedPromptKind;
   tone: "user-message" | "assistant-message" | "system-message";
+  actionState: MessageActionState;
   onRetry: (clientRequestId: string) => void;
+  onForkMessage?: ((message: SessionMessageViewModel) => Promise<void> | void) | null;
 }) {
   const [expanded, setExpanded] = useState(false);
   const summary = getRulesMessageSummary(message.content);
@@ -1539,6 +1653,24 @@ function RulesMessageCard({
               />
             </div>
           )}
+          {isUser ? (
+            <UserMessageFooter timestamp={message.timestamp}>
+              <MessageMetadataBar
+                text={message.content}
+                canCopy={actionState.canCopy}
+                canFork={actionState.canFork && Boolean(onForkMessage && message.deliveryState === "sent")}
+                compact
+                onFork={onForkMessage ? () => onForkMessage(message) : null}
+              />
+            </UserMessageFooter>
+          ) : (
+            <MessageMetadataBar
+              text={message.content}
+              canCopy={actionState.canCopy}
+              canFork={actionState.canFork && Boolean(onForkMessage && message.deliveryState === "sent")}
+              onFork={onForkMessage ? () => onForkMessage(message) : null}
+            />
+          )}
         </div>
 
         {message.deliveryState === "failed" && message.clientRequestId && (
@@ -1552,7 +1684,6 @@ function RulesMessageCard({
         )}
       </div>
 
-      {isUser ? <UserMessageMeta timestamp={message.timestamp} /> : null}
     </article>
   );
 }
@@ -1561,13 +1692,17 @@ function MessageItem({
   message,
   provider,
   foldedPromptKind = null,
+  actionState,
   onRetry,
+  onForkMessage,
   assistantAvatar
 }: {
   message: SessionMessageViewModel;
   provider: ProviderId | null;
   foldedPromptKind?: FoldedPromptKind | null;
+  actionState: MessageActionState;
   onRetry: (clientRequestId: string) => void;
+  onForkMessage?: ((message: SessionMessageViewModel) => Promise<void> | void) | null;
   assistantAvatar?: ReactNode;
 }) {
   const isUser = message.role === "user";
@@ -1594,7 +1729,16 @@ function MessageItem({
           ? "assistant-message"
           : "system-message";
 
-    return <RulesMessageCard message={message} kind={promptKind} tone={tone} onRetry={onRetry} />;
+    return (
+      <RulesMessageCard
+        message={message}
+        kind={promptKind}
+        tone={tone}
+        actionState={actionState}
+        onRetry={onRetry}
+        onForkMessage={onForkMessage}
+      />
+    );
   }
 
   if (isUser) {
@@ -1627,6 +1771,46 @@ function MessageItem({
       }
     }
 
+    const originBadge = isButlerProxyMessage ? (
+      hasOriginDetail ? (
+        <div className="message-origin-detail-anchor">
+          <button
+            type="button"
+            className="message-origin-badge message-origin-badge-button"
+            aria-expanded={originDetailOpen}
+            onClick={() => {
+              void handleToggleOriginDetail();
+            }}
+          >
+            {t("conversation.butlerProxyMessageBadge")}
+          </button>
+          {originDetailOpen ? (
+            <div className="message-origin-detail-popover" role="dialog" aria-live="polite">
+              <strong>{t("conversation.butlerOriginDetailTitle")}</strong>
+              {originDetailLoading ? (
+                <p>{t("conversation.butlerOriginDetailLoading")}</p>
+              ) : originDetailError ? (
+                <p>{originDetailError}</p>
+              ) : originDetail ? (
+                <>
+                  <p>{t("conversation.butlerOriginDetailObjectiveLabel")}：{originDetail.objective}</p>
+                  <p>{t("conversation.butlerOriginDetailStatusLabel")}：{resolveFollowUpTaskStatusLabel(originDetail.status)}</p>
+                  <p>{t("conversation.butlerOriginDetailSummaryLabel")}：{originDetail.lastAutomationSummary || t("conversation.butlerAnalysisEmpty")}</p>
+                  {originDetail.waitingReason ? (
+                    <p>{t("conversation.butlerOriginDetailWaitingReasonLabel")}：{originDetail.waitingReason}</p>
+                  ) : null}
+                </>
+              ) : (
+                <p>{t("conversation.butlerAnalysisEmpty")}</p>
+              )}
+            </div>
+          ) : null}
+        </div>
+      ) : (
+        <span className="message-origin-badge">{t("conversation.butlerProxyMessageBadge")}</span>
+      )
+    ) : null;
+
     return (
       <article className="message-item user-message">
         <div className="message-content-wrapper">
@@ -1651,48 +1835,16 @@ function MessageItem({
               {t("conversation.resendButton")}
             </button>
           )}
+          <UserMessageFooter timestamp={message.timestamp} leading={originBadge}>
+            <MessageMetadataBar
+              text={visibleContent}
+              canCopy={actionState.canCopy}
+              canFork={actionState.canFork && Boolean(onForkMessage && message.deliveryState === "sent")}
+              compact
+              onFork={onForkMessage ? () => onForkMessage(message) : null}
+            />
+          </UserMessageFooter>
         </div>
-        <UserMessageMeta timestamp={message.timestamp}>
-          {isButlerProxyMessage ? (
-            hasOriginDetail ? (
-              <div className="message-origin-detail-anchor">
-                <button
-                  type="button"
-                  className="message-origin-badge message-origin-badge-button"
-                  aria-expanded={originDetailOpen}
-                  onClick={() => {
-                    void handleToggleOriginDetail();
-                  }}
-                >
-                  {t("conversation.butlerProxyMessageBadge")}
-                </button>
-                {originDetailOpen ? (
-                  <div className="message-origin-detail-popover" role="dialog" aria-live="polite">
-                    <strong>{t("conversation.butlerOriginDetailTitle")}</strong>
-                    {originDetailLoading ? (
-                      <p>{t("conversation.butlerOriginDetailLoading")}</p>
-                    ) : originDetailError ? (
-                      <p>{originDetailError}</p>
-                    ) : originDetail ? (
-                      <>
-                        <p>{t("conversation.butlerOriginDetailObjectiveLabel")}：{originDetail.objective}</p>
-                        <p>{t("conversation.butlerOriginDetailStatusLabel")}：{resolveFollowUpTaskStatusLabel(originDetail.status)}</p>
-                        <p>{t("conversation.butlerOriginDetailSummaryLabel")}：{originDetail.lastAutomationSummary || t("conversation.butlerAnalysisEmpty")}</p>
-                        {originDetail.waitingReason ? (
-                          <p>{t("conversation.butlerOriginDetailWaitingReasonLabel")}：{originDetail.waitingReason}</p>
-                        ) : null}
-                      </>
-                    ) : (
-                      <p>{t("conversation.butlerAnalysisEmpty")}</p>
-                    )}
-                  </div>
-                ) : null}
-              </div>
-            ) : (
-              <span className="message-origin-badge">{t("conversation.butlerProxyMessageBadge")}</span>
-            )
-          ) : null}
-        </UserMessageMeta>
       </article>
     );
   }
@@ -1715,6 +1867,12 @@ function MessageItem({
               className="message-text message-content markdown-content thinking-message-text"
             />
           )}
+          <MessageMetadataBar
+            text={visibleContent}
+            canCopy={actionState.canCopy}
+            canFork={actionState.canFork && Boolean(onForkMessage && message.deliveryState === "sent")}
+            onFork={onForkMessage ? () => onForkMessage(message) : null}
+          />
         </div>
       </article>
     );
@@ -1737,6 +1895,12 @@ function MessageItem({
               className="message-text message-content markdown-content"
             />
           )}
+          <MessageMetadataBar
+            text={visibleContent}
+            canCopy={actionState.canCopy}
+            canFork={actionState.canFork && Boolean(onForkMessage && message.deliveryState === "sent")}
+            onFork={onForkMessage ? () => onForkMessage(message) : null}
+          />
         </div>
       </article>
     );
@@ -1756,6 +1920,12 @@ function MessageItem({
             <CopyableContentBlock language="text" content={visibleContent} />
           </div>
         ) : null}
+        <MessageMetadataBar
+          text={visibleContent}
+          canCopy={actionState.canCopy}
+          canFork={actionState.canFork && Boolean(onForkMessage && message.deliveryState === "sent")}
+          onFork={onForkMessage ? () => onForkMessage(message) : null}
+        />
       </div>
     </article>
   );
@@ -1798,6 +1968,7 @@ export function MessageTimeline({
   hasOlderMessages = false,
   onLoadOlderMessages = () => {},
   onRetryMessage,
+  onForkMessage,
   provider,
   runtimeThinkingPlaceholder = null,
   assistantAvatar
@@ -1816,6 +1987,10 @@ export function MessageTimeline({
   const leadingSystemPromptMessageIds = useMemo(
     () => collectLeadingSystemPromptMessageIds(messages, provider),
     [messages, provider]
+  );
+  const actionStateByMessageId = useMemo(
+    () => buildMessageActionStateById(messages),
+    [messages]
   );
   const showTimelineSkeleton = historyState === "loading" && messages.length === 0;
 
@@ -1967,7 +2142,14 @@ export function MessageTimeline({
                   ? "system_prompt"
                   : null
               }
+              actionState={
+                actionStateByMessageId.get(item.message.id) ?? {
+                  canCopy: item.message.role === "user",
+                  canFork: false
+                }
+              }
               onRetry={onRetryMessage}
+              onForkMessage={onForkMessage}
               assistantAvatar={assistantAvatar}
             />
           )
@@ -2008,4 +2190,71 @@ function buildMessageSignature(message: SessionMessageViewModel | null): string 
         }
       : null
   });
+}
+
+function buildMessageActionStateById(
+  messages: SessionMessageViewModel[]
+): Map<string, MessageActionState> {
+  const actionStateById = new Map<string, MessageActionState>();
+  let blockStart = 0;
+
+  function applyAssistantBlock(endExclusive: number) {
+    let tailMessageId: string | null = null;
+
+    for (let index = endExclusive - 1; index >= blockStart; index -= 1) {
+      const message = messages[index];
+
+      if (!message || !shouldParticipateInAssistantActionBlock(message)) {
+        continue;
+      }
+
+      tailMessageId = message.id;
+      break;
+    }
+
+    for (let index = blockStart; index < endExclusive; index += 1) {
+      const message = messages[index];
+
+      if (!message) {
+        continue;
+      }
+
+      if (message.role === "user") {
+        actionStateById.set(message.id, {
+          canCopy: true,
+          canFork: false
+        });
+        continue;
+      }
+
+      actionStateById.set(message.id, {
+        canCopy: message.id === tailMessageId,
+        canFork: message.id === tailMessageId
+      });
+    }
+  }
+
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index];
+
+    if (!message) {
+      continue;
+    }
+
+    if (message.role === "user" && index > blockStart) {
+      applyAssistantBlock(index);
+      blockStart = index;
+    }
+  }
+
+  applyAssistantBlock(messages.length);
+  return actionStateById;
+}
+
+function shouldParticipateInAssistantActionBlock(message: SessionMessageViewModel): boolean {
+  if (message.role === "user") {
+    return false;
+  }
+
+  return message.kind !== "tool_call" && message.kind !== "tool_result";
 }

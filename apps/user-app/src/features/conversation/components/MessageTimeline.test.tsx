@@ -204,6 +204,69 @@ describe("MessageTimeline", () => {
     expect(revealWorkspaceFileMock).not.toHaveBeenCalled();
   });
 
+  it("用户消息下方只显示复制按钮并复制正文", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: {
+        writeText
+      },
+      configurable: true
+    });
+
+    render(
+      <MessageTimeline
+        messages={[createAssistantTextMessage("把登录按钮改成次要操作。", "assistant-copy-1")]}
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+      />
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: t("conversation.copyAction") }));
+
+    expect(writeText).toHaveBeenCalledWith("把登录按钮改成次要操作。");
+    expect(screen.queryByRole("button", { name: t("conversation.forkFromHereAction") })).not.toBeInTheDocument();
+  });
+
+  it("AI 消息只在当前回复结尾显示一组复制和 fork 按钮", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: {
+        writeText
+      },
+      configurable: true
+    });
+    const onForkMessage = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <MessageTimeline
+        messages={[
+          createAssistantThinkingMessage("先整理一下分叉点。", "assistant-thinking-1"),
+          createAssistantTextMessage("从这里继续拆分实现。", "assistant-fork-1")
+        ]}
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+        onForkMessage={onForkMessage}
+      />
+    );
+
+    expect(screen.getAllByRole("button", { name: t("conversation.copyAction") })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: t("conversation.forkFromHereAction") })).toHaveLength(1);
+
+    await userEvent.click(screen.getByRole("button", { name: t("conversation.copyAction") }));
+    await userEvent.click(screen.getByRole("button", { name: t("conversation.forkFromHereAction") }));
+
+    expect(writeText).toHaveBeenCalledWith("从这里继续拆分实现。");
+    expect(onForkMessage).toHaveBeenCalledTimes(1);
+    expect(onForkMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "assistant-fork-1",
+        content: "从这里继续拆分实现。"
+      })
+    );
+  });
+
   it("会给 Butler 代理发送的用户消息显示来源标签", () => {
     render(
       <MessageTimeline
@@ -489,7 +552,9 @@ describe("MessageTimeline", () => {
       />
     );
 
-    const copyButtons = screen.getAllByRole("button", { name: t("conversation.copyAction") });
+    const copyButtons = Array.from(
+      document.querySelectorAll<HTMLButtonElement>(".code-copy-button")
+    );
     expect(copyButtons).toHaveLength(2);
     expect(document.querySelector(".text-code-block")).not.toBeNull();
 
@@ -1154,7 +1219,7 @@ describe("MessageTimeline", () => {
     expect(screen.getByRole("button", { name: /收起提示词/ })).toBeInTheDocument();
     expect(screen.getByText((content) => content.includes("请先阅读工作区规则，再继续执行。"))).toBeInTheDocument();
   });
-  it("代理发送标签和时间会放进同一个气泡侧边元信息区", () => {
+  it("代理发送标签和时间会放进同一个用户气泡 footer", () => {
     const view = render(
       <MessageTimeline
         messages={[createButlerProxyTextMessage("continue follow-up")]}
@@ -1164,7 +1229,7 @@ describe("MessageTimeline", () => {
       />
     );
 
-    const meta = view.container.querySelector(".message-meta");
+    const meta = view.container.querySelector(".user-message-footer");
     const badge = screen.getByText(t("conversation.butlerProxyMessageBadge"));
     const time = view.container.querySelector(".message-time");
 

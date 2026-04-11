@@ -18,9 +18,12 @@ import { useHaptics } from "../../../shared/haptics";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 import {
+  forkSession,
   getProviderCapabilities,
+  sendLiveMessage,
   startLiveSession,
   type HistoryMessageDto,
+  type MessageAttachmentDto,
   type ProviderCapabilitiesDto,
   type ProviderId,
   type SessionSummaryDto
@@ -28,11 +31,15 @@ import {
 import { ConnectionBanner } from "../components/ConnectionBanner";
 import { ComposerPanel } from "../components/ComposerPanel";
 import { MessageTimeline } from "../components/MessageTimeline";
+import { MobileConversationSessionActions } from "../components/MobileConversationSessionActions";
 import { PermissionRequestList } from "../components/PermissionRequestList";
 import { QueuedMessageList } from "../components/QueuedMessageList";
+import { SessionBranchTreePanel } from "../components/SessionBranchTreePanel";
 import { SessionHeader } from "../components/SessionHeader";
 import { SessionButlerActionButton } from "../components/SessionButlerActionButton";
+import { BranchTreeActionIcon } from "../components/ConversationActionIcons";
 import { useWorkbenchShell } from "../components/WorkbenchLayout";
+import { isRealSubagentSession } from "../session-fork-display";
 import { SessionRuntimeStore, useSessionRuntimeStore } from "../runtime/session-runtime-store";
 import {
   resolveSessionActivityBadgeLabel,
@@ -44,6 +51,10 @@ import {
   markPendingAsFailed,
   type SessionMessageViewModel
 } from "../runtime/session-runtime-machine";
+import {
+  buildSessionBranchTreeModel,
+  hasSessionBranchRelations
+} from "../components/SessionBranchTreePanel";
 import {
   createDraftCapabilities as createProviderDraftCapabilities,
   getDraftTitle as getProviderDraftTitle,
@@ -77,6 +88,12 @@ const MOBILE_PREVIEW_EXPAND_THRESHOLD_PX = 48;
 const MOBILE_PREVIEW_CLOSE_THRESHOLD_PX = 34;
 const MOBILE_PREVIEW_EDGE_ACTIVATION_PX = 96;
 const RUNTIME_THINKING_PLACEHOLDER_HIDE_DELAY_MS = 320;
+const FOCUS_COMPOSER_EVENT = "workbench:focus-composer";
+
+interface ForkComposerDraft {
+  sourceMessageId: string;
+  content: string;
+}
 
 export function ConversationPage() {
   const { sessionId = "", workspaceId: routeWorkspaceIdParam } = useParams();
@@ -117,7 +134,8 @@ function LiveConversationPage({
     favoriteSessions,
     archiveSession,
     unarchiveSession,
-    startDraftSession
+    startDraftSession,
+    upsertNavigationSession
   } = useWorkbenchShell();
   const navigate = useNavigate();
   const storeRef = useRef<SessionRuntimeStore | null>(null);
@@ -128,6 +146,8 @@ function LiveConversationPage({
   const [archiveFolderOpen, setArchiveFolderOpen] = useState(false);
   const [archiveRestoreSessionId, setArchiveRestoreSessionId] = useState<string | null>(null);
   const [archiveSubmitting, setArchiveSubmitting] = useState(false);
+  const [branchTreeOpen, setBranchTreeOpen] = useState(false);
+  const [forkDraft, setForkDraft] = useState<ForkComposerDraft | null>(null);
   const [createSessionOpen, setCreateSessionOpen] = useState(false);
   const navigationSession = useMemo(
     () =>
@@ -178,6 +198,7 @@ function LiveConversationPage({
   );
   const hasOlderMessages = useSessionRuntimeStore(store, (state) => state.hasOlderMessages);
   const connectionState = useSessionRuntimeStore(store, (state) => state.connectionState);
+  const [inheritedContextExpanded, setInheritedContextExpanded] = useState(false);
   const [deletingQueueItemId, setDeletingQueueItemId] = useState<string | null>(null);
   const [steeringQueueItemId, setSteeringQueueItemId] = useState<string | null>(null);
   const isRunning = isSessionRunning(session);
@@ -245,10 +266,48 @@ function LiveConversationPage({
     () => buildSessionTitlePresentation((session ?? navigationSession)?.title ?? null, t("conversation.titleFallback")),
     [navigationSession, session]
   );
+  const currentSessionSummary = session ?? navigationSession ?? null;
+  const sessionById = useMemo(
+    () =>
+      new Map(
+        navigationGroups.flatMap((group) => group.sessions.map((item) => [item.sessionId, item] as const))
+      ),
+    [navigationGroups]
+  );
+  const inheritedContextSource = useMemo(
+    () => resolveInheritedContextSource(currentSessionSummary, messages),
+    [currentSessionSummary, messages]
+  );
+  const inheritedContextParentTitle =
+    inheritedContextSource?.parentSessionId
+      ? sessionById.get(inheritedContextSource.parentSessionId)?.title?.trim()
+        || t("conversation.inheritedContextParentFallback")
+      : t("conversation.inheritedContextParentFallback");
+  const timelineMessages = useMemo(() => {
+    if (
+      inheritedContextExpanded
+      || !inheritedContextSource
+      || inheritedContextSource.hiddenMessageCount <= 0
+    ) {
+      return messages;
+    }
+
+    return messages.filter(
+      (message) => message.sequence > inheritedContextSource.hiddenSequenceBoundary
+    );
+  }, [inheritedContextExpanded, inheritedContextSource, messages]);
+  const branchTreeWorkspaceId =
+    currentSessionSummary?.workspaceId ?? navigationSession?.workspaceId ?? null;
+  const branchTreeModel = useMemo(
+    () => buildSessionBranchTreeModel(navigationGroups, branchTreeWorkspaceId, sessionId),
+    [branchTreeWorkspaceId, navigationGroups, sessionId]
+  );
+  const hasBranchRelations = hasSessionBranchRelations(branchTreeModel);
+  const canOpenBranchTree = Boolean(currentSessionSummary && branchTreeWorkspaceId && hasBranchRelations);
   const mobileArchivedSessions = useMemo(
     () =>
       mobileArchiveWorkspaceGroup?.sessions.filter(
-        (item) => item.isArchived === true && item.isSubagent !== true
+        (item) => item.isArchived === true && !isRealSubagentSession(item)
       ) ?? [],
     [mobileArchiveWorkspaceGroup]
   );
@@ -276,6 +335,12 @@ function LiveConversationPage({
       setSessionWorkspace(sessionId, null);
     };
   }, [session?.workspaceId, sessionId, setSessionWorkspace]);
+
+  useEffect(() => {
+    setBranchTreeOpen(false);
+    setForkDraft(null);
+    setInheritedContextExpanded(false);
+  }, [sessionId]);
 
   useEffect(() => {
     return () => {
@@ -414,6 +479,66 @@ function LiveConversationPage({
     sessionId
   );
 
+  async function sendForkDraftMessage(
+    content: string,
+    options?: {
+      model?: string;
+      reasoningLevel?: string;
+      attachments?: NonNullable<Parameters<typeof sendLiveMessage>[1]["attachments"]>;
+      attachmentMeta?: MessageAttachmentDto[];
+    }
+  ): Promise<void> {
+    const activeForkDraft = forkDraft;
+
+    if (!activeForkDraft) {
+      await store.sendMessage(content, {
+        model: options?.model,
+        reasoningLevel: options?.reasoningLevel,
+        attachments: options?.attachments,
+        attachmentMeta: options?.attachmentMeta
+      });
+      requestNavigationRefresh();
+      return;
+    }
+
+    let forkedSession: SessionSummaryDto | null = null;
+
+    try {
+      forkedSession = await forkSession(sessionId, {
+        sourceType: "message",
+        sourceMessageId: activeForkDraft.sourceMessageId,
+        strategy: "auto"
+      });
+      upsertNavigationSession(forkedSession);
+
+      await sendLiveMessage(forkedSession.sessionId, {
+        content,
+        clientRequestId:
+          globalThis.crypto?.randomUUID?.() ?? `fork-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        model: options?.model ?? null,
+        reasoningLevel: options?.reasoningLevel ?? null,
+        attachments: options?.attachments ?? []
+      });
+
+      setForkDraft(null);
+      requestNavigationRefresh();
+      selectWorkspace(forkedSession.workspaceId);
+      writeMobileConversationPreviewMode("preview");
+      navigate(buildWorkspaceSessionPath(forkedSession.workspaceId, forkedSession.sessionId));
+      showToast({
+        title: t("conversation.forkMessageSucceeded"),
+        tone: "success"
+      });
+    } catch (error) {
+      if (forkedSession) {
+        upsertNavigationSession(forkedSession);
+        requestNavigationRefresh();
+      }
+
+      throw error;
+    }
+  }
+
   return (
     <>
       <main
@@ -427,7 +552,24 @@ function LiveConversationPage({
         {showInlineHeader ? (
           <SessionHeader
             session={session ?? navigationSession}
-            actions={<SessionButlerActionButton session={session ?? navigationSession} />}
+            actions={
+              <>
+                {canOpenBranchTree ? (
+                  <button
+                    type="button"
+                    className="conversation-header-ai-button"
+                    aria-label={t("conversation.branchTreeAction")}
+                    title={t("conversation.branchTreeAction")}
+                    onClick={() => setBranchTreeOpen(true)}
+                  >
+                    <span className="conversation-header-ai-button-label" aria-hidden="true">
+                      <BranchTreeActionIcon />
+                    </span>
+                  </button>
+                ) : null}
+                <SessionButlerActionButton session={session ?? navigationSession} />
+              </>
+            }
           />
         ) : null}
         {!showInlineHeader ? (
@@ -451,7 +593,17 @@ function LiveConversationPage({
                 <span className="mobile-conversation-toolbar-title" title={mobileSessionTitlePresentation.fullTitle}>
                   {mobileSessionTitlePresentation.displayTitle}
                 </span>
-                <SessionButlerActionButton session={session ?? navigationSession} />
+                <MobileConversationSessionActions
+                  session={session ?? navigationSession}
+                  navigationGroups={navigationGroups}
+                  workspaceId={branchTreeWorkspaceId}
+                  sessionId={sessionId}
+                  onOpenSession={(targetSession) => {
+                    selectWorkspace(targetSession.workspaceId);
+                    writeMobileConversationPreviewMode("preview");
+                    navigate(buildWorkspaceSessionPath(targetSession.workspaceId, targetSession.sessionId));
+                  }}
+                />
               </div>
             }
           />
@@ -506,9 +658,20 @@ function LiveConversationPage({
                 }
               }}
             />
+            {inheritedContextSource && inheritedContextSource.hiddenMessageCount > 0 ? (
+              <InheritedContextBanner
+                expanded={inheritedContextExpanded}
+                hiddenMessageCount={inheritedContextSource.hiddenMessageCount}
+                parentTitle={inheritedContextParentTitle}
+                sourceType={inheritedContextSource.sourceType}
+                onToggle={() => {
+                  setInheritedContextExpanded((current) => !current);
+                }}
+              />
+            ) : null}
             <MessageTimeline
               sessionId={sessionId}
-              messages={messages}
+              messages={timelineMessages}
               historyState={historyState}
               loadingOlderMessages={loadingOlderMessages}
               hasOlderMessages={hasOlderMessages}
@@ -519,6 +682,13 @@ function LiveConversationPage({
               }}
               onRetryMessage={(clientRequestId: string) => {
                 void store.retryMessage(clientRequestId);
+              }}
+              onForkMessage={(message) => {
+                setForkDraft({
+                  sourceMessageId: message.id,
+                  content: message.content
+                });
+                focusComposerInput();
               }}
             />
             <QueuedMessageList
@@ -549,6 +719,8 @@ function LiveConversationPage({
             <ComposerPanel
               capabilities={capabilities}
               draftStorageId={sessionId}
+              forkDraft={forkDraft}
+              onClearForkDraft={() => setForkDraft(null)}
               panelRef={!showInlineHeader ? setMobileComposerPanelElement : undefined}
               portalContainer={!showInlineHeader ? composerPortalTarget : null}
               hasActiveRun={runtimeHasActiveRun}
@@ -565,13 +737,12 @@ function LiveConversationPage({
                 setSending(true);
 
                 try {
-                  await store.sendMessage(content, {
+                  await sendForkDraftMessage(content, {
                     model: options?.model,
                     reasoningLevel: options?.reasoningLevel,
                     attachments: options?.attachments,
                     attachmentMeta: options?.attachmentMeta
                   });
-                  requestNavigationRefresh();
                 } finally {
                   setSending(false);
                 }
@@ -580,12 +751,21 @@ function LiveConversationPage({
                 setSending(true);
 
                 try {
-                  await store.enqueueMessage(content, {
-                    model: options?.model,
-                    reasoningLevel: options?.reasoningLevel,
-                    attachments: options?.attachments,
-                    attachmentMeta: options?.attachmentMeta
-                  });
+                  if (forkDraft) {
+                    await sendForkDraftMessage(content, {
+                      model: options?.model,
+                      reasoningLevel: options?.reasoningLevel,
+                      attachments: options?.attachments,
+                      attachmentMeta: options?.attachmentMeta
+                    });
+                  } else {
+                    await store.enqueueMessage(content, {
+                      model: options?.model,
+                      reasoningLevel: options?.reasoningLevel,
+                      attachments: options?.attachments,
+                      attachmentMeta: options?.attachmentMeta
+                    });
+                  }
                 } finally {
                   setSending(false);
                 }
@@ -594,6 +774,19 @@ function LiveConversationPage({
           </div>
         </div>
       </main>
+      <SessionBranchTreePanel
+        open={branchTreeOpen}
+        navigationGroups={navigationGroups}
+        workspaceId={branchTreeWorkspaceId}
+        sessionId={sessionId}
+        onClose={() => setBranchTreeOpen(false)}
+        onOpenSession={(targetSession) => {
+          setBranchTreeOpen(false);
+          selectWorkspace(targetSession.workspaceId);
+          writeMobileConversationPreviewMode("preview");
+          navigate(buildWorkspaceSessionPath(targetSession.workspaceId, targetSession.sessionId));
+        }}
+      />
       <ConversationArchiveConfirmModal
         open={archiveConfirmOpen}
         busy={archiveSubmitting}
@@ -699,6 +892,14 @@ function shouldDelayRuntimeErrorToast(
     || /timeout/i.test(errorDetail)
     || /超时/.test(errorDetail)
   );
+}
+
+function focusComposerInput(): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.dispatchEvent(new CustomEvent(FOCUS_COMPOSER_EVENT));
 }
 
 function DraftConversationPage({
@@ -1063,7 +1264,7 @@ function buildMobilePreviewItems(
     .filter(
       (entry) =>
         !entry.session.isArchived
-        && entry.session.isSubagent !== true
+        && !isRealSubagentSession(entry.session)
         && !excludedSessionIds.has(entry.session.sessionId)
     )
     .map((entry) => ({
@@ -1076,7 +1277,7 @@ function buildMobileFavoritePreviewItems(
   favoriteSessions: readonly WorkbenchNavigationEntry[]
 ) {
   return favoriteSessions
-    .filter((item) => item.session.isSubagent !== true)
+    .filter((item) => !isRealSubagentSession(item.session))
     .map((entry) => ({
       entry,
       depth: 0 as const
@@ -1949,6 +2150,43 @@ function ConversationArchiveFolderModal({
   );
 }
 
+function InheritedContextBanner(input: {
+  expanded: boolean;
+  hiddenMessageCount: number;
+  parentTitle: string;
+  sourceType: "session" | "message";
+  onToggle: () => void;
+}) {
+  return (
+    <section className="conversation-inherited-context-banner">
+      <div className="conversation-inherited-context-copy">
+        <strong>
+          {input.sourceType === "message"
+            ? t("conversation.inheritedContextMessageLabel")
+            : t("conversation.inheritedContextSessionLabel")}
+        </strong>
+        <p>
+          {t("conversation.inheritedContextSummary", {
+            count: input.hiddenMessageCount,
+            parentTitle: input.parentTitle
+          })}
+        </p>
+      </div>
+      {input.hiddenMessageCount > 0 ? (
+        <button
+          type="button"
+          className="conversation-inherited-context-toggle"
+          onClick={input.onToggle}
+        >
+          {input.expanded
+            ? t("conversation.inheritedContextCollapse")
+            : t("conversation.inheritedContextExpand")}
+        </button>
+      ) : null}
+    </section>
+  );
+}
+
 function isSessionRunning(session: SessionSummaryDto | null): boolean {
   if (!session) {
     return false;
@@ -2152,4 +2390,48 @@ function createClientRequestId(): string {
   }
 
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function resolveInheritedContextSource(
+  session: SessionSummaryDto | null,
+  messages: SessionMessageViewModel[]
+):
+  | {
+      parentSessionId: string;
+      sourceType: "session" | "message";
+      hiddenMessageCount: number;
+      hiddenSequenceBoundary: number;
+    }
+  | null {
+  if (!session) {
+    return null;
+  }
+
+  const parentSessionId = session.parentSessionId?.trim() || null;
+
+  if (!parentSessionId || isRealSubagentSession(session)) {
+    return null;
+  }
+
+  const sourceType =
+    session.forkSourceType === "message" || session.forkSourceType === "session"
+      ? session.forkSourceType
+      : session.forkSourceMessageId
+        ? "message"
+        : "session";
+  const hiddenSequenceBoundary = Math.max(0, session.inheritedPrefixMessageCount ?? 0);
+  const hiddenMessageCount = messages.filter(
+    (message) => message.sequence <= hiddenSequenceBoundary
+  ).length;
+
+  if (hiddenMessageCount <= 0) {
+    return null;
+  }
+
+  return {
+    parentSessionId,
+    sourceType,
+    hiddenMessageCount,
+    hiddenSequenceBoundary
+  };
 }

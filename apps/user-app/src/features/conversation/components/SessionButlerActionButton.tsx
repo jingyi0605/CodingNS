@@ -13,6 +13,7 @@ import {
 } from "../../butler/api/butler-api";
 import { useWorkbenchShell } from "./WorkbenchLayout";
 import { WorkbenchModal } from "./WorkbenchModal";
+import { ButlerActionIcon } from "./ConversationActionIcons";
 
 import type { SessionSummaryDto } from "../api/conversation-api";
 
@@ -272,7 +273,9 @@ export function SessionButlerActionButton({ session }: SessionButlerActionButton
             ensureActionContext();
           }}
         >
-          <span className="conversation-header-ai-button-label">AI</span>
+          <span className="conversation-header-ai-button-label" aria-hidden="true">
+            <ButlerActionIcon />
+          </span>
         </button>
 
         {analysisOpen ? (

@@ -13,6 +13,7 @@ import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout
 import { MobileWorkspaceSwitcherHeader } from "../../mobile-shell/components/MobileWorkspaceSwitcherHeader";
 import { MobileCreateSessionSheet } from "../../mobile-sessions/components/MobileCreateSessionSheet";
 import { buildSessionTitlePresentation } from "../../conversation/session-title";
+import { isRealSubagentSession } from "../../conversation/session-fork-display";
 import {
   buildWorkspaceCompositionChartItems,
   createWorkspaceCompositionChartStyle,
@@ -30,11 +31,11 @@ import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 
 function isVisibleSession(session: SessionSummaryDto) {
-  return session.isArchived !== true && session.isSubagent !== true;
+  return session.isArchived !== true && !isRealSubagentSession(session);
 }
 
 function isArchivedSession(session: SessionSummaryDto) {
-  return session.isArchived === true && session.isSubagent !== true;
+  return session.isArchived === true && !isRealSubagentSession(session);
 }
 
 function getSessionActivityTime(session: Partial<SessionSummaryDto>) {
