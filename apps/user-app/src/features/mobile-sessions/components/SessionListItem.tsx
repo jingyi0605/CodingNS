@@ -314,9 +314,6 @@ export function SessionListItem({
             })}
             aria-hidden="true"
           />
-          <span className="session-list-subsession-toggle-icon" aria-hidden="true">
-            <ChevronIcon expanded={subsessionsExpanded} />
-          </span>
         </button>
       ) : (
         <span
@@ -450,23 +447,4 @@ function truncateSessionErrorSummary(summary: string, maxLength = 96) {
   }
 
   return `${summary.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
-}
-
-function ChevronIcon({ expanded }: { expanded: boolean }) {
-  return (
-    <svg viewBox="0 0 12 12" fill="none" aria-hidden="true">
-      <path
-        d="M3 4.25L6 7.25L9 4.25"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        style={{
-          transformOrigin: "50% 50%",
-          transform: expanded ? "rotate(180deg)" : "rotate(0deg)",
-          transition: "transform 180ms ease"
-        }}
-      />
-    </svg>
-  );
 }

@@ -6,75 +6,77 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { t } from "../../../shared/i18n";
 import { SessionIndexPage } from "./SessionIndexPage";
 
-const navigationGroups = [
-  {
-    workspace: {
-      id: "workspace-1",
-      name: "项目一"
-    },
-    sessions: [
-      {
-        sessionId: "session-1",
-        title: "会话 Alpha",
-        provider: "codex",
-        workspaceId: "workspace-1",
-        lastMessageAt: "2026-03-27T10:00:00Z",
-        runningState: null,
-        syncStatus: null,
-        lastErrorCode: null,
-        lastErrorDetail: null
+function createNavigationGroups() {
+  return [
+    {
+      workspace: {
+        id: "workspace-1",
+        name: "项目一"
       },
-      {
-        sessionId: "session-2",
-        title: "会话 Beta",
-        provider: "claude-code",
-        workspaceId: "workspace-1",
-        isFavorite: true,
-        lastMessageAt: "2026-03-27T09:00:00Z",
-        runningState: null,
-        syncStatus: null,
-        lastErrorCode: null,
-        lastErrorDetail: null
-      },
-      {
-        sessionId: "session-2-sub",
-        title: "子代理 Beta-1",
-        provider: "codex",
-        workspaceId: "workspace-1",
-        parentSessionId: "session-2",
-        isSubagent: true,
-        subagentLabel: "worker · Beta",
-        lastMessageAt: "2026-03-27T08:30:00Z",
-        runningState: null,
-        syncStatus: null,
-        lastErrorCode: null,
-        lastErrorDetail: null
-      }
-    ]
-  },
-  {
-    workspace: {
-      id: "workspace-2",
-      name: "Project Two"
+      sessions: [
+        {
+          sessionId: "session-1",
+          title: "会话 Alpha",
+          provider: "codex",
+          workspaceId: "workspace-1",
+          lastMessageAt: "2026-03-27T10:00:00Z",
+          runningState: null,
+          syncStatus: null,
+          lastErrorCode: null,
+          lastErrorDetail: null
+        },
+        {
+          sessionId: "session-2",
+          title: "会话 Beta",
+          provider: "claude-code",
+          workspaceId: "workspace-1",
+          isFavorite: true,
+          lastMessageAt: "2026-03-27T09:00:00Z",
+          runningState: null,
+          syncStatus: null,
+          lastErrorCode: null,
+          lastErrorDetail: null
+        },
+        {
+          sessionId: "session-2-sub",
+          title: "子代理 Beta-1",
+          provider: "codex",
+          workspaceId: "workspace-1",
+          parentSessionId: "session-2",
+          isSubagent: true,
+          subagentLabel: "worker · Beta",
+          lastMessageAt: "2026-03-27T08:30:00Z",
+          runningState: null,
+          syncStatus: null,
+          lastErrorCode: null,
+          lastErrorDetail: null
+        }
+      ]
     },
-    sessions: [
-      {
-        sessionId: "session-3",
-        title: "会话 Gamma",
-        provider: "codex",
-        workspaceId: "workspace-2",
-        lastMessageAt: "2026-03-26T12:00:00Z",
-        runningState: null,
-        syncStatus: null,
-        lastErrorCode: null,
-        lastErrorDetail: null
-      }
-    ]
-  }
-];
+    {
+      workspace: {
+        id: "workspace-2",
+        name: "Project Two"
+      },
+      sessions: [
+        {
+          sessionId: "session-3",
+          title: "会话 Gamma",
+          provider: "codex",
+          workspaceId: "workspace-2",
+          lastMessageAt: "2026-03-26T12:00:00Z",
+          runningState: null,
+          syncStatus: null,
+          lastErrorCode: null,
+          lastErrorDetail: null
+        }
+      ]
+    }
+  ];
+}
 
 const contextValue = {
-  navigationGroups,
+  navigationGroups: createNavigationGroups(),
   currentWorkspaceId: "workspace-1",
   currentSessionId: "session-1",
   favoriteSessionIds: ["session-2"],
@@ -123,6 +125,8 @@ describe("SessionIndexPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.localStorage.clear();
+    contextValue.navigationGroups = createNavigationGroups();
+    contextValue.currentSessionId = "session-1";
   });
 
   afterEach(() => {
@@ -299,6 +303,64 @@ describe("SessionIndexPage", () => {
     await user.click(within(betaEntry).getByRole("button", { name: t("shell.subagentCollapse") }));
 
     expect(within(workspaceSection).queryByText("子代理 Beta-1")).not.toBeInTheDocument();
+  });
+
+  it("子会话过多时会按页展开，避免一次性摊出整棵树", async () => {
+    const user = userEvent.setup();
+    contextValue.navigationGroups[0].sessions = [
+      contextValue.navigationGroups[0].sessions[0],
+      {
+        sessionId: "session-root",
+        title: "主会话 Root",
+        provider: "codex",
+        workspaceId: "workspace-1",
+        lastMessageAt: "2026-03-27T09:00:00Z",
+        runningState: null,
+        syncStatus: null,
+        lastErrorCode: null,
+        lastErrorDetail: null
+      },
+      ...Array.from({ length: 6 }, (_, index) => ({
+        sessionId: `session-root-sub-${index + 1}`,
+        title: `子代理 ${index + 1}`,
+        provider: "codex",
+        workspaceId: "workspace-1",
+        parentSessionId: "session-root",
+        isSubagent: true,
+        subagentLabel: `worker · ${index + 1}`,
+        lastMessageAt: `2026-03-27T0${8 - index}:00:00Z`,
+        runningState: null,
+        syncStatus: null,
+        lastErrorCode: null,
+        lastErrorDetail: null
+      }))
+    ];
+
+    renderPage();
+
+    const workspaceSection = screen.getByRole("heading", { level: 2, name: "当前工作区" }).closest("section");
+
+    if (!workspaceSection) {
+      throw new Error("未找到当前工作区会话区块");
+    }
+
+    const rootEntry = within(workspaceSection).getByText("主会话 Root").closest("article");
+
+    if (!rootEntry) {
+      throw new Error("未找到 Root 会话");
+    }
+
+    await user.click(within(rootEntry).getByRole("button", { name: t("shell.subagentExpand") }));
+
+    expect(within(workspaceSection).getByText("子代理 1")).toBeInTheDocument();
+    expect(within(workspaceSection).getByText("子代理 5")).toBeInTheDocument();
+    expect(within(workspaceSection).queryByText("子代理 6")).not.toBeInTheDocument();
+    expect(within(workspaceSection).getByRole("button", { name: t("shell.subagentExpandMore") })).toBeInTheDocument();
+
+    await user.click(within(workspaceSection).getByRole("button", { name: t("shell.subagentExpandMore") }));
+
+    expect(within(workspaceSection).getByText("子代理 6")).toBeInTheDocument();
+    expect(within(workspaceSection).queryByRole("button", { name: t("shell.subagentExpandMore") })).not.toBeInTheDocument();
   });
 
   it("移动端列表会显示会话失败错误摘要", () => {
