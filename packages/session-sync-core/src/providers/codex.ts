@@ -5,6 +5,8 @@ import crypto from "node:crypto";
 import type {
   ContextUsageSnapshot,
   DetectSessionsOptions,
+  ForkSessionOptions,
+  ForkSessionResult,
   HistoryDirection,
   HistoryPage,
   NormalizedMessage,
@@ -42,6 +44,26 @@ import { loadDatabaseSync, type DatabaseSyncType } from "../sqlite/node-sqlite.j
 
 interface CodexAdapterOptions {
   homeDir: string;
+  forkTransportFactory?: () => CodexForkTransport;
+}
+
+export interface CodexForkTransport {
+  initialize(): Promise<void>;
+  forkThread(
+    providerSessionId: string
+  ): Promise<{ providerSessionId: string; rawStoreRef: string | null }>;
+  readThread(providerSessionId: string): Promise<Record<string, unknown>>;
+  rollbackThread(
+    providerSessionId: string,
+    numTurns: number
+  ): Promise<{ providerSessionId: string; rawStoreRef: string | null }>;
+  resumeThreadFromHistory(input: {
+    providerSessionId?: string | null;
+    workspacePath: string;
+    history: unknown[];
+    model?: string | null;
+  }): Promise<{ providerSessionId: string; rawStoreRef: string | null }>;
+  close(): void;
 }
 
 type CodexMessageSource = "event_msg" | "response_item";
@@ -554,6 +576,111 @@ export class CodexAdapter implements ProviderAdapter {
     };
   }
 
+  async forkSession(
+    providerSessionId: string,
+    workspacePath: string,
+    options: ForkSessionOptions
+  ): Promise<ForkSessionResult> {
+    const transportFactory = this.options.forkTransportFactory;
+
+    if (!transportFactory) {
+      throw new Error("CODEX_FORK_TRANSPORT_NOT_CONFIGURED");
+    }
+
+    const transport = transportFactory();
+
+    try {
+      await transport.initialize();
+
+      if (options.sourceType === "session") {
+        const forked = await transport.forkThread(providerSessionId);
+        return await this.buildForkResultFromTransport({
+          providerSessionId: forked.providerSessionId,
+          rawStoreRef: forked.rawStoreRef,
+          workspacePath,
+          fallbackTitle: await this.readSessionTitle(providerSessionId, options.rawStoreRef),
+          fallbackParentProviderSessionId: providerSessionId,
+          forkMethod: "native_session_fork",
+          forkSourceType: "session",
+          providerSourceMessageId: null
+        });
+      }
+
+      const targetMessageId = options.sourceMessageId?.trim();
+
+      if (!targetMessageId) {
+        throw new Error("FORK_SOURCE_MESSAGE_ID_REQUIRED");
+      }
+
+      if (options.strategy === "reconstruct-only") {
+        throw new Error("CODEX_RECONSTRUCTED_MESSAGE_FORK_NOT_SUPPORTED");
+      }
+
+      const resolvedStoreRef = this.resolveSessionFilePath(options.rawStoreRef, providerSessionId);
+      const parsedMessages = this.getParsedMessages(resolvedStoreRef, providerSessionId);
+      const targetMessage = parsedMessages.find((message) => message.messageId === targetMessageId);
+
+      if (!targetMessage) {
+        throw new Error("FORK_SOURCE_MESSAGE_NOT_FOUND");
+      }
+
+      const threadReadResult = await transport.readThread(providerSessionId);
+      const threadSnapshot = extractCodexThreadHistorySnapshot(threadReadResult);
+
+      if (threadSnapshot.kind === "turns") {
+        const rollbackPlan = buildCodexTurnRollbackPlan(threadSnapshot, parsedMessages, targetMessage);
+        const forked = await transport.forkThread(providerSessionId);
+        const finalized =
+          rollbackPlan.numTurnsToRollback > 0
+            ? await transport.rollbackThread(
+                forked.providerSessionId,
+                rollbackPlan.numTurnsToRollback
+              )
+            : forked;
+
+        return await this.buildForkResultFromTransport({
+          providerSessionId: finalized.providerSessionId,
+          rawStoreRef: finalized.rawStoreRef,
+          workspacePath,
+          fallbackTitle: await this.readSessionTitle(providerSessionId, options.rawStoreRef),
+          fallbackParentProviderSessionId: providerSessionId,
+          forkMethod: "native_message_fork",
+          forkSourceType: "message",
+          providerSourceMessageId: null
+        });
+      }
+
+      const truncatedHistory = truncateCodexThreadHistory(
+        threadSnapshot.value,
+        parsedMessages,
+        targetMessage
+      );
+
+      if (truncatedHistory.length === 0) {
+        throw new Error("CODEX_FORK_HISTORY_EMPTY");
+      }
+
+      const resumed = await transport.resumeThreadFromHistory({
+        providerSessionId: null,
+        workspacePath,
+        history: truncatedHistory
+      });
+
+      return await this.buildForkResultFromTransport({
+        providerSessionId: resumed.providerSessionId,
+        rawStoreRef: resumed.rawStoreRef,
+        workspacePath,
+        fallbackTitle: await this.readSessionTitle(providerSessionId, options.rawStoreRef),
+        fallbackParentProviderSessionId: providerSessionId,
+        forkMethod: "native_message_fork",
+        forkSourceType: "message",
+        providerSourceMessageId: null
+      });
+    } finally {
+      transport.close();
+    }
+  }
+
   async sendMessage(
     providerSessionId: string,
     rawStoreRef: string,
@@ -718,6 +845,7 @@ export class CodexAdapter implements ProviderAdapter {
       supportsAttachments: true,
       supportsPermissionPrompt: true,
       supportsCheckpoint: false,
+      supportsSessionFork: true,
       limitations: [
         "Codex 产品原生支持将指导加入队列，但当前 SDK 0.116.0 仍未向宿主暴露运行中 queue/steer 提交入口。",
         "当前实现只维护原生会话文件，不负责直接驱动 Codex CLI 进程执行。"
@@ -1054,6 +1182,56 @@ export class CodexAdapter implements ProviderAdapter {
     }
   }
 
+  private async buildForkResultFromTransport(input: {
+    providerSessionId: string;
+    rawStoreRef: string | null;
+    workspacePath: string;
+    fallbackTitle: string;
+    fallbackParentProviderSessionId: string | null;
+    forkMethod: ForkSessionResult["forkMethod"];
+    forkSourceType: ForkSessionResult["forkSourceType"];
+    providerSourceMessageId: string | null;
+  }): Promise<ForkSessionResult> {
+    const resolvedStoreRef =
+      input.rawStoreRef
+        ? this.resolveSessionFilePath(input.rawStoreRef, input.providerSessionId)
+        : this.findSessionFileByThreadId(input.providerSessionId)
+          ?? buildCodexActiveSessionPath(this.options.homeDir, `${input.providerSessionId}.jsonl`);
+    const messages =
+      existsSync(resolvedStoreRef)
+        ? this.getParsedMessages(resolvedStoreRef, input.providerSessionId)
+        : [];
+    const threadMetadata =
+      this.readThreadMetadataIndex().get(input.providerSessionId) ?? null;
+    const title =
+      (existsSync(resolvedStoreRef)
+        ? await this.readSessionTitle(input.providerSessionId, resolvedStoreRef).catch(() => null)
+        : null)
+      ?? threadMetadata?.title
+      ?? input.fallbackTitle;
+    const resolvedTitle =
+      isSyntheticCodexSessionTitle(title) && input.fallbackTitle.trim().length > 0
+        ? input.fallbackTitle
+        : title;
+
+    return {
+      session: {
+        provider: this.providerId,
+        providerSessionId: input.providerSessionId,
+        title: resolvedTitle,
+        workspacePath: input.workspacePath,
+        rawStoreRef: resolvedStoreRef,
+        isArchived: resolveCodexArchivedState(threadMetadata, resolvedStoreRef),
+        lastMessageAt: messages.at(-1)?.timestamp ?? nextTimestamp(),
+        messageCount: messages.length,
+        parentProviderSessionId: input.fallbackParentProviderSessionId
+      },
+      forkMethod: input.forkMethod,
+      forkSourceType: input.forkSourceType,
+      providerSourceMessageId: input.providerSourceMessageId
+    };
+  }
+
   private touchSessionSummaryCache(
     filePath: string,
     entry: CodexSessionSummaryCacheEntry
@@ -1320,6 +1498,7 @@ export class CodexAdapter implements ProviderAdapter {
     records: Array<Pick<RawJsonLine, "lineNumber" | "data">>,
     providerSessionId: string
   ): NormalizedMessage[] {
+    const effectiveRecords = filterRolledBackCodexRecords(records);
     const messages: Array<{
       source: CodexMessageSource;
       dedupeKey: string;
@@ -1372,7 +1551,7 @@ export class CodexAdapter implements ProviderAdapter {
       });
     };
 
-    records.forEach(({ lineNumber, data: record }) => {
+    effectiveRecords.forEach(({ lineNumber, data: record }) => {
       const rawRef = createRawRef(this.providerId, filePath, lineNumber);
 
       if (record.type === "event_msg") {
@@ -1551,6 +1730,121 @@ export class CodexAdapter implements ProviderAdapter {
 
     return messages.map((entry) => entry.message);
   }
+}
+
+function filterRolledBackCodexRecords<T extends Pick<RawJsonLine, "lineNumber" | "data">>(
+  records: T[]
+): T[] {
+  const completedTurnSegments: Array<{
+    startLineNumber: number;
+    endLineNumber: number;
+    rolledBack: boolean;
+  }> = [];
+  let activeTurnStartLineNumber: number | null = null;
+  let sawRollbackEvent = false;
+
+  for (const recordEntry of records) {
+    const record = recordEntry.data;
+
+    if (record.type !== "event_msg") {
+      continue;
+    }
+
+    const payload = (record.payload ?? {}) as Record<string, unknown>;
+    const eventType = ensureText(payload.type).trim();
+
+    if (eventType === "task_started") {
+      activeTurnStartLineNumber = recordEntry.lineNumber;
+      continue;
+    }
+
+    if (eventType === "task_complete" || eventType === "task_failed") {
+      if (activeTurnStartLineNumber !== null) {
+        completedTurnSegments.push({
+          startLineNumber: activeTurnStartLineNumber,
+          endLineNumber: recordEntry.lineNumber,
+          rolledBack: false
+        });
+      }
+
+      activeTurnStartLineNumber = null;
+      continue;
+    }
+
+    if (eventType !== "thread_rolled_back") {
+      continue;
+    }
+
+    sawRollbackEvent = true;
+    const requestedTurnCount = Math.max(
+      0,
+      Math.trunc(
+        typeof payload.num_turns === "number"
+          ? payload.num_turns
+          : Number.parseInt(ensureText(payload.num_turns), 10)
+      ) || 0
+    );
+
+    if (requestedTurnCount <= 0) {
+      continue;
+    }
+
+    let remainingTurnsToRollback = requestedTurnCount;
+
+    for (let index = completedTurnSegments.length - 1; index >= 0; index -= 1) {
+      const segment = completedTurnSegments[index];
+
+      if (!segment || segment.rolledBack) {
+        continue;
+      }
+
+      segment.rolledBack = true;
+      remainingTurnsToRollback -= 1;
+
+      if (remainingTurnsToRollback <= 0) {
+        break;
+      }
+    }
+  }
+
+  if (!sawRollbackEvent) {
+    return records;
+  }
+
+  const rolledBackSegments = completedTurnSegments
+    .filter((segment) => segment.rolledBack)
+    .sort((left, right) => left.startLineNumber - right.startLineNumber);
+
+  if (rolledBackSegments.length === 0) {
+    return records;
+  }
+
+  const filteredRecords: T[] = [];
+  let segmentIndex = 0;
+
+  for (const recordEntry of records) {
+    while (
+      segmentIndex < rolledBackSegments.length
+      && recordEntry.lineNumber > rolledBackSegments[segmentIndex]!.endLineNumber
+    ) {
+      segmentIndex += 1;
+    }
+
+    const activeSegment =
+      segmentIndex < rolledBackSegments.length ? rolledBackSegments[segmentIndex]! : null;
+
+    if (
+      activeSegment
+      && recordEntry.lineNumber >= activeSegment.startLineNumber
+      && recordEntry.lineNumber <= activeSegment.endLineNumber
+    ) {
+      continue;
+    }
+
+    filteredRecords.push(recordEntry);
+  }
+
+  return filteredRecords;
 }
 
 function buildRecentHistoryPage(
@@ -2009,4 +2303,484 @@ function normalizeCodexIndexedTitle(title: string | null | undefined): string | 
 function normalizeCodexMessageTitle(content: string | null | undefined): string | null {
   const normalized = normalizeCodexIndexedTitle(content);
   return normalized ? normalized.slice(0, CODEX_SESSION_TITLE_MAX_LENGTH) : null;
+}
+
+function extractCodexThreadHistory(result: Record<string, unknown>): unknown[] {
+  const snapshot = extractCodexThreadHistorySnapshot(result);
+  return snapshot.value;
+}
+
+type CodexThreadHistorySnapshot =
+  | {
+      kind: "entries";
+      value: unknown[];
+      comparableEntries: Array<{
+        signature: string;
+        entryIndex: number;
+      }>;
+    }
+  | {
+      kind: "turns";
+      value: unknown[];
+      comparableEntries: Array<{
+        signature: string;
+        turnIndex: number;
+        containerPath: string[];
+        entryIndex: number;
+      }>;
+    };
+
+function extractCodexThreadHistorySnapshot(result: Record<string, unknown>): CodexThreadHistorySnapshot {
+  const directHistory =
+    pickCodexHistoryArray(result)
+    ?? pickCodexHistoryArray(toRecord(result.thread))
+    ?? pickCodexHistoryArray(toRecord(result.data));
+
+  if (directHistory) {
+    return {
+      kind: "entries",
+      value: directHistory,
+      comparableEntries: directHistory.flatMap((entry, entryIndex) => {
+        const signature = buildCodexThreadHistorySignature(entry);
+        return signature ? [{ signature, entryIndex }] : [];
+      })
+    };
+  }
+
+  const turns =
+    pickCodexTurnArray(result.turns)
+    ?? pickCodexTurnArray(toRecord(result.thread)?.turns)
+    ?? pickCodexTurnArray(toRecord(result.data)?.turns);
+
+  if (!turns) {
+    throw new Error("CODEX_THREAD_HISTORY_MISSING");
+  }
+
+  const comparableEntries = turns.flatMap((turn, turnIndex) =>
+    collectCodexTurnComparableEntries(turn, turnIndex)
+  );
+
+  if (comparableEntries.length === 0) {
+    throw new Error("CODEX_THREAD_HISTORY_MISSING");
+  }
+
+  return {
+    kind: "turns",
+    value: turns,
+    comparableEntries
+  };
+}
+
+function isSyntheticCodexSessionTitle(title: string | null | undefined): boolean {
+  const normalizedTitle = ensureText(title).trim();
+
+  if (normalizedTitle.length === 0) {
+    return false;
+  }
+
+  return (
+    /^rollout-\d{4}-\d{2}-\d{2}t/i.test(normalizedTitle) ||
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(normalizedTitle)
+  );
+}
+
+function pickCodexHistoryArray(value: unknown): unknown[] | null {
+  const record = toRecord(value);
+
+  if (!record) {
+    return null;
+  }
+
+  for (const key of ["history", "items"]) {
+    const candidate = record[key];
+
+    if (
+      Array.isArray(candidate)
+      && candidate.some((entry) => buildCodexThreadHistorySignature(entry) !== null)
+    ) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+function pickCodexTurnArray(value: unknown): unknown[] | null {
+  return Array.isArray(value) ? value : null;
+}
+
+function collectCodexTurnComparableEntries(
+  value: unknown,
+  turnIndex: number,
+  parentPath: string[] = []
+): Array<{
+  signature: string;
+  turnIndex: number;
+  containerPath: string[];
+  entryIndex: number;
+}> {
+  const record = toRecord(value);
+
+  if (!record) {
+    return [];
+  }
+
+  for (const key of ["history", "items"]) {
+    const candidate = record[key];
+
+    if (
+      Array.isArray(candidate)
+      && candidate.some((entry) => buildCodexThreadHistorySignature(entry) !== null)
+    ) {
+      const containerPath = [...parentPath, key];
+      return candidate.flatMap((entry, entryIndex) => {
+        const signature = buildCodexThreadHistorySignature(entry);
+        return signature
+          ? [{
+              signature,
+              turnIndex,
+              containerPath,
+              entryIndex
+            }]
+          : [];
+      });
+    }
+  }
+
+  return ([
+    ["input", record.input],
+    ["output", record.output],
+    ["turn", record.turn],
+    ["data", record.data],
+    ["result", record.result]
+  ] as Array<[string, unknown]>).flatMap(([key, candidate]) =>
+    collectCodexTurnComparableEntries(candidate, turnIndex, [...parentPath, key])
+  );
+}
+
+function toRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function truncateCodexThreadHistory(
+  history: unknown[],
+  parsedMessages: NormalizedMessage[],
+  targetMessage: Pick<NormalizedMessage, "messageId" | "role" | "kind" | "content" | "sequence">
+): unknown[] {
+  const snapshot = normalizeCodexThreadHistorySnapshot(history);
+
+  if (snapshot.kind === "entries") {
+    const targetEntry = resolveCodexThreadHistoryTargetEntry(snapshot, parsedMessages, targetMessage);
+    return snapshot.value.slice(0, targetEntry.entryIndex + 1);
+  }
+
+  const targetEntry = resolveCodexThreadHistoryTargetEntry(snapshot, parsedMessages, targetMessage);
+  const truncatedTurns = snapshot.value.slice(0, targetEntry.turnIndex + 1);
+  const lastTurn = truncatedTurns.at(-1);
+
+  if (!lastTurn) {
+    throw new Error("CODEX_FORK_SOURCE_MESSAGE_UNMAPPABLE");
+  }
+
+  return [
+    ...flattenCodexTurnHistory(truncatedTurns.slice(0, -1)),
+    ...collectCodexTurnHistoryItems(
+      truncateCodexTurnAtPath(lastTurn, targetEntry.containerPath, targetEntry.entryIndex)
+    )
+  ];
+}
+
+function normalizeCodexThreadHistorySnapshot(history: unknown[]): CodexThreadHistorySnapshot {
+  const directComparableEntries = history.flatMap((entry, entryIndex) => {
+    const signature = buildCodexThreadHistorySignature(entry);
+    return signature ? [{ signature, entryIndex }] : [];
+  });
+
+  if (directComparableEntries.length > 0) {
+    return {
+      kind: "entries",
+      value: history,
+      comparableEntries: directComparableEntries
+    };
+  }
+
+  const turnComparableEntries = history.flatMap((turn, turnIndex) =>
+    collectCodexTurnComparableEntries(turn, turnIndex)
+  );
+
+  if (turnComparableEntries.length > 0) {
+    return {
+      kind: "turns",
+      value: history,
+      comparableEntries: turnComparableEntries
+    };
+  }
+
+  throw new Error("CODEX_THREAD_HISTORY_MISSING");
+}
+
+function resolveCodexThreadHistoryTargetEntry(
+  snapshot: Extract<CodexThreadHistorySnapshot, { kind: "entries" }>,
+  parsedMessages: NormalizedMessage[],
+  targetMessage: Pick<NormalizedMessage, "messageId" | "role" | "kind" | "content" | "sequence">
+): Extract<CodexThreadHistorySnapshot, { kind: "entries" }>["comparableEntries"][number];
+function resolveCodexThreadHistoryTargetEntry(
+  snapshot: Extract<CodexThreadHistorySnapshot, { kind: "turns" }>,
+  parsedMessages: NormalizedMessage[],
+  targetMessage: Pick<NormalizedMessage, "messageId" | "role" | "kind" | "content" | "sequence">
+): Extract<CodexThreadHistorySnapshot, { kind: "turns" }>["comparableEntries"][number];
+function resolveCodexThreadHistoryTargetEntry(
+  snapshot: CodexThreadHistorySnapshot,
+  parsedMessages: NormalizedMessage[],
+  targetMessage: Pick<NormalizedMessage, "messageId" | "role" | "kind" | "content" | "sequence">
+): CodexThreadHistorySnapshot["comparableEntries"][number] {
+  const targetSignature = buildCodexThreadHistorySignature(targetMessage);
+
+  if (!targetSignature) {
+    throw new Error("CODEX_FORK_SOURCE_MESSAGE_UNMAPPABLE");
+  }
+
+  const matchingEntries = snapshot.comparableEntries.filter(
+    (entry) => entry.signature === targetSignature
+  );
+
+  if (matchingEntries.length === 0) {
+    throw new Error("CODEX_FORK_SOURCE_MESSAGE_UNMAPPABLE");
+  }
+
+  const targetOccurrence = resolveCodexMessageSignatureOccurrence(parsedMessages, targetMessage);
+  return matchingEntries[Math.min(targetOccurrence, matchingEntries.length) - 1] ?? matchingEntries.at(-1)!;
+}
+
+function resolveCodexMessageSignatureOccurrence(
+  parsedMessages: NormalizedMessage[],
+  targetMessage: Pick<NormalizedMessage, "messageId" | "role" | "kind" | "content" | "sequence">
+): number {
+  const targetSignature = buildCodexThreadHistorySignature(targetMessage);
+
+  if (!targetSignature) {
+    return 1;
+  }
+
+  let occurrence = 0;
+
+  for (const message of parsedMessages) {
+    if (buildCodexThreadHistorySignature(message) !== targetSignature) {
+      continue;
+    }
+
+    occurrence += 1;
+
+    if (message.messageId === targetMessage.messageId) {
+      return occurrence;
+    }
+  }
+
+  return Math.max(1, occurrence);
+}
+
+function buildCodexTurnRollbackPlan(
+  snapshot: Extract<CodexThreadHistorySnapshot, { kind: "turns" }>,
+  parsedMessages: NormalizedMessage[],
+  targetMessage: Pick<NormalizedMessage, "messageId" | "role" | "kind" | "content" | "sequence">
+): {
+  targetTurnIndex: number;
+  numTurnsToRollback: number;
+} {
+  const targetEntry = resolveCodexThreadHistoryTargetEntry(snapshot, parsedMessages, targetMessage);
+  const turnEntries = snapshot.comparableEntries.filter(
+    (entry) => entry.turnIndex === targetEntry.turnIndex
+  );
+  const lastComparableEntryInTurn = turnEntries.at(-1) ?? null;
+
+  if (!lastComparableEntryInTurn) {
+    throw new Error("CODEX_FORK_SOURCE_MESSAGE_UNMAPPABLE");
+  }
+
+  if (
+    lastComparableEntryInTurn.containerPath.join("/") !== targetEntry.containerPath.join("/")
+    || lastComparableEntryInTurn.entryIndex !== targetEntry.entryIndex
+  ) {
+    throw new Error("CODEX_MESSAGE_FORK_TURN_BOUNDARY_REQUIRED");
+  }
+
+  return {
+    targetTurnIndex: targetEntry.turnIndex,
+    numTurnsToRollback: Math.max(0, snapshot.value.length - targetEntry.turnIndex - 1)
+  };
+}
+
+function truncateCodexTurnAtPath(
+  turn: unknown,
+  containerPath: string[],
+  entryIndex: number
+): unknown {
+  if (containerPath.length === 0) {
+    return turn;
+  }
+
+  const record = toRecord(turn);
+
+  if (!record) {
+    return turn;
+  }
+
+  const [head, ...rest] = containerPath;
+  const current = record[head];
+
+  if (rest.length === 0) {
+    if (!Array.isArray(current)) {
+      return turn;
+    }
+
+    return {
+      ...record,
+      [head]: current.slice(0, entryIndex + 1)
+    };
+  }
+
+  return {
+    ...record,
+    [head]: truncateCodexTurnAtPath(current, rest, entryIndex)
+  };
+}
+
+function flattenCodexTurnHistory(turns: unknown[]): unknown[] {
+  return turns.flatMap((turn) => collectCodexTurnHistoryItems(turn));
+}
+
+function collectCodexTurnHistoryItems(value: unknown): unknown[] {
+  const direct = pickCodexHistoryArray(value);
+
+  if (direct) {
+    return direct;
+  }
+
+  const record = toRecord(value);
+
+  if (!record) {
+    return [];
+  }
+
+  return ([
+    record.input,
+    record.output,
+    record.turn,
+    record.data,
+    record.result
+  ] as unknown[]).flatMap((candidate) => collectCodexTurnHistoryItems(candidate));
+}
+
+function buildCodexThreadHistorySignature(value: unknown): string | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const item = value as Record<string, unknown>;
+  const normalizedKind = ensureText(item.kind).trim();
+  const normalizedRole = ensureText(item.role).trim();
+  const normalizedContent = ensureText(item.content).trim();
+
+  if (normalizedKind && normalizedRole) {
+    return `${normalizedRole}:${normalizedKind}:${normalizedContent}`;
+  }
+
+  const type = ensureText(item.type).trim();
+
+  if (type === "userMessage") {
+    const content = stringifyCodexThreadMessageContent(item.content);
+    return content ? `user:text:${content}` : null;
+  }
+
+  if (type === "agentMessage") {
+    const content = ensureText(item.text).trim() || stringifyCodexThreadMessageContent(item.content);
+    return content ? `assistant:text:${content}` : null;
+  }
+
+  if (type === "message") {
+    const role = ensureText(item.role).trim();
+    const content = stringifyCodexThreadMessageContent(item.content);
+
+    if (!role || !content) {
+      return null;
+    }
+
+    return `${role}:text:${content}`;
+  }
+
+  if (type === "reasoning") {
+    const content = stringifyCodexReasoningContent(item.summary ?? item.content);
+    return content ? `assistant:thinking:${content}` : null;
+  }
+
+  if (type === "function_call" || type === "tool_call") {
+    const name = ensureText(item.name).trim();
+    const inputValue = item.arguments ?? item.input;
+    const content = stringifyStructuredValue(inputValue);
+    return name || content ? `assistant:tool_call:${name}:${content}` : null;
+  }
+
+  if (type === "function_call_output" || type === "tool_result") {
+    const content = ensureText(item.output ?? item.content).trim();
+    return content ? `tool:tool_result:${content}` : null;
+  }
+
+  if (normalizedRole && normalizedContent) {
+    return `${normalizedRole}:text:${normalizedContent}`;
+  }
+
+  return null;
+}
+
+function stringifyCodexThreadMessageContent(content: unknown): string {
+  if (typeof content === "string") {
+    return content.trim();
+  }
+
+  if (!Array.isArray(content)) {
+    return "";
+  }
+
+  return content
+    .map((part) => {
+      if (!part || typeof part !== "object") {
+        return "";
+      }
+
+      const record = part as Record<string, unknown>;
+      return ensureText(
+        record.text
+        ?? record.input_text
+        ?? record.output_text
+        ?? (ensureText(record.type).trim() === "text" ? record.text : null)
+      ).trim();
+    })
+    .filter((value) => value.length > 0)
+    .join("\n")
+    .trim();
+}
+
+function stringifyCodexReasoningContent(content: unknown): string {
+  if (typeof content === "string") {
+    return content.trim();
+  }
+
+  if (!Array.isArray(content)) {
+    return "";
+  }
+
+  return content
+    .map((part) => {
+      if (!part || typeof part !== "object") {
+        return "";
+      }
+
+      const record = part as Record<string, unknown>;
+      return ensureText(record.text ?? record.summary_text).trim();
+    })
+    .filter((value) => value.length > 0)
+    .join("\n")
+    .trim();
 }

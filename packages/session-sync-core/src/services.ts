@@ -2,6 +2,8 @@ import { ProviderRegistry } from "./registry.js";
 import type {
   ContextUsageSnapshot,
   DetectSessionsOptions,
+  ForkSessionOptions,
+  ForkSessionResult,
   HistoryDirection,
   HistoryPage,
   ProviderCapabilities,
@@ -121,6 +123,21 @@ export class SessionSyncService {
     options: StartSessionOptions
   ): Promise<StartSessionResult> {
     return this.registry.get(providerId).startSession(workspacePath, options);
+  }
+
+  async forkSession(
+    providerId: string,
+    providerSessionId: string,
+    workspacePath: string,
+    options: ForkSessionOptions
+  ): Promise<ForkSessionResult> {
+    const provider = this.registry.get(providerId);
+
+    if (!provider.forkSession) {
+      throw new Error("PROVIDER_FORK_NOT_SUPPORTED");
+    }
+
+    return provider.forkSession(providerSessionId, workspacePath, options);
   }
 
   async sendMessage(

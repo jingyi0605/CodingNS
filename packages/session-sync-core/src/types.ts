@@ -8,6 +8,12 @@ export type SyncStatus = "idle" | "syncing" | "error";
 export type MessageKind = "text" | "thinking" | "tool_call" | "tool_result";
 export type HistoryDirection = "forward" | "backward";
 export type InRunInputMode = "none" | "streaming_guidance" | "queued_guidance";
+export type ForkSourceType = "session" | "message";
+export type ForkMethod =
+  | "native_session_fork"
+  | "native_message_fork"
+  | "reconstructed_message_fork";
+export type ForkStrategy = "auto" | "native-only" | "reconstruct-only";
 
 export interface NormalizedMessageAttachment {
   id: string;
@@ -156,6 +162,20 @@ export interface SendMessageResult {
   message: NormalizedMessage;
 }
 
+export interface ForkSessionOptions {
+  rawStoreRef: string;
+  sourceType: ForkSourceType;
+  sourceMessageId?: string | null;
+  strategy?: ForkStrategy;
+}
+
+export interface ForkSessionResult {
+  session: ProviderSessionSummary;
+  forkMethod: ForkMethod;
+  forkSourceType: ForkSourceType;
+  providerSourceMessageId?: string | null;
+}
+
 export interface ProviderSubscription {
   close(): void;
 }
@@ -192,6 +212,11 @@ export interface ProviderAdapter {
   ): ProviderSubscription;
   resumeSession(providerSessionId: string, rawStoreRef: string): Promise<ResumeSessionResult>;
   startSession(workspacePath: string, options: StartSessionOptions): Promise<StartSessionResult>;
+  forkSession?(
+    providerSessionId: string,
+    workspacePath: string,
+    options: ForkSessionOptions
+  ): Promise<ForkSessionResult>;
   sendMessage(
     providerSessionId: string,
     rawStoreRef: string,
