@@ -6,6 +6,7 @@ import { useToast } from "../../../shared/toast";
 import {
   createButlerInboxItem,
   deleteButlerInboxItem,
+  getButlerSessionTarget,
   listButlerInboxItems,
   listButlerProjects,
   updateButlerInboxItem,
@@ -20,6 +21,7 @@ import { WorkbenchModal } from "./WorkbenchModal";
 interface WorkspaceInboxPanelProps {
   active: boolean;
   preferredWorkspaceId?: string | null;
+  preferredSessionId?: string | null;
   creationRequestId?: number;
   initialDraft?: Partial<Pick<InboxFormState, "title" | "content">> | null;
   compactComposer?: boolean;
@@ -52,6 +54,7 @@ const DEFAULT_FORM_STATE: InboxFormState = {
 export function WorkspaceInboxPanel({
   active,
   preferredWorkspaceId,
+  preferredSessionId,
   creationRequestId = 0,
   initialDraft = null,
   compactComposer = false,
@@ -64,16 +67,12 @@ export function WorkspaceInboxPanel({
   const [projects, setProjects] = useState<ButlerProjectDto[]>([]);
   const [items, setItems] = useState<ButlerInboxItemDto[]>([]);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [preferredProjectId, setPreferredProjectId] = useState<string | null>(null);
   const [formState, setFormState] = useState<InboxFormState>(DEFAULT_FORM_STATE);
 
-  const visibleProjects = useMemo(
-    () =>
-      projects.filter(
-        (project) =>
-          project.lifecycleStatus !== "archived"
-          && (!preferredWorkspaceId || project.workspaceId === preferredWorkspaceId)
-      ),
-    [preferredWorkspaceId, projects]
+  const selectableProjects = useMemo(
+    () => sortSelectableProjects(projects, preferredWorkspaceId, preferredProjectId),
+    [preferredProjectId, preferredWorkspaceId, projects]
   );
 
   useEffect(() => {
@@ -82,46 +81,65 @@ export function WorkspaceInboxPanel({
     }
 
     void loadData();
-  }, [active, preferredWorkspaceId]);
+  }, [active, preferredSessionId]);
 
   useEffect(() => {
     if (!active || editingItemId) {
       return;
     }
 
-    setFormState((current) => ({
-      ...current,
-      projectId: current.projectId || visibleProjects[0]?.id || ""
-    }));
-  }, [active, editingItemId, visibleProjects]);
+    setFormState((current) => {
+      const nextProjectId = resolveProjectId({
+        projects: selectableProjects,
+        currentProjectId: current.projectId,
+        preferredProjectId,
+        preferredWorkspaceId
+      });
+
+      if (nextProjectId === current.projectId) {
+        return current;
+      }
+
+      return {
+        ...current,
+        projectId: nextProjectId
+      };
+    });
+  }, [active, editingItemId, preferredProjectId, preferredWorkspaceId, selectableProjects]);
 
   useEffect(() => {
     if (!active || creationRequestId <= 0) {
       return;
     }
 
-    resetEditor(undefined, preferredWorkspaceId, initialDraft);
+    resetEditor(undefined, preferredWorkspaceId, initialDraft, preferredProjectId);
     onComposerOpenChange?.(true);
-  }, [active, creationRequestId, initialDraft, onComposerOpenChange, preferredWorkspaceId]);
+  }, [active, creationRequestId, initialDraft, onComposerOpenChange, preferredProjectId, preferredWorkspaceId]);
 
   async function loadData() {
     setLoading(true);
 
     try {
-      const [projectResponse, itemResponse] = await Promise.all([
-        listButlerProjects({
-          workspaceId: preferredWorkspaceId ?? null
-        }),
-        listButlerInboxItems({
-          workspaceId: preferredWorkspaceId ?? null
-        })
+      const [projectResponse, itemResponse, sessionTargetResponse] = await Promise.all([
+        listButlerProjects(),
+        listButlerInboxItems(),
+        preferredSessionId
+          ? getButlerSessionTarget(preferredSessionId).catch(() => null)
+          : Promise.resolve(null)
       ]);
+      const nextPreferredProjectId = sessionTargetResponse?.target.project.id ?? null;
 
+      setPreferredProjectId(nextPreferredProjectId);
       setProjects(projectResponse.items);
       setItems(itemResponse.items);
 
       if (!editingItemId) {
-        resetEditor(projectResponse.items, preferredWorkspaceId);
+        resetEditor(
+          projectResponse.items,
+          preferredWorkspaceId,
+          creationRequestId > 0 ? initialDraft : null,
+          nextPreferredProjectId
+        );
       }
     } catch (error) {
       showToast({
@@ -137,17 +155,18 @@ export function WorkspaceInboxPanel({
   function resetEditor(
     nextProjects: ButlerProjectDto[] = projects,
     workspaceId: string | null | undefined = preferredWorkspaceId,
-    nextDraft: Partial<Pick<InboxFormState, "title" | "content">> | null = initialDraft
+    nextDraft: Partial<Pick<InboxFormState, "title" | "content">> | null = initialDraft,
+    nextPreferredProjectId: string | null = preferredProjectId
   ) {
-    const firstProject = nextProjects.find(
-      (project) =>
-        project.lifecycleStatus !== "archived"
-        && (!workspaceId || project.workspaceId === workspaceId)
-    );
+    const nextSelectableProjects = sortSelectableProjects(nextProjects, workspaceId, nextPreferredProjectId);
     setEditingItemId(null);
     setFormState({
       ...DEFAULT_FORM_STATE,
-      projectId: firstProject?.id || "",
+      projectId: resolveProjectId({
+        projects: nextSelectableProjects,
+        preferredProjectId: nextPreferredProjectId,
+        preferredWorkspaceId: workspaceId
+      }),
       title: nextDraft?.title?.trim() ?? "",
       content: nextDraft?.content?.trim() ?? ""
     });
@@ -249,7 +268,7 @@ export function WorkspaceInboxPanel({
       {!compactComposer ? (
         <section className="workspace-inbox-panel">
           <WorkspaceInboxComposerSection
-            visibleProjects={visibleProjects}
+            selectableProjects={selectableProjects}
             formState={formState}
             saving={saving}
             editingItemId={editingItemId}
@@ -359,7 +378,7 @@ export function WorkspaceInboxPanel({
         >
           <div className="workspace-inbox-composer-modal-body">
             <WorkspaceInboxComposerSection
-              visibleProjects={visibleProjects}
+              selectableProjects={selectableProjects}
               formState={formState}
               saving={saving}
               editingItemId={editingItemId}
@@ -408,7 +427,7 @@ export function WorkspaceInboxPanel({
 }
 
 function WorkspaceInboxComposerSection(props: {
-  visibleProjects: ButlerProjectDto[];
+  selectableProjects: ButlerProjectDto[];
   formState: InboxFormState;
   saving: boolean;
   editingItemId: string | null;
@@ -421,7 +440,7 @@ function WorkspaceInboxComposerSection(props: {
   onCancel: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
-  const projectOptions = props.visibleProjects.map((project) => ({
+  const projectOptions = props.selectableProjects.map((project) => ({
     value: project.id,
     label: project.name
   }));
@@ -448,7 +467,7 @@ function WorkspaceInboxComposerSection(props: {
         <p>{t("shell.butlerInboxFormDescription")}</p>
       </header>
 
-      {props.visibleProjects.length === 0 ? (
+      {props.selectableProjects.length === 0 ? (
         <p className="workspace-inbox-status">{t("shell.butlerInboxProjectsEmpty")}</p>
       ) : (
         <form className="workspace-inbox-form" onSubmit={props.onSubmit}>
@@ -486,7 +505,7 @@ function WorkspaceInboxComposerSection(props: {
                     disabled={props.saving}
                     onChange={(event) => props.onProjectChange(event.target.value)}
                   >
-                    {props.visibleProjects.map((project) => (
+                    {props.selectableProjects.map((project) => (
                       <option key={project.id} value={project.id}>
                         {project.name}
                       </option>
@@ -712,6 +731,7 @@ function MobilePickerSheet<T extends string>({
 interface WorkspaceInboxModalProps {
   open: boolean;
   preferredWorkspaceId?: string | null;
+  preferredSessionId?: string | null;
   creationRequestId?: number;
   initialDraft?: Partial<Pick<InboxFormState, "title" | "content">> | null;
   onClose: () => void;
@@ -721,6 +741,7 @@ interface WorkspaceInboxModalProps {
 export function WorkspaceInboxModal({
   open,
   preferredWorkspaceId,
+  preferredSessionId,
   creationRequestId: externalCreationRequestId = 0,
   initialDraft = null,
   onClose,
@@ -761,6 +782,7 @@ export function WorkspaceInboxModal({
       <WorkspaceInboxPanel
         active={open}
         preferredWorkspaceId={preferredWorkspaceId}
+        preferredSessionId={preferredSessionId}
         creationRequestId={Math.max(externalCreationRequestId, internalCreationRequestId)}
         initialDraft={initialDraft}
         compactComposer={compactComposer}
@@ -769,6 +791,67 @@ export function WorkspaceInboxModal({
       />
     </WorkbenchModal>
   );
+}
+
+function sortSelectableProjects(
+  projects: ButlerProjectDto[],
+  preferredWorkspaceId?: string | null,
+  preferredProjectId?: string | null
+) {
+  return [...projects]
+    .filter((project) => project.lifecycleStatus !== "archived")
+    .sort((left, right) => {
+      const leftWeight = resolveProjectWeight(left, preferredWorkspaceId, preferredProjectId);
+      const rightWeight = resolveProjectWeight(right, preferredWorkspaceId, preferredProjectId);
+
+      if (leftWeight !== rightWeight) {
+        return rightWeight - leftWeight;
+      }
+
+      return left.name.localeCompare(right.name, "zh-Hans-CN");
+    });
+}
+
+function resolveProjectWeight(
+  project: ButlerProjectDto,
+  preferredWorkspaceId?: string | null,
+  preferredProjectId?: string | null
+) {
+  if (preferredProjectId && project.id === preferredProjectId) {
+    return 2;
+  }
+
+  if (preferredWorkspaceId && project.workspaceId === preferredWorkspaceId) {
+    return 1;
+  }
+
+  return 0;
+}
+
+function resolveProjectId({
+  projects,
+  currentProjectId,
+  preferredProjectId,
+  preferredWorkspaceId
+}: {
+  projects: ButlerProjectDto[];
+  currentProjectId?: string | null;
+  preferredProjectId?: string | null;
+  preferredWorkspaceId?: string | null;
+}) {
+  if (currentProjectId && projects.some((project) => project.id === currentProjectId)) {
+    return currentProjectId;
+  }
+
+  if (preferredProjectId && projects.some((project) => project.id === preferredProjectId)) {
+    return preferredProjectId;
+  }
+
+  const workspaceProject = preferredWorkspaceId
+    ? projects.find((project) => project.workspaceId === preferredWorkspaceId)
+    : null;
+
+  return workspaceProject?.id || projects[0]?.id || "";
 }
 
 function PlusIcon() {

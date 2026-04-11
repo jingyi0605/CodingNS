@@ -591,6 +591,7 @@ export function ConversationSelectionActions({
       <WorkspaceInboxModal
         open={todoModalOpen}
         preferredWorkspaceId={session?.workspaceId ?? null}
+        preferredSessionId={session?.sessionId ?? null}
         creationRequestId={todoCreationRequestId}
         initialDraft={todoDraft}
         onClose={() => setTodoModalOpen(false)}
@@ -725,6 +726,7 @@ export function ConversationSelectionActions({
       <WorkspaceInboxModal
         open={todoModalOpen}
         preferredWorkspaceId={session.workspaceId}
+        preferredSessionId={session.sessionId}
         creationRequestId={todoCreationRequestId}
         initialDraft={todoDraft}
         onClose={() => setTodoModalOpen(false)}

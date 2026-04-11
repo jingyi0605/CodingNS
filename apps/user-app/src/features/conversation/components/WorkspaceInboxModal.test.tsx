@@ -12,13 +12,15 @@ vi.mock("../../butler/api/butler-api", () => ({
   listButlerInboxItems: vi.fn(),
   createButlerInboxItem: vi.fn(),
   updateButlerInboxItem: vi.fn(),
-  deleteButlerInboxItem: vi.fn()
+  deleteButlerInboxItem: vi.fn(),
+  getButlerSessionTarget: vi.fn()
 }));
 
 import { useToast } from "../../../shared/toast";
 import {
   createButlerInboxItem,
   deleteButlerInboxItem,
+  getButlerSessionTarget,
   listButlerInboxItems,
   listButlerProjects,
   updateButlerInboxItem
@@ -31,6 +33,7 @@ const mockedListButlerInboxItems = vi.mocked(listButlerInboxItems);
 const mockedCreateButlerInboxItem = vi.mocked(createButlerInboxItem);
 const mockedUpdateButlerInboxItem = vi.mocked(updateButlerInboxItem);
 const mockedDeleteButlerInboxItem = vi.mocked(deleteButlerInboxItem);
+const mockedGetButlerSessionTarget = vi.mocked(getButlerSessionTarget);
 
 describe("WorkspaceInboxModal", () => {
   const showToast = vi.fn();
@@ -98,6 +101,34 @@ describe("WorkspaceInboxModal", () => {
         }
       ]
     });
+    mockedGetButlerSessionTarget.mockResolvedValue({
+      target: {
+        workspaceId: "workspace-1",
+        project: {
+          id: "project-1",
+          workspaceId: "workspace-1",
+          name: "项目甲",
+          repoRoot: "/repo/project-1",
+          lifecycleStatus: "active",
+          riskLevel: "medium"
+        },
+        session: {
+          id: "butler-session-1",
+          projectId: "project-1",
+          sessionId: "session-1",
+          provider: "codex",
+          title: "当前会话",
+          role: "execution",
+          ownershipMode: "managed",
+          status: "running",
+          runningState: "running",
+          lastSummary: null,
+          lastCheckpointAt: null,
+          createdAt: "2026-04-07T00:00:00.000Z",
+          updatedAt: "2026-04-07T00:00:00.000Z"
+        }
+      }
+    });
     mockedCreateButlerInboxItem.mockResolvedValue({
       item: {
         id: "todo-2",
@@ -135,11 +166,12 @@ describe("WorkspaceInboxModal", () => {
     mockedDeleteButlerInboxItem.mockResolvedValue(undefined);
   });
 
-  it("只展示当前工作区可绑定项目，并可新增代办", async () => {
+  it("默认选中当前项目，并允许切换到其他管理项目新增代办", async () => {
     render(
       <WorkspaceInboxModal
         open
         preferredWorkspaceId="workspace-1"
+        preferredSessionId="session-1"
         onClose={vi.fn()}
       />
     );
@@ -150,8 +182,13 @@ describe("WorkspaceInboxModal", () => {
 
     const projectSelect = await screen.findByRole("combobox", { name: t("shell.butlerInboxProjectLabel") });
     expect(screen.getByRole("option", { name: "项目甲" })).toBeInTheDocument();
-    expect(screen.queryByRole("option", { name: "项目乙" })).not.toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "项目乙" })).toBeInTheDocument();
     expect((projectSelect as HTMLSelectElement).value).toBe("project-1");
+    expect(mockedGetButlerSessionTarget).toHaveBeenCalledWith("session-1");
+
+    fireEvent.change(projectSelect, {
+      target: { value: "project-2" }
+    });
 
     fireEvent.change(screen.getByRole("textbox", { name: t("shell.butlerInboxTitleLabel") }), {
       target: { value: "新增代办" }
@@ -163,7 +200,7 @@ describe("WorkspaceInboxModal", () => {
 
     await waitFor(() => {
       expect(mockedCreateButlerInboxItem).toHaveBeenCalledWith({
-        projectId: "project-1",
+        projectId: "project-2",
         itemType: "task",
         title: "新增代办",
         content: "补齐登录验证码。",

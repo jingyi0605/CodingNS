@@ -1425,6 +1425,7 @@ function WorkbenchNotificationModal(props: {
   onUnarchiveNotification: (notificationId: string) => void;
   onSelectNotification: (notification: WorkbenchGlobalNotification) => void;
   preferredWorkspaceId?: string | null;
+  preferredSessionId?: string | null;
 }) {
   const [activeTab, setActiveTab] = useState<"notifications" | "inbox">("notifications");
 
@@ -1543,7 +1544,11 @@ function WorkbenchNotificationModal(props: {
           </div>
         ) : (
           <div className="workbench-notification-pane" role="tabpanel" aria-label={t("shell.butlerInboxAction")}>
-            <WorkspaceInboxPanel active={props.open && activeTab === "inbox"} preferredWorkspaceId={props.preferredWorkspaceId} />
+            <WorkspaceInboxPanel
+              active={props.open && activeTab === "inbox"}
+              preferredWorkspaceId={props.preferredWorkspaceId}
+              preferredSessionId={props.preferredSessionId}
+            />
           </div>
         )}
       </div>
@@ -6261,6 +6266,7 @@ export function WorkbenchLayout({
         }}
         onSelectNotification={handleSelectNotification}
         preferredWorkspaceId={currentWorkspaceId}
+        preferredSessionId={isDraftSession ? null : currentSessionId}
       />
 
       <WorkspaceSearchModal
