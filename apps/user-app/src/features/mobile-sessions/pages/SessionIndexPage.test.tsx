@@ -4,40 +4,31 @@ import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { t } from "../../../shared/i18n";
+import type { SessionSummaryDto, WorkspaceDto } from "../../conversation/api/conversation-api";
+import type { WorkbenchNavigationGroup } from "../../workbench/utils/workbench-navigation";
 import { SessionIndexPage } from "./SessionIndexPage";
 
-function createNavigationGroups() {
+function createNavigationGroups(): WorkbenchNavigationGroup[] {
   return [
     {
-      workspace: {
-        id: "workspace-1",
-        name: "项目一"
-      },
+      workspace: createWorkspace("workspace-1", "项目一"),
       sessions: [
-        {
+        createSessionSummary({
           sessionId: "session-1",
           title: "会话 Alpha",
           provider: "codex",
           workspaceId: "workspace-1",
           lastMessageAt: "2026-03-27T10:00:00Z",
-          runningState: null,
-          syncStatus: null,
-          lastErrorCode: null,
-          lastErrorDetail: null
-        },
-        {
+        }),
+        createSessionSummary({
           sessionId: "session-2",
           title: "会话 Beta",
           provider: "claude-code",
           workspaceId: "workspace-1",
           isFavorite: true,
           lastMessageAt: "2026-03-27T09:00:00Z",
-          runningState: null,
-          syncStatus: null,
-          lastErrorCode: null,
-          lastErrorDetail: null
-        },
-        {
+        }),
+        createSessionSummary({
           sessionId: "session-2-sub",
           title: "子代理 Beta-1",
           provider: "codex",
@@ -46,33 +37,88 @@ function createNavigationGroups() {
           isSubagent: true,
           subagentLabel: "worker · Beta",
           lastMessageAt: "2026-03-27T08:30:00Z",
-          runningState: null,
-          syncStatus: null,
-          lastErrorCode: null,
-          lastErrorDetail: null
-        }
+        })
       ]
     },
     {
-      workspace: {
-        id: "workspace-2",
-        name: "Project Two"
-      },
+      workspace: createWorkspace("workspace-2", "Project Two"),
       sessions: [
-        {
+        createSessionSummary({
           sessionId: "session-3",
           title: "会话 Gamma",
           provider: "codex",
           workspaceId: "workspace-2",
-          lastMessageAt: "2026-03-26T12:00:00Z",
-          runningState: null,
-          syncStatus: null,
-          lastErrorCode: null,
-          lastErrorDetail: null
-        }
+          lastMessageAt: "2026-03-26T12:00:00Z"
+        })
       ]
     }
   ];
+}
+
+function createWorkspace(id: string, name: string): WorkspaceDto {
+  return {
+    id,
+    name,
+    path: `/tmp/${id}`,
+    repoRoot: `/tmp/${id}`
+  };
+}
+
+function createSessionSummary(
+  overrides: Partial<SessionSummaryDto> &
+    Pick<SessionSummaryDto, "sessionId" | "title" | "provider" | "workspaceId">
+): SessionSummaryDto {
+  return {
+    sessionId: overrides.sessionId,
+    workspaceId: overrides.workspaceId,
+    provider: overrides.provider,
+    providerSessionId: overrides.providerSessionId ?? `provider-${overrides.sessionId}`,
+    rawStoreRef: overrides.rawStoreRef ?? `codex://${overrides.sessionId}`,
+    parentSessionId: overrides.parentSessionId ?? null,
+    forkMethod: overrides.forkMethod ?? null,
+    forkSourceType: overrides.forkSourceType ?? null,
+    forkSourceSessionId: overrides.forkSourceSessionId ?? null,
+    forkSourceMessageId: overrides.forkSourceMessageId ?? null,
+    isSubagent: overrides.isSubagent ?? false,
+    subagentLabel: overrides.subagentLabel ?? null,
+    isArchived: overrides.isArchived ?? false,
+    isFavorite: overrides.isFavorite ?? false,
+    title: overrides.title,
+    messageCount: overrides.messageCount ?? 1,
+    lastMessageAt: overrides.lastMessageAt ?? "2026-03-27T10:00:00Z",
+    createdAt: overrides.createdAt ?? "2026-03-27T09:00:00Z",
+    updatedAt: overrides.updatedAt ?? (overrides.lastMessageAt ?? "2026-03-27T10:00:00Z"),
+    syncStatus: overrides.syncStatus ?? null,
+    syncCursor: overrides.syncCursor ?? null,
+    lastSyncAt: overrides.lastSyncAt ?? null,
+    lastErrorCode: overrides.lastErrorCode ?? null,
+    lastErrorDetail: overrides.lastErrorDetail ?? null,
+    resumedAt: overrides.resumedAt ?? null,
+    runningState: overrides.runningState ?? null,
+    activitySource: overrides.activitySource ?? "none",
+    lastEventAt: overrides.lastEventAt ?? null,
+    completedAt: overrides.completedAt ?? null,
+    lastSeenAt: overrides.lastSeenAt ?? null,
+    activityState: overrides.activityState ?? "idle",
+    ...(overrides.activityResolutionSource
+      ? { activityResolutionSource: overrides.activityResolutionSource }
+      : {}),
+    ...(overrides.activityConfidence ? { activityConfidence: overrides.activityConfidence } : {}),
+    ...(overrides.runId !== undefined ? { runId: overrides.runId } : {}),
+    ...(overrides.watchdogTriggeredAt !== undefined
+      ? { watchdogTriggeredAt: overrides.watchdogTriggeredAt }
+      : {}),
+    ...(overrides.sessionKind !== undefined ? { sessionKind: overrides.sessionKind } : {}),
+    ...(overrides.annotationSourceMessageId !== undefined
+      ? { annotationSourceMessageId: overrides.annotationSourceMessageId }
+      : {}),
+    ...(overrides.annotationSourceText !== undefined
+      ? { annotationSourceText: overrides.annotationSourceText }
+      : {}),
+    ...(overrides.inheritedPrefixMessageCount !== undefined
+      ? { inheritedPrefixMessageCount: overrides.inheritedPrefixMessageCount }
+      : {})
+  };
 }
 
 const contextValue = {
@@ -307,19 +353,15 @@ describe("SessionIndexPage", () => {
 
   it("不会显示父会话已归档的子会话孤儿节点", () => {
     contextValue.navigationGroups[0].sessions = [
-      {
+      createSessionSummary({
         sessionId: "archived-root",
         title: "已归档父会话",
         provider: "codex",
         workspaceId: "workspace-1",
         isArchived: true,
-        lastMessageAt: "2026-03-27T09:30:00Z",
-        runningState: null,
-        syncStatus: null,
-        lastErrorCode: null,
-        lastErrorDetail: null
-      },
-      {
+        lastMessageAt: "2026-03-27T09:30:00Z"
+      }),
+      createSessionSummary({
         sessionId: "orphan-subagent",
         title: "孤儿子会话",
         provider: "codex",
@@ -327,12 +369,8 @@ describe("SessionIndexPage", () => {
         parentSessionId: "archived-root",
         isSubagent: true,
         subagentLabel: "worker · orphan",
-        lastMessageAt: "2026-03-27T09:20:00Z",
-        runningState: null,
-        syncStatus: null,
-        lastErrorCode: null,
-        lastErrorDetail: null
-      },
+        lastMessageAt: "2026-03-27T09:20:00Z"
+      }),
       ...createNavigationGroups()[0].sessions
     ];
 
@@ -352,31 +390,25 @@ describe("SessionIndexPage", () => {
     const user = userEvent.setup();
     contextValue.navigationGroups[0].sessions = [
       contextValue.navigationGroups[0].sessions[0],
-      {
+      createSessionSummary({
         sessionId: "session-root",
         title: "主会话 Root",
         provider: "codex",
         workspaceId: "workspace-1",
-        lastMessageAt: "2026-03-27T09:00:00Z",
-        runningState: null,
-        syncStatus: null,
-        lastErrorCode: null,
-        lastErrorDetail: null
-      },
-      ...Array.from({ length: 6 }, (_, index) => ({
-        sessionId: `session-root-sub-${index + 1}`,
-        title: `子代理 ${index + 1}`,
-        provider: "codex",
-        workspaceId: "workspace-1",
-        parentSessionId: "session-root",
-        isSubagent: true,
-        subagentLabel: `worker · ${index + 1}`,
-        lastMessageAt: `2026-03-27T0${8 - index}:00:00Z`,
-        runningState: null,
-        syncStatus: null,
-        lastErrorCode: null,
-        lastErrorDetail: null
-      }))
+        lastMessageAt: "2026-03-27T09:00:00Z"
+      }),
+      ...Array.from({ length: 6 }, (_, index) =>
+        createSessionSummary({
+          sessionId: `session-root-sub-${index + 1}`,
+          title: `子代理 ${index + 1}`,
+          provider: "codex",
+          workspaceId: "workspace-1",
+          parentSessionId: "session-root",
+          isSubagent: true,
+          subagentLabel: `worker · ${index + 1}`,
+          lastMessageAt: `2026-03-27T0${8 - index}:00:00Z`
+        })
+      )
     ];
 
     renderPage();

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import type { SessionSummaryDto, WorkspaceDto } from "../api/conversation-api";
 import { resolveNextMobileSessionEntry } from "./mobile-session-archive-navigation";
 
 describe("resolveNextMobileSessionEntry", () => {
@@ -7,10 +8,7 @@ describe("resolveNextMobileSessionEntry", () => {
     const result = resolveNextMobileSessionEntry(
       [
         {
-          workspace: {
-            id: "workspace-1",
-            name: "工作区一"
-          },
+          workspace: createWorkspace("workspace-1", "工作区一"),
           sessions: [
             createSession({
               sessionId: "session-1",
@@ -38,10 +36,7 @@ describe("resolveNextMobileSessionEntry", () => {
     const result = resolveNextMobileSessionEntry(
       [
         {
-          workspace: {
-            id: "workspace-1",
-            name: "工作区一"
-          },
+          workspace: createWorkspace("workspace-1", "工作区一"),
           sessions: [
             createSession({
               sessionId: "session-last",
@@ -63,10 +58,7 @@ describe("resolveNextMobileSessionEntry", () => {
     const result = resolveNextMobileSessionEntry(
       [
         {
-          workspace: {
-            id: "workspace-1",
-            name: "工作区一"
-          },
+          workspace: createWorkspace("workspace-1", "工作区一"),
           sessions: [
             createSession({
               sessionId: "session-1",
@@ -106,7 +98,16 @@ describe("resolveNextMobileSessionEntry", () => {
   });
 });
 
-function createSession(overrides: Record<string, unknown> = {}) {
+function createWorkspace(id: string, name: string): WorkspaceDto {
+  return {
+    id,
+    name,
+    path: `/tmp/${id}`,
+    repoRoot: `/tmp/${id}`
+  };
+}
+
+function createSession(overrides: Partial<SessionSummaryDto> = {}): SessionSummaryDto {
   return {
     sessionId: "session-1",
     workspaceId: "workspace-1",
