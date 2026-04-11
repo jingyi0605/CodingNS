@@ -17,6 +17,7 @@ import {
   type HistoryDirection,
   type HistoryPage,
   type ProviderCapabilities,
+  type ProviderDiscoveryDiagnostic,
   type ProviderSubscription,
   type SendMessageResult
 } from "@codingns/session-sync-core";
@@ -72,6 +73,8 @@ interface StartSessionInput {
   initialPrompt?: string;
   parentSessionId?: string | null;
   sessionKind?: "default" | "annotation";
+  annotationSourceMessageId?: string | null;
+  annotationSourceText?: string | null;
 }
 
 interface ArchiveSessionInput {
@@ -88,6 +91,8 @@ interface ForkSessionInput {
   strategy?: ForkStrategy;
   targetProvider?: string | null;
   sessionKind?: "default" | "annotation";
+  annotationSourceMessageId?: string | null;
+  annotationSourceText?: string | null;
 }
 
 interface FavoriteSessionInput {
@@ -112,6 +117,8 @@ export type SessionHistoryMessageWithOrigin = HistoryPage["messages"][number] & 
 interface SessionRelationDescriptor {
   parentSessionId: string | null;
   sessionKind: "default" | "annotation";
+  annotationSourceMessageId: string | null;
+  annotationSourceText: string | null;
   isSubagent: boolean;
   subagentLabel: string | null;
 }
@@ -171,6 +178,7 @@ const SESSION_START_DEFERRED_PROVIDERS = new Set([
   "kimi"
 ]);
 const MUTABLE_HISTORY_TAIL_REFRESH_INTERVAL_MS = 1_200;
+const PROVIDER_DISCOVERY_WARN_THRESHOLD_MS = 2_000;
 
 export class SessionHistoryService {
   private readonly providerRegistry: ProviderRegistry;
@@ -662,6 +670,8 @@ export class SessionHistoryService {
           provider: result.session.provider,
           parentSessionId: input.parentSessionId ?? result.session.parentProviderSessionId ?? null,
           sessionKind: input.sessionKind ?? "default",
+          annotationSourceMessageId: input.annotationSourceMessageId ?? null,
+          annotationSourceText: input.annotationSourceText ?? null,
           isSubagent: result.session.isSubagent ?? false,
           subagentLabel: result.session.subagentLabel ?? null,
           title: result.session.title,
@@ -759,6 +769,8 @@ export class SessionHistoryService {
           provider: result.session.provider,
           parentSessionId: input.sessionId,
           sessionKind: input.sessionKind ?? "default",
+          annotationSourceMessageId: input.annotationSourceMessageId ?? null,
+          annotationSourceText: input.annotationSourceText ?? null,
           isSubagent: result.session.isSubagent ?? false,
           subagentLabel: result.session.subagentLabel ?? null,
           title: result.session.title,
@@ -812,6 +824,10 @@ export class SessionHistoryService {
       relationMap.set(sessionId, {
         parentSessionId: input.sessionId,
         sessionKind: forkedSession.sessionKind ?? input.sessionKind ?? "default",
+        annotationSourceMessageId:
+          forkedSession.annotationSourceMessageId ?? input.annotationSourceMessageId ?? null,
+        annotationSourceText:
+          forkedSession.annotationSourceText ?? input.annotationSourceText ?? null,
         isSubagent: forkedSession.isSubagent ?? false,
         subagentLabel: forkedSession.subagentLabel ?? null
       });
@@ -858,7 +874,9 @@ export class SessionHistoryService {
       provider: input.targetProvider,
       initialPrompt: inheritedPrompt,
       parentSessionId: input.sessionId,
-      sessionKind: input.sessionKind ?? "default"
+      sessionKind: input.sessionKind ?? "default",
+      annotationSourceMessageId: input.annotationSourceMessageId ?? null,
+      annotationSourceText: input.annotationSourceText ?? null
     });
     const timestamp = nowIso();
     const currentIndex = this.sessionIndexRepository.findIndexRecordBySessionId(startedSession.sessionId);
@@ -869,6 +887,10 @@ export class SessionHistoryService {
           ...currentIndex,
           parentSessionId: input.sessionId,
           sessionKind: input.sessionKind ?? currentIndex.sessionKind ?? "default",
+          annotationSourceMessageId:
+            input.annotationSourceMessageId ?? currentIndex.annotationSourceMessageId ?? null,
+          annotationSourceText:
+            input.annotationSourceText ?? currentIndex.annotationSourceText ?? null,
           updatedAt: timestamp
         });
       }
@@ -898,6 +920,10 @@ export class SessionHistoryService {
     relationMap.set(startedSession.sessionId, {
       parentSessionId: input.sessionId,
       sessionKind: startedSession.sessionKind ?? input.sessionKind ?? "default",
+      annotationSourceMessageId:
+        startedSession.annotationSourceMessageId ?? input.annotationSourceMessageId ?? null,
+      annotationSourceText:
+        startedSession.annotationSourceText ?? input.annotationSourceText ?? null,
       isSubagent: startedSession.isSubagent ?? false,
       subagentLabel: startedSession.subagentLabel ?? null
     });
@@ -1022,6 +1048,8 @@ export class SessionHistoryService {
       provider: binding.provider,
       parentSessionId: existing?.parentSessionId ?? null,
       sessionKind: existing?.sessionKind ?? "default",
+      annotationSourceMessageId: existing?.annotationSourceMessageId ?? null,
+      annotationSourceText: existing?.annotationSourceText ?? null,
       isSubagent: existing?.isSubagent ?? false,
       subagentLabel: existing?.subagentLabel ?? null,
       title: resolveSessionListTitle(
@@ -1298,6 +1326,8 @@ export class SessionHistoryService {
       provider: existing.provider,
       parentSessionId: existing.parentSessionId ?? null,
       sessionKind: existing.sessionKind ?? "default",
+      annotationSourceMessageId: existing.annotationSourceMessageId ?? null,
+      annotationSourceText: existing.annotationSourceText ?? null,
       isSubagent: existing.isSubagent ?? false,
       subagentLabel: existing.subagentLabel ?? null,
       title: existing.title,
@@ -1443,6 +1473,12 @@ export class SessionHistoryService {
         .catch((error) => {
           throw mapSessionProviderError(error);
         });
+      this.logWorkspaceDiscoveryDiagnostics(
+        workspace.id,
+        workspace.path,
+        discovery.providerDiagnostics ?? [],
+        discovery.isComplete
+      );
       const sessions = discovery.sessions;
       discoverDurationMs = Date.now() - discoverStartedAt;
       const timestamp = nowIso();
@@ -1518,6 +1554,8 @@ export class SessionHistoryService {
             provider: session.provider,
             parentSessionId: preservedParentSessionId,
             sessionKind: existingIndex?.sessionKind ?? "default",
+            annotationSourceMessageId: existingIndex?.annotationSourceMessageId ?? null,
+            annotationSourceText: existingIndex?.annotationSourceText ?? null,
             isSubagent: existingIndex?.isSubagent ?? false,
             subagentLabel: existingIndex?.subagentLabel ?? null,
             title: preservedTitle,
@@ -1567,6 +1605,14 @@ export class SessionHistoryService {
               relation?.sessionKind
               ?? persistedSession.existingIndex?.sessionKind
               ?? "default",
+            annotationSourceMessageId:
+              relation?.annotationSourceMessageId
+              ?? persistedSession.existingIndex?.annotationSourceMessageId
+              ?? null,
+            annotationSourceText:
+              relation?.annotationSourceText
+              ?? persistedSession.existingIndex?.annotationSourceText
+              ?? null,
             isSubagent:
               relation?.isSubagent
               ?? persistedSession.existingIndex?.isSubagent
@@ -1628,6 +1674,9 @@ export class SessionHistoryService {
           discoveredSessions: sessions.length,
           returnedSessions: nextItems.length,
           discoveryComplete: discovery.isComplete,
+          providerDiagnostics: (discovery.providerDiagnostics ?? []).map((entry) =>
+            `${entry.provider}:${entry.status}:${Math.round(entry.durationMs)}ms`
+          ),
           refreshedStates: refreshCandidates.length,
           discoverMs: discoverDurationMs,
           persistMs: persistDurationMs,
@@ -1658,6 +1707,39 @@ export class SessionHistoryService {
       );
       throw error;
     }
+  }
+
+  private logWorkspaceDiscoveryDiagnostics(
+    workspaceId: string,
+    workspacePath: string,
+    diagnostics: ProviderDiscoveryDiagnostic[],
+    isComplete: boolean
+  ): void {
+    if (diagnostics.length === 0) {
+      return;
+    }
+
+    const problematicProviders = diagnostics.filter(
+      (entry) => entry.status !== "success" || entry.durationMs >= PROVIDER_DISCOVERY_WARN_THRESHOLD_MS
+    );
+
+    if (isComplete && problematicProviders.length === 0) {
+      return;
+    }
+
+    console.warn("[workspace-discovery-diagnostics]", {
+      workspaceId,
+      workspacePath,
+      isComplete,
+      providers: (isComplete ? problematicProviders : diagnostics).map((entry) => ({
+        provider: entry.provider,
+        status: entry.status,
+        durationMs: Math.round(entry.durationMs),
+        sessionCount: entry.sessionCount,
+        isComplete: entry.isComplete,
+        errorMessage: entry.errorMessage ?? null
+      }))
+    });
   }
 
   private async readPage(
@@ -1856,6 +1938,10 @@ export class SessionHistoryService {
         parentSessionId,
         sessionKind:
           this.sessionIndexRepository.findIndexRecordBySessionId(sessionId)?.sessionKind ?? "default",
+        annotationSourceMessageId:
+          this.sessionIndexRepository.findIndexRecordBySessionId(sessionId)?.annotationSourceMessageId ?? null,
+        annotationSourceText:
+          this.sessionIndexRepository.findIndexRecordBySessionId(sessionId)?.annotationSourceText ?? null,
         isSubagent:
           session.isSubagent === true
           || this.sessionIndexRepository.findIndexRecordBySessionId(sessionId)?.isSubagent === true,
@@ -1887,6 +1973,8 @@ export class SessionHistoryService {
         ...item,
         parentSessionId: relation.parentSessionId,
         sessionKind: relation.sessionKind,
+        annotationSourceMessageId: relation.annotationSourceMessageId,
+        annotationSourceText: relation.annotationSourceText,
         isSubagent: relation.isSubagent,
         subagentLabel: relation.subagentLabel
       });
@@ -1900,6 +1988,8 @@ export class SessionHistoryService {
           ...item,
           parentSessionId: relation.parentSessionId,
           sessionKind: relation.sessionKind,
+          annotationSourceMessageId: relation.annotationSourceMessageId,
+          annotationSourceText: relation.annotationSourceText,
           isSubagent: relation.isSubagent,
           subagentLabel: relation.subagentLabel
         }
@@ -1907,6 +1997,8 @@ export class SessionHistoryService {
           ...item,
           parentSessionId: item.parentSessionId ?? null,
           sessionKind: item.sessionKind ?? "default",
+          annotationSourceMessageId: item.annotationSourceMessageId ?? null,
+          annotationSourceText: item.annotationSourceText ?? null,
           isSubagent: item.isSubagent ?? false,
           subagentLabel: item.subagentLabel ?? null
         };
@@ -2607,6 +2699,18 @@ export class SessionHistoryService {
         ?? targetIndex?.sessionKind
         ?? sourceIndex?.sessionKind
         ?? "default",
+      annotationSourceMessageId:
+        targetRelation?.annotationSourceMessageId
+        ?? sourceRelation?.annotationSourceMessageId
+        ?? targetIndex?.annotationSourceMessageId
+        ?? sourceIndex?.annotationSourceMessageId
+        ?? null,
+      annotationSourceText:
+        targetRelation?.annotationSourceText
+        ?? sourceRelation?.annotationSourceText
+        ?? targetIndex?.annotationSourceText
+        ?? sourceIndex?.annotationSourceText
+        ?? null,
       isSubagent: Boolean(
         targetRelation?.isSubagent
         || sourceRelation?.isSubagent
@@ -3007,6 +3111,10 @@ function mergeSessionIndexRecord(input: {
     provider: (input.target?.provider ?? input.source?.provider ?? input.provider) as SessionIndexRecord["provider"],
     parentSessionId: input.target?.parentSessionId ?? input.source?.parentSessionId ?? null,
     sessionKind: input.target?.sessionKind ?? input.source?.sessionKind ?? "default",
+    annotationSourceMessageId:
+      input.target?.annotationSourceMessageId ?? input.source?.annotationSourceMessageId ?? null,
+    annotationSourceText:
+      input.target?.annotationSourceText ?? input.source?.annotationSourceText ?? null,
     isSubagent: Boolean(input.target?.isSubagent || input.source?.isSubagent),
     subagentLabel: input.target?.subagentLabel ?? input.source?.subagentLabel ?? null,
     title: pickPreferredSessionTitle(input.target?.title ?? null, input.source?.title ?? null),

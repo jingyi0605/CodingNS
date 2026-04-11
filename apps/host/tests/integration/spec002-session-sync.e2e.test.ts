@@ -1325,6 +1325,124 @@ describe("spec002 会话同步核心", () => {
     expect(sessionHistoryService.needsWorkspaceDiscovery("workspace-1", 15_000)).toBe(false);
   });
 
+  it("发现部分成功时，会输出 provider 级诊断日志", async () => {
+    const fixture = createEmptyFixture();
+    const config = resolveHostConfig({
+      databasePath: ":memory:",
+      claudeCodeHomeDir: fixture.claudeHomeDir,
+      codexHomeDir: fixture.codexHomeDir
+    });
+    const database = createDatabaseClient(":memory:");
+    const workspaceRepository = new WorkspaceRepository(database.db);
+    const sessionBindingRepository = new SessionBindingRepository(database.db);
+    const sessionIndexRepository = new SessionIndexRepository(database.db);
+    const sessionStateRepository = new SessionStateRepository(database.db);
+    const sessionStatusSnapshotRepository = new SessionStatusSnapshotRepository(database.db);
+    const sessionChangedFileService = new SessionChangedFileService(
+      new SessionChangedFileRepository(database.db)
+    );
+    const sessionMessageAttachmentService = new SessionMessageAttachmentService(
+      new SessionMessageAttachmentRepository(database.db),
+      config
+    );
+    const sessionHistoryService = new SessionHistoryService(
+      database.db,
+      workspaceRepository,
+      sessionBindingRepository,
+      sessionChangedFileService,
+      sessionIndexRepository,
+      sessionMessageAttachmentService,
+      sessionStateRepository,
+      sessionStatusSnapshotRepository,
+      config
+    );
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    activeEmptyFixtures.push(fixture);
+    activeClosers.push(() => {
+      warnSpy.mockRestore();
+      database.close();
+    });
+
+    database.db
+      .prepare(
+        `INSERT INTO auth_users (id, username, password_hash, role, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      )
+      .run("user-1", "tester", "hash", "admin", "2026-03-01T00:00:00.000Z", "2026-03-01T00:00:00.000Z");
+
+    workspaceRepository.create({
+      id: "workspace-1",
+      name: "Fixture Workspace",
+      path: fixture.workspaceDir,
+      repoRoot: fixture.workspaceDir,
+      favorite: false,
+      createdAt: "2026-03-01T00:00:00.000Z",
+      updatedAt: "2026-03-01T00:00:00.000Z",
+      removedAt: null
+    });
+
+    const discoverMock = vi.fn().mockResolvedValue({
+      sessions: [],
+      isComplete: false,
+      providerDiagnostics: [
+        {
+          provider: "codex",
+          status: "success",
+          durationMs: 120,
+          sessionCount: 2,
+          isComplete: true,
+          errorMessage: null
+        },
+        {
+          provider: "opencode",
+          status: "failed",
+          durationMs: 4200,
+          sessionCount: 0,
+          isComplete: false,
+          errorMessage: "SERVER_TIMEOUT"
+        }
+      ]
+    });
+
+    (
+      sessionHistoryService as unknown as {
+        sessionSyncService: {
+          discoverWorkspaceSessions: typeof discoverMock;
+        };
+      }
+    ).sessionSyncService = {
+      discoverWorkspaceSessions: discoverMock
+    };
+
+    await sessionHistoryService.discoverWorkspaceSessions("workspace-1", "user-1", {
+      force: true,
+      refreshStateMode: "deferred"
+    });
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[workspace-discovery-diagnostics]",
+      expect.objectContaining({
+        workspaceId: "workspace-1",
+        workspacePath: fixture.workspaceDir,
+        isComplete: false,
+        providers: expect.arrayContaining([
+          expect.objectContaining({
+            provider: "codex",
+            status: "success",
+            durationMs: 120
+          }),
+          expect.objectContaining({
+            provider: "opencode",
+            status: "failed",
+            durationMs: 4200,
+            errorMessage: "SERVER_TIMEOUT"
+          })
+        ])
+      })
+    );
+  });
+
   it("首次订阅会话时只回填最近一页，而不是从最旧消息开始扫全量", async () => {
     const fixture = createEmptyFixture();
     const config = resolveHostConfig({

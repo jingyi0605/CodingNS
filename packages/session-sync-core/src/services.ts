@@ -6,6 +6,7 @@ import type {
   ForkSessionResult,
   HistoryDirection,
   HistoryPage,
+  ProviderDiscoveryDiagnostic,
   ProviderCapabilities,
   ProviderArchiveUpdateResult,
   ProviderSessionDiscovery,
@@ -40,24 +41,72 @@ export class SessionSyncService {
     workspacePath: string,
     options?: DetectSessionsOptions
   ): Promise<ProviderSessionDiscovery> {
-    const discoveries = await Promise.all(
-      this.registry.list().map(async (provider) => {
-        if (provider.detectSessionsDetailed) {
-          return provider.detectSessionsDetailed(workspacePath, options);
-        }
+    const providers = this.registry.list();
+    const diagnostics: ProviderDiscoveryDiagnostic[] = [];
+    const results = await Promise.allSettled(
+      providers.map(async (provider) => {
+        const startedAt = Date.now();
 
-        return {
-          sessions: await provider.detectSessions(workspacePath, options),
-          isComplete: true
-        } satisfies ProviderSessionDiscovery;
+        try {
+          if (provider.detectSessionsDetailed) {
+            const discovery = await provider.detectSessionsDetailed(workspacePath, options);
+
+            diagnostics.push({
+              provider: provider.providerId,
+              status: discovery.isComplete ? "success" : "partial",
+              durationMs: Date.now() - startedAt,
+              sessionCount: discovery.sessions.length,
+              isComplete: discovery.isComplete,
+              errorMessage: null
+            });
+            return discovery;
+          }
+
+          const discovery = {
+            sessions: await provider.detectSessions(workspacePath, options),
+            isComplete: true
+          } satisfies ProviderSessionDiscovery;
+          diagnostics.push({
+            provider: provider.providerId,
+            status: "success",
+            durationMs: Date.now() - startedAt,
+            sessionCount: discovery.sessions.length,
+            isComplete: discovery.isComplete,
+            errorMessage: null
+          });
+          return discovery;
+        } catch (error) {
+          diagnostics.push({
+            provider: provider.providerId,
+            status: "failed",
+            durationMs: Date.now() - startedAt,
+            sessionCount: 0,
+            isComplete: false,
+            errorMessage: error instanceof Error ? error.message : String(error)
+          });
+          throw error;
+        }
       })
     );
+    const discoveries = results
+      .filter(
+        (
+          result
+        ): result is PromiseFulfilledResult<ProviderSessionDiscovery> => result.status === "fulfilled"
+      )
+      .map((result) => result.value);
 
     return {
       sessions: discoveries
         .flatMap((discovery) => discovery.sessions)
         .sort((left, right) => (right.lastMessageAt ?? "").localeCompare(left.lastMessageAt ?? "")),
-      isComplete: discoveries.every((discovery) => discovery.isComplete)
+      // 任何一个 provider 没拿全，或者直接失败，这次发现都只能算部分成功。
+      isComplete:
+        results.length > 0
+        && results.every(
+          (result) => result.status === "fulfilled" && result.value.isComplete
+        ),
+      providerDiagnostics: diagnostics.sort((left, right) => left.provider.localeCompare(right.provider))
     };
   }
 

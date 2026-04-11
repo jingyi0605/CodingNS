@@ -106,9 +106,21 @@ export interface ProviderArchiveUpdateResult {
   isArchived: boolean;
 }
 
+export type ProviderDiscoveryStatus = "success" | "partial" | "failed";
+
+export interface ProviderDiscoveryDiagnostic {
+  provider: ProviderId;
+  status: ProviderDiscoveryStatus;
+  durationMs: number;
+  sessionCount: number;
+  isComplete: boolean;
+  errorMessage?: string | null;
+}
+
 export interface ProviderSessionDiscovery {
   sessions: ProviderSessionSummary[];
   isComplete: boolean;
+  providerDiagnostics?: ProviderDiscoveryDiagnostic[];
 }
 
 export interface DetectSessionsOptions {

@@ -214,6 +214,49 @@ test("OpenCodeAdapter 会用 knownSessions 补回 server 短暂漏掉的会话�
   }
 });
 
+test("OpenCodeAdapter 在 server 请求超时时会回退 sqlite 发现会话", async (context) => {
+  const fixture = createOpenCodeFixture();
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async (_input, init = {}) => {
+    return await new Promise((_resolve, reject) => {
+      const signal = init.signal;
+
+      const abort = () => {
+        const error = new Error("aborted");
+        error.name = "AbortError";
+        reject(error);
+      };
+
+      if (signal?.aborted) {
+        abort();
+        return;
+      }
+
+      signal?.addEventListener("abort", abort, { once: true });
+    });
+  };
+
+  context.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  try {
+    const adapter = new OpenCodeAdapter({
+      baseUrl: "http://127.0.0.1:41827",
+      dbPath: fixture.dbPath,
+      requestTimeoutMs: 5
+    });
+    const discovery = await adapter.detectSessionsDetailed("/workspace/demo");
+
+    assert.equal(discovery.isComplete, true);
+    assert.equal(discovery.sessions.length, 1);
+    assert.equal(discovery.sessions[0]?.providerSessionId, "ses_demo");
+  } finally {
+    fixture.dispose();
+  }
+});
+
 test("OpenCodeAdapter 新建会话时会把 directory 同时写进 query 和 body", async (context) => {
   const originalFetch = globalThis.fetch;
   const requests = [];

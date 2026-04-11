@@ -554,7 +554,7 @@ export class OpenCodeAdapter implements ProviderAdapter {
         isComplete
       };
     } catch (error) {
-      if (isServerUnavailableError(error)) {
+      if (isServerUnavailableError(error) || isServerTimeoutError(error)) {
         return null;
       }
 
@@ -1449,6 +1449,10 @@ async function safeReadResponseText(response: Response): Promise<string> {
 
 function isServerUnavailableError(error: unknown): boolean {
   return error instanceof Error && error.message === "SERVER_UNAVAILABLE";
+}
+
+function isServerTimeoutError(error: unknown): boolean {
+  return error instanceof Error && error.message === "SERVER_TIMEOUT";
 }
 
 function createTimeoutRetryState(): TimeoutRetryState {
