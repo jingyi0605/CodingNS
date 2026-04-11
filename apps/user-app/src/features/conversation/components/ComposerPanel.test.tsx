@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { t } from "../../../shared/i18n";
@@ -116,6 +117,7 @@ const preferenceStoreMock = vi.hoisted(() => ({
 }));
 const mockListQuickPhrases = vi.fn();
 const mockReplaceQuickPhrases = vi.fn();
+const mockGetProviderCapabilities = vi.fn();
 
 vi.mock("../api/conversation-api", async () => {
   const actual = await vi.importActual<typeof import("../api/conversation-api")>(
@@ -124,6 +126,7 @@ vi.mock("../api/conversation-api", async () => {
 
   return {
     ...actual,
+    getProviderCapabilities: (...args: unknown[]) => mockGetProviderCapabilities(...args),
     listQuickPhrases: (...args: unknown[]) => mockListQuickPhrases(...args),
     replaceQuickPhrases: (...args: unknown[]) => mockReplaceQuickPhrases(...args)
   };
@@ -239,6 +242,21 @@ function chooseOption(triggerLabel: string, optionLabel: string) {
   fireEvent.click(screen.getByRole("option", { name: optionLabel }));
 }
 
+function createForkDraft(options?: {
+  sourceProvider?: "codex" | "claude-code" | "opencode";
+  targetProvider?: "codex" | "claude-code" | "opencode";
+  targetModel?: string | null;
+}) {
+  return {
+    sourceMessageId: "assistant-message-1",
+    content: "从这个历史点继续分叉",
+    sourceProvider: options?.sourceProvider ?? ("codex" as const),
+    workspaceId: "workspace-1",
+    targetProvider: options?.targetProvider ?? (options?.sourceProvider ?? ("codex" as const)),
+    targetModel: options?.targetModel ?? null
+  };
+}
+
 describe("ComposerPanel", () => {
   beforeEach(() => {
     localStorage.clear();
@@ -258,6 +276,7 @@ describe("ComposerPanel", () => {
     preferenceStoreMock.isPreferenceProviderId.mockClear();
     mockListQuickPhrases.mockReset();
     mockReplaceQuickPhrases.mockReset();
+    mockGetProviderCapabilities.mockReset();
     mockListQuickPhrases.mockResolvedValue({
       items: [
         {
@@ -280,6 +299,7 @@ describe("ComposerPanel", () => {
         text: item.text
       }))
     }));
+    mockGetProviderCapabilities.mockResolvedValue(createCapabilities());
     Object.defineProperty(URL, "createObjectURL", {
       writable: true,
       value: vi.fn(() => "blob:preview")
@@ -940,6 +960,154 @@ describe("ComposerPanel", () => {
       attachments: [],
       attachmentMeta: []
     });
+  });
+
+  it("fork 引用态默认显示源 CLI 和默认模型，发送时不额外透传工具栏模型与推理等级", async () => {
+    const onSend = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <ComposerPanel
+        capabilities={createCapabilities()}
+        forkDraft={createForkDraft()}
+        onForkDraftChange={vi.fn()}
+        isSubmitting={false}
+        onSend={onSend}
+      />
+    );
+
+    expect(screen.getByRole("button", { name: t("conversation.forkTargetProviderLabel") })).toHaveTextContent("Codex");
+    expect(screen.getByRole("button", { name: t("conversation.forkTargetModelLabel") })).toHaveTextContent("默认");
+
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: {
+        value: "继续这一条分支"
+      }
+    });
+    fireEvent.submit(document.querySelector(".composer-form")!);
+
+    await waitFor(() => {
+      expect(onSend).toHaveBeenCalledTimes(1);
+    });
+    expect(onSend).toHaveBeenCalledWith("继续这一条分支", {
+      model: undefined,
+      reasoningLevel: undefined,
+      attachments: [],
+      attachmentMeta: []
+    });
+  });
+
+  it("fork 引用态只显示当前支持的目标 CLI，不展示不可用 provider", () => {
+    render(
+      <ComposerPanel
+        capabilities={createCapabilities()}
+        forkDraft={createForkDraft()}
+        onForkDraftChange={vi.fn()}
+        isSubmitting={false}
+        onSend={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: t("conversation.forkTargetProviderLabel") }));
+
+    expect(screen.getByRole("option", { name: /Codex/i })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /Claude Code/i })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /OpenCode/i })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /Gemini/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /Kimi/i })).not.toBeInTheDocument();
+  });
+
+  it("切换到其他 CLI 时会先弹确认框，选择保持原生不会改动当前 fork 配置", async () => {
+    function Wrapper() {
+      const [forkDraft, setForkDraft] = useState(createForkDraft());
+
+      return (
+        <div>
+          <div data-testid="fork-target-provider">{forkDraft.targetProvider}</div>
+          <ComposerPanel
+            capabilities={createCapabilities()}
+            forkDraft={forkDraft}
+            onForkDraftChange={(nextDraft) => {
+              if (nextDraft) {
+                setForkDraft(nextDraft as ReturnType<typeof createForkDraft>);
+              }
+            }}
+            isSubmitting={false}
+            onSend={vi.fn().mockResolvedValue(undefined)}
+          />
+        </div>
+      );
+    }
+
+    render(<Wrapper />);
+
+    chooseOption(t("conversation.forkTargetProviderLabel"), "OpenCode");
+
+    expect(screen.getByRole("dialog", { name: t("conversation.forkSwitchConfirmTitle") })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: t("conversation.forkSwitchKeepNative") }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: t("conversation.forkSwitchConfirmTitle") })).not.toBeInTheDocument();
+    });
+    expect(screen.getByTestId("fork-target-provider")).toHaveTextContent("codex");
+  });
+
+  it("确认切换其他 CLI 后会应用目标 provider，并切换到对应模型列表", async () => {
+    mockGetProviderCapabilities.mockResolvedValue(
+      createCapabilities({
+        provider: "opencode",
+        modelOptions: [
+          {
+            id: "provider-default",
+            name: "跟随 OpenCode 默认模型",
+            usesProviderDefault: true
+          },
+          {
+            id: "opencode/gpt-5-nano",
+            name: "opencode/gpt-5-nano"
+          }
+        ]
+      })
+    );
+
+    function Wrapper() {
+      const [forkDraft, setForkDraft] = useState(createForkDraft());
+
+      return (
+        <div>
+          <div data-testid="fork-target-provider">{forkDraft.targetProvider}</div>
+          <div data-testid="fork-target-model">{forkDraft.targetModel ?? ""}</div>
+          <ComposerPanel
+            capabilities={createCapabilities()}
+            forkDraft={forkDraft}
+            onForkDraftChange={(nextDraft) => {
+              if (nextDraft) {
+                setForkDraft(nextDraft as ReturnType<typeof createForkDraft>);
+              }
+            }}
+            isSubmitting={false}
+            onSend={vi.fn().mockResolvedValue(undefined)}
+          />
+        </div>
+      );
+    }
+
+    render(<Wrapper />);
+
+    chooseOption(t("conversation.forkTargetProviderLabel"), "OpenCode");
+    fireEvent.click(screen.getByRole("button", { name: t("conversation.forkSwitchConfirmAction") }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("fork-target-provider")).toHaveTextContent("opencode");
+    });
+    expect(screen.getByTestId("fork-target-model")).toHaveTextContent("");
+    await waitFor(() => {
+      expect(mockGetProviderCapabilities).toHaveBeenCalledWith("opencode", "workspace-1");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: t("conversation.forkTargetModelLabel") }));
+
+    expect(screen.getByRole("option", { name: "默认" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "opencode/gpt-5-nano" })).toBeInTheDocument();
   });
 
   it("没有输入时显示快捷短语按钮，选择短语后会直接填充输入框", async () => {

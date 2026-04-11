@@ -13,6 +13,8 @@ import { isPreferenceProviderId } from "../../../preferences/user-preference-sto
 import { decideCapability } from "../capability/capability-gate";
 import {
   allowsQueueDuringRun,
+  createDraftCapabilities,
+  getProviderDisplayName,
   getProviderFromCapabilities,
   shouldPersistReasoningLevel,
   shouldShowSlashMenu,
@@ -27,7 +29,11 @@ import type {
   ProviderId
 } from "../api/conversation-api";
 import type { PreferenceReasoningLevel as ReasoningLevel } from "../../../preferences/types";
-import { listQuickPhrases, replaceQuickPhrases } from "../api/conversation-api";
+import {
+  getProviderCapabilities,
+  listQuickPhrases,
+  replaceQuickPhrases
+} from "../api/conversation-api";
 import { WorkbenchModal } from "./WorkbenchModal";
 import {
   clearComposerDraftRecord,
@@ -44,9 +50,24 @@ interface ComposerPanelProps {
   placeholder?: string;
   draftStorageId?: string;
   forkDraft?: {
+    sourceMessageId: string;
     content: string;
+    sourceProvider: ProviderId;
+    workspaceId: string;
+    targetProvider: ProviderId;
+    targetModel: string | null;
   } | null;
   onClearForkDraft?: () => void;
+  onForkDraftChange?: (
+    forkDraft: {
+      sourceMessageId: string;
+      content: string;
+      sourceProvider: ProviderId;
+      workspaceId: string;
+      targetProvider: ProviderId;
+      targetModel: string | null;
+    } | null
+  ) => void;
   panelRef?: Ref<HTMLElement>;
   portalContainer?: Element | null;
   hasActiveRun?: boolean | null;
@@ -97,6 +118,23 @@ interface ComposerSelectOption {
 
 const FOCUS_COMPOSER_EVENT = "workbench:focus-composer";
 const PROVIDER_DEFAULT_MODEL_ID = "provider-default";
+const FORK_PROVIDER_IDS: ProviderId[] = [
+  "codex",
+  "claude-code",
+  "opencode",
+  "gemini",
+  "kimi"
+];
+const RECONSTRUCTED_FORK_TARGET_PROVIDERS = new Set<ProviderId>([
+  "codex",
+  "claude-code",
+  "opencode"
+]);
+const NATIVE_FORK_PROVIDERS = new Set<ProviderId>([
+  "codex",
+  "claude-code",
+  "opencode"
+]);
 const HIDDEN_FILE_INPUT_STYLE: CSSProperties = {
   position: "absolute",
   width: "1px",
@@ -203,6 +241,21 @@ function buildForkDraftPreview(content: string): string {
   return normalized.length > 140 ? `${normalized.slice(0, 140)}…` : normalized;
 }
 
+function resolveForkProviderDisabledReason(
+  sourceProvider: ProviderId,
+  candidateProvider: ProviderId
+): string | null {
+  if (candidateProvider === sourceProvider) {
+    return NATIVE_FORK_PROVIDERS.has(candidateProvider)
+      ? null
+      : t("conversation.forkProviderNativeUnsupported");
+  }
+
+  return RECONSTRUCTED_FORK_TARGET_PROVIDERS.has(candidateProvider)
+    ? null
+    : t("conversation.forkProviderReconstructedUnsupported");
+}
+
 function toAttachmentMeta(file: File, id: string): MessageAttachmentDto {
   return {
     id,
@@ -290,6 +343,7 @@ export function ComposerPanel({
   draftStorageId,
   forkDraft = null,
   onClearForkDraft,
+  onForkDraftChange,
   panelRef,
   portalContainer = null,
   hasActiveRun = null,
@@ -318,6 +372,9 @@ export function ComposerPanel({
   const [showSlashMenu, setShowSlashMenu] = useState(false);
   const [interrupting, setInterrupting] = useState(false);
   const [localSubmitting, setLocalSubmitting] = useState(false);
+  const [forkCapabilities, setForkCapabilities] = useState<ProviderCapabilitiesDto | null>(null);
+  const [forkCapabilitiesLoading, setForkCapabilitiesLoading] = useState(false);
+  const [pendingCrossProvider, setPendingCrossProvider] = useState<ProviderId | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const libraryInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -417,6 +474,73 @@ export function ComposerPanel({
   );
   const inRunInputMode = capabilities?.inRunInputMode ?? "none";
   const hasForkDraft = Boolean(forkDraft);
+  const activeForkProvider = forkDraft?.targetProvider ?? null;
+  const shouldReuseSessionCapabilitiesForFork =
+    Boolean(forkDraft) && capabilities?.provider === activeForkProvider;
+  const effectiveForkCapabilities = useMemo(() => {
+    if (!forkDraft) {
+      return null;
+    }
+
+    if (shouldReuseSessionCapabilitiesForFork) {
+      return capabilities;
+    }
+
+    return forkCapabilities ?? createDraftCapabilities(forkDraft.targetProvider);
+  }, [capabilities, forkCapabilities, forkDraft, shouldReuseSessionCapabilitiesForFork]);
+  const forkAvailableModels = useMemo<ModelOption[]>(() => {
+    if (!forkDraft) {
+      return [];
+    }
+
+    const providerModels = effectiveForkCapabilities?.modelOptions?.map((model) => ({
+      ...model,
+      provider: forkDraft.targetProvider,
+      supportedReasoningEfforts: model.supportedReasoningEfforts?.filter(
+        (effort): effort is ReasoningLevel =>
+          effort === "low" || effort === "medium" || effort === "high" || effort === "xhigh"
+      )
+    }));
+
+    if (providerModels?.length) {
+      return providerModels;
+    }
+
+    return getFallbackModelOptions(forkDraft.targetProvider);
+  }, [effectiveForkCapabilities?.modelOptions, forkDraft]);
+  const forkModelSelectOptions = useMemo<ComposerSelectOption[]>(
+    () =>
+      forkAvailableModels.map((model) => ({
+        value: model.id,
+        label: isProviderDefaultModel(model) ? t("conversation.modelUseCliDefault") : model.name
+      })),
+    [forkAvailableModels]
+  );
+  const forkSelectedModelId = useMemo(() => {
+    if (!forkDraft || !forkDraft.targetModel) {
+      return PROVIDER_DEFAULT_MODEL_ID;
+    }
+
+    return forkAvailableModels.some((model) => model.id === forkDraft.targetModel)
+      ? forkDraft.targetModel
+      : PROVIDER_DEFAULT_MODEL_ID;
+  }, [forkAvailableModels, forkDraft]);
+  const visibleForkProviders = useMemo(() => {
+    if (!forkDraft) {
+      return [];
+    }
+
+    return FORK_PROVIDER_IDS.filter(
+      (candidateProvider) =>
+        resolveForkProviderDisabledReason(forkDraft.sourceProvider, candidateProvider) === null
+    );
+  }, [forkDraft]);
+  const forkProviderSelectOptions = useMemo<ComposerSelectOption[]>(() => {
+    return visibleForkProviders.map((providerId) => ({
+      value: providerId,
+      label: getProviderDisplayName(providerId, "full")
+    }));
+  }, [visibleForkProviders]);
   const runHasActiveFlag = hasActiveRun ?? null;
   const isUnmanagedStreamingRun =
     isRunning &&
@@ -893,6 +1017,114 @@ export function ComposerPanel({
     };
   }, []);
 
+  useEffect(() => {
+    if (!forkDraft) {
+      setForkCapabilities(null);
+      setForkCapabilitiesLoading(false);
+      setPendingCrossProvider(null);
+      return;
+    }
+
+    if (shouldReuseSessionCapabilitiesForFork) {
+      setForkCapabilities(null);
+      setForkCapabilitiesLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    setForkCapabilities(createDraftCapabilities(forkDraft.targetProvider));
+    setForkCapabilitiesLoading(true);
+
+    void getProviderCapabilities(forkDraft.targetProvider, forkDraft.workspaceId)
+      .then((nextCapabilities) => {
+        if (cancelled) {
+          return;
+        }
+
+        setForkCapabilities(nextCapabilities);
+      })
+      .catch(() => {
+        if (cancelled) {
+          return;
+        }
+
+        setForkCapabilities(createDraftCapabilities(forkDraft.targetProvider));
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setForkCapabilitiesLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [forkDraft?.targetProvider, forkDraft?.workspaceId, shouldReuseSessionCapabilitiesForFork]);
+
+  useEffect(() => {
+    if (!forkDraft || !forkDraft.targetModel || !onForkDraftChange) {
+      return;
+    }
+
+    if (forkAvailableModels.some((model) => model.id === forkDraft.targetModel)) {
+      return;
+    }
+
+    onForkDraftChange({
+      ...forkDraft,
+      targetModel: null
+    });
+  }, [forkAvailableModels, forkDraft, onForkDraftChange]);
+
+  const handleForkProviderSelect = useCallback((nextProvider: ProviderId) => {
+    if (!forkDraft || !onForkDraftChange || nextProvider === forkDraft.targetProvider) {
+      return;
+    }
+
+    if (
+      nextProvider !== forkDraft.sourceProvider
+      && forkDraft.targetProvider === forkDraft.sourceProvider
+    ) {
+      setPendingCrossProvider(nextProvider);
+      return;
+    }
+
+    onForkDraftChange({
+      ...forkDraft,
+      targetProvider: nextProvider,
+      targetModel: null
+    });
+  }, [forkDraft, onForkDraftChange]);
+
+  const handleForkModelChange = useCallback((modelId: string) => {
+    if (!forkDraft || !onForkDraftChange) {
+      return;
+    }
+
+    onForkDraftChange({
+      ...forkDraft,
+      targetModel: modelId === PROVIDER_DEFAULT_MODEL_ID ? null : modelId
+    });
+  }, [forkDraft, onForkDraftChange]);
+
+  const handleConfirmCrossProvider = useCallback(() => {
+    if (!forkDraft || !pendingCrossProvider || !onForkDraftChange) {
+      return;
+    }
+
+    onForkDraftChange({
+      ...forkDraft,
+      targetProvider: pendingCrossProvider,
+      targetModel: null
+    });
+    setPendingCrossProvider(null);
+  }, [forkDraft, onForkDraftChange, pendingCrossProvider]);
+
+  const handleKeepNativeFork = useCallback(() => {
+    setPendingCrossProvider(null);
+  }, []);
+
   async function submitMessage(mode: "send" | "queue"): Promise<void> {
     // 发送状态依赖父组件异步回流，这里额外加一层同步锁，防止双击和连按 Enter。
     if (submitLockRef.current) {
@@ -941,9 +1173,18 @@ export function ComposerPanel({
           : onSend;
 
       await sendHandler(nextContent, {
-        model: selectedModelOption?.usesProviderDefault ? undefined : selectedModel || undefined,
+        model:
+          hasForkDraft
+            ? undefined
+            : selectedModelOption?.usesProviderDefault
+              ? undefined
+              : selectedModel || undefined,
         reasoningLevel:
-          reasoningSelectorEnabled && availableReasoningLevels.length > 0 ? reasoningLevel : undefined,
+          hasForkDraft
+            ? undefined
+            : reasoningSelectorEnabled && availableReasoningLevels.length > 0
+              ? reasoningLevel
+              : undefined,
         attachments: payloads,
         attachmentMeta
       });
@@ -1006,6 +1247,7 @@ export function ComposerPanel({
     inRunSendBlocked ||
     !attachmentDecision.allowed;
   const showQuickPhraseButton = content.length === 0 && !inRunSendBlocked;
+  const forkControlDisabled = localSubmitting || isSubmitting || !onForkDraftChange;
 
   const contentNode = (
     <section ref={panelRef} className="composer-panel">
@@ -1035,13 +1277,43 @@ export function ComposerPanel({
         <div className="composer-input-container">
           {forkDraft ? (
             <div className="composer-fork-draft">
-              <div className="composer-fork-draft-copy">
-                <span className="composer-fork-draft-label">
-                  {t("conversation.forkDraftLabel")}
-                </span>
-                <span className="composer-fork-draft-text">
-                  {buildForkDraftPreview(forkDraft.content)}
-                </span>
+              <div className="composer-fork-draft-main">
+                <div className="composer-fork-draft-copy">
+                  <span className="composer-fork-draft-label">
+                    {t("conversation.forkDraftLabel")}
+                  </span>
+                  <span className="composer-fork-draft-text">
+                    {buildForkDraftPreview(forkDraft.content)}
+                  </span>
+                </div>
+                <div className="composer-fork-config">
+                  <div className="composer-fork-config-grid">
+                    <div className="composer-fork-field">
+                      <span className="composer-fork-model-label">
+                        {t("conversation.forkTargetProviderLabel")}
+                      </span>
+                      <MacSelect
+                        ariaLabel={t("conversation.forkTargetProviderLabel")}
+                        value={forkDraft.targetProvider}
+                        options={forkProviderSelectOptions}
+                        onChange={(value) => handleForkProviderSelect(value as ProviderId)}
+                        compact
+                      />
+                    </div>
+                    <div className="composer-fork-field">
+                      <span className="composer-fork-model-label">
+                        {t("conversation.forkTargetModelLabel")}
+                      </span>
+                      <MacSelect
+                        ariaLabel={t("conversation.forkTargetModelLabel")}
+                        value={forkSelectedModelId}
+                        options={forkModelSelectOptions}
+                        onChange={handleForkModelChange}
+                        compact
+                      />
+                    </div>
+                  </div>
+                </div>
               </div>
               {onClearForkDraft ? (
                 <button
@@ -1215,15 +1487,16 @@ export function ComposerPanel({
                   </label>
                 )
               ) : null}
+              {!hasForkDraft ? (
+                <MacSelect
+                  ariaLabel={t("conversation.modelSelectorLabel")}
+                  value={selectedModel}
+                  options={modelSelectOptions}
+                  onChange={handleModelChange}
+                />
+              ) : null}
 
-              <MacSelect
-                ariaLabel={t("conversation.modelSelectorLabel")}
-                value={selectedModel}
-                options={modelSelectOptions}
-                onChange={handleModelChange}
-              />
-
-              {reasoningSelectorEnabled && availableReasoningLevels.length > 0 ? (
+              {!hasForkDraft && reasoningSelectorEnabled && availableReasoningLevels.length > 0 ? (
                 <MacSelect
                   ariaLabel={t("conversation.reasoningSelectorLabel")}
                   value={reasoningLevel}
@@ -1431,6 +1704,61 @@ export function ComposerPanel({
           </div>
         </div>
       </WorkbenchModal>
+      <WorkbenchModal
+        open={pendingCrossProvider !== null}
+        title={t("conversation.forkSwitchConfirmTitle")}
+        description={t("conversation.forkSwitchConfirmDescription")}
+        className="composer-fork-confirm-modal"
+        onClose={handleKeepNativeFork}
+      >
+        <div className="composer-fork-confirm-body">
+          <div className="composer-fork-confirm-list">
+            <div className="composer-fork-confirm-item">
+              <span className="composer-fork-confirm-icon is-keep" aria-hidden="true">
+                <ForkKeepIcon />
+              </span>
+              <div className="composer-fork-confirm-copy">
+                <strong>{t("conversation.forkSwitchConfirmKeepTitle")}</strong>
+                <p>{t("conversation.forkSwitchConfirmKeepBody")}</p>
+              </div>
+            </div>
+            <div className="composer-fork-confirm-item">
+              <span className="composer-fork-confirm-icon is-convert" aria-hidden="true">
+                <ForkConvertIcon />
+              </span>
+              <div className="composer-fork-confirm-copy">
+                <strong>{t("conversation.forkSwitchConfirmConvertTitle")}</strong>
+                <p>{t("conversation.forkSwitchConfirmConvertBody")}</p>
+              </div>
+            </div>
+            <div className="composer-fork-confirm-item">
+              <span className="composer-fork-confirm-icon is-drop" aria-hidden="true">
+                <ForkDropIcon />
+              </span>
+              <div className="composer-fork-confirm-copy">
+                <strong>{t("conversation.forkSwitchConfirmDropTitle")}</strong>
+                <p>{t("conversation.forkSwitchConfirmDropBody")}</p>
+              </div>
+            </div>
+          </div>
+          <div className="workbench-modal-actions">
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={handleKeepNativeFork}
+            >
+              {t("conversation.forkSwitchKeepNative")}
+            </button>
+            <button
+              type="button"
+              className="primary-button"
+              onClick={handleConfirmCrossProvider}
+            >
+              {t("conversation.forkSwitchConfirmAction")}
+            </button>
+          </div>
+        </div>
+      </WorkbenchModal>
       <AttachmentSourceSheet
         open={attachmentSheetOpen && platform.isNativeMobile}
         onClose={() => setAttachmentSheetOpen(false)}
@@ -1533,6 +1861,37 @@ function LibraryIcon() {
       <rect x="4" y="4" width="16" height="16" rx="2.5" />
       <path d="m7.5 15 3-3 2.5 2.5 3-4L18 13.5" />
       <circle cx="8.75" cy="8.75" r="1.25" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+function ForkKeepIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9">
+      <path d="M12 3 4 7v5c0 5 3.5 8 8 9 4.5-1 8-4 8-9V7l-8-4Z" />
+      <path d="m9.5 12 1.8 1.8L15 10.2" />
+    </svg>
+  );
+}
+
+function ForkConvertIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9">
+      <path d="M4 7h9" />
+      <path d="m10 3 4 4-4 4" />
+      <path d="M20 17h-9" />
+      <path d="m14 13-4 4 4 4" />
+    </svg>
+  );
+}
+
+function ForkDropIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9">
+      <path d="m7 7 10 10" />
+      <path d="M17 7 7 17" />
+      <path d="M12 3v2" />
+      <path d="M12 19v2" />
     </svg>
   );
 }
