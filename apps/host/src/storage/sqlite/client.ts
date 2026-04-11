@@ -280,6 +280,14 @@ function ensureSessionStateSchema(db: Database.Database): void {
 }
 
 function ensureSessionForkSchema(db: Database.Database): void {
+  const tableSql = db
+    .prepare(
+      `SELECT sql
+       FROM sqlite_master
+       WHERE type = 'table'
+         AND name = 'session_forks'`
+    )
+    .get() as { sql?: string | null } | undefined;
   const columns = db
     .prepare("PRAGMA table_info(session_forks)")
     .all() as Array<{ name: string }>;
@@ -302,6 +310,7 @@ function ensureSessionForkSchema(db: Database.Database): void {
     && columnNames.has("provider_source_message_id")
     && columnNames.has("fork_method")
     && columnNames.has("created_at")
+    && tableSql?.sql?.includes("'reconstructed_session_fork'")
   ) {
     return;
   }
@@ -330,6 +339,7 @@ function ensureSessionForkSchema(db: Database.Database): void {
         fork_method IN (
           'native_session_fork',
           'native_message_fork',
+          'reconstructed_session_fork',
           'reconstructed_message_fork'
         )
       ),
@@ -399,6 +409,12 @@ function ensureSessionRelationColumns(db: Database.Database): void {
 
   if (!columnNames.has("parent_session_id")) {
     db.exec("ALTER TABLE session_indices ADD COLUMN parent_session_id TEXT");
+  }
+
+  if (!columnNames.has("session_kind")) {
+    db.exec(
+      "ALTER TABLE session_indices ADD COLUMN session_kind TEXT NOT NULL DEFAULT 'default' CHECK (session_kind IN ('default', 'annotation'))"
+    );
   }
 
   if (!columnNames.has("is_subagent")) {

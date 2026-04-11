@@ -77,6 +77,7 @@ export interface SessionIndexRecord {
   workspaceId: string;
   provider: ProviderId;
   parentSessionId?: string | null;
+  sessionKind?: "default" | "annotation";
   isSubagent?: boolean;
   subagentLabel?: string | null;
   title: string;
@@ -191,6 +192,7 @@ export interface SessionListItem {
   providerSessionId: string;
   rawStoreRef: string;
   parentSessionId?: string | null;
+  sessionKind?: "default" | "annotation";
   forkMethod?: ForkMethod | null;
   forkSourceType?: ForkSourceType | null;
   forkSourceSessionId?: string | null;

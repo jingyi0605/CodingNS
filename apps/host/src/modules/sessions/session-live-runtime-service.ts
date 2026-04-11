@@ -1462,6 +1462,10 @@ export class SessionLiveRuntimeService {
       const capabilities = await this.sessionHistoryService.getSessionCapabilities(input.sessionId);
       const workspace = this.workspaceService.getWorkspaceOrThrow(session.workspaceId);
       const runtimeMode = shouldStartNativeSessionOnFirstMessage(session);
+      const syntheticForkRawStoreRef =
+        runtimeMode === "start" && shouldResumeCodexSyntheticForkSession(session)
+          ? session.rawStoreRef
+          : null;
       const nextUserSequence =
         runtimeMode === "start"
           ? 1
@@ -1487,7 +1491,7 @@ export class SessionLiveRuntimeService {
         workspacePath: workspace.path,
         provider: session.provider,
         providerSessionId: runtimeMode === "start" ? null : session.providerSessionId,
-        rawStoreRef: runtimeMode === "start" ? null : session.rawStoreRef,
+        rawStoreRef: runtimeMode === "start" ? syntheticForkRawStoreRef : session.rawStoreRef,
         sequenceBase: nextUserSequence,
         options: {
           content: input.content,
@@ -2785,6 +2789,10 @@ function shouldStartNativeSessionOnFirstMessage(session: {
     return "continue";
   }
 
+  if (session.provider === "codex" && session.providerSessionId.startsWith("rollout-")) {
+    return "start";
+  }
+
   if (session.messageCount > 0) {
     return "continue";
   }
@@ -2794,6 +2802,20 @@ function shouldStartNativeSessionOnFirstMessage(session: {
   )
     ? "continue"
     : "start";
+}
+
+function shouldResumeCodexSyntheticForkSession(session: {
+  provider: string;
+  providerSessionId: string;
+  messageCount: number;
+  rawStoreRef?: string | null;
+}): boolean {
+  return (
+    session.provider === "codex"
+    && session.messageCount > 0
+    && session.providerSessionId.startsWith("rollout-")
+    && Boolean(session.rawStoreRef?.trim())
+  );
 }
 
 function isActiveRuntimeState(state: RuntimeRunState | SessionRunningState): boolean {

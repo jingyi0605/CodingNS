@@ -76,6 +76,7 @@ CREATE TABLE IF NOT EXISTS session_indices (
   workspace_id TEXT NOT NULL,
   provider TEXT NOT NULL,
   parent_session_id TEXT,
+  session_kind TEXT NOT NULL DEFAULT 'default' CHECK (session_kind IN ('default', 'annotation')),
   is_subagent INTEGER NOT NULL DEFAULT 0 CHECK (is_subagent IN (0, 1)),
   subagent_label TEXT,
   title TEXT NOT NULL,
@@ -104,6 +105,7 @@ CREATE TABLE IF NOT EXISTS session_forks (
     fork_method IN (
       'native_session_fork',
       'native_message_fork',
+      'reconstructed_session_fork',
       'reconstructed_message_fork'
     )
   ),

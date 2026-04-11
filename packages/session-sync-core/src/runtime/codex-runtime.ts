@@ -14,7 +14,8 @@ import {
   extractTextBlocks,
   messageIdFromRawRef,
   nextTimestamp,
-  normalizeWorkspacePath
+  normalizeWorkspacePath,
+  readJsonLines
 } from "../providers/utils.js";
 import { loadDatabaseSync, type DatabaseSyncType } from "../sqlite/node-sqlite.js";
 import { createCodexThreadPermissionOptions } from "./codex-permissions.js";
@@ -158,6 +159,15 @@ export interface CodexAppServerTransport {
     providerSessionId: string;
     rawStoreRef: string | null;
   }>;
+  resumeThreadFromHistory(input: {
+    providerSessionId?: string | null;
+    workspacePath: string;
+    history: unknown[];
+    model?: string | null;
+  }): Promise<{
+    providerSessionId: string;
+    rawStoreRef: string | null;
+  }>;
   startTurn(request: ProviderRuntimeRunRequest, providerSessionId: string): Promise<void>;
   interruptTurn(): Promise<void>;
   setNotificationHandler(handler: (notification: Record<string, unknown>) => void | Promise<void>): void;
@@ -189,18 +199,26 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
     });
     const abortController = new AbortController();
     const eventQueue = createAsyncEventQueue();
-    const startThreadStartedAtMs = performance.now();
-    const startedSession = await transport.startThread(request);
-    logCodexRuntimeStep("start_session.thread_start", startThreadStartedAtMs, {
-      sessionId: request.sessionId,
-      providerSessionId: startedSession.providerSessionId
-    });
+    const resumedSyntheticSession = await this.resumeSyntheticThreadFromHistory(transport, request);
+    const startedSession =
+      resumedSyntheticSession ??
+      await (async () => {
+        const startThreadStartedAtMs = performance.now();
+        const started = await transport.startThread(request);
+        logCodexRuntimeStep("start_session.thread_start", startThreadStartedAtMs, {
+          sessionId: request.sessionId,
+          providerSessionId: started.providerSessionId
+        });
+        return started;
+      })();
     const providerSessionId = startedSession.providerSessionId;
     const syntheticRawStoreRef = buildRuntimeRawStoreRef(
       resolveRuntimeStoreKey(providerSessionId, request.sessionId)
     );
     const rawStoreRef = pickAvailableCodexRawStoreRef(
-      [startedSession.rawStoreRef, request.rawStoreRef],
+      resumedSyntheticSession
+        ? [resumedSyntheticSession.rawStoreRef]
+        : [startedSession.rawStoreRef, request.rawStoreRef],
       syntheticRawStoreRef
     );
     logCodexRuntimeStep("start_session.raw_store_ref_ready", launchPerfStartedAtMs, {
@@ -298,6 +316,31 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
         transport.close();
       })
     };
+  }
+
+  private async resumeSyntheticThreadFromHistory(
+    transport: CodexAppServerTransport,
+    request: ProviderRuntimeRunRequest
+  ): Promise<{ providerSessionId: string; rawStoreRef: string | null } | null> {
+    const history = buildSyntheticResumeHistory(request.rawStoreRef);
+
+    if (history.length === 0) {
+      return null;
+    }
+
+    const resumeStartedAtMs = performance.now();
+    const resumed = await transport.resumeThreadFromHistory({
+      providerSessionId: null,
+      workspacePath: request.workspacePath,
+      history,
+      model: request.options.model
+    });
+    logCodexRuntimeStep("start_session.thread_resume_from_history", resumeStartedAtMs, {
+      sessionId: request.sessionId,
+      providerSessionId: resumed.providerSessionId,
+      messageCount: history.length
+    });
+    return resumed;
   }
 
   async continueSession(
@@ -1323,6 +1366,34 @@ function createCodexAppServerTransport(options: CodexRuntimeOptions): CodexAppSe
         rawStoreRef: normalizeText(thread?.path) || null
       };
     },
+    async resumeThreadFromHistory(input) {
+      const startedAtMs = performance.now();
+      const result = await sendJsonRpcRequest(
+        child,
+        pendingResponses,
+        () => nextJsonRpcId("thread-resume-history", () => ++requestSequence),
+        {
+          method: "thread/resume",
+          params: createThreadResumeWithHistoryParams(input)
+        }
+      );
+      const thread = toRecord(result.thread);
+      const providerSessionId = ensureText(thread?.id).trim();
+
+      if (!providerSessionId) {
+        throw new Error("CODEX_APP_SERVER_THREAD_ID_MISSING");
+      }
+
+      activeThreadId = providerSessionId;
+      logCodexRuntimeStep("transport.thread_resume_from_history", startedAtMs, {
+        providerSessionId
+      });
+
+      return {
+        providerSessionId,
+        rawStoreRef: normalizeText(thread?.path) || null
+      };
+    },
     async startTurn(request, providerSessionId) {
       const startedAtMs = performance.now();
       const result = await sendJsonRpcRequest(
@@ -1762,6 +1833,29 @@ function createThreadResumeParams(
   return params;
 }
 
+function createThreadResumeWithHistoryParams(input: {
+  providerSessionId?: string | null;
+  workspacePath: string;
+  history: unknown[];
+  model?: string | null;
+}): Record<string, unknown> {
+  const params: Record<string, unknown> = {
+    threadId:
+      input.providerSessionId && input.providerSessionId.trim().length > 0
+        ? input.providerSessionId.trim()
+        : "__history_resume__",
+    cwd: input.workspacePath,
+    history: input.history,
+    approvalsReviewer: "user"
+  };
+
+  if (input.model) {
+    params.model = input.model;
+  }
+
+  return params;
+}
+
 function createTurnStartParams(
   request: ProviderRuntimeRunRequest,
   providerSessionId: string
@@ -2081,6 +2175,90 @@ function resolveResumeThreadId(
   }
 
   return null;
+}
+
+function buildSyntheticResumeHistory(rawStoreRef: string | null): Array<Record<string, unknown>> {
+  const filePath = ensureText(rawStoreRef).trim();
+
+  if (!filePath || !existsSync(filePath)) {
+    return [];
+  }
+
+  const threadId = readThreadIdFromRawStore(filePath);
+
+  if (!threadId || looksLikeCodexThreadId(threadId)) {
+    return [];
+  }
+
+  const history: Array<Record<string, unknown>> = [];
+
+  for (const recordEntry of readJsonLines(filePath)) {
+    const record = toRecord(recordEntry.data) ?? {};
+    const recordType = ensureText(record.type).trim();
+
+    if (recordType === "event_msg") {
+      const payload = toRecord(record.payload) ?? {};
+      const eventType = ensureText(payload.type).trim();
+      const content = ensureText(payload.message).trim();
+
+      if (content.length === 0) {
+        continue;
+      }
+
+      if (eventType === "user_message") {
+        history.push(createResumeHistoryMessage("user", content));
+        continue;
+      }
+
+      if (eventType === "agent_message") {
+        history.push(createResumeHistoryMessage("assistant", content));
+      }
+
+      continue;
+    }
+
+    if (recordType !== "response_item") {
+      continue;
+    }
+
+    const payload = toRecord(record.payload) ?? {};
+
+    if (ensureText(payload.type).trim() !== "message") {
+      continue;
+    }
+
+    const role = ensureText(payload.role).trim();
+
+    if (role !== "user" && role !== "assistant") {
+      continue;
+    }
+
+    const content = extractTextBlocks(payload.content).trim();
+
+    if (content.length === 0) {
+      continue;
+    }
+
+    history.push(createResumeHistoryMessage(role, content));
+  }
+
+  return history;
+}
+
+function createResumeHistoryMessage(
+  role: "user" | "assistant",
+  content: string
+): Record<string, unknown> {
+  return {
+    type: "message",
+    role,
+    content: [
+      {
+        type: role === "user" ? "input_text" : "output_text",
+        text: content
+      }
+    ]
+  };
 }
 
 function readProp(value: unknown, key: string): unknown {

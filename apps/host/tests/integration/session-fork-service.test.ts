@@ -12,6 +12,7 @@ import { SessionActivityAuthorityService } from "../../src/modules/sessions/sess
 import { SessionChangedFileService } from "../../src/modules/sessions/session-changed-file-service.js";
 import { SessionHistoryService } from "../../src/modules/sessions/session-history-service.js";
 import { SessionMessageAttachmentService } from "../../src/modules/sessions/session-message-attachment-service.js";
+import { AppError } from "../../src/shared/errors/app-error.js";
 import { SessionBindingRepository } from "../../src/storage/repositories/session-binding-repository.js";
 import { SessionChangedFileRepository } from "../../src/storage/repositories/session-changed-file-repository.js";
 import { SessionIndexRepository } from "../../src/storage/repositories/session-index-repository.js";
@@ -68,12 +69,16 @@ describe("SessionHistoryService forkSession", () => {
         ["assistant", "父会话回复"]
       ]
     );
+    let forkCount = 0;
     const transportFactory = vi.fn<() => CodexForkTransport>(() => ({
       initialize: vi.fn(async () => {}),
-      forkThread: vi.fn(async () => ({
-        providerSessionId: "child-thread",
+      forkThread: vi.fn(async () => {
+        forkCount += 1;
+        return {
+        providerSessionId: `child-thread-${forkCount}`,
         rawStoreRef: childFile
-      })),
+      };
+      }),
       readThread: vi.fn(async () => ({ history: [] })),
       rollbackThread: vi.fn(async () => ({
         providerSessionId: "child-thread",
@@ -239,6 +244,75 @@ describe("SessionHistoryService forkSession", () => {
     });
   });
 
+  it("跨 provider fork 会走重建链路，并把子会话绑定到目标 provider", async () => {
+    const fixture = createEmptyFixture();
+    activeFixtures.push(fixture);
+
+    const sourceFile = createCodexSessionFile(
+      fixture.codexHomeDir,
+      fixture.workspaceDir,
+      "source-thread",
+      [
+        ["user", "先整理当前实现的风险点。"],
+        ["assistant", "已经列出三类风险。"],
+        ["user", "换个 provider 继续拆方案。"]
+      ]
+    );
+    const {
+      service,
+      sessionForkRepository,
+      repos
+    } = createSessionHistoryHarness(fixture, () => ({
+      initialize: vi.fn(async () => {}),
+      forkThread: vi.fn(async () => {
+        throw new Error("should not use native transport");
+      }),
+      readThread: vi.fn(async () => ({ history: [] })),
+      rollbackThread: vi.fn(async () => {
+        throw new Error("should not use native transport");
+      }),
+      resumeThreadFromHistory: vi.fn(async () => {
+        throw new Error("should not use native transport");
+      }),
+      close: vi.fn()
+    }));
+
+    seedSourceSession(repos, sourceFile, 3);
+    const page = await service.readSessionHistory("source-session", null, 50, "forward", "user-1");
+    const anchorMessageId = page.messages[1]?.messageId;
+
+    expect(anchorMessageId).toBeTruthy();
+
+    const forked = await service.forkSession({
+      sessionId: "source-session",
+      userId: "user-1",
+      sourceType: "message",
+      sourceMessageId: anchorMessageId,
+      strategy: "auto",
+      targetProvider: "claude-code"
+    });
+
+    expect(forked.provider).toBe("claude-code");
+    expect(forked.parentSessionId).toBe("source-session");
+    expect(forked.forkMethod).toBe("reconstructed_message_fork");
+    expect(sessionForkRepository.findBySessionId(forked.sessionId)).toMatchObject({
+      sessionId: forked.sessionId,
+      parentSessionId: "source-session",
+      provider: "claude-code",
+      forkSourceType: "message",
+      forkSourceMessageId: anchorMessageId,
+      inheritedPrefixMessageCount: 2,
+      providerParentSessionId: "source-thread",
+      forkMethod: "reconstructed_message_fork"
+    });
+
+    const accepted = await service.sendMessage(forked.sessionId, "在这条新分支里继续展开。", null);
+
+    expect(accepted.sessionId).toBe(forked.sessionId);
+    expect(accepted.message.provider).toBe("claude-code");
+    expect(accepted.message.content).toBe("在这条新分支里继续展开。");
+  });
+
   it("workspace discover 刷新后仍会保留 fork 子会话的本地父子关系和标题", async () => {
     const fixture = createEmptyFixture();
     activeFixtures.push(fixture);
@@ -394,6 +468,88 @@ describe("SessionHistoryService forkSession", () => {
 
     expect(accepted.message.content).toBe("帮我继续改写成正式版本");
     expect(updatedFork.title).toBe("帮我继续改写成正式版本");
+  });
+
+  it("fork 会话深度超过 4 级时会拒绝继续分叉", async () => {
+    const fixture = createEmptyFixture();
+    activeFixtures.push(fixture);
+
+    const sourceFile = createCodexSessionFile(
+      fixture.codexHomeDir,
+      fixture.workspaceDir,
+      "source-thread",
+      [
+        ["user", "父会话第一条"],
+        ["assistant", "父会话回复"]
+      ]
+    );
+    const childFile = createCodexSessionFile(
+      fixture.codexHomeDir,
+      fixture.workspaceDir,
+      "child-thread",
+      [
+        ["user", "父会话第一条"],
+        ["assistant", "父会话回复"]
+      ]
+    );
+    let forkCount = 0;
+    const transportFactory = vi.fn<() => CodexForkTransport>(() => ({
+      initialize: vi.fn(async () => {}),
+      forkThread: vi.fn(async () => {
+        forkCount += 1;
+        return {
+          providerSessionId: `child-thread-${forkCount}`,
+          rawStoreRef: childFile
+        };
+      }),
+      readThread: vi.fn(async () => ({ history: [] })),
+      rollbackThread: vi.fn(async () => ({
+        providerSessionId: `child-thread-${forkCount}`,
+        rawStoreRef: childFile
+      })),
+      resumeThreadFromHistory: vi.fn(async () => ({
+        providerSessionId: "unused",
+        rawStoreRef: null
+      })),
+      close: vi.fn()
+    }));
+    const {
+      service,
+      repos
+    } = createSessionHistoryHarness(fixture, transportFactory);
+
+    seedSourceSession(repos, sourceFile, 2);
+
+    const level2 = await service.forkSession({
+      sessionId: "source-session",
+      userId: "user-1",
+      sourceType: "session",
+      strategy: "auto"
+    });
+    const level3 = await service.forkSession({
+      sessionId: level2.sessionId,
+      userId: "user-1",
+      sourceType: "session",
+      strategy: "auto"
+    });
+    const level4 = await service.forkSession({
+      sessionId: level3.sessionId,
+      userId: "user-1",
+      sourceType: "session",
+      strategy: "auto"
+    });
+
+    await expect(
+      service.forkSession({
+        sessionId: level4.sessionId,
+        userId: "user-1",
+        sourceType: "session",
+        strategy: "auto"
+      })
+    ).rejects.toMatchObject<AppError>({
+      statusCode: 409,
+      errorCode: "FORK_DEPTH_LIMIT_EXCEEDED"
+    });
   });
 });
 

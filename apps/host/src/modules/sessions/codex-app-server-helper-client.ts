@@ -168,6 +168,9 @@ export class CodexAppServerHelperClient {
       input: {
         request?: ProviderRuntimeRunRequest;
         providerSessionId?: string;
+        workspacePath?: string;
+        history?: unknown[];
+        model?: string | null;
       } = {}
     ): Promise<Record<string, unknown>> => {
       if (state.closed) {
@@ -215,6 +218,18 @@ export class CodexAppServerHelperClient {
         });
         return {
           providerSessionId: String(result.providerSessionId ?? providerSessionId),
+          rawStoreRef: normalizeNullableString(result.rawStoreRef)
+        };
+      },
+      async resumeThreadFromHistory(input) {
+        const result = await request("resumeThreadFromHistory", {
+          providerSessionId: input.providerSessionId ?? undefined,
+          workspacePath: input.workspacePath,
+          history: input.history,
+          model: input.model ?? null
+        });
+        return {
+          providerSessionId: String(result.providerSessionId ?? ""),
           rawStoreRef: normalizeNullableString(result.rawStoreRef)
         };
       },

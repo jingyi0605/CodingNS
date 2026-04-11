@@ -13,6 +13,7 @@ export class SessionIndexRepository {
            workspace_id,
            provider,
            parent_session_id,
+           session_kind,
            is_subagent,
            subagent_label,
            title,
@@ -21,11 +22,12 @@ export class SessionIndexRepository {
            last_message_at,
            created_at,
            updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(session_id) DO UPDATE SET
            workspace_id = excluded.workspace_id,
            provider = excluded.provider,
            parent_session_id = excluded.parent_session_id,
+           session_kind = excluded.session_kind,
            is_subagent = excluded.is_subagent,
            subagent_label = excluded.subagent_label,
            title = excluded.title,
@@ -39,6 +41,7 @@ export class SessionIndexRepository {
         record.workspaceId,
         record.provider,
         record.parentSessionId ?? null,
+        record.sessionKind ?? "default",
         record.isSubagent ? 1 : 0,
         record.subagentLabel ?? null,
         record.title,
@@ -60,6 +63,7 @@ export class SessionIndexRepository {
            bindings.provider_session_id AS provider_session_id,
            bindings.raw_store_ref AS raw_store_ref,
            indices.parent_session_id AS parent_session_id,
+           indices.session_kind AS session_kind,
            forks.fork_method AS fork_method,
            forks.fork_source_type AS fork_source_type,
            forks.fork_source_session_id AS fork_source_session_id,
@@ -109,6 +113,7 @@ export class SessionIndexRepository {
            bindings.provider_session_id AS provider_session_id,
            bindings.raw_store_ref AS raw_store_ref,
            indices.parent_session_id AS parent_session_id,
+           indices.session_kind AS session_kind,
            forks.fork_method AS fork_method,
            forks.fork_source_type AS fork_source_type,
            forks.fork_source_session_id AS fork_source_session_id,
@@ -156,6 +161,7 @@ export class SessionIndexRepository {
            workspace_id AS workspace_id,
            provider AS provider,
            parent_session_id AS parent_session_id,
+           session_kind AS session_kind,
            is_subagent AS is_subagent,
            subagent_label AS subagent_label,
            title AS title,
@@ -190,6 +196,7 @@ interface SessionListItemRow {
   provider_session_id: string;
   raw_store_ref: string;
   parent_session_id: string | null;
+  session_kind: SessionListItem["sessionKind"];
   fork_method: SessionListItem["forkMethod"];
   fork_source_type: SessionListItem["forkSourceType"];
   fork_source_session_id: string | null;
@@ -222,6 +229,7 @@ interface SessionIndexRecordRow {
   workspace_id: string;
   provider: SessionIndexRecord["provider"];
   parent_session_id: string | null;
+  session_kind: SessionIndexRecord["sessionKind"];
   is_subagent: number;
   subagent_label: string | null;
   title: string;
@@ -255,6 +263,7 @@ function mapSessionListItemRow(row: SessionListItemRow): SessionListItem {
     providerSessionId: row.provider_session_id,
     rawStoreRef: row.raw_store_ref,
     parentSessionId: row.parent_session_id,
+    sessionKind: row.session_kind ?? "default",
     forkMethod: row.fork_method ?? null,
     forkSourceType: row.fork_source_type ?? null,
     forkSourceSessionId: row.fork_source_session_id,
@@ -290,6 +299,7 @@ function mapSessionIndexRecordRow(row: SessionIndexRecordRow): SessionIndexRecor
     workspaceId: row.workspace_id,
     provider: row.provider,
     parentSessionId: row.parent_session_id,
+    sessionKind: row.session_kind ?? "default",
     isSubagent: row.is_subagent === 1,
     subagentLabel: row.subagent_label,
     title: row.title,

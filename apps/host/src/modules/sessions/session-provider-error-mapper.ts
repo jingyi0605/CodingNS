@@ -21,6 +21,14 @@ export function mapSessionProviderError(error: unknown): AppError {
     });
   }
 
+  if (error instanceof Error && error.message === "FORK_TARGET_PROVIDER_NOT_SUPPORTED") {
+    return new AppError({
+      statusCode: 400,
+      errorCode: "FORK_TARGET_PROVIDER_NOT_SUPPORTED",
+      detail: "目标 provider 当前还不支持跨供应商分叉"
+    });
+  }
+
   if (error instanceof Error && error.message === "CURSOR_INVALID") {
     return new AppError({
       statusCode: 400,

@@ -12,6 +12,7 @@ function createService() {
     getSessionContextUsage: vi.fn(),
     getBindingOrThrow: vi.fn(),
     findLatestUserMessage: vi.fn(),
+    readAllTextHistoryMessages: vi.fn(),
     persistSessionBinding: vi.fn(),
     syncSessionTitle: vi.fn(async () => undefined),
     readRecentHistoryEnvelope: vi.fn(),
@@ -320,6 +321,97 @@ describe("SessionLiveRuntimeService", () => {
       })
     );
     expect(result.message?.sequence).toBe(12);
+  });
+
+  it("重建型 Codex rollout 会话的首条真实消息会重新 start，并把 synthetic rawStoreRef 交给 runtime 重建上下文", async () => {
+    const { service, sessionHistoryService, sessionMessageAttachmentService, workspaceService } =
+      createService();
+    const startSession = vi.fn(async () => ({
+      getSnapshot: vi.fn(() => ({
+        sessionId: "session-1",
+        workspaceId: "workspace-1",
+        provider: "codex",
+        providerSessionId: "8f9d1c54-0a23-4c39-9b9d-bfd2a3958d78",
+        rawStoreRef: "/tmp/.codex/runtime-thread.jsonl",
+        runningState: "running",
+        attachedClients: 1,
+        startedAt: "2026-04-11T12:00:00.000Z",
+        lastEventAt: "2026-04-11T12:00:00.000Z",
+        completedAt: null,
+        detail: null,
+        errorCode: null,
+        supportsInterrupt: true
+      })),
+      attach: vi.fn()
+    }));
+    const continueSession = vi.fn(async () => {
+      throw new Error("should not continue synthetic rollout session");
+    });
+    const providerRuntimeService = {
+      getSnapshot: vi.fn(() => null),
+      startSession,
+      continueSession
+    };
+    Object.defineProperty(service, "providerRuntimeService", {
+      value: providerRuntimeService,
+      configurable: true
+    });
+
+    sessionHistoryService.getSession.mockReturnValue({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "rollout-2026-04-11T11-09-16-019d7a83-e12a-",
+      rawStoreRef: "/tmp/.codex/rollout-session.jsonl",
+      messageCount: 1,
+      forkMethod: "reconstructed_message_fork",
+      forkSourceType: "message"
+    });
+    sessionHistoryService.getSessionCapabilities.mockResolvedValue({
+      provider: "codex",
+      canStartSession: true,
+      canResumeSession: true,
+      canSendMessage: true,
+      inRunInputMode: "none",
+      supportsSubagents: true,
+      supportsInterrupt: true,
+      supportsStructuredToolCalls: true,
+      supportsTokenUsage: true,
+      supportsAttachments: true,
+      supportsPermissionPrompt: true,
+      supportsCheckpoint: true,
+      limitations: []
+    });
+    sessionHistoryService.getBindingOrThrow.mockReturnValue({
+      providerSessionId: "8f9d1c54-0a23-4c39-9b9d-bfd2a3958d78"
+    });
+    sessionHistoryService.findLatestUserMessage.mockResolvedValue(null);
+    workspaceService.getWorkspaceOrThrow.mockReturnValue({
+      id: "workspace-1",
+      path: "/tmp/workspace"
+    });
+    sessionMessageAttachmentService.buildProviderPrompt.mockReturnValue(null);
+    sessionMessageAttachmentService.bindClientRequestToMessage.mockReturnValue([]);
+
+    await service.sendLiveMessage({
+      sessionId: "session-1",
+      userId: "user-1",
+      content: "继续拆这条分支的实现方案",
+      clientRequestId: null
+    });
+
+    expect(startSession).toHaveBeenCalledTimes(1);
+    expect(continueSession).not.toHaveBeenCalled();
+    expect(startSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        providerSessionId: null,
+        rawStoreRef: "/tmp/.codex/rollout-session.jsonl",
+        options: expect.objectContaining({
+          content: "继续拆这条分支的实现方案",
+          providerPrompt: null
+        })
+      })
+    );
   });
 
   it("startLiveSession 会把 provider 启动失败映射成稳定的 AppError", async () => {

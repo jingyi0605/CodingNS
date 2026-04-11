@@ -58,7 +58,8 @@ describe("SessionController.fork", () => {
         body: {
           sourceType: "message",
           sourceMessageId: "msg-1",
-          strategy: "auto"
+          strategy: "auto",
+          targetProvider: "claude-code"
         },
         auth: {
           user: {
@@ -78,6 +79,11 @@ describe("SessionController.fork", () => {
         forkSourceType: "message",
         forkSourceMessageId: "msg-1",
         inheritedPrefixMessageCount: 2
+      })
+    );
+    expect(sessionHistoryService.forkSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetProvider: "claude-code"
       })
     );
   });

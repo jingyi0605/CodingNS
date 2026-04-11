@@ -70,6 +70,8 @@ interface StartSessionInput {
   userId: string;
   provider: string;
   initialPrompt?: string;
+  parentSessionId?: string | null;
+  sessionKind?: "default" | "annotation";
 }
 
 interface ArchiveSessionInput {
@@ -85,6 +87,7 @@ interface ForkSessionInput {
   sourceMessageId?: string | null;
   strategy?: ForkStrategy;
   targetProvider?: string | null;
+  sessionKind?: "default" | "annotation";
 }
 
 interface FavoriteSessionInput {
@@ -108,6 +111,7 @@ export type SessionHistoryMessageWithOrigin = HistoryPage["messages"][number] & 
 
 interface SessionRelationDescriptor {
   parentSessionId: string | null;
+  sessionKind: "default" | "annotation";
   isSubagent: boolean;
   subagentLabel: string | null;
 }
@@ -656,7 +660,8 @@ export class SessionHistoryService {
           sessionId,
           workspaceId: workspace.id,
           provider: result.session.provider,
-          parentSessionId: result.session.parentProviderSessionId ?? null,
+          parentSessionId: input.parentSessionId ?? result.session.parentProviderSessionId ?? null,
+          sessionKind: input.sessionKind ?? "default",
           isSubagent: result.session.isSubagent ?? false,
           subagentLabel: result.session.subagentLabel ?? null,
           title: result.session.title,
@@ -753,6 +758,7 @@ export class SessionHistoryService {
           workspaceId: workspace.id,
           provider: result.session.provider,
           parentSessionId: input.sessionId,
+          sessionKind: input.sessionKind ?? "default",
           isSubagent: result.session.isSubagent ?? false,
           subagentLabel: result.session.subagentLabel ?? null,
           title: result.session.title,
@@ -805,6 +811,7 @@ export class SessionHistoryService {
 
       relationMap.set(sessionId, {
         parentSessionId: input.sessionId,
+        sessionKind: forkedSession.sessionKind ?? input.sessionKind ?? "default",
         isSubagent: forkedSession.isSubagent ?? false,
         subagentLabel: forkedSession.subagentLabel ?? null
       });
@@ -849,7 +856,9 @@ export class SessionHistoryService {
       workspaceId: sourceBinding.workspaceId,
       userId: input.userId,
       provider: input.targetProvider,
-      initialPrompt: inheritedPrompt
+      initialPrompt: inheritedPrompt,
+      parentSessionId: input.sessionId,
+      sessionKind: input.sessionKind ?? "default"
     });
     const timestamp = nowIso();
     const currentIndex = this.sessionIndexRepository.findIndexRecordBySessionId(startedSession.sessionId);
@@ -859,6 +868,7 @@ export class SessionHistoryService {
         this.sessionIndexRepository.upsert({
           ...currentIndex,
           parentSessionId: input.sessionId,
+          sessionKind: input.sessionKind ?? currentIndex.sessionKind ?? "default",
           updatedAt: timestamp
         });
       }
@@ -887,6 +897,7 @@ export class SessionHistoryService {
 
     relationMap.set(startedSession.sessionId, {
       parentSessionId: input.sessionId,
+      sessionKind: startedSession.sessionKind ?? input.sessionKind ?? "default",
       isSubagent: startedSession.isSubagent ?? false,
       subagentLabel: startedSession.subagentLabel ?? null
     });
@@ -1504,6 +1515,7 @@ export class SessionHistoryService {
             workspaceId: workspace.id,
             provider: session.provider,
             parentSessionId: preservedParentSessionId,
+            sessionKind: existingIndex?.sessionKind ?? "default",
             isSubagent: existingIndex?.isSubagent ?? false,
             subagentLabel: existingIndex?.subagentLabel ?? null,
             title: preservedTitle,
@@ -1549,6 +1561,10 @@ export class SessionHistoryService {
               ?? persistedSession.existingIndex?.parentSessionId
               ?? this.sessionForkRepository.findBySessionId(persistedSession.sessionId)?.parentSessionId
               ?? null,
+            sessionKind:
+              relation?.sessionKind
+              ?? persistedSession.existingIndex?.sessionKind
+              ?? "default",
             isSubagent:
               relation?.isSubagent
               ?? persistedSession.existingIndex?.isSubagent
@@ -1836,6 +1852,8 @@ export class SessionHistoryService {
 
       relationMap.set(sessionId, {
         parentSessionId,
+        sessionKind:
+          this.sessionIndexRepository.findIndexRecordBySessionId(sessionId)?.sessionKind ?? "default",
         isSubagent:
           session.isSubagent === true
           || this.sessionIndexRepository.findIndexRecordBySessionId(sessionId)?.isSubagent === true,
@@ -1866,6 +1884,7 @@ export class SessionHistoryService {
       return this.enrichSessionItem({
         ...item,
         parentSessionId: relation.parentSessionId,
+        sessionKind: relation.sessionKind,
         isSubagent: relation.isSubagent,
         subagentLabel: relation.subagentLabel
       });
@@ -1878,12 +1897,14 @@ export class SessionHistoryService {
       ? {
           ...item,
           parentSessionId: relation.parentSessionId,
+          sessionKind: relation.sessionKind,
           isSubagent: relation.isSubagent,
           subagentLabel: relation.subagentLabel
         }
       : {
           ...item,
           parentSessionId: item.parentSessionId ?? null,
+          sessionKind: item.sessionKind ?? "default",
           isSubagent: item.isSubagent ?? false,
           subagentLabel: item.subagentLabel ?? null
         };

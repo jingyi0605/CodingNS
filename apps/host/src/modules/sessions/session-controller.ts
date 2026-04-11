@@ -54,6 +54,8 @@ interface StartSessionBody {
   workspaceId?: string;
   provider?: string;
   initialPrompt?: string;
+  parentSessionId?: string | null;
+  sessionKind?: "default" | "annotation";
 }
 
 interface StartLiveSessionBody extends RuntimeOptionsBody {
@@ -62,6 +64,8 @@ interface StartLiveSessionBody extends RuntimeOptionsBody {
   content?: string;
   clientRequestId?: string;
   attachments?: SessionImageAttachmentInput[];
+  parentSessionId?: string | null;
+  sessionKind?: "default" | "annotation";
 }
 
 interface RenameSessionBody {
@@ -80,6 +84,8 @@ interface ForkSessionBody {
   sourceType?: "session" | "message";
   sourceMessageId?: string | null;
   strategy?: "auto" | "native-only" | "reconstruct-only";
+  targetProvider?: string | null;
+  sessionKind?: "default" | "annotation";
 }
 
 interface ReplyPermissionRequestBody {
@@ -399,7 +405,9 @@ export class SessionController {
         userId: requireUserId(request),
         sourceType,
         sourceMessageId: request.body.sourceMessageId?.trim() ?? null,
-        strategy: request.body.strategy ?? "auto"
+        strategy: request.body.strategy ?? "auto",
+        targetProvider: request.body.targetProvider?.trim() || null,
+        sessionKind: request.body.sessionKind === "annotation" ? "annotation" : "default"
       })
     );
   };
@@ -424,7 +432,9 @@ export class SessionController {
         workspaceId,
         userId: requireUserId(request),
         provider,
-        initialPrompt: request.body.initialPrompt?.trim()
+        initialPrompt: request.body.initialPrompt?.trim(),
+        parentSessionId: request.body.parentSessionId?.trim() || null,
+        sessionKind: request.body.sessionKind === "annotation" ? "annotation" : "default"
       })
     );
   };
@@ -463,6 +473,8 @@ export class SessionController {
         provider,
         content,
         clientRequestId,
+        parentSessionId: request.body.parentSessionId?.trim() || null,
+        sessionKind: request.body.sessionKind === "annotation" ? "annotation" : "default",
         runtimeOptions: runtimeOptions
           ? {
               ...runtimeOptions,

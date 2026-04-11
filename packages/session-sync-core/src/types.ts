@@ -12,6 +12,7 @@ export type ForkSourceType = "session" | "message";
 export type ForkMethod =
   | "native_session_fork"
   | "native_message_fork"
+  | "reconstructed_session_fork"
   | "reconstructed_message_fork";
 export type ForkStrategy = "auto" | "native-only" | "reconstruct-only";
 
