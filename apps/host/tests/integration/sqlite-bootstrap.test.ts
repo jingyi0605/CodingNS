@@ -217,6 +217,183 @@ describe("sqlite 启动引导", () => {
     );
   });
 
+  it("初始化数据库时会创建 session_forks 表", async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-session-forks-bootstrap-"));
+    tempDirs.push(tempDir);
+    const databasePath = path.join(tempDir, "host.sqlite");
+
+    const client = createDatabaseClient(databasePath);
+    const columns = client.db
+      .prepare("PRAGMA table_info(session_forks)")
+      .all() as Array<{ name: string }>;
+
+    client.close();
+
+    expect(columns.map((column) => column.name)).toEqual(
+      expect.arrayContaining([
+        "session_id",
+        "parent_session_id",
+        "provider",
+        "fork_source_type",
+        "fork_source_session_id",
+        "fork_source_message_id",
+        "inherited_prefix_message_count",
+        "provider_parent_session_id",
+        "provider_source_message_id",
+        "fork_method",
+        "created_at"
+      ])
+    );
+  });
+
+  it("可以清理残留的 session_forks_next 并把旧 fork 表平滑升级到新结构", async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-session-forks-migration-"));
+    tempDirs.push(tempDir);
+    const databasePath = path.join(tempDir, "host.sqlite");
+    const { default: Database } = await import("better-sqlite3");
+    const seed = new Database(databasePath);
+
+    seed.exec(`
+      CREATE TABLE workspaces (
+        id TEXT PRIMARY KEY
+      );
+
+      CREATE TABLE session_bindings (
+        session_id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        provider_session_id TEXT NOT NULL,
+        raw_store_ref TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE session_forks (
+        session_id TEXT PRIMARY KEY,
+        parent_session_id TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        fork_source_type TEXT NOT NULL CHECK (fork_source_type IN ('session', 'message')),
+        fork_source_message_id TEXT,
+        fork_method TEXT NOT NULL CHECK (
+          fork_method IN (
+            'native_session_fork',
+            'native_message_fork',
+            'reconstructed_message_fork'
+          )
+        ),
+        created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE session_forks_next (
+        session_id TEXT PRIMARY KEY
+      );
+
+      INSERT INTO workspaces (id) VALUES ('workspace-1');
+
+      INSERT INTO session_bindings (
+        session_id,
+        workspace_id,
+        provider,
+        provider_session_id,
+        raw_store_ref,
+        created_at,
+        updated_at
+      ) VALUES (
+        'session-child-1',
+        'workspace-1',
+        'codex',
+        'provider-child-1',
+        '/tmp/session-child-1.jsonl',
+        '2026-04-11T10:00:00.000Z',
+        '2026-04-11T10:00:00.000Z'
+      );
+
+      INSERT INTO session_forks (
+        session_id,
+        parent_session_id,
+        provider,
+        fork_source_type,
+        fork_source_message_id,
+        fork_method,
+        created_at
+      ) VALUES (
+        'session-child-1',
+        'session-parent-1',
+        'codex',
+        'message',
+        'message-1',
+        'native_message_fork',
+        '2026-04-11T10:00:00.000Z'
+      );
+    `);
+    seed.close();
+
+    const client = createDatabaseClient(databasePath);
+    const columns = client.db
+      .prepare("PRAGMA table_info(session_forks)")
+      .all() as Array<{ name: string }>;
+    const nextTable = client.db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'session_forks_next'")
+      .get() as { name: string } | undefined;
+    const forkRow = client.db
+      .prepare(`
+        SELECT
+          session_id,
+          parent_session_id,
+          provider,
+          fork_source_type,
+          fork_source_session_id,
+          fork_source_message_id,
+          inherited_prefix_message_count,
+          provider_parent_session_id,
+          provider_source_message_id,
+          fork_method,
+          created_at
+        FROM session_forks
+        WHERE session_id = ?
+      `)
+      .get("session-child-1") as
+      | {
+          session_id: string;
+          parent_session_id: string;
+          provider: string;
+          fork_source_type: string;
+          fork_source_session_id: string;
+          fork_source_message_id: string | null;
+          inherited_prefix_message_count: number;
+          provider_parent_session_id: string | null;
+          provider_source_message_id: string | null;
+          fork_method: string;
+          created_at: string;
+        }
+      | undefined;
+
+    client.close();
+
+    expect(columns.map((column) => column.name)).toEqual(
+      expect.arrayContaining([
+        "fork_source_session_id",
+        "inherited_prefix_message_count",
+        "provider_parent_session_id",
+        "provider_source_message_id"
+      ])
+    );
+    expect(nextTable).toBeUndefined();
+    expect(forkRow).toEqual({
+      session_id: "session-child-1",
+      parent_session_id: "session-parent-1",
+      provider: "codex",
+      fork_source_type: "message",
+      fork_source_session_id: "session-parent-1",
+      fork_source_message_id: "message-1",
+      inherited_prefix_message_count: 0,
+      provider_parent_session_id: null,
+      provider_source_message_id: null,
+      fork_method: "native_message_fork",
+      created_at: "2026-04-11T10:00:00.000Z"
+    });
+  });
+
   it("可以在旧数据库上补齐终端日志索引表", async () => {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-terminal-log-bootstrap-"));
     tempDirs.push(tempDir);

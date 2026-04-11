@@ -79,4 +79,12 @@ describe("mapSessionProviderError", () => {
     expect(mapped.errorCode).toBe("KIMI_WIRE_MODE_UNAVAILABLE");
     expect(mapped.message).toContain("wire");
   });
+
+  it("会把 Codex 缺失 thread/read 历史映射成明确的 fork 错误", () => {
+    const mapped = mapSessionProviderError(new Error("CODEX_THREAD_HISTORY_MISSING"));
+
+    expect(mapped.statusCode).toBe(502);
+    expect(mapped.errorCode).toBe("PROVIDER_IO_ERROR");
+    expect(mapped.message).toContain("thread/read");
+  });
 });

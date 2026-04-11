@@ -28,6 +28,7 @@ function createSessionControllerMock() {
     renameTitle: vi.fn(),
     updateArchiveState: vi.fn(),
     updateFavoriteState: vi.fn(),
+    fork: vi.fn(),
     sendMessage: vi.fn(),
     sendLiveMessage: vi.fn(),
     replyPermissionRequest: vi.fn(),
@@ -69,6 +70,18 @@ describe("session routes", () => {
         bodyLimit: SESSION_MESSAGE_BODY_LIMIT_BYTES
       },
       controller.startLive
+    );
+  });
+
+  it("应该注册 fork 路由", async () => {
+    const app = createRouteAppMock();
+    const controller = createSessionControllerMock();
+
+    await registerSessionRoutes(app as never, controller as never);
+
+    expect(app.post).toHaveBeenCalledWith(
+      "/api/sessions/:sessionId/forks",
+      controller.fork
     );
   });
 });
