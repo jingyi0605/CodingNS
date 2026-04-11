@@ -60,6 +60,8 @@ key.properties
 .DS_Store
 Thumbs.db
 desktop.ini
+*.db
+*.sqlite
 data
 
 # Logs
