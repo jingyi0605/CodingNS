@@ -2473,6 +2473,29 @@ a {
   padding: 0;
 }
 
+.mobile-conversation-stage {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.mobile-conversation-main {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.conversation-timeline-shell {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
 .conversation-main {
   display: flex;
   flex-direction: column;
@@ -9410,6 +9433,11 @@ textarea:focus-visible {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.timeline-skeleton {
+  min-height: 100%;
+  justify-content: flex-end;
 }
 
 .workbench-skeleton-card,

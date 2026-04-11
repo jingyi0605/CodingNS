@@ -364,6 +364,72 @@ describe("SessionRuntimeStore", () => {
     store.destroy();
   });
 
+  it("导航摘要误报 0 条消息时，会持续保持加载态直到真实历史返回", async () => {
+    vi.useFakeTimers();
+    mocked.getSessionMessages.mockResolvedValueOnce({
+      messages: [
+        {
+          messageId: "message-1",
+          provider: "codex",
+          providerSessionId: "raw-1",
+          role: "assistant",
+          kind: "text",
+          content: "真实历史已经返回",
+          timestamp: "2026-03-24T10:01:00.000Z",
+          sequence: 1,
+          rawRef: "codex://raw#line=1",
+          toolCall: null
+        }
+      ],
+      cursor: "cursor-latest",
+      nextCursor: null,
+      total: 1
+    });
+    const store = new SessionRuntimeStore("session-1", {
+      initialSession: {
+        sessionId: "session-1",
+        workspaceId: "workspace-1",
+        provider: "codex",
+        providerSessionId: "raw-1",
+        rawStoreRef: "codex://raw-1",
+        title: "会话 1",
+        messageCount: 0,
+        lastMessageAt: "2026-03-24T10:01:00.000Z",
+        createdAt: "2026-03-24T09:00:00.000Z",
+        updatedAt: "2026-03-24T10:01:00.000Z",
+        syncStatus: "idle",
+        syncCursor: "cursor-sync",
+        lastSyncAt: "2026-03-24T10:01:00.000Z",
+        lastErrorCode: null,
+        lastErrorDetail: null,
+        resumedAt: null,
+        runningState: "idle",
+        activitySource: "none",
+        lastEventAt: "2026-03-24T10:01:00.000Z",
+        completedAt: null,
+        lastSeenAt: null,
+        activityState: "idle"
+      }
+    });
+
+    await store.initialize();
+
+    expect(store.getState().historyState).toBe("loading");
+
+    emitRealtimeSubscribed();
+    await vi.advanceTimersByTimeAsync(200);
+
+    expect(store.getState().historyState).toBe("loading");
+    expect(store.getState().messages).toHaveLength(0);
+
+    await vi.advanceTimersByTimeAsync(200);
+
+    expect(store.getState().historyState).toBe("ready");
+    expect(store.getState().messages.at(-1)?.id).toBe("message-1");
+
+    store.destroy();
+  });
+
   it("initialize 时会同步拉取当前会话的发送队列", async () => {
     vi.useFakeTimers();
     const store = new SessionRuntimeStore("session-1");

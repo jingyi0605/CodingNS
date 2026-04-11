@@ -787,7 +787,7 @@ describe("MessageTimeline", () => {
     }
   });
 
-  it("滚到顶部时会触发加载更早消息", () => {
+  it("首屏不会自动加载更早消息，只有滚到顶部时才触发", () => {
     const handleLoadOlderMessages = vi.fn();
 
     render(
@@ -816,6 +816,7 @@ describe("MessageTimeline", () => {
     const messageList = document.querySelector(".message-list") as HTMLDivElement | null;
 
     expect(messageList).not.toBeNull();
+    expect(handleLoadOlderMessages).not.toHaveBeenCalled();
 
     Object.defineProperty(messageList, "scrollHeight", {
       value: 1200,

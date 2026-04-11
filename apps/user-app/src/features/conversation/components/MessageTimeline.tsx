@@ -1205,7 +1205,7 @@ function RichMessageAttachments({
 function TimelineSkeleton() {
   return (
     <div className="timeline-skeleton" aria-hidden="true">
-      {Array.from({ length: 5 }, (_, index) => (
+      {Array.from({ length: 3 }, (_, index) => (
         <article
           key={index}
           className={`timeline-skeleton-item ${index % 2 === 0 ? "assistant" : "user"}`}
@@ -2091,15 +2091,6 @@ export function MessageTimeline({
     }
   }
 
-  useEffect(() => {
-    const list = listRef.current;
-
-    if (!list) {
-      return;
-    }
-
-    triggerOlderMessagesPrefetch(list);
-  }, [hasOlderMessages, historyState, loadingOlderMessages, messages.length, onLoadOlderMessages]);
 
   return (
     <section className="message-timeline">

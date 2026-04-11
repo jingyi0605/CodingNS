@@ -95,7 +95,6 @@ export class SessionRuntimeStore {
   private state: SessionRuntimeState;
   private listeners = new Set<RuntimeListener>();
   private realtimeClient: RealtimeClient | null = null;
-  private historyBootstrapReadyTimer: number | null = null;
   private historyBootstrapFallbackTimer: number | null = null;
   private historyBootstrapEnvelopeReceived = false;
   private markSeenTimer: number | null = null;
@@ -189,8 +188,6 @@ export class SessionRuntimeStore {
 
       if (hasBootstrappedMessages) {
         this.scheduleMarkSeen();
-      } else if (this.state.historyState === "loading") {
-        this.scheduleHistoryBootstrapReady();
       }
     } catch (error) {
       this.handleError(error);
@@ -198,7 +195,6 @@ export class SessionRuntimeStore {
   }
 
   async reload(): Promise<void> {
-    this.clearHistoryBootstrapReadyTimer();
     this.clearHistoryBootstrapFallbackTimer();
     this.historyBootstrapEnvelopeReceived = false;
     this.realtimeClient?.close();
@@ -469,7 +465,6 @@ export class SessionRuntimeStore {
   }
 
   destroy(): void {
-    this.clearHistoryBootstrapReadyTimer();
     this.clearHistoryBootstrapFallbackTimer();
     this.realtimeClient?.close();
     this.realtimeClient = null;
@@ -507,13 +502,8 @@ export class SessionRuntimeStore {
         });
         this.patch({
           connectionState: "connected",
-          historyState:
-            this.state.historyState === "loading" && resolveKnownMessageCount(this.state.session) === 0
-              ? "ready"
-              : this.state.historyState,
           hasOlderMessages: inferHasOlderMessages(this.state.session, this.state.messages.length)
         });
-        this.scheduleHistoryBootstrapReady();
         this.scheduleHistoryBootstrapFallback();
       },
       onConnectionChange: (connectionState) => {
@@ -549,7 +539,6 @@ export class SessionRuntimeStore {
       onEnvelope: (event) => {
         this.historyBootstrapEnvelopeReceived = true;
         this.clearHistoryBootstrapFallbackTimer();
-        this.clearHistoryBootstrapReadyTimer();
         const merged = this.mergeHistoryMessages(event.messages, event.type === "session.backfill");
         this.patch({
           messages: merged,
@@ -673,7 +662,6 @@ export class SessionRuntimeStore {
   }
 
   private handleError(error: unknown): void {
-    this.clearHistoryBootstrapReadyTimer();
     this.clearHistoryBootstrapFallbackTimer();
     const detail = error instanceof Error ? error.message : "unknown";
     this.patch({
@@ -754,40 +742,6 @@ export class SessionRuntimeStore {
     window.clearTimeout(this.runtimeRefreshTimer);
     this.runtimeRefreshTimer = null;
     this.runtimeRefreshMode = null;
-  }
-
-  private scheduleHistoryBootstrapReady(): void {
-    if (this.state.historyState !== "loading") {
-      this.clearHistoryBootstrapReadyTimer();
-      return;
-    }
-
-    if (this.historyBootstrapReadyTimer !== null) {
-      return;
-    }
-
-    this.historyBootstrapReadyTimer = window.setTimeout(() => {
-      this.historyBootstrapReadyTimer = null;
-
-      if (this.state.historyState !== "loading") {
-        return;
-      }
-
-      this.patch({
-        historyState: "ready",
-        hasOlderMessages: inferHasOlderMessages(this.state.session, this.state.messages.length),
-        pagesLoaded: this.state.messages.length > 0 ? Math.max(this.state.pagesLoaded, 1) : 0
-      });
-    }, 500);
-  }
-
-  private clearHistoryBootstrapReadyTimer(): void {
-    if (this.historyBootstrapReadyTimer === null) {
-      return;
-    }
-
-    window.clearTimeout(this.historyBootstrapReadyTimer);
-    this.historyBootstrapReadyTimer = null;
   }
 
   private scheduleHistoryBootstrapFallback(): void {
@@ -1138,7 +1092,6 @@ export class SessionRuntimeStore {
     if (event.message.role === "assistant") {
       this.completePendingReplyDebugTrace(event);
     }
-    this.clearHistoryBootstrapReadyTimer();
     const merged = mergeAuthoritativeMessages(this.state.messages, this.sessionId, [event.message]);
 
     this.patch({
@@ -1437,14 +1390,14 @@ function resolveKnownMessageCount(session: SessionSummaryDto | null): number | n
 }
 
 function resolveInitialHistoryState(
-  session: SessionSummaryDto | null,
+  _session: SessionSummaryDto | null,
   loadedMessageCount: number
 ): "loading" | "ready" {
   if (loadedMessageCount > 0) {
     return "ready";
   }
 
-  return resolveKnownMessageCount(session) === 0 ? "ready" : "loading";
+  return "loading";
 }
 
 function inferHasOlderMessages(

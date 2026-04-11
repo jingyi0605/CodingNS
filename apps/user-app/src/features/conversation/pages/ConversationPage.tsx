@@ -653,36 +653,38 @@ function LiveConversationPage({
                 onOpenBranchTree={canOpenBranchTree ? () => setBranchTreeOpen(true) : undefined}
               />
             ) : null}
-            <MessageTimeline
-              sessionId={sessionId}
-              messages={timelineMessages}
-              historyState={historyState}
-              loadingOlderMessages={loadingOlderMessages}
-              hasOlderMessages={hasOlderMessages}
-              provider={session?.provider ?? null}
-              runtimeThinkingPlaceholder={runtimeThinkingPlaceholder}
-              onLoadOlderMessages={() => {
-                void store.loadOlderMessages();
-              }}
-              onRetryMessage={(clientRequestId: string) => {
-                void store.retryMessage(clientRequestId);
-              }}
-              onForkMessage={(message) => {
-                if (!session) {
-                  return;
-                }
+            <div className="conversation-timeline-shell">
+              <MessageTimeline
+                sessionId={sessionId}
+                messages={timelineMessages}
+                historyState={historyState}
+                loadingOlderMessages={loadingOlderMessages}
+                hasOlderMessages={hasOlderMessages}
+                provider={session?.provider ?? null}
+                runtimeThinkingPlaceholder={runtimeThinkingPlaceholder}
+                onLoadOlderMessages={() => {
+                  void store.loadOlderMessages();
+                }}
+                onRetryMessage={(clientRequestId: string) => {
+                  void store.retryMessage(clientRequestId);
+                }}
+                onForkMessage={(message) => {
+                  if (!session) {
+                    return;
+                  }
 
-                setForkDraft({
-                  sourceMessageId: message.id,
-                  content: message.content,
-                  sourceProvider: session.provider,
-                  workspaceId: session.workspaceId,
-                  targetProvider: session.provider,
-                  targetModel: null
-                });
-                focusComposerInput();
-              }}
-            />
+                  setForkDraft({
+                    sourceMessageId: message.id,
+                    content: message.content,
+                    sourceProvider: session.provider,
+                    workspaceId: session.workspaceId,
+                    targetProvider: session.provider,
+                    targetModel: null
+                  });
+                  focusComposerInput();
+                }}
+              />
+            </div>
             <QueuedMessageList
               items={queuedMessages}
               deletingQueueItemId={deletingQueueItemId}
@@ -1052,17 +1054,19 @@ function DraftConversationPage({
       <div className="mobile-conversation-stage" {...(!showInlineHeader ? mobilePreview.mainGestureHandlers : {})}>
         <div ref={mobileConversationMainRef} className="mobile-conversation-main">
           <ConnectionBanner connectionState="closed" onReconnect={() => {}} />
-            <MessageTimeline
-              sessionId={draft.sessionId}
-              messages={draftMessages}
-              historyState="ready"
-              loadingOlderMessages={false}
-              hasOlderMessages={false}
-              provider={draft.provider}
-              runtimeThinkingPlaceholder={null}
-              onLoadOlderMessages={() => {}}
-              onRetryMessage={() => {}}
-            />
+            <div className="conversation-timeline-shell">
+              <MessageTimeline
+                sessionId={draft.sessionId}
+                messages={draftMessages}
+                historyState="ready"
+                loadingOlderMessages={false}
+                hasOlderMessages={false}
+                provider={draft.provider}
+                runtimeThinkingPlaceholder={null}
+                onLoadOlderMessages={() => {}}
+                onRetryMessage={() => {}}
+              />
+            </div>
           <ComposerPanel
             capabilities={capabilities}
             draftStorageId={draft.sessionId}
