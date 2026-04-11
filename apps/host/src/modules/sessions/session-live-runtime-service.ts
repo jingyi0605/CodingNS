@@ -82,6 +82,8 @@ interface StartLiveSessionInput {
   provider: string;
   content: string;
   clientRequestId: string | null;
+  parentSessionId?: string | null;
+  sessionKind?: "default" | "annotation";
   runtimeOptions?: RuntimeSendOptions;
 }
 
@@ -393,6 +395,8 @@ export class SessionLiveRuntimeService {
         workspaceId: workspace.id,
         userId: input.userId,
         provider: input.provider,
+        parentSessionId: input.parentSessionId ?? null,
+        sessionKind: input.sessionKind ?? "default",
         initialContent: input.content,
         snapshot
       });
@@ -1271,6 +1275,7 @@ export class SessionLiveRuntimeService {
       workspaceId: input.workspaceId,
       provider: "claude-code",
       parentSessionId: null,
+      sessionKind: "default",
       isSubagent: false,
       subagentLabel: null,
       title: `Claude 会话 ${input.providerSessionId.slice(0, 8)}`,
@@ -1807,6 +1812,8 @@ export class SessionLiveRuntimeService {
     workspaceId: string;
     userId: string;
     provider: string;
+    parentSessionId: string | null;
+    sessionKind: "default" | "annotation";
     initialContent: string;
     snapshot: ReturnType<ActiveRunHandle["getSnapshot"]>;
   }): void {
@@ -1825,7 +1832,8 @@ export class SessionLiveRuntimeService {
       sessionId: input.sessionId,
       workspaceId: input.workspaceId,
       provider: input.provider,
-      parentSessionId: null,
+      parentSessionId: input.parentSessionId,
+      sessionKind: input.sessionKind,
       isSubagent: false,
       subagentLabel: null,
       title: buildSessionTitle(input.initialContent),

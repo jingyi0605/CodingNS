@@ -1021,6 +1021,7 @@ export class SessionHistoryService {
       workspaceId: binding.workspaceId,
       provider: binding.provider,
       parentSessionId: existing?.parentSessionId ?? null,
+      sessionKind: existing?.sessionKind ?? "default",
       isSubagent: existing?.isSubagent ?? false,
       subagentLabel: existing?.subagentLabel ?? null,
       title: resolveSessionListTitle(
@@ -1296,6 +1297,7 @@ export class SessionHistoryService {
       workspaceId: existing.workspaceId,
       provider: existing.provider,
       parentSessionId: existing.parentSessionId ?? null,
+      sessionKind: existing.sessionKind ?? "default",
       isSubagent: existing.isSubagent ?? false,
       subagentLabel: existing.subagentLabel ?? null,
       title: existing.title,
@@ -2599,6 +2601,12 @@ export class SessionHistoryService {
     relationMap.set(targetSessionId, {
       parentSessionId:
         targetRelation?.parentSessionId ?? sourceRelation?.parentSessionId ?? fallbackParentSessionId,
+      sessionKind:
+        targetRelation?.sessionKind
+        ?? sourceRelation?.sessionKind
+        ?? targetIndex?.sessionKind
+        ?? sourceIndex?.sessionKind
+        ?? "default",
       isSubagent: Boolean(
         targetRelation?.isSubagent
         || sourceRelation?.isSubagent
@@ -2998,6 +3006,7 @@ function mergeSessionIndexRecord(input: {
     workspaceId: input.workspaceId,
     provider: (input.target?.provider ?? input.source?.provider ?? input.provider) as SessionIndexRecord["provider"],
     parentSessionId: input.target?.parentSessionId ?? input.source?.parentSessionId ?? null,
+    sessionKind: input.target?.sessionKind ?? input.source?.sessionKind ?? "default",
     isSubagent: Boolean(input.target?.isSubagent || input.source?.isSubagent),
     subagentLabel: input.target?.subagentLabel ?? input.source?.subagentLabel ?? null,
     title: pickPreferredSessionTitle(input.target?.title ?? null, input.source?.title ?? null),

@@ -31,6 +31,7 @@ export type SessionActivityResolutionSource =
   | "unknown";
 export type SessionActivityConfidence = "authoritative" | "strong" | "weak";
 export type HistoryDirection = "forward" | "backward";
+export type SessionKind = "default" | "annotation";
 export type ForkSourceType = "session" | "message";
 export type ForkMethod =
   | "native_session_fork"
@@ -169,6 +170,7 @@ export interface SessionSummaryDto {
   providerSessionId: string;
   rawStoreRef: string;
   parentSessionId?: string | null;
+  sessionKind?: SessionKind;
   forkMethod?: ForkMethod | null;
   forkSourceType?: ForkSourceType | null;
   forkSourceSessionId?: string | null;
@@ -346,6 +348,8 @@ export interface StartSessionPayload {
   workspaceId: string;
   provider: ProviderId;
   initialPrompt?: string;
+  parentSessionId?: string | null;
+  sessionKind?: SessionKind;
 }
 
 export interface StartLivePayload {
@@ -357,6 +361,8 @@ export interface StartLivePayload {
   reasoningLevel?: string | null;
   permissionMode?: string | null;
   attachments?: ImageAttachmentPayload[];
+  parentSessionId?: string | null;
+  sessionKind?: SessionKind;
 }
 
 export interface SendLiveMessagePayload {
@@ -379,6 +385,7 @@ export interface ForkSessionPayload {
   sourceMessageId?: string | null;
   strategy?: ForkStrategy;
   targetProvider?: ProviderId | null;
+  sessionKind?: SessionKind;
 }
 
 export interface StartLiveResponseDto extends SendMessageResponseDto {
