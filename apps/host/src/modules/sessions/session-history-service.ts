@@ -84,6 +84,7 @@ interface ForkSessionInput {
   sourceType: ForkSourceType;
   sourceMessageId?: string | null;
   strategy?: ForkStrategy;
+  targetProvider?: string | null;
 }
 
 interface FavoriteSessionInput {
@@ -119,6 +120,10 @@ interface PersistedSessionDescriptor {
   createdAt: string;
   existingIndex: SessionIndexRecord | null;
 }
+
+const RECONSTRUCTED_FORK_TARGET_PROVIDERS = new Set(["codex", "claude-code", "opencode"]);
+const FORK_RECONSTRUCTION_PAGE_SIZE = 200;
+const MAX_FORK_DEPTH = 4;
 
 interface WorkspaceDiscoveryStatus {
   refreshedAt: number;
@@ -615,8 +620,6 @@ export class SessionHistoryService {
   }
 
   async startSession(input: StartSessionInput): Promise<SessionListItem> {
-    const workspace = this.getWorkspaceOrThrow(input.workspaceId);
-
     if (SESSION_START_DEFERRED_PROVIDERS.has(input.provider)) {
       throw new AppError({
         statusCode: 409,
@@ -625,6 +628,12 @@ export class SessionHistoryService {
         field: "provider"
       });
     }
+
+    return this.startSessionDirect(input);
+  }
+
+  private async startSessionDirect(input: StartSessionInput): Promise<SessionListItem> {
+    const workspace = this.getWorkspaceOrThrow(input.workspaceId);
 
     try {
       const result = await this.sessionSyncService.startSession(input.provider, workspace.path, {
@@ -690,6 +699,7 @@ export class SessionHistoryService {
   async forkSession(input: ForkSessionInput): Promise<SessionListItem> {
     const binding = this.getBindingOrThrow(input.sessionId);
     const workspace = this.getWorkspaceOrThrow(binding.workspaceId);
+    const targetProvider = input.targetProvider?.trim() || binding.provider;
     const sourceMessageId =
       input.sourceType === "message"
         ? input.sourceMessageId?.trim() || null
@@ -702,6 +712,15 @@ export class SessionHistoryService {
         detail: "按消息派生会话时必须提供 sourceMessageId",
         field: "sourceMessageId"
       });
+    }
+
+    this.assertForkDepthWithinLimit(input.sessionId);
+
+    if (targetProvider !== binding.provider) {
+      return this.forkSessionAcrossProviders({
+        ...input,
+        targetProvider
+      }, binding, sourceMessageId);
     }
 
     try {
@@ -795,6 +814,167 @@ export class SessionHistoryService {
     } catch (error) {
       throw mapSessionProviderError(error);
     }
+  }
+
+  private async forkSessionAcrossProviders(
+    input: ForkSessionInput & { targetProvider: string },
+    sourceBinding: SessionBinding,
+    sourceMessageId: string | null
+  ): Promise<SessionListItem> {
+    if (!RECONSTRUCTED_FORK_TARGET_PROVIDERS.has(input.targetProvider)) {
+      throw mapSessionProviderError(new Error("FORK_TARGET_PROVIDER_NOT_SUPPORTED"));
+    }
+
+    const sourceIndex = this.sessionIndexRepository.findIndexRecordBySessionId(input.sessionId);
+    const inheritedMessages = await this.readForkSourceMessages(
+      input.sessionId,
+      sourceBinding,
+      input.sourceType,
+      sourceMessageId
+    );
+    const reconstructedMessages = inheritedMessages.filter(
+      (message) =>
+        (message.role === "user" || message.role === "assistant")
+        && message.kind === "text"
+        && message.content.trim().length > 0
+    );
+    const inheritedPrompt = buildReconstructedForkPrompt({
+      sourceProvider: sourceBinding.provider,
+      targetProvider: input.targetProvider,
+      sourceType: input.sourceType,
+      sourceTitle: sourceIndex?.title?.trim() || null,
+      messages: reconstructedMessages
+    });
+    const startedSession = await this.startSessionDirect({
+      workspaceId: sourceBinding.workspaceId,
+      userId: input.userId,
+      provider: input.targetProvider,
+      initialPrompt: inheritedPrompt
+    });
+    const timestamp = nowIso();
+    const currentIndex = this.sessionIndexRepository.findIndexRecordBySessionId(startedSession.sessionId);
+
+    this.db.transaction(() => {
+      if (currentIndex) {
+        this.sessionIndexRepository.upsert({
+          ...currentIndex,
+          parentSessionId: input.sessionId,
+          updatedAt: timestamp
+        });
+      }
+
+      this.sessionForkRepository.upsert({
+        sessionId: startedSession.sessionId,
+        parentSessionId: input.sessionId,
+        provider: input.targetProvider,
+        forkSourceType: input.sourceType,
+        forkSourceSessionId: input.sessionId,
+        forkSourceMessageId: sourceMessageId,
+        inheritedPrefixMessageCount: reconstructedMessages.length,
+        providerParentSessionId: sourceBinding.providerSessionId,
+        providerSourceMessageId: null,
+        forkMethod:
+          input.sourceType === "session"
+            ? "reconstructed_session_fork"
+            : "reconstructed_message_fork",
+        createdAt: timestamp
+      });
+    })();
+
+    const relationMap =
+      this.workspaceSessionRelations.get(sourceBinding.workspaceId)
+      ?? new Map<string, SessionRelationDescriptor>();
+
+    relationMap.set(startedSession.sessionId, {
+      parentSessionId: input.sessionId,
+      isSubagent: startedSession.isSubagent ?? false,
+      subagentLabel: startedSession.subagentLabel ?? null
+    });
+    this.workspaceSessionRelations.set(sourceBinding.workspaceId, relationMap);
+
+    return this.getSessionListItemOrThrow(startedSession.sessionId, input.userId);
+  }
+
+  private async readForkSourceMessages(
+    sessionId: string,
+    binding: SessionBinding,
+    sourceType: ForkSourceType,
+    sourceMessageId: string | null
+  ): Promise<HistoryPage["messages"]> {
+    const messages: HistoryPage["messages"] = [];
+    let cursor: string | null = null;
+
+    while (true) {
+      const page = await this.readPage(
+        sessionId,
+        binding.provider,
+        binding.providerSessionId,
+        binding.rawStoreRef,
+        cursor,
+        FORK_RECONSTRUCTION_PAGE_SIZE,
+        "forward"
+      );
+
+      messages.push(...page.messages);
+
+      if (!page.nextCursor) {
+        break;
+      }
+
+      cursor = page.nextCursor;
+    }
+
+    if (sourceType === "session") {
+      return messages;
+    }
+
+    const targetIndex = messages.findIndex((message) => message.messageId === sourceMessageId);
+
+    if (targetIndex < 0) {
+      throw mapSessionProviderError(new Error("FORK_SOURCE_MESSAGE_NOT_FOUND"));
+    }
+
+    return messages.slice(0, targetIndex + 1);
+  }
+
+  private assertForkDepthWithinLimit(parentSessionId: string) {
+    const nextDepth = this.getSessionForkDepth(parentSessionId) + 1;
+
+    if (nextDepth > MAX_FORK_DEPTH) {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "FORK_DEPTH_LIMIT_EXCEEDED",
+        detail: `fork 会话层级最多支持 ${MAX_FORK_DEPTH} 级`
+      });
+    }
+  }
+
+  private getSessionForkDepth(sessionId: string): number {
+    let depth = 1;
+    let currentSessionId: string | null = sessionId;
+    const visitedSessionIds = new Set<string>();
+
+    while (currentSessionId) {
+      if (visitedSessionIds.has(currentSessionId)) {
+        return depth;
+      }
+
+      visitedSessionIds.add(currentSessionId);
+
+      const parentSessionId: string | null =
+        this.sessionForkRepository.findBySessionId(currentSessionId)?.parentSessionId
+        ?? this.sessionIndexRepository.findIndexRecordBySessionId(currentSessionId)?.parentSessionId
+        ?? null;
+
+      if (!parentSessionId) {
+        return depth;
+      }
+
+      depth += 1;
+      currentSessionId = parentSessionId;
+    }
+
+    return depth;
   }
 
   async sendMessage(
@@ -984,6 +1164,47 @@ export class SessionHistoryService {
       cursor: page.cursor,
       messages: page.messages
     };
+  }
+
+  async readAllTextHistoryMessages(
+    sessionId: string,
+    limit = FORK_RECONSTRUCTION_PAGE_SIZE
+  ): Promise<HistoryPage["messages"]> {
+    const binding = this.getBindingOrThrow(sessionId);
+    const messages: HistoryPage["messages"] = [];
+    let cursor: string | null = null;
+    let remaining = Math.max(limit, 0);
+
+    while (remaining > 0) {
+      const pageSize = Math.min(remaining, FORK_RECONSTRUCTION_PAGE_SIZE);
+      const page = await this.readPage(
+        sessionId,
+        binding.provider,
+        binding.providerSessionId,
+        binding.rawStoreRef,
+        cursor,
+        pageSize,
+        "forward"
+      );
+
+      messages.push(
+        ...page.messages.filter(
+          (message) =>
+            (message.role === "user" || message.role === "assistant")
+            && message.kind === "text"
+            && message.content.trim().length > 0
+        )
+      );
+
+      if (!page.nextCursor || page.messages.length === 0) {
+        break;
+      }
+
+      cursor = page.nextCursor;
+      remaining -= page.messages.length;
+    }
+
+    return messages;
   }
 
   async markSessionSeen(sessionId: string, userId: string): Promise<void> {
@@ -1365,16 +1586,16 @@ export class SessionHistoryService {
       );
 
       const items = this.sessionIndexRepository.listByWorkspace(workspaceId, userId);
-      const recentItems = items.slice(0, refreshStateCount);
+      const refreshCandidates = buildSessionStateRefreshCandidates(items, refreshStateCount);
       this.workspaceDiscoveryStatuses.set(workspaceId, {
         refreshedAt: Date.now(),
         isComplete: discovery.isComplete
       });
 
       if (refreshStateMode === "inline") {
-        await this.refreshRecentSessionStates(recentItems, userId);
+        await this.refreshRecentSessionStates(refreshCandidates, userId);
       } else {
-        this.scheduleWorkspaceStateRefresh(workspaceId, userId, recentItems);
+        this.scheduleWorkspaceStateRefresh(workspaceId, userId, refreshCandidates);
       }
 
       const nextItems = this.listWorkspaceSessions(workspaceId, userId);
@@ -1389,7 +1610,7 @@ export class SessionHistoryService {
           discoveredSessions: sessions.length,
           returnedSessions: nextItems.length,
           discoveryComplete: discovery.isComplete,
-          refreshedStates: Math.min(items.length, refreshStateCount),
+          refreshedStates: refreshCandidates.length,
           discoverMs: discoverDurationMs,
           persistMs: persistDurationMs,
           refreshStateDeferred: refreshStateMode !== "inline"
@@ -2437,6 +2658,11 @@ export class SessionHistoryService {
     const current = this.sessionStateRepository.findBySessionAndUser(sessionId, userId);
     const inspection = inspectSessionActivity(binding.provider, binding.rawStoreRef);
     const timestamp = nowIso();
+    const nowMs = Date.parse(timestamp);
+
+    if (shouldClearStaleRuntimeWithoutInspection(current, inspection, nowMs)) {
+      this.sessionActivityAuthorityService.clearSession(sessionId);
+    }
 
     if (shouldPreserveRuntimeTerminalState(current, inspection)) {
       return current;
@@ -2445,6 +2671,10 @@ export class SessionHistoryService {
     const resolution = this.sessionActivityAuthorityService.observe(
       buildInspectionActivityObservation(sessionId, inspection, timestamp)
     );
+    const resolvedLastEventAt =
+      hasInspectionEvidence(inspection)
+        ? resolution.lastObservedAt ?? inspection.lastEventAt ?? current?.lastEventAt ?? null
+        : current?.lastEventAt ?? null;
     const nextRecord: SessionStateRecord = {
       sessionId,
       userId,
@@ -2454,7 +2684,7 @@ export class SessionHistoryService {
         inspection
       ),
       favorite: current?.favorite ?? false,
-      lastEventAt: resolution.lastObservedAt ?? inspection.lastEventAt ?? current?.lastEventAt ?? null,
+      lastEventAt: resolvedLastEventAt,
       completedAt:
         isTerminalResolvedRunningState(resolution.runningState)
           ? resolution.terminalAt ?? inspection.completedAtCandidate ?? current?.completedAt ?? null
@@ -2553,10 +2783,17 @@ function buildInspectionActivityObservation(
   inspection: ReturnType<typeof inspectSessionActivity>,
   observedAt: string
 ): SessionActivityObservation {
+  const resolvedRunningState =
+    inspection.runningState === "failed"
+      ? "failed"
+      : inspection.completedAtCandidate
+        ? "completed"
+        : inspection.runningState;
+
   return {
     sessionId,
     runId: null,
-    runningState: inspection.runningState,
+    runningState: resolvedRunningState,
     source: hasInspectionEvidence(inspection) ? "inferred_log" : "unknown",
     confidence: "weak",
     detail: inspection.errorDetail,
@@ -2624,6 +2861,27 @@ function clampLimit(limit: number): number {
   }
 
   return Math.max(1, Math.min(Math.trunc(limit), 100));
+}
+
+function buildSessionStateRefreshCandidates(
+  items: SessionListItem[],
+  recentCount: number
+): SessionListItem[] {
+  const recentItems = items.slice(0, recentCount);
+  const activeResidues = items.filter((item) => isSessionStateRefreshCandidate(item));
+  const deduped = new Map<string, SessionListItem>();
+
+  for (const item of [...recentItems, ...activeResidues]) {
+    deduped.set(item.sessionId, item);
+  }
+
+  return Array.from(deduped.values());
+}
+
+function isSessionStateRefreshCandidate(item: SessionListItem): boolean {
+  return item.activityState === "running"
+    || item.runningState === "starting"
+    || item.runningState === "running";
 }
 
 function mapSessionStateRecordRow(row: SessionStateRecordRow): SessionStateRecord {
@@ -3363,6 +3621,38 @@ function shouldRemoveHiddenClaudeDebugSession(session: {
   );
 }
 
+const STALE_RUNTIME_WITHOUT_INSPECTION_GRACE_MS = 120_000;
+
+function shouldClearStaleRuntimeWithoutInspection(
+  current: SessionStateRecord | null,
+  inspection: ReturnType<typeof inspectSessionActivity>,
+  nowMs: number
+): boolean {
+  if (!current || current.activitySource !== "runtime") {
+    return false;
+  }
+
+  if (current.runningState !== "starting" && current.runningState !== "running") {
+    return false;
+  }
+
+  if (inspection.lastEventAt || inspection.completedAtCandidate || inspection.errorCode) {
+    return false;
+  }
+
+  if (!current.lastEventAt) {
+    return true;
+  }
+
+  const lastEventAtMs = Date.parse(current.lastEventAt);
+
+  if (!Number.isFinite(lastEventAtMs)) {
+    return true;
+  }
+
+  return nowMs - lastEventAtMs > STALE_RUNTIME_WITHOUT_INSPECTION_GRACE_MS;
+}
+
 function shouldPreserveRuntimeTerminalState(
   current: SessionStateRecord | null,
   inspection: ReturnType<typeof inspectSessionActivity>
@@ -3371,7 +3661,11 @@ function shouldPreserveRuntimeTerminalState(
     return false;
   }
 
-  if (!inspection.lastEventAt || !current.lastEventAt) {
+  if (!inspection.lastEventAt) {
+    return !shouldClearStaleRuntimeWithoutInspection(current, inspection, Date.now());
+  }
+
+  if (!current.lastEventAt) {
     return true;
   }
 
@@ -3454,4 +3748,41 @@ function resolveActivityState(
   }
 
   return "idle";
+}
+
+function buildReconstructedForkPrompt(input: {
+  sourceProvider: string;
+  targetProvider: string;
+  sourceType: ForkSourceType;
+  sourceTitle: string | null;
+  messages: HistoryPage["messages"];
+}): string {
+  const lines = [
+    input.sourceTitle
+      ? `源会话：${input.sourceTitle}`
+      : "源会话：未命名会话",
+    `源 provider：${input.sourceProvider}`,
+    `目标 provider：${input.targetProvider}`,
+    input.sourceType === "message"
+      ? "分叉方式：从指定消息点重建后续上下文"
+      : "分叉方式：从整条会话重建上下文",
+    "",
+    "下面是需要继承到新会话里的历史文本。",
+    "请把这些内容当作已经发生过的上下文事实，不要逐条复述，也不要把它们当成新的用户问题重新回答。",
+    "后续我会在这条新分支里继续追加新的指令。",
+    ""
+  ];
+
+  if (input.messages.length === 0) {
+    lines.push("当前没有可继承的历史文本。");
+    return lines.join("\n");
+  }
+
+  for (const message of input.messages) {
+    lines.push(message.role === "user" ? "[用户]" : "[助手]");
+    lines.push(message.content.trim());
+    lines.push("");
+  }
+
+  return lines.join("\n").trim();
 }

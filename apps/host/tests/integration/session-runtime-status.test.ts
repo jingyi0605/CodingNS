@@ -216,6 +216,208 @@ describe("session runtime status", () => {
     });
   });
 
+  it("Claude 原始日志已经出现 end_turn 时，应清掉残留的 runtime running", async () => {
+    const fixture = createProviderFixture();
+    activeFixtures.push(fixture);
+
+    appendFileSync(
+      fixture.claudeSessionFile,
+      `\n${JSON.stringify({
+        type: "assistant",
+        sessionId: "claude-session-1",
+        cwd: fixture.workspaceDir,
+        timestamp: "2026-03-23T08:00:20.000Z",
+        message: {
+          role: "assistant",
+          stop_reason: "end_turn",
+          content: [{ type: "text", text: "这轮已经结束。" }]
+        }
+      })}`,
+      "utf8"
+    );
+
+    const hosted = createTestApp(fixture);
+    activeClosers.push(() => hosted.app.close());
+    await hosted.app.ready();
+
+    const setup = await hosted.app.inject({
+      method: "POST",
+      url: "/api/public/setup",
+      payload: {
+        username: "admin",
+        password: "password123"
+      }
+    });
+    expect(setup.statusCode).toBe(201);
+
+    const login = await hosted.app.inject({
+      method: "POST",
+      url: "/api/auth/login",
+      payload: {
+        username: "admin",
+        password: "password123"
+      }
+    });
+    expect(login.statusCode).toBe(200);
+    const accessToken = login.json().accessToken as string;
+    const adminUser = hosted.services.repositories.authUserRepository.findByUsername("admin");
+    expect(adminUser).toBeTruthy();
+
+    const imported = await hosted.app.inject({
+      method: "POST",
+      url: "/api/workspaces/import",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        path: fixture.workspaceDir,
+        name: "Fixture Workspace"
+      }
+    });
+    expect(imported.statusCode).toBe(201);
+    const workspaceId = imported.json().id as string;
+
+    const sessionsResponse = await hosted.app.inject({
+      method: "GET",
+      url: `/api/sessions?workspaceId=${workspaceId}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(sessionsResponse.statusCode).toBe(200);
+
+    const claudeSession = sessionsResponse
+      .json()
+      .items.find((item: { provider: string }) => item.provider === "claude-code");
+    expect(claudeSession).toBeTruthy();
+
+    hosted.services.repositories.sessionStateRepository.upsert({
+      sessionId: claudeSession.sessionId,
+      userId: adminUser!.id,
+      runningState: "running",
+      activitySource: "runtime",
+      lastEventAt: "2026-03-23T08:00:12.000Z",
+      completedAt: null,
+      lastSeenAt: null,
+      updatedAt: "2026-03-23T08:00:12.000Z"
+    });
+
+    const refreshedState = await (
+      hosted.services.modules.sessionHistoryService as unknown as {
+        refreshSessionState: (sessionId: string, userId: string) => Promise<{
+          runningState: string;
+          activitySource: string;
+          completedAt: string | null;
+        } | null>;
+      }
+    ).refreshSessionState(claudeSession.sessionId, adminUser!.id);
+
+    expect(refreshedState).toMatchObject({
+      runningState: "completed",
+      activitySource: "inferred",
+      completedAt: "2026-03-23T08:00:20.000Z"
+    });
+  });
+
+  it("没有任何本地证据且已过宽限期的 runtime running，应该回收成 idle", async () => {
+    const fixture = createProviderFixture();
+    activeFixtures.push(fixture);
+
+    const hosted = createTestApp(fixture);
+    activeClosers.push(() => hosted.app.close());
+    await hosted.app.ready();
+
+    const setup = await hosted.app.inject({
+      method: "POST",
+      url: "/api/public/setup",
+      payload: {
+        username: "admin",
+        password: "password123"
+      }
+    });
+    expect(setup.statusCode).toBe(201);
+
+    const login = await hosted.app.inject({
+      method: "POST",
+      url: "/api/auth/login",
+      payload: {
+        username: "admin",
+        password: "password123"
+      }
+    });
+    expect(login.statusCode).toBe(200);
+    const accessToken = login.json().accessToken as string;
+    const adminUser = hosted.services.repositories.authUserRepository.findByUsername("admin");
+    expect(adminUser).toBeTruthy();
+
+    const imported = await hosted.app.inject({
+      method: "POST",
+      url: "/api/workspaces/import",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        path: fixture.workspaceDir,
+        name: "Fixture Workspace"
+      }
+    });
+    expect(imported.statusCode).toBe(201);
+    const workspaceId = imported.json().id as string;
+
+    const sessionsResponse = await hosted.app.inject({
+      method: "GET",
+      url: `/api/sessions?workspaceId=${workspaceId}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(sessionsResponse.statusCode).toBe(200);
+
+    const codexSession = sessionsResponse
+      .json()
+      .items.find((item: { provider: string }) => item.provider === "codex");
+    expect(codexSession).toBeTruthy();
+
+    const existingBinding = hosted.services.repositories.sessionBindingRepository.findBySessionId(
+      codexSession.sessionId
+    );
+    expect(existingBinding).toBeTruthy();
+
+    hosted.services.repositories.sessionBindingRepository.upsert({
+      ...existingBinding!,
+      rawStoreRef: "opencode://session/stale-runtime",
+      updatedAt: "2026-03-23T09:00:12.000Z"
+    });
+    hosted.services.repositories.sessionStateRepository.upsert({
+      sessionId: codexSession.sessionId,
+      userId: adminUser!.id,
+      runningState: "running",
+      activitySource: "runtime",
+      lastEventAt: "2026-03-23T09:00:12.000Z",
+      completedAt: null,
+      lastSeenAt: null,
+      updatedAt: "2026-03-23T09:00:12.000Z"
+    });
+
+    const refreshedState = await (
+      hosted.services.modules.sessionHistoryService as unknown as {
+        refreshSessionState: (sessionId: string, userId: string) => Promise<{
+          runningState: string;
+          activitySource: string;
+          completedAt: string | null;
+          lastEventAt: string | null;
+        } | null>;
+      }
+    ).refreshSessionState(codexSession.sessionId, adminUser!.id);
+
+    expect(refreshedState).toMatchObject({
+      runningState: "idle",
+      activitySource: "none",
+      completedAt: null,
+      lastEventAt: "2026-03-23T09:00:12.000Z"
+    });
+  });
+
   it("会话列表和 runtime 接口应该返回同一份 authority 裁决字段", async () => {
     const fixture = createProviderFixture();
     activeFixtures.push(fixture);
@@ -309,7 +511,18 @@ describe("session runtime status", () => {
       method: "GET",
       url: `/api/sessions/${claudeSession.sessionId}/runtime`,
       headers: {
-        authorization: `Bearer ${accessToken}`
+        authorization: `Bearer ${
+          (
+            await hosted.app.inject({
+              method: "POST",
+              url: "/api/auth/login",
+              payload: {
+                username: "admin",
+                password: "password123"
+              }
+            })
+          ).json().accessToken as string
+        }`
       }
     });
     expect(runtime.statusCode).toBe(200);
