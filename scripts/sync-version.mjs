@@ -25,6 +25,7 @@ const iosProjectTargets = [
   'scripts/user-app-ios-project.yml',
   'apps/user-app/src-tauri/gen/apple/project.yml',
 ];
+const iosPbxprojTargets = ['apps/user-app/src-tauri/gen/apple/app.xcodeproj/project.pbxproj'];
 const iosPlistTargets = ['apps/user-app/src-tauri/gen/apple/app_iOS/Info.plist'];
 const androidTargets = ['apps/user-app/src-tauri/gen/android/app/tauri.properties'];
 
@@ -55,6 +56,13 @@ for (const { relativePath, packageName } of cargoLockTargets) {
 
 for (const relativePath of iosProjectTargets) {
   const changed = await syncIosProjectVersion(relativePath, version);
+  if (changed) {
+    changedFiles.push(relativePath);
+  }
+}
+
+for (const relativePath of iosPbxprojTargets) {
+  const changed = await syncIosPbxprojVersion(relativePath, version);
   if (changed) {
     changedFiles.push(relativePath);
   }
@@ -160,6 +168,26 @@ async function syncIosProjectVersion(relativePath, nextVersion) {
   nextSource = nextSource.replace(
     /^(\s*CFBundleVersion:\s*).+$/m,
     `$1"${nextVersion}"`,
+  );
+  nextSource = nextSource.replace(
+    /^(\s*MARKETING_VERSION:\s*).+$/m,
+    `$1${nextVersion}`,
+  );
+
+  if (nextSource === source) {
+    return false;
+  }
+
+  await writeFile(filePath, nextSource, 'utf8');
+  return true;
+}
+
+async function syncIosPbxprojVersion(relativePath, nextVersion) {
+  const filePath = path.join(rootDir, relativePath);
+  const source = await readFile(filePath, 'utf8');
+  const nextSource = source.replace(
+    /^(\s*MARKETING_VERSION = ).+;$/gm,
+    `$1${nextVersion};`,
   );
 
   if (nextSource === source) {
