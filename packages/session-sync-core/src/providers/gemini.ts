@@ -1,6 +1,6 @@
 import { execFile as nodeExecFile } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { basename, dirname, extname, join } from "node:path";
+import { accessSync, constants, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { basename, delimiter, dirname, extname, join } from "node:path";
 import { promisify } from "node:util";
 
 import type {
@@ -401,10 +401,32 @@ export class GeminiAdapter implements ProviderAdapter {
     sessions: GeminiCliSessionRecord[];
     isComplete: boolean;
   }> {
+    if (this.options.listSessions) {
+      try {
+        return {
+          sessions: await this.options.listSessions(),
+          isComplete: true
+        };
+      } catch {
+        return {
+          sessions: [],
+          isComplete: false
+        };
+      }
+    }
+
+    const commandPath = this.options.commandPath?.trim() || "gemini";
+
+    // CLI 没装是正常场景，直接回退到本地 chats 扫描，不要把整个工作区打成 partial。
+    if (!isCommandAvailable(commandPath)) {
+      return {
+        sessions: [],
+        isComplete: true
+      };
+    }
+
     try {
-      const sessions = this.options.listSessions
-        ? await this.options.listSessions()
-        : await this.readCliSessionsFromCommand(workspacePath);
+      const sessions = await this.readCliSessionsFromCommand(workspacePath);
 
       return {
         sessions,
@@ -1568,6 +1590,95 @@ function resolveWorkspacePathFromChatFile(filePath: string): string | null {
 
 function shouldUseShellForCommand(commandPath: string): boolean {
   return process.platform === "win32" && [".cmd", ".bat"].includes(extname(commandPath).toLowerCase());
+}
+
+function isCommandAvailable(commandPath: string): boolean {
+  const normalizedCommandPath = stripWrappingQuotes(commandPath);
+
+  if (!normalizedCommandPath) {
+    return false;
+  }
+
+  if (
+    normalizedCommandPath.includes("/")
+    || normalizedCommandPath.includes("\\")
+  ) {
+    if (!existsSync(normalizedCommandPath)) {
+      return false;
+    }
+
+    const extension = extname(normalizedCommandPath).toLowerCase();
+
+    if ([".js", ".cjs", ".mjs"].includes(extension)) {
+      return true;
+    }
+
+    if (process.platform === "win32") {
+      return true;
+    }
+
+    try {
+      accessSync(normalizedCommandPath, constants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  const pathEntries = (process.env.PATH ?? "")
+    .split(delimiter)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+
+  if (process.platform === "win32") {
+    const pathextEntries = (process.env.PATHEXT ?? ".EXE;.CMD;.BAT;.COM")
+      .split(";")
+      .map((entry) => entry.trim().toLowerCase())
+      .filter(Boolean);
+    const candidateNames = extname(normalizedCommandPath)
+      ? [normalizedCommandPath]
+      : pathextEntries.map((entry) => `${normalizedCommandPath}${entry.toLowerCase()}`);
+
+    for (const entry of pathEntries) {
+      for (const candidateName of candidateNames) {
+        if (existsSync(join(entry, candidateName))) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  for (const entry of pathEntries) {
+    const candidatePath = join(entry, normalizedCommandPath);
+
+    if (!existsSync(candidatePath)) {
+      continue;
+    }
+
+    try {
+      accessSync(candidatePath, constants.X_OK);
+      return true;
+    } catch {
+      continue;
+    }
+  }
+
+  return false;
+}
+
+function stripWrappingQuotes(value: string): string {
+  const trimmed = value.trim();
+
+  if (
+    (trimmed.startsWith("\"") && trimmed.endsWith("\""))
+    || (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1).trim();
+  }
+
+  return trimmed;
 }
 
 function wrapGeminiSchemaError(filePath: string, error: unknown): Error {

@@ -17,7 +17,6 @@ import {
   type HistoryDirection,
   type HistoryPage,
   type ProviderCapabilities,
-  type ProviderDiscoveryDiagnostic,
   type ProviderSubscription,
   type SendMessageResult
 } from "@codingns/session-sync-core";
@@ -28,6 +27,7 @@ import { hashContent } from "../../shared/utils/hash.js";
 import { createId } from "../../shared/utils/id.js";
 import { logPerformance } from "../../shared/utils/perf-log.js";
 import { nowIso } from "../../shared/utils/time.js";
+import { isCommandAvailable } from "../../shared/utils/command-availability.js";
 import type {
   SessionActivityConfidence,
   SessionActivityResolutionSource,
@@ -178,7 +178,6 @@ const SESSION_START_DEFERRED_PROVIDERS = new Set([
   "kimi"
 ]);
 const MUTABLE_HISTORY_TAIL_REFRESH_INTERVAL_MS = 1_200;
-const PROVIDER_DISCOVERY_WARN_THRESHOLD_MS = 2_000;
 
 export class SessionHistoryService {
   private readonly providerRegistry: ProviderRegistry;
@@ -189,6 +188,8 @@ export class SessionHistoryService {
   private readonly claudeCodeHomeDir: string;
   private readonly codexModelOptionsService: CodexModelOptionsService;
   private readonly openCodeModelOptionsService: OpenCodeModelOptionsService;
+  private readonly providerCliCommandPaths: Readonly<Partial<Record<string, string>>>;
+  private readonly providerCliAvailability: Readonly<Partial<Record<string, boolean>>>;
   private readonly workspaceDiscoveryStatuses = new Map<string, WorkspaceDiscoveryStatus>();
   private readonly workspaceDiscoveryInflight = new Map<string, Promise<SessionListItem[]>>();
   private readonly workspaceStateRefreshInflight = new Map<string, Promise<void>>();
@@ -218,6 +219,14 @@ export class SessionHistoryService {
     this.sessionActivityAuthorityService = sessionActivityAuthorityService;
     this.sessionForkRepository = sessionForkRepository ?? new SessionForkRepository(db);
     this.claudeCodeHomeDir = config.claudeCodeHomeDir;
+    this.providerCliCommandPaths = {
+      "claude-code": process.platform === "win32" ? "claude.cmd" : "claude",
+      codex: config.codexCliPath,
+      gemini: config.geminiCliPath,
+      kimi: config.kimiCliPath
+    };
+    // CLI 是否可用只在 Host 启动时探测一次；后续统一读缓存，更新 CLI 后重启 Host 生效。
+    this.providerCliAvailability = buildProviderCliAvailabilitySnapshot(this.providerCliCommandPaths);
     this.providerRegistry = new ProviderRegistry([
       new ClaudeCodeAdapter({ homeDir: config.claudeCodeHomeDir }),
       new CodexAdapter({
@@ -526,7 +535,9 @@ export class SessionHistoryService {
 
   getProviderCapabilitiesSnapshot(provider: string): ProviderCapabilities {
     try {
-      return this.capabilityService.getProviderCapabilities(provider);
+      return this.applyProviderCliAvailability(
+        this.capabilityService.getProviderCapabilities(provider)
+      );
     } catch (error) {
       throw mapSessionProviderError(error);
     }
@@ -540,7 +551,7 @@ export class SessionHistoryService {
       const workspacePath = workspaceId ? this.getWorkspaceOrThrow(workspaceId).path : null;
 
       return await this.enrichProviderCapabilities(
-        this.capabilityService.getProviderCapabilities(provider),
+        this.applyProviderCliAvailability(this.capabilityService.getProviderCapabilities(provider)),
         workspacePath
       );
     } catch (error) {
@@ -554,7 +565,9 @@ export class SessionHistoryService {
 
     return this.capabilityService
       .getSessionCapabilities(binding.provider, binding.providerSessionId)
-      .then((capabilities) => this.enrichProviderCapabilities(capabilities, workspace.path))
+      .then((capabilities) =>
+        this.enrichProviderCapabilities(this.applyProviderCliAvailability(capabilities), workspace.path)
+      )
       .catch((error) => {
         throw mapSessionProviderError(error);
       });
@@ -580,6 +593,52 @@ export class SessionHistoryService {
     );
   }
 
+  private applyProviderCliAvailability(capabilities: ProviderCapabilities): ProviderCapabilities {
+    if (!isProviderCliBacked(capabilities.provider)) {
+      return capabilities;
+    }
+
+    if (this.providerCliAvailability[capabilities.provider]) {
+      return capabilities;
+    }
+
+    const limitation = buildProviderCliUnavailableMessage(capabilities.provider);
+    const limitations = capabilities.limitations.includes(limitation)
+      ? capabilities.limitations
+      : [limitation, ...capabilities.limitations];
+
+    return {
+      ...capabilities,
+      canStartSession: false,
+      canResumeSession: false,
+      canSendMessage: false,
+      supportsSubagents: false,
+      supportsInterrupt: false,
+      supportsSessionFork: false,
+      supportsNativeAgents: false,
+      limitations
+    };
+  }
+
+  private assertProviderCapabilityEnabled(
+    provider: string,
+    capability: "canStartSession" | "canResumeSession",
+    fallbackDetail: string
+  ): void {
+    const capabilities = this.getProviderCapabilitiesSnapshot(provider);
+
+    if (capabilities[capability]) {
+      return;
+    }
+
+    throw new AppError({
+      statusCode: 409,
+      errorCode: "PROVIDER_UNAVAILABLE",
+      detail: capabilities.limitations[0] ?? fallbackDetail,
+      field: "provider"
+    });
+  }
+
   async getSessionContextUsage(sessionId: string): Promise<ContextUsageSnapshot | null> {
     const binding = this.getBindingOrThrow(sessionId);
 
@@ -601,6 +660,11 @@ export class SessionHistoryService {
     resumedAt: string;
   }> {
     const binding = this.getBindingOrThrow(sessionId);
+    this.assertProviderCapabilityEnabled(
+      binding.provider,
+      "canResumeSession",
+      "当前 provider 不支持继续会话"
+    );
 
     try {
       const result = await this.sessionSyncService.resumeSession(
@@ -646,6 +710,11 @@ export class SessionHistoryService {
 
   private async startSessionDirect(input: StartSessionInput): Promise<SessionListItem> {
     const workspace = this.getWorkspaceOrThrow(input.workspaceId);
+    this.assertProviderCapabilityEnabled(
+      input.provider,
+      "canStartSession",
+      "当前 provider 不支持创建会话"
+    );
 
     try {
       const result = await this.sessionSyncService.startSession(input.provider, workspace.path, {
@@ -715,6 +784,11 @@ export class SessionHistoryService {
     const binding = this.getBindingOrThrow(input.sessionId);
     const workspace = this.getWorkspaceOrThrow(binding.workspaceId);
     const targetProvider = input.targetProvider?.trim() || binding.provider;
+    this.assertProviderCapabilityEnabled(
+      targetProvider,
+      "canStartSession",
+      "当前 provider 不支持 fork 创建会话"
+    );
     const sourceMessageId =
       input.sourceType === "message"
         ? input.sourceMessageId?.trim() || null
@@ -1473,12 +1547,6 @@ export class SessionHistoryService {
         .catch((error) => {
           throw mapSessionProviderError(error);
         });
-      this.logWorkspaceDiscoveryDiagnostics(
-        workspace.id,
-        workspace.path,
-        discovery.providerDiagnostics ?? [],
-        discovery.isComplete
-      );
       const sessions = discovery.sessions;
       discoverDurationMs = Date.now() - discoverStartedAt;
       const timestamp = nowIso();
@@ -1718,39 +1786,6 @@ export class SessionHistoryService {
       );
       throw error;
     }
-  }
-
-  private logWorkspaceDiscoveryDiagnostics(
-    workspaceId: string,
-    workspacePath: string,
-    diagnostics: ProviderDiscoveryDiagnostic[],
-    isComplete: boolean
-  ): void {
-    if (diagnostics.length === 0) {
-      return;
-    }
-
-    const problematicProviders = diagnostics.filter(
-      (entry) => entry.status !== "success" || entry.durationMs >= PROVIDER_DISCOVERY_WARN_THRESHOLD_MS
-    );
-
-    if (isComplete && problematicProviders.length === 0) {
-      return;
-    }
-
-    console.warn("[workspace-discovery-diagnostics]", {
-      workspaceId,
-      workspacePath,
-      isComplete,
-      providers: (isComplete ? problematicProviders : diagnostics).map((entry) => ({
-        provider: entry.provider,
-        status: entry.status,
-        durationMs: Math.round(entry.durationMs),
-        sessionCount: entry.sessionCount,
-        isComplete: entry.isComplete,
-        errorMessage: entry.errorMessage ?? null
-      }))
-    });
   }
 
   private async readPage(
@@ -2901,6 +2936,38 @@ export class SessionHistoryService {
       resumedAt: current?.resumedAt ?? null,
       updatedAt: nowIso()
     });
+  }
+}
+
+function isProviderCliBacked(provider: string): provider is "claude-code" | "codex" | "gemini" | "kimi" {
+  return provider === "claude-code" || provider === "codex" || provider === "gemini" || provider === "kimi";
+}
+
+function buildProviderCliAvailabilitySnapshot(
+  commandPaths: Readonly<Partial<Record<string, string>>>
+): Readonly<Partial<Record<string, boolean>>> {
+  return Object.freeze(
+    Object.fromEntries(
+      Object.entries(commandPaths).map(([provider, commandPath]) => [
+        provider,
+        isCommandAvailable(commandPath)
+      ])
+    )
+  );
+}
+
+function buildProviderCliUnavailableMessage(provider: string): string {
+  switch (provider) {
+    case "claude-code":
+      return "未检测到 Claude CLI";
+    case "codex":
+      return "未检测到 Codex CLI";
+    case "gemini":
+      return "未检测到 Gemini CLI";
+    case "kimi":
+      return "未检测到 Kimi CLI";
+    default:
+      return "未检测到对应 CLI";
   }
 }
 

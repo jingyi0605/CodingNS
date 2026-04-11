@@ -473,6 +473,10 @@ describe("WorkbenchLayout", () => {
         return createJsonResponse(nextSession);
       }
 
+      if (url.includes("/api/providers/")) {
+        return createJsonResponse(createAvailableCapabilities("claude-code"));
+      }
+
       throw new Error(`未处理的请求: ${url}`);
     }) as typeof fetch;
 
@@ -557,6 +561,62 @@ describe("WorkbenchLayout", () => {
       );
       expect(screen.getByTestId("current-search").textContent).toBe("?provider=claude-code");
     });
+  });
+
+  it("startDraftSession 在 provider 不可用时不会进入 draft 路由", async () => {
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "会话 Alpha",
+            workspaceId: "workspace-1"
+          })
+        ]
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      if (url.includes("/api/providers/gemini/capabilities")) {
+        return createJsonResponse(createUnavailableCapabilities("gemini", "未检测到 Gemini CLI"), 200);
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    render(
+      <ToastProvider>
+        <MemoryRouter initialEntries={["/workspaces/workspace-1/sessions"]}>
+          <Routes>
+            <Route element={<WorkbenchLayout shellMode="desktop" />}>
+              <Route
+                path="/workspaces/:workspaceId/sessions"
+                element={<StartDraftSessionProbe workspaceId="workspace-1" provider="gemini" />}
+              />
+              <Route
+                path="/workspaces/:workspaceId/sessions/:sessionId"
+                element={<CurrentLocationProbe />}
+              />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </ToastProvider>
+    );
+
+    await screen.findByText("触发草稿会话");
+    await userEvent.click(screen.getByRole("button", { name: "触发草稿会话" }));
+
+    expect(await screen.findByText("未检测到 Gemini CLI")).toBeInTheDocument();
+    expect(screen.getByTestId("current-path").textContent).toBe("/workspaces/workspace-1/sessions");
+    expect(screen.getByTestId("current-search").textContent).toBe("");
   });
 
   it("收藏会话在快照短暂缺失后恢复时，不会被前端错误清掉", async () => {
@@ -1439,6 +1499,63 @@ describe("WorkbenchLayout", () => {
     const archiveDialog = await screen.findByRole("dialog", { name: t("shell.archiveModalTitle") });
     expect(within(archiveDialog).getByText("归档主会话")).toBeInTheDocument();
     expect(within(archiveDialog).queryByText("归档子代理")).not.toBeInTheDocument();
+  });
+
+  it("对话页侧边会话列表不会显示父会话已归档的孤儿子会话", async () => {
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "Project One"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "favorite-root",
+            title: "Favorite Root",
+            workspaceId: "workspace-1",
+            isFavorite: true,
+            isArchived: false
+          }),
+          createSessionSummary({
+            sessionId: "archived-root",
+            title: "已归档父会话",
+            workspaceId: "workspace-1",
+            isArchived: true
+          }),
+          createSessionSummary({
+            sessionId: "orphan-subagent",
+            title: "孤儿子会话",
+            workspaceId: "workspace-1",
+            parentSessionId: "archived-root",
+            isSubagent: true,
+            subagentLabel: "worker · orphan",
+            isArchived: false
+          }),
+          createSessionSummary({
+            sessionId: "visible-root",
+            title: "可见主会话",
+            workspaceId: "workspace-1",
+            isArchived: false
+          })
+        ]
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute("/workspaces/workspace-1/sessions/visible-root");
+
+    await screen.findByText("可见主会话");
+
+    expect(screen.queryByText("孤儿子会话")).not.toBeInTheDocument();
+    expect(screen.getByText("Favorite Root")).toBeInTheDocument();
   });
 
   it("搜索按钮不会抢占页面焦点，并支持会话与代码搜索", async () => {
@@ -3789,6 +3906,25 @@ function ButlerAuxiliaryProbe() {
   return <CurrentLocationProbe />;
 }
 
+function StartDraftSessionProbe({
+  workspaceId,
+  provider
+}: {
+  workspaceId: string;
+  provider: "codex" | "claude-code" | "opencode" | "gemini" | "kimi";
+}) {
+  const { startDraftSession } = useWorkbenchShell();
+
+  return (
+    <div>
+      <button type="button" onClick={() => startDraftSession(workspaceId, provider)}>
+        触发草稿会话
+      </button>
+      <CurrentLocationProbe />
+    </div>
+  );
+}
+
 async function findSessionCardByTitle(title: string) {
   const titleElements = await screen.findAllByText(title);
   const card = titleElements.find((element) => element.closest(".workbench-session-card"))?.closest(
@@ -3964,6 +4100,47 @@ function createPermissionRequest(input: {
     createdAt: "2026-04-01T08:00:00.000Z",
     updatedAt: "2026-04-01T08:00:00.000Z",
     resolvedAt: null
+  };
+}
+
+function createUnavailableCapabilities(
+  provider: "codex" | "claude-code" | "opencode" | "gemini" | "kimi",
+  limitation: string
+) {
+  return {
+    provider,
+    canStartSession: false,
+    canResumeSession: false,
+    canSendMessage: false,
+    inRunInputMode: "none",
+    supportsSubagents: false,
+    supportsInterrupt: false,
+    supportsStructuredToolCalls: true,
+    supportsTokenUsage: true,
+    supportsAttachments: false,
+    supportsPermissionPrompt: false,
+    supportsCheckpoint: false,
+    limitations: [limitation]
+  };
+}
+
+function createAvailableCapabilities(
+  provider: "codex" | "claude-code" | "opencode" | "gemini" | "kimi"
+) {
+  return {
+    provider,
+    canStartSession: true,
+    canResumeSession: true,
+    canSendMessage: true,
+    inRunInputMode: "none",
+    supportsSubagents: false,
+    supportsInterrupt: false,
+    supportsStructuredToolCalls: true,
+    supportsTokenUsage: true,
+    supportsAttachments: true,
+    supportsPermissionPrompt: true,
+    supportsCheckpoint: false,
+    limitations: []
   };
 }
 

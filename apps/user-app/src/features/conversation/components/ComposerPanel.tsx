@@ -31,6 +31,7 @@ import type {
 import type { PreferenceReasoningLevel as ReasoningLevel } from "../../../preferences/types";
 import {
   getProviderCapabilities,
+  listProviderCapabilities,
   listQuickPhrases,
   replaceQuickPhrases
 } from "../api/conversation-api";
@@ -256,6 +257,18 @@ function resolveForkProviderDisabledReason(
     : t("conversation.forkProviderReconstructedUnsupported");
 }
 
+function isProviderStartDisabled(capabilities: ProviderCapabilitiesDto | null): boolean {
+  return capabilities?.canStartSession === false;
+}
+
+function getProviderStartDisabledReason(capabilities: ProviderCapabilitiesDto | null): string | null {
+  if (!isProviderStartDisabled(capabilities)) {
+    return null;
+  }
+
+  return capabilities?.limitations[0] ?? t("conversation.capabilityDenied");
+}
+
 function toAttachmentMeta(file: File, id: string): MessageAttachmentDto {
   return {
     id,
@@ -374,6 +387,9 @@ export function ComposerPanel({
   const [localSubmitting, setLocalSubmitting] = useState(false);
   const [forkCapabilities, setForkCapabilities] = useState<ProviderCapabilitiesDto | null>(null);
   const [forkCapabilitiesLoading, setForkCapabilitiesLoading] = useState(false);
+  const [forkProviderCapabilities, setForkProviderCapabilities] = useState<
+    Partial<Record<ProviderId, ProviderCapabilitiesDto>>
+  >({});
   const [pendingCrossProvider, setPendingCrossProvider] = useState<ProviderId | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const libraryInputRef = useRef<HTMLInputElement>(null);
@@ -525,22 +541,47 @@ export function ComposerPanel({
       ? forkDraft.targetModel
       : PROVIDER_DEFAULT_MODEL_ID;
   }, [forkAvailableModels, forkDraft]);
-  const visibleForkProviders = useMemo(() => {
+  const selectableForkProviders = useMemo(() => {
     if (!forkDraft) {
       return [];
     }
 
     return FORK_PROVIDER_IDS.filter(
-      (candidateProvider) =>
-        resolveForkProviderDisabledReason(forkDraft.sourceProvider, candidateProvider) === null
+      (candidateProvider) => {
+        if (resolveForkProviderDisabledReason(forkDraft.sourceProvider, candidateProvider) !== null) {
+          return false;
+        }
+
+        return !isProviderStartDisabled(forkProviderCapabilities[candidateProvider] ?? null);
+      }
     );
-  }, [forkDraft]);
+  }, [forkDraft, forkProviderCapabilities]);
+  const visibleForkProviders = useMemo(() => {
+    if (!forkDraft) {
+      return [];
+    }
+
+    if (selectableForkProviders.length > 0) {
+      return selectableForkProviders;
+    }
+
+    return [forkDraft.targetProvider];
+  }, [forkDraft, selectableForkProviders]);
   const forkProviderSelectOptions = useMemo<ComposerSelectOption[]>(() => {
     return visibleForkProviders.map((providerId) => ({
       value: providerId,
       label: getProviderDisplayName(providerId, "full")
     }));
   }, [visibleForkProviders]);
+  const forkStartDisabledReason = useMemo(() => {
+    if (!forkDraft) {
+      return null;
+    }
+
+    return getProviderStartDisabledReason(
+      forkProviderCapabilities[forkDraft.targetProvider] ?? effectiveForkCapabilities ?? null
+    );
+  }, [effectiveForkCapabilities, forkDraft, forkProviderCapabilities]);
   const runHasActiveFlag = hasActiveRun ?? null;
   const isUnmanagedStreamingRun =
     isRunning &&
@@ -558,6 +599,7 @@ export function ComposerPanel({
     typeof onQueueSend === "function" &&
     allowsQueueDuringRun(capabilities, runHasActiveFlag);
   const inRunSendBlocked = !hasForkDraft && isRunning && !canStreamDuringRun && !canQueueDuringRun;
+  const forkSendBlocked = hasForkDraft && Boolean(forkStartDisabledReason);
   const hasDraft = content.trim().length > 0 || attachments.length > 0;
   const interruptAvailable = canInterrupt ?? interruptDecision.allowed;
   const canInterruptNow =
@@ -1021,6 +1063,7 @@ export function ComposerPanel({
     if (!forkDraft) {
       setForkCapabilities(null);
       setForkCapabilitiesLoading(false);
+      setForkProviderCapabilities({});
       setPendingCrossProvider(null);
       return;
     }
@@ -1061,6 +1104,45 @@ export function ComposerPanel({
       cancelled = true;
     };
   }, [forkDraft?.targetProvider, forkDraft?.workspaceId, shouldReuseSessionCapabilitiesForFork]);
+
+  useEffect(() => {
+    if (!forkDraft) {
+      setForkProviderCapabilities({});
+      return;
+    }
+
+    let cancelled = false;
+
+    void listProviderCapabilities(FORK_PROVIDER_IDS, forkDraft.workspaceId).then((nextCapabilities) => {
+      if (!cancelled) {
+        setForkProviderCapabilities(nextCapabilities);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [forkDraft?.workspaceId]);
+
+  useEffect(() => {
+    if (!forkDraft || !onForkDraftChange) {
+      return;
+    }
+
+    if (selectableForkProviders.length === 0) {
+      return;
+    }
+
+    if (selectableForkProviders.includes(forkDraft.targetProvider)) {
+      return;
+    }
+
+    onForkDraftChange({
+      ...forkDraft,
+      targetProvider: selectableForkProviders[0] ?? forkDraft.targetProvider,
+      targetModel: null
+    });
+  }, [forkDraft, onForkDraftChange, selectableForkProviders]);
 
   useEffect(() => {
     if (!forkDraft || !forkDraft.targetModel || !onForkDraftChange) {
@@ -1134,11 +1216,16 @@ export function ComposerPanel({
     const nextContent = content.trim();
     const nextAttachments = attachments;
 
-    if ((nextContent.length === 0 && nextAttachments.length === 0) || !sendDecision.allowed || inRunSendBlocked) {
+    if (
+      (nextContent.length === 0 && nextAttachments.length === 0)
+      || !sendDecision.allowed
+      || inRunSendBlocked
+      || forkSendBlocked
+    ) {
       showToast({
         title: inRunSendBlocked
           ? t("conversation.runtimeRunning")
-          : sendDecision.reason ?? t("conversation.capabilityDenied"),
+          : forkStartDisabledReason ?? sendDecision.reason ?? t("conversation.capabilityDenied"),
         tone: "error"
       });
       return;
@@ -1239,6 +1326,7 @@ export function ComposerPanel({
     localSubmitting ||
     isSubmitting ||
     inRunSendBlocked ||
+    forkSendBlocked ||
     !sendDecision.allowed ||
     !hasDraft;
   const attachButtonDisabled =
@@ -1309,10 +1397,14 @@ export function ComposerPanel({
                         value={forkSelectedModelId}
                         options={forkModelSelectOptions}
                         onChange={handleForkModelChange}
+                        disabled={forkCapabilitiesLoading || forkSendBlocked}
                         compact
                       />
                     </div>
                   </div>
+                  {forkStartDisabledReason ? (
+                    <p className="composer-capability-hint">{forkStartDisabledReason}</p>
+                  ) : null}
                 </div>
               </div>
               {onClearForkDraft ? (
@@ -1901,12 +1993,14 @@ function MacSelect({
   value,
   options,
   onChange,
+  disabled = false,
   compact = false
 }: {
   ariaLabel: string;
   value: string;
   options: ComposerSelectOption[];
   onChange: (value: string) => void;
+  disabled?: boolean;
   compact?: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -2004,6 +2098,7 @@ function MacSelect({
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={listboxId}
+        disabled={disabled}
         onClick={() => setOpen((current) => !current)}
       >
         <span className="composer-mac-select-label">{selectedOption.label}</span>

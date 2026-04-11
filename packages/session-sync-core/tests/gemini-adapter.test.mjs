@@ -118,6 +118,47 @@ test("GeminiAdapter capability 浼氬０鏄庡彲鍚姩 runtime 涓斾笉鏀�
   assert.equal(capabilities.supportsPermissionPrompt, false);
 });
 
+test("Gemini CLI 未安装时仍然把本地 chats 发现视为 complete", async () => {
+  const rootDir = mkdtempSync(join(tmpdir(), "codingns-gemini-no-cli-"));
+  const homeDir = join(rootDir, "gemini-home");
+  const chatFile = join(homeDir, "tmp", "hash-alpha", "chats", "gemini-session-alpha.json");
+
+  try {
+    mkdirSync(join(homeDir, "tmp", "hash-alpha", "chats"), { recursive: true });
+    writeFileSync(
+      chatFile,
+      JSON.stringify({
+        sessionId: "gemini-session-alpha",
+        workspacePath: "/workspace/alpha",
+        title: "Alpha 本地会话",
+        updatedAt: "2026-04-03T08:10:00.000Z",
+        messages: [
+          {
+            role: "user",
+            timestamp: "2026-04-03T08:00:00.000Z",
+            parts: [{ text: "hello" }]
+          }
+        ]
+      }),
+      "utf8"
+    );
+
+    const adapter = new GeminiAdapter({
+      homeDir,
+      commandPath: join(rootDir, "missing-gemini")
+    });
+    const discovery = await adapter.detectSessionsDetailed("/workspace/alpha");
+
+    assert.equal(discovery.isComplete, true);
+    assert.deepEqual(
+      discovery.sessions.map((session) => session.providerSessionId),
+      ["gemini-session-alpha"]
+    );
+  } finally {
+    rmSync(rootDir, { recursive: true, force: true });
+  }
+});
+
 test("GeminiAdapter 能把文本、工具调用和工具结果归一化到统一消息模型", async () => {
   const rootDir = mkdtempSync(join(tmpdir(), "codingns-gemini-history-"));
   const homeDir = join(rootDir, "gemini-home");

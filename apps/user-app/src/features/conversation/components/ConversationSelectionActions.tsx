@@ -9,6 +9,7 @@ import { useToast } from "../../../shared/toast";
 import {
   forkSession,
   getProviderCapabilities,
+  listProviderCapabilities,
   getSessionDetail,
   startLiveSession,
   sendLiveMessage,
@@ -163,6 +164,9 @@ export function ConversationSelectionActions({
   );
   const [selectedModel, setSelectedModel] = useState(PROVIDER_DEFAULT_MODEL_ID);
   const [providerCapabilities, setProviderCapabilities] = useState<ProviderCapabilitiesDto | null>(null);
+  const [providerCapabilitiesMap, setProviderCapabilitiesMap] = useState<
+    Partial<Record<BuiltinProviderId, ProviderCapabilitiesDto>>
+  >({});
   const [loadingCapabilities, setLoadingCapabilities] = useState(false);
   const [submittingAction, setSubmittingAction] = useState(false);
   const [todoModalOpen, setTodoModalOpen] = useState(false);
@@ -196,6 +200,17 @@ export function ConversationSelectionActions({
     () => modelOptions.find((item) => item.id === selectedModel) ?? modelOptions[0] ?? null,
     [modelOptions, selectedModel]
   );
+  const selectedProviderDisabledReason = useMemo(() => {
+    const selectedCapabilities =
+      providerCapabilitiesMap[selectedProvider]
+      ?? (selectedProvider === session?.provider ? currentCapabilities : providerCapabilities);
+
+    if (!selectedCapabilities || selectedCapabilities.canStartSession !== false) {
+      return null;
+    }
+
+    return selectedCapabilities.limitations[0] ?? t("conversation.capabilityDenied");
+  }, [currentCapabilities, providerCapabilities, providerCapabilitiesMap, selectedProvider, session?.provider]);
   const toolbarStyle = useMemo<CSSProperties | null>(() => {
     if (!selection || typeof window === "undefined") {
       return null;
@@ -421,6 +436,48 @@ export function ConversationSelectionActions({
   }, [actionDialogOpen, currentCapabilities, selectedProvider, session]);
 
   useEffect(() => {
+    if (!actionDialogOpen || !session) {
+      setProviderCapabilitiesMap({});
+      return;
+    }
+
+    let cancelled = false;
+
+    void listProviderCapabilities(SESSION_PROVIDER_PICKER_IDS, session.workspaceId).then((nextCapabilities) => {
+      if (!cancelled) {
+        setProviderCapabilitiesMap(nextCapabilities as Partial<Record<BuiltinProviderId, ProviderCapabilitiesDto>>);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [actionDialogOpen, session]);
+
+  useEffect(() => {
+    if (!actionDialogOpen || !session) {
+      return;
+    }
+
+    const selectableProviders = SESSION_PROVIDER_PICKER_IDS.filter((providerId) => {
+      const capabilities = providerCapabilitiesMap[providerId];
+      return !capabilities || capabilities.canStartSession !== false;
+    });
+
+    if (selectableProviders.length === 0) {
+      return;
+    }
+
+    if (selectableProviders.includes(selectedProvider)) {
+      return;
+    }
+
+    const nextProvider = selectableProviders[0];
+    setSelectedProvider(nextProvider);
+    setSelectedModel(preferredModelForProvider(nextProvider));
+  }, [actionDialogOpen, preferredModelForProvider, providerCapabilitiesMap, selectedProvider, session]);
+
+  useEffect(() => {
     const preferredModel = preferredModelForProvider(selectedProvider);
 
     if (modelOptions.some((item) => item.id === selectedModel)) {
@@ -515,6 +572,14 @@ export function ConversationSelectionActions({
 
   async function handleSubmitAction() {
     if (!selection || !session) {
+      return;
+    }
+
+    if (selectedProviderDisabledReason) {
+      showToast({
+        title: selectedProviderDisabledReason,
+        tone: "error"
+      });
       return;
     }
 
@@ -667,6 +732,9 @@ export function ConversationSelectionActions({
                     {t("conversation.selectionActionContextUnavailable")}
                   </p>
                 ) : null}
+                {selectedProviderDisabledReason ? (
+                  <p className="conversation-selection-hint">{selectedProviderDisabledReason}</p>
+                ) : null}
                 <div className="conversation-selection-grid">
                   <label className="conversation-selection-field">
                     <span>{t("conversation.forkTargetProviderLabel")}</span>
@@ -679,7 +747,11 @@ export function ConversationSelectionActions({
                       }}
                     >
                       {SESSION_PROVIDER_PICKER_IDS.map((providerId) => (
-                        <option key={providerId} value={providerId}>
+                        <option
+                          key={providerId}
+                          value={providerId}
+                          disabled={providerCapabilitiesMap[providerId]?.canStartSession === false}
+                        >
                           {getProviderDisplayName(providerId, "full")}
                         </option>
                       ))}
@@ -689,7 +761,7 @@ export function ConversationSelectionActions({
                     <span>{t("conversation.forkTargetModelLabel")}</span>
                     <select
                       value={selectedModel}
-                      disabled={loadingCapabilities}
+                      disabled={loadingCapabilities || Boolean(selectedProviderDisabledReason)}
                       onChange={(event) => setSelectedModel(event.target.value)}
                     >
                       {modelOptions.map((item) => (
@@ -711,7 +783,7 @@ export function ConversationSelectionActions({
                   <button
                     type="button"
                     className="primary-button"
-                    disabled={submittingAction}
+                    disabled={submittingAction || Boolean(selectedProviderDisabledReason)}
                     onClick={() => void handleSubmitAction()}
                   >
                     {submittingAction ? t("conversation.sendingState") : t("conversation.selectionActionSubmit")}

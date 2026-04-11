@@ -59,6 +59,7 @@ import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 import { authStore } from "../../auth/store/auth-store";
 import {
+  getProviderCapabilities,
   getSessionPermissionRequests,
   getWorkbenchSnapshot,
   removeWorkspace,
@@ -123,7 +124,10 @@ import {
   type ButlerFollowUpTaskDto,
   type ButlerOverviewDto
 } from "../../butler/api/butler-api";
-import { SessionProviderPicker } from "./SessionProviderPicker";
+import {
+  clearSessionProviderPickerCapabilityCache,
+  SessionProviderPicker
+} from "./SessionProviderPicker";
 import { WorkbenchModal as SidebarModal } from "./WorkbenchModal";
 import { WorkspaceCloneModal } from "./WorkspaceCloneModal";
 import { WorkspaceInboxPanel } from "./WorkspaceInboxModal";
@@ -602,6 +606,19 @@ interface WorkbenchShellContextValue {
   }) => boolean;
 }
 
+async function assertProviderCanStartDraftSession(
+  workspaceId: string,
+  provider: ProviderId
+): Promise<void> {
+  const capabilities = await getProviderCapabilities(provider, workspaceId);
+
+  if (capabilities.canStartSession !== false) {
+    return;
+  }
+
+  throw new Error(capabilities.limitations[0] ?? t("conversation.capabilityDenied"));
+}
+
 export interface WorkbenchFileRevealRequest {
   requestId: number;
   workspaceId: string;
@@ -642,6 +659,23 @@ function buildSessionTree(sessions: SessionSummaryDto[]) {
     getId: (session) => session.sessionId,
     getParentId: resolveParentSessionId,
     compare: sortSessions
+  });
+}
+
+function filterVisibleWorkspaceSessions(sessions: SessionSummaryDto[]) {
+  return sessions.filter((session) => {
+    if (isArchivedSession(session)) {
+      return false;
+    }
+
+    const parentSessionId = resolveParentSessionId(session);
+
+    if (!parentSessionId) {
+      return true;
+    }
+
+    const parentSession = sessions.find((item) => item.sessionId === parentSessionId);
+    return !parentSession || !isArchivedSession(parentSession);
   });
 }
 
@@ -2845,6 +2879,7 @@ function SidebarContent({
     setActionProvider(provider);
 
     try {
+      await assertProviderCanStartDraftSession(workspaceId, provider);
       setCreateSessionWorkspaceId(null);
       navigate(buildDraftSessionPath(workspaceId, provider));
       onClose?.();
@@ -3662,6 +3697,7 @@ function SidebarContent({
       >
         <SessionProviderPicker
           disabled={Boolean(actionWorkspaceId)}
+          workspaceId={createSessionWorkspace?.id ?? null}
           pendingProvider={
             actionWorkspaceId === createSessionWorkspace?.id ? actionProvider ?? null : null
           }
@@ -4718,6 +4754,10 @@ export function WorkbenchLayout({
 
     const client = new WorkbenchRealtimeClient({
       onConnectionChange: (connectionState) => {
+        if (connectionState === "connected") {
+          clearSessionProviderPickerCapabilityCache();
+        }
+
         if (connectionState === "reconnect_failed" && !hasNavigationDataRef.current) {
           setNavigationError(t("shell.navigationLoadFailed"));
           showToastRef.current({
@@ -5290,34 +5330,23 @@ export function WorkbenchLayout({
 
   const workspaceSidebarGroups = useMemo(
     () =>
-      navigationGroups.map((group) => ({
-        workspace: group.workspace,
-        visibleSessions: group.sessions.filter((session) => !isArchivedSession(session)),
-        archivedSessions: group.sessions.filter(
-          (session) => isArchivedSession(session) && !resolveParentSessionId(session)
-        ),
-        visibleSessionTree: buildSessionTree(
-          group.sessions.filter((session) => {
-            if (isArchivedSession(session)) {
-              return false;
-            }
+      navigationGroups.map((group) => {
+        const visibleSessions = filterVisibleWorkspaceSessions(group.sessions);
 
-            const parentSessionId = resolveParentSessionId(session);
-
-            if (!parentSessionId) {
-              return true;
-            }
-
-            const parentSession = group.sessions.find((item) => item.sessionId === parentSessionId);
-            return !parentSession || !isArchivedSession(parentSession);
-          })
-        ).filter(
-          (node) =>
-            !favoriteSessionIdSet.has(node.item.sessionId)
-            && !someSessionTreeNode(getTreeNodeChildren(node), (session) => favoriteSessionIdSet.has(session.sessionId))
-        ),
-        isCollapsed: collapsedWorkspaceIdSet.has(group.workspace.id)
-      })),
+        return {
+          workspace: group.workspace,
+          visibleSessions,
+          archivedSessions: group.sessions.filter(
+            (session) => isArchivedSession(session) && !resolveParentSessionId(session)
+          ),
+          visibleSessionTree: buildSessionTree(visibleSessions).filter(
+            (node) =>
+              !favoriteSessionIdSet.has(node.item.sessionId)
+              && !someSessionTreeNode(getTreeNodeChildren(node), (session) => favoriteSessionIdSet.has(session.sessionId))
+          ),
+          isCollapsed: collapsedWorkspaceIdSet.has(group.workspace.id)
+        };
+      }),
     [collapsedWorkspaceIdSet, favoriteSessionIdSet, navigationGroups]
   );
 
@@ -5515,9 +5544,18 @@ export function WorkbenchLayout({
 
   const startDraftSession = useCallback(
     (workspaceId: string, provider: ProviderId) => {
-      navigate(buildDraftSessionPath(workspaceId, provider));
+      void assertProviderCanStartDraftSession(workspaceId, provider)
+        .then(() => {
+          navigate(buildDraftSessionPath(workspaceId, provider));
+        })
+        .catch((error) => {
+          showToast({
+            title: error instanceof Error ? error.message : t("shell.startSessionFailed"),
+            tone: "error"
+          });
+        });
     },
-    [navigate]
+    [navigate, showToast]
   );
 
   const revealWorkspaceFile = useCallback(

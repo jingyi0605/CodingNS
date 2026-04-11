@@ -1,6 +1,8 @@
 import { useEffect } from "react";
+import { useState } from "react";
 
-import type { ProviderId } from "../api/conversation-api";
+import type { ProviderCapabilitiesDto, ProviderId } from "../api/conversation-api";
+import { listProviderCapabilities } from "../api/conversation-api";
 import { useHaptics } from "../../../shared/haptics";
 import { t } from "../../../shared/i18n";
 import {
@@ -14,8 +16,15 @@ interface SessionProviderDefinition {
   provider: ProviderId;
 }
 
+const providerCapabilitiesCache = new Map<string, ProviderCapabilitiesDto>();
+
+export function clearSessionProviderPickerCapabilityCache(): void {
+  providerCapabilitiesCache.clear();
+}
+
 interface SessionProviderPickerProps {
   disabled?: boolean;
+  workspaceId?: string | null;
   pendingProvider?: ProviderId | null;
   selectedProvider?: ProviderId | null;
   providers?: ProviderId[];
@@ -27,6 +36,7 @@ interface SessionProviderPickerProps {
 
 export function SessionProviderPicker({
   disabled = false,
+  workspaceId = null,
   pendingProvider = null,
   selectedProvider = null,
   providers = SESSION_PROVIDER_PICKER_IDS,
@@ -36,11 +46,48 @@ export function SessionProviderPicker({
   onSelect
 }: SessionProviderPickerProps) {
   const haptics = useHaptics();
+  const requiresCapabilityResolution = Boolean(workspaceId);
+  const [capabilitiesByProvider, setCapabilitiesByProvider] = useState<
+    Partial<Record<ProviderId, ProviderCapabilitiesDto>>
+  >(() => readCachedCapabilities(providers, workspaceId));
   const sessionProviderDefinitions: SessionProviderDefinition[] = providers.map((provider) => ({ provider }));
 
   useEffect(() => {
     warmProviderIconCache();
   }, []);
+
+  useEffect(() => {
+    if (!workspaceId) {
+      setCapabilitiesByProvider({});
+      return;
+    }
+
+    const cachedCapabilities = readCachedCapabilities(providers, workspaceId);
+    setCapabilitiesByProvider(cachedCapabilities);
+
+    const missingProviders = providers.filter((provider) => !cachedCapabilities[provider]);
+
+    if (missingProviders.length === 0) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void listProviderCapabilities(missingProviders, workspaceId).then((nextCapabilities) => {
+      writeCachedCapabilities(workspaceId, nextCapabilities);
+
+      if (!cancelled) {
+        setCapabilitiesByProvider((current) => ({
+          ...current,
+          ...nextCapabilities
+        }));
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [providers, workspaceId]);
 
   return (
     <div className={`session-provider-grid${className ? ` ${className}` : ""}`}>
@@ -48,7 +95,18 @@ export function SessionProviderPicker({
         const label = getProviderDisplayName(item.provider, "full");
         const isPending = pendingProvider === item.provider;
         const isSelected = selectedProvider === item.provider;
-        const disabledReason = disabledReasons?.[item.provider] ?? null;
+        const capabilityResolved = Boolean(capabilitiesByProvider[item.provider]);
+        const capabilityDisabledReason = resolveProviderDisabledReason(
+          capabilitiesByProvider[item.provider] ?? null
+        );
+        const loadingDisabledReason =
+          requiresCapabilityResolution && !capabilityResolved && !isPending
+            ? t("shell.providerChecking")
+            : null;
+        const disabledReason =
+          disabledReasons?.[item.provider]
+          ?? capabilityDisabledReason
+          ?? loadingDisabledReason;
         const statusLabel = isPending
           ? t("shell.startingSession")
           : disabledReason
@@ -84,4 +142,61 @@ export function SessionProviderPicker({
       })}
     </div>
   );
+}
+
+function resolveProviderDisabledReason(capabilities: ProviderCapabilitiesDto | null): string | null {
+  if (!capabilities || capabilities.canStartSession !== false) {
+    return null;
+  }
+
+  return capabilities.limitations[0] ?? t("conversation.capabilityDenied");
+}
+
+function readCachedCapabilities(
+  providers: readonly ProviderId[],
+  workspaceId: string | null | undefined
+): Partial<Record<ProviderId, ProviderCapabilitiesDto>> {
+  const normalizedWorkspaceId = workspaceId?.trim() ?? "";
+
+  if (!normalizedWorkspaceId) {
+    return {};
+  }
+
+  const entries: Array<[ProviderId, ProviderCapabilitiesDto]> = [];
+
+  for (const provider of providers) {
+    const cached = providerCapabilitiesCache.get(buildCapabilityCacheKey(normalizedWorkspaceId, provider));
+
+    if (cached) {
+      entries.push([provider, cached]);
+    }
+  }
+
+  return Object.fromEntries(entries) as Partial<Record<ProviderId, ProviderCapabilitiesDto>>;
+}
+
+function writeCachedCapabilities(
+  workspaceId: string,
+  capabilitiesByProvider: Partial<Record<ProviderId, ProviderCapabilitiesDto>>
+): void {
+  const normalizedWorkspaceId = workspaceId.trim();
+
+  if (!normalizedWorkspaceId) {
+    return;
+  }
+
+  for (const [provider, capabilities] of Object.entries(capabilitiesByProvider)) {
+    if (!capabilities) {
+      continue;
+    }
+
+    providerCapabilitiesCache.set(
+      buildCapabilityCacheKey(normalizedWorkspaceId, provider as ProviderId),
+      capabilities
+    );
+  }
+}
+
+function buildCapabilityCacheKey(workspaceId: string, provider: ProviderId): string {
+  return `${workspaceId}::${provider}`;
 }

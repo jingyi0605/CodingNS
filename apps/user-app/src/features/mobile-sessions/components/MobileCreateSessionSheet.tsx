@@ -111,6 +111,7 @@ export function MobileCreateSessionSheet({
               </div>
               <SessionProviderPicker
                 disabled={!selectedWorkspaceId}
+                workspaceId={selectedWorkspaceId || null}
                 onSelect={(provider) => {
                   if (!selectedWorkspaceId) {
                     return;

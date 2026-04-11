@@ -633,6 +633,27 @@ export function getProviderCapabilities(provider: ProviderId, workspaceId?: stri
   );
 }
 
+export async function listProviderCapabilities(
+  providers: readonly ProviderId[],
+  workspaceId?: string
+): Promise<Partial<Record<ProviderId, ProviderCapabilitiesDto>>> {
+  const results = await Promise.allSettled(
+    providers.map(async (provider) => [provider, await getProviderCapabilities(provider, workspaceId)] as const)
+  );
+  const entries: Array<[ProviderId, ProviderCapabilitiesDto]> = [];
+
+  for (const result of results) {
+    if (result.status !== "fulfilled") {
+      continue;
+    }
+
+    const [provider, capabilities] = result.value;
+    entries.push([provider, capabilities]);
+  }
+
+  return Object.fromEntries(entries) as Partial<Record<ProviderId, ProviderCapabilitiesDto>>;
+}
+
 export function getSessionMessages(
   sessionId: string,
   cursor: string | null,

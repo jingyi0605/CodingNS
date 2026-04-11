@@ -11423,6 +11423,13 @@ textarea:focus-visible {
   max-width: none;
 }
 
+.composer-capability-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--danger-600, #b42318);
+}
+
 .composer-fork-draft-clear {
   width: 24px;
   height: 24px;
