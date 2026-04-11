@@ -68,11 +68,17 @@ import {
 } from "../capability/provider-ui";
 import {
   buildDraftSessionPath,
+  buildNavigationSessionTree,
   buildWorkspaceSessionIndexPath,
   buildWorkspaceSessionPath,
   flattenNavigationSessions,
-  type WorkbenchNavigationEntry
+  type WorkbenchNavigationEntry,
+  type WorkbenchNavigationTreeNode
 } from "../../workbench/utils/workbench-navigation";
+import {
+  findSessionTreeAncestorIds,
+  someSessionTreeNode
+} from "../../workbench/utils/session-tree";
 import { useMobileConversationBottomLayer } from "../../mobile-shell/components/MobileConversationBottomLayerContext";
 import { MobileWorkspaceSwitcherHeader } from "../../mobile-shell/components/MobileWorkspaceSwitcherHeader";
 import { MobileCreateSessionSheet } from "../../mobile-sessions/components/MobileCreateSessionSheet";
@@ -81,6 +87,7 @@ import {
   writeMobileConversationPreviewMode,
   type MobileConversationPreviewMode
 } from "../../mobile-sessions/mobile-conversation-state";
+import { resolveNextMobileSessionEntry } from "./mobile-session-archive-navigation";
 import "../../mobile-sessions/styles.css";
 
 const RUNTIME_TIMEOUT_TOAST_DELAY_MS = 15_000;
@@ -240,15 +247,6 @@ function LiveConversationPage({
     () => navigationGroups.map((group) => group.workspace),
     [navigationGroups]
   );
-  const mobilePreviewActiveSessionId = useMemo(
-    () =>
-      resolveMobilePreviewActiveSessionId(
-        navigationGroups,
-        mobileWorkspaceId,
-        sessionId
-      ),
-    [mobileWorkspaceId, navigationGroups, sessionId]
-  );
   const mobilePreviewItems = useMemo(
     () =>
       buildMobilePreviewItems(
@@ -259,8 +257,13 @@ function LiveConversationPage({
     [mobileFavoriteSessionIdSet, navigationGroups, navigationSession?.workspaceId, session?.workspaceId]
   );
   const mobileFavoritePreviewItems = useMemo(
-    () => buildMobileFavoritePreviewItems(favoriteSessions),
-    [favoriteSessions]
+    () => buildMobileFavoritePreviewItems(favoriteSessions, navigationGroups),
+    [favoriteSessions, navigationGroups]
+  );
+  const [expandedMobilePreviewRootIds, setExpandedMobilePreviewRootIds] = useState<string[]>([]);
+  const mobilePreviewTrees = useMemo(
+    () => [...mobileFavoritePreviewItems, ...mobilePreviewItems],
+    [mobileFavoritePreviewItems, mobilePreviewItems]
   );
   const mobileArchiveWorkspaceGroup = useMemo(
     () =>
@@ -268,6 +271,10 @@ function LiveConversationPage({
         ? navigationGroups.find((group) => group.workspace.id === mobileWorkspaceId) ?? null
         : null,
     [mobileWorkspaceId, navigationGroups]
+  );
+  const nextMobileSessionEntry = useMemo(
+    () => resolveNextMobileSessionEntry(navigationGroups, mobileWorkspaceId, sessionId),
+    [mobileWorkspaceId, navigationGroups, sessionId]
   );
   const mobileDraftProvider = session?.provider ?? navigationSession?.provider ?? null;
   const mobileSessionTitlePresentation = useMemo(
@@ -282,6 +289,32 @@ function LiveConversationPage({
       ),
     [navigationGroups]
   );
+
+  useEffect(() => {
+    const ancestorIds = findSessionTreeAncestorIds(
+      mobilePreviewTrees,
+      sessionId,
+      (entry) => entry.session.sessionId
+    );
+
+    if (ancestorIds.length === 0) {
+      return;
+    }
+
+    setExpandedMobilePreviewRootIds((current) => {
+      const nextIds = new Set(current);
+      let changed = false;
+
+      for (const ancestorId of ancestorIds) {
+        if (!nextIds.has(ancestorId)) {
+          nextIds.add(ancestorId);
+          changed = true;
+        }
+      }
+
+      return changed ? Array.from(nextIds) : current;
+    });
+  }, [mobilePreviewTrees, sessionId]);
   const inheritedContextSource = useMemo(
     () => resolveInheritedContextSource(currentSessionSummary, messages),
     [currentSessionSummary, messages]
@@ -618,31 +651,39 @@ function LiveConversationPage({
           />
         ) : null}
         {!showInlineHeader ? (
-          <MobileConversationPreviewRail
-            visible={mobilePreview.isVisible}
-            widthPx={mobilePreview.previewWidthPx}
-            isDragging={mobilePreview.isDragging}
-            gestureHandlers={mobilePreview.railGestureHandlers}
-            activeSessionId={mobilePreviewActiveSessionId}
-            createSessionActionLabel={t("shell.createSession")}
-            favoriteItems={mobileFavoritePreviewItems}
-            items={mobilePreviewItems}
-            workspaceSectionLabel={t("shell.mobileConversationCurrentWorkspaceSection")}
-            onCreateSession={() => {
-              setCreateSessionOpen(true);
-            }}
+        <MobileConversationPreviewRail
+          visible={mobilePreview.isVisible}
+          widthPx={mobilePreview.previewWidthPx}
+          isDragging={mobilePreview.isDragging}
+          gestureHandlers={mobilePreview.railGestureHandlers}
+          activeSessionId={sessionId}
+          createSessionActionLabel={t("shell.createSession")}
+          favoriteItems={mobileFavoritePreviewItems}
+          items={mobilePreviewItems}
+          expandedRootIds={expandedMobilePreviewRootIds}
+          workspaceSectionLabel={t("shell.mobileConversationCurrentWorkspaceSection")}
+          onCreateSession={() => {
+            setCreateSessionOpen(true);
+          }}
             archiveCurrentActionLabel={t("shell.archiveCurrentSessionAction")}
             archiveFolderActionLabel={t("shell.archiveFolderAction")}
             onArchiveActiveSession={() => {
               setArchiveConfirmOpen(true);
             }}
-            onOpenArchiveFolder={() => {
-              setArchiveFolderOpen(true);
-            }}
-            onActivate={(entry) => {
-              writeMobileConversationPreviewMode("preview");
-              navigate(buildWorkspaceSessionPath(entry.workspace.id, entry.session.sessionId));
-            }}
+          onOpenArchiveFolder={() => {
+            setArchiveFolderOpen(true);
+          }}
+          onToggleSubsessions={(nextSessionId) => {
+            setExpandedMobilePreviewRootIds((current) =>
+              current.includes(nextSessionId)
+                ? current.filter((item) => item !== nextSessionId)
+                : [...current, nextSessionId]
+            );
+          }}
+          onActivate={(entry) => {
+            writeMobileConversationPreviewMode("preview");
+            navigate(buildWorkspaceSessionPath(entry.workspace.id, entry.session.sessionId));
+          }}
           />
         ) : null}
         <div className="mobile-conversation-stage" {...(!showInlineHeader ? mobilePreview.mainGestureHandlers : {})}>
@@ -841,6 +882,16 @@ function LiveConversationPage({
             if (mobileWorkspaceId) {
               selectWorkspace(mobileWorkspaceId);
               writeMobileConversationPreviewMode("preview");
+              if (nextMobileSessionEntry) {
+                navigate(
+                  buildWorkspaceSessionPath(
+                    nextMobileSessionEntry.workspace.id,
+                    nextMobileSessionEntry.session.sessionId
+                  )
+                );
+                return;
+              }
+
               navigate(buildWorkspaceSessionIndexPath(mobileWorkspaceId));
               return;
             }
@@ -973,14 +1024,45 @@ function DraftConversationPage({
     [draft.workspaceId, mobileFavoriteSessionIdSet, navigationGroups]
   );
   const mobileFavoritePreviewItems = useMemo(
-    () => buildMobileFavoritePreviewItems(favoriteSessions),
-    [favoriteSessions]
+    () => buildMobileFavoritePreviewItems(favoriteSessions, navigationGroups),
+    [favoriteSessions, navigationGroups]
+  );
+  const [expandedMobilePreviewRootIds, setExpandedMobilePreviewRootIds] = useState<string[]>([]);
+  const mobilePreviewTrees = useMemo(
+    () => [...mobileFavoritePreviewItems, ...mobilePreviewItems],
+    [mobileFavoritePreviewItems, mobilePreviewItems]
   );
   const mobileConversationMainRef = useRef<HTMLDivElement | null>(null);
   const mobileConversationPageRef = useRef<HTMLElement | null>(null);
   const mobileConversationHeaderRef = useRef<HTMLDivElement | null>(null);
   const [mobileComposerPanelElement, setMobileComposerPanelElement] = useState<HTMLElement | null>(null);
   const { composerPortalTarget } = useMobileConversationBottomLayer();
+
+  useEffect(() => {
+    const ancestorIds = findSessionTreeAncestorIds(
+      mobilePreviewTrees,
+      draft.sessionId,
+      (entry) => entry.session.sessionId
+    );
+
+    if (ancestorIds.length === 0) {
+      return;
+    }
+
+    setExpandedMobilePreviewRootIds((current) => {
+      const nextIds = new Set(current);
+      let changed = false;
+
+      for (const ancestorId of ancestorIds) {
+        if (!nextIds.has(ancestorId)) {
+          nextIds.add(ancestorId);
+          changed = true;
+        }
+      }
+
+      return changed ? Array.from(nextIds) : current;
+    });
+  }, [draft.sessionId, mobilePreviewTrees]);
 
   useEffect(() => {
     setSessionWorkspace(draft.sessionId, draft.workspaceId);
@@ -1072,9 +1154,17 @@ function DraftConversationPage({
           createSessionActionLabel={t("shell.createSession")}
           favoriteItems={mobileFavoritePreviewItems}
           items={mobilePreviewItems}
+          expandedRootIds={expandedMobilePreviewRootIds}
           workspaceSectionLabel={t("shell.mobileConversationCurrentWorkspaceSection")}
           onCreateSession={() => {
             setCreateSessionOpen(true);
+          }}
+          onToggleSubsessions={(nextSessionId) => {
+            setExpandedMobilePreviewRootIds((current) =>
+              current.includes(nextSessionId)
+                ? current.filter((item) => item !== nextSessionId)
+                : [...current, nextSessionId]
+            );
           }}
           onActivate={(entry) => {
             writeMobileConversationPreviewMode("preview");
@@ -1271,87 +1361,79 @@ function buildMobilePreviewItems(
   navigationGroups: ReturnType<typeof useWorkbenchShell>["navigationGroups"],
   workspaceId: string | null,
   excludedSessionIds: ReadonlySet<string>
-) {
+): WorkbenchNavigationTreeNode[] {
   if (!workspaceId) {
-    return [] as Array<{
-      entry: WorkbenchNavigationEntry;
-      depth: 0 | 1;
-    }>;
+    return [];
   }
 
   const workspaceGroup = navigationGroups.find((group) => group.workspace.id === workspaceId);
 
   if (!workspaceGroup) {
-    return [] as Array<{
-      entry: WorkbenchNavigationEntry;
-      depth: 0 | 1;
-    }>;
+    return [];
   }
 
-  return flattenNavigationSessions([workspaceGroup])
-    .filter(
-      (entry) =>
-        !entry.session.isArchived
-        && !isRealSubagentSession(entry.session)
-        && !excludedSessionIds.has(entry.session.sessionId)
-    )
-    .map((entry) => ({
-      entry,
-      depth: 0 as const
+  const visibleEntries = workspaceGroup.sessions
+    .filter((session) => !session.isArchived)
+    .map((session) => ({
+      session,
+      workspace: workspaceGroup.workspace
     }));
+  const visibleTree = buildNavigationSessionTree(visibleEntries);
+
+  return visibleTree.filter(
+    (node) =>
+      !excludedSessionIds.has(node.item.session.sessionId)
+      && !someSessionTreeNode(node.children, (entry) => excludedSessionIds.has(entry.session.sessionId))
+  );
 }
 
 function buildMobileFavoritePreviewItems(
-  favoriteSessions: readonly WorkbenchNavigationEntry[]
-) {
+  favoriteSessions: readonly WorkbenchNavigationEntry[],
+  navigationGroups: ReturnType<typeof useWorkbenchShell>["navigationGroups"]
+): WorkbenchNavigationTreeNode[] {
+  const treeByWorkspaceId = new Map(
+    navigationGroups.map((group) => [
+      group.workspace.id,
+      buildNavigationSessionTree(
+        group.sessions
+          .filter((session) => !session.isArchived)
+          .map((session) => ({
+            session,
+            workspace: group.workspace
+          }))
+      )
+    ] as const)
+  );
+
   return favoriteSessions
     .filter((item) => !isRealSubagentSession(item.session))
-    .map((entry) => ({
-      entry,
-      depth: 0 as const
-    }));
+    .map((entry) => {
+      const workspaceTree = treeByWorkspaceId.get(entry.workspace.id) ?? [];
+      return findNavigationTreeNodeBySessionId(workspaceTree, entry.session.sessionId) ?? {
+        item: entry,
+        depth: 0,
+        children: []
+      };
+    });
 }
 
-function resolveMobilePreviewActiveSessionId(
-  navigationGroups: ReturnType<typeof useWorkbenchShell>["navigationGroups"],
-  workspaceId: string | null,
+function findNavigationTreeNodeBySessionId(
+  nodes: readonly WorkbenchNavigationTreeNode[],
   sessionId: string
-) {
-  if (!workspaceId) {
-    return sessionId;
-  }
-
-  const workspaceGroup = navigationGroups.find((group) => group.workspace.id === workspaceId);
-
-  if (!workspaceGroup) {
-    return sessionId;
-  }
-
-  const sessionById = new Map(workspaceGroup.sessions.map((item) => [item.sessionId, item] as const));
-  let currentSession = sessionById.get(sessionId);
-
-  if (!currentSession) {
-    return sessionId;
-  }
-
-  const visitedSessionIds = new Set<string>([currentSession.sessionId]);
-
-  while (true) {
-    const parentSessionId = currentSession.parentSessionId?.trim() || null;
-
-    if (!parentSessionId) {
-      return currentSession.sessionId;
+): WorkbenchNavigationTreeNode | null {
+  for (const node of nodes) {
+    if (node.item.session.sessionId === sessionId) {
+      return node;
     }
 
-    const parentSession = sessionById.get(parentSessionId);
+    const childNode = findNavigationTreeNodeBySessionId(node.children, sessionId);
 
-    if (!parentSession || visitedSessionIds.has(parentSession.sessionId)) {
-      return currentSession.sessionId;
+    if (childNode) {
+      return childNode;
     }
-
-    visitedSessionIds.add(parentSession.sessionId);
-    currentSession = parentSession;
   }
+
+  return null;
 }
 
 function useMobileConversationComposerHeightVar(
@@ -1744,12 +1826,14 @@ function MobileConversationPreviewRail({
   createSessionActionLabel,
   favoriteItems,
   items,
+  expandedRootIds,
   workspaceSectionLabel,
   onCreateSession,
   archiveCurrentActionLabel,
   archiveFolderActionLabel,
   onArchiveActiveSession,
   onOpenArchiveFolder,
+  onToggleSubsessions,
   onActivate
 }: {
   visible: boolean;
@@ -1758,24 +1842,116 @@ function MobileConversationPreviewRail({
   gestureHandlers: MobileConversationPreviewGestureHandlers;
   activeSessionId: string;
   createSessionActionLabel?: string;
-  favoriteItems: Array<{
-    entry: WorkbenchNavigationEntry;
-    depth: 0 | 1;
-  }>;
-  items: Array<{
-    entry: WorkbenchNavigationEntry;
-    depth: 0 | 1;
-  }>;
+  favoriteItems: WorkbenchNavigationTreeNode[];
+  items: WorkbenchNavigationTreeNode[];
+  expandedRootIds: readonly string[];
   workspaceSectionLabel: string;
   onCreateSession?: (() => void) | null;
   archiveCurrentActionLabel?: string;
   archiveFolderActionLabel?: string;
   onArchiveActiveSession?: (() => void | Promise<void>) | null;
   onOpenArchiveFolder?: (() => void) | null;
+  onToggleSubsessions: (sessionId: string) => void;
   onActivate: (entry: WorkbenchNavigationEntry) => void;
 }) {
   if (!visible) {
     return null;
+  }
+
+  function renderPreviewTreeNode(
+    node: WorkbenchNavigationTreeNode,
+    options?: {
+      workspaceName?: string;
+      ancestorExpanded?: boolean;
+      ancestorHasNextSiblings?: readonly boolean[];
+      hasNextSibling?: boolean;
+      isFirstSibling?: boolean;
+    }
+  ): JSX.Element {
+    const {
+      workspaceName,
+      ancestorExpanded = false,
+      ancestorHasNextSiblings = [],
+      hasNextSibling = false,
+      isFirstSibling = false
+    } = options ?? {};
+    const sessionId = node.item.session.sessionId;
+    const childNodes = node.children;
+    const allowToggle = node.depth === 0 && childNodes.length > 0;
+    const isExpanded = ancestorExpanded || (allowToggle && expandedRootIds.includes(sessionId));
+    const nextAncestorHasNextSiblings =
+      node.depth > 0 ? [...ancestorHasNextSiblings, hasNextSibling] : [...ancestorHasNextSiblings];
+
+    return (
+      <div key={`${node.item.workspace.id}:${sessionId}`} className="mobile-conversation-preview-tree-node">
+        <div
+          className="mobile-conversation-preview-tree-row"
+          style={
+            {
+              "--mobile-preview-tree-depth": node.depth
+            } as CSSProperties
+          }
+        >
+          {node.depth > 0 ? (
+            <div className="mobile-conversation-preview-guides" aria-hidden="true">
+              {ancestorHasNextSiblings.map((continues, index) =>
+                continues ? (
+                  <span
+                    key={`${sessionId}:ancestor:${index}`}
+                    className="mobile-conversation-preview-guide-column"
+                    style={
+                      {
+                        "--mobile-preview-tree-level": index + 1
+                      } as CSSProperties
+                    }
+                  />
+                ) : null
+              )}
+              <span
+                className="mobile-conversation-preview-guide-branch"
+                data-continue={hasNextSibling}
+                data-first={isFirstSibling}
+                style={
+                  {
+                    "--mobile-preview-tree-level": node.depth
+                  } as CSSProperties
+                }
+              >
+                <span className="mobile-conversation-preview-guide-branch-horizontal" />
+              </span>
+            </div>
+          ) : null}
+          <MobileConversationPreviewEntryButton
+            entry={node.item}
+            activeSessionId={activeSessionId}
+            hasSubsessions={allowToggle}
+            subsessionsExpanded={isExpanded}
+            workspaceName={workspaceName}
+            onToggleSubsessions={
+              allowToggle
+                ? () => {
+                    onToggleSubsessions(sessionId);
+                  }
+                : undefined
+            }
+            onActivate={onActivate}
+          />
+        </div>
+        {childNodes.length > 0 && isExpanded ? (
+          <div className="mobile-conversation-preview-children">
+            {childNodes.map((childNode, index) =>
+              renderPreviewTreeNode(childNode, {
+                workspaceName,
+                ancestorExpanded: true,
+                ancestorHasNextSiblings: nextAncestorHasNextSiblings,
+                hasNextSibling: index < childNodes.length - 1,
+                isFirstSibling: index === 0
+              })
+            )}
+          </div>
+        ) : null}
+      </div>
+    );
   }
 
   return (
@@ -1808,15 +1984,12 @@ function MobileConversationPreviewRail({
               <span className="workbench-section-counter">{favoriteItems.length}</span>
             </div>
             <div className="mobile-conversation-preview-list mobile-conversation-preview-list-static terminal-mobile-session-list">
-              {favoriteItems.map((item) => (
-                <MobileConversationPreviewEntryButton
-                  key={`favorite:${item.entry.workspace.id}:${item.entry.session.sessionId}`}
-                  entry={item.entry}
-                  depth={item.depth}
-                  activeSessionId={activeSessionId}
-                  onActivate={onActivate}
-                  workspaceName={item.entry.workspace.name}
-                />
+              {favoriteItems.map((node) => (
+                <div key={`favorite:${node.item.workspace.id}:${node.item.session.sessionId}`}>
+                  {renderPreviewTreeNode(node, {
+                    workspaceName: node.item.workspace.name
+                  })}
+                </div>
               ))}
             </div>
           </section>
@@ -1834,15 +2007,7 @@ function MobileConversationPreviewRail({
               className="mobile-conversation-preview-list terminal-mobile-session-list"
               data-preview-gesture="ignore"
             >
-              {items.map((item) => (
-                <MobileConversationPreviewEntryButton
-                  key={`${item.entry.workspace.id}:${item.entry.session.sessionId}`}
-                  entry={item.entry}
-                  depth={item.depth}
-                  activeSessionId={activeSessionId}
-                  onActivate={onActivate}
-                />
-              ))}
+              {items.map((node) => renderPreviewTreeNode(node))}
             </div>
           )}
         </section>
@@ -1878,32 +2043,63 @@ function MobileConversationPreviewRail({
 
 function MobileConversationPreviewEntryButton({
   entry,
-  depth,
   activeSessionId,
+  hasSubsessions = false,
+  subsessionsExpanded = false,
   onActivate,
+  onToggleSubsessions,
   workspaceName
 }: {
   entry: WorkbenchNavigationEntry;
-  depth: 0 | 1;
   activeSessionId: string;
+  hasSubsessions?: boolean;
+  subsessionsExpanded?: boolean;
   onActivate: (entry: WorkbenchNavigationEntry) => void;
+  onToggleSubsessions?: () => void;
   workspaceName?: string;
 }) {
   const isActive = entry.session.sessionId === activeSessionId;
 
   return (
     <article className="mobile-conversation-preview-entry terminal-mobile-session-card" data-active={isActive}>
+      {hasSubsessions ? (
+        <button
+          type="button"
+          className="mobile-conversation-preview-toggle"
+          aria-label={subsessionsExpanded ? t("shell.subagentCollapse") : t("shell.subagentExpand")}
+          title={subsessionsExpanded ? t("shell.subagentCollapse") : t("shell.subagentExpand")}
+          aria-expanded={subsessionsExpanded}
+          onClick={(event) => {
+            event.stopPropagation();
+            onToggleSubsessions?.();
+          }}
+        >
+          <span
+            className={resolvePreviewIndicatorClassName(entry.session, {
+              isActive,
+              hasSubsessions
+            })}
+            aria-hidden="true"
+          />
+          <span className="mobile-conversation-preview-toggle-icon" aria-hidden="true">
+            <PreviewChevronIcon expanded={subsessionsExpanded} />
+          </span>
+        </button>
+      ) : (
+        <span
+          className={resolvePreviewIndicatorClassName(entry.session, {
+            isActive,
+            hasSubsessions
+          })}
+          aria-hidden="true"
+        />
+      )}
       <button
         type="button"
         className="mobile-conversation-preview-item terminal-mobile-session-primary"
         data-active={isActive}
-        data-depth={depth}
         onClick={() => onActivate(entry)}
       >
-        <span
-          className={resolvePreviewIndicatorClassName(entry.session, isActive)}
-          aria-hidden="true"
-        />
         <div className="mobile-conversation-preview-item-body">
           <span className="mobile-conversation-preview-item-title">
             {entry.session.title || t("common.unknown")}
@@ -1914,6 +2110,25 @@ function MobileConversationPreviewEntryButton({
         </div>
       </button>
     </article>
+  );
+}
+
+function PreviewChevronIcon({ expanded }: { expanded: boolean }) {
+  return (
+    <svg viewBox="0 0 12 12" fill="none" aria-hidden="true">
+      <path
+        d="M3 4.25L6 7.25L9 4.25"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        style={{
+          transformOrigin: "50% 50%",
+          transform: expanded ? "rotate(180deg)" : "rotate(0deg)",
+          transition: "transform 180ms ease"
+        }}
+      />
+    </svg>
   );
 }
 
@@ -1947,11 +2162,16 @@ function resolvePreviewIndicatorClassName(
     | "lastErrorCode"
     | "lastErrorDetail"
   >,
-  isActive: boolean
+  options: {
+    isActive: boolean;
+    hasSubsessions: boolean;
+  }
 ) {
-  const className = resolveSessionIndicatorClassName("mobile-conversation-preview-indicator", session);
+  const className = resolveSessionIndicatorClassName("mobile-conversation-preview-indicator", session, {
+    hasSubagents: options.hasSubsessions
+  });
 
-  if (className.endsWith(" is-idle") && isActive) {
+  if (className.endsWith(" is-idle") && options.isActive) {
     return "mobile-conversation-preview-indicator is-active";
   }
 
