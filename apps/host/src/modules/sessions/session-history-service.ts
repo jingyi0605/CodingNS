@@ -1543,10 +1543,15 @@ export class SessionHistoryService {
             existingIndex?.parentSessionId
             ?? this.sessionForkRepository.findBySessionId(sessionId)?.parentSessionId
             ?? null;
+          const preservedParentTitle =
+            preservedParentSessionId
+              ? this.sessionIndexRepository.findIndexRecordBySessionId(preservedParentSessionId)?.title ?? null
+              : null;
           const preservedTitle = resolvePersistedSessionTitle(
             session.provider,
             session.title,
-            existingIndex?.title ?? null
+            existingIndex?.title ?? null,
+            preservedParentTitle
           );
           this.sessionIndexRepository.upsert({
             sessionId,
@@ -1591,16 +1596,21 @@ export class SessionHistoryService {
 
         for (const persistedSession of persistedSessions) {
           const relation = relationMap.get(persistedSession.sessionId);
+          const resolvedParentSessionId =
+            relation?.parentSessionId
+            ?? persistedSession.existingIndex?.parentSessionId
+            ?? this.sessionForkRepository.findBySessionId(persistedSession.sessionId)?.parentSessionId
+            ?? null;
+          const resolvedParentTitle =
+            resolvedParentSessionId
+              ? this.sessionIndexRepository.findIndexRecordBySessionId(resolvedParentSessionId)?.title ?? null
+              : null;
 
           this.sessionIndexRepository.upsert({
             sessionId: persistedSession.sessionId,
             workspaceId: workspace.id,
             provider: persistedSession.session.provider,
-            parentSessionId:
-              relation?.parentSessionId
-              ?? persistedSession.existingIndex?.parentSessionId
-              ?? this.sessionForkRepository.findBySessionId(persistedSession.sessionId)?.parentSessionId
-              ?? null,
+            parentSessionId: resolvedParentSessionId,
             sessionKind:
               relation?.sessionKind
               ?? persistedSession.existingIndex?.sessionKind
@@ -1624,7 +1634,8 @@ export class SessionHistoryService {
             title: resolvePersistedSessionTitle(
               persistedSession.session.provider,
               persistedSession.session.title,
-              persistedSession.existingIndex?.title ?? null
+              persistedSession.existingIndex?.title ?? null,
+              resolvedParentTitle
             ),
             messageCount: persistedSession.session.messageCount,
             isArchived: resolveDiscoveredArchiveState(
@@ -3689,6 +3700,10 @@ function resolveSessionListTitle(
 ): string {
   const normalizedExistingTitle = existingTitle?.trim() ?? "";
   const normalizedParentTitle = parentTitle?.trim() ?? "";
+  const fallbackTitle = buildUserMessageTitle(
+    fallbackContent,
+    normalizedExistingTitle || "继续对话"
+  );
 
   if (
     normalizedExistingTitle.length > 0 &&
@@ -3701,11 +3716,15 @@ function resolveSessionListTitle(
     return normalizedExistingTitle;
   }
 
-  if (provider === "codex") {
-    return buildUserMessageTitle(fallbackContent, normalizedExistingTitle || "继续对话");
+  if (normalizedParentTitle.length > 0 && normalizedExistingTitle === normalizedParentTitle) {
+    return fallbackTitle;
   }
 
-  return normalizedExistingTitle || buildUserMessageTitle(fallbackContent, "继续对话");
+  if (provider === "codex") {
+    return fallbackTitle;
+  }
+
+  return normalizedExistingTitle || fallbackTitle;
 }
 
 function buildUserMessageTitle(content: string, fallbackTitle: string): string {
@@ -3716,12 +3735,22 @@ function buildUserMessageTitle(content: string, fallbackTitle: string): string {
 function resolvePersistedSessionTitle(
   provider: string,
   discoveredTitle: string,
-  existingTitle: string | null
+  existingTitle: string | null,
+  parentTitle: string | null = null
 ): string {
   const nextTitle = discoveredTitle.trim();
   const currentTitle = existingTitle?.trim() ?? "";
+  const normalizedParentTitle = parentTitle?.trim() ?? "";
 
   if (!currentTitle) {
+    if (provider === "codex" && isSyntheticCodexSessionTitle(nextTitle)) {
+      return currentTitle;
+    }
+
+    if (normalizedParentTitle.length > 0 && nextTitle === normalizedParentTitle) {
+      return currentTitle;
+    }
+
     return nextTitle;
   }
 
@@ -3730,6 +3759,10 @@ function resolvePersistedSessionTitle(
   }
 
   if (provider === "codex" && isSyntheticCodexSessionTitle(nextTitle)) {
+    return currentTitle;
+  }
+
+  if (normalizedParentTitle.length > 0 && nextTitle === normalizedParentTitle && currentTitle !== normalizedParentTitle) {
     return currentTitle;
   }
 

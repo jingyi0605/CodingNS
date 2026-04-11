@@ -429,7 +429,12 @@ export class OpenCodeAdapter implements ProviderAdapter {
     }
 
     const title = ensureText(row.title).trim();
-    return title || sessionId;
+
+    if (title) {
+      return title;
+    }
+
+    return this.readFirstUserMessageTitleFromSqlite(sessionId) || sessionId;
   }
 
   async renameSessionTitle(
@@ -884,13 +889,14 @@ export class OpenCodeAdapter implements ProviderAdapter {
          ) VALUES (?, ?, ?, ?, ?, ?)`
       );
 
+      let derivedTitle: string | null = null;
       insertSession.run(
         forkedSessionId,
         ensureText(sourceSession.project_id).trim() || "global",
         null,
         buildForkSlug(ensureText(sourceSession.slug).trim(), forkedSessionId),
         input.workspacePath,
-        ensureText(sourceSession.title).trim() || forkedSessionId,
+        "",
         ensureText(sourceSession.version).trim() || "v1",
         ensureNullableText(sourceSession.share_url),
         readInteger(sourceSession.summary_additions),
@@ -947,6 +953,10 @@ export class OpenCodeAdapter implements ProviderAdapter {
           if (normalized) {
             inheritedPrefixMessageCount += 1;
             lastMessageAtMs = Date.parse(normalized.timestamp);
+
+            if (derivedTitle === null) {
+              derivedTitle = resolveOpenCodeMessageTitle(normalized);
+            }
           }
 
           if (input.sourceType === "message" && normalized?.messageId === input.sourceMessageId) {
@@ -989,13 +999,85 @@ export class OpenCodeAdapter implements ProviderAdapter {
         throw new Error("FORK_SOURCE_MESSAGE_NOT_FOUND");
       }
 
+      const resolvedTitle = derivedTitle ?? "";
+      db.prepare("UPDATE session SET title = ? WHERE id = ?").run(resolvedTitle, forkedSessionId);
+
       return {
         providerSessionId: forkedSessionId,
-        title: ensureText(sourceSession.title).trim() || forkedSessionId,
+        title: resolvedTitle,
         lastMessageAt: toIsoTimestamp(lastMessageAtMs, nextTimestamp()),
         inheritedPrefixMessageCount,
         providerSourceMessageId
       };
+    });
+  }
+
+  private readFirstUserMessageTitleFromSqlite(sessionId: string): string | null {
+    return this.withReadonlyDb((db) => {
+      const rows = db.prepare(
+        `SELECT
+           message.id AS message_id,
+           message.time_created AS message_time_created,
+           message.time_updated AS message_time_updated,
+           message.data AS message_data,
+           part.id AS part_id,
+           part.time_created AS part_time_created,
+           part.time_updated AS part_time_updated,
+           part.data AS part_data
+         FROM message
+         INNER JOIN part
+           ON part.message_id = message.id
+          AND part.session_id = message.session_id
+         WHERE message.session_id = ?
+         ORDER BY COALESCE(part.time_updated, part.time_created, message.time_updated, message.time_created),
+                  COALESCE(part.time_created, message.time_created),
+                  message.id,
+                  part.id`
+      ).all(sessionId) as Array<{
+        message_id?: unknown;
+        message_time_created?: unknown;
+        message_time_updated?: unknown;
+        message_data?: unknown;
+        part_id?: unknown;
+        part_time_created?: unknown;
+        part_time_updated?: unknown;
+        part_data?: unknown;
+      }>;
+
+      for (const row of rows) {
+        const messageId = ensureText(row.message_id).trim();
+        const partId = ensureText(row.part_id).trim();
+
+        if (!messageId || !partId) {
+          continue;
+        }
+
+        const normalized = normalizeOpenCodePartMessage({
+          sessionId,
+          providerSessionId: sessionId,
+          messageId,
+          partId,
+          messagePayload: toJsonRecord(row.message_data) ?? {},
+          partPayload: toJsonRecord(row.part_data) ?? {},
+          defaultTimestamp:
+            toIsoTimestamp(
+              firstValidNumber(
+                row.part_time_created,
+                row.part_time_updated,
+                row.message_time_created,
+                row.message_time_updated
+              ),
+              null
+            ) ?? nextTimestamp()
+        });
+        const title = normalized ? resolveOpenCodeMessageTitle(normalized) : null;
+
+        if (title) {
+          return title;
+        }
+      }
+
+      return null;
     });
   }
 
@@ -1394,6 +1476,15 @@ export class OpenCodeAdapter implements ProviderAdapter {
 function ensureNullableText(value: unknown): string | null {
   const normalized = ensureText(value).trim();
   return normalized || null;
+}
+
+function resolveOpenCodeMessageTitle(message: Pick<NormalizedMessage, "role" | "kind" | "content">): string | null {
+  if (message.role !== "user" || message.kind !== "text") {
+    return null;
+  }
+
+  const title = message.content.trim().replace(/\s+/g, " ");
+  return title || null;
 }
 
 function buildForkSlug(sourceSlug: string, forkedSessionId: string): string {

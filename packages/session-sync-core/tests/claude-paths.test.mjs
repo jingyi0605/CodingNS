@@ -651,16 +651,22 @@ test("ClaudeCodeAdapter 会话级 fork 会复制 transcript 并重写新的 sess
       "forward"
     );
     const forkedTranscript = readFileSync(result.session.rawStoreRef, "utf8");
+    const discoveredSessions = await adapter.detectSessions(workspacePath);
+    const forkedSummary = discoveredSessions.find(
+      (session) => session.providerSessionId === result.session.providerSessionId
+    );
 
     assert.equal(result.forkMethod, "native_session_fork");
     assert.equal(result.forkSourceType, "session");
     assert.equal(result.inheritedPrefixMessageCount, 2);
-    assert.equal(result.session.title, "会话分叉源会话");
+    assert.equal(result.session.title, "");
     assert.equal(result.session.messageCount, 2);
     assert.equal(forkedPage.messages.length, 2);
     assert.equal(forkedPage.messages[1]?.content, "先把能力抽象出来。");
+    assert.equal(forkedSummary?.title, "请继续整理会话分叉。");
     assert.equal(forkedTranscript.includes(sessionId), false);
     assert.equal(forkedTranscript.includes(result.session.providerSessionId), true);
+    assert.equal(forkedTranscript.includes('"type":"ai-title"'), false);
     assert.equal(forkedTranscript.endsWith("\n"), true);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });

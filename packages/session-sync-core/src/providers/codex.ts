@@ -598,7 +598,6 @@ export class CodexAdapter implements ProviderAdapter {
           providerSessionId: forked.providerSessionId,
           rawStoreRef: forked.rawStoreRef,
           workspacePath,
-          fallbackTitle: await this.readSessionTitle(providerSessionId, options.rawStoreRef),
           fallbackParentProviderSessionId: providerSessionId,
           forkMethod: "native_session_fork",
           forkSourceType: "session",
@@ -642,7 +641,6 @@ export class CodexAdapter implements ProviderAdapter {
           providerSessionId: finalized.providerSessionId,
           rawStoreRef: finalized.rawStoreRef,
           workspacePath,
-          fallbackTitle: await this.readSessionTitle(providerSessionId, options.rawStoreRef),
           fallbackParentProviderSessionId: providerSessionId,
           forkMethod: "native_message_fork",
           forkSourceType: "message",
@@ -670,7 +668,6 @@ export class CodexAdapter implements ProviderAdapter {
         providerSessionId: resumed.providerSessionId,
         rawStoreRef: resumed.rawStoreRef,
         workspacePath,
-        fallbackTitle: await this.readSessionTitle(providerSessionId, options.rawStoreRef),
         fallbackParentProviderSessionId: providerSessionId,
         forkMethod: "native_message_fork",
         forkSourceType: "message",
@@ -1186,7 +1183,6 @@ export class CodexAdapter implements ProviderAdapter {
     providerSessionId: string;
     rawStoreRef: string | null;
     workspacePath: string;
-    fallbackTitle: string;
     fallbackParentProviderSessionId: string | null;
     forkMethod: ForkSessionResult["forkMethod"];
     forkSourceType: ForkSessionResult["forkSourceType"];
@@ -1201,24 +1197,18 @@ export class CodexAdapter implements ProviderAdapter {
       existsSync(resolvedStoreRef)
         ? this.getParsedMessages(resolvedStoreRef, input.providerSessionId)
         : [];
-    const threadMetadata =
-      this.readThreadMetadataIndex().get(input.providerSessionId) ?? null;
+    const threadMetadataIndex = this.readThreadMetadataIndex();
+    const threadMetadata = threadMetadataIndex.get(input.providerSessionId) ?? null;
     const title =
-      (existsSync(resolvedStoreRef)
-        ? await this.readSessionTitle(input.providerSessionId, resolvedStoreRef).catch(() => null)
-        : null)
-      ?? threadMetadata?.title
-      ?? input.fallbackTitle;
-    const resolvedTitle =
-      isSyntheticCodexSessionTitle(title) && input.fallbackTitle.trim().length > 0
-        ? input.fallbackTitle
-        : title;
+      this.resolveIndexedTitle(threadMetadataIndex, input.providerSessionId)
+      ?? resolveCodexFallbackTitle(messages)
+      ?? "";
 
     return {
       session: {
         provider: this.providerId,
         providerSessionId: input.providerSessionId,
-        title: resolvedTitle,
+        title,
         workspacePath: input.workspacePath,
         rawStoreRef: resolvedStoreRef,
         isArchived: resolveCodexArchivedState(threadMetadata, resolvedStoreRef),

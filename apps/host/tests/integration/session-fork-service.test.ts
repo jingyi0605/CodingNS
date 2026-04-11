@@ -313,6 +313,191 @@ describe("SessionHistoryService forkSession", () => {
     expect(accepted.message.content).toBe("在这条新分支里继续展开。");
   });
 
+  it("Claude 子会话发出首条新消息后会改用子会话标题，discover 刷新也不会再被父标题覆盖", async () => {
+    const fixture = createEmptyFixture();
+    activeFixtures.push(fixture);
+
+    const sourceTitle = "主会话标题";
+    const sourceFile = createClaudeSessionFile(
+      fixture.claudeHomeDir,
+      fixture.workspaceDir,
+      "source-thread",
+      sourceTitle,
+      [
+        ["user", sourceTitle],
+        ["assistant", "主会话回复"]
+      ]
+    );
+    const childFile = createClaudeSessionFile(
+      fixture.claudeHomeDir,
+      fixture.workspaceDir,
+      "child-thread",
+      sourceTitle,
+      [
+        ["user", sourceTitle],
+        ["assistant", "主会话回复"]
+      ]
+    );
+    const {
+      service,
+      sessionForkRepository,
+      repos
+    } = createSessionHistoryHarness(fixture, () => ({
+      initialize: vi.fn(async () => {}),
+      forkThread: vi.fn(async () => {
+        throw new Error("should not use codex transport");
+      }),
+      readThread: vi.fn(async () => ({ history: [] })),
+      rollbackThread: vi.fn(async () => {
+        throw new Error("should not use codex transport");
+      }),
+      resumeThreadFromHistory: vi.fn(async () => {
+        throw new Error("should not use codex transport");
+      }),
+      close: vi.fn()
+    }));
+
+    repos.sessionBindingRepository.upsert({
+      sessionId: "source-session",
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      providerSessionId: "source-thread",
+      rawStoreRef: sourceFile,
+      createdAt: "2026-04-10T08:00:00.000Z",
+      updatedAt: "2026-04-10T08:00:00.000Z"
+    });
+    repos.sessionIndexRepository.upsert({
+      sessionId: "source-session",
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      title: sourceTitle,
+      messageCount: 2,
+      isArchived: false,
+      lastMessageAt: "2026-04-10T08:00:10.000Z",
+      createdAt: "2026-04-10T08:00:00.000Z",
+      updatedAt: "2026-04-10T08:00:10.000Z"
+    });
+    repos.sessionBindingRepository.upsert({
+      sessionId: "child-session",
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      providerSessionId: "child-thread",
+      rawStoreRef: childFile,
+      createdAt: "2026-04-10T08:01:00.000Z",
+      updatedAt: "2026-04-10T08:01:00.000Z"
+    });
+    repos.sessionIndexRepository.upsert({
+      sessionId: "child-session",
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      parentSessionId: "source-session",
+      title: sourceTitle,
+      messageCount: 2,
+      isArchived: false,
+      lastMessageAt: "2026-04-10T08:01:10.000Z",
+      createdAt: "2026-04-10T08:01:00.000Z",
+      updatedAt: "2026-04-10T08:01:10.000Z"
+    });
+    repos.sessionStateRepository.upsert({
+      sessionId: "child-session",
+      userId: "user-1",
+      runningState: "idle",
+      activitySource: "none",
+      favorite: false,
+      lastEventAt: "2026-04-10T08:01:10.000Z",
+      completedAt: null,
+      lastSeenAt: null,
+      updatedAt: "2026-04-10T08:01:10.000Z"
+    });
+    repos.sessionStatusSnapshotRepository.upsert({
+      sessionId: "child-session",
+      syncStatus: "idle",
+      syncCursor: null,
+      lastSyncAt: "2026-04-10T08:01:10.000Z",
+      lastErrorCode: null,
+      lastErrorDetail: null,
+      resumedAt: null,
+      updatedAt: "2026-04-10T08:01:10.000Z"
+    });
+    sessionForkRepository.upsert({
+      sessionId: "child-session",
+      parentSessionId: "source-session",
+      provider: "claude-code",
+      forkSourceType: "session",
+      forkSourceSessionId: "source-session",
+      forkSourceMessageId: null,
+      inheritedPrefixMessageCount: 2,
+      providerParentSessionId: "source-thread",
+      providerSourceMessageId: null,
+      forkMethod: "native_session_fork",
+      createdAt: "2026-04-10T08:01:00.000Z"
+    });
+
+    const accepted = await service.sendMessage("child-session", "子会话第一条消息", null);
+
+    expect(accepted.message.provider).toBe("claude-code");
+    expect(accepted.message.content).toBe("子会话第一条消息");
+    expect(service.getSession("child-session", "user-1").title).toBe("子会话第一条消息");
+
+    vi.spyOn(
+      (service as unknown as {
+        sessionSyncService: {
+          discoverWorkspaceSessions: (
+            workspacePath: string,
+            options?: unknown
+          ) => Promise<{
+            sessions: Array<{
+              provider: string;
+              providerSessionId: string;
+              rawStoreRef: string;
+              title: string;
+              workspacePath: string;
+              lastMessageAt: string;
+              messageCount: number;
+              isArchived: boolean;
+              parentProviderSessionId?: string | null;
+            }>;
+            isComplete: boolean;
+          }>;
+        };
+      }).sessionSyncService,
+      "discoverWorkspaceSessions"
+    ).mockResolvedValue({
+      isComplete: true,
+      sessions: [
+        {
+          provider: "claude-code",
+          providerSessionId: "source-thread",
+          rawStoreRef: sourceFile,
+          title: sourceTitle,
+          workspacePath: fixture.workspaceDir,
+          lastMessageAt: "2026-04-10T08:00:10.000Z",
+          messageCount: 2,
+          isArchived: false,
+          parentProviderSessionId: null
+        },
+        {
+          provider: "claude-code",
+          providerSessionId: "child-thread",
+          rawStoreRef: childFile,
+          title: sourceTitle,
+          workspacePath: fixture.workspaceDir,
+          lastMessageAt: "2026-04-10T08:02:00.000Z",
+          messageCount: 3,
+          isArchived: false,
+          parentProviderSessionId: null
+        }
+      ]
+    });
+
+    const discovered = await service.discoverWorkspaceSessions("workspace-1", "user-1", {
+      force: true
+    });
+    const discoveredChild = discovered.find((item) => item.sessionId === "child-session");
+
+    expect(discoveredChild?.title).toBe("子会话第一条消息");
+  });
+
   it("workspace discover 刷新后仍会保留 fork 子会话的本地父子关系和标题", async () => {
     const fixture = createEmptyFixture();
     activeFixtures.push(fixture);
@@ -397,7 +582,7 @@ describe("SessionHistoryService forkSession", () => {
     });
 
     expect(forked.parentSessionId).toBe("source-session");
-    expect(forked.title).toBe("父会话问题");
+    expect(forked.title).toBe("");
 
     vi.spyOn(
       (service as unknown as {
@@ -459,7 +644,7 @@ describe("SessionHistoryService forkSession", () => {
       sessionId: forked.sessionId,
       parentSessionId: "source-session",
       forkSourceType: "message",
-      title: "父会话问题",
+      title: "",
       isSubagent: false
     });
 
@@ -734,6 +919,48 @@ function createNamedCodexSessionFile(
         }
       })
     )
+  ];
+
+  writeFileSync(filePath, lines.join("\n"), "utf8");
+  return filePath;
+}
+
+function createClaudeSessionFile(
+  claudeHomeDir: string,
+  workspaceDir: string,
+  sessionId: string,
+  title: string,
+  messages: Array<["user" | "assistant", string]>
+) {
+  const projectDir = path.join(claudeHomeDir, "projects", "-tmp-codingns-claude-fork");
+  const filePath = path.join(projectDir, `${sessionId}.jsonl`);
+  mkdirSync(projectDir, { recursive: true });
+
+  const lines = [
+    ...messages.map(([role, content], index) =>
+      JSON.stringify({
+        type: role,
+        sessionId,
+        cwd: workspaceDir,
+        timestamp: `2026-04-10T08:01:${String(index).padStart(2, "0")}.000Z`,
+        message:
+          role === "user"
+            ? {
+                role: "user",
+                content: [{ type: "text", text: content }]
+              }
+            : {
+                id: `assistant-${index}`,
+                role: "assistant",
+                content: [{ type: "text", text: content }]
+              }
+      })
+    ),
+    JSON.stringify({
+      type: "ai-title",
+      sessionId,
+      aiTitle: title
+    })
   ];
 
   writeFileSync(filePath, lines.join("\n"), "utf8");

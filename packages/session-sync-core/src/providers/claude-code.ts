@@ -352,7 +352,10 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
     }
 
     const targetFilePath = join(projectDir, `${forkedSessionId}.jsonl`);
-    const serializedRecords = forkedRecords
+    const persistedForkRecords = forkedRecords
+      // fork 后的标题必须由子会话自己生成，不能把父会话的 ai-title 原样抄过去。
+      .filter((record) => shouldPreserveClaudeForkRecord(record));
+    const serializedRecords = persistedForkRecords
       .map((record) => replaceClaudeRecordSessionId(record, forkedSessionId))
       .map((record) => JSON.stringify(record))
       .join("\n");
@@ -361,8 +364,7 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
     this.historyCache.delete(targetFilePath);
 
     const messages = this.getParsedMessages(targetFilePath, forkedSessionId);
-    const title =
-      await this.readSessionTitle(providerSessionId, sourceFilePath).catch(() => basename(sourceFilePath, ".jsonl"));
+    const title = this.resolveClaudeTitle(persistedForkRecords) || "";
 
     return {
       session: {
@@ -927,6 +929,10 @@ function truncateClaudeMessageContent(
   }
 
   return message;
+}
+
+function shouldPreserveClaudeForkRecord(record: Record<string, unknown>): boolean {
+  return record.type !== "ai-title";
 }
 
 function buildClaudeSubagentMetadataIndex(

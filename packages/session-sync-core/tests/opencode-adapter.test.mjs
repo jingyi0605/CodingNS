@@ -801,7 +801,7 @@ test("OpenCodeAdapter 会话级 fork 会复制 sqlite 会话并返回统一 fork
     assert.equal(result.forkSourceType, "session");
     assert.equal(result.inheritedPrefixMessageCount, 5);
     assert.equal(result.session.messageCount, 5);
-    assert.equal(result.session.title, "Demo Session");
+    assert.equal(result.session.title, "你好，OpenCode");
     assert.equal(page.messages[0]?.content, "你好，OpenCode");
     assert.equal(page.messages[1]?.content, "先分析一下问题");
     assert.match(page.messages[2]?.content ?? "", /command/);
@@ -847,6 +847,7 @@ test("OpenCodeAdapter 消息级 fork 会精确截断到指定 part 锚点", asyn
     assert.equal(result.forkSourceType, "message");
     assert.equal(result.inheritedPrefixMessageCount, 2);
     assert.equal(result.session.messageCount, 2);
+    assert.equal(result.session.title, "你好，OpenCode");
     assert.equal(result.providerSourceMessageId, "prt_demo_reasoning");
     assert.deepEqual(
       page.messages.map((message) => message.content),
