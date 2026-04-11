@@ -24,6 +24,7 @@ import {
   type WorkbenchFileRevealRequest,
   type WorkspaceSessionGroup
 } from "./WorkbenchLayout";
+import { WorkbenchModal } from "./WorkbenchModal";
 import { FileViewerModal } from "./FileViewerModal";
 import {
   resolveFileTreeIconKind,
@@ -70,6 +71,10 @@ type FilePanelTab = "workspace" | "session";
 type RecentFileActivation = {
   filePath: string;
   timestamp: number;
+};
+type DeleteConfirmTarget = {
+  path: string;
+  kind: "file" | "directory";
 };
 
 const ROOT_DIRECTORY = "";
@@ -134,6 +139,7 @@ export function FileContextPanel({
   const [sessionChangeCount, setSessionChangeCount] = useState(0);
   const [copyPathMenuOpen, setCopyPathMenuOpen] = useState(false);
   const [mobileActionMenuOpen, setMobileActionMenuOpen] = useState(false);
+  const [deleteConfirmTarget, setDeleteConfirmTarget] = useState<DeleteConfirmTarget | null>(null);
   const [gitChanges, setGitChanges] = useState<GitChangeItemDto[]>([]);
   const [showChangesOnly, setShowChangesOnly] = useState(false);
   const [viewerDiffContent, setViewerDiffContent] = useState<string | null>(null);
@@ -348,6 +354,7 @@ export function FileContextPanel({
     setSessionRefreshVersion(0);
     setCopyPathMenuOpen(false);
     setMobileActionMenuOpen(false);
+    setDeleteConfirmTarget(null);
     recentFileActivationRef.current = null;
     viewerDiffRequestIdRef.current += 1;
   }, [sessionId]);
@@ -610,9 +617,11 @@ export function FileContextPanel({
   const currentWorkspace =
     navigationGroups.find((group) => group.workspace.id === workspaceId)?.workspace ?? null;
   // 文件和目录原本分散在两套选中状态里，这里收敛成一个“当前目标路径”，后续按钮逻辑就不用到处打补丁。
-  const selectedTargetPath = resolveSelectedTargetPath(selectedPath, activeDirectoryPath);
+  const selectedTarget = resolveSelectedTarget(selectedPath, activeDirectoryPath);
+  const selectedTargetPath = selectedTarget?.path ?? null;
   const canCopySelectedPath = Boolean(currentWorkspace?.path && selectedTargetPath !== null);
   const canDownloadSelectedFile = Boolean(selectedPath);
+  const canDeleteSelectedTarget = Boolean(selectedTargetPath);
   const canCollapseCurrent = Boolean(
     (selectedPath ? getParentDirectory(selectedPath) : activeDirectoryPath) && expandedDirectories.length
   );
@@ -664,15 +673,23 @@ export function FileContextPanel({
     }
   }
 
-  async function refreshTreeCache() {
+  async function refreshTreeCache(options?: {
+    activeDirectoryPath?: string;
+    expandedDirectories?: string[];
+  }) {
     if (!workspaceId) {
       return;
     }
 
+    const effectiveActiveDirectoryPath =
+      options?.activeDirectoryPath ?? activeDirectoryPathRef.current;
+    const effectiveExpandedDirectories =
+      options?.expandedDirectories ?? expandedDirectoriesRef.current;
+
     const targetDirectories = resolveRefreshTargetDirectories(
       treeCacheRef.current,
-      activeDirectoryPath,
-      expandedDirectoriesRef.current
+      effectiveActiveDirectoryPath,
+      effectiveExpandedDirectories
     );
 
     logPerfDebug("file_panel.refresh_tree_cache.start", {
@@ -728,16 +745,21 @@ export function FileContextPanel({
 
     subscribeFileTree(workspaceId, subscribedDirectories);
     requestFileTreeRefresh(workspaceId, [directoryPath]);
-    return waitForDirectorySnapshot(directoryPath);
+    return waitForDirectorySnapshot(directoryPath, FILE_TREE_SNAPSHOT_TIMEOUT_MS, {
+      allowCached: options?.force !== true
+    });
   }
 
   function waitForDirectorySnapshot(
     directoryPath: string,
-    timeoutMs = FILE_TREE_SNAPSHOT_TIMEOUT_MS
+    timeoutMs = FILE_TREE_SNAPSHOT_TIMEOUT_MS,
+    options?: {
+      allowCached?: boolean;
+    }
   ): Promise<FileNodeDto[]> {
     const cachedItems = treeCacheRef.current[directoryPath];
 
-    if (cachedItems) {
+    if (options?.allowCached !== false && cachedItems) {
       return Promise.resolve(cachedItems);
     }
 
@@ -1146,6 +1168,82 @@ export function FileContextPanel({
     }
   }
 
+  function handleDeleteRequest() {
+    if (!selectedTargetPath || !selectedTarget || mutating) {
+      return;
+    }
+
+    setDeleteConfirmTarget(selectedTarget);
+  }
+
+  async function handleDeleteConfirm() {
+    if (!workspaceId || !deleteConfirmTarget) {
+      return;
+    }
+
+    setMutating(true);
+
+    try {
+      await operateFile({
+        workspaceId,
+        opType: "delete",
+        srcPath: deleteConfirmTarget.path
+      });
+
+      const nextActiveDirectory =
+        deleteConfirmTarget.kind === "directory"
+          ? getParentDirectory(deleteConfirmTarget.path)
+          : activeDirectoryPath;
+      const nextExpandedDirectories =
+        deleteConfirmTarget.kind === "directory"
+          ? expandedDirectoriesRef.current.filter(
+              (item) =>
+                item !== deleteConfirmTarget.path &&
+                !item.startsWith(`${deleteConfirmTarget.path}/`)
+            )
+          : expandedDirectoriesRef.current;
+
+      if (viewerFilePath && isSameOrDescendantPath(deleteConfirmTarget.path, viewerFilePath)) {
+        viewerDiffRequestIdRef.current += 1;
+        setViewerFilePath(null);
+        setViewerDiffContent(null);
+      }
+
+      setDeleteConfirmTarget(null);
+      setSelectedPath(null);
+      activeDirectoryPathRef.current = nextActiveDirectory;
+      expandedDirectoriesRef.current = nextExpandedDirectories;
+      setActiveDirectoryPath(nextActiveDirectory);
+      updateExpandedDirectories(nextExpandedDirectories);
+      resetRecentFileActivation();
+
+      await refreshTreeCache({
+        activeDirectoryPath: nextActiveDirectory,
+        expandedDirectories: nextExpandedDirectories
+      });
+
+      if (searchMode && searchKeyword.trim()) {
+        const response = await searchFiles(workspaceId, searchKeyword.trim());
+        setSearchResult(response.items);
+      }
+
+      setSessionRefreshVersion((current) => current + 1);
+      showToast({
+        title: t("conversation.filePanelDeleteSuccess", {
+          name: getPathLeafName(deleteConfirmTarget.path) || deleteConfirmTarget.path
+        }),
+        tone: "success"
+      });
+    } catch (error) {
+      showToast({
+        title: readError(error, t("conversation.filePanelMutateFailed")),
+        tone: "error"
+      });
+    } finally {
+      setMutating(false);
+    }
+  }
+
   async function handleCopyPath(mode: "absolute" | "relative") {
     const workspacePath = currentWorkspace?.path ?? "";
 
@@ -1475,6 +1573,15 @@ export function FileContextPanel({
                           {t("conversation.filePanelDownload")}
                         </button>
                         <button
+                          className="file-mobile-action-menu-item danger"
+                          type="button"
+                          role="menuitem"
+                          onClick={() => handleMobileToolbarAction(handleDeleteRequest)}
+                          disabled={!canDeleteSelectedTarget || mutating || transferring}
+                        >
+                          {t("conversation.filePanelDelete")}
+                        </button>
+                        <button
                           className="file-mobile-action-menu-item"
                           type="button"
                           role="menuitem"
@@ -1620,6 +1727,16 @@ export function FileContextPanel({
                     <DownloadIcon />
                   </button>
                   <button
+                    className="file-toolbar-button danger"
+                    type="button"
+                    title={t("conversation.filePanelDelete")}
+                    aria-label={t("conversation.filePanelDelete")}
+                    onClick={handleDeleteRequest}
+                    disabled={!canDeleteSelectedTarget || mutating || transferring}
+                  >
+                    <DeleteIcon />
+                  </button>
+                  <button
                     className="file-toolbar-button"
                     type="button"
                     title={t("conversation.filePanelNewFile")}
@@ -1702,6 +1819,52 @@ export function FileContextPanel({
                   <p className="file-tree-status status-text">{t("conversation.filePanelEmptyDirectory")}</p>
                 )}
               </div>
+              <WorkbenchModal
+                open={deleteConfirmTarget !== null}
+                title={t("conversation.filePanelDeleteConfirmTitle")}
+                description={t("conversation.filePanelDeleteConfirmDescription")}
+                onClose={() => {
+                  if (mutating) {
+                    return;
+                  }
+
+                  setDeleteConfirmTarget(null);
+                }}
+              >
+                <p className="workbench-section-empty">
+                  {deleteConfirmTarget
+                    ? deleteConfirmTarget.kind === "directory"
+                      ? t("conversation.filePanelDeleteDirectoryConfirm", {
+                          path: deleteConfirmTarget.path
+                        })
+                      : t("conversation.filePanelDeleteFileConfirm", {
+                          path: deleteConfirmTarget.path
+                        })
+                    : ""}
+                </p>
+                <div className="workbench-modal-actions">
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    disabled={mutating}
+                    onClick={() => setDeleteConfirmTarget(null)}
+                  >
+                    {t("common.cancel")}
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-button workbench-danger-button"
+                    disabled={mutating}
+                    onClick={() => {
+                      void handleDeleteConfirm();
+                    }}
+                  >
+                    {mutating
+                      ? t("conversation.filePanelDeleting")
+                      : t("conversation.filePanelDelete")}
+                  </button>
+                </div>
+              </WorkbenchModal>
             </>
           ) : hasSessionContext && sessionId ? (
             <SessionChangedFilesPanel
@@ -1765,12 +1928,28 @@ function normalizeUploadFileName(fileName: string): string {
   return fileName.split(/[/\\]/).pop()?.trim() ?? "";
 }
 
-function resolveSelectedTargetPath(selectedPath: string | null, activeDirectoryPath: string): string | null {
+function resolveSelectedTarget(
+  selectedPath: string | null,
+  activeDirectoryPath: string
+): {
+  path: string;
+  kind: "file" | "directory";
+} | null {
   if (selectedPath) {
-    return selectedPath;
+    return {
+      path: selectedPath,
+      kind: "file"
+    };
   }
 
-  return activeDirectoryPath || null;
+  if (activeDirectoryPath) {
+    return {
+      path: activeDirectoryPath,
+      kind: "directory"
+    };
+  }
+
+  return null;
 }
 
 function normalizeRelativeClipboardPath(
@@ -1835,6 +2014,10 @@ function normalizePathSeparators(path: string, pathStyle: BackendPathStyle): str
 
 function resolvePathSeparator(pathStyle: BackendPathStyle): "/" | "\\" {
   return pathStyle === "windows" ? "\\" : "/";
+}
+
+function isSameOrDescendantPath(targetPath: string, candidatePath: string): boolean {
+  return candidatePath === targetPath || candidatePath.startsWith(`${targetPath}/`);
 }
 
 async function readFileAsBase64(file: File): Promise<string> {
@@ -2128,6 +2311,21 @@ function DownloadIcon() {
       <path d="M8 2.5v8" fill="none" stroke="currentColor" strokeWidth="1.2" />
       <path
         d="m5.5 8.5 2.5 2.5 2.5-2.5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function DeleteIcon() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <path
+        d="M3.5 4.5h9M6.2 2.5h3.6l.6 1.4H13v1.2H3V3.9h2.6zM5.2 5.7v6.1m2.8-6.1v6.1m2.8-6.1v6.1M4.4 13.5h7.2"
         fill="none"
         stroke="currentColor"
         strokeWidth="1.2"

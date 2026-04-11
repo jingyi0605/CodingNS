@@ -1043,6 +1043,54 @@ describe("FileContextPanel", () => {
     expect(await screen.findByText(t("conversation.filePanelDownloadSuccess", { name: "config.json" }))).toBeInTheDocument();
   });
 
+  it("桌面工具栏支持删除当前选中的文件", async () => {
+    let deleted = false;
+    fileApiMock.getFileTree.mockImplementation(async () => ({
+      items: deleted
+        ? rootItemsMock.filter((item) => item.path !== "config.json")
+        : [...rootItemsMock]
+    }));
+    fileApiMock.operateFile.mockImplementationOnce(async () => {
+      deleted = true;
+      return {
+        success: true,
+        opType: "delete"
+      };
+    });
+
+    renderPanel();
+
+    await userEvent.click(await screen.findByText("config.json"));
+    await userEvent.click(screen.getByRole("button", { name: t("conversation.filePanelDelete") }));
+    const dialog = await screen.findByRole("dialog", {
+      name: t("conversation.filePanelDeleteConfirmTitle")
+    });
+
+    expect(dialog).toBeInTheDocument();
+    expect(dialog).toHaveTextContent(
+      t("conversation.filePanelDeleteFileConfirm", {
+        path: "config.json"
+      })
+    );
+
+    await userEvent.click(within(dialog).getByRole("button", { name: t("conversation.filePanelDelete") }));
+
+    await waitFor(() => {
+      expect(fileApiMock.operateFile).toHaveBeenCalledWith({
+        workspaceId: "workspace-1",
+        opType: "delete",
+        srcPath: "config.json"
+      });
+    });
+
+    expect(
+      await screen.findByText(t("conversation.filePanelDeleteSuccess", { name: "config.json" }))
+    ).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByText("config.json")).not.toBeInTheDocument();
+    });
+  });
+
   it("移动端文件工具栏会收起成操作菜单，并支持菜单操作", async () => {
     platformMock.isMobile = true;
     platformMock.viewportClass = "compact";
@@ -1065,6 +1113,7 @@ describe("FileContextPanel", () => {
     expect(within(actionMenu).getByRole("menuitem", { name: t("conversation.filePanelRefresh") })).toBeInTheDocument();
     expect(within(actionMenu).getByRole("menuitem", { name: t("conversation.filePanelUpload") })).toBeInTheDocument();
     expect(within(actionMenu).getByRole("menuitem", { name: t("conversation.filePanelDownload") })).toBeInTheDocument();
+    expect(within(actionMenu).getByRole("menuitem", { name: t("conversation.filePanelDelete") })).toBeInTheDocument();
     expect(within(actionMenu).getByRole("menuitem", { name: t("conversation.filePanelNewFile") })).toBeInTheDocument();
     expect(within(actionMenu).getByRole("menuitem", { name: t("conversation.filePanelNewDirectory") })).toBeInTheDocument();
 
@@ -1096,6 +1145,63 @@ describe("FileContextPanel", () => {
     });
 
     promptMock.mockRestore();
+  });
+
+  it("移动端操作菜单支持删除当前选中的文件夹", async () => {
+    platformMock.isMobile = true;
+    platformMock.viewportClass = "compact";
+    fileApiMock.getFileTree.mockImplementation(async (_workspaceId: string, filePath?: string) => {
+      if (filePath === "docs") {
+        return {
+          items: []
+        };
+      }
+
+      return {
+        items: [
+          {
+            path: "docs",
+            name: "docs",
+            kind: "directory",
+            size: null,
+            updatedAt: "2026-03-24T12:00:00.000Z"
+          },
+          ...rootItemsMock
+        ]
+      };
+    });
+    fileApiMock.operateFile.mockResolvedValueOnce({
+      success: true,
+      opType: "delete"
+    });
+
+    renderPanel("session-1", "workspace-1", {
+      hideHeading: true
+    });
+
+    await userEvent.click(await screen.findByText("docs"));
+    await userEvent.click(screen.getByRole("button", { name: t("conversation.filePanelActionsMenu") }));
+    await userEvent.click(screen.getByRole("menuitem", { name: t("conversation.filePanelDelete") }));
+    const dialog = await screen.findByRole("dialog", {
+      name: t("conversation.filePanelDeleteConfirmTitle")
+    });
+
+    expect(dialog).toBeInTheDocument();
+    expect(dialog).toHaveTextContent(
+      t("conversation.filePanelDeleteDirectoryConfirm", {
+        path: "docs"
+      })
+    );
+
+    await userEvent.click(within(dialog).getByRole("button", { name: t("conversation.filePanelDelete") }));
+
+    await waitFor(() => {
+      expect(fileApiMock.operateFile).toHaveBeenCalledWith({
+        workspaceId: "workspace-1",
+        opType: "delete",
+        srcPath: "docs"
+      });
+    });
   });
 
   it("Windows 下复制相对路径会使用反斜杠", async () => {
