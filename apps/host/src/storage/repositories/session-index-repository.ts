@@ -60,6 +60,11 @@ export class SessionIndexRepository {
            bindings.provider_session_id AS provider_session_id,
            bindings.raw_store_ref AS raw_store_ref,
            indices.parent_session_id AS parent_session_id,
+           forks.fork_method AS fork_method,
+           forks.fork_source_type AS fork_source_type,
+           forks.fork_source_session_id AS fork_source_session_id,
+           forks.fork_source_message_id AS fork_source_message_id,
+           forks.inherited_prefix_message_count AS inherited_prefix_message_count,
            indices.is_subagent AS is_subagent,
            indices.subagent_label AS subagent_label,
            indices.title AS title,
@@ -82,6 +87,7 @@ export class SessionIndexRepository {
            states.last_seen_at AS last_seen_at
          FROM session_indices indices
          INNER JOIN session_bindings bindings ON bindings.session_id = indices.session_id
+         LEFT JOIN session_forks forks ON forks.session_id = indices.session_id
          LEFT JOIN session_status_snapshots snapshots ON snapshots.session_id = indices.session_id
          LEFT JOIN session_states states
            ON states.session_id = indices.session_id
@@ -103,6 +109,11 @@ export class SessionIndexRepository {
            bindings.provider_session_id AS provider_session_id,
            bindings.raw_store_ref AS raw_store_ref,
            indices.parent_session_id AS parent_session_id,
+           forks.fork_method AS fork_method,
+           forks.fork_source_type AS fork_source_type,
+           forks.fork_source_session_id AS fork_source_session_id,
+           forks.fork_source_message_id AS fork_source_message_id,
+           forks.inherited_prefix_message_count AS inherited_prefix_message_count,
            indices.is_subagent AS is_subagent,
            indices.subagent_label AS subagent_label,
            indices.title AS title,
@@ -125,6 +136,7 @@ export class SessionIndexRepository {
            states.last_seen_at AS last_seen_at
          FROM session_indices indices
          INNER JOIN session_bindings bindings ON bindings.session_id = indices.session_id
+         LEFT JOIN session_forks forks ON forks.session_id = indices.session_id
          LEFT JOIN session_status_snapshots snapshots ON snapshots.session_id = indices.session_id
          LEFT JOIN session_states states
            ON states.session_id = indices.session_id
@@ -178,6 +190,11 @@ interface SessionListItemRow {
   provider_session_id: string;
   raw_store_ref: string;
   parent_session_id: string | null;
+  fork_method: SessionListItem["forkMethod"];
+  fork_source_type: SessionListItem["forkSourceType"];
+  fork_source_session_id: string | null;
+  fork_source_message_id: string | null;
+  inherited_prefix_message_count: number | null;
   is_subagent: number;
   subagent_label: string | null;
   title: string;
@@ -238,6 +255,11 @@ function mapSessionListItemRow(row: SessionListItemRow): SessionListItem {
     providerSessionId: row.provider_session_id,
     rawStoreRef: row.raw_store_ref,
     parentSessionId: row.parent_session_id,
+    forkMethod: row.fork_method ?? null,
+    forkSourceType: row.fork_source_type ?? null,
+    forkSourceSessionId: row.fork_source_session_id,
+    forkSourceMessageId: row.fork_source_message_id,
+    inheritedPrefixMessageCount: row.inherited_prefix_message_count ?? null,
     isSubagent: row.is_subagent === 1,
     subagentLabel: row.subagent_label,
     title: row.title,

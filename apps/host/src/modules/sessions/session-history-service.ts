@@ -4,13 +4,16 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import {
   CapabilityService,
   ClaudeCodeAdapter,
+  type CodexForkTransport,
   type ContextUsageSnapshot,
   CodexAdapter,
+  type ForkSourceType,
   GeminiAdapter,
   KimiAdapter,
   OpenCodeAdapter,
   ProviderRegistry,
   SessionSyncService,
+  type ForkStrategy,
   type HistoryDirection,
   type HistoryPage,
   type ProviderCapabilities,
@@ -50,6 +53,7 @@ import { SessionChangedFileService } from "./session-changed-file-service.js";
 import { SessionMessageAttachmentService } from "./session-message-attachment-service.js";
 import { mapSessionProviderError } from "./session-provider-error-mapper.js";
 import type { SessionMessageOriginRepository } from "../../storage/repositories/session-message-origin-repository.js";
+import { SessionForkRepository } from "../../storage/repositories/session-fork-repository.js";
 import { enrichClaudeCapabilities } from "../provider/claude-model-options.js";
 import {
   CodexModelOptionsService,
@@ -59,6 +63,7 @@ import {
   OpenCodeModelOptionsService,
   enrichOpenCodeCapabilities
 } from "../provider/opencode-model-options.js";
+import { CodexAppServerHelperClient } from "./codex-app-server-helper-client.js";
 
 interface StartSessionInput {
   workspaceId: string;
@@ -71,6 +76,14 @@ interface ArchiveSessionInput {
   sessionId: string;
   userId: string;
   isArchived: boolean;
+}
+
+interface ForkSessionInput {
+  sessionId: string;
+  userId: string;
+  sourceType: ForkSourceType;
+  sourceMessageId?: string | null;
+  strategy?: ForkStrategy;
 }
 
 interface FavoriteSessionInput {
@@ -137,6 +150,10 @@ interface SessionStateRecordRow {
   updated_at: string;
 }
 
+interface SessionHistoryAdapterOverrides {
+  codexForkTransportFactory?: () => CodexForkTransport;
+}
+
 const SESSION_START_DEFERRED_PROVIDERS = new Set([
   "codex",
   "claude-code",
@@ -151,6 +168,7 @@ export class SessionHistoryService {
   private readonly sessionSyncService: SessionSyncService;
   private readonly capabilityService: CapabilityService;
   private readonly sessionActivityAuthorityService: SessionActivityAuthorityService;
+  private readonly sessionForkRepository: Pick<SessionForkRepository, "upsert" | "findBySessionId">;
   private readonly claudeCodeHomeDir: string;
   private readonly codexModelOptionsService: CodexModelOptionsService;
   private readonly openCodeModelOptionsService: OpenCodeModelOptionsService;
@@ -176,13 +194,21 @@ export class SessionHistoryService {
     private readonly sessionMessageOriginRepository: Pick<
       SessionMessageOriginRepository,
       "listBySessionAndMessageIds" | "listUnresolvedBySessionAndContents" | "resolveMessageId"
-    > | null = null
+    > | null = null,
+    sessionForkRepository: Pick<SessionForkRepository, "upsert" | "findBySessionId"> | null = null,
+    adapterOverrides: SessionHistoryAdapterOverrides = {}
   ) {
     this.sessionActivityAuthorityService = sessionActivityAuthorityService;
+    this.sessionForkRepository = sessionForkRepository ?? new SessionForkRepository(db);
     this.claudeCodeHomeDir = config.claudeCodeHomeDir;
     this.providerRegistry = new ProviderRegistry([
       new ClaudeCodeAdapter({ homeDir: config.claudeCodeHomeDir }),
-      new CodexAdapter({ homeDir: config.codexHomeDir }),
+      new CodexAdapter({
+        homeDir: config.codexHomeDir,
+        forkTransportFactory:
+          adapterOverrides.codexForkTransportFactory
+          ?? createCodexForkTransportFactory(config.codexCliPath, config.codexHomeDir)
+      }),
       new GeminiAdapter({
         homeDir: config.geminiHomeDir,
         commandPath: config.geminiCliPath
@@ -661,6 +687,116 @@ export class SessionHistoryService {
     }
   }
 
+  async forkSession(input: ForkSessionInput): Promise<SessionListItem> {
+    const binding = this.getBindingOrThrow(input.sessionId);
+    const workspace = this.getWorkspaceOrThrow(binding.workspaceId);
+    const sourceMessageId =
+      input.sourceType === "message"
+        ? input.sourceMessageId?.trim() || null
+        : null;
+
+    if (input.sourceType === "message" && !sourceMessageId) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "INVALID_INPUT",
+        detail: "按消息派生会话时必须提供 sourceMessageId",
+        field: "sourceMessageId"
+      });
+    }
+
+    try {
+      const result = await this.sessionSyncService.forkSession(
+        binding.provider,
+        binding.providerSessionId,
+        workspace.path,
+        {
+          rawStoreRef: binding.rawStoreRef,
+          sourceType: input.sourceType,
+          sourceMessageId,
+          strategy: input.strategy ?? "auto"
+        }
+      );
+      const sessionId = createId();
+      const timestamp = nowIso();
+
+      this.db.transaction(() => {
+        this.sessionBindingRepository.upsert({
+          sessionId,
+          workspaceId: workspace.id,
+          provider: result.session.provider,
+          providerSessionId: result.session.providerSessionId,
+          rawStoreRef: result.session.rawStoreRef,
+          createdAt: timestamp,
+          updatedAt: timestamp
+        });
+        this.sessionIndexRepository.upsert({
+          sessionId,
+          workspaceId: workspace.id,
+          provider: result.session.provider,
+          parentSessionId: input.sessionId,
+          isSubagent: result.session.isSubagent ?? false,
+          subagentLabel: result.session.subagentLabel ?? null,
+          title: result.session.title,
+          messageCount: result.session.messageCount,
+          isArchived: result.session.isArchived ?? false,
+          lastMessageAt: result.session.lastMessageAt,
+          createdAt: timestamp,
+          updatedAt: timestamp
+        });
+        this.sessionForkRepository.upsert({
+          sessionId,
+          parentSessionId: input.sessionId,
+          provider: result.session.provider,
+          forkSourceType: result.forkSourceType,
+          forkSourceSessionId: input.sessionId,
+          forkSourceMessageId: sourceMessageId,
+          inheritedPrefixMessageCount: result.session.messageCount,
+          providerParentSessionId: binding.providerSessionId,
+          providerSourceMessageId: result.providerSourceMessageId ?? null,
+          forkMethod: result.forkMethod,
+          createdAt: timestamp
+        });
+        this.sessionStatusSnapshotRepository.upsert({
+          sessionId,
+          syncStatus: "idle",
+          syncCursor: null,
+          lastSyncAt: timestamp,
+          lastErrorCode: null,
+          lastErrorDetail: null,
+          resumedAt: null,
+          updatedAt: timestamp
+        });
+        this.sessionStateRepository.upsert({
+          sessionId,
+          userId: input.userId,
+          runningState: "idle",
+          activitySource: "none",
+          favorite: false,
+          lastEventAt: result.session.lastMessageAt,
+          completedAt: null,
+          lastSeenAt: null,
+          updatedAt: timestamp
+        });
+      })();
+
+      const forkedSession = this.getSessionListItemOrThrow(sessionId, input.userId);
+      const relationMap =
+        this.workspaceSessionRelations.get(workspace.id)
+        ?? new Map<string, SessionRelationDescriptor>();
+
+      relationMap.set(sessionId, {
+        parentSessionId: input.sessionId,
+        isSubagent: forkedSession.isSubagent ?? false,
+        subagentLabel: forkedSession.subagentLabel ?? null
+      });
+      this.workspaceSessionRelations.set(workspace.id, relationMap);
+
+      return this.getSessionListItemOrThrow(sessionId, input.userId);
+    } catch (error) {
+      throw mapSessionProviderError(error);
+    }
+  }
+
   async sendMessage(
     sessionId: string,
     content: string,
@@ -683,6 +819,11 @@ export class SessionHistoryService {
       });
 
     const existing = this.sessionIndexRepository.findIndexRecordBySessionId(sessionId);
+    const sessionFork = this.sessionForkRepository.findBySessionId(sessionId);
+    const parentTitle =
+      sessionFork?.parentSessionId
+        ? this.sessionIndexRepository.findIndexRecordBySessionId(sessionFork.parentSessionId)?.title ?? null
+        : null;
 
     this.sessionIndexRepository.upsert({
       sessionId,
@@ -691,7 +832,12 @@ export class SessionHistoryService {
       parentSessionId: existing?.parentSessionId ?? null,
       isSubagent: existing?.isSubagent ?? false,
       subagentLabel: existing?.subagentLabel ?? null,
-      title: existing?.title ?? result.message.content.slice(0, 48),
+      title: resolveSessionListTitle(
+        binding.provider,
+        existing?.title ?? null,
+        result.message.content,
+        parentTitle
+      ),
       messageCount: (existing?.messageCount ?? 0) + 1,
       isArchived: existing?.isArchived ?? false,
       lastMessageAt: result.message.timestamp,
@@ -1123,11 +1269,23 @@ export class SessionHistoryService {
             createdAt,
             updatedAt: timestamp
           });
+          const preservedParentSessionId =
+            existingIndex?.parentSessionId
+            ?? this.sessionForkRepository.findBySessionId(sessionId)?.parentSessionId
+            ?? null;
+          const preservedTitle = resolvePersistedSessionTitle(
+            session.provider,
+            session.title,
+            existingIndex?.title ?? null
+          );
           this.sessionIndexRepository.upsert({
             sessionId,
             workspaceId: workspace.id,
             provider: session.provider,
-            title: session.title,
+            parentSessionId: preservedParentSessionId,
+            isSubagent: existingIndex?.isSubagent ?? false,
+            subagentLabel: existingIndex?.subagentLabel ?? null,
+            title: preservedTitle,
             messageCount: session.messageCount,
             isArchived: resolveDiscoveredArchiveState(existingIndex?.isArchived ?? false, session.isArchived),
             lastMessageAt: session.lastMessageAt,
@@ -1165,10 +1323,24 @@ export class SessionHistoryService {
             sessionId: persistedSession.sessionId,
             workspaceId: workspace.id,
             provider: persistedSession.session.provider,
-            parentSessionId: relation?.parentSessionId ?? null,
-            isSubagent: relation?.isSubagent ?? false,
-            subagentLabel: relation?.subagentLabel ?? null,
-            title: persistedSession.session.title,
+            parentSessionId:
+              relation?.parentSessionId
+              ?? persistedSession.existingIndex?.parentSessionId
+              ?? this.sessionForkRepository.findBySessionId(persistedSession.sessionId)?.parentSessionId
+              ?? null,
+            isSubagent:
+              relation?.isSubagent
+              ?? persistedSession.existingIndex?.isSubagent
+              ?? false,
+            subagentLabel:
+              relation?.subagentLabel
+              ?? persistedSession.existingIndex?.subagentLabel
+              ?? null,
+            title: resolvePersistedSessionTitle(
+              persistedSession.session.provider,
+              persistedSession.session.title,
+              persistedSession.existingIndex?.title ?? null
+            ),
             messageCount: persistedSession.session.messageCount,
             isArchived: resolveDiscoveredArchiveState(
               persistedSession.existingIndex?.isArchived ?? false,
@@ -1439,12 +1611,17 @@ export class SessionHistoryService {
             session.parentProviderSessionId
           )?.sessionId ??
           null
-        : null;
+        : this.resolvePersistedParentSessionId(sessionId);
 
       relationMap.set(sessionId, {
         parentSessionId,
-        isSubagent: Boolean(session.isSubagent || parentSessionId),
-        subagentLabel: session.subagentLabel?.trim() || null
+        isSubagent:
+          session.isSubagent === true
+          || this.sessionIndexRepository.findIndexRecordBySessionId(sessionId)?.isSubagent === true,
+        subagentLabel:
+          session.subagentLabel?.trim()
+          || this.sessionIndexRepository.findIndexRecordBySessionId(sessionId)?.subagentLabel
+          || null
       });
     }
 
@@ -1642,15 +1819,29 @@ export class SessionHistoryService {
       )
     ).trim();
 
-    if (nextTitle.length === 0 || nextTitle === currentIndex.title) {
+    const resolvedTitle = resolvePersistedSessionTitle(
+      binding.provider,
+      nextTitle,
+      currentIndex.title
+    );
+
+    if (resolvedTitle.length === 0 || resolvedTitle === currentIndex.title) {
       return;
     }
 
     this.sessionIndexRepository.upsert({
       ...currentIndex,
-      title: nextTitle,
+      title: resolvedTitle,
       updatedAt: nowIso()
     });
+  }
+
+  private resolvePersistedParentSessionId(sessionId: string): string | null {
+    return (
+      this.sessionForkRepository.findBySessionId(sessionId)?.parentSessionId
+      ?? this.sessionIndexRepository.findIndexRecordBySessionId(sessionId)?.parentSessionId
+      ?? null
+    );
   }
 
   private async ensureSessionChangedFilesIndexed(
@@ -2065,6 +2256,9 @@ export class SessionHistoryService {
       .prepare("DELETE FROM session_status_snapshots WHERE session_id = ?")
       .run(input.sourceSessionId);
     this.db
+      .prepare("DELETE FROM session_forks WHERE session_id = ?")
+      .run(input.sourceSessionId);
+    this.db
       .prepare("DELETE FROM session_indices WHERE session_id = ?")
       .run(input.sourceSessionId);
     this.db
@@ -2168,7 +2362,6 @@ export class SessionHistoryService {
         || sourceRelation?.isSubagent
         || targetIndex?.isSubagent
         || sourceIndex?.isSubagent
-        || fallbackParentSessionId
       ),
       subagentLabel:
         targetRelation?.subagentLabel
@@ -2201,6 +2394,9 @@ export class SessionHistoryService {
       .run(sessionId);
     this.db
       .prepare("DELETE FROM session_status_snapshots WHERE session_id = ?")
+      .run(sessionId);
+    this.db
+      .prepare("DELETE FROM session_forks WHERE session_id = ?")
       .run(sessionId);
     this.db
       .prepare("DELETE FROM session_indices WHERE session_id = ?")
@@ -2332,6 +2528,24 @@ export class SessionHistoryService {
       updatedAt: nowIso()
     });
   }
+}
+
+function createCodexForkTransportFactory(
+  commandPath: string,
+  homeDir: string
+): () => CodexForkTransport {
+  return () => {
+    const client = new CodexAppServerHelperClient(commandPath, { homeDir });
+    const transport = client.createForkTransport();
+
+    return {
+      ...transport,
+      close() {
+        transport.close();
+        client.dispose();
+      }
+    };
+  };
 }
 
 function buildInspectionActivityObservation(
@@ -3069,6 +3283,68 @@ function isLegacyCodingNsRolloutSession(providerSessionId: string, rawStoreRef: 
 
 function shouldRemoveMissingSyntheticCodexSession(rawStoreRef: string): boolean {
   return isSyntheticCodexRawStoreRef(rawStoreRef) && !existsSync(rawStoreRef);
+}
+
+function resolveSessionListTitle(
+  provider: string,
+  existingTitle: string | null,
+  fallbackContent: string,
+  parentTitle: string | null = null
+): string {
+  const normalizedExistingTitle = existingTitle?.trim() ?? "";
+  const normalizedParentTitle = parentTitle?.trim() ?? "";
+
+  if (
+    normalizedExistingTitle.length > 0 &&
+    !isSyntheticCodexSessionTitle(normalizedExistingTitle) &&
+    (
+      normalizedParentTitle.length === 0 ||
+      normalizedExistingTitle !== normalizedParentTitle
+    )
+  ) {
+    return normalizedExistingTitle;
+  }
+
+  if (provider === "codex") {
+    return buildUserMessageTitle(fallbackContent, normalizedExistingTitle || "继续对话");
+  }
+
+  return normalizedExistingTitle || buildUserMessageTitle(fallbackContent, "继续对话");
+}
+
+function buildUserMessageTitle(content: string, fallbackTitle: string): string {
+  const title = content.trim().replace(/\s+/g, " ");
+  return title.slice(0, 48) || fallbackTitle;
+}
+
+function resolvePersistedSessionTitle(
+  provider: string,
+  discoveredTitle: string,
+  existingTitle: string | null
+): string {
+  const nextTitle = discoveredTitle.trim();
+  const currentTitle = existingTitle?.trim() ?? "";
+
+  if (!currentTitle) {
+    return nextTitle;
+  }
+
+  if (nextTitle.length === 0) {
+    return currentTitle;
+  }
+
+  if (provider === "codex" && isSyntheticCodexSessionTitle(nextTitle)) {
+    return currentTitle;
+  }
+
+  return nextTitle;
+}
+
+function isSyntheticCodexSessionTitle(title: string): boolean {
+  return (
+    /^rollout-\d{4}-\d{2}-\d{2}t/i.test(title) ||
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(title)
+  );
 }
 
 function shouldRemoveHiddenClaudeDebugSession(session: {

@@ -1563,6 +1563,7 @@ export class SessionLiveRuntimeService {
         input.clientRequestId,
         acceptedMessage?.messageId ?? null
       );
+      this.refreshSyntheticSessionTitle(session, input.content, input.userId);
       this.markSendDebugResponseReady(debugTrace, {
         runtimeMode,
         returnedAcceptedMessage: Boolean(acceptedMessage),
@@ -2324,6 +2325,44 @@ export class SessionLiveRuntimeService {
     });
   }
 
+  private refreshSyntheticSessionTitle(
+    session: Pick<
+      SessionListItem,
+      "sessionId" | "provider" | "title" | "parentSessionId" | "forkMethod" | "forkSourceType"
+    >,
+    content: string,
+    userId: string
+  ): void {
+    const currentIndex = this.sessionIndexRepository.findIndexRecordBySessionId(session.sessionId);
+
+    if (!currentIndex) {
+      return;
+    }
+
+    const parentTitle =
+      session.parentSessionId
+        ? this.sessionHistoryService.getSession(session.parentSessionId, userId).title
+        : null;
+    const nextTitle = resolveRuntimeSessionTitle(
+      currentIndex.provider,
+      currentIndex.title,
+      content,
+      parentTitle,
+      session.forkMethod,
+      session.forkSourceType
+    );
+
+    if (!nextTitle || nextTitle === currentIndex.title) {
+      return;
+    }
+
+    this.sessionIndexRepository.upsert({
+      ...currentIndex,
+      title: nextTitle,
+      updatedAt: nowIso()
+    });
+  }
+
   private mapRuntimeEventToEnvelope(
     sessionId: string,
     event: RuntimeEvent,
@@ -2701,6 +2740,40 @@ function mapClaudeHookToRuntimeUpdate(
 function buildSessionTitle(content: string): string {
   const title = content.trim().replace(/\s+/g, " ");
   return title.slice(0, 48) || "继续对话";
+}
+
+function resolveRuntimeSessionTitle(
+  provider: string,
+  existingTitle: string,
+  content: string,
+  parentTitle: string | null,
+  forkMethod: SessionListItem["forkMethod"],
+  forkSourceType: SessionListItem["forkSourceType"]
+): string | null {
+  const normalizedExistingTitle = existingTitle.trim();
+  const normalizedParentTitle = parentTitle?.trim() ?? "";
+  const isForkSession = Boolean(forkMethod || forkSourceType);
+
+  if (
+    normalizedExistingTitle.length > 0 &&
+    !isSyntheticRuntimeSessionTitle(provider, normalizedExistingTitle) &&
+    (!isForkSession || normalizedExistingTitle !== normalizedParentTitle)
+  ) {
+    return null;
+  }
+
+  return buildSessionTitle(content);
+}
+
+function isSyntheticRuntimeSessionTitle(provider: string, title: string): boolean {
+  if (provider !== "codex") {
+    return false;
+  }
+
+  return (
+    /^rollout-\d{4}-\d{2}-\d{2}t/i.test(title) ||
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(title)
+  );
 }
 
 function shouldStartNativeSessionOnFirstMessage(session: {

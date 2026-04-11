@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import type {
   CodexAppServerTransport,
+  CodexForkTransport,
   ProviderRuntimeRunRequest
 } from "@codingns/session-sync-core";
 
@@ -49,11 +50,19 @@ type ParentToHelperMessage =
         | "initialize"
         | "startThread"
         | "resumeThread"
+        | "forkThread"
+        | "readThread"
+        | "rollbackThread"
+        | "resumeThreadFromHistory"
         | "startTurn"
         | "interruptTurn"
         | "close";
       request?: ProviderRuntimeRunRequest;
       providerSessionId?: string;
+      numTurns?: number;
+      workspacePath?: string;
+      history?: unknown[];
+      model?: string | null;
     }
   | {
       type: "server_request_result";
@@ -229,6 +238,114 @@ export class CodexAppServerHelperClient {
       },
       isClosed() {
         return state.closed;
+      },
+      close: () => {
+        if (state.closed) {
+          return;
+        }
+
+        state.closed = true;
+        void this.sendMessage({
+          type: "transport_request",
+          transportId,
+          requestId: String(this.nextRequestId++),
+          method: "close"
+        });
+        this.rejectTransportPending(state, new Error("CODEX_APP_SERVER_CLOSED"));
+        this.notifyTransportClosed(state, null);
+        this.transports.delete(transportId);
+      }
+    };
+  }
+
+  createForkTransport(): CodexForkTransport {
+    const transportId = String(this.nextTransportId++);
+    const state: LogicalTransportState = {
+      pendingResponses: new Map(),
+      notificationHandler: () => undefined,
+      serverRequestHandler: async () => {
+        throw new Error("CODEX_APP_SERVER_REQUEST_NOT_SUPPORTED");
+      },
+      closeHandler: null,
+      closed: false
+    };
+
+    this.transports.set(transportId, state);
+
+    const request = async (
+      method: Extract<ParentToHelperMessage, { type: "transport_request" }>["method"],
+      input: {
+        providerSessionId?: string;
+        numTurns?: number;
+        workspacePath?: string;
+        history?: unknown[];
+        model?: string | null;
+      } = {}
+    ): Promise<Record<string, unknown>> => {
+      if (state.closed) {
+        throw new Error("CODEX_APP_SERVER_CLOSED");
+      }
+
+      const requestId = String(this.nextRequestId++);
+
+      return await new Promise<Record<string, unknown>>((resolve, reject) => {
+        state.pendingResponses.set(requestId, {
+          resolve,
+          reject
+        });
+
+        this.sendMessage({
+          type: "transport_request",
+          transportId,
+          requestId,
+          method,
+          ...input
+        }).catch((error) => {
+          state.pendingResponses.delete(requestId);
+          reject(error);
+        });
+      });
+    };
+
+    return {
+      async initialize() {
+        await request("initialize");
+      },
+      async forkThread(providerSessionId) {
+        const result = await request("forkThread", {
+          providerSessionId
+        });
+        return {
+          providerSessionId: String(result.providerSessionId ?? providerSessionId),
+          rawStoreRef: normalizeNullableString(result.rawStoreRef)
+        };
+      },
+      async readThread(providerSessionId) {
+        return await request("readThread", {
+          providerSessionId
+        });
+      },
+      async rollbackThread(providerSessionId, numTurns) {
+        const result = await request("rollbackThread", {
+          providerSessionId,
+          numTurns
+        });
+        return {
+          providerSessionId: String(result.providerSessionId ?? providerSessionId),
+          rawStoreRef: normalizeNullableString(result.rawStoreRef)
+        };
+      },
+      async resumeThreadFromHistory(input) {
+        const result = await request("resumeThreadFromHistory", {
+          providerSessionId: input.providerSessionId ?? undefined,
+          workspacePath: input.workspacePath,
+          history: input.history,
+          model: input.model ?? null
+        });
+        return {
+          providerSessionId: String(result.providerSessionId ?? ""),
+          rawStoreRef: normalizeNullableString(result.rawStoreRef)
+        };
       },
       close: () => {
         if (state.closed) {

@@ -23,6 +23,7 @@ export function createDatabaseClient(databasePath: string): DatabaseClient {
   ensureSessionStateSchema(db);
   ensureSessionIndexArchiveColumn(db);
   ensureSessionRelationColumns(db);
+  ensureSessionForkSchema(db);
   ensureSessionChangedFileTables(db);
   ensureTerminalInstanceProcessIdColumn(db);
   ensureTerminalRuntimeSchema(db);
@@ -275,6 +276,103 @@ function ensureSessionStateSchema(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_session_states_user_id
       ON session_states(user_id, updated_at DESC);
+  `);
+}
+
+function ensureSessionForkSchema(db: Database.Database): void {
+  const columns = db
+    .prepare("PRAGMA table_info(session_forks)")
+    .all() as Array<{ name: string }>;
+
+  if (columns.length === 0) {
+    return;
+  }
+
+  const columnNames = new Set(columns.map((column) => column.name));
+
+  if (
+    columnNames.has("session_id")
+    && columnNames.has("parent_session_id")
+    && columnNames.has("provider")
+    && columnNames.has("fork_source_type")
+    && columnNames.has("fork_source_session_id")
+    && columnNames.has("fork_source_message_id")
+    && columnNames.has("inherited_prefix_message_count")
+    && columnNames.has("provider_parent_session_id")
+    && columnNames.has("provider_source_message_id")
+    && columnNames.has("fork_method")
+    && columnNames.has("created_at")
+  ) {
+    return;
+  }
+
+  const hasSourceSessionId = columnNames.has("fork_source_session_id");
+  const hasInheritedPrefixMessageCount = columnNames.has("inherited_prefix_message_count");
+  const hasProviderParentSessionId = columnNames.has("provider_parent_session_id");
+  const hasProviderSourceMessageId = columnNames.has("provider_source_message_id");
+
+  db.exec(`
+    PRAGMA foreign_keys = OFF;
+
+    DROP TABLE IF EXISTS session_forks_next;
+
+    CREATE TABLE session_forks_next (
+      session_id TEXT PRIMARY KEY,
+      parent_session_id TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      fork_source_type TEXT NOT NULL CHECK (fork_source_type IN ('session', 'message')),
+      fork_source_session_id TEXT NOT NULL,
+      fork_source_message_id TEXT,
+      inherited_prefix_message_count INTEGER NOT NULL DEFAULT 0,
+      provider_parent_session_id TEXT,
+      provider_source_message_id TEXT,
+      fork_method TEXT NOT NULL CHECK (
+        fork_method IN (
+          'native_session_fork',
+          'native_message_fork',
+          'reconstructed_message_fork'
+        )
+      ),
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (session_id) REFERENCES session_bindings(session_id)
+    );
+
+    INSERT INTO session_forks_next (
+      session_id,
+      parent_session_id,
+      provider,
+      fork_source_type,
+      fork_source_session_id,
+      fork_source_message_id,
+      inherited_prefix_message_count,
+      provider_parent_session_id,
+      provider_source_message_id,
+      fork_method,
+      created_at
+    )
+    SELECT
+      session_id,
+      parent_session_id,
+      provider,
+      fork_source_type,
+      ${hasSourceSessionId ? "fork_source_session_id" : "parent_session_id"},
+      fork_source_message_id,
+      ${hasInheritedPrefixMessageCount ? "inherited_prefix_message_count" : "0"},
+      ${hasProviderParentSessionId ? "provider_parent_session_id" : "NULL"},
+      ${hasProviderSourceMessageId ? "provider_source_message_id" : "NULL"},
+      fork_method,
+      created_at
+    FROM session_forks;
+
+    DROP TABLE session_forks;
+    ALTER TABLE session_forks_next RENAME TO session_forks;
+
+    CREATE INDEX IF NOT EXISTS idx_session_forks_parent_session_id
+      ON session_forks(parent_session_id);
+    CREATE INDEX IF NOT EXISTS idx_session_forks_source_message_id
+      ON session_forks(fork_source_message_id);
+
+    PRAGMA foreign_keys = ON;
   `);
 }
 

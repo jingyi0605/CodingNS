@@ -116,6 +116,7 @@ import { FileContextBindingRepository } from "../storage/repositories/file-conte
 import { RecentFileRepository } from "../storage/repositories/recent-file-repository.js";
 import { SessionBindingRepository } from "../storage/repositories/session-binding-repository.js";
 import { SessionChangedFileRepository } from "../storage/repositories/session-changed-file-repository.js";
+import { SessionForkRepository } from "../storage/repositories/session-fork-repository.js";
 import { SessionIndexRepository } from "../storage/repositories/session-index-repository.js";
 import { SessionCheckpointRepository } from "../storage/repositories/session-checkpoint-repository.js";
 import { SessionMessageAttachmentRepository } from "../storage/repositories/session-message-attachment-repository.js";
@@ -173,6 +174,7 @@ export function createServer(config: HostConfig) {
     fileContextBindingRepository: new FileContextBindingRepository(database.db),
     sessionBindingRepository: new SessionBindingRepository(database.db),
     sessionChangedFileRepository: new SessionChangedFileRepository(database.db),
+    sessionForkRepository: new SessionForkRepository(database.db),
     sessionCheckpointRepository: new SessionCheckpointRepository(database.db),
     sessionIndexRepository: new SessionIndexRepository(database.db),
     sessionMessageAttachmentRepository: new SessionMessageAttachmentRepository(database.db),
@@ -268,7 +270,8 @@ export function createServer(config: HostConfig) {
     repositories.sessionStatusSnapshotRepository,
     config,
     sessionActivityAuthorityService,
-    repositories.sessionMessageOriginRepository
+    repositories.sessionMessageOriginRepository,
+    repositories.sessionForkRepository
   );
   const sessionLiveRuntimeService = new SessionLiveRuntimeService(
     sessionHistoryService,

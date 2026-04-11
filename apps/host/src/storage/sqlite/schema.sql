@@ -90,6 +90,32 @@ CREATE TABLE IF NOT EXISTS session_indices (
 
 CREATE INDEX IF NOT EXISTS idx_session_indices_workspace_id ON session_indices(workspace_id);
 
+CREATE TABLE IF NOT EXISTS session_forks (
+  session_id TEXT PRIMARY KEY,
+  parent_session_id TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  fork_source_type TEXT NOT NULL CHECK (fork_source_type IN ('session', 'message')),
+  fork_source_session_id TEXT NOT NULL,
+  fork_source_message_id TEXT,
+  inherited_prefix_message_count INTEGER NOT NULL DEFAULT 0,
+  provider_parent_session_id TEXT,
+  provider_source_message_id TEXT,
+  fork_method TEXT NOT NULL CHECK (
+    fork_method IN (
+      'native_session_fork',
+      'native_message_fork',
+      'reconstructed_message_fork'
+    )
+  ),
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (session_id) REFERENCES session_bindings(session_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_forks_parent_session_id
+  ON session_forks(parent_session_id);
+CREATE INDEX IF NOT EXISTS idx_session_forks_source_message_id
+  ON session_forks(fork_source_message_id);
+
 CREATE TABLE IF NOT EXISTS session_changed_files (
   session_id TEXT NOT NULL,
   workspace_id TEXT NOT NULL,

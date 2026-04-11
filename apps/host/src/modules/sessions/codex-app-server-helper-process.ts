@@ -13,11 +13,19 @@ type ParentToHelperMessage =
         | "initialize"
         | "startThread"
         | "resumeThread"
+        | "forkThread"
+        | "readThread"
+        | "rollbackThread"
+        | "resumeThreadFromHistory"
         | "startTurn"
         | "interruptTurn"
         | "close";
       request?: ProviderRuntimeRunRequest;
       providerSessionId?: string;
+      numTurns?: number;
+      workspacePath?: string;
+      history?: unknown[];
+      model?: string | null;
     }
   | {
       type: "server_request_result";
@@ -136,7 +144,9 @@ async function handleTransportRequest(message: Extract<ParentToHelperMessage, { 
               name: "codingns-runtime-helper",
               version: "0.0.0"
             },
-            capabilities: null
+            capabilities: {
+              experimentalApi: true
+            }
           }
         });
         writeJsonRpcMessage(transport.child, {
@@ -192,6 +202,114 @@ async function handleTransportRequest(message: Extract<ParentToHelperMessage, { 
         transport.activeTurnId =
           ensureText(readProp(readProp(result, "turn"), "id")).trim() || transport.activeTurnId;
         emitResponse(message.transportId, message.requestId, {});
+        return;
+      }
+      case "forkThread": {
+        const providerSessionId = ensureText(message.providerSessionId).trim();
+
+        if (!providerSessionId) {
+          throw new Error("CODEX_APP_SERVER_THREAD_ID_REQUIRED");
+        }
+
+        const result = await sendJsonRpcRequest(transport, {
+          method: "thread/fork",
+          params: {
+            threadId: providerSessionId
+          }
+        });
+        const thread = toRecord(result.thread);
+        const forkedProviderSessionId = ensureText(thread?.id).trim();
+
+        if (!forkedProviderSessionId) {
+          throw new Error("CODEX_APP_SERVER_THREAD_ID_MISSING");
+        }
+
+        transport.activeThreadId = forkedProviderSessionId;
+        emitResponse(message.transportId, message.requestId, {
+          providerSessionId: forkedProviderSessionId,
+          rawStoreRef: normalizeText(thread?.path) || null
+        });
+        return;
+      }
+      case "readThread": {
+        const providerSessionId = ensureText(message.providerSessionId).trim();
+
+        if (!providerSessionId) {
+          throw new Error("CODEX_APP_SERVER_THREAD_ID_REQUIRED");
+        }
+
+        const result = await sendJsonRpcRequest(transport, {
+          method: "thread/read",
+          params: {
+            threadId: providerSessionId,
+            includeTurns: true
+          }
+        });
+        emitResponse(message.transportId, message.requestId, result);
+        return;
+      }
+      case "rollbackThread": {
+        const providerSessionId = ensureText(message.providerSessionId).trim();
+        const numTurns = Math.trunc(Number(message.numTurns ?? 0));
+
+        if (!providerSessionId) {
+          throw new Error("CODEX_APP_SERVER_THREAD_ID_REQUIRED");
+        }
+
+        if (!Number.isFinite(numTurns) || numTurns < 1) {
+          throw new Error("CODEX_APP_SERVER_ROLLBACK_TURNS_REQUIRED");
+        }
+
+        const result = await sendJsonRpcRequest(transport, {
+          method: "thread/rollback",
+          params: {
+            threadId: providerSessionId,
+            numTurns
+          }
+        });
+        const thread = toRecord(result.thread);
+        const rolledProviderSessionId = ensureText(thread?.id).trim() || providerSessionId;
+        transport.activeThreadId = rolledProviderSessionId;
+        emitResponse(message.transportId, message.requestId, {
+          providerSessionId: rolledProviderSessionId,
+          rawStoreRef: normalizeText(thread?.path) || null
+        });
+        return;
+      }
+      case "resumeThreadFromHistory": {
+        const workspacePath = ensureText(message.workspacePath).trim();
+        const providerSessionId = ensureText(message.providerSessionId).trim() || null;
+        const history = Array.isArray(message.history) ? message.history : null;
+
+        if (!workspacePath) {
+          throw new Error("CODEX_APP_SERVER_WORKSPACE_PATH_REQUIRED");
+        }
+
+        if (!history) {
+          throw new Error("CODEX_APP_SERVER_HISTORY_REQUIRED");
+        }
+
+        const result = await sendJsonRpcRequest(transport, {
+          method: "thread/resume",
+          params: createThreadResumeWithHistoryParams(
+            providerSessionId,
+            workspacePath,
+            history,
+            normalizeText(message.model)
+          )
+        });
+        const thread = toRecord(result.thread);
+        const resumedProviderSessionId = ensureText(thread?.id).trim();
+
+        if (!resumedProviderSessionId) {
+          throw new Error("CODEX_APP_SERVER_THREAD_ID_MISSING");
+        }
+
+        transport.activeThreadId = resumedProviderSessionId;
+        emitResponse(message.transportId, message.requestId, {
+          providerSessionId: resumedProviderSessionId,
+          rawStoreRef: normalizeText(thread?.path) || null
+        });
         return;
       }
       case "interruptTurn": {
@@ -522,6 +640,29 @@ function createThreadResumeParams(
 
   if (request.options.model) {
     params.model = request.options.model;
+  }
+
+  return params;
+}
+
+function createThreadResumeWithHistoryParams(
+  providerSessionId: string | null,
+  workspacePath: string,
+  history: unknown[],
+  model: string | null
+): Record<string, unknown> {
+  const params: Record<string, unknown> = {
+    threadId:
+      providerSessionId && providerSessionId.trim().length > 0
+        ? providerSessionId.trim()
+        : "__history_resume__",
+    cwd: workspacePath,
+    history,
+    approvalsReviewer: "user"
+  };
+
+  if (model) {
+    params.model = model;
   }
 
   return params;

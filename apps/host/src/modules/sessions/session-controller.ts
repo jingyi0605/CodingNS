@@ -76,6 +76,12 @@ interface FavoriteSessionBody {
   favorite?: boolean;
 }
 
+interface ForkSessionBody {
+  sourceType?: "session" | "message";
+  sourceMessageId?: string | null;
+  strategy?: "auto" | "native-only" | "reconstruct-only";
+}
+
 interface ReplyPermissionRequestBody {
   action?: string;
   answers?: Record<string, string[]>;
@@ -377,6 +383,23 @@ export class SessionController {
         sessionId: request.params.sessionId,
         userId: requireUserId(request),
         isFavorite: request.body.favorite === true
+      })
+    );
+  };
+
+  readonly fork = async (
+    request: FastifyRequest<{ Params: SessionParams; Body: ForkSessionBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    const sourceType = request.body.sourceType === "message" ? "message" : "session";
+
+    reply.status(201).send(
+      await this.sessionHistoryService.forkSession({
+        sessionId: request.params.sessionId,
+        userId: requireUserId(request),
+        sourceType,
+        sourceMessageId: request.body.sourceMessageId?.trim() ?? null,
+        strategy: request.body.strategy ?? "auto"
       })
     );
   };

@@ -1,4 +1,9 @@
-import type { ProviderId, SyncStatus } from "@codingns/session-sync-core";
+import type {
+  ForkMethod,
+  ForkSourceType,
+  ProviderId,
+  SyncStatus
+} from "@codingns/session-sync-core";
 
 export type SessionRunningState =
   | "idle"
@@ -80,6 +85,20 @@ export interface SessionIndexRecord {
   lastMessageAt: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface SessionForkRecord {
+  sessionId: string;
+  parentSessionId: string;
+  provider: ProviderId;
+  forkSourceType: ForkSourceType;
+  forkSourceSessionId: string;
+  forkSourceMessageId: string | null;
+  inheritedPrefixMessageCount: number;
+  providerParentSessionId: string | null;
+  providerSourceMessageId: string | null;
+  forkMethod: ForkMethod;
+  createdAt: string;
 }
 
 export interface SessionChangedFileRecord {
@@ -172,6 +191,11 @@ export interface SessionListItem {
   providerSessionId: string;
   rawStoreRef: string;
   parentSessionId?: string | null;
+  forkMethod?: ForkMethod | null;
+  forkSourceType?: ForkSourceType | null;
+  forkSourceSessionId?: string | null;
+  forkSourceMessageId?: string | null;
+  inheritedPrefixMessageCount?: number | null;
   isSubagent?: boolean;
   subagentLabel?: string | null;
   isArchived: boolean;

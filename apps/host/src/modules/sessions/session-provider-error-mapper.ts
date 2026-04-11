@@ -13,6 +13,14 @@ export function mapSessionProviderError(error: unknown): AppError {
     });
   }
 
+  if (error instanceof Error && error.message === "PROVIDER_FORK_NOT_SUPPORTED") {
+    return new AppError({
+      statusCode: 400,
+      errorCode: "PROVIDER_FORK_NOT_SUPPORTED",
+      detail: "当前 provider 还没有接入统一 fork 能力"
+    });
+  }
+
   if (error instanceof Error && error.message === "CURSOR_INVALID") {
     return new AppError({
       statusCode: 400,
@@ -55,6 +63,65 @@ export function mapSessionProviderError(error: unknown): AppError {
       errorCode: "PROVIDER_SESSION_ID_REQUIRED",
       detail: "providerSessionId 不能为空",
       field: "providerSessionId"
+    });
+  }
+
+  if (error instanceof Error && error.message === "FORK_SOURCE_MESSAGE_NOT_FOUND") {
+    return new AppError({
+      statusCode: 404,
+      errorCode: "FORK_SOURCE_MESSAGE_NOT_FOUND",
+      detail: "未找到指定的 fork 来源消息",
+      field: "sourceMessageId"
+    });
+  }
+
+  if (error instanceof Error && error.message === "FORK_SOURCE_MESSAGE_ID_REQUIRED") {
+    return new AppError({
+      statusCode: 400,
+      errorCode: "FORK_SOURCE_MESSAGE_ID_REQUIRED",
+      detail: "按消息派生时必须提供 sourceMessageId",
+      field: "sourceMessageId"
+    });
+  }
+
+  if (error instanceof Error && error.message === "CODEX_RECONSTRUCTED_MESSAGE_FORK_NOT_SUPPORTED") {
+    return new AppError({
+      statusCode: 400,
+      errorCode: "CODEX_RECONSTRUCTED_MESSAGE_FORK_NOT_SUPPORTED",
+      detail: "Codex 当前只支持原生消息级派生，不支持重建型消息 fork"
+    });
+  }
+
+  if (error instanceof Error && error.message === "CODEX_FORK_TRANSPORT_NOT_CONFIGURED") {
+    return new AppError({
+      statusCode: 503,
+      errorCode: "CODEX_FORK_TRANSPORT_NOT_CONFIGURED",
+      detail: "Codex fork helper 未配置，暂时无法执行会话分叉"
+    });
+  }
+
+  if (error instanceof Error && error.message === "CODEX_THREAD_HISTORY_MISSING") {
+    return new AppError({
+      statusCode: 502,
+      errorCode: "PROVIDER_IO_ERROR",
+      detail: "Codex thread/read 没有返回可用于消息级派生的历史数据"
+    });
+  }
+
+  if (error instanceof Error && error.message === "CODEX_FORK_SOURCE_MESSAGE_UNMAPPABLE") {
+    return new AppError({
+      statusCode: 409,
+      errorCode: "FORK_SOURCE_MESSAGE_NOT_FOUND",
+      detail: "当前消息点无法映射到 Codex 原生历史，暂时不能从这里分叉",
+      field: "sourceMessageId"
+    });
+  }
+
+  if (error instanceof Error && error.message === "CODEX_FORK_HISTORY_EMPTY") {
+    return new AppError({
+      statusCode: 409,
+      errorCode: "PROVIDER_IO_ERROR",
+      detail: "Codex 返回的历史为空，当前会话暂时不能派生新分支"
     });
   }
 
