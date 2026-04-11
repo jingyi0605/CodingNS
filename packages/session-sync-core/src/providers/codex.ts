@@ -1496,7 +1496,7 @@ export class CodexAdapter implements ProviderAdapter {
 
   private parseMessagesFromEntries(
     filePath: string,
-    records: Array<Pick<RawJsonLine, "lineNumber" | "data">>,
+    records: Array<Pick<RawJsonLine, "lineNumber" | "partIndex" | "data">>,
     providerSessionId: string
   ): NormalizedMessage[] {
     const effectiveRecords = filterRolledBackCodexRecords(records);
@@ -1552,8 +1552,8 @@ export class CodexAdapter implements ProviderAdapter {
       });
     };
 
-    effectiveRecords.forEach(({ lineNumber, data: record }) => {
-      const rawRef = createRawRef(this.providerId, filePath, lineNumber);
+    effectiveRecords.forEach(({ lineNumber, partIndex, data: record }) => {
+      const rawRef = createRawRef(this.providerId, filePath, lineNumber, partIndex || undefined);
 
       if (record.type === "event_msg") {
         const payload = (record.payload ?? {}) as Record<string, unknown>;
@@ -1733,7 +1733,7 @@ export class CodexAdapter implements ProviderAdapter {
   }
 }
 
-function filterRolledBackCodexRecords<T extends Pick<RawJsonLine, "lineNumber" | "data">>(
+function filterRolledBackCodexRecords<T extends Pick<RawJsonLine, "lineNumber" | "partIndex" | "data">>(
   records: T[]
 ): T[] {
   const completedTurnSegments: Array<{

@@ -21,6 +21,7 @@ import type {
 
 export interface RawJsonLine {
   lineNumber: number;
+  partIndex: number;
   raw: string;
   data: Record<string, unknown>;
 }
@@ -87,15 +88,7 @@ export function walkJsonlFiles(rootDir: string): string[] {
 
 export function readJsonLines(filePath: string): RawJsonLine[] {
   const content = readFileSync(filePath, "utf8");
-
-  return content
-    .split(/\r?\n/)
-    .filter((line) => line.trim().length > 0)
-    .map((line, index) => ({
-      lineNumber: index + 1,
-      raw: line,
-      data: JSON.parse(line) as Record<string, unknown>
-    }));
+  return parseJsonLines(filePath, content.split(/\r?\n/));
 }
 
 export function readFirstNonEmptyLine(filePath: string, maxBytes = 256 * 1024): string | null {
@@ -177,19 +170,168 @@ export function readTrailingJsonLines(filePath: string, maxBytes: number): RawJs
     }
 
     const firstLineNumber = countLinesBeforeOffset(fd, alignedStartOffset) + 1;
-
-    return content
-      .toString("utf8")
-      .split(/\r?\n/)
-      .filter((line) => line.trim().length > 0)
-      .map((line, index) => ({
-        lineNumber: firstLineNumber + index,
-        raw: line,
-        data: JSON.parse(line) as Record<string, unknown>
-      }));
+    return parseJsonLines(filePath, content.toString("utf8").split(/\r?\n/), firstLineNumber);
   } finally {
     closeSync(fd);
   }
+}
+
+const warnedInvalidJsonLineKeys = new Set<string>();
+const MAX_INVALID_JSON_WARNINGS = 256;
+
+function parseJsonLines(
+  filePath: string,
+  lines: string[],
+  firstLineNumber = 1
+): RawJsonLine[] {
+  return lines.flatMap((line, index) => parseJsonLine(filePath, line, firstLineNumber + index));
+}
+
+function parseJsonLine(
+  filePath: string,
+  rawLine: string,
+  lineNumber: number
+): RawJsonLine[] {
+  const trimmed = rawLine.trim();
+
+  if (trimmed.length === 0) {
+    return [];
+  }
+
+  const directRecord = parseJsonRecord(trimmed);
+
+  if (directRecord) {
+    return [{
+      lineNumber,
+      partIndex: 0,
+      raw: trimmed,
+      data: directRecord
+    }];
+  }
+
+  const splitRecords = splitConcatenatedJsonObjects(trimmed);
+
+  if (splitRecords.length > 1) {
+    const parsedRecords = splitRecords.flatMap((segment, partIndex) => {
+      const parsed = parseJsonRecord(segment);
+
+      if (!parsed) {
+        return [];
+      }
+
+      return [{
+        lineNumber,
+        partIndex,
+        raw: segment,
+        data: parsed
+      }];
+    });
+
+    if (parsedRecords.length === splitRecords.length) {
+      return parsedRecords;
+    }
+  }
+
+  warnInvalidJsonLine(filePath, lineNumber, trimmed);
+  return [];
+}
+
+function parseJsonRecord(raw: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function splitConcatenatedJsonObjects(raw: string): string[] {
+  if (!raw.startsWith("{")) {
+    return [];
+  }
+
+  const segments: string[] = [];
+  let depth = 0;
+  let startIndex = -1;
+  let inString = false;
+  let escaping = false;
+
+  for (let index = 0; index < raw.length; index += 1) {
+    const char = raw[index];
+
+    if (inString) {
+      if (escaping) {
+        escaping = false;
+        continue;
+      }
+
+      if (char === "\\") {
+        escaping = true;
+        continue;
+      }
+
+      if (char === "\"") {
+        inString = false;
+      }
+
+      continue;
+    }
+
+    if (char === "\"") {
+      inString = true;
+      continue;
+    }
+
+    if (char === "{") {
+      if (depth === 0) {
+        startIndex = index;
+      }
+
+      depth += 1;
+      continue;
+    }
+
+    if (char !== "}") {
+      continue;
+    }
+
+    depth -= 1;
+
+    if (depth === 0 && startIndex >= 0) {
+      segments.push(raw.slice(startIndex, index + 1));
+      startIndex = -1;
+    }
+  }
+
+  if (depth !== 0 || inString || segments.length === 0) {
+    return [];
+  }
+
+  return segments.join("") === raw ? segments : [];
+}
+
+function warnInvalidJsonLine(filePath: string, lineNumber: number, raw: string): void {
+  const warningKey = `${filePath}:${lineNumber}:${createHash("sha1").update(raw).digest("hex")}`;
+
+  if (warnedInvalidJsonLineKeys.has(warningKey)) {
+    return;
+  }
+
+  warnedInvalidJsonLineKeys.add(warningKey);
+
+  if (warnedInvalidJsonLineKeys.size > MAX_INVALID_JSON_WARNINGS) {
+    const oldestKey = warnedInvalidJsonLineKeys.keys().next().value;
+
+    if (oldestKey) {
+      warnedInvalidJsonLineKeys.delete(oldestKey);
+    }
+  }
+
+  console.warn(
+    `[session-sync-core] 忽略损坏的 JSONL 记录: ${filePath}:${String(lineNumber)}`
+  );
 }
 
 function countLinesBeforeOffset(fd: number, offset: number): number {
