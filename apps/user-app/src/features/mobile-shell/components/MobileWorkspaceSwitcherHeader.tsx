@@ -108,8 +108,8 @@ export function MobileWorkspaceSwitcherHeader({
                     onClick={() => {
                       if (workspace.id !== currentWorkspace.id) {
                         void haptics.trigger("selection");
+                        onSelectWorkspace?.(workspace.id);
                       }
-                      onSelectWorkspace?.(workspace.id);
                       setSwitcherOpen(false);
                     }}
                   >

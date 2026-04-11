@@ -1,4 +1,5 @@
 import { createEvent, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -769,7 +770,7 @@ describe("ConversationPage", () => {
     });
   });
 
-  it("移动端点击项目名称会直接按较窄默认宽度打开快捷会话菜单", async () => {
+  it("移动端点击顶部工作区按钮会弹出切换面板，切换后进入目标工作区全部会话页", async () => {
     mockGetProviderCapabilities.mockResolvedValue({
       provider: "codex",
       canStartSession: true,
@@ -786,26 +787,76 @@ describe("ConversationPage", () => {
       modelOptions: [{ id: "provider-default", name: "跟随 CLI 默认模型", usesProviderDefault: true }],
       limitations: []
     });
-    mockUseWorkbenchShell.mockReturnValue(createMobileWorkbenchShellValue());
+    const selectWorkspace = vi.fn();
+    mockUseWorkbenchShell.mockReturnValue({
+      shellMode: "mobile",
+      navigationGroups: [
+        {
+          workspace: {
+            id: "workspace-1",
+            name: "工作区一",
+            path: "/Users/jackson/workspace-1"
+          },
+          sessions: [
+            createMobileSession({
+              sessionId: "session-1",
+              workspaceId: "workspace-1",
+              title: "历史会话 Alpha",
+              lastMessageAt: "2026-03-28T08:00:00.000Z",
+              updatedAt: "2026-03-28T08:00:00.000Z"
+            })
+          ]
+        },
+        {
+          workspace: {
+            id: "workspace-2",
+            name: "工作区二",
+            path: "/Users/jackson/workspace-2"
+          },
+          sessions: [
+            createMobileSession({
+              sessionId: "session-2-newest",
+              workspaceId: "workspace-2",
+              title: "目标会话最新",
+              lastMessageAt: "2026-03-29T09:00:00.000Z",
+              updatedAt: "2026-03-29T09:00:00.000Z"
+            }),
+            createMobileSession({
+              sessionId: "session-2-older",
+              workspaceId: "workspace-2",
+              title: "目标会话较早",
+              lastMessageAt: "2026-03-28T09:00:00.000Z",
+              updatedAt: "2026-03-28T09:00:00.000Z"
+            })
+          ]
+        }
+      ],
+      requestNavigationRefresh: vi.fn(),
+      setSessionWorkspace: vi.fn(),
+      upsertNavigationSession: vi.fn(),
+      favoriteSessions: [],
+      selectWorkspace
+    });
     window.localStorage.setItem("mobile.conversation.preview.mode", "immersive");
 
-    const view = renderDraftConversationPage();
-    const page = view.container.querySelector(".mobile-conversation-page") as HTMLElement;
+    renderDraftConversationPage({ withRouteProbe: true });
 
-    const initialHideButton = screen.queryByRole("button", {
-      name: t("shell.hideSessionSidebar")
+    fireEvent.click(screen.getByRole("button", { name: t("shell.workspaceHomeSwitcherLabel") }));
+
+    expect(
+      screen.getByRole("dialog", {
+        name: t("shell.workspaceHomeSwitcherTitle")
+      })
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /工作区二/ }));
+
+    await waitFor(() => {
+      expect(selectWorkspace).toHaveBeenCalledWith("workspace-2");
+      expect(screen.getByTestId("route-probe")).toHaveTextContent("/workspaces/workspace-2/sessions");
     });
 
-    if (initialHideButton) {
-      fireEvent.click(initialHideButton);
-    }
-
-    expect(screen.queryByText("历史会话 Alpha")).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: t("shell.showSessionSidebar") }));
-
-    expect(screen.getByText("历史会话 Alpha")).toBeInTheDocument();
-    expect(parseFloat(page.style.getPropertyValue("--mobile-conversation-preview-width"))).toBeCloseTo(234, 0);
+    expect(window.localStorage.getItem("mobile.conversation.preview.mode")).toBe("immersive");
   });
 
   it("移动端右滑超过阈值后，会一次性打开到默认宽度", async () => {
@@ -1217,7 +1268,7 @@ describe("ConversationPage", () => {
     expect(screen.queryByText(t("shell.favoriteSectionTitle"))).not.toBeInTheDocument();
   });
 
-  it("移动端快捷会话菜单只显示主会话，不显示子 agent 会话", async () => {
+  it("移动端快捷会话菜单会按需展开主会话下的子 agent 会话", async () => {
     mockGetProviderCapabilities.mockResolvedValue({
       provider: "codex",
       canStartSession: true,
@@ -1296,11 +1347,16 @@ describe("ConversationPage", () => {
       selectWorkspace: vi.fn()
     });
 
+    const user = userEvent.setup();
     renderDraftConversationPage();
 
     expect(screen.getByText("主会话 Alpha")).toBeInTheDocument();
     expect(screen.getByText("主会话 Beta")).toBeInTheDocument();
     expect(screen.queryByText("子代理 Alpha-1")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: t("shell.subagentExpand") }));
+
+    expect(screen.getByText("子代理 Alpha-1")).toBeInTheDocument();
   });
 
   it("移动端快捷会话菜单会显示后端统一裁决后的 stale 状态", async () => {
@@ -1331,7 +1387,7 @@ describe("ConversationPage", () => {
 
     renderDraftConversationPage();
 
-    expect(screen.getByRole("button", { name: t("shell.hideSessionSidebar") })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("shell.workspaceHomeSwitcherLabel") })).toBeInTheDocument();
     expect(
       screen.getByRole("button", {
         name: new RegExp(t("conversation.runtimeStale"))
@@ -1348,6 +1404,10 @@ function renderDraftConversationPage(options?: { withRouteProbe?: boolean }) {
       initialEntries={["/workspaces/workspace-1/sessions/draft-codex-1?provider=codex&workspaceId=workspace-1"]}
     >
       <Routes>
+        <Route
+          path="/workspaces/:workspaceId/sessions"
+          element={withRouteProbe ? <RouteProbe /> : null}
+        />
         <Route
           path="/workspaces/:workspaceId/sessions/:sessionId"
           element={

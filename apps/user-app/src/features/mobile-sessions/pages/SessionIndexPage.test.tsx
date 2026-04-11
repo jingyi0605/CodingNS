@@ -1,8 +1,9 @@
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { t } from "../../../shared/i18n";
 import { SessionIndexPage } from "./SessionIndexPage";
 
 const navigationGroups = [
@@ -78,6 +79,7 @@ const contextValue = {
   currentSessionId: "session-1",
   favoriteSessionIds: ["session-2"],
   navigationLoading: false,
+  selectWorkspace: vi.fn(),
   toggleFavoriteSession: vi.fn(async () => undefined),
   archiveSession: vi.fn(async () => undefined),
   unarchiveSession: vi.fn(async () => undefined),
@@ -93,11 +95,25 @@ vi.mock("../../conversation/components/WorkbenchLayout", async () => {
   };
 });
 
-function renderPage() {
+function renderPage(options?: { withRouteProbe?: boolean }) {
+  const withRouteProbe = options?.withRouteProbe ?? false;
+
   return render(
     <MemoryRouter initialEntries={["/workspaces/workspace-1/sessions"]}>
       <Routes>
-        <Route path="/workspaces/:workspaceId/sessions" element={<SessionIndexPage />} />
+        <Route
+          path="/workspaces/:workspaceId/sessions"
+          element={
+            <>
+              <SessionIndexPage />
+              {withRouteProbe ? <RouteProbe /> : null}
+            </>
+          }
+        />
+        <Route
+          path="/workspaces/:workspaceId/sessions/:sessionId"
+          element={withRouteProbe ? <RouteProbe /> : null}
+        />
       </Routes>
     </MemoryRouter>
   );
@@ -106,6 +122,7 @@ function renderPage() {
 describe("SessionIndexPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    window.localStorage.clear();
   });
 
   afterEach(() => {
@@ -256,8 +273,8 @@ describe("SessionIndexPage", () => {
     cancelAnimationFrameSpy.mockRestore();
   });
 
-  it("主会话长按后会展开和收起子会话列表", () => {
-    vi.useFakeTimers();
+  it("主会话点击状态指示器后会展开和收起子会话列表", async () => {
+    const user = userEvent.setup();
     renderPage();
 
     expect(screen.queryByText("子代理 Beta-1")).not.toBeInTheDocument();
@@ -274,21 +291,12 @@ describe("SessionIndexPage", () => {
       throw new Error("未找到 Beta 会话");
     }
 
-    const betaButton = within(betaEntry).getByRole("button", { name: /会话 Beta/ });
-
-    fireEvent.pointerDown(betaButton, { pointerType: "touch" });
-    act(() => {
-      vi.advanceTimersByTime(450);
-    });
-    fireEvent.pointerUp(betaButton, { pointerType: "touch" });
+    await user.click(within(betaEntry).getByRole("button", { name: t("shell.subagentExpand") }));
 
     expect(within(workspaceSection).getByText("子代理 Beta-1")).toBeInTheDocument();
+    expect(within(betaEntry).getByRole("button", { name: t("shell.subagentCollapse") })).toBeInTheDocument();
 
-    fireEvent.pointerDown(betaButton, { pointerType: "touch" });
-    act(() => {
-      vi.advanceTimersByTime(450);
-    });
-    fireEvent.pointerUp(betaButton, { pointerType: "touch" });
+    await user.click(within(betaEntry).getByRole("button", { name: t("shell.subagentCollapse") }));
 
     expect(within(workspaceSection).queryByText("子代理 Beta-1")).not.toBeInTheDocument();
   });
@@ -309,4 +317,32 @@ describe("SessionIndexPage", () => {
       screen.getByText(/CODEX_HTTP_429 · unexpected status 429 Too Many Requests/)
     ).toBeInTheDocument();
   });
+
+  it("从全部会话页进入会话时，会写入沉浸模式并且不自动展开侧边会话栏", async () => {
+    const user = userEvent.setup();
+    renderPage({ withRouteProbe: true });
+
+    const workspaceSection = screen.getByRole("heading", { level: 2, name: "当前工作区" }).closest("section");
+
+    if (!workspaceSection) {
+      throw new Error("未找到当前工作区会话区块");
+    }
+
+    const alphaEntry = within(workspaceSection).getByText("会话 Alpha").closest("article");
+
+    if (!alphaEntry) {
+      throw new Error("未找到 Alpha 会话");
+    }
+
+    await user.click(within(alphaEntry).getByRole("button", { name: /会话 Alpha/ }));
+
+    expect(window.localStorage.getItem("mobile.conversation.preview.mode")).toBe("immersive");
+    expect(screen.getByTestId("route-probe")).toHaveTextContent("/workspaces/workspace-1/sessions/session-1");
+  });
 });
+
+function RouteProbe() {
+  const location = useLocation();
+
+  return <div data-testid="route-probe">{location.pathname}</div>;
+}

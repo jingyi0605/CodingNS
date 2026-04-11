@@ -87,7 +87,9 @@ import {
   writeMobileConversationPreviewMode,
   type MobileConversationPreviewMode
 } from "../../mobile-sessions/mobile-conversation-state";
-import { resolveNextMobileSessionEntry } from "./mobile-session-archive-navigation";
+import {
+  resolveNextMobileSessionEntry
+} from "./mobile-session-archive-navigation";
 import "../../mobile-sessions/styles.css";
 
 const RUNTIME_TIMEOUT_TOAST_DELAY_MS = 15_000;
@@ -606,6 +608,11 @@ function LiveConversationPage({
     }
   }
 
+  function handleMobileWorkspaceSwitch(nextWorkspaceId: string) {
+    selectWorkspace(nextWorkspaceId);
+    navigate(buildWorkspaceSessionIndexPath(nextWorkspaceId));
+  }
+
   return (
     <>
       <main
@@ -629,15 +636,8 @@ function LiveConversationPage({
             gestureHandlers={mobilePreview.mainGestureHandlers}
             currentWorkspace={mobileArchiveWorkspaceGroup?.workspace ?? mobileWorkspaces[0] ?? null}
             workspaces={mobileWorkspaces}
+            onSelectWorkspace={handleMobileWorkspaceSwitch}
             heading={mobileSessionTitlePresentation.fullTitle}
-            triggerAriaLabel={
-              mobilePreview.displayMode === "preview"
-                ? t("shell.hideSessionSidebar")
-                : t("shell.showSessionSidebar")
-            }
-            onTriggerClick={() => {
-              mobilePreview.togglePreview();
-            }}
             trailing={
               <div className="mobile-conversation-toolbar-main">
                 <span className="mobile-conversation-toolbar-title" title={mobileSessionTitlePresentation.fullTitle}>
@@ -1106,6 +1106,11 @@ function DraftConversationPage({
     draft.sessionId
   );
 
+  function handleMobileWorkspaceSwitch(nextWorkspaceId: string) {
+    selectWorkspace(nextWorkspaceId);
+    navigate(buildWorkspaceSessionIndexPath(nextWorkspaceId));
+  }
+
   return (
     <>
     <main
@@ -1128,15 +1133,8 @@ function DraftConversationPage({
           gestureHandlers={mobilePreview.mainGestureHandlers}
           currentWorkspace={mobileWorkspaces.find((workspace) => workspace.id === draft.workspaceId) ?? mobileWorkspaces[0] ?? null}
           workspaces={mobileWorkspaces}
+          onSelectWorkspace={handleMobileWorkspaceSwitch}
           heading={mobileSessionTitlePresentation.fullTitle}
-          triggerAriaLabel={
-            mobilePreview.displayMode === "preview"
-              ? t("shell.hideSessionSidebar")
-              : t("shell.showSessionSidebar")
-          }
-          onTriggerClick={() => {
-            mobilePreview.togglePreview();
-          }}
           trailing={
             <span className="mobile-conversation-toolbar-title" title={mobileSessionTitlePresentation.fullTitle}>
               {mobileSessionTitlePresentation.displayTitle}
@@ -2081,9 +2079,6 @@ function MobileConversationPreviewEntryButton({
             })}
             aria-hidden="true"
           />
-          <span className="mobile-conversation-preview-toggle-icon" aria-hidden="true">
-            <PreviewChevronIcon expanded={subsessionsExpanded} />
-          </span>
         </button>
       ) : (
         <span
@@ -2110,25 +2105,6 @@ function MobileConversationPreviewEntryButton({
         </div>
       </button>
     </article>
-  );
-}
-
-function PreviewChevronIcon({ expanded }: { expanded: boolean }) {
-  return (
-    <svg viewBox="0 0 12 12" fill="none" aria-hidden="true">
-      <path
-        d="M3 4.25L6 7.25L9 4.25"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        style={{
-          transformOrigin: "50% 50%",
-          transform: expanded ? "rotate(180deg)" : "rotate(0deg)",
-          transition: "transform 180ms ease"
-        }}
-      />
-    </svg>
   );
 }
 
