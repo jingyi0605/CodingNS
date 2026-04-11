@@ -37,7 +37,10 @@ import { QueuedMessageList } from "../components/QueuedMessageList";
 import { SessionBranchTreePanel } from "../components/SessionBranchTreePanel";
 import { SessionHeader } from "../components/SessionHeader";
 import { SessionButlerActionButton } from "../components/SessionButlerActionButton";
-import { BranchTreeActionIcon } from "../components/ConversationActionIcons";
+import {
+  BranchTreeActionIcon,
+  ContextExpandActionIcon
+} from "../components/ConversationActionIcons";
 import { useWorkbenchShell } from "../components/WorkbenchLayout";
 import { isRealSubagentSession } from "../session-fork-display";
 import { SessionRuntimeStore, useSessionRuntimeStore } from "../runtime/session-runtime-store";
@@ -93,6 +96,10 @@ const FOCUS_COMPOSER_EVENT = "workbench:focus-composer";
 interface ForkComposerDraft {
   sourceMessageId: string;
   content: string;
+  sourceProvider: ProviderId;
+  workspaceId: string;
+  targetProvider: ProviderId;
+  targetModel: string | null;
 }
 
 export function ConversationPage() {
@@ -507,7 +514,8 @@ function LiveConversationPage({
       forkedSession = await forkSession(sessionId, {
         sourceType: "message",
         sourceMessageId: activeForkDraft.sourceMessageId,
-        strategy: "auto"
+        strategy: "auto",
+        targetProvider: activeForkDraft.targetProvider
       });
       upsertNavigationSession(forkedSession);
 
@@ -515,7 +523,7 @@ function LiveConversationPage({
         content,
         clientRequestId:
           globalThis.crypto?.randomUUID?.() ?? `fork-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-        model: options?.model ?? null,
+        model: activeForkDraft.targetModel,
         reasoningLevel: options?.reasoningLevel ?? null,
         attachments: options?.attachments ?? []
       });
@@ -595,14 +603,6 @@ function LiveConversationPage({
                 </span>
                 <MobileConversationSessionActions
                   session={session ?? navigationSession}
-                  navigationGroups={navigationGroups}
-                  workspaceId={branchTreeWorkspaceId}
-                  sessionId={sessionId}
-                  onOpenSession={(targetSession) => {
-                    selectWorkspace(targetSession.workspaceId);
-                    writeMobileConversationPreviewMode("preview");
-                    navigate(buildWorkspaceSessionPath(targetSession.workspaceId, targetSession.sessionId));
-                  }}
                 />
               </div>
             }
@@ -667,6 +667,7 @@ function LiveConversationPage({
                 onToggle={() => {
                   setInheritedContextExpanded((current) => !current);
                 }}
+                onOpenBranchTree={canOpenBranchTree ? () => setBranchTreeOpen(true) : undefined}
               />
             ) : null}
             <MessageTimeline
@@ -684,9 +685,17 @@ function LiveConversationPage({
                 void store.retryMessage(clientRequestId);
               }}
               onForkMessage={(message) => {
+                if (!session) {
+                  return;
+                }
+
                 setForkDraft({
                   sourceMessageId: message.id,
-                  content: message.content
+                  content: message.content,
+                  sourceProvider: session.provider,
+                  workspaceId: session.workspaceId,
+                  targetProvider: session.provider,
+                  targetModel: null
                 });
                 focusComposerInput();
               }}
@@ -721,6 +730,7 @@ function LiveConversationPage({
               draftStorageId={sessionId}
               forkDraft={forkDraft}
               onClearForkDraft={() => setForkDraft(null)}
+              onForkDraftChange={(nextDraft) => setForkDraft(nextDraft)}
               panelRef={!showInlineHeader ? setMobileComposerPanelElement : undefined}
               portalContainer={!showInlineHeader ? composerPortalTarget : null}
               hasActiveRun={runtimeHasActiveRun}
@@ -2156,33 +2166,56 @@ function InheritedContextBanner(input: {
   parentTitle: string;
   sourceType: "session" | "message";
   onToggle: () => void;
+  onOpenBranchTree?: (() => void) | undefined;
 }) {
+  const summaryText = t("conversation.inheritedContextSummary", {
+    count: input.hiddenMessageCount,
+    parentTitle: input.parentTitle
+  });
+
   return (
     <section className="conversation-inherited-context-banner">
       <div className="conversation-inherited-context-copy">
-        <strong>
-          {input.sourceType === "message"
-            ? t("conversation.inheritedContextMessageLabel")
-            : t("conversation.inheritedContextSessionLabel")}
-        </strong>
-        <p>
-          {t("conversation.inheritedContextSummary", {
-            count: input.hiddenMessageCount,
-            parentTitle: input.parentTitle
-          })}
+        <p title={summaryText}>
+          {summaryText}
         </p>
       </div>
-      {input.hiddenMessageCount > 0 ? (
-        <button
-          type="button"
-          className="conversation-inherited-context-toggle"
-          onClick={input.onToggle}
-        >
-          {input.expanded
-            ? t("conversation.inheritedContextCollapse")
-            : t("conversation.inheritedContextExpand")}
-        </button>
-      ) : null}
+      <div className="conversation-inherited-context-actions">
+        {input.hiddenMessageCount > 0 ? (
+          <button
+            type="button"
+            className="conversation-inherited-context-icon-button"
+            aria-label={
+              input.expanded
+                ? t("conversation.inheritedContextCollapse")
+                : t("conversation.inheritedContextExpand")
+            }
+            title={
+              input.expanded
+                ? t("conversation.inheritedContextCollapse")
+                : t("conversation.inheritedContextExpand")
+            }
+            onClick={input.onToggle}
+          >
+            <span className="conversation-header-ai-button-label" aria-hidden="true">
+              <ContextExpandActionIcon expanded={input.expanded} />
+            </span>
+          </button>
+        ) : null}
+        {input.onOpenBranchTree ? (
+          <button
+            type="button"
+            className="conversation-inherited-context-icon-button"
+            aria-label={t("conversation.branchTreeAction")}
+            title={t("conversation.branchTreeAction")}
+            onClick={input.onOpenBranchTree}
+          >
+            <span className="conversation-header-ai-button-label" aria-hidden="true">
+              <BranchTreeActionIcon />
+            </span>
+          </button>
+        ) : null}
+      </div>
     </section>
   );
 }

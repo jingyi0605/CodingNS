@@ -126,7 +126,11 @@ vi.mock("../components/ComposerPanel", () => ({
     onSend
   }: {
     capabilities: { modelOptions?: Array<{ id: string }> } | null;
-    forkDraft?: { content: string } | null;
+    forkDraft?: {
+      content: string;
+      targetProvider: string;
+      targetModel: string | null;
+    } | null;
     onSend?: (content: string, options?: { attachments?: unknown[]; attachmentMeta?: unknown[] }) => Promise<void>;
   }) => (
     <div>
@@ -134,6 +138,8 @@ vi.mock("../components/ComposerPanel", () => ({
         {capabilities?.modelOptions?.map((item) => item.id).join(",") ?? ""}
       </div>
       <div data-testid="composer-fork-draft">{forkDraft?.content ?? ""}</div>
+      <div data-testid="composer-fork-provider">{forkDraft?.targetProvider ?? ""}</div>
+      <div data-testid="composer-fork-model">{forkDraft?.targetModel ?? ""}</div>
       <button
         type="button"
         data-testid="composer-send"
@@ -293,9 +299,11 @@ describe("ConversationPage", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("继承自某条消息之前的上下文")).toBeInTheDocument();
       expect(screen.getByTestId("timeline-messages")).toHaveTextContent("现在还记得吗|还记得，口令是 1314。");
     });
+
+    expect(screen.getByRole("button", { name: "展开完整上文" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "分支树" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "展开完整上文" }));
 
@@ -369,7 +377,7 @@ describe("ConversationPage", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("继承自某条消息之前的上下文")).toBeInTheDocument();
+      expect(screen.getByText(/已默认折叠从/u)).toBeInTheDocument();
       expect(screen.getByTestId("timeline-messages")).toHaveTextContent("这是子会话自己的第一句");
     });
 
@@ -647,6 +655,8 @@ describe("ConversationPage", () => {
 
     expect(mockForkSession).not.toHaveBeenCalled();
     expect(screen.getByTestId("composer-fork-draft")).toHaveTextContent("从这个历史点继续分叉");
+    expect(screen.getByTestId("composer-fork-provider")).toHaveTextContent("codex");
+    expect(screen.getByTestId("composer-fork-model")).toHaveTextContent("");
 
     fireEvent.click(screen.getByTestId("composer-send"));
 
@@ -654,7 +664,8 @@ describe("ConversationPage", () => {
       expect(mockForkSession).toHaveBeenCalledWith("session-live-1", {
         sourceType: "message",
         sourceMessageId: "assistant-message-1",
-        strategy: "auto"
+        strategy: "auto",
+        targetProvider: "codex"
       });
     });
 
@@ -663,6 +674,7 @@ describe("ConversationPage", () => {
         "session-child-1",
         expect.objectContaining({
           content: "测试消息",
+          model: null,
           attachments: []
         })
       );
@@ -716,7 +728,7 @@ describe("ConversationPage", () => {
     fireEvent.click(screen.getByRole("button", { name: t("shell.showSessionSidebar") }));
 
     expect(screen.getByText("历史会话 Alpha")).toBeInTheDocument();
-    expect(parseFloat(page.style.getPropertyValue("--mobile-conversation-preview-width"))).toBeCloseTo(187.2, 0);
+    expect(parseFloat(page.style.getPropertyValue("--mobile-conversation-preview-width"))).toBeCloseTo(234, 0);
   });
 
   it("移动端右滑超过阈值后，会一次性打开到默认宽度", async () => {
@@ -752,7 +764,7 @@ describe("ConversationPage", () => {
     fireEvent.touchEnd(stage);
 
     expect(screen.getByText("历史会话 Alpha")).toBeInTheDocument();
-    expect(parseFloat(page.style.getPropertyValue("--mobile-conversation-preview-width"))).toBeCloseTo(187.2, 0);
+    expect(parseFloat(page.style.getPropertyValue("--mobile-conversation-preview-width"))).toBeCloseTo(234, 0);
   });
 
   it("移动端滑出侧边会话栏时，不会在 touchmove 里调用 preventDefault", async () => {
@@ -793,7 +805,7 @@ describe("ConversationPage", () => {
 
     expect(preventDefaultSpy).not.toHaveBeenCalled();
     expect(screen.getByText("历史会话 Alpha")).toBeInTheDocument();
-    expect(parseFloat(page.style.getPropertyValue("--mobile-conversation-preview-width"))).toBeCloseTo(187.2, 0);
+    expect(parseFloat(page.style.getPropertyValue("--mobile-conversation-preview-width"))).toBeCloseTo(234, 0);
   });
 
   it("移动端快速右滑时，会读取抬手位置来稳定触发打开", async () => {
@@ -831,7 +843,7 @@ describe("ConversationPage", () => {
     });
 
     expect(screen.getByText("历史会话 Alpha")).toBeInTheDocument();
-    expect(parseFloat(page.style.getPropertyValue("--mobile-conversation-preview-width"))).toBeCloseTo(187.2, 0);
+    expect(parseFloat(page.style.getPropertyValue("--mobile-conversation-preview-width"))).toBeCloseTo(234, 0);
   });
 
   it("移动端从更宽的左侧热区右滑，也能稳定打开快捷会话菜单", async () => {
@@ -867,7 +879,7 @@ describe("ConversationPage", () => {
     fireEvent.touchEnd(stage);
 
     expect(screen.getByText("历史会话 Alpha")).toBeInTheDocument();
-    expect(parseFloat(page.style.getPropertyValue("--mobile-conversation-preview-width"))).toBeCloseTo(187.2, 0);
+    expect(parseFloat(page.style.getPropertyValue("--mobile-conversation-preview-width"))).toBeCloseTo(234, 0);
   });
 
   it("移动端小幅右滑不会误触打开快捷会话菜单", async () => {
@@ -937,7 +949,7 @@ describe("ConversationPage", () => {
     });
     fireEvent.touchEnd(rail);
 
-    expect(parseFloat(page.style.getPropertyValue("--mobile-conversation-preview-width"))).toBeCloseTo(187.2, 0);
+    expect(parseFloat(page.style.getPropertyValue("--mobile-conversation-preview-width"))).toBeCloseTo(234, 0);
   });
 
   it("快捷会话菜单打开后，一次左滑会直接全部收起", async () => {
@@ -1099,7 +1111,7 @@ describe("ConversationPage", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("route-probe")).toHaveTextContent(
-        /^\/workspaces\/workspace-1\/sessions\/draft-.*\?provider=codex$/
+        /^\/workspaces\/workspace-1\/sessions\/draft-.*\?provider=codex&workspaceId=workspace-1$/
       );
     });
   });

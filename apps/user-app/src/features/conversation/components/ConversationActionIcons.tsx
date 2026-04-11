@@ -77,3 +77,33 @@ export function BranchTreeActionIcon() {
     </svg>
   );
 }
+
+export function ContextExpandActionIcon({ expanded }: { expanded: boolean }) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 20 20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="conversation-action-icon"
+    >
+      <path d="M4 6.5h8" />
+      <path d="M4 10h8" />
+      <path d="M4 13.5h5" />
+      {expanded ? (
+        <>
+          <path d="M14 12.8V7.2" />
+          <path d="M11.8 9.4L14 7.2l2.2 2.2" />
+        </>
+      ) : (
+        <>
+          <path d="M14 7.2v5.6" />
+          <path d="M11.8 10.6L14 12.8l2.2-2.2" />
+        </>
+      )}
+    </svg>
+  );
+}

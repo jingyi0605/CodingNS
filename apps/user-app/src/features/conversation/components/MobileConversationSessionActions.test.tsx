@@ -1,12 +1,9 @@
 import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
-import { t } from "../../../shared/i18n";
 import { MobileConversationSessionActions } from "./MobileConversationSessionActions";
 
-import type { SessionSummaryDto, WorkspaceDto } from "../api/conversation-api";
-import type { WorkspaceSessionGroup } from "./WorkbenchLayout";
+import type { SessionSummaryDto } from "../api/conversation-api";
 
 vi.mock("./SessionButlerActionButton", () => ({
   SessionButlerActionButton: ({ session }: { session: SessionSummaryDto | null }) => (
@@ -14,16 +11,8 @@ vi.mock("./SessionButlerActionButton", () => ({
   )
 }));
 
-vi.mock("./SessionBranchTreePanel", async () => {
-  const actual = await vi.importActual("./SessionBranchTreePanel");
-  return {
-    ...actual,
-    SessionBranchTreeExplorer: () => <div>Mock Branch Tree</div>
-  };
-});
-
 describe("MobileConversationSessionActions", () => {
-  it("没有分支关系时只显示 AI 按钮", () => {
+  it("只显示 AI 助手按钮", () => {
     render(
       <MobileConversationSessionActions
         session={createSessionSummary({
@@ -31,95 +20,23 @@ describe("MobileConversationSessionActions", () => {
           title: "Single Session",
           workspaceId: "workspace-1"
         })}
-        navigationGroups={[
-          {
-            workspace: createWorkspace("workspace-1", "Project One"),
-            sessions: [
-              createSessionSummary({
-                sessionId: "single-session",
-                title: "Single Session",
-                workspaceId: "workspace-1"
-              })
-            ]
-          }
-        ]}
-        workspaceId="workspace-1"
-        sessionId="single-session"
-        onOpenSession={vi.fn()}
       />
     );
 
     expect(screen.getByRole("button", { name: "AI" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: t("conversation.moreSessionActions") })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("有分支关系时只显示更多按钮，并且能切换标签页", async () => {
+  it("没有会话时不渲染入口", () => {
     render(
       <MobileConversationSessionActions
-        session={createSessionSummary({
-          sessionId: "child-session",
-          title: "Child Session",
-          workspaceId: "workspace-1",
-          parentSessionId: "root-session",
-          forkMethod: "native_message_fork",
-          forkSourceType: "message"
-        })}
-        navigationGroups={[createWorkspaceGroup()]}
-        workspaceId="workspace-1"
-        sessionId="child-session"
-        onOpenSession={vi.fn()}
+        session={null}
       />
     );
 
     expect(screen.queryByRole("button", { name: "AI" })).not.toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole("button", { name: t("conversation.moreSessionActions") }));
-
-    expect(
-      screen.getByRole("dialog", { name: t("conversation.moreSessionActionsTitle") })
-    ).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: t("conversation.branchTreeTab") })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByText("Mock Branch Tree")).toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole("tab", { name: t("conversation.aiAssistantTab") }));
-
-    expect(screen.getByRole("tab", { name: t("conversation.aiAssistantTab") })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByText(t("conversation.aiAssistantTabDescription"))).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "AI" })).toBeInTheDocument();
   });
 });
-
-function createWorkspaceGroup(): WorkspaceSessionGroup {
-  const workspace = createWorkspace("workspace-1", "Project One");
-
-  return {
-    workspace,
-    sessions: [
-      createSessionSummary({
-        sessionId: "root-session",
-        title: "Root Session",
-        workspaceId: workspace.id
-      }),
-      createSessionSummary({
-        sessionId: "child-session",
-        title: "Child Session",
-        workspaceId: workspace.id,
-        parentSessionId: "root-session",
-        forkMethod: "native_message_fork",
-        forkSourceType: "message"
-      })
-    ]
-  };
-}
-
-function createWorkspace(id: string, name: string): WorkspaceDto {
-  return {
-    id,
-    name,
-    path: `/tmp/${id}`,
-    repoRoot: `/tmp/${id}`
-  };
-}
 
 function createSessionSummary(input: {
   sessionId: string;
