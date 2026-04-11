@@ -155,6 +155,45 @@ describe("SessionBranchTreePanel", () => {
     });
   });
 
+  it("会在节点和预览里显示归档状态", async () => {
+    mockedGetSessionMessages.mockResolvedValue({
+      messages: [createHistoryMessage("branch-1", "assistant", "这是归档分支的预览。", 1)],
+      cursor: null,
+      nextCursor: null,
+      total: 1
+    });
+
+    render(
+      <SessionBranchTreePanel
+        open
+        navigationGroups={[createWorkspaceGroup({ archivedSessionIds: ["branch-session"] })]}
+        workspaceId="workspace-1"
+        sessionId="child-session"
+        onClose={vi.fn()}
+        onOpenSession={vi.fn()}
+      />
+    );
+
+    const archivedNodeButton = screen.getByRole("button", { name: /Branch Session/i });
+    expect(
+      within(archivedNodeButton).getByText(t("conversation.branchTreeArchivedBadge"))
+    ).toBeInTheDocument();
+
+    await userEvent.click(archivedNodeButton);
+
+    await waitFor(() => {
+      expect(mockedGetSessionMessages).toHaveBeenCalledWith("branch-session", null, 6, "backward");
+    });
+
+    await waitFor(() => {
+      const previewPopover = screen.getByRole("dialog", { name: /Branch Session/i });
+      expect(
+        within(previewPopover).getByText(t("conversation.branchTreeArchivedBadge"))
+      ).toBeInTheDocument();
+      expect(within(previewPopover).getByText("这是归档分支的预览。")).toBeInTheDocument();
+    });
+  });
+
   it("移动端会使用全屏裸画布视图并支持点击空白关闭", () => {
     const originalInnerWidth = window.innerWidth;
     Object.defineProperty(window, "innerWidth", {
@@ -200,8 +239,11 @@ describe("SessionBranchTreePanel", () => {
   });
 });
 
-function createWorkspaceGroup(): WorkspaceSessionGroup {
+function createWorkspaceGroup(options?: {
+  archivedSessionIds?: string[];
+}): WorkspaceSessionGroup {
   const workspace = createWorkspace("workspace-1", "Project One");
+  const archivedSessionIds = new Set(options?.archivedSessionIds ?? []);
 
   return {
     workspace,
@@ -209,7 +251,8 @@ function createWorkspaceGroup(): WorkspaceSessionGroup {
       createSessionSummary({
         sessionId: "root-session",
         title: "Root Session",
-        workspaceId: workspace.id
+        workspaceId: workspace.id,
+        isArchived: archivedSessionIds.has("root-session")
       }),
       createSessionSummary({
         sessionId: "mid-session",
@@ -217,7 +260,8 @@ function createWorkspaceGroup(): WorkspaceSessionGroup {
         workspaceId: workspace.id,
         parentSessionId: "root-session",
         forkMethod: "native_session_fork",
-        forkSourceType: "session"
+        forkSourceType: "session",
+        isArchived: archivedSessionIds.has("mid-session")
       }),
       createSessionSummary({
         sessionId: "branch-session",
@@ -225,7 +269,8 @@ function createWorkspaceGroup(): WorkspaceSessionGroup {
         workspaceId: workspace.id,
         parentSessionId: "root-session",
         forkMethod: "native_message_fork",
-        forkSourceType: "message"
+        forkSourceType: "message",
+        isArchived: archivedSessionIds.has("branch-session")
       }),
       createSessionSummary({
         sessionId: "child-session",
@@ -233,7 +278,8 @@ function createWorkspaceGroup(): WorkspaceSessionGroup {
         workspaceId: workspace.id,
         parentSessionId: "mid-session",
         forkMethod: "native_message_fork",
-        forkSourceType: "message"
+        forkSourceType: "message",
+        isArchived: archivedSessionIds.has("child-session")
       }),
       createSessionSummary({
         sessionId: "leaf-session",
@@ -241,7 +287,8 @@ function createWorkspaceGroup(): WorkspaceSessionGroup {
         workspaceId: workspace.id,
         parentSessionId: "child-session",
         forkMethod: "reconstructed_message_fork",
-        forkSourceType: "message"
+        forkSourceType: "message",
+        isArchived: archivedSessionIds.has("leaf-session")
       })
     ]
   };
@@ -263,6 +310,7 @@ function createSessionSummary(input: {
   parentSessionId?: string | null;
   forkMethod?: SessionSummaryDto["forkMethod"];
   forkSourceType?: SessionSummaryDto["forkSourceType"];
+  isArchived?: boolean;
 }): SessionSummaryDto {
   return {
     sessionId: input.sessionId,
@@ -277,7 +325,7 @@ function createSessionSummary(input: {
     forkSourceMessageId: null,
     isSubagent: false,
     subagentLabel: null,
-    isArchived: false,
+    isArchived: input.isArchived ?? false,
     isFavorite: false,
     title: input.title,
     messageCount: 1,

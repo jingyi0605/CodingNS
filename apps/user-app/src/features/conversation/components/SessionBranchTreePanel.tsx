@@ -242,6 +242,10 @@ function formatBranchNodeMeta(session: SessionSummaryDto) {
     .join(" · ");
 }
 
+function isArchivedBranchSession(session: SessionSummaryDto): boolean {
+  return session.isArchived === true;
+}
+
 function buildPreviewMessages(messages: HistoryMessageDto[]) {
   return [...messages]
     .sort((left, right) => left.sequence - right.sequence)
@@ -672,6 +676,7 @@ function BranchTreePreviewPopover({
 }) {
   const titlePresentation = buildSessionTitlePresentation(selectedSession.title, t("common.unknown"));
   const isCurrent = selectedSession.sessionId === model.current.sessionId;
+  const isArchived = isArchivedBranchSession(selectedSession);
   const forkBadgeTone = resolveSessionForkBadgeTone(selectedTreeNode.session);
   const forkBadgeLabel = resolveSessionForkBadgeLabel(selectedTreeNode.session);
 
@@ -689,6 +694,11 @@ function BranchTreePreviewPopover({
                 {t("conversation.branchTreeCurrentBadge")}
               </span>
             ) : null}
+            {isArchived ? (
+              <span className="conversation-branch-archived-badge">
+                {t("conversation.branchTreeArchivedBadge")}
+              </span>
+            ) : null}
           </div>
           <button
             type="button"
@@ -703,7 +713,7 @@ function BranchTreePreviewPopover({
         <p className="conversation-branch-preview-popover-meta">{formatBranchNodeMeta(selectedSession)}</p>
 
         {forkBadgeLabel && forkBadgeTone ? (
-          <div className="session-fork-row">
+          <div className="conversation-branch-badge-row">
             <span className={`session-fork-badge ${forkBadgeTone}`}>{forkBadgeLabel}</span>
           </div>
         ) : null}
@@ -859,6 +869,7 @@ function BranchCanvasTree({
             const isCurrent = layoutNode.node.session.sessionId === model.current.sessionId;
             const isSelected = layoutNode.node.session.sessionId === selectedSessionId;
             const isCurrentPath = model.currentPathIds.has(layoutNode.node.session.sessionId);
+            const isArchived = isArchivedBranchSession(layoutNode.node.session);
 
             return (
               <button
@@ -869,6 +880,7 @@ function BranchCanvasTree({
                 data-current={isCurrent}
                 data-selected={isSelected}
                 data-current-path={isCurrentPath}
+                data-archived={isArchived}
                 style={{
                   left: layoutNode.x,
                   top: layoutNode.y,
@@ -889,10 +901,15 @@ function BranchCanvasTree({
                         {t("conversation.branchTreeCurrentBadge")}
                       </span>
                     ) : null}
+                    {isArchived ? (
+                      <span className="conversation-branch-archived-badge">
+                        {t("conversation.branchTreeArchivedBadge")}
+                      </span>
+                    ) : null}
                   </div>
                   <p>{formatBranchNodeMeta(layoutNode.node.session)}</p>
                   {forkBadgeLabel && forkBadgeTone ? (
-                    <div className="session-fork-row">
+                    <div className="conversation-branch-badge-row">
                       <span className={`session-fork-badge ${forkBadgeTone}`}>{forkBadgeLabel}</span>
                     </div>
                   ) : null}

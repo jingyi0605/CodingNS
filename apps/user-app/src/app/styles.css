@@ -32,6 +32,40 @@
   --border-subtle: rgba(0, 0, 0, 0.04);
   --accent: #007aff;
   --accent-hover: #0066d4;
+  --conversation-chip-border: color-mix(in srgb, var(--border-primary) 78%, rgba(255, 255, 255, 0.4));
+  --conversation-chip-bg:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, white 64%, var(--bg-surface)),
+      color-mix(in srgb, var(--bg-surface) 92%, transparent)
+    );
+  --conversation-chip-bg-hover:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, white 48%, var(--bg-surface)),
+      color-mix(in srgb, var(--accent) 12%, var(--bg-surface))
+    );
+  --conversation-chip-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.55) inset,
+    0 8px 18px rgba(15, 23, 42, 0.08);
+  --conversation-chip-shadow-hover:
+    0 1px 0 rgba(255, 255, 255, 0.7) inset,
+    0 10px 22px rgba(15, 23, 42, 0.1);
+  --conversation-chip-text: var(--text-primary);
+  --conversation-chip-muted-text: color-mix(in srgb, var(--text-tertiary) 90%, var(--text-secondary));
+  --conversation-chip-muted-text-hover: var(--text-primary);
+  --conversation-fork-draft-bg:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, #ecf7ff 88%, var(--bg-surface)) 0%,
+      color-mix(in srgb, #dff1ff 82%, var(--bg-surface)) 100%
+    );
+  --conversation-fork-draft-border: color-mix(in srgb, #7cc7ee 28%, var(--border-primary));
+  --conversation-fork-draft-label: color-mix(in srgb, var(--accent) 56%, var(--text-secondary));
+  --conversation-fork-draft-clear-border: color-mix(in srgb, var(--text-primary) 10%, transparent);
+  --conversation-fork-draft-clear-bg: color-mix(in srgb, var(--bg-surface) 90%, transparent);
+  --conversation-fork-draft-clear-border-hover: color-mix(in srgb, var(--text-primary) 18%, transparent);
+  --conversation-fork-draft-clear-bg-hover: color-mix(in srgb, var(--bg-hover) 74%, var(--bg-surface));
 
   --success: #34c759;
   --warning: #ff9f0a;
@@ -84,6 +118,25 @@
   --border-subtle: rgba(255, 255, 255, 0.04);
   --accent: #0a84ff;
   --accent-hover: #409cff;
+  --conversation-chip-border: color-mix(in srgb, var(--border-primary) 74%, rgba(255, 255, 255, 0.16));
+  --conversation-chip-bg: color-mix(in srgb, var(--bg-surface) 82%, #2c2c2e 18%);
+  --conversation-chip-bg-hover: color-mix(in srgb, var(--bg-surface) 74%, #3a3a3c 26%);
+  --conversation-chip-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 8px 18px rgba(0, 0, 0, 0.32);
+  --conversation-chip-shadow-hover:
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    0 10px 22px rgba(0, 0, 0, 0.38);
+  --conversation-chip-text: color-mix(in srgb, var(--text-primary) 94%, white 6%);
+  --conversation-chip-muted-text: color-mix(in srgb, var(--text-secondary) 88%, var(--text-primary) 12%);
+  --conversation-chip-muted-text-hover: var(--text-primary);
+  --conversation-fork-draft-bg: color-mix(in srgb, var(--bg-surface) 94%, var(--accent) 6%);
+  --conversation-fork-draft-border: color-mix(in srgb, var(--accent) 24%, var(--border-primary));
+  --conversation-fork-draft-label: color-mix(in srgb, var(--accent) 72%, var(--text-secondary));
+  --conversation-fork-draft-clear-border: color-mix(in srgb, var(--border-primary) 82%, rgba(255, 255, 255, 0.12));
+  --conversation-fork-draft-clear-bg: color-mix(in srgb, var(--bg-primary) 72%, var(--bg-surface));
+  --conversation-fork-draft-clear-border-hover: color-mix(in srgb, var(--accent) 28%, var(--border-primary));
+  --conversation-fork-draft-clear-bg-hover: color-mix(in srgb, var(--bg-surface) 68%, #3a3a3c 32%);
 
   --success: #30d158;
   --warning: #ffd60a;
@@ -1213,7 +1266,8 @@ a {
 }
 
 .session-state-indicator.is-idle {
-  border: 1px solid var(--border-primary);
+  box-sizing: border-box;
+  border: 2px solid color-mix(in srgb, var(--text-secondary) 38%, var(--border-primary));
   background: transparent;
 }
 
@@ -3059,28 +3113,33 @@ a {
   height: 32px;
   padding: 0;
   border-radius: 10px;
-  border: 1px solid color-mix(in srgb, var(--border-primary) 82%, transparent);
-  background: color-mix(in srgb, var(--bg-surface) 92%, transparent);
-  color: var(--text-secondary);
+  border: 1px solid var(--conversation-chip-border);
+  background: var(--conversation-chip-bg);
+  box-shadow: var(--conversation-chip-shadow);
+  color: var(--conversation-chip-muted-text);
   transform: translateY(-50%);
   transition:
     background var(--transition-fast),
     border-color var(--transition-fast),
+    box-shadow var(--transition-fast),
     color var(--transition-fast),
     transform var(--transition-fast);
 }
 
 .composer-quick-phrase-trigger:hover {
-  background: color-mix(in srgb, var(--bg-hover) 88%, var(--bg-surface));
+  background: var(--conversation-chip-bg-hover);
   border-color: color-mix(in srgb, var(--accent) 22%, var(--border-primary));
-  color: var(--text-primary);
+  box-shadow: var(--conversation-chip-shadow-hover);
+  color: var(--conversation-chip-muted-text-hover);
   transform: translateY(calc(-50% - 1px));
 }
 
 .composer-quick-phrase-trigger:focus-visible {
   outline: none;
   border-color: color-mix(in srgb, var(--accent) 30%, var(--border-primary));
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent),
+    var(--conversation-chip-shadow-hover);
 }
 
 .composer-quick-phrase-modal {
@@ -6515,18 +6574,11 @@ textarea:focus-visible {
   min-width: 36px;
   height: 36px;
   padding: 0;
-  border: 1px solid color-mix(in srgb, var(--border-primary) 78%, transparent);
+  border: 1px solid var(--conversation-chip-border);
   border-radius: 12px;
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, white 64%, var(--bg-surface-2, var(--bg-surface))),
-      color-mix(in srgb, var(--bg-surface-2, var(--bg-surface)) 92%, transparent)
-    );
-  box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.55) inset,
-    0 8px 18px rgba(15, 23, 42, 0.08);
-  color: var(--text-primary);
+  background: var(--conversation-chip-bg);
+  box-shadow: var(--conversation-chip-shadow);
+  color: var(--conversation-chip-text);
   cursor: pointer;
   transition:
     border-color 120ms ease,
@@ -6537,15 +6589,8 @@ textarea:focus-visible {
 
 .conversation-header-ai-button:hover {
   border-color: color-mix(in srgb, var(--accent) 45%, var(--border-primary));
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, white 48%, var(--bg-surface)),
-      color-mix(in srgb, var(--accent) 12%, var(--bg-surface))
-    );
-  box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.7) inset,
-    0 10px 22px rgba(15, 23, 42, 0.1);
+  background: var(--conversation-chip-bg-hover);
+  box-shadow: var(--conversation-chip-shadow-hover);
   transform: translateY(-1px);
 }
 
@@ -6846,6 +6891,12 @@ textarea:focus-visible {
   animation: conversation-branch-current-pulse 1.6s ease-in-out infinite;
 }
 
+.conversation-branch-smart-card[data-archived="true"] {
+  border-color: color-mix(in srgb, var(--warning) 24%, var(--border-primary));
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--warning) 7%, var(--bg-surface)), color-mix(in srgb, var(--bg-primary) 98%, transparent));
+}
+
 .conversation-branch-smart-card[data-selected="true"] {
   box-shadow:
     0 0 0 2px color-mix(in srgb, var(--accent) 24%, transparent),
@@ -6897,6 +6948,27 @@ textarea:focus-visible {
   font-weight: 700;
   line-height: 1.45;
   flex-shrink: 0;
+}
+
+.conversation-branch-archived-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--warning) 14%, var(--bg-surface));
+  color: color-mix(in srgb, var(--warning) 78%, var(--text-primary));
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.45;
+  flex-shrink: 0;
+}
+
+.conversation-branch-badge-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 4px;
 }
 
 .conversation-branch-preview-floating {
@@ -7658,19 +7730,12 @@ textarea:focus-visible {
   justify-content: center;
   width: 23px;
   height: 23px;
-  border: 1px solid color-mix(in srgb, var(--border-primary) 76%, transparent);
+  border: 1px solid var(--conversation-chip-border);
   border-radius: 999px;
   padding: 0;
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, white 54%, var(--bg-surface)),
-      color-mix(in srgb, var(--bg-surface) 94%, transparent)
-    );
-  box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.7) inset,
-    0 4px 10px rgba(15, 23, 42, 0.045);
-  color: color-mix(in srgb, var(--text-tertiary) 90%, var(--text-secondary));
+  background: var(--conversation-chip-bg);
+  box-shadow: var(--conversation-chip-shadow);
+  color: var(--conversation-chip-muted-text);
   cursor: pointer;
   transition:
     color 120ms ease,
@@ -7682,16 +7747,9 @@ textarea:focus-visible {
 
 .message-metadata-action:hover:not(:disabled) {
   border-color: color-mix(in srgb, var(--accent) 42%, var(--border-primary));
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, white 44%, var(--bg-surface)),
-      color-mix(in srgb, var(--accent) 12%, var(--bg-surface))
-    );
-  box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.72) inset,
-    0 6px 14px rgba(15, 23, 42, 0.07);
-  color: var(--text-primary);
+  background: var(--conversation-chip-bg-hover);
+  box-shadow: var(--conversation-chip-shadow-hover);
+  color: var(--conversation-chip-muted-text-hover);
   transform: translateY(-1px);
 }
 
@@ -7699,9 +7757,7 @@ textarea:focus-visible {
   opacity: 0.56;
   cursor: default;
   transform: none;
-  box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.5) inset,
-    0 4px 10px rgba(15, 23, 42, 0.04);
+  box-shadow: var(--conversation-chip-shadow);
 }
 
 .conversation-action-icon {
@@ -9935,6 +9991,22 @@ textarea:focus-visible {
   gap: 4px;
 }
 
+.workbench-session-tree-row {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  --workbench-session-tree-line-color: color-mix(in srgb, var(--text-secondary) 42%, var(--border-primary));
+  --workbench-session-tree-guide-width: 18px;
+  --workbench-session-tree-line-offset: calc(var(--workbench-session-tree-guide-width) / 2);
+  --workbench-session-indicator-center-x: 5px;
+  --workbench-session-indicator-center-y: 17px;
+}
+
+.workbench-session-tree-row > .workbench-session-card {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .workbench-session-card {
   position: relative;
   display: block;
@@ -9972,6 +10044,18 @@ textarea:focus-visible {
   padding-left: 10px;
 }
 
+.workbench-session-card:not([data-depth="0"]) .workbench-session-main::before {
+  content: "";
+  position: absolute;
+  top: var(--workbench-session-indicator-center-y);
+  left: 0;
+  width: var(--workbench-session-indicator-center-x);
+  height: 1px;
+  background: var(--workbench-session-tree-line-color);
+  transform: translateY(-0.5px);
+  pointer-events: none;
+}
+
 .workbench-session-card[data-selecting="true"] .workbench-session-main {
   display: flex;
   align-items: center;
@@ -9983,9 +10067,62 @@ textarea:focus-visible {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  margin-left: 14px;
-  padding-left: 10px;
-  border-left: 1px solid color-mix(in srgb, var(--border-primary) 82%, transparent);
+  margin-left: 0;
+  padding-left: 0;
+}
+
+.workbench-session-tree-guides {
+  display: flex;
+  flex: 0 0 auto;
+  align-self: stretch;
+  pointer-events: none;
+}
+
+.workbench-session-tree-guide-column,
+.workbench-session-tree-guide-branch {
+  position: relative;
+  flex: 0 0 var(--workbench-session-tree-guide-width);
+  width: var(--workbench-session-tree-guide-width);
+}
+
+.workbench-session-tree-guide-column[data-continue="true"]::before {
+  content: "";
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  left: calc(var(--workbench-session-tree-line-offset) - 0.5px);
+  width: 1px;
+  background: var(--workbench-session-tree-line-color);
+}
+
+.workbench-session-tree-guide-branch::before {
+  content: "";
+  position: absolute;
+  top: -4px;
+  left: calc(var(--workbench-session-tree-line-offset) - 0.5px);
+  width: 1px;
+  height: calc(var(--workbench-session-indicator-center-y) + 4px);
+  background: var(--workbench-session-tree-line-color);
+}
+
+.workbench-session-tree-guide-branch[data-continue="true"]::after {
+  content: "";
+  position: absolute;
+  top: var(--workbench-session-indicator-center-y);
+  bottom: -4px;
+  left: calc(var(--workbench-session-tree-line-offset) - 0.5px);
+  width: 1px;
+  background: var(--workbench-session-tree-line-color);
+}
+
+.workbench-session-tree-guide-branch-horizontal {
+  position: absolute;
+  top: var(--workbench-session-indicator-center-y);
+  left: var(--workbench-session-tree-line-offset);
+  width: calc(var(--workbench-session-tree-guide-width) / 2);
+  height: 1px;
+  background: var(--workbench-session-tree-line-color);
+  transform: translateY(-0.5px);
 }
 
 .workbench-subsession-expand {
@@ -10597,6 +10734,11 @@ textarea:focus-visible {
   border-radius: 8px;
 }
 
+.workbench-session-tree-row {
+  --workbench-session-indicator-center-x: 4px;
+  --workbench-session-indicator-center-y: 14px;
+}
+
 .workbench-session-subagent-toggle {
   width: 12px;
   min-width: 12px;
@@ -10655,8 +10797,6 @@ textarea:focus-visible {
 
 .workbench-subsession-list {
   gap: 6px;
-  margin-left: 12px;
-  padding-left: 10px;
 }
 
 .workbench-workspace-actions {
@@ -10862,13 +11002,8 @@ textarea:focus-visible {
   margin: 10px 10px 0;
   padding: 12px;
   border-radius: 14px;
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, #ecf7ff 88%, var(--bg-surface)) 0%,
-      color-mix(in srgb, #dff1ff 82%, var(--bg-surface)) 100%
-    );
-  border: 1px solid color-mix(in srgb, #7cc7ee 28%, var(--border-primary));
+  background: var(--conversation-fork-draft-bg);
+  border: 1px solid var(--conversation-fork-draft-border);
 }
 
 .composer-fork-draft-main {
@@ -10891,7 +11026,7 @@ textarea:focus-visible {
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: color-mix(in srgb, var(--accent) 56%, var(--text-secondary));
+  color: var(--conversation-fork-draft-label);
 }
 
 .composer-fork-draft-text {
@@ -10908,56 +11043,17 @@ textarea:focus-visible {
   gap: 10px;
 }
 
-.composer-fork-config-header {
+.composer-fork-config-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.composer-fork-field {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.composer-fork-config-summary {
-  color: var(--text-secondary);
-  font-weight: 500;
-  text-align: right;
-}
-
-.composer-fork-provider-grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.composer-fork-provider-grid .session-provider-card {
-  min-height: 64px;
-  padding: 10px 11px;
-  border-radius: 14px;
-  background: color-mix(in srgb, white 86%, #e0f2fe 14%);
-}
-
-.composer-fork-provider-grid .session-provider-card-copy strong {
-  font-size: 13px;
-}
-
-.composer-fork-provider-grid .session-provider-card-status {
-  font-size: 10px;
-}
-
-.composer-fork-provider-grid .session-provider-card-icon {
-  width: 34px;
-  height: 34px;
-}
-
-.composer-fork-provider-grid .session-provider-card-icon img {
-  width: 20px;
-  height: 20px;
-}
-
-.composer-fork-model-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .composer-fork-model-label {
@@ -10966,18 +11062,19 @@ textarea:focus-visible {
   white-space: nowrap;
 }
 
-.composer-fork-model-row .composer-mac-select {
-  flex: 1 1 auto;
-}
-
-.composer-fork-model-row .composer-mac-select-trigger {
+.composer-fork-field .composer-mac-select {
   width: 100%;
+  max-width: none;
 }
 
-.composer-fork-footnote {
-  font-size: 11px;
-  line-height: 1.5;
-  color: var(--text-secondary);
+.composer-fork-field .composer-mac-select.is-compact {
+  width: 100%;
+  max-width: none;
+}
+
+.composer-fork-field .composer-mac-select-trigger {
+  width: 100%;
+  max-width: none;
 }
 
 .composer-fork-draft-clear {
@@ -10988,14 +11085,15 @@ textarea:focus-visible {
   align-items: center;
   justify-content: center;
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--text-primary) 10%, transparent);
-  background: color-mix(in srgb, var(--bg-surface) 90%, transparent);
+  border: 1px solid var(--conversation-fork-draft-clear-border);
+  background: var(--conversation-fork-draft-clear-bg);
   color: var(--text-secondary);
 }
 
 .composer-fork-draft-clear:hover {
   color: var(--text-primary);
-  border-color: color-mix(in srgb, var(--text-primary) 18%, transparent);
+  border-color: var(--conversation-fork-draft-clear-border-hover);
+  background: var(--conversation-fork-draft-clear-bg-hover);
 }
 
 .workbench-modal-card.composer-fork-confirm-modal {
@@ -11066,26 +11164,8 @@ textarea:focus-visible {
 }
 
 @media (max-width: 720px) {
-  .composer-fork-config-header,
-  .composer-fork-model-row {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .composer-fork-config-summary {
-    text-align: left;
-  }
-
-  .composer-fork-provider-grid {
-    grid-template-columns: repeat(3, minmax(180px, 1fr));
-    overflow-x: auto;
-    overflow-y: hidden;
-    padding-bottom: 2px;
-    scrollbar-width: thin;
-  }
-
-  .composer-fork-provider-grid .session-provider-card {
-    min-width: 180px;
+  .composer-fork-config-grid {
+    grid-template-columns: 1fr;
   }
 }
 
