@@ -1,19 +1,20 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { t } from "../../../shared/i18n";
 import type { ProviderId } from "../../conversation/api/conversation-api";
-import { isRealSubagentSession } from "../../conversation/session-fork-display";
 import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout";
 import { MobileWorkspaceSwitcherHeader } from "../../mobile-shell/components/MobileWorkspaceSwitcherHeader";
 import { MobileCreateSessionSheet } from "../components/MobileCreateSessionSheet";
 import {
   buildWorkspaceSessionIndexPath,
   buildWorkspaceSessionPath,
-  buildNavigationSessionTree,
-  flattenNavigationSessions,
   type WorkbenchNavigationEntry
 } from "../../workbench/utils/workbench-navigation";
+import {
+  buildSessionTree,
+  findSessionTreeAncestorIds
+} from "../../workbench/utils/session-tree";
 import { SessionListItem } from "../components/SessionListItem";
 import { writeMobileConversationPreviewMode } from "../mobile-conversation-state";
 import "../styles.css";
@@ -42,14 +43,28 @@ export function SessionIndexPage() {
   const currentWorkspaceEntries = useMemo(
     () =>
       currentWorkspaceGroup
-        ? flattenNavigationSessions([currentWorkspaceGroup]).filter(
-            (entry) => !entry.session.isArchived && !isRealSubagentSession(entry.session)
-          )
+        ? currentWorkspaceGroup.sessions
+            .filter((session) => !session.isArchived)
+            .map((session) => ({
+              session,
+              workspace: currentWorkspaceGroup.workspace
+            }))
         : ([] as WorkbenchNavigationEntry[]),
     [currentWorkspaceGroup]
   );
   const visibleTree = useMemo(
-    () => buildNavigationSessionTree(currentWorkspaceEntries),
+    () =>
+      buildSessionTree(
+        currentWorkspaceEntries,
+        {
+          getId: (entry) => entry.session.sessionId,
+          getParentId: (entry) => entry.session.parentSessionId?.trim() || null,
+          compare: (left, right) =>
+            (right.session.lastMessageAt ?? right.session.updatedAt).localeCompare(
+              left.session.lastMessageAt ?? left.session.updatedAt
+            )
+        }
+      ),
     [currentWorkspaceEntries]
   );
   const fallbackWorkspaceId = currentWorkspaceGroup?.workspace.id ?? "";
@@ -62,11 +77,13 @@ export function SessionIndexPage() {
       return;
     }
 
-    const rootSessionIdsToExpand = visibleTree
-      .filter((node) => node.children.some((entry) => entry.session.sessionId === currentSessionId))
-      .map((node) => node.entry.session.sessionId);
+    const sessionIdsToExpand = findSessionTreeAncestorIds(
+      visibleTree,
+      currentSessionId,
+      (entry) => entry.session.sessionId
+    );
 
-    if (rootSessionIdsToExpand.length === 0) {
+    if (sessionIdsToExpand.length === 0) {
       return;
     }
 
@@ -74,7 +91,7 @@ export function SessionIndexPage() {
       const currentSet = new Set(current);
       let changed = false;
 
-      for (const sessionId of rootSessionIdsToExpand) {
+      for (const sessionId of sessionIdsToExpand) {
         if (!currentSet.has(sessionId)) {
           currentSet.add(sessionId);
           changed = true;
@@ -100,6 +117,100 @@ export function SessionIndexPage() {
     setCreateSessionOpen(false);
     writeMobileConversationPreviewMode("immersive");
     startDraftSession(workspaceId, provider);
+  }
+
+  function renderSessionTreeNode(
+    node: ReturnType<typeof buildSessionTree<WorkbenchNavigationEntry>>[number],
+    ancestorExpanded = false,
+    ancestorHasNextSiblings: readonly boolean[] = [],
+    hasNextSibling = false,
+    isFirstSibling = false
+  ): JSX.Element {
+    const sessionId = node.item.session.sessionId;
+    const isExpanded = ancestorExpanded || expandedSubagentRootIds.includes(sessionId);
+    const childNodes = node.children;
+    const nextAncestorHasNextSiblings =
+      node.depth > 0 ? [...ancestorHasNextSiblings, hasNextSibling] : [...ancestorHasNextSiblings];
+
+    return (
+      <div key={`${node.item.workspace.id}:${sessionId}`} className="session-list-tree-node">
+        <div
+          className="session-list-tree-row"
+          style={
+            {
+              "--session-tree-depth": node.depth
+            } as CSSProperties
+          }
+        >
+          {node.depth > 0 ? (
+            <div
+              className="session-tree-guides"
+              aria-hidden="true"
+              style={
+                {
+                  "--session-tree-depth": node.depth
+                } as CSSProperties
+              }
+            >
+              {ancestorHasNextSiblings.map((continues, index) =>
+                continues ? (
+                  <span
+                    key={`${sessionId}:ancestor:${index}`}
+                    className="session-tree-guide-column"
+                    style={
+                      {
+                        "--session-tree-level": index + 1
+                      } as CSSProperties
+                    }
+                  />
+                ) : null
+              )}
+              <span
+                className="session-tree-guide-branch"
+                data-continue={hasNextSibling}
+                data-first={isFirstSibling}
+                style={
+                  {
+                    "--session-tree-level": node.depth
+                  } as CSSProperties
+                }
+              >
+                <span className="session-tree-guide-branch-horizontal" />
+              </span>
+            </div>
+          ) : null}
+          <SessionListItem
+            entry={node.item}
+            isFavorite={favoriteSet.has(sessionId)}
+            isActive={currentSessionId === sessionId}
+            depth={node.depth}
+            variant="mobile"
+            hasSubsessions={childNodes.length > 0}
+            onActivate={(nextSessionId) => handleActivateSession(node.item.workspace.id, nextSessionId)}
+            onToggleSubsessions={() => toggleSubagentList(sessionId)}
+            onToggleFavorite={(nextSessionId) => {
+              void toggleFavoriteSession(nextSessionId);
+            }}
+            onArchive={(nextSessionId) => archiveSession(nextSessionId)}
+            onUnarchive={(nextSessionId) => unarchiveSession(nextSessionId)}
+            onRename={(nextSessionId, title) => renameSession(nextSessionId, title)}
+          />
+        </div>
+        {isExpanded && childNodes.length > 0 ? (
+          <div className="session-list-children">
+            {childNodes.map((childNode, index) =>
+              renderSessionTreeNode(
+                childNode,
+                true,
+                nextAncestorHasNextSiblings,
+                index < childNodes.length - 1,
+                index === 0
+              )
+            )}
+          </div>
+        ) : null}
+      </div>
+    );
   }
 
   return (
@@ -137,51 +248,7 @@ export function SessionIndexPage() {
             </p>
           ) : (
             <div className="session-current-workspace-list">
-              {visibleTree.map((node) => {
-                const rootSessionId = node.entry.session.sessionId;
-                const isExpanded = expandedSubagentRootIds.includes(rootSessionId);
-
-                return (
-                  <div key={`${node.entry.workspace.id}:${rootSessionId}`} className="session-list-tree-node">
-                    <SessionListItem
-                      entry={node.entry}
-                      isFavorite={favoriteSet.has(rootSessionId)}
-                      isActive={currentSessionId === rootSessionId}
-                      variant="mobile"
-                      hasSubsessions={node.children.length > 0}
-                      onActivate={(sessionId) => handleActivateSession(node.entry.workspace.id, sessionId)}
-                      onToggleSubsessions={() => toggleSubagentList(rootSessionId)}
-                      onToggleFavorite={(sessionId) => {
-                        void toggleFavoriteSession(sessionId);
-                      }}
-                      onArchive={(sessionId) => archiveSession(sessionId)}
-                      onUnarchive={(sessionId) => unarchiveSession(sessionId)}
-                      onRename={(sessionId, title) => renameSession(sessionId, title)}
-                    />
-                    {isExpanded && node.children.length > 0 ? (
-                      <div className="session-list-children">
-                        {node.children.map((entry) => (
-                          <SessionListItem
-                            key={`${entry.workspace.id}:${entry.session.sessionId}`}
-                            entry={entry}
-                            isFavorite={favoriteSet.has(entry.session.sessionId)}
-                            isActive={currentSessionId === entry.session.sessionId}
-                            depth={1}
-                            variant="mobile"
-                            onActivate={(sessionId) => handleActivateSession(entry.workspace.id, sessionId)}
-                            onToggleFavorite={(sessionId) => {
-                              void toggleFavoriteSession(sessionId);
-                            }}
-                            onArchive={(sessionId) => archiveSession(sessionId)}
-                            onUnarchive={(sessionId) => unarchiveSession(sessionId)}
-                            onRename={(sessionId, title) => renameSession(sessionId, title)}
-                          />
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-                );
-              })}
+              {visibleTree.map((node) => renderSessionTreeNode(node))}
             </div>
           )}
         </section>

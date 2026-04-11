@@ -23,7 +23,10 @@ export function resolveSessionForkBadgeTone(session: {
   forkMethod?: ForkMethod | null;
   forkSourceType?: ForkSourceType | null;
 }): SessionForkBadgeTone | null {
-  if (session.forkMethod === "reconstructed_message_fork") {
+  if (
+    session.forkMethod === "reconstructed_message_fork"
+    || session.forkMethod === "reconstructed_session_fork"
+  ) {
     return "reconstructed";
   }
 

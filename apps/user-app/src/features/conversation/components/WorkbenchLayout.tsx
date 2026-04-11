@@ -100,6 +100,15 @@ import {
   type WorkbenchNavigationEntry
 } from "../../workbench/utils/workbench-navigation";
 import {
+  buildSessionTree as buildRecursiveSessionTree,
+  findSessionTreeAncestorIds,
+  flattenSessionTreeNodes,
+  flattenSessionTree,
+  getSessionTreeChildren,
+  someSessionTreeNode,
+  type SessionTreeNode
+} from "../../workbench/utils/session-tree";
+import {
   buildWorkspaceCompositionChartItems,
   createWorkspaceCompositionChartStyle,
   formatWorkspaceCompositionRatio
@@ -506,23 +515,24 @@ interface WorkspaceSidebarGroup {
   isCollapsed: boolean;
 }
 
-interface NavigationSessionTreeNode {
-  session: SessionSummaryDto;
-  children: SessionSummaryDto[];
-}
+type NavigationSessionTreeNode = SessionTreeNode<SessionSummaryDto>;
 
 export type WorkbenchShellMode = "desktop" | "mobile";
 
 function hasValidTreeNodeSession(
   node: NavigationSessionTreeNode | null | undefined
 ): node is NavigationSessionTreeNode {
-  return Boolean(node?.session);
+  return Boolean(node?.item ?? (node as { session?: SessionSummaryDto } | null | undefined)?.session);
 }
 
 export function getTreeNodeChildren(
   node: Pick<NavigationSessionTreeNode, "children"> | null | undefined
-): SessionSummaryDto[] {
-  return Array.isArray(node?.children) ? node.children : [];
+): NavigationSessionTreeNode[] {
+  return getSessionTreeChildren(node);
+}
+
+function getTreeNodeSession(node: NavigationSessionTreeNode | { session?: SessionSummaryDto } | null | undefined) {
+  return node && "item" in node ? node.item : node?.session ?? null;
 }
 
 export function getVisibleSessionTreeNodes(
@@ -626,62 +636,56 @@ function resolveParentSessionId(session: SessionSummaryDto) {
   return session.parentSessionId?.trim() || null;
 }
 
-function resolveTopLevelSessionId(
-  session: SessionSummaryDto,
-  sessionById: ReadonlyMap<string, SessionSummaryDto>
-) {
-  let currentSession = session;
-  const visitedSessionIds = new Set<string>([session.sessionId]);
-
-  while (true) {
-    const parentSessionId = resolveParentSessionId(currentSession);
-
-    if (!parentSessionId) {
-      return currentSession.sessionId;
-    }
-
-    const parentSession = sessionById.get(parentSessionId);
-
-    if (!parentSession) {
-      return currentSession.sessionId;
-    }
-
-    if (visitedSessionIds.has(parentSession.sessionId)) {
-      return session.sessionId;
-    }
-
-    visitedSessionIds.add(parentSession.sessionId);
-    currentSession = parentSession;
-  }
-}
-
 function buildSessionTree(sessions: SessionSummaryDto[]) {
-  const sessionById = new Map(sessions.map((session) => [session.sessionId, session] as const));
-  const childSessionsByRootId = new Map<string, SessionSummaryDto[]>();
-  const rootSessions: SessionSummaryDto[] = [];
-
-  for (const session of sessions) {
-    const topLevelSessionId = resolveTopLevelSessionId(session, sessionById);
-
-    if (topLevelSessionId === session.sessionId) {
-      rootSessions.push(session);
-      continue;
-    }
-
-    const currentChildren = childSessionsByRootId.get(topLevelSessionId) ?? [];
-    childSessionsByRootId.set(topLevelSessionId, [...currentChildren, session]);
-  }
-
-  return [...rootSessions]
-    .sort(sortSessions)
-    .map((session) => ({
-      session,
-      children: [...(childSessionsByRootId.get(session.sessionId) ?? [])].sort(sortSessions)
-    }));
+  return buildRecursiveSessionTree(sessions, {
+    getId: (session) => session.sessionId,
+    getParentId: resolveParentSessionId,
+    compare: sortSessions
+  });
 }
 
 export function flattenVisibleSessionTree(nodes: NavigationSessionTreeNode[]) {
-  return nodes.flatMap((node) => [node.session, ...getTreeNodeChildren(node)]);
+  return nodes.flatMap((node) => {
+    const session = getTreeNodeSession(node);
+    return session ? [session, ...flattenSessionTree(getTreeNodeChildren(node))] : [];
+  });
+}
+
+function limitVisibleDescendantTree(
+  node: NavigationSessionTreeNode,
+  visibleCount: number
+): NavigationSessionTreeNode {
+  const visibleSessionIdSet = new Set(
+    flattenSessionTreeNodes(getTreeNodeChildren(node))
+      .sort((left, right) => sortSessions(left.item, right.item))
+      .slice(0, visibleCount)
+      .map((item) => item.item.sessionId)
+  );
+
+  return {
+    ...node,
+    children: filterTreeNodesByVisibleSet(getTreeNodeChildren(node), visibleSessionIdSet)
+  };
+}
+
+function filterTreeNodesByVisibleSet(
+  nodes: NavigationSessionTreeNode[],
+  visibleSessionIdSet: ReadonlySet<string>
+): NavigationSessionTreeNode[] {
+  return nodes.flatMap((node) => {
+    const filteredChildren = filterTreeNodesByVisibleSet(getTreeNodeChildren(node), visibleSessionIdSet);
+
+    if (!visibleSessionIdSet.has(node.item.sessionId) && filteredChildren.length === 0) {
+      return [];
+    }
+
+    return [
+      {
+        ...node,
+        children: filteredChildren
+      }
+    ];
+  });
 }
 
 function resolveVisibleItemCount(
@@ -1936,7 +1940,7 @@ function SessionCard({
   isFavorite: boolean;
   menuOpen: boolean;
   showWorkspaceName: boolean;
-  depth?: 0 | 1;
+  depth?: number;
   showActions?: boolean;
   hasSubagents?: boolean;
   subagentListExpanded?: boolean;
@@ -2500,8 +2504,8 @@ function SidebarContent({
         const visibleSessionTree = getVisibleSessionTreeNodes(group);
         const activeRootSessionIndex = visibleSessionTree.findIndex(
           (node) =>
-            node.session.sessionId === activeSessionId ||
-            getTreeNodeChildren(node).some((session) => session.sessionId === activeSessionId)
+            node.item.sessionId === activeSessionId ||
+            findSessionTreeAncestorIds([node], activeSessionId ?? "", (session) => session.sessionId).length > 0
         );
 
         next[group.workspace.id] = resolveVisibleItemCount(
@@ -2521,21 +2525,23 @@ function SidebarContent({
       const next: Record<string, number> = {};
 
       for (const group of workspaceGroups) {
-        for (const node of getVisibleSessionTreeNodes(group)) {
-          const childSessions = getTreeNodeChildren(node);
+        for (const rootNode of getVisibleSessionTreeNodes(group)) {
+          for (const node of flattenSessionTreeNodes(getTreeNodeChildren(rootNode))) {
+            const childNodes = getTreeNodeChildren(node);
 
-          if (childSessions.length === 0) {
-            continue;
+            if (childNodes.length === 0) {
+              continue;
+            }
+
+            const activeChildIndex = childNodes.findIndex((childNode) => childNode.item.sessionId === activeSessionId);
+
+            next[node.item.sessionId] = resolveVisibleItemCount(
+              childNodes.length,
+              SUBAGENT_PAGE_SIZE,
+              current[node.item.sessionId],
+              activeChildIndex
+            );
           }
-
-          const activeChildIndex = childSessions.findIndex((session) => session.sessionId === activeSessionId);
-
-          next[node.session.sessionId] = resolveVisibleItemCount(
-            childSessions.length,
-            SUBAGENT_PAGE_SIZE,
-            current[node.session.sessionId],
-            activeChildIndex
-          );
         }
       }
 
@@ -2548,13 +2554,15 @@ function SidebarContent({
       return;
     }
 
-    const rootSessionIdsToExpand = workspaceGroups.flatMap((group) =>
-      getVisibleSessionTreeNodes(group)
-        .filter((node) => getTreeNodeChildren(node).some((session) => session.sessionId === activeSessionId))
-        .map((node) => node.session.sessionId)
+    const sessionIdsToExpand = workspaceGroups.flatMap((group) =>
+      findSessionTreeAncestorIds(
+        getVisibleSessionTreeNodes(group),
+        activeSessionId,
+        (session) => session.sessionId
+      )
     );
 
-    if (rootSessionIdsToExpand.length === 0) {
+    if (sessionIdsToExpand.length === 0) {
       return;
     }
 
@@ -2562,7 +2570,7 @@ function SidebarContent({
       const currentSet = new Set(current);
       let changed = false;
 
-      for (const sessionId of rootSessionIdsToExpand) {
+      for (const sessionId of sessionIdsToExpand) {
         if (!currentSet.has(sessionId)) {
           currentSet.add(sessionId);
           changed = true;
@@ -2619,7 +2627,9 @@ function SidebarContent({
 
   function getFavoriteChildSessions(sessionId: string) {
     for (const group of workspaceGroups) {
-      const node = buildSessionTree(group.visibleSessions).find((item) => item.session.sessionId === sessionId);
+      const node = flattenSessionTreeNodes(buildSessionTree(group.visibleSessions)).find(
+        (item) => item.item.sessionId === sessionId
+      );
 
       if (node) {
         return getTreeNodeChildren(node);
@@ -2627,6 +2637,157 @@ function SidebarContent({
     }
 
     return [];
+  }
+
+  function renderSessionTreeBranch(input: {
+    node: NavigationSessionTreeNode;
+    workspace: WorkspaceDto;
+    menuKeyPrefix: string;
+    showWorkspaceName: boolean;
+    selectionMode: boolean;
+    favoriteEnabled: boolean;
+    ancestorExpanded?: boolean;
+    allowToggle?: boolean;
+    ancestorHasNextSiblings?: readonly boolean[];
+    hasNextSibling?: boolean;
+    isFirstSibling?: boolean;
+  }): JSX.Element {
+    const {
+      node,
+      workspace,
+      menuKeyPrefix,
+      showWorkspaceName,
+      selectionMode,
+      favoriteEnabled,
+      ancestorExpanded = false,
+      allowToggle = node.depth === 0,
+      ancestorHasNextSiblings = [],
+      hasNextSibling = false,
+      isFirstSibling = false
+    } = input;
+    const session = node.item;
+    const childNodes = getTreeNodeChildren(node);
+    const subagentListExpanded = ancestorExpanded || isSubagentListExpanded(session.sessionId);
+    const visibleNode = subagentListExpanded
+      ? limitVisibleDescendantTree(node, getVisibleSubagentCount(session.sessionId))
+      : node;
+    const visibleChildren = subagentListExpanded ? getTreeNodeChildren(visibleNode) : [];
+    const totalDescendantCount = flattenSessionTreeNodes(childNodes).length;
+    const visibleDescendantCount = flattenSessionTreeNodes(visibleChildren).length;
+    const hasMoreSubagents = subagentListExpanded && visibleDescendantCount < totalDescendantCount;
+    const nextAncestorHasNextSiblings =
+      node.depth > 0 ? [...ancestorHasNextSiblings, hasNextSibling] : [...ancestorHasNextSiblings];
+
+    return (
+      <div key={session.sessionId} className="workbench-session-tree-node">
+        <div
+          className="workbench-session-tree-row"
+          style={
+            {
+              "--workbench-session-tree-depth": node.depth
+            } as CSSProperties
+          }
+        >
+          {node.depth > 0 ? (
+            <div className="workbench-session-tree-guides" aria-hidden="true">
+              {ancestorHasNextSiblings.map((continues, index) =>
+                continues ? (
+                  <span
+                    key={`${session.sessionId}:ancestor:${index}`}
+                    className="workbench-session-tree-guide-column"
+                    style={
+                      {
+                        "--workbench-session-tree-level": index + 1
+                      } as CSSProperties
+                    }
+                  />
+                ) : null
+              )}
+              <span
+                className="workbench-session-tree-guide-branch"
+                data-continue={hasNextSibling}
+                data-first={isFirstSibling}
+                style={
+                  {
+                    "--workbench-session-tree-level": node.depth
+                  } as CSSProperties
+                }
+              >
+                <span className="workbench-session-tree-guide-branch-horizontal" />
+              </span>
+            </div>
+          ) : null}
+          <SessionCard
+            menuKey={`${menuKeyPrefix}:${session.sessionId}`}
+            session={session}
+            workspace={workspace}
+            isActive={session.sessionId === activeSessionId}
+            isFavorite={favoriteEnabled && favoriteSessionIds.has(session.sessionId)}
+            menuOpen={openSessionMenuKey === `${menuKeyPrefix}:${session.sessionId}`}
+            showWorkspaceName={showWorkspaceName}
+            depth={node.depth}
+            showActions={favoriteEnabled}
+            hasSubagents={allowToggle && childNodes.length > 0}
+            subagentListExpanded={subagentListExpanded}
+            selectionMode={selectionMode}
+            selected={selectedSessionIdSet.has(session.sessionId)}
+            onToggleSelect={() => handleToggleSessionSelection(session.sessionId)}
+            onToggleSubagents={() => handleToggleSubagentList(session.sessionId)}
+            onOpen={() => {
+              navigate(buildWorkspaceSessionPath(workspace.id, session.sessionId));
+              onClose?.();
+            }}
+            onRename={() => handleOpenRenameSession(session, workspace)}
+            onToggleMenu={() =>
+              setOpenSessionMenuKey((current) =>
+                current === `${menuKeyPrefix}:${session.sessionId}` ? null : `${menuKeyPrefix}:${session.sessionId}`
+              )
+            }
+            onToggleFavorite={() => handleToggleFavorite(session.sessionId)}
+            onArchive={() => handleArchive(session.sessionId)}
+            onCloseMenu={() => setOpenSessionMenuKey(null)}
+            onContextMenu={
+              platform.isDesktop
+                ? () => {
+                    void handleSessionContextMenu({
+                      session,
+                      workspace
+                    });
+                  }
+                : undefined
+            }
+          />
+        </div>
+        {childNodes.length > 0 && subagentListExpanded ? (
+          <div className="workbench-subsession-list">
+            {visibleChildren.map((childNode, index) =>
+              renderSessionTreeBranch({
+                node: childNode,
+                workspace,
+                menuKeyPrefix,
+                showWorkspaceName,
+                selectionMode,
+                favoriteEnabled,
+                ancestorExpanded: true,
+                allowToggle: false,
+                ancestorHasNextSiblings: nextAncestorHasNextSiblings,
+                hasNextSibling: index < visibleChildren.length - 1,
+                isFirstSibling: index === 0
+              })
+            )}
+            {hasMoreSubagents ? (
+              <button
+                type="button"
+                className="workbench-subsession-expand ghost-button"
+                onClick={() => handleExpandSubagents(session.sessionId)}
+              >
+                {t("shell.subagentExpandMore")}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    );
   }
 
   function handleStartBatchSelection(workspaceId: string) {
@@ -2983,94 +3144,21 @@ function SidebarContent({
             <div className="workbench-session-list">
               {visibleFavoriteSessions.map((item) => {
                 const childSessions = getFavoriteChildSessions(item.session.sessionId);
-                const subagentListExpanded = isSubagentListExpanded(item.session.sessionId);
-                const visibleChildren = subagentListExpanded
-                  ? childSessions.slice(0, getVisibleSubagentCount(item.session.sessionId))
-                  : [];
-                const hasMoreSubagents = subagentListExpanded && visibleChildren.length < childSessions.length;
 
                 return (
-                  <div key={item.session.sessionId} className="workbench-session-tree-node">
-                    <SessionCard
-                      menuKey={`favorite:${item.session.sessionId}`}
-                      session={item.session}
-                      workspace={item.workspace}
-                      isActive={item.session.sessionId === activeSessionId}
-                      isFavorite={favoriteSessionIds.has(item.session.sessionId)}
-                      menuOpen={openSessionMenuKey === `favorite:${item.session.sessionId}`}
-                      showWorkspaceName
-                      hasSubagents={childSessions.length > 0}
-                      subagentListExpanded={subagentListExpanded}
-                      onToggleSubagents={() => handleToggleSubagentList(item.session.sessionId)}
-                      onOpen={() => {
-                        navigate(buildWorkspaceSessionPath(item.workspace.id, item.session.sessionId));
-                        onClose?.();
-                      }}
-                      onRename={() => handleOpenRenameSession(item.session, item.workspace)}
-                      onToggleMenu={() =>
-                        setOpenSessionMenuKey((current) =>
-                          current === `favorite:${item.session.sessionId}`
-                            ? null
-                            : `favorite:${item.session.sessionId}`
-                        )
-                      }
-                      onToggleFavorite={() => handleToggleFavorite(item.session.sessionId)}
-                      onArchive={() => handleArchive(item.session.sessionId)}
-                      onCloseMenu={() => setOpenSessionMenuKey(null)}
-                      onContextMenu={
-                        platform.isDesktop
-                          ? () => {
-                              void handleSessionContextMenu(item);
-                            }
-                          : undefined
-                      }
-                    />
-                    {childSessions.length > 0 && subagentListExpanded ? (
-                      <div className="workbench-subsession-list">
-                        {visibleChildren.map((session) => (
-                          <SessionCard
-                            menuKey={`favorite:${session.sessionId}`}
-                            key={session.sessionId}
-                            session={session}
-                            workspace={item.workspace}
-                            isActive={session.sessionId === activeSessionId}
-                            isFavorite={false}
-                            menuOpen={false}
-                            showWorkspaceName
-                            depth={1}
-                            showActions={false}
-                            onOpen={() => {
-                              navigate(buildWorkspaceSessionPath(item.workspace.id, session.sessionId));
-                              onClose?.();
-                            }}
-                            onRename={() => undefined}
-                            onToggleMenu={() => undefined}
-                            onToggleFavorite={() => undefined}
-                            onArchive={() => undefined}
-                            onCloseMenu={() => undefined}
-                            onContextMenu={
-                              platform.isDesktop
-                                ? () => {
-                                    void handleSessionContextMenu({
-                                      session,
-                                      workspace: item.workspace
-                                    });
-                                  }
-                                : undefined
-                            }
-                          />
-                        ))}
-                        {hasMoreSubagents ? (
-                          <button
-                            type="button"
-                            className="workbench-subsession-expand ghost-button"
-                            onClick={() => handleExpandSubagents(item.session.sessionId)}
-                          >
-                            {t("shell.subagentExpandMore")}
-                          </button>
-                        ) : null}
-                      </div>
-                    ) : null}
+                  <div key={item.session.sessionId}>
+                    {renderSessionTreeBranch({
+                      node: {
+                        item: item.session,
+                        depth: 0,
+                        children: childSessions
+                      },
+                      workspace: item.workspace,
+                      menuKeyPrefix: "favorite",
+                      showWorkspaceName: true,
+                      selectionMode: false,
+                      favoriteEnabled: true
+                    })}
                   </div>
                 );
               })}
@@ -3227,112 +3315,16 @@ function SidebarContent({
                     ) : (
                       visibleSessionTree
                         .slice(0, getVisibleWorkspaceSessionCount(group.workspace.id))
-                        .map((node) => {
-                          const childSessions = getTreeNodeChildren(node);
-                          const subagentListExpanded = isSubagentListExpanded(node.session.sessionId);
-                          const visibleChildren = subagentListExpanded
-                            ? childSessions.slice(0, getVisibleSubagentCount(node.session.sessionId))
-                            : [];
-                          const hasMoreSubagents =
-                            subagentListExpanded && visibleChildren.length < childSessions.length;
-
-                          return (
-                            <div key={node.session.sessionId} className="workbench-session-tree-node">
-                              <SessionCard
-                                menuKey={`workspace:${group.workspace.id}:${node.session.sessionId}`}
-                                session={node.session}
-                                workspace={group.workspace}
-                                isActive={node.session.sessionId === activeSessionId}
-                                isFavorite={favoriteSessionIds.has(node.session.sessionId)}
-                                menuOpen={
-                                  openSessionMenuKey === `workspace:${group.workspace.id}:${node.session.sessionId}`
-                                }
-                                showWorkspaceName={false}
-                                hasSubagents={childSessions.length > 0}
-                                subagentListExpanded={subagentListExpanded}
-                                selectionMode={batchWorkspaceId === group.workspace.id}
-                                selected={selectedSessionIdSet.has(node.session.sessionId)}
-                                onToggleSelect={() => handleToggleSessionSelection(node.session.sessionId)}
-                                onToggleSubagents={() => handleToggleSubagentList(node.session.sessionId)}
-                                onOpen={() => {
-                                  navigate(buildWorkspaceSessionPath(group.workspace.id, node.session.sessionId));
-                                  onClose?.();
-                                }}
-                                onRename={() => handleOpenRenameSession(node.session, group.workspace)}
-                                onToggleMenu={() =>
-                                  setOpenSessionMenuKey((current) =>
-                                    current === `workspace:${group.workspace.id}:${node.session.sessionId}`
-                                      ? null
-                                      : `workspace:${group.workspace.id}:${node.session.sessionId}`
-                                  )
-                                }
-                                onToggleFavorite={() => handleToggleFavorite(node.session.sessionId)}
-                                onArchive={() => handleArchive(node.session.sessionId)}
-                                onCloseMenu={() => setOpenSessionMenuKey(null)}
-                                onContextMenu={
-                                  platform.isDesktop
-                                    ? () => {
-                                        void handleSessionContextMenu({
-                                          session: node.session,
-                                          workspace: group.workspace
-                                        });
-                                      }
-                                    : undefined
-                                }
-                              />
-
-                              {childSessions.length > 0 && subagentListExpanded ? (
-                                <div className="workbench-subsession-list">
-                                  {visibleChildren.map((session) => (
-                                    <SessionCard
-                                      menuKey={`workspace:${group.workspace.id}:${session.sessionId}`}
-                                      key={session.sessionId}
-                                      session={session}
-                                      workspace={group.workspace}
-                                      isActive={session.sessionId === activeSessionId}
-                                      isFavorite={false}
-                                      menuOpen={false}
-                                      showWorkspaceName={false}
-                                      depth={1}
-                                      showActions={false}
-                                      selectionMode={batchWorkspaceId === group.workspace.id}
-                                      selected={selectedSessionIdSet.has(session.sessionId)}
-                                      onToggleSelect={() => handleToggleSessionSelection(session.sessionId)}
-                                      onOpen={() => {
-                                        navigate(buildWorkspaceSessionPath(group.workspace.id, session.sessionId));
-                                        onClose?.();
-                                      }}
-                                      onRename={() => undefined}
-                                      onToggleMenu={() => undefined}
-                                      onToggleFavorite={() => undefined}
-                                      onArchive={() => undefined}
-                                      onCloseMenu={() => undefined}
-                                      onContextMenu={
-                                        platform.isDesktop
-                                          ? () => {
-                                              void handleSessionContextMenu({
-                                                session,
-                                                workspace: group.workspace
-                                              });
-                                            }
-                                          : undefined
-                                      }
-                                    />
-                                  ))}
-                                  {hasMoreSubagents ? (
-                                    <button
-                                      type="button"
-                                      className="workbench-subsession-expand ghost-button"
-                                      onClick={() => handleExpandSubagents(node.session.sessionId)}
-                                    >
-                                      {t("shell.subagentExpandMore")}
-                                    </button>
-                                  ) : null}
-                                </div>
-                              ) : null}
-                            </div>
-                          );
-                        })
+                        .map((node) =>
+                          renderSessionTreeBranch({
+                            node,
+                            workspace: group.workspace,
+                            menuKeyPrefix: `workspace:${group.workspace.id}`,
+                            showWorkspaceName: false,
+                            selectionMode: batchWorkspaceId === group.workspace.id,
+                            favoriteEnabled: true
+                          })
+                        )
                     )}
                     {visibleSessionTree.length > getVisibleWorkspaceSessionCount(group.workspace.id) ? (
                       <button
@@ -5290,8 +5282,8 @@ export function WorkbenchLayout({
           })
         ).filter(
           (node) =>
-            !favoriteSessionIdSet.has(node.session.sessionId)
-            && !getTreeNodeChildren(node).some((session) => favoriteSessionIdSet.has(session.sessionId))
+            !favoriteSessionIdSet.has(node.item.sessionId)
+            && !someSessionTreeNode(getTreeNodeChildren(node), (session) => favoriteSessionIdSet.has(session.sessionId))
         ),
         isCollapsed: collapsedWorkspaceIdSet.has(group.workspace.id)
       })),

@@ -3765,7 +3765,12 @@ function createSessionSummary(input: {
   provider?: "codex" | "claude-code" | "opencode";
   isArchived?: boolean;
   parentSessionId?: string | null;
-  forkMethod?: "native_session_fork" | "native_message_fork" | "reconstructed_message_fork" | null;
+  forkMethod?:
+    | "native_session_fork"
+    | "native_message_fork"
+    | "reconstructed_session_fork"
+    | "reconstructed_message_fork"
+    | null;
   forkSourceType?: "session" | "message" | null;
   isSubagent?: boolean;
   subagentLabel?: string | null;

@@ -41,7 +41,7 @@ interface SessionListItemProps {
   readonly entry: WorkbenchNavigationEntry;
   readonly isFavorite: boolean;
   readonly isActive?: boolean;
-  readonly depth?: 0 | 1;
+  readonly depth?: number;
   readonly variant?: "default" | "mobile";
   readonly hasSubsessions?: boolean;
   readonly showActions?: boolean;

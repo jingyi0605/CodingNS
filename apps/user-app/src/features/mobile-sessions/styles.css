@@ -57,6 +57,23 @@
   flex-direction: column;
 }
 
+.session-list-tree-row {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  position: relative;
+  --session-tree-line-color: color-mix(in srgb, var(--text-secondary) 54%, var(--bg-primary));
+  --session-tree-indicator-center-x: calc(1rem + 5px);
+  --session-tree-indicator-center-y: calc(0.95rem + 0.35rem + 5px);
+  --session-tree-indent-step: 1.35rem;
+  padding-left: calc(var(--session-tree-depth, 0) * var(--session-tree-indent-step));
+}
+
+.session-list-tree-row > .session-list-item {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .session-current-workspace-list > .session-list-tree-node {
   border-bottom: 1px solid color-mix(in srgb, var(--border-primary) 82%, transparent);
 }
@@ -68,9 +85,80 @@
 .session-list-children {
   display: flex;
   flex-direction: column;
-  margin-left: 0.85rem;
-  padding-left: 0.6rem;
-  border-left: 1px solid color-mix(in srgb, var(--border-primary) 76%, transparent);
+  margin-left: 0;
+  padding-left: 0;
+}
+
+.session-tree-guides {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.session-tree-guide-column,
+.session-tree-guide-branch {
+  position: absolute;
+  inset: 0;
+}
+
+.session-tree-guide-column::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(
+    ((var(--session-tree-level) - 1) * var(--session-tree-indent-step))
+    + var(--session-tree-indicator-center-x)
+    - 0.5px
+  );
+  width: 1px;
+  background: var(--session-tree-line-color);
+}
+
+.session-tree-guide-branch::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: calc(
+    ((var(--session-tree-level) - 1) * var(--session-tree-indent-step))
+    + var(--session-tree-indicator-center-x)
+    - 0.5px
+  );
+  width: 1px;
+  height: var(--session-tree-indicator-center-y);
+  background: var(--session-tree-line-color);
+}
+
+.session-tree-guide-branch[data-first="true"]::before {
+  top: calc(-1 * var(--session-tree-indicator-center-y));
+  height: calc(var(--session-tree-indicator-center-y) * 2);
+}
+
+.session-tree-guide-branch[data-continue="true"]::after {
+  content: "";
+  position: absolute;
+  top: var(--session-tree-indicator-center-y);
+  bottom: 0;
+  left: calc(
+    ((var(--session-tree-level) - 1) * var(--session-tree-indent-step))
+    + var(--session-tree-indicator-center-x)
+    - 0.5px
+  );
+  width: 1px;
+  background: var(--session-tree-line-color);
+}
+
+.session-tree-guide-branch-horizontal {
+  position: absolute;
+  top: var(--session-tree-indicator-center-y);
+  left: calc(
+    ((var(--session-tree-level) - 1) * var(--session-tree-indent-step))
+    + var(--session-tree-indicator-center-x)
+  );
+  width: var(--session-tree-indent-step);
+  height: 1px;
+  background: var(--session-tree-line-color);
+  transform: translateY(-0.5px);
 }
 
 .session-section-empty {
@@ -87,6 +175,7 @@
   border-radius: 10px;
   background: var(--surface-press);
   border: 1px solid transparent;
+  position: relative;
 }
 
 .session-list-item[data-active="true"] {
@@ -102,6 +191,10 @@
   background: transparent;
 }
 
+.session-list-item[data-variant="mobile"]:not([data-depth="0"])::before {
+  content: none;
+}
+
 .session-list-item[data-variant="mobile"][data-active="true"] {
   border-color: transparent;
   background: color-mix(in srgb, var(--accent) 8%, var(--bg-surface));
@@ -113,6 +206,16 @@
 
 .session-list-item[data-variant="mobile"][data-depth="1"] {
   background: color-mix(in srgb, var(--bg-tertiary) 80%, transparent);
+}
+
+.session-list-item[data-depth="2"],
+.session-list-item[data-depth="3"] {
+  background: color-mix(in srgb, var(--surface-press) 72%, transparent);
+}
+
+.session-list-item[data-variant="mobile"][data-depth="2"],
+.session-list-item[data-variant="mobile"][data-depth="3"] {
+  background: color-mix(in srgb, var(--bg-tertiary) 68%, transparent);
 }
 
 .session-list-link {
@@ -170,10 +273,11 @@
   margin-top: 0.35rem;
   border-radius: 999px;
   flex-shrink: 0;
+  box-sizing: border-box;
 }
 
 .session-list-indicator.is-idle {
-  border: 1px solid var(--border-primary);
+  border: 2px solid color-mix(in srgb, var(--text-secondary) 42%, var(--border-primary));
   background: transparent;
 }
 
@@ -440,8 +544,8 @@
   height: 2rem;
   padding: 0 0.8rem;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--bg-surface) 94%, transparent);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.62);
+  background: var(--conversation-chip-bg);
+  box-shadow: var(--conversation-chip-shadow);
 }
 
 .mobile-conversation-toolbar-title {

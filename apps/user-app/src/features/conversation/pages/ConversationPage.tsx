@@ -560,24 +560,7 @@ function LiveConversationPage({
         {showInlineHeader ? (
           <SessionHeader
             session={session ?? navigationSession}
-            actions={
-              <>
-                {canOpenBranchTree ? (
-                  <button
-                    type="button"
-                    className="conversation-header-ai-button"
-                    aria-label={t("conversation.branchTreeAction")}
-                    title={t("conversation.branchTreeAction")}
-                    onClick={() => setBranchTreeOpen(true)}
-                  >
-                    <span className="conversation-header-ai-button-label" aria-hidden="true">
-                      <BranchTreeActionIcon />
-                    </span>
-                  </button>
-                ) : null}
-                <SessionButlerActionButton session={session ?? navigationSession} />
-              </>
-            }
+            actions={<SessionButlerActionButton session={session ?? navigationSession} />}
           />
         ) : null}
         {!showInlineHeader ? (

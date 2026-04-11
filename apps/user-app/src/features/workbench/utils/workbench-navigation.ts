@@ -3,6 +3,7 @@ import type {
   SessionSummaryDto,
   WorkspaceDto
 } from "../../conversation/api/conversation-api";
+import { buildSessionTree, type SessionTreeNode } from "./session-tree";
 
 export interface WorkbenchNavigationGroup {
   workspace: WorkspaceDto;
@@ -14,10 +15,7 @@ export interface WorkbenchNavigationEntry {
   workspace: WorkspaceDto;
 }
 
-export interface WorkbenchNavigationTreeNode {
-  entry: WorkbenchNavigationEntry;
-  children: WorkbenchNavigationEntry[];
-}
+export type WorkbenchNavigationTreeNode = SessionTreeNode<WorkbenchNavigationEntry>;
 
 export function buildWorkspaceHomePath(): string {
   return "/workspaces";
@@ -98,28 +96,11 @@ export function flattenNavigationSessions(
 export function buildNavigationSessionTree(
   entries: readonly WorkbenchNavigationEntry[]
 ): WorkbenchNavigationTreeNode[] {
-  const entryBySessionId = new Map(entries.map((entry) => [entry.session.sessionId, entry] as const));
-  const childEntriesByRootId = new Map<string, WorkbenchNavigationEntry[]>();
-  const rootEntries: WorkbenchNavigationEntry[] = [];
-
-  for (const entry of entries) {
-    const topLevelSessionId = resolveTopLevelSessionId(entry, entryBySessionId);
-
-    if (topLevelSessionId === entry.session.sessionId) {
-      rootEntries.push(entry);
-      continue;
-    }
-
-    const currentChildren = childEntriesByRootId.get(topLevelSessionId) ?? [];
-    childEntriesByRootId.set(topLevelSessionId, [...currentChildren, entry]);
-  }
-
-  return [...rootEntries]
-    .sort(sortNavigationEntries)
-    .map((entry) => ({
-      entry,
-      children: [...(childEntriesByRootId.get(entry.session.sessionId) ?? [])].sort(sortNavigationEntries)
-    }));
+  return buildSessionTree(entries, {
+    getId: (entry) => entry.session.sessionId,
+    getParentId: (entry) => entry.session.parentSessionId?.trim() || null,
+    compare: sortNavigationEntries
+  });
 }
 
 export function buildDraftSessionPath(workspaceId: string, provider: ProviderId): string {
@@ -145,33 +126,4 @@ function sortNavigationEntries(left: WorkbenchNavigationEntry, right: WorkbenchN
   return (right.session.lastMessageAt ?? right.session.updatedAt).localeCompare(
     left.session.lastMessageAt ?? left.session.updatedAt
   );
-}
-
-function resolveTopLevelSessionId(
-  entry: WorkbenchNavigationEntry,
-  entryBySessionId: ReadonlyMap<string, WorkbenchNavigationEntry>
-) {
-  let currentEntry = entry;
-  const visitedSessionIds = new Set<string>([entry.session.sessionId]);
-
-  while (true) {
-    const parentSessionId = currentEntry.session.parentSessionId?.trim() || null;
-
-    if (!parentSessionId) {
-      return currentEntry.session.sessionId;
-    }
-
-    const parentEntry = entryBySessionId.get(parentSessionId);
-
-    if (!parentEntry) {
-      return currentEntry.session.sessionId;
-    }
-
-    if (visitedSessionIds.has(parentEntry.session.sessionId)) {
-      return entry.session.sessionId;
-    }
-
-    visitedSessionIds.add(parentEntry.session.sessionId);
-    currentEntry = parentEntry;
-  }
 }
