@@ -9,6 +9,7 @@ import type { WorkspaceNavigationStateRepository } from "../../storage/repositor
 import type { WorkspaceRepository } from "../../storage/repositories/workspace-repository.js";
 import type { Workspace, WorkspaceNavigationStateRecord } from "../../types/domain.js";
 import type { ButlerProfileService } from "../butler/butler-profile-service.js";
+import { createGitAuthContext, type GitAuthInput } from "../git/git-auth.js";
 import type { GitCommandRunner } from "../git/git-command-runner.js";
 
 interface WorkspaceDirectoryOption {
@@ -28,32 +29,12 @@ export interface WorkspaceCreatedDirectoryResult {
   name: string;
 }
 
-type WorkspaceCloneAuth =
-  | {
-      mode?: "none";
-    }
-  | {
-      mode: "basic";
-      username?: string;
-      password?: string;
-    }
-  | {
-      mode: "token";
-      username?: string;
-      token?: string;
-    };
-
 export interface CloneWorkspaceInput {
   repositoryUrl: string;
   parentPath: string;
   directoryName?: string;
   name?: string;
-  auth?: WorkspaceCloneAuth | null;
-}
-
-interface GitAuthContext {
-  env: NodeJS.ProcessEnv;
-  cleanup: () => void;
+  auth?: GitAuthInput | null;
 }
 
 interface WorkspaceGitRemoteSummary {
@@ -641,94 +622,6 @@ function normalizeSingleDirectoryName(rawValue: string | undefined, field: strin
   }
 
   return normalized;
-}
-
-function createGitAuthContext(auth: WorkspaceCloneAuth | null | undefined): GitAuthContext | null {
-  if (!auth || !auth.mode || auth.mode === "none") {
-    return null;
-  }
-
-  const mode = auth.mode;
-  let username = "";
-  let secret = "";
-
-  if (auth.mode === "basic") {
-    username = auth.username?.trim() || "";
-    secret = auth.password?.trim() || "";
-  } else if (auth.mode === "token") {
-    username = auth.username?.trim() || "git";
-    secret = auth.token?.trim() || "";
-  } else {
-    return null;
-  }
-
-  if (!username) {
-    throw new AppError({
-      statusCode: 400,
-      errorCode: "INVALID_INPUT",
-      detail: "Git 用户名不能为空",
-      field: "username"
-    });
-  }
-
-  if (!secret) {
-    throw new AppError({
-      statusCode: 400,
-      errorCode: "INVALID_INPUT",
-      detail: mode === "basic" ? "Git 密码不能为空" : "Git token 不能为空",
-      field: mode === "basic" ? "password" : "token"
-    });
-  }
-
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "codingns-git-auth-"));
-  const helperRuntimePath = path.join(tempDir, "askpass.cjs");
-  const helperScriptPath = path.join(tempDir, process.platform === "win32" ? "askpass.cmd" : "askpass.sh");
-
-  fs.writeFileSync(
-    helperRuntimePath,
-    [
-      'const prompt = (process.argv.slice(2).join(" ") || "").toLowerCase();',
-      'const username = process.env.CODINGNS_GIT_AUTH_USERNAME || "";',
-      'const secret = process.env.CODINGNS_GIT_AUTH_SECRET || "";',
-      'if (prompt.includes("username")) {',
-      "  process.stdout.write(username);",
-      '} else if (prompt.includes("password") || prompt.includes("passphrase")) {',
-      "  process.stdout.write(secret);",
-      "} else {",
-      "  process.stdout.write(secret || username);",
-      "}"
-    ].join("\n"),
-    "utf8"
-  );
-
-  if (process.platform === "win32") {
-    fs.writeFileSync(
-      helperScriptPath,
-      '@echo off\r\n"%CODINGNS_GIT_NODE%" "%~dp0askpass.cjs" %*\r\n',
-      "utf8"
-    );
-  } else {
-    fs.writeFileSync(
-      helperScriptPath,
-      '#!/bin/sh\n"$CODINGNS_GIT_NODE" "$(dirname "$0")/askpass.cjs" "$@"\n',
-      "utf8"
-    );
-    fs.chmodSync(helperScriptPath, 0o755);
-  }
-
-  return {
-    env: {
-      CODINGNS_GIT_NODE: process.execPath,
-      CODINGNS_GIT_AUTH_USERNAME: username,
-      CODINGNS_GIT_AUTH_SECRET: secret,
-      GIT_ASKPASS: helperScriptPath,
-      GIT_TERMINAL_PROMPT: "0",
-      GCM_INTERACTIVE: "Never"
-    },
-    cleanup: () => {
-      fs.rmSync(tempDir, { recursive: true, force: true });
-    }
-  };
 }
 
 function isPathInsideButlerWorkspace(candidatePath: string, butlerWorkspacePath: string): boolean {

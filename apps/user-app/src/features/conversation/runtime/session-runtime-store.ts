@@ -62,6 +62,7 @@ type RuntimeListener = () => void;
 type RuntimeRefreshMode = "tail" | "poll";
 const INITIAL_HISTORY_LIMIT = 30;
 const REALTIME_LIMIT = 40;
+const SNAPSHOT_HISTORY_LIMIT = 600;
 const SESSION_RUNTIME_SNAPSHOT_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
 const SESSION_MARK_SEEN_DELAY_MS = 600;
 const SESSION_MARK_SEEN_MIN_INTERVAL_MS = 5_000;
@@ -81,6 +82,10 @@ interface SessionRuntimeSnapshot {
   messages: SessionMessageViewModel[];
   permissionRequests: SessionPermissionRequestDto[];
   queuedMessages: SessionQueueItemDto[];
+  olderCursor: string | null;
+  hasOlderMessages: boolean;
+  lastCursor: string | null;
+  pagesLoaded: number;
 }
 
 interface PendingReplyDebugTrace {
@@ -127,7 +132,9 @@ export class SessionRuntimeStore {
       options.bootstrapMessages ?? []
     );
     this.replaceSnapshotSeedOnBackfill =
-      !this.hasAuthoritativeBootstrapMessages && (cachedSnapshot?.messages.length ?? 0) > 0;
+      !this.hasAuthoritativeBootstrapMessages
+      && (cachedSnapshot?.messages.length ?? 0) > 0
+      && (cachedSnapshot?.pagesLoaded ?? 0) <= 1;
 
     this.state = createInitialRuntimeState({
       session: seededSession,
@@ -137,7 +144,11 @@ export class SessionRuntimeStore {
       contextUsage: cachedSnapshot?.contextUsage ?? null,
       messages: seededMessages,
       permissionRequests: cachedSnapshot?.permissionRequests ?? [],
-      queuedMessages: cachedSnapshot?.queuedMessages ?? []
+      queuedMessages: cachedSnapshot?.queuedMessages ?? [],
+      olderCursor: cachedSnapshot?.olderCursor ?? null,
+      hasOlderMessages: cachedSnapshot?.hasOlderMessages ?? false,
+      lastCursor: cachedSnapshot?.lastCursor ?? null,
+      pagesLoaded: cachedSnapshot?.pagesLoaded ?? 0
     });
     this.seenWatermark = seededSession?.lastSeenAt ?? null;
   }
@@ -165,9 +176,15 @@ export class SessionRuntimeStore {
         hasBootstrappedMessages ? mergedMessages.length : 0
       ),
       loadingOlderMessages: false,
-      olderCursor: null,
-      hasOlderMessages: inferHasOlderMessages(this.state.session, mergedMessages.length),
-      pagesLoaded: hasBootstrappedMessages ? Math.max(this.state.pagesLoaded, 1) : 0,
+      olderCursor: hasBootstrappedMessages ? null : this.state.olderCursor,
+      hasOlderMessages: resolveHasOlderMessages({
+        session: this.state.session,
+        loadedMessageCount: mergedMessages.length,
+        olderCursor: hasBootstrappedMessages ? null : this.state.olderCursor,
+        pagesLoaded: this.state.pagesLoaded,
+        currentHasOlderMessages: this.state.hasOlderMessages
+      }),
+      pagesLoaded: hasBootstrappedMessages ? Math.max(this.state.pagesLoaded, 1) : this.state.pagesLoaded,
       errorCode: null,
       errorDetail: null
     });
@@ -215,11 +232,17 @@ export class SessionRuntimeStore {
         this.options.bootstrapMessages ?? []
       ),
       permissionRequests: cachedSnapshot?.permissionRequests ?? [],
-      queuedMessages: cachedSnapshot?.queuedMessages ?? []
+      queuedMessages: cachedSnapshot?.queuedMessages ?? [],
+      olderCursor: cachedSnapshot?.olderCursor ?? null,
+      hasOlderMessages: cachedSnapshot?.hasOlderMessages ?? false,
+      lastCursor: cachedSnapshot?.lastCursor ?? null,
+      pagesLoaded: cachedSnapshot?.pagesLoaded ?? 0
     });
     this.seenWatermark = this.state.session?.lastSeenAt ?? null;
     this.replaceSnapshotSeedOnBackfill =
-      !this.hasAuthoritativeBootstrapMessages && (cachedSnapshot?.messages.length ?? 0) > 0;
+      !this.hasAuthoritativeBootstrapMessages
+      && (cachedSnapshot?.messages.length ?? 0) > 0
+      && (cachedSnapshot?.pagesLoaded ?? 0) <= 1;
     this.emit();
     await this.initialize();
   }
@@ -237,7 +260,13 @@ export class SessionRuntimeStore {
 
     this.patch({
       session: nextSession,
-      hasOlderMessages: inferHasOlderMessages(nextSession, this.state.messages.length)
+      hasOlderMessages: resolveHasOlderMessages({
+        session: nextSession,
+        loadedMessageCount: this.state.messages.length,
+        olderCursor: this.state.olderCursor,
+        pagesLoaded: this.state.pagesLoaded,
+        currentHasOlderMessages: this.state.hasOlderMessages
+      })
     });
   }
 
@@ -502,7 +531,13 @@ export class SessionRuntimeStore {
         });
         this.patch({
           connectionState: "connected",
-          hasOlderMessages: inferHasOlderMessages(this.state.session, this.state.messages.length)
+          hasOlderMessages: resolveHasOlderMessages({
+            session: this.state.session,
+            loadedMessageCount: this.state.messages.length,
+            olderCursor: this.state.olderCursor,
+            pagesLoaded: this.state.pagesLoaded,
+            currentHasOlderMessages: this.state.hasOlderMessages
+          })
         });
         this.scheduleHistoryBootstrapFallback();
       },
@@ -539,19 +574,38 @@ export class SessionRuntimeStore {
       onEnvelope: (event) => {
         this.historyBootstrapEnvelopeReceived = true;
         this.clearHistoryBootstrapFallbackTimer();
+        const shouldReplaceSnapshotSeed =
+          event.type === "session.backfill" && this.replaceSnapshotSeedOnBackfill;
         const merged = this.mergeHistoryMessages(event.messages, event.type === "session.backfill");
         this.patch({
           messages: merged,
           lastCursor: event.cursor,
           historyState: "ready",
-          olderCursor: event.olderCursor ?? this.state.olderCursor,
+          olderCursor:
+            event.type === "session.backfill" && !shouldReplaceSnapshotSeed && this.state.pagesLoaded > 1
+              ? this.state.olderCursor
+              : (event.olderCursor ?? this.state.olderCursor),
           hasOlderMessages:
             event.type === "session.backfill"
-              ? Boolean(event.olderCursor)
-              : inferHasOlderMessages(this.state.session, merged.length),
+              ? (
+                  !shouldReplaceSnapshotSeed && this.state.pagesLoaded > 1
+                    ? this.state.hasOlderMessages
+                    : Boolean(event.olderCursor)
+                )
+              : resolveHasOlderMessages({
+                  session: this.state.session,
+                  loadedMessageCount: merged.length,
+                  olderCursor: this.state.olderCursor,
+                  pagesLoaded: this.state.pagesLoaded,
+                  currentHasOlderMessages: this.state.hasOlderMessages
+                }),
           pagesLoaded:
             event.type === "session.backfill"
-              ? Math.max(this.state.pagesLoaded, merged.length > 0 ? 1 : 0)
+              ? (
+                  !shouldReplaceSnapshotSeed && this.state.pagesLoaded > 1
+                    ? this.state.pagesLoaded
+                    : Math.max(this.state.pagesLoaded, merged.length > 0 ? 1 : 0)
+                )
               : this.state.pagesLoaded,
           session: withRunningState(
             this.state.session,
@@ -785,20 +839,34 @@ export class SessionRuntimeStore {
 
       this.historyBootstrapEnvelopeReceived = true;
       const merged = this.mergeHistoryMessages(page.messages, true);
+      const shouldReplaceSnapshotSeed = this.replaceSnapshotSeedOnBackfill;
 
       this.patch({
         messages: merged,
         historyState: "ready",
-        olderCursor: page.nextCursor,
+        olderCursor:
+          !shouldReplaceSnapshotSeed && this.state.pagesLoaded > 1
+            ? this.state.olderCursor
+            : page.nextCursor,
         hasOlderMessages:
-          page.nextCursor !== null
-            ? true
-            : inferHasOlderMessages(this.state.session, merged.length),
+          !shouldReplaceSnapshotSeed && this.state.pagesLoaded > 1
+            ? this.state.hasOlderMessages
+            : resolveHasOlderMessages({
+                session: this.state.session,
+                loadedMessageCount: merged.length,
+                olderCursor: page.nextCursor,
+                pagesLoaded: this.state.pagesLoaded,
+                currentHasOlderMessages: this.state.hasOlderMessages
+              }),
         lastCursor: page.cursor ?? this.state.lastCursor,
         pagesLoaded:
-          merged.length > 0
-            ? Math.max(this.state.pagesLoaded, 1)
-            : this.state.pagesLoaded,
+          !shouldReplaceSnapshotSeed && this.state.pagesLoaded > 1
+            ? this.state.pagesLoaded
+            : (
+                merged.length > 0
+                  ? Math.max(this.state.pagesLoaded, 1)
+                  : this.state.pagesLoaded
+              ),
         errorCode: null,
         errorDetail: null
       });
@@ -1097,7 +1165,13 @@ export class SessionRuntimeStore {
     this.patch({
       messages: merged,
       historyState: "ready",
-      hasOlderMessages: inferHasOlderMessages(this.state.session, merged.length),
+      hasOlderMessages: resolveHasOlderMessages({
+        session: this.state.session,
+        loadedMessageCount: merged.length,
+        olderCursor: this.state.olderCursor,
+        pagesLoaded: this.state.pagesLoaded,
+        currentHasOlderMessages: this.state.hasOlderMessages
+      }),
       session: withRunningState(
         this.state.session,
         resolveEnvelopeRunningState("session.delta", this.state.session?.runningState)
@@ -1226,7 +1300,11 @@ export class SessionRuntimeStore {
       contextUsage: this.state.contextUsage,
       messages: buildSnapshotMessages(this.state.messages),
       permissionRequests: this.state.permissionRequests,
-      queuedMessages: this.state.queuedMessages
+      queuedMessages: this.state.queuedMessages,
+      olderCursor: this.state.olderCursor,
+      hasOlderMessages: this.state.hasOlderMessages,
+      lastCursor: this.state.lastCursor,
+      pagesLoaded: this.state.pagesLoaded
     });
   }
 
@@ -1411,6 +1489,24 @@ function inferHasOlderMessages(
   }
 
   return loadedMessageCount >= REALTIME_LIMIT;
+}
+
+function resolveHasOlderMessages(input: {
+  session: SessionSummaryDto | null;
+  loadedMessageCount: number;
+  olderCursor: string | null;
+  pagesLoaded: number;
+  currentHasOlderMessages: boolean;
+}): boolean {
+  if (input.olderCursor) {
+    return true;
+  }
+
+  if (input.pagesLoaded > 1) {
+    return input.currentHasOlderMessages;
+  }
+
+  return inferHasOlderMessages(input.session, input.loadedMessageCount);
 }
 
 function withRunningState<
@@ -1748,7 +1844,7 @@ function buildSessionRuntimeSnapshotKey(sessionId: string) {
 function buildSnapshotMessages(messages: SessionMessageViewModel[]): SessionMessageViewModel[] {
   return messages
     .filter((message) => message.deliveryState === "sent")
-    .slice(-INITIAL_HISTORY_LIMIT);
+    .slice(-SNAPSHOT_HISTORY_LIMIT);
 }
 
 function upsertQueuedMessage(

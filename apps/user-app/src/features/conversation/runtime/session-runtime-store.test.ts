@@ -875,6 +875,112 @@ describe("SessionRuntimeStore", () => {
     store.destroy();
   });
 
+  it("会把已懒加载的历史消息和 olderCursor 一起写入快照，切走再回来后仍能恢复到更早位置", async () => {
+    writeViewSnapshot(SESSION_RUNTIME_SNAPSHOT_KEY, {
+      session: null,
+      capabilities: null,
+      runtimeHasActiveRun: null,
+      runtimeCanInterrupt: null,
+      contextUsage: null,
+      messages: Array.from({ length: 90 }, (_, index) => ({
+        id: `cached-message-${index + 1}`,
+        sessionId: "session-1",
+        role: "assistant",
+        kind: "text",
+        content: `cached-message-${index + 1}`,
+        toolCall: null,
+        attachments: [],
+        attachmentPayloads: null,
+        timestamp: `2026-03-24T10:${String(index).padStart(2, "0")}:00.000Z`,
+        sequence: index + 1,
+        rawRef: `codex://raw#line=${index + 1}`,
+        deliveryState: "sent",
+        clientRequestId: null
+      })),
+      permissionRequests: [],
+      queuedMessages: [],
+      olderCursor: "cursor-older-3",
+      hasOlderMessages: true,
+      lastCursor: "cursor-latest",
+      pagesLoaded: 3
+    });
+
+    const store = new SessionRuntimeStore("session-1");
+
+    expect(store.getState().messages).toHaveLength(90);
+    expect(store.getState().messages[0]?.sequence).toBe(1);
+    expect(store.getState().messages.at(-1)?.sequence).toBe(90);
+    expect(store.getState().olderCursor).toBe("cursor-older-3");
+    expect(store.getState().hasOlderMessages).toBe(true);
+    expect(store.getState().lastCursor).toBe("cursor-latest");
+    expect(store.getState().pagesLoaded).toBe(3);
+
+    store.destroy();
+  });
+
+  it("已有多页懒加载历史时，重新进入会话不会被首个 backfill 截断成最新一页", async () => {
+    writeViewSnapshot(SESSION_RUNTIME_SNAPSHOT_KEY, {
+      session: null,
+      capabilities: null,
+      runtimeHasActiveRun: null,
+      runtimeCanInterrupt: null,
+      contextUsage: null,
+      messages: Array.from({ length: 90 }, (_, index) => ({
+        id: `cached-expanded-${index + 1}`,
+        sessionId: "session-1",
+        role: "assistant",
+        kind: "text",
+        content: `cached-expanded-${index + 1}`,
+        toolCall: null,
+        attachments: [],
+        attachmentPayloads: null,
+        timestamp: `2026-03-24T10:${String(index).padStart(2, "0")}:00.000Z`,
+        sequence: index + 1,
+        rawRef: `codex://raw#line=${index + 1}`,
+        deliveryState: "sent",
+        clientRequestId: null
+      })),
+      permissionRequests: [],
+      queuedMessages: [],
+      olderCursor: "cursor-older-3",
+      hasOlderMessages: true,
+      lastCursor: "cursor-latest-before",
+      pagesLoaded: 3
+    });
+
+    const store = new SessionRuntimeStore("session-1");
+    await store.initialize();
+    emitRealtimeSubscribed();
+    emitRealtimeEnvelope({
+      type: "session.backfill",
+      sessionId: "session-1",
+      cursor: "cursor-latest-after",
+      olderCursor: "cursor-older-1",
+      messages: Array.from({ length: 30 }, (_, index) => ({
+        messageId: `cached-expanded-${index + 61}`,
+        provider: "codex",
+        providerSessionId: "raw-1",
+        role: "assistant",
+        kind: "text",
+        content: `cached-expanded-${index + 61}`,
+        timestamp: `2026-03-24T11:${String(index).padStart(2, "0")}:00.000Z`,
+        sequence: index + 61,
+        rawRef: `codex://raw#line=${index + 61}`,
+        toolCall: null
+      }))
+    });
+
+    expect(store.getState().messages).toHaveLength(90);
+    expect(store.getState().messages[0]?.sequence).toBe(1);
+    expect(store.getState().messages.at(-1)?.sequence).toBe(90);
+    expect(store.getState().olderCursor).toBe("cursor-older-3");
+    expect(store.getState().hasOlderMessages).toBe(true);
+    expect(store.getState().pagesLoaded).toBe(3);
+    expect(store.getState().lastCursor).toBe("cursor-latest-after");
+
+    store.destroy();
+  });
+
   it("does not overwrite a terminal state back to running on later envelopes", async () => {
     vi.useFakeTimers();
     const store = new SessionRuntimeStore("session-1");

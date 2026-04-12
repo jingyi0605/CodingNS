@@ -149,6 +149,7 @@ function createSystemMessage(content: string, id = "system-1"): SessionMessageVi
 
 describe("MessageTimeline", () => {
   beforeEach(() => {
+    window.localStorage.clear();
     revealWorkspaceFileMock.mockReset();
     revealWorkspaceFileMock.mockReturnValue(false);
     getButlerFollowUpTaskMock.mockReset();
@@ -999,6 +1000,310 @@ describe("MessageTimeline", () => {
     );
 
     expect(messageList!.scrollTop).toBe(1200);
+  });
+
+  it("切到别的会话再回来时会恢复之前的阅读进度", () => {
+    const sessionOneMessages = [
+      {
+        ...createAssistantTextMessage("第一条消息", "assistant-restore-1"),
+        sessionId: "session-1"
+      },
+      {
+        ...createAssistantTextMessage("第二条消息", "assistant-restore-2"),
+        sessionId: "session-1",
+        sequence: 2,
+        rawRef: "codex://raw#line=restore-2"
+      }
+    ];
+    const sessionTwoMessages = [
+      {
+        ...createAssistantTextMessage("另一条会话消息", "assistant-restore-3"),
+        sessionId: "session-2"
+      }
+    ];
+    const { rerender } = render(
+      <MessageTimeline
+        sessionId="session-1"
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+        messages={sessionOneMessages}
+      />
+    );
+
+    const messageList = document.querySelector(".message-list") as HTMLDivElement | null;
+
+    expect(messageList).not.toBeNull();
+
+    Object.defineProperty(messageList, "scrollHeight", {
+      value: 2000,
+      configurable: true
+    });
+    Object.defineProperty(messageList, "clientHeight", {
+      value: 600,
+      configurable: true
+    });
+
+    fireEvent.scroll(messageList!, {
+      target: {
+        scrollTop: 420
+      }
+    });
+
+    expect(messageList!.scrollTop).toBe(420);
+
+    rerender(
+      <MessageTimeline
+        sessionId="session-2"
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+        messages={sessionTwoMessages}
+      />
+    );
+
+    rerender(
+      <MessageTimeline
+        sessionId="session-1"
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+        messages={sessionOneMessages}
+      />
+    );
+
+    const restoredMessageList = document.querySelector(".message-list") as HTMLDivElement | null;
+
+    expect(restoredMessageList).not.toBeNull();
+    expect(restoredMessageList!.scrollTop).toBe(420);
+  });
+
+  it("如果离开后会话尾部已经变化，仍恢复原阅读位置，并在回底按钮上提示 NEW", () => {
+    const oldMessages = [
+      {
+        ...createAssistantTextMessage("第一条消息", "assistant-stale-1"),
+        sessionId: "session-stale"
+      },
+      {
+        ...createAssistantTextMessage("第二条消息", "assistant-stale-2"),
+        sessionId: "session-stale",
+        sequence: 2,
+        rawRef: "codex://raw#line=stale-2"
+      }
+    ];
+    const updatedMessages = [
+      ...oldMessages,
+      {
+        ...createAssistantTextMessage("第三条最新消息", "assistant-stale-3"),
+        sessionId: "session-stale",
+        sequence: 3,
+        rawRef: "codex://raw#line=stale-3"
+      }
+    ];
+    const { rerender } = render(
+      <MessageTimeline
+        sessionId="session-stale"
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+        messages={oldMessages}
+      />
+    );
+
+    const messageList = document.querySelector(".message-list") as HTMLDivElement | null;
+
+    expect(messageList).not.toBeNull();
+
+    Object.defineProperty(messageList, "scrollHeight", {
+      value: 2000,
+      configurable: true
+    });
+    Object.defineProperty(messageList, "clientHeight", {
+      value: 600,
+      configurable: true
+    });
+
+    fireEvent.scroll(messageList!, {
+      target: {
+        scrollTop: 420
+      }
+    });
+
+    rerender(
+      <MessageTimeline
+        sessionId="session-other"
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+        messages={[
+          {
+            ...createAssistantTextMessage("其他会话", "assistant-other-stale"),
+            sessionId: "session-other"
+          }
+        ]}
+      />
+    );
+
+    rerender(
+      <MessageTimeline
+        sessionId="session-stale"
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+        messages={updatedMessages}
+      />
+    );
+
+    const restoredMessageList = document.querySelector(".message-list") as HTMLDivElement | null;
+
+    expect(restoredMessageList).not.toBeNull();
+    expect(restoredMessageList!.scrollTop).toBe(420);
+    expect(
+      screen.getByRole("button", { name: t("conversation.scrollToBottomAction") })
+    ).toHaveTextContent("NEW");
+  });
+
+  it("离底部较远时会显示回到底部按钮，点击后直接跳到底部", async () => {
+    render(
+      <MessageTimeline
+        sessionId="session-bottom-button"
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+        messages={[
+          {
+            ...createAssistantTextMessage("第一条", "assistant-bottom-1"),
+            sessionId: "session-bottom-button"
+          },
+          {
+            ...createAssistantTextMessage("第二条", "assistant-bottom-2"),
+            sessionId: "session-bottom-button",
+            sequence: 2,
+            rawRef: "codex://raw#line=bottom-2"
+          }
+        ]}
+      />
+    );
+
+    const messageList = document.querySelector(".message-list") as HTMLDivElement | null;
+
+    expect(messageList).not.toBeNull();
+
+    Object.defineProperty(messageList, "scrollHeight", {
+      value: 2400,
+      configurable: true
+    });
+    Object.defineProperty(messageList, "clientHeight", {
+      value: 600,
+      configurable: true
+    });
+
+    fireEvent.scroll(messageList!, {
+      target: {
+        scrollTop: 800
+      }
+    });
+
+    const jumpButton = screen.getByRole("button", {
+      name: t("conversation.scrollToBottomAction")
+    });
+
+    await userEvent.click(jumpButton);
+
+    expect(messageList!.scrollTop).toBe(2400);
+    expect(
+      screen.queryByRole("button", { name: t("conversation.scrollToBottomAction") })
+    ).not.toBeInTheDocument();
+  });
+
+  it("有新消息提示时，点击回底按钮会清除 NEW 标记", async () => {
+    const oldMessages = [
+      {
+        ...createAssistantTextMessage("第一条消息", "assistant-new-1"),
+        sessionId: "session-new"
+      },
+      {
+        ...createAssistantTextMessage("第二条消息", "assistant-new-2"),
+        sessionId: "session-new",
+        sequence: 2,
+        rawRef: "codex://raw#line=new-2"
+      }
+    ];
+    const updatedMessages = [
+      ...oldMessages,
+      {
+        ...createAssistantTextMessage("第三条最新消息", "assistant-new-3"),
+        sessionId: "session-new",
+        sequence: 3,
+        rawRef: "codex://raw#line=new-3"
+      }
+    ];
+    const { rerender } = render(
+      <MessageTimeline
+        sessionId="session-new"
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+        messages={oldMessages}
+      />
+    );
+
+    const messageList = document.querySelector(".message-list") as HTMLDivElement | null;
+
+    expect(messageList).not.toBeNull();
+
+    Object.defineProperty(messageList, "scrollHeight", {
+      value: 2000,
+      configurable: true
+    });
+    Object.defineProperty(messageList, "clientHeight", {
+      value: 600,
+      configurable: true
+    });
+
+    fireEvent.scroll(messageList!, {
+      target: {
+        scrollTop: 420
+      }
+    });
+
+    rerender(
+      <MessageTimeline
+        sessionId="session-other-new"
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+        messages={[
+          {
+            ...createAssistantTextMessage("其他会话", "assistant-other-new"),
+            sessionId: "session-other-new"
+          }
+        ]}
+      />
+    );
+
+    rerender(
+      <MessageTimeline
+        sessionId="session-new"
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+        messages={updatedMessages}
+      />
+    );
+
+    const jumpButton = screen.getByRole("button", {
+      name: t("conversation.scrollToBottomAction")
+    });
+
+    expect(jumpButton).toHaveTextContent("NEW");
+
+    await userEvent.click(jumpButton);
+
+    expect(messageList!.scrollTop).toBe(2000);
+    expect(
+      screen.queryByRole("button", { name: t("conversation.scrollToBottomAction") })
+    ).not.toBeInTheDocument();
   });
   it("renders image thumbnail preview for pending image attachments", async () => {
     render(

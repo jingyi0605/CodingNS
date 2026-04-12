@@ -31,6 +31,10 @@ import {
   CopyActionIcon,
   ForkActionIcon
 } from "./ConversationActionIcons";
+import {
+  persistConversationScrollState,
+  readPersistedConversationScrollState
+} from "./conversation-scroll-persistence";
 
 import type {
   ImageAttachmentPayload,
@@ -82,6 +86,11 @@ interface ToolMessageGroup {
 type FoldedPromptKind = "rules" | "system_prompt";
 
 const OLDER_HISTORY_PREFETCH_THRESHOLD_PX = 480;
+const STICK_TO_BOTTOM_DISTANCE_PX = 80;
+const SCROLL_TO_BOTTOM_BUTTON_THRESHOLD_PX = 240;
+const SCROLL_STATE_PERSIST_DELAY_MS = 120;
+const MANUAL_RESTORE_INTERVAL_MS = 50;
+const MANUAL_RESTORE_DURATION_MS = 3500;
 const MarkdownLinkContext = createContext(false);
 
 type TimelineRenderItem =
@@ -1976,13 +1985,24 @@ export function MessageTimeline({
   const { showToast } = useToast();
   const listRef = useRef<HTMLDivElement | null>(null);
   const previousSessionIdRef = useRef(sessionId);
-  const previousMessageCountRef = useRef(messages.length);
-  const previousLastMessageSignatureRef = useRef<string | null>(
-    buildMessageSignature(messages.at(-1) ?? null)
-  );
+  const previousMessageCountRef = useRef(0);
+  const previousLastMessageSignatureRef = useRef<string | null>(null);
   const stickToBottomRef = useRef(true);
   const pendingOlderLoadOffsetRef = useRef<number | null>(null);
   const olderLoadLockRef = useRef(false);
+  const pendingRestoreStateRef = useRef(readPersistedConversationScrollState(sessionId));
+  const restoredTailSignatureRef = useRef<string | null>(
+    readPersistedConversationScrollState(sessionId)?.lastMessageSignature ?? null
+  );
+  const currentScrollStateRef = useRef(readPersistedConversationScrollState(sessionId));
+  const scrollPersistTimerRef = useRef<number | null>(null);
+  const manualRestoreTimerRef = useRef<number | null>(null);
+  const manualRestoreTargetRef = useRef<number | null>(null);
+  const manualRestoreDeadlineRef = useRef(0);
+  const manualRestoreInProgressRef = useRef(false);
+  const [showScrollToBottomButton, setShowScrollToBottomButton] = useState(false);
+  const [hasNewMessagesBelow, setHasNewMessagesBelow] = useState(false);
+  const hasNewMessagesBelowRef = useRef(false);
   const renderItems = buildTimelineRenderItems(messages);
   const leadingSystemPromptMessageIds = useMemo(
     () => collectLeadingSystemPromptMessageIds(messages, provider),
@@ -1993,6 +2013,155 @@ export function MessageTimeline({
     [messages]
   );
   const showTimelineSkeleton = historyState === "loading" && messages.length === 0;
+
+  function buildCurrentScrollState(list: HTMLDivElement) {
+    const distanceToBottom = list.scrollHeight - list.clientHeight - list.scrollTop;
+    const stickToBottom = distanceToBottom <= STICK_TO_BOTTOM_DISTANCE_PX;
+
+    return {
+      scrollTop: list.scrollTop,
+      stickToBottom,
+      lastMessageSignature:
+        hasNewMessagesBelowRef.current && !stickToBottom
+          ? restoredTailSignatureRef.current
+          : buildMessageSignature(messages.at(-1) ?? null)
+    };
+  }
+
+  function rememberCurrentScrollState(list: HTMLDivElement) {
+    currentScrollStateRef.current = buildCurrentScrollState(list);
+    return currentScrollStateRef.current;
+  }
+
+  function syncScrollAffordance(list: HTMLDivElement) {
+    const distanceToBottom = list.scrollHeight - list.clientHeight - list.scrollTop;
+    const nextStickToBottom = distanceToBottom <= STICK_TO_BOTTOM_DISTANCE_PX;
+
+    stickToBottomRef.current = nextStickToBottom;
+    if (nextStickToBottom && hasNewMessagesBelowRef.current) {
+      finishManualRestore();
+      hasNewMessagesBelowRef.current = false;
+      restoredTailSignatureRef.current = buildMessageSignature(messages.at(-1) ?? null);
+      setHasNewMessagesBelow(false);
+    }
+    setShowScrollToBottomButton(
+      messages.length > 0
+      && (
+        distanceToBottom > SCROLL_TO_BOTTOM_BUTTON_THRESHOLD_PX
+        || hasNewMessagesBelowRef.current
+      )
+    );
+    rememberCurrentScrollState(list);
+  }
+
+  function persistCurrentScrollState(list: HTMLDivElement | null = listRef.current) {
+    if (list) {
+      rememberCurrentScrollState(list);
+    }
+
+    if (!currentScrollStateRef.current) {
+      return;
+    }
+
+    persistConversationScrollState(sessionId, currentScrollStateRef.current);
+  }
+
+  function persistCachedScrollState(targetSessionId: string) {
+    if (!currentScrollStateRef.current) {
+      return;
+    }
+
+    persistConversationScrollState(targetSessionId, currentScrollStateRef.current);
+  }
+
+  function clearPersistScrollTimer() {
+    if (scrollPersistTimerRef.current === null) {
+      return;
+    }
+
+    window.clearTimeout(scrollPersistTimerRef.current);
+    scrollPersistTimerRef.current = null;
+  }
+
+  function schedulePersistCurrentScrollState() {
+    clearPersistScrollTimer();
+    scrollPersistTimerRef.current = window.setTimeout(() => {
+      scrollPersistTimerRef.current = null;
+      persistCurrentScrollState();
+    }, SCROLL_STATE_PERSIST_DELAY_MS);
+  }
+
+  function jumpToBottom(list: HTMLDivElement) {
+    list.scrollTop = list.scrollHeight;
+  }
+
+  function clearManualRestoreTimer() {
+    if (manualRestoreTimerRef.current === null) {
+      return;
+    }
+
+    window.clearTimeout(manualRestoreTimerRef.current);
+    manualRestoreTimerRef.current = null;
+  }
+
+  function finishManualRestore() {
+    clearManualRestoreTimer();
+    manualRestoreInProgressRef.current = false;
+    manualRestoreTargetRef.current = null;
+    manualRestoreDeadlineRef.current = 0;
+  }
+
+  function applyManualRestorePosition(list: HTMLDivElement, targetScrollTop: number) {
+    const maxScrollableTop = Math.max(0, list.scrollHeight - list.clientHeight);
+    const nextScrollTop = Math.max(0, Math.min(targetScrollTop, maxScrollableTop));
+
+    list.scrollTop = nextScrollTop;
+    stickToBottomRef.current = false;
+    setShowScrollToBottomButton(
+      messages.length > 0
+      && (
+        maxScrollableTop - nextScrollTop > SCROLL_TO_BOTTOM_BUTTON_THRESHOLD_PX
+        || hasNewMessagesBelowRef.current
+      )
+    );
+  }
+
+  function scheduleManualRestoreFrame() {
+    clearManualRestoreTimer();
+
+    if (!manualRestoreInProgressRef.current) {
+      return;
+    }
+
+    manualRestoreTimerRef.current = window.setTimeout(() => {
+      manualRestoreTimerRef.current = null;
+      const list = listRef.current;
+      const targetScrollTop = manualRestoreTargetRef.current;
+
+      if (!list || targetScrollTop === null) {
+        finishManualRestore();
+        return;
+      }
+
+      applyManualRestorePosition(list, targetScrollTop);
+
+      if (Date.now() < manualRestoreDeadlineRef.current) {
+        scheduleManualRestoreFrame();
+        return;
+      }
+
+      finishManualRestore();
+      syncScrollAffordance(list);
+    }, MANUAL_RESTORE_INTERVAL_MS);
+  }
+
+  function startManualRestore(targetScrollTop: number, list: HTMLDivElement) {
+    manualRestoreInProgressRef.current = true;
+    manualRestoreTargetRef.current = targetScrollTop;
+    manualRestoreDeadlineRef.current = Date.now() + MANUAL_RESTORE_DURATION_MS;
+    applyManualRestorePosition(list, targetScrollTop);
+    scheduleManualRestoreFrame();
+  }
 
   function triggerOlderMessagesPrefetch(list: HTMLDivElement): boolean {
     if (
@@ -2022,28 +2191,95 @@ export function MessageTimeline({
     });
   }, [historyState, showToast]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (previousSessionIdRef.current !== sessionId) {
+      persistCachedScrollState(previousSessionIdRef.current);
       previousSessionIdRef.current = sessionId;
       previousMessageCountRef.current = 0;
       previousLastMessageSignatureRef.current = null;
-      stickToBottomRef.current = true;
+      pendingRestoreStateRef.current = readPersistedConversationScrollState(sessionId);
+      restoredTailSignatureRef.current = pendingRestoreStateRef.current?.lastMessageSignature ?? null;
+      currentScrollStateRef.current = pendingRestoreStateRef.current;
+      stickToBottomRef.current = pendingRestoreStateRef.current?.stickToBottom ?? true;
       pendingOlderLoadOffsetRef.current = null;
+      finishManualRestore();
+      hasNewMessagesBelowRef.current = false;
+      setHasNewMessagesBelow(false);
+      setShowScrollToBottomButton(false);
     }
   }, [sessionId]);
 
   useLayoutEffect(() => {
+    return () => {
+      clearPersistScrollTimer();
+      finishManualRestore();
+      persistCachedScrollState(previousSessionIdRef.current);
+    };
+  }, [sessionId]);
+
+  useLayoutEffect(() => {
     const list = listRef.current;
+    const currentLastSignature = buildMessageSignature(messages.at(-1) ?? null);
 
     if (!list) {
       previousMessageCountRef.current = messages.length;
-      previousLastMessageSignatureRef.current = buildMessageSignature(messages.at(-1) ?? null);
+      previousLastMessageSignatureRef.current = currentLastSignature;
       return;
     }
 
     const previousCount = previousMessageCountRef.current;
     const previousLastSignature = previousLastMessageSignatureRef.current;
-    const currentLastSignature = buildMessageSignature(messages.at(-1) ?? null);
+    const pendingRestoreState = pendingRestoreStateRef.current;
+
+    // 会话切回来时先恢复阅读位置；是否有新消息是另一件事，用 NEW 提示，不要强行把用户踢到底部。
+    if (pendingRestoreState && historyState === "ready") {
+      const hasTailUpdates =
+        !pendingRestoreState.stickToBottom
+        && pendingRestoreState.lastMessageSignature !== null
+        && currentLastSignature !== null
+        && pendingRestoreState.lastMessageSignature !== currentLastSignature;
+
+      if (pendingRestoreState.stickToBottom) {
+        finishManualRestore();
+        jumpToBottom(list);
+      } else {
+        startManualRestore(pendingRestoreState.scrollTop, list);
+      }
+
+      hasNewMessagesBelowRef.current = hasTailUpdates;
+      restoredTailSignatureRef.current = pendingRestoreState.lastMessageSignature;
+      setHasNewMessagesBelow(hasTailUpdates);
+      pendingRestoreStateRef.current = null;
+      syncScrollAffordance(list);
+      previousMessageCountRef.current = messages.length;
+      previousLastMessageSignatureRef.current = currentLastSignature;
+      rememberCurrentScrollState(list);
+      return;
+    }
+
+    if (pendingRestoreState && historyState === "error") {
+      if (pendingRestoreState.stickToBottom) {
+        finishManualRestore();
+        jumpToBottom(list);
+      } else {
+        startManualRestore(pendingRestoreState.scrollTop, list);
+      }
+
+      pendingRestoreStateRef.current = null;
+      syncScrollAffordance(list);
+      previousMessageCountRef.current = messages.length;
+      previousLastMessageSignatureRef.current = currentLastSignature;
+      rememberCurrentScrollState(list);
+      return;
+    }
+
+    if (manualRestoreInProgressRef.current) {
+      applyManualRestorePosition(list, manualRestoreTargetRef.current ?? list.scrollTop);
+      previousMessageCountRef.current = messages.length;
+      previousLastMessageSignatureRef.current = currentLastSignature;
+      rememberCurrentScrollState(list);
+      return;
+    }
 
     if (pendingOlderLoadOffsetRef.current !== null && messages.length >= previousCount) {
       list.scrollTop = Math.max(0, list.scrollHeight - pendingOlderLoadOffsetRef.current);
@@ -2056,12 +2292,13 @@ export function MessageTimeline({
         currentLastSignature !== previousLastSignature
       )
     ) {
-      list.scrollTop = list.scrollHeight;
+      jumpToBottom(list);
     }
 
+    syncScrollAffordance(list);
     previousMessageCountRef.current = messages.length;
     previousLastMessageSignatureRef.current = currentLastSignature;
-  }, [messages, sessionId]);
+  }, [historyState, messages, sessionId]);
 
   useEffect(() => {
     if (!hasOlderMessages) {
@@ -2081,8 +2318,8 @@ export function MessageTimeline({
       return;
     }
 
-    const distanceToBottom = list.scrollHeight - list.clientHeight - list.scrollTop;
-    stickToBottomRef.current = distanceToBottom <= 80;
+    syncScrollAffordance(list);
+    schedulePersistCurrentScrollState();
 
     if (
       triggerOlderMessagesPrefetch(list)
@@ -2157,6 +2394,45 @@ export function MessageTimeline({
           </div>
         ) : null}
       </div>
+      {showScrollToBottomButton ? (
+        <button
+          type="button"
+          className="conversation-scroll-to-bottom-button"
+          data-has-new={hasNewMessagesBelow ? "true" : "false"}
+          aria-label={t("conversation.scrollToBottomAction")}
+          title={t("conversation.scrollToBottomAction")}
+          onClick={() => {
+            const list = listRef.current;
+
+            if (!list) {
+              return;
+            }
+
+            finishManualRestore();
+            jumpToBottom(list);
+            hasNewMessagesBelowRef.current = false;
+            restoredTailSignatureRef.current = buildMessageSignature(messages.at(-1) ?? null);
+            setHasNewMessagesBelow(false);
+            syncScrollAffordance(list);
+            persistCurrentScrollState(list);
+          }}
+        >
+          {hasNewMessagesBelow ? (
+            <span className="conversation-scroll-to-bottom-button-badge">NEW</span>
+          ) : null}
+          <svg
+            className="conversation-scroll-to-bottom-button-icon"
+            viewBox="0 0 20 20"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <path
+              d="M10 4.25a.75.75 0 0 1 .75.75v7.19l2.72-2.72a.75.75 0 1 1 1.06 1.06l-4 4a.75.75 0 0 1-1.06 0l-4-4a.75.75 0 1 1 1.06-1.06l2.72 2.72V5a.75.75 0 0 1 .75-.75Zm-4 11a.75.75 0 0 1 0-1.5h8a.75.75 0 0 1 0 1.5H6Z"
+              fill="currentColor"
+            />
+          </svg>
+        </button>
+      ) : null}
     </section>
   );
 }

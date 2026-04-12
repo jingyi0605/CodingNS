@@ -67,6 +67,10 @@ export function createInitialRuntimeState(
       | "messages"
       | "permissionRequests"
       | "queuedMessages"
+      | "olderCursor"
+      | "hasOlderMessages"
+      | "lastCursor"
+      | "pagesLoaded"
     >
   >
 ): SessionRuntimeState {
@@ -81,11 +85,11 @@ export function createInitialRuntimeState(
     queuedMessages: seed?.queuedMessages ?? [],
     historyState: "idle",
     loadingOlderMessages: false,
-    olderCursor: null,
-    hasOlderMessages: false,
+    olderCursor: seed?.olderCursor ?? null,
+    hasOlderMessages: seed?.hasOlderMessages ?? false,
     connectionState: "closed",
-    lastCursor: null,
-    pagesLoaded: 0,
+    lastCursor: seed?.lastCursor ?? null,
+    pagesLoaded: seed?.pagesLoaded ?? 0,
     errorCode: null,
     errorDetail: null
   };
