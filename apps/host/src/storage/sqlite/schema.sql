@@ -57,6 +57,39 @@ CREATE TABLE IF NOT EXISTS workspace_navigation_states (
 CREATE INDEX IF NOT EXISTS idx_workspace_navigation_states_user_id
   ON workspace_navigation_states(user_id, updated_at DESC);
 
+CREATE TABLE IF NOT EXISTS workspace_worktrees (
+  workspace_id TEXT PRIMARY KEY,
+  root_workspace_id TEXT NOT NULL,
+  parent_workspace_id TEXT NOT NULL,
+  source_workspace_id TEXT NOT NULL,
+  merge_target_workspace_id TEXT NOT NULL,
+  branch_name TEXT NOT NULL,
+  base_ref TEXT NOT NULL,
+  base_commit TEXT NOT NULL,
+  head_commit TEXT,
+  display_name TEXT NOT NULL,
+  depth INTEGER NOT NULL CHECK (depth >= 1),
+  lifecycle_status TEXT NOT NULL CHECK (
+    lifecycle_status IN ('active', 'merged', 'abandoned', 'removing', 'removed')
+  ),
+  merged_at TEXT,
+  removed_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+  FOREIGN KEY (root_workspace_id) REFERENCES workspaces(id),
+  FOREIGN KEY (parent_workspace_id) REFERENCES workspaces(id),
+  FOREIGN KEY (source_workspace_id) REFERENCES workspaces(id),
+  FOREIGN KEY (merge_target_workspace_id) REFERENCES workspaces(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_workspace_worktrees_root_workspace_id
+  ON workspace_worktrees(root_workspace_id, depth ASC, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_workspace_worktrees_parent_workspace_id
+  ON workspace_worktrees(parent_workspace_id, updated_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_worktrees_root_branch_name
+  ON workspace_worktrees(root_workspace_id, branch_name);
+
 CREATE TABLE IF NOT EXISTS commit_rule_profiles (
   id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL UNIQUE,

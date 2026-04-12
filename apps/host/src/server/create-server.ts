@@ -84,6 +84,11 @@ import { WorkbenchController } from "../modules/workbench/workbench-controller.j
 import { WorkbenchService } from "../modules/workbench/workbench-service.js";
 import { WorkspacePanelSnapshotService } from "../modules/workbench/workspace-panel-snapshot-service.js";
 import { WorkspaceFileWatcher } from "../modules/workbench/workspace-file-watcher.js";
+import { WorktreeController } from "../modules/worktree/worktree-controller.js";
+import { WorktreeCleanupService } from "../modules/worktree/worktree-cleanup-service.js";
+import { WorktreeMergeService } from "../modules/worktree/worktree-merge-service.js";
+import { WorktreeManager } from "../modules/worktree/worktree-manager.js";
+import { WorktreeSyncService } from "../modules/worktree/worktree-sync-service.js";
 import { WorkspaceController } from "../modules/workspace/workspace-controller.js";
 import { WorkspaceService } from "../modules/workspace/workspace-service.js";
 import { registerAuthRoutes } from "../routes/auth.js";
@@ -100,6 +105,7 @@ import { registerSessionContextRoutes } from "../routes/session-contexts.js";
 import { registerSessionRoutes } from "../routes/sessions.js";
 import { registerTerminalRoutes } from "../routes/terminals.js";
 import { registerWorkbenchRoutes } from "../routes/workbench.js";
+import { registerWorktreeRoutes } from "../routes/worktrees.js";
 import { registerWorkspaceRoutes } from "../routes/workspaces.js";
 import { DemoCleanupService, DemoOnlineTracker } from "../modules/demo/demo-cleanup-service.js";
 import { setErrorHandler } from "../shared/http/error-handler.js";
@@ -142,6 +148,7 @@ import { TerminalRuntimeSessionRepository } from "../storage/repositories/termin
 import { UserPreferenceProfileRepository } from "../storage/repositories/user-preference-profile-repository.js";
 import { UserQuickPhrasePreferenceRepository } from "../storage/repositories/user-quick-phrase-preference-repository.js";
 import { WorkspaceRepository } from "../storage/repositories/workspace-repository.js";
+import { WorkspaceWorktreeRepository } from "../storage/repositories/workspace-worktree-repository.js";
 import { WorkspaceNavigationStateRepository } from "../storage/repositories/workspace-navigation-state-repository.js";
 import { createDatabaseClient } from "../storage/sqlite/client.js";
 import { TerminalWsHub } from "../ws/terminal-ws-hub.js";
@@ -167,6 +174,7 @@ export function createServer(config: HostConfig) {
     authUserRepository: new AuthUserRepository(database.db),
     authTokenRepository: new AuthTokenRepository(database.db),
     workspaceRepository: new WorkspaceRepository(database.db),
+    workspaceWorktreeRepository: new WorkspaceWorktreeRepository(database.db),
     workspaceNavigationStateRepository: new WorkspaceNavigationStateRepository(database.db),
     butlerControlSessionRepository: new ButlerControlSessionRepository(database.db),
     butlerControlEventRepository: new ButlerControlEventRepository(database.db),
@@ -242,7 +250,8 @@ export function createServer(config: HostConfig) {
     repositories.workspaceRepository,
     gitCommandRunner,
     repositories.workspaceNavigationStateRepository,
-    butlerProfileService
+    butlerProfileService,
+    repositories.workspaceWorktreeRepository
   );
   const fileAccessGuard = new FileAccessGuard(workspaceService, app.log);
   const recentFileService = new RecentFileService(repositories.recentFileRepository);
@@ -394,12 +403,40 @@ export function createServer(config: HostConfig) {
     butlerFollowUpRuntimeConfig,
     sessionActivityAuthorityService
   );
+  const worktreeManager = new WorktreeManager(
+    workspaceService,
+    repositories.workspaceWorktreeRepository,
+    gitReadService,
+    gitCommandRunner
+  );
+  const worktreeSyncService = new WorktreeSyncService(
+    workspaceService,
+    repositories.workspaceWorktreeRepository,
+    gitCommandRunner
+  );
+  const worktreeMergeService = new WorktreeMergeService(
+    workspaceService,
+    repositories.workspaceWorktreeRepository,
+    gitReadService,
+    gitCommandRunner,
+    worktreeSyncService
+  );
+  const worktreeCleanupService = new WorktreeCleanupService(
+    workspaceService,
+    repositories.workspaceWorktreeRepository,
+    repositories.sessionIndexRepository,
+    repositories.terminalInstanceRepository,
+    gitReadService,
+    gitCommandRunner,
+    worktreeSyncService
+  );
   const workbenchService = new WorkbenchService(
     repositories.workspaceRepository,
     repositories.workspaceNavigationStateRepository,
     sessionHistoryService,
     butlerProfileService,
-    repositories.butlerControlSessionRepository
+    repositories.butlerControlSessionRepository,
+    repositories.workspaceWorktreeRepository
   );
   const butlerProjectService = new ButlerProjectService(
     repositories.butlerProjectRepository,
@@ -605,6 +642,12 @@ export function createServer(config: HostConfig) {
   const clientController = new ClientController(clientService);
   const authController = new AuthController(authService);
   const workspaceController = new WorkspaceController(workspaceService);
+  const worktreeController = new WorktreeController(
+    worktreeManager,
+    worktreeSyncService,
+    worktreeMergeService,
+    worktreeCleanupService
+  );
   const workbenchController = new WorkbenchController(workbenchService);
   const butlerController = new ButlerController(
     butlerProfileService,
@@ -689,6 +732,7 @@ export function createServer(config: HostConfig) {
   void registerClientRoutes(app, clientController);
   void registerObservabilityRoutes(app, observabilityController);
   void registerWorkspaceRoutes(app, workspaceController);
+  void registerWorktreeRoutes(app, worktreeController);
   void registerWorkbenchRoutes(app, workbenchController);
   void registerButlerRoutes(app, butlerController);
   void registerSessionRoutes(app, sessionController);
@@ -734,6 +778,10 @@ export function createServer(config: HostConfig) {
         clientService,
         authService,
         workspaceService,
+        worktreeManager,
+        worktreeSyncService,
+        worktreeMergeService,
+        worktreeCleanupService,
         workbenchService,
         butlerProfileService,
         butlerSessionLiveRuntimeService,

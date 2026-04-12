@@ -246,6 +246,40 @@ describe("sqlite 启动引导", () => {
     );
   });
 
+  it("初始化数据库时会创建 workspace_worktrees 表", async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-worktree-bootstrap-"));
+    tempDirs.push(tempDir);
+    const databasePath = path.join(tempDir, "host.sqlite");
+
+    const client = createDatabaseClient(databasePath);
+    const columns = client.db
+      .prepare("PRAGMA table_info(workspace_worktrees)")
+      .all() as Array<{ name: string }>;
+
+    client.close();
+
+    expect(columns.map((column) => column.name)).toEqual(
+      expect.arrayContaining([
+        "workspace_id",
+        "root_workspace_id",
+        "parent_workspace_id",
+        "source_workspace_id",
+        "merge_target_workspace_id",
+        "branch_name",
+        "base_ref",
+        "base_commit",
+        "head_commit",
+        "display_name",
+        "depth",
+        "lifecycle_status",
+        "merged_at",
+        "removed_at",
+        "created_at",
+        "updated_at"
+      ])
+    );
+  });
+
   it("可以清理残留的 session_forks_next 并把旧 fork 表平滑升级到新结构", async () => {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-session-forks-migration-"));
     tempDirs.push(tempDir);

@@ -63,6 +63,32 @@ export interface Workspace {
   removedAt?: string | null;
 }
 
+export type WorkspaceWorktreeLifecycleStatus =
+  | "active"
+  | "merged"
+  | "abandoned"
+  | "removing"
+  | "removed";
+
+export interface WorkspaceWorktreeRecord {
+  workspaceId: string;
+  rootWorkspaceId: string;
+  parentWorkspaceId: string;
+  sourceWorkspaceId: string;
+  mergeTargetWorkspaceId: string;
+  branchName: string;
+  baseRef: string;
+  baseCommit: string;
+  headCommit: string | null;
+  displayName: string;
+  depth: number;
+  lifecycleStatus: WorkspaceWorktreeLifecycleStatus;
+  mergedAt: string | null;
+  removedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface WorkspaceNavigationStateRecord {
   workspaceId: string;
   userId: string;

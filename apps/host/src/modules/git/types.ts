@@ -99,6 +99,10 @@ export interface GitBranchSnapshot {
   remote: GitBranchItem[];
 }
 
+export interface GitTagItem {
+  name: string;
+}
+
 export interface GitRemoteSyncResult {
   action: "fetch" | "pull" | "push" | "publish";
   summary: string;

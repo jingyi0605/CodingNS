@@ -80,4 +80,121 @@ describe("WorkbenchService", () => {
 
     expect(snapshot.items.map((item) => item.workspace.id)).toEqual(["workspace-1"]);
   });
+
+  it("快照会把子工作树挂到根工作区下面，并保留各自会话", () => {
+    const service = new WorkbenchService(
+      {
+        list: vi.fn(() => [
+          {
+            id: "workspace-root",
+            path: "/repo/root"
+          },
+          {
+            id: "workspace-child",
+            path: "/repo/root.worktrees/child"
+          },
+          {
+            id: "workspace-grand-child",
+            path: "/repo/root.worktrees/grand-child"
+          }
+        ])
+      } as never,
+      {
+        listByUserId: vi.fn(() => [])
+      } as never,
+      {
+        listWorkspaceSessions: vi.fn((workspaceId: string) => {
+          if (workspaceId === "workspace-root") {
+            return [{ sessionId: "session-root" }];
+          }
+
+          if (workspaceId === "workspace-child") {
+            return [{ sessionId: "session-child" }];
+          }
+
+          if (workspaceId === "workspace-grand-child") {
+            return [{ sessionId: "session-grand-child" }];
+          }
+
+          return [];
+        }),
+        requestWorkspaceDiscovery: vi.fn()
+      } as never,
+      {
+        getProfile: vi.fn(() => null)
+      } as never,
+      {
+        listSessionIds: vi.fn(() => [])
+      } as never,
+      {
+        listWorkspaceIds: vi.fn(() => ["workspace-child", "workspace-grand-child"]),
+        listByRootWorkspaceId: vi.fn(() => [
+          {
+            workspaceId: "workspace-child",
+            rootWorkspaceId: "workspace-root",
+            parentWorkspaceId: "workspace-root",
+            sourceWorkspaceId: "workspace-root",
+            mergeTargetWorkspaceId: "workspace-root",
+            branchName: "feat/child",
+            baseRef: "main",
+            baseCommit: "abc123",
+            headCommit: "abc123",
+            displayName: "feat/child",
+            depth: 1,
+            lifecycleStatus: "active",
+            mergedAt: null,
+            removedAt: null,
+            createdAt: "2026-04-12T12:00:00.000Z",
+            updatedAt: "2026-04-12T12:00:00.000Z"
+          },
+          {
+            workspaceId: "workspace-grand-child",
+            rootWorkspaceId: "workspace-root",
+            parentWorkspaceId: "workspace-child",
+            sourceWorkspaceId: "workspace-child",
+            mergeTargetWorkspaceId: "workspace-child",
+            branchName: "feat/grand-child",
+            baseRef: "feat/child",
+            baseCommit: "abc123",
+            headCommit: "def456",
+            displayName: "feat/grand-child",
+            depth: 2,
+            lifecycleStatus: "active",
+            mergedAt: null,
+            removedAt: null,
+            createdAt: "2026-04-12T12:10:00.000Z",
+            updatedAt: "2026-04-12T12:10:00.000Z"
+          }
+        ])
+      } as never
+    );
+
+    const snapshot = service.getSnapshot("user-1");
+
+    expect(snapshot.items).toHaveLength(1);
+    expect(snapshot.items[0]?.workspace.id).toBe("workspace-root");
+    expect(snapshot.items[0]?.sessions.map((session) => session.sessionId)).toEqual(["session-root"]);
+    expect(snapshot.items[0]?.childWorktrees).toHaveLength(1);
+    expect(snapshot.items[0]?.childWorktrees?.[0]).toMatchObject({
+      workspace: {
+        id: "workspace-child"
+      },
+      sessions: [
+        {
+          sessionId: "session-child"
+        }
+      ]
+    });
+    expect(snapshot.items[0]?.childWorktrees?.[0]?.children).toHaveLength(1);
+    expect(snapshot.items[0]?.childWorktrees?.[0]?.children[0]).toMatchObject({
+      workspace: {
+        id: "workspace-grand-child"
+      },
+      sessions: [
+        {
+          sessionId: "session-grand-child"
+        }
+      ]
+    });
+  });
 });

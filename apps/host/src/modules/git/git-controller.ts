@@ -249,6 +249,13 @@ export class GitController {
     reply.send(await this.gitReadService.getBranches(requireWorkspaceId(request.query.workspaceId)));
   };
 
+  readonly getTags = async (
+    request: FastifyRequest<{ Querystring: WorkspaceQuery }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(await this.gitReadService.getTags(requireWorkspaceId(request.query.workspaceId)));
+  };
+
   readonly switchBranch = async (
     request: FastifyRequest<{ Body: BranchSwitchBody }>,
     reply: FastifyReply

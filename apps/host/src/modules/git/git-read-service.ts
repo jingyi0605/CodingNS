@@ -9,7 +9,8 @@ import type {
   GitHistoryRef,
   GitHistoryPage,
   GitRemoteItem,
-  GitRepoSnapshot
+  GitRepoSnapshot,
+  GitTagItem
 } from "./types.js";
 import type { WorkspaceRepoGuard } from "./workspace-repo-guard.js";
 
@@ -210,7 +211,7 @@ export class GitReadService {
         repo.repoRoot,
         [
           "for-each-ref",
-          "--format=%(refname:short)%x1f%(upstream:short)%x1f%(HEAD)",
+          "--format=%(refname:short)%00%(upstream:short)%00%(HEAD)",
           "refs/heads"
         ],
         {
@@ -291,6 +292,29 @@ export class GitReadService {
     }
 
     return Array.from(remotes.values());
+  }
+
+  async getTags(workspaceId: string): Promise<GitTagItem[]> {
+    const repo = await this.workspaceRepoGuard.resolve(workspaceId);
+    const result = await this.gitCommandRunner.run(
+      repo.repoRoot,
+      [
+        "for-each-ref",
+        "--sort=-creatordate",
+        "--format=%(refname:short)",
+        "refs/tags"
+      ],
+      {
+        workspaceId,
+        operation: "gitRead.getTags"
+      }
+    );
+
+    return result.stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((name) => ({ name }));
   }
 }
 
@@ -553,7 +577,7 @@ function parseHistoryCount(stdout: string): number {
 }
 
 function parseBranchLine(line: string, remote: boolean): GitBranchItem {
-  const [name = "", upstream = "", currentMarker = ""] = line.split("\u001f");
+  const [name = "", upstream = "", currentMarker = ""] = line.split("\u0000");
 
   return {
     name,

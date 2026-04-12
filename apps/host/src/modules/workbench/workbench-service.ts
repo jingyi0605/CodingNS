@@ -1,18 +1,27 @@
 import path from "node:path";
 
-import type { SessionListItem, Workspace } from "../../types/domain.js";
+import type { SessionListItem, Workspace, WorkspaceWorktreeRecord } from "../../types/domain.js";
 import { logPerformance } from "../../shared/utils/perf-log.js";
 import type { SessionHistoryService } from "../sessions/session-history-service.js";
 import type { WorkspaceNavigationStateRepository } from "../../storage/repositories/workspace-navigation-state-repository.js";
 import type { WorkspaceRepository } from "../../storage/repositories/workspace-repository.js";
+import type { WorkspaceWorktreeRepository } from "../../storage/repositories/workspace-worktree-repository.js";
 import type { ButlerProfileService } from "../butler/butler-profile-service.js";
 import type { ButlerControlSessionRepository } from "../../storage/repositories/butler-control-session-repository.js";
 
 const WORKBENCH_REFRESH_MAX_AGE_MS = 15_000;
 
+export interface WorkbenchWorktreeNode {
+  workspace: Workspace;
+  meta: WorkspaceWorktreeRecord;
+  sessions: SessionListItem[];
+  children: WorkbenchWorktreeNode[];
+}
+
 export interface WorkbenchSnapshotItem {
   workspace: Workspace;
   sessions: SessionListItem[];
+  childWorktrees?: WorkbenchWorktreeNode[];
   collapsed: boolean;
 }
 
@@ -26,12 +35,19 @@ export class WorkbenchService {
     private readonly workspaceNavigationStateRepository: WorkspaceNavigationStateRepository,
     private readonly sessionHistoryService: SessionHistoryService,
     private readonly butlerProfileService: Pick<ButlerProfileService, "getProfile">,
-    private readonly butlerControlSessionRepository: Pick<ButlerControlSessionRepository, "listSessionIds">
+    private readonly butlerControlSessionRepository: Pick<ButlerControlSessionRepository, "listSessionIds">,
+    private readonly workspaceWorktreeRepository?: Pick<
+      WorkspaceWorktreeRepository,
+      "listWorkspaceIds" | "listByRootWorkspaceId"
+    >
   ) {}
 
   getSnapshot(userId: string): WorkbenchSnapshot {
-    const workspaces = this.listVisibleWorkspaces();
-    this.scheduleWorkspaceRefreshes(workspaces, userId);
+    const allWorkspaces = this.listWorkbenchWorkspaces();
+    const workspaces = this.listVisibleWorkspaces(allWorkspaces);
+    const workspaceById = new Map(allWorkspaces.map((workspace) => [workspace.id, workspace] as const));
+
+    this.scheduleWorkspaceRefreshes(allWorkspaces, userId);
     const collapsedWorkspaceIdSet = new Set(
       this.workspaceNavigationStateRepository
         .listByUserId(userId)
@@ -45,13 +61,14 @@ export class WorkbenchService {
         sessions: this.filterButlerControlSessions(
           this.sessionHistoryService.listWorkspaceSessions(workspace.id, userId)
         ),
+        childWorktrees: this.buildChildWorktrees(workspace.id, workspaceById, userId),
         collapsed: collapsedWorkspaceIdSet.has(workspace.id)
       }))
     };
   }
 
   shouldRefreshSnapshot(): boolean {
-    return this.listVisibleWorkspaces()
+    return this.listWorkbenchWorkspaces()
       .some((workspace) =>
         this.sessionHistoryService.needsWorkspaceDiscovery(
           workspace.id,
@@ -62,7 +79,7 @@ export class WorkbenchService {
 
   async refreshSnapshot(userId: string): Promise<WorkbenchSnapshot> {
     const startedAt = Date.now();
-    const workspaces = this.listVisibleWorkspaces();
+    const workspaces = this.listWorkbenchWorkspaces();
 
     this.scheduleWorkspaceRefreshes(workspaces, userId, {
       force: true
@@ -74,8 +91,11 @@ export class WorkbenchService {
       "workbench.refresh_snapshot",
       Date.now() - startedAt,
       {
-        workspaceCount: workspaces.length,
-        sessionCount: snapshot.items.reduce((total, item) => total + item.sessions.length, 0)
+        workspaceCount: snapshot.items.length,
+        sessionCount: snapshot.items.reduce(
+          (total, item) => total + countWorkbenchSessions(item),
+          0
+        )
       },
       {
         thresholdMs: 300
@@ -86,7 +106,7 @@ export class WorkbenchService {
   }
 
   async syncSessionTitles(userId: string): Promise<WorkbenchSnapshot> {
-    const workspaces = this.listVisibleWorkspaces();
+    const workspaces = this.listWorkbenchWorkspaces();
 
     await Promise.all(
       workspaces.map((workspace) =>
@@ -97,7 +117,7 @@ export class WorkbenchService {
     return this.getSnapshot(userId);
   }
 
-  private listVisibleWorkspaces(): Workspace[] {
+  private listWorkbenchWorkspaces(): Workspace[] {
     const butlerWorkspacePath = this.butlerProfileService.getProfile()?.workspacePath ?? null;
 
     if (!butlerWorkspacePath) {
@@ -107,6 +127,12 @@ export class WorkbenchService {
     return this.workspaceRepository
       .list()
       .filter((workspace) => !isPathInsideButlerWorkspace(workspace.path, butlerWorkspacePath));
+  }
+
+  private listVisibleWorkspaces(workspaces: Workspace[]): Workspace[] {
+    const childWorkspaceIdSet = new Set(this.workspaceWorktreeRepository?.listWorkspaceIds() ?? []);
+
+    return workspaces.filter((workspace) => !childWorkspaceIdSet.has(workspace.id));
   }
 
   private scheduleWorkspaceRefreshes(
@@ -138,9 +164,75 @@ export class WorkbenchService {
 
     return sessions.filter((session) => !hiddenSessionIds.has(session.sessionId));
   }
+
+  private buildChildWorktrees(
+    rootWorkspaceId: string,
+    workspaceById: ReadonlyMap<string, Workspace>,
+    userId: string
+  ): WorkbenchWorktreeNode[] {
+    if (!this.workspaceWorktreeRepository) {
+      return [];
+    }
+
+    const records = this.workspaceWorktreeRepository
+      .listByRootWorkspaceId(rootWorkspaceId)
+      .filter((record) => record.lifecycleStatus !== "removed");
+    const nodeByWorkspaceId = new Map<string, WorkbenchWorktreeNode>();
+    const roots: WorkbenchWorktreeNode[] = [];
+
+    for (const record of records) {
+      const workspace = workspaceById.get(record.workspaceId);
+
+      if (!workspace) {
+        continue;
+      }
+
+      nodeByWorkspaceId.set(record.workspaceId, {
+        workspace,
+        meta: record,
+        sessions: this.filterButlerControlSessions(
+          this.sessionHistoryService.listWorkspaceSessions(workspace.id, userId)
+        ),
+        children: []
+      });
+    }
+
+    for (const record of records) {
+      const currentNode = nodeByWorkspaceId.get(record.workspaceId);
+
+      if (!currentNode) {
+        continue;
+      }
+
+      if (record.parentWorkspaceId === rootWorkspaceId) {
+        roots.push(currentNode);
+        continue;
+      }
+
+      const parentNode = nodeByWorkspaceId.get(record.parentWorkspaceId);
+
+      if (parentNode) {
+        parentNode.children.push(currentNode);
+        continue;
+      }
+
+      roots.push(currentNode);
+    }
+
+    return roots;
+  }
 }
 
 function isPathInsideButlerWorkspace(candidatePath: string, butlerWorkspacePath: string): boolean {
   const relative = path.relative(path.resolve(butlerWorkspacePath), path.resolve(candidatePath));
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function countWorkbenchSessions(item: WorkbenchSnapshotItem): number {
+  return item.sessions.length + (item.childWorktrees ?? [])
+    .reduce((total, node) => total + countWorktreeNodeSessions(node), 0);
+}
+
+function countWorktreeNodeSessions(node: WorkbenchWorktreeNode): number {
+  return node.sessions.length + node.children.reduce((total, child) => total + countWorktreeNodeSessions(child), 0);
 }

@@ -154,12 +154,13 @@ export class WorkspaceRepoGuard {
 
 function normalizePath(input: string): string {
   const resolved = path.resolve(input);
+  const realPath = fs.existsSync(resolved) ? fs.realpathSync.native(resolved) : resolved;
 
   if (process.platform === "win32") {
-    return resolved.toLowerCase();
+    return realPath.toLowerCase();
   }
 
-  return resolved;
+  return realPath;
 }
 
 function isPathInside(candidate: string, parent: string): boolean {

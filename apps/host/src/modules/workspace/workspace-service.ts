@@ -7,6 +7,7 @@ import { createId } from "../../shared/utils/id.js";
 import { nowIso } from "../../shared/utils/time.js";
 import type { WorkspaceNavigationStateRepository } from "../../storage/repositories/workspace-navigation-state-repository.js";
 import type { WorkspaceRepository } from "../../storage/repositories/workspace-repository.js";
+import type { WorkspaceWorktreeRepository } from "../../storage/repositories/workspace-worktree-repository.js";
 import type { Workspace, WorkspaceNavigationStateRecord } from "../../types/domain.js";
 import type { ButlerProfileService } from "../butler/butler-profile-service.js";
 import { createGitAuthContext, type GitAuthInput } from "../git/git-auth.js";
@@ -157,7 +158,8 @@ export class WorkspaceService {
     private readonly workspaceRepository: WorkspaceRepository,
     private readonly gitCommandRunner: GitCommandRunner,
     private readonly workspaceNavigationStateRepository: WorkspaceNavigationStateRepository,
-    private readonly butlerProfileService?: Pick<ButlerProfileService, "getProfile">
+    private readonly butlerProfileService?: Pick<ButlerProfileService, "getProfile">,
+    private readonly workspaceWorktreeRepository?: Pick<WorkspaceWorktreeRepository, "listWorkspaceIds">
   ) {}
 
   browseDirectories(requestedPath?: string): WorkspaceDirectoryBrowseResult {
@@ -382,14 +384,18 @@ export class WorkspaceService {
   }
 
   private listVisibleWorkspaces(): Workspace[] {
+    const childWorkspaceIdSet = new Set(this.workspaceWorktreeRepository?.listWorkspaceIds() ?? []);
     const butlerWorkspacePath = this.butlerProfileService?.getProfile()?.workspacePath ?? null;
 
     if (!butlerWorkspacePath) {
-      return this.workspaceRepository.list();
+      return this.workspaceRepository
+        .list()
+        .filter((workspace) => !childWorkspaceIdSet.has(workspace.id));
     }
 
     return this.workspaceRepository
       .list()
+      .filter((workspace) => !childWorkspaceIdSet.has(workspace.id))
       .filter((workspace) => !isPathInsideButlerWorkspace(workspace.path, butlerWorkspacePath));
   }
 

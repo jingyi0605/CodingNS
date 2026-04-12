@@ -262,6 +262,32 @@ describe("spec005 Git 上下文与提交规则引擎", () => {
     });
     expect(branchesResponse.statusCode).toBe(200);
     expect(branchesResponse.json().currentBranch).toBe("main");
+    expect(branchesResponse.json().local).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "main",
+          current: true,
+          remote: false
+        })
+      ])
+    );
+
+    runGitCommand(fixture.workspaceDir, ["tag", "v0.1.0"]);
+    const tagsResponse = await hosted.app.inject({
+      method: "GET",
+      url: `/api/git/tags?workspaceId=${fixture.workspaceId}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(tagsResponse.statusCode).toBe(200);
+    expect(tagsResponse.json()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "v0.1.0"
+        })
+      ])
+    );
 
     const switchBranchResponse = await hosted.app.inject({
       method: "POST",
