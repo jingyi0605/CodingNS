@@ -101,7 +101,8 @@ const navigationGroups: WorkspaceSessionGroup[] = [
       path: "C:/Code/demo",
       repoRoot: "C:/Code/demo"
     },
-    sessions: []
+    sessions: [],
+    childWorktrees: []
   }
 ];
 

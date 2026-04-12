@@ -1,14 +1,16 @@
 import { createPortal } from "react-dom";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 
 import { useHaptics } from "../../../shared/haptics";
 import { t } from "../../../shared/i18n";
 import type { ProviderId, WorkspaceDto } from "../../conversation/api/conversation-api";
 import { SessionProviderPicker } from "../../conversation/components/SessionProviderPicker";
+import type { MobileWorkspaceOption } from "../../workbench/utils/mobile-workspace-tree";
 
 interface MobileCreateSessionSheetProps {
   readonly open: boolean;
   readonly workspaces: readonly WorkspaceDto[];
+  readonly workspaceOptions?: readonly MobileWorkspaceOption[];
   readonly initialWorkspaceId: string | null;
   readonly onClose: () => void;
   readonly onSelect: (workspaceId: string, provider: ProviderId) => void;
@@ -17,6 +19,7 @@ interface MobileCreateSessionSheetProps {
 export function MobileCreateSessionSheet({
   open,
   workspaces,
+  workspaceOptions,
   initialWorkspaceId,
   onClose,
   onSelect
@@ -24,23 +27,39 @@ export function MobileCreateSessionSheet({
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>("");
   const [workspacePickerOpen, setWorkspacePickerOpen] = useState(false);
   const haptics = useHaptics();
+  const selectionOptions = useMemo(
+    () =>
+      workspaceOptions ?? workspaces.map((workspace) => ({
+        workspace,
+        label: workspace.name,
+        subtitle: workspace.path,
+        depth: 0,
+        kind: "workspace" as const,
+        meta: null
+      })),
+    [workspaceOptions, workspaces]
+  );
+  const selectionOptionKey = useMemo(
+    () => selectionOptions.map((item) => item.workspace.id).join("|"),
+    [selectionOptions]
+  );
 
   useEffect(() => {
     if (!open) {
       return;
     }
 
-    setSelectedWorkspaceId(resolveInitialWorkspaceId(workspaces, initialWorkspaceId));
+    setSelectedWorkspaceId(resolveInitialWorkspaceId(selectionOptions, initialWorkspaceId));
     setWorkspacePickerOpen(false);
-  }, [initialWorkspaceId, open, workspaces]);
+  }, [initialWorkspaceId, open, selectionOptionKey]);
 
   if (!open || typeof document === "undefined") {
     return null;
   }
 
-  const selectedWorkspace =
-    workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ??
-    workspaces[0] ??
+  const selectedWorkspaceOption =
+    selectionOptions.find((item) => item.workspace.id === selectedWorkspaceId) ??
+    selectionOptions[0] ??
     null;
 
   return createPortal(
@@ -63,41 +82,57 @@ export function MobileCreateSessionSheet({
               <button
                 type="button"
                 className="mobile-create-session-workspace-trigger"
-                aria-label={`${t("shell.createSessionWorkspaceLabel")} ${selectedWorkspace?.name ?? ""}`.trim()}
+                aria-label={`${t("shell.createSessionWorkspaceLabel")} ${selectedWorkspaceOption?.label ?? ""}`.trim()}
                 aria-expanded={workspacePickerOpen ? "true" : "false"}
-                disabled={workspaces.length === 0}
+                disabled={selectionOptions.length === 0}
                 onClick={() => {
                   void haptics.trigger("selection");
                   setWorkspacePickerOpen((current) => !current);
                 }}
               >
                 <span className="mobile-create-session-workspace-copy">
-                  <strong>{selectedWorkspace?.name ?? t("common.unknown")}</strong>
-                  <span>{selectedWorkspace?.path ?? t("common.unknown")}</span>
+                  <strong>{selectedWorkspaceOption?.label ?? t("common.unknown")}</strong>
+                  <span>{selectedWorkspaceOption?.subtitle ?? t("common.unknown")}</span>
                 </span>
                 <ChevronDownIcon expanded={workspacePickerOpen} />
               </button>
               {workspacePickerOpen ? (
                 <div className="mobile-workspace-home-group mobile-create-session-workspace-list" role="list">
-                  {workspaces.map((workspace) => (
+                  {selectionOptions.map((item) => (
                     <button
-                      key={workspace.id}
+                      key={item.workspace.id}
                       type="button"
                       className="mobile-workspace-home-row mobile-create-session-workspace-row"
+                      data-worktree-kind={item.kind}
+                      data-worktree-depth={item.depth}
                       onClick={() => {
-                        if (workspace.id !== selectedWorkspaceId) {
+                        if (item.workspace.id !== selectedWorkspaceId) {
                           void haptics.trigger("selection");
                         }
-                        setSelectedWorkspaceId(workspace.id);
+                        setSelectedWorkspaceId(item.workspace.id);
                         setWorkspacePickerOpen(false);
                       }}
                     >
-                      <span className="mobile-create-session-workspace-option-copy">
-                        <strong>{workspace.name}</strong>
-                        <span>{workspace.path}</span>
+                      <span
+                        className="mobile-create-session-workspace-option-copy"
+                        style={
+                          {
+                            "--mobile-workspace-tree-depth": String(item.depth)
+                          } as CSSProperties
+                        }
+                      >
+                        <strong>
+                          {item.kind === "worktree" ? (
+                            <span className="mobile-workspace-home-worktree-badge">
+                              {t("shell.mobileWorktreeBadge")}
+                            </span>
+                          ) : null}
+                          {item.label}
+                        </strong>
+                        <span>{item.subtitle}</span>
                       </span>
                       <span className="mobile-workspace-home-row-trailing">
-                        {workspace.id === selectedWorkspaceId ? <CheckIcon /> : <ChevronRightIcon />}
+                        {item.workspace.id === selectedWorkspaceId ? <CheckIcon /> : <ChevronRightIcon />}
                       </span>
                     </button>
                   ))}
@@ -132,12 +167,15 @@ export function MobileCreateSessionSheet({
   );
 }
 
-function resolveInitialWorkspaceId(workspaces: readonly WorkspaceDto[], initialWorkspaceId: string | null) {
-  if (initialWorkspaceId && workspaces.some((workspace) => workspace.id === initialWorkspaceId)) {
+function resolveInitialWorkspaceId(
+  workspaceOptions: readonly MobileWorkspaceOption[],
+  initialWorkspaceId: string | null
+) {
+  if (initialWorkspaceId && workspaceOptions.some((item) => item.workspace.id === initialWorkspaceId)) {
     return initialWorkspaceId;
   }
 
-  return workspaces[0]?.id ?? "";
+  return workspaceOptions[0]?.workspace.id ?? "";
 }
 
 function ChevronDownIcon({ expanded }: { expanded: boolean }) {

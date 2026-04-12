@@ -345,11 +345,110 @@ export interface HistoryPageDto {
 export interface WorkbenchSnapshotItemDto {
   workspace: WorkspaceDto;
   sessions: SessionSummaryDto[];
+  childWorktrees?: WorkbenchWorktreeNodeDto[];
   collapsed?: boolean;
 }
 
 export interface WorkbenchSnapshotDto {
   items: WorkbenchSnapshotItemDto[];
+}
+
+export interface WorkbenchWorktreeNodeDto {
+  workspace: WorkspaceDto;
+  meta: {
+    workspaceId: string;
+    rootWorkspaceId: string;
+    parentWorkspaceId: string;
+    sourceWorkspaceId: string;
+    mergeTargetWorkspaceId: string;
+    branchName: string;
+    baseRef: string;
+    baseCommit: string;
+    headCommit: string | null;
+    displayName: string;
+    depth: number;
+    lifecycleStatus: "active" | "merged" | "abandoned" | "removing" | "removed";
+    mergedAt: string | null;
+    removedAt: string | null;
+    createdAt: string;
+    updatedAt: string;
+  };
+  sessions: SessionSummaryDto[];
+  children: WorkbenchWorktreeNodeDto[];
+}
+
+export interface CreateWorktreePayload {
+  sourceWorkspaceId: string;
+  branchName: string;
+  displayName?: string;
+  baseRef?: string;
+}
+
+export interface WorktreeMetaDto {
+  workspaceId: string;
+  rootWorkspaceId: string;
+  parentWorkspaceId: string;
+  sourceWorkspaceId: string;
+  mergeTargetWorkspaceId: string;
+  branchName: string;
+  baseRef: string;
+  baseCommit: string;
+  headCommit: string | null;
+  displayName: string;
+  depth: number;
+  lifecycleStatus: "active" | "merged" | "abandoned" | "removing" | "removed";
+  mergedAt: string | null;
+  removedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorktreeMergeBlockerDto {
+  code:
+    | "SOURCE_NOT_ACTIVE"
+    | "SOURCE_DIRTY"
+    | "TARGET_DIRTY"
+    | "HAS_ACTIVE_CHILDREN"
+    | "NO_COMMITS_TO_MERGE"
+    | "HAS_CONFLICTS";
+  detail: string;
+}
+
+export interface WorktreeMergePreviewDto {
+  workspaceId: string;
+  sourceWorkspace: WorkspaceDto;
+  targetWorkspace: WorkspaceDto;
+  meta: WorktreeMetaDto;
+  sourceBranchName: string;
+  targetBranchName: string;
+  sourceHeadCommit: string | null;
+  targetHeadCommit: string | null;
+  mergeBaseCommit: string | null;
+  ahead: number;
+  behind: number;
+  hasConflicts: boolean;
+  conflictPaths: string[];
+  alreadyMerged: boolean;
+  canMerge: boolean;
+  blockers: WorktreeMergeBlockerDto[];
+}
+
+export interface WorktreeMergeApplyResponseDto {
+  preview: WorktreeMergePreviewDto;
+  applied: boolean;
+  mergeCommit: string | null;
+  meta: WorktreeMetaDto;
+}
+
+export interface WorktreeCleanupResponseDto {
+  workspaceId: string;
+  removed: boolean;
+  meta: WorktreeMetaDto;
+}
+
+export interface CreateWorktreeResponseDto {
+  workspace: WorkspaceDto;
+  meta: WorktreeMetaDto;
 }
 
 export interface SendMessageResponseDto {
@@ -626,6 +725,40 @@ export function updateSessionFavoriteState(sessionId: string, favorite: boolean)
     method: "PATCH",
     body: JSON.stringify({ favorite })
   });
+}
+
+export function createWorktree(payload: CreateWorktreePayload) {
+  return httpClient.request<CreateWorktreeResponseDto>("/api/worktrees", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function getWorktreeMergePreview(workspaceId: string) {
+  return httpClient.request<WorktreeMergePreviewDto>(
+    `/api/worktrees/${encodeURIComponent(workspaceId)}/merge-preview`,
+    {
+      method: "POST"
+    }
+  );
+}
+
+export function mergeWorktreeIntoParent(workspaceId: string) {
+  return httpClient.request<WorktreeMergeApplyResponseDto>(
+    `/api/worktrees/${encodeURIComponent(workspaceId)}/merge-into-parent`,
+    {
+      method: "POST"
+    }
+  );
+}
+
+export function cleanupWorktree(workspaceId: string) {
+  return httpClient.request<WorktreeCleanupResponseDto>(
+    `/api/worktrees/${encodeURIComponent(workspaceId)}/cleanup`,
+    {
+      method: "POST"
+    }
+  );
 }
 
 export function getSessionCapabilities(sessionId: string) {

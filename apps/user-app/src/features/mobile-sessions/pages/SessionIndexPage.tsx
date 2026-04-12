@@ -18,6 +18,11 @@ import {
   flattenSessionTreeNodes,
   getSessionTreeChildren
 } from "../../workbench/utils/session-tree";
+import {
+  findNavigationWorkspaceTarget,
+  flattenMobileWorkspaceOptions
+} from "../../workbench/utils/mobile-workspace-tree";
+import { buildWorkspaceVisualContextMap } from "../../workbench/utils/worktree-visual-context";
 import { SessionListItem } from "../components/SessionListItem";
 import { writeMobileConversationPreviewMode } from "../mobile-conversation-state";
 import "../styles.css";
@@ -40,15 +45,31 @@ export function SessionIndexPage() {
     startDraftSession
   } = useWorkbenchShell();
 
-  const currentWorkspaceGroup =
-    navigationGroups.find((group) => group.workspace.id === currentWorkspaceId) ??
-    navigationGroups[0] ??
-    null;
+  const workspaceOptions = flattenMobileWorkspaceOptions(navigationGroups);
+  const workspaceVisualContextMap = useMemo(
+    () => buildWorkspaceVisualContextMap(navigationGroups),
+    [navigationGroups]
+  );
+  const currentWorkspaceTarget =
+    findNavigationWorkspaceTarget(navigationGroups, currentWorkspaceId) ??
+    findNavigationWorkspaceTarget(navigationGroups, navigationGroups[0]?.workspace.id ?? null);
+  const currentWorkspaceSummary =
+    workspaceOptions.find((item) => item.workspace.id === currentWorkspaceTarget?.workspace.id)
+    ?? (currentWorkspaceTarget
+      ? {
+          workspace: currentWorkspaceTarget.workspace,
+          label: currentWorkspaceTarget.workspace.name,
+          subtitle: currentWorkspaceTarget.workspace.path,
+          depth: 0,
+          kind: "workspace" as const,
+          meta: null
+        }
+      : null);
   const favoriteSet = useMemo(() => new Set(favoriteSessionIds), [favoriteSessionIds]);
   const currentWorkspaceEntries = useMemo(
     () =>
-      currentWorkspaceGroup
-        ? currentWorkspaceGroup.sessions
+      currentWorkspaceTarget
+        ? currentWorkspaceTarget.sessions
             .filter((session) => {
               if (session.isArchived) {
                 return false;
@@ -60,7 +81,7 @@ export function SessionIndexPage() {
                 return true;
               }
 
-              const parentSession = currentWorkspaceGroup.sessions.find(
+              const parentSession = currentWorkspaceTarget.sessions.find(
                 (item) => item.sessionId === parentSessionId
               );
 
@@ -68,16 +89,16 @@ export function SessionIndexPage() {
             })
             .map((session) => ({
               session,
-              workspace: currentWorkspaceGroup.workspace
+              workspace: currentWorkspaceTarget.workspace
             }))
         : ([] as WorkbenchNavigationEntry[]),
-    [currentWorkspaceGroup]
+    [currentWorkspaceTarget]
   );
   const visibleTree = useMemo(
     () => buildNavigationSessionTree(currentWorkspaceEntries),
     [currentWorkspaceEntries]
   );
-  const fallbackWorkspaceId = currentWorkspaceGroup?.workspace.id ?? "";
+  const fallbackWorkspaceId = currentWorkspaceTarget?.workspace.id ?? "";
   const canStartSession = Boolean(fallbackWorkspaceId);
   const [expandedSubagentRootIds, setExpandedSubagentRootIds] = useState<string[]>([]);
   const [visibleSubagentCounts, setVisibleSubagentCounts] = useState<Record<string, number>>({});
@@ -243,6 +264,7 @@ export function SessionIndexPage() {
             isActive={currentSessionId === sessionId}
             depth={node.depth}
             variant="mobile"
+            workspaceTone={workspaceVisualContextMap[node.item.workspace.id]?.tone ?? "root"}
             hasSubsessions={allowToggle}
             subsessionsExpanded={isExpanded}
             onActivate={(nextSessionId) => handleActivateSession(node.item.workspace.id, nextSessionId)}
@@ -286,8 +308,17 @@ export function SessionIndexPage() {
   return (
     <main className="session-index-page mobile-feature-page mobile-page-scroll-root mobile-page-with-top-header">
       <MobileWorkspaceSwitcherHeader
-        currentWorkspace={currentWorkspaceGroup?.workspace ?? null}
+        currentWorkspace={
+          currentWorkspaceSummary
+            ? {
+                id: currentWorkspaceSummary.workspace.id,
+                name: currentWorkspaceSummary.label,
+                path: currentWorkspaceSummary.subtitle
+              }
+            : null
+        }
         workspaces={navigationGroups.map((group) => group.workspace)}
+        workspaceOptions={workspaceOptions}
         onSelectWorkspace={(workspaceId) => {
           selectWorkspace(workspaceId);
           navigate(buildWorkspaceSessionIndexPath(workspaceId));
@@ -327,6 +358,7 @@ export function SessionIndexPage() {
       <MobileCreateSessionSheet
         open={createSessionOpen}
         workspaces={navigationGroups.map((group) => group.workspace)}
+        workspaceOptions={workspaceOptions}
         initialWorkspaceId={currentWorkspaceId ?? fallbackWorkspaceId}
         onClose={() => setCreateSessionOpen(false)}
         onSelect={handleSelectSessionProvider}

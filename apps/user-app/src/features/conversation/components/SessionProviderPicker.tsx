@@ -99,19 +99,17 @@ export function SessionProviderPicker({
         const capabilityDisabledReason = resolveProviderDisabledReason(
           capabilitiesByProvider[item.provider] ?? null
         );
-        const loadingDisabledReason =
-          requiresCapabilityResolution && !capabilityResolved && !isPending
-            ? t("shell.providerChecking")
-            : null;
         const disabledReason =
           disabledReasons?.[item.provider]
-          ?? capabilityDisabledReason
-          ?? loadingDisabledReason;
+          ?? capabilityDisabledReason;
         const statusLabel = isPending
           ? t("shell.startingSession")
           : disabledReason
             ? disabledReason
-            : statusHintByProvider?.[item.provider] ?? null;
+            : statusHintByProvider?.[item.provider]
+              ?? (requiresCapabilityResolution && !capabilityResolved && !isPending
+                ? t("shell.providerChecking")
+                : null);
 
         return (
           <button

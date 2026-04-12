@@ -38,7 +38,8 @@ const {
         path: "/Users/jackson/Code/CodingNS",
         repoRoot: "/Users/jackson/Code/CodingNS"
       },
-      sessions: []
+      sessions: [],
+      childWorktrees: []
     },
     {
       workspace: {
@@ -47,7 +48,8 @@ const {
         path: "/Users/jackson/Code/Docs",
         repoRoot: "/Users/jackson/Code/Docs"
       },
-      sessions: []
+      sessions: [],
+      childWorktrees: []
     }
   ] as WorkspaceSessionGroup[],
   mockCloseTerminal: vi.fn(),

@@ -33,7 +33,8 @@ function mapWorkbenchSnapshotToGroups(snapshot: WorkbenchSnapshotDto | null | un
     workspace: item.workspace,
     sessions: [...item.sessions].sort((left, right) =>
       (right.lastMessageAt ?? right.updatedAt).localeCompare(left.lastMessageAt ?? left.updatedAt)
-    )
+    ),
+    childWorktrees: Array.isArray(item.childWorktrees) ? item.childWorktrees : []
   }));
 }
 

@@ -9,10 +9,12 @@ import { t } from "../../../shared/i18n";
 import { buildSessionTitlePresentation } from "../session-title";
 
 import type { SessionSummaryDto } from "../api/conversation-api";
+import type { WorkspaceVisualContext } from "../../workbench/utils/worktree-visual-context";
 
 interface SessionHeaderProps {
   session: SessionSummaryDto | null;
   actions?: ReactNode;
+  workspaceContext?: WorkspaceVisualContext | null;
 }
 
 function resolveTitleScale(title: string) {
@@ -33,7 +35,7 @@ function resolveTitleScale(title: string) {
   return "sm";
 }
 
-export function SessionHeader({ session, actions }: SessionHeaderProps) {
+export function SessionHeader({ session, actions, workspaceContext = null }: SessionHeaderProps) {
   const platform = usePlatform();
   const handleHeaderMouseDownCapture = useCallback((event: MouseEvent<HTMLElement>) => {
     if (!platform.isDesktop || platform.ui.osFamily !== "macos" || event.button !== 0) {
@@ -70,6 +72,7 @@ export function SessionHeader({ session, actions }: SessionHeaderProps) {
   return (
     <header
       className="conversation-header"
+      data-workspace-tone={workspaceContext?.tone ?? "root"}
       data-window-drag-handle="conversation-header"
       onMouseDownCapture={handleHeaderMouseDownCapture}
     >

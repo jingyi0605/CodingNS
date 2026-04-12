@@ -48,6 +48,7 @@ interface SessionListItemProps {
   readonly isActive?: boolean;
   readonly depth?: number;
   readonly variant?: "default" | "mobile";
+  readonly workspaceTone?: "root" | "worktree";
   readonly hasSubsessions?: boolean;
   readonly subsessionsExpanded?: boolean;
   readonly showActions?: boolean;
@@ -65,6 +66,7 @@ export function SessionListItem({
   isActive = false,
   depth = 0,
   variant = "default",
+  workspaceTone = "root",
   hasSubsessions = false,
   subsessionsExpanded = false,
   showActions = true,
@@ -291,6 +293,7 @@ export function SessionListItem({
       className="session-list-item"
       data-depth={depth}
       data-active={isActive}
+      data-workspace-tone={workspaceTone}
       data-has-subsessions={hasSubsessions}
       data-variant={variant}
     >

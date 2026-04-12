@@ -4,7 +4,11 @@ import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { t } from "../../../shared/i18n";
-import type { SessionSummaryDto, WorkspaceDto } from "../../conversation/api/conversation-api";
+import type {
+  SessionSummaryDto,
+  WorkbenchWorktreeNodeDto,
+  WorkspaceDto
+} from "../../conversation/api/conversation-api";
 import type { WorkbenchNavigationGroup } from "../../workbench/utils/workbench-navigation";
 import { SessionIndexPage } from "./SessionIndexPage";
 
@@ -61,6 +65,37 @@ function createWorkspace(id: string, name: string): WorkspaceDto {
     name,
     path: `/tmp/${id}`,
     repoRoot: `/tmp/${id}`
+  };
+}
+
+function createWorktreeNode(input: {
+  workspace: WorkspaceDto;
+  displayName: string;
+  branchName: string;
+  sessions: SessionSummaryDto[];
+}): WorkbenchWorktreeNodeDto {
+  return {
+    workspace: input.workspace,
+    meta: {
+      workspaceId: input.workspace.id,
+      rootWorkspaceId: "workspace-1",
+      parentWorkspaceId: "workspace-1",
+      sourceWorkspaceId: "workspace-1",
+      mergeTargetWorkspaceId: "workspace-1",
+      branchName: input.branchName,
+      baseRef: "main",
+      baseCommit: "commit-base",
+      headCommit: "commit-head",
+      displayName: input.displayName,
+      depth: 1,
+      lifecycleStatus: "active",
+      mergedAt: null,
+      removedAt: null,
+      createdAt: "2026-04-12T08:00:00.000Z",
+      updatedAt: "2026-04-12T08:00:00.000Z"
+    },
+    sessions: input.sessions,
+    children: []
   };
 }
 
@@ -143,11 +178,12 @@ vi.mock("../../conversation/components/WorkbenchLayout", async () => {
   };
 });
 
-function renderPage(options?: { withRouteProbe?: boolean }) {
+function renderPage(options?: { withRouteProbe?: boolean; initialEntry?: string }) {
   const withRouteProbe = options?.withRouteProbe ?? false;
+  const initialEntry = options?.initialEntry ?? "/workspaces/workspace-1/sessions";
 
   return render(
-    <MemoryRouter initialEntries={["/workspaces/workspace-1/sessions"]}>
+    <MemoryRouter initialEntries={[initialEntry]}>
       <Routes>
         <Route
           path="/workspaces/:workspaceId/sessions"
@@ -172,6 +208,7 @@ describe("SessionIndexPage", () => {
     vi.clearAllMocks();
     window.localStorage.clear();
     contextValue.navigationGroups = createNavigationGroups();
+    contextValue.currentWorkspaceId = "workspace-1";
     contextValue.currentSessionId = "session-1";
   });
 
@@ -189,7 +226,9 @@ describe("SessionIndexPage", () => {
   });
 
   it("当前工作区列表会保留收藏会话，但不会混入其他工作区会话", () => {
-    renderPage();
+    renderPage({
+      initialEntry: "/workspaces/workspace-1-child/sessions"
+    });
 
     const workspaceSection = screen.getByRole("heading", { level: 2, name: "当前工作区" }).closest("section");
 
@@ -200,6 +239,47 @@ describe("SessionIndexPage", () => {
     expect(within(workspaceSection).getByText("会话 Alpha")).toBeInTheDocument();
     expect(within(workspaceSection).getByText("会话 Beta")).toBeInTheDocument();
     expect(within(workspaceSection).queryByText("会话 Gamma")).not.toBeInTheDocument();
+  });
+
+  it("当前工作区切到子工作树后，只显示子工作树自己的会话", () => {
+    contextValue.navigationGroups = [
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: createNavigationGroups()[0].sessions,
+        childWorktrees: [
+          createWorktreeNode({
+            workspace: createWorkspace("workspace-1-child", "登录分支"),
+            displayName: "feat/login-codex",
+            branchName: "feat/login-codex",
+            sessions: [
+              createSessionSummary({
+                sessionId: "session-child",
+                title: "工作树会话",
+                provider: "codex",
+                workspaceId: "workspace-1-child",
+                lastMessageAt: "2026-03-27T11:00:00Z"
+              })
+            ]
+          })
+        ]
+      },
+      createNavigationGroups()[1]
+    ];
+    contextValue.currentWorkspaceId = "workspace-1-child";
+    contextValue.currentSessionId = "session-child";
+
+    renderPage();
+
+    expect(screen.getByRole("heading", { level: 1, name: "feat/login-codex" })).toBeInTheDocument();
+
+    const workspaceSection = screen.getByRole("heading", { level: 2, name: "当前工作区" }).closest("section");
+
+    if (!workspaceSection) {
+      throw new Error("未找到目标区块");
+    }
+
+    expect(within(workspaceSection).getByText("工作树会话")).toBeInTheDocument();
+    expect(within(workspaceSection).queryByText("会话 Alpha")).not.toBeInTheDocument();
   });
 
   it("新建会话按钮会先选择工作区和供应商再调用 startDraftSession", async () => {

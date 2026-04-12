@@ -10177,6 +10177,16 @@ textarea:focus-visible {
   gap: 12px;
 }
 
+.workbench-section-heading-button {
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
 .workbench-section-heading-main {
   display: flex;
   align-items: center;
@@ -12447,9 +12457,300 @@ textarea:focus-visible {
   width: min(840px, calc(100% - 40px));
 }
 
+.workbench-modal-card.workbench-create-worktree-modal {
+  width: min(1080px, calc(100% - 40px));
+}
+
 .workbench-create-session-modal .workbench-modal-body {
   padding-top: 6px;
   padding-inline: 2px;
+}
+
+.create-session-modal-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.create-session-modal-section-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.create-session-modal-section-header strong {
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+.create-session-modal-section-header span {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.create-session-worktree-form {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 78%, transparent);
+  background: color-mix(in srgb, var(--bg-hover) 58%, transparent);
+}
+
+.create-session-worktree-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.create-session-worktree-field > span:first-child {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.create-session-worktree-field-hint {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.create-session-worktree-help-card {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--border-primary));
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 10%, white), transparent 52%),
+    color-mix(in srgb, var(--bg-elevated) 92%, white);
+}
+
+.create-session-worktree-help-card > strong {
+  font-size: 14px;
+}
+
+.create-session-worktree-help-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.create-session-worktree-help-grid article {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 12px;
+  border-radius: 14px;
+  background: color-mix(in srgb, white 76%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border-primary) 70%, transparent);
+}
+
+.create-session-worktree-help-grid h3 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.create-session-worktree-help-grid p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--text-secondary);
+}
+
+.create-session-worktree-combobox {
+  position: relative;
+}
+
+.create-session-worktree-combobox-input-wrap {
+  position: relative;
+}
+
+.create-session-worktree-combobox-input {
+  padding-right: 42px;
+}
+
+.create-session-worktree-combobox-toggle {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  transform: translateY(-50%);
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.create-session-worktree-combobox-toggle:hover {
+  background: color-mix(in srgb, var(--bg-hover) 78%, transparent);
+  color: var(--text-primary);
+}
+
+.create-session-worktree-combobox-popover {
+  position: relative;
+  margin-top: 8px;
+  max-height: 320px;
+  overflow: auto;
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 82%, transparent);
+  background: var(--bg-surface);
+  box-shadow: 0 18px 44px rgba(15, 23, 42, 0.16);
+}
+
+.create-session-worktree-combobox-popover.floating {
+  position: fixed;
+  top: var(--create-worktree-combobox-top);
+  left: var(--create-worktree-combobox-left);
+  width: var(--create-worktree-combobox-width);
+  margin-top: 0;
+  z-index: 2001;
+}
+
+.create-session-worktree-combobox-floating-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  pointer-events: none;
+}
+
+.create-session-worktree-combobox-floating-backdrop {
+  position: fixed;
+  top: calc(var(--create-worktree-combobox-top) - 8px);
+  left: calc(var(--create-worktree-combobox-left) - 8px);
+  width: calc(var(--create-worktree-combobox-width) + 16px);
+  height: calc(var(--create-worktree-combobox-height) + 16px);
+  border-radius: 18px;
+  background: var(--bg-surface);
+  box-shadow: 0 16px 34px rgba(15, 23, 42, 0.12);
+}
+
+.create-session-worktree-combobox-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.create-session-worktree-combobox-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.create-session-worktree-combobox-group-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+}
+
+.create-session-worktree-combobox-group-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.create-session-worktree-combobox-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 72%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, white 82%, transparent);
+  color: var(--text-primary);
+  font-size: 13px;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.create-session-worktree-combobox-option-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.create-session-worktree-combobox-option-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.create-session-worktree-combobox-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-hover) 86%, white);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.create-session-worktree-combobox-badge.recommended {
+  background: color-mix(in srgb, var(--accent) 14%, white);
+  color: color-mix(in srgb, var(--accent) 82%, black);
+}
+
+.create-session-worktree-combobox-option:hover,
+.create-session-worktree-combobox-option[data-highlighted="true"] {
+  background: color-mix(in srgb, var(--accent) 10%, white);
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--border-primary));
+}
+
+.create-session-worktree-combobox-option[aria-selected="true"] {
+  background: color-mix(in srgb, var(--accent) 14%, white);
+  border-color: color-mix(in srgb, var(--accent) 46%, var(--border-primary));
+  color: color-mix(in srgb, var(--accent) 85%, black);
+}
+
+.create-session-worktree-combobox-empty {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.workbench-modal-help-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+
+.workbench-modal-help-button:hover,
+.workbench-modal-help-button.active {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-hover));
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--border-subtle));
+}
+
+.create-session-worktree-form .workbench-modal-actions {
+  grid-column: 1 / -1;
+  margin-top: 2px;
 }
 
 .workbench-modal-header {
@@ -13507,6 +13808,14 @@ textarea:focus-visible {
 }
 
 @media (max-width: 720px) {
+  .create-session-worktree-help-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .create-session-worktree-form {
+    grid-template-columns: 1fr;
+  }
+
   .workbench-session-menu-trigger {
     opacity: 1;
     pointer-events: auto;
@@ -16660,17 +16969,21 @@ textarea:focus-visible {
 }
 
 .mobile-workspace-home-session-main {
+  --mobile-workspace-tree-depth: 0;
   display: flex;
   width: 0;
   min-width: 0;
   flex: 1 1 0;
   flex-direction: column;
   gap: 0.18rem;
+  padding-left: calc(var(--mobile-workspace-tree-depth) * 0.9rem);
   overflow: hidden;
 }
 
 .mobile-workspace-home-session-title {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
   width: 100%;
   max-width: 100%;
   overflow: hidden;
@@ -16689,6 +17002,19 @@ textarea:focus-visible {
   font-size: 0.78rem;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.mobile-workspace-home-worktree-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 1.1rem;
+  padding: 0 0.4rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-surface));
+  color: var(--accent);
+  font-size: 0.68rem;
+  font-weight: 700;
+  flex-shrink: 0;
 }
 
 .mobile-workspace-home-session-status {
@@ -16896,6 +17222,9 @@ textarea:focus-visible {
 
 .mobile-create-session-workspace-copy strong,
 .mobile-create-session-workspace-option-copy strong {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
   overflow: hidden;
   font-size: 1rem;
   font-weight: 600;
@@ -16931,6 +17260,11 @@ textarea:focus-visible {
 
 .mobile-create-session-workspace-row {
   align-items: flex-start;
+}
+
+.mobile-create-session-workspace-option-copy {
+  --mobile-workspace-tree-depth: 0;
+  padding-left: calc(var(--mobile-workspace-tree-depth) * 0.9rem);
 }
 
 .mobile-create-session-provider-hint {
@@ -20562,4 +20896,198 @@ textarea:focus-visible {
   .workspace-inbox-item-badges {
     justify-content: flex-start;
   }
+}
+
+.workbench-session-card[data-workspace-tone="worktree"] {
+  border-color: color-mix(in srgb, var(--success) 16%, transparent);
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--success) 4%, transparent),
+      color-mix(in srgb, var(--accent) 6%, transparent)
+    );
+}
+
+.workbench-session-card[data-workspace-tone="worktree"]:hover,
+.workbench-session-card[data-workspace-tone="worktree"][data-active="true"] {
+  border-color: color-mix(in srgb, var(--success) 26%, var(--accent) 12%);
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--success) 10%, var(--bg-surface)),
+      color-mix(in srgb, var(--accent) 10%, var(--bg-surface))
+    );
+}
+
+.workbench-session-card[data-workspace-tone="worktree"] .session-title {
+  color: color-mix(in srgb, var(--text-primary) 82%, var(--success) 18%);
+}
+
+.workbench-session-card[data-workspace-tone="worktree"] .session-meta {
+  color: color-mix(in srgb, var(--text-secondary) 78%, var(--success) 22%);
+}
+
+.conversation-page-shell[data-workspace-tone="worktree"] {
+  background:
+    radial-gradient(circle at top right, color-mix(in srgb, var(--success) 8%, transparent), transparent 28%),
+    radial-gradient(circle at top left, color-mix(in srgb, var(--accent) 8%, transparent), transparent 32%);
+}
+
+.conversation-header[data-workspace-tone="worktree"] {
+  border-bottom-color: color-mix(in srgb, var(--success) 18%, var(--border-primary));
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--success) 4%, var(--bg-surface)),
+      color-mix(in srgb, var(--accent) 3%, var(--bg-surface))
+    );
+}
+
+.workbench-auxiliary[data-workspace-tone="worktree"] {
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--success) 4%, var(--bg-surface)),
+      color-mix(in srgb, var(--accent) 4%, var(--bg-surface))
+    );
+  border-color: color-mix(in srgb, var(--success) 20%, var(--border-primary));
+}
+
+.workbench-auxiliary-header[data-workspace-tone="worktree"] {
+  border-bottom-color: color-mix(in srgb, var(--success) 22%, var(--border-primary));
+}
+
+.worktree-merge-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 88%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--bg-surface) 88%, white 12%);
+}
+
+.worktree-merge-panel[data-state="ready"] {
+  border-color: color-mix(in srgb, var(--success) 28%, var(--border-primary));
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--success) 6%, var(--bg-surface)),
+      color-mix(in srgb, var(--accent) 4%, var(--bg-surface))
+    );
+}
+
+.worktree-merge-panel[data-state="blocked"] {
+  border-color: color-mix(in srgb, var(--warning) 26%, var(--border-primary));
+}
+
+.worktree-merge-panel[data-state="merged"] {
+  border-color: color-mix(in srgb, var(--success) 22%, var(--border-primary));
+}
+
+.worktree-merge-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.worktree-merge-panel-header h3 {
+  margin: 2px 0 0;
+  font-size: 14px;
+}
+
+.worktree-merge-panel-label {
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.worktree-merge-panel-status {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-surface-hover) 78%, transparent);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.worktree-merge-panel-copy {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.worktree-merge-panel-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.worktree-merge-panel-meta span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-surface-hover) 76%, transparent);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.worktree-merge-panel-blockers {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.worktree-merge-panel-blocker,
+.worktree-merge-panel-hint {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.worktree-merge-panel-conflicts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.worktree-merge-panel-conflicts-label {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.worktree-merge-panel-conflict-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.worktree-merge-panel-conflict-list code {
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--warning) 10%, var(--bg-surface));
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.worktree-merge-panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.worktree-merge-panel-actions > button {
+  flex: 1 1 0;
 }

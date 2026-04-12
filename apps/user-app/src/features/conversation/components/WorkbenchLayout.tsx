@@ -60,9 +60,13 @@ import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 import { authStore } from "../../auth/store/auth-store";
 import {
+  cleanupWorktree,
+  createWorktree,
   getProviderCapabilities,
+  getWorktreeMergePreview,
   getSessionPermissionRequests,
   getWorkbenchSnapshot,
+  mergeWorktreeIntoParent,
   reorderWorkspaces,
   removeWorkspace,
   renameSessionTitle,
@@ -72,9 +76,18 @@ import {
   type ProviderId,
   type SessionSummaryDto,
   type WorkbenchSnapshotDto,
+  type WorkbenchWorktreeNodeDto,
+  type WorktreeMergePreviewDto,
   type WorkspaceManagementSummaryDto,
+  type WorktreeMetaDto,
   type WorkspaceDto
 } from "../api/conversation-api";
+import {
+  getGitBranches,
+  getGitTags,
+  type GitBranchSnapshotDto,
+  type GitTagItemDto
+} from "../api/git-api";
 import { getProviderDisplayName } from "../capability/provider-ui";
 import { searchFiles, type FileNodeDto } from "../api/file-context-api";
 import {
@@ -93,6 +106,7 @@ import { buildSessionTitlePresentation } from "../session-title";
 import {
   buildDraftSessionPath,
   buildWorkspaceHomePath,
+  buildWorkspaceDetailPath,
   buildWorkspaceSessionIndexPath,
   buildWorkspaceSessionPath,
   buildWorkspaceButlerPath,
@@ -118,6 +132,11 @@ import {
   createWorkspaceCompositionChartStyle,
   formatWorkspaceCompositionRatio
 } from "../../workbench/utils/workspace-composition-chart";
+import {
+  buildWorkspaceVisualContextMap,
+  createFallbackWorkspaceVisualContext,
+  type WorkspaceVisualContext
+} from "../../workbench/utils/worktree-visual-context";
 import {
   getButlerOverview,
   getButlerProfile,
@@ -341,6 +360,72 @@ function parseWorkbenchNotificationTime(value: string | null | undefined): numbe
   return Number.isNaN(parsed) ? 0 : parsed;
 }
 
+function isRecommendedWorktreeBranchName(value: string) {
+  return /^(?:[A-Za-z0-9_-]+)(?:\/[A-Za-z0-9_-]+)*$/.test(value);
+}
+
+function isRecommendedWorktreeBranchNameInput(value: string) {
+  return /^(?:[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*\/?)?$/.test(value);
+}
+
+function buildWorktreeBaseRefSuggestions(
+  branches: GitBranchSnapshotDto | null,
+  tags: GitTagItemDto[]
+): WorktreeBaseRefSuggestions {
+  const seen = new Set<string>();
+  const currentBranchName = branches?.currentBranch ?? "";
+  const localBranches = (branches?.local ?? [])
+    .slice()
+    .sort((left, right) => Number(right.current) - Number(left.current) || left.name.localeCompare(right.name))
+    .map((item) => ({
+      value: item.name,
+      current: item.current,
+      recommended: item.name === currentBranchName
+    }))
+    .filter((item) => {
+      if (!item.value || seen.has(item.value)) {
+        return false;
+      }
+
+      seen.add(item.value);
+      return true;
+    });
+  const remoteBranches = (branches?.remote ?? [])
+    .map((item) => ({
+      value: item.name
+    }))
+    .filter((item) => {
+      if (!item.value || seen.has(item.value)) {
+        return false;
+      }
+
+      seen.add(item.value);
+      return true;
+    });
+  const tagNames = tags
+    .map((item) => ({
+      value: item.name
+    }))
+    .filter((item) => {
+      if (!item.value || seen.has(item.value)) {
+        return false;
+      }
+
+      seen.add(item.value);
+      return true;
+    });
+
+  return {
+    localBranches,
+    remoteBranches,
+    tags: tagNames
+  };
+}
+
+function measureFloatingPanelRect(anchor: HTMLElement): DOMRect {
+  return anchor.getBoundingClientRect();
+}
+
 function isWorkbenchNotificationUnread(
   notification: WorkbenchGlobalNotification,
   seenAt: string | null
@@ -507,6 +592,7 @@ const LazyTerminalManagerPanel = lazy(async () => {
 export interface WorkspaceSessionGroup {
   workspace: WorkspaceDto;
   sessions: SessionSummaryDto[];
+  childWorktrees: WorkbenchWorktreeNodeDto[];
 }
 
 interface NavigationSessionEntry {
@@ -519,7 +605,17 @@ interface WorkspaceSidebarGroup {
   visibleSessions: SessionSummaryDto[];
   archivedSessions: SessionSummaryDto[];
   visibleSessionTree: NavigationSessionTreeNode[];
+  childWorktrees: WorkspaceSidebarWorktreeNode[];
   isCollapsed: boolean;
+}
+
+interface WorkspaceSidebarWorktreeNode {
+  workspace: WorkspaceDto;
+  meta: WorkbenchWorktreeNodeDto["meta"];
+  visibleSessions: SessionSummaryDto[];
+  archivedSessions: SessionSummaryDto[];
+  visibleSessionTree: NavigationSessionTreeNode[];
+  children: WorkspaceSidebarWorktreeNode[];
 }
 
 type NavigationSessionTreeNode = SessionTreeNode<SessionSummaryDto>;
@@ -632,6 +728,32 @@ interface WorkspaceManagementViewState {
   detail: WorkspaceManagementSummaryDto | null;
   loading: boolean;
   error: string | null;
+}
+
+interface WorktreeMergeViewState {
+  preview: WorktreeMergePreviewDto | null;
+  loading: boolean;
+  applying: boolean;
+  cleaning: boolean;
+  error: string | null;
+}
+
+interface WorktreeBaseRefOption {
+  value: string;
+  current?: boolean;
+  recommended?: boolean;
+}
+
+interface WorktreeBaseRefSuggestions {
+  localBranches: WorktreeBaseRefOption[];
+  remoteBranches: WorktreeBaseRefOption[];
+  tags: WorktreeBaseRefOption[];
+}
+
+interface WorktreeBaseRefOptionGroup {
+  key: "localBranches" | "remoteBranches" | "tags";
+  label: string;
+  items: WorktreeBaseRefOption[];
 }
 
 type CenterTab = "conversation" | "terminals" | "butler";
@@ -817,12 +939,14 @@ const subagentToggleLayerStyle: CSSProperties = {
 function buildSessionMeta(
   session: SessionSummaryDto,
   workspace: WorkspaceDto,
-  includeWorkspaceName: boolean
+  includeWorkspaceName: boolean,
+  workspaceLabel?: string
 ) {
   const metaParts: string[] = [];
+  const resolvedWorkspaceLabel = workspaceLabel?.trim() || workspace.name;
 
   if (includeWorkspaceName) {
-    metaParts.push(workspace.name);
+    metaParts.push(resolvedWorkspaceLabel);
   }
 
   const dateLabel = formatSessionMeta(session);
@@ -831,7 +955,7 @@ function buildSessionMeta(
     metaParts.push(dateLabel);
   }
 
-  return metaParts.join(" · ") || workspace.name;
+  return metaParts.join(" · ") || resolvedWorkspaceLabel;
 }
 
 function sessionStateClassName(
@@ -935,8 +1059,55 @@ function mapWorkbenchSnapshotToGroups(snapshot: WorkbenchSnapshotDto | null | un
 
   return snapshot.items.map((item) => ({
     workspace: item.workspace,
-    sessions: [...item.sessions].sort(sortSessions)
+    sessions: [...item.sessions].sort(sortSessions),
+    childWorktrees: mapWorkbenchWorktreeNodes(item.childWorktrees)
   }));
+}
+
+function findWorkbenchWorktreeNodeByWorkspaceId(
+  nodes: readonly WorkbenchWorktreeNodeDto[],
+  workspaceId: string | null | undefined
+): WorkbenchWorktreeNodeDto | null {
+  const normalizedWorkspaceId = workspaceId?.trim();
+
+  if (!normalizedWorkspaceId) {
+    return null;
+  }
+
+  for (const node of nodes) {
+    if (node.workspace.id === normalizedWorkspaceId) {
+      return node;
+    }
+
+    const nested = findWorkbenchWorktreeNodeByWorkspaceId(node.children, normalizedWorkspaceId);
+
+    if (nested) {
+      return nested;
+    }
+  }
+
+  return null;
+}
+
+function findNavigationWorktreeNodeByWorkspaceId(
+  groups: readonly WorkspaceSessionGroup[],
+  workspaceId: string | null | undefined
+): WorkbenchWorktreeNodeDto | null {
+  const normalizedWorkspaceId = workspaceId?.trim();
+
+  if (!normalizedWorkspaceId) {
+    return null;
+  }
+
+  for (const group of groups) {
+    const matched = findWorkbenchWorktreeNodeByWorkspaceId(group.childWorktrees, normalizedWorkspaceId);
+
+    if (matched) {
+      return matched;
+    }
+  }
+
+  return null;
 }
 
 function extractCollapsedWorkspaceIds(snapshot: WorkbenchSnapshotDto | null | undefined): string[] {
@@ -959,9 +1130,190 @@ function createWorkbenchSnapshotFromGroups(
     items: groups.map((group) => ({
       workspace: group.workspace,
       sessions: group.sessions,
+      childWorktrees: group.childWorktrees,
       collapsed: collapsedWorkspaceIdSet.has(group.workspace.id)
     }))
   };
+}
+
+function buildWorkspaceSidebarWorktreeNodes(
+  nodes: readonly WorkbenchWorktreeNodeDto[],
+  favoriteSessionIdSet: ReadonlySet<string>
+): WorkspaceSidebarWorktreeNode[] {
+  return nodes.map((node) => {
+    const visibleSessions = filterVisibleWorkspaceSessions(node.sessions);
+
+    return {
+      workspace: node.workspace,
+      meta: node.meta,
+      visibleSessions,
+      archivedSessions: node.sessions.filter(
+        (session) => isArchivedSession(session) && !resolveParentSessionId(session)
+      ),
+      visibleSessionTree: buildSessionTree(visibleSessions).filter(
+        (treeNode) =>
+          !favoriteSessionIdSet.has(treeNode.item.sessionId)
+          && !someSessionTreeNode(
+            getTreeNodeChildren(treeNode),
+            (session) => favoriteSessionIdSet.has(session.sessionId)
+          )
+      ),
+      children: buildWorkspaceSidebarWorktreeNodes(node.children, favoriteSessionIdSet)
+    };
+  });
+}
+
+function collectSidebarWorktreeWorkspaceIds(nodes: readonly WorkspaceSidebarWorktreeNode[]): string[] {
+  return nodes.flatMap((node) => [node.workspace.id, ...collectSidebarWorktreeWorkspaceIds(node.children)]);
+}
+
+function collectSidebarVisibleSessionTrees(
+  nodes: readonly WorkspaceSidebarWorktreeNode[]
+): NavigationSessionTreeNode[] {
+  return nodes.flatMap((node) => [...node.visibleSessionTree, ...collectSidebarVisibleSessionTrees(node.children)]);
+}
+
+function findSidebarVisibleSessionNode(
+  nodes: readonly WorkspaceSidebarWorktreeNode[],
+  sessionId: string
+): NavigationSessionTreeNode | null {
+  for (const worktreeNode of nodes) {
+    const matchedNode = flattenSessionTreeNodes(worktreeNode.visibleSessionTree).find(
+      (treeNode) => treeNode.item.sessionId === sessionId
+    );
+
+    if (matchedNode) {
+      return matchedNode;
+    }
+
+    const nestedMatch = findSidebarVisibleSessionNode(worktreeNode.children, sessionId);
+
+    if (nestedMatch) {
+      return nestedMatch;
+    }
+  }
+
+  return null;
+}
+
+function findSidebarArchiveTarget(
+  workspaceGroups: readonly WorkspaceSidebarGroup[],
+  workspaceId: string | null
+): { workspace: WorkspaceDto; archivedSessions: SessionSummaryDto[] } | null {
+  if (!workspaceId) {
+    return null;
+  }
+
+  for (const group of workspaceGroups) {
+    if (group.workspace.id === workspaceId) {
+      return {
+        workspace: group.workspace,
+        archivedSessions: group.archivedSessions
+      };
+    }
+
+    const nestedTarget = findSidebarArchiveTargetInWorktreeNodes(group.childWorktrees, workspaceId);
+
+    if (nestedTarget) {
+      return nestedTarget;
+    }
+  }
+
+  return null;
+}
+
+function findSidebarWorkspaceById(
+  workspaceGroups: readonly WorkspaceSidebarGroup[],
+  workspaceId: string | null
+): WorkspaceDto | null {
+  if (!workspaceId) {
+    return null;
+  }
+
+  for (const group of workspaceGroups) {
+    if (group.workspace.id === workspaceId) {
+      return group.workspace;
+    }
+
+    const nestedWorkspace = findSidebarWorkspaceByIdInWorktreeNodes(group.childWorktrees, workspaceId);
+
+    if (nestedWorkspace) {
+      return nestedWorkspace;
+    }
+  }
+
+  return null;
+}
+
+function findSidebarArchiveTargetInWorktreeNodes(
+  nodes: readonly WorkspaceSidebarWorktreeNode[],
+  workspaceId: string
+): { workspace: WorkspaceDto; archivedSessions: SessionSummaryDto[] } | null {
+  for (const node of nodes) {
+    if (node.workspace.id === workspaceId) {
+      return {
+        workspace: node.workspace,
+        archivedSessions: node.archivedSessions
+      };
+    }
+
+    const nestedTarget = findSidebarArchiveTargetInWorktreeNodes(node.children, workspaceId);
+
+    if (nestedTarget) {
+      return nestedTarget;
+    }
+  }
+
+  return null;
+}
+
+function findSidebarWorkspaceByIdInWorktreeNodes(
+  nodes: readonly WorkspaceSidebarWorktreeNode[],
+  workspaceId: string
+): WorkspaceDto | null {
+  for (const node of nodes) {
+    if (node.workspace.id === workspaceId) {
+      return node.workspace;
+    }
+
+    const nestedWorkspace = findSidebarWorkspaceByIdInWorktreeNodes(node.children, workspaceId);
+
+    if (nestedWorkspace) {
+      return nestedWorkspace;
+    }
+  }
+
+  return null;
+}
+
+function findSidebarWorktreePathByWorkspaceId(
+  nodes: readonly WorkspaceSidebarWorktreeNode[],
+  workspaceId: string
+): string[] {
+  for (const node of nodes) {
+    if (node.workspace.id === workspaceId) {
+      return [node.workspace.id];
+    }
+
+    const childPath = findSidebarWorktreePathByWorkspaceId(node.children, workspaceId);
+
+    if (childPath.length > 0) {
+      return [node.workspace.id, ...childPath];
+    }
+  }
+
+  return [];
+}
+
+function hasSidebarWorktreeWorkspace(
+  nodes: readonly WorkspaceSidebarWorktreeNode[],
+  workspaceId: string | null
+): boolean {
+  if (!workspaceId) {
+    return false;
+  }
+
+  return findSidebarWorktreePathByWorkspaceId(nodes, workspaceId).length > 0;
 }
 
 type WorkspaceDropPosition = "before" | "after";
@@ -1029,11 +1381,22 @@ function applyPendingArchiveStateToSnapshot(
         isArchived: pendingArchivedState
       };
     });
+    const nextChildWorktrees = applyPendingArchiveStateToWorktreeNodes(
+      item.childWorktrees ?? [],
+      pendingArchiveStateBySessionId,
+      (value) => {
+        if (value) {
+          changed = true;
+          itemChanged = true;
+        }
+      }
+    );
 
     return itemChanged
       ? {
           ...item,
-          sessions: nextSessions
+          sessions: nextSessions,
+          childWorktrees: nextChildWorktrees
         }
       : item;
   });
@@ -1066,6 +1429,11 @@ function settlePendingArchiveStateFromSnapshot(
         pendingArchiveStateBySessionId.delete(session.sessionId);
       }
     }
+
+    settlePendingArchiveStateFromWorktreeNodes(
+      pendingArchiveStateBySessionId,
+      item.childWorktrees ?? []
+    );
   }
 }
 
@@ -1084,7 +1452,21 @@ function upsertSessionIntoGroups(
 
   const nextGroups = groups.map((group) => {
     if (group.workspace.id !== session.workspaceId) {
-      return group;
+      const { nodes, changed: childChanged } = upsertSessionIntoWorktreeNodes(
+        group.childWorktrees,
+        session
+      );
+
+      if (!childChanged) {
+        return group;
+      }
+
+      changed = true;
+
+      return {
+        ...group,
+        childWorktrees: nodes
+      };
     }
 
     const existingIndex = group.sessions.findIndex((item) => item.sessionId === session.sessionId);
@@ -1130,11 +1512,29 @@ function markSessionSeenInGroups(
           session.activityState === "completed_unread" ? "idle" : session.activityState
       };
     });
+    const worktreeResult = mapWorktreeNodes(group.childWorktrees, (session) => {
+      if (session.sessionId !== sessionId) {
+        return session;
+      }
+
+      changed = true;
+      groupChanged = true;
+      return {
+        ...session,
+        lastSeenAt:
+          session.lastSeenAt && session.lastSeenAt > seenAt
+            ? session.lastSeenAt
+            : seenAt,
+        activityState:
+          session.activityState === "completed_unread" ? "idle" : session.activityState
+      };
+    });
 
     return groupChanged
       ? {
           ...group,
-          sessions: nextSessions
+          sessions: nextSessions,
+          childWorktrees: worktreeResult
         }
       : group;
   });
@@ -1167,11 +1567,28 @@ function updateSessionArchivedStateInGroups(
         isArchived
       };
     });
+    const worktreeResult = mapWorktreeNodes(group.childWorktrees, (session) => {
+      if (session.sessionId !== sessionId) {
+        return session;
+      }
+
+      if (session.isArchived === isArchived) {
+        return session;
+      }
+
+      changed = true;
+      groupChanged = true;
+      return {
+        ...session,
+        isArchived
+      };
+    });
 
     return groupChanged
       ? {
           ...group,
-          sessions: nextSessions
+          sessions: nextSessions,
+          childWorktrees: worktreeResult
         }
       : group;
   });
@@ -1204,11 +1621,28 @@ function updateSessionFavoriteStateInGroups(
         isFavorite
       };
     });
+    const worktreeResult = mapWorktreeNodes(group.childWorktrees, (session) => {
+      if (session.sessionId !== sessionId) {
+        return session;
+      }
+
+      if ((session.isFavorite === true) === isFavorite) {
+        return session;
+      }
+
+      changed = true;
+      groupChanged = true;
+      return {
+        ...session,
+        isFavorite
+      };
+    });
 
     return groupChanged
       ? {
           ...group,
-          sessions: nextSessions
+          sessions: nextSessions,
+          childWorktrees: worktreeResult
         }
       : group;
   });
@@ -1218,6 +1652,10 @@ function updateSessionFavoriteStateInGroups(
 
 function toggleStoredId(items: string[], id: string) {
   return items.includes(id) ? items.filter((item) => item !== id) : [...items, id];
+}
+
+function shortenCommit(commit: string | null | undefined) {
+  return commit ? commit.slice(0, 8) : "--";
 }
 
 function setStoredIdPresence(items: string[], id: string, present: boolean) {
@@ -1231,6 +1669,158 @@ function setStoredIdPresence(items: string[], id: string, present: boolean) {
 function retainKnownIds(items: string[], knownIds: ReadonlySet<string>) {
   const nextItems = items.filter((item) => knownIds.has(item));
   return nextItems.length === items.length ? items : nextItems;
+}
+
+function mapWorkbenchWorktreeNodes(
+  nodes: readonly WorkbenchWorktreeNodeDto[] | null | undefined
+): WorkbenchWorktreeNodeDto[] {
+  if (!Array.isArray(nodes)) {
+    return [];
+  }
+
+  return nodes.map((node) => ({
+    ...node,
+    sessions: [...node.sessions].sort(sortSessions),
+    children: mapWorkbenchWorktreeNodes(node.children)
+  }));
+}
+
+function applyPendingArchiveStateToWorktreeNodes(
+  nodes: readonly WorkbenchWorktreeNodeDto[],
+  pendingArchiveStateBySessionId: ReadonlyMap<string, boolean>,
+  markChanged: (changed: boolean) => void
+): WorkbenchWorktreeNodeDto[] {
+  return nodes.map((node) => {
+    let nodeChanged = false;
+    const nextSessions = node.sessions.map((session) => {
+      const pendingArchivedState = pendingArchiveStateBySessionId.get(session.sessionId);
+
+      if (pendingArchivedState === undefined || isArchivedSession(session) === pendingArchivedState) {
+        return session;
+      }
+
+      nodeChanged = true;
+      return {
+        ...session,
+        isArchived: pendingArchivedState
+      };
+    });
+    const nextChildren = applyPendingArchiveStateToWorktreeNodes(
+      node.children,
+      pendingArchiveStateBySessionId,
+      (changed) => {
+        if (changed) {
+          nodeChanged = true;
+        }
+      }
+    );
+
+    markChanged(nodeChanged);
+
+    return nodeChanged
+      ? {
+          ...node,
+          sessions: nextSessions,
+          children: nextChildren
+        }
+      : node;
+  });
+}
+
+function settlePendingArchiveStateFromWorktreeNodes(
+  pendingArchiveStateBySessionId: Map<string, boolean>,
+  nodes: readonly WorkbenchWorktreeNodeDto[]
+) {
+  for (const node of nodes) {
+    for (const session of node.sessions) {
+      const pendingArchivedState = pendingArchiveStateBySessionId.get(session.sessionId);
+
+      if (pendingArchivedState !== undefined && isArchivedSession(session) === pendingArchivedState) {
+        pendingArchiveStateBySessionId.delete(session.sessionId);
+      }
+    }
+
+    settlePendingArchiveStateFromWorktreeNodes(pendingArchiveStateBySessionId, node.children);
+  }
+}
+
+function upsertSessionIntoWorktreeNodes(
+  nodes: readonly WorkbenchWorktreeNodeDto[],
+  session: SessionSummaryDto
+): { nodes: WorkbenchWorktreeNodeDto[]; changed: boolean } {
+  let changed = false;
+
+  const nextNodes = nodes.map((node) => {
+    if (node.workspace.id === session.workspaceId) {
+      const existingIndex = node.sessions.findIndex((item) => item.sessionId === session.sessionId);
+      const nextSessions =
+        existingIndex >= 0
+          ? node.sessions.map((item, index) => (index === existingIndex ? session : item))
+          : [session, ...node.sessions];
+
+      changed = true;
+
+      return {
+        ...node,
+        sessions: [...nextSessions].sort(sortSessions)
+      };
+    }
+
+    const nextChildResult = upsertSessionIntoWorktreeNodes(node.children, session);
+
+    if (!nextChildResult.changed) {
+      return node;
+    }
+
+    changed = true;
+
+    return {
+      ...node,
+      children: nextChildResult.nodes
+    };
+  });
+
+  return {
+    nodes: changed ? nextNodes : [...nodes],
+    changed
+  };
+}
+
+function mapWorktreeNodes(
+  nodes: readonly WorkbenchWorktreeNodeDto[],
+  updater: (session: SessionSummaryDto) => SessionSummaryDto
+): WorkbenchWorktreeNodeDto[] {
+  let changed = false;
+
+  const nextNodes = nodes.map((node) => {
+    let nodeChanged = false;
+    const nextSessions = node.sessions.map((session) => {
+      const nextSession = updater(session);
+
+      if (nextSession !== session) {
+        nodeChanged = true;
+        changed = true;
+      }
+
+      return nextSession;
+    });
+    const nextChildren = mapWorktreeNodes(node.children, updater);
+
+    if (nextChildren !== node.children) {
+      nodeChanged = true;
+      changed = true;
+    }
+
+    return nodeChanged
+      ? {
+          ...node,
+          sessions: nextSessions,
+          children: nextChildren
+        }
+      : node;
+  });
+
+  return changed ? nextNodes : [...nodes];
 }
 
 function buildWorkspaceManagementSummarySnapshotKey(workspaceId: string) {
@@ -1829,6 +2419,16 @@ function CloseIcon() {
   );
 }
 
+function QuestionIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M9.7 9.4a2.5 2.5 0 1 1 4.1 2c-.8.7-1.8 1.2-1.8 2.6" strokeLinecap="round" />
+      <circle cx="12" cy="17.2" r="1" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
 function MoreIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
@@ -2009,6 +2609,7 @@ function SessionCard({
   menuKey,
   session,
   workspace,
+  workspaceContext,
   isActive,
   isFavorite,
   menuOpen,
@@ -2032,6 +2633,7 @@ function SessionCard({
   menuKey: string;
   session: SessionSummaryDto;
   workspace: WorkspaceDto;
+  workspaceContext: WorkspaceVisualContext;
   isActive: boolean;
   isFavorite: boolean;
   menuOpen: boolean;
@@ -2153,6 +2755,8 @@ function SessionCard({
       data-active={isActive}
       data-depth={depth}
       data-subagent={isSubagentSession(session)}
+      data-workspace-tone={workspaceContext.tone}
+      data-worktree-depth={workspaceContext.depth}
       data-has-subagents={hasSubagents}
       data-selecting={selectionMode}
       data-selected={selected}
@@ -2228,7 +2832,14 @@ function SessionCard({
               ) : null}
             </div>
             <div className="session-meta-row">
-              <span className="session-meta">{buildSessionMeta(session, workspace, showWorkspaceName)}</span>
+              <span className="session-meta">
+                {buildSessionMeta(
+                  session,
+                  workspace,
+                  showWorkspaceName,
+                  workspaceContext.displayName
+                )}
+              </span>
               {sessionActivityBadgeLabel && sessionActivityBadgeClassName ? (
                 <span className={sessionActivityBadgeClassName}>{sessionActivityBadgeLabel}</span>
               ) : null}
@@ -2269,6 +2880,7 @@ function SessionCard({
 
 function SidebarContent({
   workspaceGroups,
+  workspaceVisualContextMap,
   favoriteSessions,
   favoriteSessionIds,
   activeWorkspaceId,
@@ -2308,6 +2920,7 @@ function SidebarContent({
   onToggleCollapse
 }: {
   workspaceGroups: WorkspaceSidebarGroup[];
+  workspaceVisualContextMap: Record<string, WorkspaceVisualContext>;
   favoriteSessions: NavigationSessionEntry[];
   favoriteSessionIds: ReadonlySet<string>;
   activeWorkspaceId: string | null;
@@ -2373,12 +2986,36 @@ function SidebarContent({
   const [actionWorkspaceId, setActionWorkspaceId] = useState<string | null>(null);
   const [actionProvider, setActionProvider] = useState<ProviderId | null>(null);
   const [createSessionWorkspaceId, setCreateSessionWorkspaceId] = useState<string | null>(null);
+  const [createSessionWorkspaceDraft, setCreateSessionWorkspaceDraft] = useState<WorkspaceDto | null>(null);
+  const [createWorktreeFormOpen, setCreateWorktreeFormOpen] = useState(false);
+  const [creatingWorktree, setCreatingWorktree] = useState(false);
+  const [createWorktreeBranchName, setCreateWorktreeBranchName] = useState("");
+  const [createWorktreeDisplayName, setCreateWorktreeDisplayName] = useState("");
+  const [createWorktreeBaseRef, setCreateWorktreeBaseRef] = useState("");
+  const [createWorktreeBaseRefSuggestions, setCreateWorktreeBaseRefSuggestions] =
+    useState<WorktreeBaseRefSuggestions>({
+      localBranches: [],
+      remoteBranches: [],
+      tags: []
+    });
+  const [createWorktreeBaseRefPickerOpen, setCreateWorktreeBaseRefPickerOpen] = useState(false);
+  const [createWorktreeBaseRefHighlightedIndex, setCreateWorktreeBaseRefHighlightedIndex] = useState(-1);
+  const [createWorktreeHelpOpen, setCreateWorktreeHelpOpen] = useState(false);
+  const [createWorktreeBaseRefSuggestionsLoading, setCreateWorktreeBaseRefSuggestionsLoading] =
+    useState(false);
+  const [createWorktreeBaseRefSuggestionsError, setCreateWorktreeBaseRefSuggestionsError] =
+    useState<string | null>(null);
+  const [createWorktreeBaseRefPopoverRect, setCreateWorktreeBaseRefPopoverRect] =
+    useState<{ top: number; left: number; width: number } | null>(null);
+  const [createWorktreeBaseRefPopoverHeight, setCreateWorktreeBaseRefPopoverHeight] = useState<number | null>(null);
   const [archiveWorkspaceId, setArchiveWorkspaceId] = useState<string | null>(null);
   const [openSessionMenuKey, setOpenSessionMenuKey] = useState<string | null>(null);
   const [visibleFavoriteCount, setVisibleFavoriteCount] = useState(FAVORITE_SESSION_PAGE_SIZE);
   const [visibleWorkspaceSessionCounts, setVisibleWorkspaceSessionCounts] = useState<Record<string, number>>({});
   const [visibleSubagentCounts, setVisibleSubagentCounts] = useState<Record<string, number>>({});
   const [expandedSubagentRootIds, setExpandedSubagentRootIds] = useState<string[]>([]);
+  const [expandedWorktreeSectionWorkspaceIds, setExpandedWorktreeSectionWorkspaceIds] = useState<string[]>([]);
+  const [expandedWorktreeNodeIds, setExpandedWorktreeNodeIds] = useState<string[]>([]);
   const [renameTarget, setRenameTarget] = useState<NavigationSessionEntry | null>(null);
   const [renameTitleValue, setRenameTitleValue] = useState("");
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
@@ -2386,11 +3023,52 @@ function SidebarContent({
   const [selectedSessionIds, setSelectedSessionIds] = useState<string[]>([]);
   const [batchArchiving, setBatchArchiving] = useState(false);
   const [dragWorkspaceId, setDragWorkspaceId] = useState<string | null>(null);
+  const createWorktreeBaseRefPickerRef = useRef<HTMLDivElement | null>(null);
+  const createWorktreeBaseRefPopoverRef = useRef<HTMLDivElement | null>(null);
 
   const createSessionWorkspace =
-    workspaceGroups.find((group) => group.workspace.id === createSessionWorkspaceId)?.workspace ?? null;
-  const archiveWorkspaceGroup =
-    workspaceGroups.find((group) => group.workspace.id === archiveWorkspaceId) ?? null;
+    findSidebarWorkspaceById(workspaceGroups, createSessionWorkspaceId)
+    ?? (createSessionWorkspaceDraft?.id === createSessionWorkspaceId ? createSessionWorkspaceDraft : null);
+  const createWorktreeBaseRefFilter = createWorktreeBaseRef.trim().toLowerCase();
+  const createWorktreeBaseRefOptionGroups = useMemo<WorktreeBaseRefOptionGroup[]>(
+    () => {
+      const groups: WorktreeBaseRefOptionGroup[] = [
+        {
+          key: "localBranches",
+          label: t("shell.createWorktreeBaseRefLocalGroup"),
+          items: createWorktreeBaseRefSuggestions.localBranches
+        },
+        {
+          key: "remoteBranches",
+          label: t("shell.createWorktreeBaseRefRemoteGroup"),
+          items: createWorktreeBaseRefSuggestions.remoteBranches
+        },
+        {
+          key: "tags",
+          label: t("shell.createWorktreeBaseRefTagGroup"),
+          items: createWorktreeBaseRefSuggestions.tags
+        }
+      ];
+
+      return groups
+        .map((group) => ({
+          ...group,
+          items: group.items.filter((item) =>
+            createWorktreeBaseRefFilter ? item.value.toLowerCase().includes(createWorktreeBaseRefFilter) : true
+          )
+        }))
+        .filter((group) => group.items.length > 0);
+    },
+    [createWorktreeBaseRefFilter, createWorktreeBaseRefSuggestions]
+  );
+  const createWorktreeBaseRefOptions = useMemo(
+    () => createWorktreeBaseRefOptionGroups.flatMap((group) => group.items),
+    [createWorktreeBaseRefOptionGroups]
+  );
+  const createWorktreeBaseRefListboxId = createSessionWorkspace
+    ? `create-worktree-base-ref-listbox-${createSessionWorkspace.id}`
+    : "create-worktree-base-ref-listbox";
+  const archiveWorkspaceGroup = findSidebarArchiveTarget(workspaceGroups, archiveWorkspaceId);
   const activeBatchWorkspaceGroup =
     workspaceGroups.find((group) => group.workspace.id === batchWorkspaceId) ?? null;
   const batchSelectableSessions = useMemo(
@@ -2587,8 +3265,17 @@ function SidebarContent({
 
   useEffect(() => {
     const knownWorkspaceIdSet = new Set(workspaceGroups.map((group) => group.workspace.id));
+    const knownWorktreeWorkspaceIdSet = new Set(
+      workspaceGroups.flatMap((group) => collectSidebarWorktreeWorkspaceIds(group.childWorktrees))
+    );
 
     setExpandedManagedWorkspaceIds((current) => current.filter((workspaceId) => knownWorkspaceIdSet.has(workspaceId)));
+    setExpandedWorktreeSectionWorkspaceIds((current) =>
+      current.filter((workspaceId) => knownWorkspaceIdSet.has(workspaceId))
+    );
+    setExpandedWorktreeNodeIds((current) =>
+      current.filter((workspaceId) => knownWorktreeWorkspaceIdSet.has(workspaceId))
+    );
     setWorkspaceRemovalTarget((current) =>
       current && knownWorkspaceIdSet.has(current.id) ? current : null
     );
@@ -2627,6 +3314,39 @@ function SidebarContent({
           current[group.workspace.id],
           activeRootSessionIndex
         );
+
+        for (const worktreeNode of collectSidebarVisibleSessionTrees(group.childWorktrees)) {
+          const activeWorktreeRootSessionIndex =
+            worktreeNode.item.sessionId === activeSessionId
+            || findSessionTreeAncestorIds(
+              [worktreeNode],
+              activeSessionId ?? "",
+              (session) => session.sessionId
+            ).length > 0
+              ? 0
+              : -1;
+          const workspaceId = worktreeNode.item.workspaceId;
+
+          if (next[workspaceId] !== undefined) {
+            continue;
+          }
+
+          const workspaceVisibleSessionTree = collectSidebarVisibleSessionTrees(group.childWorktrees).filter(
+            (node) => node.item.workspaceId === workspaceId && node.depth === 0
+          );
+          const workspaceActiveRootSessionIndex = workspaceVisibleSessionTree.findIndex(
+            (node) =>
+              node.item.sessionId === activeSessionId ||
+              findSessionTreeAncestorIds([node], activeSessionId ?? "", (session) => session.sessionId).length > 0
+          );
+
+          next[workspaceId] = resolveVisibleItemCount(
+            workspaceVisibleSessionTree.length,
+            ROOT_SESSION_PAGE_SIZE,
+            current[workspaceId],
+            workspaceActiveRootSessionIndex
+          );
+        }
       }
 
       return isSameVisibleCountRecord(current, next) ? current : next;
@@ -2638,7 +3358,10 @@ function SidebarContent({
       const next: Record<string, number> = {};
 
       for (const group of workspaceGroups) {
-        for (const rootNode of getVisibleSessionTreeNodes(group)) {
+        for (const rootNode of [
+          ...getVisibleSessionTreeNodes(group),
+          ...collectSidebarVisibleSessionTrees(group.childWorktrees)
+        ]) {
           for (const node of flattenSessionTreeNodes(getTreeNodeChildren(rootNode))) {
             const childNodes = getTreeNodeChildren(node);
 
@@ -2674,11 +3397,16 @@ function SidebarContent({
     }
 
     const sessionIdsToExpand = workspaceGroups.flatMap((group) =>
-      findSessionTreeAncestorIds(
-        getVisibleSessionTreeNodes(group),
-        activeSessionId,
-        (session) => session.sessionId
-      )
+      [
+        ...findSessionTreeAncestorIds(
+          getVisibleSessionTreeNodes(group),
+          activeSessionId,
+          (session) => session.sessionId
+        ),
+        ...collectSidebarVisibleSessionTrees(group.childWorktrees).flatMap((rootNode) =>
+          findSessionTreeAncestorIds([rootNode], activeSessionId, (session) => session.sessionId)
+        )
+      ]
     );
 
     if (sessionIdsToExpand.length === 0) {
@@ -2700,12 +3428,245 @@ function SidebarContent({
     });
   }, [activeSessionId, workspaceGroups]);
 
+  useEffect(() => {
+    if (!activeWorkspaceId) {
+      return;
+    }
+
+    const workspaceSectionIdsToExpand: string[] = [];
+    const worktreeNodeIdsToExpand: string[] = [];
+
+    for (const group of workspaceGroups) {
+      const worktreePath = findSidebarWorktreePathByWorkspaceId(group.childWorktrees, activeWorkspaceId);
+
+      if (worktreePath.length === 0) {
+        continue;
+      }
+
+      workspaceSectionIdsToExpand.push(group.workspace.id);
+      worktreeNodeIdsToExpand.push(...worktreePath);
+    }
+
+    if (workspaceSectionIdsToExpand.length > 0) {
+      setExpandedWorktreeSectionWorkspaceIds((current) => {
+        const currentSet = new Set(current);
+        let changed = false;
+
+        for (const workspaceId of workspaceSectionIdsToExpand) {
+          if (!currentSet.has(workspaceId)) {
+            currentSet.add(workspaceId);
+            changed = true;
+          }
+        }
+
+        return changed ? Array.from(currentSet) : current;
+      });
+    }
+
+    if (worktreeNodeIdsToExpand.length > 0) {
+      setExpandedWorktreeNodeIds((current) => {
+        const currentSet = new Set(current);
+        let changed = false;
+
+        for (const workspaceId of worktreeNodeIdsToExpand) {
+          if (!currentSet.has(workspaceId)) {
+            currentSet.add(workspaceId);
+            changed = true;
+          }
+        }
+
+        return changed ? Array.from(currentSet) : current;
+      });
+    }
+  }, [activeWorkspaceId, workspaceGroups]);
+
+  useEffect(() => {
+    if (!createSessionWorkspaceId) {
+      setCreateSessionWorkspaceDraft(null);
+      setCreateWorktreeFormOpen(false);
+      setCreatingWorktree(false);
+      setCreateWorktreeBranchName("");
+      setCreateWorktreeDisplayName("");
+      setCreateWorktreeBaseRef("");
+      setCreateWorktreeBaseRefPickerOpen(false);
+      setCreateWorktreeBaseRefHighlightedIndex(-1);
+      setCreateWorktreeHelpOpen(false);
+      setCreateWorktreeBaseRefSuggestions({
+        localBranches: [],
+        remoteBranches: [],
+        tags: []
+      });
+      setCreateWorktreeBaseRefSuggestionsLoading(false);
+      setCreateWorktreeBaseRefSuggestionsError(null);
+      return;
+    }
+
+    setCreateWorktreeFormOpen(false);
+    setCreateWorktreeBranchName("");
+    setCreateWorktreeDisplayName("");
+    setCreateWorktreeBaseRef("");
+    setCreateWorktreeBaseRefPickerOpen(false);
+    setCreateWorktreeBaseRefHighlightedIndex(-1);
+    setCreateWorktreeHelpOpen(false);
+    setCreateWorktreeBaseRefSuggestions({
+      localBranches: [],
+      remoteBranches: [],
+      tags: []
+    });
+    setCreateWorktreeBaseRefSuggestionsLoading(false);
+    setCreateWorktreeBaseRefSuggestionsError(null);
+  }, [createSessionWorkspaceId]);
+
+  useEffect(() => {
+    const createSessionWorkspaceValue = createSessionWorkspace;
+
+    if (!createWorktreeFormOpen || !createSessionWorkspaceValue) {
+      return;
+    }
+
+    let cancelled = false;
+    const workspaceId = createSessionWorkspaceValue.id;
+    setCreateWorktreeBaseRefSuggestionsLoading(true);
+    setCreateWorktreeBaseRefSuggestionsError(null);
+
+    void Promise.all([
+      getGitBranches(workspaceId),
+      getGitTags(workspaceId)
+    ])
+      .then(([branches, tags]) => {
+        if (cancelled) {
+          return;
+        }
+
+        setCreateWorktreeBaseRefSuggestions(buildWorktreeBaseRefSuggestions(branches, tags));
+      })
+      .catch(() => {
+        if (cancelled) {
+          return;
+        }
+
+        setCreateWorktreeBaseRefSuggestions({
+          localBranches: [],
+          remoteBranches: [],
+          tags: []
+        });
+        setCreateWorktreeBaseRefSuggestionsError(t("shell.createWorktreeBaseRefLoadFailed"));
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setCreateWorktreeBaseRefSuggestionsLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [createSessionWorkspace?.id, createWorktreeFormOpen]);
+
+  useLayoutEffect(() => {
+    if (!createWorktreeBaseRefPickerOpen || !createWorktreeBaseRefPickerRef.current) {
+      setCreateWorktreeBaseRefPopoverRect(null);
+      setCreateWorktreeBaseRefPopoverHeight(null);
+      return;
+    }
+
+    const updateRect = () => {
+      const anchor = createWorktreeBaseRefPickerRef.current;
+
+      if (!anchor) {
+        return;
+      }
+
+      const rect = measureFloatingPanelRect(anchor);
+      setCreateWorktreeBaseRefPopoverRect({
+        top: rect.bottom + 8,
+        left: rect.left,
+        width: rect.width
+      });
+    };
+
+    updateRect();
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+
+      if (!(target instanceof Node)) {
+        return;
+      }
+
+      if (createWorktreeBaseRefPickerRef.current?.contains(target)) {
+        return;
+      }
+
+      if (createWorktreeBaseRefPopoverRef.current?.contains(target)) {
+        return;
+      }
+
+      setCreateWorktreeBaseRefPickerOpen(false);
+      setCreateWorktreeBaseRefHighlightedIndex(-1);
+    };
+
+    window.addEventListener("resize", updateRect);
+    window.addEventListener("scroll", updateRect, true);
+    window.addEventListener("pointerdown", handlePointerDown);
+
+    return () => {
+      window.removeEventListener("resize", updateRect);
+      window.removeEventListener("scroll", updateRect, true);
+      window.removeEventListener("pointerdown", handlePointerDown);
+    };
+  }, [createWorktreeBaseRefOptions.length, createWorktreeBaseRefPickerOpen]);
+
+  useLayoutEffect(() => {
+    if (!createWorktreeBaseRefPickerOpen || !createWorktreeBaseRefPopoverRef.current) {
+      setCreateWorktreeBaseRefPopoverHeight(null);
+      return;
+    }
+
+    const popover = createWorktreeBaseRefPopoverRef.current;
+
+    const updateHeight = () => {
+      const nextHeight = Math.ceil(popover.getBoundingClientRect().height);
+      setCreateWorktreeBaseRefPopoverHeight((current) => (current === nextHeight ? current : nextHeight));
+    };
+
+    updateHeight();
+
+    if (typeof ResizeObserver === "undefined") {
+      return;
+    }
+
+    const observer = new ResizeObserver(() => {
+      updateHeight();
+    });
+    observer.observe(popover);
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [
+    createWorktreeBaseRefPickerOpen,
+    createWorktreeBaseRefOptionGroups,
+    createWorktreeBaseRefSuggestionsLoading,
+    createWorktreeBaseRefSuggestionsError
+  ]);
+
   function handleOpenDirectoryBrowser() {
     setImportBrowserOpen(true);
   }
 
   function handleOpenCloneWorkspace() {
     setCloneBrowserOpen(true);
+  }
+
+  function resetCreateWorktreeForm() {
+    setCreateWorktreeFormOpen(false);
+    setCreateWorktreeBranchName("");
+    setCreateWorktreeDisplayName("");
+    setCreateWorktreeBaseRef("");
+    setCreateWorktreeBaseRefPickerOpen(false);
+    setCreateWorktreeBaseRefHighlightedIndex(-1);
+    setCreateWorktreeHelpOpen(false);
   }
 
   function resolveWorkspaceDropPosition(target: HTMLElement, clientY: number): WorkspaceDropPosition {
@@ -2791,11 +3752,32 @@ function SidebarContent({
     );
   }
 
+  function isWorktreeSectionExpanded(workspaceId: string) {
+    return expandedWorktreeSectionWorkspaceIds.includes(workspaceId);
+  }
+
+  function handleToggleWorktreeSection(workspaceId: string) {
+    setExpandedWorktreeSectionWorkspaceIds((current) =>
+      current.includes(workspaceId) ? current.filter((item) => item !== workspaceId) : [...current, workspaceId]
+    );
+  }
+
+  function isWorktreeNodeExpanded(workspaceId: string) {
+    return expandedWorktreeNodeIds.includes(workspaceId);
+  }
+
+  function handleToggleWorktreeNode(workspaceId: string) {
+    setExpandedWorktreeNodeIds((current) =>
+      current.includes(workspaceId) ? current.filter((item) => item !== workspaceId) : [...current, workspaceId]
+    );
+  }
+
   function getFavoriteChildSessions(sessionId: string) {
     for (const group of workspaceGroups) {
-      const node = flattenSessionTreeNodes(buildSessionTree(group.visibleSessions)).find(
-        (item) => item.item.sessionId === sessionId
-      );
+      const node =
+        flattenSessionTreeNodes(buildSessionTree(group.visibleSessions)).find(
+          (item) => item.item.sessionId === sessionId
+        ) ?? findSidebarVisibleSessionNode(group.childWorktrees, sessionId);
 
       if (node) {
         return getTreeNodeChildren(node);
@@ -2805,9 +3787,150 @@ function SidebarContent({
     return [];
   }
 
+  function renderArchiveFolder(workspace: WorkspaceDto, archivedSessions: readonly SessionSummaryDto[]) {
+    return (
+      <button
+        type="button"
+        className="workbench-archive-folder"
+        onClick={() => setArchiveWorkspaceId(workspace.id)}
+      >
+        <span className="workbench-archive-folder-main">
+          <FolderArchiveIcon />
+          <span>{t("shell.archiveFolderLabel")}</span>
+        </span>
+        <span className="workbench-section-counter">{archivedSessions.length}</span>
+      </button>
+    );
+  }
+
+  function renderWorktreeNode(node: WorkspaceSidebarWorktreeNode): JSX.Element {
+    const visibleSessionTree = node.visibleSessionTree;
+    const childWorkspaceIdSet = new Set(collectSidebarWorktreeWorkspaceIds(node.children));
+    const hasActiveChildWorkspace = childWorkspaceIdSet.has(activeWorkspaceId ?? "");
+    const containsActiveWorkspace = node.workspace.id === activeWorkspaceId || hasActiveChildWorkspace;
+    const isCollapsed = !containsActiveWorkspace && !isWorktreeNodeExpanded(node.workspace.id);
+    const childWorktreeSectionExpanded =
+      node.children.length > 0
+      && (hasActiveChildWorkspace || isWorktreeSectionExpanded(node.workspace.id));
+
+    return (
+      <section
+        key={node.workspace.id}
+        className="workbench-workspace-group"
+        data-worktree-node="true"
+        data-worktree-depth={node.meta.depth}
+      >
+        <div className="workbench-workspace-header minimal">
+          <button
+            type="button"
+            className="workbench-workspace-toggle"
+            aria-label={isCollapsed ? t("shell.worktreeExpand") : t("shell.worktreeCollapse")}
+            onClick={() => handleToggleWorktreeNode(node.workspace.id)}
+          >
+            <span className="workbench-workspace-toggle-icon" aria-hidden="true">
+              <ChevronIcon expanded={!isCollapsed} />
+            </span>
+            <span>
+              <strong>{node.meta.displayName || node.workspace.name}</strong>
+              <span className="session-meta">{node.meta.branchName}</span>
+            </span>
+          </button>
+
+          <div className="workbench-workspace-actions minimal">
+            <button
+              type="button"
+              className="workbench-workspace-icon-button"
+              aria-label={t("shell.switchWorkspace")}
+              title={t("shell.switchWorkspace")}
+              aria-pressed={activeWorkspaceId === node.workspace.id}
+              onClick={() => {
+                onSelectWorkspace(node.workspace.id);
+                onClose?.();
+              }}
+            >
+              <WorkspaceSwitchIcon />
+            </button>
+            <button
+              type="button"
+              className="workbench-workspace-icon-button workbench-workspace-create"
+              aria-label={t("shell.createSession")}
+              title={t("shell.createSession")}
+              onClick={() => setCreateSessionWorkspaceId(node.workspace.id)}
+            >
+              <PlusIcon />
+            </button>
+          </div>
+        </div>
+
+        {!isCollapsed ? (
+          <>
+            <div className="workbench-session-list">
+              {visibleSessionTree.length === 0 ? (
+                <p className="workbench-session-empty">{t("shell.emptyWorkspaceSessions")}</p>
+              ) : (
+                visibleSessionTree
+                  .slice(0, getVisibleWorkspaceSessionCount(node.workspace.id))
+                  .map((treeNode) =>
+                    renderSessionTreeBranch({
+                      node: treeNode,
+                      workspace: node.workspace,
+                      workspaceContext: getWorkspaceContext(node.workspace),
+                      menuKeyPrefix: `worktree:${node.workspace.id}`,
+                      showWorkspaceName: false,
+                      selectionMode: false,
+                      favoriteEnabled: true
+                    })
+                  )
+              )}
+              {visibleSessionTree.length > getVisibleWorkspaceSessionCount(node.workspace.id) ? (
+                <button
+                  type="button"
+                  className="workbench-subsession-expand ghost-button"
+                  onClick={() => handleExpandWorkspaceSessions(node.workspace.id, visibleSessionTree.length)}
+                >
+                  {t("shell.sessionExpandMore")}
+                </button>
+              ) : null}
+            </div>
+
+            {node.children.length > 0 ? (
+              <section className="workbench-section-block">
+                <button
+                  type="button"
+                  className="workbench-section-heading workbench-section-heading-button"
+                  aria-label={
+                    childWorktreeSectionExpanded
+                      ? t("shell.worktreeSectionCollapse")
+                      : t("shell.worktreeSectionExpand")
+                  }
+                  aria-expanded={childWorktreeSectionExpanded}
+                  onClick={() => handleToggleWorktreeSection(node.workspace.id)}
+                >
+                  <span className="workbench-section-heading-main">
+                    <ChevronIcon expanded={childWorktreeSectionExpanded} />
+                    <span>{t("shell.worktreeSectionTitle")}</span>
+                  </span>
+                  <span className="workbench-section-counter">{node.children.length}</span>
+                </button>
+                {childWorktreeSectionExpanded ? (
+                  <div className="workbench-session-list">
+                    {node.children.map((childNode) => renderWorktreeNode(childNode))}
+                  </div>
+                ) : null}
+              </section>
+            ) : null}
+
+            {renderArchiveFolder(node.workspace, node.archivedSessions)}
+          </>
+        ) : null}
+      </section>
+    );
+  }
+
   function renderSessionTreeBranch(input: {
     node: NavigationSessionTreeNode;
     workspace: WorkspaceDto;
+    workspaceContext: WorkspaceVisualContext;
     menuKeyPrefix: string;
     showWorkspaceName: boolean;
     selectionMode: boolean;
@@ -2821,6 +3944,7 @@ function SidebarContent({
     const {
       node,
       workspace,
+      workspaceContext,
       menuKeyPrefix,
       showWorkspaceName,
       selectionMode,
@@ -2890,6 +4014,7 @@ function SidebarContent({
             menuKey={`${menuKeyPrefix}:${session.sessionId}`}
             session={session}
             workspace={workspace}
+            workspaceContext={workspaceContext}
             isActive={session.sessionId === activeSessionId}
             isFavorite={favoriteEnabled && favoriteSessionIds.has(session.sessionId)}
             menuOpen={openSessionMenuKey === `${menuKeyPrefix}:${session.sessionId}`}
@@ -2933,6 +4058,7 @@ function SidebarContent({
               renderSessionTreeBranch({
                 node: childNode,
                 workspace,
+                workspaceContext,
                 menuKeyPrefix,
                 showWorkspaceName,
                 selectionMode,
@@ -2997,6 +4123,64 @@ function SidebarContent({
     } finally {
       setActionWorkspaceId(null);
       setActionProvider(null);
+    }
+  }
+
+  async function handleCreateChildWorktree(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!createSessionWorkspace || creatingWorktree) {
+      return;
+    }
+
+    const branchName = createWorktreeBranchName.trim();
+    const displayName = createWorktreeDisplayName.trim();
+    const baseRef = createWorktreeBaseRef.trim();
+
+    if (!branchName) {
+      showToast({
+        title: t("shell.createWorktreeBranchRequired"),
+        tone: "error"
+      });
+      return;
+    }
+
+    if (!isRecommendedWorktreeBranchName(branchName)) {
+      showToast({
+        title: t("shell.createWorktreeBranchInvalid"),
+        tone: "error"
+      });
+      return;
+    }
+
+    setCreatingWorktree(true);
+
+    try {
+      const created = await createWorktree({
+        sourceWorkspaceId: createSessionWorkspace.id,
+        branchName,
+        displayName: displayName || undefined,
+        baseRef: baseRef || undefined
+      });
+
+      setCreateSessionWorkspaceDraft(created.workspace);
+      onSelectWorkspace(created.workspace.id);
+      await onRefreshNavigation();
+      setCreateSessionWorkspaceId(created.workspace.id);
+      resetCreateWorktreeForm();
+      showToast({
+        title: t("shell.createWorktreeSucceeded", {
+          name: created.meta.displayName || created.workspace.name
+        }),
+        tone: "success"
+      });
+    } catch (error) {
+      showToast({
+        title: error instanceof Error ? error.message : t("shell.createWorktreeFailed"),
+        tone: "error"
+      });
+    } finally {
+      setCreatingWorktree(false);
     }
   }
 
@@ -3192,6 +4376,10 @@ function SidebarContent({
   const visibleFavoriteSessions = favoriteSessions.slice(0, visibleFavoriteCount);
   const hasMoreFavoriteSessions = visibleFavoriteSessions.length < favoriteSessions.length;
 
+  function getWorkspaceContext(workspace: WorkspaceDto) {
+    return workspaceVisualContextMap[workspace.id] ?? createFallbackWorkspaceVisualContext(workspace);
+  }
+
   return (
     <>
       <div
@@ -3324,6 +4512,7 @@ function SidebarContent({
                         children: childSessions
                       },
                       workspace: item.workspace,
+                      workspaceContext: getWorkspaceContext(item.workspace),
                       menuKeyPrefix: "favorite",
                       showWorkspaceName: true,
                       selectionMode: false,
@@ -3392,7 +4581,14 @@ function SidebarContent({
         {workspaceGroups.map((group) => {
           const visibleSessionTree = getVisibleSessionTreeNodes(group);
           const isDraggedWorkspace = dragWorkspaceId === group.workspace.id;
-          const isWorkspaceCollapsed = group.isCollapsed || isDraggedWorkspace;
+          const hasActiveChildWorkspace = hasSidebarWorktreeWorkspace(group.childWorktrees, activeWorkspaceId);
+          const containsActiveWorkspace =
+            group.workspace.id === activeWorkspaceId || hasActiveChildWorkspace;
+          const isWorkspaceCollapsed =
+            (!containsActiveWorkspace && group.isCollapsed) || isDraggedWorkspace;
+          const worktreeSectionExpanded =
+            group.childWorktrees.length > 0
+            && (hasActiveChildWorkspace || isWorktreeSectionExpanded(group.workspace.id));
 
           return (
             <section
@@ -3504,6 +4700,7 @@ function SidebarContent({
                           renderSessionTreeBranch({
                             node,
                             workspace: group.workspace,
+                            workspaceContext: getWorkspaceContext(group.workspace),
                             menuKeyPrefix: `workspace:${group.workspace.id}`,
                             showWorkspaceName: false,
                             selectionMode: batchWorkspaceId === group.workspace.id,
@@ -3524,17 +4721,34 @@ function SidebarContent({
                     ) : null}
                   </div>
 
-                  <button
-                    type="button"
-                    className="workbench-archive-folder"
-                    onClick={() => setArchiveWorkspaceId(group.workspace.id)}
-                  >
-                    <span className="workbench-archive-folder-main">
-                      <FolderArchiveIcon />
-                      <span>{t("shell.archiveFolderLabel")}</span>
-                    </span>
-                    <span className="workbench-section-counter">{group.archivedSessions.length}</span>
-                  </button>
+                  {group.childWorktrees.length > 0 ? (
+                    <section className="workbench-section-block">
+                      <button
+                        type="button"
+                        className="workbench-section-heading workbench-section-heading-button"
+                        aria-label={
+                          worktreeSectionExpanded
+                            ? t("shell.worktreeSectionCollapse")
+                            : t("shell.worktreeSectionExpand")
+                        }
+                        aria-expanded={worktreeSectionExpanded}
+                        onClick={() => handleToggleWorktreeSection(group.workspace.id)}
+                      >
+                        <span className="workbench-section-heading-main">
+                          <ChevronIcon expanded={worktreeSectionExpanded} />
+                          <span>{t("shell.worktreeSectionTitle")}</span>
+                        </span>
+                        <span className="workbench-section-counter">{group.childWorktrees.length}</span>
+                      </button>
+                      {worktreeSectionExpanded ? (
+                        <div className="workbench-session-list">
+                          {group.childWorktrees.map((node) => renderWorktreeNode(node))}
+                        </div>
+                      ) : null}
+                    </section>
+                  ) : null}
+
+                  {renderArchiveFolder(group.workspace, group.archivedSessions)}
                 </>
               ) : null}
             </section>
@@ -3812,22 +5026,347 @@ function SidebarContent({
             ? `${t("shell.createSessionTarget")} · ${createSessionWorkspace.name}`
             : t("shell.createSessionModalDescription")
         }
+        headerActions={
+          <button
+            type="button"
+            className="secondary-button create-session-worktree-trigger"
+            disabled={creatingWorktree || Boolean(actionWorkspaceId)}
+            onClick={() => setCreateWorktreeFormOpen(true)}
+          >
+            {t("shell.createWorktreeAction")}
+          </button>
+        }
         onClose={() => setCreateSessionWorkspaceId(null)}
       >
-        <SessionProviderPicker
-          disabled={Boolean(actionWorkspaceId)}
-          workspaceId={createSessionWorkspace?.id ?? null}
-          pendingProvider={
-            actionWorkspaceId === createSessionWorkspace?.id ? actionProvider ?? null : null
-          }
-          onSelect={(provider) => {
-            if (!createSessionWorkspace) {
-              return;
+        <section className="create-session-modal-section">
+          <div className="create-session-modal-section-header">
+            <strong>{t("shell.createSessionProviderLabel")}</strong>
+            <span>{t("shell.providerOptionHint")}</span>
+          </div>
+          <SessionProviderPicker
+            disabled={Boolean(actionWorkspaceId) || creatingWorktree}
+            workspaceId={createSessionWorkspace?.id ?? null}
+            pendingProvider={
+              actionWorkspaceId === createSessionWorkspace?.id ? actionProvider ?? null : null
             }
+            onSelect={(provider) => {
+              if (!createSessionWorkspace) {
+                return;
+              }
 
-            void handleStartSession(createSessionWorkspace.id, provider);
-          }}
-        />
+              void handleStartSession(createSessionWorkspace.id, provider);
+            }}
+          />
+        </section>
+      </SidebarModal>
+
+      <SidebarModal
+        open={createSessionWorkspace !== null && createWorktreeFormOpen}
+        title={t("shell.createWorktreeAction")}
+        className="workbench-create-worktree-modal"
+        headerActions={
+          <button
+            type="button"
+            className={createWorktreeHelpOpen ? "workbench-modal-help-button active" : "workbench-modal-help-button"}
+            aria-label={t("shell.createWorktreeHelpAction")}
+            title={t("shell.createWorktreeHelpAction")}
+            aria-pressed={createWorktreeHelpOpen}
+            onClick={() => setCreateWorktreeHelpOpen((current) => !current)}
+          >
+            <QuestionIcon />
+          </button>
+        }
+        description={
+          createSessionWorkspace
+            ? `${t("shell.createWorktreeSectionDescription")} ${t("shell.createSessionTarget")} · ${createSessionWorkspace.name}`
+            : t("shell.createWorktreeSectionDescription")
+        }
+        onClose={resetCreateWorktreeForm}
+      >
+        <form className="create-session-worktree-form" onSubmit={handleCreateChildWorktree}>
+          {createWorktreeHelpOpen ? (
+            <section className="create-session-worktree-help-card" aria-label={t("shell.createWorktreeHelpTitle")}>
+              <strong>{t("shell.createWorktreeHelpTitle")}</strong>
+              <div className="create-session-worktree-help-grid">
+                <article>
+                  <h3>{t("shell.createWorktreeHelpBranchTitle")}</h3>
+                  <p>{t("shell.createWorktreeHelpBranchBody")}</p>
+                </article>
+                <article>
+                  <h3>{t("shell.createWorktreeHelpDisplayNameTitle")}</h3>
+                  <p>{t("shell.createWorktreeHelpDisplayNameBody")}</p>
+                </article>
+                <article>
+                  <h3>{t("shell.createWorktreeHelpBaseRefTitle")}</h3>
+                  <p>{t("shell.createWorktreeHelpBaseRefBody")}</p>
+                </article>
+              </div>
+            </section>
+          ) : null}
+          <label className="create-session-worktree-field">
+            <span>{t("shell.createWorktreeBranchLabel")}</span>
+            <input
+              className="settings-text-input"
+              value={createWorktreeBranchName}
+              placeholder={t("shell.createWorktreeBranchPlaceholder")}
+              onChange={(event) => {
+                const nextValue = event.target.value;
+
+                if (isRecommendedWorktreeBranchNameInput(nextValue)) {
+                  setCreateWorktreeBranchName(nextValue);
+                }
+              }}
+            />
+          </label>
+          <label className="create-session-worktree-field">
+            <span>{t("shell.createWorktreeDisplayNameLabel")}</span>
+            <input
+              className="settings-text-input"
+              value={createWorktreeDisplayName}
+              placeholder={t("shell.createWorktreeDisplayNamePlaceholder")}
+              onChange={(event) => setCreateWorktreeDisplayName(event.target.value)}
+            />
+          </label>
+          <label className="create-session-worktree-field">
+            <span>{t("shell.createWorktreeBaseRefLabel")}</span>
+            <div
+              className="create-session-worktree-combobox"
+              ref={createWorktreeBaseRefPickerRef}
+              onBlurCapture={(event) => {
+                const nextTarget = event.relatedTarget;
+
+                if (nextTarget instanceof Node) {
+                  if (createWorktreeBaseRefPickerRef.current?.contains(nextTarget)) {
+                    return;
+                  }
+
+                  if (createWorktreeBaseRefPopoverRef.current?.contains(nextTarget)) {
+                    return;
+                  }
+                }
+
+                setCreateWorktreeBaseRefPickerOpen(false);
+                setCreateWorktreeBaseRefHighlightedIndex(-1);
+              }}
+            >
+              <div className="create-session-worktree-combobox-input-wrap">
+                <input
+                  className="settings-text-input create-session-worktree-combobox-input"
+                  role="combobox"
+                  aria-autocomplete="list"
+                  aria-expanded={createWorktreeBaseRefPickerOpen}
+                  aria-controls={createWorktreeBaseRefListboxId}
+                  value={createWorktreeBaseRef}
+                  placeholder={t("shell.createWorktreeBaseRefPlaceholder")}
+                  onFocus={() => {
+                    setCreateWorktreeBaseRefPickerOpen(true);
+                    setCreateWorktreeBaseRefHighlightedIndex(createWorktreeBaseRefOptions.length > 0 ? 0 : -1);
+                  }}
+                  onChange={(event) => {
+                    setCreateWorktreeBaseRef(event.target.value);
+                    setCreateWorktreeBaseRefPickerOpen(true);
+                    setCreateWorktreeBaseRefHighlightedIndex(createWorktreeBaseRefOptions.length > 0 ? 0 : -1);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "ArrowDown") {
+                      event.preventDefault();
+
+                      if (!createWorktreeBaseRefPickerOpen) {
+                        setCreateWorktreeBaseRefPickerOpen(true);
+                        return;
+                      }
+
+                      if (createWorktreeBaseRefOptions.length > 0) {
+                        setCreateWorktreeBaseRefHighlightedIndex((current) =>
+                          current >= createWorktreeBaseRefOptions.length - 1 ? 0 : current + 1
+                        );
+                      }
+                      return;
+                    }
+
+                    if (event.key === "ArrowUp") {
+                      event.preventDefault();
+
+                      if (!createWorktreeBaseRefPickerOpen) {
+                        setCreateWorktreeBaseRefPickerOpen(true);
+                        return;
+                      }
+
+                      if (createWorktreeBaseRefOptions.length > 0) {
+                        setCreateWorktreeBaseRefHighlightedIndex((current) =>
+                          current <= 0 ? createWorktreeBaseRefOptions.length - 1 : current - 1
+                        );
+                      }
+                      return;
+                    }
+
+                    if (
+                      event.key === "Enter"
+                      && createWorktreeBaseRefPickerOpen
+                      && createWorktreeBaseRefHighlightedIndex >= 0
+                    ) {
+                      event.preventDefault();
+                      const selectedValue = createWorktreeBaseRefOptions[createWorktreeBaseRefHighlightedIndex];
+
+                      if (selectedValue) {
+                        setCreateWorktreeBaseRef(selectedValue.value);
+                        setCreateWorktreeBaseRefPickerOpen(false);
+                        setCreateWorktreeBaseRefHighlightedIndex(-1);
+                      }
+                      return;
+                    }
+
+                    if (event.key === "Escape") {
+                      setCreateWorktreeBaseRefPickerOpen(false);
+                    }
+                  }}
+                />
+                <button
+                  type="button"
+                  className="create-session-worktree-combobox-toggle"
+                  aria-label={t("shell.createWorktreeBaseRefToggle")}
+                  aria-expanded={createWorktreeBaseRefPickerOpen}
+                  onClick={() => {
+                    setCreateWorktreeBaseRefPickerOpen((current) => !current);
+                    setCreateWorktreeBaseRefHighlightedIndex(
+                      !createWorktreeBaseRefPickerOpen && createWorktreeBaseRefOptions.length > 0 ? 0 : -1
+                    );
+                  }}
+                >
+                  <ChevronIcon expanded={createWorktreeBaseRefPickerOpen} />
+                </button>
+              </div>
+            </div>
+            <span className="create-session-worktree-field-hint">
+              {createWorktreeBaseRefSuggestionsLoading
+                ? t("shell.createWorktreeBaseRefLoading")
+                : createWorktreeBaseRefSuggestionsError
+                  ? createWorktreeBaseRefSuggestionsError
+                  : t("shell.createWorktreeBaseRefHint", {
+                      localCount: createWorktreeBaseRefSuggestions.localBranches.length,
+                      remoteCount: createWorktreeBaseRefSuggestions.remoteBranches.length,
+                      tagCount: createWorktreeBaseRefSuggestions.tags.length
+                    })}
+            </span>
+          </label>
+          {createWorktreeBaseRefPickerOpen && createWorktreeBaseRefPopoverRect && typeof document !== "undefined"
+            ? createPortal(
+                <div className="create-session-worktree-combobox-floating-layer">
+                  <div
+                    className="create-session-worktree-combobox-floating-backdrop"
+                    style={
+                      {
+                        "--create-worktree-combobox-top": `${createWorktreeBaseRefPopoverRect.top}px`,
+                        "--create-worktree-combobox-left": `${createWorktreeBaseRefPopoverRect.left}px`,
+                        "--create-worktree-combobox-width": `${createWorktreeBaseRefPopoverRect.width}px`,
+                        "--create-worktree-combobox-height": `${createWorktreeBaseRefPopoverHeight ?? 0}px`
+                      } as CSSProperties
+                    }
+                  />
+                  <div
+                    ref={createWorktreeBaseRefPopoverRef}
+                    className="create-session-worktree-combobox-popover floating"
+                    style={
+                      {
+                        "--create-worktree-combobox-top": `${createWorktreeBaseRefPopoverRect.top}px`,
+                        "--create-worktree-combobox-left": `${createWorktreeBaseRefPopoverRect.left}px`,
+                        "--create-worktree-combobox-width": `${createWorktreeBaseRefPopoverRect.width}px`
+                      } as CSSProperties
+                    }
+                  >
+                    {createWorktreeBaseRefSuggestionsLoading ? (
+                      <p className="create-session-worktree-combobox-empty">
+                        {t("shell.createWorktreeBaseRefLoading")}
+                      </p>
+                    ) : createWorktreeBaseRefSuggestionsError ? (
+                      <p className="create-session-worktree-combobox-empty">
+                        {createWorktreeBaseRefSuggestionsError}
+                      </p>
+                    ) : createWorktreeBaseRefOptionGroups.length > 0 ? (
+                      <div
+                        id={createWorktreeBaseRefListboxId}
+                        className="create-session-worktree-combobox-list"
+                        role="listbox"
+                      >
+                        {createWorktreeBaseRefOptionGroups.map((group) => (
+                          <section
+                            key={group.key}
+                            className="create-session-worktree-combobox-group"
+                            aria-label={group.label}
+                          >
+                            <header className="create-session-worktree-combobox-group-title">
+                              {group.label}
+                            </header>
+                            <div className="create-session-worktree-combobox-group-options">
+                              {group.items.map((item) => {
+                                const optionIndex = createWorktreeBaseRefOptions.findIndex(
+                                  (candidate) => candidate.value === item.value
+                                );
+                                const selected = createWorktreeBaseRef === item.value;
+                                const highlighted = createWorktreeBaseRefHighlightedIndex === optionIndex;
+
+                                return (
+                                  <button
+                                    key={`${group.key}:${item.value}`}
+                                    type="button"
+                                    role="option"
+                                    className="create-session-worktree-combobox-option"
+                                    aria-selected={selected}
+                                    data-highlighted={highlighted}
+                                    onMouseDown={(event) => event.preventDefault()}
+                                    onMouseEnter={() => setCreateWorktreeBaseRefHighlightedIndex(optionIndex)}
+                                    onClick={() => {
+                                      setCreateWorktreeBaseRef(item.value);
+                                      setCreateWorktreeBaseRefPickerOpen(false);
+                                      setCreateWorktreeBaseRefHighlightedIndex(-1);
+                                    }}
+                                  >
+                                    <span className="create-session-worktree-combobox-option-label">
+                                      {item.value}
+                                    </span>
+                                    <span className="create-session-worktree-combobox-option-badges">
+                                      {item.current ? (
+                                        <span className="create-session-worktree-combobox-badge">
+                                          {t("shell.createWorktreeBaseRefCurrentBadge")}
+                                        </span>
+                                      ) : null}
+                                      {item.recommended ? (
+                                        <span className="create-session-worktree-combobox-badge recommended">
+                                          {t("shell.createWorktreeBaseRefRecommendedBadge")}
+                                        </span>
+                                      ) : null}
+                                    </span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </section>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="create-session-worktree-combobox-empty">
+                        {t("shell.createWorktreeBaseRefEmpty")}
+                      </p>
+                    )}
+                  </div>
+                </div>,
+                document.body
+              )
+            : null}
+          <div className="workbench-modal-actions">
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={creatingWorktree}
+              onClick={resetCreateWorktreeForm}
+            >
+              {t("common.cancel")}
+            </button>
+            <button type="submit" className="primary-button" disabled={creatingWorktree}>
+              {creatingWorktree ? t("shell.createWorktreeSubmitting") : t("shell.createWorktreeSubmit")}
+            </button>
+          </div>
+        </form>
       </SidebarModal>
 
       <SidebarModal
@@ -3931,7 +5470,13 @@ function WorkbenchInfoPanel({
   onToggleCollapse,
   currentSessionId,
   activeWorkspaceId,
-  navigationGroups
+  navigationGroups,
+  workspaceContext,
+  worktreeMeta,
+  worktreeMergeState,
+  onRefreshWorktreeMergePreview,
+  onApplyWorktreeMerge,
+  onCleanupWorktree
 }: {
   panelReady: boolean;
   activeTab: InfoTab;
@@ -3941,6 +5486,12 @@ function WorkbenchInfoPanel({
   currentSessionId: string | null;
   activeWorkspaceId: string | null;
   navigationGroups: WorkspaceSessionGroup[];
+  workspaceContext: WorkspaceVisualContext | null;
+  worktreeMeta: WorktreeMetaDto | null;
+  worktreeMergeState: WorktreeMergeViewState | null;
+  onRefreshWorktreeMergePreview: (workspaceId: string, force?: boolean) => void;
+  onApplyWorktreeMerge: (workspaceId: string) => void;
+  onCleanupWorktree: (meta: WorktreeMetaDto) => void;
 }) {
   const fallbackWorkspaceId = activeWorkspaceId ?? navigationGroups[0]?.workspace.id ?? null;
   const platform = usePlatform();
@@ -4265,6 +5816,7 @@ function WorkbenchInfoPanel({
     <>
       <div
         className="workbench-auxiliary-header"
+        data-workspace-tone={workspaceContext?.tone ?? "root"}
         data-window-drag-handle="workbench-auxiliary-header"
         onMouseDownCapture={handleHeaderMouseDownCapture}
       >
@@ -4275,7 +5827,7 @@ function WorkbenchInfoPanel({
             aria-label={t("shell.hideInfoSidebar")}
             title={t("shell.hideInfoSidebar")}
             onClick={onToggleCollapse}
-          >
+        >
             <SidebarCollapseIcon />
           </button>
         ) : null}
@@ -4338,6 +5890,16 @@ function WorkbenchInfoPanel({
       <div className="workbench-auxiliary-body">
         {!panelReady ? <InfoPanelSkeleton /> : null}
 
+        {panelReady && worktreeMeta ? (
+          <WorktreeMergePanel
+            meta={worktreeMeta}
+            state={worktreeMergeState}
+            onRefresh={() => onRefreshWorktreeMergePreview(worktreeMeta.workspaceId, true)}
+            onApply={() => onApplyWorktreeMerge(worktreeMeta.workspaceId)}
+            onCleanup={() => onCleanupWorktree(worktreeMeta)}
+          />
+        ) : null}
+
         {panelReady && activeTab === "files" ? (
           activeWorkspaceId ? (
             <Suspense fallback={<InfoPanelSkeleton />}>
@@ -4376,6 +5938,147 @@ function WorkbenchInfoPanel({
         ) : null}
       </div>
     </>
+  );
+}
+
+function WorktreeMergePanel({
+  meta,
+  state,
+  onRefresh,
+  onApply,
+  onCleanup
+}: {
+  meta: WorktreeMetaDto;
+  state: WorktreeMergeViewState | null;
+  onRefresh: () => void;
+  onApply: () => void;
+  onCleanup: () => void;
+}) {
+  const preview = state?.preview ?? null;
+  const loading = state?.loading ?? false;
+  const applying = state?.applying ?? false;
+  const cleaning = state?.cleaning ?? false;
+  const hasPreview = preview !== null;
+  const isMerged = meta.lifecycleStatus === "merged" || preview?.alreadyMerged === true;
+  const canApply = preview?.canMerge === true && !loading && !applying && !cleaning && !isMerged;
+  const canCleanup = isMerged && !loading && !applying && !cleaning;
+  const statusTone =
+    loading || applying || cleaning
+      ? "loading"
+      : isMerged
+        ? "merged"
+        : preview?.canMerge
+          ? "ready"
+          : hasPreview
+            ? "blocked"
+            : "idle";
+  const targetWorkspaceName = preview?.targetWorkspace.name ?? t("common.unknown");
+  const blockerDetails = preview?.blockers.map((item) => item.detail) ?? [];
+
+  return (
+    <section className="worktree-merge-panel" data-state={statusTone}>
+      <div className="worktree-merge-panel-header">
+        <div>
+          <span className="worktree-merge-panel-label">{t("shell.worktreeMergePanelLabel")}</span>
+          <h3>{t("shell.worktreeMergePanelTitle")}</h3>
+        </div>
+        <span className="worktree-merge-panel-status">
+          {loading
+            ? t("shell.worktreeMergePreviewLoading")
+            : applying
+              ? t("shell.worktreeMergeApplying")
+              : cleaning
+                ? t("shell.worktreeCleanupRunning")
+                : isMerged
+                  ? t("shell.worktreeMergeAlreadyMerged")
+                  : preview?.canMerge
+                  ? t("shell.worktreeMergeReady")
+                  : hasPreview
+                    ? t("shell.worktreeMergeBlocked")
+                    : t("shell.worktreeMergePreviewIdle")}
+        </span>
+      </div>
+
+      <p className="worktree-merge-panel-copy">
+        {t("shell.worktreeMergePanelSummary", {
+          source: meta.displayName || meta.branchName,
+          target: targetWorkspaceName
+        })}
+      </p>
+
+      <div className="worktree-merge-panel-meta">
+        <span>{t("shell.worktreeMergeSourceBranch", { branch: meta.branchName })}</span>
+        <span>{t("shell.worktreeMergeTargetWorkspace", { name: targetWorkspaceName })}</span>
+        {preview ? (
+          <span>{t("shell.worktreeMergeAheadBehind", { ahead: preview.ahead, behind: preview.behind })}</span>
+        ) : null}
+        {preview?.mergeBaseCommit ? (
+          <span>{t("shell.worktreeMergeBaseCommit", { commit: shortenCommit(preview.mergeBaseCommit) })}</span>
+        ) : null}
+      </div>
+
+      {state?.error ? (
+        <p className="worktree-merge-panel-error status-text" data-tone="error">
+          {state.error}
+        </p>
+      ) : null}
+
+      {blockerDetails.length > 0 ? (
+        <div className="worktree-merge-panel-blockers">
+          {blockerDetails.map((detail) => (
+            <p key={detail} className="worktree-merge-panel-blocker">
+              {detail}
+            </p>
+          ))}
+        </div>
+      ) : null}
+
+      {preview?.conflictPaths.length ? (
+        <div className="worktree-merge-panel-conflicts">
+          <span className="worktree-merge-panel-conflicts-label">
+            {t("shell.worktreeMergeConflictLabel")}
+          </span>
+          <div className="worktree-merge-panel-conflict-list">
+            {preview.conflictPaths.map((item) => (
+              <code key={item}>{item}</code>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {isMerged ? (
+        <p className="worktree-merge-panel-hint">{t("shell.worktreeMergeMergedHint")}</p>
+      ) : null}
+
+      <div className="worktree-merge-panel-actions">
+        <button
+          type="button"
+          className="secondary-button"
+          disabled={loading || applying}
+          onClick={onRefresh}
+        >
+          {hasPreview ? t("shell.worktreeMergePreviewRefresh") : t("shell.worktreeMergePreviewAction")}
+        </button>
+        {isMerged ? (
+          <button
+            type="button"
+            className="secondary-button worktree-merge-panel-cleanup-button"
+            disabled={!canCleanup}
+            onClick={onCleanup}
+          >
+            {cleaning ? t("shell.worktreeCleanupRunning") : t("shell.worktreeCleanupAction")}
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className="primary-button"
+          disabled={!canApply}
+          onClick={onApply}
+        >
+          {applying ? t("shell.worktreeMergeApplying") : t("shell.worktreeMergeApplyAction")}
+        </button>
+      </div>
+    </section>
   );
 }
 
@@ -4493,6 +6196,9 @@ export function WorkbenchLayout({
   const [fileRevealRequest, setFileRevealRequest] = useState<WorkbenchFileRevealRequest | null>(null);
   const [workspaceManagementStateById, setWorkspaceManagementStateById] = useState<
     Record<string, WorkspaceManagementViewState>
+  >({});
+  const [worktreeMergeStateById, setWorktreeMergeStateById] = useState<
+    Record<string, WorktreeMergeViewState>
   >({});
   const [globalNotifications, setGlobalNotifications] = useState<WorkbenchGlobalNotification[]>([]);
   const [archivedNotificationIds, setArchivedNotificationIds] = useState<Set<string>>(() => new Set());
@@ -4775,6 +6481,188 @@ export function WorkbenchLayout({
     },
     []
   );
+
+  const loadWorktreeMergePreview = useCallback(async (workspaceId: string, force = false) => {
+    const normalizedWorkspaceId = workspaceId.trim();
+
+    if (!normalizedWorkspaceId) {
+      return;
+    }
+
+    let shouldRequest = true;
+    setWorktreeMergeStateById((current) => {
+      const existing = current[normalizedWorkspaceId];
+
+      if (!force && existing?.loading) {
+        shouldRequest = false;
+        return current;
+      }
+
+      return {
+        ...current,
+        [normalizedWorkspaceId]: {
+          preview: existing?.preview ?? null,
+          loading: true,
+          applying: existing?.applying ?? false,
+          cleaning: existing?.cleaning ?? false,
+          error: null
+        }
+      };
+    });
+
+    if (!shouldRequest) {
+      return;
+    }
+
+    try {
+      const preview = await getWorktreeMergePreview(normalizedWorkspaceId);
+
+      setWorktreeMergeStateById((current) => ({
+        ...current,
+        [normalizedWorkspaceId]: {
+          preview,
+          loading: false,
+          applying: current[normalizedWorkspaceId]?.applying ?? false,
+          cleaning: current[normalizedWorkspaceId]?.cleaning ?? false,
+          error: null
+        }
+      }));
+    } catch (error) {
+      setWorktreeMergeStateById((current) => ({
+        ...current,
+        [normalizedWorkspaceId]: {
+          preview: current[normalizedWorkspaceId]?.preview ?? null,
+          loading: false,
+          applying: current[normalizedWorkspaceId]?.applying ?? false,
+          cleaning: current[normalizedWorkspaceId]?.cleaning ?? false,
+          error: error instanceof Error ? error.message : t("shell.worktreeMergePreviewFailed")
+        }
+      }));
+    }
+  }, []);
+
+  const applyWorktreeMerge = useCallback(async (workspaceId: string) => {
+    const normalizedWorkspaceId = workspaceId.trim();
+
+    if (!normalizedWorkspaceId) {
+      return;
+    }
+
+    setWorktreeMergeStateById((current) => ({
+      ...current,
+      [normalizedWorkspaceId]: {
+        preview: current[normalizedWorkspaceId]?.preview ?? null,
+        loading: false,
+        applying: true,
+        cleaning: current[normalizedWorkspaceId]?.cleaning ?? false,
+        error: null
+      }
+    }));
+
+    try {
+      const result = await mergeWorktreeIntoParent(normalizedWorkspaceId);
+
+      setWorktreeMergeStateById((current) => ({
+        ...current,
+        [normalizedWorkspaceId]: {
+          preview: result.preview,
+          loading: false,
+          applying: false,
+          cleaning: current[normalizedWorkspaceId]?.cleaning ?? false,
+          error: null
+        }
+      }));
+      requestNavigationRefresh();
+      void refreshNavigation();
+      void loadWorktreeMergePreview(normalizedWorkspaceId, true);
+      void requestGitRefresh(result.preview.targetWorkspace.id);
+      showToastRef.current({
+        title: result.applied
+          ? t("shell.worktreeMergeApplySuccess")
+          : t("shell.worktreeMergeAlreadyMerged"),
+        tone: "success"
+      });
+    } catch (error) {
+      setWorktreeMergeStateById((current) => ({
+        ...current,
+        [normalizedWorkspaceId]: {
+          preview: current[normalizedWorkspaceId]?.preview ?? null,
+          loading: false,
+          applying: false,
+          cleaning: current[normalizedWorkspaceId]?.cleaning ?? false,
+          error: error instanceof Error ? error.message : t("shell.worktreeMergeApplyFailed")
+        }
+      }));
+      showToastRef.current({
+        title: error instanceof Error ? error.message : t("shell.worktreeMergeApplyFailed"),
+        tone: "error"
+      });
+    }
+  }, [loadWorktreeMergePreview, refreshNavigation, requestGitRefresh, requestNavigationRefresh]);
+
+  const applyWorktreeCleanup = useCallback(async (meta: WorktreeMetaDto) => {
+    const confirmed =
+      typeof window === "undefined"
+        ? true
+        : window.confirm(
+            t("shell.worktreeCleanupConfirm", {
+              name: meta.displayName || meta.branchName
+            })
+          );
+
+    if (!confirmed) {
+      return;
+    }
+
+    const workspaceId = meta.workspaceId;
+
+    setWorktreeMergeStateById((current) => ({
+      ...current,
+      [workspaceId]: {
+        preview: current[workspaceId]?.preview ?? null,
+        loading: false,
+        applying: false,
+        cleaning: true,
+        error: null
+      }
+    }));
+
+    try {
+      await cleanupWorktree(workspaceId);
+      setWorktreeMergeStateById((current) => ({
+        ...current,
+        [workspaceId]: {
+          preview: current[workspaceId]?.preview ?? null,
+          loading: false,
+          applying: false,
+          cleaning: false,
+          error: null
+        }
+      }));
+      requestNavigationRefresh();
+      await refreshNavigation();
+      navigate(buildWorkspaceDetailPath(meta.parentWorkspaceId), { replace: true });
+      showToastRef.current({
+        title: t("shell.worktreeCleanupSuccess"),
+        tone: "success"
+      });
+    } catch (error) {
+      setWorktreeMergeStateById((current) => ({
+        ...current,
+        [workspaceId]: {
+          preview: current[workspaceId]?.preview ?? null,
+          loading: false,
+          applying: false,
+          cleaning: false,
+          error: error instanceof Error ? error.message : t("shell.worktreeCleanupFailed")
+        }
+      }));
+      showToastRef.current({
+        title: error instanceof Error ? error.message : t("shell.worktreeCleanupFailed"),
+        tone: "error"
+      });
+    }
+  }, [navigate, refreshNavigation, requestNavigationRefresh]);
 
   const subscribeTerminalManagerSnapshot = useCallback((workspaceId: string) => {
     terminalManagerWorkspaceSubscriptionRef.current = workspaceId;
@@ -5573,11 +7461,57 @@ export function WorkbenchLayout({
               !favoriteSessionIdSet.has(node.item.sessionId)
               && !someSessionTreeNode(getTreeNodeChildren(node), (session) => favoriteSessionIdSet.has(session.sessionId))
           ),
+          childWorktrees: buildWorkspaceSidebarWorktreeNodes(group.childWorktrees, favoriteSessionIdSet),
           isCollapsed: collapsedWorkspaceIdSet.has(group.workspace.id)
         };
       }),
     [collapsedWorkspaceIdSet, favoriteSessionIdSet, navigationGroups]
   );
+  const workspaceVisualContextMap = useMemo(
+    () => buildWorkspaceVisualContextMap(navigationGroups),
+    [navigationGroups]
+  );
+  const currentWorktreeNode = useMemo(
+    () => findNavigationWorktreeNodeByWorkspaceId(navigationGroups, currentWorkspaceId),
+    [currentWorkspaceId, navigationGroups]
+  );
+  const currentWorkspaceEntity = useMemo(
+    () =>
+      currentWorkspaceId
+        ? currentWorktreeNode?.workspace
+          ?? navigationGroups
+            .map((group) => group.workspace)
+            .find((workspace) => workspace.id === currentWorkspaceId)
+          ?? null
+        : null,
+    [currentWorkspaceId, currentWorktreeNode, navigationGroups]
+  );
+  const currentWorktreeMeta: WorktreeMetaDto | null = currentWorktreeNode?.meta ?? null;
+  const currentWorkspaceContext =
+    (currentWorkspaceId ? workspaceVisualContextMap[currentWorkspaceId] ?? null : null)
+    ?? (currentWorkspaceEntity ? createFallbackWorkspaceVisualContext(currentWorkspaceEntity) : null);
+  const currentWorktreeMergeState =
+    (currentWorktreeMeta ? worktreeMergeStateById[currentWorktreeMeta.workspaceId] ?? null : null);
+
+  useEffect(() => {
+    if (!currentWorktreeMeta) {
+      return;
+    }
+
+    if (currentWorktreeMeta.lifecycleStatus !== "active" && currentWorktreeMeta.lifecycleStatus !== "merged") {
+      return;
+    }
+
+    if (
+      currentWorktreeMergeState?.preview
+      || currentWorktreeMergeState?.loading
+      || currentWorktreeMergeState?.error
+    ) {
+      return;
+    }
+
+    void loadWorktreeMergePreview(currentWorktreeMeta.workspaceId);
+  }, [currentWorktreeMergeState, currentWorktreeMeta, loadWorktreeMergePreview]);
 
   const favoriteSessions = useMemo(
     () =>
@@ -6178,12 +8112,19 @@ export function WorkbenchLayout({
         currentSessionId={isDraftSession ? null : currentSessionId}
         activeWorkspaceId={currentWorkspaceId}
         navigationGroups={navigationGroups}
+        workspaceContext={currentWorkspaceContext}
+        worktreeMeta={currentWorktreeMeta}
+        worktreeMergeState={currentWorktreeMergeState}
+        onRefreshWorktreeMergePreview={loadWorktreeMergePreview}
+        onApplyWorktreeMerge={applyWorktreeMerge}
+        onCleanupWorktree={applyWorktreeCleanup}
       />
     );
   const shouldShowAuxiliaryPanel = auxiliaryPanelContent !== null;
   const mobileNavigationPanel = isMobileShell ? (
     <SidebarContent
       workspaceGroups={workspaceSidebarGroups}
+      workspaceVisualContextMap={workspaceVisualContextMap}
       favoriteSessions={favoriteSessions}
       favoriteSessionIds={favoriteSessionIdSet}
       activeWorkspaceId={currentWorkspaceId}
@@ -6350,9 +8291,10 @@ export function WorkbenchLayout({
         >
           <div className="workbench-body-shell">
             <aside className="workbench-nav surface-card" data-collapsed={leftCollapsed}>
-              <SidebarContent
-                workspaceGroups={workspaceSidebarGroups}
-                favoriteSessions={favoriteSessions}
+                <SidebarContent
+                  workspaceGroups={workspaceSidebarGroups}
+                  workspaceVisualContextMap={workspaceVisualContextMap}
+                  favoriteSessions={favoriteSessions}
                 favoriteSessionIds={favoriteSessionIdSet}
                 activeWorkspaceId={currentWorkspaceId}
                 isConversationActive={activeCenterTab === "conversation"}
@@ -6493,6 +8435,8 @@ export function WorkbenchLayout({
                 />
                 <aside
                   className="workbench-auxiliary surface-card"
+                  data-workspace-tone={currentWorkspaceContext?.tone ?? "root"}
+                  data-worktree-depth={currentWorkspaceContext?.depth ?? 0}
                   data-collapsed={rightCollapsed}
                   data-custom-panel={activeCenterTab === "butler"}
                 >
@@ -6513,6 +8457,12 @@ export function WorkbenchLayout({
                       currentSessionId={isDraftSession ? null : currentSessionId}
                       activeWorkspaceId={currentWorkspaceId}
                       navigationGroups={navigationGroups}
+                      workspaceContext={currentWorkspaceContext}
+                      worktreeMeta={currentWorktreeMeta}
+                      worktreeMergeState={currentWorktreeMergeState}
+                      onRefreshWorktreeMergePreview={loadWorktreeMergePreview}
+                      onApplyWorktreeMerge={applyWorktreeMerge}
+                      onCleanupWorktree={applyWorktreeCleanup}
                     />
                   )}
                 </aside>

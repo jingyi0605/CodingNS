@@ -1,8 +1,9 @@
 import { createPortal } from "react-dom";
-import { useState, type ReactNode, type Ref, type TouchEventHandler } from "react";
+import { useState, type CSSProperties, type ReactNode, type Ref, type TouchEventHandler } from "react";
 
 import { useHaptics } from "../../../shared/haptics";
 import { t } from "../../../shared/i18n";
+import type { MobileWorkspaceOption } from "../../workbench/utils/mobile-workspace-tree";
 import { MobileTopHeaderFrame } from "./MobileTopHeaderFrame";
 
 interface WorkspaceSummary {
@@ -14,6 +15,7 @@ interface WorkspaceSummary {
 interface MobileWorkspaceSwitcherHeaderProps {
   readonly currentWorkspace: WorkspaceSummary | null;
   readonly workspaces: readonly WorkspaceSummary[];
+  readonly workspaceOptions?: readonly MobileWorkspaceOption[];
   readonly onSelectWorkspace?: (workspaceId: string) => void;
   readonly className?: string;
   readonly containerRef?: Ref<HTMLDivElement>;
@@ -35,6 +37,7 @@ interface MobileWorkspaceSwitcherHeaderProps {
 export function MobileWorkspaceSwitcherHeader({
   currentWorkspace,
   workspaces,
+  workspaceOptions,
   onSelectWorkspace,
   className,
   containerRef,
@@ -49,6 +52,14 @@ export function MobileWorkspaceSwitcherHeader({
 }: MobileWorkspaceSwitcherHeaderProps) {
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const haptics = useHaptics();
+  const switcherItems = workspaceOptions ?? workspaces.map((workspace) => ({
+    workspace,
+    label: workspace.name,
+    subtitle: workspace.path,
+    depth: 0,
+    kind: "workspace" as const,
+    meta: null
+  }));
 
   if (!currentWorkspace) {
     return null;
@@ -100,25 +111,41 @@ export function MobileWorkspaceSwitcherHeader({
               onClose={() => setSwitcherOpen(false)}
             >
               <div className="mobile-workspace-home-group mobile-workspace-home-sheet-group">
-                {workspaces.map((workspace) => (
+                {switcherItems.map((item) => (
                   <button
-                    key={workspace.id}
+                    key={item.workspace.id}
                     type="button"
                     className="mobile-workspace-home-row mobile-workspace-home-sheet-row"
+                    data-worktree-kind={item.kind}
+                    data-worktree-depth={item.depth}
                     onClick={() => {
-                      if (workspace.id !== currentWorkspace.id) {
+                      if (item.workspace.id !== currentWorkspace.id) {
                         void haptics.trigger("selection");
-                        onSelectWorkspace?.(workspace.id);
+                        onSelectWorkspace?.(item.workspace.id);
                       }
                       setSwitcherOpen(false);
                     }}
                   >
-                    <div className="mobile-workspace-home-session-main">
-                      <span className="mobile-workspace-home-session-title">{workspace.name}</span>
-                      <span className="mobile-workspace-home-session-meta">{workspace.path}</span>
+                    <div
+                      className="mobile-workspace-home-session-main"
+                      style={
+                        {
+                          "--mobile-workspace-tree-depth": String(item.depth)
+                        } as CSSProperties
+                      }
+                    >
+                      <span className="mobile-workspace-home-session-title">
+                        {item.kind === "worktree" ? (
+                          <span className="mobile-workspace-home-worktree-badge">
+                            {t("shell.mobileWorktreeBadge")}
+                          </span>
+                        ) : null}
+                        {item.label}
+                      </span>
+                      <span className="mobile-workspace-home-session-meta">{item.subtitle}</span>
                     </div>
                     <span className="mobile-workspace-home-row-trailing">
-                      {workspace.id === currentWorkspace.id ? <CheckIcon /> : <ChevronRightIcon />}
+                      {item.workspace.id === currentWorkspace.id ? <CheckIcon /> : <ChevronRightIcon />}
                     </span>
                   </button>
                 ))}

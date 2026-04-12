@@ -27,6 +27,10 @@ import {
   buildWorkspaceToolGitPath,
   buildWorkspaceToolProcessesPath
 } from "../../workbench/utils/workbench-navigation";
+import {
+  findNavigationWorkspaceTarget,
+  flattenMobileWorkspaceOptions
+} from "../../workbench/utils/mobile-workspace-tree";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 
@@ -72,15 +76,28 @@ export function WorkspaceDetailPage() {
   const [createSessionOpen, setCreateSessionOpen] = useState(false);
   const [visibleArchivedCount, setVisibleArchivedCount] = useState(ARCHIVED_SESSIONS_PAGE_SIZE);
 
-  const workspaceGroup = navigationGroups.find((group) => group.workspace.id === workspaceId) ?? null;
-  const workspace = workspaceGroup?.workspace ?? null;
+  const workspaceOptions = flattenMobileWorkspaceOptions(navigationGroups);
+  const workspaceTarget = findNavigationWorkspaceTarget(navigationGroups, workspaceId);
+  const workspace = workspaceTarget?.workspace ?? null;
+  const workspaceSummary =
+    workspaceOptions.find((item) => item.workspace.id === workspace?.id)
+    ?? (workspace
+      ? {
+          workspace,
+          label: workspace.name,
+          subtitle: workspace.path,
+          depth: 0,
+          kind: "workspace" as const,
+          meta: null
+        }
+      : null);
   const visibleSessions = useMemo(
-    () => [...(workspaceGroup?.sessions ?? [])].filter(isVisibleSession).sort(sortSessionsByActivity),
-    [workspaceGroup]
+    () => [...(workspaceTarget?.sessions ?? [])].filter(isVisibleSession).sort(sortSessionsByActivity),
+    [workspaceTarget]
   );
   const archivedSessions = useMemo(
-    () => [...(workspaceGroup?.sessions ?? [])].filter(isArchivedSession).sort(sortSessionsByActivity),
-    [workspaceGroup]
+    () => [...(workspaceTarget?.sessions ?? [])].filter(isArchivedSession).sort(sortSessionsByActivity),
+    [workspaceTarget]
   );
 
   useEffect(() => {
@@ -234,10 +251,19 @@ export function WorkspaceDetailPage() {
   return (
     <main className="mobile-feature-page mobile-page-scroll-root mobile-page-with-top-header mobile-workspace-detail-page">
       <MobileWorkspaceSwitcherHeader
-        currentWorkspace={workspace}
+        currentWorkspace={
+          workspaceSummary
+            ? {
+                id: workspaceSummary.workspace.id,
+                name: workspaceSummary.label,
+                path: workspaceSummary.subtitle
+              }
+            : null
+        }
         workspaces={navigationGroups.map((group) => group.workspace)}
+        workspaceOptions={workspaceOptions}
         heading={t("shell.workspaceDetailTitle")}
-        triggerLabel={workspace.name}
+        triggerLabel={workspaceSummary?.label ?? workspace.name}
         onSelectWorkspace={(targetWorkspaceId) => {
           selectWorkspace(targetWorkspaceId);
           navigate(buildWorkspaceDetailPath(targetWorkspaceId));
@@ -516,6 +542,7 @@ export function WorkspaceDetailPage() {
       <MobileCreateSessionSheet
         open={createSessionOpen}
         workspaces={navigationGroups.map((group) => group.workspace)}
+        workspaceOptions={workspaceOptions}
         initialWorkspaceId={currentWorkspaceId ?? workspace.id}
         onClose={() => setCreateSessionOpen(false)}
         onSelect={handleSelectSessionProvider}

@@ -253,6 +253,65 @@ describe("WorkspaceDetailPage", () => {
     expect(startDraftSession).toHaveBeenCalledWith("workspace-1", "opencode");
   });
 
+  it("子工作树详情页会显示子工作树名称和自己的会话", async () => {
+    mockUseWorkbenchShell.mockReturnValue(createWorkbenchShell({
+      navigationGroups: [
+        {
+          workspace: {
+            id: "workspace-1",
+            name: "项目一",
+            path: "/repo/project-one"
+          },
+          sessions: [],
+          childWorktrees: [
+            {
+              workspace: {
+                id: "workspace-1-child",
+                name: "登录分支",
+                path: "/repo/project-one/.worktrees/login"
+              },
+              meta: {
+                workspaceId: "workspace-1-child",
+                rootWorkspaceId: "workspace-1",
+                parentWorkspaceId: "workspace-1",
+                sourceWorkspaceId: "workspace-1",
+                mergeTargetWorkspaceId: "workspace-1",
+                branchName: "feat/login-codex",
+                baseRef: "main",
+                baseCommit: "commit-base",
+                headCommit: "commit-head",
+                displayName: "feat/login-codex",
+                depth: 1,
+                lifecycleStatus: "active",
+                mergedAt: null,
+                removedAt: null,
+                createdAt: "2026-04-12T08:00:00.000Z",
+                updatedAt: "2026-04-12T08:00:00.000Z"
+              },
+              sessions: [
+                {
+                  sessionId: "session-child-1",
+                  title: "工作树会话",
+                  provider: "codex",
+                  messageCount: 2,
+                  isArchived: false
+                }
+              ],
+              children: []
+            }
+          ]
+        }
+      ],
+      currentWorkspaceId: "workspace-1-child"
+    }));
+
+    renderPage("/workspaces/workspace-1-child");
+
+    expect(screen.getByRole("button", { name: "切换工作区" })).toHaveTextContent("feat/login-codex");
+    expect(screen.getAllByText("/repo/project-one/.worktrees/login").length).toBeGreaterThan(0);
+    expect(screen.getByText("工作树会话")).toBeInTheDocument();
+  });
+
   it("归档会话默认显示最近 10 条，并支持继续加载", async () => {
     const user = userEvent.setup();
     const archivedSessions = Array.from({ length: 15 }, (_, index) => ({
@@ -300,9 +359,9 @@ describe("WorkspaceDetailPage", () => {
   });
 });
 
-function renderPage() {
+function renderPage(initialEntry = "/workspaces/workspace-1") {
   return render(
-    <MemoryRouter initialEntries={["/workspaces/workspace-1"]}>
+    <MemoryRouter initialEntries={[initialEntry]}>
       <Routes>
         <Route path="/workspaces/:workspaceId" element={<WorkspaceDetailPage />} />
       </Routes>

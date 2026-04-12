@@ -327,7 +327,8 @@ function createWorkspaceGroup(options?: {
         forkSourceType: "message",
         isArchived: archivedSessionIds.has("leaf-session")
       })
-    ]
+    ],
+    childWorktrees: []
   };
 }
 

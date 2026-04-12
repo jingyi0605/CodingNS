@@ -1,6 +1,7 @@
 import type {
   ProviderId,
   SessionSummaryDto,
+  WorkbenchWorktreeNodeDto,
   WorkspaceDto
 } from "../../conversation/api/conversation-api";
 import { buildSessionTree, type SessionTreeNode } from "./session-tree";
@@ -8,6 +9,7 @@ import { buildSessionTree, type SessionTreeNode } from "./session-tree";
 export interface WorkbenchNavigationGroup {
   workspace: WorkspaceDto;
   sessions: SessionSummaryDto[];
+  childWorktrees?: WorkbenchWorktreeNodeDto[];
 }
 
 export interface WorkbenchNavigationEntry {
@@ -81,10 +83,13 @@ export function flattenNavigationSessions(
 ): WorkbenchNavigationEntry[] {
   return groups
     .flatMap((group) =>
-      group.sessions.map((session) => ({
-        session,
-        workspace: group.workspace
-      }))
+      [
+        ...group.sessions.map((session) => ({
+          session,
+          workspace: group.workspace
+        })),
+        ...flattenWorktreeSessions(group.childWorktrees ?? [])
+      ]
     )
     .sort((left, right) =>
       (right.session.lastMessageAt ?? right.session.updatedAt).localeCompare(
@@ -126,4 +131,16 @@ function sortNavigationEntries(left: WorkbenchNavigationEntry, right: WorkbenchN
   return (right.session.lastMessageAt ?? right.session.updatedAt).localeCompare(
     left.session.lastMessageAt ?? left.session.updatedAt
   );
+}
+
+function flattenWorktreeSessions(
+  nodes: readonly WorkbenchWorktreeNodeDto[]
+): WorkbenchNavigationEntry[] {
+  return nodes.flatMap((node) => [
+    ...node.sessions.map((session) => ({
+      session,
+      workspace: node.workspace
+    })),
+    ...flattenWorktreeSessions(node.children)
+  ]);
 }

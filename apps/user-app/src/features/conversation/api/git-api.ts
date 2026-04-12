@@ -115,6 +115,10 @@ export interface GitBranchSnapshotDto {
   remote: GitBranchItemDto[];
 }
 
+export interface GitTagItemDto {
+  name: string;
+}
+
 export interface GitRemoteSyncResultDto {
   action: "fetch" | "pull" | "push" | "publish";
   summary: string;
@@ -262,6 +266,12 @@ export function getGitHistory(workspaceId: string, limit = 5, cursor: string | n
 export function getGitBranches(workspaceId: string) {
   return httpClient.request<GitBranchSnapshotDto>(
     `/api/git/branches?workspaceId=${encodeURIComponent(workspaceId)}`
+  );
+}
+
+export function getGitTags(workspaceId: string) {
+  return httpClient.request<GitTagItemDto[]>(
+    `/api/git/tags?workspaceId=${encodeURIComponent(workspaceId)}`
   );
 }
 

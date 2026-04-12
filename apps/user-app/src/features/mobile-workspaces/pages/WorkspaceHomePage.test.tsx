@@ -620,6 +620,67 @@ describe("WorkspaceHomePage", () => {
     });
   });
 
+  it("顶部切换器会显示子工作树并支持切换", async () => {
+    const user = userEvent.setup();
+    const selectWorkspace = vi.fn();
+
+    mockUseWorkbenchShell.mockReturnValue(
+      createWorkbenchShell({
+        selectWorkspace,
+        navigationGroups: [
+          {
+            workspace: {
+              id: "workspace-1",
+              name: "项目一",
+              path: "/repo/project-one"
+            },
+            sessions: [],
+            childWorktrees: [
+              {
+                workspace: {
+                  id: "workspace-1-child",
+                  name: "登录分支",
+                  path: "/repo/project-one/.worktrees/login"
+                },
+                meta: {
+                  workspaceId: "workspace-1-child",
+                  rootWorkspaceId: "workspace-1",
+                  parentWorkspaceId: "workspace-1",
+                  sourceWorkspaceId: "workspace-1",
+                  mergeTargetWorkspaceId: "workspace-1",
+                  branchName: "feat/login-codex",
+                  baseRef: "main",
+                  baseCommit: "commit-base",
+                  headCommit: "commit-head",
+                  displayName: "feat/login-codex",
+                  depth: 1,
+                  lifecycleStatus: "active",
+                  mergedAt: null,
+                  removedAt: null,
+                  createdAt: "2026-04-12T08:00:00.000Z",
+                  updatedAt: "2026-04-12T08:00:00.000Z"
+                },
+                sessions: [],
+                children: []
+              }
+            ]
+          }
+        ]
+      })
+    );
+
+    renderPage();
+
+    await user.click(screen.getByRole("button", { name: "切换工作区" }));
+
+    const dialog = screen.getByRole("dialog", { name: "工作区" });
+    expect(within(dialog).getByRole("button", { name: /feat\/login-codex/ })).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole("button", { name: /feat\/login-codex/ }));
+
+    expect(selectWorkspace).toHaveBeenCalledWith("workspace-1-child");
+  });
+
   it("会把添加项目和 Clone 项目放进工作区切换弹层", async () => {
     const user = userEvent.setup();
 

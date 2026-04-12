@@ -34,6 +34,10 @@ import {
   buildWorkspaceTerminalsPath,
   buildWorkspaceToolsPath
 } from "../../workbench/utils/workbench-navigation";
+import {
+  findNavigationWorkspaceTarget,
+  flattenMobileWorkspaceOptions
+} from "../../workbench/utils/mobile-workspace-tree";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 import { MobileCreateSessionSheet } from "../../mobile-sessions/components/MobileCreateSessionSheet";
@@ -167,12 +171,24 @@ export function WorkspaceHomePage() {
     pendingInboxCount: 0
   });
 
-  const currentWorkspaceGroup =
-    navigationGroups.find((group) => group.workspace.id === currentWorkspaceId) ??
-    navigationGroups[0] ??
-    null;
-  const currentWorkspace = currentWorkspaceGroup?.workspace ?? null;
-  const visibleSessions = [...(currentWorkspaceGroup?.sessions ?? [])]
+  const workspaceOptions = flattenMobileWorkspaceOptions(navigationGroups);
+  const currentWorkspaceTarget =
+    findNavigationWorkspaceTarget(navigationGroups, currentWorkspaceId) ??
+    findNavigationWorkspaceTarget(navigationGroups, navigationGroups[0]?.workspace.id ?? null);
+  const currentWorkspace = currentWorkspaceTarget?.workspace ?? null;
+  const currentWorkspaceSummary =
+    workspaceOptions.find((item) => item.workspace.id === currentWorkspace?.id)
+    ?? (currentWorkspace
+      ? {
+          workspace: currentWorkspace,
+          label: currentWorkspace.name,
+          subtitle: currentWorkspace.path,
+          depth: 0,
+          kind: "workspace" as const,
+          meta: null
+        }
+      : null);
+  const visibleSessions = [...(currentWorkspaceTarget?.sessions ?? [])]
     .filter(isVisibleSession)
     .sort(sortSessionsByActivity);
   const activeSessions = visibleSessions.filter(isSessionRunning);
@@ -604,8 +620,17 @@ export function WorkspaceHomePage() {
       {currentWorkspace ? (
         <>
           <MobileWorkspaceSwitcherHeader
-            currentWorkspace={currentWorkspace}
+            currentWorkspace={
+              currentWorkspaceSummary
+                ? {
+                    id: currentWorkspaceSummary.workspace.id,
+                    name: currentWorkspaceSummary.label,
+                    path: currentWorkspaceSummary.subtitle
+                  }
+                : null
+            }
             workspaces={navigationGroups.map((group) => group.workspace)}
+            workspaceOptions={workspaceOptions}
             onSelectWorkspace={handleSelectWorkspace}
             sheetContent={(closeSheet) => (
               <div className="mobile-workspace-home-group mobile-workspace-home-sheet-group">
@@ -848,6 +873,7 @@ export function WorkspaceHomePage() {
       <MobileCreateSessionSheet
         open={createSessionOpen}
         workspaces={navigationGroups.map((group) => group.workspace)}
+        workspaceOptions={workspaceOptions}
         initialWorkspaceId={currentWorkspace?.id ?? currentWorkspaceId ?? null}
         onClose={() => setCreateSessionOpen(false)}
         onSelect={handleSelectSessionProvider}

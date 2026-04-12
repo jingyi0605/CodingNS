@@ -230,6 +230,23 @@
   background: color-mix(in srgb, var(--bg-tertiary) 68%, transparent);
 }
 
+.session-list-item[data-variant="mobile"][data-workspace-tone="worktree"] .session-list-title {
+  color: color-mix(in srgb, var(--text-primary) 78%, var(--success) 22%);
+}
+
+.session-list-item[data-variant="mobile"][data-workspace-tone="worktree"] .session-list-meta {
+  color: color-mix(in srgb, var(--text-secondary) 76%, var(--success) 24%);
+}
+
+.session-list-item[data-variant="mobile"][data-workspace-tone="worktree"][data-active="true"] {
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--success) 12%, var(--bg-surface)),
+      color-mix(in srgb, var(--accent) 10%, var(--bg-surface))
+    );
+}
+
 .session-list-link {
   flex: 1;
   display: flex;
@@ -661,6 +678,22 @@
   min-width: 0;
   justify-content: flex-start;
   margin-left: 0;
+}
+
+.mobile-conversation-page[data-workspace-tone="worktree"] .mobile-conversation-page-header {
+  border-bottom-color: color-mix(in srgb, var(--success) 18%, var(--border-primary));
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--success) 4%, var(--bg-surface)),
+      color-mix(in srgb, var(--accent) 4%, var(--bg-surface))
+    );
+}
+
+.mobile-conversation-page[data-workspace-tone="worktree"] .mobile-conversation-stage {
+  background:
+    radial-gradient(circle at top right, color-mix(in srgb, var(--success) 8%, transparent), transparent 34%),
+    radial-gradient(circle at top left, color-mix(in srgb, var(--accent) 7%, transparent), transparent 36%);
 }
 
 .mobile-conversation-toolbar-main {

@@ -79,6 +79,14 @@ import {
   findSessionTreeAncestorIds,
   someSessionTreeNode
 } from "../../workbench/utils/session-tree";
+import {
+  findNavigationWorkspaceTarget,
+  flattenMobileWorkspaceOptions
+} from "../../workbench/utils/mobile-workspace-tree";
+import {
+  buildWorkspaceVisualContextMap,
+  createFallbackWorkspaceVisualContext
+} from "../../workbench/utils/worktree-visual-context";
 import { useMobileConversationBottomLayer } from "../../mobile-shell/components/MobileConversationBottomLayerContext";
 import { MobileWorkspaceSwitcherHeader } from "../../mobile-shell/components/MobileWorkspaceSwitcherHeader";
 import { MobileCreateSessionSheet } from "../../mobile-sessions/components/MobileCreateSessionSheet";
@@ -249,6 +257,14 @@ function LiveConversationPage({
     () => navigationGroups.map((group) => group.workspace),
     [navigationGroups]
   );
+  const mobileWorkspaceOptions = useMemo(
+    () => flattenMobileWorkspaceOptions(navigationGroups),
+    [navigationGroups]
+  );
+  const workspaceVisualContextMap = useMemo(
+    () => buildWorkspaceVisualContextMap(navigationGroups),
+    [navigationGroups]
+  );
   const mobilePreviewItems = useMemo(
     () =>
       buildMobilePreviewItems(
@@ -267,13 +283,32 @@ function LiveConversationPage({
     () => [...mobileFavoritePreviewItems, ...mobilePreviewItems],
     [mobileFavoritePreviewItems, mobilePreviewItems]
   );
-  const mobileArchiveWorkspaceGroup = useMemo(
+  const currentWorkspaceEntity = useMemo(
     () =>
       mobileWorkspaceId
-        ? navigationGroups.find((group) => group.workspace.id === mobileWorkspaceId) ?? null
+        ? mobileWorkspaces.find((workspace) => workspace.id === mobileWorkspaceId) ?? null
         : null,
+    [mobileWorkspaceId, mobileWorkspaces]
+  );
+  const currentWorkspaceContext =
+    (mobileWorkspaceId ? workspaceVisualContextMap[mobileWorkspaceId] ?? null : null)
+    ?? (currentWorkspaceEntity ? createFallbackWorkspaceVisualContext(currentWorkspaceEntity) : null);
+  const mobileWorkspaceTarget = useMemo(
+    () => findNavigationWorkspaceTarget(navigationGroups, mobileWorkspaceId),
     [mobileWorkspaceId, navigationGroups]
   );
+  const mobileWorkspaceSummary =
+    mobileWorkspaceOptions.find((item) => item.workspace.id === mobileWorkspaceId)
+    ?? (mobileWorkspaceTarget
+      ? {
+          workspace: mobileWorkspaceTarget.workspace,
+          label: mobileWorkspaceTarget.workspace.name,
+          subtitle: mobileWorkspaceTarget.workspace.path,
+          depth: 0,
+          kind: "workspace" as const,
+          meta: null
+        }
+      : null);
   const nextMobileSessionEntry = useMemo(
     () => resolveNextMobileSessionEntry(navigationGroups, mobileWorkspaceId, sessionId),
     [mobileWorkspaceId, navigationGroups, sessionId]
@@ -373,10 +408,10 @@ function LiveConversationPage({
   const canOpenBranchTree = Boolean(currentSessionSummary && branchTreeWorkspaceId && hasBranchRelations);
   const mobileArchivedSessions = useMemo(
     () =>
-      mobileArchiveWorkspaceGroup?.sessions.filter(
+      mobileWorkspaceTarget?.sessions.filter(
         (item) => item.isArchived === true && !isRealSubagentSession(item)
       ) ?? [],
-    [mobileArchiveWorkspaceGroup]
+    [mobileWorkspaceTarget]
   );
   const mobileConversationMainRef = useRef<HTMLDivElement | null>(null);
   const timelineSelectionContainerRef = useRef<HTMLDivElement | null>(null);
@@ -619,6 +654,8 @@ function LiveConversationPage({
         ref={mobileConversationPageRef}
         className="workbench-page conversation-page-shell mobile-page-fixed-root mobile-conversation-page"
         data-mobile-shell={!showInlineHeader}
+        data-workspace-tone={currentWorkspaceContext?.tone ?? "root"}
+        data-worktree-depth={currentWorkspaceContext?.depth ?? 0}
         data-preview-mode={!showInlineHeader ? mobilePreview.displayMode : undefined}
         data-preview-dragging={!showInlineHeader ? mobilePreview.isDragging : undefined}
         style={!showInlineHeader ? mobilePreview.pageStyle : undefined}
@@ -626,6 +663,7 @@ function LiveConversationPage({
         {showInlineHeader ? (
           <SessionHeader
             session={session ?? navigationSession}
+            workspaceContext={currentWorkspaceContext}
             actions={<SessionButlerActionButton session={session ?? navigationSession} />}
           />
         ) : null}
@@ -634,8 +672,17 @@ function LiveConversationPage({
             containerRef={mobileConversationHeaderRef}
             className="mobile-conversation-page-header"
             gestureHandlers={mobilePreview.mainGestureHandlers}
-            currentWorkspace={mobileArchiveWorkspaceGroup?.workspace ?? mobileWorkspaces[0] ?? null}
+            currentWorkspace={
+              mobileWorkspaceSummary
+                ? {
+                    id: mobileWorkspaceSummary.workspace.id,
+                    name: mobileWorkspaceSummary.label,
+                    path: mobileWorkspaceSummary.subtitle
+                  }
+                : mobileWorkspaces[0] ?? null
+            }
             workspaces={mobileWorkspaces}
+            workspaceOptions={mobileWorkspaceOptions}
             onSelectWorkspace={handleMobileWorkspaceSwitch}
             heading={mobileSessionTitlePresentation.fullTitle}
             trailing={
@@ -909,7 +956,7 @@ function LiveConversationPage({
       />
       <ConversationArchiveFolderModal
         open={archiveFolderOpen}
-        workspaceName={mobileArchiveWorkspaceGroup?.workspace.name ?? null}
+        workspaceName={mobileWorkspaceTarget?.workspace.name ?? null}
         sessions={mobileArchivedSessions}
         restoringSessionId={archiveRestoreSessionId}
         onClose={() => {
@@ -941,6 +988,7 @@ function LiveConversationPage({
       <MobileCreateSessionSheet
         open={createSessionOpen}
         workspaces={mobileWorkspaces}
+        workspaceOptions={mobileWorkspaceOptions}
         initialWorkspaceId={mobileWorkspaceId}
         onClose={() => setCreateSessionOpen(false)}
         onSelect={(workspaceId, provider) => {
@@ -1015,6 +1063,22 @@ function DraftConversationPage({
     () => navigationGroups.map((group) => group.workspace),
     [navigationGroups]
   );
+  const mobileWorkspaceOptions = useMemo(
+    () => flattenMobileWorkspaceOptions(navigationGroups),
+    [navigationGroups]
+  );
+  const workspaceVisualContextMap = useMemo(
+    () => buildWorkspaceVisualContextMap(navigationGroups),
+    [navigationGroups]
+  );
+  const currentWorkspaceEntity = useMemo(
+    () => mobileWorkspaces.find((workspace) => workspace.id === draft.workspaceId) ?? null,
+    [draft.workspaceId, mobileWorkspaces]
+  );
+  const currentWorkspaceContext =
+    workspaceVisualContextMap[draft.workspaceId] ?? (
+      currentWorkspaceEntity ? createFallbackWorkspaceVisualContext(currentWorkspaceEntity) : null
+    );
   const mobileSessionTitlePresentation = useMemo(
     () => buildSessionTitlePresentation(session.title ?? null, t("conversation.titleFallback")),
     [session]
@@ -1032,6 +1096,22 @@ function DraftConversationPage({
     () => [...mobileFavoritePreviewItems, ...mobilePreviewItems],
     [mobileFavoritePreviewItems, mobilePreviewItems]
   );
+  const mobileWorkspaceTarget = useMemo(
+    () => findNavigationWorkspaceTarget(navigationGroups, draft.workspaceId),
+    [draft.workspaceId, navigationGroups]
+  );
+  const mobileWorkspaceSummary =
+    mobileWorkspaceOptions.find((item) => item.workspace.id === draft.workspaceId)
+    ?? (mobileWorkspaceTarget
+      ? {
+          workspace: mobileWorkspaceTarget.workspace,
+          label: mobileWorkspaceTarget.workspace.name,
+          subtitle: mobileWorkspaceTarget.workspace.path,
+          depth: 0,
+          kind: "workspace" as const,
+          meta: null
+        }
+      : null);
   const mobileConversationMainRef = useRef<HTMLDivElement | null>(null);
   const mobileConversationPageRef = useRef<HTMLElement | null>(null);
   const mobileConversationHeaderRef = useRef<HTMLDivElement | null>(null);
@@ -1117,6 +1197,8 @@ function DraftConversationPage({
       ref={mobileConversationPageRef}
       className="workbench-page conversation-page-shell mobile-page-fixed-root mobile-conversation-page"
       data-mobile-shell={!showInlineHeader}
+      data-workspace-tone={currentWorkspaceContext?.tone ?? "root"}
+      data-worktree-depth={currentWorkspaceContext?.depth ?? 0}
       data-preview-mode={!showInlineHeader ? mobilePreview.displayMode : undefined}
       data-preview-dragging={!showInlineHeader ? mobilePreview.isDragging : undefined}
       style={!showInlineHeader ? mobilePreview.pageStyle : undefined}
@@ -1124,6 +1206,7 @@ function DraftConversationPage({
       {showInlineHeader ? (
         <SessionHeader
           session={session}
+          workspaceContext={currentWorkspaceContext}
         />
       ) : null}
       {!showInlineHeader ? (
@@ -1131,8 +1214,17 @@ function DraftConversationPage({
           containerRef={mobileConversationHeaderRef}
           className="mobile-conversation-page-header"
           gestureHandlers={mobilePreview.mainGestureHandlers}
-          currentWorkspace={mobileWorkspaces.find((workspace) => workspace.id === draft.workspaceId) ?? mobileWorkspaces[0] ?? null}
+          currentWorkspace={
+            mobileWorkspaceSummary
+              ? {
+                  id: mobileWorkspaceSummary.workspace.id,
+                  name: mobileWorkspaceSummary.label,
+                  path: mobileWorkspaceSummary.subtitle
+                }
+              : mobileWorkspaces[0] ?? null
+          }
           workspaces={mobileWorkspaces}
+          workspaceOptions={mobileWorkspaceOptions}
           onSelectWorkspace={handleMobileWorkspaceSwitch}
           heading={mobileSessionTitlePresentation.fullTitle}
           trailing={
@@ -1280,6 +1372,7 @@ function DraftConversationPage({
     <MobileCreateSessionSheet
       open={createSessionOpen}
       workspaces={mobileWorkspaces}
+      workspaceOptions={mobileWorkspaceOptions}
       initialWorkspaceId={draft.workspaceId}
       onClose={() => setCreateSessionOpen(false)}
       onSelect={(workspaceId, provider) => {
@@ -1405,16 +1498,16 @@ function buildMobilePreviewItems(
     return [];
   }
 
-  const workspaceGroup = navigationGroups.find((group) => group.workspace.id === workspaceId);
+  const workspaceTarget = findNavigationWorkspaceTarget(navigationGroups, workspaceId);
 
-  if (!workspaceGroup) {
+  if (!workspaceTarget) {
     return [];
   }
 
-  const visibleEntries = filterVisibleNavigationSessions(workspaceGroup.sessions)
+  const visibleEntries = filterVisibleNavigationSessions(workspaceTarget.sessions)
     .map((session) => ({
       session,
-      workspace: workspaceGroup.workspace
+      workspace: workspaceTarget.workspace
     }));
   const visibleTree = buildNavigationSessionTree(visibleEntries);
 
@@ -1429,21 +1522,21 @@ function buildMobileFavoritePreviewItems(
   favoriteSessions: readonly WorkbenchNavigationEntry[],
   navigationGroups: ReturnType<typeof useWorkbenchShell>["navigationGroups"]
 ): WorkbenchNavigationTreeNode[] {
-  const visibleTreeByWorkspaceId = new Map(
-    navigationGroups.map((group) => {
-      const visibleEntries = filterVisibleNavigationSessions(group.sessions).map((session) => ({
-        session,
-        workspace: group.workspace
-      }));
-
-      return [group.workspace.id, buildNavigationSessionTree(visibleEntries)] as const;
-    })
-  );
-
   return favoriteSessions
     .filter((item) => !isRealSubagentSession(item.session))
     .flatMap((entry) => {
-      const workspaceTree = visibleTreeByWorkspaceId.get(entry.workspace.id) ?? [];
+      const workspaceTarget = findNavigationWorkspaceTarget(navigationGroups, entry.workspace.id);
+
+      if (!workspaceTarget) {
+        return [];
+      }
+
+      const workspaceTree = buildNavigationSessionTree(
+        filterVisibleNavigationSessions(workspaceTarget.sessions).map((session) => ({
+          session,
+          workspace: workspaceTarget.workspace
+        }))
+      );
       const node = findNavigationTreeNodeBySessionId(workspaceTree, entry.session.sessionId);
 
       return node ? [node] : [];

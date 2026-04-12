@@ -117,7 +117,19 @@ vi.mock("../components/MessageTimeline", () => ({
 }));
 
 vi.mock("../components/SessionHeader", () => ({
-  SessionHeader: () => null
+  SessionHeader: ({
+    workspaceContext
+  }: {
+    workspaceContext?: {
+      tone?: string;
+      displayName?: string;
+      parentDisplayName?: string | null;
+    } | null;
+  }) => (
+    <div data-testid="session-header-context">
+      {workspaceContext?.tone ?? "none"}|{workspaceContext?.displayName ?? ""}|{workspaceContext?.parentDisplayName ?? ""}
+    </div>
+  )
 }));
 
 vi.mock("../components/ComposerPanel", () => ({
@@ -384,6 +396,85 @@ describe("ConversationPage", () => {
 
     expect(screen.getByTestId("timeline-messages")).not.toHaveTextContent("父会话第一句");
     expect(screen.getByTestId("timeline-messages")).not.toHaveTextContent("父会话第一句回复");
+  });
+
+  it("子工作树会话会把当前工作区上下文传给会话头部", async () => {
+    mockLiveRuntimeState.session = {
+      ...mockLiveRuntimeState.session,
+      sessionId: "session-worktree-1",
+      workspaceId: "workspace-1-child",
+      title: "工作树会话"
+    };
+    mockUseWorkbenchShell.mockReturnValue({
+      shellMode: "desktop",
+      navigationGroups: [
+        {
+          workspace: {
+            id: "workspace-1",
+            name: "CodingNS",
+            path: "/Users/jackson/Code/CodingNS",
+            repoRoot: "/Users/jackson/Code/CodingNS"
+          },
+          sessions: [],
+          childWorktrees: [
+            {
+              workspace: {
+                id: "workspace-1-child",
+                name: "登录分支",
+                path: "/Users/jackson/Code/CodingNS/.worktrees/login",
+                repoRoot: "/Users/jackson/Code/CodingNS"
+              },
+              meta: {
+                workspaceId: "workspace-1-child",
+                rootWorkspaceId: "workspace-1",
+                parentWorkspaceId: "workspace-1",
+                sourceWorkspaceId: "workspace-1",
+                mergeTargetWorkspaceId: "workspace-1",
+                branchName: "feat/login-codex",
+                baseRef: "main",
+                baseCommit: "commit-base",
+                headCommit: "commit-head",
+                displayName: "feat/login-codex",
+                depth: 1,
+                lifecycleStatus: "active",
+                mergedAt: null,
+                removedAt: null,
+                createdAt: "2026-04-12T08:00:00.000Z",
+                updatedAt: "2026-04-12T08:00:00.000Z"
+              },
+              sessions: [mockLiveRuntimeState.session],
+              children: []
+            }
+          ]
+        }
+      ],
+      requestNavigationRefresh: vi.fn(),
+      selectWorkspace: vi.fn(),
+      setSessionWorkspace: vi.fn(),
+      upsertNavigationSession: vi.fn(),
+      markNavigationSessionSeen: vi.fn(),
+      favoriteSessions: [],
+      archiveSession: vi.fn(),
+      unarchiveSession: vi.fn(),
+      startDraftSession: vi.fn()
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/workspaces/workspace-1-child/sessions/session-worktree-1"]}>
+        <Routes>
+          <Route
+            path="/workspaces/:workspaceId/sessions/:sessionId"
+            element={<ConversationPage />}
+          />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("session-header-context")).toHaveTextContent(
+        "worktree|feat/login-codex|CodingNS"
+      );
+    });
   });
 
   it("解释型子会话会默认折叠选中文本，并保留提问作为第一条真实用户消息", async () => {
