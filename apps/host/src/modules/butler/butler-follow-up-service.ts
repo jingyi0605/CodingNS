@@ -80,6 +80,13 @@ export interface ButlerFollowUpTaskView {
   completedAt: string | null;
 }
 
+export interface ButlerFollowUpRunDueTasksResult {
+  activeTaskCount: number;
+  dueTaskCount: number;
+  processedTaskCount: number;
+  idle: boolean;
+}
+
 export interface CreateButlerFollowUpTaskInput {
   projectId: string;
   butlerSessionId: string;
@@ -298,11 +305,13 @@ export class ButlerFollowUpService {
     return mapTaskView(updated, project.workspaceId, project.name, index?.title ?? null);
   }
 
-  async runDueTasks(referenceAt = nowIso()): Promise<void> {
+  async runDueTasks(referenceAt = nowIso()): Promise<ButlerFollowUpRunDueTasksResult> {
     const tasks = this.butlerFollowUpTaskRepository.list({
       statuses: ["active"],
       limit: 100
     });
+    let dueTaskCount = 0;
+    let processedTaskCount = 0;
 
     for (const task of tasks) {
       await this.autoApprovePendingPermissionRequestsIfDue(task, referenceAt);
@@ -311,8 +320,17 @@ export class ButlerFollowUpService {
         continue;
       }
 
+      dueTaskCount += 1;
       await this.processTask(task.id, referenceAt);
+      processedTaskCount += 1;
     }
+
+    return {
+      activeTaskCount: tasks.length,
+      dueTaskCount,
+      processedTaskCount,
+      idle: dueTaskCount === 0
+    };
   }
 
   async handleSessionTerminal(sessionId: string, referenceAt = nowIso()): Promise<void> {

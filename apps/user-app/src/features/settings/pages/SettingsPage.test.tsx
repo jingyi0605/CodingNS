@@ -18,6 +18,7 @@ import { AppVersionProvider } from "../../../shared/version/app-version";
 import { SettingsPage } from "./SettingsPage";
 
 const originalTauriInternals = window.__TAURI_INTERNALS__;
+const originalFetch = global.fetch;
 
 describe("SettingsPage", () => {
   beforeEach(() => {
@@ -44,6 +45,7 @@ describe("SettingsPage", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    global.fetch = originalFetch;
 
     if (originalTauriInternals) {
       window.__TAURI_INTERNALS__ = originalTauriInternals;
@@ -304,6 +306,159 @@ describe("SettingsPage", () => {
       })
     );
   });
+
+  it("桌面端高级设置可打开并关闭并行任务调试模态框", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+
+      if (url.endsWith("/api/observability/runtime/session") && method === "POST") {
+        return createJsonResponse({
+          sessionId: "session-debug-1",
+          expiresAt: "2026-04-12T09:00:20.000Z",
+          ttlMs: 20_000
+        });
+      }
+
+      if (url.includes("/api/observability/runtime?sessionId=session-debug-1") && method === "GET") {
+        return createJsonResponse({
+          observedAt: "2026-04-12T09:00:01.000Z",
+          session: {
+            sessionId: "session-debug-1",
+            expiresAt: "2026-04-12T09:00:20.000Z",
+            ttlMs: 20_000
+          },
+          backgroundTasks: {
+            totals: {
+              enqueue: 4,
+              dedupe: 1,
+              started: 3,
+              finished: 3,
+              failed: 0,
+              cancelled: 0,
+              timeout: 0,
+              cache_hit: 2
+            },
+            taskTypes: {
+              "workspace.discovery": {
+                executionLane: "helper_process",
+                counters: {
+                  enqueue: 2,
+                  dedupe: 0,
+                  started: 2,
+                  finished: 2,
+                  failed: 0,
+                  cancelled: 0,
+                  timeout: 0,
+                  cache_hit: 1
+                },
+                waitMs: {
+                  count: 2,
+                  total: 12,
+                  max: 8,
+                  min: 4,
+                  avg: 6
+                },
+                runMs: {
+                  count: 2,
+                  total: 42,
+                  max: 24,
+                  min: 18,
+                  avg: 21
+                }
+              }
+            }
+          },
+          recentTaskActivities: [
+            {
+              eventId: "evt-1",
+              recordedAt: "2026-04-12T09:00:01.000Z",
+              eventType: "finished",
+              taskId: "task-1",
+              taskType: "workspace.discovery",
+              key: "workspace:demo",
+              executionLane: "helper_process",
+              source: "settings_debug",
+              status: "succeeded",
+              attempt: 1,
+              waitMs: 6,
+              runMs: 18,
+              errorMessage: null
+            }
+          ],
+          schedulers: {
+            schedulers: {
+              patrol: {
+                tickTotal: 4,
+                idleTickTotal: 3,
+                errorTotal: 0,
+                taskCountTotal: 1,
+                durationMs: {
+                  count: 4,
+                  total: 30,
+                  max: 12,
+                  min: 4,
+                  avg: 7.5
+                },
+                lastTickAt: "2026-04-12T09:00:00.000Z",
+                lastDurationMs: 8,
+                lastTaskCount: 0,
+                lastIdle: true,
+                lastErrorCount: 0,
+                nextDelayMs: 2000,
+                idleStreak: 2
+              }
+            }
+          },
+          eventLoop: {
+            enabled: true,
+            resolutionMs: 20,
+            minMs: 1,
+            maxMs: 12,
+            meanMs: 4.2,
+            stddevMs: 1.4,
+            p50Ms: 4,
+            p95Ms: 9,
+            p99Ms: 11
+          }
+        });
+      }
+
+      if (url.endsWith("/api/observability/runtime/session/session-debug-1") && method === "DELETE") {
+        return new Response(null, { status: 204 });
+      }
+
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+
+    global.fetch = fetchMock as typeof fetch;
+    authStore.hydrate(createAuthSession());
+
+    renderSettingsPage();
+
+    expect(screen.getByText(t("settings.advancedSettings"))).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("button", { name: t("settings.parallelTaskDebugAction") }));
+
+    expect(await screen.findByRole("dialog", { name: t("settings.parallelTaskDebugModalTitle") })).toBeInTheDocument();
+    expect((await screen.findAllByText("workspace.discovery")).length).toBeGreaterThan(0);
+    expect(screen.getByText(t("settings.parallelTaskDebugEventLoopTitle"))).toBeInTheDocument();
+    expect(screen.getByText(t("settings.parallelTaskDebugMetricEnqueue"))).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: t("settings.parallelTaskDebugClose") }));
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(([input, init]) => {
+          return (
+            String(input).endsWith("/api/observability/runtime/session/session-debug-1") &&
+            (init?.method ?? "GET").toUpperCase() === "DELETE"
+          );
+        })
+      ).toBe(true);
+    });
+  });
 });
 
 function renderSettingsPage(initialEntry = "/settings") {
@@ -367,4 +522,26 @@ function createPreferenceState(overrides?: Partial<ReturnType<typeof userPrefere
     updatedAt: null,
     source: "default" as const
   };
+}
+
+function createAuthSession() {
+  return {
+    accessToken: "token-1",
+    refreshToken: "refresh-1",
+    expiresIn: 3600,
+    user: {
+      userId: "user-1",
+      username: "tester",
+      role: "admin" as const
+    }
+  };
+}
+
+function createJsonResponse(payload: unknown): Response {
+  return new Response(JSON.stringify(payload), {
+    status: 200,
+    headers: {
+      "Content-Type": "application/json"
+    }
+  });
 }

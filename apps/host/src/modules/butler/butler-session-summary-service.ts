@@ -49,6 +49,14 @@ interface ButlerSessionSummaryServiceOptions {
   sourceCodexHomeDir?: string | null;
 }
 
+export interface ButlerSessionSummaryRunOnceResult {
+  projectCount: number;
+  sessionCount: number;
+  scheduledCount: number;
+  summarizedCount: number;
+  idle: boolean;
+}
+
 export class ButlerSessionSummaryService {
   private readonly debounceMs: number;
   private readonly recentMessageLimit: number;
@@ -90,17 +98,17 @@ export class ButlerSessionSummaryService {
     this.sourceCodexHomeDir = options.sourceCodexHomeDir ?? null;
   }
 
-  async runOnce(): Promise<void> {
+  async runOnce(): Promise<ButlerSessionSummaryRunOnceResult> {
     const profile = this.butlerProfileService.getProfile();
 
     if (!profile) {
-      return;
+      return createIdleSummaryRunResult();
     }
 
     const userId = this.resolveExecutorUserId();
 
     if (!userId) {
-      return;
+      return createIdleSummaryRunResult();
     }
 
     ensureButlerWorkspaceIsolation(profile.workspacePath);
@@ -111,13 +119,17 @@ export class ButlerSessionSummaryService {
     const projects = this.butlerProjectService.list({
       lifecycleStatus: "active"
     });
+    let sessionCount = 0;
+    let scheduledCount = 0;
+    let summarizedCount = 0;
 
     for (const project of projects) {
       await this.butlerSessionService.ensureProjectSessionsSynced(project.id, userId);
       const sessions = this.butlerSessionService.listByProject(project.id, userId);
+      sessionCount += sessions.length;
 
       for (const session of sessions) {
-        await this.maybeSummarizeSession(
+        const action = await this.maybeSummarizeSession(
           project,
           session,
           userId,
@@ -125,8 +137,24 @@ export class ButlerSessionSummaryService {
           profile.workspacePath,
           debounceMs
         );
+
+        if (action === "scheduled") {
+          scheduledCount += 1;
+        }
+
+        if (action === "summarized") {
+          summarizedCount += 1;
+        }
       }
     }
+
+    return {
+      projectCount: projects.length,
+      sessionCount,
+      scheduledCount,
+      summarizedCount,
+      idle: scheduledCount === 0 && summarizedCount === 0
+    };
   }
 
   private async maybeSummarizeSession(
@@ -136,11 +164,11 @@ export class ButlerSessionSummaryService {
     providerId: "codex" | "claude-code",
     summaryWorkspacePath: string,
     debounceMs: number
-  ): Promise<void> {
+  ): Promise<"scheduled" | "summarized" | "skipped"> {
     const index = this.sessionIndexRepository.findIndexRecordBySessionId(session.sessionId);
 
     if (!index || index.isArchived || index.isSubagent) {
-      return;
+      return "skipped";
     }
 
     const state = this.butlerSessionSummaryStateRepository.findByButlerSessionId(session.id);
@@ -151,15 +179,15 @@ export class ButlerSessionSummaryService {
 
     if (sourceChanged) {
       this.scheduleSession(state, session.id, index.messageCount, index.lastMessageAt, debounceMs);
-      return;
+      return "scheduled";
     }
 
     if (!state || state.status !== "scheduled" || !state.debounceUntil || state.debounceUntil > this.now()) {
-      return;
+      return "skipped";
     }
 
     if (this.inFlightButlerSessionIds.has(session.id)) {
-      return;
+      return "skipped";
     }
 
     await this.summarizeSession(
@@ -172,6 +200,7 @@ export class ButlerSessionSummaryService {
       providerId,
       summaryWorkspacePath
     );
+    return "summarized";
   }
 
   private scheduleSession(
@@ -579,4 +608,14 @@ function syncOptionalFile(sourcePath: string, targetPath: string): void {
 
 function toTomlString(value: string): string {
   return JSON.stringify(value);
+}
+
+function createIdleSummaryRunResult(): ButlerSessionSummaryRunOnceResult {
+  return {
+    projectCount: 0,
+    sessionCount: 0,
+    scheduledCount: 0,
+    summarizedCount: 0,
+    idle: true
+  };
 }

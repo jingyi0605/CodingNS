@@ -1,4 +1,8 @@
 import { nowIso } from "../../shared/utils/time.js";
+import {
+  resolveAdaptiveSchedulerDelayMs,
+  type SchedulerMetrics
+} from "../tasks/scheduler-metrics.js";
 import type { PatrolPlanService } from "./patrol-plan-service.js";
 import type { PatrolExecutionService } from "./patrol-execution-service.js";
 import type { PatrolRunService } from "./patrol-run-service.js";
@@ -13,9 +17,18 @@ interface PatrolSchedulerLogger {
 
 interface PatrolSchedulerOptions {
   intervalMs?: number;
+  maxIntervalMs?: number;
   staleTimeoutMs?: number;
   logger?: PatrolSchedulerLogger;
   now?: () => string;
+  schedulerMetrics?: SchedulerMetrics;
+}
+
+interface PatrolTickResult {
+  referenceAt: string;
+  taskCount: number;
+  idle: boolean;
+  errorCount: number;
 }
 
 /**
@@ -27,11 +40,16 @@ interface PatrolSchedulerOptions {
  */
 export class PatrolScheduler {
   private readonly intervalMs: number;
+  private readonly maxIntervalMs: number;
   private readonly staleTimeoutMs: number;
   private readonly logger: PatrolSchedulerLogger;
   private readonly now: () => string;
-  private timer: ReturnType<typeof setInterval> | null = null;
+  private readonly schedulerMetrics: SchedulerMetrics | null;
+  private timer: ReturnType<typeof setTimeout> | null = null;
   private ticking = false;
+  private started = false;
+  private disposed = false;
+  private idleStreak = 0;
 
   constructor(
     private readonly patrolPlanService: PatrolPlanService,
@@ -40,26 +58,28 @@ export class PatrolScheduler {
     options: PatrolSchedulerOptions = {}
   ) {
     this.intervalMs = options.intervalMs ?? DEFAULT_INTERVAL_MS;
+    this.maxIntervalMs = Math.max(this.intervalMs, options.maxIntervalMs ?? this.intervalMs * 8);
     this.staleTimeoutMs = options.staleTimeoutMs ?? DEFAULT_STALE_TIMEOUT_MS;
     this.logger = options.logger ?? console;
     this.now = options.now ?? nowIso;
+    this.schedulerMetrics = options.schedulerMetrics ?? null;
   }
 
   start(): void {
-    if (this.timer) {
+    if (this.timer || this.disposed) {
       return;
     }
 
-    void this.tick();
-    this.timer = setInterval(() => {
-      void this.tick();
-    }, this.intervalMs);
-    this.timer.unref?.();
+    this.started = true;
+    this.scheduleNext(0);
   }
 
   async dispose(): Promise<void> {
+    this.started = false;
+    this.disposed = true;
+
     if (this.timer) {
-      clearInterval(this.timer);
+      clearTimeout(this.timer);
       this.timer = null;
     }
 
@@ -69,19 +89,30 @@ export class PatrolScheduler {
   }
 
   async runOnce(): Promise<void> {
-    await this.tick();
+    await this.tick(false);
   }
 
-  private async tick(): Promise<void> {
+  private scheduleNext(delayMs: number): void {
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      void this.tick();
+    }, delayMs);
+    this.timer.unref?.();
+  }
+
+  private async tick(shouldScheduleNext = true): Promise<void> {
     if (this.ticking) {
       return;
     }
 
     this.ticking = true;
+    const tickStartedAt = Date.now();
+    let result: PatrolTickResult | null = null;
 
     try {
       const referenceAt = this.now();
       const plans = this.patrolPlanService.listDuePlans(referenceAt, MAX_PLANS_PER_TICK);
+      let errorCount = 0;
 
       for (const plan of plans) {
         try {
@@ -115,10 +146,53 @@ export class PatrolScheduler {
             projectId: plan.projectId,
             error: error instanceof Error ? error.message : String(error)
           });
+          errorCount += 1;
         }
       }
+
+      result = {
+        referenceAt,
+        taskCount: plans.length,
+        idle: plans.length === 0,
+        errorCount
+      };
+    } catch (error) {
+      const referenceAt = this.now();
+      this.logger.error("[patrol-scheduler] tick failed", {
+        referenceAt,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      result = {
+        referenceAt,
+        taskCount: 0,
+        idle: true,
+        errorCount: 1
+      };
     } finally {
       this.ticking = false;
+
+      if (result) {
+        this.idleStreak = result.idle ? this.idleStreak + 1 : 0;
+        const nextDelayMs = resolveAdaptiveSchedulerDelayMs(
+          this.intervalMs,
+          this.maxIntervalMs,
+          this.idleStreak
+        );
+        this.schedulerMetrics?.recordTick({
+          schedulerName: "patrol",
+          referenceAt: result.referenceAt,
+          durationMs: Date.now() - tickStartedAt,
+          taskCount: result.taskCount,
+          idle: result.idle,
+          errorCount: result.errorCount,
+          nextDelayMs,
+          idleStreak: this.idleStreak
+        });
+
+        if (shouldScheduleNext && this.started && !this.disposed && this.timer === null) {
+          this.scheduleNext(nextDelayMs);
+        }
+      }
     }
   }
 }

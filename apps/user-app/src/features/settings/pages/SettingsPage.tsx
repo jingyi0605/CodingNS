@@ -19,6 +19,7 @@ import { useUserPreferenceSelector, userPreferenceStore } from "../../../prefere
 import { LanguageSwitcher, t } from "../../../shared/i18n";
 import { THEMES, getThemeLabel, useTheme, type ThemeId } from "../../../shared/theme";
 import { useAppVersion } from "../../../shared/version/app-version";
+import { ParallelTaskDebugModal } from "../../../settings/ParallelTaskDebugModal";
 import { ReleasePanel } from "../../../settings/ReleasePanel";
 import { ServiceUpdatePanel } from "../../../settings/ServiceUpdatePanel";
 import { authStore } from "../../auth/store/auth-store";
@@ -270,6 +271,7 @@ export function SettingsPage() {
 }
 
 function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; appVersion: string }) {
+  const [showParallelTaskDebug, setShowParallelTaskDebug] = useState(false);
   const {
     theme,
     applyTheme,
@@ -555,6 +557,29 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
           </div>
         </section>
 
+        <section className="settings-section">
+          <h2 className="settings-section-title">{t("settings.advancedSettings")}</h2>
+          <div className="settings-card">
+            <div className="settings-row">
+              <div className="settings-row-label">
+                <span className="settings-row-title">{t("settings.parallelTaskDebug")}</span>
+                <span className="settings-row-description">
+                  {t("settings.parallelTaskDebugDescription")}
+                </span>
+              </div>
+              <div className="settings-row-control">
+                <button
+                  className="settings-button"
+                  type="button"
+                  onClick={() => setShowParallelTaskDebug(true)}
+                >
+                  {t("settings.parallelTaskDebugAction")}
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+
         <div className="settings-footer settings-footer-with-logout">
           <span className="settings-version">CodingNS v{appVersion}</span>
           <button className="settings-button settings-button-danger settings-button-sticky" onClick={handleLogout} type="button">
@@ -562,6 +587,10 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
           </button>
         </div>
       </div>
+      <ParallelTaskDebugModal
+        isOpen={showParallelTaskDebug}
+        onClose={() => setShowParallelTaskDebug(false)}
+      />
     </div>
   );
 }

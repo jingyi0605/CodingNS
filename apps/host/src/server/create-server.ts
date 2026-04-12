@@ -70,6 +70,12 @@ import { SessionActivityAuthorityService } from "../modules/sessions/session-act
 import { SessionHistoryService } from "../modules/sessions/session-history-service.js";
 import { SessionLiveRuntimeService } from "../modules/sessions/session-live-runtime-service.js";
 import { SessionMessageAttachmentService } from "../modules/sessions/session-message-attachment-service.js";
+import { EventLoopMonitor } from "../modules/tasks/event-loop-monitor.js";
+import { ObservabilityController } from "../modules/tasks/observability-controller.js";
+import { RuntimeObservabilityService } from "../modules/tasks/observability-service.js";
+import { SchedulerMetrics } from "../modules/tasks/scheduler-metrics.js";
+import { TaskActivityLog } from "../modules/tasks/task-activity-log.js";
+import { createTaskManager } from "../modules/tasks/task-manager.js";
 import { CommandTemplateService } from "../modules/terminal/command-template-service.js";
 import { TerminalController } from "../modules/terminal/terminal-controller.js";
 import { TemplateReverseProxyService } from "../modules/terminal/template-reverse-proxy-service.js";
@@ -85,6 +91,7 @@ import { registerButlerRoutes } from "../routes/butler.js";
 import { registerClientRoutes } from "../routes/client.js";
 import { registerFileRoutes } from "../routes/files.js";
 import { registerGitRoutes } from "../routes/git.js";
+import { registerObservabilityRoutes } from "../routes/observability.js";
 import { registerPreferenceRoutes } from "../routes/preferences.js";
 import { registerProviderRoutes } from "../routes/providers.js";
 import { registerPublicRoutes } from "../routes/public.js";
@@ -115,6 +122,7 @@ import { ProjectMemoryRepository } from "../storage/repositories/project-memory-
 import { VerificationRunRepository } from "../storage/repositories/verification-run-repository.js";
 import { CommitRuleProfileRepository } from "../storage/repositories/commit-rule-profile-repository.js";
 import { FileContextBindingRepository } from "../storage/repositories/file-context-binding-repository.js";
+import { GitRemoteCredentialRepository } from "../storage/repositories/git-remote-credential-repository.js";
 import { RecentFileRepository } from "../storage/repositories/recent-file-repository.js";
 import { SessionBindingRepository } from "../storage/repositories/session-binding-repository.js";
 import { SessionChangedFileRepository } from "../storage/repositories/session-changed-file-repository.js";
@@ -122,7 +130,6 @@ import { SessionForkRepository } from "../storage/repositories/session-fork-repo
 import { SessionIndexRepository } from "../storage/repositories/session-index-repository.js";
 import { SessionCheckpointRepository } from "../storage/repositories/session-checkpoint-repository.js";
 import { SessionMessageAttachmentRepository } from "../storage/repositories/session-message-attachment-repository.js";
-import { GitRemoteCredentialRepository } from "../storage/repositories/git-remote-credential-repository.js";
 import { SessionMessageOriginRepository } from "../storage/repositories/session-message-origin-repository.js";
 import { SessionSendQueueRepository } from "../storage/repositories/session-send-queue-repository.js";
 import { SessionStateRepository } from "../storage/repositories/session-state-repository.js";
@@ -175,6 +182,7 @@ export function createServer(config: HostConfig) {
     patrolRunRepository: new PatrolRunRepository(database.db),
     verificationRunRepository: new VerificationRunRepository(database.db),
     commitRuleProfileRepository: new CommitRuleProfileRepository(database.db),
+    gitRemoteCredentialRepository: new GitRemoteCredentialRepository(database.db),
     recentFileRepository: new RecentFileRepository(database.db),
     fileContextBindingRepository: new FileContextBindingRepository(database.db),
     sessionBindingRepository: new SessionBindingRepository(database.db),
@@ -182,7 +190,6 @@ export function createServer(config: HostConfig) {
     sessionForkRepository: new SessionForkRepository(database.db),
     sessionCheckpointRepository: new SessionCheckpointRepository(database.db),
     sessionIndexRepository: new SessionIndexRepository(database.db),
-    gitRemoteCredentialRepository: new GitRemoteCredentialRepository(database.db),
     sessionMessageAttachmentRepository: new SessionMessageAttachmentRepository(database.db),
     sessionMessageOriginRepository: new SessionMessageOriginRepository(database.db),
     sessionSendQueueRepository: new SessionSendQueueRepository(database.db),
@@ -288,6 +295,11 @@ export function createServer(config: HostConfig) {
     repositories.sessionChangedFileRepository
   );
   const sessionActivityAuthorityService = new SessionActivityAuthorityService();
+  const schedulerMetrics = new SchedulerMetrics();
+  const eventLoopMonitor = new EventLoopMonitor();
+  let runtimeObservabilityService!: RuntimeObservabilityService;
+  const taskActivityLog = new TaskActivityLog(() => runtimeObservabilityService.hasActiveSession());
+  const taskManager = createTaskManager(taskActivityLog);
   const sessionHistoryService = new SessionHistoryService(
     database.db,
     repositories.workspaceRepository,
@@ -300,7 +312,15 @@ export function createServer(config: HostConfig) {
     config,
     sessionActivityAuthorityService,
     repositories.sessionMessageOriginRepository,
-    repositories.sessionForkRepository
+    repositories.sessionForkRepository,
+    {},
+    taskManager
+  );
+  runtimeObservabilityService = new RuntimeObservabilityService(
+    () => sessionHistoryService.observeBackgroundTaskMetrics(),
+    () => schedulerMetrics.observe(),
+    eventLoopMonitor,
+    taskActivityLog
   );
   const sessionLiveRuntimeService = new SessionLiveRuntimeService(
     sessionHistoryService,
@@ -445,7 +465,10 @@ export function createServer(config: HostConfig) {
   const patrolScheduler = new PatrolScheduler(
     patrolPlanService,
     patrolRunService,
-    patrolExecutionService
+    patrolExecutionService,
+    {
+      schedulerMetrics
+    }
   );
   const sessionSummaryInstructionAdapter = new SessionSummaryInstructionAdapter();
   const butlerFollowUpEvaluationInstructionAdapter = new ButlerFollowUpEvaluationInstructionAdapter();
@@ -508,10 +531,16 @@ export function createServer(config: HostConfig) {
     butlerFollowUpService
   );
   const sessionSummaryScheduler = new SessionSummaryScheduler(
-    butlerSessionSummaryService
+    butlerSessionSummaryService,
+    {
+      schedulerMetrics
+    }
   );
   const butlerFollowUpScheduler = new ButlerFollowUpScheduler(
-    butlerFollowUpService
+    butlerFollowUpService,
+    {
+      schedulerMetrics
+    }
   );
   const butlerFollowUpTerminalSubscription = sessionLiveRuntimeService.registerTerminalStateListener(
     async (event) => {
@@ -620,6 +649,7 @@ export function createServer(config: HostConfig) {
   );
   const gitController = new GitController(gitReadService, gitWriteService, commitOrchestrator);
   const terminalController = new TerminalController(terminalService, commandTemplateService);
+  const observabilityController = new ObservabilityController(runtimeObservabilityService);
   const wsHandle = createWsServer(
     app.server,
     new WsAuthGuard(authService),
@@ -657,6 +687,7 @@ export function createServer(config: HostConfig) {
   void registerProxyRoutes(app, templateReverseProxyService);
   void registerAuthRoutes(app, authController);
   void registerClientRoutes(app, clientController);
+  void registerObservabilityRoutes(app, observabilityController);
   void registerWorkspaceRoutes(app, workspaceController);
   void registerWorkbenchRoutes(app, workbenchController);
   void registerButlerRoutes(app, butlerController);
@@ -677,6 +708,7 @@ export function createServer(config: HostConfig) {
 
   app.addHook("onClose", async () => {
     stopTerminalDebugEventLoopLagMonitor();
+    eventLoopMonitor.dispose();
     butlerFollowUpTerminalSubscription.close();
     await patrolScheduler.dispose();
     await sessionSummaryScheduler.dispose();
@@ -732,6 +764,7 @@ export function createServer(config: HostConfig) {
         commitOrchestrator,
         quickPhraseService,
         preferenceProfileService,
+        runtimeObservabilityService,
         sessionHistoryService,
         sessionChangedFileService,
         sessionMessageAttachmentService,

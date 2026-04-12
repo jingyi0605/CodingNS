@@ -71,6 +71,8 @@ import {
   ProviderDiscoveryHelperClient,
   type ProviderSessionDiscoveryHelperConfig
 } from "../provider/provider-discovery-helper-client.js";
+import { createTaskManager, TaskManager } from "../tasks/task-manager.js";
+import { HOST_TASK_TYPES, type TaskMetricsSnapshot } from "../tasks/task-types.js";
 import { CodexAppServerHelperClient } from "./codex-app-server-helper-client.js";
 
 interface StartSessionInput {
@@ -206,11 +208,10 @@ export class SessionHistoryService {
   private readonly providerCliAvailability: Readonly<Partial<Record<string, boolean>>>;
   private readonly providerDiscoveryHelperClient = new ProviderDiscoveryHelperClient();
   private readonly providerSessionDiscoveryConfig: ProviderSessionDiscoveryHelperConfig;
+  private readonly taskManager: TaskManager;
   private readonly workspaceDiscoveryStatuses = new Map<string, WorkspaceDiscoveryStatus>();
-  private readonly workspaceDiscoveryInflight = new Map<string, Promise<SessionListItem[]>>();
   private readonly workspaceStateRefreshInflight = new Map<string, Promise<void>>();
   private readonly providerCapabilityCache = new Map<string, ProviderCapabilityCacheEntry>();
-  private readonly providerCapabilityRefreshInflight = new Map<string, Promise<void>>();
   private readonly workspaceSessionRelations = new Map<
     string,
     Map<string, SessionRelationDescriptor>
@@ -232,10 +233,12 @@ export class SessionHistoryService {
       "listBySessionAndMessageIds" | "listUnresolvedBySessionAndContents" | "resolveMessageId"
     > | null = null,
     sessionForkRepository: Pick<SessionForkRepository, "upsert" | "findBySessionId"> | null = null,
-    adapterOverrides: SessionHistoryAdapterOverrides = {}
+    adapterOverrides: SessionHistoryAdapterOverrides = {},
+    taskManager: TaskManager = createTaskManager()
   ) {
     this.sessionActivityAuthorityService = sessionActivityAuthorityService;
     this.sessionForkRepository = sessionForkRepository ?? new SessionForkRepository(db);
+    this.taskManager = taskManager;
     this.claudeCodeHomeDir = config.claudeCodeHomeDir;
     this.providerCliCommandPaths = {
       "claude-code": process.platform === "win32" ? "claude.cmd" : "claude",
@@ -290,6 +293,46 @@ export class SessionHistoryService {
       baseUrlResolver: config.opencodeBaseUrlResolver?.resolve.bind(config.opencodeBaseUrlResolver),
       commandPath: config.opencodeCliPath
     });
+    this.registerBackgroundTasks();
+  }
+
+  observeBackgroundTaskMetrics(): TaskMetricsSnapshot {
+    return this.taskManager.observe();
+  }
+
+  private registerBackgroundTasks(): void {
+    if (!this.taskManager.has(HOST_TASK_TYPES.workspaceDiscovery)) {
+      this.taskManager.register<{
+        workspaceId: string;
+        userId: string;
+        refreshStateMode: "inline" | "deferred";
+      }, SessionListItem[]>({
+        taskType: HOST_TASK_TYPES.workspaceDiscovery,
+        executionLane: "helper_process",
+        run: async ({ workspaceId, userId, refreshStateMode }) =>
+          this.runDiscoverWorkspaceSessions(workspaceId, userId, refreshStateMode)
+      });
+    }
+
+    if (!this.taskManager.has(HOST_TASK_TYPES.providerCapabilityRefresh)) {
+      this.taskManager.register<{
+        capabilities: ProviderCapabilities;
+        workspacePath: string | null;
+      }, void>({
+        taskType: HOST_TASK_TYPES.providerCapabilityRefresh,
+        executionLane: "external_process",
+        run: async ({ capabilities, workspacePath }) => {
+          const value = await this.enrichProviderCapabilities(capabilities, workspacePath);
+          this.providerCapabilityCache.set(
+            buildProviderCapabilityCacheKey(capabilities.provider, workspacePath),
+            {
+              refreshedAt: Date.now(),
+              value
+            }
+          );
+        }
+      });
+    }
   }
 
   async discoverWorkspaceSessions(
@@ -312,25 +355,23 @@ export class SessionHistoryService {
       maxAgeMs > 0 &&
       Date.now() - lastRefreshedAt <= maxAgeMs
     ) {
+      this.taskManager.recordCacheHit(HOST_TASK_TYPES.workspaceDiscovery, workspaceId);
       return this.listWorkspaceSessions(workspaceId, userId);
     }
 
-    const inflight = this.workspaceDiscoveryInflight.get(workspaceId);
-
-    if (inflight) {
-      return inflight;
-    }
-
-    const task = this.runDiscoverWorkspaceSessions(
-      workspaceId,
-      userId,
-      options?.refreshStateMode ?? "inline"
-    ).finally(() => {
-      this.workspaceDiscoveryInflight.delete(workspaceId);
-    });
-
-    this.workspaceDiscoveryInflight.set(workspaceId, task);
-    return task;
+    return this.taskManager.enqueue<{
+      workspaceId: string;
+      userId: string;
+      refreshStateMode: "inline" | "deferred";
+    }, SessionListItem[]>(HOST_TASK_TYPES.workspaceDiscovery, {
+      key: workspaceId,
+      source: "session_history.discover_workspace_sessions",
+      input: {
+        workspaceId,
+        userId,
+        refreshStateMode: options?.refreshStateMode ?? "inline"
+      }
+    }).promise;
   }
 
   requestWorkspaceDiscovery(
@@ -349,16 +390,25 @@ export class SessionHistoryService {
       return;
     }
 
-    if (this.workspaceDiscoveryInflight.has(workspaceId)) {
+    const task = this.taskManager.enqueue<{
+      workspaceId: string;
+      userId: string;
+      refreshStateMode: "inline" | "deferred";
+    }, SessionListItem[]>(HOST_TASK_TYPES.workspaceDiscovery, {
+      key: workspaceId,
+      source: "session_history.request_workspace_discovery",
+      input: {
+        workspaceId,
+        userId,
+        refreshStateMode: options?.refreshStateMode ?? "deferred"
+      }
+    });
+
+    if (task.deduped) {
       return;
     }
 
-    const task = this.runDiscoverWorkspaceSessions(
-      workspaceId,
-      userId,
-      options?.refreshStateMode ?? "deferred"
-    )
-      .catch((error) => {
+    void task.promise.catch((error) => {
         logPerformance(
           "workspace.discover_sessions.background_failed",
           0,
@@ -372,12 +422,7 @@ export class SessionHistoryService {
           }
         );
         return this.listWorkspaceSessions(workspaceId, userId);
-      })
-      .finally(() => {
-        this.workspaceDiscoveryInflight.delete(workspaceId);
       });
-
-    this.workspaceDiscoveryInflight.set(workspaceId, task);
   }
 
   needsWorkspaceDiscovery(workspaceId: string, maxAgeMs: number): boolean {
@@ -683,6 +728,7 @@ export class SessionHistoryService {
     const cached = this.providerCapabilityCache.get(cacheKey);
 
     if (cached) {
+      this.taskManager.recordCacheHit(HOST_TASK_TYPES.providerCapabilityRefresh, cacheKey);
       return cached.value;
     }
 
@@ -712,18 +758,23 @@ export class SessionHistoryService {
       return;
     }
 
-    if (this.providerCapabilityRefreshInflight.has(cacheKey)) {
+    const task = this.taskManager.enqueue<{
+      capabilities: ProviderCapabilities;
+      workspacePath: string | null;
+    }, void>(HOST_TASK_TYPES.providerCapabilityRefresh, {
+      key: cacheKey,
+      source: "session_history.provider_capability_refresh",
+      input: {
+        capabilities,
+        workspacePath
+      }
+    });
+
+    if (task.deduped) {
       return;
     }
 
-    const task = this.enrichProviderCapabilities(capabilities, workspacePath)
-      .then((value) => {
-        this.providerCapabilityCache.set(cacheKey, {
-          refreshedAt: Date.now(),
-          value
-        });
-      })
-      .catch((error) => {
+    void task.promise.catch((error) => {
         logPerformance(
           "provider.capabilities.background_failed",
           0,
@@ -737,12 +788,7 @@ export class SessionHistoryService {
             force: true
           }
         );
-      })
-      .finally(() => {
-        this.providerCapabilityRefreshInflight.delete(cacheKey);
       });
-
-    this.providerCapabilityRefreshInflight.set(cacheKey, task);
   }
 
   private applyProviderCliAvailability(capabilities: ProviderCapabilities): ProviderCapabilities {

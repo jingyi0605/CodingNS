@@ -42,4 +42,5 @@
 - `requirements.md`
 - `design.md`
 - `tasks.md`
+- `20260412-后台任务接入规范.md`
 - `docs/`
