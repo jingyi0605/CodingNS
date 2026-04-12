@@ -121,7 +121,10 @@ describe("workspace clone", () => {
       workspaceRepository as unknown as WorkspaceRepository,
       {
         run: runMock
-      } as unknown as GitCommandRunner
+      } as unknown as GitCommandRunner,
+      {
+        upsert: vi.fn()
+      } as never
     );
 
     const workspace = await service.cloneWorkspace({
@@ -154,7 +157,8 @@ function createWorkspaceRepositoryMock() {
     findByPath: vi.fn(() => null),
     create: vi.fn((record) => record),
     list: vi.fn(() => []),
-    findById: vi.fn(() => null)
+    findById: vi.fn(() => null),
+    getNextSortOrder: vi.fn(() => 0)
   };
 }
 

@@ -69,6 +69,7 @@ export interface WorkspaceDto {
   name: string;
   path: string;
   repoRoot: string | null;
+  sortOrder?: number;
 }
 
 export interface WorkspaceGitRemoteDto {
@@ -161,6 +162,17 @@ export interface CreateWorkspaceDirectoryPayload {
 export interface WorkspaceCreatedDirectoryDto {
   path: string;
   name: string;
+}
+
+export interface ReorderWorkspacesPayload {
+  workspaceIds: string[];
+}
+
+export interface WorkspaceNavigationStateDto {
+  workspaceId: string;
+  userId: string;
+  collapsed: boolean;
+  updatedAt: string;
 }
 
 export interface SessionSummaryDto {
@@ -333,6 +345,7 @@ export interface HistoryPageDto {
 export interface WorkbenchSnapshotItemDto {
   workspace: WorkspaceDto;
   sessions: SessionSummaryDto[];
+  collapsed?: boolean;
 }
 
 export interface WorkbenchSnapshotDto {
@@ -525,6 +538,25 @@ export function removeWorkspace(workspaceId: string) {
   return httpClient.request<WorkspaceDto>(`/api/workspaces/${encodeURIComponent(workspaceId)}`, {
     method: "DELETE"
   });
+}
+
+export function reorderWorkspaces(payload: ReorderWorkspacesPayload) {
+  return httpClient.request<{ items: WorkspaceDto[] }>("/api/workspaces/reorder", {
+    method: "PUT",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function updateWorkspaceNavigationState(workspaceId: string, collapsed: boolean) {
+  return httpClient.request<WorkspaceNavigationStateDto>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/navigation-state`,
+    {
+      method: "PUT",
+      body: JSON.stringify({
+        collapsed
+      })
+    }
+  );
 }
 
 export function browseWorkspaceDirectories(targetPath?: string) {

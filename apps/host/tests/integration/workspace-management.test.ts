@@ -1,8 +1,11 @@
+import { mkdirSync } from "node:fs";
 import { realpathSync } from "node:fs";
+import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  createEmptyFixture,
   createGitWorkspaceFixture,
   createTestApp,
   destroyFixture,
@@ -153,6 +156,158 @@ describe("workspace management", () => {
       expect.objectContaining({
         id: importedWorkspace.id,
         name: "Managed Workspace"
+      })
+    ]);
+  });
+
+  it("支持工作区重排，并把折叠状态持久化到工作台快照", async () => {
+    const fixture = createEmptyFixture();
+    activeFixtures.push(fixture);
+
+    const butlerWorkspacePath = path.join(fixture.rootDir, "butler-workspace");
+    const hiddenWorkspacePath = path.join(butlerWorkspacePath, "hidden-workspace");
+    const workspaceAlphaPath = path.join(fixture.rootDir, "workspace-alpha");
+    const workspaceBetaPath = path.join(fixture.rootDir, "workspace-beta");
+    const workspaceGammaPath = path.join(fixture.rootDir, "workspace-gamma");
+    mkdirSync(hiddenWorkspacePath, { recursive: true });
+    mkdirSync(workspaceAlphaPath, { recursive: true });
+    mkdirSync(workspaceBetaPath, { recursive: true });
+    mkdirSync(workspaceGammaPath, { recursive: true });
+
+    const hosted = createTestApp(fixture);
+    activeClosers.push(() => hosted.app.close());
+    await hosted.app.ready();
+
+    const accessToken = await bootstrapAndLogin(hosted);
+    const initButlerProfileResponse = await hosted.app.inject({
+      method: "POST",
+      url: "/api/butler/profile/init",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        displayName: "代码助手",
+        providerId: "codex",
+        workspacePath: butlerWorkspacePath
+      }
+    });
+
+    expect(initButlerProfileResponse.statusCode).toBe(201);
+
+    const importHiddenWorkspaceResponse = await hosted.app.inject({
+      method: "POST",
+      url: "/api/workspaces/import",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        path: hiddenWorkspacePath,
+        name: "Hidden"
+      }
+    });
+
+    expect(importHiddenWorkspaceResponse.statusCode).toBe(201);
+
+    const importedWorkspaces = [] as Array<{ id: string; name: string; sortOrder: number }>;
+
+    for (const [workspacePath, name] of [
+      [workspaceAlphaPath, "Alpha"],
+      [workspaceBetaPath, "Beta"],
+      [workspaceGammaPath, "Gamma"]
+    ] as const) {
+      const response = await hosted.app.inject({
+        method: "POST",
+        url: "/api/workspaces/import",
+        headers: {
+          authorization: `Bearer ${accessToken}`
+        },
+        payload: {
+          path: workspacePath,
+          name
+        }
+      });
+
+      expect(response.statusCode).toBe(201);
+      importedWorkspaces.push(response.json() as { id: string; name: string; sortOrder: number });
+    }
+
+    expect(importedWorkspaces.map((workspace) => workspace.sortOrder)).toEqual([1, 2, 3]);
+
+    const reorderResponse = await hosted.app.inject({
+      method: "PUT",
+      url: "/api/workspaces/reorder",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        workspaceIds: [
+          importedWorkspaces[2].id,
+          importedWorkspaces[0].id,
+          importedWorkspaces[1].id
+        ]
+      }
+    });
+
+    expect(reorderResponse.statusCode).toBe(200);
+    expect(
+      (reorderResponse.json().items as Array<{ id: string; sortOrder: number }>).map((workspace) => ({
+        id: workspace.id,
+        sortOrder: workspace.sortOrder
+      }))
+    ).toEqual([
+      { id: importedWorkspaces[2].id, sortOrder: 0 },
+      { id: importedWorkspaces[0].id, sortOrder: 1 },
+      { id: importedWorkspaces[1].id, sortOrder: 2 }
+    ]);
+
+    const collapseResponse = await hosted.app.inject({
+      method: "PUT",
+      url: `/api/workspaces/${importedWorkspaces[0].id}/navigation-state`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        collapsed: true
+      }
+    });
+
+    expect(collapseResponse.statusCode).toBe(200);
+    expect(collapseResponse.json()).toMatchObject({
+      workspaceId: importedWorkspaces[0].id,
+      collapsed: true
+    });
+
+    const workbenchResponse = await hosted.app.inject({
+      method: "GET",
+      url: "/api/workbench",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+
+    expect(workbenchResponse.statusCode).toBe(200);
+    expect(workbenchResponse.json().items).toHaveLength(3);
+    expect(workbenchResponse.json().items).toEqual([
+      expect.objectContaining({
+        workspace: expect.objectContaining({
+          id: importedWorkspaces[2].id,
+          sortOrder: 0
+        }),
+        collapsed: false
+      }),
+      expect.objectContaining({
+        workspace: expect.objectContaining({
+          id: importedWorkspaces[0].id,
+          sortOrder: 1
+        }),
+        collapsed: true
+      }),
+      expect.objectContaining({
+        workspace: expect.objectContaining({
+          id: importedWorkspaces[1].id,
+          sortOrder: 2
+        }),
+        collapsed: false
       })
     ]);
   });

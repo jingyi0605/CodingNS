@@ -11,6 +11,8 @@ export async function registerWorkspaceRoutes(
   app.post("/api/workspaces/directories", workspaceController.createDirectory);
   app.post("/api/workspaces/import", workspaceController.import);
   app.post("/api/workspaces/clone", workspaceController.clone);
+  app.put("/api/workspaces/reorder", workspaceController.reorder);
+  app.put("/api/workspaces/:workspaceId/navigation-state", workspaceController.updateNavigationState);
   app.get("/api/workspaces/:workspaceId/management", workspaceController.getManagementSummary);
   app.delete("/api/workspaces/:workspaceId", workspaceController.remove);
 }

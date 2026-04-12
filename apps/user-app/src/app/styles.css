@@ -1180,9 +1180,16 @@ a {
 
 /* Workspace Group */
 .workbench-workspace-group {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 6px;
+  transition: transform 160ms ease, opacity 160ms ease;
+}
+
+.workbench-workspace-group[data-dragging="true"] {
+  opacity: 0.72;
+  transform: scale(0.985);
 }
 
 .workbench-workspace-header.minimal {
@@ -1190,6 +1197,14 @@ a {
   align-items: center;
   padding: 8px 0;
   min-width: 0;
+}
+
+.workbench-workspace-toggle[data-reorder-enabled="true"] {
+  cursor: grab;
+}
+
+.workbench-workspace-toggle[data-reorder-enabled="true"]:active {
+  cursor: grabbing;
 }
 
 .workbench-workspace-header.minimal strong {

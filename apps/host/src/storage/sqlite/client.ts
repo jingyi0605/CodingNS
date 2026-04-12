@@ -19,6 +19,7 @@ export function createDatabaseClient(databasePath: string): DatabaseClient {
 
   db.exec(schema);
   ensureWorkspaceRemovalColumn(db);
+  ensureWorkspaceSortOrderColumn(db);
   ensureSessionProviderSchema(db);
   ensureSessionStateSchema(db);
   ensureSessionIndexArchiveColumn(db);
@@ -51,6 +52,53 @@ function ensureWorkspaceRemovalColumn(db: Database.Database): void {
   }
 
   db.exec("ALTER TABLE workspaces ADD COLUMN removed_at TEXT");
+}
+
+function ensureWorkspaceSortOrderColumn(db: Database.Database): void {
+  const columns = db
+    .prepare("PRAGMA table_info(workspaces)")
+    .all() as Array<{ name: string }>;
+  const columnNames = new Set(columns.map((column) => column.name));
+
+  if (columnNames.has("sort_order")) {
+    return;
+  }
+
+  db.exec("ALTER TABLE workspaces ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0");
+
+  const orderByClauses: string[] = [];
+
+  if (columnNames.has("updated_at")) {
+    orderByClauses.push("updated_at DESC");
+  }
+
+  if (columnNames.has("created_at")) {
+    orderByClauses.push("created_at DESC");
+  }
+
+  if (orderByClauses.length === 0) {
+    orderByClauses.push("id ASC");
+  }
+
+  const workspaces = db
+    .prepare(
+      `SELECT id
+       FROM workspaces
+       ORDER BY ${orderByClauses.join(", ")}`
+    )
+    .all() as Array<{ id: string }>;
+  const update = db.prepare(
+    `UPDATE workspaces
+     SET sort_order = ?
+     WHERE id = ?`
+  );
+  const runInTransaction = db.transaction((items: Array<{ id: string }>) => {
+    items.forEach((item, index) => {
+      update.run(index, item.id);
+    });
+  });
+
+  runInTransaction(workspaces);
 }
 
 function ensureButlerProfileSchema(db: Database.Database): void {

@@ -14,6 +14,9 @@ describe("WorkbenchService", () => {
         ])
       } as never,
       {
+        listByUserId: vi.fn(() => [])
+      } as never,
+      {
         listWorkspaceSessions: vi.fn(() => [
           {
             sessionId: "session-visible"
@@ -21,7 +24,8 @@ describe("WorkbenchService", () => {
           {
             sessionId: "session-butler"
           }
-        ])
+        ]),
+        requestWorkspaceDiscovery: vi.fn()
       } as never,
       {
         getProfile: vi.fn(() => null)
@@ -56,7 +60,11 @@ describe("WorkbenchService", () => {
         ])
       } as never,
       {
-        listWorkspaceSessions: vi.fn(() => [])
+        listByUserId: vi.fn(() => [])
+      } as never,
+      {
+        listWorkspaceSessions: vi.fn(() => []),
+        requestWorkspaceDiscovery: vi.fn()
       } as never,
       {
         getProfile: vi.fn(() => ({

@@ -1,6 +1,8 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 
+import { requireUserId } from "../preferences/common.js";
 import type { WorkspaceService } from "./workspace-service.js";
+import type { UpdateWorkspaceNavigationStateInput } from "./workspace-service.js";
 
 interface ImportWorkspaceBody {
   path?: string;
@@ -39,6 +41,10 @@ interface CreateWorkspaceDirectoryBody {
 
 interface WorkspaceParams {
   workspaceId: string;
+}
+
+interface ReorderWorkspacesBody {
+  workspaceIds?: string[];
 }
 
 export class WorkspaceController {
@@ -108,5 +114,29 @@ export class WorkspaceController {
     reply: FastifyReply
   ): Promise<void> => {
     reply.send(this.workspaceService.removeWorkspace(request.params.workspaceId));
+  };
+
+  readonly reorder = async (
+    request: FastifyRequest<{ Body: ReorderWorkspacesBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send({
+      items: this.workspaceService.reorderWorkspaces(request.body.workspaceIds ?? [])
+    });
+  };
+
+  readonly updateNavigationState = async (
+    request: FastifyRequest<{ Params: WorkspaceParams; Body: UpdateWorkspaceNavigationStateInput }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send(
+      this.workspaceService.updateNavigationState(
+        request.params.workspaceId,
+        requireUserId(request),
+        {
+          collapsed: Boolean(request.body?.collapsed)
+        }
+      )
+    );
   };
 }

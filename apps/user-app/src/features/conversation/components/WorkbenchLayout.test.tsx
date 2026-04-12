@@ -26,6 +26,7 @@ import {
   flattenVisibleSessionTree,
   getTreeNodeChildren,
   getVisibleSessionTreeNodes,
+  reorderWorkspaceGroups,
   useWorkbenchShell
 } from "./WorkbenchLayout";
 
@@ -3853,6 +3854,252 @@ describe("WorkbenchLayout", () => {
     ).toBeInTheDocument();
     expect(sessionCard.querySelector(".session-state-indicator.is-error")).not.toBeNull();
   });
+
+  it("支持保存工作区折叠状态，并显示工作区重排入口", async () => {
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [createSessionSummary({ sessionId: "session-1", title: "会话一", workspaceId: "workspace-1" })],
+        collapsed: false
+      },
+      {
+        workspace: createWorkspace("workspace-2", "项目二"),
+        sessions: [createSessionSummary({ sessionId: "session-2", title: "会话二", workspaceId: "workspace-2" })],
+        collapsed: false
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+    const navigationStateBodies: unknown[] = [];
+    const reorderBodies: unknown[] = [];
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workspaces/workspace-1/navigation-state") && init?.method === "PUT") {
+        navigationStateBodies.push(JSON.parse(String(init.body)));
+        return createJsonResponse({
+          workspaceId: "workspace-1",
+          userId: "user-1",
+          collapsed: true,
+          updatedAt: "2026-04-12T10:00:00.000Z"
+        });
+      }
+
+      if (url.endsWith("/api/workspaces/reorder") && init?.method === "PUT") {
+        reorderBodies.push(JSON.parse(String(init.body)));
+        return createJsonResponse({
+          items: [
+            createWorkspace("workspace-2", "项目二"),
+            createWorkspace("workspace-1", "项目一")
+          ]
+        });
+      }
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    const view = renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-1");
+    const workspaceOneGroup = await findWorkspaceGroupByName("项目一");
+    const workspaceTwoGroup = await findWorkspaceGroupByName("项目二");
+
+    await userEvent.click(
+      within(workspaceOneGroup).getByRole("button", {
+        name: t("shell.workspaceCollapse")
+      })
+    );
+
+    await waitFor(() => {
+      expect(navigationStateBodies).toEqual([
+        {
+          collapsed: true
+        }
+      ]);
+    });
+
+    expect(
+      within(workspaceTwoGroup).getByRole("button", {
+        name: t("shell.workspaceCollapse")
+      })
+    ).toBeInTheDocument();
+    expect(reorderBodies).toEqual([]);
+    expect(view.container.querySelectorAll(".workbench-workspace-reorder-handle")).toHaveLength(0);
+    expect(view.container.querySelectorAll('.workbench-workspace-toggle[draggable="true"]')).toHaveLength(2);
+  });
+
+  it("拖拽工作区标题时会临时收起并在松手后保存新的顺序", async () => {
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [createSessionSummary({ sessionId: "session-1", title: "会话一", workspaceId: "workspace-1" })],
+        collapsed: false
+      },
+      {
+        workspace: createWorkspace("workspace-2", "项目二"),
+        sessions: [createSessionSummary({ sessionId: "session-2", title: "会话二", workspaceId: "workspace-2" })],
+        collapsed: false
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+    const reorderBodies: unknown[] = [];
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workspaces/reorder") && init?.method === "PUT") {
+        reorderBodies.push(JSON.parse(String(init.body)));
+        return createJsonResponse({
+          items: [
+            createWorkspace("workspace-2", "项目二"),
+            createWorkspace("workspace-1", "项目一")
+          ]
+        });
+      }
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    const view = renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-1");
+    const workspaceOneGroup = await findWorkspaceGroupByName("项目一");
+    const workspaceTwoGroup = await findWorkspaceGroupByName("项目二");
+    const workspaceOneToggle = within(workspaceOneGroup).getByRole("button", {
+      name: t("shell.workspaceCollapse")
+    });
+    const dataTransfer = createDragDataTransfer();
+
+    fireEvent.dragStart(workspaceOneToggle, {
+      dataTransfer
+    });
+
+    await waitFor(() => {
+      expect(within(workspaceOneGroup).queryByText("会话一")).toBeNull();
+    });
+
+    fireEvent.dragOver(workspaceTwoGroup, {
+      dataTransfer,
+      clientY: 1
+    });
+
+    await waitFor(() => {
+      expect(readWorkspaceGroupOrder(view.container)).toEqual(["项目二", "项目一"]);
+    });
+
+    fireEvent.drop(workspaceTwoGroup, {
+      dataTransfer
+    });
+    fireEvent.dragEnd(workspaceOneToggle, {
+      dataTransfer
+    });
+
+    await waitFor(() => {
+      expect(reorderBodies).toEqual([
+        {
+          workspaceIds: ["workspace-2", "workspace-1"]
+        }
+      ]);
+    });
+
+    expect(readWorkspaceGroupOrder(view.container)).toEqual(["项目二", "项目一"]);
+  });
+
+  it("拖拽结束时会提交最后一次预览后的工作区顺序", async () => {
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [],
+        collapsed: false
+      },
+      {
+        workspace: createWorkspace("workspace-2", "项目二"),
+        sessions: [],
+        collapsed: false
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+    const reorderBodies: unknown[] = [];
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workspaces/reorder") && init?.method === "PUT") {
+        reorderBodies.push(JSON.parse(String(init.body)));
+        return createJsonResponse({
+          items: [
+            createWorkspace("workspace-2", "项目二"),
+            createWorkspace("workspace-1", "项目一")
+          ]
+        });
+      }
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    await renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-1");
+    const workspaceOneGroup = await findWorkspaceGroupByName("项目一");
+    const workspaceTwoGroup = await findWorkspaceGroupByName("项目二");
+    const workspaceOneToggle = within(workspaceOneGroup).getByRole("button", {
+      name: t("shell.workspaceCollapse")
+    });
+    const dataTransfer = createDragDataTransfer();
+
+    fireEvent.dragStart(workspaceOneToggle, {
+      dataTransfer
+    });
+    fireEvent.dragOver(workspaceTwoGroup, {
+      dataTransfer,
+      clientY: 1
+    });
+    fireEvent.dragEnd(workspaceOneToggle, {
+      dataTransfer
+    });
+
+    await waitFor(() => {
+      expect(reorderBodies).toEqual([
+        {
+          workspaceIds: ["workspace-2", "workspace-1"]
+        }
+      ]);
+    });
+  });
+
+  it("重排工作区时会按目标位置生成新的顺序", () => {
+    const groups = [
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: []
+      },
+      {
+        workspace: createWorkspace("workspace-2", "项目二"),
+        sessions: []
+      },
+      {
+        workspace: createWorkspace("workspace-3", "项目三"),
+        sessions: []
+      }
+    ];
+
+    expect(
+      reorderWorkspaceGroups(groups, "workspace-3", "workspace-1", "before").map(
+        (group) => group.workspace.id
+      )
+    ).toEqual(["workspace-3", "workspace-1", "workspace-2"]);
+    expect(
+      reorderWorkspaceGroups(groups, "workspace-1", "workspace-2", "after").map(
+        (group) => group.workspace.id
+      )
+    ).toEqual(["workspace-2", "workspace-1", "workspace-3"]);
+  });
 });
 
 function renderWorkbenchRoute(
@@ -3969,6 +4216,27 @@ async function findWorkspaceGroupByName(name: string) {
   }
 
   return group;
+}
+
+function readWorkspaceGroupOrder(container: HTMLElement) {
+  return Array.from(container.querySelectorAll(".workbench-workspace-group .workbench-workspace-toggle strong"))
+    .map((element) => element.textContent?.trim() ?? "")
+    .filter((value) => value.length > 0);
+}
+
+function createDragDataTransfer() {
+  const store = new Map<string, string>();
+
+  return {
+    effectAllowed: "move",
+    dropEffect: "move",
+    setData(type: string, value: string) {
+      store.set(type, value);
+    },
+    getData(type: string) {
+      return store.get(type) ?? "";
+    }
+  };
 }
 
 function CurrentLocationProbe() {

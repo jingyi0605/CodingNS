@@ -57,9 +57,17 @@ export interface Workspace {
   path: string;
   repoRoot: string | null;
   favorite: boolean;
+  sortOrder: number;
   createdAt: string;
   updatedAt: string;
   removedAt?: string | null;
+}
+
+export interface WorkspaceNavigationStateRecord {
+  workspaceId: string;
+  userId: string;
+  collapsed: boolean;
+  updatedAt: string;
 }
 
 export interface SessionBinding {

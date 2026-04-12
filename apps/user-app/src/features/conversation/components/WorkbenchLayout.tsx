@@ -14,6 +14,7 @@ import {
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
+  type DragEvent as ReactDragEvent,
   type FormEvent,
   type ReactNode
 } from "react";
@@ -62,10 +63,12 @@ import {
   getProviderCapabilities,
   getSessionPermissionRequests,
   getWorkbenchSnapshot,
+  reorderWorkspaces,
   removeWorkspace,
   renameSessionTitle,
   updateSessionArchiveState,
   updateSessionFavoriteState,
+  updateWorkspaceNavigationState,
   type ProviderId,
   type SessionSummaryDto,
   type WorkbenchSnapshotDto,
@@ -138,7 +141,6 @@ const RIGHT_PANEL_WIDTH_KEY = "workbench.right.width";
 const LEFT_PANEL_COLLAPSED_KEY = "workbench.left.collapsed";
 const RIGHT_PANEL_COLLAPSED_KEY = "workbench.right.collapsed";
 const LAST_SESSION_PATH_KEY = "workbench.last.session.path";
-const WORKSPACE_COLLAPSED_IDS_KEY = "workbench.workspace.collapsed.ids";
 const SELECTED_WORKSPACE_ID_KEY = "workbench.workspace.selected.id";
 const WORKBENCH_NAVIGATION_SNAPSHOT_KEY = "workbench.navigation.snapshot";
 const WORKBENCH_NOTIFICATION_SEEN_AT_KEY = "workbench.notifications.seen_at";
@@ -876,34 +878,6 @@ function readStoredBoolean(key: string, fallback: boolean) {
   }
 }
 
-function readStoredStringArray(key: string) {
-  try {
-    const raw = window.localStorage.getItem(key);
-
-    if (!raw) {
-      return [] as string[];
-    }
-
-    const parsed = JSON.parse(raw) as unknown;
-
-    if (!Array.isArray(parsed)) {
-      return [] as string[];
-    }
-
-    const uniqueValues: string[] = [];
-
-    for (const value of parsed) {
-      if (typeof value === "string" && !uniqueValues.includes(value)) {
-        uniqueValues.push(value);
-      }
-    }
-
-    return uniqueValues;
-  } catch {
-    return [] as string[];
-  }
-}
-
 function readStoredString(key: string) {
   try {
     const raw = window.localStorage.getItem(key)?.trim();
@@ -963,6 +937,70 @@ function mapWorkbenchSnapshotToGroups(snapshot: WorkbenchSnapshotDto | null | un
     workspace: item.workspace,
     sessions: [...item.sessions].sort(sortSessions)
   }));
+}
+
+function extractCollapsedWorkspaceIds(snapshot: WorkbenchSnapshotDto | null | undefined): string[] {
+  if (!snapshot || !Array.isArray(snapshot.items)) {
+    return [];
+  }
+
+  return snapshot.items
+    .filter((item) => item.collapsed === true && item.workspace?.id)
+    .map((item) => item.workspace.id);
+}
+
+function createWorkbenchSnapshotFromGroups(
+  groups: WorkspaceSessionGroup[],
+  collapsedWorkspaceIds: readonly string[]
+): WorkbenchSnapshotDto {
+  const collapsedWorkspaceIdSet = new Set(collapsedWorkspaceIds);
+
+  return {
+    items: groups.map((group) => ({
+      workspace: group.workspace,
+      sessions: group.sessions,
+      collapsed: collapsedWorkspaceIdSet.has(group.workspace.id)
+    }))
+  };
+}
+
+type WorkspaceDropPosition = "before" | "after";
+
+export function reorderWorkspaceGroups(
+  groups: WorkspaceSessionGroup[],
+  sourceWorkspaceId: string,
+  targetWorkspaceId: string,
+  position: WorkspaceDropPosition
+): WorkspaceSessionGroup[] {
+  if (sourceWorkspaceId === targetWorkspaceId) {
+    return groups;
+  }
+
+  const sourceIndex = groups.findIndex((group) => group.workspace.id === sourceWorkspaceId);
+  const targetIndex = groups.findIndex((group) => group.workspace.id === targetWorkspaceId);
+
+  if (sourceIndex < 0 || targetIndex < 0) {
+    return groups;
+  }
+
+  const nextGroups = [...groups];
+  const [sourceGroup] = nextGroups.splice(sourceIndex, 1);
+
+  if (!sourceGroup) {
+    return groups;
+  }
+
+  const nextTargetIndex = nextGroups.findIndex((group) => group.workspace.id === targetWorkspaceId);
+
+  if (nextTargetIndex < 0) {
+    return groups;
+  }
+
+  nextGroups.splice(position === "before" ? nextTargetIndex : nextTargetIndex + 1, 0, sourceGroup);
+
+  return nextGroups.every((group, index) => group.workspace.id === groups[index]?.workspace.id)
+    ? groups
+    : nextGroups;
 }
 
 function applyPendingArchiveStateToSnapshot(
@@ -1180,6 +1218,14 @@ function updateSessionFavoriteStateInGroups(
 
 function toggleStoredId(items: string[], id: string) {
   return items.includes(id) ? items.filter((item) => item !== id) : [...items, id];
+}
+
+function setStoredIdPresence(items: string[], id: string, present: boolean) {
+  if (present) {
+    return items.includes(id) ? items : [...items, id];
+  }
+
+  return items.includes(id) ? items.filter((item) => item !== id) : items;
 }
 
 function retainKnownIds(items: string[], knownIds: ReadonlySet<string>) {
@@ -2242,6 +2288,10 @@ function SidebarContent({
   onOpenSettings,
   onSelectWorkspace,
   onToggleWorkspaceCollapse,
+  onStartWorkspaceReorder,
+  onPreviewWorkspaceReorder,
+  onCommitWorkspaceReorder,
+  allowWorkspaceReorder,
   subscribeGitSnapshot,
   requestGitRefresh,
   subscribeWorkspaceManagementSnapshot,
@@ -2277,6 +2327,14 @@ function SidebarContent({
   onOpenSettings: () => void;
   onSelectWorkspace: (workspaceId: string) => void;
   onToggleWorkspaceCollapse: (workspaceId: string) => void;
+  onStartWorkspaceReorder: () => void;
+  onPreviewWorkspaceReorder: (
+    sourceWorkspaceId: string,
+    targetWorkspaceId: string,
+    position: WorkspaceDropPosition
+  ) => void;
+  onCommitWorkspaceReorder: () => void;
+  allowWorkspaceReorder: boolean;
   subscribeGitSnapshot: (workspaceId: string) => void;
   requestGitRefresh: (workspaceId: string) => void;
   subscribeWorkspaceManagementSnapshot: (workspaceId: string) => void;
@@ -2327,6 +2385,7 @@ function SidebarContent({
   const [batchWorkspaceId, setBatchWorkspaceId] = useState<string | null>(null);
   const [selectedSessionIds, setSelectedSessionIds] = useState<string[]>([]);
   const [batchArchiving, setBatchArchiving] = useState(false);
+  const [dragWorkspaceId, setDragWorkspaceId] = useState<string | null>(null);
 
   const createSessionWorkspace =
     workspaceGroups.find((group) => group.workspace.id === createSessionWorkspaceId)?.workspace ?? null;
@@ -2647,6 +2706,53 @@ function SidebarContent({
 
   function handleOpenCloneWorkspace() {
     setCloneBrowserOpen(true);
+  }
+
+  function resolveWorkspaceDropPosition(target: HTMLElement, clientY: number): WorkspaceDropPosition {
+    const rect = target.getBoundingClientRect();
+    return clientY <= rect.top + rect.height / 2 ? "before" : "after";
+  }
+
+  function clearWorkspaceDragState() {
+    setDragWorkspaceId(null);
+  }
+
+  function handleWorkspaceDragStart(
+    event: ReactDragEvent<HTMLButtonElement>,
+    workspaceId: string
+  ) {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", workspaceId);
+    onStartWorkspaceReorder();
+    setDragWorkspaceId(workspaceId);
+  }
+
+  function handleWorkspaceDragOver(
+    event: ReactDragEvent<HTMLElement>,
+    workspaceId: string
+  ) {
+    const sourceWorkspaceId = dragWorkspaceId || event.dataTransfer.getData("text/plain");
+
+    if (!sourceWorkspaceId || sourceWorkspaceId === workspaceId) {
+      return;
+    }
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    onPreviewWorkspaceReorder(
+      sourceWorkspaceId,
+      workspaceId,
+      resolveWorkspaceDropPosition(event.currentTarget, event.clientY)
+    );
+  }
+
+  function handleWorkspaceDrop(event: ReactDragEvent<HTMLElement>) {
+    event.preventDefault();
+  }
+
+  function handleWorkspaceDragEnd() {
+    clearWorkspaceDragState();
+    onCommitWorkspaceReorder();
   }
 
   function getVisibleSubagentCount(sessionId: string) {
@@ -3285,22 +3391,35 @@ function SidebarContent({
 
         {workspaceGroups.map((group) => {
           const visibleSessionTree = getVisibleSessionTreeNodes(group);
+          const isDraggedWorkspace = dragWorkspaceId === group.workspace.id;
+          const isWorkspaceCollapsed = group.isCollapsed || isDraggedWorkspace;
 
           return (
             <section
               key={group.workspace.id}
               className="workbench-workspace-group"
               data-batch-active={batchWorkspaceId === group.workspace.id}
+              data-dragging={isDraggedWorkspace}
+              onDragOver={(event) => handleWorkspaceDragOver(event, group.workspace.id)}
+              onDrop={handleWorkspaceDrop}
             >
               <div className="workbench-workspace-header minimal">
                 <button
                   type="button"
                   className="workbench-workspace-toggle"
-                  aria-label={group.isCollapsed ? t("shell.workspaceExpand") : t("shell.workspaceCollapse")}
+                  aria-label={isWorkspaceCollapsed ? t("shell.workspaceExpand") : t("shell.workspaceCollapse")}
+                  draggable={allowWorkspaceReorder}
                   onClick={() => onToggleWorkspaceCollapse(group.workspace.id)}
+                  onDragStart={
+                    allowWorkspaceReorder
+                      ? (event) => handleWorkspaceDragStart(event, group.workspace.id)
+                      : undefined
+                  }
+                  onDragEnd={allowWorkspaceReorder ? handleWorkspaceDragEnd : undefined}
+                  data-reorder-enabled={allowWorkspaceReorder ? "true" : undefined}
                 >
                   <span className="workbench-workspace-toggle-icon" aria-hidden="true">
-                    <ChevronIcon expanded={!group.isCollapsed} />
+                    <ChevronIcon expanded={!isWorkspaceCollapsed} />
                   </span>
                   <strong>{group.workspace.name}</strong>
                 </button>
@@ -3373,7 +3492,7 @@ function SidebarContent({
                 )}
               </div>
 
-              {!group.isCollapsed ? (
+              {!isWorkspaceCollapsed ? (
                 <>
                   <div className="workbench-session-list">
                     {visibleSessionTree.length === 0 ? (
@@ -4325,9 +4444,13 @@ export function WorkbenchLayout({
   const permissionWatchSessionsRef = useRef<
     Array<{ sessionId: string; workspaceId: string; title: string }>
   >([]);
+  const pendingWorkspaceReorderRef = useRef<{
+    originalGroups: WorkspaceSessionGroup[];
+  } | null>(null);
   const [navigationGroups, setNavigationGroups] = useState<WorkspaceSessionGroup[]>(() =>
     mapWorkbenchSnapshotToGroups(initialWorkbenchSnapshotRef.current)
   );
+  const navigationGroupsRef = useRef<WorkspaceSessionGroup[]>(navigationGroups);
   const [navigationLoading, setNavigationLoading] = useState(
     () => (initialWorkbenchSnapshotRef.current?.items?.length ?? 0) === 0
   );
@@ -4349,7 +4472,7 @@ export function WorkbenchLayout({
     readStoredBoolean(RIGHT_PANEL_COLLAPSED_KEY, false)
   );
   const [collapsedWorkspaceIds, setCollapsedWorkspaceIds] = useState(() =>
-    readStoredStringArray(WORKSPACE_COLLAPSED_IDS_KEY)
+    extractCollapsedWorkspaceIds(initialWorkbenchSnapshotRef.current)
   );
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(() =>
     readStoredString(SELECTED_WORKSPACE_ID_KEY)
@@ -4382,6 +4505,10 @@ export function WorkbenchLayout({
   useEffect(() => {
     showToastRef.current = showToast;
   }, [showToast]);
+
+  useEffect(() => {
+    navigationGroupsRef.current = navigationGroups;
+  }, [navigationGroups]);
 
   useEffect(() => {
     platformBridgeRef.current = platform.bridge;
@@ -4507,8 +4634,13 @@ export function WorkbenchLayout({
       currentSessionId: resolveRouteSessionMatch(location.pathname)?.sessionId ?? null
     });
 
+    const nextGroups = mapWorkbenchSnapshotToGroups(snapshotWithPendingArchiveState);
+
+    initialWorkbenchSnapshotRef.current = snapshotWithPendingArchiveState;
     writeViewSnapshot(WORKBENCH_NAVIGATION_SNAPSHOT_KEY, snapshotWithPendingArchiveState);
-    setNavigationGroups(mapWorkbenchSnapshotToGroups(snapshotWithPendingArchiveState));
+    navigationGroupsRef.current = nextGroups;
+    setNavigationGroups(nextGroups);
+    setCollapsedWorkspaceIds(extractCollapsedWorkspaceIds(snapshotWithPendingArchiveState));
     setNavigationError(null);
   }
 
@@ -4552,7 +4684,11 @@ export function WorkbenchLayout({
   }, []);
 
   const upsertNavigationSession = useCallback((session: SessionSummaryDto) => {
-    setNavigationGroups((current) => upsertSessionIntoGroups(current, session));
+    setNavigationGroups((current) => {
+      const nextGroups = upsertSessionIntoGroups(current, session);
+      navigationGroupsRef.current = nextGroups;
+      return nextGroups;
+    });
   }, []);
 
   const requestNavigationRefresh = useCallback(() => {
@@ -4922,10 +5058,6 @@ export function WorkbenchLayout({
   }, [rightCollapsed]);
 
   useEffect(() => {
-    writeStoredValue(WORKSPACE_COLLAPSED_IDS_KEY, JSON.stringify(collapsedWorkspaceIds));
-  }, [collapsedWorkspaceIds]);
-
-  useEffect(() => {
     if (!selectedWorkspaceId) {
       removeStoredValue(SELECTED_WORKSPACE_ID_KEY);
       return;
@@ -4964,6 +5096,103 @@ export function WorkbenchLayout({
     [flattenedSessions]
   );
   const favoriteSessionIdSet = useMemo(() => new Set(favoriteSessionIds), [favoriteSessionIds]);
+
+  const applyNavigationGroupsSnapshot = useCallback((groups: WorkspaceSessionGroup[]) => {
+    const nextSnapshot = createWorkbenchSnapshotFromGroups(groups, collapsedWorkspaceIds);
+
+    initialWorkbenchSnapshotRef.current = nextSnapshot;
+    writeViewSnapshot(WORKBENCH_NAVIGATION_SNAPSHOT_KEY, nextSnapshot);
+    navigationGroupsRef.current = groups;
+    setNavigationGroups(groups);
+  }, [collapsedWorkspaceIds]);
+
+  const handleToggleWorkspaceCollapse = useCallback((workspaceId: string) => {
+    const nextCollapsed = !collapsedWorkspaceIdSet.has(workspaceId);
+    const nextCollapsedWorkspaceIds = setStoredIdPresence(
+      collapsedWorkspaceIds,
+      workspaceId,
+      nextCollapsed
+    );
+    const nextSnapshot = createWorkbenchSnapshotFromGroups(navigationGroups, nextCollapsedWorkspaceIds);
+
+    initialWorkbenchSnapshotRef.current = nextSnapshot;
+    writeViewSnapshot(WORKBENCH_NAVIGATION_SNAPSHOT_KEY, nextSnapshot);
+    setCollapsedWorkspaceIds(nextCollapsedWorkspaceIds);
+    void updateWorkspaceNavigationState(workspaceId, nextCollapsed).catch((error) => {
+      const revertedCollapsedWorkspaceIds = setStoredIdPresence(
+        nextCollapsedWorkspaceIds,
+        workspaceId,
+        !nextCollapsed
+      );
+      const revertedSnapshot = createWorkbenchSnapshotFromGroups(
+        navigationGroups,
+        revertedCollapsedWorkspaceIds
+      );
+
+      initialWorkbenchSnapshotRef.current = revertedSnapshot;
+      writeViewSnapshot(WORKBENCH_NAVIGATION_SNAPSHOT_KEY, revertedSnapshot);
+      setCollapsedWorkspaceIds(revertedCollapsedWorkspaceIds);
+      showToastRef.current({
+        title: error instanceof Error ? error.message : t("shell.workspaceCollapseStateSaveFailed"),
+        tone: "error"
+      });
+    });
+  }, [collapsedWorkspaceIdSet, collapsedWorkspaceIds, navigationGroups]);
+
+  const handleStartWorkspaceReorder = useCallback(() => {
+    pendingWorkspaceReorderRef.current = {
+      originalGroups: navigationGroupsRef.current
+    };
+  }, []);
+
+  const handlePreviewWorkspaceReorder = useCallback((
+    sourceWorkspaceId: string,
+    targetWorkspaceId: string,
+    position: WorkspaceDropPosition
+  ) => {
+    const currentGroups = navigationGroupsRef.current;
+    const nextGroups = reorderWorkspaceGroups(
+      currentGroups,
+      sourceWorkspaceId,
+      targetWorkspaceId,
+      position
+    );
+
+    if (nextGroups === currentGroups) {
+      return;
+    }
+
+    applyNavigationGroupsSnapshot(nextGroups);
+  }, [applyNavigationGroupsSnapshot]);
+
+  const handleCommitWorkspaceReorder = useCallback(() => {
+    const pendingReorder = pendingWorkspaceReorderRef.current;
+    pendingWorkspaceReorderRef.current = null;
+    const currentGroups = navigationGroupsRef.current;
+
+    if (!pendingReorder) {
+      return;
+    }
+
+    if (
+      pendingReorder.originalGroups.length === currentGroups.length
+      && pendingReorder.originalGroups.every(
+        (group, index) => group.workspace.id === currentGroups[index]?.workspace.id
+      )
+    ) {
+      return;
+    }
+
+    void reorderWorkspaces({
+      workspaceIds: currentGroups.map((group) => group.workspace.id)
+    }).catch((error) => {
+      applyNavigationGroupsSnapshot(pendingReorder.originalGroups);
+      showToastRef.current({
+        title: error instanceof Error ? error.message : t("shell.workspaceReorderFailed"),
+        tone: "error"
+      });
+    });
+  }, [applyNavigationGroupsSnapshot]);
 
   useEffect(() => {
     const nextState = new Map<
@@ -5993,9 +6222,11 @@ export function WorkbenchLayout({
         navigate("/settings");
       }}
       onSelectWorkspace={handleSelectWorkspace}
-      onToggleWorkspaceCollapse={(workspaceId) =>
-        setCollapsedWorkspaceIds((current) => toggleStoredId(current, workspaceId))
-      }
+      onToggleWorkspaceCollapse={handleToggleWorkspaceCollapse}
+      onStartWorkspaceReorder={handleStartWorkspaceReorder}
+      onPreviewWorkspaceReorder={handlePreviewWorkspaceReorder}
+      onCommitWorkspaceReorder={handleCommitWorkspaceReorder}
+      allowWorkspaceReorder={false}
       subscribeGitSnapshot={subscribeGitSnapshot}
       requestGitRefresh={requestGitRefresh}
       subscribeWorkspaceManagementSnapshot={subscribeWorkspaceManagementSnapshot}
@@ -6151,9 +6382,11 @@ export function WorkbenchLayout({
                 onOpenSearch={() => openSearchModal()}
                 onOpenSettings={() => navigate("/settings")}
                 onSelectWorkspace={handleSelectWorkspace}
-                onToggleWorkspaceCollapse={(workspaceId) =>
-                  setCollapsedWorkspaceIds((current) => toggleStoredId(current, workspaceId))
-                }
+                onToggleWorkspaceCollapse={handleToggleWorkspaceCollapse}
+                onStartWorkspaceReorder={handleStartWorkspaceReorder}
+                onPreviewWorkspaceReorder={handlePreviewWorkspaceReorder}
+                onCommitWorkspaceReorder={handleCommitWorkspaceReorder}
+                allowWorkspaceReorder
                 subscribeGitSnapshot={subscribeGitSnapshot}
                 requestGitRefresh={requestGitRefresh}
                 subscribeWorkspaceManagementSnapshot={subscribeWorkspaceManagementSnapshot}

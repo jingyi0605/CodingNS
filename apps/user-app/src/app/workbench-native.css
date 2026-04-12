@@ -1856,11 +1856,24 @@ body {
 }
 
 .workbench-workspace-group {
+  position: relative;
   gap: 8px;
   padding: 10px;
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.5);
   border: 1px solid var(--panel-border);
+  transition:
+    transform 160ms ease,
+    opacity 160ms ease,
+    border-color 160ms ease,
+    background 160ms ease;
+}
+
+.workbench-workspace-group[data-dragging="true"] {
+  opacity: 0.72;
+  transform: scale(0.985);
+  border-color: color-mix(in srgb, var(--accent-primary) 42%, var(--panel-border));
+  background: color-mix(in srgb, var(--accent-primary) 10%, rgba(255, 255, 255, 0.5));
 }
 
 [data-theme="dark"] .workbench-workspace-group {
@@ -1870,6 +1883,14 @@ body {
 .workbench-workspace-header.minimal {
   align-items: center;
   margin-bottom: 0;
+}
+
+.workbench-workspace-toggle[data-reorder-enabled="true"] {
+  cursor: grab;
+}
+
+.workbench-workspace-toggle[data-reorder-enabled="true"]:active {
+  cursor: grabbing;
 }
 
 .workbench-workspace-toggle {

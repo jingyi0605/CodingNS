@@ -38,10 +38,24 @@ CREATE TABLE IF NOT EXISTS workspaces (
   path TEXT NOT NULL UNIQUE,
   repo_root TEXT,
   favorite INTEGER NOT NULL DEFAULT 0 CHECK (favorite IN (0, 1)),
+  sort_order INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   removed_at TEXT
 );
+
+CREATE TABLE IF NOT EXISTS workspace_navigation_states (
+  workspace_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  collapsed INTEGER NOT NULL DEFAULT 0 CHECK (collapsed IN (0, 1)),
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, user_id),
+  FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+  FOREIGN KEY (user_id) REFERENCES auth_users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_workspace_navigation_states_user_id
+  ON workspace_navigation_states(user_id, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS commit_rule_profiles (
   id TEXT PRIMARY KEY,

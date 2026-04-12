@@ -32,6 +32,7 @@ describe("WorkspaceService", () => {
       path: workspacePath,
       repoRoot: workspacePath,
       favorite: false,
+      sortOrder: 0,
       createdAt: "2026-03-27T00:00:00.000Z",
       updatedAt: "2026-03-27T00:00:00.000Z",
       removedAt: null
@@ -53,7 +54,10 @@ describe("WorkspaceService", () => {
 
     const service = new WorkspaceService(
       workspaceRepository as unknown as WorkspaceRepository,
-      gitCommandRunner as unknown as GitCommandRunner
+      gitCommandRunner as unknown as GitCommandRunner,
+      {
+        upsert: vi.fn()
+      } as never
     );
 
     await expect(service.getManagementSummary(workspace.id)).resolves.toMatchObject({

@@ -5,8 +5,10 @@ import path from "node:path";
 import { AppError, isAppError } from "../../shared/errors/app-error.js";
 import { createId } from "../../shared/utils/id.js";
 import { nowIso } from "../../shared/utils/time.js";
+import type { WorkspaceNavigationStateRepository } from "../../storage/repositories/workspace-navigation-state-repository.js";
 import type { WorkspaceRepository } from "../../storage/repositories/workspace-repository.js";
-import type { Workspace } from "../../types/domain.js";
+import type { Workspace, WorkspaceNavigationStateRecord } from "../../types/domain.js";
+import type { ButlerProfileService } from "../butler/butler-profile-service.js";
 import type { GitCommandRunner } from "../git/git-command-runner.js";
 
 interface WorkspaceDirectoryOption {
@@ -89,6 +91,10 @@ export interface WorkspaceManagementSummary {
   codeComposition: WorkspaceCodeCompositionSummary;
 }
 
+export interface UpdateWorkspaceNavigationStateInput {
+  collapsed: boolean;
+}
+
 const DIRECTORY_BROWSE_LIMIT = 200;
 const GIT_CLONE_TIMEOUT_MS = 120_000;
 const WORKSPACE_CODE_SCAN_LIMIT = 20_000;
@@ -168,7 +174,9 @@ const COMPOSITION_TYPE_BY_EXTENSION: Record<string, string> = {
 export class WorkspaceService {
   constructor(
     private readonly workspaceRepository: WorkspaceRepository,
-    private readonly gitCommandRunner: GitCommandRunner
+    private readonly gitCommandRunner: GitCommandRunner,
+    private readonly workspaceNavigationStateRepository: WorkspaceNavigationStateRepository,
+    private readonly butlerProfileService?: Pick<ButlerProfileService, "getProfile">
   ) {}
 
   browseDirectories(requestedPath?: string): WorkspaceDirectoryBrowseResult {
@@ -287,7 +295,45 @@ export class WorkspaceService {
   }
 
   list(): Workspace[] {
-    return this.workspaceRepository.list();
+    return this.listVisibleWorkspaces();
+  }
+
+  reorderWorkspaces(workspaceIds: string[]): Workspace[] {
+    const normalizedWorkspaceIds = normalizeWorkspaceIds(workspaceIds);
+    const visibleWorkspaces = this.listVisibleWorkspaces();
+
+    if (normalizedWorkspaceIds.length !== visibleWorkspaces.length) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "INVALID_INPUT",
+        detail: "工作区重排必须提交当前全部可见工作区",
+        field: "workspaceIds"
+      });
+    }
+
+    const visibleWorkspaceIdSet = new Set(visibleWorkspaces.map((workspace) => workspace.id));
+    if (visibleWorkspaceIdSet.size !== normalizedWorkspaceIds.length) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "INVALID_INPUT",
+        detail: "工作区列表包含重复项或数量异常",
+        field: "workspaceIds"
+      });
+    }
+
+    for (const workspaceId of normalizedWorkspaceIds) {
+      if (!visibleWorkspaceIdSet.has(workspaceId)) {
+        throw new AppError({
+          statusCode: 400,
+          errorCode: "INVALID_INPUT",
+          detail: "工作区重排列表包含未知项目",
+          field: "workspaceIds"
+        });
+      }
+    }
+
+    this.workspaceRepository.reorderVisible(normalizedWorkspaceIds);
+    return this.listVisibleWorkspaces();
   }
 
   removeWorkspace(workspaceId: string): Workspace {
@@ -336,6 +382,34 @@ export class WorkspaceService {
 
   findWorkspaceByPath(workspacePath: string): Workspace | null {
     return this.workspaceRepository.findByPath(path.resolve(workspacePath));
+  }
+
+  updateNavigationState(
+    workspaceId: string,
+    userId: string,
+    input: UpdateWorkspaceNavigationStateInput
+  ): WorkspaceNavigationStateRecord {
+    this.getWorkspaceOrThrow(workspaceId);
+    const timestamp = nowIso();
+
+    return this.workspaceNavigationStateRepository.upsert({
+      workspaceId,
+      userId,
+      collapsed: input.collapsed,
+      updatedAt: timestamp
+    });
+  }
+
+  private listVisibleWorkspaces(): Workspace[] {
+    const butlerWorkspacePath = this.butlerProfileService?.getProfile()?.workspacePath ?? null;
+
+    if (!butlerWorkspacePath) {
+      return this.workspaceRepository.list();
+    }
+
+    return this.workspaceRepository
+      .list()
+      .filter((workspace) => !isPathInsideButlerWorkspace(workspace.path, butlerWorkspacePath));
   }
 
   private async readGitSummary(workspace: Workspace): Promise<WorkspaceGitSummary> {
@@ -463,10 +537,47 @@ function createWorkspaceRecord(
     path: workspacePath,
     repoRoot: workspacePath,
     favorite: false,
+    sortOrder: workspaceRepository.getNextSortOrder(),
     createdAt: timestamp,
     updatedAt: timestamp,
     removedAt: null
   });
+}
+
+function normalizeWorkspaceIds(workspaceIds: string[]): string[] {
+  if (!Array.isArray(workspaceIds)) {
+    throw new AppError({
+      statusCode: 400,
+      errorCode: "INVALID_INPUT",
+      detail: "workspaceIds 必须是数组",
+      field: "workspaceIds"
+    });
+  }
+
+  const normalizedIds = workspaceIds.map((workspaceId, index) => {
+    if (typeof workspaceId !== "string" || !workspaceId.trim()) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "INVALID_INPUT",
+        detail: "workspaceIds 里的每一项都必须是非空字符串",
+        field: `workspaceIds.${index}`
+      });
+    }
+
+    return workspaceId.trim();
+  });
+  const uniqueIds = new Set(normalizedIds);
+
+  if (uniqueIds.size !== normalizedIds.length) {
+    throw new AppError({
+      statusCode: 400,
+      errorCode: "INVALID_INPUT",
+      detail: "workspaceIds 不允许重复",
+      field: "workspaceIds"
+    });
+  }
+
+  return normalizedIds;
 }
 
 function ensureExistingDirectory(targetPath: string, field: string): void {
@@ -618,6 +729,11 @@ function createGitAuthContext(auth: WorkspaceCloneAuth | null | undefined): GitA
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
   };
+}
+
+function isPathInsideButlerWorkspace(candidatePath: string, butlerWorkspacePath: string): boolean {
+  const relative = path.relative(path.resolve(butlerWorkspacePath), path.resolve(candidatePath));
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
 function mapCloneError(error: unknown): AppError {

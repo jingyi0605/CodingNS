@@ -133,6 +133,7 @@ import { TerminalRuntimeSessionRepository } from "../storage/repositories/termin
 import { UserPreferenceProfileRepository } from "../storage/repositories/user-preference-profile-repository.js";
 import { UserQuickPhrasePreferenceRepository } from "../storage/repositories/user-quick-phrase-preference-repository.js";
 import { WorkspaceRepository } from "../storage/repositories/workspace-repository.js";
+import { WorkspaceNavigationStateRepository } from "../storage/repositories/workspace-navigation-state-repository.js";
 import { createDatabaseClient } from "../storage/sqlite/client.js";
 import { TerminalWsHub } from "../ws/terminal-ws-hub.js";
 import { WorkbenchWsHub } from "../ws/workbench-ws-hub.js";
@@ -157,6 +158,7 @@ export function createServer(config: HostConfig) {
     authUserRepository: new AuthUserRepository(database.db),
     authTokenRepository: new AuthTokenRepository(database.db),
     workspaceRepository: new WorkspaceRepository(database.db),
+    workspaceNavigationStateRepository: new WorkspaceNavigationStateRepository(database.db),
     butlerControlSessionRepository: new ButlerControlSessionRepository(database.db),
     butlerControlEventRepository: new ButlerControlEventRepository(database.db),
     butlerFollowUpTaskRepository: new ButlerFollowUpTaskRepository(database.db),
@@ -218,10 +220,20 @@ export function createServer(config: HostConfig) {
     effectiveConfig,
     demoServices
   );
+  const butlerProfileService = new ButlerProfileService(
+    repositories.butlerProfileRepository,
+    repositories.butlerProjectRepository,
+    path.dirname(config.databasePath)
+  );
   const gitCommandRunner = new GitCommandRunner({
     preferHelperProcess: !process.env.VITEST
   });
-  const workspaceService = new WorkspaceService(repositories.workspaceRepository, gitCommandRunner);
+  const workspaceService = new WorkspaceService(
+    repositories.workspaceRepository,
+    gitCommandRunner,
+    repositories.workspaceNavigationStateRepository,
+    butlerProfileService
+  );
   const fileAccessGuard = new FileAccessGuard(workspaceService, app.log);
   const recentFileService = new RecentFileService(repositories.recentFileRepository);
   const fileVersionChecker = new FileVersionChecker();
@@ -292,11 +304,6 @@ export function createServer(config: HostConfig) {
     config,
     sessionActivityAuthorityService
   );
-  const butlerProfileService = new ButlerProfileService(
-    repositories.butlerProfileRepository,
-    repositories.butlerProjectRepository,
-    path.dirname(config.databasePath)
-  );
   const butlerRuntimeRootDir = path.join(path.dirname(config.databasePath), "butler-runtime");
   const butlerRuntimeConfig: HostConfig = {
     ...config,
@@ -357,6 +364,7 @@ export function createServer(config: HostConfig) {
   );
   const workbenchService = new WorkbenchService(
     repositories.workspaceRepository,
+    repositories.workspaceNavigationStateRepository,
     sessionHistoryService,
     butlerProfileService,
     repositories.butlerControlSessionRepository
