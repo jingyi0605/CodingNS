@@ -3,6 +3,11 @@ import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 
+import type {
+  ProviderSessionDiscovery,
+  ProviderSessionSummary
+} from "@codingns/session-sync-core";
+
 interface PendingRequest<T> {
   resolve: (value: T) => void;
   reject: (reason?: unknown) => void;
@@ -98,6 +103,19 @@ export class ProviderDiscoveryHelperClient {
     return result as string[];
   }
 
+  async discoverWorkspaceSessions(input: {
+    config: ProviderSessionDiscoveryHelperConfig;
+    workspacePath: string;
+    knownSessions: ProviderSessionSummary[];
+  }): Promise<ProviderSessionDiscovery> {
+    const result = await this.sendRequest({
+      type: "workspace_session_discovery",
+      ...input
+    });
+
+    return result as ProviderSessionDiscovery;
+  }
+
   private async sendRequest(payload: Record<string, unknown>): Promise<unknown> {
     const id = String(this.nextRequestId++);
 
@@ -162,6 +180,19 @@ export class ProviderDiscoveryHelperClient {
 
     this.pendingRequests.clear();
   }
+}
+
+export interface ProviderSessionDiscoveryHelperConfig {
+  claudeCodeHomeDir: string;
+  codexCliPath: string;
+  codexHomeDir: string;
+  geminiCliPath: string;
+  geminiHomeDir: string;
+  kimiDefaultModel: string | null;
+  kimiHomeDir: string;
+  opencodeBaseUrl: string;
+  opencodeDataDir: string;
+  opencodeDbPath: string;
 }
 
 function resolveHelperLaunch(): { command: string; args: string[] } {

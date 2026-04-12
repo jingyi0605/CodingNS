@@ -14,7 +14,7 @@ interface OpenCodeModelOptionsServiceOptions {
   cacheTtlMs?: number;
 }
 
-interface OpenCodeDiscoverySnapshot {
+export interface OpenCodeDiscoverySnapshot {
   modelOptions: ProviderModelOption[];
 }
 
@@ -76,6 +76,11 @@ export class OpenCodeModelOptionsService {
 
     this.inflight.set(cacheKey, task);
     return task;
+  }
+
+  peekSnapshot(workspacePath: string | null): OpenCodeDiscoverySnapshot | null {
+    const cacheKey = normalizeText(workspacePath) ?? "";
+    return this.cache.get(cacheKey)?.value ?? null;
   }
 
   private async loadSnapshot(workspacePath: string | null): Promise<OpenCodeDiscoverySnapshot> {
@@ -268,7 +273,7 @@ function buildCliModelOptions(models: string[]): ProviderModelOption[] {
   ];
 }
 
-function createFallbackOpenCodeModelOptions(currentModelId: string | null): ProviderModelOption[] {
+export function createFallbackOpenCodeModelOptions(currentModelId: string | null): ProviderModelOption[] {
   return [
     {
       id: PROVIDER_DEFAULT_MODEL_ID,

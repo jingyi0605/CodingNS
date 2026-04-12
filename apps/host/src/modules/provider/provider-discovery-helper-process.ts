@@ -1,7 +1,20 @@
 import { spawn } from "node:child_process";
 import readline, { createInterface } from "node:readline";
 
+import {
+  ClaudeCodeAdapter,
+  CodexAdapter,
+  GeminiAdapter,
+  KimiAdapter,
+  OpenCodeAdapter,
+  ProviderRegistry,
+  SessionSyncService,
+  type ProviderSessionDiscovery,
+  type ProviderSessionSummary
+} from "@codingns/session-sync-core";
+
 import { resolveCommandLaunch } from "../../shared/utils/command-launch.js";
+import type { ProviderSessionDiscoveryHelperConfig } from "./provider-discovery-helper-client.js";
 
 type HelperRequest =
   | {
@@ -16,7 +29,21 @@ type HelperRequest =
       commandPath: string;
       workspacePath: string | null;
       timeoutMs: number;
+    }
+  | {
+      id: string;
+      type: "workspace_session_discovery";
+      config: ProviderSessionDiscoveryHelperConfig;
+      workspacePath: string;
+      knownSessions: ProviderSessionSummary[];
     };
+
+let workspaceDiscoveryRuntime:
+  | {
+      cacheKey: string;
+      service: SessionSyncService;
+    }
+  | null = null;
 
 const stdinReader = readline.createInterface({
   input: process.stdin,
@@ -50,6 +77,16 @@ async function handleLine(line: string): Promise<void> {
           payload.timeoutMs
         );
         emitResult(payload.id, result);
+        return;
+      }
+      case "workspace_session_discovery": {
+        const result = await discoverWorkspaceSessions(
+          payload.config,
+          payload.workspacePath,
+          payload.knownSessions
+        );
+        emitResult(payload.id, result);
+        return;
       }
     }
   } catch (error) {
@@ -388,6 +425,55 @@ function normalizeCodexModelListResult(input: unknown): Array<Record<string, unk
 function normalizeCliModelId(value: string): string | null {
   const normalized = value.trim();
   return normalized.length > 0 ? normalized : null;
+}
+
+async function discoverWorkspaceSessions(
+  config: ProviderSessionDiscoveryHelperConfig,
+  workspacePath: string,
+  knownSessions: ProviderSessionSummary[]
+): Promise<ProviderSessionDiscovery> {
+  const service = getWorkspaceDiscoveryService(config);
+  return service.discoverWorkspaceSessions(workspacePath, {
+    knownSessions
+  });
+}
+
+function getWorkspaceDiscoveryService(
+  config: ProviderSessionDiscoveryHelperConfig
+): SessionSyncService {
+  const cacheKey = JSON.stringify(config);
+
+  if (workspaceDiscoveryRuntime?.cacheKey === cacheKey) {
+    return workspaceDiscoveryRuntime.service;
+  }
+
+  const registry = new ProviderRegistry([
+    new ClaudeCodeAdapter({ homeDir: config.claudeCodeHomeDir }),
+    new CodexAdapter({
+      homeDir: config.codexHomeDir
+    }),
+    new GeminiAdapter({
+      homeDir: config.geminiHomeDir,
+      commandPath: config.geminiCliPath
+    }),
+    new KimiAdapter({
+      homeDir: config.kimiHomeDir,
+      defaultModel: config.kimiDefaultModel
+    }),
+    new OpenCodeAdapter({
+      baseUrl: config.opencodeBaseUrl,
+      dataDir: config.opencodeDataDir,
+      dbPath: config.opencodeDbPath
+    })
+  ]);
+  const service = new SessionSyncService(registry);
+
+  workspaceDiscoveryRuntime = {
+    cacheKey,
+    service
+  };
+
+  return service;
 }
 
 function normalizeText(value: unknown): string | null {

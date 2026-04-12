@@ -219,23 +219,50 @@ export class ButlerContextAggregator {
   ) {}
 
   async getOverview(userId: string): Promise<ButlerOverview> {
-    const snapshot = await this.getSnapshot(userId);
+    const generatedAt = nowIso();
+    const projectContexts = await this.collectProjectContexts(userId, {
+      syncMode: "background"
+    });
+    const projects = projectContexts.map((item) => item.digest).slice(0, MAX_OVERVIEW_PROJECTS);
+    const sessions = projectContexts
+      .flatMap((item) => item.sessions)
+      .slice(0, MAX_OVERVIEW_SESSIONS);
+    const inboxItems = projectContexts
+      .flatMap((item) => item.inboxItems)
+      .slice(0, MAX_OVERVIEW_SESSIONS);
+    const patrols = projectContexts
+      .flatMap((item) => item.patrols)
+      .slice(0, MAX_OVERVIEW_RUNS);
+    const verifications = projectContexts
+      .flatMap((item) => item.verifications)
+      .slice(0, MAX_OVERVIEW_RUNS);
+    const global = buildGlobalDigest(projectContexts);
+    const version = buildSnapshotVersion({
+      global,
+      projects,
+      sessions,
+      inboxItems,
+      patrols,
+      verifications
+    });
 
     return {
-      version: snapshot.version,
-      generatedAt: snapshot.generatedAt,
-      global: snapshot.global,
-      projects: snapshot.projects.slice(0, MAX_OVERVIEW_PROJECTS),
-      sessions: snapshot.sessions.slice(0, MAX_OVERVIEW_SESSIONS),
-      inboxItems: snapshot.inboxItems.slice(0, MAX_OVERVIEW_SESSIONS),
-      patrols: snapshot.patrols.slice(0, MAX_OVERVIEW_RUNS),
-      verifications: snapshot.verifications.slice(0, MAX_OVERVIEW_RUNS)
+      version,
+      generatedAt,
+      global,
+      projects,
+      sessions,
+      inboxItems,
+      patrols,
+      verifications
     };
   }
 
   async getSnapshot(userId: string): Promise<ButlerContextSnapshot> {
     const generatedAt = nowIso();
-    const projectContexts = await this.collectProjectContexts(userId);
+    const projectContexts = await this.collectProjectContexts(userId, {
+      syncMode: "background"
+    });
     const projects = projectContexts.map((item) => item.digest);
     const sessions = projectContexts.flatMap((item) => item.sessions);
     const memories = projectContexts.flatMap((item) => item.memories);
@@ -269,7 +296,9 @@ export class ButlerContextAggregator {
   async getProjectContext(projectId: string, userId: string): Promise<ButlerProjectContext> {
     const project = this.getProjectOrThrow(projectId);
     const generatedAt = nowIso();
-    await this.butlerSessionService.ensureProjectSessionsSynced(project.id, userId);
+    await this.butlerSessionService.ensureProjectSessionsSynced(project.id, userId, {
+      mode: "background"
+    });
     const context = this.buildProjectContext(project, userId);
     const version = buildSnapshotVersion({
       project: context.digest,
@@ -346,7 +375,8 @@ export class ButlerContextAggregator {
     }
 
     const projectContexts = await this.collectProjectContexts(userId, {
-      includeArchived: options.includeArchived ?? false
+      includeArchived: options.includeArchived ?? false,
+      syncMode: "background"
     });
     const filteredContexts =
       options.projectId
@@ -372,6 +402,7 @@ export class ButlerContextAggregator {
     userId: string,
     options?: {
       includeArchived?: boolean;
+      syncMode?: "blocking" | "background";
     }
   ): Promise<ProjectAggregateResult[]> {
     const focusProjectIds = new Set(this.butlerProfileService.getProfile()?.focus.projectIds ?? []);
@@ -379,7 +410,8 @@ export class ButlerContextAggregator {
     await Promise.all(
       projects.map((project) =>
         this.butlerSessionService.ensureProjectSessionsSynced(project.id, userId, {
-          includeArchived: options?.includeArchived ?? false
+          includeArchived: options?.includeArchived ?? false,
+          mode: options?.syncMode ?? "blocking"
         })
       )
     );

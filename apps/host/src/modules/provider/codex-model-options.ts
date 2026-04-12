@@ -24,7 +24,7 @@ interface CodexModelListItem {
   }>;
 }
 
-interface CodexDiscoverySnapshot {
+export interface CodexDiscoverySnapshot {
   modelOptions: ProviderModelOption[];
   defaultReasoningLevel: string | null;
 }
@@ -72,6 +72,10 @@ export class CodexModelOptionsService {
       });
 
     return this.inflight;
+  }
+
+  peekSnapshot(): CodexDiscoverySnapshot | null {
+    return this.cache?.value ?? null;
   }
 
   private async loadSnapshot(): Promise<CodexDiscoverySnapshot> {
@@ -160,7 +164,7 @@ function buildCodexModelOptions(
   ];
 }
 
-function createFallbackCodexModelOptions(currentModel: string | null): ProviderModelOption[] {
+export function createFallbackCodexModelOptions(currentModel: string | null): ProviderModelOption[] {
   return [
     {
       id: PROVIDER_DEFAULT_MODEL_ID,

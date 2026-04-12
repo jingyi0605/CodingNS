@@ -11,6 +11,7 @@ import {
   GeminiAdapter,
   KimiAdapter,
   OpenCodeAdapter,
+  type ProviderModelOption,
   ProviderRegistry,
   SessionSyncService,
   type ForkStrategy,
@@ -58,12 +59,18 @@ import { SessionForkRepository } from "../../storage/repositories/session-fork-r
 import { enrichClaudeCapabilities } from "../provider/claude-model-options.js";
 import {
   CodexModelOptionsService,
+  createFallbackCodexModelOptions,
   enrichCodexCapabilities
 } from "../provider/codex-model-options.js";
 import {
   OpenCodeModelOptionsService,
+  createFallbackOpenCodeModelOptions,
   enrichOpenCodeCapabilities
 } from "../provider/opencode-model-options.js";
+import {
+  ProviderDiscoveryHelperClient,
+  type ProviderSessionDiscoveryHelperConfig
+} from "../provider/provider-discovery-helper-client.js";
 import { CodexAppServerHelperClient } from "./codex-app-server-helper-client.js";
 
 interface StartSessionInput {
@@ -141,6 +148,11 @@ interface WorkspaceDiscoveryStatus {
   isComplete: boolean;
 }
 
+interface ProviderCapabilityCacheEntry {
+  refreshedAt: number;
+  value: ProviderCapabilities;
+}
+
 interface DeliveredHistoryMessageState {
   readonly signaturesByMessageId: Map<string, string>;
   lastMutableTailRefreshAtMs: number;
@@ -178,6 +190,8 @@ const SESSION_START_DEFERRED_PROVIDERS = new Set([
   "kimi"
 ]);
 const MUTABLE_HISTORY_TAIL_REFRESH_INTERVAL_MS = 1_200;
+const WORKSPACE_DISCOVERY_BACKGROUND_MAX_AGE_MS = 15_000;
+const PROVIDER_CAPABILITY_CACHE_MAX_AGE_MS = 5_000;
 
 export class SessionHistoryService {
   private readonly providerRegistry: ProviderRegistry;
@@ -190,9 +204,13 @@ export class SessionHistoryService {
   private readonly openCodeModelOptionsService: OpenCodeModelOptionsService;
   private readonly providerCliCommandPaths: Readonly<Partial<Record<string, string>>>;
   private readonly providerCliAvailability: Readonly<Partial<Record<string, boolean>>>;
+  private readonly providerDiscoveryHelperClient = new ProviderDiscoveryHelperClient();
+  private readonly providerSessionDiscoveryConfig: ProviderSessionDiscoveryHelperConfig;
   private readonly workspaceDiscoveryStatuses = new Map<string, WorkspaceDiscoveryStatus>();
   private readonly workspaceDiscoveryInflight = new Map<string, Promise<SessionListItem[]>>();
   private readonly workspaceStateRefreshInflight = new Map<string, Promise<void>>();
+  private readonly providerCapabilityCache = new Map<string, ProviderCapabilityCacheEntry>();
+  private readonly providerCapabilityRefreshInflight = new Map<string, Promise<void>>();
   private readonly workspaceSessionRelations = new Map<
     string,
     Map<string, SessionRelationDescriptor>
@@ -227,6 +245,18 @@ export class SessionHistoryService {
     };
     // CLI 是否可用只在 Host 启动时探测一次；后续统一读缓存，更新 CLI 后重启 Host 生效。
     this.providerCliAvailability = buildProviderCliAvailabilitySnapshot(this.providerCliCommandPaths);
+    this.providerSessionDiscoveryConfig = {
+      claudeCodeHomeDir: config.claudeCodeHomeDir,
+      codexCliPath: config.codexCliPath,
+      codexHomeDir: config.codexHomeDir,
+      geminiCliPath: config.geminiCliPath,
+      geminiHomeDir: config.geminiHomeDir,
+      kimiDefaultModel: config.kimiDefaultModel,
+      kimiHomeDir: config.kimiHomeDir,
+      opencodeBaseUrl: config.opencodeBaseUrl,
+      opencodeDataDir: config.opencodeDataDir,
+      opencodeDbPath: config.opencodeDbPath
+    };
     this.providerRegistry = new ProviderRegistry([
       new ClaudeCodeAdapter({ homeDir: config.claudeCodeHomeDir }),
       new CodexAdapter({
@@ -301,6 +331,53 @@ export class SessionHistoryService {
 
     this.workspaceDiscoveryInflight.set(workspaceId, task);
     return task;
+  }
+
+  requestWorkspaceDiscovery(
+    workspaceId: string,
+    userId: string,
+    options?: {
+      maxAgeMs?: number;
+      force?: boolean;
+      refreshStateMode?: "inline" | "deferred";
+    }
+  ): void {
+    const maxAgeMs = options?.maxAgeMs ?? WORKSPACE_DISCOVERY_BACKGROUND_MAX_AGE_MS;
+    const force = options?.force ?? false;
+
+    if (!force && !this.needsWorkspaceDiscovery(workspaceId, maxAgeMs)) {
+      return;
+    }
+
+    if (this.workspaceDiscoveryInflight.has(workspaceId)) {
+      return;
+    }
+
+    const task = this.runDiscoverWorkspaceSessions(
+      workspaceId,
+      userId,
+      options?.refreshStateMode ?? "deferred"
+    )
+      .catch((error) => {
+        logPerformance(
+          "workspace.discover_sessions.background_failed",
+          0,
+          {
+            workspaceId,
+            error: error instanceof Error ? error.message : "unknown"
+          },
+          {
+            thresholdMs: 0,
+            force: true
+          }
+        );
+        return this.listWorkspaceSessions(workspaceId, userId);
+      })
+      .finally(() => {
+        this.workspaceDiscoveryInflight.delete(workspaceId);
+      });
+
+    this.workspaceDiscoveryInflight.set(workspaceId, task);
   }
 
   needsWorkspaceDiscovery(workspaceId: string, maxAgeMs: number): boolean {
@@ -535,8 +612,9 @@ export class SessionHistoryService {
 
   getProviderCapabilitiesSnapshot(provider: string): ProviderCapabilities {
     try {
-      return this.applyProviderCliAvailability(
-        this.capabilityService.getProviderCapabilities(provider)
+      return this.resolveProviderCapabilitiesImmediate(
+        this.applyProviderCliAvailability(this.capabilityService.getProviderCapabilities(provider)),
+        null
       );
     } catch (error) {
       throw mapSessionProviderError(error);
@@ -549,11 +627,12 @@ export class SessionHistoryService {
   ): Promise<ProviderCapabilities> {
     try {
       const workspacePath = workspaceId ? this.getWorkspaceOrThrow(workspaceId).path : null;
-
-      return await this.enrichProviderCapabilities(
-        this.applyProviderCliAvailability(this.capabilityService.getProviderCapabilities(provider)),
-        workspacePath
+      const baseCapabilities = this.applyProviderCliAvailability(
+        this.capabilityService.getProviderCapabilities(provider)
       );
+
+      this.scheduleProviderCapabilityRefresh(baseCapabilities, workspacePath);
+      return this.resolveProviderCapabilitiesImmediate(baseCapabilities, workspacePath);
     } catch (error) {
       throw mapSessionProviderError(error);
     }
@@ -562,12 +641,15 @@ export class SessionHistoryService {
   async getSessionCapabilities(sessionId: string): Promise<ProviderCapabilities> {
     const binding = this.getBindingOrThrow(sessionId);
     const workspace = this.getWorkspaceOrThrow(binding.workspaceId);
+    const workspacePath = workspace.path;
 
     return this.capabilityService
       .getSessionCapabilities(binding.provider, binding.providerSessionId)
-      .then((capabilities) =>
-        this.enrichProviderCapabilities(this.applyProviderCliAvailability(capabilities), workspace.path)
-      )
+      .then((capabilities) => {
+        const normalizedCapabilities = this.applyProviderCliAvailability(capabilities);
+        this.scheduleProviderCapabilityRefresh(normalizedCapabilities, workspacePath);
+        return this.resolveProviderCapabilitiesImmediate(normalizedCapabilities, workspacePath);
+      })
       .catch((error) => {
         throw mapSessionProviderError(error);
       });
@@ -591,6 +673,76 @@ export class SessionHistoryService {
       this.openCodeModelOptionsService,
       workspacePath
     );
+  }
+
+  private resolveProviderCapabilitiesImmediate(
+    capabilities: ProviderCapabilities,
+    workspacePath: string | null
+  ): ProviderCapabilities {
+    const cacheKey = buildProviderCapabilityCacheKey(capabilities.provider, workspacePath);
+    const cached = this.providerCapabilityCache.get(cacheKey);
+
+    if (cached) {
+      return cached.value;
+    }
+
+    const claudeEnriched = enrichClaudeCapabilities(capabilities, {
+      claudeHomeDir: this.claudeCodeHomeDir,
+      workspacePath
+    });
+
+    return applyImmediateModelOptionFallbacks(
+      claudeEnriched,
+      this.codexModelOptionsService.peekSnapshot(),
+      this.openCodeModelOptionsService.peekSnapshot(workspacePath)
+    );
+  }
+
+  private scheduleProviderCapabilityRefresh(
+    capabilities: ProviderCapabilities,
+    workspacePath: string | null
+  ): void {
+    const cacheKey = buildProviderCapabilityCacheKey(capabilities.provider, workspacePath);
+    const cached = this.providerCapabilityCache.get(cacheKey);
+
+    if (
+      cached &&
+      Date.now() - cached.refreshedAt <= PROVIDER_CAPABILITY_CACHE_MAX_AGE_MS
+    ) {
+      return;
+    }
+
+    if (this.providerCapabilityRefreshInflight.has(cacheKey)) {
+      return;
+    }
+
+    const task = this.enrichProviderCapabilities(capabilities, workspacePath)
+      .then((value) => {
+        this.providerCapabilityCache.set(cacheKey, {
+          refreshedAt: Date.now(),
+          value
+        });
+      })
+      .catch((error) => {
+        logPerformance(
+          "provider.capabilities.background_failed",
+          0,
+          {
+            provider: capabilities.provider,
+            workspacePath,
+            error: error instanceof Error ? error.message : "unknown"
+          },
+          {
+            thresholdMs: 0,
+            force: true
+          }
+        );
+      })
+      .finally(() => {
+        this.providerCapabilityRefreshInflight.delete(cacheKey);
+      });
+
+    this.providerCapabilityRefreshInflight.set(cacheKey, task);
   }
 
   private applyProviderCliAvailability(capabilities: ProviderCapabilities): ProviderCapabilities {
@@ -1540,8 +1692,10 @@ export class SessionHistoryService {
         existingWorkspaceSessions,
         workspace.path
       );
-      const discovery = await this.sessionSyncService
-        .discoverWorkspaceSessions(workspace.path, {
+      const discovery = await this.providerDiscoveryHelperClient
+        .discoverWorkspaceSessions({
+          config: this.providerSessionDiscoveryConfig,
+          workspacePath: workspace.path,
           knownSessions
         })
         .catch((error) => {
@@ -4023,4 +4177,50 @@ function buildReconstructedForkPrompt(input: {
   }
 
   return lines.join("\n").trim();
+}
+
+function buildProviderCapabilityCacheKey(
+  provider: string,
+  workspacePath: string | null
+): string {
+  return `${provider}::${workspacePath ?? ""}`;
+}
+
+function applyImmediateModelOptionFallbacks(
+  capabilities: ProviderCapabilities,
+  codexSnapshot: { modelOptions: ProviderModelOption[]; defaultReasoningLevel: string | null } | null,
+  openCodeSnapshot: { modelOptions: ProviderModelOption[] } | null
+): ProviderCapabilities {
+  if (capabilities.provider === "codex") {
+    return {
+      ...capabilities,
+      modelOptions: codexSnapshot?.modelOptions ?? createFallbackCodexModelOptions(null),
+      defaultReasoningLevel: codexSnapshot?.defaultReasoningLevel ?? null,
+      limitations: codexSnapshot
+        ? capabilities.limitations
+        : Array.from(
+            new Set([
+              ...capabilities.limitations,
+              "当前暂时使用缓存或兜底模型列表，后台会继续刷新 Codex 能力。"
+            ])
+          )
+    };
+  }
+
+  if (capabilities.provider === "opencode") {
+    return {
+      ...capabilities,
+      modelOptions: openCodeSnapshot?.modelOptions ?? createFallbackOpenCodeModelOptions(null),
+      limitations: openCodeSnapshot
+        ? capabilities.limitations
+        : Array.from(
+            new Set([
+              ...capabilities.limitations,
+              "当前暂时使用缓存或兜底模型列表，后台会继续刷新 OpenCode 能力。"
+            ])
+          )
+    };
+  }
+
+  return capabilities;
 }

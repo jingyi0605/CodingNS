@@ -78,7 +78,7 @@ export class ButlerSessionService {
     private readonly sessionLiveRuntimeService?: Pick<SessionLiveRuntimeService, "startLiveSession">,
     private readonly sessionHistoryService?: Pick<
       SessionHistoryService,
-      "discoverWorkspaceSessions" | "listWorkspaceSessions" | "resumeSession"
+      "discoverWorkspaceSessions" | "listWorkspaceSessions" | "requestWorkspaceDiscovery" | "resumeSession"
     >
   ) {}
 
@@ -285,19 +285,30 @@ export class ButlerSessionService {
     options?: {
       includeArchived?: boolean;
       force?: boolean;
+      mode?: "blocking" | "background";
     }
   ): Promise<void> {
     const project = this.getProjectOrThrow(projectId);
+    const mode = options?.mode ?? "blocking";
 
     if (!isWorkspaceAutoManagedProject(project) || !this.sessionHistoryService?.listWorkspaceSessions) {
       return;
     }
 
-    if (this.sessionHistoryService.discoverWorkspaceSessions) {
+    if (
+      mode === "blocking" &&
+      this.sessionHistoryService.discoverWorkspaceSessions
+    ) {
       await this.sessionHistoryService.discoverWorkspaceSessions(project.workspaceId, userId, {
         maxAgeMs: options?.force ? 0 : 15_000,
         force: options?.force ?? false,
         refreshStateMode: "inline"
+      });
+    } else if (this.sessionHistoryService.requestWorkspaceDiscovery) {
+      this.sessionHistoryService.requestWorkspaceDiscovery(project.workspaceId, userId, {
+        maxAgeMs: options?.force ? 0 : 15_000,
+        force: options?.force ?? false,
+        refreshStateMode: "deferred"
       });
     }
 
