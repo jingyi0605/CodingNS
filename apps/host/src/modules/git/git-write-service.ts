@@ -3,6 +3,12 @@ import os from "node:os";
 import path from "node:path";
 
 import { AppError } from "../../shared/errors/app-error.js";
+import {
+  createGitAuthContext,
+  createGitNonInteractiveEnv,
+  type GitAuthInput
+} from "./git-auth.js";
+import type { GitRemoteCredentialService } from "./git-remote-credential-service.js";
 import type { GitCommandRunner } from "./git-command-runner.js";
 import type {
   CommitDraft,
@@ -17,7 +23,8 @@ export class GitWriteService {
   constructor(
     private readonly gitCommandRunner: GitCommandRunner,
     private readonly workspaceRepoGuard: WorkspaceRepoGuard,
-    private readonly gitReadService: GitReadService
+    private readonly gitReadService: GitReadService,
+    private readonly gitRemoteCredentialService: GitRemoteCredentialService
   ) {}
 
   async stage(workspaceId: string, targets: string[]) {
@@ -209,7 +216,10 @@ export class GitWriteService {
   async syncRemote(
     workspaceId: string,
     action: GitRemoteSyncResult["action"],
-    remoteName?: string
+    remoteName?: string,
+    auth?: GitAuthInput | null,
+    remember = false,
+    userId?: string
   ): Promise<GitRemoteSyncResult> {
     const repo = await this.workspaceRepoGuard.resolve(workspaceId);
     const currentBranch = (await this.gitReadService.getStatus(workspaceId)).snapshot.branch;
@@ -232,6 +242,10 @@ export class GitWriteService {
       });
     }
 
+    const resolvedRemoteUrl = remoteUrl.stdout.trim();
+    const effectiveAuth =
+      auth ?? (userId ? this.gitRemoteCredentialService.load(userId, resolvedRemoteUrl) : null);
+
     const args =
       action === "fetch"
         ? ["fetch", remote]
@@ -240,23 +254,35 @@ export class GitWriteService {
           : action === "push"
             ? ["push", remote, currentBranch]
             : ["push", "--set-upstream", remote, currentBranch];
-    const result = await this.gitCommandRunner.run(repo.repoRoot, args, {
-      allowNonZeroExit: true,
-      timeoutMs: 60_000,
-      workspaceId,
-      operation: "gitWrite.syncRemote"
-    });
+    const authContext = createGitAuthContext(effectiveAuth);
+    const commandEnv = createGitNonInteractiveEnv(authContext?.env);
 
-    if (result.exitCode !== 0) {
-      throw mapRemoteError(action, result.stderr || result.stdout);
+    try {
+      const result = await this.gitCommandRunner.run(repo.repoRoot, args, {
+        allowNonZeroExit: true,
+        timeoutMs: 60_000,
+        env: commandEnv,
+        workspaceId,
+        operation: "gitWrite.syncRemote"
+      });
+
+      if (result.exitCode !== 0) {
+        throw mapRemoteError(action, result.stderr || result.stdout);
+      }
+
+      if (remember && userId && auth && auth.mode && auth.mode !== "none") {
+        this.gitRemoteCredentialService.save(userId, resolvedRemoteUrl, auth);
+      }
+
+      return {
+        action,
+        summary: buildRemoteSummary(action, currentBranch),
+        stdout: result.stdout.trim(),
+        stderr: result.stderr.trim()
+      };
+    } finally {
+      authContext?.cleanup();
     }
-
-    return {
-      action,
-      summary: buildRemoteSummary(action, currentBranch),
-      stdout: result.stdout.trim(),
-      stderr: result.stderr.trim()
-    };
   }
 
   async undoLastCommit(workspaceId: string): Promise<GitUndoCommitResult> {
@@ -367,7 +393,11 @@ function mapBranchSwitchError(detail: string): AppError {
 }
 
 function mapRemoteError(action: GitRemoteSyncResult["action"], detail: string): AppError {
-  if (/authentication failed|could not read from remote repository|permission denied/i.test(detail)) {
+  if (
+    /authentication failed|could not read from remote repository|could not read Username|could not read Password|permission denied|terminal prompts disabled/i.test(
+      detail
+    )
+  ) {
     return new AppError({
       statusCode: 401,
       errorCode: "GIT_REMOTE_AUTH_FAILED",

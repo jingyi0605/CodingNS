@@ -1,6 +1,8 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 
 import { AppError } from "../../shared/errors/app-error.js";
+import { requireUserId } from "../preferences/common.js";
+import type { GitAuthInput } from "./git-auth.js";
 import type { CommitOrchestrator } from "./commit-orchestrator.js";
 import type { GitReadService } from "./git-read-service.js";
 import type { GitWriteService } from "./git-write-service.js";
@@ -61,6 +63,8 @@ interface RemoteSyncBody {
   workspaceId?: string;
   action?: "fetch" | "pull" | "push" | "publish";
   remote?: string;
+  auth?: GitAuthInput | null;
+  remember?: boolean;
 }
 
 export class GitController {
@@ -284,7 +288,10 @@ export class GitController {
       await this.gitWriteService.syncRemote(
         requireWorkspaceId(request.body.workspaceId),
         action,
-        request.body.remote
+        request.body.remote,
+        request.body.auth,
+        request.body.remember === true,
+        requireUserId(request)
       )
     );
   };

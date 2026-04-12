@@ -13,6 +13,7 @@ export interface HostConfig {
   webUiDir: string | null;
   databasePath: string;
   filePreviewTokenSecret: string;
+  gitCredentialSecret: string;
   geminiHomeDir: string;
   geminiCliPath: string;
   kimiHomeDir: string;
@@ -99,6 +100,10 @@ export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConf
       overrides.filePreviewTokenSecret ??
       process.env.CODINGNS_FILE_PREVIEW_TOKEN_SECRET ??
       resolvePersistentSecret(path.join(hostDataDir, "file-preview-token")),
+    gitCredentialSecret:
+      overrides.gitCredentialSecret ??
+      process.env.CODINGNS_GIT_CREDENTIAL_SECRET ??
+      resolvePersistentSecret(path.join(hostDataDir, "git-credential-key")),
     geminiHomeDir,
     geminiCliPath,
     kimiHomeDir,

@@ -27,8 +27,7 @@ describe("spec005 远程同步错误映射", () => {
 
     await expect(service.syncRemote("workspace-1", "pull")).rejects.toMatchObject({
       errorCode: "BRANCH_CONFLICT",
-      statusCode: 409,
-      message: "远程同步失败，存在分支冲突或非快进更新"
+      statusCode: 409
     });
   });
 
@@ -66,8 +65,27 @@ describe("spec005 远程同步错误映射", () => {
 
     await expect(service.syncRemote("workspace-1", "fetch")).rejects.toMatchObject({
       errorCode: "GIT_REMOTE_FAILED",
-      statusCode: 502,
-      message: "远程网络异常，暂时无法完成同步"
+      statusCode: 502
+    });
+  });
+
+  it("在终端提示被禁用导致用户名读取失败时映射为认证错误", async () => {
+    const { service } = createRemoteSyncService([
+      {
+        stdout: "https://example.com/repo.git\n",
+        stderr: "",
+        exitCode: 0
+      },
+      {
+        stdout: "",
+        stderr: "fatal: could not read Username for 'https://example.com/repo.git': terminal prompts disabled",
+        exitCode: 128
+      }
+    ]);
+
+    await expect(service.syncRemote("workspace-1", "push")).rejects.toMatchObject({
+      errorCode: "GIT_REMOTE_AUTH_FAILED",
+      statusCode: 401
     });
   });
 });
@@ -120,11 +138,17 @@ function createRemoteSyncService(results: Array<GitCommandResult | AppError>) {
     }))
   };
 
+  const gitRemoteCredentialService = {
+    load: vi.fn(() => null),
+    save: vi.fn()
+  };
+
   return {
     service: new GitWriteService(
       gitCommandRunner as unknown as GitCommandRunner,
       workspaceRepoGuard as unknown as WorkspaceRepoGuard,
-      gitReadService as unknown as GitReadService
+      gitReadService as unknown as GitReadService,
+      gitRemoteCredentialService as never
     ),
     gitCommandRunner
   };

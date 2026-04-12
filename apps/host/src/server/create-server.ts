@@ -54,6 +54,7 @@ import { CommitOrchestrator } from "../modules/git/commit-orchestrator.js";
 import { CommitRuleEngine } from "../modules/git/commit-rule-engine.js";
 import { GitCommandRunner } from "../modules/git/git-command-runner.js";
 import { GitController } from "../modules/git/git-controller.js";
+import { GitRemoteCredentialService } from "../modules/git/git-remote-credential-service.js";
 import { GitReadService } from "../modules/git/git-read-service.js";
 import { GitRuleRepository } from "../modules/git/git-rule-repository.js";
 import { GitWriteService } from "../modules/git/git-write-service.js";
@@ -121,6 +122,7 @@ import { SessionForkRepository } from "../storage/repositories/session-fork-repo
 import { SessionIndexRepository } from "../storage/repositories/session-index-repository.js";
 import { SessionCheckpointRepository } from "../storage/repositories/session-checkpoint-repository.js";
 import { SessionMessageAttachmentRepository } from "../storage/repositories/session-message-attachment-repository.js";
+import { GitRemoteCredentialRepository } from "../storage/repositories/git-remote-credential-repository.js";
 import { SessionMessageOriginRepository } from "../storage/repositories/session-message-origin-repository.js";
 import { SessionSendQueueRepository } from "../storage/repositories/session-send-queue-repository.js";
 import { SessionStateRepository } from "../storage/repositories/session-state-repository.js";
@@ -180,6 +182,7 @@ export function createServer(config: HostConfig) {
     sessionForkRepository: new SessionForkRepository(database.db),
     sessionCheckpointRepository: new SessionCheckpointRepository(database.db),
     sessionIndexRepository: new SessionIndexRepository(database.db),
+    gitRemoteCredentialRepository: new GitRemoteCredentialRepository(database.db),
     sessionMessageAttachmentRepository: new SessionMessageAttachmentRepository(database.db),
     sessionMessageOriginRepository: new SessionMessageOriginRepository(database.db),
     sessionSendQueueRepository: new SessionSendQueueRepository(database.db),
@@ -252,7 +255,16 @@ export function createServer(config: HostConfig) {
   );
   const workspaceRepoGuard = new WorkspaceRepoGuard(workspaceService, gitCommandRunner);
   const gitReadService = new GitReadService(gitCommandRunner, workspaceRepoGuard);
-  const gitWriteService = new GitWriteService(gitCommandRunner, workspaceRepoGuard, gitReadService);
+  const gitRemoteCredentialService = new GitRemoteCredentialService(
+    repositories.gitRemoteCredentialRepository,
+    config.gitCredentialSecret
+  );
+  const gitWriteService = new GitWriteService(
+    gitCommandRunner,
+    workspaceRepoGuard,
+    gitReadService,
+    gitRemoteCredentialService
+  );
   const gitRuleRepository = new GitRuleRepository(repositories.commitRuleProfileRepository);
   const quickPhraseService = new QuickPhraseService(
     repositories.userQuickPhrasePreferenceRepository

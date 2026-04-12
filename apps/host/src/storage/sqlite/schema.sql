@@ -285,6 +285,21 @@ CREATE TABLE IF NOT EXISTS user_preference_profiles (
   FOREIGN KEY (user_id) REFERENCES auth_users(id)
 );
 
+CREATE TABLE IF NOT EXISTS git_remote_credentials (
+  user_id TEXT NOT NULL,
+  remote_url TEXT NOT NULL,
+  auth_mode TEXT NOT NULL CHECK (auth_mode IN ('basic', 'token')),
+  username_ciphertext TEXT NOT NULL,
+  secret_ciphertext TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (user_id, remote_url),
+  FOREIGN KEY (user_id) REFERENCES auth_users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_git_remote_credentials_user_updated_at
+  ON git_remote_credentials(user_id, updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS session_file_context_bindings (
   id TEXT PRIMARY KEY,
   session_id TEXT NOT NULL,

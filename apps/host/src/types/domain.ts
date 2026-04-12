@@ -314,6 +314,16 @@ export interface UserPreferenceProfileRecord extends UserPreferenceProfile {
   updatedAt: string;
 }
 
+export interface GitRemoteCredentialRecord {
+  userId: string;
+  remoteUrl: string;
+  authMode: "basic" | "token";
+  usernameCiphertext: string;
+  secretCiphertext: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export type ButlerProfileProviderId = "codex" | "claude-code";
 export type ButlerAgentsMode = "inline" | "file";
 export type ButlerControlSessionStatus = "idle" | "running" | "failed" | "closed";

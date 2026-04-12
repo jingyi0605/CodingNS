@@ -35,7 +35,11 @@ describe("GitWriteService", () => {
       2,
       "C:/repo",
       ["show", "-s", "--format=%s", "HEAD"],
-      { allowNonZeroExit: true }
+      {
+        allowNonZeroExit: true,
+        workspaceId: "workspace-1",
+        operation: "gitWrite.undoLastCommit"
+      }
     );
   });
 
@@ -75,12 +79,105 @@ describe("GitWriteService", () => {
 
     await expect(service.discard("workspace-1", ["src/app.tsx"])).resolves.toEqual(finalStatus);
 
-    expect(gitCommandRunner.run).toHaveBeenCalledWith("C:/repo", [
-      "restore",
-      "--worktree",
-      "--",
-      "src/app.tsx"
-    ]);
+    expect(gitCommandRunner.run).toHaveBeenCalledWith(
+      "C:/repo",
+      ["restore", "--worktree", "--", "src/app.tsx"],
+      {
+        workspaceId: "workspace-1",
+        operation: "gitWrite.discard"
+      }
+    );
+  });
+
+  it("远程同步携带认证时会把 askpass 环境传给 Git 命令", async () => {
+    const { service, gitCommandRunner, gitRemoteCredentialService } = createWriteService(
+      [
+        {
+          stdout: "https://example.com/repo.git\n",
+          stderr: "",
+          exitCode: 0
+        },
+        {
+          stdout: "",
+          stderr: "",
+          exitCode: 0
+        }
+      ],
+      [createStatus()]
+    );
+
+    await expect(
+      service.syncRemote("workspace-1", "push", "origin", {
+        mode: "token",
+        token: "secret-token"
+      }, true, "user-1")
+    ).resolves.toMatchObject({
+      action: "push",
+      summary: "已将 main 推送到 origin"
+    });
+
+    expect(gitCommandRunner.run).toHaveBeenNthCalledWith(
+      2,
+      "C:/repo",
+      ["push", "origin", "main"],
+      expect.objectContaining({
+        allowNonZeroExit: true,
+        timeoutMs: 60_000,
+        workspaceId: "workspace-1",
+        operation: "gitWrite.syncRemote",
+        env: expect.objectContaining({
+          CODINGNS_GIT_AUTH_SECRET: "secret-token",
+          GIT_TERMINAL_PROMPT: "0",
+          GCM_INTERACTIVE: "Never"
+        })
+      })
+    );
+
+    expect(gitRemoteCredentialService.save).toHaveBeenCalledWith("user-1", "https://example.com/repo.git", {
+      mode: "token",
+      token: "secret-token"
+    });
+  });
+
+  it("远程同步未显式传认证时会优先复用 Host 端已保存认证", async () => {
+    const { service, gitCommandRunner, gitRemoteCredentialService } = createWriteService(
+      [
+        {
+          stdout: "https://example.com/repo.git\n",
+          stderr: "",
+          exitCode: 0
+        },
+        {
+          stdout: "",
+          stderr: "",
+          exitCode: 0
+        }
+      ],
+      [createStatus()]
+    );
+    gitRemoteCredentialService.load.mockReturnValue({
+      mode: "basic",
+      username: "jackson",
+      password: "saved-password"
+    });
+
+    await expect(service.syncRemote("workspace-1", "fetch", "origin", null, false, "user-1")).resolves.toMatchObject({
+      action: "fetch",
+      summary: "已完成远程抓取"
+    });
+
+    expect(gitRemoteCredentialService.load).toHaveBeenCalledWith("user-1", "https://example.com/repo.git");
+    expect(gitCommandRunner.run).toHaveBeenNthCalledWith(
+      2,
+      "C:/repo",
+      ["fetch", "origin"],
+      expect.objectContaining({
+        env: expect.objectContaining({
+          CODINGNS_GIT_AUTH_USERNAME: "jackson",
+          CODINGNS_GIT_AUTH_SECRET: "saved-password"
+        })
+      })
+    );
   });
 });
 
@@ -125,13 +222,20 @@ function createWriteService(results: GitCommandResult[], statuses: ReturnType<ty
     })
   };
 
+  const gitRemoteCredentialService = {
+    load: vi.fn(() => null),
+    save: vi.fn()
+  };
+
   return {
     service: new GitWriteService(
       gitCommandRunner as unknown as GitCommandRunner,
       workspaceRepoGuard as unknown as WorkspaceRepoGuard,
-      gitReadService as unknown as GitReadService
+      gitReadService as unknown as GitReadService,
+      gitRemoteCredentialService as never
     ),
-    gitCommandRunner
+    gitCommandRunner,
+    gitRemoteCredentialService
   };
 }
 
@@ -143,7 +247,7 @@ function createStatus(changes: Array<{
   binary: boolean;
   stagedStatus: string | null;
   worktreeStatus: string | null;
-}>) {
+}> = []) {
   return {
     snapshot: {
       workspaceId: "workspace-1",

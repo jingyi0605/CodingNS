@@ -134,6 +134,21 @@ export interface GitUndoCommitResultDto {
   commitSubject: string;
 }
 
+export type GitRemoteAuthDto =
+  | {
+      mode?: "none";
+    }
+  | {
+      mode: "basic";
+      username?: string;
+      password?: string;
+    }
+  | {
+      mode: "token";
+      username?: string;
+      token?: string;
+    };
+
 export function getGitStatus(workspaceId: string) {
   return httpClient.request<GitStatusDto>(
     `/api/git/status?workspaceId=${encodeURIComponent(workspaceId)}`
@@ -264,14 +279,18 @@ export function switchGitBranch(workspaceId: string, branchName: string, create:
 export function syncGitRemote(
   workspaceId: string,
   action: GitRemoteSyncResultDto["action"],
-  remote?: string
+  remote?: string,
+  auth?: GitRemoteAuthDto | null,
+  remember?: boolean
 ) {
   return httpClient.request<GitRemoteSyncResultDto>("/api/git/remote/sync", {
     method: "POST",
     body: JSON.stringify({
       workspaceId,
       action,
-      ...(remote ? { remote } : {})
+      ...(remote ? { remote } : {}),
+      ...(auth ? { auth } : {}),
+      ...(remember ? { remember } : {})
     })
   });
 }

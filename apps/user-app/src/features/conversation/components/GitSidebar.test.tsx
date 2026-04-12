@@ -4,12 +4,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { clearViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import { ToastProvider } from "../../../shared/toast";
-import { GitSidebar } from "./GitSidebar";
+import { GitSidebar, resolveGitOperationsMenuPosition } from "./GitSidebar";
 
 const gitApiMock = vi.hoisted(() => ({
   getGitStatus: vi.fn(),
   getGitHistory: vi.fn(),
   getGitBranches: vi.fn(),
+  getGitRemotes: vi.fn(),
   stageGitTargets: vi.fn(),
   unstageGitTargets: vi.fn(),
   discardGitTargets: vi.fn(),
@@ -42,6 +43,7 @@ vi.mock("../api/git-api", () => ({
   getGitStatus: gitApiMock.getGitStatus,
   getGitHistory: gitApiMock.getGitHistory,
   getGitBranches: gitApiMock.getGitBranches,
+  getGitRemotes: gitApiMock.getGitRemotes,
   stageGitTargets: gitApiMock.stageGitTargets,
   unstageGitTargets: gitApiMock.unstageGitTargets,
   discardGitTargets: gitApiMock.discardGitTargets,
@@ -97,6 +99,13 @@ describe("GitSidebar", () => {
       local: [{ name: "main", current: true, upstream: "origin/main", remote: false }],
       remote: []
     });
+    gitApiMock.getGitRemotes.mockResolvedValue([
+      {
+        name: "origin",
+        fetchUrl: "https://example.com/repo.git",
+        pushUrl: "https://example.com/repo.git"
+      }
+    ]);
     gitApiMock.stageGitTargets.mockResolvedValue(createStatus([], [
       "apps/user-app/src/app/App.tsx",
       "apps/user-app/src/app/router.tsx"
@@ -473,6 +482,119 @@ describe("GitSidebar", () => {
     expect(within(operationsShell).getByRole("button", { name: "刷新" })).toBeInTheDocument();
   });
 
+  it("保存远程认证后，推送会携带认证参数", async () => {
+    renderSidebar();
+
+    fireEvent.click(await screen.findByRole("button", { name: /最近版本/ }));
+    fireEvent.click(screen.getByRole("button", { name: "操作菜单" }));
+    fireEvent.click(screen.getByRole("button", { name: "远程认证" }));
+
+    await userEvent.selectOptions(screen.getByRole("combobox"), "token");
+    await userEvent.type(screen.getByPlaceholderText("可选，留空时默认使用 git"), "git");
+    await userEvent.type(screen.getByPlaceholderText("输入 access token"), "secret-token");
+    await userEvent.click(screen.getByRole("checkbox", { name: "记住账号密码到 Host" }));
+    await userEvent.click(screen.getByRole("button", { name: "保存认证" }));
+
+    await userEvent.click(screen.getByRole("button", { name: "Push" }));
+
+    await waitFor(() => {
+      expect(gitApiMock.syncGitRemote).toHaveBeenCalledWith(
+        "workspace-1",
+        "push",
+        "origin",
+        {
+          mode: "token",
+          username: "git",
+          token: "secret-token"
+        },
+        true
+      );
+    });
+  });
+
+  it("GitHub 远程认证弹窗会提示使用 PAT", async () => {
+    gitApiMock.getGitRemotes.mockResolvedValue([
+      {
+        name: "origin",
+        fetchUrl: "https://github.com/example/repo.git",
+        pushUrl: "https://github.com/example/repo.git"
+      }
+    ]);
+    renderSidebar();
+
+    fireEvent.click(await screen.findByRole("button", { name: /最近版本/ }));
+    fireEvent.click(screen.getByRole("button", { name: "操作菜单" }));
+    fireEvent.click(screen.getByRole("button", { name: "远程认证" }));
+
+    expect(
+      await screen.findByText(
+        "检测到当前远程仓库来自 GitHub。GitHub 的 HTTPS Git 操作请使用 Personal Access Token (PAT)，不要填写 GitHub 登录密码。"
+      )
+    ).toBeInTheDocument();
+
+    await userEvent.selectOptions(screen.getByRole("combobox"), "basic");
+
+    expect(await screen.findByText("Personal Access Token (PAT)")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("输入 GitHub PAT")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "GitHub 不支持用账号密码做 Git HTTPS 认证。basic 模式请填写 GitHub 用户名 + PAT；token 模式可以直接填写 PAT。"
+      )
+    ).toBeInTheDocument();
+  });
+
+  it("非 GitHub 远程认证弹窗保持通用用户名密码提示", async () => {
+    renderSidebar();
+
+    fireEvent.click(await screen.findByRole("button", { name: /最近版本/ }));
+    fireEvent.click(screen.getByRole("button", { name: "操作菜单" }));
+    fireEvent.click(screen.getByRole("button", { name: "远程认证" }));
+
+    expect(
+      await screen.findByText("需要认证的远程仓库，在这里填写本次页面会话使用的用户名、密码或 token。")
+    ).toBeInTheDocument();
+
+    await userEvent.selectOptions(screen.getByRole("combobox"), "basic");
+
+    expect(await screen.findByText("密码")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("输入 Git 密码")).toBeInTheDocument();
+  });
+
+  it("桌面端 Git 操作菜单会在右侧贴边时向内收敛", () => {
+    const position = resolveGitOperationsMenuPosition(
+      createRect({
+        top: 80,
+        right: 430,
+        bottom: 112,
+        left: 398
+      }),
+      { width: 260, height: 280 },
+      { width: 440, height: 900 }
+    );
+
+    expect(position.left).toBe(168);
+    expect(position.top).toBe(120);
+    expect(position.transformOrigin).toBe("top right");
+  });
+
+  it("桌面端 Git 操作菜单在底部空间不足时会翻到按钮上方", () => {
+    const position = resolveGitOperationsMenuPosition(
+      createRect({
+        top: 620,
+        right: 380,
+        bottom: 652,
+        left: 348
+      }),
+      { width: 260, height: 320 },
+      { width: 1280, height: 720 }
+    );
+
+    expect(position.top).toBe(292);
+    expect(position.left).toBe(120);
+    expect(position.maxHeight).toBe(600);
+    expect(position.transformOrigin).toBe("bottom right");
+  });
+
   it("已暂存后再次编辑的文件会同时出现在暂存区和当前变更", async () => {
     setViewportWidth(1280);
     workbenchShellMock.addGitSnapshotListener.mockImplementation((listener: (snapshot: ReturnType<typeof createGitSnapshot>) => void) => {
@@ -548,6 +670,30 @@ describe("GitSidebar", () => {
     expect(screen.queryByRole("button", { name: "在新窗口打开 Git" })).toBeNull();
   });
 });
+
+function createRect({
+  top,
+  right,
+  bottom,
+  left
+}: {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+}): DOMRect {
+  return {
+    top,
+    right,
+    bottom,
+    left,
+    width: Math.max(0, right - left),
+    height: Math.max(0, bottom - top),
+    x: left,
+    y: top,
+    toJSON: () => ({})
+  } as DOMRect;
+}
 
 function renderSidebar(options?: { workspaceId?: string; panelActive?: boolean; externalWindowMode?: boolean }) {
   render(

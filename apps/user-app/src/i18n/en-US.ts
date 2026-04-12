@@ -306,6 +306,7 @@ export const enUS = {
     historyLoadFailed: "Message history is not available right now. Try again later.",
     timelineEmpty:
       "There are no messages in this session yet. Your first message will go straight into the Host chain.",
+    scrollToBottomAction: "Jump to bottom",
     rawRefLabel: "Source",
     copyAction: "Copy",
     copyContentSuccess: "Content copied.",
@@ -605,6 +606,28 @@ export const enUS = {
     pushNow: "Push Now",
     publish: "Publish",
     remoteFailed: "Remote sync failed.",
+    remoteAuthAction: "Remote Auth",
+    remoteAuthTitle: "Configure Remote Authentication",
+    remoteAuthDescription:
+      "Enter the username, password, or token to use for authenticated remote operations in this page session.",
+    remoteAuthDescriptionGithub:
+      "The current remote points to GitHub. For GitHub HTTPS Git operations, use a Personal Access Token (PAT) instead of your GitHub login password.",
+    remoteAuthStatusLabel: "Authentication",
+    remoteAuthConfigured: "Configured",
+    remoteAuthNotConfigured: "Not Configured",
+    remoteAuthGithubPatLabel: "Personal Access Token (PAT)",
+    remoteAuthGithubPatPlaceholder: "Enter GitHub PAT",
+    remoteAuthGithubUsernamePlaceholder: "Enter GitHub username",
+    remoteAuthGithubPatHint:
+      "GitHub does not support account passwords for Git HTTPS authentication. In basic mode, enter GitHub username + PAT. In token mode, you can paste the PAT directly.",
+    remoteAuthRemember: "Remember On Host",
+    remoteAuthSessionHint:
+      "By default this only applies to the current page session. If you enable “Remember On Host”, the credential will be stored on the Host after a successful remote sync and reused later.",
+    remoteAuthRememberHint:
+      "When remember is enabled, this credential will be written to the Host after the remote sync succeeds.",
+    remoteAuthSave: "Save Auth",
+    remoteAuthSaved: "Remote authentication saved. Retry the remote sync now.",
+    remoteAuthCleared: "Remote authentication for this page session has been cleared.",
     selectRemoteTitle: "Select Remote to Push",
     selectRemoteDesc: "Select remote repositories to push to. Multiple selection supported.",
     noRemotes: "No remote repositories are configured.",

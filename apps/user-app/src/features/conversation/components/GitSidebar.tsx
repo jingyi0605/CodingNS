@@ -1,11 +1,14 @@
 import {
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
+  type CSSProperties,
   type ReactNode,
   type PointerEvent as ReactPointerEvent,
   type UIEvent
 } from "react";
+import { createPortal } from "react-dom";
 
 import { readViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import { logPerfDebug } from "../../../shared/debug/perf-debug";
@@ -32,6 +35,7 @@ import {
   type GitBranchSnapshotDto,
   type GitChangeItemDto,
   type GitHistoryItemDto,
+  type GitRemoteAuthDto,
   type GitRemoteItemDto,
   type GitStatusDto
 } from "../api/git-api";
@@ -97,6 +101,10 @@ const GIT_HISTORY_PAGE_SIZE = 20;
 const MOBILE_GIT_RECORD_BASE_INSET_PX = 9;
 const MOBILE_GIT_RECORD_DEPTH_STEP_PX = 9;
 const SWIPE_ACTION_WIDTH = 68;
+const GIT_OPERATIONS_MENU_VIEWPORT_MARGIN_PX = 12;
+const GIT_OPERATIONS_MENU_GAP_PX = 8;
+const GIT_OPERATIONS_MENU_DEFAULT_WIDTH_PX = 260;
+const GIT_OPERATIONS_MENU_MIN_HEIGHT_PX = 120;
 
 interface GitSidebarSnapshot {
   status: GitStatusDto | null;
@@ -105,6 +113,31 @@ interface GitSidebarSnapshot {
   historyNextCursor: string | null;
   branches: GitBranchSnapshotDto | null;
 }
+
+interface RemoteAuthFormState {
+  authMode: "none" | "basic" | "token";
+  username: string;
+  password: string;
+  token: string;
+  rememberOnHost: boolean;
+}
+
+type GitRemoteAuthProvider = "generic" | "github";
+
+interface GitOperationsMenuPosition {
+  top: number;
+  left: number;
+  maxHeight: number;
+  transformOrigin: string;
+}
+
+const INITIAL_REMOTE_AUTH_FORM: RemoteAuthFormState = {
+  authMode: "none",
+  username: "",
+  password: "",
+  token: "",
+  rememberOnHost: false
+};
 
 export function GitSidebar({
   className,
@@ -147,10 +180,16 @@ export function GitSidebar({
   const [pushRemotesLoading, setPushRemotesLoading] = useState(false);
   const [pushSelectedRemotes, setPushSelectedRemotes] = useState<Set<string>>(new Set());
   const [pushResults, setPushResults] = useState<Map<string, { ok: boolean; summary: string }>>(new Map());
+  const [remoteAuth, setRemoteAuth] = useState<GitRemoteAuthDto | null>(null);
+  const [remoteAuthModalOpen, setRemoteAuthModalOpen] = useState(false);
+  const [remoteAuthForm, setRemoteAuthForm] = useState<RemoteAuthFormState>(INITIAL_REMOTE_AUTH_FORM);
+  const [remoteAuthProvider, setRemoteAuthProvider] = useState<GitRemoteAuthProvider>("generic");
   const [mobileSwipeRowState, setMobileSwipeRowState] = useState<{
     path: string;
     direction: MobileSwipeDirection;
   } | null>(null);
+  const [desktopOperationsMenuPosition, setDesktopOperationsMenuPosition] =
+    useState<GitOperationsMenuPosition | null>(null);
   const [treePanelRatio, setTreePanelRatio] = useState(DEFAULT_TREE_PANEL_RATIO);
   const [panelResizeActive, setPanelResizeActive] = useState(false);
   const [viewerFilePath, setViewerFilePath] = useState<string | null>(null);
@@ -159,6 +198,8 @@ export function GitSidebar({
   const splitLayoutRef = useRef<HTMLDivElement | null>(null);
   const treePanelBodyRef = useRef<HTMLDivElement | null>(null);
   const commitEditorRef = useRef<HTMLTextAreaElement | null>(null);
+  const desktopOperationsMenuTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const desktopOperationsMenuRef = useRef<HTMLDivElement | null>(null);
   const wasPanelActiveRef = useRef(panelActive);
   const { showToast } = useToast();
 
@@ -182,7 +223,16 @@ export function GitSidebar({
     setMobileActionMenuVariant(null);
     setMobileExpandedSection("unstaged");
     setMobileHistoryMenuCommitHash(null);
+    setPushRemoteModalOpen(false);
+    setPushRemotes([]);
+    setPushSelectedRemotes(new Set());
+    setPushResults(new Map());
+    setRemoteAuth(null);
+    setRemoteAuthModalOpen(false);
+    setRemoteAuthForm(INITIAL_REMOTE_AUTH_FORM);
+    setRemoteAuthProvider("generic");
     setMobileSwipeRowState(null);
+    setDesktopOperationsMenuPosition(null);
     setPanelResizeActive(false);
     setTreePanelRatio(DEFAULT_TREE_PANEL_RATIO);
     setViewerFilePath(null);
@@ -612,6 +662,72 @@ export function GitSidebar({
     }
   }
 
+  function openRemoteAuthModal(preferredRemoteName?: string) {
+    setRemoteAuthForm(toRemoteAuthFormState(remoteAuth));
+    setRemoteAuthModalOpen(true);
+    void loadRemoteAuthProvider(preferredRemoteName);
+  }
+
+  async function loadRemoteAuthProvider(preferredRemoteName?: string) {
+    const currentWorkspaceId = workspaceId?.trim();
+
+    if (!currentWorkspaceId) {
+      setRemoteAuthProvider("generic");
+      return;
+    }
+
+    try {
+      const remotes = await getGitRemotes(currentWorkspaceId);
+
+      if (workspaceId?.trim() !== currentWorkspaceId) {
+        return;
+      }
+
+      setRemoteAuthProvider(resolveRemoteAuthProvider(remotes, preferredRemoteName));
+    } catch {
+      if (workspaceId?.trim() !== currentWorkspaceId) {
+        return;
+      }
+
+      setRemoteAuthProvider("generic");
+    }
+  }
+
+  function handleSaveRemoteAuth() {
+    const nextAuth = toRemoteAuthPayload(remoteAuthForm);
+    const basicSecretPlaceholder = remoteAuthProvider === "github"
+      ? t("git.remoteAuthGithubPatPlaceholder")
+      : t("shell.clonePasswordPlaceholder");
+
+    if (remoteAuthForm.authMode === "basic") {
+      if (!remoteAuthForm.username.trim()) {
+        showToast({ title: t("shell.cloneUsernamePlaceholder"), tone: "error" });
+        return;
+      }
+
+      if (!remoteAuthForm.password) {
+        showToast({ title: basicSecretPlaceholder, tone: "error" });
+        return;
+      }
+    }
+
+    if (remoteAuthForm.authMode === "token" && !remoteAuthForm.token) {
+      showToast({ title: t("shell.cloneTokenPlaceholder"), tone: "error" });
+      return;
+    }
+
+    setRemoteAuth(nextAuth);
+    setRemoteAuthModalOpen(false);
+    showToast({
+      title: nextAuth ? t("git.remoteAuthSaved") : t("git.remoteAuthCleared"),
+      description:
+        nextAuth && remoteAuthForm.rememberOnHost
+          ? t("git.remoteAuthRememberHint")
+          : undefined,
+      tone: "success"
+    });
+  }
+
   async function handlePush() {
     if (!workspaceId) {
       return;
@@ -647,40 +763,48 @@ export function GitSidebar({
     setActioning(true);
     setPushResults(new Map());
 
-    // 并行推送到所有选中的远程仓库
-    const settled = await Promise.allSettled(
-      remoteNames.map(async (name) => {
-        const result = await syncGitRemote(workspaceId, "push", name);
-        return { name, summary: result.summary };
-      })
-    );
-
     const results = new Map<string, { ok: boolean; summary: string }>();
     let hasError = false;
 
-    for (const item of settled) {
-      if (item.status === "fulfilled") {
-        results.set(item.value.name, { ok: true, summary: item.value.summary });
-      } else {
-        hasError = true;
-        const remoteName = remoteNames[results.size];
-        results.set(remoteName, {
-          ok: false,
-          summary: readError(item.reason, t("git.remoteFailed"))
-        });
+    try {
+      // 这里故意不用并发。远程仓库通常就 1 到 2 个，顺序执行才能在认证失败时立刻停下。
+      for (const remoteName of remoteNames) {
+        try {
+          const result = await syncGitRemote(
+            workspaceId,
+            "push",
+            remoteName,
+            remoteAuth,
+            remoteAuthForm.rememberOnHost
+          );
+          results.set(remoteName, { ok: true, summary: result.summary });
+        } catch (error) {
+          hasError = true;
+          results.set(remoteName, {
+            ok: false,
+            summary: readError(error, t("git.remoteFailed"))
+          });
+          setPushResults(new Map(results));
+
+          if (isRemoteAuthError(error)) {
+            openRemoteAuthModal(remoteName);
+            return;
+          }
+        }
       }
-    }
 
-    setPushResults(results);
-    requestGitSnapshotRefresh();
-    setActioning(false);
+      setPushResults(results);
+      requestGitSnapshotRefresh();
 
-    if (!hasError) {
-      showToast({
-        title: t("git.pushAllSuccess", { count: String(remoteNames.length) }),
-        tone: "success"
-      });
-      setPushRemoteModalOpen(false);
+      if (!hasError) {
+        showToast({
+          title: t("git.pushAllSuccess", { count: String(remoteNames.length) }),
+          tone: "success"
+        });
+        setPushRemoteModalOpen(false);
+      }
+    } finally {
+      setActioning(false);
     }
   }
 
@@ -699,7 +823,13 @@ export function GitSidebar({
     setActioning(true);
 
     try {
-      const result = await syncGitRemote(workspaceId, action);
+      const result = await syncGitRemote(
+        workspaceId,
+        action,
+        undefined,
+        remoteAuth,
+        remoteAuthForm.rememberOnHost
+      );
       showToast({
         title: result.summary,
         tone: "success"
@@ -707,6 +837,11 @@ export function GitSidebar({
       setMenuOpen(false);
       requestGitSnapshotRefresh();
     } catch (error) {
+      if (isRemoteAuthError(error)) {
+        openRemoteAuthModal();
+        return;
+      }
+
       showToast({
         title: readError(error, t("git.remoteFailed")),
         tone: "error"
@@ -854,6 +989,20 @@ export function GitSidebar({
   const canPush = allChanges.length === 0 && (status?.snapshot.ahead ?? 0) > 0;
   const canCommit = stagedChanges.length > 0 && commitSubject.trim().length > 0;
   const currentBranch = branches?.currentBranch ?? status?.snapshot.branch ?? t("common.unknown");
+  const remoteAuthConfigured = remoteAuth !== null;
+  const githubRemoteDetected = remoteAuthProvider === "github";
+  const remoteAuthDescription = githubRemoteDetected
+    ? t("git.remoteAuthDescriptionGithub")
+    : t("git.remoteAuthDescription");
+  const basicSecretLabel = githubRemoteDetected
+    ? t("git.remoteAuthGithubPatLabel")
+    : t("shell.clonePasswordLabel");
+  const basicSecretPlaceholder = githubRemoteDetected
+    ? t("git.remoteAuthGithubPatPlaceholder")
+    : t("shell.clonePasswordPlaceholder");
+  const basicUsernamePlaceholder = githubRemoteDetected
+    ? t("git.remoteAuthGithubUsernamePlaceholder")
+    : t("shell.cloneUsernamePlaceholder");
   const safeTreePanelRatio = Number.isFinite(treePanelRatio)
     ? treePanelRatio
     : DEFAULT_TREE_PANEL_RATIO;
@@ -916,6 +1065,44 @@ export function GitSidebar({
     }
   }, [isMobileViewport, menuOpen, mobileExpandedSection]);
 
+  useLayoutEffect(() => {
+    if (isMobileViewport || !menuOpen) {
+      setDesktopOperationsMenuPosition(null);
+      return;
+    }
+
+    function updateDesktopOperationsMenuPosition() {
+      const trigger = desktopOperationsMenuTriggerRef.current;
+      const menu = desktopOperationsMenuRef.current;
+
+      if (!trigger || !menu || typeof window === "undefined") {
+        return;
+      }
+
+      setDesktopOperationsMenuPosition(
+        resolveGitOperationsMenuPosition(trigger.getBoundingClientRect(), {
+          width: menu.getBoundingClientRect().width || GIT_OPERATIONS_MENU_DEFAULT_WIDTH_PX,
+          height: menu.getBoundingClientRect().height || menu.scrollHeight || 0
+        }, {
+          width: window.innerWidth,
+          height: window.innerHeight
+        })
+      );
+    }
+
+    updateDesktopOperationsMenuPosition();
+    const animationFrameId = window.requestAnimationFrame(updateDesktopOperationsMenuPosition);
+
+    window.addEventListener("resize", updateDesktopOperationsMenuPosition);
+    window.addEventListener("scroll", updateDesktopOperationsMenuPosition, true);
+
+    return () => {
+      window.cancelAnimationFrame(animationFrameId);
+      window.removeEventListener("resize", updateDesktopOperationsMenuPosition);
+      window.removeEventListener("scroll", updateDesktopOperationsMenuPosition, true);
+    };
+  }, [actioning, branches?.local.length, currentBranch, isMobileViewport, menuOpen, remoteAuthConfigured]);
+
   async function copyText(value: string, successMessage: string) {
     try {
       if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
@@ -951,12 +1138,44 @@ export function GitSidebar({
     await handleDiscard(targets);
   }
 
-  function renderGitOperationsMenu() {
-    return (
-      <div className="git-operations-menu">
+  function renderGitOperationsMenu(options?: { desktopFloating?: boolean }) {
+    const desktopFloating = options?.desktopFloating === true && !isMobileViewport;
+    const menuStyle: CSSProperties | undefined = desktopFloating
+      ? {
+          top: desktopOperationsMenuPosition?.top ?? GIT_OPERATIONS_MENU_VIEWPORT_MARGIN_PX,
+          left: desktopOperationsMenuPosition?.left ?? GIT_OPERATIONS_MENU_VIEWPORT_MARGIN_PX,
+          maxHeight: desktopOperationsMenuPosition?.maxHeight,
+          transformOrigin: desktopOperationsMenuPosition?.transformOrigin ?? "top right"
+        }
+      : undefined;
+
+    const menu = (
+      <div
+        ref={desktopFloating ? desktopOperationsMenuRef : undefined}
+        className="git-operations-menu"
+        data-floating={desktopFloating ? "true" : "false"}
+        style={menuStyle}
+      >
         <div className="git-menu-section">
           <span className="git-menu-caption">{t("git.currentBranch")}</span>
           <strong className="git-menu-branch">{currentBranch}</strong>
+        </div>
+
+        <div className="git-menu-section">
+          <span className="git-menu-caption">{t("git.remoteAuthStatusLabel")}</span>
+          <div className="git-menu-branch-list">
+            <strong className="git-menu-branch">
+              {remoteAuthConfigured ? t("git.remoteAuthConfigured") : t("git.remoteAuthNotConfigured")}
+            </strong>
+            <button
+              className="git-menu-item"
+              type="button"
+              disabled={actioning}
+              onClick={() => openRemoteAuthModal()}
+            >
+              <span>{t("git.remoteAuthAction")}</span>
+            </button>
+          </div>
         </div>
 
         <div className="git-menu-section">
@@ -1004,6 +1223,16 @@ export function GitSidebar({
         </div>
       </div>
     );
+
+    if (!desktopFloating) {
+      return menu;
+    }
+
+    if (typeof document === "undefined") {
+      return null;
+    }
+
+    return createPortal(menu, document.body);
   }
 
   return (
@@ -1282,6 +1511,7 @@ export function GitSidebar({
                 <button
                   className="git-icon-button"
                   type="button"
+                  ref={desktopOperationsMenuTriggerRef}
                   aria-label={t("git.operationMenu")}
                   title={t("git.operationMenu")}
                   onClick={() => setMenuOpen((current) => !current)}
@@ -1290,7 +1520,7 @@ export function GitSidebar({
                   <MoreIcon />
                 </button>
 
-                {menuOpen ? renderGitOperationsMenu() : null}
+                {menuOpen ? renderGitOperationsMenu({ desktopFloating: true }) : null}
               </div>
             </div>
 
@@ -1355,6 +1585,20 @@ export function GitSidebar({
         description={t("git.selectRemoteDesc")}
         onClose={() => { if (!actioning) setPushRemoteModalOpen(false); }}
       >
+        <div className="git-remote-auth-banner">
+          <div className="git-remote-auth-banner-copy">
+            <strong>{t("git.remoteAuthStatusLabel")}</strong>
+            <span>{remoteAuthConfigured ? t("git.remoteAuthConfigured") : t("git.remoteAuthNotConfigured")}</span>
+          </div>
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={actioning}
+            onClick={() => openRemoteAuthModal()}
+          >
+            {t("git.remoteAuthAction")}
+          </button>
+        </div>
         <div className="git-remote-select-list">
           {pushRemotes.map((remote) => {
             const checked = pushSelectedRemotes.has(remote.name);
@@ -1409,6 +1653,147 @@ export function GitSidebar({
             {actioning
               ? t("git.pushing")
               : t("git.pushSelected", { count: String(pushSelectedRemotes.size) })}
+          </button>
+        </div>
+      </WorkbenchModal>
+
+      <WorkbenchModal
+        open={remoteAuthModalOpen}
+        title={t("git.remoteAuthTitle")}
+        description={remoteAuthDescription}
+        onClose={() => {
+          if (!actioning) {
+            setRemoteAuthModalOpen(false);
+          }
+        }}
+      >
+        <div className="workbench-clone-form">
+          <label className="workbench-modal-field">
+            <span>{t("shell.cloneAuthModeLabel")}</span>
+            <select
+              value={remoteAuthForm.authMode}
+              disabled={actioning}
+              onChange={(event) =>
+                setRemoteAuthForm((current) => ({
+                  ...current,
+                  authMode: event.target.value as RemoteAuthFormState["authMode"]
+                }))
+              }
+            >
+              <option value="none">{t("shell.cloneAuthModeNone")}</option>
+              <option value="basic">{t("shell.cloneAuthModeBasic")}</option>
+              <option value="token">{t("shell.cloneAuthModeToken")}</option>
+            </select>
+          </label>
+
+          {remoteAuthForm.authMode === "basic" ? (
+            <>
+              <label className="workbench-modal-field">
+                <span>{t("shell.cloneUsernameLabel")}</span>
+                <input
+                  type="text"
+                  value={remoteAuthForm.username}
+                  placeholder={basicUsernamePlaceholder}
+                  autoComplete="username"
+                  onChange={(event) =>
+                    setRemoteAuthForm((current) => ({
+                      ...current,
+                      username: event.target.value
+                    }))
+                  }
+                />
+              </label>
+              <label className="workbench-modal-field">
+                <span>{basicSecretLabel}</span>
+                <input
+                  type="password"
+                  value={remoteAuthForm.password}
+                  placeholder={basicSecretPlaceholder}
+                  autoComplete="current-password"
+                  onChange={(event) =>
+                    setRemoteAuthForm((current) => ({
+                      ...current,
+                      password: event.target.value
+                    }))
+                  }
+                />
+              </label>
+            </>
+          ) : null}
+
+          {remoteAuthForm.authMode === "token" ? (
+            <>
+              <label className="workbench-modal-field">
+                <span>{t("shell.cloneUsernameLabel")}</span>
+                <input
+                  type="text"
+                  value={remoteAuthForm.username}
+                  placeholder={t("shell.cloneTokenUsernamePlaceholder")}
+                  autoComplete="username"
+                  onChange={(event) =>
+                    setRemoteAuthForm((current) => ({
+                      ...current,
+                      username: event.target.value
+                    }))
+                  }
+                />
+              </label>
+              <label className="workbench-modal-field">
+                <span>{t("shell.cloneTokenLabel")}</span>
+                <input
+                  type="password"
+                  value={remoteAuthForm.token}
+                  placeholder={t("shell.cloneTokenPlaceholder")}
+                  autoComplete="current-password"
+                  onChange={(event) =>
+                    setRemoteAuthForm((current) => ({
+                      ...current,
+                      token: event.target.value
+                    }))
+                  }
+                />
+              </label>
+            </>
+          ) : null}
+
+          {githubRemoteDetected ? (
+            <p className="git-remote-auth-hint">{t("git.remoteAuthGithubPatHint")}</p>
+          ) : null}
+
+          {remoteAuthForm.authMode !== "none" ? (
+            <label className="settings-checkbox git-remote-auth-remember-toggle">
+              <input
+                type="checkbox"
+                checked={remoteAuthForm.rememberOnHost}
+                onChange={(event) =>
+                  setRemoteAuthForm((current) => ({
+                    ...current,
+                    rememberOnHost: event.target.checked
+                  }))
+                }
+              />
+              <span>{t("git.remoteAuthRemember")}</span>
+            </label>
+          ) : null}
+
+          <p className="git-remote-auth-hint">{t("git.remoteAuthSessionHint")}</p>
+        </div>
+        <div className="git-remote-actions">
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={actioning}
+            onClick={() => setRemoteAuthModalOpen(false)}
+          >
+            {t("common.close")}
+          </button>
+          <button
+            className="primary-button"
+            type="button"
+            disabled={actioning}
+            onClick={handleSaveRemoteAuth}
+          >
+            {t("git.remoteAuthSave")}
           </button>
         </div>
       </WorkbenchModal>
@@ -2607,6 +2992,168 @@ function mapGitError(error: ApiError): string | null {
     default:
       return null;
   }
+}
+
+function isRemoteAuthError(error: unknown): boolean {
+  return error instanceof ApiError && error.errorCode === "GIT_REMOTE_AUTH_FAILED";
+}
+
+function toRemoteAuthFormState(auth: GitRemoteAuthDto | null): RemoteAuthFormState {
+  if (!auth || !auth.mode || auth.mode === "none") {
+    return INITIAL_REMOTE_AUTH_FORM;
+  }
+
+  if (auth.mode === "basic") {
+    return {
+      authMode: "basic",
+      username: auth.username ?? "",
+      password: auth.password ?? "",
+      token: "",
+      rememberOnHost: false
+    };
+  }
+
+  if (auth.mode === "token") {
+    return {
+      authMode: "token",
+      username: auth.username ?? "",
+      password: "",
+      token: auth.token ?? "",
+      rememberOnHost: false
+    };
+  }
+
+  return INITIAL_REMOTE_AUTH_FORM;
+}
+
+function toRemoteAuthPayload(form: RemoteAuthFormState): GitRemoteAuthDto | null {
+  if (form.authMode === "none") {
+    return null;
+  }
+
+  if (form.authMode === "basic") {
+    return {
+      mode: "basic",
+      username: form.username.trim(),
+      password: form.password
+    };
+  }
+
+  return {
+    mode: "token",
+    username: form.username.trim() || undefined,
+    token: form.token
+  };
+}
+
+function resolveRemoteAuthProvider(
+  remotes: GitRemoteItemDto[],
+  preferredRemoteName?: string
+): GitRemoteAuthProvider {
+  const preferredRemote =
+    remotes.find((item) => item.name === preferredRemoteName)
+    ?? remotes.find((item) => item.name === "origin")
+    ?? remotes[0];
+
+  if (!preferredRemote) {
+    return "generic";
+  }
+
+  const remoteUrl = preferredRemote.pushUrl || preferredRemote.fetchUrl;
+
+  return isGitHubRemoteUrl(remoteUrl) ? "github" : "generic";
+}
+
+function isGitHubRemoteUrl(remoteUrl: string | null | undefined): boolean {
+  const normalized = remoteUrl?.trim().toLowerCase() ?? "";
+
+  return (
+    normalized.startsWith("https://github.com/")
+    || normalized.startsWith("http://github.com/")
+    || normalized.startsWith("ssh://git@github.com/")
+    || normalized.startsWith("git@github.com:")
+  );
+}
+
+export function resolveGitOperationsMenuPosition(
+  anchorRect: Pick<DOMRect, "top" | "right" | "bottom" | "left">,
+  menuSize: { width: number; height: number },
+  viewport: { width: number; height: number }
+): GitOperationsMenuPosition {
+  const viewportWidth = Math.max(0, viewport.width);
+  const viewportHeight = Math.max(0, viewport.height);
+  const viewportMaxHeight = Math.max(
+    0,
+    viewportHeight - GIT_OPERATIONS_MENU_VIEWPORT_MARGIN_PX * 2
+  );
+  const maxMenuWidth = Math.max(
+    0,
+    viewportWidth - GIT_OPERATIONS_MENU_VIEWPORT_MARGIN_PX * 2
+  );
+  const safeMenuWidth = Math.min(
+    Math.max(menuSize.width || GIT_OPERATIONS_MENU_DEFAULT_WIDTH_PX, 0),
+    maxMenuWidth
+  );
+  const spaceBelow = Math.max(
+    0,
+    viewportHeight - anchorRect.bottom - GIT_OPERATIONS_MENU_GAP_PX - GIT_OPERATIONS_MENU_VIEWPORT_MARGIN_PX
+  );
+  const spaceAbove = Math.max(
+    0,
+    anchorRect.top - GIT_OPERATIONS_MENU_GAP_PX - GIT_OPERATIONS_MENU_VIEWPORT_MARGIN_PX
+  );
+  const shouldOpenUpward = spaceBelow < menuSize.height && spaceAbove > spaceBelow;
+  const availableHeight = shouldOpenUpward ? spaceAbove : spaceBelow;
+  const safeMaxHeight = clampNumber(
+    Math.max(availableHeight, GIT_OPERATIONS_MENU_MIN_HEIGHT_PX),
+    0,
+    viewportMaxHeight
+  );
+  const visibleMenuHeight = Math.min(
+    Math.max(menuSize.height, 0),
+    safeMaxHeight
+  );
+  const unclampedTop = shouldOpenUpward
+    ? anchorRect.top - GIT_OPERATIONS_MENU_GAP_PX - visibleMenuHeight
+    : anchorRect.bottom + GIT_OPERATIONS_MENU_GAP_PX;
+  const maxTop = Math.max(
+    GIT_OPERATIONS_MENU_VIEWPORT_MARGIN_PX,
+    viewportHeight - GIT_OPERATIONS_MENU_VIEWPORT_MARGIN_PX - visibleMenuHeight
+  );
+  const maxLeft = Math.max(
+    GIT_OPERATIONS_MENU_VIEWPORT_MARGIN_PX,
+    viewportWidth - GIT_OPERATIONS_MENU_VIEWPORT_MARGIN_PX - safeMenuWidth
+  );
+
+  return {
+    top: clampNumber(
+      unclampedTop,
+      GIT_OPERATIONS_MENU_VIEWPORT_MARGIN_PX,
+      maxTop
+    ),
+    left: clampNumber(
+      anchorRect.right - safeMenuWidth,
+      GIT_OPERATIONS_MENU_VIEWPORT_MARGIN_PX,
+      maxLeft
+    ),
+    maxHeight: Math.max(
+      0,
+      safeMaxHeight
+    ),
+    transformOrigin: `${shouldOpenUpward ? "bottom" : "top"} right`
+  };
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) {
+    return min;
+  }
+
+  if (max < min) {
+    return min;
+  }
+
+  return Math.min(Math.max(value, min), max);
 }
 
 function TreeChevron({ expanded }: { expanded: boolean }) {
