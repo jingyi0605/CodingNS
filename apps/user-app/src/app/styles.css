@@ -8847,7 +8847,7 @@ textarea:focus-visible {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  gap: 4px;
+  gap: 0;
   overflow: hidden;
 }
 
@@ -12259,7 +12259,7 @@ textarea:focus-visible {
 }
 
 .git-sidebar {
-  gap: 8px;
+  gap: 0;
 }
 
 .git-sidebar .git-card {

@@ -202,7 +202,6 @@ export function GitSidebar({
   const desktopOperationsMenuRef = useRef<HTMLDivElement | null>(null);
   const wasPanelActiveRef = useRef(panelActive);
   const { showToast } = useToast();
-
   useEffect(() => {
     logPerfDebug("git_sidebar.props", {
       workspaceId,
