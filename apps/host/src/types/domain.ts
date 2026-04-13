@@ -56,6 +56,7 @@ export interface Workspace {
   name: string;
   path: string;
   repoRoot: string | null;
+  backgroundColor?: string | null;
   favorite: boolean;
   sortOrder: number;
   createdAt: string;
@@ -93,6 +94,7 @@ export interface WorkspaceNavigationStateRecord {
   workspaceId: string;
   userId: string;
   collapsed: boolean;
+  backgroundColor: string | null;
   updatedAt: string;
 }
 

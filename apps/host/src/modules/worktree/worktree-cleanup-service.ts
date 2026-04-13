@@ -11,10 +11,18 @@ import type { WorktreeSyncService } from "./worktree-sync-service.js";
 
 const WORKTREE_CLEANUP_TIMEOUT_MS = 30_000;
 
+export interface WorktreeCleanupOptions {
+  deleteBranch?: boolean;
+}
+
 export interface WorktreeCleanupResult {
   workspaceId: string;
   removed: boolean;
   meta: WorkspaceWorktreeRecord;
+  branchDeleteRequested: boolean;
+  branchDeleted: boolean;
+  deletedBranchName: string | null;
+  branchDeleteError: string | null;
 }
 
 export class WorktreeCleanupService {
@@ -28,13 +36,19 @@ export class WorktreeCleanupService {
     private readonly worktreeSyncService: WorktreeSyncService
   ) {}
 
-  async cleanup(workspaceId: string, userId: string): Promise<WorktreeCleanupResult> {
+  async cleanup(
+    workspaceId: string,
+    userId: string,
+    options: WorktreeCleanupOptions = {}
+  ): Promise<WorktreeCleanupResult> {
     const meta = await this.resolveCleanupCandidate(workspaceId);
     const workspace = this.workspaceService.getWorkspaceOrThrow(meta.workspaceId);
     const rootWorkspace = this.workspaceService.getWorkspaceOrThrow(meta.rootWorkspaceId);
+    const targetWorkspace = this.workspaceService.getWorkspaceOrThrow(meta.parentWorkspaceId);
     const activeChildren = this.workspaceWorktreeRepository
       .listByParentWorkspaceId(meta.workspaceId)
       .filter((record) => record.lifecycleStatus !== "removed");
+    const deleteBranchRequested = options.deleteBranch === true;
 
     if (activeChildren.length > 0) {
       throw new AppError({
@@ -78,6 +92,18 @@ export class WorktreeCleanupService {
       });
     }
 
+    const branchMergedIntoParent = deleteBranchRequested
+      ? await this.isBranchMergedIntoParent(workspace, targetWorkspace)
+      : false;
+
+    if (deleteBranchRequested && !branchMergedIntoParent) {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "WORKTREE_CLEANUP_BRANCH_NOT_MERGED",
+        detail: "当前分支还没有合入父工作区，不能在清理时同时删除分支"
+      });
+    }
+
     const timestamp = nowIso();
     const removingMeta = this.workspaceWorktreeRepository.update({
       ...meta,
@@ -94,6 +120,9 @@ export class WorktreeCleanupService {
     }
 
     try {
+      let branchDeleted = false;
+      let branchDeleteError: string | null = null;
+
       const removeResult = await this.gitCommandRunner.run(
         rootWorkspace.path,
         ["worktree", "remove", workspace.path],
@@ -123,6 +152,25 @@ export class WorktreeCleanupService {
         }
       );
 
+      if (deleteBranchRequested) {
+        const deleteBranchResult = await this.gitCommandRunner.run(
+          rootWorkspace.path,
+          ["branch", "-d", meta.branchName],
+          {
+            allowNonZeroExit: true,
+            workspaceId: rootWorkspace.id,
+            operation: "worktree.cleanup.deleteBranch"
+          }
+        );
+
+        if (deleteBranchResult.exitCode === 0) {
+          branchDeleted = true;
+        } else {
+          branchDeleteError =
+            deleteBranchResult.stderr.trim() || deleteBranchResult.stdout.trim() || "分支删除失败";
+        }
+      }
+
       const removedMeta = this.workspaceWorktreeRepository.update({
         ...removingMeta,
         lifecycleStatus: "removed",
@@ -143,7 +191,11 @@ export class WorktreeCleanupService {
       return {
         workspaceId: workspace.id,
         removed: true,
-        meta: removedMeta
+        meta: removedMeta,
+        branchDeleteRequested: deleteBranchRequested,
+        branchDeleted,
+        deletedBranchName: branchDeleted ? meta.branchName : null,
+        branchDeleteError
       };
     } catch (error) {
       this.workspaceWorktreeRepository.update({
@@ -153,6 +205,57 @@ export class WorktreeCleanupService {
       });
       throw error;
     }
+  }
+
+  private async isBranchMergedIntoParent(
+    sourceWorkspace: { id: string; path: string },
+    targetWorkspace: { id: string; path: string }
+  ): Promise<boolean> {
+    const sourceHeadCommit = await this.resolveCommit(sourceWorkspace.path, sourceWorkspace.id, "HEAD");
+    const targetHeadCommit = await this.resolveCommit(targetWorkspace.path, targetWorkspace.id, "HEAD");
+
+    if (!sourceHeadCommit || !targetHeadCommit) {
+      return false;
+    }
+
+    return this.isAncestor(targetWorkspace.path, targetWorkspace.id, sourceHeadCommit, targetHeadCommit);
+  }
+
+  private async resolveCommit(
+    cwd: string,
+    workspaceId: string,
+    ref: string
+  ): Promise<string | null> {
+    const result = await this.gitCommandRunner.run(
+      cwd,
+      ["rev-parse", "--verify", ref],
+      {
+        allowNonZeroExit: true,
+        workspaceId,
+        operation: "worktree.cleanup.resolveCommit"
+      }
+    );
+
+    return result.exitCode === 0 ? result.stdout.trim() || null : null;
+  }
+
+  private async isAncestor(
+    cwd: string,
+    workspaceId: string,
+    ancestorCommit: string,
+    descendantCommit: string
+  ): Promise<boolean> {
+    const result = await this.gitCommandRunner.run(
+      cwd,
+      ["merge-base", "--is-ancestor", ancestorCommit, descendantCommit],
+      {
+        allowNonZeroExit: true,
+        workspaceId,
+        operation: "worktree.cleanup.previewAncestor"
+      }
+    );
+
+    return result.exitCode === 0;
   }
 
   private async resolveCleanupCandidate(workspaceId: string): Promise<WorkspaceWorktreeRecord> {

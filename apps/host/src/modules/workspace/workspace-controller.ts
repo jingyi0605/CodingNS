@@ -47,6 +47,11 @@ interface ReorderWorkspacesBody {
   workspaceIds?: string[];
 }
 
+interface UpdateWorkspaceNavigationStateBody {
+  collapsed?: unknown;
+  backgroundColor?: unknown;
+}
+
 export class WorkspaceController {
   constructor(private readonly workspaceService: WorkspaceService) {}
 
@@ -126,16 +131,28 @@ export class WorkspaceController {
   };
 
   readonly updateNavigationState = async (
-    request: FastifyRequest<{ Params: WorkspaceParams; Body: UpdateWorkspaceNavigationStateInput }>,
+    request: FastifyRequest<{ Params: WorkspaceParams; Body: UpdateWorkspaceNavigationStateBody }>,
     reply: FastifyReply
   ): Promise<void> => {
+    const input: UpdateWorkspaceNavigationStateInput = {};
+
+    if (typeof request.body?.collapsed === "boolean") {
+      input.collapsed = request.body.collapsed;
+    }
+
+    if (request.body && Object.prototype.hasOwnProperty.call(request.body, "backgroundColor")) {
+      const rawBackgroundColor = request.body.backgroundColor;
+
+      if (rawBackgroundColor === null || typeof rawBackgroundColor === "string") {
+        input.backgroundColor = rawBackgroundColor;
+      }
+    }
+
     reply.send(
       this.workspaceService.updateNavigationState(
         request.params.workspaceId,
         requireUserId(request),
-        {
-          collapsed: Boolean(request.body?.collapsed)
-        }
+        input
       )
     );
   };

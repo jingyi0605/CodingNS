@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS workspace_navigation_states (
   workspace_id TEXT NOT NULL,
   user_id TEXT NOT NULL,
   collapsed INTEGER NOT NULL DEFAULT 0 CHECK (collapsed IN (0, 1)),
+  background_color TEXT,
   updated_at TEXT NOT NULL,
   PRIMARY KEY (workspace_id, user_id),
   FOREIGN KEY (workspace_id) REFERENCES workspaces(id),

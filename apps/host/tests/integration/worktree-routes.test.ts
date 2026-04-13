@@ -509,6 +509,162 @@ describe("worktree routes", () => {
     ).toBe(true);
   });
 
+  it("git 已经合入父工作区但元数据仍是 active 时，预检会自动纠正为已合并", async () => {
+    const fixture = createGitWorkspaceFixture();
+    activeFixtures.push(fixture);
+    runGitCommand(fixture.repoDir, ["restore", "README.md"]);
+
+    const hosted = createTestApp(fixture);
+    activeServers.push(hosted);
+    await hosted.app.ready();
+
+    await bootstrapWorkspace(hosted, fixture);
+    const accessToken = await loginAsAdmin(hosted);
+    const createResponse = await hosted.app.inject({
+      method: "POST",
+      url: "/api/worktrees",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        sourceWorkspaceId: fixture.workspaceId,
+        branchName: "feat/merged-but-meta-stale"
+      }
+    });
+
+    expect(createResponse.statusCode).toBe(201);
+
+    const childWorkspaceId = createResponse.json().workspace.id as string;
+    const childPath = createResponse.json().workspace.path as string;
+
+    appendLine(childPath, "README.md", "来自子工作树的已合并提交");
+    runGitCommand(childPath, ["add", "README.md"]);
+    runGitCommand(childPath, ["commit", "-m", "feat: merged but meta stale"]);
+
+    runGitCommand(fixture.repoDir, ["merge", "--no-ff", "--no-edit", "feat/merged-but-meta-stale"]);
+
+    const staleMeta = hosted.services.repositories.workspaceWorktreeRepository.findByWorkspaceId(childWorkspaceId);
+    expect(staleMeta).not.toBeNull();
+
+    hosted.services.repositories.workspaceWorktreeRepository.update({
+      ...staleMeta!,
+      lifecycleStatus: "active",
+      mergedAt: null,
+      updatedAt: nowIso()
+    });
+
+    const previewResponse = await hosted.app.inject({
+      method: "POST",
+      url: `/api/worktrees/${childWorkspaceId}/merge-preview`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+
+    expect(previewResponse.statusCode).toBe(200);
+    expect(previewResponse.json()).toMatchObject({
+      workspaceId: childWorkspaceId,
+      ahead: 0,
+      behind: 1,
+      alreadyMerged: true,
+      canMerge: false,
+      meta: {
+        workspaceId: childWorkspaceId,
+        lifecycleStatus: "merged"
+      }
+    });
+    expect(previewResponse.json().meta.mergedAt).toBeTruthy();
+    expect(
+      previewResponse.json().blockers.some((item: { code: string }) => item.code === "NO_COMMITS_TO_MERGE")
+    ).toBe(false);
+    expect(
+      previewResponse.json().blockers.some((item: { code: string }) => item.code === "SOURCE_NOT_ACTIVE")
+    ).toBe(false);
+
+    expect(
+      hosted.services.repositories.workspaceWorktreeRepository.findByWorkspaceId(childWorkspaceId)
+    ).toMatchObject({
+      workspaceId: childWorkspaceId,
+      lifecycleStatus: "merged"
+    });
+  });
+
+  it("git 仍可合并但元数据被误标为 merged 时，预检会自动恢复 active", async () => {
+    const fixture = createGitWorkspaceFixture();
+    activeFixtures.push(fixture);
+    runGitCommand(fixture.repoDir, ["restore", "README.md"]);
+
+    const hosted = createTestApp(fixture);
+    activeServers.push(hosted);
+    await hosted.app.ready();
+
+    await bootstrapWorkspace(hosted, fixture);
+    const accessToken = await loginAsAdmin(hosted);
+    const createResponse = await hosted.app.inject({
+      method: "POST",
+      url: "/api/worktrees",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        sourceWorkspaceId: fixture.workspaceId,
+        branchName: "feat/meta-should-be-active"
+      }
+    });
+
+    expect(createResponse.statusCode).toBe(201);
+
+    const childWorkspaceId = createResponse.json().workspace.id as string;
+    const childPath = createResponse.json().workspace.path as string;
+
+    appendLine(childPath, "README.md", "子工作树里还有待合并提交");
+    runGitCommand(childPath, ["add", "README.md"]);
+    runGitCommand(childPath, ["commit", "-m", "feat: meta should restore active"]);
+
+    const staleMeta = hosted.services.repositories.workspaceWorktreeRepository.findByWorkspaceId(childWorkspaceId);
+    expect(staleMeta).not.toBeNull();
+
+    hosted.services.repositories.workspaceWorktreeRepository.update({
+      ...staleMeta!,
+      lifecycleStatus: "merged",
+      mergedAt: nowIso(),
+      updatedAt: nowIso()
+    });
+
+    const previewResponse = await hosted.app.inject({
+      method: "POST",
+      url: `/api/worktrees/${childWorkspaceId}/merge-preview`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+
+    expect(previewResponse.statusCode).toBe(200);
+    expect(previewResponse.json()).toMatchObject({
+      workspaceId: childWorkspaceId,
+      ahead: 1,
+      behind: 0,
+      alreadyMerged: false,
+      canMerge: true,
+      meta: {
+        workspaceId: childWorkspaceId,
+        lifecycleStatus: "active",
+        mergedAt: null
+      }
+    });
+    expect(
+      previewResponse.json().blockers.some((item: { code: string }) => item.code === "SOURCE_NOT_ACTIVE")
+    ).toBe(false);
+
+    expect(
+      hosted.services.repositories.workspaceWorktreeRepository.findByWorkspaceId(childWorkspaceId)
+    ).toMatchObject({
+      workspaceId: childWorkspaceId,
+      lifecycleStatus: "active",
+      mergedAt: null
+    });
+  });
+
   it("已经合并的子工作树可以被安全清理", async () => {
     const fixture = createGitWorkspaceFixture();
     activeFixtures.push(fixture);
@@ -577,6 +733,127 @@ describe("worktree routes", () => {
       lifecycleStatus: "removed"
     });
     expect(hosted.services.repositories.workspaceRepository.findById(childWorkspaceId)?.removedAt).toBeTruthy();
+  });
+
+  it("已经合并的子工作树在请求 deleteBranch=true 时会同时删除分支", async () => {
+    const fixture = createGitWorkspaceFixture();
+    activeFixtures.push(fixture);
+    runGitCommand(fixture.repoDir, ["restore", "README.md"]);
+
+    const hosted = createTestApp(fixture);
+    activeServers.push(hosted);
+    await hosted.app.ready();
+
+    await bootstrapWorkspace(hosted, fixture);
+    const accessToken = await loginAsAdmin(hosted);
+    const createResponse = await hosted.app.inject({
+      method: "POST",
+      url: "/api/worktrees",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        sourceWorkspaceId: fixture.workspaceId,
+        branchName: "feat/delete-branch"
+      }
+    });
+
+    expect(createResponse.statusCode).toBe(201);
+
+    const childWorkspaceId = createResponse.json().workspace.id as string;
+    const childPath = createResponse.json().workspace.path as string;
+
+    appendLine(childPath, "README.md", "准备连分支一起清理");
+    runGitCommand(childPath, ["add", "README.md"]);
+    runGitCommand(childPath, ["commit", "-m", "feat: merge before cleanup delete branch"]);
+
+    const mergeResponse = await hosted.app.inject({
+      method: "POST",
+      url: `/api/worktrees/${childWorkspaceId}/merge-into-parent`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+
+    expect(mergeResponse.statusCode).toBe(200);
+
+    const cleanupResponse = await hosted.app.inject({
+      method: "POST",
+      url: `/api/worktrees/${childWorkspaceId}/cleanup`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        deleteBranch: true
+      }
+    });
+
+    expect(cleanupResponse.statusCode).toBe(200);
+    expect(cleanupResponse.json()).toMatchObject({
+      workspaceId: childWorkspaceId,
+      removed: true,
+      branchDeleteRequested: true,
+      branchDeleted: true,
+      deletedBranchName: "feat/delete-branch",
+      branchDeleteError: null,
+      meta: {
+        workspaceId: childWorkspaceId,
+        lifecycleStatus: "removed"
+      }
+    });
+    expect(runGitCommand(fixture.repoDir, ["branch", "--list", "feat/delete-branch"])).toBe("");
+    expect(existsSync(childPath)).toBe(false);
+  });
+
+  it("未合并的子工作树请求 deleteBranch=true 时会被拒绝", async () => {
+    const fixture = createGitWorkspaceFixture();
+    activeFixtures.push(fixture);
+    runGitCommand(fixture.repoDir, ["restore", "README.md"]);
+
+    const hosted = createTestApp(fixture);
+    activeServers.push(hosted);
+    await hosted.app.ready();
+
+    await bootstrapWorkspace(hosted, fixture);
+    const accessToken = await loginAsAdmin(hosted);
+    const createResponse = await hosted.app.inject({
+      method: "POST",
+      url: "/api/worktrees",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        sourceWorkspaceId: fixture.workspaceId,
+        branchName: "feat/not-merged-delete"
+      }
+    });
+
+    expect(createResponse.statusCode).toBe(201);
+
+    const childWorkspaceId = createResponse.json().workspace.id as string;
+    const childPath = createResponse.json().workspace.path as string;
+
+    appendLine(childPath, "README.md", "还没合并，不允许删分支");
+    runGitCommand(childPath, ["add", "README.md"]);
+    runGitCommand(childPath, ["commit", "-m", "feat: not merged yet"]);
+
+    const cleanupResponse = await hosted.app.inject({
+      method: "POST",
+      url: `/api/worktrees/${childWorkspaceId}/cleanup`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        deleteBranch: true
+      }
+    });
+
+    expect(cleanupResponse.statusCode).toBe(409);
+    expect(cleanupResponse.json().error_code).toBe("WORKTREE_CLEANUP_BRANCH_NOT_MERGED");
+    expect(existsSync(childPath)).toBe(true);
+    expect(runGitCommand(fixture.repoDir, ["branch", "--list", "feat/not-merged-delete"])).toContain(
+      "feat/not-merged-delete"
+    );
   });
 
   it("清理时会拦截仍有活跃终端占用的工作树", async () => {

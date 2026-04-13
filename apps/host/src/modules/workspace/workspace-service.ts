@@ -74,7 +74,8 @@ export interface WorkspaceManagementSummary {
 }
 
 export interface UpdateWorkspaceNavigationStateInput {
-  collapsed: boolean;
+  collapsed?: boolean;
+  backgroundColor?: string | null;
 }
 
 const DIRECTORY_BROWSE_LIMIT = 200;
@@ -373,12 +374,27 @@ export class WorkspaceService {
     input: UpdateWorkspaceNavigationStateInput
   ): WorkspaceNavigationStateRecord {
     this.getWorkspaceOrThrow(workspaceId);
+    if (input.collapsed === undefined && input.backgroundColor === undefined) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "INVALID_INPUT",
+        detail: "至少要更新一个导航状态字段"
+      });
+    }
+
+    const normalizedBackgroundColor = normalizeWorkspaceNavigationBackgroundColor(input.backgroundColor);
+    const existing =
+      this.workspaceNavigationStateRepository.findByWorkspaceIdAndUserId(workspaceId, userId);
     const timestamp = nowIso();
 
     return this.workspaceNavigationStateRepository.upsert({
       workspaceId,
       userId,
-      collapsed: input.collapsed,
+      collapsed: input.collapsed ?? existing?.collapsed ?? false,
+      backgroundColor:
+        normalizedBackgroundColor !== undefined
+          ? normalizedBackgroundColor
+          : existing?.backgroundColor ?? null,
       updatedAt: timestamp
     });
   }
@@ -485,6 +501,35 @@ export class WorkspaceService {
       };
     }
   }
+}
+
+function normalizeWorkspaceNavigationBackgroundColor(
+  backgroundColor: string | null | undefined
+): string | null | undefined {
+  if (backgroundColor === undefined) {
+    return undefined;
+  }
+
+  if (backgroundColor === null) {
+    return null;
+  }
+
+  const normalizedColor = backgroundColor.trim().toUpperCase();
+
+  if (!normalizedColor) {
+    return null;
+  }
+
+  if (!/^#[0-9A-F]{6}$/.test(normalizedColor)) {
+    throw new AppError({
+      statusCode: 400,
+      errorCode: "INVALID_INPUT",
+      detail: "背景颜色必须是 #RRGGBB 格式",
+      field: "backgroundColor"
+    });
+  }
+
+  return normalizedColor;
 }
 
 function createWorkspaceRecord(

@@ -83,8 +83,9 @@ export class WorktreeMergeService {
       .listByParentWorkspaceId(meta.workspaceId)
       .filter((record) => record.lifecycleStatus === "active" || record.lifecycleStatus === "removing");
     const blockers: WorktreeMergeBlocker[] = [];
+    const normalizedMeta = this.normalizePreviewMeta(meta, alreadyMerged);
 
-    if (meta.lifecycleStatus !== "active") {
+    if (!alreadyMerged && normalizedMeta.lifecycleStatus !== "active") {
       blockers.push({
         code: "SOURCE_NOT_ACTIVE",
         detail: "当前子工作树不是活跃状态，不能继续合并"
@@ -137,7 +138,7 @@ export class WorktreeMergeService {
       workspaceId: meta.workspaceId,
       sourceWorkspace,
       targetWorkspace,
-      meta,
+      meta: normalizedMeta,
       sourceBranchName: sourceStatus.snapshot.branch,
       targetBranchName: targetStatus.snapshot.branch,
       sourceHeadCommit,
@@ -278,6 +279,39 @@ export class WorktreeMergeService {
     }
 
     return nextMeta;
+  }
+
+  private normalizePreviewMeta(
+    meta: WorkspaceWorktreeRecord,
+    alreadyMerged: boolean
+  ): WorkspaceWorktreeRecord {
+    if (alreadyMerged) {
+      if (meta.lifecycleStatus === "merged" && meta.mergedAt) {
+        return meta;
+      }
+
+      return (
+        this.workspaceWorktreeRepository.update({
+          ...meta,
+          lifecycleStatus: "merged",
+          mergedAt: meta.mergedAt ?? nowIso(),
+          updatedAt: nowIso()
+        }) ?? meta
+      );
+    }
+
+    if (meta.lifecycleStatus === "active") {
+      return meta;
+    }
+
+    return (
+      this.workspaceWorktreeRepository.update({
+        ...meta,
+        lifecycleStatus: "active",
+        mergedAt: null,
+        updatedAt: nowIso()
+      }) ?? meta
+    );
   }
 
   private async resolveCommit(

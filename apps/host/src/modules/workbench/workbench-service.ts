@@ -46,22 +46,30 @@ export class WorkbenchService {
     const allWorkspaces = this.listWorkbenchWorkspaces();
     const workspaces = this.listVisibleWorkspaces(allWorkspaces);
     const workspaceById = new Map(allWorkspaces.map((workspace) => [workspace.id, workspace] as const));
+    const navigationStates = this.workspaceNavigationStateRepository.listByUserId(userId);
+    const navigationStateByWorkspaceId = new Map(
+      navigationStates.map((item) => [item.workspaceId, item] as const)
+    );
 
     this.scheduleWorkspaceRefreshes(allWorkspaces, userId);
     const collapsedWorkspaceIdSet = new Set(
-      this.workspaceNavigationStateRepository
-        .listByUserId(userId)
+      navigationStates
         .filter((item) => item.collapsed)
         .map((item) => item.workspaceId)
     );
 
     return {
       items: workspaces.map((workspace) => ({
-        workspace,
+        workspace: applyWorkspaceNavigationState(workspace, navigationStateByWorkspaceId.get(workspace.id)),
         sessions: this.filterButlerControlSessions(
           this.sessionHistoryService.listWorkspaceSessions(workspace.id, userId)
         ),
-        childWorktrees: this.buildChildWorktrees(workspace.id, workspaceById, userId),
+        childWorktrees: this.buildChildWorktrees(
+          workspace.id,
+          workspaceById,
+          navigationStateByWorkspaceId,
+          userId
+        ),
         collapsed: collapsedWorkspaceIdSet.has(workspace.id)
       }))
     };
@@ -168,6 +176,7 @@ export class WorkbenchService {
   private buildChildWorktrees(
     rootWorkspaceId: string,
     workspaceById: ReadonlyMap<string, Workspace>,
+    navigationStateByWorkspaceId: ReadonlyMap<string, { backgroundColor: string | null }>,
     userId: string
   ): WorkbenchWorktreeNode[] {
     if (!this.workspaceWorktreeRepository) {
@@ -188,7 +197,10 @@ export class WorkbenchService {
       }
 
       nodeByWorkspaceId.set(record.workspaceId, {
-        workspace,
+        workspace: applyWorkspaceNavigationState(
+          workspace,
+          navigationStateByWorkspaceId.get(record.workspaceId) ?? null
+        ),
         meta: record,
         sessions: this.filterButlerControlSessions(
           this.sessionHistoryService.listWorkspaceSessions(workspace.id, userId)
@@ -221,6 +233,20 @@ export class WorkbenchService {
 
     return roots;
   }
+}
+
+function applyWorkspaceNavigationState(
+  workspace: Workspace,
+  navigationState: { backgroundColor: string | null } | null | undefined
+): Workspace {
+  if (!navigationState) {
+    return workspace;
+  }
+
+  return {
+    ...workspace,
+    backgroundColor: navigationState.backgroundColor
+  };
 }
 
 function isPathInsideButlerWorkspace(candidatePath: string, butlerWorkspacePath: string): boolean {

@@ -20,6 +20,7 @@ export function createDatabaseClient(databasePath: string): DatabaseClient {
   db.exec(schema);
   ensureWorkspaceRemovalColumn(db);
   ensureWorkspaceSortOrderColumn(db);
+  ensureWorkspaceNavigationBackgroundColorColumn(db);
   ensureSessionProviderSchema(db);
   ensureSessionStateSchema(db);
   ensureSessionIndexArchiveColumn(db);
@@ -99,6 +100,18 @@ function ensureWorkspaceSortOrderColumn(db: Database.Database): void {
   });
 
   runInTransaction(workspaces);
+}
+
+function ensureWorkspaceNavigationBackgroundColorColumn(db: Database.Database): void {
+  const columns = db
+    .prepare("PRAGMA table_info(workspace_navigation_states)")
+    .all() as Array<{ name: string }>;
+
+  if (columns.length === 0 || columns.some((column) => column.name === "background_color")) {
+    return;
+  }
+
+  db.exec("ALTER TABLE workspace_navigation_states ADD COLUMN background_color TEXT");
 }
 
 function ensureButlerProfileSchema(db: Database.Database): void {

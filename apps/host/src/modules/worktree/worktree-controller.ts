@@ -21,6 +21,10 @@ interface WorktreeParams {
   workspaceId?: string;
 }
 
+interface WorktreeCleanupBody {
+  deleteBranch?: boolean;
+}
+
 export class WorktreeController {
   constructor(
     private readonly worktreeManager: WorktreeManager,
@@ -69,13 +73,16 @@ export class WorktreeController {
   };
 
   readonly cleanup = async (
-    request: FastifyRequest<{ Params: WorktreeParams }>,
+    request: FastifyRequest<{ Params: WorktreeParams; Body: WorktreeCleanupBody }>,
     reply: FastifyReply
   ): Promise<void> => {
     reply.send(
       await this.worktreeCleanupService.cleanup(
         request.params.workspaceId?.trim() || "",
-        requireUserId(request)
+        requireUserId(request),
+        {
+          deleteBranch: request.body?.deleteBranch === true
+        }
       )
     );
   };
