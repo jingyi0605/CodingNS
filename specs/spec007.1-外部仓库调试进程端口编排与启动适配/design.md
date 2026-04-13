@@ -7,17 +7,19 @@
 ### 1.1 目标
 
 - 在 `spec007` 的进程管理底座上，加一层“外部仓库调试运行时编排”
+- 先分析项目框架与启动形态，只对兼容框架自动开启端口注入
 - 让平台能用统一方式描述外部仓库里的多个调试服务
 - 先用跨平台可落地的端口注入方式解决冲突
 - 明确 AI 编辑只做兜底，并且全程可审计、可回滚
 
 ### 1.2 覆盖需求
 
-- `requirements.md` 需求 1：外部仓库调试服务统一数据模型
-- `requirements.md` 需求 2：启动适配分层设计
-- `requirements.md` 需求 3：端口租约机制
-- `requirements.md` 需求 4：AI 兜底编辑约束
-- `requirements.md` 需求 5：第一阶段最小落地边界
+- `requirements.md` 需求 1：项目框架分析与自动注入准入
+- `requirements.md` 需求 2：外部仓库调试服务统一数据模型
+- `requirements.md` 需求 3：启动适配分层设计
+- `requirements.md` 需求 4：端口租约机制
+- `requirements.md` 需求 5：AI 兜底编辑约束
+- `requirements.md` 需求 6：第一阶段最小落地边界
 
 ### 1.3 技术约束
 
@@ -59,7 +61,20 @@
 
 `CLI 参数 -> 环境变量 -> 覆盖产物 -> AI 兜底编辑`
 
-### 2.3 第一阶段不做万能识别器
+### 2.3 先做框架分析，再谈自动注入
+
+不是所有项目都值得自动注入。
+
+平台必须先回答四个问题：
+
+1. 这是什么框架或启动形态
+2. 这个框架有没有正式的端口覆盖入口
+3. 它是否还需要额外处理前后端发现、HMR、回调地址
+4. 它是 `supported`、`conditional`、`unsupported` 还是 `unknown`
+
+只有 `supported/conditional` 才能自动进入端口注入链路。
+
+### 2.4 第一阶段不做万能识别器
 
 第一阶段只做最常见、最有价值的一批：
 
@@ -81,6 +96,7 @@
 | 模块 | 职责 | 输入 | 输出 |
 | --- | --- | --- | --- |
 | `debug-target-service` | 管理受管仓库的调试目标与服务清单 | 仓库路径、工作树信息、用户配置 | `DebugTargetProfile` |
+| `framework-analysis-service` | 识别项目框架、兼容等级和额外处理项 | 仓库特征、配置文件、命令模板 | `FrameworkAnalysisResult` |
 | `launch-adapter-registry` | 按技术栈选择启动适配器 | 仓库特征、命令模板、文件探测结果 | `LaunchAdapter` |
 | `launch-plan-resolver` | 决定本次启动的注入方式与端口需求 | 调试目标、服务角色、适配器结果 | `LaunchPlan` |
 | `port-lease-service` | 分配、续租、回收端口租约 | 服务角色、运行时 ID | `PortLeaseRecord` |
@@ -119,7 +135,28 @@
 | `createdAt` | string | 是 | 创建时间 |
 | `updatedAt` | string | 是 | 更新时间 |
 
-### 4.2 `DebugServiceSpec`
+### 4.2 `FrameworkAnalysisResult`
+
+表示平台对当前仓库或服务做出的框架分析结论。
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `id` | string | 是 | 分析记录 ID |
+| `targetId` | string | 是 | 归属调试目标 |
+| `serviceId` | string | 否 | 可选，针对单服务分析时使用 |
+| `primaryFramework` | string | 否 | 主判断结果，例如 `vite`、`nextjs`、`spring-boot` |
+| `confidence` | string | 是 | `high/medium/low` |
+| `compatibilityLevel` | string | 是 | `supported/conditional/unsupported/unknown` |
+| `recommendedInjectionMode` | string | 否 | `cli/env/override/none` |
+| `requiresServiceDiscoveryHandling` | boolean | 是 | 是否需要额外处理前后端发现 |
+| `requiresHmrHandling` | boolean | 是 | 是否需要额外处理 HMR/WS |
+| `requiresCallbackHandling` | boolean | 是 | 是否需要额外处理 redirect/webhook/callback |
+| `aiFallbackPolicy` | string | 是 | `never/conditional/allowed` |
+| `reasons` | json | 是 | 命中规则和结论原因 |
+| `detectedFiles` | json | 否 | 参与判断的配置文件 |
+| `createdAt` | string | 是 | 创建时间 |
+
+### 4.3 `DebugServiceSpec`
 
 描述调试目标下一个服务该怎么被识别和启动。
 
@@ -137,8 +174,9 @@
 | `protocol` | string | 否 | `http/ws/tcp` |
 | `healthPath` | string | 否 | 可选健康检查路径 |
 | `adapterKind` | string | 否 | 当前建议适配器 |
+| `frameworkAnalysisId` | string | 否 | 对应框架分析结果 |
 
-### 4.3 `DebugRuntimeSession`
+### 4.4 `DebugRuntimeSession`
 
 表示一次完整的调试启动尝试。
 
@@ -153,7 +191,7 @@
 | `createdAt` | string | 是 | 创建时间 |
 | `updatedAt` | string | 是 | 更新时间 |
 
-### 4.4 `RuntimeBinding`
+### 4.5 `RuntimeBinding`
 
 记录某个服务在某次运行里最终绑定到了什么地址。
 
@@ -170,7 +208,7 @@
 | `status` | string | 是 | `ALLOCATED/LISTENING/FAILED/RELEASED` |
 | `updatedAt` | string | 是 | 更新时间 |
 
-### 4.5 `PortLeaseRecord`
+### 4.6 `PortLeaseRecord`
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
@@ -184,7 +222,7 @@
 | `expiresAt` | string | 否 | 过期时间 |
 | `releasedAt` | string | 否 | 释放时间 |
 
-### 4.6 `AiFallbackEditRecord`
+### 4.7 `AiFallbackEditRecord`
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
@@ -200,6 +238,21 @@
 | `createdAt` | string | 是 | 创建时间 |
 
 ## 5. 启动适配器分层
+
+### 5.0 准入前提
+
+自动端口注入前必须先有 `FrameworkAnalysisResult`。
+
+规则如下：
+
+1. `supported`
+   - 允许自动注入
+2. `conditional`
+   - 只有满足额外处理项时才允许自动注入
+3. `unsupported`
+   - 不允许自动注入，默认转人工或直接停止
+4. `unknown`
+   - 不允许自动注入，除非用户显式确认进入受限兜底流程
 
 ### 5.1 适配器分层规则
 
@@ -238,6 +291,22 @@ interface LaunchAdapter {
 | `envPatch` | json | 否 | 环境变量补丁 |
 | `artifactRef` | string | 否 | 临时覆盖产物引用 |
 
+### 5.4 前后端发现与 HMR 的额外处理
+
+不是所有框架只改监听端口就够了。
+
+平台必须在框架分析阶段决定是否补以下处理：
+
+- `serviceDiscovery`
+  - 前端是否需要注入 `API_BASE_URL`
+  - 是否推荐改走同源 `/api`
+- `hmr`
+  - 是否需要额外注入 HMR WebSocket 端口、Host、Path
+- `callback`
+  - 是否需要提醒 redirect URI、webhook、OAuth callback 跟着调整
+
+如果框架兼容矩阵要求额外处理，而当前启动计划没有补齐，就不能自动进入运行态。
+
 ## 6. 端口分配与回收规则
 
 ### 6.1 分配规则
@@ -271,6 +340,7 @@ interface LaunchAdapter {
 
 只有下面条件同时成立，才允许进 AI 兜底：
 
+- `FrameworkAnalysisResult.aiFallbackPolicy !== "never"`
 - `CliPortAdapter` 失败
 - `EnvPortAdapter` 失败
 - `RuntimeOverrideAdapter` 失败
@@ -313,9 +383,15 @@ interface LaunchAdapter {
   - Vite
   - Next.js
   - CRA
+  - Astro
+  - Nuxt
   - Node 原生 / Express / Nest 常见 dev 命令
   - Spring Boot 单服务
   - Uvicorn / Flask / Django 单服务
+
+第一阶段的具体兼容矩阵、推荐注入方式、HMR/服务发现补充要求和 AI 兜底判定，统一维护在：
+
+- `docs/20260413-框架兼容矩阵.md`
 
 ### 8.2 第一阶段明确不做
 
@@ -331,16 +407,23 @@ interface LaunchAdapter {
 - 启动失败时能明确告诉用户失败在哪一层
 - AI 兜底编辑具备最小约束和回滚记录
 
+第一阶段的表、API、前端展示和 `LauncherProfile / ProcessInstance` 扩展建议，统一维护在：
+
+- `docs/20260413-实现清单.md`
+
 ## 9. 测试策略
 
 ### 9.1 单元测试
 
+- 框架分析规则与兼容等级判定
 - 适配器匹配规则
 - 端口租约状态流转
 - AI 编辑准入判断
 
 ### 9.2 集成测试
 
+- 兼容框架识别后自动开启注入
+- 不兼容框架识别后拒绝自动注入
 - 单服务项目启动并注入非默认端口
 - 前后端双服务项目并行分配端口
 - 端口冲突后重新分配
