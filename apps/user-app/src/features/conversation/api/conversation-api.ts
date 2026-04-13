@@ -69,6 +69,7 @@ export interface WorkspaceDto {
   name: string;
   path: string;
   repoRoot: string | null;
+  backgroundColor?: string | null;
   sortOrder?: number;
 }
 
@@ -172,6 +173,7 @@ export interface WorkspaceNavigationStateDto {
   workspaceId: string;
   userId: string;
   collapsed: boolean;
+  backgroundColor: string | null;
   updatedAt: string;
 }
 
@@ -444,6 +446,10 @@ export interface WorktreeCleanupResponseDto {
   workspaceId: string;
   removed: boolean;
   meta: WorktreeMetaDto;
+  branchDeleteRequested: boolean;
+  branchDeleted: boolean;
+  deletedBranchName: string | null;
+  branchDeleteError: string | null;
 }
 
 export interface CreateWorktreeResponseDto {
@@ -646,14 +652,18 @@ export function reorderWorkspaces(payload: ReorderWorkspacesPayload) {
   });
 }
 
-export function updateWorkspaceNavigationState(workspaceId: string, collapsed: boolean) {
+export function updateWorkspaceNavigationState(
+  workspaceId: string,
+  payload: {
+    collapsed?: boolean;
+    backgroundColor?: string | null;
+  }
+) {
   return httpClient.request<WorkspaceNavigationStateDto>(
     `/api/workspaces/${encodeURIComponent(workspaceId)}/navigation-state`,
     {
       method: "PUT",
-      body: JSON.stringify({
-        collapsed
-      })
+      body: JSON.stringify(payload)
     }
   );
 }
@@ -752,11 +762,12 @@ export function mergeWorktreeIntoParent(workspaceId: string) {
   );
 }
 
-export function cleanupWorktree(workspaceId: string) {
+export function cleanupWorktree(workspaceId: string, payload?: { deleteBranch?: boolean }) {
   return httpClient.request<WorktreeCleanupResponseDto>(
     `/api/worktrees/${encodeURIComponent(workspaceId)}/cleanup`,
     {
-      method: "POST"
+      method: "POST",
+      body: JSON.stringify(payload ?? {})
     }
   );
 }

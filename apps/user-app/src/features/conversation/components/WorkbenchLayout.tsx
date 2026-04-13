@@ -134,6 +134,7 @@ import {
 } from "../../workbench/utils/workspace-composition-chart";
 import {
   buildWorkspaceVisualContextMap,
+  createWorkspaceToneStyle,
   createFallbackWorkspaceVisualContext,
   type WorkspaceVisualContext
 } from "../../workbench/utils/worktree-visual-context";
@@ -187,6 +188,26 @@ const WORKBENCH_RUNTIME_ACTIVE_STATES: ReadonlySet<string> = new Set([
   "stale",
   "unknown"
 ]);
+const WORKSPACE_COLOR_PRESETS = [
+  "#34C759",
+  "#22C55E",
+  "#14B8A6",
+  "#06B6D4",
+  "#0EA5E9",
+  "#3B82F6",
+  "#6366F1",
+  "#8B5CF6",
+  "#A855F7",
+  "#D946EF",
+  "#EC4899",
+  "#F43F5E",
+  "#EF4444",
+  "#F97316",
+  "#F59E0B",
+  "#EAB308",
+  "#84CC16",
+  "#10B981"
+] as const;
 
 export type WorkbenchGlobalNotificationKind =
   | "follow_up_waiting_user"
@@ -616,6 +637,11 @@ interface WorkspaceSidebarWorktreeNode {
   archivedSessions: SessionSummaryDto[];
   visibleSessionTree: NavigationSessionTreeNode[];
   children: WorkspaceSidebarWorktreeNode[];
+}
+
+interface WorktreeNodeExpansionState {
+  expandedWorkspaceIds: string[];
+  collapsedWorkspaceIds: string[];
 }
 
 type NavigationSessionTreeNode = SessionTreeNode<SessionSummaryDto>;
@@ -1173,6 +1199,32 @@ function collectSidebarVisibleSessionTrees(
   return nodes.flatMap((node) => [...node.visibleSessionTree, ...collectSidebarVisibleSessionTrees(node.children)]);
 }
 
+function findSidebarBatchTarget(
+  workspaceGroups: readonly WorkspaceSidebarGroup[],
+  workspaceId: string | null
+): { workspace: WorkspaceDto; visibleSessionTree: NavigationSessionTreeNode[] } | null {
+  if (!workspaceId) {
+    return null;
+  }
+
+  for (const group of workspaceGroups) {
+    if (group.workspace.id === workspaceId) {
+      return {
+        workspace: group.workspace,
+        visibleSessionTree: getVisibleSessionTreeNodes(group)
+      };
+    }
+
+    const nestedTarget = findSidebarBatchTargetInWorktreeNodes(group.childWorktrees, workspaceId);
+
+    if (nestedTarget) {
+      return nestedTarget;
+    }
+  }
+
+  return null;
+}
+
 function findSidebarVisibleSessionNode(
   nodes: readonly WorkspaceSidebarWorktreeNode[],
   sessionId: string
@@ -1190,6 +1242,28 @@ function findSidebarVisibleSessionNode(
 
     if (nestedMatch) {
       return nestedMatch;
+    }
+  }
+
+  return null;
+}
+
+function findSidebarBatchTargetInWorktreeNodes(
+  nodes: readonly WorkspaceSidebarWorktreeNode[],
+  workspaceId: string
+): { workspace: WorkspaceDto; visibleSessionTree: NavigationSessionTreeNode[] } | null {
+  for (const node of nodes) {
+    if (node.workspace.id === workspaceId) {
+      return {
+        workspace: node.workspace,
+        visibleSessionTree: node.visibleSessionTree
+      };
+    }
+
+    const nestedTarget = findSidebarBatchTargetInWorktreeNodes(node.children, workspaceId);
+
+    if (nestedTarget) {
+      return nestedTarget;
     }
   }
 
@@ -1314,6 +1388,40 @@ function hasSidebarWorktreeWorkspace(
   }
 
   return findSidebarWorktreePathByWorkspaceId(nodes, workspaceId).length > 0;
+}
+
+function collectManagedWorkspaceIds(
+  groups: readonly Pick<WorkspaceSidebarGroup, "workspace" | "childWorktrees">[]
+): string[] {
+  return groups.flatMap((group) => [group.workspace.id, ...collectManagedWorktreeIds(group.childWorktrees)]);
+}
+
+function collectManagedWorktreeIds(nodes: readonly WorkspaceSidebarWorktreeNode[]): string[] {
+  return nodes.flatMap((node) => [node.workspace.id, ...collectManagedWorktreeIds(node.children)]);
+}
+
+function buildManagedWorkspaceTreePath(
+  workspaceContext: WorkspaceVisualContext,
+  ancestorDisplayNames: readonly string[] = []
+): string {
+  if (workspaceContext.tone !== "worktree") {
+    return workspaceContext.rootDisplayName;
+  }
+
+  if (ancestorDisplayNames.length > 0) {
+    return ancestorDisplayNames.join(" / ");
+  }
+
+  const segments = [workspaceContext.rootDisplayName];
+
+  if (
+    workspaceContext.parentDisplayName
+    && workspaceContext.parentDisplayName !== workspaceContext.rootDisplayName
+  ) {
+    segments.push(workspaceContext.parentDisplayName);
+  }
+
+  return segments.join(" / ");
 }
 
 type WorkspaceDropPosition = "before" | "after";
@@ -2760,6 +2868,7 @@ function SessionCard({
       data-has-subagents={hasSubagents}
       data-selecting={selectionMode}
       data-selected={selected}
+      style={createWorkspaceToneStyle(workspaceContext)}
       onContextMenu={(event) => {
         if (selectionMode || !onContextMenu) {
           return;
@@ -3014,17 +3123,30 @@ function SidebarContent({
   const [visibleWorkspaceSessionCounts, setVisibleWorkspaceSessionCounts] = useState<Record<string, number>>({});
   const [visibleSubagentCounts, setVisibleSubagentCounts] = useState<Record<string, number>>({});
   const [expandedSubagentRootIds, setExpandedSubagentRootIds] = useState<string[]>([]);
-  const [expandedWorktreeSectionWorkspaceIds, setExpandedWorktreeSectionWorkspaceIds] = useState<string[]>([]);
-  const [expandedWorktreeNodeIds, setExpandedWorktreeNodeIds] = useState<string[]>([]);
+  const [worktreeNodeExpansionState, setWorktreeNodeExpansionState] = useState<WorktreeNodeExpansionState>({
+    expandedWorkspaceIds: [],
+    collapsedWorkspaceIds: []
+  });
   const [renameTarget, setRenameTarget] = useState<NavigationSessionEntry | null>(null);
   const [renameTitleValue, setRenameTitleValue] = useState("");
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
   const [batchWorkspaceId, setBatchWorkspaceId] = useState<string | null>(null);
   const [selectedSessionIds, setSelectedSessionIds] = useState<string[]>([]);
   const [batchArchiving, setBatchArchiving] = useState(false);
+  const [workspaceNavigationSavingById, setWorkspaceNavigationSavingById] = useState<Record<string, boolean>>({});
   const [dragWorkspaceId, setDragWorkspaceId] = useState<string | null>(null);
   const createWorktreeBaseRefPickerRef = useRef<HTMLDivElement | null>(null);
   const createWorktreeBaseRefPopoverRef = useRef<HTMLDivElement | null>(null);
+  const workspaceDragCollapseFrameRef = useRef<number | null>(null);
+  const expandedWorktreeNodeIdSet = useMemo(
+    () => new Set(worktreeNodeExpansionState.expandedWorkspaceIds),
+    [worktreeNodeExpansionState.expandedWorkspaceIds]
+  );
+  const collapsedWorktreeNodeIdSet = useMemo(
+    () => new Set(worktreeNodeExpansionState.collapsedWorkspaceIds),
+    [worktreeNodeExpansionState.collapsedWorkspaceIds]
+  );
+  const workspaceReorderDragging = dragWorkspaceId !== null;
 
   const createSessionWorkspace =
     findSidebarWorkspaceById(workspaceGroups, createSessionWorkspaceId)
@@ -3069,11 +3191,19 @@ function SidebarContent({
     ? `create-worktree-base-ref-listbox-${createSessionWorkspace.id}`
     : "create-worktree-base-ref-listbox";
   const archiveWorkspaceGroup = findSidebarArchiveTarget(workspaceGroups, archiveWorkspaceId);
-  const activeBatchWorkspaceGroup =
-    workspaceGroups.find((group) => group.workspace.id === batchWorkspaceId) ?? null;
+  const archiveWorkspaceContext =
+    archiveWorkspaceGroup ? getWorkspaceContext(archiveWorkspaceGroup.workspace) : null;
+  const activeBatchWorkspaceTarget = useMemo(
+    () => findSidebarBatchTarget(workspaceGroups, batchWorkspaceId),
+    [batchWorkspaceId, workspaceGroups]
+  );
   const batchSelectableSessions = useMemo(
-    () => (activeBatchWorkspaceGroup ? flattenVisibleSessionTree(getVisibleSessionTreeNodes(activeBatchWorkspaceGroup)) : []),
-    [activeBatchWorkspaceGroup]
+    () => (
+      activeBatchWorkspaceTarget
+        ? flattenVisibleSessionTree(activeBatchWorkspaceTarget.visibleSessionTree)
+        : []
+    ),
+    [activeBatchWorkspaceTarget]
   );
   const batchSelectableSessionIds = useMemo(
     () => batchSelectableSessions.map((session) => session.sessionId),
@@ -3089,7 +3219,8 @@ function SidebarContent({
 
   useEffect(() => {
     setWorkspaceManagementStateById((current) => {
-      const knownWorkspaceIds = new Set(workspaceGroups.map((group) => group.workspace.id));
+      const allManagedWorkspaceIds = collectManagedWorkspaceIds(workspaceGroups);
+      const knownWorkspaceIds = new Set(allManagedWorkspaceIds);
       const nextState: Record<string, WorkspaceManagementViewState> = {};
 
       Object.entries(current).forEach(([workspaceId, state]) => {
@@ -3098,24 +3229,30 @@ function SidebarContent({
         }
       });
 
-      workspaceGroups.forEach((group) => {
+      allManagedWorkspaceIds.forEach((workspaceId) => {
+        const workspace = findSidebarWorkspaceById(workspaceGroups, workspaceId);
+
+        if (!workspace) {
+          return;
+        }
+
         const cachedDetail = readViewSnapshot<WorkspaceManagementSummaryDto>(
-          buildWorkspaceManagementSummarySnapshotKey(group.workspace.id),
+          buildWorkspaceManagementSummarySnapshotKey(workspaceId),
           WORKSPACE_MANAGEMENT_SNAPSHOT_CACHE_MAX_AGE_MS
         );
         const cachedGitSnapshot = readViewSnapshot<Pick<GitRealtimeSnapshotDto, "status" | "branches">>(
-          buildGitSidebarSnapshotKey(group.workspace.id),
+          buildGitSidebarSnapshotKey(workspaceId),
           WORKSPACE_MANAGEMENT_SNAPSHOT_CACHE_MAX_AGE_MS
         );
-        const currentState = nextState[group.workspace.id];
+        const currentState = nextState[workspaceId];
         let nextDetail = mergeWorkspaceManagementDetailWithWorkspace(
-          currentState?.detail ?? cachedDetail ?? createWorkspaceManagementFallback(group.workspace),
-          group.workspace
+          currentState?.detail ?? cachedDetail ?? createWorkspaceManagementFallback(workspace),
+          workspace
         );
 
         if (cachedGitSnapshot?.status || cachedGitSnapshot?.branches) {
           nextDetail = mergeWorkspaceManagementDetailWithGitSnapshot(nextDetail, {
-            workspaceId: group.workspace.id,
+            workspaceId,
             status: cachedGitSnapshot.status ?? null,
             history: [],
             historyTotalCount: 0,
@@ -3124,7 +3261,7 @@ function SidebarContent({
           });
         }
 
-        nextState[group.workspace.id] = {
+        nextState[workspaceId] = {
           detail: nextDetail,
           loading: false,
           error: null
@@ -3174,6 +3311,36 @@ function SidebarContent({
     requestGitRefresh(workspaceId);
     subscribeWorkspaceManagementSnapshot(workspaceId);
     requestWorkspaceManagementRefresh(workspaceId);
+  }
+
+  async function handleUpdateWorkspaceBackgroundColor(workspaceId: string, backgroundColor: string | null) {
+    if (workspaceNavigationSavingById[workspaceId]) {
+      return;
+    }
+
+    const normalizedBackgroundColor = backgroundColor?.trim().toUpperCase() ?? null;
+
+    setWorkspaceNavigationSavingById((current) => ({
+      ...current,
+      [workspaceId]: true
+    }));
+
+    try {
+      await updateWorkspaceNavigationState(workspaceId, {
+        backgroundColor: normalizedBackgroundColor
+      });
+      await onRefreshNavigation();
+    } catch (error) {
+      showToast({
+        title: error instanceof Error ? error.message : t("shell.manageWorkspaceColorSaveFailed"),
+        tone: "error"
+      });
+    } finally {
+      setWorkspaceNavigationSavingById((current) => ({
+        ...current,
+        [workspaceId]: false
+      }));
+    }
   }
 
   async function handleConfirmWorkspaceRemoval() {
@@ -3242,7 +3409,7 @@ function SidebarContent({
       return;
     }
 
-    if (!activeBatchWorkspaceGroup) {
+    if (!activeBatchWorkspaceTarget) {
       setBatchWorkspaceId(null);
       setSelectedSessionIds([]);
       return;
@@ -3250,7 +3417,7 @@ function SidebarContent({
 
     setSelectedSessionIds((current) => retainKnownIds(current, batchSelectableSessionIdSet));
   }, [
-    activeBatchWorkspaceGroup,
+    activeBatchWorkspaceTarget,
     batchSelectableSessionIdSet,
     batchWorkspaceId,
     selectedSessionIds.length
@@ -3264,20 +3431,25 @@ function SidebarContent({
   }, [batchSelectableSessionIds.length, batchWorkspaceId]);
 
   useEffect(() => {
-    const knownWorkspaceIdSet = new Set(workspaceGroups.map((group) => group.workspace.id));
+    const knownWorkspaceIdSet = new Set(collectManagedWorkspaceIds(workspaceGroups));
     const knownWorktreeWorkspaceIdSet = new Set(
       workspaceGroups.flatMap((group) => collectSidebarWorktreeWorkspaceIds(group.childWorktrees))
     );
 
     setExpandedManagedWorkspaceIds((current) => current.filter((workspaceId) => knownWorkspaceIdSet.has(workspaceId)));
-    setExpandedWorktreeSectionWorkspaceIds((current) =>
-      current.filter((workspaceId) => knownWorkspaceIdSet.has(workspaceId))
-    );
-    setExpandedWorktreeNodeIds((current) =>
-      current.filter((workspaceId) => knownWorktreeWorkspaceIdSet.has(workspaceId))
-    );
-    setWorkspaceRemovalTarget((current) =>
-      current && knownWorkspaceIdSet.has(current.id) ? current : null
+    setWorktreeNodeExpansionState((current) => ({
+      expandedWorkspaceIds: current.expandedWorkspaceIds.filter((workspaceId) =>
+        knownWorktreeWorkspaceIdSet.has(workspaceId)
+      ),
+      collapsedWorkspaceIds: current.collapsedWorkspaceIds.filter((workspaceId) =>
+        knownWorktreeWorkspaceIdSet.has(workspaceId)
+      )
+    }));
+    setWorkspaceRemovalTarget((current) => (current && knownWorkspaceIdSet.has(current.id) ? current : null));
+    setWorkspaceNavigationSavingById((current) =>
+      Object.fromEntries(
+        Object.entries(current).filter(([workspaceId, saving]) => saving && knownWorkspaceIdSet.has(workspaceId))
+      )
     );
   }, [workspaceGroups]);
 
@@ -3433,7 +3605,6 @@ function SidebarContent({
       return;
     }
 
-    const workspaceSectionIdsToExpand: string[] = [];
     const worktreeNodeIdsToExpand: string[] = [];
 
     for (const group of workspaceGroups) {
@@ -3443,29 +3614,12 @@ function SidebarContent({
         continue;
       }
 
-      workspaceSectionIdsToExpand.push(group.workspace.id);
       worktreeNodeIdsToExpand.push(...worktreePath);
     }
 
-    if (workspaceSectionIdsToExpand.length > 0) {
-      setExpandedWorktreeSectionWorkspaceIds((current) => {
-        const currentSet = new Set(current);
-        let changed = false;
-
-        for (const workspaceId of workspaceSectionIdsToExpand) {
-          if (!currentSet.has(workspaceId)) {
-            currentSet.add(workspaceId);
-            changed = true;
-          }
-        }
-
-        return changed ? Array.from(currentSet) : current;
-      });
-    }
-
     if (worktreeNodeIdsToExpand.length > 0) {
-      setExpandedWorktreeNodeIds((current) => {
-        const currentSet = new Set(current);
+      setWorktreeNodeExpansionState((current) => {
+        const currentSet = new Set(current.expandedWorkspaceIds);
         let changed = false;
 
         for (const workspaceId of worktreeNodeIdsToExpand) {
@@ -3475,7 +3629,14 @@ function SidebarContent({
           }
         }
 
-        return changed ? Array.from(currentSet) : current;
+        if (!changed) {
+          return current;
+        }
+
+        return {
+          expandedWorkspaceIds: Array.from(currentSet),
+          collapsedWorkspaceIds: current.collapsedWorkspaceIds
+        };
       });
     }
   }, [activeWorkspaceId, workspaceGroups]);
@@ -3675,6 +3836,11 @@ function SidebarContent({
   }
 
   function clearWorkspaceDragState() {
+    if (workspaceDragCollapseFrameRef.current !== null) {
+      cancelAnimationFrame(workspaceDragCollapseFrameRef.current);
+      workspaceDragCollapseFrameRef.current = null;
+    }
+
     setDragWorkspaceId(null);
   }
 
@@ -3685,7 +3851,17 @@ function SidebarContent({
     event.dataTransfer.effectAllowed = "move";
     event.dataTransfer.setData("text/plain", workspaceId);
     onStartWorkspaceReorder();
-    setDragWorkspaceId(workspaceId);
+
+    if (workspaceDragCollapseFrameRef.current !== null) {
+      cancelAnimationFrame(workspaceDragCollapseFrameRef.current);
+    }
+
+    // 让浏览器先稳定建立拖拽源，再统一临时收起全部工作区。
+    // 否则拖拽非第一项时，上方分组瞬间收起会导致源节点跳位，原生拖拽很容易直接失效。
+    workspaceDragCollapseFrameRef.current = requestAnimationFrame(() => {
+      workspaceDragCollapseFrameRef.current = null;
+      setDragWorkspaceId(workspaceId);
+    });
   }
 
   function handleWorkspaceDragOver(
@@ -3752,24 +3928,33 @@ function SidebarContent({
     );
   }
 
-  function isWorktreeSectionExpanded(workspaceId: string) {
-    return expandedWorktreeSectionWorkspaceIds.includes(workspaceId);
+  function isWorktreeNodeExpanded(workspaceId: string, containsActiveWorkspace: boolean) {
+    if (collapsedWorktreeNodeIdSet.has(workspaceId)) {
+      return false;
+    }
+
+    return containsActiveWorkspace || expandedWorktreeNodeIdSet.has(workspaceId);
   }
 
-  function handleToggleWorktreeSection(workspaceId: string) {
-    setExpandedWorktreeSectionWorkspaceIds((current) =>
-      current.includes(workspaceId) ? current.filter((item) => item !== workspaceId) : [...current, workspaceId]
-    );
-  }
+  function handleToggleWorktreeNode(workspaceId: string, containsActiveWorkspace: boolean) {
+    const nextExpanded = !isWorktreeNodeExpanded(workspaceId, containsActiveWorkspace);
 
-  function isWorktreeNodeExpanded(workspaceId: string) {
-    return expandedWorktreeNodeIds.includes(workspaceId);
-  }
+    setWorktreeNodeExpansionState((current) => {
+      const expandedWorkspaceIds = current.expandedWorkspaceIds.filter((item) => item !== workspaceId);
+      const collapsedWorkspaceIds = current.collapsedWorkspaceIds.filter((item) => item !== workspaceId);
 
-  function handleToggleWorktreeNode(workspaceId: string) {
-    setExpandedWorktreeNodeIds((current) =>
-      current.includes(workspaceId) ? current.filter((item) => item !== workspaceId) : [...current, workspaceId]
-    );
+      if (nextExpanded) {
+        return {
+          expandedWorkspaceIds: [...expandedWorkspaceIds, workspaceId],
+          collapsedWorkspaceIds
+        };
+      }
+
+      return {
+        expandedWorkspaceIds,
+        collapsedWorkspaceIds: [...collapsedWorkspaceIds, workspaceId]
+      };
+    });
   }
 
   function getFavoriteChildSessions(sessionId: string) {
@@ -3788,10 +3973,14 @@ function SidebarContent({
   }
 
   function renderArchiveFolder(workspace: WorkspaceDto, archivedSessions: readonly SessionSummaryDto[]) {
+    const workspaceContext = getWorkspaceContext(workspace);
+
     return (
       <button
         type="button"
         className="workbench-archive-folder"
+        data-workspace-tone={workspaceContext.tone}
+        style={createWorkspaceToneStyle(workspaceContext)}
         onClick={() => setArchiveWorkspaceId(workspace.id)}
       >
         <span className="workbench-archive-folder-main">
@@ -3803,29 +3992,104 @@ function SidebarContent({
     );
   }
 
+  function renderWorkspaceBatchToolbar() {
+    return (
+      <div className="workbench-workspace-batch-toolbar">
+        <span className="workbench-workspace-batch-label">{t("shell.batchSelectionMode")}</span>
+        <span className="workbench-workspace-batch-counter">
+          {selectedSessionIds.length}/{batchSelectableSessionIds.length}
+        </span>
+        <button
+          type="button"
+          className="workbench-workspace-batch-action"
+          onClick={handleToggleSelectAllSessions}
+        >
+          {allBatchSessionsSelected ? t("shell.clearSelectedSessions") : t("shell.selectAllSessions")}
+        </button>
+        <button
+          type="button"
+          className="workbench-workspace-batch-action primary"
+          disabled={selectedSessionIds.length === 0 || batchArchiving}
+          onClick={() => {
+            void handleArchiveSelectedSessions();
+          }}
+        >
+          {batchArchiving ? t("shell.batchArchiving") : t("shell.batchArchiveAction")}
+        </button>
+        <button
+          type="button"
+          className="workbench-workspace-batch-action"
+          onClick={handleStopBatchSelection}
+        >
+          {t("common.cancel")}
+        </button>
+      </div>
+    );
+  }
+
+  function renderWorkspaceActionButtons(workspaceId: string, className = "workbench-workspace-actions") {
+    return (
+      <div className={className}>
+        <button
+          type="button"
+          className="workbench-workspace-icon-button"
+          aria-label={t("shell.switchWorkspace")}
+          title={t("shell.switchWorkspace")}
+          aria-pressed={activeWorkspaceId === workspaceId}
+          onClick={() => {
+            onSelectWorkspace(workspaceId);
+            onClose?.();
+          }}
+        >
+          <WorkspaceSwitchIcon />
+        </button>
+        <button
+          type="button"
+          className="workbench-workspace-icon-button"
+          aria-label={t("shell.batchSelectSessions")}
+          title={t("shell.batchSelectSessions")}
+          onClick={() => handleStartBatchSelection(workspaceId)}
+        >
+          <MultiSelectIcon />
+        </button>
+        <button
+          type="button"
+          className="workbench-workspace-icon-button workbench-workspace-create"
+          aria-label={t("shell.createSession")}
+          title={t("shell.createSession")}
+          onClick={() => setCreateSessionWorkspaceId(workspaceId)}
+        >
+          <PlusIcon />
+        </button>
+      </div>
+    );
+  }
+
   function renderWorktreeNode(node: WorkspaceSidebarWorktreeNode): JSX.Element {
     const visibleSessionTree = node.visibleSessionTree;
     const childWorkspaceIdSet = new Set(collectSidebarWorktreeWorkspaceIds(node.children));
     const hasActiveChildWorkspace = childWorkspaceIdSet.has(activeWorkspaceId ?? "");
     const containsActiveWorkspace = node.workspace.id === activeWorkspaceId || hasActiveChildWorkspace;
-    const isCollapsed = !containsActiveWorkspace && !isWorktreeNodeExpanded(node.workspace.id);
-    const childWorktreeSectionExpanded =
-      node.children.length > 0
-      && (hasActiveChildWorkspace || isWorktreeSectionExpanded(node.workspace.id));
+    const isCollapsed =
+      workspaceReorderDragging || !isWorktreeNodeExpanded(node.workspace.id, containsActiveWorkspace);
+    const workspaceContext = getWorkspaceContext(node.workspace);
 
     return (
       <section
         key={node.workspace.id}
         className="workbench-workspace-group"
         data-worktree-node="true"
+        data-batch-active={batchWorkspaceId === node.workspace.id}
         data-worktree-depth={node.meta.depth}
+        data-workspace-tone="worktree"
+        style={createWorkspaceToneStyle(workspaceContext)}
       >
         <div className="workbench-workspace-header minimal">
           <button
             type="button"
             className="workbench-workspace-toggle"
             aria-label={isCollapsed ? t("shell.worktreeExpand") : t("shell.worktreeCollapse")}
-            onClick={() => handleToggleWorktreeNode(node.workspace.id)}
+            onClick={() => handleToggleWorktreeNode(node.workspace.id, containsActiveWorkspace)}
           >
             <span className="workbench-workspace-toggle-icon" aria-hidden="true">
               <ChevronIcon expanded={!isCollapsed} />
@@ -3836,35 +4100,18 @@ function SidebarContent({
             </span>
           </button>
 
-          <div className="workbench-workspace-actions minimal">
-            <button
-              type="button"
-              className="workbench-workspace-icon-button"
-              aria-label={t("shell.switchWorkspace")}
-              title={t("shell.switchWorkspace")}
-              aria-pressed={activeWorkspaceId === node.workspace.id}
-              onClick={() => {
-                onSelectWorkspace(node.workspace.id);
-                onClose?.();
-              }}
-            >
-              <WorkspaceSwitchIcon />
-            </button>
-            <button
-              type="button"
-              className="workbench-workspace-icon-button workbench-workspace-create"
-              aria-label={t("shell.createSession")}
-              title={t("shell.createSession")}
-              onClick={() => setCreateSessionWorkspaceId(node.workspace.id)}
-            >
-              <PlusIcon />
-            </button>
-          </div>
+          {batchWorkspaceId === node.workspace.id
+            ? renderWorkspaceBatchToolbar()
+            : renderWorkspaceActionButtons(node.workspace.id)}
         </div>
 
         {!isCollapsed ? (
           <>
-            <div className="workbench-session-list">
+            <div
+              className="workbench-session-list"
+              data-workspace-tone={workspaceContext.tone}
+              style={createWorkspaceToneStyle(workspaceContext)}
+            >
               {visibleSessionTree.length === 0 ? (
                 <p className="workbench-session-empty">{t("shell.emptyWorkspaceSessions")}</p>
               ) : (
@@ -3874,10 +4121,10 @@ function SidebarContent({
                     renderSessionTreeBranch({
                       node: treeNode,
                       workspace: node.workspace,
-                      workspaceContext: getWorkspaceContext(node.workspace),
+                      workspaceContext,
                       menuKeyPrefix: `worktree:${node.workspace.id}`,
                       showWorkspaceName: false,
-                      selectionMode: false,
+                      selectionMode: batchWorkspaceId === node.workspace.id,
                       favoriteEnabled: true
                     })
                   )
@@ -3894,30 +4141,9 @@ function SidebarContent({
             </div>
 
             {node.children.length > 0 ? (
-              <section className="workbench-section-block">
-                <button
-                  type="button"
-                  className="workbench-section-heading workbench-section-heading-button"
-                  aria-label={
-                    childWorktreeSectionExpanded
-                      ? t("shell.worktreeSectionCollapse")
-                      : t("shell.worktreeSectionExpand")
-                  }
-                  aria-expanded={childWorktreeSectionExpanded}
-                  onClick={() => handleToggleWorktreeSection(node.workspace.id)}
-                >
-                  <span className="workbench-section-heading-main">
-                    <ChevronIcon expanded={childWorktreeSectionExpanded} />
-                    <span>{t("shell.worktreeSectionTitle")}</span>
-                  </span>
-                  <span className="workbench-section-counter">{node.children.length}</span>
-                </button>
-                {childWorktreeSectionExpanded ? (
-                  <div className="workbench-session-list">
-                    {node.children.map((childNode) => renderWorktreeNode(childNode))}
-                  </div>
-                ) : null}
-              </section>
+              <div className="workbench-session-list workbench-worktree-child-list">
+                {node.children.map((childNode) => renderWorktreeNode(childNode))}
+              </div>
             ) : null}
 
             {renderArchiveFolder(node.workspace, node.archivedSessions)}
@@ -4380,6 +4606,255 @@ function SidebarContent({
     return workspaceVisualContextMap[workspace.id] ?? createFallbackWorkspaceVisualContext(workspace);
   }
 
+  function renderManagedWorkspaceItem(
+    workspace: WorkspaceDto,
+    ownSessionCount: number,
+    childNodes: readonly WorkspaceSidebarWorktreeNode[],
+    isWorktree: boolean,
+    ancestorDisplayNames: readonly string[] = []
+  ): JSX.Element {
+    const isExpanded = expandedManagedWorkspaceIds.includes(workspace.id);
+    const managementState = workspaceManagementStateById[workspace.id] ?? {
+      detail: null,
+      loading: false,
+      error: null
+    };
+    const isRemovingCurrentWorkspace = removingWorkspaceId === workspace.id;
+    const isSavingColor = workspaceNavigationSavingById[workspace.id] === true;
+    const remoteSummary =
+      managementState.detail?.git.remotes.length
+        ? managementState.detail.git.remotes
+            .map((remote) => `${remote.name}: ${remote.url}`)
+            .join(" · ")
+        : t("shell.manageWorkspaceNoRemote");
+    const compositionChartItems = managementState.detail
+      ? buildWorkspaceCompositionChartItems(
+          managementState.detail.codeComposition.items,
+          t("shell.manageWorkspaceCodeCompositionOther")
+        )
+      : [];
+    const compositionChartStyle =
+      compositionChartItems.length > 0
+        ? createWorkspaceCompositionChartStyle(compositionChartItems)
+        : undefined;
+    const workspaceContext = getWorkspaceContext(workspace);
+    const treePathLabel = buildManagedWorkspaceTreePath(workspaceContext, ancestorDisplayNames);
+    const nextAncestorDisplayNames = [...ancestorDisplayNames, workspaceContext.displayName];
+
+    return (
+      <article
+        key={workspace.id}
+        className="workbench-manage-item"
+        data-workspace-tone={workspaceContext.tone}
+        data-worktree-node={isWorktree}
+        style={createWorkspaceToneStyle(workspaceContext)}
+      >
+        <button
+          type="button"
+          className="workbench-manage-item-toggle"
+          aria-expanded={isExpanded}
+          onClick={() => handleToggleManagedWorkspace(workspace.id)}
+        >
+          <span className="workbench-manage-item-heading">
+            <ChevronIcon expanded={isExpanded} />
+            <span className="workbench-manage-item-heading-copy">
+              <strong>{workspaceContext.displayName}</strong>
+              <span className="workbench-manage-item-tree-path">{treePathLabel}</span>
+            </span>
+          </span>
+          <span className="workbench-section-counter">{ownSessionCount}</span>
+        </button>
+
+        {isExpanded ? (
+          <div className="workbench-manage-item-body">
+            <div className="workbench-manage-detail-block">
+              <span className="workbench-manage-detail-label">
+                {t("shell.manageWorkspacePathLabel")}
+              </span>
+              <p className="workbench-manage-detail-value">{workspace.path}</p>
+            </div>
+
+            {isWorktree ? (
+              <div className="workbench-manage-detail-block">
+                <div className="workbench-manage-detail-header">
+                  <span className="workbench-manage-detail-label">
+                    {t("shell.manageWorkspaceColorLabel")}
+                  </span>
+                  <div className="workbench-manage-color-actions">
+                    <div className="workbench-manage-color-palette" aria-label={t("shell.manageWorkspaceColorLabel")}>
+                      {WORKSPACE_COLOR_PRESETS.map((color) => (
+                        <button
+                          key={color}
+                          type="button"
+                          className="workbench-manage-color-swatch"
+                          aria-label={t("shell.manageWorkspaceColorSelectSwatch", {
+                            color
+                          })}
+                          aria-pressed={workspace.backgroundColor === color}
+                          disabled={isSavingColor}
+                          data-selected={workspace.backgroundColor === color}
+                          style={{ backgroundColor: color }}
+                          onClick={() => {
+                            void handleUpdateWorkspaceBackgroundColor(workspace.id, color);
+                          }}
+                        />
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      disabled={isSavingColor || !workspace.backgroundColor}
+                      onClick={() => {
+                        void handleUpdateWorkspaceBackgroundColor(workspace.id, null);
+                      }}
+                    >
+                      {t("shell.manageWorkspaceColorClearAction")}
+                    </button>
+                  </div>
+                </div>
+                <p className="workbench-manage-hint">
+                  {workspace.backgroundColor ?? t("shell.manageWorkspaceColorUnset")}
+                </p>
+              </div>
+            ) : null}
+
+            {managementState.loading && managementState.detail === null ? (
+              <p className="workbench-manage-status status-text">
+                {t("shell.manageWorkspaceLoading")}
+              </p>
+            ) : null}
+
+            {managementState.error ? (
+              <p className="workbench-manage-status status-text" data-tone="error">
+                {managementState.error}
+              </p>
+            ) : null}
+
+            {managementState.detail ? (
+              <>
+                <div className="workbench-manage-detail-block">
+                  <div className="workbench-manage-detail-header">
+                    <span className="workbench-manage-detail-label">
+                      {t("shell.manageWorkspaceGitCommitCount")}
+                    </span>
+                    <strong className="workbench-manage-detail-accent">
+                      {managementState.detail.git.commitCount ?? "--"}
+                    </strong>
+                  </div>
+                </div>
+
+                <div className="workbench-manage-detail-block">
+                  <span className="workbench-manage-detail-label">
+                    {t("shell.manageWorkspaceGitInfoLabel")}
+                  </span>
+                  {managementState.detail.git.isRepository ? (
+                    <div className="workbench-manage-kv-list">
+                      <div className="workbench-manage-kv-item">
+                        <span>{t("shell.manageWorkspaceRepoRoot")}</span>
+                        <span>{managementState.detail.git.repoRoot ?? "--"}</span>
+                      </div>
+                      <div className="workbench-manage-kv-item">
+                        <span>{t("shell.manageWorkspaceCurrentBranch")}</span>
+                        <span>{managementState.detail.git.currentBranch ?? "--"}</span>
+                      </div>
+                      <div className="workbench-manage-kv-item">
+                        <span>{t("shell.manageWorkspaceRemoteLabel")}</span>
+                        <span>{remoteSummary}</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="workbench-section-empty">
+                      {managementState.detail.git.error ?? t("shell.manageWorkspaceNotGit")}
+                    </p>
+                  )}
+                </div>
+
+                <div className="workbench-manage-detail-block">
+                  <span className="workbench-manage-detail-label">
+                    {t("shell.manageWorkspaceCodeCompositionLabel")}
+                  </span>
+                  {compositionChartItems.length > 0 ? (
+                    <div className="workbench-manage-type-chart">
+                      <div
+                        className="workbench-manage-type-chart-ring"
+                        style={compositionChartStyle}
+                        aria-hidden="true"
+                      >
+                        <strong className="workbench-manage-type-chart-total">
+                          {managementState.detail.codeComposition.scannedFileCount}
+                        </strong>
+                        <span className="workbench-manage-type-chart-caption">
+                          {t("shell.manageWorkspaceCodeCompositionFiles")}
+                        </span>
+                      </div>
+
+                      <div className="workbench-manage-type-list">
+                        {compositionChartItems.map((item) => (
+                          <div key={item.key} className="workbench-manage-type-item">
+                            <span className="workbench-manage-type-meta">
+                              <span
+                                className="workbench-manage-type-swatch"
+                                style={{ backgroundColor: item.color }}
+                                aria-hidden="true"
+                              />
+                              <span className="workbench-manage-type-name">{item.type}</span>
+                            </span>
+                            <span>
+                              {item.count} · {formatWorkspaceCompositionRatio(item)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="workbench-section-empty">
+                      {managementState.detail.codeComposition.error ??
+                        t("shell.manageWorkspaceNoCodeComposition")}
+                    </p>
+                  )}
+                  {managementState.detail.codeComposition.truncated ? (
+                    <p className="workbench-manage-hint">
+                      {t("shell.manageWorkspaceCodeTruncated", {
+                        count: managementState.detail.codeComposition.scannedFileCount
+                      })}
+                    </p>
+                  ) : null}
+                </div>
+              </>
+            ) : null}
+
+            <div className="workbench-modal-actions">
+              <button
+                type="button"
+                className="secondary-button workbench-danger-button"
+                disabled={Boolean(removingWorkspaceId)}
+                onClick={() => setWorkspaceRemovalTarget(workspace)}
+              >
+                {isRemovingCurrentWorkspace
+                  ? t("shell.manageWorkspaceRemoving")
+                  : t("shell.manageWorkspaceRemoveAction")}
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        {childNodes.length > 0 ? (
+          <div className="workbench-manage-children">
+            {childNodes.map((childNode) =>
+              renderManagedWorkspaceItem(
+                childNode.workspace,
+                childNode.visibleSessions.length + childNode.archivedSessions.length,
+                childNode.children,
+                true,
+                nextAncestorDisplayNames
+              )
+            )}
+          </div>
+        ) : null}
+      </article>
+    );
+  }
+
   return (
     <>
       <div
@@ -4581,14 +5056,7 @@ function SidebarContent({
         {workspaceGroups.map((group) => {
           const visibleSessionTree = getVisibleSessionTreeNodes(group);
           const isDraggedWorkspace = dragWorkspaceId === group.workspace.id;
-          const hasActiveChildWorkspace = hasSidebarWorktreeWorkspace(group.childWorktrees, activeWorkspaceId);
-          const containsActiveWorkspace =
-            group.workspace.id === activeWorkspaceId || hasActiveChildWorkspace;
-          const isWorkspaceCollapsed =
-            (!containsActiveWorkspace && group.isCollapsed) || isDraggedWorkspace;
-          const worktreeSectionExpanded =
-            group.childWorktrees.length > 0
-            && (hasActiveChildWorkspace || isWorktreeSectionExpanded(group.workspace.id));
+          const isWorkspaceCollapsed = group.isCollapsed || workspaceReorderDragging;
 
           return (
             <section
@@ -4621,70 +5089,9 @@ function SidebarContent({
                 </button>
 
                 {batchWorkspaceId === group.workspace.id ? (
-                  <div className="workbench-workspace-batch-toolbar">
-                    <span className="workbench-workspace-batch-label">{t("shell.batchSelectionMode")}</span>
-                    <span className="workbench-workspace-batch-counter">
-                      {selectedSessionIds.length}/{batchSelectableSessionIds.length}
-                    </span>
-                    <button
-                      type="button"
-                      className="workbench-workspace-batch-action"
-                      onClick={handleToggleSelectAllSessions}
-                    >
-                      {allBatchSessionsSelected ? t("shell.clearSelectedSessions") : t("shell.selectAllSessions")}
-                    </button>
-                    <button
-                      type="button"
-                      className="workbench-workspace-batch-action primary"
-                      disabled={selectedSessionIds.length === 0 || batchArchiving}
-                      onClick={() => {
-                        void handleArchiveSelectedSessions();
-                      }}
-                    >
-                      {batchArchiving ? t("shell.batchArchiving") : t("shell.batchArchiveAction")}
-                    </button>
-                    <button
-                      type="button"
-                      className="workbench-workspace-batch-action"
-                      onClick={handleStopBatchSelection}
-                    >
-                      {t("common.cancel")}
-                    </button>
-                  </div>
+                  renderWorkspaceBatchToolbar()
                 ) : (
-                  <div className="workbench-workspace-actions">
-                    <button
-                      type="button"
-                      className="workbench-workspace-icon-button"
-                      aria-label={t("shell.switchWorkspace")}
-                      title={t("shell.switchWorkspace")}
-                      aria-pressed={activeWorkspaceId === group.workspace.id}
-                      onClick={() => {
-                        onSelectWorkspace(group.workspace.id);
-                        onClose?.();
-                      }}
-                    >
-                      <WorkspaceSwitchIcon />
-                    </button>
-                    <button
-                      type="button"
-                      className="workbench-workspace-icon-button"
-                      aria-label={t("shell.batchSelectSessions")}
-                      title={t("shell.batchSelectSessions")}
-                      onClick={() => handleStartBatchSelection(group.workspace.id)}
-                    >
-                      <MultiSelectIcon />
-                    </button>
-                    <button
-                      type="button"
-                      className="workbench-workspace-icon-button workbench-workspace-create"
-                      aria-label={t("shell.createSession")}
-                      title={t("shell.createSession")}
-                      onClick={() => setCreateSessionWorkspaceId(group.workspace.id)}
-                    >
-                      <PlusIcon />
-                    </button>
-                  </div>
+                  renderWorkspaceActionButtons(group.workspace.id)
                 )}
               </div>
 
@@ -4722,30 +5129,9 @@ function SidebarContent({
                   </div>
 
                   {group.childWorktrees.length > 0 ? (
-                    <section className="workbench-section-block">
-                      <button
-                        type="button"
-                        className="workbench-section-heading workbench-section-heading-button"
-                        aria-label={
-                          worktreeSectionExpanded
-                            ? t("shell.worktreeSectionCollapse")
-                            : t("shell.worktreeSectionExpand")
-                        }
-                        aria-expanded={worktreeSectionExpanded}
-                        onClick={() => handleToggleWorktreeSection(group.workspace.id)}
-                      >
-                        <span className="workbench-section-heading-main">
-                          <ChevronIcon expanded={worktreeSectionExpanded} />
-                          <span>{t("shell.worktreeSectionTitle")}</span>
-                        </span>
-                        <span className="workbench-section-counter">{group.childWorktrees.length}</span>
-                      </button>
-                      {worktreeSectionExpanded ? (
-                        <div className="workbench-session-list">
-                          {group.childWorktrees.map((node) => renderWorktreeNode(node))}
-                        </div>
-                      ) : null}
-                    </section>
+                    <div className="workbench-session-list workbench-worktree-child-list">
+                      {group.childWorktrees.map((node) => renderWorktreeNode(node))}
+                    </div>
                   ) : null}
 
                   {renderArchiveFolder(group.workspace, group.archivedSessions)}
@@ -4783,179 +5169,14 @@ function SidebarContent({
       >
         {workspaceGroups.length > 0 ? (
           <div className="workbench-manage-list">
-            {workspaceGroups.map((group) => {
-              const isExpanded = expandedManagedWorkspaceIds.includes(group.workspace.id);
-              const managementState = workspaceManagementStateById[group.workspace.id] ?? {
-                detail: null,
-                loading: false,
-                error: null
-              };
-              const isRemovingCurrentWorkspace = removingWorkspaceId === group.workspace.id;
-              const remoteSummary =
-                managementState.detail?.git.remotes.length
-                  ? managementState.detail.git.remotes
-                      .map((remote) => `${remote.name}: ${remote.url}`)
-                      .join(" · ")
-                  : t("shell.manageWorkspaceNoRemote");
-              const workspaceSessionCount =
-                group.visibleSessions.length + group.archivedSessions.length;
-              const compositionChartItems = managementState.detail
-                ? buildWorkspaceCompositionChartItems(
-                    managementState.detail.codeComposition.items,
-                    t("shell.manageWorkspaceCodeCompositionOther")
-                  )
-                : [];
-              const compositionChartStyle =
-                compositionChartItems.length > 0
-                  ? createWorkspaceCompositionChartStyle(compositionChartItems)
-                  : undefined;
-
-              return (
-                <article key={group.workspace.id} className="workbench-manage-item">
-                  <button
-                    type="button"
-                    className="workbench-manage-item-toggle"
-                    aria-expanded={isExpanded}
-                    onClick={() => handleToggleManagedWorkspace(group.workspace.id)}
-                  >
-                    <span className="workbench-manage-item-heading">
-                      <ChevronIcon expanded={isExpanded} />
-                      <strong>{group.workspace.name}</strong>
-                    </span>
-                    <span className="workbench-section-counter">{workspaceSessionCount}</span>
-                  </button>
-
-                  {isExpanded ? (
-                    <div className="workbench-manage-item-body">
-                      <div className="workbench-manage-detail-block">
-                        <span className="workbench-manage-detail-label">
-                          {t("shell.manageWorkspacePathLabel")}
-                        </span>
-                        <p className="workbench-manage-detail-value">{group.workspace.path}</p>
-                      </div>
-
-                      {managementState.loading && managementState.detail === null ? (
-                        <p className="workbench-manage-status status-text">
-                          {t("shell.manageWorkspaceLoading")}
-                        </p>
-                      ) : null}
-
-                      {managementState.error ? (
-                        <p className="workbench-manage-status status-text" data-tone="error">
-                          {managementState.error}
-                        </p>
-                      ) : null}
-
-                      {managementState.detail ? (
-                        <>
-                          <div className="workbench-manage-detail-block">
-                            <div className="workbench-manage-detail-header">
-                              <span className="workbench-manage-detail-label">
-                                {t("shell.manageWorkspaceGitCommitCount")}
-                              </span>
-                              <strong className="workbench-manage-detail-accent">
-                                {managementState.detail.git.commitCount ?? "--"}
-                              </strong>
-                            </div>
-                          </div>
-
-                          <div className="workbench-manage-detail-block">
-                            <span className="workbench-manage-detail-label">
-                              {t("shell.manageWorkspaceGitInfoLabel")}
-                            </span>
-                            {managementState.detail.git.isRepository ? (
-                              <div className="workbench-manage-kv-list">
-                                <div className="workbench-manage-kv-item">
-                                  <span>{t("shell.manageWorkspaceRepoRoot")}</span>
-                                  <span>{managementState.detail.git.repoRoot ?? "--"}</span>
-                                </div>
-                                <div className="workbench-manage-kv-item">
-                                  <span>{t("shell.manageWorkspaceCurrentBranch")}</span>
-                                  <span>{managementState.detail.git.currentBranch ?? "--"}</span>
-                                </div>
-                                <div className="workbench-manage-kv-item">
-                                  <span>{t("shell.manageWorkspaceRemoteLabel")}</span>
-                                  <span>{remoteSummary}</span>
-                                </div>
-                              </div>
-                            ) : (
-                              <p className="workbench-section-empty">
-                                {managementState.detail.git.error ?? t("shell.manageWorkspaceNotGit")}
-                              </p>
-                            )}
-                          </div>
-
-                          <div className="workbench-manage-detail-block">
-                            <span className="workbench-manage-detail-label">
-                              {t("shell.manageWorkspaceCodeCompositionLabel")}
-                            </span>
-                            {compositionChartItems.length > 0 ? (
-                              <div className="workbench-manage-type-chart">
-                                <div
-                                  className="workbench-manage-type-chart-ring"
-                                  style={compositionChartStyle}
-                                  aria-hidden="true"
-                                >
-                                  <strong className="workbench-manage-type-chart-total">
-                                    {managementState.detail.codeComposition.scannedFileCount}
-                                  </strong>
-                                  <span className="workbench-manage-type-chart-caption">
-                                    {t("shell.manageWorkspaceCodeCompositionFiles")}
-                                  </span>
-                                </div>
-
-                                <div className="workbench-manage-type-list">
-                                  {compositionChartItems.map((item) => (
-                                    <div key={item.key} className="workbench-manage-type-item">
-                                      <span className="workbench-manage-type-meta">
-                                        <span
-                                          className="workbench-manage-type-swatch"
-                                          style={{ backgroundColor: item.color }}
-                                          aria-hidden="true"
-                                        />
-                                        <span className="workbench-manage-type-name">{item.type}</span>
-                                      </span>
-                                      <span>
-                                        {item.count} · {formatWorkspaceCompositionRatio(item)}
-                                      </span>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            ) : (
-                              <p className="workbench-section-empty">
-                                {managementState.detail.codeComposition.error ??
-                                  t("shell.manageWorkspaceNoCodeComposition")}
-                              </p>
-                            )}
-                            {managementState.detail.codeComposition.truncated ? (
-                              <p className="workbench-manage-hint">
-                                {t("shell.manageWorkspaceCodeTruncated", {
-                                  count: managementState.detail.codeComposition.scannedFileCount
-                                })}
-                              </p>
-                            ) : null}
-                          </div>
-                        </>
-                      ) : null}
-
-                      <div className="workbench-modal-actions">
-                        <button
-                          type="button"
-                          className="secondary-button workbench-danger-button"
-                          disabled={Boolean(removingWorkspaceId)}
-                          onClick={() => setWorkspaceRemovalTarget(group.workspace)}
-                        >
-                          {isRemovingCurrentWorkspace
-                            ? t("shell.manageWorkspaceRemoving")
-                            : t("shell.manageWorkspaceRemoveAction")}
-                        </button>
-                      </div>
-                    </div>
-                  ) : null}
-                </article>
-              );
-            })}
+            {workspaceGroups.map((group) =>
+              renderManagedWorkspaceItem(
+                group.workspace,
+                group.visibleSessions.length + group.archivedSessions.length,
+                group.childWorktrees,
+                false
+              )
+            )}
           </div>
         ) : (
           <p className="workbench-section-empty">{t("shell.manageWorkspaceEmpty")}</p>
@@ -5380,12 +5601,21 @@ function SidebarContent({
         onClose={() => setArchiveWorkspaceId(null)}
       >
         {archiveWorkspaceGroup && archiveWorkspaceGroup.archivedSessions.length > 0 ? (
-          <div className="workbench-archive-list">
+          <div
+            className="workbench-archive-list"
+            data-workspace-tone={archiveWorkspaceContext?.tone ?? "root"}
+            style={createWorkspaceToneStyle(archiveWorkspaceContext)}
+          >
             {archiveWorkspaceGroup.archivedSessions.map((session) => {
               const titlePresentation = buildSessionTitlePresentation(session.title, t("common.unknown"));
 
               return (
-                <article key={session.sessionId} className="workbench-archive-item">
+                <article
+                  key={session.sessionId}
+                  className="workbench-archive-item"
+                  data-workspace-tone={archiveWorkspaceContext?.tone ?? "root"}
+                  style={createWorkspaceToneStyle(archiveWorkspaceContext)}
+                >
                   <div className="workbench-archive-item-main">
                     <strong title={titlePresentation.fullTitle}>{titlePresentation.displayTitle}</strong>
                     <p>
@@ -5817,6 +6047,7 @@ function WorkbenchInfoPanel({
       <div
         className="workbench-auxiliary-header"
         data-workspace-tone={workspaceContext?.tone ?? "root"}
+        style={createWorkspaceToneStyle(workspaceContext)}
         data-window-drag-handle="workbench-auxiliary-header"
         onMouseDownCapture={handleHeaderMouseDownCapture}
       >
@@ -5890,7 +6121,7 @@ function WorkbenchInfoPanel({
       <div className="workbench-auxiliary-body">
         {!panelReady ? <InfoPanelSkeleton /> : null}
 
-        {panelReady && worktreeMeta ? (
+        {panelReady && activeTab === "git" && worktreeMeta ? (
           <WorktreeMergePanel
             meta={worktreeMeta}
             state={worktreeMergeState}
@@ -5954,18 +6185,31 @@ function WorktreeMergePanel({
   onApply: () => void;
   onCleanup: () => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
   const preview = state?.preview ?? null;
   const loading = state?.loading ?? false;
   const applying = state?.applying ?? false;
   const cleaning = state?.cleaning ?? false;
   const hasPreview = preview !== null;
-  const isMerged = meta.lifecycleStatus === "merged" || preview?.alreadyMerged === true;
-  const canApply = preview?.canMerge === true && !loading && !applying && !cleaning && !isMerged;
-  const canCleanup = isMerged && !loading && !applying && !cleaning;
+  // “是否已经合回父工作区”只能信预检结果，不能拿本地生命周期状态瞎猜。
+  const isMerged = preview?.alreadyMerged === true;
+  const blockerCodeSet = new Set(preview?.blockers.map((item) => item.code) ?? []);
+  const hasBlockingIssues = blockerCodeSet.size > 0 || Boolean(state?.error);
+  const showMergedState = isMerged && !hasBlockingIssues;
+  const canApply = preview?.canMerge === true && !loading && !applying && !cleaning && !showMergedState;
+  const canCleanup =
+    showMergedState
+    && !loading
+    && !applying
+    && !cleaning
+    && !blockerCodeSet.has("SOURCE_DIRTY")
+    && !blockerCodeSet.has("HAS_ACTIVE_CHILDREN");
   const statusTone =
     loading || applying || cleaning
       ? "loading"
-      : isMerged
+      : hasBlockingIssues
+        ? "blocked"
+        : showMergedState
         ? "merged"
         : preview?.canMerge
           ? "ready"
@@ -5973,113 +6217,335 @@ function WorktreeMergePanel({
             ? "blocked"
             : "idle";
   const targetWorkspaceName = preview?.targetWorkspace.name ?? t("common.unknown");
-  const blockerDetails = preview?.blockers.map((item) => item.detail) ?? [];
+  const currentBranchName = preview?.sourceBranchName ?? meta.branchName;
+  const parentBranchName = preview?.targetBranchName ?? meta.baseRef ?? t("common.unknown");
+  const checklistItems = buildWorktreeMergeChecklistItems({
+    t,
+    hasPreview,
+    showMergedState,
+    isMerged,
+    canMerge: preview?.canMerge === true,
+    ahead: preview?.ahead ?? 0,
+    blockerCodeSet
+  });
+  const statusLabel = loading
+    ? t("shell.worktreeMergePreviewLoading")
+    : applying
+      ? t("shell.worktreeMergeApplying")
+      : cleaning
+        ? t("shell.worktreeCleanupRunning")
+        : showMergedState
+          ? t("shell.worktreeMergeAlreadyMerged")
+          : preview?.canMerge
+            ? t("shell.worktreeMergeReady")
+            : hasPreview
+              ? t("shell.worktreeMergeBlocked")
+              : t("shell.worktreeMergePreviewIdle");
+  const summaryMetaItems = [
+    t("shell.worktreeMergeCurrentBranch", { branch: currentBranchName }),
+    t("shell.worktreeMergeParentBranch", { branch: parentBranchName }),
+    t("shell.worktreeMergeTargetWorkspace", { name: targetWorkspaceName }),
+    preview
+      ? t("shell.worktreeMergeAheadBehind", { ahead: preview.ahead, behind: preview.behind })
+      : t("shell.worktreeMergeAheadBehindPending"),
+    preview?.mergeBaseCommit
+      ? t("shell.worktreeMergeBaseCommit", { commit: shortenCommit(preview.mergeBaseCommit) })
+      : null
+  ].filter((item): item is string => Boolean(item));
+  const detailsId = `worktree-merge-panel-details-${meta.workspaceId}`;
+  const summaryToggleLabel = expanded
+    ? t("shell.worktreeMergeCollapseDetails")
+    : t("shell.worktreeMergeExpandDetails");
+  const compactStatusLabels = resolveWorktreeMergeCompactStatusLabels({
+    t,
+    loading,
+    applying,
+    cleaning,
+    hasPreview,
+    canMerge: preview?.canMerge === true,
+    showMergedState,
+    blockerCodeSet
+  });
+
+  useEffect(() => {
+    setExpanded(false);
+  }, [meta.workspaceId]);
 
   return (
     <section className="worktree-merge-panel" data-state={statusTone}>
-      <div className="worktree-merge-panel-header">
-        <div>
-          <span className="worktree-merge-panel-label">{t("shell.worktreeMergePanelLabel")}</span>
-          <h3>{t("shell.worktreeMergePanelTitle")}</h3>
-        </div>
-        <span className="worktree-merge-panel-status">
-          {loading
-            ? t("shell.worktreeMergePreviewLoading")
-            : applying
-              ? t("shell.worktreeMergeApplying")
-              : cleaning
-                ? t("shell.worktreeCleanupRunning")
-                : isMerged
-                  ? t("shell.worktreeMergeAlreadyMerged")
-                  : preview?.canMerge
-                  ? t("shell.worktreeMergeReady")
-                  : hasPreview
-                    ? t("shell.worktreeMergeBlocked")
-                    : t("shell.worktreeMergePreviewIdle")}
-        </span>
-      </div>
-
-      <p className="worktree-merge-panel-copy">
-        {t("shell.worktreeMergePanelSummary", {
-          source: meta.displayName || meta.branchName,
-          target: targetWorkspaceName
-        })}
-      </p>
-
-      <div className="worktree-merge-panel-meta">
-        <span>{t("shell.worktreeMergeSourceBranch", { branch: meta.branchName })}</span>
-        <span>{t("shell.worktreeMergeTargetWorkspace", { name: targetWorkspaceName })}</span>
-        {preview ? (
-          <span>{t("shell.worktreeMergeAheadBehind", { ahead: preview.ahead, behind: preview.behind })}</span>
-        ) : null}
-        {preview?.mergeBaseCommit ? (
-          <span>{t("shell.worktreeMergeBaseCommit", { commit: shortenCommit(preview.mergeBaseCommit) })}</span>
-        ) : null}
-      </div>
-
-      {state?.error ? (
-        <p className="worktree-merge-panel-error status-text" data-tone="error">
-          {state.error}
-        </p>
-      ) : null}
-
-      {blockerDetails.length > 0 ? (
-        <div className="worktree-merge-panel-blockers">
-          {blockerDetails.map((detail) => (
-            <p key={detail} className="worktree-merge-panel-blocker">
-              {detail}
-            </p>
-          ))}
-        </div>
-      ) : null}
-
-      {preview?.conflictPaths.length ? (
-        <div className="worktree-merge-panel-conflicts">
-          <span className="worktree-merge-panel-conflicts-label">
-            {t("shell.worktreeMergeConflictLabel")}
-          </span>
-          <div className="worktree-merge-panel-conflict-list">
-            {preview.conflictPaths.map((item) => (
-              <code key={item}>{item}</code>
+      <button
+        type="button"
+        className="worktree-merge-panel-summary"
+        aria-label={summaryToggleLabel}
+        aria-expanded={expanded}
+        aria-controls={detailsId}
+        onClick={() => {
+          setExpanded((value) => !value);
+        }}
+      >
+        <span className="worktree-merge-panel-summary-label">{t("shell.worktreeMergePanelLabel")}</span>
+        <span className="worktree-merge-panel-summary-main">
+          <span className="worktree-merge-panel-summary-tags">
+            {compactStatusLabels.map((label) => (
+              <span key={label} className="worktree-merge-panel-summary-tag" data-state={statusTone}>
+                {label}
+              </span>
             ))}
+          </span>
+        </span>
+        <span className="worktree-merge-panel-summary-toggle">
+          {summaryToggleLabel}
+        </span>
+      </button>
+
+      {expanded ? (
+        <div id={detailsId} className="worktree-merge-panel-details">
+          <div className="worktree-merge-panel-detail-head">
+            <span className="worktree-merge-panel-status" data-state={statusTone}>
+              {statusLabel}
+            </span>
+          </div>
+          <div className="worktree-merge-panel-meta">
+            {summaryMetaItems.map((item) => (
+              <span key={item}>{item}</span>
+            ))}
+          </div>
+
+          {hasPreview ? (
+            <div className="worktree-merge-panel-checklist" aria-label={t("shell.worktreeMergeChecklistTitle")}>
+              {checklistItems.map((item) => (
+                <div
+                  key={item.key}
+                  className="worktree-merge-panel-checklist-item"
+                  data-state={item.state}
+                >
+                  <span className="worktree-merge-panel-checklist-marker" aria-hidden="true">
+                    {item.state === "done" ? "✓" : item.state === "blocked" ? "!" : "·"}
+                  </span>
+                  <span className="worktree-merge-panel-checklist-copy">
+                    <strong>{item.label}</strong>
+                    {item.detail ? <span>{item.detail}</span> : null}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          {state?.error ? (
+            <p className="worktree-merge-panel-error status-text" data-tone="error">
+              {state.error}
+            </p>
+          ) : null}
+
+          {preview?.conflictPaths.length ? (
+            <div className="worktree-merge-panel-conflicts">
+              <span className="worktree-merge-panel-conflicts-label">
+                {t("shell.worktreeMergeConflictLabel")}
+              </span>
+              <div className="worktree-merge-panel-conflict-list">
+                {preview.conflictPaths.map((item) => (
+                  <code key={item}>{item}</code>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          <div className="worktree-merge-panel-actions">
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={loading || applying || cleaning}
+              onClick={onRefresh}
+            >
+              {hasPreview
+                ? t("shell.worktreeMergePreviewRefresh")
+                : t("shell.worktreeMergePreviewAction")}
+            </button>
+            <button
+              type="button"
+              className="primary-button"
+              disabled={!canApply}
+              onClick={onApply}
+            >
+              {applying ? t("shell.worktreeMergeApplying") : t("shell.worktreeMergeApplyAction")}
+            </button>
+            <button
+              type="button"
+              className="secondary-button worktree-merge-panel-cleanup-button"
+              disabled={!canCleanup}
+              onClick={onCleanup}
+            >
+              {cleaning ? t("shell.worktreeCleanupRunning") : t("shell.worktreeCleanupAction")}
+            </button>
           </div>
         </div>
       ) : null}
-
-      {isMerged ? (
-        <p className="worktree-merge-panel-hint">{t("shell.worktreeMergeMergedHint")}</p>
-      ) : null}
-
-      <div className="worktree-merge-panel-actions">
-        <button
-          type="button"
-          className="secondary-button"
-          disabled={loading || applying}
-          onClick={onRefresh}
-        >
-          {hasPreview ? t("shell.worktreeMergePreviewRefresh") : t("shell.worktreeMergePreviewAction")}
-        </button>
-        {isMerged ? (
-          <button
-            type="button"
-            className="secondary-button worktree-merge-panel-cleanup-button"
-            disabled={!canCleanup}
-            onClick={onCleanup}
-          >
-            {cleaning ? t("shell.worktreeCleanupRunning") : t("shell.worktreeCleanupAction")}
-          </button>
-        ) : null}
-        <button
-          type="button"
-          className="primary-button"
-          disabled={!canApply}
-          onClick={onApply}
-        >
-          {applying ? t("shell.worktreeMergeApplying") : t("shell.worktreeMergeApplyAction")}
-        </button>
-      </div>
     </section>
   );
+}
+
+function resolveWorktreeMergeCompactStatusLabels(input: {
+  t: (key: string) => string;
+  loading: boolean;
+  applying: boolean;
+  cleaning: boolean;
+  hasPreview: boolean;
+  canMerge: boolean;
+  showMergedState: boolean;
+  blockerCodeSet: ReadonlySet<string>;
+}) {
+  const { t, loading, applying, cleaning, hasPreview, canMerge, showMergedState, blockerCodeSet } = input;
+
+  if (loading) {
+    return [t("shell.worktreeMergeCompactChecking")];
+  }
+
+  if (applying) {
+    return [t("shell.worktreeMergeCompactMerging")];
+  }
+
+  if (cleaning) {
+    return [t("shell.worktreeMergeCompactCleaning")];
+  }
+
+  const labels: string[] = [];
+
+  if (blockerCodeSet.has("SOURCE_NOT_ACTIVE")) {
+    labels.push(t("shell.worktreeMergeCompactInactive"));
+  }
+
+  if (blockerCodeSet.has("SOURCE_DIRTY")) {
+    labels.push(t("shell.worktreeMergeCompactDirty"));
+  }
+
+  if (blockerCodeSet.has("TARGET_DIRTY")) {
+    labels.push(t("shell.worktreeMergeCompactTargetDirty"));
+  }
+
+  if (blockerCodeSet.has("HAS_CONFLICTS")) {
+    labels.push(t("shell.worktreeMergeCompactConflict"));
+  }
+
+  if (blockerCodeSet.has("HAS_ACTIVE_CHILDREN")) {
+    labels.push(t("shell.worktreeMergeCompactChildren"));
+  }
+
+  if (labels.length > 0) {
+    return labels;
+  }
+
+  if (canMerge) {
+    return [t("shell.worktreeMergeCompactReady")];
+  }
+
+  if (showMergedState) {
+    return [t("shell.worktreeMergeCompactMerged")];
+  }
+
+  if (!hasPreview) {
+    return [t("shell.worktreeMergeCompactPending")];
+  }
+
+  if (blockerCodeSet.has("NO_COMMITS_TO_MERGE")) {
+    return [t("shell.worktreeMergeCompactNoCommits")];
+  }
+
+  return [t("shell.worktreeMergeCompactBlocked")];
+}
+
+function buildWorktreeMergeChecklistItems(input: {
+  t: (key: string) => string;
+  hasPreview: boolean;
+  showMergedState: boolean;
+  isMerged: boolean;
+  canMerge: boolean;
+  ahead: number;
+  blockerCodeSet: ReadonlySet<string>;
+}) {
+  const { t, hasPreview, showMergedState, isMerged, canMerge, ahead, blockerCodeSet } = input;
+  const hasSourceInactive = blockerCodeSet.has("SOURCE_NOT_ACTIVE");
+  const hasSourceDirty = blockerCodeSet.has("SOURCE_DIRTY");
+  const hasTargetDirty = blockerCodeSet.has("TARGET_DIRTY");
+  const hasChildren = blockerCodeSet.has("HAS_ACTIVE_CHILDREN");
+  const hasConflicts = blockerCodeSet.has("HAS_CONFLICTS");
+  const hasNoCommits = hasPreview && !isMerged && (blockerCodeSet.has("NO_COMMITS_TO_MERGE") || ahead <= 0);
+  const resultItem = showMergedState
+    ? {
+      key: "merge-result",
+      label: t("shell.worktreeMergeChecklistResultMerged"),
+      detail: t("shell.worktreeMergeMergedHint"),
+      state: "done"
+    }
+    : canMerge
+      ? {
+        key: "merge-result",
+        label: t("shell.worktreeMergeChecklistResultReady"),
+        detail: t("shell.worktreeMergeChecklistResultReadyDetail"),
+        state: "done"
+      }
+      : hasPreview
+        ? {
+          key: "merge-result",
+          label: t("shell.worktreeMergeChecklistResultBlocked"),
+          detail: t("shell.worktreeMergeChecklistResultBlockedDetail"),
+          state: "blocked"
+        }
+        : {
+          key: "merge-result",
+          label: t("shell.worktreeMergeChecklistResultPending"),
+          detail: null,
+          state: "pending"
+        };
+
+  return [
+    {
+      key: "source-state",
+      label: t("shell.worktreeMergeChecklistSourceState"),
+      detail:
+        !hasPreview
+          ? null
+          : hasSourceInactive
+            ? t("shell.worktreeMergeChecklistSourceStateBlocked")
+            : null,
+      state: !hasPreview ? "pending" : hasSourceInactive ? "blocked" : "done"
+    },
+    {
+      key: "clean-source",
+      label: t("shell.worktreeMergeChecklistSourceClean"),
+      detail: !hasPreview ? null : hasSourceDirty ? t("shell.worktreeMergeChecklistSourceCleanBlocked") : null,
+      state: !hasPreview ? "pending" : hasSourceDirty ? "blocked" : "done"
+    },
+    {
+      key: "clean-target",
+      label: t("shell.worktreeMergeChecklistTargetClean"),
+      detail: !hasPreview ? null : hasTargetDirty ? t("shell.worktreeMergeChecklistTargetCleanBlocked") : null,
+      state: !hasPreview ? "pending" : hasTargetDirty ? "blocked" : "done"
+    },
+    {
+      key: "children",
+      label: t("shell.worktreeMergeChecklistChildren"),
+      detail: !hasPreview ? null : hasChildren ? t("shell.worktreeMergeChecklistChildrenBlocked") : null,
+      state: !hasPreview ? "pending" : hasChildren ? "blocked" : "done"
+    },
+    {
+      key: "commits",
+      label: t("shell.worktreeMergeChecklistCommits"),
+      detail:
+        hasNoCommits
+          ? isMerged
+            ? t("shell.worktreeMergeMergedDirtyHint")
+            : t("shell.worktreeMergeChecklistCommitsBlocked")
+          : null,
+      state: hasNoCommits ? (isMerged ? "done" : "blocked") : hasPreview ? "done" : "pending"
+    },
+    {
+      key: "conflicts",
+      label: t("shell.worktreeMergeChecklistConflicts"),
+      detail: hasConflicts ? t("shell.worktreeMergeChecklistConflictsBlocked") : null,
+      state: hasConflicts ? "blocked" : hasPreview ? "done" : "pending"
+    },
+    resultItem
+  ];
 }
 
 export function WorkbenchLayout({
@@ -6200,6 +6666,8 @@ export function WorkbenchLayout({
   const [worktreeMergeStateById, setWorktreeMergeStateById] = useState<
     Record<string, WorktreeMergeViewState>
   >({});
+  const [worktreeCleanupTarget, setWorktreeCleanupTarget] = useState<WorktreeMetaDto | null>(null);
+  const [cleanupDeleteBranch, setCleanupDeleteBranch] = useState(false);
   const [globalNotifications, setGlobalNotifications] = useState<WorkbenchGlobalNotification[]>([]);
   const [archivedNotificationIds, setArchivedNotificationIds] = useState<Set<string>>(() => new Set());
   const [notificationPanelOpen, setNotificationPanelOpen] = useState(false);
@@ -6601,20 +7069,9 @@ export function WorkbenchLayout({
   }, [loadWorktreeMergePreview, refreshNavigation, requestGitRefresh, requestNavigationRefresh]);
 
   const applyWorktreeCleanup = useCallback(async (meta: WorktreeMetaDto) => {
-    const confirmed =
-      typeof window === "undefined"
-        ? true
-        : window.confirm(
-            t("shell.worktreeCleanupConfirm", {
-              name: meta.displayName || meta.branchName
-            })
-          );
-
-    if (!confirmed) {
-      return;
-    }
-
     const workspaceId = meta.workspaceId;
+    const allowDeleteBranch =
+      cleanupDeleteBranch && worktreeMergeStateById[workspaceId]?.preview?.alreadyMerged === true;
 
     setWorktreeMergeStateById((current) => ({
       ...current,
@@ -6628,7 +7085,9 @@ export function WorkbenchLayout({
     }));
 
     try {
-      await cleanupWorktree(workspaceId);
+      const result = await cleanupWorktree(workspaceId, {
+        deleteBranch: allowDeleteBranch
+      });
       setWorktreeMergeStateById((current) => ({
         ...current,
         [workspaceId]: {
@@ -6639,9 +7098,33 @@ export function WorkbenchLayout({
           error: null
         }
       }));
+      setCleanupDeleteBranch(false);
+      setWorktreeCleanupTarget((current) => (current?.workspaceId === workspaceId ? null : current));
       requestNavigationRefresh();
       await refreshNavigation();
       navigate(buildWorkspaceDetailPath(meta.parentWorkspaceId), { replace: true });
+
+      if (result.branchDeleted) {
+        showToastRef.current({
+          title: t("shell.worktreeCleanupDeleteBranchSuccess", {
+            branch: result.deletedBranchName || meta.branchName
+          }),
+          tone: "success"
+        });
+        return;
+      }
+
+      if (result.branchDeleteRequested) {
+        showToastRef.current({
+          title: t("shell.worktreeCleanupDeleteBranchPartialFailed", {
+            branch: meta.branchName
+          }),
+          description: result.branchDeleteError || undefined,
+          tone: "warning"
+        });
+        return;
+      }
+
       showToastRef.current({
         title: t("shell.worktreeCleanupSuccess"),
         tone: "success"
@@ -6662,7 +7145,12 @@ export function WorkbenchLayout({
         tone: "error"
       });
     }
-  }, [navigate, refreshNavigation, requestNavigationRefresh]);
+  }, [cleanupDeleteBranch, navigate, refreshNavigation, requestNavigationRefresh, worktreeMergeStateById]);
+
+  const requestWorktreeCleanup = useCallback((meta: WorktreeMetaDto) => {
+    setCleanupDeleteBranch(false);
+    setWorktreeCleanupTarget(meta);
+  }, []);
 
   const subscribeTerminalManagerSnapshot = useCallback((workspaceId: string) => {
     terminalManagerWorkspaceSubscriptionRef.current = workspaceId;
@@ -7006,7 +7494,9 @@ export function WorkbenchLayout({
     initialWorkbenchSnapshotRef.current = nextSnapshot;
     writeViewSnapshot(WORKBENCH_NAVIGATION_SNAPSHOT_KEY, nextSnapshot);
     setCollapsedWorkspaceIds(nextCollapsedWorkspaceIds);
-    void updateWorkspaceNavigationState(workspaceId, nextCollapsed).catch((error) => {
+    void updateWorkspaceNavigationState(workspaceId, {
+      collapsed: nextCollapsed
+    }).catch((error) => {
       const revertedCollapsedWorkspaceIds = setStoredIdPresence(
         nextCollapsedWorkspaceIds,
         workspaceId,
@@ -7492,26 +7982,6 @@ export function WorkbenchLayout({
     ?? (currentWorkspaceEntity ? createFallbackWorkspaceVisualContext(currentWorkspaceEntity) : null);
   const currentWorktreeMergeState =
     (currentWorktreeMeta ? worktreeMergeStateById[currentWorktreeMeta.workspaceId] ?? null : null);
-
-  useEffect(() => {
-    if (!currentWorktreeMeta) {
-      return;
-    }
-
-    if (currentWorktreeMeta.lifecycleStatus !== "active" && currentWorktreeMeta.lifecycleStatus !== "merged") {
-      return;
-    }
-
-    if (
-      currentWorktreeMergeState?.preview
-      || currentWorktreeMergeState?.loading
-      || currentWorktreeMergeState?.error
-    ) {
-      return;
-    }
-
-    void loadWorktreeMergePreview(currentWorktreeMeta.workspaceId);
-  }, [currentWorktreeMergeState, currentWorktreeMeta, loadWorktreeMergePreview]);
 
   const favoriteSessions = useMemo(
     () =>
@@ -8439,6 +8909,7 @@ export function WorkbenchLayout({
                   data-worktree-depth={currentWorkspaceContext?.depth ?? 0}
                   data-collapsed={rightCollapsed}
                   data-custom-panel={activeCenterTab === "butler"}
+                  style={createWorkspaceToneStyle(currentWorkspaceContext)}
                 >
                   {activeCenterTab === "butler" ? (
                     <div className="workbench-auxiliary-custom-panel">
@@ -8462,7 +8933,7 @@ export function WorkbenchLayout({
                       worktreeMergeState={currentWorktreeMergeState}
                       onRefreshWorktreeMergePreview={loadWorktreeMergePreview}
                       onApplyWorktreeMerge={applyWorktreeMerge}
-                      onCleanupWorktree={applyWorktreeCleanup}
+                      onCleanupWorktree={requestWorktreeCleanup}
                     />
                   )}
                 </aside>
@@ -8523,6 +8994,91 @@ export function WorkbenchLayout({
           navigate(entry ? buildWorkspaceSessionPath(entry.workspace.id, sessionId) : buildWorkspaceHomePath());
         }}
       />
+
+      <SidebarModal
+        open={worktreeCleanupTarget !== null}
+        title={t("shell.worktreeCleanupModalTitle")}
+        description={t("shell.worktreeCleanupModalDescription")}
+        onClose={() => {
+          if (worktreeCleanupTarget && worktreeMergeStateById[worktreeCleanupTarget.workspaceId]?.cleaning) {
+            return;
+          }
+
+          setCleanupDeleteBranch(false);
+          setWorktreeCleanupTarget(null);
+        }}
+      >
+        <p className="workbench-section-empty">
+          {worktreeCleanupTarget
+            ? t("shell.worktreeCleanupConfirm", {
+                name: worktreeCleanupTarget.displayName || worktreeCleanupTarget.branchName
+              })
+            : ""}
+        </p>
+        {worktreeCleanupTarget ? (
+          <div className="worktree-cleanup-modal-options">
+            <label className="conversation-selection-checkbox worktree-cleanup-modal-option">
+              <input
+                type="checkbox"
+                checked={cleanupDeleteBranch}
+                disabled={
+                  Boolean(worktreeMergeStateById[worktreeCleanupTarget.workspaceId]?.cleaning)
+                  || worktreeMergeStateById[worktreeCleanupTarget.workspaceId]?.preview?.alreadyMerged !== true
+                }
+                onChange={(event) => setCleanupDeleteBranch(event.target.checked)}
+              />
+              <span>
+                {t("shell.worktreeCleanupDeleteBranchLabel", {
+                  branch: worktreeCleanupTarget.branchName
+                })}
+              </span>
+            </label>
+            {worktreeMergeStateById[worktreeCleanupTarget.workspaceId]?.preview?.alreadyMerged !== true ? (
+              <p className="conversation-selection-hint worktree-cleanup-modal-hint">
+                {t("shell.worktreeCleanupDeleteBranchHint")}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+        <div className="workbench-modal-actions">
+          <button
+            type="button"
+            className="secondary-button"
+            disabled={Boolean(worktreeCleanupTarget && worktreeMergeStateById[worktreeCleanupTarget.workspaceId]?.cleaning)}
+            onClick={() => {
+              setCleanupDeleteBranch(false);
+              setWorktreeCleanupTarget(null);
+            }}
+          >
+            {t("common.cancel")}
+          </button>
+          <button
+            type="button"
+            className={
+              cleanupDeleteBranch
+              && Boolean(worktreeCleanupTarget)
+              && worktreeMergeStateById[worktreeCleanupTarget.workspaceId]?.preview?.alreadyMerged === true
+                ? "secondary-button workbench-danger-button"
+                : "primary-button"
+            }
+            disabled={!worktreeCleanupTarget || Boolean(worktreeCleanupTarget && worktreeMergeStateById[worktreeCleanupTarget.workspaceId]?.cleaning)}
+            onClick={() => {
+              if (!worktreeCleanupTarget) {
+                return;
+              }
+
+              void applyWorktreeCleanup(worktreeCleanupTarget);
+            }}
+          >
+            {worktreeCleanupTarget && worktreeMergeStateById[worktreeCleanupTarget.workspaceId]?.cleaning
+              ? t("shell.worktreeCleanupRunning")
+              : cleanupDeleteBranch
+                && worktreeMergeStateById[worktreeCleanupTarget.workspaceId]?.preview?.alreadyMerged === true
+                  ? t("shell.worktreeCleanupDeleteBranchAction")
+                  : t("shell.worktreeCleanupAction")}
+          </button>
+        </div>
+      </SidebarModal>
 
       {isMobileShell ? (
         <>

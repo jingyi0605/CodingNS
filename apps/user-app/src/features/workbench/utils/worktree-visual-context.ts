@@ -1,3 +1,5 @@
+import type { CSSProperties } from "react";
+
 import type {
   WorkbenchWorktreeNodeDto,
   WorkspaceDto
@@ -8,6 +10,7 @@ export type WorkspaceVisualTone = "root" | "worktree";
 export interface WorkspaceVisualContext {
   readonly workspaceId: string;
   readonly tone: WorkspaceVisualTone;
+  readonly backgroundColor: string | null;
   readonly displayName: string;
   readonly workspaceName: string;
   readonly branchName: string | null;
@@ -29,6 +32,7 @@ export function createFallbackWorkspaceVisualContext(
   return {
     workspaceId: workspace.id,
     tone: "root",
+    backgroundColor: workspace.backgroundColor ?? null,
     displayName: workspace.name,
     workspaceName: workspace.name,
     branchName: null,
@@ -72,6 +76,18 @@ export function resolveWorkspaceVisualContext(
   return contextMap[normalizedWorkspaceId] ?? null;
 }
 
+export function createWorkspaceToneStyle(
+  workspaceContext: Pick<WorkspaceVisualContext, "backgroundColor"> | null | undefined
+): CSSProperties | undefined {
+  if (!workspaceContext?.backgroundColor) {
+    return undefined;
+  }
+
+  return {
+    "--workspace-tone-color": workspaceContext.backgroundColor
+  } as CSSProperties;
+}
+
 function collectWorktreeContexts(
   contextMap: Map<string, WorkspaceVisualContext>,
   nodes: readonly WorkbenchWorktreeNodeDto[],
@@ -85,6 +101,7 @@ function collectWorktreeContexts(
     contextMap.set(node.workspace.id, {
       workspaceId: node.workspace.id,
       tone: "worktree",
+      backgroundColor: node.workspace.backgroundColor ?? null,
       displayName,
       workspaceName: node.workspace.name,
       branchName: node.meta.branchName || null,

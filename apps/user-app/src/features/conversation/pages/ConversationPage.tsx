@@ -85,6 +85,7 @@ import {
 } from "../../workbench/utils/mobile-workspace-tree";
 import {
   buildWorkspaceVisualContextMap,
+  createWorkspaceToneStyle,
   createFallbackWorkspaceVisualContext
 } from "../../workbench/utils/worktree-visual-context";
 import { useMobileConversationBottomLayer } from "../../mobile-shell/components/MobileConversationBottomLayerContext";
@@ -658,7 +659,10 @@ function LiveConversationPage({
         data-worktree-depth={currentWorkspaceContext?.depth ?? 0}
         data-preview-mode={!showInlineHeader ? mobilePreview.displayMode : undefined}
         data-preview-dragging={!showInlineHeader ? mobilePreview.isDragging : undefined}
-        style={!showInlineHeader ? mobilePreview.pageStyle : undefined}
+        style={{
+          ...(createWorkspaceToneStyle(currentWorkspaceContext) ?? {}),
+          ...(!showInlineHeader ? mobilePreview.pageStyle : {})
+        }}
       >
         {showInlineHeader ? (
           <SessionHeader
@@ -1201,7 +1205,10 @@ function DraftConversationPage({
       data-worktree-depth={currentWorkspaceContext?.depth ?? 0}
       data-preview-mode={!showInlineHeader ? mobilePreview.displayMode : undefined}
       data-preview-dragging={!showInlineHeader ? mobilePreview.isDragging : undefined}
-      style={!showInlineHeader ? mobilePreview.pageStyle : undefined}
+      style={{
+        ...(createWorkspaceToneStyle(currentWorkspaceContext) ?? {}),
+        ...(!showInlineHeader ? mobilePreview.pageStyle : {})
+      }}
     >
       {showInlineHeader ? (
         <SessionHeader

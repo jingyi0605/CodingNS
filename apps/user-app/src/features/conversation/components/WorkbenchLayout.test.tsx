@@ -758,6 +758,10 @@ describe("WorkbenchLayout", () => {
     expect(within(listbox).getByRole("option", { name: "v0.9.0" })).toBeInTheDocument();
     expect(within(listbox).getAllByText(t("shell.createWorktreeBaseRefCurrentBadge")).length).toBeGreaterThan(0);
     expect(within(listbox).getAllByText(t("shell.createWorktreeBaseRefRecommendedBadge")).length).toBeGreaterThan(0);
+    await userEvent.click(within(listbox).getByRole("option", { name: "origin/main" }));
+    expect(await screen.findByRole("dialog", { name: t("shell.createWorktreeAction") })).toBeInTheDocument();
+    expect(baseRefInput).toHaveValue("origin/main");
+    await userEvent.clear(baseRefInput);
     await userEvent.type(baseRefInput, "v1");
     expect(screen.getByRole("option", { name: "v1.0.0" })).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: /^main/ })).not.toBeInTheDocument();
@@ -4148,11 +4152,7 @@ describe("WorkbenchLayout", () => {
     );
 
     await waitFor(() => {
-      expect(navigationStateBodies).toEqual([
-        {
-          collapsed: true
-        }
-      ]);
+      expect(navigationStateBodies).toEqual([{ collapsed: true }]);
     });
 
     expect(
@@ -4165,7 +4165,7 @@ describe("WorkbenchLayout", () => {
     expect(view.container.querySelectorAll('.workbench-workspace-toggle[draggable="true"]')).toHaveLength(2);
   });
 
-  it("拖拽工作区标题时会临时收起并在松手后保存新的顺序", async () => {
+  it("拖拽工作区标题时会临时收起所有工作区并在松手后恢复原有折叠状态后保存新的顺序", async () => {
     const currentSnapshot = createWorkbenchSnapshot([
       {
         workspace: createWorkspace("workspace-1", "项目一"),
@@ -4207,6 +4207,8 @@ describe("WorkbenchLayout", () => {
     const workspaceOneToggle = within(workspaceOneGroup).getByRole("button", {
       name: t("shell.workspaceCollapse")
     });
+    expect(within(workspaceOneGroup).getByText("会话一")).toBeInTheDocument();
+    expect(within(workspaceTwoGroup).getByText("会话二")).toBeInTheDocument();
     const dataTransfer = createDragDataTransfer();
 
     fireEvent.dragStart(workspaceOneToggle, {
@@ -4215,6 +4217,7 @@ describe("WorkbenchLayout", () => {
 
     await waitFor(() => {
       expect(within(workspaceOneGroup).queryByText("会话一")).toBeNull();
+      expect(within(workspaceTwoGroup).queryByText("会话二")).toBeNull();
     });
 
     fireEvent.dragOver(workspaceTwoGroup, {
@@ -4242,6 +4245,8 @@ describe("WorkbenchLayout", () => {
     });
 
     expect(readWorkspaceGroupOrder(view.container)).toEqual(["项目二", "项目一"]);
+    expect(within(await findWorkspaceGroupByName("项目一")).getByText("会话一")).toBeInTheDocument();
+    expect(within(await findWorkspaceGroupByName("项目二")).getByText("会话二")).toBeInTheDocument();
   });
 
   it("拖拽结束时会提交最后一次预览后的工作区顺序", async () => {
@@ -4339,7 +4344,7 @@ describe("WorkbenchLayout", () => {
     ).toEqual(["workspace-2", "workspace-1", "workspace-3"]);
   });
 
-  it("会在工作区展开内容里显示子工作树区块并递归展示子节点", async () => {
+  it("会直接显示子工作区并递归展示子节点", async () => {
     const currentSnapshot = createWorkbenchSnapshot([
       {
         workspace: createWorkspace("workspace-1", "项目一"),
@@ -4404,24 +4409,197 @@ describe("WorkbenchLayout", () => {
     const rootGroup = await findWorkspaceGroupByName("项目一");
     expect(within(rootGroup).getByText("根会话")).toBeInTheDocument();
     expect(within(rootGroup).getByText(t("shell.archiveFolderLabel"))).toBeInTheDocument();
-    expect(within(rootGroup).queryByText("feat/login-codex")).not.toBeInTheDocument();
-
-    await userEvent.click(
-      within(rootGroup).getByRole("button", { name: t("shell.worktreeSectionExpand") })
-    );
+    expect(within(rootGroup).getAllByText("feat/login-codex").length).toBeGreaterThan(0);
 
     const childGroup = await findWorkspaceGroupByName("feat/login-codex");
     expect(childGroup).toBeInTheDocument();
     await userEvent.click(within(childGroup).getByRole("button", { name: t("shell.worktreeExpand") }));
     expect(within(childGroup).getByText("工作树会话")).toBeInTheDocument();
 
-    await userEvent.click(
-      within(childGroup).getByRole("button", { name: t("shell.worktreeSectionExpand") })
-    );
-
     const nestedGroup = await findWorkspaceGroupByName("feat/login-codex-v2");
     await userEvent.click(within(nestedGroup).getByRole("button", { name: t("shell.worktreeExpand") }));
     expect(within(nestedGroup).getByText("二级工作树会话")).toBeInTheDocument();
+  });
+
+  it("子工作区头部保留切换、多选、新建会话三个按钮，并支持对子工作区批量归档", async () => {
+    let currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [],
+        childWorktrees: [
+          createWorkbenchWorktreeNode({
+            workspace: createWorkspace("workspace-1-child", "登录分支"),
+            displayName: "feat/login-codex",
+            branchName: "feat/login-codex",
+            sessions: [
+              createSessionSummary({
+                sessionId: "session-child",
+                title: "工作树会话",
+                workspaceId: "workspace-1-child"
+              })
+            ]
+          })
+        ]
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      if (url.endsWith("/api/sessions/session-child/archive")) {
+        const archivedSession = createSessionSummary({
+          sessionId: "session-child",
+          title: "工作树会话",
+          workspaceId: "workspace-1-child",
+          isArchived: true
+        });
+
+        currentSnapshot = createWorkbenchSnapshot([
+          {
+            workspace: createWorkspace("workspace-1", "项目一"),
+            sessions: [],
+            childWorktrees: [
+              createWorkbenchWorktreeNode({
+                workspace: createWorkspace("workspace-1-child", "登录分支"),
+                displayName: "feat/login-codex",
+                branchName: "feat/login-codex",
+                sessions: [archivedSession]
+              })
+            ]
+          }
+        ]);
+        MockWebSocket.workbenchSnapshot = currentSnapshot;
+
+        return createJsonResponse(archivedSession);
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    await renderWorkbenchRoute("/workspaces/workspace-1-child/sessions/session-child");
+
+    const childGroup = await findWorkspaceGroupByName("feat/login-codex");
+    const childScope = within(childGroup);
+
+    expect(childScope.getByRole("button", { name: t("shell.switchWorkspace") })).toBeInTheDocument();
+    expect(childScope.getByRole("button", { name: t("shell.batchSelectSessions") })).toBeInTheDocument();
+    expect(childScope.getByRole("button", { name: t("shell.createSession") })).toBeInTheDocument();
+
+    await userEvent.click(childScope.getByRole("button", { name: t("shell.batchSelectSessions") }));
+
+    const sessionCard = await findSessionCardByTitle("工作树会话");
+    await userEvent.click(within(sessionCard).getByText("工作树会话"));
+
+    expect(childScope.getByText("1/1")).toBeInTheDocument();
+
+    await userEvent.click(childScope.getByRole("button", { name: t("shell.batchArchiveAction") }));
+
+    await waitFor(() => {
+      expect(querySessionCardsByTitle("工作树会话")).toHaveLength(0);
+    });
+  });
+
+  it("管理工作区弹窗会树状显示子工作区，并持久化子工作区颜色配置", async () => {
+    let currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [],
+        childWorktrees: [
+          createWorkbenchWorktreeNode({
+            workspace: createWorkspace("workspace-1-child", "登录分支"),
+            displayName: "feat/login-codex",
+            branchName: "feat/login-codex",
+            sessions: []
+          })
+        ]
+      }
+    ]);
+    const navigationStateBodies: Array<Record<string, unknown>> = [];
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL, init?: RequestInit) => {
+      const request = rawInput instanceof Request ? rawInput : null;
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+      const method = request?.method ?? init?.method;
+      const body = request ? await request.clone().text() : String(init?.body ?? "");
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      if (url.endsWith("/api/workspaces/workspace-1/management")) {
+        return createJsonResponse(createWorkspaceManagementSummary("workspace-1", "项目一"));
+      }
+
+      if (url.endsWith("/api/workspaces/workspace-1-child/management")) {
+        return createJsonResponse(createWorkspaceManagementSummary("workspace-1-child", "登录分支"));
+      }
+
+      if (url.endsWith("/api/workspaces/workspace-1-child/navigation-state") && method === "PUT") {
+        navigationStateBodies.push(JSON.parse(body));
+        currentSnapshot = createWorkbenchSnapshot([
+          {
+            workspace: createWorkspace("workspace-1", "项目一"),
+            sessions: [],
+            childWorktrees: [
+              createWorkbenchWorktreeNode({
+                workspace: createWorkspace("workspace-1-child", "登录分支", "#0EA5E9"),
+                displayName: "feat/login-codex",
+                branchName: "feat/login-codex",
+                sessions: []
+              })
+            ]
+          }
+        ]);
+        MockWebSocket.workbenchSnapshot = currentSnapshot;
+
+        return createJsonResponse({
+          workspaceId: "workspace-1-child",
+          userId: "user-1",
+          collapsed: false,
+          backgroundColor: "#0EA5E9",
+          updatedAt: "2026-04-12T12:00:00.000Z"
+        });
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    await renderWorkbenchRoute("/workspaces/workspace-1/sessions");
+
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.manageWorkspaceAction") }));
+    const managerDialog = await screen.findByRole("dialog", {
+      name: t("shell.manageWorkspaceTitle")
+    });
+
+    const childToggle = await within(managerDialog).findByRole("button", { name: /feat\/login-codex/ });
+    expect(childToggle).toBeInTheDocument();
+
+    await userEvent.click(childToggle);
+
+    const childItem = childToggle.closest(".workbench-manage-item");
+    expect(childItem).not.toBeNull();
+    const swatchButton = within(childItem as HTMLElement).getByRole("button", {
+      name: t("shell.manageWorkspaceColorSelectSwatch", {
+        color: "#0EA5E9"
+      })
+    });
+    await userEvent.click(swatchButton);
+
+    await waitFor(() => {
+      expect(navigationStateBodies).toEqual([{ backgroundColor: "#0EA5E9" }]);
+    });
+
+    const childGroup = await findWorkspaceGroupByName("feat/login-codex");
+    expect(childGroup).toHaveStyle("--workspace-tone-color: #0EA5E9");
+    expect(within(childItem as HTMLElement).getByText("#0EA5E9")).toBeInTheDocument();
   });
 
   it("当前会话属于子工作树时，会给会话卡片和右侧信息栏打上工作树视觉标记", async () => {
@@ -4460,6 +4638,7 @@ describe("WorkbenchLayout", () => {
 
     await renderWorkbenchRoute("/workspaces/workspace-1-child/sessions/session-child");
     const childGroup = await findWorkspaceGroupByName("feat/login-codex");
+    expect(childGroup).toHaveAttribute("data-workspace-tone", "worktree");
 
     const childSessionCard = querySessionCardsByTitle("工作树会话")[0];
     expect(childSessionCard).toHaveAttribute("data-workspace-tone", "worktree");
@@ -4467,6 +4646,63 @@ describe("WorkbenchLayout", () => {
     await waitFor(() => {
       expect(document.querySelector(".workbench-auxiliary")).toHaveAttribute("data-workspace-tone", "worktree");
     });
+  });
+
+  it("当前选中的工作区也允许手动折叠会话", async () => {
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          createSessionSummary({
+            sessionId: "session-1",
+            title: "当前会话",
+            workspaceId: "workspace-1"
+          })
+        ],
+        collapsed: false
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+    const navigationStateBodies: unknown[] = [];
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL, init?: RequestInit) => {
+      const request = rawInput instanceof Request ? rawInput : null;
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+      const method = request?.method ?? init?.method;
+      const body = request ? await request.clone().text() : String(init?.body ?? "");
+
+      if (url.endsWith("/api/workspaces/workspace-1/navigation-state") && method === "PUT") {
+        navigationStateBodies.push(JSON.parse(body));
+        return createJsonResponse({
+          workspaceId: "workspace-1",
+          collapsed: true
+        });
+      }
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    const view = renderWorkbenchRoute("/workspaces/workspace-1/sessions/session-1");
+    const workspaceGroup = await findWorkspaceGroupByName("项目一");
+
+    expect(within(workspaceGroup).getByText("当前会话")).toBeInTheDocument();
+
+    await userEvent.click(
+      within(workspaceGroup).getByRole("button", {
+        name: t("shell.workspaceCollapse")
+      })
+    );
+
+    await waitFor(() => {
+      expect(navigationStateBodies).toEqual([{ collapsed: true }]);
+      expect(within(workspaceGroup).queryByText("当前会话")).toBeNull();
+    });
+
+    expect(view.container).toBeInTheDocument();
   });
 
   it("当前工作区是子工作树时，右侧信息栏会显示合并回父节点预检卡片", async () => {
@@ -4542,15 +4778,802 @@ describe("WorkbenchLayout", () => {
     }) as typeof fetch;
 
     await renderWorkbenchRoute("/workspaces/workspace-1-child/sessions/session-child");
+    await userEvent.click(screen.getByRole("tab", { name: t("shell.gitEntry") }));
 
-    expect(await screen.findByText(t("shell.worktreeMergePanelTitle"))).toBeInTheDocument();
-    expect(screen.getByText(t("shell.worktreeMergeReady"))).toBeInTheDocument();
+    expect(await screen.findByText(t("shell.worktreeMergeCompactPending"))).toBeInTheDocument();
     expect(
-      screen.getByText(t("shell.worktreeMergeTargetWorkspace", { name: "项目一" }))
+      screen.queryByText(t("shell.worktreeMergePanelSummary", { source: "feat/login-codex", target: "项目一" }))
+    ).toBeNull();
+
+    const detailToggle = screen.getByRole("button", {
+      name: new RegExp(t("shell.worktreeMergeExpandDetails"))
+    });
+    expect(detailToggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("button", { name: t("shell.worktreeMergeApplyAction") })).not.toBeInTheDocument();
+
+    await userEvent.click(detailToggle);
+
+    expect(
+      screen.getByRole("button", { name: new RegExp(t("shell.worktreeMergeCollapseDetails")) })
+    ).toHaveAttribute("aria-expanded", "true");
+    expect(
+      screen.queryByText(t("shell.worktreeMergePanelSummary", { source: "feat/login-codex", target: "项目一" }))
+    ).toBeNull();
+    expect(screen.queryByLabelText(t("shell.worktreeMergeChecklistTitle"))).toBeNull();
+    expect(screen.getByText(t("shell.worktreeMergeCurrentBranch", { branch: "feat/login-codex" }))).toBeInTheDocument();
+    expect(screen.getByText(t("shell.worktreeMergeParentBranch", { branch: "main" }))).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("shell.worktreeMergePreviewAction") })).toBeEnabled();
+    expect(screen.getByRole("button", { name: t("shell.worktreeMergeApplyAction") })).toBeDisabled();
+    expect(screen.getByRole("button", { name: t("shell.worktreeCleanupAction") })).toBeDisabled();
+
+    await userEvent.click(screen.getByRole("button", { name: t("shell.worktreeMergePreviewAction") }));
+
+    expect(await screen.findByLabelText(t("shell.worktreeMergeChecklistTitle"))).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("shell.worktreeMergeApplyAction") })).toBeEnabled();
+  });
+
+  it("工作树合并状态只在 GIT 管理页签显示", async () => {
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [],
+        childWorktrees: [
+          createWorkbenchWorktreeNode({
+            workspace: createWorkspace("workspace-1-child", "登录分支"),
+            displayName: "feat/login-codex",
+            branchName: "feat/login-codex",
+            sessions: [
+              createSessionSummary({
+                sessionId: "session-child",
+                title: "工作树会话",
+                workspaceId: "workspace-1-child"
+              })
+            ]
+          })
+        ]
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      if (url.endsWith("/api/worktrees/workspace-1-child/merge-preview")) {
+        return createJsonResponse({
+          workspaceId: "workspace-1-child",
+          sourceWorkspace: createWorkspace("workspace-1-child", "登录分支"),
+          targetWorkspace: createWorkspace("workspace-1", "项目一"),
+          meta: {
+            workspaceId: "workspace-1-child",
+            rootWorkspaceId: "workspace-1",
+            parentWorkspaceId: "workspace-1",
+            sourceWorkspaceId: "workspace-1",
+            mergeTargetWorkspaceId: "workspace-1",
+            branchName: "feat/login-codex",
+            baseRef: "main",
+            baseCommit: "abc12345",
+            headCommit: "def67890",
+            displayName: "feat/login-codex",
+            depth: 1,
+            lifecycleStatus: "active",
+            mergedAt: null,
+            removedAt: null,
+            createdAt: "2026-04-12T12:00:00.000Z",
+            updatedAt: "2026-04-12T12:00:00.000Z"
+          },
+          sourceBranchName: "feat/login-codex",
+          targetBranchName: "main",
+          sourceHeadCommit: "def67890",
+          targetHeadCommit: "abc12345",
+          mergeBaseCommit: "abc12345",
+          ahead: 2,
+          behind: 0,
+          hasConflicts: false,
+          conflictPaths: [],
+          alreadyMerged: false,
+          canMerge: true,
+          blockers: []
+        });
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    await renderWorkbenchRoute("/workspaces/workspace-1-child/sessions/session-child");
+
+    expect(screen.queryByText(t("shell.worktreeMergePanelLabel"))).toBeNull();
+
+    await userEvent.click(screen.getByRole("tab", { name: t("shell.gitEntry") }));
+
+    expect(await screen.findByText(t("shell.worktreeMergePanelLabel"))).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("tab", { name: t("shell.terminalManagerEntry") }));
+
+    await waitFor(() => {
+      expect(screen.queryByText(t("shell.worktreeMergePanelLabel"))).toBeNull();
+    });
+  });
+
+  it("不会仅凭工作树生命周期状态就误判已经合回父工作区", async () => {
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [],
+        childWorktrees: [
+          createWorkbenchWorktreeNode({
+            workspace: createWorkspace("workspace-1-child", "登录分支"),
+            displayName: "test-mdg",
+            branchName: "test-mdg",
+            lifecycleStatus: "merged",
+            sessions: [
+              createSessionSummary({
+                sessionId: "session-child",
+                title: "工作树会话",
+                workspaceId: "workspace-1-child"
+              })
+            ]
+          })
+        ]
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      if (url.endsWith("/api/worktrees/workspace-1-child/merge-preview")) {
+        return createJsonResponse({
+          workspaceId: "workspace-1-child",
+          sourceWorkspace: createWorkspace("workspace-1-child", "登录分支"),
+          targetWorkspace: createWorkspace("workspace-1", "项目一"),
+          meta: {
+            workspaceId: "workspace-1-child",
+            rootWorkspaceId: "workspace-1",
+            parentWorkspaceId: "workspace-1",
+            sourceWorkspaceId: "workspace-1",
+            mergeTargetWorkspaceId: "workspace-1",
+            branchName: "test-mdg",
+            baseRef: "main",
+            baseCommit: "abc12345",
+            headCommit: "def67890",
+            displayName: "test-mdg",
+            depth: 1,
+            lifecycleStatus: "merged",
+            mergedAt: null,
+            removedAt: null,
+            createdAt: "2026-04-12T12:00:00.000Z",
+            updatedAt: "2026-04-12T12:00:00.000Z"
+          },
+          sourceBranchName: "test-mdg",
+          targetBranchName: "main",
+          sourceHeadCommit: "def67890",
+          targetHeadCommit: "abc12345",
+          mergeBaseCommit: "abc12345",
+          ahead: 2,
+          behind: 0,
+          hasConflicts: false,
+          conflictPaths: [],
+          alreadyMerged: false,
+          canMerge: true,
+          blockers: []
+        });
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    await renderWorkbenchRoute("/workspaces/workspace-1-child/sessions/session-child");
+    await userEvent.click(screen.getByRole("tab", { name: t("shell.gitEntry") }));
+    await userEvent.click(
+      screen.getByRole("button", {
+        name: new RegExp(t("shell.worktreeMergeExpandDetails"))
+      })
+    );
+    await userEvent.click(screen.getByRole("button", { name: t("shell.worktreeMergePreviewAction") }));
+
+    expect(await screen.findByText(t("shell.worktreeMergeCompactReady"))).toBeInTheDocument();
+    expect(screen.queryByText(t("shell.worktreeMergeAlreadyMerged"))).toBeNull();
+  });
+
+  it("已进入父分支但子工作区仍有未提交改动时，摘要优先显示阻塞状态而不是已合并", async () => {
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [],
+        childWorktrees: [
+          createWorkbenchWorktreeNode({
+            workspace: createWorkspace("workspace-1-child", "登录分支"),
+            displayName: "test-mdg",
+            branchName: "mdg/test",
+            lifecycleStatus: "merged",
+            sessions: [
+              createSessionSummary({
+                sessionId: "session-child",
+                title: "工作树会话",
+                workspaceId: "workspace-1-child"
+              })
+            ]
+          })
+        ]
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      if (url.endsWith("/api/worktrees/workspace-1-child/merge-preview")) {
+        return createJsonResponse({
+          workspaceId: "workspace-1-child",
+          sourceWorkspace: createWorkspace("workspace-1-child", "登录分支"),
+          targetWorkspace: createWorkspace("workspace-1", "项目一"),
+          meta: {
+            workspaceId: "workspace-1-child",
+            rootWorkspaceId: "workspace-1",
+            parentWorkspaceId: "workspace-1",
+            sourceWorkspaceId: "workspace-1",
+            mergeTargetWorkspaceId: "workspace-1",
+            branchName: "mdg/test",
+            baseRef: "main",
+            baseCommit: "abc12345",
+            headCommit: "def67890",
+            displayName: "test-mdg",
+            depth: 1,
+            lifecycleStatus: "merged",
+            mergedAt: "2026-04-13T10:00:00.000Z",
+            removedAt: null,
+            createdAt: "2026-04-12T12:00:00.000Z",
+            updatedAt: "2026-04-13T10:00:00.000Z"
+          },
+          sourceBranchName: "mdg/test",
+          targetBranchName: "main",
+          sourceHeadCommit: "def67890",
+          targetHeadCommit: "def67890",
+          mergeBaseCommit: "def67890",
+          ahead: 0,
+          behind: 0,
+          hasConflicts: false,
+          conflictPaths: [],
+          alreadyMerged: true,
+          canMerge: false,
+          blockers: [
+            {
+              code: "SOURCE_DIRTY",
+              detail: "当前子工作树存在未提交改动，先提交或清理后再合并"
+            }
+          ]
+        });
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    await renderWorkbenchRoute("/workspaces/workspace-1-child/sessions/session-child");
+    await userEvent.click(screen.getByRole("tab", { name: t("shell.gitEntry") }));
+    await userEvent.click(
+      screen.getByRole("button", {
+        name: new RegExp(t("shell.worktreeMergeExpandDetails"))
+      })
+    );
+    await userEvent.click(screen.getByRole("button", { name: t("shell.worktreeMergePreviewAction") }));
+
+    expect(await screen.findByText(t("shell.worktreeMergeCompactDirty"))).toBeInTheDocument();
+    expect(screen.queryByText(t("shell.worktreeMergeCompactMerged"))).toBeNull();
+
+    expect(screen.getByText(t("shell.worktreeMergeBlocked"))).toBeInTheDocument();
+    expect(screen.getByText(t("shell.worktreeMergeCurrentBranch", { branch: "mdg/test" }))).toBeInTheDocument();
+    expect(screen.getByText(t("shell.worktreeMergeParentBranch", { branch: "main" }))).toBeInTheDocument();
+    expect(screen.getByText(t("shell.worktreeMergeChecklistSourceClean"))).toBeInTheDocument();
+    expect(screen.getByText(t("shell.worktreeMergeChecklistSourceCleanBlocked"))).toBeInTheDocument();
+    expect(screen.getByText(t("shell.worktreeMergeChecklistResultBlocked"))).toBeInTheDocument();
+    expect(screen.getByText(t("shell.worktreeMergeChecklistResultBlockedDetail"))).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("shell.worktreeMergePreviewAction") })).toBeEnabled();
+    expect(screen.getByRole("button", { name: t("shell.worktreeMergeApplyAction") })).toBeDisabled();
+    expect(screen.getByRole("button", { name: t("shell.worktreeCleanupAction") })).toBeDisabled();
+  });
+
+  it("没有领先父分支提交时，不能把待合并提交错误显示为已满足", async () => {
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [],
+        childWorktrees: [
+          createWorkbenchWorktreeNode({
+            workspace: createWorkspace("workspace-1-child", "登录分支"),
+            displayName: "test-mdg",
+            branchName: "mdg/test",
+            sessions: [
+              createSessionSummary({
+                sessionId: "session-child",
+                title: "工作树会话",
+                workspaceId: "workspace-1-child"
+              })
+            ]
+          })
+        ]
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      if (url.endsWith("/api/worktrees/workspace-1-child/merge-preview")) {
+        return createJsonResponse({
+          workspaceId: "workspace-1-child",
+          sourceWorkspace: createWorkspace("workspace-1-child", "登录分支"),
+          targetWorkspace: createWorkspace("workspace-1", "项目一"),
+          meta: {
+            workspaceId: "workspace-1-child",
+            rootWorkspaceId: "workspace-1",
+            parentWorkspaceId: "workspace-1",
+            sourceWorkspaceId: "workspace-1",
+            mergeTargetWorkspaceId: "workspace-1",
+            branchName: "mdg/test",
+            baseRef: "main",
+            baseCommit: "abc12345",
+            headCommit: "def67890",
+            displayName: "test-mdg",
+            depth: 1,
+            lifecycleStatus: "active",
+            mergedAt: null,
+            removedAt: null,
+            createdAt: "2026-04-12T12:00:00.000Z",
+            updatedAt: "2026-04-13T10:00:00.000Z"
+          },
+          sourceBranchName: "mdg/test",
+          targetBranchName: "main",
+          sourceHeadCommit: "def67890",
+          targetHeadCommit: "9876abcd",
+          mergeBaseCommit: "d6d8eb49",
+          ahead: 0,
+          behind: 1,
+          hasConflicts: false,
+          conflictPaths: [],
+          alreadyMerged: false,
+          canMerge: false,
+          blockers: []
+        });
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    await renderWorkbenchRoute("/workspaces/workspace-1-child/sessions/session-child");
+    await userEvent.click(screen.getByRole("tab", { name: t("shell.gitEntry") }));
+    await userEvent.click(
+      screen.getByRole("button", {
+        name: new RegExp(t("shell.worktreeMergeExpandDetails"))
+      })
+    );
+    await userEvent.click(screen.getByRole("button", { name: t("shell.worktreeMergePreviewAction") }));
+
+    expect(screen.getByText(t("shell.worktreeMergeBlocked"))).toBeInTheDocument();
+    expect(screen.getByText(t("shell.worktreeMergeChecklistCommits"))).toBeInTheDocument();
+    expect(screen.getByText(t("shell.worktreeMergeChecklistCommitsBlocked"))).toBeInTheDocument();
+    expect(screen.getByText(t("shell.worktreeMergeChecklistResultBlocked"))).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("shell.worktreeMergeApplyAction") })).toBeDisabled();
+  });
+
+  it("后端返回 SOURCE_NOT_ACTIVE 时，会明确展示工作树状态异常", async () => {
+    const currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [],
+        childWorktrees: [
+          createWorkbenchWorktreeNode({
+            workspace: createWorkspace("workspace-1-child", "登录分支"),
+            displayName: "test-mdg",
+            branchName: "mdg/test",
+            lifecycleStatus: "merged",
+            sessions: [
+              createSessionSummary({
+                sessionId: "session-child",
+                title: "工作树会话",
+                workspaceId: "workspace-1-child"
+              })
+            ]
+          })
+        ]
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      if (url.endsWith("/api/worktrees/workspace-1-child/merge-preview")) {
+        return createJsonResponse({
+          workspaceId: "workspace-1-child",
+          sourceWorkspace: createWorkspace("workspace-1-child", "登录分支"),
+          targetWorkspace: createWorkspace("workspace-1", "项目一"),
+          meta: {
+            workspaceId: "workspace-1-child",
+            rootWorkspaceId: "workspace-1",
+            parentWorkspaceId: "workspace-1",
+            sourceWorkspaceId: "workspace-1",
+            mergeTargetWorkspaceId: "workspace-1",
+            branchName: "mdg/test",
+            baseRef: "main",
+            baseCommit: "abc12345",
+            headCommit: "def67890",
+            displayName: "test-mdg",
+            depth: 1,
+            lifecycleStatus: "merged",
+            mergedAt: "2026-04-13T10:00:00.000Z",
+            removedAt: null,
+            createdAt: "2026-04-12T12:00:00.000Z",
+            updatedAt: "2026-04-13T10:00:00.000Z"
+          },
+          sourceBranchName: "mdg/test",
+          targetBranchName: "main",
+          sourceHeadCommit: "def67890",
+          targetHeadCommit: "abc12345",
+          mergeBaseCommit: "abc12345",
+          ahead: 1,
+          behind: 0,
+          hasConflicts: false,
+          conflictPaths: [],
+          alreadyMerged: false,
+          canMerge: false,
+          blockers: [
+            {
+              code: "SOURCE_NOT_ACTIVE",
+              detail: "当前子工作树不是活跃状态，不能继续合并"
+            }
+          ]
+        });
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    await renderWorkbenchRoute("/workspaces/workspace-1-child/sessions/session-child");
+    await userEvent.click(screen.getByRole("tab", { name: t("shell.gitEntry") }));
+    await userEvent.click(
+      screen.getByRole("button", {
+        name: new RegExp(t("shell.worktreeMergeExpandDetails"))
+      })
+    );
+    await userEvent.click(screen.getByRole("button", { name: t("shell.worktreeMergePreviewAction") }));
+
+    expect(await screen.findByText(t("shell.worktreeMergeCompactInactive"))).toBeInTheDocument();
+
+    expect(screen.getByText(t("shell.worktreeMergeChecklistSourceState"))).toBeInTheDocument();
+    expect(screen.getByText(t("shell.worktreeMergeChecklistSourceStateBlocked"))).toBeInTheDocument();
+    expect(screen.getByText(t("shell.worktreeMergeChecklistResultBlocked"))).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("shell.worktreeMergeApplyAction") })).toBeDisabled();
+  });
+
+  it("清理工作树前会先打开内置确认模态框，再执行 cleanup 接口", async () => {
+    let currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [],
+        childWorktrees: [
+          createWorkbenchWorktreeNode({
+            workspace: createWorkspace("workspace-1-child", "登录分支"),
+            displayName: "test-mdg",
+            branchName: "mdg/test",
+            lifecycleStatus: "merged",
+            sessions: [
+              createSessionSummary({
+                sessionId: "session-child",
+                title: "工作树会话",
+                workspaceId: "workspace-1-child"
+              })
+            ]
+          })
+        ]
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+    const cleanupCalls: string[] = [];
+
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      if (url.endsWith("/api/worktrees/workspace-1-child/merge-preview")) {
+        return createJsonResponse({
+          workspaceId: "workspace-1-child",
+          sourceWorkspace: createWorkspace("workspace-1-child", "登录分支"),
+          targetWorkspace: createWorkspace("workspace-1", "项目一"),
+          meta: {
+            workspaceId: "workspace-1-child",
+            rootWorkspaceId: "workspace-1",
+            parentWorkspaceId: "workspace-1",
+            sourceWorkspaceId: "workspace-1",
+            mergeTargetWorkspaceId: "workspace-1",
+            branchName: "mdg/test",
+            baseRef: "main",
+            baseCommit: "abc12345",
+            headCommit: "def67890",
+            displayName: "test-mdg",
+            depth: 1,
+            lifecycleStatus: "merged",
+            mergedAt: "2026-04-13T12:27:38.000Z",
+            removedAt: null,
+            createdAt: "2026-04-12T12:00:00.000Z",
+            updatedAt: "2026-04-13T12:27:38.000Z"
+          },
+          sourceBranchName: "mdg/test",
+          targetBranchName: "main",
+          sourceHeadCommit: "d6d8eb49",
+          targetHeadCommit: "1a6a680e",
+          mergeBaseCommit: "d6d8eb49",
+          ahead: 0,
+          behind: 1,
+          hasConflicts: false,
+          conflictPaths: [],
+          alreadyMerged: true,
+          canMerge: false,
+          blockers: []
+        });
+      }
+
+      if (url.endsWith("/api/worktrees/workspace-1-child/cleanup")) {
+        cleanupCalls.push(url);
+        currentSnapshot = createWorkbenchSnapshot([
+          {
+            workspace: createWorkspace("workspace-1", "项目一"),
+            sessions: []
+          }
+        ]);
+        MockWebSocket.workbenchSnapshot = currentSnapshot;
+
+        return createJsonResponse({
+          workspaceId: "workspace-1-child",
+          removed: true,
+          meta: {
+            workspaceId: "workspace-1-child",
+            rootWorkspaceId: "workspace-1",
+            parentWorkspaceId: "workspace-1",
+            sourceWorkspaceId: "workspace-1",
+            mergeTargetWorkspaceId: "workspace-1",
+            branchName: "mdg/test",
+            baseRef: "main",
+            baseCommit: "abc12345",
+            headCommit: "d6d8eb49",
+            displayName: "test-mdg",
+            depth: 1,
+            lifecycleStatus: "removed",
+            mergedAt: "2026-04-13T12:27:38.000Z",
+            removedAt: "2026-04-13T12:28:00.000Z",
+            createdAt: "2026-04-12T12:00:00.000Z",
+            updatedAt: "2026-04-13T12:28:00.000Z"
+          }
+        });
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    await renderWorkbenchRoute("/workspaces/workspace-1-child/sessions/session-child");
+    await userEvent.click(screen.getByRole("tab", { name: t("shell.gitEntry") }));
+    await userEvent.click(
+      screen.getByRole("button", {
+        name: new RegExp(t("shell.worktreeMergeExpandDetails"))
+      })
+    );
+    await userEvent.click(screen.getByRole("button", { name: t("shell.worktreeMergePreviewAction") }));
+
+    const cleanupButton = screen.getByRole("button", { name: t("shell.worktreeCleanupAction") });
+    expect(cleanupButton).toBeEnabled();
+
+    await userEvent.click(cleanupButton);
+
+    expect(
+      screen.getByRole("dialog", {
+        name: t("shell.worktreeCleanupModalTitle")
+      })
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: t("shell.worktreeMergeApplyAction") })
-    ).toBeEnabled();
+    expect(cleanupCalls).toHaveLength(0);
+
+    await userEvent.click(screen.getByRole("button", { name: t("common.cancel") }));
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("dialog", {
+          name: t("shell.worktreeCleanupModalTitle")
+        })
+      ).toBeNull();
+    });
+    expect(cleanupCalls).toHaveLength(0);
+
+    await userEvent.click(screen.getAllByRole("button", { name: t("shell.worktreeCleanupAction") })[0]);
+    const cleanupDialog = screen.getByRole("dialog", {
+      name: t("shell.worktreeCleanupModalTitle")
+    });
+    await userEvent.click(within(cleanupDialog).getByRole("button", { name: t("shell.worktreeCleanupAction") }));
+
+    await waitFor(() => {
+      expect(cleanupCalls).toHaveLength(1);
+      expect(
+        screen.queryByRole("dialog", {
+          name: t("shell.worktreeCleanupModalTitle")
+        })
+      ).toBeNull();
+    });
+  });
+
+  it("已合并时勾选删除分支，会把 deleteBranch=true 传给 cleanup 接口", async () => {
+    let currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [],
+        childWorktrees: [
+          createWorkbenchWorktreeNode({
+            workspace: createWorkspace("workspace-1-child", "登录分支"),
+            displayName: "test-mdg",
+            branchName: "mdg/test",
+            lifecycleStatus: "merged",
+            sessions: [
+              createSessionSummary({
+                sessionId: "session-child",
+                title: "工作树会话",
+                workspaceId: "workspace-1-child"
+              })
+            ]
+          })
+        ]
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+    const cleanupPayloads: Array<{ deleteBranch?: boolean }> = [];
+
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL, rawInit?: RequestInit) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      if (url.endsWith("/api/worktrees/workspace-1-child/merge-preview")) {
+        return createJsonResponse({
+          workspaceId: "workspace-1-child",
+          sourceWorkspace: createWorkspace("workspace-1-child", "登录分支"),
+          targetWorkspace: createWorkspace("workspace-1", "项目一"),
+          meta: {
+            workspaceId: "workspace-1-child",
+            rootWorkspaceId: "workspace-1",
+            parentWorkspaceId: "workspace-1",
+            sourceWorkspaceId: "workspace-1",
+            mergeTargetWorkspaceId: "workspace-1",
+            branchName: "mdg/test",
+            baseRef: "main",
+            baseCommit: "abc12345",
+            headCommit: "def67890",
+            displayName: "test-mdg",
+            depth: 1,
+            lifecycleStatus: "merged",
+            mergedAt: "2026-04-13T12:27:38.000Z",
+            removedAt: null,
+            createdAt: "2026-04-12T12:00:00.000Z",
+            updatedAt: "2026-04-13T12:27:38.000Z"
+          },
+          sourceBranchName: "mdg/test",
+          targetBranchName: "main",
+          sourceHeadCommit: "d6d8eb49",
+          targetHeadCommit: "1a6a680e",
+          mergeBaseCommit: "d6d8eb49",
+          ahead: 0,
+          behind: 1,
+          hasConflicts: false,
+          conflictPaths: [],
+          alreadyMerged: true,
+          canMerge: false,
+          blockers: []
+        });
+      }
+
+      if (url.endsWith("/api/worktrees/workspace-1-child/cleanup")) {
+        cleanupPayloads.push(
+          rawInit?.body ? (JSON.parse(String(rawInit.body)) as { deleteBranch?: boolean }) : {}
+        );
+        currentSnapshot = createWorkbenchSnapshot([
+          {
+            workspace: createWorkspace("workspace-1", "项目一"),
+            sessions: []
+          }
+        ]);
+        MockWebSocket.workbenchSnapshot = currentSnapshot;
+
+        return createJsonResponse({
+          workspaceId: "workspace-1-child",
+          removed: true,
+          branchDeleteRequested: true,
+          branchDeleted: true,
+          deletedBranchName: "mdg/test",
+          branchDeleteError: null,
+          meta: {
+            workspaceId: "workspace-1-child",
+            rootWorkspaceId: "workspace-1",
+            parentWorkspaceId: "workspace-1",
+            sourceWorkspaceId: "workspace-1",
+            mergeTargetWorkspaceId: "workspace-1",
+            branchName: "mdg/test",
+            baseRef: "main",
+            baseCommit: "abc12345",
+            headCommit: "d6d8eb49",
+            displayName: "test-mdg",
+            depth: 1,
+            lifecycleStatus: "removed",
+            mergedAt: "2026-04-13T12:27:38.000Z",
+            removedAt: "2026-04-13T12:28:00.000Z",
+            createdAt: "2026-04-12T12:00:00.000Z",
+            updatedAt: "2026-04-13T12:28:00.000Z"
+          }
+        });
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    await renderWorkbenchRoute("/workspaces/workspace-1-child/sessions/session-child");
+    await userEvent.click(screen.getByRole("tab", { name: t("shell.gitEntry") }));
+    await userEvent.click(
+      screen.getByRole("button", {
+        name: new RegExp(t("shell.worktreeMergeExpandDetails"))
+      })
+    );
+    await userEvent.click(screen.getByRole("button", { name: t("shell.worktreeMergePreviewAction") }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: t("shell.worktreeCleanupAction") })).toBeEnabled();
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: t("shell.worktreeCleanupAction") }));
+
+    const cleanupDialog = screen.getByRole("dialog", {
+      name: t("shell.worktreeCleanupModalTitle")
+    });
+    const deleteBranchCheckbox = within(cleanupDialog).getByRole("checkbox", {
+      name: t("shell.worktreeCleanupDeleteBranchLabel", { branch: "mdg/test" })
+    });
+
+    expect(deleteBranchCheckbox).toBeEnabled();
+
+    await userEvent.click(deleteBranchCheckbox);
+    await userEvent.click(
+      within(cleanupDialog).getByRole("button", {
+        name: t("shell.worktreeCleanupDeleteBranchAction")
+      })
+    );
+
+    await waitFor(() => {
+      expect(cleanupPayloads).toEqual([{ deleteBranch: true }]);
+    });
   });
 });
 
@@ -4702,12 +5725,13 @@ function CurrentLocationProbe() {
   );
 }
 
-function createWorkspace(id: string, name: string) {
+function createWorkspace(id: string, name: string, backgroundColor?: string | null) {
   return {
     id,
     name,
     path: `C:/repo/${id}`,
-    repoRoot: `C:/repo/${id}`
+    repoRoot: `C:/repo/${id}`,
+    backgroundColor: backgroundColor ?? null
   };
 }
 
@@ -4791,6 +5815,7 @@ function createWorkbenchWorktreeNode(input: {
   children?: Array<Record<string, unknown>>;
   depth?: number;
   parentWorkspaceId?: string;
+  lifecycleStatus?: "active" | "merged" | "abandoned" | "removing" | "removed";
 }) {
   return {
     workspace: input.workspace,
@@ -4806,7 +5831,7 @@ function createWorkbenchWorktreeNode(input: {
       headCommit: "commit-head",
       displayName: input.displayName,
       depth: input.depth ?? 1,
-      lifecycleStatus: "active",
+      lifecycleStatus: input.lifecycleStatus ?? "active",
       mergedAt: null,
       removedAt: null,
       createdAt: "2026-04-12T08:00:00.000Z",
@@ -4817,6 +5842,49 @@ function createWorkbenchWorktreeNode(input: {
       children: [],
       ...child
     }))
+  };
+}
+
+function createWorkspaceManagementSummary(workspaceId: string, name: string) {
+  return {
+    workspaceId,
+    name,
+    path: `C:/repo/${workspaceId}`,
+    git: {
+      isRepository: true,
+      repoRoot: `C:/repo/${workspaceId}`,
+      currentBranch: "main",
+      commitCount: 12,
+      remotes: [
+        {
+          name: "origin",
+          url: `https://example.com/team/${workspaceId}.git`
+        }
+      ],
+      error: null
+    },
+    codeComposition: {
+      scannedFileCount: 4,
+      truncated: false,
+      items: [
+        {
+          type: "TypeScript",
+          count: 2,
+          ratio: 0.5
+        },
+        {
+          type: "Markdown",
+          count: 1,
+          ratio: 0.25
+        },
+        {
+          type: "JSON",
+          count: 1,
+          ratio: 0.25
+        }
+      ],
+      error: null
+    }
   };
 }
 

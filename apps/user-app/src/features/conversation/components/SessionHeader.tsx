@@ -9,7 +9,10 @@ import { t } from "../../../shared/i18n";
 import { buildSessionTitlePresentation } from "../session-title";
 
 import type { SessionSummaryDto } from "../api/conversation-api";
-import type { WorkspaceVisualContext } from "../../workbench/utils/worktree-visual-context";
+import {
+  createWorkspaceToneStyle,
+  type WorkspaceVisualContext
+} from "../../workbench/utils/worktree-visual-context";
 
 interface SessionHeaderProps {
   session: SessionSummaryDto | null;
@@ -73,6 +76,7 @@ export function SessionHeader({ session, actions, workspaceContext = null }: Ses
     <header
       className="conversation-header"
       data-workspace-tone={workspaceContext?.tone ?? "root"}
+      style={createWorkspaceToneStyle(workspaceContext)}
       data-window-drag-handle="conversation-header"
       onMouseDownCapture={handleHeaderMouseDownCapture}
     >
