@@ -27,6 +27,11 @@ import { AppError } from "../../shared/errors/app-error.js";
 import { hashContent } from "../../shared/utils/hash.js";
 import { createId } from "../../shared/utils/id.js";
 import { logPerformance } from "../../shared/utils/perf-log.js";
+import {
+  isTerminalDebugEnabled,
+  logTerminalDebug,
+  terminalDebugNowMs
+} from "../../shared/utils/terminal-debug-log.js";
 import { nowIso } from "../../shared/utils/time.js";
 import { isCommandAvailable } from "../../shared/utils/command-availability.js";
 import type {
@@ -194,6 +199,7 @@ const SESSION_START_DEFERRED_PROVIDERS = new Set([
 const MUTABLE_HISTORY_TAIL_REFRESH_INTERVAL_MS = 1_200;
 const WORKSPACE_DISCOVERY_BACKGROUND_MAX_AGE_MS = 15_000;
 const PROVIDER_CAPABILITY_CACHE_MAX_AGE_MS = 5_000;
+const WORKSPACE_DISCOVERY_PERSIST_BATCH_SIZE = 25;
 
 export class SessionHistoryService {
   private readonly providerRegistry: ProviderRegistry;
@@ -625,14 +631,18 @@ export class SessionHistoryService {
     await this.syncSessionTitleFromProvider(sessionId, binding);
   }
 
-  async syncWorkspaceSessionTitles(workspaceId: string, userId: string): Promise<void> {
+  async syncWorkspaceSessionTitles(
+    workspaceId: string,
+    userId: string,
+    concurrency = 1
+  ): Promise<void> {
     const sessions = this.sessionIndexRepository.listByWorkspace(workspaceId, userId);
 
-    for (const session of sessions) {
+    await runWithConcurrency(sessions, concurrency, async (session) => {
       await this.syncSessionTitle(session.sessionId).catch(() => {
         return;
       });
-    }
+    });
   }
 
   async listSessionChangedFiles(
@@ -1726,9 +1736,20 @@ export class SessionHistoryService {
     refreshStateMode: "inline" | "deferred" = "inline"
   ): Promise<SessionListItem[]> {
     const startedAt = Date.now();
+    const debugStartedAtMs = terminalDebugNowMs();
     const workspace = this.getWorkspaceOrThrow(workspaceId);
     let discoverDurationMs = 0;
     let persistDurationMs = 0;
+    let persistPass1DurationMs = 0;
+    let persistPass1BatchCount = 0;
+    let persistPass1MaxBatchMs = 0;
+    let relationMapDurationMs = 0;
+    let persistPass2DurationMs = 0;
+    let persistPass2BatchCount = 0;
+    let persistPass2MaxBatchMs = 0;
+    let cleanupDurationMs = 0;
+    let listItemsDurationMs = 0;
+    let refreshStateDurationMs = 0;
     const refreshStateCount = 10;
 
     try {
@@ -1753,16 +1774,14 @@ export class SessionHistoryService {
       const discoveredSessionIds = new Map<string, string>();
       const persistedSessions: PersistedSessionDescriptor[] = [];
       const claimedPendingSessionIds = new Set<string>();
-
-      const persist = this.db.transaction(() => {
-        for (const session of sessions) {
+      const persistPass1Transaction = this.db.transaction((batch: typeof sessions) => {
+        for (const session of batch) {
           const exactExisting =
             this.sessionBindingRepository.findByProviderSession(
               session.provider,
               session.providerSessionId
             ) ?? this.sessionBindingRepository.findByRawStoreRef(session.provider, session.rawStoreRef);
 
-          // discover 只能补全当前工作区，不能把别的工作区已有会话偷过来重绑。
           if (exactExisting && exactExisting.workspaceId !== workspaceId) {
             continue;
           }
@@ -1859,10 +1878,24 @@ export class SessionHistoryService {
             existingIndex
           });
         }
+      });
 
-        const relationMap = this.buildWorkspaceSessionRelationMap(sessions, discoveredSessionIds);
+      const persistPass1StartedAt = Date.now();
+      const persistPass1Stats = await runBatchedTransactions(
+        sessions,
+        WORKSPACE_DISCOVERY_PERSIST_BATCH_SIZE,
+        persistPass1Transaction
+      );
+      persistPass1DurationMs = Date.now() - persistPass1StartedAt;
+      persistPass1BatchCount = persistPass1Stats.batchCount;
+      persistPass1MaxBatchMs = persistPass1Stats.maxBatchMs;
 
-        for (const persistedSession of persistedSessions) {
+      const relationMapStartedAt = Date.now();
+      const relationMap = this.buildWorkspaceSessionRelationMap(sessions, discoveredSessionIds);
+      relationMapDurationMs = Date.now() - relationMapStartedAt;
+
+      const persistPass2Transaction = this.db.transaction((batch: PersistedSessionDescriptor[]) => {
+        for (const persistedSession of batch) {
           const relation = relationMap.get(persistedSession.sessionId);
           const resolvedParentSessionId =
             relation?.parentSessionId
@@ -1917,31 +1950,66 @@ export class SessionHistoryService {
         }
       });
 
-      const persistStartedAt = Date.now();
-      persist();
-      persistDurationMs = Date.now() - persistStartedAt;
+      const persistPass2StartedAt = Date.now();
+      const persistPass2Stats = await runBatchedTransactions(
+        persistedSessions,
+        WORKSPACE_DISCOVERY_PERSIST_BATCH_SIZE,
+        persistPass2Transaction
+      );
+      persistPass2DurationMs = Date.now() - persistPass2StartedAt;
+      persistPass2BatchCount = persistPass2Stats.batchCount;
+      persistPass2MaxBatchMs = persistPass2Stats.maxBatchMs;
+      persistDurationMs = persistPass1DurationMs + relationMapDurationMs + persistPass2DurationMs;
       if (discovery.isComplete) {
-        this.cleanupStaleHiddenSessions(workspaceId, userId, sessions);
+        const cleanupStartedAt = Date.now();
+        await this.cleanupStaleHiddenSessions(workspaceId, userId, sessions);
+        cleanupDurationMs = Date.now() - cleanupStartedAt;
       }
       this.workspaceSessionRelations.set(
         workspaceId,
-        this.buildWorkspaceSessionRelationMap(sessions, discoveredSessionIds)
+        relationMap
       );
 
+      const listItemsStartedAt = Date.now();
       const items = this.sessionIndexRepository.listByWorkspace(workspaceId, userId);
+      listItemsDurationMs = Date.now() - listItemsStartedAt;
       const refreshCandidates = buildSessionStateRefreshCandidates(items, refreshStateCount);
       this.workspaceDiscoveryStatuses.set(workspaceId, {
         refreshedAt: Date.now(),
         isComplete: discovery.isComplete
       });
 
+      const refreshStateStartedAt = Date.now();
       if (refreshStateMode === "inline") {
         await this.refreshRecentSessionStates(refreshCandidates, userId);
       } else {
         this.scheduleWorkspaceStateRefresh(workspaceId, userId, refreshCandidates);
       }
+      refreshStateDurationMs = Date.now() - refreshStateStartedAt;
 
       const nextItems = this.listWorkspaceSessions(workspaceId, userId);
+
+      if (isTerminalDebugEnabled()) {
+        logTerminalDebug("workspace.discovery.completed", {
+          workspaceId,
+          sessionCount: sessions.length,
+          returnedSessionCount: nextItems.length,
+          discoverMs: discoverDurationMs,
+          persistMs: persistDurationMs,
+          persistPass1Ms: persistPass1DurationMs,
+          persistPass1BatchCount,
+          persistPass1MaxBatchMs,
+          relationMapMs: relationMapDurationMs,
+          persistPass2Ms: persistPass2DurationMs,
+          persistPass2BatchCount,
+          persistPass2MaxBatchMs,
+          cleanupMs: cleanupDurationMs,
+          listItemsMs: listItemsDurationMs,
+          refreshStateMs: refreshStateDurationMs,
+          refreshStateDeferred: refreshStateMode !== "inline",
+          durationMs: terminalDebugNowMs() - debugStartedAtMs
+        });
+      }
 
       logPerformance(
         "workspace.discover_sessions",
@@ -1959,6 +2027,16 @@ export class SessionHistoryService {
           refreshedStates: refreshCandidates.length,
           discoverMs: discoverDurationMs,
           persistMs: persistDurationMs,
+          persistPass1Ms: persistPass1DurationMs,
+          persistPass1BatchCount,
+          persistPass1MaxBatchMs,
+          relationMapMs: relationMapDurationMs,
+          persistPass2Ms: persistPass2DurationMs,
+          persistPass2BatchCount,
+          persistPass2MaxBatchMs,
+          cleanupMs: cleanupDurationMs,
+          listItemsMs: listItemsDurationMs,
+          refreshStateMs: refreshStateDurationMs,
           refreshStateDeferred: refreshStateMode !== "inline"
         },
         {
@@ -1976,6 +2054,16 @@ export class SessionHistoryService {
           workspacePath: workspace.path,
           discoverMs: discoverDurationMs,
           persistMs: persistDurationMs,
+          persistPass1Ms: persistPass1DurationMs,
+          persistPass1BatchCount,
+          persistPass1MaxBatchMs,
+          relationMapMs: relationMapDurationMs,
+          persistPass2Ms: persistPass2DurationMs,
+          persistPass2BatchCount,
+          persistPass2MaxBatchMs,
+          cleanupMs: cleanupDurationMs,
+          listItemsMs: listItemsDurationMs,
+          refreshStateMs: refreshStateDurationMs,
           refreshStateDeferred: refreshStateMode !== "inline",
           error: error instanceof Error ? error.message : "unknown"
         },
@@ -2394,11 +2482,12 @@ export class SessionHistoryService {
     }
 
     const nextTitle = (
-      await this.sessionSyncService.readSessionTitle(
-        binding.provider,
-        binding.providerSessionId,
-        binding.rawStoreRef
-      )
+      await this.providerDiscoveryHelperClient.readSessionTitle({
+        config: this.providerSessionDiscoveryConfig,
+        provider: binding.provider,
+        providerSessionId: binding.providerSessionId,
+        rawStoreRef: binding.rawStoreRef
+      })
     ).trim();
 
     const resolvedTitle = resolvePersistedSessionTitle(
@@ -2649,7 +2738,7 @@ export class SessionHistoryService {
     this.workspaceStateRefreshInflight.set(inflightKey, task);
   }
 
-  private cleanupStaleHiddenSessions(
+  private async cleanupStaleHiddenSessions(
     workspaceId: string,
     userId: string,
     sessions: Array<{
@@ -2687,17 +2776,17 @@ export class SessionHistoryService {
       return;
     }
 
-    this.deleteSessionsByIds(staleHiddenSessions.map((session) => session.sessionId));
-  }
-
-  private deleteSessionsByIds(sessionIds: string[]): void {
-    const remove = this.db.transaction((ids: string[]) => {
+    const deleteTransaction = this.db.transaction((ids: string[]) => {
       for (const sessionId of ids) {
         this.deleteSessionById(sessionId);
       }
     });
 
-    remove(sessionIds);
+    await runBatchedTransactions(
+      staleHiddenSessions.map((session) => session.sessionId),
+      WORKSPACE_DISCOVERY_PERSIST_BATCH_SIZE,
+      deleteTransaction
+    );
   }
 
   private findPendingBindingDuplicate(
@@ -4230,6 +4319,63 @@ function buildProviderCapabilityCacheKey(
   workspacePath: string | null
 ): string {
   return `${provider}::${workspacePath ?? ""}`;
+}
+
+async function runWithConcurrency<TItem>(
+  items: readonly TItem[],
+  concurrency: number,
+  worker: (item: TItem) => Promise<void>
+): Promise<void> {
+  const normalizedConcurrency = Math.max(1, Math.floor(concurrency) || 1);
+  const queue = [...items];
+  const runners = Array.from({
+    length: Math.min(normalizedConcurrency, queue.length || 1)
+  }, async () => {
+    while (queue.length > 0) {
+      const current = queue.shift();
+
+      if (current === undefined) {
+        return;
+      }
+
+      await worker(current);
+    }
+  });
+
+  await Promise.all(runners);
+}
+
+async function runBatchedTransactions<TItem>(
+  items: readonly TItem[],
+  batchSize: number,
+  transaction: (batch: TItem[]) => void
+): Promise<{
+  batchCount: number;
+  maxBatchMs: number;
+}> {
+  const normalizedBatchSize = Math.max(1, Math.floor(batchSize) || 1);
+  let batchCount = 0;
+  let maxBatchMs = 0;
+
+  for (let index = 0; index < items.length; index += normalizedBatchSize) {
+    const batch = items.slice(index, index + normalizedBatchSize);
+    const batchStartedAt = Date.now();
+
+    transaction(batch);
+
+    const batchDurationMs = Date.now() - batchStartedAt;
+    batchCount += 1;
+    maxBatchMs = Math.max(maxBatchMs, batchDurationMs);
+
+    if (index + normalizedBatchSize < items.length) {
+      await delay(0);
+    }
+  }
+
+  return {
+    batchCount,
+    maxBatchMs
+  };
 }
 
 function applyImmediateModelOptionFallbacks(

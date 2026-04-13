@@ -8,6 +8,7 @@ import type { AuthContext } from "../../src/modules/auth/auth-service.js";
 import type { WorkbenchService } from "../../src/modules/workbench/workbench-service.js";
 import type { WorkspacePanelSnapshotService } from "../../src/modules/workbench/workspace-panel-snapshot-service.js";
 import type { WorkspaceFileWatcher } from "../../src/modules/workbench/workspace-file-watcher.js";
+import type { TaskHandle } from "../../src/modules/tasks/task-types.js";
 
 function createMockFileWatcher() {
   return {
@@ -452,6 +453,131 @@ describe("WorkbenchWsHub", () => {
 
     expect(workbenchService.getSnapshot).toHaveBeenCalledTimes(2);
     expect(client.send).toHaveBeenCalledTimes(1);
+
+    hub.cleanupClient(client);
+  });
+
+  it("workbench.refresh 会把标题同步改成后台任务调度，不再直接走同步标题链路", async () => {
+    const authContext: AuthContext = {
+      accessToken: "token",
+      user: {
+        userId: "user-1",
+        username: "admin",
+        role: "admin"
+      }
+    };
+    const scheduleSessionTitleSync = vi.fn(() => ({
+      taskId: "task-1",
+      taskType: "workbench.sync_titles",
+      key: "user-1",
+      executionLane: "host_background",
+      deduped: false,
+      promise: Promise.resolve({ items: [] }),
+      cancel: vi.fn()
+    } satisfies TaskHandle<{ items: [] }>));
+    const workbenchService = {
+      getSnapshot: vi.fn(() => ({ items: [] })),
+      shouldRefreshSnapshot: vi.fn(() => false),
+      refreshSnapshot: vi.fn(async () => ({ items: [] })),
+      syncSessionTitles: vi.fn(async () => ({ items: [] })),
+      scheduleSessionTitleSync
+    } satisfies Pick<
+      WorkbenchService,
+      "getSnapshot" | "shouldRefreshSnapshot" | "refreshSnapshot" | "syncSessionTitles" | "scheduleSessionTitleSync"
+    >;
+
+    const hub = new WorkbenchWsHub(
+      workbenchService as unknown as WorkbenchService,
+      {} as WorkspacePanelSnapshotService,
+      createMockFileWatcher() as unknown as WorkspaceFileWatcher
+    );
+
+    expect(
+      hub.handleMessage(
+        { send: vi.fn() } as unknown as WebSocket,
+        {
+          type: "workbench.refresh"
+        },
+        authContext
+      )
+    ).toBe(true);
+
+    await flushAsyncTasks();
+
+    expect(scheduleSessionTitleSync).toHaveBeenCalledWith("user-1", "workbench_ws.sync_titles");
+    expect(workbenchService.syncSessionTitles).not.toHaveBeenCalled();
+  });
+
+  it("侧边栏定时刷新默认不会自动触发 workspaceManagement A/B 刷新", async () => {
+    vi.useFakeTimers();
+
+    const client = {
+      send: vi.fn()
+    } as unknown as WebSocket;
+    const authContext: AuthContext = {
+      accessToken: "token",
+      user: {
+        userId: "user-1",
+        username: "admin",
+        role: "admin"
+      }
+    };
+    const workbenchService = {
+      getSnapshot: vi.fn(() => ({ items: [] })),
+      shouldRefreshSnapshot: vi.fn(() => false),
+      refreshSnapshot: vi.fn(async () => ({ items: [] })),
+      syncSessionTitles: vi.fn(async () => ({ items: [] })),
+      scheduleSessionTitleSync: vi.fn()
+    } satisfies Pick<
+      WorkbenchService,
+      "getSnapshot" | "shouldRefreshSnapshot" | "refreshSnapshot" | "syncSessionTitles" | "scheduleSessionTitleSync"
+    >;
+    const workspacePanelSnapshotService = {
+      getWorkspaceManagementSnapshot: vi.fn(async () => ({
+        workspaceId: "workspace-1",
+        name: "workspace",
+        path: "/workspace",
+        git: {
+          isRepository: false,
+          repoRoot: null,
+          currentBranch: null,
+          commitCount: null,
+          remotes: [],
+          error: null
+        },
+        codeComposition: {
+          scannedFileCount: 0,
+          truncated: false,
+          items: [],
+          error: null
+        }
+      }))
+    } satisfies Pick<WorkspacePanelSnapshotService, "getWorkspaceManagementSnapshot">;
+
+    const hub = new WorkbenchWsHub(
+      workbenchService as unknown as WorkbenchService,
+      workspacePanelSnapshotService as unknown as WorkspacePanelSnapshotService,
+      createMockFileWatcher() as unknown as WorkspaceFileWatcher
+    );
+
+    expect(
+      hub.handleMessage(
+        client,
+        {
+          type: "workspaceManagement.subscribe",
+          workspaceId: "workspace-1"
+        },
+        authContext
+      )
+    ).toBe(true);
+
+    await flushAsyncTasks();
+    expect(workspacePanelSnapshotService.getWorkspaceManagementSnapshot).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    await flushAsyncTasks();
+
+    expect(workspacePanelSnapshotService.getWorkspaceManagementSnapshot).toHaveBeenCalledTimes(1);
 
     hub.cleanupClient(client);
   });

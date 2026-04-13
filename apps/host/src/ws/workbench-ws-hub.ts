@@ -17,6 +17,10 @@ const WORKBENCH_REFRESH_INTERVAL_MS = 60_000;
 const SIDEBAR_REFRESH_INTERVAL_MS = 5_000;
 const GIT_SUBSCRIPTION_MIN_REFRESH_INTERVAL_MS = 15_000;
 const WORKBENCH_REALTIME_BROADCAST_DEBOUNCE_MS = 120;
+const WORKSPACE_MANAGEMENT_TIMER_REFRESH_ENABLED = readBooleanEnv(
+  process.env.CODINGNS_WORKSPACE_MANAGEMENT_AUTO_REFRESH,
+  false
+);
 
 interface WorkbenchSubscribeMessage {
   type: "workbench.subscribe";
@@ -156,10 +160,8 @@ export class WorkbenchWsHub {
         void this.sendWorkbenchSnapshotToClient(client, userId, channel);
         return true;
       case "workbench.refresh":
-        void Promise.all([
-          this.syncTitlesAndBroadcast(userId),
-          this.refreshAndBroadcast(userId, true)
-        ]);
+        void this.syncTitlesAndBroadcast(userId);
+        void this.refreshAndBroadcast(userId, true);
         return true;
       case "fileTree.subscribe":
         this.clientFileTreeSubscriptions.set(client, {
@@ -425,7 +427,10 @@ export class WorkbenchWsHub {
     channel.titleSyncTask = (async () => {
       const startedAtMs = terminalDebugNowMs();
       try {
-        const payload = buildWorkbenchPayload(await this.workbenchService.syncSessionTitles(userId));
+        const snapshot = await this.workbenchService
+          .scheduleSessionTitleSync(userId, "workbench_ws.sync_titles")
+          .promise;
+        const payload = buildWorkbenchPayload(snapshot);
 
         if (payload === channel.lastWorkbenchPayload) {
           return;
@@ -518,11 +523,16 @@ export class WorkbenchWsHub {
     const startedAtMs = terminalDebugNowMs();
     await Promise.all(
       [...channel.clients].map(async (client) => {
-        await Promise.allSettled([
+        const refreshTasks = [
           this.refreshGitSubscription(client),
-          this.refreshTerminalManagerSubscription(client),
-          this.refreshWorkspaceManagementSubscription(client)
-        ]);
+          this.refreshTerminalManagerSubscription(client)
+        ];
+
+        if (WORKSPACE_MANAGEMENT_TIMER_REFRESH_ENABLED) {
+          refreshTasks.push(this.refreshWorkspaceManagementSubscription(client));
+        }
+
+        await Promise.allSettled(refreshTasks);
       })
     );
     logTerminalDebug("workbench.sidebar_refresh.completed", {
@@ -671,19 +681,25 @@ export class WorkbenchWsHub {
         subscription.workspaceId,
         { force }
       );
+      const payloadStartedAtMs = terminalDebugNowMs();
       const payload = buildTerminalManagerPayload(snapshot);
+      const payloadBuildMs = terminalDebugNowMs() - payloadStartedAtMs;
 
       if (payload === subscription.lastPayload) {
         return;
       }
 
       subscription.lastPayload = payload;
+      const sendStartedAtMs = terminalDebugNowMs();
       client.send(payload);
       logTerminalDebug("workbench.terminal_manager_refresh.completed", {
         workspaceId: subscription.workspaceId,
         force,
         terminalCount: snapshot.terminals.length,
         templateCount: snapshot.templates.length,
+        templateStatusCount: snapshot.templateStatuses.length,
+        payloadBuildMs,
+        sendMs: terminalDebugNowMs() - sendStartedAtMs,
         durationMs: terminalDebugNowMs() - startedAtMs
       });
     } catch (error) {
@@ -745,6 +761,24 @@ export class WorkbenchWsHub {
       detail: appError.message
     });
   }
+}
+
+function readBooleanEnv(rawValue: string | undefined, fallback: boolean): boolean {
+  const normalized = rawValue?.trim().toLowerCase();
+
+  if (!normalized) {
+    return fallback;
+  }
+
+  if (["1", "true", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+
+  if (["0", "false", "no", "off"].includes(normalized)) {
+    return false;
+  }
+
+  return fallback;
 }
 
 function parseWorkbenchMessage(payload: unknown): WorkbenchMessage | null {

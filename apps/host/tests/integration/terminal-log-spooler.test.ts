@@ -22,7 +22,7 @@ afterEach(() => {
 });
 
 describe("TerminalLogSpooler", () => {
-  it("会把终端输出批量刷入日志文件并写入索引", () => {
+  it("会把终端输出批量刷入日志文件并写入索引", async () => {
     const database = createDatabaseClient(":memory:");
     const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-terminal-log-spooler-"));
     tempDirs.push(tempDir);
@@ -54,7 +54,7 @@ describe("TerminalLogSpooler", () => {
         timestamp: "2026-03-28T11:00:01.000Z"
       }
     ]);
-    spooler.flushTerminal("terminal-1");
+    await spooler.flushTerminal("terminal-1");
 
     const fileRecord = fileRepository.findActiveByTerminalId("terminal-1");
     const latestSegment = segmentRepository.findLatestByTerminalId("terminal-1");
@@ -71,6 +71,60 @@ describe("TerminalLogSpooler", () => {
       readFileSync(path.join(tempDir, "terminal-1", "active.log"), "utf8")
     ).toBe("hello\nworld\n");
 
+    await spooler.dispose();
+    database.close();
+  });
+
+  it("文件数据库模式下会通过后台写入进程落日志", async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-terminal-log-worker-"));
+    const databasePath = path.join(tempDir, "terminal.db");
+    tempDirs.push(tempDir);
+    const database = createDatabaseClient(databasePath);
+    seedTerminalDependencies(database.db, "terminal-2");
+
+    const fileRepository = new TerminalLogFileRepository(database.db);
+    const segmentRepository = new TerminalLogSegmentRepository(database.db);
+    const spooler = new TerminalLogSpooler({
+      databasePath,
+      logRootDir: tempDir,
+      fileRepository,
+      segmentRepository,
+      flushIntervalMs: 60_000,
+      maxBatchBytes: 1024
+    });
+
+    spooler.appendChunks("terminal-2", [
+      {
+        terminalId: "terminal-2",
+        cursor: "1",
+        stream: "stdout",
+        content: "worker\n",
+        timestamp: "2026-03-28T11:00:00.000Z"
+      },
+      {
+        terminalId: "terminal-2",
+        cursor: "2",
+        stream: "stdout",
+        content: "flush\n",
+        timestamp: "2026-03-28T11:00:01.000Z"
+      }
+    ]);
+    await spooler.flushTerminal("terminal-2");
+
+    const fileRecord = fileRepository.findActiveByTerminalId("terminal-2");
+    const latestSegment = segmentRepository.findLatestByTerminalId("terminal-2");
+
+    expect(fileRecord).not.toBeNull();
+    expect(fileRecord?.startSeq).toBe(1);
+    expect(fileRecord?.endSeq).toBe(2);
+    expect(latestSegment).not.toBeNull();
+    expect(latestSegment?.startSeq).toBe(1);
+    expect(latestSegment?.endSeq).toBe(2);
+    expect(
+      readFileSync(path.join(tempDir, "terminal-2", "active.log"), "utf8")
+    ).toBe("worker\nflush\n");
+
+    await spooler.dispose();
     database.close();
   });
 });

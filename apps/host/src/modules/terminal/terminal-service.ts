@@ -52,6 +52,16 @@ interface CreateTerminalInput {
   runtimeType?: TerminalRuntimeType | null;
   createdByUserId: string;
   env?: Record<string, string>;
+  debugRuntimeSessionId?: string | null;
+  debugTargetId?: string | null;
+  debugServiceId?: string | null;
+  frameworkAnalysisId?: string | null;
+  launcherSourceType?: TerminalInstance["launcherSourceType"];
+  launchStage?: string | null;
+  failureStage?: string | null;
+  adapterKind?: TerminalInstance["adapterKind"];
+  envPatchSummary?: Record<string, unknown>;
+  artifactRef?: string | null;
 }
 
 interface TerminalInputDebugContext {
@@ -70,6 +80,7 @@ interface SubscribeTerminalCallbacks {
 type TerminalCloseReason = "user_closed" | "idle_timeout";
 
 interface TerminalServiceOptions {
+  databasePath?: string;
   terminalLogRootDir?: string;
   terminalLogFileRepository?: TerminalLogFileRepository;
   terminalLogSegmentRepository?: TerminalLogSegmentRepository;
@@ -144,6 +155,7 @@ export class TerminalService extends EventEmitter {
       options.terminalLogFileRepository &&
       options.terminalLogSegmentRepository
         ? new TerminalLogSpooler({
+            databasePath: options.databasePath,
             logRootDir: options.terminalLogRootDir,
             fileRepository: options.terminalLogFileRepository,
             segmentRepository: options.terminalLogSegmentRepository
@@ -184,7 +196,17 @@ export class TerminalService extends EventEmitter {
       lastActiveAt: now,
       closedAt: null,
       exitCode: null,
-      statusDetail: null
+      statusDetail: null,
+      debugRuntimeSessionId: input.debugRuntimeSessionId ?? null,
+      debugTargetId: input.debugTargetId ?? null,
+      debugServiceId: input.debugServiceId ?? null,
+      frameworkAnalysisId: input.frameworkAnalysisId ?? null,
+      launcherSourceType: input.launcherSourceType ?? null,
+      launchStage: input.launchStage ?? null,
+      failureStage: input.failureStage ?? null,
+      adapterKind: input.adapterKind ?? null,
+      envPatchSummary: input.envPatchSummary ?? undefined,
+      artifactRef: input.artifactRef ?? null
     };
     const runtimeSession: TerminalRuntimeSession = {
       id: runtimeSessionId,
@@ -344,11 +366,11 @@ export class TerminalService extends EventEmitter {
       return { success: true };
     }
 
-    this.flushTerminalLogs(terminalId);
+    await this.flushTerminalLogs(terminalId);
     const willEmitExit = await this.runtimeManager.terminateSession(terminal, session);
 
     if (!willEmitExit) {
-      this.finalizeTerminalClosure(terminal, session, {
+      await this.finalizeTerminalClosure(terminal, session, {
         requestedClose: true,
         exitCode: 0,
         sessionAlive: false,
@@ -366,7 +388,7 @@ export class TerminalService extends EventEmitter {
     this.pendingCloseReasons.delete(terminalId);
     this.pendingActivityByTerminalId.delete(terminalId);
     this.clearActivityFlushTimerIfIdle();
-    this.flushTerminalLogs(terminalId);
+    await this.flushTerminalLogs(terminalId);
     this.pendingDeletedTerminalIds.add(terminalId);
     const deleteRecords = this.db.transaction(() => {
       this.terminalRuntimeSessionRepository.deleteByTerminalId(terminalId);
@@ -386,7 +408,7 @@ export class TerminalService extends EventEmitter {
       willEmitExit = await this.runtimeManager.terminateSession(terminal, session);
     } catch (error) {
       this.pendingDeletedTerminalIds.delete(terminalId);
-      this.clearTerminalLogs(terminalId);
+      await this.clearTerminalLogs(terminalId);
       console.warn("[terminal-delete-runtime-cleanup-failed]", {
         terminalId,
         runtimeSessionId: session.id,
@@ -397,7 +419,7 @@ export class TerminalService extends EventEmitter {
 
     if (!willEmitExit) {
       this.pendingDeletedTerminalIds.delete(terminalId);
-      this.clearTerminalLogs(terminalId);
+      await this.clearTerminalLogs(terminalId);
     }
 
     return { success: true };
@@ -532,7 +554,7 @@ export class TerminalService extends EventEmitter {
     this.isDisposing = true;
     this.flushPendingTerminalOutput();
     this.flushPendingActivity();
-    this.terminalLogSpooler?.flushAll();
+    await this.terminalLogSpooler?.dispose();
     this.runtimeManager.closeAllAttachments();
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
@@ -543,7 +565,7 @@ export class TerminalService extends EventEmitter {
     limit: number
   ): Promise<TerminalHistoryPageDto> {
     const terminal = this.getTerminalOrThrow(terminalId);
-    this.flushTerminalLogs(terminalId);
+    await this.flushTerminalLogs(terminalId);
     const runtimeSession =
       terminal.runtimeSessionId
         ? this.terminalRuntimeSessionRepository.findById(terminal.runtimeSessionId)
@@ -686,6 +708,10 @@ export class TerminalService extends EventEmitter {
   }
 
   private handleRuntimeExit(event: RuntimeAttachmentExitEvent): void {
+    void this.handleRuntimeExitAsync(event);
+  }
+
+  private async handleRuntimeExitAsync(event: RuntimeAttachmentExitEvent): Promise<void> {
     if (this.isDisposing) {
       return;
     }
@@ -695,11 +721,11 @@ export class TerminalService extends EventEmitter {
       this.pendingActivityByTerminalId.delete(event.terminalId);
       this.clearActivityFlushTimerIfIdle();
       this.pendingInputTraceByTerminalId.delete(event.terminalId);
-      this.clearTerminalLogs(event.terminalId);
+      await this.clearTerminalLogs(event.terminalId);
       return;
     }
 
-    this.flushTerminalLogs(event.terminalId);
+    await this.flushTerminalLogs(event.terminalId);
     const current = this.getTerminalOrThrow(event.terminalId);
     const session = this.getRuntimeSessionOrThrow(current.runtimeSessionId);
 
@@ -708,7 +734,7 @@ export class TerminalService extends EventEmitter {
       return;
     }
 
-    this.finalizeTerminalClosure(current, session, event);
+    await this.finalizeTerminalClosure(current, session, event);
   }
 
   private touchLastActiveAt(terminalId: string): void {
@@ -929,14 +955,14 @@ export class TerminalService extends EventEmitter {
     return updated;
   }
 
-  private finalizeTerminalClosure(
+  private async finalizeTerminalClosure(
     terminal: TerminalInstance,
     session: TerminalRuntimeSession,
     event: Pick<
       RuntimeAttachmentExitEvent,
       "requestedClose" | "exitCode" | "sessionAlive" | "sessionDetail" | "shellPid"
     >
-  ): void {
+  ): Promise<void> {
     const closeReason = this.pendingCloseReasons.get(terminal.id) ?? "user_closed";
     this.pendingCloseReasons.delete(terminal.id);
     this.pendingActivityByTerminalId.delete(terminal.id);
@@ -976,7 +1002,7 @@ export class TerminalService extends EventEmitter {
     });
 
     if (status === "closed") {
-      this.clearTerminalLogs(terminal.id);
+      await this.clearTerminalLogs(terminal.id);
     }
   }
 
@@ -1047,12 +1073,12 @@ export class TerminalService extends EventEmitter {
     this.runtimeManager.detach(terminalId);
   }
 
-  private flushTerminalLogs(terminalId: string): void {
+  private async flushTerminalLogs(terminalId: string): Promise<void> {
     this.flushPendingTerminalOutput(terminalId);
-    this.terminalLogSpooler?.flushTerminal(terminalId);
+    await this.terminalLogSpooler?.flushTerminal(terminalId);
   }
 
-  private clearTerminalLogs(terminalId: string): void {
+  private async clearTerminalLogs(terminalId: string): Promise<void> {
     const pendingOutput = this.pendingOutputByTerminalId.get(terminalId);
 
     if (pendingOutput?.timer) {
@@ -1062,9 +1088,14 @@ export class TerminalService extends EventEmitter {
     this.pendingOutputByTerminalId.delete(terminalId);
     this.pendingInputTraceByTerminalId.delete(terminalId);
     this.outputBuffer.clear(terminalId);
+
+    if (this.terminalLogSpooler) {
+      await this.terminalLogSpooler.deleteTerminalLogs(terminalId);
+      return;
+    }
+
     this.terminalLogSegmentRepository?.deleteByTerminalId(terminalId);
     this.terminalLogFileRepository?.deleteByTerminalId(terminalId);
-    this.terminalLogSpooler?.deleteTerminalLogs(terminalId);
   }
 
   private getOrCreatePendingOutputBatch(terminalId: string): PendingTerminalOutputBatch {

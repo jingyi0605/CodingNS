@@ -33,6 +33,14 @@ export function createDatabaseClient(databasePath: string): DatabaseClient {
   ensureTerminalCommandTemplatePortColumn(db);
   ensureTerminalCommandTemplateRuntimeTypeColumn(db);
   ensureTerminalCommandTemplateProxySchema(db);
+  ensureDebugTargetSchema(db);
+  ensureFrameworkAnalysisSchema(db);
+  ensureDebugRuntimeSchema(db);
+  ensurePortLeaseSchema(db);
+  ensureRuntimeBindingSchema(db);
+  ensureAiFallbackEditSchema(db);
+  ensureTerminalCommandTemplateDebugSchema(db);
+  ensureTerminalInstanceDebugSchema(db);
   ensureButlerProfileSchema(db);
   ensureButlerFollowUpTaskSchema(db);
   ensureButlerSessionSummarySchema(db);
@@ -746,6 +754,285 @@ function ensureTerminalLogSchema(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_terminal_log_segments_file_id
       ON terminal_log_segments(file_id, start_offset ASC);
+  `);
+}
+
+function ensureDebugTargetSchema(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS debug_targets (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      root_path TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      stack_hint TEXT,
+      source_type TEXT NOT NULL CHECK (source_type IN ('repo', 'worktree')),
+      root_workspace_id TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+      FOREIGN KEY (root_workspace_id) REFERENCES workspaces(id),
+      UNIQUE (workspace_id, root_path)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_debug_targets_workspace_id
+      ON debug_targets(workspace_id, updated_at DESC, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS debug_services (
+      id TEXT PRIMARY KEY,
+      target_id TEXT NOT NULL,
+      role TEXT NOT NULL CHECK (role IN ('frontend', 'backend', 'worker', 'mock', 'custom')),
+      name TEXT NOT NULL,
+      cwd TEXT NOT NULL,
+      command TEXT NOT NULL,
+      args_json TEXT NOT NULL,
+      env_json TEXT NOT NULL,
+      default_port_hint INTEGER,
+      protocol TEXT CHECK (protocol IS NULL OR protocol IN ('http', 'ws', 'tcp')),
+      health_path TEXT,
+      adapter_kind TEXT CHECK (
+        adapter_kind IS NULL OR adapter_kind IN ('cli', 'env', 'override', 'ai_fallback')
+      ),
+      framework_analysis_id TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (target_id) REFERENCES debug_targets(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_debug_services_target_id
+      ON debug_services(target_id, updated_at DESC, created_at DESC);
+  `);
+}
+
+function ensureFrameworkAnalysisSchema(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS framework_analysis_results (
+      id TEXT PRIMARY KEY,
+      target_id TEXT NOT NULL,
+      service_id TEXT,
+      primary_framework TEXT,
+      confidence TEXT NOT NULL CHECK (confidence IN ('high', 'medium', 'low')),
+      compatibility_level TEXT NOT NULL CHECK (
+        compatibility_level IN ('supported', 'conditional', 'unsupported', 'unknown')
+      ),
+      recommended_injection_mode TEXT CHECK (
+        recommended_injection_mode IS NULL OR recommended_injection_mode IN ('cli', 'env', 'override', 'none')
+      ),
+      requires_service_discovery_handling INTEGER NOT NULL CHECK (
+        requires_service_discovery_handling IN (0, 1)
+      ),
+      requires_hmr_handling INTEGER NOT NULL CHECK (requires_hmr_handling IN (0, 1)),
+      requires_callback_handling INTEGER NOT NULL CHECK (requires_callback_handling IN (0, 1)),
+      ai_fallback_policy TEXT NOT NULL CHECK (ai_fallback_policy IN ('never', 'conditional', 'allowed')),
+      reasons_json TEXT NOT NULL,
+      detected_files_json TEXT NOT NULL DEFAULT '[]',
+      raw_evidence_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (target_id) REFERENCES debug_targets(id) ON DELETE CASCADE,
+      FOREIGN KEY (service_id) REFERENCES debug_services(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_framework_analysis_results_target_id
+      ON framework_analysis_results(target_id, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_framework_analysis_results_service_id
+      ON framework_analysis_results(service_id, created_at DESC);
+  `);
+}
+
+function ensureDebugRuntimeSchema(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS debug_runtime_sessions (
+      id TEXT PRIMARY KEY,
+      target_id TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('PREPARING', 'RUNNING', 'FAILED', 'STOPPED')),
+      failure_stage TEXT,
+      started_at TEXT,
+      stopped_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (target_id) REFERENCES debug_targets(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_debug_runtime_sessions_target_id
+      ON debug_runtime_sessions(target_id, updated_at DESC, created_at DESC);
+  `);
+}
+
+function ensurePortLeaseSchema(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS port_leases (
+      id TEXT PRIMARY KEY,
+      runtime_id TEXT NOT NULL,
+      service_id TEXT NOT NULL,
+      port INTEGER NOT NULL,
+      protocol TEXT NOT NULL CHECK (protocol IN ('tcp', 'udp')),
+      status TEXT NOT NULL CHECK (status IN ('LEASED', 'RELEASING', 'RELEASED', 'STALE')),
+      leased_at TEXT NOT NULL,
+      expires_at TEXT,
+      released_at TEXT,
+      FOREIGN KEY (runtime_id) REFERENCES debug_runtime_sessions(id) ON DELETE CASCADE,
+      FOREIGN KEY (service_id) REFERENCES debug_services(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_port_leases_runtime_id
+      ON port_leases(runtime_id, leased_at DESC);
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_port_leases_active_port
+      ON port_leases(port, protocol)
+      WHERE status IN ('LEASED', 'RELEASING');
+  `);
+}
+
+function ensureRuntimeBindingSchema(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS runtime_bindings (
+      id TEXT PRIMARY KEY,
+      runtime_id TEXT NOT NULL,
+      service_id TEXT NOT NULL,
+      process_instance_id TEXT,
+      expected_port INTEGER,
+      leased_port INTEGER,
+      observed_port INTEGER,
+      proxy_path TEXT,
+      status TEXT NOT NULL CHECK (status IN ('ALLOCATED', 'LISTENING', 'FAILED', 'RELEASED')),
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (runtime_id) REFERENCES debug_runtime_sessions(id) ON DELETE CASCADE,
+      FOREIGN KEY (service_id) REFERENCES debug_services(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_runtime_bindings_runtime_id
+      ON runtime_bindings(runtime_id, updated_at DESC);
+  `);
+}
+
+function ensureAiFallbackEditSchema(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS ai_fallback_edits (
+      id TEXT PRIMARY KEY,
+      runtime_id TEXT NOT NULL,
+      service_id TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      allowed_files_json TEXT NOT NULL,
+      target_port INTEGER NOT NULL,
+      patch_ref TEXT,
+      rollback_ref TEXT,
+      status TEXT NOT NULL CHECK (status IN ('PENDING', 'APPLIED', 'ROLLED_BACK', 'REJECTED')),
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (runtime_id) REFERENCES debug_runtime_sessions(id) ON DELETE CASCADE,
+      FOREIGN KEY (service_id) REFERENCES debug_services(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_ai_fallback_edits_runtime_id
+      ON ai_fallback_edits(runtime_id, created_at DESC);
+  `);
+}
+
+function ensureTerminalCommandTemplateDebugSchema(db: Database.Database): void {
+  const columns = db
+    .prepare("PRAGMA table_info(terminal_command_templates)")
+    .all() as Array<{ name: string }>;
+  const columnNames = new Set(columns.map((column) => column.name));
+
+  if (!columnNames.has("source_type")) {
+    db.exec("ALTER TABLE terminal_command_templates ADD COLUMN source_type TEXT");
+  }
+
+  if (!columnNames.has("debug_target_id")) {
+    db.exec("ALTER TABLE terminal_command_templates ADD COLUMN debug_target_id TEXT");
+  }
+
+  if (!columnNames.has("debug_service_id")) {
+    db.exec("ALTER TABLE terminal_command_templates ADD COLUMN debug_service_id TEXT");
+  }
+
+  if (!columnNames.has("framework_analysis_id")) {
+    db.exec("ALTER TABLE terminal_command_templates ADD COLUMN framework_analysis_id TEXT");
+  }
+
+  if (!columnNames.has("adapter_kind")) {
+    db.exec("ALTER TABLE terminal_command_templates ADD COLUMN adapter_kind TEXT");
+  }
+
+  if (!columnNames.has("injection_mode")) {
+    db.exec("ALTER TABLE terminal_command_templates ADD COLUMN injection_mode TEXT");
+  }
+
+  if (!columnNames.has("generated_artifact_ref")) {
+    db.exec("ALTER TABLE terminal_command_templates ADD COLUMN generated_artifact_ref TEXT");
+  }
+
+  if (!columnNames.has("service_discovery_mode")) {
+    db.exec("ALTER TABLE terminal_command_templates ADD COLUMN service_discovery_mode TEXT");
+  }
+
+  if (!columnNames.has("managed_by_system")) {
+    db.exec(
+      "ALTER TABLE terminal_command_templates ADD COLUMN managed_by_system INTEGER NOT NULL DEFAULT 0"
+    );
+  }
+
+  db.exec(`
+    UPDATE terminal_command_templates
+    SET managed_by_system = 0
+    WHERE managed_by_system IS NULL OR managed_by_system NOT IN (0, 1);
+
+    CREATE INDEX IF NOT EXISTS idx_terminal_templates_debug_target_id
+      ON terminal_command_templates(debug_target_id);
+  `);
+}
+
+function ensureTerminalInstanceDebugSchema(db: Database.Database): void {
+  const columns = db
+    .prepare("PRAGMA table_info(terminal_instances)")
+    .all() as Array<{ name: string }>;
+  const columnNames = new Set(columns.map((column) => column.name));
+
+  if (!columnNames.has("debug_runtime_session_id")) {
+    db.exec("ALTER TABLE terminal_instances ADD COLUMN debug_runtime_session_id TEXT");
+  }
+
+  if (!columnNames.has("debug_target_id")) {
+    db.exec("ALTER TABLE terminal_instances ADD COLUMN debug_target_id TEXT");
+  }
+
+  if (!columnNames.has("debug_service_id")) {
+    db.exec("ALTER TABLE terminal_instances ADD COLUMN debug_service_id TEXT");
+  }
+
+  if (!columnNames.has("framework_analysis_id")) {
+    db.exec("ALTER TABLE terminal_instances ADD COLUMN framework_analysis_id TEXT");
+  }
+
+  if (!columnNames.has("launcher_source_type")) {
+    db.exec("ALTER TABLE terminal_instances ADD COLUMN launcher_source_type TEXT");
+  }
+
+  if (!columnNames.has("launch_stage")) {
+    db.exec("ALTER TABLE terminal_instances ADD COLUMN launch_stage TEXT");
+  }
+
+  if (!columnNames.has("failure_stage")) {
+    db.exec("ALTER TABLE terminal_instances ADD COLUMN failure_stage TEXT");
+  }
+
+  if (!columnNames.has("adapter_kind")) {
+    db.exec("ALTER TABLE terminal_instances ADD COLUMN adapter_kind TEXT");
+  }
+
+  if (!columnNames.has("env_patch_summary_json")) {
+    db.exec("ALTER TABLE terminal_instances ADD COLUMN env_patch_summary_json TEXT");
+  }
+
+  if (!columnNames.has("artifact_ref")) {
+    db.exec("ALTER TABLE terminal_instances ADD COLUMN artifact_ref TEXT");
+  }
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_terminal_instances_debug_runtime_session_id
+      ON terminal_instances(debug_runtime_session_id);
+
+    CREATE INDEX IF NOT EXISTS idx_terminal_instances_debug_target_id
+      ON terminal_instances(debug_target_id);
   `);
 }
 

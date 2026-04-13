@@ -280,6 +280,176 @@ describe("sqlite 启动引导", () => {
     );
   });
 
+  it("初始化数据库时会创建 spec007.1 调试编排表，并补齐终端关联字段", async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-debug-target-bootstrap-"));
+    tempDirs.push(tempDir);
+    const databasePath = path.join(tempDir, "host.sqlite");
+
+    const client = createDatabaseClient(databasePath);
+    const tableNames = client.db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+      .all()
+      .map((row) => (row as { name: string }).name);
+    const templateColumns = client.db
+      .prepare("PRAGMA table_info(terminal_command_templates)")
+      .all() as Array<{ name: string }>;
+    const terminalColumns = client.db
+      .prepare("PRAGMA table_info(terminal_instances)")
+      .all() as Array<{ name: string }>;
+
+    client.close();
+
+    expect(tableNames).toEqual(
+      expect.arrayContaining([
+        "debug_targets",
+        "debug_services",
+        "framework_analysis_results",
+        "debug_runtime_sessions",
+        "port_leases",
+        "runtime_bindings",
+        "ai_fallback_edits"
+      ])
+    );
+    expect(templateColumns.map((column) => column.name)).toEqual(
+      expect.arrayContaining([
+        "source_type",
+        "debug_target_id",
+        "debug_service_id",
+        "framework_analysis_id",
+        "adapter_kind",
+        "injection_mode",
+        "generated_artifact_ref",
+        "service_discovery_mode",
+        "managed_by_system"
+      ])
+    );
+    expect(terminalColumns.map((column) => column.name)).toEqual(
+      expect.arrayContaining([
+        "debug_runtime_session_id",
+        "debug_target_id",
+        "debug_service_id",
+        "framework_analysis_id",
+        "launcher_source_type",
+        "launch_stage",
+        "failure_stage",
+        "adapter_kind",
+        "env_patch_summary_json",
+        "artifact_ref"
+      ])
+    );
+  });
+
+  it("可以把缺少调试字段的旧终端表平滑升级到新结构", async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-debug-terminal-bootstrap-"));
+    tempDirs.push(tempDir);
+    const databasePath = path.join(tempDir, "host.sqlite");
+    const { default: Database } = await import("better-sqlite3");
+    const seed = new Database(databasePath);
+
+    seed.exec(`
+      CREATE TABLE auth_users (
+        id TEXT PRIMARY KEY
+      );
+
+      CREATE TABLE workspaces (
+        id TEXT PRIMARY KEY
+      );
+
+      CREATE TABLE terminal_instances (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        cwd TEXT NOT NULL,
+        shell TEXT NOT NULL,
+        runtime_type TEXT NOT NULL,
+        runtime_session_id TEXT NOT NULL,
+        attach_target TEXT NOT NULL,
+        status TEXT NOT NULL,
+        process_id INTEGER,
+        created_by_user_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        last_active_at TEXT NOT NULL,
+        closed_at TEXT,
+        exit_code INTEGER,
+        status_detail TEXT
+      );
+
+      CREATE TABLE terminal_command_templates (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        cwd TEXT NOT NULL,
+        command TEXT NOT NULL,
+        args_json TEXT NOT NULL,
+        env_json TEXT NOT NULL,
+        port INTEGER,
+        proxy_enabled INTEGER NOT NULL DEFAULT 0 CHECK (proxy_enabled IN (0, 1)),
+        proxy_slug TEXT,
+        runtime_type TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE (workspace_id, name)
+      );
+    `);
+    seed.close();
+
+    const client = createDatabaseClient(databasePath);
+    const terminalColumns = client.db
+      .prepare("PRAGMA table_info(terminal_instances)")
+      .all() as Array<{ name: string }>;
+    const templateColumns = client.db
+      .prepare("PRAGMA table_info(terminal_command_templates)")
+      .all() as Array<{ name: string }>;
+    const debugRuntimeIndex = client.db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_terminal_instances_debug_runtime_session_id'"
+      )
+      .get() as { name: string } | undefined;
+    const debugTargetIndex = client.db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_terminal_instances_debug_target_id'"
+      )
+      .get() as { name: string } | undefined;
+    const templateDebugTargetIndex = client.db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_terminal_templates_debug_target_id'"
+      )
+      .get() as { name: string } | undefined;
+
+    client.close();
+
+    expect(terminalColumns.map((column) => column.name)).toEqual(
+      expect.arrayContaining([
+        "debug_runtime_session_id",
+        "debug_target_id",
+        "debug_service_id",
+        "framework_analysis_id",
+        "launcher_source_type",
+        "launch_stage",
+        "failure_stage",
+        "adapter_kind",
+        "env_patch_summary_json",
+        "artifact_ref"
+      ])
+    );
+    expect(templateColumns.map((column) => column.name)).toEqual(
+      expect.arrayContaining([
+        "source_type",
+        "debug_target_id",
+        "debug_service_id",
+        "framework_analysis_id",
+        "adapter_kind",
+        "injection_mode",
+        "generated_artifact_ref",
+        "service_discovery_mode",
+        "managed_by_system"
+      ])
+    );
+    expect(debugRuntimeIndex?.name).toBe("idx_terminal_instances_debug_runtime_session_id");
+    expect(debugTargetIndex?.name).toBe("idx_terminal_instances_debug_target_id");
+    expect(templateDebugTargetIndex?.name).toBe("idx_terminal_templates_debug_target_id");
+  });
+
   it("可以清理残留的 session_forks_next 并把旧 fork 表平滑升级到新结构", async () => {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-session-forks-migration-"));
     tempDirs.push(tempDir);

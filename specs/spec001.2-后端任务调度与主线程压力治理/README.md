@@ -14,6 +14,7 @@
 - 后端任务分类：请求内同步、请求触发后台刷新、周期调度、helper 进程任务
 - `discoverWorkspaceSessions` 脱离请求主链路，改成缓存优先、后台刷新
 - provider 会话发现从 Host 主进程同步 `fs/sqlite` 扫描迁到 helper 进程或异步分批执行
+- `workbench.sync_titles`、`terminal_manager_refresh`、`workspaceManagement` 这类工作台链路改成“后台刷新缓存 + 广播最近结果”，不再在 WS 广播链路里现算
 - `getOverview()`、搜索、工作台刷新改成摘要聚合，不再先构造全量 snapshot
 - `getProviderCapabilities()` 先返回缓存或兜底，再异步刷新模型列表
 - 全局后台任务管理器的最小边界：注册、去重、限流、取消、超时、重试、指标
@@ -43,4 +44,5 @@
 - `design.md`
 - `tasks.md`
 - `20260412-后台任务接入规范.md`
+- `20260413-终端卡顿治理补记.md`
 - `docs/`

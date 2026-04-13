@@ -34,8 +34,18 @@ export class TerminalInstanceRepository {
           last_active_at,
           closed_at,
           exit_code,
-          status_detail
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          status_detail,
+          debug_runtime_session_id,
+          debug_target_id,
+          debug_service_id,
+          framework_analysis_id,
+          launcher_source_type,
+          launch_stage,
+          failure_stage,
+          adapter_kind,
+          env_patch_summary_json,
+          artifact_ref
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         record.id,
@@ -53,7 +63,17 @@ export class TerminalInstanceRepository {
         record.lastActiveAt,
         record.closedAt,
         record.exitCode,
-        record.statusDetail
+        record.statusDetail,
+        record.debugRuntimeSessionId ?? null,
+        record.debugTargetId ?? null,
+        record.debugServiceId ?? null,
+        record.frameworkAnalysisId ?? null,
+        record.launcherSourceType ?? null,
+        record.launchStage ?? null,
+        record.failureStage ?? null,
+        record.adapterKind ?? null,
+        record.envPatchSummary ? JSON.stringify(record.envPatchSummary) : null,
+        record.artifactRef ?? null
       );
 
     return record;
@@ -78,7 +98,17 @@ export class TerminalInstanceRepository {
           last_active_at,
           closed_at,
           exit_code,
-          status_detail
+          status_detail,
+          debug_runtime_session_id,
+          debug_target_id,
+          debug_service_id,
+          framework_analysis_id,
+          launcher_source_type,
+          launch_stage,
+          failure_stage,
+          adapter_kind,
+          env_patch_summary_json,
+          artifact_ref
         FROM terminal_instances
         WHERE id = ?`
       )
@@ -106,7 +136,17 @@ export class TerminalInstanceRepository {
           last_active_at,
           closed_at,
           exit_code,
-          status_detail
+          status_detail,
+          debug_runtime_session_id,
+          debug_target_id,
+          debug_service_id,
+          framework_analysis_id,
+          launcher_source_type,
+          launch_stage,
+          failure_stage,
+          adapter_kind,
+          env_patch_summary_json,
+          artifact_ref
         FROM terminal_instances
         WHERE workspace_id = ?
         ORDER BY last_active_at DESC, created_at DESC`
@@ -134,7 +174,17 @@ export class TerminalInstanceRepository {
           last_active_at,
           closed_at,
           exit_code,
-          status_detail
+          status_detail,
+          debug_runtime_session_id,
+          debug_target_id,
+          debug_service_id,
+          framework_analysis_id,
+          launcher_source_type,
+          launch_stage,
+          failure_stage,
+          adapter_kind,
+          env_patch_summary_json,
+          artifact_ref
         FROM terminal_instances
         WHERE status IN ('creating', 'running')
         ORDER BY last_active_at DESC, created_at DESC`
@@ -203,10 +253,20 @@ interface TerminalInstanceRow {
   closed_at: string | null;
   exit_code: number | null;
   status_detail: string | null;
+  debug_runtime_session_id: string | null;
+  debug_target_id: string | null;
+  debug_service_id: string | null;
+  framework_analysis_id: string | null;
+  launcher_source_type: TerminalInstance["launcherSourceType"] | null;
+  launch_stage: string | null;
+  failure_stage: string | null;
+  adapter_kind: TerminalInstance["adapterKind"] | null;
+  env_patch_summary_json: string | null;
+  artifact_ref: string | null;
 }
 
 function mapTerminalInstanceRow(row: TerminalInstanceRow): TerminalInstance {
-  return {
+  const terminal: TerminalInstance = {
     id: row.id,
     workspaceId: row.workspace_id,
     name: row.name,
@@ -224,4 +284,57 @@ function mapTerminalInstanceRow(row: TerminalInstanceRow): TerminalInstance {
     exitCode: row.exit_code,
     statusDetail: row.status_detail
   };
+
+  if (row.debug_runtime_session_id) {
+    terminal.debugRuntimeSessionId = row.debug_runtime_session_id;
+  }
+
+  if (row.debug_target_id) {
+    terminal.debugTargetId = row.debug_target_id;
+  }
+
+  if (row.debug_service_id) {
+    terminal.debugServiceId = row.debug_service_id;
+  }
+
+  if (row.framework_analysis_id) {
+    terminal.frameworkAnalysisId = row.framework_analysis_id;
+  }
+
+  if (row.launcher_source_type) {
+    terminal.launcherSourceType = row.launcher_source_type;
+  }
+
+  if (row.launch_stage) {
+    terminal.launchStage = row.launch_stage;
+  }
+
+  if (row.failure_stage) {
+    terminal.failureStage = row.failure_stage;
+  }
+
+  if (row.adapter_kind) {
+    terminal.adapterKind = row.adapter_kind;
+  }
+
+  if (row.env_patch_summary_json) {
+    terminal.envPatchSummary = parseJsonObject(row.env_patch_summary_json);
+  }
+
+  if (row.artifact_ref) {
+    terminal.artifactRef = row.artifact_ref;
+  }
+
+  return terminal;
+}
+
+function parseJsonObject(raw: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
 }

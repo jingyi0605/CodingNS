@@ -4,8 +4,10 @@ import { TaskScheduler } from "./task-scheduler.js";
 import type {
   TaskActivitySink,
   TaskDefinition,
+  TaskExecutionLane,
   TaskEnqueueOptions,
   TaskHandle,
+  TaskLaneExecutor,
   TaskMetricsSnapshot,
   TaskSnapshot
 } from "./task-types.js";
@@ -15,8 +17,11 @@ export class TaskManager {
   private readonly metrics = new TaskMetrics();
   private readonly scheduler: TaskScheduler;
 
-  constructor(activitySink: TaskActivitySink | null = null) {
-    this.scheduler = new TaskScheduler(this.registry, this.metrics, activitySink);
+  constructor(
+    activitySink: TaskActivitySink | null = null,
+    laneExecutors: Partial<Record<TaskExecutionLane, TaskLaneExecutor>> = {}
+  ) {
+    this.scheduler = new TaskScheduler(this.registry, this.metrics, activitySink, laneExecutors);
   }
 
   register<TInput, TResult>(definition: TaskDefinition<TInput, TResult>): void {
@@ -48,6 +53,9 @@ export class TaskManager {
   }
 }
 
-export function createTaskManager(activitySink: TaskActivitySink | null = null): TaskManager {
-  return new TaskManager(activitySink);
+export function createTaskManager(
+  activitySink: TaskActivitySink | null = null,
+  laneExecutors: Partial<Record<TaskExecutionLane, TaskLaneExecutor>> = {}
+): TaskManager {
+  return new TaskManager(activitySink, laneExecutors);
 }

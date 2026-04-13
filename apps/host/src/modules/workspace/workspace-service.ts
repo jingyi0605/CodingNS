@@ -12,6 +12,9 @@ import type { Workspace, WorkspaceNavigationStateRecord } from "../../types/doma
 import type { ButlerProfileService } from "../butler/butler-profile-service.js";
 import { createGitAuthContext, type GitAuthInput } from "../git/git-auth.js";
 import type { GitCommandRunner } from "../git/git-command-runner.js";
+import { createTaskManager, type TaskManager } from "../tasks/task-manager.js";
+import { HOST_TASK_TYPES } from "../tasks/task-types.js";
+import { readWorkspaceCodeComposition } from "./workspace-code-composition.js";
 
 interface WorkspaceDirectoryOption {
   path: string;
@@ -80,88 +83,21 @@ export interface UpdateWorkspaceNavigationStateInput {
 
 const DIRECTORY_BROWSE_LIMIT = 200;
 const GIT_CLONE_TIMEOUT_MS = 120_000;
-const WORKSPACE_CODE_SCAN_LIMIT = 20_000;
-const IGNORED_COMPOSITION_DIRECTORIES = new Set([
-  ".git",
-  ".idea",
-  ".vscode",
-  ".yarn",
-  ".pnpm-store",
-  ".turbo",
-  "node_modules",
-  "dist",
-  "build",
-  "coverage",
-  ".next",
-  ".nuxt",
-  "out",
-  "target",
-  "vendor",
-  "bin",
-  "obj"
-]);
-const COMPOSITION_TYPE_BY_NAME: Record<string, string> = {
-  dockerfile: "Dockerfile",
-  makefile: "Makefile",
-  justfile: "Justfile"
-};
-const COMPOSITION_TYPE_BY_EXTENSION: Record<string, string> = {
-  ".ts": "TypeScript",
-  ".tsx": "TypeScript",
-  ".mts": "TypeScript",
-  ".cts": "TypeScript",
-  ".js": "JavaScript",
-  ".jsx": "JavaScript",
-  ".mjs": "JavaScript",
-  ".cjs": "JavaScript",
-  ".vue": "Vue",
-  ".svelte": "Svelte",
-  ".css": "CSS",
-  ".scss": "SCSS",
-  ".sass": "Sass",
-  ".less": "Less",
-  ".html": "HTML",
-  ".xml": "XML",
-  ".json": "JSON",
-  ".jsonc": "JSON",
-  ".yaml": "YAML",
-  ".yml": "YAML",
-  ".toml": "TOML",
-  ".md": "Markdown",
-  ".mdx": "Markdown",
-  ".sh": "Shell",
-  ".bash": "Shell",
-  ".zsh": "Shell",
-  ".ps1": "PowerShell",
-  ".bat": "Batch",
-  ".cmd": "Batch",
-  ".py": "Python",
-  ".go": "Go",
-  ".rs": "Rust",
-  ".java": "Java",
-  ".kt": "Kotlin",
-  ".kts": "Kotlin",
-  ".swift": "Swift",
-  ".php": "PHP",
-  ".rb": "Ruby",
-  ".sql": "SQL",
-  ".c": "C",
-  ".h": "C/C++ Header",
-  ".cc": "C++",
-  ".cpp": "C++",
-  ".cxx": "C++",
-  ".hpp": "C++ Header",
-  ".cs": "C#"
-};
 
 export class WorkspaceService {
+  private readonly taskManager: TaskManager;
+
   constructor(
     private readonly workspaceRepository: WorkspaceRepository,
     private readonly gitCommandRunner: GitCommandRunner,
     private readonly workspaceNavigationStateRepository: WorkspaceNavigationStateRepository,
     private readonly butlerProfileService?: Pick<ButlerProfileService, "getProfile">,
-    private readonly workspaceWorktreeRepository?: Pick<WorkspaceWorktreeRepository, "listWorkspaceIds">
-  ) {}
+    private readonly workspaceWorktreeRepository?: Pick<WorkspaceWorktreeRepository, "listWorkspaceIds">,
+    taskManager: TaskManager = createTaskManager()
+  ) {
+    this.taskManager = taskManager;
+    this.registerBackgroundTasks();
+  }
 
   browseDirectories(requestedPath?: string): WorkspaceDirectoryBrowseResult {
     const roots = listDirectoryRoots();
@@ -334,20 +270,15 @@ export class WorkspaceService {
   }
 
   async getManagementSummary(workspaceId: string): Promise<WorkspaceManagementSummary> {
-    const workspace = this.getWorkspaceOrThrow(workspaceId);
-
-    const [git, codeComposition] = await Promise.all([
-      this.readGitSummary(workspace),
-      Promise.resolve(readWorkspaceCodeComposition(workspace.path))
-    ]);
-
-    return {
-      workspaceId: workspace.id,
-      name: workspace.name,
-      path: workspace.path,
-      git,
-      codeComposition
-    };
+    return await this.taskManager.enqueue<{
+      workspaceId: string;
+    }, WorkspaceManagementSummary>(HOST_TASK_TYPES.workspaceManagementSummary, {
+      key: workspaceId,
+      source: "workspace.get_management_summary",
+      input: {
+        workspaceId
+      }
+    }).promise;
   }
 
   getWorkspaceOrThrow(workspaceId: string): Workspace {
@@ -500,6 +431,54 @@ export class WorkspaceService {
         error: mapWorkspaceGitSummaryError(error)
       };
     }
+  }
+
+  private registerBackgroundTasks(): void {
+    if (!this.taskManager.has(HOST_TASK_TYPES.workspaceCodeCompositionScan)) {
+      this.taskManager.register<{
+        workspacePath: string;
+      }, WorkspaceCodeCompositionSummary>({
+        taskType: HOST_TASK_TYPES.workspaceCodeCompositionScan,
+        executionLane: "helper_process",
+        helperProcessHandler: "workspace.code_composition_scan",
+        run: async ({ workspacePath }) => readWorkspaceCodeComposition(workspacePath)
+      });
+    }
+
+    if (!this.taskManager.has(HOST_TASK_TYPES.workspaceManagementSummary)) {
+      this.taskManager.register<{
+        workspaceId: string;
+      }, WorkspaceManagementSummary>({
+        taskType: HOST_TASK_TYPES.workspaceManagementSummary,
+        executionLane: "host_background",
+        run: async ({ workspaceId }) => this.loadManagementSummary(workspaceId)
+      });
+    }
+  }
+
+  private async loadManagementSummary(workspaceId: string): Promise<WorkspaceManagementSummary> {
+    const workspace = this.getWorkspaceOrThrow(workspaceId);
+
+    const [git, codeComposition] = await Promise.all([
+      this.readGitSummary(workspace),
+      this.taskManager.enqueue<{
+        workspacePath: string;
+      }, WorkspaceCodeCompositionSummary>(HOST_TASK_TYPES.workspaceCodeCompositionScan, {
+        key: workspace.id,
+        source: "workspace.load_management_summary.code_composition",
+        input: {
+          workspacePath: workspace.path
+        }
+      }).promise
+    ]);
+
+    return {
+      workspaceId: workspace.id,
+      name: workspace.name,
+      path: workspace.path,
+      git,
+      codeComposition
+    };
   }
 }
 
@@ -802,105 +781,6 @@ function resolveParentPath(currentPath: string): string | null {
   }
 
   return parentPath;
-}
-
-function readWorkspaceCodeComposition(workspacePath: string): WorkspaceCodeCompositionSummary {
-  const resolvedPath = path.resolve(workspacePath);
-
-  if (!fs.existsSync(resolvedPath) || !fs.statSync(resolvedPath).isDirectory()) {
-    return {
-      scannedFileCount: 0,
-      truncated: false,
-      items: [],
-      error: "工作区路径不存在，无法统计代码类型"
-    };
-  }
-
-  const typeCounts = new Map<string, number>();
-  const directories = [resolvedPath];
-  let scannedFileCount = 0;
-  let truncated = false;
-
-  // 这里故意只做轻量扫描，避免为了一个信息面板把大仓库整棵树扫爆。
-  while (directories.length > 0 && !truncated) {
-    const currentDirectory = directories.pop();
-
-    if (!currentDirectory) {
-      continue;
-    }
-
-    let entries: fs.Dirent[];
-
-    try {
-      entries = fs.readdirSync(currentDirectory, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-
-    for (const entry of entries) {
-      if (entry.isSymbolicLink()) {
-        continue;
-      }
-
-      const fullPath = path.join(currentDirectory, entry.name);
-
-      if (entry.isDirectory()) {
-        if (!IGNORED_COMPOSITION_DIRECTORIES.has(entry.name)) {
-          directories.push(fullPath);
-        }
-        continue;
-      }
-
-      if (!entry.isFile()) {
-        continue;
-      }
-
-      const detectedType = detectWorkspaceFileType(entry.name);
-
-      if (!detectedType) {
-        continue;
-      }
-
-      scannedFileCount += 1;
-      typeCounts.set(detectedType, (typeCounts.get(detectedType) ?? 0) + 1);
-
-      if (scannedFileCount >= WORKSPACE_CODE_SCAN_LIMIT) {
-        truncated = true;
-        break;
-      }
-    }
-  }
-
-  const items = [...typeCounts.entries()]
-    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
-    .map(([type, count]) => ({
-      type,
-      count,
-      ratio: scannedFileCount > 0 ? count / scannedFileCount : 0
-    }));
-
-  return {
-    scannedFileCount,
-    truncated,
-    items,
-    error: null
-  };
-}
-
-function detectWorkspaceFileType(fileName: string): string | null {
-  const normalizedName = fileName.trim().toLowerCase();
-
-  if (!normalizedName) {
-    return null;
-  }
-
-  const directMatch = COMPOSITION_TYPE_BY_NAME[normalizedName];
-
-  if (directMatch) {
-    return directMatch;
-  }
-
-  return COMPOSITION_TYPE_BY_EXTENSION[path.extname(normalizedName)] ?? null;
 }
 
 function normalizeGitOutput(value: string): string | null {

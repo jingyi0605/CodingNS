@@ -8,8 +8,11 @@ import type { WorkspaceRepository } from "../../storage/repositories/workspace-r
 import type { WorkspaceWorktreeRepository } from "../../storage/repositories/workspace-worktree-repository.js";
 import type { ButlerProfileService } from "../butler/butler-profile-service.js";
 import type { ButlerControlSessionRepository } from "../../storage/repositories/butler-control-session-repository.js";
+import { createTaskManager, type TaskManager } from "../tasks/task-manager.js";
+import { HOST_TASK_TYPES, type TaskHandle } from "../tasks/task-types.js";
 
 const WORKBENCH_REFRESH_MAX_AGE_MS = 15_000;
+const SESSION_TITLE_SYNC_CONCURRENCY = 4;
 
 export interface WorkbenchWorktreeNode {
   workspace: Workspace;
@@ -30,6 +33,8 @@ export interface WorkbenchSnapshot {
 }
 
 export class WorkbenchService {
+  private readonly taskManager: TaskManager;
+
   constructor(
     private readonly workspaceRepository: WorkspaceRepository,
     private readonly workspaceNavigationStateRepository: WorkspaceNavigationStateRepository,
@@ -39,8 +44,12 @@ export class WorkbenchService {
     private readonly workspaceWorktreeRepository?: Pick<
       WorkspaceWorktreeRepository,
       "listWorkspaceIds" | "listByRootWorkspaceId"
-    >
-  ) {}
+    >,
+    taskManager: TaskManager = createTaskManager()
+  ) {
+    this.taskManager = taskManager;
+    this.registerBackgroundTasks();
+  }
 
   getSnapshot(userId: string): WorkbenchSnapshot {
     const allWorkspaces = this.listWorkbenchWorkspaces();
@@ -114,11 +123,43 @@ export class WorkbenchService {
   }
 
   async syncSessionTitles(userId: string): Promise<WorkbenchSnapshot> {
+    return await this.scheduleSessionTitleSync(userId, "workbench.sync_session_titles").promise;
+  }
+
+  scheduleSessionTitleSync(userId: string, source = "workbench.sync_session_titles"): TaskHandle<WorkbenchSnapshot> {
+    return this.taskManager.enqueue<{
+      userId: string;
+    }, WorkbenchSnapshot>(HOST_TASK_TYPES.workbenchSyncTitles, {
+      key: userId,
+      source,
+      input: {
+        userId
+      }
+    });
+  }
+
+  private registerBackgroundTasks(): void {
+    if (!this.taskManager.has(HOST_TASK_TYPES.workbenchSyncTitles)) {
+      this.taskManager.register<{
+        userId: string;
+      }, WorkbenchSnapshot>({
+        taskType: HOST_TASK_TYPES.workbenchSyncTitles,
+        executionLane: "host_background",
+        run: async ({ userId }) => this.runSyncSessionTitles(userId)
+      });
+    }
+  }
+
+  private async runSyncSessionTitles(userId: string): Promise<WorkbenchSnapshot> {
     const workspaces = this.listWorkbenchWorkspaces();
 
     await Promise.all(
       workspaces.map((workspace) =>
-        this.sessionHistoryService.syncWorkspaceSessionTitles(workspace.id, userId)
+        this.sessionHistoryService.syncWorkspaceSessionTitles(
+          workspace.id,
+          userId,
+          SESSION_TITLE_SYNC_CONCURRENCY
+        )
       )
     );
 

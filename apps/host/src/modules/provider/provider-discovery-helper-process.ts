@@ -36,6 +36,14 @@ type HelperRequest =
       config: ProviderSessionDiscoveryHelperConfig;
       workspacePath: string;
       knownSessions: ProviderSessionSummary[];
+    }
+  | {
+      id: string;
+      type: "session_title_read";
+      config: ProviderSessionDiscoveryHelperConfig;
+      provider: string;
+      providerSessionId: string;
+      rawStoreRef: string;
     };
 
 let workspaceDiscoveryRuntime:
@@ -84,6 +92,16 @@ async function handleLine(line: string): Promise<void> {
           payload.config,
           payload.workspacePath,
           payload.knownSessions
+        );
+        emitResult(payload.id, result);
+        return;
+      }
+      case "session_title_read": {
+        const result = await readSessionTitle(
+          payload.config,
+          payload.provider,
+          payload.providerSessionId,
+          payload.rawStoreRef
         );
         emitResult(payload.id, result);
         return;
@@ -436,6 +454,16 @@ async function discoverWorkspaceSessions(
   return service.discoverWorkspaceSessions(workspacePath, {
     knownSessions
   });
+}
+
+async function readSessionTitle(
+  config: ProviderSessionDiscoveryHelperConfig,
+  provider: string,
+  providerSessionId: string,
+  rawStoreRef: string
+): Promise<string> {
+  const service = getWorkspaceDiscoveryService(config);
+  return await service.readSessionTitle(provider, providerSessionId, rawStoreRef);
 }
 
 function getWorkspaceDiscoveryService(

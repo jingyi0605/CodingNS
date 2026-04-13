@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createTaskManager } from "../../src/modules/tasks/task-manager.js";
+import { createHostTaskLaneExecutors } from "../../src/modules/tasks/task-lane-executors.js";
 import { TaskCancelledError, TaskTimeoutError } from "../../src/modules/tasks/task-types.js";
 
 describe("TaskManager", () => {
@@ -108,6 +109,39 @@ describe("TaskManager", () => {
     expect(metrics.totals.timeout).toBe(1);
     expect(metrics.totals.finished).toBe(0);
     expect(manager.peek("test.timeout", "provider-1")?.status).toBe("timeout");
+  });
+
+  it("helper_process lane 会优先走统一 helper executor，而不是回落到主线程 run", async () => {
+    const manager = createTaskManager(null, createHostTaskLaneExecutors());
+    const run = vi.fn(async () => ({
+      scannedFileCount: 999,
+      truncated: false,
+      items: [],
+      error: null
+    }));
+
+    manager.register({
+      taskType: "test.helper_process",
+      executionLane: "helper_process",
+      helperProcessHandler: "workspace.code_composition_scan",
+      run
+    });
+
+    const result = await manager.enqueue<{ workspacePath: string }, {
+      scannedFileCount: number;
+      truncated: boolean;
+      items: unknown[];
+      error: string | null;
+    }>("test.helper_process", {
+      key: "workspace-1",
+      input: {
+        workspacePath: "/definitely/not/exist"
+      }
+    }).promise;
+
+    expect(result.scannedFileCount).toBe(0);
+    expect(result.error).toBe("工作区路径不存在，无法统计代码类型");
+    expect(run).not.toHaveBeenCalled();
   });
 });
 

@@ -652,6 +652,172 @@ export interface FileContextBinding {
   attachedAt: string;
 }
 
+export type DebugTargetSourceType = "repo" | "worktree";
+export type DebugServiceRole = "frontend" | "backend" | "worker" | "mock" | "custom";
+export type DebugServiceProtocol = "http" | "ws" | "tcp";
+export type FrameworkAnalysisConfidence = "high" | "medium" | "low";
+export type FrameworkCompatibilityLevel = "supported" | "conditional" | "unsupported" | "unknown";
+export type DebugInjectionMode = "cli" | "env" | "override" | "none";
+export type DebugAdapterKind = "cli" | "env" | "override" | "ai_fallback";
+export type DebugAiFallbackPolicy = "never" | "conditional" | "allowed";
+export type DebugRuntimeSessionStatus = "PREPARING" | "RUNNING" | "FAILED" | "STOPPED";
+export type RuntimeBindingStatus = "ALLOCATED" | "LISTENING" | "FAILED" | "RELEASED";
+export type PortLeaseStatus = "LEASED" | "RELEASING" | "RELEASED" | "STALE";
+export type AiFallbackEditStatus = "PENDING" | "APPLIED" | "ROLLED_BACK" | "REJECTED";
+export type LauncherSourceType = "manual" | "debug_service";
+export type ServiceDiscoveryMode = "same_origin" | "api_base_url" | "none";
+
+export interface DebugTargetProfile {
+  id: string;
+  workspaceId: string;
+  rootPath: string;
+  displayName: string;
+  stackHint?: string | null;
+  sourceType: DebugTargetSourceType;
+  rootWorkspaceId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DebugServiceSpec {
+  id: string;
+  targetId: string;
+  role: DebugServiceRole;
+  name: string;
+  cwd: string;
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+  defaultPortHint?: number | null;
+  protocol?: DebugServiceProtocol | null;
+  healthPath?: string | null;
+  adapterKind?: DebugAdapterKind | null;
+  frameworkAnalysisId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FrameworkAnalysisResult {
+  id: string;
+  targetId: string;
+  serviceId?: string | null;
+  primaryFramework?: string | null;
+  confidence: FrameworkAnalysisConfidence;
+  compatibilityLevel: FrameworkCompatibilityLevel;
+  recommendedInjectionMode?: DebugInjectionMode | null;
+  requiresServiceDiscoveryHandling: boolean;
+  requiresHmrHandling: boolean;
+  requiresCallbackHandling: boolean;
+  aiFallbackPolicy: DebugAiFallbackPolicy;
+  reasons: string[];
+  detectedFiles: string[];
+  rawEvidence?: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface DebugRuntimeSession {
+  id: string;
+  targetId: string;
+  status: DebugRuntimeSessionStatus;
+  failureStage?: string | null;
+  startedAt?: string | null;
+  stoppedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RuntimeBinding {
+  id: string;
+  runtimeId: string;
+  serviceId: string;
+  processInstanceId?: string | null;
+  expectedPort?: number | null;
+  leasedPort?: number | null;
+  observedPort?: number | null;
+  proxyPath?: string | null;
+  status: RuntimeBindingStatus;
+  updatedAt: string;
+}
+
+export interface PortLeaseRecord {
+  id: string;
+  runtimeId: string;
+  serviceId: string;
+  port: number;
+  protocol: "tcp" | "udp";
+  status: PortLeaseStatus;
+  leasedAt: string;
+  expiresAt?: string | null;
+  releasedAt?: string | null;
+}
+
+export interface AiFallbackEditRecord {
+  id: string;
+  runtimeId: string;
+  serviceId: string;
+  reason: string;
+  allowedFiles: string[];
+  targetPort: number;
+  patchRef?: string | null;
+  rollbackRef?: string | null;
+  status: AiFallbackEditStatus;
+  createdAt: string;
+}
+
+export interface FrameworkCompatibilityMatrixItem {
+  framework: string;
+  compatibilityLevel: FrameworkCompatibilityLevel;
+  recommendedInjectionMode: DebugInjectionMode;
+  requiresServiceDiscoveryHandling: boolean;
+  requiresHmrHandling: boolean;
+  requiresCallbackHandling: boolean;
+  aiFallbackPolicy: DebugAiFallbackPolicy;
+  notes: string;
+}
+
+export interface DebugLaunchPlanServiceItem {
+  serviceId: string;
+  role: DebugServiceRole;
+  frameworkAnalysisId: string | null;
+  primaryFramework: string | null;
+  compatibilityLevel: FrameworkCompatibilityLevel;
+  adapterKind: DebugAdapterKind | null;
+  injectionMode: DebugInjectionMode | null;
+  command: string;
+  args: string[];
+  envPatch: Record<string, string>;
+  expectedPort: number | null;
+  leasedPort: number | null;
+  runtimeBindingId: string;
+  portLeaseId: string | null;
+  requiresServiceDiscoveryHandling: boolean;
+  requiresHmrHandling: boolean;
+  requiresCallbackHandling: boolean;
+  missingRequirements: string[];
+  autoStartAllowed: boolean;
+}
+
+export interface DebugLaunchPlan {
+  runtimeSession: DebugRuntimeSession;
+  targetId: string;
+  autoStartAllowed: boolean;
+  services: DebugLaunchPlanServiceItem[];
+}
+
+export interface DebugRuntimeDetailServiceItem {
+  service: DebugServiceSpec;
+  analysis: FrameworkAnalysisResult | null;
+  binding: RuntimeBinding | null;
+  portLease: PortLeaseRecord | null;
+  processInstance: TerminalInstance | null;
+}
+
+export interface DebugRuntimeDetail {
+  runtimeSession: DebugRuntimeSession;
+  target: DebugTargetProfile;
+  services: DebugRuntimeDetailServiceItem[];
+}
+
 export type PersistentTerminalRuntimeType =
   | "tmux"
   | "conpty-powershell"
@@ -683,6 +849,16 @@ export interface TerminalInstance {
   closedAt: string | null;
   exitCode: number | null;
   statusDetail: string | null;
+  debugRuntimeSessionId?: string | null;
+  debugTargetId?: string | null;
+  debugServiceId?: string | null;
+  frameworkAnalysisId?: string | null;
+  launcherSourceType?: LauncherSourceType | null;
+  launchStage?: string | null;
+  failureStage?: string | null;
+  adapterKind?: DebugAdapterKind | null;
+  envPatchSummary?: Record<string, unknown>;
+  artifactRef?: string | null;
 }
 
 export interface TerminalRuntimeSession {
@@ -761,6 +937,15 @@ export interface TerminalCommandTemplate {
   runtimeType: TerminalRuntimeType | null;
   createdAt: string;
   updatedAt: string;
+  sourceType?: LauncherSourceType | null;
+  debugTargetId?: string | null;
+  debugServiceId?: string | null;
+  frameworkAnalysisId?: string | null;
+  adapterKind?: DebugAdapterKind | null;
+  injectionMode?: DebugInjectionMode | null;
+  generatedArtifactRef?: string | null;
+  serviceDiscoveryMode?: ServiceDiscoveryMode | null;
+  managedBySystem?: boolean;
 }
 
 export interface TerminalTemplateRuntimeStatus {

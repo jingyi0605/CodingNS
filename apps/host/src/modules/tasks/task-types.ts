@@ -1,6 +1,11 @@
 export const HOST_TASK_TYPES = {
   workspaceDiscovery: "workspace.discovery",
-  providerCapabilityRefresh: "provider.capability_refresh"
+  providerCapabilityRefresh: "provider.capability_refresh",
+  workbenchSyncTitles: "workbench.sync_titles",
+  workspaceManagementSummary: "workspace.management_summary",
+  workspaceCodeCompositionScan: "workspace.code_composition_scan",
+  terminalManagerSnapshot: "terminal.manager_snapshot",
+  templateRuntimeStatusDiscovery: "terminal.template_runtime_status_discovery"
 } as const;
 
 export type HostTaskType = (typeof HOST_TASK_TYPES)[keyof typeof HOST_TASK_TYPES];
@@ -42,6 +47,7 @@ export interface TaskDefinition<TInput = unknown, TResult = unknown> {
   concurrency?: number;
   timeoutMs?: number;
   retryPolicy?: TaskRetryPolicy;
+  helperProcessHandler?: string;
   run: (input: TInput, context: TaskRunContext) => Promise<TResult>;
 }
 
@@ -52,6 +58,14 @@ export interface TaskRunContext {
   readonly executionLane: TaskExecutionLane;
   readonly attempt: number;
   readonly signal: AbortSignal;
+}
+
+export interface TaskLaneExecutor {
+  execute<TInput, TResult>(
+    definition: TaskDefinition<TInput, TResult>,
+    input: TInput,
+    context: TaskRunContext
+  ): Promise<TResult>;
 }
 
 export interface TaskEnqueueOptions<TInput = unknown> {

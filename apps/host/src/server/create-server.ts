@@ -38,6 +38,8 @@ import { SessionSummaryScheduler } from "../modules/butler/session-summary-sched
 import { VerificationRunService } from "../modules/butler/verification-run-service.js";
 import { ClientController } from "../modules/client/client-controller.js";
 import { ClientService } from "../modules/client/client-service.js";
+import { DebugTargetController } from "../modules/debug-target/debug-target-controller.js";
+import { DebugTargetService } from "../modules/debug-target/debug-target-service.js";
 import { FileAccessGuard } from "../modules/file/file-access-guard.js";
 import { FileContentService } from "../modules/file/file-content-service.js";
 import { FileContextController } from "../modules/file/file-context-controller.js";
@@ -76,6 +78,7 @@ import { RuntimeObservabilityService } from "../modules/tasks/observability-serv
 import { SchedulerMetrics } from "../modules/tasks/scheduler-metrics.js";
 import { TaskActivityLog } from "../modules/tasks/task-activity-log.js";
 import { createTaskManager } from "../modules/tasks/task-manager.js";
+import { createHostTaskLaneExecutors } from "../modules/tasks/task-lane-executors.js";
 import { CommandTemplateService } from "../modules/terminal/command-template-service.js";
 import { TerminalController } from "../modules/terminal/terminal-controller.js";
 import { TemplateReverseProxyService } from "../modules/terminal/template-reverse-proxy-service.js";
@@ -94,6 +97,7 @@ import { WorkspaceService } from "../modules/workspace/workspace-service.js";
 import { registerAuthRoutes } from "../routes/auth.js";
 import { registerButlerRoutes } from "../routes/butler.js";
 import { registerClientRoutes } from "../routes/client.js";
+import { registerDebugTargetRoutes } from "../routes/debug-targets.js";
 import { registerFileRoutes } from "../routes/files.js";
 import { registerGitRoutes } from "../routes/git.js";
 import { registerObservabilityRoutes } from "../routes/observability.js";
@@ -112,6 +116,7 @@ import { setErrorHandler } from "../shared/http/error-handler.js";
 import { startTerminalDebugEventLoopLagMonitor } from "../shared/utils/terminal-debug-log.js";
 import { AuthTokenRepository } from "../storage/repositories/auth-token-repository.js";
 import { AuthUserRepository } from "../storage/repositories/auth-user-repository.js";
+import { AiFallbackEditRepository } from "../storage/repositories/ai-fallback-edit-repository.js";
 import { BootstrapStateRepository } from "../storage/repositories/bootstrap-state-repository.js";
 import { ButlerControlSessionRepository } from "../storage/repositories/butler-control-session-repository.js";
 import { ButlerControlEventRepository } from "../storage/repositories/butler-control-event-repository.js";
@@ -127,9 +132,15 @@ import { PatrolRunRepository } from "../storage/repositories/patrol-run-reposito
 import { ProjectMemoryRepository } from "../storage/repositories/project-memory-repository.js";
 import { VerificationRunRepository } from "../storage/repositories/verification-run-repository.js";
 import { CommitRuleProfileRepository } from "../storage/repositories/commit-rule-profile-repository.js";
+import { DebugRuntimeSessionRepository } from "../storage/repositories/debug-runtime-session-repository.js";
+import { DebugServiceRepository } from "../storage/repositories/debug-service-repository.js";
+import { DebugTargetRepository } from "../storage/repositories/debug-target-repository.js";
 import { FileContextBindingRepository } from "../storage/repositories/file-context-binding-repository.js";
+import { FrameworkAnalysisResultRepository } from "../storage/repositories/framework-analysis-result-repository.js";
 import { GitRemoteCredentialRepository } from "../storage/repositories/git-remote-credential-repository.js";
+import { PortLeaseRepository } from "../storage/repositories/port-lease-repository.js";
 import { RecentFileRepository } from "../storage/repositories/recent-file-repository.js";
+import { RuntimeBindingRepository } from "../storage/repositories/runtime-binding-repository.js";
 import { SessionBindingRepository } from "../storage/repositories/session-binding-repository.js";
 import { SessionChangedFileRepository } from "../storage/repositories/session-changed-file-repository.js";
 import { SessionForkRepository } from "../storage/repositories/session-fork-repository.js";
@@ -156,6 +167,7 @@ import { WorkbenchWsHub } from "../ws/workbench-ws-hub.js";
 import { createWsServer } from "../ws/ws-server.js";
 import { WsAuthGuard } from "../ws/ws-auth-guard.js";
 import { registerStaticWebRoutes } from "./static-web.js";
+import type { TerminalInstance } from "../types/domain.js";
 
 export function createServer(config: HostConfig) {
   // Demo 模式下覆盖 token TTL 为 15 分钟
@@ -176,6 +188,13 @@ export function createServer(config: HostConfig) {
     workspaceRepository: new WorkspaceRepository(database.db),
     workspaceWorktreeRepository: new WorkspaceWorktreeRepository(database.db),
     workspaceNavigationStateRepository: new WorkspaceNavigationStateRepository(database.db),
+    debugTargetRepository: new DebugTargetRepository(database.db),
+    debugServiceRepository: new DebugServiceRepository(database.db),
+    frameworkAnalysisResultRepository: new FrameworkAnalysisResultRepository(database.db),
+    debugRuntimeSessionRepository: new DebugRuntimeSessionRepository(database.db),
+    portLeaseRepository: new PortLeaseRepository(database.db),
+    runtimeBindingRepository: new RuntimeBindingRepository(database.db),
+    aiFallbackEditRepository: new AiFallbackEditRepository(database.db),
     butlerControlSessionRepository: new ButlerControlSessionRepository(database.db),
     butlerControlEventRepository: new ButlerControlEventRepository(database.db),
     butlerFollowUpTaskRepository: new ButlerFollowUpTaskRepository(database.db),
@@ -246,12 +265,18 @@ export function createServer(config: HostConfig) {
   const gitCommandRunner = new GitCommandRunner({
     preferHelperProcess: !process.env.VITEST
   });
+  const schedulerMetrics = new SchedulerMetrics();
+  const eventLoopMonitor = new EventLoopMonitor();
+  let runtimeObservabilityService!: RuntimeObservabilityService;
+  const taskActivityLog = new TaskActivityLog(() => runtimeObservabilityService.hasActiveSession());
+  const taskManager = createTaskManager(taskActivityLog, createHostTaskLaneExecutors());
   const workspaceService = new WorkspaceService(
     repositories.workspaceRepository,
     gitCommandRunner,
     repositories.workspaceNavigationStateRepository,
     butlerProfileService,
-    repositories.workspaceWorktreeRepository
+    repositories.workspaceWorktreeRepository,
+    taskManager
   );
   const fileAccessGuard = new FileAccessGuard(workspaceService, app.log);
   const recentFileService = new RecentFileService(repositories.recentFileRepository);
@@ -304,11 +329,6 @@ export function createServer(config: HostConfig) {
     repositories.sessionChangedFileRepository
   );
   const sessionActivityAuthorityService = new SessionActivityAuthorityService();
-  const schedulerMetrics = new SchedulerMetrics();
-  const eventLoopMonitor = new EventLoopMonitor();
-  let runtimeObservabilityService!: RuntimeObservabilityService;
-  const taskActivityLog = new TaskActivityLog(() => runtimeObservabilityService.hasActiveSession());
-  const taskManager = createTaskManager(taskActivityLog);
   const sessionHistoryService = new SessionHistoryService(
     database.db,
     repositories.workspaceRepository,
@@ -436,7 +456,8 @@ export function createServer(config: HostConfig) {
     sessionHistoryService,
     butlerProfileService,
     repositories.butlerControlSessionRepository,
-    repositories.workspaceWorktreeRepository
+    repositories.workspaceWorktreeRepository,
+    taskManager
   );
   const butlerProjectService = new ButlerProjectService(
     repositories.butlerProjectRepository,
@@ -617,10 +638,24 @@ export function createServer(config: HostConfig) {
     workspaceService,
     config.terminalIdleTimeoutSeconds,
     {
+      databasePath: config.databasePath,
       terminalLogRootDir: path.join(path.dirname(config.databasePath), "terminal-logs"),
       terminalLogFileRepository: repositories.terminalLogFileRepository,
       terminalLogSegmentRepository: repositories.terminalLogSegmentRepository
     }
+  );
+  const debugTargetService = new DebugTargetService(
+    database.db,
+    workspaceService,
+    repositories.workspaceWorktreeRepository,
+    repositories.debugTargetRepository,
+    repositories.debugServiceRepository,
+    repositories.frameworkAnalysisResultRepository,
+    repositories.debugRuntimeSessionRepository,
+    repositories.portLeaseRepository,
+    repositories.runtimeBindingRepository,
+    terminalService,
+    repositories.terminalInstanceRepository
   );
   const commandTemplateService = new CommandTemplateService(
     database.db,
@@ -634,12 +669,21 @@ export function createServer(config: HostConfig) {
     gitReadService,
     terminalService,
     commandTemplateService,
-    workspaceService
+    workspaceService,
+    taskManager
   );
   const fileWatcher = new WorkspaceFileWatcher(workspaceService);
 
   const bootstrapController = new BootstrapController(bootstrapService);
   const clientController = new ClientController(clientService);
+  const debugTargetController = new DebugTargetController(debugTargetService);
+  const handleDebugTargetTerminalExit = (event: {
+    terminal: TerminalInstance;
+    requestedClose: boolean;
+  }) => {
+    void debugTargetService.handleTerminalExit(event);
+  };
+  terminalService.on("exit", handleDebugTargetTerminalExit);
   const authController = new AuthController(authService);
   const workspaceController = new WorkspaceController(workspaceService);
   const worktreeController = new WorktreeController(
@@ -730,6 +774,7 @@ export function createServer(config: HostConfig) {
   void registerProxyRoutes(app, templateReverseProxyService);
   void registerAuthRoutes(app, authController);
   void registerClientRoutes(app, clientController);
+  void registerDebugTargetRoutes(app, debugTargetController);
   void registerObservabilityRoutes(app, observabilityController);
   void registerWorkspaceRoutes(app, workspaceController);
   void registerWorktreeRoutes(app, worktreeController);
@@ -757,6 +802,7 @@ export function createServer(config: HostConfig) {
     await patrolScheduler.dispose();
     await sessionSummaryScheduler.dispose();
     await butlerFollowUpScheduler.dispose();
+    terminalService.off("exit", handleDebugTargetTerminalExit);
     await terminalService.dispose();
     await butlerFollowUpSessionLiveRuntimeService.dispose();
     await butlerSummarySessionLiveRuntimeService.dispose();
@@ -776,6 +822,7 @@ export function createServer(config: HostConfig) {
       modules: {
         bootstrapService,
         clientService,
+        debugTargetService,
         authService,
         workspaceService,
         worktreeManager,

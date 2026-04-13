@@ -378,6 +378,20 @@ CREATE TABLE IF NOT EXISTS terminal_instances (
   closed_at TEXT,
   exit_code INTEGER,
   status_detail TEXT,
+  debug_runtime_session_id TEXT,
+  debug_target_id TEXT,
+  debug_service_id TEXT,
+  framework_analysis_id TEXT,
+  launcher_source_type TEXT CHECK (
+    launcher_source_type IS NULL OR launcher_source_type IN ('manual', 'debug_service')
+  ),
+  launch_stage TEXT,
+  failure_stage TEXT,
+  adapter_kind TEXT CHECK (
+    adapter_kind IS NULL OR adapter_kind IN ('cli', 'env', 'override', 'ai_fallback')
+  ),
+  env_patch_summary_json TEXT,
+  artifact_ref TEXT,
   FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
   FOREIGN KEY (created_by_user_id) REFERENCES auth_users(id)
 );
@@ -469,6 +483,23 @@ CREATE TABLE IF NOT EXISTS terminal_command_templates (
       'conpty-git-bash'
     )
   ),
+  source_type TEXT CHECK (
+    source_type IS NULL OR source_type IN ('manual', 'debug_service')
+  ),
+  debug_target_id TEXT,
+  debug_service_id TEXT,
+  framework_analysis_id TEXT,
+  adapter_kind TEXT CHECK (
+    adapter_kind IS NULL OR adapter_kind IN ('cli', 'env', 'override', 'ai_fallback')
+  ),
+  injection_mode TEXT CHECK (
+    injection_mode IS NULL OR injection_mode IN ('cli', 'env', 'override', 'none')
+  ),
+  generated_artifact_ref TEXT,
+  service_discovery_mode TEXT CHECK (
+    service_discovery_mode IS NULL OR service_discovery_mode IN ('same_origin', 'api_base_url', 'none')
+  ),
+  managed_by_system INTEGER NOT NULL DEFAULT 0 CHECK (managed_by_system IN (0, 1)),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
@@ -477,6 +508,150 @@ CREATE TABLE IF NOT EXISTS terminal_command_templates (
 
 CREATE INDEX IF NOT EXISTS idx_terminal_templates_workspace_id
   ON terminal_command_templates(workspace_id);
+
+CREATE TABLE IF NOT EXISTS debug_targets (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  root_path TEXT NOT NULL,
+  display_name TEXT NOT NULL,
+  stack_hint TEXT,
+  source_type TEXT NOT NULL CHECK (source_type IN ('repo', 'worktree')),
+  root_workspace_id TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+  FOREIGN KEY (root_workspace_id) REFERENCES workspaces(id),
+  UNIQUE (workspace_id, root_path)
+);
+
+CREATE INDEX IF NOT EXISTS idx_debug_targets_workspace_id
+  ON debug_targets(workspace_id, updated_at DESC, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS debug_services (
+  id TEXT PRIMARY KEY,
+  target_id TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('frontend', 'backend', 'worker', 'mock', 'custom')),
+  name TEXT NOT NULL,
+  cwd TEXT NOT NULL,
+  command TEXT NOT NULL,
+  args_json TEXT NOT NULL,
+  env_json TEXT NOT NULL,
+  default_port_hint INTEGER,
+  protocol TEXT CHECK (protocol IS NULL OR protocol IN ('http', 'ws', 'tcp')),
+  health_path TEXT,
+  adapter_kind TEXT CHECK (
+    adapter_kind IS NULL OR adapter_kind IN ('cli', 'env', 'override', 'ai_fallback')
+  ),
+  framework_analysis_id TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (target_id) REFERENCES debug_targets(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_debug_services_target_id
+  ON debug_services(target_id, updated_at DESC, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS framework_analysis_results (
+  id TEXT PRIMARY KEY,
+  target_id TEXT NOT NULL,
+  service_id TEXT,
+  primary_framework TEXT,
+  confidence TEXT NOT NULL CHECK (confidence IN ('high', 'medium', 'low')),
+  compatibility_level TEXT NOT NULL CHECK (
+    compatibility_level IN ('supported', 'conditional', 'unsupported', 'unknown')
+  ),
+  recommended_injection_mode TEXT CHECK (
+    recommended_injection_mode IS NULL OR recommended_injection_mode IN ('cli', 'env', 'override', 'none')
+  ),
+  requires_service_discovery_handling INTEGER NOT NULL CHECK (
+    requires_service_discovery_handling IN (0, 1)
+  ),
+  requires_hmr_handling INTEGER NOT NULL CHECK (requires_hmr_handling IN (0, 1)),
+  requires_callback_handling INTEGER NOT NULL CHECK (requires_callback_handling IN (0, 1)),
+  ai_fallback_policy TEXT NOT NULL CHECK (ai_fallback_policy IN ('never', 'conditional', 'allowed')),
+  reasons_json TEXT NOT NULL,
+  detected_files_json TEXT NOT NULL DEFAULT '[]',
+  raw_evidence_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (target_id) REFERENCES debug_targets(id) ON DELETE CASCADE,
+  FOREIGN KEY (service_id) REFERENCES debug_services(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_framework_analysis_results_target_id
+  ON framework_analysis_results(target_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_framework_analysis_results_service_id
+  ON framework_analysis_results(service_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS debug_runtime_sessions (
+  id TEXT PRIMARY KEY,
+  target_id TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('PREPARING', 'RUNNING', 'FAILED', 'STOPPED')),
+  failure_stage TEXT,
+  started_at TEXT,
+  stopped_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (target_id) REFERENCES debug_targets(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_debug_runtime_sessions_target_id
+  ON debug_runtime_sessions(target_id, updated_at DESC, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS port_leases (
+  id TEXT PRIMARY KEY,
+  runtime_id TEXT NOT NULL,
+  service_id TEXT NOT NULL,
+  port INTEGER NOT NULL,
+  protocol TEXT NOT NULL CHECK (protocol IN ('tcp', 'udp')),
+  status TEXT NOT NULL CHECK (status IN ('LEASED', 'RELEASING', 'RELEASED', 'STALE')),
+  leased_at TEXT NOT NULL,
+  expires_at TEXT,
+  released_at TEXT,
+  FOREIGN KEY (runtime_id) REFERENCES debug_runtime_sessions(id) ON DELETE CASCADE,
+  FOREIGN KEY (service_id) REFERENCES debug_services(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_port_leases_runtime_id
+  ON port_leases(runtime_id, leased_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_port_leases_active_port
+  ON port_leases(port, protocol)
+  WHERE status IN ('LEASED', 'RELEASING');
+
+CREATE TABLE IF NOT EXISTS runtime_bindings (
+  id TEXT PRIMARY KEY,
+  runtime_id TEXT NOT NULL,
+  service_id TEXT NOT NULL,
+  process_instance_id TEXT,
+  expected_port INTEGER,
+  leased_port INTEGER,
+  observed_port INTEGER,
+  proxy_path TEXT,
+  status TEXT NOT NULL CHECK (status IN ('ALLOCATED', 'LISTENING', 'FAILED', 'RELEASED')),
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (runtime_id) REFERENCES debug_runtime_sessions(id) ON DELETE CASCADE,
+  FOREIGN KEY (service_id) REFERENCES debug_services(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_runtime_bindings_runtime_id
+  ON runtime_bindings(runtime_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS ai_fallback_edits (
+  id TEXT PRIMARY KEY,
+  runtime_id TEXT NOT NULL,
+  service_id TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  allowed_files_json TEXT NOT NULL,
+  target_port INTEGER NOT NULL,
+  patch_ref TEXT,
+  rollback_ref TEXT,
+  status TEXT NOT NULL CHECK (status IN ('PENDING', 'APPLIED', 'ROLLED_BACK', 'REJECTED')),
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (runtime_id) REFERENCES debug_runtime_sessions(id) ON DELETE CASCADE,
+  FOREIGN KEY (service_id) REFERENCES debug_services(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_fallback_edits_runtime_id
+  ON ai_fallback_edits(runtime_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS butler_profiles (
   id TEXT PRIMARY KEY CHECK (id = 'default'),

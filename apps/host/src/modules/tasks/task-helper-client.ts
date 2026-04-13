@@ -3,13 +3,10 @@ import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 
-import type {
-  ProviderSessionDiscovery,
-  ProviderSessionSummary
-} from "@codingns/session-sync-core";
+import type { TaskHelperProcessHandlerName } from "./task-helper-process-handlers.js";
 
-interface PendingRequest<T> {
-  resolve: (value: T) => void;
+interface PendingRequest<TResult> {
+  resolve: (value: TResult) => void;
   reject: (reason?: unknown) => void;
 }
 
@@ -27,7 +24,7 @@ type HelperResponse =
       error: string;
     };
 
-export class ProviderDiscoveryHelperClient {
+export class TaskHelperProcessClient {
   private readonly child: ChildProcessWithoutNullStreams;
   private readonly stdoutReader: readline.Interface;
   private readonly pendingRequests = new Map<string, PendingRequest<unknown>>();
@@ -51,7 +48,7 @@ export class ProviderDiscoveryHelperClient {
       const content = String(chunk).trim();
 
       if (content) {
-        console.warn(`[provider-discovery-helper] ${content}`);
+        console.warn(`[task-helper] ${content}`);
       }
     });
     this.child.on("error", (error) => {
@@ -60,93 +57,72 @@ export class ProviderDiscoveryHelperClient {
     this.child.on("exit", (code, signal) => {
       this.rejectAll(
         new Error(
-          `provider discovery helper 已退出：code=${code ?? "null"} signal=${signal ?? "null"}`
+          `task helper 已退出：code=${code ?? "null"} signal=${signal ?? "null"}`
         )
       );
     });
   }
 
-  async readCodexAppServerState(input: {
-    commandPath: string;
-    timeoutMs: number;
-  }): Promise<{
-    config: {
-      model: string | null;
-      modelReasoningEffort: string | null;
-    };
-    models: Array<Record<string, unknown>>;
-  }> {
-    const result = await this.sendRequest({
-      type: "codex_app_server_state",
-      ...input
-    });
-
-    return result as {
-      config: {
-        model: string | null;
-        modelReasoningEffort: string | null;
-      };
-      models: Array<Record<string, unknown>>;
-    };
-  }
-
-  async readOpenCodeCliModels(input: {
-    commandPath: string;
-    workspacePath: string | null;
-    timeoutMs: number;
-  }): Promise<string[]> {
-    const result = await this.sendRequest({
-      type: "opencode_cli_models",
-      ...input
-    });
-
-    return result as string[];
-  }
-
-  async discoverWorkspaceSessions(input: {
-    config: ProviderSessionDiscoveryHelperConfig;
-    workspacePath: string;
-    knownSessions: ProviderSessionSummary[];
-  }): Promise<ProviderSessionDiscovery> {
-    const result = await this.sendRequest({
-      type: "workspace_session_discovery",
-      ...input
-    });
-
-    return result as ProviderSessionDiscovery;
-  }
-
-  async readSessionTitle(input: {
-    config: ProviderSessionDiscoveryHelperConfig;
-    provider: string;
-    providerSessionId: string;
-    rawStoreRef: string;
-  }): Promise<string> {
-    const result = await this.sendRequest({
-      type: "session_title_read",
-      ...input
-    });
-
-    return result as string;
-  }
-
-  private async sendRequest(payload: Record<string, unknown>): Promise<unknown> {
+  async execute<TResult>(
+    handler: TaskHelperProcessHandlerName,
+    input: unknown,
+    signal?: AbortSignal
+  ): Promise<TResult> {
     const id = String(this.nextRequestId++);
 
-    return await new Promise((resolve, reject) => {
+    return await new Promise<TResult>((resolve, reject) => {
+      let aborted = false;
+      let onAbort: (() => void) | null = null;
+
+      if (signal) {
+        onAbort = () => {
+          aborted = true;
+          this.pendingRequests.delete(id);
+          reject(signal.reason ?? new Error("helper task aborted"));
+        };
+
+        if (signal.aborted) {
+          onAbort();
+          return;
+        }
+
+        signal.addEventListener("abort", onAbort, { once: true });
+      }
+
       this.pendingRequests.set(id, {
-        resolve,
-        reject
+        resolve: (value) => {
+          if (onAbort && signal) {
+            signal.removeEventListener("abort", onAbort);
+          }
+
+          if (!aborted) {
+            resolve(value as TResult);
+          }
+        },
+        reject: (error) => {
+          if (onAbort && signal) {
+            signal.removeEventListener("abort", onAbort);
+          }
+
+          if (!aborted) {
+            reject(error);
+          }
+        }
       });
 
       this.child.stdin.write(
         `${JSON.stringify({
           id,
-          ...payload
+          handler,
+          input
         })}\n`,
         (error) => {
           if (!error) {
             return;
+          }
+
+          if (onAbort && signal) {
+            signal.removeEventListener("abort", onAbort);
           }
 
           this.pendingRequests.delete(id);
@@ -196,25 +172,12 @@ export class ProviderDiscoveryHelperClient {
   }
 }
 
-export interface ProviderSessionDiscoveryHelperConfig {
-  claudeCodeHomeDir: string;
-  codexCliPath: string;
-  codexHomeDir: string;
-  geminiCliPath: string;
-  geminiHomeDir: string;
-  kimiDefaultModel: string | null;
-  kimiHomeDir: string;
-  opencodeBaseUrl: string;
-  opencodeDataDir: string;
-  opencodeDbPath: string;
-}
-
 function resolveHelperLaunch(): { command: string; args: string[] } {
   const currentFilePath = fileURLToPath(import.meta.url);
   const extension = path.extname(currentFilePath);
   const helperPath = currentFilePath.replace(
-    /provider-discovery-helper-client\.(ts|js)$/,
-    `provider-discovery-helper-process${extension}`
+    /task-helper-client\.(ts|js)$/,
+    `task-helper-process${extension}`
   );
 
   if (extension === ".ts") {

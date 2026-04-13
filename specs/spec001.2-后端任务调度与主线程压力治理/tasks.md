@@ -1,6 +1,6 @@
 # 任务清单 - spec001.2 后端任务调度与主线程压力治理（人话版）
 
-状态：In Progress
+状态：DONE
 
 ## 2026-04-12 进展补记
 
@@ -14,6 +14,16 @@
 - 已把 `session-history-service` 里的 `workspaceDiscoveryInflight`、`providerCapabilityRefreshInflight` 收口到统一任务入口
 - 已补任务骨架和 `session-history-service` 接入测试，并通过 Host 构建、任务模块测试、`provider-cli-availability` 与 `workbench-service` 定向测试
 - 已新增 `20260412-后台任务接入规范.md`，后续新任务必须按统一规范接入，不允许再长散装 `inflight/timer`
+
+## 2026-04-13 进展补记
+
+- 已针对“终端输入卡顿”补做专项排查，确认跨端时钟差值不能直接拿来判断网络慢，真正该盯的是 `event_loop.lag`、`workspace.discovery.completed`、`workbench.sync_titles.completed` 这类 Host 侧阶段日志
+- 已给 `workspace.discovery` 补分阶段耗时，并把 Host 收尾从一口气大事务改成分批事务，确认 `persistPass1MaxBatchMs`、`persistPass2MaxBatchMs` 已明显回落
+- 已把 `TaskManager` 的 `helper_process` 从“语义标签”补成真正执行器，避免任务声明 helper 化后，重活却还留在 Host 主线程
+- 已收编 `workbench.sync_titles`、`workspace.management_summary`、`terminal.manager_snapshot`、`terminal.template_runtime_status_discovery` 这几条工作台链路，明确它们不能在广播链路里现算重任务
+- 已确认最终主犯是 `workbench.sync_titles -> readSessionTitle`，并把标题读取搬进 helper 进程执行
+- 已新增 `20260413-终端卡顿治理补记.md`，把这次根因、误判过程、阶段日志口径和最终修复路径写清楚
+- 已完成用户回归确认，用户反馈“现在没有任何卡顿了”
 
 ## 状态说明
 
@@ -269,3 +279,32 @@
     - PC 设置页已新增“高级设置 / 并行任务调试”，可以通过模态框实时查看后台任务指标、最近执行记录、调度器状态和 `event loop` 延迟
     - `workspace discovery`、`provider capability refresh` 继续通过统一 `TaskManager` 收口，没有回退到散装 `inflight` 状态
   - 回写时间：2026-04-12
+
+- [x] 5.3 完成终端卡顿专项排查、修复和回归
+  - 状态：DONE
+  - 这一做到底做什么：围绕终端输入卡顿继续追根溯源，把“看起来已经后台化、实际上还在 Host 主线程做重活”的残留链路彻底找出来并搬走
+  - 做完以后能看到什么结果：终端输入、工作台刷新、侧边栏广播不再互相拖累，排查日志也能明确区分 helper 发现慢还是 Host 收尾慢
+  - 依赖什么：5.2
+  - 主要改哪些文件：
+    - `apps/host/src/modules/sessions/session-history-service.ts`
+    - `apps/host/src/modules/tasks/*`
+    - `apps/host/src/modules/workbench/*`
+    - `apps/host/src/modules/workspace/*`
+    - `apps/host/src/modules/terminal/*`
+    - `specs/spec001.2-后端任务调度与主线程压力治理/20260413-终端卡顿治理补记.md`
+  - 这一步先不做什么：不扩成新的调度系统重构，只针对已确认的主线程阻塞链路做止血和收口
+  - 怎么验证：
+    - 打开终端调试日志，检查 `workspace.discovery.completed`、`workbench.sync_titles.completed`、`event_loop.lag`
+    - 对比拆批前后的 `persistPass1MaxBatchMs`、`persistPass2MaxBatchMs`
+    - 结合用户实机回归结果确认卡顿是否消失
+  - 验证结果：
+    - `workspace.discovery` 已补分阶段埋点，能够拆出 `discoverMs`、两轮持久化耗时、清理耗时和 `refreshStateMs`
+    - `workspace.discovery` 的 Host 收尾已从大事务改成分批事务，单批最长耗时回落到个位数毫秒级
+    - `TaskManager` 已补真正的 `helper_process` 执行器，不再只靠 `executionLane` 标签自我安慰
+    - `workbench.sync_titles` 的 `readSessionTitle()` 已搬进 helper 进程，最终打掉终端输入卡顿
+    - 用户已明确回归反馈“现在没有任何卡顿了”
+  - 对应设计：
+    - `design.md` §1.6
+    - `design.md` §2.5.5
+    - `design.md` §2.5.6
+  - 回写时间：2026-04-13

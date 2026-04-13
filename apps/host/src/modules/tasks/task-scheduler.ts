@@ -5,9 +5,12 @@ import {
   TaskCancelledError,
   type TaskActivitySink,
   type TaskDefinition,
+  type TaskExecutionLane,
   type TaskEnqueueOptions,
+  type TaskLaneExecutor,
   type TaskHandle,
   type TaskSnapshot,
+  type TaskRunContext,
   TaskTimeoutError
 } from "./task-types.js";
 
@@ -40,7 +43,8 @@ export class TaskScheduler {
   constructor(
     private readonly registry: TaskRegistry,
     private readonly metrics: TaskMetrics,
-    private readonly activitySink: TaskActivitySink | null = null
+    private readonly activitySink: TaskActivitySink | null = null,
+    private readonly laneExecutors: Partial<Record<TaskExecutionLane, TaskLaneExecutor>> = {}
   ) {}
 
   enqueue<TInput, TResult>(taskType: string, options: TaskEnqueueOptions<TInput>): TaskHandle<TResult> {
@@ -310,15 +314,19 @@ export class TaskScheduler {
     attempt: number
   ): Promise<TResult> {
     const timeoutMs = record.definition.timeoutMs ?? 0;
-
-    const runPromise = record.definition.run(record.input, {
+    const runContext: TaskRunContext = {
       taskType: record.taskType,
       key: record.key,
       taskId: record.taskId,
       executionLane: record.definition.executionLane,
       attempt,
       signal: record.controller.signal
-    });
+    };
+    const executor = this.laneExecutors[record.definition.executionLane];
+
+    const runPromise = executor
+      ? executor.execute(record.definition, record.input, runContext)
+      : record.definition.run(record.input, runContext);
 
     if (timeoutMs <= 0) {
       return runPromise;

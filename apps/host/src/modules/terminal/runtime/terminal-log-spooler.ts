@@ -1,11 +1,14 @@
 import { createId } from "../../../shared/utils/id.js";
+import { logTerminalDebug, terminalDebugNowMs } from "../../../shared/utils/terminal-debug-log.js";
 import { nowIso } from "../../../shared/utils/time.js";
 import type { TerminalOutputChunk } from "../../../types/domain.js";
 import type { TerminalLogFileRepository } from "../../../storage/repositories/terminal-log-file-repository.js";
 import type { TerminalLogSegmentRepository } from "../../../storage/repositories/terminal-log-segment-repository.js";
 import { TerminalLogFileStore } from "./terminal-log-file-store.js";
+import { TerminalLogWriterClient } from "./terminal-log-writer-client.js";
 
 interface TerminalLogSpoolerOptions {
+  databasePath?: string;
   logRootDir: string;
   fileRepository: TerminalLogFileRepository;
   segmentRepository: TerminalLogSegmentRepository;
@@ -18,6 +21,7 @@ interface PendingTerminalLogBatch {
   totalBytes: number;
   timer: ReturnType<typeof setTimeout> | null;
   flushing: boolean;
+  flushPromise: Promise<void> | null;
 }
 
 const DEFAULT_FLUSH_INTERVAL_MS = 2_000;
@@ -28,11 +32,16 @@ export class TerminalLogSpooler {
   private readonly pendingByTerminalId = new Map<string, PendingTerminalLogBatch>();
   private readonly flushIntervalMs: number;
   private readonly maxBatchBytes: number;
+  private readonly writerClient: TerminalLogWriterClient | null;
 
   constructor(private readonly options: TerminalLogSpoolerOptions) {
     this.fileStore = new TerminalLogFileStore(options.logRootDir);
     this.flushIntervalMs = options.flushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS;
     this.maxBatchBytes = options.maxBatchBytes ?? DEFAULT_MAX_BATCH_BYTES;
+    this.writerClient =
+      options.databasePath && options.databasePath !== ":memory:"
+        ? new TerminalLogWriterClient(options.databasePath, options.logRootDir)
+        : null;
   }
 
   appendChunks(terminalId: string, chunks: TerminalOutputChunk[]): void {
@@ -54,10 +63,24 @@ export class TerminalLogSpooler {
     this.scheduleFlush(terminalId, batch.totalBytes >= this.maxBatchBytes ? 0 : this.flushIntervalMs);
   }
 
-  flushTerminal(terminalId: string): void {
+  async flushTerminal(terminalId: string): Promise<void> {
     const batch = this.pendingByTerminalId.get(terminalId);
 
-    if (!batch || batch.flushing || batch.chunks.length === 0) {
+    if (!batch) {
+      return;
+    }
+
+    if (batch.flushing) {
+      await batch.flushPromise;
+
+      if (batch.chunks.length > 0) {
+        await this.flushTerminal(terminalId);
+      }
+
+      return;
+    }
+
+    if (batch.chunks.length === 0) {
       return;
     }
 
@@ -68,34 +91,67 @@ export class TerminalLogSpooler {
     const flushingBytes = batch.totalBytes;
     batch.chunks = [];
     batch.totalBytes = 0;
+    const flushStartedAtMs = terminalDebugNowMs();
 
-    try {
-      this.persistChunks(terminalId, flushingChunks);
-    } catch (error) {
-      batch.chunks = [...flushingChunks, ...batch.chunks];
-      batch.totalBytes += flushingBytes;
-      console.warn("[terminal-log-flush-failed]", {
-        terminalId,
-        error: error instanceof Error ? error.message : String(error)
-      });
-      this.scheduleFlush(terminalId, this.flushIntervalMs);
-    } finally {
-      batch.flushing = false;
+    logTerminalDebug("terminal.log_flush.started", {
+      terminalId,
+      chunkCount: flushingChunks.length,
+      totalBytes: flushingBytes,
+      mode: this.writerClient ? "worker" : "inline"
+    });
 
-      if (batch.chunks.length > 0) {
-        this.scheduleFlush(
+    const flushPromise = this.persistChunks(terminalId, flushingChunks)
+      .then(() => {
+        logTerminalDebug("terminal.log_flush.completed", {
           terminalId,
-          batch.totalBytes >= this.maxBatchBytes ? 0 : this.flushIntervalMs
-        );
-      } else if (!batch.timer) {
-        this.pendingByTerminalId.delete(terminalId);
-      }
-    }
+          chunkCount: flushingChunks.length,
+          totalBytes: flushingBytes,
+          durationMs: terminalDebugNowMs() - flushStartedAtMs,
+          mode: this.writerClient ? "worker" : "inline"
+        });
+      })
+      .catch((error) => {
+        batch.chunks = [...flushingChunks, ...batch.chunks];
+        batch.totalBytes += flushingBytes;
+        console.warn("[terminal-log-flush-failed]", {
+          terminalId,
+          error: error instanceof Error ? error.message : String(error)
+        });
+        logTerminalDebug("terminal.log_flush.failed", {
+          terminalId,
+          chunkCount: flushingChunks.length,
+          totalBytes: flushingBytes,
+          durationMs: terminalDebugNowMs() - flushStartedAtMs,
+          error: error instanceof Error ? error.message : String(error),
+          mode: this.writerClient ? "worker" : "inline"
+        });
+        this.scheduleFlush(terminalId, this.flushIntervalMs);
+      })
+      .finally(() => {
+        batch.flushing = false;
+        batch.flushPromise = null;
+
+        if (batch.chunks.length > 0) {
+          this.scheduleFlush(
+            terminalId,
+            batch.totalBytes >= this.maxBatchBytes ? 0 : this.flushIntervalMs
+          );
+        } else if (!batch.timer) {
+          this.pendingByTerminalId.delete(terminalId);
+        }
+      });
+
+    batch.flushPromise = flushPromise;
+    await flushPromise;
   }
 
-  flushAll(): void {
+  async flushAll(): Promise<void> {
     for (const terminalId of [...this.pendingByTerminalId.keys()]) {
-      this.flushTerminal(terminalId);
+      try {
+        await this.flushTerminal(terminalId);
+      } catch {
+        // flush 失败时保留已有警告，这里继续尝试刷其他终端。
+      }
     }
   }
 
@@ -110,12 +166,36 @@ export class TerminalLogSpooler {
     this.pendingByTerminalId.delete(terminalId);
   }
 
-  deleteTerminalLogs(terminalId: string): void {
+  async deleteTerminalLogs(terminalId: string): Promise<void> {
+    const batch = this.pendingByTerminalId.get(terminalId);
+    const flushPromise = batch?.flushPromise ?? null;
+
     this.clearTerminal(terminalId);
+
+    if (flushPromise) {
+      try {
+        await flushPromise;
+      } catch {
+        // flush 失败时继续删除，避免残留损坏的日志索引。
+      }
+    }
+
+    if (this.writerClient) {
+      await this.writerClient.deleteTerminalLogs(terminalId);
+      return;
+    }
+
+    this.options.segmentRepository.deleteByTerminalId(terminalId);
+    this.options.fileRepository.deleteByTerminalId(terminalId);
     this.fileStore.deleteTerminalLogs(terminalId);
   }
 
-  private persistChunks(terminalId: string, chunks: TerminalOutputChunk[]): void {
+  async dispose(): Promise<void> {
+    await this.flushAll();
+    await this.writerClient?.close();
+  }
+
+  private async persistChunks(terminalId: string, chunks: TerminalOutputChunk[]): Promise<void> {
     const startSeq = parseCursor(chunks[0]?.cursor);
     const endSeq = parseCursor(chunks.at(-1)?.cursor);
 
@@ -124,6 +204,26 @@ export class TerminalLogSpooler {
     }
 
     const content = chunks.map((chunk) => chunk.content).join("");
+
+    if (this.writerClient) {
+      await this.writerClient.persistChunkBatch({
+        terminalId,
+        startSeq,
+        endSeq,
+        content
+      });
+      return;
+    }
+
+    this.persistChunksInline(terminalId, startSeq, endSeq, content);
+  }
+
+  private persistChunksInline(
+    terminalId: string,
+    startSeq: number,
+    endSeq: number,
+    content: string
+  ): void {
     const timestamp = nowIso();
     let activeFile = this.options.fileRepository.findActiveByTerminalId(terminalId);
 
@@ -176,7 +276,8 @@ export class TerminalLogSpooler {
         chunks: [],
         totalBytes: 0,
         timer: null,
-        flushing: false
+        flushing: false,
+        flushPromise: null
       };
       this.pendingByTerminalId.set(terminalId, batch);
     }
@@ -194,7 +295,7 @@ export class TerminalLogSpooler {
     this.clearBatchTimer(batch);
     batch.timer = setTimeout(() => {
       batch.timer = null;
-      this.flushTerminal(terminalId);
+      void this.flushTerminal(terminalId);
     }, Math.max(0, delayMs));
     batch.timer.unref?.();
   }

@@ -20,9 +20,18 @@ export class TerminalCommandTemplateRepository {
           proxy_enabled,
           proxy_slug,
           runtime_type,
+          source_type,
+          debug_target_id,
+          debug_service_id,
+          framework_analysis_id,
+          adapter_kind,
+          injection_mode,
+          generated_artifact_ref,
+          service_discovery_mode,
+          managed_by_system,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         record.id,
@@ -36,6 +45,15 @@ export class TerminalCommandTemplateRepository {
         record.proxyEnabled ? 1 : 0,
         record.proxySlug,
         record.runtimeType,
+        record.sourceType ?? null,
+        record.debugTargetId ?? null,
+        record.debugServiceId ?? null,
+        record.frameworkAnalysisId ?? null,
+        record.adapterKind ?? null,
+        record.injectionMode ?? null,
+        record.generatedArtifactRef ?? null,
+        record.serviceDiscoveryMode ?? null,
+        record.managedBySystem ? 1 : 0,
         record.createdAt,
         record.updatedAt
       );
@@ -58,6 +76,15 @@ export class TerminalCommandTemplateRepository {
           proxy_enabled,
           proxy_slug,
           runtime_type,
+          source_type,
+          debug_target_id,
+          debug_service_id,
+          framework_analysis_id,
+          adapter_kind,
+          injection_mode,
+          generated_artifact_ref,
+          service_discovery_mode,
+          managed_by_system,
           created_at,
           updated_at
         FROM terminal_command_templates
@@ -83,6 +110,15 @@ export class TerminalCommandTemplateRepository {
           proxy_enabled,
           proxy_slug,
           runtime_type,
+          source_type,
+          debug_target_id,
+          debug_service_id,
+          framework_analysis_id,
+          adapter_kind,
+          injection_mode,
+          generated_artifact_ref,
+          service_discovery_mode,
+          managed_by_system,
           created_at,
           updated_at
         FROM terminal_command_templates
@@ -108,6 +144,15 @@ export class TerminalCommandTemplateRepository {
           proxy_enabled,
           proxy_slug,
           runtime_type,
+          source_type,
+          debug_target_id,
+          debug_service_id,
+          framework_analysis_id,
+          adapter_kind,
+          injection_mode,
+          generated_artifact_ref,
+          service_discovery_mode,
+          managed_by_system,
           created_at,
           updated_at
         FROM terminal_command_templates
@@ -131,6 +176,15 @@ export class TerminalCommandTemplateRepository {
              proxy_enabled = ?,
              proxy_slug = ?,
              runtime_type = ?,
+             source_type = ?,
+             debug_target_id = ?,
+             debug_service_id = ?,
+             framework_analysis_id = ?,
+             adapter_kind = ?,
+             injection_mode = ?,
+             generated_artifact_ref = ?,
+             service_discovery_mode = ?,
+             managed_by_system = ?,
              updated_at = ?
          WHERE id = ?`
       )
@@ -144,6 +198,15 @@ export class TerminalCommandTemplateRepository {
         record.proxyEnabled ? 1 : 0,
         record.proxySlug,
         record.runtimeType,
+        record.sourceType ?? null,
+        record.debugTargetId ?? null,
+        record.debugServiceId ?? null,
+        record.frameworkAnalysisId ?? null,
+        record.adapterKind ?? null,
+        record.injectionMode ?? null,
+        record.generatedArtifactRef ?? null,
+        record.serviceDiscoveryMode ?? null,
+        record.managedBySystem ? 1 : 0,
         record.updatedAt,
         record.id
       );
@@ -172,12 +235,21 @@ interface TerminalCommandTemplateRow {
   proxy_enabled: number;
   proxy_slug: string | null;
   runtime_type: TerminalCommandTemplate["runtimeType"];
+  source_type: TerminalCommandTemplate["sourceType"] | null;
+  debug_target_id: string | null;
+  debug_service_id: string | null;
+  framework_analysis_id: string | null;
+  adapter_kind: TerminalCommandTemplate["adapterKind"] | null;
+  injection_mode: TerminalCommandTemplate["injectionMode"] | null;
+  generated_artifact_ref: string | null;
+  service_discovery_mode: TerminalCommandTemplate["serviceDiscoveryMode"] | null;
+  managed_by_system: number;
   created_at: string;
   updated_at: string;
 }
 
 function mapTemplateRow(row: TerminalCommandTemplateRow): TerminalCommandTemplate {
-  return {
+  const template: TerminalCommandTemplate = {
     id: row.id,
     workspaceId: row.workspace_id,
     name: row.name,
@@ -192,4 +264,42 @@ function mapTemplateRow(row: TerminalCommandTemplateRow): TerminalCommandTemplat
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
+
+  if (row.source_type) {
+    template.sourceType = row.source_type;
+  }
+
+  if (row.debug_target_id) {
+    template.debugTargetId = row.debug_target_id;
+  }
+
+  if (row.debug_service_id) {
+    template.debugServiceId = row.debug_service_id;
+  }
+
+  if (row.framework_analysis_id) {
+    template.frameworkAnalysisId = row.framework_analysis_id;
+  }
+
+  if (row.adapter_kind) {
+    template.adapterKind = row.adapter_kind;
+  }
+
+  if (row.injection_mode) {
+    template.injectionMode = row.injection_mode;
+  }
+
+  if (row.generated_artifact_ref) {
+    template.generatedArtifactRef = row.generated_artifact_ref;
+  }
+
+  if (row.service_discovery_mode) {
+    template.serviceDiscoveryMode = row.service_discovery_mode;
+  }
+
+  if (row.managed_by_system === 1) {
+    template.managedBySystem = true;
+  }
+
+  return template;
 }

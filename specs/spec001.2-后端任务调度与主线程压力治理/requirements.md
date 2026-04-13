@@ -119,6 +119,16 @@
 2. WHEN 需要评估主线程是否被阻塞 THEN System SHALL 提供事件循环延迟、请求耗时分布、任务单次最长耗时、同步扫描次数或代理指标
 3. WHEN 需要比较优化前后效果 THEN System SHALL 能按接口、任务类型、执行位点输出可对比指标，而不是只看零散日志
 
+### 需求 8：工作台和 WebSocket 广播链路禁止现算重任务
+
+**用户故事：** 作为用户，我希望终端、工作台和侧边栏刷新互不拖累，而不是某条广播链路里顺手现算一个重任务，就把整个 Host 主线程一起卡住。
+
+#### 验收标准
+
+1. WHEN `workbench.refresh`、`sync_titles`、`terminal_manager_refresh`、`workspaceManagement` 等链路被触发 THEN System SHALL 优先读取缓存或最近结果，不得在 WebSocket 广播链路里直接现算重任务
+2. WHEN 工作台需要刷新重数据 THEN System SHALL 通过统一后台任务调度刷新缓存，再由广播链路分发结果
+3. WHEN 某条工作台链路已经声明为 `helper_process` 或 `external_process` THEN System SHALL 确保真正的重活发生在对应执行位点，而不是只打标签后仍在 Host 主线程做同步收尾
+
 ## 非功能需求
 
 ### 非功能需求 1：向后兼容
@@ -135,6 +145,7 @@
 
 1. WHEN 新增一个后台任务 THEN System SHALL 能明确回答它的任务键、执行位点、并发限制、缓存策略和指标名称
 2. WHEN 删除或替换一个旧调度器 THEN System SHALL 不需要在多个模块里到处找私有 `timer/inflight` 状态
+3. WHEN 一个任务被标成 `helper_process` 或 `external_process` THEN System SHALL 能明确指出真正的执行器在哪里，以及 Host 收尾阶段是否还存在同步大事务、同步文件读写或大对象组装
 
 ## 成功定义
 

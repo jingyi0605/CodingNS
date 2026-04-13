@@ -56,14 +56,20 @@ export class CommandTemplateService {
   }
 
   async listTemplateRuntimeStatuses(workspaceId: string) {
-    const templates = this.listTemplates(workspaceId)
-      .filter((template) => template.port !== null)
-      .map((template) => ({
-        templateId: template.id,
-        port: template.port as number
-      }));
+    return await this.listTemplateRuntimeStatusesByItems(
+      this.listTemplates(workspaceId)
+        .filter((template) => template.port !== null)
+        .map((template) => ({
+          templateId: template.id,
+          port: template.port as number
+        }))
+    );
+  }
 
-    return await discoverTemplateRuntimeStatuses(templates);
+  async listTemplateRuntimeStatusesByItems(
+    items: Array<{ templateId: string; port: number }>
+  ) {
+    return await discoverTemplateRuntimeStatuses(items);
   }
 
   async stopTemplateRuntimeProcess(templateId: string): Promise<{

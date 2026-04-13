@@ -41,6 +41,8 @@
 4. `getProviderCapabilities()` 以前容易把“新建会话入口是否可用”绑死在实时模型探测上
 5. 任务状态管理散落在 `workspaceDiscoveryInflight`、`providerCapabilityRefreshInflight`、`queueRetryTimers`、`WorkbenchWsHub.refreshTask` 和各类 scheduler 的 `ticking`
 6. `PatrolScheduler`、`ButlerFollowUpScheduler` 即使没有待执行任务也会周期醒一次，但当前没有统一的空转指标和退让规则
+7. `workbench.sync_titles`、`terminal_manager_refresh`、`workspaceManagement` 等工作台链路最早仍会在 WS Hub 或广播链路里现算重任务，导致“终端输入卡顿”和“工作台刷新”互相拖累
+8. `executionLane` 最早更像标签而不是强约束，哪怕声明了 `helper_process`，只要 `run()` 或 helper 返回后的 Host 收尾里还留着同步本地 I/O、大事务或大对象组装，主线程照样会被堵
 
 一句人话：
 这不是线程太少的问题，是主线程被拿去干了太多“不该当场干”的事。
@@ -55,6 +57,35 @@
 4. `getProviderCapabilities()` 已支持先返回缓存或兜底，再异步刷新模型列表
 
 这个 Spec 的任务不是重复写一遍这些代码，而是把它们变成一套可持续规则。
+
+### 1.6 2026-04-13 终端卡顿专项结论
+
+这次 `tmux` 终端卡顿专项排查，最后确认了三件事：
+
+1. `tmux` 输入链路本身不是主因
+2. 终端日志同步 flush 曾经是阻塞源之一，但不是最后的大头
+3. 最后真正命中的主犯，是 `workbench.sync_titles -> readSessionTitle`
+
+之前为什么会误判：
+
+- `terminal_manager_snapshot` 最早出现过秒级耗时，看起来很像主犯
+- 但补了阶段埋点以后，后续同路径已回落到几十毫秒
+- 说明它更像“主线程卡顿时一起被拖长的受害者”，而不是稳定主犯
+
+这次最终修复路径是：
+
+1. 恢复并补齐终端调试埋点
+2. 把终端日志 flush 移到后台 writer 进程
+3. 给 `TaskManager` 补真正的 `helper_process` 执行器
+4. 把 `workspaceManagement` 扫描、`terminal_manager_snapshot` 端口探测搬到 helper
+5. 给 `workspace.discovery` 补分阶段埋点，并把 Host 大事务拆成分批事务
+6. 把 `sync_titles` 的 `readSessionTitle()` 也搬进 helper
+
+最终结果是：
+
+- `workspace.discovery` 的 Host 收尾不再是大段同步阻塞
+- `sync_titles` 的标题读取不再堵在 Host 主线程
+- 终端输入卡顿消失
 
 ## 2. 架构
 
@@ -157,6 +188,7 @@
 2. `helper_process`
    - 适合 provider 本地扫描、历史读取、组合查询
    - Host 只负责传参和收结果
+   - 这不是“给任务打个 lane 标签”就算完成，必须有真正统一执行器把重活发到 helper
 3. `external_process`
    - 适合直接调用 CLI/provider 命令
    - 返回前必须有兜底和缓存，不把它当成入口必经步骤
@@ -224,6 +256,37 @@
 - `PatrolScheduler` 没有计划时仍会周期醒一次，但 `listDuePlans()` 为空就返回，不会创建巡视任务
 - `ButlerFollowUpScheduler` 没有活跃跟进任务或还没到 `nextCheckAt` 时，也会周期醒一次，但只做轻判断，不会继续推进重逻辑
 
+#### 2.5.5 工作台刷新和终端链路
+
+这次排查后，这条规则必须写死：
+
+1. `workbench.refresh`、`sync_titles`、`terminal_manager_refresh`、`workspaceManagement` 这类链路不允许在 WS 广播链路里直接现算重任务
+2. 广播链路只负责：
+   - 读缓存
+   - 读最近结果
+   - 发送 payload
+3. 重算必须通过后台任务调度完成，完成后再广播
+
+原因很现实：
+
+- 只要广播链路里混进同步本地 I/O、同步 SQLite 或大对象整理
+- 终端输入、工作台刷新、侧边栏刷新就会互相拖累
+
+#### 2.5.6 helper 返回后的 Host 收尾
+
+这次 `workspace.discovery` 暴露了另一个常见坑：
+
+- helper 进程只搬走“发现阶段”
+- 但 helper 返回后的 Host 收尾，仍可能因为同步大事务继续卡主线程
+
+所以后续设计里必须把 Host 收尾单独当成一个阶段看，而不是默认认为“helper 化以后就没事了”。
+
+最低要求：
+
+1. Helper 返回后的 Host 收尾必须单独埋点
+2. 只要存在同步大事务、同步文件读写或大对象组装，就必须评估是否拆批
+3. 单批次执行时间必须可观测，必要时在批次之间显式让出事件循环
+
 ### 2.6 迁移路径
 
 第一阶段只收编最痛的任务，别一次吞全世界。
@@ -232,6 +295,10 @@
 
 - `workspace.discovery`
 - `provider.capability_refresh`
+- `workbench.sync_titles`
+- `workspace.management_summary`
+- `terminal.manager_snapshot`
+- `terminal.template_runtime_status_discovery`
 
 #### 阶段 B：收口散装状态
 

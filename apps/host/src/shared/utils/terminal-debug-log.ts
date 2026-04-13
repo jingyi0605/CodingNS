@@ -1,8 +1,6 @@
 import { performance } from "node:perf_hooks";
 
-// 调试日志已停用，保留工具函数便于后续需要时快速恢复。
-// const TERMINAL_DEBUG_ENABLED = process.env.CODINGNS_TERMINAL_DEBUG === "1";
-const TERMINAL_DEBUG_ENABLED = false;
+const TERMINAL_DEBUG_ENABLED = readTerminalDebugFlag();
 const EVENT_LOOP_LAG_MONITOR_INTERVAL_MS = 100;
 const EVENT_LOOP_LAG_REPORT_THRESHOLD_MS = 50;
 
@@ -48,6 +46,11 @@ export function startTerminalDebugEventLoopLagMonitor(): () => void {
   return () => {
     clearInterval(timer);
   };
+}
+
+function readTerminalDebugFlag(): boolean {
+  const rawValue = process.env.CODINGNS_TERMINAL_DEBUG?.trim().toLowerCase();
+  return rawValue === "1" || rawValue === "true" || rawValue === "yes" || rawValue === "on";
 }
 
 function formatTerminalDebugDetail(detail: Record<string, unknown>): string {

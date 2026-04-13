@@ -14,6 +14,13 @@ import type {
   WorkspaceManagementSummary,
   WorkspaceService
 } from "../workspace/workspace-service.js";
+import {
+  isTerminalDebugEnabled,
+  logTerminalDebug,
+  terminalDebugNowMs
+} from "../../shared/utils/terminal-debug-log.js";
+import { createTaskManager, type TaskManager } from "../tasks/task-manager.js";
+import { HOST_TASK_TYPES } from "../tasks/task-types.js";
 
 const FILE_TREE_CACHE_MAX_AGE_MS = 5_000;
 const GIT_SNAPSHOT_CACHE_MAX_AGE_MS = 15_000;
@@ -78,8 +85,11 @@ export class WorkspacePanelSnapshotService {
     private readonly gitReadService: GitReadService,
     private readonly terminalService: TerminalService,
     private readonly commandTemplateService: CommandTemplateService,
-    private readonly workspaceService: WorkspaceService
-  ) {}
+    private readonly workspaceService: WorkspaceService,
+    private readonly taskManager: TaskManager = createTaskManager()
+  ) {
+    this.registerBackgroundTasks();
+  }
 
   async getFileTreeSnapshot(
     workspaceId: string,
@@ -200,26 +210,15 @@ export class WorkspacePanelSnapshotService {
       return inflight;
     }
 
-    const task = Promise.all([
-      Promise.resolve(this.terminalService.listTerminalSnapshotItems(workspaceId)),
-      Promise.resolve(this.commandTemplateService.listTemplates(workspaceId)),
-      this.commandTemplateService.listTemplateRuntimeStatuses(workspaceId)
-    ]).then(([terminals, templates, templateStatuses]) => {
-      const snapshot: TerminalManagerSnapshot = {
-        workspaceId,
-        terminals,
-        templates,
-        templateStatuses,
-        shellOptions: listTerminalShellOptions()
-      };
-
-      this.terminalManagerCache.set(workspaceId, {
-        snapshot,
-        cachedAt: Date.now()
-      });
-
-      return snapshot;
-    }).finally(() => {
+    const task = this.taskManager.enqueue<{
+      workspaceId: string;
+    }, TerminalManagerSnapshot>(HOST_TASK_TYPES.terminalManagerSnapshot, {
+      key: workspaceId,
+      source: "workspace_panel.get_terminal_manager_snapshot",
+      input: {
+        workspaceId
+      }
+    }).promise.finally(() => {
       this.terminalManagerInflight.delete(workspaceId);
     });
 
@@ -290,6 +289,92 @@ export class WorkspacePanelSnapshotService {
 
   invalidateWorkspaceManagement(workspaceId: string): void {
     this.workspaceManagementCache.delete(workspaceId);
+  }
+
+  private registerBackgroundTasks(): void {
+    if (!this.taskManager.has(HOST_TASK_TYPES.templateRuntimeStatusDiscovery)) {
+      this.taskManager.register<{
+        items: Array<{ templateId: string; port: number }>;
+      }, TerminalTemplateRuntimeStatus[]>({
+        taskType: HOST_TASK_TYPES.templateRuntimeStatusDiscovery,
+        executionLane: "helper_process",
+        helperProcessHandler: "terminal.template_runtime_status_discovery",
+        run: async ({ items }) => this.commandTemplateService.listTemplateRuntimeStatusesByItems(items)
+      });
+    }
+
+    if (!this.taskManager.has(HOST_TASK_TYPES.terminalManagerSnapshot)) {
+      this.taskManager.register<{
+        workspaceId: string;
+      }, TerminalManagerSnapshot>({
+        taskType: HOST_TASK_TYPES.terminalManagerSnapshot,
+        executionLane: "host_background",
+        run: async ({ workspaceId }) => this.loadTerminalManagerSnapshot(workspaceId)
+      });
+    }
+  }
+
+  private async loadTerminalManagerSnapshot(workspaceId: string): Promise<TerminalManagerSnapshot> {
+    const startedAtMs = terminalDebugNowMs();
+    const terminalListStartedAtMs = terminalDebugNowMs();
+    const terminals = this.terminalService.listTerminalSnapshotItems(workspaceId);
+    const terminalListMs = terminalDebugNowMs() - terminalListStartedAtMs;
+    const templateListStartedAtMs = terminalDebugNowMs();
+    const templates = this.commandTemplateService.listTemplates(workspaceId);
+    const templateListMs = terminalDebugNowMs() - templateListStartedAtMs;
+    const runtimeStatusItems = templates
+      .filter((template) => template.port !== null)
+      .map((template) => ({
+        templateId: template.id,
+        port: template.port as number
+      }));
+    const templateStatusStartedAtMs = terminalDebugNowMs();
+    const templateStatuses = runtimeStatusItems.length === 0
+      ? []
+      : await this.taskManager.enqueue<{
+          items: Array<{ templateId: string; port: number }>;
+        }, TerminalTemplateRuntimeStatus[]>(HOST_TASK_TYPES.templateRuntimeStatusDiscovery, {
+          key: workspaceId,
+          source: "workspace_panel.load_terminal_manager_snapshot.runtime_status",
+          input: {
+            items: runtimeStatusItems
+          }
+        }).promise;
+    const templateStatusMs = terminalDebugNowMs() - templateStatusStartedAtMs;
+    const shellOptionsStartedAtMs = terminalDebugNowMs();
+    const shellOptions = listTerminalShellOptions();
+    const shellOptionsMs = terminalDebugNowMs() - shellOptionsStartedAtMs;
+    const assembleStartedAtMs = terminalDebugNowMs();
+    const snapshot: TerminalManagerSnapshot = {
+      workspaceId,
+      terminals,
+      templates,
+      templateStatuses,
+      shellOptions
+    };
+    const assembleMs = terminalDebugNowMs() - assembleStartedAtMs;
+
+    this.terminalManagerCache.set(workspaceId, {
+      snapshot,
+      cachedAt: Date.now()
+    });
+
+    if (isTerminalDebugEnabled()) {
+      logTerminalDebug("workbench.terminal_manager_snapshot.completed", {
+        workspaceId,
+        terminalCount: terminals.length,
+        templateCount: templates.length,
+        templateStatusCount: templateStatuses.length,
+        terminalListMs,
+        templateListMs,
+        templateStatusMs,
+        shellOptionsMs,
+        assembleMs,
+        durationMs: terminalDebugNowMs() - startedAtMs
+      });
+    }
+
+    return snapshot;
   }
 }
 
