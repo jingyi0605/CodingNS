@@ -361,6 +361,156 @@ describe("session runtime machine", () => {
     expect(merged).toHaveLength(1);
   });
 
+  it("会折叠被 codex 工具消息隔开的重复 assistant 正文", () => {
+    const merged = mergeAuthoritativeMessages([], "session-1", [
+      createHistoryMessage({
+        messageId: "codex-assistant-1",
+        provider: "codex",
+        providerSessionId: "raw-1",
+        role: "assistant",
+        content: "继续跑回归。现在主要看 preview 异步返回后，按钮状态是不是按预期切换。",
+        timestamp: "2026-04-13T10:00:00.000Z",
+        sequence: 2,
+        rawRef: "codex://demo#line=6"
+      }),
+      createHistoryMessage({
+        messageId: "codex-tool-call-1",
+        provider: "codex",
+        providerSessionId: "raw-1",
+        role: "tool",
+        kind: "tool_call",
+        content: "{\"command\":\"pnpm --filter user-app exec vitest run\"}",
+        timestamp: "2026-04-13T10:00:01.000Z",
+        sequence: 3,
+        rawRef: "codex://demo#line=7",
+        toolCall: {
+          callId: "tool-1",
+          name: "shell_command",
+          input: "{\"command\":\"pnpm --filter user-app exec vitest run\"}",
+          output: null,
+          error: null,
+          status: "running"
+        }
+      }),
+      createHistoryMessage({
+        messageId: "codex-tool-result-1",
+        provider: "codex",
+        providerSessionId: "raw-1",
+        role: "tool",
+        kind: "tool_result",
+        content: "Exit code: 0",
+        timestamp: "2026-04-13T10:00:05.000Z",
+        sequence: 4,
+        rawRef: "codex://demo#line=8",
+        toolCall: {
+          callId: "tool-1",
+          name: "shell_command",
+          input: "{\"command\":\"pnpm --filter user-app exec vitest run\"}",
+          output: "Exit code: 0",
+          error: null,
+          status: "completed"
+        }
+      }),
+      createHistoryMessage({
+        messageId: "codex-assistant-2",
+        provider: "codex",
+        providerSessionId: "raw-1",
+        role: "assistant",
+        content: "继续跑回归。现在主要看 preview 异步返回后，按钮状态是不是按预期切换。",
+        timestamp: "2026-04-13T10:00:08.000Z",
+        sequence: 5,
+        rawRef: "codex://demo#line=9"
+      })
+    ]);
+
+    expect(merged.map((item) => item.id)).toEqual([
+      "codex-assistant-1",
+      "codex-tool-call-1",
+      "codex-tool-result-1"
+    ]);
+  });
+
+  it("不会误折叠中间已经插入另一条 assistant 正文的 codex 重复文案", () => {
+    const merged = mergeAuthoritativeMessages([], "session-1", [
+      createHistoryMessage({
+        messageId: "codex-assistant-1",
+        provider: "codex",
+        providerSessionId: "raw-1",
+        role: "assistant",
+        content: "同一条提示语",
+        timestamp: "2026-04-13T10:00:00.000Z",
+        sequence: 2,
+        rawRef: "codex://demo#line=6"
+      }),
+      createHistoryMessage({
+        messageId: "codex-tool-result-1",
+        provider: "codex",
+        providerSessionId: "raw-1",
+        role: "tool",
+        kind: "tool_result",
+        content: "Exit code: 0",
+        timestamp: "2026-04-13T10:00:01.000Z",
+        sequence: 3,
+        rawRef: "codex://demo#line=7",
+        toolCall: {
+          callId: "tool-1",
+          name: "shell_command",
+          input: "{\"command\":\"pwd\"}",
+          output: "Exit code: 0",
+          error: null,
+          status: "completed"
+        }
+      }),
+      createHistoryMessage({
+        messageId: "codex-assistant-2",
+        provider: "codex",
+        providerSessionId: "raw-1",
+        role: "assistant",
+        content: "这是中间插进来的另一条正文",
+        timestamp: "2026-04-13T10:00:03.000Z",
+        sequence: 4,
+        rawRef: "codex://demo#line=8"
+      }),
+      createHistoryMessage({
+        messageId: "codex-tool-result-2",
+        provider: "codex",
+        providerSessionId: "raw-1",
+        role: "tool",
+        kind: "tool_result",
+        content: "Exit code: 0",
+        timestamp: "2026-04-13T10:00:05.000Z",
+        sequence: 5,
+        rawRef: "codex://demo#line=9",
+        toolCall: {
+          callId: "tool-2",
+          name: "shell_command",
+          input: "{\"command\":\"git status --short\"}",
+          output: "Exit code: 0",
+          error: null,
+          status: "completed"
+        }
+      }),
+      createHistoryMessage({
+        messageId: "codex-assistant-3",
+        provider: "codex",
+        providerSessionId: "raw-1",
+        role: "assistant",
+        content: "同一条提示语",
+        timestamp: "2026-04-13T10:00:08.000Z",
+        sequence: 6,
+        rawRef: "codex://demo#line=10"
+      })
+    ]);
+
+    expect(merged.map((item) => item.id)).toEqual([
+      "codex-assistant-1",
+      "codex-tool-result-1",
+      "codex-assistant-2",
+      "codex-tool-result-2",
+      "codex-assistant-3"
+    ]);
+  });
+
   it("会折叠 codex 过时 event_msg 和后续 response_item 的重复用户消息", () => {
     const merged = mergeAuthoritativeMessages(
       [

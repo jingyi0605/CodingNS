@@ -278,6 +278,36 @@ function collapseEquivalentCodexMessages(
   return collapsed;
 }
 
+function collapseInterleavedEquivalentCodexAssistantMessages(
+  messages: SessionMessageViewModel[]
+): SessionMessageViewModel[] {
+  const collapsed: SessionMessageViewModel[] = [];
+
+  for (const message of messages) {
+    if (!isCodexAssistantTextLikeMessage(message)) {
+      collapsed.push(message);
+      continue;
+    }
+
+    let candidateIndex = collapsed.length - 1;
+
+    while (candidateIndex >= 0 && isCodexToolMessage(collapsed[candidateIndex])) {
+      candidateIndex -= 1;
+    }
+
+    const candidate = candidateIndex >= 0 ? collapsed[candidateIndex] : null;
+
+    if (!candidate || !isEquivalentCodexTextMessage(candidate, message)) {
+      collapsed.push(message);
+      continue;
+    }
+
+    collapsed[candidateIndex] = pickPreferredInterleavedCodexAssistantMessage(candidate, message);
+  }
+
+  return collapsed;
+}
+
 function collapseEquivalentOpenCodeUserMessages(
   messages: SessionMessageViewModel[]
 ): SessionMessageViewModel[] {
@@ -423,7 +453,9 @@ function sortMessages(messages: SessionMessageViewModel[]): SessionMessageViewMo
       collapseEquivalentOpenCodeUserMessages(
         collapseEquivalentOpenCodeTurnPairs(
           collapseEquivalentOpenCodeAssistantMessages(
-            collapseEquivalentCodexMessages(sorted)
+            collapseInterleavedEquivalentCodexAssistantMessages(
+              collapseEquivalentCodexMessages(sorted)
+            )
           )
         )
       )
@@ -591,6 +623,24 @@ function isEquivalentCodexTextMessage(
   );
 }
 
+function isCodexAssistantTextLikeMessage(message: SessionMessageViewModel): boolean {
+  return (
+    message.deliveryState === "sent" &&
+    message.rawRef.startsWith("codex://") &&
+    message.role === "assistant" &&
+    (message.kind === "text" || message.kind === "thinking") &&
+    message.toolCall === null
+  );
+}
+
+function isCodexToolMessage(message: SessionMessageViewModel): boolean {
+  return (
+    message.deliveryState === "sent" &&
+    message.rawRef.startsWith("codex://") &&
+    (message.kind === "tool_call" || message.kind === "tool_result")
+  );
+}
+
 function shouldCollapseOpenCodeRepeatedUserMessage(
   previousUser: SessionMessageViewModel | null,
   nextMessage: SessionMessageViewModel,
@@ -710,6 +760,36 @@ function pickPreferredCodexTextMessage(
   }
 
   return right;
+}
+
+function pickPreferredInterleavedCodexAssistantMessage(
+  left: SessionMessageViewModel,
+  right: SessionMessageViewModel
+): SessionMessageViewModel {
+  const leftAttachmentCount = left.attachments?.length ?? 0;
+  const rightAttachmentCount = right.attachments?.length ?? 0;
+
+  if (leftAttachmentCount !== rightAttachmentCount) {
+    return leftAttachmentCount > rightAttachmentCount ? left : right;
+  }
+
+  const leftInlineImageCount = parseMessageRichContent(left.content).inlineImages.length;
+  const rightInlineImageCount = parseMessageRichContent(right.content).inlineImages.length;
+
+  if (leftInlineImageCount !== rightInlineImageCount) {
+    return leftInlineImageCount > rightInlineImageCount ? left : right;
+  }
+
+  const leftHasTrailingWhitespace =
+    left.content !== normalizeComparableCodexText(left.content);
+  const rightHasTrailingWhitespace =
+    right.content !== normalizeComparableCodexText(right.content);
+
+  if (leftHasTrailingWhitespace !== rightHasTrailingWhitespace) {
+    return leftHasTrailingWhitespace ? right : left;
+  }
+
+  return left;
 }
 
 function isEquivalentGeminiTextMessage(
