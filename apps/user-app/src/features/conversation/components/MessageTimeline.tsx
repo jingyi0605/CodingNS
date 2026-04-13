@@ -26,6 +26,11 @@ import {
   type ApplyPatchFileChange
 } from "../apply-patch-preview";
 import { parseMessageRichContent } from "../message-rich-content";
+import {
+  buildConversationTaskSnapshotFromToolCall,
+  countConversationTasksByStatus,
+  type ConversationTaskSnapshot
+} from "../session-task-progress";
 import { useWorkbenchShell } from "./WorkbenchLayout";
 import {
   CopyActionIcon,
@@ -81,6 +86,7 @@ interface ToolMessageGroup {
   tool: ResolvedToolCall;
   hasRequest: boolean;
   hasResult: boolean;
+  updatedAt: string;
 }
 
 type FoldedPromptKind = "rules" | "system_prompt";
@@ -484,7 +490,8 @@ function mergeToolMessages(messages: SessionMessageViewModel[]): ToolMessageGrou
     key: tools.map(({ message }) => message.id).join(":"),
     tool: merged,
     hasRequest,
-    hasResult
+    hasResult,
+    updatedAt: tools.at(-1)?.message.timestamp ?? tools[0]!.message.timestamp
   };
 }
 
@@ -1374,6 +1381,10 @@ function ToolCallItem({ group }: { group: ToolMessageGroup }) {
   const [expanded, setExpanded] = useState(false);
   const { tool, hasRequest, hasResult } = group;
   const toolDisplayName = getToolDisplayName(tool.name);
+  const taskSnapshot = useMemo(
+    () => buildConversationTaskSnapshotFromToolCall(tool, null, group.updatedAt),
+    [group.updatedAt, tool]
+  );
   const applyPatchPreview = useMemo(
     () => buildEditableToolPreview(tool),
     [tool.input, tool.name]
@@ -1381,6 +1392,21 @@ function ToolCallItem({ group }: { group: ToolMessageGroup }) {
 
   if (applyPatchPreview) {
     return <ApplyPatchToolItem tool={tool} preview={applyPatchPreview} />;
+  }
+
+  if (taskSnapshot) {
+    return (
+      <TaskToolItem
+        tool={tool}
+        snapshot={taskSnapshot}
+        expanded={expanded}
+        hasRequest={hasRequest}
+        hasResult={hasResult}
+        onToggleExpanded={() => {
+          setExpanded((current) => !current);
+        }}
+      />
+    );
   }
 
   const preview = getToolPreview(tool);
@@ -1429,6 +1455,144 @@ function ToolCallItem({ group }: { group: ToolMessageGroup }) {
       )}
     </div>
   );
+}
+
+function TaskToolItem({
+  tool,
+  snapshot,
+  expanded,
+  hasRequest,
+  hasResult,
+  onToggleExpanded
+}: {
+  tool: ResolvedToolCall;
+  snapshot: ConversationTaskSnapshot;
+  expanded: boolean;
+  hasRequest: boolean;
+  hasResult: boolean;
+  onToggleExpanded: () => void;
+}) {
+  const summary = countConversationTasksByStatus(snapshot.items);
+  const rawLabel = expanded
+    ? t("conversation.taskCardRawCollapse")
+    : t("conversation.taskCardRawExpand");
+
+  return (
+    <div className="tool-call-item task-tool-item">
+      <div className="task-tool-header">
+        <div className="task-tool-heading">
+          <span className="task-tool-badge">
+            {snapshot.source === "plan"
+              ? t("conversation.taskCardPlanTitle")
+              : t("conversation.taskCardTodoTitle")}
+          </span>
+          <div className="task-tool-heading-main">
+            <strong>{resolveTaskToolTitle(snapshot, tool.name)}</strong>
+            <span className="task-tool-summary-text">
+              {buildTaskToolSummaryText(snapshot.items, summary)}
+            </span>
+          </div>
+        </div>
+        <button
+          type="button"
+          className="task-tool-raw-toggle"
+          onClick={onToggleExpanded}
+        >
+          {rawLabel}
+        </button>
+      </div>
+
+      <ol className="task-tool-list">
+        {snapshot.items.map((item) => (
+          <li key={item.id} className="task-tool-list-item" data-status={item.status}>
+            <span className="task-tool-item-indicator" data-status={item.status} aria-hidden="true" />
+            <strong className="task-tool-item-title">{item.title}</strong>
+            {item.detail ? <span className="task-tool-item-detail">{item.detail}</span> : null}
+            <span className="task-tool-item-status">{resolveTaskToolStatusLabel(item.status)}</span>
+          </li>
+        ))}
+      </ol>
+
+      {expanded ? (
+        <div className="tool-call-output">
+          {hasRequest && tool.input ? (
+            <div className="tool-call-section">
+              <div className="tool-call-section-label">{t("conversation.toolInputLabel")}</div>
+              <pre>{tool.input}</pre>
+            </div>
+          ) : null}
+
+          {(hasResult || tool.error || tool.output) ? (
+            <div className="tool-call-section">
+              <div className="tool-call-section-label">{t("conversation.toolResultLabel")}</div>
+              <pre className={tool.error ? "tool-call-error" : undefined}>
+                {tool.error || tool.output || t("conversation.toolResultEmpty")}
+              </pre>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function resolveTaskToolTitle(snapshot: ConversationTaskSnapshot, toolName: string): string {
+  if (snapshot.source === "plan") {
+    return t("conversation.taskCardPlanUpdated");
+  }
+
+  const normalized = toolName.trim().toLowerCase();
+
+  if (normalized === "taskcreate" || normalized === "todowrite" || normalized === "todoread") {
+    return t("conversation.taskCardTodoUpdated");
+  }
+
+  if (normalized.startsWith("task")) {
+    return t("conversation.taskCardTodoUpdated");
+  }
+
+  return t("conversation.taskCardTodoUpdated");
+}
+
+function buildTaskToolSummaryText(
+  items: ConversationTaskSnapshot["items"],
+  summary: ReturnType<typeof countConversationTasksByStatus>
+): string {
+  const parts = [t("conversation.taskCardSummaryTotal", { count: items.length })];
+
+  if (summary.in_progress > 0) {
+    parts.push(t("conversation.taskCardSummaryInProgress", { count: summary.in_progress }));
+  }
+
+  if (summary.pending > 0) {
+    parts.push(t("conversation.taskCardSummaryPending", { count: summary.pending }));
+  }
+
+  if (summary.completed > 0) {
+    parts.push(t("conversation.taskCardSummaryCompleted", { count: summary.completed }));
+  }
+
+  if (summary.failed > 0) {
+    parts.push(t("conversation.taskCardSummaryFailed", { count: summary.failed }));
+  }
+
+  return parts.join(" / ");
+}
+
+function resolveTaskToolStatusLabel(status: ConversationTaskSnapshot["items"][number]["status"]): string {
+  switch (status) {
+    case "in_progress":
+      return t("conversation.taskProgressStatusInProgress");
+    case "completed":
+      return t("conversation.taskProgressStatusCompleted");
+    case "failed":
+      return t("conversation.taskProgressStatusFailed");
+    case "cancelled":
+      return t("conversation.taskProgressStatusCancelled");
+    case "pending":
+    default:
+      return t("conversation.taskProgressStatusPending");
+  }
 }
 
 function getApplyPatchActionLabel(action: ApplyPatchFileChange["action"]) {

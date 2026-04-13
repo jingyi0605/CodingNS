@@ -12,7 +12,7 @@ vi.mock("./SessionButlerActionButton", () => ({
 }));
 
 describe("MobileConversationSessionActions", () => {
-  it("只显示 AI 助手按钮", () => {
+  it("有会话时只显示 AI 助手按钮", () => {
     render(
       <MobileConversationSessionActions
         session={createSessionSummary({

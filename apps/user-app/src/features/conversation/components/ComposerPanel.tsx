@@ -28,6 +28,7 @@ import type {
   ProviderCapabilitiesDto,
   ProviderId
 } from "../api/conversation-api";
+import type { SessionMessageViewModel } from "../runtime/session-runtime-machine";
 import type { PreferenceReasoningLevel as ReasoningLevel } from "../../../preferences/types";
 import {
   getProviderCapabilities,
@@ -36,6 +37,7 @@ import {
   replaceQuickPhrases
 } from "../api/conversation-api";
 import { WorkbenchModal } from "./WorkbenchModal";
+import { SessionTaskProgressButton } from "./SessionTaskProgressButton";
 import {
   clearComposerDraftRecord,
   createQuickPhraseRecord,
@@ -74,6 +76,8 @@ interface ComposerPanelProps {
   hasActiveRun?: boolean | null;
   canInterrupt?: boolean | null;
   contextUsage?: ContextUsageDto | null;
+  taskProvider?: ProviderId | null;
+  taskMessages?: SessionMessageViewModel[];
   hasPendingQueuedMessages?: boolean;
   isSubmitting: boolean;
   isRunning?: boolean;
@@ -362,6 +366,8 @@ export function ComposerPanel({
   hasActiveRun = null,
   canInterrupt = null,
   contextUsage = null,
+  taskProvider = null,
+  taskMessages = [],
   hasPendingQueuedMessages = false,
   isSubmitting,
   isRunning = false,
@@ -1611,6 +1617,11 @@ export function ComposerPanel({
               ) : null}
 
               <ContextUsageRing contextUsage={contextUsage} />
+              <SessionTaskProgressButton
+                provider={taskProvider}
+                messages={taskMessages}
+                variant="composer"
+              />
             </div>
 
             {showBusyButton ? (

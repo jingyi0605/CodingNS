@@ -147,6 +147,42 @@ function createSystemMessage(content: string, id = "system-1"): SessionMessageVi
   };
 }
 
+function createToolMessage(input: {
+  id: string;
+  callId: string;
+  name: string;
+  kind: "tool_call" | "tool_result";
+  content: string;
+  toolInput?: string;
+  toolOutput?: string | null;
+  toolError?: string | null;
+  status?: "running" | "completed" | "failed";
+  sequence?: number;
+  rawRef?: string;
+  timestamp?: string;
+}): SessionMessageViewModel {
+  return {
+    id: input.id,
+    sessionId: "session-1",
+    role: "tool",
+    kind: input.kind,
+    content: input.content,
+    toolCall: {
+      callId: input.callId,
+      name: input.name,
+      input: input.toolInput ?? (input.kind === "tool_call" ? input.content : ""),
+      output: input.toolOutput ?? (input.kind === "tool_result" ? input.content : null),
+      error: input.toolError ?? null,
+      status: input.status ?? (input.kind === "tool_result" ? "completed" : "running")
+    },
+    timestamp: input.timestamp ?? "2026-04-13T10:00:00.000Z",
+    sequence: input.sequence ?? 1,
+    rawRef: input.rawRef ?? `codex://raw#line=${input.id}`,
+    deliveryState: "sent",
+    clientRequestId: null
+  };
+}
+
 describe("MessageTimeline", () => {
   beforeEach(() => {
     window.localStorage.clear();
@@ -409,6 +445,155 @@ describe("MessageTimeline", () => {
     expect(screen.getByText(t("conversation.toolInputLabel"))).toBeInTheDocument();
     expect(screen.getAllByText(t("conversation.toolResultLabel")).length).toBeGreaterThan(0);
     expect(screen.getAllByText((content) => content.includes("M src/main.ts")).length).toBeGreaterThan(0);
+  });
+
+  it("会把 update_plan 渲染成任务卡片，并保留原始展开入口", async () => {
+    render(
+      <MessageTimeline
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+        messages={[
+          createToolMessage({
+            id: "plan-call-1",
+            callId: "plan-call-1",
+            name: "update_plan",
+            kind: "tool_call",
+            content: JSON.stringify({
+              explanation: "先处理结构，再补测试。",
+              plan: [
+                { step: "梳理现有时间线", status: "completed" },
+                { step: "补任务卡片", status: "in_progress" }
+              ]
+            }, null, 2)
+          })
+        ]}
+      />
+    );
+
+    expect(screen.getByText(t("conversation.taskCardPlanTitle"))).toBeInTheDocument();
+    expect(screen.getByText("梳理现有时间线")).toBeInTheDocument();
+    expect(screen.getByText("补任务卡片")).toBeInTheDocument();
+    expect(
+      screen.getByText(`${t("conversation.taskCardSummaryTotal", { count: 2 })} / ${t("conversation.taskCardSummaryInProgress", { count: 1 })} / ${t("conversation.taskCardSummaryCompleted", { count: 1 })}`)
+    ).toBeInTheDocument();
+    expect(screen.queryByText("先处理结构，再补测试。")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: t("conversation.taskCardRawExpand") }));
+
+    expect(screen.getByText(t("conversation.toolInputLabel"))).toBeInTheDocument();
+    expect(screen.getByText(/"plan":/)).toBeInTheDocument();
+  });
+
+  it("会把 Claude TaskUpdate 渲染成任务卡片", async () => {
+    render(
+      <MessageTimeline
+        historyState="ready"
+        provider="claude-code"
+        onRetryMessage={vi.fn()}
+        messages={[
+          createToolMessage({
+            id: "task-update-1",
+            callId: "task-update-1",
+            name: "TaskUpdate",
+            kind: "tool_result",
+            content: JSON.stringify({
+              tasks: [
+                { id: "spec", title: "补 spec", status: "completed" },
+                { id: "ui", title: "补时间线卡片", status: "in_progress", detail: "正在改 MessageTimeline" }
+              ]
+            }, null, 2),
+            toolOutput: JSON.stringify({
+              tasks: [
+                { id: "spec", title: "补 spec", status: "completed" },
+                { id: "ui", title: "补时间线卡片", status: "in_progress", detail: "正在改 MessageTimeline" }
+              ]
+            }, null, 2)
+          })
+        ]}
+      />
+    );
+
+    expect(screen.getByText(t("conversation.taskCardTodoTitle"))).toBeInTheDocument();
+    expect(screen.getByText("补 spec")).toBeInTheDocument();
+    expect(screen.getByText("补时间线卡片")).toBeInTheDocument();
+    expect(screen.getByText("正在改 MessageTimeline")).toBeInTheDocument();
+  });
+
+  it("会把 Claude TodoWrite 渲染成任务卡片", async () => {
+    render(
+      <MessageTimeline
+        historyState="ready"
+        provider="claude-code"
+        onRetryMessage={vi.fn()}
+        messages={[
+          createToolMessage({
+            id: "todo-write-1",
+            callId: "todo-write-1",
+            name: "TodoWrite",
+            kind: "tool_call",
+            content: JSON.stringify({
+              todos: [
+                { id: "a", content: "设计任务卡片", status: "completed" },
+                { id: "b", content: "补时间线测试", status: "pending" }
+              ]
+            }, null, 2)
+          })
+        ]}
+      />
+    );
+
+    expect(screen.getByText("设计任务卡片")).toBeInTheDocument();
+    expect(screen.getByText("补时间线测试")).toBeInTheDocument();
+  });
+
+  it("会把 OpenCode 的 todowrite 调用与结果合并成任务卡片", async () => {
+    render(
+      <MessageTimeline
+        historyState="ready"
+        provider="opencode"
+        onRetryMessage={vi.fn()}
+        messages={[
+          createToolMessage({
+            id: "opencode-todo-call-1",
+            callId: "oc-todo-1",
+            name: "todowrite",
+            kind: "tool_call",
+            content: JSON.stringify({
+              todos: [
+                { id: "1", content: "接时间线卡片", status: "in_progress" }
+              ]
+            }, null, 2),
+            rawRef: "opencode://session-1/message-1/part-1",
+            sequence: 1
+          }),
+          createToolMessage({
+            id: "opencode-todo-result-1",
+            callId: "oc-todo-1",
+            name: "todowrite",
+            kind: "tool_result",
+            content: JSON.stringify({
+              todos: [
+                { id: "1", content: "接时间线卡片", status: "completed" },
+                { id: "2", content: "保留原始展开", status: "in_progress" }
+              ]
+            }, null, 2),
+            toolOutput: JSON.stringify({
+              todos: [
+                { id: "1", content: "接时间线卡片", status: "completed" },
+                { id: "2", content: "保留原始展开", status: "in_progress" }
+              ]
+            }, null, 2),
+            rawRef: "opencode://session-1/message-1/part-2",
+            sequence: 2
+          })
+        ]}
+      />
+    );
+
+    expect(document.querySelectorAll(".tool-message-row")).toHaveLength(1);
+    expect(screen.getByText("接时间线卡片")).toBeInTheDocument();
+    expect(screen.getByText("保留原始展开")).toBeInTheDocument();
   });
 
   it("不依赖 provider，也会合并相邻的 claude 工具消息", async () => {

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { t } from "../../../shared/i18n";
 import type { ProviderCapabilitiesDto } from "../api/conversation-api";
+import type { SessionMessageViewModel } from "../runtime/session-runtime-machine";
 import { ComposerPanel } from "./ComposerPanel";
 
 const platformMock = vi.hoisted(() => ({
@@ -601,6 +602,52 @@ describe("ComposerPanel", () => {
     expect(tooltip?.textContent).toContain(t("conversation.contextUsageTitle"));
     expect(tooltip?.textContent).toContain("32%");
     expect(tooltip?.textContent).toContain("64,000 / 200,000 tokens");
+  });
+
+  it("有任务记录时会在上下文占用按钮右侧显示任务按钮", () => {
+    const { container } = render(
+      <ComposerPanel
+        capabilities={createCapabilities()}
+        contextUsage={{
+          provider: "codex",
+          promptTokens: 64000,
+          uncachedInputTokens: 40000,
+          cachedInputTokens: 24000,
+          contextWindow: 200000,
+          usageRatio: 0.32,
+          source: "provider-log",
+          contextWindowSource: "provider-log",
+          modelId: "gpt-5.3-codex",
+          capturedAt: "2026-03-26T10:00:00.000Z",
+          isEstimated: false
+        }}
+        taskProvider="codex"
+        taskMessages={[
+          createToolMessage({
+            callId: "plan-1",
+            name: "update_plan",
+            input: JSON.stringify({
+              plan: [
+                { step: "收口任务入口", status: "completed" },
+                { step: "压缩时间线卡片", status: "in_progress" }
+              ]
+            })
+          })
+        ]}
+        isSubmitting={false}
+        onSend={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    const leftControls = container.querySelector(".composer-controls-left");
+    const ring = container.querySelector(".composer-context-ring");
+    const taskButton = screen.getByRole("button", {
+      name: t("conversation.taskProgressButton", { count: 2 })
+    });
+
+    expect(taskButton).toHaveClass("composer-task-progress-button");
+    expect(leftControls?.lastElementChild).toBe(taskButton);
+    expect(ring?.nextElementSibling).toBe(taskButton);
   });
 
   it("粘贴图片后会显示预览卡片", async () => {
@@ -1260,3 +1307,34 @@ describe("ComposerPanel", () => {
     });
   });
 });
+
+function createToolMessage(input: {
+  callId: string;
+  name: string;
+  input: string;
+}): SessionMessageViewModel {
+  return {
+    id: input.callId,
+    sessionId: "session-1",
+    role: "tool",
+    kind: "tool_call",
+    content: input.input,
+    toolCall: {
+      callId: input.callId,
+      name: input.name,
+      input: input.input,
+      output: null,
+      error: null,
+      status: "completed"
+    },
+    attachments: [],
+    attachmentPayloads: null,
+    origin: null,
+    originRef: null,
+    timestamp: "2026-04-13T10:00:00.000Z",
+    sequence: 1,
+    rawRef: `raw://${input.callId}`,
+    deliveryState: "sent",
+    clientRequestId: null
+  };
+}

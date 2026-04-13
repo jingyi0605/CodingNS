@@ -107,3 +107,28 @@ export function ContextExpandActionIcon({ expanded }: { expanded: boolean }) {
     </svg>
   );
 }
+
+export function TaskListActionIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 20 20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="conversation-action-icon"
+    >
+      <path d="M4.5 5.5h1.2" />
+      <path d="M8 5.5h7.5" />
+      <path d="M4.5 10h1.2" />
+      <path d="M8 10h7.5" />
+      <path d="M4.5 14.5h1.2" />
+      <path d="M8 14.5h7.5" />
+      <path d="M5.1 5.5l.5.5 1-1" />
+      <circle cx="5.1" cy="10" r=".8" fill="currentColor" stroke="none" />
+      <path d="M5.1 14.5l.5.5 1-1" />
+    </svg>
+  );
+}

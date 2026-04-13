@@ -11,5 +11,9 @@ export function MobileConversationSessionActions({
     return null;
   }
 
-  return <SessionButlerActionButton session={session} />;
+  return (
+    <>
+      <SessionButlerActionButton session={session} />
+    </>
+  );
 }

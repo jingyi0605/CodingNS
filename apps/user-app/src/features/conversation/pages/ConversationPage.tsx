@@ -843,6 +843,8 @@ function LiveConversationPage({
               portalContainer={!showInlineHeader ? composerPortalTarget : null}
               hasActiveRun={runtimeHasActiveRun}
               contextUsage={contextUsage}
+              taskProvider={(session ?? navigationSession)?.provider ?? null}
+              taskMessages={messages}
               hasPendingQueuedMessages={hasPendingQueuedMessages}
               canInterrupt={runtimeCanInterrupt}
               isSubmitting={sending}
@@ -1291,6 +1293,8 @@ function DraftConversationPage({
             panelRef={!showInlineHeader ? setMobileComposerPanelElement : undefined}
             portalContainer={!showInlineHeader ? composerPortalTarget : null}
             contextUsage={null}
+            taskProvider={draft.provider}
+            taskMessages={draftMessages}
             isSubmitting={sending}
             isRunning={false}
             onSend={async (content, options) => {
