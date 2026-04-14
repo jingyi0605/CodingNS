@@ -167,9 +167,10 @@ export class ButlerSessionService {
     const includeArchived = options?.includeArchived ?? false;
 
     return this.butlerSessionRepository.listByProject(project.id).flatMap((record) => {
-      const binding = this.sessionBindingRepository.findBySessionId(record.sessionId);
-      const index = this.sessionIndexRepository.findIndexRecordBySessionId(record.sessionId);
-      const state = this.sessionStateRepository.findBySessionAndUser(record.sessionId, userId);
+      const canonicalSessionId = this.resolveCanonicalSessionId(record.sessionId);
+      const binding = this.sessionBindingRepository.findBySessionId(canonicalSessionId);
+      const index = this.sessionIndexRepository.findIndexRecordBySessionId(canonicalSessionId);
+      const state = this.sessionStateRepository.findBySessionAndUser(canonicalSessionId, userId);
       const isArchived = index?.isArchived ?? false;
 
       if (!includeArchived && isArchived) {
@@ -179,7 +180,7 @@ export class ButlerSessionService {
       return [{
         id: record.id,
         projectId: record.projectId,
-        sessionId: record.sessionId,
+        sessionId: canonicalSessionId,
         provider: binding?.provider ?? null,
         title: index?.title ?? null,
         isArchived,
@@ -197,7 +198,8 @@ export class ButlerSessionService {
 
   importSession(projectId: string, input: ImportButlerSessionInput, userId: string): ButlerProjectSessionView {
     const project = this.getProjectOrThrow(projectId);
-    const sessionId = requireNonEmptyText(input.sessionId, "sessionId", "sessionId 不能为空");
+    const requestedSessionId = requireNonEmptyText(input.sessionId, "sessionId", "sessionId 不能为空");
+    const sessionId = this.resolveCanonicalSessionId(requestedSessionId);
     const binding = this.sessionBindingRepository.findBySessionId(sessionId);
 
     if (!binding) {
@@ -217,7 +219,9 @@ export class ButlerSessionService {
       });
     }
 
-    const existing = this.butlerSessionRepository.findBySessionId(sessionId);
+    const existing = this.butlerSessionRepository
+      .listByProject(project.id)
+      .find((record) => this.resolveCanonicalSessionId(record.sessionId) === sessionId);
 
     if (existing) {
       throw new AppError({
@@ -333,9 +337,10 @@ export class ButlerSessionService {
       });
     }
 
-    const binding = this.sessionBindingRepository.findBySessionId(record.sessionId);
-    const index = this.sessionIndexRepository.findIndexRecordBySessionId(record.sessionId);
-    const state = this.sessionStateRepository.findBySessionAndUser(record.sessionId, userId);
+    const canonicalSessionId = this.resolveCanonicalSessionId(record.sessionId);
+    const binding = this.sessionBindingRepository.findBySessionId(canonicalSessionId);
+    const index = this.sessionIndexRepository.findIndexRecordBySessionId(canonicalSessionId);
+    const state = this.sessionStateRepository.findBySessionAndUser(canonicalSessionId, userId);
     const timestamp = nowIso();
     const progressState = mapCheckpointProgressState(state?.runningState ?? null);
     const summary = buildSnapshotSummary(index?.title ?? null, state?.runningState ?? null, timestamp);
@@ -372,7 +377,7 @@ export class ButlerSessionService {
     return {
       id: updatedRecord.id,
       projectId: updatedRecord.projectId,
-      sessionId: updatedRecord.sessionId,
+      sessionId: canonicalSessionId,
       provider: binding?.provider ?? null,
       title: index?.title ?? null,
       isArchived: index?.isArchived ?? false,
@@ -412,7 +417,9 @@ export class ButlerSessionService {
       });
     }
 
-    const resumed = await this.sessionHistoryService.resumeSession(record.sessionId);
+    const resumed = await this.sessionHistoryService.resumeSession(
+      this.resolveCanonicalSessionId(record.sessionId)
+    );
     const session = this.captureSessionSnapshot(projectId, butlerSessionId, userId, {
       sourceKind: "manual"
     });
@@ -426,7 +433,8 @@ export class ButlerSessionService {
   }
 
   getSessionWorkspaceId(sessionId: string): string {
-    const binding = this.sessionBindingRepository.findBySessionId(sessionId);
+    const canonicalSessionId = this.resolveCanonicalSessionId(sessionId);
+    const binding = this.sessionBindingRepository.findBySessionId(canonicalSessionId);
 
     if (!binding) {
       throw new AppError({
@@ -447,7 +455,8 @@ export class ButlerSessionService {
   ): Promise<ButlerSessionActionTarget> {
     const project = this.getProjectOrThrow(projectId);
     const normalizedSessionId = requireNonEmptyText(sessionId, "sessionId", "sessionId 不能为空");
-    const workspaceId = this.getSessionWorkspaceId(normalizedSessionId);
+    const canonicalSessionId = this.resolveCanonicalSessionId(normalizedSessionId);
+    const workspaceId = this.getSessionWorkspaceId(canonicalSessionId);
 
     if (workspaceId !== project.workspaceId) {
       throw new AppError({
@@ -465,7 +474,7 @@ export class ButlerSessionService {
 
     const existing = this.listByProject(project.id, userId, {
       includeArchived: true
-    }).find((item) => item.sessionId === normalizedSessionId);
+    }).find((item) => item.sessionId === canonicalSessionId);
 
     if (existing) {
       return {
@@ -479,7 +488,7 @@ export class ButlerSessionService {
       session: this.importSession(
         project.id,
         {
-          sessionId: normalizedSessionId,
+          sessionId: canonicalSessionId,
           role: "adhoc",
           ownershipMode: "observed"
         },
@@ -500,6 +509,36 @@ export class ButlerSessionService {
     }
 
     return project;
+  }
+
+  private resolveCanonicalSessionId(sessionId: string): string {
+    const binding = this.sessionBindingRepository.findBySessionId(sessionId);
+
+    if (!binding) {
+      return sessionId;
+    }
+
+    const aliasTargetSessionId =
+      extractSessionAliasTargetSessionId(binding.providerSessionId)
+      ?? extractSessionAliasTargetSessionId(binding.rawStoreRef);
+
+    if (!aliasTargetSessionId || aliasTargetSessionId === sessionId) {
+      return sessionId;
+    }
+
+    const targetBinding = this.sessionBindingRepository.findBySessionId(aliasTargetSessionId);
+
+    if (
+      !targetBinding
+      || targetBinding.workspaceId !== binding.workspaceId
+      || targetBinding.provider !== binding.provider
+      || isPendingBindingValue(targetBinding.providerSessionId)
+      || isPendingBindingValue(targetBinding.rawStoreRef)
+    ) {
+      return sessionId;
+    }
+
+    return aliasTargetSessionId;
   }
 
   private importWorkspaceSessions(
@@ -694,4 +733,45 @@ function normalizeRunningState(
 function normalizeNullableText(value: string | null | undefined): string | null {
   const normalized = value?.trim();
   return normalized && normalized.length > 0 ? normalized : null;
+}
+
+function isPendingBindingValue(value: string): boolean {
+  return value.trim().toLowerCase().startsWith("pending://");
+}
+
+function extractPendingBindingTargetSessionId(value: string): string | null {
+  if (!isPendingBindingValue(value)) {
+    return null;
+  }
+
+  const normalizedValue = value.trim();
+  const targetSessionId = normalizedValue.slice(normalizedValue.indexOf("/", "pending://".length) + 1).trim();
+  return targetSessionId || null;
+}
+
+function extractAliasBindingTargetSessionId(value: string): string | null {
+  const normalizedValue = value.trim();
+
+  if (!normalizedValue.toLowerCase().startsWith("alias://")) {
+    return null;
+  }
+
+  const pathStart = normalizedValue.indexOf("/", "alias://".length);
+
+  if (pathStart < 0) {
+    return null;
+  }
+
+  const targetAndSource = normalizedValue.slice(pathStart + 1).trim();
+
+  if (targetAndSource.length === 0) {
+    return null;
+  }
+
+  const [targetSessionId] = targetAndSource.split("/", 1);
+  return targetSessionId?.trim() || null;
+}
+
+function extractSessionAliasTargetSessionId(value: string): string | null {
+  return extractAliasBindingTargetSessionId(value) ?? extractPendingBindingTargetSessionId(value);
 }

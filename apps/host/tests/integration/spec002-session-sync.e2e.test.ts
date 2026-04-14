@@ -429,9 +429,26 @@ describe("spec002 会话同步核心", () => {
       rawStoreRef
     });
 
-    expect(sessionBindingRepository.findBySessionId(duplicateSessionId)).toBeNull();
-    expect(sessionIndexRepository.findIndexRecordBySessionId(duplicateSessionId)).toBeNull();
+    expect(sessionBindingRepository.findBySessionId(duplicateSessionId)).toEqual(
+      expect.objectContaining({
+        sessionId: duplicateSessionId,
+        providerSessionId: `alias://claude-code/${runtimeSessionId}/${duplicateSessionId}`,
+        rawStoreRef: `alias://claude-code/${runtimeSessionId}/${duplicateSessionId}`
+      })
+    );
+    expect(sessionIndexRepository.findIndexRecordBySessionId(duplicateSessionId)).toEqual(
+      expect.objectContaining({
+        sessionId: duplicateSessionId
+      })
+    );
     expect(sessionStateRepository.findBySessionAndUser(duplicateSessionId, "user-1")).toBeNull();
+    expect(sessionHistoryService.getBindingOrThrow(duplicateSessionId)).toEqual(
+      expect.objectContaining({
+        sessionId: runtimeSessionId,
+        providerSessionId,
+        rawStoreRef
+      })
+    );
     expect(sessionBindingRepository.findByProviderSession("claude-code", providerSessionId)).toEqual(
       expect.objectContaining({
         sessionId: runtimeSessionId,
@@ -475,6 +492,236 @@ describe("spec002 会话同步核心", () => {
     ).toEqual({
       session_id: runtimeSessionId
     });
+  });
+
+  it("Claude runtime 已回填真 ID 后再次持久化同一个 binding 时，仍会并回同工作区重复记录", async () => {
+    const fixture = createEmptyFixture();
+    const config = resolveHostConfig({
+      databasePath: ":memory:",
+      claudeCodeHomeDir: fixture.claudeHomeDir,
+      codexHomeDir: fixture.codexHomeDir
+    });
+    const database = createDatabaseClient(":memory:");
+    const workspaceRepository = new WorkspaceRepository(database.db);
+    const sessionBindingRepository = new SessionBindingRepository(database.db);
+    const sessionIndexRepository = new SessionIndexRepository(database.db);
+    const sessionStateRepository = new SessionStateRepository(database.db);
+    const sessionStatusSnapshotRepository = new SessionStatusSnapshotRepository(database.db);
+    const sessionChangedFileService = new SessionChangedFileService(
+      new SessionChangedFileRepository(database.db)
+    );
+    const sessionMessageAttachmentService = new SessionMessageAttachmentService(
+      new SessionMessageAttachmentRepository(database.db),
+      config
+    );
+    const sessionHistoryService = new SessionHistoryService(
+      database.db,
+      workspaceRepository,
+      sessionBindingRepository,
+      sessionChangedFileService,
+      sessionIndexRepository,
+      sessionMessageAttachmentService,
+      sessionStateRepository,
+      sessionStatusSnapshotRepository,
+      config
+    );
+    const runtimeSessionId = "runtime-session-real";
+    const duplicateSessionId = "duplicate-session-real";
+    const providerSessionId = "claude-session-real";
+    const oldProviderSessionId = "claude-session-old";
+    const rawStoreRef = path.join(
+      fixture.claudeHomeDir,
+      "projects",
+      "fixture-workspace",
+      `${providerSessionId}.jsonl`
+    );
+    const oldRawStoreRef = path.join(
+      fixture.claudeHomeDir,
+      "projects",
+      "fixture-workspace",
+      `${oldProviderSessionId}.jsonl`
+    );
+
+    activeEmptyFixtures.push(fixture);
+    activeClosers.push(() => database.close());
+
+    database.db
+      .prepare(
+        `INSERT INTO auth_users (id, username, password_hash, role, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        "user-1",
+        "tester",
+        "hash",
+        "admin",
+        "2026-03-28T10:00:00.000Z",
+        "2026-03-28T10:00:00.000Z"
+      );
+
+    workspaceRepository.create({
+      id: "workspace-1",
+      name: "Fixture Workspace",
+      path: fixture.workspaceDir,
+      repoRoot: fixture.workspaceDir,
+      favorite: false,
+      createdAt: "2026-03-28T10:00:00.000Z",
+      updatedAt: "2026-03-28T10:00:00.000Z",
+      removedAt: null
+    });
+
+    sessionBindingRepository.upsert({
+      sessionId: runtimeSessionId,
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      providerSessionId: oldProviderSessionId,
+      rawStoreRef: oldRawStoreRef,
+      createdAt: "2026-03-28T10:00:01.000Z",
+      updatedAt: "2026-03-28T10:00:02.000Z"
+    });
+    sessionIndexRepository.upsert({
+      sessionId: runtimeSessionId,
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      title: "继续当前运行中的会话",
+      messageCount: 2,
+      isArchived: false,
+      lastMessageAt: "2026-03-28T10:00:03.000Z",
+      createdAt: "2026-03-28T10:00:01.000Z",
+      updatedAt: "2026-03-28T10:00:03.000Z"
+    });
+    sessionStateRepository.upsert({
+      sessionId: runtimeSessionId,
+      userId: "user-1",
+      runningState: "running",
+      activitySource: "runtime",
+      favorite: false,
+      lastEventAt: "2026-03-28T10:00:03.000Z",
+      completedAt: null,
+      lastSeenAt: null,
+      updatedAt: "2026-03-28T10:00:03.000Z"
+    });
+
+    sessionBindingRepository.upsert({
+      sessionId: duplicateSessionId,
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      providerSessionId,
+      rawStoreRef,
+      createdAt: "2026-03-28T10:00:04.000Z",
+      updatedAt: "2026-03-28T10:00:04.000Z"
+    });
+    sessionIndexRepository.upsert({
+      sessionId: duplicateSessionId,
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      title: "后台发现出来的重复记录",
+      messageCount: 6,
+      isArchived: false,
+      lastMessageAt: "2026-03-28T10:00:05.000Z",
+      createdAt: "2026-03-28T10:00:04.000Z",
+      updatedAt: "2026-03-28T10:00:05.000Z"
+    });
+    sessionStateRepository.upsert({
+      sessionId: duplicateSessionId,
+      userId: "user-1",
+      runningState: "idle",
+      activitySource: "none",
+      favorite: true,
+      lastEventAt: "2026-03-28T10:00:05.000Z",
+      completedAt: null,
+      lastSeenAt: null,
+      updatedAt: "2026-03-28T10:00:05.000Z"
+    });
+
+    sessionHistoryService.persistSessionBinding(runtimeSessionId, "workspace-1", {
+      provider: "claude-code",
+      providerSessionId,
+      rawStoreRef
+    });
+
+    expect(sessionBindingRepository.findBySessionId(duplicateSessionId)).toEqual(
+      expect.objectContaining({
+        sessionId: duplicateSessionId,
+        providerSessionId: `alias://claude-code/${runtimeSessionId}/${duplicateSessionId}`,
+        rawStoreRef: `alias://claude-code/${runtimeSessionId}/${duplicateSessionId}`
+      })
+    );
+    expect(sessionIndexRepository.findIndexRecordBySessionId(duplicateSessionId)).toEqual(
+      expect.objectContaining({
+        sessionId: duplicateSessionId
+      })
+    );
+    expect(sessionHistoryService.getBindingOrThrow(duplicateSessionId)).toEqual(
+      expect.objectContaining({
+        sessionId: runtimeSessionId,
+        providerSessionId,
+        rawStoreRef
+      })
+    );
+    expect(sessionBindingRepository.findByProviderSession("claude-code", providerSessionId)).toEqual(
+      expect.objectContaining({
+        sessionId: runtimeSessionId,
+        providerSessionId,
+        rawStoreRef
+      })
+    );
+    expect(sessionIndexRepository.findIndexRecordBySessionId(runtimeSessionId)).toEqual(
+      expect.objectContaining({
+        title: "继续当前运行中的会话",
+        messageCount: 6,
+        lastMessageAt: "2026-03-28T10:00:05.000Z"
+      })
+    );
+    expect(sessionStateRepository.findBySessionAndUser(runtimeSessionId, "user-1")).toEqual(
+      expect.objectContaining({
+        runningState: "running",
+        activitySource: "runtime",
+        favorite: true
+      })
+    );
+  });
+
+  it("markSessionError 遇到已失效 session 时会直接跳过，不再触发外键异常", () => {
+    const fixture = createEmptyFixture();
+    const config = resolveHostConfig({
+      databasePath: ":memory:",
+      claudeCodeHomeDir: fixture.claudeHomeDir,
+      codexHomeDir: fixture.codexHomeDir
+    });
+    const database = createDatabaseClient(":memory:");
+    const workspaceRepository = new WorkspaceRepository(database.db);
+    const sessionBindingRepository = new SessionBindingRepository(database.db);
+    const sessionIndexRepository = new SessionIndexRepository(database.db);
+    const sessionStateRepository = new SessionStateRepository(database.db);
+    const sessionStatusSnapshotRepository = new SessionStatusSnapshotRepository(database.db);
+    const sessionChangedFileService = new SessionChangedFileService(
+      new SessionChangedFileRepository(database.db)
+    );
+    const sessionMessageAttachmentService = new SessionMessageAttachmentService(
+      new SessionMessageAttachmentRepository(database.db),
+      config
+    );
+    const sessionHistoryService = new SessionHistoryService(
+      database.db,
+      workspaceRepository,
+      sessionBindingRepository,
+      sessionChangedFileService,
+      sessionIndexRepository,
+      sessionMessageAttachmentService,
+      sessionStateRepository,
+      sessionStatusSnapshotRepository,
+      config
+    );
+
+    activeEmptyFixtures.push(fixture);
+    activeClosers.push(() => database.close());
+
+    expect(() =>
+      (sessionHistoryService as unknown as { markSessionError: (sessionId: string, errorCode: string, error: unknown) => void })
+        .markSessionError("missing-session", "RESUME_FAILED", new Error("boom"))
+    ).not.toThrow();
+    expect(sessionStatusSnapshotRepository.findBySessionId("missing-session")).toBeNull();
   });
 
   it("pending 绑定回填真 ID 时如果撞上其他工作区的会话，会直接拒绝跨工作区合并", async () => {

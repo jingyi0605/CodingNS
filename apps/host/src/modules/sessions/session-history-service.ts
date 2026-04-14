@@ -191,6 +191,8 @@ interface SessionHistoryAdapterOverrides {
   codexForkTransportFactory?: () => CodexForkTransport;
 }
 
+type LiveActivityObservationResolver = (sessionId: string) => SessionActivityObservation | null;
+
 const SESSION_START_DEFERRED_PROVIDERS = new Set([
   "codex",
   "claude-code",
@@ -220,6 +222,7 @@ export class SessionHistoryService {
   private readonly workspaceDiscoveryStatuses = new Map<string, WorkspaceDiscoveryStatus>();
   private readonly workspaceStateRefreshInflight = new Map<string, Promise<void>>();
   private readonly providerCapabilityCache = new Map<string, ProviderCapabilityCacheEntry>();
+  private readonly liveActivityObservationResolvers = new Set<LiveActivityObservationResolver>();
   private readonly workspaceSessionRelations = new Map<
     string,
     Map<string, SessionRelationDescriptor>
@@ -306,6 +309,24 @@ export class SessionHistoryService {
 
   observeBackgroundTaskMetrics(): TaskMetricsSnapshot {
     return this.taskManager.observe();
+  }
+
+  registerLiveActivityObservationResolver(
+    resolver: LiveActivityObservationResolver
+  ): { close(): void } {
+    this.liveActivityObservationResolvers.add(resolver);
+    let closed = false;
+
+    return {
+      close: () => {
+        if (closed) {
+          return;
+        }
+
+        closed = true;
+        this.liveActivityObservationResolvers.delete(resolver);
+      }
+    };
   }
 
   private registerBackgroundTasks(): void {
@@ -1711,17 +1732,16 @@ export class SessionHistoryService {
     });
     const currentBinding = this.sessionBindingRepository.findBySessionId(sessionId);
     const timestamp = nowIso();
-    const duplicateBinding = this.findPendingBindingDuplicate(
+    const duplicateBinding = this.findSameWorkspaceBindingDuplicate(
       sessionId,
       workspaceId,
-      currentBinding,
       resolvedSnapshot
     );
 
     this.db.transaction(() => {
       if (duplicateBinding) {
-        // 新建运行时会话会先写入 pending 绑定，后台发现链路可能在真 ID 回填前先落一条重复记录。
-        // 这里保留当前 runtime session，把扫描出的重复会话并回当前会话，避免 provider_session_id 撞唯一键。
+        // 运行时链路显式指定了当前 sessionId，就应该由当前会话接管同工作区里的重复底层会话。
+        // 否则后续事件重放或后台发现补录都会持续撞 UNIQUE(provider, provider_session_id)。
         this.mergeSessionIntoTarget({
           workspaceId,
           targetSessionId: sessionId,
@@ -2666,13 +2686,13 @@ export class SessionHistoryService {
   private findPendingSessionAliasTargetSessionId(
     descriptor: PendingSessionAliasDescriptor | null | undefined
   ): string | null {
-    if (!descriptor || descriptor.provider !== "gemini") {
+    if (!descriptor) {
       return null;
     }
 
     const aliasTargetSessionId =
-      extractPendingBindingTargetSessionId(descriptor.providerSessionId)
-      ?? extractPendingBindingTargetSessionId(descriptor.rawStoreRef);
+      extractSessionAliasTargetSessionId(descriptor.providerSessionId)
+      ?? extractSessionAliasTargetSessionId(descriptor.rawStoreRef);
 
     if (!aliasTargetSessionId || aliasTargetSessionId === descriptor.sessionId) {
       return null;
@@ -2813,16 +2833,11 @@ export class SessionHistoryService {
     );
   }
 
-  private findPendingBindingDuplicate(
+  private findSameWorkspaceBindingDuplicate(
     sessionId: string,
     workspaceId: string,
-    currentBinding: SessionBinding | null,
     snapshot: { provider: string; providerSessionId: string; rawStoreRef: string }
   ): SessionBinding | null {
-    if (!currentBinding || !isPendingBindingValue(currentBinding.providerSessionId)) {
-      return null;
-    }
-
     if (isPendingBindingValue(snapshot.providerSessionId)) {
       return null;
     }
@@ -2953,12 +2968,32 @@ export class SessionHistoryService {
     this.db
       .prepare("DELETE FROM session_forks WHERE session_id = ?")
       .run(input.sourceSessionId);
-    this.db
-      .prepare("DELETE FROM session_indices WHERE session_id = ?")
-      .run(input.sourceSessionId);
-    this.db
-      .prepare("DELETE FROM session_bindings WHERE session_id = ?")
-      .run(input.sourceSessionId);
+
+    // 保留旧 session_id 作为 alias，避免前端或 Butler 还拿着旧 id 时直接炸成 SESSION_NOT_FOUND。
+    this.sessionBindingRepository.upsert({
+      sessionId: input.sourceSessionId,
+      workspaceId: sourceBinding.workspaceId,
+      provider: sourceBinding.provider,
+      providerSessionId: buildAliasBindingValue(
+        input.provider,
+        input.targetSessionId,
+        input.sourceSessionId
+      ),
+      rawStoreRef: buildAliasBindingValue(
+        input.provider,
+        input.targetSessionId,
+        input.sourceSessionId
+      ),
+      createdAt: sourceBinding.createdAt,
+      updatedAt: input.timestamp
+    });
+
+    if (sourceIndex) {
+      this.sessionIndexRepository.upsert({
+        ...sourceIndex,
+        updatedAt: input.timestamp
+      });
+    }
 
     this.rewriteWorkspaceSessionRelations(
       input.workspaceId,
@@ -3124,6 +3159,7 @@ export class SessionHistoryService {
     workspacePath: string
   ) {
     return sessions
+      .filter((session) => !this.isPendingSessionAlias(session))
       .filter((session) => !shouldSkipClaudePendingBinding(session))
       .map((session) => {
       const stats = safeStat(session.rawStoreRef);
@@ -3148,25 +3184,35 @@ export class SessionHistoryService {
   ): Promise<SessionStateRecord | null> {
     const binding = this.getBindingOrThrow(sessionId);
     const current = this.sessionStateRepository.findBySessionAndUser(sessionId, userId);
-    const inspection = inspectSessionActivity(binding.provider, binding.rawStoreRef);
     const timestamp = nowIso();
-    const nowMs = Date.parse(timestamp);
+    const liveObservation = this.resolveLiveActivityObservation(sessionId);
+    const inspection = liveObservation
+      ? null
+      : inspectSessionActivity(binding.provider, binding.rawStoreRef);
 
-    if (shouldClearStaleRuntimeWithoutInspection(current, inspection, nowMs)) {
-      this.sessionActivityAuthorityService.clearSession(sessionId);
+    if (inspection) {
+      const nowMs = Date.parse(timestamp);
+
+      if (shouldClearStaleRuntimeWithoutInspection(current, inspection, nowMs)) {
+        this.sessionActivityAuthorityService.clearSession(sessionId);
+      }
+
+      if (shouldPreserveRuntimeTerminalState(current, inspection)) {
+        return current;
+      }
     }
 
-    if (shouldPreserveRuntimeTerminalState(current, inspection)) {
-      return current;
-    }
-
-    const resolution = this.sessionActivityAuthorityService.observe(
-      buildInspectionActivityObservation(sessionId, inspection, timestamp)
-    );
+    const resolution = liveObservation
+      ? this.sessionActivityAuthorityService.observe(liveObservation)
+      : this.sessionActivityAuthorityService.observe(
+          buildInspectionActivityObservation(sessionId, inspection as ReturnType<typeof inspectSessionActivity>, timestamp)
+        );
     const resolvedLastEventAt =
-      hasInspectionEvidence(inspection)
-        ? resolution.lastObservedAt ?? inspection.lastEventAt ?? current?.lastEventAt ?? null
-        : current?.lastEventAt ?? null;
+      liveObservation
+        ? resolution.lastObservedAt ?? current?.lastEventAt ?? null
+        : inspection && hasInspectionEvidence(inspection)
+          ? resolution.lastObservedAt ?? inspection.lastEventAt ?? current?.lastEventAt ?? null
+          : current?.lastEventAt ?? null;
     const nextRecord: SessionStateRecord = {
       sessionId,
       userId,
@@ -3179,7 +3225,7 @@ export class SessionHistoryService {
       lastEventAt: resolvedLastEventAt,
       completedAt:
         isTerminalResolvedRunningState(resolution.runningState)
-          ? resolution.terminalAt ?? inspection.completedAtCandidate ?? current?.completedAt ?? null
+          ? resolution.terminalAt ?? inspection?.completedAtCandidate ?? current?.completedAt ?? null
           : null,
       lastSeenAt: current?.lastSeenAt ?? null,
       updatedAt: timestamp
@@ -3202,8 +3248,8 @@ export class SessionHistoryService {
       lastSyncAt:
         resolution.lastObservedAt
         ?? resolution.terminalAt
-        ?? inspection.lastEventAt
-        ?? inspection.completedAtCandidate
+        ?? inspection?.lastEventAt
+        ?? inspection?.completedAtCandidate
         ?? currentSnapshot?.lastSyncAt
         ?? null,
       lastErrorCode:
@@ -3225,22 +3271,46 @@ export class SessionHistoryService {
     return nextRecord;
   }
 
+  private resolveLiveActivityObservation(sessionId: string): SessionActivityObservation | null {
+    for (const resolver of this.liveActivityObservationResolvers) {
+      const observation = resolver(sessionId);
+
+      if (observation) {
+        return observation;
+      }
+    }
+
+    return null;
+  }
+
   private upsertSnapshot(
     sessionId: string,
     input: Omit<SessionStatusSnapshot, "sessionId" | "updatedAt">
   ): void {
+    const resolvedSessionId = this.resolveCanonicalSessionId(sessionId);
+
+    if (!this.sessionBindingRepository.findBySessionId(resolvedSessionId)) {
+      return;
+    }
+
     this.sessionStatusSnapshotRepository.upsert({
-      sessionId,
+      sessionId: resolvedSessionId,
       ...input,
       updatedAt: nowIso()
     });
   }
 
   private markSessionError(sessionId: string, errorCode: string, error: unknown): void {
-    const current = this.sessionStatusSnapshotRepository.findBySessionId(sessionId);
+    const resolvedSessionId = this.resolveCanonicalSessionId(sessionId);
+
+    if (!this.sessionBindingRepository.findBySessionId(resolvedSessionId)) {
+      return;
+    }
+
+    const current = this.sessionStatusSnapshotRepository.findBySessionId(resolvedSessionId);
 
     this.sessionStatusSnapshotRepository.upsert({
-      sessionId,
+      sessionId: resolvedSessionId,
       syncStatus: "error",
       syncCursor: current?.syncCursor ?? null,
       lastSyncAt: current?.lastSyncAt ?? null,
@@ -3658,6 +3728,10 @@ function buildPendingBindingValue(provider: string, sessionId: string): string {
   return `pending://${provider}/${sessionId}`;
 }
 
+function buildAliasBindingValue(provider: string, targetSessionId: string, sourceSessionId: string): string {
+  return `alias://${provider}/${targetSessionId}/${sourceSessionId}`;
+}
+
 function extractPendingBindingTargetSessionId(value: string): string | null {
   if (!isPendingBindingValue(value)) {
     return null;
@@ -3666,6 +3740,33 @@ function extractPendingBindingTargetSessionId(value: string): string | null {
   const normalizedValue = value.trim();
   const targetSessionId = normalizedValue.slice(normalizedValue.indexOf("/", "pending://".length) + 1).trim();
   return targetSessionId || null;
+}
+
+function extractAliasBindingTargetSessionId(value: string): string | null {
+  const normalizedValue = value.trim();
+
+  if (!normalizedValue.toLowerCase().startsWith("alias://")) {
+    return null;
+  }
+
+  const pathStart = normalizedValue.indexOf("/", "alias://".length);
+
+  if (pathStart < 0) {
+    return null;
+  }
+
+  const targetAndSource = normalizedValue.slice(pathStart + 1).trim();
+
+  if (targetAndSource.length === 0) {
+    return null;
+  }
+
+  const [targetSessionId] = targetAndSource.split("/", 1);
+  return targetSessionId?.trim() || null;
+}
+
+function extractSessionAliasTargetSessionId(value: string): string | null {
+  return extractAliasBindingTargetSessionId(value) ?? extractPendingBindingTargetSessionId(value);
 }
 
 function isClaudePendingRuntimeRawStoreRef(rawStoreRef: string): boolean {
@@ -4258,13 +4359,13 @@ function mapResolvedRunningStateToStored(
 
 function mapResolutionSourceToLegacyActivitySource(
   source: SessionActivityResolutionSource,
-  inspection: ReturnType<typeof inspectSessionActivity>
+  inspection: ReturnType<typeof inspectSessionActivity> | null
 ): SessionStateRecord["activitySource"] {
   if (source === "authoritative_runtime" || source === "authoritative_provider_event") {
     return "runtime";
   }
 
-  if (inspection.lastEventAt || inspection.completedAtCandidate) {
+  if (inspection && (inspection.lastEventAt || inspection.completedAtCandidate)) {
     return "inferred";
   }
 

@@ -817,4 +817,168 @@ describe("ButlerSessionService", () => {
     expect(target.session.sessionId).toBe("session-target");
     expect(target.session.ownershipMode).toBe("observed");
   });
+
+  it("resolveActionTarget 会把已合并的 alias session 解析到真实 session", async () => {
+    const project: ButlerProject = {
+      id: "project-target-alias",
+      workspaceId: "workspace-target",
+      name: "repo-target",
+      repoRoot: "/tmp/repo-target",
+      defaultProvider: "codex",
+      instructionProfileId: null,
+      approvalMode: "controlled",
+      lifecycleStatus: "active",
+      riskLevel: "low",
+      config: {
+        managedBy: "workspace-auto"
+      },
+      lastPatrolAt: null,
+      lastVerificationAt: null,
+      createdAt: "2026-04-02T00:00:00.000Z",
+      updatedAt: "2026-04-02T00:00:00.000Z",
+      archivedAt: null
+    };
+    const aliasBinding: SessionBinding = {
+      sessionId: "session-alias",
+      workspaceId: "workspace-target",
+      provider: "codex",
+      providerSessionId: "alias://codex/session-target/session-alias",
+      rawStoreRef: "alias://codex/session-target/session-alias",
+      createdAt: "2026-04-02T00:00:00.000Z",
+      updatedAt: "2026-04-02T00:00:00.000Z"
+    };
+    const binding: SessionBinding = {
+      sessionId: "session-target",
+      workspaceId: "workspace-target",
+      provider: "codex",
+      providerSessionId: "provider-session-target",
+      rawStoreRef: "raw-session-target",
+      createdAt: "2026-04-02T00:00:00.000Z",
+      updatedAt: "2026-04-02T00:00:00.000Z"
+    };
+    const index: SessionIndexRecord = {
+      sessionId: "session-target",
+      workspaceId: "workspace-target",
+      provider: "codex",
+      parentSessionId: null,
+      isSubagent: false,
+      subagentLabel: null,
+      title: "登录页开发",
+      messageCount: 6,
+      isArchived: false,
+      lastMessageAt: "2026-04-02T00:10:00.000Z",
+      createdAt: "2026-04-02T00:00:00.000Z",
+      updatedAt: "2026-04-02T00:10:00.000Z"
+    };
+    const state: SessionStateRecord = {
+      sessionId: "session-target",
+      userId: "user-1",
+      runningState: "running",
+      activitySource: "runtime",
+      favorite: false,
+      lastEventAt: "2026-04-02T00:10:00.000Z",
+      completedAt: null,
+      lastSeenAt: null,
+      updatedAt: "2026-04-02T00:10:00.000Z"
+    };
+    const createdSessions: ButlerSession[] = [
+      {
+        id: "butler-session-alias",
+        projectId: project.id,
+        sessionId: "session-alias",
+        role: "adhoc",
+        ownershipMode: "observed",
+        status: "running",
+        lastSummary: "旧 alias 记录",
+        lastCheckpointAt: "2026-04-02T00:10:00.000Z",
+        createdAt: "2026-04-02T00:00:00.000Z",
+        updatedAt: "2026-04-02T00:10:00.000Z"
+      }
+    ];
+
+    const service = new ButlerSessionService(
+      {
+        findById: vi.fn(() => project)
+      } satisfies Pick<ButlerProjectRepository, "findById"> as ButlerProjectRepository,
+      {
+        listByProject: vi.fn(() => createdSessions),
+        findBySessionId: vi.fn((sessionId: string) =>
+          createdSessions.find((item) => item.sessionId === sessionId) ?? null
+        ),
+        create: vi.fn((record: ButlerSession) => {
+          createdSessions.push(record);
+          return record;
+        })
+      } satisfies Pick<ButlerSessionRepository, "listByProject" | "findBySessionId" | "create"> as ButlerSessionRepository,
+      {
+        getLatestSeq: vi.fn(() => 0),
+        create: vi.fn((record) => record)
+      } satisfies Pick<SessionCheckpointRepository, "getLatestSeq" | "create"> as SessionCheckpointRepository,
+      {
+        findBySessionId: vi.fn((sessionId: string) => {
+          if (sessionId === "session-alias") {
+            return aliasBinding;
+          }
+
+          if (sessionId === "session-target") {
+            return binding;
+          }
+
+          return null;
+        })
+      } satisfies Pick<SessionBindingRepository, "findBySessionId"> as SessionBindingRepository,
+      {
+        findIndexRecordBySessionId: vi.fn((sessionId: string) => {
+          return sessionId === "session-target" ? index : null;
+        })
+      } satisfies Pick<SessionIndexRepository, "findIndexRecordBySessionId"> as SessionIndexRepository,
+      {
+        findBySessionAndUser: vi.fn((sessionId: string) => {
+          return sessionId === "session-target" ? state : null;
+        })
+      } satisfies Pick<SessionStateRepository, "findBySessionAndUser"> as SessionStateRepository,
+      undefined,
+      {
+        discoverWorkspaceSessions: vi.fn(async () => undefined),
+        listWorkspaceSessions: vi.fn(() => [
+          {
+            sessionId: "session-target",
+            workspaceId: "workspace-target",
+            provider: "codex",
+            providerSessionId: "provider-session-target",
+            rawStoreRef: "raw-session-target",
+            parentSessionId: null,
+            isSubagent: false,
+            subagentLabel: null,
+            isArchived: false,
+            isFavorite: false,
+            title: "登录页开发",
+            messageCount: 6,
+            lastMessageAt: "2026-04-02T00:10:00.000Z",
+            createdAt: "2026-04-02T00:00:00.000Z",
+            updatedAt: "2026-04-02T00:10:00.000Z",
+            syncStatus: null,
+            syncCursor: null,
+            lastSyncAt: null,
+            lastErrorCode: null,
+            lastErrorDetail: null,
+            resumedAt: null,
+            runningState: "running",
+            activitySource: "runtime",
+            lastEventAt: "2026-04-02T00:10:00.000Z",
+            completedAt: null,
+            lastSeenAt: null,
+            activityState: "running"
+          } satisfies SessionListItem
+        ]),
+        resumeSession: vi.fn()
+      } as never
+    );
+
+    const target = await service.resolveActionTarget(project.id, "session-alias", "user-1");
+
+    expect(target.workspaceId).toBe("workspace-target");
+    expect(target.session.sessionId).toBe("session-target");
+    expect(target.session.provider).toBe("codex");
+  });
 });
