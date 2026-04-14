@@ -30,9 +30,11 @@ Consistent experience across H5, Windows, and macOS.
 
 ![alt text](img/image.png)
 
-Full-featured support for Android and iOS mobile platforms.
+The iOS app is now live on the App Store, and the Android app is already supported. The remaining planned capabilities are under active development.
 
 ### ✨ Core Features
+
+> Current status: the iOS app has been released on the App Store, the Android app is already supported, completed features below remain unchanged, and the remaining planned capabilities are now in active development.
 
 #### 🔄 Multi-Provider Session Sync
 - **Seamless CLI Session Continuation**: Support for Claude Code, Codex, OpenCode and other mainstream AI programming tools
@@ -315,18 +317,18 @@ Detailed feature specifications and design documents are located in the [`specs/
 |------|----------|--------|
 | Session forking support with branch visualization | Completed | 🟢 Completed |
 | Reverse proxy for process management — proxy dev apps through a single port | Completed | 🟢 Completed |
-| iOS APP | In development (App Store submission prep completed) | 🟡 In Progress |
+| iOS APP | Released on the App Store | 🟢 Completed |
 | Demo mode and controlled demo environment | Completed | 🟢 Completed |
 | Multi-window support on desktop | Completed | 🟢 Completed |
-| Parallel dev mode — launch multiple CLI or model configs simultaneously for rapid dev validation on a single workspace | Planning | ⬜ Planned |
+| Parallel dev mode — launch multiple CLI or model configs simultaneously for rapid dev validation on a single workspace | In development | 🟡 In Progress |
 | Support more CLIs (Gemini CLI, Kimi CLI, etc.) | Completed  | 🟢 Completed  |
-| Support connecting to multiple hosts simultaneously | Planning | ⬜ Planned |
-| Better file editor experience | Planning | ⬜ Planned |
-| Built-in Tailscale for one-click NAT traversal | Planning | ⬜ Planned |
+| Support connecting to multiple hosts simultaneously | In development | 🟡 In Progress |
+| Better file editor experience | In development | 🟡 In Progress |
+| Built-in Tailscale for one-click NAT traversal | In development | 🟡 In Progress |
 | Code Butler — manage multiple projects and sessions across workspaces, provide dev suggestions and act on behalf of the user | Completed  | 🟢 Completed  |
-| Code Butler with real-time voice conversation | Planning | ⬜ Planned |
+| Code Butler with real-time voice conversation | In development | 🟡 In Progress |
 
-> Status legend: 🟢 Completed | 🟡 In Progress | ⬜ Planned
+> Status legend: 🟢 Completed | 🟡 In Progress
 
 ### 🤝 Contributing
 
@@ -350,9 +352,11 @@ CodingNS 致力于提供一整套闭环的 AI 编程工作流程，让你能够�
 
 ![alt text](img/image.png)
 
-全面支持 Android、iOS 移动端，全功能使用。
+iOS App 已经上架，Android App 也已支持，其余原先计划中的能力仍在持续开发中。
 
 ### ✨ 核心特性
+
+> 当前状态：iOS App 已完成并已上架 App Store，Android App 也已支持。下方已经标注为“已完成”的能力保持不变，原先“计划中”的能力现已进入开发中状态。
 
 #### 🔄 多 Provider 会话同步
 - **无缝续接原生 CLI 会话**：支持 Claude Code、Codex、OpenCode 等主流 AI 编程工具
@@ -635,18 +639,18 @@ pnpm test:user-app
 |----------|----------|----------|
 | 会话分叉功能，支持分支树可视化 | 已完成 | 🟢 已完成 |
 | 进程管理支持反向代理，单一端口代理开发中的应用 | 已完成 | 🟢 已完成 |
-| iOS APP | 开发中（提审准备已完成） | 🟡 进行中 |
+| iOS APP | 已上架 App Store | 🟢 已完成 |
 | 演示模式与受控演示环境 | 已完成 | 🟢 已完成 |
 | PC 端支持多窗口操作 | 已完成 | 🟢 已完成 |
-| 并行开发模式，同时启动多个 CLI 或模型配置，并行针对单一工作区进行快速开发验证 | 规划中 | ⬜ 计划中 |
+| 并行开发模式，同时启动多个 CLI 或模型配置，并行针对单一工作区进行快速开发验证 | 开发中 | 🟡 开发中 |
 | 支持更多 CLI（Gemini CLI、Kimi CLI 等） | 已完成 | 🟢 已完成 |
-| 支持同时连接多个 HOST | 规划中 | ⬜ 计划中 |
-| 更好的文件编辑器体验 | 规划中 | ⬜ 计划中 |
-| 内置 Tailscale 支持一键穿透内网 | 规划中 | ⬜ 计划中 |
+| 支持同时连接多个 HOST | 开发中 | 🟡 开发中 |
+| 更好的文件编辑器体验 | 开发中 | 🟡 开发中 |
+| 内置 Tailscale 支持一键穿透内网 | 开发中 | 🟡 开发中 |
 | 代码助手功能，支持跨工作区管理多个项目及会话，并为用户提供项目开发的建议和代替用户进行项目开发的控制 | 已完成 | 🟢 已完成 |
-| 代码助手支持实时语音对话 | 规划中 | ⬜ 计划中 |
+| 代码助手支持实时语音对话 | 开发中 | 🟡 开发中 |
 
-> 进度说明：🟢 已完成 | 🟡 开发中 | ⬜ 计划中
+> 进度说明：🟢 已完成 | 🟡 开发中
 
 ### 🤝 贡献
 
