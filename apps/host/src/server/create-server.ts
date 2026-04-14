@@ -6,6 +6,8 @@ import type { HostConfig } from "../config/env.js";
 import { createAuthGuard } from "../middlewares/auth-guard.js";
 import { AuthController } from "../modules/auth/auth-controller.js";
 import { AuthService } from "../modules/auth/auth-service.js";
+import { AssistantCapabilityController } from "../modules/assistant-capability/assistant-capability-controller.js";
+import { AssistantCapabilityService } from "../modules/assistant-capability/assistant-capability-service.js";
 import { BootstrapController } from "../modules/bootstrap/bootstrap-controller.js";
 import { BootstrapService } from "../modules/bootstrap/bootstrap-service.js";
 import { ButlerControlSessionService } from "../modules/butler/butler-control-session-service.js";
@@ -95,6 +97,7 @@ import { WorktreeSyncService } from "../modules/worktree/worktree-sync-service.j
 import { WorkspaceController } from "../modules/workspace/workspace-controller.js";
 import { WorkspaceService } from "../modules/workspace/workspace-service.js";
 import { registerAuthRoutes } from "../routes/auth.js";
+import { registerAssistantCapabilityRoutes } from "../routes/assistant.js";
 import { registerButlerRoutes } from "../routes/butler.js";
 import { registerClientRoutes } from "../routes/client.js";
 import { registerDebugTargetRoutes } from "../routes/debug-targets.js";
@@ -715,6 +718,15 @@ export function createServer(config: HostConfig) {
     sessionLiveRuntimeService,
     repositories.butlerControlSessionRepository
   );
+  const assistantCapabilityController = new AssistantCapabilityController(
+    new AssistantCapabilityService(
+      butlerProjectService,
+      butlerSessionService,
+      sessionHistoryService,
+      sessionLiveRuntimeService,
+      terminalService
+    )
+  );
   const providerController = new ProviderController(
     sessionHistoryService,
     sessionLiveRuntimeService,
@@ -773,6 +785,7 @@ export function createServer(config: HostConfig) {
   void registerPublicRoutes(app, bootstrapController);
   void registerProxyRoutes(app, templateReverseProxyService);
   void registerAuthRoutes(app, authController);
+  void registerAssistantCapabilityRoutes(app, assistantCapabilityController);
   void registerClientRoutes(app, clientController);
   void registerDebugTargetRoutes(app, debugTargetController);
   void registerObservabilityRoutes(app, observabilityController);

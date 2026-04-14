@@ -318,6 +318,10 @@ function syncCodexInstructionConfig(
     path.join(sourceHomeDir, "auth.json"),
     path.join(targetHomeDir, "auth.json")
   );
+  syncOptionalDirectory(
+    path.join(sourceHomeDir, "skills", "codingns-assistant"),
+    path.join(targetHomeDir, "skills", "codingns-assistant")
+  );
   writeFileIfChanged(path.join(targetHomeDir, "config.toml"), `${configContent}\n`);
 }
 
@@ -384,73 +388,86 @@ function composeInstructionContent(
 - 如果用户要求“修改代码”“继续实现”“修 bug”，先定位目标项目和目标会话；没有会话就先新建/续接项目会话，再把任务发给那个会话继续做，不要自己在 Butler 工作目录里动手。
 - 当前聚合后的平台摘要写在 \`BUTLER_CONTEXT.md\`，先看这里，不要把所有项目原始记录一股脑塞进回答。
 - 当前摘要作用域是：${promptContext.scope === "project" ? `项目 ${promptContext.projectId}` : "全局总览"}。
+- 你自己的主工具入口不是一堆 HTTP 路由，而是 \`codingns assistant ...\`。真正执行前，先用 \`codingns assistant --help\`、\`codingns assistant help <group>\`、\`codingns assistant <group> <action> --help\` 按需查命令。
+- 如果当前 Codex 环境能发现 \`codingns-assistant\` skill，优先按这个 skill 的流程工作：先查能力，再查项目/会话/终端，再决定是否发送消息、fork 或发终端输入。
+- 默认查询顺序固定为：先看 \`BUTLER_CONTEXT.md\`，再用 \`codingns assistant capabilities list\` 确认能力，再按 \`projects / sessions / terminals\` 分组查具体对象；不要先翻一大堆旧 REST 文档。
 - 如果你在跟进开发会话，且目标或上下文里提到了 spec，只能围绕 spec 明确写出的必做项推进，不能顺着建议项无限扩展开发范围。
 - 如果当前没有 spec，就先从用户要求和会话现状里归纳一句核心任务，后续只围绕这个核心任务推进；不要把建议项、最佳实践、顺手优化当成必做项。
-- 如果用户的问题里已经带了项目名、会话名、错误词或任务关键词，优先按 \`BUTLER_API.md\` 调 \`GET /api/butler/search?q=...\` 命中摘要，再决定要不要继续翻原始消息；如果用户明确点名历史会话或归档会话，记得加 \`includeArchived=true\`。
-- 如果 \`BUTLER_CONTEXT.md\` 里的项目数或会话数是 0，不能直接下结论，必须先按 \`BUTLER_API.md\` 实查一次 \`GET /api/butler/overview\` 和 \`GET /api/butler/projects\`。
-- 如果用户追问的细节超出当前摘要，先明确缺口，再要求宿主系统按 \`BUTLER_API.md\` 的说明补查具体项目、会话、巡视或验证信息。
-- 如果用户追问会话内容，先定位 \`sessionId\`，再调用 \`GET /api/sessions/:sessionId/messages?direction=backward&limit=40\` 查看最近消息，不要只复述摘要。
+- 如果用户的问题里已经带了项目名、会话名、错误词或任务关键词，先通过 \`codingns assistant projects --help\`、\`codingns assistant sessions --help\` 选对命令，再查目标对象；如果用户明确点名历史会话或归档会话，按 help 提示补充筛选参数。
+- 如果 \`BUTLER_CONTEXT.md\` 里的项目数或会话数是 0，不能直接下结论，必须先跑 \`codingns assistant capabilities list\` 和 \`codingns assistant projects list\` 确认真实状态。
+- 如果用户追问的细节超出当前摘要，先明确缺口，再按 \`BUTLER_API.md\` 里记录的 CLI 顺序补查项目、会话、消息窗口或终端历史。
+- 如果用户追问会话内容，先定位 \`sessionId\`，再优先用 \`codingns assistant sessions messages <sessionId>\` 查看最近消息，不要只复述摘要。
+- 需要推进开发时，优先用 \`codingns assistant sessions send <sessionId> --message ...\`；只有明确需要 shell 链路时，才用 \`codingns assistant terminals send <terminalId> --input ...\`。
 - 不要编造不存在的项目状态；信息不足时直接说缺什么。
 `;
 }
 
 function buildApiGuideContent(auth: ButlerWorkspaceCredential, authFilePath: string): string {
-  return `# 代码助手内部补查接口
+  return `# 代码助手 CLI 与按需补查指南
 
-这些接口由宿主系统提供，用于按需补查信息，不应该在每轮对话默认全量注入。
+默认不要直接背 HTTP 路由。先用 \`codingns assistant ...\` 和分层 help 按需查询。
 
 ## 固定认证方式
 
 - Butler 专用凭证文件：\`${path.basename(authFilePath)}\`
 - 凭证文件路径：\`${authFilePath}\`
 - 当前 API 基地址：\`${auth.apiBaseUrl}\`
-- 调内部接口时固定读取这个文件，不要每轮重新摸索认证方式。
-- 请求头固定为：\`Authorization: Bearer <BUTLER_AUTH.json.accessToken>\`
+- 先从这个文件导出环境变量，再执行 \`codingns assistant ...\`。
+
+## 推荐先准备一次环境变量
+
+\`\`\`bash
+export CODINGNS_BASE_URL="$(jq -r '.apiBaseUrl' "${authFilePath}")"
+export CODINGNS_ACCESS_TOKEN="$(jq -r '.accessToken' "${authFilePath}")"
+\`\`\`
 
 ## 默认读取顺序
 
 1. 先读 \`BUTLER_CONTEXT.md\` 的当前摘要。
-2. 用户的问题里带了项目名、会话名、报错词、任务词时，先补查 \`GET /api/butler/search?q=...\`，优先命中摘要层；如果用户明确点名历史会话或归档会话，改用 \`GET /api/butler/search?q=...&includeArchived=true\`。
-3. 如果摘要里项目数或会话数是 0，先补查 \`GET /api/butler/overview\` 和 \`GET /api/butler/projects\`，确认不是旧摘要。
-4. 用户问全局情况时，补查 \`GET /api/butler/overview\`。
-5. 用户明确追问某个项目时，补查 \`GET /api/butler/projects/:projectId/context\`。
-6. 用户追问某个会话内容时，先拿到 \`sessionId\`，再补查 \`GET /api/sessions/:sessionId/messages?direction=backward&limit=40\`。
-7. 仍然不够时，再按既有 butler 细节接口查询项目、会话、记忆、巡视、验证对象。
+2. 先跑 \`codingns assistant capabilities list\`，确认当前开放能力。
+3. 不知道怎么查时，先跑 \`codingns assistant --help\`、\`codingns assistant help projects\`、\`codingns assistant help sessions\`、\`codingns assistant help terminals\`。
+4. 要找项目时，先 \`codingns assistant projects list\`，需要详情时再 \`projects get <projectId>\`。
+5. 要找会话时，先 \`codingns assistant sessions list --project <projectId>\`，再按需要用 \`sessions get\`、\`sessions runtime\`、\`sessions messages\`。
+6. 要推进开发时，优先 \`codingns assistant sessions send <sessionId> --message "..."\`。
+7. 只有明确需要 shell 链路时，先 \`terminals list\`、\`terminals history\`，再决定是否 \`terminals send\`。
+8. 要开新分支时，再用 \`codingns assistant sessions fork <sessionId>\`。
 
 ## 执行边界
 
 - 你不能直接修改项目代码，也不能把自己当成项目执行会话。
-- 需要推进开发时，只能通过下面的项目会话接口或终端接口操作。
+- 需要推进开发时，只能通过下面这些 CLI 命令驱动真实项目会话或受控终端。
 - 需要命令结果时，优先查终端历史；确实要执行命令，再向受控终端发送输入。
-- 需要分叉会话时，统一走 \`POST /api/sessions/:sessionId/forks\`，不要自己伪造一条“新上下文”继续编。
+- 需要分叉会话时，统一走 \`codingns assistant sessions fork\`，不要自己伪造一条“新上下文”继续编。
 
-## 调用示例
+## help 入口
 
 \`\`\`bash
-TOKEN="$(jq -r '.accessToken' "${authFilePath}")"
-BASE_URL="$(jq -r '.apiBaseUrl' "${authFilePath}")"
-curl -H "Authorization: Bearer ${"$"}TOKEN" "${"$"}BASE_URL/api/butler/overview"
+codingns assistant --help
+codingns assistant help projects
+codingns assistant help sessions
+codingns assistant sessions send --help
+codingns assistant terminals send --help
 \`\`\`
 
-## 可用接口
+## 常用命令
 
-- \`GET /api/butler/overview\`：全局聚合总览，只返回摘要层和行动层。
-- \`GET /api/butler/projects\`：当前 Butler 视图中的项目列表。
-- \`GET /api/butler/context-snapshot\`：完整聚合快照，仍然只返回摘要字段，不返回全量原始正文。
-- \`GET /api/butler/search?q=...\`：Butler 摘要优先检索入口，先按项目、会话、记忆、巡视、验证摘要做命中。
-- \`GET /api/butler/search?q=...&includeArchived=true\`：当用户明确要查历史会话或归档会话时，扩展到归档摘要。
-- \`GET /api/butler/projects/:projectId/context\`：单项目聚合上下文，用于回答项目级追问。
-- \`GET /api/butler/projects/:projectId/sessions\`：项目会话列表，可先拿到可续接的 \`sessionId\`。
-- \`POST /api/butler/projects/:projectId/sessions/start\`：给指定项目新建一个执行会话。
-- \`POST /api/butler/projects/:projectId/sessions/:butlerSessionId/resume\`：续接指定项目会话。
-- \`GET /api/sessions/:sessionId\`：读取真实会话详情和运行状态摘要。
-- \`GET /api/sessions/:sessionId/messages?direction=backward&limit=40\`：读取某个真实会话最近几十条消息。
-- \`GET /api/sessions/:sessionId/runtime\`：读取实时运行状态，判断是否还在跑。
-- \`POST /api/sessions/:sessionId/messages/live\`：向指定真实会话发送一条实时消息，并拿到 accepted 响应。
-- \`POST /api/sessions/:sessionId/forks\`：从指定会话或消息点创建 fork 会话。
-- \`GET /api/terminals\`：列出当前终端实例，查看它们属于哪个工作区、是否在运行。
-- \`GET /api/terminals/:terminalId/history\`：读取终端输出历史，先看结果再决定要不要继续发命令。
-- \`POST /api/terminals/:terminalId/input\`：向指定终端写入输入内容，用于执行命令。
+- \`codingns assistant capabilities list\`：查看当前 Butler 可用能力。
+- \`codingns assistant projects list\`：列出托管项目。
+- \`codingns assistant projects get <projectId>\`：读取项目详情和项目下可操作会话。
+- \`codingns assistant sessions list --project <projectId>\`：列出项目会话。
+- \`codingns assistant sessions get <sessionId>\`：读取真实会话详情。
+- \`codingns assistant sessions messages <sessionId> --limit 40\`：读取最近消息窗口。
+- \`codingns assistant sessions runtime <sessionId>\`：查看会话是否还在运行。
+- \`codingns assistant sessions send <sessionId> --message "..."\`：向真实项目会话发消息。
+- \`codingns assistant sessions fork <sessionId> --message-id <messageId>\`：从消息点 fork 新会话。
+- \`codingns assistant terminals list --project-id <projectId>\`：列出项目下终端。
+- \`codingns assistant terminals history <terminalId> --limit 50\`：读取终端最近输出。
+- \`codingns assistant terminals send <terminalId> --input "npm test\\n"\`：向终端发送输入。
+
+## 底层说明
+
+- 上面这些命令最终还是调用宿主系统的 \`/api/assistant/*\`。
+- 只有当 CLI 还没覆盖某个极少数细节时，才回退到底层 HTTP。
 `;
 }
 
@@ -481,6 +498,17 @@ function syncOptionalFile(sourcePath: string, targetPath: string): void {
   }
 
   fs.copyFileSync(sourcePath, targetPath);
+}
+
+function syncOptionalDirectory(sourcePath: string, targetPath: string): void {
+  if (!fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isDirectory()) {
+    fs.rmSync(targetPath, { recursive: true, force: true });
+    return;
+  }
+
+  fs.rmSync(targetPath, { recursive: true, force: true });
+  fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+  fs.cpSync(sourcePath, targetPath, { recursive: true });
 }
 
 function normalizeControlContent(value: string | undefined, fallback: string): string {

@@ -118,6 +118,19 @@ describe("ButlerControlSessionService", () => {
       }),
       "utf8"
     );
+    mkdirSync(path.join(defaultCodexHomeDir, "skills", "codingns-assistant", "references"), {
+      recursive: true
+    });
+    writeFileSync(
+      path.join(defaultCodexHomeDir, "skills", "codingns-assistant", "SKILL.md"),
+      "---\nname: codingns-assistant\ndescription: test\n---\n",
+      "utf8"
+    );
+    writeFileSync(
+      path.join(defaultCodexHomeDir, "skills", "codingns-assistant", "references", "cli-workflow.md"),
+      "# test\n",
+      "utf8"
+    );
     writeFileSync(
       path.join(defaultCodexHomeDir, "config.toml"),
       [
@@ -276,13 +289,16 @@ describe("ButlerControlSessionService", () => {
     expect(savedControlSession?.lastContextVersion).toBe("ctx-overview-v1");
     expect(readFileSync(path.join(workspacePath, "BUTLER_CONTEXT.md"), "utf8")).toContain("作用域：全局总览");
     expect(readFileSync(path.join(workspacePath, "BUTLER_API.md"), "utf8")).toContain(
-      "GET /api/butler/overview"
+      "codingns assistant capabilities list"
     );
     expect(readFileSync(path.join(workspacePath, "BUTLER_API.md"), "utf8")).toContain(
-      "GET /api/butler/search?q=..."
+      "codingns assistant help sessions"
     );
     expect(readFileSync(path.join(workspacePath, "BUTLER_API.md"), "utf8")).toContain(
       "BUTLER_AUTH.json"
+    );
+    expect(readFileSync(path.join(workspacePath, "AGENTS.md"), "utf8")).toContain(
+      "codingns-assistant"
     );
     expect(JSON.parse(readFileSync(path.join(workspacePath, "BUTLER_AUTH.json"), "utf8")).accessToken).toBe(
       "token-1"
@@ -296,6 +312,9 @@ describe("ButlerControlSessionService", () => {
     expect(codexConfig).toContain(`model_instructions_file = "${path.join(workspacePath, "AGENTS.md")}"`);
     expect(readFileSync(path.join(codexHomeDir, "auth.json"), "utf8")).toBe(
       readFileSync(path.join(defaultCodexHomeDir, "auth.json"), "utf8")
+    );
+    expect(readFileSync(path.join(codexHomeDir, "skills", "codingns-assistant", "SKILL.md"), "utf8")).toContain(
+      "codingns-assistant"
     );
   });
 

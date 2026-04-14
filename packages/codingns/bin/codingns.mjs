@@ -14,61 +14,328 @@ if (!command || command === "help" || command === "--help" || command === "-h") 
   printHelp(0);
 }
 
-if (command !== "start") {
-  console.error(`[codingns] 不支持的命令：${command}`);
-  printHelp(1);
+switch (command) {
+  case "start":
+    await runStartCommand(argv);
+    break;
+  case "assistant":
+    await runAssistantCommand(argv);
+    break;
+  default:
+    console.error(`[codingns] 不支持的命令：${command}`);
+    printHelp(1);
 }
 
-const options = parseArgs(argv);
+async function runStartCommand(argv) {
+  const options = parseArgs(argv, {
+    supportedOptions: ["host", "port", "data-dir"],
+    supportedFlags: ["demo"]
+  });
 
-if (options.help) {
-  printHelp(0);
-}
-
-if (options.errors.length > 0) {
-  for (const error of options.errors) {
-    console.error(`[codingns] ${error}`);
+  if (options.help) {
+    printHelp(0);
   }
-  printHelp(1);
+
+  if (options.errors.length > 0) {
+    for (const error of options.errors) {
+      console.error(`[codingns] ${error}`);
+    }
+    printHelp(1);
+  }
+
+  const host = readStringOption(
+    options.values.host,
+    process.env.HOST,
+    process.env.CODINGNS_HOST,
+    "0.0.0.0"
+  );
+  const port = parsePort(
+    readStringOption(options.values.port, process.env.PORT, process.env.CODINGNS_PORT, "3002")
+  );
+  const dataDir = resolveDataDir(
+    readStringOption(
+      options.values["data-dir"],
+      process.env.CODINGNS_DATA_DIR,
+      path.join(os.homedir(), ".codingns")
+    )
+  );
+  const demoMode = options.flags.demo || process.env.DEMO_MODE === "true";
+
+  fs.mkdirSync(dataDir, { recursive: true });
+  fs.mkdirSync(path.join(dataDir, "releases"), { recursive: true });
+
+  const { startHost } = await import("../dist/server/server/start-host.js");
+
+  await startHost({
+    host,
+    port,
+    webUiDir: path.join(distRoot, "public"),
+    databasePath: path.join(dataDir, "host.sqlite"),
+    releaseManifestRoot: path.join(dataDir, "releases"),
+    serverUpdatePackageName: "@jingyi0605/codingns",
+    demoMode
+  });
 }
 
-const host = readStringOption(
-  options.values.host,
-  process.env.HOST,
-  process.env.CODINGNS_HOST,
-  "0.0.0.0"
-);
-const port = parsePort(
-  readStringOption(options.values.port, process.env.PORT, process.env.CODINGNS_PORT, "3002")
-);
-const dataDir = resolveDataDir(
-  readStringOption(
-    options.values["data-dir"],
-    process.env.CODINGNS_DATA_DIR,
-    path.join(os.homedir(), ".codingns")
-  )
-);
-const demoMode = options.flags.demo || process.env.DEMO_MODE === "true";
+async function runAssistantCommand(argv) {
+  const [group, action, ...rest] = argv;
 
-fs.mkdirSync(dataDir, { recursive: true });
-fs.mkdirSync(path.join(dataDir, "releases"), { recursive: true });
+  if (!group || group === "help" || group === "--help" || group === "-h") {
+    const topic = buildAssistantHelpTopic(action, rest);
+    printAssistantHelpTopic(topic, 0);
+  }
 
-const { startHost } = await import("../dist/server/server/start-host.js");
+  if (!action || action === "help" || action === "--help" || action === "-h") {
+    printAssistantHelpTopic(group, 0);
+  }
 
-await startHost({
-  host,
-  port,
-  webUiDir: path.join(distRoot, "public"),
-  databasePath: path.join(dataDir, "host.sqlite"),
-  releaseManifestRoot: path.join(dataDir, "releases"),
-  serverUpdatePackageName: "@jingyi0605/codingns",
-  demoMode
-});
+  if (rest.length > 0 && isHelpToken(rest[0])) {
+    printAssistantHelpTopic(`${group}.${action}`, 0);
+  }
 
-function parseArgs(argv) {
+  switch (`${group}:${action ?? ""}`) {
+    case "capabilities:list":
+      await printAssistantResponse(await requestAssistant({
+        method: "GET",
+        path: "/api/assistant/capabilities",
+        argv: rest,
+        helpTopic: "capabilities.list"
+      }));
+      return;
+    case "projects:list":
+      await printAssistantResponse(await requestAssistant({
+        method: "GET",
+        path: "/api/assistant/projects",
+        argv: rest,
+        supportedOptions: ["workspace-id", "status", "risk-level"],
+        helpTopic: "projects.list"
+      }, (options) => ({
+        workspaceId: readOptionalTrimmedValue(options.values["workspace-id"]),
+        status: readOptionalTrimmedValue(options.values.status),
+        riskLevel: readOptionalTrimmedValue(options.values["risk-level"])
+      })));
+      return;
+    case "projects:get": {
+      const [projectId, ...tail] = rest;
+      await printAssistantResponse(await requestAssistant({
+        method: "GET",
+        path: `/api/assistant/projects/${requirePositional(projectId, "projectId")}`,
+        argv: tail,
+        helpTopic: "projects.get"
+      }));
+      return;
+    }
+    case "sessions:list": {
+      await printAssistantResponse(await requestAssistant({
+        method: "GET",
+        path: `/api/assistant/projects/${requireOptionPositional(rest, "--project", "projectId")}/sessions`,
+        argv: stripConsumedOption(rest, "--project"),
+        supportedOptions: [],
+        helpTopic: "sessions.list"
+      }));
+      return;
+    }
+    case "sessions:get": {
+      const [sessionId, ...tail] = rest;
+      await printAssistantResponse(await requestAssistant({
+        method: "GET",
+        path: `/api/assistant/sessions/${requirePositional(sessionId, "sessionId")}`,
+        argv: tail,
+        helpTopic: "sessions.get"
+      }));
+      return;
+    }
+    case "sessions:messages": {
+      const [sessionId, ...tail] = rest;
+      await printAssistantResponse(await requestAssistant({
+        method: "GET",
+        path: `/api/assistant/sessions/${requirePositional(sessionId, "sessionId")}/messages`,
+        argv: tail,
+        supportedOptions: ["cursor", "limit", "direction"],
+        helpTopic: "sessions.messages"
+      }, (options) => ({
+        cursor: readOptionalTrimmedValue(options.values.cursor),
+        limit: readOptionalTrimmedValue(options.values.limit),
+        direction: readOptionalTrimmedValue(options.values.direction)
+      })));
+      return;
+    }
+    case "sessions:runtime": {
+      const [sessionId, ...tail] = rest;
+      await printAssistantResponse(await requestAssistant({
+        method: "GET",
+        path: `/api/assistant/sessions/${requirePositional(sessionId, "sessionId")}/runtime`,
+        argv: tail,
+        helpTopic: "sessions.runtime"
+      }));
+      return;
+    }
+    case "sessions:send": {
+      const [sessionId, ...tail] = rest;
+      await printAssistantResponse(await requestAssistant({
+        method: "POST",
+        path: `/api/assistant/sessions/${requirePositional(sessionId, "sessionId")}/messages`,
+        argv: tail,
+        supportedOptions: ["message", "client-request-id", "model", "reasoning-level", "permission-mode"],
+        helpTopic: "sessions.send"
+      }, (options) => ({
+        content: requireOptionValue(options.values.message, "message"),
+        clientRequestId: readOptionalTrimmedValue(options.values["client-request-id"]),
+        model: readOptionalTrimmedValue(options.values.model),
+        reasoningLevel: readOptionalTrimmedValue(options.values["reasoning-level"]),
+        permissionMode: readOptionalTrimmedValue(options.values["permission-mode"])
+      })));
+      return;
+    }
+    case "sessions:fork": {
+      const [sessionId, ...tail] = rest;
+      await printAssistantResponse(await requestAssistant({
+        method: "POST",
+        path: `/api/assistant/sessions/${requirePositional(sessionId, "sessionId")}/forks`,
+        argv: tail,
+        supportedOptions: ["source-type", "message-id", "strategy", "target-provider"],
+        helpTopic: "sessions.fork"
+      }, (options) => ({
+        sourceType: readOptionalTrimmedValue(options.values["source-type"]),
+        sourceMessageId: readOptionalTrimmedValue(options.values["message-id"]),
+        strategy: readOptionalTrimmedValue(options.values.strategy),
+        targetProvider: readOptionalTrimmedValue(options.values["target-provider"])
+      })));
+      return;
+    }
+    case "terminals:list":
+      await printAssistantResponse(await requestAssistant({
+        method: "GET",
+        path: "/api/assistant/terminals",
+        argv: rest,
+        supportedOptions: ["workspace-id", "project-id"],
+        helpTopic: "terminals.list"
+      }, (options) => ({
+        workspaceId: readOptionalTrimmedValue(options.values["workspace-id"]),
+        projectId: readOptionalTrimmedValue(options.values["project-id"])
+      })));
+      return;
+    case "terminals:history": {
+      const [terminalId, ...tail] = rest;
+      await printAssistantResponse(await requestAssistant({
+        method: "GET",
+        path: `/api/assistant/terminals/${requirePositional(terminalId, "terminalId")}/history`,
+        argv: tail,
+        supportedOptions: ["before-seq", "limit"],
+        helpTopic: "terminals.history"
+      }, (options) => ({
+        beforeSeq: readOptionalTrimmedValue(options.values["before-seq"]),
+        limit: readOptionalTrimmedValue(options.values.limit)
+      })));
+      return;
+    }
+    case "terminals:send": {
+      const [terminalId, ...tail] = rest;
+      await printAssistantResponse(await requestAssistant({
+        method: "POST",
+        path: `/api/assistant/terminals/${requirePositional(terminalId, "terminalId")}/input`,
+        argv: tail,
+        supportedOptions: ["input"],
+        helpTopic: "terminals.send"
+      }, (options) => ({
+        content: requireOptionValue(options.values.input, "input")
+      })));
+      return;
+    }
+    default:
+      console.error(`[codingns] 不支持的 assistant 子命令：${group}${action ? ` ${action}` : ""}`);
+      printAssistantHelpTopic("assistant", 1);
+  }
+}
+
+async function requestAssistant(command, buildPayload) {
+  const options = parseArgs(command.argv, {
+    supportedOptions: [
+      "base-url",
+      "token",
+      ...(command.supportedOptions ?? [])
+    ]
+  });
+
+  if (options.help) {
+    printAssistantHelpTopic(command.helpTopic ?? "assistant", 0);
+  }
+
+  if (options.errors.length > 0) {
+    for (const error of options.errors) {
+      console.error(`[codingns] ${error}`);
+    }
+    printAssistantHelpTopic(command.helpTopic ?? "assistant", 1);
+  }
+
+  const baseUrl = resolveAssistantBaseUrl(options.values["base-url"]);
+  const accessToken = resolveAssistantAccessToken(options.values.token);
+  const url = new URL(command.path, appendTrailingSlash(baseUrl));
+  const payload = buildPayload ? buildPayload(options) : null;
+
+  if (command.method === "GET" && payload) {
+    for (const [key, value] of Object.entries(payload)) {
+      if (typeof value === "string" && value.length > 0) {
+        url.searchParams.set(key, value);
+      }
+    }
+  }
+
+  let response;
+
+  try {
+    response = await fetch(url, {
+      method: command.method,
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        ...(command.method === "POST" ? { "Content-Type": "application/json" } : {})
+      },
+      body: command.method === "POST" ? JSON.stringify(payload ?? {}) : undefined
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "未知网络错误";
+    console.error(JSON.stringify({
+      ok: false,
+      detail: `助手能力请求失败：${message}`,
+      target: url.toString()
+    }, null, 2));
+    process.exit(1);
+  }
+
+  const rawBody = await response.text();
+  const responseBody = tryParseJson(rawBody);
+
+  if (!response.ok) {
+    const detail = typeof responseBody?.detail === "string"
+      ? responseBody.detail
+      : `HTTP ${response.status}`;
+    console.error(JSON.stringify({
+      ok: false,
+      status: response.status,
+      detail,
+      body: responseBody ?? rawBody
+    }, null, 2));
+    process.exit(1);
+  }
+
+  return responseBody ?? rawBody;
+}
+
+async function printAssistantResponse(payload) {
+  if (typeof payload === "string") {
+    console.log(payload);
+    return;
+  }
+
+  console.log(JSON.stringify(payload, null, 2));
+}
+
+function parseArgs(argv, input = {}) {
   const values = {};
   const flags = {};
   const errors = [];
+  const supportedOptions = new Set(input.supportedOptions ?? []);
+  const supportedFlags = new Set(input.supportedFlags ?? []);
   let index = 0;
 
   while (index < argv.length) {
@@ -98,13 +365,13 @@ function parseArgs(argv) {
     }
 
     // 布尔标志（不需要值）
-    if (isSupportedFlag(rawName)) {
+    if (supportedFlags.has(rawName)) {
       flags[rawName] = true;
       index += 1;
       continue;
     }
 
-    if (!isSupportedOption(rawName)) {
+    if (!supportedOptions.has(rawName)) {
       errors.push(`不支持的参数：${token}`);
       index += 1;
       continue;
@@ -136,12 +403,33 @@ function parseArgs(argv) {
   };
 }
 
-function isSupportedOption(name) {
-  return name === "host" || name === "port" || name === "data-dir";
+function resolveAssistantBaseUrl(input) {
+  const baseUrl = readStringOption(
+    input,
+    process.env.CODINGNS_BASE_URL,
+    process.env.CODINGNS_SERVER_BASE_URL,
+    "http://127.0.0.1:3002"
+  );
+
+  try {
+    return new URL(baseUrl).toString();
+  } catch {
+    fail(`助手调用 baseUrl 非法：${baseUrl}`);
+  }
 }
 
-function isSupportedFlag(name) {
-  return name === "demo";
+function resolveAssistantAccessToken(input) {
+  const accessToken = readStringOption(
+    input,
+    process.env.CODINGNS_ACCESS_TOKEN,
+    process.env.CODINGNS_TOKEN
+  );
+
+  if (!accessToken) {
+    fail("缺少助手调用 access token，请传 --token 或设置 CODINGNS_ACCESS_TOKEN");
+  }
+
+  return accessToken;
 }
 
 function readStringOption(...values) {
@@ -152,6 +440,79 @@ function readStringOption(...values) {
   }
 
   return "";
+}
+
+function readOptionalTrimmedValue(value) {
+  const normalized = typeof value === "string" ? value.trim() : "";
+  return normalized.length > 0 ? normalized : null;
+}
+
+function requireOptionValue(value, field) {
+  const normalized = readOptionalTrimmedValue(value);
+
+  if (!normalized) {
+    fail(`参数 --${field} 不能为空`);
+  }
+
+  return normalized;
+}
+
+function requirePositional(value, field) {
+  const normalized = typeof value === "string" ? value.trim() : "";
+
+  if (!normalized) {
+    fail(`缺少位置参数：${field}`);
+  }
+
+  return normalized;
+}
+
+function requireOptionPositional(argv, optionName, field) {
+  const index = argv.findIndex((token) => token === optionName || token.startsWith(`${optionName}=`));
+
+  if (index < 0) {
+    fail(`缺少必要参数：${optionName}`);
+  }
+
+  const token = argv[index];
+
+  if (token.includes("=")) {
+    return requirePositional(token.split("=", 2)[1], field);
+  }
+
+  return requirePositional(argv[index + 1], field);
+}
+
+function stripConsumedOption(argv, optionName) {
+  const index = argv.findIndex((token) => token === optionName || token.startsWith(`${optionName}=`));
+
+  if (index < 0) {
+    return argv;
+  }
+
+  const token = argv[index];
+
+  if (token.includes("=")) {
+    return argv.filter((_, currentIndex) => currentIndex !== index);
+  }
+
+  return argv.filter((_, currentIndex) => currentIndex !== index && currentIndex !== index + 1);
+}
+
+function appendTrailingSlash(value) {
+  return value.endsWith("/") ? value : `${value}/`;
+}
+
+function tryParseJson(input) {
+  if (!input) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(input);
+  } catch {
+    return null;
+  }
 }
 
 function parsePort(input) {
@@ -187,6 +548,7 @@ function printHelp(exitCode) {
 codingns 用法：
 
   codingns start [--host 0.0.0.0] [--port 3002] [--data-dir ~/.codingns] [--demo]
+  codingns assistant <group> <action> [options]
 
 说明：
 
@@ -195,6 +557,13 @@ codingns 用法：
   --data-dir  数据目录，默认 ~/.codingns
   --demo      以演示模式启动（自动创建 demo 账户、15 分钟会话超时、开放 CORS）
   --help      显示帮助
+
+assistant 例子：
+
+  codingns assistant capabilities list --token <token>
+  codingns assistant projects list --status active --token <token>
+  codingns assistant sessions send <sessionId> --message "继续修复类型错误" --token <token>
+  codingns assistant terminals send <terminalId> --input "npm test\\n" --token <token>
 `.trim();
 
   if (exitCode === 0) {
@@ -204,6 +573,224 @@ codingns 用法：
   }
 
   process.exit(exitCode);
+}
+
+function printAssistantHelpTopic(topic, exitCode) {
+  const output = getAssistantHelpText(topic);
+
+  if (exitCode === 0) {
+    console.log(output);
+  } else {
+    console.error(output);
+  }
+
+  process.exit(exitCode);
+}
+
+function getAssistantHelpText(topic) {
+  switch (topic) {
+    case "capabilities":
+    case "capabilities.list":
+      return `
+codingns assistant capabilities
+
+用途：
+  查看当前 Host 开放了哪些助手能力，以及版本和限制。
+
+用法：
+  codingns assistant capabilities list [--base-url http://127.0.0.1:3002] --token <token>
+`.trim();
+    case "projects":
+      return `
+codingns assistant projects
+
+可用动作：
+  list    列出托管项目
+  get     读取单个项目详情
+
+示例：
+  codingns assistant projects list --status active --token <token>
+  codingns assistant projects get <projectId> --token <token>
+`.trim();
+    case "projects.list":
+      return `
+codingns assistant projects list
+
+用途：
+  按工作区、生命周期、风险等级筛选托管项目。
+
+用法：
+  codingns assistant projects list [--workspace-id <id>] [--status active|paused|archived] [--risk-level low|medium|high] --token <token>
+`.trim();
+    case "projects.get":
+      return `
+codingns assistant projects get
+
+用途：
+  读取项目详情、概况，以及该项目下可操作会话。
+
+用法：
+  codingns assistant projects get <projectId> --token <token>
+`.trim();
+    case "sessions":
+      return `
+codingns assistant sessions
+
+可用动作：
+  list      列出指定项目下的会话
+  get       读取会话详情
+  messages  读取消息窗口
+  runtime   读取运行态
+  send      向真实项目会话发送消息
+  fork      从会话或消息点 fork 新会话
+
+示例：
+  codingns assistant sessions list --project <projectId> --token <token>
+  codingns assistant sessions send <sessionId> --message "继续修复" --token <token>
+`.trim();
+    case "sessions.list":
+      return `
+codingns assistant sessions list
+
+用途：
+  列出指定项目下当前可操作的真实会话。
+
+用法：
+  codingns assistant sessions list --project <projectId> --token <token>
+`.trim();
+    case "sessions.get":
+      return `
+codingns assistant sessions get
+
+用途：
+  读取会话详情，包括当前状态和可继续操作的引用。
+
+用法：
+  codingns assistant sessions get <sessionId> --token <token>
+`.trim();
+    case "sessions.messages":
+      return `
+codingns assistant sessions messages
+
+用途：
+  分页读取某个会话的消息窗口。
+
+用法：
+  codingns assistant sessions messages <sessionId> [--cursor <cursor>] [--limit 40] [--direction forward|backward] --token <token>
+`.trim();
+    case "sessions.runtime":
+      return `
+codingns assistant sessions runtime
+
+用途：
+  读取会话当前运行态，用来判断能否继续发送或是否还在执行。
+
+用法：
+  codingns assistant sessions runtime <sessionId> --token <token>
+`.trim();
+    case "sessions.send":
+      return `
+codingns assistant sessions send
+
+用途：
+  向真实项目会话发送消息，推进开发，但不直接改本地代码。
+
+用法：
+  codingns assistant sessions send <sessionId> --message "..." [--client-request-id <id>] [--model <model>] [--reasoning-level <level>] [--permission-mode <mode>] --token <token>
+`.trim();
+    case "sessions.fork":
+      return `
+codingns assistant sessions fork
+
+用途：
+  从现有会话或消息点 fork 一个新分支会话。
+
+用法：
+  codingns assistant sessions fork <sessionId> [--source-type session|message] [--message-id <id>] [--strategy auto|native-only|reconstruct-only] [--target-provider <provider>] --token <token>
+`.trim();
+    case "terminals":
+      return `
+codingns assistant terminals
+
+可用动作：
+  list     列出项目或工作区下的终端
+  history  读取终端历史输出
+  send     向受控终端发送输入
+
+示例：
+  codingns assistant terminals list --project-id <projectId> --token <token>
+  codingns assistant terminals send <terminalId> --input "npm test\\n" --token <token>
+`.trim();
+    case "terminals.list":
+      return `
+codingns assistant terminals list
+
+用途：
+  列出指定项目或工作区下的受控终端。
+
+用法：
+  codingns assistant terminals list [--workspace-id <id> | --project-id <id>] --token <token>
+`.trim();
+    case "terminals.history":
+      return `
+codingns assistant terminals history
+
+用途：
+  分页读取终端历史输出。
+
+用法：
+  codingns assistant terminals history <terminalId> [--before-seq <n>] [--limit 20] --token <token>
+`.trim();
+    case "terminals.send":
+      return `
+codingns assistant terminals send
+
+用途：
+  向受控终端发送输入，比如测试命令或构建命令。
+
+用法：
+  codingns assistant terminals send <terminalId> --input "npm test\\n" --token <token>
+`.trim();
+    default:
+      return `
+codingns assistant 用法：
+
+  codingns assistant help [capabilities|projects|sessions|terminals] [action]
+  codingns assistant capabilities list [--base-url http://127.0.0.1:3002] --token <token>
+  codingns assistant projects list [--workspace-id <id>] [--status active|paused|archived] [--risk-level low|medium|high] --token <token>
+  codingns assistant projects get <projectId> [--base-url ...] --token <token>
+  codingns assistant sessions list --project <projectId> [--base-url ...] --token <token>
+  codingns assistant sessions get <sessionId> [--base-url ...] --token <token>
+  codingns assistant sessions messages <sessionId> [--cursor <cursor>] [--limit 40] [--direction forward|backward] --token <token>
+  codingns assistant sessions runtime <sessionId> [--base-url ...] --token <token>
+  codingns assistant sessions send <sessionId> --message "..." [--client-request-id <id>] [--model <model>] [--reasoning-level <level>] [--permission-mode <mode>] --token <token>
+  codingns assistant sessions fork <sessionId> [--source-type session|message] [--message-id <id>] [--strategy auto|native-only|reconstruct-only] [--target-provider <provider>] --token <token>
+  codingns assistant terminals list [--workspace-id <id> | --project-id <id>] --token <token>
+  codingns assistant terminals history <terminalId> [--before-seq <n>] [--limit 20] --token <token>
+  codingns assistant terminals send <terminalId> --input "npm test\\n" --token <token>
+
+环境变量：
+
+  CODINGNS_BASE_URL      默认 Host 地址，未传时默认 http://127.0.0.1:3002
+  CODINGNS_ACCESS_TOKEN  默认 Bearer token
+`.trim();
+  }
+}
+
+function buildAssistantHelpTopic(action, rest) {
+  if (!action || action === "--help" || action === "-h") {
+    return "assistant";
+  }
+
+  if (rest.length === 0) {
+    return action;
+  }
+
+  return `${action}.${rest[0]}`;
+}
+
+function isHelpToken(value) {
+  return value === "help" || value === "--help" || value === "-h";
 }
 
 function fail(message) {
