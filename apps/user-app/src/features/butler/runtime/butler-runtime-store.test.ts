@@ -1,5 +1,31 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const realtimeMock = vi.hoisted(() => {
+  const instances: Array<{
+    options: Record<string, unknown>;
+    updateCursor: ReturnType<typeof vi.fn>;
+    close: ReturnType<typeof vi.fn>;
+    start: ReturnType<typeof vi.fn>;
+  }> = [];
+
+  class MockRealtimeClient {
+    public readonly options: Record<string, unknown>;
+    public readonly updateCursor = vi.fn();
+    public readonly close = vi.fn();
+    public readonly start = vi.fn();
+
+    constructor(options: Record<string, unknown>) {
+      this.options = options;
+      instances.push(this);
+    }
+  }
+
+  return {
+    instances,
+    MockRealtimeClient
+  };
+});
+
 vi.mock("../api/butler-api", () => ({
   getButlerProfile: vi.fn(),
   initButlerProfile: vi.fn(),
@@ -16,6 +42,10 @@ vi.mock("../../conversation/api/conversation-api", () => ({
   getProviderCapabilities: vi.fn(),
   getSessionMessages: vi.fn(),
   getSessionRuntime: vi.fn()
+}));
+
+vi.mock("../../../network/realtime-client", () => ({
+  RealtimeClient: realtimeMock.MockRealtimeClient
 }));
 
 import { ButlerRuntimeStore } from "./butler-runtime-store";
@@ -48,6 +78,7 @@ const mockedGetSessionRuntime = vi.mocked(getSessionRuntime);
 describe("ButlerRuntimeStore", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    realtimeMock.instances.length = 0;
 
     mockedGetButlerProfile.mockResolvedValue({
       initialized: true,
@@ -201,6 +232,94 @@ describe("ButlerRuntimeStore", () => {
         content: "继续消息"
       })
     );
+  });
+
+  it("控制会话收到实时助手消息时会立刻更新消息列表", async () => {
+    const store = new ButlerRuntimeStore("workspace-1");
+    mockedGetCurrentButlerControlSession
+      .mockResolvedValueOnce({ controlSession: null })
+      .mockResolvedValueOnce({
+        controlSession: {
+          id: "ctrl-start",
+          providerId: "codex",
+          sessionId: "session-control-1",
+          status: "running",
+          lastContextVersion: null,
+          lastSummary: "首次消息",
+          createdAt: "2026-04-05T00:00:00.000Z",
+          updatedAt: "2026-04-05T00:00:00.000Z",
+          session: {
+            sessionId: "session-control-1",
+            workspaceId: "workspace-1",
+            provider: "codex",
+            providerSessionId: "provider-control-1",
+            rawStoreRef: "raw-control-1",
+            title: "控制会话",
+            messageCount: 1,
+            lastMessageAt: "2026-04-05T00:00:01.000Z",
+            createdAt: "2026-04-05T00:00:00.000Z",
+            updatedAt: "2026-04-05T00:00:01.000Z",
+            syncStatus: "idle",
+            syncCursor: null,
+            lastSyncAt: null,
+            lastErrorCode: null,
+            lastErrorDetail: null,
+            resumedAt: null,
+            runningState: "running",
+            activitySource: "runtime",
+            lastEventAt: "2026-04-05T00:00:01.000Z",
+            completedAt: null,
+            lastSeenAt: null,
+            activityState: "idle"
+          }
+        }
+      } as never);
+    mockedGetSessionMessages.mockResolvedValueOnce({
+      messages: [
+        {
+          messageId: "msg-user-1",
+          provider: "codex",
+          providerSessionId: "provider-control-1",
+          role: "user",
+          kind: "text",
+          content: "首次消息",
+          timestamp: "2026-04-05T00:00:01.000Z",
+          sequence: 1,
+          rawRef: "raw-user-1"
+        }
+      ],
+      cursor: "cursor-1",
+      nextCursor: null,
+      total: 1
+    } as never);
+
+    await store.initialize();
+    await store.sendMessage("首次消息");
+
+    const realtime = realtimeMock.instances[0];
+    expect(realtime).toBeDefined();
+
+    (realtime?.options.onRuntimeMessage as ((payload: Record<string, unknown>) => void))({
+      type: "session.runtime_message",
+      sessionId: "session-control-1",
+      source: "runtime",
+      message: {
+        messageId: "msg-assistant-1",
+        provider: "codex",
+        providerSessionId: "provider-control-1",
+        role: "assistant",
+        kind: "text",
+        content: "这是实时回复",
+        timestamp: "2026-04-05T00:00:02.000Z",
+        sequence: 2,
+        rawRef: "raw-assistant-1"
+      }
+    });
+
+    expect(store.getState().messages.map((message) => message.content)).toEqual([
+      "首次消息",
+      "这是实时回复"
+    ]);
   });
 
   it("新建会话时只清空当前状态，不自动发送首条消息", async () => {

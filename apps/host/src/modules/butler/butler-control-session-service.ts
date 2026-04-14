@@ -379,6 +379,9 @@ function composeInstructionContent(
 ## 代码助手运行附加说明（系统自动生成）
 
 - 当前工作目录是代码助手专用目录，只使用这里的助手规则，不回退到普通项目会话规则。
+- 你是代码助手控制面，不是项目实现者。默认职责只有：查看、分析、归纳、补查信息、安排下一步、把指令发送给真实项目会话或终端。
+- 禁止直接改业务项目代码、禁止直接生成补丁并落盘、禁止自己在项目目录里写实现。用户要推进开发时，只能通过内部 API 续接/新建项目会话、发送消息、查询结果，或者操作受控终端。
+- 如果用户要求“修改代码”“继续实现”“修 bug”，先定位目标项目和目标会话；没有会话就先新建/续接项目会话，再把任务发给那个会话继续做，不要自己在 Butler 工作目录里动手。
 - 当前聚合后的平台摘要写在 \`BUTLER_CONTEXT.md\`，先看这里，不要把所有项目原始记录一股脑塞进回答。
 - 当前摘要作用域是：${promptContext.scope === "project" ? `项目 ${promptContext.projectId}` : "全局总览"}。
 - 如果你在跟进开发会话，且目标或上下文里提到了 spec，只能围绕 spec 明确写出的必做项推进，不能顺着建议项无限扩展开发范围。
@@ -414,6 +417,13 @@ function buildApiGuideContent(auth: ButlerWorkspaceCredential, authFilePath: str
 6. 用户追问某个会话内容时，先拿到 \`sessionId\`，再补查 \`GET /api/sessions/:sessionId/messages?direction=backward&limit=40\`。
 7. 仍然不够时，再按既有 butler 细节接口查询项目、会话、记忆、巡视、验证对象。
 
+## 执行边界
+
+- 你不能直接修改项目代码，也不能把自己当成项目执行会话。
+- 需要推进开发时，只能通过下面的项目会话接口或终端接口操作。
+- 需要命令结果时，优先查终端历史；确实要执行命令，再向受控终端发送输入。
+- 需要分叉会话时，统一走 \`POST /api/sessions/:sessionId/forks\`，不要自己伪造一条“新上下文”继续编。
+
 ## 调用示例
 
 \`\`\`bash
@@ -430,11 +440,17 @@ curl -H "Authorization: Bearer ${"$"}TOKEN" "${"$"}BASE_URL/api/butler/overview"
 - \`GET /api/butler/search?q=...\`：Butler 摘要优先检索入口，先按项目、会话、记忆、巡视、验证摘要做命中。
 - \`GET /api/butler/search?q=...&includeArchived=true\`：当用户明确要查历史会话或归档会话时，扩展到归档摘要。
 - \`GET /api/butler/projects/:projectId/context\`：单项目聚合上下文，用于回答项目级追问。
-- \`GET /api/butler/projects/:projectId/sessions\`：项目会话列表。
-- \`GET /api/butler/projects/:projectId/memories\`：项目记忆摘要列表。
-- \`GET /api/butler/projects/:projectId/patrol-runs\`：项目巡视记录列表。
-- \`GET /api/butler/projects/:projectId/verifications\`：项目验证记录列表。
+- \`GET /api/butler/projects/:projectId/sessions\`：项目会话列表，可先拿到可续接的 \`sessionId\`。
+- \`POST /api/butler/projects/:projectId/sessions/start\`：给指定项目新建一个执行会话。
+- \`POST /api/butler/projects/:projectId/sessions/:butlerSessionId/resume\`：续接指定项目会话。
+- \`GET /api/sessions/:sessionId\`：读取真实会话详情和运行状态摘要。
 - \`GET /api/sessions/:sessionId/messages?direction=backward&limit=40\`：读取某个真实会话最近几十条消息。
+- \`GET /api/sessions/:sessionId/runtime\`：读取实时运行状态，判断是否还在跑。
+- \`POST /api/sessions/:sessionId/messages/live\`：向指定真实会话发送一条实时消息，并拿到 accepted 响应。
+- \`POST /api/sessions/:sessionId/forks\`：从指定会话或消息点创建 fork 会话。
+- \`GET /api/terminals\`：列出当前终端实例，查看它们属于哪个工作区、是否在运行。
+- \`GET /api/terminals/:terminalId/history\`：读取终端输出历史，先看结果再决定要不要继续发命令。
+- \`POST /api/terminals/:terminalId/input\`：向指定终端写入输入内容，用于执行命令。
 `;
 }
 

@@ -1,5 +1,13 @@
 import { useEffect, useState } from "react";
 
+import type {
+  SessionActivityEvent,
+  SessionInterruptedEvent,
+  SessionRuntimeErrorEvent,
+  SessionRuntimeMessageEvent,
+  SessionRuntimeStatusEvent
+} from "../../../network/realtime-client";
+import { RealtimeClient } from "../../../network/realtime-client";
 import { t } from "../../../shared/i18n";
 import type {
   ContextUsageDto,
@@ -60,6 +68,8 @@ const BUTLER_MESSAGE_PAGE_SIZE = 60;
 export class ButlerRuntimeStore {
   private state: ButlerRuntimeState;
   private listeners = new Set<ButlerRuntimeListener>();
+  private realtimeClient: RealtimeClient | null = null;
+  private realtimeSessionId: string | null = null;
 
   constructor(private readonly workspaceId: string) {
     this.state = {
@@ -362,6 +372,7 @@ export class ButlerRuntimeStore {
       return;
     }
 
+    this.teardownRealtime();
     this.patch({
       sending: false,
       error: null,
@@ -430,6 +441,7 @@ export class ButlerRuntimeStore {
       const controlSession = response.controlSession;
 
       if (!controlSession) {
+        this.teardownRealtime();
         this.patch({
           controlSession: null,
           messages: [],
@@ -448,6 +460,7 @@ export class ButlerRuntimeStore {
       const viewMessages = historyPage.messages.map((message) =>
         toViewMessage(controlSession.session.sessionId, message)
       );
+      this.ensureRealtimeSubscription(controlSession.session.sessionId, historyPage.cursor);
 
       this.patch({
         controlSession,
@@ -517,6 +530,146 @@ export class ButlerRuntimeStore {
       listener();
     }
   }
+
+  private ensureRealtimeSubscription(sessionId: string, cursor: string | null): void {
+    if (this.realtimeClient && this.realtimeSessionId === sessionId) {
+      this.realtimeClient.updateCursor(cursor);
+      return;
+    }
+
+    this.teardownRealtime();
+    this.realtimeSessionId = sessionId;
+    this.realtimeClient = new RealtimeClient({
+      sessionId,
+      cursor,
+      limit: BUTLER_MESSAGE_PAGE_SIZE,
+      onConnectionChange: () => undefined,
+      onSubscribed: () => undefined,
+      onEnvelope: (event) => {
+        this.handleRealtimeMessages(event.sessionId, event.messages);
+      },
+      onOlderHistory: (event) => {
+        this.handleRealtimeMessages(event.sessionId, event.messages);
+      },
+      onRuntimeMessage: (event) => {
+        this.handleRealtimeRuntimeMessage(event);
+      },
+      onActivity: (event) => {
+        this.handleRealtimeActivity(event);
+      },
+      onRuntimeStatus: (event) => {
+        this.handleRealtimeStatus(event);
+      },
+      onRuntimeError: (event) => {
+        this.handleRealtimeRuntimeError(event);
+      },
+      onInterrupted: (event) => {
+        this.handleRealtimeInterrupted(event);
+      },
+      onPermissionRequest: () => undefined,
+      onPermissionRequestResolved: () => undefined,
+      onError: (event) => {
+        if (!this.isActiveControlSession(event.sessionId ?? null)) {
+          return;
+        }
+
+        this.patch({
+          error: event.detail
+        });
+      },
+      onUnauthorized: () => {
+        this.patch({
+          error: t("common.unauthorized")
+        });
+      }
+    });
+    this.realtimeClient.start();
+  }
+
+  private teardownRealtime(): void {
+    this.realtimeClient?.close();
+    this.realtimeClient = null;
+    this.realtimeSessionId = null;
+  }
+
+  private handleRealtimeMessages(
+    sessionId: string,
+    incoming: Parameters<typeof toViewMessage>[1][]
+  ): void {
+    if (!this.isActiveControlSession(sessionId)) {
+      return;
+    }
+
+    this.patch({
+      messages: mergeButlerMessages(this.state.messages, sessionId, incoming),
+      historyState: "ready"
+    });
+  }
+
+  private handleRealtimeRuntimeMessage(event: SessionRuntimeMessageEvent): void {
+    this.handleRealtimeMessages(event.sessionId, [event.message]);
+  }
+
+  private handleRealtimeActivity(event: SessionActivityEvent): void {
+    if (!this.isActiveControlSession(event.sessionId)) {
+      return;
+    }
+
+    this.patch({
+      runtimeHasActiveRun: event.hasActiveRun,
+      runtimeCanInterrupt: event.canInterrupt
+    });
+
+    if (!event.hasActiveRun) {
+      void this.reloadControlSession();
+    }
+  }
+
+  private handleRealtimeStatus(event: SessionRuntimeStatusEvent): void {
+    if (!this.isActiveControlSession(event.sessionId)) {
+      return;
+    }
+
+    this.patch({
+      runtimeHasActiveRun: event.status === "starting" || event.status === "running",
+      runtimeCanInterrupt: event.status === "starting" || event.status === "running"
+        ? true
+        : this.state.runtimeCanInterrupt
+    });
+
+    if (event.status === "completed" || event.status === "failed" || event.status === "interrupted") {
+      void this.reloadControlSession();
+    }
+  }
+
+  private handleRealtimeRuntimeError(event: SessionRuntimeErrorEvent): void {
+    if (!this.isActiveControlSession(event.sessionId)) {
+      return;
+    }
+
+    this.patch({
+      error: event.detail,
+      runtimeHasActiveRun: false
+    });
+    void this.reloadControlSession();
+  }
+
+  private handleRealtimeInterrupted(event: SessionInterruptedEvent): void {
+    if (!this.isActiveControlSession(event.sessionId)) {
+      return;
+    }
+
+    this.patch({
+      runtimeHasActiveRun: false,
+      runtimeCanInterrupt: false,
+      error: event.detail
+    });
+    void this.reloadControlSession();
+  }
+
+  private isActiveControlSession(sessionId: string | null): boolean {
+    return Boolean(sessionId && this.state.controlSession?.session.sessionId === sessionId);
+  }
 }
 
 export function useButlerRuntimeStore<T>(
@@ -565,6 +718,35 @@ function createButlerFallbackCapabilities(provider: ButlerProviderId): ProviderC
     defaultReasoningLevel: null,
     limitations: []
   };
+}
+
+function mergeButlerMessages(
+  current: SessionMessageViewModel[],
+  sessionId: string,
+  incoming: Parameters<typeof toViewMessage>[1][]
+): SessionMessageViewModel[] {
+  const merged = new Map<string, SessionMessageViewModel>();
+
+  for (const message of current) {
+    merged.set(resolveButlerMessageKey(message), message);
+  }
+
+  for (const message of incoming) {
+    const view = toViewMessage(sessionId, message);
+    merged.set(resolveButlerMessageKey(view), view);
+  }
+
+  return [...merged.values()].sort((left, right) => {
+    if (left.sequence !== right.sequence) {
+      return left.sequence - right.sequence;
+    }
+
+    return left.timestamp.localeCompare(right.timestamp);
+  });
+}
+
+function resolveButlerMessageKey(message: Pick<SessionMessageViewModel, "id" | "rawRef">): string {
+  return message.id || message.rawRef;
 }
 
 function toErrorMessage(error: unknown): string {
