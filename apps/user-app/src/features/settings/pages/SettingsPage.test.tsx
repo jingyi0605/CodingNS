@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clientConfigStore } from "../../../config/client-config-store";
 import {
   NOTIFICATION_PREFERENCES_STORAGE_KEY,
+  SESSION_DISPLAY_SORT_MODE_STORAGE_KEY,
   SHOW_SYSTEM_FILES_STORAGE_KEY,
   localUiPreferenceStore
 } from "../../../preferences/local-ui-preference-store";
@@ -23,6 +24,7 @@ const originalFetch = global.fetch;
 describe("SettingsPage", () => {
   beforeEach(() => {
     window.localStorage.clear();
+    localUiPreferenceStore.setSessionDisplaySortMode("createdAt");
     localUiPreferenceStore.setShowSystemFiles(false);
     localUiPreferenceStore.setNotificationPreferences({
       notifyOnPermissionRequest: true,
@@ -270,6 +272,27 @@ describe("SettingsPage", () => {
     expect(checkbox).not.toBeChecked();
     expect(localUiPreferenceStore.getState().showSystemFiles).toBe(false);
     expect(window.localStorage.getItem(SHOW_SYSTEM_FILES_STORAGE_KEY)).toBeNull();
+  });
+
+  it("会把工作区会话排序方式写入本地 localStorage", async () => {
+    renderSettingsPage();
+
+    const select = screen.getByRole("combobox", { name: t("settings.workspaceSessionSortMode") });
+
+    expect(select).toHaveValue("createdAt");
+    expect(window.localStorage.getItem(SESSION_DISPLAY_SORT_MODE_STORAGE_KEY)).toBeNull();
+
+    await userEvent.selectOptions(select, "updatedAt");
+
+    expect(select).toHaveValue("updatedAt");
+    expect(localUiPreferenceStore.getState().sessionDisplaySortMode).toBe("updatedAt");
+    expect(window.localStorage.getItem(SESSION_DISPLAY_SORT_MODE_STORAGE_KEY)).toBe("updatedAt");
+
+    await userEvent.selectOptions(select, "createdAt");
+
+    expect(select).toHaveValue("createdAt");
+    expect(localUiPreferenceStore.getState().sessionDisplaySortMode).toBe("createdAt");
+    expect(window.localStorage.getItem(SESSION_DISPLAY_SORT_MODE_STORAGE_KEY)).toBeNull();
   });
 
   it("会把会话通知行为开关写入本地 localStorage", async () => {

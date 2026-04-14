@@ -15,6 +15,7 @@ import {
   localUiPreferenceStore,
   useLocalUiPreferenceSelector
 } from "../../../preferences/local-ui-preference-store";
+import type { SessionDisplaySortMode } from "../../../preferences/local-ui-preference-store";
 import { useUserPreferenceSelector, userPreferenceStore } from "../../../preferences/user-preference-store";
 import { LanguageSwitcher, t } from "../../../shared/i18n";
 import { THEMES, getThemeLabel, useTheme, type ThemeId } from "../../../shared/theme";
@@ -40,6 +41,7 @@ interface SettingsPageModel {
     language: AppLanguage;
     defaultPermissionMode: ClientPermissionMode;
   };
+  readonly sessionDisplaySortMode: SessionDisplaySortMode;
   readonly showSystemFiles: boolean;
   readonly notifyOnPermissionRequest: boolean;
   readonly notifyOnSessionCompleted: boolean;
@@ -53,12 +55,17 @@ interface SettingsPageModel {
     value: ClientPermissionMode;
     label: string;
   }>;
+  readonly sessionDisplaySortModeOptions: Array<{
+    value: SessionDisplaySortMode;
+    label: string;
+  }>;
   readonly handleHostBaseUrlSubmit: (event: FormEvent<HTMLFormElement>) => void;
   readonly handleLogout: () => void;
   readonly updateReleaseChannel: (value: string) => void;
   readonly updateAutoReconnect: (enabled: boolean) => void;
   readonly updateAutoCheckUpdate: (enabled: boolean) => void;
   readonly updateDefaultPermissionMode: (value: string) => void;
+  readonly updateSessionDisplaySortMode: (value: string) => void;
   readonly updateShowSystemFiles: (enabled: boolean) => void;
   readonly updateNotifyOnPermissionRequest: (enabled: boolean) => void;
   readonly updateNotifyOnSessionCompleted: (enabled: boolean) => void;
@@ -109,6 +116,7 @@ function useSettingsPageModel(): SettingsPageModel {
   const preferencePermissionMode = useUserPreferenceSelector(
     (state) => state.profile.defaultPermissionMode
   );
+  const sessionDisplaySortMode = useLocalUiPreferenceSelector((state) => state.sessionDisplaySortMode);
   const showSystemFiles = useLocalUiPreferenceSelector((state) => state.showSystemFiles);
   const notifyOnPermissionRequest = useLocalUiPreferenceSelector(
     (state) => state.notificationPreferences.notifyOnPermissionRequest
@@ -184,6 +192,24 @@ function useSettingsPageModel(): SettingsPageModel {
     }
   ];
 
+  const sessionDisplaySortModeOptions: Array<{
+    value: SessionDisplaySortMode;
+    label: string;
+  }> = [
+    {
+      value: "createdAt",
+      label: t("settings.sessionSortModeCreatedAt")
+    },
+    {
+      value: "updatedAt",
+      label: t("settings.sessionSortModeUpdatedAt")
+    },
+    {
+      value: "title",
+      label: t("settings.sessionSortModeTitle")
+    }
+  ];
+
   function updateReleaseChannel(value: string): void {
     void clientConfigStore.update({
       releaseChannel: value === "beta" ? "beta" : "stable"
@@ -206,6 +232,12 @@ function useSettingsPageModel(): SettingsPageModel {
     const normalized =
       value === "acceptEdits" || value === "bypassPermissions" ? value : "default";
     void userPreferenceStore.updateProfile({ defaultPermissionMode: normalized }).catch(() => {});
+  }
+
+  function updateSessionDisplaySortMode(value: string): void {
+    const normalized: SessionDisplaySortMode =
+      value === "updatedAt" || value === "title" ? value : "createdAt";
+    localUiPreferenceStore.setSessionDisplaySortMode(normalized);
   }
 
   function updateShowSystemFiles(enabled: boolean): void {
@@ -236,6 +268,7 @@ function useSettingsPageModel(): SettingsPageModel {
     applyTheme,
     runtimeConfig,
     accountPreferences,
+    sessionDisplaySortMode,
     showSystemFiles,
     notifyOnPermissionRequest,
     notifyOnSessionCompleted,
@@ -246,12 +279,14 @@ function useSettingsPageModel(): SettingsPageModel {
     setHostBaseUrlDraft,
     canSaveHostBaseUrl,
     permissionModeOptions,
+    sessionDisplaySortModeOptions,
     handleHostBaseUrlSubmit,
     handleLogout,
     updateReleaseChannel,
     updateAutoReconnect,
     updateAutoCheckUpdate,
     updateDefaultPermissionMode,
+    updateSessionDisplaySortMode,
     updateShowSystemFiles,
     updateNotifyOnPermissionRequest,
     updateNotifyOnSessionCompleted,
@@ -277,6 +312,7 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
     applyTheme,
     runtimeConfig,
     accountPreferences,
+    sessionDisplaySortMode,
     showSystemFiles,
     notifyOnPermissionRequest,
     notifyOnSessionCompleted,
@@ -286,6 +322,7 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
     setHostBaseUrlDraft,
     canSaveHostBaseUrl,
     permissionModeOptions,
+    sessionDisplaySortModeOptions,
     platform,
     handleHostBaseUrlSubmit,
     handleLogout,
@@ -293,6 +330,7 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
     updateAutoReconnect,
     updateAutoCheckUpdate,
     updateDefaultPermissionMode,
+    updateSessionDisplaySortMode,
     updateShowSystemFiles,
     updateNotifyOnPermissionRequest,
     updateNotifyOnSessionCompleted,
@@ -337,6 +375,29 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
                     </button>
                   ))}
                 </div>
+              </div>
+            </div>
+
+            <div className="settings-row">
+              <div className="settings-row-label">
+                <span className="settings-row-title">{t("settings.workspaceSessionSortMode")}</span>
+                <span className="settings-row-description">
+                  {t("settings.workspaceSessionSortModeDescription")}
+                </span>
+              </div>
+              <div className="settings-row-control">
+                <select
+                  aria-label={t("settings.workspaceSessionSortMode")}
+                  className="settings-select"
+                  value={sessionDisplaySortMode}
+                  onChange={(event) => updateSessionDisplaySortMode(event.target.value)}
+                >
+                  {sessionDisplaySortModeOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
 
@@ -760,8 +821,29 @@ function MobileAppearanceSection({ model }: { model: SettingsPageModel }) {
 
       <section className="settings-mobile-group-section">
         <h2 className="settings-mobile-group-title">{t("settings.fileManager")}</h2>
-        <p className="settings-mobile-group-note">{t("settings.showSystemFilesDescription")}</p>
+        <p className="settings-mobile-group-note">{t("settings.workspaceSessionSortModeDescription")}</p>
         <div className="settings-mobile-card">
+          <div className="settings-mobile-form-row">
+            <div className="settings-mobile-row-copy">
+              <span className="settings-mobile-row-title">{t("settings.workspaceSessionSortMode")}</span>
+              <span className="settings-mobile-row-description">
+                {t("settings.workspaceSessionSortModeDescription")}
+              </span>
+            </div>
+            <select
+              aria-label={t("settings.workspaceSessionSortMode")}
+              className="settings-select settings-mobile-select"
+              value={model.sessionDisplaySortMode}
+              onChange={(event) => model.updateSessionDisplaySortMode(event.target.value)}
+            >
+              {model.sessionDisplaySortModeOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
           <div className="settings-mobile-form-row">
             <div className="settings-mobile-row-copy">
               <span className="settings-mobile-row-title">{t("settings.showSystemFiles")}</span>

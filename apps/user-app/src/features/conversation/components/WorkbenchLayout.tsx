@@ -53,7 +53,10 @@ import {
   openProcessesExternalWindow
 } from "../../../platform/desktop/window-openers";
 import { usePlatform } from "../../../platform/platform-provider";
-import { useLocalUiPreferenceSelector } from "../../../preferences/local-ui-preference-store";
+import {
+  useLocalUiPreferenceSelector,
+  type SessionDisplaySortMode
+} from "../../../preferences/local-ui-preference-store";
 import { readViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import { logPerfDebug } from "../../../shared/debug/perf-debug";
 import { t } from "../../../shared/i18n";
@@ -129,10 +132,21 @@ import {
   type SessionTreeNode
 } from "../../workbench/utils/session-tree";
 import {
+  compareSessionSummaryByDisplayMode,
+  sortSessionSummaryList,
+  sortWorkbenchWorktreeNodes
+} from "../../workbench/utils/session-display-sort";
+import {
   buildWorkspaceCompositionChartItems,
   createWorkspaceCompositionChartStyle,
   formatWorkspaceCompositionRatio
 } from "../../workbench/utils/workspace-composition-chart";
+import {
+  mapWorkbenchSnapshotToNavigationGroups,
+  readWorkbenchNavigationSnapshot,
+  WORKBENCH_NAVIGATION_CACHE_MAX_AGE_MS,
+  writeWorkbenchNavigationSnapshot
+} from "../../workbench/utils/workbench-navigation-snapshot";
 import {
   buildWorkspaceVisualContextMap,
   createWorkspaceToneStyle,
@@ -163,7 +177,6 @@ const LEFT_PANEL_COLLAPSED_KEY = "workbench.left.collapsed";
 const RIGHT_PANEL_COLLAPSED_KEY = "workbench.right.collapsed";
 const LAST_SESSION_PATH_KEY = "workbench.last.session.path";
 const SELECTED_WORKSPACE_ID_KEY = "workbench.workspace.selected.id";
-const WORKBENCH_NAVIGATION_SNAPSHOT_KEY = "workbench.navigation.snapshot";
 const WORKBENCH_NOTIFICATION_SEEN_AT_KEY = "workbench.notifications.seen_at";
 const DEFAULT_LEFT_PANEL_WIDTH = 280;
 const DEFAULT_RIGHT_PANEL_WIDTH = 320;
@@ -176,7 +189,6 @@ const ROOT_SESSION_PAGE_SIZE = 40;
 const SUBAGENT_PAGE_SIZE = 5;
 const WORKBENCH_NOTIFICATION_POLL_INTERVAL_MS = 30_000;
 const WORKBENCH_NOTIFICATION_MAX_ITEMS = 12;
-const WORKBENCH_NAVIGATION_CACHE_MAX_AGE_MS = 30 * 60 * 1000;
 const WORKSPACE_MANAGEMENT_SNAPSHOT_CACHE_MAX_AGE_MS = 60 * 1000;
 const WORKBENCH_PERMISSION_POLL_INTERVAL_MS = 4_000;
 const SESSION_FAILURE_NOTIFICATION_DETAIL_MAX_LENGTH = 220;
@@ -789,10 +801,6 @@ type SearchMode = "sessions" | "code";
 
 const WorkbenchShellContext = createContext<WorkbenchShellContextValue | null>(null);
 
-function sortSessions(left: SessionSummaryDto, right: SessionSummaryDto) {
-  return (right.lastMessageAt ?? right.updatedAt).localeCompare(left.lastMessageAt ?? left.updatedAt);
-}
-
 function isSubagentSession(session: SessionSummaryDto) {
   return isRealSubagentSession(session);
 }
@@ -805,11 +813,15 @@ function resolveParentSessionId(session: SessionSummaryDto) {
   return session.parentSessionId?.trim() || null;
 }
 
-function buildSessionTree(sessions: SessionSummaryDto[]) {
+function buildSessionTree(
+  sessions: SessionSummaryDto[],
+  sessionDisplaySortMode: SessionDisplaySortMode
+) {
   return buildRecursiveSessionTree(sessions, {
     getId: (session) => session.sessionId,
     getParentId: resolveParentSessionId,
-    compare: sortSessions
+    compare: (left, right) =>
+      compareSessionSummaryByDisplayMode(left, right, sessionDisplaySortMode)
   });
 }
 
@@ -839,11 +851,14 @@ export function flattenVisibleSessionTree(nodes: NavigationSessionTreeNode[]) {
 
 function limitVisibleDescendantTree(
   node: NavigationSessionTreeNode,
-  visibleCount: number
+  visibleCount: number,
+  sessionDisplaySortMode: SessionDisplaySortMode
 ): NavigationSessionTreeNode {
   const visibleSessionIdSet = new Set(
     flattenSessionTreeNodes(getTreeNodeChildren(node))
-      .sort((left, right) => sortSessions(left.item, right.item))
+      .sort((left, right) =>
+        compareSessionSummaryByDisplayMode(left.item, right.item, sessionDisplaySortMode)
+      )
       .slice(0, visibleCount)
       .map((item) => item.item.sessionId)
   );
@@ -1079,18 +1094,6 @@ function focusComposer() {
   window.dispatchEvent(new CustomEvent(FOCUS_COMPOSER_EVENT));
 }
 
-function mapWorkbenchSnapshotToGroups(snapshot: WorkbenchSnapshotDto | null | undefined) {
-  if (!snapshot || !Array.isArray(snapshot.items)) {
-    return [];
-  }
-
-  return snapshot.items.map((item) => ({
-    workspace: item.workspace,
-    sessions: [...item.sessions].sort(sortSessions),
-    childWorktrees: mapWorkbenchWorktreeNodes(item.childWorktrees)
-  }));
-}
-
 function findWorkbenchWorktreeNodeByWorkspaceId(
   nodes: readonly WorkbenchWorktreeNodeDto[],
   workspaceId: string | null | undefined
@@ -1165,7 +1168,8 @@ function createWorkbenchSnapshotFromGroups(
 
 function buildWorkspaceSidebarWorktreeNodes(
   nodes: readonly WorkbenchWorktreeNodeDto[],
-  favoriteSessionIdSet: ReadonlySet<string>
+  favoriteSessionIdSet: ReadonlySet<string>,
+  sessionDisplaySortMode: SessionDisplaySortMode
 ): WorkspaceSidebarWorktreeNode[] {
   return nodes.map((node) => {
     const visibleSessions = filterVisibleWorkspaceSessions(node.sessions);
@@ -1177,7 +1181,7 @@ function buildWorkspaceSidebarWorktreeNodes(
       archivedSessions: node.sessions.filter(
         (session) => isArchivedSession(session) && !resolveParentSessionId(session)
       ),
-      visibleSessionTree: buildSessionTree(visibleSessions).filter(
+      visibleSessionTree: buildSessionTree(visibleSessions, sessionDisplaySortMode).filter(
         (treeNode) =>
           !favoriteSessionIdSet.has(treeNode.item.sessionId)
           && !someSessionTreeNode(
@@ -1185,7 +1189,11 @@ function buildWorkspaceSidebarWorktreeNodes(
             (session) => favoriteSessionIdSet.has(session.sessionId)
           )
       ),
-      children: buildWorkspaceSidebarWorktreeNodes(node.children, favoriteSessionIdSet)
+      children: buildWorkspaceSidebarWorktreeNodes(
+        node.children,
+        favoriteSessionIdSet,
+        sessionDisplaySortMode
+      )
     };
   });
 }
@@ -1546,16 +1554,10 @@ function settlePendingArchiveStateFromSnapshot(
   }
 }
 
-function readCachedWorkbenchSnapshot() {
-  return readViewSnapshot<WorkbenchSnapshotDto>(
-    WORKBENCH_NAVIGATION_SNAPSHOT_KEY,
-    WORKBENCH_NAVIGATION_CACHE_MAX_AGE_MS
-  );
-}
-
 function upsertSessionIntoGroups(
   groups: WorkspaceSessionGroup[],
-  session: SessionSummaryDto
+  session: SessionSummaryDto,
+  sessionDisplaySortMode: SessionDisplaySortMode
 ): WorkspaceSessionGroup[] {
   let changed = false;
 
@@ -1563,7 +1565,8 @@ function upsertSessionIntoGroups(
     if (group.workspace.id !== session.workspaceId) {
       const { nodes, changed: childChanged } = upsertSessionIntoWorktreeNodes(
         group.childWorktrees,
-        session
+        session,
+        sessionDisplaySortMode
       );
 
       if (!childChanged) {
@@ -1588,7 +1591,7 @@ function upsertSessionIntoGroups(
 
     return {
       ...group,
-      sessions: [...nextSessions].sort(sortSessions)
+      sessions: sortSessionSummaryList(nextSessions, sessionDisplaySortMode)
     };
   });
 
@@ -1781,17 +1784,10 @@ function retainKnownIds(items: string[], knownIds: ReadonlySet<string>) {
 }
 
 function mapWorkbenchWorktreeNodes(
-  nodes: readonly WorkbenchWorktreeNodeDto[] | null | undefined
+  nodes: readonly WorkbenchWorktreeNodeDto[] | null | undefined,
+  sessionDisplaySortMode: SessionDisplaySortMode
 ): WorkbenchWorktreeNodeDto[] {
-  if (!Array.isArray(nodes)) {
-    return [];
-  }
-
-  return nodes.map((node) => ({
-    ...node,
-    sessions: [...node.sessions].sort(sortSessions),
-    children: mapWorkbenchWorktreeNodes(node.children)
-  }));
+  return sortWorkbenchWorktreeNodes(nodes, sessionDisplaySortMode);
 }
 
 function applyPendingArchiveStateToWorktreeNodes(
@@ -1855,7 +1851,8 @@ function settlePendingArchiveStateFromWorktreeNodes(
 
 function upsertSessionIntoWorktreeNodes(
   nodes: readonly WorkbenchWorktreeNodeDto[],
-  session: SessionSummaryDto
+  session: SessionSummaryDto,
+  sessionDisplaySortMode: SessionDisplaySortMode
 ): { nodes: WorkbenchWorktreeNodeDto[]; changed: boolean } {
   let changed = false;
 
@@ -1871,11 +1868,15 @@ function upsertSessionIntoWorktreeNodes(
 
       return {
         ...node,
-        sessions: [...nextSessions].sort(sortSessions)
+        sessions: sortSessionSummaryList(nextSessions, sessionDisplaySortMode)
       };
     }
 
-    const nextChildResult = upsertSessionIntoWorktreeNodes(node.children, session);
+    const nextChildResult = upsertSessionIntoWorktreeNodes(
+      node.children,
+      session,
+      sessionDisplaySortMode
+    );
 
     if (!nextChildResult.changed) {
       return node;
@@ -1893,6 +1894,17 @@ function upsertSessionIntoWorktreeNodes(
     nodes: changed ? nextNodes : [...nodes],
     changed
   };
+}
+
+function sortWorkspaceSessionGroups(
+  groups: readonly WorkspaceSessionGroup[],
+  sessionDisplaySortMode: SessionDisplaySortMode
+): WorkspaceSessionGroup[] {
+  return groups.map((group) => ({
+    ...group,
+    sessions: sortSessionSummaryList(group.sessions, sessionDisplaySortMode),
+    childWorktrees: sortWorkbenchWorktreeNodes(group.childWorktrees, sessionDisplaySortMode)
+  }));
 }
 
 function mapWorktreeNodes(
@@ -2991,6 +3003,7 @@ function SessionCard({
 function SidebarContent({
   workspaceGroups,
   workspaceVisualContextMap,
+  sessionDisplaySortMode,
   favoriteSessions,
   favoriteSessionIds,
   activeWorkspaceId,
@@ -3031,6 +3044,7 @@ function SidebarContent({
 }: {
   workspaceGroups: WorkspaceSidebarGroup[];
   workspaceVisualContextMap: Record<string, WorkspaceVisualContext>;
+  sessionDisplaySortMode: SessionDisplaySortMode;
   favoriteSessions: NavigationSessionEntry[];
   favoriteSessionIds: ReadonlySet<string>;
   activeWorkspaceId: string | null;
@@ -3961,7 +3975,7 @@ function SidebarContent({
   function getFavoriteChildSessions(sessionId: string) {
     for (const group of workspaceGroups) {
       const node =
-        flattenSessionTreeNodes(buildSessionTree(group.visibleSessions)).find(
+        flattenSessionTreeNodes(buildSessionTree(group.visibleSessions, sessionDisplaySortMode)).find(
           (item) => item.item.sessionId === sessionId
         ) ?? findSidebarVisibleSessionNode(group.childWorktrees, sessionId);
 
@@ -4189,7 +4203,11 @@ function SidebarContent({
     // 否则同一棵树会被重复裁剪，冒出多个“展开更多子会话”按钮。
     const shouldPaginateSubagentTree = subagentListExpanded && allowToggle;
     const visibleNode = shouldPaginateSubagentTree
-      ? limitVisibleDescendantTree(node, getVisibleSubagentCount(session.sessionId))
+      ? limitVisibleDescendantTree(
+          node,
+          getVisibleSubagentCount(session.sessionId),
+          sessionDisplaySortMode
+        )
       : node;
     const visibleChildren = subagentListExpanded ? getTreeNodeChildren(visibleNode) : [];
     const totalDescendantCount = flattenSessionTreeNodes(childNodes).length;
@@ -6568,6 +6586,7 @@ export function WorkbenchLayout({
   const navigate = useNavigate();
   const platform = usePlatform();
   const { showToast } = useToast();
+  const sessionDisplaySortMode = useLocalUiPreferenceSelector((state) => state.sessionDisplaySortMode);
   const notifyOnPermissionRequest = useLocalUiPreferenceSelector(
     (state) => state.notificationPreferences.notifyOnPermissionRequest
   );
@@ -6577,7 +6596,9 @@ export function WorkbenchLayout({
   const notifyOnSessionFailed = useLocalUiPreferenceSelector(
     (state) => state.notificationPreferences.notifyOnSessionFailed
   );
-  const initialWorkbenchSnapshotRef = useRef<WorkbenchSnapshotDto | null>(readCachedWorkbenchSnapshot());
+  const initialWorkbenchSnapshotRef = useRef<WorkbenchSnapshotDto | null>(
+    readWorkbenchNavigationSnapshot(WORKBENCH_NAVIGATION_CACHE_MAX_AGE_MS)
+  );
   const requestIdRef = useRef(0);
   const hasNavigationDataRef = useRef(
     (initialWorkbenchSnapshotRef.current?.items?.length ?? 0) > 0
@@ -6624,11 +6645,15 @@ export function WorkbenchLayout({
   const permissionWatchSessionsRef = useRef<
     Array<{ sessionId: string; workspaceId: string; title: string }>
   >([]);
+  const sessionDisplaySortModeRef = useRef<SessionDisplaySortMode>(sessionDisplaySortMode);
   const pendingWorkspaceReorderRef = useRef<{
     originalGroups: WorkspaceSessionGroup[];
   } | null>(null);
   const [navigationGroups, setNavigationGroups] = useState<WorkspaceSessionGroup[]>(() =>
-    mapWorkbenchSnapshotToGroups(initialWorkbenchSnapshotRef.current)
+    mapWorkbenchSnapshotToNavigationGroups(
+      initialWorkbenchSnapshotRef.current,
+      sessionDisplaySortMode
+    )
   );
   const navigationGroupsRef = useRef<WorkspaceSessionGroup[]>(navigationGroups);
   const [navigationLoading, setNavigationLoading] = useState(
@@ -6690,6 +6715,11 @@ export function WorkbenchLayout({
   useEffect(() => {
     showToastRef.current = showToast;
   }, [showToast]);
+
+  useEffect(() => {
+    sessionDisplaySortModeRef.current = sessionDisplaySortMode;
+    setNavigationGroups((current) => sortWorkspaceSessionGroups(current, sessionDisplaySortMode));
+  }, [sessionDisplaySortMode]);
 
   useEffect(() => {
     navigationGroupsRef.current = navigationGroups;
@@ -6819,10 +6849,13 @@ export function WorkbenchLayout({
       currentSessionId: resolveRouteSessionMatch(location.pathname)?.sessionId ?? null
     });
 
-    const nextGroups = mapWorkbenchSnapshotToGroups(snapshotWithPendingArchiveState);
+    const nextGroups = mapWorkbenchSnapshotToNavigationGroups(
+      snapshotWithPendingArchiveState,
+      sessionDisplaySortModeRef.current
+    );
 
     initialWorkbenchSnapshotRef.current = snapshotWithPendingArchiveState;
-    writeViewSnapshot(WORKBENCH_NAVIGATION_SNAPSHOT_KEY, snapshotWithPendingArchiveState);
+    writeWorkbenchNavigationSnapshot(snapshotWithPendingArchiveState);
     navigationGroupsRef.current = nextGroups;
     setNavigationGroups(nextGroups);
     setCollapsedWorkspaceIds(extractCollapsedWorkspaceIds(snapshotWithPendingArchiveState));
@@ -6870,7 +6903,11 @@ export function WorkbenchLayout({
 
   const upsertNavigationSession = useCallback((session: SessionSummaryDto) => {
     setNavigationGroups((current) => {
-      const nextGroups = upsertSessionIntoGroups(current, session);
+      const nextGroups = upsertSessionIntoGroups(
+        current,
+        session,
+        sessionDisplaySortModeRef.current
+      );
       navigationGroupsRef.current = nextGroups;
       return nextGroups;
     });
@@ -7488,7 +7525,7 @@ export function WorkbenchLayout({
     const nextSnapshot = createWorkbenchSnapshotFromGroups(groups, collapsedWorkspaceIds);
 
     initialWorkbenchSnapshotRef.current = nextSnapshot;
-    writeViewSnapshot(WORKBENCH_NAVIGATION_SNAPSHOT_KEY, nextSnapshot);
+    writeWorkbenchNavigationSnapshot(nextSnapshot);
     navigationGroupsRef.current = groups;
     setNavigationGroups(groups);
   }, [collapsedWorkspaceIds]);
@@ -7503,7 +7540,7 @@ export function WorkbenchLayout({
     const nextSnapshot = createWorkbenchSnapshotFromGroups(navigationGroups, nextCollapsedWorkspaceIds);
 
     initialWorkbenchSnapshotRef.current = nextSnapshot;
-    writeViewSnapshot(WORKBENCH_NAVIGATION_SNAPSHOT_KEY, nextSnapshot);
+    writeWorkbenchNavigationSnapshot(nextSnapshot);
     setCollapsedWorkspaceIds(nextCollapsedWorkspaceIds);
     void updateWorkspaceNavigationState(workspaceId, {
       collapsed: nextCollapsed
@@ -7519,7 +7556,7 @@ export function WorkbenchLayout({
       );
 
       initialWorkbenchSnapshotRef.current = revertedSnapshot;
-      writeViewSnapshot(WORKBENCH_NAVIGATION_SNAPSHOT_KEY, revertedSnapshot);
+      writeWorkbenchNavigationSnapshot(revertedSnapshot);
       setCollapsedWorkspaceIds(revertedCollapsedWorkspaceIds);
       showToastRef.current({
         title: error instanceof Error ? error.message : t("shell.workspaceCollapseStateSaveFailed"),
@@ -7957,16 +7994,20 @@ export function WorkbenchLayout({
           archivedSessions: group.sessions.filter(
             (session) => isArchivedSession(session) && !resolveParentSessionId(session)
           ),
-          visibleSessionTree: buildSessionTree(visibleSessions).filter(
+          visibleSessionTree: buildSessionTree(visibleSessions, sessionDisplaySortMode).filter(
             (node) =>
               !favoriteSessionIdSet.has(node.item.sessionId)
               && !someSessionTreeNode(getTreeNodeChildren(node), (session) => favoriteSessionIdSet.has(session.sessionId))
           ),
-          childWorktrees: buildWorkspaceSidebarWorktreeNodes(group.childWorktrees, favoriteSessionIdSet),
+          childWorktrees: buildWorkspaceSidebarWorktreeNodes(
+            group.childWorktrees,
+            favoriteSessionIdSet,
+            sessionDisplaySortMode
+          ),
           isCollapsed: collapsedWorkspaceIdSet.has(group.workspace.id)
         };
       }),
-    [collapsedWorkspaceIdSet, favoriteSessionIdSet, navigationGroups]
+    [collapsedWorkspaceIdSet, favoriteSessionIdSet, navigationGroups, sessionDisplaySortMode]
   );
   const workspaceVisualContextMap = useMemo(
     () => buildWorkspaceVisualContextMap(navigationGroups),
@@ -8606,6 +8647,7 @@ export function WorkbenchLayout({
     <SidebarContent
       workspaceGroups={workspaceSidebarGroups}
       workspaceVisualContextMap={workspaceVisualContextMap}
+      sessionDisplaySortMode={sessionDisplaySortMode}
       favoriteSessions={favoriteSessions}
       favoriteSessionIds={favoriteSessionIdSet}
       activeWorkspaceId={currentWorkspaceId}
@@ -8775,6 +8817,7 @@ export function WorkbenchLayout({
                 <SidebarContent
                   workspaceGroups={workspaceSidebarGroups}
                   workspaceVisualContextMap={workspaceVisualContextMap}
+                  sessionDisplaySortMode={sessionDisplaySortMode}
                   favoriteSessions={favoriteSessions}
                 favoriteSessionIds={favoriteSessionIdSet}
                 activeWorkspaceId={currentWorkspaceId}

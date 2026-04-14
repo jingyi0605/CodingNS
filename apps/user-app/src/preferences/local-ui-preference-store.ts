@@ -2,6 +2,8 @@ import { useSyncExternalStore } from "react";
 
 type Listener = () => void;
 
+export type SessionDisplaySortMode = "createdAt" | "updatedAt" | "title";
+
 export interface LocalNotificationPreferenceState {
   notifyOnPermissionRequest: boolean;
   notifyOnSessionCompleted: boolean;
@@ -9,10 +11,12 @@ export interface LocalNotificationPreferenceState {
 }
 
 interface LocalUiPreferenceState {
+  sessionDisplaySortMode: SessionDisplaySortMode;
   showSystemFiles: boolean;
   notificationPreferences: LocalNotificationPreferenceState;
 }
 
+export const SESSION_DISPLAY_SORT_MODE_STORAGE_KEY = "codingns.workspace.session-display-sort-mode";
 export const SHOW_SYSTEM_FILES_STORAGE_KEY = "codingns.file-panel.show-system-files";
 export const NOTIFICATION_PREFERENCES_STORAGE_KEY = "codingns.notification.preferences";
 
@@ -24,6 +28,19 @@ const DEFAULT_NOTIFICATION_PREFERENCES: LocalNotificationPreferenceState = {
 
 function canUseLocalStorage(): boolean {
   return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
+}
+
+function isSessionDisplaySortMode(value: unknown): value is SessionDisplaySortMode {
+  return value === "createdAt" || value === "updatedAt" || value === "title";
+}
+
+function readSessionDisplaySortModeFromStorage(): SessionDisplaySortMode {
+  if (!canUseLocalStorage()) {
+    return "createdAt";
+  }
+
+  const storedValue = window.localStorage.getItem(SESSION_DISPLAY_SORT_MODE_STORAGE_KEY);
+  return isSessionDisplaySortMode(storedValue) ? storedValue : "createdAt";
 }
 
 function readShowSystemFilesFromStorage(): boolean {
@@ -91,6 +108,7 @@ function writeNotificationPreferencesToStorage(preferences: LocalNotificationPre
 
 class LocalUiPreferenceStore {
   private state: LocalUiPreferenceState = {
+    sessionDisplaySortMode: readSessionDisplaySortModeFromStorage(),
     showSystemFiles: readShowSystemFilesFromStorage(),
     notificationPreferences: readNotificationPreferencesFromStorage()
   };
@@ -111,6 +129,26 @@ class LocalUiPreferenceStore {
   };
 
   getState = () => this.state;
+
+  setSessionDisplaySortMode(mode: SessionDisplaySortMode): void {
+    if (canUseLocalStorage()) {
+      if (mode === "createdAt") {
+        window.localStorage.removeItem(SESSION_DISPLAY_SORT_MODE_STORAGE_KEY);
+      } else {
+        window.localStorage.setItem(SESSION_DISPLAY_SORT_MODE_STORAGE_KEY, mode);
+      }
+    }
+
+    if (this.state.sessionDisplaySortMode === mode) {
+      return;
+    }
+
+    this.state = {
+      ...this.state,
+      sessionDisplaySortMode: mode
+    };
+    this.emit();
+  }
 
   setShowSystemFiles(enabled: boolean): void {
     if (canUseLocalStorage()) {
@@ -153,25 +191,34 @@ class LocalUiPreferenceStore {
   private handleStorage = (event: StorageEvent) => {
     if (
       event.key !== null
+      && event.key !== SESSION_DISPLAY_SORT_MODE_STORAGE_KEY
       && event.key !== SHOW_SYSTEM_FILES_STORAGE_KEY
       && event.key !== NOTIFICATION_PREFERENCES_STORAGE_KEY
     ) {
       return;
     }
 
+    const nextSessionDisplaySortMode = readSessionDisplaySortModeFromStorage();
     const nextShowSystemFiles = readShowSystemFilesFromStorage();
     const nextNotificationPreferences = readNotificationPreferencesFromStorage();
+    const sessionDisplaySortModeUnchanged =
+      this.state.sessionDisplaySortMode === nextSessionDisplaySortMode;
     const showSystemFilesUnchanged = this.state.showSystemFiles === nextShowSystemFiles;
     const notificationPreferencesUnchanged = areNotificationPreferencesEqual(
       this.state.notificationPreferences,
       nextNotificationPreferences
     );
 
-    if (showSystemFilesUnchanged && notificationPreferencesUnchanged) {
+    if (
+      sessionDisplaySortModeUnchanged
+      && showSystemFilesUnchanged
+      && notificationPreferencesUnchanged
+    ) {
       return;
     }
 
     this.state = {
+      sessionDisplaySortMode: nextSessionDisplaySortMode,
       showSystemFiles: nextShowSystemFiles,
       notificationPreferences: nextNotificationPreferences
     };

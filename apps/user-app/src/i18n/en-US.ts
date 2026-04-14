@@ -50,6 +50,12 @@ export const enUS = {
     theme: "Theme",
     themeDescription: "Choose the color theme that fits the way you work.",
     fileManager: "File Manager",
+    workspaceSessionSortMode: "Workspace session sort order",
+    workspaceSessionSortModeDescription:
+      "Controls the default sort order for session lists across the workspace. This setting only applies to the current device.",
+    sessionSortModeCreatedAt: "By session created time",
+    sessionSortModeUpdatedAt: "By session updated time",
+    sessionSortModeTitle: "By session name",
     showSystemFiles: "Show system files",
     showSystemFilesDescription:
       "Display common macOS and Windows system files in the file manager, such as .DS_Store and Thumbs.db. This setting only applies to the current device.",

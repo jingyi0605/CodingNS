@@ -15,28 +15,16 @@ import {
   type GitSidebarWorkbenchShellOverrides
 } from "../conversation/components/GitSidebar";
 import type { WorkspaceSessionGroup } from "../conversation/components/WorkbenchLayout";
+import { useLocalUiPreferenceSelector } from "../../preferences/local-ui-preference-store";
 import {
   TerminalManagerPanel,
   type TerminalManagerPanelWorkbenchShellOverrides
 } from "../workbench/components/TerminalManagerPanel";
+import { mapWorkbenchSnapshotToNavigationGroups } from "../workbench/utils/workbench-navigation-snapshot";
 import { WorkbenchRealtimeClient } from "../../network/workbench-realtime-client";
 import type { WindowDescriptor } from "../../platform/desktop/window-descriptor";
 import { usePlatform } from "../../platform/platform-provider";
 import { t } from "../../shared/i18n";
-
-function mapWorkbenchSnapshotToGroups(snapshot: WorkbenchSnapshotDto | null | undefined): WorkspaceSessionGroup[] {
-  if (!snapshot || !Array.isArray(snapshot.items)) {
-    return [];
-  }
-
-  return snapshot.items.map((item) => ({
-    workspace: item.workspace,
-    sessions: [...item.sessions].sort((left, right) =>
-      (right.lastMessageAt ?? right.updatedAt).localeCompare(left.lastMessageAt ?? left.updatedAt)
-    ),
-    childWorktrees: Array.isArray(item.childWorktrees) ? item.childWorktrees : []
-  }));
-}
 
 function createEmptyWorkbenchShellOverrides(
   navigationGroups: WorkspaceSessionGroup[]
@@ -88,6 +76,7 @@ export function DesktopWindowPage() {
   const { windowId } = useParams<{ windowId: string }>();
   const navigate = useNavigate();
   const platform = usePlatform();
+  const sessionDisplaySortMode = useLocalUiPreferenceSelector((state) => state.sessionDisplaySortMode);
   const [descriptor, setDescriptor] = useState<WindowDescriptor | null>(null);
   const [descriptorLoading, setDescriptorLoading] = useState(true);
   const [descriptorError, setDescriptorError] = useState<string | null>(null);
@@ -153,7 +142,12 @@ export function DesktopWindowPage() {
           return;
         }
 
-        setNavigationGroups(mapWorkbenchSnapshotToGroups(snapshot));
+        setNavigationGroups(
+          mapWorkbenchSnapshotToNavigationGroups(
+            snapshot as WorkbenchSnapshotDto | null | undefined,
+            sessionDisplaySortMode
+          ) as WorkspaceSessionGroup[]
+        );
       } catch {
         if (cancelled) {
           return;
@@ -168,7 +162,7 @@ export function DesktopWindowPage() {
     return () => {
       cancelled = true;
     };
-  }, [descriptor?.workspaceId]);
+  }, [descriptor?.workspaceId, sessionDisplaySortMode]);
 
   useEffect(() => {
     if (!descriptor) {
@@ -179,7 +173,7 @@ export function DesktopWindowPage() {
     const client = new WorkbenchRealtimeClient({
       onConnectionChange: () => undefined,
       onSnapshot: (snapshot) => {
-        setNavigationGroups(mapWorkbenchSnapshotToGroups(snapshot));
+        setNavigationGroups(mapWorkbenchSnapshotToNavigationGroups(snapshot, sessionDisplaySortMode));
       },
       onUnauthorized: () => {
         authStore.clear();
@@ -196,7 +190,7 @@ export function DesktopWindowPage() {
       client.close();
       setRealtimeClient(null);
     };
-  }, [descriptor, navigate]);
+  }, [descriptor, navigate, sessionDisplaySortMode]);
 
   const workbenchShellOverrides = useMemo<FileContextPanelWorkbenchShellOverrides>(() => {
     if (!realtimeClient) {

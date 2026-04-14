@@ -48,6 +48,12 @@ export const zhCN = {
     theme: "主题",
     themeDescription: "选择适合你的界面配色方案",
     fileManager: "文件管理",
+    workspaceSessionSortMode: "工作区的会话显示排序方式",
+    workspaceSessionSortModeDescription:
+      "控制工作区里各处会话列表的默认排序，只影响当前设备。",
+    sessionSortModeCreatedAt: "按照会话创建时间",
+    sessionSortModeUpdatedAt: "按照会话更新时间",
+    sessionSortModeTitle: "按照会话名称",
     showSystemFiles: "显示系统文件",
     showSystemFilesDescription:
       "在文件管理里显示 macOS 和 Windows 常见的系统文件，例如 .DS_Store、Thumbs.db。这个开关只影响当前设备。",

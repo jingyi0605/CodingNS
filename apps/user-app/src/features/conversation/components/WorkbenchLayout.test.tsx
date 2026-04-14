@@ -211,6 +211,7 @@ describe("WorkbenchLayout", () => {
     });
     window.localStorage.clear();
     window.sessionStorage.clear();
+    localUiPreferenceStore.setSessionDisplaySortMode("createdAt");
     localUiPreferenceStore.setNotificationPreferences({
       notifyOnPermissionRequest: true,
       notifyOnSessionCompleted: true,
@@ -310,6 +311,67 @@ describe("WorkbenchLayout", () => {
         visibleSessionTree: [malformedNode, undefined] as never
       })
     ).toHaveLength(1);
+  });
+
+  it("会按照本地设置的会话名称顺序显示工作区会话", async () => {
+    localUiPreferenceStore.setSessionDisplaySortMode("title");
+
+    const snapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: [
+          {
+            ...createSessionSummary({
+              sessionId: "session-z",
+              title: "Zebra",
+              workspaceId: "workspace-1"
+            }),
+            createdAt: "2026-04-12T10:00:00.000Z",
+            updatedAt: "2026-04-12T10:00:00.000Z"
+          },
+          {
+            ...createSessionSummary({
+              sessionId: "session-a",
+              title: "Alpha",
+              workspaceId: "workspace-1"
+            }),
+            createdAt: "2026-04-10T10:00:00.000Z",
+            updatedAt: "2026-04-15T10:00:00.000Z"
+          },
+          {
+            ...createSessionSummary({
+              sessionId: "session-m",
+              title: "Monkey",
+              workspaceId: "workspace-1"
+            }),
+            createdAt: "2026-04-11T10:00:00.000Z",
+            updatedAt: "2026-04-11T10:00:00.000Z"
+          }
+        ]
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = snapshot;
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(snapshot);
+      }
+
+      return createJsonResponse({});
+    });
+
+    renderWorkbenchRoute("/workspaces/workspace-1/sessions");
+
+    const workspaceGroup = await findWorkspaceGroupByName("项目一");
+    const sessionTitles = Array.from(
+      workspaceGroup.querySelectorAll(".workbench-session-card .session-title")
+    )
+      .map((element) => element.textContent?.trim() ?? "")
+      .filter(Boolean);
+
+    expect(sessionTitles.slice(0, 3)).toEqual(["Alpha", "Monkey", "Zebra"]);
   });
 
   it("支持收藏、归档恢复，并在新建时进入 draft 会话路由", async () => {

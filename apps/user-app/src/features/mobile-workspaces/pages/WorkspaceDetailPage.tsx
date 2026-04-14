@@ -44,14 +44,6 @@ function isArchivedSession(session: SessionSummaryDto) {
   return session.isArchived === true && !isRealSubagentSession(session);
 }
 
-function getSessionActivityTime(session: Partial<SessionSummaryDto>) {
-  return session.lastEventAt ?? session.lastMessageAt ?? session.updatedAt ?? session.createdAt ?? "";
-}
-
-function sortSessionsByActivity(left: SessionSummaryDto, right: SessionSummaryDto) {
-  return getSessionActivityTime(right).localeCompare(getSessionActivityTime(left));
-}
-
 const WORKSPACE_MANAGEMENT_SNAPSHOT_CACHE_MAX_AGE_MS = 60 * 1000;
 const ARCHIVED_SESSIONS_PAGE_SIZE = 10;
 
@@ -94,11 +86,11 @@ export function WorkspaceDetailPage() {
         }
       : null);
   const visibleSessions = useMemo(
-    () => [...(workspaceTarget?.sessions ?? [])].filter(isVisibleSession).sort(sortSessionsByActivity),
+    () => [...(workspaceTarget?.sessions ?? [])].filter(isVisibleSession),
     [workspaceTarget]
   );
   const archivedSessions = useMemo(
-    () => [...(workspaceTarget?.sessions ?? [])].filter(isArchivedSession).sort(sortSessionsByActivity),
+    () => [...(workspaceTarget?.sessions ?? [])].filter(isArchivedSession),
     [workspaceTarget]
   );
 
