@@ -11336,6 +11336,345 @@ textarea:focus-visible {
   color: var(--text-tertiary);
 }
 
+.debug-readiness-page-shell {
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.debug-readiness-page {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  flex: 0 0 auto;
+}
+
+.debug-readiness-hero,
+.debug-readiness-section {
+  position: relative;
+  overflow: hidden;
+  border-radius: 22px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 82%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 96%, white), color-mix(in srgb, var(--bg-primary) 92%, white));
+  box-shadow: 0 18px 40px -34px rgba(15, 23, 42, 0.38);
+}
+
+.debug-readiness-hero {
+  padding: 22px;
+  background:
+    radial-gradient(circle at top right, color-mix(in srgb, var(--accent) 14%, transparent), transparent 36%),
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 96%, white), color-mix(in srgb, var(--bg-primary) 92%, white));
+}
+
+.debug-readiness-hero-header,
+.debug-readiness-section-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.debug-readiness-hero-copy,
+.debug-readiness-section-header > div {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.debug-readiness-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--border-primary));
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--text-primary) 82%, var(--accent) 18%);
+}
+
+.debug-readiness-hero-copy h2,
+.debug-readiness-section-header h3 {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
+.debug-readiness-hero-copy p,
+.debug-readiness-section-header p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.debug-readiness-hero-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.debug-readiness-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.debug-readiness-summary-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 118px;
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 76%, transparent);
+  background: color-mix(in srgb, var(--bg-surface) 94%, white);
+}
+
+.debug-readiness-summary-card[data-tone="success"] {
+  border-color: color-mix(in srgb, var(--success) 26%, var(--border-primary));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--success) 8%, white), color-mix(in srgb, var(--bg-surface) 94%, white));
+}
+
+.debug-readiness-summary-card[data-tone="warn"] {
+  border-color: color-mix(in srgb, var(--warning) 30%, var(--border-primary));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--warning) 10%, white), color-mix(in srgb, var(--bg-surface) 94%, white));
+}
+
+.debug-readiness-summary-card[data-tone="danger"] {
+  border-color: color-mix(in srgb, var(--danger) 30%, var(--border-primary));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--danger) 10%, white), color-mix(in srgb, var(--bg-surface) 94%, white));
+}
+
+.debug-readiness-summary-card > span {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.debug-readiness-summary-card > strong {
+  font-size: 18px;
+  line-height: 1.3;
+}
+
+.debug-readiness-summary-card > small {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.debug-readiness-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.debug-readiness-hero-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid color-mix(in srgb, var(--border-primary) 72%, transparent);
+}
+
+.debug-readiness-hero-meta > span {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--text-secondary);
+}
+
+.debug-readiness-hero-meta > strong {
+  font-size: 13px;
+  line-height: 1.7;
+  word-break: break-all;
+}
+
+.debug-readiness-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 11px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 80%, transparent);
+  background: color-mix(in srgb, var(--bg-hover) 58%, transparent);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.debug-readiness-chip[data-tone="success"] {
+  border-color: color-mix(in srgb, var(--success) 26%, var(--border-primary));
+  color: color-mix(in srgb, var(--text-primary) 84%, var(--success) 16%);
+}
+
+.debug-readiness-chip[data-tone="warn"] {
+  border-color: color-mix(in srgb, var(--warning) 30%, var(--border-primary));
+  color: color-mix(in srgb, var(--text-primary) 84%, var(--warning) 16%);
+}
+
+.debug-readiness-chip[data-tone="danger"] {
+  border-color: color-mix(in srgb, var(--danger) 30%, var(--border-primary));
+  color: color-mix(in srgb, var(--text-primary) 80%, var(--danger) 20%);
+}
+
+.debug-readiness-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(300px, 0.9fr);
+  gap: 18px;
+}
+
+.debug-readiness-section {
+  padding: 18px;
+}
+
+.debug-readiness-service-grid,
+.debug-readiness-runtime-list,
+.debug-readiness-matrix-list,
+.debug-readiness-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.debug-readiness-service-grid {
+  margin-top: 16px;
+}
+
+.debug-readiness-service-card,
+.debug-readiness-runtime-item,
+.debug-readiness-matrix-item {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 76%, transparent);
+  background: color-mix(in srgb, var(--bg-surface) 95%, white);
+}
+
+.debug-readiness-service-card-header,
+.debug-readiness-runtime-item-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.debug-readiness-service-card-header strong,
+.debug-readiness-runtime-item-header strong,
+.debug-readiness-matrix-item strong {
+  font-size: 14px;
+  line-height: 1.3;
+}
+
+.debug-readiness-service-card-header p,
+.debug-readiness-runtime-item > p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+
+.debug-readiness-runtime-item-header > span {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.debug-readiness-service-card-grid,
+.debug-readiness-runtime-item-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 12px;
+}
+
+.debug-readiness-service-card-grid > div,
+.debug-readiness-service-card-list > p {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+}
+
+.debug-readiness-service-card-grid span,
+.debug-readiness-service-card-list span {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.debug-readiness-service-card-grid strong,
+.debug-readiness-service-card-list strong {
+  font-size: 13px;
+  line-height: 1.6;
+  word-break: break-word;
+  color: var(--text-primary);
+}
+
+.debug-readiness-service-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--border-primary) 70%, transparent);
+}
+
+.debug-readiness-runtime-item-grid {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.debug-readiness-matrix-item {
+  gap: 6px;
+}
+
+.debug-readiness-matrix-item > span {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+@media (max-width: 1100px) {
+  .debug-readiness-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .debug-readiness-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .debug-readiness-hero,
+  .debug-readiness-section {
+    padding: 16px;
+    border-radius: 18px;
+  }
+
+  .debug-readiness-summary-grid,
+  .debug-readiness-service-card-grid,
+  .debug-readiness-runtime-item-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .workbench-manage-item[data-workspace-tone="worktree"] .workbench-section-counter {
   border-color: color-mix(in srgb, var(--workspace-tone-color, var(--success)) 28%, var(--border-primary));
   background: color-mix(in srgb, var(--workspace-tone-color, var(--success)) 12%, var(--bg-surface));
@@ -11742,6 +12081,14 @@ textarea:focus-visible {
   border-radius: 16px;
   background: var(--desktop-panel-fill);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+
+.workbench-main-shell > .debug-readiness-page-shell,
+.workbench-shell .workbench-main-shell > .debug-readiness-page-shell {
+  min-height: 0;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  overscroll-behavior: contain;
 }
 
 .conversation-page-shell::before {

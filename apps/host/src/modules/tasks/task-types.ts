@@ -5,7 +5,8 @@ export const HOST_TASK_TYPES = {
   workspaceManagementSummary: "workspace.management_summary",
   workspaceCodeCompositionScan: "workspace.code_composition_scan",
   terminalManagerSnapshot: "terminal.manager_snapshot",
-  templateRuntimeStatusDiscovery: "terminal.template_runtime_status_discovery"
+  templateRuntimeStatusDiscovery: "terminal.template_runtime_status_discovery",
+  debugRuntimeStaleReconciliation: "debug_runtime.stale_reconciliation"
 } as const;
 
 export type HostTaskType = (typeof HOST_TASK_TYPES)[keyof typeof HOST_TASK_TYPES];

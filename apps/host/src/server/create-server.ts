@@ -41,6 +41,7 @@ import { VerificationRunService } from "../modules/butler/verification-run-servi
 import { ClientController } from "../modules/client/client-controller.js";
 import { ClientService } from "../modules/client/client-service.js";
 import { DebugTargetController } from "../modules/debug-target/debug-target-controller.js";
+import { DebugRuntimeReconciliationScheduler } from "../modules/debug-target/debug-runtime-reconciliation-scheduler.js";
 import { DebugTargetService } from "../modules/debug-target/debug-target-service.js";
 import { FileAccessGuard } from "../modules/file/file-access-guard.js";
 import { FileContentService } from "../modules/file/file-content-service.js";
@@ -322,7 +323,8 @@ export function createServer(config: HostConfig) {
     gitRuleRepository,
     commitRuleEngine,
     commitDraftService,
-    gitWriteService
+    gitWriteService,
+    repositories.aiFallbackEditRepository
   );
   const sessionMessageAttachmentService = new SessionMessageAttachmentService(
     repositories.sessionMessageAttachmentRepository,
@@ -657,8 +659,16 @@ export function createServer(config: HostConfig) {
     repositories.debugRuntimeSessionRepository,
     repositories.portLeaseRepository,
     repositories.runtimeBindingRepository,
+    repositories.aiFallbackEditRepository,
     terminalService,
-    repositories.terminalInstanceRepository
+    repositories.terminalInstanceRepository,
+    taskManager
+  );
+  const debugRuntimeReconciliationScheduler = new DebugRuntimeReconciliationScheduler(
+    debugTargetService,
+    {
+      schedulerMetrics
+    }
   );
   const commandTemplateService = new CommandTemplateService(
     database.db,
@@ -773,6 +783,11 @@ export function createServer(config: HostConfig) {
   });
   app.addHook("onRequest", createAuthGuard(authService));
   app.setErrorHandler(setErrorHandler);
+  app.addHook("onReady", async () => {
+    await debugTargetService.runBackgroundRuntimeReconciliation(
+      "debug_target.startup_runtime_recovery"
+    );
+  });
 
   // Demo 模式：自动创建演示用户
   if (config.demoMode) {
@@ -803,6 +818,7 @@ export function createServer(config: HostConfig) {
   patrolScheduler.start();
   sessionSummaryScheduler.start();
   butlerFollowUpScheduler.start();
+  debugRuntimeReconciliationScheduler.start();
 
   if (config.webUiDir) {
     registerStaticWebRoutes(app, config.webUiDir);
@@ -815,6 +831,7 @@ export function createServer(config: HostConfig) {
     await patrolScheduler.dispose();
     await sessionSummaryScheduler.dispose();
     await butlerFollowUpScheduler.dispose();
+    await debugRuntimeReconciliationScheduler.dispose();
     terminalService.off("exit", handleDebugTargetTerminalExit);
     await terminalService.dispose();
     await butlerFollowUpSessionLiveRuntimeService.dispose();
@@ -836,6 +853,7 @@ export function createServer(config: HostConfig) {
         bootstrapService,
         clientService,
         debugTargetService,
+        debugRuntimeReconciliationScheduler,
         authService,
         workspaceService,
         worktreeManager,

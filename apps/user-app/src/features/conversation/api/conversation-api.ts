@@ -262,6 +262,11 @@ export interface DebugRuntimeDetailDto {
   services: DebugRuntimeDetailServiceItemDto[];
 }
 
+export interface DebugRuntimeHistoryEnvelopeDto {
+  targetId: string;
+  items: DebugRuntimeDetailDto[];
+}
+
 export interface DebugTargetAnalysisEnvelopeDto {
   target: DebugTargetProfileDto;
   services: DebugServiceSpecDto[];
@@ -848,6 +853,15 @@ export function getFrameworkAnalysis(targetId: string) {
 export function getLatestDebugRuntime(targetId: string) {
   return httpClient.request<DebugRuntimeDetailDto | null>(
     `/api/debug-targets/${encodeURIComponent(targetId)}/runtime-latest`
+  );
+}
+
+export function getRecentDebugRuntimes(targetId: string, limit = 5) {
+  const search = new URLSearchParams();
+  search.set("limit", String(limit));
+
+  return httpClient.request<DebugRuntimeHistoryEnvelopeDto>(
+    `/api/debug-targets/${encodeURIComponent(targetId)}/runtimes?${search.toString()}`
   );
 }
 

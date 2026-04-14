@@ -657,13 +657,14 @@ export type DebugServiceRole = "frontend" | "backend" | "worker" | "mock" | "cus
 export type DebugServiceProtocol = "http" | "ws" | "tcp";
 export type FrameworkAnalysisConfidence = "high" | "medium" | "low";
 export type FrameworkCompatibilityLevel = "supported" | "conditional" | "unsupported" | "unknown";
-export type DebugInjectionMode = "cli" | "env" | "override" | "none";
+export type DebugInjectionMode = "cli" | "env" | "override" | "ai_fallback" | "none";
 export type DebugAdapterKind = "cli" | "env" | "override" | "ai_fallback";
 export type DebugAiFallbackPolicy = "never" | "conditional" | "allowed";
 export type DebugRuntimeSessionStatus = "PREPARING" | "RUNNING" | "FAILED" | "STOPPED";
 export type RuntimeBindingStatus = "ALLOCATED" | "LISTENING" | "FAILED" | "RELEASED";
 export type PortLeaseStatus = "LEASED" | "RELEASING" | "RELEASED" | "STALE";
 export type AiFallbackEditStatus = "PENDING" | "APPLIED" | "ROLLED_BACK" | "REJECTED";
+export type DebugLaunchAdapterAttemptStatus = "selected" | "skipped" | "blocked" | "fallback_required";
 export type LauncherSourceType = "manual" | "debug_service";
 export type ServiceDiscoveryMode = "same_origin" | "api_base_url" | "none";
 
@@ -775,6 +776,20 @@ export interface FrameworkCompatibilityMatrixItem {
   notes: string;
 }
 
+export interface DebugLaunchAdapterAttempt {
+  kind: DebugAdapterKind;
+  status: DebugLaunchAdapterAttemptStatus;
+  reason: string;
+}
+
+export interface DebugAiFallbackSummary {
+  eligible: boolean;
+  editId: string | null;
+  status: AiFallbackEditStatus | null;
+  reason: string;
+  allowedFiles: string[];
+}
+
 export interface DebugLaunchPlanServiceItem {
   serviceId: string;
   role: DebugServiceRole;
@@ -788,11 +803,15 @@ export interface DebugLaunchPlanServiceItem {
   envPatch: Record<string, string>;
   expectedPort: number | null;
   leasedPort: number | null;
+  artifactRef: string | null;
   runtimeBindingId: string;
   portLeaseId: string | null;
   requiresServiceDiscoveryHandling: boolean;
   requiresHmrHandling: boolean;
   requiresCallbackHandling: boolean;
+  failureStage: string | null;
+  adapterAttempts: DebugLaunchAdapterAttempt[];
+  aiFallback: DebugAiFallbackSummary | null;
   missingRequirements: string[];
   autoStartAllowed: boolean;
 }
@@ -810,12 +829,18 @@ export interface DebugRuntimeDetailServiceItem {
   binding: RuntimeBinding | null;
   portLease: PortLeaseRecord | null;
   processInstance: TerminalInstance | null;
+  aiFallbackEdits: AiFallbackEditRecord[];
 }
 
 export interface DebugRuntimeDetail {
   runtimeSession: DebugRuntimeSession;
   target: DebugTargetProfile;
   services: DebugRuntimeDetailServiceItem[];
+}
+
+export interface DebugRuntimeHistoryEnvelope {
+  targetId: string;
+  items: DebugRuntimeDetail[];
 }
 
 export type PersistentTerminalRuntimeType =

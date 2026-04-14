@@ -10,6 +10,8 @@ import {
 } from "../../conversation/api/conversation-api";
 import { getProviderDisplayName } from "../../conversation/capability/provider-ui";
 import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout";
+import { DebugReadinessView } from "../../debug-target/components/DebugReadinessView";
+import { useDebugReadiness } from "../../debug-target/hooks/useDebugReadiness";
 import { MobileWorkspaceSwitcherHeader } from "../../mobile-shell/components/MobileWorkspaceSwitcherHeader";
 import { MobileCreateSessionSheet } from "../../mobile-sessions/components/MobileCreateSessionSheet";
 import { buildSessionTitlePresentation } from "../../conversation/session-title";
@@ -190,6 +192,9 @@ export function WorkspaceDetailPage() {
   const visibleArchivedSessions = useMemo(
     () => archivedSessions.slice(0, visibleArchivedCount),
     [archivedSessions, visibleArchivedCount]
+  );
+  const debugReadinessState = useDebugReadiness(
+    workspace ? { id: workspace.id, path: workspace.path, name: workspace.name } : null
   );
 
   async function handleRemoveWorkspace() {
@@ -374,6 +379,12 @@ export function WorkspaceDetailPage() {
             </button>
           </div>
         </section>
+
+        <DebugReadinessView
+          workspace={workspace ? { id: workspace.id, path: workspace.path, name: workspace.name } : null}
+          state={debugReadinessState}
+          variant="mobile"
+        />
 
         <section className="mobile-feature-panel surface-card mobile-workspace-composition-panel">
           <div className="mobile-feature-section-header">

@@ -21,6 +21,7 @@ import { ToolProcessesPage } from "../features/mobile-tools/ToolProcessesPage";
 import { ToolsHomePage } from "../features/mobile-tools/ToolsHomePage";
 import { WorkspaceHomePage } from "../features/mobile-workspaces/pages/WorkspaceHomePage";
 import { WorkspaceDetailPage } from "../features/mobile-workspaces/pages/WorkspaceDetailPage";
+import { WorkspaceDebugDetailPage } from "../features/debug-target/pages/WorkspaceDebugDetailPage";
 import { WorkbenchShellRoute } from "../features/workbench/components/WorkbenchShellRoute";
 import { WorkbenchLandingPage } from "../features/workbench/pages/WorkbenchLandingPage";
 import { SettingsPage } from "../features/settings/pages/SettingsPage";
@@ -91,6 +92,10 @@ const appRoutes = [
           {
             path: "workspaces/:workspaceId",
             element: <WorkspaceDetailPage />
+          },
+          {
+            path: "workspaces/:workspaceId/debug",
+            element: <WorkspaceDebugDetailPage />
           },
           {
             path: "workspaces/:workspaceId/sessions",

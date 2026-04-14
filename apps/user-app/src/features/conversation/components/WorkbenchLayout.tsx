@@ -105,6 +105,7 @@ import {
 import { buildSessionTitlePresentation } from "../session-title";
 import {
   buildDraftSessionPath,
+  buildWorkspaceDebugPath,
   buildWorkspaceHomePath,
   buildWorkspaceDetailPath,
   buildWorkspaceSessionIndexPath,
@@ -4824,6 +4825,16 @@ function SidebarContent({
             ) : null}
 
             <div className="workbench-modal-actions">
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => {
+                  setWorkspaceManagerOpen(false);
+                  navigate(buildWorkspaceDebugPath(workspace.id));
+                }}
+              >
+                {t("shell.workspaceDetailDebugOpenPageAction")}
+              </button>
               <button
                 type="button"
                 className="secondary-button workbench-danger-button"

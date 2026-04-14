@@ -29,6 +29,7 @@ import {
   reorderWorkspaceGroups,
   useWorkbenchShell
 } from "./WorkbenchLayout";
+import { WorkspaceDebugDetailPage } from "../../debug-target/pages/WorkspaceDebugDetailPage";
 
 const openFilesExternalWindowMock = vi.hoisted(() => vi.fn());
 const openGitExternalWindowMock = vi.hoisted(() => vi.fn());
@@ -3208,6 +3209,243 @@ describe("WorkbenchLayout", () => {
         return createJsonResponse(currentSnapshot);
       }
 
+      if (url.endsWith("/api/debug-targets/analyze") && init?.method === "POST") {
+        return createJsonResponse({
+          target: {
+            id: "debug-target-1",
+            workspaceId: "workspace-1",
+            rootPath: "C:/repo/workspace-1",
+            displayName: "workspace-1",
+            sourceType: "repo",
+            createdAt: "2026-03-26T12:00:00.000Z",
+            updatedAt: "2026-03-26T12:00:00.000Z"
+          },
+          services: [
+            {
+              id: "service-1",
+              targetId: "debug-target-1",
+              role: "frontend",
+              name: "web",
+              cwd: "C:/repo/workspace-1/apps/web",
+              command: "pnpm",
+              args: ["dev"],
+              env: {},
+              defaultPortHint: 5173,
+              protocol: "http",
+              healthPath: null,
+              adapterKind: "cli",
+              frameworkAnalysisId: "analysis-1",
+              createdAt: "2026-03-26T12:00:00.000Z",
+              updatedAt: "2026-03-26T12:00:00.000Z"
+            },
+            {
+              id: "service-2",
+              targetId: "debug-target-1",
+              role: "backend",
+              name: "host",
+              cwd: "C:/repo/workspace-1/apps/host",
+              command: "pnpm",
+              args: ["dev"],
+              env: {},
+              defaultPortHint: 3000,
+              protocol: "http",
+              healthPath: null,
+              adapterKind: "env",
+              frameworkAnalysisId: "analysis-2",
+              createdAt: "2026-03-26T12:00:00.000Z",
+              updatedAt: "2026-03-26T12:00:00.000Z"
+            },
+            {
+              id: "service-3",
+              targetId: "debug-target-1",
+              role: "frontend",
+              name: "desktop",
+              cwd: "C:/repo/workspace-1/apps/desktop",
+              command: "pnpm",
+              args: ["dev"],
+              env: {},
+              defaultPortHint: null,
+              protocol: "http",
+              healthPath: null,
+              adapterKind: "cli",
+              frameworkAnalysisId: "analysis-3",
+              createdAt: "2026-03-26T12:00:00.000Z",
+              updatedAt: "2026-03-26T12:00:00.000Z"
+            }
+          ],
+          analyses: [
+            {
+              id: "analysis-1",
+              targetId: "debug-target-1",
+              serviceId: "service-1",
+              primaryFramework: "vite",
+              confidence: "high",
+              compatibilityLevel: "supported",
+              recommendedInjectionMode: "cli",
+              requiresServiceDiscoveryHandling: true,
+              requiresHmrHandling: true,
+              requiresCallbackHandling: false,
+              aiFallbackPolicy: "conditional",
+              reasons: ["检测到 vite.config.ts"],
+              detectedFiles: ["package.json", "vite.config.ts"],
+              createdAt: "2026-03-26T12:00:00.000Z"
+            },
+            {
+              id: "analysis-2",
+              targetId: "debug-target-1",
+              serviceId: "service-2",
+              primaryFramework: "node-custom",
+              confidence: "medium",
+              compatibilityLevel: "conditional",
+              recommendedInjectionMode: "env",
+              requiresServiceDiscoveryHandling: false,
+              requiresHmrHandling: false,
+              requiresCallbackHandling: false,
+              aiFallbackPolicy: "conditional",
+              reasons: ["检测到 package.json"],
+              detectedFiles: ["package.json", "src/main.ts"],
+              createdAt: "2026-03-26T12:00:00.000Z"
+            },
+            {
+              id: "analysis-3",
+              targetId: "debug-target-1",
+              serviceId: "service-3",
+              primaryFramework: "tauri",
+              confidence: "high",
+              compatibilityLevel: "conditional",
+              recommendedInjectionMode: "none",
+              requiresServiceDiscoveryHandling: false,
+              requiresHmrHandling: false,
+              requiresCallbackHandling: false,
+              aiFallbackPolicy: "forbidden",
+              reasons: ["检测到 src-tauri/tauri.conf.json"],
+              detectedFiles: ["package.json", "src-tauri/tauri.conf.json"],
+              createdAt: "2026-03-26T12:00:00.000Z"
+            }
+          ],
+          autoInjectionEligible: true
+        });
+      }
+
+      if (url.includes("/api/debug-targets/debug-target-1/runtimes?")) {
+        return createJsonResponse({
+          targetId: "debug-target-1",
+          items: [{
+          runtimeSession: {
+            id: "runtime-1",
+            targetId: "debug-target-1",
+            status: "FAILED",
+            failureStage: "service_discovery",
+            startedAt: "2026-03-26T12:00:00.000Z",
+            stoppedAt: "2026-03-26T12:01:00.000Z",
+            createdAt: "2026-03-26T12:00:00.000Z",
+            updatedAt: "2026-03-26T12:01:00.000Z"
+          },
+          target: {
+            id: "debug-target-1",
+            workspaceId: "workspace-1",
+            rootPath: "C:/repo/workspace-1",
+            displayName: "workspace-1",
+            sourceType: "repo",
+            createdAt: "2026-03-26T12:00:00.000Z",
+            updatedAt: "2026-03-26T12:00:00.000Z"
+          },
+          services: [
+            {
+              service: {
+                id: "service-1",
+                targetId: "debug-target-1",
+                role: "frontend",
+                name: "web",
+                cwd: "C:/repo/workspace-1",
+                command: "pnpm",
+                args: ["dev"],
+                env: {},
+                defaultPortHint: 5173,
+                protocol: "http",
+                healthPath: null,
+                adapterKind: "cli",
+                frameworkAnalysisId: "analysis-1",
+                createdAt: "2026-03-26T12:00:00.000Z",
+                updatedAt: "2026-03-26T12:00:00.000Z"
+              },
+              analysis: null,
+              binding: {
+                id: "binding-1",
+                runtimeId: "runtime-1",
+                serviceId: "service-1",
+                processInstanceId: "terminal-1",
+                expectedPort: 5173,
+                leasedPort: 43000,
+                observedPort: null,
+                proxyPath: null,
+                status: "FAILED",
+                updatedAt: "2026-03-26T12:01:00.000Z"
+              },
+              portLease: {
+                id: "lease-1",
+                runtimeId: "runtime-1",
+                serviceId: "service-1",
+                port: 43000,
+                protocol: "tcp",
+                status: "RELEASED",
+                leasedAt: "2026-03-26T12:00:00.000Z",
+                expiresAt: null,
+                releasedAt: "2026-03-26T12:01:00.000Z"
+              },
+              processInstance: {
+                id: "terminal-1",
+                workspaceId: "workspace-1",
+                name: "web",
+                cwd: "C:/repo/workspace-1",
+                shell: "pwsh",
+                runtimeType: "embedded-pty",
+                runtimeSessionId: "terminal-runtime-1",
+                attachTarget: "terminal-1",
+                status: "error",
+                processId: 123,
+                createdByUserId: "user-1",
+                createdAt: "2026-03-26T12:00:00.000Z",
+                lastActiveAt: "2026-03-26T12:00:30.000Z",
+                closedAt: "2026-03-26T12:01:00.000Z",
+                exitCode: 1,
+                statusDetail: "boom",
+                debugRuntimeSessionId: "runtime-1",
+                debugTargetId: "debug-target-1",
+                debugServiceId: "service-1",
+                frameworkAnalysisId: "analysis-1",
+                launcherSourceType: "debug_service",
+                launchStage: "command_dispatched",
+                failureStage: "process_runtime_error",
+                adapterKind: "cli",
+                envPatchSummary: {},
+                artifactRef: null
+              },
+              aiFallbackEdits: []
+            }
+          ]
+          }]
+        });
+      }
+
+      if (url.endsWith("/api/framework-compatibility-matrix")) {
+        return createJsonResponse({
+          version: "2026-04-13",
+          items: [
+            {
+              framework: "vite",
+              compatibilityLevel: "supported",
+              recommendedInjectionMode: "cli",
+              requiresServiceDiscoveryHandling: true,
+              requiresHmrHandling: true,
+              requiresCallbackHandling: false,
+              aiFallbackPolicy: "conditional",
+              notes: "Vite 端口入口清楚，第一阶段默认支持"
+            }
+          ]
+        });
+      }
+
       if (url.endsWith("/api/workspaces/workspace-1") && init?.method === "DELETE") {
         currentSnapshot = createWorkbenchSnapshot([
           {
@@ -3272,6 +3510,212 @@ describe("WorkbenchLayout", () => {
     });
 
     expect(screen.getAllByText("项目二").length).toBeGreaterThan(0);
+  });
+
+  it("工作区管理中的调试入口可以跳到桌面端完整调试详情页", async () => {
+    let currentSnapshot = createWorkbenchSnapshot([
+      {
+        workspace: createWorkspace("workspace-1", "项目一"),
+        sessions: []
+      }
+    ]);
+
+    MockWebSocket.workbenchSnapshot = currentSnapshot;
+    global.fetch = vi.fn(async (rawInput: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof rawInput === "string" ? rawInput : rawInput.toString();
+
+      if (url.endsWith("/api/workbench")) {
+        return createJsonResponse(currentSnapshot);
+      }
+
+      if (url.endsWith("/api/debug-targets/analyze") && init?.method === "POST") {
+        return createJsonResponse({
+          target: {
+            id: "debug-target-1",
+            workspaceId: "workspace-1",
+            rootPath: "C:/repo/workspace-1",
+            displayName: "workspace-1",
+            sourceType: "repo",
+            createdAt: "2026-03-26T12:00:00.000Z",
+            updatedAt: "2026-03-26T12:00:00.000Z"
+          },
+          services: [
+            {
+              id: "service-1",
+              targetId: "debug-target-1",
+              role: "frontend",
+              name: "web",
+              cwd: "C:/repo/workspace-1/apps/web",
+              command: "pnpm",
+              args: ["dev"],
+              env: {},
+              defaultPortHint: 5173,
+              protocol: "http",
+              healthPath: null,
+              adapterKind: "cli",
+              frameworkAnalysisId: "analysis-1",
+              createdAt: "2026-03-26T12:00:00.000Z",
+              updatedAt: "2026-03-26T12:00:00.000Z"
+            },
+            {
+              id: "service-2",
+              targetId: "debug-target-1",
+              role: "backend",
+              name: "host",
+              cwd: "C:/repo/workspace-1/apps/host",
+              command: "pnpm",
+              args: ["dev"],
+              env: {},
+              defaultPortHint: 3000,
+              protocol: "http",
+              healthPath: null,
+              adapterKind: "env",
+              frameworkAnalysisId: "analysis-2",
+              createdAt: "2026-03-26T12:00:00.000Z",
+              updatedAt: "2026-03-26T12:00:00.000Z"
+            },
+            {
+              id: "service-3",
+              targetId: "debug-target-1",
+              role: "frontend",
+              name: "desktop",
+              cwd: "C:/repo/workspace-1/apps/desktop",
+              command: "pnpm",
+              args: ["dev"],
+              env: {},
+              defaultPortHint: null,
+              protocol: "http",
+              healthPath: null,
+              adapterKind: "cli",
+              frameworkAnalysisId: "analysis-3",
+              createdAt: "2026-03-26T12:00:00.000Z",
+              updatedAt: "2026-03-26T12:00:00.000Z"
+            }
+          ],
+          analyses: [
+            {
+              id: "analysis-1",
+              targetId: "debug-target-1",
+              serviceId: "service-1",
+              primaryFramework: "vite",
+              confidence: "high",
+              compatibilityLevel: "supported",
+              recommendedInjectionMode: "cli",
+              requiresServiceDiscoveryHandling: true,
+              requiresHmrHandling: true,
+              requiresCallbackHandling: false,
+              aiFallbackPolicy: "conditional",
+              reasons: ["检测到 vite.config.ts"],
+              detectedFiles: ["package.json", "vite.config.ts"],
+              createdAt: "2026-03-26T12:00:00.000Z"
+            },
+            {
+              id: "analysis-2",
+              targetId: "debug-target-1",
+              serviceId: "service-2",
+              primaryFramework: "node-custom",
+              confidence: "medium",
+              compatibilityLevel: "conditional",
+              recommendedInjectionMode: "env",
+              requiresServiceDiscoveryHandling: false,
+              requiresHmrHandling: false,
+              requiresCallbackHandling: false,
+              aiFallbackPolicy: "conditional",
+              reasons: ["检测到 package.json"],
+              detectedFiles: ["package.json", "src/main.ts"],
+              createdAt: "2026-03-26T12:00:00.000Z"
+            },
+            {
+              id: "analysis-3",
+              targetId: "debug-target-1",
+              serviceId: "service-3",
+              primaryFramework: "tauri",
+              confidence: "high",
+              compatibilityLevel: "conditional",
+              recommendedInjectionMode: "none",
+              requiresServiceDiscoveryHandling: false,
+              requiresHmrHandling: false,
+              requiresCallbackHandling: false,
+              aiFallbackPolicy: "forbidden",
+              reasons: ["检测到 src-tauri/tauri.conf.json"],
+              detectedFiles: ["package.json", "src-tauri/tauri.conf.json"],
+              createdAt: "2026-03-26T12:00:00.000Z"
+            }
+          ],
+          autoInjectionEligible: true
+        });
+      }
+
+      if (url.includes("/api/debug-targets/debug-target-1/runtimes?")) {
+        return createJsonResponse({
+          targetId: "debug-target-1",
+          items: []
+        });
+      }
+
+      if (url.endsWith("/api/framework-compatibility-matrix")) {
+        return createJsonResponse({
+          version: "2026-04-13",
+          items: [
+            {
+              framework: "vite",
+              compatibilityLevel: "supported",
+              recommendedInjectionMode: "cli",
+              requiresServiceDiscoveryHandling: true,
+              requiresHmrHandling: true,
+              requiresCallbackHandling: false,
+              aiFallbackPolicy: "conditional",
+              notes: "Vite 端口入口清楚，第一阶段默认支持"
+            },
+            {
+              framework: "node-custom",
+              compatibilityLevel: "conditional",
+              recommendedInjectionMode: "env",
+              requiresServiceDiscoveryHandling: false,
+              requiresHmrHandling: false,
+              requiresCallbackHandling: false,
+              aiFallbackPolicy: "conditional",
+              notes: "通用 Node 服务先按条件支持处理"
+            },
+            {
+              framework: "tauri",
+              compatibilityLevel: "conditional",
+              recommendedInjectionMode: "none",
+              requiresServiceDiscoveryHandling: false,
+              requiresHmrHandling: false,
+              requiresCallbackHandling: false,
+              aiFallbackPolicy: "forbidden",
+              notes: "桌面壳默认只做识别，不参与 Web 端口编排"
+            }
+          ]
+        });
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderWorkbenchRoute();
+
+    await userEvent.click(await screen.findByRole("button", { name: t("shell.manageWorkspaceAction") }));
+    const managerDialog = await screen.findByRole("dialog", {
+      name: t("shell.manageWorkspaceTitle")
+    });
+
+    await userEvent.click(within(managerDialog).getByRole("button", { name: /项目一/ }));
+    await userEvent.click(
+      within(managerDialog).getByRole("button", { name: t("shell.workspaceDetailDebugOpenPageAction") })
+    );
+
+    expect(await screen.findByText(t("shell.workspaceDetailDebugPageTitle"))).toBeInTheDocument();
+    expect(await screen.findByText(/apps\/web/)).toBeInTheDocument();
+    expect(await screen.findByText(/apps\/host/)).toBeInTheDocument();
+    expect(await screen.findByText(/apps\/desktop/)).toBeInTheDocument();
+    expect(screen.getAllByText(/桌面壳服务/).length).toBeGreaterThan(0);
+    expect(
+      screen.getByText(
+        t("shell.workspaceDetailDebugOverallSummaryMixed", { webCount: 2, desktopCount: 1 })
+      )
+    ).toBeInTheDocument();
   });
 
   it("收到空 git 快照并写入缓存后，重新挂载工作台也不会崩溃", async () => {
@@ -5594,6 +6038,7 @@ function renderWorkbenchRoute(
             <Route path="/landing" element={<CurrentLocationProbe />} />
             <Route path="/workspaces" element={<CurrentLocationProbe />} />
             <Route path="/workspaces/:workspaceId" element={<CurrentLocationProbe />} />
+            <Route path="/workspaces/:workspaceId/debug" element={<WorkspaceDebugDetailPage />} />
             <Route path="/workspaces/:workspaceId/sessions" element={<CurrentLocationProbe />} />
             <Route
               path="/workspaces/:workspaceId/sessions/:sessionId"

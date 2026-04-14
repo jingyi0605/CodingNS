@@ -27,6 +27,10 @@ export function buildWorkspaceDetailPath(workspaceId: string): string {
   return `/workspaces/${encodeURIComponent(workspaceId)}`;
 }
 
+export function buildWorkspaceDebugPath(workspaceId: string): string {
+  return `${buildWorkspaceDetailPath(workspaceId)}/debug`;
+}
+
 export function buildWorkspaceSessionIndexPath(workspaceId: string): string {
   return `${buildWorkspaceDetailPath(workspaceId)}/sessions`;
 }
