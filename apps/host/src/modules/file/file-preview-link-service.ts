@@ -1,36 +1,10 @@
 import crypto from "node:crypto";
-import path from "node:path";
 
 import { AppError } from "../../shared/errors/app-error.js";
 import type { FileAccessGuard } from "./file-access-guard.js";
+import { detectPreviewKind, resolvePreviewContentType } from "./file-preview-types.js";
 
 const FILE_PREVIEW_TOKEN_TTL_MS = 5 * 60 * 1000;
-const HTML_FILE_EXTENSIONS = new Set([".html", ".htm"]);
-const PREVIEW_CONTENT_TYPES = new Map<string, string>([
-  [".html", "text/html; charset=utf-8"],
-  [".htm", "text/html; charset=utf-8"],
-  [".css", "text/css; charset=utf-8"],
-  [".js", "text/javascript; charset=utf-8"],
-  [".mjs", "text/javascript; charset=utf-8"],
-  [".cjs", "text/javascript; charset=utf-8"],
-  [".json", "application/json; charset=utf-8"],
-  [".map", "application/json; charset=utf-8"],
-  [".svg", "image/svg+xml"],
-  [".png", "image/png"],
-  [".jpg", "image/jpeg"],
-  [".jpeg", "image/jpeg"],
-  [".gif", "image/gif"],
-  [".webp", "image/webp"],
-  [".ico", "image/x-icon"],
-  [".bmp", "image/bmp"],
-  [".txt", "text/plain; charset=utf-8"],
-  [".wasm", "application/wasm"],
-  [".woff", "font/woff"],
-  [".woff2", "font/woff2"],
-  [".ttf", "font/ttf"],
-  [".otf", "font/otf"],
-  [".eot", "application/vnd.ms-fontobject"]
-]);
 
 interface FilePreviewTokenPayload {
   workspaceId: string;
@@ -61,11 +35,13 @@ export class FilePreviewLinkService {
       kind: "file"
     });
 
-    if (!isHtmlFile(resolved.relativePath)) {
+    const previewKind = detectPreviewKind(resolved.relativePath);
+
+    if (previewKind !== "html" && previewKind !== "image" && previewKind !== "pdf") {
       throw new AppError({
         statusCode: 400,
         errorCode: "FILE_PREVIEW_NOT_SUPPORTED",
-        detail: "当前只支持为 HTML 文件生成页面预览",
+        detail: "当前只支持为 HTML、图片和 PDF 生成受控预览链接",
         field: "path"
       });
     }
@@ -142,7 +118,7 @@ export class FilePreviewLinkService {
       throw new AppError({
         statusCode: 401,
         errorCode: "FILE_PREVIEW_TOKEN_EXPIRED",
-        detail: "预览链接已经过期，请重新打开 HTML 预览"
+        detail: "预览链接已经过期，请重新打开文件预览"
       });
     }
 
@@ -169,14 +145,6 @@ function encodeRelativePath(relativePath: string): string {
     .join("/");
 }
 
-function isHtmlFile(filePath: string): boolean {
-  return HTML_FILE_EXTENSIONS.has(path.extname(filePath).toLowerCase());
-}
-
-function resolvePreviewContentType(filePath: string): string | null {
-  return PREVIEW_CONTENT_TYPES.get(path.extname(filePath).toLowerCase()) ?? null;
-}
-
 function encodeBase64Url(input: string): string {
   return Buffer.from(input, "utf8").toString("base64url");
 }
@@ -200,6 +168,6 @@ function buildInvalidPreviewTokenError(): AppError {
   return new AppError({
     statusCode: 401,
     errorCode: "FILE_PREVIEW_TOKEN_INVALID",
-    detail: "预览链接无效，请重新打开 HTML 预览"
+    detail: "预览链接无效，请重新打开文件预览"
   });
 }

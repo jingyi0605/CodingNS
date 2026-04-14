@@ -60,16 +60,36 @@ export interface RecentFileRecordDto {
   pinned: boolean;
 }
 
+export type FilePreviewKind =
+  | "text"
+  | "markdown"
+  | "html"
+  | "image"
+  | "pdf"
+  | "binary"
+  | "unsupported";
+
+export interface FilePreviewCapabilitiesDto {
+  canEdit: boolean;
+  canRefresh: boolean;
+  canResize: boolean;
+  canZoom: boolean;
+  canPaginate: boolean;
+}
+
 export interface FilePreviewDto {
   workspaceId: string;
   path: string;
   supported: boolean;
-  kind: "text" | "binary" | "unsupported";
+  kind: FilePreviewKind;
   reason: string | null;
   content: string | null;
   version: string | null;
   size: number;
   updatedAt: string | null;
+  previewPath: string | null;
+  previewUrl: string | null;
+  capabilities: FilePreviewCapabilitiesDto;
 }
 
 export interface FilePreviewLinkDto {

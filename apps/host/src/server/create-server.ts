@@ -69,6 +69,9 @@ import { PreferenceProfileService } from "../modules/preferences/profile-service
 import { QuickPhraseController } from "../modules/preferences/quick-phrase-controller.js";
 import { QuickPhraseService } from "../modules/preferences/quick-phrase-service.js";
 import { ProviderController } from "../modules/provider/provider-controller.js";
+import { TailscaleManager } from "../modules/tailscale/tailscale-manager.js";
+import { TailscaleController } from "../modules/tailscale/tailscale-controller.js";
+import { TailscaleService } from "../modules/tailscale/tailscale-service.js";
 import { SessionController } from "../modules/sessions/session-controller.js";
 import { SessionChangedFileService } from "../modules/sessions/session-changed-file-service.js";
 import { SessionActivityAuthorityService } from "../modules/sessions/session-activity-authority-service.js";
@@ -115,6 +118,7 @@ import { registerTerminalRoutes } from "../routes/terminals.js";
 import { registerWorkbenchRoutes } from "../routes/workbench.js";
 import { registerWorktreeRoutes } from "../routes/worktrees.js";
 import { registerWorkspaceRoutes } from "../routes/workspaces.js";
+import { registerSystemRoutes } from "../routes/system.js";
 import { DemoCleanupService, DemoOnlineTracker } from "../modules/demo/demo-cleanup-service.js";
 import { setErrorHandler } from "../shared/http/error-handler.js";
 import { startTerminalDebugEventLoopLagMonitor } from "../shared/utils/terminal-debug-log.js";
@@ -155,6 +159,7 @@ import { SessionMessageOriginRepository } from "../storage/repositories/session-
 import { SessionSendQueueRepository } from "../storage/repositories/session-send-queue-repository.js";
 import { SessionStateRepository } from "../storage/repositories/session-state-repository.js";
 import { SessionStatusSnapshotRepository } from "../storage/repositories/session-status-snapshot-repository.js";
+import { InstanceTailscaleRepository } from "../storage/repositories/instance-tailscale-repository.js";
 import { TerminalCommandTemplateRepository } from "../storage/repositories/terminal-command-template-repository.js";
 import { TerminalInstanceRepository } from "../storage/repositories/terminal-instance-repository.js";
 import { TerminalLogFileRepository } from "../storage/repositories/terminal-log-file-repository.js";
@@ -226,6 +231,7 @@ export function createServer(config: HostConfig) {
     sessionSendQueueRepository: new SessionSendQueueRepository(database.db),
     sessionStateRepository: new SessionStateRepository(database.db),
     sessionStatusSnapshotRepository: new SessionStatusSnapshotRepository(database.db),
+    instanceTailscaleRepository: new InstanceTailscaleRepository(database.db),
     userQuickPhrasePreferenceRepository: new UserQuickPhrasePreferenceRepository(database.db),
     userPreferenceProfileRepository: new UserPreferenceProfileRepository(database.db),
     terminalInstanceRepository: new TerminalInstanceRepository(database.db),
@@ -293,7 +299,11 @@ export function createServer(config: HostConfig) {
     repositories.fileContextBindingRepository,
     fileVersionChecker
   );
-  const filePreviewService = new FilePreviewService(fileAccessGuard, fileContentService);
+  const filePreviewService = new FilePreviewService(
+    fileAccessGuard,
+    fileContentService,
+    recentFileService
+  );
   const filePreviewLinkService = new FilePreviewLinkService(
     fileAccessGuard,
     config.filePreviewTokenSecret
@@ -316,6 +326,18 @@ export function createServer(config: HostConfig) {
   );
   const preferenceProfileService = new PreferenceProfileService(
     repositories.userPreferenceProfileRepository
+  );
+  const tailscaleManager = new TailscaleManager(
+    repositories.bootstrapStateRepository,
+    repositories.instanceTailscaleRepository
+  );
+  const tailscaleService = new TailscaleService(
+    database.db,
+    repositories.instanceTailscaleRepository,
+    tailscaleManager,
+    {
+      databasePath: config.databasePath
+    }
   );
   const commitRuleEngine = new CommitRuleEngine();
   const commitDraftService = new CommitDraftService(gitReadService);
@@ -660,6 +682,7 @@ export function createServer(config: HostConfig) {
     repositories.portLeaseRepository,
     repositories.runtimeBindingRepository,
     repositories.aiFallbackEditRepository,
+    repositories.terminalCommandTemplateRepository,
     terminalService,
     repositories.terminalInstanceRepository,
     taskManager
@@ -742,6 +765,7 @@ export function createServer(config: HostConfig) {
     sessionLiveRuntimeService,
     config
   );
+  const tailscaleController = new TailscaleController(tailscaleService);
   const quickPhraseController = new QuickPhraseController(quickPhraseService);
   const profileController = new ProfileController(preferenceProfileService);
   const fileController = new FileController(
@@ -810,6 +834,7 @@ export function createServer(config: HostConfig) {
   void registerButlerRoutes(app, butlerController);
   void registerSessionRoutes(app, sessionController);
   void registerPreferenceRoutes(app, quickPhraseController, profileController);
+  void registerSystemRoutes(app, tailscaleController);
   void registerFileRoutes(app, fileController);
   void registerSessionContextRoutes(app, fileContextController);
   void registerTerminalRoutes(app, terminalController);
@@ -890,6 +915,8 @@ export function createServer(config: HostConfig) {
         commitOrchestrator,
         quickPhraseService,
         preferenceProfileService,
+        tailscaleManager,
+        tailscaleService,
         runtimeObservabilityService,
         sessionHistoryService,
         sessionChangedFileService,

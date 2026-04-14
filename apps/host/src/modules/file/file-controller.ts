@@ -6,6 +6,7 @@ import { AppError } from "../../shared/errors/app-error.js";
 import type { FileContentService, FileOperationType } from "./file-content-service.js";
 import type { FilePreviewLinkService } from "./file-preview-link-service.js";
 import type { FilePreviewService } from "./file-preview-service.js";
+import { isResourcePreviewKind } from "./file-preview-types.js";
 import type { FileSearchService } from "./file-search-service.js";
 import type { FileTreeService } from "./file-tree-service.js";
 import type { RecentFileService } from "./recent-file-service.js";
@@ -195,13 +196,25 @@ export class FileController {
     request: FastifyRequest<{ Querystring: FileWorkspaceQuery }>,
     reply: FastifyReply
   ): Promise<void> => {
-    reply.send(
-      this.filePreviewService.preview(
-        requireWorkspaceId(request.query.workspaceId),
-        request.query.path ?? "",
-        requireUserId(request)
-      )
+    const workspaceId = requireWorkspaceId(request.query.workspaceId);
+    const filePath = request.query.path ?? "";
+    const preview = this.filePreviewService.preview(
+      workspaceId,
+      filePath,
+      requireUserId(request)
     );
+
+    if (preview.supported && isResourcePreviewKind(preview.kind)) {
+      const previewLink = this.filePreviewLinkService.createLink(
+        workspaceId,
+        filePath,
+        requireUserId(request)
+      );
+      preview.previewPath = previewLink.previewPath;
+      preview.previewUrl = buildAbsolutePreviewUrl(request, previewLink.previewPath);
+    }
+
+    reply.send(preview);
   };
 
   readonly createPreviewLink = async (
@@ -249,7 +262,7 @@ function parsePublicPreviewPath(rawPath: string): {
     throw new AppError({
       statusCode: 401,
       errorCode: "FILE_PREVIEW_TOKEN_INVALID",
-      detail: "预览链接无效，请重新打开 HTML 预览"
+      detail: "预览链接无效，请重新打开文件预览"
     });
   }
 
@@ -268,7 +281,7 @@ function decodePreviewPath(fileSegments: string[]): string {
         throw new AppError({
           statusCode: 401,
           errorCode: "FILE_PREVIEW_TOKEN_INVALID",
-          detail: "预览链接无效，请重新打开 HTML 预览"
+          detail: "预览链接无效，请重新打开文件预览"
         });
       }
     })

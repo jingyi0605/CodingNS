@@ -297,6 +297,43 @@ describe("spec004 文件管理能力", () => {
     expect(previewBinary.json().supported).toBe(false);
     expect(previewBinary.json().kind).toBe("binary");
 
+    const previewHtmlMeta = await hosted.app.inject({
+      method: "GET",
+      url: `/api/files/preview?workspaceId=${workspaceId}&path=${encodeURIComponent("site/index.html")}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(previewHtmlMeta.statusCode).toBe(200);
+    expect(previewHtmlMeta.json().kind).toBe("html");
+    expect(previewHtmlMeta.json().content).toContain("HTML 预览页面");
+    expect(previewHtmlMeta.json().previewUrl).toContain("/preview/files/");
+    expect(previewHtmlMeta.json().capabilities.canEdit).toBe(true);
+
+    const previewImageMeta = await hosted.app.inject({
+      method: "GET",
+      url: `/api/files/preview?workspaceId=${workspaceId}&path=${encodeURIComponent("assets/diagram.png")}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(previewImageMeta.statusCode).toBe(200);
+    expect(previewImageMeta.json().kind).toBe("image");
+    expect(previewImageMeta.json().previewUrl).toContain("/preview/files/");
+    expect(previewImageMeta.json().capabilities.canZoom).toBe(true);
+
+    const previewPdfMeta = await hosted.app.inject({
+      method: "GET",
+      url: `/api/files/preview?workspaceId=${workspaceId}&path=${encodeURIComponent("docs/spec.pdf")}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(previewPdfMeta.statusCode).toBe(200);
+    expect(previewPdfMeta.json().kind).toBe("pdf");
+    expect(previewPdfMeta.json().previewUrl).toContain("/preview/files/");
+    expect(previewPdfMeta.json().capabilities.canPaginate).toBe(true);
+
     const previewLink = await hosted.app.inject({
       method: "GET",
       url: `/api/files/preview-link?workspaceId=${workspaceId}&path=${encodeURIComponent("site/index.html")}`,
@@ -365,6 +402,51 @@ describe("spec004 文件管理能力", () => {
     });
     expect(previewChinese.statusCode).toBe(200);
     expect(previewChinese.body).toContain("中文路径预览");
+
+    const previewImageLink = await hosted.app.inject({
+      method: "GET",
+      url: `/api/files/preview-link?workspaceId=${workspaceId}&path=${encodeURIComponent("assets/diagram.png")}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(previewImageLink.statusCode).toBe(200);
+    expect(previewImageLink.json().previewPath).toContain("/preview/files/");
+
+    const previewImage = await hosted.app.inject({
+      method: "GET",
+      url: previewImageLink.json().previewPath
+    });
+    expect(previewImage.statusCode).toBe(200);
+    expect(previewImage.headers["content-type"]).toContain("image/png");
+
+    const previewPdfLink = await hosted.app.inject({
+      method: "GET",
+      url: `/api/files/preview-link?workspaceId=${workspaceId}&path=${encodeURIComponent("docs/spec.pdf")}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(previewPdfLink.statusCode).toBe(200);
+
+    const previewPdf = await hosted.app.inject({
+      method: "GET",
+      url: previewPdfLink.json().previewPath
+    });
+    expect(previewPdf.statusCode).toBe(200);
+    expect(previewPdf.headers["content-type"]).toContain("application/pdf");
+
+    const previewLargePdfMeta = await hosted.app.inject({
+      method: "GET",
+      url: `/api/files/preview?workspaceId=${workspaceId}&path=${encodeURIComponent("docs/large-preview.pdf")}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(previewLargePdfMeta.statusCode).toBe(200);
+    expect(previewLargePdfMeta.json().kind).toBe("pdf");
+    expect(previewLargePdfMeta.json().supported).toBe(true);
+    expect(previewLargePdfMeta.json().previewUrl).toContain("/preview/files/");
 
     const recent = await hosted.app.inject({
       method: "GET",
@@ -480,6 +562,7 @@ describe("spec004 文件管理能力", () => {
 });
 
 function seedWorkspaceFiles(workspaceDir: string): void {
+  mkdirSync(path.join(workspaceDir, "assets"), { recursive: true });
   mkdirSync(path.join(workspaceDir, "docs"), { recursive: true });
   mkdirSync(path.join(workspaceDir, "site"), { recursive: true });
   mkdirSync(path.join(workspaceDir, "src"), { recursive: true });
@@ -521,6 +604,61 @@ function seedWorkspaceFiles(workspaceDir: string): void {
     path.join(workspaceDir, "site", "app.js"),
     "document.body.dataset.previewState = 'preview-ready';\n",
     "utf8"
+  );
+  writeFileSync(
+    path.join(workspaceDir, "assets", "diagram.png"),
+    Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIW2NkYGD4DwABBAEAAPrL7QAAAABJRU5ErkJggg==",
+      "base64"
+    )
+  );
+  writeFileSync(
+    path.join(workspaceDir, "docs", "spec.pdf"),
+    Buffer.from(
+      [
+        "%PDF-1.1",
+        "1 0 obj",
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "endobj",
+        "2 0 obj",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "endobj",
+        "3 0 obj",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+        "endobj",
+        "4 0 obj",
+        "<< /Length 44 >>",
+        "stream",
+        "BT /F1 18 Tf 40 120 Td (Spec004 PDF Preview) Tj ET",
+        "endstream",
+        "endobj",
+        "5 0 obj",
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        "endobj",
+        "xref",
+        "0 6",
+        "0000000000 65535 f ",
+        "0000000010 00000 n ",
+        "0000000060 00000 n ",
+        "0000000117 00000 n ",
+        "0000000243 00000 n ",
+        "0000000338 00000 n ",
+        "trailer",
+        "<< /Root 1 0 R /Size 6 >>",
+        "startxref",
+        "408",
+        "%%EOF"
+      ].join("\n"),
+      "utf8"
+    )
+  );
+  writeFileSync(
+    path.join(workspaceDir, "docs", "large-preview.pdf"),
+    Buffer.concat([
+      Buffer.from("%PDF-1.4\n", "utf8"),
+      Buffer.alloc(1024 * 1024, 0x20),
+      Buffer.from("\n%%EOF", "utf8")
+    ])
   );
   mkdirSync(path.join(workspaceDir, "化工行业AI培训"), { recursive: true });
   writeFileSync(
