@@ -69,8 +69,12 @@ import { PreferenceProfileService } from "../modules/preferences/profile-service
 import { QuickPhraseController } from "../modules/preferences/quick-phrase-controller.js";
 import { QuickPhraseService } from "../modules/preferences/quick-phrase-service.js";
 import { ProviderController } from "../modules/provider/provider-controller.js";
+import { SkillController } from "../modules/skills/skill-controller.js";
+import { SkillManagerService } from "../modules/skills/skill-manager-service.js";
+import { createDefaultSkillTargetAdapters } from "../modules/skills/skill-target-adapter.js";
 import { TailscaleManager } from "../modules/tailscale/tailscale-manager.js";
 import { TailscaleController } from "../modules/tailscale/tailscale-controller.js";
+import { TailscaleHelperClient } from "../modules/tailscale/tailscale-helper-client.js";
 import { TailscaleService } from "../modules/tailscale/tailscale-service.js";
 import { SessionController } from "../modules/sessions/session-controller.js";
 import { SessionChangedFileService } from "../modules/sessions/session-changed-file-service.js";
@@ -114,6 +118,7 @@ import { registerPublicRoutes } from "../routes/public.js";
 import { registerProxyRoutes } from "../routes/proxy.js";
 import { registerSessionContextRoutes } from "../routes/session-contexts.js";
 import { registerSessionRoutes } from "../routes/sessions.js";
+import { registerSkillRoutes } from "../routes/skills.js";
 import { registerTerminalRoutes } from "../routes/terminals.js";
 import { registerWorkbenchRoutes } from "../routes/workbench.js";
 import { registerWorktreeRoutes } from "../routes/worktrees.js";
@@ -146,6 +151,7 @@ import { DebugTargetRepository } from "../storage/repositories/debug-target-repo
 import { FileContextBindingRepository } from "../storage/repositories/file-context-binding-repository.js";
 import { FrameworkAnalysisResultRepository } from "../storage/repositories/framework-analysis-result-repository.js";
 import { GitRemoteCredentialRepository } from "../storage/repositories/git-remote-credential-repository.js";
+import { ManagedSkillRepository } from "../storage/repositories/managed-skill-repository.js";
 import { PortLeaseRepository } from "../storage/repositories/port-lease-repository.js";
 import { RecentFileRepository } from "../storage/repositories/recent-file-repository.js";
 import { RuntimeBindingRepository } from "../storage/repositories/runtime-binding-repository.js";
@@ -160,6 +166,7 @@ import { SessionSendQueueRepository } from "../storage/repositories/session-send
 import { SessionStateRepository } from "../storage/repositories/session-state-repository.js";
 import { SessionStatusSnapshotRepository } from "../storage/repositories/session-status-snapshot-repository.js";
 import { InstanceTailscaleRepository } from "../storage/repositories/instance-tailscale-repository.js";
+import { SkillTargetBindingRepository } from "../storage/repositories/skill-target-binding-repository.js";
 import { TerminalCommandTemplateRepository } from "../storage/repositories/terminal-command-template-repository.js";
 import { TerminalInstanceRepository } from "../storage/repositories/terminal-instance-repository.js";
 import { TerminalLogFileRepository } from "../storage/repositories/terminal-log-file-repository.js";
@@ -219,6 +226,7 @@ export function createServer(config: HostConfig) {
     verificationRunRepository: new VerificationRunRepository(database.db),
     commitRuleProfileRepository: new CommitRuleProfileRepository(database.db),
     gitRemoteCredentialRepository: new GitRemoteCredentialRepository(database.db),
+    managedSkillRepository: new ManagedSkillRepository(database.db),
     recentFileRepository: new RecentFileRepository(database.db),
     fileContextBindingRepository: new FileContextBindingRepository(database.db),
     sessionBindingRepository: new SessionBindingRepository(database.db),
@@ -232,6 +240,7 @@ export function createServer(config: HostConfig) {
     sessionStateRepository: new SessionStateRepository(database.db),
     sessionStatusSnapshotRepository: new SessionStatusSnapshotRepository(database.db),
     instanceTailscaleRepository: new InstanceTailscaleRepository(database.db),
+    skillTargetBindingRepository: new SkillTargetBindingRepository(database.db),
     userQuickPhrasePreferenceRepository: new UserQuickPhrasePreferenceRepository(database.db),
     userPreferenceProfileRepository: new UserPreferenceProfileRepository(database.db),
     terminalInstanceRepository: new TerminalInstanceRepository(database.db),
@@ -327,9 +336,15 @@ export function createServer(config: HostConfig) {
   const preferenceProfileService = new PreferenceProfileService(
     repositories.userPreferenceProfileRepository
   );
+  const tailscaleHelperClient = new TailscaleHelperClient();
   const tailscaleManager = new TailscaleManager(
     repositories.bootstrapStateRepository,
-    repositories.instanceTailscaleRepository
+    repositories.instanceTailscaleRepository,
+    tailscaleHelperClient,
+    {
+      commandPath: config.tailscaleCliPath,
+      servicePort: config.port
+    }
   );
   const tailscaleService = new TailscaleService(
     database.db,
@@ -337,6 +352,14 @@ export function createServer(config: HostConfig) {
     tailscaleManager,
     {
       databasePath: config.databasePath
+    }
+  );
+  const skillManagerService = new SkillManagerService(
+    repositories.managedSkillRepository,
+    repositories.skillTargetBindingRepository,
+    createDefaultSkillTargetAdapters(config),
+    {
+      ssotRootDir: path.join(path.dirname(config.databasePath), "skills")
     }
   );
   const commitRuleEngine = new CommitRuleEngine();
@@ -777,6 +800,7 @@ export function createServer(config: HostConfig) {
     sessionLiveRuntimeService,
     config
   );
+  const skillController = new SkillController(skillManagerService);
   const tailscaleController = new TailscaleController(tailscaleService);
   const quickPhraseController = new QuickPhraseController(quickPhraseService);
   const profileController = new ProfileController(preferenceProfileService);
@@ -823,6 +847,7 @@ export function createServer(config: HostConfig) {
     await debugTargetService.runBackgroundRuntimeReconciliation(
       "debug_target.startup_runtime_recovery"
     );
+    await tailscaleService.restoreOnStartup();
   });
 
   // Demo 模式：自动创建演示用户
@@ -846,6 +871,7 @@ export function createServer(config: HostConfig) {
   void registerButlerRoutes(app, butlerController);
   void registerSessionRoutes(app, sessionController);
   void registerPreferenceRoutes(app, quickPhraseController, profileController);
+  void registerSkillRoutes(app, skillController);
   void registerSystemRoutes(app, tailscaleController);
   void registerFileRoutes(app, fileController);
   void registerSessionContextRoutes(app, fileContextController);
@@ -877,6 +903,7 @@ export function createServer(config: HostConfig) {
     await sessionLiveRuntimeService.dispose();
     await wsHandle.close();
     gitCommandRunner.dispose();
+    tailscaleHelperClient.dispose();
     database.close();
   });
 
@@ -927,6 +954,7 @@ export function createServer(config: HostConfig) {
         commitOrchestrator,
         quickPhraseService,
         preferenceProfileService,
+        skillManagerService,
         tailscaleManager,
         tailscaleService,
         runtimeObservabilityService,

@@ -92,6 +92,9 @@ export class DebugTargetService {
     private readonly portLeaseRepository: PortLeaseRepository,
     private readonly runtimeBindingRepository: RuntimeBindingRepository,
     private readonly aiFallbackEditRepository: AiFallbackEditRepository,
+    private readonly terminalCommandTemplateRepository: {
+      listByWorkspace(workspaceId: string): TerminalCommandTemplate[];
+    },
     private readonly terminalService: Pick<TerminalService, "createTerminal" | "writeInput" | "closeTerminal" | "getTerminalOrThrow">,
     private readonly terminalInstanceRepository: {
       findById(id: string): TerminalInstance | null;
@@ -106,7 +109,13 @@ export class DebugTargetService {
     const rootPath = this.resolveRootPath(workspace.path, input.rootPath);
     const sourceMeta = this.resolveSourceMeta(workspace.id);
     const timestamp = nowIso();
-    const discoveredServices = discoverServiceCandidates(rootPath, input.commandHints);
+    const commandHints = resolveAnalyzeCommandHints({
+      workspaceId: workspace.id,
+      rootPath,
+      explicitCommandHints: input.commandHints,
+      terminalCommandTemplateRepository: this.terminalCommandTemplateRepository
+    });
+    const discoveredServices = discoverServiceCandidates(rootPath, commandHints);
     const analyzedServices = discoveredServices.map((candidate) => ({
       candidate,
       framework: pickFramework(collectFrameworkEvidence(candidate.cwd))
@@ -1021,23 +1030,33 @@ function discoverServiceCandidates(
     workspacePackages,
     rootScripts
   );
-
-  if (candidatesFromRootScripts.length > 0) {
-    return applyCommandHintFallback(candidatesFromRootScripts, commandHints);
-  }
-
   const candidatesFromWorkspacePackages = discoverWorkspaceServiceCandidatesFromPackages(
     rootPath,
     workspacePackages
   );
+  const candidatesFromAppsPythonServices = discoverAppsPythonServiceCandidates(rootPath);
+  const discoveredByCwd = new Map<string, DiscoveredServiceCandidate>();
 
-  if (candidatesFromWorkspacePackages.length > 0) {
-    return applyCommandHintFallback(candidatesFromWorkspacePackages, commandHints);
+  for (const candidate of [
+    ...candidatesFromRootScripts,
+    ...candidatesFromWorkspacePackages,
+    ...candidatesFromAppsPythonServices
+  ]) {
+    if (!discoveredByCwd.has(candidate.cwd)) {
+      discoveredByCwd.set(candidate.cwd, candidate);
+    }
   }
 
-    return applyCommandHintFallback([
-      {
-        name: extractPackageName(rootPackageJson) ?? (path.basename(rootPath) || "service"),
+  if (discoveredByCwd.size > 0) {
+    return applyCommandHintFallback(
+      sortDiscoveredServiceCandidates([...discoveredByCwd.values()]),
+      commandHints
+    );
+  }
+
+  return applyCommandHintFallback([
+    {
+      name: extractPackageName(rootPackageJson) ?? (path.basename(rootPath) || "service"),
       cwd: rootPath,
       commandHint: commandHints?.[0] ?? null,
       roleHint: null
@@ -1249,6 +1268,47 @@ function discoverWorkspaceServiceCandidatesFromPackages(
   return sortDiscoveredServiceCandidates(discovered);
 }
 
+function discoverAppsPythonServiceCandidates(rootPath: string): DiscoveredServiceCandidate[] {
+  const appsDir = path.join(rootPath, "apps");
+
+  if (!fs.existsSync(appsDir) || !fs.statSync(appsDir).isDirectory()) {
+    return [];
+  }
+
+  let appEntries: string[] = [];
+
+  try {
+    appEntries = fs.readdirSync(appsDir);
+  } catch {
+    return [];
+  }
+
+  const discovered: DiscoveredServiceCandidate[] = [];
+
+  for (const entry of appEntries) {
+    const serviceDir = path.join(appsDir, entry);
+
+    if (!fs.existsSync(serviceDir) || !fs.statSync(serviceDir).isDirectory()) {
+      continue;
+    }
+
+    const framework = pickFramework(collectFrameworkEvidence(serviceDir));
+
+    if (!isPythonFramework(framework.primaryFramework)) {
+      continue;
+    }
+
+    discovered.push({
+      name: path.basename(serviceDir) || "service",
+      cwd: serviceDir,
+      commandHint: null,
+      roleHint: "backend"
+    });
+  }
+
+  return sortDiscoveredServiceCandidates(discovered);
+}
+
 function hasRunnableDevScript(scripts: Record<string, string>): boolean {
   return Object.keys(scripts).some((name) => name === "dev" || name.startsWith("dev:"));
 }
@@ -1348,7 +1408,9 @@ function buildServiceRecord(
   timestamp: string,
   frameworkAnalysisId: string
 ): DebugServiceSpec {
-  const parsedCommand = parseCommandHint(candidate.commandHint ?? defaultCommandHintForFramework(framework.primaryFramework));
+  const parsedCommand = parseCommandHint(
+    candidate.commandHint ?? defaultCommandHintForFramework(framework.primaryFramework, candidate.cwd)
+  );
 
   return {
     id: createId(),
@@ -1394,12 +1456,12 @@ function parseCommandHint(commandHint: string): { command: string; args: string[
   };
 }
 
-function defaultCommandHintForFramework(framework: string | null): string {
+function defaultCommandHintForFramework(framework: string | null, rootPath?: string): string {
   switch (framework) {
     case "spring-boot":
       return "./mvnw spring-boot:run";
     case "uvicorn":
-      return "uvicorn main:app --reload";
+      return `uvicorn ${inferUvicornAppSpec(rootPath)} --reload`;
     case "flask":
       return "flask run";
     case "django":
@@ -1441,6 +1503,39 @@ function resolveServiceRole(framework: string | null): DebugServiceRole {
     default:
       return "custom";
   }
+}
+
+function inferUvicornAppSpec(rootPath: string | undefined): string {
+  if (!rootPath) {
+    return "main:app";
+  }
+
+  const candidates: Array<{ relativePath: string; moduleSpec: string }> = [
+    {
+      relativePath: "app/main.py",
+      moduleSpec: "app.main:app"
+    },
+    {
+      relativePath: "main.py",
+      moduleSpec: "main:app"
+    },
+    {
+      relativePath: "src/main.py",
+      moduleSpec: "src.main:app"
+    },
+    {
+      relativePath: "app.py",
+      moduleSpec: "app:app"
+    }
+  ];
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(path.join(rootPath, candidate.relativePath))) {
+      return candidate.moduleSpec;
+    }
+  }
+
+  return "main:app";
 }
 
 function normalizeAdapterKind(framework: string | null): DebugServiceSpec["adapterKind"] {
@@ -1884,6 +1979,135 @@ function safeListFiles(rootPath: string): string[] {
 
 function pickFramework(result: FrameworkDetectionResult): FrameworkDetectionResult {
   return result;
+}
+
+function isPythonFramework(framework: string | null): boolean {
+  return framework === "uvicorn" || framework === "flask" || framework === "django";
+}
+
+function resolveAnalyzeCommandHints(input: {
+  workspaceId: string;
+  rootPath: string;
+  explicitCommandHints: string[] | undefined;
+  terminalCommandTemplateRepository: {
+    listByWorkspace(workspaceId: string): TerminalCommandTemplate[];
+  };
+}): string[] | undefined {
+  const templateHints = collectTemplateCommandHints(
+    input.terminalCommandTemplateRepository.listByWorkspace(input.workspaceId),
+    input.rootPath
+  );
+  const explicitHints = (input.explicitCommandHints ?? []).map((item) => item.trim()).filter(Boolean);
+  const mergedHints = [...templateHints, ...explicitHints];
+
+  return mergedHints.length > 0 ? [...new Set(mergedHints)] : undefined;
+}
+
+function collectTemplateCommandHints(
+  templates: TerminalCommandTemplate[],
+  rootPath: string
+): string[] {
+  return templates
+    .filter((template) => isTemplateRelevantToRootPath(template, rootPath))
+    .sort((left, right) => compareTemplatePriority(left, right, rootPath))
+    .map((template) => buildTemplateCommandHint(template))
+    .filter((item): item is string => Boolean(item));
+}
+
+function isTemplateRelevantToRootPath(template: TerminalCommandTemplate, rootPath: string): boolean {
+  const templateCwd = path.resolve(template.cwd);
+  const normalizedRootPath = path.resolve(rootPath);
+
+  return isPathWithin(normalizedRootPath, templateCwd) || isPathWithin(templateCwd, normalizedRootPath);
+}
+
+function compareTemplatePriority(
+  left: TerminalCommandTemplate,
+  right: TerminalCommandTemplate,
+  rootPath: string
+): number {
+  const backendDelta = Number(isLikelyBackendTemplate(right)) - Number(isLikelyBackendTemplate(left));
+
+  if (backendDelta !== 0) {
+    return backendDelta;
+  }
+
+  const sourceDelta = resolveTemplateSourcePriority(left) - resolveTemplateSourcePriority(right);
+
+  if (sourceDelta !== 0) {
+    return sourceDelta;
+  }
+
+  const distanceDelta = resolveTemplateDistance(left, rootPath) - resolveTemplateDistance(right, rootPath);
+
+  if (distanceDelta !== 0) {
+    return distanceDelta;
+  }
+
+  return left.cwd.localeCompare(right.cwd);
+}
+
+function resolveTemplateSourcePriority(template: TerminalCommandTemplate): number {
+  return template.sourceType === "debug_service" ? 1 : 0;
+}
+
+function resolveTemplateDistance(template: TerminalCommandTemplate, rootPath: string): number {
+  const templateCwd = path.resolve(template.cwd);
+  const normalizedRootPath = path.resolve(rootPath);
+
+  if (templateCwd === normalizedRootPath) {
+    return 0;
+  }
+
+  if (isPathWithin(normalizedRootPath, templateCwd)) {
+    return 1;
+  }
+
+  if (isPathWithin(templateCwd, normalizedRootPath)) {
+    return 2;
+  }
+
+  return 3;
+}
+
+function buildTemplateCommandHint(template: TerminalCommandTemplate): string | null {
+  const command = template.command.trim();
+  const args = template.args.map((item) => item.trim()).filter(Boolean);
+
+  if (!command) {
+    return null;
+  }
+
+  return [command, ...args].join(" ");
+}
+
+function isLikelyBackendTemplate(template: TerminalCommandTemplate): boolean {
+  const signal = [
+    template.name,
+    template.cwd,
+    template.command,
+    ...template.args
+  ].join(" ").toLowerCase();
+
+  return (
+    signal.includes("backend")
+    || signal.includes("server")
+    || signal.includes("api")
+    || signal.includes("host")
+    || signal.includes("python")
+    || signal.includes("uvicorn")
+    || signal.includes("gunicorn")
+    || signal.includes("flask")
+    || signal.includes("django")
+    || signal.includes("manage.py")
+  );
+}
+
+function isPathWithin(parentPath: string, childPath: string): boolean {
+  const normalizedParent = withTrailingSeparator(path.resolve(parentPath));
+  const normalizedChild = path.resolve(childPath);
+
+  return normalizedChild === path.resolve(parentPath) || normalizedChild.startsWith(normalizedParent);
 }
 
 interface FrameworkDetectionCandidate {

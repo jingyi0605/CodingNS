@@ -347,6 +347,165 @@ describe("debug target routes", () => {
     });
   }, 15000);
 
+  it("根目录分析可以发现 apps 下的 Python 后端，并推断正确的 Uvicorn 默认入口", async () => {
+    const fixture = createEmptyFixture();
+    activeFixtures.push(fixture);
+    const repoPath = path.join(fixture.rootDir, "python-mono-repo");
+    const apiServerPath = path.join(repoPath, "apps", "api-server");
+
+    mkdirSync(path.join(apiServerPath, "app"), { recursive: true });
+    writeFileSync(
+      path.join(repoPath, "package.json"),
+      JSON.stringify(
+        {
+          name: "python-mono-repo",
+          private: true,
+          workspaces: ["packages/*"]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    writeFileSync(
+      path.join(apiServerPath, "pyproject.toml"),
+      [
+        "[project]",
+        "name = \"api-server\"",
+        "dependencies = [",
+        "  \"fastapi>=0.115,<1.0\",",
+        "  \"uvicorn>=0.34,<1.0\"",
+        "]"
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(path.join(apiServerPath, "app", "main.py"), "from fastapi import FastAPI\napp = FastAPI()\n", "utf8");
+
+    const hosted = createTestApp(fixture);
+    activeServers.push(hosted);
+    await hosted.app.ready();
+
+    const accessToken = await bootstrapAndLogin(hosted);
+    const workspaceId = await importWorkspace(hosted, accessToken, repoPath, "Python Mono Repo");
+    const response = await hosted.app.inject({
+      method: "POST",
+      url: "/api/debug-targets/analyze",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        workspaceId,
+        rootPath: repoPath
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      services: [
+        expect.objectContaining({
+          role: "backend",
+          cwd: apiServerPath,
+          command: "uvicorn",
+          args: ["app.main:app", "--reload"]
+        })
+      ],
+      analyses: [
+        expect.objectContaining({
+          primaryFramework: "uvicorn",
+          compatibilityLevel: "supported"
+        })
+      ]
+    });
+  }, 15000);
+
+  it("分析调试目标时会优先读取已有后端模板作为 commandHints", async () => {
+    const fixture = createEmptyFixture();
+    activeFixtures.push(fixture);
+    const repoPath = path.join(fixture.rootDir, "python-template-repo");
+    const apiServerPath = path.join(repoPath, "apps", "api-server");
+
+    mkdirSync(path.join(apiServerPath, "app"), { recursive: true });
+    writeFileSync(
+      path.join(repoPath, "package.json"),
+      JSON.stringify(
+        {
+          name: "python-template-repo",
+          private: true,
+          workspaces: ["packages/*"]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    writeFileSync(
+      path.join(apiServerPath, "pyproject.toml"),
+      [
+        "[project]",
+        "name = \"api-server\"",
+        "dependencies = [",
+        "  \"fastapi>=0.115,<1.0\",",
+        "  \"uvicorn>=0.34,<1.0\"",
+        "]"
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(path.join(apiServerPath, "app", "main.py"), "from fastapi import FastAPI\napp = FastAPI()\n", "utf8");
+
+    const hosted = createTestApp(fixture);
+    activeServers.push(hosted);
+    await hosted.app.ready();
+
+    const accessToken = await bootstrapAndLogin(hosted);
+    const workspaceId = await importWorkspace(hosted, accessToken, repoPath, "Python Template Repo");
+    hosted.services.repositories.terminalCommandTemplateRepository.create({
+      id: "template-api-server",
+      workspaceId,
+      name: "api-server backend",
+      cwd: apiServerPath,
+      command: ".venv/bin/python",
+      args: ["-m", "uvicorn", "app.main:app", "--reload"],
+      env: {},
+      port: 8000,
+      proxyEnabled: false,
+      proxySlug: null,
+      runtimeType: "embedded-pty",
+      sourceType: "manual",
+      managedBySystem: false,
+      createdAt: "2026-04-14T12:00:00.000Z",
+      updatedAt: "2026-04-14T12:00:00.000Z"
+    });
+
+    const response = await hosted.app.inject({
+      method: "POST",
+      url: "/api/debug-targets/analyze",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        workspaceId,
+        rootPath: repoPath
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      services: [
+        expect.objectContaining({
+          role: "backend",
+          cwd: apiServerPath,
+          command: ".venv/bin/python",
+          args: ["-m", "uvicorn", "app.main:app", "--reload"]
+        })
+      ],
+      analyses: [
+        expect.objectContaining({
+          primaryFramework: "uvicorn"
+        })
+      ]
+    });
+  }, 15000);
+
   it("monorepo 根目录会拆出前后端服务并返回相对明确的路径分析", async () => {
     const fixture = createEmptyFixture();
     activeFixtures.push(fixture);
