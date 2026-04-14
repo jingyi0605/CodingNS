@@ -3716,6 +3716,14 @@ describe("WorkbenchLayout", () => {
         t("shell.workspaceDetailDebugOverallSummaryMixed", { webCount: 2, desktopCount: 1 })
       )
     ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("shell.workspaceDetailDebugMatrixOpenAction") })).toBeInTheDocument();
+    expect(screen.queryByText("通用 Node 服务先按条件支持处理")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: t("shell.workspaceDetailDebugMatrixOpenAction") }));
+
+    expect(await screen.findByRole("dialog", { name: t("shell.workspaceDetailDebugMatrixTitle") })).toBeInTheDocument();
+    expect(screen.getByText("通用 Node 服务先按条件支持处理")).toBeInTheDocument();
+    expect(screen.getByText("桌面壳默认只做识别，不参与 Web 端口编排")).toBeInTheDocument();
   });
 
   it("收到空 git 快照并写入缓存后，重新挂载工作台也不会崩溃", async () => {

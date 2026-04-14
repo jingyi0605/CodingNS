@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -452,13 +452,14 @@ describe("WorkspaceDetailPage", () => {
   });
 
   it("会展示服务状态信息和最新失败阶段", async () => {
+    const user = userEvent.setup();
+
     renderPage();
 
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "服务状态" })).toBeInTheDocument();
       expect(screen.getAllByText("vite").length).toBeGreaterThan(0);
       expect(screen.getAllByText("可以直接使用").length).toBeGreaterThan(0);
-      expect(screen.getAllByText("启动参数").length).toBeGreaterThan(0);
       expect(screen.getByText("启动失败")).toBeInTheDocument();
       expect(screen.getByText("还缺少服务地址相关处理")).toBeInTheDocument();
       expect(screen.getByText("识别到的服务")).toBeInTheDocument();
@@ -471,8 +472,16 @@ describe("WorkspaceDetailPage", () => {
       ).toBeInTheDocument();
       expect(screen.getByText("最近一次启动")).toBeInTheDocument();
       expect(screen.getByText("支持说明")).toBeInTheDocument();
-      expect(screen.getAllByText("Vite 端口入口清楚，第一阶段默认支持").length).toBeGreaterThan(0);
+      expect(screen.getByRole("button", { name: "查看支持矩阵" })).toBeInTheDocument();
     });
+
+    expect(screen.queryByRole("dialog", { name: "支持说明" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "查看支持矩阵" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "支持说明" });
+    expect(dialog).toBeInTheDocument();
+    expect(within(dialog).getByText("Vite 端口入口清楚，第一阶段默认支持")).toBeInTheDocument();
 
     expect(mockAnalyzeDebugTarget).toHaveBeenCalledWith({
       workspaceId: "workspace-1",

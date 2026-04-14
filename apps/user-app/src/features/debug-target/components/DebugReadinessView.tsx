@@ -632,6 +632,261 @@ function DesktopDebugReadinessPageView({
   );
 }
 
+type DebugSupportMatrixItem = DebugReadinessState["matrixItems"][number];
+type DebugReadinessTone = "success" | "warn" | "danger" | "neutral";
+type MatrixStatusIcon = "check" | "warn" | "cross" | "neutral";
+
+interface DebugSupportMatrixEntryProps {
+  items: DebugSupportMatrixItem[];
+  layout: "mobile" | "desktop";
+  open: boolean;
+  onOpen: () => void;
+  onClose: () => void;
+}
+
+function DebugSupportMatrixEntry({
+  items,
+  layout,
+  open,
+  onOpen,
+  onClose
+}: DebugSupportMatrixEntryProps) {
+  const summary = buildSupportMatrixSummary(items);
+
+  return (
+    <>
+      <div className={layout === "mobile" ? undefined : "debug-readiness-section-body"}>
+        <div className={layout === "mobile" ? "mobile-feature-section-header" : "debug-readiness-section-header"}>
+          <div>
+            {layout === "mobile" ? <h2>{t("shell.workspaceDetailDebugMatrixTitle")}</h2> : null}
+            {layout === "desktop" ? <h3>{t("shell.workspaceDetailDebugMatrixTitle")}</h3> : null}
+            <p>{t("shell.workspaceDetailDebugMatrixSectionDescription")}</p>
+          </div>
+          <span className={layout === "mobile" ? "mobile-feature-counter" : "debug-readiness-matrix-counter"}>
+            {items.length}
+          </span>
+        </div>
+
+        <div className={`debug-readiness-matrix-entry${layout === "mobile" ? " debug-readiness-matrix-entry-mobile" : ""}`}>
+          <div className="debug-readiness-matrix-summary-row">
+            <span className="debug-readiness-matrix-summary-pill" data-tone="success">
+              {t("shell.workspaceDetailDebugCompatibilitySupported")}
+              <strong>{summary.supportedCount}</strong>
+            </span>
+            <span className="debug-readiness-matrix-summary-pill" data-tone="warn">
+              {t("shell.workspaceDetailDebugCompatibilityConditional")}
+              <strong>{summary.conditionalCount}</strong>
+            </span>
+            <span className="debug-readiness-matrix-summary-pill" data-tone="danger">
+              {t("shell.workspaceDetailDebugCompatibilityUnsupported")}
+              <strong>{summary.unsupportedCount}</strong>
+            </span>
+            <span className="debug-readiness-matrix-summary-pill" data-tone="neutral">
+              {t("shell.workspaceDetailDebugCompatibilityUnknown")}
+              <strong>{summary.unknownCount}</strong>
+            </span>
+          </div>
+          <button type="button" className="secondary-button debug-readiness-matrix-open-button" onClick={onOpen}>
+            {t("shell.workspaceDetailDebugMatrixOpenAction")}
+          </button>
+        </div>
+      </div>
+
+      <WorkbenchModal
+        open={open}
+        title={t("shell.workspaceDetailDebugMatrixTitle")}
+        description={t("shell.workspaceDetailDebugMatrixModalDescription")}
+        className={`debug-readiness-matrix-modal-card${layout === "mobile" ? " debug-readiness-matrix-modal-card-mobile" : ""}`}
+        onClose={onClose}
+      >
+        <div className="debug-readiness-matrix-modal">
+          <div className="debug-readiness-matrix-summary-row debug-readiness-matrix-summary-row-modal">
+            <span className="debug-readiness-matrix-summary-pill" data-tone="success">
+              {t("shell.workspaceDetailDebugCompatibilitySupported")}
+              <strong>{summary.supportedCount}</strong>
+            </span>
+            <span className="debug-readiness-matrix-summary-pill" data-tone="warn">
+              {t("shell.workspaceDetailDebugCompatibilityConditional")}
+              <strong>{summary.conditionalCount}</strong>
+            </span>
+            <span className="debug-readiness-matrix-summary-pill" data-tone="danger">
+              {t("shell.workspaceDetailDebugCompatibilityUnsupported")}
+              <strong>{summary.unsupportedCount}</strong>
+            </span>
+            <span className="debug-readiness-matrix-summary-pill" data-tone="neutral">
+              {t("shell.workspaceDetailDebugCompatibilityUnknown")}
+              <strong>{summary.unknownCount}</strong>
+            </span>
+          </div>
+
+          <div className="debug-readiness-matrix-table-wrap">
+            <table className="debug-readiness-matrix-table">
+              <thead>
+                <tr>
+                  <th scope="col">{t("shell.workspaceDetailDebugMatrixFrameworkHeader")}</th>
+                  <th scope="col">{t("shell.workspaceDetailDebugMatrixCompatibilityHeader")}</th>
+                  <th scope="col">{t("shell.workspaceDetailDebugMatrixInjectionHeader")}</th>
+                  <th scope="col">{t("shell.workspaceDetailDebugMatrixDiscoveryHeader")}</th>
+                  <th scope="col">{t("shell.workspaceDetailDebugMatrixHmrHeader")}</th>
+                  <th scope="col">{t("shell.workspaceDetailDebugMatrixCallbackHeader")}</th>
+                  <th scope="col">{t("shell.workspaceDetailDebugMatrixAiHeader")}</th>
+                  <th scope="col">{t("shell.workspaceDetailDebugMatrixNotesHeader")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((item) => {
+                  const tone = resolveCompatibilityTone(item.compatibilityLevel);
+
+                  return (
+                    <tr key={item.framework}>
+                      <th scope="row" className="debug-readiness-matrix-framework-cell">
+                        {item.framework}
+                      </th>
+                      <td>
+                        <MatrixStatusPill
+                          className="debug-readiness-matrix-badge"
+                          tone={tone}
+                          icon={resolveCompatibilityIcon(item.compatibilityLevel)}
+                          label={formatCompatibilityLevelReadable(item.compatibilityLevel)}
+                          title={formatCompatibilityLevel(item.compatibilityLevel)}
+                        />
+                      </td>
+                      <td>
+                        <span
+                          className="debug-readiness-matrix-badge debug-readiness-matrix-badge-subtle"
+                          data-tone="neutral"
+                          title={formatInjectionMode(item.recommendedInjectionMode)}
+                        >
+                          {formatInjectionModeCompact(item.recommendedInjectionMode)}
+                        </span>
+                      </td>
+                      <td>
+                        <MatrixStatusPill
+                          className="debug-readiness-matrix-flag"
+                          tone={item.requiresServiceDiscoveryHandling ? "warn" : "success"}
+                          icon={item.requiresServiceDiscoveryHandling ? "warn" : "check"}
+                          label={formatRequirementFlagReadable(item.requiresServiceDiscoveryHandling)}
+                          title={formatRequirementFlag(item.requiresServiceDiscoveryHandling)}
+                        />
+                      </td>
+                      <td>
+                        <MatrixStatusPill
+                          className="debug-readiness-matrix-flag"
+                          tone={item.requiresHmrHandling ? "warn" : "success"}
+                          icon={item.requiresHmrHandling ? "warn" : "check"}
+                          label={formatRequirementFlagReadable(item.requiresHmrHandling)}
+                          title={formatRequirementFlag(item.requiresHmrHandling)}
+                        />
+                      </td>
+                      <td>
+                        <MatrixStatusPill
+                          className="debug-readiness-matrix-flag"
+                          tone={item.requiresCallbackHandling ? "warn" : "success"}
+                          icon={item.requiresCallbackHandling ? "warn" : "check"}
+                          label={formatRequirementFlagReadable(item.requiresCallbackHandling)}
+                          title={formatRequirementFlag(item.requiresCallbackHandling)}
+                        />
+                      </td>
+                      <td>
+                        <MatrixStatusPill
+                          className="debug-readiness-matrix-badge debug-readiness-matrix-badge-subtle"
+                          tone={resolveAiFallbackTone(item.aiFallbackPolicy)}
+                          icon={resolveAiFallbackIcon(item.aiFallbackPolicy)}
+                          label={formatAiFallbackPolicyReadable(item.aiFallbackPolicy)}
+                          title={formatAiFallbackPolicy(item.aiFallbackPolicy)}
+                        />
+                      </td>
+                      <td className="debug-readiness-matrix-note-cell">{item.notes}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="debug-readiness-matrix-legend">
+            <p>{t("shell.workspaceDetailDebugMatrixLegendSummary")}</p>
+            <div className="debug-readiness-matrix-legend-grid">
+              <div>
+                <strong>{t("shell.workspaceDetailDebugMatrixDiscoveryHeader")}</strong>
+                <span>{t("shell.workspaceDetailDebugMatrixDiscoveryNote")}</span>
+              </div>
+              <div>
+                <strong>{t("shell.workspaceDetailDebugMatrixHmrHeader")}</strong>
+                <span>{t("shell.workspaceDetailDebugMatrixHmrNote")}</span>
+              </div>
+              <div>
+                <strong>{t("shell.workspaceDetailDebugMatrixCallbackHeader")}</strong>
+                <span>{t("shell.workspaceDetailDebugMatrixCallbackNote")}</span>
+              </div>
+              <div>
+                <strong>{t("shell.workspaceDetailDebugMatrixAiHeader")}</strong>
+                <span>{t("shell.workspaceDetailDebugMatrixAiNote")}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </WorkbenchModal>
+    </>
+  );
+}
+
+function MatrixStatusPill({
+  tone,
+  icon,
+  label,
+  title,
+  className
+}: {
+  tone: DebugReadinessTone;
+  icon: MatrixStatusIcon;
+  label: string;
+  title: string;
+  className: string;
+}) {
+  return (
+    <span className={className} data-tone={tone} title={title}>
+      <MatrixStatusIconMark kind={icon} />
+      <span>{label}</span>
+    </span>
+  );
+}
+
+function MatrixStatusIconMark({ kind }: { kind: MatrixStatusIcon }) {
+  if (kind === "check") {
+    return (
+      <svg viewBox="0 0 16 16" aria-hidden="true">
+        <path d="M3.2 8.3L6.4 11.5L12.8 4.8" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.9" />
+      </svg>
+    );
+  }
+
+  if (kind === "cross") {
+    return (
+      <svg viewBox="0 0 16 16" aria-hidden="true">
+        <path d="M4.4 4.4L11.6 11.6M11.6 4.4L4.4 11.6" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="1.9" />
+      </svg>
+    );
+  }
+
+  if (kind === "warn") {
+    return (
+      <svg viewBox="0 0 16 16" aria-hidden="true">
+        <path d="M8 2.2L14 13.4H2L8 2.2Z" fill="currentColor" opacity="0.18" />
+        <path d="M8 5.3V8.8M8 11.3H8.01" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.7" />
+        <path d="M8 2.2L14 13.4H2L8 2.2Z" fill="none" stroke="currentColor" strokeLinejoin="round" strokeWidth="1.2" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" strokeWidth="1.4" />
+      <path d="M8 5.1V8.4M8 11H8.01" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="1.7" />
+    </svg>
+  );
+}
+
 function formatDebugConfidence(confidence: FrameworkAnalysisResultDto["confidence"]) {
   switch (confidence) {
     case "high":
@@ -740,6 +995,15 @@ function buildOverallSummary(state: DebugReadinessState): DebugOverallSummary {
     autoInjectionEligible: state.autoInjectionEligible,
     overallTone,
     categoryChips
+  };
+}
+
+function buildSupportMatrixSummary(items: DebugSupportMatrixItem[]) {
+  return {
+    supportedCount: items.filter((item) => item.compatibilityLevel === "supported").length,
+    conditionalCount: items.filter((item) => item.compatibilityLevel === "conditional").length,
+    unsupportedCount: items.filter((item) => item.compatibilityLevel === "unsupported").length,
+    unknownCount: items.filter((item) => item.compatibilityLevel === "unknown").length
   };
 }
 
@@ -980,6 +1244,45 @@ function formatCompatibilityLevel(level: FrameworkAnalysisResultDto["compatibili
   }
 }
 
+function formatCompatibilityLevelReadable(level: FrameworkAnalysisResultDto["compatibilityLevel"]) {
+  switch (level) {
+    case "supported":
+      return t("shell.workspaceDetailDebugMatrixCompatibilitySupportedShort");
+    case "conditional":
+      return t("shell.workspaceDetailDebugMatrixCompatibilityConditionalShort");
+    case "unsupported":
+      return t("shell.workspaceDetailDebugMatrixCompatibilityUnsupportedShort");
+    default:
+      return t("shell.workspaceDetailDebugMatrixCompatibilityUnknownShort");
+  }
+}
+
+function resolveCompatibilityIcon(level: FrameworkAnalysisResultDto["compatibilityLevel"]): MatrixStatusIcon {
+  switch (level) {
+    case "supported":
+      return "check";
+    case "conditional":
+      return "warn";
+    case "unsupported":
+      return "cross";
+    default:
+      return "neutral";
+  }
+}
+
+function resolveCompatibilityTone(level: FrameworkAnalysisResultDto["compatibilityLevel"]): DebugReadinessTone {
+  switch (level) {
+    case "supported":
+      return "success";
+    case "conditional":
+      return "warn";
+    case "unsupported":
+      return "danger";
+    default:
+      return "neutral";
+  }
+}
+
 function formatInjectionMode(mode: NonNullable<FrameworkAnalysisResultDto["recommendedInjectionMode"]> | "none") {
   switch (mode) {
     case "cli":
@@ -992,6 +1295,21 @@ function formatInjectionMode(mode: NonNullable<FrameworkAnalysisResultDto["recom
       return t("shell.workspaceDetailDebugInjectionAiFallback");
     default:
       return t("shell.workspaceDetailDebugInjectionNone");
+  }
+}
+
+function formatInjectionModeCompact(mode: NonNullable<FrameworkAnalysisResultDto["recommendedInjectionMode"]> | "none") {
+  switch (mode) {
+    case "cli":
+      return t("shell.workspaceDetailDebugMatrixInjectionCliShort");
+    case "env":
+      return t("shell.workspaceDetailDebugMatrixInjectionEnvShort");
+    case "override":
+      return t("shell.workspaceDetailDebugMatrixInjectionOverrideShort");
+    case "ai_fallback":
+      return t("shell.workspaceDetailDebugMatrixInjectionAiFallbackShort");
+    default:
+      return t("shell.workspaceDetailDebugMatrixInjectionNoneShort");
   }
 }
 
@@ -1046,6 +1364,12 @@ function formatRequirementFlag(required: boolean) {
     : t("shell.workspaceDetailDebugRequirementNotRequired");
 }
 
+function formatRequirementFlagReadable(required: boolean) {
+  return required
+    ? t("shell.workspaceDetailDebugMatrixRequirementRequiredShort")
+    : t("shell.workspaceDetailDebugMatrixRequirementNotRequiredShort");
+}
+
 function formatAiFallbackPolicy(policy: string) {
   switch (policy) {
     case "never":
@@ -1054,6 +1378,39 @@ function formatAiFallbackPolicy(policy: string) {
       return t("shell.workspaceDetailDebugAiPolicyConditional");
     default:
       return t("shell.workspaceDetailDebugAiPolicyAllowed");
+  }
+}
+
+function formatAiFallbackPolicyReadable(policy: string) {
+  switch (policy) {
+    case "never":
+      return t("shell.workspaceDetailDebugMatrixAiNeverShort");
+    case "conditional":
+      return t("shell.workspaceDetailDebugMatrixAiConditionalShort");
+    default:
+      return t("shell.workspaceDetailDebugMatrixAiAllowedShort");
+  }
+}
+
+function resolveAiFallbackTone(policy: string): DebugReadinessTone {
+  switch (policy) {
+    case "never":
+      return "danger";
+    case "conditional":
+      return "warn";
+    default:
+      return "success";
+  }
+}
+
+function resolveAiFallbackIcon(policy: string): MatrixStatusIcon {
+  switch (policy) {
+    case "never":
+      return "cross";
+    case "conditional":
+      return "warn";
+    default:
+      return "check";
   }
 }
 
