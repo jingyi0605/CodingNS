@@ -16982,24 +16982,36 @@ textarea:focus-visible {
 
 .settings-tailscale-summary {
   display: grid;
-  gap: 6px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
 }
 
 .settings-tailscale-summary-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  min-height: 40px;
-  padding: 8px 12px;
-  border-radius: var(--radius-md);
-  background: var(--bg-primary);
+  gap: 14px;
+  min-height: 60px;
+  padding: 12px 14px;
+  border-radius: 18px;
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, #ffffff 90%, var(--bg-primary) 10%),
+      color-mix(in srgb, #f4f4f6 84%, var(--bg-primary) 16%)
+    );
   border: 1px solid var(--border-subtle);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 8px 18px rgba(15, 23, 42, 0.06);
 }
 
 .settings-tailscale-summary-label {
+  flex: 0 0 auto;
   color: var(--text-secondary);
   font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
 .settings-tailscale-summary-value {
@@ -17008,9 +17020,26 @@ textarea:focus-visible {
   align-items: center;
   justify-content: flex-end;
   color: var(--text-primary);
-  font-size: 12px;
+  font-size: 15px;
+  font-weight: 600;
   text-align: right;
-  word-break: break-all;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.settings-tailscale-summary-value .settings-tailscale-link {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  .settings-tailscale-summary {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .settings-tailscale-form {
@@ -17073,7 +17102,6 @@ textarea:focus-visible {
 .settings-skill-panel {
   display: flex;
   flex-direction: column;
-  gap: 12px;
   width: 100%;
 }
 
@@ -17212,6 +17240,15 @@ textarea:focus-visible {
   color: var(--text-secondary);
   font-size: 12px;
   line-height: 1.5;
+}
+
+.settings-skill-modal {
+  width: min(920px, calc(100% - 24px));
+  max-height: min(84vh, 860px);
+}
+
+.settings-skill-modal .workbench-modal-body {
+  gap: 14px;
 }
 
 .settings-tailscale-modal {

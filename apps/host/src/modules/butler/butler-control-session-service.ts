@@ -21,6 +21,7 @@ import type { SessionHistoryService } from "../sessions/session-history-service.
 import type { SessionLiveRuntimeService } from "../sessions/session-live-runtime-service.js";
 import type { ButlerContextAggregator, ButlerPromptContext } from "./context-aggregator.js";
 import type { ButlerWorkspaceCredential } from "./butler-auth-service.js";
+import type { SkillManagerService } from "../skills/skill-manager-service.js";
 
 export interface ButlerControlSessionView extends ButlerControlSession {
   session: SessionListItem;
@@ -53,6 +54,7 @@ export class ButlerControlSessionService {
     >,
     private readonly butlerContextAggregator: Pick<ButlerContextAggregator, "resolvePromptContext">,
     private readonly butlerAuthService: Pick<ButlerAuthService, "ensureWorkspaceCredential" | "getCredentialFilePath">,
+    private readonly skillManagerService: Pick<SkillManagerService, "getOverview" | "importUnmanagedSkill">,
     private readonly codexHomeDir: string | null = null,
     private readonly sourceCodexHomeDir: string | null = null
   ) {}
@@ -247,7 +249,12 @@ export class ButlerControlSessionService {
     ensureButlerWorkspaceIsolation(profile.workspacePath);
     const auth = this.butlerAuthService.ensureWorkspaceCredential(profile.workspacePath, userId);
     writeInstructionFiles(profile, promptContext, auth, this.butlerAuthService.getCredentialFilePath(profile.workspacePath));
-    syncCodexInstructionConfig(profile, this.codexHomeDir, this.sourceCodexHomeDir);
+    syncCodexInstructionConfig(
+      profile,
+      this.skillManagerService,
+      this.codexHomeDir,
+      this.sourceCodexHomeDir
+    );
   }
 
   private markFailed(record: ButlerControlSession, fallbackSummary: string): void {
@@ -290,6 +297,7 @@ function writeInstructionFiles(
 
 function syncCodexInstructionConfig(
   profile: ButlerProfile,
+  skillManagerService: Pick<SkillManagerService, "getOverview" | "importUnmanagedSkill">,
   codexHomeDir: string | null,
   sourceCodexHomeDir: string | null
 ): void {
@@ -318,11 +326,45 @@ function syncCodexInstructionConfig(
     path.join(sourceHomeDir, "auth.json"),
     path.join(targetHomeDir, "auth.json")
   );
-  syncOptionalDirectory(
-    path.join(sourceHomeDir, "skills", "codingns-assistant"),
+  syncButlerCodexSkill(
+    skillManagerService,
     path.join(targetHomeDir, "skills", "codingns-assistant")
   );
   writeFileIfChanged(path.join(targetHomeDir, "config.toml"), `${configContent}\n`);
+}
+
+function syncButlerCodexSkill(
+  skillManagerService: Pick<SkillManagerService, "getOverview" | "importUnmanagedSkill">,
+  targetSkillPath: string
+): void {
+  const skillDirectoryName = "codingns-assistant";
+  const overview = skillManagerService.getOverview({
+    targetCli: ["codex"]
+  });
+  const managedSkill = overview.managedSkills.find(
+    (item) => item.skill.directoryName === skillDirectoryName
+  );
+
+  if (managedSkill) {
+    syncOptionalDirectory(managedSkill.ssotPath, targetSkillPath);
+    return;
+  }
+
+  const unmanagedEntry = overview.unmanagedEntries.find(
+    (entry) => entry.targetCli === "codex" && entry.directoryName === skillDirectoryName
+  );
+
+  if (unmanagedEntry) {
+    const imported = skillManagerService.importUnmanagedSkill({
+      targetCli: "codex",
+      directoryPath: unmanagedEntry.directoryPath,
+      expectedContentHash: unmanagedEntry.contentHash
+    });
+    syncOptionalDirectory(imported.ssotPath, targetSkillPath);
+    return;
+  }
+
+  fs.rmSync(targetSkillPath, { recursive: true, force: true });
 }
 
 function resolveSourceCodexHomeDir(sourceCodexHomeDir: string | null, targetHomeDir: string): string {

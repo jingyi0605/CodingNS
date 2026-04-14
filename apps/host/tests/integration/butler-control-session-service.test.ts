@@ -19,6 +19,7 @@ import type { ButlerAuthService } from "../../src/modules/butler/butler-auth-ser
 import type { WorkspaceService } from "../../src/modules/workspace/workspace-service.js";
 import type { SessionHistoryService } from "../../src/modules/sessions/session-history-service.js";
 import type { SessionLiveRuntimeService } from "../../src/modules/sessions/session-live-runtime-service.js";
+import type { SkillManagerService } from "../../src/modules/skills/skill-manager-service.js";
 
 const tempDirs: string[] = [];
 
@@ -95,7 +96,8 @@ describe("ButlerControlSessionService", () => {
           userId: "user-1"
         })),
         getCredentialFilePath: vi.fn(() => path.join(workspacePath, "BUTLER_AUTH.json"))
-      } as unknown as Pick<ButlerAuthService, "ensureWorkspaceCredential" | "getCredentialFilePath">
+      } as unknown as Pick<ButlerAuthService, "ensureWorkspaceCredential" | "getCredentialFilePath">,
+      createSkillManagerStub()
     );
 
     await expect(service.startSession("user-1", {})).rejects.toMatchObject({
@@ -111,6 +113,8 @@ describe("ButlerControlSessionService", () => {
     tempDirs.push(codexHomeDir);
     const defaultCodexHomeDir = mkdtempSync(path.join(os.tmpdir(), "codingns-default-codex-home-"));
     tempDirs.push(defaultCodexHomeDir);
+    const managedSkillRootDir = mkdtempSync(path.join(os.tmpdir(), "codingns-butler-managed-skill-"));
+    tempDirs.push(managedSkillRootDir);
     writeFileSync(
       path.join(defaultCodexHomeDir, "auth.json"),
       JSON.stringify({
@@ -118,16 +122,16 @@ describe("ButlerControlSessionService", () => {
       }),
       "utf8"
     );
-    mkdirSync(path.join(defaultCodexHomeDir, "skills", "codingns-assistant", "references"), {
+    mkdirSync(path.join(managedSkillRootDir, "codingns-assistant", "references"), {
       recursive: true
     });
     writeFileSync(
-      path.join(defaultCodexHomeDir, "skills", "codingns-assistant", "SKILL.md"),
+      path.join(managedSkillRootDir, "codingns-assistant", "SKILL.md"),
       "---\nname: codingns-assistant\ndescription: test\n---\n",
       "utf8"
     );
     writeFileSync(
-      path.join(defaultCodexHomeDir, "skills", "codingns-assistant", "references", "cli-workflow.md"),
+      path.join(managedSkillRootDir, "codingns-assistant", "references", "cli-workflow.md"),
       "# test\n",
       "utf8"
     );
@@ -275,6 +279,59 @@ describe("ButlerControlSessionService", () => {
         }),
         getCredentialFilePath: vi.fn(() => path.join(workspacePath, "BUTLER_AUTH.json"))
       } as unknown as Pick<ButlerAuthService, "ensureWorkspaceCredential" | "getCredentialFilePath">,
+      createSkillManagerStub({
+        overview: {
+          summary: {
+            managedSkillCount: 1,
+            managedEntryCount: 1,
+            unmanagedEntryCount: 0,
+            conflictedEntryCount: 0,
+            diagnosticCount: 0
+          },
+          managedSkills: [
+            {
+              skill: {
+                id: "skill-1",
+                name: "codingns-assistant",
+                directoryName: "codingns-assistant",
+                sourceType: "local-import",
+                sourcePath: path.join(managedSkillRootDir, "codingns-assistant"),
+                contentHash: "hash-1",
+                managedState: "active",
+                createdAt: "2026-04-05T00:00:00.000Z",
+                updatedAt: "2026-04-05T00:00:00.000Z"
+              },
+              bindings: [
+                {
+                  skillId: "skill-1",
+                  targetCli: "codex",
+                  enabled: true,
+                  syncStatus: "synced",
+                  lastSyncedAt: "2026-04-05T00:00:00.000Z",
+                  lastErrorCode: null,
+                  lastErrorDetail: null
+                }
+              ],
+              ssotPath: path.join(managedSkillRootDir, "codingns-assistant")
+            }
+          ],
+          managedEntries: [
+            {
+              targetCli: "codex",
+              directoryPath: path.join(managedSkillRootDir, "codingns-assistant"),
+              directoryName: "codingns-assistant",
+              name: "codingns-assistant",
+              contentHash: "hash-1",
+              managementState: "managed",
+              managedSkillId: "skill-1"
+            }
+          ],
+          unmanagedEntries: [],
+          conflictedEntries: [],
+          diagnostics: [],
+          scannedAt: "2026-04-05T00:00:00.000Z"
+        }
+      }),
       codexHomeDir,
       defaultCodexHomeDir
     );
@@ -449,7 +506,8 @@ describe("ButlerControlSessionService", () => {
           return credential;
         }),
         getCredentialFilePath: vi.fn(() => path.join(workspacePath, "BUTLER_AUTH.json"))
-      } as unknown as Pick<ButlerAuthService, "ensureWorkspaceCredential" | "getCredentialFilePath">
+      } as unknown as Pick<ButlerAuthService, "ensureWorkspaceCredential" | "getCredentialFilePath">,
+      createSkillManagerStub()
     );
 
     const sent = await service.sendMessage("user-1", {
@@ -466,3 +524,31 @@ describe("ButlerControlSessionService", () => {
     );
   });
 });
+
+function createSkillManagerStub(
+  options?: {
+    overview?: Partial<ReturnType<Pick<SkillManagerService, "getOverview">["getOverview"]>>;
+  }
+) {
+  const overview = {
+    summary: {
+      managedSkillCount: 0,
+      managedEntryCount: 0,
+      unmanagedEntryCount: 0,
+      conflictedEntryCount: 0,
+      diagnosticCount: 0
+    },
+    managedSkills: [],
+    managedEntries: [],
+    unmanagedEntries: [],
+    conflictedEntries: [],
+    diagnostics: [],
+    scannedAt: "2026-04-05T00:00:00.000Z",
+    ...(options?.overview ?? {})
+  };
+
+  return {
+    getOverview: vi.fn(() => overview),
+    importUnmanagedSkill: vi.fn()
+  } as unknown as Pick<SkillManagerService, "getOverview" | "importUnmanagedSkill">;
+}

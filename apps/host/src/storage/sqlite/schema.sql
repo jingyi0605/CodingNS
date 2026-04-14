@@ -959,6 +959,71 @@ CREATE INDEX IF NOT EXISTS idx_verification_runs_project_created_at
 CREATE INDEX IF NOT EXISTS idx_verification_runs_project_status
   ON verification_runs(project_id, status, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS instance_tailscale_config (
+  id TEXT PRIMARY KEY CHECK (id = 'default'),
+  enabled INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
+  control_server_url TEXT,
+  hostname TEXT,
+  state_dir TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS instance_tailscale_status (
+  id TEXT PRIMARY KEY CHECK (id = 'default'),
+  phase TEXT NOT NULL CHECK (
+    phase IN (
+      'disabled',
+      'blocked_uninitialized',
+      'starting',
+      'needs_login',
+      'running',
+      'stopping',
+      'error'
+    )
+  ),
+  connected INTEGER NOT NULL DEFAULT 0 CHECK (connected IN (0, 1)),
+  login_url TEXT,
+  control_server_url TEXT,
+  hostname TEXT,
+  account_name TEXT,
+  tailnet_fqdn TEXT,
+  tailnet_ipv4 TEXT,
+  tailnet_ipv6 TEXT,
+  reachable_base_url TEXT,
+  last_error TEXT,
+  observed_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS managed_skills (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  directory_name TEXT NOT NULL UNIQUE,
+  source_type TEXT NOT NULL CHECK (source_type IN ('builtin', 'local-import', 'managed-copy')),
+  source_path TEXT,
+  content_hash TEXT NOT NULL,
+  managed_state TEXT NOT NULL CHECK (managed_state IN ('active', 'conflicted', 'missing')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_managed_skills_state
+  ON managed_skills(managed_state, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS skill_target_bindings (
+  skill_id TEXT NOT NULL,
+  target_cli TEXT NOT NULL CHECK (target_cli IN ('codex', 'claude-code', 'gemini', 'opencode')),
+  enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+  sync_status TEXT NOT NULL CHECK (sync_status IN ('synced', 'pending', 'failed', 'conflicted')),
+  last_synced_at TEXT,
+  last_error_code TEXT,
+  last_error_detail TEXT,
+  PRIMARY KEY (skill_id, target_cli),
+  FOREIGN KEY (skill_id) REFERENCES managed_skills(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_skill_target_bindings_target_cli
+  ON skill_target_bindings(target_cli, sync_status, enabled);
+
 INSERT INTO bootstrap_state (id, initialized)
 VALUES ('default', 0)
 ON CONFLICT(id) DO NOTHING;

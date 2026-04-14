@@ -981,3 +981,92 @@ export interface TerminalTemplateRuntimeStatus {
   processName: string | null;
   processCommandLine: string | null;
 }
+
+export type SkillSourceType = "builtin" | "local-import" | "managed-copy";
+export type ManagedSkillState = "active" | "conflicted" | "missing";
+export type SkillTargetCli = "codex" | "claude-code" | "gemini" | "opencode";
+export type SkillTargetSyncStatus = "synced" | "pending" | "failed" | "conflicted";
+
+export interface ManagedSkillRecord {
+  id: string;
+  name: string;
+  directoryName: string;
+  sourceType: SkillSourceType;
+  sourcePath: string | null;
+  contentHash: string;
+  managedState: ManagedSkillState;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SkillTargetBindingRecord {
+  skillId: string;
+  targetCli: SkillTargetCli;
+  enabled: boolean;
+  syncStatus: SkillTargetSyncStatus;
+  lastSyncedAt: string | null;
+  lastErrorCode: string | null;
+  lastErrorDetail: string | null;
+}
+
+export type SkillScanManagementState = "managed" | "unmanaged" | "conflicted";
+
+export interface SkillScanEntry {
+  targetCli: SkillTargetCli;
+  directoryPath: string;
+  directoryName: string;
+  name: string;
+  contentHash: string;
+  managementState: SkillScanManagementState;
+  managedSkillId: string | null;
+}
+
+export interface SkillScanDiagnostic {
+  targetCli: SkillTargetCli;
+  rootDir: string;
+  code: string;
+  detail: string;
+  directoryName: string | null;
+  directoryPath: string | null;
+  managedSkillId: string | null;
+}
+
+export interface SkillScanResult {
+  managed: SkillScanEntry[];
+  unmanaged: SkillScanEntry[];
+  conflicted: SkillScanEntry[];
+  diagnostics: SkillScanDiagnostic[];
+  scannedAt: string;
+}
+
+export type TailscalePhase =
+  | "disabled"
+  | "blocked_uninitialized"
+  | "starting"
+  | "needs_login"
+  | "running"
+  | "stopping"
+  | "error";
+
+export interface InstanceTailscaleConfig {
+  enabled: boolean;
+  controlServerUrl: string | null;
+  hostname: string | null;
+  stateDir: string;
+  updatedAt: string;
+}
+
+export interface InstanceTailscaleStatus {
+  phase: TailscalePhase;
+  connected: boolean;
+  loginUrl: string | null;
+  controlServerUrl: string | null;
+  hostname: string | null;
+  accountName: string | null;
+  tailnetFqdn: string | null;
+  tailnetIpv4: string | null;
+  tailnetIpv6: string | null;
+  reachableBaseUrl: string | null;
+  lastError: string | null;
+  observedAt: string | null;
+}

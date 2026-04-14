@@ -675,6 +675,7 @@ export function createServer(config: HostConfig) {
     butlerSessionLiveRuntimeService,
     butlerContextAggregator,
     butlerAuthService,
+    skillManagerService,
     butlerRuntimeConfig.codexHomeDir,
     config.codexHomeDir
   );

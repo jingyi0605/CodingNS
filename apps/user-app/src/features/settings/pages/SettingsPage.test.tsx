@@ -68,7 +68,12 @@ describe("SettingsPage", () => {
     expect(screen.getByRole("heading", { name: t("settings.title") })).toBeInTheDocument();
     expect(screen.queryByText(t("settings.serverConnection"))).not.toBeInTheDocument();
     expect(screen.getByText(t("settings.remoteAccess"))).toBeInTheDocument();
+    expect(screen.queryByText(t("settings.skillManagerTitle"))).not.toBeInTheDocument();
+    expect(screen.queryByText(t("settings.skillManagerDescription"))).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("settings.skillManageAction") })).toBeInTheDocument();
     expect(screen.getByTestId("tailscale-panel")).toBeInTheDocument();
+    expect(screen.queryByText(t("settings.tailscaleSectionTitle"))).not.toBeInTheDocument();
+    expect(screen.queryByText(t("settings.tailscaleSectionDescription"))).not.toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: t("settings.serverAddress") })).not.toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: t("settings.defaultPermissionMode") })).toBeInTheDocument();
     expect(screen.getByText(t("settings.serverUpdate"))).toBeInTheDocument();
@@ -138,6 +143,33 @@ describe("SettingsPage", () => {
     await userEvent.click(screen.getByRole("button", { name: new RegExp(t("settings.remoteAccess")) }));
 
     expect(await screen.findByTestId("tailscale-panel")).toBeInTheDocument();
+  });
+
+  it("移动布局提供 Skills 分类并能进入 Skill 管理页", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+
+      if (url.endsWith("/api/skills/overview") && method === "GET") {
+        return createJsonResponse(createSkillOverviewResponse());
+      }
+
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+
+    global.fetch = fetchMock as typeof fetch;
+    authStore.hydrate(createAuthSession());
+    setViewportWidth(390);
+    renderSettingsPage();
+
+    await userEvent.click(screen.getByRole("button", { name: new RegExp(t("settings.skills")) }));
+
+    expect(await screen.findByRole("button", { name: t("settings.skillManageAction") })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: t("settings.skillManageAction") }));
+
+    expect(await screen.findByRole("dialog", { name: t("settings.skillConfigModalTitle") })).toBeInTheDocument();
+    expect(screen.getByText("codingns-assistant")).toBeInTheDocument();
   });
 
   it("iOS 客户端使用移动布局时仍然允许修改服务器地址", async () => {
@@ -352,6 +384,10 @@ describe("SettingsPage", () => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
 
+      if (url.endsWith("/api/skills/overview") && method === "GET") {
+        return createJsonResponse(createSkillOverviewResponse());
+      }
+
       if (url.endsWith("/api/observability/runtime/session") && method === "POST") {
         return createJsonResponse({
           sessionId: "session-debug-1",
@@ -477,7 +513,7 @@ describe("SettingsPage", () => {
     renderSettingsPage();
 
     expect(screen.getByText(t("settings.advancedSettings"))).toBeInTheDocument();
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
 
     await userEvent.click(screen.getByRole("button", { name: t("settings.parallelTaskDebugAction") }));
 
@@ -584,4 +620,68 @@ function createJsonResponse(payload: unknown): Response {
       "Content-Type": "application/json"
     }
   });
+}
+
+function createSkillOverviewResponse() {
+  return {
+    summary: {
+      managedSkillCount: 1,
+      managedEntryCount: 1,
+      unmanagedEntryCount: 1,
+      conflictedEntryCount: 0,
+      diagnosticCount: 0
+    },
+    managedSkills: [
+      {
+        skill: {
+          id: "skill-1",
+          name: "codingns-assistant",
+          directoryName: "codingns-assistant",
+          sourceType: "local-import",
+          sourcePath: "/tmp/skills/codingns-assistant",
+          contentHash: "hash-1",
+          managedState: "active",
+          createdAt: "2026-04-14T10:00:00.000Z",
+          updatedAt: "2026-04-14T10:00:00.000Z"
+        },
+        bindings: [
+          {
+            skillId: "skill-1",
+            targetCli: "codex",
+            enabled: true,
+            syncStatus: "synced",
+            lastSyncedAt: "2026-04-14T10:05:00.000Z",
+            lastErrorCode: null,
+            lastErrorDetail: null
+          }
+        ],
+        ssotPath: "/tmp/managed-skills/codingns-assistant"
+      }
+    ],
+    managedEntries: [
+      {
+        targetCli: "codex",
+        directoryPath: "/tmp/skills/codingns-assistant",
+        directoryName: "codingns-assistant",
+        name: "codingns-assistant",
+        contentHash: "hash-1",
+        managementState: "managed",
+        managedSkillId: "skill-1"
+      }
+    ],
+    unmanagedEntries: [
+      {
+        targetCli: "claude-code",
+        directoryPath: "/tmp/claude/skills/sample-helper",
+        directoryName: "sample-helper",
+        name: "sample-helper",
+        contentHash: "hash-2",
+        managementState: "unmanaged",
+        managedSkillId: null
+      }
+    ],
+    conflictedEntries: [],
+    diagnostics: [],
+    scannedAt: "2026-04-14T10:10:00.000Z"
+  };
 }

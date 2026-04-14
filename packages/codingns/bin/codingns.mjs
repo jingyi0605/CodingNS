@@ -21,6 +21,9 @@ switch (command) {
   case "assistant":
     await runAssistantCommand(argv);
     break;
+  case "skills":
+    await runSkillsCommand(argv);
+    break;
   default:
     console.error(`[codingns] 不支持的命令：${command}`);
     printHelp(1);
@@ -248,6 +251,84 @@ async function runAssistantCommand(argv) {
   }
 }
 
+async function runSkillsCommand(argv) {
+  const [action, ...rest] = argv;
+
+  if (!action || action === "help" || action === "--help" || action === "-h") {
+    printSkillsHelpTopic(buildSkillsHelpTopic(rest[0]), 0);
+  }
+
+  if (rest.length > 0 && isHelpToken(rest[0])) {
+    printSkillsHelpTopic(buildSkillsHelpTopic(action), 0);
+  }
+
+  switch (action) {
+    case "overview":
+      await printAssistantResponse(await requestSkills({
+        method: "GET",
+        path: "/api/skills/overview",
+        argv: rest,
+        supportedOptions: ["target"],
+        repeatableOptions: ["target"],
+        helpTopic: "skills.overview"
+      }, (options) => {
+        const targets = readMultiOptionValues(options.values.target);
+
+        return targets.length > 0
+          ? { targetCli: targets.join(",") }
+          : null;
+      }));
+      return;
+    case "add":
+      await printAssistantResponse(await requestSkills({
+        method: "POST",
+        path: "/api/skills",
+        argv: rest,
+        supportedOptions: ["source", "target", "source-type"],
+        repeatableOptions: ["target"],
+        helpTopic: "skills.add"
+      }, (options) => ({
+        sourcePath: requireOptionValue(options.values.source, "source"),
+        targetCli: requireMultiOptionValues(options.values.target, "target"),
+        sourceType: readOptionalTrimmedValue(options.values["source-type"]) ?? "local-import"
+      })));
+      return;
+    case "import":
+      await printAssistantResponse(await requestSkills({
+        method: "POST",
+        path: "/api/skills/import",
+        argv: rest,
+        supportedOptions: ["cli", "path", "expected-hash", "target"],
+        repeatableOptions: ["target"],
+        helpTopic: "skills.import"
+      }, (options) => ({
+        targetCli: requireOptionValue(options.values.cli, "cli"),
+        directoryPath: requireOptionValue(options.values.path, "path"),
+        expectedContentHash: readOptionalTrimmedValue(options.values["expected-hash"]),
+        additionalTargetCli: readMultiOptionValues(options.values.target)
+      })));
+      return;
+    case "sync": {
+      const [skillId, ...tail] = rest;
+      await printAssistantResponse(await requestSkills({
+        method: "POST",
+        path: "/api/skills/sync",
+        argv: tail,
+        supportedOptions: ["target"],
+        repeatableOptions: ["target"],
+        helpTopic: "skills.sync"
+      }, (options) => ({
+        skillId: requirePositional(skillId, "skillId"),
+        targetCli: requireMultiOptionValues(options.values.target, "target")
+      })));
+      return;
+    }
+    default:
+      console.error(`[codingns] 不支持的 skills 子命令：${action}`);
+      printSkillsHelpTopic("skills", 1);
+  }
+}
+
 async function requestAssistant(command, buildPayload) {
   const options = parseArgs(command.argv, {
     supportedOptions: [
@@ -321,6 +402,80 @@ async function requestAssistant(command, buildPayload) {
   return responseBody ?? rawBody;
 }
 
+async function requestSkills(command, buildPayload) {
+  const options = parseArgs(command.argv, {
+    supportedOptions: [
+      "base-url",
+      "token",
+      ...(command.supportedOptions ?? [])
+    ],
+    repeatableOptions: command.repeatableOptions ?? []
+  });
+
+  if (options.help) {
+    printSkillsHelpTopic(command.helpTopic ?? "skills", 0);
+  }
+
+  if (options.errors.length > 0) {
+    for (const error of options.errors) {
+      console.error(`[codingns] ${error}`);
+    }
+    printSkillsHelpTopic(command.helpTopic ?? "skills", 1);
+  }
+
+  const baseUrl = resolveAssistantBaseUrl(options.values["base-url"]);
+  const accessToken = resolveAssistantAccessToken(options.values.token);
+  const url = new URL(command.path, appendTrailingSlash(baseUrl));
+  const payload = buildPayload ? buildPayload(options) : null;
+
+  if (command.method === "GET" && payload) {
+    for (const [key, value] of Object.entries(payload)) {
+      if (typeof value === "string" && value.length > 0) {
+        url.searchParams.set(key, value);
+      }
+    }
+  }
+
+  let response;
+
+  try {
+    response = await fetch(url, {
+      method: command.method,
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        ...(command.method === "POST" ? { "Content-Type": "application/json" } : {})
+      },
+      body: command.method === "POST" ? JSON.stringify(payload ?? {}) : undefined
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "未知网络错误";
+    console.error(JSON.stringify({
+      ok: false,
+      detail: `Skill 管理请求失败：${message}`,
+      target: url.toString()
+    }, null, 2));
+    process.exit(1);
+  }
+
+  const rawBody = await response.text();
+  const responseBody = tryParseJson(rawBody);
+
+  if (!response.ok) {
+    const detail = typeof responseBody?.detail === "string"
+      ? responseBody.detail
+      : `HTTP ${response.status}`;
+    console.error(JSON.stringify({
+      ok: false,
+      status: response.status,
+      detail,
+      body: responseBody ?? rawBody
+    }, null, 2));
+    process.exit(1);
+  }
+
+  return responseBody ?? rawBody;
+}
+
 async function printAssistantResponse(payload) {
   if (typeof payload === "string") {
     console.log(payload);
@@ -336,6 +491,7 @@ function parseArgs(argv, input = {}) {
   const errors = [];
   const supportedOptions = new Set(input.supportedOptions ?? []);
   const supportedFlags = new Set(input.supportedFlags ?? []);
+  const repeatableOptions = new Set(input.repeatableOptions ?? []);
   let index = 0;
 
   while (index < argv.length) {
@@ -378,7 +534,12 @@ function parseArgs(argv, input = {}) {
     }
 
     if (inlineValue !== undefined) {
-      values[rawName] = inlineValue;
+      if (repeatableOptions.has(rawName)) {
+        const current = values[rawName];
+        values[rawName] = Array.isArray(current) ? [...current, inlineValue] : current ? [current, inlineValue] : [inlineValue];
+      } else {
+        values[rawName] = inlineValue;
+      }
       index += 1;
       continue;
     }
@@ -391,7 +552,12 @@ function parseArgs(argv, input = {}) {
       continue;
     }
 
-    values[rawName] = nextValue;
+    if (repeatableOptions.has(rawName)) {
+      const current = values[rawName];
+      values[rawName] = Array.isArray(current) ? [...current, nextValue] : current ? [current, nextValue] : [nextValue];
+    } else {
+      values[rawName] = nextValue;
+    }
     index += 2;
   }
 
@@ -447,10 +613,33 @@ function readOptionalTrimmedValue(value) {
   return normalized.length > 0 ? normalized : null;
 }
 
+function readMultiOptionValues(value) {
+  const values = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? [value]
+      : [];
+
+  return values
+    .flatMap((item) => item.split(","))
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+}
+
 function requireOptionValue(value, field) {
   const normalized = readOptionalTrimmedValue(value);
 
   if (!normalized) {
+    fail(`参数 --${field} 不能为空`);
+  }
+
+  return normalized;
+}
+
+function requireMultiOptionValues(value, field) {
+  const normalized = readMultiOptionValues(value);
+
+  if (normalized.length === 0) {
     fail(`参数 --${field} 不能为空`);
   }
 
@@ -549,6 +738,7 @@ codingns 用法：
 
   codingns start [--host 0.0.0.0] [--port 3002] [--data-dir ~/.codingns] [--demo]
   codingns assistant <group> <action> [options]
+  codingns skills <action> [options]
 
 说明：
 
@@ -564,6 +754,12 @@ assistant 例子：
   codingns assistant projects list --status active --token <token>
   codingns assistant sessions send <sessionId> --message "继续修复类型错误" --token <token>
   codingns assistant terminals send <terminalId> --input "npm test\\n" --token <token>
+
+skills 例子：
+
+  codingns skills overview --token <token>
+  codingns skills add --source ./my-skill --target codex --token <token>
+  codingns skills sync <skillId> --target gemini --token <token>
 `.trim();
 
   if (exitCode === 0) {
@@ -577,6 +773,18 @@ assistant 例子：
 
 function printAssistantHelpTopic(topic, exitCode) {
   const output = getAssistantHelpText(topic);
+
+  if (exitCode === 0) {
+    console.log(output);
+  } else {
+    console.error(output);
+  }
+
+  process.exit(exitCode);
+}
+
+function printSkillsHelpTopic(topic, exitCode) {
+  const output = getSkillsHelpText(topic);
 
   if (exitCode === 0) {
     console.log(output);
@@ -777,6 +985,65 @@ codingns assistant 用法：
   }
 }
 
+function getSkillsHelpText(topic) {
+  switch (topic) {
+    case "skills.overview":
+      return `
+codingns skills overview
+
+用途：
+  查看当前 Host 聚合后的 skill 概况，包括受管、未纳管、冲突和诊断结果。
+
+用法：
+  codingns skills overview [--target codex] [--target gemini] --token <token>
+`.trim();
+    case "skills.add":
+      return `
+codingns skills add
+
+用途：
+  把本地 skill 目录纳入统一管理，并只同步到你指定的目标 CLI。
+
+用法：
+  codingns skills add --source <path> --target <cli> [--target <cli>] [--source-type local-import|builtin|managed-copy] --token <token>
+`.trim();
+    case "skills.import":
+      return `
+codingns skills import
+
+用途：
+  把某个 CLI 目录里已存在但未纳管的 skill 导入 SSOT，并可顺带同步到其他目标。
+
+用法：
+  codingns skills import --cli <cli> --path <directoryPath> [--expected-hash <hash>] [--target <cli>] --token <token>
+`.trim();
+    case "skills.sync":
+      return `
+codingns skills sync
+
+用途：
+  把指定受管 skill 再同步到一个或多个目标 CLI。
+
+用法：
+  codingns skills sync <skillId> --target <cli> [--target <cli>] --token <token>
+`.trim();
+    default:
+      return `
+codingns skills 用法：
+
+  codingns skills overview [--target <cli>] --token <token>
+  codingns skills add --source <path> --target <cli> [--target <cli>] [--source-type local-import|builtin|managed-copy] --token <token>
+  codingns skills import --cli <cli> --path <directoryPath> [--expected-hash <hash>] [--target <cli>] --token <token>
+  codingns skills sync <skillId> --target <cli> [--target <cli>] --token <token>
+
+环境变量：
+
+  CODINGNS_BASE_URL      默认 Host 地址，未传时默认 http://127.0.0.1:3002
+  CODINGNS_ACCESS_TOKEN  默认 Bearer token
+`.trim();
+  }
+}
+
 function buildAssistantHelpTopic(action, rest) {
   if (!action || action === "--help" || action === "-h") {
     return "assistant";
@@ -787,6 +1054,14 @@ function buildAssistantHelpTopic(action, rest) {
   }
 
   return `${action}.${rest[0]}`;
+}
+
+function buildSkillsHelpTopic(action) {
+  if (!action || action === "--help" || action === "-h") {
+    return "skills";
+  }
+
+  return `skills.${action}`;
 }
 
 function isHelpToken(value) {

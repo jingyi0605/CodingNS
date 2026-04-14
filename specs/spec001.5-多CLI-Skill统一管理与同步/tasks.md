@@ -10,6 +10,70 @@
 - 已确认当前仓库里最需要被替换的是 Butler 中 Codex 专用的 `codingns-assistant` skill 复制硬编码。
 - 已完成本子 Spec 的 `README.md`、`requirements.md`、`design.md`、`tasks.md` 初始化。
 
+## 2026-04-14 实施进展
+
+- 已新增受管 skill 领域类型：
+  - `ManagedSkillRecord`
+  - `SkillTargetBindingRecord`
+  - `SkillSourceType`
+  - `ManagedSkillState`
+  - `SkillTargetCli`
+  - `SkillTargetSyncStatus`
+- 已在 Host SQLite 模式里新增两张表：
+  - `managed_skills`
+  - `skill_target_bindings`
+- 已补两个基础仓储：
+  - `ManagedSkillRepository`
+  - `SkillTargetBindingRepository`
+- 已新增第一版目标适配器：
+  - `ClaudeCodeSkillTargetAdapter`
+  - `CodexSkillTargetAdapter`
+  - `GeminiSkillTargetAdapter`
+  - `OpenCodeSkillTargetAdapter`
+- 已补集成测试：
+  - `apps/host/tests/integration/skill-management-repositories.test.ts`
+  - `apps/host/tests/integration/skill-target-adapters.test.ts`
+- 已补扫描与对账主链路：
+  - `apps/host/src/modules/skills/skill-manager-service.ts`
+  - `apps/host/src/modules/skills/skill-reconciler.ts`
+- 已补新增与单目标同步主链路：
+  - `apps/host/src/modules/skills/skill-sync-planner.ts`
+  - `apps/host/src/modules/skills/skill-manager-service.ts`
+- 已补扫描相关领域类型：
+  - `SkillScanEntry`
+  - `SkillScanDiagnostic`
+  - `SkillScanResult`
+- 已补扫描集成测试：
+  - `apps/host/tests/integration/skill-scan-service.test.ts`
+- 已补新增与同步集成测试：
+  - `apps/host/tests/integration/skill-add-service.test.ts`
+- 已补未纳管导入主链路：
+  - `apps/host/src/modules/skills/skill-manager-service.ts`
+- 已补未纳管导入集成测试：
+  - `apps/host/tests/integration/skill-import-service.test.ts`
+- 已补 Host Skill API 入口：
+  - `apps/host/src/modules/skills/skill-controller.ts`
+  - `apps/host/src/routes/skills.ts`
+  - `apps/host/src/server/create-server.ts`
+- 已补 `codingns skills` CLI 入口：
+  - `packages/codingns/bin/codingns.mjs`
+- 已补 Skill API 集成测试：
+  - `apps/host/tests/integration/skill-routes.test.ts`
+- 已验证：
+  - `pnpm --dir apps/host test -- skill-management-repositories.test.ts`
+  - `pnpm --dir apps/host test -- skill-target-adapters.test.ts`
+  - `pnpm --dir apps/host test -- skill-management-repositories.test.ts skill-target-adapters.test.ts skill-scan-service.test.ts`
+  - `pnpm --dir apps/host test -- skill-add-service.test.ts skill-scan-service.test.ts skill-management-repositories.test.ts skill-target-adapters.test.ts`
+  - `pnpm --dir apps/host test -- skill-import-service.test.ts skill-add-service.test.ts skill-scan-service.test.ts skill-management-repositories.test.ts skill-target-adapters.test.ts`
+  - `pnpm --dir apps/host test -- skill-routes.test.ts skill-import-service.test.ts skill-add-service.test.ts skill-scan-service.test.ts skill-management-repositories.test.ts skill-target-adapters.test.ts`
+  - `pnpm --dir apps/host test -- sqlite-bootstrap.test.ts`
+  - `pnpm --dir apps/host build`
+  - `node packages/codingns/bin/codingns.mjs skills --help`
+  - `node packages/codingns/bin/codingns.mjs skills add --help`
+- 构建过程中顺手清掉一个旧的 TypeScript 历史问题：
+  - `apps/host/src/modules/tailscale/tailscale-helper-client.ts`
+  - `apps/host/src/modules/tailscale/tailscale-manager.ts`
+
 ## 这份文档是干什么的
 
 这份任务清单不是为了列一堆抽象词。
@@ -37,8 +101,8 @@
 
 ## 阶段 1：先把统一模型和边界钉死
 
-- [ ] 1.1 建 `SkillManager` 的最小数据模型
-  - 状态：TODO
+- [x] 1.1 建 `SkillManager` 的最小数据模型
+  - 状态：DONE
   - 这一步到底做什么：把受管 skill、目标绑定、扫描结果这三类对象的字段、状态和持久化边界定下来。
   - 做完你能看到什么：后面写扫描、导入、同步时，不再边写边猜字段。
   - 先依赖什么：无
@@ -54,13 +118,14 @@
     1. 已有受管 skill 记录和目标绑定模型
     2. 已有最小仓储接口或表结构草案
   - 怎么验证：
-    - 类型检查
-    - 模型单元测试
+    - `pnpm --dir apps/host test -- skill-management-repositories.test.ts`
+    - `pnpm --dir apps/host test -- sqlite-bootstrap.test.ts`
+    - `pnpm --dir apps/host build`
   - 对应需求：`requirements.md` 需求 1、需求 2、需求 4
   - 对应设计：`design.md` §2.1、§3.2、§4.1
 
-- [ ] 1.2 建各 CLI 的 `SkillTargetAdapter`
-  - 状态：TODO
+- [x] 1.2 建各 CLI 的 `SkillTargetAdapter`
+  - 状态：DONE
   - 这一步到底做什么：把 `codex`、`claude-code`、`gemini`、`opencode` 的 skill 根目录解析逻辑收口成统一适配器。
   - 做完你能看到什么：主流程里不再散落每个 CLI 的目录判断。
   - 先依赖什么：1.1
@@ -75,15 +140,15 @@
     1. 每个目标 CLI 都能给出 skill 根目录
     2. 未受支持目标会返回统一错误
   - 怎么验证：
-    - 单元测试
-    - 临时目录集成测试
+    - `pnpm --dir apps/host test -- skill-target-adapters.test.ts`
+    - `pnpm --dir apps/host build`
   - 对应需求：`requirements.md` 需求 1、需求 5
   - 对应设计：`design.md` §2.2、§3.1、§3.3
 
 ### 阶段检查
 
-- [ ] 1.3 检查统一模型是不是站稳了
-  - 状态：TODO
+- [x] 1.3 检查统一模型是不是站稳了
+  - 状态：DONE
   - 这一步到底做什么：确认后续扫描、导入、同步都能基于前面这套模型往下做，而不是再推翻一次。
   - 做完你能看到什么：下一阶段可以开始写真实行为，不会中途返工数据模型。
   - 先依赖什么：1.1、1.2
@@ -98,13 +163,14 @@
     2. 已知缺口已经记清楚
   - 怎么验证：
     - 人工走查
+    - `pnpm --dir apps/host build`
   - 对应需求：`requirements.md` 需求 1、需求 2、需求 5
   - 对应设计：`design.md` §2、§3、§4
 
 ## 阶段 2：把扫描、导入、同步主链路做出来
 
-- [ ] 2.1 落本地扫描与未纳管识别
-  - 状态：TODO
+- [x] 2.1 落本地扫描与未纳管识别
+  - 状态：DONE
   - 这一步到底做什么：实现扫描各 CLI skill 目录、识别 `managed/unmanaged/conflicted` 结果的主链路。
   - 做完你能看到什么：系统第一次能清楚回答“这台机器现在到底有哪些 skill”。
   - 先依赖什么：1.3
@@ -122,11 +188,13 @@
   - 怎么验证：
     - 集成测试
     - 临时目录回放
+    - `pnpm --dir apps/host test -- skill-scan-service.test.ts`
+    - `pnpm --dir apps/host build`
   - 对应需求：`requirements.md` 需求 1、需求 4
   - 对应设计：`design.md` §2.3.1、§3.3.1、§4.2
 
-- [ ] 2.2 落新增 skill 与单目标同步
-  - 状态：TODO
+- [x] 2.2 落新增 skill 与单目标同步
+  - 状态：DONE
   - 这一步到底做什么：实现从本地目录纳入管理、写入 SSOT、同步到指定 CLI 的主链路。
   - 做完你能看到什么：维护者可以正式为某个 CLI 添加新 skill，不再手工复制目录。
   - 先依赖什么：2.1
@@ -145,11 +213,13 @@
   - 怎么验证：
     - 单元测试
     - 多目标目录集成测试
+    - `pnpm --dir apps/host test -- skill-add-service.test.ts`
+    - `pnpm --dir apps/host build`
   - 对应需求：`requirements.md` 需求 2、需求 3
   - 对应设计：`design.md` §2.3.2、§3.3.2、§6.2
 
-- [ ] 2.3 落未纳管导入与冲突分支
-  - 状态：TODO
+- [x] 2.3 落未纳管导入与冲突分支
+  - 状态：DONE
   - 这一步到底做什么：实现从现有 CLI 目录导入未纳管 skill，并把同名不同内容的情况拦下来。
   - 做完你能看到什么：老机器上的 skill 可以被纳入统一管理，不需要从头重建。
   - 先依赖什么：2.2
@@ -167,13 +237,15 @@
   - 怎么验证：
     - 集成测试
     - 冲突回放测试
+    - `pnpm --dir apps/host test -- skill-import-service.test.ts`
+    - `pnpm --dir apps/host build`
   - 对应需求：`requirements.md` 需求 4
   - 对应设计：`design.md` §2.3.3、§6.3
 
 ### 阶段检查
 
-- [ ] 2.4 检查主链路是不是已经跑通
-  - 状态：TODO
+- [x] 2.4 检查主链路是不是已经跑通
+  - 状态：DONE
   - 这一步到底做什么：确认扫描、导入、添加、同步已经形成完整闭环。
   - 做完你能看到什么：后面接 Host API 和 Butler 时不是在接半成品。
   - 先依赖什么：2.1、2.2、2.3
@@ -193,8 +265,8 @@
 
 ## 阶段 3：接外部入口、补设置页入口并替换旧硬编码
 
-- [ ] 3.1 落 Host API 和 `codingns skills` CLI
-  - 状态：TODO
+- [x] 3.1 落 Host API 和 `codingns skills` CLI
+  - 状态：DONE
   - 这一步到底做什么：给统一 skill 管理补最小对外入口，让外部不再直接调文件系统。
   - 做完你能看到什么：可以通过 API 或 CLI 扫描、导入、添加、同步 skill。
   - 先依赖什么：2.4
@@ -212,11 +284,14 @@
   - 怎么验证：
     - API 集成测试
     - CLI 命令测试
+    - `pnpm --dir apps/host test -- skill-routes.test.ts`
+    - `node packages/codingns/bin/codingns.mjs skills --help`
+    - `node packages/codingns/bin/codingns.mjs skills add --help`
   - 对应需求：`requirements.md` 需求 3、需求 4
   - 对应设计：`design.md` §3.3、§7.2
 
-- [ ] 3.2 在设置页挂最小 Skill 管理入口
-  - 状态：TODO
+- [x] 3.2 在设置页挂最小 Skill 管理入口
+  - 状态：DONE
   - 这一步到底做什么：复用现有 `/settings/:section` 结构，新增 `skills` 分段，展示 skill 概况、未纳管列表、最小导入和同步入口。
   - 做完你能看到什么：普通用户可以在设置页里看到并管理本机 skill，不需要先学 CLI 命令。
   - 先依赖什么：3.1
@@ -235,14 +310,14 @@
     2. 页面能展示 skill 概况、受管和未纳管结果
     3. 页面能触发最小导入和同步动作
   - 怎么验证：
-    - 前端组件测试
-    - 路由集成测试
-    - 人工点击验证
+    - `pnpm --dir apps/user-app test src/features/settings/pages/SettingsPage.test.tsx`
+    - `pnpm --dir apps/user-app test src/settings/SkillManagementPanel.test.tsx`
+    - 人工走查设置页桌面端与移动端入口
   - 对应需求：`requirements.md` 需求 6
   - 对应设计：`design.md` §2.3.5、§3.3.8、§6.4
 
-- [ ] 3.3 替换 Butler 里的 Codex 专用 skill 复制逻辑
-  - 状态：TODO
+- [x] 3.3 替换 Butler 里的 Codex 专用 skill 复制逻辑
+  - 状态：DONE
   - 这一步到底做什么：把 `butler-control-session-service.ts` 里直接复制 `codingns-assistant` 目录的做法迁到统一 `SkillManager`。
   - 做完你能看到什么：Butler 不再知道 skill 目录细节，只表达“确保目标环境有这个 skill”。
   - 先依赖什么：3.1
@@ -257,8 +332,9 @@
     1. 旧的目录复制硬编码被移除或收口到统一服务
     2. Butler 集成测试仍然通过
   - 怎么验证：
-    - 集成测试
-    - 人工走查
+    - `pnpm --dir apps/host test -- butler-control-session-service.test.ts`
+    - `pnpm --dir apps/host build`
+    - 人工走查 Butler 独立 Codex home 的 skill 来源已经改成 SSOT
   - 对应需求：`requirements.md` 需求 5
   - 对应设计：`design.md` §2.3.4、§6.1
 
