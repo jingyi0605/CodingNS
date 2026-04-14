@@ -1289,8 +1289,10 @@ export function GitSidebar({
       return;
     }
 
+    const commitHash = activeHistoryMenuCommitHash;
+
     function updateHistoryActionsMenuPosition() {
-      const trigger = historyMenuTriggerRefs.current.get(activeHistoryMenuCommitHash) ?? null;
+      const trigger = historyMenuTriggerRefs.current.get(commitHash) ?? null;
       const menu = historyActionsMenuRef.current;
 
       if (!trigger || !menu || typeof window === "undefined") {
@@ -1330,6 +1332,8 @@ export function GitSidebar({
       return;
     }
 
+    const commitHash = activeHistoryMenuCommitHash;
+
     function handlePointerDown(event: PointerEvent) {
       const target = event.target;
 
@@ -1337,7 +1341,7 @@ export function GitSidebar({
         return;
       }
 
-      const trigger = historyMenuTriggerRefs.current.get(activeHistoryMenuCommitHash) ?? null;
+      const trigger = historyMenuTriggerRefs.current.get(commitHash) ?? null;
       const menu = historyActionsMenuRef.current;
 
       if (trigger?.contains(target) || menu?.contains(target)) {
