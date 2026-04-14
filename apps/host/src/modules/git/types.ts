@@ -86,6 +86,31 @@ export interface GitHistoryRef {
   remoteName: string | null;
 }
 
+export interface GitCommitChangedFile {
+  path: string;
+  oldPath: string | null;
+  status: string;
+  binary: boolean;
+}
+
+export interface GitCommitDetail {
+  workspaceId: string;
+  commitHash: string;
+  shortHash: string;
+  versionLabel: string;
+  authorName: string;
+  authorEmail: string;
+  authoredAt: string;
+  committerName: string;
+  committerEmail: string;
+  committedAt: string;
+  subject: string;
+  body: string;
+  changedFiles: GitCommitChangedFile[];
+  diffTruncated: boolean;
+  diffContent: string;
+}
+
 export interface GitBranchItem {
   name: string;
   current: boolean;

@@ -102,6 +102,31 @@ export interface GitHistoryRefDto {
   remoteName: string | null;
 }
 
+export interface GitCommitChangedFileDto {
+  path: string;
+  oldPath: string | null;
+  status: string;
+  binary: boolean;
+}
+
+export interface GitCommitDetailDto {
+  workspaceId: string;
+  commitHash: string;
+  shortHash: string;
+  versionLabel: string;
+  authorName: string;
+  authorEmail: string;
+  authoredAt: string;
+  committerName: string;
+  committerEmail: string;
+  committedAt: string;
+  subject: string;
+  body: string;
+  changedFiles: GitCommitChangedFileDto[];
+  diffTruncated: boolean;
+  diffContent: string;
+}
+
 export interface GitBranchItemDto {
   name: string;
   current: boolean;
@@ -261,6 +286,15 @@ export function getGitHistory(workspaceId: string, limit = 5, cursor: string | n
   }
 
   return httpClient.request<GitHistoryPageDto>(`/api/git/history?${search.toString()}`);
+}
+
+export function getGitCommitDetail(workspaceId: string, commitHash: string) {
+  const search = new URLSearchParams({
+    workspaceId,
+    commitHash
+  });
+
+  return httpClient.request<GitCommitDetailDto>(`/api/git/commit-detail?${search.toString()}`);
 }
 
 export function getGitBranches(workspaceId: string) {

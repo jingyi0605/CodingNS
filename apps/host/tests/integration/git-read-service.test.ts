@@ -195,6 +195,106 @@ describe("GitReadService", () => {
       totalCount: 4
     });
   });
+
+  it("可以读取单个提交的文件列表、版本号和完整 diff", async () => {
+    const gitCommandRunner = {
+      run: vi.fn(async (_repoRoot: string, args: string[]) => {
+        if (args[0] === "show" && args.includes("--no-patch")) {
+          return createResult(
+            "abc123456789\u001fabc12345\u001fLinus\u001flinus@example.com\u001f2026-04-14T10:00:00.000Z\u001fLinus\u001flinus@example.com\u001f2026-04-14T10:05:00.000Z\u001ffeat: add commit tools\u001f补充最近版本菜单\n"
+          );
+        }
+
+        if (args[0] === "show" && args.includes("--name-status")) {
+          return createResult(
+            [
+              "M\tapps/user-app/src/features/conversation/components/GitSidebar.tsx",
+              "R100\tapps/host/src/modules/git/old.ts\tapps/host/src/modules/git/new.ts"
+            ].join("\n")
+          );
+        }
+
+        if (args[0] === "show" && !args.includes("--name-status") && !args.includes("--no-patch")) {
+          return createResult(
+            [
+              "commit abc123456789",
+              "Author: Linus <linus@example.com>",
+              "",
+              "    feat: add commit tools",
+              "",
+              "diff --git a/apps/user-app/src/features/conversation/components/GitSidebar.tsx b/apps/user-app/src/features/conversation/components/GitSidebar.tsx",
+              "+const added = true;"
+            ].join("\n")
+          );
+        }
+
+        if (args[0] === "describe") {
+          return createResult("v1.2.3-4-gabc12345\n");
+        }
+
+        throw new Error(`未预期的 Git 命令: ${args.join(" ")}`);
+      })
+    } satisfies Pick<GitCommandRunner, "run">;
+
+    const workspaceRepoGuard = {
+      resolve: vi.fn(async () => ({
+        workspace: {
+          id: "workspace-1",
+          name: "Git 工作区",
+          path: "C:/repo",
+          repoRoot: "C:/repo",
+          favorite: false,
+          createdAt: "2026-03-23T00:00:00.000Z",
+          updatedAt: "2026-03-23T00:00:00.000Z"
+        },
+        repoRoot: "C:/repo"
+      }))
+    } satisfies Pick<WorkspaceRepoGuard, "resolve">;
+
+    const service = new GitReadService(
+      gitCommandRunner as unknown as GitCommandRunner,
+      workspaceRepoGuard as unknown as WorkspaceRepoGuard
+    );
+
+    await expect(service.getCommitDetail("workspace-1", "abc123456789")).resolves.toEqual({
+      workspaceId: "workspace-1",
+      commitHash: "abc123456789",
+      shortHash: "abc12345",
+      versionLabel: "v1.2.3-4-gabc12345",
+      authorName: "Linus",
+      authorEmail: "linus@example.com",
+      authoredAt: "2026-04-14T10:00:00.000Z",
+      committerName: "Linus",
+      committerEmail: "linus@example.com",
+      committedAt: "2026-04-14T10:05:00.000Z",
+      subject: "feat: add commit tools",
+      body: "补充最近版本菜单",
+      changedFiles: [
+        {
+          path: "apps/user-app/src/features/conversation/components/GitSidebar.tsx",
+          oldPath: null,
+          status: "M",
+          binary: false
+        },
+        {
+          path: "apps/host/src/modules/git/new.ts",
+          oldPath: "apps/host/src/modules/git/old.ts",
+          status: "R",
+          binary: false
+        }
+      ],
+      diffTruncated: false,
+      diffContent: [
+        "commit abc123456789",
+        "Author: Linus <linus@example.com>",
+        "",
+        "    feat: add commit tools",
+        "",
+        "diff --git a/apps/user-app/src/features/conversation/components/GitSidebar.tsx b/apps/user-app/src/features/conversation/components/GitSidebar.tsx",
+        "+const added = true;"
+      ].join("\n")
+    });
+  });
 });
 
 function createResult(stdout: string): GitCommandResult {

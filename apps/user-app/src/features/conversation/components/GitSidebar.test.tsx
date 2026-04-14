@@ -9,6 +9,7 @@ import { GitSidebar, resolveGitOperationsMenuPosition } from "./GitSidebar";
 const gitApiMock = vi.hoisted(() => ({
   getGitStatus: vi.fn(),
   getGitHistory: vi.fn(),
+  getGitCommitDetail: vi.fn(),
   getGitBranches: vi.fn(),
   getGitRemotes: vi.fn(),
   stageGitTargets: vi.fn(),
@@ -21,10 +22,19 @@ const gitApiMock = vi.hoisted(() => ({
   undoLastCommit: vi.fn()
 }));
 
+const conversationApiMock = vi.hoisted(() => ({
+  startLiveSession: vi.fn(),
+  getSessionDetail: vi.fn(),
+  listProviderCapabilities: vi.fn()
+}));
+
 const workbenchShellMock = vi.hoisted(() => ({
   subscribeGitSnapshot: vi.fn(),
   requestGitRefresh: vi.fn(),
-  addGitSnapshotListener: vi.fn()
+  addGitSnapshotListener: vi.fn(),
+  requestNavigationRefresh: vi.fn(),
+  selectWorkspace: vi.fn(),
+  upsertNavigationSession: vi.fn()
 }));
 const hapticsMock = vi.hoisted(() => ({
   trigger: vi.fn()
@@ -36,12 +46,14 @@ const platformMock = vi.hoisted(() => ({
   }
 }));
 const clipboardWriteTextMock = vi.hoisted(() => vi.fn());
+const navigateMock = vi.hoisted(() => vi.fn());
 const GIT_SIDEBAR_SNAPSHOT_KEY = "git-sidebar.snapshot.workspace-1";
 let gitSnapshotListener: ((snapshot: ReturnType<typeof createGitSnapshot>) => void) | null = null;
 
 vi.mock("../api/git-api", () => ({
   getGitStatus: gitApiMock.getGitStatus,
   getGitHistory: gitApiMock.getGitHistory,
+  getGitCommitDetail: gitApiMock.getGitCommitDetail,
   getGitBranches: gitApiMock.getGitBranches,
   getGitRemotes: gitApiMock.getGitRemotes,
   stageGitTargets: gitApiMock.stageGitTargets,
@@ -54,12 +66,22 @@ vi.mock("../api/git-api", () => ({
   undoLastCommit: gitApiMock.undoLastCommit
 }));
 
+vi.mock("../api/conversation-api", () => ({
+  startLiveSession: conversationApiMock.startLiveSession,
+  getSessionDetail: conversationApiMock.getSessionDetail,
+  listProviderCapabilities: conversationApiMock.listProviderCapabilities
+}));
+
 vi.mock("./WorkbenchLayout", () => ({
   useWorkbenchShell: () => workbenchShellMock
 }));
 
 vi.mock("../../../platform/platform-provider", () => ({
   usePlatform: () => platformMock
+}));
+
+vi.mock("react-router-dom", () => ({
+  useNavigate: () => navigateMock
 }));
 
 vi.mock("../../../shared/haptics", () => ({
@@ -99,6 +121,7 @@ describe("GitSidebar", () => {
       local: [{ name: "main", current: true, upstream: "origin/main", remote: false }],
       remote: []
     });
+    gitApiMock.getGitCommitDetail.mockResolvedValue(createCommitDetail());
     gitApiMock.getGitRemotes.mockResolvedValue([
       {
         name: "origin",
@@ -169,6 +192,62 @@ describe("GitSidebar", () => {
       summary: "ok",
       commitHash: "abc123",
       commitSubject: "feat: restore message"
+    });
+    conversationApiMock.startLiveSession.mockResolvedValue({
+      sessionId: "session-commit-explain",
+      acceptedAt: "2026-04-14T12:00:00.000Z",
+      clientRequestId: "req-1",
+      provider: "codex",
+      providerSessionId: "provider-session-1",
+      message: {
+        messageId: "message-1",
+        role: "user",
+        kind: "text",
+        content: "分析提交",
+        createdAt: "2026-04-14T12:00:00.000Z"
+      },
+      session: {
+        sessionId: "session-commit-explain",
+        workspaceId: "workspace-1",
+        provider: "codex",
+        providerSessionId: "provider-session-1",
+        rawStoreRef: "store-ref",
+        title: "解释提交",
+        messageCount: 1,
+        lastMessageAt: "2026-04-14T12:00:00.000Z",
+        createdAt: "2026-04-14T12:00:00.000Z",
+        updatedAt: "2026-04-14T12:00:00.000Z",
+        syncStatus: "idle",
+        syncCursor: null,
+        lastSyncAt: null,
+        lastErrorCode: null,
+        lastErrorDetail: null,
+        resumedAt: null,
+        runningState: "starting",
+        activitySource: "runtime",
+        lastEventAt: "2026-04-14T12:00:00.000Z",
+        completedAt: null,
+        lastSeenAt: null,
+        activityState: "running"
+      }
+    });
+    conversationApiMock.getSessionDetail.mockResolvedValue(null);
+    conversationApiMock.listProviderCapabilities.mockResolvedValue({
+      codex: {
+        provider: "codex",
+        canStartSession: true,
+        canResumeSession: true,
+        canSendMessage: true,
+        inRunInputMode: "none",
+        supportsSubagents: true,
+        supportsInterrupt: true,
+        supportsStructuredToolCalls: true,
+        supportsTokenUsage: true,
+        supportsAttachments: true,
+        supportsPermissionPrompt: true,
+        supportsCheckpoint: true,
+        limitations: []
+      }
     });
     workbenchShellMock.subscribeGitSnapshot.mockImplementation(() => undefined);
     workbenchShellMock.requestGitRefresh.mockImplementation(() => undefined);
@@ -452,34 +531,79 @@ describe("GitSidebar", () => {
   it("移动端最近版本条目提供操作菜单，并支持复制 Commit Hash", async () => {
     renderSidebar();
 
-    fireEvent.click(await screen.findByRole("button", { name: /最近版本/ }));
-    fireEvent.click(screen.getAllByRole("button", { name: "版本操作" })[0]);
+    fireEvent.click(await screen.findByRole("button", { name: /最近版本|Recent Versions/ }));
+    fireEvent.click(screen.getAllByRole("button", { name: /版本操作|History Item Menu|Commit Actions/ })[0]);
 
-    expect(screen.getByRole("button", { name: "复制 Commit Hash" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "复制提交标题" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "撤销上次提交" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /复制 Commit Hash|Copy Commit Hash/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /复制提交信息|Copy Commit Message/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /复制 Git 版本号|Copy Git Version/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /解释更改|Explain Change/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /撤销上次提交|Undo Last Commit/ })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "复制 Commit Hash" }));
+    fireEvent.click(screen.getByRole("button", { name: /复制 Commit Hash|Copy Commit Hash/ }));
 
     await waitFor(() => {
       expect(clipboardWriteTextMock).toHaveBeenCalledWith("33333333");
     });
   });
 
+  it("最近版本支持打开提交详情模态框并展示文件与 diff", async () => {
+    renderSidebar();
+
+    fireEvent.click(await screen.findByRole("button", { name: /最近版本|Recent Versions/ }));
+    fireEvent.click(screen.getAllByRole("button", { name: /版本操作|History Item Menu|Commit Actions/ })[0]);
+    fireEvent.click(screen.getByRole("button", { name: /查看更改文件与 DIFF|View Changed Files and DIFF/ }));
+
+    expect(await screen.findByText(/版本详情|Commit Detail/)).toBeInTheDocument();
+    expect(
+      await screen.findByText("apps/user-app/src/features/conversation/components/GitSidebar.tsx")
+    ).toBeInTheDocument();
+    expect(screen.getByText(/提交 DIFF|Commit DIFF/)).toBeInTheDocument();
+    expect(gitApiMock.getGitCommitDetail).toHaveBeenCalledWith("workspace-1", "33333333");
+  });
+
+  it("解释更改会先弹供应商选择，再新建会话", async () => {
+    renderSidebar();
+
+    fireEvent.click(await screen.findByRole("button", { name: /最近版本|Recent Versions/ }));
+    fireEvent.click(screen.getAllByRole("button", { name: /版本操作|History Item Menu|Commit Actions/ })[0]);
+    fireEvent.click(screen.getByRole("button", { name: /解释更改|Explain Change/ }));
+
+    expect(await screen.findByText(/解释版本更改|Explain Commit Change/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /Codex/i }));
+    await userEvent.click(screen.getByRole("button", { name: /开始解释|Start Explaining/ }));
+
+    await waitFor(() => {
+      expect(conversationApiMock.startLiveSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workspaceId: "workspace-1",
+          provider: "codex"
+        })
+      );
+    });
+
+    await waitFor(() => {
+      expect(navigateMock).toHaveBeenCalledWith(
+        "/workspaces/workspace-1/sessions/session-commit-explain"
+      );
+    });
+  });
+
   it("移动端最近版本标题右侧提供 Git 操作菜单，并复用桌面端菜单内容", async () => {
     renderSidebar();
 
-    fireEvent.click(await screen.findByRole("button", { name: /最近版本/ }));
-    fireEvent.click(screen.getByRole("button", { name: "操作菜单" }));
+    fireEvent.click(await screen.findByRole("button", { name: /最近版本|Recent Versions/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^(操作菜单|Actions)$/ }));
 
     const operationsShell = document.querySelector(".git-mobile-operations-shell") as HTMLElement;
 
     expect(operationsShell).not.toBeNull();
+    expect(within(operationsShell).getByRole("button", { name: /查看所有版本|View All Versions/ })).toBeInTheDocument();
     expect(within(operationsShell).getByRole("button", { name: "Fetch" })).toBeInTheDocument();
     expect(within(operationsShell).getByRole("button", { name: "Pull" })).toBeInTheDocument();
     expect(within(operationsShell).getByRole("button", { name: "Push" })).toBeInTheDocument();
-    expect(within(operationsShell).getByRole("button", { name: "撤销上次提交" })).toBeInTheDocument();
-    expect(within(operationsShell).getByRole("button", { name: "刷新" })).toBeInTheDocument();
+    expect(within(operationsShell).getByRole("button", { name: /撤销上次提交|Undo Last Commit/ })).toBeInTheDocument();
+    expect(within(operationsShell).getByRole("button", { name: /刷新|Refresh/ })).toBeInTheDocument();
   });
 
   it("保存远程认证后，推送会携带认证参数", async () => {
@@ -848,6 +972,34 @@ function createGitSnapshot(status = createStatus()) {
       local: [{ name: "main", current: true, upstream: "origin/main", remote: false }],
       remote: []
     }
+  };
+}
+
+function createCommitDetail() {
+  return {
+    workspaceId: "workspace-1",
+    commitHash: "33333333",
+    shortHash: "33333333",
+    versionLabel: "v1.2.3-4-g33333333",
+    authorName: "Linus",
+    authorEmail: "linus@example.com",
+    authoredAt: "2026-03-26T00:00:00.000Z",
+    committerName: "Linus",
+    committerEmail: "linus@example.com",
+    committedAt: "2026-03-26T00:00:00.000Z",
+    subject: "feat: local only",
+    body: "补充最近版本菜单",
+    changedFiles: [
+      {
+        path: "apps/user-app/src/features/conversation/components/GitSidebar.tsx",
+        oldPath: null,
+        status: "M",
+        binary: false
+      }
+    ],
+    diffTruncated: false,
+    diffContent:
+      "diff --git a/apps/user-app/src/features/conversation/components/GitSidebar.tsx b/apps/user-app/src/features/conversation/components/GitSidebar.tsx"
   };
 }
 

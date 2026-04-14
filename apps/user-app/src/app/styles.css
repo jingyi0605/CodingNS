@@ -10075,10 +10075,6 @@ textarea:focus-visible {
 }
 
 .git-history-entry-menu {
-  position: absolute;
-  top: 40px;
-  right: 0;
-  z-index: 3;
   display: flex;
   min-width: 220px;
   flex-direction: column;
@@ -10088,6 +10084,17 @@ textarea:focus-visible {
   border: 1px solid color-mix(in srgb, var(--border-primary) 82%, transparent);
   background: color-mix(in srgb, var(--bg-surface) 98%, transparent);
   box-shadow: 0 18px 40px rgba(15, 23, 42, 0.14);
+}
+
+.git-history-entry-menu[data-floating="true"] {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: 40;
+  width: min(240px, calc(100vw - 24px));
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .git-history-modal-list {
@@ -10100,6 +10107,20 @@ textarea:focus-visible {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.workbench-modal-card.git-commit-detail-modal,
+.workbench-modal-card.git-explain-provider-modal {
+  width: min(60vw, calc(100vw - 48px));
+  max-width: calc(100vw - 48px);
+}
+
+@media (max-width: 960px) {
+  .workbench-modal-card.git-commit-detail-modal,
+  .workbench-modal-card.git-explain-provider-modal {
+    width: min(100%, calc(100vw - 24px));
+    max-width: calc(100vw - 24px);
+  }
 }
 
 .git-commit-detail-state {
@@ -16938,6 +16959,67 @@ textarea:focus-visible {
   gap: 8px;
 }
 
+.settings-tailscale-panel {
+  width: 100%;
+}
+
+.settings-tailscale-form {
+  display: grid;
+  gap: 12px;
+}
+
+.settings-tailscale-field {
+  display: grid;
+  gap: 6px;
+}
+
+.settings-tailscale-field-label {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.settings-tailscale-field-description {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.settings-tailscale-addresses {
+  display: grid;
+  gap: 8px;
+}
+
+.settings-tailscale-address-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-subtle);
+}
+
+.settings-tailscale-address-label {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.settings-tailscale-address-value {
+  min-width: 0;
+  color: var(--text-primary);
+  font-size: 12px;
+  text-align: right;
+  word-break: break-all;
+}
+
+.settings-tailscale-link {
+  color: var(--accent);
+  text-decoration: underline;
+  word-break: break-all;
+}
+
 /* Theme Selector */
 .theme-selector {
   display: grid;
@@ -18590,6 +18672,25 @@ textarea:focus-visible {
   flex-shrink: 0;
 }
 
+.mobile-host-workspace-switcher-host-main {
+  padding-top: 0.08rem;
+  padding-bottom: 0.08rem;
+}
+
+.mobile-host-workspace-switcher-host-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 1.1rem;
+  padding: 0 0.45rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-secondary) 12%, var(--bg-surface));
+  color: var(--text-secondary);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
+}
+
 .mobile-workspace-home-session-status {
   display: inline-flex;
   align-items: center;
@@ -18674,6 +18775,18 @@ textarea:focus-visible {
   min-height: 3.5rem;
   padding-right: 1rem;
   padding-left: 1rem;
+}
+
+.mobile-workspace-home-sheet-row[data-host-entry-kind="host"] {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-surface-secondary) 94%, transparent), transparent),
+    transparent;
+}
+
+.mobile-workspace-home-sheet-row[data-host-active="true"][data-host-entry-kind="host"] {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--accent) 10%, var(--bg-surface)), transparent),
+    transparent;
 }
 
 .mobile-workspace-home-form {

@@ -4,6 +4,8 @@ import type {
   GitBranchItem,
   GitBranchSnapshot,
   GitChangeItem,
+  GitCommitChangedFile,
+  GitCommitDetail,
   GitDiffResult,
   GitHistoryItem,
   GitHistoryRef,
@@ -111,6 +113,83 @@ export class GitReadService {
       binary,
       truncated,
       content: truncated ? diffResult.stdout.slice(0, MAX_DIFF_OUTPUT) : diffResult.stdout
+    };
+  }
+
+  async getCommitDetail(workspaceId: string, commitHash: string): Promise<GitCommitDetail> {
+    const repo = await this.workspaceRepoGuard.resolve(workspaceId);
+    const normalizedCommitHash = commitHash.trim();
+    const [metadataResult, changedFilesResult, diffResult, versionResult] = await Promise.all([
+      this.gitCommandRunner.run(
+        repo.repoRoot,
+        [
+          "show",
+          "--no-patch",
+          "--date=iso-strict",
+          "--format=%H%x1f%h%x1f%an%x1f%ae%x1f%aI%x1f%cn%x1f%ce%x1f%cI%x1f%s%x1f%b",
+          normalizedCommitHash
+        ],
+        {
+          workspaceId,
+          operation: "gitRead.getCommitDetail"
+        }
+      ),
+      this.gitCommandRunner.run(
+        repo.repoRoot,
+        [
+          "show",
+          "--format=",
+          "--name-status",
+          "--find-renames",
+          normalizedCommitHash
+        ],
+        {
+          workspaceId,
+          operation: "gitRead.getCommitDetail"
+        }
+      ),
+      this.gitCommandRunner.run(
+        repo.repoRoot,
+        [
+          "show",
+          "--find-renames",
+          "--submodule=diff",
+          normalizedCommitHash
+        ],
+        {
+          workspaceId,
+          operation: "gitRead.getCommitDetail"
+        }
+      ),
+      this.gitCommandRunner.run(
+        repo.repoRoot,
+        ["describe", "--tags", "--always", normalizedCommitHash],
+        {
+          allowNonZeroExit: true,
+          workspaceId,
+          operation: "gitRead.getCommitDetail"
+        }
+      )
+    ]);
+    const metadata = parseCommitDetailMetadata(metadataResult.stdout, normalizedCommitHash);
+    const diffTruncated = diffResult.stdout.length > MAX_DIFF_OUTPUT;
+
+    return {
+      workspaceId,
+      commitHash: metadata.commitHash,
+      shortHash: metadata.shortHash,
+      versionLabel: versionResult.stdout.trim() || metadata.shortHash,
+      authorName: metadata.authorName,
+      authorEmail: metadata.authorEmail,
+      authoredAt: metadata.authoredAt,
+      committerName: metadata.committerName,
+      committerEmail: metadata.committerEmail,
+      committedAt: metadata.committedAt,
+      subject: metadata.subject,
+      body: metadata.body,
+      changedFiles: parseCommitChangedFiles(changedFilesResult.stdout),
+      diffTruncated,
+      diffContent: diffTruncated ? diffResult.stdout.slice(0, MAX_DIFF_OUTPUT) : diffResult.stdout
     };
   }
 
@@ -396,6 +475,48 @@ function parseHistoryItem(
   };
 }
 
+function parseCommitDetailMetadata(
+  stdout: string,
+  fallbackCommitHash: string
+): {
+  commitHash: string;
+  shortHash: string;
+  authorName: string;
+  authorEmail: string;
+  authoredAt: string;
+  committerName: string;
+  committerEmail: string;
+  committedAt: string;
+  subject: string;
+  body: string;
+} {
+  const [
+    commitHash = "",
+    shortHash = "",
+    authorName = "",
+    authorEmail = "",
+    authoredAt = "",
+    committerName = "",
+    committerEmail = "",
+    committedAt = "",
+    subject = "",
+    body = ""
+  ] = stdout.trimEnd().split("\u001f");
+
+  return {
+    commitHash: commitHash || fallbackCommitHash,
+    shortHash: shortHash || (commitHash || fallbackCommitHash).slice(0, 8),
+    authorName,
+    authorEmail,
+    authoredAt,
+    committerName,
+    committerEmail,
+    committedAt,
+    subject,
+    body: body.trim()
+  };
+}
+
 function parseGitRefLine(line: string): ParsedGitRef {
   const [fullName = "", shortName = "", commitHash = "", upstream = "", currentMarker = ""] =
     line.split("\u0000");
@@ -472,6 +593,36 @@ function parseHistoryRefs(
   }
 
   return refs;
+}
+
+function parseCommitChangedFiles(stdout: string): GitCommitChangedFile[] {
+  return stdout
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => parseCommitChangedFileLine(line));
+}
+
+function parseCommitChangedFileLine(line: string): GitCommitChangedFile {
+  const parts = line.split("\t");
+  const rawStatus = parts[0] ?? "";
+  const status = rawStatus.charAt(0) || "?";
+
+  if ((status === "R" || status === "C") && parts.length >= 3) {
+    return {
+      status,
+      oldPath: parts[1] ?? null,
+      path: parts[2] ?? "",
+      binary: false
+    };
+  }
+
+  return {
+    status,
+    oldPath: null,
+    path: parts[1] ?? "",
+    binary: false
+  };
 }
 
 function parseHistoryDivergence(stdout: string): { local: ReadonlySet<string>; remote: ReadonlySet<string> } {

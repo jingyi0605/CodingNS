@@ -9,6 +9,7 @@ import {
   type UIEvent
 } from "react";
 import { createPortal } from "react-dom";
+import { useNavigate } from "react-router-dom";
 
 import { readViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import { logPerfDebug } from "../../../shared/debug/perf-debug";
@@ -22,6 +23,7 @@ import {
   createCommitDraft,
   discardGitTargets,
   getGitBranches,
+  getGitCommitDetail,
   getGitDiff,
   getGitRemotes,
   getGitStatus,
@@ -32,6 +34,8 @@ import {
   undoLastCommit,
   unstageGitTargets,
   type CommitDraftDto,
+  type GitCommitChangedFileDto,
+  type GitCommitDetailDto,
   type GitBranchSnapshotDto,
   type GitChangeItemDto,
   type GitHistoryItemDto,
@@ -40,12 +44,19 @@ import {
   type GitStatusDto
 } from "../api/git-api";
 import {
+  getSessionDetail,
+  startLiveSession,
+  type ProviderId
+} from "../api/conversation-api";
+import {
   resolveFileTreeIconKind,
   resolveFileTreeIconLabel
 } from "./file-tree-icon";
 import { FileViewerModal } from "./FileViewerModal";
+import { SessionProviderPicker } from "./SessionProviderPicker";
 import { useWorkbenchShell } from "./WorkbenchLayout";
 import { WorkbenchModal } from "./WorkbenchModal";
+import { buildWorkspaceSessionPath } from "../../workbench/utils/workbench-navigation";
 
 interface GitSidebarProps {
   className?: string;
@@ -105,6 +116,7 @@ const GIT_OPERATIONS_MENU_VIEWPORT_MARGIN_PX = 12;
 const GIT_OPERATIONS_MENU_GAP_PX = 8;
 const GIT_OPERATIONS_MENU_DEFAULT_WIDTH_PX = 260;
 const GIT_OPERATIONS_MENU_MIN_HEIGHT_PX = 120;
+const GIT_COMMIT_EXPLAIN_DIFF_LIMIT = 60_000;
 
 interface GitSidebarSnapshot {
   status: GitStatusDto | null;
@@ -146,11 +158,15 @@ export function GitSidebar({
   externalWindowMode = false,
   workbenchShellOverrides
 }: GitSidebarProps) {
+  const navigate = useNavigate();
   const workbenchShell = useWorkbenchShell();
   const {
     subscribeGitSnapshot,
     requestGitRefresh,
-    addGitSnapshotListener
+    addGitSnapshotListener,
+    requestNavigationRefresh,
+    selectWorkspace,
+    upsertNavigationSession
   } = {
     ...workbenchShell,
     ...workbenchShellOverrides
@@ -175,6 +191,16 @@ export function GitSidebar({
   const [mobileActionMenuVariant, setMobileActionMenuVariant] = useState<"staged" | "unstaged" | null>(null);
   const [mobileExpandedSection, setMobileExpandedSection] = useState<MobileGitSectionKey>("unstaged");
   const [mobileHistoryMenuCommitHash, setMobileHistoryMenuCommitHash] = useState<string | null>(null);
+  const [desktopHistoryMenuCommitHash, setDesktopHistoryMenuCommitHash] = useState<string | null>(null);
+  const [allHistoryModalOpen, setAllHistoryModalOpen] = useState(false);
+  const [commitDetailModalCommitHash, setCommitDetailModalCommitHash] = useState<string | null>(null);
+  const [commitDetailModalLoading, setCommitDetailModalLoading] = useState(false);
+  const [commitDetailModalError, setCommitDetailModalError] = useState<string | null>(null);
+  const [commitDetailModalData, setCommitDetailModalData] = useState<GitCommitDetailDto | null>(null);
+  const [explainCommitHash, setExplainCommitHash] = useState<string | null>(null);
+  const [explainProviderModalOpen, setExplainProviderModalOpen] = useState(false);
+  const [explainProvider, setExplainProvider] = useState<ProviderId | null>(null);
+  const [explainingChange, setExplainingChange] = useState(false);
   const [pushRemoteModalOpen, setPushRemoteModalOpen] = useState(false);
   const [pushRemotes, setPushRemotes] = useState<GitRemoteItemDto[]>([]);
   const [pushRemotesLoading, setPushRemotesLoading] = useState(false);
@@ -190,6 +216,8 @@ export function GitSidebar({
   } | null>(null);
   const [desktopOperationsMenuPosition, setDesktopOperationsMenuPosition] =
     useState<GitOperationsMenuPosition | null>(null);
+  const [historyActionsMenuPosition, setHistoryActionsMenuPosition] =
+    useState<GitOperationsMenuPosition | null>(null);
   const [treePanelRatio, setTreePanelRatio] = useState(DEFAULT_TREE_PANEL_RATIO);
   const [panelResizeActive, setPanelResizeActive] = useState(false);
   const [viewerFilePath, setViewerFilePath] = useState<string | null>(null);
@@ -200,6 +228,10 @@ export function GitSidebar({
   const commitEditorRef = useRef<HTMLTextAreaElement | null>(null);
   const desktopOperationsMenuTriggerRef = useRef<HTMLButtonElement | null>(null);
   const desktopOperationsMenuRef = useRef<HTMLDivElement | null>(null);
+  const historyActionsMenuRef = useRef<HTMLDivElement | null>(null);
+  const historyMenuTriggerRefs = useRef(new Map<string, HTMLButtonElement>());
+  const commitDetailCacheRef = useRef(new Map<string, GitCommitDetailDto>());
+  const commitDetailRequestIdRef = useRef(0);
   const wasPanelActiveRef = useRef(panelActive);
   const { showToast } = useToast();
   useEffect(() => {
@@ -222,6 +254,16 @@ export function GitSidebar({
     setMobileActionMenuVariant(null);
     setMobileExpandedSection("unstaged");
     setMobileHistoryMenuCommitHash(null);
+    setDesktopHistoryMenuCommitHash(null);
+    setAllHistoryModalOpen(false);
+    setCommitDetailModalCommitHash(null);
+    setCommitDetailModalLoading(false);
+    setCommitDetailModalError(null);
+    setCommitDetailModalData(null);
+    setExplainCommitHash(null);
+    setExplainProviderModalOpen(false);
+    setExplainProvider(null);
+    setExplainingChange(false);
     setPushRemoteModalOpen(false);
     setPushRemotes([]);
     setPushSelectedRemotes(new Set());
@@ -232,10 +274,13 @@ export function GitSidebar({
     setRemoteAuthProvider("generic");
     setMobileSwipeRowState(null);
     setDesktopOperationsMenuPosition(null);
+    setHistoryActionsMenuPosition(null);
     setPanelResizeActive(false);
     setTreePanelRatio(DEFAULT_TREE_PANEL_RATIO);
     setViewerFilePath(null);
     setViewerDiffContent(null);
+    commitDetailCacheRef.current.clear();
+    historyMenuTriggerRefs.current.clear();
   }, [workspaceId]);
 
   useEffect(() => {
@@ -898,6 +943,130 @@ export function GitSidebar({
     }
   }
 
+  async function ensureCommitDetail(commitHash: string): Promise<GitCommitDetailDto> {
+    const normalizedWorkspaceId = workspaceId?.trim();
+
+    if (!normalizedWorkspaceId) {
+      throw new Error(t("git.panelLoadFailed"));
+    }
+
+    const cachedDetail = commitDetailCacheRef.current.get(commitHash);
+
+    if (cachedDetail) {
+      return cachedDetail;
+    }
+
+    const detail = await getGitCommitDetail(normalizedWorkspaceId, commitHash);
+    commitDetailCacheRef.current.set(commitHash, detail);
+    return detail;
+  }
+
+  async function openCommitDetailModal(commitHash: string) {
+    setDesktopHistoryMenuCommitHash(null);
+    setMobileHistoryMenuCommitHash(null);
+    setCommitDetailModalCommitHash(commitHash);
+    setCommitDetailModalError(null);
+
+    const cachedDetail = commitDetailCacheRef.current.get(commitHash) ?? null;
+    setCommitDetailModalData(cachedDetail);
+    setCommitDetailModalLoading(!cachedDetail);
+
+    if (cachedDetail) {
+      return;
+    }
+
+    const requestId = commitDetailRequestIdRef.current + 1;
+    commitDetailRequestIdRef.current = requestId;
+
+    try {
+      const detail = await ensureCommitDetail(commitHash);
+
+      if (commitDetailRequestIdRef.current !== requestId) {
+        return;
+      }
+
+      setCommitDetailModalData(detail);
+    } catch (error) {
+      if (commitDetailRequestIdRef.current !== requestId) {
+        return;
+      }
+
+      setCommitDetailModalError(readError(error, t("git.commitDetailLoadFailed")));
+      setCommitDetailModalData(null);
+    } finally {
+      if (commitDetailRequestIdRef.current === requestId) {
+        setCommitDetailModalLoading(false);
+      }
+    }
+  }
+
+  function closeCommitDetailModal() {
+    setCommitDetailModalCommitHash(null);
+    setCommitDetailModalLoading(false);
+    setCommitDetailModalError(null);
+    setCommitDetailModalData(null);
+  }
+
+  async function handleCopyCommitVersion(commitHash: string) {
+    try {
+      const detail = await ensureCommitDetail(commitHash);
+      await copyText(detail.versionLabel, t("git.copyCommitVersionSuccess"));
+    } catch (error) {
+      showToast({
+        title: readError(error, t("git.commitDetailLoadFailed")),
+        tone: "error"
+      });
+    }
+  }
+
+  function openExplainProviderModal(commitHash: string) {
+    setDesktopHistoryMenuCommitHash(null);
+    setMobileHistoryMenuCommitHash(null);
+    setExplainCommitHash(commitHash);
+    setExplainProvider(null);
+    setExplainProviderModalOpen(true);
+  }
+
+  async function handleExplainCommit() {
+    if (!workspaceId || !explainCommitHash || !explainProvider || explainingChange) {
+      return;
+    }
+
+    setExplainingChange(true);
+
+    try {
+      const detail = await ensureCommitDetail(explainCommitHash);
+      const response = await startLiveSession({
+        workspaceId,
+        provider: explainProvider,
+        content: buildCommitExplainPrompt(detail),
+        clientRequestId:
+          globalThis.crypto?.randomUUID?.()
+          ?? `git-explain-${Date.now()}-${Math.random().toString(16).slice(2)}`
+      });
+      const nextSession = response.session ?? await getSessionDetail(response.sessionId);
+
+      upsertNavigationSession(nextSession);
+      requestNavigationRefresh();
+      selectWorkspace(nextSession.workspaceId);
+      navigate(buildWorkspaceSessionPath(nextSession.workspaceId, nextSession.sessionId));
+      setExplainProviderModalOpen(false);
+      setExplainCommitHash(null);
+      setExplainProvider(null);
+      showToast({
+        title: t("git.explainCommitStarted"),
+        tone: "success"
+      });
+    } catch (error) {
+      showToast({
+        title: readError(error, t("git.explainCommitFailed")),
+        tone: "error"
+      });
+    } finally {
+      setExplainingChange(false);
+    }
+  }
+
   function toggleTreePath(path: string) {
     setCollapsedTreePaths((current) =>
       current.includes(path) ? current.filter((item) => item !== path) : [...current, path]
@@ -1055,6 +1224,16 @@ export function GitSidebar({
   }, [history, mobileHistoryMenuCommitHash]);
 
   useEffect(() => {
+    if (!desktopHistoryMenuCommitHash) {
+      return;
+    }
+
+    if (!history.some((item) => item.commitHash === desktopHistoryMenuCommitHash)) {
+      setDesktopHistoryMenuCommitHash(null);
+    }
+  }, [desktopHistoryMenuCommitHash, history]);
+
+  useEffect(() => {
     if (!isMobileViewport) {
       return;
     }
@@ -1101,6 +1280,80 @@ export function GitSidebar({
       window.removeEventListener("scroll", updateDesktopOperationsMenuPosition, true);
     };
   }, [actioning, branches?.local.length, currentBranch, isMobileViewport, menuOpen, remoteAuthConfigured]);
+
+  const activeHistoryMenuCommitHash = mobileHistoryMenuCommitHash ?? desktopHistoryMenuCommitHash;
+
+  useLayoutEffect(() => {
+    if (!activeHistoryMenuCommitHash) {
+      setHistoryActionsMenuPosition(null);
+      return;
+    }
+
+    function updateHistoryActionsMenuPosition() {
+      const trigger = historyMenuTriggerRefs.current.get(activeHistoryMenuCommitHash) ?? null;
+      const menu = historyActionsMenuRef.current;
+
+      if (!trigger || !menu || typeof window === "undefined") {
+        return;
+      }
+
+      setHistoryActionsMenuPosition(
+        resolveGitOperationsMenuPosition(
+          trigger.getBoundingClientRect(),
+          {
+            width: menu.getBoundingClientRect().width || GIT_OPERATIONS_MENU_DEFAULT_WIDTH_PX,
+            height: menu.getBoundingClientRect().height || menu.scrollHeight || 0
+          },
+          {
+            width: window.innerWidth,
+            height: window.innerHeight
+          }
+        )
+      );
+    }
+
+    updateHistoryActionsMenuPosition();
+    const animationFrameId = window.requestAnimationFrame(updateHistoryActionsMenuPosition);
+
+    window.addEventListener("resize", updateHistoryActionsMenuPosition);
+    window.addEventListener("scroll", updateHistoryActionsMenuPosition, true);
+
+    return () => {
+      window.cancelAnimationFrame(animationFrameId);
+      window.removeEventListener("resize", updateHistoryActionsMenuPosition);
+      window.removeEventListener("scroll", updateHistoryActionsMenuPosition, true);
+    };
+  }, [activeHistoryMenuCommitHash, history.length]);
+
+  useEffect(() => {
+    if (!activeHistoryMenuCommitHash || typeof document === "undefined") {
+      return;
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target;
+
+      if (!(target instanceof Node)) {
+        return;
+      }
+
+      const trigger = historyMenuTriggerRefs.current.get(activeHistoryMenuCommitHash) ?? null;
+      const menu = historyActionsMenuRef.current;
+
+      if (trigger?.contains(target) || menu?.contains(target)) {
+        return;
+      }
+
+      setMobileHistoryMenuCommitHash(null);
+      setDesktopHistoryMenuCommitHash(null);
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+    };
+  }, [activeHistoryMenuCommitHash]);
 
   async function copyText(value: string, successMessage: string) {
     try {
@@ -1199,6 +1452,17 @@ export function GitSidebar({
         </div>
 
         <div className="git-menu-section">
+          <button
+            className="git-menu-item"
+            type="button"
+            disabled={actioning}
+            onClick={() => {
+              setMenuOpen(false);
+              setAllHistoryModalOpen(true);
+            }}
+          >
+            <span>{t("git.viewAllVersions")}</span>
+          </button>
           <button className="git-menu-item" type="button" disabled={actioning} onClick={() => void handleRemoteAction("fetch")}>
             <span>{t("git.fetch")}</span>
           </button>
@@ -1232,6 +1496,60 @@ export function GitSidebar({
     }
 
     return createPortal(menu, document.body);
+  }
+
+  function setHistoryMenuTriggerRef(commitHash: string, node: HTMLButtonElement | null) {
+    if (node) {
+      historyMenuTriggerRefs.current.set(commitHash, node);
+      return;
+    }
+
+    historyMenuTriggerRefs.current.delete(commitHash);
+  }
+
+  function renderHistoryActionsMenu() {
+    if (!activeHistoryMenuCommitHash || typeof document === "undefined") {
+      return null;
+    }
+
+    const item = history.find((entry) => entry.commitHash === activeHistoryMenuCommitHash);
+
+    if (!item) {
+      return null;
+    }
+
+    const canUndo = history[0]?.commitHash === item.commitHash && item.commitKind === "local";
+
+    return createPortal(
+      <div
+        ref={historyActionsMenuRef}
+        className="git-history-entry-menu"
+        data-floating="true"
+        style={{
+          top: historyActionsMenuPosition?.top ?? GIT_OPERATIONS_MENU_VIEWPORT_MARGIN_PX,
+          left: historyActionsMenuPosition?.left ?? GIT_OPERATIONS_MENU_VIEWPORT_MARGIN_PX,
+          maxHeight: historyActionsMenuPosition?.maxHeight,
+          transformOrigin: historyActionsMenuPosition?.transformOrigin ?? "top right"
+        }}
+      >
+        <GitHistoryActionsMenu
+          item={item}
+          canUndo={canUndo}
+          actioning={actioning}
+          onViewCommitChanges={(commitHash) => void openCommitDetailModal(commitHash)}
+          onCopyCommitHash={(commitHash) =>
+            void copyText(commitHash, t("git.copyCommitHashSuccess"))
+          }
+          onCopyCommitMessage={(entry) =>
+            void copyText(buildCommitMessageText(entry), t("git.copyCommitMessageSuccess"))
+          }
+          onCopyCommitVersion={(commitHash) => void handleCopyCommitVersion(commitHash)}
+          onExplainCommitChange={(commitHash) => void openExplainProviderModal(commitHash)}
+          onUndoLastCommit={() => void handleUndoLastCommit()}
+        />
+      </div>,
+      document.body
+    );
   }
 
   return (
@@ -1382,17 +1700,21 @@ export function GitSidebar({
               hasMore={Boolean(historyNextCursor)}
               actioning={actioning}
               openCommitHash={mobileHistoryMenuCommitHash}
+              onMenuTriggerRef={setHistoryMenuTriggerRef}
               onToggleMenu={(commitHash) =>
                 setMobileHistoryMenuCommitHash((current) =>
                   current === commitHash ? null : commitHash
                 )
               }
+              onViewCommitChanges={(commitHash) => void openCommitDetailModal(commitHash)}
               onCopyCommitHash={(commitHash) =>
                 void copyText(commitHash, t("git.copyCommitHashSuccess"))
               }
-              onCopyCommitSubject={(subject) =>
-                void copyText(subject, t("git.copyCommitSubjectSuccess"))
+              onCopyCommitMessage={(item) =>
+                void copyText(buildCommitMessageText(item), t("git.copyCommitMessageSuccess"))
               }
+              onCopyCommitVersion={(commitHash) => void handleCopyCommitVersion(commitHash)}
+              onExplainCommitChange={(commitHash) => void openExplainProviderModal(commitHash)}
               onUndoLastCommit={() => void handleUndoLastCommit()}
               onLoadMore={() => void loadMoreHistory()}
             />
@@ -1524,55 +1846,31 @@ export function GitSidebar({
             </div>
 
             {historyExpanded ? (
-              <div className="git-history-list" onScroll={handleHistoryScroll}>
-                {history.length ? (
-                  <>
-                    {history.map((item) => (
-                      <article
-                        key={item.commitHash}
-                        className="git-history-entry"
-                        data-kind={item.commitKind}
-                      >
-                        <span
-                          className="git-history-marker"
-                          data-kind={item.commitKind}
-                          aria-hidden="true"
-                        />
-                        <div className="git-history-body">
-                          <div className="git-history-title-row">
-                            <strong title={item.subject}>{item.subject}</strong>
-                            <span className="git-history-kind-badge" data-kind={item.commitKind}>
-                              {formatHistoryCommitKind(item.commitKind)}
-                            </span>
-                          </div>
-                          {item.refs.length > 0 ? (
-                            <div className="git-history-ref-list">
-                              {item.refs.map((ref) => (
-                                <span
-                                  key={`${item.commitHash}:${ref.kind}:${ref.name}`}
-                                  className="git-history-ref-pill"
-                                  data-kind={ref.kind}
-                                  data-remote-index={String(resolveRemotePaletteIndex(ref.remoteName))}
-                                >
-                                  {ref.name}
-                                </span>
-                              ))}
-                            </div>
-                          ) : null}
-                          <div className="git-history-meta">
-                            <span className="git-history-hash">{item.commitHash.slice(0, 8)}</span>
-                            <span>{item.authorName}</span>
-                            <time dateTime={item.authoredAt}>{formatCommitTime(item.authoredAt)}</time>
-                          </div>
-                        </div>
-                      </article>
-                    ))}
-                    {historyLoadingMore ? <p className="git-history-loading">{t("git.refreshNow")}...</p> : null}
-                  </>
-                ) : (
-                  <p className="status-text">{t("git.noHistory")}</p>
-                )}
-              </div>
+              <GitDesktopHistoryList
+                history={history}
+                historyLoadingMore={historyLoadingMore}
+                hasMore={Boolean(historyNextCursor)}
+                actioning={actioning}
+                openCommitHash={desktopHistoryMenuCommitHash}
+                onMenuTriggerRef={setHistoryMenuTriggerRef}
+                onScroll={handleHistoryScroll}
+                onToggleMenu={(commitHash) =>
+                  setDesktopHistoryMenuCommitHash((current) =>
+                    current === commitHash ? null : commitHash
+                  )
+                }
+                onViewCommitChanges={(commitHash) => void openCommitDetailModal(commitHash)}
+                onCopyCommitHash={(commitHash) =>
+                  void copyText(commitHash, t("git.copyCommitHashSuccess"))
+                }
+                onCopyCommitMessage={(item) =>
+                  void copyText(buildCommitMessageText(item), t("git.copyCommitMessageSuccess"))
+                }
+                onCopyCommitVersion={(commitHash) => void handleCopyCommitVersion(commitHash)}
+                onExplainCommitChange={(commitHash) => void openExplainProviderModal(commitHash)}
+                onUndoLastCommit={() => void handleUndoLastCommit()}
+                onLoadMore={() => void loadMoreHistory()}
+              />
             ) : null}
           </section>
         </div>
@@ -1797,6 +2095,169 @@ export function GitSidebar({
         </div>
       </WorkbenchModal>
 
+      <WorkbenchModal
+        open={allHistoryModalOpen}
+        title={t("git.viewAllVersions")}
+        description={t("git.viewAllVersionsDescription", { count: String(historyTotalCount) })}
+        onClose={() => setAllHistoryModalOpen(false)}
+      >
+        <GitDesktopHistoryList
+          history={history}
+          historyLoadingMore={historyLoadingMore}
+          hasMore={Boolean(historyNextCursor)}
+          actioning={actioning}
+          openCommitHash={desktopHistoryMenuCommitHash}
+          className="git-history-modal-list"
+          onMenuTriggerRef={setHistoryMenuTriggerRef}
+          onToggleMenu={(commitHash) =>
+            setDesktopHistoryMenuCommitHash((current) => (current === commitHash ? null : commitHash))
+          }
+          onViewCommitChanges={(commitHash) => void openCommitDetailModal(commitHash)}
+          onCopyCommitHash={(commitHash) =>
+            void copyText(commitHash, t("git.copyCommitHashSuccess"))
+          }
+          onCopyCommitMessage={(item) =>
+            void copyText(buildCommitMessageText(item), t("git.copyCommitMessageSuccess"))
+          }
+          onCopyCommitVersion={(commitHash) => void handleCopyCommitVersion(commitHash)}
+          onExplainCommitChange={(commitHash) => void openExplainProviderModal(commitHash)}
+          onUndoLastCommit={() => void handleUndoLastCommit()}
+          onLoadMore={() => void loadMoreHistory()}
+        />
+      </WorkbenchModal>
+
+      <WorkbenchModal
+        open={commitDetailModalCommitHash !== null}
+        className="git-commit-detail-modal"
+        title={commitDetailModalData?.subject || t("git.commitDetailTitle")}
+        description={
+          commitDetailModalData
+            ? t("git.commitDetailDescription", { hash: commitDetailModalData.shortHash })
+            : t("git.commitDetailLoading")
+        }
+        onClose={closeCommitDetailModal}
+      >
+        {commitDetailModalLoading ? (
+          <div className="git-commit-detail-state">
+            <p>{t("git.commitDetailLoading")}</p>
+          </div>
+        ) : commitDetailModalError ? (
+          <div className="git-commit-detail-state is-error">
+            <p>{commitDetailModalError}</p>
+          </div>
+        ) : commitDetailModalData ? (
+          <div className="git-commit-detail-shell">
+            <div className="git-commit-detail-meta-grid">
+              <div className="git-commit-detail-meta-card">
+                <span>{t("git.commitVersionLabel")}</span>
+                <strong>{commitDetailModalData.versionLabel}</strong>
+              </div>
+              <div className="git-commit-detail-meta-card">
+                <span>{t("git.commitHashLabel")}</span>
+                <strong>{commitDetailModalData.commitHash}</strong>
+              </div>
+              <div className="git-commit-detail-meta-card">
+                <span>{t("git.commitAuthorLabel")}</span>
+                <strong>{commitDetailModalData.authorName}</strong>
+              </div>
+              <div className="git-commit-detail-meta-card">
+                <span>{t("git.commitTimeLabel")}</span>
+                <strong>{formatCommitDateTime(commitDetailModalData.authoredAt)}</strong>
+              </div>
+            </div>
+
+            <section className="git-commit-detail-section">
+              <div className="git-commit-detail-section-header">
+                <h3>{t("git.commitMessageLabel")}</h3>
+              </div>
+              <pre className="git-commit-detail-message">{buildCommitMessageText(commitDetailModalData)}</pre>
+            </section>
+
+            <section className="git-commit-detail-section">
+              <div className="git-commit-detail-section-header">
+                <h3>{t("git.changedFilesTitle")}</h3>
+                <span className="workbench-section-counter">{commitDetailModalData.changedFiles.length}</span>
+              </div>
+              <div className="git-commit-detail-file-list">
+                {commitDetailModalData.changedFiles.map((file) => (
+                  <div key={`${file.status}:${file.oldPath ?? ""}:${file.path}`} className="git-commit-detail-file-item">
+                    <span className="git-commit-detail-file-status" data-status={file.status}>{file.status}</span>
+                    <div className="git-commit-detail-file-copy">
+                      <strong>{file.path}</strong>
+                      {file.oldPath ? (
+                        <span>{t("git.renamedFromLabel", { path: file.oldPath })}</span>
+                      ) : null}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <section className="git-commit-detail-section">
+              <div className="git-commit-detail-section-header">
+                <h3>{t("git.commitDiffLabel")}</h3>
+                {commitDetailModalData.diffTruncated ? (
+                  <span className="git-commit-detail-truncated">{t("git.diffTruncated")}</span>
+                ) : null}
+              </div>
+              <pre className="git-commit-detail-diff">{commitDetailModalData.diffContent || t("git.emptyDiff")}</pre>
+            </section>
+          </div>
+        ) : (
+          <div className="git-commit-detail-state">
+            <p>{t("git.commitDetailEmpty")}</p>
+          </div>
+        )}
+      </WorkbenchModal>
+
+      <WorkbenchModal
+        open={explainProviderModalOpen}
+        className="git-explain-provider-modal"
+        title={t("git.explainCommitTitle")}
+        description={t("git.explainCommitDescription")}
+        onClose={() => {
+          if (explainingChange) {
+            return;
+          }
+
+          setExplainProviderModalOpen(false);
+          setExplainCommitHash(null);
+          setExplainProvider(null);
+        }}
+      >
+        <div className="git-explain-provider-shell">
+          <SessionProviderPicker
+            workspaceId={workspaceId}
+            selectedProvider={explainProvider}
+            pendingProvider={explainingChange ? explainProvider : null}
+            disabled={explainingChange}
+            onSelect={(provider) => setExplainProvider(provider)}
+          />
+          <div className="git-explain-provider-actions">
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={explainingChange}
+              onClick={() => {
+                setExplainProviderModalOpen(false);
+                setExplainCommitHash(null);
+                setExplainProvider(null);
+              }}
+            >
+              {t("common.cancel")}
+            </button>
+            <button
+              type="button"
+              className="primary-button"
+              disabled={!explainProvider || explainingChange}
+              onClick={() => void handleExplainCommit()}
+            >
+              {explainingChange ? t("conversation.sendingState") : t("git.startExplainCommit")}
+            </button>
+          </div>
+        </div>
+      </WorkbenchModal>
+
       <FileViewerModal
         workspaceId={workspaceId}
         filePath={viewerFilePath}
@@ -1810,6 +2271,7 @@ export function GitSidebar({
         }}
         diffContent={viewerDiffContent}
       />
+      {renderHistoryActionsMenu()}
     </section>
   );
 }
@@ -2418,9 +2880,13 @@ function MobileGitHistoryList({
   hasMore,
   actioning,
   openCommitHash,
+  onMenuTriggerRef,
   onToggleMenu,
+  onViewCommitChanges,
   onCopyCommitHash,
-  onCopyCommitSubject,
+  onCopyCommitMessage,
+  onCopyCommitVersion,
+  onExplainCommitChange,
   onUndoLastCommit,
   onLoadMore
 }: {
@@ -2429,9 +2895,13 @@ function MobileGitHistoryList({
   hasMore: boolean;
   actioning: boolean;
   openCommitHash: string | null;
+  onMenuTriggerRef: (commitHash: string, node: HTMLButtonElement | null) => void;
   onToggleMenu: (commitHash: string) => void;
+  onViewCommitChanges: (commitHash: string) => void;
   onCopyCommitHash: (commitHash: string) => void;
-  onCopyCommitSubject: (subject: string) => void;
+  onCopyCommitMessage: (item: GitHistoryItemDto) => void;
+  onCopyCommitVersion: (commitHash: string) => void;
+  onExplainCommitChange: (commitHash: string) => void;
   onUndoLastCommit: () => void;
   onLoadMore: () => void;
 }) {
@@ -2441,10 +2911,7 @@ function MobileGitHistoryList({
 
   return (
     <div className="git-mobile-history-list">
-      {history.map((item, index) => {
-        const menuOpen = openCommitHash === item.commitHash;
-        const canUndo = index === 0 && item.commitKind === "local";
-
+      {history.map((item) => {
         return (
           <article key={item.commitHash} className="git-mobile-history-entry" data-kind={item.commitKind}>
             <div className="git-mobile-history-entry-main">
@@ -2479,33 +2946,13 @@ function MobileGitHistoryList({
               <button
                 type="button"
                 className="git-icon-button"
+                ref={(node) => onMenuTriggerRef(item.commitHash, node)}
                 aria-label={t("git.historyItemMenu")}
                 onClick={() => onToggleMenu(item.commitHash)}
               >
                 <MoreIcon />
               </button>
             </div>
-
-            {menuOpen ? (
-              <div className="git-mobile-history-menu">
-                <button type="button" className="git-menu-item" onClick={() => onCopyCommitHash(item.commitHash)}>
-                  <span>{t("git.copyCommitHash")}</span>
-                </button>
-                <button type="button" className="git-menu-item" onClick={() => onCopyCommitSubject(item.subject)}>
-                  <span>{t("git.copyCommitSubject")}</span>
-                </button>
-                {canUndo ? (
-                  <button
-                    type="button"
-                    className="git-menu-item"
-                    disabled={actioning}
-                    onClick={onUndoLastCommit}
-                  >
-                    <span>{t("git.undoLastCommit")}</span>
-                  </button>
-                ) : null}
-              </div>
-            ) : null}
           </article>
         );
       })}
@@ -2521,6 +2968,172 @@ function MobileGitHistoryList({
         </button>
       ) : null}
     </div>
+  );
+}
+
+function GitDesktopHistoryList({
+  history,
+  historyLoadingMore,
+  hasMore,
+  actioning,
+  openCommitHash,
+  className,
+  onMenuTriggerRef,
+  onScroll,
+  onToggleMenu,
+  onViewCommitChanges,
+  onCopyCommitHash,
+  onCopyCommitMessage,
+  onCopyCommitVersion,
+  onExplainCommitChange,
+  onUndoLastCommit,
+  onLoadMore
+}: {
+  history: GitHistoryItemDto[];
+  historyLoadingMore: boolean;
+  hasMore: boolean;
+  actioning: boolean;
+  openCommitHash: string | null;
+  className?: string;
+  onMenuTriggerRef: (commitHash: string, node: HTMLButtonElement | null) => void;
+  onScroll?: (event: UIEvent<HTMLDivElement>) => void;
+  onToggleMenu: (commitHash: string) => void;
+  onViewCommitChanges: (commitHash: string) => void;
+  onCopyCommitHash: (commitHash: string) => void;
+  onCopyCommitMessage: (item: GitHistoryItemDto) => void;
+  onCopyCommitVersion: (commitHash: string) => void;
+  onExplainCommitChange: (commitHash: string) => void;
+  onUndoLastCommit: () => void;
+  onLoadMore: () => void;
+}) {
+  if (!history.length) {
+    return <p className="status-text">{t("git.noHistory")}</p>;
+  }
+
+  return (
+    <div className={["git-history-list", className].filter(Boolean).join(" ")} onScroll={onScroll}>
+      {history.map((item) => {
+        const menuOpen = openCommitHash === item.commitHash;
+
+        return (
+          <article
+            key={item.commitHash}
+            className="git-history-entry"
+            data-kind={item.commitKind}
+            data-menu-open={menuOpen ? "true" : "false"}
+          >
+            <span
+              className="git-history-marker"
+              data-kind={item.commitKind}
+              aria-hidden="true"
+            />
+            <div className="git-history-body">
+              <div className="git-history-title-row">
+                <strong title={item.subject}>{item.subject}</strong>
+                <div className="git-history-title-actions">
+                  <span className="git-history-kind-badge" data-kind={item.commitKind}>
+                    {formatHistoryCommitKind(item.commitKind)}
+                  </span>
+                  <button
+                    type="button"
+                    className="git-icon-button git-history-more"
+                    ref={(node) => onMenuTriggerRef(item.commitHash, node)}
+                    aria-label={t("git.historyItemMenu")}
+                    onClick={() => onToggleMenu(item.commitHash)}
+                  >
+                    <MoreIcon />
+                  </button>
+                </div>
+              </div>
+              {item.refs.length > 0 ? (
+                <div className="git-history-ref-list">
+                  {item.refs.map((ref) => (
+                    <span
+                      key={`${item.commitHash}:${ref.kind}:${ref.name}`}
+                      className="git-history-ref-pill"
+                      data-kind={ref.kind}
+                      data-remote-index={String(resolveRemotePaletteIndex(ref.remoteName))}
+                    >
+                      {ref.name}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+              <div className="git-history-meta">
+                <span className="git-history-hash">{item.commitHash.slice(0, 8)}</span>
+                <span>{item.authorName}</span>
+                <time dateTime={item.authoredAt}>{formatCommitTime(item.authoredAt)}</time>
+              </div>
+            </div>
+          </article>
+        );
+      })}
+
+      {historyLoadingMore ? <p className="git-history-loading">{t("git.refreshNow")}...</p> : null}
+
+      {hasMore ? (
+        <button
+          type="button"
+          className="secondary-button git-mobile-history-more"
+          disabled={historyLoadingMore}
+          onClick={onLoadMore}
+        >
+          {historyLoadingMore ? `${t("git.refreshNow")}...` : t("common.loadMore")}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function GitHistoryActionsMenu({
+  item,
+  canUndo,
+  actioning,
+  onViewCommitChanges,
+  onCopyCommitHash,
+  onCopyCommitMessage,
+  onCopyCommitVersion,
+  onExplainCommitChange,
+  onUndoLastCommit
+}: {
+  item: GitHistoryItemDto;
+  canUndo: boolean;
+  actioning: boolean;
+  onViewCommitChanges: (commitHash: string) => void;
+  onCopyCommitHash: (commitHash: string) => void;
+  onCopyCommitMessage: (item: GitHistoryItemDto) => void;
+  onCopyCommitVersion: (commitHash: string) => void;
+  onExplainCommitChange: (commitHash: string) => void;
+  onUndoLastCommit: () => void;
+}) {
+  return (
+    <>
+      <button type="button" className="git-menu-item" onClick={() => onViewCommitChanges(item.commitHash)}>
+        <span>{t("git.viewCommitChanges")}</span>
+      </button>
+      <button type="button" className="git-menu-item" onClick={() => onCopyCommitHash(item.commitHash)}>
+        <span>{t("git.copyCommitHash")}</span>
+      </button>
+      <button type="button" className="git-menu-item" onClick={() => onCopyCommitMessage(item)}>
+        <span>{t("git.copyCommitMessage")}</span>
+      </button>
+      <button type="button" className="git-menu-item" onClick={() => onCopyCommitVersion(item.commitHash)}>
+        <span>{t("git.copyCommitVersion")}</span>
+      </button>
+      <button type="button" className="git-menu-item" onClick={() => onExplainCommitChange(item.commitHash)}>
+        <span>{t("git.explainCommitAction")}</span>
+      </button>
+      {canUndo ? (
+        <button
+          type="button"
+          className="git-menu-item"
+          disabled={actioning}
+          onClick={onUndoLastCommit}
+        >
+          <span>{t("git.undoLastCommit")}</span>
+        </button>
+      ) : null}
+    </>
   );
 }
 
@@ -2896,6 +3509,51 @@ function normalizeCommitSubject(subject: string) {
   return subject.replace(/[\r\n]+/g, " ");
 }
 
+function buildCommitMessageText(input: Pick<GitHistoryItemDto, "subject" | "body">): string;
+function buildCommitMessageText(input: Pick<GitCommitDetailDto, "subject" | "body">): string;
+function buildCommitMessageText(
+  input: Pick<GitHistoryItemDto, "subject" | "body"> | Pick<GitCommitDetailDto, "subject" | "body">
+): string {
+  const subject = input.subject.trim();
+  const body = input.body.trim();
+
+  return body ? `${subject}\n\n${body}` : subject;
+}
+
+function buildCommitExplainPrompt(detail: GitCommitDetailDto): string {
+  const summarizedFiles = detail.changedFiles
+    .map((file) => `- [${file.status}] ${file.path}${file.oldPath ? ` (from ${file.oldPath})` : ""}`)
+    .join("\n");
+  const trimmedDiff = detail.diffContent.length > GIT_COMMIT_EXPLAIN_DIFF_LIMIT
+    ? detail.diffContent.slice(0, GIT_COMMIT_EXPLAIN_DIFF_LIMIT)
+    : detail.diffContent;
+  const diffNotice = detail.diffContent.length > GIT_COMMIT_EXPLAIN_DIFF_LIMIT || detail.diffTruncated
+    ? "\n注意：diff 内容过长，下面已经截断，只分析可见部分，同时明确指出可能遗漏的区域。"
+    : "";
+
+  return [
+    "请你分析下面这个 Git 提交。",
+    "输出要求：",
+    "1. 先用 3 到 5 句话说明这次改动的核心目的。",
+    "2. 按文件说明关键改动点，不要泛泛而谈。",
+    "3. 指出潜在风险、边界情况和可能的回归点。",
+    "4. 如果提交信息写得差，给出一条更合适的中文提交说明。",
+    "",
+    `版本号：${detail.versionLabel}`,
+    `Commit Hash：${detail.commitHash}`,
+    `提交标题：${detail.subject}`,
+    `提交作者：${detail.authorName} <${detail.authorEmail}>`,
+    `提交时间：${detail.authoredAt}`,
+    "",
+    "变更文件：",
+    summarizedFiles || "- 无",
+    diffNotice,
+    "",
+    "Diff：",
+    trimmedDiff || "(empty diff)"
+  ].join("\n");
+}
+
 function resizeCommitEditor(editor: HTMLTextAreaElement | null) {
   if (!editor) {
     return;
@@ -2930,6 +3588,22 @@ function resolveRemotePaletteIndex(remoteName: string | null) {
   }
 
   return hash % 6;
+}
+
+function formatCommitDateTime(value: string) {
+  const timestamp = Date.parse(value);
+
+  if (Number.isNaN(timestamp)) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).format(timestamp);
 }
 
 function readError(error: unknown, fallback: string): string {

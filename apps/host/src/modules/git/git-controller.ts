@@ -17,6 +17,10 @@ interface DiffQuery extends WorkspaceQuery {
   staged?: string;
 }
 
+interface CommitDetailQuery extends WorkspaceQuery {
+  commitHash?: string;
+}
+
 interface HistoryQuery extends WorkspaceQuery {
   cursor?: string;
   limit?: string;
@@ -104,6 +108,25 @@ export class GitController {
         request.query.staged === "true"
       )
     );
+  };
+
+  readonly getCommitDetail = async (
+    request: FastifyRequest<{ Querystring: CommitDetailQuery }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    const workspaceId = requireWorkspaceId(request.query.workspaceId);
+    const commitHash = request.query.commitHash?.trim();
+
+    if (!commitHash) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "INVALID_INPUT",
+        detail: "查看提交详情必须提供 commitHash",
+        field: "commitHash"
+      });
+    }
+
+    reply.send(await this.gitReadService.getCommitDetail(workspaceId, commitHash));
   };
 
   readonly stage = async (
