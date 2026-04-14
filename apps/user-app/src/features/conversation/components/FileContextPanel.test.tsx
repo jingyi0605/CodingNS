@@ -1823,12 +1823,12 @@ describe("FileContextPanel", () => {
     expect(settingsButton).toHaveAttribute("data-selected", "false");
     expect(docsButton).toHaveAttribute("data-selected", "true");
     expect(
-      screen.getByText(
+      screen.queryByText(
         t("conversation.filePanelSelectionCount", {
           count: 2
         })
       )
-    ).toBeInTheDocument();
+    ).not.toBeInTheDocument();
   });
 
   it("支持复制多选文件并粘贴到目标目录", async () => {

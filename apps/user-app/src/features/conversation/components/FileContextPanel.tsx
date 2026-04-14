@@ -2397,29 +2397,6 @@ export function FileContextPanel({
                   )
                 : null}
 
-              {selectedTargets.length > 0 || fileClipboard ? (
-                <div className="file-panel-selection-summary" aria-live="polite">
-                  {selectedTargets.length > 0 ? (
-                    <span>
-                      {t("conversation.filePanelSelectionCount", {
-                        count: selectedTargets.length
-                      })}
-                    </span>
-                  ) : null}
-                  {fileClipboard ? (
-                    <span>
-                      {fileClipboard.mode === "copy"
-                        ? t("conversation.filePanelClipboardCopyReady", {
-                            count: fileClipboard.items.length
-                          })
-                        : t("conversation.filePanelClipboardCutReady", {
-                            count: fileClipboard.items.length
-                          })}
-                    </span>
-                  ) : null}
-                </div>
-              ) : null}
-
               {searchVisible ? (
                 <form className="file-toolbar-search" onSubmit={(event) => void handleSearchSubmit(event)}>
                   <input
