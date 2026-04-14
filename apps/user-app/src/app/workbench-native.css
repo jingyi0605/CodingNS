@@ -869,9 +869,9 @@ body {
   border: 1px solid var(--panel-border);
   background: var(--panel-bg-strong);
   box-shadow: var(--panel-shadow);
-  z-index: 2400;
-  transform: translateY(-100%);
-  transform-origin: bottom left;
+  z-index: 3200;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .workbench-session-menu-item {
@@ -1906,6 +1906,74 @@ body {
   width: 100%;
 }
 
+.settings-tailscale-overview {
+  display: grid;
+  gap: 10px;
+}
+
+.settings-tailscale-phase-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  min-height: 28px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(60, 60, 67, 0.16);
+  background: rgba(120, 120, 128, 0.08);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.settings-tailscale-phase-badge[data-phase="running"] {
+  border-color: rgba(52, 199, 89, 0.28);
+  background: rgba(52, 199, 89, 0.12);
+}
+
+.settings-tailscale-phase-badge[data-phase="needs_login"] {
+  border-color: rgba(0, 122, 255, 0.28);
+  background: rgba(0, 122, 255, 0.1);
+}
+
+.settings-tailscale-phase-badge[data-phase="error"],
+.settings-tailscale-phase-badge[data-phase="blocked_uninitialized"] {
+  border-color: rgba(255, 59, 48, 0.28);
+  background: rgba(255, 59, 48, 0.1);
+}
+
+.settings-tailscale-summary {
+  display: grid;
+  gap: 6px;
+}
+
+.settings-tailscale-summary-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 40px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+}
+
+.settings-tailscale-summary-label {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.settings-tailscale-summary-value {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  color: var(--text-primary);
+  font-size: 12px;
+  text-align: right;
+  word-break: break-all;
+}
+
 .settings-tailscale-form {
   display: grid;
   gap: 12px;
@@ -1961,6 +2029,31 @@ body {
   color: var(--accent);
   text-decoration: underline;
   word-break: break-all;
+}
+
+.settings-tailscale-modal {
+  width: min(520px, calc(100vw - 32px));
+}
+
+.settings-tailscale-modal .workbench-modal-body {
+  display: grid;
+}
+
+.settings-tailscale-modal-body {
+  display: grid;
+  gap: 14px;
+}
+
+.settings-tailscale-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.settings-tailscale-login-url {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .theme-card {

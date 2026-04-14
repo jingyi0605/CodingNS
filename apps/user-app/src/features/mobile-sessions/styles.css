@@ -528,7 +528,7 @@
 
 .session-action-menu {
   position: fixed;
-  z-index: 2400;
+  z-index: 3200;
   min-width: 9rem;
   display: flex;
   flex-direction: column;

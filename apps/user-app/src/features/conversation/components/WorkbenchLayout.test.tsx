@@ -609,7 +609,7 @@ describe("WorkbenchLayout", () => {
 
     const betaCard = await findSessionCardByTitle("会话 Beta");
 
-    await userEvent.click(within(betaCard).getByRole("button", { name: t("shell.sessionMoreAction") }));
+    openSessionCardContextMenu(betaCard);
     await userEvent.click(screen.getByRole("button", { name: t("shell.favoriteAction") }));
 
     const favoriteSection = screen
@@ -634,9 +634,7 @@ describe("WorkbenchLayout", () => {
 
     const betaCardAfterReload = await findSessionCardByTitle("会话 Beta");
 
-    await userEvent.click(
-      within(betaCardAfterReload).getByRole("button", { name: t("shell.sessionMoreAction") })
-    );
+    openSessionCardContextMenu(betaCardAfterReload);
     await userEvent.click(screen.getByRole("button", { name: t("shell.archiveAction") }));
 
     await waitFor(() => {
@@ -1039,7 +1037,7 @@ describe("WorkbenchLayout", () => {
     renderWorkbenchRoute();
 
     const betaCard = await findSessionCardByTitle("会话 Beta");
-    await userEvent.click(within(betaCard).getByRole("button", { name: t("shell.sessionMoreAction") }));
+    openSessionCardContextMenu(betaCard);
     await userEvent.click(screen.getByRole("button", { name: t("shell.favoriteAction") }));
 
     MockWebSocket.instances[0]?.dispatchMessage({
@@ -1062,7 +1060,7 @@ describe("WorkbenchLayout", () => {
     });
   });
 
-  it("会话菜单吸附在按钮右侧并与按钮底部对齐", async () => {
+  it("会话菜单会跟随右键位置并保持在视口范围内", async () => {
     const currentSnapshot = createWorkbenchSnapshot([
       {
         workspace: createWorkspace("workspace-1", "项目一"),
@@ -1094,24 +1092,20 @@ describe("WorkbenchLayout", () => {
 
     renderWorkbenchRoute();
 
-    const betaCard = await findSessionCardByTitle("会话 Beta");
-    const menuTrigger = within(betaCard).getByRole("button", { name: t("shell.sessionMoreAction") });
-    Object.defineProperty(menuTrigger, "getBoundingClientRect", {
+    Object.defineProperty(window, "innerWidth", {
       configurable: true,
-      value: vi.fn(() => ({
-        top: 120,
-        right: 248,
-        bottom: 150,
-        left: 218,
-        width: 30,
-        height: 30,
-        x: 218,
-        y: 120,
-        toJSON: () => null
-      }))
+      value: 390
+    });
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: 720
     });
 
-    await userEvent.click(menuTrigger);
+    const betaCard = await findSessionCardByTitle("会话 Beta");
+    openSessionCardContextMenu(betaCard, {
+      x: 382,
+      y: 646
+    });
 
     const menu = document.querySelector(".workbench-session-menu");
 
@@ -1119,10 +1113,22 @@ describe("WorkbenchLayout", () => {
       throw new Error("未找到会话操作菜单");
     }
 
-    expect(menu).not.toHaveAttribute("data-placement");
+    Object.defineProperty(menu, "offsetWidth", {
+      configurable: true,
+      get: () => 180
+    });
+    Object.defineProperty(menu, "offsetHeight", {
+      configurable: true,
+      get: () => 168
+    });
+
+    fireEvent(window, new Event("resize"));
+
     expect(menu).toHaveStyle({
-      top: "150px",
-      left: "248px"
+      position: "fixed",
+      top: "470px",
+      left: "198px",
+      width: "180px"
     });
   });
 
@@ -1302,7 +1308,7 @@ describe("WorkbenchLayout", () => {
 
     const sessionCard = await findSessionCardByTitle("旧标题");
 
-    await userEvent.click(within(sessionCard).getByRole("button", { name: t("shell.sessionMoreAction") }));
+    openSessionCardContextMenu(sessionCard);
     await userEvent.click(screen.getByRole("button", { name: t("shell.renameAction") }));
 
     const dialog = await screen.findByRole("dialog", { name: t("shell.renameModalTitle") });
@@ -2254,7 +2260,7 @@ describe("WorkbenchLayout", () => {
 
     const betaCard = await findSessionCardByTitle("会话 Beta");
 
-    await userEvent.click(within(betaCard).getByRole("button", { name: t("shell.sessionMoreAction") }));
+    openSessionCardContextMenu(betaCard);
     const archiveActionPromise = userEvent.click(screen.getByRole("button", { name: t("shell.archiveAction") }));
 
     await waitFor(() => {
@@ -2372,7 +2378,7 @@ describe("WorkbenchLayout", () => {
 
     const betaCard = await findSessionCardByTitle("会话 Beta");
 
-    await userEvent.click(within(betaCard).getByRole("button", { name: t("shell.sessionMoreAction") }));
+    openSessionCardContextMenu(betaCard);
     await userEvent.click(screen.getByRole("button", { name: t("shell.archiveAction") }));
 
     await waitFor(() => {
@@ -6237,6 +6243,13 @@ function querySessionCardsByTitle(title: string) {
     .queryAllByText(title)
     .map((element) => element.closest(".workbench-session-card"))
     .filter((element): element is HTMLElement => element instanceof HTMLElement);
+}
+
+function openSessionCardContextMenu(card: HTMLElement, position: { x: number; y: number } = { x: 220, y: 220 }) {
+  fireEvent.contextMenu(card, {
+    clientX: position.x,
+    clientY: position.y
+  });
 }
 
 async function findWorkspaceGroupByName(name: string) {

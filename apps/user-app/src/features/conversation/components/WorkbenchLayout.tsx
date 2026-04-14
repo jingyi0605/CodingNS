@@ -38,7 +38,6 @@ import {
   type TerminalManagerRealtimeSnapshotDto,
   type WorkspaceManagementRealtimeSnapshotDto
 } from "../../../network/workbench-realtime-client";
-import { showDesktopContextMenu } from "../../../platform/desktop/desktop-context-menu";
 import {
   canStartDesktopWindowDragFromTarget,
   startDesktopWindowDrag
@@ -141,6 +140,10 @@ import {
   createWorkspaceCompositionChartStyle,
   formatWorkspaceCompositionRatio
 } from "../../workbench/utils/workspace-composition-chart";
+import {
+  resolveContextMenuPosition,
+  type ContextMenuAnchorPoint
+} from "../../workbench/utils/context-menu-position";
 import {
   mapWorkbenchSnapshotToNavigationGroups,
   readWorkbenchNavigationSnapshot,
@@ -2551,16 +2554,6 @@ function QuestionIcon() {
   );
 }
 
-function MoreIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-      <circle cx="5" cy="12" r="1.8" />
-      <circle cx="12" cy="12" r="1.8" />
-      <circle cx="19" cy="12" r="1.8" />
-    </svg>
-  );
-}
-
 function WorkspaceSearchModal({
   open,
   mode,
@@ -2735,6 +2728,7 @@ function SessionCard({
   isActive,
   isFavorite,
   menuOpen,
+  menuAnchorPoint,
   showWorkspaceName,
   depth = 0,
   showActions = true,
@@ -2746,11 +2740,10 @@ function SessionCard({
   onToggleSubagents,
   onOpen,
   onRename,
-  onToggleMenu,
+  onOpenContextMenu,
   onToggleFavorite,
   onArchive,
-  onCloseMenu,
-  onContextMenu
+  onCloseMenu
 }: {
   menuKey: string;
   session: SessionSummaryDto;
@@ -2759,6 +2752,7 @@ function SessionCard({
   isActive: boolean;
   isFavorite: boolean;
   menuOpen: boolean;
+  menuAnchorPoint: ContextMenuAnchorPoint | null;
   showWorkspaceName: boolean;
   depth?: number;
   showActions?: boolean;
@@ -2770,11 +2764,10 @@ function SessionCard({
   onToggleSubagents?: () => void;
   onOpen: () => void;
   onRename: () => void;
-  onToggleMenu: () => void;
+  onOpenContextMenu?: (anchorPoint: ContextMenuAnchorPoint) => void;
   onToggleFavorite: () => void;
   onArchive: () => void;
   onCloseMenu: () => void;
-  onContextMenu?: () => void;
 }) {
   const subagentBadgeLabel = isSubagentSession(session)
     ? session.subagentLabel?.trim() || t("shell.subagentBadge")
@@ -2791,26 +2784,38 @@ function SessionCard({
       : null;
   const sessionForkBadgeTone = resolveSessionForkBadgeTone(session);
   const sessionForkBadgeLabel = resolveSessionForkBadgeLabel(session);
-  const menuTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
   const [menuPositionStyle, setMenuPositionStyle] = useState<CSSProperties | null>(null);
 
   useLayoutEffect(() => {
-    if (!menuOpen) {
+    if (!menuOpen || !menuAnchorPoint || typeof window === "undefined") {
       setMenuPositionStyle(null);
       return;
     }
 
     const updateMenuPosition = () => {
-      const triggerElement = menuTriggerRef.current;
-
-      if (!triggerElement) {
-        return;
-      }
-
-      const triggerRect = triggerElement.getBoundingClientRect();
+      const nextPosition = resolveContextMenuPosition(
+        menuAnchorPoint,
+        {
+          width: menuRef.current?.offsetWidth ?? 0,
+          height: menuRef.current?.offsetHeight ?? 0
+        },
+        {
+          width: window.innerWidth,
+          height: window.innerHeight
+        },
+        {
+          estimatedHeightPx: 168
+        }
+      );
       setMenuPositionStyle({
-        top: `${triggerRect.bottom}px`,
-        left: `${triggerRect.right}px`
+        position: "fixed",
+        top: `${Math.round(nextPosition.top)}px`,
+        left: `${Math.round(nextPosition.left)}px`,
+        width: `${Math.round(nextPosition.width)}px`,
+        maxWidth: "calc(100vw - 24px)",
+        maxHeight: `${Math.round(nextPosition.maxHeight)}px`,
+        transformOrigin: nextPosition.transformOrigin
       });
     };
 
@@ -2822,16 +2827,26 @@ function SessionCard({
       window.removeEventListener("resize", updateMenuPosition);
       window.removeEventListener("scroll", updateMenuPosition, true);
     };
-  }, [menuOpen]);
+  }, [menuAnchorPoint, menuOpen]);
 
   const sessionMenu =
-    menuOpen && typeof document !== "undefined" && menuPositionStyle
+    menuOpen && typeof document !== "undefined"
       ? createPortal(
           <div
+            ref={menuRef}
             className="workbench-session-menu"
             data-menu-key={menuKey}
+            role="menu"
+            aria-label={t("shell.sessionMoreAction")}
             onClick={(event) => event.stopPropagation()}
-            style={menuPositionStyle}
+            style={
+              menuPositionStyle ?? {
+                position: "fixed",
+                top: 0,
+                left: 0,
+                visibility: "hidden"
+              }
+            }
           >
             <button
               type="button"
@@ -2884,12 +2899,16 @@ function SessionCard({
       data-selected={selected}
       style={createWorkspaceToneStyle(workspaceContext)}
       onContextMenu={(event) => {
-        if (selectionMode || !onContextMenu) {
+        if (selectionMode || !showActions || !onOpenContextMenu) {
           return;
         }
 
         event.preventDefault();
-        onContextMenu();
+        event.stopPropagation();
+        onOpenContextMenu({
+          x: event.clientX,
+          y: event.clientY
+        });
       }}
     >
       <div className="workbench-session-main">
@@ -2941,6 +2960,27 @@ function SessionCard({
           data-active={isActive}
           aria-pressed={selectionMode ? selected : undefined}
           onClick={selectionMode ? onToggleSelect : onOpen}
+          onKeyDown={(event) => {
+            if (
+              selectionMode
+              || !showActions
+              || !onOpenContextMenu
+              || (
+                event.key !== "ContextMenu"
+                && !(event.shiftKey && event.key === "F10")
+              )
+            ) {
+              return;
+            }
+
+            event.preventDefault();
+            event.stopPropagation();
+            const anchorRect = event.currentTarget.getBoundingClientRect();
+            onOpenContextMenu({
+              x: anchorRect.right,
+              y: anchorRect.bottom
+            });
+          }}
         >
           <div className="workbench-session-link-copy">
             <div className="session-title-row">
@@ -2977,25 +3017,6 @@ function SessionCard({
         </button>
       </div>
 
-      {showActions && !selectionMode ? (
-        <div className="workbench-session-actions" data-open={menuOpen}>
-          <button
-            ref={menuTriggerRef}
-            type="button"
-            className="workbench-session-menu-trigger"
-            data-open={menuOpen}
-            aria-label={t("shell.sessionMoreAction")}
-            title={t("shell.sessionMoreAction")}
-            aria-expanded={menuOpen}
-            onClick={(event) => {
-              event.stopPropagation();
-              onToggleMenu();
-            }}
-          >
-            <MoreIcon />
-          </button>
-        </div>
-      ) : null}
       {sessionMenu}
     </article>
   );
@@ -3135,6 +3156,7 @@ function SidebarContent({
   const [createWorktreeBaseRefPopoverHeight, setCreateWorktreeBaseRefPopoverHeight] = useState<number | null>(null);
   const [archiveWorkspaceId, setArchiveWorkspaceId] = useState<string | null>(null);
   const [openSessionMenuKey, setOpenSessionMenuKey] = useState<string | null>(null);
+  const [openSessionMenuAnchorPoint, setOpenSessionMenuAnchorPoint] = useState<ContextMenuAnchorPoint | null>(null);
   const [visibleFavoriteCount, setVisibleFavoriteCount] = useState(FAVORITE_SESSION_PAGE_SIZE);
   const [visibleWorkspaceSessionCounts, setVisibleWorkspaceSessionCounts] = useState<Record<string, number>>({});
   const [visibleSubagentCounts, setVisibleSubagentCounts] = useState<Record<string, number>>({});
@@ -3163,6 +3185,14 @@ function SidebarContent({
     [worktreeNodeExpansionState.collapsedWorkspaceIds]
   );
   const workspaceReorderDragging = dragWorkspaceId !== null;
+  const closeSessionMenu = useCallback(() => {
+    setOpenSessionMenuKey(null);
+    setOpenSessionMenuAnchorPoint(null);
+  }, []);
+  const openSessionMenu = useCallback((menuKey: string, anchorPoint: ContextMenuAnchorPoint) => {
+    setOpenSessionMenuKey(menuKey);
+    setOpenSessionMenuAnchorPoint(anchorPoint);
+  }, []);
 
   const createSessionWorkspace =
     findSidebarWorkspaceById(workspaceGroups, createSessionWorkspaceId)
@@ -3400,14 +3430,11 @@ function SidebarContent({
     function handlePointerDown(event: PointerEvent) {
       const target = event.target;
 
-      if (
-        target instanceof HTMLElement
-        && (target.closest(".workbench-session-actions") || target.closest(".workbench-session-menu"))
-      ) {
+      if (target instanceof HTMLElement && target.closest(".workbench-session-menu")) {
         return;
       }
 
-      setOpenSessionMenuKey(null);
+      closeSessionMenu();
     }
 
     window.addEventListener("pointerdown", handlePointerDown);
@@ -3415,7 +3442,7 @@ function SidebarContent({
     return () => {
       window.removeEventListener("pointerdown", handlePointerDown);
     };
-  }, [openSessionMenuKey]);
+  }, [closeSessionMenu, openSessionMenuKey]);
 
   useEffect(() => {
     if (!batchWorkspaceId) {
@@ -4278,24 +4305,17 @@ function SidebarContent({
               onClose?.();
             }}
             onRename={() => handleOpenRenameSession(session, workspace)}
-            onToggleMenu={() =>
-              setOpenSessionMenuKey((current) =>
-                current === `${menuKeyPrefix}:${session.sessionId}` ? null : `${menuKeyPrefix}:${session.sessionId}`
-              )
+            menuAnchorPoint={
+              openSessionMenuKey === `${menuKeyPrefix}:${session.sessionId}`
+                ? openSessionMenuAnchorPoint
+                : null
+            }
+            onOpenContextMenu={(anchorPoint) =>
+              openSessionMenu(`${menuKeyPrefix}:${session.sessionId}`, anchorPoint)
             }
             onToggleFavorite={() => handleToggleFavorite(session.sessionId)}
             onArchive={() => handleArchive(session.sessionId)}
-            onCloseMenu={() => setOpenSessionMenuKey(null)}
-            onContextMenu={
-              platform.isDesktop
-                ? () => {
-                    void handleSessionContextMenu({
-                      session,
-                      workspace
-                    });
-                  }
-                : undefined
-            }
+            onCloseMenu={closeSessionMenu}
           />
         </div>
         {childNodes.length > 0 && subagentListExpanded ? (
@@ -4332,7 +4352,7 @@ function SidebarContent({
   }
 
   function handleStartBatchSelection(workspaceId: string) {
-    setOpenSessionMenuKey(null);
+    closeSessionMenu();
     setBatchWorkspaceId(workspaceId);
     setSelectedSessionIds([]);
   }
@@ -4432,7 +4452,7 @@ function SidebarContent({
 
   async function handleToggleFavorite(sessionId: string) {
     const isFavorite = favoriteSessionIds.has(sessionId);
-    setOpenSessionMenuKey(null);
+    closeSessionMenu();
 
     try {
       await onToggleFavoriteSession(sessionId);
@@ -4449,7 +4469,7 @@ function SidebarContent({
   }
 
   async function handleArchive(sessionId: string) {
-    setOpenSessionMenuKey(null);
+    closeSessionMenu();
 
     try {
       await onArchiveSession(sessionId);
@@ -4470,7 +4490,7 @@ function SidebarContent({
       return;
     }
 
-    setOpenSessionMenuKey(null);
+    closeSessionMenu();
     setBatchArchiving(true);
 
     try {
@@ -4527,7 +4547,7 @@ function SidebarContent({
   }
 
   async function handleUnarchive(sessionId: string) {
-    setOpenSessionMenuKey(null);
+    closeSessionMenu();
 
     try {
       await onUnarchiveSession(sessionId);
@@ -4544,7 +4564,7 @@ function SidebarContent({
   }
 
   function handleOpenRenameSession(session: SessionSummaryDto, workspace: WorkspaceDto) {
-    setOpenSessionMenuKey(null);
+    closeSessionMenu();
     setRenameTarget({ session, workspace });
     setRenameTitleValue(session.title);
   }
@@ -4581,42 +4601,6 @@ function SidebarContent({
     } finally {
       setRenamingSessionId(null);
     }
-  }
-
-  async function handleSessionContextMenu(entry: NavigationSessionEntry) {
-    if (!platform.isDesktop) {
-      return;
-    }
-
-    const isFavorite = favoriteSessionIds.has(entry.session.sessionId);
-
-    await showDesktopContextMenu([
-      {
-        id: `open-${entry.session.sessionId}`,
-        label: t("shell.contextOpenSession"),
-        onSelect: () => {
-          navigate(buildWorkspaceSessionPath(entry.workspace.id, entry.session.sessionId));
-          onClose?.();
-        }
-      },
-      {
-        id: `rename-${entry.session.sessionId}`,
-        label: t("shell.renameAction"),
-        onSelect: () => handleOpenRenameSession(entry.session, entry.workspace)
-      },
-      {
-        id: `favorite-${entry.session.sessionId}`,
-        label: isFavorite ? t("shell.unfavoriteAction") : t("shell.favoriteAction"),
-        onSelect: () => handleToggleFavorite(entry.session.sessionId)
-      },
-      {
-        id: `archive-${entry.session.sessionId}`,
-        label: t("shell.archiveAction"),
-        onSelect: () => {
-          void handleArchive(entry.session.sessionId);
-        }
-      }
-    ]);
   }
 
   const visibleFavoriteSessions = favoriteSessions.slice(0, visibleFavoriteCount);

@@ -11200,7 +11200,7 @@ textarea:focus-visible {
 
 .workbench-session-menu {
   position: fixed;
-  z-index: 2400;
+  z-index: 3200;
   min-width: 140px;
   display: flex;
   flex-direction: column;
@@ -11210,8 +11210,8 @@ textarea:focus-visible {
   border: 1px solid color-mix(in srgb, var(--border-primary) 82%, transparent);
   background: color-mix(in srgb, var(--bg-surface) 96%, transparent);
   box-shadow: 0 16px 36px rgba(15, 23, 42, 0.14);
-  transform: translateY(-100%);
-  transform-origin: bottom left;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .workbench-session-menu-item {
@@ -16947,12 +16947,7 @@ textarea:focus-visible {
 
 .settings-tailscale-overview {
   display: grid;
-  gap: 14px;
-}
-
-.settings-tailscale-overview-main {
-  display: grid;
-  gap: 8px;
+  gap: 10px;
 }
 
 .settings-tailscale-phase-badge {
@@ -16985,23 +16980,18 @@ textarea:focus-visible {
   background: color-mix(in srgb, var(--danger, #dc2626) 10%, transparent);
 }
 
-.settings-tailscale-overview-description {
-  margin: 0;
-  color: var(--text-secondary);
-  line-height: 1.5;
-}
-
 .settings-tailscale-summary {
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 .settings-tailscale-summary-row {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 10px 12px;
+  min-height: 40px;
+  padding: 8px 12px;
   border-radius: var(--radius-md);
   background: var(--bg-primary);
   border: 1px solid var(--border-subtle);
@@ -17014,6 +17004,9 @@ textarea:focus-visible {
 
 .settings-tailscale-summary-value {
   min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
   color: var(--text-primary);
   font-size: 12px;
   text-align: right;
@@ -17222,7 +17215,7 @@ textarea:focus-visible {
 }
 
 .settings-tailscale-modal {
-  width: min(560px, calc(100vw - 32px));
+  width: min(520px, calc(100vw - 32px));
 }
 
 .settings-tailscale-modal .workbench-modal-body {
@@ -17231,24 +17224,19 @@ textarea:focus-visible {
 
 .settings-tailscale-modal-body {
   display: grid;
-  gap: 16px;
-}
-
-.settings-tailscale-modal-section {
-  display: grid;
-  gap: 10px;
-}
-
-.settings-tailscale-modal-section-title {
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 600;
+  gap: 14px;
 }
 
 .settings-tailscale-modal-actions {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+.settings-tailscale-login-url {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 /* Theme Selector */

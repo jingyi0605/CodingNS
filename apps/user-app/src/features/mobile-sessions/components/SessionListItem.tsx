@@ -1,4 +1,12 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent
+} from "react";
 import { createPortal } from "react-dom";
 
 import {
@@ -11,11 +19,12 @@ import type { SessionSummaryDto } from "../../conversation/api/conversation-api"
 import { getProviderDisplayName } from "../../conversation/capability/provider-ui";
 import { useHaptics } from "../../../shared/haptics";
 import { t } from "../../../shared/i18n";
+import {
+  resolveContextMenuPosition,
+  type ContextMenuAnchorPoint
+} from "../../workbench/utils/context-menu-position";
 
 const LONG_PRESS_DELAY_MS = 420;
-const MENU_EDGE_PADDING_PX = 12;
-const MENU_GAP_PX = 8;
-const MENU_MIN_WIDTH_PX = 160;
 const MENU_ESTIMATED_HEIGHT_PX = 156;
 
 interface WorkbenchNavigationEntry {
@@ -79,9 +88,9 @@ export function SessionListItem({
 }: SessionListItemProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuPositionStyle, setMenuPositionStyle] = useState<CSSProperties | null>(null);
+  const [menuAnchorPoint, setMenuAnchorPoint] = useState<ContextMenuAnchorPoint | null>(null);
   const longPressTimerRef = useRef<number | null>(null);
   const suppressNextClickRef = useRef(false);
-  const menuTriggerRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const haptics = useHaptics();
   const { session, workspace } = entry;
@@ -109,58 +118,36 @@ export function SessionListItem({
   }, []);
 
   useLayoutEffect(() => {
-    if (!menuOpen || typeof window === "undefined") {
+    if (!menuOpen || !menuAnchorPoint || typeof window === "undefined") {
       setMenuPositionStyle(null);
       return;
     }
 
-    let animationFrameId = 0;
-
     const updateMenuPosition = () => {
-      const triggerElement = menuTriggerRef.current;
+      const nextPosition = resolveContextMenuPosition(
+        menuAnchorPoint,
+        {
+          width: menuRef.current?.offsetWidth ?? 0,
+          height: menuRef.current?.offsetHeight ?? 0
+        },
+        {
+          width: window.innerWidth,
+          height: window.innerHeight
+        },
+        {
+          estimatedHeightPx: MENU_ESTIMATED_HEIGHT_PX
+        }
+      );
 
-      if (!triggerElement) {
-        return;
-      }
-
-      const triggerRect = triggerElement.getBoundingClientRect();
-      const viewportWidth = window.innerWidth;
-      const viewportHeight = window.innerHeight;
-      const maxMenuWidth = Math.max(0, viewportWidth - MENU_EDGE_PADDING_PX * 2);
-      const menuWidth = maxMenuWidth > 0
-        ? Math.min(
-            Math.max(menuRef.current?.offsetWidth ?? MENU_MIN_WIDTH_PX, MENU_MIN_WIDTH_PX),
-            maxMenuWidth
-          )
-        : MENU_MIN_WIDTH_PX;
-      const menuHeight = Math.max(menuRef.current?.offsetHeight ?? 0, MENU_ESTIMATED_HEIGHT_PX);
-      const preferredLeft = triggerRect.right - menuWidth;
-      const maxLeft = Math.max(MENU_EDGE_PADDING_PX, viewportWidth - menuWidth - MENU_EDGE_PADDING_PX);
-      const left = Math.min(Math.max(MENU_EDGE_PADDING_PX, preferredLeft), maxLeft);
-      const spaceAbove = triggerRect.top - MENU_EDGE_PADDING_PX;
-      const spaceBelow = viewportHeight - triggerRect.bottom - MENU_EDGE_PADDING_PX;
-      const shouldPlaceAbove = spaceBelow < menuHeight + MENU_GAP_PX && spaceAbove > spaceBelow;
-      const preferredTop = shouldPlaceAbove
-        ? triggerRect.top - menuHeight - MENU_GAP_PX
-        : triggerRect.bottom + MENU_GAP_PX;
-      const maxTop = Math.max(MENU_EDGE_PADDING_PX, viewportHeight - menuHeight - MENU_EDGE_PADDING_PX);
-      const top = Math.min(Math.max(MENU_EDGE_PADDING_PX, preferredTop), maxTop);
-
-      // 菜单挂到 body 后，必须按视口坐标夹紧，避免横向或纵向跑出屏幕。
       setMenuPositionStyle({
         position: "fixed",
-        left: `${Math.round(left)}px`,
-        top: `${Math.round(top)}px`,
-        width: `${Math.round(menuWidth)}px`,
-        maxWidth: `calc(100vw - ${MENU_EDGE_PADDING_PX * 2}px)`,
-        maxHeight: `${Math.max(96, viewportHeight - MENU_EDGE_PADDING_PX * 2)}px`,
-        transformOrigin: shouldPlaceAbove ? "bottom right" : "top right"
+        left: `${Math.round(nextPosition.left)}px`,
+        top: `${Math.round(nextPosition.top)}px`,
+        width: `${Math.round(nextPosition.width)}px`,
+        maxWidth: "calc(100vw - 24px)",
+        maxHeight: `${Math.round(nextPosition.maxHeight)}px`,
+        transformOrigin: nextPosition.transformOrigin
       });
-    };
-
-    const requestPositionUpdate = () => {
-      window.cancelAnimationFrame(animationFrameId);
-      animationFrameId = window.requestAnimationFrame(updateMenuPosition);
     };
 
     const handlePointerDown = (event: PointerEvent) => {
@@ -169,32 +156,40 @@ export function SessionListItem({
       if (
         target
         && !menuRef.current?.contains(target)
-        && !menuTriggerRef.current?.contains(target)
       ) {
-        setMenuOpen(false);
+        closeMenu();
       }
     };
 
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        setMenuOpen(false);
+        closeMenu();
       }
     };
 
-    requestPositionUpdate();
+    updateMenuPosition();
     window.addEventListener("pointerdown", handlePointerDown);
     window.addEventListener("keydown", handleEscape);
-    window.addEventListener("resize", requestPositionUpdate);
-    window.addEventListener("scroll", requestPositionUpdate, true);
+    window.addEventListener("resize", updateMenuPosition);
+    window.addEventListener("scroll", updateMenuPosition, true);
 
     return () => {
-      window.cancelAnimationFrame(animationFrameId);
       window.removeEventListener("pointerdown", handlePointerDown);
       window.removeEventListener("keydown", handleEscape);
-      window.removeEventListener("resize", requestPositionUpdate);
-      window.removeEventListener("scroll", requestPositionUpdate, true);
+      window.removeEventListener("resize", updateMenuPosition);
+      window.removeEventListener("scroll", updateMenuPosition, true);
     };
-  }, [menuOpen]);
+  }, [menuAnchorPoint, menuOpen]);
+
+  function openMenu(anchorPoint: ContextMenuAnchorPoint) {
+    setMenuAnchorPoint(anchorPoint);
+    setMenuOpen(true);
+  }
+
+  function closeMenu() {
+    setMenuOpen(false);
+    setMenuAnchorPoint(null);
+  }
 
   function clearLongPressTimer() {
     if (longPressTimerRef.current !== null) {
@@ -204,15 +199,19 @@ export function SessionListItem({
   }
 
   function handlePointerDown(event: ReactPointerEvent<HTMLButtonElement>) {
-    if (!hasSubsessions || event.pointerType === "mouse") {
+    if (!showActions || event.pointerType === "mouse") {
       return;
     }
 
+    const anchorPoint = {
+      x: event.clientX,
+      y: event.clientY
+    };
     clearLongPressTimer();
     longPressTimerRef.current = window.setTimeout(() => {
       suppressNextClickRef.current = true;
       void haptics.trigger("gesture");
-      onToggleSubsessions?.();
+      openMenu(anchorPoint);
     }, LONG_PRESS_DELAY_MS);
   }
 
@@ -237,23 +236,37 @@ export function SessionListItem({
     }
 
     await onRename(session.sessionId, nextTitle.trim());
-    setMenuOpen(false);
+    closeMenu();
   };
 
   const handleArchiveEntry = async () => {
     if (session.isArchived) {
       await onUnarchive(session.sessionId);
-      setMenuOpen(false);
+      closeMenu();
       return;
     }
 
     await onArchive(session.sessionId);
-    setMenuOpen(false);
+    closeMenu();
   };
 
   const handleToggleFavoriteEntry = () => {
     onToggleFavorite(session.sessionId);
-    setMenuOpen(false);
+    closeMenu();
+  };
+
+  const handleKeyboardContextMenu = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    const anchorRect = event.currentTarget.getBoundingClientRect();
+    openMenu({
+      x: anchorRect.right,
+      y: anchorRect.bottom
+    });
   };
 
   const sessionActionMenu =
@@ -296,6 +309,18 @@ export function SessionListItem({
       data-workspace-tone={workspaceTone}
       data-has-subsessions={hasSubsessions}
       data-variant={variant}
+      onContextMenu={(event) => {
+        if (!showActions) {
+          return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+        openMenu({
+          x: event.clientX,
+          y: event.clientY
+        });
+      }}
     >
       {hasSubsessions ? (
         <button
@@ -335,6 +360,7 @@ export function SessionListItem({
         onPointerUp={handlePointerEnd}
         onPointerCancel={handlePointerEnd}
         onPointerLeave={handlePointerEnd}
+        onKeyDown={handleKeyboardContextMenu}
       >
         <div className="session-list-copy">
           <div className="session-list-title">{title || t("shell.searchEntry")}</div>
@@ -362,23 +388,6 @@ export function SessionListItem({
           ) : null}
         </div>
       </button>
-      {showActions ? (
-        <div className="session-list-actions">
-          <button
-            ref={menuTriggerRef}
-            type="button"
-            className="ghost-button"
-            aria-expanded={menuOpen}
-            aria-haspopup="menu"
-            onClick={() => {
-              void haptics.trigger("selection");
-              setMenuOpen((current) => !current);
-            }}
-          >
-            {t("shell.sessionMoreAction")}
-          </button>
-        </div>
-      ) : null}
       {sessionActionMenu}
     </article>
   );

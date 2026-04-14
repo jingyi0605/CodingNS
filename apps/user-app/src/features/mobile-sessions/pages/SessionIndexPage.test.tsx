@@ -222,7 +222,7 @@ describe("SessionIndexPage", () => {
 
     expect(screen.queryByText("对话")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 1, name: "项目一" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 2, name: "当前工作区" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: /^(当前工作区|Current Workspace)$/ })).toBeInTheDocument();
   });
 
   it("当前工作区列表会保留收藏会话，但不会混入其他工作区会话", () => {
@@ -230,7 +230,7 @@ describe("SessionIndexPage", () => {
       initialEntry: "/workspaces/workspace-1-child/sessions"
     });
 
-    const workspaceSection = screen.getByRole("heading", { level: 2, name: "当前工作区" }).closest("section");
+    const workspaceSection = screen.getByRole("heading", { level: 2, name: /^(当前工作区|Current Workspace)$/ }).closest("section");
 
     if (!workspaceSection) {
       throw new Error("未找到目标区块");
@@ -272,7 +272,7 @@ describe("SessionIndexPage", () => {
 
     expect(screen.getByRole("heading", { level: 1, name: "feat/login-codex" })).toBeInTheDocument();
 
-    const workspaceSection = screen.getByRole("heading", { level: 2, name: "当前工作区" }).closest("section");
+    const workspaceSection = screen.getByRole("heading", { level: 2, name: /^(当前工作区|Current Workspace)$/ }).closest("section");
 
     if (!workspaceSection) {
       throw new Error("未找到目标区块");
@@ -298,7 +298,7 @@ describe("SessionIndexPage", () => {
     const user = userEvent.setup();
     renderPage();
 
-    const workspaceSection = screen.getByRole("heading", { level: 2, name: "当前工作区" }).closest("section");
+    const workspaceSection = screen.getByRole("heading", { level: 2, name: /^(当前工作区|Current Workspace)$/ }).closest("section");
 
     if (!workspaceSection) {
       throw new Error("未找到会话区块");
@@ -311,36 +311,25 @@ describe("SessionIndexPage", () => {
       throw new Error("未找到会话列表项");
     }
 
-    await user.click(within(alphaEntry).getByRole("button", { name: "更多操作" }));
-    const archiveButton = await screen.findByRole("menuitem", { name: "归档会话" });
+    openSessionItemContextMenu(alphaEntry);
+    const archiveButton = await screen.findByRole("menuitem", { name: /^(归档会话|Archive Session)$/ });
     await user.click(archiveButton);
     expect(contextValue.archiveSession).toHaveBeenCalledWith("session-1");
 
-    await user.click(within(betaEntry).getByRole("button", { name: "更多操作" }));
-    const unfavoriteButton = await screen.findByRole("menuitem", { name: "取消收藏" });
+    openSessionItemContextMenu(betaEntry);
+    const unfavoriteButton = await screen.findByRole("menuitem", { name: /^(取消收藏|Unpin Session|Unpin)$/ });
     await user.click(unfavoriteButton);
     expect(contextValue.toggleFavoriteSession).toHaveBeenCalledWith("session-2");
 
     const promptSpy = vi.spyOn(window, "prompt").mockReturnValue("New Title");
-    await user.click(within(alphaEntry).getByRole("button", { name: "更多操作" }));
-    const renameButton = await screen.findByRole("menuitem", { name: "重命名" });
+    openSessionItemContextMenu(alphaEntry);
+    const renameButton = await screen.findByRole("menuitem", { name: /^(重命名|Rename)$/ });
     await user.click(renameButton);
     expect(contextValue.renameSession).toHaveBeenCalledWith("session-1", "New Title");
     promptSpy.mockRestore();
   }, 10000);
 
   it("更多操作菜单会挂到视口层并保持在屏幕范围内", async () => {
-    const user = userEvent.setup();
-    const requestAnimationFrameSpy = vi
-      .spyOn(window, "requestAnimationFrame")
-      .mockImplementation((callback: FrameRequestCallback) => {
-        callback(0);
-        return 1;
-      });
-    const cancelAnimationFrameSpy = vi
-      .spyOn(window, "cancelAnimationFrame")
-      .mockImplementation(() => undefined);
-
     Object.defineProperty(window, "innerWidth", {
       configurable: true,
       value: 390
@@ -352,7 +341,7 @@ describe("SessionIndexPage", () => {
 
     renderPage();
 
-    const workspaceSection = screen.getByRole("heading", { level: 2, name: "当前工作区" }).closest("section");
+    const workspaceSection = screen.getByRole("heading", { level: 2, name: /^(当前工作区|Current Workspace)$/ }).closest("section");
 
     if (!workspaceSection) {
       throw new Error("未找到会话区块");
@@ -364,22 +353,12 @@ describe("SessionIndexPage", () => {
       throw new Error("未找到 Alpha 会话");
     }
 
-    const trigger = within(alphaEntry).getByRole("button", { name: "更多操作" });
-    vi.spyOn(trigger, "getBoundingClientRect").mockReturnValue({
-      x: 350,
-      y: 620,
-      width: 48,
-      height: 32,
-      top: 620,
-      right: 398,
-      bottom: 652,
-      left: 350,
-      toJSON: () => undefined
+    openSessionItemContextMenu(alphaEntry, {
+      x: 398,
+      y: 652
     });
 
-    await user.click(trigger);
-
-    const menu = screen.getByRole("menu", { name: "更多操作" });
+    const menu = screen.getByRole("menu", { name: /^(更多操作|More Actions)$/ });
     Object.defineProperty(menu, "offsetWidth", {
       configurable: true,
       get: () => 180
@@ -395,12 +374,9 @@ describe("SessionIndexPage", () => {
     expect(menu).toHaveStyle({
       position: "fixed",
       left: "198px",
-      top: "452px",
+      top: "484px",
       width: "180px"
     });
-
-    requestAnimationFrameSpy.mockRestore();
-    cancelAnimationFrameSpy.mockRestore();
   });
 
   it("主会话点击状态指示器后会展开和收起子会话列表", async () => {
@@ -409,7 +385,7 @@ describe("SessionIndexPage", () => {
 
     expect(screen.queryByText("子代理 Beta-1")).not.toBeInTheDocument();
 
-    const workspaceSection = screen.getByRole("heading", { level: 2, name: "当前工作区" }).closest("section");
+    const workspaceSection = screen.getByRole("heading", { level: 2, name: /^(当前工作区|Current Workspace)$/ }).closest("section");
 
     if (!workspaceSection) {
       throw new Error("未找到当前工作区会话区块");
@@ -456,7 +432,7 @@ describe("SessionIndexPage", () => {
 
     renderPage();
 
-    const workspaceSection = screen.getByRole("heading", { level: 2, name: "当前工作区" }).closest("section");
+    const workspaceSection = screen.getByRole("heading", { level: 2, name: /^(当前工作区|Current Workspace)$/ }).closest("section");
 
     if (!workspaceSection) {
       throw new Error("未找到当前工作区会话区块");
@@ -493,7 +469,7 @@ describe("SessionIndexPage", () => {
 
     renderPage();
 
-    const workspaceSection = screen.getByRole("heading", { level: 2, name: "当前工作区" }).closest("section");
+    const workspaceSection = screen.getByRole("heading", { level: 2, name: /^(当前工作区|Current Workspace)$/ }).closest("section");
 
     if (!workspaceSection) {
       throw new Error("未找到当前工作区会话区块");
@@ -539,7 +515,7 @@ describe("SessionIndexPage", () => {
     const user = userEvent.setup();
     renderPage({ withRouteProbe: true });
 
-    const workspaceSection = screen.getByRole("heading", { level: 2, name: "当前工作区" }).closest("section");
+    const workspaceSection = screen.getByRole("heading", { level: 2, name: /^(当前工作区|Current Workspace)$/ }).closest("section");
 
     if (!workspaceSection) {
       throw new Error("未找到当前工作区会话区块");
@@ -562,4 +538,11 @@ function RouteProbe() {
   const location = useLocation();
 
   return <div data-testid="route-probe">{location.pathname}</div>;
+}
+
+function openSessionItemContextMenu(entry: HTMLElement, position: { x: number; y: number } = { x: 220, y: 220 }) {
+  fireEvent.contextMenu(entry, {
+    clientX: position.x,
+    clientY: position.y
+  });
 }
