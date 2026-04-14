@@ -355,7 +355,8 @@ export class OpenCodeAdapter implements ProviderAdapter {
       sourceSessionId,
       workspacePath,
       sourceType: options.sourceType,
-      sourceMessageId: options.sourceMessageId?.trim() || null
+      sourceMessageId: options.sourceMessageId?.trim() || null,
+      sourceMessageSnapshot: options.sourceMessageSnapshot ?? null
     });
 
     return {
@@ -793,6 +794,7 @@ export class OpenCodeAdapter implements ProviderAdapter {
     workspacePath: string;
     sourceType: "session" | "message";
     sourceMessageId: string | null;
+    sourceMessageSnapshot: ForkSessionOptions["sourceMessageSnapshot"];
   }): {
     providerSessionId: string;
     title: string;
@@ -961,6 +963,15 @@ export class OpenCodeAdapter implements ProviderAdapter {
 
           if (input.sourceType === "message" && normalized?.messageId === input.sourceMessageId) {
             providerSourceMessageId = sourcePartId;
+            if (input.sourceMessageSnapshot) {
+              includedPartRows[includedPartRows.length - 1] = {
+                ...partRow,
+                data: applyOpenCodeForkSourceSnapshot(
+                  toJsonRecord(partRow.data) ?? {},
+                  input.sourceMessageSnapshot
+                )
+              };
+            }
             reachedAnchor = true;
             break;
           }
@@ -1528,6 +1539,30 @@ function mapOpenCodeHttpError(statusCode: number, detail: string): Error {
   }
 
   return new Error(detail || `OPENCODE_HTTP_${statusCode}`);
+}
+
+function applyOpenCodeForkSourceSnapshot(
+  partPayload: Record<string, unknown>,
+  snapshot: ForkSessionOptions["sourceMessageSnapshot"]
+): Record<string, unknown> {
+  if (!snapshot) {
+    return partPayload;
+  }
+
+  const nextPart = { ...partPayload };
+  const targetKey =
+    typeof nextPart.text === "string"
+      ? "text"
+      : typeof nextPart.content === "string"
+        ? "content"
+        : typeof nextPart.message === "string"
+          ? "message"
+          : snapshot.kind === "thinking"
+            ? "thinking"
+            : "text";
+
+  nextPart[targetKey] = snapshot.content;
+  return nextPart;
 }
 
 async function safeReadResponseText(response: Response): Promise<string> {

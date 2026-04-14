@@ -899,3 +899,73 @@ test("ClaudeCodeAdapter 消息级 fork 会截断到指定消息锚点", async ()
     rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+test("ClaudeCodeAdapter 会优先使用 fork 点击当下的消息快照，而不是后续刷新的最新内容", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-claude-fork-snapshot-"));
+  const workspacePath = "/Users/jackson/Documents/Code/CodingNS";
+  const projectDir = join(tempDir, "projects", "-Users-jackson-Documents-Code-CodingNS");
+  const sessionId = "67676767-6767-4676-8676-676767676767";
+  const rawStoreRef = join(projectDir, `${sessionId}.jsonl`);
+
+  try {
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(
+      rawStoreRef,
+      [
+        JSON.stringify({
+          type: "user",
+          sessionId,
+          cwd: workspacePath,
+          timestamp: "2026-04-11T02:10:00.000Z",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "从这里开始分析。" }]
+          }
+        }),
+        JSON.stringify({
+          type: "assistant",
+          sessionId,
+          cwd: workspacePath,
+          timestamp: "2026-04-11T02:10:05.000Z",
+          message: {
+            id: "msg-fork-message-2",
+            role: "assistant",
+            content: [
+              { type: "text", text: "旧回答 X，后来又继续长成了 Y。" }
+            ]
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const adapter = new ClaudeCodeAdapter({ homeDir: tempDir });
+    const sourcePage = await adapter.readSessionHistory(sessionId, rawStoreRef, null, 20, "forward");
+    const anchorMessage = sourcePage.messages[1];
+
+    assert.ok(anchorMessage);
+
+    const result = await adapter.forkSession(sessionId, workspacePath, {
+      rawStoreRef,
+      sourceType: "message",
+      sourceMessageId: anchorMessage.messageId,
+      sourceMessageSnapshot: {
+        role: "assistant",
+        kind: "text",
+        content: "旧回答 X"
+      }
+    });
+    const forkedPage = await adapter.readSessionHistory(
+      result.session.providerSessionId,
+      result.session.rawStoreRef,
+      null,
+      20,
+      "forward"
+    );
+
+    assert.equal(result.forkMethod, "native_message_fork");
+    assert.equal(forkedPage.messages[1]?.content, "旧回答 X");
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});

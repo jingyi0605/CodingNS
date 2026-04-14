@@ -16,6 +16,12 @@ export type ForkMethod =
   | "reconstructed_message_fork";
 export type ForkStrategy = "auto" | "native-only" | "reconstruct-only";
 
+export interface ForkSourceMessageSnapshot {
+  role: SessionRole;
+  kind: MessageKind;
+  content: string;
+}
+
 export interface NormalizedMessageAttachment {
   id: string;
   kind: "image";
@@ -179,6 +185,7 @@ export interface ForkSessionOptions {
   rawStoreRef: string;
   sourceType: ForkSourceType;
   sourceMessageId?: string | null;
+  sourceMessageSnapshot?: ForkSourceMessageSnapshot | null;
   strategy?: ForkStrategy;
 }
 

@@ -40,6 +40,12 @@ export type ForkMethod =
   | "reconstructed_message_fork";
 export type ForkStrategy = "auto" | "native-only" | "reconstruct-only";
 
+export interface ForkSourceMessageSnapshotDto {
+  role: "user" | "assistant" | "tool" | "system";
+  kind: MessageKind;
+  content: string;
+}
+
 export interface ToolCallDto {
   callId: string;
   name: string;
@@ -106,6 +112,182 @@ export interface WorkspaceManagementSummaryDto {
   path: string;
   git: WorkspaceManagementGitDto;
   codeComposition: WorkspaceCodeCompositionDto;
+}
+
+export type DebugServiceRoleDto = "frontend" | "backend" | "worker" | "mock" | "custom";
+export type FrameworkAnalysisConfidenceDto = "high" | "medium" | "low";
+export type FrameworkCompatibilityLevelDto = "supported" | "conditional" | "unsupported" | "unknown";
+export type DebugInjectionModeDto = "cli" | "env" | "override" | "ai_fallback" | "none";
+export type DebugAiFallbackPolicyDto = "never" | "conditional" | "allowed";
+export type DebugRuntimeSessionStatusDto = "PREPARING" | "RUNNING" | "FAILED" | "STOPPED";
+
+export interface DebugTargetProfileDto {
+  id: string;
+  workspaceId: string;
+  rootPath: string;
+  displayName: string;
+  stackHint?: string | null;
+  sourceType: "repo" | "worktree";
+  rootWorkspaceId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DebugServiceSpecDto {
+  id: string;
+  targetId: string;
+  role: DebugServiceRoleDto;
+  name: string;
+  cwd: string;
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+  defaultPortHint?: number | null;
+  protocol?: "http" | "ws" | "tcp" | null;
+  healthPath?: string | null;
+  adapterKind?: "cli" | "env" | "override" | "ai_fallback" | null;
+  frameworkAnalysisId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FrameworkAnalysisResultDto {
+  id: string;
+  targetId: string;
+  serviceId?: string | null;
+  primaryFramework?: string | null;
+  confidence: FrameworkAnalysisConfidenceDto;
+  compatibilityLevel: FrameworkCompatibilityLevelDto;
+  recommendedInjectionMode?: DebugInjectionModeDto | null;
+  requiresServiceDiscoveryHandling: boolean;
+  requiresHmrHandling: boolean;
+  requiresCallbackHandling: boolean;
+  aiFallbackPolicy: DebugAiFallbackPolicyDto;
+  reasons: string[];
+  detectedFiles: string[];
+  rawEvidence?: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface DebugRuntimeSessionDto {
+  id: string;
+  targetId: string;
+  status: DebugRuntimeSessionStatusDto;
+  failureStage?: string | null;
+  startedAt?: string | null;
+  stoppedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PortLeaseRecordDto {
+  id: string;
+  runtimeId: string;
+  serviceId: string;
+  port: number;
+  protocol: "tcp" | "udp";
+  status: "LEASED" | "RELEASING" | "RELEASED" | "STALE";
+  leasedAt: string;
+  expiresAt?: string | null;
+  releasedAt?: string | null;
+}
+
+export interface RuntimeBindingDto {
+  id: string;
+  runtimeId: string;
+  serviceId: string;
+  processInstanceId?: string | null;
+  expectedPort?: number | null;
+  leasedPort?: number | null;
+  observedPort?: number | null;
+  proxyPath?: string | null;
+  status: "ALLOCATED" | "LISTENING" | "FAILED" | "RELEASED";
+  updatedAt: string;
+}
+
+export interface AiFallbackEditRecordDto {
+  id: string;
+  runtimeId: string;
+  serviceId: string;
+  reason: string;
+  allowedFiles: string[];
+  targetPort: number;
+  patchRef?: string | null;
+  rollbackRef?: string | null;
+  status: "PENDING" | "APPLIED" | "ROLLED_BACK" | "REJECTED";
+  createdAt: string;
+}
+
+export interface TerminalInstanceDebugDto {
+  id: string;
+  workspaceId: string;
+  name: string;
+  cwd: string;
+  shell: string;
+  runtimeType: string;
+  runtimeSessionId: string;
+  attachTarget: string;
+  status: "creating" | "running" | "closed" | "error";
+  processId: number | null;
+  createdByUserId: string;
+  createdAt: string;
+  lastActiveAt: string;
+  closedAt: string | null;
+  exitCode: number | null;
+  statusDetail: string | null;
+  debugRuntimeSessionId?: string | null;
+  debugTargetId?: string | null;
+  debugServiceId?: string | null;
+  frameworkAnalysisId?: string | null;
+  launcherSourceType?: "manual" | "debug_service" | null;
+  launchStage?: string | null;
+  failureStage?: string | null;
+  adapterKind?: "cli" | "env" | "override" | "ai_fallback" | null;
+  envPatchSummary?: Record<string, unknown>;
+  artifactRef?: string | null;
+}
+
+export interface DebugRuntimeDetailServiceItemDto {
+  service: DebugServiceSpecDto;
+  analysis: FrameworkAnalysisResultDto | null;
+  binding: RuntimeBindingDto | null;
+  portLease: PortLeaseRecordDto | null;
+  processInstance: TerminalInstanceDebugDto | null;
+  aiFallbackEdits: AiFallbackEditRecordDto[];
+}
+
+export interface DebugRuntimeDetailDto {
+  runtimeSession: DebugRuntimeSessionDto;
+  target: DebugTargetProfileDto;
+  services: DebugRuntimeDetailServiceItemDto[];
+}
+
+export interface DebugTargetAnalysisEnvelopeDto {
+  target: DebugTargetProfileDto;
+  services: DebugServiceSpecDto[];
+  analyses: FrameworkAnalysisResultDto[];
+  autoInjectionEligible: boolean;
+}
+
+export interface FrameworkAnalysisListEnvelopeDto {
+  targetId: string;
+  items: FrameworkAnalysisResultDto[];
+}
+
+export interface FrameworkCompatibilityMatrixItemDto {
+  framework: string;
+  compatibilityLevel: FrameworkCompatibilityLevelDto;
+  recommendedInjectionMode: DebugInjectionModeDto;
+  requiresServiceDiscoveryHandling: boolean;
+  requiresHmrHandling: boolean;
+  requiresCallbackHandling: boolean;
+  aiFallbackPolicy: DebugAiFallbackPolicyDto;
+  notes: string;
+}
+
+export interface FrameworkCompatibilityMatrixDto {
+  version: string;
+  items: FrameworkCompatibilityMatrixItemDto[];
 }
 
 export interface ProviderModelOptionDto {
@@ -507,6 +689,7 @@ export interface SendSessionMessagePayload {
 export interface ForkSessionPayload {
   sourceType: ForkSourceType;
   sourceMessageId?: string | null;
+  sourceMessageSnapshot?: ForkSourceMessageSnapshotDto | null;
   strategy?: ForkStrategy;
   targetProvider?: ProviderId | null;
   sessionKind?: SessionKind;
@@ -643,6 +826,33 @@ export function removeWorkspace(workspaceId: string) {
   return httpClient.request<WorkspaceDto>(`/api/workspaces/${encodeURIComponent(workspaceId)}`, {
     method: "DELETE"
   });
+}
+
+export function analyzeDebugTarget(payload: {
+  workspaceId: string;
+  rootPath: string;
+  commandHints?: string[];
+}) {
+  return httpClient.request<DebugTargetAnalysisEnvelopeDto>("/api/debug-targets/analyze", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function getFrameworkAnalysis(targetId: string) {
+  return httpClient.request<FrameworkAnalysisListEnvelopeDto>(
+    `/api/debug-targets/${encodeURIComponent(targetId)}/framework-analysis`
+  );
+}
+
+export function getLatestDebugRuntime(targetId: string) {
+  return httpClient.request<DebugRuntimeDetailDto | null>(
+    `/api/debug-targets/${encodeURIComponent(targetId)}/runtime-latest`
+  );
+}
+
+export function getFrameworkCompatibilityMatrix() {
+  return httpClient.request<FrameworkCompatibilityMatrixDto>("/api/framework-compatibility-matrix");
 }
 
 export function reorderWorkspaces(payload: ReorderWorkspacesPayload) {

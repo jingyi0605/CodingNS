@@ -622,12 +622,16 @@ export class CodexAdapter implements ProviderAdapter {
       if (!targetMessage) {
         throw new Error("FORK_SOURCE_MESSAGE_NOT_FOUND");
       }
+      const targetSnapshot = applyForkSourceMessageSnapshot(
+        targetMessage,
+        options.sourceMessageSnapshot
+      );
 
       const threadReadResult = await transport.readThread(providerSessionId);
       const threadSnapshot = extractCodexThreadHistorySnapshot(threadReadResult);
 
       if (threadSnapshot.kind === "turns") {
-        const rollbackPlan = buildCodexTurnRollbackPlan(threadSnapshot, parsedMessages, targetMessage);
+        const rollbackPlan = buildCodexTurnRollbackPlan(threadSnapshot, parsedMessages, targetSnapshot);
         const forked = await transport.forkThread(providerSessionId);
         const finalized =
           rollbackPlan.numTurnsToRollback > 0
@@ -651,7 +655,7 @@ export class CodexAdapter implements ProviderAdapter {
       const truncatedHistory = truncateCodexThreadHistory(
         threadSnapshot.value,
         parsedMessages,
-        targetMessage
+        targetSnapshot
       );
 
       if (truncatedHistory.length === 0) {
@@ -2723,6 +2727,22 @@ function buildCodexThreadHistorySignature(value: unknown): string | null {
   }
 
   return null;
+}
+
+function applyForkSourceMessageSnapshot(
+  targetMessage: NormalizedMessage,
+  snapshot: ForkSessionOptions["sourceMessageSnapshot"]
+): NormalizedMessage {
+  if (!snapshot) {
+    return targetMessage;
+  }
+
+  return {
+    ...targetMessage,
+    role: snapshot.role,
+    kind: snapshot.kind,
+    content: snapshot.content
+  };
 }
 
 function stringifyCodexThreadMessageContent(content: unknown): string {

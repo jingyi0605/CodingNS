@@ -19,6 +19,7 @@ import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 import {
   forkSession,
+  type ForkSourceMessageSnapshotDto,
   getProviderCapabilities,
   sendLiveMessage,
   startLiveSession,
@@ -114,6 +115,7 @@ const FOCUS_COMPOSER_EVENT = "workbench:focus-composer";
 
 interface ForkComposerDraft {
   sourceMessageId: string;
+  sourceMessageSnapshot: ForkSourceMessageSnapshotDto;
   content: string;
   sourceProvider: ProviderId;
   workspaceId: string;
@@ -611,6 +613,7 @@ function LiveConversationPage({
       forkedSession = await forkSession(sessionId, {
         sourceType: "message",
         sourceMessageId: activeForkDraft.sourceMessageId,
+        sourceMessageSnapshot: activeForkDraft.sourceMessageSnapshot,
         strategy: "auto",
         targetProvider: activeForkDraft.targetProvider
       });
@@ -793,6 +796,11 @@ function LiveConversationPage({
 
                   setForkDraft({
                     sourceMessageId: message.id,
+                    sourceMessageSnapshot: {
+                      role: message.role,
+                      kind: message.kind,
+                      content: message.content
+                    },
                     content: message.content,
                     sourceProvider: session.provider,
                     workspaceId: session.workspaceId,

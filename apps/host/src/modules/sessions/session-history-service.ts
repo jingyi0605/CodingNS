@@ -7,6 +7,7 @@ import {
   type CodexForkTransport,
   type ContextUsageSnapshot,
   CodexAdapter,
+  type ForkSourceMessageSnapshot,
   type ForkSourceType,
   GeminiAdapter,
   KimiAdapter,
@@ -102,6 +103,7 @@ interface ForkSessionInput {
   userId: string;
   sourceType: ForkSourceType;
   sourceMessageId?: string | null;
+  sourceMessageSnapshot?: ForkSourceMessageSnapshot | null;
   strategy?: ForkStrategy;
   targetProvider?: string | null;
   sessionKind?: "default" | "annotation";
@@ -1029,6 +1031,7 @@ export class SessionHistoryService {
           rawStoreRef: binding.rawStoreRef,
           sourceType: input.sourceType,
           sourceMessageId,
+          sourceMessageSnapshot: input.sourceMessageSnapshot ?? null,
           strategy: input.strategy ?? "auto"
         }
       );
@@ -1135,7 +1138,8 @@ export class SessionHistoryService {
       input.sessionId,
       sourceBinding,
       input.sourceType,
-      sourceMessageId
+      sourceMessageId,
+      input.sourceMessageSnapshot ?? null
     );
     const reconstructedMessages = inheritedMessages.filter(
       (message) =>
@@ -1218,7 +1222,8 @@ export class SessionHistoryService {
     sessionId: string,
     binding: SessionBinding,
     sourceType: ForkSourceType,
-    sourceMessageId: string | null
+    sourceMessageId: string | null,
+    sourceMessageSnapshot: ForkSourceMessageSnapshot | null = null
   ): Promise<HistoryPage["messages"]> {
     const messages: HistoryPage["messages"] = [];
     let cursor: string | null = null;
@@ -1253,7 +1258,26 @@ export class SessionHistoryService {
       throw mapSessionProviderError(new Error("FORK_SOURCE_MESSAGE_NOT_FOUND"));
     }
 
-    return messages.slice(0, targetIndex + 1);
+    const inheritedMessages = messages.slice(0, targetIndex + 1);
+
+    if (!sourceMessageSnapshot) {
+      return inheritedMessages;
+    }
+
+    const targetMessage = inheritedMessages[targetIndex];
+
+    if (!targetMessage) {
+      return inheritedMessages;
+    }
+
+    inheritedMessages[targetIndex] = {
+      ...targetMessage,
+      role: sourceMessageSnapshot.role,
+      kind: sourceMessageSnapshot.kind,
+      content: sourceMessageSnapshot.content
+    };
+
+    return inheritedMessages;
   }
 
   private assertForkDepthWithinLimit(parentSessionId: string) {
@@ -2746,7 +2770,7 @@ export class SessionHistoryService {
       providerSessionId: string;
       rawStoreRef: string;
     }>
-  ): void {
+  ): Promise<void> {
     const discoveredProviderSessionIds = new Set(
       sessions.map((session) => buildProviderSessionKey(session.provider, session.providerSessionId))
     );

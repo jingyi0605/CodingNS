@@ -87,6 +87,11 @@ interface FavoriteSessionBody {
 interface ForkSessionBody {
   sourceType?: "session" | "message";
   sourceMessageId?: string | null;
+  sourceMessageSnapshot?: {
+    role?: "user" | "assistant" | "tool" | "system";
+    kind?: "text" | "thinking" | "tool_call" | "tool_result";
+    content?: string | null;
+  } | null;
   strategy?: "auto" | "native-only" | "reconstruct-only";
   targetProvider?: string | null;
   sessionKind?: "default" | "annotation";
@@ -411,6 +416,25 @@ export class SessionController {
         userId: requireUserId(request),
         sourceType,
         sourceMessageId: request.body.sourceMessageId?.trim() ?? null,
+        sourceMessageSnapshot:
+          request.body.sourceMessageSnapshot
+          && typeof request.body.sourceMessageSnapshot === "object"
+            ? {
+                role:
+                  request.body.sourceMessageSnapshot.role === "assistant"
+                  || request.body.sourceMessageSnapshot.role === "tool"
+                  || request.body.sourceMessageSnapshot.role === "system"
+                    ? request.body.sourceMessageSnapshot.role
+                    : "user",
+                kind:
+                  request.body.sourceMessageSnapshot.kind === "thinking"
+                  || request.body.sourceMessageSnapshot.kind === "tool_call"
+                  || request.body.sourceMessageSnapshot.kind === "tool_result"
+                    ? request.body.sourceMessageSnapshot.kind
+                    : "text",
+                content: request.body.sourceMessageSnapshot.content ?? ""
+              }
+            : null,
         strategy: request.body.strategy ?? "auto",
         targetProvider: request.body.targetProvider?.trim() || null,
         sessionKind: request.body.sessionKind === "annotation" ? "annotation" : "default",

@@ -342,7 +342,8 @@ export class ClaudeCodeAdapter implements ProviderAdapter {
       forkedRecords = forkedRecords.slice(0, target.recordIndex + 1);
       forkedRecords[target.recordIndex] = truncateClaudeForkRecord(
         forkedRecords[target.recordIndex],
-        target
+        target,
+        options.sourceMessageSnapshot ?? null
       );
       providerSourceMessageId = target.providerSourceMessageId;
       forkMethod = "native_message_fork";
@@ -960,7 +961,8 @@ function replaceClaudeSessionIdRecursive(value: unknown, sessionId: string): voi
 
 function truncateClaudeForkRecord(
   record: Record<string, unknown>,
-  target: ClaudeForkTargetLocation
+  target: ClaudeForkTargetLocation,
+  snapshot: ForkSessionOptions["sourceMessageSnapshot"] = null
 ): Record<string, unknown> {
   const nextRecord = cloneJsonRecord(record);
 
@@ -970,7 +972,8 @@ function truncateClaudeForkRecord(
 
     nestedEnvelope.message = truncateClaudeMessageContent(
       toClaudeRecord(nestedEnvelope.message),
-      target.partIndex
+      target.partIndex,
+      snapshot
     );
     progressData.message = nestedEnvelope;
     nextRecord.data = progressData;
@@ -979,19 +982,36 @@ function truncateClaudeForkRecord(
 
   nextRecord.message = truncateClaudeMessageContent(
     toClaudeRecord(nextRecord.message),
-    target.partIndex
+    target.partIndex,
+    snapshot
   );
   return nextRecord;
 }
 
 function truncateClaudeMessageContent(
   message: Record<string, unknown>,
-  partIndex: number
+  partIndex: number,
+  snapshot: ForkSessionOptions["sourceMessageSnapshot"] = null
 ): Record<string, unknown> {
   const content = message.content;
 
   if (Array.isArray(content)) {
-    message.content = content.slice(0, partIndex + 1);
+    const truncated = content.slice(0, partIndex + 1);
+    const targetPart = truncated[partIndex];
+
+    if (snapshot && targetPart && typeof targetPart === "object" && !Array.isArray(targetPart)) {
+      const nextPart = { ...(targetPart as Record<string, unknown>) };
+
+      if (snapshot.kind === "thinking") {
+        nextPart.thinking = snapshot.content;
+      } else {
+        nextPart.text = snapshot.content;
+      }
+
+      truncated[partIndex] = nextPart;
+    }
+
+    message.content = truncated;
   }
 
   return message;

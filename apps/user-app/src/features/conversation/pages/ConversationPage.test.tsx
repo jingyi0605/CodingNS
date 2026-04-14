@@ -92,9 +92,16 @@ vi.mock("../components/MessageTimeline", () => ({
     messages,
     onForkMessage
   }: {
-    messages?: Array<{ content: string }>;
+    messages?: Array<{
+      id: string;
+      role: "user" | "assistant" | "tool" | "system";
+      kind: "text" | "thinking" | "tool_call" | "tool_result";
+      content: string;
+    }>;
     onForkMessage?: (message: {
       id: string;
+      role: "user" | "assistant" | "tool" | "system";
+      kind: "text" | "thinking" | "tool_call" | "tool_result";
       content: string;
     }) => void;
   }) => (
@@ -105,8 +112,10 @@ vi.mock("../components/MessageTimeline", () => ({
         data-testid="timeline-fork"
         onClick={() => {
           onForkMessage?.({
-            id: "assistant-message-1",
-            content: "从这个历史点继续分叉"
+            id: messages?.[0]?.id ?? "assistant-message-1",
+            role: messages?.[0]?.role ?? "assistant",
+            kind: messages?.[0]?.kind ?? "text",
+            content: messages?.[0]?.content ?? "从这个历史点继续分叉"
           });
         }}
       >
@@ -727,6 +736,9 @@ describe("ConversationPage", () => {
   });
 
   it("历史消息 fork 会先进入引用态，发送时才真正创建子会话并把首条消息发到子会话", async () => {
+    mockLiveRuntimeState.messages = [
+      createHistoryViewMessage("assistant-message-1", "assistant", "从这个历史点继续分叉", 1)
+    ];
     mockForkSession.mockResolvedValue({
       sessionId: "session-child-1",
       workspaceId: "workspace-1",
@@ -833,6 +845,11 @@ describe("ConversationPage", () => {
       expect(mockForkSession).toHaveBeenCalledWith("session-live-1", {
         sourceType: "message",
         sourceMessageId: "assistant-message-1",
+        sourceMessageSnapshot: {
+          role: "assistant",
+          kind: "text",
+          content: "从这个历史点继续分叉"
+        },
         strategy: "auto",
         targetProvider: "codex"
       });
@@ -858,6 +875,130 @@ describe("ConversationPage", () => {
       expect(screen.getByTestId("route-probe")).toHaveTextContent(
         "/workspaces/workspace-1/sessions/session-child-1"
       );
+    });
+  });
+
+  it("运行中消息进入 fork 引用态后，即使原消息刷新，发送时仍使用点击当下的快照", async () => {
+    mockLiveRuntimeState.messages = [
+      createHistoryViewMessage("assistant-message-1", "assistant", "旧回答 X", 1)
+    ];
+    mockForkSession.mockResolvedValue({
+      sessionId: "session-child-2",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "provider-child-2",
+      rawStoreRef: "/tmp/session-child-2.jsonl",
+      parentSessionId: "session-live-1",
+      forkMethod: "native_message_fork",
+      forkSourceType: "message",
+      forkSourceSessionId: "session-live-1",
+      forkSourceMessageId: "assistant-message-1",
+      isSubagent: true,
+      subagentLabel: null,
+      isArchived: false,
+      isFavorite: false,
+      title: "父会话",
+      messageCount: 0,
+      lastMessageAt: "2026-04-11T11:06:00.000Z",
+      createdAt: "2026-04-11T11:06:00.000Z",
+      updatedAt: "2026-04-11T11:06:00.000Z",
+      syncStatus: "idle",
+      syncCursor: null,
+      lastSyncAt: null,
+      lastErrorCode: null,
+      lastErrorDetail: null,
+      resumedAt: null,
+      runningState: "idle",
+      activitySource: "none",
+      lastEventAt: "2026-04-11T11:06:00.000Z",
+      completedAt: null,
+      lastSeenAt: null,
+      activityState: "idle"
+    });
+    mockSendLiveMessage.mockResolvedValue({
+      sessionId: "session-child-2",
+      acceptedAt: "2026-04-11T11:06:05.000Z",
+      clientRequestId: "client-request-2",
+      message: {
+        messageId: "message-child-2",
+        provider: "codex",
+        providerSessionId: "provider-child-2",
+        role: "user",
+        content: "测试消息",
+        timestamp: "2026-04-11T11:06:05.000Z",
+        sequence: 1,
+        rawRef: "codex://session/provider-child-2/message/message-child-2"
+      }
+    });
+    mockUseWorkbenchShell.mockReturnValue({
+      shellMode: "desktop",
+      navigationGroups: [
+        {
+          workspace: {
+            id: "workspace-1",
+            name: "CodingNS",
+            path: "/Users/jackson/Code/CodingNS",
+            repoRoot: "/Users/jackson/Code/CodingNS"
+          },
+          sessions: [mockLiveRuntimeState.session]
+        }
+      ],
+      requestNavigationRefresh: vi.fn(),
+      selectWorkspace: vi.fn(),
+      setSessionWorkspace: vi.fn(),
+      upsertNavigationSession: vi.fn(),
+      markNavigationSessionSeen: vi.fn(),
+      favoriteSessions: [],
+      archiveSession: vi.fn(),
+      unarchiveSession: vi.fn(),
+      startDraftSession: vi.fn()
+    });
+
+    const view = render(
+      <MemoryRouter initialEntries={["/workspaces/workspace-1/sessions/session-live-1"]}>
+        <Routes>
+          <Route
+            path="/workspaces/:workspaceId/sessions/:sessionId"
+            element={<ConversationPage />}
+          />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByTestId("timeline-fork"));
+    expect(screen.getByTestId("composer-fork-draft")).toHaveTextContent("旧回答 X");
+
+    mockLiveRuntimeState.messages = [
+      createHistoryViewMessage("assistant-message-1", "assistant", "新回答 Y", 1)
+    ];
+
+    view.rerender(
+      <MemoryRouter initialEntries={["/workspaces/workspace-1/sessions/session-live-1"]}>
+        <Routes>
+          <Route
+            path="/workspaces/:workspaceId/sessions/:sessionId"
+            element={<ConversationPage />}
+          />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(screen.getByTestId("composer-fork-draft")).toHaveTextContent("旧回答 X");
+
+    fireEvent.click(screen.getByTestId("composer-send"));
+
+    await waitFor(() => {
+      expect(mockForkSession).toHaveBeenCalledWith("session-live-1", {
+        sourceType: "message",
+        sourceMessageId: "assistant-message-1",
+        sourceMessageSnapshot: {
+          role: "assistant",
+          kind: "text",
+          content: "旧回答 X"
+        },
+        strategy: "auto",
+        targetProvider: "codex"
+      });
     });
   });
 

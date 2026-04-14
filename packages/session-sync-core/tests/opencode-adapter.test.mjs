@@ -858,6 +858,47 @@ test("OpenCodeAdapter 消息级 fork 会精确截断到指定 part 锚点", asyn
   }
 });
 
+test("OpenCodeAdapter 会优先使用 fork 点击当下的消息快照，而不是 part 后续刷新的内容", async () => {
+  const fixture = createOpenCodeFixture();
+
+  try {
+    const adapter = new OpenCodeAdapter({ dbPath: fixture.dbPath });
+    const sourcePage = await adapter.readSessionHistory(
+      "ses_demo",
+      "opencode://session/ses_demo",
+      null,
+      20,
+      "forward"
+    );
+    const anchorMessage = sourcePage.messages[1];
+
+    assert.ok(anchorMessage);
+
+    const result = await adapter.forkSession("ses_demo", "/workspace/demo", {
+      rawStoreRef: "opencode://session/ses_demo",
+      sourceType: "message",
+      sourceMessageId: anchorMessage.messageId,
+      sourceMessageSnapshot: {
+        role: "assistant",
+        kind: "thinking",
+        content: "先分析"
+      }
+    });
+    const page = await adapter.readSessionHistory(
+      result.session.providerSessionId,
+      result.session.rawStoreRef,
+      null,
+      20,
+      "forward"
+    );
+
+    assert.equal(result.forkMethod, "native_message_fork");
+    assert.equal(page.messages[1]?.content, "先分析");
+  } finally {
+    fixture.dispose();
+  }
+});
+
 function jsonResponse(payload, status = 200, headers = {}) {
   return new Response(JSON.stringify(payload), {
     status,
