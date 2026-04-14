@@ -4,17 +4,52 @@ import path from "node:path";
 const SCRIPT_EXTENSIONS = new Set([".js", ".cjs", ".mjs"]);
 
 export function isCommandAvailable(commandPath: string | null | undefined): boolean {
+  return resolveAvailableCommandPath(commandPath) !== null;
+}
+
+export function resolveAvailableCommandPath(
+  commandPath: string | null | undefined,
+  fallbackCandidates: readonly string[] = []
+): string | null {
   const normalizedCommandPath = stripWrappingQuotes(commandPath ?? "");
 
   if (!normalizedCommandPath) {
-    return false;
+    return null;
   }
 
   if (isPathLikeCommand(normalizedCommandPath)) {
-    return canExecuteResolvedPath(normalizedCommandPath);
+    return canExecuteResolvedPath(normalizedCommandPath) ? normalizedCommandPath : null;
   }
 
-  return resolveExecutableOnPath(normalizedCommandPath) !== null;
+  const resolvedFromPath = resolveExecutableOnPath(normalizedCommandPath);
+
+  if (resolvedFromPath) {
+    return resolvedFromPath;
+  }
+
+  for (const candidate of fallbackCandidates) {
+    const normalizedCandidate = stripWrappingQuotes(candidate);
+
+    if (!normalizedCandidate) {
+      continue;
+    }
+
+    if (isPathLikeCommand(normalizedCandidate)) {
+      if (canExecuteResolvedPath(normalizedCandidate)) {
+        return normalizedCandidate;
+      }
+
+      continue;
+    }
+
+    const resolvedCandidate = resolveExecutableOnPath(normalizedCandidate);
+
+    if (resolvedCandidate) {
+      return resolvedCandidate;
+    }
+  }
+
+  return null;
 }
 
 function isPathLikeCommand(commandPath: string): boolean {

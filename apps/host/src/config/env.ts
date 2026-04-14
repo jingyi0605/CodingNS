@@ -11,6 +11,7 @@ export interface HostConfig {
   host: string;
   port: number;
   webUiDir: string | null;
+  webUiPort: number;
   databasePath: string;
   filePreviewTokenSecret: string;
   gitCredentialSecret: string;
@@ -32,6 +33,7 @@ export interface HostConfig {
   terminalIdleTimeoutSeconds: number;
   claudeCodeHomeDir: string;
   codexHomeDir: string;
+  tailscaleCliPath: string;
   codexCliPath: string;
   claudeHookBridgeToken: string;
   serverUpdatePackageName: string;
@@ -42,6 +44,12 @@ export interface HostConfig {
 export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConfig {
   const homeDir = os.homedir();
   const appRootDir = resolveAppRootDir();
+  const hostPort = overrides.port ?? Number(process.env.CODINGNS_PORT ?? "3002");
+  const webUiDir =
+    overrides.webUiDir ??
+    resolveExistingDir(
+      normalizeOptionalText(process.env.CODINGNS_WEB_UI_DIR) ?? path.join(appRootDir, "public")
+    );
   const opencodeDataDir =
     overrides.opencodeDataDir ??
     process.env.CODINGNS_OPENCODE_DATA_DIR ??
@@ -89,12 +97,13 @@ export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConf
 
   return {
     host: overrides.host ?? process.env.CODINGNS_HOST ?? "0.0.0.0",
-    port: overrides.port ?? Number(process.env.CODINGNS_PORT ?? "3002"),
-    webUiDir:
-      overrides.webUiDir ??
-      resolveExistingDir(
-        normalizeOptionalText(process.env.CODINGNS_WEB_UI_DIR) ?? path.join(appRootDir, "public")
-      ),
+    port: hostPort,
+    webUiDir,
+    webUiPort: resolveWebUiPort({
+      configuredPort: overrides.webUiPort ?? readOptionalNumber(process.env.CODINGNS_WEB_UI_PORT),
+      hostPort,
+      hasEmbeddedWebUi: Boolean(webUiDir)
+    }),
     databasePath,
     filePreviewTokenSecret:
       overrides.filePreviewTokenSecret ??
@@ -145,6 +154,10 @@ export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConf
       overrides.codexHomeDir ??
       process.env.CODINGNS_CODEX_HOME ??
       path.join(homeDir, ".codex"),
+    tailscaleCliPath:
+      overrides.tailscaleCliPath ??
+      process.env.CODINGNS_TAILSCALE_COMMAND ??
+      "tailscale",
     codexCliPath,
     claudeHookBridgeToken:
       overrides.claudeHookBridgeToken ??
@@ -161,6 +174,24 @@ export function resolveHostConfig(overrides: Partial<HostConfig> = {}): HostConf
     demoMode:
       overrides.demoMode ?? process.env.DEMO_MODE === "true"
   };
+}
+
+function resolveWebUiPort(input: {
+  configuredPort: number | null;
+  hostPort: number;
+  hasEmbeddedWebUi: boolean;
+}): number {
+  if (input.hasEmbeddedWebUi) {
+    // npm 包安装模式由 Host 自己托管前端，外部访问入口必须跟 `codingns start --port` 保持一致。
+    return input.hostPort;
+  }
+
+  if (input.configuredPort && Number.isFinite(input.configuredPort) && input.configuredPort > 0) {
+    return input.configuredPort;
+  }
+
+  // 开发态 Host 不直接托管页面时，默认回到 user-app 的 Vite 入口端口。
+  return 4174;
 }
 
 function resolveAppRootDir(): string {
@@ -375,6 +406,17 @@ function resolvePersistentSecret(secretPath: string): string {
   } catch {
     return crypto.randomBytes(24).toString("hex");
   }
+}
+
+function readOptionalNumber(value: string | undefined): number | null {
+  const normalized = normalizeOptionalText(value);
+
+  if (!normalized) {
+    return null;
+  }
+
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function resolveKimiDefaultModelFromConfig(configPath: string): string | null {

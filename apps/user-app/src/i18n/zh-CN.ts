@@ -134,6 +134,8 @@ export const zhCN = {
     tailscaleTailnetIpv6: "Tailnet IPv6",
     tailscaleDetailAddresses: "详细地址",
     tailscaleRefresh: "刷新状态",
+    tailscaleInstallAction: "安装 Tailscale",
+    tailscaleInstallOpenFailed: "打开 Tailscale 安装页面失败。",
     tailscaleEnable: "启用 Tailscale",
     tailscaleDisable: "停用 Tailscale",
     tailscaleLogin: "开始绑定",

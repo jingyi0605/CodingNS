@@ -73,6 +73,7 @@ async function runStartCommand(argv) {
     host,
     port,
     webUiDir: path.join(distRoot, "public"),
+    webUiPort: port,
     databasePath: path.join(dataDir, "host.sqlite"),
     releaseManifestRoot: path.join(dataDir, "releases"),
     serverUpdatePackageName: "@jingyi0605/codingns",

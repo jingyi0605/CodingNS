@@ -138,6 +138,8 @@ export const enUS = {
     tailscaleTailnetIpv6: "Tailnet IPv6",
     tailscaleDetailAddresses: "Detailed Addresses",
     tailscaleRefresh: "Refresh",
+    tailscaleInstallAction: "Install Tailscale",
+    tailscaleInstallOpenFailed: "Failed to open the Tailscale install page.",
     tailscaleEnable: "Enable Tailscale",
     tailscaleDisable: "Disable Tailscale",
     tailscaleLogin: "Bind Account",

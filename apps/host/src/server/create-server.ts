@@ -343,7 +343,7 @@ export function createServer(config: HostConfig) {
     tailscaleHelperClient,
     {
       commandPath: config.tailscaleCliPath,
-      servicePort: config.port
+      webUiPort: config.webUiPort
     }
   );
   const tailscaleService = new TailscaleService(

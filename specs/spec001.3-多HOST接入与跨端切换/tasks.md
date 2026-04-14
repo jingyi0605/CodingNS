@@ -75,8 +75,8 @@
 
 ## 阶段 1：先把配置真相和迁移规则立住
 
-- [ ] 1.1 把单 `hostBaseUrl` 升级成多 HOST Profile 配置
-  - 状态：TODO
+- [x] 1.1 把单 `hostBaseUrl` 升级成多 HOST Profile 配置
+  - 状态：DONE
   - 这一步到底做什么：把前端运行时配置和桌面壳配置从单 host 字符串升级为 `hosts[] + activeHostId`
   - 做完以后能看到什么结果：前端终于有正式的多 HOST 真相，而不是一堆地址历史
   - 依赖什么：0.2
@@ -91,9 +91,15 @@
   - 怎么验证：
     - 单元测试
     - 旧配置迁移测试
+  - 验证结果：
+    - 已完成 `ClientRuntimeConfig`、`client-config-service`、`client-config-store`、`server-config`、`env` 和双 Tauri 配置桥改造
+    - 已确认兼容层仍然通过“当前激活 HOST 视图”给登录页和设置页提供单地址编辑能力
+    - 已通过 `pnpm --dir apps/user-app exec tsc --noEmit -p tsconfig.json`
+    - 已通过 `pnpm --dir apps/user-app exec vitest run src/config/client-config-service.test.ts src/config/server-config.test.ts`
+    - 已通过 `cargo test --manifest-path apps/user-app/src-tauri/Cargo.toml config::tests`
 
 - [ ] 1.2 定义旧配置迁移和默认 HOST 生成规则
-  - 状态：TODO
+  - 状态：DONE
   - 这一步到底做什么：兼容旧 `hostBaseUrl`、旧登录态、旧 remember password，统一迁移成默认 HOST
   - 做完以后能看到什么结果：老用户升级后不会凭空丢配置
   - 依赖什么：1.1
@@ -105,13 +111,18 @@
   - 怎么验证：
     - 迁移测试
     - 回归测试
+  - 验证结果：
+    - 已完成旧 `client-runtime-config.hostBaseUrl -> hosts[] + activeHostId`
+    - 已完成旧 `codingns.auth.session` -> HOST 级会话映射迁移
+    - 已完成旧 `codingns.auth.remembered-login` -> HOST 级凭据映射迁移
+    - 已通过迁移测试和登录页回归测试
 
 ---
 
 ## 阶段 2：把 HOST 级认证数据隔离开
 
-- [ ] 2.1 按 HOST 保存和读取登录态
-  - 状态：TODO
+- [x] 2.1 按 HOST 保存和读取登录态
+  - 状态：DONE
   - 这一步到底做什么：把 `authStore` 从单会话改成按 HOST 保存，当前使用会话取决于 `activeHostId`
   - 做完以后能看到什么结果：两个 HOST 的 token 不会互相覆盖
   - 依赖什么：1.2
@@ -123,9 +134,14 @@
   - 怎么验证：
     - 多 HOST 登录/退出测试
     - refresh 流程测试
+  - 验证结果：
+    - 已把 `authStore` 升级为 HOST 级 `sessionMap`
+    - `activeHostId` 变化时会自动切换当前认证上下文
+    - `logout`/`401`/`BOOTSTRAP_REQUIRED` 只清当前 HOST，会保留其他 HOST 会话
+    - 已通过 `auth-store.test.ts`、`http-client.test.ts`、`workbench-realtime-client.test.ts`、`terminal-realtime-client.test.ts`
 
-- [ ] 2.2 按 HOST 保存和读取 remember password
-  - 状态：TODO
+- [x] 2.2 按 HOST 保存和读取 remember password
+  - 状态：DONE
   - 这一步到底做什么：把 remember password 从单条记录改成按 HOST 保存
   - 做完以后能看到什么结果：登录页能根据当前 HOST 回填对应账号密码
   - 依赖什么：2.1
@@ -137,13 +153,18 @@
   - 怎么验证：
     - remember password 测试
     - 登录页回填测试
+  - 验证结果：
+    - 已把 remember password 升级为 HOST 级凭据映射
+    - 登录页会按当前 HOST 读取和保存凭据
+    - 旧单条 remember password 会迁移到当前 HOST，并保留一次性旧地址兼容信息
+    - 已通过 `remembered-login.test.ts`、`LoginPage.test.tsx`
 
 ---
 
 ## 阶段 3：把 HOST 切换事务做干净
 
-- [ ] 3.1 实现统一的 `switchHost(hostId)` 协调器
-  - 状态：TODO
+- [x] 3.1 实现统一的 `switchHost(hostId)` 协调器
+  - 状态：DONE
   - 这一步到底做什么：建立 HOST 切换事务，统一处理探活、切换配置、认证上下文切换和运行时重建
   - 做完以后能看到什么结果：切 HOST 不再是“改个字符串赌命”
   - 依赖什么：2.2
@@ -156,9 +177,13 @@
   - 怎么验证：
     - HOST 切换集成测试
     - HTTP / WebSocket 地址切换测试
+  - 验证结果：
+    - 已新增 `host-switch-coordinator`，统一执行目标 HOST 校验、探活和 `activeHostId` 切换
+    - 探活失败时会保持原 HOST 不变
+    - 已通过 `host-switch-coordinator.test.ts`，确认切换后 `getHostBaseUrl()` / `getHostWebSocketUrl()` 一起切到目标 HOST
 
-- [ ] 3.2 建立运行时边界重建机制
-  - 状态：TODO
+- [x] 3.2 建立运行时边界重建机制
+  - 状态：DONE
   - 这一步到底做什么：让 HOST 切换后工作台、会话、终端、Butler 等运行时整体重建
   - 做完以后能看到什么结果：不会出现旧 HOST socket 和新 HOST 请求混用
   - 依赖什么：3.1
@@ -170,13 +195,17 @@
   - 怎么验证：
     - 工作台回归测试
     - 终端/会话切换测试
+  - 验证结果：
+    - 已新增 `host-runtime-store`，在 `activeHostId` 变化时自动 bump runtime key
+    - 已把认证后路由树挂到 runtime boundary key 下，HOST 切换时整棵已登录运行时子树会重建
+    - 已通过 `host-runtime-store.test.tsx`，确认 HOST 变化时边界 key 会递增更新
 
 ---
 
 ## 阶段 4：接桌面端入口
 
-- [ ] 4.1 桌面端顶部 HOST 快速切换器落位
-  - 状态：TODO
+- [x] 4.1 桌面端顶部 HOST 快速切换器落位
+  - 状态：DONE
   - 这一步到底做什么：在桌面端标题栏区接入 HOST 快速切换器，位置固定为收起按钮和通知按钮之间
   - 做完以后能看到什么结果：桌面端主界面可以直接切 HOST
   - 依赖什么：3.2
@@ -188,9 +217,13 @@
   - 怎么验证：
     - 组件测试
     - 桌面端手动验收
+  - 验证结果：
+    - 已新增桌面端 `WorkbenchHostSwitcher`，并接到左侧标题栏和收起态 rail
+    - 已确认入口顺序固定为“收起按钮 -> HOST 切换器 -> 通知按钮”
+    - 已通过 `pnpm --dir apps/user-app exec vitest run src/features/conversation/components/WorkbenchLayout.test.tsx -t "HOST 切换器"`
 
-- [ ] 4.2 桌面端 HOST 管理弹层和新增入口
-  - 状态：TODO
+- [x] 4.2 桌面端 HOST 管理弹层和新增入口
+  - 状态：DONE
   - 这一步到底做什么：补齐切换器下拉内容，包括 HOST 列表、当前激活态和新增 HOST 入口
   - 做完以后能看到什么结果：用户不必手输地址才能维护多个 HOST
   - 依赖什么：4.1
@@ -202,13 +235,17 @@
   - 怎么验证：
     - 组件测试
     - 手动验收
+  - 验证结果：
+    - 已在桌面端切换器弹层里补齐 HOST 列表、当前激活态和新增 HOST 表单
+    - 已在登录和切 HOST 时同步更新 `lastConnectedAt` / `lastUsername`，让列表状态可用
+    - 已通过 `pnpm --dir apps/user-app exec vitest run src/features/workbench/components/WorkbenchHostSwitcher.test.tsx`
 
 ---
 
 ## 阶段 5：接移动端入口
 
-- [ ] 5.1 移动端顶部工作区切换器改成 HOST 树
-  - 状态：TODO
+- [x] 5.1 移动端顶部工作区切换器改成 HOST 树
+  - 状态：DONE
   - 这一步到底做什么：把顶部工作区切换器升级成 `HOST -> 工作区` 树状结构
   - 做完以后能看到什么结果：用户在一个入口里就能看到 HOST 和工作区
   - 依赖什么：3.2
@@ -220,9 +257,13 @@
   - 怎么验证：
     - 组件测试
     - 移动端手动验收
+  - 验证结果：
+    - 已把 `MobileWorkspaceSwitcherHeader` 升级成 `HOST -> 工作区` 树，当前 HOST 走实时导航，其余 HOST 走按 HOST 隔离的导航快照
+    - 已支持“无工作区 HOST”时继续显示 HOST 标题和地址，不会把头部入口直接消掉
+    - 已通过 `pnpm --dir apps/user-app exec vitest run src/features/mobile-shell/components/MobileWorkspaceSwitcherHeader.test.tsx`
 
-- [ ] 5.2 接通 HOST 切换与工作区跳转联动
-  - 状态：TODO
+- [x] 5.2 接通 HOST 切换与工作区跳转联动
+  - 状态：DONE
   - 这一步到底做什么：点击 HOST 节点时切 HOST，点击工作区节点时先切 HOST 再跳工作区
   - 做完以后能看到什么结果：移动端树状入口是真能用，不是摆设
   - 依赖什么：5.1
@@ -234,6 +275,10 @@
   - 怎么验证：
     - 跳转测试
     - 手动验收
+  - 验证结果：
+    - 点击 HOST 节点时会执行 `switchHost(hostId)` 并回到工作区首页
+    - 点击工作区节点时会先切 HOST，再回调现有工作区选择逻辑，不在页面里堆额外分支
+    - 已通过 `pnpm --dir apps/user-app exec vitest run src/features/mobile-shell/components/MobileWorkspaceSwitcherHeader.test.tsx`
 
 ---
 

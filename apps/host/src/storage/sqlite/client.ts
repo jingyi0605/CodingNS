@@ -39,6 +39,7 @@ export function createDatabaseClient(databasePath: string): DatabaseClient {
   ensurePortLeaseSchema(db);
   ensureRuntimeBindingSchema(db);
   ensureAiFallbackEditSchema(db);
+  ensureInstanceTailscaleStatusSchema(db);
   ensureTerminalCommandTemplateDebugSchema(db);
   ensureTerminalInstanceDebugSchema(db);
   ensureButlerProfileSchema(db);
@@ -167,6 +168,18 @@ function ensureButlerSessionSummarySchema(db: Database.Database): void {
   }
 
   db.exec("ALTER TABLE butler_session_summary_states ADD COLUMN last_summarized_sequence INTEGER");
+}
+
+function ensureInstanceTailscaleStatusSchema(db: Database.Database): void {
+  const columns = db
+    .prepare("PRAGMA table_info(instance_tailscale_status)")
+    .all() as Array<{ name: string }>;
+
+  if (columns.length === 0 || columns.some((column) => column.name === "account_name")) {
+    return;
+  }
+
+  db.exec("ALTER TABLE instance_tailscale_status ADD COLUMN account_name TEXT");
 }
 
 function ensureSessionProviderSchema(db: Database.Database): void {
