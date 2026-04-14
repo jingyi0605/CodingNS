@@ -798,7 +798,7 @@ function LiveConversationPage({
                     sourceMessageId: message.id,
                     sourceMessageSnapshot: {
                       role: message.role,
-                      kind: message.kind,
+                      kind: message.kind ?? (message.role === "tool" ? "tool_result" : "text"),
                       content: message.content
                     },
                     content: message.content,

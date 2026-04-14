@@ -448,6 +448,8 @@ export function FileContextPanel({
       return;
     }
 
+    const activeWebContextMenu = webContextMenu;
+
     function updateWebContextMenuLayout() {
       const menuElement = webContextMenuRef.current;
 
@@ -459,8 +461,8 @@ export function FileContextPanel({
       setWebContextMenuLayout(
         resolveWebContextMenuLayout(
           {
-            x: webContextMenu.positionX,
-            y: webContextMenu.positionY
+            x: activeWebContextMenu.positionX,
+            y: activeWebContextMenu.positionY
           },
           {
             width: menuRect.width || WEB_CONTEXT_MENU_DEFAULT_WIDTH_PX,

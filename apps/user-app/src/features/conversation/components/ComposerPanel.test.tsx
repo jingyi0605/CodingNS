@@ -250,6 +250,11 @@ function createForkDraft(options?: {
 }) {
   return {
     sourceMessageId: "assistant-message-1",
+    sourceMessageSnapshot: {
+      role: "assistant" as const,
+      kind: "text" as const,
+      content: "从这个历史点继续分叉"
+    },
     content: "从这个历史点继续分叉",
     sourceProvider: options?.sourceProvider ?? ("codex" as const),
     workspaceId: "workspace-1",

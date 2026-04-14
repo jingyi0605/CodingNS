@@ -9066,10 +9066,12 @@ export function WorkbenchLayout({
           <button
             type="button"
             className={
-              cleanupDeleteBranch
-              && Boolean(worktreeCleanupTarget)
-              && worktreeMergeStateById[worktreeCleanupTarget.workspaceId]?.preview?.alreadyMerged === true
-                ? "secondary-button workbench-danger-button"
+              cleanupDeleteBranch && worktreeCleanupTarget
+                ? (
+                    worktreeMergeStateById[worktreeCleanupTarget.workspaceId]?.preview?.alreadyMerged === true
+                      ? "secondary-button workbench-danger-button"
+                      : "primary-button"
+                  )
                 : "primary-button"
             }
             disabled={!worktreeCleanupTarget || Boolean(worktreeCleanupTarget && worktreeMergeStateById[worktreeCleanupTarget.workspaceId]?.cleaning)}
@@ -9083,7 +9085,7 @@ export function WorkbenchLayout({
           >
             {worktreeCleanupTarget && worktreeMergeStateById[worktreeCleanupTarget.workspaceId]?.cleaning
               ? t("shell.worktreeCleanupRunning")
-              : cleanupDeleteBranch
+              : cleanupDeleteBranch && worktreeCleanupTarget
                 && worktreeMergeStateById[worktreeCleanupTarget.workspaceId]?.preview?.alreadyMerged === true
                   ? t("shell.worktreeCleanupDeleteBranchAction")
                   : t("shell.worktreeCleanupAction")}

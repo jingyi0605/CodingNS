@@ -30,6 +30,11 @@ type WriterRequest =
       id: string;
     };
 
+type WriterRequestInput =
+  | Omit<Extract<WriterRequest, { type: "persist" }>, "id">
+  | Omit<Extract<WriterRequest, { type: "delete" }>, "id">
+  | Omit<Extract<WriterRequest, { type: "shutdown" }>, "id">;
+
 type WriterResponse =
   | {
       type: "result";
@@ -111,7 +116,7 @@ export class TerminalLogWriterClient {
   }
 
   private async sendRequest(
-    input: Omit<Extract<WriterRequest, { id: string }>, "id">
+    input: WriterRequestInput
   ): Promise<void> {
     if (this.closed) {
       throw new Error("terminal log writer 已关闭");

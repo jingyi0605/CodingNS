@@ -23,6 +23,7 @@ import {
 } from "../capability/provider-ui";
 import type {
   ContextUsageDto,
+  ForkSourceMessageSnapshotDto,
   ImageAttachmentPayload,
   MessageAttachmentDto,
   ProviderCapabilitiesDto,
@@ -54,6 +55,7 @@ interface ComposerPanelProps {
   draftStorageId?: string;
   forkDraft?: {
     sourceMessageId: string;
+    sourceMessageSnapshot: ForkSourceMessageSnapshotDto;
     content: string;
     sourceProvider: ProviderId;
     workspaceId: string;
@@ -64,6 +66,7 @@ interface ComposerPanelProps {
   onForkDraftChange?: (
     forkDraft: {
       sourceMessageId: string;
+      sourceMessageSnapshot: ForkSourceMessageSnapshotDto;
       content: string;
       sourceProvider: ProviderId;
       workspaceId: string;
