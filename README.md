@@ -30,11 +30,11 @@ Consistent experience across H5, Windows, and macOS.
 
 ![alt text](img/image.png)
 
-The iOS app is now live on the App Store, and the Android app is already supported. The remaining planned capabilities are under active development.
+The iOS app is now live on the App Store, and the Android app is already supported. Version `0.3.0` adds multi-host switching, richer file preview/editing, Git version drill-down, settings-based Skill management, and built-in instance-level Tailscale management.
 
 ### ✨ Core Features
 
-> Current status: the iOS app has been released on the App Store, the Android app is already supported, completed features below remain unchanged, and the remaining planned capabilities are now in active development.
+> Current status: the iOS app has been released on the App Store, the Android app is already supported, and version `0.3.0` adds multi-host switching, richer file preview/editing, Git version drill-down, settings-based Skill management, and built-in instance-level Tailscale management.
 
 #### 🔄 Multi-Provider Session Sync
 - **Seamless CLI Session Continuation**: Support for Claude Code, Codex, OpenCode and other mainstream AI programming tools
@@ -66,11 +66,13 @@ The iOS app is now live on the App Store, and the Android app is already support
 - **File Search**: Quickly locate files in your project
 - **Change-focused Views**: Git status badges, change filters, and diff preview
 - **Path Linking & Cleaner Trees**: Jump from chat paths to files and hide system files by default when needed
-- **HTML Preview**: Support for HTML file preview, refresh, and fullscreen
+- **Richer Preview & Editing**: Support text editing plus HTML/PDF preview, refresh, and fullscreen
 
 #### 🔀 Git Integration
 - **Git Status Display**: Real-time view of file change status
 - **Commit Workflow Integration**: Complete code commits directly within sessions
+- **Version Drill-down**: View recent versions, full history, commit details, and explain changes inside the app
+- **Quick Metadata Copy**: Copy commit hash, version labels, and other release-facing details in one click
 - **Multi-remote Push**: Push to multiple remotes in one action
 - **Rule Validation**: Support for custom commit rules
 
@@ -86,6 +88,16 @@ The iOS app is now live on the App Store, and the Android app is already support
 - **Account-level Settings Sync**: Language, theme, and default permission mode follow your account across clients
 - **Provider Defaults Sync**: Keep default model and reasoning level in sync
 - **Local Preference Layering**: Device-specific UI preferences stay local instead of being forced onto every client
+
+#### 🌐 Multi-Host & Remote Access
+- **Multi-Host Switching**: Switch between multiple hosts on desktop and mobile without losing runtime context
+- **Remote Entry Unification**: Keep login, workspace, and runtime entry behavior consistent after host switching
+- **Built-in Tailscale Management**: Manage instance-level Tailscale status, install guidance, and remote access entry from settings
+
+#### 🧩 Skill Management
+- **Settings-based Skill Management**: Add, scan, import, and inspect Skills directly from the settings page
+- **Unified Skill Sync**: Reuse the same Skill reconciliation flow for Butler and other execution targets
+- **Target Binding Awareness**: Track which Skill is available to which runtime target, avoiding duplicate or stale bindings
 
 #### 🎨 Minimalist Interface Design
 - **Engineer-Centric Aesthetics**: Balance between functionality and beauty
@@ -322,9 +334,11 @@ Detailed feature specifications and design documents are located in the [`specs/
 | Multi-window support on desktop | Completed | 🟢 Completed |
 | Parallel dev mode — launch multiple CLI or model configs simultaneously for rapid dev validation on a single workspace | In development | 🟡 In Progress |
 | Support more CLIs (Gemini CLI, Kimi CLI, etc.) | Completed  | 🟢 Completed  |
-| Support connecting to multiple hosts simultaneously | In development | 🟡 In Progress |
-| Better file editor experience | In development | 🟡 In Progress |
-| Built-in Tailscale for one-click NAT traversal | In development | 🟡 In Progress |
+| Support connecting to multiple hosts simultaneously | Completed | 🟢 Completed |
+| Richer file preview and editor workflow | Completed | 🟢 Completed |
+| Git commit drill-down, change explanation, and full history | Completed | 🟢 Completed |
+| Settings-based Skill management and Butler Skill sync | Completed | 🟢 Completed |
+| Built-in Tailscale for one-click NAT traversal | Completed | 🟢 Completed |
 | Code Butler — manage multiple projects and sessions across workspaces, provide dev suggestions and act on behalf of the user | Completed  | 🟢 Completed  |
 | Code Butler with real-time voice conversation | In development | 🟡 In Progress |
 
@@ -352,11 +366,11 @@ CodingNS 致力于提供一整套闭环的 AI 编程工作流程，让你能够�
 
 ![alt text](img/image.png)
 
-iOS App 已经上架，Android App 也已支持，其余原先计划中的能力仍在持续开发中。
+iOS App 已经上架，Android App 也已支持。`0.3.0` 版本新增了多 Host 切换、更完整的文件预览与编辑、Git 版本详情查看、设置页 Skill 管理，以及实例级 Tailscale 管理。
 
 ### ✨ 核心特性
 
-> 当前状态：iOS App 已完成并已上架 App Store，Android App 也已支持。下方已经标注为“已完成”的能力保持不变，原先“计划中”的能力现已进入开发中状态。
+> 当前状态：iOS App 已完成并已上架 App Store，Android App 也已支持。`0.3.0` 版本新增了多 Host 切换、更完整的文件预览与编辑、Git 版本详情查看、设置页 Skill 管理，以及实例级 Tailscale 管理。
 
 #### 🔄 多 Provider 会话同步
 - **无缝续接原生 CLI 会话**：支持 Claude Code、Codex、OpenCode 等主流 AI 编程工具
@@ -388,11 +402,13 @@ iOS App 已经上架，Android App 也已支持，其余原先计划中的能力
 - **文件搜索**：快速定位项目中的文件
 - **变更视图增强**：支持 Git 状态标记、变更筛选与 Diff 预览
 - **路径联动与清爽视图**：支持从聊天内容定位文件，并可默认隐藏系统文件
-- **HTML 预览**：支持 HTML 文件预览、刷新与全屏
+- **更完整的预览与编辑**：支持文本文件编辑，以及 HTML / PDF 预览、刷新与全屏
 
 #### 🔀 Git 集成
 - **Git 状态展示**：实时查看文件变更状态
 - **提交流程集成**：在会话中直接完成代码提交
+- **版本详情下钻**：在应用内查看最近版本、全量历史、提交详情，并支持解释改动
+- **关键信息一键复制**：支持快速复制 commit hash、版本标识等适合发布使用的信息
 - **多远程推送**：支持一次推送多个远程仓库
 - **规则校验**：支持自定义提交规则
 
@@ -408,6 +424,16 @@ iOS App 已经上架，Android App 也已支持，其余原先计划中的能力
 - **账户级配置同步**：语言、主题、默认权限模式可在多客户端之间同步
 - **Provider 默认项同步**：支持同步默认模型与默认推理强度
 - **本地偏好分层**：界面类偏好保留本地，避免把设备相关设置硬同步到所有端
+
+#### 🌐 多 Host 与远程访问
+- **多 Host 切换**：桌面端和移动端都支持在多个 Host 之间切换，并保留运行时上下文
+- **远程入口统一**：切换 Host 后，登录、工作区和运行时入口行为保持一致
+- **内置 Tailscale 管理**：在设置页直接查看实例级 Tailscale 状态、安装引导和远程访问入口
+
+#### 🧩 Skill 管理
+- **设置页直接管理 Skill**：支持扫描、导入、添加和查看 Skill
+- **统一 Skill 同步链路**：Butler 与其他执行目标复用同一套 Skill 对齐逻辑
+- **目标绑定可见**：明确每个 Skill 绑定到哪个目标，减少重复绑定和脏状态
 
 #### 🎨 极简界面设计
 - **软件工程师审美**：专注于功能性与美感的平衡
@@ -644,9 +670,11 @@ pnpm test:user-app
 | PC 端支持多窗口操作 | 已完成 | 🟢 已完成 |
 | 并行开发模式，同时启动多个 CLI 或模型配置，并行针对单一工作区进行快速开发验证 | 开发中 | 🟡 开发中 |
 | 支持更多 CLI（Gemini CLI、Kimi CLI 等） | 已完成 | 🟢 已完成 |
-| 支持同时连接多个 HOST | 开发中 | 🟡 开发中 |
-| 更好的文件编辑器体验 | 开发中 | 🟡 开发中 |
-| 内置 Tailscale 支持一键穿透内网 | 开发中 | 🟡 开发中 |
+| 支持同时连接多个 HOST | 已完成 | 🟢 已完成 |
+| 更完整的文件预览与编辑体验 | 已完成 | 🟢 已完成 |
+| Git 版本详情、改动解释与全量历史查看 | 已完成 | 🟢 已完成 |
+| 设置页 Skill 管理与 Butler Skill 同步 | 已完成 | 🟢 已完成 |
+| 内置 Tailscale 支持一键穿透内网 | 已完成 | 🟢 已完成 |
 | 代码助手功能，支持跨工作区管理多个项目及会话，并为用户提供项目开发的建议和代替用户进行项目开发的控制 | 已完成 | 🟢 已完成 |
 | 代码助手支持实时语音对话 | 开发中 | 🟡 开发中 |
 
