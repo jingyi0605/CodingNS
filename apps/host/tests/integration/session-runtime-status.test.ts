@@ -2,7 +2,7 @@ import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { inspectSessionActivity } from "../../src/modules/sessions/session-activity-inspector.js";
 import {
@@ -533,6 +533,111 @@ describe("session runtime status", () => {
       activityResolutionSource: "authoritative_provider_event",
       activityConfidence: "authoritative",
       runId: null
+    });
+  });
+
+  it("会话列表刷新时，应优先使用 live runtime 的权威状态，而不是退回 inferred", async () => {
+    const fixture = createProviderFixture();
+    activeFixtures.push(fixture);
+
+    const hosted = createTestApp(fixture);
+    activeClosers.push(() => hosted.app.close());
+    await hosted.app.ready();
+
+    const setup = await hosted.app.inject({
+      method: "POST",
+      url: "/api/public/setup",
+      payload: {
+        username: "admin",
+        password: "password123"
+      }
+    });
+    expect(setup.statusCode).toBe(201);
+
+    const login = await hosted.app.inject({
+      method: "POST",
+      url: "/api/auth/login",
+      payload: {
+        username: "admin",
+        password: "password123"
+      }
+    });
+    expect(login.statusCode).toBe(200);
+    const accessToken = login.json().accessToken as string;
+
+    const imported = await hosted.app.inject({
+      method: "POST",
+      url: "/api/workspaces/import",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        path: fixture.workspaceDir,
+        name: "Fixture Workspace"
+      }
+    });
+    expect(imported.statusCode).toBe(201);
+    const workspaceId = imported.json().id as string;
+
+    const firstList = await hosted.app.inject({
+      method: "GET",
+      url: `/api/sessions?workspaceId=${workspaceId}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(firstList.statusCode).toBe(200);
+
+    const firstCodexSession = firstList
+      .json()
+      .items.find((item: { provider: string }) => item.provider === "codex");
+    expect(firstCodexSession).toBeTruthy();
+    expect(firstCodexSession).toMatchObject({
+      activitySource: "inferred",
+      activityResolutionSource: "inferred_log"
+    });
+
+    (
+      hosted.services.modules.sessionLiveRuntimeService as unknown as {
+        resolveLiveActivityObservation: (sessionId: string) => unknown;
+      }
+    ).resolveLiveActivityObservation = vi.fn((sessionId: string) => {
+      if (sessionId !== firstCodexSession!.sessionId) {
+        return null;
+      }
+
+      return {
+        sessionId,
+        runId: "codex-live-run-1",
+        runningState: "running",
+        source: "authoritative_runtime",
+        confidence: "authoritative",
+        detail: "Host 正在跟踪这轮运行",
+        errorCode: null,
+        observedAt: "2026-03-23T09:00:12.000Z"
+      };
+    });
+
+    const secondList = await hosted.app.inject({
+      method: "GET",
+      url: `/api/sessions?workspaceId=${workspaceId}`,
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      }
+    });
+    expect(secondList.statusCode).toBe(200);
+
+    const secondCodexSession = secondList
+      .json()
+      .items.find((item: { provider: string }) => item.provider === "codex");
+    expect(secondCodexSession).toBeTruthy();
+    expect(secondCodexSession).toMatchObject({
+      sessionId: firstCodexSession!.sessionId,
+      runningState: "running",
+      activitySource: "runtime",
+      activityResolutionSource: "authoritative_runtime",
+      activityConfidence: "authoritative",
+      activityState: "running"
     });
   });
 

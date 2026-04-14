@@ -392,6 +392,9 @@ export function createServer(config: HostConfig) {
     config,
     sessionActivityAuthorityService
   );
+  sessionHistoryService.registerLiveActivityObservationResolver((sessionId) =>
+    sessionLiveRuntimeService.resolveLiveActivityObservation(sessionId)
+  );
   const butlerRuntimeRootDir = path.join(path.dirname(config.databasePath), "butler-runtime");
   const butlerRuntimeConfig: HostConfig = {
     ...config,
@@ -422,6 +425,9 @@ export function createServer(config: HostConfig) {
     butlerRuntimeConfig,
     sessionActivityAuthorityService
   );
+  sessionHistoryService.registerLiveActivityObservationResolver((sessionId) =>
+    butlerSessionLiveRuntimeService.resolveLiveActivityObservation(sessionId)
+  );
   const butlerSummarySessionLiveRuntimeService = new SessionLiveRuntimeService(
     sessionHistoryService,
     sessionMessageAttachmentService,
@@ -436,6 +442,9 @@ export function createServer(config: HostConfig) {
     butlerSummaryRuntimeConfig,
     sessionActivityAuthorityService
   );
+  sessionHistoryService.registerLiveActivityObservationResolver((sessionId) =>
+    butlerSummarySessionLiveRuntimeService.resolveLiveActivityObservation(sessionId)
+  );
   const butlerFollowUpSessionLiveRuntimeService = new SessionLiveRuntimeService(
     sessionHistoryService,
     sessionMessageAttachmentService,
@@ -449,6 +458,9 @@ export function createServer(config: HostConfig) {
     repositories.sessionStatusSnapshotRepository,
     butlerFollowUpRuntimeConfig,
     sessionActivityAuthorityService
+  );
+  sessionHistoryService.registerLiveActivityObservationResolver((sessionId) =>
+    butlerFollowUpSessionLiveRuntimeService.resolveLiveActivityObservation(sessionId)
   );
   const worktreeManager = new WorktreeManager(
     workspaceService,

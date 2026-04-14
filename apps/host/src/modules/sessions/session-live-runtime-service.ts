@@ -909,6 +909,23 @@ export class SessionLiveRuntimeService {
     };
   }
 
+  resolveLiveActivityObservation(sessionId: string): SessionActivityObservation | null {
+    const runtimeSessionId = this.resolveRuntimeSessionId(sessionId);
+    const runtimeSnapshot = this.providerRuntimeService.getSnapshot(runtimeSessionId);
+
+    if (runtimeSnapshot) {
+      return createRuntimeActivityObservation(runtimeSessionId, runtimeSnapshot);
+    }
+
+    const externalRuntimeSnapshot = this.externalRuntimeSnapshots.get(runtimeSessionId) ?? null;
+
+    if (externalRuntimeSnapshot) {
+      return createExternalRuntimeActivityObservation(runtimeSessionId, externalRuntimeSnapshot);
+    }
+
+    return null;
+  }
+
   async interruptSession(sessionId: string, userId: string): Promise<InterruptSessionResult> {
     this.sessionHistoryService.getSession(sessionId, userId);
     const runtimeSessionId = this.resolveRuntimeSessionId(sessionId);
