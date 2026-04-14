@@ -3406,27 +3406,34 @@ function applySessionActivityResolution(
   item: SessionListItem,
   resolution: SessionActivityResolution
 ): SessionListItem {
-  const runningState = resolution.runningState;
-  const shouldClearResolvedFailure = runningState !== "failed" && item.runningState === "failed";
+  const rawResolvedRunningState =
+    resolution.runningState === "unknown" && item.runningState === null
+      ? null
+      : resolution.runningState;
+  const resolvedRunningState =
+    resolution.activityResolutionSource === "inferred_log" && rawResolvedRunningState === "completed"
+      ? "idle"
+      : rawResolvedRunningState;
+  const shouldClearResolvedFailure = resolvedRunningState !== "failed" && item.runningState === "failed";
   const lastEventAt = resolution.lastObservedAt ?? item.lastEventAt;
   const completedAt =
-    isTerminalResolvedRunningState(runningState)
+    rawResolvedRunningState && isTerminalResolvedRunningState(rawResolvedRunningState)
       ? resolution.terminalAt ?? item.completedAt
       : null;
   const lastErrorCode =
-    runningState === "failed"
+    resolvedRunningState === "failed"
       ? resolution.errorCode ?? item.lastErrorCode
       : shouldClearResolvedFailure
         ? null
         : item.lastErrorCode;
   const lastErrorDetail =
-    runningState === "failed"
+    resolvedRunningState === "failed"
       ? resolution.detail ?? item.lastErrorDetail
       : shouldClearResolvedFailure
         ? null
         : item.lastErrorDetail;
   const syncStatus =
-    runningState === "failed"
+    resolvedRunningState === "failed"
       ? "error"
       : shouldClearResolvedFailure && item.syncStatus === "error"
         ? "idle"
@@ -3435,7 +3442,7 @@ function applySessionActivityResolution(
   return {
     ...item,
     syncStatus,
-    runningState,
+    runningState: resolvedRunningState,
     activitySource: mapResolutionSourceToCompatibilitySource(resolution.activityResolutionSource),
     activityResolutionSource: resolution.activityResolutionSource,
     activityConfidence: resolution.activityConfidence,
@@ -3445,7 +3452,7 @@ function applySessionActivityResolution(
     lastErrorCode,
     lastErrorDetail,
     watchdogTriggeredAt: resolution.watchdogTriggeredAt,
-    activityState: resolveActivityState(runningState, completedAt, item.lastSeenAt)
+    activityState: resolveActivityState(resolvedRunningState, completedAt, item.lastSeenAt)
   };
 }
 

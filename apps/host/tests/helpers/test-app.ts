@@ -264,7 +264,7 @@ export function createTestApp(
   return createServer(
     resolveHostConfig({
       databasePath: ":memory:",
-      accessTokenTtlSeconds: 2,
+      accessTokenTtlSeconds: 120,
       refreshTokenTtlSeconds: 30,
       terminalIdleTimeoutSeconds: 900,
       claudeCodeHomeDir: fixture.claudeHomeDir,

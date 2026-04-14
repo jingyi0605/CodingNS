@@ -163,6 +163,7 @@ function inspectCodexActivity(
   let lastTaskCompleteAt: string | null = null;
   let lastTaskFailedAt: string | null = null;
   let lastTaskFailedDetail: string | null = null;
+  let lastToolOutputAt: string | null = null;
 
   for (const record of records) {
     const recordType = readText(record.type);
@@ -215,6 +216,7 @@ function inspectCodexActivity(
 
       if (callId) {
         pendingToolCalls.delete(callId);
+        lastToolOutputAt = maxTimestamp(lastToolOutputAt, recordTimestamp);
       }
     }
   }
@@ -222,10 +224,16 @@ function inspectCodexActivity(
   const hasExplicitFailure = isTimestampAtOrAfter(lastTaskFailedAt, lastEventAt);
   const hasExplicitCompletion =
     !hasExplicitFailure && isTimestampAtOrAfter(lastTaskCompleteAt, lastEventAt);
+  const hasImplicitCompletion =
+    !hasExplicitFailure
+    && !hasExplicitCompletion
+    && pendingToolCalls.size === 0
+    && isTimestampAtOrAfter(lastToolOutputAt, lastEventAt);
   const hasPendingTools = pendingToolCalls.size > 0 && !hasExplicitCompletion;
   const isRunning =
     !hasExplicitFailure
     && !hasExplicitCompletion
+    && !hasImplicitCompletion
     && hasRecentActivity(lastEventAt, mtimeMs, now);
 
   return {
@@ -236,6 +244,8 @@ function inspectCodexActivity(
         ? lastTaskFailedAt
         : hasExplicitCompletion
           ? lastTaskCompleteAt
+          : hasImplicitCompletion
+            ? lastToolOutputAt
           : isRunning
             ? null
             : null,
@@ -244,7 +254,12 @@ function inspectCodexActivity(
         ? classifyCodexDetailErrorCode(lastTaskFailedDetail, "CODEX_CLI_TURN_FAILED")
         : null,
     errorDetail: hasExplicitFailure ? lastTaskFailedDetail ?? "codex turn failed" : null,
-    terminalState: hasExplicitFailure ? "failed" : hasExplicitCompletion ? "completed" : "none"
+    terminalState:
+      hasExplicitFailure
+        ? "failed"
+        : hasExplicitCompletion || hasImplicitCompletion
+          ? "completed"
+          : "none"
   };
 }
 
@@ -291,7 +306,11 @@ function hasRecentActivity(
   now: number
 ): boolean {
   const timestampMs = timestamp ? Date.parse(timestamp) : Number.NaN;
-  const activityAt = Number.isFinite(timestampMs) ? timestampMs : mtimeMs;
+  // 有些 provider 记录里的时间戳可能滞后于真实落盘时间，不能把更近的 mtime 白白丢掉。
+  const activityAt =
+    Number.isFinite(timestampMs)
+      ? Math.max(timestampMs, mtimeMs)
+      : mtimeMs;
 
   if (!Number.isFinite(activityAt) || activityAt <= 0) {
     return false;

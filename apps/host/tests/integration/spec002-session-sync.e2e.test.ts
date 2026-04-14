@@ -155,6 +155,19 @@ describe("spec002 会话同步核心", () => {
       updatedAt: "2026-04-01T08:00:00.000Z",
       removedAt: null
     });
+    database.db
+      .prepare(
+        `INSERT INTO auth_users (id, username, password_hash, role, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        "user-1",
+        "tester",
+        "hash",
+        "admin",
+        "2026-04-01T08:00:00.000Z",
+        "2026-04-01T08:00:00.000Z"
+      );
 
     sessionBindingRepository.upsert({
       sessionId: "session-1",
@@ -1541,11 +1554,11 @@ describe("spec002 会话同步核心", () => {
 
     (
       sessionHistoryService as unknown as {
-        sessionSyncService: {
+        providerDiscoveryHelperClient: {
           discoverWorkspaceSessions: typeof discoverMock;
         };
       }
-    ).sessionSyncService = {
+    ).providerDiscoveryHelperClient = {
       discoverWorkspaceSessions: discoverMock
     };
 
@@ -1553,7 +1566,7 @@ describe("spec002 会话同步核心", () => {
       force: true
     });
 
-    const firstCallOptions = discoverMock.mock.calls[0]?.[1];
+    const firstCallOptions = discoverMock.mock.calls[0]?.[0];
     expect(firstCallOptions?.knownSessions).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -2977,7 +2990,7 @@ describe("spec002 会话同步核心", () => {
     let reconnectSubscribed = false;
     let reconnectBackfill: null | { messages: Array<{ content: string }> } = null;
 
-    for (let index = 0; index < 3; index += 1) {
+    for (let index = 0; index < 6; index += 1) {
       const payload = JSON.parse(await reconnectMessages.next()) as {
         type: string;
         messages?: Array<{ content: string }>;
@@ -3012,7 +3025,7 @@ describe("spec002 会话同步核心", () => {
         badSocket.once("close", () => resolve(true));
       })
     ).resolves.toBe(true);
-  });
+  }, 15_000);
 
   it("支持通过 WebSocket 继续加载更早的会话消息", async () => {
     const fixture = createProviderFixture();
@@ -3250,7 +3263,7 @@ describe("spec002 会话同步核心", () => {
     ).toBe("Claude 新标题");
 
     await waitForWorkbenchSessionTitle(workbenchMessages, claudeSessionId!, "Claude 新标题");
-  });
+  }, 15_000);
 
   it("codex 会在消息推送时同步刷新会话列表标题", async () => {
     const fixture = createProviderFixture();

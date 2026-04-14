@@ -364,6 +364,15 @@ function isResolutionMoreTrustworthyThanPersisted(
   current: SessionActivityResolution,
   session: Pick<SessionListItem, "activitySource" | "runningState" | "lastEventAt" | "completedAt">
 ): boolean {
+  const persistedResolution = createPersistedResolution({
+    sessionId: current.sessionId,
+    runningState: session.runningState,
+    activitySource: session.activitySource,
+    lastEventAt: session.lastEventAt,
+    completedAt: session.completedAt,
+    lastErrorCode: null,
+    lastErrorDetail: null
+  });
   const persistedSource = mapLegacyActivitySource(session.activitySource, session.runningState);
   const persistedObservedAt = session.completedAt ?? session.lastEventAt ?? null;
 
@@ -379,7 +388,11 @@ function isResolutionMoreTrustworthyThanPersisted(
     return sourcePriority(current.activityResolutionSource) > sourcePriority(persistedSource);
   }
 
-  return confidencePriority(current.activityConfidence) >= mapPersistedConfidencePriority(persistedSource);
+  if (confidencePriority(current.activityConfidence) !== confidencePriority(persistedResolution.activityConfidence)) {
+    return confidencePriority(current.activityConfidence) > confidencePriority(persistedResolution.activityConfidence);
+  }
+
+  return compareIsoTimestamps(current.updatedAt, persistedResolution.updatedAt) >= 0;
 }
 
 function mapLegacyActivitySource(
