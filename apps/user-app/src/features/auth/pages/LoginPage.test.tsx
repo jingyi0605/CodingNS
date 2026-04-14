@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { clientConfigStore } from "../../../config/client-config-store";
+import { DEFAULT_HOST_PROFILE_ID, getActiveHostBaseUrl } from "../../../config/client-config-types";
 import { serverConfigStore } from "../../../config/server-config";
 import { PlatformProvider } from "../../../platform/platform-provider";
 import { I18nProvider, t } from "../../../shared/i18n";
@@ -137,9 +138,12 @@ describe("LoginPage", () => {
     window.localStorage.setItem(
       "codingns.auth.remembered-login",
       JSON.stringify({
-        username: "saved-admin",
-        password: "Saved123!",
-        serverBaseUrl: "http://10.10.1.8:4100"
+        [DEFAULT_HOST_PROFILE_ID]: {
+          hostId: DEFAULT_HOST_PROFILE_ID,
+          username: "saved-admin",
+          password: "Saved123!",
+          savedAt: 1
+        }
       })
     );
 
@@ -155,9 +159,7 @@ describe("LoginPage", () => {
     expect(usernameInput.value).toBe("saved-admin");
     expect(passwordInput.value).toBe("Saved123!");
 
-    await waitFor(() => {
-      expect(clientConfigStore.getState().hostBaseUrl).toBe("http://10.10.1.8:4100");
-    });
+    expect(getActiveHostBaseUrl(clientConfigStore.getState())).toBe("http://127.0.0.1:3002");
 
     expect(screen.getByRole("button", { name: new RegExp(t("auth.serverSettings")) })).toBeInTheDocument();
   });
@@ -191,7 +193,7 @@ describe("LoginPage", () => {
     );
   });
 
-  it("登录页修改服务器后，不会再被记住密码里的旧服务器地址回滚", async () => {
+  it("登录页修改服务器后，不会再被当前 HOST 的记住密码配置回滚", async () => {
     mockNavigator({
       userAgent:
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
@@ -212,17 +214,16 @@ describe("LoginPage", () => {
     window.localStorage.setItem(
       "codingns.auth.remembered-login",
       JSON.stringify({
-        username: "saved-admin",
-        password: "Saved123!",
-        serverBaseUrl: "http://10.10.1.8:4100"
+        [DEFAULT_HOST_PROFILE_ID]: {
+          hostId: DEFAULT_HOST_PROFILE_ID,
+          username: "saved-admin",
+          password: "Saved123!",
+          savedAt: 1
+        }
       })
     );
 
     renderLoginPage();
-
-    await waitFor(() => {
-      expect(clientConfigStore.getState().hostBaseUrl).toBe("http://10.10.1.8:4100");
-    });
 
     await userEvent.click(screen.getByRole("button", { name: new RegExp(t("auth.serverSettings")) }));
 
@@ -234,14 +235,18 @@ describe("LoginPage", () => {
     await userEvent.click(saveButton);
 
     await waitFor(() => {
-      expect(clientConfigStore.getState().hostBaseUrl).toBe("http://10.10.1.9:4200");
+      expect(getActiveHostBaseUrl(clientConfigStore.getState())).toBe("http://10.10.1.9:4200");
     });
 
     await waitFor(() => {
       expect(
         JSON.parse(window.localStorage.getItem("codingns.auth.remembered-login") ?? "null")
       ).toMatchObject({
-        serverBaseUrl: "http://10.10.1.9:4200"
+        [DEFAULT_HOST_PROFILE_ID]: {
+          hostId: DEFAULT_HOST_PROFILE_ID,
+          username: "saved-admin",
+          password: "Saved123!"
+        }
       });
     });
   });

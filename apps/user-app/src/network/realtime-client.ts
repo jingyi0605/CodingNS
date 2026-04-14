@@ -162,6 +162,8 @@ export class RealtimeClient {
   private disposed = false;
   private authRecoveryInFlight = false;
   private latestCursor: string | null;
+  private subscribed = false;
+  private pendingOlderRequest: { cursor: string | null; limit: number } | null = null;
   private readonly connectionManager: ConnectionManager;
 
   constructor(private readonly options: RealtimeClientOptions) {
@@ -191,19 +193,19 @@ export class RealtimeClient {
       return false;
     }
 
-    this.socket.send(
-      JSON.stringify({
-        type: "session.load_older",
-        sessionId: this.options.sessionId,
-        cursor,
-        limit
-      })
-    );
+    if (!this.subscribed) {
+      this.pendingOlderRequest = { cursor, limit };
+      return true;
+    }
+
+    this.sendOlderMessagesRequest(cursor, limit);
     return true;
   }
 
   close(): void {
     this.disposed = true;
+    this.subscribed = false;
+    this.pendingOlderRequest = null;
     this.connectionManager.close();
     this.socket?.close();
     this.socket = null;
@@ -229,6 +231,7 @@ export class RealtimeClient {
     const socketUrl = `${getHostWebSocketUrl("/ws")}?access_token=${encodeURIComponent(accessToken)}`;
     const socket = new WebSocket(socketUrl);
 
+    this.subscribed = false;
     this.socket = socket;
 
     socket.addEventListener("open", () => {
@@ -251,7 +254,9 @@ export class RealtimeClient {
       }
 
       if (payload.type === "session.subscribed") {
+        this.subscribed = true;
         this.options.onSubscribed();
+        this.flushPendingOlderRequest();
         return;
       }
 
@@ -314,6 +319,7 @@ export class RealtimeClient {
         return;
       }
 
+      this.subscribed = false;
       this.connectionManager.markDisconnected();
     });
 
@@ -332,6 +338,7 @@ export class RealtimeClient {
     }
 
     this.authRecoveryInFlight = true;
+    this.subscribed = false;
     const socket = this.socket;
     this.socket = null;
     socket?.close();
@@ -355,5 +362,26 @@ export class RealtimeClient {
 
       this.options.onUnauthorized();
     });
+  }
+
+  private sendOlderMessagesRequest(cursor: string | null, limit: number): void {
+    this.socket?.send(
+      JSON.stringify({
+        type: "session.load_older",
+        sessionId: this.options.sessionId,
+        cursor,
+        limit
+      })
+    );
+  }
+
+  private flushPendingOlderRequest(): void {
+    if (!this.pendingOlderRequest) {
+      return;
+    }
+
+    const pending = this.pendingOlderRequest;
+    this.pendingOlderRequest = null;
+    this.sendOlderMessagesRequest(pending.cursor, pending.limit);
   }
 }

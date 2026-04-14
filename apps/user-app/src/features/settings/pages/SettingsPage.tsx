@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 
 import { clientConfigStore, useClientConfigSelector } from "../../../config/client-config-store";
 import { canConfigureHostBaseUrl } from "../../../config/client-config-service";
+import { getActiveHostBaseUrl } from "../../../config/client-config-types";
 import type {
   AppLanguage,
   ClientRuntimeConfig,
@@ -23,12 +24,14 @@ import { useAppVersion } from "../../../shared/version/app-version";
 import { ParallelTaskDebugModal } from "../../../settings/ParallelTaskDebugModal";
 import { ReleasePanel } from "../../../settings/ReleasePanel";
 import { ServiceUpdatePanel } from "../../../settings/ServiceUpdatePanel";
+import { TailscalePanel } from "../../../settings/TailscalePanel";
 import { authStore } from "../../auth/store/auth-store";
 import { MobilePageHeader } from "../../mobile-shell/components/MobilePageHeader";
 
 type SettingsSectionId =
   | "appearance"
   | "server-connection"
+  | "remote-access"
   | "security-privacy"
   | "software-update";
 
@@ -84,6 +87,7 @@ function isSettingsSectionId(value: string | undefined): value is SettingsSectio
   return (
     value === "appearance" ||
     value === "server-connection" ||
+    value === "remote-access" ||
     value === "security-privacy" ||
     value === "software-update"
   );
@@ -134,11 +138,12 @@ function useSettingsPageModel(): SettingsPageModel {
   const platform = usePlatform();
   const canConfigureServerAddress = canConfigureHostBaseUrl(runtimeConfig.platform);
   const showServerSettings = canConfigureServerAddress;
-  const [hostBaseUrlDraft, setHostBaseUrlDraft] = useState(runtimeConfig.hostBaseUrl);
+  const activeHostBaseUrl = getActiveHostBaseUrl(runtimeConfig) ?? "";
+  const [hostBaseUrlDraft, setHostBaseUrlDraft] = useState(activeHostBaseUrl);
 
   useEffect(() => {
-    setHostBaseUrlDraft(runtimeConfig.hostBaseUrl);
-  }, [runtimeConfig.hostBaseUrl]);
+    setHostBaseUrlDraft(activeHostBaseUrl);
+  }, [activeHostBaseUrl]);
 
   function handleLogout(): void {
     authStore.clear();
@@ -160,7 +165,7 @@ function useSettingsPageModel(): SettingsPageModel {
 
   const normalizedHostBaseUrlDraft = getNormalizedHostBaseUrl(hostBaseUrlDraft);
   const canSaveHostBaseUrl =
-    normalizedHostBaseUrlDraft !== null && normalizedHostBaseUrlDraft !== runtimeConfig.hostBaseUrl;
+    normalizedHostBaseUrlDraft !== null && normalizedHostBaseUrlDraft !== activeHostBaseUrl;
 
   function handleHostBaseUrlSubmit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
@@ -170,7 +175,15 @@ function useSettingsPageModel(): SettingsPageModel {
     }
 
     void clientConfigStore.update({
-      hostBaseUrl: normalizedHostBaseUrlDraft
+      hosts: runtimeConfig.hosts.map((host) =>
+        host.id === runtimeConfig.activeHostId
+          ? {
+              ...host,
+              baseUrl: normalizedHostBaseUrlDraft,
+              updatedAt: new Date().toISOString()
+            }
+          : host
+      )
     });
   }
 
@@ -468,6 +481,23 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
         ) : null}
 
         <section className="settings-section">
+          <h2 className="settings-section-title">{t("settings.remoteAccess")}</h2>
+          <div className="settings-card">
+            <div className="settings-row">
+              <div className="settings-row-label">
+                <span className="settings-row-title">{t("settings.tailscaleSectionTitle")}</span>
+                <span className="settings-row-description">
+                  {t("settings.tailscaleSectionDescription")}
+                </span>
+              </div>
+              <div className="settings-row-control settings-row-control-stretch">
+                <TailscalePanel />
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="settings-section">
           <h2 className="settings-section-title">{t("settings.securityPrivacy")}</h2>
           <div className="settings-card">
             <div className="settings-row">
@@ -660,60 +690,49 @@ function MobileSettingsPage({ model, appVersion }: { model: SettingsPageModel; a
   const navigate = useNavigate();
   const { section } = useParams<{ section?: string }>();
   const activeSection = isSettingsSectionId(section) ? section : null;
-  const sectionEntries: SettingsSectionMeta[] = model.showServerSettings
-    ? [
-      {
-        id: "appearance",
-        title: t("settings.appearance"),
-        description: t("settings.appearanceSectionSummary"),
-        value: getLanguageLabel(model.accountPreferences.language),
-        icon: <AppearanceSectionIcon />
-      },
-      {
-        id: "server-connection",
-        title: t("settings.serverConnection"),
-        description: t("settings.serverConnectionSectionSummary"),
-        value: model.runtimeConfig.hostBaseUrl,
-        icon: <ConnectionSectionIcon />
-      },
-      {
-        id: "security-privacy",
-        title: t("settings.securityPrivacy"),
-        description: t("settings.securityPrivacySectionSummary"),
-        value: getPermissionModeLabel(model.accountPreferences.defaultPermissionMode),
-        icon: <SecurityPrivacySectionIcon />
-      },
-      {
-        id: "software-update",
-        title: t("settings.softwareUpdate"),
-        description: t("settings.softwareUpdateSectionSummary"),
-        value: getReleaseChannelLabel(model.runtimeConfig.releaseChannel),
-        icon: <DesktopReleaseSectionIcon />
-      }
-    ]
-    : [
-      {
-        id: "appearance",
-        title: t("settings.appearance"),
-        description: t("settings.appearanceSectionSummary"),
-        value: getLanguageLabel(model.accountPreferences.language),
-        icon: <AppearanceSectionIcon />
-      },
-      {
-        id: "security-privacy",
-        title: t("settings.securityPrivacy"),
-        description: t("settings.securityPrivacySectionSummary"),
-        value: getPermissionModeLabel(model.accountPreferences.defaultPermissionMode),
-        icon: <SecurityPrivacySectionIcon />
-      },
-      {
-        id: "software-update",
-        title: t("settings.softwareUpdate"),
-        description: t("settings.softwareUpdateSectionSummary"),
-        value: getReleaseChannelLabel(model.runtimeConfig.releaseChannel),
-        icon: <DesktopReleaseSectionIcon />
-      }
-    ];
+  const sectionEntries: SettingsSectionMeta[] = [
+    {
+      id: "appearance",
+      title: t("settings.appearance"),
+      description: t("settings.appearanceSectionSummary"),
+      value: getLanguageLabel(model.accountPreferences.language),
+      icon: <AppearanceSectionIcon />
+    }
+  ];
+
+  if (model.showServerSettings) {
+    sectionEntries.push({
+      id: "server-connection",
+      title: t("settings.serverConnection"),
+      description: t("settings.serverConnectionSectionSummary"),
+      value: getActiveHostBaseUrl(model.runtimeConfig) ?? "",
+      icon: <ConnectionSectionIcon />
+    });
+  }
+
+  sectionEntries.push(
+    {
+      id: "remote-access",
+      title: t("settings.remoteAccess"),
+      description: t("settings.remoteAccessSectionSummary"),
+      value: t("settings.tailscaleBrand"),
+      icon: <RemoteAccessSectionIcon />
+    },
+    {
+      id: "security-privacy",
+      title: t("settings.securityPrivacy"),
+      description: t("settings.securityPrivacySectionSummary"),
+      value: getPermissionModeLabel(model.accountPreferences.defaultPermissionMode),
+      icon: <SecurityPrivacySectionIcon />
+    },
+    {
+      id: "software-update",
+      title: t("settings.softwareUpdate"),
+      description: t("settings.softwareUpdateSectionSummary"),
+      value: getReleaseChannelLabel(model.runtimeConfig.releaseChannel),
+      icon: <DesktopReleaseSectionIcon />
+    }
+  );
   const currentSection = activeSection
     ? sectionEntries.find((entry) => entry.id === activeSection) ?? null
     : null;
@@ -763,6 +782,7 @@ function MobileSettingsPage({ model, appVersion }: { model: SettingsPageModel; a
         {activeSection === "server-connection" && model.showServerSettings
           ? <MobileServerConnectionSection model={model} />
           : null}
+        {activeSection === "remote-access" ? <MobileRemoteAccessSection /> : null}
         {activeSection === "security-privacy" ? <MobileSecurityPrivacySection model={model} /> : null}
         {activeSection === "software-update" ? <MobileSoftwareUpdateSection model={model} /> : null}
       </div>
@@ -993,6 +1013,18 @@ function MobileSecurityPrivacySection({ model }: { model: SettingsPageModel }) {
   );
 }
 
+function MobileRemoteAccessSection() {
+  return (
+    <section className="settings-mobile-group-section">
+      <h2 className="settings-mobile-group-title">{t("settings.remoteAccess")}</h2>
+      <p className="settings-mobile-group-note">{t("settings.remoteAccessSectionSummary")}</p>
+      <div className="settings-mobile-card settings-mobile-release-card">
+        <TailscalePanel />
+      </div>
+    </section>
+  );
+}
+
 function MobileSoftwareUpdateSection({ model }: { model: SettingsPageModel }) {
   return (
     <>
@@ -1109,6 +1141,17 @@ function DesktopReleaseSectionIcon() {
       <path d="M7 16h6" />
       <path d="M10 13.5V16" />
       <path d="m8 8 2 2 3-3" />
+    </svg>
+  );
+}
+
+function RemoteAccessSectionIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+      <circle cx="10" cy="10" r="5.8" />
+      <path d="M10 4.2c1.5 1.3 2.4 3.5 2.4 5.8s-.9 4.5-2.4 5.8c-1.5-1.3-2.4-3.5-2.4-5.8s.9-4.5 2.4-5.8Z" />
+      <path d="M4.6 8.1h10.8" />
+      <path d="M4.6 11.9h10.8" />
     </svg>
   );
 }

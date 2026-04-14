@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { canConfigureHostBaseUrl } from "../../../config/client-config-service";
+import { useClientConfigSelector } from "../../../config/client-config-store";
 import { serverConfigStore, useServerConfigSelector } from "../../../config/server-config";
 import { authGateway } from "../../../auth/auth-gateway";
 import { probeHost } from "../../../network/host-probe";
@@ -16,7 +17,7 @@ import { authStore, useAuthSelector } from "../store/auth-store";
 import {
   clearRememberedLoginCredentials,
   persistRememberedLoginCredentials,
-  readRememberedLoginCredentials,
+  readRememberedLoginSnapshot,
   supportsRememberPassword
 } from "../store/remembered-login";
 import { ServerSettingsModal } from "../components/ServerSettingsModal";
@@ -172,13 +173,19 @@ export function LoginPage() {
   const [searchParams] = useSearchParams();
   const platform = usePlatform();
   const appVersion = useAppVersion();
+  const activeHostId = useClientConfigSelector((state) => state.activeHostId);
   const canConfigureServerAddress = canConfigureHostBaseUrl(platform.platform);
   const rememberPasswordSupported = useMemo(() => supportsRememberPassword(platform), [platform]);
-  const rememberedLogin = useMemo(
-    () => (rememberPasswordSupported ? readRememberedLoginCredentials() : null),
-    [rememberPasswordSupported]
+  const rememberedLoginSnapshot = useMemo(
+    () =>
+      rememberPasswordSupported ? readRememberedLoginSnapshot(activeHostId) : {
+        credentials: null,
+        legacyServerBaseUrl: null
+      },
+    [activeHostId, rememberPasswordSupported]
   );
-  const rememberedServerBaseUrl = rememberedLogin?.serverBaseUrl ?? null;
+  const rememberedLogin = rememberedLoginSnapshot.credentials;
+  const rememberedServerBaseUrl = rememberedLoginSnapshot.legacyServerBaseUrl;
   const [username, setUsername] = useState(() => rememberedLogin?.username ?? "admin");
   const [password, setPassword] = useState(() => rememberedLogin?.password ?? "");
   const [rememberPassword, setRememberPassword] = useState(() => Boolean(rememberedLogin));
@@ -199,6 +206,12 @@ export function LoginPage() {
   const loginTheme = useMemo(() => {
     return theme === "light" ? "light" : "dark";
   }, [theme]);
+
+  useEffect(() => {
+    setUsername(rememberedLogin?.username ?? "admin");
+    setPassword(rememberedLogin?.password ?? "");
+    setRememberPassword(Boolean(rememberedLogin));
+  }, [rememberedLogin]);
 
   useEffect(() => {
     if (typeof document === "undefined") {
@@ -287,19 +300,19 @@ export function LoginPage() {
     setStatusText(null);
     setProbeServerBaseUrl(persistedServerBaseUrl);
 
-    if (rememberPasswordSupported && !rememberPassword) {
-      clearRememberedLoginCredentials();
+    if (rememberPasswordSupported && !rememberPassword && activeHostId) {
+      clearRememberedLoginCredentials(activeHostId);
     }
 
     try {
       await authGateway.login(username, password, persistedServerBaseUrl);
       await userPreferenceStore.refreshForAuthenticatedUser();
 
-      if (rememberPasswordSupported && rememberPassword) {
+      if (rememberPasswordSupported && rememberPassword && activeHostId) {
         persistRememberedLoginCredentials({
+          hostId: activeHostId,
           username,
-          password,
-          serverBaseUrl: persistedServerBaseUrl
+          password
         });
       }
 

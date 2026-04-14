@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 
 import { clientConfigStore } from "./client-config-store";
+import { getActiveHost } from "./client-config-types";
 import { normalizeServerBaseUrl } from "./server-config-shared";
 
 const HISTORY_STORAGE_KEY = "codingns.server.base-url.history";
@@ -78,9 +79,14 @@ function uniqOptions(items: Array<string | null | undefined>): string[] {
   return result;
 }
 
-function buildOptions(baseUrl: string): string[] {
+function buildOptions(baseUrl: string, hostBaseUrls: string[]): string[] {
   const history = readStoredHistory();
-  const nextOptions = uniqOptions([baseUrl, ...history, safelyNormalizeServerBaseUrl(readWindowOrigin())]);
+  const nextOptions = uniqOptions([
+    baseUrl,
+    ...hostBaseUrls,
+    ...history,
+    safelyNormalizeServerBaseUrl(readWindowOrigin())
+  ]);
 
   return nextOptions.slice(0, MAX_HISTORY_SIZE);
 }
@@ -92,12 +98,12 @@ function persistHistory(options: string[]): void {
 }
 
 class ServerConfigStoreCompat {
-  private state: ServerConfigState = this.createState(clientConfigStore.getState().hostBaseUrl);
+  private state: ServerConfigState = this.createState(clientConfigStore.getState());
   private listeners = new Set<() => void>();
 
   constructor() {
     clientConfigStore.subscribe(() => {
-      const nextState = this.createState(clientConfigStore.getState().hostBaseUrl);
+      const nextState = this.createState(clientConfigStore.getState());
 
       if (
         nextState.baseUrl === this.state.baseUrl &&
@@ -122,21 +128,47 @@ class ServerConfigStoreCompat {
   getState = (): ServerConfigState => this.state;
 
   setBaseUrl(input: string): boolean {
+    const currentConfig = clientConfigStore.getState();
+    const activeHost = getActiveHost(currentConfig);
+
+    if (!activeHost) {
+      return false;
+    }
+
     const nextBaseUrl = normalizeServerBaseUrl(input);
-    const changed = nextBaseUrl !== clientConfigStore.getState().hostBaseUrl;
-    this.state = this.createState(nextBaseUrl);
+    const changed = nextBaseUrl !== activeHost.baseUrl;
+    const nextHosts = currentConfig.hosts.map((host) =>
+      host.id === activeHost.id
+        ? {
+            ...host,
+            baseUrl: nextBaseUrl,
+            name: new URL(nextBaseUrl).host,
+            updatedAt: new Date().toISOString()
+          }
+        : host
+    );
+
+    this.state = this.createState({
+      ...currentConfig,
+      hosts: nextHosts
+    });
     this.emit();
-    void clientConfigStore.update({ hostBaseUrl: nextBaseUrl });
+    void clientConfigStore.update({ hosts: nextHosts });
     return changed;
   }
 
   reset(): void {
-    this.state = this.createState(clientConfigStore.getState().hostBaseUrl);
+    this.state = this.createState(clientConfigStore.getState());
     this.emit();
   }
 
-  private createState(baseUrl: string): ServerConfigState {
-    const options = buildOptions(baseUrl);
+  private createState(config: ReturnType<typeof clientConfigStore.getState>): ServerConfigState {
+    const activeHost = getActiveHost(config);
+    const baseUrl = activeHost?.baseUrl ?? "";
+    const options = buildOptions(
+      baseUrl,
+      config.hosts.map((host) => host.baseUrl)
+    );
     persistHistory(options);
 
     return {

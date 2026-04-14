@@ -166,6 +166,7 @@ import {
   clearSessionProviderPickerCapabilityCache,
   SessionProviderPicker
 } from "./SessionProviderPicker";
+import { WorkbenchHostSwitcher } from "../../workbench/components/WorkbenchHostSwitcher";
 import { WorkbenchModal as SidebarModal } from "./WorkbenchModal";
 import { WorkspaceCloneModal } from "./WorkspaceCloneModal";
 import { WorkspaceInboxPanel } from "./WorkspaceInboxModal";
@@ -4903,6 +4904,7 @@ function SidebarContent({
               <SidebarCollapseIcon />
             </button>
           ) : null}
+          <WorkbenchHostSwitcher />
           <WorkbenchNotificationButton
             unreadCount={unreadNotificationCount}
             open={notificationPanelOpen}
@@ -8896,6 +8898,7 @@ export function WorkbenchLayout({
                     collapsed={true}
                     onClick={openLeftPanel}
                   />
+                  <WorkbenchHostSwitcher collapsed />
                   <WorkbenchNotificationButton
                     unreadCount={unreadNotificationCount}
                     open={notificationPanelOpen}

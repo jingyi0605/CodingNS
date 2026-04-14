@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { clientConfigStore } from "../../../config/client-config-store";
+import { getActiveHostBaseUrl } from "../../../config/client-config-types";
 import {
   NOTIFICATION_PREFERENCES_STORAGE_KEY,
   SESSION_DISPLAY_SORT_MODE_STORAGE_KEY,
@@ -20,6 +21,10 @@ import { SettingsPage } from "./SettingsPage";
 
 const originalTauriInternals = window.__TAURI_INTERNALS__;
 const originalFetch = global.fetch;
+
+vi.mock("../../../settings/TailscalePanel", () => ({
+  TailscalePanel: () => <div data-testid="tailscale-panel">tailscale-panel</div>
+}));
 
 describe("SettingsPage", () => {
   beforeEach(() => {
@@ -62,6 +67,8 @@ describe("SettingsPage", () => {
 
     expect(screen.getByRole("heading", { name: t("settings.title") })).toBeInTheDocument();
     expect(screen.queryByText(t("settings.serverConnection"))).not.toBeInTheDocument();
+    expect(screen.getByText(t("settings.remoteAccess"))).toBeInTheDocument();
+    expect(screen.getByTestId("tailscale-panel")).toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: t("settings.serverAddress") })).not.toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: t("settings.defaultPermissionMode") })).toBeInTheDocument();
     expect(screen.getByText(t("settings.serverUpdate"))).toBeInTheDocument();
@@ -107,6 +114,7 @@ describe("SettingsPage", () => {
     renderSettingsPage();
 
     expect(screen.getByRole("heading", { name: t("settings.title") })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: new RegExp(t("settings.remoteAccess")) })).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: new RegExp(t("settings.serverConnection")) })
     ).not.toBeInTheDocument();
@@ -121,6 +129,15 @@ describe("SettingsPage", () => {
     expect(screen.queryByText(t("settings.autoReconnect"))).not.toBeInTheDocument();
 
     serverView.unmount();
+  });
+
+  it("移动布局可以进入远程访问分类并显示 Tailscale 面板", async () => {
+    setViewportWidth(390);
+    renderSettingsPage();
+
+    await userEvent.click(screen.getByRole("button", { name: new RegExp(t("settings.remoteAccess")) }));
+
+    expect(await screen.findByTestId("tailscale-panel")).toBeInTheDocument();
   });
 
   it("iOS 客户端使用移动布局时仍然允许修改服务器地址", async () => {
@@ -150,7 +167,7 @@ describe("SettingsPage", () => {
     await userEvent.click(saveButton);
 
     await waitFor(() => {
-      expect(clientConfigStore.getState().hostBaseUrl).toBe("http://10.10.1.8:4100");
+      expect(getActiveHostBaseUrl(clientConfigStore.getState())).toBe("http://10.10.1.8:4100");
     });
   });
 
@@ -178,7 +195,7 @@ describe("SettingsPage", () => {
     await userEvent.click(saveButton);
 
     await waitFor(() => {
-      expect(clientConfigStore.getState().hostBaseUrl).toBe("http://10.10.1.8:4100");
+      expect(getActiveHostBaseUrl(clientConfigStore.getState())).toBe("http://10.10.1.8:4100");
     });
   });
 

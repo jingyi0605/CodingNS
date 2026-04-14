@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 
-import { getHostBaseUrl } from "../../../config/env";
+import { clientConfigStore } from "../../../config/client-config-store";
+import { getActiveHost, type HostProfile } from "../../../config/client-config-types";
 import { ApiError } from "../../../shared/network/api-error";
 import { loginRequest, refreshRequest, setupRequest } from "../api/auth-api";
 
@@ -22,6 +23,14 @@ export interface AuthState {
   session: AuthSession | null;
 }
 
+export interface HostSessionEnvelope {
+  hostId: string;
+  session: AuthSession | null;
+  savedAt: number;
+}
+
+export type HostSessionMap = Record<string, HostSessionEnvelope>;
+
 export type AuthRefreshResult =
   | {
       status: "refreshed";
@@ -41,7 +50,7 @@ type AuthListener = () => void;
 
 const STORAGE_KEY = "codingns.auth.session";
 
-interface StoredAuthSession {
+interface LegacyStoredAuthSession {
   serverBaseUrl?: string;
   session: AuthSession;
 }
@@ -49,18 +58,17 @@ interface StoredAuthSession {
 class AuthStore {
   private state: AuthState = {
     status: "anonymous",
-    session: this.readSession()
+    session: null
   };
 
   private listeners = new Set<AuthListener>();
+  private sessionMap: HostSessionMap = {};
 
   constructor() {
-    if (this.state.session) {
-      this.state = {
-        status: "authenticated",
-        session: this.state.session
-      };
-    }
+    this.syncCurrentHostSession();
+    clientConfigStore.subscribe(() => {
+      this.syncCurrentHostSession();
+    });
   }
 
   subscribe = (listener: AuthListener) => {
@@ -94,6 +102,7 @@ class AuthStore {
   async refresh(): Promise<AuthRefreshResult> {
     const previousSession = this.state.session;
     const refreshToken = previousSession?.refreshToken;
+    const currentHost = this.getCurrentHost();
 
     if (!refreshToken) {
       this.clear();
@@ -110,8 +119,8 @@ class AuthStore {
     this.emit();
 
     try {
-      const nextSession = await refreshRequest({ refreshToken });
-      this.setSession(nextSession);
+      const nextSession = await refreshRequest({ refreshToken }, currentHost?.baseUrl);
+      this.setSession(nextSession, currentHost);
       return {
         status: "refreshed",
         session: nextSession
@@ -140,58 +149,154 @@ class AuthStore {
   }
 
   clear(): void {
-    this.state = {
+    const currentHost = this.getCurrentHost();
+
+    if (!currentHost) {
+      this.sessionMap = {};
+      this.persistSessionMap();
+      this.updateState({
+        status: "anonymous",
+        session: null
+      });
+      return;
+    }
+
+    if (this.sessionMap[currentHost.id]) {
+      const nextSessionMap = { ...this.sessionMap };
+      delete nextSessionMap[currentHost.id];
+      this.sessionMap = nextSessionMap;
+      this.persistSessionMap();
+    }
+
+    this.updateState({
       status: "anonymous",
       session: null
-    };
-    window.localStorage.removeItem(STORAGE_KEY);
-    this.emit();
+    });
   }
 
-  private setSession(session: AuthSession): void {
-    this.state = {
+  private setSession(session: AuthSession, host = this.getCurrentHost()): void {
+    if (!host) {
+      return;
+    }
+
+    this.sessionMap = {
+      ...this.sessionMap,
+      [host.id]: {
+        hostId: host.id,
+        session,
+        savedAt: Date.now()
+      }
+    };
+    this.persistSessionMap();
+    void clientConfigStore.update({
+      hosts: clientConfigStore.getState().hosts.map((item) =>
+        item.id === host.id
+          ? {
+              ...item,
+              lastConnectedAt: new Date().toISOString(),
+              lastUserId: session.user.userId,
+              lastUsername: session.user.username,
+              updatedAt: new Date().toISOString()
+            }
+          : item
+      )
+    }).catch(() => {});
+    this.updateState({
       status: "authenticated",
       session
-    };
-    const storedSession: StoredAuthSession = {
-      serverBaseUrl: getHostBaseUrl(),
-      session
-    };
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(storedSession));
-    this.emit();
+    });
   }
 
-  private readSession(): AuthSession | null {
+  private syncCurrentHostSession(): void {
+    const currentHost = this.getCurrentHost();
+    const { sessionMap, migrated } = this.readSessionMapFromStorage(currentHost);
+
+    this.sessionMap = sessionMap;
+
+    if (migrated) {
+      this.persistSessionMap();
+    }
+
+    const nextSession = currentHost ? sessionMap[currentHost.id]?.session ?? null : null;
+    this.updateState({
+      status: nextSession ? "authenticated" : "anonymous",
+      session: nextSession
+    });
+  }
+
+  private getCurrentHost(): HostProfile | null {
+    return getActiveHost(clientConfigStore.getState());
+  }
+
+  private readSessionMapFromStorage(currentHost: HostProfile | null): {
+    sessionMap: HostSessionMap;
+    migrated: boolean;
+  } {
+    if (typeof window === "undefined" || typeof window.localStorage === "undefined") {
+      return {
+        sessionMap: {},
+        migrated: false
+      };
+    }
+
     const raw = window.localStorage.getItem(STORAGE_KEY);
 
     if (!raw) {
-      return null;
+      return {
+        sessionMap: {},
+        migrated: false
+      };
     }
 
     try {
-      const parsed = JSON.parse(raw) as AuthSession | StoredAuthSession;
-      const currentBaseUrl = getHostBaseUrl();
+      const parsed = JSON.parse(raw) as unknown;
 
-      if (isStoredAuthSession(parsed)) {
-        if (parsed.serverBaseUrl && parsed.serverBaseUrl !== currentBaseUrl) {
-          // 应用启动早期客户端配置还没完成恢复，不能用 fallback host 去误删已保存登录态。
-          // 真正的跨服务端失效会在后续请求里由 401/refresh 结果来收口。
-          return parsed.session;
-        }
-
-        return parsed.session;
+      if (isHostSessionMap(parsed)) {
+        return {
+          sessionMap: parsed,
+          migrated: false
+        };
       }
 
-      if (isAuthSession(parsed)) {
-        return parsed;
-      }
+      const migratedSessionMap = migrateLegacyStoredSession(parsed, currentHost);
 
-      window.localStorage.removeItem(STORAGE_KEY);
-      return null;
+      if (migratedSessionMap) {
+        return {
+          sessionMap: migratedSessionMap,
+          migrated: true
+        };
+      }
     } catch {
-      window.localStorage.removeItem(STORAGE_KEY);
-      return null;
+      // 无效 JSON 直接清掉，避免后续一直反复解析失败。
     }
+
+    window.localStorage.removeItem(STORAGE_KEY);
+    return {
+      sessionMap: {},
+      migrated: false
+    };
+  }
+
+  private persistSessionMap(): void {
+    if (typeof window === "undefined" || typeof window.localStorage === "undefined") {
+      return;
+    }
+
+    if (Object.keys(this.sessionMap).length === 0) {
+      window.localStorage.removeItem(STORAGE_KEY);
+      return;
+    }
+
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(this.sessionMap));
+  }
+
+  private updateState(nextState: AuthState): void {
+    if (this.state.status === nextState.status && this.state.session === nextState.session) {
+      return;
+    }
+
+    this.state = nextState;
+    this.emit();
   }
 
   private emit(): void {
@@ -207,12 +312,34 @@ export function useAuthSelector<T>(selector: (state: AuthState) => T): T {
   return useSyncExternalStore(authStore.subscribe, () => selector(authStore.getState()));
 }
 
-function isStoredAuthSession(value: unknown): value is StoredAuthSession {
+function isHostSessionEnvelope(value: unknown): value is HostSessionEnvelope {
   if (typeof value !== "object" || value === null) {
     return false;
   }
 
-  return "session" in value && isAuthSession((value as StoredAuthSession).session);
+  const candidate = value as Partial<HostSessionEnvelope>;
+
+  return (
+    typeof candidate.hostId === "string" &&
+    typeof candidate.savedAt === "number" &&
+    isAuthSession(candidate.session)
+  );
+}
+
+function isHostSessionMap(value: unknown): value is HostSessionMap {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+
+  return Object.values(value).every((item) => isHostSessionEnvelope(item));
+}
+
+function isLegacyStoredAuthSession(value: unknown): value is LegacyStoredAuthSession {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  return "session" in value && isAuthSession((value as LegacyStoredAuthSession).session);
 }
 
 function isAuthSession(value: unknown): value is AuthSession {
@@ -229,6 +356,54 @@ function isAuthSession(value: unknown): value is AuthSession {
     typeof candidate.user === "object" &&
     candidate.user !== null
   );
+}
+
+function migrateLegacyStoredSession(
+  value: unknown,
+  currentHost: HostProfile | null
+): HostSessionMap | null {
+  const fallbackHostId = currentHost?.id ?? null;
+
+  if (!fallbackHostId) {
+    return null;
+  }
+
+  if (isLegacyStoredAuthSession(value)) {
+    const targetHostId = resolveLegacySessionHostId(value.serverBaseUrl, currentHost) ?? fallbackHostId;
+    return {
+      [targetHostId]: {
+        hostId: targetHostId,
+        session: value.session,
+        savedAt: Date.now()
+      }
+    };
+  }
+
+  if (isAuthSession(value)) {
+    return {
+      [fallbackHostId]: {
+        hostId: fallbackHostId,
+        session: value,
+        savedAt: Date.now()
+      }
+    };
+  }
+
+  return null;
+}
+
+function resolveLegacySessionHostId(
+  serverBaseUrl: string | undefined,
+  currentHost: HostProfile | null
+): string | null {
+  if (!serverBaseUrl) {
+    return currentHost?.id ?? null;
+  }
+
+  const config = clientConfigStore.getState();
+  const matchedHost = config.hosts.find((host) => host.baseUrl === serverBaseUrl);
+
+  return matchedHost?.id ?? currentHost?.id ?? null;
 }
 
 function shouldClearSessionAfterRefreshFailure(error: unknown): boolean {

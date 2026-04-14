@@ -1,9 +1,10 @@
-import { describe, expect, it, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import {
   clearRememberedLoginCredentials,
   persistRememberedLoginCredentials,
   readRememberedLoginCredentials,
+  readRememberedLoginSnapshot,
   syncRememberedLoginServerBaseUrl,
   supportsRememberPassword
 } from "./remembered-login";
@@ -82,37 +83,96 @@ describe("remembered-login", () => {
     expect(supportsRememberPassword(createPlatform({ osFamily: "macos" }))).toBe(false);
   });
 
-  it("能正确读写并清理已保存的登录凭据", () => {
+  it("能按 HOST 读写并清理已保存的登录凭据", () => {
     persistRememberedLoginCredentials({
+      hostId: "host-1",
       username: "admin",
-      password: "Secret123!",
-      serverBaseUrl: "10.10.1.8:4100"
+      password: "Secret123!"
+    });
+    persistRememberedLoginCredentials({
+      hostId: "host-2",
+      username: "tester",
+      password: "Other456!"
     });
 
-    expect(readRememberedLoginCredentials()).toEqual({
+    expect(readRememberedLoginCredentials("host-1")).toMatchObject({
+      hostId: "host-1",
       username: "admin",
-      password: "Secret123!",
-      serverBaseUrl: "http://10.10.1.8:4100"
+      password: "Secret123!"
+    });
+    expect(readRememberedLoginCredentials("host-2")).toMatchObject({
+      hostId: "host-2",
+      username: "tester",
+      password: "Other456!"
     });
 
-    clearRememberedLoginCredentials();
+    clearRememberedLoginCredentials("host-1");
 
-    expect(readRememberedLoginCredentials()).toBeNull();
+    expect(readRememberedLoginCredentials("host-1")).toBeNull();
+    expect(readRememberedLoginCredentials("host-2")).toMatchObject({
+      hostId: "host-2",
+      username: "tester"
+    });
   });
 
-  it("同步服务器地址时会保留原有账号密码，只更新服务器地址", () => {
-    persistRememberedLoginCredentials({
+  it("读取旧单条 remember password 时会迁移到当前 HOST 槽位", () => {
+    window.localStorage.setItem(
+      "codingns.auth.remembered-login",
+      JSON.stringify({
+        username: "admin",
+        password: "Secret123!",
+        serverBaseUrl: "10.10.1.8:4100"
+      })
+    );
+
+    const snapshot = readRememberedLoginSnapshot("host-2");
+
+    expect(snapshot.legacyServerBaseUrl).toBe("http://10.10.1.8:4100");
+    expect(snapshot.credentials).toMatchObject({
+      hostId: "host-2",
       username: "admin",
-      password: "Secret123!",
-      serverBaseUrl: "10.10.1.8:4100"
+      password: "Secret123!"
     });
+    expect(
+      JSON.parse(window.localStorage.getItem("codingns.auth.remembered-login") ?? "null")
+    ).toMatchObject({
+      "host-2": {
+        hostId: "host-2",
+        username: "admin",
+        password: "Secret123!"
+      }
+    });
+  });
+
+  it("同步服务器地址时只更新旧兼容结构，不会污染新的 HOST 凭据映射", () => {
+    window.localStorage.setItem(
+      "codingns.auth.remembered-login",
+      JSON.stringify({
+        username: "admin",
+        password: "Secret123!",
+        serverBaseUrl: "10.10.1.8:4100"
+      })
+    );
 
     syncRememberedLoginServerBaseUrl("http://10.10.1.9:4200");
 
-    expect(readRememberedLoginCredentials()).toEqual({
-      username: "admin",
-      password: "Secret123!",
+    expect(
+      JSON.parse(window.localStorage.getItem("codingns.auth.remembered-login") ?? "null")
+    ).toMatchObject({
       serverBaseUrl: "http://10.10.1.9:4200"
+    });
+
+    persistRememberedLoginCredentials({
+      hostId: "host-1",
+      username: "admin",
+      password: "Secret123!"
+    });
+    syncRememberedLoginServerBaseUrl("http://10.10.1.10:4300");
+
+    expect(readRememberedLoginCredentials("host-1")).toMatchObject({
+      hostId: "host-1",
+      username: "admin",
+      password: "Secret123!"
     });
   });
 });

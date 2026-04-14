@@ -1,27 +1,21 @@
 import { useSyncExternalStore } from "react";
 
-import type { ClientRuntimeConfig, ClientRuntimeConfigPatch } from "./client-config-types";
+import type {
+  ClientRuntimeConfig,
+  ClientRuntimeConfigPatch,
+  LegacyClientRuntimeConfigSnapshot
+} from "./client-config-types";
 import {
   loadClientRuntimeConfig,
-  persistClientRuntimeConfig,
-  resolveDefaultHostBaseUrl
+  normalizeClientRuntimeConfigSnapshot,
+  persistClientRuntimeConfig
 } from "./client-config-service";
 import { resolveRuntimePlatform } from "../platform/platform-adapter";
 
 type Listener = () => void;
 
 function createFallbackState(): ClientRuntimeConfig {
-  const platform = resolveRuntimePlatform();
-
-  return {
-    platform,
-    hostBaseUrl: resolveDefaultHostBaseUrl(platform),
-    releaseChannel: "stable",
-    autoReconnect: true,
-    autoCheckUpdate: platform === "desktop",
-    language: "zh-CN",
-    defaultPermissionMode: "default"
-  };
+  return normalizeClientRuntimeConfigSnapshot(null, resolveRuntimePlatform());
 }
 
 class ClientConfigStore {
@@ -37,8 +31,8 @@ class ClientConfigStore {
 
   getState = () => this.state;
 
-  hydrate(config: ClientRuntimeConfig): void {
-    this.state = config;
+  hydrate(config: ClientRuntimeConfig | LegacyClientRuntimeConfigSnapshot): void {
+    this.state = normalizeClientRuntimeConfigSnapshot(config, this.state.platform);
     this.emit();
   }
 

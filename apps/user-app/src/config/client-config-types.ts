@@ -2,10 +2,26 @@ export type RuntimePlatform = "desktop" | "web" | "ios" | "android";
 export type ReleaseChannel = "stable" | "beta";
 export type AppLanguage = "zh-CN" | "en-US";
 export type ClientPermissionMode = "default" | "acceptEdits" | "bypassPermissions";
+export type HostProfileKind = "local" | "lan" | "remote" | "custom";
+
+export const DEFAULT_HOST_PROFILE_ID = "default-host";
+
+export interface HostProfile {
+  id: string;
+  name: string;
+  baseUrl: string;
+  kind: HostProfileKind;
+  createdAt: string;
+  updatedAt: string;
+  lastConnectedAt: string | null;
+  lastUserId: string | null;
+  lastUsername: string | null;
+}
 
 export interface ClientRuntimeConfig {
   platform: RuntimePlatform;
-  hostBaseUrl: string;
+  activeHostId: string | null;
+  hosts: HostProfile[];
   releaseChannel: ReleaseChannel;
   autoReconnect: boolean;
   autoCheckUpdate: boolean;
@@ -13,8 +29,16 @@ export interface ClientRuntimeConfig {
   defaultPermissionMode: ClientPermissionMode;
 }
 
-export interface ClientRuntimeConfigPatch extends Partial<ClientRuntimeConfig> {
+export interface ClientRuntimeConfigPatch extends Partial<ClientRuntimeConfig> {}
+
+export interface LegacyClientRuntimeConfigSnapshot {
+  platform?: RuntimePlatform;
   hostBaseUrl?: string;
+  releaseChannel?: ReleaseChannel;
+  autoReconnect?: boolean;
+  autoCheckUpdate?: boolean;
+  language?: AppLanguage | "en";
+  defaultPermissionMode?: ClientPermissionMode;
 }
 
 export interface DesktopBridgeResult<T = void> {
@@ -80,4 +104,25 @@ export interface DesktopUpdateInstallResult {
   errorCode?: string;
   detail?: string;
   downloadedFilePath?: string | null;
+}
+
+export function getHostProfileById(
+  config: Pick<ClientRuntimeConfig, "activeHostId" | "hosts">,
+  hostId: string | null | undefined
+): HostProfile | null {
+  if (!hostId) {
+    return null;
+  }
+
+  return config.hosts.find((host) => host.id === hostId) ?? null;
+}
+
+export function getActiveHost(config: Pick<ClientRuntimeConfig, "activeHostId" | "hosts">): HostProfile | null {
+  return getHostProfileById(config, config.activeHostId) ?? config.hosts[0] ?? null;
+}
+
+export function getActiveHostBaseUrl(
+  config: Pick<ClientRuntimeConfig, "activeHostId" | "hosts">
+): string | null {
+  return getActiveHost(config)?.baseUrl ?? null;
 }

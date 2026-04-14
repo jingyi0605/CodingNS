@@ -1,4 +1,6 @@
 import { clientConfigStore } from "./client-config-store";
+import { getActiveHostBaseUrl } from "./client-config-types";
+import { resolveDefaultHostBaseUrl } from "./client-config-service";
 
 function ensureTrailingSlash(baseUrl: string): string {
   return baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
@@ -9,7 +11,8 @@ function trimLeadingSlash(path: string): string {
 }
 
 export function getHostBaseUrl(): string {
-  return clientConfigStore.getState().hostBaseUrl;
+  const config = clientConfigStore.getState();
+  return getActiveHostBaseUrl(config) ?? resolveDefaultHostBaseUrl(config.platform);
 }
 
 export function getHostRequestUrl(path: string, baseUrl = getHostBaseUrl()): string {

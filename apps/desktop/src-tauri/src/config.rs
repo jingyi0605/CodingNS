@@ -4,9 +4,25 @@ use tauri::{AppHandle, Manager};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
+pub struct DesktopHostProfile {
+    pub id: String,
+    pub name: String,
+    pub base_url: String,
+    pub kind: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub last_connected_at: Option<String>,
+    pub last_user_id: Option<String>,
+    pub last_username: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct DesktopRuntimeConfig {
     pub platform: Option<String>,
     pub host_base_url: Option<String>,
+    pub active_host_id: Option<String>,
+    pub hosts: Option<Vec<DesktopHostProfile>>,
     pub release_channel: Option<String>,
     pub auto_reconnect: Option<bool>,
     pub auto_check_update: Option<bool>,
@@ -45,6 +61,14 @@ pub fn write_desktop_config(app: &AppHandle, patch: DesktopRuntimeConfig) -> Res
     }
     if patch.host_base_url.is_some() {
         current.host_base_url = patch.host_base_url;
+    }
+    if patch.active_host_id.is_some() {
+        current.active_host_id = patch.active_host_id;
+        current.host_base_url = None;
+    }
+    if patch.hosts.is_some() {
+        current.hosts = patch.hosts;
+        current.host_base_url = None;
     }
     if patch.release_channel.is_some() {
         current.release_channel = patch.release_channel;

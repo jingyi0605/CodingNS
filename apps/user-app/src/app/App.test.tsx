@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
 import { clientConfigStore } from "../config/client-config-store";
+import { getActiveHostBaseUrl } from "../config/client-config-types";
 import { serverConfigStore } from "../config/server-config";
 import { userPreferenceStore } from "../preferences/user-preference-store";
 import { LoginPage } from "../features/auth/pages/LoginPage";
@@ -345,7 +346,7 @@ describe("app routes", () => {
 
     serverConfigStore.setBaseUrl("http://10.10.1.8:4100");
     await waitFor(() => {
-      expect(clientConfigStore.getState().hostBaseUrl).toBe("http://10.10.1.8:4100");
+      expect(getActiveHostBaseUrl(clientConfigStore.getState())).toBe("http://10.10.1.8:4100");
     });
     hydrateAuth();
 
@@ -415,7 +416,7 @@ describe("app routes", () => {
     await userEvent.click(saveButton);
 
     await waitFor(() => {
-      expect(clientConfigStore.getState().hostBaseUrl).toBe("http://10.10.1.8:4100");
+      expect(getActiveHostBaseUrl(clientConfigStore.getState())).toBe("http://10.10.1.8:4100");
     });
 
     await waitFor(() => {

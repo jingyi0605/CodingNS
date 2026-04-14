@@ -293,6 +293,50 @@ describe("WorkbenchLayout", () => {
     delete window.__TAURI_INTERNALS__;
   });
 
+  it("在桌面端工具栏里把 HOST 切换器放在收起按钮和通知按钮之间", async () => {
+    renderWorkbenchRoute();
+
+    const collapseButton = await screen.findByRole("button", { name: t("shell.hideSessionSidebar") });
+    const toolbarRoot = collapseButton.closest(".workbench-nav-toolbar");
+
+    if (!(toolbarRoot instanceof HTMLElement)) {
+      throw new Error("未找到工作台工具栏");
+    }
+
+    const orderedLabels = Array.from(toolbarRoot.querySelectorAll("button")).map((button) =>
+      button.getAttribute("aria-label") ?? ""
+    );
+
+    expect(orderedLabels.slice(0, 3)).toEqual([
+      t("shell.hideSessionSidebar"),
+      t("shell.hostSwitcherAriaLabel"),
+      t("shell.globalNotificationsAction")
+    ]);
+  });
+
+  it("左侧收起后仍然把 HOST 切换器放在展开按钮和通知按钮之间", async () => {
+    const user = userEvent.setup();
+
+    renderWorkbenchRoute();
+    await user.click(await screen.findByRole("button", { name: t("shell.hideSessionSidebar") }));
+
+    const collapsedControls = document.querySelector(".workbench-collapsed-controls.left[data-visible='true']");
+
+    if (!(collapsedControls instanceof HTMLElement)) {
+      throw new Error("未找到收起态左侧工具栏");
+    }
+
+    const orderedLabels = Array.from(collapsedControls.querySelectorAll("button")).map((button) =>
+      button.getAttribute("aria-label") ?? ""
+    );
+
+    expect(orderedLabels.slice(0, 3)).toEqual([
+      t("shell.showSessionSidebar"),
+      t("shell.hostSwitcherAriaLabel"),
+      t("shell.globalNotificationsAction")
+    ]);
+  });
+
   it("会把缺失 children 的侧栏树节点当作空数组处理", () => {
     const session = createSessionSummary({
       sessionId: "session-1",

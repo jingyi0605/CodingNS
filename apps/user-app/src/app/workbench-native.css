@@ -1902,6 +1902,67 @@ body {
   border: 1px solid var(--panel-border);
 }
 
+.settings-tailscale-panel {
+  width: 100%;
+}
+
+.settings-tailscale-form {
+  display: grid;
+  gap: 12px;
+}
+
+.settings-tailscale-field {
+  display: grid;
+  gap: 6px;
+}
+
+.settings-tailscale-field-label {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.settings-tailscale-field-description {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.settings-tailscale-addresses {
+  display: grid;
+  gap: 8px;
+}
+
+.settings-tailscale-address-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+}
+
+.settings-tailscale-address-label {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.settings-tailscale-address-value {
+  min-width: 0;
+  color: var(--text-primary);
+  font-size: 12px;
+  text-align: right;
+  word-break: break-all;
+}
+
+.settings-tailscale-link {
+  color: var(--accent);
+  text-decoration: underline;
+  word-break: break-all;
+}
+
 .theme-card {
   min-width: 0;
   min-height: 44px;
@@ -2121,6 +2182,148 @@ body {
 .workbench-notification-anchor {
   position: relative;
   display: inline-flex;
+}
+
+.workbench-host-switcher-anchor {
+  position: relative;
+  display: inline-flex;
+  min-width: 0;
+}
+.workbench-host-switcher-anchor > .workbench-nav-toolbar-button > svg,
+.workbench-host-switcher-item-trailing svg,
+.workbench-host-switcher-add svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+.workbench-host-switcher-item-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: flex-start;
+}
+.workbench-host-switcher-item-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+.workbench-host-switcher-item-meta {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workbench-host-switcher-item-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--panel-active);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.workbench-host-switcher-menu {
+  position: fixed;
+  z-index: 2401;
+  width: min(320px, calc(100vw - 32px));
+  overflow: hidden;
+  border: 1px solid var(--panel-border);
+  border-radius: 14px;
+  background: var(--panel-bg-strong);
+  box-shadow: var(--panel-shadow);
+  backdrop-filter: blur(18px);
+}
+
+.workbench-host-switcher-menu-header {
+  padding: 12px 14px 10px;
+  border-bottom: 1px solid var(--panel-separator);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.workbench-host-switcher-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.workbench-host-switcher-item,
+.workbench-host-switcher-add {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.workbench-host-switcher-item + .workbench-host-switcher-item,
+.workbench-host-switcher-form,
+.workbench-host-switcher-add {
+  border-top: 1px solid var(--panel-separator);
+}
+
+.workbench-host-switcher-item:hover,
+.workbench-host-switcher-add:hover {
+  background: var(--panel-hover);
+}
+
+.workbench-host-switcher-item[data-active="true"] {
+  background: var(--panel-active);
+}
+
+.workbench-host-switcher-item-trailing {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 44px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.workbench-host-switcher-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+}
+
+.workbench-host-switcher-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.workbench-host-switcher-field input {
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel-bg) 92%, transparent);
+  color: var(--text-primary);
+}
+
+.workbench-host-switcher-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .workbench-notification-badge {

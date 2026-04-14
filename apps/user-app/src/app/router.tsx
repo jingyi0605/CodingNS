@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import {
   Navigate,
   Outlet,
@@ -6,6 +7,7 @@ import {
   useLocation
 } from "react-router-dom";
 
+import { useHostRuntimeBoundaryKey } from "../config/host-runtime-store";
 import { BootstrapPage } from "../features/auth/pages/BootstrapPage";
 import { LoginPage } from "../features/auth/pages/LoginPage";
 import { AdaptiveButlerPage } from "../features/butler/pages/AdaptiveButlerPage";
@@ -26,6 +28,26 @@ import { WorkbenchShellRoute } from "../features/workbench/components/WorkbenchS
 import { WorkbenchLandingPage } from "../features/workbench/pages/WorkbenchLandingPage";
 import { SettingsPage } from "../features/settings/pages/SettingsPage";
 
+function RuntimeResetBoundary({
+  runtimeKey,
+  children
+}: {
+  runtimeKey: string;
+  children: ReactNode;
+}) {
+  return <div key={runtimeKey}>{children}</div>;
+}
+
+function AuthenticatedRuntimeOutlet() {
+  const runtimeKey = useHostRuntimeBoundaryKey();
+
+  return (
+    <RuntimeResetBoundary runtimeKey={runtimeKey}>
+      <Outlet />
+    </RuntimeResetBoundary>
+  );
+}
+
 function RequireAuth() {
   const session = useAuthSelector((state) => state.session);
   const location = useLocation();
@@ -44,7 +66,7 @@ function RequireAuth() {
     return <Navigate to={`/login?returnTo=${encodeURIComponent(returnTo)}`} replace />;
   }
 
-  return <Outlet />;
+  return <AuthenticatedRuntimeOutlet />;
 }
 
 function WorkbenchIndexRedirect() {

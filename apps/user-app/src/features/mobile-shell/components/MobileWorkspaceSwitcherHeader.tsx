@@ -1,9 +1,19 @@
 import { createPortal } from "react-dom";
 import { useState, type CSSProperties, type ReactNode, type Ref, type TouchEventHandler } from "react";
+import { useNavigate } from "react-router-dom";
 
+import { useClientConfigSelector } from "../../../config/client-config-store";
+import { getActiveHost } from "../../../config/client-config-types";
+import { HostSwitchError, hostSwitchCoordinator } from "../../../config/host-switch-coordinator";
 import { useHaptics } from "../../../shared/haptics";
 import { t } from "../../../shared/i18n";
+import { useToast } from "../../../shared/toast";
+import {
+  buildMobileHostSwitcherEntries,
+  type MobileHostSwitcherEntry
+} from "../../workbench/utils/host-workspace-switcher";
 import type { MobileWorkspaceOption } from "../../workbench/utils/mobile-workspace-tree";
+import { buildWorkspaceHomePath } from "../../workbench/utils/workbench-navigation";
 import { MobileTopHeaderFrame } from "./MobileTopHeaderFrame";
 
 interface WorkspaceSummary {
@@ -16,7 +26,7 @@ interface MobileWorkspaceSwitcherHeaderProps {
   readonly currentWorkspace: WorkspaceSummary | null;
   readonly workspaces: readonly WorkspaceSummary[];
   readonly workspaceOptions?: readonly MobileWorkspaceOption[];
-  readonly onSelectWorkspace?: (workspaceId: string) => void;
+  readonly onSelectWorkspace?: (workspaceId: string) => void | Promise<void>;
   readonly className?: string;
   readonly containerRef?: Ref<HTMLDivElement>;
   readonly heading?: string;
@@ -51,18 +61,64 @@ export function MobileWorkspaceSwitcherHeader({
   gestureHandlers
 }: MobileWorkspaceSwitcherHeaderProps) {
   const [switcherOpen, setSwitcherOpen] = useState(false);
+  const [pendingSelectionKey, setPendingSelectionKey] = useState<string | null>(null);
   const haptics = useHaptics();
+  const navigate = useNavigate();
+  const { showToast } = useToast();
+  const runtimeConfig = useClientConfigSelector((state) => state);
+  const activeHost = getActiveHost(runtimeConfig);
   const switcherItems = workspaceOptions ?? workspaces.map((workspace) => ({
-    workspace,
+    workspace: {
+      ...workspace,
+      repoRoot: workspace.path
+    },
     label: workspace.name,
     subtitle: workspace.path,
     depth: 0,
     kind: "workspace" as const,
     meta: null
   }));
+  const hostSwitcherItems = buildMobileHostSwitcherEntries(runtimeConfig, switcherItems);
+  const headerTitle = currentWorkspace?.name ?? activeHost?.name ?? null;
+  const headerSubtitle = currentWorkspace?.path ?? activeHost?.baseUrl ?? null;
 
-  if (!currentWorkspace) {
+  if (!headerTitle) {
     return null;
+  }
+
+  async function handleItemSelect(item: MobileHostSwitcherEntry): Promise<void> {
+    const itemKey =
+      item.kind === "host"
+        ? `host:${item.host.id}`
+        : `workspace:${item.host.id}:${item.workspace.id}`;
+
+    if (pendingSelectionKey) {
+      return;
+    }
+
+    setPendingSelectionKey(itemKey);
+
+    try {
+      if (item.host.id !== runtimeConfig.activeHostId) {
+        void haptics.trigger("selection");
+        await hostSwitchCoordinator.switchHost(item.host.id);
+      }
+
+      if (item.kind === "host") {
+        navigate(buildWorkspaceHomePath());
+      } else if (item.workspace.id !== currentWorkspace?.id || item.host.id !== runtimeConfig.activeHostId) {
+        await onSelectWorkspace?.(item.workspace.id);
+      }
+
+      setSwitcherOpen(false);
+    } catch (error) {
+      showToast({
+        title: resolveHostSwitchErrorMessage(error, item.host.name),
+        tone: "error"
+      });
+    } finally {
+      setPendingSelectionKey(null);
+    }
   }
 
   return (
@@ -73,7 +129,7 @@ export function MobileWorkspaceSwitcherHeader({
         {...gestureHandlers}
       >
         <section className="mobile-workspace-home-header">
-          <h1 className="mobile-workspace-switcher-heading">{heading ?? currentWorkspace.name}</h1>
+          <h1 className="mobile-workspace-switcher-heading">{heading ?? headerTitle}</h1>
 
           <div className="mobile-workspace-home-toolbar-top">
             <button
@@ -90,7 +146,7 @@ export function MobileWorkspaceSwitcherHeader({
                 setSwitcherOpen(true);
               }}
             >
-              <span className="mobile-workspace-home-switcher-label">{triggerLabel ?? currentWorkspace.name}</span>
+              <span className="mobile-workspace-home-switcher-label">{triggerLabel ?? headerTitle}</span>
               <ChevronDownIcon />
             </button>
 
@@ -99,7 +155,7 @@ export function MobileWorkspaceSwitcherHeader({
             </div>
           </div>
 
-          <p className="mobile-workspace-home-path">{currentWorkspace.path}</p>
+          {headerSubtitle ? <p className="mobile-workspace-home-path">{headerSubtitle}</p> : null}
           {content}
         </section>
       </MobileTopHeaderFrame>
@@ -107,45 +163,71 @@ export function MobileWorkspaceSwitcherHeader({
       {switcherOpen && !onTriggerClick
         ? renderSheet(
             <WorkspaceSwitcherSheet
-              title={t("shell.workspaceHomeSwitcherTitle")}
+              title={t("shell.hostWorkspaceSwitcherTitle")}
               onClose={() => setSwitcherOpen(false)}
             >
               <div className="mobile-workspace-home-group mobile-workspace-home-sheet-group">
-                {switcherItems.map((item) => (
+                {hostSwitcherItems.map((item) => (
                   <button
-                    key={item.workspace.id}
+                    key={
+                      item.kind === "host"
+                        ? `host-${item.host.id}`
+                        : `workspace-${item.host.id}-${item.workspace.id}`
+                    }
                     type="button"
                     className="mobile-workspace-home-row mobile-workspace-home-sheet-row"
-                    data-worktree-kind={item.kind}
-                    data-worktree-depth={item.depth}
+                    data-host-entry-kind={item.kind}
+                    data-host-active={item.host.id === runtimeConfig.activeHostId}
+                    data-worktree-kind={item.kind === "workspace" ? item.option.kind : undefined}
+                    data-worktree-depth={item.kind === "workspace" ? item.option.depth + 1 : 0}
+                    disabled={pendingSelectionKey !== null}
                     onClick={() => {
-                      if (item.workspace.id !== currentWorkspace.id) {
-                        void haptics.trigger("selection");
-                        onSelectWorkspace?.(item.workspace.id);
-                      }
-                      setSwitcherOpen(false);
+                      void handleItemSelect(item);
                     }}
                   >
                     <div
-                      className="mobile-workspace-home-session-main"
+                      className={
+                        item.kind === "host"
+                          ? "mobile-workspace-home-session-main mobile-host-workspace-switcher-host-main"
+                          : "mobile-workspace-home-session-main"
+                      }
                       style={
                         {
-                          "--mobile-workspace-tree-depth": String(item.depth)
+                          "--mobile-workspace-tree-depth": String(
+                            item.kind === "host" ? 0 : item.option.depth + 1
+                          )
                         } as CSSProperties
                       }
                     >
                       <span className="mobile-workspace-home-session-title">
-                        {item.kind === "worktree" ? (
+                        {item.kind === "host" ? (
+                          <span className="mobile-host-workspace-switcher-host-badge">
+                            {t("shell.hostSwitcherNodeBadge")}
+                          </span>
+                        ) : null}
+                        {item.kind === "workspace" && item.option.kind === "worktree" ? (
                           <span className="mobile-workspace-home-worktree-badge">
                             {t("shell.mobileWorktreeBadge")}
                           </span>
                         ) : null}
-                        {item.label}
+                        {item.kind === "host" ? item.host.name : item.option.label}
                       </span>
-                      <span className="mobile-workspace-home-session-meta">{item.subtitle}</span>
+                      <span className="mobile-workspace-home-session-meta">
+                        {item.kind === "host"
+                          ? formatHostSummary(item.host, item.workspaceCount)
+                          : item.option.subtitle}
+                      </span>
                     </div>
                     <span className="mobile-workspace-home-row-trailing">
-                      {item.workspace.id === currentWorkspace.id ? <CheckIcon /> : <ChevronRightIcon />}
+                      {item.kind === "host" && item.host.id === runtimeConfig.activeHostId ? (
+                        <CheckIcon />
+                      ) : item.kind === "workspace"
+                        && item.workspace.id === currentWorkspace?.id
+                        && item.host.id === runtimeConfig.activeHostId ? (
+                          <CheckIcon />
+                        ) : (
+                          <ChevronRightIcon />
+                        )}
                     </span>
                   </button>
                 ))}
@@ -156,6 +238,38 @@ export function MobileWorkspaceSwitcherHeader({
         : null}
     </>
   );
+}
+
+function resolveHostSwitchErrorMessage(error: unknown, hostName: string): string {
+  if (!(error instanceof HostSwitchError)) {
+    return t("shell.hostSwitchFailed");
+  }
+
+  if (error.code === "HOST_UNREACHABLE") {
+    return t("shell.hostSwitchUnreachable", { name: hostName });
+  }
+
+  return t("shell.hostSwitchMissing");
+}
+
+function formatHostSummary(
+  host: ReturnType<typeof getActiveHost>,
+  workspaceCount: number
+): string {
+  if (!host) {
+    return "";
+  }
+
+  if (host.lastUsername) {
+    return t("shell.hostSwitcherWorkspaceCountWithUser", {
+      username: host.lastUsername,
+      count: workspaceCount
+    });
+  }
+
+  return workspaceCount > 0
+    ? t("shell.hostSwitcherWorkspaceCount", { count: workspaceCount })
+    : host.baseUrl;
 }
 
 function renderSheet(content: ReactNode) {
