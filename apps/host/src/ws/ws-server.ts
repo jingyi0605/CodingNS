@@ -172,12 +172,6 @@ export function createWsServer(
 
       subscriptions.get(payload.sessionId)?.close();
 
-      client.send(
-        JSON.stringify({
-          type: "session.subscribed",
-          sessionId: payload.sessionId
-        })
-      );
       butlerActionContextService?.preloadSessionActionContext(
         payload.sessionId,
         authContext.user.userId
@@ -250,6 +244,13 @@ export function createWsServer(
             runtimeSubscription.close();
           }
         });
+
+        client.send(
+          JSON.stringify({
+            type: "session.subscribed",
+            sessionId: payload.sessionId
+          })
+        );
       } catch (error) {
         runtimeSubscription.close();
 
