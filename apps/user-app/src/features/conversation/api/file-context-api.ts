@@ -6,7 +6,8 @@ export type FileOperationType =
   | "create_directory"
   | "delete"
   | "rename"
-  | "move";
+  | "move"
+  | "copy";
 
 export interface FileNodeDto {
   path: string;

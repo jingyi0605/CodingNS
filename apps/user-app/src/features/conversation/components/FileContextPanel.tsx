@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { useLocalUiPreferenceSelector } from "../../../preferences/local-ui-preference-store";
 import { readViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
@@ -19,6 +20,10 @@ import {
 } from "../api/file-context-api";
 import { getGitDiff, type GitChangeItemDto } from "../api/git-api";
 import { usePlatform } from "../../../platform/platform-provider";
+import {
+  showDesktopContextMenu,
+  type DesktopContextMenuItem
+} from "../../../platform/desktop/desktop-context-menu";
 import {
   useWorkbenchShell,
   type WorkbenchFileRevealRequest,
@@ -72,13 +77,32 @@ type RecentFileActivation = {
   filePath: string;
   timestamp: number;
 };
-type DeleteConfirmTarget = {
+type FileSelectionTarget = {
   path: string;
   kind: "file" | "directory";
+};
+type FileClipboardMode = "copy" | "cut";
+type FileClipboardState = {
+  mode: FileClipboardMode;
+  items: FileSelectionTarget[];
+};
+type WebContextMenuState = {
+  positionX: number;
+  positionY: number;
+  items: DesktopContextMenuItem[];
+};
+type WebContextMenuLayout = {
+  left: number;
+  top: number;
+  maxHeight: number;
 };
 
 const ROOT_DIRECTORY = "";
 const FILE_REPEAT_ACTIVATION_MS = 450;
+const WEB_CONTEXT_MENU_VIEWPORT_MARGIN_PX = 8;
+const WEB_CONTEXT_MENU_GAP_PX = 4;
+const WEB_CONTEXT_MENU_DEFAULT_WIDTH_PX = 176;
+const WEB_CONTEXT_MENU_MIN_HEIGHT_PX = 120;
 const FILE_PANEL_WORKSPACE_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
 const FILE_PANEL_SESSION_COUNT_CACHE_MAX_AGE_MS = 60 * 1000;
 const FILE_TREE_SNAPSHOT_TIMEOUT_MS = 1600;
@@ -125,7 +149,8 @@ export function FileContextPanel({
   const [expandedDirectories, setExpandedDirectories] = useState<string[]>([]);
   const [loadingDirectories, setLoadingDirectories] = useState<string[]>([]);
   const [activeDirectoryPath, setActiveDirectoryPath] = useState(ROOT_DIRECTORY);
-  const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [selectedTargets, setSelectedTargets] = useState<FileSelectionTarget[]>([]);
+  const [selectionAnchorPath, setSelectionAnchorPath] = useState<string | null>(null);
   const [loadingTree, setLoadingTree] = useState(false);
   const [mutating, setMutating] = useState(false);
   const [transferring, setTransferring] = useState(false);
@@ -139,7 +164,10 @@ export function FileContextPanel({
   const [sessionChangeCount, setSessionChangeCount] = useState(0);
   const [copyPathMenuOpen, setCopyPathMenuOpen] = useState(false);
   const [mobileActionMenuOpen, setMobileActionMenuOpen] = useState(false);
-  const [deleteConfirmTarget, setDeleteConfirmTarget] = useState<DeleteConfirmTarget | null>(null);
+  const [webContextMenu, setWebContextMenu] = useState<WebContextMenuState | null>(null);
+  const [webContextMenuLayout, setWebContextMenuLayout] = useState<WebContextMenuLayout | null>(null);
+  const [deleteConfirmTargets, setDeleteConfirmTargets] = useState<FileSelectionTarget[] | null>(null);
+  const [fileClipboard, setFileClipboard] = useState<FileClipboardState | null>(null);
   const [gitChanges, setGitChanges] = useState<GitChangeItemDto[]>([]);
   const [showChangesOnly, setShowChangesOnly] = useState(false);
   const [viewerDiffContent, setViewerDiffContent] = useState<string | null>(null);
@@ -150,6 +178,7 @@ export function FileContextPanel({
   const recentFileActivationRef = useRef<RecentFileActivation | null>(null);
   const copyPathMenuRef = useRef<HTMLDivElement | null>(null);
   const mobileActionMenuRef = useRef<HTMLDivElement | null>(null);
+  const webContextMenuRef = useRef<HTMLDivElement | null>(null);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const handledExternalRevealRequestIdRef = useRef<number | null>(null);
   const viewerDiffRequestIdRef = useRef(0);
@@ -223,6 +252,11 @@ export function FileContextPanel({
       setLoadingTree(false);
       setShowChangesOnly(false);
       setViewerDiffContent(null);
+      setSelectedTargets([]);
+      setSelectionAnchorPath(null);
+      setWebContextMenu(null);
+      setWebContextMenuLayout(null);
+      setDeleteConfirmTargets(null);
       return;
     }
 
@@ -348,13 +382,16 @@ export function FileContextPanel({
   }, [activeDirectoryPath, expandedDirectories, subscribeFileTree, workspaceId]);
 
   useEffect(() => {
-    setSelectedPath(null);
+    setSelectedTargets([]);
+    setSelectionAnchorPath(null);
     setViewerFilePath(null);
     setViewerDiffContent(null);
     setSessionRefreshVersion(0);
     setCopyPathMenuOpen(false);
     setMobileActionMenuOpen(false);
-    setDeleteConfirmTarget(null);
+    setWebContextMenu(null);
+    setWebContextMenuLayout(null);
+    setDeleteConfirmTargets(null);
     recentFileActivationRef.current = null;
     viewerDiffRequestIdRef.current += 1;
   }, [sessionId]);
@@ -366,7 +403,7 @@ export function FileContextPanel({
   }, [activeTab, hasSessionContext]);
 
   useEffect(() => {
-    if (!copyPathMenuOpen && !mobileActionMenuOpen) {
+    if (!copyPathMenuOpen && !mobileActionMenuOpen && !webContextMenu) {
       return;
     }
 
@@ -377,10 +414,13 @@ export function FileContextPanel({
 
       const clickedCopyPathMenu = copyPathMenuRef.current?.contains(event.target) ?? false;
       const clickedMobileActionMenu = mobileActionMenuRef.current?.contains(event.target) ?? false;
+      const clickedWebContextMenu = webContextMenuRef.current?.contains(event.target) ?? false;
 
-      if (!clickedCopyPathMenu && !clickedMobileActionMenu) {
+      if (!clickedCopyPathMenu && !clickedMobileActionMenu && !clickedWebContextMenu) {
         setCopyPathMenuOpen(false);
         setMobileActionMenuOpen(false);
+        setWebContextMenu(null);
+        setWebContextMenuLayout(null);
       }
     }
 
@@ -388,6 +428,8 @@ export function FileContextPanel({
       if (event.key === "Escape") {
         setCopyPathMenuOpen(false);
         setMobileActionMenuOpen(false);
+        setWebContextMenu(null);
+        setWebContextMenuLayout(null);
       }
     }
 
@@ -398,7 +440,52 @@ export function FileContextPanel({
       document.removeEventListener("pointerdown", handleDocumentPointerDown);
       document.removeEventListener("keydown", handleDocumentKeyDown);
     };
-  }, [copyPathMenuOpen, mobileActionMenuOpen]);
+  }, [copyPathMenuOpen, mobileActionMenuOpen, webContextMenu]);
+
+  useLayoutEffect(() => {
+    if (!webContextMenu || typeof window === "undefined") {
+      setWebContextMenuLayout(null);
+      return;
+    }
+
+    function updateWebContextMenuLayout() {
+      const menuElement = webContextMenuRef.current;
+
+      if (!menuElement) {
+        return;
+      }
+
+      const menuRect = menuElement.getBoundingClientRect();
+      setWebContextMenuLayout(
+        resolveWebContextMenuLayout(
+          {
+            x: webContextMenu.positionX,
+            y: webContextMenu.positionY
+          },
+          {
+            width: menuRect.width || WEB_CONTEXT_MENU_DEFAULT_WIDTH_PX,
+            height: menuRect.height || menuElement.scrollHeight || 0
+          },
+          {
+            width: window.innerWidth,
+            height: window.innerHeight
+          }
+        )
+      );
+    }
+
+    updateWebContextMenuLayout();
+    const animationFrameId = window.requestAnimationFrame(updateWebContextMenuLayout);
+
+    window.addEventListener("resize", updateWebContextMenuLayout);
+    window.addEventListener("scroll", updateWebContextMenuLayout, true);
+
+    return () => {
+      window.cancelAnimationFrame(animationFrameId);
+      window.removeEventListener("resize", updateWebContextMenuLayout);
+      window.removeEventListener("scroll", updateWebContextMenuLayout, true);
+    };
+  }, [webContextMenu]);
 
   useEffect(() => {
     if (!workspaceId) {
@@ -614,16 +701,66 @@ export function FileContextPanel({
   );
   const rootItems = visibleTreeCache[ROOT_DIRECTORY] ?? [];
   const searchMode = searchVisible && visibleSearchResult !== null;
+  const visibleWorkspaceItems = useMemo(
+    () =>
+      showChangesOnly
+        ? filterTreeByChanges(
+            rootItems,
+            visibleTreeCache,
+            gitChangeInfo.statusByPath,
+            gitChangeInfo.changedDirs
+          )
+        : rootItems,
+    [gitChangeInfo.changedDirs, gitChangeInfo.statusByPath, rootItems, showChangesOnly, visibleTreeCache]
+  );
+  const orderedSelectionTargets = useMemo(() => {
+    if (searchMode) {
+      return (visibleSearchResult ?? []).map((item) => createSelectionTarget(item.path, item.kind));
+    }
+
+    return flattenVisibleSelectionTargets(
+      visibleWorkspaceItems,
+      visibleTreeCache,
+      expandedDirectories,
+      showChangesOnly,
+      gitChangeInfo.statusByPath,
+      gitChangeInfo.changedDirs
+    );
+  }, [
+    expandedDirectories,
+    gitChangeInfo.changedDirs,
+    gitChangeInfo.statusByPath,
+    searchMode,
+    showChangesOnly,
+    visibleSearchResult,
+    visibleTreeCache,
+    visibleWorkspaceItems
+  ]);
   const currentWorkspace =
     navigationGroups.find((group) => group.workspace.id === workspaceId)?.workspace ?? null;
-  // 文件和目录原本分散在两套选中状态里，这里收敛成一个“当前目标路径”，后续按钮逻辑就不用到处打补丁。
-  const selectedTarget = resolveSelectedTarget(selectedPath, activeDirectoryPath);
-  const selectedTargetPath = selectedTarget?.path ?? null;
-  const canCopySelectedPath = Boolean(currentWorkspace?.path && selectedTargetPath !== null);
-  const canDownloadSelectedFile = Boolean(selectedPath);
-  const canDeleteSelectedTarget = Boolean(selectedTargetPath);
+  const primarySelectedTarget = getPrimarySelectedTarget(selectedTargets);
+  const primarySelectedPath = primarySelectedTarget?.path ?? null;
+  const primarySelectedFilePath =
+    primarySelectedTarget?.kind === "file" ? primarySelectedTarget.path : null;
+  const selectedTargetPathSet = useMemo(
+    () => new Set(selectedTargets.map((item) => item.path)),
+    [selectedTargets]
+  );
+  const actionableSelectedTargets = useMemo(
+    () => collapseNestedSelectionTargets(selectedTargets),
+    [selectedTargets]
+  );
+  const canCopySelectedPath = Boolean(
+    currentWorkspace?.path && selectedTargets.length === 1 && primarySelectedPath
+  );
+  const canDownloadSelectedFile =
+    selectedTargets.length === 1 && primarySelectedTarget?.kind === "file";
+  const canDeleteSelectedTarget = actionableSelectedTargets.length > 0;
+  const canCopyOrCutSelection = actionableSelectedTargets.length > 0;
+  const canPasteSelection = Boolean(fileClipboard?.items.length && workspaceId);
   const canCollapseCurrent = Boolean(
-    (selectedPath ? getParentDirectory(selectedPath) : activeDirectoryPath) && expandedDirectories.length
+    (primarySelectedFilePath ? getParentDirectory(primarySelectedFilePath) : activeDirectoryPath) &&
+      expandedDirectories.length
   );
 
   async function loadDirectory(directoryPath: string, force = false) {
@@ -819,6 +956,56 @@ export function FileContextPanel({
     directoryWaitersRef.current.clear();
   }
 
+  function setSingleSelection(target: FileSelectionTarget) {
+    setSelectedTargets([target]);
+    setSelectionAnchorPath(target.path);
+  }
+
+  function syncActiveDirectoryWithTarget(target: FileSelectionTarget) {
+    setActiveDirectoryPath(target.kind === "directory" ? target.path : getParentDirectory(target.path));
+  }
+
+  function applyRangeSelection(target: FileSelectionTarget) {
+    const rangeTargets = selectRangeTargets(orderedSelectionTargets, selectionAnchorPath, target);
+    setSelectedTargets(rangeTargets);
+    setSelectionAnchorPath(target.path);
+    syncActiveDirectoryWithTarget(target);
+  }
+
+  function applyToggleSelection(target: FileSelectionTarget) {
+    const nextTargets = toggleSelectionTarget(selectedTargets, target);
+    const nextPrimaryTarget = getPrimarySelectedTarget(nextTargets);
+
+    setSelectedTargets(nextTargets);
+    setSelectionAnchorPath(target.path);
+
+    if (nextPrimaryTarget) {
+      syncActiveDirectoryWithTarget(nextPrimaryTarget);
+    }
+  }
+
+  function applySingleSelection(target: FileSelectionTarget) {
+    setSingleSelection(target);
+    syncActiveDirectoryWithTarget(target);
+  }
+
+  function handleTargetSelection(
+    target: FileSelectionTarget,
+    event?: Pick<React.MouseEvent<HTMLElement>, "shiftKey" | "ctrlKey" | "metaKey">
+  ) {
+    if (event?.shiftKey) {
+      applyRangeSelection(target);
+      return;
+    }
+
+    if (isToggleSelectionEvent(event)) {
+      applyToggleSelection(target);
+      return;
+    }
+
+    applySingleSelection(target);
+  }
+
   // 选中文件时要把父目录链展开，否则树高亮永远对不上。
   async function revealPathInTree(targetPath: string, includeLeafDirectory = false) {
     const directoryChain = getDirectoryChain(targetPath, includeLeafDirectory);
@@ -841,8 +1028,9 @@ export function FileContextPanel({
   }
 
   async function selectFile(filePath: string) {
-    setSelectedPath(filePath);
-    setActiveDirectoryPath(getParentDirectory(filePath));
+    const target = createSelectionTarget(filePath, "file");
+    setSingleSelection(target);
+    syncActiveDirectoryWithTarget(target);
     await revealPathInTree(filePath);
   }
 
@@ -891,13 +1079,25 @@ export function FileContextPanel({
     recentFileActivationRef.current = null;
   }
 
-  async function handleWorkspaceFileClick(filePath: string) {
+  async function handleWorkspaceFileClick(
+    filePath: string,
+    event?: Pick<React.MouseEvent<HTMLElement>, "shiftKey" | "ctrlKey" | "metaKey">
+  ) {
+    const target = createSelectionTarget(filePath, "file");
+
+    if (event?.shiftKey || isToggleSelectionEvent(event)) {
+      resetRecentFileActivation();
+      handleTargetSelection(target, event);
+      return;
+    }
+
     if (shouldOpenViewerByRepeatClick(filePath)) {
       await openFileViewer(filePath);
       return;
     }
 
-    await selectFile(filePath);
+    handleTargetSelection(target, event);
+    await revealPathInTree(filePath);
   }
 
   function closeSearchPanel() {
@@ -907,9 +1107,21 @@ export function FileContextPanel({
     resetRecentFileActivation();
   }
 
-  async function handleSearchResultClick(item: FileNodeDto) {
+  async function handleSearchResultClick(
+    item: FileNodeDto,
+    event?: Pick<React.MouseEvent<HTMLElement>, "shiftKey" | "ctrlKey" | "metaKey">
+  ) {
+    const target = createSelectionTarget(item.path, item.kind);
+
+    if (event?.shiftKey || isToggleSelectionEvent(event)) {
+      resetRecentFileActivation();
+      handleTargetSelection(target, event);
+      return;
+    }
+
     if (item.kind === "directory") {
       closeSearchPanel();
+      handleTargetSelection(target, event);
       await expandDirectory(item.path);
       return;
     }
@@ -924,7 +1136,7 @@ export function FileContextPanel({
   }
 
   async function expandDirectory(directoryPath: string) {
-    setSelectedPath(null);
+    setSingleSelection(createSelectionTarget(directoryPath, "directory"));
     setActiveDirectoryPath(directoryPath);
 
     if (expandedDirectoriesRef.current.includes(directoryPath)) {
@@ -940,7 +1152,7 @@ export function FileContextPanel({
   }
 
   async function toggleDirectory(directoryPath: string) {
-    setSelectedPath(null);
+    setSingleSelection(createSelectionTarget(directoryPath, "directory"));
     setActiveDirectoryPath(directoryPath);
 
     if (expandedDirectoriesRef.current.includes(directoryPath)) {
@@ -956,7 +1168,8 @@ export function FileContextPanel({
       previous.filter((item) => item !== directoryPath && !item.startsWith(`${directoryPath}/`))
     );
     setActiveDirectoryPath(getParentDirectory(directoryPath));
-    setSelectedPath(null);
+    setSelectedTargets([]);
+    setSelectionAnchorPath(null);
   }
 
   async function handleRefresh() {
@@ -971,8 +1184,8 @@ export function FileContextPanel({
       requestGitRefresh(wid);
       await refreshTreeCache();
 
-      if (selectedPath) {
-        await revealPathInTree(selectedPath);
+      if (primarySelectedFilePath) {
+        await revealPathInTree(primarySelectedFilePath);
       }
 
       if (searchMode && searchKeyword.trim()) {
@@ -1048,7 +1261,7 @@ export function FileContextPanel({
       return;
     }
 
-    const baseDirectory = getCreateBaseDirectory(activeDirectoryPath, selectedPath);
+    const baseDirectory = getCreateBaseDirectory(activeDirectoryPath, primarySelectedTarget);
     const targetPath = joinRelativePath(baseDirectory, safeFileName);
 
     setTransferring(true);
@@ -1080,15 +1293,15 @@ export function FileContextPanel({
     }
   }
 
-  async function handleDownload() {
-    if (!workspaceId || !selectedPath) {
+  async function handleDownload(explicitFilePath = primarySelectedFilePath) {
+    if (!workspaceId || !explicitFilePath) {
       return;
     }
 
     setTransferring(true);
 
     try {
-      const payload = await downloadFile(workspaceId, selectedPath);
+      const payload = await downloadFile(workspaceId, explicitFilePath);
       const fileBuffer = decodeBase64ToArrayBuffer(payload.contentBase64);
 
       downloadBlob(payload.fileName, new Blob([fileBuffer], {
@@ -1111,7 +1324,9 @@ export function FileContextPanel({
   }
 
   function handleCollapseCurrent() {
-    const targetDirectory = selectedPath ? getParentDirectory(selectedPath) : activeDirectoryPath;
+    const targetDirectory = primarySelectedFilePath
+      ? getParentDirectory(primarySelectedFilePath)
+      : activeDirectoryPath;
 
     if (!targetDirectory || !expandedDirectoriesRef.current.includes(targetDirectory)) {
       return;
@@ -1120,12 +1335,15 @@ export function FileContextPanel({
     collapseBranch(targetDirectory);
   }
 
-  async function handleCreate(opType: "create_file" | "create_directory") {
+  async function handleCreate(
+    opType: "create_file" | "create_directory",
+    explicitBaseDirectory = getCreateBaseDirectory(activeDirectoryPath, primarySelectedTarget)
+  ) {
     if (!workspaceId) {
       return;
     }
 
-    const baseDirectory = getCreateBaseDirectory(activeDirectoryPath, selectedPath);
+    const baseDirectory = explicitBaseDirectory;
     const defaultPath = baseDirectory ? `${baseDirectory}/` : "";
     const nextPath = window.prompt(
       opType === "create_file"
@@ -1154,7 +1372,8 @@ export function FileContextPanel({
 
       if (opType === "create_directory") {
         await revealPathInTree(safeNextPath, true);
-        setSelectedPath(null);
+        setSingleSelection(createSelectionTarget(safeNextPath, "directory"));
+        setActiveDirectoryPath(safeNextPath);
       } else {
         await selectFile(safeNextPath);
       }
@@ -1168,49 +1387,168 @@ export function FileContextPanel({
     }
   }
 
-  function handleDeleteRequest() {
-    if (!selectedTargetPath || !selectedTarget || mutating) {
+  function handleCopyCutRequest(
+    mode: FileClipboardMode,
+    targets: FileSelectionTarget[] = actionableSelectedTargets
+  ) {
+    if (targets.length === 0) {
       return;
     }
 
-    setDeleteConfirmTarget(selectedTarget);
+    const nextTargets = collapseNestedSelectionTargets(targets);
+    setFileClipboard({
+      mode,
+      items: nextTargets
+    });
+    setSelectedTargets(nextTargets);
+    setSelectionAnchorPath(nextTargets[nextTargets.length - 1]?.path ?? null);
+    showToast({
+      title:
+        mode === "copy"
+          ? t("conversation.filePanelCopySelectionSuccess", {
+              count: nextTargets.length
+            })
+          : t("conversation.filePanelCutSelectionSuccess", {
+              count: nextTargets.length
+            }),
+      tone: "success"
+    });
+    setWebContextMenu(null);
   }
 
-  async function handleDeleteConfirm() {
-    if (!workspaceId || !deleteConfirmTarget) {
+  async function handlePasteRequest(
+    explicitBaseDirectory = resolvePasteBaseDirectory(primarySelectedTarget, activeDirectoryPath)
+  ) {
+    if (!workspaceId || !fileClipboard || !fileClipboard.items.length) {
       return;
     }
+
+    const baseDirectory = explicitBaseDirectory ?? ROOT_DIRECTORY;
+    const nextTargets = fileClipboard.items.map((item) => ({
+      source: item,
+      destinationPath: joinRelativePath(baseDirectory, getPathLeafName(item.path) || item.path)
+    }));
 
     setMutating(true);
 
     try {
-      await operateFile({
-        workspaceId,
-        opType: "delete",
-        srcPath: deleteConfirmTarget.path
+      for (const target of nextTargets) {
+        if (
+          fileClipboard.mode === "cut" &&
+          normalizeRelativeClipboardPath(target.source.path) ===
+            normalizeRelativeClipboardPath(target.destinationPath)
+        ) {
+          continue;
+        }
+
+        await operateFile({
+          workspaceId,
+          opType: fileClipboard.mode === "copy" ? "copy" : "move",
+          srcPath: target.source.path,
+          dstPath: target.destinationPath
+        });
+      }
+
+      const pastedTargets = nextTargets.map((item) =>
+        createSelectionTarget(item.destinationPath, item.source.kind)
+      );
+      const nextPrimaryTarget = pastedTargets[pastedTargets.length - 1] ?? null;
+
+      if (fileClipboard.mode === "cut") {
+        setFileClipboard(null);
+      }
+
+      setSelectedTargets(pastedTargets);
+      setSelectionAnchorPath(nextPrimaryTarget?.path ?? null);
+      if (nextPrimaryTarget) {
+        syncActiveDirectoryWithTarget(nextPrimaryTarget);
+      }
+      resetRecentFileActivation();
+
+      await refreshTreeCache({
+        activeDirectoryPath:
+          nextPrimaryTarget?.kind === "directory"
+            ? nextPrimaryTarget.path
+            : nextPrimaryTarget
+              ? getParentDirectory(nextPrimaryTarget.path)
+              : activeDirectoryPathRef.current,
+        expandedDirectories: expandedDirectoriesRef.current
       });
 
-      const nextActiveDirectory =
-        deleteConfirmTarget.kind === "directory"
-          ? getParentDirectory(deleteConfirmTarget.path)
-          : activeDirectoryPath;
-      const nextExpandedDirectories =
-        deleteConfirmTarget.kind === "directory"
-          ? expandedDirectoriesRef.current.filter(
-              (item) =>
-                item !== deleteConfirmTarget.path &&
-                !item.startsWith(`${deleteConfirmTarget.path}/`)
-            )
-          : expandedDirectoriesRef.current;
+      if (searchMode && searchKeyword.trim()) {
+        const response = await searchFiles(workspaceId, searchKeyword.trim());
+        setSearchResult(response.items);
+      }
 
-      if (viewerFilePath && isSameOrDescendantPath(deleteConfirmTarget.path, viewerFilePath)) {
+      setSessionRefreshVersion((current) => current + 1);
+      showToast({
+        title: t("conversation.filePanelPasteSuccess", {
+          count: pastedTargets.length
+        }),
+        tone: "success"
+      });
+      setWebContextMenu(null);
+    } catch (error) {
+      await refreshTreeCache().catch(() => undefined);
+      showToast({
+        title: readError(error, t("conversation.filePanelPasteFailed")),
+        tone: "error"
+      });
+    } finally {
+      setMutating(false);
+    }
+  }
+
+  function handleDeleteRequest(targets: FileSelectionTarget[] = actionableSelectedTargets) {
+    if (!targets.length || mutating) {
+      return;
+    }
+
+    setDeleteConfirmTargets(collapseNestedSelectionTargets(targets));
+    setWebContextMenu(null);
+  }
+
+  async function handleDeleteConfirm() {
+    if (!workspaceId || !deleteConfirmTargets?.length) {
+      return;
+    }
+
+    const effectiveDeleteTargets = collapseNestedSelectionTargets(deleteConfirmTargets);
+
+    setMutating(true);
+
+    try {
+      for (const target of effectiveDeleteTargets) {
+        await operateFile({
+          workspaceId,
+          opType: "delete",
+          srcPath: target.path
+        });
+      }
+
+      const nextActiveDirectory = resolveSafeActiveDirectoryAfterDelete(
+        activeDirectoryPath,
+        effectiveDeleteTargets
+      );
+      const nextExpandedDirectories = expandedDirectoriesRef.current.filter(
+        (item) =>
+          !effectiveDeleteTargets.some(
+            (target) => target.kind === "directory" && isSameOrDescendantPath(target.path, item)
+          )
+      );
+
+      if (
+        viewerFilePath &&
+        effectiveDeleteTargets.some((target) => isSameOrDescendantPath(target.path, viewerFilePath))
+      ) {
         viewerDiffRequestIdRef.current += 1;
         setViewerFilePath(null);
         setViewerDiffContent(null);
       }
 
-      setDeleteConfirmTarget(null);
-      setSelectedPath(null);
+      setDeleteConfirmTargets(null);
+      setSelectedTargets([]);
+      setSelectionAnchorPath(null);
       activeDirectoryPathRef.current = nextActiveDirectory;
       expandedDirectoriesRef.current = nextExpandedDirectories;
       setActiveDirectoryPath(nextActiveDirectory);
@@ -1229,9 +1567,17 @@ export function FileContextPanel({
 
       setSessionRefreshVersion((current) => current + 1);
       showToast({
-        title: t("conversation.filePanelDeleteSuccess", {
-          name: getPathLeafName(deleteConfirmTarget.path) || deleteConfirmTarget.path
-        }),
+        title:
+          effectiveDeleteTargets.length === 1
+            ? t("conversation.filePanelDeleteSuccess", {
+                name:
+                  getPathLeafName(effectiveDeleteTargets[0]?.path ?? "") ||
+                  effectiveDeleteTargets[0]?.path ||
+                  ""
+              })
+            : t("conversation.filePanelDeleteSelectionSuccess", {
+                count: effectiveDeleteTargets.length
+              }),
         tone: "success"
       });
     } catch (error) {
@@ -1244,10 +1590,14 @@ export function FileContextPanel({
     }
   }
 
-  async function handleCopyPath(mode: "absolute" | "relative") {
+  async function handleCopyPath(
+    mode: "absolute" | "relative",
+    explicitTarget = primarySelectedTarget
+  ) {
     const workspacePath = currentWorkspace?.path ?? "";
+    const targetPath = explicitTarget?.path ?? null;
 
-    if (selectedTargetPath === null || !workspacePath) {
+    if (targetPath === null || !workspacePath) {
       setCopyPathMenuOpen(false);
       return;
     }
@@ -1256,8 +1606,8 @@ export function FileContextPanel({
       const backendPathStyle = resolveBackendPathStyle(workspacePath);
       const copiedPath =
         mode === "absolute"
-          ? buildAbsoluteWorkspacePath(workspacePath, selectedTargetPath, backendPathStyle)
-          : normalizeRelativeClipboardPath(selectedTargetPath, backendPathStyle);
+          ? buildAbsoluteWorkspacePath(workspacePath, targetPath, backendPathStyle)
+          : normalizeRelativeClipboardPath(targetPath, backendPathStyle);
 
       await writeTextToClipboard(copiedPath, platform);
       showToast({
@@ -1274,13 +1624,189 @@ export function FileContextPanel({
       });
     } finally {
       setCopyPathMenuOpen(false);
+      setWebContextMenu(null);
     }
   }
+
+  function buildWorkspaceContextMenuItems(
+    target: FileSelectionTarget,
+    effectiveSelection: FileSelectionTarget[],
+    baseDirectory: string
+  ): DesktopContextMenuItem[] {
+    return [
+      {
+        id: `open-${target.path}`,
+        label:
+          target.kind === "directory"
+            ? expandedDirectories.includes(target.path)
+              ? t("conversation.filePanelCollapseDirectory")
+              : t("conversation.filePanelExpandDirectory")
+            : t("conversation.filePanelOpenFile"),
+        onSelect: () => {
+          if (target.kind === "directory") {
+            void toggleDirectory(target.path);
+            return;
+          }
+
+          void openFileViewer(target.path);
+        }
+      },
+      {
+        id: `download-${target.path}`,
+        label: t("conversation.filePanelDownload"),
+        disabled: target.kind !== "file" || transferring,
+        onSelect: () => {
+          void handleDownload(target.kind === "file" ? target.path : null);
+        }
+      },
+      {
+        id: `create-file-${target.path}`,
+        label: t("conversation.filePanelNewFile"),
+        disabled: !workspaceId || mutating || transferring,
+        onSelect: () => {
+          void handleCreate("create_file", baseDirectory);
+        }
+      },
+      {
+        id: `create-directory-${target.path}`,
+        label: t("conversation.filePanelNewDirectory"),
+        disabled: !workspaceId || mutating || transferring,
+        onSelect: () => {
+          void handleCreate("create_directory", baseDirectory);
+        }
+      },
+      {
+        id: `copy-${target.path}`,
+        label: t("conversation.filePanelCopy"),
+        disabled: effectiveSelection.length === 0,
+        onSelect: () => handleCopyCutRequest("copy", effectiveSelection)
+      },
+      {
+        id: `cut-${target.path}`,
+        label: t("conversation.filePanelCut"),
+        disabled: effectiveSelection.length === 0,
+        onSelect: () => handleCopyCutRequest("cut", effectiveSelection)
+      },
+      {
+        id: `paste-${target.path}`,
+        label: t("conversation.filePanelPaste"),
+        disabled: !canPasteSelection,
+        onSelect: () => {
+          void handlePasteRequest(baseDirectory);
+        }
+      },
+      {
+        id: `copy-relative-${target.path}`,
+        label: t("conversation.filePanelCopyRelativePath"),
+        onSelect: () => {
+          void handleCopyPath("relative", target);
+        }
+      },
+      {
+        id: `copy-absolute-${target.path}`,
+        label: t("conversation.filePanelCopyAbsolutePath"),
+        onSelect: () => {
+          void handleCopyPath("absolute", target);
+        }
+      },
+      {
+        id: `delete-${target.path}`,
+        label: t("conversation.filePanelDelete"),
+        disabled: effectiveSelection.length === 0 || mutating || transferring,
+        onSelect: () => handleDeleteRequest(effectiveSelection)
+      }
+    ];
+  }
+
+  async function handleWorkspaceItemContextMenu(
+    event: React.MouseEvent<HTMLButtonElement>,
+    item: FileNodeDto
+  ) {
+    if (platform.isMobile) {
+      return;
+    }
+
+    event.preventDefault();
+    const target = createSelectionTarget(item.path, item.kind);
+    const effectiveSelection = selectedTargetPathSet.has(target.path)
+      ? actionableSelectedTargets
+      : [target];
+    const itemBaseDirectory =
+      target.kind === "directory" ? target.path : getParentDirectory(target.path);
+
+    if (!selectedTargetPathSet.has(target.path)) {
+      applySingleSelection(target);
+    }
+
+    const menuItems = buildWorkspaceContextMenuItems(target, effectiveSelection, itemBaseDirectory);
+
+    if (platform.isDesktop) {
+      await showDesktopContextMenu(menuItems);
+      return;
+    }
+
+    if (platform.isWeb) {
+      setCopyPathMenuOpen(false);
+      setMobileActionMenuOpen(false);
+      setWebContextMenu({
+        positionX: event.clientX,
+        positionY: event.clientY,
+        items: menuItems
+      });
+    }
+  }
+
+  useEffect(() => {
+    if (activeTab !== "workspace") {
+      return;
+    }
+
+    function handleDocumentKeyDown(event: KeyboardEvent) {
+      if (!hasModifierKey(event) || event.altKey || event.shiftKey) {
+        return;
+      }
+
+      if (isEditableEventTarget(event.target)) {
+        return;
+      }
+
+      const lowerKey = event.key.toLowerCase();
+
+      if (lowerKey === "c" && canCopyOrCutSelection) {
+        event.preventDefault();
+        handleCopyCutRequest("copy");
+        return;
+      }
+
+      if (lowerKey === "x" && canCopyOrCutSelection) {
+        event.preventDefault();
+        handleCopyCutRequest("cut");
+        return;
+      }
+
+      if (lowerKey === "v" && canPasteSelection) {
+        event.preventDefault();
+        void handlePasteRequest();
+      }
+    }
+
+    document.addEventListener("keydown", handleDocumentKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleDocumentKeyDown);
+    };
+  }, [
+    activeTab,
+    canCopyOrCutSelection,
+    canPasteSelection,
+    handleCopyCutRequest,
+    handlePasteRequest
+  ]);
 
   function renderTree(items: FileNodeDto[], depth: number) {
     return (
       <>
         {items.map((item) => {
+          const target = createSelectionTarget(item.path, item.kind);
           const isDirectory = item.kind === "directory";
           const isExpanded = isDirectory && expandedDirectories.includes(item.path);
           const isLoading = isDirectory && loadingDirectories.includes(item.path);
@@ -1294,11 +1820,13 @@ export function FileContextPanel({
                 gitChangeInfo.changedDirs
               )
             : rawChildItems;
-          const isActive =
-            selectedPath === item.path ||
-            (selectedPath === null && isDirectory && activeDirectoryPath === item.path);
+          const isSelected = selectedTargetPathSet.has(item.path);
+          const isActive = primarySelectedPath === item.path;
           const changeStatus = gitChangeInfo.statusByPath.get(item.path.replace(/\\/g, "/"));
           const hasDirChanges = isDirectory && gitChangeInfo.changedDirs.has(item.path.replace(/\\/g, "/"));
+          const isCutPending =
+            fileClipboard?.mode === "cut" &&
+            fileClipboard.items.some((clipboardItem) => clipboardItem.path === item.path);
 
           return (
             <div key={`${item.kind}-${item.path}`} className="file-tree-node">
@@ -1306,19 +1834,31 @@ export function FileContextPanel({
                 className="file-tree-item"
                 type="button"
                 data-active={isActive}
+                data-selected={isSelected}
+                data-cut-pending={isCutPending || undefined}
                 data-kind={item.kind}
                 aria-expanded={isDirectory ? isExpanded : undefined}
                 style={{
                   paddingInlineStart: `${SIDEBAR_TREE_ROOT_PADDING_PX + depth * SIDEBAR_TREE_DEPTH_STEP_PX}px`
                 }}
-                onClick={() => {
+                onClick={(event) => {
                   if (isDirectory) {
+                    if (event.shiftKey || isToggleSelectionEvent(event)) {
+                      resetRecentFileActivation();
+                      handleTargetSelection(target, event);
+                      return;
+                    }
+
                     resetRecentFileActivation();
+                    handleTargetSelection(target, event);
                     void toggleDirectory(item.path);
                     return;
                   }
 
-                  void handleWorkspaceFileClick(item.path);
+                  void handleWorkspaceFileClick(item.path, event);
+                }}
+                onContextMenu={(event) => {
+                  void handleWorkspaceItemContextMenu(event, item);
                 }}
               >
                 <span className={`file-tree-chevron${isDirectory ? "" : " is-hidden"}`} aria-hidden="true">
@@ -1370,7 +1910,8 @@ export function FileContextPanel({
       <>
         {items.map((item) => {
           const isDirectory = item.kind === "directory";
-          const isActive = selectedPath === item.path;
+          const isSelected = selectedTargetPathSet.has(item.path);
+          const isActive = primarySelectedPath === item.path;
 
           return (
             <div key={`search-${item.kind}-${item.path}`} className="file-tree-node">
@@ -1378,13 +1919,13 @@ export function FileContextPanel({
                 className="file-tree-item is-search-result"
                 type="button"
                 data-active={isActive}
+                data-selected={isSelected}
                 data-kind={item.kind}
-                onClick={() => {
-                  if (isDirectory) {
-                    void handleSearchResultClick(item);
-                  } else {
-                    void handleSearchResultClick(item);
-                  }
+                onClick={(event) => {
+                  void handleSearchResultClick(item, event);
+                }}
+                onContextMenu={(event) => {
+                  void handleWorkspaceItemContextMenu(event, item);
                 }}
               >
                 <span className="file-tree-chevron is-hidden" aria-hidden="true">&gt;</span>
@@ -1509,6 +2050,33 @@ export function FileContextPanel({
                           className="file-mobile-action-menu-item"
                           type="button"
                           role="menuitem"
+                          onClick={() => handleMobileToolbarAction(() => handleCopyCutRequest("copy"))}
+                          disabled={!canCopyOrCutSelection}
+                        >
+                          {t("conversation.filePanelCopy")}
+                        </button>
+                        <button
+                          className="file-mobile-action-menu-item"
+                          type="button"
+                          role="menuitem"
+                          onClick={() => handleMobileToolbarAction(() => handleCopyCutRequest("cut"))}
+                          disabled={!canCopyOrCutSelection}
+                        >
+                          {t("conversation.filePanelCut")}
+                        </button>
+                        <button
+                          className="file-mobile-action-menu-item"
+                          type="button"
+                          role="menuitem"
+                          onClick={() => handleMobileToolbarAction(() => handlePasteRequest())}
+                          disabled={!canPasteSelection || mutating || transferring}
+                        >
+                          {t("conversation.filePanelPaste")}
+                        </button>
+                        <button
+                          className="file-mobile-action-menu-item"
+                          type="button"
+                          role="menuitem"
                           onClick={() => {
                             setMobileActionMenuOpen(false);
                             handleToggleSearch();
@@ -1625,6 +2193,36 @@ export function FileContextPanel({
                 </div>
               ) : (
                 <div className="file-panel-toolbar" aria-label={t("conversation.filePanelTitle")}>
+                  <button
+                    className="file-toolbar-button"
+                    type="button"
+                    title={t("conversation.filePanelCopy")}
+                    aria-label={t("conversation.filePanelCopy")}
+                    onClick={() => handleCopyCutRequest("copy")}
+                    disabled={!canCopyOrCutSelection}
+                  >
+                    <CopyIcon />
+                  </button>
+                  <button
+                    className="file-toolbar-button"
+                    type="button"
+                    title={t("conversation.filePanelCut")}
+                    aria-label={t("conversation.filePanelCut")}
+                    onClick={() => handleCopyCutRequest("cut")}
+                    disabled={!canCopyOrCutSelection}
+                  >
+                    <CutIcon />
+                  </button>
+                  <button
+                    className="file-toolbar-button"
+                    type="button"
+                    title={t("conversation.filePanelPaste")}
+                    aria-label={t("conversation.filePanelPaste")}
+                    onClick={() => void handlePasteRequest()}
+                    disabled={!canPasteSelection || mutating || transferring}
+                  >
+                    <PasteIcon />
+                  </button>
                   <div className="file-toolbar-menu-shell" ref={copyPathMenuRef}>
                     <button
                       className="file-toolbar-button"
@@ -1731,7 +2329,7 @@ export function FileContextPanel({
                     type="button"
                     title={t("conversation.filePanelDelete")}
                     aria-label={t("conversation.filePanelDelete")}
-                    onClick={handleDeleteRequest}
+                    onClick={() => handleDeleteRequest()}
                     disabled={!canDeleteSelectedTarget || mutating || transferring}
                   >
                     <DeleteIcon />
@@ -1758,6 +2356,67 @@ export function FileContextPanel({
                   </button>
                 </div>
               )}
+
+              {webContextMenu && typeof document !== "undefined"
+                ? createPortal(
+                    <div
+                      className="file-web-context-menu"
+                      ref={webContextMenuRef}
+                      role="menu"
+                      aria-label={t("conversation.filePanelActionsMenu")}
+                      style={{
+                        left: `${webContextMenuLayout?.left ?? Math.max(8, webContextMenu.positionX)}px`,
+                        top: `${webContextMenuLayout?.top ?? Math.max(8, webContextMenu.positionY)}px`,
+                        maxHeight: webContextMenuLayout ? `${webContextMenuLayout.maxHeight}px` : undefined
+                      }}
+                    >
+                      {webContextMenu.items.map((item) => (
+                        <button
+                          key={item.id}
+                          className={[
+                            "file-web-context-menu-item",
+                            item.label === t("conversation.filePanelDelete") ? "danger" : ""
+                          ]
+                            .filter(Boolean)
+                            .join(" ")}
+                          type="button"
+                          role="menuitem"
+                          disabled={item.disabled}
+                          onClick={() => {
+                            setWebContextMenu(null);
+                            void item.onSelect();
+                          }}
+                        >
+                          {item.label}
+                        </button>
+                      ))}
+                    </div>,
+                    document.body
+                  )
+                : null}
+
+              {selectedTargets.length > 0 || fileClipboard ? (
+                <div className="file-panel-selection-summary" aria-live="polite">
+                  {selectedTargets.length > 0 ? (
+                    <span>
+                      {t("conversation.filePanelSelectionCount", {
+                        count: selectedTargets.length
+                      })}
+                    </span>
+                  ) : null}
+                  {fileClipboard ? (
+                    <span>
+                      {fileClipboard.mode === "copy"
+                        ? t("conversation.filePanelClipboardCopyReady", {
+                            count: fileClipboard.items.length
+                          })
+                        : t("conversation.filePanelClipboardCutReady", {
+                            count: fileClipboard.items.length
+                          })}
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
 
               {searchVisible ? (
                 <form className="file-toolbar-search" onSubmit={(event) => void handleSearchSubmit(event)}>
@@ -1799,17 +2458,8 @@ export function FileContextPanel({
                     <p className="file-tree-status status-text">{t("conversation.filePanelSearchEmpty")}</p>
                   )
                 ) : showChangesOnly ? (
-                  filterTreeByChanges(rootItems, visibleTreeCache, gitChangeInfo.statusByPath, gitChangeInfo.changedDirs)
-                    .length ? (
-                    renderTree(
-                      filterTreeByChanges(
-                        rootItems,
-                        visibleTreeCache,
-                        gitChangeInfo.statusByPath,
-                        gitChangeInfo.changedDirs
-                      ),
-                      0
-                    )
+                  visibleWorkspaceItems.length ? (
+                    renderTree(visibleWorkspaceItems, 0)
                   ) : (
                     <p className="file-tree-status status-text">{t("conversation.filePanelNoChanges")}</p>
                   )
@@ -1820,7 +2470,7 @@ export function FileContextPanel({
                 )}
               </div>
               <WorkbenchModal
-                open={deleteConfirmTarget !== null}
+                open={deleteConfirmTargets !== null}
                 title={t("conversation.filePanelDeleteConfirmTitle")}
                 description={t("conversation.filePanelDeleteConfirmDescription")}
                 onClose={() => {
@@ -1828,17 +2478,21 @@ export function FileContextPanel({
                     return;
                   }
 
-                  setDeleteConfirmTarget(null);
+                  setDeleteConfirmTargets(null);
                 }}
               >
                 <p className="workbench-section-empty">
-                  {deleteConfirmTarget
-                    ? deleteConfirmTarget.kind === "directory"
-                      ? t("conversation.filePanelDeleteDirectoryConfirm", {
-                          path: deleteConfirmTarget.path
-                        })
-                      : t("conversation.filePanelDeleteFileConfirm", {
-                          path: deleteConfirmTarget.path
+                  {deleteConfirmTargets?.length
+                    ? deleteConfirmTargets.length === 1
+                      ? deleteConfirmTargets[0]?.kind === "directory"
+                        ? t("conversation.filePanelDeleteDirectoryConfirm", {
+                            path: deleteConfirmTargets[0].path
+                          })
+                        : t("conversation.filePanelDeleteFileConfirm", {
+                            path: deleteConfirmTargets[0].path
+                          })
+                      : t("conversation.filePanelDeleteSelectionConfirm", {
+                          count: deleteConfirmTargets.length
                         })
                     : ""}
                 </p>
@@ -1847,7 +2501,7 @@ export function FileContextPanel({
                     type="button"
                     className="secondary-button"
                     disabled={mutating}
-                    onClick={() => setDeleteConfirmTarget(null)}
+                    onClick={() => setDeleteConfirmTargets(null)}
                   >
                     {t("common.cancel")}
                   </button>
@@ -1871,7 +2525,7 @@ export function FileContextPanel({
               sessionId={sessionId}
               workspaceId={workspaceId}
               showSystemFiles={showSystemFiles}
-              selectedPath={selectedPath}
+              selectedPath={primarySelectedFilePath}
               refreshVersion={sessionRefreshVersion}
               onCountChange={setSessionChangeCount}
               onSelectFile={selectFile}
@@ -1908,13 +2562,20 @@ function getDirectoryChain(targetPath: string, includeLeafDirectory = false): st
   return directories;
 }
 
-function getCreateBaseDirectory(activeDirectoryPath: string, selectedPath: string | null): string {
+function getCreateBaseDirectory(
+  activeDirectoryPath: string,
+  primarySelectedTarget: FileSelectionTarget | null
+): string {
   if (activeDirectoryPath) {
     return activeDirectoryPath;
   }
 
-  if (selectedPath) {
-    return getParentDirectory(selectedPath);
+  if (primarySelectedTarget?.kind === "directory") {
+    return primarySelectedTarget.path;
+  }
+
+  if (primarySelectedTarget?.path) {
+    return getParentDirectory(primarySelectedTarget.path);
   }
 
   return ROOT_DIRECTORY;
@@ -1928,28 +2589,246 @@ function normalizeUploadFileName(fileName: string): string {
   return fileName.split(/[/\\]/).pop()?.trim() ?? "";
 }
 
-function resolveSelectedTarget(
-  selectedPath: string | null,
+function createSelectionTarget(
+  path: string,
+  kind: "file" | "directory"
+): FileSelectionTarget {
+  return { path, kind };
+}
+
+function getPrimarySelectedTarget(
+  targets: FileSelectionTarget[]
+): FileSelectionTarget | null {
+  return targets[targets.length - 1] ?? null;
+}
+
+function toggleSelectionTarget(
+  targets: FileSelectionTarget[],
+  nextTarget: FileSelectionTarget
+): FileSelectionTarget[] {
+  const existingIndex = targets.findIndex((item) => item.path === nextTarget.path);
+
+  if (existingIndex >= 0) {
+    return targets.filter((item) => item.path !== nextTarget.path);
+  }
+
+  return [...targets, nextTarget];
+}
+
+function selectRangeTargets(
+  orderedTargets: FileSelectionTarget[],
+  anchorPath: string | null,
+  nextTarget: FileSelectionTarget
+): FileSelectionTarget[] {
+  const targetIndex = orderedTargets.findIndex((item) => item.path === nextTarget.path);
+
+  if (targetIndex < 0) {
+    return [nextTarget];
+  }
+
+  const anchorIndex = anchorPath
+    ? orderedTargets.findIndex((item) => item.path === anchorPath)
+    : targetIndex;
+
+  if (anchorIndex < 0) {
+    return [nextTarget];
+  }
+
+  const start = Math.min(anchorIndex, targetIndex);
+  const end = Math.max(anchorIndex, targetIndex);
+  return orderedTargets.slice(start, end + 1);
+}
+
+function isToggleSelectionEvent(
+  event?: Pick<React.MouseEvent<HTMLElement>, "ctrlKey" | "metaKey">
+): boolean {
+  return Boolean(event?.ctrlKey || event?.metaKey);
+}
+
+function hasModifierKey(event: KeyboardEvent): boolean {
+  return event.ctrlKey || event.metaKey;
+}
+
+function isEditableEventTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  const tagName = target.tagName.toLowerCase();
+  return (
+    tagName === "input" ||
+    tagName === "textarea" ||
+    tagName === "select" ||
+    target.isContentEditable
+  );
+}
+
+function collapseNestedSelectionTargets(targets: FileSelectionTarget[]): FileSelectionTarget[] {
+  const uniqueTargets = [...new Map(targets.map((item) => [item.path, item])).values()].sort((left, right) =>
+    left.path.localeCompare(right.path)
+  );
+  const collapsed: FileSelectionTarget[] = [];
+
+  for (const target of uniqueTargets) {
+    if (
+      collapsed.some(
+        (item) => item.kind === "directory" && isSameOrDescendantPath(item.path, target.path)
+      )
+    ) {
+      continue;
+    }
+
+    collapsed.push(target);
+  }
+
+  return collapsed;
+}
+
+function resolvePasteBaseDirectory(
+  primarySelectedTarget: FileSelectionTarget | null,
   activeDirectoryPath: string
-): {
-  path: string;
-  kind: "file" | "directory";
-} | null {
-  if (selectedPath) {
-    return {
-      path: selectedPath,
-      kind: "file"
-    };
+): string {
+  if (primarySelectedTarget?.kind === "directory") {
+    return primarySelectedTarget.path;
   }
 
-  if (activeDirectoryPath) {
-    return {
-      path: activeDirectoryPath,
-      kind: "directory"
-    };
+  if (primarySelectedTarget?.path) {
+    return getParentDirectory(primarySelectedTarget.path);
   }
 
-  return null;
+  return activeDirectoryPath;
+}
+
+function resolveSafeActiveDirectoryAfterDelete(
+  activeDirectoryPath: string,
+  deletedTargets: FileSelectionTarget[]
+): string {
+  let nextDirectory = activeDirectoryPath;
+
+  while (
+    nextDirectory &&
+    deletedTargets.some(
+      (target) => target.kind === "directory" && isSameOrDescendantPath(target.path, nextDirectory)
+    )
+  ) {
+    nextDirectory = getParentDirectory(nextDirectory);
+  }
+
+  return nextDirectory;
+}
+
+function flattenVisibleSelectionTargets(
+  items: FileNodeDto[],
+  treeCache: FileTreeCache,
+  expandedDirectories: string[],
+  showChangesOnly: boolean,
+  statusByPath: Map<string, string>,
+  changedDirs: Set<string>
+): FileSelectionTarget[] {
+  const flattened: FileSelectionTarget[] = [];
+
+  for (const item of items) {
+    flattened.push(createSelectionTarget(item.path, item.kind));
+
+    if (item.kind !== "directory" || !expandedDirectories.includes(item.path)) {
+      continue;
+    }
+
+    const rawChildItems = treeCache[item.path] ?? [];
+    const childItems = showChangesOnly
+      ? filterTreeByChanges(rawChildItems, treeCache, statusByPath, changedDirs)
+      : rawChildItems;
+
+    flattened.push(
+      ...flattenVisibleSelectionTargets(
+        childItems,
+        treeCache,
+        expandedDirectories,
+        showChangesOnly,
+        statusByPath,
+        changedDirs
+      )
+    );
+  }
+
+  return flattened;
+}
+
+function resolveWebContextMenuLayout(
+  anchorPoint: { x: number; y: number },
+  menuSize: { width: number; height: number },
+  viewport: { width: number; height: number }
+): WebContextMenuLayout {
+  const viewportWidth = Math.max(0, viewport.width);
+  const viewportHeight = Math.max(0, viewport.height);
+  const viewportMaxHeight = Math.max(
+    0,
+    viewportHeight - WEB_CONTEXT_MENU_VIEWPORT_MARGIN_PX * 2
+  );
+  const maxMenuWidth = Math.max(
+    0,
+    viewportWidth - WEB_CONTEXT_MENU_VIEWPORT_MARGIN_PX * 2
+  );
+  const safeMenuWidth = Math.min(
+    Math.max(menuSize.width || WEB_CONTEXT_MENU_DEFAULT_WIDTH_PX, 0),
+    maxMenuWidth
+  );
+  const spaceBelow = Math.max(
+    0,
+    viewportHeight - anchorPoint.y - WEB_CONTEXT_MENU_GAP_PX - WEB_CONTEXT_MENU_VIEWPORT_MARGIN_PX
+  );
+  const spaceAbove = Math.max(
+    0,
+    anchorPoint.y - WEB_CONTEXT_MENU_GAP_PX - WEB_CONTEXT_MENU_VIEWPORT_MARGIN_PX
+  );
+  const shouldOpenUpward = spaceBelow < menuSize.height && spaceAbove > spaceBelow;
+  const availableHeight = shouldOpenUpward ? spaceAbove : spaceBelow;
+  const safeMaxHeight = clampNumber(
+    Math.max(availableHeight, WEB_CONTEXT_MENU_MIN_HEIGHT_PX),
+    0,
+    viewportMaxHeight
+  );
+  const visibleMenuHeight = Math.min(
+    Math.max(menuSize.height, 0),
+    safeMaxHeight
+  );
+  const unclampedTop = shouldOpenUpward
+    ? anchorPoint.y - WEB_CONTEXT_MENU_GAP_PX - visibleMenuHeight
+    : anchorPoint.y + WEB_CONTEXT_MENU_GAP_PX;
+  const maxTop = Math.max(
+    WEB_CONTEXT_MENU_VIEWPORT_MARGIN_PX,
+    viewportHeight - WEB_CONTEXT_MENU_VIEWPORT_MARGIN_PX - visibleMenuHeight
+  );
+  const maxLeft = Math.max(
+    WEB_CONTEXT_MENU_VIEWPORT_MARGIN_PX,
+    viewportWidth - WEB_CONTEXT_MENU_VIEWPORT_MARGIN_PX - safeMenuWidth
+  );
+
+  return {
+    top: clampNumber(
+      unclampedTop,
+      WEB_CONTEXT_MENU_VIEWPORT_MARGIN_PX,
+      maxTop
+    ),
+    left: clampNumber(
+      anchorPoint.x,
+      WEB_CONTEXT_MENU_VIEWPORT_MARGIN_PX,
+      maxLeft
+    ),
+    maxHeight: Math.max(0, safeMaxHeight)
+  };
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) {
+    return min;
+  }
+
+  if (max < min) {
+    return min;
+  }
+
+  return Math.min(Math.max(value, min), max);
 }
 
 function normalizeRelativeClipboardPath(
@@ -2273,6 +3152,43 @@ function PathCopyIcon() {
         strokeWidth="1.2"
       />
       <path d="M5.7 10.8h4.5" fill="none" stroke="currentColor" strokeWidth="1.2" />
+    </svg>
+  );
+}
+
+function CopyIcon() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <path d="M5 2.5h7.5v9H5z" fill="none" stroke="currentColor" strokeWidth="1.2" />
+      <path d="M3.5 5H2.4V13.5H10V12.4" fill="none" stroke="currentColor" strokeWidth="1.2" />
+    </svg>
+  );
+}
+
+function CutIcon() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <path
+        d="M4.2 4.2a1.4 1.4 0 1 1 0 2.8 1.4 1.4 0 0 1 0-2.8zm0 5.4a1.4 1.4 0 1 1 0 2.8 1.4 1.4 0 0 1 0-2.8zm1-3.2 6.6 5.6M5.2 9.6l6.6-5.6"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function PasteIcon() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <path
+        d="M4 3.5h8v10H4zM6 2.2h4v2H6z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.2"
+      />
+      <path d="M6 7.2h4M6 9.6h4" fill="none" stroke="currentColor" strokeWidth="1.2" />
     </svg>
   );
 }

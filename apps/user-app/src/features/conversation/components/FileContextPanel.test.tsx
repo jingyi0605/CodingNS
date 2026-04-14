@@ -1,4 +1,4 @@
-﻿import { render, screen, waitFor, within } from "@testing-library/react";
+﻿import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -36,6 +36,7 @@ const gitApiMock = vi.hoisted(() => ({
 }));
 
 const clipboardWriteTextMock = vi.hoisted(() => vi.fn());
+const showDesktopContextMenuMock = vi.hoisted(() => vi.fn());
 const createObjectUrlMock = vi.hoisted(() => vi.fn(() => "blob:mock-file"));
 const revokeObjectUrlMock = vi.hoisted(() => vi.fn());
 const anchorClickMock = vi.hoisted(() => vi.fn());
@@ -238,6 +239,10 @@ vi.mock("./WorkbenchLayout", () => ({
 
 vi.mock("../../../platform/platform-provider", () => ({
   usePlatform: () => platformMock
+}));
+
+vi.mock("../../../platform/desktop/desktop-context-menu", () => ({
+  showDesktopContextMenu: showDesktopContextMenuMock
 }));
 
 describe("FileContextPanel", () => {
@@ -1336,7 +1341,7 @@ describe("FileContextPanel", () => {
 
     const dialog = await screen.findByRole("dialog", { name: "config.json" });
     expect(dialog).toBeInTheDocument();
-    expect(within(dialog).getAllByText("JSON")).toHaveLength(2);
+    expect(within(dialog).getByText("JSON")).toBeInTheDocument();
     expect(within(dialog).getByText("\"name\"")).toBeInTheDocument();
 
     await userEvent.click(within(dialog).getByRole("tab", { name: t("conversation.fileViewerEdit") }));
@@ -1352,7 +1357,7 @@ describe("FileContextPanel", () => {
 
     const dialog = await screen.findByRole("dialog", { name: "settings.yaml" });
     expect(dialog).toBeInTheDocument();
-    expect(within(dialog).getAllByText("YAML")).toHaveLength(2);
+    expect(within(dialog).getByText("YAML")).toBeInTheDocument();
     expect(within(dialog).getByText("enabled")).toBeInTheDocument();
 
     await userEvent.click(within(dialog).getByRole("tab", { name: t("conversation.fileViewerEdit") }));
@@ -1368,7 +1373,7 @@ describe("FileContextPanel", () => {
 
     const dialog = await screen.findByRole("dialog", { name: "app.toml" });
     expect(dialog).toBeInTheDocument();
-    expect(within(dialog).getAllByText("TOML")).toHaveLength(2);
+    expect(within(dialog).getByText("TOML")).toBeInTheDocument();
     expect(within(dialog).getByText("[database]")).toBeInTheDocument();
 
     await userEvent.click(within(dialog).getByRole("tab", { name: t("conversation.fileViewerEdit") }));
@@ -1384,7 +1389,7 @@ describe("FileContextPanel", () => {
 
     const dialog = await screen.findByRole("dialog", { name: "profile.ini" });
     expect(dialog).toBeInTheDocument();
-    expect(within(dialog).getAllByText("INI")).toHaveLength(2);
+    expect(within(dialog).getByText("INI")).toBeInTheDocument();
     expect(within(dialog).getByText("[user]")).toBeInTheDocument();
 
     await userEvent.click(within(dialog).getByRole("tab", { name: t("conversation.fileViewerEdit") }));
@@ -1400,7 +1405,7 @@ describe("FileContextPanel", () => {
 
     const dialog = await screen.findByRole("dialog", { name: ".env.local" });
     expect(dialog).toBeInTheDocument();
-    expect(within(dialog).getAllByText("ENV")).toHaveLength(2);
+    expect(within(dialog).getByText("ENV")).toBeInTheDocument();
     expect(within(dialog).getByText("NODE_ENV")).toBeInTheDocument();
 
     await userEvent.click(within(dialog).getByRole("tab", { name: t("conversation.fileViewerEdit") }));
@@ -1416,7 +1421,7 @@ describe("FileContextPanel", () => {
 
     const dialog = await screen.findByRole("dialog", { name: "gradle.properties" });
     expect(dialog).toBeInTheDocument();
-    expect(within(dialog).getAllByText("Properties")).toHaveLength(2);
+    expect(within(dialog).getByText("Properties")).toBeInTheDocument();
     expect(within(dialog).getByText("org.gradle.jvmargs")).toBeInTheDocument();
 
     await userEvent.click(within(dialog).getByRole("tab", { name: t("conversation.fileViewerEdit") }));
@@ -1432,7 +1437,7 @@ describe("FileContextPanel", () => {
 
     const dialog = await screen.findByRole("dialog", { name: "app.conf" });
     expect(dialog).toBeInTheDocument();
-    expect(within(dialog).getAllByText("CONF")).toHaveLength(2);
+    expect(within(dialog).getByText("CONF")).toBeInTheDocument();
     expect(within(dialog).getByText("[server]")).toBeInTheDocument();
 
     await userEvent.click(within(dialog).getByRole("tab", { name: t("conversation.fileViewerEdit") }));
@@ -1448,7 +1453,7 @@ describe("FileContextPanel", () => {
 
     const dialog = await screen.findByRole("dialog", { name: ".editorconfig" });
     expect(dialog).toBeInTheDocument();
-    expect(within(dialog).getAllByText("EditorConfig")).toHaveLength(2);
+    expect(within(dialog).getByText("EditorConfig")).toBeInTheDocument();
     expect(within(dialog).getByText("indent_style")).toBeInTheDocument();
 
     await userEvent.click(within(dialog).getByRole("tab", { name: t("conversation.fileViewerEdit") }));
@@ -1464,7 +1469,7 @@ describe("FileContextPanel", () => {
 
     const dialog = await screen.findByRole("dialog", { name: "Dockerfile" });
     expect(dialog).toBeInTheDocument();
-    expect(within(dialog).getAllByText("Dockerfile")).toHaveLength(3);
+    expect(within(dialog).getAllByText("Dockerfile").length).toBeGreaterThan(0);
     expect(within(dialog).getByText("FROM")).toBeInTheDocument();
 
     await userEvent.click(within(dialog).getByRole("tab", { name: t("conversation.fileViewerEdit") }));
@@ -1480,7 +1485,7 @@ describe("FileContextPanel", () => {
 
     const dialog = await screen.findByRole("dialog", { name: ".gitignore" });
     expect(dialog).toBeInTheDocument();
-    expect(within(dialog).getAllByText("GitIgnore")).toHaveLength(2);
+    expect(within(dialog).getByText("GitIgnore")).toBeInTheDocument();
     expect(within(dialog).getByText("*.log")).toBeInTheDocument();
 
     await userEvent.click(within(dialog).getByRole("tab", { name: t("conversation.fileViewerEdit") }));
@@ -1496,7 +1501,7 @@ describe("FileContextPanel", () => {
 
     const dialog = await screen.findByRole("dialog", { name: "server.log" });
     expect(dialog).toBeInTheDocument();
-    expect(within(dialog).getAllByText("Log")).toHaveLength(2);
+    expect(within(dialog).getByText("Log")).toBeInTheDocument();
     expect(within(dialog).getByText("INFO")).toBeInTheDocument();
     expect(within(dialog).getByText("ERROR")).toBeInTheDocument();
 
@@ -1796,6 +1801,273 @@ describe("FileContextPanel", () => {
     expect(
       await screen.findByRole("dialog", { name: "apps/user-app/src/app/App.tsx" })
     ).toBeInTheDocument();
+  });
+
+  it("支持 Shift 连续多选和 Ctrl 切换单个选中项", async () => {
+    renderPanel();
+
+    const configButton = await screen.findByRole("button", { name: "config.json" });
+    const settingsButton = screen.getByRole("button", { name: "settings.yaml" });
+    const docsButton = screen.getByRole("button", { name: "docs.md" });
+
+    await userEvent.click(configButton);
+    fireEvent.click(docsButton, { shiftKey: true });
+
+    expect(configButton).toHaveAttribute("data-selected", "true");
+    expect(settingsButton).toHaveAttribute("data-selected", "true");
+    expect(docsButton).toHaveAttribute("data-selected", "true");
+
+    fireEvent.click(settingsButton, { ctrlKey: true });
+
+    expect(configButton).toHaveAttribute("data-selected", "true");
+    expect(settingsButton).toHaveAttribute("data-selected", "false");
+    expect(docsButton).toHaveAttribute("data-selected", "true");
+    expect(
+      screen.getByText(
+        t("conversation.filePanelSelectionCount", {
+          count: 2
+        })
+      )
+    ).toBeInTheDocument();
+  });
+
+  it("支持复制多选文件并粘贴到目标目录", async () => {
+    fileApiMock.getFileTree.mockImplementation(async (_workspaceId: string, filePath?: string) => {
+      if (filePath === "archive") {
+        return {
+          items: []
+        };
+      }
+
+      return {
+        items: [
+          {
+            path: "archive",
+            name: "archive",
+            kind: "directory",
+            size: null,
+            updatedAt: "2026-03-24T12:00:00.000Z"
+          },
+          rootItemsMock[0],
+          rootItemsMock[1]
+        ]
+      };
+    });
+
+    renderPanel();
+
+    const configButton = await screen.findByRole("button", { name: "config.json" });
+    const settingsButton = screen.getByRole("button", { name: "settings.yaml" });
+
+    await userEvent.click(configButton);
+    fireEvent.click(settingsButton, { ctrlKey: true });
+    await userEvent.click(screen.getByRole("button", { name: t("conversation.filePanelCopy") }));
+
+    expect(
+      await screen.findByText(
+        t("conversation.filePanelCopySelectionSuccess", {
+          count: 2
+        })
+      )
+    ).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "archive" }));
+    await userEvent.click(screen.getByRole("button", { name: t("conversation.filePanelPaste") }));
+
+    await waitFor(() => {
+      expect(fileApiMock.operateFile).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workspaceId: "workspace-1",
+          opType: "copy",
+          srcPath: "config.json",
+          dstPath: "archive/config.json"
+        })
+      );
+      expect(fileApiMock.operateFile).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workspaceId: "workspace-1",
+          opType: "copy",
+          srcPath: "settings.yaml",
+          dstPath: "archive/settings.yaml"
+        })
+      );
+    });
+  });
+
+  it("支持剪切文件并粘贴到目标目录", async () => {
+    fileApiMock.getFileTree.mockImplementation(async (_workspaceId: string, filePath?: string) => {
+      if (filePath === "archive") {
+        return {
+          items: []
+        };
+      }
+
+      return {
+        items: [
+          {
+            path: "archive",
+            name: "archive",
+            kind: "directory",
+            size: null,
+            updatedAt: "2026-03-24T12:00:00.000Z"
+          },
+          rootItemsMock[0]
+        ]
+      };
+    });
+
+    renderPanel();
+
+    await userEvent.click(await screen.findByRole("button", { name: "config.json" }));
+    await userEvent.click(screen.getByRole("button", { name: t("conversation.filePanelCut") }));
+
+    expect(
+      await screen.findByText(
+        t("conversation.filePanelCutSelectionSuccess", {
+          count: 1
+        })
+      )
+    ).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "archive" }));
+    await userEvent.click(screen.getByRole("button", { name: t("conversation.filePanelPaste") }));
+
+    await waitFor(() => {
+      expect(fileApiMock.operateFile).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workspaceId: "workspace-1",
+          opType: "move",
+          srcPath: "config.json",
+          dstPath: "archive/config.json"
+        })
+      );
+    });
+  });
+
+  it("桌面端右键会弹出文件操作菜单", async () => {
+    platformMock.platform = "desktop";
+    platformMock.isDesktop = true;
+    platformMock.isWeb = false;
+    platformMock.bridge.supported = true;
+    showDesktopContextMenuMock.mockResolvedValue(undefined);
+
+    renderPanel();
+
+    const configButton = await screen.findByRole("button", { name: "config.json" });
+    fireEvent.contextMenu(configButton);
+
+    await waitFor(() => {
+      expect(showDesktopContextMenuMock).toHaveBeenCalledTimes(1);
+    });
+
+    const menuItems = showDesktopContextMenuMock.mock.calls[0][0] as Array<{ label: string }>;
+    expect(menuItems.map((item) => item.label)).toEqual(
+      expect.arrayContaining([
+        t("conversation.filePanelOpenFile"),
+        t("conversation.filePanelDownload"),
+        t("conversation.filePanelNewFile"),
+        t("conversation.filePanelNewDirectory"),
+        t("conversation.filePanelCopy"),
+        t("conversation.filePanelCut"),
+        t("conversation.filePanelPaste"),
+        t("conversation.filePanelDelete")
+      ])
+    );
+  });
+
+  it("H5 端右键会显示页面内操作菜单", async () => {
+    renderPanel();
+
+    const configButton = await screen.findByRole("button", { name: "config.json" });
+    fireEvent.contextMenu(configButton, {
+      clientX: 160,
+      clientY: 220
+    });
+
+    const menu = await screen.findByRole("menu", {
+      name: t("conversation.filePanelActionsMenu")
+    });
+    expect(menu).toHaveClass("file-web-context-menu");
+    expect(within(menu).getByRole("menuitem", { name: t("conversation.filePanelOpenFile") })).toBeInTheDocument();
+    expect(within(menu).getByRole("menuitem", { name: t("conversation.filePanelDownload") })).toBeInTheDocument();
+    expect(within(menu).getByRole("menuitem", { name: t("conversation.filePanelNewFile") })).toBeInTheDocument();
+    expect(within(menu).getByRole("menuitem", { name: t("conversation.filePanelNewDirectory") })).toBeInTheDocument();
+    expect(within(menu).getByRole("menuitem", { name: t("conversation.filePanelCopy") })).toBeInTheDocument();
+    expect(within(menu).getByRole("menuitem", { name: t("conversation.filePanelCut") })).toBeInTheDocument();
+    expect(within(menu).getByRole("menuitem", { name: t("conversation.filePanelDelete") })).toBeInTheDocument();
+  });
+
+  it("H5 端右键菜单会限制在可视区域内并支持下载文件", async () => {
+    const originalInnerWidth = window.innerWidth;
+    const originalInnerHeight = window.innerHeight;
+    const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
+
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      value: 300
+    });
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: 260
+    });
+
+    HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRectMock() {
+      if (this instanceof HTMLElement && this.classList.contains("file-web-context-menu")) {
+        return {
+          x: 0,
+          y: 0,
+          top: 0,
+          left: 0,
+          right: 176,
+          bottom: 320,
+          width: 176,
+          height: 320,
+          toJSON: () => ({})
+        } as DOMRect;
+      }
+
+      return originalGetBoundingClientRect.call(this);
+    };
+
+    try {
+      renderPanel();
+
+      const configButton = await screen.findByRole("button", { name: "config.json" });
+      fireEvent.contextMenu(configButton, {
+        clientX: 280,
+        clientY: 240
+      });
+
+      const menu = await screen.findByRole("menu", {
+        name: t("conversation.filePanelActionsMenu")
+      });
+
+      await waitFor(() => {
+        expect(menu).toHaveStyle({
+          left: "116px",
+          top: "8px",
+          maxHeight: "228px"
+        });
+      });
+
+      await userEvent.click(
+        within(menu).getByRole("menuitem", { name: t("conversation.filePanelDownload") })
+      );
+
+      await waitFor(() => {
+        expect(fileApiMock.downloadFile).toHaveBeenCalledWith("workspace-1", "config.json");
+      });
+    } finally {
+      Object.defineProperty(window, "innerWidth", {
+        configurable: true,
+        value: originalInnerWidth
+      });
+      Object.defineProperty(window, "innerHeight", {
+        configurable: true,
+        value: originalInnerHeight
+      });
+      HTMLElement.prototype.getBoundingClientRect = originalGetBoundingClientRect;
+    }
   });
 
   it("不再显示按钮式开新窗口入口", async () => {

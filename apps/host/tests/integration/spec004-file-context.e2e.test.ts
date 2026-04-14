@@ -214,6 +214,62 @@ describe("spec004 文件管理能力", () => {
       "文件管理"
     );
 
+    const copyFile = await hosted.app.inject({
+      method: "POST",
+      url: "/api/files/ops",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        workspaceId,
+        opType: "copy",
+        srcPath: "docs/todo-renamed.md",
+        dstPath: "notes/todo-copy.md"
+      }
+    });
+    expect(copyFile.statusCode).toBe(200);
+    expect(readFileSync(path.join(fixture.workspaceDir, "notes", "todo-copy.md"), "utf8")).toContain(
+      "文件管理"
+    );
+
+    const copyDirectory = await hosted.app.inject({
+      method: "POST",
+      url: "/api/files/ops",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        workspaceId,
+        opType: "copy",
+        srcPath: "docs",
+        dstPath: "docs-copy"
+      }
+    });
+    expect(copyDirectory.statusCode).toBe(200);
+    expect(readFileSync(path.join(fixture.workspaceDir, "docs-copy", "readme.md"), "utf8")).toContain(
+      "spec004"
+    );
+
+    mkdirSync(path.join(fixture.workspaceDir, "docs", "nested"), {
+      recursive: true
+    });
+
+    const nestedCopyRejected = await hosted.app.inject({
+      method: "POST",
+      url: "/api/files/ops",
+      headers: {
+        authorization: `Bearer ${accessToken}`
+      },
+      payload: {
+        workspaceId,
+        opType: "copy",
+        srcPath: "docs",
+        dstPath: "docs/nested/docs"
+      }
+    });
+    expect(nestedCopyRejected.statusCode).toBe(400);
+    expect(nestedCopyRejected.json().error_code).toBe("INVALID_FILE_OPERATION");
+
     const search = await hosted.app.inject({
       method: "GET",
       url: `/api/files/search?workspaceId=${workspaceId}&keyword=${encodeURIComponent("todo")}`,
@@ -222,8 +278,13 @@ describe("spec004 文件管理能力", () => {
       }
     });
     expect(search.statusCode).toBe(200);
-    expect(search.json().items).toHaveLength(1);
-    expect(search.json().items[0].path).toBe("docs/todo-renamed.md");
+    expect(search.json().items.map((item: { path: string }) => item.path)).toEqual(
+      expect.arrayContaining([
+        "docs/todo-renamed.md",
+        "notes/todo-copy.md",
+        "docs-copy/todo-renamed.md"
+      ])
+    );
 
     const previewBinary = await hosted.app.inject({
       method: "GET",

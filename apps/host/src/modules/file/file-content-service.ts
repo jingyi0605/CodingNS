@@ -9,7 +9,13 @@ import { MAX_TEXT_FILE_BYTES } from "./file-constants.js";
 import type { FileAccessGuard, ResolvedWorkspacePath } from "./file-access-guard.js";
 import { FileVersionChecker } from "./file-version-checker.js";
 
-export type FileOperationType = "create_file" | "create_directory" | "delete" | "rename" | "move";
+export type FileOperationType =
+  | "create_file"
+  | "create_directory"
+  | "delete"
+  | "rename"
+  | "move"
+  | "copy";
 
 interface ReadFileOptions {
   recordRecent?: boolean;
@@ -169,6 +175,9 @@ export class FileContentService {
       case "move":
         this.movePath(input.workspaceId, input.srcPath, input.dstPath);
         break;
+      case "copy":
+        this.copyPath(input.workspaceId, input.srcPath, input.dstPath);
+        break;
       default:
         throw new AppError({
           statusCode: 400,
@@ -268,6 +277,15 @@ export class FileContentService {
       });
     }
 
+    if (source.stats?.isDirectory() && isSameOrDescendantRelativePath(source.relativePath, target.relativePath)) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "INVALID_FILE_OPERATION",
+        detail: "目录不能移动到自己内部",
+        field: "dstPath"
+      });
+    }
+
     fs.renameSync(source.absolutePath, target.absolutePath);
 
     try {
@@ -281,6 +299,54 @@ export class FileContentService {
       fs.renameSync(target.absolutePath, source.absolutePath);
       throw error;
     }
+  }
+
+  private copyPath(
+    workspaceId: string,
+    sourcePath: string | undefined,
+    targetPath: string | undefined
+  ): void {
+    const source = this.fileAccessGuard.resolvePath(workspaceId, sourcePath, {
+      mustExist: true,
+      kind: "any"
+    });
+    const target = this.fileAccessGuard.resolvePath(workspaceId, targetPath, {
+      mustExist: false,
+      kind: "any"
+    });
+
+    if (target.exists) {
+      throw new AppError({
+        statusCode: 409,
+        errorCode: "FILE_ALREADY_EXISTS",
+        detail: "目标路径已存在",
+        field: "dstPath"
+      });
+    }
+
+    if (source.relativePath === target.relativePath) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "INVALID_FILE_OPERATION",
+        detail: "源路径和目标路径不能相同",
+        field: "dstPath"
+      });
+    }
+
+    if (source.stats?.isDirectory() && isSameOrDescendantRelativePath(source.relativePath, target.relativePath)) {
+      throw new AppError({
+        statusCode: 400,
+        errorCode: "INVALID_FILE_OPERATION",
+        detail: "目录不能复制到自己内部",
+        field: "dstPath"
+      });
+    }
+
+    fs.cpSync(source.absolutePath, target.absolutePath, {
+      recursive: source.stats?.isDirectory() ?? false,
+      errorOnExist: true,
+      force: false
+    });
   }
 
   private readSnapshot(resolved: ResolvedWorkspacePath): FileSnapshot {
@@ -335,4 +401,8 @@ export class FileContentService {
 
 function isBinaryBuffer(buffer: Buffer): boolean {
   return buffer.includes(0);
+}
+
+function isSameOrDescendantRelativePath(targetPath: string, candidatePath: string): boolean {
+  return candidatePath === targetPath || candidatePath.startsWith(`${targetPath}/`);
 }
