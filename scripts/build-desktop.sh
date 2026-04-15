@@ -9,6 +9,8 @@
 #   ./build-desktop.sh build              # 构建当前平台
 #   ./build-desktop.sh build macos        # 仅构建 macOS
 #   ./build-desktop.sh release-macos      # macOS 签名、公证、校验
+#   ./build-desktop.sh release-copy       # 一站式构建 + 签名 + 公证 + 复制 macOS 产物
+#   ./build-desktop.sh release-macos-copy # macOS 签名、公证、校验后复制（需先 build）
 #   ./build-desktop.sh windows            # 兼容旧用法：仅构建 Windows
 #   ./build-desktop.sh linux              # 兼容旧用法：仅构建 Linux
 #   ./build-desktop.sh all                # 尝试构建所有平台
@@ -31,6 +33,7 @@ MACOS_SIGNING_ENV_FILE="$MACOS_SIGNING_DIR/release-macos.env"
 MACOS_SIGNING_CSR_FILE="$MACOS_SIGNING_DIR/developer-id-signing.csr.pem"
 MACOS_CERT_IMPORT_SCRIPT="$REPO_DIR/scripts/import-macos-signing-certificate.sh"
 CARGO_HOME_DEFAULT="$REPO_DIR/.cargo-home"
+MACOS_RELEASE_COPY_DIR_DEFAULT="$HOME/WorkFile/临时文件"
 
 # 颜色输出
 RED='\033[0;31m'
@@ -120,6 +123,22 @@ require_env() {
         return 1
     fi
     return 0
+}
+
+expand_home_path() {
+    local raw_path="${1:-}"
+
+    case "$raw_path" in
+        "~")
+            printf '%s\n' "$HOME"
+            ;;
+        "~/"*)
+            printf '%s/%s\n' "$HOME" "${raw_path#~/}"
+            ;;
+        *)
+            printf '%s\n' "$raw_path"
+            ;;
+    esac
 }
 
 ensure_macos_host() {
@@ -213,6 +232,53 @@ print_macos_release_artifacts() {
     log_success "  notarized app: $app_path"
     log_success "  notarized dmg: $dmg_path"
     log_success "  notarize zip: $zip_path"
+}
+
+copy_macos_release_artifacts() {
+    local copy_root
+    local destination_dir
+    local release_app_path="$MACOS_RELEASE_DIR/CodingNS.app"
+    local release_dmg_path="$MACOS_RELEASE_DIR/CodingNS.dmg"
+    local release_zip_path="$MACOS_RELEASE_DIR/CodingNS.zip"
+    local timestamp
+
+    if [[ -n "${CODINGNS_MACOS_RELEASE_COPY_DIR:-}" ]]; then
+        copy_root="$(expand_home_path "$CODINGNS_MACOS_RELEASE_COPY_DIR")"
+    else
+        copy_root="$(expand_home_path "$MACOS_RELEASE_COPY_DIR_DEFAULT")"
+        log_warn "未检测到 CODINGNS_MACOS_RELEASE_COPY_DIR，回退到默认目录: $copy_root"
+    fi
+
+    timestamp="$(date +%Y%m%d-%H%M%S)"
+    destination_dir="$copy_root/CodingNS-macos-notarized-$timestamp"
+
+    if [[ ! -d "$release_app_path" ]]; then
+        log_error "未找到 notarized app: $release_app_path"
+        return 1
+    fi
+
+    if [[ ! -f "$release_dmg_path" ]]; then
+        log_error "未找到 notarized dmg: $release_dmg_path"
+        return 1
+    fi
+
+    if [[ ! -f "$release_zip_path" ]]; then
+        log_error "未找到 notarize zip: $release_zip_path"
+        return 1
+    fi
+
+    log_info "复制 macOS 发布产物到: $destination_dir"
+    mkdir -p "$destination_dir"
+    rsync -a "$release_app_path" "$destination_dir/"
+    cp "$release_dmg_path" "$destination_dir/"
+    cp "$release_zip_path" "$destination_dir/"
+
+    echo ""
+    log_info "复制后的产物位置:"
+    log_success "  target dir: $destination_dir"
+    log_success "  app: $destination_dir/$(basename "$release_app_path")"
+    log_success "  dmg: $destination_dir/$(basename "$release_dmg_path")"
+    log_success "  zip: $destination_dir/$(basename "$release_zip_path")"
 }
 
 resolve_notarytool_args() {
@@ -871,6 +937,16 @@ release_all_macos() {
     release_macos
 }
 
+release_macos_and_copy() {
+    release_macos
+    copy_macos_release_artifacts
+}
+
+release_all_macos_and_copy() {
+    release_all_macos
+    copy_macos_release_artifacts
+}
+
 # ============================================
 # 主程序
 # ============================================
@@ -891,6 +967,8 @@ print_usage() {
     echo "  $0 build linux             构建 Linux (.deb, .AppImage)"
     echo "  $0 release                 一站式构建 + 签名 + 公证 macOS 通用包"
     echo "  $0 release-macos           macOS 签名、公证、校验（需先 build）"
+    echo "  $0 release-copy            一站式构建 + 签名 + 公证，并复制到目标目录"
+    echo "  $0 release-macos-copy      macOS 签名、公证、校验后复制（需先 build）"
     echo "  $0 macos                   兼容旧用法：构建 macOS"
     echo "  $0 windows                 兼容旧用法：构建 Windows"
     echo "  $0 linux                   兼容旧用法：构建 Linux"
@@ -905,6 +983,8 @@ print_usage() {
     echo "  APPLE_TEAM_ID              未使用 APPLE_NOTARY_PROFILE 时必填"
     echo "  MACOS_ENTITLEMENTS_PATH    可选，自定义 entitlements 文件"
     echo "  MACOS_BUILD_TARGET         可选，默认 universal-apple-darwin"
+    echo "  CODINGNS_MACOS_RELEASE_COPY_DIR  可选，release-copy / release-macos-copy 的复制目标目录"
+    echo "  默认复制目录                    $MACOS_RELEASE_COPY_DIR_DEFAULT"
     echo "  默认本地配置文件           $MACOS_SIGNING_ENV_FILE"
     echo ""
     echo "本地签名证书导入："
@@ -967,6 +1047,12 @@ main() {
             ;;
         release-macos)
             release_macos
+            ;;
+        release-copy)
+            release_all_macos_and_copy
+            ;;
+        release-macos-copy)
+            release_macos_and_copy
             ;;
         macos|darwin|osx|windows|win|msvc|linux|ubuntu|debian|all)
             log_info "兼容旧用法，默认进入构建阶段"

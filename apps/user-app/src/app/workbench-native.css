@@ -5047,10 +5047,10 @@ body {
   --workbench-titlebar-leading-inset: 0px;
   --workbench-titlebar-content-shift-y: 0px;
   --workbench-nav-toolbar-shift-y: 0px;
+  --workbench-collapsed-controls-shift-y: 0px;
   --workbench-macos-traffic-light-safe-zone: 0px;
-  /* 这两个值描述的是“当前 Web 布局自己的默认中心线”，不是系统坐标。 */
-  --workbench-macos-content-layout-center-y: 18px;
-  --workbench-macos-nav-layout-center-y: 20px;
+  /* 这是 Web 侧标题栏控件的统一默认中心线，不是系统坐标。 */
+  --workbench-macos-titlebar-layout-center-y: 18px;
   --workbench-collapsed-balanced-inset: max(
     var(--workbench-collapsed-left-inset),
     var(--workbench-collapsed-right-inset)
@@ -5071,13 +5071,12 @@ body {
   --workbench-header-padding-bottom: 5px;
   --workbench-macos-traffic-light-safe-zone: var(--desktop-macos-traffic-light-safe-zone-width, 86px);
   --workbench-titlebar-leading-inset: var(--desktop-macos-traffic-light-leading-inset, 78px);
-  /* 系统三色球中心线由原生窗口提供，Web 侧只做统一换算。 */
+  /* 左侧按钮、右侧标签和收起态控件全部贴同一条系统基线，避免位置漂移。 */
   --workbench-titlebar-content-shift-y: calc(
-    var(--desktop-macos-traffic-light-center-y, 14px) - var(--workbench-macos-content-layout-center-y)
+    var(--desktop-macos-traffic-light-center-y, 14px) - var(--workbench-macos-titlebar-layout-center-y)
   );
-  --workbench-nav-toolbar-shift-y: calc(
-    var(--desktop-macos-traffic-light-center-y, 14px) - var(--workbench-macos-nav-layout-center-y)
-  );
+  --workbench-nav-toolbar-shift-y: var(--workbench-titlebar-content-shift-y);
+  --workbench-collapsed-controls-shift-y: var(--workbench-titlebar-content-shift-y);
   --workbench-macos-titlebar-control-size: 26px;
   --workbench-macos-titlebar-padding-top: 4px;
   --workbench-macos-titlebar-padding-bottom: 5px;
@@ -5174,22 +5173,22 @@ body {
 
 .workbench-collapsed-controls.left {
   margin-left: var(--workbench-titlebar-leading-inset);
-  transform: translate3d(-6px, var(--workbench-nav-toolbar-shift-y), 0);
+  transform: translate3d(-6px, var(--workbench-collapsed-controls-shift-y), 0);
 }
 
 .workbench-collapsed-controls.right {
-  transform: translate3d(8px, var(--workbench-titlebar-content-shift-y), 0);
+  transform: translate3d(8px, var(--workbench-collapsed-controls-shift-y), 0);
 }
 
 .workbench-collapsed-controls[data-visible="true"] {
   pointer-events: auto;
   opacity: 1;
   visibility: visible;
-  transform: translate3d(0, var(--workbench-titlebar-content-shift-y), 0);
+  transform: translate3d(0, var(--workbench-collapsed-controls-shift-y), 0);
 }
 
 .workbench-collapsed-controls.left[data-visible="true"] {
-  transform: translate3d(0, var(--workbench-nav-toolbar-shift-y), 0);
+  transform: translate3d(0, var(--workbench-collapsed-controls-shift-y), 0);
 }
 
 .workbench-main-drag-strip {
