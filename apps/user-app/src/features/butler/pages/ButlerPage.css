@@ -41,8 +41,17 @@
   box-sizing: border-box;
   align-items: center;
   gap: 8px;
+  padding-left: calc(
+    var(--workbench-header-padding-inline) + var(--workbench-collapsed-left-content-inset, 0px)
+  );
+  padding-right: calc(
+    var(--workbench-header-padding-inline) + var(--workbench-collapsed-right-content-inset, 0px)
+  );
   border-bottom: 1px solid color-mix(in srgb, var(--border-primary) 78%, transparent);
   background: var(--bg-surface);
+  transition:
+    padding-left 220ms cubic-bezier(0.2, 0.9, 0.2, 1),
+    padding-right 220ms cubic-bezier(0.2, 0.9, 0.2, 1);
 }
 
 .butler-header-main {

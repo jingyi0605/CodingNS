@@ -2256,7 +2256,7 @@ body {
   align-items: center;
   width: 100%;
   min-width: 0;
-  gap: 8px;
+  gap: var(--workbench-toolbar-control-gap);
 }
 
 .workbench-window-drag-spacer {
@@ -4790,13 +4790,17 @@ body {
   min-height: var(--workbench-header-min-height);
   padding:
     var(--workbench-header-padding-top)
-    10px
+    calc(10px + var(--workbench-collapsed-right-content-inset))
     var(--workbench-header-padding-bottom);
+  padding-left: calc(10px + var(--workbench-collapsed-left-content-inset));
   border-bottom: 1px solid var(--panel-separator);
   background: color-mix(in srgb, var(--panel-bg-strong) 84%, transparent);
   box-shadow: none;
   backdrop-filter: blur(20px) saturate(145%);
   border-radius: 0;
+  transition:
+    padding-left 220ms cubic-bezier(0.2, 0.9, 0.2, 1),
+    padding-right 220ms cubic-bezier(0.2, 0.9, 0.2, 1);
 }
 
 .workbench-shell .terminal-tabbar-main {
@@ -5055,8 +5059,6 @@ body {
 }
 
 .workbench-shell {
-  --workbench-collapsed-left-inset: 0px;
-  --workbench-collapsed-right-inset: 0px;
   --workbench-header-min-height: 44px;
   --workbench-header-padding-top: 7px;
   --workbench-header-padding-bottom: 7px;
@@ -5188,7 +5190,7 @@ body {
 .workbench-collapsed-controls {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--workbench-toolbar-control-gap);
   pointer-events: none;
   opacity: 0;
   visibility: hidden;
@@ -5227,9 +5229,7 @@ body {
   z-index: 20;
 }
 
-.conversation-header-main,
-.terminal-tabbar-main,
-.butler-header-main {
+.conversation-header-main {
   padding-left: var(--workbench-collapsed-left-content-inset);
   padding-right: var(--workbench-collapsed-right-content-inset);
   transition:
