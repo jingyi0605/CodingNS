@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
+import { logPerfDebug } from "../../../shared/debug/perf-debug";
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 import { ComposerPanel } from "../../conversation/components/ComposerPanel";
 import { MessageTimeline } from "../../conversation/components/MessageTimeline";
-import { SessionRuntimeStore } from "../../conversation/runtime/session-runtime-store";
-import type { SessionMessageViewModel } from "../../conversation/runtime/session-runtime-machine";
 import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout";
 import { WorkbenchModal } from "../../conversation/components/WorkbenchModal";
 import {
@@ -15,6 +14,7 @@ import {
 } from "../../workbench/utils/workbench-navigation";
 import type {
   ButlerControlEventDto,
+  ButlerControlSessionDto,
   ButlerFollowUpTaskRoundDto,
   ButlerFollowUpTaskDto,
   ButlerInboxItemDto,
@@ -31,6 +31,7 @@ import type {
 import {
   analyzeButlerInboxItem,
   getButlerFollowUpTask,
+  listButlerControlSessions,
   listButlerFollowUpTasks,
   listButlerInboxItems,
   listButlerPatrolPlans,
@@ -119,6 +120,47 @@ const BUTLER_AVATAR_POOLS = {
   default: ["🧠", "🤖", "🦉", "🧩", "📚", "💡", "🛠️", "🚀", "🌟", "🪄", "🧭", "🔮"]
 } as const;
 
+function copyTextWithExecCommand(text: string): boolean {
+  if (typeof document === "undefined") {
+    return false;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  textarea.style.pointerEvents = "none";
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+
+  try {
+    return document.execCommand("copy");
+  } catch {
+    return false;
+  } finally {
+    document.body.removeChild(textarea);
+  }
+}
+
+async function writeTextToClipboard(text: string): Promise<void> {
+  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // 浏览器剪贴板权限失败时，继续走旧接口兜底。
+    }
+  }
+
+  if (copyTextWithExecCommand(text)) {
+    return;
+  }
+
+  throw new Error(t("conversation.copyContentFailed"));
+}
+
 export function ButlerPage() {
   const { workspaceId = "" } = useParams();
   const navigate = useNavigate();
@@ -136,8 +178,10 @@ export function ButlerPage() {
   const [inboxItems, setInboxItems] = useState<ButlerInboxItemDto[]>([]);
   const [followUpTasks, setFollowUpTasks] = useState<ButlerFollowUpTaskDto[]>([]);
   const [patrolPlans, setPatrolPlans] = useState<ButlerPatrolPlanDto[]>([]);
+  const [controlSessions, setControlSessions] = useState<ButlerControlSessionDto[]>([]);
   const [analysisOpen, setAnalysisOpen] = useState(false);
   const [followUpHistoryOpen, setFollowUpHistoryOpen] = useState(false);
+  const [controlHistoryOpen, setControlHistoryOpen] = useState(false);
   const [detailTaskId, setDetailTaskId] = useState<string | null>(null);
   const [detailTask, setDetailTask] = useState<ButlerFollowUpTaskDto | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -172,6 +216,7 @@ export function ButlerPage() {
   const runtimeCanInterrupt = useButlerRuntimeStore(store, (state) => state.runtimeCanInterrupt);
   const contextUsage = useButlerRuntimeStore(store, (state) => state.contextUsage);
   const error = useButlerRuntimeStore(store, (state) => state.error);
+  const debugRenderStateRef = useRef<string | null>(null);
 
   const butlerDisplayName = profile?.displayName?.trim() || initForm.displayName.trim() || t("shell.butlerEntry");
   const butlerAvatar = useMemo(
@@ -189,26 +234,6 @@ export function ButlerPage() {
       profile?.providerId
     ]
   );
-  const liveRuntimeSessionId = controlSession?.session?.sessionId?.trim() || null;
-  const liveRuntimeStore = useMemo(() => {
-    if (!liveRuntimeSessionId || !controlSession?.session) {
-      return null;
-    }
-
-    return new SessionRuntimeStore(liveRuntimeSessionId, {
-      initialSession: controlSession.session
-    });
-  }, [liveRuntimeSessionId]);
-  const liveRuntime = useButlerLiveRuntime(liveRuntimeStore);
-  const effectiveMessages = liveRuntimeStore ? liveRuntime.messages : messages;
-  const effectiveHistoryState = liveRuntimeStore ? liveRuntime.historyState : historyState;
-  const effectiveRuntimeHasActiveRun =
-    liveRuntimeStore ? liveRuntime.runtimeHasActiveRun : runtimeHasActiveRun;
-  const effectiveRuntimeCanInterrupt =
-    liveRuntimeStore ? liveRuntime.runtimeCanInterrupt : runtimeCanInterrupt;
-  const effectiveContextUsage = liveRuntimeStore ? liveRuntime.contextUsage : contextUsage;
-  const effectiveLoadingOlderMessages = liveRuntimeStore ? liveRuntime.loadingOlderMessages : false;
-  const effectiveHasOlderMessages = liveRuntimeStore ? liveRuntime.hasOlderMessages : false;
   const analysisTasks = useMemo(
     () => followUpTasks.filter((task) => isVisibleFollowUpTask(task.status)).slice(0, 3),
     [followUpTasks]
@@ -217,9 +242,30 @@ export function ButlerPage() {
     () => (overview?.projects ?? []).map((project) => project.id).sort(),
     [overview?.projects]
   );
+  const reloadControlSessionHistory = useCallback(async () => {
+    if (!initialized) {
+      setControlSessions([]);
+      return;
+    }
+
+    try {
+      const response = await listButlerControlSessions();
+      setControlSessions(response.items);
+    } catch (error) {
+      showToast({
+        title: t("shell.butlerSidebarLoadFailed"),
+        description: error instanceof Error ? error.message : undefined,
+        tone: "error"
+      });
+    }
+  }, [initialized, showToast]);
   const handleOpenFollowUpHistory = useCallback(() => {
     setFollowUpHistoryOpen(true);
   }, []);
+  const handleOpenControlHistory = useCallback(() => {
+    setControlHistoryOpen(true);
+    void reloadControlSessionHistory();
+  }, [reloadControlSessionHistory]);
   const handleSettingsFormChange = useCallback((patch: Partial<ButlerSettingsFormState>) => {
     setSettingsForm((current) => ({
       ...current,
@@ -255,6 +301,8 @@ export function ButlerPage() {
     try {
       const response = await analyzeButlerInboxItem(item.id);
       setInboxItems((current) => replaceInboxItem(current, response.item));
+      setControlSessions((current) => replaceControlSession(current, response.controlSession));
+      await store.adoptControlSession(response.controlSession);
       showToast({
         title: t("shell.butlerTodoAnalyzeQueued"),
         tone: "success"
@@ -312,6 +360,26 @@ export function ButlerPage() {
 
     navigate(buildWorkspaceSessionPath(item.workspaceId, sessionId));
   }, [navigate]);
+  const handleCopyTodoPrompt = useCallback(async (item: ButlerInboxItemDto) => {
+    const prompt = item.assistantState.generatedPrompt?.trim();
+
+    if (!prompt) {
+      return;
+    }
+
+    try {
+      await writeTextToClipboard(prompt);
+      showToast({
+        title: t("shell.butlerTodoCopyPromptSucceeded"),
+        tone: "success"
+      });
+    } catch (error) {
+      showToast({
+        title: error instanceof Error ? error.message : t("conversation.copyContentFailed"),
+        tone: "error"
+      });
+    }
+  }, [showToast]);
   const handleSaveSettings = useCallback(async () => {
     if (!profile) {
       return;
@@ -365,24 +433,54 @@ export function ButlerPage() {
   }, [store]);
 
   useEffect(() => {
-    if (!liveRuntimeStore) {
+    const nextSnapshot = JSON.stringify({
+      workspaceId,
+      activeProvider,
+      controlSessionId: controlSession?.id ?? null,
+      sessionId: controlSession?.session?.sessionId ?? null,
+      messages: messages.length,
+      historyState,
+      runtimeHasActiveRun,
+      runtimeCanInterrupt,
+      loading,
+      sending,
+      switchingProvider,
+      error
+    });
+
+    if (debugRenderStateRef.current === nextSnapshot) {
       return;
     }
 
-    void liveRuntimeStore.initialize();
-
-    return () => {
-      liveRuntimeStore.destroy();
-    };
-  }, [liveRuntimeStore]);
-
-  useEffect(() => {
-    if (!liveRuntimeStore || !controlSession?.session) {
-      return;
-    }
-
-    liveRuntimeStore.applyNavigationSession(controlSession.session);
-  }, [controlSession?.session, liveRuntimeStore]);
+    debugRenderStateRef.current = nextSnapshot;
+    logPerfDebug("butler.page.timeline_state", {
+      workspaceId,
+      activeProvider,
+      controlSessionId: controlSession?.id ?? null,
+      sessionId: controlSession?.session?.sessionId ?? null,
+      messages: messages.length,
+      historyState,
+      runtimeHasActiveRun,
+      runtimeCanInterrupt,
+      loading,
+      sending,
+      switchingProvider,
+      error: error ?? null
+    });
+  }, [
+    workspaceId,
+    activeProvider,
+    controlSession?.id,
+    controlSession?.session?.sessionId,
+    messages.length,
+    historyState,
+    runtimeHasActiveRun,
+    runtimeCanInterrupt,
+    loading,
+    sending,
+    switchingProvider,
+    error
+  ]);
 
   useEffect(() => {
     if (error) {
@@ -420,6 +518,7 @@ export function ButlerPage() {
       setInboxItems([]);
       setFollowUpTasks([]);
       setPatrolPlans([]);
+      setControlSessions([]);
       return;
     }
 
@@ -427,15 +526,17 @@ export function ButlerPage() {
 
     async function loadSidebarData() {
       try {
-        const [inboxResponse, followUpResponse, patrolPlanResponses] = await Promise.all([
+        const [inboxResponse, followUpResponse, controlSessionResponse, patrolPlanResponses] = await Promise.all([
           listButlerInboxItems(),
           listButlerFollowUpTasks(),
+          listButlerControlSessions(),
           Promise.all(overviewProjectIds.map((projectId) => listButlerPatrolPlans(projectId)))
         ]);
 
         if (!disposed) {
           setInboxItems(inboxResponse.items);
           setFollowUpTasks(followUpResponse.items);
+          setControlSessions(controlSessionResponse.items);
           setPatrolPlans(patrolPlanResponses.flatMap((response) => response.items));
         }
       } catch (loadError) {
@@ -446,6 +547,7 @@ export function ButlerPage() {
         setInboxItems([]);
         setFollowUpTasks([]);
         setPatrolPlans([]);
+        setControlSessions([]);
         showToast({
           title: t("shell.butlerSidebarLoadFailed"),
           description: loadError instanceof Error ? loadError.message : undefined,
@@ -584,6 +686,7 @@ export function ButlerPage() {
         onAnalyzeTodo={handleAnalyzeTodo}
         onStartTodoSession={handleStartTodoSession}
         onOpenTodoSession={handleOpenTodoSession}
+        onCopyTodoPrompt={handleCopyTodoPrompt}
         todoActionState={todoActionState}
         onSettingsFormChange={handleSettingsFormChange}
         onSaveSettings={() => {
@@ -594,6 +697,7 @@ export function ButlerPage() {
     [
       events,
       handleAnalyzeTodo,
+      handleCopyTodoPrompt,
       handleOpenFollowUpHistory,
       followUpTasks,
       handleOpenFollowUpDetail,
@@ -1093,19 +1197,15 @@ export function ButlerPage() {
           <button
             type="button"
             className="terminal-tab-control butler-header-icon-button"
-            aria-label={t("shell.butlerRefreshAction")}
-            title={t("shell.butlerRefreshAction")}
+            aria-label={t("shell.butlerHistoryAction")}
+            title={t("shell.butlerHistoryAction")}
             disabled={loading || sending || switchingProvider}
             onClick={() => {
-              void Promise.all([
-                store.refreshAll(),
-                listButlerInboxItems().then((response) => setInboxItems(response.items)),
-                listButlerFollowUpTasks().then((response) => setFollowUpTasks(response.items))
-              ]);
+              handleOpenControlHistory();
             }}
           >
             <span className="terminal-toolbar-icon" aria-hidden="true">
-              <ButlerRefreshIcon />
+              <ButlerHistoryIcon />
             </span>
           </button>
         </div>
@@ -1115,25 +1215,19 @@ export function ButlerPage() {
           <div key={`timeline:${activeProvider}:${viewKey}`} className="butler-conversation-shell">
             <MessageTimeline
             sessionId={controlSession?.session?.sessionId}
-            messages={effectiveMessages}
-            historyState={effectiveHistoryState}
-            loadingOlderMessages={effectiveLoadingOlderMessages}
-            hasOlderMessages={effectiveHasOlderMessages}
+            messages={messages}
+            historyState={historyState}
+            loadingOlderMessages={false}
+            hasOlderMessages={false}
             provider={activeProvider}
             assistantAvatar={
               <span className="butler-message-avatar" aria-hidden="true">
                 {butlerAvatar}
               </span>
             }
-            onLoadOlderMessages={() => {
-              if (!liveRuntimeStore) {
-                return;
-              }
-
-              void liveRuntimeStore.loadOlderMessages();
-            }}
+            onLoadOlderMessages={() => undefined}
             onRetryMessage={(clientRequestId) => {
-              const targetMessage = effectiveMessages.find(
+              const targetMessage = messages.find(
                 (message) => message.clientRequestId === clientRequestId
               );
 
@@ -1153,11 +1247,15 @@ export function ButlerPage() {
               placeholder={t("shell.butlerComposerPlaceholder", {
                 displayName: butlerDisplayName
               })}
-              hasActiveRun={effectiveRuntimeHasActiveRun}
-              canInterrupt={effectiveRuntimeCanInterrupt}
-              contextUsage={effectiveContextUsage}
+              hasActiveRun={runtimeHasActiveRun}
+              canInterrupt={runtimeCanInterrupt}
+              contextUsage={contextUsage}
               isSubmitting={sending || switchingProvider}
-              isRunning={effectiveRuntimeHasActiveRun ?? false}
+              isRunning={runtimeHasActiveRun ?? false}
+              onInterrupt={async () => {
+                await store.interrupt();
+                requestNavigationRefresh();
+              }}
               onSend={async (content, options) => {
                 if ((options?.attachments?.length ?? 0) > 0) {
                   showToast({
@@ -1195,6 +1293,23 @@ export function ButlerPage() {
         />
       </WorkbenchModal>
       <WorkbenchModal
+        open={controlHistoryOpen}
+        title={t("shell.butlerHistoryTitle")}
+        description={t("shell.butlerHistoryDescription")}
+        onClose={() => {
+          setControlHistoryOpen(false);
+        }}
+      >
+        <ButlerControlHistoryPanel
+          sessions={controlSessions}
+          activeControlSessionId={controlSession?.id ?? null}
+          onSelectSession={async (targetSession) => {
+            await store.openControlSession(targetSession.id);
+            setControlHistoryOpen(false);
+          }}
+        />
+      </WorkbenchModal>
+      <WorkbenchModal
         open={detailTaskId !== null}
         title={t("shell.butlerAutomationRoundDetailsTitle")}
         description={detailTask?.sessionTitle?.trim() || detailTask?.projectName || t("shell.butlerAutomationRoundDetailsDescription")}
@@ -1228,6 +1343,7 @@ function ButlerAuxiliaryPanel(props: {
   onAnalyzeTodo: (item: ButlerInboxItemDto) => Promise<void>;
   onStartTodoSession: (item: ButlerInboxItemDto) => Promise<void>;
   onOpenTodoSession: (item: ButlerInboxItemDto) => void;
+  onCopyTodoPrompt: (item: ButlerInboxItemDto) => Promise<void>;
   todoActionState: {
     itemId: string | null;
     kind: "analyze" | "start" | null;
@@ -1276,6 +1392,7 @@ function ButlerAuxiliaryPanel(props: {
           onAnalyzeTodo={props.onAnalyzeTodo}
           onStartTodoSession={props.onStartTodoSession}
           onOpenTodoSession={props.onOpenTodoSession}
+          onCopyTodoPrompt={props.onCopyTodoPrompt}
           todoActionState={props.todoActionState}
         />
       ) : activeTab === "automation" ? (
@@ -1305,6 +1422,7 @@ function GlobalRecordsSidebarContent(props: {
   onAnalyzeTodo: (item: ButlerInboxItemDto) => Promise<void>;
   onStartTodoSession: (item: ButlerInboxItemDto) => Promise<void>;
   onOpenTodoSession: (item: ButlerInboxItemDto) => void;
+  onCopyTodoPrompt: (item: ButlerInboxItemDto) => Promise<void>;
   todoActionState: {
     itemId: string | null;
     kind: "analyze" | "start" | null;
@@ -1357,6 +1475,7 @@ function GlobalRecordsSidebarContent(props: {
         onAnalyzeTodo={props.onAnalyzeTodo}
         onStartTodoSession={props.onStartTodoSession}
         onOpenTodoSession={props.onOpenTodoSession}
+        onCopyTodoPrompt={props.onCopyTodoPrompt}
       />
     </>
   );
@@ -1427,6 +1546,7 @@ function TodoLifecycleCard(props: {
   onAnalyzeTodo: (item: ButlerInboxItemDto) => Promise<void>;
   onStartTodoSession: (item: ButlerInboxItemDto) => Promise<void>;
   onOpenTodoSession: (item: ButlerInboxItemDto) => void;
+  onCopyTodoPrompt: (item: ButlerInboxItemDto) => Promise<void>;
 }) {
   return (
     <section className="butler-side-card">
@@ -1461,10 +1581,12 @@ function TodoLifecycleCard(props: {
                     || t("shell.butlerTodoLifecycleEmpty")}
                 </p>
                 {hasPrompt ? (
-                  <details className="butler-todo-prompt-preview">
-                    <summary>{t("shell.butlerTodoPromptPreviewAction")}</summary>
-                    <pre>{item.assistantState.generatedPrompt}</pre>
-                  </details>
+                  <div className="butler-todo-prompt-preview">
+                    <details className="butler-todo-prompt-preview-details">
+                      <summary>{t("shell.butlerTodoPromptPreviewAction")}</summary>
+                      <pre>{item.assistantState.generatedPrompt}</pre>
+                    </details>
+                  </div>
                 ) : null}
                 <div className="butler-todo-card-actions">
                   <button
@@ -1506,6 +1628,16 @@ function TodoLifecycleCard(props: {
                             ? t("shell.butlerTodoAnalyzeFirstAction")
                             : t("shell.butlerTodoStartSessionAction")}
                   </button>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    disabled={!hasPrompt}
+                    onClick={() => {
+                      void props.onCopyTodoPrompt(item);
+                    }}
+                  >
+                    {t("shell.butlerTodoCopyPromptAction")}
+                  </button>
                 </div>
               </article>
             );
@@ -1515,6 +1647,62 @@ function TodoLifecycleCard(props: {
         <p className="butler-secondary-text">{props.emptyText}</p>
       )}
     </section>
+  );
+}
+
+function ButlerControlHistoryPanel(props: {
+  sessions: ButlerControlSessionDto[];
+  activeControlSessionId: string | null;
+  onSelectSession: (session: ButlerControlSessionDto) => Promise<void>;
+}) {
+  if (props.sessions.length === 0) {
+    return <p className="butler-secondary-text">{t("shell.butlerHistoryEmpty")}</p>;
+  }
+
+  return (
+    <div className="butler-record-list">
+      {props.sessions.map((session) => {
+        const selected = session.id === props.activeControlSessionId;
+        const title = session.title?.trim() || session.session.title?.trim() || session.lastSummary?.trim() || session.sessionId;
+
+        return (
+          <article key={session.id} className="butler-todo-card">
+            <header className="butler-todo-card-header">
+              <div>
+                <strong>{title}</strong>
+                <span>{formatTimestamp(session.updatedAt)}</span>
+              </div>
+              <div className="butler-todo-card-badges">
+                <span className="butler-inline-badge">
+                  {session.purpose === "todo_analysis"
+                    ? t("shell.butlerControlSessionKindTodoAnalysis")
+                    : t("shell.butlerControlSessionKindChat")}
+                </span>
+                <span className="butler-inline-badge">{resolveControlSessionStatusLabel(session.status)}</span>
+                {selected ? (
+                  <span className="butler-inline-badge">{t("shell.butlerCurrentSessionBadge")}</span>
+                ) : null}
+              </div>
+            </header>
+            <p className="butler-secondary-text">
+              {session.lastSummary?.trim() || session.session.title?.trim() || session.sessionId}
+            </p>
+            <div className="butler-todo-card-actions">
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={selected}
+                onClick={() => {
+                  void props.onSelectSession(session);
+                }}
+              >
+                {selected ? t("shell.butlerCurrentSessionBadge") : t("shell.butlerHistoryOpenAction")}
+              </button>
+            </div>
+          </article>
+        );
+      })}
+    </div>
   );
 }
 
@@ -2195,6 +2383,15 @@ function replaceFollowUpTask(
     .sort((left, right) => parseIsoTime(resolveFollowUpTaskUpdatedAt(right)) - parseIsoTime(resolveFollowUpTaskUpdatedAt(left)));
 }
 
+function replaceControlSession(
+  sessions: ButlerControlSessionDto[],
+  nextSession: ButlerControlSessionDto
+): ButlerControlSessionDto[] {
+  const nextSessions = sessions.filter((session) => session.id !== nextSession.id);
+  return [nextSession, ...nextSessions]
+    .sort((left, right) => parseIsoTime(right.updatedAt) - parseIsoTime(left.updatedAt));
+}
+
 function isVisibleFollowUpTask(status: ButlerFollowUpTaskDto["status"]): boolean {
   return status === "active" || status === "waiting_user";
 }
@@ -2236,6 +2433,21 @@ function parseIsoTime(value: string | null | undefined): number {
   return Number.isNaN(time) ? 0 : time;
 }
 
+function formatTimestamp(value: string | null | undefined): string {
+  const time = parseIsoTime(value);
+
+  if (time <= 0) {
+    return "-";
+  }
+
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(new Date(time));
+}
+
 function resolveReportPriorityPreset(reportPriority: string[]): ButlerReportPriorityPresetId {
   for (const [preset, priorities] of Object.entries(REPORT_PRIORITY_PRESET_VALUES)) {
     if (
@@ -2270,6 +2482,20 @@ function resolveTodoStatusLabel(status: ButlerInboxItemDto["status"]): string {
       return t("shell.butlerInfoTodoInProgress");
     case "closed":
       return t("shell.butlerInfoTodoClosed");
+    default:
+      return t("shell.butlerInfoTodoPending");
+  }
+}
+
+function resolveControlSessionStatusLabel(status: ButlerControlSessionDto["status"]): string {
+  switch (status) {
+    case "running":
+      return t("shell.butlerInfoTodoInProgress");
+    case "failed":
+      return t("shell.butlerTodoLifecycleFailed");
+    case "closed":
+      return t("shell.butlerInfoTodoClosed");
+    case "idle":
     default:
       return t("shell.butlerInfoTodoPending");
   }
@@ -2414,63 +2640,14 @@ function ButlerPlusIcon() {
   );
 }
 
-function ButlerRefreshIcon() {
+function ButlerHistoryIcon() {
   return (
-    <svg viewBox="0 0 16 16" aria-hidden="true">
-      <path
-        d="M12.8 5.2A5.5 5.5 0 1 0 13.5 8h-1.8A3.7 3.7 0 1 1 10.6 5l-1.4 1.4h4V2l-1.4 1.4z"
-        fill="currentColor"
-      />
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M12 8v5l3 2" />
+      <path d="M5 3v4" />
+      <path d="M19 3v4" />
+      <path d="M4 7h16" />
+      <rect x="3" y="5" width="18" height="16" rx="2" />
     </svg>
   );
-}
-
-function useButlerLiveRuntime(runtimeStore: SessionRuntimeStore | null): {
-  messages: SessionMessageViewModel[];
-  historyState: "idle" | "loading" | "ready" | "error";
-  loadingOlderMessages: boolean;
-  hasOlderMessages: boolean;
-  runtimeHasActiveRun: boolean | null;
-  runtimeCanInterrupt: boolean | null;
-  contextUsage: ReturnType<SessionRuntimeStore["getState"]>["contextUsage"];
-} {
-  const [snapshot, setSnapshot] = useState(() => createEmptyButlerLiveRuntimeSnapshot());
-
-  useEffect(() => {
-    if (!runtimeStore) {
-      setSnapshot(createEmptyButlerLiveRuntimeSnapshot());
-      return;
-    }
-
-    const syncSnapshot = () => {
-      const state = runtimeStore.getState();
-
-      setSnapshot({
-        messages: state.messages,
-        historyState: state.historyState,
-        loadingOlderMessages: state.loadingOlderMessages,
-        hasOlderMessages: state.hasOlderMessages,
-        runtimeHasActiveRun: state.runtimeHasActiveRun,
-        runtimeCanInterrupt: state.runtimeCanInterrupt,
-        contextUsage: state.contextUsage
-      });
-    };
-
-    syncSnapshot();
-    return runtimeStore.subscribe(syncSnapshot);
-  }, [runtimeStore]);
-
-  return snapshot;
-}
-
-function createEmptyButlerLiveRuntimeSnapshot() {
-  return {
-    messages: [] as SessionMessageViewModel[],
-    historyState: "ready" as "idle" | "loading" | "ready" | "error",
-    loadingOlderMessages: false,
-    hasOlderMessages: false,
-    runtimeHasActiveRun: null as boolean | null,
-    runtimeCanInterrupt: null as boolean | null,
-    contextUsage: null as ReturnType<SessionRuntimeStore["getState"]>["contextUsage"]
-  };
 }

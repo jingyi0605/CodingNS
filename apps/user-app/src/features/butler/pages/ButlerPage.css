@@ -466,6 +466,113 @@
   color: var(--text-secondary, #6b7280);
 }
 
+.butler-record-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary, #6b7280);
+  font-size: 11px;
+}
+
+.butler-record-toggle input {
+  margin: 0;
+}
+
+.butler-todo-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 64%, transparent);
+  background: color-mix(in srgb, var(--bg-primary) 94%, transparent);
+}
+
+.butler-todo-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.butler-todo-card-header strong {
+  display: block;
+  color: var(--text-primary, #111827);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.butler-todo-card-header span {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-secondary, #6b7280);
+  font-size: 11px;
+}
+
+.butler-todo-card-badges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.butler-inline-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--border-primary) 64%, transparent);
+  color: var(--text-secondary, #6b7280);
+  font-size: 10px;
+}
+
+.butler-todo-card p {
+  margin: 0;
+  color: var(--text-primary, #111827);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.butler-todo-prompt-preview {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.butler-todo-prompt-preview-details {
+  min-width: 0;
+  flex: 1 1 220px;
+}
+
+.butler-todo-prompt-preview summary {
+  cursor: pointer;
+  color: var(--text-secondary, #6b7280);
+  font-size: 11px;
+}
+
+.butler-todo-prompt-preview pre {
+  margin: 8px 0 0;
+  max-height: 180px;
+  overflow: auto;
+  padding: 10px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-hover) 74%, transparent);
+  color: var(--text-primary, #111827);
+  font-size: 11px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.butler-todo-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .workbench-auxiliary[data-custom-panel="true"] .butler-automation-card,
 .workbench-auxiliary-custom-panel .butler-automation-card,
 .butler-automation-card {

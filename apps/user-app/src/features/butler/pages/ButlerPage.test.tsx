@@ -6,6 +6,7 @@ import { t } from "../../../shared/i18n";
 
 const setAuxiliaryPanelMock = vi.hoisted(() => vi.fn());
 const navigateMock = vi.hoisted(() => vi.fn());
+const clipboardWriteTextMock = vi.hoisted(() => vi.fn());
 
 vi.mock("react-router-dom", async () => {
   const actual = await vi.importActual<typeof import("react-router-dom")>("react-router-dom");
@@ -90,6 +91,7 @@ vi.mock("../api/butler-api", () => ({
   getButlerOverview: vi.fn(),
   cancelButlerFollowUpTask: vi.fn(),
   getButlerFollowUpTask: vi.fn(),
+  listButlerControlSessions: vi.fn(),
   listButlerPatrolPlans: vi.fn(),
   listButlerFollowUpTasks: vi.fn(),
   listButlerInboxItems: vi.fn(),
@@ -111,6 +113,7 @@ import {
   getButlerOverview,
   cancelButlerFollowUpTask,
   getButlerFollowUpTask,
+  listButlerControlSessions,
   listButlerPatrolPlans,
   listButlerFollowUpTasks,
   listButlerInboxItems,
@@ -134,6 +137,7 @@ const mockedUpdateButlerProfile = vi.mocked(updateButlerProfile);
 const mockedGetButlerOverview = vi.mocked(getButlerOverview);
 const mockedCancelButlerFollowUpTask = vi.mocked(cancelButlerFollowUpTask);
 const mockedGetButlerFollowUpTask = vi.mocked(getButlerFollowUpTask);
+const mockedListButlerControlSessions = vi.mocked(listButlerControlSessions);
 const mockedListButlerPatrolPlans = vi.mocked(listButlerPatrolPlans);
 const mockedListButlerFollowUpTasks = vi.mocked(listButlerFollowUpTasks);
 const mockedListButlerInboxItems = vi.mocked(listButlerInboxItems);
@@ -163,6 +167,8 @@ describe("ButlerPage", () => {
     lifecycleStage: "pending" as const,
     analysisSummary: null,
     generatedPrompt: null,
+    analysisControlSessionId: null,
+    analysisSessionId: null,
     linkedButlerSessionId: null,
     linkedSessionId: null,
     linkedFollowUpTaskId: null,
@@ -176,6 +182,14 @@ describe("ButlerPage", () => {
     vi.clearAllMocks();
     setAuxiliaryPanelMock.mockReset();
     navigateMock.mockReset();
+    clipboardWriteTextMock.mockReset();
+    clipboardWriteTextMock.mockResolvedValue(undefined);
+    Object.defineProperty(window.navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: clipboardWriteTextMock
+      }
+    });
     mockedUseToast.mockReturnValue({
       showToast: showToastMock,
       dismissToast: vi.fn()
@@ -293,6 +307,9 @@ describe("ButlerPage", () => {
     mockedListButlerPatrolPlans.mockResolvedValue({
       items: []
     });
+    mockedListButlerControlSessions.mockResolvedValue({
+      items: []
+    } as never);
     mockedListButlerFollowUpTasks.mockResolvedValue({
       items: []
     });
@@ -303,7 +320,8 @@ describe("ButlerPage", () => {
     mockedGetCurrentButlerControlSession.mockResolvedValue({ controlSession: null });
     mockedResetButlerControlSession.mockResolvedValue({ controlSession: null } as never);
     mockedAnalyzeButlerInboxItem.mockResolvedValue({
-      item: {} as never
+      item: {} as never,
+      controlSession: {} as never
     });
     mockedStartButlerControlSession.mockResolvedValue({
       controlSession: {
@@ -1106,7 +1124,23 @@ describe("ButlerPage", () => {
       items: [pendingTodo]
     });
     mockedAnalyzeButlerInboxItem.mockResolvedValueOnce({
-      item: analyzingTodo
+      item: analyzingTodo,
+      controlSession: {
+        id: "ctrl-analysis-1",
+        providerId: "codex",
+        sessionId: "session-analysis-1",
+        purpose: "todo_analysis",
+        title: "分析代办：补齐验证码流程",
+        sourceItemId: "todo-lifecycle-1",
+        status: "running",
+        lastContextVersion: "ctx-1",
+        lastSummary: "分析代办：补齐验证码流程",
+        createdAt: "2026-04-05T08:45:00.000Z",
+        updatedAt: "2026-04-05T08:45:00.000Z",
+        session: {
+          sessionId: "session-analysis-1"
+        }
+      } as never
     });
     mockedStartButlerInboxItemSession.mockResolvedValueOnce({
       item: startedTodo,
@@ -1253,6 +1287,81 @@ describe("ButlerPage", () => {
     expect(renderedPanel.getByText(t("shell.butlerInfoTodoInProgress"))).toBeInTheDocument();
     expect(renderedPanel.getByText(t("shell.butlerTodoLifecycleFollowUpActive"))).toBeInTheDocument();
     expect(renderedPanel.getByRole("button", { name: t("shell.butlerTodoOpenSessionAction") })).toBeInTheDocument();
+  });
+
+  it("代办提示词支持从预览区和动作区复制", async () => {
+    mockedGetButlerProfile.mockResolvedValueOnce({
+      initialized: true,
+      profile: {
+        id: "default",
+        displayName: "阿尔文",
+        providerId: "codex",
+        workspacePath: "/tmp/butler",
+        agentsMode: "inline",
+        agentsFilePath: null,
+        agentsContent: "测试",
+        persona: { tone: "direct", language: "zh-CN", summaryStyle: "brief" },
+        focus: { projectIds: [], riskPreference: "conservative", reportPriority: [], summaryDebounceSeconds: 300 },
+        initializedAt: "2026-04-05T00:00:00.000Z",
+        updatedAt: "2026-04-05T00:00:00.000Z"
+      }
+    });
+    mockedListButlerInboxItems.mockResolvedValue({
+      items: [
+        {
+          id: "todo-copy-1",
+          projectId: "project-normal",
+          projectName: "普通项目",
+          workspaceId: "workspace-1",
+          projectLifecycleStatus: "active",
+          itemType: "task",
+          title: "补齐验证码流程",
+          content: "继续把登录页验证码流程收尾。",
+          priority: "medium",
+          status: "pending",
+          assistantState: {
+            ...defaultAssistantState,
+            lifecycleStage: "analyzed",
+            analysisSummary: "仓库以 TypeScript 为主，登录验证码流程还差最后一轮联调。",
+            generatedPrompt: "请先检查登录验证码相关页面、接口和错误处理，再继续补齐流程。",
+            lastAnalyzedAt: "2026-04-05T08:50:00.000Z"
+          },
+          createdAt: "2026-04-05T08:40:00.000Z",
+          updatedAt: "2026-04-05T08:50:00.000Z",
+          closedAt: null
+        }
+      ]
+    });
+
+    renderPage();
+
+    await waitFor(() => {
+      const latestSidePanel = getLatestSidePanel() as {
+        props: {
+          inboxItems?: unknown[];
+        };
+      };
+      expect(latestSidePanel.props.inboxItems).toHaveLength(1);
+    });
+
+    const renderedPanel = render(getLatestSidePanel());
+    const copyButton = renderedPanel.getByRole("button", {
+      name: t("shell.butlerTodoCopyPromptAction")
+    });
+
+    fireEvent.click(copyButton);
+
+    await waitFor(() => {
+      expect(clipboardWriteTextMock).toHaveBeenCalledWith(
+        "请先检查登录验证码相关页面、接口和错误处理，再继续补齐流程。"
+      );
+    });
+    expect(showToastMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: t("shell.butlerTodoCopyPromptSucceeded"),
+        tone: "success"
+      })
+    );
   });
 
   it("自动化页只展示自动化任务和最近运行记录", async () => {
