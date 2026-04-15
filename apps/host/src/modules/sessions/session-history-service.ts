@@ -1730,48 +1730,61 @@ export class SessionHistoryService {
       providerSessionId: snapshot.providerSessionId,
       rawStoreRef: snapshot.rawStoreRef
     });
-    const currentBinding = this.sessionBindingRepository.findBySessionId(sessionId);
-    const timestamp = nowIso();
-    const duplicateBinding = this.findSameWorkspaceBindingDuplicate(
-      sessionId,
-      workspaceId,
-      resolvedSnapshot
-    );
+    // discovery 和 runtime 回填会并发命中这里；如果在事务外先看重复，再事务内写入，
+    // 中间就会留下一个竞态窗口，最后直接撞 UNIQUE(provider, provider_session_id)。
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        this.db.transaction(() => {
+          const currentBinding = this.sessionBindingRepository.findBySessionId(sessionId);
+          const timestamp = nowIso();
+          const duplicateBinding = this.findSameWorkspaceBindingDuplicate(
+            sessionId,
+            workspaceId,
+            resolvedSnapshot
+          );
 
-    this.db.transaction(() => {
-      if (duplicateBinding) {
-        // 运行时链路显式指定了当前 sessionId，就应该由当前会话接管同工作区里的重复底层会话。
-        // 否则后续事件重放或后台发现补录都会持续撞 UNIQUE(provider, provider_session_id)。
-        this.mergeSessionIntoTarget({
-          workspaceId,
-          targetSessionId: sessionId,
-          sourceSessionId: duplicateBinding.sessionId,
-          provider: resolvedSnapshot.provider,
-          timestamp
-        });
+          if (duplicateBinding) {
+            // 运行时链路显式指定了当前 sessionId，就应该由当前会话接管同工作区里的重复底层会话。
+            // 否则后续事件重放或后台发现补录都会持续撞 UNIQUE(provider, provider_session_id)。
+            this.mergeSessionIntoTarget({
+              workspaceId,
+              targetSessionId: sessionId,
+              sourceSessionId: duplicateBinding.sessionId,
+              provider: resolvedSnapshot.provider,
+              timestamp
+            });
+          }
+
+          const currentIndex = this.sessionIndexRepository.findIndexRecordBySessionId(sessionId);
+
+          this.sessionBindingRepository.upsert({
+            sessionId,
+            workspaceId,
+            provider: resolvedSnapshot.provider,
+            providerSessionId: resolvedSnapshot.providerSessionId,
+            rawStoreRef: resolvedSnapshot.rawStoreRef,
+            createdAt:
+              pickEarlierIso(currentBinding?.createdAt ?? null, duplicateBinding?.createdAt ?? null)
+              ?? timestamp,
+            updatedAt: timestamp
+          });
+
+          if (currentIndex) {
+            this.sessionIndexRepository.upsert({
+              ...currentIndex,
+              updatedAt: timestamp
+            });
+          }
+        })();
+        return;
+      } catch (error) {
+        if (attempt === 0 && isSessionBindingProviderUniqueConflict(error)) {
+          continue;
+        }
+
+        throw error;
       }
-
-      const currentIndex = this.sessionIndexRepository.findIndexRecordBySessionId(sessionId);
-
-      this.sessionBindingRepository.upsert({
-        sessionId,
-        workspaceId,
-        provider: resolvedSnapshot.provider,
-        providerSessionId: resolvedSnapshot.providerSessionId,
-        rawStoreRef: resolvedSnapshot.rawStoreRef,
-        createdAt:
-          pickEarlierIso(currentBinding?.createdAt ?? null, duplicateBinding?.createdAt ?? null)
-          ?? timestamp,
-        updatedAt: timestamp
-      });
-
-      if (currentIndex) {
-        this.sessionIndexRepository.upsert({
-          ...currentIndex,
-          updatedAt: timestamp
-        });
-      }
-    })();
+    }
   }
 
   private async runDiscoverWorkspaceSessions(
@@ -3742,6 +3755,16 @@ function shouldSkipClaudePendingBinding(binding: Pick<SessionBinding, "provider"
 
 function isPendingBindingValue(value: string): boolean {
   return value.trim().toLowerCase().startsWith("pending://");
+}
+
+function isSessionBindingProviderUniqueConflict(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  return error.message.includes(
+    "UNIQUE constraint failed: session_bindings.provider, session_bindings.provider_session_id"
+  );
 }
 
 function buildPendingBindingValue(provider: string, sessionId: string): string {
