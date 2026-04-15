@@ -278,7 +278,11 @@ vi.mock("@xterm/xterm", () => ({
       return undefined;
     }
 
-    scrollToLine() {
+    scrollToLine(line: number) {
+      this.buffer.active.viewportY = Math.max(
+        0,
+        Math.min(this.buffer.active.baseY, line)
+      );
       return undefined;
     }
 
@@ -1009,6 +1013,112 @@ describe("TerminalPage", () => {
         beforeSeq: 3,
         limit: 20
       });
+    });
+  });
+
+  it("初次回放后会给最新光标保留底部安全区，而不是直接贴底", async () => {
+    setTerminalManagerSnapshot("workspace-1", [buildTerminal()]);
+
+    renderPage();
+
+    await screen.findByText("工作终端");
+    await waitFor(() => {
+      expect(screen.getByTestId("mock-xterm")).toBeInTheDocument();
+    });
+
+    const socket = MockWebSocket.instances[0];
+
+    if (!socket) {
+      throw new Error("未建立终端 WebSocket 连接");
+    }
+
+    socket.dispatchMessage({
+      type: "terminal.backfill",
+      terminalId: "terminal-1",
+      truncated: false,
+      cursorReset: false,
+      latestCursor: "40",
+      chunks: [
+        {
+          terminalId: "terminal-1",
+          cursor: "40",
+          stream: "stdout",
+          content: Array.from({ length: 40 }, (_, index) => `line-${index + 1}`).join("\r\n") + "\r\n",
+          timestamp: "2026-03-26T08:00:00.000Z"
+        }
+      ]
+    });
+
+    const terminal = mockXtermInstances.at(-1);
+
+    if (!terminal) {
+      throw new Error("未创建 xterm 实例");
+    }
+
+    await waitFor(() => {
+      expect(terminal.buffer.active.baseY).toBe(39);
+      expect(terminal.buffer.active.viewportY).toBe(37);
+    });
+  });
+
+  it("已经处于底部安全区时，实时输出会继续跟随到新的安全区位置", async () => {
+    setTerminalManagerSnapshot("workspace-1", [buildTerminal()]);
+
+    renderPage();
+
+    await screen.findByText("工作终端");
+    await waitFor(() => {
+      expect(screen.getByTestId("mock-xterm")).toBeInTheDocument();
+    });
+
+    const socket = MockWebSocket.instances[0];
+
+    if (!socket) {
+      throw new Error("未建立终端 WebSocket 连接");
+    }
+
+    socket.dispatchMessage({
+      type: "terminal.backfill",
+      terminalId: "terminal-1",
+      truncated: false,
+      cursorReset: false,
+      latestCursor: "40",
+      chunks: [
+        {
+          terminalId: "terminal-1",
+          cursor: "40",
+          stream: "stdout",
+          content: Array.from({ length: 40 }, (_, index) => `line-${index + 1}`).join("\r\n") + "\r\n",
+          timestamp: "2026-03-26T08:00:00.000Z"
+        }
+      ]
+    });
+
+    const terminal = mockXtermInstances.at(-1);
+
+    if (!terminal) {
+      throw new Error("未创建 xterm 实例");
+    }
+
+    await waitFor(() => {
+      expect(terminal.buffer.active.viewportY).toBe(37);
+    });
+
+    socket.dispatchMessage({
+      type: "terminal.output",
+      terminalId: "terminal-1",
+      chunk: {
+        terminalId: "terminal-1",
+        cursor: "42",
+        stream: "stdout",
+        content: "line-41\r\nline-42\r\n",
+        timestamp: "2026-03-26T08:00:01.000Z"
+      }
+    });
+
+    await waitFor(() => {
+      expect(terminal.buffer.active.baseY).toBe(41);
+      expect(terminal.buffer.active.viewportY).toBe(39);
     });
   });
 

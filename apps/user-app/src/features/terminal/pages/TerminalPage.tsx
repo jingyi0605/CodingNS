@@ -215,6 +215,7 @@ const TERMINAL_TOUCH_MOMENTUM_MAX_LINES_PER_MS = 0.9;
 const TERMINAL_TOUCH_MOMENTUM_FRICTION = 0.97;
 const TERMINAL_TOUCH_MOMENTUM_MAX_DURATION_MS = 3600;
 const TERMINAL_TOUCH_MOMENTUM_MAX_IDLE_FRAMES = 3;
+const TERMINAL_LATEST_CURSOR_BOTTOM_GAP_RATIO = 0.05;
 const INITIAL_PANE_BINDINGS: TerminalPaneBindings = {
   primary: null,
   secondary: null
@@ -4530,20 +4531,22 @@ function filterTerminalChunksAfterCursor(
 }
 
 function scrollTerminalToBottom(terminal: Terminal): void {
-  const terminalWithOptionalScrollToBottom = terminal as Terminal & {
-    scrollToBottom?: () => void;
-  };
-
-  if (typeof terminalWithOptionalScrollToBottom.scrollToBottom === "function") {
-    terminalWithOptionalScrollToBottom.scrollToBottom();
-    return;
-  }
-
-  terminal.scrollToLine(terminal.buffer.active.baseY);
+  terminal.scrollToLine(resolveTerminalPreferredViewportY(terminal));
 }
 
 function isTerminalViewportNearBottom(terminal: Terminal, slackLines = 1): boolean {
-  return terminal.buffer.active.baseY - terminal.buffer.active.viewportY <= slackLines;
+  return terminal.buffer.active.viewportY >= resolveTerminalPreferredViewportY(terminal) - slackLines;
+}
+
+function resolveTerminalPreferredViewportY(terminal: Terminal): number {
+  return Math.max(0, terminal.buffer.active.baseY - resolveTerminalBottomGapLines(terminal));
+}
+
+function resolveTerminalBottomGapLines(terminal: Terminal): number {
+  const visibleRows = Number.isFinite(terminal.rows) && terminal.rows > 0
+    ? terminal.rows
+    : DEFAULT_TERMINAL_ROWS;
+  return Math.max(1, Math.ceil(visibleRows * TERMINAL_LATEST_CURSOR_BOTTOM_GAP_RATIO));
 }
 
 function hasUsableContainerSize(container: HTMLDivElement): boolean {
