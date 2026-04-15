@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
+import { ModalCloseButton } from "../../../components/ModalCloseButton";
 import { getHostRequestUrl } from "../../../config/env";
 import { readViewSnapshot, writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
 import { logPerfDebug } from "../../../shared/debug/perf-debug";
@@ -294,14 +295,7 @@ function TerminalManagerModal({
             <h2>{title}</h2>
             <p>{description}</p>
           </div>
-          <button
-            type="button"
-            className="workbench-modal-close"
-            aria-label={t("common.close")}
-            onClick={onClose}
-          >
-            x
-          </button>
+          <ModalCloseButton onClick={onClose} />
         </div>
         <div className="workbench-modal-body">{children}</div>
       </section>

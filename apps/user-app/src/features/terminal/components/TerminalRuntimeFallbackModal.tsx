@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { createPortal } from "react-dom";
 
+import { ModalCloseButton } from "../../../components/ModalCloseButton";
 import { t } from "../../../shared/i18n";
 
 interface TerminalRuntimeFallbackModalProps {
@@ -60,18 +61,13 @@ export function TerminalRuntimeFallbackModal({
             <h2>{t("terminal.runtimeMissingDialogTitle")}</h2>
             <p>{t("terminal.runtimeMissingDialogDescription")}</p>
           </div>
-          <button
-            type="button"
-            className="workbench-modal-close"
-            aria-label={t("common.close")}
+          <ModalCloseButton
             onClick={() => {
               if (!busy) {
                 onClose();
               }
             }}
-          >
-            x
-          </button>
+          />
         </div>
 
         <div className="workbench-modal-body terminal-runtime-fallback-body">

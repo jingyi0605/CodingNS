@@ -14,6 +14,8 @@ import { createPortal } from "react-dom";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
+import { ModalCloseButton } from "../../../components/ModalCloseButton";
+
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 import { usePlatform } from "../../../platform/platform-provider";
@@ -1192,14 +1194,10 @@ function RichMessageAttachments({
                 <h2>{t("conversation.imagePreviewTitle")}</h2>
                 <p>{previewAttachment.fileName}</p>
               </div>
-              <button
-                type="button"
-                className="workbench-modal-close"
+              <ModalCloseButton
                 aria-label={t("conversation.attachmentPreviewClose")}
                 onClick={() => setPreviewAttachmentId(null)}
-              >
-                x
-              </button>
+              />
             </div>
             <div className="message-image-modal-body">
               <div className="message-image-modal-stage">
@@ -1299,14 +1297,7 @@ function ApplyPatchToolItem({
                     <h2>{t("conversation.applyPatchDialogTitle")}</h2>
                     <p>{t("conversation.applyPatchDialogDescription")}</p>
                   </div>
-                  <button
-                    type="button"
-                    className="workbench-modal-close"
-                    aria-label={t("common.close")}
-                    onClick={() => setSelectedFileIndex(null)}
-                  >
-                    x
-                  </button>
+                  <ModalCloseButton onClick={() => setSelectedFileIndex(null)} />
                 </div>
 
                 {(() => {

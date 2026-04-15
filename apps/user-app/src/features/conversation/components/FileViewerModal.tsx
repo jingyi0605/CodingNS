@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
+import { ModalCloseButton } from "../../../components/ModalCloseButton";
 import { usePlatform } from "../../../platform/platform-provider";
 import { t } from "../../../shared/i18n";
 import { ApiError } from "../../../shared/network/api-error";
@@ -514,14 +515,7 @@ export function FileViewerModal({
             <h2>{filePath}</h2>
             <p>{t("conversation.fileViewerHint").replace("{language}", viewerLabel)}</p>
           </div>
-          <button
-            type="button"
-            className="workbench-modal-close"
-            aria-label={t("common.close")}
-            onClick={onClose}
-          >
-            <CloseIcon />
-          </button>
+          <ModalCloseButton onClick={onClose} />
         </div>
 
         <div className="file-viewer-toolbar">
@@ -2101,20 +2095,6 @@ function readError(error: unknown, fallback: string): string {
   }
 
   return fallback;
-}
-
-function CloseIcon() {
-  return (
-    <svg viewBox="0 0 16 16" aria-hidden="true">
-      <path
-        d="M4.2 4.2l7.6 7.6M11.8 4.2l-7.6 7.6"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
 }
 
 // ==================== Git Diff 解析与渲染 ====================

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
+import { ModalCloseButton } from "../components/ModalCloseButton";
 import { httpClient } from "../network/http-client";
 import { t } from "../shared/i18n";
 
@@ -299,14 +300,10 @@ export function ParallelTaskDebugModal({ isOpen, onClose }: ParallelTaskDebugMod
             <span className="parallel-task-debug-status-chip" data-tone={errorText ? "error" : "active"}>
               {errorText ? t("settings.parallelTaskDebugStatusError") : t("settings.parallelTaskDebugStatusActive")}
             </span>
-            <button
-              className="workbench-modal-close"
+            <ModalCloseButton
               onClick={onClose}
-              type="button"
               aria-label={t("settings.parallelTaskDebugClose")}
-            >
-              ×
-            </button>
+            />
           </div>
         </div>
 

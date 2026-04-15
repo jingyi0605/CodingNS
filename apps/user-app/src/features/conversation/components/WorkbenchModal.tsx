@@ -1,21 +1,8 @@
 import { createPortal } from "react-dom";
 import { useEffect, type ReactNode } from "react";
 
+import { ModalCloseButton } from "../../../components/ModalCloseButton";
 import { t } from "../../../shared/i18n";
-
-function CloseIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path
-        d="M7 7L17 17M17 7L7 17"
-        fill="none"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeWidth="1.8"
-      />
-    </svg>
-  );
-}
 
 interface WorkbenchModalProps {
   readonly open: boolean;
@@ -83,14 +70,7 @@ export function WorkbenchModal({
             <div className="workbench-modal-header-actions">
               {headerActions}
               {showCloseButton ? (
-                <button
-                  type="button"
-                  className="workbench-modal-close"
-                  aria-label={t("common.close")}
-                  onClick={onClose}
-                >
-                  <CloseIcon />
-                </button>
+                <ModalCloseButton onClick={onClose} />
               ) : null}
             </div>
           ) : null}

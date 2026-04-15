@@ -14228,15 +14228,27 @@ textarea:focus-visible {
   justify-content: center;
   width: 34px;
   height: 34px;
+  flex-shrink: 0;
   border-radius: 12px;
   border: 1px solid color-mix(in srgb, var(--border-primary) 74%, transparent);
   background: color-mix(in srgb, var(--bg-hover) 68%, transparent);
   color: var(--text-secondary);
+  font-size: 16px;
+  line-height: 1;
+  appearance: none;
+  -webkit-appearance: none;
 }
 
 .workbench-modal-close:hover {
   color: var(--text-primary);
   background: color-mix(in srgb, var(--bg-active) 70%, transparent);
+}
+
+.workbench-modal-close svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+  pointer-events: none;
 }
 
 .workbench-notification-modal-card {
