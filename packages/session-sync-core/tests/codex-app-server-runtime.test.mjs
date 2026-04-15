@@ -528,3 +528,155 @@ rl.on("line", (line) => {
     rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+test("CodexRuntimeAdapter 会把仅 completed 的 fileChange 转成标准 apply_patch 输入", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-app-server-file-change-"));
+  const scriptPath = join(tempDir, "fake-codex-app-server.cjs");
+  const launcherPath = join(
+    tempDir,
+    process.platform === "win32" ? "fake-codex.cmd" : "fake-codex.sh"
+  );
+  const threadPath = join(tempDir, "thread-4.jsonl").replace(/\\/g, "/");
+  const emitted = [];
+
+  writeFakeCodexAppServer(
+    scriptPath,
+    `
+const readline = require("node:readline");
+const rl = readline.createInterface({ input: process.stdin });
+function write(payload) {
+  process.stdout.write(JSON.stringify(payload) + "\\n");
+}
+rl.on("line", (line) => {
+  const msg = JSON.parse(line);
+  if (msg.method === "initialize") {
+    write({ jsonrpc: "2.0", id: msg.id, result: {} });
+    return;
+  }
+  if (msg.method === "thread/start") {
+    write({
+      jsonrpc: "2.0",
+      id: msg.id,
+      result: {
+        thread: {
+          id: "thread-4",
+          preview: "",
+          ephemeral: false,
+          modelProvider: "openai",
+          createdAt: 0,
+          updatedAt: 0,
+          status: { type: "idle" },
+          path: ${JSON.stringify(threadPath)},
+          cwd: "C:/workspace-1",
+          cliVersion: "0.0.0",
+          source: "appServer",
+          agentNickname: null,
+          agentRole: null,
+          gitInfo: null,
+          name: null,
+          turns: []
+        }
+      }
+    });
+    return;
+  }
+  if (msg.method === "turn/start") {
+    write({
+      method: "turn/started",
+      params: {
+        threadId: "thread-4",
+        turn: { id: "turn-4", items: [], status: "inProgress" }
+      }
+    });
+    write({
+      method: "item/completed",
+      params: {
+        threadId: "thread-4",
+        turnId: "turn-4",
+        item: {
+          type: "fileChange",
+          id: "patch-1",
+          status: "completed",
+          changes: [
+            {
+              path: "/Users/jackson/Code/CodingNS/apps/host/src/modules/sessions/session-live-runtime-service.ts",
+              kind: "update"
+            }
+          ]
+        }
+      }
+    });
+    write({
+      method: "turn/completed",
+      params: {
+        threadId: "thread-4",
+        turn: { id: "turn-4", items: [], status: "completed" }
+      }
+    });
+    write({
+      jsonrpc: "2.0",
+      id: msg.id,
+      result: {
+        turn: { id: "turn-4", items: [], status: "completed" }
+      }
+    });
+    setTimeout(() => process.exit(0), 10);
+  }
+});
+`
+  );
+  writeFileSync(
+    launcherPath,
+    process.platform === "win32"
+      ? `@echo off\r\n"${process.execPath}" "${scriptPath}" %*\r\n`
+      : `#!/usr/bin/env sh\n"${process.execPath}" "${scriptPath}" "$@"\n`,
+    "utf8"
+  );
+
+  if (process.platform !== "win32") {
+    chmodSync(launcherPath, 0o755);
+  }
+
+  try {
+    const adapter = new CodexRuntimeAdapter({
+      homeDir: tempDir,
+      commandPath: launcherPath
+    });
+
+    const launch = await adapter.startSession(
+      createRunRequest({
+        sessionId: "session-4",
+        options: {
+          content: "请返回文件修改结果",
+          clientRequestId: "client-4",
+          model: null,
+          reasoningLevel: null,
+          permissionMode: null,
+          providerPrompt: null,
+          attachments: []
+        }
+      }),
+      {
+        async emit(event) {
+          emitted.push(event);
+        },
+        updateSessionBinding() {}
+      }
+    );
+
+    await launch.completed;
+
+    const toolResultEvent = emitted.find(
+      (event) => event.type === "message" && event.message.kind === "tool_result"
+    );
+
+    assert.equal(toolResultEvent?.message.toolCall?.name, "apply_patch");
+    assert.match(toolResultEvent?.message.toolCall?.input ?? "", /^\*\*\* Begin Patch/m);
+    assert.match(
+      toolResultEvent?.message.toolCall?.input ?? "",
+      /\*\*\* Update File: \/Users\/jackson\/Code\/CodingNS\/apps\/host\/src\/modules\/sessions\/session-live-runtime-service\.ts/
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});

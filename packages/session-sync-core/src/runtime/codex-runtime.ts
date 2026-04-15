@@ -17,6 +17,11 @@ import {
   normalizeWorkspacePath,
   readJsonLines
 } from "../providers/utils.js";
+import {
+  buildApplyPatchFromFileChangeList,
+  extractApplyPatchTargetPathsFromToolOutput,
+  normalizeApplyPatchText
+} from "../patch-builder.js";
 import { loadDatabaseSync, type DatabaseSyncType } from "../sqlite/node-sqlite.js";
 import { createCodexThreadPermissionOptions } from "./codex-permissions.js";
 import type { NormalizedMessage, NormalizedToolCall, ProviderId } from "../types.js";
@@ -737,11 +742,7 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
     );
 
     if (eventType === "item.started") {
-      const input = pickFirstNonEmpty(
-        extractTextBlocks(readProp(item, "arguments")).trim(),
-        extractTextBlocks(readProp(item, "input")).trim(),
-        extractTextBlocks(readProp(item, "command")).trim()
-      );
+      const input = resolveCodexToolInput(name, item);
       const toolCall: NormalizedToolCall = {
         callId,
         name,
@@ -764,6 +765,8 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
     }
 
     if (eventType === "item.updated") {
+      const knownName = context.toolNameByCallId.get(callId) ?? name;
+      const input = resolveCodexToolInput(knownName, item);
       const output = pickFirstNonEmpty(
         extractTextBlocks(readProp(item, "result")).trim(),
         extractTextBlocks(readProp(item, "output")).trim(),
@@ -775,7 +778,6 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
         return;
       }
 
-      const knownName = context.toolNameByCallId.get(callId) ?? name;
       context.toolNameByCallId.set(callId, knownName);
 
       await this.emitStableMessage(context, {
@@ -787,7 +789,7 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
         toolCall: {
           callId,
           name: knownName,
-          input: "",
+          input,
           output,
           error: null,
           status: "running"
@@ -797,6 +799,8 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
     }
 
     if (eventType === "item.completed") {
+      const knownName = context.toolNameByCallId.get(callId) ?? name;
+      const input = resolveCodexToolInput(knownName, item);
       const output = pickFirstNonEmpty(
         extractTextBlocks(readProp(item, "result")).trim(),
         extractTextBlocks(readProp(item, "output")).trim(),
@@ -804,11 +808,10 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
         extractTextBlocks(readProp(item, "error")).trim()
       );
       const success = inferToolSuccess(item, output);
-      const knownName = context.toolNameByCallId.get(callId) ?? name;
       const toolCall: NormalizedToolCall = {
         callId,
         name: knownName,
-        input: "",
+        input,
         output: success ? output : null,
         error: success ? null : output,
         status: success ? "completed" : "failed"
@@ -2934,11 +2937,7 @@ function toSyntheticRuntimeRecord(
   );
 
   if (eventType === "item.started") {
-    const input = pickFirstNonEmpty(
-      extractTextBlocks(readProp(item, "arguments")).trim(),
-      extractTextBlocks(readProp(item, "input")).trim(),
-      extractTextBlocks(readProp(item, "command")).trim()
-    );
+    const input = resolveCodexToolInput(name, item);
 
     return {
       timestamp,
@@ -3014,6 +3013,21 @@ function buildCodexFileChangeOutput(value: unknown): string {
     return "";
   }
 
+  const structuredPatch = buildApplyPatchFromFileChangeList(
+    value.map((change) => {
+      const record = toRecord(change);
+
+      return {
+        path: ensureText(record?.path).trim() || null,
+        kind: ensureText(record?.kind).trim() || null
+      };
+    })
+  );
+
+  if (structuredPatch) {
+    return structuredPatch;
+  }
+
   return value
     .map((change) => {
       const record = toRecord(change);
@@ -3033,4 +3047,51 @@ function buildCodexFileChangeOutput(value: unknown): string {
     })
     .filter((entry) => entry.length > 0)
     .join("\n\n");
+}
+
+function resolveCodexToolInput(name: string, item: unknown): string {
+  const rawInput = pickFirstNonEmpty(
+    extractTextBlocks(readProp(item, "arguments")).trim(),
+    extractTextBlocks(readProp(item, "input")).trim(),
+    extractTextBlocks(readProp(item, "command")).trim()
+  );
+
+  if (name.trim().toLowerCase() !== "apply_patch") {
+    return rawInput;
+  }
+
+  return (
+    normalizeApplyPatchText(rawInput, {
+      fallbackPaths: collectCodexApplyPatchFallbackPaths(item)
+    }) ?? rawInput
+  );
+}
+
+function collectCodexApplyPatchFallbackPaths(item: unknown): string[] {
+  const directPaths = [
+    ensureText(readProp(item, "path")).trim(),
+    ensureText(readProp(item, "filePath")).trim(),
+    ensureText(readProp(item, "file_path")).trim()
+  ].filter((value) => value.length > 0);
+
+  const rawChanges = readProp(item, "changes");
+  const changes: unknown[] = Array.isArray(rawChanges) ? rawChanges : [];
+  const changePaths = changes
+    .map((change) => ensureText(readProp(change, "path")).trim())
+    .filter((value) => value.length > 0);
+
+  const outputText = pickFirstNonEmpty(
+    extractTextBlocks(readProp(item, "result")).trim(),
+    extractTextBlocks(readProp(item, "output")).trim(),
+    extractTextBlocks(readProp(item, "aggregated_output")).trim(),
+    extractTextBlocks(readProp(item, "error")).trim()
+  );
+
+  return [
+    ...new Set([
+      ...directPaths,
+      ...changePaths,
+      ...extractApplyPatchTargetPathsFromToolOutput(outputText)
+    ])
+  ];
 }

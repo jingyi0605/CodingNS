@@ -73,6 +73,21 @@ const SAMPLE_DUPLICATE_APPLY_PATCH_INPUT = `*** Begin Patch
  }
 *** End Patch`;
 
+const SAMPLE_LOOSE_APPLY_PATCH_INPUT = `@@ -398,3 +398,2 @@
++// 先把基础记录建出来，再回放 runtime 缓存事件，避免超快启动时出现
++// “事件先到、索引还没落库”的竞态窗口。
+-this.attachRuntimePersistence(handle, sessionId, workspace.id, input.userId);
++this.attachRuntimePersistence(handle, sessionId, workspace.id, input.userId);`;
+
+const SAMPLE_LOOSE_APPLY_PATCH_OUTPUT = JSON.stringify({
+  output:
+    "Success. Updated the following files:\nM /Users/jackson/Code/CodingNS/apps/host/src/modules/sessions/session-live-runtime-service.ts\n",
+  metadata: {
+    exit_code: 0,
+    duration_seconds: 0
+  }
+});
+
 function createTextMessage(content: string): SessionMessageViewModel {
   return {
     id: "message-1",
@@ -920,7 +935,7 @@ describe("MessageTimeline", () => {
     );
 
     expect(screen.queryByText(/^apply_patch$/)).not.toBeInTheDocument();
-    expect(screen.getByText("已编辑")).toBeInTheDocument();
+    expect(document.querySelectorAll(".apply-patch-summary-row")).toHaveLength(1);
     expect(screen.getByText("styles.css")).toBeInTheDocument();
     expect(screen.getAllByText("+5").length).toBeGreaterThan(0);
     expect(screen.getAllByText("-2").length).toBeGreaterThan(0);
@@ -937,6 +952,39 @@ describe("MessageTimeline", () => {
     const diffViewText = document.querySelector(".apply-patch-diff-view")?.textContent ?? "";
     expect(diffViewText).toContain("+  gap: 8px;");
     expect(diffViewText).toContain("-  padding: 10px 14px;");
+  });
+
+  it("遇到裸 hunk 的 apply_patch 也会回退成编辑摘要", async () => {
+    render(
+      <MessageTimeline
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+        messages={[
+          createToolMessage({
+            id: "tool-result-loose-apply-patch",
+            callId: "call-loose-apply-patch",
+            name: "apply_patch",
+            kind: "tool_result",
+            content: SAMPLE_LOOSE_APPLY_PATCH_OUTPUT,
+            toolInput: SAMPLE_LOOSE_APPLY_PATCH_INPUT,
+            toolOutput: SAMPLE_LOOSE_APPLY_PATCH_OUTPUT,
+            status: "completed"
+          })
+        ]}
+      />
+    );
+
+    expect(screen.queryByText(/^apply_patch$/)).not.toBeInTheDocument();
+    expect(document.querySelectorAll(".apply-patch-summary-row")).toHaveLength(1);
+    expect(screen.getByText("session-live-runtime-service.ts")).toBeInTheDocument();
+    expect(screen.queryByText("@@ -398,3 +398,2 @@")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /session-live-runtime-service\.ts/i }));
+
+    const diffViewText = document.querySelector(".apply-patch-diff-view")?.textContent ?? "";
+    expect(diffViewText).toContain("+// 先把基础记录建出来，再回放 runtime 缓存事件");
+    expect(diffViewText).toContain("-this.attachRuntimePersistence(handle, sessionId, workspace.id, input.userId);");
   });
 
   it("renders Claude Write tool with the same edit-style preview", async () => {

@@ -21,7 +21,9 @@ import { usePlatform } from "../../../platform/platform-provider";
 import { getButlerFollowUpTask, type ButlerFollowUpTaskDto } from "../../butler/api/butler-api";
 import { getSessionAttachmentBlob } from "../api/conversation-api";
 import {
+  extractApplyPatchPathsFromToolOutput,
   getApplyPatchDisplayName,
+  normalizeApplyPatchPreviewInput,
   parseApplyPatchPreview,
   type ApplyPatchPreview,
   type ApplyPatchFileChange
@@ -320,7 +322,16 @@ function readToolInputText(record: Record<string, unknown>, field: string): stri
 
 function buildEditableToolPreview(tool: ResolvedToolCall): ApplyPatchPreview | null {
   if (tool.name === "apply_patch") {
-    return parseApplyPatchPreview(tool.input);
+    const directPreview = parseApplyPatchPreview(tool.input);
+
+    if (directPreview) {
+      return directPreview;
+    }
+
+    const fallbackPaths = extractApplyPatchPathsFromToolOutput(tool.output || tool.error || "");
+    const normalizedInput = normalizeApplyPatchPreviewInput(tool.input, fallbackPaths);
+
+    return normalizedInput ? parseApplyPatchPreview(normalizedInput) : null;
   }
 
   if (tool.name !== "Write" && tool.name !== "Edit" && tool.name !== "MultiEdit") {

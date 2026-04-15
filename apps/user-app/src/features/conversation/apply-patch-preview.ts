@@ -190,6 +190,75 @@ export function parseApplyPatchPreview(input: string): ApplyPatchPreview | null 
   };
 }
 
+export function normalizeApplyPatchPreviewInput(
+  input: string,
+  fallbackPaths: string[] = []
+): string | null {
+  const normalized = input.replace(/\r\n/g, "\n").trim();
+
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized.includes(BEGIN_PATCH_MARKER) && normalized.includes(END_PATCH_MARKER)) {
+    return normalized;
+  }
+
+  const uniquePaths = [...new Set(fallbackPaths.map((path) => path.trim()).filter((path) => path.length > 0))];
+
+  if (uniquePaths.length !== 1 || !looksLikeLooseApplyPatchBody(normalized)) {
+    return null;
+  }
+
+  return [
+    BEGIN_PATCH_MARKER,
+    `*** Update File: ${uniquePaths[0]}`,
+    normalized,
+    END_PATCH_MARKER
+  ].join("\n");
+}
+
+export function extractApplyPatchPathsFromToolOutput(output: string): string[] {
+  const resolvedText = unwrapApplyPatchOutputText(output);
+
+  if (!resolvedText) {
+    return [];
+  }
+
+  const lines = resolvedText.replace(/\r\n/g, "\n").split("\n");
+  const collected: string[] = [];
+  let inUpdatedFileSection = false;
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+
+    if (!inUpdatedFileSection) {
+      if (/^Success\.\s+Updated the following files:/i.test(line)) {
+        inUpdatedFileSection = true;
+      }
+      continue;
+    }
+
+    if (!line) {
+      if (collected.length > 0) {
+        break;
+      }
+      continue;
+    }
+
+    const matched = line.match(/^[A-Z?]\s+(.+)$/);
+    const candidate = (matched?.[1] ?? line).trim();
+
+    if (!candidate) {
+      break;
+    }
+
+    collected.push(candidate);
+  }
+
+  return [...new Set(collected)];
+}
+
 export function getApplyPatchDisplayName(filePath: string): string {
   const normalized = filePath.replace(/\\/g, "/");
   const parts = normalized.split("/");
@@ -221,4 +290,54 @@ function parseHunkCursor(line: string): HunkCursor | null {
     oldLineNumber: Number(matched[1]),
     newLineNumber: Number(matched[2])
   };
+}
+
+function looksLikeLooseApplyPatchBody(input: string): boolean {
+  return (
+    input.startsWith("@@") ||
+    input.startsWith("*** Update File: ") ||
+    input.startsWith("*** Add File: ") ||
+    input.startsWith("*** Delete File: ") ||
+    input.includes("\n@@") ||
+    input.startsWith("+") ||
+    input.startsWith("-")
+  );
+}
+
+function unwrapApplyPatchOutputText(output: string): string {
+  const normalized = output.trim();
+
+  if (!normalized) {
+    return "";
+  }
+
+  if (!normalized.startsWith("{")) {
+    return normalized;
+  }
+
+  try {
+    const parsed = JSON.parse(normalized) as unknown;
+
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return normalized;
+    }
+
+    const record = parsed as Record<string, unknown>;
+
+    if (typeof record.output === "string" && record.output.trim().length > 0) {
+      return record.output;
+    }
+
+    if (typeof record.result === "string" && record.result.trim().length > 0) {
+      return record.result;
+    }
+
+    if (typeof record.message === "string" && record.message.trim().length > 0) {
+      return record.message;
+    }
+  } catch {
+    return normalized;
+  }
+
+  return normalized;
 }
