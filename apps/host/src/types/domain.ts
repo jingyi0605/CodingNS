@@ -24,6 +24,7 @@ export type SessionActivityResolutionSource =
   | "inferred_log"
   | "unknown";
 export type SessionActivityConfidence = "authoritative" | "strong" | "weak";
+export type SessionInterruptSource = "user" | "runtime";
 
 export interface BootstrapState {
   id: "default";
@@ -392,11 +393,20 @@ export type ButlerSessionRole = "patrol" | "execution" | "verification" | "adhoc
 export type ButlerSessionOwnershipMode = "managed" | "observed";
 export type ButlerSessionStatus = "idle" | "running" | "blocked" | "failed" | "closed";
 export type ButlerSessionSummaryStatus = "idle" | "scheduled" | "running" | "failed";
+export type ButlerControlSessionPurpose = "chat" | "todo_analysis";
 export type ButlerCheckpointSourceKind = "snapshot" | "summary" | "verification" | "manual";
 export type ButlerCheckpointProgressState = "unknown" | "working" | "blocked" | "done";
 export type ButlerInboxItemType = "bug" | "feature" | "change" | "task";
 export type ButlerInboxItemStatus = "pending" | "in_progress" | "closed";
 export type ButlerInboxItemPriority = "low" | "medium" | "high";
+export type ButlerInboxItemLifecycleStage =
+  | "pending"
+  | "analyzing"
+  | "analyzed"
+  | "session_created"
+  | "follow_up_active"
+  | "completed"
+  | "failed";
 export type ButlerFollowUpTaskStatus =
   | "active"
   | "waiting_user"
@@ -430,6 +440,9 @@ export interface ButlerControlSession {
   id: string;
   providerId: ButlerProfileProviderId;
   sessionId: string;
+  purpose: ButlerControlSessionPurpose;
+  title: string | null;
+  sourceItemId: string | null;
   status: ButlerControlSessionStatus;
   lastContextVersion: string | null;
   lastSummary: string | null;
@@ -497,9 +510,25 @@ export interface ButlerInboxItem {
   content: string;
   priority: ButlerInboxItemPriority;
   status: ButlerInboxItemStatus;
+  assistantState: ButlerInboxAssistantState;
   createdAt: string;
   updatedAt: string;
   closedAt: string | null;
+}
+
+export interface ButlerInboxAssistantState {
+  lifecycleStage: ButlerInboxItemLifecycleStage;
+  analysisSummary: string | null;
+  generatedPrompt: string | null;
+  analysisControlSessionId: string | null;
+  analysisSessionId: string | null;
+  linkedButlerSessionId: string | null;
+  linkedSessionId: string | null;
+  linkedFollowUpTaskId: string | null;
+  lastError: string | null;
+  lastAnalyzedAt: string | null;
+  lastSessionCreatedAt: string | null;
+  lastFollowUpAt: string | null;
 }
 
 export interface ButlerNotificationArchiveRecord {

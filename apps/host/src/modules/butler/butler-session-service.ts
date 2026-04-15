@@ -1,4 +1,4 @@
-import { AppError } from "../../shared/errors/app-error.js";
+import { AppError, isAppError } from "../../shared/errors/app-error.js";
 import { createId } from "../../shared/utils/id.js";
 import { nowIso } from "../../shared/utils/time.js";
 import type {
@@ -7,6 +7,7 @@ import type {
   ButlerSessionOwnershipMode,
   ButlerSessionRole,
   ButlerSessionStatus,
+  SessionListItem,
   SessionRunningState
 } from "../../types/domain.js";
 import type { ButlerProjectRepository } from "../../storage/repositories/butler-project-repository.js";
@@ -55,6 +56,10 @@ export interface StartButlerSessionInput {
   permissionMode?: string | null;
 }
 
+export interface RecoverManagedButlerSessionOptions {
+  recoveryReferenceAt?: string | null;
+}
+
 export interface ResumeButlerSessionResult {
   session: ButlerProjectSessionView;
   resumedAt: string;
@@ -99,61 +104,47 @@ export class ButlerSessionService {
 
     const providerId = input.providerId ?? resolveProviderId(project.defaultProvider);
     const content = input.content?.trim() || "请先梳理当前项目状态，并给出下一步建议。";
-    const launch = await this.sessionLiveRuntimeService.startLiveSession({
-      workspaceId: project.workspaceId,
-      userId,
-      provider: providerId,
-      content,
-      clientRequestId: null,
-      runtimeOptions: {
-        model: normalizeNullableText(input.model),
-        reasoningLevel: normalizeNullableText(input.reasoningLevel),
-        permissionMode:
-          normalizeNullableText(input.permissionMode)
-          ?? (project.approvalMode === "readonly" ? "default" : "acceptEdits")
-      }
-    });
-    const timestamp = launch.acceptedAt;
-    const created = this.butlerSessionRepository.create({
-      id: createId(),
-      projectId: project.id,
-      sessionId: launch.sessionId,
-      role: input.role ?? "adhoc",
-      ownershipMode: input.ownershipMode ?? "managed",
-      status: "running",
-      lastSummary: `已创建并启动托管会话，provider=${providerId}`,
-      lastCheckpointAt: timestamp,
-      createdAt: timestamp,
-      updatedAt: timestamp
-    });
-    this.sessionCheckpointRepository.create({
-      id: createId(),
-      butlerSessionId: created.id,
-      checkpointSeq: this.sessionCheckpointRepository.getLatestSeq(created.id) + 1,
-      sourceKind: "manual",
-      progressState: "working",
-      summary: created.lastSummary ?? "已创建并启动托管会话",
-      riskFlags: [],
-      nextActions: ["等待会话执行后继续采集快照"],
-      capturedAt: timestamp
-    });
+    const recoveryReferenceAt = nowIso();
 
-    return {
-      id: created.id,
-      projectId: created.projectId,
-      sessionId: created.sessionId,
-      provider: providerId,
-      title: null,
-      isArchived: false,
-      role: created.role,
-      ownershipMode: created.ownershipMode,
-      status: created.status,
-      runningState: "running",
-      lastSummary: created.lastSummary,
-      lastCheckpointAt: created.lastCheckpointAt,
-      createdAt: created.createdAt,
-      updatedAt: created.updatedAt
-    };
+    try {
+      const launch = await this.sessionLiveRuntimeService.startLiveSession({
+        workspaceId: project.workspaceId,
+        userId,
+        provider: providerId,
+        content,
+        clientRequestId: null,
+        runtimeOptions: {
+          model: normalizeNullableText(input.model),
+          reasoningLevel: normalizeNullableText(input.reasoningLevel),
+          permissionMode:
+            normalizeNullableText(input.permissionMode)
+            ?? (project.approvalMode === "readonly" ? "default" : "acceptEdits")
+        }
+      });
+
+      return this.createManagedSessionFromLaunch(project, input, providerId, launch);
+    } catch (error) {
+      if (isRecoverableSessionIndexMissing(error)) {
+        const recovered = this.tryRecoverManagedSession(project, input, userId, {
+          recoveryReferenceAt
+        });
+
+        if (recovered) {
+          return recovered;
+        }
+      }
+
+      throw error;
+    }
+  }
+
+  recoverManagedSession(
+    projectId: string,
+    input: StartButlerSessionInput,
+    userId: string,
+    options: RecoverManagedButlerSessionOptions = {}
+  ): ButlerProjectSessionView | null {
+    return this.tryRecoverManagedSession(this.getProjectOrThrow(projectId), input, userId, options);
   }
 
   listByProject(
@@ -511,6 +502,58 @@ export class ButlerSessionService {
     return project;
   }
 
+  private createManagedSessionFromLaunch(
+    project: ButlerProject,
+    input: StartButlerSessionInput,
+    providerId: "codex" | "claude-code",
+    launch: {
+      sessionId: string;
+      acceptedAt: string;
+    }
+  ): ButlerProjectSessionView {
+    const timestamp = launch.acceptedAt;
+    const created = this.butlerSessionRepository.create({
+      id: createId(),
+      projectId: project.id,
+      sessionId: launch.sessionId,
+      role: input.role ?? "adhoc",
+      ownershipMode: input.ownershipMode ?? "managed",
+      status: "running",
+      lastSummary: `已创建并启动托管会话，provider=${providerId}`,
+      lastCheckpointAt: timestamp,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+    this.sessionCheckpointRepository.create({
+      id: createId(),
+      butlerSessionId: created.id,
+      checkpointSeq: this.sessionCheckpointRepository.getLatestSeq(created.id) + 1,
+      sourceKind: "manual",
+      progressState: "working",
+      summary: created.lastSummary ?? "已创建并启动托管会话",
+      riskFlags: [],
+      nextActions: ["等待会话执行后继续采集快照"],
+      capturedAt: timestamp
+    });
+
+    return {
+      id: created.id,
+      projectId: created.projectId,
+      sessionId: created.sessionId,
+      provider: providerId,
+      title: null,
+      isArchived: false,
+      role: created.role,
+      ownershipMode: created.ownershipMode,
+      status: created.status,
+      runningState: "running",
+      lastSummary: created.lastSummary,
+      lastCheckpointAt: created.lastCheckpointAt,
+      createdAt: created.createdAt,
+      updatedAt: created.updatedAt
+    };
+  }
+
   private resolveCanonicalSessionId(sessionId: string): string {
     const binding = this.sessionBindingRepository.findBySessionId(sessionId);
 
@@ -539,6 +582,142 @@ export class ButlerSessionService {
     }
 
     return aliasTargetSessionId;
+  }
+
+  private tryRecoverManagedSession(
+    project: ButlerProject,
+    input: StartButlerSessionInput,
+    userId: string,
+    options: RecoverManagedButlerSessionOptions
+  ): ButlerProjectSessionView | null {
+    const providerId = input.providerId ?? resolveProviderId(project.defaultProvider);
+    const content = input.content?.trim() || "请先梳理当前项目状态，并给出下一步建议。";
+    const candidate = this.findRecoverableWorkspaceSession(
+      project,
+      providerId,
+      content,
+      userId,
+      options.recoveryReferenceAt?.trim() || null
+    );
+
+    if (!candidate) {
+      return null;
+    }
+
+    const existing = this.butlerSessionRepository.findBySessionId(candidate.sessionId);
+
+    if (existing) {
+      return existing.projectId === project.id ? this.buildManagedSessionView(existing, userId) : null;
+    }
+
+    const timestamp = nowIso();
+    const runningState = this.sessionStateRepository.findBySessionAndUser(candidate.sessionId, userId)?.runningState
+      ?? candidate.runningState
+      ?? null;
+    const created = this.butlerSessionRepository.create({
+      id: createId(),
+      projectId: project.id,
+      sessionId: candidate.sessionId,
+      role: input.role ?? "adhoc",
+      ownershipMode: input.ownershipMode ?? "managed",
+      status: mapButlerStatusFromRunningState(runningState),
+      lastSummary: `检测到底层会话已存在，已自动回收并重新绑定托管会话，provider=${providerId}`,
+      lastCheckpointAt: timestamp,
+      createdAt: candidate.createdAt,
+      updatedAt: timestamp
+    });
+    this.sessionCheckpointRepository.create({
+      id: createId(),
+      butlerSessionId: created.id,
+      checkpointSeq: this.sessionCheckpointRepository.getLatestSeq(created.id) + 1,
+      sourceKind: "manual",
+      progressState: mapCheckpointProgressState(runningState),
+      summary: created.lastSummary ?? "已自动回收并重新绑定托管会话",
+      riskFlags: buildCheckpointRiskFlags(runningState),
+      nextActions: ["继续沿当前会话推进实现，并补采当前执行快照"],
+      capturedAt: timestamp
+    });
+
+    return {
+      id: created.id,
+      projectId: created.projectId,
+      sessionId: candidate.sessionId,
+      provider: candidate.provider,
+      title: candidate.title,
+      isArchived: candidate.isArchived,
+      role: created.role,
+      ownershipMode: created.ownershipMode,
+      status: created.status,
+      runningState,
+      lastSummary: created.lastSummary,
+      lastCheckpointAt: created.lastCheckpointAt,
+      createdAt: created.createdAt,
+      updatedAt: created.updatedAt
+    };
+  }
+
+  private findRecoverableWorkspaceSession(
+    project: ButlerProject,
+    providerId: "codex" | "claude-code",
+    content: string,
+    userId: string,
+    referenceAt: string | null
+  ): SessionListItem | null {
+    const expectedTitle = buildManagedSessionTitle(content);
+    const sessions = this.sessionIndexRepository.listByWorkspace(project.workspaceId, userId);
+    const candidates = new Map<string, SessionListItem>();
+
+    for (const session of sessions) {
+      if (
+        session.provider !== providerId
+        || session.isArchived
+        || session.isSubagent
+        || session.title !== expectedTitle
+      ) {
+        continue;
+      }
+
+      const canonicalSessionId = this.resolveCanonicalSessionId(session.sessionId);
+      const normalized = canonicalSessionId === session.sessionId
+        ? session
+        : this.sessionIndexRepository.findBySessionId(canonicalSessionId, userId) ?? session;
+
+      if (!isRecoverableSessionTimestamp(normalized, referenceAt)) {
+        continue;
+      }
+
+      const existing = candidates.get(canonicalSessionId);
+
+      if (!existing || compareSessionRecency(normalized, existing) > 0) {
+        candidates.set(canonicalSessionId, normalized);
+      }
+    }
+
+    return [...candidates.values()].sort((left, right) => compareSessionRecency(right, left))[0] ?? null;
+  }
+
+  private buildManagedSessionView(record: ButlerSession, userId: string): ButlerProjectSessionView {
+    const canonicalSessionId = this.resolveCanonicalSessionId(record.sessionId);
+    const binding = this.sessionBindingRepository.findBySessionId(canonicalSessionId);
+    const index = this.sessionIndexRepository.findIndexRecordBySessionId(canonicalSessionId);
+    const state = this.sessionStateRepository.findBySessionAndUser(canonicalSessionId, userId);
+
+    return {
+      id: record.id,
+      projectId: record.projectId,
+      sessionId: canonicalSessionId,
+      provider: binding?.provider ?? null,
+      title: index?.title ?? null,
+      isArchived: index?.isArchived ?? false,
+      role: record.role,
+      ownershipMode: record.ownershipMode,
+      status: record.status,
+      runningState: state?.runningState ?? null,
+      lastSummary: record.lastSummary,
+      lastCheckpointAt: record.lastCheckpointAt,
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt
+    };
   }
 
   private importWorkspaceSessions(
@@ -733,6 +912,53 @@ function normalizeRunningState(
 function normalizeNullableText(value: string | null | undefined): string | null {
   const normalized = value?.trim();
   return normalized && normalized.length > 0 ? normalized : null;
+}
+
+function buildManagedSessionTitle(content: string): string {
+  const title = content.trim().replace(/\s+/g, " ");
+  return title.slice(0, 48) || "继续对话";
+}
+
+function compareSessionRecency(
+  left: Pick<SessionListItem, "updatedAt" | "createdAt">,
+  right: Pick<SessionListItem, "updatedAt" | "createdAt">
+): number {
+  const leftValue = left.updatedAt || left.createdAt;
+  const rightValue = right.updatedAt || right.createdAt;
+
+  if (leftValue === rightValue) {
+    return left.createdAt.localeCompare(right.createdAt);
+  }
+
+  return leftValue.localeCompare(rightValue);
+}
+
+function isRecoverableSessionTimestamp(
+  session: Pick<SessionListItem, "createdAt" | "updatedAt">,
+  referenceAt: string | null
+): boolean {
+  if (!referenceAt) {
+    return true;
+  }
+
+  const referenceMs = Date.parse(referenceAt);
+
+  if (!Number.isFinite(referenceMs)) {
+    return true;
+  }
+
+  const updatedMs = Date.parse(session.updatedAt || session.createdAt);
+  const createdMs = Date.parse(session.createdAt);
+
+  if (!Number.isFinite(updatedMs) || !Number.isFinite(createdMs)) {
+    return true;
+  }
+
+  return updatedMs >= referenceMs - 5_000 || createdMs >= referenceMs - 5_000;
+}
+
+function isRecoverableSessionIndexMissing(error: unknown): boolean {
+  return isAppError(error) && error.errorCode === "SESSION_INDEX_MISSING";
 }
 
 function isPendingBindingValue(value: string): boolean {

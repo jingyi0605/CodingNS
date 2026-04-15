@@ -32,6 +32,7 @@ vi.mock("../api/butler-api", () => ({
   updateButlerProfile: vi.fn(),
   getButlerOverview: vi.fn(),
   listButlerControlEvents: vi.fn(),
+  getButlerControlSession: vi.fn(),
   getCurrentButlerControlSession: vi.fn(),
   resetButlerControlSession: vi.fn(),
   startButlerControlSession: vi.fn(),
@@ -41,7 +42,8 @@ vi.mock("../api/butler-api", () => ({
 vi.mock("../../conversation/api/conversation-api", () => ({
   getProviderCapabilities: vi.fn(),
   getSessionMessages: vi.fn(),
-  getSessionRuntime: vi.fn()
+  getSessionRuntime: vi.fn(),
+  interruptSession: vi.fn()
 }));
 
 vi.mock("../../../network/realtime-client", () => ({
@@ -55,18 +57,25 @@ import {
   updateButlerProfile,
   getButlerOverview,
   listButlerControlEvents,
+  getButlerControlSession,
   getCurrentButlerControlSession,
   resetButlerControlSession,
   startButlerControlSession,
   sendButlerControlMessage
 } from "../api/butler-api";
-import { getProviderCapabilities, getSessionMessages, getSessionRuntime } from "../../conversation/api/conversation-api";
+import {
+  getProviderCapabilities,
+  getSessionMessages,
+  getSessionRuntime,
+  interruptSession
+} from "../../conversation/api/conversation-api";
 
 const mockedGetButlerProfile = vi.mocked(getButlerProfile);
 const mockedInitButlerProfile = vi.mocked(initButlerProfile);
 const mockedUpdateButlerProfile = vi.mocked(updateButlerProfile);
 const mockedGetButlerOverview = vi.mocked(getButlerOverview);
 const mockedListButlerControlEvents = vi.mocked(listButlerControlEvents);
+const mockedGetButlerControlSession = vi.mocked(getButlerControlSession);
 const mockedGetCurrentButlerControlSession = vi.mocked(getCurrentButlerControlSession);
 const mockedResetButlerControlSession = vi.mocked(resetButlerControlSession);
 const mockedStartButlerControlSession = vi.mocked(startButlerControlSession);
@@ -74,6 +83,7 @@ const mockedSendButlerControlMessage = vi.mocked(sendButlerControlMessage);
 const mockedGetProviderCapabilities = vi.mocked(getProviderCapabilities);
 const mockedGetSessionMessages = vi.mocked(getSessionMessages);
 const mockedGetSessionRuntime = vi.mocked(getSessionRuntime);
+const mockedInterruptSession = vi.mocked(interruptSession);
 
 describe("ButlerRuntimeStore", () => {
   beforeEach(() => {
@@ -147,6 +157,7 @@ describe("ButlerRuntimeStore", () => {
       }
     });
     mockedListButlerControlEvents.mockResolvedValue({ items: [] });
+    mockedGetButlerControlSession.mockResolvedValue({ controlSession: null });
     mockedGetCurrentButlerControlSession.mockResolvedValue({ controlSession: null });
     mockedResetButlerControlSession.mockResolvedValue({ controlSession: null });
     mockedGetProviderCapabilities.mockResolvedValue({
@@ -201,6 +212,11 @@ describe("ButlerRuntimeStore", () => {
     mockedSendButlerControlMessage.mockResolvedValue({
       controlSession: { id: "ctrl-send" }
     } as never);
+    mockedInterruptSession.mockResolvedValue({
+      sessionId: "session-control-1",
+      interrupted: true,
+      detail: "interrupt requested"
+    } as never);
   });
 
   it("发送消息没有控制会话时调用 start 接口", async () => {
@@ -236,44 +252,47 @@ describe("ButlerRuntimeStore", () => {
 
   it("控制会话收到实时助手消息时会立刻更新消息列表", async () => {
     const store = new ButlerRuntimeStore("workspace-1");
-    mockedGetCurrentButlerControlSession
-      .mockResolvedValueOnce({ controlSession: null })
-      .mockResolvedValueOnce({
-        controlSession: {
-          id: "ctrl-start",
-          providerId: "codex",
-          sessionId: "session-control-1",
-          status: "running",
-          lastContextVersion: null,
-          lastSummary: "首次消息",
-          createdAt: "2026-04-05T00:00:00.000Z",
-          updatedAt: "2026-04-05T00:00:00.000Z",
-          session: {
-            sessionId: "session-control-1",
-            workspaceId: "workspace-1",
-            provider: "codex",
-            providerSessionId: "provider-control-1",
-            rawStoreRef: "raw-control-1",
-            title: "控制会话",
-            messageCount: 1,
-            lastMessageAt: "2026-04-05T00:00:01.000Z",
-            createdAt: "2026-04-05T00:00:00.000Z",
-            updatedAt: "2026-04-05T00:00:01.000Z",
-            syncStatus: "idle",
-            syncCursor: null,
-            lastSyncAt: null,
-            lastErrorCode: null,
-            lastErrorDetail: null,
-            resumedAt: null,
-            runningState: "running",
-            activitySource: "runtime",
-            lastEventAt: "2026-04-05T00:00:01.000Z",
-            completedAt: null,
-            lastSeenAt: null,
-            activityState: "idle"
-          }
-        }
-      } as never);
+    const controlSession = {
+      id: "ctrl-start",
+      providerId: "codex",
+      sessionId: "session-control-1",
+      purpose: "chat" as const,
+      title: "控制会话",
+      sourceItemId: null,
+      status: "running" as const,
+      lastContextVersion: null,
+      lastSummary: "首次消息",
+      createdAt: "2026-04-05T00:00:00.000Z",
+      updatedAt: "2026-04-05T00:00:00.000Z",
+      session: {
+        sessionId: "session-control-1",
+        workspaceId: "workspace-1",
+        provider: "codex",
+        providerSessionId: "provider-control-1",
+        rawStoreRef: "raw-control-1",
+        title: "控制会话",
+        messageCount: 1,
+        lastMessageAt: "2026-04-05T00:00:01.000Z",
+        createdAt: "2026-04-05T00:00:00.000Z",
+        updatedAt: "2026-04-05T00:00:01.000Z",
+        syncStatus: "idle",
+        syncCursor: null,
+        lastSyncAt: null,
+        lastErrorCode: null,
+        lastErrorDetail: null,
+        resumedAt: null,
+        runningState: "running",
+        activitySource: "runtime",
+        lastEventAt: "2026-04-05T00:00:01.000Z",
+        completedAt: null,
+        lastSeenAt: null,
+        activityState: "idle"
+      }
+    };
+    mockedGetCurrentButlerControlSession.mockResolvedValueOnce({ controlSession: null });
+    mockedGetButlerControlSession.mockResolvedValueOnce({
+      controlSession
+    } as never);
     mockedGetSessionMessages.mockResolvedValueOnce({
       messages: [
         {
@@ -291,6 +310,9 @@ describe("ButlerRuntimeStore", () => {
       cursor: "cursor-1",
       nextCursor: null,
       total: 1
+    } as never);
+    mockedStartButlerControlSession.mockResolvedValueOnce({
+      controlSession
     } as never);
 
     await store.initialize();
@@ -322,6 +344,265 @@ describe("ButlerRuntimeStore", () => {
     ]);
   });
 
+  it("分析会话结束但没有任何消息时，会补一条本地诊断消息", async () => {
+    const store = new ButlerRuntimeStore("workspace-1");
+    const controlSession = {
+      id: "ctrl-analysis-1",
+      providerId: "codex",
+      sessionId: "session-analysis-1",
+      purpose: "todo_analysis" as const,
+      title: "分析代办：验证码收尾",
+      sourceItemId: "todo-1",
+      status: "failed" as const,
+      lastContextVersion: null,
+      lastSummary:
+        "代办分析助手没有返回结构化 JSON；最近 assistant 输出为空；raw 终态：task_complete，last_agent_message=null",
+      createdAt: "2026-04-05T00:00:00.000Z",
+      updatedAt: "2026-04-05T00:01:00.000Z",
+      session: {
+        sessionId: "session-analysis-1",
+        workspaceId: "workspace-1",
+        provider: "codex",
+        providerSessionId: "provider-analysis-1",
+        rawStoreRef: "raw-analysis-1",
+        title: "分析代办：验证码收尾",
+        messageCount: 0,
+        lastMessageAt: null,
+        createdAt: "2026-04-05T00:00:00.000Z",
+        updatedAt: "2026-04-05T00:01:00.000Z",
+        syncStatus: "idle",
+        syncCursor: null,
+        lastSyncAt: "2026-04-05T00:01:00.000Z",
+        lastErrorCode: null,
+        lastErrorDetail: null,
+        resumedAt: null,
+        runningState: "failed",
+        activitySource: "runtime",
+        lastEventAt: "2026-04-05T00:01:00.000Z",
+        completedAt: "2026-04-05T00:01:00.000Z",
+        lastSeenAt: null,
+        activityState: "completed"
+      }
+    };
+
+    mockedGetCurrentButlerControlSession.mockResolvedValue({
+      controlSession
+    } as never);
+    mockedGetSessionRuntime.mockResolvedValue({
+      sessionId: "session-analysis-1",
+      runningState: "failed",
+      hasActiveRun: false,
+      canAttach: false,
+      canInterrupt: false,
+      inRunInputMode: "none",
+      provider: "codex",
+      providerSessionId: "provider-analysis-1",
+      activityResolutionSource: "authoritative_runtime",
+      activityConfidence: "authoritative",
+      runId: null,
+      detail: null,
+      errorCode: null,
+      errorDetail:
+        "代办分析助手没有返回结构化 JSON；最近 assistant 输出为空；raw 终态：task_complete，last_agent_message=null",
+      updatedAt: "2026-04-05T00:01:00.000Z",
+      watchdogTriggeredAt: null,
+      contextUsage: null
+    } as never);
+
+    await store.initialize();
+
+    expect(store.getState().messages).toEqual([
+      expect.objectContaining({
+        role: "system",
+        kind: "text",
+        content: expect.stringContaining("没有收到可展示的助手消息"),
+        rawRef: "butler-diagnostic://ctrl-analysis-1"
+      })
+    ]);
+  });
+
+  it("重复收到 inactive 活动事件时不会反复 reload 控制会话", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const store = new ButlerRuntimeStore("workspace-1");
+      const controlSession = {
+        id: "ctrl-start",
+        providerId: "codex",
+        sessionId: "session-control-1",
+        purpose: "chat" as const,
+        title: "控制会话",
+        sourceItemId: null,
+        status: "running" as const,
+        lastContextVersion: null,
+        lastSummary: "首次消息",
+        createdAt: "2026-04-05T00:00:00.000Z",
+        updatedAt: "2026-04-05T00:00:00.000Z",
+        session: {
+          sessionId: "session-control-1",
+          workspaceId: "workspace-1",
+          provider: "codex",
+          providerSessionId: "provider-control-1",
+          rawStoreRef: "raw-control-1",
+          title: "控制会话",
+          messageCount: 0,
+          lastMessageAt: null,
+          createdAt: "2026-04-05T00:00:00.000Z",
+          updatedAt: "2026-04-05T00:00:00.000Z",
+          syncStatus: "idle",
+          syncCursor: null,
+          lastSyncAt: null,
+          lastErrorCode: null,
+          lastErrorDetail: null,
+          resumedAt: null,
+          runningState: "running",
+          activitySource: "runtime",
+          lastEventAt: "2026-04-05T00:00:00.000Z",
+          completedAt: null,
+          lastSeenAt: null,
+          activityState: "running"
+        }
+      };
+
+      mockedGetCurrentButlerControlSession.mockResolvedValue({
+        controlSession
+      } as never);
+
+      await store.initialize();
+
+      const realtime = realtimeMock.instances[0];
+      expect(realtime).toBeDefined();
+
+      const baselineCalls = mockedGetCurrentButlerControlSession.mock.calls.length;
+      const emitActivity = realtime?.options.onActivity as ((payload: Record<string, unknown>) => void);
+
+      emitActivity({
+        type: "session.activity",
+        sessionId: "session-control-1",
+        runningState: "idle",
+        activityResolutionSource: "authoritative_runtime",
+        activityConfidence: "authoritative",
+        runId: null,
+        detail: null,
+        interruptSource: null,
+        errorCode: null,
+        errorDetail: null,
+        hasActiveRun: false,
+        canInterrupt: false,
+        updatedAt: "2026-04-05T00:00:01.000Z",
+        watchdogTriggeredAt: null
+      });
+      emitActivity({
+        type: "session.activity",
+        sessionId: "session-control-1",
+        runningState: "idle",
+        activityResolutionSource: "authoritative_runtime",
+        activityConfidence: "authoritative",
+        runId: null,
+        detail: null,
+        interruptSource: null,
+        errorCode: null,
+        errorDetail: null,
+        hasActiveRun: false,
+        canInterrupt: false,
+        updatedAt: "2026-04-05T00:00:01.100Z",
+        watchdogTriggeredAt: null
+      });
+
+      await vi.advanceTimersByTimeAsync(500);
+
+      expect(mockedGetCurrentButlerControlSession.mock.calls.length - baselineCalls).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("同一控制会话的后台同步不会把历史状态重新切回 loading", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const store = new ButlerRuntimeStore("workspace-1");
+      const controlSession = {
+        id: "ctrl-start",
+        providerId: "codex",
+        sessionId: "session-control-1",
+        purpose: "chat" as const,
+        title: "控制会话",
+        sourceItemId: null,
+        status: "running" as const,
+        lastContextVersion: null,
+        lastSummary: "首次消息",
+        createdAt: "2026-04-05T00:00:00.000Z",
+        updatedAt: "2026-04-05T00:00:00.000Z",
+        session: {
+          sessionId: "session-control-1",
+          workspaceId: "workspace-1",
+          provider: "codex",
+          providerSessionId: "provider-control-1",
+          rawStoreRef: "raw-control-1",
+          title: "控制会话",
+          messageCount: 0,
+          lastMessageAt: null,
+          createdAt: "2026-04-05T00:00:00.000Z",
+          updatedAt: "2026-04-05T00:00:00.000Z",
+          syncStatus: "idle",
+          syncCursor: null,
+          lastSyncAt: null,
+          lastErrorCode: null,
+          lastErrorDetail: null,
+          resumedAt: null,
+          runningState: "running",
+          activitySource: "runtime",
+          lastEventAt: "2026-04-05T00:00:00.000Z",
+          completedAt: null,
+          lastSeenAt: null,
+          activityState: "running"
+        }
+      };
+      const historyStates: string[] = [];
+
+      mockedGetCurrentButlerControlSession.mockResolvedValue({
+        controlSession
+      } as never);
+
+      const unsubscribe = store.subscribe(() => {
+        historyStates.push(store.getState().historyState);
+      });
+
+      await store.initialize();
+      historyStates.length = 0;
+
+      const realtime = realtimeMock.instances[0];
+      expect(realtime).toBeDefined();
+
+      const emitActivity = realtime?.options.onActivity as ((payload: Record<string, unknown>) => void);
+      emitActivity({
+        type: "session.activity",
+        sessionId: "session-control-1",
+        runningState: "idle",
+        activityResolutionSource: "authoritative_runtime",
+        activityConfidence: "authoritative",
+        runId: null,
+        detail: null,
+        interruptSource: null,
+        errorCode: null,
+        errorDetail: null,
+        hasActiveRun: false,
+        canInterrupt: false,
+        updatedAt: "2026-04-05T00:00:01.000Z",
+        watchdogTriggeredAt: null
+      });
+
+      await vi.advanceTimersByTimeAsync(500);
+      unsubscribe();
+
+      expect(historyStates).not.toContain("loading");
+      expect(store.getState().historyState).toBe("ready");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("新建会话时只清空当前状态，不自动发送首条消息", async () => {
     const store = new ButlerRuntimeStore("workspace-1");
     await store.initialize();
@@ -345,5 +626,27 @@ describe("ButlerRuntimeStore", () => {
     expect(store.getState().runtimeHasActiveRun).toBeNull();
     expect(store.getState().runtimeCanInterrupt).toBeNull();
     expect(store.getState().contextUsage).toBeNull();
+  });
+
+  it("中断控制会话时会调用通用会话中断接口并更新本地运行态", async () => {
+    const store = new ButlerRuntimeStore("workspace-1");
+    await store.initialize();
+
+    (store as unknown as { patch: (state: Record<string, unknown>) => void }).patch({
+      controlSession: {
+        id: "ctrl-existing",
+        session: {
+          sessionId: "session-control-1"
+        }
+      },
+      runtimeHasActiveRun: true,
+      runtimeCanInterrupt: true
+    });
+
+    await store.interrupt();
+
+    expect(mockedInterruptSession).toHaveBeenCalledWith("session-control-1");
+    expect(store.getState().runtimeHasActiveRun).toBe(false);
+    expect(store.getState().runtimeCanInterrupt).toBe(false);
   });
 });

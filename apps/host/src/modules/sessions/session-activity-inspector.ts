@@ -3,7 +3,7 @@ import { readFileSync, statSync } from "node:fs";
 import type { ProviderId } from "@codingns/session-sync-core";
 
 export interface SessionActivityInspection {
-  runningState: "idle" | "running" | "failed";
+  runningState: "idle" | "running" | "failed" | "interrupted";
   hasPendingTools: boolean;
   lastEventAt: string | null;
   completedAtCandidate: string | null;
@@ -17,7 +17,7 @@ interface SessionActivityInspectionBase {
   completedAtCandidate: string | null;
   errorCode: string | null;
   errorDetail: string | null;
-  terminalState: "none" | "completed" | "failed";
+  terminalState: "none" | "completed" | "failed" | "interrupted";
 }
 
 const ACTIVE_WINDOW_MS = 20_000;
@@ -163,6 +163,8 @@ function inspectCodexActivity(
   let lastTaskCompleteAt: string | null = null;
   let lastTaskFailedAt: string | null = null;
   let lastTaskFailedDetail: string | null = null;
+  let lastTurnAbortedAt: string | null = null;
+  let lastTurnAbortedDetail: string | null = null;
 
   for (const record of records) {
     const recordType = readText(record.type);
@@ -183,6 +185,11 @@ function inspectCodexActivity(
       if (eventType === "task_failed") {
         lastTaskFailedAt = maxTimestamp(lastTaskFailedAt, recordTimestamp);
         lastTaskFailedDetail = readText(payload.error) || "codex turn failed";
+      }
+
+      if (eventType === "turn_aborted") {
+        lastTurnAbortedAt = maxTimestamp(lastTurnAbortedAt, recordTimestamp);
+        lastTurnAbortedDetail = resolveCodexTurnAbortedDetail(payload);
       }
 
       continue;
@@ -220,11 +227,14 @@ function inspectCodexActivity(
   }
 
   const hasExplicitFailure = isTimestampAtOrAfter(lastTaskFailedAt, lastEventAt);
+  const hasExplicitInterrupt =
+    !hasExplicitFailure && isTimestampAtOrAfter(lastTurnAbortedAt, lastEventAt);
   const hasExplicitCompletion =
-    !hasExplicitFailure && isTimestampAtOrAfter(lastTaskCompleteAt, lastEventAt);
+    !hasExplicitFailure && !hasExplicitInterrupt && isTimestampAtOrAfter(lastTaskCompleteAt, lastEventAt);
   const hasPendingTools = pendingToolCalls.size > 0 && !hasExplicitCompletion;
   const isRunning =
     !hasExplicitFailure
+    && !hasExplicitInterrupt
     && !hasExplicitCompletion
     && hasRecentActivity(lastEventAt, mtimeMs, now);
 
@@ -234,6 +244,8 @@ function inspectCodexActivity(
     completedAtCandidate:
       hasExplicitFailure
         ? lastTaskFailedAt
+        : hasExplicitInterrupt
+          ? lastTurnAbortedAt
         : hasExplicitCompletion
           ? lastTaskCompleteAt
           : isRunning
@@ -243,10 +255,17 @@ function inspectCodexActivity(
       hasExplicitFailure
         ? classifyCodexDetailErrorCode(lastTaskFailedDetail, "CODEX_CLI_TURN_FAILED")
         : null,
-    errorDetail: hasExplicitFailure ? lastTaskFailedDetail ?? "codex turn failed" : null,
+    errorDetail:
+      hasExplicitFailure
+        ? lastTaskFailedDetail ?? "codex turn failed"
+        : hasExplicitInterrupt
+          ? lastTurnAbortedDetail ?? "codex turn interrupted"
+          : null,
     terminalState:
       hasExplicitFailure
         ? "failed"
+        : hasExplicitInterrupt
+          ? "interrupted"
         : hasExplicitCompletion
           ? "completed"
           : "none"
@@ -280,6 +299,17 @@ function finalizeInspection(
     };
   }
 
+  if (base.terminalState === "interrupted") {
+    return {
+      runningState: "interrupted",
+      hasPendingTools: false,
+      lastEventAt: base.lastEventAt,
+      completedAtCandidate: base.completedAtCandidate,
+      errorCode: null,
+      errorDetail: base.errorDetail
+    };
+  }
+
   return {
     runningState: hasRecentActivity(base.lastEventAt, mtimeMs ?? 0, now) ? "running" : "idle",
     hasPendingTools: base.hasPendingTools,
@@ -288,6 +318,20 @@ function finalizeInspection(
     errorCode: null,
     errorDetail: null
   };
+}
+
+function resolveCodexTurnAbortedDetail(payload: Record<string, unknown>): string {
+  const reason = readText(payload.reason);
+
+  if (reason === "interrupted") {
+    return "codex turn interrupted by user";
+  }
+
+  if (reason.length > 0) {
+    return `codex turn aborted: ${reason}`;
+  }
+
+  return "codex turn aborted";
 }
 
 function hasRecentActivity(

@@ -71,6 +71,9 @@ import { ProfileController } from "../modules/preferences/profile-controller.js"
 import { PreferenceProfileService } from "../modules/preferences/profile-service.js";
 import { QuickPhraseController } from "../modules/preferences/quick-phrase-controller.js";
 import { QuickPhraseService } from "../modules/preferences/quick-phrase-service.js";
+import { CcSwitchAdapter } from "../modules/model-switch/cc-switch-adapter.js";
+import { ModelSwitchController } from "../modules/model-switch/model-switch-controller.js";
+import { ModelSwitchService } from "../modules/model-switch/model-switch-service.js";
 import { ProviderController } from "../modules/provider/provider-controller.js";
 import { SkillController } from "../modules/skills/skill-controller.js";
 import { SkillManagerService } from "../modules/skills/skill-manager-service.js";
@@ -368,6 +371,12 @@ export function createServer(config: HostConfig) {
     {
       databasePath: config.databasePath
     }
+  );
+  const modelSwitchService = new ModelSwitchService(
+    new CcSwitchAdapter({
+      commandPath: config.ccSwitchCliPath,
+      dbPath: config.ccSwitchDbPath
+    })
   );
   const skillManagerService = new SkillManagerService(
     repositories.managedSkillRepository,
@@ -841,6 +850,7 @@ export function createServer(config: HostConfig) {
   );
   const skillController = new SkillController(skillManagerService);
   const tailscaleController = new TailscaleController(tailscaleService);
+  const modelSwitchController = new ModelSwitchController(modelSwitchService);
   const quickPhraseController = new QuickPhraseController(quickPhraseService);
   const profileController = new ProfileController(preferenceProfileService);
   const fileController = new FileController(
@@ -928,7 +938,7 @@ export function createServer(config: HostConfig) {
   void registerSessionRoutes(app, sessionController);
   void registerPreferenceRoutes(app, quickPhraseController, profileController);
   void registerSkillRoutes(app, skillController);
-  void registerSystemRoutes(app, tailscaleController);
+  void registerSystemRoutes(app, tailscaleController, modelSwitchController);
   void registerFileRoutes(app, fileController);
   void registerSessionContextRoutes(app, fileContextController);
   void registerTerminalRoutes(app, terminalController);
@@ -1014,6 +1024,7 @@ export function createServer(config: HostConfig) {
         skillManagerService,
         tailscaleManager,
         tailscaleService,
+        modelSwitchService,
         runtimeObservabilityService,
         sessionHistoryService,
         sessionChangedFileService,

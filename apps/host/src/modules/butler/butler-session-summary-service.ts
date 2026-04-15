@@ -21,6 +21,7 @@ import {
 import {
   SessionSummaryInstructionAdapter
 } from "./session-summary-instruction-adapter.js";
+import { resolveButlerCodexBackgroundModel } from "./butler-codex-model-policy.js";
 import type { WorkspaceService } from "../workspace/workspace-service.js";
 import type { SessionHistoryService } from "../sessions/session-history-service.js";
 
@@ -165,6 +166,10 @@ export class ButlerSessionSummaryService {
     summaryWorkspacePath: string,
     debounceMs: number
   ): Promise<"scheduled" | "summarized" | "skipped"> {
+    if (!this.hasPersistedButlerSession(session.id)) {
+      return "skipped";
+    }
+
     const index = this.sessionIndexRepository.findIndexRecordBySessionId(session.sessionId);
 
     if (!index || index.isArchived || index.isSubagent) {
@@ -178,8 +183,15 @@ export class ButlerSessionSummaryService {
       || state.sourceLastMessageAt !== index.lastMessageAt;
 
     if (sourceChanged) {
-      this.scheduleSession(state, session.id, index.messageCount, index.lastMessageAt, debounceMs);
-      return "scheduled";
+      return this.scheduleSession(
+        state,
+        session.id,
+        index.messageCount,
+        index.lastMessageAt,
+        debounceMs
+      )
+        ? "scheduled"
+        : "skipped";
     }
 
     if (!state || state.status !== "scheduled" || !state.debounceUntil || state.debounceUntil > this.now()) {
@@ -209,7 +221,11 @@ export class ButlerSessionSummaryService {
     sourceMessageCount: number,
     sourceLastMessageAt: string | null,
     debounceMs: number
-  ): void {
+  ): boolean {
+    if (!this.hasPersistedButlerSession(butlerSessionId)) {
+      return false;
+    }
+
     const timestamp = this.now();
     this.butlerSessionSummaryStateRepository.upsert({
       butlerSessionId,
@@ -222,6 +238,7 @@ export class ButlerSessionSummaryService {
       errorDetail: null,
       updatedAt: timestamp
     });
+    return true;
   }
 
   private resolveDebounceMs(summaryDebounceSeconds: number): number {
@@ -238,6 +255,10 @@ export class ButlerSessionSummaryService {
     providerId: "codex" | "claude-code",
     summaryWorkspacePath: string
   ): Promise<void> {
+    if (!this.hasPersistedButlerSession(session.id)) {
+      return;
+    }
+
     this.inFlightButlerSessionIds.add(session.id);
     const runningAt = this.now();
     const currentState = this.butlerSessionSummaryStateRepository.findByButlerSessionId(session.id);
@@ -299,7 +320,7 @@ export class ButlerSessionSummaryService {
         userId,
         providerId,
         prompt: instruction.prompt,
-        model: resolveSummaryModel(providerId),
+        model: resolveSummaryModel(providerId, this.sourceCodexHomeDir),
         reasoningLevel: "low",
         permissionMode: "default"
       });
@@ -316,17 +337,19 @@ export class ButlerSessionSummaryService {
       );
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      this.butlerSessionSummaryStateRepository.upsert({
-        butlerSessionId: session.id,
-        sourceMessageCount,
-        sourceLastMessageAt,
-        lastSummarizedAt: currentState?.lastSummarizedAt ?? null,
-        lastSummarizedSequence: currentState?.lastSummarizedSequence ?? null,
-        debounceUntil: null,
-        status: "failed",
-        errorDetail: detail,
-        updatedAt: this.now()
-      });
+      if (this.hasPersistedButlerSession(session.id)) {
+        this.butlerSessionSummaryStateRepository.upsert({
+          butlerSessionId: session.id,
+          sourceMessageCount,
+          sourceLastMessageAt,
+          lastSummarizedAt: currentState?.lastSummarizedAt ?? null,
+          lastSummarizedSequence: currentState?.lastSummarizedSequence ?? null,
+          debounceUntil: null,
+          status: "failed",
+          errorDetail: detail,
+          updatedAt: this.now()
+        });
+      }
       this.logger.error("[butler-session-summary] summarize failed", {
         butlerSessionId: session.id,
         sessionId: session.sessionId,
@@ -355,15 +378,21 @@ export class ButlerSessionSummaryService {
     const riskFlags = dedupeItems(result.structured.riskFlags).slice(0, 4);
     const existing = this.butlerSessionRepository.findById(session.id);
 
-    if (existing) {
-      this.butlerSessionRepository.update({
-        ...existing,
-        status: resolveButlerSessionStatus(session.runningState, progressState),
-        lastSummary: summary,
-        lastCheckpointAt: timestamp,
-        updatedAt: timestamp
+    if (!existing) {
+      this.logger.error("[butler-session-summary] skip persist for removed session", {
+        butlerSessionId: session.id,
+        sessionId: session.sessionId
       });
+      return;
     }
+
+    this.butlerSessionRepository.update({
+      ...existing,
+      status: resolveButlerSessionStatus(session.runningState, progressState),
+      lastSummary: summary,
+      lastCheckpointAt: timestamp,
+      updatedAt: timestamp
+    });
 
     this.sessionCheckpointRepository.create({
       id: createId(),
@@ -399,6 +428,10 @@ export class ButlerSessionSummaryService {
 
   private resolveExecutorUserId(): string | null {
     return this.authUserRepository.listIds()[0] ?? null;
+  }
+
+  private hasPersistedButlerSession(butlerSessionId: string): boolean {
+    return Boolean(this.butlerSessionRepository.findById(butlerSessionId));
   }
 
   private async collectIncrementalHistory(
@@ -474,8 +507,15 @@ export class ButlerSessionSummaryService {
   }
 }
 
-function resolveSummaryModel(providerId: "codex" | "claude-code"): string {
-  return providerId === "codex" ? "gpt-5.1-codex-mini" : "haiku";
+function resolveSummaryModel(
+  providerId: "codex" | "claude-code",
+  sourceCodexHomeDir: string | null
+): string | null {
+  if (providerId !== "codex") {
+    return "haiku";
+  }
+
+  return resolveButlerCodexBackgroundModel("gpt-5.1-codex-mini", sourceCodexHomeDir);
 }
 
 function resolveButlerSessionStatus(

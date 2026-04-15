@@ -68,139 +68,86 @@ describe("butler control-session routes", () => {
   });
 
   it("control-session start|reset|resume|messages 路由会返回独立控制会话结果", async () => {
-    const butlerControlSessionService = {
-      getCurrentSession: vi.fn(() => null),
-      resetCurrentSession: vi.fn(() => undefined),
-      startSession: vi.fn(async () => ({
-        id: "control-1",
-        providerId: "codex",
+    const controlSessionRecord = {
+      id: "control-1",
+      providerId: "codex",
+      sessionId: "session-1",
+      purpose: "chat" as const,
+      title: "代码助手",
+      sourceItemId: null,
+      status: "running" as const,
+      lastContextVersion: null,
+      lastSummary: "请先介绍当前职责",
+      createdAt: "2026-04-05T00:00:00.000Z",
+      updatedAt: "2026-04-05T00:00:05.000Z",
+      session: {
         sessionId: "session-1",
-        status: "running",
-        lastContextVersion: null,
-        lastSummary: "请先介绍当前职责",
+        workspaceId: "workspace-butler",
+        provider: "codex",
+        providerSessionId: "provider-session-1",
+        rawStoreRef: "raw-1",
+        parentSessionId: null,
+        isSubagent: false,
+        subagentLabel: null,
+        isArchived: false,
+        isFavorite: false,
+        title: "代码助手",
+        messageCount: 1,
+        lastMessageAt: "2026-04-05T00:00:05.000Z",
         createdAt: "2026-04-05T00:00:00.000Z",
         updatedAt: "2026-04-05T00:00:05.000Z",
-        session: {
-          sessionId: "session-1",
-          workspaceId: "workspace-butler",
-          provider: "codex",
-          providerSessionId: "provider-session-1",
-          rawStoreRef: "raw-1",
-          parentSessionId: null,
-          isSubagent: false,
-          subagentLabel: null,
-          isArchived: false,
-          isFavorite: false,
-          title: "代码助手",
-          messageCount: 1,
-          lastMessageAt: "2026-04-05T00:00:05.000Z",
-          createdAt: "2026-04-05T00:00:00.000Z",
-          updatedAt: "2026-04-05T00:00:05.000Z",
-          syncStatus: "idle",
-          syncCursor: null,
-          lastSyncAt: "2026-04-05T00:00:05.000Z",
-          lastErrorCode: null,
-          lastErrorDetail: null,
-          resumedAt: null,
-          runningState: "running",
-          activitySource: "runtime",
-          activityResolutionSource: "authoritative_runtime",
-          activityConfidence: "authoritative",
-          runId: null,
-          lastEventAt: "2026-04-05T00:00:05.000Z",
-          completedAt: null,
-          lastSeenAt: null,
-          watchdogTriggeredAt: null,
-          activityState: "running"
-        }
-      })),
+        syncStatus: "idle",
+        syncCursor: null,
+        lastSyncAt: "2026-04-05T00:00:05.000Z",
+        lastErrorCode: null,
+        lastErrorDetail: null,
+        resumedAt: null,
+        runningState: "running",
+        activitySource: "runtime",
+        activityResolutionSource: "authoritative_runtime",
+        activityConfidence: "authoritative",
+        runId: null,
+        lastEventAt: "2026-04-05T00:00:05.000Z",
+        completedAt: null,
+        lastSeenAt: null,
+        watchdogTriggeredAt: null,
+        activityState: "running"
+      }
+    };
+    const butlerControlSessionService = {
+      getCurrentSession: vi.fn(() => null),
+      listSessions: vi.fn(() => [controlSessionRecord]),
+      getSession: vi.fn(() => controlSessionRecord),
+      resetCurrentSession: vi.fn(() => undefined),
+      startSession: vi.fn(async () => controlSessionRecord),
       resumeCurrentSession: vi.fn(async () => ({
-        id: "control-1",
-        providerId: "codex",
-        sessionId: "session-1",
-        status: "running",
-        lastContextVersion: null,
-        lastSummary: "请先介绍当前职责",
-        createdAt: "2026-04-05T00:00:00.000Z",
+        ...controlSessionRecord,
         updatedAt: "2026-04-05T00:01:00.000Z",
         resumedAt: "2026-04-05T00:01:00.000Z",
         provider: "codex",
         providerSessionId: "provider-session-1",
         session: {
-          sessionId: "session-1",
-          workspaceId: "workspace-butler",
-          provider: "codex",
-          providerSessionId: "provider-session-1",
-          rawStoreRef: "raw-1",
-          parentSessionId: null,
-          isSubagent: false,
-          subagentLabel: null,
-          isArchived: false,
-          isFavorite: false,
-          title: "代码助手",
-          messageCount: 1,
+          ...controlSessionRecord.session,
           lastMessageAt: "2026-04-05T00:01:00.000Z",
-          createdAt: "2026-04-05T00:00:00.000Z",
           updatedAt: "2026-04-05T00:01:00.000Z",
-          syncStatus: "idle",
-          syncCursor: null,
           lastSyncAt: "2026-04-05T00:01:00.000Z",
-          lastErrorCode: null,
-          lastErrorDetail: null,
           resumedAt: "2026-04-05T00:01:00.000Z",
-          runningState: "running",
-          activitySource: "runtime",
-          activityResolutionSource: "authoritative_runtime",
-          activityConfidence: "authoritative",
-          runId: null,
-          lastEventAt: "2026-04-05T00:01:00.000Z",
-          completedAt: null,
-          lastSeenAt: null,
-          watchdogTriggeredAt: null,
-          activityState: "running"
+          lastEventAt: "2026-04-05T00:01:00.000Z"
         }
       })),
       sendMessage: vi.fn(async () => ({
         controlSession: {
-          id: "control-1",
-          providerId: "codex",
-          sessionId: "session-1",
-          status: "running",
-          lastContextVersion: null,
+          ...controlSessionRecord,
           lastSummary: "继续汇总当前风险",
-          createdAt: "2026-04-05T00:00:00.000Z",
           updatedAt: "2026-04-05T00:01:05.000Z",
           session: {
-            sessionId: "session-1",
-            workspaceId: "workspace-butler",
-            provider: "codex",
-            providerSessionId: "provider-session-1",
-            rawStoreRef: "raw-1",
-            parentSessionId: null,
-            isSubagent: false,
-            subagentLabel: null,
-            isArchived: false,
-            isFavorite: false,
-            title: "代码助手",
+            ...controlSessionRecord.session,
             messageCount: 2,
             lastMessageAt: "2026-04-05T00:01:05.000Z",
-            createdAt: "2026-04-05T00:00:00.000Z",
             updatedAt: "2026-04-05T00:01:05.000Z",
-            syncStatus: "idle",
-            syncCursor: null,
             lastSyncAt: "2026-04-05T00:01:05.000Z",
-            lastErrorCode: null,
-            lastErrorDetail: null,
             resumedAt: "2026-04-05T00:01:00.000Z",
-            runningState: "running",
-            activitySource: "runtime",
-            activityResolutionSource: "authoritative_runtime",
-            activityConfidence: "authoritative",
-            runId: null,
             lastEventAt: "2026-04-05T00:01:05.000Z",
-            completedAt: null,
-            lastSeenAt: null,
-            watchdogTriggeredAt: null,
             activityState: "running"
           }
         },
@@ -230,6 +177,20 @@ describe("butler control-session routes", () => {
     expect(current.json()).toEqual({
       controlSession: null
     });
+
+    const listed = await app.inject({
+      method: "GET",
+      url: "/api/butler/control-sessions"
+    });
+    expect(listed.statusCode).toBe(200);
+    expect(listed.json().items[0].purpose).toBe("chat");
+
+    const detail = await app.inject({
+      method: "GET",
+      url: "/api/butler/control-sessions/control-1"
+    });
+    expect(detail.statusCode).toBe(200);
+    expect(detail.json().controlSession.id).toBe("control-1");
 
     const reset = await app.inject({
       method: "POST",

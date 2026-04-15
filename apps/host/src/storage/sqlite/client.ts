@@ -44,6 +44,8 @@ export function createDatabaseClient(databasePath: string): DatabaseClient {
   ensureTerminalCommandTemplateDebugSchema(db);
   ensureTerminalInstanceDebugSchema(db);
   ensureButlerProfileSchema(db);
+  ensureButlerControlSessionSchema(db);
+  ensureButlerInboxSchema(db);
   ensureButlerFollowUpTaskSchema(db);
   ensureButlerSessionSummarySchema(db);
 
@@ -159,6 +161,41 @@ function ensureButlerProfileSchema(db: Database.Database): void {
   }
 
   db.exec("ALTER TABLE butler_profiles ADD COLUMN display_name TEXT NOT NULL DEFAULT '代码助手'");
+}
+
+function ensureButlerControlSessionSchema(db: Database.Database): void {
+  const columns = db
+    .prepare("PRAGMA table_info(butler_control_sessions)")
+    .all() as Array<{ name: string }>;
+  const columnNames = new Set(columns.map((column) => column.name));
+
+  if (columns.length === 0) {
+    return;
+  }
+
+  if (!columnNames.has("purpose")) {
+    db.exec("ALTER TABLE butler_control_sessions ADD COLUMN purpose TEXT NOT NULL DEFAULT 'chat'");
+  }
+
+  if (!columnNames.has("title")) {
+    db.exec("ALTER TABLE butler_control_sessions ADD COLUMN title TEXT");
+  }
+
+  if (!columnNames.has("source_item_id")) {
+    db.exec("ALTER TABLE butler_control_sessions ADD COLUMN source_item_id TEXT");
+  }
+}
+
+function ensureButlerInboxSchema(db: Database.Database): void {
+  const columns = db
+    .prepare("PRAGMA table_info(butler_inbox_items)")
+    .all() as Array<{ name: string }>;
+
+  if (columns.length === 0 || columns.some((column) => column.name === "assistant_state_json")) {
+    return;
+  }
+
+  db.exec("ALTER TABLE butler_inbox_items ADD COLUMN assistant_state_json TEXT NOT NULL DEFAULT '{}'");
 }
 
 function ensureButlerFollowUpTaskSchema(db: Database.Database): void {

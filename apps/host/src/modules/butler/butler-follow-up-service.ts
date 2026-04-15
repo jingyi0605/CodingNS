@@ -32,6 +32,7 @@ import {
   ButlerFollowUpEvaluationInstructionAdapter,
   type ButlerFollowUpEvaluationDecision
 } from "./butler-follow-up-evaluation-instruction-adapter.js";
+import { resolveButlerCodexBackgroundModel } from "./butler-codex-model-policy.js";
 import type { WorkspaceService } from "../workspace/workspace-service.js";
 
 const DEFAULT_CHECK_INTERVAL_SECONDS = 300;
@@ -835,7 +836,7 @@ export class ButlerFollowUpService {
       userId: task.createdByUserId,
       providerId: profile.providerId,
       prompt: instruction.prompt,
-      model: resolveFollowUpModel(profile.providerId),
+      model: resolveFollowUpModel(profile.providerId, this.sourceCodexHomeDir),
       reasoningLevel: "low",
       permissionMode: "default"
     });
@@ -1151,8 +1152,15 @@ function truncateText(value: string, maxLength: number): string {
   return `${value.slice(0, Math.max(0, maxLength - 1))}…`;
 }
 
-function resolveFollowUpModel(providerId: ButlerProfile["providerId"]): string {
-  return providerId === "codex" ? "gpt-5.1-codex-mini" : "haiku";
+function resolveFollowUpModel(
+  providerId: ButlerProfile["providerId"],
+  sourceCodexHomeDir: string | null
+): string | null {
+  if (providerId !== "codex") {
+    return "haiku";
+  }
+
+  return resolveButlerCodexBackgroundModel("gpt-5.1-codex-mini", sourceCodexHomeDir);
 }
 
 function parseEvaluationResult(result: PatrolSessionResult): ButlerFollowUpEvaluationResult {

@@ -10,9 +10,18 @@ export type ButlerToneId = "direct" | "steady" | "friendly";
 export type ButlerLanguageId = "zh-CN" | "en-US" | "bilingual";
 export type ButlerSummaryStyleId = "brief" | "structured" | "thorough";
 export type ButlerRiskPreferenceId = "conservative" | "balanced" | "proactive";
+export type ButlerControlSessionPurpose = "chat" | "todo_analysis";
 export type ButlerInboxItemType = "bug" | "feature" | "change" | "task";
 export type ButlerInboxItemPriority = "low" | "medium" | "high";
 export type ButlerInboxItemStatus = "pending" | "in_progress" | "closed";
+export type ButlerInboxLifecycleStage =
+  | "pending"
+  | "analyzing"
+  | "analyzed"
+  | "session_created"
+  | "follow_up_active"
+  | "completed"
+  | "failed";
 export type ButlerFollowUpTaskStatus = "active" | "waiting_user" | "completed" | "failed" | "cancelled";
 export type ButlerFollowUpRoundKind =
   | "started"
@@ -80,6 +89,9 @@ export interface ButlerControlSessionDto {
   id: string;
   providerId: ButlerProviderId;
   sessionId: string;
+  purpose: ButlerControlSessionPurpose;
+  title: string | null;
+  sourceItemId: string | null;
   status: "idle" | "running" | "failed" | "closed";
   lastContextVersion: string | null;
   lastSummary: string | null;
@@ -94,6 +106,9 @@ export interface ButlerStartControlSessionPayload {
   model?: string | null;
   reasoningLevel?: string | null;
   permissionMode?: string | null;
+  purpose?: ButlerControlSessionPurpose;
+  title?: string | null;
+  sourceItemId?: string | null;
 }
 
 export interface ButlerControlSessionResponseDto {
@@ -117,6 +132,7 @@ export interface ButlerResumeControlSessionResponseDto {
 
 export interface ButlerSendMessagePayload extends ButlerStartControlSessionPayload {
   content: string;
+  controlSessionId?: string | null;
 }
 
 export interface ButlerSendMessageResponseDto {
@@ -233,9 +249,42 @@ export interface ButlerInboxItemDto {
   content: string;
   priority: ButlerInboxItemPriority;
   status: ButlerInboxItemStatus;
+  assistantState: ButlerInboxAssistantStateDto;
   createdAt: string;
   updatedAt: string;
   closedAt: string | null;
+}
+
+export interface ButlerInboxAssistantStateDto {
+  lifecycleStage: ButlerInboxLifecycleStage;
+  analysisSummary: string | null;
+  generatedPrompt: string | null;
+  analysisControlSessionId: string | null;
+  analysisSessionId: string | null;
+  linkedButlerSessionId: string | null;
+  linkedSessionId: string | null;
+  linkedFollowUpTaskId: string | null;
+  lastError: string | null;
+  lastAnalyzedAt: string | null;
+  lastSessionCreatedAt: string | null;
+  lastFollowUpAt: string | null;
+}
+
+export interface ButlerManagedSessionDto {
+  id: string;
+  projectId: string;
+  sessionId: string;
+  provider: string | null;
+  title: string | null;
+  isArchived: boolean;
+  role: "patrol" | "execution" | "verification" | "adhoc";
+  ownershipMode: "managed" | "observed";
+  status: "idle" | "running" | "blocked" | "failed" | "closed";
+  runningState: string | null;
+  lastSummary: string | null;
+  lastCheckpointAt: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface ButlerNotificationArchiveDto {
@@ -448,6 +497,16 @@ export function getCurrentButlerControlSession() {
   return httpClient.request<ButlerControlSessionResponseDto>("/api/butler/control-session");
 }
 
+export function listButlerControlSessions() {
+  return httpClient.request<{ items: ButlerControlSessionDto[] }>("/api/butler/control-sessions");
+}
+
+export function getButlerControlSession(controlSessionId: string) {
+  return httpClient.request<ButlerControlSessionResponseDto>(
+    `/api/butler/control-sessions/${encodeURIComponent(controlSessionId)}`
+  );
+}
+
 export function resetButlerControlSession() {
   return httpClient.request<ButlerControlSessionResponseDto>("/api/butler/control-session/reset", {
     method: "POST"
@@ -650,6 +709,30 @@ export function updateButlerInboxItem(itemId: string, payload: {
         priority: payload.priority,
         status: payload.status
       })
+    }
+  );
+}
+
+export function analyzeButlerInboxItem(itemId: string) {
+  return httpClient.request<{ item: ButlerInboxItemDto; controlSession: ButlerControlSessionDto }>(
+    `/api/butler/inbox/${encodeURIComponent(itemId)}/analyze`,
+    {
+      method: "POST",
+      body: JSON.stringify({})
+    }
+  );
+}
+
+export function startButlerInboxItemSession(itemId: string) {
+  return httpClient.request<{
+    item: ButlerInboxItemDto;
+    session: ButlerManagedSessionDto;
+    followUpTask: ButlerFollowUpTaskDto | null;
+  }>(
+    `/api/butler/inbox/${encodeURIComponent(itemId)}/start-session`,
+    {
+      method: "POST",
+      body: JSON.stringify({})
     }
   );
 }

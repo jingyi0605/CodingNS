@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 
 import type {
+  ButlerInboxAssistantState,
   ButlerInboxItem,
   ButlerInboxItemPriority,
   ButlerInboxItemStatus,
@@ -21,10 +22,11 @@ export class ButlerInboxItemRepository {
            content,
            priority,
            status,
+           assistant_state_json,
            created_at,
            updated_at,
            closed_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         record.id,
@@ -34,6 +36,7 @@ export class ButlerInboxItemRepository {
         record.content,
         record.priority,
         record.status,
+        JSON.stringify(record.assistantState),
         record.createdAt,
         record.updatedAt,
         record.closedAt
@@ -77,6 +80,7 @@ export class ButlerInboxItemRepository {
            content,
            priority,
            status,
+           assistant_state_json,
            created_at,
            updated_at,
            closed_at
@@ -99,6 +103,7 @@ export class ButlerInboxItemRepository {
            content,
            priority,
            status,
+           assistant_state_json,
            created_at,
            updated_at,
            closed_at
@@ -121,6 +126,7 @@ export class ButlerInboxItemRepository {
            content = ?,
            priority = ?,
            status = ?,
+           assistant_state_json = ?,
            updated_at = ?,
            closed_at = ?
          WHERE id = ?`
@@ -132,6 +138,7 @@ export class ButlerInboxItemRepository {
         record.content,
         record.priority,
         record.status,
+        JSON.stringify(record.assistantState),
         record.updatedAt,
         record.closedAt,
         record.id
@@ -155,6 +162,7 @@ interface ButlerInboxItemRow {
   content: string;
   priority: ButlerInboxItemPriority;
   status: ButlerInboxItemStatus;
+  assistant_state_json: string;
   created_at: string;
   updated_at: string;
   closed_at: string | null;
@@ -169,8 +177,59 @@ function mapButlerInboxItemRow(row: ButlerInboxItemRow): ButlerInboxItem {
     content: row.content,
     priority: row.priority,
     status: row.status,
+    assistantState: parseAssistantState(row.assistant_state_json),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     closedAt: row.closed_at
   };
+}
+
+function parseAssistantState(value: string | null | undefined): ButlerInboxAssistantState {
+  if (!value?.trim()) {
+    return createDefaultAssistantState();
+  }
+
+  try {
+    const parsed = JSON.parse(value) as Partial<ButlerInboxAssistantState>;
+
+    return {
+      lifecycleStage: parsed.lifecycleStage ?? "pending",
+      analysisSummary: normalizeNullableText(parsed.analysisSummary),
+      generatedPrompt: normalizeNullableText(parsed.generatedPrompt),
+      analysisControlSessionId: normalizeNullableText(parsed.analysisControlSessionId),
+      analysisSessionId: normalizeNullableText(parsed.analysisSessionId),
+      linkedButlerSessionId: normalizeNullableText(parsed.linkedButlerSessionId),
+      linkedSessionId: normalizeNullableText(parsed.linkedSessionId),
+      linkedFollowUpTaskId: normalizeNullableText(parsed.linkedFollowUpTaskId),
+      lastError: normalizeNullableText(parsed.lastError),
+      lastAnalyzedAt: normalizeNullableText(parsed.lastAnalyzedAt),
+      lastSessionCreatedAt: normalizeNullableText(parsed.lastSessionCreatedAt),
+      lastFollowUpAt: normalizeNullableText(parsed.lastFollowUpAt)
+    };
+  } catch {
+    return createDefaultAssistantState();
+  }
+}
+
+function createDefaultAssistantState(): ButlerInboxAssistantState {
+  return {
+    lifecycleStage: "pending",
+    analysisSummary: null,
+    generatedPrompt: null,
+    analysisControlSessionId: null,
+    analysisSessionId: null,
+    linkedButlerSessionId: null,
+    linkedSessionId: null,
+    linkedFollowUpTaskId: null,
+    lastError: null,
+    lastAnalyzedAt: null,
+    lastSessionCreatedAt: null,
+    lastFollowUpAt: null
+  };
+}
+
+function normalizeNullableText(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim()
+    : null;
 }

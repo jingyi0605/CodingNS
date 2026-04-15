@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { AppError } from "../../src/shared/errors/app-error.js";
 import type {
   ButlerProject,
   ButlerSession,
@@ -328,6 +329,181 @@ describe("ButlerSessionService", () => {
     expect(started.lastSummary).toContain("已创建并启动托管会话");
     expect(createdSessions).toHaveLength(1);
     expect(createdCheckpoints).toHaveLength(1);
+    expect(createdCheckpoints[0]).toMatchObject({
+      progressState: "working",
+      sourceKind: "manual"
+    });
+  });
+
+  it("startSession 遇到底层会话已创建但索引读取失败时，会自动回收并绑定托管会话", async () => {
+    const now = new Date().toISOString();
+    const later = new Date(Date.now() + 1_000).toISOString();
+    const project: ButlerProject = {
+      id: "project-recover-1",
+      workspaceId: "workspace-recover-1",
+      name: "repo-recover",
+      repoRoot: "/tmp/repo-recover",
+      defaultProvider: "codex",
+      instructionProfileId: null,
+      approvalMode: "controlled",
+      lifecycleStatus: "active",
+      riskLevel: "low",
+      config: {},
+      lastPatrolAt: null,
+      lastVerificationAt: null,
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null
+    };
+    const recoveredWorkspaceSession: SessionListItem = {
+      sessionId: "session-recovered",
+      workspaceId: project.workspaceId,
+      provider: "codex",
+      providerSessionId: "provider-session-recovered",
+      rawStoreRef: "raw-session-recovered",
+      parentSessionId: null,
+      sessionKind: "default",
+      annotationSourceMessageId: null,
+      annotationSourceText: null,
+      forkMethod: null,
+      forkSourceType: null,
+      forkSourceSessionId: null,
+      forkSourceMessageId: null,
+      inheritedPrefixMessageCount: null,
+      isSubagent: false,
+      subagentLabel: null,
+      title: "请检查项目进度",
+      isFavorite: false,
+      messageCount: 1,
+      lastMessageAt: later,
+      createdAt: now,
+      updatedAt: later,
+      syncStatus: "idle",
+      syncCursor: null,
+      lastSyncAt: later,
+      lastErrorCode: null,
+      lastErrorDetail: null,
+      resumedAt: null,
+      runningState: "running",
+      activitySource: "runtime",
+      activityResolutionSource: "authoritative_runtime",
+      activityConfidence: "authoritative",
+      runId: null,
+      lastEventAt: later,
+      completedAt: null,
+      lastSeenAt: null,
+      watchdogTriggeredAt: null,
+      activityState: "running"
+    };
+    const createdSessions: ButlerSession[] = [];
+    const createdCheckpoints: Array<{ summary: string; progressState: string; sourceKind: string }> = [];
+
+    const service = new ButlerSessionService(
+      {
+        findById: vi.fn(() => project)
+      } satisfies Pick<ButlerProjectRepository, "findById"> as ButlerProjectRepository,
+      {
+        create: vi.fn((record: ButlerSession) => {
+          createdSessions.push(record);
+          return record;
+        }),
+        findBySessionId: vi.fn(() => null)
+      } satisfies Pick<ButlerSessionRepository, "create" | "findBySessionId"> as ButlerSessionRepository,
+      {
+        getLatestSeq: vi.fn(() => createdCheckpoints.length),
+        create: vi.fn((record) => {
+          createdCheckpoints.push({
+            summary: record.summary,
+            progressState: record.progressState,
+            sourceKind: record.sourceKind
+          });
+          return record;
+        })
+      } satisfies Pick<SessionCheckpointRepository, "getLatestSeq" | "create"> as SessionCheckpointRepository,
+      {
+        findBySessionId: vi.fn((sessionId: string) =>
+          sessionId === "session-recovered"
+            ? {
+                sessionId: "session-recovered",
+                workspaceId: project.workspaceId,
+                provider: "codex",
+                providerSessionId: "provider-session-recovered",
+                rawStoreRef: "raw-session-recovered",
+                createdAt: now,
+                updatedAt: later
+              }
+            : null
+        )
+      } satisfies Pick<SessionBindingRepository, "findBySessionId"> as SessionBindingRepository,
+      {
+        findBySessionId: vi.fn((sessionId: string, _userId: string) =>
+          sessionId === "session-recovered" ? recoveredWorkspaceSession : null
+        ),
+        findIndexRecordBySessionId: vi.fn((sessionId: string) =>
+          sessionId === "session-recovered"
+            ? {
+                sessionId: "session-recovered",
+                workspaceId: project.workspaceId,
+                provider: "codex",
+                parentSessionId: null,
+                sessionKind: "default",
+                annotationSourceMessageId: null,
+                annotationSourceText: null,
+                isSubagent: false,
+                subagentLabel: null,
+                title: "请检查项目进度",
+                messageCount: 1,
+                isArchived: false,
+                lastMessageAt: later,
+                createdAt: now,
+                updatedAt: later
+              }
+            : null
+        ),
+        listByWorkspace: vi.fn(() => [recoveredWorkspaceSession])
+      } satisfies Pick<SessionIndexRepository, "findBySessionId" | "findIndexRecordBySessionId" | "listByWorkspace"> as SessionIndexRepository,
+      {
+        findBySessionAndUser: vi.fn((sessionId: string) =>
+          sessionId === "session-recovered"
+            ? {
+                sessionId,
+                userId: "user-1",
+                runningState: "running",
+                activitySource: "runtime",
+                favorite: false,
+                lastEventAt: later,
+                completedAt: null,
+                lastSeenAt: null,
+                updatedAt: later
+              }
+            : null
+        )
+      } satisfies Pick<SessionStateRepository, "findBySessionAndUser"> as SessionStateRepository,
+      {
+        startLiveSession: vi.fn(async () => {
+          throw new AppError({
+            statusCode: 500,
+            errorCode: "SESSION_INDEX_MISSING",
+            detail: "session 索引缺失"
+          });
+        })
+      }
+    );
+
+    const started = await service.startSession(
+      project.id,
+      {
+        role: "execution",
+        ownershipMode: "managed",
+        content: "请检查项目进度"
+      },
+      "user-1"
+    );
+
+    expect(started.sessionId).toBe("session-recovered");
+    expect(started.ownershipMode).toBe("managed");
+    expect(started.lastSummary).toContain("自动回收");
+    expect(createdSessions).toHaveLength(1);
     expect(createdCheckpoints[0]).toMatchObject({
       progressState: "working",
       sourceKind: "manual"

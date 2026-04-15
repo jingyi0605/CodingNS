@@ -363,6 +363,8 @@ describe("MobileButlerPage", () => {
             lifecycleStage: "pending",
             analysisSummary: null,
             generatedPrompt: null,
+            analysisControlSessionId: null,
+            analysisSessionId: null,
             linkedButlerSessionId: null,
             linkedSessionId: null,
             linkedFollowUpTaskId: null,

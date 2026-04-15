@@ -91,6 +91,20 @@ describe("ButlerContextAggregator", () => {
                   content: "先把 host 里的 TypeScript 报错清掉。",
                   priority: "high",
                   status: "in_progress",
+                  assistantState: {
+                    lifecycleStage: "follow_up_active",
+                    analysisSummary: null,
+                    generatedPrompt: null,
+                    analysisControlSessionId: null,
+                    analysisSessionId: null,
+                    linkedButlerSessionId: null,
+                    linkedSessionId: null,
+                    linkedFollowUpTaskId: null,
+                    lastError: null,
+                    lastAnalyzedAt: null,
+                    lastSessionCreatedAt: null,
+                    lastFollowUpAt: null
+                  },
                   createdAt: "2026-04-05T00:20:00.000Z",
                   updatedAt: "2026-04-05T01:09:00.000Z",
                   closedAt: null

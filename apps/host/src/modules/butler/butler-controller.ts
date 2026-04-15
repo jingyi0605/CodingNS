@@ -102,6 +102,10 @@ interface ButlerSessionParams extends ButlerProjectParams {
   butlerSessionId: string;
 }
 
+interface ButlerControlSessionParams {
+  controlSessionId: string;
+}
+
 interface CreateButlerProjectBody {
   workspaceId?: string;
   name?: string;
@@ -174,6 +178,7 @@ interface UpdateButlerNotificationArchiveBody {
   archived?: boolean;
 }
 interface CreateButlerFollowUpTaskBody extends CreateButlerFollowUpTaskInput {}
+interface ButlerInboxLifecycleActionBody {}
 
 interface ButlerPatrolPlanListQuery {
   enabled?: "true" | "false";
@@ -307,6 +312,27 @@ export class ButlerController {
     });
   };
 
+  readonly listControlSessions = async (
+    request: FastifyRequest,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send({
+      items: this.butlerControlSessionService.listSessions(requireUserId(request))
+    });
+  };
+
+  readonly getControlSession = async (
+    request: FastifyRequest<{ Params: ButlerControlSessionParams }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.send({
+      controlSession: this.butlerControlSessionService.getSession(
+        request.params.controlSessionId,
+        requireUserId(request)
+      )
+    });
+  };
+
   readonly listControlSessionEvents = async (
     _request: FastifyRequest,
     reply: FastifyReply
@@ -374,7 +400,8 @@ export class ButlerController {
         workspaceId: request.query.workspaceId,
         projectId: request.query.projectId,
         status: request.query.status,
-        itemType: request.query.itemType
+        itemType: request.query.itemType,
+        userId: requireUserId(request)
       })
     });
   };
@@ -461,6 +488,31 @@ export class ButlerController {
         status: request.body.status
       })
     });
+  };
+
+  readonly analyzeInboxItem = async (
+    request: FastifyRequest<{ Params: ButlerInboxItemParams; Body: ButlerInboxLifecycleActionBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    reply.status(202).send(
+      await this.butlerInboxService.analyzeItem(
+        request.params.itemId,
+        requireUserId(request)
+      )
+    );
+  };
+
+  readonly startInboxItemSession = async (
+    request: FastifyRequest<{ Params: ButlerInboxItemParams; Body: ButlerInboxLifecycleActionBody }>,
+    reply: FastifyReply
+  ): Promise<void> => {
+    const result = await this.butlerInboxService.startExecution(
+      request.params.itemId,
+      requireUserId(request)
+    );
+    this.butlerActionContextService?.invalidateSessionActionContext(result.session.sessionId);
+
+    reply.status(201).send(result);
   };
 
   readonly deleteInboxItem = async (

@@ -8,6 +8,7 @@ import type {
   SessionRuntimeStatusEvent
 } from "../../../network/realtime-client";
 import { RealtimeClient } from "../../../network/realtime-client";
+import { logPerfDebug } from "../../../shared/debug/perf-debug";
 import { t } from "../../../shared/i18n";
 import type {
   ContextUsageDto,
@@ -17,7 +18,8 @@ import type {
 import {
   getProviderCapabilities,
   getSessionMessages,
-  getSessionRuntime
+  getSessionRuntime,
+  interruptSession
 } from "../../conversation/api/conversation-api";
 import type { SessionMessageViewModel } from "../../conversation/runtime/session-runtime-machine";
 import { toViewMessage } from "../../conversation/runtime/session-runtime-machine";
@@ -30,6 +32,7 @@ import type {
   ButlerProviderId
 } from "../api/butler-api";
 import {
+  getButlerControlSession,
   getButlerOverview,
   getButlerProfile,
   getCurrentButlerControlSession,
@@ -64,12 +67,19 @@ export interface ButlerRuntimeState {
 }
 
 const BUTLER_MESSAGE_PAGE_SIZE = 60;
+const BUTLER_TERMINAL_SYNC_DEBOUNCE_MS = 400;
+const BUTLER_DIAGNOSTIC_RAW_REF_PREFIX = "butler-diagnostic://";
 
 export class ButlerRuntimeStore {
   private state: ButlerRuntimeState;
   private listeners = new Set<ButlerRuntimeListener>();
   private realtimeClient: RealtimeClient | null = null;
   private realtimeSessionId: string | null = null;
+  private selectedControlSessionId: string | null = null;
+  private controlSessionReloadInFlight = false;
+  private terminalSyncTimer: number | null = null;
+  private terminalSyncArmed = false;
+  private terminalSyncCompletedControlSessionId: string | null = null;
 
   constructor(private readonly workspaceId: string) {
     this.state = {
@@ -326,22 +336,25 @@ export class ButlerRuntimeStore {
           reasoningLevel: options?.reasoningLevel ?? null,
           permissionMode: options?.permissionMode ?? null
         });
+        this.selectedControlSessionId = started.controlSession.id;
         this.patch({
           controlSession: started.controlSession
         });
       } else {
         const sent = await sendButlerControlMessage({
+          controlSessionId: currentControlSession.id,
           content: normalizedContent,
           model: options?.model ?? null,
           reasoningLevel: options?.reasoningLevel ?? null,
           permissionMode: options?.permissionMode ?? null
         });
+        this.selectedControlSessionId = sent.controlSession.id;
         this.patch({
           controlSession: sent.controlSession
         });
       }
 
-      await this.reloadControlSession();
+      await this.reloadControlSession(this.selectedControlSessionId);
       await Promise.all([this.refreshOverview(), this.refreshEvents()]);
     } catch (error) {
       this.patch({
@@ -367,12 +380,29 @@ export class ButlerRuntimeStore {
     await this.sendMessage(targetMessage.content);
   }
 
+  async interrupt(): Promise<void> {
+    const sessionId = this.state.controlSession?.session.sessionId ?? null;
+
+    if (!sessionId) {
+      return;
+    }
+
+    await interruptSession(sessionId);
+    this.patch({
+      runtimeHasActiveRun: false,
+      runtimeCanInterrupt: false
+    });
+  }
+
   async startFreshSession(options?: { preserveSwitchingState?: boolean }): Promise<void> {
     if (!this.state.initialized) {
       return;
     }
 
     this.teardownRealtime();
+    this.selectedControlSessionId = null;
+    this.terminalSyncArmed = false;
+    this.terminalSyncCompletedControlSessionId = null;
     this.patch({
       sending: false,
       error: null,
@@ -427,20 +457,66 @@ export class ButlerRuntimeStore {
   }
 
   private async reloadForProvider(providerId: ButlerProviderId): Promise<void> {
+    logPerfDebug("butler.runtime.reload_for_provider.start", {
+      workspaceId: this.workspaceId,
+      providerId,
+      selectedControlSessionId: this.selectedControlSessionId
+    });
     await Promise.all([this.refreshCapabilities(providerId), this.refreshOverview(), this.refreshEvents()]);
-    await this.reloadControlSession();
+    await this.reloadControlSession(this.selectedControlSessionId);
+    logPerfDebug("butler.runtime.reload_for_provider.end", {
+      workspaceId: this.workspaceId,
+      providerId,
+      selectedControlSessionId: this.selectedControlSessionId
+    });
   }
 
-  private async reloadControlSession(): Promise<void> {
+  async openControlSession(controlSessionId: string): Promise<void> {
+    this.selectedControlSessionId = controlSessionId.trim() || null;
+    await this.reloadControlSession(this.selectedControlSessionId);
+  }
+
+  async adoptControlSession(controlSession: ButlerControlSessionDto): Promise<void> {
+    this.selectedControlSessionId = controlSession.id;
     this.patch({
-      historyState: "loading"
+      controlSession
     });
+    await this.reloadControlSession(controlSession.id);
+  }
+
+  private async reloadControlSession(controlSessionId?: string | null): Promise<void> {
+    const currentControlSessionId = this.state.controlSession?.id ?? null;
+    const isBackgroundReload =
+      this.state.historyState === "ready"
+      && currentControlSessionId !== null
+      && (controlSessionId === null
+        || controlSessionId === undefined
+        || controlSessionId === currentControlSessionId);
+    logPerfDebug("butler.runtime.reload_control_session.start", {
+      workspaceId: this.workspaceId,
+      requestedControlSessionId: controlSessionId ?? null,
+      currentControlSessionId,
+      currentSessionId: this.state.controlSession?.session?.sessionId ?? null,
+      currentMessages: this.state.messages.length,
+      currentHistoryState: this.state.historyState,
+      backgroundReload: isBackgroundReload
+    });
+    if (!isBackgroundReload) {
+      this.patch({
+        historyState: "loading"
+      });
+    }
 
     try {
-      const response = await getCurrentButlerControlSession();
+      const response = controlSessionId
+        ? await getButlerControlSession(controlSessionId)
+        : await getCurrentButlerControlSession();
       const controlSession = response.controlSession;
 
       if (!controlSession) {
+        this.selectedControlSessionId = null;
+        this.terminalSyncArmed = false;
+        this.terminalSyncCompletedControlSessionId = null;
         this.teardownRealtime();
         this.patch({
           controlSession: null,
@@ -450,13 +526,28 @@ export class ButlerRuntimeStore {
           runtimeCanInterrupt: null,
           contextUsage: null
         });
+        logPerfDebug("butler.runtime.reload_control_session.empty", {
+          workspaceId: this.workspaceId,
+          requestedControlSessionId: controlSessionId ?? null
+        });
         return;
       }
+
+      this.selectedControlSessionId = controlSession.id;
 
       const [historyPage, runtime] = await Promise.all([
         getSessionMessages(controlSession.session.sessionId, null, BUTLER_MESSAGE_PAGE_SIZE, "forward"),
         getSessionRuntime(controlSession.session.sessionId)
       ]);
+      if (this.state.controlSession?.id !== controlSession.id) {
+        this.terminalSyncCompletedControlSessionId = null;
+      }
+      this.terminalSyncArmed = runtime.hasActiveRun || controlSession.status === "running";
+      if (runtime.hasActiveRun) {
+        this.terminalSyncCompletedControlSessionId = null;
+      } else if (!this.terminalSyncArmed) {
+        this.terminalSyncCompletedControlSessionId = controlSession.id;
+      }
       const viewMessages = historyPage.messages.map((message) =>
         toViewMessage(controlSession.session.sessionId, message)
       );
@@ -464,16 +555,39 @@ export class ButlerRuntimeStore {
 
       this.patch({
         controlSession,
-        messages: viewMessages,
+        messages: buildButlerVisibleMessages(viewMessages, controlSession, {
+          runningState: runtime.runningState,
+          runtimeHasActiveRun: runtime.hasActiveRun,
+          runtimeCanInterrupt: runtime.canInterrupt,
+          detail: runtime.detail,
+          errorDetail: runtime.errorDetail,
+          updatedAt: runtime.updatedAt
+        }),
         historyState: "ready",
         runtimeHasActiveRun: runtime.hasActiveRun,
         runtimeCanInterrupt: runtime.canInterrupt,
         contextUsage: runtime.contextUsage
       });
+      logPerfDebug("butler.runtime.reload_control_session.end", {
+        workspaceId: this.workspaceId,
+        controlSessionId: controlSession.id,
+        sessionId: controlSession.session.sessionId,
+        messages: viewMessages.length,
+        historyState: "ready",
+        hasActiveRun: runtime.hasActiveRun,
+        canInterrupt: runtime.canInterrupt,
+        terminalSyncArmed: this.terminalSyncArmed,
+        terminalSyncCompletedControlSessionId: this.terminalSyncCompletedControlSessionId
+      });
     } catch (error) {
       this.patch({
         historyState: "error",
         error: toErrorMessage(error)
+      });
+      logPerfDebug("butler.runtime.reload_control_session.error", {
+        workspaceId: this.workspaceId,
+        requestedControlSessionId: controlSessionId ?? null,
+        message: toErrorMessage(error)
       });
     }
   }
@@ -534,11 +648,21 @@ export class ButlerRuntimeStore {
   private ensureRealtimeSubscription(sessionId: string, cursor: string | null): void {
     if (this.realtimeClient && this.realtimeSessionId === sessionId) {
       this.realtimeClient.updateCursor(cursor);
+      logPerfDebug("butler.runtime.realtime.reuse", {
+        workspaceId: this.workspaceId,
+        sessionId,
+        cursor
+      });
       return;
     }
 
     this.teardownRealtime();
     this.realtimeSessionId = sessionId;
+    logPerfDebug("butler.runtime.realtime.subscribe", {
+      workspaceId: this.workspaceId,
+      sessionId,
+      cursor
+    });
     this.realtimeClient = new RealtimeClient({
       sessionId,
       cursor,
@@ -587,9 +711,67 @@ export class ButlerRuntimeStore {
   }
 
   private teardownRealtime(): void {
+    this.clearTerminalSyncTimer();
+    if (this.realtimeSessionId) {
+      logPerfDebug("butler.runtime.realtime.teardown", {
+        workspaceId: this.workspaceId,
+        sessionId: this.realtimeSessionId
+      });
+    }
     this.realtimeClient?.close();
     this.realtimeClient = null;
     this.realtimeSessionId = null;
+  }
+
+  private clearTerminalSyncTimer(): void {
+    if (this.terminalSyncTimer === null) {
+      return;
+    }
+
+    window.clearTimeout(this.terminalSyncTimer);
+    this.terminalSyncTimer = null;
+  }
+
+  private scheduleTerminalSessionSync(reason: string, detail: Record<string, unknown>): void {
+    this.clearTerminalSyncTimer();
+    logPerfDebug("butler.runtime.terminal_sync.scheduled", {
+      workspaceId: this.workspaceId,
+      controlSessionId: this.state.controlSession?.id ?? null,
+      reason,
+      ...detail
+    });
+    this.terminalSyncTimer = window.setTimeout(() => {
+      this.terminalSyncTimer = null;
+
+      if (this.controlSessionReloadInFlight) {
+        logPerfDebug("butler.runtime.terminal_sync.skipped_inflight", {
+          workspaceId: this.workspaceId,
+          controlSessionId: this.state.controlSession?.id ?? null,
+          reason,
+          ...detail
+        });
+        return;
+      }
+
+      this.controlSessionReloadInFlight = true;
+      this.terminalSyncCompletedControlSessionId = this.state.controlSession?.id ?? null;
+      logPerfDebug("butler.runtime.terminal_sync.start", {
+        workspaceId: this.workspaceId,
+        controlSessionId: this.state.controlSession?.id ?? null,
+        reason,
+        ...detail
+      });
+      void this.reloadControlSession()
+        .finally(() => {
+          this.controlSessionReloadInFlight = false;
+          logPerfDebug("butler.runtime.terminal_sync.end", {
+            workspaceId: this.workspaceId,
+            controlSessionId: this.state.controlSession?.id ?? null,
+            reason,
+            ...detail
+          });
+        });
+    }, BUTLER_TERMINAL_SYNC_DEBOUNCE_MS);
   }
 
   private handleRealtimeMessages(
@@ -597,12 +779,37 @@ export class ButlerRuntimeStore {
     incoming: Parameters<typeof toViewMessage>[1][]
   ): void {
     if (!this.isActiveControlSession(sessionId)) {
+      logPerfDebug("butler.runtime.realtime.messages.ignored", {
+        workspaceId: this.workspaceId,
+        sessionId,
+        incoming: incoming.length,
+        activeSessionId: this.state.controlSession?.session.sessionId ?? null
+      });
       return;
     }
 
+    const merged = mergeButlerMessages(this.state.messages, sessionId, incoming);
     this.patch({
-      messages: mergeButlerMessages(this.state.messages, sessionId, incoming),
+      messages: buildButlerVisibleMessages(
+        merged,
+        this.state.controlSession,
+        {
+          runningState:
+            this.state.controlSession?.session.runningState ?? "idle",
+          runtimeHasActiveRun: this.state.runtimeHasActiveRun ?? false,
+          runtimeCanInterrupt: this.state.runtimeCanInterrupt ?? false,
+          detail: null,
+          errorDetail: this.state.error,
+          updatedAt: this.state.controlSession?.updatedAt ?? new Date().toISOString()
+        }
+      ),
       historyState: "ready"
+    });
+    logPerfDebug("butler.runtime.realtime.messages", {
+      workspaceId: this.workspaceId,
+      sessionId,
+      incoming: incoming.length,
+      messages: merged.length
     });
   }
 
@@ -615,13 +822,36 @@ export class ButlerRuntimeStore {
       return;
     }
 
+    if (event.hasActiveRun) {
+      this.terminalSyncArmed = true;
+      this.terminalSyncCompletedControlSessionId = null;
+    }
+    const currentControlSessionId = this.state.controlSession?.id ?? null;
+    const shouldSyncTerminalState =
+      !event.hasActiveRun
+      && this.terminalSyncArmed
+      && currentControlSessionId !== null
+      && this.terminalSyncCompletedControlSessionId !== currentControlSessionId;
+    logPerfDebug("butler.runtime.realtime.activity", {
+      workspaceId: this.workspaceId,
+      sessionId: event.sessionId,
+      hasActiveRun: event.hasActiveRun,
+      canInterrupt: event.canInterrupt,
+      updatedAt: event.updatedAt,
+      shouldSyncTerminalState,
+      terminalSyncArmed: this.terminalSyncArmed,
+      terminalSyncCompletedControlSessionId: this.terminalSyncCompletedControlSessionId
+    });
     this.patch({
       runtimeHasActiveRun: event.hasActiveRun,
       runtimeCanInterrupt: event.canInterrupt
     });
 
-    if (!event.hasActiveRun) {
-      void this.reloadControlSession();
+    if (shouldSyncTerminalState) {
+      this.scheduleTerminalSessionSync("activity_terminal", {
+        sessionId: event.sessionId,
+        updatedAt: event.updatedAt
+      });
     }
   }
 
@@ -630,15 +860,42 @@ export class ButlerRuntimeStore {
       return;
     }
 
+    const nextHasActiveRun = event.status === "starting" || event.status === "running";
+    if (nextHasActiveRun) {
+      this.terminalSyncArmed = true;
+      this.terminalSyncCompletedControlSessionId = null;
+    }
+    const isTerminalStatus =
+      event.status === "completed" || event.status === "failed" || event.status === "interrupted";
+    const currentControlSessionId = this.state.controlSession?.id ?? null;
+    const shouldSyncTerminalState =
+      isTerminalStatus
+      && (!nextHasActiveRun)
+      && this.terminalSyncArmed
+      && currentControlSessionId !== null
+      && this.terminalSyncCompletedControlSessionId !== currentControlSessionId;
+    logPerfDebug("butler.runtime.realtime.status", {
+      workspaceId: this.workspaceId,
+      sessionId: event.sessionId,
+      status: event.status,
+      timestamp: event.timestamp,
+      shouldSyncTerminalState,
+      terminalSyncArmed: this.terminalSyncArmed,
+      terminalSyncCompletedControlSessionId: this.terminalSyncCompletedControlSessionId
+    });
     this.patch({
-      runtimeHasActiveRun: event.status === "starting" || event.status === "running",
-      runtimeCanInterrupt: event.status === "starting" || event.status === "running"
+      runtimeHasActiveRun: nextHasActiveRun,
+      runtimeCanInterrupt: nextHasActiveRun
         ? true
         : this.state.runtimeCanInterrupt
     });
 
-    if (event.status === "completed" || event.status === "failed" || event.status === "interrupted") {
-      void this.reloadControlSession();
+    if (shouldSyncTerminalState) {
+      this.scheduleTerminalSessionSync("status_terminal", {
+        sessionId: event.sessionId,
+        status: event.status,
+        timestamp: event.timestamp
+      });
     }
   }
 
@@ -647,6 +904,12 @@ export class ButlerRuntimeStore {
       return;
     }
 
+    logPerfDebug("butler.runtime.realtime.error", {
+      workspaceId: this.workspaceId,
+      sessionId: event.sessionId,
+      detail: event.detail,
+      errorCode: event.error_code
+    });
     this.patch({
       error: event.detail,
       runtimeHasActiveRun: false
@@ -659,6 +922,11 @@ export class ButlerRuntimeStore {
       return;
     }
 
+    logPerfDebug("butler.runtime.realtime.interrupted", {
+      workspaceId: this.workspaceId,
+      sessionId: event.sessionId,
+      detail: event.detail
+    });
     this.patch({
       runtimeHasActiveRun: false,
       runtimeCanInterrupt: false,
@@ -727,7 +995,7 @@ function mergeButlerMessages(
 ): SessionMessageViewModel[] {
   const merged = new Map<string, SessionMessageViewModel>();
 
-  for (const message of current) {
+  for (const message of current.filter((item) => !isButlerDiagnosticMessage(item))) {
     merged.set(resolveButlerMessageKey(message), message);
   }
 
@@ -747,6 +1015,113 @@ function mergeButlerMessages(
 
 function resolveButlerMessageKey(message: Pick<SessionMessageViewModel, "id" | "rawRef">): string {
   return message.id || message.rawRef;
+}
+
+function buildButlerVisibleMessages(
+  messages: SessionMessageViewModel[],
+  controlSession: ButlerControlSessionDto | null,
+  runtime: {
+    runningState: string | null;
+    runtimeHasActiveRun: boolean | null;
+    runtimeCanInterrupt: boolean | null;
+    detail: string | null;
+    errorDetail: string | null;
+    updatedAt: string | null;
+  }
+): SessionMessageViewModel[] {
+  const authoritativeMessages = messages.filter((message) => !isButlerDiagnosticMessage(message));
+
+  if (authoritativeMessages.length > 0 || !controlSession) {
+    return authoritativeMessages;
+  }
+
+  const diagnosticContent = buildButlerEmptyOutputDiagnostic(controlSession, runtime);
+
+  if (!diagnosticContent) {
+    return authoritativeMessages;
+  }
+
+  return [
+    ...authoritativeMessages,
+    createButlerDiagnosticMessage(controlSession, diagnosticContent, runtime.updatedAt)
+  ];
+}
+
+function buildButlerEmptyOutputDiagnostic(
+  controlSession: ButlerControlSessionDto,
+  runtime: {
+    runningState: string | null;
+    runtimeHasActiveRun: boolean | null;
+    detail: string | null;
+    errorDetail: string | null;
+  }
+): string | null {
+  if (runtime.runtimeHasActiveRun) {
+    return null;
+  }
+
+  const terminalState = runtime.runningState;
+  const sessionFailed = controlSession.status === "failed" || terminalState === "failed";
+  const sessionTerminal =
+    sessionFailed
+    || terminalState === "completed"
+    || terminalState === "interrupted"
+    || (terminalState === "idle" && controlSession.status !== "running");
+
+  if (!sessionTerminal) {
+    return null;
+  }
+
+  const detail =
+    controlSession.lastSummary?.trim()
+    || runtime.errorDetail?.trim()
+    || runtime.detail?.trim()
+    || null;
+
+  const lines = [
+    sessionFailed
+      ? "本轮助手会话已结束，但没有收到可展示的助手消息。"
+      : "本轮助手会话已结束，但 provider 没有返回可展示的助手消息。"
+  ];
+
+  if (detail) {
+    lines.push("");
+    lines.push(`诊断信息：${detail}`);
+  }
+
+  return lines.join("\n");
+}
+
+function createButlerDiagnosticMessage(
+  controlSession: ButlerControlSessionDto,
+  content: string,
+  updatedAt: string | null
+): SessionMessageViewModel {
+  const sequenceBase = Number.isFinite(controlSession.session.messageCount)
+    ? controlSession.session.messageCount
+    : 0;
+
+  return {
+    id: `butler-diagnostic-${controlSession.id}`,
+    sessionId: controlSession.session.sessionId,
+    role: "system",
+    kind: "text",
+    content,
+    toolCall: null,
+    attachments: [],
+    attachmentPayloads: null,
+    origin: "system",
+    originRef: controlSession.id,
+    timestamp: updatedAt ?? controlSession.updatedAt,
+    sequence: sequenceBase + 1,
+    rawRef: `${BUTLER_DIAGNOSTIC_RAW_REF_PREFIX}${controlSession.id}`,
+    deliveryState: "sent",
+    clientRequestId: null
+  };
+}
+
+function isButlerDiagnosticMessage(message: Pick<SessionMessageViewModel, "rawRef">): boolean {
+  return message.rawRef.startsWith(BUTLER_DIAGNOSTIC_RAW_REF_PREFIX);
 }
 
 function toErrorMessage(error: unknown): string {

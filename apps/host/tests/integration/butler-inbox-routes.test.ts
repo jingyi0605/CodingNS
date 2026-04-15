@@ -65,6 +65,20 @@ describe("butler inbox routes", () => {
   });
 
   it("支持列出、新增、更新和删除收件箱代办", async () => {
+    const defaultAssistantState = {
+      lifecycleStage: "pending" as const,
+      analysisSummary: null,
+      generatedPrompt: null,
+      analysisControlSessionId: null,
+      analysisSessionId: null,
+      linkedButlerSessionId: null,
+      linkedSessionId: null,
+      linkedFollowUpTaskId: null,
+      lastError: null,
+      lastAnalyzedAt: null,
+      lastSessionCreatedAt: null,
+      lastFollowUpAt: null
+    };
     const butlerInboxService = {
       listItems: vi.fn(() => [
         {
@@ -77,6 +91,7 @@ describe("butler inbox routes", () => {
           content: "继续推动验证码收尾。",
           priority: "medium",
           status: "pending",
+          assistantState: defaultAssistantState,
           createdAt: "2026-04-07T00:00:00.000Z",
           updatedAt: "2026-04-07T00:00:00.000Z",
           closedAt: null
@@ -92,6 +107,7 @@ describe("butler inbox routes", () => {
         content: input.content,
         priority: input.priority,
         status: input.status,
+        assistantState: defaultAssistantState,
         createdAt: "2026-04-07T00:01:00.000Z",
         updatedAt: "2026-04-07T00:01:00.000Z",
         closedAt: null
@@ -106,9 +122,121 @@ describe("butler inbox routes", () => {
         content: input.content ?? "继续推动验证码收尾。",
         priority: input.priority ?? "medium",
         status: input.status ?? "closed",
+        assistantState: {
+          ...defaultAssistantState,
+          lifecycleStage: (input.status ?? "closed") === "closed" ? "completed" : "pending"
+        },
         createdAt: "2026-04-07T00:00:00.000Z",
         updatedAt: "2026-04-07T00:02:00.000Z",
         closedAt: "2026-04-07T00:02:00.000Z"
+      })),
+      analyzeItem: vi.fn(async (itemId: string) => ({
+        item: {
+          id: itemId,
+          projectId: "project-1",
+          projectName: "项目甲",
+          workspaceId: "workspace-1",
+          itemType: "task",
+          title: "跟进登录验证码",
+          content: "继续推动验证码收尾。",
+          priority: "medium",
+          status: "pending",
+          assistantState: {
+            ...defaultAssistantState,
+            lifecycleStage: "analyzing",
+            analysisControlSessionId: "control-analysis-1",
+            analysisSessionId: "session-analysis-1"
+          },
+          createdAt: "2026-04-07T00:00:00.000Z",
+          updatedAt: "2026-04-07T00:03:00.000Z",
+          closedAt: null
+        },
+        controlSession: {
+          id: "control-analysis-1",
+          providerId: "codex",
+          sessionId: "session-analysis-1",
+          purpose: "todo_analysis",
+          title: "分析代办：跟进登录验证码",
+          sourceItemId: itemId,
+          status: "running",
+          lastContextVersion: null,
+          lastSummary: "分析代办：跟进登录验证码",
+          createdAt: "2026-04-07T00:03:00.000Z",
+          updatedAt: "2026-04-07T00:03:00.000Z",
+          session: {
+            sessionId: "session-analysis-1",
+            workspaceId: "workspace-1",
+            provider: "codex",
+            providerSessionId: "provider-analysis-1",
+            rawStoreRef: "raw-analysis-1",
+            parentSessionId: null,
+            isSubagent: false,
+            subagentLabel: null,
+            isArchived: false,
+            isFavorite: false,
+            title: "分析代办：跟进登录验证码",
+            messageCount: 1,
+            lastMessageAt: "2026-04-07T00:03:00.000Z",
+            createdAt: "2026-04-07T00:03:00.000Z",
+            updatedAt: "2026-04-07T00:03:00.000Z",
+            syncStatus: "idle",
+            syncCursor: null,
+            lastSyncAt: "2026-04-07T00:03:00.000Z",
+            lastErrorCode: null,
+            lastErrorDetail: null,
+            resumedAt: null,
+            runningState: "running",
+            activitySource: "runtime",
+            activityResolutionSource: "authoritative_runtime",
+            activityConfidence: "authoritative",
+            runId: null,
+            lastEventAt: "2026-04-07T00:03:00.000Z",
+            completedAt: null,
+            lastSeenAt: null,
+            watchdogTriggeredAt: null,
+            activityState: "running"
+          }
+        }
+      })),
+      startExecution: vi.fn(async (itemId: string) => ({
+        item: {
+          id: itemId,
+          projectId: "project-1",
+          projectName: "项目甲",
+          workspaceId: "workspace-1",
+          itemType: "task",
+          title: "跟进登录验证码",
+          content: "继续推动验证码收尾。",
+          priority: "medium",
+          status: "in_progress",
+          assistantState: {
+            ...defaultAssistantState,
+            lifecycleStage: "follow_up_active",
+            linkedButlerSessionId: "butler-session-1",
+            linkedSessionId: "session-1",
+            linkedFollowUpTaskId: "follow-up-1"
+          },
+          createdAt: "2026-04-07T00:00:00.000Z",
+          updatedAt: "2026-04-07T00:04:00.000Z",
+          closedAt: null
+        },
+        session: {
+          id: "butler-session-1",
+          projectId: "project-1",
+          sessionId: "session-1",
+          provider: "codex",
+          title: "登录验证码修复",
+          isArchived: false,
+          role: "execution",
+          ownershipMode: "managed",
+          status: "running",
+          runningState: "running",
+          lastSummary: null,
+          lastCheckpointAt: null,
+          createdAt: "2026-04-07T00:04:00.000Z",
+          updatedAt: "2026-04-07T00:04:00.000Z"
+        },
+        followUpTask: null
       })),
       deleteItem: vi.fn()
     } as unknown as ButlerInboxService;
@@ -123,7 +251,8 @@ describe("butler inbox routes", () => {
     expect(listResponse.statusCode).toBe(200);
     expect(listResponse.json().items[0].title).toBe("跟进登录验证码");
     expect((butlerInboxService.listItems as any).mock.calls[0][0]).toMatchObject({
-      workspaceId: "workspace-1"
+      workspaceId: "workspace-1",
+      userId: "user-1"
     });
 
     const createResponse = await app.inject({
@@ -157,6 +286,25 @@ describe("butler inbox routes", () => {
     expect(updateResponse.statusCode).toBe(200);
     expect(updateResponse.json().item.status).toBe("closed");
     expect((butlerInboxService.updateItem as any).mock.calls[0][0]).toBe("todo-1");
+
+    const analyzeResponse = await app.inject({
+      method: "POST",
+      url: "/api/butler/inbox/todo-1/analyze"
+    });
+
+    expect(analyzeResponse.statusCode).toBe(202);
+    expect(analyzeResponse.json().item.assistantState.lifecycleStage).toBe("analyzing");
+    expect(analyzeResponse.json().controlSession.purpose).toBe("todo_analysis");
+    expect((butlerInboxService.analyzeItem as any).mock.calls[0][0]).toBe("todo-1");
+
+    const startSessionResponse = await app.inject({
+      method: "POST",
+      url: "/api/butler/inbox/todo-1/start-session"
+    });
+
+    expect(startSessionResponse.statusCode).toBe(201);
+    expect(startSessionResponse.json().item.assistantState.lifecycleStage).toBe("follow_up_active");
+    expect((butlerInboxService.startExecution as any).mock.calls[0][0]).toBe("todo-1");
 
     const deleteResponse = await app.inject({
       method: "DELETE",

@@ -10,6 +10,8 @@ export async function registerButlerRoutes(
   app.post("/api/butler/profile/init", butlerController.initProfile);
   app.patch("/api/butler/profile", butlerController.updateProfile);
   app.get("/api/butler/control-session", butlerController.getCurrentControlSession);
+  app.get("/api/butler/control-sessions", butlerController.listControlSessions);
+  app.get("/api/butler/control-sessions/:controlSessionId", butlerController.getControlSession);
   app.get("/api/butler/control-session/events", butlerController.listControlSessionEvents);
   app.post("/api/butler/control-session/reset", butlerController.resetControlSession);
   app.post("/api/butler/control-session/start", butlerController.startControlSession);
@@ -23,6 +25,8 @@ export async function registerButlerRoutes(
   app.get("/api/butler/inbox", butlerController.listInboxItems);
   app.post("/api/butler/inbox", butlerController.createInboxItem);
   app.patch("/api/butler/inbox/:itemId", butlerController.updateInboxItem);
+  app.post("/api/butler/inbox/:itemId/analyze", butlerController.analyzeInboxItem);
+  app.post("/api/butler/inbox/:itemId/start-session", butlerController.startInboxItemSession);
   app.delete("/api/butler/inbox/:itemId", butlerController.deleteInboxItem);
   app.get("/api/butler/notifications/archives", butlerController.listNotificationArchives);
   app.patch("/api/butler/notifications/archives/:notificationId", butlerController.updateNotificationArchive);

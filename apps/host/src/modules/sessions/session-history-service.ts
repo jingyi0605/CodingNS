@@ -2743,7 +2743,14 @@ export class SessionHistoryService {
   }
 
   private getSessionListItemOrThrow(sessionId: string, userId: string): SessionListItem {
-    const item = this.sessionIndexRepository.findBySessionId(sessionId, userId);
+    const canonicalSessionId = this.resolveCanonicalSessionId(sessionId, userId);
+    const item =
+      this.sessionIndexRepository.findBySessionId(canonicalSessionId, userId)
+      ?? (
+        canonicalSessionId === sessionId
+          ? null
+          : this.sessionIndexRepository.findBySessionId(sessionId, userId)
+      );
 
     if (!item) {
       throw new AppError({

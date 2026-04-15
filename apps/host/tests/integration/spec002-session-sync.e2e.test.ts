@@ -1253,6 +1253,114 @@ describe("spec002 会话同步核心", () => {
     expect(sessionStatusSnapshotRepository.findBySessionId("missing-session")).toBeNull();
   });
 
+  it("getSession 会把只有 alias binding 的旧 sessionId 解析到真实 session", () => {
+    const fixture = createEmptyFixture();
+    const config = resolveHostConfig({
+      databasePath: ":memory:",
+      claudeCodeHomeDir: fixture.claudeHomeDir,
+      codexHomeDir: fixture.codexHomeDir
+    });
+    const database = createDatabaseClient(":memory:");
+    const workspaceRepository = new WorkspaceRepository(database.db);
+    const sessionBindingRepository = new SessionBindingRepository(database.db);
+    const sessionIndexRepository = new SessionIndexRepository(database.db);
+    const sessionStateRepository = new SessionStateRepository(database.db);
+    const sessionStatusSnapshotRepository = new SessionStatusSnapshotRepository(database.db);
+    const sessionChangedFileService = new SessionChangedFileService(
+      new SessionChangedFileRepository(database.db)
+    );
+    const sessionMessageAttachmentService = new SessionMessageAttachmentService(
+      new SessionMessageAttachmentRepository(database.db),
+      config
+    );
+    const sessionHistoryService = new SessionHistoryService(
+      database.db,
+      workspaceRepository,
+      sessionBindingRepository,
+      sessionChangedFileService,
+      sessionIndexRepository,
+      sessionMessageAttachmentService,
+      sessionStateRepository,
+      sessionStatusSnapshotRepository,
+      config
+    );
+
+    activeEmptyFixtures.push(fixture);
+    activeClosers.push(() => database.close());
+
+    database.db
+      .prepare(
+        `INSERT INTO auth_users (id, username, password_hash, role, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        "user-1",
+        "tester",
+        "hash",
+        "admin",
+        "2026-04-15T10:00:00.000Z",
+        "2026-04-15T10:00:00.000Z"
+      );
+    workspaceRepository.create({
+      id: "workspace-1",
+      name: "Fixture Workspace",
+      path: fixture.workspaceDir,
+      repoRoot: fixture.workspaceDir,
+      favorite: false,
+      createdAt: "2026-04-15T10:00:00.000Z",
+      updatedAt: "2026-04-15T10:00:00.000Z",
+      removedAt: null
+    });
+    sessionBindingRepository.upsert({
+      sessionId: "session-target",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "provider-session-target",
+      rawStoreRef: "raw-target",
+      createdAt: "2026-04-15T10:00:00.000Z",
+      updatedAt: "2026-04-15T10:00:00.000Z"
+    });
+    sessionIndexRepository.upsert({
+      sessionId: "session-target",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      title: "真实会话",
+      messageCount: 6,
+      isArchived: false,
+      lastMessageAt: "2026-04-15T10:05:00.000Z",
+      createdAt: "2026-04-15T10:00:00.000Z",
+      updatedAt: "2026-04-15T10:05:00.000Z"
+    });
+    sessionStateRepository.upsert({
+      sessionId: "session-target",
+      userId: "user-1",
+      runningState: "running",
+      activitySource: "runtime",
+      favorite: false,
+      lastEventAt: "2026-04-15T10:05:00.000Z",
+      completedAt: null,
+      lastSeenAt: null,
+      updatedAt: "2026-04-15T10:05:00.000Z"
+    });
+    sessionBindingRepository.upsert({
+      sessionId: "session-alias",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "alias://codex/session-target/session-alias",
+      rawStoreRef: "alias://codex/session-target/session-alias",
+      createdAt: "2026-04-15T10:00:00.000Z",
+      updatedAt: "2026-04-15T10:05:01.000Z"
+    });
+
+    expect(sessionHistoryService.getSession("session-alias", "user-1")).toEqual(
+      expect.objectContaining({
+        sessionId: "session-target",
+        title: "真实会话",
+        providerSessionId: "provider-session-target"
+      })
+    );
+  });
+
   it("pending 绑定回填真 ID 时如果撞上其他工作区的会话，会直接拒绝跨工作区合并", async () => {
     const fixture = createEmptyFixture();
     const config = resolveHostConfig({
