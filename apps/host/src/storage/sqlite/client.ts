@@ -18,6 +18,7 @@ export function createDatabaseClient(databasePath: string): DatabaseClient {
   const schema = fs.readFileSync(schemaPath, "utf8");
 
   db.exec(schema);
+  ensureAuthLoginAttemptSchema(db);
   ensureWorkspaceRemovalColumn(db);
   ensureWorkspaceSortOrderColumn(db);
   ensureWorkspaceNavigationBackgroundColorColumn(db);
@@ -50,6 +51,31 @@ export function createDatabaseClient(databasePath: string): DatabaseClient {
     db,
     close: () => db.close()
   };
+}
+
+function ensureAuthLoginAttemptSchema(db: Database.Database): void {
+  const columns = db
+    .prepare("PRAGMA table_info(auth_login_attempts)")
+    .all() as Array<{ name: string }>;
+
+  if (columns.length > 0) {
+    return;
+  }
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS auth_login_attempts (
+      username TEXT PRIMARY KEY,
+      failed_attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (failed_attempt_count >= 0),
+      captcha_id TEXT,
+      captcha_code_hash TEXT,
+      captcha_expires_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_auth_login_attempts_updated_at
+      ON auth_login_attempts(updated_at DESC);
+  `);
 }
 
 function ensureWorkspaceRemovalColumn(db: Database.Database): void {

@@ -131,6 +131,7 @@ import { DemoCleanupService, DemoOnlineTracker } from "../modules/demo/demo-clea
 import { setErrorHandler } from "../shared/http/error-handler.js";
 import { startTerminalDebugEventLoopLagMonitor } from "../shared/utils/terminal-debug-log.js";
 import { AuthTokenRepository } from "../storage/repositories/auth-token-repository.js";
+import { AuthLoginAttemptRepository } from "../storage/repositories/auth-login-attempt-repository.js";
 import { AuthUserRepository } from "../storage/repositories/auth-user-repository.js";
 import { AiFallbackEditRepository } from "../storage/repositories/ai-fallback-edit-repository.js";
 import { BootstrapStateRepository } from "../storage/repositories/bootstrap-state-repository.js";
@@ -205,6 +206,7 @@ export function createServer(config: HostConfig) {
     bootstrapStateRepository: new BootstrapStateRepository(database.db),
     authUserRepository: new AuthUserRepository(database.db),
     authTokenRepository: new AuthTokenRepository(database.db),
+    authLoginAttemptRepository: new AuthLoginAttemptRepository(database.db),
     workspaceRepository: new WorkspaceRepository(database.db),
     workspaceWorktreeRepository: new WorkspaceWorktreeRepository(database.db),
     workspaceNavigationStateRepository: new WorkspaceNavigationStateRepository(database.db),
@@ -275,6 +277,7 @@ export function createServer(config: HostConfig) {
     repositories.bootstrapStateRepository,
     repositories.authUserRepository,
     repositories.authTokenRepository,
+    repositories.authLoginAttemptRepository,
     effectiveConfig,
     demoServices
   );

@@ -3,12 +3,14 @@ export interface AppErrorOptions {
   errorCode: string;
   detail: string;
   field?: string;
+  data?: Record<string, unknown>;
 }
 
 export class AppError extends Error {
   readonly statusCode: number;
   readonly errorCode: string;
   readonly field?: string;
+  readonly data?: Record<string, unknown>;
 
   constructor(options: AppErrorOptions) {
     super(options.detail);
@@ -16,6 +18,7 @@ export class AppError extends Error {
     this.statusCode = options.statusCode;
     this.errorCode = options.errorCode;
     this.field = options.field;
+    this.data = options.data;
   }
 }
 

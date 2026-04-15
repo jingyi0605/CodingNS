@@ -167,6 +167,31 @@ function TypewriterText({ text }: { text: string }) {
   );
 }
 
+interface LoginCaptchaChallenge {
+  captchaId: string;
+  imageDataUrl: string;
+}
+
+function readLoginCaptchaChallenge(data: Record<string, unknown> | undefined): LoginCaptchaChallenge | null {
+  const captcha = data?.captcha;
+
+  if (typeof captcha !== "object" || captcha === null) {
+    return null;
+  }
+
+  const captchaId = (captcha as Record<string, unknown>).captchaId;
+  const imageDataUrl = (captcha as Record<string, unknown>).imageDataUrl;
+
+  if (typeof captchaId !== "string" || typeof imageDataUrl !== "string") {
+    return null;
+  }
+
+  return {
+    captchaId,
+    imageDataUrl
+  };
+}
+
 export function LoginPage() {
   const navigate = useNavigate();
   const t = useT();
@@ -188,6 +213,8 @@ export function LoginPage() {
   const rememberedServerBaseUrl = rememberedLoginSnapshot.legacyServerBaseUrl;
   const [username, setUsername] = useState(() => rememberedLogin?.username ?? "admin");
   const [password, setPassword] = useState(() => rememberedLogin?.password ?? "");
+  const [captchaChallenge, setCaptchaChallenge] = useState<LoginCaptchaChallenge | null>(null);
+  const [captchaCode, setCaptchaCode] = useState("");
   const [rememberPassword, setRememberPassword] = useState(() => Boolean(rememberedLogin));
   const persistedServerBaseUrl = useServerConfigSelector((state) => state.baseUrl);
   const [probeServerBaseUrl, setProbeServerBaseUrl] = useState(persistedServerBaseUrl);
@@ -210,6 +237,8 @@ export function LoginPage() {
   useEffect(() => {
     setUsername(rememberedLogin?.username ?? "admin");
     setPassword(rememberedLogin?.password ?? "");
+    setCaptchaChallenge(null);
+    setCaptchaCode("");
     setRememberPassword(Boolean(rememberedLogin));
   }, [rememberedLogin]);
 
@@ -305,7 +334,24 @@ export function LoginPage() {
     }
 
     try {
-      await authGateway.login(username, password, persistedServerBaseUrl);
+      const loginPayload = captchaChallenge
+        ? {
+            username,
+            password,
+            captchaId: captchaChallenge.captchaId,
+            captchaCode
+          }
+        : {
+            username,
+            password
+          };
+
+      await authGateway.login(
+        loginPayload,
+        persistedServerBaseUrl
+      );
+      setCaptchaChallenge(null);
+      setCaptchaCode("");
       await userPreferenceStore.refreshForAuthenticatedUser();
 
       if (rememberPasswordSupported && rememberPassword && activeHostId) {
@@ -323,6 +369,17 @@ export function LoginPage() {
           navigate("/bootstrap", { replace: true });
           return;
         }
+
+        const nextCaptchaChallenge = readLoginCaptchaChallenge(error.data);
+
+        if (nextCaptchaChallenge) {
+          setCaptchaChallenge(nextCaptchaChallenge);
+          setCaptchaCode("");
+        } else if (error.errorCode === "INVALID_CREDENTIALS") {
+          setCaptchaChallenge(null);
+          setCaptchaCode("");
+        }
+
         setStatusText(error.message);
       } else {
         setStatusText(t("auth.authUnavailable"));
@@ -332,6 +389,17 @@ export function LoginPage() {
     }
   }
 
+  function handleUsernameChange(value: string): void {
+    setUsername(value);
+
+    if (!captchaChallenge) {
+      return;
+    }
+
+    setCaptchaChallenge(null);
+    setCaptchaCode("");
+  }
+
   function handleServerSettingsSave(baseUrl: string): void {
     setProbeServerBaseUrl(baseUrl);
     setStatusText(null);
@@ -339,6 +407,7 @@ export function LoginPage() {
 
   const usernameInputId = "login-username";
   const passwordInputId = "login-password";
+  const captchaInputId = "login-captcha";
 
   return (
     <main
@@ -417,7 +486,7 @@ export function LoginPage() {
                   aria-label={t("auth.username")}
                   className="cyber-input"
                   value={username}
-                  onChange={(e) => setUsername(e.target.value)}
+                  onChange={(e) => handleUsernameChange(e.target.value)}
                   onFocus={() => setFocusedField("username")}
                   onBlur={() => setFocusedField(null)}
                   autoComplete="username"
@@ -445,6 +514,39 @@ export function LoginPage() {
                   autoComplete="current-password"
                 />
               </div>
+
+              {captchaChallenge ? (
+                <div className="cyber-captcha-panel">
+                  <img
+                    alt={t("auth.captchaImageAlt")}
+                    className="cyber-captcha-image"
+                    draggable={false}
+                    src={captchaChallenge.imageDataUrl}
+                  />
+                  <p className="cyber-captcha-hint">{t("auth.captchaHint")}</p>
+
+                  <div className={`cyber-field ${focusedField === "captcha" ? "focused" : ""}`}>
+                    <div className="cyber-field-border">
+                      <div className="cyber-field-border-glow" />
+                    </div>
+                    <label className="cyber-field-label" htmlFor={captchaInputId}>
+                      <span className="cyber-field-icon">#</span>
+                      {t("auth.captcha")}
+                    </label>
+                    <input
+                      id={captchaInputId}
+                      aria-label={t("auth.captcha")}
+                      className="cyber-input"
+                      placeholder={t("auth.captchaPlaceholder")}
+                      value={captchaCode}
+                      onChange={(event) => setCaptchaCode(event.target.value)}
+                      onFocus={() => setFocusedField("captcha")}
+                      onBlur={() => setFocusedField(null)}
+                      autoComplete="one-time-code"
+                    />
+                  </div>
+                </div>
+              ) : null}
 
               {rememberPasswordSupported ? (
                 <label className="cyber-remember-toggle">

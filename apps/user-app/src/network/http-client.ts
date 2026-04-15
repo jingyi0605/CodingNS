@@ -130,6 +130,7 @@ async function parseApiErrorPayload(response: Response): Promise<ApiErrorPayload
         detail: parsed.detail,
         error_code: parsed.error_code,
         field: typeof parsed.field === "string" ? parsed.field : undefined,
+        data: isApiErrorData(parsed.data) ? parsed.data : undefined,
         timestamp: typeof parsed.timestamp === "string" ? parsed.timestamp : undefined
       };
     }
@@ -147,6 +148,10 @@ function buildFallbackApiErrorPayload(status: number, rawDetail?: string): ApiEr
     detail: normalizedDetail || `请求失败（HTTP ${status}）`,
     error_code: status === 401 ? "UNAUTHORIZED" : "HTTP_ERROR"
   };
+}
+
+function isApiErrorData(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function shouldAttemptRefresh(status: number, errorCode: string): boolean {

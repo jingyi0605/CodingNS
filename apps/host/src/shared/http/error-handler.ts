@@ -6,6 +6,7 @@ export interface ErrorPayload {
   error_code: string;
   detail: string;
   field?: string;
+  data?: Record<string, unknown>;
   timestamp: string;
 }
 
@@ -14,12 +15,14 @@ export function sendError(
   statusCode: number,
   errorCode: string,
   detail: string,
-  field?: string
+  field?: string,
+  data?: Record<string, unknown>
 ): FastifyReply {
   return reply.status(statusCode).send({
     error_code: errorCode,
     detail,
     field,
+    data,
     timestamp: new Date().toISOString()
   } satisfies ErrorPayload);
 }
@@ -41,7 +44,7 @@ export function setErrorHandler(
   request.log.error(error);
 
   if (isAppError(error)) {
-    return sendError(reply, error.statusCode, error.errorCode, error.message, error.field);
+    return sendError(reply, error.statusCode, error.errorCode, error.message, error.field, error.data);
   }
 
   return sendError(reply, 500, "INTERNAL_ERROR", "服务内部错误");

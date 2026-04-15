@@ -16083,6 +16083,32 @@ textarea:focus-visible {
   opacity: 0.5;
 }
 
+.cyber-captcha-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--cyber-border) 76%, transparent);
+  background: color-mix(in srgb, var(--cyber-bg-card) 70%, transparent);
+}
+
+.cyber-captcha-image {
+  width: 100%;
+  height: 56px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--cyber-border) 82%, transparent);
+  background: #0f172a;
+  object-fit: cover;
+}
+
+.cyber-captcha-hint {
+  margin: 0;
+  color: var(--cyber-text-dim);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .cyber-remember-toggle {
   display: inline-flex;
   align-items: center;

@@ -51,6 +51,16 @@ export interface AuthTokenRecord {
   createdAt: string;
 }
 
+export interface AuthLoginAttemptRecord {
+  username: string;
+  failedAttemptCount: number;
+  captchaId: string | null;
+  captchaCodeHash: string | null;
+  captchaExpiresAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface Workspace {
   id: string;
   name: string;

@@ -32,6 +32,19 @@ CREATE TABLE IF NOT EXISTS auth_tokens (
 CREATE INDEX IF NOT EXISTS idx_auth_tokens_user_id ON auth_tokens(user_id);
 CREATE INDEX IF NOT EXISTS idx_auth_tokens_expires_at ON auth_tokens(expires_at);
 
+CREATE TABLE IF NOT EXISTS auth_login_attempts (
+  username TEXT PRIMARY KEY,
+  failed_attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (failed_attempt_count >= 0),
+  captcha_id TEXT,
+  captcha_code_hash TEXT,
+  captcha_expires_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_auth_login_attempts_updated_at
+  ON auth_login_attempts(updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS workspaces (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,

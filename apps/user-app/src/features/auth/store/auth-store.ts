@@ -3,7 +3,7 @@ import { useSyncExternalStore } from "react";
 import { clientConfigStore } from "../../../config/client-config-store";
 import { getActiveHost, type HostProfile } from "../../../config/client-config-types";
 import { ApiError } from "../../../shared/network/api-error";
-import { loginRequest, refreshRequest, setupRequest } from "../api/auth-api";
+import { loginRequest, refreshRequest, setupRequest, type LoginPayload } from "../api/auth-api";
 
 export interface AuthenticatedUser {
   userId: string;
@@ -80,8 +80,8 @@ class AuthStore {
 
   getState = () => this.state;
 
-  async login(username: string, password: string, baseUrl?: string): Promise<AuthSession> {
-    const session = await loginRequest({ username, password }, baseUrl);
+  async login(payload: LoginPayload, baseUrl?: string): Promise<AuthSession> {
+    const session = await loginRequest(payload, baseUrl);
     this.setSession(session);
     return session;
   }

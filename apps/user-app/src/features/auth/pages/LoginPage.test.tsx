@@ -6,7 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clientConfigStore } from "../../../config/client-config-store";
 import { DEFAULT_HOST_PROFILE_ID, getActiveHostBaseUrl } from "../../../config/client-config-types";
 import { serverConfigStore } from "../../../config/server-config";
+import { authStore } from "../store/auth-store";
 import { PlatformProvider } from "../../../platform/platform-provider";
+import { userPreferenceStore } from "../../../preferences/user-preference-store";
 import { I18nProvider, t } from "../../../shared/i18n";
 import { ThemeProvider } from "../../../shared/theme";
 import { AppVersionProvider } from "../../../shared/version/app-version";
@@ -44,6 +46,7 @@ function mockNavigator({
 describe("LoginPage", () => {
   beforeEach(() => {
     window.localStorage.clear();
+    authStore.clear();
     document.head.innerHTML = `
       <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     `;
@@ -69,6 +72,7 @@ describe("LoginPage", () => {
   });
 
   afterEach(() => {
+    authStore.clear();
     global.fetch = originalFetch;
     vi.restoreAllMocks();
     document.head.innerHTML = "";
@@ -250,6 +254,160 @@ describe("LoginPage", () => {
       });
     });
   });
+
+  it("第三次失败后会显示验证码，并在验证码正确后继续登录", async () => {
+    mockNavigator({
+      userAgent:
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+      platform: "MacIntel"
+    });
+    delete window.__TAURI_INTERNALS__;
+
+    const loginRequests: Array<Record<string, unknown>> = [];
+    vi.spyOn(userPreferenceStore, "refreshForAuthenticatedUser").mockResolvedValue(
+      userPreferenceStore.getState()
+    );
+    global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+
+      if (url.endsWith("/api/public/bootstrap-status")) {
+        return createJsonResponse({ initialized: true });
+      }
+
+      if (url.endsWith("/api/auth/login")) {
+        const payload = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+        loginRequests.push(payload);
+
+        switch (loginRequests.length) {
+          case 1:
+          case 2:
+            return createJsonResponse(
+              {
+                detail: "用户名或密码错误",
+                error_code: "INVALID_CREDENTIALS"
+              },
+              401
+            );
+          case 3:
+            return createJsonResponse(
+              {
+                detail: "用户名或密码错误，请完成图形验证码后重试",
+                error_code: "INVALID_CREDENTIALS",
+                data: {
+                  captcha: {
+                    captchaId: "captcha-3",
+                    imageDataUrl: "data:image/svg+xml;base64,Y2FwdGNoYS0z"
+                  }
+                }
+              },
+              401
+            );
+          case 4:
+            return createJsonResponse(
+              {
+                detail: "请先完成图形验证码",
+                error_code: "CAPTCHA_REQUIRED",
+                data: {
+                  captcha: {
+                    captchaId: "captcha-4",
+                    imageDataUrl: "data:image/svg+xml;base64,Y2FwdGNoYS00"
+                  }
+                }
+              },
+              400
+            );
+          case 5:
+            return createJsonResponse(
+              {
+                detail: "图形验证码错误，请重试",
+                error_code: "CAPTCHA_INVALID",
+                data: {
+                  captcha: {
+                    captchaId: "captcha-5",
+                    imageDataUrl: "data:image/svg+xml;base64,Y2FwdGNoYS01"
+                  }
+                }
+              },
+              400
+            );
+          default:
+            return createJsonResponse({
+              accessToken: "access-token",
+              refreshToken: "refresh-token",
+              expiresIn: 3600,
+              user: {
+                userId: "user-1",
+                username: "admin",
+                role: "admin"
+              }
+            });
+        }
+      }
+
+      throw new Error(`未处理的请求: ${url}`);
+    }) as typeof fetch;
+
+    renderLoginPage();
+
+    const passwordInput = (await screen.findByLabelText(t("auth.password"))) as HTMLInputElement;
+    const submitButton = screen.getByRole("button", { name: new RegExp(t("auth.submitLogin")) });
+
+    await userEvent.type(passwordInput, "wrong-password");
+    await userEvent.click(submitButton);
+    await userEvent.click(submitButton);
+    await userEvent.click(submitButton);
+
+    const captchaInput = (await screen.findByLabelText(t("auth.captcha"))) as HTMLInputElement;
+    expect(screen.getByRole("img", { name: t("auth.captchaImageAlt") })).toBeInTheDocument();
+
+    await userEvent.clear(passwordInput);
+    await userEvent.type(passwordInput, "admin1234");
+    await userEvent.click(submitButton);
+
+    await userEvent.type(captchaInput, "WRNG");
+    await userEvent.click(submitButton);
+
+    await userEvent.clear(captchaInput);
+    await userEvent.type(captchaInput, "ABCD");
+    await userEvent.click(submitButton);
+
+    await waitFor(() => {
+      expect(screen.getByText("HOME")).toBeInTheDocument();
+    });
+
+    expect(loginRequests).toEqual([
+      {
+        username: "admin",
+        password: "wrong-password"
+      },
+      {
+        username: "admin",
+        password: "wrong-password"
+      },
+      {
+        username: "admin",
+        password: "wrong-password"
+      },
+      {
+        username: "admin",
+        password: "admin1234",
+        captchaId: "captcha-3",
+        captchaCode: ""
+      },
+      {
+        username: "admin",
+        password: "admin1234",
+        captchaId: "captcha-4",
+        captchaCode: "WRNG"
+      },
+      {
+        username: "admin",
+        password: "admin1234",
+        captchaId: "captcha-5",
+        captchaCode: "ABCD"
+      }
+    ]);
+  });
 });
 
 function renderLoginPage() {
@@ -260,6 +418,7 @@ function renderLoginPage() {
           <ThemeProvider>
             <MemoryRouter initialEntries={["/login"]}>
               <Routes>
+                <Route path="/" element={<div>HOME</div>} />
                 <Route path="/login" element={<LoginPage />} />
               </Routes>
             </MemoryRouter>

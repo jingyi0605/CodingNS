@@ -7,6 +7,11 @@ export interface CredentialPayload {
   password: string;
 }
 
+export interface LoginPayload extends CredentialPayload {
+  captchaId?: string;
+  captchaCode?: string;
+}
+
 export interface RefreshPayload {
   refreshToken: string;
 }
@@ -32,7 +37,7 @@ export function setupRequest(payload: CredentialPayload, baseUrl?: string) {
   });
 }
 
-export function loginRequest(payload: CredentialPayload, baseUrl?: string) {
+export function loginRequest(payload: LoginPayload, baseUrl?: string) {
   return httpClient.request<AuthSession>("/api/auth/login", {
     method: "POST",
     body: JSON.stringify(payload),

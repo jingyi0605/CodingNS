@@ -3,10 +3,11 @@ import {
   type AuthRefreshResult,
   type AuthSession
 } from "../features/auth/store/auth-store";
+import type { LoginPayload } from "../features/auth/api/auth-api";
 
 export const authGateway = {
-  login(username: string, password: string, baseUrl?: string): Promise<AuthSession> {
-    return authStore.login(username, password, baseUrl);
+  login(payload: LoginPayload, baseUrl?: string): Promise<AuthSession> {
+    return authStore.login(payload, baseUrl);
   },
   bootstrap(username: string, password: string, baseUrl?: string): Promise<void> {
     return authStore.bootstrap(username, password, baseUrl);

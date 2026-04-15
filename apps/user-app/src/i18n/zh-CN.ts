@@ -35,6 +35,10 @@ export const zhCN = {
     logoutSuccess: "当前登录态已经清空。",
     demoBanner: "演示环境 — 所有账号数据公开可见，注销后自动清除",
     demoSessionExpired: "演示会话已过期，请重新登录",
+    captcha: "图形验证码",
+    captchaPlaceholder: "输入图中的字符",
+    captchaHint: "连续输错三次后，需要先完成图形验证码才能继续登录。",
+    captchaImageAlt: "登录图形验证码",
     serverSettings: "服务器设置",
     serverSettingsTitle: "服务器配置",
     saveServerSettings: "保存设置"

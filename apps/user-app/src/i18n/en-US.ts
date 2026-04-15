@@ -37,6 +37,10 @@ export const enUS = {
     logoutSuccess: "The current login state has been cleared.",
     demoBanner: "Demo environment — all account data is public and cleared on logout",
     demoSessionExpired: "Demo session expired. Please log in again.",
+    captcha: "Captcha",
+    captchaPlaceholder: "Enter the characters in the image",
+    captchaHint: "After three failed attempts, complete the captcha before trying again.",
+    captchaImageAlt: "Login captcha image",
     serverSettings: "Server Settings",
     serverSettingsTitle: "Server Configuration",
     saveServerSettings: "Save Settings"
