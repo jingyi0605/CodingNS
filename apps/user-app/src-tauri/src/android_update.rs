@@ -2,6 +2,9 @@ use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
 #[cfg(target_os = "android")]
+use tauri::Manager;
+
+#[cfg(target_os = "android")]
 use std::{
   fs,
   io::Read,
@@ -151,7 +154,7 @@ fn cleanup_downloaded_apk(apk_path: &Path) {
 #[cfg(target_os = "android")]
 fn with_android_env<T, F>(handler: F) -> Result<T, String>
 where
-  F: FnOnce(&mut JNIEnv, &JObject) -> Result<T, String>
+  F: for<'local> FnOnce(&mut JNIEnv<'local>, &JObject<'local>) -> Result<T, String>
 {
   let android_context = ndk_context::android_context();
   let vm = unsafe { JavaVM::from_raw(android_context.vm().cast()) }
@@ -167,7 +170,10 @@ where
 }
 
 #[cfg(target_os = "android")]
-fn read_runtime_info(env: &mut JNIEnv, activity: &JObject) -> Result<AndroidRuntimeInfo, String> {
+fn read_runtime_info<'local>(
+  env: &mut JNIEnv<'local>,
+  activity: &JObject<'local>
+) -> Result<AndroidRuntimeInfo, String> {
   let package_name = read_package_name(env, activity)?;
   let package_info = get_installed_package_info(env, activity, &package_name)?;
   let version_name = read_optional_string_field(env, &package_info, "versionName")?
@@ -185,7 +191,10 @@ fn read_runtime_info(env: &mut JNIEnv, activity: &JObject) -> Result<AndroidRunt
 }
 
 #[cfg(target_os = "android")]
-fn read_package_name(env: &mut JNIEnv, activity: &JObject) -> Result<String, String> {
+fn read_package_name<'local>(
+  env: &mut JNIEnv<'local>,
+  activity: &JObject<'local>
+) -> Result<String, String> {
   let package_name = env
     .call_method(activity, "getPackageName", "()Ljava/lang/String;", &[])
     .and_then(|value| value.l())
@@ -195,11 +204,11 @@ fn read_package_name(env: &mut JNIEnv, activity: &JObject) -> Result<String, Str
 }
 
 #[cfg(target_os = "android")]
-fn get_installed_package_info(
-  env: &mut JNIEnv,
-  activity: &JObject,
+fn get_installed_package_info<'local>(
+  env: &mut JNIEnv<'local>,
+  activity: &JObject<'local>,
   package_name: &str
-) -> Result<JObject, String> {
+) -> Result<JObject<'local>, String> {
   let package_manager = get_package_manager(env, activity)?;
   let package_name_java = env
     .new_string(package_name)
@@ -223,7 +232,10 @@ fn get_installed_package_info(
 }
 
 #[cfg(target_os = "android")]
-fn get_package_manager(env: &mut JNIEnv, activity: &JObject) -> Result<JObject, String> {
+fn get_package_manager<'local>(
+  env: &mut JNIEnv<'local>,
+  activity: &JObject<'local>
+) -> Result<JObject<'local>, String> {
   env
     .call_method(
       activity,
@@ -236,9 +248,9 @@ fn get_package_manager(env: &mut JNIEnv, activity: &JObject) -> Result<JObject, 
 }
 
 #[cfg(target_os = "android")]
-fn read_optional_string_field(
-  env: &mut JNIEnv,
-  object: &JObject,
+fn read_optional_string_field<'local>(
+  env: &mut JNIEnv<'local>,
+  object: &JObject<'local>,
   field_name: &str
 ) -> Result<Option<String>, String> {
   let value = env
@@ -254,10 +266,13 @@ fn read_optional_string_field(
 }
 
 #[cfg(target_os = "android")]
-fn read_java_string(env: &mut JNIEnv, value: &JObject) -> Result<String, String> {
-  let java_string = JString::from(value);
+fn read_java_string<'local>(
+  env: &mut JNIEnv<'local>,
+  value: &JObject<'local>
+) -> Result<String, String> {
+  let java_string = <&JString>::from(value);
   env
-    .get_string(&java_string)
+    .get_string(java_string)
     .map(|value| value.to_string_lossy().to_string())
     .map_err(|error| format!("读取 Java 字符串失败: {error}"))
 }
@@ -379,7 +394,10 @@ fn normalize_digest(value: &str) -> String {
 }
 
 #[cfg(target_os = "android")]
-fn can_request_package_installs(env: &mut JNIEnv, activity: &JObject) -> Result<bool, String> {
+fn can_request_package_installs<'local>(
+  env: &mut JNIEnv<'local>,
+  activity: &JObject<'local>
+) -> Result<bool, String> {
   let package_manager = get_package_manager(env, activity)?;
   env
     .call_method(&package_manager, "canRequestPackageInstalls", "()Z", &[])
@@ -388,9 +406,9 @@ fn can_request_package_installs(env: &mut JNIEnv, activity: &JObject) -> Result<
 }
 
 #[cfg(target_os = "android")]
-fn open_unknown_sources_settings(
-  env: &mut JNIEnv,
-  activity: &JObject,
+fn open_unknown_sources_settings<'local>(
+  env: &mut JNIEnv<'local>,
+  activity: &JObject<'local>,
   package_name: &str
 ) -> Result<(), String> {
   let action = env
@@ -448,9 +466,9 @@ fn open_unknown_sources_settings(
 }
 
 #[cfg(target_os = "android")]
-fn open_installer(
-  env: &mut JNIEnv,
-  activity: &JObject,
+fn open_installer<'local>(
+  env: &mut JNIEnv<'local>,
+  activity: &JObject<'local>,
   package_name: &str,
   apk_path: &Path
 ) -> Result<(), String> {
@@ -537,8 +555,8 @@ fn open_installer(
 }
 
 #[cfg(target_os = "android")]
-fn get_int_constant(
-  env: &mut JNIEnv,
+fn get_int_constant<'local>(
+  env: &mut JNIEnv<'local>,
   class_name: &str,
   field_name: &str
 ) -> Result<i32, String> {

@@ -219,11 +219,13 @@ fn perform_platform_haptic_feedback(app: Option<&AppHandle>, kind: &str) -> Resu
     return perform_ios_haptic_feedback(app, kind);
   }
 
-  let _ = app;
-  let _ = kind;
+  #[cfg(not(any(target_os = "android", target_os = "ios")))]
+  {
+    let _ = app;
+    let _ = kind;
 
-  #[allow(unreachable_code)]
-  Ok(())
+    Ok(())
+  }
 }
 
 #[cfg(target_os = "android")]
