@@ -1996,8 +1996,8 @@ body {
   }
 }
 
-.settings-tailscale-panel .settings-release-actions {
-  margin-top: 12px;
+.settings-tailscale-panel-actions {
+  margin-top: 6px;
 }
 
 .settings-tailscale-form {

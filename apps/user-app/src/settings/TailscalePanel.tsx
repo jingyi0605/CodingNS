@@ -234,34 +234,32 @@ export function TailscalePanel() {
     <>
       <div className="settings-tailscale-panel">
         <div className="settings-release-card">
-          <div className="settings-tailscale-overview">
-            <div className="settings-tailscale-summary">
-              <SummaryRow
-                label={t("settings.tailscaleStatusIndicator")}
-                value={(
-                  <span
-                    className="settings-tailscale-status-indicator"
-                    data-tone={resolveTailscaleIndicatorTone(status?.phase ?? "disabled")}
-                  >
-                    <span className="settings-tailscale-status-dot" aria-hidden="true" />
-                    {resolveTailscalePhaseLabel(status?.phase ?? "disabled")}
-                  </span>
-                )}
-              />
-              <SummaryRow
-                label={t("settings.tailscaleServerAddress")}
-                value={status?.reachableBaseUrl ?? t("settings.tailscaleUnavailable")}
-                href={status?.reachableBaseUrl ?? undefined}
-              />
-              <SummaryRow
-                label={t("settings.tailscaleAccountName")}
-                value={status?.accountName ?? t("settings.tailscaleUnavailable")}
-              />
-              <SummaryRow
-                label={t("settings.tailscaleIpAddress")}
-                value={resolveIpAddress(status)}
-              />
-            </div>
+          <div className="settings-tailscale-summary">
+            <SummaryRow
+              label={t("settings.tailscaleStatusIndicator")}
+              value={(
+                <span
+                  className="settings-tailscale-status-indicator"
+                  data-tone={resolveTailscaleIndicatorTone(status?.phase ?? "disabled")}
+                >
+                  <span className="settings-tailscale-status-dot" aria-hidden="true" />
+                  {resolveTailscalePhaseLabel(status?.phase ?? "disabled")}
+                </span>
+              )}
+            />
+            <SummaryRow
+              label={t("settings.tailscaleServerAddress")}
+              value={status?.reachableBaseUrl ?? t("settings.tailscaleUnavailable")}
+              href={status?.reachableBaseUrl ?? undefined}
+            />
+            <SummaryRow
+              label={t("settings.tailscaleAccountName")}
+              value={status?.accountName ?? t("settings.tailscaleUnavailable")}
+            />
+            <SummaryRow
+              label={t("settings.tailscaleIpAddress")}
+              value={resolveIpAddress(status)}
+            />
           </div>
 
           {status?.phase === "needs_login" && status.loginUrl ? (
@@ -283,7 +281,7 @@ export function TailscalePanel() {
             <p className="settings-release-status">{panelError ?? status?.lastError}</p>
           ) : null}
 
-          <div className="settings-release-actions">
+          <div className="settings-release-actions settings-tailscale-panel-actions">
             {canInstallTailscale ? (
               <button
                 className="settings-button"
@@ -431,18 +429,22 @@ function SummaryRow({
   href?: string;
 }) {
   return (
-    <div className="settings-tailscale-summary-row">
-      <span className="settings-tailscale-summary-label">{label}</span>
-      <span className="settings-tailscale-summary-value">
-        {href && typeof value === "string" ? (
-          <a className="settings-tailscale-link" href={href} target="_blank" rel="noreferrer">
-            {value}
-          </a>
-        ) : (
-          value
-        )}
-      </span>
-    </div>
+    <section className="settings-model-card settings-tailscale-summary-card">
+      <div className="settings-model-card-main settings-tailscale-summary-card-main">
+        <div className="settings-model-card-copy">
+          <strong className="settings-model-card-title">{label}</strong>
+        </div>
+        <div className="settings-tailscale-summary-value">
+          {href && typeof value === "string" ? (
+            <a className="settings-tailscale-link" href={href} target="_blank" rel="noreferrer">
+              {value}
+            </a>
+          ) : (
+            value
+          )}
+        </div>
+      </div>
+    </section>
   );
 }
 

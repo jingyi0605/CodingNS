@@ -193,7 +193,7 @@ export function SkillManagementPanel() {
           />
         </div>
 
-        <div className="settings-release-actions">
+        <div className="settings-release-actions settings-skill-panel-actions">
           <button
             className="secondary-button"
             type="button"

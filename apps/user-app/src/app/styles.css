@@ -17000,10 +17000,13 @@ textarea:focus-visible {
   width: 100%;
 }
 
-.settings-tailscale-overview {
-  display: grid;
-  gap: 8px;
-  margin-bottom: 12px;
+.settings-tailscale-summary + .settings-release-notes,
+.settings-tailscale-summary + .settings-release-status {
+  margin-top: 6px;
+}
+
+.settings-tailscale-panel .settings-release-notes + .settings-release-status {
+  margin-top: 6px;
 }
 
 .settings-tailscale-status-indicator {
@@ -17036,30 +17039,16 @@ textarea:focus-visible {
 .settings-tailscale-summary {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  gap: 12px;
 }
 
-.settings-tailscale-summary-row {
-  display: flex;
+.settings-tailscale-summary-card {
+  min-width: 0;
+}
+
+.settings-tailscale-summary-card-main {
   align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  min-height: 40px;
-  padding: 0 12px;
-  border-radius: 12px;
-  background: color-mix(in srgb, #ffffff 84%, var(--bg-primary) 16%);
-  border: 1px solid color-mix(in srgb, var(--border-subtle) 72%, transparent);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.88),
-    0 1px 2px rgba(15, 23, 42, 0.04);
-  backdrop-filter: blur(12px);
-}
-
-.settings-tailscale-summary-label {
-  flex: 0 0 auto;
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 500;
+  min-width: 0;
 }
 
 .settings-tailscale-summary-value {
@@ -17068,8 +17057,9 @@ textarea:focus-visible {
   align-items: center;
   justify-content: flex-end;
   color: var(--text-primary);
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
   text-align: right;
   white-space: nowrap;
   overflow: hidden;
@@ -17090,8 +17080,8 @@ textarea:focus-visible {
   }
 }
 
-.settings-tailscale-panel .settings-release-actions {
-  margin-top: 12px;
+.settings-tailscale-panel-actions {
+  margin-top: 6px;
 }
 
 .settings-tailscale-form {
@@ -17261,7 +17251,7 @@ textarea:focus-visible {
 .settings-model-panel-actions {
   display: flex;
   justify-content: flex-start;
-  margin-top: 12px;
+  margin-top: 6px;
 }
 
 .settings-model-open-action {
@@ -17456,8 +17446,8 @@ textarea:focus-visible {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  min-height: 74px;
-  padding: 10px 12px;
+  min-height: 58px;
+  padding: 8px 12px;
 }
 
 .settings-skill-summary-card span {
@@ -17576,7 +17566,7 @@ textarea:focus-visible {
 }
 
 .settings-skill-panel-actions {
-  margin-top: 12px;
+  margin-top: 6px;
 }
 
 .settings-skill-modal {
