@@ -96,6 +96,7 @@ AGENTS.md
 apps/host/data/host/*
 apps/host/apps/host/*
 apps/host/runtime/
+runtime/
 UsersjacksonAndroidSdk/
 apps/user-app/src-tauri/gen/apple/assets/index.html
 apps/user-app/src-tauri/gen/apple/assets/assets/
