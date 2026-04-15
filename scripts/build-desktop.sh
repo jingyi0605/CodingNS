@@ -34,6 +34,8 @@ MACOS_SIGNING_CSR_FILE="$MACOS_SIGNING_DIR/developer-id-signing.csr.pem"
 MACOS_CERT_IMPORT_SCRIPT="$REPO_DIR/scripts/import-macos-signing-certificate.sh"
 CARGO_HOME_DEFAULT="$REPO_DIR/.cargo-home"
 MACOS_RELEASE_COPY_DIR_DEFAULT="$HOME/WorkFile/临时文件"
+DESKTOP_UPDATER_MANIFEST_URL_DEFAULT="https://github.com/jingyi0605/CodingNS/releases/latest/download/latest.json"
+TAURI_UPDATER_PUBLIC_KEY_PLACEHOLDER="__CODINGNS_TAURI_UPDATER_PUBLIC_KEY__"
 
 # 颜色输出
 RED='\033[0;31m'
@@ -67,6 +69,21 @@ check_command() {
         return 1
     fi
     return 0
+}
+
+resolve_python_cmd() {
+    if command -v python3 &> /dev/null; then
+        echo "python3"
+        return 0
+    fi
+
+    if command -v python &> /dev/null; then
+        echo "python"
+        return 0
+    fi
+
+    log_error "未找到 Python，无法生成临时 Tauri 配置"
+    return 1
 }
 
 get_current_platform() {
@@ -114,6 +131,50 @@ registry = "sparse+https://index.crates.io/"
 [net]
 git-fetch-with-cli = true
 EOF
+}
+
+resolve_desktop_updater_manifest_url() {
+    echo "${CODINGNS_TAURI_UPDATER_ENDPOINT:-$DESKTOP_UPDATER_MANIFEST_URL_DEFAULT}"
+}
+
+validate_desktop_updater_build_env() {
+    require_env CODINGNS_TAURI_UPDATER_PUBLIC_KEY || return 1
+    require_env TAURI_SIGNING_PRIVATE_KEY || return 1
+    return 0
+}
+
+prepare_desktop_tauri_build_config() {
+    validate_desktop_updater_build_env || return 1
+
+    local python_cmd
+    local config_path
+    python_cmd="$(resolve_python_cmd)" || return 1
+    config_path="$(mktemp "${TMPDIR:-/tmp}/codingns-tauri-build.XXXXXX.json")"
+
+    "$python_cmd" - "$TAURI_DIR/tauri.conf.json" "$config_path" "${CODINGNS_TAURI_UPDATER_PUBLIC_KEY}" "$(resolve_desktop_updater_manifest_url)" "$TAURI_UPDATER_PUBLIC_KEY_PLACEHOLDER" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source_path, target_path, pubkey, endpoint, placeholder = sys.argv[1:]
+
+with Path(source_path).open("r", encoding="utf-8") as file:
+    config = json.load(file)
+
+plugins = config.setdefault("plugins", {})
+updater = plugins.setdefault("updater", {})
+
+if updater.get("pubkey") == placeholder or not str(updater.get("pubkey", "")).strip():
+    updater["pubkey"] = pubkey.strip()
+
+updater["endpoints"] = [endpoint]
+
+with Path(target_path).open("w", encoding="utf-8") as file:
+    json.dump(config, file, ensure_ascii=False, indent=2)
+    file.write("\n")
+PY
+
+    printf '%s\n' "$config_path"
 }
 
 require_env() {
@@ -672,7 +733,11 @@ install_deps() {
 run_desktop_tauri_build() {
     local target="${1:-}"
     local bundles="${2:-}"
+    local config_path
+    local status
     local cmd=(pnpm --dir apps/desktop exec tauri build)
+
+    config_path="$(prepare_desktop_tauri_build_config)" || return 1
 
     if [[ -n "$target" ]]; then
         cmd+=(--target "$target")
@@ -682,7 +747,16 @@ run_desktop_tauri_build() {
         cmd+=(--bundles "$bundles")
     fi
 
-    PATH=/usr/local/bin:/opt/homebrew/bin:$PATH "${cmd[@]}"
+    cmd+=(--config "$config_path")
+
+    if PATH=/usr/local/bin:/opt/homebrew/bin:$PATH "${cmd[@]}"; then
+        status=0
+    else
+        status=$?
+    fi
+
+    rm -f "$config_path"
+    return $status
 }
 
 build_macos() {

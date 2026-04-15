@@ -43,5 +43,13 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "__CODINGNS_TAURI_UPDATER_PUBLIC_KEY__",
+      "endpoints": [
+        "https://github.com/jingyi0605/CodingNS/releases/latest/download/latest.json"
+      ]
+    }
   }
 }
