@@ -174,6 +174,7 @@ export class TerminalService extends EventEmitter {
 
   async createTerminal(input: CreateTerminalInput): Promise<TerminalInstance> {
     const workspace = this.workspaceService.getWorkspaceOrThrow(input.workspaceId);
+    const existingTerminals = this.terminalInstanceRepository.listByWorkspace(workspace.id);
     const now = nowIso();
     const shell = resolveRequestedShell(sanitizeShell(input.shell) ?? getDefaultShell());
     const cwd = resolveWorkspaceCwd(workspace.path, input.cwd);
@@ -183,7 +184,7 @@ export class TerminalService extends EventEmitter {
     const terminal: TerminalInstance = {
       id: createId(),
       workspaceId: workspace.id,
-      name: input.name?.trim() || buildDefaultTerminalName(cwd),
+      name: input.name?.trim() || buildDefaultTerminalName(cwd, existingTerminals),
       cwd,
       shell,
       runtimeType,
@@ -1352,9 +1353,49 @@ function buildTerminalEnv(extraEnv?: Record<string, string>): Record<string, str
   return env;
 }
 
-function buildDefaultTerminalName(cwd: string): string {
+function buildDefaultTerminalName(
+  cwd: string,
+  existingTerminals: ReadonlyArray<Pick<TerminalInstance, "name">>
+): string {
   const folderName = path.basename(cwd).trim();
-  return folderName || "终端";
+  const baseName = folderName || "终端";
+  const nextSequence = resolveNextTerminalSequence(baseName, existingTerminals);
+  return `${baseName} ${nextSequence}`;
+}
+
+function resolveNextTerminalSequence(
+  baseName: string,
+  terminals: ReadonlyArray<Pick<TerminalInstance, "name">>
+): number {
+  const escapedBaseName = escapeRegExp(baseName);
+  const namePattern = new RegExp(`^${escapedBaseName}(?:\\s+(\\d+))?$`);
+  let maxSequence = 0;
+
+  for (const terminal of terminals) {
+    const normalizedName = terminal.name.trim();
+    const match = namePattern.exec(normalizedName);
+
+    if (!match) {
+      continue;
+    }
+
+    if (!match[1]) {
+      maxSequence = Math.max(maxSequence, 1);
+      continue;
+    }
+
+    const sequence = Number.parseInt(match[1], 10);
+
+    if (Number.isFinite(sequence) && sequence > 0) {
+      maxSequence = Math.max(maxSequence, sequence);
+    }
+  }
+
+  return maxSequence + 1;
+}
+
+function escapeRegExp(input: string): string {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function buildMissingProcessStatusDetail(terminal: TerminalInstance): string {

@@ -149,7 +149,7 @@ export class TerminalInstanceRepository {
           artifact_ref
         FROM terminal_instances
         WHERE workspace_id = ?
-        ORDER BY last_active_at DESC, created_at DESC`
+        ORDER BY created_at ASC, id ASC`
       )
       .all(workspaceId)
       .map((row) => mapTerminalInstanceRow(row as TerminalInstanceRow));
