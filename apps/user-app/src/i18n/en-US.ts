@@ -213,6 +213,8 @@ export const enUS = {
     releaseInstallStarted: "Install started",
     releaseInstallFailed: "Install failed",
     releasePageOpenFailed: "Failed to open page",
+    androidInstallerStarted: "Handed off to the Android installer. You can still cancel there.",
+    androidInstallPermissionRequired: "Allow installs from this source before retrying.",
     releaseRollbackStarted: "Rollback started",
     releaseRollbackFailed: "Rollback failed",
     clientUpdateUnsupported: "Install updates are not supported here",
@@ -405,6 +407,9 @@ export const enUS = {
     historyLoadFailed: "Message history is not available right now. Try again later.",
     timelineEmpty:
       "There are no messages in this session yet. Your first message will go straight into the Host chain.",
+    turnAbortedUser: "The previous turn was stopped by you.",
+    turnAbortedUnexpected: "The previous turn was interrupted unexpectedly and did not finish cleanly.",
+    turnAbortedGeneric: "The previous turn was interrupted before it finished cleanly.",
     scrollToBottomAction: "Jump to bottom",
     rawRefLabel: "Source",
     copyAction: "Copy",

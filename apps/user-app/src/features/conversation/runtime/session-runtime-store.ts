@@ -16,6 +16,7 @@ import {
   getSessionMessages,
   getSessionPermissionRequests,
   getSessionQueue,
+  type SessionInterruptSource,
   getSessionRuntime,
   interruptSession,
   markSessionSeen,
@@ -86,6 +87,7 @@ interface SessionRuntimeSnapshot {
   hasOlderMessages: boolean;
   lastCursor: string | null;
   pagesLoaded: number;
+  interruptSource: SessionInterruptSource | null;
 }
 
 interface PendingReplyDebugTrace {
@@ -148,6 +150,7 @@ export class SessionRuntimeStore {
       olderCursor: cachedSnapshot?.olderCursor ?? null,
       hasOlderMessages: cachedSnapshot?.hasOlderMessages ?? false,
       lastCursor: cachedSnapshot?.lastCursor ?? null,
+      interruptSource: cachedSnapshot?.interruptSource ?? null,
       pagesLoaded: cachedSnapshot?.pagesLoaded ?? 0
     });
     this.seenWatermark = seededSession?.lastSeenAt ?? null;
@@ -433,6 +436,7 @@ export class SessionRuntimeStore {
       session: withRunningState(this.state.session, "interrupted"),
       runtimeHasActiveRun: false,
       runtimeCanInterrupt: false,
+      interruptSource: "user",
       errorCode: null,
       errorDetail: null
     });
@@ -922,7 +926,7 @@ export class SessionRuntimeStore {
         runtimeHasActiveRun: runtime.hasActiveRun,
         runtimeCanInterrupt: runtime.canInterrupt,
         contextUsage: runtime.contextUsage,
-        ...resolveRuntimeErrorState(runtime)
+        ...resolveRuntimeErrorState(runtime, this.state.interruptSource)
       });
       await this.refreshQueue();
 
@@ -1039,7 +1043,7 @@ export class SessionRuntimeStore {
         runtimeHasActiveRun: runtime.hasActiveRun,
         runtimeCanInterrupt: runtime.canInterrupt,
         contextUsage: runtime.contextUsage,
-        ...resolveRuntimeErrorState(runtime)
+        ...resolveRuntimeErrorState(runtime, this.state.interruptSource)
       });
       await this.refreshQueue();
 
@@ -1121,6 +1125,12 @@ export class SessionRuntimeStore {
       runtimeCanInterrupt: isRuntimeActiveState(nextRunningState)
         ? this.state.runtimeCanInterrupt
         : false,
+      interruptSource:
+        nextRunningState === "interrupted"
+          ? (event.interruptSource ?? this.state.interruptSource)
+          : nextRunningState === "completed" || nextRunningState === "failed"
+            ? null
+            : this.state.interruptSource,
       errorCode: null,
       errorDetail: nextRunningState === event.status ? event.detail : this.state.errorDetail
     });
@@ -1142,7 +1152,7 @@ export class SessionRuntimeStore {
       session: applyRealtimeActivityToSession(this.state.session, event),
       runtimeHasActiveRun: event.hasActiveRun,
       runtimeCanInterrupt: event.canInterrupt,
-      ...resolveRuntimeErrorState(event)
+      ...resolveRuntimeErrorState(event, this.state.interruptSource)
     });
 
     if (isTerminalRuntimeState(event.runningState)) {
@@ -1196,6 +1206,7 @@ export class SessionRuntimeStore {
       session: withRunningState(this.state.session, nextRunningState),
       runtimeHasActiveRun: false,
       runtimeCanInterrupt: false,
+      interruptSource: null,
       errorCode: nextRunningState === "failed" ? event.error_code : this.state.errorCode,
       errorDetail: nextRunningState === "failed" ? event.detail : this.state.errorDetail
     });
@@ -1213,6 +1224,10 @@ export class SessionRuntimeStore {
       session: withRunningState(this.state.session, nextRunningState),
       runtimeHasActiveRun: false,
       runtimeCanInterrupt: false,
+      interruptSource:
+        nextRunningState === "interrupted"
+          ? (event.interruptSource ?? this.state.interruptSource)
+          : this.state.interruptSource,
       errorCode: nextRunningState === "interrupted" ? null : this.state.errorCode,
       errorDetail: nextRunningState === "interrupted" ? event.detail : this.state.errorDetail
     });
@@ -1304,7 +1319,8 @@ export class SessionRuntimeStore {
       olderCursor: this.state.olderCursor,
       hasOlderMessages: this.state.hasOlderMessages,
       lastCursor: this.state.lastCursor,
-      pagesLoaded: this.state.pagesLoaded
+      pagesLoaded: this.state.pagesLoaded,
+      interruptSource: this.state.interruptSource
     });
   }
 
@@ -1570,6 +1586,7 @@ function applyRuntimeActivityToSession(
     activityConfidence: runtime.activityConfidence,
     runId: runtime.runId,
     detail: runtime.detail,
+    interruptSource: runtime.interruptSource,
     errorCode: runtime.errorCode,
     errorDetail: runtime.errorDetail,
     hasActiveRun: runtime.hasActiveRun,
@@ -1593,6 +1610,7 @@ function applySessionActivityPatch(
     activityConfidence: SessionActivityConfidence;
     runId: string | null;
     detail: string | null;
+    interruptSource: SessionInterruptSource | null;
     errorCode: string | null;
     errorDetail: string | null;
     hasActiveRun: boolean;
@@ -1716,15 +1734,18 @@ function resolveRuntimeTransitionState(
 
 function resolveRuntimeErrorState(runtime: {
   runningState: SessionRunningState;
+  interruptSource?: SessionInterruptSource | null;
   errorCode: string | null;
   errorDetail: string | null;
   detail: string | null;
-}): {
+}, currentInterruptSource: SessionInterruptSource | null): {
+  interruptSource: SessionInterruptSource | null;
   errorCode: string | null;
   errorDetail: string | null;
 } {
   if (runtime.runningState === "failed") {
     return {
+      interruptSource: null,
       errorCode: runtime.errorCode,
       errorDetail: runtime.errorDetail ?? runtime.detail
     };
@@ -1732,6 +1753,7 @@ function resolveRuntimeErrorState(runtime: {
 
   if (runtime.runningState === "interrupted") {
     return {
+      interruptSource: runtime.interruptSource ?? null,
       errorCode: null,
       errorDetail: runtime.detail
     };
@@ -1739,12 +1761,14 @@ function resolveRuntimeErrorState(runtime: {
 
   if (runtime.runningState === "completed") {
     return {
+      interruptSource: null,
       errorCode: null,
       errorDetail: runtime.detail
     };
   }
 
   return {
+    interruptSource: currentInterruptSource,
     errorCode: null,
     errorDetail: null
   };

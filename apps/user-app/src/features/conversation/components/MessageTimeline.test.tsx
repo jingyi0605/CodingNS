@@ -241,6 +241,53 @@ describe("MessageTimeline", () => {
     expect(revealWorkspaceFileMock).not.toHaveBeenCalled();
   });
 
+  it("会把 turn_aborted 控制标记渲染成手动终止的助手消息", () => {
+    render(
+      <MessageTimeline
+        messages={[createAssistantTextMessage("<turn_aborted>previous turn aborted</turn_aborted>")]}
+        historyState="ready"
+        onRetryMessage={vi.fn()}
+        provider="codex"
+        interruptedSource="user"
+      />
+    );
+
+    expect(screen.getByText(t("conversation.turnAbortedUser"))).toBeInTheDocument();
+    expect(screen.queryByText("<turn_aborted>previous turn aborted</turn_aborted>")).not.toBeInTheDocument();
+    expect(screen.queryByText("previous turn aborted")).not.toBeInTheDocument();
+  });
+
+  it("会把 turn_aborted 控制标记渲染成意外中断的助手消息", () => {
+    render(
+      <MessageTimeline
+        messages={[createAssistantTextMessage("<turn_aborted>previous turn aborted</turn_aborted>")]}
+        historyState="ready"
+        onRetryMessage={vi.fn()}
+        provider="codex"
+        interruptedSource="runtime"
+      />
+    );
+
+    expect(screen.getByText(t("conversation.turnAbortedUnexpected"))).toBeInTheDocument();
+    expect(screen.queryByText("<turn_aborted>previous turn aborted</turn_aborted>")).not.toBeInTheDocument();
+  });
+
+  it("会把 Codex 历史里的 user turn_aborted 控制标记也渲染成助手消息", () => {
+    render(
+      <MessageTimeline
+        messages={[createTextMessage("<turn_aborted>previous turn aborted</turn_aborted>")]}
+        historyState="ready"
+        onRetryMessage={vi.fn()}
+        provider="codex"
+        interruptedSource="user"
+      />
+    );
+
+    expect(screen.getByText(t("conversation.turnAbortedUser"))).toBeInTheDocument();
+    expect(screen.queryByText("<turn_aborted>previous turn aborted</turn_aborted>")).not.toBeInTheDocument();
+    expect(screen.queryByText("previous turn aborted")).not.toBeInTheDocument();
+  });
+
   it("用户消息下方只显示复制按钮并复制正文", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", {

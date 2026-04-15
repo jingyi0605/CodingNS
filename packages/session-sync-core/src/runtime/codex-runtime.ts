@@ -168,7 +168,10 @@ export interface CodexAppServerTransport {
     providerSessionId: string;
     rawStoreRef: string | null;
   }>;
-  startTurn(request: ProviderRuntimeRunRequest, providerSessionId: string): Promise<void>;
+  startTurn(
+    request: ProviderRuntimeRunRequest,
+    providerSessionId: string
+  ): Promise<{ notification?: Record<string, unknown> | null } | void>;
   interruptTurn(): Promise<void>;
   setNotificationHandler(handler: (notification: Record<string, unknown>) => void | Promise<void>): void;
   setServerRequestHandler(handler: (request: Record<string, unknown>) => Promise<unknown>): void;
@@ -250,8 +253,8 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
         eventQueue.setTurnId(translated.turnId);
       }
 
-      if (translated.event) {
-        eventQueue.push(translated.event);
+      for (const event of translated.events) {
+        eventQueue.push(event);
       }
 
       if (translated.terminal) {
@@ -280,7 +283,24 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
       eventQueue.close();
     });
     const startTurnStartedAtMs = performance.now();
-    await transport.startTurn(request, providerSessionId);
+    const startTurnResult = await transport.startTurn(request, providerSessionId);
+    const startTurnNotification = startTurnResult?.notification ?? null;
+
+    if (startTurnNotification) {
+      const translated = translateCodexAppServerNotification(startTurnNotification);
+
+      if (translated.turnId) {
+        eventQueue.setTurnId(translated.turnId);
+      }
+
+      for (const event of translated.events) {
+        eventQueue.push(event);
+      }
+
+      if (translated.terminal) {
+        eventQueue.close();
+      }
+    }
     logCodexRuntimeStep("start_session.turn_start", startTurnStartedAtMs, {
       sessionId: request.sessionId,
       providerSessionId
@@ -410,8 +430,8 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
         eventQueue.setTurnId(translated.turnId);
       }
 
-      if (translated.event) {
-        eventQueue.push(translated.event);
+      for (const event of translated.events) {
+        eventQueue.push(event);
       }
 
       if (translated.terminal) {
@@ -440,7 +460,24 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
       eventQueue.close();
     });
     const startTurnStartedAtMs = performance.now();
-    await transport.startTurn(request, resolvedSessionId);
+    const startTurnResult = await transport.startTurn(request, resolvedSessionId);
+    const startTurnNotification = startTurnResult?.notification ?? null;
+
+    if (startTurnNotification) {
+      const translated = translateCodexAppServerNotification(startTurnNotification);
+
+      if (translated.turnId) {
+        eventQueue.setTurnId(translated.turnId);
+      }
+
+      for (const event of translated.events) {
+        eventQueue.push(event);
+      }
+
+      if (translated.terminal) {
+        eventQueue.close();
+      }
+    }
     logCodexRuntimeStep("continue_session.turn_start", startTurnStartedAtMs, {
       sessionId: request.sessionId,
       providerSessionId: resolvedSessionId
@@ -541,6 +578,7 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
         await sink.emit({
           type: "interrupted",
           status: "interrupted",
+          interruptSource: "user",
           providerSessionId: context.providerSessionId,
           rawStoreRef: context.rawStoreRef,
           detail: "codex turn interrupted",
@@ -612,6 +650,7 @@ export class CodexRuntimeAdapter implements ProviderRuntimeAdapter {
       await context.sink.emit({
         type: "interrupted",
         status: "interrupted",
+        interruptSource: interrupted ? "user" : "runtime",
         providerSessionId: context.providerSessionId,
         rawStoreRef: context.rawStoreRef,
         detail: "codex turn interrupted",
@@ -1405,12 +1444,17 @@ function createCodexAppServerTransport(options: CodexRuntimeOptions): CodexAppSe
           params: createTurnStartParams(request, providerSessionId)
         }
       );
-      activeTurnId = ensureText(readProp(readProp(result, "turn"), "id")).trim() || activeTurnId;
+      const turn = toRecord(result.turn);
+      activeTurnId = ensureText(readProp(turn, "id")).trim() || activeTurnId;
       logCodexRuntimeStep("transport.turn_start", startedAtMs, {
         sessionId: request.sessionId,
         providerSessionId,
         turnId: activeTurnId
       });
+
+      return {
+        notification: buildCodexTurnCompletionNotification(turn, providerSessionId)
+      };
     },
     async interruptTurn() {
       if (!activeThreadId || !activeTurnId) {
@@ -1456,6 +1500,25 @@ function createCodexAppServerTransport(options: CodexRuntimeOptions): CodexAppSe
       if (!child.killed) {
         child.kill("SIGTERM");
       }
+    }
+  };
+}
+
+function buildCodexTurnCompletionNotification(
+  turn: Record<string, unknown> | null,
+  threadId: string
+): Record<string, unknown> | null {
+  const status = ensureText(readProp(turn, "status")).trim();
+
+  if (status !== "completed" && status !== "failed" && status !== "interrupted") {
+    return null;
+  }
+
+  return {
+    method: "turn/completed",
+    params: {
+      threadId,
+      turn
     }
   };
 }
@@ -1535,7 +1598,7 @@ function createAsyncEventQueue(): {
 }
 
 function translateCodexAppServerNotification(notification: Record<string, unknown>): {
-  event: Record<string, unknown> | null;
+  events: Record<string, unknown>[];
   terminal: boolean;
   turnId: string | null;
 } {
@@ -1544,7 +1607,7 @@ function translateCodexAppServerNotification(notification: Record<string, unknow
 
   if (method === "turn/started") {
     return {
-      event: null,
+      events: [],
       terminal: false,
       turnId: ensureText(readProp(readProp(params, "turn"), "id")).trim() || null
     };
@@ -1553,14 +1616,18 @@ function translateCodexAppServerNotification(notification: Record<string, unknow
   if (method === "turn/completed") {
     const turn = toRecord(params.turn);
     const status = ensureText(turn?.status).trim();
+    const itemEvents = translateCodexAppServerTurnItems(turn, "item.completed");
 
     if (status === "failed") {
       return {
-        event: {
-          type: "turn.failed",
-          timestamp: nextTimestamp(),
-          error: ensureText(readProp(turn?.error, "message")).trim() || "codex turn failed"
-        },
+        events: [
+          ...itemEvents,
+          {
+            type: "turn.failed",
+            timestamp: nextTimestamp(),
+            error: ensureText(readProp(turn?.error, "message")).trim() || "codex turn failed"
+          }
+        ],
         terminal: true,
         turnId: ensureText(turn?.id).trim() || null
       };
@@ -1568,20 +1635,26 @@ function translateCodexAppServerNotification(notification: Record<string, unknow
 
     if (status === "interrupted") {
       return {
-        event: {
-          type: "turn.interrupted",
-          timestamp: nextTimestamp()
-        },
+        events: [
+          ...itemEvents,
+          {
+            type: "turn.interrupted",
+            timestamp: nextTimestamp()
+          }
+        ],
         terminal: true,
         turnId: ensureText(turn?.id).trim() || null
       };
     }
 
     return {
-      event: {
-        type: "turn.completed",
-        timestamp: nextTimestamp()
-      },
+      events: [
+        ...itemEvents,
+        {
+          type: "turn.completed",
+          timestamp: nextTimestamp()
+        }
+      ],
       terminal: true,
       turnId: ensureText(turn?.id).trim() || null
     };
@@ -1593,18 +1666,20 @@ function translateCodexAppServerNotification(notification: Record<string, unknow
 
     if (params.willRetry === true) {
       return {
-        event: null,
+        events: [],
         terminal: false,
         turnId: ensureText(params.turnId).trim() || null
       };
     }
 
     return {
-      event: {
-        type: "turn.failed",
-        timestamp: nextTimestamp(),
-        error: detail
-      },
+      events: [
+        {
+          type: "turn.failed",
+          timestamp: nextTimestamp(),
+          error: detail
+        }
+      ],
       terminal: true,
       turnId: ensureText(params.turnId).trim() || null
     };
@@ -1615,33 +1690,99 @@ function translateCodexAppServerNotification(notification: Record<string, unknow
 
     if (!item) {
       return {
-        event: null,
+        events: [],
         terminal: false,
         turnId: null
       };
     }
 
     return {
-      event: {
-        type:
-          method === "item/started"
-            ? "item.started"
-            : method === "item/updated"
-              ? "item.updated"
-              : "item.completed",
-        item,
-        timestamp: nextTimestamp()
-      },
+      events: [
+        {
+          type:
+            method === "item/started"
+              ? "item.started"
+              : method === "item/updated"
+                ? "item.updated"
+                : "item.completed",
+          item,
+          timestamp: nextTimestamp()
+        }
+      ],
       terminal: false,
       turnId: null
     };
   }
 
   return {
-    event: null,
+    events: [],
     terminal: false,
     turnId: null
   };
+}
+
+function translateCodexAppServerTurnItems(
+  turn: Record<string, unknown> | null,
+  eventType: "item.completed"
+): Record<string, unknown>[] {
+  const rawItems = Array.isArray(turn?.items) ? turn.items : [];
+  const translatedItems = rawItems
+    .map((item) => translateCodexAppServerItem(toRecord(item)))
+    .filter((item): item is Record<string, unknown> => item !== null)
+    .map((item) => ({
+      type: eventType,
+      item,
+      timestamp: nextTimestamp()
+    }));
+
+  if (translatedItems.length > 0) {
+    return translatedItems;
+  }
+
+  const lastAgentMessage = normalizeCodexTurnLastAgentMessage(turn);
+
+  if (!lastAgentMessage) {
+    return [];
+  }
+
+  return [
+    {
+      type: eventType,
+      item: {
+        type: "agent_message",
+        id: ensureText(turn?.id).trim() || "turn-final-message",
+        text: lastAgentMessage
+      },
+      timestamp: nextTimestamp()
+    }
+  ];
+}
+
+function normalizeCodexTurnLastAgentMessage(turn: Record<string, unknown> | null): string | null {
+  const candidate =
+    readProp(turn, "lastAgentMessage")
+    ?? readProp(turn, "last_agent_message")
+    ?? readProp(turn, "lastMessage")
+    ?? readProp(turn, "last_message");
+
+  if (typeof candidate === "string") {
+    const normalized = candidate.trim();
+    return normalized.length > 0 ? normalized : null;
+  }
+
+  const record = toRecord(candidate);
+
+  if (!record) {
+    return null;
+  }
+
+  const content = pickFirstNonEmpty(
+    ensureText(record.text).trim(),
+    extractTextBlocks(readProp(record, "content")).trim(),
+    ensureText(readProp(record, "message")).trim()
+  );
+
+  return content.length > 0 ? content : null;
 }
 
 function buildCodexAppServerErrorDetail(error: Record<string, unknown> | null): string {

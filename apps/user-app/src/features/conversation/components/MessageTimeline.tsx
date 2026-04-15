@@ -15,7 +15,6 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { ModalCloseButton } from "../../../components/ModalCloseButton";
-
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 import { usePlatform } from "../../../platform/platform-provider";
@@ -46,7 +45,8 @@ import {
 import type {
   ImageAttachmentPayload,
   MessageAttachmentDto,
-  ProviderId
+  ProviderId,
+  SessionInterruptSource
 } from "../api/conversation-api";
 import type { SessionMessageViewModel } from "../runtime/session-runtime-machine";
 import { shouldFoldRulesMessages } from "../capability/provider-ui";
@@ -61,6 +61,7 @@ interface MessageTimelineProps {
   onRetryMessage: (clientRequestId: string) => void;
   onForkMessage?: (message: SessionMessageViewModel) => Promise<void> | void;
   provider: ProviderId | null;
+  interruptedSource?: SessionInterruptSource | null;
   runtimeThinkingPlaceholder?: string | null;
   assistantAvatar?: ReactNode;
 }
@@ -72,6 +73,34 @@ interface MessageActionState {
 
 function stripThinkingTrailingDots(value: string): string {
   return value.replace(/(\.{3,}|…+)$/, "").trimEnd();
+}
+
+function parseTurnAbortedMessage(value: string): { detail: string | null } | null {
+  const match = value.match(/^\s*<turn_aborted>([\s\S]*?)<\/turn_aborted>\s*$/i);
+
+  if (!match) {
+    return null;
+  }
+
+  const detail = match[1]?.trim() ?? "";
+
+  if (!detail || /^previous turn aborted$/i.test(detail)) {
+    return { detail: null };
+  }
+
+  return { detail };
+}
+
+function resolveTurnAbortedMessageText(source: SessionInterruptSource | null | undefined): string {
+  if (source === "user") {
+    return t("conversation.turnAbortedUser");
+  }
+
+  if (source === "runtime") {
+    return t("conversation.turnAbortedUnexpected");
+  }
+
+  return t("conversation.turnAbortedGeneric");
 }
 
 interface ResolvedToolCall {
@@ -1855,6 +1884,7 @@ function RulesMessageCard({
 function MessageItem({
   message,
   provider,
+  interruptedSource = null,
   foldedPromptKind = null,
   actionState,
   onRetry,
@@ -1863,6 +1893,7 @@ function MessageItem({
 }: {
   message: SessionMessageViewModel;
   provider: ProviderId | null;
+  interruptedSource?: SessionInterruptSource | null;
   foldedPromptKind?: FoldedPromptKind | null;
   actionState: MessageActionState;
   onRetry: (clientRequestId: string) => void;
@@ -1872,6 +1903,10 @@ function MessageItem({
   const isUser = message.role === "user";
   const isThinking = message.kind === "thinking";
   const isAssistantText = message.role === "assistant" && message.kind === "text";
+  const turnAborted =
+    provider === "codex" && message.kind === "text"
+      ? parseTurnAbortedMessage(message.content)
+      : null;
   const promptKind: FoldedPromptKind | null =
     foldedPromptKind ??
     (looksLikeRulesMessage(provider, message.content)
@@ -1902,6 +1937,29 @@ function MessageItem({
         onRetry={onRetry}
         onForkMessage={onForkMessage}
       />
+    );
+  }
+
+  if (turnAborted) {
+    const abortedText = resolveTurnAbortedMessageText(interruptedSource);
+    const displayText = turnAborted.detail ? `${abortedText}\n\n${turnAborted.detail}` : abortedText;
+
+    return (
+      <article className="message-item assistant-message" data-message-id={message.id}>
+        <div className="message-avatar">{assistantAvatar ?? <DefaultAssistantAvatar />}</div>
+        <div className="message-content-wrapper">
+          <MessageMarkdownBody
+            content={displayText}
+            className="message-text message-content markdown-content"
+          />
+          <MessageMetadataBar
+            text={displayText}
+            canCopy={actionState.canCopy}
+            canFork={false}
+            onFork={null}
+          />
+        </div>
+      </article>
     );
   }
 
@@ -2134,6 +2192,7 @@ export function MessageTimeline({
   onRetryMessage,
   onForkMessage,
   provider,
+  interruptedSource = null,
   runtimeThinkingPlaceholder = null,
   assistantAvatar
 }: MessageTimelineProps) {
@@ -2532,6 +2591,7 @@ export function MessageTimeline({
               }
               onRetry={onRetryMessage}
               onForkMessage={onForkMessage}
+              interruptedSource={interruptedSource}
               assistantAvatar={assistantAvatar}
             />
           )
