@@ -661,11 +661,55 @@ describe("TerminalPage", () => {
     expect(screen.queryByRole("menuitem", { name: "绑定到当前分栏" })).not.toBeInTheDocument();
   });
 
+  it("终端标签顺序按创建时间稳定显示，不会因为最近活跃时间变化自动重排", async () => {
+    setTerminalManagerSnapshot("workspace-1", [
+      buildTerminal({
+        id: "terminal-1",
+        name: "CodingNS 1",
+        createdAt: "2026-03-26T08:00:00.000Z",
+        lastActiveAt: "2026-03-26T08:30:00.000Z"
+      }),
+      buildTerminal({
+        id: "terminal-2",
+        name: "CodingNS 2",
+        runtimeSessionId: "session-2",
+        attachTarget: "tmux://session-2",
+        processId: 4567,
+        createdAt: "2026-03-26T08:01:00.000Z",
+        lastActiveAt: "2026-03-26T10:30:00.000Z"
+      }),
+      buildTerminal({
+        id: "terminal-3",
+        name: "CodingNS 3",
+        runtimeSessionId: "session-3",
+        attachTarget: "tmux://session-3",
+        processId: 5678,
+        createdAt: "2026-03-26T08:02:00.000Z",
+        lastActiveAt: "2026-03-26T09:30:00.000Z"
+      })
+    ]);
+
+    renderPage();
+
+    await screen.findByText("CodingNS 1");
+
+    await waitFor(() => {
+      expect(screen.getAllByRole("tab").map((tab) => tab.textContent?.includes("CodingNS 1"))).toContain(true);
+    });
+
+    const orderedTabLabels = screen
+      .getAllByRole("tab")
+      .map((tab) => tab.querySelector(".terminal-tab-name-text")?.textContent?.trim() ?? "");
+
+    expect(orderedTabLabels).toEqual(["CodingNS 1", "CodingNS 2", "CodingNS 3"]);
+  });
+
   it("运行中和异常终端的菜单只显示各自允许的生命周期动作", async () => {
     setTerminalManagerSnapshot("workspace-1", [
       buildTerminal({
         id: "terminal-running",
-        name: "运行中终端"
+        name: "运行中终端",
+        createdAt: "2026-03-26T08:00:00.000Z"
       }),
       buildTerminal({
         id: "terminal-error",
@@ -674,7 +718,8 @@ describe("TerminalPage", () => {
         attachTarget: "tmux://session-2",
         status: "error",
         processId: null,
-        statusDetail: "tmux exited"
+        statusDetail: "tmux exited",
+        createdAt: "2026-03-26T08:01:00.000Z"
       })
     ]);
 
@@ -1016,109 +1061,17 @@ describe("TerminalPage", () => {
     });
   });
 
-  it("初次回放后会给最新光标保留底部安全区，而不是直接贴底", async () => {
+  it("终端视口容器会设置底部安全区变量，给最新输入留出可视空白", async () => {
     setTerminalManagerSnapshot("workspace-1", [buildTerminal()]);
 
     renderPage();
 
     await screen.findByText("工作终端");
     await waitFor(() => {
-      expect(screen.getByTestId("mock-xterm")).toBeInTheDocument();
-    });
-
-    const socket = MockWebSocket.instances[0];
-
-    if (!socket) {
-      throw new Error("未建立终端 WebSocket 连接");
-    }
-
-    socket.dispatchMessage({
-      type: "terminal.backfill",
-      terminalId: "terminal-1",
-      truncated: false,
-      cursorReset: false,
-      latestCursor: "40",
-      chunks: [
-        {
-          terminalId: "terminal-1",
-          cursor: "40",
-          stream: "stdout",
-          content: Array.from({ length: 40 }, (_, index) => `line-${index + 1}`).join("\r\n") + "\r\n",
-          timestamp: "2026-03-26T08:00:00.000Z"
-        }
-      ]
-    });
-
-    const terminal = mockXtermInstances.at(-1);
-
-    if (!terminal) {
-      throw new Error("未创建 xterm 实例");
-    }
-
-    await waitFor(() => {
-      expect(terminal.buffer.active.baseY).toBe(39);
-      expect(terminal.buffer.active.viewportY).toBe(37);
-    });
-  });
-
-  it("已经处于底部安全区时，实时输出会继续跟随到新的安全区位置", async () => {
-    setTerminalManagerSnapshot("workspace-1", [buildTerminal()]);
-
-    renderPage();
-
-    await screen.findByText("工作终端");
-    await waitFor(() => {
-      expect(screen.getByTestId("mock-xterm")).toBeInTheDocument();
-    });
-
-    const socket = MockWebSocket.instances[0];
-
-    if (!socket) {
-      throw new Error("未建立终端 WebSocket 连接");
-    }
-
-    socket.dispatchMessage({
-      type: "terminal.backfill",
-      terminalId: "terminal-1",
-      truncated: false,
-      cursorReset: false,
-      latestCursor: "40",
-      chunks: [
-        {
-          terminalId: "terminal-1",
-          cursor: "40",
-          stream: "stdout",
-          content: Array.from({ length: 40 }, (_, index) => `line-${index + 1}`).join("\r\n") + "\r\n",
-          timestamp: "2026-03-26T08:00:00.000Z"
-        }
-      ]
-    });
-
-    const terminal = mockXtermInstances.at(-1);
-
-    if (!terminal) {
-      throw new Error("未创建 xterm 实例");
-    }
-
-    await waitFor(() => {
-      expect(terminal.buffer.active.viewportY).toBe(37);
-    });
-
-    socket.dispatchMessage({
-      type: "terminal.output",
-      terminalId: "terminal-1",
-      chunk: {
-        terminalId: "terminal-1",
-        cursor: "42",
-        stream: "stdout",
-        content: "line-41\r\nline-42\r\n",
-        timestamp: "2026-03-26T08:00:01.000Z"
-      }
-    });
-
-    await waitFor(() => {
-      expect(terminal.buffer.active.baseY).toBe(41);
-      expect(terminal.buffer.active.viewportY).toBe(39);
+      const terminalMarker = screen.getByTestId("mock-xterm");
+      const viewportHost = terminalMarker.parentElement;
+      expect(viewportHost).not.toBeNull();
+      expect(viewportHost?.style.getPropertyValue("--terminal-bottom-gap")).toBe("28px");
     });
   });
 

@@ -5036,6 +5036,24 @@ body {
   background: color-mix(in srgb, var(--panel-bg-strong) 84%, transparent);
 }
 
+.workbench-shell[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .terminal-xterm {
+  padding: 0;
+}
+
+.workbench-shell[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .terminal-xterm .xterm {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  padding: 10px 10px max(var(--terminal-bottom-gap), env(safe-area-inset-bottom, 0px));
+}
+
+.workbench-shell[data-runtime-platform="desktop"][data-os-family="macos"][data-overlay-titlebar="true"] .terminal-xterm .xterm-viewport {
+  top: 10px;
+  right: 10px;
+  bottom: max(var(--terminal-bottom-gap), env(safe-area-inset-bottom, 0px));
+  left: 10px;
+}
+
 .workbench-shell {
   --workbench-collapsed-left-inset: 0px;
   --workbench-collapsed-right-inset: 0px;
@@ -5043,26 +5061,39 @@ body {
   --workbench-header-padding-top: 7px;
   --workbench-header-padding-bottom: 7px;
   --workbench-header-padding-inline: 14px;
+  --workbench-toolbar-control-size: 30px;
+  --workbench-toolbar-control-gap: 8px;
   /* 默认按 Web/H5 基线布局，不额外吃 macOS 标题栏补偿。 */
   --workbench-titlebar-leading-inset: 0px;
   --workbench-titlebar-content-shift-y: 0px;
   --workbench-nav-toolbar-shift-y: 0px;
   --workbench-collapsed-controls-shift-y: 0px;
   --workbench-macos-traffic-light-safe-zone: 0px;
+  --workbench-collapsed-left-controls-width: 0px;
+  --workbench-collapsed-right-controls-width: 0px;
+  --workbench-collapsed-left-content-inset: 0px;
+  --workbench-collapsed-right-content-inset: 0px;
   /* 这是 Web 侧标题栏控件的统一默认中心线，不是系统坐标。 */
   --workbench-macos-titlebar-layout-center-y: 18px;
-  --workbench-collapsed-balanced-inset: max(
-    var(--workbench-collapsed-left-inset),
-    var(--workbench-collapsed-right-inset)
-  );
 }
 
 .workbench-shell[data-left-collapsed="true"] {
-  --workbench-collapsed-left-inset: 132px;
+  /* 左侧收起态现在有 5 个按钮，不能再靠 132px 这种魔法数字硬顶。 */
+  --workbench-collapsed-left-controls-width: calc(
+    5 * var(--workbench-toolbar-control-size) + 4 * var(--workbench-toolbar-control-gap)
+  );
+  --workbench-collapsed-left-content-inset: calc(
+    var(--workbench-titlebar-leading-inset)
+    + var(--workbench-collapsed-left-controls-width)
+    + var(--workbench-header-padding-inline)
+  );
 }
 
 .workbench-shell[data-right-collapsed="true"] {
-  --workbench-collapsed-right-inset: 56px;
+  --workbench-collapsed-right-controls-width: var(--workbench-toolbar-control-size);
+  --workbench-collapsed-right-content-inset: calc(
+    var(--workbench-collapsed-right-controls-width) + var(--workbench-header-padding-inline)
+  );
 }
 
 .workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"] {
@@ -5080,10 +5111,6 @@ body {
   --workbench-macos-titlebar-control-size: 26px;
   --workbench-macos-titlebar-padding-top: 4px;
   --workbench-macos-titlebar-padding-bottom: 5px;
-}
-
-.workbench-shell[data-os-family="macos"][data-overlay-titlebar="true"][data-left-collapsed="true"] {
-  --workbench-collapsed-left-inset: 136px;
 }
 
 .workbench-nav {
@@ -5201,9 +5228,10 @@ body {
 }
 
 .conversation-header-main,
-.terminal-tabbar-main {
-  padding-left: var(--workbench-collapsed-balanced-inset);
-  padding-right: var(--workbench-collapsed-balanced-inset);
+.terminal-tabbar-main,
+.butler-header-main {
+  padding-left: var(--workbench-collapsed-left-content-inset);
+  padding-right: var(--workbench-collapsed-right-content-inset);
   transition:
     padding-left 220ms cubic-bezier(0.2, 0.9, 0.2, 1),
     padding-right 220ms cubic-bezier(0.2, 0.9, 0.2, 1);

@@ -215,7 +215,8 @@ const TERMINAL_TOUCH_MOMENTUM_MAX_LINES_PER_MS = 0.9;
 const TERMINAL_TOUCH_MOMENTUM_FRICTION = 0.97;
 const TERMINAL_TOUCH_MOMENTUM_MAX_DURATION_MS = 3600;
 const TERMINAL_TOUCH_MOMENTUM_MAX_IDLE_FRAMES = 3;
-const TERMINAL_LATEST_CURSOR_BOTTOM_GAP_RATIO = 0.05;
+const TERMINAL_VIEWPORT_BOTTOM_GAP_RATIO = 0.05;
+const TERMINAL_VIEWPORT_BOTTOM_GAP_MIN_PX = 28;
 const INITIAL_PANE_BINDINGS: TerminalPaneBindings = {
   primary: null,
   secondary: null
@@ -4299,7 +4300,13 @@ function createTerminalViewportRuntime(input: {
   }
 
   function fitToContainer(): void {
-    if (disposed || !hasUsableContainerSize(input.container)) {
+    if (disposed) {
+      return;
+    }
+
+    syncViewportBottomGap();
+
+    if (!hasUsableContainerSize(input.container)) {
       return;
     }
 
@@ -4320,6 +4327,11 @@ function createTerminalViewportRuntime(input: {
     hasCommittedFit = true;
     lastFittedCols = terminal.cols;
     lastFittedRows = terminal.rows;
+  }
+
+  function syncViewportBottomGap(): void {
+    const bottomGapPx = resolveTerminalViewportBottomGapPx(input.container.clientHeight);
+    input.container.style.setProperty("--terminal-bottom-gap", `${bottomGapPx}px`);
   }
 
   function revealLatest(): void {
@@ -4531,22 +4543,31 @@ function filterTerminalChunksAfterCursor(
 }
 
 function scrollTerminalToBottom(terminal: Terminal): void {
-  terminal.scrollToLine(resolveTerminalPreferredViewportY(terminal));
+  const terminalWithOptionalScrollToBottom = terminal as Terminal & {
+    scrollToBottom?: () => void;
+  };
+
+  if (typeof terminalWithOptionalScrollToBottom.scrollToBottom === "function") {
+    terminalWithOptionalScrollToBottom.scrollToBottom();
+    return;
+  }
+
+  terminal.scrollToLine(terminal.buffer.active.baseY);
 }
 
 function isTerminalViewportNearBottom(terminal: Terminal, slackLines = 1): boolean {
-  return terminal.buffer.active.viewportY >= resolveTerminalPreferredViewportY(terminal) - slackLines;
+  return terminal.buffer.active.baseY - terminal.buffer.active.viewportY <= slackLines;
 }
 
-function resolveTerminalPreferredViewportY(terminal: Terminal): number {
-  return Math.max(0, terminal.buffer.active.baseY - resolveTerminalBottomGapLines(terminal));
-}
+function resolveTerminalViewportBottomGapPx(containerHeight: number): number {
+  if (!Number.isFinite(containerHeight) || containerHeight <= 0) {
+    return TERMINAL_VIEWPORT_BOTTOM_GAP_MIN_PX;
+  }
 
-function resolveTerminalBottomGapLines(terminal: Terminal): number {
-  const visibleRows = Number.isFinite(terminal.rows) && terminal.rows > 0
-    ? terminal.rows
-    : DEFAULT_TERMINAL_ROWS;
-  return Math.max(1, Math.ceil(visibleRows * TERMINAL_LATEST_CURSOR_BOTTOM_GAP_RATIO));
+  return Math.max(
+    TERMINAL_VIEWPORT_BOTTOM_GAP_MIN_PX,
+    Math.ceil(containerHeight * TERMINAL_VIEWPORT_BOTTOM_GAP_RATIO)
+  );
 }
 
 function hasUsableContainerSize(container: HTMLDivElement): boolean {
@@ -4604,7 +4625,15 @@ function sortTerminals(
       return leftPinned ? -1 : 1;
     }
 
-    return right.lastActiveAt.localeCompare(left.lastActiveAt);
+    if (left.createdAt !== right.createdAt) {
+      return left.createdAt.localeCompare(right.createdAt);
+    }
+
+    if (left.name !== right.name) {
+      return left.name.localeCompare(right.name, "zh-CN-u-kn-true");
+    }
+
+    return left.id.localeCompare(right.id);
   });
 }
 
@@ -5173,7 +5202,7 @@ function upsertTerminal(terminals: TerminalDto[], nextTerminal: TerminalDto): Te
   const existingIndex = terminals.findIndex((terminal) => terminal.id === nextTerminal.id);
 
   if (existingIndex === -1) {
-    return [nextTerminal, ...terminals];
+    return [...terminals, nextTerminal];
   }
 
   const nextTerminals = [...terminals];
