@@ -334,6 +334,7 @@ Detailed feature specifications and design documents are located in the [`specs/
 | Multi-window support on desktop | Completed | 🟢 Completed |
 | Parallel dev mode — launch multiple CLI or model configs simultaneously for rapid dev validation on a single workspace | In development | 🟡 In Progress |
 | Support more CLIs (Gemini CLI, Kimi CLI, etc.) | Completed  | 🟢 Completed  |
+| CLI model quick switching with CC-SWITCH integration | Completed | 🟢 Completed |
 | Support connecting to multiple hosts simultaneously | Completed | 🟢 Completed |
 | Richer file preview and editor workflow | Completed | 🟢 Completed |
 | Git commit drill-down, change explanation, and full history | Completed | 🟢 Completed |
@@ -670,6 +671,7 @@ pnpm test:user-app
 | PC 端支持多窗口操作 | 已完成 | 🟢 已完成 |
 | 并行开发模式，同时启动多个 CLI 或模型配置，并行针对单一工作区进行快速开发验证 | 开发中 | 🟡 开发中 |
 | 支持更多 CLI（Gemini CLI、Kimi CLI 等） | 已完成 | 🟢 已完成 |
+| CLI 模型快速切换（CC-SWITCH 集成） | 已完成 | 🟢 已完成 |
 | 支持同时连接多个 HOST | 已完成 | 🟢 已完成 |
 | 更完整的文件预览与编辑体验 | 已完成 | 🟢 已完成 |
 | Git 版本详情、改动解释与全量历史查看 | 已完成 | 🟢 已完成 |
