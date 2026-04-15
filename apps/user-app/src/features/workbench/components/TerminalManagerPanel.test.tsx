@@ -11,6 +11,7 @@ import type {
   TerminalTemplateDto,
   TerminalTemplateRuntimeStatusDto
 } from "../../terminal/api/terminal-api";
+import { userPreferenceStore } from "../../../preferences/user-preference-store";
 import { TerminalManagerPanel } from "./TerminalManagerPanel";
 
 interface MockTerminalManagerSnapshot {
@@ -22,6 +23,43 @@ interface MockTerminalManagerSnapshot {
 }
 
 let terminalManagerSnapshotListener: ((snapshot: MockTerminalManagerSnapshot) => void) | null = null;
+const initialPreferenceState = userPreferenceStore.getState();
+
+function createPreferenceState(language: "zh-CN" | "en-US") {
+  return {
+    initialized: true,
+    profile: {
+      language,
+      theme: "light" as const,
+      defaultPermissionMode: "default" as const
+    },
+    providers: {
+      "claude-code": {
+        defaultModel: null,
+        defaultReasoningLevel: null
+      },
+      codex: {
+        defaultModel: null,
+        defaultReasoningLevel: null
+      },
+      opencode: {
+        defaultModel: null,
+        defaultReasoningLevel: null
+      },
+      gemini: {
+        defaultModel: null,
+        defaultReasoningLevel: null
+      },
+      kimi: {
+        defaultModel: null,
+        defaultReasoningLevel: null
+      }
+    },
+    updatedAt: null,
+    source: "default" as const
+  };
+}
+
 let buildMockSnapshot = (): MockTerminalManagerSnapshot => ({
   workspaceId: "workspace-1",
   terminals: [],
@@ -128,6 +166,7 @@ describe("TerminalManagerPanel", () => {
     window.localStorage.clear();
     window.sessionStorage.clear();
     authStore.clear();
+    userPreferenceStore.hydrate(createPreferenceState("zh-CN"));
     terminalManagerSnapshotListener = null;
     buildMockSnapshot = () => ({
       workspaceId: "workspace-1",
@@ -159,6 +198,7 @@ describe("TerminalManagerPanel", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     global.fetch = originalFetch;
+    userPreferenceStore.hydrate(initialPreferenceState);
   });
 
   it("主面板不再显示工作区和 shell 下拉，改为用模态框创建快捷启动项", async () => {
@@ -200,8 +240,13 @@ describe("TerminalManagerPanel", () => {
               port: 5173,
               occupied: true,
               processId: 3250,
+              parentProcessId: 3120,
+              processGroupId: 3120,
               processName: "node",
-              processCommandLine: "node node_modules/vite/bin/vite.js --port 5173"
+              processCommandLine: "node node_modules/vite/bin/vite.js --port 5173",
+              parentProcessName: "npm",
+              parentProcessCommandLine: "npm run dev:frontend",
+              terminationScope: "process_group"
             }
           ]
         : [
@@ -210,8 +255,13 @@ describe("TerminalManagerPanel", () => {
               port: 5173,
               occupied: false,
               processId: null,
+              parentProcessId: null,
+              processGroupId: null,
               processName: null,
-              processCommandLine: null
+              processCommandLine: null,
+              parentProcessName: null,
+              parentProcessCommandLine: null,
+              terminationScope: null
             }
           ]
     });
@@ -266,6 +316,9 @@ describe("TerminalManagerPanel", () => {
     await userEvent.click(screen.getByRole("button", { name: "显示详细信息" }));
 
     expect(await screen.findByText("node node_modules/vite/bin/vite.js --port 5173")).toBeInTheDocument();
+    expect(screen.getByText("npm run dev:frontend")).toBeInTheDocument();
+    expect(screen.getAllByText("3120")).toHaveLength(2);
+    expect(screen.getByText("整个进程组")).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "隐藏详细信息" }));
 
@@ -362,8 +415,13 @@ describe("TerminalManagerPanel", () => {
                 port: currentTemplate.port,
                 occupied: false,
                 processId: null,
+                parentProcessId: null,
+                processGroupId: null,
                 processName: null,
-                processCommandLine: null
+                processCommandLine: null,
+                parentProcessName: null,
+                parentProcessCommandLine: null,
+                terminationScope: null
               }
             ]
           : []

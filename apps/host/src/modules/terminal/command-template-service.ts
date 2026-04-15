@@ -103,7 +103,16 @@ export class CommandTemplateService {
       };
     }
 
-    await terminateRuntimeProcess(runtimeStatus.processId);
+    await terminateRuntimeProcess({
+      processId: runtimeStatus.processId,
+      parentProcessId: runtimeStatus.parentProcessId ?? null,
+      processGroupId: runtimeStatus.processGroupId ?? null,
+      processName: runtimeStatus.processName,
+      processCommandLine: runtimeStatus.processCommandLine,
+      parentProcessName: runtimeStatus.parentProcessName ?? null,
+      parentProcessCommandLine: runtimeStatus.parentProcessCommandLine ?? null,
+      terminationScope: runtimeStatus.terminationScope ?? "process"
+    });
 
     return {
       success: true,

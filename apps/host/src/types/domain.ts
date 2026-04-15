@@ -978,8 +978,13 @@ export interface TerminalTemplateRuntimeStatus {
   port: number;
   occupied: boolean;
   processId: number | null;
+  parentProcessId?: number | null;
+  processGroupId?: number | null;
   processName: string | null;
   processCommandLine: string | null;
+  parentProcessName?: string | null;
+  parentProcessCommandLine?: string | null;
+  terminationScope?: "process" | "process_group" | null;
 }
 
 export type SkillSourceType = "builtin" | "local-import" | "managed-copy";

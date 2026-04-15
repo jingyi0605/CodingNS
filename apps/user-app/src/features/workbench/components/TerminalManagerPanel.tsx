@@ -225,6 +225,18 @@ function resolveTemplateVisualStatus(
   };
 }
 
+function getTerminationScopeLabel(
+  runtimeStatus: TerminalTemplateRuntimeStatusDto | null
+): string | null {
+  if (!runtimeStatus?.terminationScope) {
+    return null;
+  }
+
+  return runtimeStatus.terminationScope === "process_group"
+    ? t("terminalManager.terminationScopeProcessGroup")
+    : t("terminalManager.terminationScopeProcess");
+}
+
 function TerminalManagerModal({
   open,
   title,
@@ -1084,6 +1096,7 @@ export function TerminalManagerPanel({
             {templates.map((template) => {
               const runtimeStatus = getTemplateRuntimeStatus(runtimeStatusByTemplateId, template.id);
               const visualStatus = resolveTemplateVisualStatus(template, runtimeStatus);
+              const terminationScopeLabel = getTerminationScopeLabel(runtimeStatus);
               const detailsOpen = expandedTemplateIds.includes(template.id);
               const detailButtonLabel = detailsOpen
                 ? t("terminalManager.hideDetailsAction")
@@ -1142,6 +1155,9 @@ export function TerminalManagerPanel({
                       <span className="badge" data-tone={visualStatus.badgeTone}>
                         {visualStatus.badgeLabel}
                       </span>
+                      {runtimeStatus?.occupied && runtimeStatus.processGroupId ? (
+                        <span className="badge">{`PGID ${runtimeStatus.processGroupId}`}</span>
+                      ) : null}
                       {template.proxyEnabled ? (
                         <span className="badge">{t("terminalManager.proxyEnabled")}</span>
                       ) : null}
@@ -1217,10 +1233,34 @@ export function TerminalManagerPanel({
                             <strong>{runtimeStatus.processId}</strong>
                           </div>
                         ) : null}
+                        {runtimeStatus?.processGroupId ? (
+                          <div className="terminal-manager-detail-item">
+                            <span>{t("terminalManager.processGroupIdLabel")}</span>
+                            <strong>{runtimeStatus.processGroupId}</strong>
+                          </div>
+                        ) : null}
+                        {terminationScopeLabel ? (
+                          <div className="terminal-manager-detail-item">
+                            <span>{t("terminalManager.terminationScopeLabel")}</span>
+                            <strong>{terminationScopeLabel}</strong>
+                          </div>
+                        ) : null}
+                        {runtimeStatus?.parentProcessId ? (
+                          <div className="terminal-manager-detail-item">
+                            <span>{t("terminalManager.parentProcessIdLabel")}</span>
+                            <strong>{runtimeStatus.parentProcessId}</strong>
+                          </div>
+                        ) : null}
                         {runtimeStatus?.processCommandLine ? (
                           <div className="terminal-manager-detail-item terminal-manager-detail-item-wide">
                             <span>{t("terminalManager.processCommandLabel")}</span>
                             <strong>{runtimeStatus.processCommandLine}</strong>
+                          </div>
+                        ) : null}
+                        {runtimeStatus?.parentProcessCommandLine ? (
+                          <div className="terminal-manager-detail-item terminal-manager-detail-item-wide">
+                            <span>{t("terminalManager.parentProcessCommandLabel")}</span>
+                            <strong>{runtimeStatus.parentProcessCommandLine}</strong>
                           </div>
                         ) : null}
                       </div>

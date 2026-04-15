@@ -5,8 +5,13 @@ import type { TerminalTemplateRuntimeStatus } from "../../types/domain.js";
 
 interface PortProcessInfo {
   processId: number;
+  parentProcessId: number | null;
+  processGroupId: number | null;
   processName: string | null;
   processCommandLine: string | null;
+  parentProcessName: string | null;
+  parentProcessCommandLine: string | null;
+  terminationScope: "process" | "process_group";
 }
 
 export async function discoverTemplateRuntimeStatuses(
@@ -29,28 +34,68 @@ export async function discoverTemplateRuntimeStatuses(
       port: item.port,
       occupied: processInfo !== null,
       processId: processInfo?.processId ?? null,
+      parentProcessId: processInfo?.parentProcessId ?? null,
+      processGroupId: processInfo?.processGroupId ?? null,
       processName: processInfo?.processName ?? null,
-      processCommandLine: processInfo?.processCommandLine ?? null
+      processCommandLine: processInfo?.processCommandLine ?? null,
+      parentProcessName: processInfo?.parentProcessName ?? null,
+      parentProcessCommandLine: processInfo?.parentProcessCommandLine ?? null,
+      terminationScope: processInfo?.terminationScope ?? null
     };
   });
 }
 
-export async function terminateRuntimeProcess(processId: number): Promise<void> {
-  if (!Number.isInteger(processId) || processId <= 0) {
-    throw new Error(`invalid process id: ${processId}`);
+export async function terminateRuntimeProcess(processInfo: PortProcessInfo): Promise<void> {
+  if (!Number.isInteger(processInfo.processId) || processInfo.processId <= 0) {
+    throw new Error(`invalid process id: ${processInfo.processId}`);
   }
 
   if (process.platform === "win32") {
-    await runProcess("taskkill", ["/PID", String(processId), "/T", "/F"]);
+    await runProcess("taskkill", ["/PID", String(processInfo.processId), "/T", "/F"]);
     return;
   }
 
-  process.kill(processId, "SIGTERM");
-  await waitForProcessExit(processId, 1500);
+  if (
+    processInfo.terminationScope === "process_group" &&
+    Number.isInteger(processInfo.processGroupId) &&
+    (processInfo.processGroupId ?? 0) > 0
+  ) {
+    const processGroupId = processInfo.processGroupId as number;
 
-  if (isProcessAlive(processId)) {
-    process.kill(processId, "SIGKILL");
-    await waitForProcessExit(processId, 1500);
+    // 如果目标就是当前 Host 所在进程组，改用脱离的 helper 延后执行，先把 HTTP 响应发出去。
+    if (await shouldDeferPosixProcessGroupTermination(processInfo.processId, processGroupId)) {
+      scheduleDeferredPosixTermination({
+        processId: processInfo.processId,
+        processGroupId
+      });
+      return;
+    }
+
+    signalPosixProcessGroup(processGroupId, "SIGTERM");
+    await waitForProcessGroupExit(processGroupId, 1500);
+
+    if (isProcessGroupAlive(processGroupId)) {
+      signalPosixProcessGroup(processGroupId, "SIGKILL");
+      await waitForProcessGroupExit(processGroupId, 1500);
+    }
+
+    return;
+  }
+
+  if (await shouldDeferPosixProcessTermination(processInfo.processId)) {
+    scheduleDeferredPosixTermination({
+      processId: processInfo.processId,
+      processGroupId: null
+    });
+    return;
+  }
+
+  process.kill(processInfo.processId, "SIGTERM");
+  await waitForProcessExit(processInfo.processId, 1500);
+
+  if (isProcessAlive(processInfo.processId)) {
+    process.kill(processInfo.processId, "SIGKILL");
+    await waitForProcessExit(processInfo.processId, 1500);
   }
 }
 
@@ -71,7 +116,7 @@ async function findWindowsPortProcess(port: number): Promise<PortProcessInfo | n
     `$port=${port}`,
     "$connection = Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue | Select-Object -First 1",
     "if (-not $connection) { return }",
-    "$process = Get-CimInstance Win32_Process -Filter \"ProcessId = $($connection.OwningProcess)\" | Select-Object ProcessId, Name, CommandLine",
+    "$process = Get-CimInstance Win32_Process -Filter \"ProcessId = $($connection.OwningProcess)\" | Select-Object ProcessId, ParentProcessId, Name, CommandLine",
     "if (-not $process) { return }",
     "$process | ConvertTo-Json -Compress"
   ].join("; ");
@@ -94,10 +139,18 @@ async function findWindowsPortProcess(port: number): Promise<PortProcessInfo | n
     return null;
   }
 
+  const parentProcessId = normalizeOptionalPositiveInteger(parsed.ParentProcessId);
+  const parentProcess = parentProcessId ? await lookupWindowsProcess(parentProcessId) : null;
+
   return {
     processId: parsed.ProcessId,
+    parentProcessId,
+    processGroupId: null,
     processName: parsed.Name?.trim() || null,
-    processCommandLine: parsed.CommandLine?.trim() || null
+    processCommandLine: parsed.CommandLine?.trim() || null,
+    parentProcessName: parentProcess?.Name?.trim() || null,
+    parentProcessCommandLine: parentProcess?.CommandLine?.trim() || null,
+    terminationScope: "process"
   };
 }
 
@@ -182,14 +235,26 @@ async function enrichPosixProcess(
   processId: number,
   fallbackName: string | null
 ): Promise<PortProcessInfo | null> {
-  const processName = (await tryRunProcess("ps", ["-p", String(processId), "-o", "comm="]))?.trim() || fallbackName;
-  const processCommandLine =
-    (await tryRunProcess("ps", ["-p", String(processId), "-o", "args="]))?.trim() || null;
+  const currentProcess = await lookupPosixProcess(processId, fallbackName);
+
+  if (!currentProcess) {
+    return null;
+  }
+
+  const parentProcess =
+    currentProcess.parentProcessId !== null
+      ? await lookupPosixProcess(currentProcess.parentProcessId, null)
+      : null;
 
   return {
-    processId,
-    processName,
-    processCommandLine
+    processId: currentProcess.processId,
+    parentProcessId: currentProcess.parentProcessId,
+    processGroupId: currentProcess.processGroupId,
+    processName: currentProcess.processName,
+    processCommandLine: currentProcess.processCommandLine,
+    parentProcessName: parentProcess?.processName ?? null,
+    parentProcessCommandLine: parentProcess?.processCommandLine ?? null,
+    terminationScope: currentProcess.processGroupId ? "process_group" : "process"
   };
 }
 
@@ -231,6 +296,43 @@ async function runProcess(command: string, args: string[]): Promise<string> {
   });
 }
 
+async function lookupPosixProcess(
+  processId: number,
+  fallbackName: string | null
+): Promise<{
+  processId: number;
+  parentProcessId: number | null;
+  processGroupId: number | null;
+  processName: string | null;
+  processCommandLine: string | null;
+} | null> {
+  if (!Number.isInteger(processId) || processId <= 0) {
+    return null;
+  }
+
+  const [parentProcessIdText, processGroupIdText, processNameText, processCommandLine] = await Promise.all([
+    tryRunProcess("ps", ["-p", String(processId), "-o", "ppid="]),
+    tryRunProcess("ps", ["-p", String(processId), "-o", "pgid="]),
+    tryRunProcess("ps", ["-p", String(processId), "-o", "comm="]),
+    tryRunProcess("ps", ["-p", String(processId), "-o", "args="])
+  ]);
+
+  const processName = processNameText?.trim() || fallbackName;
+  const commandLine = processCommandLine?.trim() || null;
+
+  if (!processName && !commandLine) {
+    return null;
+  }
+
+  return {
+    processId,
+    parentProcessId: normalizeOptionalPositiveInteger(parentProcessIdText),
+    processGroupId: normalizeOptionalPositiveInteger(processGroupIdText),
+    processName,
+    processCommandLine: commandLine
+  };
+}
+
 function isProcessAlive(processId: number): boolean {
   try {
     process.kill(processId, 0);
@@ -248,6 +350,27 @@ function isProcessAlive(processId: number): boolean {
   }
 }
 
+function isProcessGroupAlive(processGroupId: number): boolean {
+  try {
+    process.kill(-processGroupId, 0);
+    return true;
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      (error as NodeJS.ErrnoException).code === "ESRCH"
+    ) {
+      return false;
+    }
+
+    throw error;
+  }
+}
+
+function signalPosixProcessGroup(processGroupId: number, signal: NodeJS.Signals): void {
+  process.kill(-processGroupId, signal);
+}
+
 async function waitForProcessExit(processId: number, timeoutMs: number): Promise<void> {
   const startedAt = Date.now();
 
@@ -262,8 +385,120 @@ async function waitForProcessExit(processId: number, timeoutMs: number): Promise
   }
 }
 
+async function waitForProcessGroupExit(processGroupId: number, timeoutMs: number): Promise<void> {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < timeoutMs) {
+    if (!isProcessGroupAlive(processGroupId)) {
+      return;
+    }
+
+    await new Promise((resolve) => {
+      setTimeout(resolve, 100);
+    });
+  }
+}
+
 interface WindowsProcessInfo {
   ProcessId: number;
+  ParentProcessId?: number | null;
   Name: string | null;
   CommandLine: string | null;
+}
+
+async function lookupWindowsProcess(processId: number): Promise<WindowsProcessInfo | null> {
+  const shellPath =
+    process.env.SYSTEMROOT
+      ? path.join(process.env.SYSTEMROOT, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+      : "powershell.exe";
+  const script = [
+    `$processId=${processId}`,
+    "$process = Get-CimInstance Win32_Process -Filter \"ProcessId = $processId\" | Select-Object ProcessId, ParentProcessId, Name, CommandLine",
+    "if (-not $process) { return }",
+    "$process | ConvertTo-Json -Compress"
+  ].join("; ");
+  const stdout = await tryRunProcess(shellPath, [
+    "-NoProfile",
+    "-NonInteractive",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-Command",
+    script
+  ]);
+
+  if (!stdout?.trim()) {
+    return null;
+  }
+
+  return JSON.parse(stdout) as WindowsProcessInfo;
+}
+
+async function shouldDeferPosixProcessTermination(processId: number): Promise<boolean> {
+  return processId === process.pid;
+}
+
+async function shouldDeferPosixProcessGroupTermination(
+  processId: number,
+  processGroupId: number
+): Promise<boolean> {
+  if (processId === process.pid) {
+    return true;
+  }
+
+  const currentProcessGroupId = await lookupCurrentPosixProcessGroupId();
+  return currentProcessGroupId !== null && currentProcessGroupId === processGroupId;
+}
+
+let currentPosixProcessGroupIdPromise: Promise<number | null> | null = null;
+
+async function lookupCurrentPosixProcessGroupId(): Promise<number | null> {
+  if (!currentPosixProcessGroupIdPromise) {
+    currentPosixProcessGroupIdPromise = (async () => {
+      const stdout = await tryRunProcess("ps", ["-p", String(process.pid), "-o", "pgid="]);
+      return normalizeOptionalPositiveInteger(stdout);
+    })();
+  }
+
+  return await currentPosixProcessGroupIdPromise;
+}
+
+function scheduleDeferredPosixTermination(input: {
+  processId: number;
+  processGroupId: number | null;
+}): void {
+  const target =
+    input.processGroupId && input.processGroupId > 0
+      ? `kill -TERM -- -${input.processGroupId} 2>/dev/null || kill -TERM ${input.processId} 2>/dev/null || true`
+      : `kill -TERM ${input.processId} 2>/dev/null || true`;
+  const forceTarget =
+    input.processGroupId && input.processGroupId > 0
+      ? `kill -KILL -- -${input.processGroupId} 2>/dev/null || kill -KILL ${input.processId} 2>/dev/null || true`
+      : `kill -KILL ${input.processId} 2>/dev/null || true`;
+  const script = `sleep 0.2; ${target}; sleep 1.5; ${forceTarget}`;
+  const helper = spawn("sh", ["-c", script], {
+    detached: true,
+    stdio: "ignore",
+    windowsHide: true
+  });
+
+  helper.unref();
+}
+
+function normalizeOptionalPositiveInteger(value: unknown): number | null {
+  if (typeof value === "number") {
+    return Number.isInteger(value) && value > 0 ? value : null;
+  }
+
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    return null;
+  }
+
+  const parsed = Number(trimmed);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
