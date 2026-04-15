@@ -210,6 +210,7 @@ describe("SessionIndexPage", () => {
     contextValue.navigationGroups = createNavigationGroups();
     contextValue.currentWorkspaceId = "workspace-1";
     contextValue.currentSessionId = "session-1";
+    contextValue.favoriteSessionIds = ["session-2"];
   });
 
   afterEach(() => {
@@ -239,6 +240,36 @@ describe("SessionIndexPage", () => {
     expect(within(workspaceSection).getByText("会话 Alpha")).toBeInTheDocument();
     expect(within(workspaceSection).getByText("会话 Beta")).toBeInTheDocument();
     expect(within(workspaceSection).queryByText("会话 Gamma")).not.toBeInTheDocument();
+  });
+
+  it("会单独渲染收藏会话区块", () => {
+    renderPage();
+
+    const favoriteSection = screen.getByRole("heading", { level: 2, name: /^(收藏会话|Pinned Sessions)$/ }).closest("section");
+
+    if (!favoriteSection) {
+      throw new Error("未找到收藏会话区块");
+    }
+
+    expect(within(favoriteSection).getByText("会话 Beta")).toBeInTheDocument();
+    expect(within(favoriteSection).getByText("1")).toBeInTheDocument();
+  });
+
+  it("没有收藏会话时不显示收藏区块", () => {
+    contextValue.favoriteSessionIds = [];
+    contextValue.navigationGroups = createNavigationGroups().map((group) => ({
+      ...group,
+      sessions: group.sessions.map((session) => ({
+        ...session,
+        isFavorite: false
+      }))
+    }));
+
+    renderPage();
+
+    expect(
+      screen.queryByRole("heading", { level: 2, name: /^(收藏会话|Pinned Sessions)$/ })
+    ).not.toBeInTheDocument();
   });
 
   it("当前工作区切到子工作树后，只显示子工作树自己的会话", () => {
@@ -286,8 +317,8 @@ describe("SessionIndexPage", () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(screen.getByRole("button", { name: "新建会话" }));
-    await user.click(screen.getByRole("button", { name: /选择工作区 项目一/ }));
+    await user.click(screen.getByRole("button", { name: t("shell.createSession") }));
+    await user.click(screen.getByRole("button", { name: /^(选择工作区|Choose Workspace) 项目一$/ }));
     await user.click(screen.getByRole("button", { name: /Project Two/ }));
     await user.click(screen.getByRole("button", { name: "OpenCode" }));
 
@@ -327,6 +358,36 @@ describe("SessionIndexPage", () => {
     await user.click(renameButton);
     expect(contextValue.renameSession).toHaveBeenCalledWith("session-1", "New Title");
     promptSpy.mockRestore();
+  }, 10000);
+
+  it("查看归档会话按钮会打开归档弹窗并支持恢复", async () => {
+    const user = userEvent.setup();
+    contextValue.navigationGroups[0].sessions = [
+      ...contextValue.navigationGroups[0].sessions,
+      createSessionSummary({
+        sessionId: "session-archived",
+        title: "已归档会话",
+        provider: "codex",
+        workspaceId: "workspace-1",
+        isArchived: true,
+        lastMessageAt: "2026-03-27T07:00:00Z"
+      })
+    ];
+
+    renderPage();
+
+    const archiveButton = screen.getByRole("button", { name: new RegExp(t("shell.archiveViewAction")) });
+
+    expect(archiveButton).toHaveClass("primary-button", "mobile-session-index-create-button");
+
+    await user.click(archiveButton);
+
+    const dialog = await screen.findByRole("dialog", { name: /^(归档会话|Archived Sessions)$/ });
+    expect(within(dialog).getByText("已归档会话")).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole("button", { name: /^(取消归档|Restore from Archive)$/ }));
+
+    expect(contextValue.unarchiveSession).toHaveBeenCalledWith("session-archived");
   }, 10000);
 
   it("更多操作菜单会挂到视口层并保持在屏幕范围内", async () => {

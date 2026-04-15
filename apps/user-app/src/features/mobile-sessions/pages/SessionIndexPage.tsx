@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 
 import { t } from "../../../shared/i18n";
-import type { ProviderId } from "../../conversation/api/conversation-api";
+import type { ProviderId, SessionSummaryDto } from "../../conversation/api/conversation-api";
+import { getProviderDisplayName } from "../../conversation/capability/provider-ui";
 import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout";
+import { isRealSubagentSession } from "../../conversation/session-fork-display";
 import { MobileWorkspaceSwitcherHeader } from "../../mobile-shell/components/MobileWorkspaceSwitcherHeader";
 import { MobileCreateSessionSheet } from "../components/MobileCreateSessionSheet";
 import {
@@ -94,15 +97,34 @@ export function SessionIndexPage() {
         : ([] as WorkbenchNavigationEntry[]),
     [currentWorkspaceTarget]
   );
+  const favoriteEntries = useMemo(
+    () => currentWorkspaceEntries.filter((entry) => favoriteSet.has(entry.session.sessionId)),
+    [currentWorkspaceEntries, favoriteSet]
+  );
   const visibleTree = useMemo(
     () => buildNavigationSessionTree(currentWorkspaceEntries),
     [currentWorkspaceEntries]
+  );
+  const favoriteTree = useMemo(
+    () => buildNavigationSessionTree(favoriteEntries),
+    [favoriteEntries]
+  );
+  const archivedSessions = useMemo(
+    () =>
+      currentWorkspaceTarget
+        ? currentWorkspaceTarget.sessions.filter(
+            (session) => session.isArchived === true && !isRealSubagentSession(session)
+          )
+        : ([] as SessionSummaryDto[]),
+    [currentWorkspaceTarget]
   );
   const fallbackWorkspaceId = currentWorkspaceTarget?.workspace.id ?? "";
   const canStartSession = Boolean(fallbackWorkspaceId);
   const [expandedSubagentRootIds, setExpandedSubagentRootIds] = useState<string[]>([]);
   const [visibleSubagentCounts, setVisibleSubagentCounts] = useState<Record<string, number>>({});
   const [createSessionOpen, setCreateSessionOpen] = useState(false);
+  const [archiveDialogOpen, setArchiveDialogOpen] = useState(false);
+  const [restoringArchivedSessionId, setRestoringArchivedSessionId] = useState<string | null>(null);
 
   useEffect(() => {
     setVisibleSubagentCounts((current) => {
@@ -187,6 +209,16 @@ export function SessionIndexPage() {
     setCreateSessionOpen(false);
     writeMobileConversationPreviewMode("immersive");
     startDraftSession(workspaceId, provider);
+  }
+
+  async function handleRestoreArchivedSession(sessionId: string) {
+    setRestoringArchivedSessionId(sessionId);
+
+    try {
+      await unarchiveSession(sessionId);
+    } finally {
+      setRestoringArchivedSessionId((current) => (current === sessionId ? null : current));
+    }
   }
 
   function renderSessionTreeNode(
@@ -336,6 +368,32 @@ export function SessionIndexPage() {
       />
 
       <div className="mobile-page-top-body">
+        <div className="session-index-archive-actions">
+          <button
+            type="button"
+            className="primary-button mobile-session-index-create-button session-index-archive-button"
+            disabled={navigationLoading || !currentWorkspaceTarget}
+            onClick={() => setArchiveDialogOpen(true)}
+          >
+            <span>{t("shell.archiveViewAction")}</span>
+            <span className="session-index-archive-count">{archivedSessions.length}</span>
+          </button>
+        </div>
+
+        {favoriteTree.length > 0 ? (
+          <section className="session-section session-section-sheet">
+            <header className="session-section-heading">
+              <div>
+                <h2>{t("shell.favoriteSectionTitle")}</h2>
+              </div>
+              <span className="session-section-count">{favoriteEntries.length}</span>
+            </header>
+            <div className="session-current-workspace-list">
+              {favoriteTree.map((node) => renderSessionTreeNode(node))}
+            </div>
+          </section>
+        ) : null}
+
         <section className="session-section session-section-sheet">
           <header className="session-section-heading">
             <div>
@@ -363,8 +421,141 @@ export function SessionIndexPage() {
         onClose={() => setCreateSessionOpen(false)}
         onSelect={handleSelectSessionProvider}
       />
+
+      <MobileArchivedSessionsDialog
+        open={archiveDialogOpen}
+        workspaceName={currentWorkspaceSummary?.label ?? currentWorkspaceTarget?.workspace.name ?? null}
+        sessions={archivedSessions}
+        restoringSessionId={restoringArchivedSessionId}
+        onClose={() => {
+          if (!restoringArchivedSessionId) {
+            setArchiveDialogOpen(false);
+          }
+        }}
+        onRestore={(sessionId) => void handleRestoreArchivedSession(sessionId)}
+      />
     </main>
   );
+}
+
+function MobileArchivedSessionsDialog({
+  open,
+  workspaceName,
+  sessions,
+  restoringSessionId,
+  onClose,
+  onRestore
+}: {
+  open: boolean;
+  workspaceName: string | null;
+  sessions: readonly SessionSummaryDto[];
+  restoringSessionId: string | null;
+  onClose: () => void;
+  onRestore: (sessionId: string) => void | Promise<void>;
+}) {
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape" && !restoringSessionId) {
+        onClose();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [onClose, open, restoringSessionId]);
+
+  if (!open || typeof document === "undefined") {
+    return null;
+  }
+
+  return createPortal(
+    <div className="workbench-modal-layer">
+      <button
+        type="button"
+        className="workbench-modal-backdrop"
+        aria-label={t("common.close")}
+        disabled={Boolean(restoringSessionId)}
+        onClick={onClose}
+      />
+      <section
+        className="workbench-modal-card surface-card"
+        role="dialog"
+        aria-modal="true"
+        aria-label={t("shell.archiveModalTitle")}
+      >
+        <div className="workbench-modal-header">
+          <div className="workbench-modal-title-wrap">
+            <h2>{t("shell.archiveModalTitle")}</h2>
+            <p>
+              {workspaceName
+                ? `${workspaceName} · ${t("shell.archiveModalDescription")}`
+                : t("shell.archiveModalDescription")}
+            </p>
+          </div>
+        </div>
+        <div className="workbench-modal-body">
+          {sessions.length > 0 ? (
+            <div className="workbench-archive-list">
+              {sessions.map((session) => (
+                <article key={session.sessionId} className="workbench-archive-item">
+                  <div className="workbench-archive-item-main">
+                    <strong title={session.title ?? session.sessionId}>{session.title ?? session.sessionId}</strong>
+                    <p>{buildArchivedSessionMeta(session)}</p>
+                  </div>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    disabled={restoringSessionId === session.sessionId}
+                    onClick={() => {
+                      void onRestore(session.sessionId);
+                    }}
+                  >
+                    {t("shell.unarchiveAction")}
+                  </button>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <p className="workbench-section-empty">{t("shell.archiveEmpty")}</p>
+          )}
+        </div>
+      </section>
+    </div>,
+    document.body
+  );
+}
+
+function buildArchivedSessionMeta(session: SessionSummaryDto): string {
+  const providerLabel = getProviderDisplayName(session.provider);
+  const timeLabel = formatSessionTime(session.lastMessageAt ?? session.updatedAt ?? null);
+
+  return [providerLabel, timeLabel].filter(Boolean).join(" · ");
+}
+
+function formatSessionTime(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+
+  const timestamp = Date.parse(value);
+
+  if (Number.isNaN(timestamp)) {
+    return null;
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(timestamp);
 }
 
 function limitVisibleDescendantTree(
