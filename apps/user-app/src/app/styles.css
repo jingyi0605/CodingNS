@@ -8456,6 +8456,9 @@ textarea:focus-visible {
   box-shadow: 0 18px 42px rgba(15, 23, 42, 0.16);
   transform: translateX(-50%);
   backdrop-filter: blur(14px);
+  pointer-events: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .conversation-selection-action {
@@ -8467,6 +8470,7 @@ textarea:focus-visible {
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
+  pointer-events: auto;
   transition:
     background 0.16s ease,
     color 0.16s ease;

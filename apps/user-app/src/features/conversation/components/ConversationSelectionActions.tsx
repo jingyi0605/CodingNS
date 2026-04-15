@@ -49,6 +49,7 @@ const PROVIDER_DEFAULT_MODEL_ID = "provider-default";
 const DESKTOP_SELECTION_DIALOG_ESTIMATED_HEIGHT = 420;
 const DESKTOP_SELECTION_DIALOG_MAX_HEIGHT = 520;
 const MOBILE_SELECTION_DIALOG_MAX_HEIGHT_OFFSET = 32;
+const SELECTION_COMMIT_DELAY_MS = 48;
 
 function copyTextWithExecCommand(text: string): boolean {
   if (typeof document === "undefined") {
@@ -140,6 +141,57 @@ function buildSelectionPrompt(selectionText: string, actionPrompt: string): stri
   ].join("\n");
 }
 
+function buildSelectionSnapshot(container: HTMLElement): SelectionSnapshot | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const currentSelection = window.getSelection();
+
+  if (!currentSelection || currentSelection.rangeCount === 0 || currentSelection.isCollapsed) {
+    return null;
+  }
+
+  const range = currentSelection.getRangeAt(0);
+  const startElement = getNodeElement(range.startContainer);
+  const endElement = getNodeElement(range.endContainer);
+
+  if (!startElement || !endElement || !container.contains(startElement) || !container.contains(endElement)) {
+    return null;
+  }
+
+  const text = currentSelection.toString().trim();
+
+  if (!text) {
+    return null;
+  }
+
+  const rect = range.getBoundingClientRect();
+
+  if (!rect.width && !rect.height) {
+    return null;
+  }
+
+  const startMessageId = resolveMessageId(range.startContainer);
+  const endMessageId = resolveMessageId(range.endContainer);
+
+  return {
+    text,
+    sourceMessageId:
+      startMessageId && startMessageId === endMessageId
+        ? startMessageId
+        : null,
+    rect: {
+      left: rect.left,
+      top: rect.top,
+      right: rect.right,
+      bottom: rect.bottom,
+      width: rect.width,
+      height: rect.height
+    }
+  };
+}
+
 export function ConversationSelectionActions({
   containerRef,
   session,
@@ -177,6 +229,9 @@ export function ConversationSelectionActions({
     height: typeof window === "undefined" ? 0 : window.innerHeight
   }));
   const actionDialogLockedRef = useRef(false);
+  const pointerSelectionActiveRef = useRef(false);
+  const pendingSelectionRef = useRef<SelectionSnapshot | null>(null);
+  const selectionCommitTimerRef = useRef<number | null>(null);
   const isMobileSelectionDialog = shellMode === "mobile" || platform.isMobile;
 
   const preferredModelForProvider = useMemo(() => {
@@ -297,6 +352,13 @@ export function ConversationSelectionActions({
 
   useEffect(() => {
     if (!session) {
+      if (selectionCommitTimerRef.current !== null && typeof window !== "undefined") {
+        window.clearTimeout(selectionCommitTimerRef.current);
+        selectionCommitTimerRef.current = null;
+      }
+
+      pendingSelectionRef.current = null;
+      pointerSelectionActiveRef.current = false;
       setSelection(null);
       setActionDialogOpen(false);
       return;
@@ -309,84 +371,118 @@ export function ConversationSelectionActions({
 
   useEffect(() => {
     if (!session || !containerRef.current || typeof window === "undefined") {
+      if (selectionCommitTimerRef.current !== null) {
+        window.clearTimeout(selectionCommitTimerRef.current);
+        selectionCommitTimerRef.current = null;
+      }
+
+      pendingSelectionRef.current = null;
+      pointerSelectionActiveRef.current = false;
       setSelection(null);
       return;
     }
 
     const container = containerRef.current;
 
+    const commitSelection = (nextSelection: SelectionSnapshot | null) => {
+      if (actionDialogLockedRef.current) {
+        return;
+      }
+
+      pendingSelectionRef.current = nextSelection;
+      setSelection(nextSelection);
+
+      if (!nextSelection) {
+        setActionDialogOpen(false);
+      }
+    };
+
+    const clearSelectionCommitTimer = () => {
+      if (selectionCommitTimerRef.current === null) {
+        return;
+      }
+
+      window.clearTimeout(selectionCommitTimerRef.current);
+      selectionCommitTimerRef.current = null;
+    };
+
+    const scheduleSelectionCommit = (
+      nextSelection: SelectionSnapshot | null,
+      options?: { immediate?: boolean }
+    ) => {
+      pendingSelectionRef.current = nextSelection;
+      clearSelectionCommitTimer();
+
+      if (options?.immediate) {
+        commitSelection(nextSelection);
+        return;
+      }
+
+      selectionCommitTimerRef.current = window.setTimeout(() => {
+        selectionCommitTimerRef.current = null;
+        commitSelection(pendingSelectionRef.current);
+      }, SELECTION_COMMIT_DELAY_MS);
+    };
+
     const updateSelection = () => {
-      if (actionDialogLockedRef.current) {
+      const nextSelection = buildSelectionSnapshot(container);
+
+      if (pointerSelectionActiveRef.current) {
+        pendingSelectionRef.current = nextSelection;
         return;
       }
 
-      const currentSelection = window.getSelection();
-
-      if (!currentSelection || currentSelection.rangeCount === 0 || currentSelection.isCollapsed) {
-        setSelection(null);
-        return;
-      }
-
-      const range = currentSelection.getRangeAt(0);
-      const startElement = getNodeElement(range.startContainer);
-      const endElement = getNodeElement(range.endContainer);
-
-      if (!startElement || !endElement || !container.contains(startElement) || !container.contains(endElement)) {
-        setSelection(null);
-        return;
-      }
-
-      const text = currentSelection.toString().trim();
-
-      if (!text) {
-        setSelection(null);
-        return;
-      }
-
-      const rect = range.getBoundingClientRect();
-
-      if (!rect.width && !rect.height) {
-        setSelection(null);
-        return;
-      }
-
-      const startMessageId = resolveMessageId(range.startContainer);
-      const endMessageId = resolveMessageId(range.endContainer);
-
-      setSelection({
-        text,
-        sourceMessageId:
-          startMessageId && startMessageId === endMessageId
-            ? startMessageId
-            : null,
-        rect: {
-          left: rect.left,
-          top: rect.top,
-          right: rect.right,
-          bottom: rect.bottom,
-          width: rect.width,
-          height: rect.height
-        }
-      });
+      scheduleSelectionCommit(nextSelection);
     };
 
-    const hideSelection = () => {
-      if (actionDialogLockedRef.current) {
+    const refreshSelection = () => {
+      const nextSelection = buildSelectionSnapshot(container);
+
+      if (pointerSelectionActiveRef.current) {
+        pendingSelectionRef.current = nextSelection;
         return;
       }
 
-      setSelection(null);
-      setActionDialogOpen(false);
+      scheduleSelectionCommit(nextSelection, { immediate: true });
     };
 
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!(event.target instanceof Node) || !container.contains(event.target)) {
+        return;
+      }
+
+      pointerSelectionActiveRef.current = true;
+      clearSelectionCommitTimer();
+    };
+
+    const settleSelection = () => {
+      if (!pointerSelectionActiveRef.current) {
+        return;
+      }
+
+      pointerSelectionActiveRef.current = false;
+      scheduleSelectionCommit(buildSelectionSnapshot(container));
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
     document.addEventListener("selectionchange", updateSelection);
-    window.addEventListener("resize", hideSelection);
-    window.addEventListener("scroll", hideSelection, true);
+    window.addEventListener("pointerup", settleSelection);
+    window.addEventListener("pointercancel", settleSelection);
+    window.addEventListener("mouseup", settleSelection);
+    window.addEventListener("touchend", settleSelection);
+    window.addEventListener("resize", refreshSelection);
+    window.addEventListener("scroll", refreshSelection, true);
 
     return () => {
+      clearSelectionCommitTimer();
+      document.removeEventListener("pointerdown", handlePointerDown);
       document.removeEventListener("selectionchange", updateSelection);
-      window.removeEventListener("resize", hideSelection);
-      window.removeEventListener("scroll", hideSelection, true);
+      window.removeEventListener("pointerup", settleSelection);
+      window.removeEventListener("pointercancel", settleSelection);
+      window.removeEventListener("mouseup", settleSelection);
+      window.removeEventListener("touchend", settleSelection);
+      window.removeEventListener("resize", refreshSelection);
+      window.removeEventListener("scroll", refreshSelection, true);
     };
   }, [containerRef, session]);
 
