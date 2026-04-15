@@ -60,7 +60,7 @@ log_warn() {
 }
 
 log_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
+    echo -e "${RED}[ERROR]${NC} $1" >&2
 }
 
 check_command() {
@@ -137,6 +137,12 @@ resolve_desktop_updater_manifest_url() {
     echo "${CODINGNS_TAURI_UPDATER_ENDPOINT:-$DESKTOP_UPDATER_MANIFEST_URL_DEFAULT}"
 }
 
+prepare_desktop_temp_dir() {
+    local temp_dir="$TAURI_DIR/target/tmp"
+    mkdir -p "$temp_dir"
+    printf '%s\n' "$temp_dir"
+}
+
 validate_desktop_updater_build_env() {
     require_env CODINGNS_TAURI_UPDATER_PUBLIC_KEY || return 1
     require_env TAURI_SIGNING_PRIVATE_KEY || return 1
@@ -147,9 +153,11 @@ prepare_desktop_tauri_build_config() {
     validate_desktop_updater_build_env || return 1
 
     local python_cmd
+    local temp_dir
     local config_path
     python_cmd="$(resolve_python_cmd)" || return 1
-    config_path="$(mktemp "${TMPDIR:-/tmp}/codingns-tauri-build.XXXXXX.json")"
+    temp_dir="$(prepare_desktop_temp_dir)" || return 1
+    config_path="$temp_dir/tauri-build-config-$$.json"
 
     "$python_cmd" - "$TAURI_DIR/tauri.conf.json" "$config_path" "${CODINGNS_TAURI_UPDATER_PUBLIC_KEY}" "$(resolve_desktop_updater_manifest_url)" "$TAURI_UPDATER_PUBLIC_KEY_PLACEHOLDER" <<'PY'
 import json
