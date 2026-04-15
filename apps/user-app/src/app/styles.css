@@ -15577,7 +15577,7 @@ textarea:focus-visible {
   color: color-mix(in srgb, var(--session-provider-accent) 58%, var(--text-secondary));
 }
 
-/* 桌面新建会话弹窗单独压缩卡片尺寸，并做成更接近 macOS 的玻璃按钮风格。 */
+/* 桌面新建会话弹窗单独压缩卡片尺寸，保持紧凑的纯色卡片风格。 */
 .workbench-create-session-modal .session-provider-grid {
   display: flex;
   flex-wrap: wrap;
@@ -15596,12 +15596,7 @@ textarea:focus-visible {
   padding: 10px 14px;
   border-radius: 16px;
   border: 1px solid color-mix(in srgb, var(--surface-overlay-border) 92%, transparent);
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--surface-overlay-bg) 86%, var(--session-provider-surface) 14%) 0%,
-      color-mix(in srgb, var(--surface-overlay-bg-active) 80%, var(--session-provider-surface) 20%) 100%
-    );
+  background: color-mix(in srgb, var(--surface-overlay-bg) 82%, var(--session-provider-surface) 18%);
   box-shadow:
     var(--surface-overlay-shadow),
     inset 0 0 0 1px color-mix(in srgb, var(--session-provider-accent) 6%, transparent);
@@ -15610,13 +15605,7 @@ textarea:focus-visible {
 }
 
 .workbench-create-session-modal .session-provider-card::before {
-  content: "";
-  position: absolute;
-  inset: 1px 1px auto;
-  height: 48%;
-  border-radius: 17px 17px 12px 12px;
-  background: linear-gradient(180deg, color-mix(in srgb, var(--surface-overlay-highlight) 84%, var(--session-provider-surface) 16%) 0%, transparent 100%);
-  pointer-events: none;
+  content: none;
 }
 
 .workbench-create-session-modal .session-provider-card::after {
@@ -15635,12 +15624,7 @@ textarea:focus-visible {
 
 .workbench-create-session-modal .session-provider-card:hover:not(:disabled) {
   border-color: color-mix(in srgb, var(--session-provider-accent) 24%, var(--border-primary));
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--surface-overlay-bg-hover) 84%, var(--session-provider-surface) 16%),
-      color-mix(in srgb, var(--surface-overlay-bg) 74%, var(--session-provider-surface) 26%)
-    );
+  background: color-mix(in srgb, var(--surface-overlay-bg-hover) 76%, var(--session-provider-surface) 24%);
   box-shadow:
     var(--surface-overlay-shadow),
     inset 0 0 0 1px color-mix(in srgb, var(--session-provider-accent) 8%, transparent),
@@ -15648,12 +15632,7 @@ textarea:focus-visible {
 }
 
 .workbench-create-session-modal .session-provider-card:active:not(:disabled) {
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--surface-overlay-bg-active) 86%, var(--session-provider-surface) 14%) 0%,
-      color-mix(in srgb, var(--bg-primary) 72%, var(--session-provider-surface) 28%) 100%
-    );
+  background: color-mix(in srgb, var(--surface-overlay-bg-active) 74%, var(--session-provider-surface) 26%);
   box-shadow:
     inset 0 2px 4px color-mix(in srgb, var(--session-provider-accent) 8%, transparent),
     inset 0 0 0 1px color-mix(in srgb, var(--session-provider-accent) 12%, transparent);
@@ -15669,12 +15648,7 @@ textarea:focus-visible {
 
 .workbench-create-session-modal .session-provider-card[data-pending="true"] {
   border-color: color-mix(in srgb, var(--session-provider-accent) 28%, var(--border-primary));
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--surface-overlay-bg-hover) 78%, var(--session-provider-surface)) 0%,
-      color-mix(in srgb, var(--surface-overlay-bg-active) 72%, var(--session-provider-surface)) 100%
-    );
+  background: color-mix(in srgb, var(--bg-surface-secondary) 72%, var(--session-provider-surface) 28%);
   box-shadow:
     var(--surface-overlay-shadow),
     inset 0 0 0 1px color-mix(in srgb, var(--session-provider-accent) 10%, transparent),
@@ -15687,12 +15661,7 @@ textarea:focus-visible {
   width: 40px;
   height: 40px;
   border-radius: 12px;
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--bg-elevated) 72%, var(--session-provider-surface)) 0%,
-      color-mix(in srgb, var(--bg-surface-secondary) 60%, var(--session-provider-surface)) 100%
-    );
+  background: color-mix(in srgb, var(--bg-elevated) 68%, var(--session-provider-surface) 32%);
   box-shadow:
     inset 0 1px 0 color-mix(in srgb, var(--surface-overlay-highlight) 74%, transparent),
     inset 0 0 0 1px color-mix(in srgb, var(--session-provider-accent) 10%, transparent),
