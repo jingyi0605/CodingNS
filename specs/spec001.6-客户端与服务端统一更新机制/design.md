@@ -39,6 +39,19 @@
 - 服务端已经能查 registry 版本，但没有执行更新接口
 - 现在的服务端升级命令展示也不够准确，第一版要修成真实可执行的全局升级动作
 
+### 1.5 现状盘点结论
+
+详细盘点见：
+
+- [20260415-更新机制现状盘点.md](/Users/jackson/Code/CodingNS/specs/spec001.6-客户端与服务端统一更新机制/docs/20260415-更新机制现状盘点.md)
+
+这里先把结论钉死：
+
+- 桌面端：有 UI、有桥接命令、有回退入口，但底层还是私有下载器，不是正式 updater
+- Android：只有壳、打包脚本和 `FileProvider`，没有真正的更新实现
+- 服务端：只有单包版本检查，没有全局升级任务、没有安装接口、没有“需要重启”状态
+- 发布流水线：桌面端能出安装包，但还不是正式更新产物链路；Android 还没有客户端可直接消费的发布清单
+
 ## 2. 架构
 
 ### 2.1 总体结构
@@ -106,6 +119,17 @@ npm install -g <package>@<tag or version>
 
 不要把第一版执行入口做成模糊的 `npm update -g`。后者受当前 semver 范围影响，太不稳定。
 
+#### 2.3.5 检查失败不能伪装成“没有更新”
+
+当前服务端版本检查在 registry 失败时会退回 `latestVersion: null + hasUpdate: false`。
+
+这会把两种完全不同的状态混在一起：
+
+1. registry 真的返回“没有更高版本”
+2. 当前根本没查成功
+
+第一版必须把这两种状态拆开，否则设置页会一直说“没更新”，实际上只是请求炸了。
+
 ## 3. 组件和接口
 
 ### 3.1 客户端发布清单模型
@@ -160,6 +184,8 @@ npm install -g <package>@<tag or version>
 | `currentVersion` | string | 是 | 当前全局已安装版本 |
 | `latestVersion` | string | 否 | registry 最新可升级版本 |
 | `hasUpdate` | boolean | 是 | 是否有更新 |
+| `checkStatus` | `idle \| succeeded \| failed` | 是 | 最近一次检查状态 |
+| `checkErrorMessage` | string | 否 | 检查失败摘要 |
 | `packagePageUrl` | string | 否 | npm 页面 |
 | `installCommand` | string | 是 | 实际执行命令 |
 | `restartRequired` | boolean | 是 | 包升级后是否还需要重启才能生效 |
@@ -205,6 +231,12 @@ npm install -g <package>@<tag or version>
 - 说明：
   - 前端轮询或事件刷新时使用
 
+#### 3.3.4 服务端细化设计参考
+
+服务端实现切分和接口返回建议见：
+
+- [20260415-服务端全局NPM升级链路细化设计.md](/Users/jackson/Code/CodingNS/specs/spec001.6-客户端与服务端统一更新机制/docs/20260415-服务端全局NPM升级链路细化设计.md)
+
 ### 3.4 后台任务定义
 
 覆盖需求：5、6、7
@@ -219,6 +251,17 @@ npm install -g <package>@<tag or version>
 - `check` 可走 `host_background` 或轻量 `external_process`，第一版允许直接在请求里查单包 registry，但如果扩到多包就必须任务化
 - `install` 必须走 `external_process`
 - `install` 的去重 key 采用：`packageName + channel`
+
+当前要明确一条现实约束：
+
+- 现有 `TaskManager` 只显式补了 `helper_process` 执行器
+- 如果不新增 `external_process` 执行器，`service.npm_global_update_install` 只是名字写得好看，真正还是在 Host 里本地跑
+
+所以第一版服务端升级实现必须同时补：
+
+1. 任务类型
+2. 安装接口
+3. `external_process` 执行器
 
 执行命令统一为：
 
@@ -239,6 +282,11 @@ npm install -g <packageName>@<resolvedTagOrVersion>
 1. 和 Tauri 官方更新链路分叉，后面越维护越脏
 2. 发布流水线没有强约束 updater 需要的完整产物
 3. 前端“安装更新”按钮实际上不是标准桌面更新能力
+
+另外还有两个硬伤：
+
+4. Rust 依赖里还没有 `tauri-plugin-updater`
+5. `tauri.conf.json` 里也没有 updater 配置块、公钥和端点
 
 #### 3.5.2 目标方案
 
@@ -265,6 +313,12 @@ npm install -g <packageName>@<resolvedTagOrVersion>
 - 若缺少“允许安装未知来源应用”授权，则先给跳转设置引导
 - 若用户取消安装，则状态写成“已取消”，允许重新触发
 - 若校验失败，必须删掉坏包或至少标记坏包不可安装
+
+#### 3.6.3 当前可复用点
+
+- 现有 Android 壳和打包脚本可继续使用
+- `AndroidManifest.xml` 已经有 `FileProvider`
+- 但还没有任何 APK 下载、校验、安装命令桥接，所以第一版不能高估当前基础
 
 ### 3.7 设置页统一入口
 

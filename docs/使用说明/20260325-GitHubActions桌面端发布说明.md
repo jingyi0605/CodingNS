@@ -15,6 +15,7 @@
 - macOS Apple Silicon：`.dmg`
 - macOS Intel：`.dmg`
 - Windows：`.msi` 和 `NSIS .exe`
+- 桌面 updater：`latest.json`、macOS `.app.tar.gz + .sig`、Windows `NSIS .exe + .sig`
 
 说明：
 
@@ -53,7 +54,7 @@ v*
 会执行多平台构建，并且在构建完成后：
 
 - 创建或更新同名 GitHub Release
-- 把 `.dmg`、`.msi`、`.exe` 上传到 Release assets
+- 把 `.dmg`、`.msi`、`.exe`、updater 签名资产和 `latest.json` 一起上传到 Release assets
 
 ## 产物对应关系
 
@@ -106,7 +107,17 @@ v*
 - `TAURI_SIGNING_PRIVATE_KEY`
 - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
 
-这两个主要服务于 Tauri 更新包签名，不等于系统安装包签名。
+现在还需要再补一个：
+
+- `TAURI_SIGNING_PUBLIC_KEY`
+
+用途要说清楚：
+
+- `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` 用来给 updater 产物签名
+- `TAURI_SIGNING_PUBLIC_KEY` 会在构建时写进桌面客户端，客户端检查更新时用它验签
+- 这些都不等于 macOS notarization 或 Windows 代码签名证书
+
+如果缺 `TAURI_SIGNING_PUBLIC_KEY`，客户端虽然还能构建，但官方 updater 安装链路不会工作。这不是小问题，这是半套实现。
 
 ## 后续如果要补完整签名
 
