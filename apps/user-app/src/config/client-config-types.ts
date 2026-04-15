@@ -67,7 +67,28 @@ export interface DesktopRuntimeInfo {
   windowChrome?: DesktopWindowChromeInfo | null;
 }
 
-export interface ServiceUpdateInfo {
+export type ServiceUpdateCheckStatus = "ready" | "up_to_date" | "check_failed";
+export type ServiceUpdateTaskStatus =
+  | "queued"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "cancelled"
+  | "timeout";
+
+export interface ServiceUpdateTaskInfo {
+  taskId: string;
+  packageName: string;
+  channel: ReleaseChannel;
+  targetVersion: string | null;
+  status: ServiceUpdateTaskStatus;
+  startedAt: string | null;
+  finishedAt: string | null;
+  errorMessage: string | null;
+  restartRequired: boolean;
+}
+
+export interface ManagedServicePackageInfo {
   channel: ReleaseChannel;
   packageName: string;
   registryUrl: string;
@@ -75,7 +96,16 @@ export interface ServiceUpdateInfo {
   currentVersion: string;
   latestVersion: string | null;
   hasUpdate: boolean;
-  updateCommand: string;
+  checkStatus: ServiceUpdateCheckStatus;
+  checkError: string | null;
+  restartRequired: boolean;
+  installTask: ServiceUpdateTaskInfo | null;
+}
+
+export interface ServiceUpdateSnapshot {
+  channel: ReleaseChannel;
+  checkedAt: string;
+  packages: ManagedServicePackageInfo[];
 }
 
 export interface ReleaseManifest {
@@ -89,6 +119,48 @@ export interface ReleaseManifest {
   signature: string | null;
   htmlUrl: string;
   publishedAt: string;
+}
+
+export interface AndroidApkManifest {
+  channel: ReleaseChannel;
+  version: string;
+  versionCode: number;
+  packageName: string;
+  fileName: string;
+  downloadUrl: string;
+  sha256: string;
+  publishedAt: string;
+  notes: string;
+  minSupportedVersionCode: number | null;
+  htmlUrl: string | null;
+}
+
+export interface AndroidRuntimeInfo {
+  version: string;
+  versionCode: number;
+  packageName: string;
+}
+
+export interface AndroidReleaseState {
+  checkedAt: string;
+  currentVersion: string;
+  currentVersionCode: number;
+  hasUpdate: boolean;
+  manifest: AndroidApkManifest | null;
+  runtimeInfo: AndroidRuntimeInfo;
+}
+
+export type AndroidUpdateInstallStatus =
+  | "installer_started"
+  | "permission_required"
+  | "already_up_to_date"
+  | "failed";
+
+export interface AndroidUpdateInstallResult {
+  ok: boolean;
+  status: AndroidUpdateInstallStatus;
+  detail?: string;
+  downloadedFilePath?: string | null;
 }
 
 export interface DesktopReleaseState {

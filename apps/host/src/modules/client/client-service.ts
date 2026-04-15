@@ -4,6 +4,9 @@ import { fileURLToPath } from "node:url";
 
 import type { HostConfig } from "../../config/env.js";
 import { AppError } from "../../shared/errors/app-error.js";
+import type { NpmGlobalPackageService } from "./npm-global-package-service.js";
+import type { ServiceUpdateTaskService } from "./service-update-task-service.js";
+import type { ServiceUpdateListDto, ServiceUpdateTaskDto } from "./service-update-types.js";
 
 export interface ClientRuntimeConfigDto {
   platform: "desktop" | "web";
@@ -13,7 +16,7 @@ export interface ClientRuntimeConfigDto {
   autoCheckUpdate: boolean;
 }
 
-export interface ReleaseManifestDto {
+export interface DesktopReleaseManifestDto {
   channel: "stable" | "beta";
   platform: string;
   version: string;
@@ -23,19 +26,28 @@ export interface ReleaseManifestDto {
   publishedAt: string;
 }
 
-export interface ServiceUpdateDto {
+export interface AndroidReleaseManifestDto {
   channel: "stable" | "beta";
+  version: string;
+  versionCode: number;
   packageName: string;
-  registryUrl: string;
-  packagePageUrl: string;
-  currentVersion: string;
-  latestVersion: string | null;
-  hasUpdate: boolean;
-  updateCommand: string;
+  fileName: string;
+  downloadUrl: string;
+  sha256: string;
+  publishedAt: string;
+  notes: string;
+  minSupportedVersionCode: number | null;
+  htmlUrl: string | null;
 }
 
+export type ReleaseManifestDto = DesktopReleaseManifestDto | AndroidReleaseManifestDto;
+
 export class ClientService {
-  constructor(private readonly config: HostConfig) {}
+  constructor(
+    private readonly config: HostConfig,
+    private readonly npmGlobalPackageService: NpmGlobalPackageService,
+    private readonly serviceUpdateTaskService: ServiceUpdateTaskService
+  ) {}
 
   getRuntimeConfig(
     platform: "desktop" | "web",
@@ -70,81 +82,113 @@ export class ClientService {
     const raw = fs.readFileSync(manifestPath, "utf8");
 
     try {
-      const parsed = JSON.parse(raw) as Partial<ReleaseManifestDto>;
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
 
-      if (
-        !parsed.channel ||
-        !parsed.platform ||
-        !parsed.version ||
-        !parsed.packageUrl ||
-        !parsed.signature ||
-        !parsed.publishedAt
-      ) {
-        throw new Error("manifest incomplete");
+      if (platform === "android-apk") {
+        return parseAndroidReleaseManifest(parsed);
       }
 
-      return {
-        channel: parsed.channel,
-        platform: parsed.platform,
-        version: parsed.version,
-        notes: parsed.notes ?? "",
-        packageUrl: parsed.packageUrl,
-        signature: parsed.signature,
-        publishedAt: parsed.publishedAt
-      };
+      return parseDesktopReleaseManifest(parsed);
     } catch {
       throw new AppError({
         statusCode: 500,
         errorCode: "MANIFEST_INVALID",
-        detail: `桌面发布清单 ${manifestPath} 格式无效`
+        detail: `发布清单 ${manifestPath} 格式无效`
       });
     }
   }
 
-  async getServiceUpdate(channel: "stable" | "beta"): Promise<ServiceUpdateDto> {
-    const packageName = this.config.serverUpdatePackageName;
+  async getServiceUpdate(channel: "stable" | "beta"): Promise<ServiceUpdateListDto> {
     const currentVersion = readHostPackageVersion();
-    const packagePageUrl = `https://www.npmjs.com/package/${packageName}`;
-    const registryUrl = buildRegistryPackageUrl(this.config.npmRegistryBaseUrl, packageName);
+    const packages = await this.npmGlobalPackageService.listManagedPackages(
+      channel,
+      currentVersion,
+      (packageName) => this.serviceUpdateTaskService.getLatestTaskByPackageName(packageName)
+    );
 
-    try {
-      const response = await fetch(registryUrl, {
-        headers: {
-          Accept: "application/json"
-        }
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-
-      const raw = (await response.json()) as NpmRegistryPackageDocument;
-      const latestVersion = pickServiceTargetVersion(raw, channel);
-
-      return {
-        channel,
-        packageName,
-        registryUrl,
-        packagePageUrl,
-        currentVersion,
-        latestVersion,
-        hasUpdate:
-          latestVersion !== null && compareSemver(latestVersion, currentVersion) > 0,
-        updateCommand: `npm install ${packageName}@${channel === "beta" ? "beta" : "latest"}`
-      };
-    } catch {
-      return {
-        channel,
-        packageName,
-        registryUrl,
-        packagePageUrl,
-        currentVersion,
-        latestVersion: null,
-        hasUpdate: false,
-        updateCommand: `npm install ${packageName}@${channel === "beta" ? "beta" : "latest"}`
-      };
-    }
+    return {
+      channel,
+      checkedAt: new Date().toISOString(),
+      packages
+    };
   }
+
+  async installServiceUpdate(
+    channel: "stable" | "beta",
+    packageName: string
+  ): Promise<ServiceUpdateTaskDto> {
+    return await this.serviceUpdateTaskService.installPackage(channel, packageName);
+  }
+
+  getServiceUpdateTask(taskId: string): ServiceUpdateTaskDto {
+    return this.serviceUpdateTaskService.getTask(taskId);
+  }
+}
+
+function parseDesktopReleaseManifest(parsed: Record<string, unknown>): DesktopReleaseManifestDto {
+  if (
+    !isReleaseChannel(parsed.channel) ||
+    !isNonEmptyString(parsed.platform) ||
+    !isNonEmptyString(parsed.version) ||
+    !isNonEmptyString(parsed.packageUrl) ||
+    !isNonEmptyString(parsed.signature) ||
+    !isNonEmptyString(parsed.publishedAt)
+  ) {
+    throw new Error("desktop manifest incomplete");
+  }
+
+  return {
+    channel: parsed.channel,
+    platform: parsed.platform,
+    version: parsed.version,
+    notes: isNonEmptyString(parsed.notes) ? parsed.notes : "",
+    packageUrl: parsed.packageUrl,
+    signature: parsed.signature,
+    publishedAt: parsed.publishedAt
+  };
+}
+
+function parseAndroidReleaseManifest(parsed: Record<string, unknown>): AndroidReleaseManifestDto {
+  if (
+    !isReleaseChannel(parsed.channel) ||
+    !isNonEmptyString(parsed.version) ||
+    !isPositiveInteger(parsed.versionCode) ||
+    !isNonEmptyString(parsed.packageName) ||
+    !isNonEmptyString(parsed.fileName) ||
+    !isNonEmptyString(parsed.downloadUrl) ||
+    !isNonEmptyString(parsed.sha256) ||
+    !isNonEmptyString(parsed.publishedAt)
+  ) {
+    throw new Error("android manifest incomplete");
+  }
+
+  return {
+    channel: parsed.channel,
+    version: parsed.version,
+    versionCode: parsed.versionCode,
+    packageName: parsed.packageName,
+    fileName: parsed.fileName,
+    downloadUrl: parsed.downloadUrl,
+    sha256: parsed.sha256,
+    publishedAt: parsed.publishedAt,
+    notes: isNonEmptyString(parsed.notes) ? parsed.notes : "",
+    minSupportedVersionCode: isPositiveInteger(parsed.minSupportedVersionCode)
+      ? parsed.minSupportedVersionCode
+      : null,
+    htmlUrl: isNonEmptyString(parsed.htmlUrl) ? parsed.htmlUrl : null
+  };
+}
+
+function isReleaseChannel(value: unknown): value is "stable" | "beta" {
+  return value === "stable" || value === "beta";
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0;
 }
 
 function resolveClientHostBaseUrl(
@@ -179,11 +223,7 @@ function resolveAccessibleHost(host: string): string {
   return host;
 }
 
-interface NpmRegistryPackageDocument {
-  readonly "dist-tags"?: Record<string, string | undefined>;
-}
-
-function readHostPackageVersion(): string {
+export function readHostPackageVersion(): string {
   const packageJsonPath = findNearestPackageJson(fileURLToPath(import.meta.url));
 
   if (!packageJsonPath) {
@@ -195,69 +235,6 @@ function readHostPackageVersion(): string {
   return typeof parsed.version === "string" && parsed.version.trim().length > 0
     ? parsed.version
     : "0.0.0";
-}
-
-function buildRegistryPackageUrl(baseUrl: string, packageName: string): string {
-  const normalizedBaseUrl = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
-  return new URL(encodeURIComponent(packageName), normalizedBaseUrl).toString();
-}
-
-function pickServiceTargetVersion(
-  payload: NpmRegistryPackageDocument,
-  channel: "stable" | "beta"
-): string | null {
-  const distTags = payload["dist-tags"] ?? {};
-
-  if (channel === "beta") {
-    return distTags.beta ?? distTags.latest ?? null;
-  }
-
-  return distTags.latest ?? null;
-}
-
-function compareSemver(left: string, right: string): number {
-  const leftMeta = parseSemver(left);
-  const rightMeta = parseSemver(right);
-
-  for (let index = 0; index < 3; index += 1) {
-    const diff = (leftMeta.numbers[index] ?? 0) - (rightMeta.numbers[index] ?? 0);
-
-    if (diff !== 0) {
-      return diff;
-    }
-  }
-
-  if (leftMeta.prerelease === rightMeta.prerelease) {
-    return 0;
-  }
-
-  if (!leftMeta.prerelease) {
-    return 1;
-  }
-
-  if (!rightMeta.prerelease) {
-    return -1;
-  }
-
-  return leftMeta.prerelease.localeCompare(rightMeta.prerelease);
-}
-
-function parseSemver(input: string): {
-  readonly numbers: [number, number, number];
-  readonly prerelease: string;
-} {
-  const normalized = input.trim().replace(/^v/i, "");
-  const [versionPart, prerelease = ""] = normalized.split("-", 2);
-  const rawNumbers = versionPart.split(".");
-
-  return {
-    numbers: [
-      Number.parseInt(rawNumbers[0] ?? "0", 10) || 0,
-      Number.parseInt(rawNumbers[1] ?? "0", 10) || 0,
-      Number.parseInt(rawNumbers[2] ?? "0", 10) || 0
-    ],
-    prerelease
-  };
 }
 
 function findNearestPackageJson(fromFilePath: string): string | null {

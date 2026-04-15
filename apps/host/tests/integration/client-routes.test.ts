@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
 
 import {
   createEmptyFixture,
@@ -8,6 +11,25 @@ import {
   destroyFixture,
   type EmptyFixture
 } from "../helpers/test-app.js";
+
+const { spawnMock } = vi.hoisted(() => ({
+  spawnMock: vi.fn()
+}));
+
+vi.mock("node:child_process", async () => {
+  const actual = await vi.importActual<typeof import("node:child_process")>("node:child_process");
+
+  return {
+    ...actual,
+    spawn: ((command: string, ...args: unknown[]) => {
+      if (command === "npm" || command === "npm.cmd") {
+        return spawnMock(command, ...args);
+      }
+
+      return (actual.spawn as (...input: unknown[]) => unknown)(command, ...args);
+    }) as typeof actual.spawn
+  };
+});
 
 const activeServers: Array<ReturnType<typeof createTestApp>> = [];
 const activeFixtures: EmptyFixture[] = [];
@@ -60,6 +82,25 @@ describe("client routes", () => {
       ),
       "utf8"
     );
+    writeFileSync(
+      path.join(stableDir, "android-apk.json"),
+      JSON.stringify(
+        {
+          channel: "stable",
+          version: "1.2.3",
+          versionCode: 1230,
+          packageName: "com.codingns.userapp",
+          fileName: "app-universal-release.apk",
+          downloadUrl: "https://example.invalid/app-universal-release.apk",
+          sha256: "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          publishedAt: "2026-03-25T10:00:00.000Z",
+          notes: "Android 直装清单"
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
 
     const hosted = createTestApp(fixture, {
       host: "127.0.0.1",
@@ -102,6 +143,22 @@ describe("client routes", () => {
       channel: "stable",
       platform: "windows-x64",
       version: "1.2.3"
+    });
+
+    const androidManifestResponse = await hosted.app.inject({
+      method: "GET",
+      url: "/api/client/release-manifest?channel=stable&platform=android-apk",
+      headers: {
+        authorization: `Bearer ${tokens.accessToken}`
+      }
+    });
+
+    expect(androidManifestResponse.statusCode).toBe(200);
+    expect(androidManifestResponse.json()).toMatchObject({
+      channel: "stable",
+      version: "1.2.3",
+      versionCode: 1230,
+      packageName: "com.codingns.userapp"
     });
   });
 
@@ -146,11 +203,121 @@ describe("client routes", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
       channel: "stable",
-      packageName: "placeholder-server-package",
-      latestVersion: "0.2.0",
-      currentVersion: "0.1.0",
-      hasUpdate: true
+      packages: [
+        expect.objectContaining({
+          packageName: "placeholder-server-package",
+          latestVersion: "0.2.0",
+          currentVersion: "0.3.0",
+          hasUpdate: false,
+          checkStatus: "up_to_date"
+        })
+      ]
     });
+  });
+
+  it("支持触发服务端全局 npm 安装任务，并返回重启状态", async () => {
+    const fixture = createEmptyFixture();
+    activeFixtures.push(fixture);
+
+    globalThis.fetch = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          "dist-tags": {
+            latest: "0.4.0",
+            beta: "0.5.0-beta.1"
+          }
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json"
+          }
+        }
+      )
+    ) as typeof fetch;
+    spawnMock.mockImplementation(() => createSuccessfulChildProcess("updated"));
+
+    const hosted = createTestApp(fixture, {
+      serverUpdatePackageName: "placeholder-server-package",
+      npmRegistryBaseUrl: "https://registry.npmjs.org",
+      accessTokenTtlSeconds: 30
+    });
+    activeServers.push(hosted);
+    await hosted.app.ready();
+
+    const tokens = await bootstrapAndLogin(hosted);
+    const installResponse = await hosted.app.inject({
+      method: "POST",
+      url: "/api/client/service-update/install",
+      headers: {
+        authorization: `Bearer ${tokens.accessToken}`
+      },
+      payload: {
+        packageName: "placeholder-server-package",
+        channel: "stable"
+      }
+    });
+
+    expect(installResponse.statusCode).toBe(200);
+    const task = installResponse.json() as {
+      taskId: string;
+      packageName: string;
+      status: string;
+    };
+    expect(task.packageName).toBe("placeholder-server-package");
+
+    await flushAsyncWork();
+
+    const taskResponse = await hosted.app.inject({
+      method: "GET",
+      url: `/api/client/service-update/tasks/${task.taskId}`,
+      headers: {
+        authorization: `Bearer ${tokens.accessToken}`
+      }
+    });
+
+    expect(taskResponse.statusCode).toBe(200);
+    expect(taskResponse.json()).toMatchObject({
+      taskId: task.taskId,
+      packageName: "placeholder-server-package",
+      targetVersion: "0.4.0",
+      status: "succeeded",
+      restartRequired: true
+    });
+
+    const listResponse = await hosted.app.inject({
+      method: "GET",
+      url: "/api/client/service-update?channel=stable",
+      headers: {
+        authorization: `Bearer ${tokens.accessToken}`
+      }
+    });
+
+    expect(listResponse.statusCode).toBe(200);
+    expect(listResponse.json()).toMatchObject({
+      packages: [
+        expect.objectContaining({
+          packageName: "placeholder-server-package",
+          latestVersion: "0.4.0",
+          currentVersion: "0.3.0",
+          hasUpdate: true,
+          restartRequired: true,
+          installTask: expect.objectContaining({
+            taskId: task.taskId,
+            status: "succeeded",
+            restartRequired: true
+          })
+        })
+      ]
+    });
+    expect(spawnMock).toHaveBeenCalledWith(
+      process.platform === "win32" ? "npm.cmd" : "npm",
+      ["install", "-g", "placeholder-server-package@latest"],
+      expect.objectContaining({
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true
+      })
+    );
   });
 
   it("发布清单缺失时返回 MANIFEST_NOT_FOUND", async () => {
@@ -201,4 +368,31 @@ async function bootstrapAndLogin(hosted: ReturnType<typeof createTestApp>) {
 
   expect(loginResponse.statusCode).toBe(200);
   return loginResponse.json() as { accessToken: string };
+}
+
+function createSuccessfulChildProcess(output: string): ChildProcessWithoutNullStreams {
+  const emitter = new EventEmitter();
+  const stdout = new PassThrough();
+  const stderr = new PassThrough();
+  const stdin = new PassThrough();
+  const child = Object.assign(emitter, {
+    stdout,
+    stderr,
+    stdin
+  }) as unknown as ChildProcessWithoutNullStreams;
+
+  queueMicrotask(() => {
+    stdout.write(output);
+    stdout.end();
+    stderr.end();
+    emitter.emit("close", 0, null);
+  });
+
+  return child;
+}
+
+async function flushAsyncWork(): Promise<void> {
+  await new Promise((resolve) => {
+    setTimeout(resolve, 0);
+  });
 }

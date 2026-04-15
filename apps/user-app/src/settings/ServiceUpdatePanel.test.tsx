@@ -7,12 +7,20 @@ import { I18nProvider, t } from "../shared/i18n";
 import { ThemeProvider } from "../shared/theme";
 import { ServiceUpdatePanel } from "./ServiceUpdatePanel";
 
-const { checkForServiceUpdate } = vi.hoisted(() => ({
-  checkForServiceUpdate: vi.fn()
+const {
+  checkForServiceUpdate,
+  installServiceUpdate,
+  getServiceUpdateTask
+} = vi.hoisted(() => ({
+  checkForServiceUpdate: vi.fn(),
+  installServiceUpdate: vi.fn(),
+  getServiceUpdateTask: vi.fn()
 }));
 
 vi.mock("../platform/server/service-update-manager", () => ({
-  checkForServiceUpdate
+  checkForServiceUpdate,
+  installServiceUpdate,
+  getServiceUpdateTask
 }));
 
 describe("ServiceUpdatePanel", () => {
@@ -29,19 +37,58 @@ describe("ServiceUpdatePanel", () => {
     });
   });
 
-  it("展示服务端版本和 npm 更新入口", async () => {
-    checkForServiceUpdate.mockResolvedValue({
-      channel: "stable",
+  it("展示服务端版本并支持触发安装任务", async () => {
+    checkForServiceUpdate
+      .mockResolvedValueOnce({
+        channel: "stable",
+        checkedAt: "2026-04-15T10:00:00.000Z",
+        packages: [
+          {
+            channel: "stable",
+            packageName: "placeholder-server-package",
+            registryUrl: "https://registry.npmjs.org/placeholder-server-package",
+            packagePageUrl: "https://www.npmjs.com/package/placeholder-server-package",
+            currentVersion: "0.1.0",
+            latestVersion: "0.2.0",
+            hasUpdate: true,
+            checkStatus: "ready",
+            checkError: null,
+            restartRequired: false,
+            installTask: null
+          }
+        ]
+      })
+      .mockResolvedValueOnce({
+        channel: "stable",
+        checkedAt: "2026-04-15T10:02:00.000Z",
+        packages: [
+          {
+            channel: "stable",
+            packageName: "placeholder-server-package",
+            registryUrl: "https://registry.npmjs.org/placeholder-server-package",
+            packagePageUrl: "https://www.npmjs.com/package/placeholder-server-package",
+            currentVersion: "0.1.0",
+            latestVersion: "0.2.0",
+            hasUpdate: true,
+            checkStatus: "ready",
+            checkError: null,
+            restartRequired: false,
+            installTask: null
+          }
+        ]
+      });
+    installServiceUpdate.mockResolvedValue({
+      taskId: "task-1",
       packageName: "placeholder-server-package",
-      registryUrl: "https://registry.npmjs.org/placeholder-server-package",
-      packagePageUrl: "https://www.npmjs.com/package/placeholder-server-package",
-      currentVersion: "0.1.0",
-      latestVersion: "0.2.0",
-      hasUpdate: true,
-      updateCommand: "npm install placeholder-server-package@latest"
+      channel: "stable",
+      targetVersion: "0.2.0",
+      status: "queued",
+      startedAt: null,
+      finishedAt: null,
+      errorMessage: null,
+      restartRequired: false
     });
-
-    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+    const user = userEvent.setup();
 
     render(
       <I18nProvider language="zh-CN">
@@ -51,17 +98,16 @@ describe("ServiceUpdatePanel", () => {
       </I18nProvider>
     );
 
-    await userEvent.click(screen.getByRole("button", { name: t("settings.serverCheckNow") }));
+    await user.click(screen.getByRole("button", { name: t("settings.serverCheckNow") }));
 
-    expect(await screen.findByText("npm install placeholder-server-package@latest")).toBeInTheDocument();
+    expect(await screen.findByText("0.1.0")).toBeInTheDocument();
+    expect(screen.getByText("0.2.0")).toBeInTheDocument();
     expect(screen.getByText(t("settings.serverUpdateReady"))).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: t("settings.serverOpenPage") }));
+    await user.click(screen.getByRole("button", { name: t("settings.serverInstallNow") }));
 
-    expect(openSpy).toHaveBeenCalledWith(
-      "https://www.npmjs.com/package/placeholder-server-package",
-      "_blank",
-      "noopener,noreferrer"
-    );
+    expect(installServiceUpdate).toHaveBeenCalledWith("placeholder-server-package");
+    expect(screen.getByText(t("settings.serverInstallQueued"))).toBeInTheDocument();
+    expect(getServiceUpdateTask).not.toHaveBeenCalled();
   });
 });

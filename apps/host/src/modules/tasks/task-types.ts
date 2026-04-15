@@ -4,9 +4,11 @@ export const HOST_TASK_TYPES = {
   workbenchSyncTitles: "workbench.sync_titles",
   workspaceManagementSummary: "workspace.management_summary",
   workspaceCodeCompositionScan: "workspace.code_composition_scan",
+  butlerInboxAnalyze: "butler.inbox_analyze",
   terminalManagerSnapshot: "terminal.manager_snapshot",
   templateRuntimeStatusDiscovery: "terminal.template_runtime_status_discovery",
-  debugRuntimeStaleReconciliation: "debug_runtime.stale_reconciliation"
+  debugRuntimeStaleReconciliation: "debug_runtime.stale_reconciliation",
+  serviceNpmGlobalUpdateInstall: "service.npm_global_update_install"
 } as const;
 
 export type HostTaskType = (typeof HOST_TASK_TYPES)[keyof typeof HOST_TASK_TYPES];

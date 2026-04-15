@@ -19,6 +19,7 @@ import { ButlerAuthService } from "../modules/butler/butler-auth-service.js";
 import { ButlerFollowUpEvaluationInstructionAdapter } from "../modules/butler/butler-follow-up-evaluation-instruction-adapter.js";
 import { ButlerFollowUpScheduler } from "../modules/butler/butler-follow-up-scheduler.js";
 import { ButlerFollowUpService } from "../modules/butler/butler-follow-up-service.js";
+import { ButlerInboxAnalysisService } from "../modules/butler/butler-inbox-analysis-service.js";
 import { ButlerInboxService } from "../modules/butler/butler-inbox-service.js";
 import { ButlerNotificationService } from "../modules/butler/butler-notification-service.js";
 import { ButlerProfileService } from "../modules/butler/butler-profile-service.js";
@@ -40,6 +41,8 @@ import { SessionSummaryScheduler } from "../modules/butler/session-summary-sched
 import { VerificationRunService } from "../modules/butler/verification-run-service.js";
 import { ClientController } from "../modules/client/client-controller.js";
 import { ClientService } from "../modules/client/client-service.js";
+import { NpmGlobalPackageService } from "../modules/client/npm-global-package-service.js";
+import { ServiceUpdateTaskService } from "../modules/client/service-update-task-service.js";
 import { DebugTargetController } from "../modules/debug-target/debug-target-controller.js";
 import { DebugRuntimeReconciliationScheduler } from "../modules/debug-target/debug-runtime-reconciliation-scheduler.js";
 import { DebugTargetService } from "../modules/debug-target/debug-target-service.js";
@@ -257,8 +260,6 @@ export function createServer(config: HostConfig) {
     repositories.authUserRepository,
     config.demoMode
   );
-  const clientService = new ClientService(config);
-
   // Demo 模式服务
   const demoCleanupService = config.demoMode
     ? new DemoCleanupService(database.db, config.databasePath)
@@ -290,6 +291,16 @@ export function createServer(config: HostConfig) {
   let runtimeObservabilityService!: RuntimeObservabilityService;
   const taskActivityLog = new TaskActivityLog(() => runtimeObservabilityService.hasActiveSession());
   const taskManager = createTaskManager(taskActivityLog, createHostTaskLaneExecutors());
+  const npmGlobalPackageService = new NpmGlobalPackageService(config);
+  const serviceUpdateTaskService = new ServiceUpdateTaskService(
+    taskManager,
+    npmGlobalPackageService
+  );
+  const clientService = new ClientService(
+    config,
+    npmGlobalPackageService,
+    serviceUpdateTaskService
+  );
   const workspaceService = new WorkspaceService(
     repositories.workspaceRepository,
     gitCommandRunner,
@@ -530,7 +541,8 @@ export function createServer(config: HostConfig) {
   );
   const butlerInboxService = new ButlerInboxService(
     repositories.butlerProjectRepository,
-    repositories.butlerInboxItemRepository
+    repositories.butlerInboxItemRepository,
+    taskManager
   );
   const butlerNotificationService = new ButlerNotificationService(
     repositories.butlerNotificationArchiveRepository
@@ -570,6 +582,10 @@ export function createServer(config: HostConfig) {
   const followUpProviderAdapterRegistry = new ProviderAdapterRegistry([
     new RuntimePatrolProviderAdapter("codex", butlerFollowUpSessionLiveRuntimeService, sessionHistoryService),
     new RuntimePatrolProviderAdapter("claude-code", butlerFollowUpSessionLiveRuntimeService, sessionHistoryService)
+  ]);
+  const butlerAnalysisProviderAdapterRegistry = new ProviderAdapterRegistry([
+    new RuntimePatrolProviderAdapter("codex", butlerSessionLiveRuntimeService, sessionHistoryService),
+    new RuntimePatrolProviderAdapter("claude-code", butlerSessionLiveRuntimeService, sessionHistoryService)
   ]);
   const patrolExecutionService = new PatrolExecutionService(
     repositories.butlerProjectRepository,
@@ -612,6 +628,18 @@ export function createServer(config: HostConfig) {
   const butlerAuthService = new ButlerAuthService(
     repositories.authTokenRepository,
     config
+  );
+  const butlerInboxAnalysisService = new ButlerInboxAnalysisService(
+    butlerProfileService,
+    workspaceService,
+    butlerContextAggregator,
+    butlerAuthService,
+    skillManagerService,
+    sessionHistoryService,
+    butlerSessionLiveRuntimeService,
+    butlerAnalysisProviderAdapterRegistry,
+    butlerRuntimeConfig.codexHomeDir,
+    config.codexHomeDir
   );
   const butlerSessionSummaryService = new ButlerSessionSummaryService(
     butlerProfileService,
@@ -680,6 +708,12 @@ export function createServer(config: HostConfig) {
     butlerRuntimeConfig.codexHomeDir,
     config.codexHomeDir
   );
+  butlerInboxService.configureLifecycleServices({
+    butlerInboxAnalysisService,
+    butlerControlSessionService,
+    butlerSessionService,
+    butlerFollowUpService
+  });
   const butlerControlActionService = new ButlerControlActionService(
     butlerProfileService,
     repositories.butlerControlSessionRepository,

@@ -17,6 +17,10 @@ export function createHostTaskLaneExecutors(): Partial<Record<TaskExecutionLane,
           context.signal
         );
       }
+    },
+    external_process: {
+      execute: async (definition, input, context) =>
+        await definition.run(input, context)
     }
   };
 }
