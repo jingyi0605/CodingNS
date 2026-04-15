@@ -240,7 +240,7 @@ CREATE TABLE IF NOT EXISTS session_message_attachments (
   session_id TEXT NOT NULL,
   client_request_id TEXT NOT NULL,
   message_id TEXT,
-  kind TEXT NOT NULL CHECK (kind IN ('image')),
+  kind TEXT NOT NULL CHECK (kind IN ('image', 'file')),
   file_name TEXT NOT NULL,
   mime_type TEXT NOT NULL,
   file_size INTEGER NOT NULL,

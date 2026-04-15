@@ -8,6 +8,7 @@ import { logPerfDebug } from "../../../shared/debug/perf-debug";
 import { t } from "../../../shared/i18n";
 import { ApiError } from "../../../shared/network/api-error";
 import {
+  type AttachmentPayload,
   type ContextUsageDto,
   deleteSessionQueueItem,
   enqueueSessionMessage,
@@ -25,7 +26,6 @@ import {
   sendSessionMessage,
   sendLiveMessage,
   steerSessionQueueItem,
-  type ImageAttachmentPayload,
   type HistoryMessageDto,
   type ProviderCapabilitiesDto,
   type SessionPermissionRequestDto,
@@ -278,7 +278,7 @@ export class SessionRuntimeStore {
     options?: {
       model?: string;
       reasoningLevel?: string;
-      attachments?: ImageAttachmentPayload[];
+      attachments?: AttachmentPayload[];
       attachmentMeta?: MessageAttachmentDto[];
     }
   ): Promise<void> {
@@ -395,7 +395,7 @@ export class SessionRuntimeStore {
     options?: {
       model?: string;
       reasoningLevel?: string;
-      attachments?: ImageAttachmentPayload[];
+      attachments?: AttachmentPayload[];
       attachmentMeta?: MessageAttachmentDto[];
     }
   ): Promise<void> {
@@ -1078,7 +1078,7 @@ export class SessionRuntimeStore {
     options?: {
       model?: string;
       reasoningLevel?: string;
-      attachments?: ImageAttachmentPayload[];
+      attachments?: AttachmentPayload[];
       attachmentMeta?: MessageAttachmentDto[];
     }
   ) {

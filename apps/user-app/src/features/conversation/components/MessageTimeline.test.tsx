@@ -1562,6 +1562,7 @@ describe("MessageTimeline", () => {
             ],
             attachmentPayloads: [
               {
+                kind: "image",
                 fileName: "sample.png",
                 mimeType: "image/png",
                 fileSize: 128,
@@ -1587,6 +1588,45 @@ describe("MessageTimeline", () => {
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: t("conversation.imagePreviewTitle") })).toBeInTheDocument();
     expect(screen.getAllByAltText("sample.png")).toHaveLength(2);
+  });
+
+  it("renders generic file cards for non-image attachments", () => {
+    render(
+      <MessageTimeline
+        historyState="ready"
+        provider="codex"
+        onRetryMessage={vi.fn()}
+        messages={[
+          {
+            id: "pending-file-message",
+            sessionId: "session-1",
+            role: "user",
+            kind: "text",
+            content: "check file",
+            toolCall: null,
+            attachments: [
+              {
+                id: "attachment-file-1",
+                kind: "file",
+                fileName: "notes.md",
+                mimeType: "text/markdown",
+                fileSize: 256
+              }
+            ],
+            attachmentPayloads: null,
+            timestamp: "2026-03-23T10:00:02.000Z",
+            sequence: 3,
+            rawRef: "pending://file-1",
+            deliveryState: "sending",
+            clientRequestId: "file-1"
+          }
+        ]}
+      />
+    );
+
+    expect(screen.getByText("notes.md")).toBeInTheDocument();
+    expect(screen.getByText("256 B")).toBeInTheDocument();
+    expect(document.querySelectorAll(".message-attachment-file-card")).toHaveLength(1);
   });
 
   it("renders inline base64 images in content as thumbnails instead of raw text", async () => {

@@ -22,10 +22,10 @@ export interface RuntimeSendOptions {
   reasoningLevel: string | null;
   permissionMode: string | null;
   providerPrompt: string | null;
-  attachments: RuntimeImageAttachment[];
+  attachments: RuntimeAttachment[];
 }
 
-export interface RuntimeImageAttachment extends NormalizedMessageAttachment {
+export interface RuntimeAttachment extends NormalizedMessageAttachment {
   filePath: string;
 }
 

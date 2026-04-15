@@ -23,7 +23,7 @@ function createService() {
     }))
   };
   const sessionMessageAttachmentService = {
-    persistImageAttachments: vi.fn(() => ({
+    persistAttachments: vi.fn(() => ({
       messageAttachments: [],
       runtimeAttachments: []
     })),
@@ -543,11 +543,11 @@ describe("SessionLiveRuntimeService", () => {
     });
 
     expect(sessionHistoryService.persistSessionBinding).toHaveBeenCalled();
-    expect(sessionMessageAttachmentService.persistImageAttachments).toHaveBeenCalledTimes(1);
+    expect(sessionMessageAttachmentService.persistAttachments).toHaveBeenCalledTimes(1);
     expect(
       sessionHistoryService.persistSessionBinding.mock.invocationCallOrder[0]
     ).toBeLessThan(
-      sessionMessageAttachmentService.persistImageAttachments.mock.invocationCallOrder[0]
+      sessionMessageAttachmentService.persistAttachments.mock.invocationCallOrder[0]
     );
   });
 

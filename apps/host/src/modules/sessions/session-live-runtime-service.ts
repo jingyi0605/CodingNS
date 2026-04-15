@@ -51,8 +51,8 @@ import {
 import { SessionChangedFileService } from "./session-changed-file-service.js";
 import type { WorkspaceService } from "../workspace/workspace-service.js";
 import type {
-  RuntimeImageAttachmentDescriptor,
-  SessionImageAttachmentInput
+  RuntimeAttachmentDescriptor,
+  SessionAttachmentInput
 } from "./session-message-attachment-service.js";
 import { SessionMessageAttachmentService } from "./session-message-attachment-service.js";
 import {
@@ -74,7 +74,7 @@ interface RuntimeSendOptions {
   model?: string | null;
   reasoningLevel?: string | null;
   permissionMode?: string | null;
-  attachments?: SessionImageAttachmentInput[];
+  attachments?: SessionAttachmentInput[];
 }
 
 interface StartLiveSessionInput {
@@ -110,7 +110,7 @@ interface LiveMessageAcceptedResult {
 
 interface PersistedAttachmentBundle {
   messageAttachments: NormalizedMessageAttachment[];
-  runtimeAttachments: RuntimeImageAttachmentDescriptor[];
+  runtimeAttachments: RuntimeAttachmentDescriptor[];
 }
 
 interface PendingSessionSendDebugTrace {
@@ -2364,7 +2364,7 @@ export class SessionLiveRuntimeService {
   private persistMessageAttachments(
     sessionId: string,
     clientRequestId: string | null,
-    attachments: SessionImageAttachmentInput[]
+    attachments: SessionAttachmentInput[]
   ) {
     if (!clientRequestId || attachments.length === 0) {
       return {
@@ -2373,7 +2373,7 @@ export class SessionLiveRuntimeService {
       };
     }
 
-    return this.sessionMessageAttachmentService.persistImageAttachments({
+    return this.sessionMessageAttachmentService.persistAttachments({
       sessionId,
       clientRequestId,
       attachments

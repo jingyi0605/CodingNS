@@ -1,8 +1,8 @@
 import type {
+  AttachmentPayload,
   ContextUsageDto,
   DeliveryState,
   HistoryMessageDto,
-  ImageAttachmentPayload,
   MessageAttachmentDto,
   ProviderCapabilitiesDto,
   SessionPermissionRequestDto,
@@ -24,7 +24,7 @@ export interface SessionMessageViewModel {
   content: string;
   toolCall: ToolCallDto | null;
   attachments?: MessageAttachmentDto[];
-  attachmentPayloads?: ImageAttachmentPayload[] | null;
+  attachmentPayloads?: AttachmentPayload[] | null;
   origin?: HistoryMessageDto["origin"];
   originRef?: HistoryMessageDto["originRef"];
   timestamp: string;
@@ -147,7 +147,7 @@ export function createPendingMessage(
   content: string,
   clientRequestId: string,
   attachments: MessageAttachmentDto[] = [],
-  attachmentPayloads: ImageAttachmentPayload[] = [],
+  attachmentPayloads: AttachmentPayload[] = [],
   sequence = Number.MAX_SAFE_INTEGER
 ): SessionMessageViewModel {
   return {

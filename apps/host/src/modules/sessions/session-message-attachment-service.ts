@@ -22,23 +22,23 @@ const SUPPORTED_IMAGE_EXTENSIONS = new Map<string, string>([
 
 const CLAUDE_ATTACHMENT_HEADER = "[[CODINGNS_IMAGE_ATTACHMENTS]]";
 const CLAUDE_ATTACHMENT_FOOTER = "[[/CODINGNS_IMAGE_ATTACHMENTS]]";
-const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
 
-export interface SessionImageAttachmentInput {
+export interface SessionAttachmentInput {
   fileName: string;
   mimeType: string;
   fileSize: number;
   contentBase64: string;
 }
 
-export interface RuntimeImageAttachmentDescriptor extends NormalizedMessageAttachment {
+export interface RuntimeAttachmentDescriptor extends NormalizedMessageAttachment {
   filePath: string;
 }
 
-interface PersistImageAttachmentsInput {
+interface PersistAttachmentsInput {
   sessionId: string;
   clientRequestId: string;
-  attachments: SessionImageAttachmentInput[];
+  attachments: SessionAttachmentInput[];
 }
 
 export class SessionMessageAttachmentService {
@@ -51,11 +51,11 @@ export class SessionMessageAttachmentService {
     this.storageRoot = path.resolve(path.dirname(config.databasePath), "session-attachments");
   }
 
-  persistImageAttachments(
-    input: PersistImageAttachmentsInput
+  persistAttachments(
+    input: PersistAttachmentsInput
   ): {
     messageAttachments: NormalizedMessageAttachment[];
-    runtimeAttachments: RuntimeImageAttachmentDescriptor[];
+    runtimeAttachments: RuntimeAttachmentDescriptor[];
   } {
     if (input.attachments.length === 0) {
       return {
@@ -124,7 +124,7 @@ export class SessionMessageAttachmentService {
   getRuntimeAttachments(
     sessionId: string,
     clientRequestId: string | null
-  ): RuntimeImageAttachmentDescriptor[] {
+  ): RuntimeAttachmentDescriptor[] {
     if (!clientRequestId) {
       return [];
     }
@@ -214,9 +214,13 @@ export class SessionMessageAttachmentService {
   buildProviderPrompt(
     provider: ProviderId,
     content: string,
-    attachments: RuntimeImageAttachmentDescriptor[]
+    attachments: RuntimeAttachmentDescriptor[]
   ): string | null {
-    if (attachments.length === 0 || provider !== "claude-code") {
+    if (attachments.length === 0) {
+      return null;
+    }
+
+    if (provider !== "claude-code" && provider !== "codex") {
       return null;
     }
 
@@ -224,14 +228,13 @@ export class SessionMessageAttachmentService {
     const attachmentLines = attachments
       .map((attachment, index) => `${index + 1}. ${attachment.filePath}`)
       .join("\n");
+    const hasOnlyImages = attachments.every((attachment) => attachment.kind === "image");
+    const attachmentInstruction =
+      hasOnlyImages
+        ? "下面这些图片是用户随消息附带的本地附件。请先读取并理解它们，再继续处理这条请求。"
+        : "下面这些文件是用户随消息附带的本地文件。请先读取并理解相关内容，再继续处理这条请求。";
 
-    return [
-      normalizedContent,
-      CLAUDE_ATTACHMENT_HEADER,
-      "下面这些图片是用户随消息附带的本地图片。请先读取并理解它们，再继续处理这条请求。",
-      attachmentLines,
-      CLAUDE_ATTACHMENT_FOOTER
-    ]
+    return [normalizedContent, CLAUDE_ATTACHMENT_HEADER, attachmentInstruction, attachmentLines, CLAUDE_ATTACHMENT_FOOTER]
       .filter((part) => part.trim().length > 0)
       .join("\n\n");
   }
@@ -250,28 +253,24 @@ export class SessionMessageAttachmentService {
     targetDir: string,
     sessionId: string,
     clientRequestId: string,
-    attachment: SessionImageAttachmentInput,
+    attachment: SessionAttachmentInput,
     index: number
   ): SessionMessageAttachmentRecord {
     const mimeType = attachment.mimeType.trim().toLowerCase();
-    const extension = SUPPORTED_IMAGE_EXTENSIONS.get(mimeType);
-
-    if (!extension) {
-      throw new Error("UNSUPPORTED_IMAGE_TYPE");
-    }
+    const kind = mimeType.startsWith("image/") ? "image" : "file";
 
     const buffer = Buffer.from(attachment.contentBase64, "base64");
 
     if (buffer.length === 0) {
-      throw new Error("EMPTY_IMAGE_CONTENT");
+      throw new Error("EMPTY_ATTACHMENT_CONTENT");
     }
 
-    if (buffer.length > MAX_IMAGE_BYTES) {
-      throw new Error("IMAGE_TOO_LARGE");
+    if (buffer.length > MAX_ATTACHMENT_BYTES) {
+      throw new Error("ATTACHMENT_TOO_LARGE");
     }
 
     const attachmentId = createId();
-    const fileName = buildSafeFileName(attachment.fileName, index, extension);
+    const fileName = buildSafeFileName(attachment.fileName, index, mimeType);
     const storagePath = path.join(targetDir, `${attachmentId}-${fileName}`);
     fs.writeFileSync(storagePath, buffer);
 
@@ -280,7 +279,7 @@ export class SessionMessageAttachmentService {
       sessionId,
       clientRequestId,
       messageId: null,
-      kind: "image",
+      kind,
       fileName,
       mimeType,
       fileSize: buffer.length,
@@ -310,18 +309,16 @@ export function normalizeProviderMessageContent(provider: string, content: strin
   return content.slice(0, headerIndex).trimEnd();
 }
 
-function buildSafeFileName(fileName: string, index: number, extension: string): string {
-  const normalized = path.basename(fileName || `image-${index + 1}${extension}`);
+function buildSafeFileName(fileName: string, index: number, mimeType: string): string {
+  const fallbackExtension = SUPPORTED_IMAGE_EXTENSIONS.get(mimeType) ?? "";
+  const normalized = path.basename(fileName || `attachment-${index + 1}${fallbackExtension}`);
   const safeBase = normalized.replace(/[<>:"/\\|?*\u0000-\u001f]+/g, "-").trim();
-  const hasSupportedExtension = Array.from(SUPPORTED_IMAGE_EXTENSIONS.values()).some((value) =>
-    safeBase.toLowerCase().endsWith(value)
-  );
 
   if (safeBase.length === 0) {
-    return `image-${index + 1}${extension}`;
+    return `attachment-${index + 1}${fallbackExtension}`;
   }
 
-  return hasSupportedExtension ? safeBase : `${safeBase}${extension}`;
+  return safeBase;
 }
 
 function toMessageAttachmentDto(
@@ -338,7 +335,7 @@ function toMessageAttachmentDto(
 
 function toRuntimeAttachment(
   record: SessionMessageAttachmentRecord
-): RuntimeImageAttachmentDescriptor {
+): RuntimeAttachmentDescriptor {
   return {
     ...toMessageAttachmentDto(record),
     filePath: record.storagePath

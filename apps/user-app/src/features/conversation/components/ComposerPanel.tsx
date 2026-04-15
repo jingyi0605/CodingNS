@@ -22,9 +22,9 @@ import {
   supportsReasoningSelector
 } from "../capability/provider-ui";
 import type {
+  AttachmentPayload,
   ContextUsageDto,
   ForkSourceMessageSnapshotDto,
-  ImageAttachmentPayload,
   MessageAttachmentDto,
   ProviderCapabilitiesDto,
   ProviderId
@@ -90,7 +90,7 @@ interface ComposerPanelProps {
     options?: {
       model?: string;
       reasoningLevel?: string;
-      attachments?: ImageAttachmentPayload[];
+      attachments?: AttachmentPayload[];
       attachmentMeta?: MessageAttachmentDto[];
     }
   ) => Promise<void>;
@@ -99,7 +99,7 @@ interface ComposerPanelProps {
     options?: {
       model?: string;
       reasoningLevel?: string;
-      attachments?: ImageAttachmentPayload[];
+      attachments?: AttachmentPayload[];
       attachmentMeta?: MessageAttachmentDto[];
     }
   ) => Promise<void>;
@@ -113,10 +113,11 @@ type ModelOption = {
   supportedReasoningEfforts?: ReasoningLevel[];
 };
 
-interface ComposerImageAttachment {
+interface ComposerAttachment {
   id: string;
   file: File;
-  previewUrl: string;
+  kind: "image" | "file";
+  previewUrl: string | null;
 }
 
 interface ComposerSelectOption {
@@ -222,9 +223,33 @@ function base64ToFile(
   });
 }
 
+function isImageMimeType(mimeType: string): boolean {
+  return mimeType.trim().toLowerCase().startsWith("image/");
+}
+
+function resolveAttachmentMimeType(file: File): string {
+  const normalized = file.type.trim().toLowerCase();
+  return normalized.length > 0 ? normalized : "application/octet-stream";
+}
+
+function resolveAttachmentKind(file: File): "image" | "file" {
+  return isImageMimeType(resolveAttachmentMimeType(file)) ? "image" : "file";
+}
+
+function createComposerAttachment(file: File, id = createAttachmentId()): ComposerAttachment {
+  const kind = resolveAttachmentKind(file);
+
+  return {
+    id,
+    file,
+    kind,
+    previewUrl: kind === "image" ? URL.createObjectURL(file) : null
+  };
+}
+
 function restoreDraftAttachment(
   attachment: StoredComposerDraftAttachment
-): ComposerImageAttachment {
+): ComposerAttachment {
   const file = base64ToFile(
     attachment.fileName,
     attachment.mimeType,
@@ -232,11 +257,19 @@ function restoreDraftAttachment(
     attachment.lastModified
   );
 
-  return {
-    id: attachment.id,
-    file,
-    previewUrl: URL.createObjectURL(file)
-  };
+  return createComposerAttachment(file, attachment.id);
+}
+
+function formatAttachmentSize(fileSize: number): string {
+  if (fileSize < 1024) {
+    return `${fileSize} B`;
+  }
+
+  if (fileSize < 1024 * 1024) {
+    return `${(fileSize / 1024).toFixed(1)} KB`;
+  }
+
+  return `${(fileSize / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function buildForkDraftPreview(content: string): string {
@@ -279,9 +312,9 @@ function getProviderStartDisabledReason(capabilities: ProviderCapabilitiesDto | 
 function toAttachmentMeta(file: File, id: string): MessageAttachmentDto {
   return {
     id,
-    kind: "image",
+    kind: resolveAttachmentKind(file),
     fileName: file.name,
-    mimeType: file.type || "image/png",
+    mimeType: resolveAttachmentMimeType(file),
     fileSize: file.size
   };
 }
@@ -302,38 +335,20 @@ function readFileAsBase64(file: File): Promise<string> {
   });
 }
 
-function revokeAttachmentPreviews(attachments: ComposerImageAttachment[]): void {
+function revokeAttachmentPreviews(attachments: ComposerAttachment[]): void {
   attachments.forEach((attachment) => {
+    if (!attachment.previewUrl) {
+      return;
+    }
+
     URL.revokeObjectURL(attachment.previewUrl);
   });
 }
 
-function collectImageFiles(files: Iterable<File>): {
-  accepted: File[];
-  rejectedCount: number;
-} {
-  const accepted: File[] = [];
-  let rejectedCount = 0;
-
-  for (const file of files) {
-    if (file.type.startsWith("image/")) {
-      accepted.push(file);
-      continue;
-    }
-
-    rejectedCount += 1;
-  }
-
-  return {
-    accepted,
-    rejectedCount
-  };
-}
-
-function mergeImageAttachments(
-  current: ComposerImageAttachment[],
+function mergeComposerAttachments(
+  current: ComposerAttachment[],
   incomingFiles: File[]
-): ComposerImageAttachment[] {
+): ComposerAttachment[] {
   const existingKeys = new Set(
     current.map((item) => `${item.file.name}:${item.file.size}:${item.file.lastModified}`)
   );
@@ -347,11 +362,7 @@ function mergeImageAttachments(
     }
 
     existingKeys.add(key);
-    next.push({
-      id: createAttachmentId(),
-      file,
-      previewUrl: URL.createObjectURL(file)
-    });
+    next.push(createComposerAttachment(file));
   });
 
   return next;
@@ -384,8 +395,9 @@ export function ComposerPanel({
   const [content, setContent] = useState("");
   const [selectedModel, setSelectedModel] = useState<string>("");
   const [reasoningLevel, setReasoningLevel] = useState<ReasoningLevel>("medium");
-  const [attachments, setAttachments] = useState<ComposerImageAttachment[]>([]);
+  const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [attachmentSheetOpen, setAttachmentSheetOpen] = useState(false);
+  const [dragActive, setDragActive] = useState(false);
   const [quickPhrases, setQuickPhrases] = useState<QuickPhraseRecord[]>(DEFAULT_QUICK_PHRASES);
   const [quickPhraseModalOpen, setQuickPhraseModalOpen] = useState(false);
   const [quickPhraseCreateModalOpen, setQuickPhraseCreateModalOpen] = useState(false);
@@ -663,48 +675,43 @@ export function ComposerPanel({
     }
   }, [provider]);
 
-  const replaceAttachments = useCallback((nextAttachments: ComposerImageAttachment[]) => {
+  const replaceAttachments = useCallback((nextAttachments: ComposerAttachment[]) => {
     attachmentRegistryRef.current.forEach((previewUrl) => {
       URL.revokeObjectURL(previewUrl);
     });
     attachmentRegistryRef.current.clear();
     nextAttachments.forEach((attachment) => {
-      attachmentRegistryRef.current.add(attachment.previewUrl);
+      if (attachment.previewUrl) {
+        attachmentRegistryRef.current.add(attachment.previewUrl);
+      }
     });
     setAttachments(nextAttachments);
   }, []);
 
   const mergeAttachments = useCallback((incomingFiles: File[]) => {
-    const { accepted, rejectedCount } = collectImageFiles(incomingFiles);
-
-    if (rejectedCount > 0) {
-      showToast({
-        title: t("conversation.attachmentImageOnly"),
-        tone: "error"
-      });
-    }
-
-    if (accepted.length === 0) {
+    if (incomingFiles.length === 0) {
       return;
     }
 
     setAttachments((current) => {
-      const next = mergeImageAttachments(current, accepted);
+      const next = mergeComposerAttachments(current, incomingFiles);
 
       next.forEach((attachment) => {
-        attachmentRegistryRef.current.add(attachment.previewUrl);
+        if (attachment.previewUrl) {
+          attachmentRegistryRef.current.add(attachment.previewUrl);
+        }
       });
 
       return next;
     });
-  }, [showToast]);
+  }, []);
 
   const removeAttachment = useCallback((attachmentId: string) => {
     attachmentDraftCacheRef.current.delete(attachmentId);
     setAttachments((current) => {
       const target = current.find((item) => item.id === attachmentId);
 
-      if (target) {
+      if (target?.previewUrl) {
         attachmentRegistryRef.current.delete(target.previewUrl);
         URL.revokeObjectURL(target.previewUrl);
       }
@@ -722,6 +729,55 @@ export function ComposerPanel({
 
     event.target.value = "";
   }, [mergeAttachments]);
+
+  const handleComposerDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    if (platform.isMobile || !attachmentDecision.allowed || inRunSendBlocked) {
+      return;
+    }
+
+    const hasFiles =
+      (event.dataTransfer.files?.length ?? 0) > 0 ||
+      Array.from(event.dataTransfer.items ?? []).some((item) => item.kind === "file");
+
+    if (!hasFiles) {
+      return;
+    }
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+
+    if (!dragActive) {
+      setDragActive(true);
+    }
+
+    setShowSlashMenu(false);
+  }, [attachmentDecision.allowed, dragActive, inRunSendBlocked, platform.isMobile]);
+
+  const handleComposerDragLeave = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    const relatedTarget = event.relatedTarget;
+
+    if (relatedTarget instanceof Node && event.currentTarget.contains(relatedTarget)) {
+      return;
+    }
+
+    setDragActive(false);
+  }, []);
+
+  const handleComposerDrop = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    if (platform.isMobile || !attachmentDecision.allowed || inRunSendBlocked) {
+      return;
+    }
+
+    const droppedFiles = Array.from(event.dataTransfer.files ?? []);
+
+    if (droppedFiles.length === 0) {
+      return;
+    }
+
+    event.preventDefault();
+    setDragActive(false);
+    mergeAttachments(droppedFiles);
+  }, [attachmentDecision.allowed, inRunSendBlocked, mergeAttachments, platform.isMobile]);
 
   const triggerNativeAttachmentInput = useCallback((target: "camera" | "library") => {
     if (!attachmentDecision.allowed || inRunSendBlocked) {
@@ -984,7 +1040,7 @@ export function ComposerPanel({
             cached.fileName === attachment.file.name &&
             cached.fileSize === attachment.file.size &&
             cached.lastModified === attachment.file.lastModified &&
-            cached.mimeType === (attachment.file.type || "image/png")
+            cached.mimeType === resolveAttachmentMimeType(attachment.file)
           ) {
             return cached;
           }
@@ -992,7 +1048,7 @@ export function ComposerPanel({
           return {
             id: attachment.id,
             fileName: attachment.file.name,
-            mimeType: attachment.file.type || "image/png",
+            mimeType: resolveAttachmentMimeType(attachment.file),
             fileSize: attachment.file.size,
             lastModified: attachment.file.lastModified,
             contentBase64: await readFileAsBase64(attachment.file)
@@ -1246,6 +1302,7 @@ export function ComposerPanel({
     setContent("");
     setAttachments([]);
     setAttachmentSheetOpen(false);
+    setDragActive(false);
     setQuickPhraseModalOpen(false);
     setQuickPhraseCreateModalOpen(false);
     setShowSlashMenu(false);
@@ -1253,8 +1310,9 @@ export function ComposerPanel({
     try {
       const payloads = await Promise.all(
         nextAttachments.map(async (attachment) => ({
+          kind: attachment.kind,
           fileName: attachment.file.name,
-          mimeType: attachment.file.type || "image/png",
+          mimeType: resolveAttachmentMimeType(attachment.file),
           fileSize: attachment.file.size,
           contentBase64: await readFileAsBase64(attachment.file)
         }))
@@ -1287,7 +1345,9 @@ export function ComposerPanel({
 
       revokeAttachmentPreviews(nextAttachments);
       nextAttachments.forEach((attachment) => {
-        attachmentRegistryRef.current.delete(attachment.previewUrl);
+        if (attachment.previewUrl) {
+          attachmentRegistryRef.current.delete(attachment.previewUrl);
+        }
       });
     } catch (error) {
       setContent(nextContent);
@@ -1353,7 +1413,6 @@ export function ComposerPanel({
           id={libraryInputId}
           ref={libraryInputRef}
           type="file"
-          accept="image/*"
           multiple
           tabIndex={-1}
           aria-hidden="true"
@@ -1371,7 +1430,13 @@ export function ComposerPanel({
           style={HIDDEN_FILE_INPUT_STYLE}
           onChange={handleAttachmentInputChange}
         />
-        <div className="composer-input-container">
+        <div
+          className="composer-input-container"
+          data-drag-active={dragActive ? "true" : undefined}
+          onDragOver={handleComposerDragOver}
+          onDragLeave={handleComposerDragLeave}
+          onDrop={handleComposerDrop}
+        >
           {forkDraft ? (
             <div className="composer-fork-draft">
               <div className="composer-fork-draft-main">
@@ -1437,17 +1502,28 @@ export function ComposerPanel({
             <div className="composer-attachments">
               {attachments.map((attachment) => (
                 <div key={attachment.id} className="composer-attachment-card">
-                  <img
-                    src={attachment.previewUrl}
-                    alt={t("conversation.attachmentPreviewAlt")}
-                    className="composer-attachment-preview"
-                  />
+                  {attachment.previewUrl ? (
+                    <img
+                      src={attachment.previewUrl}
+                      alt={t("conversation.attachmentPreviewAlt")}
+                      className="composer-attachment-preview"
+                    />
+                  ) : (
+                    <div className="composer-attachment-file" aria-hidden="true">
+                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                        <path d="M14 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7z" />
+                        <path d="M14 2v5h5" />
+                        <path d="M9 13h6" />
+                        <path d="M9 17h6" />
+                      </svg>
+                    </div>
+                  )}
                   <div className="composer-attachment-meta">
                     <span className="attachment-name" title={attachment.file.name}>
                       {attachment.file.name}
                     </span>
                     <span className="attachment-size">
-                      {(attachment.file.size / 1024).toFixed(1)} KB
+                      {formatAttachmentSize(attachment.file.size)}
                     </span>
                   </div>
                   <button
@@ -1463,6 +1539,12 @@ export function ComposerPanel({
                   </button>
                 </div>
               ))}
+            </div>
+          ) : null}
+
+          {dragActive ? (
+            <div className="composer-drop-hint">
+              {t("conversation.attachmentDropHint")}
             </div>
           ) : null}
 

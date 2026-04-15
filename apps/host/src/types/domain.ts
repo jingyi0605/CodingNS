@@ -194,7 +194,7 @@ export interface SessionMessageAttachmentRecord {
   sessionId: string;
   clientRequestId: string;
   messageId: string | null;
-  kind: "image";
+  kind: "image" | "file";
   fileName: string;
   mimeType: string;
   fileSize: number;

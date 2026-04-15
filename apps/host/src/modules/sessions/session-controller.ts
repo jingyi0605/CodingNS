@@ -4,7 +4,7 @@ import { AppError } from "../../shared/errors/app-error.js";
 import type { ButlerControlSessionRepository } from "../../storage/repositories/butler-control-session-repository.js";
 import type { SessionHistoryService } from "./session-history-service.js";
 import type { SessionLiveRuntimeService } from "./session-live-runtime-service.js";
-import type { SessionImageAttachmentInput } from "./session-message-attachment-service.js";
+import type { SessionAttachmentInput } from "./session-message-attachment-service.js";
 
 interface SessionListQuery {
   workspaceId?: string;
@@ -44,7 +44,7 @@ interface SendMessageBody extends RuntimeOptionsBody {
 }
 
 interface AttachmentsBody {
-  attachments?: SessionImageAttachmentInput[];
+  attachments?: SessionAttachmentInput[];
 }
 
 interface SendLiveMessageBody extends SendMessageBody, RuntimeOptionsBody, AttachmentsBody {}
@@ -65,7 +65,7 @@ interface StartLiveSessionBody extends RuntimeOptionsBody {
   provider?: string;
   content?: string;
   clientRequestId?: string;
-  attachments?: SessionImageAttachmentInput[];
+  attachments?: SessionAttachmentInput[];
   parentSessionId?: string | null;
   sessionKind?: "default" | "annotation";
   annotationSourceMessageId?: string | null;
@@ -135,7 +135,7 @@ function requireNonEmptyText(value: string | undefined, field: string, detail: s
 
 function requireMessageContentOrAttachments(
   value: string | undefined,
-  attachments: SessionImageAttachmentInput[],
+  attachments: SessionAttachmentInput[],
   field: string,
   detail: string
 ): string {
@@ -153,7 +153,7 @@ function requireMessageContentOrAttachments(
   return text;
 }
 
-function normalizeAttachments(input: AttachmentsBody): SessionImageAttachmentInput[] {
+function normalizeAttachments(input: AttachmentsBody): SessionAttachmentInput[] {
   if (!Array.isArray(input.attachments)) {
     return [];
   }
@@ -168,7 +168,7 @@ function normalizeAttachments(input: AttachmentsBody): SessionImageAttachmentInp
       throw new AppError({
         statusCode: 400,
         errorCode: "INVALID_INPUT",
-        detail: `attachments[${index}] 缺少有效的图片字段`,
+        detail: `attachments[${index}] 缺少有效的附件字段`,
         field: "attachments"
       });
     }
@@ -184,7 +184,7 @@ function normalizeAttachments(input: AttachmentsBody): SessionImageAttachmentInp
 
 function requireClientRequestIdForAttachments(
   clientRequestId: string | undefined,
-  attachments: SessionImageAttachmentInput[]
+  attachments: SessionAttachmentInput[]
 ): string | null {
   const normalized = clientRequestId?.trim() ?? null;
 
@@ -192,7 +192,7 @@ function requireClientRequestIdForAttachments(
     throw new AppError({
       statusCode: 400,
       errorCode: "INVALID_INPUT",
-      detail: "发送图片时必须提供 clientRequestId",
+      detail: "发送附件时必须提供 clientRequestId",
       field: "clientRequestId"
     });
   }
@@ -277,7 +277,7 @@ export class SessionController {
       throw new AppError({
         statusCode: 404,
         errorCode: "ATTACHMENT_NOT_FOUND",
-        detail: "未找到对应的图片附件",
+        detail: "未找到对应的附件",
         field: "attachmentId"
       });
     }

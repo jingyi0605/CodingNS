@@ -43,7 +43,7 @@ import {
 } from "./conversation-scroll-persistence";
 
 import type {
-  ImageAttachmentPayload,
+  AttachmentPayload,
   MessageAttachmentDto,
   ProviderId,
   SessionInterruptSource
@@ -983,6 +983,7 @@ function MessageMarkdownBody({
 
 interface AttachmentPreviewSource {
   id: string;
+  kind: "image" | "file";
   fileName: string;
   fileSize: number | null;
   url: string | null;
@@ -991,13 +992,29 @@ interface AttachmentPreviewSource {
 
 function buildInlineAttachmentPreviewUrl(
   attachment: MessageAttachmentDto,
-  payload: ImageAttachmentPayload | null | undefined
+  payload: AttachmentPayload | null | undefined
 ) {
-  if (!payload?.contentBase64 || payload.mimeType !== attachment.mimeType) {
+  if (attachment.kind !== "image" || !payload?.contentBase64 || payload.mimeType !== attachment.mimeType) {
     return null;
   }
 
   return `data:${payload.mimeType};base64,${payload.contentBase64}`;
+}
+
+function formatAttachmentSize(fileSize: number | null): string | null {
+  if (typeof fileSize !== "number" || !Number.isFinite(fileSize) || fileSize < 0) {
+    return null;
+  }
+
+  if (fileSize < 1024) {
+    return `${fileSize} B`;
+  }
+
+  if (fileSize < 1024 * 1024) {
+    return `${(fileSize / 1024).toFixed(1)} KB`;
+  }
+
+  return `${(fileSize / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function MessageAttachments({
@@ -1007,7 +1024,7 @@ function MessageAttachments({
   inlineImages = []
 }: {
   sessionId?: string;
-  attachmentPayloads?: ImageAttachmentPayload[] | null;
+  attachmentPayloads?: AttachmentPayload[] | null;
   attachments?: MessageAttachmentDto[];
   inlineImages?: ReturnType<typeof parseMessageRichContent>["inlineImages"];
 }) {
@@ -1028,7 +1045,7 @@ function RichMessageAttachments({
   inlineImages = []
 }: {
   sessionId?: string;
-  attachmentPayloads?: ImageAttachmentPayload[] | null;
+  attachmentPayloads?: AttachmentPayload[] | null;
   attachments?: MessageAttachmentDto[];
   inlineImages?: ReturnType<typeof parseMessageRichContent>["inlineImages"];
 }) {
@@ -1043,6 +1060,7 @@ function RichMessageAttachments({
         if (inlineUrl) {
           return {
             id: attachment.id,
+            kind: attachment.kind,
             fileName: attachment.fileName,
             fileSize: attachment.fileSize,
             url: inlineUrl,
@@ -1054,6 +1072,7 @@ function RichMessageAttachments({
 
         return {
           id: attachment.id,
+          kind: attachment.kind,
           fileName: attachment.fileName,
           fileSize: attachment.fileSize,
           url: remoteSource?.url ?? null,
@@ -1066,6 +1085,7 @@ function RichMessageAttachments({
     () =>
       inlineImages.map((image, index) => ({
         id: `inline-image-${index}`,
+        kind: "image" as const,
         fileName: image.altText || `${t("conversation.imageAttachmentLabel")} ${index + 1}`,
         fileSize: image.estimatedBytes,
         url: image.url,
@@ -1115,6 +1135,7 @@ function RichMessageAttachments({
           attachment.id,
           {
             id: attachment.id,
+            kind: attachment.kind,
             fileName: attachment.fileName,
             fileSize: attachment.fileSize,
             url: null,
@@ -1133,6 +1154,7 @@ function RichMessageAttachments({
 
           return {
             id: attachment.id,
+            kind: attachment.kind,
             fileName: attachment.fileName,
             fileSize: attachment.fileSize,
             url: objectUrl,
@@ -1141,6 +1163,7 @@ function RichMessageAttachments({
         } catch {
           return {
             id: attachment.id,
+            kind: attachment.kind,
             fileName: attachment.fileName,
             fileSize: attachment.fileSize,
             url: null,
@@ -1171,25 +1194,20 @@ function RichMessageAttachments({
     <>
       <div className="message-attachments">
         {previewSources.map((attachment) => {
+          const isImageAttachment = attachment.kind === "image";
           const previewLabel =
             attachment.status === "loading"
               ? t("conversation.attachmentPreviewLoading")
               : attachment.status === "error"
                 ? t("conversation.attachmentPreviewUnavailable")
-                : t("conversation.attachmentPreviewOpen");
-
-          return (
-            <button
-              key={attachment.id}
-              type="button"
-              className="message-attachment-button"
-              onClick={() => attachment.url && setPreviewAttachmentId(attachment.id)}
-              disabled={!attachment.url}
-              aria-label={`${attachment.fileName} - ${previewLabel}`}
-              title={previewLabel}
-            >
-              <div className="message-attachment-card">
-                {attachment.url ? (
+                : isImageAttachment
+                  ? t("conversation.attachmentPreviewOpen")
+                  : t("conversation.attachmentDownload");
+          const attachmentSize = formatAttachmentSize(attachment.fileSize);
+          const contentNode = (
+            <div className="message-attachment-card">
+              {isImageAttachment ? (
+                attachment.url ? (
                   <img
                     className="message-attachment-thumbnail"
                     src={attachment.url}
@@ -1202,8 +1220,52 @@ function RichMessageAttachments({
                       ? t("conversation.attachmentPreviewLoading")
                       : t("conversation.attachmentPreviewUnavailable")}
                   </div>
-                )}
-              </div>
+                )
+              ) : (
+                <div className="message-attachment-file-card">
+                  <div className="message-attachment-file-icon" aria-hidden="true">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                      <path d="M14 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7z" />
+                      <path d="M14 2v5h5" />
+                      <path d="M9 13h6" />
+                      <path d="M9 17h6" />
+                    </svg>
+                  </div>
+                  <div className="message-attachment-file-meta">
+                    <strong title={attachment.fileName}>{attachment.fileName}</strong>
+                    <span>{attachmentSize ?? t("conversation.fileAttachmentLabel")}</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+
+          if (!isImageAttachment && attachment.url) {
+            return (
+              <a
+                key={attachment.id}
+                className="message-attachment-button"
+                href={attachment.url}
+                download={attachment.fileName}
+                aria-label={`${attachment.fileName} - ${previewLabel}`}
+                title={previewLabel}
+              >
+                {contentNode}
+              </a>
+            );
+          }
+
+          return (
+            <button
+              key={attachment.id}
+              type="button"
+              className="message-attachment-button"
+              onClick={() => isImageAttachment && attachment.url && setPreviewAttachmentId(attachment.id)}
+              disabled={!attachment.url}
+              aria-label={`${attachment.fileName} - ${previewLabel}`}
+              title={previewLabel}
+            >
+              {contentNode}
             </button>
           );
         })}

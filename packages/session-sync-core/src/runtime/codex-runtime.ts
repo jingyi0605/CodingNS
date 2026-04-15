@@ -2068,6 +2068,10 @@ function createCodexInput(request: ProviderRuntimeRunRequest): CodexRuntimeInput
   }
 
   request.options.attachments.forEach((attachment) => {
+    if (attachment.kind !== "image") {
+      return;
+    }
+
     input.push({
       type: "local_image",
       path: attachment.filePath
@@ -2089,6 +2093,10 @@ function createCodexAppServerInput(request: ProviderRuntimeRunRequest): Array<Re
   }
 
   for (const attachment of request.options.attachments) {
+    if (attachment.kind !== "image") {
+      continue;
+    }
+
     input.push({
       type: "localImage",
       path: attachment.filePath

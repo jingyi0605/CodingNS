@@ -58,13 +58,14 @@ export interface ToolCallDto {
 
 export interface MessageAttachmentDto {
   id: string;
-  kind: "image";
+  kind: "image" | "file";
   fileName: string;
   mimeType: string;
   fileSize: number;
 }
 
-export interface ImageAttachmentPayload {
+export interface AttachmentPayload {
+  kind: "image" | "file";
   fileName: string;
   mimeType: string;
   fileSize: number;
@@ -670,7 +671,7 @@ export interface StartLivePayload {
   model?: string | null;
   reasoningLevel?: string | null;
   permissionMode?: string | null;
-  attachments?: ImageAttachmentPayload[];
+  attachments?: AttachmentPayload[];
   parentSessionId?: string | null;
   sessionKind?: SessionKind;
   annotationSourceMessageId?: string | null;
@@ -683,7 +684,7 @@ export interface SendLiveMessagePayload {
   model?: string | null;
   reasoningLevel?: string | null;
   permissionMode?: string | null;
-  attachments?: ImageAttachmentPayload[];
+  attachments?: AttachmentPayload[];
 }
 
 export interface SendSessionMessagePayload {

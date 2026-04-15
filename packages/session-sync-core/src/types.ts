@@ -24,7 +24,7 @@ export interface ForkSourceMessageSnapshot {
 
 export interface NormalizedMessageAttachment {
   id: string;
-  kind: "image";
+  kind: "image" | "file";
   fileName: string;
   mimeType: string;
   fileSize: number;

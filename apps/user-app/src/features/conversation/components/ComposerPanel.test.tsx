@@ -696,7 +696,7 @@ describe("ComposerPanel", () => {
 
     const file = new File(["demo"], "demo.png", { type: "image/png" });
     const attachButton = screen.getByLabelText(t("conversation.attachFiles"));
-    const libraryInput = container.querySelector('input[type="file"][accept="image/*"]:not([capture])');
+    const libraryInput = container.querySelector('input[type="file"]:not([capture])');
 
     expect(attachButton).toBeInTheDocument();
     expect(libraryInput).not.toBeNull();
@@ -710,6 +710,78 @@ describe("ComposerPanel", () => {
 
     await waitFor(() => {
       expect(screen.getByText("demo.png")).toBeInTheDocument();
+    });
+  });
+
+  it("桌面端拖拽任意文件后会加入附件列表", async () => {
+    const onSend = vi.fn().mockResolvedValue(undefined);
+    const { container } = render(
+      <ComposerPanel
+        capabilities={createCapabilities({ supportsAttachments: true })}
+        isSubmitting={false}
+        onSend={onSend}
+      />
+    );
+
+    const dropTarget = container.querySelector(".composer-input-container") as HTMLDivElement;
+    const file = new File(["demo"], "notes.md", { type: "text/markdown" });
+
+    fireEvent.dragOver(dropTarget, {
+      dataTransfer: {
+        files: [file],
+        items: [
+          {
+            kind: "file",
+            type: "text/markdown",
+            getAsFile: () => file
+          }
+        ]
+      }
+    });
+
+    expect(dropTarget).toHaveAttribute("data-drag-active", "true");
+
+    fireEvent.drop(dropTarget, {
+      dataTransfer: {
+        files: [file],
+        items: [
+          {
+            kind: "file",
+            type: "text/markdown",
+            getAsFile: () => file
+          }
+        ]
+      }
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("notes.md")).toBeInTheDocument();
+    });
+
+    fireEvent.submit(container.querySelector(".composer-form")!);
+
+    await waitFor(() => {
+      expect(onSend).toHaveBeenCalledWith("", {
+        model: undefined,
+        reasoningLevel: "high",
+        attachments: [
+          {
+            kind: "file",
+            fileName: "notes.md",
+            mimeType: "text/markdown",
+            fileSize: 4,
+            contentBase64: "ZmFrZQ=="
+          }
+        ],
+        attachmentMeta: [
+          expect.objectContaining({
+            kind: "file",
+            fileName: "notes.md",
+            mimeType: "text/markdown",
+            fileSize: 4
+          })
+        ]
+      });
     });
   });
 
@@ -768,7 +840,7 @@ describe("ComposerPanel", () => {
     );
 
     const attachTrigger = screen.getByLabelText(t("conversation.attachFiles"));
-    const libraryInput = container.querySelector('input[type="file"][accept="image/*"]:not([capture])') as HTMLInputElement;
+    const libraryInput = container.querySelector('input[type="file"]:not([capture])') as HTMLInputElement;
     const libraryClickSpy = vi.fn();
     libraryInput.addEventListener("click", libraryClickSpy);
 
@@ -800,7 +872,7 @@ describe("ComposerPanel", () => {
     );
 
     const libraryInput = container.querySelector(
-      'input[type="file"][accept="image/*"]:not([capture])'
+      'input[type="file"]:not([capture])'
     ) as HTMLInputElement;
     const libraryClickSpy = vi.fn();
     libraryInput.addEventListener("click", libraryClickSpy);
@@ -825,6 +897,46 @@ describe("ComposerPanel", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("移动端文件选择支持一次添加多个文件", async () => {
+    platformMock.platform = "android";
+    platformMock.isWeb = false;
+    platformMock.isMobile = true;
+    platformMock.isNativeMobile = true;
+    platformMock.viewportClass = "compact";
+    platformMock.ui.osFamily = "android";
+
+    const { container } = render(
+      <ComposerPanel
+        capabilities={createCapabilities({ supportsAttachments: true })}
+        isSubmitting={false}
+        onSend={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    const libraryInput = container.querySelector('input[type="file"]:not([capture])') as HTMLInputElement;
+
+    fireEvent.click(screen.getByLabelText(t("conversation.attachFiles")));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: t("conversation.attachmentChooseFromLibrary")
+      })
+    );
+
+    fireEvent.change(libraryInput, {
+      target: {
+        files: [
+          new File(["one"], "first.txt", { type: "text/plain" }),
+          new File(["two"], "second.json", { type: "application/json" })
+        ]
+      }
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("first.txt")).toBeInTheDocument();
+      expect(screen.getByText("second.json")).toBeInTheDocument();
+    });
+  });
+
   it("Codex 默认会跟随当前配置发送，并把附件一起传出去", async () => {
     const onSend = vi.fn().mockResolvedValue(undefined);
 
@@ -837,7 +949,7 @@ describe("ComposerPanel", () => {
     );
 
     const file = new File(["demo"], "demo.png", { type: "image/png" });
-    const libraryInput = container.querySelector('input[type="file"][accept="image/*"]:not([capture])');
+    const libraryInput = container.querySelector('input[type="file"]:not([capture])');
 
     expect(container.querySelector(".composer-attach-btn")).not.toBeNull();
 
@@ -862,6 +974,7 @@ describe("ComposerPanel", () => {
       reasoningLevel: "high",
       attachments: [
         {
+          kind: "image",
           fileName: "demo.png",
           mimeType: "image/png",
           fileSize: 4,

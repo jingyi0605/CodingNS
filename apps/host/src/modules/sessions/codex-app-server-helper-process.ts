@@ -713,6 +713,10 @@ function createCodexAppServerInput(
   }
 
   for (const attachment of request.options.attachments) {
+    if (attachment.kind !== "image") {
+      continue;
+    }
+
     input.push({
       type: "localImage",
       path: attachment.filePath

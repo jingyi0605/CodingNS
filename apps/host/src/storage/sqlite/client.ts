@@ -24,6 +24,7 @@ export function createDatabaseClient(databasePath: string): DatabaseClient {
   ensureWorkspaceNavigationBackgroundColorColumn(db);
   ensureSessionProviderSchema(db);
   ensureSessionStateSchema(db);
+  ensureSessionAttachmentSchema(db);
   ensureSessionIndexArchiveColumn(db);
   ensureSessionRelationColumns(db);
   ensureSessionForkSchema(db);
@@ -149,6 +150,77 @@ function ensureWorkspaceNavigationBackgroundColorColumn(db: Database.Database): 
   }
 
   db.exec("ALTER TABLE workspace_navigation_states ADD COLUMN background_color TEXT");
+}
+
+function ensureSessionAttachmentSchema(db: Database.Database): void {
+  const table = db
+    .prepare(
+      `SELECT sql
+       FROM sqlite_master
+       WHERE type = 'table'
+         AND name = 'session_message_attachments'
+       LIMIT 1`
+    )
+    .get() as { sql?: string | null } | undefined;
+  const definition = table?.sql ?? "";
+
+  if (
+    definition.length === 0 ||
+    definition.includes("kind IN ('image', 'file')") ||
+    definition.includes("kind IN ('image','file')")
+  ) {
+    return;
+  }
+
+  db.exec(`
+    ALTER TABLE session_message_attachments RENAME TO session_message_attachments_legacy;
+
+    CREATE TABLE session_message_attachments (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      client_request_id TEXT NOT NULL,
+      message_id TEXT,
+      kind TEXT NOT NULL CHECK (kind IN ('image', 'file')),
+      file_name TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      file_size INTEGER NOT NULL,
+      storage_path TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (session_id) REFERENCES session_bindings(session_id)
+    );
+
+    INSERT INTO session_message_attachments (
+      id,
+      session_id,
+      client_request_id,
+      message_id,
+      kind,
+      file_name,
+      mime_type,
+      file_size,
+      storage_path,
+      created_at
+    )
+    SELECT
+      id,
+      session_id,
+      client_request_id,
+      message_id,
+      kind,
+      file_name,
+      mime_type,
+      file_size,
+      storage_path,
+      created_at
+    FROM session_message_attachments_legacy;
+
+    DROP TABLE session_message_attachments_legacy;
+
+    CREATE INDEX IF NOT EXISTS idx_session_message_attachments_message
+      ON session_message_attachments(session_id, message_id);
+    CREATE INDEX IF NOT EXISTS idx_session_message_attachments_client_request
+      ON session_message_attachments(session_id, client_request_id);
+  `);
 }
 
 function ensureButlerProfileSchema(db: Database.Database): void {
