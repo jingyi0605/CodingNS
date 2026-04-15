@@ -15,6 +15,7 @@ SELECTED_COMMIT_SUBJECT=""
 dry_run="false"
 provenance="false"
 publish_tag=""
+selected_mode=""
 
 print_help() {
   cat <<'EOF'
@@ -25,6 +26,7 @@ print_help() {
 选项：
 
   --dry-run     只做发布预演，不真正发布到 npm
+  --mode        指定执行模式：pack 或 publish；指定后不再进入交互菜单
   --provenance  发布时附带 npm provenance
   --tag         显式指定 npm dist-tag；默认根据版本号自动判断
   --help        显示帮助
@@ -52,6 +54,15 @@ while [[ $# -gt 0 ]]; do
     --dry-run)
       dry_run="true"
       shift
+      ;;
+    --mode)
+      if [[ $# -lt 2 ]]; then
+        echo "缺少 --mode 的取值" >&2
+        exit 1
+      fi
+
+      selected_mode="$2"
+      shift 2
       ;;
     --provenance)
       provenance="true"
@@ -265,6 +276,17 @@ package_version="$(read_package_field "$ROOT_DIR" "version")"
 echo ""
 echo "==> $package_name v$package_version"
 echo ""
+
+if [[ -n "$selected_mode" ]]; then
+  if [[ "$selected_mode" != "pack" && "$selected_mode" != "publish" ]]; then
+    echo "不支持的 --mode：$selected_mode，仅支持 pack 或 publish" >&2
+    exit 1
+  fi
+
+  execute_publish_flow "$ROOT_DIR" "$PACKAGE_DIR" "$selected_mode" "当前工作区" ""
+  exit 0
+fi
+
 echo "  [1] 基于当前工作区仅本地打包（npm pack）"
 echo "  [2] 基于当前工作区打包并发布到 npm"
 echo "  [3] 从最近 5 次提交中选择一个版本，仅本地打包"

@@ -56,4 +56,4 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bash scripts/publish-npm-package.sh --provenance
+          bash scripts/publish-npm-package.sh --mode publish --provenance
