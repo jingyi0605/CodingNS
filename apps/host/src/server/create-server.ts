@@ -194,6 +194,7 @@ export function createServer(config: HostConfig) {
   const app = Fastify({
     logger: false
   });
+  let shuttingDown = false;
   const stopTerminalDebugEventLoopLagMonitor = startTerminalDebugEventLoopLagMonitor();
 
   const database = createDatabaseClient(config.databasePath);
@@ -844,11 +845,28 @@ export function createServer(config: HostConfig) {
   });
   app.addHook("onRequest", createAuthGuard(authService));
   app.setErrorHandler(setErrorHandler);
-  app.addHook("onReady", async () => {
-    await debugTargetService.runBackgroundRuntimeReconciliation(
+  app.addHook("onReady", () => {
+    // 启动恢复属于后台补偿流程，不能把 Host ready 绑死在外部命令或慢任务上。
+    void debugTargetService.runBackgroundRuntimeReconciliation(
       "debug_target.startup_runtime_recovery"
-    );
-    await tailscaleService.restoreOnStartup();
+    ).catch((error) => {
+      if (shuttingDown) {
+        return;
+      }
+
+      console.error("[startup-recovery] 调试运行时恢复失败", {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    });
+    void tailscaleService.restoreOnStartup().catch((error) => {
+      if (shuttingDown) {
+        return;
+      }
+
+      console.error("[startup-recovery] Tailscale 启动恢复失败", {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    });
   });
 
   // Demo 模式：自动创建演示用户
@@ -889,6 +907,7 @@ export function createServer(config: HostConfig) {
   }
 
   app.addHook("onClose", async () => {
+    shuttingDown = true;
     stopTerminalDebugEventLoopLagMonitor();
     eventLoopMonitor.dispose();
     butlerFollowUpTerminalSubscription.close();

@@ -1470,6 +1470,9 @@ describe("debug target routes", () => {
     const recoveredHost = createTestApp(fixture, { databasePath });
     activeServers.push(recoveredHost);
     await recoveredHost.app.ready();
+    await recoveredHost.services.modules.debugTargetService.runBackgroundRuntimeReconciliation(
+      "debug_target.test_startup_runtime_recovery"
+    );
 
     expect(
       recoveredHost.services.repositories.debugRuntimeSessionRepository.findById(runtimeId)

@@ -90,7 +90,12 @@ export class TailscaleManager extends EventEmitter {
       return this.transition(config, "blocked_uninitialized");
     }
 
-    this.transition(config, "starting");
+    const current = this.resolveEffectiveStatus(config);
+
+    // 已经处于运行中时，enable 应该保持幂等，只做一次实际状态对账。
+    if (current.phase !== "starting" && current.phase !== "running") {
+      this.transition(config, "starting");
+    }
 
     try {
       const snapshot = await this.helperClient.enable({

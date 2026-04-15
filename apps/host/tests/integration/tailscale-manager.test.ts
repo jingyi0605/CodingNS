@@ -118,6 +118,37 @@ describe("TailscaleManager 状态机", () => {
     });
   });
 
+  it("running 状态重复 enable 时保持幂等，不会先崩在非法迁移上", async () => {
+    const { client, bootstrapStateRepository, repository } = createHarness();
+    bootstrapStateRepository.markInitialized("2026-04-14T09:00:00.000Z", "user-1");
+    const manager = createManager(bootstrapStateRepository, repository, {
+      enable: async () => createHelperSnapshot("running")
+    });
+    const config = createConfig(true);
+
+    repository.upsertStatus({
+      phase: "running",
+      connected: true,
+      loginUrl: null,
+      controlServerUrl: null,
+      hostname: null,
+      accountName: "user@example.com",
+      tailnetFqdn: "codingns-host.tailnet.ts.net",
+      tailnetIpv4: "100.64.0.10",
+      tailnetIpv6: "fd7a:115c:a1e0::10",
+      reachableBaseUrl: "http://codingns-host.tailnet.ts.net:4174",
+      lastError: null,
+      observedAt: "2026-04-14T09:00:00.000Z"
+    });
+
+    const status = await manager.enable(config);
+    client.close();
+
+    expect(status.phase).toBe("running");
+    expect(status.connected).toBe(true);
+    expect(status.accountName).toBe("user@example.com");
+  });
+
   it("running 状态会把外部访问地址绑定到前端端口，而不是 Host API 端口", async () => {
     const { client, bootstrapStateRepository, repository } = createHarness();
     bootstrapStateRepository.markInitialized("2026-04-14T09:00:00.000Z", "user-1");

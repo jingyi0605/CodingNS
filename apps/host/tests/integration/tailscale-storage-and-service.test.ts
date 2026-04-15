@@ -221,4 +221,117 @@ describe("Tailscale 存储与服务骨架", () => {
       updatedAt: expect.any(String)
     });
   });
+
+  it("启动恢复时遇到持久化 running 状态不会因为重复 enable 崩溃", async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codingns-tailscale-restore-"));
+    tempDirs.push(tempDir);
+    const databasePath = path.join(tempDir, "host.sqlite");
+    const client = createDatabaseClient(databasePath);
+    const bootstrapStateRepository = new BootstrapStateRepository(client.db);
+    bootstrapStateRepository.markInitialized("2026-04-14T09:00:00.000Z", "user-1");
+    const repository = new InstanceTailscaleRepository(client.db);
+    let enableCalls = 0;
+    const manager = new TailscaleManager(
+      bootstrapStateRepository,
+      repository,
+      {
+        inspectStatus: async () => ({
+          backendState: "running",
+          loginUrl: null,
+          hostname: "codingns-host",
+          accountName: "user@example.com",
+          tailnetFqdn: "codingns-host.tailnet.ts.net",
+          tailnetIpv4: "100.64.0.10",
+          tailnetIpv6: "fd7a:115c:a1e0::10",
+          lastError: null
+        }),
+        enable: async () => {
+          enableCalls += 1;
+          return {
+            backendState: "running",
+            loginUrl: null,
+            hostname: "codingns-host",
+            accountName: "user@example.com",
+            tailnetFqdn: "codingns-host.tailnet.ts.net",
+            tailnetIpv4: "100.64.0.10",
+            tailnetIpv6: "fd7a:115c:a1e0::10",
+            lastError: null
+          };
+        },
+        login: async () => ({
+          backendState: "needs_login",
+          loginUrl: "https://login.tailscale.test/device/abc123",
+          hostname: null,
+          accountName: null,
+          tailnetFqdn: null,
+          tailnetIpv4: null,
+          tailnetIpv6: null,
+          lastError: null
+        }),
+        disable: async () => ({
+          backendState: "stopped",
+          loginUrl: null,
+          hostname: null,
+          accountName: null,
+          tailnetFqdn: null,
+          tailnetIpv4: null,
+          tailnetIpv6: null,
+          lastError: null
+        }),
+        logout: async () => ({
+          backendState: "needs_login",
+          loginUrl: null,
+          hostname: null,
+          accountName: null,
+          tailnetFqdn: null,
+          tailnetIpv4: null,
+          tailnetIpv6: null,
+          lastError: null
+        })
+      } as unknown as TailscaleHelperClient,
+      {
+        commandPath: "tailscale",
+        webUiPort: 4174
+      }
+    );
+    const service = new TailscaleService(
+      client.db,
+      repository,
+      manager,
+      {
+        databasePath
+      }
+    );
+
+    repository.upsertConfig({
+      enabled: true,
+      controlServerUrl: null,
+      hostname: "codingns-host",
+      stateDir: path.join(tempDir, "tailscale-state"),
+      updatedAt: "2026-04-14T09:00:00.000Z"
+    });
+    repository.upsertStatus({
+      phase: "running",
+      connected: true,
+      loginUrl: null,
+      controlServerUrl: null,
+      hostname: "codingns-host",
+      accountName: "user@example.com",
+      tailnetFqdn: "codingns-host.tailnet.ts.net",
+      tailnetIpv4: "100.64.0.10",
+      tailnetIpv6: "fd7a:115c:a1e0::10",
+      reachableBaseUrl: "http://codingns-host.tailnet.ts.net:4174",
+      lastError: null,
+      observedAt: "2026-04-14T09:01:00.000Z"
+    });
+
+    await expect(service.restoreOnStartup()).resolves.toBeUndefined();
+
+    const restoredStatus = repository.findStatus();
+    client.close();
+
+    expect(enableCalls).toBe(1);
+    expect(restoredStatus?.phase).toBe("running");
+    expect(restoredStatus?.connected).toBe(true);
+  });
 });
