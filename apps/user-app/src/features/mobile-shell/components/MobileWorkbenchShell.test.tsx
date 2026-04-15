@@ -6,6 +6,7 @@ import { MemoryRouter, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { PlatformProvider } from "../../../platform/platform-provider";
+import { t } from "../../../shared/i18n";
 import { MobileWorkbenchShell } from "./MobileWorkbenchShell";
 
 class MockVisualViewport extends EventTarget {
@@ -169,7 +170,7 @@ describe("MobileWorkbenchShell", () => {
     expect(view.queryByRole("button", { name: "打开工具面板" })).not.toBeInTheDocument();
   });
 
-  it("底部导航会显示工作区、终端、对话、工具、设置五个一级入口", () => {
+  it("底部导航会显示工作区、对话、助手、终端、设置五个一级入口", () => {
     const view = renderMobileShell({
       activeEntry: "terminals"
     });
@@ -177,11 +178,11 @@ describe("MobileWorkbenchShell", () => {
     const tabbarItems = Array.from(view.container.querySelectorAll(".mobile-workbench-tabbar-item"));
     expect(tabbarItems).toHaveLength(5);
     expect(tabbarItems.map((item) => item.textContent?.trim())).toEqual([
-      "工作区",
-      "对话",
-      "终端",
-      "工具",
-      "设置"
+      t("shell.mobileWorkspacesEntry"),
+      t("shell.mobileSessionsEntry"),
+      t("shell.mobileButlerEntry"),
+      t("shell.mobileTerminalsEntry"),
+      t("shell.mobileSettingsEntry")
     ]);
   });
 
@@ -200,7 +201,7 @@ describe("MobileWorkbenchShell", () => {
     expect(view.queryByRole("button", { name: "更多操作" })).not.toBeInTheDocument();
     expect(view.queryByRole("button", { name: "打开快捷导航" })).not.toBeInTheDocument();
     expect(view.queryByRole("button", { name: "打开搜索" })).not.toBeInTheDocument();
-    expect(view.getByRole("button", { name: "工作区" })).toBeInTheDocument();
+    expect(view.getByRole("button", { name: t("shell.mobileWorkspacesEntry") })).toBeInTheDocument();
     expect(shell).toHaveAttribute("data-conversation-tabbar-state", "visible");
 
     act(() => {
@@ -379,7 +380,7 @@ describe("MobileWorkbenchShell", () => {
 
   it("工具主页不再渲染外层标题栏，避免和页面内头部重复", () => {
     const view = renderMobileShell({
-      activeEntry: "tools",
+      activeEntry: "sessions",
       route: "/workspaces/workspace-1/tools?tab=git"
     });
 
@@ -387,12 +388,11 @@ describe("MobileWorkbenchShell", () => {
     expect(view.queryByRole("button", { name: "更多操作" })).not.toBeInTheDocument();
   });
 
-  it("进程管理页会显示返回按钮，并返回最近的主工具页", async () => {
+  it("进程管理页会显示返回按钮，并返回终端页", async () => {
     const user = userEvent.setup();
-    window.localStorage.setItem("mobile.tools.last-primary-tool", "git");
 
     const view = renderMobileShell({
-      activeEntry: "tools",
+      activeEntry: "butler",
       initialEntries: [
         "/workspaces/workspace-1/tools?tab=git",
         "/workspaces/workspace-1/tools/processes"
@@ -400,19 +400,19 @@ describe("MobileWorkbenchShell", () => {
       initialIndex: 1
     });
 
-    expect(view.getByRole("heading", { name: "进程管理" })).toBeInTheDocument();
+    expect(view.getByRole("heading", { name: t("shell.terminalManagerEntry") })).toBeInTheDocument();
 
-    await user.click(view.getByRole("button", { name: "返回" }));
+    await user.click(view.getByRole("button", { name: t("common.back") }));
 
     await waitFor(() => {
       expect(view.container.querySelector(".mobile-workbench-header")).not.toBeInTheDocument();
-      expect(view.getByTestId("mobile-location")).toHaveTextContent("/workspaces/workspace-1/tools");
+      expect(view.getByTestId("mobile-location")).toHaveTextContent("/workspaces/workspace-1/terminals");
     });
   });
 });
 
 function renderMobileShell(options?: {
-  activeEntry?: "workspaces" | "terminals" | "sessions" | "tools" | "settings";
+  activeEntry?: "workspaces" | "terminals" | "sessions" | "butler" | "settings";
   navigationPanel?: ReactNode;
   auxiliaryPanel?: ReactNode;
   presentation?: "default" | "conversation-focus";
@@ -443,7 +443,7 @@ function renderMobileShell(options?: {
           onNavigateWorkspaces={() => undefined}
           onNavigateTerminals={() => undefined}
           onNavigateSessions={() => undefined}
-          onNavigateTools={() => undefined}
+          onNavigateButler={() => undefined}
           onNavigateToolFiles={options?.onNavigateToolFiles ?? (() => undefined)}
           onNavigateToolGit={options?.onNavigateToolGit ?? (() => undefined)}
           onNavigateToolProcesses={options?.onNavigateToolProcesses ?? (() => undefined)}

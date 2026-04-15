@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { writeViewSnapshot } from "../../../shared/cache/view-snapshot-cache";
+import { t } from "../../../shared/i18n";
 import { WorkspaceHomePage } from "./WorkspaceHomePage";
 
 const mockUseWorkbenchShell = vi.fn();
@@ -376,25 +377,25 @@ describe("WorkspaceHomePage", () => {
   it("会渲染 iOS 风格的工作区和会话分组列表", async () => {
     renderPage();
 
-    expect(screen.getByRole("button", { name: "切换工作区" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("shell.workspaceHomeSwitcherLabel") })).toBeInTheDocument();
     expect(screen.getByText("/repo/project-one")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "项目详情" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "新建会话" })).toBeInTheDocument();
-    expect(screen.getByText("活动会话")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "查看全部会话" })).toBeInTheDocument();
-    expect(screen.getByText("收藏会话")).toBeInTheDocument();
-    expect(screen.getByLabelText("当前工作区")).toBeInTheDocument();
-    expect(screen.getByText("快捷启动进程")).toBeInTheDocument();
-    expect(screen.getByText("等待输入")).toBeInTheDocument();
-    expect(screen.getByText("代码助手")).toBeInTheDocument();
-    expect(screen.getByText("收件箱")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("shell.workspaceDetailTitle") })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("shell.createSession") })).toBeInTheDocument();
+    expect(screen.getByText(t("shell.workspaceHomeActiveSessionsSectionTitle"))).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("shell.workspaceHomeViewAllAction") })).toBeInTheDocument();
+    expect(screen.getByText(t("shell.favoriteSectionTitle"))).toBeInTheDocument();
+    expect(screen.getByLabelText(t("shell.workspaceHomeStatusSectionTitle"))).toBeInTheDocument();
+    expect(screen.getByText(t("shell.workspaceHomeQuickLaunchStatusLabel"))).toBeInTheDocument();
+    expect(screen.getByText(t("shell.workspaceHomeWaitingInputLabel"))).toBeInTheDocument();
+    expect(screen.getByText(t("shell.workspaceHomeButlerLabel"))).toBeInTheDocument();
+    expect(screen.getByText(t("shell.butlerInboxAction"))).toBeInTheDocument();
 
-    const activeTerminalRow = screen.getByText("终端").closest("button");
-    const changedFilesRow = screen.getByText("变更").closest("button");
-    const processRow = screen.getByText("快捷启动进程").closest("button");
-    const waitingInputRow = screen.getByText("等待输入").closest("button");
-    const butlerRow = screen.getByText("代码助手").closest("button");
-    const inboxRow = screen.getByText("收件箱").closest("button");
+    const activeTerminalRow = screen.getByText(t("shell.workspaceHomeMetricTerminal")).closest("button");
+    const changedFilesRow = screen.getByText(t("shell.workspaceHomeMetricChanges")).closest("button");
+    const processRow = screen.getByText(t("shell.workspaceHomeQuickLaunchStatusLabel")).closest("button");
+    const waitingInputRow = screen.getByText(t("shell.workspaceHomeWaitingInputLabel")).closest("button");
+    const butlerRow = screen.getByText(t("shell.workspaceHomeButlerLabel")).closest("button");
+    const inboxRow = screen.getByText(t("shell.butlerInboxAction")).closest("button");
 
     expect(activeTerminalRow).not.toBeNull();
     expect(changedFilesRow).not.toBeNull();
@@ -406,7 +407,7 @@ describe("WorkspaceHomePage", () => {
     await waitFor(() => {
       expect(within(activeTerminalRow as HTMLElement).getByText("2")).toBeInTheDocument();
       expect(within(changedFilesRow as HTMLElement).getByText("2")).toBeInTheDocument();
-      expect(within(processRow as HTMLElement).getByText("运行中")).toBeInTheDocument();
+      expect(within(processRow as HTMLElement).getByText(t("shell.workspaceHomeQuickLaunchRunning"))).toBeInTheDocument();
       expect(within(waitingInputRow as HTMLElement).getByText("1")).toBeInTheDocument();
       expect(within(butlerRow as HTMLElement).getByText("3")).toBeInTheDocument();
       expect(within(inboxRow as HTMLElement).getByText("1")).toBeInTheDocument();
@@ -419,10 +420,18 @@ describe("WorkspaceHomePage", () => {
     expect(butlerRow).toHaveAttribute("data-accent", "true");
     expect(inboxRow).toHaveAttribute("data-accent", "true");
 
-    expect(screen.getByText((_, element) => element?.textContent === "活动")).toBeInTheDocument();
-    expect(screen.getByText((_, element) => element?.textContent === "通知")).toBeInTheDocument();
-    expect(screen.getByText((_, element) => element?.textContent === "终端")).toBeInTheDocument();
-    expect(screen.getByText((_, element) => element?.textContent === "变更")).toBeInTheDocument();
+    expect(
+      screen.getByText((_, element) => element?.textContent === t("shell.workspaceHomeMetricActive"))
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText((_, element) => element?.textContent === t("shell.workspaceHomeMetricUnread"))
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText((_, element) => element?.textContent === t("shell.workspaceHomeMetricTerminal"))
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText((_, element) => element?.textContent === t("shell.workspaceHomeMetricChanges"))
+    ).toBeInTheDocument();
 
     expect(screen.getByText("修复首页布局")).toBeInTheDocument();
     expect(screen.getByText("收藏的上下文")).toBeInTheDocument();
@@ -496,21 +505,23 @@ describe("WorkspaceHomePage", () => {
     renderPage();
 
     const activeMetric = screen
-      .getByText((_, element) => element?.textContent === "活动")
+      .getByText((_, element) => element?.textContent === t("shell.workspaceHomeMetricActive"))
       .closest(".mobile-workspace-home-toolbar-metric");
     const notificationMetric = screen
-      .getByText((_, element) => element?.textContent === "通知")
+      .getByText((_, element) => element?.textContent === t("shell.workspaceHomeMetricUnread"))
       .closest(".mobile-workspace-home-toolbar-metric");
     const terminalMetric = screen
-      .getByText((_, element) => element?.textContent === "终端")
+      .getByText((_, element) => element?.textContent === t("shell.workspaceHomeMetricTerminal"))
       .closest(".mobile-workspace-home-toolbar-metric");
     const changesMetric = screen
-      .getByText((_, element) => element?.textContent === "变更")
+      .getByText((_, element) => element?.textContent === t("shell.workspaceHomeMetricChanges"))
       .closest(".mobile-workspace-home-toolbar-metric");
-    const waitingInputRow = screen.getByText("等待输入").closest(".mobile-workspace-home-row");
-    const butlerRow = screen.getByText("代码助手").closest(".mobile-workspace-home-row");
-    const processRow = screen.getByText("快捷启动进程").closest(".mobile-workspace-home-row");
-    const inboxRow = screen.getByText("收件箱").closest(".mobile-workspace-home-row");
+    const waitingInputRow = screen.getByText(t("shell.workspaceHomeWaitingInputLabel")).closest(".mobile-workspace-home-row");
+    const butlerRow = screen.getByText(t("shell.workspaceHomeButlerLabel")).closest(".mobile-workspace-home-row");
+    const processRow = screen
+      .getByText(t("shell.workspaceHomeQuickLaunchStatusLabel"))
+      .closest(".mobile-workspace-home-row");
+    const inboxRow = screen.getByText(t("shell.butlerInboxAction")).closest(".mobile-workspace-home-row");
 
     expect(activeMetric).not.toBeNull();
     expect(notificationMetric).not.toBeNull();
@@ -528,7 +539,7 @@ describe("WorkspaceHomePage", () => {
       expect(within(changesMetric as HTMLElement).getByText("2")).toBeInTheDocument();
       expect(within(waitingInputRow as HTMLElement).getByText("0")).toBeInTheDocument();
       expect(within(butlerRow as HTMLElement).getByText("0")).toBeInTheDocument();
-      expect(within(processRow as HTMLElement).getByText("运行中")).toBeInTheDocument();
+      expect(within(processRow as HTMLElement).getByText(t("shell.workspaceHomeQuickLaunchRunning"))).toBeInTheDocument();
       expect(within(inboxRow as HTMLElement).getByText("0")).toBeInTheDocument();
     });
 
@@ -589,8 +600,10 @@ describe("WorkspaceHomePage", () => {
 
     renderPage();
 
-    await user.click(screen.getAllByRole("button", { name: /新建会话/ })[0]);
-    expect(screen.getByRole("button", { name: /选择工作区 项目一/ })).toHaveTextContent("项目一");
+    await user.click(screen.getAllByRole("button", { name: t("shell.createSession") })[0]);
+    expect(screen.getByRole("button", { name: new RegExp(t("shell.createSessionWorkspaceLabel")) })).toHaveTextContent(
+      "项目一"
+    );
     await user.click(screen.getByRole("button", { name: "Claude Code" }));
 
     expect(startDraftSession).toHaveBeenCalledWith("workspace-1", "claude-code");
@@ -609,14 +622,14 @@ describe("WorkspaceHomePage", () => {
 
     renderPage();
 
-    await user.click(screen.getByRole("button", { name: "切换工作区" }));
+    await user.click(screen.getByRole("button", { name: t("shell.workspaceHomeSwitcherLabel") }));
 
-    const dialog = screen.getByRole("dialog", { name: "工作区" });
+    const dialog = screen.getByRole("dialog", { name: t("shell.hostWorkspaceSwitcherTitle") });
     await user.click(within(dialog).getByRole("button", { name: /项目二/ }));
 
     expect(selectWorkspace).toHaveBeenCalledWith("workspace-2");
     await waitFor(() => {
-      expect(screen.queryByRole("dialog", { name: "工作区" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("dialog", { name: t("shell.hostWorkspaceSwitcherTitle") })).not.toBeInTheDocument();
     });
   });
 
@@ -671,9 +684,9 @@ describe("WorkspaceHomePage", () => {
 
     renderPage();
 
-    await user.click(screen.getByRole("button", { name: "切换工作区" }));
+    await user.click(screen.getByRole("button", { name: t("shell.workspaceHomeSwitcherLabel") }));
 
-    const dialog = screen.getByRole("dialog", { name: "工作区" });
+    const dialog = screen.getByRole("dialog", { name: t("shell.hostWorkspaceSwitcherTitle") });
     expect(within(dialog).getByRole("button", { name: /feat\/login-codex/ })).toBeInTheDocument();
 
     await user.click(within(dialog).getByRole("button", { name: /feat\/login-codex/ }));
@@ -686,12 +699,12 @@ describe("WorkspaceHomePage", () => {
 
     renderPage();
 
-    await user.click(screen.getByRole("button", { name: "切换工作区" }));
+    await user.click(screen.getByRole("button", { name: t("shell.workspaceHomeSwitcherLabel") }));
 
-    const dialog = screen.getByRole("dialog", { name: "工作区" });
+    const dialog = screen.getByRole("dialog", { name: t("shell.hostWorkspaceSwitcherTitle") });
 
-    expect(within(dialog).getByRole("button", { name: "添加项目" })).toBeInTheDocument();
-    expect(within(dialog).getByRole("button", { name: "Clone项目" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: t("shell.importWorkspaceTitle") })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: t("shell.cloneWorkspaceTitle") })).toBeInTheDocument();
   });
 
   it("移动端添加项目会复用服务器目录导入模态框", async () => {
@@ -699,12 +712,12 @@ describe("WorkspaceHomePage", () => {
 
     renderPage();
 
-    await user.click(screen.getByRole("button", { name: "切换工作区" }));
-    await user.click(screen.getByRole("button", { name: "添加项目" }));
+    await user.click(screen.getByRole("button", { name: t("shell.workspaceHomeSwitcherLabel") }));
+    await user.click(screen.getByRole("button", { name: t("shell.importWorkspaceTitle") }));
 
-    expect(await screen.findByRole("dialog", { name: "选择服务器目录" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "新建文件夹" })).toBeInTheDocument();
-    expect(screen.queryByText("项目路径")).not.toBeInTheDocument();
+    expect(await screen.findByRole("dialog", { name: t("shell.importBrowserTitle") })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("shell.importBrowserCreateDirectory") })).toBeInTheDocument();
+    expect(screen.queryByText(t("shell.importPathLabel"))).not.toBeInTheDocument();
   });
 
   it("移动端 Clone 项目会复用桌面端同款 Clone 模态框", async () => {
@@ -712,12 +725,12 @@ describe("WorkspaceHomePage", () => {
 
     renderPage();
 
-    await user.click(screen.getByRole("button", { name: "切换工作区" }));
-    await user.click(screen.getByRole("button", { name: "Clone项目" }));
+    await user.click(screen.getByRole("button", { name: t("shell.workspaceHomeSwitcherLabel") }));
+    await user.click(screen.getByRole("button", { name: t("shell.cloneWorkspaceTitle") }));
 
-    expect(await screen.findByRole("dialog", { name: "Clone项目" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "选择目录" })).toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "认证方式" })).toBeInTheDocument();
+    expect(await screen.findByRole("dialog", { name: t("shell.cloneWorkspaceTitle") })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("shell.clonePickDirectory") })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: t("shell.cloneAuthModeLabel") })).toBeInTheDocument();
   });
 });
 

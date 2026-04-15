@@ -57,9 +57,7 @@ function BrowserMobileWorkbenchShell({
   onNavigateWorkspaces,
   onNavigateTerminals,
   onNavigateSessions,
-  onNavigateTools,
-  onNavigateToolFiles,
-  onNavigateToolGit,
+  onNavigateButler,
   onNavigateToolProcesses,
   onNavigateSettings
 }: MobileWorkbenchShellProps) {
@@ -112,15 +110,15 @@ function BrowserMobileWorkbenchShell({
     },
     {
       key: "terminals",
+      label: t("shell.mobileButlerEntry"),
+      icon: <AssistantIcon />,
+      onClick: onNavigateButler
+    },
+    {
+      key: "butler",
       label: t("shell.mobileTerminalsEntry"),
       icon: <TerminalIcon />,
       onClick: onNavigateTerminals
-    },
-    {
-      key: "tools",
-      label: t("shell.mobileToolsEntry"),
-      icon: <ToolboxIcon />,
-      onClick: onNavigateTools
     },
     {
       key: "settings",
@@ -142,7 +140,7 @@ function BrowserMobileWorkbenchShell({
     const preferredToolsHomeHref = resolvePreferredToolsHomeHref(location.pathname, location.search);
 
     if (!preferredToolsHomeHref) {
-      onNavigateTools();
+      onNavigateTerminals();
       return;
     }
 
@@ -309,13 +307,14 @@ function TerminalIcon() {
   );
 }
 
-function ToolboxIcon() {
+function AssistantIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9">
-      <path d="M8 6V4.8A1.8 1.8 0 0 1 9.8 3h4.4A1.8 1.8 0 0 1 16 4.8V6" />
-      <rect x="3" y="6" width="18" height="13" rx="2" />
-      <path d="M3 12h18" />
-      <path d="M10 11.5h4" />
+      <rect x="5" y="7" width="14" height="10" rx="3" />
+      <path d="M9 7V5a3 3 0 0 1 6 0v2" />
+      <circle cx="10" cy="12" r="1" fill="currentColor" stroke="none" />
+      <circle cx="14" cy="12" r="1" fill="currentColor" stroke="none" />
+      <path d="M10 15c.6.5 1.2.8 2 .8s1.4-.3 2-.8" />
     </svg>
   );
 }

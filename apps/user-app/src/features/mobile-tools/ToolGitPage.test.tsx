@@ -26,15 +26,29 @@ describe("ToolGitPage", () => {
     expect(screen.getByText(t("shell.toolsWorkspaceRequiredBody"))).toBeInTheDocument();
   });
 
-  it("redirects scoped git routes back to the unified tools page", async () => {
-    mockUseWorkbenchShell.mockReturnValue({ currentWorkspaceId: "workspace-1" });
+  it("redirects scoped git routes back to the current conversation with the git panel intent", async () => {
+    mockUseWorkbenchShell.mockReturnValue({
+      currentWorkspaceId: "workspace-1",
+      currentSessionId: "session-1",
+      navigationGroups: [
+        {
+          workspace: { id: "workspace-1", name: "项目一" },
+          sessions: [
+            {
+              sessionId: "session-1",
+              workspaceId: "workspace-1"
+            }
+          ]
+        }
+      ]
+    });
 
     render(
       <MemoryRouter initialEntries={["/workspaces/workspace-1/tools/git"]}>
         <Routes>
           <Route path="/workspaces/:workspaceId/tools/git" element={<ToolGitPage />} />
           <Route
-            path="/workspaces/:workspaceId/tools"
+            path="/workspaces/:workspaceId/sessions/:sessionId"
             element={<LocationProbe />}
           />
         </Routes>
@@ -42,7 +56,7 @@ describe("ToolGitPage", () => {
     );
 
     expect(await screen.findByTestId("location-probe")).toHaveTextContent(
-      "/workspaces/workspace-1/tools?tab=git"
+      "/workspaces/workspace-1/sessions/session-1?toolPanel=git"
     );
   });
 });

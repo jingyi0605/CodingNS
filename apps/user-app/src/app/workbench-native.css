@@ -3924,13 +3924,19 @@ body {
 }
 
 .workbench-session-menu {
-  border: none;
-  background: rgba(255, 255, 255, 0.96);
-  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
+  border: 1px solid var(--panel-border);
+  background: var(--panel-bg-strong);
+  box-shadow: var(--panel-shadow);
 }
 
 .workbench-session-menu-item {
   border-radius: 8px;
+  color: var(--text-secondary);
+}
+
+.workbench-session-menu-item:hover {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--bg-hover) 86%, transparent);
 }
 
 .workbench-archive-folder {

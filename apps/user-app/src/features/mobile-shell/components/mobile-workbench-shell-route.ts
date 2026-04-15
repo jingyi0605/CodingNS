@@ -1,7 +1,10 @@
 import { matchPath } from "react-router-dom";
 
 import { t } from "../../../shared/i18n";
-import { buildWorkspaceToolsPath } from "../../workbench/utils/workbench-navigation";
+import {
+  buildWorkspaceTerminalsPath,
+  buildWorkspaceToolsPath
+} from "../../workbench/utils/workbench-navigation";
 import type {
   MobileWorkbenchEntry,
   MobileWorkbenchPresentation
@@ -128,6 +131,10 @@ function resolvePrimaryToolTab(pathname: string, search: string): MobilePrimaryT
 export function resolvePreferredToolsHomeHref(pathname: string, search: string): string | null {
   const routeMatch = resolveToolRouteMatch(pathname);
 
+  if (routeMatch?.routeKind === "processes" && routeMatch.workspaceId) {
+    return buildWorkspaceTerminalsPath(routeMatch.workspaceId);
+  }
+
   if (routeMatch?.workspaceId) {
     return buildWorkspaceToolsPath(
       routeMatch.workspaceId,
@@ -155,7 +162,7 @@ export function resolveMobileToolHeaderState({
   search: string;
   moreButtonLabel: string;
 }): MobileToolHeaderState | null {
-  if (presentation === "conversation-focus" || activeEntry !== "tools") {
+  if (presentation === "conversation-focus" || activeEntry !== "butler") {
     return null;
   }
 

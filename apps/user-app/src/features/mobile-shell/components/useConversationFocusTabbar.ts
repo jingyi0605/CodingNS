@@ -470,7 +470,11 @@ function resolveConversationGestureSurface(target: EventTarget | null) {
     return "composer";
   }
 
-  if (target.closest(".message-list, .message-timeline, .mobile-conversation-main, .conversation-page-shell")) {
+  if (
+    target.closest(
+      ".message-list, .message-timeline, .mobile-conversation-main, .conversation-page-shell, .mobile-butler-main-stage, .mobile-butler-chat-body, .mobile-butler-page-shell"
+    )
+  ) {
     return "conversation";
   }
 

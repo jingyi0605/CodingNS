@@ -125,7 +125,7 @@ describe("AndroidWorkbenchShell", () => {
     window.localStorage.setItem("mobile.tools.last-primary-tool", "git");
 
     renderAndroidShell({
-      activeEntry: "tools",
+      activeEntry: "butler",
       initialEntries: [
         "/workspaces/workspace-1/tools?tab=git",
         "/workspaces/workspace-1/tools/processes"
@@ -136,7 +136,7 @@ describe("AndroidWorkbenchShell", () => {
     expect(screen.getByRole("heading", { name: t("shell.terminalManagerEntry") })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: t("common.back") }));
     expect(document.querySelector(".android-workbench-topbar")).not.toBeInTheDocument();
-    expect(screen.getByTestId("android-location")).toHaveTextContent("/workspaces/workspace-1/tools");
+    expect(screen.getByTestId("android-location")).toHaveTextContent("/workspaces/workspace-1/terminals");
   });
 });
 
@@ -152,7 +152,7 @@ function renderAndroidShell({
   initialEntries?: string[];
   initialIndex?: number;
   presentation?: "default" | "conversation-focus";
-  activeEntry?: "workspaces" | "terminals" | "sessions" | "tools" | "settings";
+  activeEntry?: "workspaces" | "terminals" | "sessions" | "butler" | "settings";
   childVariant?: "workbench" | "conversation";
   onNavigateToolGit?: () => void;
   onNavigateToolProcesses?: () => void;
@@ -174,7 +174,7 @@ function renderAndroidShell({
               onNavigateWorkspaces={() => undefined}
               onNavigateTerminals={() => undefined}
               onNavigateSessions={() => undefined}
-              onNavigateTools={() => undefined}
+              onNavigateButler={() => undefined}
               onNavigateToolFiles={() => undefined}
               onNavigateToolGit={onNavigateToolGit ?? (() => undefined)}
               onNavigateToolProcesses={onNavigateToolProcesses ?? (() => undefined)}

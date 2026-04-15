@@ -68,7 +68,7 @@ export function buildWorkspaceTerminalsPath(workspaceId: string): string {
   return `${buildWorkspaceDetailPath(workspaceId)}/terminals`;
 }
 
-export function buildWorkspaceButlerPath(workspaceId: string, tab?: "info" | "automation"): string {
+export function buildWorkspaceButlerPath(workspaceId: string, tab?: "info" | "automation" | "settings"): string {
   const basePath = `${buildWorkspaceDetailPath(workspaceId)}/butler`;
 
   if (!tab) {

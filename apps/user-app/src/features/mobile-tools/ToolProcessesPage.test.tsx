@@ -1,25 +1,18 @@
 import { render, screen } from "@testing-library/react";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 
 import { ToolProcessesPage } from "./ToolProcessesPage";
 import { t } from "../../shared/i18n";
+import {
+  buildWorkspaceSessionIndexPath,
+  buildWorkspaceSessionPath
+} from "../workbench/utils/workbench-navigation";
 
 const mockUseWorkbenchShell = vi.fn();
-const mockTerminalManagerPanel = vi.fn();
 
 vi.mock("../conversation/components/WorkbenchLayout", () => ({
   useWorkbenchShell: () => mockUseWorkbenchShell()
-}));
-
-vi.mock("../workbench/components/TerminalManagerPanel", () => ({
-  TerminalManagerPanel: (props: {
-    className?: string;
-    currentWorkspaceId: string;
-    navigationGroups: unknown[];
-  }) => {
-    mockTerminalManagerPanel(props);
-    return <div data-testid="terminal-panel" data-class-name={props.className} />;
-  }
 }));
 
 describe("ToolProcessesPage", () => {
@@ -31,30 +24,73 @@ describe("ToolProcessesPage", () => {
     expect(screen.getByText(t("shell.toolsWorkspaceRequiredBody"))).toBeInTheDocument();
   });
 
-  it("renders the terminal manager when workspace context exists", () => {
+  it("会把旧进程入口重定向回当前对话页的进程标签", () => {
     mockUseWorkbenchShell.mockReturnValue({
       currentWorkspaceId: "workspace-1",
-      navigationGroups: []
+      currentSessionId: "session-1",
+      navigationGroups: [
+        {
+          workspace: {
+            id: "workspace-1",
+            name: "工作区一",
+            path: "/tmp/workspace-1"
+          },
+          sessions: [
+            {
+              sessionId: "session-1",
+              workspaceId: "workspace-1"
+            }
+          ]
+        }
+      ]
     });
 
-    render(<ToolProcessesPage />);
+    render(
+      <MemoryRouter initialEntries={["/tools/processes"]}>
+        <Routes>
+          <Route path="/tools/processes" element={<ToolProcessesPage />} />
+          <Route path="*" element={<RouteProbe />} />
+        </Routes>
+      </MemoryRouter>
+    );
 
-    expect(screen.getByRole("main")).toHaveClass(
-      "mobile-page-fixed-root",
-      "mobile-tool-panel-page",
-      "mobile-tool-process-page"
+    expect(screen.getByTestId("route-probe")).toHaveTextContent(
+      `${buildWorkspaceSessionPath("workspace-1", "session-1")}?toolPanel=processes`
     );
-    expect(screen.getByTestId("terminal-panel")).toBeInTheDocument();
-    expect(screen.getByTestId("terminal-panel")).toHaveAttribute(
-      "data-class-name",
-      "mobile-panel-scroll-root mobile-tool-native-panel mobile-tool-process-panel"
+  });
+
+  it("没有当前会话时会重定向到工作区会话列表并带进程标签", () => {
+    mockUseWorkbenchShell.mockReturnValue({
+      currentWorkspaceId: "workspace-1",
+      currentSessionId: null,
+      navigationGroups: [
+        {
+          workspace: {
+            id: "workspace-1",
+            name: "工作区一",
+            path: "/tmp/workspace-1"
+          },
+          sessions: []
+        }
+      ]
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/tools/processes"]}>
+        <Routes>
+          <Route path="/tools/processes" element={<ToolProcessesPage />} />
+          <Route path="*" element={<RouteProbe />} />
+        </Routes>
+      </MemoryRouter>
     );
-    expect(mockTerminalManagerPanel).toHaveBeenCalledWith(
-      expect.objectContaining({
-        className: "mobile-panel-scroll-root mobile-tool-native-panel mobile-tool-process-panel",
-        currentWorkspaceId: "workspace-1",
-        navigationGroups: []
-      })
+
+    expect(screen.getByTestId("route-probe")).toHaveTextContent(
+      `${buildWorkspaceSessionIndexPath("workspace-1")}?toolPanel=processes`
     );
   });
 });
+
+function RouteProbe() {
+  const location = useLocation();
+  return <div data-testid="route-probe">{location.pathname + location.search}</div>;
+}

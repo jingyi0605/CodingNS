@@ -1,28 +1,42 @@
-import { useEffect, useMemo, useRef, useState, type TouchEvent as ReactTouchEvent } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type RefObject,
+  type TouchEvent as ReactTouchEvent
+} from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 
 import { t } from "../../../shared/i18n";
 import { useToast } from "../../../shared/toast";
 import { MobileWorkspaceSwitcherHeader } from "../../mobile-shell/components/MobileWorkspaceSwitcherHeader";
+import { useMobileConversationBottomLayer } from "../../mobile-shell/components/MobileConversationBottomLayerContext";
 import { useWorkbenchShell } from "../../conversation/components/WorkbenchLayout";
+import { ComposerPanel } from "../../conversation/components/ComposerPanel";
+import { MessageTimeline } from "../../conversation/components/MessageTimeline";
 import {
   getButlerOverview,
   getButlerProfile,
+  listButlerControlSessions,
   listButlerFollowUpTasks,
   listButlerInboxItems,
   listButlerPatrolPlans,
+  type ButlerControlSessionDto,
   type ButlerFollowUpTaskDto,
   type ButlerInboxItemDto,
   type ButlerOverviewDto,
   type ButlerPatrolPlanDto,
   type ButlerProfileDto
 } from "../api/butler-api";
+import { ButlerLoadingState } from "../components/ButlerLoadingState";
 import { BUTLER_INBOX_UPDATED_EVENT } from "../runtime/butler-inbox-events";
 import { subscribeButlerRecordsUpdated } from "../runtime/butler-records-events";
+import { ButlerRuntimeStore, useButlerRuntimeStore } from "../runtime/butler-runtime-store";
 import { buildWorkspaceButlerPath } from "../../workbench/utils/workbench-navigation";
-import { countInProgressButlerTasks } from "../butler-task-count";
 
-type MobileButlerTab = "info" | "automation";
+type MobileButlerTab = "info" | "automation" | "settings";
+type MobileButlerDrawer = "list" | "sidebar" | null;
 
 interface MobileButlerState {
   loading: boolean;
@@ -32,6 +46,7 @@ interface MobileButlerState {
   followUpTasks: ButlerFollowUpTaskDto[];
   inboxItems: ButlerInboxItemDto[];
   patrolPlans: ButlerPatrolPlanDto[];
+  controlSessions: ButlerControlSessionDto[];
 }
 
 interface AutomationTaskItem {
@@ -55,10 +70,11 @@ interface AutomationRunItem {
 }
 
 const MOBILE_BUTLER_TAB_STORAGE_KEY = "mobile.butler.active-tab";
-const MOBILE_BUTLER_TAB_ORDER: MobileButlerTab[] = ["info", "automation"];
+const MOBILE_BUTLER_TAB_ORDER: MobileButlerTab[] = ["info", "automation", "settings"];
 const MOBILE_BUTLER_POLL_INTERVAL_MS = 15_000;
 const MOBILE_BUTLER_SWIPE_THRESHOLD_PX = 56;
 const MOBILE_BUTLER_SWIPE_DOMINANCE_RATIO = 1.2;
+const MOBILE_BUTLER_DRAWER_WIDTH_PX = 360;
 
 function readStoredTab(): MobileButlerTab {
   if (typeof window === "undefined") {
@@ -66,15 +82,23 @@ function readStoredTab(): MobileButlerTab {
   }
 
   try {
-    return window.localStorage.getItem(MOBILE_BUTLER_TAB_STORAGE_KEY) === "automation"
-      ? "automation"
-      : "info";
+    const value = window.localStorage.getItem(MOBILE_BUTLER_TAB_STORAGE_KEY);
+
+    if (value === "automation" || value === "settings") {
+      return value;
+    }
+
+    return "info";
   } catch {
     return "info";
   }
 }
 
 function resolveTabFromSearch(searchTab: string | null, fallbackTab: MobileButlerTab): MobileButlerTab {
+  if (searchTab === "settings") {
+    return "settings";
+  }
+
   if (searchTab === "automation") {
     return "automation";
   }
@@ -90,29 +114,86 @@ function resolveTabAfterSwipe(
   activeTab: MobileButlerTab,
   touchStart: { x: number; y: number } | null,
   touchEnd: { x: number; y: number }
-): MobileButlerTab {
+): {
+  closeSidebar: boolean;
+  nextTab: MobileButlerTab;
+} {
   if (!touchStart) {
-    return activeTab;
+    return {
+      closeSidebar: false,
+      nextTab: activeTab
+    };
   }
 
   const deltaX = touchEnd.x - touchStart.x;
   const deltaY = touchEnd.y - touchStart.y;
 
   if (Math.abs(deltaX) < MOBILE_BUTLER_SWIPE_THRESHOLD_PX) {
-    return activeTab;
+    return {
+      closeSidebar: false,
+      nextTab: activeTab
+    };
   }
 
   if (Math.abs(deltaX) < Math.abs(deltaY) * MOBILE_BUTLER_SWIPE_DOMINANCE_RATIO) {
-    return activeTab;
+    return {
+      closeSidebar: false,
+      nextTab: activeTab
+    };
   }
 
   const activeIndex = MOBILE_BUTLER_TAB_ORDER.indexOf(activeTab);
+
+  if (deltaX > 0 && activeIndex === 0) {
+    return {
+      closeSidebar: true,
+      nextTab: activeTab
+    };
+  }
+
   const nextIndex =
     deltaX < 0
       ? Math.min(MOBILE_BUTLER_TAB_ORDER.length - 1, activeIndex + 1)
       : Math.max(0, activeIndex - 1);
 
-  return MOBILE_BUTLER_TAB_ORDER[nextIndex] ?? activeTab;
+  return {
+    closeSidebar: false,
+    nextTab: MOBILE_BUTLER_TAB_ORDER[nextIndex] ?? activeTab
+  };
+}
+
+function resolveDrawerFromStageSwipe(
+  touchStart: { x: number; y: number } | null,
+  touchEnd: { x: number; y: number }
+): MobileButlerDrawer {
+  if (!touchStart) {
+    return null;
+  }
+
+  const deltaX = touchEnd.x - touchStart.x;
+  const deltaY = touchEnd.y - touchStart.y;
+
+  if (Math.abs(deltaX) < MOBILE_BUTLER_SWIPE_THRESHOLD_PX) {
+    return null;
+  }
+
+  if (Math.abs(deltaX) < Math.abs(deltaY) * MOBILE_BUTLER_SWIPE_DOMINANCE_RATIO) {
+    return null;
+  }
+
+  return deltaX > 0 ? "list" : "sidebar";
+}
+
+function shouldIgnoreMobileButlerGestureTarget(target: EventTarget | null) {
+  if (!(target instanceof Element)) {
+    return false;
+  }
+
+  return Boolean(
+    target.closest(
+      "input, textarea, select, option, label, button, a, [contenteditable='true'], [data-mobile-butler-gesture='ignore']"
+    )
+  );
 }
 
 export function MobileButlerPage() {
@@ -120,13 +201,19 @@ export function MobileButlerPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const { showToast } = useToast();
-  const { navigationGroups, selectWorkspace } = useWorkbenchShell();
+  const { navigationGroups, requestNavigationRefresh, selectWorkspace } = useWorkbenchShell();
   const currentWorkspace =
     navigationGroups.find((group) => group.workspace.id === workspaceId)?.workspace ?? null;
   const searchTab = new URLSearchParams(location.search).get("tab");
   const storedTabRef = useRef<MobileButlerTab>(readStoredTab());
   const activeTab = resolveTabFromSearch(searchTab, storedTabRef.current);
-  const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+  const stageTouchStartRef = useRef<{ x: number; y: number } | null>(null);
+  const listTouchStartRef = useRef<{ x: number; y: number } | null>(null);
+  const sidebarTouchStartRef = useRef<{ x: number; y: number } | null>(null);
+  const storeRef = useRef<ButlerRuntimeStore | null>(null);
+  const currentWorkspaceIdRef = useRef<string | null>(null);
+  const [openDrawer, setOpenDrawer] = useState<MobileButlerDrawer>(null);
+  const [composerPanelElement, setComposerPanelElement] = useState<HTMLElement | null>(null);
   const [state, setState] = useState<MobileButlerState>({
     loading: true,
     initialized: false,
@@ -134,8 +221,29 @@ export function MobileButlerPage() {
     overview: null,
     followUpTasks: [],
     inboxItems: [],
-    patrolPlans: []
+    patrolPlans: [],
+    controlSessions: []
   });
+
+  if (!storeRef.current || currentWorkspaceIdRef.current !== workspaceId) {
+    storeRef.current = new ButlerRuntimeStore(workspaceId);
+    currentWorkspaceIdRef.current = workspaceId;
+  }
+
+  const store = storeRef.current;
+  const runtimeLoading = useButlerRuntimeStore(store, (runtime) => runtime.loading);
+  const runtimeInitialized = useButlerRuntimeStore(store, (runtime) => runtime.initialized);
+  const runtimeProfile = useButlerRuntimeStore(store, (runtime) => runtime.profile);
+  const activeProvider = useButlerRuntimeStore(store, (runtime) => runtime.activeProvider);
+  const controlSession = useButlerRuntimeStore(store, (runtime) => runtime.controlSession);
+  const capabilities = useButlerRuntimeStore(store, (runtime) => runtime.capabilities);
+  const messages = useButlerRuntimeStore(store, (runtime) => runtime.messages);
+  const historyState = useButlerRuntimeStore(store, (runtime) => runtime.historyState);
+  const runtimeHasActiveRun = useButlerRuntimeStore(store, (runtime) => runtime.runtimeHasActiveRun);
+  const runtimeCanInterrupt = useButlerRuntimeStore(store, (runtime) => runtime.runtimeCanInterrupt);
+  const contextUsage = useButlerRuntimeStore(store, (runtime) => runtime.contextUsage);
+  const { composerPortalTarget } = useMobileConversationBottomLayer();
+  const pageRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     storedTabRef.current = activeTab;
@@ -177,6 +285,14 @@ export function MobileButlerPage() {
 
   useEffect(() => {
     if (!workspaceId) {
+      return;
+    }
+
+    void store.initialize();
+  }, [store, workspaceId]);
+
+  useEffect(() => {
+    if (!workspaceId) {
       setState({
         loading: false,
         initialized: false,
@@ -184,7 +300,8 @@ export function MobileButlerPage() {
         overview: null,
         followUpTasks: [],
         inboxItems: [],
-        patrolPlans: []
+        patrolPlans: [],
+        controlSessions: []
       });
       return;
     }
@@ -209,18 +326,20 @@ export function MobileButlerPage() {
               overview: null,
               followUpTasks: [],
               inboxItems: [],
-              patrolPlans: []
+              patrolPlans: [],
+              controlSessions: []
             });
           }
           return;
         }
 
-        const [overviewResponse, followUpResponse, inboxResponse] = await Promise.all([
+        const [overviewResponse, followUpResponse, inboxResponse, controlSessionsResponse] = await Promise.all([
           getButlerOverview(),
           listButlerFollowUpTasks(),
           listButlerInboxItems({
             workspaceId
-          })
+          }),
+          listButlerControlSessions()
         ]);
 
         const workspaceProjectIds = overviewResponse.overview.projects
@@ -241,7 +360,8 @@ export function MobileButlerPage() {
           overview: overviewResponse.overview,
           followUpTasks: followUpResponse.items.filter((task) => task.workspaceId === workspaceId),
           inboxItems: inboxResponse.items.filter((item) => item.status !== "closed"),
-          patrolPlans: patrolPlanResponses.flatMap((response) => response.items)
+          patrolPlans: patrolPlanResponses.flatMap((response) => response.items),
+          controlSessions: controlSessionsResponse.items
         });
       } catch (error) {
         if (disposed) {
@@ -294,15 +414,6 @@ export function MobileButlerPage() {
       ),
     [state.overview?.projects, workspaceId]
   );
-  const workspaceProjects = useMemo(
-    () =>
-      (state.overview?.projects ?? []).filter((project) => project.workspaceId === workspaceId),
-    [state.overview?.projects, workspaceId]
-  );
-  const waitingUserCount = useMemo(
-    () => state.followUpTasks.filter((task) => task.status === "waiting_user").length,
-    [state.followUpTasks]
-  );
   const visibleFollowUpTasks = useMemo(
     () => state.followUpTasks.filter((task) => isVisibleMobileFollowUpTask(task.status)),
     [state.followUpTasks]
@@ -313,10 +424,6 @@ export function MobileButlerPage() {
         verification.projectId ? workspaceProjectIds.has(verification.projectId) : false
       )),
     [state.overview?.verifications, workspaceProjectIds]
-  );
-  const inProgressTaskCount = useMemo(
-    () => countInProgressButlerTasks(visibleFollowUpTasks, workspaceVerifications),
-    [visibleFollowUpTasks, workspaceVerifications]
   );
   const followUpRecords = useMemo(
     () =>
@@ -341,187 +448,55 @@ export function MobileButlerPage() {
     () => buildAutomationRunItems(state.followUpTasks, state.overview, workspaceProjectIds),
     [state.followUpTasks, state.overview, workspaceProjectIds]
   );
+  const showLoadingState = state.loading || runtimeLoading;
+  const showEmptyState = !showLoadingState && (!state.initialized || !runtimeInitialized || !state.profile);
+  const butlerDisplayName = runtimeProfile?.displayName?.trim() || state.profile?.displayName?.trim() || t("shell.butlerEntry");
+  const runtimeEmpty = !controlSession && messages.length === 0;
+  const showComposer = !showEmptyState && openDrawer === null;
+  const sidebarContent = activeTab === "info"
+    ? (
+        <>
+          <CompactRecordSection
+            title={t("shell.butlerInfoFollowUpRecordsTitle")}
+            emptyText={t("shell.butlerInfoFollowUpRecordsEmpty")}
+            actionLabel={t("shell.butlerFollowUpHistoryAction")}
+            onAction={() => setOpenDrawer("list")}
+            items={followUpRecords.map((task) => ({
+              id: task.id,
+              title: task.sessionTitle?.trim() || task.projectName,
+              content:
+                task.waitingReason?.trim()
+                || task.lastAutomationSummary?.trim()
+                || task.objective
+                || t("shell.butlerInfoFollowUpFallback", {
+                  updatedAt: formatIsoDateTime(resolveFollowUpTaskUpdatedAt(task))
+                })
+            }))}
+          />
 
-  function selectTab(nextTab: MobileButlerTab) {
-    if (nextTab === activeTab) {
-      return;
-    }
+          <CompactRecordSection
+            title={t("shell.butlerInfoVerificationRecordsTitle")}
+            emptyText={t("shell.butlerInfoVerificationRecordsEmpty")}
+            items={verificationRecords.map((item, index) => ({
+              id: `${item.title}:${index}`,
+              title: item.title,
+              content: item.content
+            }))}
+          />
 
-    navigate(buildWorkspaceButlerPath(workspaceId, nextTab), {
-      replace: true
-    });
-  }
-
-  function handleTouchStart(event: ReactTouchEvent<HTMLElement>) {
-    if (event.changedTouches.length !== 1) {
-      touchStartRef.current = null;
-      return;
-    }
-
-    const touchPoint = event.changedTouches[0];
-    touchStartRef.current = {
-      x: touchPoint.clientX,
-      y: touchPoint.clientY
-    };
-  }
-
-  function handleTouchEnd(event: ReactTouchEvent<HTMLElement>) {
-    const touchStart = touchStartRef.current;
-    touchStartRef.current = null;
-
-    if (event.changedTouches.length !== 1) {
-      return;
-    }
-
-    const touchPoint = event.changedTouches[0];
-    const nextTab = resolveTabAfterSwipe(activeTab, touchStart, {
-      x: touchPoint.clientX,
-      y: touchPoint.clientY
-    });
-
-    if (nextTab !== activeTab) {
-      selectTab(nextTab);
-    }
-  }
-
-  if (!currentWorkspace) {
-    return (
-      <main className="mobile-feature-page mobile-page-scroll-root">
-        <article className="mobile-feature-empty surface-card">
-          <h1>{t("shell.workspaceDetailMissingTitle")}</h1>
-          <p>{t("shell.workspaceDetailMissingBody")}</p>
-        </article>
-      </main>
-    );
-  }
-
-  return (
-    <main className="mobile-feature-page mobile-page-scroll-root mobile-page-with-top-header mobile-butler-page">
-      <MobileWorkspaceSwitcherHeader
-        currentWorkspace={currentWorkspace}
-        workspaces={navigationGroups.map((group) => group.workspace)}
-        heading={t("shell.mobileButlerEntry")}
-        triggerLabel={currentWorkspace.name}
-        onSelectWorkspace={(targetWorkspaceId) => {
-          selectWorkspace(targetWorkspaceId);
-          navigate(buildWorkspaceButlerPath(targetWorkspaceId, activeTab));
-        }}
-        content={
-          <div className="mobile-butler-segmented-shell">
-            <div className="mobile-butler-segmented-control" role="tablist" aria-label={t("shell.mobileButlerEntry")}>
-              {MOBILE_BUTLER_TAB_ORDER.map((tabId) => {
-                const selected = activeTab === tabId;
-                const label = tabId === "info"
-                  ? t("shell.butlerSidebarInfoTab")
-                  : t("shell.butlerSidebarAutomationTab");
-
-                return (
-                  <button
-                    key={tabId}
-                    type="button"
-                    role="tab"
-                    className="mobile-butler-segmented-button"
-                    aria-selected={selected}
-                    onClick={() => {
-                      selectTab(tabId);
-                    }}
-                  >
-                    {label}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        }
-      />
-
-      <div
-        className="mobile-page-top-body mobile-butler-body"
-        onTouchStart={handleTouchStart}
-        onTouchEnd={handleTouchEnd}
-      >
-        {state.loading ? (
-          <section className="mobile-feature-panel surface-card mobile-butler-empty-panel">
-            <p>{t("common.loading")}</p>
-          </section>
-        ) : !state.initialized || !state.profile ? (
-          <section className="mobile-feature-panel surface-card mobile-butler-empty-panel">
-            <h2>{t("shell.mobileButlerEmptyTitle")}</h2>
-            <p>{t("shell.mobileButlerEmptyBody")}</p>
-          </section>
-        ) : activeTab === "info" ? (
-          <>
-            <section className="mobile-feature-panel surface-card mobile-butler-hero-card">
-              <div className="mobile-butler-hero-top">
-                <div className="mobile-butler-hero-badge">AI</div>
-                <div className="mobile-butler-hero-copy">
-                  <strong>{state.profile.displayName || t("shell.mobileButlerEntry")}</strong>
-                  <span>{resolveProviderLabel(state.profile.providerId)}</span>
-                </div>
-              </div>
-              <div className="mobile-butler-hero-grid">
-                <InfoMetric label={t("shell.mobileButlerAssistantWorkspaceLabel")} value={state.profile.workspacePath} />
-                <InfoMetric label={t("shell.mobileButlerAssistantToneLabel")} value={resolvePersonaToneLabel(state.profile.persona.tone)} />
-                <InfoMetric label={t("shell.mobileButlerAssistantLanguageLabel")} value={resolvePersonaLanguageLabel(state.profile.persona.language)} />
-                <InfoMetric label={t("shell.mobileButlerAssistantUpdatedAtLabel")} value={formatIsoDateTime(state.profile.updatedAt)} />
-              </div>
-            </section>
-
-            <section className="mobile-feature-panel surface-card mobile-butler-summary-card">
-              <div className="mobile-feature-section-header">
-                <div>
-                  <h2>{t("shell.mobileButlerSummaryTitle")}</h2>
-                </div>
-                <span className="mobile-feature-counter">{workspaceProjects.length}</span>
-              </div>
-              <div className="mobile-butler-summary-grid">
-                <SummaryPill label={t("shell.mobileButlerSummaryProjects")} value={workspaceProjects.length} />
-                <SummaryPill label={t("shell.mobileButlerSummaryFollowUps")} value={inProgressTaskCount} />
-                <SummaryPill label={t("shell.mobileButlerSummaryWaitingUser")} value={waitingUserCount} />
-                <SummaryPill label={t("shell.mobileButlerSummaryInbox")} value={state.inboxItems.length} />
-              </div>
-            </section>
-
-            <RecordSection
-              title={t("shell.butlerInfoFollowUpRecordsTitle")}
-              emptyText={t("shell.butlerInfoFollowUpRecordsEmpty")}
-              items={followUpRecords.map((task) => ({
-                id: task.id,
-                title: task.sessionTitle?.trim() || task.projectName,
-                subtitle: task.projectName,
-                status: resolveFollowUpTaskStatusLabel(task.status),
-                content: task.waitingReason?.trim() || task.lastAutomationSummary?.trim() || task.objective,
-                meta: formatIsoDateTime(resolveFollowUpTaskUpdatedAt(task))
-              }))}
-            />
-
-            <RecordSection
-              title={t("shell.butlerInfoVerificationRecordsTitle")}
-              emptyText={t("shell.butlerInfoVerificationRecordsEmpty")}
-              items={verificationRecords.map((item, index) => ({
-                id: `${item.title}:${index}`,
-                title: item.title,
-                subtitle: null,
-                status: null,
-                content: item.content,
-                meta: null
-              }))}
-            />
-
-            <RecordSection
-              title={t("shell.butlerInfoTodoRecordsTitle")}
-              emptyText={t("shell.butlerInfoTodoRecordsEmpty")}
-              items={todoRecords.map((item, index) => ({
-                id: `${item.title}:${index}`,
-                title: item.title,
-                subtitle: null,
-                status: null,
-                content: item.content,
-                meta: null
-              }))}
-            />
-          </>
-        ) : (
+          <CompactRecordSection
+            title={t("shell.butlerInfoTodoRecordsTitle")}
+            emptyText={t("shell.butlerInfoTodoRecordsEmpty")}
+            items={todoRecords.map((item, index) => ({
+              id: `${item.title}:${index}`,
+              title: item.title,
+              content: item.content
+            }))}
+          />
+        </>
+      )
+    : activeTab === "automation"
+      ? (
           <>
             <RecordSection
               title={t("shell.butlerAutomationTasksTitle")}
@@ -549,7 +524,398 @@ export function MobileButlerPage() {
               }))}
             />
           </>
-        )}
+        )
+      : (
+          <section className="mobile-feature-panel surface-card mobile-butler-record-section">
+            <div className="mobile-feature-section-header">
+              <div>
+                <h2>{t("shell.butlerSidebarSettingsTab")}</h2>
+              </div>
+            </div>
+            <div className="mobile-butler-settings-summary">
+              <InfoMetric label={t("shell.butlerDisplayNameLabel")} value={butlerDisplayName} />
+              <InfoMetric label={t("shell.butlerProviderLabel")} value={resolveProviderLabel(activeProvider)} />
+              <InfoMetric
+                label={t("shell.mobileButlerAssistantWorkspaceLabel")}
+                value={state.profile?.workspacePath ?? currentWorkspace?.path ?? "-"}
+              />
+            </div>
+          </section>
+        );
+
+  useMobileButlerComposerHeightVar(
+    pageRef,
+    composerPanelElement,
+    showComposer,
+    `${workspaceId}:${openDrawer ?? "none"}`
+  );
+
+  function selectTab(nextTab: MobileButlerTab) {
+    if (nextTab === activeTab) {
+      return;
+    }
+
+    navigate(buildWorkspaceButlerPath(workspaceId, nextTab), {
+      replace: true
+    });
+  }
+
+  function handleStageTouchStart(event: ReactTouchEvent<HTMLElement>) {
+    if (event.changedTouches.length !== 1) {
+      stageTouchStartRef.current = null;
+      return;
+    }
+
+    if (shouldIgnoreMobileButlerGestureTarget(event.target)) {
+      stageTouchStartRef.current = null;
+      return;
+    }
+
+    const touchPoint = event.changedTouches[0];
+    stageTouchStartRef.current = {
+      x: touchPoint.clientX,
+      y: touchPoint.clientY
+    };
+  }
+
+  function handleStageTouchEnd(event: ReactTouchEvent<HTMLElement>) {
+    if (event.changedTouches.length !== 1) {
+      return;
+    }
+
+    const touchStart = stageTouchStartRef.current;
+    stageTouchStartRef.current = null;
+    const touchPoint = event.changedTouches[0];
+    const nextDrawer = resolveDrawerFromStageSwipe(touchStart, {
+      x: touchPoint.clientX,
+      y: touchPoint.clientY
+    });
+
+    if (nextDrawer) {
+      setOpenDrawer(nextDrawer);
+    }
+  }
+
+  function handleListTouchStart(event: ReactTouchEvent<HTMLElement>) {
+    if (event.changedTouches.length !== 1) {
+      listTouchStartRef.current = null;
+      return;
+    }
+
+    if (shouldIgnoreMobileButlerGestureTarget(event.target)) {
+      listTouchStartRef.current = null;
+      return;
+    }
+
+    const touchPoint = event.changedTouches[0];
+    listTouchStartRef.current = {
+      x: touchPoint.clientX,
+      y: touchPoint.clientY
+    };
+  }
+
+  function handleListTouchEnd(event: ReactTouchEvent<HTMLElement>) {
+    const touchStart = listTouchStartRef.current;
+    listTouchStartRef.current = null;
+
+    if (!touchStart || event.changedTouches.length !== 1) {
+      return;
+    }
+
+    const touchPoint = event.changedTouches[0];
+    const deltaX = touchPoint.clientX - touchStart.x;
+    const deltaY = touchPoint.clientY - touchStart.y;
+
+    if (
+      deltaX > -MOBILE_BUTLER_SWIPE_THRESHOLD_PX
+      || Math.abs(deltaX) < Math.abs(deltaY) * MOBILE_BUTLER_SWIPE_DOMINANCE_RATIO
+    ) {
+      return;
+    }
+
+    setOpenDrawer(null);
+  }
+
+  function handleSidebarTouchStart(event: ReactTouchEvent<HTMLElement>) {
+    if (event.changedTouches.length !== 1) {
+      sidebarTouchStartRef.current = null;
+      return;
+    }
+
+    if (shouldIgnoreMobileButlerGestureTarget(event.target)) {
+      sidebarTouchStartRef.current = null;
+      return;
+    }
+
+    const touchPoint = event.changedTouches[0];
+    sidebarTouchStartRef.current = {
+      x: touchPoint.clientX,
+      y: touchPoint.clientY
+    };
+  }
+
+  function handleSidebarTouchEnd(event: ReactTouchEvent<HTMLElement>) {
+    const touchStart = sidebarTouchStartRef.current;
+    sidebarTouchStartRef.current = null;
+
+    if (event.changedTouches.length !== 1) {
+      return;
+    }
+
+    const touchPoint = event.changedTouches[0];
+    const result = resolveTabAfterSwipe(activeTab, touchStart, {
+      x: touchPoint.clientX,
+      y: touchPoint.clientY
+    });
+
+    if (result.closeSidebar) {
+      setOpenDrawer(null);
+      return;
+    }
+
+    if (result.nextTab !== activeTab) {
+      selectTab(result.nextTab);
+    }
+  }
+
+  async function handleOpenControlSession(controlSessionId: string) {
+    await store.openControlSession(controlSessionId);
+    setOpenDrawer(null);
+  }
+
+  async function handleStartFreshSession() {
+    await store.startFreshSession();
+    setOpenDrawer(null);
+    requestNavigationRefresh();
+  }
+
+  async function handleSendMessage(content: string, options?: { model?: string | null; reasoningLevel?: string | null; attachments?: unknown[] }) {
+    if ((options?.attachments?.length ?? 0) > 0) {
+      showToast({
+        title: t("shell.butlerAttachmentUnsupported"),
+        tone: "warning"
+      });
+    }
+
+    await store.sendMessage(content, {
+      model: options?.model ?? null,
+      reasoningLevel: options?.reasoningLevel ?? null,
+      permissionMode: null
+    });
+    requestNavigationRefresh();
+  }
+
+  if (!currentWorkspace) {
+    return (
+      <main className="mobile-feature-page mobile-page-scroll-root">
+        <article className="mobile-feature-empty surface-card">
+          <h1>{t("shell.workspaceDetailMissingTitle")}</h1>
+          <p>{t("shell.workspaceDetailMissingBody")}</p>
+        </article>
+      </main>
+    );
+  }
+
+  return (
+    <main
+      ref={pageRef}
+      className="mobile-feature-page mobile-page-fixed-root mobile-butler-page mobile-butler-page-shell"
+      data-mobile-butler-drawer={openDrawer ?? "none"}
+    >
+      <MobileWorkspaceSwitcherHeader
+        currentWorkspace={currentWorkspace}
+        workspaces={navigationGroups.map((group) => group.workspace)}
+        heading={t("shell.mobileButlerEntry")}
+        triggerLabel={currentWorkspace.name}
+        onSelectWorkspace={(targetWorkspaceId) => {
+          selectWorkspace(targetWorkspaceId);
+          navigate(buildWorkspaceButlerPath(targetWorkspaceId, activeTab));
+        }}
+        trailing={
+          <div className="mobile-butler-header-trailing" data-mobile-butler-gesture="ignore">
+            <div className="mobile-butler-hero-top mobile-butler-toolbar-identity">
+              <div className="mobile-butler-hero-badge">AI</div>
+              <div className="mobile-butler-hero-copy">
+                <strong>{butlerDisplayName}</strong>
+                <span>{resolveProviderLabel(activeProvider)}</span>
+              </div>
+            </div>
+            <div className="mobile-butler-toolbar-actions">
+              <button
+                type="button"
+                className="mobile-butler-toolbar-button"
+                aria-label={t("shell.butlerHistoryAction")}
+                title={t("shell.butlerHistoryAction")}
+                onClick={() => setOpenDrawer("list")}
+              >
+                ≡
+              </button>
+              <button
+                type="button"
+                className="mobile-butler-toolbar-button"
+                aria-label={t("shell.butlerSidebarTabsLabel")}
+                title={t("shell.butlerSidebarTabsLabel")}
+                onClick={() => setOpenDrawer("sidebar")}
+              >
+                ⓘ
+              </button>
+            </div>
+          </div>
+        }
+      />
+
+      <div className="mobile-butler-stage-shell">
+        {openDrawer ? (
+          <button
+            type="button"
+            className="mobile-butler-drawer-scrim"
+            aria-label={t("common.close")}
+            onClick={() => setOpenDrawer(null)}
+          />
+        ) : null}
+
+        <aside
+          className="mobile-butler-drawer mobile-butler-drawer-list"
+          style={{ width: `min(88vw, ${MOBILE_BUTLER_DRAWER_WIDTH_PX}px)` }}
+          onTouchStart={handleListTouchStart}
+          onTouchEnd={handleListTouchEnd}
+        >
+          <div className="mobile-butler-drawer-header">
+            <div>
+              <h2>{t("shell.butlerHistoryTitle")}</h2>
+              <p>{t("shell.butlerHistoryDescription")}</p>
+            </div>
+            <button
+              type="button"
+              className="mobile-butler-toolbar-button"
+              aria-label={t("shell.butlerNewSessionAction")}
+              onClick={() => {
+                void handleStartFreshSession();
+              }}
+            >
+              +
+            </button>
+          </div>
+          <div className="mobile-butler-list-body">
+            <MobileButlerConversationList
+              activeControlSessionId={controlSession?.id ?? null}
+              sessions={state.controlSessions}
+              onSelectSession={(controlSessionId) => {
+                void handleOpenControlSession(controlSessionId);
+              }}
+            />
+          </div>
+        </aside>
+
+        <div
+          className="mobile-butler-main-stage"
+          onTouchStart={handleStageTouchStart}
+          onTouchEnd={handleStageTouchEnd}
+        >
+          {showLoadingState ? (
+            <section className="mobile-butler-loading-shell">
+              <ButlerLoadingState />
+            </section>
+          ) : showEmptyState ? (
+            <section className="mobile-butler-empty-panel">
+              <h2>{t("shell.mobileButlerEmptyTitle")}</h2>
+              <p>{t("shell.mobileButlerEmptyBody")}</p>
+            </section>
+          ) : (
+            <>
+              <div className="mobile-butler-chat-body">
+                {runtimeEmpty ? (
+                  <section className="mobile-butler-empty-panel">
+                    <h2>{t("shell.butlerConversationTitle")}</h2>
+                    <p>{t("shell.butlerProjectSyncEmptyState")}</p>
+                  </section>
+                ) : (
+                  <div className="conversation-timeline-shell mobile-butler-timeline-shell">
+                    <MessageTimeline
+                      sessionId={controlSession?.session?.sessionId}
+                      messages={messages}
+                      historyState={historyState}
+                      loadingOlderMessages={false}
+                      hasOlderMessages={false}
+                      provider={activeProvider}
+                      onLoadOlderMessages={() => undefined}
+                      onRetryMessage={(clientRequestId) => {
+                        void store.retryMessage(clientRequestId);
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
+              {showComposer ? (
+                <div className="mobile-butler-chat-composer" data-mobile-butler-gesture="ignore">
+                  <ComposerPanel
+                    capabilities={capabilities}
+                    draftStorageId={`mobile-butler:${workspaceId}:${activeProvider}`}
+                    panelRef={setComposerPanelElement}
+                    portalContainer={composerPortalTarget}
+                    placeholder={t("shell.butlerComposerPlaceholder", {
+                      displayName: butlerDisplayName
+                    })}
+                    hasActiveRun={runtimeHasActiveRun ?? false}
+                    canInterrupt={runtimeCanInterrupt ?? false}
+                    contextUsage={contextUsage}
+                    isSubmitting={runtimeLoading}
+                    isRunning={runtimeHasActiveRun ?? false}
+                    onInterrupt={async () => {
+                      await store.interrupt();
+                      requestNavigationRefresh();
+                    }}
+                    onSend={async (content, options) => {
+                      await handleSendMessage(content, options);
+                    }}
+                  />
+                </div>
+              ) : null}
+            </>
+          )}
+        </div>
+
+        <aside
+          className="mobile-butler-drawer mobile-butler-drawer-sidebar"
+          style={{ width: `min(88vw, ${MOBILE_BUTLER_DRAWER_WIDTH_PX}px)` }}
+          onTouchStart={handleSidebarTouchStart}
+          onTouchEnd={handleSidebarTouchEnd}
+        >
+          <div
+            className="mobile-butler-segmented-shell"
+            data-mobile-butler-gesture="ignore"
+          >
+            <div className="mobile-butler-segmented-control" role="tablist" aria-label={t("shell.butlerSidebarTabsLabel")}>
+              {MOBILE_BUTLER_TAB_ORDER.map((tabId) => {
+                const selected = activeTab === tabId;
+                const label =
+                  tabId === "info"
+                    ? t("shell.butlerSidebarInfoTab")
+                    : tabId === "automation"
+                      ? t("shell.butlerSidebarAutomationTab")
+                      : t("shell.butlerSidebarSettingsTab");
+
+                return (
+                  <button
+                    key={tabId}
+                    type="button"
+                    role="tab"
+                    className="mobile-butler-segmented-button"
+                    aria-selected={selected}
+                    onClick={() => {
+                      selectTab(tabId);
+                    }}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div className="mobile-page-top-body mobile-butler-body mobile-butler-sidebar-body">
+            {sidebarContent}
+          </div>
+        </aside>
       </div>
     </main>
   );
@@ -560,15 +926,6 @@ function InfoMetric({ label, value }: { label: string; value: string }) {
     <div className="mobile-butler-info-metric">
       <span>{label}</span>
       <strong title={value}>{value}</strong>
-    </div>
-  );
-}
-
-function SummaryPill({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="mobile-butler-summary-pill">
-      <strong>{value}</strong>
-      <span>{label}</span>
     </div>
   );
 }
@@ -616,6 +973,151 @@ function RecordSection(props: {
       )}
     </section>
   );
+}
+
+function CompactRecordSection(props: {
+  title: string;
+  emptyText: string;
+  actionLabel?: string;
+  onAction?: () => void;
+  items: Array<{
+    id: string;
+    title: string;
+    content: string;
+  }>;
+}) {
+  return (
+    <section className="mobile-feature-panel surface-card mobile-butler-record-section mobile-butler-record-section-compact">
+      <div className="mobile-feature-section-header">
+        <div>
+          <h2>{props.title}</h2>
+        </div>
+        {props.actionLabel && props.onAction ? (
+          <button
+            type="button"
+            className="mobile-butler-section-action"
+            onClick={props.onAction}
+          >
+            {props.actionLabel}
+          </button>
+        ) : null}
+      </div>
+      {props.items.length > 0 ? (
+        <div className="mobile-butler-record-list mobile-butler-record-list-compact">
+          {props.items.map((item) => (
+            <article key={item.id} className="mobile-butler-compact-record">
+              <span>{item.title}</span>
+              <strong>{item.content}</strong>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <p className="mobile-butler-empty-text">{props.emptyText}</p>
+      )}
+    </section>
+  );
+}
+
+function MobileButlerConversationList(props: {
+  sessions: ButlerControlSessionDto[];
+  activeControlSessionId: string | null;
+  onSelectSession: (controlSessionId: string) => void;
+}) {
+  if (props.sessions.length === 0) {
+    return <p className="mobile-butler-empty-text">{t("shell.butlerHistoryEmpty")}</p>;
+  }
+
+  return (
+    <div className="mobile-butler-record-list">
+      {props.sessions.map((session) => {
+        const selected = session.id === props.activeControlSessionId;
+        const title =
+          session.title?.trim()
+          || session.session.title?.trim()
+          || session.lastSummary?.trim()
+          || session.sessionId;
+
+        return (
+          <article
+            key={session.id}
+            className="mobile-butler-record-card mobile-butler-history-card"
+            data-active={selected}
+          >
+            <header className="mobile-butler-record-header">
+              <div className="mobile-butler-record-copy">
+                <strong>{title}</strong>
+                <span>{formatIsoDateTime(session.updatedAt)}</span>
+              </div>
+              {selected ? (
+                <span className="mobile-butler-record-badge">{t("shell.butlerCurrentSessionBadge")}</span>
+              ) : null}
+            </header>
+            <p>{session.lastSummary?.trim() || session.session.title?.trim() || session.sessionId}</p>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => {
+                props.onSelectSession(session.id);
+              }}
+            >
+              {selected ? t("shell.butlerCurrentSessionBadge") : t("shell.butlerHistoryOpenAction")}
+            </button>
+          </article>
+        );
+      })}
+    </div>
+  );
+}
+
+function useMobileButlerComposerHeightVar(
+  rootRef: RefObject<HTMLElement | null>,
+  composerPanelElement: HTMLElement | null,
+  enabled: boolean,
+  resetKey: string
+) {
+  useEffect(() => {
+    const rootElement = rootRef.current;
+
+    if (!enabled || !rootElement) {
+      if (rootElement) {
+        rootElement.style.removeProperty("--mobile-conversation-composer-height");
+      }
+      return;
+    }
+
+    if (!composerPanelElement) {
+      rootElement.style.removeProperty("--mobile-conversation-composer-height");
+      return;
+    }
+
+    const stableRootElement = rootElement;
+    const stableComposerPanel = composerPanelElement;
+
+    function syncComposerHeight() {
+      if (!rootRef.current || !stableComposerPanel.isConnected) {
+        return;
+      }
+
+      stableRootElement.style.setProperty(
+        "--mobile-conversation-composer-height",
+        `${stableComposerPanel.offsetHeight}px`
+      );
+    }
+
+    syncComposerHeight();
+
+    const resizeObserver =
+      typeof ResizeObserver !== "undefined" ? new ResizeObserver(syncComposerHeight) : null;
+
+    resizeObserver?.observe(stableComposerPanel);
+    window.addEventListener("resize", syncComposerHeight);
+
+    return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", syncComposerHeight);
+      rootElement.style.removeProperty("--mobile-conversation-composer-height");
+    };
+  }, [composerPanelElement, enabled, resetKey, rootRef]);
 }
 
 function buildVerificationRecords(

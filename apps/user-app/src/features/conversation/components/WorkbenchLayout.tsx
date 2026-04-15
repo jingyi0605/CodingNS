@@ -8381,15 +8381,23 @@ export function WorkbenchLayout({
   );
   const mobileActiveEntry: MobileWorkbenchEntry = location.pathname.startsWith("/settings")
     ? "settings"
-    : isTerminalsRoute(location.pathname)
+    : isButlerRoute(location.pathname)
       ? "terminals"
+    : isTerminalsRoute(location.pathname)
+      ? "butler"
     : isToolsRoute(location.pathname)
-      ? "tools"
+      ? location.pathname.endsWith("/tools/processes") || location.pathname === "/tools/processes"
+        ? "butler"
+        : "sessions"
     : isSessionsRoute(location.pathname) || isSessionDetailRoute(location.pathname)
       ? "sessions"
         : "workspaces";
   const isMobileConversationFocus =
-    isMobileShell && mobileActiveEntry === "sessions" && isSessionDetailRoute(location.pathname);
+    isMobileShell
+    && (
+      (mobileActiveEntry === "sessions" && isSessionDetailRoute(location.pathname))
+      || isButlerRoute(location.pathname)
+    );
   const preferCompactMobilePaneLayout = shouldPreferCompactNativeMobileLayout({
     isNativeMobile: platform.isNativeMobile,
     viewportClass: platform.viewportClass
@@ -9084,19 +9092,19 @@ export function WorkbenchLayout({
                   : buildWorkspaceHomePath()
               );
             }}
-            onNavigateSessions={() => {
-              setMobileNavOpen(false);
-              setMobileInfoOpen(false);
-              goToMobileSessionsEntry();
-            }}
-            onNavigateTools={() => {
+            onNavigateButler={() => {
               setMobileNavOpen(false);
               setMobileInfoOpen(false);
               navigate(
                 currentWorkspaceId
-                  ? buildWorkspaceToolsPath(currentWorkspaceId)
+                  ? buildWorkspaceButlerPath(currentWorkspaceId)
                   : buildWorkspaceHomePath()
               );
+            }}
+            onNavigateSessions={() => {
+              setMobileNavOpen(false);
+              setMobileInfoOpen(false);
+              goToMobileSessionsEntry();
             }}
             onNavigateToolFiles={() => {
               setMobileNavOpen(false);

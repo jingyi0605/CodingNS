@@ -1,41 +1,14 @@
-import { render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import {
-  ToolsHomePage,
-  resolvePrimaryToolAfterSwipe,
-  resolvePrimaryToolFromSearch
-} from "./ToolsHomePage";
+import { ToolsHomePage } from "./ToolsHomePage";
+import { t } from "../../shared/i18n";
+
+const mockUseWorkbenchShell = vi.fn();
 
 vi.mock("../conversation/components/WorkbenchLayout", () => ({
-  useWorkbenchShell: () => ({
-    navigationGroups: [
-      {
-        workspace: {
-          id: "workspace-1",
-          name: "CodingNS"
-        },
-        sessions: []
-      }
-    ],
-    currentWorkspaceId: "workspace-1",
-    currentSessionId: null
-  })
-}));
-
-vi.mock("../conversation/components/FileContextPanel", () => ({
-  FileContextPanel: ({ hideHeading }: { hideHeading?: boolean }) => (
-    <div>
-      {hideHeading ? null : <h2 className="file-panel-heading">文件管理</h2>}
-      <div>文件面板</div>
-    </div>
-  )
-}));
-
-vi.mock("../conversation/components/GitSidebar", () => ({
-  GitSidebar: () => <div>Git 面板</div>
+  useWorkbenchShell: () => mockUseWorkbenchShell()
 }));
 
 function LocationProbe() {
@@ -45,105 +18,78 @@ function LocationProbe() {
 }
 
 describe("ToolsHomePage", () => {
-  afterEach(() => {
-    window.localStorage.removeItem("mobile.tools.last-primary-tool");
+  it("没有工作区时显示空态", () => {
+    mockUseWorkbenchShell.mockReturnValue({
+      navigationGroups: [],
+      currentWorkspaceId: null,
+      currentSessionId: null
+    });
+
+    render(<ToolsHomePage />);
+
+    expect(screen.getByText(t("shell.emptyNavigationBody"))).toBeInTheDocument();
   });
 
-  it("默认优先使用 URL 指定的主工具，否则回退到持久化结果", () => {
-    expect(resolvePrimaryToolFromSearch("files", "git")).toBe("files");
-    expect(resolvePrimaryToolFromSearch("git", "files")).toBe("git");
-    expect(resolvePrimaryToolFromSearch(null, "files")).toBe("files");
-  });
-
-  it("水平滑动会在文件和 Git 主工具之间切换", () => {
-    expect(
-      resolvePrimaryToolAfterSwipe("files", { x: 240, y: 80 }, { x: 120, y: 88 })
-    ).toBe("git");
-    expect(
-      resolvePrimaryToolAfterSwipe("git", { x: 120, y: 88 }, { x: 240, y: 80 })
-    ).toBe("files");
-  });
-
-  it("垂直手势或位移过小不应该切换主工具", () => {
-    expect(
-      resolvePrimaryToolAfterSwipe("files", { x: 240, y: 80 }, { x: 210, y: 84 })
-    ).toBe("files");
-    expect(
-      resolvePrimaryToolAfterSwipe("files", { x: 240, y: 80 }, { x: 200, y: 160 })
-    ).toBe("files");
-    expect(resolvePrimaryToolAfterSwipe("files", null, { x: 120, y: 88 })).toBe("files");
-  });
-
-  it("点击主工具切换后应该稳定停在目标 tab，不再和 URL 来回打架", async () => {
-    const user = userEvent.setup();
+  it("有当前会话时回到当前工作区的对话页", async () => {
+    mockUseWorkbenchShell.mockReturnValue({
+      navigationGroups: [
+        {
+          workspace: {
+            id: "workspace-1",
+            name: "CodingNS"
+          },
+          sessions: [
+            {
+              sessionId: "session-1",
+              workspaceId: "workspace-1"
+            }
+          ]
+        }
+      ],
+      currentWorkspaceId: "workspace-1",
+      currentSessionId: "session-1"
+    });
 
     render(
-      <MemoryRouter initialEntries={["/workspaces/workspace-1/tools?tab=files"]}>
+      <MemoryRouter initialEntries={["/workspaces/workspace-1/tools"]}>
         <Routes>
-          <Route
-            path="/workspaces/:workspaceId/tools"
-            element={
-              <>
-                <ToolsHomePage />
-                <LocationProbe />
-              </>
-            }
-          />
-          <Route path="/workspaces/:workspaceId/tools/processes" element={<LocationProbe />} />
+          <Route path="/workspaces/:workspaceId/tools" element={<ToolsHomePage />} />
+          <Route path="/workspaces/:workspaceId/sessions/:sessionId" element={<LocationProbe />} />
         </Routes>
       </MemoryRouter>
     );
 
-    const filesButton = screen.getByRole("tab", { name: "文件管理" });
-    const gitButton = screen.getByRole("tab", { name: "GIT管理" });
-
-    expect(filesButton).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByTestId("location-probe")).toHaveTextContent(
-      "/workspaces/workspace-1/tools?tab=files"
+    expect(await screen.findByTestId("location-probe")).toHaveTextContent(
+      "/workspaces/workspace-1/sessions/session-1"
     );
-
-    await user.click(gitButton);
-
-    await waitFor(() => {
-      expect(gitButton).toHaveAttribute("aria-selected", "true");
-      expect(filesButton).toHaveAttribute("aria-selected", "false");
-      expect(screen.getByTestId("location-probe")).toHaveTextContent(
-        "/workspaces/workspace-1/tools?tab=git"
-      );
-    });
   });
 
-  it("工具页会移除旧说明区，并把进程管理入口收进右上角更多按钮", async () => {
-    const user = userEvent.setup();
+  it("没有当前会话时回到当前工作区的会话列表", async () => {
+    mockUseWorkbenchShell.mockReturnValue({
+      navigationGroups: [
+        {
+          workspace: {
+            id: "workspace-1",
+            name: "CodingNS"
+          },
+          sessions: []
+        }
+      ],
+      currentWorkspaceId: "workspace-1",
+      currentSessionId: null
+    });
 
     render(
-      <MemoryRouter initialEntries={["/workspaces/workspace-1/tools?tab=files"]}>
+      <MemoryRouter initialEntries={["/workspaces/workspace-1/tools"]}>
         <Routes>
-          <Route
-            path="/workspaces/:workspaceId/tools"
-            element={
-              <>
-                <ToolsHomePage />
-                <LocationProbe />
-              </>
-            }
-          />
-          <Route path="/workspaces/:workspaceId/tools/processes" element={<LocationProbe />} />
+          <Route path="/workspaces/:workspaceId/tools" element={<ToolsHomePage />} />
+          <Route path="/workspaces/:workspaceId/sessions" element={<LocationProbe />} />
         </Routes>
       </MemoryRouter>
     );
 
-    expect(
-      screen.queryByText("当前项目：CodingNS。文件、Git、终端和进程都从这里进。")
-    ).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "进程管理" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "文件管理" })).not.toBeInTheDocument();
-    expect(screen.queryByText("更多")).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "更多" }));
-
-    await waitFor(() => {
-      expect(screen.getByTestId("location-probe")).toHaveTextContent("/workspaces/workspace-1/tools/processes");
-    });
+    expect(await screen.findByTestId("location-probe")).toHaveTextContent(
+      "/workspaces/workspace-1/sessions"
+    );
   });
 });

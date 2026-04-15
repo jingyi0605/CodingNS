@@ -1,9 +1,14 @@
-import { TerminalManagerPanel } from "../workbench/components/TerminalManagerPanel";
+import { Navigate } from "react-router-dom";
+
 import { useWorkbenchShell } from "../conversation/components/WorkbenchLayout";
+import {
+  buildWorkspaceSessionIndexPath,
+  buildWorkspaceSessionPath
+} from "../workbench/utils/workbench-navigation";
 import { t } from "../../shared/i18n";
 
 export function ToolProcessesPage() {
-  const { currentWorkspaceId, navigationGroups } = useWorkbenchShell();
+  const { currentWorkspaceId, currentSessionId, navigationGroups } = useWorkbenchShell();
 
   if (!currentWorkspaceId) {
     return (
@@ -16,13 +21,15 @@ export function ToolProcessesPage() {
     );
   }
 
-  return (
-    <main className="mobile-feature-page mobile-page-fixed-root mobile-tool-panel-page mobile-tool-process-page">
-      <TerminalManagerPanel
-        className="mobile-panel-scroll-root mobile-tool-native-panel mobile-tool-process-panel"
-        currentWorkspaceId={currentWorkspaceId}
-        navigationGroups={navigationGroups}
-      />
-    </main>
-  );
+  const currentSessionInWorkspace = navigationGroups
+    .flatMap((group) => group.sessions)
+    .find(
+      (session) =>
+        session.sessionId === currentSessionId && session.workspaceId === currentWorkspaceId
+    );
+  const targetPath = currentSessionInWorkspace
+    ? buildWorkspaceSessionPath(currentWorkspaceId, currentSessionInWorkspace.sessionId)
+    : buildWorkspaceSessionIndexPath(currentWorkspaceId);
+
+  return <Navigate to={`${targetPath}?toolPanel=processes`} replace />;
 }

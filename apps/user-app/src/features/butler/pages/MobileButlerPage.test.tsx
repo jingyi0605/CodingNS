@@ -1,9 +1,10 @@
 import type { ReactNode } from "react";
 
-import { render, screen, waitFor, within } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { t } from "../../../shared/i18n";
 import { MobileButlerPage } from "./MobileButlerPage";
 
 const mockUseWorkbenchShell = vi.fn();
@@ -13,6 +14,87 @@ const mockGetButlerOverview = vi.fn();
 const mockListButlerFollowUpTasks = vi.fn();
 const mockListButlerInboxItems = vi.fn();
 const mockListButlerPatrolPlans = vi.fn();
+const mockListButlerControlSessions = vi.fn();
+const mockRuntimeState: any = {
+  loading: false,
+  initialized: true,
+  profile: {
+    id: "default",
+    displayName: "助手一号",
+    providerId: "codex",
+    workspacePath: "/repo/project-one",
+    agentsMode: "inline",
+    agentsFilePath: null,
+    agentsContent: "",
+    persona: {
+      tone: "direct",
+      language: "zh-CN",
+      summaryStyle: "brief"
+    },
+    focus: {
+      projectIds: [],
+      riskPreference: "balanced",
+      reportPriority: [],
+      summaryDebounceSeconds: 300
+    },
+    initializedAt: "2026-04-09T10:00:00.000Z",
+    updatedAt: "2026-04-09T10:00:00.000Z"
+  },
+  activeProvider: "codex",
+  controlSession: {
+    id: "control-1",
+    sessionId: "butler-session-1",
+    title: "继续改移动端",
+    purpose: "chat",
+    status: "running",
+    updatedAt: "2026-04-09T10:00:00.000Z",
+    lastSummary: "继续推进布局调整",
+    session: {
+      sessionId: "butler-session-1",
+      title: "继续改移动端",
+      runningState: "running"
+    }
+  },
+  capabilities: {
+    provider: "codex",
+    canStartSession: true,
+    canResumeSession: true,
+    canSendMessage: true,
+    inRunInputMode: "none",
+    supportsSubagents: false,
+    supportsInterrupt: true,
+    supportsStructuredToolCalls: true,
+    supportsTokenUsage: true,
+    supportsAttachments: false,
+    supportsPermissionPrompt: true,
+    supportsCheckpoint: false,
+    modelOptions: [],
+    limitations: []
+  },
+  messages: [
+    {
+      id: "message-1",
+      sessionId: "butler-session-1",
+      role: "assistant",
+      kind: "text",
+      content: "我正在继续推进移动端改造。",
+      toolCall: null,
+      attachments: [],
+      attachmentPayloads: null,
+      origin: "assistant",
+      originRef: null,
+      timestamp: "2026-04-09T10:00:00.000Z",
+      sequence: 1,
+      rawRef: "raw://message-1",
+      deliveryState: "sent",
+      clientRequestId: null
+    }
+  ],
+  historyState: "ready",
+  runtimeHasActiveRun: true,
+  runtimeCanInterrupt: true,
+  contextUsage: null
+};
 
 vi.mock("../../../shared/toast", () => ({
   useToast: () => ({
@@ -27,17 +109,40 @@ vi.mock("../../conversation/components/WorkbenchLayout", () => ({
 vi.mock("../../mobile-shell/components/MobileWorkspaceSwitcherHeader", () => ({
   MobileWorkspaceSwitcherHeader: ({
     currentWorkspace,
-    content
+    trailing
   }: {
     currentWorkspace: { name: string; path: string } | null;
-    content?: ReactNode;
+    trailing?: ReactNode;
   }) => (
     <div>
       <h1>{currentWorkspace?.name}</h1>
       <p>{currentWorkspace?.path}</p>
-      {content}
+      {trailing}
     </div>
   )
+}));
+
+vi.mock("../../conversation/components/MessageTimeline", () => ({
+  MessageTimeline: ({ messages }: { messages: Array<{ content: string }> }) => (
+    <div data-testid="butler-timeline">{messages.map((item) => item.content).join("|")}</div>
+  )
+}));
+
+vi.mock("../../conversation/components/ComposerPanel", () => ({
+  ComposerPanel: () => <div data-testid="butler-composer">composer</div>
+}));
+
+vi.mock("../runtime/butler-runtime-store", () => ({
+  ButlerRuntimeStore: class {
+    initialize = vi.fn();
+    openControlSession = vi.fn();
+    startFreshSession = vi.fn();
+    sendMessage = vi.fn();
+    retryMessage = vi.fn();
+    interrupt = vi.fn();
+  },
+  useButlerRuntimeStore: (_store: unknown, selector: (state: typeof mockRuntimeState) => unknown) =>
+    selector(mockRuntimeState)
 }));
 
 vi.mock("../api/butler-api", () => ({
@@ -45,7 +150,8 @@ vi.mock("../api/butler-api", () => ({
   getButlerOverview: (...args: unknown[]) => mockGetButlerOverview(...args),
   listButlerFollowUpTasks: (...args: unknown[]) => mockListButlerFollowUpTasks(...args),
   listButlerInboxItems: (...args: unknown[]) => mockListButlerInboxItems(...args),
-  listButlerPatrolPlans: (...args: unknown[]) => mockListButlerPatrolPlans(...args)
+  listButlerPatrolPlans: (...args: unknown[]) => mockListButlerPatrolPlans(...args),
+  listButlerControlSessions: (...args: unknown[]) => mockListButlerControlSessions(...args)
 }));
 
 vi.mock("../runtime/butler-records-events", () => ({
@@ -65,49 +171,21 @@ describe("MobileButlerPage", () => {
             path: "/repo/project-one"
           },
           sessions: []
-        },
-        {
-          workspace: {
-            id: "workspace-2",
-            name: "项目二",
-            path: "/repo/project-two"
-          },
-          sessions: []
         }
       ],
+      requestNavigationRefresh: vi.fn(),
       selectWorkspace: vi.fn()
     });
     mockGetButlerProfile.mockResolvedValue({
       initialized: true,
-      profile: {
-        id: "default",
-        displayName: "代码助手",
-        providerId: "codex",
-        workspacePath: "/tmp/butler",
-        agentsMode: "inline",
-        agentsFilePath: null,
-        agentsContent: "",
-        persona: {
-          tone: "direct",
-          language: "zh-CN",
-          summaryStyle: "brief"
-        },
-        focus: {
-          projectIds: [],
-          riskPreference: "balanced",
-          reportPriority: [],
-          summaryDebounceSeconds: 300
-        },
-        initializedAt: "2026-04-09T10:00:00.000Z",
-        updatedAt: "2026-04-09T10:00:00.000Z"
-      }
+      profile: mockRuntimeState.profile
     });
     mockGetButlerOverview.mockResolvedValue({
       overview: {
         version: "overview-1",
         generatedAt: "2026-04-09T10:00:00.000Z",
         global: {
-          projectCount: 2,
+          projectCount: 1,
           activeProjectCount: 1,
           blockedProjectCount: 0,
           highRiskProjectCount: 0,
@@ -124,26 +202,6 @@ describe("MobileButlerPage", () => {
             riskLevel: "low",
             activeSessionCount: 1,
             sessionCount: 1,
-            memoryCount: 0,
-            failedPatrolCount: 0,
-            failedVerificationCount: 0,
-            latestSessionSummary: null,
-            latestPatrolSummary: null,
-            latestVerificationSummary: null,
-            topRisks: [],
-            nextActions: [],
-            lastActivityAt: "2026-04-09T10:00:00.000Z",
-            updatedAt: "2026-04-09T10:00:00.000Z"
-          },
-          {
-            id: "project-2",
-            workspaceId: "workspace-2",
-            name: "项目二",
-            repoRoot: "/repo/project-two",
-            lifecycleStatus: "active",
-            riskLevel: "low",
-            activeSessionCount: 0,
-            sessionCount: 0,
             memoryCount: 0,
             failedPatrolCount: 0,
             failedVerificationCount: 0,
@@ -181,28 +239,6 @@ describe("MobileButlerPage", () => {
             startedAt: "2026-04-09T10:01:00.000Z",
             finishedAt: null,
             createdAt: "2026-04-09T10:01:00.000Z"
-          },
-          {
-            id: "verification-3",
-            projectId: "project-1",
-            verificationType: "browser",
-            status: "passed",
-            targetRef: "smoke",
-            summary: null,
-            startedAt: "2026-04-09T09:40:00.000Z",
-            finishedAt: "2026-04-09T09:45:00.000Z",
-            createdAt: "2026-04-09T09:40:00.000Z"
-          },
-          {
-            id: "verification-4",
-            projectId: "project-2",
-            verificationType: "test",
-            status: "running",
-            targetRef: "pnpm lint",
-            summary: null,
-            startedAt: "2026-04-09T10:02:00.000Z",
-            finishedAt: null,
-            createdAt: "2026-04-09T10:02:00.000Z"
           }
         ]
       }
@@ -262,87 +298,6 @@ describe("MobileButlerPage", () => {
           createdAt: "2026-04-09T09:40:00.000Z",
           updatedAt: "2026-04-09T10:00:00.000Z",
           completedAt: null
-        },
-        {
-          id: "follow-up-3",
-          projectId: "project-1",
-          projectName: "项目一",
-          workspaceId: "workspace-1",
-          butlerSessionId: "butler-session-3",
-          sessionId: "session-3",
-          sessionTitle: "历史任务",
-          objective: "旧任务",
-          completionCriteria: "完成",
-          maxAutoContinueCount: 5,
-          status: "completed",
-          checkIntervalSeconds: 300,
-          lastCheckedAt: null,
-          nextCheckAt: null,
-          lastObservedRunningState: "completed",
-          lastObservedMessageAt: "2026-04-09T09:00:00.000Z",
-          lastObservedMessageCount: 10,
-          lastAutomationSummary: "已完成",
-          lastAutomationAt: "2026-04-09T09:00:00.000Z",
-          autoContinueCount: 2,
-          waitingReason: null,
-          rounds: [],
-          createdAt: "2026-04-09T08:50:00.000Z",
-          updatedAt: "2026-04-09T09:00:00.000Z",
-          completedAt: "2026-04-09T09:00:00.000Z"
-        },
-        {
-          id: "follow-up-3b",
-          projectId: "project-1",
-          projectName: "项目一",
-          workspaceId: "workspace-1",
-          butlerSessionId: "butler-session-3b",
-          sessionId: "session-3b",
-          sessionTitle: "失败任务",
-          objective: "这个失败记录应该进历史",
-          completionCriteria: "失败记录默认隐藏",
-          maxAutoContinueCount: 5,
-          status: "failed",
-          checkIntervalSeconds: 300,
-          lastCheckedAt: null,
-          nextCheckAt: null,
-          lastObservedRunningState: "failed",
-          lastObservedMessageAt: "2026-04-09T09:20:00.000Z",
-          lastObservedMessageCount: 7,
-          lastAutomationSummary: "运行失败，不应该继续占用活跃面板。",
-          lastAutomationAt: "2026-04-09T09:20:00.000Z",
-          autoContinueCount: 2,
-          waitingReason: null,
-          rounds: [],
-          createdAt: "2026-04-09T09:10:00.000Z",
-          updatedAt: "2026-04-09T09:20:00.000Z",
-          completedAt: null
-        },
-        {
-          id: "follow-up-4",
-          projectId: "project-2",
-          projectName: "项目二",
-          workspaceId: "workspace-2",
-          butlerSessionId: "butler-session-4",
-          sessionId: "session-4",
-          sessionTitle: "别的工作区",
-          objective: "不该算进来",
-          completionCriteria: "忽略",
-          maxAutoContinueCount: 5,
-          status: "active",
-          checkIntervalSeconds: 300,
-          lastCheckedAt: null,
-          nextCheckAt: null,
-          lastObservedRunningState: "running",
-          lastObservedMessageAt: "2026-04-09T10:00:00.000Z",
-          lastObservedMessageCount: 10,
-          lastAutomationSummary: "继续推进",
-          lastAutomationAt: "2026-04-09T10:00:00.000Z",
-          autoContinueCount: 1,
-          waitingReason: null,
-          rounds: [],
-          createdAt: "2026-04-09T09:50:00.000Z",
-          updatedAt: "2026-04-09T10:00:00.000Z",
-          completedAt: null
         }
       ]
     });
@@ -380,31 +335,170 @@ describe("MobileButlerPage", () => {
       ]
     });
     mockListButlerPatrolPlans.mockResolvedValue({
-      items: []
+      items: [
+        {
+          id: "plan-1",
+          projectId: "project-1",
+          name: "夜间巡视",
+          enabled: true,
+          triggerType: "interval",
+          intervalMinutes: 30,
+          cronExpression: null,
+          nextRunAt: "2026-04-10T00:00:00.000Z",
+          lastScheduledAt: "2026-04-09T23:30:00.000Z",
+          createdAt: "2026-04-09T09:00:00.000Z",
+          updatedAt: "2026-04-09T09:00:00.000Z"
+        }
+      ]
+    });
+    mockListButlerControlSessions.mockResolvedValue({
+      items: [
+        {
+          id: "control-1",
+          sessionId: "butler-session-1",
+          title: "继续改移动端",
+          purpose: "chat",
+          status: "running",
+          updatedAt: "2026-04-09T10:00:00.000Z",
+          lastSummary: "继续推进布局调整",
+          session: {
+            sessionId: "butler-session-1",
+            title: "继续改移动端",
+            runningState: "running"
+          }
+        }
+      ]
     });
   });
 
-  it("摘要计数只统计 active 跟进和 queued/running 验证", async () => {
+  it("首次渲染时先显示助手加载动画，不提前显示未准备好文案", () => {
     renderPage();
 
-    const inProgressPill = await screen.findByText("Active Tasks");
-    const waitingUserPill = screen.getByText("Waiting on You");
+    expect(screen.getByText(t("shell.butlerLoadingTitle"))).toBeInTheDocument();
+    expect(screen.getByText(t("shell.butlerLoadingDescription"))).toBeInTheDocument();
+    expect(screen.queryByText(t("shell.mobileButlerEmptyTitle"))).not.toBeInTheDocument();
+  });
 
-    await waitFor(() => {
-      expect(within(inProgressPill.parentElement as HTMLElement).getByText("3")).toBeInTheDocument();
-      expect(within(waitingUserPill.parentElement as HTMLElement).getByText("1")).toBeInTheDocument();
+  it("右滑主内容会打开助手会话列表", async () => {
+    const view = renderPage();
+    const stage = view.container.querySelector(".mobile-butler-main-stage") as HTMLElement;
+
+    fireEvent.touchStart(stage, {
+      changedTouches: [{ clientX: 48, clientY: 180 }]
+    });
+    fireEvent.touchEnd(stage, {
+      changedTouches: [{ clientX: 156, clientY: 186 }]
     });
 
-    expect(screen.queryByText("失败任务")).not.toBeInTheDocument();
+    expect(await screen.findByText("继续改移动端")).toBeInTheDocument();
+    expect(screen.getByText("继续推进布局调整")).toBeInTheDocument();
+    expect(screen.queryByTestId("butler-composer")).not.toBeInTheDocument();
+  });
+
+  it("左滑主内容会打开右侧信息栏，并只保留记录类内容", async () => {
+    const view = renderPage();
+    const stage = view.container.querySelector(".mobile-butler-main-stage") as HTMLElement;
+
+    fireEvent.touchStart(stage, {
+      changedTouches: [{ clientX: 300, clientY: 180 }]
+    });
+    fireEvent.touchEnd(stage, {
+      changedTouches: [{ clientX: 168, clientY: 186 }]
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(t("shell.butlerInfoFollowUpRecordsTitle"))).toBeInTheDocument();
+      expect(screen.getByText(t("shell.butlerInfoVerificationRecordsTitle"))).toBeInTheDocument();
+      expect(screen.getByText(t("shell.butlerInfoTodoRecordsTitle"))).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: t("shell.butlerFollowUpHistoryAction") })).toBeInTheDocument();
+      expect(screen.queryByText(t("shell.mobileButlerSummaryTitle"))).not.toBeInTheDocument();
+      expect(screen.queryByText(t("shell.mobileButlerAssistantWorkspaceLabel"))).not.toBeInTheDocument();
+      expect(screen.getByText("确认验证结果")).toBeInTheDocument();
+      expect(screen.getByText(`${"项目一"} · ${t("shell.butlerInfoTodoPending")}`)).toBeInTheDocument();
+    });
+  });
+
+  it("右侧信息栏内继续左滑会在信息、自动化、设置之间切换", async () => {
+    const view = renderPage({ withRouteProbe: true });
+    const stage = view.container.querySelector(".mobile-butler-main-stage") as HTMLElement;
+
+    fireEvent.touchStart(stage, {
+      changedTouches: [{ clientX: 300, clientY: 180 }]
+    });
+    fireEvent.touchEnd(stage, {
+      changedTouches: [{ clientX: 168, clientY: 186 }]
+    });
+
+    const sidebar = await waitFor(() =>
+      view.container.querySelector(".mobile-butler-drawer-sidebar") as HTMLElement
+    );
+
+    fireEvent.touchStart(sidebar, {
+      changedTouches: [{ clientX: 300, clientY: 180 }]
+    });
+    fireEvent.touchEnd(sidebar, {
+      changedTouches: [{ clientX: 168, clientY: 186 }]
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: "Automation" })).toHaveAttribute("aria-selected", "true");
+      expect(screen.getByTestId("route-probe")).toHaveTextContent("?tab=automation");
+    });
+
+    fireEvent.touchStart(sidebar, {
+      changedTouches: [{ clientX: 300, clientY: 180 }]
+    });
+    fireEvent.touchEnd(sidebar, {
+      changedTouches: [{ clientX: 168, clientY: 186 }]
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: "Settings" })).toHaveAttribute("aria-selected", "true");
+      expect(screen.getByTestId("route-probe")).toHaveTextContent("?tab=settings");
+    });
+  });
+
+  it("助手聊天区不再保留额外标头和外层卡片，打开抽屉时会隐藏输入框", async () => {
+    const view = renderPage();
+
+    expect(view.container.querySelector(".mobile-butler-chat-card")).toBeNull();
+    expect(view.container.querySelector(".mobile-butler-chat-header")).toBeNull();
+    expect(screen.getByText("助手一号")).toBeInTheDocument();
+    expect(await screen.findByTestId("butler-composer")).toBeInTheDocument();
+
+    const stage = view.container.querySelector(".mobile-butler-main-stage") as HTMLElement;
+    fireEvent.touchStart(stage, {
+      changedTouches: [{ clientX: 300, clientY: 180 }]
+    });
+    fireEvent.touchEnd(stage, {
+      changedTouches: [{ clientX: 168, clientY: 186 }]
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("butler-composer")).not.toBeInTheDocument();
+    });
   });
 });
 
-function renderPage() {
+function renderPage(options?: { withRouteProbe?: boolean }) {
   return render(
     <MemoryRouter initialEntries={["/workspaces/workspace-1/butler?tab=info"]}>
       <Routes>
-        <Route path="/workspaces/:workspaceId/butler" element={<MobileButlerPage />} />
+        <Route
+          path="/workspaces/:workspaceId/butler"
+          element={
+            <>
+              <MobileButlerPage />
+              {options?.withRouteProbe ? <RouteProbe /> : null}
+            </>
+          }
+        />
       </Routes>
     </MemoryRouter>
   );
+}
+
+function RouteProbe() {
+  const location = useLocation();
+  return <div data-testid="route-probe">{location.pathname + location.search}</div>;
 }

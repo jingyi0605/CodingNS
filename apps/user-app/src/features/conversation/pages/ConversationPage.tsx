@@ -32,6 +32,8 @@ import {
 import { ConnectionBanner } from "../components/ConnectionBanner";
 import { ComposerPanel } from "../components/ComposerPanel";
 import { ConversationSelectionActions } from "../components/ConversationSelectionActions";
+import { FileContextPanel } from "../components/FileContextPanel";
+import { GitSidebar } from "../components/GitSidebar";
 import { MessageTimeline } from "../components/MessageTimeline";
 import { MobileConversationSessionActions } from "../components/MobileConversationSessionActions";
 import { PermissionRequestList } from "../components/PermissionRequestList";
@@ -76,6 +78,7 @@ import {
   type WorkbenchNavigationEntry,
   type WorkbenchNavigationTreeNode
 } from "../../workbench/utils/workbench-navigation";
+import { TerminalManagerPanel } from "../../workbench/components/TerminalManagerPanel";
 import {
   findSessionTreeAncestorIds,
   someSessionTreeNode
@@ -94,8 +97,11 @@ import { MobileWorkspaceSwitcherHeader } from "../../mobile-shell/components/Mob
 import { MobileCreateSessionSheet } from "../../mobile-sessions/components/MobileCreateSessionSheet";
 import {
   readMobileConversationPreviewMode,
+  readMobileConversationToolPanel,
   writeMobileConversationPreviewMode,
-  type MobileConversationPreviewMode
+  writeMobileConversationToolPanel,
+  type MobileConversationPreviewMode,
+  type MobileConversationToolPanel
 } from "../../mobile-sessions/mobile-conversation-state";
 import {
   resolveNextMobileSessionEntry
@@ -128,6 +134,7 @@ export function ConversationPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const searchParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
+  const toolPanel = resolveMobileConversationToolPanel(searchParams.get("toolPanel"));
   const routeWorkspaceId = routeWorkspaceIdParam?.trim() || null;
   const draftContext = useMemo(
     () => parseDraftContext(sessionId, routeWorkspaceId, searchParams),
@@ -139,18 +146,26 @@ export function ConversationPage() {
   );
 
   if (draftContext) {
-    return <DraftConversationPage draft={draftContext} navigate={navigate} />;
+    return <DraftConversationPage draft={draftContext} navigate={navigate} initialToolPanel={toolPanel} />;
   }
 
-  return <LiveConversationPage sessionId={sessionId} bootstrapMessages={liveBootstrapMessages} />;
+  return (
+    <LiveConversationPage
+      sessionId={sessionId}
+      bootstrapMessages={liveBootstrapMessages}
+      initialToolPanel={toolPanel}
+    />
+  );
 }
 
 function LiveConversationPage({
   sessionId,
-  bootstrapMessages
+  bootstrapMessages,
+  initialToolPanel
 }: {
   sessionId: string;
   bootstrapMessages: HistoryMessageDto[];
+  initialToolPanel: MobileConversationToolPanel | null;
 }) {
   const {
     shellMode,
@@ -176,7 +191,6 @@ function LiveConversationPage({
   const [archiveSubmitting, setArchiveSubmitting] = useState(false);
   const [branchTreeOpen, setBranchTreeOpen] = useState(false);
   const [forkDraft, setForkDraft] = useState<ForkComposerDraft | null>(null);
-  const [createSessionOpen, setCreateSessionOpen] = useState(false);
   const navigationSession = useMemo(
     () =>
       navigationGroups
@@ -253,6 +267,13 @@ function LiveConversationPage({
   const showInlineHeader = shellMode !== "mobile";
   const mobilePreview = useMobileConversationPreviewController(!showInlineHeader);
   const mobileWorkspaceId = session?.workspaceId ?? navigationSession?.workspaceId ?? null;
+  const mobileToolPanel = useMobileConversationToolPanelController({
+    enabled: !showInlineHeader,
+    initialPanel: initialToolPanel,
+    sessionId,
+    workspaceId: mobileWorkspaceId,
+    suspendMainGesture: !showInlineHeader && mobilePreview.isVisible
+  });
   const mobileFavoriteSessionIdSet = useMemo(
     () => new Set(favoriteSessions.map((item) => item.session.sessionId)),
     [favoriteSessions]
@@ -323,6 +344,9 @@ function LiveConversationPage({
     [navigationSession, session]
   );
   const currentSessionSummary = session ?? navigationSession ?? null;
+  const mobileMainGestureHandlers = !showInlineHeader
+    ? mergeMobileGestureHandlers(mobilePreview.mainGestureHandlers, mobileToolPanel.mainGestureHandlers)
+    : null;
   const sessionById = useMemo(
     () =>
       new Map(
@@ -669,13 +693,14 @@ function LiveConversationPage({
         ref={mobileConversationPageRef}
         className="workbench-page conversation-page-shell mobile-page-fixed-root mobile-conversation-page"
         data-mobile-shell={!showInlineHeader}
-        data-workspace-tone={currentWorkspaceContext?.tone ?? "root"}
-        data-worktree-depth={currentWorkspaceContext?.depth ?? 0}
         data-preview-mode={!showInlineHeader ? mobilePreview.displayMode : undefined}
         data-preview-dragging={!showInlineHeader ? mobilePreview.isDragging : undefined}
+        data-workspace-tone={currentWorkspaceContext?.tone ?? "root"}
+        data-worktree-depth={currentWorkspaceContext?.depth ?? 0}
+        data-tool-panel-open={!showInlineHeader ? mobileToolPanel.isOpen : undefined}
         style={{
-          ...(createWorkspaceToneStyle(currentWorkspaceContext) ?? {}),
-          ...(!showInlineHeader ? mobilePreview.pageStyle : {})
+          ...(!showInlineHeader ? mobilePreview.pageStyle : {}),
+          ...(createWorkspaceToneStyle(currentWorkspaceContext) ?? {})
         }}
       >
         {showInlineHeader ? (
@@ -689,7 +714,7 @@ function LiveConversationPage({
           <MobileWorkspaceSwitcherHeader
             containerRef={mobileConversationHeaderRef}
             className="mobile-conversation-page-header"
-            gestureHandlers={mobilePreview.mainGestureHandlers}
+            gestureHandlers={mobileMainGestureHandlers ?? undefined}
             currentWorkspace={
               mobileWorkspaceSummary
                 ? {
@@ -716,42 +741,51 @@ function LiveConversationPage({
           />
         ) : null}
         {!showInlineHeader ? (
-        <MobileConversationPreviewRail
-          visible={mobilePreview.isVisible}
-          widthPx={mobilePreview.previewWidthPx}
-          isDragging={mobilePreview.isDragging}
-          gestureHandlers={mobilePreview.railGestureHandlers}
-          activeSessionId={sessionId}
-          createSessionActionLabel={t("shell.createSession")}
-          favoriteItems={mobileFavoritePreviewItems}
-          items={mobilePreviewItems}
-          expandedRootIds={expandedMobilePreviewRootIds}
-          workspaceSectionLabel={t("shell.mobileConversationCurrentWorkspaceSection")}
-          onCreateSession={() => {
-            setCreateSessionOpen(true);
-          }}
+          <MobileConversationPreviewRail
+            visible={!mobileToolPanel.isOpen && mobilePreview.isVisible}
+            widthPx={mobilePreview.previewWidthPx}
+            isDragging={mobilePreview.isDragging}
+            gestureHandlers={mobilePreview.railGestureHandlers}
+            activeSessionId={sessionId}
+            createSessionActionLabel={mobileWorkspaceId && mobileDraftProvider ? t("shell.createSession") : undefined}
+            favoriteItems={mobileFavoritePreviewItems}
+            items={mobilePreviewItems}
+            expandedRootIds={expandedMobilePreviewRootIds}
+            workspaceSectionLabel={mobileWorkspaceSummary?.label ?? t("shell.mobileConversationCurrentWorkspaceSection")}
+            onCreateSession={
+              mobileWorkspaceId && mobileDraftProvider
+                ? () => {
+                    startDraftSession(mobileWorkspaceId, mobileDraftProvider);
+                  }
+                : undefined
+            }
             archiveCurrentActionLabel={t("shell.archiveCurrentSessionAction")}
-            archiveFolderActionLabel={t("shell.archiveFolderAction")}
+            archiveFolderActionLabel={mobileArchivedSessions.length > 0 ? t("shell.archiveFolderLabel") : undefined}
             onArchiveActiveSession={() => {
               setArchiveConfirmOpen(true);
             }}
-          onOpenArchiveFolder={() => {
-            setArchiveFolderOpen(true);
-          }}
-          onToggleSubsessions={(nextSessionId) => {
-            setExpandedMobilePreviewRootIds((current) =>
-              current.includes(nextSessionId)
-                ? current.filter((item) => item !== nextSessionId)
-                : [...current, nextSessionId]
-            );
-          }}
-          onActivate={(entry) => {
-            writeMobileConversationPreviewMode("preview");
-            navigate(buildWorkspaceSessionPath(entry.workspace.id, entry.session.sessionId));
-          }}
+            onOpenArchiveFolder={
+              mobileArchivedSessions.length > 0
+                ? () => {
+                    setArchiveFolderOpen(true);
+                  }
+                : undefined
+            }
+            onToggleSubsessions={(targetSessionId) => {
+              setExpandedMobilePreviewRootIds((current) =>
+                current.includes(targetSessionId)
+                  ? current.filter((item) => item !== targetSessionId)
+                  : [...current, targetSessionId]
+              );
+            }}
+            onActivate={(entry) => {
+              mobilePreview.closePreview();
+              selectWorkspace(entry.workspace.id);
+              navigate(buildWorkspaceSessionPath(entry.workspace.id, entry.session.sessionId));
+            }}
           />
         ) : null}
-        <div className="mobile-conversation-stage" {...(!showInlineHeader ? mobilePreview.mainGestureHandlers : {})}>
+        <div className="mobile-conversation-stage" {...(mobileMainGestureHandlers ?? {})}>
           <div ref={mobileConversationMainRef} className="mobile-conversation-main">
             <ConnectionBanner connectionState={connectionState} onReconnect={() => store.reconnect()} />
             <PermissionRequestList
@@ -853,66 +887,91 @@ function LiveConversationPage({
                 }
               }}
             />
-            <ComposerPanel
-              capabilities={capabilities}
-              draftStorageId={sessionId}
-              forkDraft={forkDraft}
-              onClearForkDraft={() => setForkDraft(null)}
-              onForkDraftChange={(nextDraft) => setForkDraft(nextDraft)}
-              panelRef={!showInlineHeader ? setMobileComposerPanelElement : undefined}
-              portalContainer={!showInlineHeader ? composerPortalTarget : null}
-              hasActiveRun={runtimeHasActiveRun}
-              contextUsage={contextUsage}
-              taskProvider={(session ?? navigationSession)?.provider ?? null}
-              taskMessages={messages}
-              hasPendingQueuedMessages={hasPendingQueuedMessages}
-              canInterrupt={runtimeCanInterrupt}
-              isSubmitting={sending}
-              isRunning={isRunning}
-              onInterrupt={async () => {
-                await store.interrupt();
-                requestNavigationRefresh();
-              }}
-              onSend={async (content, options) => {
-                setSending(true);
+            {!mobileToolPanel.isOpen ? (
+              <ComposerPanel
+                capabilities={capabilities}
+                draftStorageId={sessionId}
+                forkDraft={forkDraft}
+                onClearForkDraft={() => setForkDraft(null)}
+                onForkDraftChange={(nextDraft) => setForkDraft(nextDraft)}
+                panelRef={!showInlineHeader ? setMobileComposerPanelElement : undefined}
+                portalContainer={!showInlineHeader ? composerPortalTarget : null}
+                hasActiveRun={runtimeHasActiveRun}
+                contextUsage={contextUsage}
+                taskProvider={(session ?? navigationSession)?.provider ?? null}
+                taskMessages={messages}
+                hasPendingQueuedMessages={hasPendingQueuedMessages}
+                canInterrupt={runtimeCanInterrupt}
+                isSubmitting={sending}
+                isRunning={isRunning}
+                onInterrupt={async () => {
+                  await store.interrupt();
+                  requestNavigationRefresh();
+                }}
+                onSend={async (content, options) => {
+                  setSending(true);
 
-                try {
-                  await sendForkDraftMessage(content, {
-                    model: options?.model,
-                    reasoningLevel: options?.reasoningLevel,
-                    attachments: options?.attachments,
-                    attachmentMeta: options?.attachmentMeta
-                  });
-                } finally {
-                  setSending(false);
-                }
-              }}
-              onQueueSend={async (content, options) => {
-                setSending(true);
-
-                try {
-                  if (forkDraft) {
+                  try {
                     await sendForkDraftMessage(content, {
                       model: options?.model,
                       reasoningLevel: options?.reasoningLevel,
                       attachments: options?.attachments,
                       attachmentMeta: options?.attachmentMeta
                     });
-                  } else {
-                    await store.enqueueMessage(content, {
-                      model: options?.model,
-                      reasoningLevel: options?.reasoningLevel,
-                      attachments: options?.attachments,
-                      attachmentMeta: options?.attachmentMeta
-                    });
+                  } finally {
+                    setSending(false);
                   }
-                } finally {
-                  setSending(false);
-                }
-              }}
-            />
+                }}
+                onQueueSend={async (content, options) => {
+                  setSending(true);
+
+                  try {
+                    if (forkDraft) {
+                      await sendForkDraftMessage(content, {
+                        model: options?.model,
+                        reasoningLevel: options?.reasoningLevel,
+                        attachments: options?.attachments,
+                        attachmentMeta: options?.attachmentMeta
+                      });
+                    } else {
+                      await store.enqueueMessage(content, {
+                        model: options?.model,
+                        reasoningLevel: options?.reasoningLevel,
+                        attachments: options?.attachments,
+                        attachmentMeta: options?.attachmentMeta
+                      });
+                    }
+                  } finally {
+                    setSending(false);
+                  }
+                }}
+              />
+            ) : null}
           </div>
         </div>
+        {!showInlineHeader && mobileWorkspaceId ? (
+          <MobileConversationToolPanelOverlay
+            activePanel={mobileToolPanel.activePanel}
+            open={mobileToolPanel.isOpen}
+            sessionId={sessionId}
+            workspaceId={mobileWorkspaceId}
+            navigationGroups={navigationGroups}
+            onClose={() => {
+              mobileToolPanel.closePanel();
+            }}
+            onSelectPanel={(nextPanel) => {
+              mobileToolPanel.selectPanel(nextPanel);
+            }}
+            onSelectPanelBySwipe={(nextPanel) => {
+              if (nextPanel === null) {
+                mobileToolPanel.closePanel();
+                return;
+              }
+
+              mobileToolPanel.selectPanel(nextPanel);
+            }}
+          />
+        ) : null}
       </main>
       <SessionBranchTreePanel
         open={branchTreeOpen}
@@ -1011,18 +1070,6 @@ function LiveConversationPage({
           }
         }}
       />
-      <MobileCreateSessionSheet
-        open={createSessionOpen}
-        workspaces={mobileWorkspaces}
-        workspaceOptions={mobileWorkspaceOptions}
-        initialWorkspaceId={mobileWorkspaceId}
-        onClose={() => setCreateSessionOpen(false)}
-        onSelect={(workspaceId, provider) => {
-          setCreateSessionOpen(false);
-          writeMobileConversationPreviewMode("immersive");
-          startDraftSession(workspaceId, provider);
-        }}
-      />
     </>
   );
 }
@@ -1055,10 +1102,12 @@ function focusComposerInput(): void {
 
 function DraftConversationPage({
   draft,
-  navigate
+  navigate,
+  initialToolPanel
 }: {
   draft: DraftConversationContext;
   navigate: ReturnType<typeof useNavigate>;
+  initialToolPanel: MobileConversationToolPanel | null;
 }) {
   const {
     shellMode,
@@ -1068,19 +1117,27 @@ function DraftConversationPage({
     setSessionWorkspace,
     upsertNavigationSession,
     favoriteSessions,
+    unarchiveSession,
     startDraftSession
   } = useWorkbenchShell();
   const [sending, setSending] = useState(false);
   const [draftMessages, setDraftMessages] = useState<SessionMessageViewModel[]>([]);
-  const [createSessionOpen, setCreateSessionOpen] = useState(false);
   const fallbackCapabilities = useMemo(
     () => createProviderDraftCapabilities(draft.provider),
     [draft.provider]
   );
   const [capabilities, setCapabilities] = useState<ProviderCapabilitiesDto>(fallbackCapabilities);
   const showInlineHeader = shellMode !== "mobile";
-  const mobilePreview = useMobileConversationPreviewController(!showInlineHeader);
+  const { showToast } = useToast();
   const session = useMemo(() => createDraftSessionSummary(draft), [draft]);
+  const mobilePreview = useMobileConversationPreviewController(!showInlineHeader);
+  const mobileToolPanel = useMobileConversationToolPanelController({
+    enabled: !showInlineHeader,
+    initialPanel: initialToolPanel,
+    sessionId: draft.sessionId,
+    workspaceId: draft.workspaceId,
+    suspendMainGesture: !showInlineHeader && mobilePreview.isVisible
+  });
   const mobileFavoriteSessionIdSet = useMemo(
     () => new Set(favoriteSessions.map((item) => item.session.sessionId)),
     [favoriteSessions]
@@ -1126,6 +1183,13 @@ function DraftConversationPage({
     () => findNavigationWorkspaceTarget(navigationGroups, draft.workspaceId),
     [draft.workspaceId, navigationGroups]
   );
+  const mobileArchivedSessions = useMemo(
+    () =>
+      mobileWorkspaceTarget?.sessions.filter(
+        (item) => item.isArchived === true && !isRealSubagentSession(item)
+      ) ?? [],
+    [mobileWorkspaceTarget]
+  );
   const mobileWorkspaceSummary =
     mobileWorkspaceOptions.find((item) => item.workspace.id === draft.workspaceId)
     ?? (mobileWorkspaceTarget
@@ -1138,6 +1202,11 @@ function DraftConversationPage({
           meta: null
         }
       : null);
+  const mobileMainGestureHandlers = !showInlineHeader
+    ? mergeMobileGestureHandlers(mobilePreview.mainGestureHandlers, mobileToolPanel.mainGestureHandlers)
+    : null;
+  const [archiveFolderOpen, setArchiveFolderOpen] = useState(false);
+  const [archiveRestoreSessionId, setArchiveRestoreSessionId] = useState<string | null>(null);
   const mobileConversationMainRef = useRef<HTMLDivElement | null>(null);
   const mobileConversationPageRef = useRef<HTMLElement | null>(null);
   const mobileConversationHeaderRef = useRef<HTMLDivElement | null>(null);
@@ -1223,13 +1292,14 @@ function DraftConversationPage({
       ref={mobileConversationPageRef}
       className="workbench-page conversation-page-shell mobile-page-fixed-root mobile-conversation-page"
       data-mobile-shell={!showInlineHeader}
-      data-workspace-tone={currentWorkspaceContext?.tone ?? "root"}
-      data-worktree-depth={currentWorkspaceContext?.depth ?? 0}
       data-preview-mode={!showInlineHeader ? mobilePreview.displayMode : undefined}
       data-preview-dragging={!showInlineHeader ? mobilePreview.isDragging : undefined}
+      data-workspace-tone={currentWorkspaceContext?.tone ?? "root"}
+      data-worktree-depth={currentWorkspaceContext?.depth ?? 0}
+      data-tool-panel-open={!showInlineHeader ? mobileToolPanel.isOpen : undefined}
       style={{
-        ...(createWorkspaceToneStyle(currentWorkspaceContext) ?? {}),
-        ...(!showInlineHeader ? mobilePreview.pageStyle : {})
+        ...(!showInlineHeader ? mobilePreview.pageStyle : {}),
+        ...(createWorkspaceToneStyle(currentWorkspaceContext) ?? {})
       }}
     >
       {showInlineHeader ? (
@@ -1242,7 +1312,7 @@ function DraftConversationPage({
         <MobileWorkspaceSwitcherHeader
           containerRef={mobileConversationHeaderRef}
           className="mobile-conversation-page-header"
-          gestureHandlers={mobilePreview.mainGestureHandlers}
+          gestureHandlers={mobileMainGestureHandlers ?? undefined}
           currentWorkspace={
             mobileWorkspaceSummary
               ? {
@@ -1265,7 +1335,7 @@ function DraftConversationPage({
       ) : null}
       {!showInlineHeader ? (
         <MobileConversationPreviewRail
-          visible={mobilePreview.isVisible}
+          visible={!mobileToolPanel.isOpen && mobilePreview.isVisible}
           widthPx={mobilePreview.previewWidthPx}
           isDragging={mobilePreview.isDragging}
           gestureHandlers={mobilePreview.railGestureHandlers}
@@ -1274,24 +1344,33 @@ function DraftConversationPage({
           favoriteItems={mobileFavoritePreviewItems}
           items={mobilePreviewItems}
           expandedRootIds={expandedMobilePreviewRootIds}
-          workspaceSectionLabel={t("shell.mobileConversationCurrentWorkspaceSection")}
+          workspaceSectionLabel={mobileWorkspaceSummary?.label ?? t("shell.mobileConversationCurrentWorkspaceSection")}
           onCreateSession={() => {
-            setCreateSessionOpen(true);
+            startDraftSession(draft.workspaceId, draft.provider);
           }}
-          onToggleSubsessions={(nextSessionId) => {
+          archiveFolderActionLabel={mobileArchivedSessions.length > 0 ? t("shell.archiveFolderLabel") : undefined}
+          onOpenArchiveFolder={
+            mobileArchivedSessions.length > 0
+              ? () => {
+                  setArchiveFolderOpen(true);
+                }
+              : undefined
+          }
+          onToggleSubsessions={(targetSessionId) => {
             setExpandedMobilePreviewRootIds((current) =>
-              current.includes(nextSessionId)
-                ? current.filter((item) => item !== nextSessionId)
-                : [...current, nextSessionId]
+              current.includes(targetSessionId)
+                ? current.filter((item) => item !== targetSessionId)
+                : [...current, targetSessionId]
             );
           }}
           onActivate={(entry) => {
-            writeMobileConversationPreviewMode("preview");
+            mobilePreview.closePreview();
+            selectWorkspace(entry.workspace.id);
             navigate(buildWorkspaceSessionPath(entry.workspace.id, entry.session.sessionId));
           }}
         />
       ) : null}
-      <div className="mobile-conversation-stage" {...(!showInlineHeader ? mobilePreview.mainGestureHandlers : {})}>
+      <div className="mobile-conversation-stage" {...(mobileMainGestureHandlers ?? {})}>
         <div ref={mobileConversationMainRef} className="mobile-conversation-main">
           <ConnectionBanner connectionState="closed" onReconnect={() => {}} />
             <div className="conversation-timeline-shell">
@@ -1307,111 +1386,154 @@ function DraftConversationPage({
                 onRetryMessage={() => {}}
               />
             </div>
-          <ComposerPanel
-            capabilities={capabilities}
-            draftStorageId={draft.sessionId}
-            panelRef={!showInlineHeader ? setMobileComposerPanelElement : undefined}
-            portalContainer={!showInlineHeader ? composerPortalTarget : null}
-            contextUsage={null}
-            taskProvider={draft.provider}
-            taskMessages={draftMessages}
-            isSubmitting={sending}
-            isRunning={false}
-            onSend={async (content, options) => {
-              const clientRequestId = createClientRequestId();
-              setDraftMessages((current) => [
-                ...current,
-                createPendingMessage(
-                  draft.sessionId,
-                  content,
-                  clientRequestId,
-                  options?.attachmentMeta ?? [],
-                  options?.attachments ?? []
-                )
-              ]);
-              setSending(true);
-              const startLiveStartedAtMs = performance.now();
-              logPerfDebug("session_send.start_live.client_start", {
-                draftSessionId: draft.sessionId,
-                workspaceId: draft.workspaceId,
-                provider: draft.provider,
-                clientRequestId,
-                contentLength: content.length
-              });
-
-              try {
-                const permissionMode = userPreferenceStore.getState().profile.defaultPermissionMode;
-                const created = await startLiveSession({
+          {!mobileToolPanel.isOpen ? (
+            <ComposerPanel
+              capabilities={capabilities}
+              draftStorageId={draft.sessionId}
+              panelRef={!showInlineHeader ? setMobileComposerPanelElement : undefined}
+              portalContainer={!showInlineHeader ? composerPortalTarget : null}
+              contextUsage={null}
+              taskProvider={draft.provider}
+              taskMessages={draftMessages}
+              isSubmitting={sending}
+              isRunning={false}
+              onSend={async (content, options) => {
+                const clientRequestId = createClientRequestId();
+                setDraftMessages((current) => [
+                  ...current,
+                  createPendingMessage(
+                    draft.sessionId,
+                    content,
+                    clientRequestId,
+                    options?.attachmentMeta ?? [],
+                    options?.attachments ?? []
+                  )
+                ]);
+                setSending(true);
+                const startLiveStartedAtMs = performance.now();
+                logPerfDebug("session_send.start_live.client_start", {
+                  draftSessionId: draft.sessionId,
                   workspaceId: draft.workspaceId,
                   provider: draft.provider,
-                  content,
                   clientRequestId,
-                  model: options?.model ?? null,
-                  reasoningLevel: options?.reasoningLevel ?? null,
-                  permissionMode: permissionMode === "default" ? null : permissionMode,
-                  attachments: options?.attachments ?? []
-                });
-                logPerfDebug("session_send.start_live.client_response", {
-                  draftSessionId: draft.sessionId,
-                  sessionId: created.sessionId,
-                  workspaceId: created.session?.workspaceId ?? draft.workspaceId,
-                  provider: created.provider,
-                  clientRequestId,
-                  durationMs: Math.round(performance.now() - startLiveStartedAtMs),
-                  returnedMessageId: created.message?.messageId ?? null
+                  contentLength: content.length
                 });
 
-                if (created.session) {
-                  upsertNavigationSession(created.session);
-                }
+                try {
+                  const permissionMode = userPreferenceStore.getState().profile.defaultPermissionMode;
+                  const created = await startLiveSession({
+                    workspaceId: draft.workspaceId,
+                    provider: draft.provider,
+                    content,
+                    clientRequestId,
+                    model: options?.model ?? null,
+                    reasoningLevel: options?.reasoningLevel ?? null,
+                    permissionMode: permissionMode === "default" ? null : permissionMode,
+                    attachments: options?.attachments ?? []
+                  });
+                  logPerfDebug("session_send.start_live.client_response", {
+                    draftSessionId: draft.sessionId,
+                    sessionId: created.sessionId,
+                    workspaceId: created.session?.workspaceId ?? draft.workspaceId,
+                    provider: created.provider,
+                    clientRequestId,
+                    durationMs: Math.round(performance.now() - startLiveStartedAtMs),
+                    returnedMessageId: created.message?.messageId ?? null
+                  });
 
-                const resolvedWorkspaceId = created.session?.workspaceId?.trim() || draft.workspaceId;
+                  if (created.session) {
+                    upsertNavigationSession(created.session);
+                  }
 
-                setSessionWorkspace(created.sessionId, resolvedWorkspaceId);
-                writeMobileConversationPreviewMode("preview");
-                navigate(buildWorkspaceSessionPath(resolvedWorkspaceId, created.sessionId), {
-                  replace: true,
-                  state: created.message
-                    ? {
-                        bootstrap: {
-                          sessionId: created.sessionId,
-                          messages: [created.message]
+                  const resolvedWorkspaceId = created.session?.workspaceId?.trim() || draft.workspaceId;
+
+                  setSessionWorkspace(created.sessionId, resolvedWorkspaceId);
+                  writeMobileConversationPreviewMode("preview");
+                  navigate(buildWorkspaceSessionPath(resolvedWorkspaceId, created.sessionId), {
+                    replace: true,
+                    state: created.message
+                      ? {
+                          bootstrap: {
+                            sessionId: created.sessionId,
+                            messages: [created.message]
+                          }
                         }
-                      }
-                    : null
-                });
-                requestNavigationRefresh();
-              } catch (error) {
-                logPerfDebug("session_send.start_live.client_error", {
-                  draftSessionId: draft.sessionId,
-                  workspaceId: draft.workspaceId,
-                  provider: draft.provider,
-                  clientRequestId,
-                  durationMs: Math.round(performance.now() - startLiveStartedAtMs),
-                  error: error instanceof Error ? error.message : String(error)
-                });
-                setDraftMessages((current) => markPendingAsFailed(current, clientRequestId));
-                throw error;
-              } finally {
-                setSending(false);
-              }
-            }}
-          />
+                      : null
+                  });
+                  requestNavigationRefresh();
+                } catch (error) {
+                  logPerfDebug("session_send.start_live.client_error", {
+                    draftSessionId: draft.sessionId,
+                    workspaceId: draft.workspaceId,
+                    provider: draft.provider,
+                    clientRequestId,
+                    durationMs: Math.round(performance.now() - startLiveStartedAtMs),
+                    error: error instanceof Error ? error.message : String(error)
+                  });
+                  setDraftMessages((current) => markPendingAsFailed(current, clientRequestId));
+                  throw error;
+                } finally {
+                  setSending(false);
+                }
+              }}
+            />
+          ) : null}
         </div>
       </div>
+      {!showInlineHeader ? (
+        <MobileConversationToolPanelOverlay
+          activePanel={mobileToolPanel.activePanel}
+          open={mobileToolPanel.isOpen}
+          sessionId={draft.sessionId}
+          workspaceId={draft.workspaceId}
+          navigationGroups={navigationGroups}
+          onClose={() => {
+            mobileToolPanel.closePanel();
+          }}
+          onSelectPanel={(nextPanel) => {
+            mobileToolPanel.selectPanel(nextPanel);
+          }}
+          onSelectPanelBySwipe={(nextPanel) => {
+            if (nextPanel === null) {
+              mobileToolPanel.closePanel();
+              return;
+            }
+
+            mobileToolPanel.selectPanel(nextPanel);
+          }}
+        />
+      ) : null}
+      <ConversationArchiveFolderModal
+        open={archiveFolderOpen}
+        workspaceName={mobileWorkspaceTarget?.workspace.name ?? null}
+        sessions={mobileArchivedSessions}
+        restoringSessionId={archiveRestoreSessionId}
+        onClose={() => {
+          if (archiveRestoreSessionId) {
+            return;
+          }
+          setArchiveFolderOpen(false);
+        }}
+        onRestore={async (restoreSessionId) => {
+          setArchiveRestoreSessionId(restoreSessionId);
+
+          try {
+            await unarchiveSession(restoreSessionId);
+            showToast({
+              title: t("shell.archiveRestored"),
+              tone: "success"
+            });
+          } catch (error) {
+            showToast({
+              title: error instanceof Error ? error.message : t("shell.navigationLoadFailed"),
+              tone: "error"
+            });
+          } finally {
+            setArchiveRestoreSessionId(null);
+          }
+        }}
+      />
     </main>
-    <MobileCreateSessionSheet
-      open={createSessionOpen}
-      workspaces={mobileWorkspaces}
-      workspaceOptions={mobileWorkspaceOptions}
-      initialWorkspaceId={draft.workspaceId}
-      onClose={() => setCreateSessionOpen(false)}
-      onSelect={(workspaceId, provider) => {
-        setCreateSessionOpen(false);
-        writeMobileConversationPreviewMode("immersive");
-        startDraftSession(workspaceId, provider);
-      }}
-    />
     </>
   );
 }
@@ -1703,6 +1825,373 @@ interface MobileConversationPreviewGestureHandlers {
   onTouchCancel: (event: ReactTouchEvent<HTMLElement>) => void;
 }
 
+function resolveMobileConversationToolPanel(
+  value: string | null | undefined
+): MobileConversationToolPanel | null {
+  if (value === "files" || value === "git" || value === "processes") {
+    return value;
+  }
+
+  return null;
+}
+
+function mergeMobileGestureHandlers(
+  ...handlersList: Array<MobileConversationPreviewGestureHandlers | null | undefined>
+): MobileConversationPreviewGestureHandlers {
+  const handlers = handlersList.filter(Boolean) as MobileConversationPreviewGestureHandlers[];
+
+  return {
+    onTouchStart(event) {
+      handlers.forEach((item) => item.onTouchStart(event));
+    },
+    onTouchMove(event) {
+      handlers.forEach((item) => item.onTouchMove(event));
+    },
+    onTouchEnd(event) {
+      handlers.forEach((item) => item.onTouchEnd(event));
+    },
+    onTouchCancel(event) {
+      handlers.forEach((item) => item.onTouchCancel(event));
+    }
+  };
+}
+
+function useMobileConversationToolPanelController(input: {
+  enabled: boolean;
+  initialPanel: MobileConversationToolPanel | null;
+  sessionId: string;
+  workspaceId: string | null;
+  suspendMainGesture?: boolean;
+}) {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const haptics = useHaptics();
+  const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+  const [selectedPanel, setSelectedPanel] = useState<MobileConversationToolPanel>(() =>
+    input.initialPanel ?? readMobileConversationToolPanel()
+  );
+  const activePanel = input.initialPanel ?? selectedPanel;
+  const isOpen = input.enabled && input.workspaceId !== null && input.initialPanel !== null;
+
+  useEffect(() => {
+    if (!input.enabled) {
+      touchStartRef.current = null;
+      return;
+    }
+
+    const nextPanel = input.initialPanel ?? readMobileConversationToolPanel();
+    setSelectedPanel(nextPanel);
+    writeMobileConversationToolPanel(nextPanel);
+  }, [input.enabled, input.initialPanel]);
+
+  function navigateToolPanel(
+    nextPanel: MobileConversationToolPanel | null,
+    options?: {
+      replace?: boolean;
+    }
+  ) {
+    const nextSearchParams = new URLSearchParams(location.search);
+
+    if (nextPanel) {
+      nextSearchParams.set("toolPanel", nextPanel);
+      setSelectedPanel(nextPanel);
+      writeMobileConversationToolPanel(nextPanel);
+    } else {
+      nextSearchParams.delete("toolPanel");
+    }
+
+    const nextSearch = nextSearchParams.toString();
+    navigate(
+      {
+        pathname: location.pathname,
+        search: nextSearch ? `?${nextSearch}` : ""
+      },
+      { replace: options?.replace ?? false }
+    );
+  }
+
+  function selectPanel(nextPanel: MobileConversationToolPanel) {
+    void haptics.trigger("selection");
+    navigateToolPanel(nextPanel, {
+      replace: isOpen
+    });
+  }
+
+  function closePanel() {
+    if (!isOpen) {
+      return;
+    }
+
+    void haptics.trigger("gesture");
+    navigateToolPanel(null, {
+      replace: true
+    });
+  }
+
+  function openPanel(nextPanel?: MobileConversationToolPanel) {
+    if (!input.enabled || !input.workspaceId) {
+      return;
+    }
+
+    const targetPanel = nextPanel ?? activePanel;
+    void haptics.trigger("gesture");
+    navigateToolPanel(targetPanel);
+  }
+
+  function handleTouchStart(event: ReactTouchEvent<HTMLElement>) {
+    if (!input.enabled || event.changedTouches.length !== 1) {
+      touchStartRef.current = null;
+      return;
+    }
+
+    if (shouldIgnoreMobileConversationToolGesture(event.target)) {
+      touchStartRef.current = null;
+      return;
+    }
+
+    const touch = event.changedTouches[0];
+    touchStartRef.current = {
+      x: touch.clientX,
+      y: touch.clientY
+    };
+  }
+
+  function settleMainGesture(event: ReactTouchEvent<HTMLElement>) {
+    const touchStart = touchStartRef.current;
+    touchStartRef.current = null;
+
+    if (!touchStart || event.changedTouches.length !== 1 || isOpen || input.suspendMainGesture) {
+      return;
+    }
+
+    const touch = event.changedTouches[0];
+    const deltaX = touch.clientX - touchStart.x;
+    const deltaY = touch.clientY - touchStart.y;
+
+    if (
+      deltaX > -56
+      || Math.abs(deltaX) <= Math.abs(deltaY) * 1.15
+    ) {
+      return;
+    }
+
+    openPanel();
+  }
+
+  function settlePanelGesture(event: ReactTouchEvent<HTMLElement>) {
+    const touchStart = touchStartRef.current;
+    touchStartRef.current = null;
+
+    if (!touchStart || event.changedTouches.length !== 1 || !isOpen) {
+      return;
+    }
+
+    const touch = event.changedTouches[0];
+    const deltaX = touch.clientX - touchStart.x;
+    const deltaY = touch.clientY - touchStart.y;
+
+    if (
+      deltaX < 56
+      || Math.abs(deltaX) <= Math.abs(deltaY) * 1.15
+    ) {
+      return;
+    }
+
+    closePanel();
+  }
+
+  const mainGestureHandlers: MobileConversationPreviewGestureHandlers = {
+    onTouchStart: handleTouchStart,
+    onTouchMove: () => undefined,
+    onTouchEnd: settleMainGesture,
+    onTouchCancel: () => {
+      touchStartRef.current = null;
+    }
+  };
+  const panelGestureHandlers: MobileConversationPreviewGestureHandlers = {
+    onTouchStart: handleTouchStart,
+    onTouchMove: () => undefined,
+    onTouchEnd: settlePanelGesture,
+    onTouchCancel: () => {
+      touchStartRef.current = null;
+    }
+  };
+
+  return {
+    activePanel,
+    closePanel,
+    isOpen,
+    mainGestureHandlers,
+    openPanel,
+    panelGestureHandlers,
+    selectPanel
+  };
+}
+
+function MobileConversationToolPanelOverlay(props: {
+  open: boolean;
+  activePanel: MobileConversationToolPanel;
+  workspaceId: string;
+  sessionId: string;
+  navigationGroups: ReturnType<typeof useWorkbenchShell>["navigationGroups"];
+  onClose: () => void;
+  onSelectPanel: (panel: MobileConversationToolPanel) => void;
+  onSelectPanelBySwipe: (panel: MobileConversationToolPanel | null) => void;
+}) {
+  const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+
+  if (!props.open) {
+    return null;
+  }
+
+  function handleTouchStart(event: ReactTouchEvent<HTMLElement>) {
+    if (event.changedTouches.length !== 1) {
+      touchStartRef.current = null;
+      return;
+    }
+
+    if (shouldIgnoreMobileConversationToolPanelSwipeTarget(event.target)) {
+      touchStartRef.current = null;
+      return;
+    }
+
+    const touch = event.changedTouches[0];
+    touchStartRef.current = {
+      x: touch.clientX,
+      y: touch.clientY
+    };
+  }
+
+  function handleTouchEnd(event: ReactTouchEvent<HTMLElement>) {
+    const touchStart = touchStartRef.current;
+    touchStartRef.current = null;
+
+    if (!touchStart || event.changedTouches.length !== 1) {
+      return;
+    }
+
+    const touch = event.changedTouches[0];
+    const deltaX = touch.clientX - touchStart.x;
+    const deltaY = touch.clientY - touchStart.y;
+
+    if (
+      Math.abs(deltaX) < 56
+      || Math.abs(deltaX) <= Math.abs(deltaY) * 1.15
+    ) {
+      return;
+    }
+
+    const panels: MobileConversationToolPanel[] = ["files", "git", "processes"];
+    const activeIndex = panels.indexOf(props.activePanel);
+
+    if (deltaX < 0) {
+      props.onSelectPanelBySwipe(panels[Math.min(panels.length - 1, activeIndex + 1)] ?? props.activePanel);
+      return;
+    }
+
+    if (activeIndex === 0) {
+      props.onSelectPanelBySwipe(null);
+      return;
+    }
+
+    props.onSelectPanelBySwipe(panels[Math.max(0, activeIndex - 1)] ?? props.activePanel);
+  }
+
+  return (
+    <section
+      className="mobile-conversation-tool-panel"
+      data-panel={props.activePanel}
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+      onTouchCancel={() => {
+        touchStartRef.current = null;
+      }}
+    >
+      <header className="mobile-conversation-tool-panel-header" data-preview-gesture="ignore">
+        <button
+          type="button"
+          className="mobile-conversation-tool-panel-back"
+          aria-label={t("shell.mobileConversationToolCloseAction")}
+          title={t("shell.mobileConversationToolCloseAction")}
+          onClick={props.onClose}
+        >
+          <span aria-hidden="true">‹</span>
+        </button>
+        <div
+          className="mobile-conversation-tool-panel-tabs"
+          role="tablist"
+          aria-label={t("shell.mobileConversationToolTabsLabel")}
+        >
+          {(["files", "git", "processes"] as const).map((panelId) => (
+            <button
+              key={panelId}
+              type="button"
+              role="tab"
+              aria-selected={props.activePanel === panelId}
+              className="mobile-conversation-tool-panel-tab"
+              onClick={() => {
+                props.onSelectPanel(panelId);
+              }}
+            >
+              {panelId === "files"
+                ? t("shell.filesEntry")
+                : panelId === "git"
+                  ? t("shell.gitEntry")
+                  : t("shell.mobileConversationToolProcessesTab")}
+            </button>
+          ))}
+        </div>
+      </header>
+      <div className="mobile-conversation-tool-panel-body">
+        {props.activePanel === "files" ? (
+          <FileContextPanel
+            className="mobile-conversation-tool-surface"
+            hideHeading
+            sessionId={props.sessionId}
+            workspaceId={props.workspaceId}
+          />
+        ) : props.activePanel === "git" ? (
+          <GitSidebar
+            className="mobile-conversation-tool-surface"
+            panelActive
+            workspaceId={props.workspaceId}
+          />
+        ) : (
+          <TerminalManagerPanel
+            className="mobile-conversation-tool-surface mobile-tool-native-panel mobile-tool-process-panel"
+            currentWorkspaceId={props.workspaceId}
+            navigationGroups={props.navigationGroups}
+          />
+        )}
+      </div>
+    </section>
+  );
+}
+
+function shouldIgnoreMobileConversationToolGesture(target: EventTarget | null) {
+  if (!(target instanceof Element)) {
+    return false;
+  }
+
+  return Boolean(
+    target.closest(
+      "input, textarea, select, option, label, button, a, [contenteditable='true'], [data-preview-gesture='ignore']"
+    )
+  );
+}
+
+function shouldIgnoreMobileConversationToolPanelSwipeTarget(target: EventTarget | null) {
+  if (!(target instanceof Element)) {
+    return false;
+  }
+
+  return Boolean(
+    target.closest(
+      "input, textarea, select, option, [contenteditable='true']"
+    )
+  );
+}
+
 function useMobileConversationPreviewController(enabled: boolean) {
   const haptics = useHaptics();
   const [previewMode, setPreviewMode] = useState<MobileConversationPreviewMode>(() =>
@@ -1798,19 +2287,14 @@ function useMobileConversationPreviewController(enabled: boolean) {
   }
 
   function handleTouchStart(source: "main" | "rail", event: ReactTouchEvent<HTMLElement>) {
-    if (!enabled || event.touches.length !== 1) {
+    const touch = event.touches[0] ?? event.changedTouches[0];
+
+    if (!enabled || !touch) {
       gestureRef.current = null;
       return;
     }
 
     if (shouldIgnorePreviewGestureTarget(event.target)) {
-      gestureRef.current = null;
-      return;
-    }
-
-    const touch = event.touches[0];
-
-    if (!touch) {
       gestureRef.current = null;
       return;
     }

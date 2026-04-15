@@ -20,7 +20,7 @@ describe("AdaptiveMobilePaneLayout", () => {
     expect(shouldDockAuxiliaryPanel(mode)).toBe(false);
   });
 
-  it("medium 会在会话页停靠导航面板，在工具页停靠辅助面板", () => {
+  it("medium 会在会话页停靠导航面板，在终端入口页停靠辅助面板", () => {
     const sessionsMode = resolveAdaptiveMobilePaneLayout({
       viewportClass: "medium",
       activeEntry: "sessions",
@@ -29,7 +29,7 @@ describe("AdaptiveMobilePaneLayout", () => {
     });
     const toolsMode = resolveAdaptiveMobilePaneLayout({
       viewportClass: "medium",
-      activeEntry: "tools",
+      activeEntry: "butler",
       hasNavigationPanel: true,
       hasAuxiliaryPanel: true
     });

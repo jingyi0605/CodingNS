@@ -37,6 +37,7 @@ import {
   listButlerPatrolPlans,
   startButlerInboxItemSession
 } from "../api/butler-api";
+import { ButlerLoadingState } from "../components/ButlerLoadingState";
 import { BUTLER_INBOX_UPDATED_EVENT } from "../runtime/butler-inbox-events";
 import { subscribeButlerRecordsUpdated } from "../runtime/butler-records-events";
 import { ButlerRuntimeStore, useButlerRuntimeStore } from "../runtime/butler-runtime-store";
@@ -2140,22 +2141,6 @@ function SettingsSidebarContent(props: {
         >
           {props.savingSettings ? t("shell.butlerSettingsSaving") : t("shell.butlerSettingsSaveAction")}
         </button>
-      </div>
-    </section>
-  );
-}
-
-function ButlerLoadingState() {
-  return (
-    <section className="butler-loading-panel" role="status" aria-live="polite">
-      <div className="butler-loading-orb" aria-hidden="true">
-        <span className="butler-loading-ring butler-loading-ring-primary" />
-        <span className="butler-loading-ring butler-loading-ring-secondary" />
-        <span className="butler-loading-core" />
-      </div>
-      <div className="butler-loading-copy">
-        <h1>{t("shell.butlerLoadingTitle")}</h1>
-        <p>{t("shell.butlerLoadingDescription")}</p>
       </div>
     </section>
   );
