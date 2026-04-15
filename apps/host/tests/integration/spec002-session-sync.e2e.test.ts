@@ -695,6 +695,328 @@ describe("spec002 会话同步核心", () => {
     );
   });
 
+  it("Claude 新会话首次回填真 binding 时，目标 binding 和 index 尚未存在也会接管重复记录", () => {
+    const fixture = createEmptyFixture();
+    const config = resolveHostConfig({
+      databasePath: ":memory:",
+      claudeCodeHomeDir: fixture.claudeHomeDir,
+      codexHomeDir: fixture.codexHomeDir
+    });
+    const database = createDatabaseClient(":memory:");
+    const workspaceRepository = new WorkspaceRepository(database.db);
+    const sessionBindingRepository = new SessionBindingRepository(database.db);
+    const sessionIndexRepository = new SessionIndexRepository(database.db);
+    const sessionStateRepository = new SessionStateRepository(database.db);
+    const sessionStatusSnapshotRepository = new SessionStatusSnapshotRepository(database.db);
+    const sessionChangedFileService = new SessionChangedFileService(
+      new SessionChangedFileRepository(database.db)
+    );
+    const sessionMessageAttachmentService = new SessionMessageAttachmentService(
+      new SessionMessageAttachmentRepository(database.db),
+      config
+    );
+    const sessionHistoryService = new SessionHistoryService(
+      database.db,
+      workspaceRepository,
+      sessionBindingRepository,
+      sessionChangedFileService,
+      sessionIndexRepository,
+      sessionMessageAttachmentService,
+      sessionStateRepository,
+      sessionStatusSnapshotRepository,
+      config
+    );
+    const runtimeSessionId = "runtime-session-first-bind";
+    const duplicateSessionId = "duplicate-session-first-bind";
+    const providerSessionId = "claude-session-first-bind";
+    const rawStoreRef = path.join(
+      fixture.claudeHomeDir,
+      "projects",
+      "fixture-workspace",
+      `${providerSessionId}.jsonl`
+    );
+
+    activeEmptyFixtures.push(fixture);
+    activeClosers.push(() => database.close());
+
+    database.db
+      .prepare(
+        `INSERT INTO auth_users (id, username, password_hash, role, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        "user-1",
+        "tester",
+        "hash",
+        "admin",
+        "2026-03-28T10:00:00.000Z",
+        "2026-03-28T10:00:00.000Z"
+      );
+
+    workspaceRepository.create({
+      id: "workspace-1",
+      name: "Fixture Workspace",
+      path: fixture.workspaceDir,
+      repoRoot: fixture.workspaceDir,
+      favorite: false,
+      createdAt: "2026-03-28T10:00:00.000Z",
+      updatedAt: "2026-03-28T10:00:00.000Z",
+      removedAt: null
+    });
+
+    sessionBindingRepository.upsert({
+      sessionId: duplicateSessionId,
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      providerSessionId,
+      rawStoreRef,
+      createdAt: "2026-03-28T10:00:04.000Z",
+      updatedAt: "2026-03-28T10:00:04.000Z"
+    });
+    sessionIndexRepository.upsert({
+      sessionId: duplicateSessionId,
+      workspaceId: "workspace-1",
+      provider: "claude-code",
+      title: "后台发现出来的重复记录",
+      messageCount: 6,
+      isArchived: false,
+      lastMessageAt: "2026-03-28T10:00:05.000Z",
+      createdAt: "2026-03-28T10:00:04.000Z",
+      updatedAt: "2026-03-28T10:00:05.000Z"
+    });
+    sessionStateRepository.upsert({
+      sessionId: duplicateSessionId,
+      userId: "user-1",
+      runningState: "idle",
+      activitySource: "none",
+      favorite: true,
+      lastEventAt: "2026-03-28T10:00:05.000Z",
+      completedAt: null,
+      lastSeenAt: null,
+      updatedAt: "2026-03-28T10:00:05.000Z"
+    });
+    sessionStatusSnapshotRepository.upsert({
+      sessionId: duplicateSessionId,
+      syncStatus: "error",
+      syncCursor: "cursor-1",
+      lastSyncAt: "2026-03-28T10:00:05.000Z",
+      lastErrorCode: "CLAUDE_SYNC_FAILED",
+      lastErrorDetail: "后台发现记录同步失败",
+      resumedAt: null,
+      updatedAt: "2026-03-28T10:00:05.000Z"
+    });
+
+    expect(() =>
+      sessionHistoryService.persistSessionBinding(runtimeSessionId, "workspace-1", {
+        provider: "claude-code",
+        providerSessionId,
+        rawStoreRef
+      })
+    ).not.toThrow();
+
+    expect(sessionBindingRepository.findBySessionId(runtimeSessionId)).toEqual(
+      expect.objectContaining({
+        sessionId: runtimeSessionId,
+        provider: "claude-code",
+        providerSessionId,
+        rawStoreRef
+      })
+    );
+    expect(sessionIndexRepository.findIndexRecordBySessionId(runtimeSessionId)).toEqual(
+      expect.objectContaining({
+        sessionId: runtimeSessionId,
+        title: "后台发现出来的重复记录",
+        messageCount: 6,
+        lastMessageAt: "2026-03-28T10:00:05.000Z"
+      })
+    );
+    expect(sessionStatusSnapshotRepository.findBySessionId(runtimeSessionId)).toEqual(
+      expect.objectContaining({
+        sessionId: runtimeSessionId,
+        syncStatus: "error",
+        syncCursor: "cursor-1",
+        lastErrorCode: "CLAUDE_SYNC_FAILED"
+      })
+    );
+    expect(sessionBindingRepository.findBySessionId(duplicateSessionId)).toEqual(
+      expect.objectContaining({
+        sessionId: duplicateSessionId,
+        providerSessionId: `alias://claude-code/${runtimeSessionId}/${duplicateSessionId}`,
+        rawStoreRef: `alias://claude-code/${runtimeSessionId}/${duplicateSessionId}`
+      })
+    );
+    expect(sessionHistoryService.getBindingOrThrow(duplicateSessionId)).toEqual(
+      expect.objectContaining({
+        sessionId: runtimeSessionId,
+        providerSessionId,
+        rawStoreRef
+      })
+    );
+  });
+
+  it("Codex 新会话首次回填真 binding 时，目标 binding 和 index 尚未存在也会接管重复记录", () => {
+    const fixture = createEmptyFixture();
+    const config = resolveHostConfig({
+      databasePath: ":memory:",
+      claudeCodeHomeDir: fixture.claudeHomeDir,
+      codexHomeDir: fixture.codexHomeDir
+    });
+    const database = createDatabaseClient(":memory:");
+    const workspaceRepository = new WorkspaceRepository(database.db);
+    const sessionBindingRepository = new SessionBindingRepository(database.db);
+    const sessionIndexRepository = new SessionIndexRepository(database.db);
+    const sessionStateRepository = new SessionStateRepository(database.db);
+    const sessionStatusSnapshotRepository = new SessionStatusSnapshotRepository(database.db);
+    const sessionChangedFileService = new SessionChangedFileService(
+      new SessionChangedFileRepository(database.db)
+    );
+    const sessionMessageAttachmentService = new SessionMessageAttachmentService(
+      new SessionMessageAttachmentRepository(database.db),
+      config
+    );
+    const sessionHistoryService = new SessionHistoryService(
+      database.db,
+      workspaceRepository,
+      sessionBindingRepository,
+      sessionChangedFileService,
+      sessionIndexRepository,
+      sessionMessageAttachmentService,
+      sessionStateRepository,
+      sessionStatusSnapshotRepository,
+      config
+    );
+    const runtimeSessionId = "runtime-session-codex-first-bind";
+    const duplicateSessionId = "duplicate-session-codex-first-bind";
+    const providerSessionId = "codex-session-first-bind";
+    const rawStoreRef = writeCodexSessionFile({
+      codexHomeDir: fixture.codexHomeDir,
+      workspaceDir: fixture.workspaceDir,
+      fileName: providerSessionId,
+      timestamps: [
+        "2026-03-23T09:00:00.000Z",
+        "2026-03-23T09:00:01.000Z",
+        "2026-03-23T09:00:02.000Z"
+      ]
+    });
+
+    activeEmptyFixtures.push(fixture);
+    activeClosers.push(() => database.close());
+
+    database.db
+      .prepare(
+        `INSERT INTO auth_users (id, username, password_hash, role, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        "user-1",
+        "tester",
+        "hash",
+        "admin",
+        "2026-03-28T11:00:00.000Z",
+        "2026-03-28T11:00:00.000Z"
+      );
+
+    workspaceRepository.create({
+      id: "workspace-1",
+      name: "Fixture Workspace",
+      path: fixture.workspaceDir,
+      repoRoot: fixture.workspaceDir,
+      favorite: false,
+      createdAt: "2026-03-28T11:00:00.000Z",
+      updatedAt: "2026-03-28T11:00:00.000Z",
+      removedAt: null
+    });
+
+    sessionBindingRepository.upsert({
+      sessionId: duplicateSessionId,
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId,
+      rawStoreRef,
+      createdAt: "2026-03-28T11:00:04.000Z",
+      updatedAt: "2026-03-28T11:00:04.000Z"
+    });
+    sessionIndexRepository.upsert({
+      sessionId: duplicateSessionId,
+      workspaceId: "workspace-1",
+      provider: "codex",
+      title: "后台发现出来的 Codex 会话",
+      messageCount: 6,
+      isArchived: false,
+      lastMessageAt: "2026-03-28T11:00:05.000Z",
+      createdAt: "2026-03-28T11:00:04.000Z",
+      updatedAt: "2026-03-28T11:00:05.000Z"
+    });
+    sessionStateRepository.upsert({
+      sessionId: duplicateSessionId,
+      userId: "user-1",
+      runningState: "idle",
+      activitySource: "none",
+      favorite: true,
+      lastEventAt: "2026-03-28T11:00:05.000Z",
+      completedAt: null,
+      lastSeenAt: null,
+      updatedAt: "2026-03-28T11:00:05.000Z"
+    });
+    sessionStatusSnapshotRepository.upsert({
+      sessionId: duplicateSessionId,
+      syncStatus: "error",
+      syncCursor: "cursor-codex-1",
+      lastSyncAt: "2026-03-28T11:00:05.000Z",
+      lastErrorCode: "CODEX_SYNC_FAILED",
+      lastErrorDetail: "Codex 后台发现记录同步失败",
+      resumedAt: null,
+      updatedAt: "2026-03-28T11:00:05.000Z"
+    });
+
+    expect(() =>
+      sessionHistoryService.persistSessionBinding(runtimeSessionId, "workspace-1", {
+        provider: "codex",
+        providerSessionId,
+        rawStoreRef
+      })
+    ).not.toThrow();
+
+    expect(sessionBindingRepository.findBySessionId(runtimeSessionId)).toEqual(
+      expect.objectContaining({
+        sessionId: runtimeSessionId,
+        provider: "codex",
+        providerSessionId,
+        rawStoreRef
+      })
+    );
+    expect(sessionIndexRepository.findIndexRecordBySessionId(runtimeSessionId)).toEqual(
+      expect.objectContaining({
+        sessionId: runtimeSessionId,
+        title: "后台发现出来的 Codex 会话",
+        messageCount: 6,
+        lastMessageAt: "2026-03-28T11:00:05.000Z"
+      })
+    );
+    expect(sessionStatusSnapshotRepository.findBySessionId(runtimeSessionId)).toEqual(
+      expect.objectContaining({
+        sessionId: runtimeSessionId,
+        syncStatus: "error",
+        syncCursor: "cursor-codex-1",
+        lastErrorCode: "CODEX_SYNC_FAILED"
+      })
+    );
+    expect(sessionBindingRepository.findBySessionId(duplicateSessionId)).toEqual(
+      expect.objectContaining({
+        sessionId: duplicateSessionId,
+        providerSessionId: `alias://codex/${runtimeSessionId}/${duplicateSessionId}`,
+        rawStoreRef: `alias://codex/${runtimeSessionId}/${duplicateSessionId}`
+      })
+    );
+    expect(sessionHistoryService.getBindingOrThrow(duplicateSessionId)).toEqual(
+      expect.objectContaining({
+        sessionId: runtimeSessionId,
+        providerSessionId,
+        rawStoreRef
+      })
+    );
+  });
+
   it("markSessionError 遇到已失效 session 时会直接跳过，不再触发外键异常", () => {
     const fixture = createEmptyFixture();
     const config = resolveHostConfig({

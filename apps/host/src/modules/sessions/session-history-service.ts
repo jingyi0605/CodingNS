@@ -2870,11 +2870,24 @@ export class SessionHistoryService {
       return;
     }
 
-    const targetBinding = this.sessionBindingRepository.findBySessionId(input.targetSessionId);
     const sourceBinding = this.sessionBindingRepository.findBySessionId(input.sourceSessionId);
 
-    if (!targetBinding || !sourceBinding) {
+    if (!sourceBinding) {
       return;
+    }
+
+    const targetBinding = this.sessionBindingRepository.findBySessionId(input.targetSessionId);
+
+    if (!targetBinding) {
+      this.sessionBindingRepository.upsert({
+        sessionId: input.targetSessionId,
+        workspaceId: input.workspaceId,
+        provider: input.provider as SessionBinding["provider"],
+        providerSessionId: buildPendingBindingValue(input.provider, input.targetSessionId),
+        rawStoreRef: buildPendingBindingValue(input.provider, input.targetSessionId),
+        createdAt: sourceBinding.createdAt,
+        updatedAt: input.timestamp
+      });
     }
 
     const targetIndex = this.sessionIndexRepository.findIndexRecordBySessionId(input.targetSessionId);
