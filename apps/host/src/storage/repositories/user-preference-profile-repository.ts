@@ -8,7 +8,7 @@ export class UserPreferenceProfileRepository {
   findByUserId(userId: string): UserPreferenceProfileRecord | null {
     const row = this.db
       .prepare(
-        `SELECT language, theme, default_permission_mode, providers_json, created_at, updated_at
+        `SELECT language, theme, auto_theme, default_permission_mode, providers_json, created_at, updated_at
          FROM user_preference_profiles
          WHERE user_id = ?`
       )
@@ -22,6 +22,7 @@ export class UserPreferenceProfileRepository {
       userId,
       language: row.language as UserPreferenceProfileRecord["language"],
       theme: row.theme as UserPreferenceProfileRecord["theme"],
+      autoTheme: row.auto_theme === 1,
       defaultPermissionMode: row.default_permission_mode as UserPreferenceProfileRecord["defaultPermissionMode"],
       providers: JSON.parse(row.providers_json) as UserPreferenceProfileRecord["providers"],
       createdAt: row.created_at,
@@ -36,14 +37,16 @@ export class UserPreferenceProfileRepository {
           user_id,
           language,
           theme,
+          auto_theme,
           default_permission_mode,
           providers_json,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(user_id) DO UPDATE SET
           language = excluded.language,
           theme = excluded.theme,
+          auto_theme = excluded.auto_theme,
           default_permission_mode = excluded.default_permission_mode,
           providers_json = excluded.providers_json,
           updated_at = excluded.updated_at`
@@ -52,6 +55,7 @@ export class UserPreferenceProfileRepository {
         record.userId,
         record.language,
         record.theme,
+        record.autoTheme ? 1 : 0,
         record.defaultPermissionMode,
         JSON.stringify(record.providers),
         record.createdAt,
@@ -65,6 +69,7 @@ export class UserPreferenceProfileRepository {
 interface UserPreferenceProfileRow {
   language: string;
   theme: string;
+  auto_theme: number;
   default_permission_mode: string;
   providers_json: string;
   created_at: string;

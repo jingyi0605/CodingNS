@@ -323,6 +323,7 @@ CREATE TABLE IF NOT EXISTS user_preference_profiles (
   user_id TEXT PRIMARY KEY,
   language TEXT NOT NULL CHECK (language IN ('zh-CN', 'en-US')),
   theme TEXT NOT NULL CHECK (theme IN ('light', 'dark', 'sky-blue', 'eye-green')),
+  auto_theme INTEGER NOT NULL DEFAULT 0 CHECK (auto_theme IN (0, 1)),
   default_permission_mode TEXT NOT NULL CHECK (
     default_permission_mode IN ('default', 'acceptEdits', 'bypassPermissions')
   ),

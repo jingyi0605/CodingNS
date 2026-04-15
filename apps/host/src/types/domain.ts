@@ -343,6 +343,7 @@ export type UserPreferenceProviders = Record<PreferenceProviderId, UserPreferenc
 export interface UserPreferenceProfile {
   language: UserPreferenceLanguage;
   theme: UserPreferenceTheme;
+  autoTheme: boolean;
   defaultPermissionMode: UserPreferencePermissionMode;
   providers: UserPreferenceProviders;
 }

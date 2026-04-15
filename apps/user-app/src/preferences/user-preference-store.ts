@@ -24,6 +24,7 @@ interface AccountPreferenceState {
   profile: {
     language: AppLanguage;
     theme: PreferenceThemeId;
+    autoTheme: boolean;
     defaultPermissionMode: ClientPermissionMode;
   };
   providers: AccountPreferencesProfile["providers"];
@@ -94,6 +95,14 @@ function getSystemTheme(): PreferenceThemeId {
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
+function normalizeAutoTheme(value: unknown): boolean | null {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  return null;
+}
+
 function normalizePermissionMode(value?: string | null): ClientPermissionMode | null {
   if (value === "acceptEdits" || value === "bypassPermissions" || value === "default") {
     return value;
@@ -141,6 +150,7 @@ function createDefaultState(): AccountPreferenceState {
     profile: {
       language: detectBrowserLanguage(),
       theme: getSystemTheme(),
+      autoTheme: false,
       defaultPermissionMode: "default"
     },
     providers: createDefaultProviders(),
@@ -257,6 +267,7 @@ function hasPatchContent(patch: AccountPreferencesPatch | null | undefined): boo
   return (
     patch.language !== undefined ||
     patch.theme !== undefined ||
+    patch.autoTheme !== undefined ||
     patch.defaultPermissionMode !== undefined ||
     (patch.providers !== undefined && Object.keys(patch.providers).length > 0)
   );
@@ -279,6 +290,7 @@ function normalizeProfile(
   return {
     language: normalizeLanguage(input?.language) ?? defaults.profile.language,
     theme: normalizeTheme(input?.theme) ?? defaults.profile.theme,
+    autoTheme: normalizeAutoTheme(input?.autoTheme) ?? defaults.profile.autoTheme,
     defaultPermissionMode:
       normalizePermissionMode(input?.defaultPermissionMode) ?? defaults.profile.defaultPermissionMode,
     providers,
@@ -302,6 +314,7 @@ function readShadow(): StoredPreferenceShadow | null {
     const normalized = normalizeProfile({
       language: parsed.profile?.language,
       theme: parsed.profile?.theme,
+      autoTheme: parsed.profile?.autoTheme,
       defaultPermissionMode: parsed.profile?.defaultPermissionMode,
       providers: parsed.providers,
       updatedAt: parsed.updatedAt
@@ -311,6 +324,7 @@ function readShadow(): StoredPreferenceShadow | null {
       profile: {
         language: normalized.language,
         theme: normalized.theme,
+        autoTheme: normalized.autoTheme,
         defaultPermissionMode: normalized.defaultPermissionMode
       },
       providers: normalized.providers,
@@ -363,6 +377,7 @@ function createStateFromProfile(
     profile: {
       language: profile.language,
       theme: profile.theme,
+      autoTheme: profile.autoTheme,
       defaultPermissionMode: profile.defaultPermissionMode
     },
     providers: profile.providers,
@@ -406,6 +421,7 @@ function applyPatch(
     profile: {
       language: patch.language ?? current.profile.language,
       theme: patch.theme ?? current.profile.theme,
+      autoTheme: patch.autoTheme ?? current.profile.autoTheme,
       defaultPermissionMode: patch.defaultPermissionMode ?? current.profile.defaultPermissionMode
     },
     providers: nextProviders,

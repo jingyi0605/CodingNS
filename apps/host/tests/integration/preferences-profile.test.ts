@@ -34,6 +34,7 @@ afterEach(async () => {
 const DEFAULT_PROFILE_RESPONSE = {
   language: "zh-CN",
   theme: "light",
+  autoTheme: false,
   defaultPermissionMode: "default",
   providers: {
     "claude-code": {
@@ -144,6 +145,7 @@ describe("偏好 profile 接口", () => {
       payload: {
         language: "en-US",
         theme: "dark",
+        autoTheme: true,
         defaultPermissionMode: "bypassPermissions"
       }
     });
@@ -153,6 +155,7 @@ describe("偏好 profile 接口", () => {
       ...DEFAULT_PROFILE_RESPONSE,
       language: "en-US",
       theme: "dark",
+      autoTheme: true,
       defaultPermissionMode: "bypassPermissions",
       updatedAt: expect.any(String)
     });
@@ -170,6 +173,7 @@ describe("偏好 profile 接口", () => {
       ...DEFAULT_PROFILE_RESPONSE,
       language: "en-US",
       theme: "dark",
+      autoTheme: true,
       defaultPermissionMode: "bypassPermissions",
       updatedAt: expect.any(String)
     });

@@ -44,6 +44,7 @@ export function createDatabaseClient(databasePath: string): DatabaseClient {
   ensureInstanceTailscaleStatusSchema(db);
   ensureTerminalCommandTemplateDebugSchema(db);
   ensureTerminalInstanceDebugSchema(db);
+  ensureUserPreferenceProfileSchema(db);
   ensureButlerProfileSchema(db);
   ensureButlerControlSessionSchema(db);
   ensureButlerInboxSchema(db);
@@ -233,6 +234,18 @@ function ensureButlerProfileSchema(db: Database.Database): void {
   }
 
   db.exec("ALTER TABLE butler_profiles ADD COLUMN display_name TEXT NOT NULL DEFAULT '代码助手'");
+}
+
+function ensureUserPreferenceProfileSchema(db: Database.Database): void {
+  const columns = db
+    .prepare("PRAGMA table_info(user_preference_profiles)")
+    .all() as Array<{ name: string }>;
+
+  if (columns.length === 0 || columns.some((column) => column.name === "auto_theme")) {
+    return;
+  }
+
+  db.exec("ALTER TABLE user_preference_profiles ADD COLUMN auto_theme INTEGER NOT NULL DEFAULT 0 CHECK (auto_theme IN (0, 1))");
 }
 
 function ensureButlerControlSessionSchema(db: Database.Database): void {

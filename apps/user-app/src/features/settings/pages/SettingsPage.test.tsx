@@ -21,6 +21,7 @@ import { SettingsPage } from "./SettingsPage";
 
 const originalTauriInternals = window.__TAURI_INTERNALS__;
 const originalFetch = global.fetch;
+const originalMatchMedia = window.matchMedia;
 const userAgentDescriptor = Object.getOwnPropertyDescriptor(window.navigator, "userAgent");
 const platformDescriptor = Object.getOwnPropertyDescriptor(window.navigator, "platform");
 const maxTouchPointsDescriptor = Object.getOwnPropertyDescriptor(window.navigator, "maxTouchPoints");
@@ -60,6 +61,7 @@ describe("SettingsPage", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     global.fetch = originalFetch;
+    window.matchMedia = originalMatchMedia;
 
     if (originalTauriInternals) {
       window.__TAURI_INTERNALS__ = originalTauriInternals;
@@ -421,6 +423,38 @@ describe("SettingsPage", () => {
 
     expect(screen.getByRole("button", { name: t("common.logout") })).toBeInTheDocument();
   });
+
+  it("会把自动主题开关写入账户偏好", async () => {
+    renderSettingsPage();
+
+    const checkbox = screen.getByRole("checkbox", { name: t("settings.autoTheme") });
+
+    expect(checkbox).not.toBeChecked();
+
+    await userEvent.click(checkbox);
+
+    await waitFor(() => {
+      expect(userPreferenceStore.getState().profile.autoTheme).toBe(true);
+    });
+  });
+
+  it("开启自动主题后会根据系统偏好切换日夜模式", async () => {
+    const mediaQuery = createMatchMediaMock(false);
+    window.matchMedia = vi.fn().mockImplementation(mediaQuery.matchMedia);
+    renderSettingsPage();
+
+    const checkbox = screen.getByRole("checkbox", { name: t("settings.autoTheme") });
+    await userEvent.click(checkbox);
+
+    expect(document.documentElement.getAttribute("data-theme")).toBe("light");
+
+    mediaQuery.setMatches(true);
+
+    await waitFor(() => {
+      expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
+    });
+  });
+
   it("会把显示系统文件开关写入本地 localStorage", async () => {
     renderSettingsPage();
 
@@ -713,6 +747,7 @@ function createPreferenceState(overrides?: Partial<ReturnType<typeof userPrefere
     profile: {
       language: overrides?.language ?? "zh-CN",
       theme: overrides?.theme ?? "light",
+      autoTheme: overrides?.autoTheme ?? false,
       defaultPermissionMode: overrides?.defaultPermissionMode ?? "default"
     },
     providers: {
@@ -739,6 +774,43 @@ function createPreferenceState(overrides?: Partial<ReturnType<typeof userPrefere
     },
     updatedAt: null,
     source: "default" as const
+  };
+}
+
+function createMatchMediaMock(initialMatches: boolean) {
+  let matches = initialMatches;
+  const listeners = new Set<(event: MediaQueryListEvent) => void>();
+
+  return {
+    matchMedia: () => {
+      const mediaQuery = {
+        media: "(prefers-color-scheme: dark)",
+        get matches() {
+          return matches;
+        },
+        onchange: null,
+        addEventListener: (_event: string, listener: (event: MediaQueryListEvent) => void) => {
+          listeners.add(listener);
+        },
+        removeEventListener: (_event: string, listener: (event: MediaQueryListEvent) => void) => {
+          listeners.delete(listener);
+        },
+        addListener: (listener: (event: MediaQueryListEvent) => void) => {
+          listeners.add(listener);
+        },
+        removeListener: (listener: (event: MediaQueryListEvent) => void) => {
+          listeners.delete(listener);
+        },
+        dispatchEvent: () => true
+      } as unknown as MediaQueryList;
+
+      return mediaQuery;
+    },
+    setMatches(nextMatches: boolean) {
+      matches = nextMatches;
+      const event = { matches, media: "(prefers-color-scheme: dark)" } as MediaQueryListEvent;
+      listeners.forEach((listener) => listener(event));
+    }
   };
 }
 

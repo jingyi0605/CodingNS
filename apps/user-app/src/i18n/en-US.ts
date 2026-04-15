@@ -53,6 +53,9 @@ export const enUS = {
     languageDescription: "Choose the display language used by the interface.",
     theme: "Theme",
     themeDescription: "Choose the color theme that fits the way you work.",
+    autoTheme: "Follow system theme automatically",
+    autoThemeDescription:
+      "When enabled, switch between day and night mode based on the system or browser color scheme.",
     fileManager: "File Manager",
     workspaceSessionSortMode: "Workspace session sort order",
     workspaceSessionSortModeDescription:

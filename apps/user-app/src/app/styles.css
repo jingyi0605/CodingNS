@@ -17173,6 +17173,9 @@ textarea:focus-visible {
 .settings-row-theme .settings-row-control {
   width: 100%;
   justify-content: stretch;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
 }
 
 @media (max-width: 640px) {
@@ -17245,12 +17248,23 @@ textarea:focus-visible {
   color: var(--text-primary);
 }
 
-.settings-checkbox {
-  display: inline-flex;
+.settings-theme-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.settings-theme-toggle-row {
+  display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  color: var(--text-primary);
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.settings-theme-note {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.4;
 }
 
 .settings-runtime-badge {
@@ -17964,6 +17978,16 @@ textarea:focus-visible {
   background: var(--bg-hover);
 }
 
+.theme-card:disabled {
+  cursor: not-allowed;
+  opacity: 0.56;
+}
+
+.theme-card:disabled:hover {
+  border-color: var(--border-primary);
+  background: var(--bg-primary);
+}
+
 .theme-card.active {
   border-color: var(--accent);
   background: var(--bg-active);
@@ -18571,6 +18595,15 @@ textarea:focus-visible {
     transform var(--transition-fast);
 }
 
+.settings-mobile-choice-row:disabled {
+  cursor: not-allowed;
+  opacity: 0.56;
+}
+
+.settings-mobile-choice-row:disabled:active {
+  background: transparent;
+}
+
 .settings-mobile-nav-row:active,
 .settings-mobile-choice-row:active {
   background: color-mix(in srgb, var(--accent) 5%, transparent);
@@ -18795,8 +18828,8 @@ textarea:focus-visible {
 }
 
 .settings-mobile-switch-track {
-  width: 52px;
-  height: 32px;
+  width: 44px;
+  height: 28px;
   position: relative;
   border-radius: 999px;
   background: color-mix(in srgb, var(--bg-hover) 82%, var(--bg-primary));
@@ -18811,8 +18844,8 @@ textarea:focus-visible {
   position: absolute;
   top: 2px;
   left: 2px;
-  width: 26px;
-  height: 26px;
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
   background: #ffffff;
   box-shadow:
@@ -18827,7 +18860,7 @@ textarea:focus-visible {
 }
 
 .settings-mobile-switch input:checked + .settings-mobile-switch-track .settings-mobile-switch-thumb {
-  transform: translateX(20px);
+  transform: translateX(16px);
 }
 
 .settings-mobile-panel-shell .settings-release-card {

@@ -1190,6 +1190,7 @@ function createPreferenceState(overrides?: Partial<ReturnType<typeof userPrefere
     profile: {
       language: overrides?.language ?? "zh-CN",
       theme: overrides?.theme ?? "light",
+      autoTheme: overrides?.autoTheme ?? false,
       defaultPermissionMode: overrides?.defaultPermissionMode ?? "default"
     },
     providers: {

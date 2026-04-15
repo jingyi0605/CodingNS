@@ -44,6 +44,7 @@ interface ProviderPreferencePatch {
 export interface PreferenceProfilePatchInput {
   language?: string;
   theme?: string;
+  autoTheme?: boolean;
   defaultPermissionMode?: string;
   providers?: unknown;
 }
@@ -76,6 +77,8 @@ export class PreferenceProfileService {
       language:
         input.language !== undefined ? normalizeLanguage(input.language) : baseProfile.language,
       theme: input.theme !== undefined ? normalizeTheme(input.theme) : baseProfile.theme,
+      autoTheme:
+        input.autoTheme !== undefined ? normalizeAutoTheme(input.autoTheme) : baseProfile.autoTheme,
       defaultPermissionMode:
         input.defaultPermissionMode !== undefined
           ? normalizePermissionMode(input.defaultPermissionMode)
@@ -100,6 +103,7 @@ function toProfile(record: UserPreferenceProfileRecord): UserPreferenceProfile {
   return {
     language: record.language,
     theme: record.theme,
+    autoTheme: record.autoTheme,
     defaultPermissionMode: record.defaultPermissionMode,
     providers: buildProvidersRecord(record.providers)
   };
@@ -116,6 +120,7 @@ function createDefaultProfile(): UserPreferenceProfile {
   return {
     language: DEFAULT_LANGUAGE,
     theme: DEFAULT_THEME,
+    autoTheme: false,
     defaultPermissionMode: DEFAULT_PERMISSION_MODE,
     providers: buildProvidersRecord()
   };
@@ -245,6 +250,14 @@ function normalizeTheme(value: unknown): UserPreferenceTheme {
   }
 
   return normalized as UserPreferenceTheme;
+}
+
+function normalizeAutoTheme(value: unknown): boolean {
+  if (typeof value !== "boolean") {
+    throw invalidField("autoTheme", "autoTheme 只允许为 boolean");
+  }
+
+  return value;
 }
 
 function normalizePermissionMode(value: unknown): UserPreferencePermissionMode {

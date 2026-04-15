@@ -51,6 +51,8 @@ export const zhCN = {
     languageDescription: "选择界面显示语言，切换后立即应用到当前页面。",
     theme: "主题",
     themeDescription: "选择适合你的界面配色方案",
+    autoTheme: "自动跟随系统主题",
+    autoThemeDescription: "开启后根据系统或浏览器的深浅色偏好自动切换日间和夜间模式。",
     fileManager: "文件管理",
     workspaceSessionSortMode: "工作区的会话显示排序方式",
     workspaceSessionSortModeDescription:

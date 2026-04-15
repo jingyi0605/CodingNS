@@ -42,7 +42,10 @@ type SettingsSectionId =
 interface SettingsPageModel {
   readonly platform: ReturnType<typeof usePlatform>;
   readonly theme: ThemeId;
+  readonly selectedTheme: ThemeId;
+  readonly autoTheme: boolean;
   readonly applyTheme: (id: ThemeId) => void;
+  readonly applyAutoTheme: (enabled: boolean) => void;
   readonly runtimeConfig: ClientRuntimeConfig;
   readonly accountPreferences: {
     language: AppLanguage;
@@ -120,7 +123,7 @@ function getPermissionModeLabel(mode: ClientPermissionMode): string {
 
 function useSettingsPageModel(): SettingsPageModel {
   const navigate = useNavigate();
-  const { theme, setTheme } = useTheme();
+  const { theme, selectedTheme, autoTheme, setTheme, setAutoTheme } = useTheme();
   const runtimeConfig = useClientConfigSelector((state) => state);
   const preferenceLanguage = useUserPreferenceSelector((state) => state.profile.language);
   const preferencePermissionMode = useUserPreferenceSelector(
@@ -159,6 +162,10 @@ function useSettingsPageModel(): SettingsPageModel {
 
   function applyTheme(id: ThemeId): void {
     setTheme(id);
+  }
+
+  function applyAutoTheme(enabled: boolean): void {
+    setAutoTheme(enabled);
   }
 
   function getNormalizedHostBaseUrl(value: string): string | null {
@@ -284,7 +291,10 @@ function useSettingsPageModel(): SettingsPageModel {
   return {
     platform,
     theme,
+    selectedTheme,
+    autoTheme,
     applyTheme,
+    applyAutoTheme,
     runtimeConfig,
     accountPreferences,
     sessionDisplaySortMode,
@@ -328,7 +338,10 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
   const [showParallelTaskDebug, setShowParallelTaskDebug] = useState(false);
   const {
     theme,
+    selectedTheme,
+    autoTheme,
     applyTheme,
+    applyAutoTheme,
     runtimeConfig,
     accountPreferences,
     sessionDisplaySortMode,
@@ -377,20 +390,33 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
             <div className="settings-row settings-row-theme">
               <div className="settings-row-label">
                 <span className="settings-row-title">{t("settings.theme")}</span>
+                <span className="settings-row-description">{t("settings.themeDescription")}</span>
               </div>
               <div className="settings-row-control settings-row-control-stretch">
+                <div className="settings-theme-panel">
+                  <div className="settings-theme-toggle-row">
+                    <span className="settings-row-title">{t("settings.autoTheme")}</span>
+                    <SettingsSwitch
+                      checked={autoTheme}
+                      label={t("settings.autoTheme")}
+                      onChange={applyAutoTheme}
+                    />
+                  </div>
+                  <span className="settings-theme-note">{t("settings.autoThemeDescription")}</span>
+                </div>
                 <div className="theme-selector">
                   {THEMES.map((themeOption) => (
                     <button
                       key={themeOption.id}
                       type="button"
-                      className={`theme-card ${theme === themeOption.id ? "active" : ""}`}
-                      aria-pressed={theme === themeOption.id}
+                      className={`theme-card ${selectedTheme === themeOption.id && !autoTheme ? "active" : ""}`}
+                      aria-pressed={selectedTheme === themeOption.id && !autoTheme}
+                      disabled={autoTheme}
                       onClick={() => applyTheme(themeOption.id as ThemeId)}
                     >
                       <span className="theme-preview" style={{ background: themeOption.color }} />
                       <span className="theme-label">{getThemeLabel(themeOption)}</span>
-                      {theme === themeOption.id ? <span className="theme-check">✓</span> : null}
+                      {selectedTheme === themeOption.id && !autoTheme ? <span className="theme-check">✓</span> : null}
                     </button>
                   ))}
                 </div>
@@ -426,15 +452,11 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
                 <span className="settings-row-description">{t("settings.showSystemFilesDescription")}</span>
               </div>
               <div className="settings-row-control">
-                <label className="settings-checkbox">
-                  <input
-                    type="checkbox"
-                    aria-label={t("settings.showSystemFiles")}
-                    checked={showSystemFiles}
-                    onChange={(event) => updateShowSystemFiles(event.target.checked)}
-                  />
-                  <span>{showSystemFiles ? t("settings.enabled") : t("settings.disabled")}</span>
-                </label>
+                <SettingsSwitch
+                  checked={showSystemFiles}
+                  label={t("settings.showSystemFiles")}
+                  onChange={updateShowSystemFiles}
+                />
               </div>
             </div>
           </div>
@@ -472,14 +494,11 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
                   </span>
                 </div>
                 <div className="settings-row-control">
-                  <label className="settings-checkbox">
-                    <input
-                      type="checkbox"
-                      checked={runtimeConfig.autoReconnect}
-                      onChange={(event) => updateAutoReconnect(event.target.checked)}
-                    />
-                    <span>{runtimeConfig.autoReconnect ? t("settings.enabled") : t("settings.disabled")}</span>
-                  </label>
+                  <SettingsSwitch
+                    checked={runtimeConfig.autoReconnect}
+                    label={t("settings.autoReconnect")}
+                    onChange={updateAutoReconnect}
+                  />
                 </div>
               </div>
             </div>
@@ -553,15 +572,11 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
                 </span>
               </div>
               <div className="settings-row-control">
-                <label className="settings-checkbox">
-                  <input
-                    type="checkbox"
-                    aria-label={t("settings.notifyOnPermissionRequest")}
-                    checked={notifyOnPermissionRequest}
-                    onChange={(event) => updateNotifyOnPermissionRequest(event.target.checked)}
-                  />
-                  <span>{notifyOnPermissionRequest ? t("settings.enabled") : t("settings.disabled")}</span>
-                </label>
+                <SettingsSwitch
+                  checked={notifyOnPermissionRequest}
+                  label={t("settings.notifyOnPermissionRequest")}
+                  onChange={updateNotifyOnPermissionRequest}
+                />
               </div>
             </div>
 
@@ -573,15 +588,11 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
                 </span>
               </div>
               <div className="settings-row-control">
-                <label className="settings-checkbox">
-                  <input
-                    type="checkbox"
-                    aria-label={t("settings.notifyOnSessionCompleted")}
-                    checked={notifyOnSessionCompleted}
-                    onChange={(event) => updateNotifyOnSessionCompleted(event.target.checked)}
-                  />
-                  <span>{notifyOnSessionCompleted ? t("settings.enabled") : t("settings.disabled")}</span>
-                </label>
+                <SettingsSwitch
+                  checked={notifyOnSessionCompleted}
+                  label={t("settings.notifyOnSessionCompleted")}
+                  onChange={updateNotifyOnSessionCompleted}
+                />
               </div>
             </div>
 
@@ -593,15 +604,11 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
                 </span>
               </div>
               <div className="settings-row-control">
-                <label className="settings-checkbox">
-                  <input
-                    type="checkbox"
-                    aria-label={t("settings.notifyOnSessionFailed")}
-                    checked={notifyOnSessionFailed}
-                    onChange={(event) => updateNotifyOnSessionFailed(event.target.checked)}
-                  />
-                  <span>{notifyOnSessionFailed ? t("settings.enabled") : t("settings.disabled")}</span>
-                </label>
+                <SettingsSwitch
+                  checked={notifyOnSessionFailed}
+                  label={t("settings.notifyOnSessionFailed")}
+                  onChange={updateNotifyOnSessionFailed}
+                />
               </div>
             </div>
           </div>
@@ -646,14 +653,11 @@ function DesktopSettingsPage({ model, appVersion }: { model: SettingsPageModel; 
                     <span className="settings-row-title">{t("settings.autoCheckUpdate")}</span>
                   </div>
                   <div className="settings-row-control">
-                    <label className="settings-checkbox">
-                      <input
-                        type="checkbox"
-                        checked={runtimeConfig.autoCheckUpdate}
-                        onChange={(event) => updateAutoCheckUpdate(event.target.checked)}
-                      />
-                      <span>{runtimeConfig.autoCheckUpdate ? t("settings.enabled") : t("settings.disabled")}</span>
-                    </label>
+                    <SettingsSwitch
+                      checked={runtimeConfig.autoCheckUpdate}
+                      label={t("settings.autoCheckUpdate")}
+                      onChange={updateAutoCheckUpdate}
+                    />
                   </div>
                 </div>
 
@@ -849,8 +853,22 @@ function MobileAppearanceSection({ model }: { model: SettingsPageModel }) {
         <h2 className="settings-mobile-group-title">{t("settings.theme")}</h2>
         <p className="settings-mobile-group-note">{t("settings.themeDescription")}</p>
         <div className="settings-mobile-list">
+          <div className="settings-mobile-form-row">
+            <div className="settings-mobile-row-copy">
+              <span className="settings-mobile-row-title">{t("settings.autoTheme")}</span>
+              <span className="settings-mobile-row-description">
+                {t("settings.autoThemeDescription")}
+              </span>
+            </div>
+            <SettingsSwitch
+              checked={model.autoTheme}
+              label={t("settings.autoTheme")}
+              onChange={model.applyAutoTheme}
+            />
+          </div>
+
           {THEMES.map((themeOption) => {
-            const isActive = model.theme === themeOption.id;
+            const isActive = model.selectedTheme === themeOption.id && !model.autoTheme;
 
             return (
               <button
@@ -858,6 +876,7 @@ function MobileAppearanceSection({ model }: { model: SettingsPageModel }) {
                 type="button"
                 className={`settings-mobile-choice-row${isActive ? " active" : ""}`}
                 aria-pressed={isActive}
+                disabled={model.autoTheme}
                 onClick={() => model.applyTheme(themeOption.id as ThemeId)}
               >
                 <span className="settings-mobile-choice-leading">
@@ -909,7 +928,7 @@ function MobileAppearanceSection({ model }: { model: SettingsPageModel }) {
                 {t("settings.showSystemFilesDescription")}
               </span>
             </div>
-            <MobileSwitch
+            <SettingsSwitch
               checked={model.showSystemFiles}
               label={t("settings.showSystemFiles")}
               onChange={model.updateShowSystemFiles}
@@ -958,7 +977,7 @@ function MobileServerConnectionSection({ model }: { model: SettingsPageModel }) 
                 {t("settings.autoReconnectDescription")}
               </span>
             </div>
-            <MobileSwitch
+            <SettingsSwitch
               checked={model.runtimeConfig.autoReconnect}
               label={t("settings.autoReconnect")}
               onChange={model.updateAutoReconnect}
@@ -1011,7 +1030,7 @@ function MobileSecurityPrivacySection({ model }: { model: SettingsPageModel }) {
                 {t("settings.notifyOnPermissionRequestDescription")}
               </span>
             </div>
-            <MobileSwitch
+            <SettingsSwitch
               checked={model.notifyOnPermissionRequest}
               label={t("settings.notifyOnPermissionRequest")}
               onChange={model.updateNotifyOnPermissionRequest}
@@ -1025,7 +1044,7 @@ function MobileSecurityPrivacySection({ model }: { model: SettingsPageModel }) {
                 {t("settings.notifyOnSessionCompletedDescription")}
               </span>
             </div>
-            <MobileSwitch
+            <SettingsSwitch
               checked={model.notifyOnSessionCompleted}
               label={t("settings.notifyOnSessionCompleted")}
               onChange={model.updateNotifyOnSessionCompleted}
@@ -1039,7 +1058,7 @@ function MobileSecurityPrivacySection({ model }: { model: SettingsPageModel }) {
                 {t("settings.notifyOnSessionFailedDescription")}
               </span>
             </div>
-            <MobileSwitch
+            <SettingsSwitch
               checked={model.notifyOnSessionFailed}
               label={t("settings.notifyOnSessionFailed")}
               onChange={model.updateNotifyOnSessionFailed}
@@ -1125,11 +1144,11 @@ function MobileSoftwareUpdateSection({ model }: { model: SettingsPageModel }) {
               <div className="settings-mobile-row-copy">
                 <span className="settings-mobile-row-title">{t("settings.autoCheckUpdate")}</span>
               </div>
-              <MobileSwitch
-                checked={model.runtimeConfig.autoCheckUpdate}
-                label={t("settings.autoCheckUpdate")}
-                onChange={model.updateAutoCheckUpdate}
-              />
+            <SettingsSwitch
+              checked={model.runtimeConfig.autoCheckUpdate}
+              label={t("settings.autoCheckUpdate")}
+              onChange={model.updateAutoCheckUpdate}
+            />
             </div>
           </div>
           <div className="settings-mobile-panel-shell settings-mobile-update-shell">
@@ -1151,7 +1170,7 @@ function MobileSettingsLogoutBar({ onLogout }: { onLogout: () => void }) {
   );
 }
 
-function MobileSwitch({
+function SettingsSwitch({
   checked,
   label,
   onChange
@@ -1162,7 +1181,12 @@ function MobileSwitch({
 }) {
   return (
     <label className="settings-mobile-switch" aria-label={label}>
-      <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} />
+      <input
+        type="checkbox"
+        aria-label={label}
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
+      />
       <span className="settings-mobile-switch-track" aria-hidden="true">
         <span className="settings-mobile-switch-thumb" />
       </span>

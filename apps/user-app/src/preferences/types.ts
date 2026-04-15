@@ -17,6 +17,7 @@ export interface AccountPreferenceProviderProfile {
 export interface AccountPreferencesProfile {
   language: AppLanguage;
   theme: PreferenceThemeId;
+  autoTheme: boolean;
   defaultPermissionMode: ClientPermissionMode;
   providers: Record<PreferenceProviderId, AccountPreferenceProviderProfile>;
   updatedAt: string | null;
@@ -30,6 +31,7 @@ export interface AccountPreferenceProviderPatch {
 export interface AccountPreferencesPatch {
   language?: AppLanguage;
   theme?: PreferenceThemeId;
+  autoTheme?: boolean;
   defaultPermissionMode?: ClientPermissionMode;
   providers?: Partial<Record<PreferenceProviderId, AccountPreferenceProviderPatch>>;
 }

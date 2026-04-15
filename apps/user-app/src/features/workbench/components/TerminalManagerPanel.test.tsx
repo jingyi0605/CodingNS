@@ -31,6 +31,7 @@ function createPreferenceState(language: "zh-CN" | "en-US") {
     profile: {
       language,
       theme: "light" as const,
+      autoTheme: false,
       defaultPermissionMode: "default" as const
     },
     providers: {

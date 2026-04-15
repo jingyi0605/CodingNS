@@ -21,42 +21,72 @@ export function getThemeLabel(theme: ThemeDefinition): string {
   return t(theme.labelKey);
 }
 
-function getSystemTheme(): ThemeId {
+function getSystemTheme(): Extract<ThemeId, "light" | "dark"> {
   if (typeof window === "undefined") {
+    return "light";
+  }
+
+  if (typeof window.matchMedia !== "function") {
     return "light";
   }
 
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
+function resolveTheme(theme: ThemeId, autoTheme: boolean): ThemeId {
+  if (!autoTheme) {
+    return theme;
+  }
+
+  return getSystemTheme();
+}
+
 export function getInitialTheme(): ThemeId {
-  return userPreferenceStore.getState().profile.theme ?? getSystemTheme();
+  const { theme, autoTheme } = userPreferenceStore.getState().profile;
+  return resolveTheme(theme, autoTheme);
 }
 
 export function setTheme(themeId: ThemeId): void {
+  void updatePreferences({
+    theme: themeId,
+    autoTheme: false
+  }).catch(() => undefined);
+}
+
+export function setAutoTheme(enabled: boolean): void {
+  void updatePreferences({
+    autoTheme: enabled
+  }).catch(() => undefined);
+}
+
+export function applyThemeToDocument(themeId: ThemeId): void {
   if (typeof window === "undefined") {
     return;
   }
 
   document.documentElement.setAttribute("data-theme", themeId);
-  void updatePreferences({
-    theme: themeId
-  }).catch(() => undefined);
 }
 
-export function useTheme(): { theme: ThemeId; setTheme: (id: ThemeId) => void } {
-  const theme = usePreferencesSelector((state) => state.profile.theme) as ThemeId;
+export function useTheme(): {
+  theme: ThemeId;
+  selectedTheme: ThemeId;
+  autoTheme: boolean;
+  setTheme: (id: ThemeId) => void;
+  setAutoTheme: (enabled: boolean) => void;
+} {
+  const selectedTheme = usePreferencesSelector((state) => state.profile.theme) as ThemeId;
+  const autoTheme = usePreferencesSelector((state) => state.profile.autoTheme);
+  const theme = resolveTheme(selectedTheme, autoTheme);
 
   return {
     theme,
-    setTheme
+    selectedTheme,
+    autoTheme,
+    setTheme,
+    setAutoTheme
   };
 }
 
 export function initTheme(): void {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  document.documentElement.setAttribute("data-theme", getInitialTheme());
+  applyThemeToDocument(getInitialTheme());
 }
