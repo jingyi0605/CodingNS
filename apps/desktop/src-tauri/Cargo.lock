@@ -549,7 +549,7 @@ dependencies = [
 
 [[package]]
 name = "codingns-desktop"
-version = "0.3.0"
+version = "0.3.5"
 dependencies = [
  "chrono",
  "rfd",
