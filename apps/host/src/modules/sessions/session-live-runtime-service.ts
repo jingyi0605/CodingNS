@@ -22,7 +22,7 @@ import {
 } from "@codingns/session-sync-core";
 
 import type { HostConfig } from "../../config/env.js";
-import { AppError } from "../../shared/errors/app-error.js";
+import { AppError, isAppError } from "../../shared/errors/app-error.js";
 import { createId } from "../../shared/utils/id.js";
 import { isPerfDebugEnabled, logPerformance } from "../../shared/utils/perf-log.js";
 import { logPermissionDebug } from "../../shared/utils/permission-debug-log.js";
@@ -457,7 +457,18 @@ export class SessionLiveRuntimeService {
         acceptedMessage?.messageId ?? null
       );
 
-      const session = this.sessionHistoryService.getSession(sessionId, input.userId);
+      const session = this.resolveStartedSession({
+        sessionId,
+        workspaceId: workspace.id,
+        userId: input.userId,
+        provider: input.provider,
+        parentSessionId: input.parentSessionId ?? null,
+        sessionKind: input.sessionKind ?? "default",
+        annotationSourceMessageId: input.annotationSourceMessageId ?? null,
+        annotationSourceText: input.annotationSourceText ?? null,
+        initialContent: input.content,
+        handle
+      });
       this.markSendDebugResponseReady(debugTrace, {
         returnedAcceptedMessage: Boolean(acceptedMessage),
         returnedSyntheticUser: !acceptedMessage,
@@ -1860,7 +1871,62 @@ export class SessionLiveRuntimeService {
     initialContent: string;
     snapshot: ReturnType<ActiveRunHandle["getSnapshot"]>;
   }): void {
+    this.upsertRuntimeBackedSessionRecords(input);
+  }
+
+  private resolveStartedSession(input: {
+    sessionId: string;
+    workspaceId: string;
+    userId: string;
+    provider: string;
+    parentSessionId: string | null;
+    sessionKind: "default" | "annotation";
+    annotationSourceMessageId: string | null;
+    annotationSourceText: string | null;
+    initialContent: string;
+    handle: ActiveRunHandle;
+  }): SessionListItem {
+    try {
+      return this.sessionHistoryService.getSession(input.sessionId, input.userId);
+    } catch (error) {
+      if (!isRepairableStartedSessionLookupError(error)) {
+        throw error;
+      }
+
+      this.upsertRuntimeBackedSessionRecords({
+        sessionId: input.sessionId,
+        workspaceId: input.workspaceId,
+        userId: input.userId,
+        provider: input.provider,
+        parentSessionId: input.parentSessionId,
+        sessionKind: input.sessionKind,
+        annotationSourceMessageId: input.annotationSourceMessageId,
+        annotationSourceText: input.annotationSourceText,
+        initialContent: input.initialContent,
+        snapshot: input.handle.getSnapshot()
+      });
+
+      return this.sessionHistoryService.getSession(input.sessionId, input.userId);
+    }
+  }
+
+  private upsertRuntimeBackedSessionRecords(input: {
+    sessionId: string;
+    workspaceId: string;
+    userId: string;
+    provider: string;
+    parentSessionId: string | null;
+    sessionKind: "default" | "annotation";
+    annotationSourceMessageId: string | null;
+    annotationSourceText: string | null;
+    initialContent: string;
+    snapshot: ReturnType<ActiveRunHandle["getSnapshot"]>;
+  }): void {
     const timestamp = nowIso();
+    const currentIndex = this.sessionIndexRepository.findIndexRecordBySessionId(input.sessionId);
+    const currentState = this.sessionStateRepository.findBySessionAndUser(input.sessionId, input.userId);
+    const currentSnapshot = this.sessionStatusSnapshotRepository.findBySessionId(input.sessionId);
+
     this.sessionHistoryService.persistSessionBinding(
       input.sessionId,
       input.workspaceId,
@@ -1875,36 +1941,38 @@ export class SessionLiveRuntimeService {
       sessionId: input.sessionId,
       workspaceId: input.workspaceId,
       provider: input.provider,
-      parentSessionId: input.parentSessionId,
-      sessionKind: input.sessionKind,
-      annotationSourceMessageId: input.annotationSourceMessageId,
-      annotationSourceText: input.annotationSourceText,
-      isSubagent: false,
-      subagentLabel: null,
-      title: buildSessionTitle(input.initialContent),
-      messageCount: 0,
-      isArchived: false,
-      lastMessageAt: input.snapshot.lastEventAt,
-      createdAt: timestamp,
+      parentSessionId: currentIndex?.parentSessionId ?? input.parentSessionId,
+      sessionKind: currentIndex?.sessionKind ?? input.sessionKind,
+      annotationSourceMessageId:
+        currentIndex?.annotationSourceMessageId ?? input.annotationSourceMessageId,
+      annotationSourceText:
+        currentIndex?.annotationSourceText ?? input.annotationSourceText,
+      isSubagent: currentIndex?.isSubagent ?? false,
+      subagentLabel: currentIndex?.subagentLabel ?? null,
+      title: currentIndex?.title?.trim() || buildSessionTitle(input.initialContent),
+      messageCount: currentIndex?.messageCount ?? 0,
+      isArchived: currentIndex?.isArchived ?? false,
+      lastMessageAt: currentIndex?.lastMessageAt ?? input.snapshot.lastEventAt,
+      createdAt: currentIndex?.createdAt ?? timestamp,
       updatedAt: timestamp
     });
     this.upsertSnapshot(input.sessionId, {
-      syncStatus: "idle",
-      syncCursor: null,
-      lastSyncAt: input.snapshot.lastEventAt ?? timestamp,
-      lastErrorCode: null,
-      lastErrorDetail: null,
-      resumedAt: null
+      syncStatus: currentSnapshot?.syncStatus ?? "idle",
+      syncCursor: currentSnapshot?.syncCursor ?? null,
+      lastSyncAt: currentSnapshot?.lastSyncAt ?? input.snapshot.lastEventAt ?? timestamp,
+      lastErrorCode: currentSnapshot?.lastErrorCode ?? null,
+      lastErrorDetail: currentSnapshot?.lastErrorDetail ?? null,
+      resumedAt: currentSnapshot?.resumedAt ?? null
     });
     this.sessionStateRepository.upsert({
       sessionId: input.sessionId,
       userId: input.userId,
       runningState: toStoredRunningState(input.snapshot.runningState),
       activitySource: "runtime",
-      favorite: false,
-      lastEventAt: input.snapshot.lastEventAt,
-      completedAt: input.snapshot.completedAt,
-      lastSeenAt: null,
+      favorite: currentState?.favorite ?? false,
+      lastEventAt: input.snapshot.lastEventAt ?? currentState?.lastEventAt ?? null,
+      completedAt: input.snapshot.completedAt ?? currentState?.completedAt ?? null,
+      lastSeenAt: currentState?.lastSeenAt ?? null,
       updatedAt: timestamp
     });
     this.sessionActivityAuthorityService.observe(
@@ -2996,6 +3064,11 @@ function isGeminiPendingRuntimeAliasBinding(value: string, targetSessionId: stri
 
 function shouldAwaitAcceptedUserMessage(provider: string): boolean {
   return provider !== "gemini";
+}
+
+function isRepairableStartedSessionLookupError(error: unknown): boolean {
+  return isAppError(error)
+    && (error.errorCode === "SESSION_INDEX_MISSING" || error.errorCode === "SESSION_NOT_FOUND");
 }
 
 function shouldAwaitStartBindingBeforeAcceptedUserLookup(provider: string): boolean {

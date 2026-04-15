@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { AppError } from "../../src/shared/errors/app-error.js";
 import { SessionLiveRuntimeService } from "../../src/modules/sessions/session-live-runtime-service.js";
 
 function createService() {
@@ -568,6 +569,100 @@ describe("SessionLiveRuntimeService", () => {
     });
 
     expect(order).toEqual(["create", "attach"]);
+  });
+
+  it("startLiveSession 首次读取 session 索引缺失时会重建基础记录并重试一次", async () => {
+    const {
+      service,
+      sessionHistoryService,
+      sessionMessageAttachmentService,
+      workspaceService,
+      sessionIndexRepository,
+      sessionStateRepository,
+      sessionStatusSnapshotRepository
+    } = createService();
+    const runtimeSnapshot = {
+      sessionId: "runtime-session-1",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "provider-session-1",
+      rawStoreRef: "/tmp/.codex/provider-session-1.jsonl",
+      runningState: "starting",
+      attachedClients: 1,
+      startedAt: "2026-04-16T10:00:00.000Z",
+      lastEventAt: null,
+      completedAt: null,
+      detail: null,
+      errorCode: null,
+      supportsInterrupt: true
+    };
+    const providerRuntimeService = {
+      startSession: vi.fn(async () => ({
+        getSnapshot: vi.fn(() => ({ ...runtimeSnapshot })),
+        attach: vi.fn()
+      }))
+    };
+    Object.defineProperty(service, "providerRuntimeService", {
+      value: providerRuntimeService,
+      configurable: true
+    });
+
+    sessionHistoryService.getProviderCapabilitiesSnapshot = vi.fn(() => ({
+      provider: "codex",
+      canStartSession: true,
+      canResumeSession: true,
+      canSendMessage: true,
+      inRunInputMode: "none",
+      supportsSubagents: false,
+      supportsInterrupt: true,
+      supportsStructuredToolCalls: true,
+      supportsTokenUsage: true,
+      supportsAttachments: true,
+      supportsPermissionPrompt: false,
+      supportsCheckpoint: false,
+      limitations: []
+    }));
+    workspaceService.getWorkspaceOrThrow.mockReturnValue({
+      id: "workspace-1",
+      path: "/tmp/workspace"
+    });
+    sessionMessageAttachmentService.buildProviderPrompt.mockReturnValue(null);
+    sessionHistoryService.getBindingOrThrow.mockReturnValue({
+      provider: "codex",
+      providerSessionId: "provider-session-1",
+      rawStoreRef: "/tmp/.codex/provider-session-1.jsonl"
+    });
+    sessionHistoryService.findLatestUserMessage.mockResolvedValue(null);
+    sessionHistoryService.getSession
+      .mockImplementationOnce(() => {
+        throw new AppError({
+          statusCode: 500,
+          errorCode: "SESSION_INDEX_MISSING",
+          detail: "session 索引缺失"
+        });
+      })
+      .mockImplementation((sessionId: string) => ({
+        sessionId,
+        workspaceId: "workspace-1",
+        provider: "codex",
+        providerSessionId: "provider-session-1",
+        rawStoreRef: "/tmp/.codex/provider-session-1.jsonl",
+        messageCount: 0
+      }));
+
+    const result = await service.startLiveSession({
+      workspaceId: "workspace-1",
+      userId: "user-1",
+      provider: "codex",
+      content: "启动后如果索引缺失要自动补齐",
+      clientRequestId: null
+    });
+
+    expect(result.sessionId).toEqual(expect.any(String));
+    expect(sessionHistoryService.getSession).toHaveBeenCalledTimes(2);
+    expect(sessionIndexRepository.upsert).toHaveBeenCalledTimes(2);
+    expect(sessionStateRepository.upsert).toHaveBeenCalledTimes(2);
+    expect(sessionStatusSnapshotRepository.upsert).toHaveBeenCalledTimes(2);
   });
 
   it("startLiveSession 在写入首条图片附件前会先创建 pending session binding", async () => {
