@@ -158,39 +158,67 @@ describe("SessionHistoryService forkSession", () => {
         providerSessionId: "child-message-thread",
         rawStoreRef: childFile
       })),
-      readThread: vi.fn(async () => ({
-        thread: {
-          id: "source-thread",
-          turns: [
-            {
-              id: "turn-1",
-              items: [
+      readThread: vi.fn(async (providerSessionId) => {
+        if (providerSessionId === "child-message-thread") {
+          return {
+            thread: {
+              id: "child-message-thread",
+              turns: [
                 {
-                  type: "userMessage",
-                  id: "item-1",
-                  content: [{ type: "input_text", text: "第一轮问题" }]
-                },
-                {
-                  type: "agentMessage",
-                  id: "item-2",
-                  text: "第一轮回答",
-                  phase: "final_answer"
-                }
-              ]
-            },
-            {
-              id: "turn-2",
-              items: [
-                {
-                  type: "userMessage",
-                  id: "item-3",
-                  content: [{ type: "input_text", text: "第二轮问题" }]
+                  id: "turn-1",
+                  items: [
+                    {
+                      type: "userMessage",
+                      id: "item-1",
+                      content: [{ type: "input_text", text: "第一轮问题" }]
+                    },
+                    {
+                      type: "agentMessage",
+                      id: "item-2",
+                      text: "第一轮回答",
+                      phase: "final_answer"
+                    }
+                  ]
                 }
               ]
             }
-          ]
+          };
         }
-      })),
+
+        return {
+          thread: {
+            id: "source-thread",
+            turns: [
+              {
+                id: "turn-1",
+                items: [
+                  {
+                    type: "userMessage",
+                    id: "item-1",
+                    content: [{ type: "input_text", text: "第一轮问题" }]
+                  },
+                  {
+                    type: "agentMessage",
+                    id: "item-2",
+                    text: "第一轮回答",
+                    phase: "final_answer"
+                  }
+                ]
+              },
+              {
+                id: "turn-2",
+                items: [
+                  {
+                    type: "userMessage",
+                    id: "item-3",
+                    content: [{ type: "input_text", text: "第二轮问题" }]
+                  }
+                ]
+              }
+            ]
+          }
+        };
+      }),
       rollbackThread: vi.fn(async (providerSessionId, numTurns) => {
         expect(providerSessionId).toBe("child-message-thread");
         expect(numTurns).toBe(1);
@@ -201,10 +229,7 @@ describe("SessionHistoryService forkSession", () => {
       }),
       resumeThreadFromHistory: vi.fn(async (input) => {
         resumedHistory = input.history;
-        return {
-          providerSessionId: "child-message-thread",
-          rawStoreRef: childFile
-        };
+        throw new Error(`UNEXPECTED_RESUME_THREAD_FROM_HISTORY:${JSON.stringify(input)}`);
       }),
       close: vi.fn()
     }));
@@ -241,6 +266,125 @@ describe("SessionHistoryService forkSession", () => {
       inheritedPrefixMessageCount: 2,
       providerParentSessionId: "source-thread",
       forkMethod: "native_message_fork"
+    });
+  });
+
+  it("读取子会话历史时会剔除 fork 后误带入的父会话最新消息，并回写正确的继承前缀长度", async () => {
+    const fixture = createEmptyFixture();
+    activeFixtures.push(fixture);
+
+    const sourceFile = createCodexSessionFile(
+      fixture.codexHomeDir,
+      fixture.workspaceDir,
+      "source-thread",
+      [
+        ["user", "第一轮问题"],
+        ["assistant", "第一轮回答"],
+        ["user", "父会话最新问题"]
+      ]
+    );
+    const childFile = createNamedCodexSessionFile(
+      fixture.codexHomeDir,
+      fixture.workspaceDir,
+      "child-thread.jsonl",
+      "child-thread",
+      [
+        ["user", "第一轮问题"],
+        ["assistant", "第一轮回答"],
+        ["user", "父会话最新问题"],
+        ["user", "子会话自己的第一句"]
+      ]
+    );
+    const {
+      service,
+      sessionForkRepository,
+      repos
+    } = createSessionHistoryHarness(fixture, () => ({
+      initialize: vi.fn(async () => {}),
+      forkThread: vi.fn(async () => {
+        throw new Error("UNEXPECTED_FORK_THREAD");
+      }),
+      readThread: vi.fn(async () => ({ history: [] })),
+      rollbackThread: vi.fn(async () => {
+        throw new Error("UNEXPECTED_ROLLBACK_THREAD");
+      }),
+      resumeThreadFromHistory: vi.fn(async () => {
+        throw new Error("UNEXPECTED_RESUME_THREAD_FROM_HISTORY");
+      }),
+      close: vi.fn()
+    }));
+
+    seedSourceSession(repos, sourceFile, 3);
+    const sourcePage = await service.readSessionHistory("source-session", null, 50, "forward", "user-1");
+    const anchorMessageId = sourcePage.messages[1]?.messageId;
+
+    expect(anchorMessageId).toBeTruthy();
+
+    repos.sessionBindingRepository?.upsert({
+      sessionId: "child-session",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      providerSessionId: "child-thread",
+      rawStoreRef: childFile,
+      createdAt: "2026-04-10T08:00:03.500Z",
+      updatedAt: "2026-04-10T08:00:03.500Z"
+    });
+    repos.sessionIndexRepository?.upsert({
+      sessionId: "child-session",
+      workspaceId: "workspace-1",
+      provider: "codex",
+      parentSessionId: "source-session",
+      title: "子会话",
+      messageCount: 4,
+      isArchived: false,
+      lastMessageAt: "2026-04-10T08:00:04.000Z",
+      createdAt: "2026-04-10T08:00:03.500Z",
+      updatedAt: "2026-04-10T08:00:04.000Z"
+    });
+    repos.sessionStateRepository?.upsert({
+      sessionId: "child-session",
+      userId: "user-1",
+      runningState: "idle",
+      activitySource: "none",
+      favorite: false,
+      lastEventAt: "2026-04-10T08:00:04.000Z",
+      completedAt: null,
+      lastSeenAt: null,
+      updatedAt: "2026-04-10T08:00:04.000Z"
+    });
+    repos.sessionStatusSnapshotRepository?.upsert({
+      sessionId: "child-session",
+      syncStatus: "idle",
+      syncCursor: null,
+      lastSyncAt: "2026-04-10T08:00:04.000Z",
+      lastErrorCode: null,
+      lastErrorDetail: null,
+      resumedAt: null,
+      updatedAt: "2026-04-10T08:00:04.000Z"
+    });
+    sessionForkRepository.upsert({
+      sessionId: "child-session",
+      parentSessionId: "source-session",
+      provider: "codex",
+      forkSourceType: "message",
+      forkSourceSessionId: "source-session",
+      forkSourceMessageId: anchorMessageId ?? null,
+      inheritedPrefixMessageCount: 3,
+      providerParentSessionId: "source-thread",
+      providerSourceMessageId: null,
+      forkMethod: "native_message_fork",
+      createdAt: "2026-04-10T08:00:03.500Z"
+    });
+
+    const childPage = await service.readSessionHistory("child-session", null, 50, "forward", "user-1");
+
+    expect(childPage.messages.map((message) => message.content)).toEqual([
+      "第一轮问题",
+      "第一轮回答",
+      "子会话自己的第一句"
+    ]);
+    expect(sessionForkRepository.findBySessionId("child-session")).toMatchObject({
+      inheritedPrefixMessageCount: 2
     });
   });
 

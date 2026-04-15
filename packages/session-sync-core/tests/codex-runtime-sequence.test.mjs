@@ -82,3 +82,61 @@ test("CodexRuntimeAdapter 生成运行时消息时会接续 sequenceBase", async
     rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+test("CodexRuntimeAdapter continueSession 会直接复用 provider 子线程，而不是按本地历史重建上下文", async () => {
+  const resumedThreadIds = [];
+  let resumeFromHistoryCalled = false;
+  let closeHandler = null;
+  const adapter = new CodexRuntimeAdapter({
+    homeDir: "/tmp/codingns-codex-runtime-continue",
+    transportFactory: () => ({
+      async initialize() {},
+      async startThread() {
+        throw new Error("UNEXPECTED_START_THREAD");
+      },
+      async resumeThread(_request, providerSessionId) {
+        resumedThreadIds.push(providerSessionId);
+        return {
+          providerSessionId,
+          rawStoreRef: `/tmp/${providerSessionId}.jsonl`
+        };
+      },
+      async resumeThreadFromHistory() {
+        resumeFromHistoryCalled = true;
+        return {
+          providerSessionId: "rebuilt-thread",
+          rawStoreRef: "/tmp/rebuilt-thread.jsonl"
+        };
+      },
+      async startTurn() {
+        closeHandler?.(null);
+      },
+      async interruptTurn() {},
+      setNotificationHandler() {},
+      setServerRequestHandler() {},
+      setOnClose(handler) {
+        closeHandler = handler;
+      },
+      isClosed() {
+        return false;
+      },
+      close() {}
+    })
+  });
+
+  const launch = await adapter.continueSession(
+    createRunRequest({
+      providerSessionId: "child-thread-dirty",
+      rawStoreRef: "/tmp/host-sanitized-view.jsonl"
+    }),
+    {
+      async emit() {},
+      updateSessionBinding() {}
+    }
+  );
+
+  await launch.completed;
+
+  assert.deepEqual(resumedThreadIds, ["child-thread-dirty"]);
+  assert.equal(resumeFromHistoryCalled, false);
+});

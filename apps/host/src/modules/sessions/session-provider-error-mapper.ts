@@ -133,6 +133,14 @@ export function mapSessionProviderError(error: unknown): AppError {
     });
   }
 
+  if (error instanceof Error && error.message === "CODEX_NATIVE_MESSAGE_FORK_DIRTY") {
+    return new AppError({
+      statusCode: 502,
+      errorCode: "CODEX_NATIVE_MESSAGE_FORK_DIRTY",
+      detail: "Codex 原生消息 fork 后，provider 子线程没有正确停在所选消息点，请重试或稍后再试"
+    });
+  }
+
   if (error instanceof Error && error.message === "SERVER_UNAVAILABLE") {
     return new AppError({
       statusCode: 503,

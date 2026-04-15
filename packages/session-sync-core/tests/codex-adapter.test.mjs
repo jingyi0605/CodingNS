@@ -683,7 +683,7 @@ test("CodexAdapter 在子线程没有 CLI 标题和首条用户消息时，不�
   }
 });
 
-test("CodexAdapter 支持按历史消息点派生新会话", async () => {
+test("CodexAdapter 遇到只提供扁平 history 的 thread/read 时，会拒绝使用重建型 message fork", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-fork-message-"));
   const workspacePath = "/Users/jackson/Code/CodingNS";
   const sourceFile = join(tempDir, "sessions", "2026", "04", "10", "source-thread.jsonl");
@@ -793,18 +793,203 @@ test("CodexAdapter 支持按历史消息点派生新会话", async () => {
           };
         },
         async resumeThreadFromHistory(input) {
-          assert.equal(input.providerSessionId, null);
-          assert.equal(input.history.length, 2);
-          return {
-            providerSessionId: "child-thread",
-            rawStoreRef: childFile
-          };
+          throw new Error(`UNEXPECTED_RESUME_THREAD_FROM_HISTORY:${JSON.stringify(input)}`);
         },
         close() {}
       })
     });
     const page = await adapter.readSessionHistory("source-thread", sourceFile, null, 50);
     const anchorMessageId = page.messages[1].messageId;
+
+    await assert.rejects(
+      adapter.forkSession("source-thread", workspacePath, {
+        rawStoreRef: sourceFile,
+        sourceType: "message",
+        sourceMessageId: anchorMessageId,
+        strategy: "auto"
+      }),
+      /CODEX_RECONSTRUCTED_MESSAGE_FORK_NOT_SUPPORTED/
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("CodexAdapter 在 child thread 正确但本地 transcript 仍然脏时，仍然保留 native message fork", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-fork-verify-"));
+  const workspacePath = "/Users/jackson/Code/CodingNS";
+  const sourceFile = join(tempDir, "sessions", "2026", "04", "10", "source-thread.jsonl");
+  const dirtyChildFile = join(tempDir, "sessions", "2026", "04", "10", "dirty-child-thread.jsonl");
+
+  try {
+    mkdirSync(join(tempDir, "sessions", "2026", "04", "10"), { recursive: true });
+    writeFileSync(
+      sourceFile,
+      [
+        JSON.stringify({
+          timestamp: "2026-04-10T08:00:00.000Z",
+          type: "session_meta",
+          payload: {
+            id: "source-thread",
+            cwd: workspacePath
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-04-10T08:00:01.000Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: "第一轮问题"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-04-10T08:00:02.000Z",
+          type: "event_msg",
+          payload: {
+            type: "agent_message",
+            message: "第一轮回答"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-04-10T08:00:03.000Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: "父会话最新问题"
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(
+      dirtyChildFile,
+      [
+        JSON.stringify({
+          timestamp: "2026-04-10T08:00:00.000Z",
+          type: "session_meta",
+          payload: {
+            id: "dirty-child-thread",
+            cwd: workspacePath
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-04-10T08:00:01.000Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: "第一轮问题"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-04-10T08:00:02.000Z",
+          type: "event_msg",
+          payload: {
+            type: "agent_message",
+            message: "第一轮回答"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-04-10T08:00:03.000Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: "父会话最新问题"
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+    const adapter = new CodexAdapter({
+      homeDir: tempDir,
+      forkTransportFactory: () => ({
+        async initialize() {},
+        async forkThread(providerSessionId) {
+          assert.equal(providerSessionId, "source-thread");
+          return {
+            providerSessionId: "dirty-child-thread",
+            rawStoreRef: dirtyChildFile
+          };
+        },
+        async readThread(providerSessionId) {
+          if (providerSessionId === "dirty-child-thread") {
+            return {
+              thread: {
+                id: "dirty-child-thread",
+                turns: [
+                  {
+                    id: "turn-1",
+                    items: [
+                      {
+                        type: "userMessage",
+                        id: "item-1",
+                        content: [{ type: "input_text", text: "第一轮问题" }]
+                      },
+                      {
+                        type: "agentMessage",
+                        id: "item-2",
+                        text: "第一轮回答",
+                        phase: "final_answer"
+                      }
+                    ]
+                  }
+                ]
+              }
+            };
+          }
+
+          return {
+            thread: {
+              id: "source-thread",
+              turns: [
+                {
+                  id: "turn-1",
+                  items: [
+                    {
+                      type: "userMessage",
+                      id: "item-1",
+                      content: [{ type: "input_text", text: "第一轮问题" }]
+                    },
+                    {
+                      type: "agentMessage",
+                      id: "item-2",
+                      text: "第一轮回答",
+                      phase: "final_answer"
+                    }
+                  ]
+                },
+                {
+                  id: "turn-2",
+                  items: [
+                    {
+                      type: "userMessage",
+                      id: "item-3",
+                      content: [{ type: "input_text", text: "父会话最新问题" }]
+                    }
+                  ]
+                }
+              ]
+            }
+          };
+        },
+        async rollbackThread(providerSessionId, numTurns) {
+          assert.equal(providerSessionId, "dirty-child-thread");
+          assert.equal(numTurns, 1);
+          return {
+            providerSessionId: "dirty-child-thread",
+            rawStoreRef: dirtyChildFile
+          };
+        },
+        async resumeThreadFromHistory(input) {
+          throw new Error(`UNEXPECTED_RESUME_THREAD_FROM_HISTORY:${JSON.stringify(input)}`);
+        },
+        close() {}
+      })
+    });
+
+    const page = await adapter.readSessionHistory("source-thread", sourceFile, null, 50);
+    const anchorMessageId = page.messages[1]?.messageId;
+
+    assert.ok(anchorMessageId);
 
     const result = await adapter.forkSession("source-thread", workspacePath, {
       rawStoreRef: sourceFile,
@@ -815,8 +1000,211 @@ test("CodexAdapter 支持按历史消息点派生新会话", async () => {
 
     assert.equal(result.forkMethod, "native_message_fork");
     assert.equal(result.forkSourceType, "message");
-    assert.equal(result.session.providerSessionId, "child-thread");
+    assert.equal(result.session.providerSessionId, "dirty-child-thread");
     assert.equal(result.session.messageCount, 2);
+    assert.equal(result.inheritedPrefixMessageCount, 2);
+    assert.equal(result.session.lastMessageAt, "2026-04-10T08:00:02.000Z");
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("CodexAdapter 在 native rollback 后如果 child thread 仍然带着父会话脏历史，会直接报错", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "codingns-codex-fork-dirty-provider-"));
+  const workspacePath = "/Users/jackson/Code/CodingNS";
+  const sourceFile = join(tempDir, "sessions", "2026", "04", "10", "source-thread.jsonl");
+  const childFile = join(tempDir, "sessions", "2026", "04", "10", "child-thread.jsonl");
+
+  try {
+    mkdirSync(join(tempDir, "sessions", "2026", "04", "10"), { recursive: true });
+    writeFileSync(
+      sourceFile,
+      [
+        JSON.stringify({
+          timestamp: "2026-04-10T08:00:00.000Z",
+          type: "session_meta",
+          payload: {
+            id: "source-thread",
+            cwd: workspacePath
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-04-10T08:00:01.000Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: "第一轮问题"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-04-10T08:00:02.000Z",
+          type: "event_msg",
+          payload: {
+            type: "agent_message",
+            message: "第一轮回答"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-04-10T08:00:03.000Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: "父会话最新问题"
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(
+      childFile,
+      [
+        JSON.stringify({
+          timestamp: "2026-04-10T08:00:00.000Z",
+          type: "session_meta",
+          payload: {
+            id: "child-thread",
+            cwd: workspacePath
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-04-10T08:00:01.000Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: "第一轮问题"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-04-10T08:00:02.000Z",
+          type: "event_msg",
+          payload: {
+            type: "agent_message",
+            message: "第一轮回答"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-04-10T08:00:03.000Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: "父会话最新问题"
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+
+    const adapter = new CodexAdapter({
+      homeDir: tempDir,
+      forkTransportFactory: () => ({
+        async initialize() {},
+        async forkThread(providerSessionId) {
+          assert.equal(providerSessionId, "source-thread");
+          return {
+            providerSessionId: "child-thread",
+            rawStoreRef: childFile
+          };
+        },
+        async readThread(providerSessionId) {
+          if (providerSessionId === "child-thread") {
+            return {
+              thread: {
+                id: "child-thread",
+                turns: [
+                  {
+                    id: "turn-1",
+                    items: [
+                      {
+                        type: "userMessage",
+                        id: "item-1",
+                        content: [{ type: "input_text", text: "第一轮问题" }]
+                      },
+                      {
+                        type: "agentMessage",
+                        id: "item-2",
+                        text: "第一轮回答",
+                        phase: "final_answer"
+                      }
+                    ]
+                  },
+                  {
+                    id: "turn-2",
+                    items: [
+                      {
+                        type: "userMessage",
+                        id: "item-3",
+                        content: [{ type: "input_text", text: "父会话最新问题" }]
+                      }
+                    ]
+                  }
+                ]
+              }
+            };
+          }
+
+          return {
+            thread: {
+              id: "source-thread",
+              turns: [
+                {
+                  id: "turn-1",
+                  items: [
+                    {
+                      type: "userMessage",
+                      id: "item-1",
+                      content: [{ type: "input_text", text: "第一轮问题" }]
+                    },
+                    {
+                      type: "agentMessage",
+                      id: "item-2",
+                      text: "第一轮回答",
+                      phase: "final_answer"
+                    }
+                  ]
+                },
+                {
+                  id: "turn-2",
+                  items: [
+                    {
+                      type: "userMessage",
+                      id: "item-3",
+                      content: [{ type: "input_text", text: "父会话最新问题" }]
+                    }
+                  ]
+                }
+              ]
+            }
+          };
+        },
+        async rollbackThread(providerSessionId, numTurns) {
+          assert.equal(providerSessionId, "child-thread");
+          assert.equal(numTurns, 1);
+          return {
+            providerSessionId: "child-thread",
+            rawStoreRef: childFile
+          };
+        },
+        async resumeThreadFromHistory(input) {
+          throw new Error(`UNEXPECTED_RESUME_THREAD_FROM_HISTORY:${JSON.stringify(input)}`);
+        },
+        close() {}
+      })
+    });
+
+    const page = await adapter.readSessionHistory("source-thread", sourceFile, null, 50);
+    const anchorMessageId = page.messages[1]?.messageId;
+
+    assert.ok(anchorMessageId);
+
+    await assert.rejects(
+      adapter.forkSession("source-thread", workspacePath, {
+        rawStoreRef: sourceFile,
+        sourceType: "message",
+        sourceMessageId: anchorMessageId,
+        strategy: "auto"
+      }),
+      /CODEX_NATIVE_MESSAGE_FORK_DIRTY/
+    );
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
@@ -878,6 +1266,22 @@ test("CodexAdapter 能兼容 Codex app-server thread/read 返回的 turns.items 
             id: "child-thread",
             cwd: workspacePath
           }
+        }),
+        JSON.stringify({
+          timestamp: "2026-04-10T08:00:01.000Z",
+          type: "event_msg",
+          payload: {
+            type: "user_message",
+            message: "第一轮问题"
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-04-10T08:00:02.000Z",
+          type: "event_msg",
+          payload: {
+            type: "agent_message",
+            message: "第一轮回答"
+          }
         })
       ].join("\n"),
       "utf8"
@@ -895,7 +1299,33 @@ test("CodexAdapter 能兼容 Codex app-server thread/read 返回的 turns.items 
             rawStoreRef: childFile
           };
         },
-        async readThread() {
+        async readThread(providerSessionId) {
+          if (providerSessionId === "child-thread") {
+            return {
+              thread: {
+                id: "child-thread",
+                turns: [
+                  {
+                    id: "turn-1",
+                    items: [
+                      {
+                        type: "userMessage",
+                        id: "item-1",
+                        content: [{ type: "input_text", text: "第一轮问题" }]
+                      },
+                      {
+                        type: "agentMessage",
+                        id: "item-2",
+                        text: "第一轮回答",
+                        phase: "final_answer"
+                      }
+                    ]
+                  }
+                ]
+              }
+            };
+          }
+
           return {
             thread: {
               id: "source-thread",
@@ -1067,14 +1497,34 @@ test("CodexAdapter 按首轮 assistant 锚点派生时会保留完整 turn 结�
     );
     writeFileSync(
       childFile,
-      JSON.stringify({
-        timestamp: "2026-04-11T06:01:00.000Z",
-        type: "session_meta",
-        payload: {
-          id: "child-thread",
-          cwd: workspacePath
-        }
-      }),
+      [
+        JSON.stringify({
+          timestamp: "2026-04-11T06:01:00.000Z",
+          type: "session_meta",
+          payload: {
+            id: "child-thread",
+            cwd: workspacePath
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-04-11T06:01:01.000Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "对话测试，口令：1314" }]
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-04-11T06:01:02.000Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: "收到，口令是 1314。" }]
+          }
+        })
+      ].join("\n"),
       "utf8"
     );
 
@@ -1090,7 +1540,33 @@ test("CodexAdapter 按首轮 assistant 锚点派生时会保留完整 turn 结�
             rawStoreRef: childFile
           };
         },
-        async readThread() {
+        async readThread(providerSessionId) {
+          if (providerSessionId === "child-thread") {
+            return {
+              thread: {
+                id: "child-thread",
+                turns: [
+                  {
+                    id: "turn-1",
+                    items: [
+                      {
+                        type: "userMessage",
+                        id: "item-1",
+                        content: [{ type: "input_text", text: "对话测试，口令：1314" }]
+                      },
+                      {
+                        type: "agentMessage",
+                        id: "item-2",
+                        text: "收到，口令是 1314。",
+                        phase: "final_answer"
+                      }
+                    ]
+                  }
+                ]
+              }
+            };
+          }
+
           return {
             thread: {
               id: "source-thread",

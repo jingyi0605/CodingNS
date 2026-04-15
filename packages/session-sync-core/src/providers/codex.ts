@@ -629,29 +629,6 @@ export class CodexAdapter implements ProviderAdapter {
 
       const threadReadResult = await transport.readThread(providerSessionId);
       const threadSnapshot = extractCodexThreadHistorySnapshot(threadReadResult);
-
-      if (threadSnapshot.kind === "turns") {
-        const rollbackPlan = buildCodexTurnRollbackPlan(threadSnapshot, parsedMessages, targetSnapshot);
-        const forked = await transport.forkThread(providerSessionId);
-        const finalized =
-          rollbackPlan.numTurnsToRollback > 0
-            ? await transport.rollbackThread(
-                forked.providerSessionId,
-                rollbackPlan.numTurnsToRollback
-              )
-            : forked;
-
-        return await this.buildForkResultFromTransport({
-          providerSessionId: finalized.providerSessionId,
-          rawStoreRef: finalized.rawStoreRef,
-          workspacePath,
-          fallbackParentProviderSessionId: providerSessionId,
-          forkMethod: "native_message_fork",
-          forkSourceType: "message",
-          providerSourceMessageId: null
-        });
-      }
-
       const truncatedHistory = truncateCodexThreadHistory(
         threadSnapshot.value,
         parsedMessages,
@@ -662,20 +639,36 @@ export class CodexAdapter implements ProviderAdapter {
         throw new Error("CODEX_FORK_HISTORY_EMPTY");
       }
 
-      const resumed = await transport.resumeThreadFromHistory({
-        providerSessionId: null,
-        workspacePath,
-        history: truncatedHistory
-      });
+      if (threadSnapshot.kind !== "turns") {
+        throw new Error("CODEX_RECONSTRUCTED_MESSAGE_FORK_NOT_SUPPORTED");
+      }
+
+      const rollbackPlan = buildCodexTurnRollbackPlan(threadSnapshot, parsedMessages, targetSnapshot);
+      const forked = await transport.forkThread(providerSessionId);
+      const finalized =
+        rollbackPlan.numTurnsToRollback > 0
+          ? await transport.rollbackThread(
+              forked.providerSessionId,
+              rollbackPlan.numTurnsToRollback
+            )
+          : forked;
+      const childThreadReadResult = await transport.readThread(finalized.providerSessionId);
+
+      if (!this.isForkedChildHistoryAligned(childThreadReadResult, truncatedHistory)) {
+        throw new Error("CODEX_NATIVE_MESSAGE_FORK_DIRTY");
+      }
 
       return await this.buildForkResultFromTransport({
-        providerSessionId: resumed.providerSessionId,
-        rawStoreRef: resumed.rawStoreRef,
+        providerSessionId: finalized.providerSessionId,
+        rawStoreRef: finalized.rawStoreRef,
         workspacePath,
         fallbackParentProviderSessionId: providerSessionId,
         forkMethod: "native_message_fork",
         forkSourceType: "message",
-        providerSourceMessageId: null
+        providerSourceMessageId: null,
+        messageCountOverride: targetSnapshot.sequence,
+        inheritedPrefixMessageCountOverride: targetSnapshot.sequence,
+        lastMessageAtOverride: targetSnapshot.timestamp
       });
     } finally {
       transport.close();
@@ -1191,6 +1184,9 @@ export class CodexAdapter implements ProviderAdapter {
     forkMethod: ForkSessionResult["forkMethod"];
     forkSourceType: ForkSessionResult["forkSourceType"];
     providerSourceMessageId: string | null;
+    messageCountOverride?: number;
+    inheritedPrefixMessageCountOverride?: number;
+    lastMessageAtOverride?: string | null;
   }): Promise<ForkSessionResult> {
     const resolvedStoreRef =
       input.rawStoreRef
@@ -1216,13 +1212,13 @@ export class CodexAdapter implements ProviderAdapter {
         workspacePath: input.workspacePath,
         rawStoreRef: resolvedStoreRef,
         isArchived: resolveCodexArchivedState(threadMetadata, resolvedStoreRef),
-        lastMessageAt: messages.at(-1)?.timestamp ?? nextTimestamp(),
-        messageCount: messages.length,
+        lastMessageAt: input.lastMessageAtOverride ?? messages.at(-1)?.timestamp ?? nextTimestamp(),
+        messageCount: input.messageCountOverride ?? messages.length,
         parentProviderSessionId: input.fallbackParentProviderSessionId
       },
       forkMethod: input.forkMethod,
       forkSourceType: input.forkSourceType,
-      inheritedPrefixMessageCount: messages.length,
+      inheritedPrefixMessageCount: input.inheritedPrefixMessageCountOverride ?? messages.length,
       providerSourceMessageId: input.providerSourceMessageId
     };
   }
@@ -1243,6 +1239,33 @@ export class CodexAdapter implements ProviderAdapter {
 
       this.sessionSummaryCache.delete(oldestKey);
     }
+  }
+
+  private isForkedChildHistoryAligned(
+    childThreadReadResult: Record<string, unknown>,
+    expectedHistory: unknown[]
+  ): boolean {
+    const expectedSignatures = collectCodexForkComparableSignatures(expectedHistory);
+
+    if (expectedSignatures.length === 0) {
+      return false;
+    }
+
+    let childHistory: unknown[];
+
+    try {
+      childHistory = extractCodexThreadHistory(childThreadReadResult);
+    } catch {
+      return false;
+    }
+
+    const childSignatures = collectCodexForkComparableSignatures(childHistory);
+
+    if (childSignatures.length !== expectedSignatures.length) {
+      return false;
+    }
+
+    return expectedSignatures.every((signature, index) => childSignatures[index] === signature);
   }
 
   private resolveCodexSessionId(
@@ -2743,6 +2766,14 @@ function applyForkSourceMessageSnapshot(
     kind: snapshot.kind,
     content: snapshot.content
   };
+}
+
+function collectCodexForkComparableSignatures(history: unknown[]): string[] {
+  try {
+    return normalizeCodexThreadHistorySnapshot(history).comparableEntries.map((entry) => entry.signature);
+  } catch {
+    return [];
+  }
 }
 
 function stringifyCodexThreadMessageContent(content: unknown): string {

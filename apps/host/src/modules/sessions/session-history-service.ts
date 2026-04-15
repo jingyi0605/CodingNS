@@ -2180,13 +2180,22 @@ export class SessionHistoryService {
           );
 
     return historyTask
-      .then((page) => {
-        const messagesWithAttachments = this.sessionMessageAttachmentService.enrichMessages(sessionId, page.messages);
+      .then(async (page) => {
+        const sanitizedPage = await this.sanitizeForkHistoryPage(
+          sessionId,
+          page,
+          cursor,
+          direction
+        );
+        const messagesWithAttachments = this.sessionMessageAttachmentService.enrichMessages(
+          sessionId,
+          sanitizedPage.messages
+        );
         const messages = this.enrichMessagesWithOrigin(sessionId, messagesWithAttachments);
         this.persistSessionChangedFiles(sessionId, messages);
 
         return {
-          ...page,
+          ...sanitizedPage,
           messages
         };
       })
@@ -2209,6 +2218,80 @@ export class SessionHistoryService {
     messages: HistoryPage["messages"]
   ): SessionHistoryMessageWithOrigin[] {
     return this.resolveMessageOrigins(sessionId, messages);
+  }
+
+  private async sanitizeForkHistoryPage(
+    sessionId: string,
+    page: HistoryPage,
+    cursor: string | null,
+    direction: HistoryDirection
+  ): Promise<HistoryPage> {
+    if (direction !== "forward" || cursor !== null || page.messages.length === 0) {
+      return page;
+    }
+
+    const forkRecord = this.sessionForkRepository.findBySessionId(sessionId);
+
+    if (
+      !forkRecord
+      || forkRecord.forkSourceType !== "message"
+      || !forkRecord.forkSourceMessageId
+    ) {
+      return page;
+    }
+
+    const childSession = this.sessionIndexRepository.findIndexRecordBySessionId(sessionId);
+    const childCreatedAt = childSession?.createdAt?.trim() || null;
+
+    if (!childCreatedAt) {
+      return page;
+    }
+
+    const parentBinding = this.getBindingOrThrow(forkRecord.forkSourceSessionId);
+    const inheritedMessages = await this.readForkSourceMessages(
+      forkRecord.forkSourceSessionId,
+      parentBinding,
+      "message",
+      forkRecord.forkSourceMessageId,
+      null
+    );
+    const expectedInheritedCount = inheritedMessages.length;
+
+    if (expectedInheritedCount <= 0) {
+      return page;
+    }
+
+    let leakedInheritedCount = 0;
+
+    for (let index = expectedInheritedCount; index < page.messages.length; index += 1) {
+      const message = page.messages[index];
+
+      if (!message || message.timestamp > childCreatedAt) {
+        break;
+      }
+
+      leakedInheritedCount += 1;
+    }
+
+    if (forkRecord.inheritedPrefixMessageCount !== expectedInheritedCount) {
+      this.sessionForkRepository.upsert({
+        ...forkRecord,
+        inheritedPrefixMessageCount: expectedInheritedCount
+      });
+    }
+
+    if (leakedInheritedCount <= 0) {
+      return page;
+    }
+
+    return {
+      ...page,
+      messages: [
+        ...page.messages.slice(0, expectedInheritedCount),
+        ...page.messages.slice(expectedInheritedCount + leakedInheritedCount)
+      ],
+      total: Math.max(0, page.total - leakedInheritedCount)
+    };
   }
 
   private resolveMessageOrigins(
@@ -3417,6 +3500,7 @@ function buildInspectionActivityObservation(
     source: hasInspectionEvidence(inspection) ? "inferred_log" : "unknown",
     confidence: "weak",
     detail: inspection.errorDetail,
+    interruptSource: null,
     errorCode: inspection.errorCode,
     observedAt: inspection.completedAtCandidate ?? inspection.lastEventAt ?? observedAt
   };

@@ -87,4 +87,12 @@ describe("mapSessionProviderError", () => {
     expect(mapped.errorCode).toBe("PROVIDER_IO_ERROR");
     expect(mapped.message).toContain("thread/read");
   });
+
+  it("会把 Codex native message fork 脏子线程映射成明确的 provider 错误", () => {
+    const mapped = mapSessionProviderError(new Error("CODEX_NATIVE_MESSAGE_FORK_DIRTY"));
+
+    expect(mapped.statusCode).toBe(502);
+    expect(mapped.errorCode).toBe("CODEX_NATIVE_MESSAGE_FORK_DIRTY");
+    expect(mapped.message).toContain("所选消息点");
+  });
 });
