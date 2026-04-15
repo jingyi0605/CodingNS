@@ -758,7 +758,7 @@ function MobileSettingsPage({ model, appVersion }: { model: SettingsPageModel; a
         <MobilePageHeader title={t("settings.title")} />
         <div className="settings-mobile-container">
           <section className="settings-mobile-group-section">
-            <div className="settings-mobile-card">
+            <div className="settings-mobile-list">
               {sectionEntries.map((entry) => (
                 <button
                   key={entry.id}
@@ -813,7 +813,7 @@ function MobileAppearanceSection({ model }: { model: SettingsPageModel }) {
       <section className="settings-mobile-group-section">
         <h2 className="settings-mobile-group-title">{t("settings.language")}</h2>
         <p className="settings-mobile-group-note">{t("settings.languageDescription")}</p>
-        <div className="settings-mobile-card">
+        <div className="settings-mobile-list">
           <div className="settings-mobile-form-row">
             <div className="settings-mobile-row-copy">
               <span className="settings-mobile-row-title">{t("settings.language")}</span>
@@ -826,7 +826,7 @@ function MobileAppearanceSection({ model }: { model: SettingsPageModel }) {
       <section className="settings-mobile-group-section">
         <h2 className="settings-mobile-group-title">{t("settings.theme")}</h2>
         <p className="settings-mobile-group-note">{t("settings.themeDescription")}</p>
-        <div className="settings-mobile-card">
+        <div className="settings-mobile-list">
           {THEMES.map((themeOption) => {
             const isActive = model.theme === themeOption.id;
 
@@ -858,7 +858,7 @@ function MobileAppearanceSection({ model }: { model: SettingsPageModel }) {
       <section className="settings-mobile-group-section">
         <h2 className="settings-mobile-group-title">{t("settings.fileManager")}</h2>
         <p className="settings-mobile-group-note">{t("settings.workspaceSessionSortModeDescription")}</p>
-        <div className="settings-mobile-card">
+        <div className="settings-mobile-list">
           <div className="settings-mobile-form-row">
             <div className="settings-mobile-row-copy">
               <span className="settings-mobile-row-title">{t("settings.workspaceSessionSortMode")}</span>
@@ -906,7 +906,7 @@ function MobileServerConnectionSection({ model }: { model: SettingsPageModel }) 
         <section className="settings-mobile-group-section">
           <h2 className="settings-mobile-group-title">{t("settings.serverAddress")}</h2>
           <p className="settings-mobile-group-note">{t("settings.serverDescription")}</p>
-          <div className="settings-mobile-card">
+          <div className="settings-mobile-list">
             <form className="settings-mobile-form-stack" onSubmit={model.handleHostBaseUrlSubmit}>
               <input
                 aria-label={t("settings.serverAddress")}
@@ -928,7 +928,7 @@ function MobileServerConnectionSection({ model }: { model: SettingsPageModel }) 
 
       <section className="settings-mobile-group-section">
         <h2 className="settings-mobile-group-title">{t("settings.serverConnection")}</h2>
-        <div className="settings-mobile-card">
+        <div className="settings-mobile-list">
           <div className="settings-mobile-form-row">
             <div className="settings-mobile-row-copy">
               <span className="settings-mobile-row-title">{t("settings.autoReconnect")}</span>
@@ -954,7 +954,7 @@ function MobileSecurityPrivacySection({ model }: { model: SettingsPageModel }) {
       <section className="settings-mobile-group-section">
         <h2 className="settings-mobile-group-title">{t("settings.securityPrivacy")}</h2>
         <p className="settings-mobile-group-note">{t("settings.securityPrivacySectionSummary")}</p>
-        <div className="settings-mobile-card">
+        <div className="settings-mobile-list">
           <div className="settings-mobile-form-row">
             <div className="settings-mobile-row-copy">
               <span className="settings-mobile-row-title">{t("settings.defaultPermissionMode")}</span>
@@ -981,7 +981,7 @@ function MobileSecurityPrivacySection({ model }: { model: SettingsPageModel }) {
       <section className="settings-mobile-group-section">
         <h2 className="settings-mobile-group-title">{t("settings.notificationSettings")}</h2>
         <p className="settings-mobile-group-note">{t("settings.notificationSettingsDescription")}</p>
-        <div className="settings-mobile-card">
+        <div className="settings-mobile-list">
           <div className="settings-mobile-form-row">
             <div className="settings-mobile-row-copy">
               <span className="settings-mobile-row-title">{t("settings.notifyOnPermissionRequest")}</span>
@@ -1034,7 +1034,7 @@ function MobileRemoteAccessSection() {
     <section className="settings-mobile-group-section">
       <h2 className="settings-mobile-group-title">{t("settings.remoteAccess")}</h2>
       <p className="settings-mobile-group-note">{t("settings.remoteAccessSectionSummary")}</p>
-      <div className="settings-mobile-card settings-mobile-release-card">
+      <div className="settings-mobile-panel-shell">
         <TailscalePanel />
       </div>
     </section>
@@ -1046,7 +1046,7 @@ function MobileSkillManagementSection() {
     <section className="settings-mobile-group-section">
       <h2 className="settings-mobile-group-title">{t("settings.skills")}</h2>
       <p className="settings-mobile-group-note">{t("settings.skillsSectionSummary")}</p>
-      <div className="settings-mobile-card settings-mobile-release-card">
+      <div className="settings-mobile-panel-shell">
         <SkillManagementPanel />
       </div>
     </section>
@@ -1059,7 +1059,7 @@ function MobileSoftwareUpdateSection({ model }: { model: SettingsPageModel }) {
       <section className="settings-mobile-group-section">
         <h2 className="settings-mobile-group-title">{t("settings.softwareUpdate")}</h2>
         <p className="settings-mobile-group-note">{t("settings.softwareUpdateSectionSummary")}</p>
-        <div className="settings-mobile-card">
+        <div className="settings-mobile-list">
           <div className="settings-mobile-form-row">
             <div className="settings-mobile-row-copy">
               <span className="settings-mobile-row-title">{t("settings.releaseChannel")}</span>
@@ -1077,13 +1077,12 @@ function MobileSoftwareUpdateSection({ model }: { model: SettingsPageModel }) {
               <option value="beta">{t("settings.releaseBeta")}</option>
             </select>
           </div>
-
         </div>
       </section>
 
       <section className="settings-mobile-group-section">
         <h2 className="settings-mobile-group-title">{t("settings.serverUpdate")}</h2>
-        <div className="settings-mobile-card settings-mobile-release-card">
+        <div className="settings-mobile-panel-shell">
           <ServiceUpdatePanel />
         </div>
       </section>
@@ -1091,7 +1090,7 @@ function MobileSoftwareUpdateSection({ model }: { model: SettingsPageModel }) {
       {!model.platform.isWeb ? (
         <section className="settings-mobile-group-section">
           <h2 className="settings-mobile-group-title">{t("settings.clientUpdate")}</h2>
-          <div className="settings-mobile-card">
+          <div className="settings-mobile-list">
             <div className="settings-mobile-form-row">
               <div className="settings-mobile-row-copy">
                 <span className="settings-mobile-row-title">{t("settings.autoCheckUpdate")}</span>
@@ -1103,7 +1102,7 @@ function MobileSoftwareUpdateSection({ model }: { model: SettingsPageModel }) {
               />
             </div>
           </div>
-          <div className="settings-mobile-card settings-mobile-release-card">
+          <div className="settings-mobile-panel-shell">
             <ReleasePanel />
           </div>
         </section>

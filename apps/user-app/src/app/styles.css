@@ -17661,18 +17661,14 @@ textarea:focus-visible {
 
 .settings-page-mobile {
   padding: 0 0 32px;
-  background:
-    radial-gradient(circle at top, color-mix(in srgb, var(--accent) 10%, transparent), transparent 34%),
-    linear-gradient(180deg, color-mix(in srgb, white 55%, var(--bg-primary)), color-mix(in srgb, var(--bg-primary) 96%, white 4%) 18%, var(--bg-primary) 72%);
+  background: var(--bg-primary);
   font-family: "SF Pro Display", "SF Pro Text", -apple-system, BlinkMacSystemFont, sans-serif;
 }
 
 .mobile-workbench-shell[data-active-entry="settings"],
 .ios-workbench-shell[data-active-entry="settings"],
 .android-workbench-shell[data-active-entry="settings"] {
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 18%, transparent), transparent 18%),
-    var(--bg-primary);
+  background: var(--bg-primary);
 }
 
 .mobile-workbench-shell[data-active-entry="settings"] .mobile-workbench-content,
@@ -17701,7 +17697,7 @@ textarea:focus-visible {
   margin: 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 22px;
+  gap: 20px;
   width: 100%;
   padding: 0 16px calc(184px + var(--mobile-shell-safe-bottom, env(safe-area-inset-bottom, 0px)));
   box-sizing: border-box;
@@ -17737,12 +17733,12 @@ textarea:focus-visible {
 .settings-mobile-group-section {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
 
 .settings-mobile-group-title {
   margin: 0;
-  padding: 0 8px;
+  padding: 0;
   font-size: 13px;
   font-weight: 600;
   color: var(--text-secondary);
@@ -17750,49 +17746,42 @@ textarea:focus-visible {
 }
 
 .settings-mobile-group-note {
-  padding: 0 8px;
+  padding: 0;
   font-size: 13px;
   max-width: 34rem;
 }
 
-.settings-mobile-card {
-  position: relative;
-  overflow: hidden;
-  border-radius: 18px;
-  border: 1px solid color-mix(in srgb, var(--border-primary) 62%, rgba(255, 255, 255, 0.65));
-  background:
-    linear-gradient(180deg, color-mix(in srgb, rgba(255, 255, 255, 0.9) 72%, var(--bg-surface)), color-mix(in srgb, var(--bg-surface) 96%, white 4%)),
-    color-mix(in srgb, var(--bg-surface) 96%, white 4%);
-  box-shadow:
-    0 0 0 0.5px color-mix(in srgb, rgba(255, 255, 255, 0.75) 58%, transparent),
-    0 10px 30px rgba(15, 23, 42, 0.05),
-    0 1px 0 rgba(255, 255, 255, 0.72) inset;
-  backdrop-filter: blur(20px) saturate(130%);
-  -webkit-backdrop-filter: blur(20px) saturate(130%);
+.settings-mobile-list,
+.settings-mobile-panel-shell {
+  width: 100%;
+  min-width: 0;
+  border-top: 1px solid color-mix(in srgb, var(--border-primary) 72%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--border-primary) 72%, transparent);
 }
 
-.settings-mobile-card::before {
-  content: "";
-  position: absolute;
-  inset: 0 0 auto 0;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.9), transparent);
-  pointer-events: none;
+.settings-mobile-list {
+  display: flex;
+  flex-direction: column;
 }
 
-.settings-mobile-card > .settings-mobile-nav-row:not(:last-child),
-.settings-mobile-card > .settings-mobile-form-row:not(:last-child),
-.settings-mobile-card > .settings-mobile-static-row:not(:last-child),
-.settings-mobile-card > .settings-mobile-choice-row:not(:last-child) {
-  border-bottom: 1px solid color-mix(in srgb, var(--border-primary) 44%, transparent);
+.settings-mobile-panel-shell {
+  padding: 14px 0;
+}
+
+.settings-mobile-list > * {
+  min-width: 0;
+}
+
+.settings-mobile-list > :not(:last-child) {
+  border-bottom: 1px solid color-mix(in srgb, var(--border-primary) 48%, transparent);
 }
 
 .settings-mobile-nav-row,
 .settings-mobile-choice-row {
   width: 100%;
-  padding: 15px 16px;
+  padding: 16px 0;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 12px;
   border: none;
   background: transparent;
@@ -17811,7 +17800,7 @@ textarea:focus-visible {
 
 .settings-mobile-form-row,
 .settings-mobile-static-row {
-  padding: 15px 16px;
+  padding: 16px 0;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -17821,23 +17810,20 @@ textarea:focus-visible {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 16px;
+  padding: 16px 0;
 }
 
 .settings-mobile-nav-icon {
-  width: 30px;
-  height: 30px;
-  border-radius: 9px;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  background:
-    linear-gradient(180deg, color-mix(in srgb, white 78%, var(--bg-surface)), color-mix(in srgb, var(--accent) 8%, var(--bg-primary)));
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-surface));
   color: color-mix(in srgb, var(--accent) 82%, var(--text-primary));
-  box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.72) inset,
-    0 0 0 0.5px color-mix(in srgb, var(--border-primary) 56%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 10%, var(--border-primary));
 }
 
 .settings-mobile-nav-icon svg,
@@ -17877,16 +17863,20 @@ textarea:focus-visible {
   gap: 6px;
   color: var(--text-tertiary);
   flex-shrink: 0;
+  margin-left: auto;
+  min-width: 0;
+  max-width: 44%;
 }
 
 .settings-mobile-nav-value {
-  max-width: 124px;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 14px;
   font-weight: 500;
   color: var(--text-secondary);
+  text-align: right;
 }
 
 .settings-mobile-language-switcher {
@@ -17929,7 +17919,7 @@ textarea:focus-visible {
   border-radius: 50%;
   border: 0.5px solid color-mix(in srgb, var(--border-primary) 82%, transparent);
   flex-shrink: 0;
-  box-shadow: 0 0 0 3px color-mix(in srgb, white 78%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--bg-surface) 72%, transparent);
 }
 
 .settings-mobile-choice-row.active {
@@ -17945,9 +17935,8 @@ textarea:focus-visible {
   justify-content: center;
   flex-shrink: 0;
   color: transparent;
-  background: color-mix(in srgb, var(--bg-primary) 92%, white 8%);
+  background: color-mix(in srgb, var(--bg-surface) 88%, var(--bg-primary));
   border: 0.5px solid color-mix(in srgb, var(--border-primary) 64%, transparent);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
 }
 
 .settings-mobile-choice-row.active .settings-mobile-choice-indicator {
@@ -17968,10 +17957,7 @@ textarea:focus-visible {
   padding-right: 14px;
   border-radius: 12px;
   border: 0.5px solid color-mix(in srgb, var(--border-primary) 60%, transparent);
-  background: color-mix(in srgb, var(--bg-primary) 88%, white 12%);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.7),
-    inset 0 -1px 0 rgba(15, 23, 42, 0.02);
+  background: color-mix(in srgb, var(--bg-surface) 90%, var(--bg-primary));
 }
 
 .settings-mobile-primary-button,
@@ -18066,17 +18052,17 @@ textarea:focus-visible {
   transform: translateX(20px);
 }
 
-.settings-mobile-release-card .settings-release-card {
+.settings-mobile-panel-shell .settings-release-card {
   padding: 16px;
 }
 
-.settings-mobile-release-card .settings-release-actions {
+.settings-mobile-panel-shell .settings-release-actions {
   display: grid;
   grid-template-columns: 1fr;
 }
 
-.settings-mobile-release-card .primary-button,
-.settings-mobile-release-card .secondary-button {
+.settings-mobile-panel-shell .primary-button,
+.settings-mobile-panel-shell .secondary-button {
   width: 100%;
 }
 
@@ -18125,17 +18111,13 @@ textarea:focus-visible {
 }
 
 [data-theme="dark"] .settings-page-mobile {
-  background:
-    radial-gradient(circle at top, rgba(10, 132, 255, 0.12), transparent 28%),
-    linear-gradient(180deg, #090909, #0b0b0c 16%, #0d0d0d 55%, #0a0a0a);
+  background: var(--bg-primary);
 }
 
 [data-theme="dark"] .mobile-workbench-shell[data-active-entry="settings"],
 [data-theme="dark"] .ios-workbench-shell[data-active-entry="settings"],
 [data-theme="dark"] .android-workbench-shell[data-active-entry="settings"] {
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 14%),
-    #080808;
+  background: var(--bg-primary);
 }
 
 [data-theme="dark"] .settings-mobile-group-title,
@@ -18146,27 +18128,13 @@ textarea:focus-visible {
   color: rgba(235, 235, 245, 0.6);
 }
 
-[data-theme="dark"] .settings-mobile-card {
-  border-color: rgba(255, 255, 255, 0.08);
-  background:
-    linear-gradient(180deg, rgba(28, 28, 30, 0.98), rgba(18, 18, 20, 0.98)),
-    #141416;
-  box-shadow:
-    0 0 0 0.5px rgba(255, 255, 255, 0.04),
-    0 14px 34px rgba(0, 0, 0, 0.36),
-    inset 0 1px 0 rgba(255, 255, 255, 0.05);
-  backdrop-filter: blur(18px) saturate(120%);
-  -webkit-backdrop-filter: blur(18px) saturate(120%);
+[data-theme="dark"] .settings-mobile-list,
+[data-theme="dark"] .settings-mobile-panel-shell {
+  border-top-color: rgba(255, 255, 255, 0.08);
+  border-bottom-color: rgba(255, 255, 255, 0.08);
 }
 
-[data-theme="dark"] .settings-mobile-card::before {
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.07), transparent);
-}
-
-[data-theme="dark"] .settings-mobile-card > .settings-mobile-nav-row:not(:last-child),
-[data-theme="dark"] .settings-mobile-card > .settings-mobile-form-row:not(:last-child),
-[data-theme="dark"] .settings-mobile-card > .settings-mobile-static-row:not(:last-child),
-[data-theme="dark"] .settings-mobile-card > .settings-mobile-choice-row:not(:last-child) {
+[data-theme="dark"] .settings-mobile-list > :not(:last-child) {
   border-bottom-color: rgba(255, 255, 255, 0.06);
 }
 
@@ -18177,12 +18145,9 @@ textarea:focus-visible {
 }
 
 [data-theme="dark"] .settings-mobile-nav-icon {
-  background:
-    linear-gradient(180deg, rgba(36, 36, 40, 0.96), rgba(22, 22, 24, 0.96));
+  background: rgba(36, 36, 40, 0.92);
   color: #4da3ff;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.05),
-    0 0 0 0.5px rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.08);
 }
 
 [data-theme="dark"] .settings-mobile-nav-value {
@@ -18232,9 +18197,6 @@ textarea:focus-visible {
 [data-theme="dark"] .settings-mobile-select {
   border-color: rgba(255, 255, 255, 0.08);
   background: #0c0c0d;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.03),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.24);
 }
 
 [data-theme="dark"] .settings-mobile-primary-button {
